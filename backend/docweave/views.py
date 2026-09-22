@@ -37,7 +37,7 @@ class Views:
         if block is not None:
             base["block"] = block
         if doc.workbook_json is not None and fam in ("table",):
-            return {**base, "view": "grid", "grid": workbook_window(doc.workbook_json, sheet, offset, limit)}
+            return {**base, "view": "grid", "grid": workbook_window(doc.workbook, sheet, offset, limit)}
         if fam == "document":
             return {**base, "view": "docx", "doc": render_docx(doc.data)}
         if fam == "pdf":
@@ -53,7 +53,7 @@ class Views:
             text = doc.text
             out = {**base, "view": "text", "lines": text.split("\n")}
             if doc.workbook_json is not None:
-                out["grid"] = workbook_window(doc.workbook_json, sheet, offset, limit)
+                out["grid"] = workbook_window(doc.workbook, sheet, offset, limit)
             return out
         return {**base, "view": "error", "error": "无法预览该文件"}
 

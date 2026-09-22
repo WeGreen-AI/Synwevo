@@ -56,8 +56,12 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
-  // reset on file / sheet change
+  // reset on file / sheet change.  The first load is made with sheet=null and the
+  // server answers which sheet that was; telling the parent must not re-fetch the
+  // window we already hold (a 20k×30 workbook paid ~300 ms and 133 KB for that).
+  const loadedRef = useRef("");
   useEffect(() => {
+    if (sheet && loadedRef.current === `${reloadKey}::${sheet}`) return;
     setWins({});
     setMeta(null);
     setErr(null);
@@ -66,6 +70,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     load(sheet, 0, WIN)
       .then((w) => {
         if (!alive) return;
+        loadedRef.current = `${reloadKey}::${w.sheet}`;
         setMeta(w);
         setWins({ 0: w });
         onInfo?.({ sheets: w.sheets, sheet: w.sheet, totalRows: w.total_rows, totalCols: w.total_cols, notes: w.notes });

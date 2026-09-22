@@ -160,9 +160,14 @@ class XlsxRenderer:
                 "sheets": self.sheets()}
 
 
-def workbook_window(wb_json: dict, sheet: str | None, offset: int = 0, limit: int = 200, max_cols: int = 1024) -> dict:
-    """Window over a parsed source workbook (values only)."""
-    wb = tabular.Workbook.from_json(wb_json)
+def workbook_window(wb: "tabular.Workbook | dict", sheet: str | None, offset: int = 0, limit: int = 200, max_cols: int = 1024) -> dict:
+    """Window over a parsed source workbook (values only).
+
+    Takes an already-parsed Workbook whenever the caller has one: rebuilding the object
+    model per window costs ~0.4 s on a 20k x 30 sheet, which is paid on every scroll.
+    """
+    if isinstance(wb, dict):
+        wb = tabular.Workbook.from_json(wb)
     sh = wb.sheet(name=sheet) if sheet else (wb.sheets[0] if wb.sheets else None)
     if sh is None:
         raise ValueError(f"没有工作表「{sheet}」")

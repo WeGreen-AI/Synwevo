@@ -15,8 +15,8 @@ PEOPLE = [
 RULE = {"mode": "per_block", "block": {"anchor": "人员登记表", "match": "contains"}}
 
 
-def _template(api, pid):
-    t = api.template(pid, "testdata/测试_登记卡模板.docx")
+def _template(api, pid, fixtures):
+    t = api.template(pid, fixtures / "测试_登记卡模板.docx")
     return t["id"], {n: api.text_slot(t["id"], s, n) for n, s in (("姓名", "某某"), ("电话", "00000000"), ("地址", "某地"))}
 
 
@@ -59,7 +59,7 @@ def test_split_map_and_generate(api, fixtures, fmt):
     pid = api.project(f"每块一份-{fmt}")
     api.upload(pid, fixtures / f"测试_多表单登记表.{fmt}")
     sid = api.ok(api.c.get(f"/api/projects/{pid}/sources"))[0]["id"]
-    tid, slots = _template(api, pid)
+    tid, slots = _template(api, pid, fixtures)
     api.rule(pid, RULE)
     pv = api.ok(api.c.post(f"/api/projects/{pid}/rule-preview", json=RULE))
     assert pv["total"] == 4 and not pv["file_errors"], pv
