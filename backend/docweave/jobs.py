@@ -493,7 +493,16 @@ class JobService:
         policy = options.get("error_policy", "block")
         if policy not in ("block", "skip"):
             raise ServiceError(400, "bad_error_policy", "error_policy 只能是 block 或 skip", {"field": "error_policy"})
-        layout = options.get("layout") if options.get("layout") in ("off", "warn", "fit") else ((ctx.project.get("output") or {}).get("layout") or "off")
+        # An unknown value must not silently become "off": a caller asking for the strictest
+        # pagination check would then get no check at all and a 202 saying it worked.
+        if "layout" in options and options["layout"] is not None:
+            layout = options["layout"]
+            if layout not in ("off", "warn", "fit"):
+                raise ServiceError(400, "bad_layout", "layout 只能是 off / warn / fit", {"field": "layout"})
+        else:
+            layout = (ctx.project.get("output") or {}).get("layout") or "off"
+            if layout not in ("off", "warn", "fit"):
+                layout = "off"
         pattern = options.get("naming") or (ctx.project.get("output") or {}).get("naming") or "{序号}"
         normalized = {"project": pid, "formats": list(formats), "error_policy": policy, "naming": pattern,
                       "keep_fields": bool(options.get("keep_fields")), "layout": layout}

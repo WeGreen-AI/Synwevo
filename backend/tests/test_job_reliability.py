@@ -181,3 +181,31 @@ def test_service_error_shape(api, fixtures):
     assert r.status_code == 404 and r.json()["error"] == "not_found"
     with pytest.raises(ServiceError):
         api.c.app_state.jobs.get("j_nope", tenant="default")
+
+
+def test_unknown_layout_is_rejected_not_silently_downgraded(api, fixtures):
+    """DW-049: layout='strict' used to be accepted with 202 and stored as 'off', so a caller
+    asking for the strictest pagination check got no check at all and was told it worked."""
+    pid = api.project("layout 校验")
+    api.upload(pid, fixtures / "测试_客户100.xlsx")
+    t = api.template(pid, fixtures / "测试_合同模板.docx")
+    api.text_slot(t["id"], "示例客户名称", "客户名称")
+    api.ok(api.c.patch(f"/api/projects/{pid}", json={"record_rule": {
+        "mode": "per_row", "table": {"sheet": "客户", "header_row": 0, "data_start": 1}}}))
+
+    for bad in ("strict", "fitt", "OFF", "", 123):
+        r = api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"], "layout": bad})
+        assert r.status_code == 400, (bad, r.status_code, r.text[:200])
+        body = r.json()
+        assert body["error"] == "bad_layout" and body["detail"]["field"] == "layout", body
+
+    # the documented values still work, and omitting the key still falls back to the project default
+    for good in ("off", "warn", "fit"):
+        r = api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"], "layout": good})
+        assert r.status_code < 400, (good, r.text[:200])
+        jid = r.json()["id"]
+        assert api.ok(api.c.get(f"/api/jobs/{jid}"))["options"]["layout"] == good
+        api.c.post(f"/api/jobs/{jid}/cancel", json={})
+    r = api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"]})
+    assert r.status_code < 400 and api.ok(api.c.get(f"/api/jobs/{r.json()['id']}"))["options"]["layout"] == "off"
+    api.c.post(f"/api/jobs/{r.json()['id']}/cancel", json={})

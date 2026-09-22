@@ -37,7 +37,7 @@ python backend/manage.py apikey revoke <key_id>
 
 | 状态 | 场景 |
 |---|---|
-| 400 | 请求内容不合法（`invalid`、`invalid_definition`、`bad_error_policy`、`format_unavailable`…） |
+| 400 | 请求内容不合法（`invalid`、`invalid_definition`、`bad_error_policy`、`bad_layout`、`format_unavailable`…）。枚举字段只接受文档列出的值，拼错或大小写不符会被拒绝，**不会**静默退回默认值 |
 | 401 / 403 | 密钥缺失/无效/过期/被撤销；权限不足 |
 | 404 | 资源不存在或不属于该租户 |
 | 409 | 幂等键冲突（`idempotency_conflict`）、映射版本过期（`stale`）、预检发现错误（`has_errors`）、任务状态不允许（`job_active`、`nothing_to_retry`） |
@@ -156,6 +156,16 @@ python backend/manage.py apikey revoke <key_id>
 | POST | `/jobs/{jid}/retry` | write | 重试失败/取消项（沿用原快照），支持 `Idempotency-Key`、`include_skipped` |
 
 任务提交体：`{"formats": ["docx","pdf"], "naming": "{客户编号}_{客户名称}", "error_policy": "block|skip", "layout": "off|warn|fit", "keep_fields": false}`。
+
+`layout` 是分页检查（仅对 DOCX / PPTX 这类有分页的格式生效，需要 LibreOffice）：
+
+| 值 | 行为 |
+|---|---|
+| `off`（默认） | 不检查。新内容更长时输出页数可能与模板不同 |
+| `warn` | 每份输出实际排版一次并数页数；超出模板页数的样本仍生成，但在结果清单里带 `page_overflow` **警告**（含实际页数与模板页数） |
+| `fit` | 同上，但超出的样本判为**失败**不产出；若字段勾选了「超长时允许缩小字号」，先按 92%/84%/76%/68%/60% 逐级缩小并每级重新排版，放得下则成功并带 `shrunk_to_fit` 警告 |
+
+省略 `layout` 时沿用项目设置；传入未列出的值返回 400 `bad_layout`。LibreOffice 不可用时返回 `layout_unavailable` 警告而不是假装检查过。
 
 **状态机**：`queued → running → (completed | completed_with_errors | failed | cancelled)`；取消请求把运行中的任务置为 `cancelling`。
 
