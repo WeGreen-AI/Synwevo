@@ -39,6 +39,7 @@ class App:
         self.parse_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="parse")
         self._src_cache: dict[tuple, SourceDoc] = {}
         self._cache_lock = threading.Lock()
+        self.on_event = None          # set by the API layer: called after a job event is stored
 
     # ================================================================ projects
     def create_project(self, name: str) -> dict:

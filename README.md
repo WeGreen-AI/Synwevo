@@ -18,6 +18,18 @@ scripts/setup.sh      # Python 依赖、界面构建、中文 OCR 模型
 scripts/start.sh      # 打开 http://127.0.0.1:8765
 ```
 
+需要程序调用（无界面）时：
+
+```bash
+backend/.venv/bin/python backend/manage.py apikey create --name ci --scopes read,write   # 生成密钥（只显示一次）
+export DOCWEAVE_API_KEY=dw_...  DOCWEAVE_BASE_URL=http://127.0.0.1:8765
+backend/.venv/bin/python scripts/automation_example.py \
+  --source testdata/测试_客户100.xlsx --template testdata/测试_合同模板.docx \
+  --definition docs/integration/example-definition.json --out ./out
+```
+
+接口与端口文档：[docs/integration/api.md](docs/integration/api.md)、[docs/integration/ports.md](docs/integration/ports.md)。
+
 Docker：`docker compose up -d --build`（镜像内含 LibreOffice、Tesseract 中文模型与中文字体；对外服务请加带认证的反向代理，见 `docs/DEPLOY.md`）。
 
 ## 已实现的用户流程
@@ -39,6 +51,14 @@ Docker：`docker compose up -d --build`（镜像内含 LibreOffice、Tesseract �
 | [docs/DEPLOY.md](docs/DEPLOY.md) | 运行、Docker、反向代理、限制与升级 |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | 组件、版本、许可证（含 PyMuPDF AGPL 说明）、费用与部署要求 |
 | [docs/TESTING.md](docs/TESTING.md) | 测试数据、自动化测试、浏览器端到端测试、性能测试 |
+| [docs/integration/ports.md](docs/integration/ports.md) | **端口、绑定地址、健康检查**（实测）与反向代理配置 |
+| [docs/integration/api.md](docs/integration/api.md) | **机器接口 `/api/v1`**：鉴权、路由、任务语义、幂等、事件与 Webhook |
+| [docs/integration/automation.md](docs/integration/automation.md) | 无界面调用完整流程、可运行脚本与 curl 示例 |
+| [docs/integration/openapi.yaml](docs/integration/openapi.yaml) | 机器可读接口规范（由代码导出，测试校验一致） |
+| [docs/operations.md](docs/operations.md) | 生产启动、备份恢复、迁移与回滚、故障处理 |
+| [docs/quality/issues.md](docs/quality/issues.md) | 问题清单与修复证据 |
+| [docs/quality/verification.md](docs/quality/verification.md) | 实际执行的验证命令与结果 |
+| [docs/design.md](docs/design.md) | 设计规范、参考来源、交互与动效 |
 | `.env.example` | 所有配置项与上限 |
 
 ## 验证结果摘要

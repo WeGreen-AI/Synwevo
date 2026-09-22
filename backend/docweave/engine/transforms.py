@@ -69,7 +69,9 @@ def validate(ops: list[dict]) -> list[str]:
         if name not in OPS:
             errs.append(f"不支持的转换：{name}")
         if name == "date_format" and op.get("pattern") not in DATE_PATTERNS:
-            errs.append(f"不支持的日期格式：{op.get('pattern')}")
+            got = op.get("pattern")
+            errs.append((f"日期格式转换缺少 pattern" if got is None else f"不支持的日期格式：{got}")
+                        + f"；可用：{'、'.join(DATE_PATTERNS)}")
         if name == "decimals":
             try:
                 n = int(op.get("n", 2))

@@ -49,6 +49,9 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     views = Views(app_)
     jobs = JobService(app_) if start_jobs else None
     auth = Auth(store)
+    from ..webhooks import WebhookDispatcher
+    hooks = WebhookDispatcher(store, jobs, start=start_jobs)
+    app_.on_event = hooks.notify                      # job state changes wake the dispatcher
     show_docs = (os.environ.get("DOCWEAVE_API_DOCS") or "").strip().lower() in ("1", "true", "on", "yes")
     api = FastAPI(title="DocWeave", version="1.0.0",
                   docs_url="/api/docs" if show_docs else None,
@@ -58,6 +61,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     api.state.views = views
     api.state.jobs = jobs
     api.state.auth = auth
+    api.state.webhooks = hooks
     limiter = rate_limiter(API_RATE_PER_MIN)
 
     def _error_body(request: Request, code: str, message: str, detail: dict | None):
@@ -156,8 +160,10 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
             checks["storage"] = f"error: {type(e).__name__}"
         checks["worker"] = "ok" if (jobs and jobs.runner_alive()) else "stopped"
         ready = all(v == "ok" for v in checks.values())
-        return JSONResponse({"status": "ready" if ready else "not_ready", "checks": checks,
-                             "schema_version": store.schema_version()}, status_code=200 if ready else 503)
+        out = {"status": "ready" if ready else "not_ready", "checks": checks, "schema_version": store.schema_version()}
+        if hooks.enabled:
+            out["webhooks"] = "enabled"
+        return JSONResponse(out, status_code=200 if ready else 503)
 
     # ------------------------------------------------------------ regression cases & desensitization
     @api.get("/api/regression-cases")

@@ -1,0 +1,92 @@
+{
+  "_comment": "示例定义（配合 testdata/ 中的合成测试文件）：fields 创建模板字段，rule 划分样本，mappings 绑定来源列到字段。",
+  "fields": [
+    {
+      "kind": "text",
+      "name": "客户名称",
+      "find": "客户名称"
+    },
+    {
+      "kind": "text",
+      "name": "客户编号",
+      "find": "000000"
+    },
+    {
+      "kind": "text",
+      "name": "签约日期",
+      "find": "2020-01-01"
+    },
+    {
+      "kind": "text",
+      "name": "金额",
+      "find": "0.00"
+    }
+  ],
+  "rule": {
+    "mode": "per_row",
+    "table": {
+      "sheet": "客户",
+      "header_row": 0,
+      "data_end": 10
+    }
+  },
+  "mappings": [
+    {
+      "field": "客户名称",
+      "type": "single",
+      "sources": [
+        {
+          "kind": "column",
+          "sheet": "客户",
+          "header": "姓名"
+        }
+      ]
+    },
+    {
+      "field": "客户编号",
+      "type": "single",
+      "sources": [
+        {
+          "kind": "column",
+          "sheet": "客户",
+          "header": "客户编号"
+        }
+      ]
+    },
+    {
+      "field": "签约日期",
+      "type": "single",
+      "sources": [
+        {
+          "kind": "column",
+          "sheet": "客户",
+          "header": "签约日期"
+        }
+      ],
+      "transforms": [
+        {
+          "op": "date_format",
+          "pattern": "yyyy年m月d日"
+        }
+      ]
+    },
+    {
+      "field": "金额",
+      "type": "single",
+      "sources": [
+        {
+          "kind": "column",
+          "sheet": "客户",
+          "header": "金额"
+        }
+      ],
+      "transforms": [
+        {
+          "op": "decimals",
+          "n": 2,
+          "thousands": true
+        }
+      ]
+    }
+  ]
+}
