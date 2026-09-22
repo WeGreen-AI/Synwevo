@@ -35,6 +35,7 @@ backend/.venv/bin/python -m pytest backend/tests -q
 scripts/start.sh &
 backend/.venv/bin/python scripts/ui_e2e.py           # 新建项目→上传→设模板→选文字建字段→定义样本→点选单元格建映射→预览→生成 100 份→下载 ZIP 核对→刷新→手机宽度查看任务
 backend/.venv/bin/python scripts/ui_e2e_more.py      # 分组+XLSX 明细（拖选区域）、PDF 鼠标框选字段、内置文档编辑器、内置表格编辑器
+backend/.venv/bin/python scripts/ui_e2e_keyboard.py  # 命令面板（⌘K）、映射列表键盘与批量操作+撤销、主题与文档纸张、布局记忆与减少动效
 ```
 
 截图保存在 `docs/screenshots/`。

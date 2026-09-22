@@ -63,10 +63,12 @@ Docker：`docker compose up -d --build`（镜像内含 LibreOffice、Tesseract �
 
 ## 验证结果摘要
 
-* `pytest`：65 项通过（引擎单元测试、14 项验收场景、格式覆盖、编辑流程、能力声明佐证）。
-* 浏览器端到端（Playwright 驱动本机 Chrome）：5 条完整流程通过。
+* `pytest`：**172 项通过、1 项跳过**（引擎单元测试、14 项验收场景、格式覆盖、任务可靠性、机器接口、Webhook、编辑流程、能力声明佐证）。
+* 浏览器端到端（Playwright 驱动本机 Chrome）：完整流程通过。
+* 无界面调用：按 `docs/integration/automation.md` 从干净环境跑通上传 → 模板 → 规则 → 预检 → 提交 → 下载 → 校验。
 * Microsoft Word / Excel / PowerPoint 实机打开生成文件：无修复提示。
-* 性能（Apple Silicon 笔记本）：1 000 份合同 11.3 秒；5 000 份 69 秒；200 份分组 XLSX 0.9 秒；300 份 PDF 模板 23 秒；PDF 导出约 0.8 秒/份；峰值内存约 440 MB。详见 `docs/ACCEPTANCE.md`。
+* 性能（Apple Silicon 笔记本，合成数据）：1 000 份合同 11.1 秒；5 000 份 65 秒（峰值 RSS 452 MB）；200 份分组 XLSX 1.0 秒；300 份 PDF 模板 23 秒；双格式（DOCX+PDF）约 355 ms/份。
+* 完整命令、结果与环境见 [docs/quality/verification.md](docs/quality/verification.md)；问题与修复证据见 [docs/quality/issues.md](docs/quality/issues.md)。
 
 ## 工作假设（未收到补充信息时的默认方案）
 
@@ -76,12 +78,13 @@ Docker：`docker compose up -d --build`（镜像内含 LibreOffice、Tesseract �
 
 ## 已知限制
 
-* 不计算公式：XLSX 输出清除公式缓存并由 Excel 打开时重算；可选用 LibreOffice 计算后写回缓存值。
+* 公式：内置引擎计算 90+ 常用函数并写入结果，不支持的函数改用 LibreOffice 计算；同时设置 `fullCalcOnLoad`，Excel 打开时仍会重算。**不声称与 Excel 逐函数一致**，差异见 `docs/FORMATS.md`。
 * 更长的新内容可能改变 DOCX/PPTX 的分页或排版，不承诺像素级不变；演示文稿不会自动分页（超出时警告）。
-* PDF 模板只支持单值文本框（无重复明细）；PDF 不能转换为可编辑 Word；表单字段输出为扁平化文字。
-* 图片模板（直接输出图片）、DOCX 非表格内容块的重复、单文件内多个不规则表单块的自动切分尚未实现（见 `docs/FORMATS.md` 第 3 节，界面不会显示为可用）。
-* 无登录与多租户权限；多人使用请用带认证的反向代理并按团队分实例部署。
+* PDF 不能转换为可编辑 Word；表单字段输出为扁平化文字。
+* 图片模板的字段区域按周围背景重建像素，非字段区域不变，但不保证与原图逐像素一致。
+* 界面为单团队自托管定位：界面鉴权支持 `basic` 或交由反向代理（`DOCWEAVE_UI_AUTH`），机器接口有独立的 API 密钥与租户隔离；不提供面向终端用户的注册/角色体系。
 * 大批量为单进程串行处理；PDF 导出受 LibreOffice 串行转换速度限制。
+* 全部验收使用合成测试数据；未获得真实业务文件，真实结构差异未覆盖。
 
 ## 目录
 
