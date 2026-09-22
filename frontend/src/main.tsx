@@ -2,6 +2,7 @@ import { StrictMode, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DialogProvider, ToastProvider } from "./lib/ui";
+import { initTheme } from "./lib/theme";
 import Home from "./pages/Home";
 import Workspace from "./pages/Workspace";
 import JobPage from "./pages/JobPage";
@@ -12,6 +13,8 @@ import "./styles.css";
 
 const DocEditor = lazy(() => import("./pages/DocEditor"));
 const SheetEditor = lazy(() => import("./pages/SheetEditor"));
+
+initTheme();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -4,7 +4,10 @@ import { ApiError, del, get, patch, post, put, qs } from "../lib/api";
 import { describeSelection, mappingSlots, MODE_NAME, slotPos } from "../lib/describe";
 import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, TemplateDetail } from "../lib/types";
 import { useDialog, useToast } from "../lib/ui";
+import { applyTheme, nextTheme, recall, remember, storedTheme, THEME_NAME, type Theme } from "../lib/theme";
 import AnyView from "../components/AnyView";
+import CommandPalette, { Command } from "../components/CommandPalette";
+import Shortcuts from "../components/Shortcuts";
 import Connectors from "../components/Connectors";
 import FilePanel from "../components/FilePanel";
 import GenerateDialog from "../components/GenerateDialog";
@@ -55,26 +58,41 @@ export default function Workspace() {
   const [locate, setLocate] = useState<Record<string, any[]>>({});
   const [save, setSave] = useState<"saved" | "saving" | "error">("saved");
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [tab, setTab] = useState<SideTab>("mappings");
+  const [tab, setTab] = useState<SideTab>(() => recall<SideTab>("tab", "mappings"));
   const [preview, setPreview] = useState(false);
-  const [lines, setLines] = useState(true);
-  const [leftW, setLeftW] = useState<number>(() => Number(localStorage.getItem("dw.leftW")) || 0);
-  const [zoomL, setZoomL] = useState(1);
-  const [zoomR, setZoomR] = useState(1);
+  const [lines, setLines] = useState(() => recall("lines", true));
+  const [leftW, setLeftW] = useState<number>(() => recall("leftW", 0));
+  const [zoomL, setZoomL] = useState(() => recall("zoomL", 1));
+  const [zoomR, setZoomR] = useState(() => recall("zoomR", 1));
+  const [sideW, setSideW] = useState(() => recall("sideW", 0));
+  const [cmdOpen, setCmdOpen] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [theme, setTheme] = useState<Theme>(() => storedTheme());
   const [focusL, setFocusL] = useState<string | null>(null);
   const [focusR, setFocusR] = useState<string | null>(null);
   const [gridFocusL, setGridFocusL] = useState<any>(null);
   const [gridFocusR, setGridFocusR] = useState<any>(null);
-  const [filesCollapsed, setFilesCollapsed] = useState(false);
-  const [sideCollapsed, setSideCollapsed] = useState(false);
+  const [filesCollapsed, setFilesCollapsed] = useState(() => recall("filesCollapsed", false));
+  const [sideCollapsed, setSideCollapsed] = useState(() => recall("sideCollapsed", false));
   const [relocate, setRelocate] = useState<{ fileId: string; mappingId: string } | null>(null);
   const [tick, setTick] = useState(0);
-  const [guide, setGuide] = useState(() => localStorage.getItem("dw.guide.hidden") !== "1");
+  const [guide, setGuide] = useState(() => recall("guide", true));
   const [ocrBusy, setOcrBusy] = useState(false);
   const [findQ, setFindQ] = useState("");
   const [find, setFind] = useState<{ hits: any[]; total: number; idx: number; q: string } | null>(null);
   const actions = useRef<{ undo: ("m" | "t")[]; redo: ("m" | "t")[] }>({ undo: [], redo: [] });
   const workRef = useRef<HTMLDivElement>(null);
+  const findRef = useRef<HTMLInputElement>(null);
+
+  // remembered layout – the workspace comes back the way it was left
+  useEffect(() => { remember("lines", lines); }, [lines]);
+  useEffect(() => { remember("tab", tab); }, [tab]);
+  useEffect(() => { remember("zoomL", zoomL); }, [zoomL]);
+  useEffect(() => { remember("zoomR", zoomR); }, [zoomR]);
+  useEffect(() => { remember("filesCollapsed", filesCollapsed); }, [filesCollapsed]);
+  useEffect(() => { remember("sideCollapsed", sideCollapsed); }, [sideCollapsed]);
+  useEffect(() => { remember("sideW", sideW); }, [sideW]);
+  useEffect(() => { remember("guide", guide); }, [guide]);
 
   const tpl: TemplateDetail | null = project?.template || null;
   const slots: Slot[] = tpl?.version.slots || [];
@@ -218,15 +236,38 @@ export default function Workspace() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || (e as any).keyCode === 229) return;   // never steal keys from an IME
       const t = e.target as HTMLElement;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      const mod = e.metaKey || e.ctrlKey;
+      // the palette works from anywhere, including while typing in a field
+      if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdOpen((v) => !v);
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "f" && file && file.status !== "parsing" && !preview) {
+        e.preventDefault();                                       // replace the browser find: ours searches the parsed file
+        findRef.current?.focus();
+        findRef.current?.select();
+        return;
+      }
+      if (cmdOpen || help) return;
+      if (typing) return;
       if (dialog) return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+      if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
         e.shiftKey ? redo() : undo();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
+      } else if (mod && e.key.toLowerCase() === "y") {
         e.preventDefault();
         redo();
+      } else if (mod && e.key === "Enter") {
+        if (tpl && rule.mode) { e.preventDefault(); setDialog({ kind: "generate" }); }
+      } else if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        e.preventDefault();
+        setHelp(true);
+      } else if (e.key === "p" && !mod && !e.altKey) {
+        if (tpl && rule.mode) { e.preventDefault(); setPreview((v) => !v); }
       } else if (e.key === "Escape") {
         setLeftSel(null);
         setRightSel(null);
@@ -428,14 +469,16 @@ export default function Workspace() {
     const container = workRef.current!;
     const leftPane = container.querySelector(".pane.left") as HTMLElement;
     const w0 = leftPane.getBoundingClientRect().width;
+    document.body.classList.add("resizing");
     const move = (ev: MouseEvent) => {
       const w = Math.max(280, Math.min(container.clientWidth - 420, w0 + ev.clientX - start));
       setLeftW(w);
     };
     const up = () => {
+      document.body.classList.remove("resizing");
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
-      localStorage.setItem("dw.leftW", String(leftPaneWidth()));
+      remember("leftW", leftPaneWidth());
       setTick((t) => t + 1);
     };
     const leftPaneWidth = () => (container.querySelector(".pane.left") as HTMLElement).getBoundingClientRect().width;
@@ -459,6 +502,45 @@ export default function Workspace() {
   const canMap = !!(leftSel && selectedSlot && file && !relocate);
   const rawRight = rightSel && rightSel.kind !== "slot" ? rightSel : null;
   const lastJob = project.jobs?.[0];
+  const setThemeTo = (t: Theme) => { setTheme(t); applyTheme(t); };
+
+  // Every palette entry runs the same handler as its button – nothing here is a separate code path.
+  const commands: Command[] = [
+    { id: "upload", group: "工作流", label: "上传来源文件", hint: "展开左侧文件列表", run: () => setFilesCollapsed(false) },
+    { id: "template", group: "工作流", label: "设置 / 更换模板", run: () => setDialog({ kind: "template" }) },
+    { id: "rule", group: "工作流", label: "定义样本规则", hint: rule.mode ? MODE_NAME[rule.mode] : "未定义", run: () => setDialog({ kind: "rule" }) },
+    { id: "map", group: "工作流", label: "建立映射", keys: "⇄", hint: canMap ? "" : "先选中左侧来源和右侧字段", disabled: !canMap, run: startMapping },
+    { id: "preview", group: "工作流", label: preview ? "关闭预览" : "打开预览", keys: "P", disabled: !tpl || !rule.mode, run: () => setPreview(!preview) },
+    { id: "generate", group: "工作流", label: "批量生成…", keys: "⌘↵", disabled: !tpl || !rule.mode, run: () => setDialog({ kind: "generate" }) },
+    { id: "undo", group: "编辑", label: "撤销", keys: "⌘Z", disabled: !project.mappings.can_undo && !tpl?.can_undo, run: undo },
+    { id: "redo", group: "编辑", label: "重做", keys: "⇧⌘Z", disabled: !project.mappings.can_redo && !tpl?.can_redo, run: redo },
+    { id: "clear", group: "编辑", label: "清除当前选择", keys: "Esc", disabled: !leftSel && !rightSel, run: () => { setLeftSel(null); setRightSel(null); setActiveMap(null); } },
+    { id: "find", group: "编辑", label: "在来源文件中查找", keys: "⌘F", disabled: !file || file.status === "parsing", run: () => { setPreview(false); setTimeout(() => findRef.current?.focus(), 0); } },
+    { id: "ocr", group: "编辑", label: file?.ocr_pages?.length ? "重新 OCR 识别当前文件" : "OCR 识别当前文件", disabled: !file || (file.family !== "image" && file.family !== "pdf"), run: runOcr },
+    { id: "tab-map", group: "面板", label: "查看映射列表", run: () => { setSideCollapsed(false); setTab("mappings"); } },
+    { id: "tab-field", group: "面板", label: "查看模板字段", run: () => { setSideCollapsed(false); setTab("fields"); } },
+    { id: "tab-sample", group: "面板", label: "查看样本列表", run: () => { setSideCollapsed(false); setTab("samples"); } },
+    { id: "tab-check", group: "面板", label: "查看逐文件校验", run: () => { setSideCollapsed(false); setTab("check"); } },
+    { id: "side", group: "面板", label: sideCollapsed ? "展开右侧面板" : "收起右侧面板（聚焦文档）", run: () => setSideCollapsed(!sideCollapsed) },
+    { id: "files", group: "面板", label: filesCollapsed ? "展开文件列表" : "收起文件列表", run: () => setFilesCollapsed(!filesCollapsed) },
+    { id: "lines", group: "面板", label: lines ? "隐藏映射连线" : "显示映射连线", run: () => setLines(!lines) },
+    { id: "width", group: "面板", label: "恢复默认布局宽度", disabled: !leftW && !sideW, run: () => { setLeftW(0); remember("leftW", 0); setSideW(0); setTick((t) => t + 1); } },
+    { id: "zoom-reset", group: "面板", label: "缩放恢复 100%", disabled: zoomL === 1 && zoomR === 1, run: () => { setZoomL(1); setZoomR(1); } },
+    { id: "theme", group: "外观", label: `界面主题：${THEME_NAME[theme]} → ${THEME_NAME[nextTheme(theme)]}`, hint: "不影响文档纸张与导出颜色", run: () => setThemeTo(nextTheme(theme)) },
+    { id: "help", group: "外观", label: "显示键盘快捷键", keys: "?", run: () => setHelp(true) },
+    { id: "regression", group: "更多", label: "保存为回归用例…", disabled: !tpl || !rule.mode, run: () => setDialog({ kind: "regression" }) },
+    { id: "desensitize", group: "更多", label: "生成脱敏副本…", disabled: !sources.length, run: () => setDialog({ kind: "desensitize" }) },
+    { id: "job", group: "更多", label: "打开最近的生成任务", disabled: !lastJob, run: () => lastJob && nav(`/p/${pid}/jobs/${lastJob.id}`) },
+    { id: "regressions", group: "更多", label: "回归用例列表", run: () => nav("/regression") },
+    { id: "caps", group: "更多", label: "格式能力矩阵", run: () => window.open("/capabilities", "_blank") },
+    { id: "about", group: "更多", label: "关于与许可", run: () => window.open("/about", "_blank") },
+    { id: "home", group: "更多", label: "返回项目列表", run: () => nav("/") },
+    ...sources.slice(0, 20).map((s) => ({
+      id: `file-${s.id}`, group: "切换来源文件", label: s.filename,
+      hint: s.id === activeFile ? "当前" : s.representative ? "代表文件" : "", disabled: s.id === activeFile,
+      run: () => setActiveFile(s.id),
+    })),
+  ];
 
   return (
     <div className="app">
@@ -477,11 +559,16 @@ export default function Workspace() {
         </span>
         <span className="spacer" />
         {lastJob && <Link className="btn ghost sm" to={`/p/${pid}/jobs/${lastJob.id}`}>最近任务：{({ completed: "已完成", running: "进行中", queued: "排队中", completed_with_errors: "部分失败", cancelled: "已取消", failed: "失败" } as any)[lastJob.status] || lastJob.status}</Link>}
+        <button className="btn ghost sm" onClick={() => setCmdOpen(true)} title="命令面板：所有操作与快捷键">
+          ⌘K <span className="desktop-only tiny muted">命令</span>
+        </button>
         <MoreMenu items={[
           { label: "保存为回归用例…", onClick: () => setDialog({ kind: "regression" }), disabled: !tpl || !rule.mode },
           { label: "生成脱敏副本…", onClick: () => setDialog({ kind: "desensitize" }), disabled: !sources.length },
           { label: "回归用例", onClick: () => nav("/regression") },
           { label: "格式能力矩阵", onClick: () => window.open("/capabilities", "_blank") },
+          { label: `界面主题：${THEME_NAME[theme]}`, onClick: () => setThemeTo(nextTheme(theme)) },
+          { label: "键盘快捷键", onClick: () => setHelp(true) },
           { label: "关于与许可", onClick: () => window.open("/about", "_blank") },
         ]} />
         <button className={`btn${preview ? " active" : ""}`} disabled={!tpl || !rule.mode} onClick={() => setPreview(!preview)}>👁 预览</button>
@@ -496,7 +583,7 @@ export default function Workspace() {
         ))}
         <span className="spacer" />
         <label className="check small"><input type="checkbox" checked={lines} onChange={(e) => setLines(e.target.checked)} />显示连线</label>
-        {!guide && <button className="btn ghost sm" onClick={() => { setGuide(true); localStorage.removeItem("dw.guide.hidden"); }}>操作指引</button>}
+        {!guide && <button className="btn ghost sm" onClick={() => setGuide(true)}>操作指引</button>}
       </div>
       <div className="notice warn mobile-only small" style={{ borderRadius: 0 }}>
         手机屏幕较小：建议在电脑浏览器中建立映射。手机上可以查看任务进度与下载结果（点击上方「最近任务」）。
@@ -507,7 +594,7 @@ export default function Workspace() {
             <b>使用步骤：</b>① 左侧上传来源文件 → ② 设置右侧目标模板（上传或新建）→ ③ 定义样本（每行 / 每文件 / 每组一份）→ ④ 左侧选中数据、右侧点选字段，点底部「建立映射」→ ⑤ 预览并生成。
             任何一步都可以返回修改；Ctrl/⌘+Z 撤销，Esc 清除选择。
           </span>
-          <button className="btn ghost sm" onClick={() => { setGuide(false); localStorage.setItem("dw.guide.hidden", "1"); }}>不再显示</button>
+          <button className="btn ghost sm" onClick={() => setGuide(false)}>不再显示</button>
         </div>
       )}
       {/* ---------------------------------------------------------------- work area */}
@@ -521,7 +608,7 @@ export default function Workspace() {
             <span className="spacer" />
             {file && file.status !== "parsing" && (
               <span className="row gap4">
-                <input className="input sm" style={{ width: 120 }} placeholder="查找…" value={findQ} onChange={(e) => setFindQ(e.target.value)}
+                <input ref={findRef} className="input sm" style={{ width: 120 }} placeholder="查找…（⌘F）" value={findQ} onChange={(e) => setFindQ(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") { if (find && find.hits.length && e.shiftKey) gotoFind({ ...find, idx: (find.idx - 1 + find.hits.length) % find.hits.length }); else if (find && find.hits.length && findQ.trim() === find.q) gotoFind({ ...find, idx: (find.idx + 1) % find.hits.length }); else runFind().then(() => {}); } if (e.key === "Escape") { setFind(null); setFindQ(""); } }} aria-label="在当前文件中查找" />
                 {find && <span className="tiny muted nowrap">{find.hits.length ? `${find.idx + 1}/${find.total}` : "0"}</span>}
                 {find && find.hits.length > 1 && <>
@@ -632,6 +719,7 @@ export default function Workspace() {
           onOpenRule={() => setDialog({ kind: "rule" })}
           onCorrect={async (fid, mid, v) => { await run(() => put(`/api/sources/${fid}/corrections/${mid}`, { value: v, confirmed: true })); await reload(); }}
           collapsed={sideCollapsed} onCollapse={setSideCollapsed}
+          width={sideW} onWidth={(w) => { setSideW(w); setTick((t) => t + 1); }}
           canUndo={!!project.mappings.can_undo} canRedo={!!project.mappings.can_redo}
           onUndo={async () => { await post(`/api/projects/${pid}/mappings/undo`); reload(); }} onRedo={async () => { await post(`/api/projects/${pid}/mappings/redo`); reload(); }} />
         <Connectors container={workRef.current} mappings={mappings} active={activeMap} visible={lines && !preview} tick={tick + (project.rev || 0) + (leftW || 0)} />
@@ -678,6 +766,8 @@ export default function Workspace() {
       {dialog?.kind === "regression" && <RegressionDialog project={project} onClose={() => setDialog(null)} />}
       {dialog?.kind === "desensitize" && <DesensitizeDialog projectId={pid!} sources={sources} onDone={reload} onClose={() => setDialog(null)} />}
       {dialog?.kind === "area" && <AreaDialog project={project} sel={dialog.sel} onPick={(r) => setDialog({ kind: "rule", initial: r })} onClose={() => setDialog(null)} />}
+      <CommandPalette commands={commands} open={cmdOpen} onClose={() => setCmdOpen(false)} />
+      {help && <Shortcuts onClose={() => setHelp(false)} />}
     </div>
   );
 }

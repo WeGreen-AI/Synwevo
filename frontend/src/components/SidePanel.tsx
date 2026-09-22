@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { get, qs } from "../lib/api";
 import { describeLocator, MAP_TYPE, mappingSlots, MODE_NAME, SLOT_KIND, variesText } from "../lib/describe";
 import type { Mapping, Project, Slot, SourceFile } from "../lib/types";
@@ -34,6 +34,8 @@ interface Props {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  width: number;
+  onWidth: (w: number) => void;
 }
 
 export default function SidePanel(p: Props) {
@@ -45,8 +47,24 @@ export default function SidePanel(p: Props) {
       </div>
     );
   }
+  // drag the panel's left edge; the document panes keep the rest of the window
+  const drag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const x0 = e.clientX;
+    const w0 = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect().width;
+    document.body.classList.add("resizing");
+    const move = (ev: MouseEvent) => p.onWidth(Math.max(240, Math.min(window.innerWidth - 560, w0 + x0 - ev.clientX)));
+    const up = () => {
+      document.body.classList.remove("resizing");
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
   return (
-    <div className="side right">
+    <div className="side right" style={p.width ? { width: p.width } : undefined}>
+      <div className="side-resizer" onMouseDown={drag} role="separator" aria-orientation="vertical" title="拖动调整面板宽度" />
       <div className="tabs">
         <button className={p.tab === "mappings" ? "on" : ""} onClick={() => p.onTab("mappings")}>映射 {p.mappings.length}</button>
         <button className={p.tab === "fields" ? "on" : ""} onClick={() => p.onTab("fields")}>字段 {p.slots.length}</button>
@@ -66,6 +84,64 @@ function MappingList(p: Props) {
   const { confirm } = useDialog();
   const selSlot = p.slots.find((s) => s.id === p.activeSlot) || null;
   const kindOf = (s: Slot) => (s.kind === "repeat" ? "repeat" : s.kind === "region" ? "region" : "single");
+  /* ---- keyboard navigation and multi-select (↑↓ / J K, X, Shift range, ⌘A, D, Delete) ---- */
+  const ids = p.mappings.map((m) => m.id);
+  const idKey = ids.join(",");
+  const [cursor, setCursor] = useState(0);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [anchor, setAnchor] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { setPicked((xs) => xs.filter((x) => ids.includes(x))); }, [idKey]);
+  useEffect(() => {
+    const i = ids.indexOf(p.activeMap || "");
+    if (i >= 0 && i !== cursor) setCursor(i);
+  }, [p.activeMap, idKey]);
+  useEffect(() => {
+    listRef.current?.querySelectorAll<HTMLElement>("[data-map]")[cursor]?.scrollIntoView({ block: "nearest" });
+  }, [cursor]);
+  const clamp = (i: number) => Math.max(0, Math.min(p.mappings.length - 1, i));
+  const range = (a: number, b: number) => ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+  const move = (d: number, extend: boolean) => {
+    const i = clamp(cursor + d);
+    setCursor(i);
+    if (extend) setPicked(range(anchor, i));
+    else setAnchor(i);
+    p.onPickMapping(ids[i]);
+  };
+  const togglePick = (i: number, additive: boolean) => {
+    const id = ids[i];
+    setAnchor(i);
+    setPicked((xs) => (additive || xs.includes(id) ? (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]) : [id]));
+  };
+  const selection = picked.length ? p.mappings.filter((m) => picked.includes(m.id)) : [];
+  const setEnabled = async (list: Mapping[], on: boolean) => {
+    const set = new Set(list.map((m) => m.id));
+    await p.onSaveMappings(p.mappings.map((x) => (set.has(x.id) ? { ...x, enabled: on } : x)),
+      `${on ? "启用" : "禁用"} ${list.length} 个映射（#${list.map((m) => m.no).join("、#")}）`);
+  };
+  const removeMany = async (list: Mapping[]) => {
+    const nos = list.map((m) => m.no);
+    if (!(await confirm("删除映射", `删除 ${list.length} 个映射（#${nos.join("、#")}）？可以用「撤销」恢复。`, "删除", true))) return;
+    const set = new Set(list.map((m) => m.id));
+    await p.onSaveMappings(p.mappings.filter((x) => !set.has(x.id)), `删除 ${list.length} 个映射（#${nos.join("、#")}）`);
+    setPicked([]);
+  };
+  const onListKey = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
+    const n = p.mappings.length;
+    if (!n) return;
+    const mod = e.metaKey || e.ctrlKey;
+    const k = e.key;
+    const target = selection.length ? selection : [p.mappings[clamp(cursor)]];
+    if (k === "ArrowDown" || (!mod && (k === "j" || k === "J"))) { e.preventDefault(); move(1, e.shiftKey); }
+    else if (k === "ArrowUp" || (!mod && (k === "k" || k === "K"))) { e.preventDefault(); move(-1, e.shiftKey); }
+    else if (mod && (k === "a" || k === "A")) { e.preventDefault(); setPicked(ids); }
+    else if (!mod && (k === "x" || k === "X")) { e.preventDefault(); togglePick(clamp(cursor), true); }
+    else if (k === "Enter") { e.preventDefault(); p.onEditMapping(p.mappings[clamp(cursor)]); }
+    else if (!mod && (k === "d" || k === "D")) { e.preventDefault(); setEnabled(target, !target.every((m) => m.enabled)); }
+    else if (k === "Delete" || k === "Backspace") { e.preventDefault(); removeMany(target); }
+    else if (k === "Escape" && picked.length) { e.preventDefault(); e.stopPropagation(); setPicked([]); }
+  };
   const rebind = async (m: Mapping) => {
     if (!selSlot) return;
     const b = selSlot.binding || selSlot.id;
@@ -87,9 +163,9 @@ function MappingList(p: Props) {
         <button className="btn sm" disabled={!p.canUndo} onClick={p.onUndo} title="撤销（Ctrl/⌘+Z）">↶ 撤销</button>
         <button className="btn sm" disabled={!p.canRedo} onClick={p.onRedo} title="重做（Ctrl/⌘+Shift+Z）">↷ 重做</button>
         <span className="spacer" />
-        <span className="tiny muted">当前文件的实际取值</span>
+        <span className="tiny muted" title="列表可用键盘操作：↑↓ 移动，X 多选，D 启用/禁用，Delete 删除">当前文件的实际取值</span>
       </div>
-      <div className="maplist">
+      <div className={`maplist${picked.length ? " picking" : ""}`} ref={listRef} tabIndex={0} role="listbox" aria-multiselectable aria-label="映射列表" onKeyDown={onListKey}>
         {!p.mappings.length && (
           <div className="empty small">
             <div className="big">还没有映射</div>
@@ -98,14 +174,27 @@ function MappingList(p: Props) {
             <div>3. 点击底部「建立映射」</div>
           </div>
         )}
-        {p.mappings.map((m) => {
+        {p.mappings.map((m, i) => {
           const tslots = mappingSlots(m, p.slots);
           const loc = p.locate[m.id] || [];
           const bad = loc.find((x) => !x.ok);
           const val = loc.map((x) => x.value).filter((x) => x !== undefined && x !== null).join(" + ");
+          const on = picked.includes(m.id);
           return (
-            <div key={m.id} className={`mapitem${m.id === p.activeMap ? " on" : ""}${m.enabled ? "" : " off"}`} onClick={() => p.onPickMapping(m.id)}>
+            <div key={m.id} data-map role="option" aria-selected={on}
+              className={`mapitem${m.id === p.activeMap ? " on" : ""}${m.enabled ? "" : " off"}${i === cursor ? " cursor" : ""}${on ? " picked" : ""}`}
+              onClick={(e) => {
+                listRef.current?.focus({ preventScroll: true });   // keyboard works straight after a click
+                if (e.shiftKey) { setCursor(i); setPicked(range(anchor, i)); return; }
+                if (e.metaKey || e.ctrlKey) { setCursor(i); togglePick(i, true); return; }
+                setCursor(i);
+                setAnchor(i);
+                if (picked.length) setPicked([]);
+                p.onPickMapping(m.id);
+              }}>
               <div className="line1">
+                <span className="pick" role="checkbox" aria-checked={on} tabIndex={-1} aria-label={`选择映射 #${m.no}`}
+                  onClick={(e) => { e.stopPropagation(); setCursor(i); togglePick(i, true); }}>{on ? "✓" : ""}</span>
                 <span className="num" style={{ background: m.color }}>{m.no}</span>
                 <span className="badge">{MAP_TYPE[m.type]}</span>
                 {!m.enabled && <span className="badge warn">已禁用</span>}
@@ -131,6 +220,17 @@ function MappingList(p: Props) {
           );
         })}
       </div>
+      {picked.length > 0 && (
+        <div className="bulkbar" role="toolbar" aria-label="批量操作">
+          <span className="small"><b>已选 {picked.length}</b> / {p.mappings.length}</span>
+          <span className="spacer" />
+          <button className="btn sm" onClick={() => setEnabled(selection, !selection.every((m) => m.enabled))}>
+            {selection.every((m) => m.enabled) ? "禁用" : "启用"}
+          </button>
+          <button className="btn sm danger" onClick={() => removeMany(selection)}>删除</button>
+          <button className="btn ghost sm" onClick={() => setPicked([])} title="Esc">取消选择</button>
+        </div>
+      )}
     </>
   );
 }
