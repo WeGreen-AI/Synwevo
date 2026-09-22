@@ -8,7 +8,8 @@
   - `none`  – no check; only allowed when the server listens on loopback (default)
   - `basic` – HTTP Basic against users created with `manage.py ui-user add`
   - `proxy` – the operator's reverse proxy authenticates (explicitly acknowledged)
-  The server refuses to start when it listens on a non-loopback address with `none`.
+  The server refuses to start when it listens on a non-loopback address with `none`
+  (in a container it warns instead: there, exposure is decided by the port mapping).
 
 Secrets never appear in responses, logs or the built frontend.
 """
@@ -20,6 +21,7 @@ import hmac
 import ipaddress
 import json
 import os
+import sys
 import secrets
 import time
 
@@ -55,16 +57,39 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def check_listen_config(host: str) -> None:
-    """Refuse to start open to the network without deciding how the UI is protected."""
-    if not is_loopback(host) and ui_auth_mode() == "none":
-        raise SystemExit(
-            f"拒绝启动：DOCWEAVE_HOST={host} 会对外监听，但 DOCWEAVE_UI_AUTH=none（界面无任何访问控制）。\n"
-            "请任选其一：\n"
-            "  1) 仅本机监听：DOCWEAVE_HOST=127.0.0.1（默认），由反向代理对外提供；\n"
-            "  2) 启用内置口令：python backend/manage.py ui-user add <用户名>，并设置 DOCWEAVE_UI_AUTH=basic；\n"
-            "  3) 由反向代理完成认证并显式声明：DOCWEAVE_UI_AUTH=proxy。\n"
-            "机器接口 /api/v1 始终需要 API 密钥，不受此设置影响。")
+def in_container() -> bool:
+    """Inside a container, binding 0.0.0.0 is how the port mapping reaches the process;
+    what is actually exposed is decided by the mapping, which this process cannot see."""
+    if (os.environ.get("DOCWEAVE_IN_CONTAINER") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
+
+
+REMEDIES = (
+    "请任选其一：\n"
+    "  1) 仅本机监听：DOCWEAVE_HOST=127.0.0.1（默认），由反向代理对外提供；\n"
+    "  2) 启用内置口令：python backend/manage.py ui-user add <用户名>，并设置 DOCWEAVE_UI_AUTH=basic；\n"
+    "  3) 由反向代理完成认证并显式声明：DOCWEAVE_UI_AUTH=proxy。\n"
+    "机器接口 /api/v1 始终需要 API 密钥，不受此设置影响。"
+)
+
+
+def check_listen_config(host: str, warn=None) -> None:
+    """Refuse to start open to the network without deciding how the UI is protected.
+
+    Must be called by whatever starts the server (``backend/run.py`` does).  In a container
+    the bind address says nothing about exposure, so this warns loudly instead of refusing —
+    the compose file publishes to 127.0.0.1 only.
+    """
+    if is_loopback(host) or ui_auth_mode() != "none":
+        return
+    if in_container():
+        (warn or (lambda m: print(m, file=sys.stderr)))(
+            f"警告：容器内监听 {host}，且 DOCWEAVE_UI_AUTH=none（界面无访问控制）。\n"
+            "容器的实际暴露范围由端口映射决定：请只映射到 127.0.0.1，并在前面加带认证的反向代理。\n" + REMEDIES)
+        return
+    raise SystemExit(
+        f"拒绝启动：DOCWEAVE_HOST={host} 会对外监听，但 DOCWEAVE_UI_AUTH=none（界面无任何访问控制）。\n" + REMEDIES)
 
 
 # ------------------------------------------------------------------ API keys

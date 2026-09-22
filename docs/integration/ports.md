@@ -33,7 +33,9 @@
 
 * 镜像内监听 `0.0.0.0:8765`（`Dockerfile` 中 `DOCWEAVE_HOST=0.0.0.0`、`EXPOSE 8765`）。
 * `docker-compose.yml` 映射为 `127.0.0.1:8765:8765`：**只在宿主机本地可达**，对外请另配反向代理。
-* 容器内使用 `DOCWEAVE_UI_AUTH=proxy` 表示「由外层代理完成界面认证」；若不配置任何界面鉴权且绑定非本机地址，服务会**拒绝启动**并打印处理方式。
+* 绑定非本机地址且 `DOCWEAVE_UI_AUTH=none` 时，`backend/run.py` **拒绝启动**并打印三种处理方式（实测：`DOCWEAVE_HOST=0.0.0.0 python backend/run.py` 退出码 1，输出「拒绝启动…」）。设为 `basic` 或 `proxy` 后正常启动。
+* 容器是例外：镜像内必须绑定 `0.0.0.0`，实际暴露范围由端口映射决定，进程无法判断，因此容器内（`DOCWEAVE_IN_CONTAINER=1`，镜像已设置）**只打印警告**而不拒绝。`docker-compose.yml` 只映射到 `127.0.0.1:8765`，对外请在前面加带认证的反向代理。
+* 机器接口 `/api/v1` 与此设置无关，任何情况下都需要 API 密钥。
 * 反向代理示例（Nginx，界面走 SSO/Basic，机器接口走密钥）：
 
 ```nginx

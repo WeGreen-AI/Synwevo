@@ -7,7 +7,7 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-slim-bookworm
-ENV PYTHONUNBUFFERED=1 DOCWEAVE_HOST=0.0.0.0 DOCWEAVE_PORT=8765 DOCWEAVE_DATA_DIR=/data \
+ENV PYTHONUNBUFFERED=1 DOCWEAVE_IN_CONTAINER=1 DOCWEAVE_HOST=0.0.0.0 DOCWEAVE_PORT=8765 DOCWEAVE_DATA_DIR=/data \
     DOCWEAVE_UI_DIR=/app/frontend/dist DOCWEAVE_TESSDATA=/usr/share/tesseract-ocr/5/tessdata
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libreoffice-writer libreoffice-calc libreoffice-impress \
