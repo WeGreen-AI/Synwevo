@@ -28,7 +28,8 @@ def create_builtin(app: App, body: dict) -> dict:
     tid = new_id("t")
     t = now()
     blob = app.store.put_blob(data)
-    app.store.insert("templates", {"id": tid, "name": (body.get("name") or ("文档模板" if fmt == "docx" else "表格模板"))[:100],
+    from .context import tenant as current_tenant
+    app.store.insert("templates", {"id": tid, "tenant": current_tenant(), "name": (body.get("name") or ("文档模板" if fmt == "docx" else "表格模板"))[:100],
                                    "kind": kind, "format": fmt, "original_blob": blob, "original_name": None, "head": 1,
                                    "created_at": t, "updated_at": t, "info": {"notes": []}})
     app.store.insert("template_versions", {"template_id": tid, "version_no": 1, "parent_no": None, "working_blob": blob,

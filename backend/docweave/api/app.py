@@ -3,6 +3,9 @@ package has no web dependency so a desktop shell can reuse it later."""
 from __future__ import annotations
 
 import os
+import secrets
+import time
+import traceback
 import urllib.parse
 from pathlib import Path
 
@@ -10,11 +13,16 @@ from fastapi import Body, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from ..auth import Auth, rate_limiter, ui_auth_mode
+from ..context import UI_TENANT, set_tenant
 from ..engine.limits import LIMITS
 from ..jobs import JobService, naming_tokens
 from ..services import App, ServiceError, safe_output_name
 from ..store import Store
 from ..views import Views
+
+API_RATE_PER_MIN = int(os.environ.get("DOCWEAVE_API_RATE_PER_MIN", "300"))
+PUBLIC_V1 = ("/api/v1/download/",)          # signed links carry their own proof
 
 MIME = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -40,25 +48,84 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     app_ = App(store)
     views = Views(app_)
     jobs = JobService(app_) if start_jobs else None
-    api = FastAPI(title="DocWeave", version="1.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
+    auth = Auth(store)
+    show_docs = (os.environ.get("DOCWEAVE_API_DOCS") or "").strip().lower() in ("1", "true", "on", "yes")
+    api = FastAPI(title="DocWeave", version="1.0.0",
+                  docs_url="/api/docs" if show_docs else None,
+                  redoc_url=None,
+                  openapi_url="/api/openapi.json" if show_docs else None)
     api.state.app = app_
     api.state.views = views
     api.state.jobs = jobs
+    api.state.auth = auth
+    limiter = rate_limiter(API_RATE_PER_MIN)
+
+    def _error_body(request: Request, code: str, message: str, detail: dict | None):
+        rid = getattr(request.state, "request_id", "")
+        if request.url.path.startswith("/api/v1"):
+            body = {"error": {"code": code, "message": message, "request_id": rid}}
+            if isinstance(detail, dict) and detail.get("field"):
+                body["error"]["field"] = detail["field"]
+            if detail:
+                body["error"]["details"] = {k: v for k, v in detail.items() if k != "field"} or None
+                if not body["error"]["details"]:
+                    body["error"].pop("details")
+            return body
+        return {"error": code, "message": message, "detail": detail, "request_id": rid}
 
     @api.exception_handler(ServiceError)
     async def _svc_err(request: Request, exc: ServiceError):
-        return JSONResponse({"error": exc.code, "message": exc.message, "detail": exc.detail}, status_code=exc.status)
+        resp = JSONResponse(_error_body(request, exc.code, exc.message, exc.detail), status_code=exc.status)
+        if exc.code == "rate_limited" and (exc.detail or {}).get("retry_after"):
+            resp.headers["Retry-After"] = str(int((exc.detail or {})["retry_after"]) + 1)
+        return resp
 
     @api.exception_handler(ValueError)
     async def _val_err(request: Request, exc: ValueError):
-        return JSONResponse({"error": getattr(exc, "code", "invalid"), "message": str(exc)}, status_code=400)
+        return JSONResponse(_error_body(request, getattr(exc, "code", "invalid"), str(exc), None), status_code=400)
+
+    @api.exception_handler(Exception)
+    async def _unexpected(request: Request, exc: Exception):
+        rid = getattr(request.state, "request_id", "")
+        print(f"[docweave] unhandled error request_id={rid} path={request.url.path}\n{traceback.format_exc()}", flush=True)
+        return JSONResponse(_error_body(request, "internal_error", "服务器内部错误；请提供 request_id 以便排查", None), status_code=500)
 
     @api.middleware("http")
-    async def _headers(request: Request, call_next):
-        resp = await call_next(request)
+    async def _gate(request: Request, call_next):
+        rid = (request.headers.get("X-Request-ID") or "")[:64] or secrets.token_hex(8)
+        request.state.request_id = "".join(ch for ch in rid if ch.isalnum() or ch in "-_") or secrets.token_hex(8)
+        path = request.url.path
+        token = None
+        try:
+            if path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):
+                principal = auth.verify(request.headers.get("Authorization"))
+                request.state.principal = principal
+                ok, wait = limiter(principal["key_id"])
+                if not ok:
+                    raise ServiceError(429, "rate_limited", f"请求过于频繁（限制 {API_RATE_PER_MIN} 次/分钟）", {"retry_after": wait})
+                token = set_tenant(principal["tenant"])
+            elif path.startswith("/api/") or not path.startswith("/api"):
+                mode = ui_auth_mode()
+                if mode == "basic" and not path.startswith("/api/v1"):
+                    if not auth.check_ui_basic(request.headers.get("Authorization")):
+                        return JSONResponse(_error_body(request, "unauthorized", "需要登录", None), status_code=401,
+                                            headers={"WWW-Authenticate": 'Basic realm="DocWeave"'})
+                token = set_tenant(UI_TENANT)
+        except ServiceError as e:
+            return await _svc_err(request, e)
+        try:
+            resp = await call_next(request)
+        finally:
+            if token is not None:
+                try:
+                    from ..context import _tenant
+                    _tenant.reset(token)
+                except (ValueError, LookupError):
+                    pass
+        resp.headers["X-Request-ID"] = request.state.request_id
         resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
-        if request.url.path.startswith("/api/"):
+        if path.startswith("/api/"):
             resp.headers.setdefault("Cache-Control", "no-store")
         return resp
 
@@ -66,6 +133,31 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     @api.get("/api/health")
     def health():
         return {"ok": True}
+
+    @api.get("/healthz", tags=["system"], summary="存活检查（进程是否在运行）")
+    def healthz():
+        return {"status": "ok", "version": api.version}
+
+    @api.get("/readyz", tags=["system"], summary="就绪检查（能否真正处理任务）")
+    def readyz():
+        checks = {}
+        try:
+            store.one("SELECT 1 AS x")
+            store.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('readyz', ?)", (str(time.time()),))
+            checks["database"] = "ok"
+        except Exception as e:  # noqa: BLE001
+            checks["database"] = f"error: {type(e).__name__}"
+        try:
+            p = Path(store.root) / "blobs" / ".readyz"
+            p.write_text("ok")
+            p.unlink()
+            checks["storage"] = "ok"
+        except Exception as e:  # noqa: BLE001
+            checks["storage"] = f"error: {type(e).__name__}"
+        checks["worker"] = "ok" if (jobs and jobs.runner_alive()) else "stopped"
+        ready = all(v == "ok" for v in checks.values())
+        return JSONResponse({"status": "ready" if ready else "not_ready", "checks": checks,
+                             "schema_version": store.schema_version()}, status_code=200 if ready else 503)
 
     # ------------------------------------------------------------ regression cases & desensitization
     @api.get("/api/regression-cases")
@@ -454,6 +546,10 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
             raise ServiceError(400, "not_pdf", "只有 PDF / 图片结果可以渲染页面")
         from ..engine.pdf_engine import as_pdf_bytes
         return Response(render_page_png(as_pdf_bytes(data), page, zoom), media_type="image/png")
+
+    # ------------------------------------------------------------ machine API (documented in docs/integration/api.md)
+    from .v1 import build_router
+    api.include_router(build_router(app_, views, jobs, auth, attachment))
 
     # ------------------------------------------------------------ static UI
     dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))

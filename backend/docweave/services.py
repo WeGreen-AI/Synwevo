@@ -8,6 +8,7 @@ import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
+from .context import tenant as current_tenant
 from .engine import sources as S
 from .engine import templates as T
 from .engine.detect import FAMILY
@@ -44,13 +45,15 @@ class App:
         pid = new_id("p")
         t = now()
         self.store.insert("projects", {"id": pid, "name": (name or "未命名项目").strip()[:100], "created_at": t, "updated_at": t,
+                                       "tenant": current_tenant(),
                                        "record_rule": {}, "output": {"naming": "{序号}", "formats": [], "error_policy": "block"},
                                        "mapping_rev": 0, "rev": 1, "step": "sources"})
         self.store.insert("mapping_revs", {"project_id": pid, "rev": 0, "parent_rev": None, "data": [], "note": "初始", "created_at": t})
         return self.get_project(pid)
 
     def list_projects(self) -> list[dict]:
-        rows = self.store.all("SELECT id, name, created_at, updated_at, template_id, record_rule, step FROM projects WHERE deleted=0 ORDER BY updated_at DESC")
+        rows = self.store.all("SELECT id, name, created_at, updated_at, template_id, record_rule, step FROM projects "
+                              "WHERE deleted=0 AND tenant=? ORDER BY updated_at DESC", (current_tenant(),))
         for r in rows:
             r["sources"] = self.store.one("SELECT COUNT(*) AS n FROM source_files WHERE project_id=? AND removed=0", (r["id"],))["n"]
             last = self.store.one("SELECT id, status, counts, created_at FROM jobs WHERE project_id=? ORDER BY created_at DESC LIMIT 1", (r["id"],))
@@ -59,8 +62,8 @@ class App:
 
     def get_project(self, pid: str) -> dict:
         p = self.store.one("SELECT * FROM projects WHERE id=? AND deleted=0", (pid,))
-        if not p:
-            not_found("项目")
+        if not p or (p.get("tenant") or "default") != current_tenant():
+            not_found("项目")          # a foreign tenant gets 404, never "exists but forbidden"
         return p
 
     def update_project(self, pid: str, values: dict) -> dict:
@@ -274,7 +277,7 @@ class App:
 
     # ================================================================ templates
     def list_templates(self) -> list[dict]:
-        rows = self.store.all("SELECT * FROM templates WHERE deleted=0 ORDER BY updated_at DESC")
+        rows = self.store.all("SELECT * FROM templates WHERE deleted=0 AND tenant=? ORDER BY updated_at DESC", (current_tenant(),))
         out = []
         for r in rows:
             v = self.store.one("SELECT slots FROM template_versions WHERE template_id=? AND version_no=?", (r["id"], r["head"]))
@@ -296,7 +299,7 @@ class App:
 
     def get_template(self, tid: str) -> dict:
         r = self.store.one("SELECT * FROM templates WHERE id=? AND deleted=0", (tid,))
-        if not r:
+        if not r or (r.get("tenant") or "default") != current_tenant():
             not_found("模板")
         return r
 
@@ -380,7 +383,7 @@ class App:
         tid = new_id("t")
         t = now()
         orig = self.store.put_blob(working)
-        self.store.insert("templates", {"id": tid, "name": (name or filename.rsplit(".", 1)[0])[:100], "kind": "uploaded",
+        self.store.insert("templates", {"id": tid, "tenant": current_tenant(), "name": (name or filename.rsplit(".", 1)[0])[:100], "kind": "uploaded",
                                         "format": fmt, "original_blob": orig, "original_name": filename, "head": 1,
                                         "created_at": t, "updated_at": t, "info": {"notes": notes, "inventory": check.get("inventory", {}),
                                                                                     "pdf": check.get("pdf"), "image": image_meta}})
@@ -426,7 +429,7 @@ class App:
         v = self.get_version(tid, r["head"])
         nid = new_id("t")
         t = now()
-        self.store.insert("templates", {"id": nid, "name": (name or r["name"] + " 副本")[:100], "kind": r["kind"], "format": r["format"],
+        self.store.insert("templates", {"id": nid, "tenant": current_tenant(), "name": (name or r["name"] + " 副本")[:100], "kind": r["kind"], "format": r["format"],
                                         "original_blob": r["original_blob"], "original_name": r["original_name"], "head": 1,
                                         "created_at": t, "updated_at": t, "info": r.get("info")})
         self.store.insert("template_versions", {"template_id": nid, "version_no": 1, "parent_no": None, "working_blob": v["working_blob"],

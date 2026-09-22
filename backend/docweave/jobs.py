@@ -22,6 +22,7 @@ from .engine import generate as G
 from .engine import records as R
 from .engine.plan import build_plan, static_check
 from .engine.resolve import SourceDoc
+from .context import tenant as current_tenant
 from .services import App, ServiceError, not_found, safe_output_name
 from .store import new_id, now
 
@@ -482,7 +483,8 @@ class JobService:
         return row["job_id"]
 
     # -------------------------------------------------------------- create
-    def create(self, pid: str, options: dict, tenant: str = "default", idem_key: str | None = None, origin: str = "ui") -> dict:
+    def create(self, pid: str, options: dict, tenant: str | None = None, idem_key: str | None = None, origin: str = "ui") -> dict:
+        tenant = tenant or current_tenant()
         idem_key = idem_key or options.get("request_id")
         ctx = ProjectContext(self.app, pid)
         if not ctx.template:
@@ -565,7 +567,8 @@ class JobService:
     def get(self, jid: str, tenant: str | None = None) -> dict:
         j = self.store.one("SELECT id, project_id, status, created_at, started_at, finished_at, options, counts, error, cancel_requested, "
                            "cancel_requested_at, request_id, tenant, run_no, origin FROM jobs WHERE id=?", (jid,))
-        if not j or (tenant is not None and j["tenant"] != tenant):
+        tenant = tenant or current_tenant()
+        if not j or (j["tenant"] or "default") != tenant:
             not_found("任务")
         snap = self.store.one("SELECT snapshot FROM jobs WHERE id=?", (jid,))["snapshot"]
         j["template"] = {k: snap["template"][k] for k in ("id", "name", "format", "version_no")}
@@ -598,7 +601,8 @@ class JobService:
         return self.store.all("SELECT run_no, trigger, requested_by, items, created_at, started_at, finished_at, status FROM job_runs WHERE job_id=? ORDER BY run_no", (jid,))
 
     def list_for_project(self, pid: str) -> list[dict]:
-        return self.store.all("SELECT id, status, created_at, started_at, finished_at, counts, options, run_no FROM jobs WHERE project_id=? ORDER BY created_at DESC LIMIT 50", (pid,))
+        return self.store.all("SELECT id, status, created_at, started_at, finished_at, counts, options, run_no FROM jobs "
+                              "WHERE project_id=? AND tenant=? ORDER BY created_at DESC LIMIT 50", (pid, current_tenant()))
 
     # -------------------------------------------------------------- control
     def cancel(self, jid: str, tenant: str | None = None) -> dict:
@@ -842,7 +846,8 @@ class JobService:
     # -------------------------------------------------------------- downloads
     def artifact(self, aid: str, tenant: str | None = None) -> tuple[dict, bytes]:
         a = self.store.one("SELECT a.*, j.tenant FROM artifacts a JOIN jobs j ON j.id=a.job_id WHERE a.id=?", (aid,))
-        if not a or (tenant is not None and a["tenant"] != tenant):
+        tenant = tenant or current_tenant()
+        if not a or (a["tenant"] or "default") != tenant:
             not_found("输出文件")
         if a.get("deleted_at"):
             raise ServiceError(410, "artifact_deleted", "该输出文件已被删除，无法下载；可对原任务重新生成")
