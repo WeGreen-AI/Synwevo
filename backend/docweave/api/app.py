@@ -100,6 +100,17 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
         request.state.request_id = "".join(ch for ch in rid if ch.isalnum() or ch in "-_") or secrets.token_hex(8)
         path = request.url.path
         token = None
+
+        def finish(resp):
+            """Every response – including the ones returned before the route runs – carries
+            the trace id and the standard headers (docs/integration/api.md)."""
+            resp.headers["X-Request-ID"] = request.state.request_id
+            resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+            resp.headers.setdefault("Referrer-Policy", "no-referrer")
+            if path.startswith("/api/"):
+                resp.headers.setdefault("Cache-Control", "no-store")
+            return resp
+
         try:
             if path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):
                 principal = auth.verify(request.headers.get("Authorization"))
@@ -112,11 +123,11 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                 mode = ui_auth_mode()
                 if mode == "basic" and not path.startswith("/api/v1"):
                     if not auth.check_ui_basic(request.headers.get("Authorization")):
-                        return JSONResponse(_error_body(request, "unauthorized", "需要登录", None), status_code=401,
-                                            headers={"WWW-Authenticate": 'Basic realm="DocWeave"'})
+                        return finish(JSONResponse(_error_body(request, "unauthorized", "需要登录", None), status_code=401,
+                                                   headers={"WWW-Authenticate": 'Basic realm="DocWeave"'}))
                 token = set_tenant(UI_TENANT)
         except ServiceError as e:
-            return await _svc_err(request, e)
+            return finish(await _svc_err(request, e))
         try:
             resp = await call_next(request)
         finally:
@@ -126,12 +137,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                     _tenant.reset(token)
                 except (ValueError, LookupError):
                     pass
-        resp.headers["X-Request-ID"] = request.state.request_id
-        resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-        resp.headers.setdefault("Referrer-Policy", "no-referrer")
-        if path.startswith("/api/"):
-            resp.headers.setdefault("Cache-Control", "no-store")
-        return resp
+        return finish(resp)
 
     # ------------------------------------------------------------ system
     @api.get("/api/health")

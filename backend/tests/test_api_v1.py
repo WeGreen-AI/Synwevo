@@ -243,3 +243,21 @@ def _wait(api, keys, jid: str) -> dict:
             return job
         time.sleep(0.05)
     raise AssertionError("job did not finish")
+
+
+def test_every_response_carries_the_trace_id(api, keys):
+    """docs/integration/api.md: 每个响应都带 X-Request-ID – including the ones the
+    middleware returns before the route runs (DW-048: 401 used to skip the header)."""
+    c = api.c
+    r = c.get("/api/v1/capabilities", headers=keys["rw"])            # authorised
+    assert r.status_code == 200 and r.headers.get("X-Request-ID")
+
+    r = c.get("/api/v1/capabilities")                                # rejected in the middleware
+    assert r.status_code == 401
+    assert r.headers.get("X-Request-ID"), "鉴权失败的响应也必须带追踪 ID"
+    assert r.json()["error"]["request_id"] == r.headers["X-Request-ID"], "头与响应体的追踪 ID 必须一致"
+
+    mine = "my-own-trace-1234"                                       # a caller-supplied id is echoed back
+    r = c.get("/api/v1/capabilities", headers={"X-Request-ID": mine})
+    assert r.headers.get("X-Request-ID") == mine
+    assert r.json()["error"]["request_id"] == mine

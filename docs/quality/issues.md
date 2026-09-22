@@ -29,6 +29,7 @@
 | DW-045 | P3 | 界面 | 深色主题不完整：徽章、步骤条、选择栏、文件项等仍用写死的浅色 | 界面走查 | 12 处硬编码色值 | 设计令牌未覆盖全部组件 | 全部改为令牌；文档纸张仍固定为 paper 令牌 | 深色下实测：`.topbar` `rgb(22,28,37)`、`.side.right` `rgb(27,34,44)`，而 `.gcell`/`.doc-page` 仍为 `rgb(255,255,255)` + `rgb(17,20,24)` | 已修复 |
 | DW-046 | P3 | 操作效率 | 关闭后重开项目，栏宽、缩放、折叠状态、连线开关全部回到默认 | 界面走查 | 仅左栏宽度被记住（`dw.leftW`） | 其余状态未持久化 | 统一 `remember/recall`（存储不可用时静默降级），记住栏宽、面板宽、折叠、缩放、连线、当前标签页、指引条 | 重载后实测保留（`docweave.sideW` = 240 等） | 已修复 |
 | DW-047 | P0 | 安全 | 绑定 `0.0.0.0` 时界面（含全部来源文件、模板与生成结果）对局域网匿名开放，而文档声称会拒绝启动 | 交付前实跑验证：`DOCWEAVE_HOST=0.0.0.0 python backend/run.py` | 服务正常启动并监听 `0.0.0.0:8798`，无任何界面鉴权；`docs/integration/ports.md` 当时写的是「会拒绝启动」 | `check_listen_config()` 已实现但**没有任何调用点**（死代码） | `backend/run.py` 启动前调用；容器内（`DOCWEAVE_IN_CONTAINER=1`）改为打印警告，因为容器的暴露范围由端口映射决定，进程无法判断；文档按实际行为改写 | 实测：`DOCWEAVE_HOST=0.0.0.0` 退出码 1 并打印三种处理方式；加 `DOCWEAVE_UI_AUTH=proxy` 后正常启动（`Uvicorn running on http://0.0.0.0:8798`）。`tests/test_listen_guard.py` 12 项，含直接运行 `backend/run.py` 断言退出码非 0 | 已修复 |
+| DW-048 | P2 | 接口 | 鉴权失败的响应没有 `X-Request-ID` 头，与文档「每个响应都带 X-Request-ID」不符，401 无法与服务端日志对上 | 交付前实跑验证 | `curl -D - /api/v1/capabilities`（无密钥）返回 401，响应头无 `x-request-id`（响应体内有 `request_id`） | 中间件在鉴权失败时提前返回，跳过了设置响应头的代码 | 把响应头设置提取为 `finish()`，三个返回路径（正常、鉴权失败、界面口令失败）都经过它 | 实测：401 的 `x-request-id` 与响应体 `request_id` 一致；调用方自带的 `X-Request-ID` 被原样回显；`tests/test_api_v1.py::test_every_response_carries_the_trace_id` | 已修复 |
 
 ## 上一轮已修复（保留为回归依据）
 
