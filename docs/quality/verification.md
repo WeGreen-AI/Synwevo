@@ -26,7 +26,7 @@
 backend/.venv/bin/python -m pytest -q          # 在 backend/ 下运行
 ```
 
-**结果：185 passed, 1 skipped**（约 85 秒）。跳过项为需要外部依赖的用例（见 `docs/TESTING.md`）。
+**结果：202 passed, 1 skipped**（约 95 秒）。跳过项为需要外部依赖的用例（见 `docs/TESTING.md`）。
 
 本轮新增/修改的用例：
 
@@ -36,6 +36,9 @@ backend/.venv/bin/python -m pytest -q          # 在 backend/ 下运行
 | `tests/test_large_sheet.py` | 1 | 大表分页复用已解析工作簿（统计重建次数） |
 | `tests/test_api_v1.py::test_every_response_carries_the_trace_id` | 1 | 鉴权失败的响应也带 `X-Request-ID`，且与响应体一致、可由调用方指定 |
 | `tests/test_per_block.py` | 4（修复） | 不再依赖运行目录 |
+| `tests/test_slot_options.py` | 15 | 字段枚举（`empty_policy`/`data_type`/`align`/`valign`）在创建与 PATCH 两条路径上都拒绝未知值 |
+| `tests/test_job_reliability.py::test_unknown_layout_is_rejected_not_silently_downgraded` | 1 | `layout` 非法值返回 400 而不是静默关闭分页检查 |
+| `tests/test_engine.py::test_combine_rejects_unknown_op` | 1 | 未知合并方式抛错，不再静默拼接 |
 
 两个新回归测试都验证过「没有修复时会失败」：恢复旧调用后 `test_large_sheet.py` 报「分页时重建了 6 次工作簿对象」；修复前 `DOCWEAVE_HOST=0.0.0.0` 实际可以启动并提供服务。
 
@@ -227,7 +230,22 @@ backend/.venv/bin/python scripts/ui_e2e_keyboard.py  #  4.1s 通过（4 条流�
 
 「关键交互反馈约 100 ms 内」与「滚动、拖拽接近屏幕刷新节奏」两个目标在上述**已测项目**上达成。这些是本机（Apple Silicon、120 Hz）实测值，不代表其他机器、其他刷新率或更大规模。
 
-## 12. 可访问性与主题
+## 12. 六项已知限制的逐项核验（2026-09-23 本轮）
+
+用户提出的限制列表来自旧版 README。逐项用真实文件核验后的结论：
+
+| 限制原文 | 核验结论 | 证据 |
+|---|---|---|
+| 「软件不计算公式」 | **不成立**：内置引擎实际计算并写入缓存值 | 真实链路生成后用 `openpyxl(data_only=True)` 读回：`=B2*C2`→1194、`=ROUND(D2*1.13,2)`→1349.22、嵌套 `IF`→「大客户」、`SUM`→1194、`TEXT(...)&`→「1,194.00 元」、`IFERROR`→99.5，且第二份样本取到自己的值（60 / 67.8 / 「小额」） |
+| 「新内容更长时分页可能变化」 | **边界属实，但已可检测并自动处理** | 一页模板 + 超长内容实测：`layout=off` 静默出 2 页；`layout=warn` 生成并报 `page_overflow` 警告「输出有 2 页，模板为 1 页」；`layout=fit` 该样本**判为失败不产出**（任务 `completed_with_errors`，1 成功 1 失败）；字段勾选「允许缩小」后 `fit` 缩到 **68%** 并成功放回 1 页，带 `shrunk_to_fit` 警告。每一级都由 LibreOffice 真实排版核对，不是估算 |
+| 「PDF 模板只支持单值文本框，没有重复明细」 | **不成立**：PDF 重复明细区域已实现 | `tests/test_pdf_repeat.py` 断言列识别（`序号/品名/数量/单价/金额`）、行高、可容纳行数、超出策略 |
+| 「尚未实现：图片模板、非表格内容块重复、单文件多表单块切分」 | **三项均已实现并有测试** | `test_image_template.py`（输出同尺寸 PNG/JPEG，保留 DPI/ICC/EXIF/透明通道，字段区外像素逐点相同）、`test_docx_blocks.py`（重复内容块）、`test_per_block.py`（XLSX/DOCX/PDF/TXT 四种格式的每块一份）。五个文件合计 **65 passed** |
+| 「PyMuPDF 是 AGPL」 | **已有可部署的无 AGPL 方案，实测通过** | 用导入拦截器让 `import pymupdf` 真正失败：服务正常启动、`/readyz` ok、能力矩阵报 `pdf_engine=pdfium`（Apache-2.0/BSD-3）、无界面流程 10/10 成功、PDF 来源解析与中文词坐标/查找/渲染全部正常、PDF 与图片**模板**返回 `engine_unavailable` 并说明原因。仍用 PyMuPDF 时，`/api/source-code` 提供 AGPL 对应源代码（实测 479 296 字节 / 153 条目，含 `SOURCE_OFFER.txt`，不含 `data/`、`.venv/`、`node_modules/`）。详见 `docs/DEPENDENCIES.md` 第 6 节 |
+| 「全部用合成数据验收」 | **属实，仍是外部阻碍** | 未取得脱敏真实文件；界面「保存为回归用例」可在拿到样本后直接补充回归集 |
+
+核验过程中按同一思路排查「枚举值静默回落」这一缺陷类，发现并修复三处真实缺陷：DW-049（`layout`）、DW-050（字段 `empty_policy` 等）、**DW-051（合并方式静默改为拼接，属错填数据）**。同时确认 `aggregate()`、`transforms.apply/validate`、样本 `mode`、`error_policy`、`formats` 已正确校验，不存在同类问题。
+
+## 13. 可访问性与主题
 
 | 检查 | 结果 |
 |---|---|
@@ -239,7 +257,7 @@ backend/.venv/bin/python scripts/ui_e2e_keyboard.py  #  4.1s 通过（4 条流�
 | 深色主题不影响文档 | `.doc-page`、`.gcell` 在深浅色下均为 `rgb(255,255,255)` / `rgb(17,20,24)`（实测） |
 | 中文输入法 | 全局按键处理检查 `isComposing` / `keyCode 229`；输入框内不触发字母快捷键 |
 
-## 13. 未覆盖 / 未测量（如实记录）
+## 14. 未覆盖 / 未测量（如实记录）
 
 | 项 | 原因 | 影响 |
 |---|---|---|
@@ -250,9 +268,9 @@ backend/.venv/bin/python scripts/ui_e2e_keyboard.py  #  4.1s 通过（4 条流�
 | 多实例共享数据目录的长时间并发 | 只做了同进程 4 线程并发与单次中断恢复 | 多进程部署的长稳未验证 |
 | 大规模并发负载（多客户端同时提交） | 未运行 | 上表所有数字均为单客户端、单进程 |
 
-## 14. 发布判断
+## 15. 发布判断
 
-* 本轮范围内**已确认缺陷为 0**：`docs/quality/issues.md` 中 DW-001…DW-012、DW-030…DW-032、DW-040…DW-048 全部为「已修复」并附验证证据。
-* 约定检查全部执行并通过：185 项后端测试、3 套浏览器端到端、类型检查、生产构建、干净环境启动、无界面调用、界面/接口一致、权限与输入、幂等并发、取消语义、Webhook 全链路、持续使用资源。
-* 仍然存在的限制与未测量项见第 13 节与 `README.md`「已知限制」，**不计入已交付**。
+* 本轮范围内**已确认缺陷为 0**：`docs/quality/issues.md` 中 DW-001…DW-012、DW-030…DW-032、DW-040…DW-051 全部为「已修复」并附验证证据。
+* 约定检查全部执行并通过：202 项后端测试、3 套浏览器端到端、类型检查、生产构建、干净环境启动、无界面调用、界面/接口一致、权限与输入、幂等并发、取消语义、Webhook 全链路、持续使用资源。
+* 仍然存在的限制与未测量项见第 14 节与 `README.md`「已知限制」，**不计入已交付**。
 * 结论：可以发布到自托管环境。对外提供服务前需按 `docs/DEPLOY.md` 配置反向代理与界面鉴权，并确认 PyMuPDF 的许可证义务。
