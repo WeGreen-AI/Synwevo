@@ -1,0 +1,62 @@
+import type { Mark, Selection } from "../lib/types";
+import DocView from "../views/DocView";
+import GridView, { CellSel, GridWindow } from "../views/GridView";
+import PdfView from "../views/PdfView";
+import SlidesView from "../views/SlidesView";
+import TextView from "../views/TextView";
+
+export interface ViewProps {
+  view: any;
+  side: "src" | "tpl";
+  reloadKey: string;
+  loadGrid: (sheet: string | null, offset: number, limit: number) => Promise<GridWindow>;
+  pageUrl?: (page: number) => string;
+  wordsUrl?: (page: number) => string;
+  marks: Mark[];
+  selection: Selection | null;
+  onSelect: (s: Selection | null) => void;
+  onMarkClick?: (id: string) => void;
+  zoom: number;
+  sheet: string | null;
+  onSheet: (s: string) => void;
+  page: number;
+  onPage: (n: number) => void;
+  headerRow?: { sheet: string; row: number } | null;
+  gridFocus?: { sheet: string; r: number; c: number; key: number } | null;
+  focusKey?: string | null;
+  slotNames?: Record<string, { name: string; color: string; no?: number }>;
+  onGridInfo?: (i: any) => void;
+}
+
+export default function AnyView(p: ViewProps) {
+  const v = p.view;
+  if (!v) return <div className="empty">加载中…</div>;
+  if (v.view === "pending") return <div className="empty"><div className="big">正在解析文件…</div><div>解析完成后自动显示</div></div>;
+  if (v.view === "error") return (
+    <div className="empty">
+      <div className="big">无法读取此文件</div>
+      <div className="notice err" style={{ maxWidth: 480 }}>{v.error || "未知错误"}</div>
+    </div>
+  );
+  if (v.view === "grid") {
+    const sel = p.selection?.kind === "cells" ? (p.selection as CellSel) : null;
+    return (
+      <GridView load={p.loadGrid} reloadKey={p.reloadKey} marks={p.marks} selection={sel} onSelect={(s) => p.onSelect(s ? { kind: "cells", ...s } : null)}
+        onMarkClick={p.onMarkClick} headerRow={p.headerRow} focus={p.gridFocus} sheet={p.sheet} onSheet={p.onSheet} zoom={p.zoom} onInfo={p.onGridInfo} />
+    );
+  }
+  if (v.view === "docx") return <DocView doc={v.doc} marks={p.marks} selection={p.selection} onSelect={p.onSelect} onMarkClick={p.onMarkClick} side={p.side} zoom={p.zoom} slotNames={p.slotNames} focusKey={p.focusKey} />;
+  if (v.view === "pdf" || v.view === "image") {
+    const pages = v.view === "pdf" ? v.pdf.pages : [{ index: 0, w: (v.image?.width || 800) * 0.75, h: (v.image?.height || 1000) * 0.75, rotation: 0, kind: "scanned" }];
+    const sel = p.selection?.kind === "pdf_region" ? p.selection : null;
+    return (
+      <PdfView pages={pages} imageUrl={p.pageUrl!} wordsUrl={p.wordsUrl} marks={p.marks} selection={sel} onSelect={(s) => p.onSelect(s)} onMarkClick={p.onMarkClick}
+        zoom={p.zoom} focusKey={p.focusKey} reloadKey={p.reloadKey} page={p.page} onPage={p.onPage} />
+    );
+  }
+  if (v.view === "slides") return <SlidesView data={v.slides} marks={p.marks} selection={p.selection} onSelect={p.onSelect} side={p.side} zoom={p.zoom} slotNames={p.slotNames} focusKey={p.focusKey} onMarkClick={p.onMarkClick} />;
+  if (v.view === "text") {
+    return <TextView lines={v.lines} marks={p.marks} selection={p.selection} onSelect={p.onSelect} focusKey={p.focusKey} />;
+  }
+  return <div className="empty">无法预览</div>;
+}

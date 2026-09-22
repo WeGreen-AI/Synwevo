@@ -1,0 +1,16 @@
+# local environments and build output
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+.claude/
+# runtime data: user files, database, job results – never committed
+data/
+.env
+# generated synthetic fixtures (scripts/make_fixtures.py)
+testdata/
+# screenshots produced by browser E2E runs
+docs/screenshots/*.png

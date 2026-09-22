@@ -1,0 +1,476 @@
+"""HTTP API (FastAPI).  The browser UI talks only to these endpoints; the engine
+package has no web dependency so a desktop shell can reuse it later."""
+from __future__ import annotations
+
+import os
+import urllib.parse
+from pathlib import Path
+
+from fastapi import Body, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+
+from ..engine.limits import LIMITS
+from ..jobs import JobService, naming_tokens
+from ..services import App, ServiceError, safe_output_name
+from ..store import Store
+from ..views import Views
+
+MIME = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "pdf": "application/pdf", "csv": "text/csv; charset=utf-8", "zip": "application/zip", "png": "image/png", "jpg": "image/jpeg"}
+
+
+def attachment(data: bytes, filename: str, ext: str | None = None, inline: bool = False) -> Response:
+    ext = ext or (filename.rsplit(".", 1)[-1].lower() if "." in filename else "")
+    if not ext.isascii() or not ext.isalnum():
+        ext = "bin"
+    safe = safe_output_name(filename, 200)
+    ascii_fallback = safe.encode("ascii", "ignore").decode() or f"download.{ext}"
+    disp = "inline" if inline else "attachment"
+    cd = f"{disp}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{urllib.parse.quote(safe)}"
+    return Response(data, media_type=MIME.get(ext, "application/octet-stream"),
+                    headers={"Content-Disposition": cd, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
+
+def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
+    data_dir = data_dir or os.environ.get("DOCWEAVE_DATA_DIR") or str(Path(__file__).resolve().parents[3] / "data")
+    store = Store(data_dir)
+    app_ = App(store)
+    views = Views(app_)
+    jobs = JobService(app_) if start_jobs else None
+    api = FastAPI(title="DocWeave", version="1.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
+    api.state.app = app_
+    api.state.views = views
+    api.state.jobs = jobs
+
+    @api.exception_handler(ServiceError)
+    async def _svc_err(request: Request, exc: ServiceError):
+        return JSONResponse({"error": exc.code, "message": exc.message, "detail": exc.detail}, status_code=exc.status)
+
+    @api.exception_handler(ValueError)
+    async def _val_err(request: Request, exc: ValueError):
+        return JSONResponse({"error": getattr(exc, "code", "invalid"), "message": str(exc)}, status_code=400)
+
+    @api.middleware("http")
+    async def _headers(request: Request, call_next):
+        resp = await call_next(request)
+        resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        if request.url.path.startswith("/api/"):
+            resp.headers.setdefault("Cache-Control", "no-store")
+        return resp
+
+    # ------------------------------------------------------------ system
+    @api.get("/api/health")
+    def health():
+        return {"ok": True}
+
+    # ------------------------------------------------------------ regression cases & desensitization
+    @api.get("/api/regression-cases")
+    def regression_list():
+        from ..regression import list_cases
+        return list_cases()
+
+    @api.post("/api/projects/{pid}/regression-cases")
+    def regression_capture(pid: str, body: dict = Body(default={})):
+        from ..regression import RegressionError, capture
+        try:
+            return capture(app_, pid, body.get("name") or "", body.get("note") or "", body.get("sample_keys"))
+        except RegressionError as e:
+            raise ServiceError(400, e.code, str(e)) from e
+
+    @api.post("/api/regression-cases/{cid}/run")
+    def regression_run(cid: str):
+        from ..regression import RegressionError, run
+        try:
+            return run(cid)
+        except RegressionError as e:
+            raise ServiceError(404 if e.code == "not_found" else 400, e.code, str(e)) from e
+
+    @api.delete("/api/regression-cases/{cid}")
+    def regression_delete(cid: str):
+        from ..regression import RegressionError, delete
+        try:
+            delete(cid)
+        except RegressionError as e:
+            raise ServiceError(404 if e.code == "not_found" else 400, e.code, str(e)) from e
+        return {"ok": True}
+
+    @api.get("/api/regression-cases/{cid}/download")
+    def regression_download(cid: str):
+        import io as _io
+        import zipfile
+        from ..regression import RegressionError, load
+        try:
+            _, d = load(cid)
+        except RegressionError as e:
+            raise ServiceError(404, e.code, str(e)) from e
+        buf = _io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for f in sorted(d.rglob("*")):
+                if f.is_file():
+                    z.write(f, f"{cid}/{f.relative_to(d).as_posix()}")
+        return attachment(buf.getvalue(), f"回归用例_{cid}.zip", "zip")
+
+    @api.post("/api/projects/{pid}/desensitize")
+    def desensitize(pid: str, body: dict = Body(...)):
+        return app_.desensitize_sources(pid, body)
+
+    @api.get("/api/desensitized/{blob}")
+    def desensitized_file(blob: str, name: str = "脱敏文件"):
+        return attachment(views.preview_file(blob), name)
+
+    @api.get("/api/about")
+    def about():
+        from ..licensing import about as _about
+        return _about()
+
+    @api.get("/api/source-code")
+    def source_code():
+        from ..licensing import source_archive, source_offer_enabled
+        if not source_offer_enabled():
+            raise ServiceError(404, "source_offer_off", "本部署已关闭源代码下载（运营方已取得相应许可或未使用 AGPL 组件）")
+        data, name = source_archive()
+        return Response(data, media_type="application/gzip",
+                        headers={"Content-Disposition": f"attachment; filename=\"{name}\""})
+
+    @api.get("/api/capabilities")
+    def capabilities():
+        from ..capabilities import capability_report
+        return capability_report()
+
+    # ------------------------------------------------------------ projects
+    @api.get("/api/projects")
+    def list_projects():
+        return app_.list_projects()
+
+    @api.post("/api/projects")
+    def create_project(body: dict = Body(...)):
+        return app_.create_project(body.get("name", ""))
+
+    @api.get("/api/projects/{pid}")
+    def get_project(pid: str):
+        p = app_.get_project(pid)
+        p["sources"] = app_.list_sources(pid)
+        p["template"] = app_.template_detail(p["template_id"]) if p.get("template_id") else None
+        p["mappings"] = app_.get_mappings(pid)
+        if jobs:
+            p["jobs"] = jobs.list_for_project(pid)
+        return p
+
+    @api.patch("/api/projects/{pid}")
+    def patch_project(pid: str, body: dict = Body(...)):
+        return app_.update_project(pid, body)
+
+    @api.delete("/api/projects/{pid}")
+    def delete_project(pid: str):
+        app_.delete_project(pid)
+        return {"ok": True}
+
+    # ------------------------------------------------------------ sources
+    @api.post("/api/projects/{pid}/sources")
+    async def upload_sources(pid: str, files: list[UploadFile] = File(...)):
+        out = []
+        for f in files:
+            data = await _read_limited(f)
+            out.append(app_.add_source(pid, f.filename or "file", data))
+        return out
+
+    @api.get("/api/projects/{pid}/sources")
+    def list_sources(pid: str):
+        return app_.list_sources(pid)
+
+    @api.put("/api/projects/{pid}/sources/order")
+    def reorder(pid: str, body: dict = Body(...)):
+        return app_.reorder_sources(pid, body.get("ids", []))
+
+    @api.delete("/api/sources/{sid}")
+    def remove_source(sid: str):
+        app_.remove_source(sid)
+        return {"ok": True}
+
+    @api.post("/api/sources/{sid}/representative")
+    def representative(sid: str):
+        return app_.set_representative(sid)
+
+    @api.put("/api/sources/{sid}/options")
+    def source_options(sid: str, body: dict = Body(...)):
+        return app_.set_source_options(sid, body)
+
+    @api.get("/api/sources/{sid}/view")
+    def source_view(sid: str, sheet: str | None = None, offset: int = 0, limit: int = Query(200, le=2000), block: int | None = None):
+        return views.source_view(sid, sheet, offset, limit, block)
+
+    @api.get("/api/sources/{sid}/blocks")
+    def source_blocks(sid: str):
+        return app_.source_blocks(sid)
+
+    @api.get("/api/sources/{sid}/search")
+    def source_search(sid: str, q: str, block: int | None = None):
+        return views.search_source(sid, q, block=block)
+
+    @api.get("/api/sources/{sid}/page/{page}.png")
+    def source_page(sid: str, page: int, zoom: float = 1.5, block: int | None = None):
+        return Response(views.source_page_png(sid, page, zoom, block), media_type="image/png", headers={"Cache-Control": "private, max-age=600"})
+
+    @api.get("/api/sources/{sid}/words/{page}")
+    def source_words(sid: str, page: int, block: int | None = None):
+        return views.source_words(sid, page, block)
+
+    @api.post("/api/sources/{sid}/ocr")
+    def run_ocr(sid: str, body: dict = Body(default={})):
+        return views.run_ocr(sid, body.get("pages"))
+
+    @api.put("/api/sources/{sid}/corrections/{mid}")
+    def correction(sid: str, mid: str, body: dict = Body(...)):
+        return views.set_correction(sid, mid, body.get("value"), bool(body.get("confirmed", True)))
+
+    @api.post("/api/sources/{sid}/locator")
+    def build_locator(sid: str, body: dict = Body(...)):
+        from ..locators import build_locator as bl
+        project = app_.get_project(body["project_id"]) if body.get("project_id") else None
+        return bl(app_, sid, body.get("selection") or {}, project, body.get("block"))
+
+    @api.get("/api/projects/{pid}/locate")
+    def locate(pid: str, file: str, block: int | None = None):
+        from ..locators import locate_all
+        return locate_all(app_, pid, file, block)
+
+    @api.get("/api/sources/{sid}/download")
+    def source_download(sid: str):
+        r = app_.get_source(sid, raw=True)
+        return attachment(store.get_blob(r["blob"]), r["filename"])
+
+    # ------------------------------------------------------------ templates
+    @api.get("/api/templates")
+    def list_templates():
+        return app_.list_templates()
+
+    @api.post("/api/templates/upload")
+    async def upload_template(file: UploadFile = File(...), name: str | None = Form(None), project_id: str | None = Form(None)):
+        data = await _read_limited(file)
+        t = app_.upload_template(file.filename or "template", data, name)
+        if project_id:
+            app_.update_project(project_id, {"template_id": t["id"]})
+        return t
+
+    @api.post("/api/templates/builtin")
+    def create_builtin(body: dict = Body(...)):
+        from ..builtin_service import create_builtin as cb
+        t = cb(app_, body)
+        if body.get("project_id"):
+            app_.update_project(body["project_id"], {"template_id": t["id"]})
+        return t
+
+    @api.put("/api/templates/{tid}/builtin")
+    def save_builtin(tid: str, body: dict = Body(...)):
+        from ..builtin_service import save_builtin as sb
+        return sb(app_, tid, body)
+
+    @api.get("/api/templates/{tid}")
+    def template_detail(tid: str):
+        return app_.template_detail(tid)
+
+    @api.patch("/api/templates/{tid}")
+    def rename_template(tid: str, body: dict = Body(...)):
+        return app_.rename_template(tid, body.get("name", ""))
+
+    @api.delete("/api/templates/{tid}")
+    def delete_template(tid: str):
+        app_.delete_template(tid)
+        return {"ok": True}
+
+    @api.post("/api/templates/{tid}/duplicate")
+    def dup_template(tid: str, body: dict = Body(default={})):
+        return app_.duplicate_template(tid, body.get("name"))
+
+    @api.get("/api/templates/{tid}/view")
+    def template_view(tid: str, sheet: str | None = None, offset: int = 0, limit: int = Query(200, le=2000), version: int | None = None):
+        return views.template_view(tid, sheet, offset, limit, version)
+
+    @api.get("/api/templates/{tid}/page/{page}.png")
+    def template_page(tid: str, page: int, zoom: float = 1.5, which: str = "working"):
+        return Response(views.template_page_png(tid, page, zoom, which), media_type="image/png")
+
+    @api.post("/api/templates/{tid}/slots")
+    def add_slot(tid: str, body: dict = Body(...)):
+        return app_.add_slot(tid, body)
+
+    @api.post("/api/templates/{tid}/pdf-repeat-detect")
+    def pdf_repeat_detect(tid: str, body: dict = Body(...)):
+        return app_.pdf_repeat_detect(tid, int(body.get("page", 0)), body.get("nrect") or [])
+
+    @api.patch("/api/templates/{tid}/slots/{slot_id}")
+    def update_slot(tid: str, slot_id: str, body: dict = Body(...)):
+        return app_.update_slot(tid, slot_id, body)
+
+    @api.delete("/api/templates/{tid}/slots/{slot_id}")
+    def remove_slot(tid: str, slot_id: str, project_id: str | None = None, cascade: bool = True):
+        return app_.remove_slot(tid, slot_id, project_id, cascade)
+
+    @api.post("/api/templates/{tid}/undo")
+    def t_undo(tid: str):
+        return app_.template_undo(tid)
+
+    @api.post("/api/templates/{tid}/redo")
+    def t_redo(tid: str):
+        return app_.template_redo(tid)
+
+    @api.get("/api/templates/{tid}/download")
+    def template_download(tid: str, which: str = "working"):
+        t = app_.get_template(tid)
+        v = app_.get_version(tid, t["head"])
+        blob = t["original_blob"] if which == "original" else v["working_blob"]
+        ext = {"builtin_doc": "docx", "builtin_sheet": "xlsx"}.get(t["format"], t["format"])
+        img = (t.get("info") or {}).get("image")
+        if img:   # image template: the upload itself, or the working copy (a one-page PDF with the fields)
+            if which == "original":
+                blob, ext = img["original_blob"], {"jpeg": "jpg"}.get(img.get("source_format") or "png", img.get("source_format") or "png")
+            else:
+                ext = "pdf"
+        suffix = "（原始）" if which == "original" else f"（工作副本 v{v['version_no']}）"
+        return attachment(store.get_blob(blob), f"{t['name']}{suffix}.{ext}", ext)
+
+    # ------------------------------------------------------------ records / rules
+    @api.get("/api/projects/{pid}/records")
+    def records(pid: str, offset: int = 0, limit: int = Query(200, le=5000)):
+        return views.records(pid, offset, limit)
+
+    @api.post("/api/projects/{pid}/rule-preview")
+    def rule_preview(pid: str, body: dict = Body(...)):
+        return views.rule_preview(pid, body)
+
+    @api.get("/api/projects/{pid}/validate")
+    def validate(pid: str):
+        return views.validate(pid)
+
+    # ------------------------------------------------------------ mappings
+    @api.get("/api/projects/{pid}/mappings")
+    def get_mappings(pid: str):
+        return app_.get_mappings(pid)
+
+    @api.put("/api/projects/{pid}/mappings")
+    def put_mappings(pid: str, body: dict = Body(...)):
+        return app_.save_mappings(pid, body.get("mappings", []), body.get("note", "修改映射"), body.get("base_rev"))
+
+    @api.post("/api/projects/{pid}/mappings/undo")
+    def m_undo(pid: str):
+        return app_.mappings_undo(pid)
+
+    @api.post("/api/projects/{pid}/mappings/redo")
+    def m_redo(pid: str):
+        return app_.mappings_redo(pid)
+
+    # ------------------------------------------------------------ preview
+    @api.get("/api/projects/{pid}/preview")
+    def preview(pid: str, index: int | None = None, key: str | None = None, search: str | None = None):
+        return views.preview(pid, index, key, search)
+
+    @api.get("/api/preview-files/{blob}")
+    def preview_file(blob: str, fmt: str = "docx", name: str = "预览"):
+        return attachment(views.preview_file(blob), f"{name}.{fmt}", fmt)
+
+    @api.get("/api/projects/{pid}/preview-layout")
+    def preview_layout(pid: str, blob: str):
+        return views.preview_layout(pid, blob)
+
+    @api.get("/api/preview-files/{blob}/view")
+    def preview_view(blob: str, fmt: str, sheet: str | None = None, offset: int = 0, limit: int = Query(200, le=2000)):
+        from ..views import render_output
+        return render_output(fmt, views.preview_file(blob), sheet, offset, limit, [])
+
+    @api.get("/api/artifacts/{aid}/view")
+    def artifact_view(aid: str, sheet: str | None = None, offset: int = 0, limit: int = Query(200, le=2000)):
+        from ..views import render_output
+        a, data = jobs.artifact(aid)
+        return render_output(a["format"], data, sheet, offset, limit, [])
+
+    @api.get("/api/preview-files/{blob}/page/{page}.png")
+    def preview_page(blob: str, page: int, zoom: float = 1.5):
+        from ..engine.pdf_engine import render_page_png
+        from ..engine.pdf_engine import as_pdf_bytes
+        return Response(render_page_png(as_pdf_bytes(views.preview_file(blob)), page, zoom), media_type="image/png")
+
+    # ------------------------------------------------------------ jobs
+    @api.get("/api/projects/{pid}/generation-summary")
+    def gen_summary(pid: str, formats: str | None = None, naming: str | None = None):
+        return jobs.summary(pid, formats.split(",") if formats else None, naming)
+
+    @api.post("/api/projects/{pid}/jobs")
+    def create_job(pid: str, body: dict = Body(...)):
+        return jobs.create(pid, body)
+
+    @api.get("/api/projects/{pid}/jobs")
+    def list_jobs(pid: str):
+        return jobs.list_for_project(pid)
+
+    @api.get("/api/jobs/{jid}")
+    def get_job(jid: str):
+        return jobs.get(jid)
+
+    @api.get("/api/jobs/{jid}/items")
+    def job_items(jid: str, status: str | None = None, offset: int = 0, limit: int = Query(500, le=5000)):
+        return jobs.items(jid, status, offset, limit)
+
+    @api.post("/api/jobs/{jid}/cancel")
+    def cancel_job(jid: str):
+        return jobs.cancel(jid)
+
+    @api.post("/api/jobs/{jid}/retry")
+    def retry_job(jid: str, body: dict = Body(default={})):
+        return jobs.retry(jid, bool(body.get("include_skipped")))
+
+    @api.get("/api/jobs/{jid}/zip")
+    def job_zip(jid: str, fmt: str | None = None):
+        j = jobs.get(jid)
+        return attachment(jobs.zip(jid, fmt), f"{j['template']['name']}_批量结果_{jid[-6:]}.zip", "zip")
+
+    @api.get("/api/jobs/{jid}/report.csv")
+    def job_report(jid: str):
+        return attachment(jobs.report_csv(jid), f"生成清单_{jid[-6:]}.csv", "csv")
+
+    @api.get("/api/artifacts/{aid}")
+    def artifact(aid: str, inline: bool = False):
+        a, data = jobs.artifact(aid)
+        return attachment(data, a["filename"], a["format"], inline=inline and a["format"] == "pdf")
+
+    @api.get("/api/artifacts/{aid}/page/{page}.png")
+    def artifact_page(aid: str, page: int, zoom: float = 1.2):
+        from ..engine.pdf_engine import render_page_png
+        a, data = jobs.artifact(aid)
+        if a["format"] not in ("pdf", "png", "jpg"):
+            raise ServiceError(400, "not_pdf", "只有 PDF / 图片结果可以渲染页面")
+        from ..engine.pdf_engine import as_pdf_bytes
+        return Response(render_page_png(as_pdf_bytes(data), page, zoom), media_type="image/png")
+
+    # ------------------------------------------------------------ static UI
+    dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))
+    if dist.exists():
+        api.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+        @api.get("/{full_path:path}")
+        def spa(full_path: str):
+            if full_path.startswith("api/"):
+                return JSONResponse({"error": "not_found", "message": "接口不存在"}, status_code=404)
+            target = (dist / full_path).resolve()
+            if full_path and target.is_file() and dist.resolve() in target.parents:
+                return FileResponse(target)
+            return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache"})
+
+    return api
+
+
+async def _read_limited(f: UploadFile) -> bytes:
+    chunks = []
+    total = 0
+    while True:
+        chunk = await f.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > LIMITS.max_file_bytes:
+            raise ServiceError(413, "too_large", f"文件「{f.filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限")
+        chunks.append(chunk)
+    return b"".join(chunks)

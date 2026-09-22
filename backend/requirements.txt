@@ -1,0 +1,17 @@
+# Runtime dependencies (pinned; verified on Python 3.12–3.14). Licences: see docs/DEPENDENCIES.md
+fastapi==0.141.1
+starlette==1.6.0
+uvicorn==0.53.0
+python-multipart==0.0.32
+pydantic==2.13.5
+openpyxl==3.1.5
+python-docx==1.2.0
+python-pptx==1.0.2
+pymupdf==1.28.2          # AGPL-3.0 or Artifex commercial licence – see docs/DEPENDENCIES.md (omit: requirements-pdfium.txt)
+pypdfium2==5.13.0        # Apache-2.0 / BSD-3 – AGPL-free PDF reading engine (DOCWEAVE_PDF_ENGINE=pdfium)
+fonttools==4.65.0        # PDF font subsetting
+lxml==6.1.3
+pillow==12.3.0
+charset-normalizer==3.5.1
+xlrd==2.0.2
+olefile==0.47

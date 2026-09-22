@@ -1,0 +1,7 @@
+services:
+  docweave:
+    build: .
+    ports: ["127.0.0.1:8765:8765"]   # bind to localhost; publish through your own reverse proxy with authentication
+    volumes: ["./data:/data"]
+    env_file: [.env.example]
+    restart: unless-stopped
