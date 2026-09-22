@@ -420,7 +420,17 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
 
     @api.post("/api/jobs/{jid}/retry")
     def retry_job(jid: str, body: dict = Body(default={})):
-        return jobs.retry(jid, bool(body.get("include_skipped")))
+        return jobs.retry(jid, bool(body.get("include_skipped")), idem_key=body.get("idempotency_key"))
+
+    @api.get("/api/jobs/{jid}/runs")
+    def job_runs(jid: str):
+        jobs.get(jid)
+        return jobs.runs(jid)
+
+    @api.get("/api/jobs/{jid}/events")
+    def job_events(jid: str, after: int = 0, limit: int = Query(200, le=1000)):
+        jobs.get(jid)
+        return jobs.events(jid, after, limit)
 
     @api.get("/api/jobs/{jid}/zip")
     def job_zip(jid: str, fmt: str | None = None):

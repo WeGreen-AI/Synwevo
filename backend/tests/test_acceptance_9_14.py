@@ -290,7 +290,7 @@ def test_s12b_cancel(api, fixtures):
     api.ok(api.c.post(f"/api/jobs/{j['id']}/cancel"))
     for _ in range(300):
         j = api.ok(api.c.get(f"/api/jobs/{j['id']}"))
-        if j["status"] not in ("queued", "running"):
+        if j["status"] not in ("queued", "running", "cancelling"):    # 「取消中」= 已接受请求，尚未到终态
             break
         time.sleep(0.1)
     assert j["status"] == "cancelled"

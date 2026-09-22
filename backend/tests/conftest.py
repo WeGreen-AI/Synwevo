@@ -44,6 +44,10 @@ class Api:
         assert r.status_code < 400, (r.status_code, r.text[:800])
         return r.json()
 
+    def ok_bytes(self, r):
+        assert r.status_code < 400, (r.status_code, r.text[:300])
+        return r.content
+
     def project(self, name="测试项目"):
         return self.ok(self.c.post("/api/projects", json={"name": name}))["id"]
 
@@ -104,7 +108,7 @@ class Api:
         t0 = time.time()
         while time.time() - t0 < timeout:
             j = self.ok(self.c.get(f"/api/jobs/{j['id']}"))
-            if j["status"] not in ("queued", "running"):
+            if j["status"] not in ("queued", "running", "cancelling"):
                 return j
             time.sleep(0.1)
         raise AssertionError("job timeout")

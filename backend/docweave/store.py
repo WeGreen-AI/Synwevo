@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -61,6 +61,49 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE INDEX IF NOT EXISTS ix_art_job ON artifacts(job_id);
 """
 
+# v2: tenancy, job leases / runs / events, persistent idempotency, API keys, webhook deliveries
+SCHEMA_V2 = """
+CREATE TABLE IF NOT EXISTS idempotency (
+  tenant TEXT NOT NULL, scope TEXT NOT NULL, key TEXT NOT NULL, request_hash TEXT NOT NULL,
+  job_id TEXT, created_at REAL NOT NULL, PRIMARY KEY (tenant, scope, key)
+);
+CREATE TABLE IF NOT EXISTS job_runs (
+  job_id TEXT NOT NULL, run_no INTEGER NOT NULL, trigger TEXT NOT NULL, requested_by TEXT, items INTEGER,
+  created_at REAL, started_at REAL, finished_at REAL, status TEXT, PRIMARY KEY (job_id, run_no)
+);
+CREATE TABLE IF NOT EXISTS job_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, job_id TEXT NOT NULL, tenant TEXT,
+  type TEXT NOT NULL, version INTEGER NOT NULL, occurred_at REAL NOT NULL, data TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_events_job ON job_events(job_id, seq);
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, tenant TEXT NOT NULL, scopes TEXT NOT NULL, secret_hash TEXT NOT NULL,
+  created_at REAL NOT NULL, expires_at REAL, last_used_at REAL, revoked_at REAL
+);
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id TEXT PRIMARY KEY, event_id TEXT NOT NULL, event_seq INTEGER, endpoint TEXT NOT NULL, status TEXT NOT NULL,
+  attempts INTEGER DEFAULT 0, next_attempt_at REAL, last_code INTEGER, last_error TEXT, created_at REAL, delivered_at REAL,
+  UNIQUE (event_id, endpoint)
+);
+CREATE INDEX IF NOT EXISTS ix_wh_due ON webhook_deliveries(status, next_attempt_at);
+"""
+
+# columns added to v1 tables (name, table, definition)
+V2_COLUMNS = [
+    ("projects", "tenant", "TEXT DEFAULT 'default'"),
+    ("projects", "template_version", "INTEGER"),
+    ("templates", "tenant", "TEXT DEFAULT 'default'"),
+    ("jobs", "tenant", "TEXT DEFAULT 'default'"),
+    ("jobs", "lease_owner", "TEXT"),
+    ("jobs", "lease_until", "REAL"),
+    ("jobs", "run_no", "INTEGER DEFAULT 1"),
+    ("jobs", "cancel_requested_at", "REAL"),
+    ("jobs", "origin", "TEXT DEFAULT 'ui'"),
+    ("job_items", "run_no", "INTEGER DEFAULT 1"),
+    ("artifacts", "run_no", "INTEGER DEFAULT 1"),
+    ("artifacts", "deleted_at", "REAL"),
+]
+
 JSON_COLS = {"record_rule", "output", "notes", "structure", "options", "ocr", "corrections", "slots", "editor", "data",
              "snapshot", "counts", "record", "issues", "trace", "verification", "info", "summary"}
 
@@ -80,33 +123,76 @@ class Store:
         (self.root / "blobs").mkdir(exist_ok=True)
         self.db_path = self.root / "docweave.sqlite3"
         self._local = threading.local()
-        self._lock = threading.RLock()
-        with self.conn() as c:
-            c.executescript(SCHEMA)
-            c.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
+        self._write_lock = threading.RLock()     # serialises writers inside this process; SQLite locks across processes
+        c = self._c()
+        c.executescript(SCHEMA)
+        self._migrate(c)
+
+    # ---------------------------------------------------------------- schema migration
+    def _migrate(self, c: sqlite3.Connection) -> None:
+        """Forward-only, idempotent migrations.  Existing rows stay readable: new columns have
+        defaults, and pre-v2 rows belong to the default tenant."""
+        c.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '1')")
+        ver = int(c.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"])
+        if ver < 2:
+            c.executescript(SCHEMA_V2)
+            with self.tx() as t:
+                for table, col, decl in V2_COLUMNS:
+                    have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
+                    if col not in have:
+                        t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+                t.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
+        c.executescript(SCHEMA_V2)                   # new tables of the current version (idempotent)
+
+    def schema_version(self) -> int:
+        return int(self.one("SELECT value FROM meta WHERE key='schema_version'")["value"])
 
     # ---------------------------------------------------------------- connection
     def _connect(self) -> sqlite3.Connection:
-        c = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+        c = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False, isolation_level=None)  # explicit transactions
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA foreign_keys=ON")
         c.execute("PRAGMA synchronous=NORMAL")
+        c.execute("PRAGMA busy_timeout=30000")
         return c
 
-    @contextmanager
-    def conn(self):
+    def _c(self) -> sqlite3.Connection:
         c = getattr(self._local, "c", None)
         if c is None:
             c = self._connect()
             self._local.c = c
-        with self._lock:
+            self._local.depth = 0
+        return c
+
+    @contextmanager
+    def tx(self):
+        """A write transaction (``BEGIN IMMEDIATE``): all statements inside commit together or
+        not at all.  Re-entrant within a thread; the outermost block commits."""
+        c = self._c()
+        if self._local.depth:
+            self._local.depth += 1
             try:
                 yield c
-                c.commit()
-            except Exception:
-                c.rollback()
+            finally:
+                self._local.depth -= 1
+            return
+        with self._write_lock:
+            c.execute("BEGIN IMMEDIATE")
+            self._local.depth = 1
+            try:
+                yield c
+                c.execute("COMMIT")
+            except BaseException:
+                c.execute("ROLLBACK")
                 raise
+            finally:
+                self._local.depth = 0
+
+    @contextmanager
+    def conn(self):
+        """Single statements: autocommit (atomic on their own); inside ``tx()`` they join it."""
+        yield self._c()
 
     # ---------------------------------------------------------------- rows
     @staticmethod
@@ -138,7 +224,7 @@ class Store:
 
     def insert(self, table: str, row: dict) -> None:
         cols = list(row)
-        with self.conn() as c:
+        with self.tx() as c:
             c.execute(f"INSERT INTO {table} ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
                       tuple(self._encode(row[k]) for k in cols))
 
@@ -147,12 +233,12 @@ class Store:
             return
         sets = ",".join(f"{k}=?" for k in values)
         where = " AND ".join(f"{k}=?" for k in key)
-        with self.conn() as c:
+        with self.tx() as c:
             c.execute(f"UPDATE {table} SET {sets} WHERE {where}",
                       tuple(self._encode(v) for v in values.values()) + tuple(key.values()))
 
     def execute(self, sql: str, args: tuple = ()) -> int:
-        with self.conn() as c:
+        with self.tx() as c:
             return c.execute(sql, args).rowcount
 
     # ---------------------------------------------------------------- blobs
@@ -185,7 +271,7 @@ class Store:
 
     # ---------------------------------------------------------------- project rev
     def bump_project(self, pid: str) -> int:
-        with self.conn() as c:
+        with self.tx() as c:
             c.execute("UPDATE projects SET rev = rev + 1, updated_at = ? WHERE id = ?", (now(), pid))
             r = c.execute("SELECT rev FROM projects WHERE id = ?", (pid,)).fetchone()
             return r["rev"] if r else 0
