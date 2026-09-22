@@ -218,7 +218,14 @@ def _sum(vals: list[V.Value]) -> V.Value:
     return V.Value(V.DEC, s, s)
 
 
+COMBINE_OPS = ("concat", "newline", "sum")
+
+
 def combine(vals: list[V.Value], op: str, sep: str = " ") -> V.Value:
+    # An unknown op must not fall through to concatenation: "sum" mistyped would turn
+    # 100 + 200 into "100 200" in the delivered document, with nothing reported.
+    if op not in COMBINE_OPS:
+        raise TransformError(f"不支持的合并方式：{op}；只能是 {' / '.join(COMBINE_OPS)}")
     if op == "sum":
         non_empty = [v for v in vals if not v.is_empty]
         return _sum(non_empty) if non_empty else V.empty()

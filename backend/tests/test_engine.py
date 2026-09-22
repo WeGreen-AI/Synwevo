@@ -207,3 +207,26 @@ def test_safe_names_and_dedupe():
     assert len(safe_output_name("长" * 200).encode()) <= 150
     assert dedupe(["a", "A", "a", "b"]) == ["a", "A (2)", "a (3)", "b"]
     assert render_name("{序号}_{不存在}", {"label": "x"}, None, [], 4, 3)[0] == "005_"
+
+
+def test_combine_rejects_unknown_op():
+    """DW-051: a mistyped combine op used to fall through to concatenation, so a mapping
+    meant to add 100 + 200 silently delivered "100 200" with nothing reported.
+    aggregate() already raised for the same mistake; combine() now matches it."""
+    from docweave.engine import transforms as T
+    from docweave.engine import values as V
+
+    a, b = V.Value(V.DEC, "100", "100"), V.Value(V.DEC, "200", "200")
+    assert T.combine([a, b], "sum").text == "300"
+    assert T.combine([a, b], "concat", " ").text == "100 200"
+    assert T.combine([a, b], "newline").text == "100\n200"
+
+    for bad in ("sumn", "SUM", "add", "", "join"):
+        with pytest.raises(T.TransformError) as e:
+            T.combine([a, b], bad)
+        assert "不支持的合并方式" in str(e.value) and "concat / newline / sum" in str(e.value)
+
+    for bad in ("sumn", "SUM", "concat"):        # the aggregate side must stay consistent
+        with pytest.raises(T.TransformError):
+            T.aggregate([a, b], bad)
+    assert T.aggregate([a, b], "join", "、").text == "100、200"      # join is an aggregate op, not a combine one
