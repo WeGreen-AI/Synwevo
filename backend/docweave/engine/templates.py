@@ -29,6 +29,28 @@ def new_slot_id() -> str:
     return "f" + secrets.token_hex(5)
 
 
+# Enum options on a slot.  An unknown value must be refused, never silently replaced:
+# asking for "error" (block the sample when there are no detail rows) and quietly getting
+# "remove_row" would ship a document the caller expected to be stopped.
+EMPTY_POLICIES = {
+    "table": ("remove_row", "blank_row", "placeholder", "remove_table", "error"),
+    "block": ("remove", "placeholder", "error"),
+    "area": ("blank", "placeholder", "error"),
+}
+ALIGNS = ("left", "center", "right")
+SEPARATORS = ("none", "blank", "page_break")
+OVERFLOWS = ("error", "shrink", "continue")
+
+
+def _enum(req: dict, key: str, allowed: tuple[str, ...], default: str) -> str:
+    v = req.get(key)
+    if v is None:
+        return default
+    if v not in allowed:
+        raise TemplateError("bad_value", f"{key} 只能是 {' / '.join(allowed)}；收到「{v}」")
+    return v
+
+
 def _base_slot(name: str, kind: str, **kw) -> dict:
     d = {"id": new_slot_id(), "name": (name or "字段").strip()[:80], "kind": kind, "data_type": "auto",
          "required": False, "format": [], "default": None}
@@ -95,7 +117,7 @@ def docx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
             hdr = [dc.cell_text(tc) for tc in dc.iter_cells(rows[ri - 1])] if ri > 0 else []
             columns = []
             slot = _base_slot(name, "repeat", locator={"part": part, "table_path": req["table_path"], "row": ri},
-                              header_rows=header_rows, empty_policy=req.get("empty_policy", "remove_row"),
+                              header_rows=header_rows, empty_policy=_enum(req, "empty_policy", EMPTY_POLICIES["table"], "remove_row"),
                               placeholder=req.get("placeholder", "（无）"), repeat_header=bool(req.get("repeat_header", True)))
             for ci, tc in enumerate(dc.iter_cells(tr)):
                 key = f"c{ci}"
@@ -112,9 +134,9 @@ def docx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
         elif kind == "repeat_block":
             from . import docx_blocks as db
             slot = _base_slot(name, "repeat", locator={"part": part, "first": req["first"], "last": req["last"], "block": True},
-                              block=True, empty_policy=req.get("empty_policy") if req.get("empty_policy") in ("remove", "placeholder", "error") else "remove",
+                              block=True, empty_policy=_enum(req, "empty_policy", EMPTY_POLICIES["block"], "remove"),
                               placeholder=req.get("placeholder", "（无）"),
-                              separator=req.get("separator") if req.get("separator") in ("none", "blank", "page_break") else "none")
+                              separator=_enum(req, "separator", SEPARATORS, "none"))
             try:
                 sdt = db.wrap_blocks(container, req["first"], req["last"], dc.TAG_PREFIX + slot["id"], slot["name"])
                 slot["columns"] = db.auto_columns(sdt, slot["id"]) if req.get("auto_columns", True) else []
@@ -363,7 +385,7 @@ def xlsx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
             cols.append({"key": f"c{c}", "name": hname or f"{tabular.col_letter(c)}列", "col": c,
                          "original_text": x.get_cell(sheet, row, c)["text"]})
         slot = _base_slot(name, "repeat", locator={"sheet": sheet, "row": row, "c1": c1, "c2": c2},
-                          header_row=header_row, columns=cols, empty_policy=req.get("empty_policy", "remove_row"),
+                          header_row=header_row, columns=cols, empty_policy=_enum(req, "empty_policy", EMPTY_POLICIES["table"], "remove_row"),
                           placeholder=req.get("placeholder", "（无）"))
         x.set_defined_name("_dw_" + slot["id"], sheet, tabular.range_ref(row, c1, row, c2))
     else:
@@ -612,7 +634,7 @@ def _pdf_repeat_slot(page, rect, req: dict, slots: list[dict]) -> dict:
     for i, c in enumerate(lay.get("cols") or auto["cols"]):
         cols.append({"key": f"c{i}", "name": (str(c.get("name") or "").strip() or f"第{i + 1}列")[:40],
                      "x0": round(float(c["x0"]), 2), "x1": round(float(c["x1"]), 2),
-                     "align": c.get("align") if c.get("align") in ("left", "center", "right") else "left"})
+                     "align": _enum(c, "align", ALIGNS, "left")})
     layout = {"trot": auto["trot"], "trect": trect, "cols": cols,
               "row_height": round(float(lay.get("row_height") or auto["row_height"]), 2),
               "font_size": float(req.get("font_size") or auto["font_size"])}
@@ -643,10 +665,10 @@ def _pdf_repeat_slot(page, rect, req: dict, slots: list[dict]) -> dict:
                       locator={"page": page.number, "rect": [round(x, 2) for x in urect], "page_size": [page.mediabox.width, page.mediabox.height],
                                "rotation": page.rotation},
                       layout=layout, columns=[{"key": c["key"], "name": c["name"]} for c in cols],
-                      overflow=req.get("overflow") if req.get("overflow") in ("error", "shrink", "continue") else "error",
+                      overflow=_enum(req, "overflow", OVERFLOWS, "error"),
                       min_row_scale=min(1.0, max(0.3, float(req.get("min_row_scale", 0.5)))), font_size=layout["font_size"],
                       min_font_size=float(req.get("min_font_size", 5)), clear=clear,
-                      empty_policy=req.get("empty_policy") if req.get("empty_policy") in ("blank", "placeholder", "error") else "blank",
+                      empty_policy=_enum(req, "empty_policy", EMPTY_POLICIES["area"], "blank"),
                       placeholder=req.get("placeholder", "（无）"), original_text=pe.join_words(pe.words_in_rect(page, urect))[:200],
                       capacity=pr.capacity(trect, layout["row_height"]), color=_valid_hex(req.get("color")) or color, fill=fill)
     if partial:

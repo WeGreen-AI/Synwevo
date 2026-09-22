@@ -15,6 +15,12 @@ import json
 from lxml import etree
 
 from . import values as V
+
+
+def _tpl_enum(req: dict) -> str:
+    from .templates import EMPTY_POLICIES, _enum
+    return _enum(req, "empty_policy", EMPTY_POLICIES["table"], "remove_row")
+
 from .ooxml import NS, Package
 
 A = NS["a"]
@@ -356,7 +362,7 @@ def pptx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
             cols = [{"key": f"c{ci}", "name": (hdr[ci].strip() if ci < len(hdr) and hdr[ci].strip() else f"第{ci + 1}列"), "col": ci,
                      "original_text": cell_text(tc)} for ci, tc in enumerate(rows[ri].findall(a("tc")))]
             slot = _base_slot(name, "repeat", locator={**loc, "row": ri}, columns=cols,
-                              empty_policy=req.get("empty_policy", "remove_row"), placeholder=req.get("placeholder", "（无）"))
+                              empty_policy=_tpl_enum(req), placeholder=req.get("placeholder", "（无）"))
         else:
             r1, c1, r2, c2 = int(req["r1"]), int(req["c1"]), int(req["r2"]), int(req["c2"])
             slot = _base_slot(name, "region", locator={**loc, "r1": r1, "c1": c1, "r2": r2, "c2": c2}, rows=r2 - r1 + 1, cols=c2 - c1 + 1)

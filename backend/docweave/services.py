@@ -542,6 +542,17 @@ class App:
                 continue
             if k == "overflow" and val not in ("error", "shrink", "continue"):
                 raise ServiceError(400, "bad_value", "超出处理方式无效")
+            if k == "empty_policy":
+                # the valid set depends on what kind of repeat this slot is
+                kindset = "block" if sl.get("block") else ("area" if sl.get("layout") else "table")
+                allowed = T.EMPTY_POLICIES[kindset]
+                if val not in allowed:
+                    raise ServiceError(400, "bad_value", f"empty_policy 只能是 {' / '.join(allowed)}；收到「{val}」",
+                                       {"field": "empty_policy", "allowed": list(allowed)})
+            if k == "data_type" and val not in ("auto", "text", "number", "date"):
+                raise ServiceError(400, "bad_value", "data_type 只能是 auto / text / number / date", {"field": "data_type"})
+            if k in ("align", "valign") and val not in (("left", "center", "right") if k == "align" else ("top", "middle", "bottom")):
+                raise ServiceError(400, "bad_value", f"{k} 取值无效", {"field": k})
             if k == "overflow" and val == "continue" and r["format"] in ("png", "jpeg"):
                 raise ServiceError(400, "no_continue", "图片模板只有一页，不能复制页面续写；请选择「视为错误」或「压缩行高」")
             if k == "color":
