@@ -34,6 +34,8 @@ THIRD_PARTY = [
     ("lxml", "BSD-3-Clause", "OOXML 直接编辑"),
     ("Pillow", "MIT-CMU (HPND)", "图片处理"),
     ("fontTools", "MIT", "字体子集"),
+    ("argon2-cffi（含 argon2-cffi-bindings、cffi、pycparser）", "MIT",
+     "口令哈希（Argon2id；参数经部署机实测，见 docweave/passwords.py）"),
     ("charset-normalizer", "MIT", "CSV 编码识别"),
     ("xlrd / olefile", "BSD-3-Clause / BSD-2-Clause", "XLS 读取、旧格式检测"),
     ("React / React Router / Vite / TypeScript", "MIT / Apache-2.0", "界面"),

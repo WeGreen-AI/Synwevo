@@ -27,6 +27,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from docweave.auth import SCOPES, Auth  # noqa: E402
+from docweave.identity import Identity, registration_mode  # noqa: E402
+from docweave.passwords import PasswordError  # noqa: E402
+from docweave.services import ServiceError  # noqa: E402
 from docweave.store import Store, now  # noqa: E402
 
 
@@ -74,6 +77,61 @@ def cmd_apikey(args) -> int:
         token, row = auth.create_key(old["name"], old["tenant"], tuple(old["scopes"].split(",")), args.expires_days)
         auth.revoke_key(old["id"])
         print(f"已创建新密钥 {row['id']} 并撤销旧密钥 {old['id']}。新密钥（只显示一次）：\n\n{token}\n")
+        return 0
+    return 1
+
+
+def cmd_bootstrap(args) -> int:
+    """Create the first platform administrator.
+
+    Deliberately a CLI action by whoever controls the deployment, not a web page: the first
+    person to reach a public URL must not be able to make themselves an administrator. There is
+    no default password in this product, so the account is created here with one the operator
+    chooses, or via a single-use token they hand to a browser.
+    """
+    store = Store(data_dir(args))
+    ident = Identity(store)
+
+    if args.action == "status":
+        admins = ident.platform_admins()
+        print(f"平台管理员：{len(admins)} 名" + ("（需要引导）" if not admins else ""))
+        for a in admins:
+            print(f"  {a['email']}\t{a['id']}\t{_ts(a['created_at'])}")
+        print(f"注册模式：{registration_mode()}（DOCWEAVE_REGISTRATION）")
+        return 0
+
+    if args.action == "token":
+        if ident.platform_admins() and not args.force:
+            print("已存在平台管理员；如确需再次引导，请加 --force（旧令牌会失效）")
+            return 1
+        raw = ident.create_bootstrap_token(ttl_s=args.ttl)
+        print("一次性引导令牌（只显示一次，%d 秒后过期）：\n\n%s\n" % (args.ttl, raw))
+        print("用法：在浏览器打开服务后按提示粘贴该令牌创建首位管理员。")
+        print("说明：单次使用；生成新令牌会使旧令牌立即失效；过期后需重新生成。")
+        return 0
+
+    if args.action == "admin":
+        if not args.email:
+            print("需要 --email")
+            return 1
+        if ident.platform_admins() and not args.force:
+            print("已存在平台管理员；如确需再加一名，请加 --force")
+            return 1
+        pw = args.password or getpass.getpass(f"为 {args.email} 设置口令：")
+        if not args.password:
+            again = getpass.getpass("再输入一次：")
+            if pw != again:
+                print("两次输入不一致")
+                return 1
+        try:
+            u = ident.create_user(args.email, pw, display_name=args.name,
+                                  status="active", platform_role="admin")
+        except (ServiceError, PasswordError) as e:
+            print(f"未创建：{getattr(e, 'message', str(e))}")
+            return 1
+        print(f"已创建平台管理员 {u['email']}（{u['id']}）。")
+        print("该账户同时拥有一个个人工作空间；历史数据仍在「历史数据（待认领）」空间中，")
+        print("需要在管理后台显式指派后才可访问。")
         return 0
     return 1
 
@@ -312,6 +370,15 @@ def main() -> int:
     k.add_argument("--scopes", default="read,write", help=f"逗号分隔，可选：{','.join(SCOPES)}")
     k.add_argument("--expires-days", type=float, default=None)
     k.set_defaults(func=cmd_apikey)
+
+    b = sub.add_parser("bootstrap", help="建立首位平台管理员（无默认口令）")
+    b.add_argument("action", choices=["status", "token", "admin"])
+    b.add_argument("--email", help="admin：管理员邮箱")
+    b.add_argument("--name", help="admin：显示名称")
+    b.add_argument("--password", help="admin：口令（省略则交互输入，不回显）")
+    b.add_argument("--ttl", type=int, default=900, help="token：有效期秒数（默认 900）")
+    b.add_argument("--force", action="store_true", help="已有管理员时仍继续")
+    b.set_defaults(func=cmd_bootstrap)
 
     u = sub.add_parser("ui-user", help="界面 HTTP Basic 用户")
     u.add_argument("action", choices=["add", "list", "remove"])
