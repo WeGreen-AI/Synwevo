@@ -311,7 +311,10 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   scope TEXT NOT NULL, audience TEXT,
   central_session_id TEXT, workspace_id TEXT,
   issued_at REAL NOT NULL, access_expires_at REAL, refresh_expires_at REAL,
-  revoked_at REAL, revoked_reason TEXT
+  revoked_at REAL, revoked_reason TEXT,
+  -- Refresh rotation lineage. `family_id` is the first token of a grant; presenting a spent
+  -- refresh token revokes the whole family, which is what makes replay detectable at all.
+  family_id TEXT, parent_id TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_tok_session ON oauth_tokens(central_session_id, revoked_at);
 CREATE INDEX IF NOT EXISTS ix_tok_user ON oauth_tokens(user_id, revoked_at);
@@ -394,6 +397,15 @@ V3_COLUMNS = [
     # Archive is separate from `deleted`: deleted is the soft delete (the project 404s), an
     # archived project is still fully usable, just out of the default list.
     ("projects", "archived_at", "REAL"),
+]
+
+# v4's tables are created unconditionally at the end of _migrate (they are pure additions, so
+# they need no version bump). Columns added to those tables afterwards therefore need the same
+# unconditional treatment: a database already stamped v4 never re-enters the `ver <` branch, so
+# putting them in a version-gated list would silently skip every existing install.
+V4_COLUMNS = [
+    ("oauth_tokens", "family_id", "TEXT"),
+    ("oauth_tokens", "parent_id", "TEXT"),
 ]
 
 V2_COLUMNS = [
@@ -488,6 +500,11 @@ class Store:
                 t.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
         c.executescript(SCHEMA_V2)                   # new tables of the current version (idempotent)
         c.executescript(SCHEMA_V4)
+        with self.tx() as t:
+            for table, col, decl in V4_COLUMNS:
+                have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
+                if col not in have:
+                    t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
     @staticmethod
     def _seed_legacy_workspace(t: sqlite3.Connection) -> None:

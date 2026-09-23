@@ -123,6 +123,9 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     # The SPA shell and its assets must load so the login screen can render; every /api/ route
     # behind them still requires the session, so no data rides along with the HTML.
     SPA_PREFIXES = ("/assets/",)
+    # OIDC protocol surface. Not a product feature and not UI: these are the endpoints a relying
+    # party talks to, and each one carries its own authentication.
+    PLATFORM_PREFIXES = ("/oidc/", "/.well-known/")
     SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
     def _session_gate(request: Request, path: str, finish):
@@ -210,7 +213,15 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                 # 200. Only the SPA shell was reachable that way, but an authentication branch
                 # that some paths fall past is not a shape to leave in place.
                 mode = ui_auth_mode()
-                if mode == "session" and not path.startswith("/api/v1"):
+                if any(path.startswith(p) for p in PLATFORM_PREFIXES):
+                    # Protocol endpoints authenticate themselves: /oidc/authorize reads the
+                    # central session cookie and redirects to /login when there is none, and the
+                    # token/userinfo/revoke half authenticates by client credentials and bearer
+                    # token. Putting the legacy Basic prompt in front of them would make the
+                    # account service unusable as an identity provider in `basic` mode, and
+                    # would put an HTTP auth dialog in the middle of a redirect chain.
+                    token = set_tenant("__platform__")
+                elif mode == "session" and not path.startswith("/api/v1"):
                     token = _session_gate(request, path, finish)
                     if isinstance(token, JSONResponse):
                         return token
@@ -684,6 +695,15 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     api.include_router(build_invite_router(identity, sessions, invites, mailer, _audit))
     from .auth_routes import build_mfa_router
     api.include_router(build_mfa_router(identity, sessions, mfa, _audit))
+
+    # ------------------------------------------------------------ platform identity (OIDC provider)
+    # Registered before the SPA catch-all so /oidc/* and /.well-known/* reach real handlers
+    # instead of being served index.html.
+    from ..platform.apps import Apps, bootstrap_docweave
+    from ..platform.routes import build_router as build_oidc_router
+    bootstrap_docweave(store, identity)
+    Apps(store, identity).adopt_existing_members()
+    api.include_router(build_oidc_router(store, identity, sessions, _audit))
 
     # ------------------------------------------------------------ static UI
     dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))

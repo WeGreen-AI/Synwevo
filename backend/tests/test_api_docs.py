@@ -27,6 +27,14 @@ def test_openapi_describes_only_machine_routes_and_needs_auth():
     assert spec["components"]["securitySchemes"]["apiKey"]["scheme"] == "bearer"
     for probe in ("/healthz", "/readyz"):
         assert spec["paths"][probe]["get"]["security"] == []
+    # Component schemas are pruned to what the kept paths reach. FastAPI emits one per route in
+    # the whole app, so without pruning this file describes UI and OIDC request bodies it does
+    # not document — including, once the account service was added, the OIDC form bodies.
+    names = " ".join(spec["components"].get("schemas", {}))
+    assert "oidc" not in names.lower()
+    for name in spec["components"].get("schemas", {}):
+        if name.startswith("Body_"):
+            assert "_api_v1_" in name, f"{name} 属于非 v1 路由，不应出现在机器接口文档中"
 
 
 def test_example_definition_matches_the_documented_shape(api, fixtures):

@@ -1131,38 +1131,6 @@ components:
           title: File
       type: object
       title: Body_upload_file_api_v1_projects__pid__files_post
-    Body_upload_sources_api_projects__pid__sources_post:
-      properties:
-        files:
-          items:
-            type: string
-            contentMediaType: application/octet-stream
-          type: array
-          title: Files
-      type: object
-      required:
-        - files
-      title: Body_upload_sources_api_projects__pid__sources_post
-    Body_upload_template_api_templates_upload_post:
-      properties:
-        file:
-          type: string
-          contentMediaType: application/octet-stream
-          title: File
-        name:
-          anyOf:
-            - type: string
-            - type: "null"
-          title: Name
-        project_id:
-          anyOf:
-            - type: string
-            - type: "null"
-          title: Project Id
-      type: object
-      required:
-        - file
-      title: Body_upload_template_api_templates_upload_post
     Body_upload_template_api_v1_templates_post:
       properties:
         file:

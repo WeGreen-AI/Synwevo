@@ -410,6 +410,32 @@ def _read_from_roots(path: str) -> tuple[bytes, str]:
     raise ServiceError(403, "path_not_allowed", f"路径不在授权目录内（DOCWEAVE_IMPORT_ROOTS）：{path}", {"field": "path"})
 
 
+def _reachable_schemas(spec: dict) -> dict:
+    """The component schemas referenced, directly or transitively, by the kept paths."""
+    schemas = (spec.get("components") or {}).get("schemas") or {}
+
+    def refs(node, out):
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+                out.add(ref.rsplit("/", 1)[1])
+            for v in node.values():
+                refs(v, out)
+        elif isinstance(node, list):
+            for v in node:
+                refs(v, out)
+        return out
+
+    wanted, frontier = set(), refs(spec["paths"], set())
+    while frontier:
+        name = frontier.pop()
+        if name in wanted or name not in schemas:
+            continue
+        wanted.add(name)
+        frontier |= refs(schemas[name], set())
+    return {k: v for k, v in schemas.items() if k in wanted}
+
+
 def openapi_subset(api) -> dict:
     """The OpenAPI document of the machine API (v1 routes and the health probes)."""
     spec = api.openapi()
@@ -426,6 +452,10 @@ def openapi_subset(api) -> dict:
         for op in ops.values():
             if isinstance(op, dict) and path in ("/healthz", "/readyz"):
                 op["security"] = []
+    # Drop schemas no kept path can reach. FastAPI generates a component for every route in the
+    # app, so without this the machine-API document also carried request bodies belonging to the
+    # UI and the OIDC endpoints — routes this file deliberately does not describe.
+    spec["components"]["schemas"] = _reachable_schemas(spec)
     spec["x-generated-at"] = None                       # stable file: no timestamp
     spec.pop("x-generated-at")
     return spec

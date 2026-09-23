@@ -246,24 +246,69 @@ class Grants:
             (now(), reason, row["user_id"], row["client_id"]))
 
     # -------------------------------------------------------------- tokens
-    def issue_tokens(self, *, client: dict, code_row: dict, with_refresh: bool) -> dict:
+    def issue_tokens(self, *, client: dict, code_row: dict, with_refresh: bool,
+                     family_id: str | None = None, parent_id: str | None = None) -> dict:
         access = secrets.token_urlsafe(40)
         refresh = secrets.token_urlsafe(40) if with_refresh else None
         tid = new_id("tok")
         audience = (client.get("audiences") or [None])[0]
         self.store.execute(
             "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,refresh_hash,scope,audience,"
-            "central_session_id,workspace_id,issued_at,access_expires_at,refresh_expires_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "central_session_id,workspace_id,issued_at,access_expires_at,refresh_expires_at,"
+            "family_id,parent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (tid, client["client_id"], code_row["user_id"], _sha(access),
              _sha(refresh) if refresh else None, code_row["scope"], audience,
              code_row["central_session_id"], code_row["workspace_id"], now(),
-             now() + ACCESS_TTL_S, (now() + REFRESH_TTL_S) if refresh else None))
+             now() + ACCESS_TTL_S, (now() + REFRESH_TTL_S) if refresh else None,
+             family_id or tid, parent_id))
         out = {"access_token": access, "token_type": "Bearer", "expires_in": ACCESS_TTL_S,
                "scope": code_row["scope"]}
         if refresh:
             out["refresh_token"] = refresh
         return out
+
+    def rotate_refresh(self, raw: str, *, client: dict) -> tuple[dict, dict]:
+        """Spend a refresh token and issue its successor. Returns (token response, old row).
+
+        Rotation with replay detection, which is the part that makes a long-lived refresh token
+        defensible at all. Each refresh token is single use; presenting a *spent* one means the
+        token leaked — the legitimate holder already has the successor — so the entire family
+        descended from the original grant is revoked rather than just the one presented.
+        """
+        digest = _sha(raw)
+        row = self.store.one("SELECT * FROM oauth_tokens WHERE refresh_hash=?", (digest,))
+        if not row:
+            raise ServiceError(400, "invalid_grant", "刷新令牌无效")
+        if row["client_id"] != client["client_id"]:
+            raise ServiceError(400, "invalid_grant", "刷新令牌不属于该客户端")
+        if row.get("revoked_at"):
+            n = self.revoke_family(row["family_id"] or row["id"], "refresh_replayed")
+            raise ServiceError(400, "invalid_grant",
+                               f"刷新令牌已被使用过，该授权的全部令牌已撤销（{n} 个）")
+        if (row["refresh_expires_at"] or 0) <= now():
+            raise ServiceError(400, "invalid_grant", "刷新令牌已过期")
+
+        with self.store.tx() as t:
+            spent = t.execute(
+                "UPDATE oauth_tokens SET revoked_at=?, revoked_reason='rotated' "
+                "WHERE id=? AND revoked_at IS NULL", (now(), row["id"])).rowcount
+            if not spent:
+                # Lost the race against a concurrent refresh; the winner's successor stands and
+                # this caller must not get a second one.
+                raise ServiceError(400, "invalid_grant", "刷新令牌已被使用")
+
+        out = self.issue_tokens(
+            client=client,
+            code_row={"user_id": row["user_id"], "scope": row["scope"],
+                      "central_session_id": row["central_session_id"],
+                      "workspace_id": row["workspace_id"]},
+            with_refresh=True, family_id=row["family_id"] or row["id"], parent_id=row["id"])
+        return out, row
+
+    def revoke_family(self, family_id: str, reason: str) -> int:
+        return self.store.execute(
+            "UPDATE oauth_tokens SET revoked_at=?, revoked_reason=? "
+            "WHERE family_id=? AND revoked_at IS NULL", (now(), reason, family_id))
 
     def load_access(self, raw: str) -> dict | None:
         r = self.store.one("SELECT * FROM oauth_tokens WHERE access_hash=?", (_sha(raw),))
@@ -316,6 +361,80 @@ class Grants:
             digest = hashlib.sha256(access_token.encode("ascii")).digest()
             claims["at_hash"] = base64.urlsafe_b64encode(digest[:16]).rstrip(b"=").decode()
         return jwt.encode({"alg": ALG, "kid": key["kid"]}, claims, priv).decode("ascii")
+
+
+    # -------------------------------------------------------------- logout token
+    def logout_token(self, *, client: dict, user_id: str, sid: str) -> str:
+        """A back-channel logout token (OIDC Back-Channel Logout 1.0, §2.4).
+
+        Carries `sid` so the client logs out exactly the session that came from this sign-in, and
+        a `jti` so a client can reject duplicates from our retries. It deliberately has **no
+        nonce** — a logout token that could pass as an id_token would be an authentication
+        bypass, and §2.4 makes the absence a validation rule for that reason.
+        """
+        key = self.keys.active()
+        iat = int(time.time())
+        claims = {
+            "iss": issuer(), "sub": user_id, "aud": client["client_id"],
+            "iat": iat, "exp": iat + 120, "jti": new_id("lt"), "sid": sid,
+            "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+        }
+        return jwt.encode({"alg": ALG, "kid": key["kid"], "typ": "logout+jwt"},
+                          claims, json.loads(key["private_jwk"])).decode("ascii")
+
+
+def deliver_logout(url: str, token: str, timeout: float = 3.0) -> tuple[bool, str | None]:
+    """POST a logout token to a client's back-channel endpoint.
+
+    Best effort on purpose. The notification is not the enforcement: the tokens are already
+    revoked in our own database before this is called, so a client that never receives it still
+    fails on its next token check. Treating delivery as the mechanism is how "signed out
+    everywhere" quietly becomes "signed out on whichever apps happened to answer".
+
+    The URL is not attacker-supplied — it comes from a client registration made by CLI — but it
+    is still validated, because a registration mistake should not turn this into a way to make
+    the server issue requests to arbitrary internal addresses.
+    """
+    try:
+        _check_redirect(url)
+    except ServiceError as e:
+        return False, e.message
+    import httpx
+    try:
+        r = httpx.post(url, data={"logout_token": token}, timeout=timeout,
+                       follow_redirects=False,
+                       headers={"Content-Type": "application/x-www-form-urlencoded"})
+        if 200 <= r.status_code < 300:
+            return True, None
+        return False, f"HTTP {r.status_code}"
+    except Exception as e:                                   # network, DNS, TLS, timeout
+        return False, f"{type(e).__name__}: {e}"[:200]
+
+
+def verify_logout_token(raw: str, *, jwks: dict, client_id: str, expected_issuer: str | None = None) -> dict:
+    """Client side: validate a logout token before acting on it.
+
+    Used by DocWeave as a relying party. Every check here is one that, if skipped, lets someone
+    log other people out at will: signature against the issuer's published keys, issuer and
+    audience, freshness, the logout event claim, and the absence of `nonce`.
+    """
+    iss = expected_issuer or issuer()
+    claims = jwt.decode(raw, JsonWebKey.import_key_set(jwks))
+    if claims.get("iss") != iss:
+        raise ServiceError(400, "bad_logout_token", "发行者不匹配")
+    aud = claims.get("aud")
+    if client_id not in ([aud] if isinstance(aud, str) else (aud or [])):
+        raise ServiceError(400, "bad_logout_token", "受众不匹配")
+    if "nonce" in claims:
+        raise ServiceError(400, "bad_logout_token", "登出令牌不得带 nonce")
+    events = claims.get("events") or {}
+    if "http://schemas.openid.net/event/backchannel-logout" not in events:
+        raise ServiceError(400, "bad_logout_token", "缺少后通道登出事件声明")
+    if not claims.get("sid") and not claims.get("sub"):
+        raise ServiceError(400, "bad_logout_token", "登出令牌必须指明 sid 或 sub")
+    if abs(int(time.time()) - int(claims.get("iat") or 0)) > 300:
+        raise ServiceError(400, "bad_logout_token", "登出令牌不在有效时间窗内")
+    return dict(claims)
 
 
 def discovery() -> dict:
