@@ -17,6 +17,7 @@ from fastapi import APIRouter, Body, Request, Response
 
 from ..auth import ui_auth_mode
 from ..identity import Identity, registration_mode
+from ..mfa import TICKET_MAX_ATTEMPTS
 from ..passwords import PasswordError
 from ..services import ServiceError
 from ..sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
@@ -51,7 +52,7 @@ def client_ip(request: Request) -> str:
     return (request.client.host if request.client else "") or "unknown"
 
 
-def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
+def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=None) -> APIRouter:
     r = APIRouter(prefix="/api/auth", tags=["auth"])
 
     def _issue(response: Response, user: dict, *, amr: str, request: Request) -> dict:
@@ -139,9 +140,56 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
                                    {"retry_after": int(res.get("retry_after") or 60)})
             raise ServiceError(401, *_LOGIN_FAILED)
         user = res["user"]
+        if mfa and mfa.enabled_for(user["id"]):
+            # The password is not enough on its own. A ticket carries the fact that it was
+            # correct; it is not a session and cannot become one without the second factor.
+            ticket = tickets.issue(user["id"], user_agent=request.headers.get("user-agent"),
+                                   ip=client_ip(request))
+            f = mfa.factors(user["id"])
+            audit(request, "auth.login", actor_id=user["id"], object_kind="user",
+                  object_id=user["id"], result="ok", meta={"stage": "password", "mfa": True})
+            return {"mfa_required": True, "ticket": ticket,
+                    "methods": {"totp": f["totp"], "recovery": f["recovery_remaining"] > 0}}
         audit(request, "auth.login", actor_id=user["id"], object_kind="user",
               object_id=user["id"], result="ok")
         return _issue(response, user, amr="password", request=request)
+
+    @r.post("/login/mfa")
+    def login_mfa(request: Request, response: Response, body: dict = Body(...)):
+        """Second half of a sign-in. Requires the ticket from /login plus one factor."""
+        raw = (body.get("ticket") or "").strip()
+        code = (body.get("code") or "").strip()
+        recovery = (body.get("recovery_code") or "").strip()
+        t = tickets.load(raw)
+        if not t:
+            # Expired, spent, or out of attempts — all indistinguishable, all mean start again.
+            raise ServiceError(401, "ticket_invalid", "验证已超时或失败次数过多，请重新登录")
+        user = ident.get_user(t["user_id"])
+        if not user or user["status"] != "active":
+            raise ServiceError(401, "ticket_invalid", "验证已超时或失败次数过多，请重新登录")
+
+        used_recovery = False
+        if code and mfa.verify_totp(user["id"], code):
+            amr = "password+totp"
+        elif recovery and mfa.use_recovery_code(user["id"], recovery):
+            amr, used_recovery = "password+recovery", True
+        else:
+            left = TICKET_MAX_ATTEMPTS - tickets.count_failure(raw)
+            audit(request, "auth.login.mfa", actor_id=user["id"], object_kind="user",
+                  object_id=user["id"], result="denied", meta={"remaining": max(0, left)})
+            raise ServiceError(401, "bad_code", "验证码不正确" + (f"，还可尝试 {left} 次" if left > 0 else "，请重新登录"))
+
+        if not tickets.redeem(raw):
+            raise ServiceError(401, "ticket_invalid", "验证已超时，请重新登录")
+        audit(request, "auth.login.mfa", actor_id=user["id"], object_kind="user",
+              object_id=user["id"], result="ok", meta={"amr": amr})
+        out = _issue(response, user, amr=amr, request=request)
+        if used_recovery:
+            # Says it plainly: a spent recovery code is one fewer way back in, and the moment
+            # someone notices is when they are already in the account and can act on it.
+            out["recovery_used"] = True
+            out["recovery_remaining"] = mfa.recovery_remaining(user["id"])
+        return out
 
     @r.post("/logout")
     def logout(request: Request, response: Response):
@@ -320,3 +368,93 @@ def _issue_session(ident: Identity, sessions: Sessions, response: Response, user
     response.set_cookie(CSRF_COOKIE, new_csrf_token(), httponly=False, secure=secure,
                         samesite="lax", path="/")
     return {"user": _public_user(ident, user), "session": {"id": row["id"], "amr": amr}}
+
+
+def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRouter:
+    """Second-factor management for one's own account.
+
+    Every change here is gated on a *recent* re-authentication recorded server-side, scoped to
+    this purpose. Proving yourself to add a factor must not also unlock removing one, and a
+    front-end flag would unlock nothing at all.
+    """
+    from ..passwords import verify as verify_password
+    from ..sessions import REAUTH_SECONDS
+
+    r = APIRouter(prefix="/api/auth/mfa", tags=["auth"])
+    SCOPE = "mfa"
+
+    def _session(request: Request) -> dict:
+        s = getattr(request.state, "session", None)
+        if not s:
+            raise ServiceError(401, "unauthorized", "请先登录")
+        return s
+
+    def _fresh(request: Request) -> dict:
+        s = _session(request)
+        if not Sessions.reauth_fresh(s, SCOPE):
+            raise ServiceError(403, "reauth_required",
+                               "这是敏感操作，请重新输入口令确认", {"scope": SCOPE})
+        return s
+
+    @r.post("/reauth")
+    def reauth(request: Request, body: dict = Body(...)):
+        """Re-prove the password, for this purpose only and for a few minutes."""
+        s = _session(request)
+        user = ident.get_user(s["user_id"])
+        row = ident.store.one("SELECT phc FROM user_passwords WHERE user_id=?", (s["user_id"],))
+        if not user or not row or not verify_password(row["phc"], body.get("password") or ""):
+            audit(request, "auth.reauth", actor_id=s["user_id"], result="denied")
+            raise ServiceError(401, "bad_credentials", "口令不正确")
+        sessions.mark_reauth(s["id"], SCOPE)
+        audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": SCOPE})
+        return {"ok": True, "valid_for_s": REAUTH_SECONDS}
+
+    @r.get("")
+    def state(request: Request):
+        s = _session(request)
+        f = mfa.factors(s["user_id"])
+        return {**f, "reauth_fresh": Sessions.reauth_fresh(s, SCOPE)}
+
+    # ------------------------------------------------------------------ TOTP
+    @r.post("/totp/begin")
+    def totp_begin(request: Request):
+        s = _fresh(request)
+        user = ident.get_user(s["user_id"])
+        out = mfa.begin_totp(s["user_id"], account_label=user["email"])
+        audit(request, "mfa.totp.begin", actor_id=s["user_id"], result="ok")
+        return out
+
+    @r.post("/totp/confirm")
+    def totp_confirm(request: Request, body: dict = Body(...)):
+        s = _fresh(request)
+        mfa.confirm_totp(s["user_id"], body.get("code") or "")
+        audit(request, "mfa.totp.enable", actor_id=s["user_id"], result="ok")
+        # Recovery codes are issued with the first factor, not left for later: the moment MFA
+        # starts mattering is the moment losing the phone starts mattering.
+        codes = mfa.generate_recovery_codes(s["user_id"])
+        return {"ok": True, "recovery_codes": codes}
+
+    @r.post("/totp/disable")
+    def totp_disable(request: Request, body: dict = Body(...)):
+        s = _fresh(request)
+        # Removing a factor is guarded at least as strongly as adding one, and it also takes a
+        # current code: someone who has your unlocked laptop should not be able to strip MFA
+        # without the thing MFA is made of.
+        if not mfa.verify_totp(s["user_id"], body.get("code") or ""):
+            raise ServiceError(400, "bad_code", "请输入当前的动态验证码以确认关闭", {"field": "code"})
+        mfa.disable_totp(s["user_id"])
+        audit(request, "mfa.totp.disable", actor_id=s["user_id"], result="ok")
+        return {"ok": True, **mfa.factors(s["user_id"])}
+
+    # ------------------------------------------------------------------ recovery codes
+    @r.post("/recovery/regenerate")
+    def recovery_regen(request: Request):
+        s = _fresh(request)
+        if not mfa.enabled_for(s["user_id"]):
+            raise ServiceError(409, "no_mfa", "还没有启用任何第二因素，恢复码暂时没有用处")
+        codes = mfa.generate_recovery_codes(s["user_id"])
+        audit(request, "mfa.recovery.regenerate", actor_id=s["user_id"], result="ok",
+              meta={"count": len(codes)})
+        return {"recovery_codes": codes}
+
+    return r

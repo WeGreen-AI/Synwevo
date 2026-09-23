@@ -351,6 +351,15 @@ def cmd_info(args) -> int:
     print(f"监听配置      : DOCWEAVE_HOST={os.environ.get('DOCWEAVE_HOST', '127.0.0.1')} DOCWEAVE_PORT={os.environ.get('DOCWEAVE_PORT', '8765')}")
     print(f"界面鉴权      : DOCWEAVE_UI_AUTH={os.environ.get('DOCWEAVE_UI_AUTH', 'none')}")
     print(f"PDF 引擎      : DOCWEAVE_PDF_ENGINE={os.environ.get('DOCWEAVE_PDF_ENGINE', '(auto)')}")
+    from docweave.mfa import key_is_external
+    from docweave.passwords import parameters as pw_params
+    pp = pw_params()
+    print(f"口令哈希      : argon2id m={pp['memory_kib']}KiB t={pp['time_cost']} p={pp['parallelism']}，并发上限 {pp['concurrency']}")
+    # Where this key lives decides whether encrypting TOTP seeds helps against a stolen database,
+    # so it is printed rather than left for someone to infer from the absence of a warning.
+    print("MFA 种子密钥  : " + ("来自 DOCWEAVE_SECRET（与数据分离）" if key_is_external()
+                                else "取自库内 meta.server_secret —— 与密文同库，"
+                                     "拿到数据库副本即可解出 TOTP 种子；建议设置 DOCWEAVE_SECRET"))
     if ver:
         counts = {t: store.one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in ("projects", "templates", "jobs", "artifacts", "api_keys")}
         print("数据统计      : " + "，".join(f"{k}={v}" for k, v in counts.items()))

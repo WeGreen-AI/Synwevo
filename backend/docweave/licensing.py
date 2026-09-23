@@ -36,6 +36,8 @@ THIRD_PARTY = [
     ("fontTools", "MIT", "字体子集"),
     ("argon2-cffi（含 argon2-cffi-bindings、cffi、pycparser）", "MIT",
      "口令哈希（Argon2id；参数经部署机实测，见 docweave/passwords.py）"),
+    ("PyOTP", "MIT", "TOTP 第二因素"),
+    ("cryptography", "Apache-2.0 或 BSD-3-Clause", "TOTP 种子落地加密（AES-256-GCM）"),
     ("charset-normalizer", "MIT", "CSV 编码识别"),
     ("xlrd / olefile", "BSD-3-Clause / BSD-2-Clause", "XLS 读取、旧格式检测"),
     ("React / React Router / Vite / TypeScript", "MIT / Apache-2.0", "界面"),

@@ -18,6 +18,7 @@ from ..context import UI_TENANT, set_tenant
 from ..identity import Identity
 from ..invites import Invites
 from ..mail import Mailer
+from ..mfa import Mfa, Tickets
 from ..sessions import Sessions
 from ..engine.limits import LIMITS
 from ..jobs import JobService, naming_tokens
@@ -57,6 +58,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     sessions = Sessions(store)
     invites = Invites(store, identity)
     mailer = Mailer(store, start=start_jobs)
+    mfa = Mfa(store)
+    tickets = Tickets(store)
     from ..webhooks import WebhookDispatcher
     hooks = WebhookDispatcher(store, jobs, start=start_jobs)
     app_.on_event = hooks.notify                      # job state changes wake the dispatcher
@@ -73,6 +76,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     api.state.sessions = sessions
     api.state.invites = invites
     api.state.mailer = mailer
+    api.state.mfa = mfa
     api.state.webhooks = hooks
     limiter = rate_limiter(API_RATE_PER_MIN)
 
@@ -113,7 +117,9 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                        # An invitation is for someone who has no account yet, so reading the
                        # landing page and accepting it cannot require being signed in. Preview
                        # is read-only and accept consumes a token that is itself the authority.
-                       "/api/auth/invitations/preview", "/api/auth/invitations/accept"}
+                       "/api/auth/invitations/preview", "/api/auth/invitations/accept",
+                       # the second half of a sign-in: the ticket is the authority here
+                       "/api/auth/login/mfa"}
     # The SPA shell and its assets must load so the login screen can render; every /api/ route
     # behind them still requires the session, so no data rides along with the HTML.
     SPA_PREFIXES = ("/assets/",)
@@ -674,8 +680,10 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
              (request.client.host if request.client else None), _json.dumps(meta or {}, ensure_ascii=False)))
 
     from .auth_routes import build_invite_router, build_router as build_auth_router
-    api.include_router(build_auth_router(identity, sessions, _audit))
+    api.include_router(build_auth_router(identity, sessions, _audit, mfa, tickets))
     api.include_router(build_invite_router(identity, sessions, invites, mailer, _audit))
+    from .auth_routes import build_mfa_router
+    api.include_router(build_mfa_router(identity, sessions, mfa, _audit))
 
     # ------------------------------------------------------------ static UI
     dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))

@@ -238,6 +238,19 @@ CREATE INDEX IF NOT EXISTS ix_audit_at ON audit_events(at);
 CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_events(actor_id, at);
 CREATE INDEX IF NOT EXISTS ix_audit_ws ON audit_events(workspace_id, at);
 
+CREATE TABLE IF NOT EXISTS mfa_tickets (
+  -- Proof that the password step succeeded, held between the two halves of a sign-in.
+  --
+  -- Deliberately not a session row with a flag: anything in `sessions` is one bug away from
+  -- being loadable as an authenticated session, and a half-finished login must never be.
+  -- Short-lived, single-use, and counted — five wrong codes burn it, so a six-digit TOTP cannot
+  -- be ground down inside its window.
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL,
+  user_agent TEXT, ip TEXT
+);
+
 CREATE TABLE IF NOT EXISTS mail_outbox (
   -- Mail is queued here first and sent by a worker, so an invitation is never reported as
   -- "sent" because an API call returned 200. A handler that sends inline has to either block on
