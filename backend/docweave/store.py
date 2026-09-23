@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -86,6 +86,164 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   UNIQUE (event_id, endpoint)
 );
 CREATE INDEX IF NOT EXISTS ix_wh_due ON webhook_deliveries(status, next_attempt_at);
+"""
+
+# v4: identity — accounts, workspaces, memberships, sessions, credentials, invitations, audit.
+#
+# The one decision that shapes everything here: **a workspace id IS the tenant value**. The
+# `tenant` column already exists on projects/templates/jobs and already threads through
+# api_keys, idempotency, job_events and the request ContextVar, so reusing it turns machinery
+# that is already in place into real isolation instead of adding a second parallel concept.
+#
+# It also settles the migration. Every pre-v4 row carries tenant='default', so the legacy data
+# becomes workspace 'default' with **zero row rewrites** — and because that workspace is created
+# with no members, it is invisible to every account by construction. Nobody inherits the old
+# files by registering first; a platform admin has to assign them deliberately. That is a
+# property of the data model, not a check that some future code path could forget.
+#
+# Status columns carry CHECK constraints on purpose: DW-049/050/051 were all silent enum
+# fallbacks, where an unexpected value quietly became the permissive default. Here the database
+# refuses the write instead.
+SCHEMA_V4 = """
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  -- email_key is the normalised (casefolded, trimmed) form and carries uniqueness; email keeps
+  -- what the person typed, for display. Comparing on the raw form would let Alice@x and
+  -- alice@x become two accounts that receive the same mail.
+  email TEXT NOT NULL, email_key TEXT NOT NULL UNIQUE,
+  email_verified_at REAL,
+  display_name TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','active','suspended','pending_delete','deleted')),
+  -- platform_role is NOT a superset of workspace access: a platform admin manages accounts and
+  -- service state and still has no read access to any workspace's documents (docs/security/permissions.md §4.1).
+  platform_role TEXT NOT NULL DEFAULT 'none'
+    CHECK (platform_role IN ('none','operator','admin')),
+  created_at REAL NOT NULL, updated_at REAL NOT NULL, deleted_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS workspaces (
+  -- id doubles as the tenant value on projects/templates/jobs/api_keys.
+  id TEXT PRIMARY KEY, name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'personal' CHECK (kind IN ('personal','org','legacy')),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','frozen','pending_claim','deleted')),
+  created_at REAL NOT NULL, updated_at REAL NOT NULL, created_by TEXT, deleted_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS memberships (
+  workspace_id TEXT NOT NULL, user_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('viewer','editor','admin','owner')),
+  -- viewers may or may not be allowed to take files off the platform; reading and exporting are
+  -- separate permissions (permissions.md §4.2), so this is not implied by the role.
+  can_export INTEGER NOT NULL DEFAULT 0,
+  created_at REAL NOT NULL, updated_at REAL NOT NULL, created_by TEXT,
+  PRIMARY KEY (workspace_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS ix_member_user ON memberships(user_id);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  -- id is the SHA-256 of the cookie value; the cookie itself is never stored, so a database
+  -- read cannot be replayed as a login.
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+  workspace_id TEXT,                      -- the workspace currently selected in this session
+  created_at REAL NOT NULL, last_seen_at REAL NOT NULL,
+  idle_expires_at REAL NOT NULL, absolute_expires_at REAL NOT NULL,
+  -- reauth_at records a *server-side* recent re-authentication. Sensitive actions check this;
+  -- a front-end flag would be worthless (permissions.md §4.2).
+  reauth_at REAL, reauth_scope TEXT,
+  -- amr = which methods were actually used ("password", "password+totp", "passkey_uv").
+  -- Needed because "the user has a passkey" is not the same as "this login was phishing-resistant".
+  amr TEXT NOT NULL DEFAULT '',
+  user_agent TEXT, ip TEXT,
+  revoked_at REAL, revoked_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sess_user ON sessions(user_id, revoked_at);
+
+CREATE TABLE IF NOT EXISTS user_passwords (
+  user_id TEXT PRIMARY KEY,
+  -- A full PHC string: algorithm and parameters travel with the hash, so parameters can be
+  -- raised later and old hashes upgraded on next successful login without a password export.
+  phc TEXT NOT NULL,
+  updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+  credential_id TEXT NOT NULL UNIQUE,     -- base64url of the raw credential id
+  public_key TEXT NOT NULL, sign_count INTEGER NOT NULL DEFAULT 0,
+  transports TEXT, aaguid TEXT, name TEXT,
+  -- uv/backup flags decide whether this authenticator satisfies a multi-factor requirement on
+  -- its own; they are recorded from the ceremony rather than assumed.
+  uv INTEGER NOT NULL DEFAULT 0, backup_eligible INTEGER NOT NULL DEFAULT 0, backup_state INTEGER NOT NULL DEFAULT 0,
+  created_at REAL NOT NULL, last_used_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_wa_user ON webauthn_credentials(user_id);
+
+CREATE TABLE IF NOT EXISTS totp_secrets (
+  user_id TEXT PRIMARY KEY,
+  secret_enc TEXT NOT NULL,               -- encrypted at rest; never returned by any API
+  confirmed_at REAL,                      -- NULL until one real code has been verified
+  last_step INTEGER,                      -- highest accepted time step, so a code cannot be replayed
+  created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recovery_codes (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+  code_hash TEXT NOT NULL,                -- irreversible; nobody, including an admin, can read these back
+  created_at REAL NOT NULL, used_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_rc_user ON recovery_codes(user_id, used_at);
+
+CREATE TABLE IF NOT EXISTS invitations (
+  id TEXT PRIMARY KEY, email_key TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('viewer','editor','admin','owner')),
+  can_export INTEGER NOT NULL DEFAULT 0,
+  token_hash TEXT NOT NULL UNIQUE,
+  invited_by TEXT NOT NULL,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL,
+  accepted_at REAL, accepted_by TEXT, revoked_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_inv_ws ON invitations(workspace_id, accepted_at, revoked_at);
+
+CREATE TABLE IF NOT EXISTS email_tokens (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('verify','reset','email_change')),
+  token_hash TEXT NOT NULL UNIQUE,
+  new_email TEXT, new_email_key TEXT,     -- only for email_change
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_etok_user ON email_tokens(user_id, kind, used_at);
+
+CREATE TABLE IF NOT EXISTS bootstrap_tokens (
+  -- One-shot creation of the first platform admin, from the CLI. Short-lived and single-use, so
+  -- it cannot sit around as a permanent master key; no default password exists anywhere.
+  id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL, used_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
+  at REAL NOT NULL,
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('user','machine','system','anonymous')),
+  actor_id TEXT, workspace_id TEXT,
+  action TEXT NOT NULL, object_kind TEXT, object_id TEXT,
+  result TEXT NOT NULL CHECK (result IN ('ok','denied','error')),
+  request_id TEXT, ip TEXT,
+  -- metadata only: never passwords, tokens, TOTP seeds, recovery codes or document content.
+  meta TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_audit_at ON audit_events(at);
+CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_events(actor_id, at);
+CREATE INDEX IF NOT EXISTS ix_audit_ws ON audit_events(workspace_id, at);
+
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  -- Rate limiting and backoff have to survive a restart and be shared across workers, so they
+  -- live here rather than in a per-process dict.
+  bucket TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0,
+  first_at REAL NOT NULL, last_at REAL NOT NULL, blocked_until REAL
+);
 """
 
 # columns added to v1 tables (name, table, definition)
@@ -181,13 +339,41 @@ class Store:
             # is therefore safe AND necessary — gating on `ver < 2` meant a v2 database never
             # received v3's columns and the app then failed with "no such column".
             c.executescript(SCHEMA_V2)
+            c.executescript(SCHEMA_V4)
             with self.tx() as t:
                 for table, col, decl in V2_COLUMNS + V3_COLUMNS:
                     have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                     if col not in have:
                         t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+                self._seed_legacy_workspace(t)
                 t.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
         c.executescript(SCHEMA_V2)                   # new tables of the current version (idempotent)
+        c.executescript(SCHEMA_V4)
+
+    @staticmethod
+    def _seed_legacy_workspace(t: sqlite3.Connection) -> None:
+        """Give the pre-identity data a workspace to belong to — and no members.
+
+        Every row written before v4 carries tenant='default', and a workspace id *is* a tenant
+        value, so one row here adopts all of it without rewriting a single project, template or
+        job. The workspace is created with **zero memberships**, which is the whole point:
+        access is granted by membership, so until a platform admin deliberately assigns this
+        workspace, nobody can reach the historical files — not the first person to register, not
+        anyone who guesses a project id. The rule "old data is not handed to whoever signs up
+        first" is enforced by the absence of a row rather than by a check.
+
+        status='pending_claim' marks it as awaiting that decision. Skipped when there is nothing
+        to adopt, so a fresh install does not get a phantom workspace.
+        """
+        if t.execute("SELECT 1 FROM workspaces WHERE id='default'").fetchone():
+            return
+        has_data = any(t.execute(f"SELECT 1 FROM {tbl} LIMIT 1").fetchone() for tbl in ("projects", "templates"))
+        if not has_data:
+            return
+        ts = now()
+        t.execute("INSERT INTO workspaces (id, name, kind, status, created_at, updated_at, created_by) "
+                  "VALUES ('default', ?, 'legacy', 'pending_claim', ?, ?, NULL)",
+                  ("历史数据（待认领）", ts, ts))
 
     def schema_version(self) -> int:
         """0 means "nothing here yet" — only reachable via ``Store(..., migrate=False)``, which
