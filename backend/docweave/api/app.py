@@ -187,7 +187,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
         return set_tenant(wid or f"__no_workspace__{user['id']}")
 
     # Paths the account service owns. Everything else under /api/ is DocWeave's own workbench.
-    ACCOUNT_PATHS = ("/api/auth/", "/oidc/", "/.well-known/")
+    ACCOUNT_PATHS = ("/api/auth/", "/api/admin/", "/oidc/", "/.well-known/")
     SHARED_PATHS = ("/api/health", "/healthz", "/readyz", "/assets/")
     # The account routes an application still needs about its *own* session: who is signed in,
     # which workspace is selected, and how to leave. Credentials, MFA enrolment, invitations and
@@ -215,10 +215,15 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
         if role == "accounts" and not is_account:
             return "该接口不在账户服务上，请访问应用自身的地址"
         if role in ("app", "portal"):
-            if path.startswith(("/oidc/", "/.well-known/")):
-                return "该接口在账户服务上，请访问账户服务地址"
-            if path.startswith("/api/auth/") and path not in APP_ACCOUNT_PATHS:
-                return "账户与安全设置在账户服务上统一管理，请访问账户服务地址"
+            # Everything the account service owns is refused here, except the handful of routes
+            # an application still needs about its own session. Expressed as "account paths
+            # minus the allow-list" rather than as a list of prefixes to block, so a route added
+            # to the account service later is refused by default instead of quietly reachable —
+            # which is how `/api/admin/` first slipped through on a business role.
+            if any(path.startswith(p) for p in ACCOUNT_PATHS) and path not in APP_ACCOUNT_PATHS:
+                if path.startswith(("/oidc/", "/.well-known/")):
+                    return "该接口在账户服务上，请访问账户服务地址"
+                return "账户、安全与平台管理在账户服务上统一管理，请访问账户服务地址"
         if role == "app" and path.startswith("/api/portal/"):
             return "门户接口在平台门户上，不在业务应用上"
         if role == "portal" and not is_account and not path.startswith("/auth/") \
@@ -770,6 +775,10 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     # ------------------------------------------------------------ platform portal
     from .portal_routes import build_router as build_portal_router
     api.include_router(build_portal_router(store, identity, sessions, _audit))
+
+    # ------------------------------------------------------------ platform administration
+    from .admin_routes import build_router as build_admin_router
+    api.include_router(build_admin_router(store, identity, sessions, _audit))
 
     # ------------------------------------------------------------ static UI
     dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))

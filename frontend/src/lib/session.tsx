@@ -14,6 +14,8 @@ export interface Me {
   status: string;
   platform_role: "none" | "operator" | "admin";
   workspaces: { id: string; name: string; kind: string; role: string; can_export: boolean }[];
+  /** The workspace this session is currently acting in; null when none is selected. */
+  workspace_id?: string | null;
   session?: { id: string; amr: string };
 }
 
@@ -29,6 +31,8 @@ export interface AuthState {
   role?: string;
   /** Server-controlled "back" target from the account pages; empty when there is no portal. */
   portal_url?: string;
+  /** Where the account and security pages live: this app's own, or the account service's. */
+  account_url?: string;
 }
 
 interface Ctx {

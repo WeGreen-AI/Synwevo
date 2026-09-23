@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PlatformNav } from "../components/PlatformNav";
 import { Link, useNavigate } from "react-router-dom";
 import { del, get, patch, post } from "../lib/api";
 import { fmtTime, useDialog, useToast } from "../lib/ui";
@@ -103,6 +104,7 @@ export default function Home() {
       <div className="topbar">
         <span className="brand"><span className="logo">W</span>DocWeave 数据映射与模板批量生成</span>
         <span className="spacer" />
+        <PlatformNav />
         <Link className="btn ghost" to="/capabilities">格式能力矩阵</Link>
         <Link className="btn ghost" to="/about">关于与许可</Link>
         <button className="btn primary" onClick={create}>＋ 新建项目</button>

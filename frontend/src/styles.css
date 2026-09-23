@@ -104,6 +104,8 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .grow { flex: 1 1 auto; min-width: 0; }
 .spacer { flex: 1; }
 .wrap { flex-wrap: wrap; }
+/* Generic small text. `.btn.sm` etc. size controls; this sizes prose beside them. */
+.sm { font-size: 12px; }
 .gap4 { gap: 4px; } .gap12 { gap: 12px; } .gap16 { gap: 16px; }
 .mt8 { margin-top: 8px; } .mt12 { margin-top: 12px; } .mt16 { margin-top: 16px; } .mb8 { margin-bottom: 8px; }
 .hidden { display: none !important; }

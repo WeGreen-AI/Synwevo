@@ -29,6 +29,10 @@ COOKIE_NAME = "dw_session"
 CSRF_COOKIE = "dw_csrf"
 CSRF_HEADER = "X-DocWeave-CSRF"
 
+# What a re-authentication can be *for*. A closed set on purpose: the empty scope satisfies
+# every check, so it must never be something a request can ask for.
+REAUTH_SCOPES = ("mfa", "admin")
+
 # Defaults chosen for a document tool people keep open while they work; overridable per deployment.
 IDLE_SECONDS = int(os.environ.get("DOCWEAVE_SESSION_IDLE_S", str(12 * 3600)))
 ABSOLUTE_SECONDS = int(os.environ.get("DOCWEAVE_SESSION_ABSOLUTE_S", str(30 * 24 * 3600)))
@@ -154,17 +158,26 @@ class Sessions:
                            (now(), scope, session_id))
 
     @staticmethod
-    def reauth_fresh(session: dict, scope: str) -> bool:
+    def reauth_fresh(session: dict, scope: str, *, strict: bool = False) -> bool:
         """Did this session re-authenticate recently, for this purpose?
 
         The scope check is the point. Proving yourself to add a passkey should not leave a window
         in which deleting the workspace is also unlocked, so a stored scope only satisfies the
         same scope — or an empty stored scope, which is what a fresh login grants.
+
+        `strict` drops that last allowance: the person must have deliberately re-entered their
+        password *for this purpose*, not merely have signed in a moment ago. Used for the
+        operations where the prompt is the point — reassigning who owns a body of documents,
+        suspending an account, changing a platform role. Without it the confirmation an
+        administrator sees would be one they could silently never be shown, which is a
+        confirmation in name only.
         """
         at = session.get("reauth_at")
         if not at or now() - at > REAUTH_SECONDS:
             return False
         stored = session.get("reauth_scope") or ""
+        if strict:
+            return stored == scope
         return stored in ("", scope)
 
     def set_workspace(self, session_id: str, workspace_id: str | None) -> None:

@@ -52,6 +52,13 @@ def client_ip(request: Request) -> str:
     return (request.client.host if request.client else "") or "unknown"
 
 
+def _account_url(role: str) -> str:
+    if role in ("accounts", "all", ""):
+        return "/account"
+    from ..rp import issuer
+    return issuer().rstrip("/") + "/account"
+
+
 def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=None) -> APIRouter:
     r = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -111,7 +118,11 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
                 # Where "back" goes from the account pages. Server-controlled: a return target
                 # the page took from a query string would be an open redirect on the one origin
                 # that must never have one.
-                "portal_url": os.environ.get("DOCWEAVE_PORTAL_URL") or ""}
+                "portal_url": os.environ.get("DOCWEAVE_PORTAL_URL") or "",
+                # Where the account and security pages live. On a relying party that is the
+                # account service; on a single-process install it is this app's own page. Given
+                # by the server so no client has to assemble it from an issuer string.
+                "account_url": _account_url(role)}
 
     @r.post("/bootstrap")
     def bootstrap(request: Request, response: Response, body: dict = Body(...)):
@@ -225,7 +236,34 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         if not user:
             raise ServiceError(401, "unauthorized", "请先登录")
         return {**_me(user, ident.workspaces_for(user["id"])),
+                # Which workspace this session is acting in. The page needs it to show the
+                # switcher's current value; without it the switcher would guess, and guessing
+                # wrong tells someone they are in a tenant they are not.
+                "workspace_id": s.get("workspace_id"),
                 "session": {"id": s["id"], "amr": s["amr"]}}
+
+    @r.post("/reauth")
+    def reauth(request: Request, body: dict = Body(...)):
+        """Re-prove the password for one named purpose, for a few minutes.
+
+        The scope comes from a closed set. A client-chosen string would let a page ask for
+        `scope=""`, which satisfies every check — the one value that must not be requestable.
+        """
+        from ..passwords import verify as verify_password
+        from ..sessions import REAUTH_SECONDS, REAUTH_SCOPES
+        s = _require_session(request)
+        scope = (body.get("scope") or "").strip()
+        if scope not in REAUTH_SCOPES:
+            raise ServiceError(400, "bad_scope", f"未知的重认证用途 {scope!r}")
+        user = ident.get_user(s["user_id"])
+        row = ident.store.one("SELECT phc FROM user_passwords WHERE user_id=?", (s["user_id"],))
+        if not user or not row or not verify_password(row["phc"], body.get("password") or ""):
+            audit(request, "auth.reauth", actor_id=s["user_id"], result="denied",
+                  meta={"scope": scope})
+            raise ServiceError(401, "bad_credentials", "口令不正确")
+        sessions.mark_reauth(s["id"], scope)
+        audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": scope})
+        return {"ok": True, "scope": scope, "valid_for_s": REAUTH_SECONDS}
 
     # ------------------------------------------------------------------ sessions
     @r.get("/sessions")

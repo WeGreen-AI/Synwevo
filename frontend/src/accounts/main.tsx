@@ -18,6 +18,7 @@ import { initTheme } from "../lib/theme";
 import Login from "../pages/Login";
 import Account from "../pages/Account";
 import Invite from "../pages/Invite";
+import Admin from "./Admin";
 import "../styles.css";
 
 initTheme();
@@ -49,6 +50,10 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/invite" element={<Invite />} />
               <Route path="/logged-out" element={<SignedOut />} />
               <Route path="/account" element={<RequireSession><Account /></RequireSession>} />
+              {/* The route exists for everyone; the server answers 404 to a non-administrator,
+                  and the page renders that same answer. Access control is on the route, not on
+                  whether a link is drawn. */}
+              <Route path="/admin" element={<RequireSession><Admin /></RequireSession>} />
               {/* There is no home page here. Someone who arrives at the root either has an
                   account to manage or needs to sign in; both are one redirect away. */}
               <Route path="/" element={<RequireSession><Navigate to="/account" replace /></RequireSession>} />
