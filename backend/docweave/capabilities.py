@@ -14,6 +14,19 @@ from .engine.converters import soffice_path, soffice_version
 from .engine.ocr import available_langs, tesseract_path
 
 
+def _pymupdf_installed() -> bool:
+    from .licensing import pymupdf_installed
+    return pymupdf_installed()
+
+
+def _engine_license(engine: str) -> str:
+    if engine == "pymupdf":
+        return "AGPL-3.0 或 Artifex 商业许可"
+    if _pymupdf_installed():
+        return "引擎 Apache-2.0 / BSD-3-Clause；但本部署仍安装了 PyMuPDF（AGPL-3.0），义务仍适用"
+    return "Apache-2.0 / BSD-3-Clause"
+
+
 def capability_report() -> dict:
     lo = bool(soffice_path())
     tess = bool(tesseract_path())
@@ -48,7 +61,12 @@ def capability_report() -> dict:
             r["processing"] = "服务端本地（pypdfium2，Apache-2.0 / BSD-3）" + ("" if "Tesseract" not in r["processing"] else " + Tesseract")
     return {"rows": rows, "environment": {"libreoffice": soffice_version() if lo else None, "tesseract": tesseract_path(),
                                           "ocr_languages": langs, "pdf_engine": pdf_engine.ENGINE,
-                                          "pdf_engine_license": "AGPL-3.0 或 Artifex 商业许可" if pdf_engine.ENGINE == "pymupdf" else "Apache-2.0 / BSD-3-Clause"},
+                                          # The engine says which code runs; it says nothing about what is
+                                          # installed. Reporting "Apache-2.0 / BSD-3-Clause" while the AGPL
+                                          # MuPDF binary ships in the same image is a false licensing claim,
+                                          # so the AGPL component is reported separately. See licensing.about().
+                                          "pdf_engine_license": _engine_license(pdf_engine.ENGINE),
+                                          "agpl_component_installed": _pymupdf_installed()},
             "legend": {"verified": "已实现并有自动化测试", "conversion": "经 LibreOffice 转换（可能有损，已提示）", "partial": "有限支持（见说明）",
                        "unavailable": "功能已实现但本机缺少依赖或当前部署未启用", "no": "不支持"}}
 

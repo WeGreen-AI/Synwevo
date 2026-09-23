@@ -65,3 +65,40 @@ def test_all_declared_columns_exist_after_migration(tmp_path):
     for table, col, _ in V2_COLUMNS + V3_COLUMNS:
         cols = {r["name"] for r in s.all(f"PRAGMA table_info({table})")}
         assert col in cols, f"{table}.{col} 缺失"
+
+
+def test_info_style_open_does_not_upgrade_the_directory(tmp_path):
+    """Store(migrate=False) must leave an old data directory exactly as it found it.
+
+    `manage.py info` is what the upgrade docs tell you to run to check a schema version, and it
+    used to migrate v2 -> v3 in place just by opening. Pointed at a backup, that rewrites the
+    backup you were about to verify.
+    """
+    import sqlite3
+    from docweave.store import SCHEMA_VERSION, Store
+
+    d = tmp_path / "old"
+    Store(d)                                             # create at the current version
+    db = d / "docweave.sqlite3"
+    con = sqlite3.connect(db)
+    con.execute("UPDATE meta SET value='2' WHERE key='schema_version'")
+    con.commit()
+    con.close()
+
+    before = (db.read_bytes(), sqlite3.connect(db).execute(
+        "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0])
+    assert before[1] == "2"
+
+    s = Store(d, migrate=False)
+    assert s.schema_version() == 2, "只读打开不应升级"
+    after = sqlite3.connect(db).execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
+    assert after == "2", "目录被 info 式打开改写了"
+
+    # and a normal open still upgrades, so the real startup path is unaffected
+    assert Store(d).schema_version() == SCHEMA_VERSION
+
+
+def test_info_style_open_on_an_empty_directory_reports_zero(tmp_path):
+    """migrate=False may be pointed at a directory with no database at all."""
+    from docweave.store import Store
+    assert Store(tmp_path / "nothing", migrate=False).schema_version() == 0

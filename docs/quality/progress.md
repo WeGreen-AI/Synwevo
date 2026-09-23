@@ -53,6 +53,8 @@
 * **版式（§3）**：`fit` 只按页数验收，不检查字段丢失/裁切/重叠；报告的 `factor` 是请求的步进值而非 clamp 后的实际值；**被测量的字节与被交付的字节不是同一份**；失败时版式报告被丢弃（恰恰是最需要它的时候）。
 * **首页（§6.2）**：无搜索/排序/分页/虚拟滚动；卡片不可键盘访问；中文界面里直接显示英文枚举 `completed_with_errors`；失败任务与取消/部分失败同为琥珀色；`per_block` 不在标签表内；列表接口对 40 个项目要 81 次 SQLite 往返。归档需要新列（`deleted` 已被软删除占用）。
 * **测试污染（§6.1）**：真实数据目录是 `<repo>/data`，共 68 个项目；其中 36 个没有任何任务，**无法追溯来源**；另有 3 个测试命名的项目被用户在脚本运行数小时后手工改动过——**不能删**。2157 个 blob 引用指向 694 个去重 blob，回收磁盘需要全局 mark-and-sweep。
+  **⚠ 这 2157/694 只数了 6 个直接列**（`source_files.{blob,parsed_blob,working_blob}`、`templates.original_blob`、`template_versions.working_blob`、`artifacts.blob`）。另有两类引用藏在 JSON 里，按列扫描看不见：`jobs.snapshot` 的 `$.template.working_blob` / `$.template.fill_options.image.original_blob` / `$.sources[*].{blob,working_blob,parsed_blob}`（真实库里另有 126 处引用、38 个去重 blob），以及 `templates.info.$.image.original_blob`（每个图片模板都会写）。**按 6 列做 mark-and-sweep 会删掉快照仍在引用的 blob，任务重跑/重试随之失效。**
+  另外三点在实现前必须处理：① 248 个 blob 被多个项目共享（63/69 个项目都有共享 blob），所以只能按可达性回收，不能按归属级联删除；② `put_blob` 先写文件、后提交引用行，且内容重复时**不重写文件**，所以 mtime 是首次写入时间、永远不更新——真实库里 131 个 blob 在首次写入 1 小时后才获得新引用，单靠 mtime 宽限期判断陈旧是错的；③ `idempotency.request_hash` 与 `api_keys.secret_hash` 也是 64 位十六进制但不是 blob id，全表正则扫描会误标。安全做法：先列磁盘、再读引用、mtime 宽限、在 `BEGIN IMMEDIATE` 内复核候选集、用改名隔离而非直接删除。
 
 ## 剩余事项（按价值排序）
 

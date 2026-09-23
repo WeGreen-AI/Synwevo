@@ -107,3 +107,38 @@ def test_missing_font_raises_an_actionable_error(monkeypatch):
     with pytest.raises(fonts.NoCJKFont) as e:
         fonts.require_cjk_font()
     assert "DOCWEAVE_CJK_FONT_FILE" in str(e.value) and "文件路径" in str(e.value)
+
+
+def test_drawn_width_matches_measured_width_at_fractional_sizes():
+    """The shrink ladder lands on fractions, and a box is cleared to exactly the measured width.
+
+    RasterFont used to measure at the exact float size but rasterise at int(round(size)), so at
+    13.5 it measured 189px, drew 196px, and overran the box it had just reported fitting — text
+    clipped in a delivered document, with nothing in the result saying so.
+    """
+    f = RasterFont()
+    text = "示例收货方名称示例收货方名称"
+    for size in (9.7, 11.25, 12.0, 13.5, 17.3):
+        measured = f.width(text, size)
+        drawn = f._pil(size).getlength(text)
+        assert abs(drawn - measured) <= 0.5, (size, measured, drawn)
+
+
+def test_drawn_ink_is_as_wide_as_it_was_measured_to_be():
+    """The overflow does not spill — draw_box's mask is sized to the layout, so oversized glyphs
+    are cut off at the edge instead. That makes the damage invisible in the result dict: the fill
+    reports ok, and the document quietly ends up with the tail of a value missing.
+
+    So the property to pin is that the ink really is the width it was measured as. At 13.5 the
+    old int-rounded font drew 196px of ink for 189px of measurement."""
+    from PIL import Image
+    f = RasterFont()
+    text = "示例收货方名称示例收货方名称"      # long enough that a 0.5px/char error is unambiguous
+    size = 13.5
+    measured = f.width(text, size)
+    box = (20, 20, 20 + int(measured) + 80, 20 + int(f.line_height(size)) + 20)   # generous: no clipping
+    im = Image.new("RGB", (box[2] + 40, box[3] + 40), (255, 255, 255))
+    assert draw_box(im, box, text, font=f, font_size=size, min_font_size=6, color=(0, 0, 0))["ok"]
+    ink = im.convert("L").point(lambda v: 255 - v).getbbox()
+    assert ink is not None
+    assert abs((ink[2] - ink[0]) - measured) <= 3, (ink[2] - ink[0], measured)

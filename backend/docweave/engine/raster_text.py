@@ -68,7 +68,12 @@ class RasterFont:
 
     @functools.lru_cache(maxsize=64)  # noqa: B019 - bounded by the sizes a template uses
     def _pil(self, size: float) -> ImageFont.FreeTypeFont:
-        return ImageFont.truetype(self.path, size=max(1, int(round(size))))
+        # Measure and draw at the SAME size.  This used to round to an int while width() kept
+        # measuring at the exact float, so a shrink ladder that stopped at 13.5 measured 189px,
+        # drew 196px and ran 7px past the edge it had just been told it fitted inside — silent
+        # clipping in a delivered document, worst in narrow table cells where the ladder ends on
+        # a fraction. Pillow takes a float size (pinned 12.3.0), so there is nothing to round.
+        return ImageFont.truetype(self.path, size=max(1.0, float(size)))
 
     def advance(self, ch: str, size: float) -> float:
         return self.m.advances.get(ord(ch), self._fallback) * size

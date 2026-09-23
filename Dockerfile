@@ -19,6 +19,14 @@ COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 COPY backend/ backend/
 COPY --from=ui /ui/dist frontend/dist
+# AGPL-3.0 §13: /api/source-code serves the Corresponding Source of the *running* program, built
+# from these files. Without them the archive silently shipped the backend alone while claiming to
+# hold the frontend, scripts and docs. The frontend source is part of what a network user runs.
+COPY frontend/src frontend/src
+COPY frontend/index.html frontend/package.json frontend/package-lock.json frontend/tsconfig.json frontend/vite.config.ts frontend/
+COPY scripts/ scripts/
+COPY docs/ docs/
+COPY README.md Dockerfile docker-compose.yml ./
 RUN useradd -m docweave && mkdir -p /data && chown docweave /data
 USER docweave
 VOLUME ["/data"]

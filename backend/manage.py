@@ -279,14 +279,23 @@ def cmd_projects(args) -> int:
 
 def cmd_info(args) -> int:
     d = data_dir(args)
-    store = Store(d)
+    store = Store(d, migrate=False)          # inspect only: never upgrade the directory being looked at
     print(f"数据目录      : {Path(d).resolve()}")
-    print(f"数据库        : {store.db_path}（schema v{store.schema_version()}）")
+    from docweave.store import SCHEMA_VERSION
+    ver = store.schema_version()
+    if not ver:
+        note = "（尚未初始化，启动服务后创建）"
+    elif ver < SCHEMA_VERSION:
+        note = f"（本程序为 v{SCHEMA_VERSION}，启动服务时会自动升级）"
+    else:
+        note = ""
+    print(f"数据库        : {store.db_path}（schema v{ver}）{note}")
     print(f"监听配置      : DOCWEAVE_HOST={os.environ.get('DOCWEAVE_HOST', '127.0.0.1')} DOCWEAVE_PORT={os.environ.get('DOCWEAVE_PORT', '8765')}")
     print(f"界面鉴权      : DOCWEAVE_UI_AUTH={os.environ.get('DOCWEAVE_UI_AUTH', 'none')}")
     print(f"PDF 引擎      : DOCWEAVE_PDF_ENGINE={os.environ.get('DOCWEAVE_PDF_ENGINE', '(auto)')}")
-    counts = {t: store.one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in ("projects", "templates", "jobs", "artifacts", "api_keys")}
-    print("数据统计      : " + "，".join(f"{k}={v}" for k, v in counts.items()))
+    if ver:
+        counts = {t: store.one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in ("projects", "templates", "jobs", "artifacts", "api_keys")}
+        print("数据统计      : " + "，".join(f"{k}={v}" for k, v in counts.items()))
     return 0
 
 

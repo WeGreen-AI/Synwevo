@@ -127,7 +127,15 @@ def now() -> float:
 
 
 class Store:
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, migrate: bool = True):
+        """Open the store, migrating the schema forward unless told not to.
+
+        ``migrate=False`` is for looking at a data directory without changing it — checking a
+        backup's schema version, or reading counts before an upgrade. Opening used to migrate
+        unconditionally, which made `manage.py info` (the command the upgrade docs tell you to
+        run to *check* the version) silently rewrite a v2 database to v3 in place. Pointed at a
+        backup, an inspection command that mutates its subject defeats the backup.
+        """
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "blobs").mkdir(exist_ok=True)
@@ -135,6 +143,8 @@ class Store:
         self._local = threading.local()
         self._write_lock = threading.RLock()     # serialises writers inside this process; SQLite locks across processes
         c = self._c()
+        if not migrate:
+            return
         c.executescript(SCHEMA)
         self._migrate(c)
         self._stamp_instance_kind(c)
@@ -180,7 +190,13 @@ class Store:
         c.executescript(SCHEMA_V2)                   # new tables of the current version (idempotent)
 
     def schema_version(self) -> int:
-        return int(self.one("SELECT value FROM meta WHERE key='schema_version'")["value"])
+        """0 means "nothing here yet" — only reachable via ``Store(..., migrate=False)``, which
+        may be pointed at an empty or not-yet-initialised directory."""
+        try:
+            row = self.one("SELECT value FROM meta WHERE key='schema_version'")
+        except sqlite3.OperationalError:
+            return 0
+        return int(row["value"]) if row else 0
 
     # ---------------------------------------------------------------- connection
     def _connect(self) -> sqlite3.Connection:

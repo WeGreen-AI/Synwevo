@@ -1,0 +1,80 @@
+DocWeave —— 第三方组件与许可声明（NOTICE）
+
+本文件列出 DocWeave 运行时使用或分发的第三方组件及其许可。
+本文件由 backend/docweave/licensing.py 的 THIRD_PARTY 表生成，
+两者由 backend/tests/test_licensing.py 保证一致。
+
+注意：本文件不是 DocWeave 自身的许可证。DocWeave 目前没有 LICENSE 文件，
+需由项目所有者选定后添加；在此之前不要假定任何授权条款。
+
+==============================================================================
+
+* PyMuPDF
+    许可：AGPL-3.0 或 Artifex 商业许可
+    用途：PDF 模板、图片模板、PDF 读取（pymupdf 引擎）
+
+* pypdfium2 / PDFium
+    许可：Apache-2.0 或 BSD-3-Clause（绑定）；BSD-3-Clause / Apache-2.0（PDFium）
+    用途：PDF 读取（pdfium 引擎）
+
+* LibreOffice（外部程序）
+    许可：MPL-2.0
+    用途：旧格式转换、PDF 导出、真实分页、公式后备计算
+
+* Tesseract OCR（外部程序）+ chi_sim / eng 模型
+    许可：Apache-2.0
+    用途：扫描件 / 图片本地 OCR
+
+* FastAPI / Starlette / Uvicorn / Pydantic
+    许可：MIT / BSD-3-Clause
+    用途：Web 服务
+
+* openpyxl
+    许可：MIT
+    用途：XLSX 读取与预览
+
+* python-docx / python-pptx
+    许可：MIT
+    用途：DOCX / PPTX 读取与内置模板生成
+
+* lxml
+    许可：BSD-3-Clause
+    用途：OOXML 直接编辑
+
+* Pillow
+    许可：MIT-CMU (HPND)
+    用途：图片处理
+
+* fontTools
+    许可：MIT
+    用途：字体子集
+
+* charset-normalizer
+    许可：MIT
+    用途：CSV 编码识别
+
+* xlrd / olefile
+    许可：BSD-3-Clause / BSD-2-Clause
+    用途：XLS 读取、旧格式检测
+
+* React / React Router / Vite / TypeScript
+    许可：MIT / Apache-2.0
+    用途：界面
+
+* TipTap（开源部分）
+    许可：MIT
+    用途：内置文档编辑器
+
+* Droid Sans Fallback（随 PyMuPDF 分发的字体）
+    许可：Apache-2.0
+    用途：PDF 中文字体
+
+==============================================================================
+
+关于 AGPL-3.0：
+  PyMuPDF 以 AGPL-3.0（或 Artifex 商业许可）分发，其 wheel 中内含 MuPDF 原生二进制。
+  只要镜像中安装了 pymupdf，无论 DOCWEAVE_PDF_ENGINE 选的是哪个引擎，
+  AGPL-3.0 第 13 条的「向网络用户提供对应源代码」义务都适用——
+  换引擎不会把二进制从镜像里拿掉，且图片模板包装页与中文后备字体两处仍会调用它。
+  本服务通过 /api/source-code 提供对应源代码。
+  若要真正不含 AGPL 依赖，请按 backend/requirements-pdfium.txt 构建，且不安装 pymupdf。
