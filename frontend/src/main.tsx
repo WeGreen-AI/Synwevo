@@ -13,6 +13,7 @@ import Capabilities from "./pages/Capabilities";
 import Login from "./pages/Login";
 import Account from "./pages/Account";
 import Invite from "./pages/Invite";
+import { ForgotPassword, ResetPassword } from "./pages/Recover";
 import "./styles.css";
 
 const DocEditor = lazy(() => import("./pages/DocEditor"));
@@ -32,6 +33,9 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/login" element={<Login />} />
               {/* The emailed invitation link lands here; it must render signed out. */}
               <Route path="/invite" element={<Invite />} />
+              {/* Signed out by necessity, same as /login. */}
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/account" element={<RequireSession><Account /></RequireSession>} />
               <Route path="/" element={<RequireSession><Home /></RequireSession>} />
               <Route path="/capabilities" element={<RequireSession><Capabilities /></RequireSession>} />

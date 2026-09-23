@@ -236,6 +236,10 @@ export default function Login() {
           {busy ? "处理中…" : bootstrap ? "创建管理员并登录" : "登录"}
         </button>
 
+        {!bootstrap && (
+          <a className="tiny muted authfoot" href="/forgot-password">忘记口令？</a>
+        )}
+
         {!bootstrap && passkeySupported && (
           <>
             <div className="author" aria-hidden="true"><span>或</span></div>

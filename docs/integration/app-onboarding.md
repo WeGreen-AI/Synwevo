@@ -284,6 +284,26 @@ python backend/manage.py keys retire --kid k_xxx   # 等最长令牌有效期过
 
 ---
 
+## 6.1 找回口令与邮箱验证
+
+```bash
+# 本机用投递目录，不发真信
+export DOCWEAVE_MAIL_MODE=file
+export DOCWEAVE_MAIL_DIR=./data/mail
+export DOCWEAVE_PUBLIC_URL=http://accounts.localhost:8770
+```
+
+`DOCWEAVE_PUBLIC_URL` 是必须的：邮件里的链接不能从请求的 Host 推导，否则目标地址由攻击者控制
+而令牌在真实主机上仍然有效。
+
+流程的三条规则写在 `docs/security/permissions.md` §3.6，最容易做错的两条：
+
+1. **请求重置对任何地址（以及邮件发送失败时）都给同一个答复。** 否则这就是一个无需认证的账户
+   存在性探测器。
+2. **链接不是动作。** 打开链接只读取令牌，消费要第二次明确的 POST——邮件安全扫描器会跟随链接。
+
+**本地投递目录是测试设施，不是生产邮件可送达的证据。** 真实投递、域名与邮件信誉属独立外部条件。
+
 ## 7. 还没有做的
 
 按「本轮已验证完成 / 只在合成样本验证 / 仍需外部条件」如实记录，见

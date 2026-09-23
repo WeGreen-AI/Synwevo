@@ -20,7 +20,9 @@ from ..identity import Identity, registration_mode
 from ..mfa import TICKET_MAX_ATTEMPTS
 from ..passwords import PasswordError
 from ..services import ServiceError
+from ..mail import reset_mail as mail_reset, security_notice as mail_notice, verify_mail as mail_verify
 from ..sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
+from ..store import now as now_ts
 
 # Same shape for every failed sign-in attempt, whatever actually went wrong.
 _LOGIN_FAILED = ("bad_credentials", "邮箱或口令不正确")
@@ -452,6 +454,134 @@ def _issue_session(ident: Identity, sessions: Sessions, response: Response, user
     response.set_cookie(CSRF_COOKIE, new_csrf_token(), httponly=False, secure=secure,
                         samesite="lax", path="/")
     return {"user": _public_user(ident, user), "session": {"id": row["id"], "amr": amr}}
+
+
+RESET_TTL_H = 2
+VERIFY_TTL_H = 24
+
+
+def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, mfa,
+                          audit) -> APIRouter:
+    """Forgetting a password, and proving an address.
+
+    Both halves of each flow are deliberately shaped:
+
+    * **Requesting a reset always answers the same way.** Whether or not the address has an
+      account, the response is identical — otherwise this endpoint is an account-existence
+      oracle that needs no authentication at all.
+    * **The link is not the action.** Opening it only *reads* the token; spending it takes a
+      second, deliberate POST. Mail security scanners follow links in messages, and a token
+      consumed by a scanner's GET is a reset the person never asked for and can no longer do.
+    * **A reset is not a sign-in.** It sets the password and ends every session; the person then
+      signs in normally, which means any second factor they have still applies. Signing them in
+      here would make "I forgot my password" a way around their own MFA.
+    """
+    from ..passwords import PasswordError
+    r = APIRouter(prefix="/api/auth", tags=["auth"])
+
+    @r.post("/forgot")
+    def forgot(request: Request, body: dict = Body(...)):
+        email = (body.get("email") or "").strip()
+        same = {"ok": True, "message": "如果这个邮箱有账户，我们已经发送了重置链接。"}
+        if not email:
+            return same
+        user = ident.by_email(email)
+        # Recorded either way, so the audit log shows attempts against addresses with no
+        # account — which is what a scan of this endpoint looks like.
+        if not user or user["status"] not in ("active", "pending"):
+            audit(request, "auth.reset.request", result="denied",
+                  meta={"reason": "no_such_account"})
+            return same
+        token = invites.issue_email_token(user["id"], "reset", ttl_s=RESET_TTL_H * 3600)
+        subject, text = mail_reset(token=token, expires_h=RESET_TTL_H)
+        try:
+            mailer.enqueue(user["email"], subject, text, kind="reset", ref_id=user["id"])
+        except ServiceError as e:
+            # Swallowed *here specifically*, and nowhere else. `enqueue` raises on purpose so an
+            # invitation nobody can receive is not reported as sent — but on this endpoint the
+            # response shape is itself the security property. Letting the refusal through would
+            # answer 503 for an address that has an account and 200 for one that does not,
+            # turning the one endpoint built to resist enumeration into a perfect oracle for it.
+            # The failure is recorded loudly instead of being lost.
+            audit(request, "auth.reset.request", actor_id=user["id"], object_kind="user",
+                  object_id=user["id"], result="error", meta={"mail_error": e.code})
+            return same
+        audit(request, "auth.reset.request", actor_id=user["id"], object_kind="user",
+              object_id=user["id"], result="ok")
+        return same
+
+    @r.get("/reset/preview")
+    def reset_preview(request: Request, token: str = ""):
+        """Read-only, for the landing page. Spending happens on the POST below."""
+        row = invites.peek_email_token(token.strip(), "reset")
+        if not row:
+            raise ServiceError(410, "bad_token", "链接无效或已过期，请重新申请")
+        user = ident.get_user(row["user_id"])
+        if not user:
+            raise ServiceError(410, "bad_token", "链接无效或已过期，请重新申请")
+        return {"email": user["email"], "expires_at": row["expires_at"]}
+
+    @r.post("/reset")
+    def reset(request: Request, body: dict = Body(...)):
+        token = (body.get("token") or "").strip()
+        password = body.get("password") or ""
+        if not token or not password:
+            raise ServiceError(400, "missing_fields", "请提供链接令牌与新口令")
+        row = invites.consume_email_token(token, "reset")
+        user = ident.get_user(row["user_id"])
+        if not user or user["status"] == "suspended":
+            raise ServiceError(403, "account_unavailable", "账户不可用，请联系管理员")
+        try:
+            ident.set_password(user["id"], password)
+        except PasswordError as e:
+            # The token is already spent — it had to be, to make it single use under
+            # concurrency. Say so plainly rather than let someone retype into a dead link.
+            raise ServiceError(400, "weak_password",
+                               f"{e}（这个链接已失效，请重新申请一封邮件）", {"field": "password"}) from None
+
+        # A credential change ends everything that was authorised by the old one.
+        n = sessions.revoke_all_for_user(user["id"], "password_reset")
+        from ..platform.oidc import Grants
+        tokens = Grants(ident.store).revoke_for_user(user["id"], "password_reset")
+        audit(request, "auth.reset.complete", actor_id=user["id"], object_kind="user",
+              object_id=user["id"], result="ok", meta={"sessions": n, "tokens": tokens})
+        try:
+            subject, text = mail_notice(what="口令已重置", when_text="刚刚")
+            mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
+        except Exception:                      # a notice that fails must not undo the reset
+            pass
+        # Deliberately not signed in: the next sign-in goes through the normal path, so a second
+        # factor still applies. Otherwise a reset would be a way around the person's own MFA.
+        return {"ok": True, "sessions_revoked": n,
+                "mfa_required": mfa.enabled_for(user["id"]) if mfa else False}
+
+    @r.post("/verify-email/send")
+    def verify_send(request: Request):
+        s = getattr(request.state, "session", None)
+        if not s:
+            raise ServiceError(401, "unauthorized", "请先登录")
+        user = ident.get_user(s["user_id"])
+        if not user:
+            raise ServiceError(401, "unauthorized", "请先登录")
+        if user.get("email_verified_at"):
+            return {"ok": True, "already_verified": True}
+        token = invites.issue_email_token(user["id"], "verify", ttl_s=VERIFY_TTL_H * 3600)
+        subject, text = mail_verify(token=token, expires_h=VERIFY_TTL_H)
+        mailer.enqueue(user["email"], subject, text, kind="verify", ref_id=user["id"])
+        audit(request, "auth.email.verify_sent", actor_id=user["id"], result="ok")
+        return {"ok": True, "expires_h": VERIFY_TTL_H}
+
+    @r.post("/verify-email")
+    def verify_email(request: Request, body: dict = Body(...)):
+        """A POST, not a GET on the link, for the scanner reason above."""
+        row = invites.consume_email_token((body.get("token") or "").strip(), "verify")
+        ident.store.execute("UPDATE users SET email_verified_at=?, updated_at=? WHERE id=?",
+                            (now_ts(), now_ts(), row["user_id"]))
+        audit(request, "auth.email.verified", actor_id=row["user_id"], object_kind="user",
+              object_id=row["user_id"], result="ok")
+        return {"ok": True}
+
+    return r
 
 
 def build_passkey_router(ident: Identity, sessions: Sessions, passkeys, audit) -> APIRouter:

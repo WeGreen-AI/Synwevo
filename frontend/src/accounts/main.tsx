@@ -18,6 +18,7 @@ import { initTheme } from "../lib/theme";
 import Login from "../pages/Login";
 import Account from "../pages/Account";
 import Invite from "../pages/Invite";
+import { ForgotPassword, ResetPassword } from "../pages/Recover";
 import Admin from "./Admin";
 import "../styles.css";
 
@@ -48,6 +49,10 @@ createRoot(document.getElementById("root")!).render(
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/invite" element={<Invite />} />
+              {/* Both render signed out by necessity: someone who has forgotten their password
+                  cannot sign in to ask for a way back. */}
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/logged-out" element={<SignedOut />} />
               <Route path="/account" element={<RequireSession><Account /></RequireSession>} />
               {/* The route exists for everyone; the server answers 404 to a non-administrator,

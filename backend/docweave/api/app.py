@@ -128,7 +128,11 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                        # A passkey sign-in has no password step before it, so it cannot require
                        # a session; the signed assertion over a server-issued challenge is the
                        # authority. Its challenge endpoint is anonymous for the same reason.
-                       "/api/auth/login/passkey", "/api/auth/passkeys/authenticate/begin"}
+                       "/api/auth/login/passkey", "/api/auth/passkeys/authenticate/begin",
+                       # Someone who has forgotten their password cannot be signed in to ask
+                       # for a way back; the emailed token is the authority for the reset.
+                       "/api/auth/forgot", "/api/auth/reset", "/api/auth/reset/preview",
+                       "/api/auth/verify-email"}
     # The SPA shell and its assets must load so the login screen can render; every /api/ route
     # behind them still requires the session, so no data rides along with the HTML.
     SPA_PREFIXES = ("/assets/",)
@@ -767,6 +771,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     api.include_router(build_invite_router(identity, sessions, invites, mailer, _audit))
     from .auth_routes import build_mfa_router, build_passkey_router
     api.include_router(build_mfa_router(identity, sessions, mfa, _audit))
+    from .auth_routes import build_recovery_router
+    api.include_router(build_recovery_router(identity, sessions, invites, mailer, mfa, _audit))
     from ..passkeys import Passkeys
     passkeys = Passkeys(store)
     api.state.passkeys = passkeys
