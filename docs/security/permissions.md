@@ -112,7 +112,48 @@
 错误详情 · 统计计数 · 任务事件流 · 产物下载 · ZIP 打包 · 结果清单 CSV · 签名链接 ·
 blob id 直取接口 · 临时文件 · 日志导出
 
-> 具体端点清单由 `entry-points` 调查产出后逐条勾选，见 §9。
+### 5.1 已实测的越权清单（授权层必须逐条覆盖）
+
+全部路由共 85 个：3 个探针、62 个 `/api/`（非 v1）界面路由、39 个 `/api/v1`、静态挂载与 SPA 兜底。
+下表**不是**代码阅读推断，而是用 FastAPI TestClient 起两个租户实跑出来的结果：这些端点在
+另一个租户的对象上返回了 200 和真实内容。兄弟端点（`/api/projects/{pid}`、`/api/jobs/{jid}`、
+`/api/artifacts/{aid}`）返回 404，说明检查是**手工逐个写的、漏了一半**。
+
+| 端点 | 拿到什么 |
+|---|---|
+| `GET /api/projects/{pid}/sources` | 他人项目的完整文件清单，含 `sha256` |
+| `GET /api/sources/{sid}/view` | 文档本体（表格单元格 / docx 块 / PDF 元数据 / 幻灯片） |
+| `GET /api/sources/{sid}/download` | 原始上传字节 |
+| `GET /api/sources/{sid}/search?q=` | 全文命中与上下文 |
+| `GET /api/sources/{sid}/page/{n}.png` | 渲染页面图（且是**唯一**设了 `private, max-age=600` 而非 `no-store` 的路由） |
+| `GET /api/sources/{sid}/words/{n}` | 每个词及其坐标，等于整页转写 |
+| `GET /api/jobs/{jid}/items`、`/report.csv` | 逐样本结果与清单 |
+| `GET /api/preview-files/{blob}`、`/view`、`/page/{n}.png` | 存储里的任意字节 |
+| `GET /api/desensitized/{blob}` | 同上（名字是装饰性的） |
+| `GET /api/projects/{pid}/locate?file={sid}` | 用自己的映射去解析**他人**文档，返回逐字段取值 |
+| `DELETE /api/sources/{sid}`、`PUT .../options`、`POST .../ocr` 等 | 修改/删除他人项目的文件 |
+
+**结构性事实：blob 层没有归属。** `views.preview_file(blob)`（`views.py:295`）只问「这个 sha256
+在磁盘上存在吗」，四条路由直接暴露它；而 blob id 本身在普通响应里就发出去了（每个来源文件行和
+每个产物行都带 `sha256`），既不过期也不回收，产品里任何「删除」都不会让它失效（生产代码从未设置
+`artifacts.deleted_at`，项目/来源/模板删除都是软标记）。
+
+> 因此：**任何只给项目加空间过滤、却把这五条 raw-id 路由留在外面的方案，设计上就是可绕过的。**
+> 授权必须落在取数据的那一层，而不只是列表查询的 `WHERE` 里。
+
+### 5.2 已修复
+
+* **鉴权分支漏路径**（本轮修复，`api/app.py`）：`elif path.startswith("/api/") or not
+  path.startswith("/api")` 对「以 `/api` 开头但没有斜杠」的路径两个条件都不满足，网关整个被跳过、
+  `set_tenant` 也没执行。`DOCWEAVE_UI_AUTH=basic` 下 `/` 返回 401，而 `/api`、`/apifoo` 返回 200。
+  实跑复现，改为 `else` 后四条路径全部 401。回归测试 `backend/tests/test_auth_gate.py`。
+
+### 5.3 待处理的不一致
+
+* `/healthz`、`/readyz`、`/api/health` 在 `basic` 模式下返回 **401**，而 `docs/integration/ports.md`
+  与 `openapi_subset`（`v1.py:426`）都声明它们无需鉴权。监控据此配置会全部报警。
+  需要决定：健康检查是否豁免（豁免则泄漏版本与 `instance_kind`），以及 `/readyz` 每次探测都
+  往 `blobs/` 写一个文件是否合适。**本轮未改**，避免在收尾时仓促做暴露面决定。
 
 ## 6. 任务快照与撤权
 

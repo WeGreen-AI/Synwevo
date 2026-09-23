@@ -119,7 +119,16 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                 if not ok:
                     raise ServiceError(429, "rate_limited", f"请求过于频繁（限制 {API_RATE_PER_MIN} 次/分钟）", {"retry_after": wait})
                 token = set_tenant(principal["tenant"])
-            elif path.startswith("/api/") or not path.startswith("/api"):
+            else:
+                # Everything that is not a key-authenticated /api/v1 route goes through the UI
+                # gate — including signed download links, which skip only the Basic check below.
+                #
+                # This used to read `elif path.startswith("/api/") or not path.startswith("/api")`,
+                # and a path beginning with "/api" but lacking the slash satisfied neither
+                # disjunct: the gate was skipped outright and set_tenant never ran. Under
+                # DOCWEAVE_UI_AUTH=basic, "/" returned 401 while "/api" and "/apifoo" returned
+                # 200. Only the SPA shell was reachable that way, but an authentication branch
+                # that some paths fall past is not a shape to leave in place.
                 mode = ui_auth_mode()
                 if mode == "basic" and not path.startswith("/api/v1"):
                     if not auth.check_ui_basic(request.headers.get("Authorization")):
