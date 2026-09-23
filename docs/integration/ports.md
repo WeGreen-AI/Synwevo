@@ -80,17 +80,48 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8765/api/v1/capabilities   # 
 | Tunnel Public Hostname | `dw.wegreen.ltd` → **`http://127.0.0.1:8765`**（必须写 IPv4 字面量，不要写 `localhost`，原因见下） |
 | 界面鉴权 | `DOCWEAVE_UI_AUTH=basic`，用户 `wegreen`（口令仅以 PBKDF2 哈希存储） |
 | PDF 引擎 | `DOCWEAVE_PDF_ENGINE=pymupdf`（功能完整；**AGPL-3.0 网络服务义务适用**，对应源代码经 `/api/source-code` 提供） |
-| 资源限制 | `--memory=1536m --memory-swap=2048m`。这台机器同时运行 bdr-prod / carboy / beeurei / apexterminal 四套生产服务，限制确保 DocWeave 超限时只影响自己 |
-| 持久化 | 宿主 `/opt/docweave-data` → 容器 `/data`（SQLite + blobs）。**用户本地的 `data/` 没有同步上去**，实例以空库交付 |
+| 资源限制 | `--memory=3g --memory-swap=4g`。这台机器同时运行 bdr-prod / carboy / beeurei / apexterminal 四套生产服务，限制确保 DocWeave 超限时只影响自己 |
+| 持久化 | 宿主 `/opt/docweave-data` → 容器 `/data`（SQLite + blobs）。**用户本地的 `data/` 没有同步上去**；库中只有下述三个合成示例项目 |
 | 重启策略 | `unless-stopped`（重启机器后自动拉起） |
 | 源码位置 | `/opt/docweave`（rsync，排除 `data/`、`.env`、`.venv`、`node_modules`、`testdata/`） |
 
-### 实测（部署后）
+### 实测（2026-09-23 重新部署后）
 
 * 鉴权：无凭据 `401`、错误口令 `401`、正确口令 `200`。
-* `/healthz` → `{"status":"ok","version":"1.0.0","instance":"normal"}`；`/readyz` → `database/storage/worker` 全部 `ok`，`schema_version: 2`。
-* 端到端生成（经部署实例的 HTTP 接口）：预检 2 条样本全部有效 → 任务 `completed`、2 份文档 → 产物正文为 `客户：部署验证甲 / 金额：1234.50`，即每份样本取到自己的值。验证后已删除该项目与模板、撤销临时密钥，交付状态为空库。
-* 空闲占用：**88 MiB / 1.5 GiB 上限**（LibreOffice 仅在转换时另起进程）。
+* `/healthz` → `{"status":"ok","version":"1.0.0","instance":"normal"}`；`/readyz` → `database/storage/worker` 全部 `ok`。
+* `manage.py info` → `schema v3`（带 DW-058 迁移闸门的镜像升级，旧库由 v2 就地加列，未丢数据）。
+* Cloudflare 侧路由已生效：`cloudflared` 配置 v32 的 ingress 含
+  `{"hostname":"dw.wegreen.ltd","service":"http://127.0.0.1:8765"}`。
+* 空闲占用：**123.6 MiB / 3 GiB 上限（4.02%）**，`docker stats` 实测，此时库中已有下述三个示例项目
+  （LibreOffice 仅在转换时另起进程）。
+
+#### 该域名当前挂着 Cloudflare 人机校验
+
+`curl https://dw.wegreen.ltd/` 返回 `403` 且带 `cf-mitigated: challenge`（"Just a moment…"），
+真人浏览器可以通过，**但任何程序化访问（脚本、CI、`/api/v1` 客户端）都会被拦在 Cloudflare**，
+根本到不了 DocWeave 的 Basic Auth。这是 Cloudflare 的 Bot Fight / WAF 设置，不是本服务的行为。
+若要从外部调用机器接口，需要在 Cloudflare 面板为该主机名加一条跳过规则；仅做浏览器访问则无需改动。
+
+### 实例上的三个合成示例（2026-09-23）
+
+交付实例预置了三个示例项目，覆盖三种样本模式与三类模板，全部由 `scripts/seed_samples.py`
+经 `/api/v1` 创建并逐份核对过产物内容：
+
+| 项目 | 样本模式 | 模板 | 产物 |
+|---|---|---|---|
+| 示例一 · 客户合同 | `per_row` | DOCX，文字字段 + 日期/金额转换 | 6 份 `.docx` |
+| 示例二 · 订单对账单 | `per_group` | XLSX，单元格字段 + 重复明细行 | 3 份 `.xlsx` |
+| 示例三 · 发货单 | `per_row` | PNG 图片模板 | 4 份 `.png`（尺寸与 DPI 原样） |
+
+所有公司名、编号、金额均为编造的合成数据，模板与产物正文都写明"演示用合成内容"。
+三个项目的 `origin` 均为 `api:<key id>`，因此可以用来源证据一次性清掉，不会误伤人工建的项目：
+
+```bash
+docker exec docweave python backend/manage.py projects list        # dry-run，先看判定
+docker exec docweave python backend/manage.py projects prune --id <id> --apply
+```
+
+用于播种的临时密钥在建完后已撤销（`apikey list` 显示 `已撤销`），容器内不留明文密钥文件。
 
 ### 变更端口 / 重启
 
