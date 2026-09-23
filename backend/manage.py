@@ -422,8 +422,11 @@ def cmd_client(args) -> int:
             print("（没有已登记的客户端）")
         for c in rows:
             state = "停用" if c["disabled_at"] else "启用"
-            print(f"{c['client_id']:<18} app={c['app_id']:<12} {state}  "
-                  f"认证={c['token_endpoint_auth_method']}  PKCE={'必需' if c['require_pkce'] else '否'}")
+            kind = "服务账户" if c["kind"] == "service" else "用户客户端"
+            extra = f"  空间={c['workspace_id']}  权限={c['api_scopes'] or '无'}" \
+                if c["kind"] == "service" else f"  PKCE={'必需' if c['require_pkce'] else '否'}"
+            print(f"{c['client_id']:<18} app={c['app_id']:<12} {kind:<6} {state}  "
+                  f"认证={c['token_endpoint_auth_method']}{extra}")
         return 0
     if args.action == "show":
         c = clients.get(args.client_id)
@@ -440,22 +443,37 @@ def cmd_client(args) -> int:
         return 0
 
     # register
-    if not args.redirect:
+    service = bool(getattr(args, "service", False))
+    if not args.redirect and not service:
         print("至少需要一个 --redirect", file=sys.stderr)
+        return 2
+    if service and args.workspace and not ident.get_workspace(args.workspace):
+        print(f"找不到工作空间 {args.workspace}", file=sys.stderr)
         return 2
     try:
         row, secret = clients.register(
             client_id=args.client_id, app_id=args.app, name=args.name or args.client_id,
-            redirect_uris=list(args.redirect), scopes=args.scopes,
-            audiences=list(args.audience or []), confidential=bool(args.confidential),
+            # A service account has no browser and therefore no callback. Requiring one would
+            # mean inventing a URL that nothing ever visits.
+            redirect_uris=list(args.redirect or []), scopes=args.scopes,
+            audiences=list(args.audience or []),
+            confidential=bool(args.confidential) or service,
             post_logout_redirect_uris=list(args.post_logout or []),
-            backchannel_logout_uri=args.backchannel)
+            backchannel_logout_uri=args.backchannel,
+            kind="service" if service else "user",
+            workspace_id=args.workspace if service else None,
+            api_scopes=args.api_scopes or "")
     except ServiceError as e:
         print(f"登记失败：{e.message}", file=sys.stderr)
         return 2
     print(f"client_id      : {row['client_id']}")
     print(f"应用           : {row['app_id']}")
-    print(f"回调地址       : {', '.join(row['redirect_uris'])}")
+    print(f"类型           : {'服务账户（机器身份）' if service else '用户客户端'}")
+    if service:
+        print(f"工作空间       : {row['workspace_id']}")
+        print(f"接口权限       : {row['api_scopes'] or '（无）'}")
+    else:
+        print(f"回调地址       : {', '.join(row['redirect_uris'])}")
     print(f"认证方式       : {row['token_endpoint_auth_method']}")
     if secret:
         print(f"client_secret  : {secret}")
@@ -589,6 +607,11 @@ def main() -> int:
     cl.add_argument("--audience", action="append", help="该客户端可获得令牌的 API 受众，可重复")
     cl.add_argument("--scopes", default="openid profile email")
     cl.add_argument("--confidential", action="store_true", help="机密客户端：生成一次性 client_secret")
+    cl.add_argument("--service", action="store_true",
+                    help="登记为服务账户（机器身份）：必须机密，必须绑定一个工作空间")
+    cl.add_argument("--workspace", help="服务账户所属工作空间 ID")
+    cl.add_argument("--api-scopes", dest="api_scopes", default="",
+                    help="接口权限，空格分隔：docweave.read docweave.write")
     cl.set_defaults(func=cmd_client)
 
     ky = sub.add_parser("keys", help="OIDC 签名密钥")

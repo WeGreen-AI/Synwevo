@@ -214,6 +214,63 @@ python backend/manage.py --data data app list
 
 重认证作用域是一个封闭集合（`mfa` / `admin`）。空作用域满足所有检查，所以它必须是请求无法要求的值。
 
+## 5.2 机器身份：服务账户与用户委托
+
+两种机器调用者，区别很重要：
+
+| | 服务账户 | 用户委托 |
+|---|---|---|
+| 背后有人吗 | 没有，它以自己的身份行动 | 有，它代表授权它的那个人 |
+| 租户从哪来 | 登记时绑定的工作空间 | 每次调用重新按成员关系解析 |
+| 权限 | 登记时的 `api_scopes` ∩ 本次申请 | 客户端许可 ∩ **当前**角色 ∩ 本次授权 |
+| 生命周期 | 独立；有人退出浏览器不影响它 | 随账户状态、成员关系、应用资格一起失效 |
+| 流程 | `client_credentials` | 授权码流程签发的访问令牌 |
+
+登记一个服务账户：
+
+```bash
+python backend/manage.py client register \
+    --client-id nightly-batch --app docweave --name 夜间批处理 \
+    --service --workspace w_xxx --api-scopes "docweave.read docweave.write"
+```
+
+必须是机密客户端（密钥就是它的全部凭据），必须绑定工作空间（背后没有人，租户推不出来）。
+`client_secret` 只显示一次。
+
+取令牌并调用（`scripts/automation_example.py` 原样支持）：
+
+```bash
+python scripts/automation_example.py \
+    --base-url http://docweave.localhost:8775 \
+    --issuer http://accounts.localhost:8770 \
+    --client-id nightly-batch --client-secret "$SECRET" \
+    --source testdata/测试_客户100.xlsx --template testdata/测试_合同模板.docx \
+    --definition docs/integration/example-definition.json --out ./out
+```
+
+**本机实跑通过**：取令牌 → 建项目 → 上传来源与模板 → 写映射 → 预检 → 提交任务 →
+真实状态事件 → 下载 10 个 .docx（每个约 39 KB，内容含真实客户数据）。全程没有浏览器、
+没有 Cookie、没有点击。
+
+### 每次调用都重新核验，不看令牌当初记了什么
+
+`backend/docweave/machine.py` 在**每一次**请求上重新问三个问题：账户还在不在、这个人还是不是
+该空间成员、该空间还有没有这个应用。令牌里记的是当初授予了什么，不是现在还成不成立。把这些
+固化进令牌，就是「已被撤权的人继续工作到令牌过期」的成因。
+
+角色还会**收窄**委托：令牌签发时是 editor、现在被改成 viewer，那么读仍然可以，写会被拒——
+令牌没有被撤销，但角色说了算。
+
+### ID Token 不是 API 凭证
+
+只带 `openid profile email` 的访问令牌调用 `/api/v1` 会被 403 拒绝，并明确告诉你需要申请带
+`docweave.*` 权限的令牌。它证明的是谁登录了，不是可以运行什么。
+
+### 旧的 `dw_` 密钥继续有效
+
+它们早于平台存在，一次性全部作废会打断正在运行的自动化。两种凭据走同一个解析函数，出来的
+principal 形状相同，因此没有任何调用点需要知道自己拿到的是哪一种。
+
 ## 6. 密钥
 
 ```bash

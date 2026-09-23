@@ -79,6 +79,33 @@ class Api:
         return self._request("PUT", path, json_body=json_body, **kw)
 
 
+def fetch_service_token(issuer: str, client_id: str, client_secret: str, scopes: str,
+                        *, quiet: bool = False) -> str:
+    """Exchange a service account's credentials for a short-lived access token.
+
+    The client credentials grant — no browser, no user, no cookie. `trust_env` is not a thing
+    urllib does automatically here, but the proxy environment is still worth avoiding for a
+    request carrying a client secret, so this builds an opener with no proxy handler.
+    """
+    body = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": client_id,
+                                   "client_secret": client_secret, "scope": scopes}).encode()
+    req = urllib.request.Request(
+        issuer.rstrip("/") + "/oidc/token", data=body, method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=30) as resp:
+            out = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"取令牌失败 [HTTP {e.code}]：{e.read()[:300].decode('utf-8', 'replace')}") from e
+    except urllib.error.URLError as e:
+        raise SystemExit(f"无法连接账户服务 {issuer}：{e.reason}") from e
+    if not quiet:
+        print(f"服务账户 {client_id} 已取得访问令牌（权限 {out.get('scope')}，"
+              f"{out.get('expires_in')} 秒后过期）")
+    return out["access_token"]
+
+
 def upload(api: Api, path: str, where: str) -> dict:
     p = Path(path)
     if not p.is_file():
@@ -139,7 +166,17 @@ def download_artifacts(api: Api, jid: str, out_dir: Path, quiet: bool) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base-url", default=os.environ.get("DOCWEAVE_BASE_URL", "http://127.0.0.1:8765"))
-    ap.add_argument("--key", default=os.environ.get("DOCWEAVE_API_KEY"), help="API 密钥（或设置 DOCWEAVE_API_KEY）")
+    ap.add_argument("--key", default=os.environ.get("DOCWEAVE_API_KEY"),
+                    help="API 密钥 dw_… 或平台访问令牌（或设置 DOCWEAVE_API_KEY）")
+    # A machine identity on the platform: this fetches its own token instead of carrying a
+    # long-lived key. The credential is the client secret, held by whatever runs this, and the
+    # token it exchanges for lives fifteen minutes.
+    ap.add_argument("--issuer", default=os.environ.get("DOCWEAVE_ISSUER"),
+                    help="账户服务地址；与 --client-id/--client-secret 一起用于服务账户")
+    ap.add_argument("--client-id", dest="client_id", default=os.environ.get("DOCWEAVE_CLIENT_ID"))
+    ap.add_argument("--client-secret", dest="client_secret",
+                    default=os.environ.get("DOCWEAVE_CLIENT_SECRET"))
+    ap.add_argument("--api-scopes", dest="api_scopes", default="docweave.read docweave.write")
     ap.add_argument("--source", action="append", required=True, help="来源文件（可重复）")
     ap.add_argument("--template", help="模板文件；省略时用 --template-id 复用已有模板")
     ap.add_argument("--template-id")
@@ -153,8 +190,15 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=1800)
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
+    if not a.key and a.client_id and a.client_secret and a.issuer:
+        a.key = fetch_service_token(a.issuer, a.client_id, a.client_secret, a.api_scopes,
+                                    quiet=a.quiet)
     if not a.key:
-        raise SystemExit("缺少 API 密钥：--key 或环境变量 DOCWEAVE_API_KEY（用 python backend/manage.py apikey create 创建）")
+        raise SystemExit(
+            "缺少凭据。二选一：\n"
+            "  · API 密钥：--key 或 DOCWEAVE_API_KEY（python backend/manage.py apikey create）\n"
+            "  · 服务账户：--issuer --client-id --client-secret\n"
+            "    （python backend/manage.py client register --service --workspace … --api-scopes …）")
     api = Api(a.base_url, a.key)
     definition = json.loads(Path(a.definition).read_text(encoding="utf-8"))
 

@@ -287,6 +287,13 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none'
     CHECK (token_endpoint_auth_method IN ('none','client_secret_basic','client_secret_post')),
   require_pkce INTEGER NOT NULL DEFAULT 1,
+  -- 'user': a client that acts on behalf of a person who signed in.
+  -- 'service': a machine identity that acts as itself, bound to one workspace, with its own
+  -- lifecycle. A person signing out of a browser must not stop a service account's work, and
+  -- a service account must not inherit anyone's permissions.
+  kind TEXT NOT NULL DEFAULT 'user' CHECK (kind IN ('user','service')),
+  workspace_id TEXT,                      -- service accounts only; the tenant they act in
+  api_scopes TEXT NOT NULL DEFAULT '',    -- the most this client may ever be granted
   created_at REAL NOT NULL, updated_at REAL NOT NULL, disabled_at REAL
 );
 CREATE INDEX IF NOT EXISTS ix_client_app ON oauth_clients(app_id);
@@ -421,6 +428,12 @@ V3_COLUMNS = [
 V4_COLUMNS = [
     ("oauth_tokens", "family_id", "TEXT"),
     ("oauth_tokens", "parent_id", "TEXT"),
+    # A service account is a client that acts as itself, with no user behind it. It is bound to
+    # exactly one workspace, because "which tenant is this machine acting in" cannot be answered
+    # by a person's membership when there is no person.
+    ("oauth_clients", "kind", "TEXT NOT NULL DEFAULT 'user'"),
+    ("oauth_clients", "workspace_id", "TEXT"),
+    ("oauth_clients", "api_scopes", "TEXT NOT NULL DEFAULT ''"),
     # A DocWeave session created by single sign-on remembers which grant produced it, so a
     # back-channel logout can end exactly that sign-in and no one else's. NULL means the session
     # was created locally (bootstrap, or the legacy direct login), which is why revocation by

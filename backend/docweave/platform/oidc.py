@@ -33,7 +33,12 @@ REFRESH_TTL_S = int(os.environ.get("DOCWEAVE_REFRESH_TTL_S", str(14 * 24 * 3600)
 ID_TOKEN_TTL_S = 300
 ALG = "RS256"
 
-SUPPORTED_SCOPES = ("openid", "profile", "email", "offline_access")
+SUPPORTED_SCOPES = ("openid", "profile", "email", "offline_access",
+                    # API scopes. Separate vocabulary from the identity scopes on purpose: a
+                    # token that proves who signed in is not a token that may run a job, and
+                    # keeping them in one list is how the two quietly become the same thing.
+                    "docweave.read", "docweave.write")
+API_SCOPES = ("docweave.read", "docweave.write")
 
 
 def issuer() -> str:
@@ -118,7 +123,8 @@ class Clients:
     def register(self, *, client_id: str, app_id: str, name: str, redirect_uris: list[str],
                  scopes: str = "openid profile email", audiences: list[str] | None = None,
                  confidential: bool = False, post_logout_redirect_uris: list[str] | None = None,
-                 backchannel_logout_uri: str | None = None) -> tuple[dict, str | None]:
+                 backchannel_logout_uri: str | None = None, kind: str = "user",
+                 workspace_id: str | None = None, api_scopes: str = "") -> tuple[dict, str | None]:
         """Register a client. Returns (row, secret) — the secret is shown once and hashed here.
 
         Registration is a CLI/configuration action by design. Dynamic client registration is not
@@ -127,21 +133,36 @@ class Clients:
         """
         for uri in redirect_uris:
             _check_redirect(uri)
+        if kind not in ("user", "service"):
+            raise ServiceError(400, "bad_kind", f"未知的客户端类型 {kind!r}")
+        if kind == "service":
+            if not workspace_id:
+                raise ServiceError(400, "no_workspace",
+                                   "服务账户必须绑定一个工作空间——没有人在背后，租户不能由成员关系推出来")
+            if not confidential:
+                # Its credential is all it has; a public service account is a published one.
+                raise ServiceError(400, "must_be_confidential", "服务账户必须是机密客户端")
+        bad = [s for s in api_scopes.split() if s not in API_SCOPES]
+        if bad:
+            raise ServiceError(400, "bad_scope", f"未知的接口权限：{' '.join(bad)}")
         secret = secrets.token_urlsafe(40) if confidential else None
         ts = now()
         self.store.execute(
             "INSERT INTO oauth_clients (client_id,app_id,name,secret_hash,redirect_uris,"
             "post_logout_redirect_uris,backchannel_logout_uri,scopes,audiences,"
-            "token_endpoint_auth_method,require_pkce,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?) "
+            "token_endpoint_auth_method,require_pkce,kind,workspace_id,api_scopes,"
+            "created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?) "
             "ON CONFLICT(client_id) DO UPDATE SET app_id=excluded.app_id, name=excluded.name, "
             "redirect_uris=excluded.redirect_uris, post_logout_redirect_uris=excluded.post_logout_redirect_uris, "
             "backchannel_logout_uri=excluded.backchannel_logout_uri, scopes=excluded.scopes, "
-            "audiences=excluded.audiences, updated_at=excluded.updated_at",
+            "audiences=excluded.audiences, kind=excluded.kind, workspace_id=excluded.workspace_id, "
+            "api_scopes=excluded.api_scopes, updated_at=excluded.updated_at",
             (client_id, app_id, name, _sha(secret) if secret else None,
              json.dumps(redirect_uris), json.dumps(post_logout_redirect_uris or []),
              backchannel_logout_uri, scopes, json.dumps(audiences or []),
-             "client_secret_post" if confidential else "none", ts, ts))
+             "client_secret_post" if confidential else "none", kind, workspace_id, api_scopes,
+             ts, ts))
         return self.get(client_id), secret
 
     def check_secret(self, client_id: str, secret: str) -> bool:
@@ -310,6 +331,31 @@ class Grants:
             with_refresh=True, family_id=row["family_id"] or row["id"], parent_id=row["id"])
         return out, row
 
+    def issue_for_service(self, *, client: dict, scope: str) -> dict:
+        """The client credentials grant: a machine acting as itself.
+
+        No user, no refresh token, no `openid`. A service account has its own lifecycle on
+        purpose — a person closing their browser must not stop its work, and it must not inherit
+        anyone's permissions. Its tenant comes from the registration, because with nobody behind
+        it there is no membership to resolve one from.
+        """
+        access = secrets.token_urlsafe(40)
+        tid = new_id("tok")
+        audience = (client.get("audiences") or [None])[0]
+        self.store.execute(
+            "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,refresh_hash,scope,audience,"
+            "central_session_id,workspace_id,issued_at,access_expires_at,refresh_expires_at,"
+            "family_id,parent_id) VALUES (?,?,NULL,?,NULL,?,?,NULL,?,?,?,NULL,?,NULL)",
+            (tid, client["client_id"], _sha(access), scope, audience,
+             client.get("workspace_id"), now(), now() + ACCESS_TTL_S, tid))
+        return {"access_token": access, "token_type": "Bearer", "expires_in": ACCESS_TTL_S,
+                "scope": scope}
+
+    def revoke_for_client(self, client_id: str, reason: str) -> int:
+        return self.store.execute(
+            "UPDATE oauth_tokens SET revoked_at=?, revoked_reason=? "
+            "WHERE client_id=? AND revoked_at IS NULL", (now(), reason, client_id))
+
     def revoke_family(self, family_id: str, reason: str) -> int:
         return self.store.execute(
             "UPDATE oauth_tokens SET revoked_at=?, revoked_reason=? "
@@ -466,7 +512,7 @@ def discovery() -> dict:
         "revocation_endpoint": f"{iss}/oidc/revoke",
         "end_session_endpoint": f"{iss}/oidc/logout",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": [ALG],
         "scopes_supported": list(SUPPORTED_SCOPES),

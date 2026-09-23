@@ -118,9 +118,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
     def token(request: Request,
               grant_type: str = Form(...), code: str = Form(None), redirect_uri: str = Form(None),
               client_id: str = Form(None), client_secret: str = Form(None),
-              code_verifier: str = Form(None), refresh_token: str = Form(None)):
+              code_verifier: str = Form(None), refresh_token: str = Form(None),
+              scope: str = Form(None)):
         """Deliberately cookie-blind. Credentials come from the request body, never the browser."""
-        if grant_type not in ("authorization_code", "refresh_token"):
+        if grant_type not in ("authorization_code", "refresh_token", "client_credentials"):
             return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
         client = clients.get(client_id or "")
         if not client:
@@ -129,6 +130,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
             if not clients.check_secret(client["client_id"], client_secret or ""):
                 return JSONResponse({"error": "invalid_client"}, status_code=401)
 
+        if grant_type == "client_credentials":
+            return _client_credentials(request, client, scope or "")
         if grant_type == "refresh_token":
             return _refresh(request, client, refresh_token or "")
 
@@ -154,6 +157,46 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         if "openid" in (row["scope"] or "").split():
             out["id_token"] = grants.id_token(client=client, user=user, code_row=row, sid=sid,
                                               access_token=out["access_token"])
+        return JSONResponse(out, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+
+    def _client_credentials(request: Request, client: dict, requested: str):
+        """A machine identity authenticating as itself.
+
+        Refused for anything that is not a registered service account, and refused for a public
+        client — the secret is the whole credential, so a public service account is a published
+        one. The granted scope is the intersection of what was asked for and what the
+        registration allows, never the union.
+        """
+        if client.get("kind") != "service":
+            return JSONResponse({"error": "unauthorized_client",
+                                 "error_description": "只有服务账户可以使用客户端凭据流程"},
+                                status_code=400)
+        if client["token_endpoint_auth_method"] == "none":
+            return JSONResponse({"error": "invalid_client"}, status_code=401)
+        allowed = set((client.get("api_scopes") or "").split())
+        asked = set(requested.split()) if requested.strip() else set(allowed)
+        unknown = asked - set(oidc.API_SCOPES)
+        if unknown:
+            return JSONResponse({"error": "invalid_scope",
+                                 "error_description": f"unsupported scope: {' '.join(sorted(unknown))}"},
+                                status_code=400)
+        granted = asked & allowed
+        if not granted:
+            return JSONResponse({"error": "invalid_scope",
+                                 "error_description": "该服务账户没有被授予任何可用的接口权限"},
+                                status_code=400)
+        ws = client.get("workspace_id")
+        if not ws or not ident.get_workspace(ws):
+            return JSONResponse({"error": "invalid_client",
+                                 "error_description": "服务账户绑定的工作空间不存在"}, status_code=400)
+        entitled, _, reason = apps.check_access_for_workspace(ws, client["app_id"])
+        if not entitled:
+            return JSONResponse({"error": "invalid_client", "error_description": reason},
+                                status_code=400)
+        out = grants.issue_for_service(client=client, scope=" ".join(sorted(granted)))
+        audit(request, "oidc.client_credentials", actor_kind="machine",
+              actor_id=client["client_id"], workspace_id=ws, object_kind="app",
+              object_id=client["app_id"], result="ok", meta={"scope": out["scope"]})
         return JSONResponse(out, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
     def _refresh(request: Request, client: dict, raw: str):

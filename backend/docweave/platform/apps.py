@@ -136,6 +136,27 @@ class Apps:
             return True, workspace_id, "ok"
         return True, (spaces[0]["id"] if spaces else None), "ok"
 
+    def check_access_for_workspace(self, workspace_id: str, app_id: str) -> tuple[bool, str | None, str]:
+        """Is this application usable *in this workspace*, with nobody in particular asking?
+
+        The service-account question. There is no user, so there is no membership to resolve —
+        only whether the application is live and the workspace has turned it on. Deliberately a
+        separate method rather than a `user_id=None` branch of `check_access`: a null user
+        silently skipping the entitlement check is the shape of a bug nobody notices.
+        """
+        app = self.get(app_id)
+        if not app:
+            return False, None, "该应用不存在"
+        if app["status"] != "active":
+            return False, None, "该应用已停用"
+        ws = self.ident.get_workspace(workspace_id)
+        if not ws or ws["status"] != "active":
+            return False, None, "该工作空间不可用"
+        if not self.store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id=?",
+                              (workspace_id, app_id)):
+            return False, None, f"该工作空间尚未启用「{app['name']}」"
+        return True, workspace_id, "ok"
+
     def apps_for(self, user_id: str) -> list[dict]:
         """What the portal shows. Only applications this person can actually open.
 

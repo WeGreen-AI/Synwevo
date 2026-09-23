@@ -55,6 +55,11 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     jobs = JobService(app_) if start_jobs else None
     auth = Auth(store)
     identity = Identity(store)
+    from ..machine import MachineAuth
+    # One resolver for every machine caller: legacy API keys, service accounts and user
+    # delegations all come out as the same principal shape, so no call site has to know which
+    # kind it got — and none of them can forget to re-check one of the three.
+    machine = MachineAuth(store, identity, auth)
     sessions = Sessions(store)
     invites = Invites(store, identity)
     mailer = Mailer(store, start=start_jobs)
@@ -259,7 +264,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                 return finish(JSONResponse(_error_body(request, "not_in_this_role", off, None),
                                            status_code=404))
             if path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):
-                principal = auth.verify(request.headers.get("Authorization"))
+                principal = machine.verify(request.headers.get("Authorization"))
                 request.state.principal = principal
                 ok, wait = limiter(principal["key_id"])
                 if not ok:
@@ -733,7 +738,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
 
     # ------------------------------------------------------------ machine API (documented in docs/integration/api.md)
     from .v1 import build_router
-    api.include_router(build_router(app_, views, jobs, auth, attachment))
+    api.include_router(build_router(app_, views, jobs, machine, attachment))
 
     def _audit(request: Request, action: str, *, actor_id: str | None = None, actor_kind: str = "user",
                workspace_id: str | None = None, object_kind: str | None = None,
