@@ -16,15 +16,22 @@ export default function Login() {
   const [token, setToken] = useState("");
   const [name, setName] = useState("");
   const [show, setShow] = useState(false);
+  // Set when the password was right but a second factor is still owed.
+  const [ticket, setTicket] = useState<string | null>(null);
+  const [methods, setMethods] = useState<{ totp: boolean; recovery: boolean } | null>(null);
+  const [code, setCode] = useState("");
+  const [useRecovery, setUseRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const errRef = useRef<HTMLDivElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
+  const codeRef = useRef<HTMLInputElement>(null);
 
   const bootstrap = !!state?.bootstrap_required;
 
   useEffect(() => { if (disabled || me) window.location.assign(next); }, [me, disabled, next]);
   useEffect(() => { emailRef.current?.focus(); }, [bootstrap]);
+  useEffect(() => { if (ticket) codeRef.current?.focus(); }, [ticket]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,8 +39,27 @@ export default function Login() {
     setBusy(true);
     setErr(null);
     try {
-      if (bootstrap) await post("/api/auth/bootstrap", { token: token.trim(), email, password, display_name: name || null });
-      else await post("/api/auth/login", { email, password });
+      if (bootstrap) {
+        await post("/api/auth/bootstrap", { token: token.trim(), email, password, display_name: name || null });
+      } else if (ticket) {
+        const body = useRecovery ? { ticket, recovery_code: code } : { ticket, code };
+        const r = await post<{ recovery_remaining?: number }>("/api/auth/login/mfa", body);
+        if (r.recovery_remaining !== undefined) {
+          // Said at the moment it happens: one fewer way back in, and they are signed in now
+          // and able to do something about it.
+          sessionStorage.setItem("dw_recovery_notice", String(r.recovery_remaining));
+        }
+      } else {
+        const r = await post<{ mfa_required?: boolean; ticket?: string; methods?: any }>(
+          "/api/auth/login", { email, password });
+        if (r.mfa_required) {
+          setTicket(r.ticket!);
+          setMethods(r.methods);
+          setPassword("");
+          setBusy(false);
+          return;                       // second step, same page — no navigation in between
+        }
+      }
       await refresh();
       window.location.assign(next);
     } catch (e2: any) {
@@ -58,7 +84,16 @@ export default function Login() {
       <form className="authcard" onSubmit={submit} noValidate>
         <div className="authbrand"><span className="logo">W</span>DocWeave</div>
 
-        {bootstrap ? (
+        {ticket ? (
+          <>
+            <h1>两步验证</h1>
+            <p className="authlede">
+              {useRecovery
+                ? "输入一个恢复码。每个恢复码只能用一次。"
+                : "打开你的验证器应用，输入其中显示的 6 位数字。"}
+            </p>
+          </>
+        ) : bootstrap ? (
           <>
             <h1>建立首位管理员</h1>
             <p className="authlede">
@@ -77,6 +112,34 @@ export default function Login() {
         {/* role=alert so the message is announced; tabIndex so focus can be moved to it */}
         {err && <div className="notice err autherr" role="alert" tabIndex={-1} ref={errRef}>{err}</div>}
 
+        {ticket ? (
+          <>
+            <label className="field">
+              <span>{useRecovery ? "恢复码" : "验证码"}</span>
+              <input ref={codeRef} className="input mono" value={code}
+                inputMode={useRecovery ? "text" : "numeric"}
+                // one-time-code lets iOS and Android offer the code from the notification
+                autoComplete="one-time-code" autoCapitalize="off" spellCheck={false}
+                maxLength={useRecovery ? 24 : 6} required
+                onChange={(e) => setCode(useRecovery ? e.target.value : e.target.value.replace(/\D/g, ""))} />
+            </label>
+            <button className="btn primary authsubmit" type="submit"
+              disabled={busy || (useRecovery ? code.trim().length < 6 : code.length !== 6)}>
+              {busy ? "验证中…" : "验证并登录"}
+            </button>
+            {methods?.recovery && (
+              <button type="button" className="btn ghost sm"
+                onClick={() => { setUseRecovery((v) => !v); setCode(""); setErr(null); }}>
+                {useRecovery ? "改用验证器应用的验证码" : "手机不在身边？使用恢复码"}
+              </button>
+            )}
+            <button type="button" className="btn ghost sm"
+              onClick={() => { setTicket(null); setCode(""); setUseRecovery(false); setErr(null); }}>
+              ← 返回，换个账户登录
+            </button>
+          </>
+        ) : (
+          <>
         {bootstrap && (
           <label className="field">
             <span>一次性引导令牌</span>
@@ -125,6 +188,8 @@ export default function Login() {
         )}
         {!bootstrap && state?.registration === "closed" && (
           <p className="tiny muted authfoot">本服务已关闭新账户注册。</p>
+        )}
+          </>
         )}
       </form>
     </div>

@@ -513,3 +513,14 @@ table.tbl tbody:focus-visible { outline: 2px solid var(--accent); outline-offset
 @media (max-width: 420px) {
   .authcard { padding: 22px 18px; border-radius: var(--radius); }
 }
+
+/* ---------------------------------------------------------------- MFA */
+.qrbox { background: #fff; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); line-height: 0; }
+.qrbox svg { display: block; width: 160px; height: 160px; }
+/* The seed has to be transcribable by eye, so it gets room and letter spacing rather than
+   being squeezed into a single line that people mis-key. */
+.seedbox { display: inline-block; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); letter-spacing: .08em; word-break: break-all; max-width: 260px; }
+.reccodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 12px;
+  margin: 4px 0; padding: 0; list-style: none; }
+.reccodes li { letter-spacing: .06em; }

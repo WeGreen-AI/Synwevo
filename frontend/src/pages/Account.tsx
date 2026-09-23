@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { del, get, post } from "../lib/api";
 import { fmtTime, useDialog, useToast } from "../lib/ui";
 import { useSession } from "../lib/session";
+import MfaSection from "../components/MfaSection";
 
 interface SessionRow {
   id: string;
@@ -153,11 +154,7 @@ export default function Account() {
             </p>
           </section>
 
-          <section className="card card-b col gap12 mt12">
-            <h2 className="secttl">Passkey 与两步验证</h2>
-            {/* Stated plainly rather than shown as a disabled button that does nothing. */}
-            <p className="muted">这一部分尚未上线。当前登录方式为邮箱 + 口令。</p>
-          </section>
+          <MfaSection />
         </div>
       </div>
     </div>

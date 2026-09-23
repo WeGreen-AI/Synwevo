@@ -215,7 +215,7 @@ blob id 直取接口 · 临时文件 · 日志导出
 | 邮箱验证 / 忘记口令 | 部分（令牌与邮件模板已就绪，路由未接） | `invites.issue_email_token` | `test_invites.py` 令牌段 |
 | TOTP + 恢复码（后端） | **已实现** | `mfa.py`、`auth_routes.build_mfa_router`、两步 `/login` | `test_mfa.py`（24） |
 | Passkey / WebAuthn | 待实现 | — | — |
-| MFA 界面 | 待实现（账户页仍写「尚未上线」） | — | — |
+| MFA 界面 | **已实现** | `components/MfaSection.tsx`、`Login.tsx` 第二步 | 浏览器实跑（扫码→确认→恢复码→两步登录）|
 | 逐对象授权与空间隔离 | **已实现** | `authz.py`；`services.get_source/list_sources`、`views.preview_file`、`locators.locate_all`、job 路由 | `test_authz_isolation.py`（18） |
 | 管理后台 | 待实现 | — | — |
 | 旁路端点逐条覆盖（§5.1） | **已覆盖并回归** | 同上 | 去掉修复后 10/18 失败，已验证 |
