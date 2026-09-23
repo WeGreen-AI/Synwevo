@@ -53,9 +53,22 @@ def fill_checked(template_format: str, work: bytes, slots: list[dict], plan: Pla
             if any(i.get("level") == "error" for i in issues) or not out:
                 return out, issues, None
             out, rep = L.fit_docx(out, slots, tpl_pages, keep)
-            if rep["factor"] < 1 and rep["pages"] <= tpl_pages:
+            if rep["effective_factor"] < 1 and rep["pages"] <= tpl_pages:
+                detail = f"，最小 {rep['min_pt']:.1f} 磅" if rep.get("min_pt") else ""
+                pinned = f"；字段 {'、'.join(rep['clamped'])} 已到各自的最小字号" if rep.get("clamped") else ""
                 issues.append({"level": "warning", "code": "shrunk_to_fit",
-                               "message": f"为保持 {tpl_pages} 页，允许缩小的字段字号已缩小到原来的 {rep['factor']:.0%}"})
+                               "message": f"为保持 {tpl_pages} 页，允许缩小的字段字号已缩小到原来的 "
+                                          f"{rep['effective_factor']:.0%}{detail}{pinned}"})
+            # Fitting the page budget is not success on its own: shrinking can push content out
+            # of a fixed-height row or frame, leaving the right page count and the wrong document.
+            if rep.get("lost_fields"):
+                issues.append({"level": "error", "code": "content_lost",
+                               "message": f"缩放后这些字段的内容在文档中消失了：{'、'.join(rep['lost_fields'])}。"
+                                          f"页数满足了要求，但内容不完整，因此不产出这一份"})
+            elif rep.get("truncated_fields"):
+                issues.append({"level": "error", "code": "content_truncated",
+                               "message": f"缩放后这些字段的内容被截断：{'、'.join(rep['truncated_fields'])}。"
+                                          f"页数满足了要求，但内容不完整，因此不产出这一份"})
             iss = L.page_issue(rep["pages"], tpl_pages, strict=True, slot_hint=True)
             if iss:
                 issues.append(iss)

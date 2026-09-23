@@ -81,11 +81,17 @@ def _effective_size(styles, run, para) -> float:
     return float(r.get("sz") or 10.5)
 
 
-def scale_fields(data: bytes, slot_ids: set[str], factor: float, min_pt: dict[str, float]) -> bytes:
+def scale_fields(data: bytes, slot_ids: set[str], factor: float, min_pt: dict[str, float]) -> tuple[bytes, dict]:
     """Set the font size of every run inside the given fields (content controls ``dw:<id>…``)
     to ``factor`` × its original size, never below the slot's minimum.  Original sizes are
-    remembered on the run (``dw-osz``) so repeated calls scale from the original."""
+    remembered on the run (``dw-osz``) so repeated calls scale from the original.
+
+    Returns (bytes, applied) where ``applied`` records what really happened: the smallest
+    ratio actually used, the smallest resulting point size, and which slots hit their floor.
+    Reporting the requested step instead would tell the user "shrunk to 60%" when a field
+    was in fact pinned at its minimum and never got that small."""
     from .docx_render import StyleSheet
+    applied = {"ratio": 1.0, "min_pt": float("inf"), "clamped": set()}
     pkg = Package(data)
     styles = StyleSheet(pkg, pkg.main_part())
     for info in dc.list_parts(pkg):
@@ -112,7 +118,16 @@ def scale_fields(data: bytes, slot_ids: set[str], factor: float, min_pt: dict[st
                     if el is None:
                         el = etree.SubElement(rpr, dc.w(tagname))
                     el.set(dc.w("val"), str(max(2, int(round(new * 2)))))
-    return pkg.save()
+                if size > 0:
+                    ratio = new / size
+                    applied["ratio"] = min(applied["ratio"], ratio)
+                    applied["min_pt"] = min(applied["min_pt"], new)
+                    if new > size * factor + 1e-6:      # the floor, not the factor, decided this run
+                        applied["clamped"].add(base)
+    applied["clamped"] = sorted(applied["clamped"])
+    if applied["min_pt"] == float("inf"):
+        applied["min_pt"] = None
+    return pkg.save(), applied
 
 
 def _strip_marks(data: bytes, unwrap: bool) -> bytes:
@@ -129,21 +144,89 @@ def _strip_marks(data: bytes, unwrap: bool) -> bytes:
     return pkg.save()
 
 
+def _field_texts(data: bytes) -> dict[str, str]:
+    """The text currently inside each field control, for checking nothing was lost."""
+    out: dict[str, str] = {}
+    pkg = Package(data)
+    for info in dc.list_parts(pkg):
+        root = pkg.xml(info["part"])
+        for tag, sdt in dc.iter_field_sdts(root):
+            base = tag.split("#")[0].split("@")[0]
+            txt = "".join(t.text or "" for t in sdt.iter(dc.w("t")))
+            out[base] = out.get(base, "") + txt
+    return out
+
+
+def _ladder(slots: list[dict], shrink: set[str], mins: dict[str, float]) -> tuple[float, ...]:
+    """Shrink steps, extended down to the smallest ratio the fields' own minimums allow.
+
+    SHRINK_STEPS stops at 0.6, which silently overrode a field configured to go smaller:
+    a 16 pt field with shrink_min 4 may legitimately reach 0.25, and stopping at 0.6 failed
+    the sample while the user's own constraint still had room."""
+    # Only a slot that declares its own font size lets us express its floor as a RATIO.
+    # DOCX text fields inherit their size from the paragraph style and declare none, so the
+    # ladder stays as-is for them and the per-run clamp in scale_fields enforces min_pt.
+    floors = []
+    for s in slots:
+        if s["id"] not in shrink:
+            continue
+        base = float(s.get("font_size") or 0)
+        if base > 0:
+            floors.append(max(0.05, mins.get(s["id"], 7.0) / base))
+    steps = list(SHRINK_STEPS)
+    if not floors:
+        return tuple(steps)
+    floor = min(floors)
+    steps = [f for f in steps if f >= floor] or []
+    last = steps[-1] if steps else 1.0
+    if floor < last - 1e-6:                     # the field's own minimum allows going further
+        steps += [round(last - i * (last - floor) / 3, 3) for i in range(1, 4)]
+        steps = [f for f in steps if f >= floor - 1e-9]
+    return tuple(steps or (floor,))
+
+
 def fit_docx(filled_keep: bytes, slots: list[dict], tpl_pages: int, keep_fields: bool) -> tuple[bytes, dict]:
     """``filled_keep`` was filled with the field controls kept.  Shrink shrinkable fields until the
-    layout has at most ``tpl_pages`` pages.  Returns (final bytes, report)."""
+    layout has at most ``tpl_pages`` pages.  Returns (final bytes, report).
+
+    The page count in the report is measured on the bytes that are actually DELIVERED, not on
+    the intermediate that still carries the field controls — unwrapping them can change the
+    layout, so the two are not interchangeable.
+    """
     shrink = {s["id"] for s in slots if s.get("shrink")}
     mins = {s["id"]: float(s.get("shrink_min") or 7) for s in slots if s.get("shrink")}
-    pages = page_count(filled_keep, "docx")
-    report = {"template_pages": tpl_pages, "pages": pages, "factor": 1.0, "renders": 1}
+    names = {s["id"]: s.get("name") or s["id"] for s in slots}
+    before = _field_texts(filled_keep)
+
+    def deliver(b: bytes) -> bytes:
+        return _strip_marks(b, not keep_fields)
+
     data = filled_keep
+    final = deliver(data)
+    pages = page_count(final, "docx")
+    report = {"template_pages": tpl_pages, "pages": pages, "factor": 1.0, "effective_factor": 1.0,
+              "min_pt": None, "clamped": [], "renders": 1, "steps": []}
     if pages > tpl_pages and shrink:
-        for f in SHRINK_STEPS:
-            trial = scale_fields(data, shrink, f, mins)
-            p = page_count(_strip_marks(trial, False), "docx")
+        for f in _ladder(slots, shrink, mins):
+            trial, applied = scale_fields(data, shrink, f, mins)
+            cand = deliver(trial)
+            p = page_count(cand, "docx")
             report["renders"] += 1
+            report["steps"].append({"factor": f, "effective": round(applied["ratio"], 3), "pages": p})
+            data, final, report["pages"] = trial, cand, p
+            report["factor"] = f
+            report["effective_factor"] = round(applied["ratio"], 3)
+            report["min_pt"] = applied["min_pt"]
+            report["clamped"] = [names.get(i, i) for i in applied["clamped"]]
             if p <= tpl_pages:
-                data, report["pages"], report["factor"] = trial, p, f
                 break
-            data, report["pages"], report["factor"] = trial, p, f
-    return _strip_marks(data, not keep_fields), report
+
+    # Page count alone is not success: shrinking can push text out of a fixed-height row or
+    # frame, and the document would still have the right number of pages.
+    after = _field_texts(final if keep_fields else data)
+    lost = [names.get(k, k) for k, v in before.items() if v.strip() and not after.get(k, "").strip()]
+    truncated = [names.get(k, k) for k, v in before.items()
+                 if v.strip() and after.get(k, "").strip() and len(after[k].strip()) < len(v.strip())]
+    report["lost_fields"] = lost
+    report["truncated_fields"] = truncated
+    return final, report

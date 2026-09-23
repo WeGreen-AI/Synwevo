@@ -816,7 +816,19 @@ class JobService:
                                           layout_mode, tpl_pages)
         blocking = [i for i in issues if i.get("level") == "error"]
         if blocking or not out:
-            self._item_done(item["id"], "failed", [{**i, "stage": i.get("stage", "fill")} for i in (blocking or issues)])
+            failed = [{**i, "stage": i.get("stage", "fill")} for i in (blocking or issues)]
+            if lay:
+                # Keep the layout facts precisely when the sample failed — that is when the
+                # user needs to know the achieved page count, the factor tried and the floor
+                # that stopped it.  They used to be thrown away here.
+                failed.append({"level": "info", "code": "layout_report", "stage": "layout",
+                               "message": f"版式：模板 {lay.get('template_pages')} 页，本次排版 {lay.get('pages')} 页；"
+                                          f"实际缩放 {lay.get('effective_factor', 1.0):.0%}"
+                                          + (f"，最小 {lay['min_pt']:.1f} 磅" if lay.get("min_pt") else "")
+                                          + (f"；已到最小字号的字段：{'、'.join(lay['clamped'])}" if lay.get("clamped") else "")
+                                          + f"；共排版 {lay.get('renders')} 次",
+                               "layout": lay})
+            self._item_done(item["id"], "failed", failed)
             return
         produced = []
         for f in opts["formats"]:

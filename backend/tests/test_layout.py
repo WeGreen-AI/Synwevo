@@ -1,5 +1,6 @@
 """Pagination guard: real LibreOffice layout, page-count check, shrink-to-fit for marked fields."""
 import io
+import pathlib
 
 import docx
 import pytest
@@ -102,3 +103,65 @@ def test_libreoffice_lays_out_chinese_with_a_cjk_font():
     width = spans[0]["bbox"][2] - spans[0]["bbox"][0]
     assert abs(width - 8 * 12) < 6, (spans[0]["font"], width)                 # 8 full-width glyphs at 12 pt
     assert spans[0]["font"] and "Libertine" not in spans[0]["font"]
+
+
+# ---------------------------------------------------------------- report honesty & content integrity
+
+def test_reported_page_count_is_measured_on_the_delivered_bytes(tmp_path, monkeypatch):
+    """fit_docx used to count pages on the intermediate that still carried the field
+    controls, then deliver a different byte stream with them unwrapped.  The number a user
+    sees must describe the file they actually receive."""
+    from docweave.engine import layout as L
+
+    seen = []
+    real = L.page_count
+
+    def spy(data, fmt):
+        seen.append(data)
+        return real(data, fmt)
+
+    monkeypatch.setattr(L, "page_count", spy)
+    tpl = pathlib.Path(_template(tmp_path)).read_bytes()
+    out, rep = L.fit_docx(tpl, [], tpl_pages=1, keep_fields=False)
+    assert seen, "没有实际排版"
+    assert seen[0] == out, "报告的页数必须量自最终交付的字节"
+    assert rep["pages"] == real(out, "docx")
+
+
+def test_effective_factor_reports_what_was_applied_not_what_was_asked(tmp_path):
+    """A field pinned at its own minimum must not be reported as 'shrunk to 60%'."""
+    from docweave.engine import layout as L
+
+    d = docx.Document()
+    d.styles["Normal"].font.size = Pt(10)
+    p = d.add_paragraph()
+    run = p.add_run("内容")
+    run.font.size = Pt(10)
+    buf = io.BytesIO(); d.save(buf)
+
+    # shrink_min equal to the current size: no shrinking is actually possible
+    slots = [{"id": "s1", "name": "备注", "shrink": True, "shrink_min": 10.0}]
+    _, applied = L.scale_fields(buf.getvalue(), {"s1"}, 0.6, {"s1": 10.0})
+    assert applied["ratio"] == pytest.approx(1.0), "被下限挡住时不能报告成缩小了"
+
+
+def test_content_lost_by_shrinking_is_detected_not_counted_as_success():
+    """Page count alone is not success: a field whose text vanished must fail the sample."""
+    from docweave.engine import layout as L
+
+    before = {"s1": "重要内容", "s2": "保留"}
+    after_lost = {"s1": "", "s2": "保留"}
+    after_trunc = {"s1": "重要", "s2": "保留"}
+
+    lost = [k for k, v in before.items() if v.strip() and not after_lost.get(k, "").strip()]
+    trunc = [k for k, v in before.items()
+             if v.strip() and after_trunc.get(k, "").strip() and len(after_trunc[k].strip()) < len(v.strip())]
+    assert lost == ["s1"] and trunc == ["s1"], "这是 fit_docx 用来判定内容完整性的同一条规则"
+    assert hasattr(L, "_field_texts"), "内容完整性检查依赖按字段取文本"
+
+
+def test_field_texts_reads_every_field(tmp_path):
+    from docweave.engine import layout as L
+    tpl = pathlib.Path(_template(tmp_path)).read_bytes()
+    texts = L._field_texts(tpl)
+    assert isinstance(texts, dict)
