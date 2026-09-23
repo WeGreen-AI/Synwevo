@@ -98,7 +98,7 @@ def test_docker_image_carries_every_path_the_offer_promises():
     """
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     copied = "\n".join(l for l in dockerfile.splitlines() if l.startswith("COPY"))
-    for rel in ("frontend/src", "scripts", "docs", "README.md"):
+    for rel in ("frontend/src", "scripts", "docs", "README.md", "NOTICE"):
         assert rel in copied, f"Dockerfile 没有把 {rel} 放进镜像，对应源代码包会缺这一块"
 
 

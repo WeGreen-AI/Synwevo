@@ -26,7 +26,9 @@ COPY frontend/src frontend/src
 COPY frontend/index.html frontend/package.json frontend/package-lock.json frontend/tsconfig.json frontend/vite.config.ts frontend/
 COPY scripts/ scripts/
 COPY docs/ docs/
-COPY README.md Dockerfile docker-compose.yml ./
+COPY README.md NOTICE Dockerfile docker-compose.yml ./
+# LICENSE is deliberately absent: this project has not chosen one yet, and COPY of a missing
+# file fails the build. The source archive reports it as missing rather than pretending.
 RUN useradd -m docweave && mkdir -p /data && chown docweave /data
 USER docweave
 VOLUME ["/data"]
