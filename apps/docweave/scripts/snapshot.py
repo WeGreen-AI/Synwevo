@@ -2,7 +2,7 @@
 """Take and restore a consistent snapshot of a DocWeave instance.
 
     python scripts/snapshot.py create --data data --out ./backups
-    python scripts/snapshot.py verify --archive ./backups/docweave-2026-09-23T18-40.tar.gz
+    python scripts/platform.py verify-restore ./backups/docweave-2026-09-23T18-40.tar.gz
     python scripts/snapshot.py restore --archive <file> --into /tmp/restored
 
 **`verify` is the point.** A backup that has never been restored is a file, not a backup. It
@@ -192,7 +192,7 @@ def create(args) -> int:
                 print("   · 未设置 DOCWEAVE_SECRET，因此 MFA 种子的密钥就在这个库里——")
                 print("     拿到这个归档即可解出 TOTP 种子。这不叫加密。")
         print("\n下一步：先验证，再依赖它。")
-        print(f"  python scripts/snapshot.py verify --archive {archive}")
+        print(f"  python scripts/platform.py verify-restore {archive}")
         return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)

@@ -1,6 +1,6 @@
 # 把一个应用接入平台账户体系
 
-本文档是可执行的：每条命令都在本机跑通过，`scripts/verify_sso.py` 会把结果量出来。
+本文档是可执行的：每条命令都在本机跑通过，`python tests/integration/verify_sso.py` 会把结果量出来（本轮实测 38/38）。
 
 平台账户服务是 OIDC Provider；平台门户和 DocWeave 都是接入它的独立客户端。本轮的两个客户端
 都是真实业务链路的一部分，因此它们本身就是跨客户端验证的对象。
@@ -32,7 +32,7 @@
 python -m platform_identity.cli app list
 ```
 
-DocWeave 在服务启动时自动登记（`platform/apps.py: bootstrap_docweave`），幂等。新增一个应用时
+DocWeave 在服务启动时自动登记（`platform_core/apps.py: bootstrap_docweave`），幂等。新增一个应用时
 在同一位置登记，或扩展该函数。
 
 工作空间要显式启用应用，成员要显式获得使用资格：
@@ -312,3 +312,59 @@ export DOCWEAVE_PUBLIC_URL=http://accounts.localhost:8770
 - Passkey / WebAuthn：RP ID 与可信 origin 策略已确定为账户服务域名，实现尚未落地。
 - 机器身份（服务账户、用户委托）仍走现有 `/api/v1` 密钥体系，尚未接入 OIDC 的客户端凭据流程。
 - 管理后台与历史数据认领界面未开始。门户首页、账户与安全页已完成并在浏览器中走通。
+
+---
+
+## 10. 一个新应用放在仓库的哪里
+
+平台是单仓库，新应用有它自己的目录，和 DocWeave 平级：
+
+```
+apps/<your-app>/
+├─ pyproject.toml        声明依赖：platform-core、platform-auth-client，**不写任何别的应用**
+├─ requirements.txt      -r ../../packages/auth-client/python/requirements.txt + 自己的
+├─ <your_app>/           Python 包：app.py（工厂）、routes.py、业务实现
+├─ web/                  自己的 Vite 构建；package.json 依赖 @platform/ui、@platform/auth-client
+│                        build.assetsDir 取一个**不重名**的目录名，否则单进程部署里会互相遮盖
+├─ tests/                这个应用自己的测试
+└─ AGENTS.md             这个模块的工作边界
+```
+
+接入统一身份**不需要修改 DocWeave 的任何代码**，也不需要改账户服务的实现。要做的是四件事：
+
+1. **挂上依赖方路由**（授权码流程、回调、后通道登出，都在共享包里）：
+
+   ```python
+   from platform_auth_client.routes import build_router as build_rp_router
+   from platform_auth_client.session_routes import build_router as build_session_router
+   from platform_core.http import build_platform, install as install_platform, new_api
+
+   def create_app(data_dir=None):
+       plat = build_platform(data_dir)
+       api = new_api("Your App")
+       install_platform(api, plat, role="app")
+       api.include_router(build_session_router(plat.identity, plat.sessions, plat.audit))
+       api.include_router(build_rp_router(plat.store, plat.identity, plat.sessions, plat.audit))
+       ...
+   ```
+
+   不要自己写授权码流程，也不要给应用加第二个口令框——`role != accounts` 的进程根本不提供
+   `/api/auth/login`，那个框永远不可能成功。
+
+2. **登记应用与客户端**（§1、§2），并在 `platform_core/apps.py` 里登记 `app_id`。
+
+3. **前端用共享包**：`@platform/ui` 拿设计变量与基础组件，`@platform/auth-client` 拿
+   `SessionProvider` / `RequireSession` / `signInUrl`。账户与安全页面**不要复制**：链接到
+   `state.account_url`。
+
+4. **把它加进组装层**：`infra/server/platform_server/app.py` 按角色挂载。这是唯一允许同时导入
+   多个应用的地方。
+
+然后 `python scripts/check_boundaries.py` 必须通过——它会告诉你有没有不小心伸进别人的实现里。
+
+### 自动化编排类产品怎么接
+
+不需要改 DocWeave。它已经有完整的机器接口（`/api/v1`，见
+[api.md](api.md)）与机器身份（§5 的服务账户与用户委托）：取令牌 → 提交任务 → 查询 → 取回产物，
+全程无浏览器、无 Cookie，权限精确到 app / workspace / 操作。编排产品作为**另一个应用**接入统一
+身份，用自己的服务账户调用 DocWeave 的公开接口，而不是 import 它的 Python 包。

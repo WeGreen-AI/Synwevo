@@ -11,11 +11,19 @@ brew install tesseract                   # Debian/Ubuntu: apt install tesseract-
 # 2) 依赖、界面构建、OCR 语言数据（chi_sim/eng）
 python scripts/platform.py setup
 
-# 3) 启动（默认 http://127.0.0.1:8765）
+# 3) 启动（三个来源：账户服务 8770、门户 8769、DocWeave 8765）
 python scripts/platform.py up
 ```
 
-打开浏览器访问 `http://127.0.0.1:8765`。数据默认保存在仓库下的 `data/`（SQLite + 文件），可用 `DOCWEAVE_DATA_DIR` 修改。所有配置见 `.env.example`。
+打开浏览器访问 `http://docweave.localhost:8765`（平台门户 `http://portal.localhost:8769`，
+账户与安全 `http://accounts.localhost:8770`）。首次需要一个平台管理员：
+`python -m platform_identity.cli bootstrap token`。
+
+只要单进程形态（工作台 + 账户页同一源站，容器镜像用的就是它）：
+`.venv/bin/python -m platform_server.run`，访问 `http://127.0.0.1:8765`。
+
+数据默认保存在仓库根目录的 `data/`（SQLite + 文件），可用 `DOCWEAVE_DATA_DIR` 修改。
+所有配置见 `.env.example`。
 
 开发模式（界面热更新）：一个终端 `python scripts/platform.py up`，另一个终端 `cd apps/docweave/web && npm run dev`，访问 `http://127.0.0.1:5173`（`/api` 自动代理到 8765）。修改后端代码后需重启服务。
 
@@ -26,8 +34,10 @@ docker compose -f infra/docker-compose.yml up -d --build            # 首次构�
 ```
 
 * 镜像包含：API + 界面、LibreOffice（Writer/Calc/Impress）、Tesseract（chi_sim + eng）、Noto CJK 字体。
-* 数据卷：`./data:/data`。备份时停止服务后复制该目录即可（SQLite + 内容寻址文件）。
-* `docker-compose.yml` 默认只绑定 `127.0.0.1:8765`。
+* 数据卷：`../data:/data`（构建上下文是仓库根目录）。**备份不要只复制 `.sqlite3` 文件**——
+  数据库跑在 WAL 模式，主库可能落后几小时。用 `python scripts/platform.py backup`
+  （走 SQLite 备份 API + blob 清单），再用 `verify-restore` 在隔离副本上真的恢复一次。
+* `infra/docker-compose.yml` 默认只绑定 `127.0.0.1:8765`。
 * **界面鉴权三选一**（`DOCWEAVE_UI_AUTH`）：`none`（仅限回环监听，绑定其他地址时服务拒绝启动）、
   `basic`（内置口令，`python -m platform_identity.cli ui-user add <用户名>`，口令以 PBKDF2-HMAC-SHA256 存储）、
   `proxy`（由反向代理认证，需显式声明）。对外提供服务请启用 HTTPS。
@@ -49,4 +59,4 @@ docker compose -f infra/docker-compose.yml up -d --build            # 首次构�
 
 ## 5. 升级
 
-停止服务 → 备份 `data/` → 更新代码 → `python scripts/platform.py setup` → 启动。数据库表结构在启动时自动创建，迁移前进式、可重复执行（当前 schema_version = 3；以 `python -m docweave.cli info` 的输出为准）。
+停止服务（`python scripts/platform.py down`）→ 备份（`python scripts/platform.py backup`，再 `verify-restore` 核验）→ 更新代码 → `python scripts/platform.py setup` → `python scripts/platform.py up`。数据库表结构在启动时自动创建，迁移前进式、可重复执行（当前 schema_version = 4；以 `python -m docweave.cli info` 的输出为准）。

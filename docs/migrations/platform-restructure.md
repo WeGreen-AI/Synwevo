@@ -168,4 +168,94 @@ DocWeave 与确有共用的包。本文件是执行记录：先写映射与恢�
 
 ## 执行记录
 
-（按阶段追加。）
+### A —— 写下计划（提交 `676a6a3`）
+
+本文件的 §1–§7 先于任何移动写成并提交。
+
+### B —— 目录改名（无提交；改的是仓库自身的位置）
+
+```
+mv /Users/lihiko/repo/wegreen/DocWeave /Users/lihiko/repo/wegreen/platform-workspace
+```
+
+改名后立即核对：
+
+| 检查 | 结果 |
+|---|---|
+| `git rev-parse --show-toplevel` | `/Users/lihiko/repo/wegreen/platform-workspace` |
+| HEAD | `676a6a3`（与改名前一致） |
+| 分支 | `upgrade/automation-api-ui`（另有 `main`、`origin/upgrade/automation-api-ui`） |
+| remote | `origin git@github.com:WeGreen-AI/DocWeave.git`，**未修改** |
+| 旧提交可达 | `git cat-file -t e292a3e…` → commit；`git log` 完整 |
+| `git fsck` | 无输出（无错误） |
+| `git status` | 干净 |
+| 数据库 | `pragma integrity_check` → ok；44 张表行数与备份清单一致 |
+| blob | 695 个文件摘要清单与迁移前**逐字节一致** |
+
+### C —— 纯移动（提交 `63811c5`）
+
+213 个文件全部经 `git mv`，`git show --stat` 中**每一个都显示为重命名**（`{旧 => 新}`），
+没有一行内容改动。这个提交上的代码**不能运行**——这是有意的：一个既搬动 213 个文件又重写其
+导入的提交，没有人能审；之后出问题时也分不清是哪一半造成的。
+
+### D —— 边界与运行（提交 `e1ae385`）
+
+导入修复、五个可安装发行版、角色组装层、前端拆成三个构建 + 两个共享包、CLI 一分为二、
+容器构建与源代码提供清单按新布局更新。
+
+**这一步里做出的、不只是移动的改动**（逐条列出，因为它们改变了行为）：
+
+1. **`ServiceError`、`Store`、`Identity`、`Sessions`、`Apps`、机器身份、OIDC 令牌存储移入共享层。**
+   理由不是"两边都用到"，而是具体的：验证令牌的一方不是签发它的一方；判断"是不是这个工作空间的
+   成员"的一方不该 import 账户服务。
+2. **`/api/auth/state`、`/me`、`/logout`、`/workspace` 移入 `platform_auth_client.session_routes`。**
+   三个角色都要提供这四条；写两遍的那一遍会忘记重新核对工作空间成员资格。
+3. **账户与安全界面收归账户服务，工作台不再打包第二份。** 单进程部署下两个外壳由同一进程、同一
+   源站提供（静态资源目录不同名，互不遮盖）；依赖方上这些路径改为服务端 303 重定向。
+4. **角色在构建应用时确定，不在每次请求时读环境变量。** 因为现在是按角色条件挂载路由：进程里
+   存在哪些路由，必须和网关按角色拒绝哪些路径是同一个答案。
+5. **数据目录解析改为从模块位置向上找工作区标记**，找不到就报错而不是猜（见 §5）。
+6. **`up` 在数据目录没有数据库时拒绝启动**，除非显式 `--init`。
+7. **源代码提供清单（AGPL §13）按新布局重写**：正在运行的程序不再只是 DocWeave 自己的目录，
+   共享包、账户服务与组装层都在里面；同时排除了 `data/`、`testdata/`、`.egg-info` 等不该进去的内容
+   （实测归档 275 个条目，0 个泄漏项）。
+
+### 旧目录的处理
+
+`backend/`（只剩旧虚拟环境与缓存，Git 里已无任何跟踪文件）与 `frontend/` 已删除。
+仓库里**不存在**两套都能运行的项目，也没有指回旧路径的符号链接——
+`python scripts/check_boundaries.py` 会检查这一点。
+
+`scripts/setup.sh` 与 `scripts/start.sh` 由 `python scripts/platform.py setup` / `up` 取代：
+它们写死了 `backend/.venv` 与 `backend/run.py`，留下就是两条会坏掉的入口。
+
+### 数据处理结果
+
+| 项 | 迁移前 | 迁移后 |
+|---|---|---|
+| 数据库位置 | `…/DocWeave/data/docweave.sqlite3` | `…/platform-workspace/data/docweave.sqlite3`（随根目录改名移动） |
+| 44 张表行数 | 见 §1 | **完全一致** |
+| 69 个 project id | — | 逐一相同 |
+| `default` 工作空间 | `legacy / pending_claim / 0 成员` | **原样** |
+| 695 个 blob | 摘要清单 | **逐字节一致** |
+| 密钥材料 | 库内（服务端根密钥、`oidc_keys`） | 未重新生成、未移动 |
+| issuer / client_id / 回调 / RP ID / Cookie 名 | — | **未改**（`accounts.localhost:8770` 等照旧） |
+| Docker 卷 | `./data:/data` | `../data:/data`（构建上下文改为仓库根目录，具名路径仍指向同一个 `data/`） |
+
+数据库里没有任何指向旧目录的绝对路径（blob 按内容寻址，任务快照只存 blob id 与文件名），
+因此**没有、也不需要**对数据库做字符串替换。
+
+### 回退方式
+
+| 想回到 | 怎么做 |
+|---|---|
+| 重组前的代码 | `git checkout 676a6a3`（或 `e292a3e`，本轮之前的 HEAD），历史完整可达 |
+| 重组前的目录名 | `mv platform-workspace DocWeave`；`.git` 是普通目录，改名无副作用 |
+| 重组前的数据 | `/Users/lihiko/repo/wegreen/.platform-restructure-backup-20260923/`：一致性数据库备份 + 695 个 blob + 摘要清单 + `git bundle`。**Git 回退不等于业务数据恢复**，这两件事分开准备、分开验证 |
+| 任意时点的完整实例 | `python scripts/platform.py backup` → `verify-restore`（本轮实测 20/20） |
+
+### 验证结果
+
+见 [`docs/quality/verification.md`](../quality/verification.md) 的「平台单仓库重组轮」一节：
+后端 650 passed / 1 skipped、边界检查 0 越界、统一登录 38/38、真实库迁移演练 15/15、
+恢复演练 20/20、干净检出安装成功、三条主链路与浏览器实跑。

@@ -7,8 +7,10 @@
 
 | 服务 / 进程 | 用途 | 协议 | 默认端口 | 默认绑定 | 配置项 | 是否对外 | 鉴权 |
 |---|---|---|---|---|---|---|---|
-| `backend/run.py`（uvicorn，单进程） | Web 界面 + 机器接口 + 健康检查 | HTTP/1.1 | **8765** | `127.0.0.1` | `DOCWEAVE_PORT` / `DOCWEAVE_HOST` | 建议仅经反向代理对外 | `/api/v1/*` 必须 API 密钥；界面按 `DOCWEAVE_UI_AUTH` |
-| Vite 开发服务器（仅开发） | 前端热更新，`/api` 反向代理到 8765 | HTTP/1.1 | **5173** | `localhost` | `frontend/vite.config.ts` 的 `server.port` | 否（仅本机开发） | 无（代理到后端后按后端规则） |
+| `platform_server.run`（uvicorn，单进程） | Web 界面 + 机器接口 + 健康检查 | HTTP/1.1 | **8765** | `127.0.0.1` | `DOCWEAVE_PORT` / `DOCWEAVE_HOST` | 建议仅经反向代理对外 | `/api/v1/*` 必须 API 密钥；界面按 `DOCWEAVE_UI_AUTH` |
+| Vite 开发服务器（仅开发，DocWeave 工作台） | 前端热更新，`/api` 反向代理到 8765 | HTTP/1.1 | **5173** | `localhost` | `apps/docweave/web/vite.config.ts` | 否（仅本机开发） | 无（代理到后端后按后端规则） |
+| Vite 开发服务器（仅开发，门户） | 热更新，`/api` 代理到 8769 | HTTP/1.1 | **5174** | `localhost` | `apps/portal/web/vite.config.ts` | 否 | — |
+| Vite 开发服务器（仅开发，账户与安全） | 热更新，`/api` 代理到 8770 | HTTP/1.1 | **5175** | `localhost` | `services/identity/web/vite.config.ts` | 否 | — |
 | 任务运行线程 `job-runner` / 看门狗 `job-supervisor` | 执行生成任务、租约心跳、恢复 | — | **无监听端口** | — | `DOCWEAVE_JOB_LEASE_S` | — | — |
 | Webhook 投递线程 `webhooks` | 主动向外发起 HTTPS 回调 | 出站 HTTP(S) | **无监听端口** | — | `DOCWEAVE_WEBHOOK_*` | 出站 | 请求带 HMAC 签名 |
 | SQLite（`data/docweave.sqlite3`） | 元数据、任务、事件 | 文件 | **无监听端口** | — | `DOCWEAVE_DATA_DIR` | 否 | 文件系统权限 |
@@ -16,18 +18,24 @@
 | LibreOffice（`soffice --headless`） | 旧格式转换、PDF 导出、分页计算 | 子进程 | **无监听端口**（使用私有配置目录，不启动监听） | — | `DOCWEAVE_SOFFICE`、`DOCWEAVE_LO_PROFILE` | 否 | — |
 | Tesseract（`tesseract`） | 扫描件 / 图片 OCR | 子进程 | **无监听端口** | — | `DOCWEAVE_TESSERACT`、`DOCWEAVE_TESSDATA` | 否 | — |
 
-没有独立的队列服务、对象存储服务或后台管理端口；`docker-compose.yml` 中也只映射 8765。
+没有独立的队列服务、对象存储服务或后台管理端口；`infra/docker-compose.yml` 中也只映射 `127.0.0.1:8765`。
 
 ## 1.1 平台模式：一个二进制，三个角色，三个来源
 
-上面那张表描述的是**单进程形态**（`DOCWEAVE_ROLE` 未设 ⇒ `all`），也是 `dw.wegreen.ltd` 今天
-运行的形态。启用平台模式后，同一个二进制以三个角色各起一个进程：
+上面那张表描述的是**单进程形态**（`DOCWEAVE_ROLE` 未设 ⇒ `all`，容器镜像用的就是这个）。
+平台模式下由 `platform_server` 按角色组装，三个角色各起一个进程：
+
+**`all` 角色同时提供两个外壳**：工作台（`assets/`）与账户与安全（`account-assets/`）。
+两份构建产物的静态资源目录不同名，所以一个进程可以同时提供而不互相遮盖；账户路径
+（`/login`、`/account`、`/invite`、`/forgot-password`、`/reset-password`、`/logged-out`、`/admin`）
+由账户外壳服务，其余由工作台外壳服务。`app` / `portal` 角色上这些路径是**服务端 303 重定向**
+到账户服务，不是本地页面。
 
 | 角色 | 用途 | 默认端口 | 默认绑定 | 服务的前端 | 鉴权 |
 |---|---|---|---|---|---|
-| `accounts` | 账户服务 / OIDC Provider、账户与安全、管理后台 | **8770**（`PLATFORM_ACCOUNTS_PORT`） | 见下 | `accounts.html` | `/api/auth/*` 会话；`/oidc/*` 各自携带自己的认证 |
-| `portal` | 平台门户（接入统一身份的客户端） | **8769**（`PLATFORM_PORTAL_PORT`） | 见下 | `portal.html` | 会话 |
-| `app` | DocWeave 业务应用 | **8765**（`PLATFORM_DOCWEAVE_PORT`） | 见下 | `index.html` | 会话；`/api/v1/*` 机器凭据 |
+| `accounts` | 账户服务 / OIDC Provider、账户与安全、管理后台 | **8770**（`PLATFORM_ACCOUNTS_PORT`） | 见下 | `services/identity/web/dist`（资源目录 `account-assets/`） | `/api/auth/*` 会话；`/oidc/*` 各自携带自己的认证 |
+| `portal` | 平台门户（接入统一身份的客户端） | **8769**（`PLATFORM_PORTAL_PORT`） | 见下 | `apps/portal/web/dist`（资源目录 `portal-assets/`） | 会话 |
+| `app` | DocWeave 业务应用 | **8765**（`PLATFORM_DOCWEAVE_PORT`） | 见下 | `apps/docweave/web/dist`（资源目录 `assets/`） | 会话；`/api/v1/*` 机器凭据 |
 
 本机地址分别是 `http://accounts.localhost:8770`、`http://portal.localhost:8769`、
 `http://docweave.localhost:8765`。

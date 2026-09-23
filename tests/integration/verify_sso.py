@@ -27,7 +27,7 @@ import urllib.request
 
 ACCOUNTS = "http://accounts.localhost:8770"
 PORTAL = "http://portal.localhost:8769"
-DOCWEAVE = "http://docweave.localhost:8775"
+DOCWEAVE = "http://docweave.localhost:8765"   # 与 scripts/platform.py 的默认端口一致
 
 PASS, FAIL = "✓", "✗"
 results: list[tuple[bool, str, str]] = []

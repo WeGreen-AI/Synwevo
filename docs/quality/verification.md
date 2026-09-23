@@ -274,3 +274,132 @@ export DOCWEAVE_API_KEY=dw_...
 * 约定检查全部执行并通过：202 项后端测试、3 套浏览器端到端、类型检查、生产构建、干净环境启动、无界面调用、界面/接口一致、权限与输入、幂等并发、取消语义、Webhook 全链路、持续使用资源。
 * 仍然存在的限制与未测量项见第 14 节与 `README.md`「已知限制」，**不计入已交付**。
 * 结论：可以发布到自托管环境。对外提供服务前需按 `docs/DEPLOY.md` 配置反向代理与界面鉴权，并确认 PyMuPDF 的许可证义务。
+
+---
+
+# 平台单仓库重组轮（2026-09-24）
+
+环境：macOS（Apple Silicon），Python 3.14.5（仓库根目录 `.venv`），Node 22 / npm workspaces。
+数据目录在各条命令里显式给出；**真实业务库全程未被任何服务打开**，涉及运行的验证都指向
+`/tmp/platform-live`（隔离实例）或真实库的只读副本。
+
+## 实际执行的命令与结果
+
+```bash
+# 迁移前基线（改名之前，在 .../DocWeave 里）
+backend/.venv/bin/python -m pytest backend/tests -q
+# → 644 passed, 1 skipped in 186.36s
+
+# 重组之后（仓库根目录）
+.venv/bin/python -m pytest
+# → 650 passed, 1 skipped in 158.49s
+
+# 模块单跑
+cd apps/docweave && ../../.venv/bin/python -m pytest tests
+# → 306 passed, 1 skipped in 104.53s
+
+# 模块依赖边界
+.venv/bin/python scripts/check_boundaries.py
+# → 检查了 156 个文件，覆盖 7 个模块边界。
+#   没有跨应用导入、没有 sys.path 改写、没有机器绝对路径、没有指向旧目录的链接。
+
+# 前端
+npm run typecheck && npm run build
+# → 三个外壳（@docweave/web、@platform/accounts-web、@platform/portal-web）全部通过
+
+# 统一登录链路（对着重组后真正跑起来的三个进程）
+DOCWEAVE_DATA_DIR=/tmp/platform-live .venv/bin/python tests/integration/verify_sso.py \
+    --email owner@example.test --password '***' --docweave http://docweave.localhost:8765
+# → 38/38 项通过
+
+# 真实库的隔离副本上跑迁移
+.venv/bin/python tests/integration/migration_rehearsal.py --from data
+# → 15/15 项通过；来源只读；default 仍 legacy/pending_claim/0 成员
+
+# 一致性备份与恢复演练
+DOCWEAVE_DATA_DIR=/tmp/platform-live .venv/bin/python scripts/platform.py backup --out /tmp/platform-live-backups
+.venv/bin/python scripts/platform.py verify-restore /tmp/platform-live-backups/docweave-2026-09-24T00-14.tar.gz
+# → 20/20 项通过。"这份备份是可恢复的。"
+#   备份同时报出：主库 0.5 MB / WAL 2.7 MB —— 只复制主库会丢掉 2.7 MB
+
+# 干净检出（等效于另一个人第一次拿到仓库）
+git clone --no-hardlinks <repo> /tmp/clean-checkout && cd /tmp/clean-checkout
+python3 scripts/platform.py setup        # → EXIT=0，装好依赖并构建三个外壳
+.venv/bin/python -m pytest               # → 见下
+
+# 数据目录解析（三个起始目录，同一个库）
+.venv/bin/python -m docweave.cli info                                   # 平台根目录
+(cd apps/docweave && ../../.venv/bin/python -m docweave.cli info)       # 应用目录
+(cd services/identity && ../../.venv/bin/python -m platform_identity.cli info)
+# → 三者都报告 /Users/lihiko/repo/wegreen/platform-workspace/data
+
+# 空数据目录守卫
+DOCWEAVE_DATA_DIR=/tmp/does-not-exist .venv/bin/python scripts/platform.py up
+# → 退出码 2，并说明「这里不会替你建一个空库」
+```
+
+## 真实数据完整性（迁移前后逐项比对）
+
+| 检查 | 结果 |
+|---|---|
+| `pragma integrity_check` | ok |
+| 44 张表逐表行数 vs 迁移前备份清单 | **完全一致**，无一处差异 |
+| 69 个 project id 逐一比对 | 完全相同 |
+| 全部项目的 tenant | 仍然只有 `default`（69 个） |
+| `default` 工作空间 | `legacy / pending_claim / 0 成员`，未认领、未重置 |
+| 695 个 blob 的 SHA-256 清单 | 与迁移前**逐字节一致**；每个文件的内容摘要等于其文件名 |
+| `data/` 的位置 | 随仓库根目录改名一起移动，这是本轮唯一一次数据位置变化，有完整备份与上述核验 |
+
+## 机器自动化（无浏览器、无 Cookie）
+
+```bash
+.venv/bin/python -m platform_identity.cli --data /tmp/platform-live client register \
+    --client-id nightly-batch --app docweave --name 夜间批处理 \
+    --service --workspace w_xxx --api-scopes "docweave.read docweave.write"
+
+.venv/bin/python tests/integration/automation_example.py \
+    --base-url http://docweave.localhost:8765 --issuer http://accounts.localhost:8770 \
+    --client-id nightly-batch --client-secret '***' \
+    --source testdata/测试_客户100.xlsx --template testdata/测试_合同模板.docx \
+    --definition docs/integration/example-definition.json --out /tmp/automation-out
+# → 任务 completed，样本 10，成功 10，输出 10 个 .docx（各约 39.5 KB）
+```
+
+打开产物逐条核对（不是只断言 HTTP 200）：
+
+```
+001.docx → 甲方（客户）：示例测试钱磊敏，客户编号 000001。签约日期：2025年1月4日；金额 1,123.45 元
+002.docx → 甲方（客户）：示例测试孙涛强，客户编号 000002。签约日期：2025年1月7日；金额 1,246.90 元
+003.docx → 甲方（客户）：示例测试李桂洋，客户编号 000003。签约日期：2025年1月10日；金额 1,370.35 元
+```
+
+负面用例（**按预期被拒绝即为正确结果**）：
+
+| 用例 | 实测 |
+|---|---|
+| 无凭据调 `/api/v1/projects` | 401 |
+| 只有 `openid` 的身份令牌调业务接口 | 401 `凭据无效、已过期或已撤销` |
+| 同一 `Idempotency-Key` 两次提交 | 同一个 job id（`j_e449f75b9b70`） |
+| 停用服务账户后继续用已签发的令牌 | 401 `client_unavailable` |
+| 平台管理员读工作空间 | 只返回 `projects: 1` 这样的**数量**，无项目名称与内容 |
+
+## 浏览器实跑
+
+门户首页 → 登录（账户服务，输一次口令）→ 门户看到 DocWeave 卡片 → 打开工作台（未再要口令）→
+批量生成 10 份 → 结果页 10/10 成功且逐条「已核验」→ 取回产物核对内容。
+
+清空 DocWeave 会话后直接打开深链接 `http://docweave.localhost:8765/p/p_23578f09c418` →
+跳到账户服务登录 → 登录后**回到该深链接本身**（`location.href` 实测）。
+
+停掉门户之后：`portal /healthz → 000`（不可达），`docweave /healthz → 200`，
+`accounts /healthz → 200`，DocWeave 工作台照常打开与操作。
+
+账户与安全页、平台管理后台（概览 / 账户 / 工作空间 / 审计）在桌面与 375px 窄屏下都可操作，
+静态资源与样式正常。
+
+## 未验证 / 外部条件
+
+* 真实认证器的 Passkey 互操作（需要用户生物特征，不擅自发起）；本轮仍由软件虚拟认证器驱动。
+* 真实邮件送达；本轮使用本地投递目录。
+* 真实业务文件的结构差异；本轮全部使用合成夹具。
+* **未部署到服务器**，未推送任何提交，未修改远程仓库。
