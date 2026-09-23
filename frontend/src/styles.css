@@ -474,3 +474,42 @@ tr.rowlink:hover td { background: var(--surface-hover); }
 tr.rowlink.cursor td { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
 tr.rowlink.off td { opacity: .6; }
 table.tbl tbody:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ---------------------------------------------------------------- account & sign-in
+   One visual language with the workspace: same tokens, same radii, same motion budget.
+   A sign-in screen that looks like a different product is a small thing people notice. */
+.authpage { min-height: 100%; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); }
+.authcard {
+  width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  padding: 28px 26px; box-shadow: var(--shadow-lg);
+  /* Entrance is decoration only: the form is interactive immediately and the animation cannot
+     swallow a keystroke. Reduced-motion zeroes --dur-3 so this becomes a no-op. */
+  animation: auth-in var(--dur-3) var(--ease);
+}
+@keyframes auth-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.authbrand { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-2); }
+.authcard h1 { margin: 2px 0 0; font-size: 19px; }
+.authlede { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.authcard .field { display: flex; flex-direction: column; gap: 5px; }
+.authcard .field > span { font-size: 12px; color: var(--text-2); }
+.authcard .input { height: 34px; }
+.authpw { display: flex; gap: 6px; align-items: center; }
+.authpw .input { flex: 1; min-width: 0; }
+/* Fixed width so toggling 显示/隐藏 cannot resize the row and shift the field under the cursor. */
+.authshow { flex: 0 0 auto; width: 52px; }
+.authsubmit { height: 36px; margin-top: 2px; }
+/* The error sits above the fields and never moves the submit button: a control that jumps as
+   the message appears is how a second, unintended click happens. */
+.autherr { margin: 0; }
+.autherr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.authfoot { margin: 0; text-align: center; }
+
+.secttl { margin: 0; font-size: 14px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; }
+.kv dt { color: var(--muted); font-size: 12px; }
+.kv dd { margin: 0; font-size: 13px; }
+
+@media (max-width: 420px) {
+  .authcard { padding: 22px 18px; border-radius: var(--radius); }
+}

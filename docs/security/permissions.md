@@ -206,7 +206,8 @@ blob id 直取接口 · 临时文件 · 日志导出
 | 账户/工作空间/成员 | **已实现（服务层）** | `identity.py` | `test_identity.py` 成员段（5） |
 | 首位管理员引导 | **已实现（CLI）** | `manage.py bootstrap` + `bootstrap_tokens` | `test_identity.py` 引导段（3） |
 | 登录/会话的 HTTP 路由 | **已实现** | `api/auth_routes.py` + `app.py::_session_gate` | `test_auth_http.py`（18） |
-| 登录/账户/后台界面 | 待实现 | — | — |
+| 登录与账户安全界面 | **已实现** | `pages/Login.tsx`、`pages/Account.tsx`、`lib/session.tsx` | 浏览器实跑（引导→登录→账户页→历史数据不可见） |
+| 管理后台界面 | 待实现 | — | — |
 | 注册与邀请流程 | 待实现（模式开关已就绪） | `identity.registration_mode` | — |
 | Passkey / MFA / 恢复 | 待实现 | — | — |
 | 逐对象授权与空间隔离 | **已实现** | `authz.py`；`services.get_source/list_sources`、`views.preview_file`、`locators.locate_all`、job 路由 | `test_authz_isolation.py`（18） |

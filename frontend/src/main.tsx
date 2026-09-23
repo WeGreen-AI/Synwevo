@@ -2,6 +2,7 @@ import { StrictMode, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DialogProvider, ToastProvider } from "./lib/ui";
+import { RequireSession, SessionProvider } from "./lib/session";
 import { initTheme } from "./lib/theme";
 import Home from "./pages/Home";
 import Workspace from "./pages/Workspace";
@@ -9,6 +10,8 @@ import JobPage from "./pages/JobPage";
 import AboutPage from "./pages/About";
 import RegressionPage from "./pages/Regression";
 import Capabilities from "./pages/Capabilities";
+import Login from "./pages/Login";
+import Account from "./pages/Account";
 import "./styles.css";
 
 const DocEditor = lazy(() => import("./pages/DocEditor"));
@@ -19,24 +22,29 @@ initTheme();
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ToastProvider>
-      <DialogProvider>
+      <SessionProvider>
+        <DialogProvider>
         <BrowserRouter>
           <Suspense fallback={<div className="empty">加载中…</div>}>
             <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/capabilities" element={<Capabilities />} />
-              <Route path="/about" element={<AboutPage />} />
-              <Route path="/regression" element={<RegressionPage />} />
-              <Route path="/p/:pid" element={<Workspace />} />
-              <Route path="/p/:pid/jobs/:jid" element={<JobPage />} />
-              <Route path="/templates/new/doc" element={<DocEditor />} />
-              <Route path="/templates/new/sheet" element={<SheetEditor />} />
-              <Route path="/templates/:tid/edit" element={<EditorSwitch />} />
+              {/* The only route that must render without an account. */}
+              <Route path="/login" element={<Login />} />
+              <Route path="/account" element={<RequireSession><Account /></RequireSession>} />
+              <Route path="/" element={<RequireSession><Home /></RequireSession>} />
+              <Route path="/capabilities" element={<RequireSession><Capabilities /></RequireSession>} />
+              <Route path="/about" element={<RequireSession><AboutPage /></RequireSession>} />
+              <Route path="/regression" element={<RequireSession><RegressionPage /></RequireSession>} />
+              <Route path="/p/:pid" element={<RequireSession><Workspace /></RequireSession>} />
+              <Route path="/p/:pid/jobs/:jid" element={<RequireSession><JobPage /></RequireSession>} />
+              <Route path="/templates/new/doc" element={<RequireSession><DocEditor /></RequireSession>} />
+              <Route path="/templates/new/sheet" element={<RequireSession><SheetEditor /></RequireSession>} />
+              <Route path="/templates/:tid/edit" element={<RequireSession><EditorSwitch /></RequireSession>} />
               <Route path="*" element={<div className="empty"><div className="big">页面不存在</div><a href="/">返回首页</a></div>} />
             </Routes>
           </Suspense>
         </BrowserRouter>
-      </DialogProvider>
+        </DialogProvider>
+      </SessionProvider>
     </ToastProvider>
   </StrictMode>,
 );

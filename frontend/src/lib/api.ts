@@ -75,12 +75,36 @@ async function handle(res: Response) {
   throw new ApiError(res.status, body?.error || "http_error", msg, body?.detail);
 }
 
+const CSRF_COOKIE = "dw_csrf";
+const CSRF_HEADER = "X-DocWeave-CSRF";
+const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** The CSRF cookie is readable on purpose — the page has to echo it back in a header.
+ *  It is not a credential by itself; it only proves the request came from our own page. */
+function csrfToken(): string | null {
+  const hit = document.cookie.split("; ").find((c) => c.startsWith(CSRF_COOKIE + "="));
+  return hit ? decodeURIComponent(hit.slice(CSRF_COOKIE.length + 1)) : null;
+}
+
+/** Headers for one request, adding the CSRF echo on anything that changes state.
+ *  Absent in deployments without the account system, where the server does not ask for it. */
+export function authHeaders(method: string, hasBody: boolean): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (hasBody) h["Content-Type"] = "application/json";
+  if (!SAFE.has(method.toUpperCase())) {
+    const t = csrfToken();
+    if (t) h[CSRF_HEADER] = t;
+  }
+  return h;
+}
+
 export async function api<T = any>(path: string, opts: { method?: string; body?: any; signal?: AbortSignal } = {}): Promise<T> {
   let res: Response;
+  const method = opts.method || (opts.body !== undefined ? "POST" : "GET");
   try {
     res = await fetch(path, {
-      method: opts.method || (opts.body !== undefined ? "POST" : "GET"),
-      headers: opts.body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      method,
+      headers: authHeaders(method, opts.body !== undefined),
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       signal: opts.signal,
     });
@@ -102,6 +126,9 @@ export function upload<T = any>(path: string, form: FormData, onProgress?: (p: n
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", path);
+    // Uploads are state-changing too, and they go through XHR rather than fetch, so the CSRF
+    // echo has to be set here as well or every upload 403s under session auth.
+    for (const [k, v] of Object.entries(authHeaders("POST", false))) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
     };
