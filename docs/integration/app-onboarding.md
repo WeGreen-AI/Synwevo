@@ -237,7 +237,7 @@ python -m platform_identity.cli client register \
 必须是机密客户端（密钥就是它的全部凭据），必须绑定工作空间（背后没有人，租户推不出来）。
 `client_secret` 只显示一次。
 
-取令牌并调用（`scripts/automation_example.py` 原样支持）：
+取令牌并调用（`tests/integration/automation_example.py` 原样支持）：
 
 ```bash
 python tests/integration/automation_example.py \

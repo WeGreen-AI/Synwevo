@@ -11,8 +11,12 @@
 ## 2. 自动化测试（pytest）
 
 ```bash
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest apps/docweave/tests -q
+python scripts/platform.py setup                      # 或手动：.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest                          # 三个套件：DocWeave、账户服务、跨模块集成
+.venv/bin/python -m pytest apps/docweave/tests      # 只跑 DocWeave
+.venv/bin/python -m pytest services/identity/tests  # 只跑账户服务
+.venv/bin/python -m pytest tests/integration        # 只跑跨模块验证
+.venv/bin/python scripts/check_boundaries.py        # 模块依赖边界
 ```
 
 | 文件 | 内容 |

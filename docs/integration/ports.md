@@ -232,7 +232,7 @@ DocWeave 自己有口令（`DOCWEAVE_UI_AUTH=basic`，PBKDF2 存储），`/api/v
 
 ### 实例上的三个合成示例（2026-09-23）
 
-交付实例预置了三个示例项目，覆盖三种样本模式与三类模板，全部由 `scripts/seed_samples.py`
+交付实例预置了三个示例项目，覆盖三种样本模式与三类模板，全部由 `apps/docweave/scripts/seed_samples.py`
 经 `/api/v1` 创建并逐份核对过产物内容：
 
 | 项目 | 样本模式 | 模板 | 产物 |

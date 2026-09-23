@@ -2,7 +2,7 @@
 
 本表只把**有自动化测试覆盖**的能力标为「✅ 已验证」。经 LibreOffice 转换才能处理的格式标为「🔁 转换」并在界面上提示可能的损失；有限支持标为「⚠️ 部分」；未实现标为「❌」并给出原因和替代路径。界面中的「格式能力」页面（`/capabilities`）由服务端按当前环境实时生成（例如未安装 LibreOffice 时相关项会显示「缺依赖」）。
 
-测试位置：`apps/docweave/tests/`（引擎单元测试、验收场景 1–14、格式覆盖测试）与 `scripts/ui_e2e*.py`（真实浏览器操作）。验证环境：macOS 27 / Apple Silicon，Python 3.14，LibreOffice 26.8，Tesseract 5.5。
+测试位置：`apps/docweave/tests/`（引擎单元测试、验收场景 1–14、格式覆盖测试）与 `apps/docweave/scripts/ui_e2e*.py`（真实浏览器操作）。验证环境：macOS 27 / Apple Silicon，Python 3.14，LibreOffice 26.8，Tesseract 5.5。
 
 ## 1. 总表
 

@@ -65,7 +65,7 @@ workspaces: id='default', kind='legacy', status='pending_claim', 成员 0 个
 **零成员是重点，不是疏漏。** 访问权由成员关系授予，所以在平台管理员显式指派之前，**没有人**能
 读到这些文件——包括平台管理员自己，包括第一个注册的人。
 
-真实库上的实测（`scripts/migration_rehearsal.py`，69 项目隔离副本）：
+真实库上的实测（`tests/integration/migration_rehearsal.py`，69 项目隔离副本）：
 
 ```
 default 空间成员数 : 0
@@ -153,7 +153,7 @@ OIDC 协议端点（`/oidc/*`、`/.well-known/*`）和 SSO 端点（`/auth/*`）
 > 而且它能正常启动——迁移会把这些表重新建成空表——所以失败的样子是"所有人都没有账户了"，
 > 不是"备份文件损坏"。
 >
-> `scripts/snapshot.py` 与 `scripts/migration_rehearsal.py` 都用 backup API，因此不受影响
+> `apps/docweave/scripts/snapshot.py` 与 `tests/integration/migration_rehearsal.py` 都用 backup API，因此不受影响
 > （快照验证里 44 张表全部恢复，20/20 通过）。
 
 ### 5.2 密钥的实情

@@ -78,7 +78,7 @@ curl -s -X POST "$ISSUER/oidc/token" \
 **旧的 `dw_` 密钥继续有效**，不设废止期限。它们早于平台存在，一次性全部作废会打断正在运行的
 自动化。两种凭据走同一个解析函数（`apps/docweave/docweave/machine.py`），出来的 principal 形状相同。
 
-`scripts/automation_example.py` 两种都支持：给 `--key` 用旧密钥，给
+`tests/integration/automation_example.py` 两种都支持：给 `--key` 用旧密钥，给
 `--issuer --client-id --client-secret` 用服务账户。
 
 ## 2. 错误与追踪

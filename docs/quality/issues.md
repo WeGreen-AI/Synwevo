@@ -93,9 +93,26 @@
 | 打开 20000×30（3.5 MB）表格 | 同上 | 上传+解析 6.63 s（服务端）；首个网格窗口 380 ms；其后每页 11–12 ms |
 | 单元格选区响应 | 页面内实测：事件派发 → React 提交 → 强制样式/布局 | 中位 5.9 ms，p95 6.7 ms（n=25） |
 | 映射列表键盘移动（联动双侧高亮） | 同上 | 中位 5.1 ms，p95 5.9 ms（n=25） |
-| 大表虚拟滚动帧间隔 | 可见窗口真实帧计时（`scripts/ui_perf.py`） | 中位 8.3 ms，p95 9.7，最大 16.6（显示器空闲节拍中位 8.3 ms，即跟随刷新节奏；仅渲染视口内约 200 个单元格节点） |
+| 大表虚拟滚动帧间隔 | 可见窗口真实帧计时（`apps/docweave/scripts/ui_perf.py`） | 中位 8.3 ms，p95 9.7，最大 16.6（显示器空闲节拍中位 8.3 ms，即跟随刷新节奏；仅渲染视口内约 200 个单元格节点） |
 | 校验 / 样本 / 预览 / 定位接口 | 浏览器 `fetch` 计时 | 8 / 4 / 29 / 2 ms |
 | 页面内存 | `performance.memory` | 打开大表后 7–10 MB |
-| 批量生成 | `scripts/benchmark.py`（真实处理链路） | 100 份 DOCX 1.21 s（12.1 ms/份）；1 000 份 11.12 s；5 000 份 65.35 s（13.1 ms/份，峰值 RSS 452 MB）；PDF 模板 300 份 22.97 s（76.6 ms/份）；DOCX+PDF 双格式 20 样本 14.2 s（355 ms/份，LibreOffice 转换为主） |
+| 批量生成 | `apps/docweave/scripts/benchmark.py`（真实处理链路） | 100 份 DOCX 1.21 s（12.1 ms/份）；1 000 份 11.12 s；5 000 份 65.35 s（13.1 ms/份，峰值 RSS 452 MB）；PDF 模板 300 份 22.97 s（76.6 ms/份）；DOCX+PDF 双格式 20 样本 14.2 s（355 ms/份，LibreOffice 转换为主） |
 
-说明：选区与键盘响应为**页面内测量**（事件处理 + React 提交 + 强制样式/布局），不含操作系统输入延迟；帧间隔另用可见窗口的真实帧计时测量（`scripts/ui_perf.py`，完整数据见 `verification.md` 第 11 节）。约 100 ms 的交互反馈目标与「滚动拖拽接近刷新节奏」在上述已测项目上达成，但这是本机（Apple Silicon、约 120 Hz）实测值，不代表其他机器、刷新率与文件规模。
+说明：选区与键盘响应为**页面内测量**（事件处理 + React 提交 + 强制样式/布局），不含操作系统输入延迟；帧间隔另用可见窗口的真实帧计时测量（`apps/docweave/scripts/ui_perf.py`，完整数据见 `verification.md` 第 11 节）。约 100 ms 的交互反馈目标与「滚动拖拽接近刷新节奏」在上述已测项目上达成，但这是本机（Apple Silicon、约 120 Hz）实测值，不代表其他机器、刷新率与文件规模。
+
+---
+
+## 平台单仓库重组轮发现并修复的问题（2026-09-24）
+
+这些都是**重组本身**暴露或造成的，逐条实测确认修复。
+
+| 编号 | 级别 | 类别 | 现象 | 怎么发现的 | 原因 | 修复 | 验证 |
+|---|---|---|---|---|---|---|---|
+| PR-001 | P1 | 打包 | 三个外壳的静态资源都叫 `/assets`，单进程部署里后挂载的那个会被前一个遮盖 | 拆成三个独立 Vite 构建后，`role=all` 同时提供工作台与账户外壳 | 一个构建改成三个构建，但 `assetsDir` 还都是默认值 | 各自取 `assets` / `account-assets` / `portal-assets` | `tests/integration/test_shells.py`：每个角色在 `/`、`/index.html`、`/portal.html`、`/accounts.html` 上都只返回自己的外壳 |
+| PR-002 | P1 | 路由 | `role=app` 上 `/login`、`/account` 变成工作台 SPA 的「页面不存在」 | 把账户页收归账户服务后，依赖方不再打包这些路由 | 客户端原本靠 JS 跳转；服务端没有对应处理 | `platform_auth_client.build_account_redirect_router()`：服务端 303，`/login` 经 `/auth/start`（只有它会建可校验的请求行） | 实测 `role=app` 的 `/login` → 303 `/auth/start…`，`/account` → 303 账户服务 |
+| PR-003 | P1 | 配置 | 角色由每次请求读环境变量决定，而路由改成按角色条件挂载后两者可能不一致 | 集成套件整体运行时，先建的应用把进程级角色改了，后面 20 多个用例连带失败 | 用模块级全局存角色，建一个应用就改变了后面所有应用的行为 | 角色随应用走（`api.state.role`），网关闭包捕获构建时的角色 | 全量套件从 35 failed 回到 0 failed；角色边界改为按角色各建一个应用来验证（`tests/integration/test_role_boundaries.py`） |
+| PR-004 | P1 | 数据 | `Path(__file__).parents[N]` 在模块搬家后指向了错的目录：工作台构建产物找不到、回归用例目录被创建到 `apps/regression` | 起服务后所有页面 404；`list_cases()` 返回 0 | 数了固定层数的 `..`，层数随目录深度变了 | 构建产物按各自模块位置解析；数据目录改为向上找工作区标记，找不到**报错而不是猜** | 三个 `web_dist()` 实测指向正确目录；`regression.ROOT` 指向 `apps/docweave`；空目录启动退出码 2 |
+| PR-005 | P2 | 许可 | AGPL §13 的源代码归档仍按旧布局收集，且会把 `*.egg-info` 一起打进去 | 重组后跑 `test_licensing` 与 `/api/source-code` | `INCLUDE` 是旧路径；排除规则用集合成员判断，看不到 `platform_core.egg-info` 这种整段名字 | 清单按"正在运行的程序"重写（含共享包、账户服务、组装层）；排除改为同时匹配后缀 | 归档 275 个条目，`data/`、`.sqlite3`、`node_modules`、`.venv`、`testdata/`、`.env`、`egg-info`、`dist/` **0 个泄漏** |
+| PR-006 | P2 | 依赖 | `pyyaml` 是测试用到但没有任何清单声明的依赖，只是碰巧装在旧虚拟环境里 | 在新建的干净 `.venv` 上跑测试，`test_api_docs` 报 `No module named 'yaml'` | 旧环境里手装过，没进 `requirements-dev.txt` | 写进 `requirements-dev.txt` 并注明用途 | 干净检出 `setup` → 650 passed |
+| PR-007 | P2 | 文档 | `docs/architecture/platform.md` §1 论证"不搬目录"，而目录已经搬了 | 通读文档 | 上一轮的决定被本轮取代 | 该节改写为"已被后一轮取代"，保留原有理由并指向重组记录与新结构 | — |
+
