@@ -19,6 +19,7 @@ from __future__ import annotations
 import atexit
 import io
 import math
+import threading
 import weakref
 from contextlib import contextmanager
 
@@ -26,6 +27,13 @@ import pypdfium2 as pdfium
 import pypdfium2.raw as raw
 
 _LIVE: "weakref.WeakSet[Document]" = weakref.WeakSet()
+
+# PDFium is explicitly NOT thread-safe, and it does not fail gracefully: concurrent calls
+# abort the whole process (measured: exit 138 / SIGBUS within 200 mixed reads on 8 threads).
+# FastAPI runs sync route handlers on a threadpool and the job runner is a separate thread,
+# so concurrency is the normal case here, not an edge case.  Every entry into the library is
+# serialised by this process-wide reentrant lock.
+LOCK = threading.RLock()
 
 
 @atexit.register
@@ -195,7 +203,7 @@ class Page:
 
     # PyMuPDF's matrices: unrotated → displayed and back
     def _page(self):
-        return _opened(self.parent._pdf[self.number])
+        return _opened(self.parent, self.number)
 
     @property
     def rotation_matrix(self) -> Matrix:
@@ -300,15 +308,22 @@ class Page:
 
 
 @contextmanager
-def _opened(page):
-    try:
-        yield page
-    finally:
-        page.close()
+def _opened(doc, index):
+    """Acquire, use and close a page with the PDFium lock held the whole time."""
+    with LOCK:
+        page = doc._pdf[index]
+        try:
+            yield page
+        finally:
+            page.close()
 
 
 class Document:
     def __init__(self, stream: bytes | None = None, filetype: str | None = None):
+        with LOCK:
+            self._init(stream, filetype)
+
+    def _init(self, stream: bytes | None, filetype: str | None) -> None:
         _LIVE.add(self)
         self._closed = False
         self.needs_pass = False
@@ -327,7 +342,8 @@ class Document:
 
     @property
     def page_count(self) -> int:
-        return len(self._pdf)
+        with LOCK:
+            return len(self._pdf)
 
     def __len__(self):
         return self.page_count
@@ -368,15 +384,16 @@ class Document:
             return 0
 
     def close(self):
-        if self._closed:
-            return
-        self._closed = True
-        if hasattr(self, "_pages"):
-            self._pages.clear()
-        try:
-            self._pdf.close()
-        except Exception:  # noqa: BLE001
-            pass
+        with LOCK:
+            if self._closed:
+                return
+            self._closed = True
+            if hasattr(self, "_pages"):
+                self._pages.clear()
+            try:
+                self._pdf.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def open(stream: bytes | None = None, filetype: str | None = None) -> Document:  # noqa: A001 - PyMuPDF's name
