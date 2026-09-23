@@ -3,11 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { get, post, qs } from "../lib/api";
 import { fmtSize, fmtTime, useToast } from "../lib/ui";
 
-const ST: Record<string, [string, string]> = {
-  queued: ["排队中", "info"], running: ["生成中", "info"], completed: ["已完成", "ok"], completed_with_errors: ["已完成（有失败/跳过）", "warn"],
-  cancelled: ["已取消", "warn"], failed: ["任务失败", "err"], interrupted: ["已中断", "warn"],
-};
-const IST: Record<string, [string, string]> = { pending: ["等待", ""], running: ["生成中", "info"], success: ["成功", "ok"], failed: ["失败", "err"], skipped: ["已跳过", "warn"], cancelled: ["已取消", "warn"] };
+import { ITEM_STATUS as IST, JOB_STATUS as ST } from "../lib/status";
 
 export default function JobPage() {
   const { pid, jid } = useParams();

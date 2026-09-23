@@ -5,6 +5,7 @@ import { describeSelection, mappingSlots, MODE_NAME, slotPos } from "../lib/desc
 import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, TemplateDetail } from "../lib/types";
 import { useDialog, useToast } from "../lib/ui";
 import { applyTheme, nextTheme, recall, remember, storedTheme, THEME_NAME, type Theme } from "../lib/theme";
+import { jobStatus } from "../lib/status";
 import AnyView from "../components/AnyView";
 import CommandPalette, { Command } from "../components/CommandPalette";
 import Shortcuts from "../components/Shortcuts";
@@ -558,7 +559,7 @@ export default function Workspace() {
           {save === "saved" ? "✓ 已自动保存" : save === "saving" ? "保存中…" : "保存失败"}
         </span>
         <span className="spacer" />
-        {lastJob && <Link className="btn ghost sm" to={`/p/${pid}/jobs/${lastJob.id}`}>最近任务：{({ completed: "已完成", running: "进行中", queued: "排队中", completed_with_errors: "部分失败", cancelled: "已取消", failed: "失败" } as any)[lastJob.status] || lastJob.status}</Link>}
+        {lastJob && <Link className="btn ghost sm" to={`/p/${pid}/jobs/${lastJob.id}`}>最近任务：{jobStatus(lastJob.status)[0]}</Link>}
         <button className="btn ghost sm" onClick={() => setCmdOpen(true)} title="命令面板：所有操作与快捷键">
           ⌘K <span className="desktop-only tiny muted">命令</span>
         </button>

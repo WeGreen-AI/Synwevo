@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { del, get, patch, post } from "../lib/api";
 import { fmtTime, useDialog, useToast } from "../lib/ui";
+import { jobStatus, ruleMode } from "../lib/status";
 
 export default function Home() {
   const [projects, setProjects] = useState<any[] | null>(null);
@@ -45,14 +46,19 @@ export default function Home() {
           )}
           <div className="projgrid">
             {projects?.map((p) => (
-              <div key={p.id} className="card projcard" onClick={() => nav(`/p/${p.id}`)}>
+              <div key={p.id} className="card projcard" role="link" tabIndex={0}
+                aria-label={`打开项目 ${p.name}`}
+                onClick={() => nav(`/p/${p.id}`)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); nav(`/p/${p.id}`); } }}>
                 <div className="row"><h3 className="grow ellipsis">{p.name}</h3>
                   <button className="btn xs ghost" onClick={async (e) => { e.stopPropagation(); const n = await prompt("重命名项目", "名称", p.name); if (n) { await patch(`/api/projects/${p.id}`, { name: n }); load(); } }}>重命名</button>
                   <button className="btn xs ghost" onClick={async (e) => { e.stopPropagation(); if (await confirm("删除项目", `删除项目「${p.name}」？项目将从列表中移除。`, "删除", true)) { await del(`/api/projects/${p.id}`); toast("已删除", "ok"); load(); } }}>删除</button>
                 </div>
-                <div className="small muted mt8">来源文件 {p.sources} 个 · {p.record_rule?.mode ? { per_row: "每行一份", per_file: "每文件一份", per_group: "每组一份" }[p.record_rule.mode as string] : "未定义样本"}</div>
+                <div className="small muted mt8">来源文件 {p.sources} 个 · {ruleMode(p.record_rule?.mode)}</div>
                 <div className="small muted">更新于 {fmtTime(p.updated_at)}</div>
-                {p.last_job && <div className="small mt8">最近任务：<span className={`badge ${p.last_job.status === "completed" ? "ok" : p.last_job.status === "running" ? "info" : "warn"}`}>{p.last_job.status}</span> 成功 {p.last_job.counts?.success || 0} / {p.last_job.counts?.total || 0}</div>}
+                {p.last_job && (() => { const [label, tone] = jobStatus(p.last_job.status); return (
+                  <div className="small mt8">最近任务：<span className={`badge ${tone}`}>{label}</span> 成功 {p.last_job.counts?.success || 0} / {p.last_job.counts?.total || 0}</div>
+                ); })()}
               </div>
             ))}
           </div>
