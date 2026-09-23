@@ -1,30 +1,13 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
-const here = fileURLToPath(new URL(".", import.meta.url));
-
-// Two entries, not one app with a portal route. The portal is served from its own origin by a
-// process running with DOCWEAVE_ROLE=portal, and a single SPA shell would mean the portal's
-// router also owned every DocWeave path — which is exactly how a new entry point swallows the
-// application it was meant to sit beside.
+// DocWeave 自己的构建产物。三个外壳各自构建，各自的静态资源目录也不同（assets /
+// portal-assets / account-assets）——单进程部署要同时提供其中两个，同名的 /assets 会互相遮盖。
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
     proxy: { "/api": { target: "http://127.0.0.1:8765", changeOrigin: false } },
   },
-  build: {
-    outDir: "dist",
-    sourcemap: false,
-    chunkSizeWarningLimit: 1500,
-    rollupOptions: {
-      input: {
-        main: resolve(here, "index.html"),
-        portal: resolve(here, "portal.html"),
-        accounts: resolve(here, "accounts.html"),
-      },
-    },
-  },
+  build: { outDir: "dist", assetsDir: "assets", sourcemap: false, chunkSizeWarningLimit: 1500 },
 });

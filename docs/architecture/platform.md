@@ -18,8 +18,8 @@
 
 | 内容 | 实际位置 | 说明 |
 |---|---|---|
-| DocWeave 业务 | `backend/docweave/`、`frontend/src/` | **原地不动** |
-| 平台账户服务 | `backend/docweave/platform/` | 与业务模块同进程可启动，也可独立启动 |
+| DocWeave 业务 | `apps/docweave/docweave/`、`frontend/src/` | **原地不动** |
+| 平台账户服务 | `apps/docweave/docweave/platform/` | 与业务模块同进程可启动，也可独立启动 |
 | 平台门户 | `frontend/portal/` | 独立 Vite 入口，不吞掉 DocWeave 的前端路由 |
 | 数据 | `data/`（原位） | 不新建第二份账户库 |
 | 文档 | `docs/architecture/`、`docs/security/`、`docs/integration/` | — |
@@ -72,7 +72,7 @@ Cookie 按**主机**划分，不按端口。`localhost:8765` 与 `localhost:8766
 同名 Cookie，三个不同的主机，因此是三个互不相通的值——这正是要验证的性质。
 所有 Cookie **不设 `Domain` 属性**（host-only），按 RFC 6265 不会发往兄弟主机。
 
-`python scripts/platform_local.py up` 启动这三个进程，`python scripts/verify_sso.py` 用
+`python scripts/platform.py up` 启动这三个进程，`python tests/integration/verify_sso.py` 用
 Python 的 `http.cookiejar`（真实规则：按主机作用域、无视端口）把结果量出来。**已实测 32/32 通过**，
 其中直接检查了：三个会话值互不相同、DocWeave 的会话 Cookie `domain=docweave.localhost` 且
 非 `.`-前缀、Cookie 没有端口限定、没有任何 Cookie 落在 `localhost` 这样的共享父域上。
@@ -92,7 +92,7 @@ Python 的 `http.cookiejar`（真实规则：按主机作用域、无视端口�
 `*.localhost` 在本机同时解析到 `::1` 和 `127.0.0.1`，`getaddrinfo` 先返回 `::1`。uvicorn 只绑
 一个地址，绑 `127.0.0.1` 会让 `[::1]:8770` 拒绝连接。浏览器和 urllib 会挨个地址重试，所以
 浏览器跳转全部正常；httpx 不会，于是**只有服务端换码那一步失败**，表现为回调处的
-`Server disconnected without sending a response`。`platform_local.py: bind_addr()` 因此按域名
+`Server disconnected without sending a response`。`scripts/platform.py: bind_addr()` 因此按域名
 解析结果绑定。生产同理：发行者域名和监听地址必须对得上。
 
 ### 3.2 不继承环境里的代理

@@ -25,7 +25,11 @@ import sqlite3
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from platform_core.http import repo_root
+
+# 相对的 --data 以**仓库根目录**为准，而不是脚本所在的模块目录：脚本搬了家，
+# `--data data` 指的还得是同一个 data/，否则备份的是一个空实例。
+ROOT = repo_root() or Path(__file__).resolve().parents[3]
 
 # Columns that hold a blob id directly.
 #
@@ -84,7 +88,6 @@ def _cross_check_against_authz() -> list:
     like an orphan here — and a collector built on this list deletes it. So the two are compared
     rather than assumed to agree, and a mismatch is a hard failure rather than a quieter report.
     """
-    sys.path.insert(0, str(ROOT / "backend"))
     try:
         from docweave import authz
     except ImportError:

@@ -10,8 +10,8 @@
  * the person never asked for and can no longer do.
  */
 import { useEffect, useState } from "react";
-import { ApiError, get, post } from "../lib/api";
-import { useSession } from "../lib/session";
+import { ApiError, get, post } from "@platform/auth-client";
+import { useSession } from "@platform/auth-client";
 
 export function ForgotPassword() {
   const { state } = useSession();

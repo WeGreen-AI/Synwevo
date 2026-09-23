@@ -11,11 +11,11 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-from docweave.identity import Identity
-from docweave.invites import Invites
-from docweave.mfa import Mfa
-from docweave.sessions import CSRF_COOKIE, CSRF_HEADER
-from docweave.store import Store
+from platform_core.identity import Identity
+from platform_identity.invites import Invites
+from platform_identity.mfa import Mfa
+from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
+from platform_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 NEW_PW = "an-entirely-different-long-phrase"
@@ -32,7 +32,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCWEAVE_MAIL_MODE", "file")
     monkeypatch.setenv("DOCWEAVE_MAIL_DIR", str(tmp_path / "mail"))
     monkeypatch.setenv("DOCWEAVE_PUBLIC_URL", "http://accounts.localhost:8770")
-    import docweave.api.app as app_mod
+    import platform_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -163,7 +163,7 @@ def test_a_reset_changes_the_password_and_ends_every_session(env):
 
 
 def test_a_reset_also_revokes_platform_tokens(env):
-    from docweave.platform import oidc
+    from platform_core import oidc
     store = env["store"]
     store.execute(
         "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,scope,issued_at,"

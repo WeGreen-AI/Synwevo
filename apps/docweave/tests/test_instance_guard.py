@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from docweave.store import Store
+from platform_core.store import Store
 
 
 def _store(tmp_path, name="d"):
@@ -101,7 +101,7 @@ def test_readyz_neither_writes_a_row_nor_leaves_a_file_in_the_blob_tree(tmp_path
     after = wal.stat().st_size if wal.exists() else 0
     assert after == before, f"50 次探针让 WAL 增长了 {after - before} 字节"
 
-    from docweave.store import Store
+    from platform_core.store import Store
     assert Store(d).one("SELECT COUNT(*) AS n FROM meta WHERE key='readyz'")["n"] == 0
     assert not list((d / "blobs").glob(".*")), "探针文件不能留在内容寻址目录里"
     assert c.get("/readyz").json().keys() == {"status", "checks"}, "匿名响应不带诊断信息"

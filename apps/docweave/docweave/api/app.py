@@ -1,33 +1,28 @@
-"""HTTP API (FastAPI).  The browser UI talks only to these endpoints; the engine
-package has no web dependency so a desktop shell can reuse it later."""
+"""DocWeave 的 HTTP 接口：浏览器工作台与机器接口。
+
+engine 包不依赖任何 Web 框架，所以将来的桌面外壳可以直接复用它；这一层只做 HTTP。
+
+会话网关、错误契约、探针和静态外壳的通用部分已经移到 `platform_core.http`——它们对账户服务、
+门户和这里是同一套，留在这里就意味着账户服务要导入 DocWeave 才能有一个会话。这里剩下的全部是
+DocWeave 自己的业务路由。
+"""
 from __future__ import annotations
 
 import os
-import secrets
-import time
-import traceback
 import urllib.parse
 from pathlib import Path
-
 from fastapi import Body, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
 
-from ..auth import Auth, rate_limiter, ui_auth_mode
-from ..context import UI_TENANT, set_tenant
-from ..identity import Identity
-from ..invites import Invites
-from ..mail import Mailer
-from ..mfa import Mfa, Tickets
-from ..sessions import Sessions
+from platform_core.errors import ServiceError
+from platform_core.http import (Platform, build_platform, install as install_platform,
+                                install_probes, mount_web, new_api, shell_response)
+from platform_core.store import Store
+
 from ..engine.limits import LIMITS
 from ..jobs import JobService, naming_tokens
-from ..services import App, ServiceError, safe_output_name
-from ..store import Store, new_id
+from ..services import App, safe_output_name
 from ..views import Views
-
-API_RATE_PER_MIN = int(os.environ.get("DOCWEAVE_API_RATE_PER_MIN", "300"))
-PUBLIC_V1 = ("/api/v1/download/",)          # signed links carry their own proof
 
 MIME = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -47,393 +42,28 @@ def attachment(data: bytes, filename: str, ext: str | None = None, inline: bool 
                     headers={"Content-Disposition": cd, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
 
-class _HashedAssets(StaticFiles):
-    """Vite's build output, whose filenames already contain a content hash.
+def web_dist() -> Path:
+    """The workbench's built shell. Its own build output, beside its own source."""
+    return Path(os.environ.get("DOCWEAVE_UI_DIR") or Path(__file__).resolve().parents[2] / "web" / "dist")
 
-    `main-Fb_P6FP5.js` changes its *name* when its bytes change, so the bytes under any one name
-    never change and the browser never needs to ask again. `immutable` is what says that: it
-    stops even a manual reload from revalidating, which is the difference between a reload
-    costing one request and costing one per bundle.
 
-    Applied only to files that actually carry a hash. A build output without one would be a file
-    whose contents *can* change under a fixed name, and telling a browser to keep that for a year
-    is how a deploy silently fails to reach people.
+def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
+    """Mount DocWeave's own routes onto an application the caller has already scaffolded.
 
-    The mount sits behind the same gate as everything else — this only adds a header to a
-    response the gate has already allowed.
+    Returns the business service object so a composer can hold on to it. Nothing here touches
+    accounts, the OIDC provider or the portal — those are mounted by their own modules.
     """
-
-    _HASHED = __import__("re").compile(r"-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$")
-
-    def file_response(self, full_path, stat_result, scope, status_code=200):
-        resp = super().file_response(full_path, stat_result, scope, status_code)
-        name = os.path.basename(str(full_path))
-        if self._HASHED.search(name):
-            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-        else:
-            # No hash in the name ⇒ the bytes can change under this name. Revalidate.
-            resp.headers["Cache-Control"] = "no-cache"
-        return resp
-
-
-def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
-    data_dir = data_dir or os.environ.get("DOCWEAVE_DATA_DIR") or str(Path(__file__).resolve().parents[3] / "data")
-    store = Store(data_dir)
+    from ..webhooks import WebhookDispatcher
+    store, machine = plat.store, plat.machine
     app_ = App(store)
     views = Views(app_)
     jobs = JobService(app_) if start_jobs else None
-    auth = Auth(store)
-    identity = Identity(store)
-    from ..machine import MachineAuth
-    # One resolver for every machine caller: legacy API keys, service accounts and user
-    # delegations all come out as the same principal shape, so no call site has to know which
-    # kind it got — and none of them can forget to re-check one of the three.
-    machine = MachineAuth(store, identity, auth)
-    sessions = Sessions(store)
-    invites = Invites(store, identity)
-    mailer = Mailer(store, start=start_jobs)
-    mfa = Mfa(store)
-    tickets = Tickets(store)
-    from ..webhooks import WebhookDispatcher
     hooks = WebhookDispatcher(store, jobs, start=start_jobs)
     app_.on_event = hooks.notify                      # job state changes wake the dispatcher
-    show_docs = (os.environ.get("DOCWEAVE_API_DOCS") or "").strip().lower() in ("1", "true", "on", "yes")
-    api = FastAPI(title="DocWeave", version="1.0.0",
-                  docs_url="/api/docs" if show_docs else None,
-                  redoc_url=None,
-                  openapi_url="/api/openapi.json" if show_docs else None)
     api.state.app = app_
     api.state.views = views
     api.state.jobs = jobs
-    api.state.auth = auth
-    api.state.identity = identity
-    api.state.sessions = sessions
-    api.state.invites = invites
-    api.state.mailer = mailer
-    api.state.mfa = mfa
     api.state.webhooks = hooks
-    limiter = rate_limiter(API_RATE_PER_MIN)
-
-    def _error_body(request: Request, code: str, message: str, detail: dict | None):
-        rid = getattr(request.state, "request_id", "")
-        if request.url.path.startswith("/api/v1"):
-            body = {"error": {"code": code, "message": message, "request_id": rid}}
-            if isinstance(detail, dict) and detail.get("field"):
-                body["error"]["field"] = detail["field"]
-            if detail:
-                body["error"]["details"] = {k: v for k, v in detail.items() if k != "field"} or None
-                if not body["error"]["details"]:
-                    body["error"].pop("details")
-            return body
-        return {"error": code, "message": message, "detail": detail, "request_id": rid}
-
-    @api.exception_handler(ServiceError)
-    async def _svc_err(request: Request, exc: ServiceError):
-        resp = JSONResponse(_error_body(request, exc.code, exc.message, exc.detail), status_code=exc.status)
-        if exc.code == "rate_limited" and (exc.detail or {}).get("retry_after"):
-            resp.headers["Retry-After"] = str(int((exc.detail or {})["retry_after"]) + 1)
-        return resp
-
-    @api.exception_handler(ValueError)
-    async def _val_err(request: Request, exc: ValueError):
-        return JSONResponse(_error_body(request, getattr(exc, "code", "invalid"), str(exc), None), status_code=400)
-
-    @api.exception_handler(Exception)
-    async def _unexpected(request: Request, exc: Exception):
-        rid = getattr(request.state, "request_id", "")
-        print(f"[docweave] unhandled error request_id={rid} path={request.url.path}\n{traceback.format_exc()}", flush=True)
-        return JSONResponse(_error_body(request, "internal_error", "服务器内部错误；请提供 request_id 以便排查", None), status_code=500)
-
-    # Reachable without a session, because you cannot sign in from behind a sign-in wall. Kept
-    # to an exact set rather than a prefix: "/api/auth" as a prefix would also open anything
-    # added under it later, and this list is the whole anonymous surface of the account system.
-    ANON_AUTH_PATHS = {"/api/auth/state", "/api/auth/login", "/api/auth/bootstrap", "/api/auth/logout",
-                       # An invitation is for someone who has no account yet, so reading the
-                       # landing page and accepting it cannot require being signed in. Preview
-                       # is read-only and accept consumes a token that is itself the authority.
-                       "/api/auth/invitations/preview", "/api/auth/invitations/accept",
-                       # the second half of a sign-in: the ticket is the authority here
-                       "/api/auth/login/mfa",
-                       # A passkey sign-in has no password step before it, so it cannot require
-                       # a session; the signed assertion over a server-issued challenge is the
-                       # authority. Its challenge endpoint is anonymous for the same reason.
-                       "/api/auth/login/passkey", "/api/auth/passkeys/authenticate/begin",
-                       # Someone who has forgotten their password cannot be signed in to ask
-                       # for a way back; the emailed token is the authority for the reset.
-                       "/api/auth/forgot", "/api/auth/reset", "/api/auth/reset/preview",
-                       "/api/auth/verify-email"}
-    # The SPA shell and its assets must load so the login screen can render; every /api/ route
-    # behind them still requires the session, so no data rides along with the HTML.
-    SPA_PREFIXES = ("/assets/",)
-    # OIDC protocol surface. Not a product feature and not UI: these are the endpoints a relying
-    # party talks to, and each one carries its own authentication.
-    PLATFORM_PREFIXES = ("/oidc/", "/.well-known/")
-    # The relying-party side. `/auth/start` and `/auth/callback` are mid-redirect-chain and
-    # `/auth/backchannel-logout` is authenticated by a signed token, so none of them can be put
-    # behind the legacy Basic prompt.
-    SSO_PREFIXES = ("/auth/",)
-    # One build, three shells. The account service must not serve the document workbench: its
-    # API refuses those calls by role, so a shared shell renders a project list that then fills
-    # with "this endpoint is not on the account service" — a correct refusal presented as a
-    # broken page.
-    SHELLS = {"portal": "portal.html", "accounts": "accounts.html"}
-    SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-
-    def _session_gate(request: Request, path: str, finish):
-        """Resolve the session cookie into an identity, or refuse.
-
-        Returns the tenant-context token on success, or a JSONResponse to return as-is. The
-        workspace comes from the session row and is re-checked against live membership on every
-        request, so a workspace someone has been removed from stops working immediately rather
-        than at the end of their session.
-        """
-        from ..sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, csrf_ok
-        session = sessions.load(request.cookies.get(COOKIE_NAME))
-        request.state.session = session
-
-        if session and request.method not in SAFE_METHODS and path.startswith("/api/"):
-            # Double-submit CSRF on every state-changing request. Login is exempt because it has
-            # no session yet; it is protected by being useless without valid credentials.
-            if path not in ANON_AUTH_PATHS and not csrf_ok(request.cookies.get(CSRF_COOKIE),
-                                                           request.headers.get(CSRF_HEADER)):
-                return finish(JSONResponse(_error_body(request, "csrf_failed",
-                                                       "请求校验失败，请刷新页面后重试", None), status_code=403))
-
-        if path in ANON_AUTH_PATHS or any(path.startswith(p) for p in SPA_PREFIXES) or not path.startswith("/api/"):
-            # The SPA shell renders for anyone; it fetches nothing until a session exists. The
-            # fallback is deliberately an id no row carries rather than UI_TENANT — see below.
-            return set_tenant((session or {}).get("workspace_id") or "__anonymous__")
-
-        if not session:
-            return finish(JSONResponse(_error_body(request, "unauthorized", "请先登录", None), status_code=401))
-
-        user = identity.get_user(session["user_id"])
-        if not user or user["status"] != "active":
-            # Suspension and deletion take effect on the next request, not at session expiry.
-            sessions.revoke(session["id"], f"user_{user['status'] if user else 'deleted'}")
-            request.state.session = None
-            return finish(JSONResponse(_error_body(request, "unauthorized", "账户不可用，请重新登录", None), status_code=401))
-        request.state.user = user
-
-        wid = session.get("workspace_id")
-        if wid:
-            # Membership is authoritative every time; the session only remembers a preference.
-            if not identity.membership(wid, user["id"]):
-                sessions.set_workspace(session["id"], None)
-                wid = None
-        request.state.workspace_id = wid
-        # With no workspace selected the tenant becomes an id no row can ever carry, so the
-        # person sees nothing. Falling back to UI_TENANT here would be a disaster: UI_TENANT is
-        # "default", which is exactly the legacy workspace holding every pre-identity file — so
-        # the fallback would hand the historical data to every signed-in account.
-        return set_tenant(wid or f"__no_workspace__{user['id']}")
-
-    # Paths the account service owns. Everything else under /api/ is DocWeave's own workbench.
-    ACCOUNT_PATHS = ("/api/auth/", "/api/admin/", "/oidc/", "/.well-known/")
-    SHARED_PATHS = ("/api/health", "/healthz", "/readyz", "/assets/")
-    # Liveness and readiness. An **exact set**, not a prefix: SHARED_PATHS above matches by
-    # prefix, so a route added later called /healthz-debug would inherit anonymity by accident.
-    # These two are the only paths a load balancer or container runtime must reach without a
-    # credential, and neither handler reads tenant-scoped data.
-    PROBE_PATHS = frozenset({"/healthz", "/readyz"})
-    # The account routes an application still needs about its *own* session: who is signed in,
-    # which workspace is selected, and how to leave. Credentials, MFA enrolment, invitations and
-    # device management stay on the account service, so there is one place to change a password
-    # and one place that knows about authenticators.
-    APP_ACCOUNT_PATHS = ("/api/auth/state", "/api/auth/logout", "/api/auth/me",
-                         "/api/auth/workspace", "/api/auth/sign-out")
-
-    def _role_blocks(path: str) -> str | None:
-        """Why this role refuses this path, or None.
-
-        `all` is the default and keeps the single-process behaviour the existing deployment has.
-        `accounts` and `app` are what make two origins mean two services rather than two names
-        for the same one.
-        """
-        role = (os.environ.get("DOCWEAVE_ROLE") or "all").strip().lower()
-        if role in ("all", ""):
-            return None
-        api_path = path.startswith("/api/") or path.startswith("/oidc/") \
-            or path.startswith("/.well-known/") or path.startswith("/auth/") \
-            or path in ("/healthz", "/readyz")
-        if not api_path or any(path.startswith(p) for p in SHARED_PATHS):
-            return None                                      # the SPA shell and probes are shared
-        is_account = any(path.startswith(p) for p in ACCOUNT_PATHS)
-        if role == "accounts" and not is_account:
-            return "该接口不在账户服务上，请访问应用自身的地址"
-        if role in ("app", "portal"):
-            # Everything the account service owns is refused here, except the handful of routes
-            # an application still needs about its own session. Expressed as "account paths
-            # minus the allow-list" rather than as a list of prefixes to block, so a route added
-            # to the account service later is refused by default instead of quietly reachable —
-            # which is how `/api/admin/` first slipped through on a business role.
-            if any(path.startswith(p) for p in ACCOUNT_PATHS) and path not in APP_ACCOUNT_PATHS:
-                if path.startswith(("/oidc/", "/.well-known/")):
-                    return "该接口在账户服务上，请访问账户服务地址"
-                return "账户、安全与平台管理在账户服务上统一管理，请访问账户服务地址"
-        if role == "app" and path.startswith("/api/portal/"):
-            return "门户接口在平台门户上，不在业务应用上"
-        if role == "portal" and not is_account and not path.startswith("/auth/") \
-                and not path.startswith("/api/portal/"):
-            return "该接口不在平台门户上"
-        return None
-
-    @api.middleware("http")
-    async def _gate(request: Request, call_next):
-        rid = (request.headers.get("X-Request-ID") or "")[:64] or secrets.token_hex(8)
-        request.state.request_id = "".join(ch for ch in rid if ch.isalnum() or ch in "-_") or secrets.token_hex(8)
-        path = request.url.path
-        token = None
-
-        def finish(resp):
-            """Every response – including the ones returned before the route runs – carries
-            the trace id and the standard headers (docs/integration/api.md)."""
-            resp.headers["X-Request-ID"] = request.state.request_id
-            resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-            resp.headers.setdefault("Referrer-Policy", "no-referrer")
-            if path.startswith("/api/"):
-                resp.headers.setdefault("Cache-Control", "no-store")
-            return resp
-
-        try:
-            off = _role_blocks(path)
-            if off:
-                # One binary, three roles, decided by configuration. Enforced here rather than by
-                # conditionally mounting routers: a filter in one place cannot be half-applied,
-                # and it means the account service genuinely cannot serve a document — an
-                # accounts-origin cookie reaching DocWeave's data would defeat the whole point
-                # of giving them separate origins.
-                return finish(JSONResponse(_error_body(request, "not_in_this_role", off, None),
-                                           status_code=404))
-            if path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):
-                principal = machine.verify(request.headers.get("Authorization"))
-                request.state.principal = principal
-                ok, wait = limiter(principal["key_id"])
-                if not ok:
-                    raise ServiceError(429, "rate_limited", f"请求过于频繁（限制 {API_RATE_PER_MIN} 次/分钟）", {"retry_after": wait})
-                token = set_tenant(principal["tenant"])
-            else:
-                # Everything that is not a key-authenticated /api/v1 route goes through the UI
-                # gate — including signed download links, which skip only the Basic check below.
-                #
-                # This used to read `elif path.startswith("/api/") or not path.startswith("/api")`,
-                # and a path beginning with "/api" but lacking the slash satisfied neither
-                # disjunct: the gate was skipped outright and set_tenant never ran. Under
-                # DOCWEAVE_UI_AUTH=basic, "/" returned 401 while "/api" and "/apifoo" returned
-                # 200. Only the SPA shell was reachable that way, but an authentication branch
-                # that some paths fall past is not a shape to leave in place.
-                mode = ui_auth_mode()
-                if path in PROBE_PATHS:
-                    # Anonymous in every mode. Under `basic` these previously answered 401,
-                    # which contradicted ports.md, the committed OpenAPI (their security is [])
-                    # and permissions.md §5.3 — and it makes a container's own restart policy
-                    # depend on a shared password. The bodies are kept to the minimum that the
-                    # contract promises; see the handlers.
-                    token = set_tenant("__probe__")
-                elif any(path.startswith(p) for p in PLATFORM_PREFIXES + SSO_PREFIXES):
-                    # Protocol endpoints authenticate themselves: /oidc/authorize reads the
-                    # central session cookie and redirects to /login when there is none, and the
-                    # token/userinfo/revoke half authenticates by client credentials and bearer
-                    # token. Putting the legacy Basic prompt in front of them would make the
-                    # account service unusable as an identity provider in `basic` mode, and
-                    # would put an HTTP auth dialog in the middle of a redirect chain.
-                    token = set_tenant("__platform__")
-                elif mode == "session" and not path.startswith("/api/v1"):
-                    token = _session_gate(request, path, finish)
-                    if isinstance(token, JSONResponse):
-                        return token
-                elif mode == "basic" and not path.startswith("/api/v1"):
-                    if not auth.check_ui_basic(request.headers.get("Authorization")):
-                        return finish(JSONResponse(_error_body(request, "unauthorized", "需要登录", None), status_code=401,
-                                                   headers={"WWW-Authenticate": 'Basic realm="DocWeave"'}))
-                    token = set_tenant(UI_TENANT)
-                else:
-                    token = set_tenant(UI_TENANT)
-        except ServiceError as e:
-            return finish(await _svc_err(request, e))
-        try:
-            resp = await call_next(request)
-        finally:
-            if token is not None:
-                try:
-                    from ..context import _tenant
-                    _tenant.reset(token)
-                except (ValueError, LookupError):
-                    pass
-        return finish(resp)
-
-    # ------------------------------------------------------------ system
-    @api.get("/api/health")
-    def health():
-        return {"ok": True}
-
-    @api.get("/healthz", tags=["system"], summary="存活检查（进程是否在运行）",
-             description="无需鉴权。返回 `{\"status\":\"ok\"}`；仅测试实例额外返回 `instance`。")
-    def healthz():
-        """Alive. Deliberately says almost nothing.
-
-        `version` used to be here and is gone: this is the one anonymous endpoint, and the exact
-        build string is what someone matching a service against a vulnerability list wants.
-        An authenticated caller still gets `api_version` from /api/v1/capabilities.
-
-        `instance` is emitted **only on a test instance**, where it is the marker destructive
-        tooling uses to prove it is not pointed at real data. On a normal instance the key is
-        absent, and `scripts/_testenv.py` compares `!= "test"` — so a missing key refuses, which
-        is the direction that has to fail safe.
-        """
-        out = {"status": "ok"}
-        kind = app_.store.instance_kind()
-        if kind == "test":
-            out["instance"] = kind
-        return out
-
-    @api.get("/readyz", tags=["system"], summary="就绪检查（能否真正处理任务）",
-             description="无需鉴权。200 `ready` / 503 `not_ready`，带 `checks` 组件级状态；不含版本、"
-                         "schema 版本等诊断信息。")
-    def readyz():
-        """Ready to actually do work: database writable, storage writable, worker alive.
-
-        Three things here are deliberate.
-
-        **It no longer writes a row.** It used to `INSERT OR REPLACE INTO meta`, so every
-        unauthenticated probe produced a WAL commit — a container on a 5-second readiness check
-        wrote ~17k rows a day, and anyone who could reach the port could drive that. Taking and
-        releasing the write lock says the same thing for free: measured, 200 probes now grow the
-        WAL by 0 bytes.
-
-        What this check does **not** prove, measured rather than assumed: neither the lock nor
-        the old INSERT detects a filesystem turned read-only *under an already-open handle* —
-        SQLite writes into the WAL it already holds. Both report `ok`. The old code was no
-        better at this; it just wrote a row each time. The `storage` check below is what
-        actually catches that case, and it is why the endpoint still returns 503.
-
-        **The storage probe no longer writes inside `blobs/`.** A crash between write and unlink
-        left a non-blob file in the content-addressed tree, which a future mark-and-sweep would
-        have to special-case — and special cases in a delete path are how the wrong file gets
-        deleted.
-
-        **The anonymous body carries component state and nothing else.** `schema_version` and
-        the webhook flag are gone from here; `manage.py info` and /api/v1/capabilities report
-        them to a caller who has proved something.
-        """
-        checks = {}
-        try:
-            with store.tx():
-                pass                       # BEGIN IMMEDIATE + rollback: writable, no commit
-            checks["database"] = "ok"
-        except Exception as e:  # noqa: BLE001
-            checks["database"] = f"error: {type(e).__name__}"
-        try:
-            p = Path(store.root) / ".readyz-probe"
-            p.write_text("ok")
-            p.unlink()
-            checks["storage"] = "ok"
-        except Exception as e:  # noqa: BLE001
-            checks["storage"] = f"error: {type(e).__name__}"
-        checks["worker"] = "ok" if (jobs and jobs.runner_alive()) else "stopped"
-        ready = all(v == "ok" for v in checks.values())
-        return JSONResponse({"status": "ready" if ready else "not_ready", "checks": checks},
-                            status_code=200 if ready else 503)
 
     # ------------------------------------------------------------ regression cases & desensitization
     @api.get("/api/regression-cases")
@@ -876,87 +506,39 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     from .v1 import build_router
     api.include_router(build_router(app_, views, jobs, machine, attachment))
 
-    def _audit(request: Request, action: str, *, actor_id: str | None = None, actor_kind: str = "user",
-               workspace_id: str | None = None, object_kind: str | None = None,
-               object_id: str | None = None, result: str = "ok", meta: dict | None = None) -> None:
-        """Append a security event.
+    return app_
 
-        Metadata only — never a password, token, TOTP seed, recovery code or document content.
-        A failure to write must not be mistaken for the action not happening, so it is raised
-        rather than swallowed; callers that must not fail closed catch it deliberately.
-        """
-        import json as _json
-        store.execute(
-            "INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,"
-            "object_id,result,request_id,ip,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            (new_id("ae"), time.time(), actor_kind, actor_id,
-             workspace_id or getattr(request.state, "workspace_id", None), action, object_kind, object_id,
-             result, getattr(request.state, "request_id", None),
-             (request.client.host if request.client else None), _json.dumps(meta or {}, ensure_ascii=False)))
 
-    from .auth_routes import build_invite_router, build_router as build_auth_router
-    api.include_router(build_auth_router(identity, sessions, _audit, mfa, tickets))
-    api.include_router(build_invite_router(identity, sessions, invites, mailer, _audit))
-    from .auth_routes import build_mfa_router, build_passkey_router
-    api.include_router(build_mfa_router(identity, sessions, mfa, _audit))
-    from .auth_routes import build_recovery_router
-    api.include_router(build_recovery_router(identity, sessions, invites, mailer, mfa, _audit))
-    from ..passkeys import Passkeys
-    passkeys = Passkeys(store)
-    api.state.passkeys = passkeys
-    api.include_router(build_passkey_router(identity, sessions, passkeys, _audit))
+def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
+    """DocWeave on its own: the workbench, the machine API, and the single-sign-on client.
 
-    # ------------------------------------------------------------ platform identity (OIDC provider)
-    # Registered before the SPA catch-all so /oidc/* and /.well-known/* reach real handlers
-    # instead of being served index.html.
-    from ..platform.apps import Apps, bootstrap_docweave
-    from ..platform.routes import build_router as build_oidc_router
-    bootstrap_docweave(store, identity)
-    Apps(store, identity).adopt_existing_members()
-    api.include_router(build_oidc_router(store, identity, sessions, _audit))
+    No portal build and no account pages are served here; the account service is a separate
+    origin and this process is a relying party on it. `platform_server` is what puts several
+    roles into one process for the single-process deployment.
+    """
+    from platform_auth_client.routes import (build_account_redirect_router,
+                                             build_router as build_rp_router)
+    from platform_auth_client.session_routes import build_router as build_session_router
+    plat = build_platform(data_dir)
+    api = new_api("DocWeave")
+    api.state.auth = plat.auth
+    api.state.identity = plat.identity
+    api.state.sessions = plat.sessions
+    install_platform(api, plat, role=os.environ.get("DOCWEAVE_ROLE") or "app")
+    # Probes first, so the published OpenAPI document lists them where it always has. Route
+    # order is not behaviour, but a generated file that reshuffles on every refactor is one
+    # nobody reads the diff of.
+    install_probes(api, plat.store, worker=lambda: bool(getattr(api.state, "jobs", None) and api.state.jobs.runner_alive()))
+    app_ = install(api, plat, start_jobs=start_jobs)
+    api.include_router(build_session_router(plat.identity, plat.sessions, plat.audit))
+    api.include_router(build_rp_router(plat.store, plat.identity, plat.sessions, plat.audit))
+    api.include_router(build_account_redirect_router())
 
-    # ------------------------------------------------------------ this app as a relying party
-    from .rp_routes import build_router as build_rp_router
-    api.include_router(build_rp_router(store, identity, sessions, _audit))
-
-    # ------------------------------------------------------------ platform portal
-    from .portal_routes import build_router as build_portal_router
-    api.include_router(build_portal_router(store, identity, sessions, _audit))
-
-    # ------------------------------------------------------------ platform administration
-    from .admin_routes import build_router as build_admin_router
-    api.include_router(build_admin_router(store, identity, sessions, _audit))
-
-    # ------------------------------------------------------------ static UI
-    dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))
-    if dist.exists():
-        api.mount("/assets", _HashedAssets(directory=dist / "assets"), name="assets")
-
-        SHELL_FILES = {"index.html", "portal.html", "accounts.html"}
-
+    dist = web_dist()
+    if mount_web(api, dist):
         @api.get("/{full_path:path}")
         def spa(full_path: str):
-            if full_path.startswith("api/"):
-                return JSONResponse({"error": "not_found", "message": "接口不存在"}, status_code=404)
-            # Which shell this role serves. The portal is a separate build output, not a route
-            # inside DocWeave's SPA: one shell owning both would mean the portal's router also
-            # owned every DocWeave path, which is how a new entry point swallows the application
-            # it was meant to sit beside.
-            shell = SHELLS.get((os.environ.get("DOCWEAVE_ROLE") or "").lower(), "index.html")
-            if not (dist / shell).exists():
-                shell = "index.html"
-
-            target = (dist / full_path).resolve()
-            if full_path and full_path not in SHELL_FILES \
-                    and target.is_file() and dist.resolve() in target.parents:
-                return FileResponse(target)
-            # Asking for a shell **by filename** used to fall into the branch above and be served
-            # as a generic file — with no Cache-Control at all, and with whichever shell was
-            # named rather than the one this role owns. A cached entry document is the worst
-            # thing to hold onto: it names asset hashes, and after a deploy those files are gone,
-            # so a stale shell is a blank page that a reload does not fix.
-            return FileResponse(dist / shell,
-                                headers={"Cache-Control": "no-cache, must-revalidate"})
+            return shell_response(dist, full_path)
 
     return api
 

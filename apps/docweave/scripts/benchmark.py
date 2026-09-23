@@ -17,17 +17,32 @@ import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "backend"))
-sys.path.insert(0, str(ROOT / "backend" / "tests"))
+APP = Path(__file__).resolve().parents[1]              # apps/docweave
 
 import openpyxl  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from conftest import Api  # noqa: E402
 from docweave.api.app import create_app  # noqa: E402
+from platform_core.http import repo_root  # noqa: E402
 
+ROOT = repo_root() or APP.parents[1]
 DATA = ROOT / "testdata"
+
+
+def _api_helper():
+    """The tests' HTTP helper, loaded by path rather than by putting its directory on sys.path.
+
+    Test helpers are not an installed package and should not become one just so a benchmark can
+    reuse them; loading the one file explicitly says exactly what is borrowed.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_docweave_test_helpers", APP / "tests" / "helpers.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.Api
+
+
+Api = _api_helper()
 
 
 def rss_mb() -> float:

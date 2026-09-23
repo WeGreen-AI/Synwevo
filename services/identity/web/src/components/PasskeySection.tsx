@@ -10,8 +10,8 @@
  * than left as a key that mysteriously stops working.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, del, get, patch, post } from "../lib/api";
-import { useToast } from "../lib/ui";
+import { ApiError, del, get, patch, post } from "@platform/auth-client";
+import { useToast } from "@platform/ui";
 
 type Passkey = {
   id: string;

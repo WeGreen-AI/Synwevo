@@ -265,13 +265,13 @@ id 不可信，一个人已被移出的空间必须立刻不能用。
 ## 11. 本机验证
 
 ```bash
-python scripts/platform_local.py up
-python scripts/verify_sso.py --email you@example.test --password '...'
-python scripts/platform_local.py down
+python scripts/platform.py up
+python tests/integration/verify_sso.py --email you@example.test --password '...'
+python scripts/platform.py down
 ```
 
 `verify_sso.py` 用 `http.cookiejar`（按主机作用域、无视端口的真实规则）量三个来源的会话值、
 host-only 属性、端口无关性，以及跨应用登出。**38/38 本机通过。**
 
-相关测试：`backend/tests/test_sso_chain.py`（26）、`test_oidc_flow.py`（28）、
+相关测试：`apps/docweave/tests/test_sso_chain.py`（26）、`test_oidc_flow.py`（28）、
 `test_oidc_logout.py`（15）、`test_passkeys.py`（19）、`test_recovery.py`（20）。

@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Run the platform locally on three real origins.
+"""平台根目录的运行入口：安装、启动、停止、状态、日志、验证。
 
-    python scripts/platform_local.py up          # start all three, register clients, print URLs
-    python scripts/platform_local.py down
-    python scripts/platform_local.py status
-    python scripts/platform_local.py logs accounts|portal|docweave [-n 200]
+    python scripts/platform.py setup                 # 建立 .venv、装依赖、构建三个前端
+    python scripts/platform.py up                    # 启动全部三个服务，登记客户端，打印地址
+    python scripts/platform.py up accounts           # 只启动其中一个（可多个）
+    python scripts/platform.py down [accounts …]
+    python scripts/platform.py restart [accounts …]
+    python scripts/platform.py status
+    python scripts/platform.py logs accounts|portal|docweave [-n 200]
+    python scripts/platform.py test [docweave|identity|integration|all]
+    python scripts/platform.py backup [--out DIR]    # 一致性备份（SQLite 备份 API + blob 清单）
+    python scripts/platform.py verify-restore DIR    # 在隔离副本上核验备份能恢复
 
 Why three hostnames and not three ports: **different ports do not isolate cookies.** A cookie
 set by `localhost:8770` is sent to `localhost:8765` as well, because the cookie protocol scopes
@@ -36,7 +42,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN = ROOT / ".local" / "platform"
-PY = ROOT / "backend" / ".venv" / "bin" / "python"
+PY = ROOT / ".venv" / "bin" / "python"
 
 # Overridable, because a developer very often already has a DocWeave on 8765 and stopping
 # someone else's running server to demonstrate a login flow is not an acceptable trade.
@@ -161,7 +167,7 @@ def register_clients() -> None:
     for client_id, app_id, name, base in (
             ("portal-web", "platform", "平台门户", PORTAL),
             ("docweave-web", "docweave", "DocWeave", DOCWEAVE)):
-        cmd = [str(PY), str(ROOT / "backend" / "manage.py"), "--data", data_dir(),
+        cmd = [str(PY), "-m", "platform_identity.cli", "--data", data_dir(),
                "client", "register", "--client-id", client_id, "--app", app_id, "--name", name,
                "--redirect", f"{base}/auth/callback",
                "--post-logout", f"{base}/signed-out",
@@ -173,8 +179,17 @@ def register_clients() -> None:
             print(f"  ✓ {client_id} → {base}/auth/callback")
 
 
+def _selected(args) -> list[str]:
+    names = [n for n in getattr(args, "services", []) or [] if n in SERVICES]
+    return names or list(SERVICES)
+
+
 def up(args) -> int:
     RUN.mkdir(parents=True, exist_ok=True)
+    if not PY.exists():
+        print(f"没有 {PY}。先运行：python scripts/platform.py setup", file=sys.stderr)
+        return 2
+    _require_data_dir(args)
     print("检查本机域名解析：")
     if not check_hostnames():
         print("\n这些名字必须解析到回环地址，否则请求会离开本机。中止。", file=sys.stderr)
@@ -185,7 +200,8 @@ def up(args) -> int:
     register_clients()
 
     print("\n启动服务：")
-    for name, (role, port, url, _, _app) in SERVICES.items():
+    for name in _selected(args):
+        role, port, url, _, _app = SERVICES[name]
         if _alive(name):
             print(f"  · {name} 已在运行（pid {_alive(name)}）")
             continue
@@ -195,7 +211,7 @@ def up(args) -> int:
         log = (RUN / f"{name}.log").open("a")
         log.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} start role={role} =====\n")
         log.flush()
-        p = subprocess.Popen([str(PY), str(ROOT / "backend" / "run.py")],
+        p = subprocess.Popen([str(PY), "-m", "platform_server.run"],
                              env=env_for(name), stdout=log, stderr=subprocess.STDOUT,
                              start_new_session=True)
         _pidfile(name).write_text(str(p.pid))
@@ -204,21 +220,28 @@ def up(args) -> int:
 
     deadline = time.time() + 20
     while time.time() < deadline:
-        if all(_port_busy(port, urllib.parse.urlparse(u).hostname)
-               for _, port, u, _, _a in SERVICES.values()):
+        if all(_port_busy(SERVICES[n][1], urllib.parse.urlparse(SERVICES[n][2]).hostname)
+               for n in _selected(args)):
             break
         time.sleep(0.3)
+    failed = [n for n in _selected(args)
+              if not _port_busy(SERVICES[n][1], urllib.parse.urlparse(SERVICES[n][2]).hostname)]
+    if failed:
+        # A start script whose only output is "OK" is worse than no script: the next thing that
+        # fails looks unrelated. Say which one, and where to read why.
+        for n in failed:
+            print(f"  ✗ {n} 没有在 20 秒内开始监听；日志：{RUN / (n + '.log')}", file=sys.stderr)
 
     print("\n打开：")
     print(f"  平台门户   {PORTAL}")
     print(f"  DocWeave   {DOCWEAVE}")
     print(f"  账户服务   {ACCOUNTS}/login")
-    print(f"\n日志：{RUN}/<服务>.log      停止：python scripts/platform_local.py down")
-    return 0
+    print(f"\n日志：{RUN}/<服务>.log      停止：python scripts/platform.py down")
+    return 1 if failed else 0
 
 
 def down(args) -> int:
-    for name in SERVICES:
+    for name in _selected(args):
         pid = _alive(name)
         if not pid:
             print(f"  · {name} 未在运行")
@@ -266,17 +289,142 @@ def logs(args) -> int:
     return 0
 
 
+
+# ---------------------------------------------------------------- setup / verification
+
+
+def _run(cmd: list[str], cwd: Path | None = None) -> int:
+    print("  $ " + " ".join(str(c) for c in cmd))
+    return subprocess.run(cmd, cwd=str(cwd or ROOT)).returncode
+
+
+def _require_data_dir(args) -> None:
+    """Refuse to start against a directory that is not the initialised instance.
+
+    Starting with a wrong or empty path does not fail: SQLite creates the file, the schema is
+    written, and the platform comes up looking like a fresh install with nobody's data in it.
+    That is the failure that reads as "the data is gone", so it is turned into a refusal — and
+    `--init` is how you say you meant it.
+    """
+    d = Path(data_dir())
+    db = d / "docweave.sqlite3"
+    if db.exists() or getattr(args, "init", False):
+        return
+    print(f"数据目录 {d} 里没有 docweave.sqlite3。\n"
+          f"如果这是新装，用 --init 明确表示；如果不是，先检查 DOCWEAVE_DATA_DIR 指到哪里了。\n"
+          f"这里不会替你建一个空库：一个空库会让服务正常启动，而那正是「数据不见了」的样子。",
+          file=sys.stderr)
+    raise SystemExit(2)
+
+
+def setup(args) -> int:
+    """Create the workspace virtualenv, install every module, build the three shells."""
+    py = sys.executable
+    if not PY.exists():
+        print(f"建立 {ROOT / '.venv'}：")
+        if _run([py, "-m", "venv", str(ROOT / ".venv")]):
+            return 1
+    print("安装 Python 依赖（按各模块固定的版本）：")
+    if _run([str(PY), "-m", "pip", "install", "-q", "-U", "pip"]):
+        return 1
+    if _run([str(PY), "-m", "pip", "install", "-q", "-r", "requirements-dev.txt"]):
+        return 1
+    print("以可编辑方式安装各模块（真实的包边界，不是 sys.path 拼接）：")
+    mods = ["packages/platform-core", "packages/auth-client/python", "services/identity",
+            "apps/portal", "apps/docweave", "infra/server"]
+    if _run([str(PY), "-m", "pip", "install", "-q", "--no-deps"]
+            + [a for m in mods for a in ("-e", m)]):
+        return 1
+    print("安装前端依赖并构建三个外壳：")
+    if _run(["npm", "install"]) or _run(["npm", "run", "build"]):
+        return 1
+    print("\n完成。启动：python scripts/platform.py up")
+    return 0
+
+
+SUITES = {"docweave": "apps/docweave/tests", "identity": "services/identity/tests",
+          "integration": "tests/integration"}
+
+
+def test(args) -> int:
+    targets = [SUITES[k] for k in (args.suite if args.suite != "all" else SUITES)]
+    return _run([str(PY), "-m", "pytest", *targets])
+
+
+def deps(args) -> int:
+    """Check the dependency boundaries the restructure exists to create."""
+    return _run([str(PY), str(ROOT / "scripts" / "check_boundaries.py")])
+
+
+SNAPSHOT = ROOT / "apps" / "docweave" / "scripts" / "snapshot.py"
+
+
+def backup(args) -> int:
+    """A consistent snapshot: SQLite's own backup API plus the blob tree, in one archive.
+
+    Delegates to the tool that already does this correctly rather than growing a second one.
+    Copying the `.sqlite3` file is not a backup while a write-ahead log exists — it is a backup
+    missing whatever had not been checkpointed.
+    """
+    out = Path(args.out or (ROOT / ".local" / "backups"))
+    return _run([str(PY), str(SNAPSHOT), "create", "--data", data_dir(), "--out", str(out)])
+
+
+def verify_restore(args) -> int:
+    """Restore into a throwaway directory and compare, row by row, against what was captured.
+
+    A backup that has never been restored is a file, not a backup.
+    """
+    return _run([str(PY), str(SNAPSHOT), "verify", "--archive", args.backup])
+
+
+def restart(args) -> int:
+    down(args)
+    return up(args)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("up").set_defaults(func=up)
-    sub.add_parser("down").set_defaults(func=down)
-    sub.add_parser("status").set_defaults(func=status)
-    lg = sub.add_parser("logs")
+
+    sub.add_parser("setup", help="建立 .venv、安装各模块、构建前端").set_defaults(func=setup)
+
+    u = sub.add_parser("up", help="启动服务（不指定则全部）")
+    u.add_argument("services", nargs="*", choices=list(SERVICES) + [], default=[])
+    u.add_argument("--init", action="store_true", help="允许在空数据目录上初始化一个新实例")
+    u.set_defaults(func=up)
+
+    d = sub.add_parser("down", help="停止服务（不指定则全部）")
+    d.add_argument("services", nargs="*", default=[])
+    d.set_defaults(func=down)
+
+    rs = sub.add_parser("restart", help="重启服务")
+    rs.add_argument("services", nargs="*", default=[])
+    rs.add_argument("--init", action="store_true")
+    rs.set_defaults(func=restart)
+
+    sub.add_parser("status", help="端口、进程与发行者").set_defaults(func=status)
+
+    lg = sub.add_parser("logs", help="查看某个服务的日志")
     lg.add_argument("service", choices=list(SERVICES))
     lg.add_argument("-n", type=int, default=120)
     lg.set_defaults(func=logs)
+
+    t = sub.add_parser("test", help="运行模块级或平台集成验证")
+    t.add_argument("suite", nargs="?", choices=list(SUITES) + ["all"], default="all")
+    t.set_defaults(func=test)
+
+    sub.add_parser("deps", help="检查模块依赖边界").set_defaults(func=deps)
+
+    bk = sub.add_parser("backup", help="一致性备份（SQLite 备份 API + blob 清单）")
+    bk.add_argument("--out")
+    bk.set_defaults(func=backup)
+
+    vr = sub.add_parser("verify-restore", help="在隔离副本上核验备份能恢复")
+    vr.add_argument("backup", help="备份归档文件（python scripts/platform.py backup 的产物）")
+    vr.set_defaults(func=verify_restore)
+
     args = ap.parse_args()
     return args.func(args)
 

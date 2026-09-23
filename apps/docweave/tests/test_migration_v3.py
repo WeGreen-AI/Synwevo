@@ -10,7 +10,7 @@ import sqlite3
 
 import pytest
 
-from docweave.store import SCHEMA_VERSION, V2_COLUMNS, V3_COLUMNS, Store
+from platform_core.store import SCHEMA_VERSION, V2_COLUMNS, V3_COLUMNS, Store
 
 TABLES = ("projects", "templates", "jobs", "source_files", "artifacts", "job_items")
 
@@ -75,7 +75,7 @@ def test_info_style_open_does_not_upgrade_the_directory(tmp_path):
     backup you were about to verify.
     """
     import sqlite3
-    from docweave.store import SCHEMA_VERSION, Store
+    from platform_core.store import SCHEMA_VERSION, Store
 
     d = tmp_path / "old"
     Store(d)                                             # create at the current version
@@ -100,5 +100,5 @@ def test_info_style_open_does_not_upgrade_the_directory(tmp_path):
 
 def test_info_style_open_on_an_empty_directory_reports_zero(tmp_path):
     """migrate=False may be pointed at a directory with no database at all."""
-    from docweave.store import Store
+    from platform_core.store import Store
     assert Store(tmp_path / "nothing", migrate=False).schema_version() == 0

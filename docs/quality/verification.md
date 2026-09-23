@@ -53,7 +53,7 @@ cd frontend && npx tsc --noEmit && npm run build
 ## 3. 干净环境启动与部署一致性
 
 ```bash
-DOCWEAVE_DATA_DIR=<空目录> DOCWEAVE_PORT=8799 backend/.venv/bin/python backend/run.py
+DOCWEAVE_DATA_DIR=<空目录> DOCWEAVE_PORT=8799 .venv/bin/python -m platform_server.run
 ```
 
 | 检查 | 结果 |
@@ -78,9 +78,9 @@ DOCWEAVE_DATA_DIR=<空目录> DOCWEAVE_PORT=8799 backend/.venv/bin/python backen
 按 `docs/integration/automation.md` 执行：
 
 ```bash
-python backend/manage.py apikey create --name 验收 --scopes read,write
+python -m docweave.cli apikey create --name 验收 --scopes read,write
 export DOCWEAVE_API_KEY=dw_...
-backend/.venv/bin/python scripts/automation_example.py \
+.venv/bin/python tests/integration/automation_example.py \
   --base-url http://127.0.0.1:8765 \
   --source testdata/测试_客户100.xlsx --template testdata/测试_合同模板.docx \
   --definition docs/integration/example-definition.json --out ./out
@@ -152,9 +152,9 @@ backend/.venv/bin/python scripts/automation_example.py \
 ## 9. 浏览器端到端
 
 ```bash
-backend/.venv/bin/python scripts/ui_e2e.py           # 13.6s 通过
-backend/.venv/bin/python scripts/ui_e2e_more.py      # 10.2s 通过（4 条流程）
-backend/.venv/bin/python scripts/ui_e2e_keyboard.py  #  4.1s 通过（4 条流程）
+.venv/bin/python apps/docweave/scripts/ui_e2e.py           # 13.6s 通过
+.venv/bin/python apps/docweave/scripts/ui_e2e_more.py      # 10.2s 通过（4 条流程）
+.venv/bin/python apps/docweave/scripts/ui_e2e_keyboard.py  #  4.1s 通过（4 条流程）
 ```
 
 `ui_e2e_keyboard.py` 覆盖本轮新增的交互，全部断言针对真实状态：

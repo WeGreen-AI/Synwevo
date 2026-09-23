@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import re
 
-from .services import App, ServiceError
+from platform_core.errors import ServiceError
+
+from .services import App
 
 TEMPLATE_FIELDS_SCHEMA = "docweave.template-fields"
 PROJECT_SCHEMA = "docweave.project"

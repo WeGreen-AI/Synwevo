@@ -4,7 +4,7 @@ import io
 import docx
 import pytest
 
-from conftest import _walk
+from .helpers import _walk
 
 PEOPLE = [
     {"姓名": "测试赵一", "电话": "13900000001", "地址": "测试市一路 1 号"},

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from docweave.jobs import JobService
-from docweave.services import ServiceError
+from platform_core.errors import ServiceError
 
 
 def _project(api, fixtures, rows=6, bad=False):

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, post } from "../lib/api";
-import { safeNext, signInUrl, useSession } from "../lib/session";
+import { ApiError, post } from "@platform/auth-client";
+import { safeNext, signInUrl, useSession } from "@platform/auth-client";
 import { b64urlToBuf, toJSON } from "../components/PasskeySection";
 
 /** Sign in, and — on a deployment that has never been set up — create the first administrator.

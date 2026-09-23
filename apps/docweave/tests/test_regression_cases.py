@@ -71,7 +71,7 @@ def test_cli(api, fixtures, case_dir):
     from pathlib import Path
     pid = _project(api, fixtures)
     api.ok(api.c.post(f"/api/projects/{pid}/regression-cases", json={"name": "CLI"}))
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]
     p = subprocess.run([sys.executable, str(root / "scripts" / "regression.py")], capture_output=True, text=True,
                        env={**__import__("os").environ, "DOCWEAVE_REGRESSION_DIR": str(case_dir)})
     assert p.returncode == 0 and "[通过]" in p.stdout, p.stdout + p.stderr

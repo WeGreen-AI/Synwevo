@@ -27,8 +27,8 @@ from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
 
-from .services import ServiceError
-from .store import Store, new_id, now
+from platform_core.errors import ServiceError
+from platform_core.store import Store, new_id, now
 
 # Backoff between attempts; the last value repeats until MAX_ATTEMPTS.
 RETRY_SCHEDULE = (30, 120, 600, 1800, 3600)
@@ -77,6 +77,15 @@ class Mailer:
             self._thread.start()
 
     # ------------------------------------------------------------------ enqueue
+    def alive(self) -> bool:
+        """Is the delivery thread running? Reported by /readyz on the account service.
+
+        A mailer that has died takes password resets and invitations with it, and the failure is
+        silent — the row is queued and nothing sends it. Started with ``start=False`` (tests,
+        one-shot CLI) it reports alive, because there is no worker that was supposed to be there.
+        """
+        return self._thread is None or self._thread.is_alive()
+
     def enqueue(self, to_addr: str, subject: str, body: str, *, kind: str, ref_id: str | None = None) -> dict:
         """Queue one message. Raises when mail is not configured, rather than silently dropping.
 

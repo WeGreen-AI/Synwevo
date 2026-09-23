@@ -16,11 +16,11 @@ import pytest
 from authlib.jose import JsonWebKey, jwt
 from fastapi.testclient import TestClient
 
-from docweave.identity import Identity
-from docweave.platform import oidc
-from docweave.platform.apps import Apps, bootstrap_docweave
-from docweave.sessions import CSRF_COOKIE, CSRF_HEADER
-from docweave.store import Store, now
+from platform_core.identity import Identity
+from platform_core import oidc
+from platform_core.apps import Apps, bootstrap_docweave
+from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
+from platform_core.store import Store, now
 
 PW = "a-sufficiently-long-passphrase"
 REDIRECT = "http://docweave.localhost:8765/auth/callback"
@@ -32,7 +32,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
     monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
     monkeypatch.setenv("DOCWEAVE_ISSUER", "http://accounts.localhost:8770")
-    import docweave.api.app as app_mod
+    import platform_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -339,7 +339,7 @@ def test_only_docweaves_own_process_sets_its_launch_url(env, monkeypatch, role):
     and its default is "docweave", so an app-id test passes here while the real deployment
     repoints the card at the login page. That is what happened.
     """
-    from docweave.platform.apps import bootstrap_docweave
+    from platform_core.apps import bootstrap_docweave
     store, ident = env["store"], env["ident"]
 
     monkeypatch.setenv("DOCWEAVE_ROLE", "app")
@@ -354,7 +354,7 @@ def test_only_docweaves_own_process_sets_its_launch_url(env, monkeypatch, role):
 
 def test_the_single_process_deployment_still_sets_its_own_launch_url(env, monkeypatch):
     """`all` is the existing deployment's shape and must keep working unchanged."""
-    from docweave.platform.apps import bootstrap_docweave
+    from platform_core.apps import bootstrap_docweave
     monkeypatch.setenv("DOCWEAVE_ROLE", "all")
     monkeypatch.setenv("DOCWEAVE_APP_URL", "https://docweave.example.com")
     assert bootstrap_docweave(env["store"], env["ident"])["launch_url"] == "https://docweave.example.com"

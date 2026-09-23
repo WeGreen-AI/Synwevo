@@ -8,11 +8,11 @@
 复现：
 
 ```bash
-backend/.venv/bin/python -m pytest backend/tests -q     # 65 passed（约 55 秒）
-scripts/start.sh &                                      # 启动服务后
-backend/.venv/bin/python scripts/ui_e2e.py              # 主流程（真实浏览器操作）
-backend/.venv/bin/python scripts/ui_e2e_more.py         # 分组/PDF 框选/内置编辑器
-backend/.venv/bin/python scripts/benchmark.py           # 性能实测
+.venv/bin/python -m pytest apps/docweave/tests -q     # 65 passed（约 55 秒）
+python scripts/platform.py up &                                      # 启动服务后
+.venv/bin/python apps/docweave/scripts/ui_e2e.py              # 主流程（真实浏览器操作）
+.venv/bin/python apps/docweave/scripts/ui_e2e_more.py         # 分组/PDF 框选/内置编辑器
+.venv/bin/python apps/docweave/scripts/benchmark.py           # 性能实测
 ```
 
 ## 1. 场景结果

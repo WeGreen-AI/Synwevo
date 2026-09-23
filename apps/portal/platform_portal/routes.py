@@ -9,28 +9,19 @@ would be a way to read titles you have no right to read.
 from __future__ import annotations
 
 import os
-
 from fastapi import APIRouter, Request
 
-from ..identity import Identity
-from ..services import ServiceError
-from ..sessions import Sessions
-from ..store import Store
-
-
-def platform_name() -> str:
-    """Configurable, defaulting to something neutral.
-
-    The platform's real name is not decided yet, and hard-coding DocWeave as the name of the
-    platform it is only one application on would have to be undone later in every string.
-    """
-    return os.environ.get("DOCWEAVE_PLATFORM_NAME") or "工作平台"
+from platform_core.apps import Apps
+from platform_core.config import platform_name
+from platform_core.errors import ServiceError
+from platform_core.identity import Identity
+from platform_core.sessions import Sessions
+from platform_core.store import Store
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=None) -> APIRouter:
     r = APIRouter(tags=["portal"], prefix="/api/portal")
     if apps is None:
-        from ..platform.apps import Apps
         apps = Apps(store, ident)
 
     def _session(request: Request) -> dict:
@@ -86,5 +77,5 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=
 
 
 def _accounts_base() -> str:
-    from ..rp import issuer
+    from platform_auth_client.rp import issuer
     return issuer()

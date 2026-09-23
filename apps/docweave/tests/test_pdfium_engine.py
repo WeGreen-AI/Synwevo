@@ -95,8 +95,8 @@ def test_about_and_source_offer(api, monkeypatch):
     r = api.c.get("/api/source-code")
     assert r.status_code == 200
     names = tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz").getnames()
-    assert any(n.endswith("backend/docweave/engine/pdf_engine.py") for n in names)
-    assert any(n.endswith("frontend/src/main.tsx") for n in names) and any(n.endswith("SOURCE_OFFER.txt") for n in names)
+    assert any(n.endswith("apps/docweave/docweave/engine/pdf_engine.py") for n in names)
+    assert any(n.endswith("apps/docweave/web/src/main.tsx") for n in names) and any(n.endswith("SOURCE_OFFER.txt") for n in names)
     assert not any("/data/" in n or ".venv" in n or "node_modules" in n for n in names)   # never user data
     monkeypatch.setenv("DOCWEAVE_SOURCE_OFFER", "off")
     assert api.c.get("/api/source-code").status_code == 404

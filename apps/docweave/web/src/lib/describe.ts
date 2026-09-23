@@ -1,5 +1,5 @@
 import type { Mapping, Pos, Selection, Slot } from "./types";
-import { cellRef, rangeRef } from "./ui";
+import { cellRef, rangeRef } from "@platform/ui";
 
 export const MAP_TYPE: Record<string, string> = { single: "单值", region: "固定区域", repeat: "重复明细" };
 export const SLOT_KIND: Record<string, string> = { text: "文字", cell: "单元格", region: "固定区域", repeat: "重复明细行", pdf_box: "PDF 区域", pdf_field: "PDF 表单字段", pptx_text: "幻灯片文字" };

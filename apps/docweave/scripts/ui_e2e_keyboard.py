@@ -22,11 +22,9 @@ from pathlib import Path
 
 from playwright.sync_api import Page, expect, sync_playwright
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ui_e2e import make_field, map_field  # noqa: E402  (same helpers as the main UI flow)
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _testenv import target  # noqa: E402  isolated test instance; never the user's real data
 
 ARG_BASE = sys.argv[1] if len(sys.argv) > 1 else None

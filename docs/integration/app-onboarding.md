@@ -29,7 +29,7 @@
 ## 1. 登记应用
 
 ```bash
-python backend/manage.py app list
+python -m platform_identity.cli app list
 ```
 
 DocWeave 在服务启动时自动登记（`platform/apps.py: bootstrap_docweave`），幂等。新增一个应用时
@@ -38,14 +38,14 @@ DocWeave 在服务启动时自动登记（`platform/apps.py: bootstrap_docweave`
 工作空间要显式启用应用，成员要显式获得使用资格：
 
 ```bash
-python backend/manage.py app enable  docweave --workspace w_xxx
-python backend/manage.py app grant   docweave --workspace w_xxx --user someone@example.com
-python backend/manage.py app revoke  docweave --workspace w_xxx --user someone@example.com
-python backend/manage.py app disable docweave                      # 停用整个应用
+python -m platform_identity.cli app enable  docweave --workspace w_xxx
+python -m platform_identity.cli app grant   docweave --workspace w_xxx --user someone@example.com
+python -m platform_identity.cli app revoke  docweave --workspace w_xxx --user someone@example.com
+python -m platform_identity.cli app disable docweave                      # 停用整个应用
 ```
 
 新建的工作空间会在创建它的同一个事务里启用 `DEFAULT_WORKSPACE_APPS`（见
-`backend/docweave/identity.py`）并给所有者授予资格。这不是顺手：`adopt_existing_members()` 是
+`apps/docweave/docweave/identity.py`）并给所有者授予资格。这不是顺手：`adopt_existing_members()` 是
 一次性迁移，如果新空间不在创建时就配好，之后注册的每个账户都会登录成功、然后被告知什么都不能用。
 
 workspace `default` 是历史数据空间，`legacy / pending_claim / 0 成员`。CLI 会拒绝直接对它授权，
@@ -56,7 +56,7 @@ workspace `default` 是历史数据空间，`legacy / pending_claim / 0 成员`�
 ## 2. 登记 OIDC 客户端
 
 ```bash
-python backend/manage.py client register \
+python -m platform_identity.cli client register \
     --client-id my-app-web \
     --app my-app \
     --name 我的应用 \
@@ -75,16 +75,16 @@ python backend/manage.py client register \
 - 没有动态客户端注册端点，将来也不会有。
 
 ```bash
-python backend/manage.py client list
-python backend/manage.py client show    --client-id my-app-web   # 不打印密钥，连哈希也不打印
-python backend/manage.py client disable --client-id my-app-web
+python -m platform_identity.cli client list
+python -m platform_identity.cli client show    --client-id my-app-web   # 不打印密钥，连哈希也不打印
+python -m platform_identity.cli client disable --client-id my-app-web
 ```
 
 ---
 
 ## 3. 应用侧要实现的四个端点
 
-`backend/docweave/rp.py` 和 `backend/docweave/api/rp_routes.py` 是一份可以照抄的参考实现。
+`apps/docweave/docweave/rp.py` 和 `apps/docweave/docweave/api/rp_routes.py` 是一份可以照抄的参考实现。
 
 | 路由 | 作用 | 关键约束 |
 |---|---|---|
@@ -139,10 +139,10 @@ python backend/manage.py client disable --client-id my-app-web
 ## 4. 本机跑起来并量一遍
 
 ```bash
-python scripts/platform_local.py up          # 三个来源，一个数据库
-python scripts/platform_local.py status
-python scripts/verify_sso.py --email you@example.test --password '...'
-python scripts/platform_local.py down
+python scripts/platform.py up          # 三个来源，一个数据库
+python scripts/platform.py status
+python tests/integration/verify_sso.py --email you@example.test --password '...'
+python scripts/platform.py down
 ```
 
 端口可用 `PLATFORM_ACCOUNTS_PORT` / `PLATFORM_PORTAL_PORT` / `PLATFORM_DOCWEAVE_PORT` 覆盖。
@@ -161,7 +161,7 @@ python scripts/platform_local.py down
 
 `*.localhost` 在本机同时解析到 `::1` 和 `127.0.0.1`，`getaddrinfo` 先给 `::1`。uvicorn 只绑一个
 地址，绑 `127.0.0.1` 会让 `[::1]:8770` 拒绝连接——浏览器和 urllib 会挨个地址重试所以看不出问题，
-httpx 不会，于是服务端换码那一步失败。`platform_local.py: bind_addr()` 因此按域名解析结果绑定。
+httpx 不会，于是服务端换码那一步失败。`scripts/platform.py: bind_addr()` 因此按域名解析结果绑定。
 生产环境同理：发行者域名和监听地址必须对得上。
 
 ---
@@ -200,7 +200,7 @@ httpx 不会，于是服务端换码那一步失败。`platform_local.py: bind_a
 ```bash
 # 认领只能在界面里做——它需要重认证、理由和事务，不是一条可以脚本化的命令。
 # 但可以先看清楚将要发生什么：
-python backend/manage.py --data data app list
+python python -m docweave.cli --data data app list
 ```
 
 认领的约束写在 `docs/security/permissions.md` §3.3。要点：
@@ -229,7 +229,7 @@ python backend/manage.py --data data app list
 登记一个服务账户：
 
 ```bash
-python backend/manage.py client register \
+python -m platform_identity.cli client register \
     --client-id nightly-batch --app docweave --name 夜间批处理 \
     --service --workspace w_xxx --api-scopes "docweave.read docweave.write"
 ```
@@ -240,7 +240,7 @@ python backend/manage.py client register \
 取令牌并调用（`scripts/automation_example.py` 原样支持）：
 
 ```bash
-python scripts/automation_example.py \
+python tests/integration/automation_example.py \
     --base-url http://docweave.localhost:8775 \
     --issuer http://accounts.localhost:8770 \
     --client-id nightly-batch --client-secret "$SECRET" \
@@ -254,7 +254,7 @@ python scripts/automation_example.py \
 
 ### 每次调用都重新核验，不看令牌当初记了什么
 
-`backend/docweave/machine.py` 在**每一次**请求上重新问三个问题：账户还在不在、这个人还是不是
+`apps/docweave/docweave/machine.py` 在**每一次**请求上重新问三个问题：账户还在不在、这个人还是不是
 该空间成员、该空间还有没有这个应用。令牌里记的是当初授予了什么，不是现在还成不成立。把这些
 固化进令牌，就是「已被撤权的人继续工作到令牌过期」的成因。
 
@@ -274,9 +274,9 @@ principal 形状相同，因此没有任何调用点需要知道自己拿到的�
 ## 6. 密钥
 
 ```bash
-python backend/manage.py keys list
-python backend/manage.py keys rotate            # 新密钥签名，旧密钥转 retiring 仍在 JWKS 中
-python backend/manage.py keys retire --kid k_xxx   # 等最长令牌有效期过去之后
+python -m platform_identity.cli keys list
+python -m platform_identity.cli keys rotate            # 新密钥签名，旧密钥转 retiring 仍在 JWKS 中
+python -m platform_identity.cli keys retire --kid k_xxx   # 等最长令牌有效期过去之后
 ```
 
 签名密钥持久化保存。每次启动重新生成密钥，会让所有已签发令牌失效——那看起来就是一次没有原因的

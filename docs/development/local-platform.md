@@ -19,40 +19,54 @@
 | 消息队列 | **无**。任务由进程内后台线程执行 | — |
 | 本地邮件接收器 | **无需额外软件**，见 §5 | — |
 
-一次性安装：
+一次性安装（在仓库根目录）：
 
 ```bash
-scripts/setup.sh
+python scripts/platform.py setup
 ```
 
-它建立 `backend/.venv`、安装 `backend/requirements.txt`、构建前端、下载 OCR 语言数据。
+它建立仓库根目录的 `.venv`，按各模块固定的版本装依赖，把五个包以**可编辑方式**装进去
+（真实的包边界，不是 `sys.path` 拼接），然后 `npm install` 并构建三个前端外壳。
+
+各模块的依赖清单是分开的，装的时候也分得开：
+
+| 模块 | 依赖清单 |
+|---|---|
+| 共享基础 | `packages/platform-core/requirements.txt` |
+| 依赖方适配 | `packages/auth-client/python/requirements.txt` |
+| 账户服务 | `services/identity/requirements.txt`（**不含任何 DocWeave 依赖**） |
+| 门户 | `apps/portal/requirements.txt` |
+| DocWeave | `apps/docweave/requirements.txt` |
+| 开发与测试 | 仓库根目录 `requirements-dev.txt`（以上全部 + pytest / httpx / playwright / pyyaml） |
 
 ---
 
 ## 1. 三个来源，一条命令
 
 ```bash
-python scripts/platform_local.py up
+python scripts/platform.py up
 ```
 
 | 服务 | 角色 | 地址 | 服务的前端 |
 |---|---|---|---|
-| 账户服务 | `accounts` | http://accounts.localhost:8770 | `accounts.html`（登录、账户与安全、管理后台） |
-| 平台门户 | `portal` | http://portal.localhost:8769 | `portal.html`（平台首页） |
-| DocWeave | `app` | http://docweave.localhost:8765 | `index.html`（文档工作台） |
+| 账户服务 | `accounts` | http://accounts.localhost:8770 | `services/identity/web/dist`（登录、账户与安全、管理后台） |
+| 平台门户 | `portal` | http://portal.localhost:8769 | `apps/portal/web/dist`（平台首页） |
+| DocWeave | `app` | http://docweave.localhost:8765 | `apps/docweave/web/dist`（文档工作台） |
+
+只启动其中几个：`python scripts/platform.py up accounts docweave`。
 
 端口可覆盖（开发机上 8765 经常已被占用）：
 
 ```bash
-PLATFORM_DOCWEAVE_PORT=8775 python scripts/platform_local.py up
+PLATFORM_DOCWEAVE_PORT=8775 python scripts/platform.py up
 ```
 
 其它命令：
 
 ```bash
-python scripts/platform_local.py status                 # 进程、端口、发行者、支持的 scope
-python scripts/platform_local.py logs accounts -n 200   # 也可以是 portal / docweave
-python scripts/platform_local.py down
+python scripts/platform.py status                 # 进程、端口、发行者、支持的 scope
+python scripts/platform.py logs accounts -n 200   # 也可以是 portal / docweave
+python scripts/platform.py down
 ```
 
 日志与 pid 在 `.local/platform/`（已加入 `.gitignore`）。
@@ -63,7 +77,7 @@ python scripts/platform_local.py down
 设的 Cookie 会照样发给 `localhost:8765`。全用 `localhost` 换端口做出来的"跨来源单点登录"，其实
 是一个共享 Cookie 戴了三顶帽子。
 
-`*.localhost` 按 RFC 6761 全部解析到回环地址，**不需要改 hosts 文件**。`platform_local.py up`
+`*.localhost` 按 RFC 6761 全部解析到回环地址，**不需要改 hosts 文件**。`platform.py up`
 会先检查这三个名字确实解析到回环地址，不通过就中止。
 
 ### 1.2 服务监听自己域名解析到的地址
@@ -72,22 +86,28 @@ python scripts/platform_local.py down
 地址；绑 `127.0.0.1` 会让 `[::1]:8770` 拒绝连接。浏览器和 urllib 会挨个地址重试所以看不出问题，
 **httpx 不会**——于是只有服务端换码那一步失败。`bind_addr()` 因此按域名解析结果绑定。
 
-**监听范围**：始终是回环地址。`backend/run.py` 的 `check_listen_config()` 会在
+**监听范围**：始终是回环地址。`platform_server.run` 的 `check_listen_config()` 会在
 `DOCWEAVE_HOST` 对外监听且 `DOCWEAVE_UI_AUTH=none` 时**拒绝启动**，不会退回无认证。
 
 ---
 
 ## 2. 数据在哪里
 
-**默认原地不动**：`data/`（`docweave.sqlite3` + `blobs/`）。
+**默认原地不动**：仓库根目录的 `data/`（`docweave.sqlite3` + `blobs/`）。
 
-`platform_local.py` 把 `DOCWEAVE_DATA_DIR` 显式传给三个子进程，所以**不会**在别的目录里建出
+解析顺序是「命令行 `--data` → `DOCWEAVE_DATA_DIR` → 仓库根目录 `data/`」，第三档由模块自身位置
+推出而**不依赖进程 cwd**：从平台根目录启动和从 `apps/docweave/` 启动加载的是同一个库。
+
+`up` 在数据目录里没有 `docweave.sqlite3` 时**拒绝启动**，除非显式给 `--init`。原因很直接：
+指错路径不会失败，SQLite 会建出一个空库、服务照常起来——而那正是"数据不见了"的样子。
+
+`platform.py` 把 `DOCWEAVE_DATA_DIR` 显式传给三个子进程，所以**不会**在别的目录里建出
 一个"空数据库"被误认为用户数据丢失。三个进程**共用同一个数据库**——必须只有一个账户权威来源。
 
 用隔离副本试（推荐，不动真实数据）：
 
 ```bash
-DOCWEAVE_DATA_DIR=/tmp/platform-demo python scripts/platform_local.py up
+DOCWEAVE_DATA_DIR=/tmp/platform-demo python scripts/platform.py up
 ```
 
 迁移由任何一个打开数据库的进程执行，幂等，纯追加。详见
@@ -100,7 +120,7 @@ DOCWEAVE_DATA_DIR=/tmp/platform-demo python scripts/platform_local.py up
 没有默认管理员，没有默认口令。
 
 ```bash
-python backend/manage.py --data data bootstrap admin \
+python -m platform_identity.cli --data data bootstrap admin \
     --email you@example.test --name 你的名字
 # 不带 --password 会交互式询问；口令策略是真的，弱口令会被拒绝
 ```
@@ -108,7 +128,7 @@ python backend/manage.py --data data bootstrap admin \
 或者生成一次性引导令牌，在浏览器里完成：
 
 ```bash
-python backend/manage.py --data data bootstrap token
+python -m platform_identity.cli --data data bootstrap token
 ```
 
 > 建立平台管理员**不会**让你获得历史数据。`data/` 里的 68 个历史项目在 workspace `default`
@@ -119,10 +139,10 @@ python backend/manage.py --data data bootstrap token
 
 ## 4. 登记应用与客户端
 
-`platform_local.py up` 已经自动登记了门户和 DocWeave 两个客户端。手动做的话：
+`platform.py up` 已经自动登记了门户和 DocWeave 两个客户端。手动做的话：
 
 ```bash
-python backend/manage.py --data data client register \
+python -m platform_identity.cli --data data client register \
     --client-id docweave-web --app docweave --name DocWeave \
     --redirect    http://docweave.localhost:8765/auth/callback \
     --post-logout http://docweave.localhost:8765/signed-out \
@@ -132,7 +152,7 @@ python backend/manage.py --data data client register \
 机器身份（服务账户）：
 
 ```bash
-python backend/manage.py --data data client register \
+python -m platform_identity.cli --data data client register \
     --client-id nightly-batch --app docweave --name 夜间批处理 \
     --service --workspace w_xxx --api-scopes "docweave.read docweave.write"
 # client_secret 只显示一次。写进运行它的东西的环境变量，不要提交进仓库。
@@ -174,7 +194,7 @@ export DOCWEAVE_PUBLIC_URL=http://accounts.localhost:8770
 所以 WebAuthn 在这些主机名上可用——本机实测 `isUserVerifyingPlatformAuthenticatorAvailable()`
 返回 `true`。
 
-对应地，本机必须 `DOCWEAVE_COOKIE_SECURE=0`（`platform_local.py` 已设），否则 Cookie 在明文
+对应地，本机必须 `DOCWEAVE_COOKIE_SECURE=0`（`platform.py` 已设），否则 Cookie 在明文
 HTTP 上根本不会被写入。
 
 **这也是这些主机名绝不能用于任何真实用途的原因。**
@@ -197,7 +217,12 @@ export DOCWEAVE_RP_ORIGINS=http://accounts.localhost:8770   # 额外可信 origi
 DocWeave 保留独立启动方式，这是"独立应用"的一部分：
 
 ```bash
-scripts/start.sh            # 或 backend/.venv/bin/python backend/run.py
+# 账户服务 + DocWeave，不启动门户
+python scripts/platform.py up accounts docweave
+python scripts/platform.py down portal          # 确认门户确实没在跑
+
+# 或者单进程形态（工作台 + 账户页，同一个源站）
+.venv/bin/python -m platform_server.run
 ```
 
 单进程形态下 `DOCWEAVE_ROLE` 未设 ⇒ 视为 `all`：所有路由挂在一个进程上，服务 `index.html`，
@@ -206,19 +231,24 @@ scripts/start.sh            # 或 backend/.venv/bin/python backend/run.py
 `PlatformNav`（返回平台 / 工作空间切换 / 账户）在 `all` 模式下**不渲染**——单进程部署没有门户
 可以返回，一个指向不存在页面的"返回平台"比没有这个链接更糟。
 
+**账户页在每个角色下都来自同一份实现。** `role=all` 时账户外壳和工作台外壳由同一个进程、同一个
+源站提供（两份构建产物，静态资源目录不同名，互不遮盖）；`role=app` / `role=portal` 时
+`/login`、`/account` 等路径是**服务端重定向**到账户服务，而不是本地页面——一个收集口令却无法
+校验口令的表单，不该出现在"口令只在一个地方输入"这条规则最该被贯彻的页面上。
+
 ---
 
 ## 8. 验证它真的通了
 
 ```bash
 # 三条登录链路 + Cookie 主机隔离（用真实 http.cookiejar 量，不是按端口假设）
-python scripts/verify_sso.py --email you@example.test --password '...'
+python tests/integration/verify_sso.py --email you@example.test --password '...'
 
 # 真实数据库的隔离副本上跑迁移，逐行比对
-python scripts/migration_rehearsal.py --from data
+python tests/integration/migration_rehearsal.py --from data
 
 # 自动化链路：无浏览器、无 Cookie，取令牌 → 提交任务 → 取回真实产物
-python scripts/automation_example.py \
+python tests/integration/automation_example.py \
     --base-url http://docweave.localhost:8765 \
     --issuer   http://accounts.localhost:8770 \
     --client-id nightly-batch --client-secret "$SECRET" \
@@ -226,11 +256,18 @@ python scripts/automation_example.py \
     --template testdata/测试_合同模板.docx \
     --definition docs/integration/example-definition.json --out ./out
 
-# 后端测试
-cd backend && .venv/bin/python -m pytest -q
+# 三个测试套件（也可以 test docweave / identity / integration 单跑）
+python scripts/platform.py test
 
-# 前端类型检查与构建
-cd frontend && npx tsc --noEmit && npm run build
+# 模块依赖边界：跨应用导入、sys.path 改写、机器绝对路径、指向旧目录的链接
+python scripts/check_boundaries.py
+
+# 一致性备份与恢复演练（在隔离副本上真的恢复出来，再逐项比对）
+python scripts/platform.py backup
+python scripts/platform.py verify-restore .local/backups/<归档>
+
+# 前端类型检查与构建（三个外壳）
+npm run typecheck && npm run build
 ```
 
 ---
@@ -280,14 +317,14 @@ cd frontend && npx tsc --noEmit && npm run build
 lsof -nP -iTCP:8765 -sTCP:LISTEN
 ```
 
-如果就是这个项目的 `backend/run.py`，不要再起一个（两个进程共用一个 SQLite 库），
+如果就是这个项目的 `platform_server.run`，不要再起一个（两个进程共用一个 SQLite 库），
 要么直接用它，要么停掉它再 `up`。也可以用 `PLATFORM_DOCWEAVE_PORT` 换个端口。
 
 **回调处 `Server disconnected without sending a response`** — 见 §9 的代理说明。
 
 **浏览器跳转都正常，只有换码失败** — 同上，或者服务绑错了地址族（§1.2）。
 
-**登录后什么都打不开** — 工作空间没有启用应用。`python backend/manage.py --data data app list`
+**登录后什么都打不开** — 工作空间没有启用应用。`python -m platform_identity.cli --data data app list`
 看一眼，用 `app enable docweave --workspace w_xxx` 修。新建的工作空间会在创建的同一个事务里自动
 配好，只有历史数据空间需要走认领。
 

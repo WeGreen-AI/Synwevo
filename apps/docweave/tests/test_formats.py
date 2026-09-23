@@ -9,7 +9,7 @@ import openpyxl
 import pytest
 from pptx import Presentation
 
-from conftest import docx_text
+from .helpers import docx_text
 from docweave.engine.converters import convert
 
 

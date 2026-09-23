@@ -6,7 +6,7 @@ import docx
 import openpyxl
 from lxml import etree
 
-from conftest import _walk
+from .helpers import _walk
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 

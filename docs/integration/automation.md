@@ -6,13 +6,13 @@
 
 ```bash
 # 1) 启动（默认 127.0.0.1:8765，端口与绑定见 docs/integration/ports.md）
-backend/.venv/bin/python backend/run.py
+.venv/bin/python -m platform_server.run
 
 # 2) 生成测试数据（可选，仅用于示例）
-backend/.venv/bin/python scripts/make_fixtures.py
+.venv/bin/python apps/docweave/scripts/make_fixtures.py
 
 # 3) 创建 API 密钥（只显示一次）
-backend/.venv/bin/python backend/manage.py apikey create --name ci --scopes read,write
+.venv/bin/python -m docweave.cli apikey create --name ci --scopes read,write
 export DOCWEAVE_API_KEY=dw_xxxxxxxx_yyyyyyyyyyyyyyyyyyyy
 export DOCWEAVE_BASE_URL=http://127.0.0.1:8765
 ```
@@ -20,7 +20,7 @@ export DOCWEAVE_BASE_URL=http://127.0.0.1:8765
 ## 1. 一条命令跑完整流程
 
 ```bash
-backend/.venv/bin/python scripts/automation_example.py \
+.venv/bin/python tests/integration/automation_example.py \
   --source testdata/测试_客户100.xlsx \
   --template testdata/测试_合同模板.docx \
   --definition docs/integration/example-definition.json \
@@ -139,7 +139,7 @@ def verify(body: bytes, headers, secret: str, tolerance=300) -> bool:
     return hmac.compare_digest(expect, sig)
 # 再按 X-DocWeave-Event-Id 去重（投递可能重复、可能乱序）
 ```
-`backend/docweave/webhooks.py` 里的 `verify()` 就是这段逻辑，`backend/tests/test_webhooks.py` 用它验证真实投递。
+`apps/docweave/docweave/webhooks.py` 里的 `verify()` 就是这段逻辑，`apps/docweave/tests/test_webhooks.py` 用它验证真实投递。
 
 **等待任务：轮询事件**
 ```bash
@@ -157,4 +157,4 @@ done
 
 * 在界面里做模板、字段、样本规则和映射 → `GET /projects/{pid}/definition` 导出 → 交给流水线按定义在新项目上复用。
 * 界面与接口的任务、产物、清单共享同一套存储：界面里能看到自动化提交的任务（同一租户），也能下载其产物。
-* 界面中不会显示密钥、Webhook 或端口配置；这些只通过 `backend/manage.py` 与环境变量管理。
+* 界面中不会显示密钥、Webhook 或端口配置；这些只通过 `python -m docweave.cli` 与环境变量管理。

@@ -1,4 +1,10 @@
-"""OIDC provider: keys, clients, codes and tokens.
+"""OIDC 的数据模型与令牌存储：签名密钥、客户端、授权码与令牌。
+
+在共享层而不是在账户服务里，是因为**验证令牌的一方不是签发它的一方**：DocWeave 的机器接口
+要在每次调用时判断一个访问令牌是否仍然有效、属于谁、还剩哪些权限。如果这段代码住在账户服务
+里，业务应用就得 import 账户服务才能拒绝一个过期令牌——那条 import 一旦存在，"账户服务可以
+独立于业务应用运行"就不再是可检查的事实。协议端点（authorize/token/userinfo/logout）仍然
+只在账户服务上，见 `platform_identity.provider_routes`。
 
 Authlib owns the protocol; this module owns identity and storage. The split matters — writing
 the OAuth state machine by hand is exactly the thing not to do, but *who the user is*, *how the
@@ -21,11 +27,10 @@ import json
 import os
 import secrets
 import time
-
 from authlib.jose import JsonWebKey, jwt
 
-from ..services import ServiceError
-from ..store import Store, new_id, now
+from .errors import ServiceError
+from .store import Store, new_id, now
 
 CODE_TTL_S = 60                      # short: a code is exchanged immediately or not at all
 ACCESS_TTL_S = int(os.environ.get("DOCWEAVE_ACCESS_TTL_S", "900"))

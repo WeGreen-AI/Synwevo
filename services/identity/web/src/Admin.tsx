@@ -10,9 +10,9 @@
  * the control.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, get, post } from "../lib/api";
-import { useSession } from "../lib/session";
-import { useToast } from "../lib/ui";
+import { ApiError, get, post } from "@platform/auth-client";
+import { useSession } from "@platform/auth-client";
+import { useToast } from "@platform/ui";
 
 type Overview = {
   users: number;

@@ -19,12 +19,12 @@ def basic_client(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCWEAVE_UI_AUTH", "basic")
     import importlib
 
-    from docweave import auth as auth_mod
-    from docweave.store import Store
+    from platform_core import auth as auth_mod
+    from platform_core.store import Store
     store = Store(tmp_path / "d")
     auth_mod.Auth(store).add_ui_user("probe", "probe-pass-123")
 
-    import docweave.api.main as main
+    import platform_server.main as main
     importlib.reload(main)
     return TestClient(main.app)
 
@@ -36,7 +36,7 @@ def _client(data_dir, monkeypatch, *, mode: str, role: str) -> TestClient:
     monkeypatch.setenv("DOCWEAVE_UI_AUTH", mode)
     monkeypatch.setenv("DOCWEAVE_ROLE", role)
     monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    import docweave.api.app as app_mod
+    import platform_server.app as app_mod
     importlib.reload(app_mod)
     return TestClient(app_mod.create_app(str(data_dir), start_jobs=False))
 

@@ -15,11 +15,11 @@ import pytest
 from authlib.jose import JsonWebKey
 from fastapi.testclient import TestClient
 
-from docweave.identity import Identity
-from docweave.platform import oidc
-from docweave.platform.apps import Apps, bootstrap_docweave
-from docweave.services import ServiceError
-from docweave.store import Store
+from platform_core.identity import Identity
+from platform_core import oidc
+from platform_core.apps import Apps, bootstrap_docweave
+from platform_core.errors import ServiceError
+from platform_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 REDIRECT = "http://docweave.localhost:8765/auth/callback"
@@ -44,11 +44,11 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
     monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
     monkeypatch.setenv("DOCWEAVE_ISSUER", "http://accounts.localhost:8770")
-    import docweave.api.app as app_mod
+    import platform_identity.app as app_mod
     importlib.reload(app_mod)
 
     deliveries = Deliveries()
-    import docweave.platform.routes as routes_mod
+    import platform_identity.provider_routes as routes_mod
     real_build = routes_mod.build_router
     monkeypatch.setattr(routes_mod, "build_router",
                         lambda *a, **k: real_build(*a, **{**k, "deliver": deliveries}))

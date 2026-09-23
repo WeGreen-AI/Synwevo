@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "platform-portal"
+version = "1.0.0"
+description = "平台门户：登录后的第一页与应用入口"
+requires-python = ">=3.12"
+dependencies = ["platform-core", "platform-auth-client", "fastapi"]
+
+[tool.setuptools.packages.find]
+include = ["platform_portal*"]

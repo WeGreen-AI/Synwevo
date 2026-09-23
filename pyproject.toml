@@ -1,0 +1,6 @@
+# 平台仓库根：只放跨模块的开发工具配置。每个模块自己的打包配置在它自己的 pyproject.toml 里。
+[tool.pytest.ini_options]
+testpaths = ["apps/docweave/tests", "services/identity/tests", "tests/integration"]
+addopts = "-q --import-mode=importlib"
+# 两个同名的 test_*.py 分属不同模块时，pytest 需要知道它们不是同一个包。
+consider_namespace_packages = true

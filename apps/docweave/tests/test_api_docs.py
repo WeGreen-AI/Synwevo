@@ -4,16 +4,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
 
 
 def test_openapi_file_is_in_sync(tmp_path):
     out = tmp_path / "openapi.yaml"
-    p = subprocess.run([sys.executable, str(ROOT / "backend" / "manage.py"), "--data", str(tmp_path / "data"),
+    p = subprocess.run([sys.executable, "-m", "docweave.cli", "--data", str(tmp_path / "data"),
                         "openapi", "--out", str(out)], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr[-800:]
     committed = (ROOT / "docs" / "integration" / "openapi.yaml").read_text(encoding="utf-8")
-    assert out.read_text(encoding="utf-8") == committed, "docs/integration/openapi.yaml 与代码不一致：运行 python backend/manage.py openapi"
+    assert out.read_text(encoding="utf-8") == committed, "docs/integration/openapi.yaml 与代码不一致：运行 python -m docweave.cli openapi"
 
 
 def test_openapi_describes_only_machine_routes_and_needs_auth():

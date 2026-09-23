@@ -18,10 +18,10 @@ import urllib.parse
 import pytest
 from fastapi.testclient import TestClient
 
-from docweave.identity import Identity
-from docweave.platform import oidc
-from docweave.platform.apps import Apps, bootstrap_docweave
-from docweave.store import Store
+from platform_core.identity import Identity
+from platform_core import oidc
+from platform_core.apps import Apps, bootstrap_docweave
+from platform_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 ACCOUNTS = "http://accounts.localhost:8770"
@@ -114,13 +114,13 @@ def world(tmp_path, monkeypatch):
                  "DOCWEAVE_COOKIE_SECURE": "0", "DOCWEAVE_ISSUER": ACCOUNTS,
                  "DOCWEAVE_APP_URL": DOCWEAVE, "DOCWEAVE_OIDC_CLIENT_ID": "docweave-web"}.items():
         monkeypatch.setenv(k, v)
-    import docweave.api.app as app_mod
+    import platform_server.app as app_mod
     importlib.reload(app_mod)
 
     # The provider's back-channel POST must reach DocWeave over the test transport. The router
     # binds its deliverer when it is built, so this is patched *before* the account service is
     # created; the app it posts to is filled in below.
-    import docweave.platform.oidc as oidc_mod
+    import platform_core.oidc as oidc_mod
     later: dict = {}
 
     def _deliver(url, token, timeout=3.0):
@@ -133,7 +133,7 @@ def world(tmp_path, monkeypatch):
 
     # DocWeave's relying-party client talks to the account service over that same transport, so
     # the token exchange really is an HTTP request to the real provider, not a function call.
-    import docweave.rp as rp_mod
+    import platform_auth_client.rp as rp_mod
     monkeypatch.setattr(rp_mod.Rp, "http", property(lambda self: accounts.c))
     docweave = Svc(app_mod.create_app(data, start_jobs=False), DOCWEAVE)
     later["docweave"] = docweave
@@ -353,7 +353,7 @@ def test_a_repeated_logout_notification_is_a_no_op_success(world):
     _sign_in_centrally(world)
     b.go(DOCWEAVE + "/auth/start?next=/")
     sid = world["store"].one("SELECT sid FROM client_sessions ORDER BY created_at DESC LIMIT 1")["sid"]
-    from docweave.platform.oidc import Grants
+    from platform_core.oidc import Grants
     client = oidc.Clients(world["store"]).get("docweave-web")
     tok = Grants(world["store"]).logout_token(client=client, user_id=world["user"]["id"], sid=sid)
     first = world["docweave"].post("/auth/backchannel-logout", data={"logout_token": tok})
@@ -412,39 +412,3 @@ def test_the_local_session_reports_the_real_central_authentication_time(world):
         "本地会话不能把两小时前的中央认证记成刚刚重认证"
 
 
-# ---------------------------------------------------------------- role boundary
-@pytest.mark.parametrize("role,expect_password", [
-    ("accounts", True), ("all", True), ("app", False), ("portal", False),
-])
-def test_auth_state_says_whether_this_service_can_check_a_password(world, monkeypatch,
-                                                                   role, expect_password):
-    """A relying party does not serve /api/auth/login, so it must not offer a password box.
-
-    Found in the browser: clicking the DocWeave card landed on DocWeave's own login form, which
-    could never work — on the one page whose whole point is that the password is typed in
-    exactly one place.
-    """
-    monkeypatch.setenv("DOCWEAVE_ROLE", role)
-    st = world["docweave"].get("/api/auth/state").json()
-    assert st["role"] == role
-    assert st["password_login"] is expect_password
-    assert st["platform_name"]
-
-
-def test_a_relying_party_does_not_serve_the_login_endpoint(world, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_ROLE", "app")
-    r = world["docweave"].post("/api/auth/login",
-                               json={"email": "alice@example.com", "password": PW})
-    assert r.status_code == 404 and r.json()["error"] == "not_in_this_role"
-    # ...while the account service still does
-    monkeypatch.setenv("DOCWEAVE_ROLE", "accounts")
-    assert world["accounts"].post("/api/auth/login",
-                                  json={"email": "alice@example.com", "password": PW}).status_code == 200
-
-
-def test_the_account_service_does_not_serve_business_data(world, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_ROLE", "accounts")
-    _sign_in_centrally(world)
-    for path in ("/api/projects", "/api/templates", "/api/v1/projects"):
-        r = world["accounts"].get(path, cookies=world["b"].jar.apply(ACCOUNTS))
-        assert r.status_code == 404, f"{path} → {r.status_code}"

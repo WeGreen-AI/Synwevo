@@ -15,11 +15,31 @@ import tarfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-INCLUDE = ("backend/docweave", "backend/tests", "backend/run.py", "backend/requirements.txt", "backend/requirements-dev.txt",
-           "frontend/src", "frontend/index.html", "frontend/package.json", "frontend/package-lock.json", "frontend/tsconfig.json",
-           "frontend/vite.config.ts", "scripts", "docs", "README.md", "Dockerfile", "docker-compose.yml", "LICENSE", "NOTICE")
-EXCLUDE_PARTS = {"__pycache__", "node_modules", ".venv", "dist", ".pytest_cache", "screenshots"}
+from platform_core.http import repo_root
+
+ROOT = repo_root() or Path(__file__).resolve().parents[3]
+# The Corresponding Source of the *running program*. After the platform restructure that is more
+# than DocWeave's own directory: the process a network user reaches is composed from the shared
+# packages, the account service and the role composer, and an archive holding only `apps/docweave`
+# would be a partial source shipped under a complete-source claim — which is the exact failure
+# AGPL-3.0 §13 is about.
+INCLUDE = (
+    # the business application
+    "apps/docweave/docweave", "apps/docweave/tests", "apps/docweave/scripts",
+    "apps/docweave/web/src", "apps/docweave/web/index.html", "apps/docweave/web/package.json",
+    "apps/docweave/web/tsconfig.json", "apps/docweave/web/vite.config.ts",
+    "apps/docweave/pyproject.toml", "apps/docweave/requirements.txt",
+    "apps/docweave/requirements-pdfium.txt",
+    # the platform it runs on
+    "packages/platform-core", "packages/auth-client", "packages/ui",
+    "services/identity", "apps/portal", "infra/server",
+    # how it is built, run and documented
+    "infra/Dockerfile", "infra/docker-compose.yml", "scripts", "tests", "docs",
+    "package.json", "package-lock.json", "pyproject.toml", "requirements-dev.txt",
+    "README.md", "LICENSE", "NOTICE",
+)
+EXCLUDE_PARTS = {"__pycache__", "node_modules", ".venv", "dist", ".pytest_cache", "screenshots",
+                 "data", "testdata", ".local"}
 MAX_FILE = 5 * 1024 * 1024
 
 THIRD_PARTY = [
@@ -87,7 +107,7 @@ def about() -> dict:
         notice = ("当前 PDF 引擎是 pdfium（pypdfium2，Apache-2.0 / BSD-3-Clause），**但本部署仍然安装了 PyMuPDF**："
                   "AGPL-3.0 的 MuPDF 二进制仍随镜像分发，且图片模板包装页与中文后备字体两处仍会调用它。"
                   "因此 AGPL-3.0 第 13 条的源代码提供义务依然适用。要真正去掉 AGPL 依赖，需按 "
-                  "backend/requirements-pdfium.txt 构建、镜像中不安装 pymupdf。")
+                  "apps/docweave/requirements-pdfium.txt 构建、镜像中不安装 pymupdf。")
     else:
         notice = "本部署未安装 PyMuPDF，镜像中不含 MuPDF 二进制，无 AGPL 依赖；PDF / 图片模板的部分能力在此模式下受限。"
     return {
@@ -128,21 +148,25 @@ def source_archive() -> tuple[bytes, str]:
                 continue
             files = [p] if p.is_file() else sorted(x for x in p.rglob("*") if x.is_file())
             for f in files:
-                parts = set(f.relative_to(ROOT).parts)
-                if parts & EXCLUDE_PARTS or f.suffix in (".pyc", ".log") or f.stat().st_size > MAX_FILE:
+                parts = f.relative_to(ROOT).parts
+                # Suffix match as well as exact: `platform_core.egg-info` is one path component,
+                # so a set membership test never saw it and build metadata rode along.
+                if (set(parts) & EXCLUDE_PARTS
+                        or any(part.endswith(".egg-info") for part in parts)
+                        or f.suffix in (".pyc", ".log") or f.stat().st_size > MAX_FILE):
                     continue
                 tar.add(f, arcname=f"{top}/{f.relative_to(ROOT).as_posix()}", recursive=False)
         lines = ["DocWeave 对应源代码（Corresponding Source）", "",
                  "本压缩包由正在运行的服务按其安装目录中的文件生成。",
                  f"生成位置：{status['root']}", ""]
         if status["complete"]:
-            lines += ["本包包含所列全部内容：后端、前端源码、脚本、文档与依赖版本清单。"]
+            lines += ["本包包含所列全部内容：业务应用、平台共享包、账户服务、门户、构建与运行脚本、文档与依赖版本清单。"]
         else:
             lines += ["⚠ 本包并不完整。以下内容在运行本服务的目录中不存在，因此未能包含：", ""]
             lines += [f"  - {rel}" for rel in status["missing"]]
-            lines += ["", "这通常是因为容器镜像只复制了后端与编译后的前端产物。完整源代码请见项目仓库，",
+            lines += ["", "这通常是因为容器镜像只复制了运行所需的代码与编译后的前端产物。完整源代码请见项目仓库，",
                       "或用包含这些路径的镜像重新构建（见 Dockerfile 中的 COPY 行）。"]
-        lines += ["", "第三方组件的源代码可从其官方发布获取（版本见 backend/requirements.txt 与 frontend/package-lock.json）。", ""]
+        lines += ["", "第三方组件的源代码可从其官方发布获取（版本见各模块的 requirements.txt 与仓库根目录的 package-lock.json）。", ""]
         readme = "\n".join(lines).encode("utf-8")
         info = tarfile.TarInfo(f"{top}/SOURCE_OFFER.txt")
         info.size = len(readme)

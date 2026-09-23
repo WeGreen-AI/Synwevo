@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { get } from "../lib/api";
+import { get } from "@platform/auth-client";
 import type { Mark } from "../lib/types";
 import { hexA } from "./GridView";
-import { useFit } from "../lib/useFit";
+import { useFit } from "@platform/ui";
 
 const PT = 96 / 72;
 

@@ -1,7 +1,7 @@
 import { ReactElement, useEffect, useRef } from "react";
 import type { Mark, Selection } from "../lib/types";
 import { hexA } from "./GridView";
-import { useFit } from "../lib/useFit";
+import { useFit } from "@platform/ui";
 
 const PT = 96 / 72;
 const HL: Record<string, string> = { yellow: "#ffff00", green: "#00ff00", cyan: "#00ffff", magenta: "#ff00ff", blue: "#0000ff", red: "#ff0000",

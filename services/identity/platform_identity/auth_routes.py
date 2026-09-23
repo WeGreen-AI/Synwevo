@@ -12,17 +12,17 @@ have accounts. Login answers with one shape for "no such account", "wrong passwo
 from __future__ import annotations
 
 import os
-
 from fastapi import APIRouter, Body, Request, Response
 
-from ..auth import ui_auth_mode
-from ..identity import Identity, registration_mode
-from ..mfa import TICKET_MAX_ATTEMPTS
-from ..passwords import PasswordError
-from ..services import ServiceError
-from ..mail import reset_mail as mail_reset, security_notice as mail_notice, verify_mail as mail_verify
-from ..sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
-from ..store import now as now_ts
+from platform_auth_client.session_routes import describe_user
+from platform_core.errors import ServiceError
+from platform_core.identity import Identity, registration_mode
+from platform_core.passwords import PasswordError
+from platform_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
+from platform_core.store import now as now_ts
+
+from .mfa import TICKET_MAX_ATTEMPTS
+from .mail import reset_mail as mail_reset, security_notice as mail_notice, verify_mail as mail_verify
 
 # Same shape for every failed sign-in attempt, whatever actually went wrong.
 _LOGIN_FAILED = ("bad_credentials", "邮箱或口令不正确")
@@ -54,13 +54,6 @@ def client_ip(request: Request) -> str:
     return (request.client.host if request.client else "") or "unknown"
 
 
-def _account_url(role: str) -> str:
-    if role in ("accounts", "all", ""):
-        return "/account"
-    from ..rp import issuer
-    return issuer().rstrip("/") + "/account"
-
-
 def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=None) -> APIRouter:
     r = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -81,50 +74,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         return {"user": _me(user, spaces), "session": {"id": row["id"], "amr": amr}}
 
     def _me(user: dict, spaces: list[dict]) -> dict:
-        return {"id": user["id"], "email": user["email"], "display_name": user.get("display_name"),
-                "status": user["status"], "platform_role": user["platform_role"],
-                "workspaces": [{"id": w["id"], "name": w["name"], "kind": w["kind"],
-                                "role": w["role"], "can_export": bool(w["can_export"])} for w in spaces]}
-
-    # ------------------------------------------------------------------ state
-    @r.get("/state")
-    def state(request: Request):
-        """What the login screen needs before anyone has identified themselves.
-
-        Deliberately says nothing about specific accounts — only how this deployment is
-        configured and whether it still needs its first administrator.
-
-        `mode` is the load-bearing field. These routes are mounted whatever DOCWEAVE_UI_AUTH
-        says, so on a `basic` deployment this endpoint answers 200 like any other — and a client
-        that inferred "accounts are in use" from a successful response sent people who had
-        already signed in with the shared password to a first-run bootstrap screen. Whether the
-        account system is active is the server's answer, not something the client can deduce.
-        """
-        import os
-        from .portal_routes import platform_name
-        role = (os.environ.get("DOCWEAVE_ROLE") or "all").strip().lower()
-        return {"mode": ui_auth_mode(),
-                "registration": registration_mode(),
-                "bootstrap_required": ident.bootstrap_needed(),
-                # False on a relying party, where `/api/auth/login` is not served at all: the
-                # password belongs to the account service and there is exactly one place to
-                # type it. A client that showed its own password form here would be collecting
-                # a credential it cannot check — and teaching people to type it anywhere.
-                "password_login": role in ("accounts", "all", ""),
-                # The sign-in screen belongs to the *platform*, not to DocWeave. Hard-coding
-                # DocWeave as the name of the platform it is only one application on would have
-                # to be undone later in every string, and would tell someone arriving from the
-                # portal that they are signing in to the wrong product.
-                "platform_name": platform_name(),
-                "role": role,
-                # Where "back" goes from the account pages. Server-controlled: a return target
-                # the page took from a query string would be an open redirect on the one origin
-                # that must never have one.
-                "portal_url": os.environ.get("DOCWEAVE_PORTAL_URL") or "",
-                # Where the account and security pages live. On a relying party that is the
-                # account service; on a single-process install it is this app's own page. Given
-                # by the server so no client has to assemble it from an issuer string.
-                "account_url": _account_url(role)}
+        return describe_user(user, spaces)
 
     @r.post("/bootstrap")
     def bootstrap(request: Request, response: Response, body: dict = Body(...)):
@@ -250,28 +200,6 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
             out["recovery_remaining"] = mfa.recovery_remaining(user["id"])
         return out
 
-    @r.post("/logout")
-    def logout(request: Request, response: Response):
-        s = getattr(request.state, "session", None)
-        if s:
-            sessions.revoke(s["id"], "logout")
-            audit(request, "auth.logout", actor_id=s["user_id"], result="ok")
-        response.delete_cookie(COOKIE_NAME, path="/")
-        response.delete_cookie(CSRF_COOKIE, path="/")
-        return {"ok": True}
-
-    @r.get("/me")
-    def me(request: Request):
-        s = _require_session(request)
-        user = ident.get_user(s["user_id"])
-        if not user:
-            raise ServiceError(401, "unauthorized", "请先登录")
-        return {**_me(user, ident.workspaces_for(user["id"])),
-                # Which workspace this session is acting in. The page needs it to show the
-                # switcher's current value; without it the switcher would guess, and guessing
-                # wrong tells someone they are in a tenant they are not.
-                "workspace_id": s.get("workspace_id"),
-                "session": {"id": s["id"], "amr": s["amr"]}}
 
     @r.post("/reauth")
     def reauth(request: Request, body: dict = Body(...)):
@@ -280,8 +208,8 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         The scope comes from a closed set. A client-chosen string would let a page ask for
         `scope=""`, which satisfies every check — the one value that must not be requestable.
         """
-        from ..passwords import verify as verify_password
-        from ..sessions import REAUTH_SECONDS, REAUTH_SCOPES
+        from platform_core.passwords import verify as verify_password
+        from platform_core.sessions import REAUTH_SECONDS, REAUTH_SCOPES
         s = _require_session(request)
         scope = (body.get("scope") or "").strip()
         if scope not in REAUTH_SCOPES:
@@ -322,19 +250,6 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
               meta={"count": n})
         return {"ok": True, "revoked": n}
 
-    @r.post("/workspace")
-    def switch_workspace(request: Request, body: dict = Body(...)):
-        """Change the workspace this session is working in.
-
-        Membership is re-checked here rather than trusted from the request, so a stale id or a
-        guessed one cannot move the session into a workspace the person has since left.
-        """
-        s = _require_session(request)
-        wid = (body.get("workspace_id") or "").strip()
-        if not ident.membership(wid, s["user_id"]):
-            raise ServiceError(404, "no_workspace", "找不到该工作空间")
-        sessions.set_workspace(s["id"], wid)
-        return {"ok": True, "workspace_id": wid}
 
     def _require_session(request: Request) -> dict:
         s = getattr(request.state, "session", None)
@@ -352,8 +267,8 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
     on the same `/api/auth` prefix and the anonymous set in app.py lists exactly which of these
     may be reached without a session.
     """
-    from ..invites import INVITE_TTL_S, ROLE_LABEL
-    from .. import mail as mail_mod
+    from .invites import INVITE_TTL_S, ROLE_LABEL
+    from . import mail as mail_mod
 
     r = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -476,7 +391,7 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
       signs in normally, which means any second factor they have still applies. Signing them in
       here would make "I forgot my password" a way around their own MFA.
     """
-    from ..passwords import PasswordError
+    from platform_core.passwords import PasswordError
     r = APIRouter(prefix="/api/auth", tags=["auth"])
 
     @r.post("/forgot")
@@ -541,7 +456,7 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
 
         # A credential change ends everything that was authorised by the old one.
         n = sessions.revoke_all_for_user(user["id"], "password_reset")
-        from ..platform.oidc import Grants
+        from platform_core.oidc import Grants
         tokens = Grants(ident.store).revoke_for_user(user["id"], "password_reset")
         audit(request, "auth.reset.complete", actor_id=user["id"], object_kind="user",
               object_id=user["id"], result="ok", meta={"sessions": n, "tokens": tokens})
@@ -611,7 +526,7 @@ def build_passkey_router(ident: Identity, sessions: Sessions, passkeys, audit) -
 
     @r.get("")
     def listing(request: Request):
-        from ..passkeys import allowed_origins, rp_id
+        from .passkeys import allowed_origins, rp_id
         s = _session(request)
         return {"items": passkeys.list_for(s["user_id"]),
                 "reauth_fresh": Sessions.reauth_fresh(s, SCOPE, strict=True),
@@ -679,8 +594,8 @@ def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRout
     this purpose. Proving yourself to add a factor must not also unlock removing one, and a
     front-end flag would unlock nothing at all.
     """
-    from ..passwords import verify as verify_password
-    from ..sessions import REAUTH_SECONDS
+    from platform_core.passwords import verify as verify_password
+    from platform_core.sessions import REAUTH_SECONDS
 
     r = APIRouter(prefix="/api/auth/mfa", tags=["auth"])
     SCOPE = "mfa"

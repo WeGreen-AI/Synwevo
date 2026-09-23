@@ -1,0 +1,3 @@
+# 版本固定在这里；各模块的 pyproject.toml 只声明抽象依赖（名字），装什么版本以本文件为准。
+# 门户：只有平台基础与依赖方适配。
+-r ../../packages/auth-client/python/requirements.txt

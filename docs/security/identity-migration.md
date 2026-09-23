@@ -9,7 +9,7 @@
 
 ## 1. 迁移模型
 
-`backend/docweave/store.py: _migrate()`。**只向前、可重复执行、纯追加**。
+`apps/docweave/docweave/store.py: _migrate()`。**只向前、可重复执行、纯追加**。
 
 ```
 schema v1  →  v2  （tenant / lease / runs / events / idempotency / api_keys / webhooks）
@@ -221,8 +221,8 @@ MFA 种子密钥 : 取自库内 meta.server_secret —— 与密文同库，
 ## 8. 本机演练
 
 ```bash
-python scripts/migration_rehearsal.py --from data          # 隔离副本，来源只读
-python scripts/migration_rehearsal.py --from data --keep   # 保留副本以便检查
+python tests/integration/migration_rehearsal.py --from data          # 隔离副本，来源只读
+python tests/integration/migration_rehearsal.py --from data --keep   # 保留副本以便检查
 ```
 
 它做的事：一致快照 → 在副本上跑迁移 → 逐行指纹比对 → 检查新列 → 检查 `default` 仍未认领 →
@@ -238,4 +238,4 @@ python scripts/migration_rehearsal.py --from data --keep   # 保留副本以便�
 - 会话、SSO、撤权：[sessions.md](sessions.md)
 - 权限契约（平台角色、应用资格、逐对象授权）：[permissions.md](permissions.md)
 - 本机启动：[../development/local-platform.md](../development/local-platform.md)
-- 测试：`backend/tests/test_migration_v4.py`、`test_admin.py`（认领流程 21 条）
+- 测试：`apps/docweave/tests/test_migration_v4.py`、`test_admin.py`（认领流程 21 条）

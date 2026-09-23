@@ -7,7 +7,7 @@ import zipfile
 import docx
 import pytest
 
-from docweave.auth import Auth
+from platform_core.auth import Auth
 
 
 @pytest.fixture()
@@ -194,7 +194,7 @@ def test_definition_validation_rejects_unknown_and_incompatible(api, keys, fixtu
 
 
 def test_rate_limit_and_request_id(api, keys, monkeypatch):
-    import docweave.api.app as A
+    import platform_core.http as A
     c = api.c
     rid = c.get("/api/v1/whoami", headers={**keys["rw"], "X-Request-ID": "trace-123"})
     assert rid.headers["X-Request-ID"] == "trace-123"

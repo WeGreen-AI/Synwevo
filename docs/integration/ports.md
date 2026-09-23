@@ -39,7 +39,7 @@
 
 **绑定地址按域名解析结果决定**，不是固定 `127.0.0.1`。`*.localhost` 在本机同时解析到 `::1` 和
 `127.0.0.1` 且 `getaddrinfo` 先返回 `::1`；uvicorn 只绑一个地址，绑错会让浏览器正常而
-服务端换码失败（httpx 不做地址回退）。`scripts/platform_local.py: bind_addr()` 负责这件事。
+服务端换码失败（httpx 不做地址回退）。`scripts/platform.py: bind_addr()` 负责这件事。
 
 角色边界由网关中的一个过滤器强制执行，**不是靠"没挂载那个路由"**：
 
@@ -95,7 +95,7 @@
 
 * 镜像内监听 `0.0.0.0:8765`（`Dockerfile` 中 `DOCWEAVE_HOST=0.0.0.0`、`EXPOSE 8765`）。
 * `docker-compose.yml` 映射为 `127.0.0.1:8765:8765`：**只在宿主机本地可达**，对外请另配反向代理。
-* 绑定非本机地址且 `DOCWEAVE_UI_AUTH=none` 时，`backend/run.py` **拒绝启动**并打印三种处理方式（实测：`DOCWEAVE_HOST=0.0.0.0 python backend/run.py` 退出码 1，输出「拒绝启动…」）。设为 `basic` 或 `proxy` 后正常启动。
+* 绑定非本机地址且 `DOCWEAVE_UI_AUTH=none` 时，`backend/run.py` **拒绝启动**并打印三种处理方式（实测：`DOCWEAVE_HOST=0.0.0.0 python -m platform_server.run` 退出码 1，输出「拒绝启动…」）。设为 `basic` 或 `proxy` 后正常启动。
 * 容器是例外：镜像内必须绑定 `0.0.0.0`，实际暴露范围由端口映射决定，进程无法判断，因此容器内（`DOCWEAVE_IN_CONTAINER=1`，镜像已设置）**只打印警告**而不拒绝。`docker-compose.yml` 只映射到 `127.0.0.1:8765`，对外请在前面加带认证的反向代理。
 * 机器接口 `/api/v1` 与此设置无关，任何情况下都需要 API 密钥。
 * 反向代理示例（Nginx，界面走 SSO/Basic，机器接口走密钥）：
@@ -127,14 +127,14 @@ location = /healthz { proxy_pass http://127.0.0.1:8765; access_log off; }
 
 ## 4. 端口冲突与变更
 
-* 改端口：`DOCWEAVE_PORT=9000 python backend/run.py`（或 compose 中改映射）。
+* 改端口：`DOCWEAVE_PORT=9000 python -m platform_server.run`（或 compose 中改映射）。
 * 端口被占用时 uvicorn 会以 `[Errno 48] Address already in use` 退出；用 `lsof -nP -iTCP:8765 -sTCP:LISTEN` 查看占用进程。
 * 开发时前端 5173 与后端 8765 同时运行；前端通过 `vite.config.ts` 的 proxy 访问后端，不需要额外端口。
 
 ## 5. 如何自行核对
 
 ```bash
-python backend/manage.py info                       # 数据目录、schema 版本、当前监听配置
+python -m docweave.cli info                       # 数据目录、schema 版本、当前监听配置
 lsof -nP -iTCP -sTCP:LISTEN | grep -E '8765|5173'   # 实际监听（macOS/Linux）
 curl -s localhost:8765/healthz                      # 存活
 curl -s localhost:8765/readyz                       # 就绪（数据库 / 存储 / 运行线程）
@@ -237,8 +237,8 @@ DocWeave 自己有口令（`DOCWEAVE_UI_AUTH=basic`，PBKDF2 存储），`/api/v
 三个项目的 `origin` 均为 `api:<key id>`，因此可以用来源证据一次性清掉，不会误伤人工建的项目：
 
 ```bash
-docker exec docweave python backend/manage.py projects list        # dry-run，先看判定
-docker exec docweave python backend/manage.py projects prune --id <id> --apply
+docker exec docweave python -m docweave.cli projects list        # dry-run，先看判定
+docker exec docweave python -m docweave.cli projects prune --id <id> --apply
 ```
 
 用于播种的临时密钥在建完后已撤销（`apikey list` 显示 `已撤销`），容器内不留明文密钥文件。
@@ -249,7 +249,7 @@ docker exec docweave python backend/manage.py projects prune --id <id> --apply
 ssh vultr_tokyo
 docker restart docweave                 # 重启
 docker logs -f docweave                 # 日志
-docker exec docweave python backend/manage.py ui-user add <用户名> --password '<口令，≥8 位>'
+docker exec docweave python -m platform_identity.cli ui-user add <用户名> --password '<口令，≥8 位>'
 ```
 
 改端口：修改 `-p 127.0.0.1:<新端口>:8765` 后重建容器，并同步修改 Cloudflare Tunnel 的 Public Hostname 指向。

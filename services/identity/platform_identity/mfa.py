@@ -25,12 +25,11 @@ import os
 import secrets
 import time
 import urllib.parse
-
 import pyotp
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from .services import ServiceError
-from .store import Store, new_id, now
+from platform_core.errors import ServiceError
+from platform_core.store import Store, new_id, now
 
 # A code is accepted one step either side of now, so a clock a few seconds out still works.
 # Wider than that starts extending the useful life of a phished code for no real gain.
@@ -59,7 +58,7 @@ def _key(store: Store) -> bytes:
     Separation matters: the same root secret also signs download links, and a key reused across
     unrelated purposes turns any weakness in one into a weakness in the other.
     """
-    from .auth import Auth
+    from platform_core.auth import Auth
     root = Auth(store).secret()
     return hmac.new(root, b"docweave/mfa-seed/v1", hashlib.sha256).digest()
 

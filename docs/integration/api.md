@@ -4,7 +4,7 @@
 接口不依赖浏览器、页面、DOM 或鼠标选区。产品界面中不展示这些能力，密钥与回调通过命令行和部署配置管理。
 
 * 基础地址：`http://<host>:<port>/api/v1`（默认 `http://127.0.0.1:8765/api/v1`，端口见 [ports.md](ports.md)）
-* 机器可读规范：[openapi.yaml](openapi.yaml)（由 `python backend/manage.py openapi` 从实际路由导出，`backend/tests/test_api_docs.py` 校验其与代码一致）
+* 机器可读规范：[openapi.yaml](openapi.yaml)（由 `python -m docweave.cli openapi` 从实际路由导出，`apps/docweave/tests/test_api_docs.py` 校验其与代码一致）
 * 调用示例与脚本：[automation.md](automation.md)
 
 ## 1. 鉴权
@@ -14,10 +14,10 @@ Authorization: Bearer dw_<key_id>_<secret>
 ```
 
 ```bash
-python backend/manage.py apikey create --name ci --tenant default --scopes read,write
-python backend/manage.py apikey list
-python backend/manage.py apikey rotate <key_id>     # 生成新密钥并撤销旧的
-python backend/manage.py apikey revoke <key_id>
+python -m docweave.cli apikey create --name ci --tenant default --scopes read,write
+python -m docweave.cli apikey list
+python -m docweave.cli apikey rotate <key_id>     # 生成新密钥并撤销旧的
+python -m docweave.cli apikey revoke <key_id>
 ```
 
 * 密钥只在创建时显示一次，服务器只保存 SHA-256 哈希；**不要**写进前端包、仓库或日志。
@@ -41,7 +41,7 @@ python backend/manage.py apikey revoke <key_id>
 登记一个服务账户（**只有 CLI，没有产品界面**）：
 
 ```bash
-python backend/manage.py client register \
+python -m platform_identity.cli client register \
     --client-id nightly-batch --app docweave --name 夜间批处理 \
     --service --workspace w_xxx --api-scopes "docweave.read docweave.write"
 ```
@@ -76,7 +76,7 @@ curl -s -X POST "$ISSUER/oidc/token" \
    令牌本身不需要撤销。
 
 **旧的 `dw_` 密钥继续有效**，不设废止期限。它们早于平台存在，一次性全部作废会打断正在运行的
-自动化。两种凭据走同一个解析函数（`backend/docweave/machine.py`），出来的 principal 形状相同。
+自动化。两种凭据走同一个解析函数（`apps/docweave/docweave/machine.py`），出来的 principal 形状相同。
 
 `scripts/automation_example.py` 两种都支持：给 `--key` 用旧密钥，给
 `--issuer --client-id --client-secret` 用服务账户。

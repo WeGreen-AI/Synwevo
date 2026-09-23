@@ -25,7 +25,7 @@ import sys
 import secrets
 import time
 
-from .services import ServiceError
+from .errors import ServiceError
 from .store import Store, new_id, now
 
 SCOPES = ("read", "write", "admin")

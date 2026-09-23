@@ -15,14 +15,29 @@ from pathlib import Path
 import pytest
 
 from docweave.services import App
-from docweave.store import Store, now
+from platform_core.store import Store, now
 
-ROOT = Path(__file__).resolve().parents[2]
-MANAGE = ROOT / "backend" / "manage.py"
+ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
+APP = Path(__file__).resolve().parents[1]
+SCRIPTS = APP / "scripts"
+
+
+def _blob_audit():
+    """Load the operational script as a module, by path.
+
+    `sys.path.insert` would make the import work by changing the interpreter's idea of where
+    modules live — which is the habit the platform restructure exists to remove. The script is
+    a script, not an installed package, so it is loaded as the one file it is.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_docweave_blob_audit", SCRIPTS / "blob_audit.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _run(data_dir, *args):
-    r = subprocess.run([sys.executable, str(MANAGE), "--data", str(data_dir), "projects", *args],
+    r = subprocess.run([sys.executable, "-m", "docweave.cli", "--data", str(data_dir), "projects", *args],
                        capture_output=True, text=True, timeout=120)
     return r.returncode, r.stdout + r.stderr
 
@@ -97,10 +112,8 @@ def test_unknown_id_is_reported_rather_than_silently_skipped(seeded):
 def test_the_blob_audit_sees_references_hidden_inside_json(tmp_path):
     """A per-column scan cannot see a blob id inside `jobs.snapshot`. That is the whole reason
     the inventory exists, so it has to be the thing the test proves."""
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-    from blob_audit import audit
-    from docweave.store import Store, now
+    audit = _blob_audit().audit
+    from platform_core.store import Store, now
 
     store = Store(tmp_path)
     only_in_json = "a" * 64
@@ -129,7 +142,7 @@ def test_the_blob_audit_sees_references_hidden_inside_json(tmp_path):
 def test_the_blob_audit_does_not_offer_to_delete():
     """A delete path written against an incomplete mark set destroys user data. The inventory
     ships first, on purpose."""
-    src = (Path(__file__).resolve().parents[2] / "scripts" / "blob_audit.py").read_text("utf-8")
+    src = (SCRIPTS / "blob_audit.py").read_text("utf-8")
     for forbidden in ("unlink(", "os.remove", "shutil.rmtree", "DELETE FROM"):
         assert forbidden not in src, f"这个脚本不应当能删除任何东西，但出现了 {forbidden}"
 
@@ -142,11 +155,9 @@ def test_a_preview_blob_is_counted_as_referenced(tmp_path):
     clauses and dropped that one, so bytes the server was actively serving over
     `/api/preview-files/{blob}` were listed under `unreferenced_on_disk`.
     """
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-    from blob_audit import audit
+    audit = _blob_audit().audit
     from docweave import authz
-    from docweave.store import Store
+    from platform_core.store import Store
 
     store = Store(tmp_path)
     (tmp_path / "blobs").mkdir(exist_ok=True)
@@ -168,9 +179,7 @@ def test_the_inventory_refuses_to_be_narrower_than_the_authorization_check(monke
     compares the two, and adding a sixth clause to `_REACHABLE` has to make this fail rather
     than silently shrink the mark set.
     """
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-    import blob_audit
+    blob_audit = _blob_audit()
     from docweave import authz
 
     assert blob_audit._cross_check_against_authz() == [], "今天两者应当是一致的"

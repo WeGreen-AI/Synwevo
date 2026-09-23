@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "platform-server"
+version = "1.0.0"
+description = "部署组装：按角色把身份服务、门户与业务应用拼成一个进程"
+requires-python = ">=3.12"
+# The one distribution that may depend on all of them, because it is the deployment and not an
+# application. Everything else is checked against this: no app may depend on another app.
+dependencies = ["platform-core", "platform-auth-client", "platform-identity",
+                "platform-portal", "docweave", "uvicorn"]
+
+[tool.setuptools.packages.find]
+include = ["platform_server*"]

@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from docweave import auth
+from platform_core import auth
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", ""])
@@ -62,7 +62,7 @@ def test_run_py_actually_calls_the_guard(tmp_path):
     """The end-to-end guarantee: starting the documented way must refuse, not serve."""
     env = {"PATH": "/usr/bin:/bin", "DOCWEAVE_HOST": "0.0.0.0", "DOCWEAVE_PORT": "8791",
            "DOCWEAVE_DATA_DIR": str(tmp_path), "HOME": str(tmp_path)}
-    r = subprocess.run([sys.executable, str(ROOT / "backend" / "run.py")], env=env,
+    r = subprocess.run([sys.executable, str(ROOT / "infra" / "server" / "platform_server" / "run.py")], env=env,
                        capture_output=True, text=True, timeout=120)
     assert r.returncode != 0, r.stdout[-2000:]
     assert "拒绝启动" in (r.stderr + r.stdout)

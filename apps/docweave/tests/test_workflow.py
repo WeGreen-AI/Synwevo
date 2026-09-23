@@ -3,7 +3,7 @@ import io
 
 import docx
 
-from conftest import docx_text
+from .helpers import docx_text
 
 
 def _form(label: str, value: str) -> bytes:

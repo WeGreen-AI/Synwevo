@@ -17,13 +17,12 @@ reason, one transaction and an audit record.
 from __future__ import annotations
 
 import json
-
 from fastapi import APIRouter, Body, Query, Request
 
-from ..identity import Identity
-from ..services import ServiceError
-from ..sessions import Sessions
-from ..store import Store, now
+from platform_core.errors import ServiceError
+from platform_core.identity import Identity
+from platform_core.sessions import Sessions
+from platform_core.store import Store, now
 
 REAUTH_SCOPE = "admin"
 
@@ -164,7 +163,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit) -> AP
                           (new_name[:100], ts, wid))
             else:
                 t.execute("UPDATE workspaces SET status='active', updated_at=? WHERE id=?", (ts, wid))
-            from ..platform.apps import DOCWEAVE_APP_ID
+            from platform_core.apps import DOCWEAVE_APP_ID
             t.execute("INSERT INTO workspace_apps (workspace_id,app_id,enabled_at,enabled_by) "
                       "VALUES (?,?,?,?) ON CONFLICT(workspace_id,app_id) DO NOTHING",
                       (wid, DOCWEAVE_APP_ID, ts, actor["id"]))
@@ -233,7 +232,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit) -> AP
         n = sessions.revoke_all_for_user(uid, "admin_revoked")
         # Tokens issued from those sessions go too; otherwise an application keeps working with
         # an access token minted by a session that no longer exists.
-        from ..platform.oidc import Grants
+        from platform_core.oidc import Grants
         tokens = Grants(store).revoke_for_user(uid, "admin_revoked")
         audit(request, "admin.user.revoke_sessions", actor_id=actor["id"], object_kind="user",
               object_id=uid, result="ok",

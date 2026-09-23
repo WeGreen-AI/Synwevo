@@ -13,15 +13,15 @@ server-side. What reaches the browser is DocWeave's own session cookie and nothi
 from __future__ import annotations
 
 import urllib.parse
-
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from ..identity import Identity
-from ..rp import Rp, app_id, issuer, public_url, safe_next
-from ..services import ServiceError
-from ..sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
-from ..store import Store
+from platform_core.errors import ServiceError
+from platform_core.identity import Identity
+from platform_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
+from platform_core.store import Store
+
+from .rp import Rp, app_id, issuer, public_url, safe_next
 
 REQ_COOKIE = "dw_authreq"
 
@@ -31,7 +31,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: R
     r = APIRouter(tags=["sso"])
     rp = rp if rp is not None else Rp(store)
     if apps is None:
-        from ..platform.apps import Apps
+        from platform_core.apps import Apps
         apps = Apps(store, ident)
 
     def _secure() -> bool:
@@ -135,7 +135,60 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: R
         return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
     def _client_id() -> str:
-        from ..rp import client_id
+        from .rp import client_id
         return client_id()
+
+    return r
+
+
+# Account paths that exist only on the account service. On a relying party they are not pages,
+# they are redirects.
+ACCOUNT_PATHS = ("/login", "/account", "/invite", "/forgot-password", "/reset-password",
+                 "/logged-out")
+
+
+def build_account_redirect_router() -> APIRouter:
+    """Send the account paths to the account service instead of rendering a dead page.
+
+    Before the split these paths were routes inside the application's own bundle, and on a
+    relying party they rendered a sign-in form that could never succeed — `/api/auth/login` is
+    not even served there. The client-side code already knew to bounce; doing it on the server
+    means a bookmark, a link written before the platform existed, or a redirect after signing
+    out all land somewhere that works, rather than on the application's "page not found".
+
+    `/login` goes through `/auth/start` rather than straight to the account service, because
+    only `/auth/start` mints the request row that makes the round trip verifiable — sending the
+    browser to the account service by hand would be a sign-in with no state to check on return.
+    """
+    r = APIRouter(tags=["sso"], include_in_schema=False)
+
+    @r.get("/login")
+    def login(request: Request):
+        nxt = safe_next(request.query_params.get("next")) or "/"
+        return RedirectResponse(f"/auth/start?next={urllib.parse.quote(nxt, safe='/?=&')}",
+                                status_code=303)
+
+    @r.get("/account")
+    def account():
+        return RedirectResponse(issuer().rstrip("/") + "/account", status_code=303)
+
+    @r.get("/invite")
+    def invite(request: Request):
+        # The token is what the account service needs; it is carried, not interpreted here.
+        q = ("?" + str(request.url.query)) if request.url.query else ""
+        return RedirectResponse(issuer().rstrip("/") + "/invite" + q, status_code=303)
+
+    @r.get("/forgot-password")
+    def forgot():
+        return RedirectResponse(issuer().rstrip("/") + "/forgot-password", status_code=303)
+
+    @r.get("/reset-password")
+    def reset(request: Request):
+        q = ("?" + str(request.url.query)) if request.url.query else ""
+        return RedirectResponse(issuer().rstrip("/") + "/reset-password" + q, status_code=303)
+
+    @r.get("/logged-out")
+    def logged_out():
+        return RedirectResponse(issuer().rstrip("/") + "/logged-out", status_code=303)
 
     return r

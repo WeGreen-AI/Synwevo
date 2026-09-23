@@ -18,9 +18,9 @@ from __future__ import annotations
 import hashlib
 import secrets
 
-from .identity import Identity, ROLE_RANK, ROLES, normalise_email, valid_email
-from .services import ServiceError
-from .store import Store, new_id, now
+from platform_core.errors import ServiceError
+from platform_core.identity import Identity, ROLE_RANK, ROLES, normalise_email, valid_email
+from platform_core.store import Store, new_id, now
 
 INVITE_TTL_S = 7 * 24 * 3600
 VERIFY_TTL_S = 24 * 3600

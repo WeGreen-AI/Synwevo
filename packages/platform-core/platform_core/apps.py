@@ -14,9 +14,9 @@ Three things are checked, in order, and all three must hold:
 """
 from __future__ import annotations
 
-from ..identity import Identity
-from ..services import ServiceError
-from ..store import Store, now
+from .errors import ServiceError
+from .identity import Identity
+from .store import Store, now
 
 DOCWEAVE_APP_ID = "docweave"
 

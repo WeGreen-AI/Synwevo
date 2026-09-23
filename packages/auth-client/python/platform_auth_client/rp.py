@@ -28,8 +28,8 @@ import secrets
 import time
 import urllib.parse
 
-from .services import ServiceError
-from .store import Store, new_id, now
+from platform_core.errors import ServiceError
+from platform_core.store import Store, new_id, now
 
 REQUEST_TTL_S = 600          # a sign-in someone walked away from should not stay startable
 JWKS_TTL_S = 300
@@ -218,7 +218,7 @@ class Rp:
         Duplicates are expected — the provider retries — so a repeat is a success with nothing
         left to do, not an error that would make the provider retry forever.
         """
-        from .platform import oidc as _oidc         # verification helper, not the provider itself
+        from platform_core import oidc as _oidc         # verification helper, not the provider itself
         claims = _oidc.verify_logout_token(raw_token, jwks=self._jwks_now(),
                                            client_id=client_id(), expected_issuer=issuer())
         jti = claims["jti"]

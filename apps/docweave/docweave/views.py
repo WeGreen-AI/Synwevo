@@ -3,12 +3,13 @@ cross-file validation.  Preview uses exactly the same plan + fill code as jobs."
 from __future__ import annotations
 
 import io
-
 import hashlib
 import json
 
+from platform_core.context import tenant as current_tenant
+from platform_core.errors import ServiceError, not_found
+
 from . import authz
-from .context import tenant as current_tenant
 from .engine import generate as G
 from .engine import pdf_engine as pe
 from .engine import records as R
@@ -16,7 +17,7 @@ from .engine.docx_render import DocxRenderer, render_docx
 from .engine.ooxml import Package
 from .engine.sheet_render import XlsxRenderer, workbook_window
 from .jobs import ProjectContext, verify_output
-from .services import App, ServiceError, not_found
+from .services import App
 
 
 class Views:
@@ -214,7 +215,7 @@ class Views:
         fmt = t["format"]
         slots = [dict(s) for s in v["slots"]]
         if fmt in ("pdf", "png", "jpeg") and slots:
-            from .services import pdf_slots_with_nrect
+            from ..services import pdf_slots_with_nrect
             slots = pdf_slots_with_nrect(work, slots)
         out = {"id": tid, "format": fmt, "version": v["version_no"], "slots": slots}
         out.update(render_output("pdf" if fmt in ("png", "jpeg") else fmt, work, sheet, offset, limit, slots))

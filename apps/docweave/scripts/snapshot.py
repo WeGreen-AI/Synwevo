@@ -36,8 +36,26 @@ import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "backend"))
+from platform_core.http import repo_root
+
+# 相对的 --data 以**仓库根目录**为准，而不是脚本所在的模块目录：脚本搬了家，
+# `--data data` 指的还得是同一个 data/，否则备份的是一个空实例。
+ROOT = repo_root() or Path(__file__).resolve().parents[3]
+
+
+def _blob_audit():
+    """The inventory script, loaded by path.
+
+    A plain `import blob_audit` works only when this file is being run as a script, because then
+    its own directory is first on the import path. Loaded any other way — from a test, from a
+    wrapper — the import vanishes. Loading the file it means is the version that works both ways.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_docweave_blob_audit", Path(__file__).resolve().parent / "blob_audit.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 PASS, FAIL, WARN = "✓", "✗", "!"
 
@@ -283,8 +301,7 @@ def verify(args) -> int:
         check(n == want, f"blob 文件 {want} 个", "" if n == want else f"恢复后是 {n}")
 
         print("\n【3】引用与内容对得上（恢复出一个内容缺失的目录是最糟的情况）")
-        sys.path.insert(0, str(ROOT / "scripts"))
-        from blob_audit import audit
+        audit = _blob_audit().audit
         r = audit(work)
         check(not r["referenced_but_missing"],
               f"被引用的 blob 全都在：{r['referenced_total']} 个",
@@ -292,7 +309,7 @@ def verify(args) -> int:
               else f"缺失 {len(r['referenced_but_missing'])} 个")
 
         print("\n【4】应用能真的打开它")
-        from docweave.store import Store
+        from platform_core.store import Store
         s = Store(work)
         check(s.schema_version() >= 4, f"schema v{s.schema_version()}")
         n_proj = s.one("SELECT COUNT(*) AS n FROM projects")["n"]

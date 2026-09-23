@@ -15,10 +15,10 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
-from docweave.context import as_tenant
-from docweave.identity import Identity
-from docweave.sessions import CSRF_COOKIE, CSRF_HEADER
-from docweave.store import Store
+from platform_core.context import as_tenant
+from platform_core.identity import Identity
+from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
+from platform_core.store import Store
 
 
 def _xlsx(name: str = "机密") -> bytes:
@@ -50,7 +50,7 @@ def two(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
     monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
     import importlib
-    import docweave.api.app as app_mod
+    import platform_server.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"))   # job routes need the job service
     store = Store(tmp_path / "d")
@@ -146,7 +146,7 @@ def test_locate_cannot_run_your_mappings_over_someone_elses_document(two):
     pairing of ids that is rejected, which is what locate_all now checks.
     """
     from docweave.locators import locate_all
-    from docweave.services import ServiceError
+    from platform_core.errors import ServiceError
     app_, sid, pid, ws_a = two["app"], two["sid"], two["pid"], two["ws_a"]
 
     # Across workspaces get_source already refuses, so the interesting case is the one it cannot
@@ -167,7 +167,7 @@ def test_locate_cannot_run_your_mappings_over_someone_elses_document(two):
 def test_job_items_and_report_refuse_another_workspace(two):
     app_, pid = two["app"], two["pid"]
     # a job row in A's workspace, so the routes have something real to refuse B
-    from docweave.store import new_id, now
+    from platform_core.store import new_id, now
     jid = new_id("j")
     app_.store.execute(
         "INSERT INTO jobs (id,project_id,status,created_at,tenant) VALUES (?,?,'completed',?,'ws_a')",

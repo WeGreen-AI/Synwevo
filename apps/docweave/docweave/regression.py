@@ -31,7 +31,7 @@ from .engine import sources as S
 from .engine.plan import build_plan
 from .engine.resolve import ResolveError, SourceDoc
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]   # apps/docweave
 CASE_VERSION = 1
 MAX_SAMPLES = 50
 

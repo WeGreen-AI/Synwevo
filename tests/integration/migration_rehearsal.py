@@ -24,8 +24,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "backend"))
+from platform_core.http import repo_root
+
+ROOT = repo_root() or Path(__file__).resolve().parents[2]
 
 PASS, FAIL = "✓", "✗"
 results: list[tuple[bool, str]] = []
@@ -131,7 +132,7 @@ def main() -> int:
     src_mtime = src_db.stat().st_mtime
 
     print("\n【2】在副本上跑迁移")
-    from docweave.store import Store
+    from platform_core.store import Store
     store = Store(work)                       # opening it runs _migrate
     after = census(dst_db)
 

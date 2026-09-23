@@ -2,7 +2,7 @@
 
 所有组件均为开源、**无需付费**；未使用任何商业 SDK、外部账号或云服务，所有文件处理在本机 / 用户自有服务器完成。版本与许可证取自实际安装包的元数据（`pip show` / `package.json`），核对日期 2026-09-23。
 
-## 1. 服务端（Python，`backend/requirements.txt`）
+## 1. 服务端（Python，`apps/docweave/requirements.txt`）
 
 | 组件 | 版本 | 许可证 | 费用 | 用途 / 处理能力 | 限制与说明 |
 |---|---|---|---|---|---|
@@ -26,7 +26,7 @@
 |---|---|---|---|---|---|
 | **LibreOffice** | 26.8.0.3 | MPL-2.0 | 免费 | DOC/XLS/PPT/ODT/ODS/ODP/RTF 转换；DOCX/XLSX/PPTX → PDF 导出；内置公式引擎不支持的函数的后备计算 | 这些功能在界面标为「缺依赖」且不可选择，其余功能正常；XLS 仍可用 xlrd 读取 |
 | **Tesseract OCR** | 5.5.0 | Apache-2.0 | 免费 | 扫描 PDF / 图片识别 | OCR 按钮提示未安装；扫描件无法取值 |
-| tessdata_fast（chi_sim / eng / osd） | 4.x 模型 | Apache-2.0 | 免费 | 中文简体 + 英文识别模型（约 17 MB，放在 `backend/tessdata`） | 缺少时只能用系统自带语言 |
+| tessdata_fast（chi_sim / eng / osd） | 4.x 模型 | Apache-2.0 | 免费 | 中文简体 + 英文识别模型（约 17 MB，放在 `apps/docweave/tessdata`） | 缺少时只能用系统自带语言 |
 | Droid Sans Fallback（随 PyMuPDF 提供） | — | Apache-2.0 | 免费 | PDF 写入中文 | — |
 | 中文字体（Linux 部署建议 `fonts-noto-cjk`） | — | SIL OFL | 免费 | LibreOffice 导出 PDF 时显示中文 | PDF 导出中文可能显示为方框；模板使用的字体未安装时上传即提示 |
 
@@ -39,7 +39,7 @@
 | TipTap（react、starter-kit、table、text-style、text-align、image、highlight、pm） | 3.31.3 | MIT | 内置文档模板编辑器（仅使用开源扩展，未使用 TipTap Pro） |
 | Vite / TypeScript（仅构建） | 8.3.0 / 7.0.2 | MIT / Apache-2.0 | 构建工具 |
 
-## 4. 开发与测试（`backend/requirements-dev.txt`）
+## 4. 开发与测试（`requirements-dev.txt`）
 
 | 组件 | 版本 | 许可证 | 用途 |
 |---|---|---|---|
@@ -58,7 +58,7 @@
 PyMuPDF 是唯一的 AGPL 组件。把它换掉不需要修改代码，也不需要购买商业许可：
 
 ```bash
-DOCWEAVE_PDF_ENGINE=pdfium backend/.venv/bin/python backend/run.py
+DOCWEAVE_PDF_ENGINE=pdfium .venv/bin/python -m platform_server.run
 # 或者在构建镜像时直接不安装 PyMuPDF —— 引擎会自动回落到 pdfium
 ```
 
@@ -79,7 +79,7 @@ DOCWEAVE_PDF_ENGINE=pdfium backend/.venv/bin/python backend/run.py
 * 上传 PDF 来源：2 页几何正确、页面文字与中文词坐标正确（`姓名：/测试赵一/电话：/13900000001`）、全文查找命中 3 处并返回坐标、页面渲染 PNG 200（38 452 字节）；
 * 上传 PDF / 图片作为**模板**被拒绝：`{"error":"engine_unavailable","message":"当前部署使用 pdfium 引擎…如需 PDF / 图片模板，请按 docs/DEPENDENCIES.md 启用 PyMuPDF"}`，带请求追踪 ID，不是崩溃也不是静默失败。
 
-回归覆盖：`backend/tests/test_pdfium_engine.py` 对同一批 PDF 用两个引擎交叉比对页面几何与词坐标（要求 80% 以上的词一致、坐标差 < 0.02），并断言模板类操作被明确拒绝、能力矩阵把对应行标为 `unavailable`。
+回归覆盖：`apps/docweave/tests/test_pdfium_engine.py` 对同一批 PDF 用两个引擎交叉比对页面几何与词坐标（要求 80% 以上的词一致、坐标差 < 0.02），并断言模板类操作被明确拒绝、能力矩阵把对应行标为 `unavailable`。
 
 ### 仍然使用 PyMuPDF 时的 AGPL 合规
 

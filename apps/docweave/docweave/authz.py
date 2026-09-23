@@ -16,8 +16,8 @@ bypassable by construction, so `blob_readable` is the gate for all of them.
 """
 from __future__ import annotations
 
-from .context import tenant as current_tenant
-from .store import Store, now
+from platform_core.context import tenant as current_tenant
+from platform_core.store import Store, now
 
 # Every column that holds a blob id together with the join that gives it a workspace. Kept as
 # data so the read check and any future sweeper cannot drift apart.

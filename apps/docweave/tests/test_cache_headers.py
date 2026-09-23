@@ -20,17 +20,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 
 
 def _client(tmp_path, monkeypatch, *, role: str = "all", mode: str = "none") -> TestClient:
     monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("DOCWEAVE_UI_AUTH", mode)
     monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    if role == "all":
-        monkeypatch.delenv("DOCWEAVE_ROLE", raising=False)
-    else:
-        monkeypatch.setenv("DOCWEAVE_ROLE", role)
+    monkeypatch.setenv("DOCWEAVE_ROLE", role)
     import docweave.api.app as app_mod
     importlib.reload(app_mod)
     return TestClient(app_mod.create_app(str(tmp_path), start_jobs=False))
@@ -40,7 +37,7 @@ pytestmark = pytest.mark.skipif(not DIST.exists(), reason="前端未构建")
 
 
 # ---------------------------------------------------------------- entry HTML
-@pytest.mark.parametrize("path", ["/", "/login", "/projects/p_x", "/index.html",
+@pytest.mark.parametrize("path", ["/", "/projects/p_x", "/index.html",
                                   "/portal.html", "/accounts.html"])
 def test_every_entry_document_must_revalidate(tmp_path, monkeypatch, path):
     """Asking for a shell **by filename** used to fall through to the generic-file branch and
@@ -50,16 +47,6 @@ def test_every_entry_document_must_revalidate(tmp_path, monkeypatch, path):
     cc = r.headers.get("cache-control", "")
     assert "no-cache" in cc, f"{path} 的 Cache-Control 是 {cc!r}"
     assert "max-age=0" in cc or "max-age" not in cc, f"{path} 不应当被缓存：{cc!r}"
-
-
-@pytest.mark.parametrize("role,marker", [("all", "DocWeave"), ("portal", "工作平台"),
-                                         ("accounts", "账户与安全")])
-def test_a_role_serves_its_own_shell_even_when_another_is_named(tmp_path, monkeypatch, role, marker):
-    """`/portal.html` on the DocWeave origin used to serve the portal's shell, because the
-    generic-file branch matched the name before the role was consulted."""
-    c = _client(tmp_path, monkeypatch, role=role)
-    for path in ("/", "/index.html", "/portal.html", "/accounts.html"):
-        assert marker in c.get(path).text, f"role={role} 在 {path} 上没有返回自己的外壳"
 
 
 # ---------------------------------------------------------------- hashed assets

@@ -17,11 +17,10 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
 
 SCRIPT = textwrap.dedent("""
-    import concurrent.futures as cf, sys
-    sys.path.insert(0, {backend!r})
+    import concurrent.futures as cf
     from docweave.engine import pdf_engine as pe
     pe.use_engine("pdfium")
     data = open({pdf!r}, "rb").read()
@@ -48,7 +47,7 @@ def test_concurrent_pdfium_reads_do_not_crash_the_process():
     pdf = ROOT / "testdata" / "测试_多表单登记表.pdf"
     if not pdf.is_file():
         pytest.skip(f"缺少测试文件 {pdf}")
-    src = SCRIPT.format(backend=str(ROOT / "backend"), pdf=str(pdf), n=200)
+    src = SCRIPT.format(pdf=str(pdf), n=200)
     r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=300)
 
     assert r.returncode != -10 and r.returncode != 138, (

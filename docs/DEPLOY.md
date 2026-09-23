@@ -9,27 +9,27 @@ brew install tesseract                   # Debian/Ubuntu: apt install tesseract-
 # Linux 另外建议安装中文字体：apt install fonts-noto-cjk
 
 # 2) 依赖、界面构建、OCR 语言数据（chi_sim/eng）
-scripts/setup.sh
+python scripts/platform.py setup
 
 # 3) 启动（默认 http://127.0.0.1:8765）
-scripts/start.sh
+python scripts/platform.py up
 ```
 
 打开浏览器访问 `http://127.0.0.1:8765`。数据默认保存在仓库下的 `data/`（SQLite + 文件），可用 `DOCWEAVE_DATA_DIR` 修改。所有配置见 `.env.example`。
 
-开发模式（界面热更新）：一个终端 `scripts/start.sh`，另一个终端 `cd frontend && npm run dev`，访问 `http://127.0.0.1:5173`（`/api` 自动代理到 8765）。修改后端代码后需重启服务。
+开发模式（界面热更新）：一个终端 `python scripts/platform.py up`，另一个终端 `cd apps/docweave/web && npm run dev`，访问 `http://127.0.0.1:5173`（`/api` 自动代理到 8765）。修改后端代码后需重启服务。
 
 ## 2. Docker（自有服务器）
 
 ```bash
-docker compose up -d --build            # 首次构建会下载 LibreOffice、Tesseract 与中文字体（约 1 GB）
+docker compose -f infra/docker-compose.yml up -d --build            # 首次构建会下载 LibreOffice、Tesseract 与中文字体（约 1 GB）
 ```
 
 * 镜像包含：API + 界面、LibreOffice（Writer/Calc/Impress）、Tesseract（chi_sim + eng）、Noto CJK 字体。
 * 数据卷：`./data:/data`。备份时停止服务后复制该目录即可（SQLite + 内容寻址文件）。
 * `docker-compose.yml` 默认只绑定 `127.0.0.1:8765`。
 * **界面鉴权三选一**（`DOCWEAVE_UI_AUTH`）：`none`（仅限回环监听，绑定其他地址时服务拒绝启动）、
-  `basic`（内置口令，`python backend/manage.py ui-user add <用户名>`，口令以 PBKDF2-HMAC-SHA256 存储）、
+  `basic`（内置口令，`python -m platform_identity.cli ui-user add <用户名>`，口令以 PBKDF2-HMAC-SHA256 存储）、
   `proxy`（由反向代理认证，需显式声明）。对外提供服务请启用 HTTPS。
   `/api/v1` 任何情况下都需要 API 密钥，与此设置无关。
 * 反向代理需允许较大的上传（例如 Nginx `client_max_body_size 100m;`），并把超时设为 300 秒以上（大文件解析/转换），
@@ -49,4 +49,4 @@ docker compose up -d --build            # 首次构建会下载 LibreOffice、Te
 
 ## 5. 升级
 
-停止服务 → 备份 `data/` → 更新代码 → `scripts/setup.sh` → 启动。数据库表结构在启动时自动创建，迁移前进式、可重复执行（当前 schema_version = 3；以 `python backend/manage.py info` 的输出为准）。
+停止服务 → 备份 `data/` → 更新代码 → `python scripts/platform.py setup` → 启动。数据库表结构在启动时自动创建，迁移前进式、可重复执行（当前 schema_version = 3；以 `python -m docweave.cli info` 的输出为准）。

@@ -8,30 +8,19 @@ import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
+from platform_core.context import tenant as current_tenant
+from platform_core.errors import ServiceError, not_found
+from platform_core.store import Store, new_id, now
+
 from . import authz
-from .context import tenant as current_tenant
 from .engine import sources as S
 from .engine import templates as T
 from .engine.detect import FAMILY
 from .engine.limits import LIMITS
 from .engine.resolve import SourceDoc
-from .store import Store, new_id, now
 
 PALETTE = ["#2563eb", "#db2777", "#059669", "#d97706", "#7c3aed", "#0891b2", "#dc2626", "#65a30d", "#c026d3",
            "#0d9488", "#ea580c", "#4f46e5", "#be123c", "#15803d", "#a16207", "#0369a1"]
-
-
-class ServiceError(Exception):
-    def __init__(self, status: int, code: str, message: str, detail: dict | None = None):
-        super().__init__(message)
-        self.status = status
-        self.code = code
-        self.message = message
-        self.detail = detail or {}
-
-
-def not_found(what: str):
-    raise ServiceError(404, "not_found", f"{what}不存在或已删除")
 
 
 class App:

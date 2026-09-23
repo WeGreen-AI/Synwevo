@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { del, get, post } from "../lib/api";
-import { useDialog, useToast } from "../lib/ui";
+import { del, get, post } from "@platform/auth-client";
+import { useDialog, useToast } from "@platform/ui";
 
 export default function RegressionPage() {
   const [cases, setCases] = useState<any[] | null>(null);

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { del, get, post } from "../lib/api";
-import { fmtTime, useDialog, useToast } from "../lib/ui";
-import { useSession } from "../lib/session";
+import { del, get, post } from "@platform/auth-client";
+import { fmtTime, useDialog, useToast } from "@platform/ui";
+import { useSession } from "@platform/auth-client";
 import MfaSection from "../components/MfaSection";
 import PasskeySection from "../components/PasskeySection";
 

@@ -5,7 +5,7 @@ import docx
 import openpyxl
 import pymupdf
 
-from conftest import docx_text
+from .helpers import docx_text
 from docweave.engine.converters import convert
 
 

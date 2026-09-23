@@ -13,10 +13,10 @@ import json
 import pytest
 from authlib.jose import JsonWebKey, jwt
 
-from docweave.identity import Identity
-from docweave.platform import oidc
-from docweave.services import ServiceError
-from docweave.store import Store, now
+from platform_core.identity import Identity
+from platform_core import oidc
+from platform_core.errors import ServiceError
+from platform_core.store import Store, now
 
 PW = "a-sufficiently-long-passphrase"
 
@@ -84,7 +84,7 @@ def test_rotation_keeps_the_previous_key_verifiable(env):
 def test_the_first_rotation_on_a_fresh_service_retires_nothing(tmp_path):
     """Reported honestly, so an operator is not told a previous key is still published when
     there never was one."""
-    from docweave.store import Store
+    from platform_core.store import Store
     keys = oidc.Keys(Store(tmp_path / "fresh"))
     kid, retiring = keys.rotate()
     assert kid and retiring == 0

@@ -15,16 +15,16 @@ from __future__ import annotations
 import json
 import secrets
 import urllib.parse
-
 from fastapi import APIRouter, Body, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from ..identity import Identity
-from ..services import ServiceError
-from ..sessions import COOKIE_NAME, CSRF_COOKIE, Sessions
-from ..store import Store, new_id, now
-from . import oidc
-from .apps import Apps
+from platform_core.errors import ServiceError
+from platform_core.identity import Identity
+from platform_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions
+from platform_core.store import Store, new_id, now
+
+from platform_core import oidc
+from platform_core.apps import Apps
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliver=None) -> APIRouter:

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PlatformNav } from "../components/PlatformNav";
+import { PlatformNav } from "@platform/auth-client";
 import { Link, useNavigate } from "react-router-dom";
-import { del, get, patch, post } from "../lib/api";
-import { fmtTime, useDialog, useToast } from "../lib/ui";
+import { del, get, patch, post } from "@platform/auth-client";
+import { fmtTime, useDialog, useToast } from "@platform/ui";
 import { jobStatus, ruleMode } from "../lib/status";
 import MoreMenu from "../components/MoreMenu";
 

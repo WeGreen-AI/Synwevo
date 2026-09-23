@@ -7,8 +7,8 @@ import { TextStyle, Color, FontSize, FontFamily } from "@tiptap/extension-text-s
 import TextAlign from "@tiptap/extension-text-align";
 import Image from "@tiptap/extension-image";
 import Highlight from "@tiptap/extension-highlight";
-import { get, post, put } from "../lib/api";
-import { useDialog, useToast } from "../lib/ui";
+import { get, post, put } from "@platform/auth-client";
+import { useDialog, useToast } from "@platform/ui";
 
 const rid = () => "f" + Math.random().toString(16).slice(2, 12);
 

@@ -166,7 +166,7 @@
 * 登录端点**不接受邮箱**：由浏览器选择可发现凭据，服务端从断言得知是谁。为某个邮箱返回凭据列表
   会顺带回答「这个邮箱有没有账户」。
 
-**验证范围**：服务端仪式由 `backend/tests/test_passkeys.py` 中的软件认证器驱动，用真实 P-256
+**验证范围**：服务端仪式由 `apps/docweave/tests/test_passkeys.py` 中的软件认证器驱动，用真实 P-256
 密钥对真实 clientData / authenticatorData 签名，因此服务端校验做的是真密码学。**真实浏览器 +
 真实认证器的互操作未在本轮验证**——本机浏览器确实有可用的平台认证器，但触发它需要用户的生物特征，
 不能擅自发起。
@@ -301,7 +301,7 @@ blob id 直取接口 · 临时文件 · 日志导出
 * **鉴权分支漏路径**（本轮修复，`api/app.py`）：`elif path.startswith("/api/") or not
   path.startswith("/api")` 对「以 `/api` 开头但没有斜杠」的路径两个条件都不满足，网关整个被跳过、
   `set_tenant` 也没执行。`DOCWEAVE_UI_AUTH=basic` 下 `/` 返回 401，而 `/api`、`/apifoo` 返回 200。
-  实跑复现，改为 `else` 后四条路径全部 401。回归测试 `backend/tests/test_auth_gate.py`。
+  实跑复现，改为 `else` 后四条路径全部 401。回归测试 `apps/docweave/tests/test_auth_gate.py`。
 
 ### 5.3 待处理的不一致
 

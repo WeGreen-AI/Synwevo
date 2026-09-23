@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "platform-core"
+version = "1.0.0"
+description = "平台共享基础库：持久化入口、租户上下文、身份读写、会话、机器身份、HTTP 骨架"
+requires-python = ">=3.12"
+# Versions are pinned in the repository's requirements files, which stay the single source of
+# truth for what gets installed; this list is the abstract dependency set, so an import that is
+# not declared here fails the boundary check rather than working by accident.
+dependencies = ["fastapi", "starlette", "argon2-cffi"]
+
+[tool.setuptools.packages.find]
+include = ["platform_core*"]

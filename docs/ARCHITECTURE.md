@@ -18,7 +18,7 @@
                                   LibreOffice（转换/PDF 导出/公式计算）  Tesseract（OCR）
 ```
 
-`backend/docweave/engine/` 不依赖 FastAPI，可以被将来的桌面端直接调用。
+`apps/docweave/docweave/engine/` 不依赖 FastAPI，可以被将来的桌面端直接调用。
 
 ## 2. 引擎模块
 
@@ -41,7 +41,7 @@
 | `generate.py` | 原生填充与导出格式（含可用性判断与原因） |
 | `converters.py` / `ocr.py` | LibreOffice 与 Tesseract 子进程封装 |
 
-## 3. 数据模型（SQLite，`backend/docweave/store.py`）
+## 3. 数据模型（SQLite，`apps/docweave/docweave/store.py`）
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|

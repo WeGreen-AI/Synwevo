@@ -32,8 +32,8 @@ import os
 import secrets
 import time
 
-from .services import ServiceError
-from .store import Store, new_id, now
+from platform_core.errors import ServiceError
+from platform_core.store import Store, new_id, now
 
 CHALLENGE_TTL_S = 300
 MAX_PASSKEYS = 10

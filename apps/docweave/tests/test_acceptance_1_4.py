@@ -6,7 +6,7 @@ import zipfile
 import docx
 import openpyxl
 
-from conftest import docx_text
+from .helpers import docx_text
 
 
 def test_s1_per_row_100_contracts(api, fixtures):

@@ -10,7 +10,7 @@ import pymupdf
 import pytest
 from docx.shared import Pt
 
-from conftest import Api, docx_text
+from .helpers import Api, docx_text
 from docweave.engine.converters import convert
 
 
@@ -306,7 +306,7 @@ def test_s12c_restart_recovery(tmp_path, fixtures):
     from fastapi.testclient import TestClient
 
     from docweave.api.app import create_app
-    from docweave.store import Store
+    from platform_core.store import Store
     data_dir = str(tmp_path / "data")
     app = create_app(data_dir)
     with TestClient(app) as c:

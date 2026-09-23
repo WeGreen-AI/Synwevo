@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { get, post } from "../lib/api";
-import { useToast } from "../lib/ui";
+import { get, post } from "@platform/auth-client";
+import { useToast } from "@platform/ui";
 
 interface State {
   totp: boolean;

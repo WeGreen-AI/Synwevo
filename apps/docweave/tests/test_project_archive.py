@@ -58,7 +58,7 @@ def test_list_returns_what_the_dense_list_renders(api, fixtures):
 
 def test_api_created_projects_record_their_key_as_origin(api, client):
     """Provenance is what a cleanup tool acts on; a name prefix is not evidence."""
-    from docweave.auth import Auth
+    from platform_core.auth import Auth
     token, _ = Auth(client.app_state.app.store).create_key("prov", "default", ("read", "write"))
     made = api.ok(api.c.post("/api/v1/projects", json={"name": "自动化建的"},
                              headers={"Authorization": f"Bearer {token}"}))

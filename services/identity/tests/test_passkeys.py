@@ -23,10 +23,10 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
-from docweave.identity import Identity
-from docweave.passkeys import Passkeys
-from docweave.sessions import CSRF_COOKIE, CSRF_HEADER
-from docweave.store import Store
+from platform_core.identity import Identity
+from platform_identity.passkeys import Passkeys
+from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
+from platform_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 RP_ID = "accounts.localhost"
@@ -110,7 +110,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
     monkeypatch.setenv("DOCWEAVE_ISSUER", ORIGIN)
     monkeypatch.setenv("DOCWEAVE_RP_ID", RP_ID)
-    import docweave.api.app as app_mod
+    import platform_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -320,11 +320,8 @@ def test_no_private_key_material_is_ever_stored(env):
     assert "PRIVATE" not in blob.upper() and "BEGIN" not in blob.upper()
     # what is stored is a COSE public key, which decodes to a public EC point and nothing else
     import cbor2
-    from docweave.passkeys import _b64d
+    from platform_identity.passkeys import _b64d
     cose = cbor2.loads(_b64d(row["public_key"]))
     assert cose[1] == 2 and cose[3] == -7 and set(cose) == {1, 3, -1, -2, -3}
 
 
-def test_the_passkey_endpoints_are_not_on_a_business_role(env, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_ROLE", "app")
-    assert env["c"].get("/api/auth/passkeys").status_code == 404

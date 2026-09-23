@@ -21,7 +21,7 @@ import pytest
 
 from docweave import licensing
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
 
 
 def test_agpl_obligation_follows_the_binary_not_the_engine_setting(monkeypatch):
@@ -56,20 +56,23 @@ def test_pymupdf_engine_keeps_the_section_13_offer(monkeypatch):
 
 
 def test_archive_says_so_when_it_is_incomplete(monkeypatch, tmp_path):
-    """Simulate the container layout: backend present, everything else absent."""
-    (tmp_path / "backend" / "docweave").mkdir(parents=True)
-    (tmp_path / "backend" / "docweave" / "x.py").write_text("# code\n", encoding="utf-8")
+    """Simulate a partial image: the business package present, everything else absent."""
+    (tmp_path / "apps" / "docweave" / "docweave").mkdir(parents=True)
+    (tmp_path / "apps" / "docweave" / "docweave" / "x.py").write_text("# code\n", encoding="utf-8")
     monkeypatch.setattr(licensing, "ROOT", tmp_path)
 
     status = licensing.source_status()
     assert not status["complete"]
-    assert "frontend/src" in status["missing"] and "docs" in status["missing"]
+    # The shared packages and the account service are part of the running program after the
+    # platform restructure, so their absence has to be reported like any other gap.
+    assert "packages/platform-core" in status["missing"] and "docs" in status["missing"]
+    assert "services/identity" in status["missing"]
 
     blob, name = licensing.source_archive()
     tar = tarfile.open(fileobj=io.BytesIO(blob))
     offer = tar.extractfile([m for m in tar.getmembers() if m.name.endswith("SOURCE_OFFER.txt")][0]).read().decode()
     assert "并不完整" in offer, "缺内容时必须说出来，不能继续声称完整"
-    assert "frontend/src" in offer, "必须逐条列出缺了什么"
+    assert "packages/platform-core" in offer, "必须逐条列出缺了什么"
     assert "包含所列全部内容" not in offer
 
 
@@ -96,9 +99,10 @@ def test_docker_image_carries_every_path_the_offer_promises():
     The deployed container served a backend-only archive because the Dockerfile COPYed only
     backend/ and the compiled frontend/dist.
     """
-    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8")
     copied = "\n".join(l for l in dockerfile.splitlines() if l.startswith("COPY"))
-    for rel in ("frontend/src", "scripts", "docs", "README.md", "NOTICE"):
+    for rel in ("packages/", "services/identity/", "apps/docweave/", "apps/portal/",
+                "infra/server/", "scripts/", "docs/", "README.md", "NOTICE"):
         assert rel in copied, f"Dockerfile 没有把 {rel} 放进镜像，对应源代码包会缺这一块"
 
 

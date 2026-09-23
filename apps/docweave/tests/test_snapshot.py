@@ -11,14 +11,23 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
+ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
+SCRIPTS = ROOT / "apps" / "docweave" / "scripts"
+
+
+def _snapshot():
+    """The backup/restore script, loaded by path — it is a script, not an installed package."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_docweave_snapshot", SCRIPTS / "snapshot.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 @pytest.fixture()
 def instance(tmp_path):
     """A small instance with real rows and real blob files."""
-    from docweave.store import Store, now
+    from platform_core.store import Store, now
     data = tmp_path / "data"
     store = Store(data)
     (data / "blobs").mkdir(exist_ok=True)
@@ -39,14 +48,14 @@ def instance(tmp_path):
 
 
 def test_a_snapshot_restores_to_the_same_content(instance, tmp_path, capsys):
-    import snapshot
+    snapshot = _snapshot()
     out = tmp_path / "backups"
     rc = snapshot.create(_args(data=str(instance), out=str(out)))
     assert rc == 0
     archive = next(out.glob("*.tar.gz"))
 
     # Change the original afterwards; the archive must still restore what it captured.
-    from docweave.store import Store, now
+    from platform_core.store import Store, now
     Store(instance).execute(
         "INSERT INTO projects (id,name,tenant,step,rev,mapping_rev,created_at,updated_at,deleted) "
         "VALUES ('p2','备份之后才建的','default','upload',1,1,?,?,0)", (now(), now()))
@@ -61,7 +70,7 @@ def test_a_snapshot_restores_to_the_same_content(instance, tmp_path, capsys):
 
 
 def test_verify_restores_and_checks_rather_than_trusting_the_archive(instance, tmp_path, capsys):
-    import snapshot
+    snapshot = _snapshot()
     out = tmp_path / "b"
     snapshot.create(_args(data=str(instance), out=str(out)))
     archive = next(out.glob("*.tar.gz"))
@@ -73,7 +82,8 @@ def test_verify_restores_and_checks_rather_than_trusting_the_archive(instance, t
 def test_verify_fails_when_the_blob_content_is_missing(instance, tmp_path, capsys):
     """The worst failure mode: a catalogue of documents whose contents are gone. It must be
     caught by verification, not discovered when someone opens a file."""
-    import snapshot, tarfile
+    import tarfile
+    snapshot = _snapshot()
     out = tmp_path / "b"
     snapshot.create(_args(data=str(instance), out=str(out)))
     archive = next(out.glob("*.tar.gz"))
@@ -95,7 +105,7 @@ def test_verify_fails_when_the_blob_content_is_missing(instance, tmp_path, capsy
 
 
 def test_restore_refuses_to_overwrite_an_existing_database(instance, tmp_path):
-    import snapshot
+    snapshot = _snapshot()
     out = tmp_path / "b"
     snapshot.create(_args(data=str(instance), out=str(out)))
     archive = next(out.glob("*.tar.gz"))
@@ -107,8 +117,8 @@ def test_restore_refuses_to_overwrite_an_existing_database(instance, tmp_path):
 def test_a_restore_warns_about_credentials_that_would_revive(instance, tmp_path, capsys):
     """Restoring an old backup is not going back in time — it brings back what was deliberately
     taken away since, including credentials revoked after the backup was taken."""
-    import snapshot
-    from docweave.store import Store, now
+    snapshot = _snapshot()
+    from platform_core.store import Store, now
     Store(instance).execute(
         "INSERT INTO api_keys (id,name,tenant,scopes,secret_hash,created_at) "
         "VALUES ('k1','ci','default','read','x',?)", (now(),))
@@ -122,7 +132,8 @@ def test_a_restore_warns_about_credentials_that_would_revive(instance, tmp_path,
 
 def test_the_archive_is_not_world_readable(instance, tmp_path):
     """It contains signing keys and password hashes. Saying so is not enough; the mode matters."""
-    import snapshot, stat
+    import stat
+    snapshot = _snapshot()
     out = tmp_path / "b"
     snapshot.create(_args(data=str(instance), out=str(out)))
     mode = next(out.glob("*.tar.gz")).stat().st_mode
@@ -131,7 +142,8 @@ def test_the_archive_is_not_world_readable(instance, tmp_path):
 
 def test_an_archive_with_an_escaping_path_is_refused(tmp_path):
     """A tar can name paths outside the target directory."""
-    import snapshot, tarfile
+    import tarfile
+    snapshot = _snapshot()
     evil = tmp_path / "evil.tar.gz"
     payload = tmp_path / "payload"
     payload.write_text("x")

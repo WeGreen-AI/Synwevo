@@ -17,9 +17,9 @@
  * them invites exactly the "this tab is quietly a different tenant now" problem.
  */
 import { useState } from "react";
-import { ApiError, post } from "../lib/api";
-import { useSession } from "../lib/session";
-import { useToast } from "../lib/ui";
+import { ApiError, post } from "./api";
+import { useSession } from "./session";
+import { useToast } from "@platform/ui";
 
 export function PlatformNav() {
   const { me, state } = useSession();

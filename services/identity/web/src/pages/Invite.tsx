@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { get, post } from "../lib/api";
-import { fmtTime } from "../lib/ui";
-import { useSession } from "../lib/session";
+import { get, post } from "@platform/auth-client";
+import { fmtTime } from "@platform/ui";
+import { useSession } from "@platform/auth-client";
 
 interface Preview {
   state: "pending" | "accepted" | "revoked" | "expired";

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, get, post, qs } from "../lib/api";
-import { fmtSize, fmtTime, useToast } from "../lib/ui";
+import { ApiError, get, post, qs } from "@platform/auth-client";
+import { fmtSize, fmtTime, useToast } from "@platform/ui";
 
 import { ITEM_STATUS as IST, JOB_STATUS as ST } from "../lib/status";
 

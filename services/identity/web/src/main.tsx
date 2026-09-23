@@ -12,15 +12,14 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { DialogProvider, ToastProvider } from "../lib/ui";
-import { RequireSession, SessionProvider, useSession } from "../lib/session";
-import { initTheme } from "../lib/theme";
-import Login from "../pages/Login";
-import Account from "../pages/Account";
-import Invite from "../pages/Invite";
-import { ForgotPassword, ResetPassword } from "../pages/Recover";
+import { DialogProvider, ToastProvider, initTheme } from "@platform/ui";
+import { RequireSession, SessionProvider, useSession } from "@platform/auth-client";
+import Login from "./pages/Login";
+import Account from "./pages/Account";
+import Invite from "./pages/Invite";
+import { ForgotPassword, ResetPassword } from "./pages/Recover";
 import Admin from "./Admin";
-import "../styles.css";
+import "@platform/ui/styles.css";
 
 initTheme();
 

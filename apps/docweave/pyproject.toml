@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docweave"
+version = "1.0.0"
+description = "DocWeave：数据映射与批量文档生成"
+requires-python = ">=3.12"
+# No dependency on platform-identity: DocWeave is a relying party on the account service, it
+# does not contain one.
+dependencies = ["platform-core", "platform-auth-client", "fastapi", "python-multipart",
+                "openpyxl", "python-docx", "python-pptx", "lxml", "pillow", "fonttools",
+                "charset-normalizer", "xlrd", "olefile"]
+
+[project.optional-dependencies]
+# PyMuPDF is AGPL-3.0 (or an Artifex commercial licence). It is a real option, not the only
+# way to read a PDF: `pypdfium2` is the AGPL-free engine, selected with DOCWEAVE_PDF_ENGINE.
+pymupdf = ["pymupdf"]
+pdfium = ["pypdfium2"]
+
+[tool.setuptools.packages.find]
+include = ["docweave*"]

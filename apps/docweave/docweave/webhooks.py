@@ -27,7 +27,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-from .store import Store, new_id, now
+from platform_core.store import Store, new_id, now
 
 BACKOFF_S = (30, 120, 600, 1800, 7200)
 DEFAULT_EVENTS = ("job.completed", "job.completed_with_errors", "job.failed", "job.cancelled")

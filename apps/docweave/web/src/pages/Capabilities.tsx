@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { get } from "../lib/api";
+import { get } from "@platform/auth-client";
 
 const COLS: [string, string][] = [
   ["source", "来源导入与提取"], ["preview", "预览与可选择对象"], ["template", "作为模板 / 创建字段"], ["fill", "可填充类型"],

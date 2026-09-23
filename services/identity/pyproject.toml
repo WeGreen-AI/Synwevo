@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "platform-identity"
+version = "1.0.0"
+description = "统一账户服务：登录仪式、MFA、Passkey、邀请与找回、平台管理、OIDC 授权服务器"
+requires-python = ">=3.12"
+# Note what is absent: nothing from DocWeave. The account service must start with the document
+# engine uninstalled, and this list is where that stops being a claim.
+dependencies = ["platform-core", "platform-auth-client", "fastapi", "authlib", "httpx",
+                "pyotp", "cryptography", "webauthn", "cbor2"]
+
+[tool.setuptools.packages.find]
+include = ["platform_identity*"]

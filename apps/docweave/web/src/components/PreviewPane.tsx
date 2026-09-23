@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { get, qs } from "../lib/api";
+import { get, qs } from "@platform/auth-client";
 import type { Mark, Mapping, Slot } from "../lib/types";
 import AnyView from "./AnyView";
 

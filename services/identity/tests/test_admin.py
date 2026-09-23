@@ -11,9 +11,9 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-from docweave.identity import Identity
-from docweave.platform.apps import Apps, bootstrap_docweave
-from docweave.store import Store, now
+from platform_core.identity import Identity
+from platform_core.apps import Apps, bootstrap_docweave
+from platform_core.store import Store, now
 
 PW = "a-sufficiently-long-passphrase"
 REASON = "把历史数据交给它原本的所有者"
@@ -24,7 +24,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
     monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
     monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    import docweave.api.app as app_mod
+    import platform_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -58,7 +58,7 @@ def post(client, path, body=None):
     — which is the protection working, but it means a test that forgets the header proves
     nothing about the route it meant to exercise.
     """
-    from docweave.sessions import CSRF_COOKIE, CSRF_HEADER
+    from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
     return client.post(path, json=body if body is not None else {},
                        headers={CSRF_HEADER: client.cookies.get(CSRF_COOKIE) or ""})
 
@@ -222,7 +222,7 @@ def test_the_last_administrator_cannot_be_suspended(env):
 def test_revoking_sessions_also_revokes_the_tokens_they_minted(env):
     """An application holding an access token minted by a session that no longer exists would
     otherwise keep working."""
-    from docweave.platform import oidc
+    from platform_core import oidc
     store = env["store"]
     store.execute(
         "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,scope,issued_at,"
@@ -244,12 +244,6 @@ def test_there_is_no_route_that_sets_someone_elses_password(env):
     for p in paths:
         assert "password" not in p, p
         assert "impersonat" not in p and "su" != p.rsplit("/", 1)[-1], p
-
-
-def test_the_admin_api_is_not_served_by_a_business_role(env, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_ROLE", "app")
-    r = env["c"].get("/api/admin/overview")
-    assert r.status_code == 404 and r.json()["error"] == "not_in_this_role"
 
 
 # ---------------------------------------------------------------- audit

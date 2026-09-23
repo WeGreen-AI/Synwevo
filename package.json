@@ -1,0 +1,20 @@
+{
+  "name": "platform-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "description": "平台单仓库：门户、统一账户服务、DocWeave 与共享前端包",
+  "workspaces": [
+    "packages/ui",
+    "packages/auth-client/web",
+    "apps/docweave/web",
+    "apps/portal/web",
+    "services/identity/web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build:docweave": "npm run build -w @docweave/web",
+    "build:portal": "npm run build -w @platform/portal-web",
+    "build:accounts": "npm run build -w @platform/accounts-web"
+  }
+}

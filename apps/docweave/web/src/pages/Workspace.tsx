@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ApiError, del, get, patch, post, put, qs } from "../lib/api";
+import { ApiError, del, get, patch, post, put, qs } from "@platform/auth-client";
 import { describeSelection, mappingSlots, MODE_NAME, slotPos } from "../lib/describe";
 import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, TemplateDetail } from "../lib/types";
-import { useDialog, useToast } from "../lib/ui";
-import { applyTheme, nextTheme, recall, remember, storedTheme, THEME_NAME, type Theme } from "../lib/theme";
+import { useDialog, useToast } from "@platform/ui";
+import { applyTheme, nextTheme, recall, remember, storedTheme, THEME_NAME, type Theme } from "@platform/ui";
 import { jobStatus } from "../lib/status";
 import AnyView from "../components/AnyView";
 import CommandPalette, { Command } from "../components/CommandPalette";

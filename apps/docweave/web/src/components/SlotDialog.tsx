@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { describeSelection, pdfLike } from "../lib/describe";
 import type { Selection, Slot, TemplateDetail } from "../lib/types";
-import { Modal, cellRef, rangeRef } from "../lib/ui";
+import { Modal, cellRef, rangeRef } from "@platform/ui";
 import PdfRepeatEditor, { type RepeatLayout } from "./PdfRepeatEditor";
 
 interface Props {

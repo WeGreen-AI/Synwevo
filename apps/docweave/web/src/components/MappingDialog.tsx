@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { describeLocator, MAP_TYPE } from "../lib/describe";
 import type { Mapping, Project, Slot } from "../lib/types";
-import { Modal } from "../lib/ui";
+import { Modal } from "@platform/ui";
 import Transforms from "./Transforms";
 
 export interface Proposal { label: string; locator: any; varies?: string; sample?: any; detail?: boolean }

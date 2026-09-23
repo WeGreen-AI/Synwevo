@@ -1,20 +1,15 @@
 import { StrictMode, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { DialogProvider, ToastProvider } from "./lib/ui";
-import { RequireSession, SessionProvider } from "./lib/session";
-import { initTheme } from "./lib/theme";
+import { DialogProvider, ToastProvider, initTheme } from "@platform/ui";
+import { RequireSession, SessionProvider } from "@platform/auth-client";
 import Home from "./pages/Home";
 import Workspace from "./pages/Workspace";
 import JobPage from "./pages/JobPage";
 import AboutPage from "./pages/About";
 import RegressionPage from "./pages/Regression";
 import Capabilities from "./pages/Capabilities";
-import Login from "./pages/Login";
-import Account from "./pages/Account";
-import Invite from "./pages/Invite";
-import { ForgotPassword, ResetPassword } from "./pages/Recover";
-import "./styles.css";
+import "@platform/ui/styles.css";
 
 const DocEditor = lazy(() => import("./pages/DocEditor"));
 const SheetEditor = lazy(() => import("./pages/SheetEditor"));
@@ -29,14 +24,12 @@ createRoot(document.getElementById("root")!).render(
         <BrowserRouter>
           <Suspense fallback={<div className="empty">加载中…</div>}>
             <Routes>
-              {/* The only route that must render without an account. */}
-              <Route path="/login" element={<Login />} />
-              {/* The emailed invitation link lands here; it must render signed out. */}
-              <Route path="/invite" element={<Invite />} />
-              {/* Signed out by necessity, same as /login. */}
-              <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/account" element={<RequireSession><Account /></RequireSession>} />
+              {/* No /login, /account, /invite or password-recovery route here. Those pages
+                  belong to the account service and exist exactly once, in its own shell —
+                  which the server serves for these paths in every role, including the
+                  single-process deployment where both shells sit on one origin. A second copy
+                  inside the workbench is how a relying party ends up with a password box that
+                  cannot work. */}
               <Route path="/" element={<RequireSession><Home /></RequireSession>} />
               <Route path="/capabilities" element={<RequireSession><Capabilities /></RequireSession>} />
               <Route path="/about" element={<RequireSession><AboutPage /></RequireSession>} />
@@ -58,7 +51,7 @@ createRoot(document.getElementById("root")!).render(
 
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { get } from "./lib/api";
+import { get } from "@platform/auth-client";
 
 function EditorSwitch() {
   const { tid } = useParams();

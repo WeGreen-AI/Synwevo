@@ -1,12 +1,12 @@
-"""Platform layer: the account service that other applications authenticate against.
+"""统一账户服务：平台上所有应用共用的那一个登录。
 
-Lives inside the DocWeave repository on purpose (see docs/architecture/platform.md §1): moving
-the business application into apps/docweave while simultaneously introducing an identity
-provider would change database paths, static bases, import paths and startup all at once, and
-that combination is the usual cause of "the user data is gone".
+**边界**：这个包只依赖 `platform_core`（唯一的账户权威库）。它**不导入任何业务应用**——
+不导入 `docweave`，也不导入 `platform_portal`。账户服务必须能在 DocWeave 停用时照常登录，
+所以"DocWeave 的文档引擎不在它的依赖里"是一条可执行的检查，而不是一句声明。
 
-The boundary is enforced by imports rather than by directory nesting: this package may use
-`docweave.identity`, `docweave.sessions`, `docweave.passwords` and `docweave.store` — the single
-account authority — and must not reach into DocWeave's business modules (`services`, `views`,
-`jobs`, `engine`).
+**职责**：口令与 Argon2id 校验的仪式层、MFA、Passkey、恢复码、邀请、找回、会话与重认证、
+平台管理后台，以及 OIDC 授权服务器（Authlib）。账户与安全界面（`web/`）也在这里，且**只有这一份**。
+
+**不在这里**：用户表、工作空间、成员与应用资格的数据访问在 `platform_core`——因为门户与业务应用
+也要读它们，把它们留在服务里就意味着别人要 import 这个服务才能判断"你是不是这个工作空间的成员"。
 """

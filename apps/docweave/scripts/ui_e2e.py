@@ -22,7 +22,6 @@ import docx
 from playwright.sync_api import Page, expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _testenv import target  # noqa: E402  isolated test instance; never the user's real data
 
 ARG_BASE = sys.argv[1] if len(sys.argv) > 1 else None

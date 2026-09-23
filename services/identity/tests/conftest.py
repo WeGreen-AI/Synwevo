@@ -1,0 +1,22 @@
+"""Fixtures for the account service's own tests.
+
+The application under test is `platform_identity.app.create_app` — the account service alone,
+with no document engine mounted. That is the point of the split: a test that needs a DocWeave
+route to pass belongs in `tests/integration/`, and this factory makes that obvious instead of
+letting it drift.
+"""
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+
+@pytest.fixture()
+def identity_client(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
+    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
+    from platform_identity.app import create_app
+    api = create_app(str(tmp_path / "d"), start_jobs=False)
+    with TestClient(api) as c:
+        c.app_state = api.state
+        yield c

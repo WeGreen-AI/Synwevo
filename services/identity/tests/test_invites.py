@@ -10,11 +10,11 @@ import threading
 
 import pytest
 
-from docweave import mail as mail_mod
-from docweave.identity import Identity
-from docweave.invites import Invites
-from docweave.services import ServiceError
-from docweave.store import Store, now
+from platform_identity import mail as mail_mod
+from platform_core.identity import Identity
+from platform_identity.invites import Invites
+from platform_core.errors import ServiceError
+from platform_core.store import Store, now
 
 PW = "a-sufficiently-long-passphrase"
 PW2 = "another-sufficiently-long-pass"
@@ -322,7 +322,7 @@ def http(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCWEAVE_MAIL_MODE", "file")
     monkeypatch.setenv("DOCWEAVE_MAIL_DIR", str(tmp_path / "mail"))
     monkeypatch.setenv("DOCWEAVE_PUBLIC_URL", "https://docs.example.org")
-    import docweave.api.app as app_mod
+    import platform_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -336,7 +336,7 @@ def http(tmp_path, monkeypatch):
 
 
 def _csrf(c):
-    from docweave.sessions import CSRF_COOKIE, CSRF_HEADER
+    from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
     return {CSRF_HEADER: c.cookies.get(CSRF_COOKIE)}
 
 

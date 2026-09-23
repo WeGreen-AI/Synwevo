@@ -1,7 +1,13 @@
+# 从仓库根目录运行：docker compose -f infra/docker-compose.yml up -d
+# 构建上下文是仓库根目录（..），因为镜像要包含共享包与账户服务，不只是 apps/docweave。
 services:
   docweave:
-    build: .
-    ports: ["127.0.0.1:8765:8765"]   # bind to localhost; publish through your own reverse proxy with authentication
-    volumes: ["./data:/data"]
-    env_file: [.env.example]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    # 绑定到回环地址；对外发布请用你自己的、带鉴权的反向代理。
+    ports: ["127.0.0.1:8765:8765"]
+    # 具名卷保持不变，所以目录改名不会让 Compose 建出第二套空卷。
+    volumes: ["../data:/data"]
+    env_file: [../.env.example]
     restart: unless-stopped

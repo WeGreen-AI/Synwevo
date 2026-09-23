@@ -22,7 +22,7 @@ keeps working until it expires.
 from __future__ import annotations
 
 from .identity import Identity
-from .services import ServiceError
+from .errors import ServiceError
 from .store import Store
 
 # What a machine caller may do, and which legacy key scope each corresponds to. Kept explicit
@@ -36,7 +36,7 @@ class MachineAuth:
     def __init__(self, store: Store, ident: Identity, legacy):
         self.store = store
         self.ident = ident
-        self.legacy = legacy                 # docweave.auth.Auth — the existing dw_ key checker
+        self.legacy = legacy                 # platform_core.auth.Auth — the existing dw_ key checker
 
     def verify(self, header: str | None) -> dict:
         """Authorization header → principal, or raise 401/403.
@@ -57,8 +57,8 @@ class MachineAuth:
         return self._platform_token(token)
 
     def _platform_token(self, token: str) -> dict:
-        from .platform.apps import Apps
-        from .platform.oidc import Clients, Grants
+        from .apps import Apps
+        from .oidc import Clients, Grants
         if not token:
             raise ServiceError(401, "unauthorized",
                                "缺少凭据（Authorization: Bearer <平台访问令牌> 或 dw_<id>_<secret>）")

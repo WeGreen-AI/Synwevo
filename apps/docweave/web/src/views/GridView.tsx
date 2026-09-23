@@ -1,6 +1,6 @@
 import { ReactElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Mark } from "../lib/types";
-import { cellRef, colLetter, rangeRef } from "../lib/ui";
+import { cellRef, colLetter, rangeRef } from "@platform/ui";
 
 export interface GridWindow {
   sheet: string;

@@ -18,10 +18,10 @@ import urllib.parse
 import pytest
 from fastapi.testclient import TestClient
 
-from docweave.identity import Identity
-from docweave.platform import oidc
-from docweave.platform.apps import Apps, bootstrap_docweave
-from docweave.store import Store
+from platform_core.identity import Identity
+from platform_core import oidc
+from platform_core.apps import Apps, bootstrap_docweave
+from platform_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 REDIRECT = "http://docweave.localhost:8765/auth/callback"
@@ -33,7 +33,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
     monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
     monkeypatch.setenv("DOCWEAVE_ISSUER", "http://accounts.localhost:8770")
-    import docweave.api.app as app_mod
+    import platform_server.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -145,7 +145,7 @@ def test_a_read_only_service_account_cannot_write(env):
 
 def test_a_public_client_cannot_be_a_service_account(env):
     """Its secret is the whole credential, so a public service account is a published one."""
-    from docweave.services import ServiceError
+    from platform_core.errors import ServiceError
     with pytest.raises(ServiceError, match="机密"):
         oidc.Clients(env["store"]).register(
             client_id="oops", app_id="docweave", name="x", redirect_uris=[],
@@ -153,7 +153,7 @@ def test_a_public_client_cannot_be_a_service_account(env):
 
 
 def test_a_service_account_must_name_a_workspace(env):
-    from docweave.services import ServiceError
+    from platform_core.errors import ServiceError
     with pytest.raises(ServiceError, match="工作空间"):
         oidc.Clients(env["store"]).register(
             client_id="oops2", app_id="docweave", name="x", redirect_uris=[],
@@ -242,7 +242,7 @@ def test_a_service_account_survives_the_persons_browser_logout(env):
 
 
 def test_revoking_one_persons_sessions_does_not_touch_the_service_account(env):
-    from docweave.platform.oidc import Grants
+    from platform_core.oidc import Grants
     svc = service_token(env).json()["access_token"]
     dele = delegated_token(env)["access_token"]
     Grants(env["store"]).revoke_for_user(env["alice"]["id"], "admin_revoked")
@@ -253,7 +253,7 @@ def test_revoking_one_persons_sessions_does_not_touch_the_service_account(env):
 # ---------------------------------------------------------------- legacy keys
 def test_existing_api_keys_keep_working(env):
     """They predate the platform. Revoking them all at once would break running automation."""
-    from docweave.auth import Auth
+    from platform_core.auth import Auth
     token, row = Auth(env["store"]).create_key("ci", env["ws"], ("read", "write"), None)
     out = api(env, token)
     assert out.status_code == 200

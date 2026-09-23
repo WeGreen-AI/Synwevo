@@ -1,4 +1,4 @@
-import { Modal } from "../lib/ui";
+import { Modal } from "@platform/ui";
 
 const GROUPS: { title: string; items: [string, string][] }[] = [
   {
