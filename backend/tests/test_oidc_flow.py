@@ -224,13 +224,21 @@ def test_a_suspended_account_cannot_exchange_its_code(env):
 
 # ---------------------------------------------------------------- entitlement
 def test_signing_in_does_not_by_itself_grant_an_application(env):
-    """Identity and eligibility are different questions with different answers."""
-    ident, apps = env["ident"], env["apps"]
+    """Identity and eligibility are different questions with different answers.
+
+    A new workspace starts with DocWeave enabled, so the separation is shown by taking it away:
+    a live account, a live workspace, a live membership — and still no access, because
+    eligibility is its own record rather than something inferred from being signed in.
+    """
+    ident, apps, store = env["ident"], env["apps"], env["store"]
     bob = ident.create_user("bob@example.com", PW, status="active")
     bob_ws = ident.workspaces_for(bob["id"])[0]["id"]
-    # Bob has an account and a workspace, but that workspace has not enabled DocWeave.
+    assert apps.check_access(bob["id"], "docweave")[0] is True
+
+    store.execute("DELETE FROM workspace_apps WHERE workspace_id=?", (bob_ws,))
     ok, wid, reason = apps.check_access(bob["id"], "docweave")
     assert ok is False and wid is None and "尚未启用" in reason
+    assert ident.membership(bob_ws, bob["id"]), "成员关系还在——被拒绝的是资格，不是身份"
 
     apps.enable_for_workspace(bob_ws, "docweave")
     ok, wid, _ = apps.check_access(bob["id"], "docweave")
@@ -239,7 +247,9 @@ def test_signing_in_does_not_by_itself_grant_an_application(env):
 
 def test_authorize_refuses_a_user_without_the_application(env):
     ident = env["ident"]
-    ident.create_user("bob@example.com", PW, status="active")
+    u = ident.create_user("bob@example.com", PW, status="active")
+    env["store"].execute("DELETE FROM workspace_apps WHERE workspace_id=?",
+                         (ident.workspaces_for(u["id"])[0]["id"],))
     bob = TestClient(env["api"])
     bob.post("/api/auth/login", json={"email": "bob@example.com", "password": PW})
     resp, _ = _authorize(bob)
@@ -291,3 +301,30 @@ def test_adoption_is_idempotent(env):
     assert second["workspaces_enabled"] == 0          # already enabled
     assert second["entitlements"] == first["entitlements"]
     assert env["store"].one("SELECT COUNT(*) AS n FROM app_entitlements")["n"] == first["entitlements"]
+
+
+# ---------------------------------------------------------------- provisioning
+def test_a_newly_created_workspace_can_open_docweave_immediately(env):
+    """Found live: `adopt_existing_members` is a one-time migration, so every account created
+    after it ran owned a workspace with no applications enabled — sign-in succeeded and then
+    said "you have no access to anything"."""
+    ident, apps = env["ident"], env["apps"]
+    bob = ident.create_user("bob@example.com", PW, status="active")
+    ok, wid, reason = apps.check_access(bob["id"], "docweave")
+    assert ok is True, reason
+    assert wid == ident.workspaces_for(bob["id"])[0]["id"]
+
+    ws = ident.create_workspace("第二个空间", owner_id=bob["id"])
+    ok, _, reason = apps.check_access(bob["id"], "docweave", ws["id"])
+    assert ok is True, reason
+
+
+def test_provisioning_does_not_reach_the_legacy_workspace(env):
+    """It is seeded by the migration, not by _create_workspace, and must stay empty."""
+    store, ts = env["store"], now()
+    store.execute("INSERT INTO workspaces (id,name,kind,status,created_at,updated_at) "
+                  "VALUES ('default','历史数据（待认领）','legacy','pending_claim',?,?)", (ts, ts))
+    env["ident"].create_user("carol@example.com", PW, status="active")
+    for table in ("memberships", "workspace_apps", "app_entitlements"):
+        n = store.one(f"SELECT COUNT(*) AS n FROM {table} WHERE workspace_id='default'")["n"]
+        assert n == 0, f"{table} 不应因为新建账户而碰到 default 空间"

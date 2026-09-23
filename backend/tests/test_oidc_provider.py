@@ -73,12 +73,22 @@ def test_jwks_publishes_only_public_material(env):
 
 def test_rotation_keeps_the_previous_key_verifiable(env):
     old = env["keys"].active()["kid"]
-    new = env["keys"].rotate()
-    assert new != old
+    new, retiring = env["keys"].rotate()
+    assert new != old and retiring == 1
     kids = {k["kid"] for k in env["keys"].jwks()["keys"]}
     assert old in kids and new in kids, "轮换期间旧密钥必须仍可验签，否则轮换看起来像故障"
     env["keys"].retire(old)
     assert old not in {k["kid"] for k in env["keys"].jwks()["keys"]}
+
+
+def test_the_first_rotation_on_a_fresh_service_retires_nothing(tmp_path):
+    """Reported honestly, so an operator is not told a previous key is still published when
+    there never was one."""
+    from docweave.store import Store
+    keys = oidc.Keys(Store(tmp_path / "fresh"))
+    kid, retiring = keys.rotate()
+    assert kid and retiring == 0
+    assert len(keys.jwks()["keys"]) == 1
 
 
 # ---------------------------------------------------------------- clients

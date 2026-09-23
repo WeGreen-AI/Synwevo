@@ -20,6 +20,13 @@ from ..store import Store, now
 
 DOCWEAVE_APP_ID = "docweave"
 
+# The portal itself. Deliberately *not* a row in `apps`: the registry lists business
+# applications someone can be granted or denied, and the portal is the place you go to find out
+# which of those you have. Putting it in the registry would make it appear on its own home page
+# as an application you can open, and would make "no entitlement to the portal" a state in which
+# a person cannot reach their own account settings.
+PLATFORM_APP_ID = "platform"
+
 
 class Apps:
     def __init__(self, store: Store, ident: Identity):
@@ -67,6 +74,8 @@ class Apps:
         will actually be acting in, resolved here from live membership. The reason string is
         shown to the person, so it says what to do, not just that something failed.
         """
+        if app_id == PLATFORM_APP_ID:
+            return self._check_platform(user_id, workspace_id)
         app = self.get(app_id)
         if not app:
             return False, None, "该应用不存在"
@@ -94,6 +103,25 @@ class Apps:
                 return True, w["id"], "ok"
 
         return False, None, f"你所在的工作空间尚未启用「{app['name']}」，或你没有使用它的资格"
+
+    def _check_platform(self, user_id: str, workspace_id: str | None) -> tuple[bool, str | None, str]:
+        """Anyone with a live account may open the portal.
+
+        Including someone who belongs to no workspace at all. They see a real empty state and
+        their own account settings — not a locked door, and emphatically not the legacy
+        workspace. The returned workspace is their current one *if they have one*; `None` is a
+        valid answer and the portal renders it honestly.
+        """
+        user = self.ident.get_user(user_id)
+        if not user or user["status"] != "active":
+            return False, None, "账户不可用"
+        spaces = [w for w in self.ident.workspaces_for(user_id) if w["status"] == "active"]
+        if workspace_id:
+            match = [w for w in spaces if w["id"] == workspace_id]
+            if not match:
+                return False, None, "你不是该工作空间的成员"
+            return True, workspace_id, "ok"
+        return True, (spaces[0]["id"] if spaces else None), "ok"
 
     def apps_for(self, user_id: str) -> list[dict]:
         """What the portal shows. Only applications this person can actually open.

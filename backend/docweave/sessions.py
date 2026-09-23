@@ -49,7 +49,8 @@ class Sessions:
     # ------------------------------------------------------------------ lifecycle
     def create(self, user_id: str, *, workspace_id: str | None, amr: str,
                user_agent: str | None = None, ip: str | None = None,
-               admin: bool = False) -> tuple[str, dict]:
+               admin: bool = False, oidc_sid: str | None = None,
+               central_session_id: str | None = None, auth_time: float | None = None) -> tuple[str, dict]:
         """Return (cookie value, row). The caller sets the cookie; the raw value is never stored.
 
         Always called *after* authentication succeeds and never reuses an id the client supplied,
@@ -64,15 +65,20 @@ class Sessions:
             "created_at": ts, "last_seen_at": ts,
             "idle_expires_at": ts + idle, "absolute_expires_at": ts + ABSOLUTE_SECONDS,
             # A fresh login is itself a recent authentication, scoped to nothing in particular.
-            "reauth_at": ts, "reauth_scope": "",
+            # For a session created by SSO, `auth_time` is when the *central* authentication
+            # actually happened. Taking "now" instead would let a sign-in that only replayed an
+            # hours-old central session claim to be a fresh re-authentication.
+            "reauth_at": auth_time if auth_time is not None else ts, "reauth_scope": "",
             "amr": amr, "user_agent": (user_agent or "")[:300], "ip": (ip or "")[:64],
+            "oidc_sid": oidc_sid, "central_session_id": central_session_id,
         }
         with self.store.tx() as t:
             t.execute(
                 "INSERT INTO sessions (id,user_id,workspace_id,created_at,last_seen_at,idle_expires_at,"
-                "absolute_expires_at,reauth_at,reauth_scope,amr,user_agent,ip) "
+                "absolute_expires_at,reauth_at,reauth_scope,amr,user_agent,ip,oidc_sid,central_session_id) "
                 "VALUES (:id,:user_id,:workspace_id,:created_at,:last_seen_at,:idle_expires_at,"
-                ":absolute_expires_at,:reauth_at,:reauth_scope,:amr,:user_agent,:ip)", row)
+                ":absolute_expires_at,:reauth_at,:reauth_scope,:amr,:user_agent,:ip,:oidc_sid,"
+                ":central_session_id)", row)
         return raw, row
 
     def load(self, raw_cookie: str | None, *, touch: bool = True) -> dict | None:

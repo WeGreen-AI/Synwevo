@@ -14,3 +14,6 @@ data/
 testdata/
 # screenshots produced by browser E2E runs
 docs/screenshots/*.png
+
+# local three-origin platform run (pids, logs)
+.local/

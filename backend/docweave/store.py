@@ -327,6 +327,21 @@ CREATE TABLE IF NOT EXISTS oidc_keys (
   created_at REAL NOT NULL, retired_at REAL
 );
 
+CREATE TABLE IF NOT EXISTS rp_auth_requests (
+  -- DocWeave's side of a sign-in in progress. state, nonce and the PKCE verifier live here,
+  -- server-side; the browser only carries an opaque id, so none of the three can be supplied by
+  -- whoever sent the person to the link.
+  id TEXT PRIMARY KEY, state TEXT NOT NULL, nonce TEXT NOT NULL, code_verifier TEXT NOT NULL,
+  next_path TEXT,                          -- already reduced to a path on this origin
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS rp_logout_seen (
+  -- jti of back-channel logout tokens already applied. The provider retries on failure, so a
+  -- repeat must be a no-op success rather than a second (harmless but confusing) revocation.
+  jti TEXT PRIMARY KEY, at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS client_sessions (
   -- Links a central session to the per-client sessions it produced, so a platform-wide logout
   -- can reach them. Without this, "sign out everywhere" only clears the portal's own cookie.
@@ -406,6 +421,12 @@ V3_COLUMNS = [
 V4_COLUMNS = [
     ("oauth_tokens", "family_id", "TEXT"),
     ("oauth_tokens", "parent_id", "TEXT"),
+    # A DocWeave session created by single sign-on remembers which grant produced it, so a
+    # back-channel logout can end exactly that sign-in and no one else's. NULL means the session
+    # was created locally (bootstrap, or the legacy direct login), which is why revocation by
+    # `sub` is scoped to rows where this is set.
+    ("sessions", "oidc_sid", "TEXT"),
+    ("sessions", "central_session_id", "TEXT"),
 ]
 
 V2_COLUMNS = [

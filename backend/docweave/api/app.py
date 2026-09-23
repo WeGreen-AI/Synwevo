@@ -126,6 +126,10 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     # OIDC protocol surface. Not a product feature and not UI: these are the endpoints a relying
     # party talks to, and each one carries its own authentication.
     PLATFORM_PREFIXES = ("/oidc/", "/.well-known/")
+    # The relying-party side. `/auth/start` and `/auth/callback` are mid-redirect-chain and
+    # `/auth/backchannel-logout` is authenticated by a signed token, so none of them can be put
+    # behind the legacy Basic prompt.
+    SSO_PREFIXES = ("/auth/",)
     SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
     def _session_gate(request: Request, path: str, finish):
@@ -177,6 +181,44 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
         # the fallback would hand the historical data to every signed-in account.
         return set_tenant(wid or f"__no_workspace__{user['id']}")
 
+    # Paths the account service owns. Everything else under /api/ is DocWeave's own workbench.
+    ACCOUNT_PATHS = ("/api/auth/", "/oidc/", "/.well-known/")
+    SHARED_PATHS = ("/api/health", "/healthz", "/readyz", "/assets/")
+    # The account routes an application still needs about its *own* session: who is signed in,
+    # which workspace is selected, and how to leave. Credentials, MFA enrolment, invitations and
+    # device management stay on the account service, so there is one place to change a password
+    # and one place that knows about authenticators.
+    APP_ACCOUNT_PATHS = ("/api/auth/state", "/api/auth/logout", "/api/auth/me",
+                         "/api/auth/workspace", "/api/auth/sign-out")
+
+    def _role_blocks(path: str) -> str | None:
+        """Why this role refuses this path, or None.
+
+        `all` is the default and keeps the single-process behaviour the existing deployment has.
+        `accounts` and `app` are what make two origins mean two services rather than two names
+        for the same one.
+        """
+        role = (os.environ.get("DOCWEAVE_ROLE") or "all").strip().lower()
+        if role in ("all", ""):
+            return None
+        api_path = path.startswith("/api/") or path.startswith("/oidc/") \
+            or path.startswith("/.well-known/") or path.startswith("/auth/") \
+            or path in ("/healthz", "/readyz")
+        if not api_path or any(path.startswith(p) for p in SHARED_PATHS):
+            return None                                      # the SPA shell and probes are shared
+        is_account = any(path.startswith(p) for p in ACCOUNT_PATHS)
+        if role == "accounts" and not is_account:
+            return "该接口不在账户服务上，请访问应用自身的地址"
+        if role in ("app", "portal"):
+            if path.startswith(("/oidc/", "/.well-known/")):
+                return "该接口在账户服务上，请访问账户服务地址"
+            if path.startswith("/api/auth/") and path not in APP_ACCOUNT_PATHS:
+                return "账户与安全设置在账户服务上统一管理，请访问账户服务地址"
+        if role == "portal" and not is_account and not path.startswith("/auth/") \
+                and not path.startswith("/api/portal/"):
+            return "该接口不在平台门户上"
+        return None
+
     @api.middleware("http")
     async def _gate(request: Request, call_next):
         rid = (request.headers.get("X-Request-ID") or "")[:64] or secrets.token_hex(8)
@@ -195,6 +237,15 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
             return resp
 
         try:
+            off = _role_blocks(path)
+            if off:
+                # One binary, three roles, decided by configuration. Enforced here rather than by
+                # conditionally mounting routers: a filter in one place cannot be half-applied,
+                # and it means the account service genuinely cannot serve a document — an
+                # accounts-origin cookie reaching DocWeave's data would defeat the whole point
+                # of giving them separate origins.
+                return finish(JSONResponse(_error_body(request, "not_in_this_role", off, None),
+                                           status_code=404))
             if path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):
                 principal = auth.verify(request.headers.get("Authorization"))
                 request.state.principal = principal
@@ -213,7 +264,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                 # 200. Only the SPA shell was reachable that way, but an authentication branch
                 # that some paths fall past is not a shape to leave in place.
                 mode = ui_auth_mode()
-                if any(path.startswith(p) for p in PLATFORM_PREFIXES):
+                if any(path.startswith(p) for p in PLATFORM_PREFIXES + SSO_PREFIXES):
                     # Protocol endpoints authenticate themselves: /oidc/authorize reads the
                     # central session cookie and redirects to /login when there is none, and the
                     # token/userinfo/revoke half authenticates by client credentials and bearer
@@ -704,6 +755,10 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     bootstrap_docweave(store, identity)
     Apps(store, identity).adopt_existing_members()
     api.include_router(build_oidc_router(store, identity, sessions, _audit))
+
+    # ------------------------------------------------------------ this app as a relying party
+    from .rp_routes import build_router as build_rp_router
+    api.include_router(build_rp_router(store, identity, sessions, _audit))
 
     # ------------------------------------------------------------ static UI
     dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))

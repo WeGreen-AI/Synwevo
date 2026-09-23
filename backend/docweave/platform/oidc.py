@@ -86,11 +86,16 @@ class Keys:
         rows = self.store.all("SELECT public_jwk FROM oidc_keys WHERE status IN ('active','retiring')")
         return {"keys": [json.loads(r["public_jwk"]) for r in rows]}
 
-    def rotate(self) -> str:
-        """Start signing with a new key; the previous one keeps verifying until retired."""
+    def rotate(self) -> tuple[str, int]:
+        """Start signing with a new key. Returns (new kid, how many keys moved to `retiring`).
+
+        The count is returned so a caller can say what actually happened: on a service that has
+        never signed anything there is no previous key, and reporting "the old key is still
+        published" would be describing a state that does not exist.
+        """
         with self.store.tx() as t:
-            t.execute("UPDATE oidc_keys SET status='retiring' WHERE status='active'")
-        return self.active()["kid"]
+            n = t.execute("UPDATE oidc_keys SET status='retiring' WHERE status='active'").rowcount
+        return self.active()["kid"], n
 
     def retire(self, kid: str) -> None:
         self.store.execute("UPDATE oidc_keys SET status='retired', retired_at=? WHERE kid=?", (now(), kid))
@@ -401,8 +406,12 @@ def deliver_logout(url: str, token: str, timeout: float = 3.0) -> tuple[bool, st
         return False, e.message
     import httpx
     try:
-        r = httpx.post(url, data={"logout_token": token}, timeout=timeout,
-                       follow_redirects=False,
+        # Same reasoning as the relying party's client: no ambient proxy. A logout notification
+        # routed through an unrelated proxy either fails silently or hands a signed token
+        # naming a user and a session to a third party.
+        with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False,
+                          proxy=os.environ.get("DOCWEAVE_OIDC_PROXY") or None) as c:
+            r = c.post(url, data={"logout_token": token},
                        headers={"Content-Type": "application/x-www-form-urlencoded"})
         if 200 <= r.status_code < 300:
             return True, None
@@ -419,7 +428,15 @@ def verify_logout_token(raw: str, *, jwks: dict, client_id: str, expected_issuer
     audience, freshness, the logout event claim, and the absence of `nonce`.
     """
     iss = expected_issuer or issuer()
-    claims = jwt.decode(raw, JsonWebKey.import_key_set(jwks))
+    try:
+        claims = jwt.decode(raw, JsonWebKey.import_key_set(jwks))
+    except ServiceError:
+        raise
+    except Exception as e:
+        # Authlib raises its own exception types for a malformed or badly signed token. Letting
+        # those escape turned a junk POST into a 500, which tells the provider to keep retrying
+        # and tells an operator nothing. It is a rejected token, which is a 400.
+        raise ServiceError(400, "bad_logout_token", f"登出令牌无法验证：{type(e).__name__}") from e
     if claims.get("iss") != iss:
         raise ServiceError(400, "bad_logout_token", "发行者不匹配")
     aud = claims.get("aud")

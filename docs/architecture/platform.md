@@ -65,17 +65,36 @@ Cookie 按**主机**划分，不按端口。`localhost:8765` 与 `localhost:8766
 
 | 角色 | 本机地址 | 会话 Cookie |
 |---|---|---|
-| 平台账户服务（OIDC Provider） | `http://accounts.localhost:8770` | `dw_central`（host-only） |
-| 平台门户（OIDC Client） | `http://portal.localhost:8771` | `dw_portal`（host-only） |
-| DocWeave（OIDC Client） | `http://docweave.localhost:8765` | `dw_session`（host-only，沿用现有） |
+| 平台账户服务（OIDC Provider） | `http://accounts.localhost:8770` | `dw_session`（host-only，账户服务域） |
+| 平台门户（OIDC Client） | `http://portal.localhost:8769` | `dw_session`（host-only，门户域） |
+| DocWeave（OIDC Client） | `http://docweave.localhost:8765` | `dw_session`（host-only，DocWeave 域） |
 
-所有 Cookie **不设 `Domain` 属性**（host-only），因此按 RFC 6265 不会发往兄弟主机。
-这一点由服务端设置决定，是我们能控制并能验证的部分。
+同名 Cookie，三个不同的主机，因此是三个互不相通的值——这正是要验证的性质。
+所有 Cookie **不设 `Domain` 属性**（host-only），按 RFC 6265 不会发往兄弟主机。
+
+`python scripts/platform_local.py up` 启动这三个进程，`python scripts/verify_sso.py` 用
+Python 的 `http.cookiejar`（真实规则：按主机作用域、无视端口）把结果量出来。**已实测 32/32 通过**，
+其中直接检查了：三个会话值互不相同、DocWeave 的会话 Cookie `domain=docweave.localhost` 且
+非 `.`-前缀、Cookie 没有端口限定、没有任何 Cookie 落在 `localhost` 这样的共享父域上。
 
 > **本机验证的已知限制**：本会话中的沙箱浏览器按主机授权，只放行了 `accounts.localhost`，
-> 兄弟主机被拒。因此跨 origin 的重定向链路用实现了 RFC 6265 主机匹配的 HTTP 客户端
-> （Python `http.cookiejar`）验证，浏览器仅验证单 origin 页面。这一限制在交付报告中单独列出，
+> 兄弟主机被拒。因此跨 origin 的重定向链路用 `http.cookiejar` 验证（上面那 32 项），
+> 浏览器仅验证单 origin 页面。这一限制在交付报告中单独列出，
 > 不写成"浏览器已验证跨域隔离"。
+
+### 3.1 服务要监听自己域名解析到的地址
+
+`*.localhost` 在本机同时解析到 `::1` 和 `127.0.0.1`，`getaddrinfo` 先返回 `::1`。uvicorn 只绑
+一个地址，绑 `127.0.0.1` 会让 `[::1]:8770` 拒绝连接。浏览器和 urllib 会挨个地址重试，所以
+浏览器跳转全部正常；httpx 不会，于是**只有服务端换码那一步失败**，表现为回调处的
+`Server disconnected without sending a response`。`platform_local.py: bind_addr()` 因此按域名
+解析结果绑定。生产同理：发行者域名和监听地址必须对得上。
+
+### 3.2 不继承环境里的代理
+
+连接身份服务的 HTTP 客户端设 `trust_env=False`。httpx 默认遵循 `HTTP_PROXY`，而这个连接上跑的是
+授权码和客户端密钥；`NO_PROXY=localhost,127.0.0.1` **不匹配** `accounts.localhost`。本机验证时
+就是这样被静默送进代理并丢弃的。需要经代理访问发行者的部署用 `DOCWEAVE_OIDC_PROXY` 显式指定。
 
 生产域名未定，全部通过配置项给出，不写死。改域名会使已登记的 Passkey 失效（RP ID 绑定域名），
 这一点记在 `docs/security/sessions.md`。
@@ -120,12 +139,17 @@ app / workspace / 操作。机器配置只经 CLI 与配置文件管理，**产�
 
 | 区块 | 状态 |
 |---|---|
-| 架构决策与本机拓扑（本文件） | 已确定并实测 `*.localhost` 解析 |
-| 应用注册与 OIDC 客户端数据模型 | 进行中 |
-| Provider 端点（discovery/JWKS/authorize/token/userinfo/revocation） | 进行中 |
-| 门户（OIDC Client） | 未开始 |
-| DocWeave 接入为 Client | 未开始 |
-| 跨应用登出与撤权 | 未开始 |
-| 历史数据认领后台 | 未开始 |
+| 架构决策与本机拓扑（本文件） | 已确定；`*.localhost` 解析、绑定地址、代理行为均已实测 |
+| 应用注册与 OIDC 客户端数据模型 | 已完成（schema v4 追加表 + `V4_COLUMNS` 无条件列迁移） |
+| Provider 端点（discovery/JWKS/authorize/token/userinfo/revocation/logout） | 已完成并测试 |
+| 刷新令牌轮换 + 重放检测 | 已完成并测试 |
+| DocWeave 接入为 Client（BFF） | 已完成并测试；本机三来源链路 32/32 通过 |
+| 跨应用登出（后通道）与撤权传播 | 已完成并测试 |
+| 角色边界（accounts / portal / app 三个角色） | 已完成；本机实测三种 404 边界 |
+| CLI：应用、客户端、密钥 | 已完成并本机跑通 |
+| 门户前端页面 | 未开始（后端链路已通，`portal` 角色已可运行） |
+| 管理后台与历史数据认领 | 未开始 |
+| Passkey / WebAuthn | 未开始；RP ID 策略已确定为账户服务域名 |
+| 机器身份接入 OIDC（服务账户 / 用户委托） | 未开始；现有 `/api/v1` 密钥体系不变 |
 
-**未部署到服务器。**
+**未部署到服务器。** 本轮全部在本机完成，未修改生产 DNS，未创建隧道，未公开暴露服务。

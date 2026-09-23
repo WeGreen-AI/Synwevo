@@ -205,6 +205,14 @@ class Identity:
         if owner_id:
             t.execute("INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) "
                       "VALUES (?,?, 'owner', 1, ?,?,?)", (wid, owner_id, ts, ts, created_by))
+        for app_id in DEFAULT_WORKSPACE_APPS:
+            t.execute("INSERT INTO workspace_apps (workspace_id,app_id,enabled_at,enabled_by) "
+                      "VALUES (?,?,?,?) ON CONFLICT(workspace_id,app_id) DO NOTHING",
+                      (wid, app_id, ts, created_by))
+            if owner_id:
+                t.execute("INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by) "
+                          "VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,app_id,user_id) DO UPDATE SET "
+                          "revoked_at=NULL", (wid, app_id, owner_id, ts, created_by))
         return wid
 
     def create_workspace(self, name: str, *, owner_id: str, kind: str = "org") -> dict:
@@ -325,6 +333,17 @@ class Identity:
 
     def bootstrap_needed(self) -> bool:
         return not self.platform_admins()
+
+
+# Applications a newly created workspace starts with, written in the *same transaction* that
+# creates the workspace. Not a stylistic choice: `adopt_existing_members` is a one-time
+# migration, so without this every account created afterwards — every registration, every
+# `manage.py bootstrap admin` — owned a workspace with no applications enabled and could sign in
+# successfully only to be told it had no access to anything. It was found exactly that way.
+#
+# The entitlement *model* lives in platform/apps.py; this is only the starting state, and the
+# legacy workspace does not go through here, so it keeps its zero members and zero applications.
+DEFAULT_WORKSPACE_APPS = ("docweave",)
 
 
 def _personal_name(display_name: str | None, email: str) -> str:

@@ -9,6 +9,11 @@
     python backend/manage.py openapi --out docs/integration/openapi.yaml
     python backend/manage.py jobs recover                  # resume jobs left by a stopped worker
     python backend/manage.py info                          # data dir, schema version, ports in use
+    python backend/manage.py app list|enable|disable|grant|revoke
+    python backend/manage.py client register --client-id portal-web --app platform \
+        --name 平台门户 --redirect http://portal.localhost:8769/auth/callback
+    python backend/manage.py client list|show|disable
+    python backend/manage.py keys list|rotate|retire            # OIDC signing keys
 
 The database is the one in DOCWEAVE_DATA_DIR (default ./data).  A key's secret is shown
 once, at creation; only its hash is stored.
@@ -335,6 +340,160 @@ def cmd_projects(args) -> int:
     return 1
 
 
+def _platform(args):
+    store = Store(data_dir(args))
+    ident = Identity(store)
+    from docweave.platform.apps import Apps
+    from docweave.platform import oidc
+    return store, ident, Apps(store, ident), oidc
+
+
+def cmd_app(args) -> int:
+    """Applications and who may use them.
+
+    Deliberately CLI-only. An application registry is platform configuration, not a product
+    feature, and a web page that could enable an application for a workspace would be a web page
+    that could grant access to data.
+    """
+    store, ident, apps, _ = _platform(args)
+    if args.action == "list":
+        rows = store.all("SELECT * FROM apps ORDER BY name")
+        if not rows:
+            print("（没有已登记的应用）")
+        for a in rows:
+            n = store.one("SELECT COUNT(*) AS n FROM workspace_apps WHERE app_id=?", (a["id"],))["n"]
+            print(f"{a['id']:<16} {a['name']:<16} {a['status']:<9} 策略={a['access_policy']:<9} "
+                  f"已启用空间={n}  {a['launch_url']}")
+        return 0
+    if args.action in ("enable", "disable") and not args.workspace:
+        # Enabling/disabling the application itself, platform-wide.
+        if not apps.get(args.app):
+            print(f"没有名为 {args.app} 的应用", file=sys.stderr)
+            return 2
+        store.execute("UPDATE apps SET status=?, updated_at=? WHERE id=?",
+                      ("active" if args.action == "enable" else "disabled", now(), args.app))
+        print(f"应用 {args.app} 已{'启用' if args.action == 'enable' else '停用'}")
+        return 0
+    if not args.workspace:
+        print("需要 --workspace", file=sys.stderr)
+        return 2
+    ws = ident.get_workspace(args.workspace)
+    if not ws:
+        print(f"没有 id 为 {args.workspace} 的工作空间", file=sys.stderr)
+        return 2
+    if ws["kind"] == "legacy":
+        # The legacy workspace holds every pre-identity file and has zero members on purpose.
+        print("workspace default 是待认领的历史数据空间，不能在这里直接授权；请使用认领流程。",
+              file=sys.stderr)
+        return 2
+    if args.action == "enable":
+        apps.enable_for_workspace(args.workspace, args.app)
+        print(f"工作空间 {args.workspace} 已启用 {args.app}")
+    elif args.action == "disable":
+        store.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
+                      (args.workspace, args.app))
+        print(f"工作空间 {args.workspace} 已停用 {args.app}")
+    elif args.action in ("grant", "revoke"):
+        if not args.user:
+            print("需要 --user（用户 ID 或邮箱）", file=sys.stderr)
+            return 2
+        u = ident.get_user(args.user) or ident.by_email(args.user)
+        if not u:
+            print(f"找不到用户 {args.user}", file=sys.stderr)
+            return 2
+        (apps.grant if args.action == "grant" else apps.revoke)(args.workspace, args.app, u["id"])
+        print(f"{u['email']} 在 {args.workspace} 的 {args.app} 使用资格已"
+              f"{'授予' if args.action == 'grant' else '撤销'}")
+    return 0
+
+
+def cmd_client(args) -> int:
+    """OIDC client registrations.
+
+    There is no dynamic client registration endpoint and there will not be one: anything that
+    lets an unauthenticated caller create a client with its own redirect URI is a way to have
+    authorization codes delivered somewhere else.
+    """
+    store, ident, apps, oidc = _platform(args)
+    clients = oidc.Clients(store)
+    if args.action == "list":
+        rows = store.all("SELECT * FROM oauth_clients ORDER BY created_at")
+        if not rows:
+            print("（没有已登记的客户端）")
+        for c in rows:
+            state = "停用" if c["disabled_at"] else "启用"
+            print(f"{c['client_id']:<18} app={c['app_id']:<12} {state}  "
+                  f"认证={c['token_endpoint_auth_method']}  PKCE={'必需' if c['require_pkce'] else '否'}")
+        return 0
+    if args.action == "show":
+        c = clients.get(args.client_id)
+        if not c:
+            print("找不到该客户端", file=sys.stderr)
+            return 2
+        c.pop("secret_hash", None)                        # never printed, not even hashed
+        print(json.dumps(c, ensure_ascii=False, indent=2))
+        return 0
+    if args.action == "disable":
+        n = store.execute("UPDATE oauth_clients SET disabled_at=? WHERE client_id=? AND disabled_at IS NULL",
+                          (now(), args.client_id))
+        print(f"{'已停用' if n else '该客户端不存在或已停用'} {args.client_id}")
+        return 0
+
+    # register
+    if not args.redirect:
+        print("至少需要一个 --redirect", file=sys.stderr)
+        return 2
+    try:
+        row, secret = clients.register(
+            client_id=args.client_id, app_id=args.app, name=args.name or args.client_id,
+            redirect_uris=list(args.redirect), scopes=args.scopes,
+            audiences=list(args.audience or []), confidential=bool(args.confidential),
+            post_logout_redirect_uris=list(args.post_logout or []),
+            backchannel_logout_uri=args.backchannel)
+    except ServiceError as e:
+        print(f"登记失败：{e.message}", file=sys.stderr)
+        return 2
+    print(f"client_id      : {row['client_id']}")
+    print(f"应用           : {row['app_id']}")
+    print(f"回调地址       : {', '.join(row['redirect_uris'])}")
+    print(f"认证方式       : {row['token_endpoint_auth_method']}")
+    if secret:
+        print(f"client_secret  : {secret}")
+        print("这是唯一一次显示；只保存了它的哈希。写入服务的环境变量，不要提交到仓库。")
+    else:
+        print("公共客户端：没有密钥，安全性由 PKCE(S256) 与精确回调匹配提供。")
+    return 0
+
+
+def cmd_keys(args) -> int:
+    """OIDC signing keys. Persisted on purpose — a key regenerated at startup would invalidate
+    every issued token on restart, which presents as a mass logout with no cause."""
+    store, ident, apps, oidc = _platform(args)
+    keys = oidc.Keys(store)
+    if args.action == "list":
+        for k in store.all("SELECT kid,alg,status,created_at,retired_at FROM oidc_keys ORDER BY created_at"):
+            print(f"{k['kid']:<18} {k['alg']}  {k['status']:<9} 创建 {_ts(k['created_at'])}  "
+                  f"退役 {_ts(k['retired_at'])}")
+        return 0
+    if args.action == "rotate":
+        kid, retiring = keys.rotate()
+        print(f"新的签名密钥：{kid}")
+        if retiring:
+            print(f"{retiring} 个旧密钥转为 retiring，仍在 JWKS 中发布，因此此前签发的令牌继续可验证。")
+            print("等待最长的令牌有效期过去之后，再执行 keys retire <kid>。")
+        else:
+            print("此前没有活动密钥，这是第一把；没有需要保留验证的旧令牌。")
+        return 0
+    if args.action == "retire":
+        if not args.kid:
+            print("需要 --kid", file=sys.stderr)
+            return 2
+        keys.retire(args.kid)
+        print(f"{args.kid} 已退役，不再发布；用它签发的令牌从此验证失败。")
+        return 0
+    return 0
+
+
 def cmd_info(args) -> int:
     d = data_dir(args)
     store = Store(d, migrate=False)          # inspect only: never upgrade the directory being looked at
@@ -411,6 +570,31 @@ def main() -> int:
     pr.add_argument("--i-understand-delete-is-permanent", action="store_true", help=argparse.SUPPRESS)
     pr.add_argument("--json", action="store_true", help="list 输出 JSON")
     pr.set_defaults(func=cmd_projects)
+
+    a = sub.add_parser("app", help="平台应用与使用资格（无产品界面，仅 CLI）")
+    a.add_argument("action", choices=["list", "enable", "disable", "grant", "revoke"])
+    a.add_argument("app", nargs="?", default="docweave", help="应用 ID，默认 docweave")
+    a.add_argument("--workspace", help="工作空间 ID；省略时 enable/disable 作用于应用本身")
+    a.add_argument("--user", help="用户 ID 或邮箱（grant/revoke）")
+    a.set_defaults(func=cmd_app)
+
+    cl = sub.add_parser("client", help="OIDC 客户端登记（无动态注册端点）")
+    cl.add_argument("action", choices=["register", "list", "show", "disable"])
+    cl.add_argument("--client-id", dest="client_id", help="客户端 ID")
+    cl.add_argument("--app", default="docweave", help="所属应用 ID")
+    cl.add_argument("--name", help="显示名称")
+    cl.add_argument("--redirect", action="append", help="回调地址，可重复；精确匹配，无通配符")
+    cl.add_argument("--post-logout", dest="post_logout", action="append", help="登出后跳转地址，可重复")
+    cl.add_argument("--backchannel", help="后通道登出接收地址")
+    cl.add_argument("--audience", action="append", help="该客户端可获得令牌的 API 受众，可重复")
+    cl.add_argument("--scopes", default="openid profile email")
+    cl.add_argument("--confidential", action="store_true", help="机密客户端：生成一次性 client_secret")
+    cl.set_defaults(func=cmd_client)
+
+    ky = sub.add_parser("keys", help="OIDC 签名密钥")
+    ky.add_argument("action", choices=["list", "rotate", "retire"])
+    ky.add_argument("--kid", help="retire 时指定")
+    ky.set_defaults(func=cmd_keys)
 
     i = sub.add_parser("info", help="部署信息")
     i.set_defaults(func=cmd_info)
