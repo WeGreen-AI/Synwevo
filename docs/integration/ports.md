@@ -66,3 +66,38 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8765/api/v1/capabilities   # 
 实测记录（2026-09-23，macOS 26.0 / Python 3.14 / 本机部署）：`lsof` 显示 `Python … TCP 127.0.0.1:8765 (LISTEN)`；
 `/healthz` → `{"status":"ok","version":"1.0.0"}`；`/readyz` → `{"status":"ready","checks":{"database":"ok","storage":"ok","worker":"ok"},"schema_version":2}`；
 无密钥访问 `/api/v1/capabilities` → `401`。
+
+---
+
+## 生产部署实例：vultr_tokyo（2026-09-23）
+
+| 项 | 值 |
+|---|---|
+| 主机 | `vultr_tokyo`（Ubuntu 24.04，2 核 / 3.9 GB 内存 / 8 GB swap） |
+| 运行方式 | Docker 容器 `docweave`，镜像 `docweave:local`（1.32 GB，含 LibreOffice 7.4.7.2、Tesseract 5.3.0 chi_sim+eng+osd、Noto CJK 字体、Python 3.12） |
+| 监听 | **`127.0.0.1:8765`**（仅回环，`-p 127.0.0.1:8765:8765`）。容器内监听 `0.0.0.0:8765` |
+| 对外 | 经 Cloudflare Tunnel（`cloudflared`，token 模式，路由在 Cloudflare Zero Trust 面板配置）。**服务器上没有开放任何公网 HTTP 端口** |
+| 界面鉴权 | `DOCWEAVE_UI_AUTH=basic`，用户 `wegreen`（口令仅以 PBKDF2 哈希存储） |
+| PDF 引擎 | `DOCWEAVE_PDF_ENGINE=pymupdf`（功能完整；**AGPL-3.0 网络服务义务适用**，对应源代码经 `/api/source-code` 提供） |
+| 资源限制 | `--memory=1536m --memory-swap=2048m`。这台机器同时运行 bdr-prod / carboy / beeurei / apexterminal 四套生产服务，限制确保 DocWeave 超限时只影响自己 |
+| 持久化 | 宿主 `/opt/docweave-data` → 容器 `/data`（SQLite + blobs）。**用户本地的 `data/` 没有同步上去**，实例以空库交付 |
+| 重启策略 | `unless-stopped`（重启机器后自动拉起） |
+| 源码位置 | `/opt/docweave`（rsync，排除 `data/`、`.env`、`.venv`、`node_modules`、`testdata/`） |
+
+### 实测（部署后）
+
+* 鉴权：无凭据 `401`、错误口令 `401`、正确口令 `200`。
+* `/healthz` → `{"status":"ok","version":"1.0.0","instance":"normal"}`；`/readyz` → `database/storage/worker` 全部 `ok`，`schema_version: 2`。
+* 端到端生成（经部署实例的 HTTP 接口）：预检 2 条样本全部有效 → 任务 `completed`、2 份文档 → 产物正文为 `客户：部署验证甲 / 金额：1234.50`，即每份样本取到自己的值。验证后已删除该项目与模板、撤销临时密钥，交付状态为空库。
+* 空闲占用：**88 MiB / 1.5 GiB 上限**（LibreOffice 仅在转换时另起进程）。
+
+### 变更端口 / 重启
+
+```bash
+ssh vultr_tokyo
+docker restart docweave                 # 重启
+docker logs -f docweave                 # 日志
+docker exec docweave python backend/manage.py ui-user add <用户名> --password '<口令，≥8 位>'
+```
+
+改端口：修改 `-p 127.0.0.1:<新端口>:8765` 后重建容器，并同步修改 Cloudflare Tunnel 的 Public Hostname 指向。
