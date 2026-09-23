@@ -27,7 +27,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from docweave.auth import SCOPES, Auth  # noqa: E402
-from docweave.store import Store  # noqa: E402
+from docweave.store import Store, now  # noqa: E402
 
 
 def data_dir(args) -> str:
@@ -185,6 +185,98 @@ def cmd_jobs(args) -> int:
     return 1
 
 
+def _project_evidence(store, row: dict) -> dict:
+    """Everything known about where a project came from.  A cleanup decision must rest on
+    this, never on the name — three of the test-named projects in the real database were
+    edited by the user hours after any script ran."""
+    pid = row["id"]
+    jobs = store.all("SELECT origin, created_at FROM jobs WHERE project_id=? ORDER BY created_at", (pid,))
+    origins = sorted({(j.get("origin") or "?") for j in jobs})
+    srcs = store.one("SELECT COUNT(*) AS n FROM source_files WHERE project_id=? AND removed=0", (pid,))["n"]
+    arts = store.one("SELECT COUNT(*) AS n FROM artifacts a JOIN jobs j ON a.job_id=j.id "
+                     "WHERE j.project_id=? AND a.deleted_at IS NULL", (pid,))["n"]
+    return {
+        "id": pid, "name": row["name"], "origin": row.get("origin"),
+        "created_at": row.get("created_at"), "updated_at": row.get("updated_at"),
+        "archived": bool(row.get("archived_at")),
+        "jobs": len(jobs), "job_origins": origins, "sources": srcs, "artifacts": arts,
+        # Edited well after creation => a human touched it, whatever its name says.
+        "edited_after_create": bool(row.get("updated_at") and row.get("created_at")
+                                    and row["updated_at"] - row["created_at"] > 600),
+    }
+
+
+def _classify(e: dict) -> tuple[str, str]:
+    """(verdict, why).  Only `test` is ever eligible for automatic action."""
+    if e["origin"] and e["origin"].startswith("test:"):
+        return "test", f"来源标记为 {e['origin']}"
+    if e["origin"] in ("ui", None) and e["edited_after_create"]:
+        return "keep", "创建后被人工修改过" + (f"（来源 {e['origin']}）" if e["origin"] else "（来源未知）")
+    if e["origin"]:
+        return "keep", f"来源为 {e['origin']}"
+    return "unknown", "没有来源记录（v3 之前创建），无法证明是测试数据"
+
+
+def cmd_projects(args) -> int:
+    from docweave.services import App
+    store = Store(data_dir(args))
+    App(store)                       # ensures migrations have run
+    rows = store.all("SELECT * FROM projects WHERE deleted=0 ORDER BY updated_at DESC")
+    ev = [_project_evidence(store, r) for r in rows]
+    for e in ev:
+        e["verdict"], e["why"] = _classify(e)
+
+    if args.action == "list":
+        if args.json:
+            print(json.dumps(ev, ensure_ascii=False, indent=1, default=str))
+            return 0
+        print(f"{'ID':<16}{'判定':<8}{'来源':<22}{'任务':>4}{'来源文件':>8}{'产物':>6}  名称 / 依据")
+        for e in ev:
+            print(f"{e['id']:<16}{e['verdict']:<8}{str(e['origin'] or '-'):<22}{e['jobs']:>4}{e['sources']:>8}{e['artifacts']:>6}  "
+                  f"{e['name'][:28]}  · {e['why']}")
+        n = {v: sum(1 for e in ev if e["verdict"] == v) for v in ("test", "keep", "unknown")}
+        print(f"\n共 {len(ev)} 个项目：可自动处理 {n['test']}，明确保留 {n['keep']}，来源不明 {n['unknown']}")
+        if n["unknown"]:
+            print("来源不明的项目不会被自动归档或删除——v3 之前创建的项目没有来源记录，"
+                  "只能由你逐个确认。请用 --id 明确指定。")
+        return 0
+
+    if args.action == "prune":
+        targets = [e for e in ev if e["verdict"] == "test" and not e["archived"]]
+        if args.id:
+            wanted = set(args.id)
+            chosen = [e for e in ev if e["id"] in wanted]
+            missing = wanted - {e["id"] for e in chosen}
+            if missing:
+                print(f"找不到这些项目：{', '.join(sorted(missing))}")
+                return 2
+            targets = chosen                      # explicit ids bypass the verdict, on purpose
+        if not targets:
+            print("没有可处理的项目。（来源不明的项目不会被自动选中，请用 --id 指定。）")
+            return 0
+
+        print(f"{'将要' if args.apply else '[dry-run] 将要'}{'删除' if args.delete else '归档'} {len(targets)} 个项目：")
+        for e in targets:
+            print(f"  {e['id']}  {e['name'][:36]}  来源={e['origin'] or '未知'}  任务={e['jobs']} "
+                  f"来源文件={e['sources']} 产物={e['artifacts']}  · {e['why']}")
+        if not args.apply:
+            print("\n这是 dry-run，什么都没有改动。确认无误后加 --apply。")
+            return 0
+        if args.delete and not args.i_understand_delete_is_permanent:
+            print("\n删除是不可逆的。归档（默认）可以随时撤销。"
+                  "确实要删除请同时加 --i-understand-delete-is-permanent。")
+            return 2
+        for e in targets:
+            if args.delete:
+                store.update("projects", {"id": e["id"]}, {"deleted": 1, "updated_at": now()})
+            else:
+                store.update("projects", {"id": e["id"]}, {"archived_at": now(), "updated_at": now()})
+        print(f"\n已{'删除' if args.delete else '归档'} {len(targets)} 个项目。"
+              + ("" if args.delete else "归档可以在界面「显示已归档」中撤销。"))
+        return 0
+    return 1
+
+
 def cmd_info(args) -> int:
     d = data_dir(args)
     store = Store(d)
@@ -225,6 +317,15 @@ def main() -> int:
     j = sub.add_parser("jobs", help="任务维护")
     j.add_argument("action", choices=["recover", "list"])
     j.set_defaults(func=cmd_jobs)
+
+    pr = sub.add_parser("projects", help="项目清单与清理（按来源证据，默认 dry-run）")
+    pr.add_argument("action", choices=["list", "prune"])
+    pr.add_argument("--id", action="append", help="明确指定项目 ID（可重复）；指定后不再依据判定自动选择")
+    pr.add_argument("--apply", action="store_true", help="真正执行；不加就是 dry-run")
+    pr.add_argument("--delete", action="store_true", help="硬删除而不是归档（不可逆）")
+    pr.add_argument("--i-understand-delete-is-permanent", action="store_true", help=argparse.SUPPRESS)
+    pr.add_argument("--json", action="store_true", help="list 输出 JSON")
+    pr.set_defaults(func=cmd_projects)
 
     i = sub.add_parser("info", help="部署信息")
     i.set_defaults(func=cmd_info)
