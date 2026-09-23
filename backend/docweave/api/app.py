@@ -253,7 +253,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
 
     @api.post("/api/projects")
     def create_project(body: dict = Body(...)):
-        return app_.create_project(body.get("name", ""))
+        return app_.create_project(body.get("name", ""), origin="ui")
 
     @api.get("/api/projects/{pid}")
     def get_project(pid: str):

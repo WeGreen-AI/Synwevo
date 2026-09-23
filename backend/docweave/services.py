@@ -42,23 +42,44 @@ class App:
         self.on_event = None          # set by the API layer: called after a job event is stored
 
     # ================================================================ projects
-    def create_project(self, name: str) -> dict:
+    def create_project(self, name: str, origin: str | None = None) -> dict:
+        """``origin`` records who created this project ("ui", "api:<key id>", "test:<run id>").
+        It is the only evidence a cleanup tool can act on — a name prefix is not proof."""
         pid = new_id("p")
         t = now()
         self.store.insert("projects", {"id": pid, "name": (name or "未命名项目").strip()[:100], "created_at": t, "updated_at": t,
-                                       "tenant": current_tenant(),
+                                       "tenant": current_tenant(), "origin": (origin or "ui")[:80],
                                        "record_rule": {}, "output": {"naming": "{序号}", "formats": [], "error_policy": "block"},
                                        "mapping_rev": 0, "rev": 1, "step": "sources"})
         self.store.insert("mapping_revs", {"project_id": pid, "rev": 0, "parent_rev": None, "data": [], "note": "初始", "created_at": t})
         return self.get_project(pid)
 
-    def list_projects(self) -> list[dict]:
-        rows = self.store.all("SELECT id, name, created_at, updated_at, template_id, record_rule, step FROM projects "
-                              "WHERE deleted=0 AND tenant=? ORDER BY updated_at DESC", (current_tenant(),))
+    def list_projects(self, include_archived: bool = False) -> list[dict]:
+        """Three queries regardless of project count.
+
+        This used to run a COUNT and a last-job SELECT per project inside a Python loop —
+        81 SQLite round-trips for 40 projects, growing linearly with the list."""
+        tenant = current_tenant()
+        arch = "" if include_archived else " AND archived_at IS NULL"
+        rows = self.store.all(
+            "SELECT id, name, created_at, updated_at, template_id, record_rule, step, origin, archived_at "
+            f"FROM projects WHERE deleted=0 AND tenant=?{arch} ORDER BY updated_at DESC", (tenant,))
+        if not rows:
+            return rows
+        counts = {r["project_id"]: r["n"] for r in self.store.all(
+            "SELECT project_id, COUNT(*) AS n FROM source_files WHERE removed=0 GROUP BY project_id")}
+        last = {r["project_id"]: r for r in self.store.all(
+            "SELECT id, project_id, status, counts, created_at FROM ("
+            "  SELECT id, project_id, status, counts, created_at,"
+            "         ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY created_at DESC, id DESC) AS rn"
+            "  FROM jobs) WHERE rn = 1")}
+        names = {r["id"]: r["name"] for r in self.store.all(
+            "SELECT id, name FROM templates WHERE deleted=0 AND tenant=?", (tenant,))}
         for r in rows:
-            r["sources"] = self.store.one("SELECT COUNT(*) AS n FROM source_files WHERE project_id=? AND removed=0", (r["id"],))["n"]
-            last = self.store.one("SELECT id, status, counts, created_at FROM jobs WHERE project_id=? ORDER BY created_at DESC LIMIT 1", (r["id"],))
-            r["last_job"] = last
+            r["sources"] = counts.get(r["id"], 0)
+            j = last.get(r["id"])
+            r["last_job"] = {k: j[k] for k in ("id", "status", "counts", "created_at")} if j else None
+            r["template_name"] = names.get(r.get("template_id"))
         return rows
 
     def get_project(self, pid: str) -> dict:

@@ -62,8 +62,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
     # ------------------------------------------------------------ projects
     @r.post("/projects", status_code=201, summary="创建项目")
     def create_project(request: Request, body: dict = Body(default={})):
-        scope(request, "write")
-        return app_.create_project(body.get("name") or "自动化项目")
+        p = scope(request, "write")
+        return app_.create_project(body.get("name") or "自动化项目", origin=f"api:{p['key_id']}")
 
     @r.get("/projects", summary="项目列表")
     def list_projects(request: Request, offset: int = 0, limit: int = Query(50, le=200)):

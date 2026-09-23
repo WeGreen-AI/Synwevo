@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -89,6 +89,16 @@ CREATE INDEX IF NOT EXISTS ix_wh_due ON webhook_deliveries(status, next_attempt_
 """
 
 # columns added to v1 tables (name, table, definition)
+V3_COLUMNS = [
+    # Provenance: which run created this project.  Without it a cleanup tool cannot prove a
+    # row is test data, and deleting by name prefix is not evidence.  Pre-v3 rows keep NULL,
+    # which means "unknown origin" and is deliberately NOT treated as test data.
+    ("projects", "origin", "TEXT"),
+    # Archive is separate from `deleted`: deleted is the soft delete (the project 404s), an
+    # archived project is still fully usable, just out of the default list.
+    ("projects", "archived_at", "REAL"),
+]
+
 V2_COLUMNS = [
     ("projects", "tenant", "TEXT DEFAULT 'default'"),
     ("projects", "template_version", "INTEGER"),
@@ -155,10 +165,14 @@ class Store:
         defaults, and pre-v2 rows belong to the default tenant."""
         c.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '1')")
         ver = int(c.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"])
-        if ver < 2:
+        if ver < SCHEMA_VERSION:
+            # Every migration so far is additive: new tables (idempotent CREATE IF NOT EXISTS)
+            # and new columns (guarded by PRAGMA).  Running the whole set on any older version
+            # is therefore safe AND necessary — gating on `ver < 2` meant a v2 database never
+            # received v3's columns and the app then failed with "no such column".
             c.executescript(SCHEMA_V2)
             with self.tx() as t:
-                for table, col, decl in V2_COLUMNS:
+                for table, col, decl in V2_COLUMNS + V3_COLUMNS:
                     have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                     if col not in have:
                         t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
