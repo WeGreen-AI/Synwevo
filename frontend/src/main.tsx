@@ -12,6 +12,7 @@ import RegressionPage from "./pages/Regression";
 import Capabilities from "./pages/Capabilities";
 import Login from "./pages/Login";
 import Account from "./pages/Account";
+import Invite from "./pages/Invite";
 import "./styles.css";
 
 const DocEditor = lazy(() => import("./pages/DocEditor"));
@@ -29,6 +30,8 @@ createRoot(document.getElementById("root")!).render(
             <Routes>
               {/* The only route that must render without an account. */}
               <Route path="/login" element={<Login />} />
+              {/* The emailed invitation link lands here; it must render signed out. */}
+              <Route path="/invite" element={<Invite />} />
               <Route path="/account" element={<RequireSession><Account /></RequireSession>} />
               <Route path="/" element={<RequireSession><Home /></RequireSession>} />
               <Route path="/capabilities" element={<RequireSession><Capabilities /></RequireSession>} />

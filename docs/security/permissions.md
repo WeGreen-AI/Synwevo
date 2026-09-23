@@ -209,7 +209,8 @@ blob id 直取接口 · 临时文件 · 日志导出
 | 登录与账户安全界面 | **已实现** | `pages/Login.tsx`、`pages/Account.tsx`、`lib/session.tsx` | 浏览器实跑（引导→登录→账户页→历史数据不可见） |
 | 管理后台界面 | 待实现 | — | — |
 | 邀请与加入流程 | **已实现（后端）** | `invites.py`、`mail.py`、`auth_routes.build_invite_router` | `test_invites.py`（30） |
-| 邀请 / 加入界面 | 待实现 | — | — |
+| 邀请落地页 | **已实现** | `pages/Invite.tsx` | 浏览器实跑（邮件链接→落地页→接受→双工作空间）|
+| 成员与邀请管理界面 | 待实现 | — | — |
 | 自助注册（open 模式） | 待实现 | `identity.registration_mode` | — |
 | 邮箱验证 / 忘记口令 | 部分（令牌与邮件模板已就绪，路由未接） | `invites.issue_email_token` | `test_invites.py` 令牌段 |
 | Passkey / MFA / 恢复 | 待实现 | — | — |
