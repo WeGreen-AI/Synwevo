@@ -238,6 +238,101 @@ CREATE INDEX IF NOT EXISTS ix_audit_at ON audit_events(at);
 CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_events(actor_id, at);
 CREATE INDEX IF NOT EXISTS ix_audit_ws ON audit_events(workspace_id, at);
 
+CREATE TABLE IF NOT EXISTS apps (
+  -- A business application on the platform. Right now there is exactly one real one
+  -- (DocWeave); the table exists so adding a second needs configuration, not a schema change.
+  --
+  -- app_id is NOT a client_id and NOT an audience. One app may have several OIDC clients (web,
+  -- later a desktop build) that share the app but have their own redirect URIs and secrets.
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, icon TEXT,
+  launch_url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
+  -- 'members' = any member of a workspace that enabled the app; 'explicit' = per-user grant.
+  access_policy TEXT NOT NULL DEFAULT 'members' CHECK (access_policy IN ('members','explicit')),
+  created_at REAL NOT NULL, updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workspace_apps (
+  -- Which apps a workspace has turned on. Separate from membership: being in a workspace does
+  -- not by itself mean every app is available in it.
+  workspace_id TEXT NOT NULL, app_id TEXT NOT NULL,
+  enabled_at REAL NOT NULL, enabled_by TEXT,
+  PRIMARY KEY (workspace_id, app_id)
+);
+
+CREATE TABLE IF NOT EXISTS app_entitlements (
+  -- A person's right to use one app inside one workspace.
+  --
+  -- Deliberately its own table rather than being inferred from membership: a future second app
+  -- must not inherit DocWeave's access just because someone is a workspace admin. Migration
+  -- writes these explicitly for existing members so nobody is locked out, and grants nothing
+  -- beyond the app they already used.
+  workspace_id TEXT NOT NULL, app_id TEXT NOT NULL, user_id TEXT NOT NULL,
+  granted_at REAL NOT NULL, granted_by TEXT, revoked_at REAL,
+  PRIMARY KEY (workspace_id, app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS ix_ent_user ON app_entitlements(user_id, revoked_at);
+
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  -- OIDC client registration. Managed by CLI and configuration only — there is deliberately no
+  -- product UI for this, per the standing constraint on automation surfaces.
+  client_id TEXT PRIMARY KEY, app_id TEXT NOT NULL, name TEXT NOT NULL,
+  -- NULL for public clients (PKCE only). Confidential clients store a hash, never the secret.
+  secret_hash TEXT,
+  redirect_uris TEXT NOT NULL,            -- JSON array; matched exactly, never by wildcard
+  post_logout_redirect_uris TEXT,         -- JSON array
+  backchannel_logout_uri TEXT,
+  scopes TEXT NOT NULL DEFAULT 'openid profile email',
+  audiences TEXT,                         -- JSON array of APIs this client may be issued tokens for
+  token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none'
+    CHECK (token_endpoint_auth_method IN ('none','client_secret_basic','client_secret_post')),
+  require_pkce INTEGER NOT NULL DEFAULT 1,
+  created_at REAL NOT NULL, updated_at REAL NOT NULL, disabled_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_client_app ON oauth_clients(app_id);
+
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  -- Authorization codes. Short-lived and single-use; `used_at` is set by a conditional UPDATE so
+  -- a replayed code cannot be exchanged twice.
+  code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL, user_id TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL, scope TEXT NOT NULL, nonce TEXT,
+  code_challenge TEXT, code_challenge_method TEXT,
+  auth_time REAL NOT NULL, amr TEXT,        -- carried into the id_token: how and when they authenticated
+  central_session_id TEXT,                  -- ties the grant to the central session, for logout
+  workspace_id TEXT,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  -- Issued access/refresh tokens, stored as hashes so the table cannot be replayed.
+  -- Rows persist after revocation so introspection can answer "revoked" rather than "unknown".
+  id TEXT PRIMARY KEY, client_id TEXT NOT NULL, user_id TEXT,
+  access_hash TEXT UNIQUE, refresh_hash TEXT UNIQUE,
+  scope TEXT NOT NULL, audience TEXT,
+  central_session_id TEXT, workspace_id TEXT,
+  issued_at REAL NOT NULL, access_expires_at REAL, refresh_expires_at REAL,
+  revoked_at REAL, revoked_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_tok_session ON oauth_tokens(central_session_id, revoked_at);
+CREATE INDEX IF NOT EXISTS ix_tok_user ON oauth_tokens(user_id, revoked_at);
+
+CREATE TABLE IF NOT EXISTS oidc_keys (
+  -- Signing keys, persisted. Generating a fresh key at startup would invalidate every issued
+  -- token on restart, which looks exactly like a mass logout bug.
+  kid TEXT PRIMARY KEY, alg TEXT NOT NULL, private_jwk TEXT NOT NULL, public_jwk TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','retiring','retired')),
+  created_at REAL NOT NULL, retired_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS client_sessions (
+  -- Links a central session to the per-client sessions it produced, so a platform-wide logout
+  -- can reach them. Without this, "sign out everywhere" only clears the portal's own cookie.
+  id TEXT PRIMARY KEY, central_session_id TEXT NOT NULL, client_id TEXT NOT NULL,
+  user_id TEXT NOT NULL, sid TEXT NOT NULL,        -- the `sid` claim given to the client
+  created_at REAL NOT NULL, logged_out_at REAL, logout_error TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_csess_central ON client_sessions(central_session_id, logged_out_at);
+
 CREATE TABLE IF NOT EXISTS mfa_tickets (
   -- Proof that the password step succeeded, held between the two halves of a sign-in.
   --

@@ -38,6 +38,7 @@ THIRD_PARTY = [
      "口令哈希（Argon2id；参数经部署机实测，见 docweave/passwords.py）"),
     ("PyOTP", "MIT", "TOTP 第二因素"),
     ("cryptography", "Apache-2.0 或 BSD-3-Clause", "TOTP 种子落地加密（AES-256-GCM）"),
+    ("Authlib", "BSD-3-Clause", "OAuth 2.0 / OpenID Connect 授权服务器与客户端（协议实现）"),
     ("charset-normalizer", "MIT", "CSV 编码识别"),
     ("xlrd / olefile", "BSD-3-Clause / BSD-2-Clause", "XLS 读取、旧格式检测"),
     ("React / React Router / Vite / TypeScript", "MIT / Apache-2.0", "界面"),

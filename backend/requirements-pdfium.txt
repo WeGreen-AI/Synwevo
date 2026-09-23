@@ -15,6 +15,7 @@ pillow==12.3.0
 argon2-cffi==25.1.0       # MIT – Argon2id password hashing (parameters measured: docweave/passwords.py)
 pyotp==2.10.0             # MIT – TOTP second factor
 cryptography==46.0.3      # Apache-2.0 OR BSD-3 – AES-GCM for TOTP seeds at rest
+authlib==1.6.5            # BSD-3-Clause – OAuth 2.0 / OIDC authorization server (protocol impl; identity stays ours)
 charset-normalizer==3.5.1
 xlrd==2.0.2
 olefile==0.47

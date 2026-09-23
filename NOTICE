@@ -61,6 +61,10 @@ DocWeave —— 第三方组件与许可声明（NOTICE）
     许可：Apache-2.0 或 BSD-3-Clause
     用途：TOTP 种子落地加密（AES-256-GCM）
 
+* Authlib
+    许可：BSD-3-Clause
+    用途：OAuth 2.0 / OpenID Connect 授权服务器与客户端（协议实现）
+
 * charset-normalizer
     许可：MIT
     用途：CSV 编码识别
@@ -86,7 +90,6 @@ DocWeave —— 第三方组件与许可声明（NOTICE）
 关于 AGPL-3.0：
   PyMuPDF 以 AGPL-3.0（或 Artifex 商业许可）分发，其 wheel 中内含 MuPDF 原生二进制。
   只要镜像中安装了 pymupdf，无论 DOCWEAVE_PDF_ENGINE 选的是哪个引擎，
-  AGPL-3.0 第 13 条的「向网络用户提供对应源代码」义务都适用——
-  换引擎不会把二进制从镜像里拿掉，且图片模板包装页与中文后备字体两处仍会调用它。
+  AGPL-3.0 第 13 条的「向网络用户提供对应源代码」义务都适用。
   本服务通过 /api/source-code 提供对应源代码。
   若要真正不含 AGPL 依赖，请按 backend/requirements-pdfium.txt 构建，且不安装 pymupdf。
