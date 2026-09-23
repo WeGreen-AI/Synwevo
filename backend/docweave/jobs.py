@@ -811,7 +811,8 @@ class JobService:
         if plan.blocking:
             self._item_done(item["id"], "failed", [{**i, "stage": i.get("stage", "resolve")} for i in plan.blocking])
             return
-        out, issues, lay = G.fill_checked(tpl["format"], work, slots, plan, {**(tpl.get("fill_options") or {}), "keep_fields": opts.get("keep_fields")},
+        out, issues, lay = G.fill_checked(tpl["format"], work, slots, plan,
+                                          {**self.app.with_image_bytes(tpl.get("fill_options") or {}), "keep_fields": opts.get("keep_fields")},
                                           layout_mode, tpl_pages)
         blocking = [i for i in issues if i.get("level") == "error"]
         if blocking or not out:

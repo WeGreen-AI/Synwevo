@@ -27,15 +27,25 @@ def capability_report() -> dict:
                 "pdf_export": pdf, "fidelity": fidelity, "processing": where, "batch": batch}
 
     rows = _rows(lo, conv, ocr, row)
-    if not pdf_engine.templates_available():
+    if not pdf_engine.pdf_templates_available():
         why = pdf_engine.TEMPLATES_UNAVAILABLE
+        images_ok = pdf_engine.image_templates_available()
+        # One row covers scanned PDFs together with PNG/JPEG, but they no longer share a
+        # fate: image templates are filled in pixels and work here, scanned-PDF templates
+        # still need a PDF engine that can rewrite page content.
+        mixed = ("partial", "图片模板（PNG/JPEG）可用：在像素上直接清除与写入，支持中文、换行与缩放；"
+                           "扫描型 PDF 模板仍需 PyMuPDF。" + why)
         for r in rows:
-            if r["format"].startswith("PDF") or r["format"].startswith("PDF（扫描型）"):
-                for k in ("template", "fill"):
-                    r[k] = ("unavailable", why)
-                if r["native_export"][0] != "no":
-                    r["native_export"] = ("unavailable", "PDF / 图片模板不可用，因此没有原生输出")
-                r["processing"] = "服务端本地（pypdfium2，Apache-2.0 / BSD-3）" + ("" if "Tesseract" not in r["processing"] else " + Tesseract")
+            if not r["format"].startswith("PDF"):
+                continue
+            is_mixed_row = "PNG" in r["format"] or "JPEG" in r["format"]
+            for k in ("template", "fill"):
+                r[k] = (mixed if (is_mixed_row and images_ok) else ("unavailable", why))
+            if r["native_export"][0] != "no":
+                r["native_export"] = ((("partial", "图片模板输出同尺寸 PNG/JPEG；扫描型 PDF 无原生输出"))
+                                      if (is_mixed_row and images_ok)
+                                      else ("unavailable", "PDF 模板不可用，因此没有原生输出"))
+            r["processing"] = "服务端本地（pypdfium2，Apache-2.0 / BSD-3）" + ("" if "Tesseract" not in r["processing"] else " + Tesseract")
     return {"rows": rows, "environment": {"libreoffice": soffice_version() if lo else None, "tesseract": tesseract_path(),
                                           "ocr_languages": langs, "pdf_engine": pdf_engine.ENGINE,
                                           "pdf_engine_license": "AGPL-3.0 或 Artifex 商业许可" if pdf_engine.ENGINE == "pymupdf" else "Apache-2.0 / BSD-3-Clause"},

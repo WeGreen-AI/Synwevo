@@ -294,9 +294,26 @@ class App:
 
     @staticmethod
     def fill_options(template_row: dict) -> dict:
-        """Template-specific options every fill needs (image size / DPI / ICC for image templates)."""
+        """Template-specific options every fill needs (image size / DPI / ICC for image templates).
+
+        Metadata only: this is stored verbatim in a job snapshot, so the image's pixels must
+        not go in here.  Use :meth:`with_image_bytes` at fill time to attach them."""
         img = (template_row.get("info") or {}).get("image")
         return {"image": img} if img else {}
+
+    def with_image_bytes(self, opts: dict) -> dict:
+        """Attach an image template's original pixels, resolved from the blob store.
+
+        The raster fill path edits the picture itself, so it needs the bytes; the snapshot
+        only carries the blob id, which keeps job snapshots small and stable."""
+        img = (opts or {}).get("image") or {}
+        blob = img.get("original_blob")
+        if not blob or opts.get("image_bytes"):
+            return opts
+        try:
+            return {**opts, "image_bytes": self.store.get_blob(blob)}
+        except Exception:  # noqa: BLE001 - a missing blob is reported by the fill itself
+            return opts
 
     def get_template(self, tid: str) -> dict:
         r = self.store.one("SELECT * FROM templates WHERE id=? AND deleted=0", (tid,))
@@ -359,10 +376,11 @@ class App:
                 raise ServiceError(400, "convert_failed", str(e)) from e
         fmt = {"docm": "docx", "xlsm": "xlsx", "pptm": "pptx"}.get(fmt, fmt)
         image_meta = None
-        if fmt in ("pdf", "png", "jpeg", "tiff", "bmp", "webp"):
-            from .engine import pdf_engine as _pe
-            if not _pe.templates_available():
-                raise ServiceError(400, "engine_unavailable", _pe.TEMPLATES_UNAVAILABLE)
+        from .engine import pdf_engine as _pe
+        if fmt == "pdf" and not _pe.pdf_templates_available():
+            raise ServiceError(400, "engine_unavailable", _pe.TEMPLATES_UNAVAILABLE)
+        if fmt in ("png", "jpeg", "tiff", "bmp", "webp") and not _pe.image_templates_available():
+            raise ServiceError(400, "engine_unavailable", _pe.IMAGE_TEMPLATES_UNAVAILABLE)
         if fmt in ("png", "jpeg", "tiff", "bmp", "webp"):
             from .engine.image_template import ImageTemplateError, make_wrapper
             try:
@@ -469,12 +487,20 @@ class App:
             elif fmt == "xlsx":
                 work2, slot = T.xlsx_add_slot(work, req, slots)
             elif fmt in PDF_LIKE:
+                from .engine import pdf_engine as _pe
+                img_meta = (r.get("info") or {}).get("image") or {}
                 if fmt != "pdf":
                     req = {**req, "image_template": True}
-                slot = T.pdf_add_slot(self.store.get_blob(r["original_blob"]), req, slots)
-                work2, warns = T.pdf_working_copy(self.store.get_blob(r["original_blob"]), slots + [slot])
-                if warns:
-                    slot["warning"] = "；".join(warns)
+                if fmt != "pdf" and not _pe.pdf_templates_available():
+                    # raster authoring: the wrapper PDF is left untouched (it is only the
+                    # preview surface); the field is analysed straight from the pixels
+                    slot = T.image_add_slot(self.store.get_blob(img_meta["original_blob"]), req, slots)
+                    work2 = work
+                else:
+                    slot = T.pdf_add_slot(self.store.get_blob(r["original_blob"]), req, slots)
+                    work2, warns = T.pdf_working_copy(self.store.get_blob(r["original_blob"]), slots + [slot])
+                    if warns:
+                        slot["warning"] = "；".join(warns)
             elif fmt == "pptx":
                 from .engine.pptx_engine import pptx_add_slot
                 work2, slot = pptx_add_slot(work, req, slots)
@@ -743,10 +769,21 @@ PDF_LIKE = ("pdf", "png", "jpeg")
 
 def pdf_slots_with_nrect(pdf_bytes: bytes, slots: list[dict]) -> list[dict]:
     """Add the on-screen (rotated, normalised) rectangle of each PDF box for display."""
-    import pymupdf
-
     from .engine import pdf_engine as pe
     out = [dict(s) for s in slots]
+    if not pe.pdf_templates_available():
+        # Image templates: the page IS the pixel grid (1 px = 1 pt, no rotation), so the
+        # normalised rect is plain arithmetic and needs no PDF engine.
+        for s in out:
+            loc = s.get("locator") or {}
+            size = loc.get("page_size")
+            if "rect" in loc and size and float(size[0]) > 0 and float(size[1]) > 0:
+                x0, y0, x1, y1 = (float(v) for v in loc["rect"])
+                w, h = float(size[0]), float(size[1])
+                s["nrect"] = [x0 / w, y0 / h, x1 / w, y1 / h]
+        return out
+
+    import pymupdf
     doc = pe.open_pdf(pdf_bytes)
     for s in out:
         loc = s.get("locator") or {}

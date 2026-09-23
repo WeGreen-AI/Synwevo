@@ -605,6 +605,55 @@ def pdf_add_slot(original: bytes, req: dict, slots: list[dict]) -> dict:
     return slot
 
 
+def image_add_slot(image_bytes: bytes, req: dict, slots: list[dict]) -> dict:
+    """Define a field on an image template without any PDF engine.
+
+    An image wrapper has no text layer (nothing to extract, nothing to redact), so all the
+    PDF-specific work in pdf_add_slot is a no-op for it; what is left — the paper colour,
+    the ink colour and the ink height that sets the default font size — is pixel analysis
+    that Pillow does directly.
+    """
+    from .image_template import background_color_px, ink_metrics_px, open_image
+    kind = req.get("kind", "pdf_box")
+    if kind != "pdf_box":
+        raise TemplateError("raster_kind_unsupported",
+                            "无 PyMuPDF 的部署目前只支持图片模板的单值文本框字段；重复明细区域请按 "
+                            "docs/DEPENDENCIES.md 启用 PyMuPDF")
+    im = open_image(image_bytes).convert("RGB")
+    W, H = im.size
+    r = [float(v) for v in req["rect"]]
+    x0, y0, x1, y1 = min(r[0], r[2]), min(r[1], r[3]), max(r[0], r[2]), max(r[1], r[3])
+    x0, y0 = max(0.0, x0), max(0.0, y0)
+    x1, y1 = min(float(W), x1), min(float(H), y1)
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        raise TemplateError("too_small", "框选区域太小")
+    _check_overlap_rect(slots, 0, (x0, y0, x1, y1))
+    crop = im.crop((int(x0), int(y0), int(x1), int(y1)))
+    bg = background_color_px(crop)
+    ink, height = ink_metrics_px(crop, bg)
+    size = round(min(72.0, max(5.0, height / 0.86)) * 2) / 2 if height else 11.0   # CJK ink ~ 0.86 em
+    from . import pdf_engine as pe
+    return _base_slot(req.get("name") or "字段", "pdf_box",
+                      locator={"page": 0, "rect": [round(v, 2) for v in (x0, y0, x1, y1)],
+                               "page_size": [float(W), float(H)], "rotation": 0},
+                      text_rotate=0, font_size=req.get("font_size") or size,
+                      min_font_size=req.get("min_font_size", 6), align=req.get("align", "left"),
+                      valign=req.get("valign", "middle"), clear="text_pixels", original_text="",
+                      color=_valid_hex(req.get("color")) or (pe.hexcolor(ink) if ink else "#000000"),
+                      fill=list(bg))
+
+
+def _check_overlap_rect(slots: list[dict], page: int, rect) -> None:
+    x0, y0, x1, y1 = rect
+    for other in slots:
+        loc = other.get("locator") or {}
+        if loc.get("page") != page or "rect" not in loc:
+            continue
+        a0, b0, a1, b1 = loc["rect"]
+        if min(x1, a1) - max(x0, a0) > 2 and min(y1, b1) - max(y0, b0) > 2:
+            raise TemplateError("overlap", f"区域与字段「{other.get('name')}」重叠")
+
+
 def _valid_hex(c) -> str | None:
     return c.lower() if isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) else None
 
@@ -704,11 +753,26 @@ def pdf_working_copy(original: bytes, slots: list[dict]) -> tuple[bytes, list[st
 
 
 def image_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: dict | None = None) -> tuple[bytes, list[dict]]:
-    """Image template: fill the wrapper PDF, check the values are in it, then rasterise."""
+    """Image template: fill the wrapper PDF, check the values are in it, then rasterise.
+
+    Without a PDF engine that can rewrite page content there is no wrapper to fill, so the
+    original pixels are edited directly (image_raster).  Image templates are raster work;
+    they only ever went through a PDF because that is how the machinery was shared."""
+    from . import pdf_engine as _pe
     from .image_template import rasterise
     meta = (options or {}).get("image")
     if not meta:
         raise TemplateError("image_meta", "图片模板缺少尺寸信息，请重新上传模板")
+    if not _pe.pdf_templates_available():
+        from .image_template import ImageTemplateError
+        from .image_raster import fill as raster_fill
+        src = (options or {}).get("image_bytes")
+        if not src:
+            raise TemplateError("image_source", "缺少图片模板的原始像素，无法在无 PDF 引擎的部署中填充")
+        try:
+            return raster_fill(src, slots, values, meta)
+        except ImageTemplateError as e:
+            raise TemplateError(e.code, str(e)) from e
     pdf, issues = pdf_fill(work, slots, values, options)
     if any(i.get("level") == "error" for i in issues):
         return b"", issues

@@ -60,13 +60,29 @@ def use_engine(name: str) -> str:
     return prev
 
 
-def templates_available() -> bool:
-    """PDF / image templates need an engine that can rewrite page content (PyMuPDF)."""
+def pdf_templates_available() -> bool:
+    """PDF templates need an engine that can rewrite page content (PyMuPDF today)."""
     return ENGINE == "pymupdf"
 
 
-TEMPLATES_UNAVAILABLE = ("当前部署使用 pdfium 引擎（未安装或未启用 AGPL 许可的 PyMuPDF），PDF / 图片模板不可用；"
-                         "PDF 来源文件的读取、预览、OCR 与取值不受影响。如需 PDF / 图片模板，请按 docs/DEPENDENCIES.md 启用 PyMuPDF")
+def image_templates_available() -> bool:
+    """Image templates are pure raster work: they need a CJK-capable font file, not a PDF
+    engine.  Capability is per format on purpose — one global "is PyMuPDF importable"
+    switch used to disable image templates for a reason that had nothing to do with them."""
+    if ENGINE == "pymupdf":
+        return True
+    from . import fonts
+    return bool(fonts.cjk_font_file())
+
+
+def templates_available() -> bool:      # kept: older callers mean "PDF templates"
+    return pdf_templates_available()
+
+
+TEMPLATES_UNAVAILABLE = ("当前部署使用 pdfium 引擎（未安装或未启用 AGPL 许可的 PyMuPDF），PDF 模板不可用；"
+                         "PDF 来源文件的读取、预览、OCR 与取值不受影响。如需 PDF 模板，请按 docs/DEPENDENCIES.md 启用 PyMuPDF")
+IMAGE_TEMPLATES_UNAVAILABLE = ("图片模板需要一个可绘制中文的字体文件，但本机没有找到。请安装中文字体"
+                               "（Debian/Ubuntu：apt install fonts-noto-cjk），或用 DOCWEAVE_CJK_FONT_FILE 指定字体文件路径")
 
 _CJK_FONT: pymupdf.Font | None = None
 FONT_NAME = "dwcjk"

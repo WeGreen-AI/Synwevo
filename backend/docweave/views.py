@@ -256,7 +256,8 @@ class Views:
             return result
         layout_mode = (ctx.project.get("output") or {}).get("layout") or "off"
         tpl_pages = G.template_pages(ctx.template["format"], ctx.working()) if layout_mode == "fit" else None
-        out, issues, lay = G.fill_checked(ctx.template["format"], ctx.working(), ctx.slots, plan, self.app.fill_options(ctx.template),
+        out, issues, lay = G.fill_checked(ctx.template["format"], ctx.working(), ctx.slots, plan,
+                                          self.app.with_image_bytes(self.app.fill_options(ctx.template)),
                                           "fit" if layout_mode == "fit" else "off", tpl_pages)
         result["issues"] = plan.issues + issues
         if not out:

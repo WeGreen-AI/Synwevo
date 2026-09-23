@@ -53,8 +53,10 @@ def test_pdf_source_flow_and_template_refusal(api, fixtures, pdfium):
     assert prop["sample"] == "TEST00000001" and prop["locator"]["anchor"]["text"].startswith("证件号")
     r = api.c.post("/api/templates/upload", files={"file": ("t.pdf", (fixtures / "测试_通知书模板.pdf").read_bytes())}, data={"project_id": pid})
     assert r.status_code == 400 and "pdfium" in r.text and "PyMuPDF" in r.text
+    # Image templates DO work without PyMuPDF: they are raster work and now use the Pillow
+    # fill path (they used to be refused for a reason that had nothing to do with images).
     r = api.c.post("/api/templates/upload", files={"file": ("t.png", (fixtures / "测试_发货单图片模板.png").read_bytes())}, data={"project_id": pid})
-    assert r.status_code == 400
+    assert r.status_code < 400, r.text[:300]
     # a DOCX template still works end to end with the PDF source
     t = api.template(pid, fixtures / "测试_合同模板.docx")
     slot = api.text_slot(t["id"], "示例客户名称", "客户")
@@ -65,7 +67,9 @@ def test_pdf_source_flow_and_template_refusal(api, fixtures, pdfium):
     caps = api.ok(api.c.get("/api/capabilities"))
     assert caps["environment"]["pdf_engine"] == "pdfium"
     pdf_row = next(r for r in caps["rows"] if r["format"].startswith("PDF（文本型）"))
-    assert pdf_row["template"][0] == "unavailable"
+    assert pdf_row["template"][0] == "unavailable"      # PDF templates still need PyMuPDF
+    img_row = next(r for r in caps["rows"] if "PNG" in r["format"])
+    assert img_row["template"][0] != "unavailable", "图片模板在 pdfium 部署下应当可用"
 
 
 def test_page_level_blocks_and_scanned_ocr(api, fixtures, pdfium):

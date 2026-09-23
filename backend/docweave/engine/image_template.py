@@ -14,7 +14,6 @@ from __future__ import annotations
 import base64
 import io
 
-import pymupdf
 from PIL import Image, ImageOps
 
 from . import images as _images  # noqa: F401  sets Image.MAX_IMAGE_PIXELS from LIMITS
@@ -44,6 +43,27 @@ def open_image(data: bytes) -> Image.Image:
     except Exception as e:  # noqa: BLE001
         raise ImageTemplateError("corrupt", f"无法打开图片：{e}") from e
     return im
+
+
+def _wrap_pdf(im: Image.Image, stream: bytes, w: int, h: int) -> bytes:
+    """One-page PDF whose page is exactly the pixel grid (1 px = 1 pt).
+
+    Built with PyMuPDF when it is present (it embeds the given stream as-is), and with
+    Pillow otherwise, so an image template can still be authored and previewed in the
+    AGPL-free deployment.  Filling never goes through this PDF — see image_raster.
+    """
+    try:
+        import pymupdf
+    except ImportError:
+        buf = io.BytesIO()
+        im.save(buf, "PDF", resolution=72.0)          # 1 px = 1 pt, matching the PyMuPDF page
+        return buf.getvalue()
+    doc = pymupdf.open()
+    page = doc.new_page(width=w, height=h)
+    page.insert_image(page.rect, stream=stream)
+    out = doc.tobytes(garbage=3, deflate=True)
+    doc.close()
+    return out
 
 
 def make_wrapper(data: bytes) -> tuple[bytes, dict, list[str]]:
@@ -85,11 +105,7 @@ def make_wrapper(data: bytes) -> tuple[bytes, dict, list[str]]:
         buf = io.BytesIO()
         im2.save(buf, "PNG")
         stream = buf.getvalue()
-    doc = pymupdf.open()
-    page = doc.new_page(width=w, height=h)
-    page.insert_image(page.rect, stream=stream)
-    pdf = doc.tobytes(garbage=3, deflate=True)
-    doc.close()
+    pdf = _wrap_pdf(im2, stream, w, h)
     meta = {"native": native, "width": w, "height": h, "dpi": [round(dpi[0], 3), round(dpi[1], 3)], "alpha": bool(alpha),
             "mode": im2.mode, "source_format": src_fmt.lower(), "icc": base64.b64encode(icc).decode() if icc else None}
     notes.append(f"图片模板：{w}×{h} 像素，输出为同尺寸 {NATIVE[native].upper()}；框选区域会按周围背景色清除原像素后写入新内容")
@@ -100,6 +116,7 @@ def make_wrapper(data: bytes) -> tuple[bytes, dict, list[str]]:
 
 def rasterise(pdf: bytes, meta: dict) -> bytes:
     """Filled wrapper PDF → image bytes in the template's native format."""
+    import pymupdf
     doc = pymupdf.open(stream=pdf, filetype="pdf")
     try:
         page = doc[0]
@@ -134,6 +151,7 @@ def rasterise(pdf: bytes, meta: dict) -> bytes:
 
 def to_pdf(image_bytes: bytes) -> bytes:
     """An output image as a one-page PDF (for PDF export and page rendering)."""
+    import pymupdf
     src = pymupdf.open(stream=image_bytes)
     try:
         pdf = src.convert_to_pdf()
@@ -152,8 +170,9 @@ def check(data: bytes, meta: dict) -> dict:
 
 
 # ------------------------------------------------------------------ pixel helpers (scanned PDFs and images)
-def region_pixels(page: pymupdf.Page, rect, zoom: float = 1.0) -> Image.Image:
+def region_pixels(page, rect, zoom: float = 1.0) -> Image.Image:
     """Render ``rect`` (unrotated coords) of the page's *unrotated* content."""
+    import pymupdf
     r = pymupdf.Rect(rect) & page.mediabox
     if r.is_empty:
         return Image.new("RGB", (1, 1), "white")
@@ -169,10 +188,17 @@ def region_pixels(page: pymupdf.Page, rect, zoom: float = 1.0) -> Image.Image:
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
-def background_color(page: pymupdf.Page, rect) -> tuple[float, float, float]:
-    """The paper colour of ``rect``: the bright majority of its pixels (text, table rules and
-    stamps are the darker minority).  Used as the flat fallback fill when clearing pixels."""
-    im = region_pixels(page, pymupdf.Rect(rect))
+def background_color(page, rect) -> tuple[float, float, float]:
+    """The paper colour of ``rect`` — see :func:`background_color_px`."""
+    import pymupdf
+    return background_color_px(region_pixels(page, pymupdf.Rect(rect)))
+
+
+def background_color_px(im: Image.Image) -> tuple[float, float, float]:
+    """The paper colour of an already-cropped region: the bright majority of its pixels
+    (text, table rules and stamps are the darker minority).  Pure Pillow, so the raster
+    fill path can use it without a PDF engine."""
+    im = im.convert("RGB")
     w, h = im.size
     if w * h == 0:
         return (1.0, 1.0, 1.0)
@@ -191,17 +217,23 @@ def background_color(page: pymupdf.Page, rect) -> tuple[float, float, float]:
     return (round(med[0] / 255, 4), round(med[1] / 255, 4), round(med[2] / 255, 4))
 
 
-def text_color(page: pymupdf.Page, rect, bg: tuple[float, float, float]) -> tuple[float, float, float] | None:
+def text_color(page, rect, bg: tuple[float, float, float]) -> tuple[float, float, float] | None:
     """Colour of the original ink inside ``rect`` (pixels clearly darker than the background)."""
     return ink_metrics(page, rect, bg)[0]
 
 
-def ink_metrics(page: pymupdf.Page, rect, bg: tuple[float, float, float]) -> tuple[tuple[float, float, float] | None, float | None]:
+def ink_metrics(page, rect, bg: tuple[float, float, float]) -> tuple[tuple[float, float, float] | None, float | None]:
     """(ink colour, height of the tallest ink line in points) inside ``rect`` – the colour and
     size new text should use to look like the text it replaces."""
+    import pymupdf
     r = pymupdf.Rect(rect)
     zoom = 2.0 if r.width * r.height * 4 <= 1_000_000 else 1.0
-    im = region_pixels(page, r, zoom=zoom).convert("RGB")
+    return ink_metrics_px(region_pixels(page, r, zoom=zoom), bg, zoom)
+
+
+def ink_metrics_px(im: Image.Image, bg: tuple[float, float, float], zoom: float = 1.0):
+    """(ink colour, height of the tallest ink line) for an already-cropped region."""
+    im = im.convert("RGB")
     w, h = im.size
     if w * h == 0:
         return None, None
@@ -228,9 +260,10 @@ def ink_metrics(page: pymupdf.Page, rect, bg: tuple[float, float, float]) -> tup
     return color, height
 
 
-def raster_rules(page: pymupdf.Page, rect, min_frac: float = 0.55) -> tuple[list[float], list[float]]:
+def raster_rules(page, rect, min_frac: float = 0.55) -> tuple[list[float], list[float]]:
     """Horizontal (y) and vertical (x) ruling lines drawn *in pixels* inside ``rect``
     (unrotated coords), found by row / column darkness projections."""
+    import pymupdf
     r = pymupdf.Rect(rect)
     im = region_pixels(page, r, zoom=2.0).convert("L")
     w, h = im.size
@@ -256,18 +289,29 @@ def raster_rules(page: pymupdf.Page, rect, min_frac: float = 0.55) -> tuple[list
     return hs, vs
 
 
-def background_patch(page: pymupdf.Page, rect, max_grid: int = 48) -> bytes | None:
+def background_patch(page, rect, max_grid: int = 48) -> bytes | None:
     """A PNG that reconstructs the background under ``rect`` from the pixels around it
     (Coons-patch interpolation of the four edge colours, dark pixels – lines, text –
     replaced by their neighbours).  Follows gradients and uneven scan lighting that a
     flat fill would not.  Returns None when the area is too small to matter."""
+    import pymupdf
     r = pymupdf.Rect(rect)
     if r.width < 2 or r.height < 2:
         return None
     # the outermost pixels *of the area itself*: outside it there may be table rules or labels,
     # inside the edge band there is normally only background (the text sits further in)
-    ring = r
-    im = region_pixels(page, ring, zoom=1.0)
+    inner = background_patch_px(region_pixels(page, r, zoom=1.0), max_grid)
+    if inner is None:
+        return None
+    buf = io.BytesIO()
+    inner.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def background_patch_px(im: Image.Image, max_grid: int = 48) -> Image.Image | None:
+    """Reconstruct the background of an already-cropped region from its own edge pixels
+    (Coons-patch interpolation, dark pixels replaced by their neighbours).  Pure Pillow."""
+    im = im.convert("RGB")
     w, h = im.size
     if w < 5 or h < 5:
         return None
@@ -317,7 +361,4 @@ def background_patch(page: pymupdf.Page, rect, max_grid: int = 48) -> bytes | No
                        - ((1 - u) * (1 - v) * tl[k] + u * (1 - v) * tr_[k] + (1 - u) * v * bl[k] + u * v * br[k]))
                 c.append(max(0, min(255, int(round(val)))))
             g[i, j] = tuple(c)
-    inner = grid.resize((w, h), Image.BICUBIC)
-    buf = io.BytesIO()
-    inner.save(buf, "PNG")
-    return buf.getvalue()
+    return grid.resize((w, h), Image.BICUBIC)
