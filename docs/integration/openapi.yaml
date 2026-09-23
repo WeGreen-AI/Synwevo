@@ -9,6 +9,7 @@ paths:
       tags:
         - system
       summary: 存活检查（进程是否在运行）
+      description: "无需鉴权。返回 `{\"status\":\"ok\"}`；仅测试实例额外返回 `instance`。"
       operationId: healthz_healthz_get
       responses:
         200:
@@ -22,6 +23,7 @@ paths:
       tags:
         - system
       summary: 就绪检查（能否真正处理任务）
+      description: "无需鉴权。200 `ready` / 503 `not_ready`，带 `checks` 组件级状态；不含版本、schema 版本等诊断信息。"
       operationId: readyz_readyz_get
       responses:
         200:

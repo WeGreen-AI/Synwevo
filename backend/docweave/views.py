@@ -130,6 +130,25 @@ class Views:
             return to_png(doc.data)
         raise ServiceError(400, "not_paged", "该文件没有页面图像")
 
+    def source_page_etag(self, sid: str, page: int, zoom: float, block: int | None = None) -> str | None:
+        """A validator for a rendered page, computed without rendering it.
+
+        Derived from the *stored* content (the blob digest) plus everything that changes what
+        the render looks like. Hashing the rendered PNG instead would mean rasterizing the page
+        to decide whether we need to rasterize the page.
+
+        Goes through the same `get_source` lookup as the render, so an unauthorized caller gets
+        the same refusal here as there — a validator that could be obtained without
+        authorization would leak whether a document changed.
+        """
+        import hashlib
+        r = self.app.get_source(sid, raw=True)
+        base = r.get("working_blob") or r.get("parsed_blob") or r.get("blob")
+        if not base:
+            return None
+        seed = f"{base}|{page}|{zoom}|{block}|{r.get('family')}"
+        return '"' + hashlib.sha256(seed.encode()).hexdigest()[:32] + '"'
+
     def source_words(self, sid: str, page: int, block: int | None = None) -> dict:
         r = self.app.get_source(sid, raw=True)
         doc = self.app.doc_for(r, block)

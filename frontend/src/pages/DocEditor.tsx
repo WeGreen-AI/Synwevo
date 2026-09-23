@@ -194,13 +194,41 @@ export default function DocEditor() {
   };
   const setBlock = (attrs: any) => body!.chain().updateAttributes("repeatBlock", attrs).run();
 
+  /**
+   * Insert a picked image, re-encoded to something a page can actually use.
+   *
+   * It used to insert the file's own data URI at full resolution and merely *display* it at
+   * 600px. A phone photo is 4000px wide and ~11 MB, which becomes ~16 MB of base64 living
+   * inside the document model — and the model is what `saveTpl` submits, so every save carried
+   * the whole camera original. Several of those is an out-of-memory kill on a small container
+   * rather than an error page.
+   *
+   * 1600px on the long edge is roughly 135mm at 300dpi: generous for print, and a ~50x
+   * reduction from a phone original. PNG is kept as PNG so transparency survives; everything
+   * else becomes JPEG, which is what actually removes the bulk.
+   */
   const onImage = (f: File) => {
+    const MAX_EDGE = 1600;
     const r = new FileReader();
     r.onload = () => {
       const img = new window.Image();
       img.onload = () => {
-        const w = Math.min(img.width, 600);
-        chain().setImage({ src: String(r.result), width: w } as any).run();
+        const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+        let src = String(r.result);
+        if (scale < 1) {
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const keepAlpha = f.type === "image/png";
+            // A failed re-encode leaves `src` as the original: worse for size, still correct.
+            src = canvas.toDataURL(keepAlpha ? "image/png" : "image/jpeg",
+                                   keepAlpha ? undefined : 0.85) || src;
+          }
+        }
+        chain().setImage({ src, width: Math.min(img.width, 600) } as any).run();
       };
       img.src = String(r.result);
     };

@@ -18,6 +18,68 @@
 
 没有独立的队列服务、对象存储服务或后台管理端口；`docker-compose.yml` 中也只映射 8765。
 
+## 1.1 平台模式：一个二进制，三个角色，三个来源
+
+上面那张表描述的是**单进程形态**（`DOCWEAVE_ROLE` 未设 ⇒ `all`），也是 `dw.wegreen.ltd` 今天
+运行的形态。启用平台模式后，同一个二进制以三个角色各起一个进程：
+
+| 角色 | 用途 | 默认端口 | 默认绑定 | 服务的前端 | 鉴权 |
+|---|---|---|---|---|---|
+| `accounts` | 账户服务 / OIDC Provider、账户与安全、管理后台 | **8770**（`PLATFORM_ACCOUNTS_PORT`） | 见下 | `accounts.html` | `/api/auth/*` 会话；`/oidc/*` 各自携带自己的认证 |
+| `portal` | 平台门户（接入统一身份的客户端） | **8769**（`PLATFORM_PORTAL_PORT`） | 见下 | `portal.html` | 会话 |
+| `app` | DocWeave 业务应用 | **8765**（`PLATFORM_DOCWEAVE_PORT`） | 见下 | `index.html` | 会话；`/api/v1/*` 机器凭据 |
+
+本机地址分别是 `http://accounts.localhost:8770`、`http://portal.localhost:8769`、
+`http://docweave.localhost:8765`。
+
+> **为什么是三个主机名而不是三个端口：不同端口不隔离 Cookie。** Cookie 协议按主机划分作用域并
+> 完全忽略端口，所以 `localhost:8770` 设的 Cookie 会照样发给 `localhost:8765`。全用 `localhost`
+> 换端口做出来的"跨来源单点登录"，其实是一个共享 Cookie 戴了三顶帽子。`*.localhost` 按 RFC 6761
+> 全部解析到回环地址，不需要改 hosts 文件。
+
+**绑定地址按域名解析结果决定**，不是固定 `127.0.0.1`。`*.localhost` 在本机同时解析到 `::1` 和
+`127.0.0.1` 且 `getaddrinfo` 先返回 `::1`；uvicorn 只绑一个地址，绑错会让浏览器正常而
+服务端换码失败（httpx 不做地址回退）。`scripts/platform_local.py: bind_addr()` 负责这件事。
+
+角色边界由网关中的一个过滤器强制执行，**不是靠"没挂载那个路由"**：
+
+| 请求 | `accounts` | `portal` | `app` |
+|---|---|---|---|
+| `/oidc/*`、`/.well-known/*` | 200 | 404 | 404 |
+| `/api/auth/*`（除会话自身的几条） | 200 | 404 | 404 |
+| `/api/admin/*` | 200 | 404 | 404 |
+| `/api/portal/*` | 404 | 200 | 404 |
+| `/api/projects`、`/api/v1/*` | 404 | 404 | 200 |
+| `/api/auth/state`、`/logout`、`/me`、`/workspace`、`/sign-out` | 200 | 200 | 200 |
+| `/api/health`、`/healthz`、`/readyz`、`/assets/*` | 200 | 200 | 200 |
+
+过滤器表达为"账户服务拥有的路径**减去**允许清单"，而不是一张要封的前缀名单——这样账户服务以后
+新增的路由默认被拒绝，而不是悄悄可达。
+
+### 1.2 协议端点（账户服务上）
+
+| 路径 | 用途 | 鉴权 |
+|---|---|---|
+| `GET /.well-known/openid-configuration` | discovery | 无 |
+| `GET /oidc/jwks.json` | 公钥 | 无 |
+| `GET /oidc/authorize` | 授权端点 | 中央会话 Cookie（没有则跳登录） |
+| `POST /oidc/token` | 令牌端点（`authorization_code` / `refresh_token` / `client_credentials`） | 客户端凭据；**完全不看 Cookie** |
+| `GET /oidc/userinfo` | 用户信息 | Bearer 访问令牌 |
+| `POST /oidc/revoke` | 撤销 | 客户端凭据 |
+| `GET /oidc/logout` | RP 发起的登出 | 中央会话 Cookie |
+
+### 1.3 依赖方端点（门户与 DocWeave 上）
+
+| 路径 | 用途 | 鉴权 |
+|---|---|---|
+| `GET /auth/start` | 发起登录 | 无（这是入口） |
+| `GET /auth/callback` | 换码建会话 | 服务端请求行 + `dw_authreq` Cookie |
+| `POST /auth/backchannel-logout` | 接收登出通知 | **签名的登出令牌本身**；无 Cookie、无 CSRF |
+| `POST /api/auth/sign-out` | 退出本应用 | 会话 + CSRF |
+
+**这些协议与 SSO 端点不经过旧的 Basic 关卡**：它们各自携带自己的认证，而在一条重定向链中间
+弹出 HTTP 认证对话框不是登录流程。
+
 ## 2. 地址与路径
 
 | 用途 | 地址（默认部署） |

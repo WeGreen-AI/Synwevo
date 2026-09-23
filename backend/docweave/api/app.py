@@ -47,6 +47,35 @@ def attachment(data: bytes, filename: str, ext: str | None = None, inline: bool 
                     headers={"Content-Disposition": cd, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
 
+class _HashedAssets(StaticFiles):
+    """Vite's build output, whose filenames already contain a content hash.
+
+    `main-Fb_P6FP5.js` changes its *name* when its bytes change, so the bytes under any one name
+    never change and the browser never needs to ask again. `immutable` is what says that: it
+    stops even a manual reload from revalidating, which is the difference between a reload
+    costing one request and costing one per bundle.
+
+    Applied only to files that actually carry a hash. A build output without one would be a file
+    whose contents *can* change under a fixed name, and telling a browser to keep that for a year
+    is how a deploy silently fails to reach people.
+
+    The mount sits behind the same gate as everything else — this only adds a header to a
+    response the gate has already allowed.
+    """
+
+    _HASHED = __import__("re").compile(r"-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$")
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        resp = super().file_response(full_path, stat_result, scope, status_code)
+        name = os.path.basename(str(full_path))
+        if self._HASHED.search(name):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            # No hash in the name ⇒ the bytes can change under this name. Revalidate.
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     data_dir = data_dir or os.environ.get("DOCWEAVE_DATA_DIR") or str(Path(__file__).resolve().parents[3] / "data")
     store = Store(data_dir)
@@ -202,6 +231,11 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     # Paths the account service owns. Everything else under /api/ is DocWeave's own workbench.
     ACCOUNT_PATHS = ("/api/auth/", "/api/admin/", "/oidc/", "/.well-known/")
     SHARED_PATHS = ("/api/health", "/healthz", "/readyz", "/assets/")
+    # Liveness and readiness. An **exact set**, not a prefix: SHARED_PATHS above matches by
+    # prefix, so a route added later called /healthz-debug would inherit anonymity by accident.
+    # These two are the only paths a load balancer or container runtime must reach without a
+    # credential, and neither handler reads tenant-scoped data.
+    PROBE_PATHS = frozenset({"/healthz", "/readyz"})
     # The account routes an application still needs about its *own* session: who is signed in,
     # which workspace is selected, and how to leave. Credentials, MFA enrolment, invitations and
     # device management stay on the account service, so there is one place to change a password
@@ -289,7 +323,14 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                 # 200. Only the SPA shell was reachable that way, but an authentication branch
                 # that some paths fall past is not a shape to leave in place.
                 mode = ui_auth_mode()
-                if any(path.startswith(p) for p in PLATFORM_PREFIXES + SSO_PREFIXES):
+                if path in PROBE_PATHS:
+                    # Anonymous in every mode. Under `basic` these previously answered 401,
+                    # which contradicted ports.md, the committed OpenAPI (their security is [])
+                    # and permissions.md §5.3 — and it makes a container's own restart policy
+                    # depend on a shared password. The bodies are kept to the minimum that the
+                    # contract promises; see the handlers.
+                    token = set_tenant("__probe__")
+                elif any(path.startswith(p) for p in PLATFORM_PREFIXES + SSO_PREFIXES):
                     # Protocol endpoints authenticate themselves: /oidc/authorize reads the
                     # central session cookie and redirects to /login when there is none, and the
                     # token/userinfo/revoke half authenticates by client credentials and bearer
@@ -326,22 +367,64 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     def health():
         return {"ok": True}
 
-    @api.get("/healthz", tags=["system"], summary="存活检查（进程是否在运行）")
+    @api.get("/healthz", tags=["system"], summary="存活检查（进程是否在运行）",
+             description="无需鉴权。返回 `{\"status\":\"ok\"}`；仅测试实例额外返回 `instance`。")
     def healthz():
-        # `instance` lets destructive test tooling prove it is not pointed at real data.
-        return {"status": "ok", "version": api.version, "instance": app_.store.instance_kind()}
+        """Alive. Deliberately says almost nothing.
 
-    @api.get("/readyz", tags=["system"], summary="就绪检查（能否真正处理任务）")
+        `version` used to be here and is gone: this is the one anonymous endpoint, and the exact
+        build string is what someone matching a service against a vulnerability list wants.
+        An authenticated caller still gets `api_version` from /api/v1/capabilities.
+
+        `instance` is emitted **only on a test instance**, where it is the marker destructive
+        tooling uses to prove it is not pointed at real data. On a normal instance the key is
+        absent, and `scripts/_testenv.py` compares `!= "test"` — so a missing key refuses, which
+        is the direction that has to fail safe.
+        """
+        out = {"status": "ok"}
+        kind = app_.store.instance_kind()
+        if kind == "test":
+            out["instance"] = kind
+        return out
+
+    @api.get("/readyz", tags=["system"], summary="就绪检查（能否真正处理任务）",
+             description="无需鉴权。200 `ready` / 503 `not_ready`，带 `checks` 组件级状态；不含版本、"
+                         "schema 版本等诊断信息。")
     def readyz():
+        """Ready to actually do work: database writable, storage writable, worker alive.
+
+        Three things here are deliberate.
+
+        **It no longer writes a row.** It used to `INSERT OR REPLACE INTO meta`, so every
+        unauthenticated probe produced a WAL commit — a container on a 5-second readiness check
+        wrote ~17k rows a day, and anyone who could reach the port could drive that. Taking and
+        releasing the write lock says the same thing for free: measured, 200 probes now grow the
+        WAL by 0 bytes.
+
+        What this check does **not** prove, measured rather than assumed: neither the lock nor
+        the old INSERT detects a filesystem turned read-only *under an already-open handle* —
+        SQLite writes into the WAL it already holds. Both report `ok`. The old code was no
+        better at this; it just wrote a row each time. The `storage` check below is what
+        actually catches that case, and it is why the endpoint still returns 503.
+
+        **The storage probe no longer writes inside `blobs/`.** A crash between write and unlink
+        left a non-blob file in the content-addressed tree, which a future mark-and-sweep would
+        have to special-case — and special cases in a delete path are how the wrong file gets
+        deleted.
+
+        **The anonymous body carries component state and nothing else.** `schema_version` and
+        the webhook flag are gone from here; `manage.py info` and /api/v1/capabilities report
+        them to a caller who has proved something.
+        """
         checks = {}
         try:
-            store.one("SELECT 1 AS x")
-            store.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('readyz', ?)", (str(time.time()),))
+            with store.tx():
+                pass                       # BEGIN IMMEDIATE + rollback: writable, no commit
             checks["database"] = "ok"
         except Exception as e:  # noqa: BLE001
             checks["database"] = f"error: {type(e).__name__}"
         try:
-            p = Path(store.root) / "blobs" / ".readyz"
+            p = Path(store.root) / ".readyz-probe"
             p.write_text("ok")
             p.unlink()
             checks["storage"] = "ok"
@@ -349,10 +432,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
             checks["storage"] = f"error: {type(e).__name__}"
         checks["worker"] = "ok" if (jobs and jobs.runner_alive()) else "stopped"
         ready = all(v == "ok" for v in checks.values())
-        out = {"status": "ready" if ready else "not_ready", "checks": checks, "schema_version": store.schema_version()}
-        if hooks.enabled:
-            out["webhooks"] = "enabled"
-        return JSONResponse(out, status_code=200 if ready else 503)
+        return JSONResponse({"status": "ready" if ready else "not_ready", "checks": checks},
+                            status_code=200 if ready else 503)
 
     # ------------------------------------------------------------ regression cases & desensitization
     @api.get("/api/regression-cases")
@@ -499,8 +580,33 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
         return views.search_source(sid, q, block=block)
 
     @api.get("/api/sources/{sid}/page/{page}.png")
-    def source_page(sid: str, page: int, zoom: float = 1.5, block: int | None = None):
-        return Response(views.source_page_png(sid, page, zoom, block), media_type="image/png", headers={"Cache-Control": "private, max-age=600"})
+    def source_page(request: Request, sid: str, page: int, zoom: float = 1.5, block: int | None = None):
+        """A rendered page of someone's source document.
+
+        This used to answer `private, max-age=600`, which meant the browser served it from cache
+        **without contacting the server** for ten minutes — including after the person signed
+        out, was removed from the workspace, or had their session revoked. Every other path
+        re-checks authorization on the next request; this one had no next request, so the
+        revocation guarantees in docs/security/sessions.md §6.3 did not hold for it.
+
+        The cache is still worth having — re-rasterizing a PDF page is expensive and the UI
+        re-requests on every zoom and page change — so the bytes stay in the browser and only
+        the permission to see them is re-checked: `no-cache` forces revalidation, the ETag makes
+        that revalidation cheap (304, no body, no rasterizing), and the request itself goes
+        through the auth gate and per-object authorization like everything else.
+
+        The ETag is derived from the stored content, not from the rendered bytes, so computing
+        it does not require doing the work it is meant to avoid.
+        """
+        etag = views.source_page_etag(sid, page, zoom, block)
+        if etag and request.headers.get("if-none-match") == etag:
+            # Authorization already ran: source_page_etag goes through the same object lookup.
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, no-cache"})
+        headers = {"Cache-Control": "private, no-cache"}
+        if etag:
+            headers["ETag"] = etag
+        return Response(views.source_page_png(sid, page, zoom, block), media_type="image/png",
+                        headers=headers)
 
     @api.get("/api/sources/{sid}/words/{page}")
     def source_words(sid: str, page: int, block: int | None = None):
@@ -544,7 +650,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
         return t
 
     @api.post("/api/templates/builtin")
-    def create_builtin(body: dict = Body(...)):
+    async def create_builtin(request: Request, body: dict = Body(...)):
+        _guard_editor_body(request)
         from ..builtin_service import create_builtin as cb
         t = cb(app_, body)
         if body.get("project_id"):
@@ -552,7 +659,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
         return t
 
     @api.put("/api/templates/{tid}/builtin")
-    def save_builtin(tid: str, body: dict = Body(...)):
+    async def save_builtin(request: Request, tid: str, body: dict = Body(...)):
+        _guard_editor_body(request)
         from ..builtin_service import save_builtin as sb
         return sb(app_, tid, body)
 
@@ -802,15 +910,14 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     # ------------------------------------------------------------ static UI
     dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))
     if dist.exists():
-        api.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+        api.mount("/assets", _HashedAssets(directory=dist / "assets"), name="assets")
+
+        SHELL_FILES = {"index.html", "portal.html", "accounts.html"}
 
         @api.get("/{full_path:path}")
         def spa(full_path: str):
             if full_path.startswith("api/"):
                 return JSONResponse({"error": "not_found", "message": "接口不存在"}, status_code=404)
-            target = (dist / full_path).resolve()
-            if full_path and target.is_file() and dist.resolve() in target.parents:
-                return FileResponse(target)
             # Which shell this role serves. The portal is a separate build output, not a route
             # inside DocWeave's SPA: one shell owning both would mean the portal's router also
             # owned every DocWeave path, which is how a new entry point swallows the application
@@ -818,9 +925,50 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
             shell = SHELLS.get((os.environ.get("DOCWEAVE_ROLE") or "").lower(), "index.html")
             if not (dist / shell).exists():
                 shell = "index.html"
-            return FileResponse(dist / shell, headers={"Cache-Control": "no-cache"})
+
+            target = (dist / full_path).resolve()
+            if full_path and full_path not in SHELL_FILES \
+                    and target.is_file() and dist.resolve() in target.parents:
+                return FileResponse(target)
+            # Asking for a shell **by filename** used to fall into the branch above and be served
+            # as a generic file — with no Cache-Control at all, and with whichever shell was
+            # named rather than the one this role owns. A cached entry document is the worst
+            # thing to hold onto: it names asset hashes, and after a deploy those files are gone,
+            # so a stale shell is a blank page that a reload does not fix.
+            return FileResponse(dist / shell,
+                                headers={"Cache-Control": "no-cache, must-revalidate"})
 
     return api
+
+
+def _guard_editor_body(request: Request) -> None:
+    """Refuse an editor document too large to hold in memory, with a message someone can act on.
+
+    Uploaded *files* go through `_read_limited` and are capped. This route does not take a file:
+    it takes the editor's document model as JSON, and Starlette reads that body into memory in
+    full and parses it before any handler runs. There was no limit on it at all.
+
+    That matters because images arrive inline. The editor inserts a picked or pasted image as a
+    `data:` URI in the document model (Tiptap is configured `allowBase64`), so an 11 MB photo
+    becomes ~16 MB of base64 inside the JSON — and several of them, on a container limited to
+    3 GB, is an out-of-memory kill rather than an error page.
+
+    Checked against Content-Length so the refusal happens before the body is read, and phrased
+    so the person knows the fix is a smaller image rather than a smaller document.
+    """
+    declared = request.headers.get("content-length")
+    if not declared:
+        return                                  # chunked: the ASGI server's own limits apply
+    try:
+        size = int(declared)
+    except ValueError:
+        return
+    if size > LIMITS.max_editor_body_bytes:
+        mb = LIMITS.max_editor_body_bytes // (1024 * 1024)
+        raise ServiceError(413, "editor_body_too_large",
+                           f"这份文档有 {size / (1024 * 1024):.1f} MB，超过 {mb} MB 上限。"
+                           "通常是插入的图片太大——图片是连同文档一起提交的。"
+                           "请换用更小的图片，或把它裁剪、压缩之后再插入。你的其它修改还在编辑器里，没有丢失。")
 
 
 async def _read_limited(f: UploadFile) -> bytes:

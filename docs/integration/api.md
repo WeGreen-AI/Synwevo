@@ -26,6 +26,61 @@ python backend/manage.py apikey revoke <key_id>
 * `--expires-days`：可选有效期；过期返回 `401 key_expired`，撤销返回 `401 key_revoked`。
 * 限流：默认每个密钥 300 次/分钟（`DOCWEAVE_API_RATE_PER_MIN`，按进程计），超出返回 `429 rate_limited` 并带 `Retry-After`。
 
+### 1.1 平台机器身份（推荐）
+
+启用平台模式后，`/api/v1` 还接受**平台签发的访问令牌**。两种机器调用者，区别很重要：
+
+| | 服务账户 | 用户委托 |
+|---|---|---|
+| 背后有人吗 | 没有，它以自己的身份行动 | 有，它代表授权它的那个人 |
+| 租户从哪来 | 登记时绑定的工作空间 | **每次调用**重新按成员关系解析 |
+| 权限 | 登记时的 `api_scopes` ∩ 本次申请 | 客户端许可 ∩ **当前**角色 ∩ 本次授权 |
+| 生命周期 | 独立；有人退出浏览器不影响它 | 随账户状态、成员关系、应用资格一起失效 |
+| 流程 | `client_credentials` | 授权码流程签发的访问令牌 |
+
+登记一个服务账户（**只有 CLI，没有产品界面**）：
+
+```bash
+python backend/manage.py client register \
+    --client-id nightly-batch --app docweave --name 夜间批处理 \
+    --service --workspace w_xxx --api-scopes "docweave.read docweave.write"
+```
+
+必须是机密客户端（密钥就是它的全部凭据），必须绑定工作空间（背后没有人，租户推不出来）。
+`client_secret` 只显示一次。
+
+取令牌：
+
+```bash
+curl -s -X POST "$ISSUER/oidc/token" \
+  -d grant_type=client_credentials \
+  -d client_id=nightly-batch \
+  -d client_secret="$CLIENT_SECRET" \
+  -d scope="docweave.read docweave.write"
+# → {"access_token":"…","token_type":"Bearer","expires_in":900,"scope":"…"}
+```
+
+然后 `Authorization: Bearer <access_token>`，用法与 `dw_` 密钥完全一致。
+
+接口权限词表：`docweave.read`（等价旧的 `read`）、`docweave.write`（等价旧的 `write`）。
+两种词表在同一个检查里都接受，因此没有任何调用点需要知道自己拿到的是哪一种凭据。
+
+**三条硬规则：**
+
+1. **ID Token 不是 API 凭证。** 只带 `openid profile email` 的访问令牌调用 `/api/v1` 会被
+   `403 wrong_credential` 拒绝，并说明需要申请带 `docweave.*` 权限的令牌。它证明的是谁登录了，
+   不是可以运行什么。
+2. **每次调用都重新核验**账户状态、成员关系、应用资格——不看令牌当初记了什么。令牌里记的是
+   当初授予了什么，不是现在还成不成立；固化进令牌就是"已撤权的人继续工作到过期"的成因。
+3. **当前角色会收窄委托**：签发时是 editor、现在被改成 viewer，那么读仍然可以，写会被拒，
+   令牌本身不需要撤销。
+
+**旧的 `dw_` 密钥继续有效**，不设废止期限。它们早于平台存在，一次性全部作废会打断正在运行的
+自动化。两种凭据走同一个解析函数（`backend/docweave/machine.py`），出来的 principal 形状相同。
+
+`scripts/automation_example.py` 两种都支持：给 `--key` 用旧密钥，给
+`--issuer --client-id --client-secret` 用服务账户。
+
 ## 2. 错误与追踪
 
 所有 `/api/v1` 错误的响应体结构一致，HTTP 状态码表达类别：

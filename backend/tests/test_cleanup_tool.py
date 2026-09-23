@@ -7,6 +7,7 @@ ran.  A tool that deleted by name prefix would therefore destroy real work, whic
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -90,3 +91,44 @@ def test_unknown_id_is_reported_rather_than_silently_skipped(seeded):
     d, _ = seeded
     code, out = _run(d, "prune", "--id", "p_does_not_exist", "--apply")
     assert code == 2 and "找不到" in out, out
+
+
+# ---------------------------------------------------------------- blob reference inventory
+def test_the_blob_audit_sees_references_hidden_inside_json(tmp_path):
+    """A per-column scan cannot see a blob id inside `jobs.snapshot`. That is the whole reason
+    the inventory exists, so it has to be the thing the test proves."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from blob_audit import audit
+    from docweave.store import Store, now
+
+    store = Store(tmp_path)
+    only_in_json = "a" * 64
+    also_direct = "b" * 64
+    (tmp_path / "blobs").mkdir(exist_ok=True)
+    for digest in (only_in_json, also_direct, "c" * 64):
+        (tmp_path / "blobs" / digest).write_bytes(b"x")
+
+    store.execute(
+        "INSERT INTO jobs (id,project_id,status,tenant,created_at,run_no,snapshot) "
+        "VALUES ('j1','p1','completed','default',?,1,?)",
+        (now(), json.dumps({"template": {"working_blob": only_in_json},
+                            "sources": [{"blob": also_direct}]})))
+    store.execute(
+        "INSERT INTO templates (id,name,kind,format,tenant,created_at,updated_at,original_blob,deleted) "
+        "VALUES ('t1','t','builtin_doc','docx','default',?,?,?,0)", (now(), now(), also_direct))
+
+    r = audit(tmp_path)
+    assert only_in_json in r["reachable_only_from_json"], \
+        "只能从 JSON 到达的 blob 必须被报出来——六列扫描正是在这里出错"
+    assert also_direct not in r["reachable_only_from_json"]
+    assert r["unreferenced_on_disk"] == ["c" * 64]
+    assert r["referenced_but_missing"] == []
+
+
+def test_the_blob_audit_does_not_offer_to_delete():
+    """A delete path written against an incomplete mark set destroys user data. The inventory
+    ships first, on purpose."""
+    src = (Path(__file__).resolve().parents[2] / "scripts" / "blob_audit.py").read_text("utf-8")
+    for forbidden in ("unlink(", "os.remove", "shutil.rmtree", "DELETE FROM"):
+        assert forbidden not in src, f"这个脚本不应当能删除任何东西，但出现了 {forbidden}"
