@@ -17,10 +17,12 @@ import io
 import pymupdf
 from PIL import Image, ImageOps
 
+from . import images as _images  # noqa: F401  sets Image.MAX_IMAGE_PIXELS from LIMITS
 from .limits import LIMITS, LimitError
 
 NATIVE = {"png": "png", "jpeg": "jpg"}
-MAX_PIXELS = 60_000_000          # 60 MP – large scans are fine, decompression bombs are not
+# The ceiling is configurable (DOCWEAVE_MAX_IMAGE_MPIX); it used to be hardcoded at 60 MP
+# here, so raising or lowering the documented limit had no effect on image templates.
 
 
 class ImageTemplateError(ValueError):
@@ -34,8 +36,8 @@ def open_image(data: bytes) -> Image.Image:
         raise LimitError("图片超过大小上限")
     try:
         im = Image.open(io.BytesIO(data))
-        if im.width * im.height > MAX_PIXELS:
-            raise ImageTemplateError("too_large", f"图片像素 {im.width}×{im.height} 超过上限（{MAX_PIXELS // 1_000_000} MP）")
+        if im.width * im.height > LIMITS.max_image_pixels:
+            raise ImageTemplateError("too_large", f"图片像素 {im.width}×{im.height} 超过上限（{LIMITS.max_image_pixels // 1_000_000} MP）")
         im.load()
     except ImageTemplateError:
         raise

@@ -19,7 +19,12 @@ from .limits import LIMITS
 
 _LO_LOCK = threading.Lock()
 # one private profile per server process: LibreOffice profiles must not be shared by concurrent instances
-_PROFILE_DIR = Path(os.environ.get("DOCWEAVE_LO_PROFILE", Path(tempfile.gettempdir()) / f"docweave-lo-profile-{os.getpid()}"))
+# A LibreOffice user profile must not be shared by two concurrent soffice processes.
+# _LO_LOCK only serialises threads INSIDE one process, so the directory is always made
+# per-PID: DOCWEAVE_LO_PROFILE names the parent to put profiles under, not the profile
+# itself (pointing several workers at one fixed path used to corrupt it).
+_PROFILE_BASE = Path(os.environ.get("DOCWEAVE_LO_PROFILE") or (Path(tempfile.gettempdir()) / "docweave-lo"))
+_PROFILE_DIR = _PROFILE_BASE / f"profile-{os.getpid()}"
 
 
 def soffice_path() -> str | None:
