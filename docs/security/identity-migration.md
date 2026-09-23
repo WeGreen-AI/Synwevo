@@ -137,9 +137,24 @@ OIDC 协议端点（`/oidc/*`、`/.well-known/*`）和 SSO 端点（`/auth/*`）
 | 签名私钥 | `oidc_keys.private_jwk`（**在库里**） | 丢了 = 所有已签发令牌失效 |
 | MFA 种子密钥 | `DOCWEAVE_SECRET`，或库内 `meta.server_secret` | 见下 |
 
-> **必须用 SQLite 的 backup API，不能 `cp`。** 数据库跑在 WAL 模式，单独复制 `.sqlite3` 文件可能
-> 落后数小时——实测主库 4.4 MB、WAL 4.2 MB。复制一个文件然后宣布迁移安全，检查的是一个并不存在
-> 的数据库。`scripts/migration_rehearsal.py: snapshot()` 是正确做法的参考实现。
+> **必须用 SQLite 的 backup API，不能 `cp`。** 这不是"可能落后一点"的问题。在**今天这个真实库**上
+> 实测：
+>
+> | 打开方式 | 能看到的表 |
+> |---|---|
+> | 正常只读打开（读 WAL） | **44 张** |
+> | 只复制 `docweave.sqlite3` 主文件 | **16 张** |
+>
+> 丢掉的 28 张表里包含**整个身份体系**：`users`、`user_passwords`、`sessions`、`workspaces`、
+> `memberships`、`totp_secrets`、`recovery_codes`、`passkeys`、`oauth_clients`、`oauth_tokens`、
+> `oidc_keys`、`audit_events`、`blob_grants`……它们全都还在 WAL 里，从未被 checkpoint 进主文件。
+>
+> 也就是说：**对这个实例执行 `cp data/docweave.sqlite3`，恢复出来的是一个一个账户都没有的安装。**
+> 而且它能正常启动——迁移会把这些表重新建成空表——所以失败的样子是"所有人都没有账户了"，
+> 不是"备份文件损坏"。
+>
+> `scripts/snapshot.py` 与 `scripts/migration_rehearsal.py` 都用 backup API，因此不受影响
+> （快照验证里 44 张表全部恢复，20/20 通过）。
 
 ### 5.2 密钥的实情
 
