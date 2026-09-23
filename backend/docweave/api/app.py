@@ -130,6 +130,11 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     # `/auth/backchannel-logout` is authenticated by a signed token, so none of them can be put
     # behind the legacy Basic prompt.
     SSO_PREFIXES = ("/auth/",)
+    # One build, three shells. The account service must not serve the document workbench: its
+    # API refuses those calls by role, so a shared shell renders a project list that then fills
+    # with "this endpoint is not on the account service" — a correct refusal presented as a
+    # broken page.
+    SHELLS = {"portal": "portal.html", "accounts": "accounts.html"}
     SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
     def _session_gate(request: Request, path: str, finish):
@@ -214,6 +219,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                 return "该接口在账户服务上，请访问账户服务地址"
             if path.startswith("/api/auth/") and path not in APP_ACCOUNT_PATHS:
                 return "账户与安全设置在账户服务上统一管理，请访问账户服务地址"
+        if role == "app" and path.startswith("/api/portal/"):
+            return "门户接口在平台门户上，不在业务应用上"
         if role == "portal" and not is_account and not path.startswith("/auth/") \
                 and not path.startswith("/api/portal/"):
             return "该接口不在平台门户上"
@@ -760,6 +767,10 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     from .rp_routes import build_router as build_rp_router
     api.include_router(build_rp_router(store, identity, sessions, _audit))
 
+    # ------------------------------------------------------------ platform portal
+    from .portal_routes import build_router as build_portal_router
+    api.include_router(build_portal_router(store, identity, sessions, _audit))
+
     # ------------------------------------------------------------ static UI
     dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))
     if dist.exists():
@@ -772,7 +783,14 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
             target = (dist / full_path).resolve()
             if full_path and target.is_file() and dist.resolve() in target.parents:
                 return FileResponse(target)
-            return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache"})
+            # Which shell this role serves. The portal is a separate build output, not a route
+            # inside DocWeave's SPA: one shell owning both would mean the portal's router also
+            # owned every DocWeave path, which is how a new entry point swallows the application
+            # it was meant to sit beside.
+            shell = SHELLS.get((os.environ.get("DOCWEAVE_ROLE") or "").lower(), "index.html")
+            if not (dist / shell).exists():
+                shell = "index.html"
+            return FileResponse(dist / shell, headers={"Cache-Control": "no-cache"})
 
     return api
 

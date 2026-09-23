@@ -116,6 +116,26 @@ python backend/manage.py client disable --client-id my-app-web
 
 ---
 
+### 依赖方不要有自己的口令框
+
+`/api/auth/state` 里的 `password_login` 由角色决定：只有 `accounts` 和 `all` 为真。依赖方
+（`app` / `portal`）**根本不提供** `/api/auth/login`，因此它的 `RequireSession` 和 `/login`
+都直接前往 `/auth/start`，由账户服务完成认证。
+
+这条是浏览器验证时发现的：点门户上的 DocWeave 卡片，落到了 DocWeave 自己的登录表单，要求
+再输一次口令——而那个表单永远不可能成功。它重要的地方不只是坏了：一个收集口令却无法校验口令
+的表单，恰恰出现在「口令只在一个地方输入」这条规则最该被贯彻的页面上。
+
+### 每个角色服务自己的前端外壳
+
+一个 Vite 构建，三个入口：`index.html`（DocWeave 工作台）、`portal.html`（平台门户）、
+`accounts.html`（账户与安全）。由 `DOCWEAVE_ROLE` 决定服务哪一个。
+
+账户服务原本和 DocWeave 共用同一个外壳，于是它渲染出 DocWeave 的项目列表，然后被自己的角色
+边界拒绝，页面上浮出「该接口不在账户服务上」——一次正确的拒绝被呈现成一个坏掉的页面。
+
+新增应用时同理：给它自己的入口，不要把它塞进别人的 SPA 路由。
+
 ## 4. 本机跑起来并量一遍
 
 ```bash
@@ -192,4 +212,4 @@ python backend/manage.py keys retire --kid k_xxx   # 等最长令牌有效期过
 
 - Passkey / WebAuthn：RP ID 与可信 origin 策略已确定为账户服务域名，实现尚未落地。
 - 机器身份（服务账户、用户委托）仍走现有 `/api/v1` 密钥体系，尚未接入 OIDC 的客户端凭据流程。
-- 门户与管理后台的界面本轮只有后端链路，前端页面另计。
+- 管理后台与历史数据认领界面未开始。门户首页、账户与安全页已完成并在浏览器中走通。

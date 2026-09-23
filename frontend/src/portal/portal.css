@@ -1,0 +1,134 @@
+/* Portal styles. Built on the shared tokens in styles.css so the platform and the application
+   look like one product; only layout lives here. */
+
+.pt {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+
+.pt-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.pt-brand { font-weight: 650; letter-spacing: .01em; }
+.pt-account { display: flex; align-items: center; gap: var(--sp-4); font-size: 13px; }
+.pt-who { color: var(--muted); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-link { color: var(--accent); text-decoration: none; }
+.pt-link:hover { text-decoration: underline; }
+
+.pt-main { max-width: 900px; margin: 0 auto; padding: var(--sp-5) var(--sp-4) 64px; }
+.pt-h1 { font-size: 22px; font-weight: 650; margin: 0 0 var(--sp-4); }
+.pt-lead { color: var(--text-2); line-height: 1.6; margin: 0 0 var(--sp-4); }
+.pt-hint { color: var(--muted); font-size: 13px; margin: 0; }
+.pt-err { color: var(--err); }
+.pt-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---- workspace switcher ---- */
+.pt-ws { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); margin: 0 0 var(--sp-5); }
+.pt-ws-label { color: var(--muted); font-size: 13px; margin-right: var(--sp-1); }
+.pt-chip {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 5px var(--sp-3);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+}
+.pt-chip:hover:not(:disabled) { background: var(--surface-hover); }
+.pt-chip.is-on { background: var(--accent-weak); border-color: var(--accent-line); color: var(--accent-strong); }
+.pt-chip:disabled { opacity: .6; cursor: default; }
+
+/* ---- application cards ---- */
+.pt-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--sp-3);
+}
+.pt-card {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  color: inherit;
+  transition: transform var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease),
+              border-color var(--dur-1) var(--ease);
+}
+.pt-card:hover { border-color: var(--accent-line); box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+.pt-card:focus-visible { outline: none; box-shadow: var(--focus); }
+.pt-icon {
+  display: grid; place-items: center;
+  width: 40px; height: 40px; flex: none;
+  border-radius: var(--radius);
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+}
+.pt-card-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pt-card-name { font-weight: 600; }
+.pt-card-ws { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- empty and error states ---- */
+.pt-empty, .pt-none {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-5);
+  box-shadow: var(--shadow);
+}
+.pt-btn {
+  font: inherit;
+  padding: 8px var(--sp-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease);
+}
+.pt-btn:hover { background: var(--surface-hover); }
+.pt-btn:focus-visible { outline: none; box-shadow: var(--focus); }
+.pt-btn-primary { background: var(--accent); border-color: var(--accent-strong); color: #fff; }
+.pt-btn-primary:hover { background: var(--accent-strong); }
+
+/* ---- loading skeleton ---- */
+.pt-skel-line, .pt-skel-card {
+  background: linear-gradient(90deg, var(--surface-hover) 25%, var(--surface-active) 37%, var(--surface-hover) 63%);
+  background-size: 400% 100%;
+  animation: pt-shimmer 1.4s var(--ease) infinite;
+  border-radius: var(--radius);
+}
+.pt-skel-line { height: 22px; margin-bottom: var(--sp-5); }
+.pt-skel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--sp-3); }
+.pt-skel-card { height: 74px; }
+@keyframes pt-shimmer { to { background-position: -400% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .pt-skel-line, .pt-skel-card { animation: none; }
+  .pt-card, .pt-chip, .pt-btn { transition: none; }
+  .pt-card:hover { transform: none; }
+}
+
+@media (max-width: 560px) {
+  .pt-top { padding: var(--sp-3) var(--sp-4); }
+  .pt-account { gap: var(--sp-3); }
+  .pt-who { max-width: 12ch; }
+  .pt-main { padding: var(--sp-4) var(--sp-4) 48px; }
+  .pt-grid { grid-template-columns: 1fr; }
+}

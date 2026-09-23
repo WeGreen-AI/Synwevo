@@ -26,7 +26,7 @@ const AMR: Record<string, string> = {
 };
 
 export default function Account() {
-  const { me, signOut } = useSession();
+  const { me, state, signOut } = useSession();
   const [rows, setRows] = useState<SessionRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const toast = useToast();
@@ -64,12 +64,32 @@ export default function Account() {
 
   if (!me) return <div className="empty">加载中…</div>;
 
+  const onAccountService = state?.role === "accounts";
+  const platformName = state?.platform_name || "工作平台";
+  const portalUrl = state?.portal_url || "";
+
   return (
     <div className="app">
       <div className="topbar">
-        <Link to="/" className="brand"><span className="logo">W</span><span className="desktop-only">DocWeave</span></Link>
-        <span className="sep" />
-        <Link to="/" className="btn ghost sm">← 返回项目</Link>
+        {/* On the account service there is no project list to go back to, and the brand is the
+            platform's. Where "back" leads is the server's answer (state.portal_url), never a
+            query parameter — this is the one origin that must not carry an open redirect. */}
+        {onAccountService ? (
+          <>
+            <span className="brand"><span className="logo" aria-hidden="true">◫</span>
+              <span className="desktop-only">{platformName}</span></span>
+            <span className="sep" />
+            {portalUrl
+              ? <a href={portalUrl} className="btn ghost sm">← 返回{platformName}</a>
+              : <span className="btn ghost sm" aria-disabled="true" style={{ visibility: "hidden" }} />}
+          </>
+        ) : (
+          <>
+            <Link to="/" className="brand"><span className="logo">W</span><span className="desktop-only">DocWeave</span></Link>
+            <span className="sep" />
+            <Link to="/" className="btn ghost sm">← 返回项目</Link>
+          </>
+        )}
         <span className="grow"><b>账户与安全</b></span>
       </div>
 

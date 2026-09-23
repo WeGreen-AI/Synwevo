@@ -31,6 +31,7 @@ import subprocess
 import sys
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,10 +48,14 @@ PORTAL = f"http://portal.localhost:{PORTAL_PORT}"
 DOCWEAVE = f"http://docweave.localhost:{DOCWEAVE_PORT}"
 
 SERVICES = {
-    # name: (role, port, public URL, OIDC client id)
-    "accounts": ("accounts", ACCOUNTS_PORT, ACCOUNTS, None),
-    "portal": ("portal", PORTAL_PORT, PORTAL, "portal-web"),
-    "docweave": ("app", DOCWEAVE_PORT, DOCWEAVE, "docweave-web"),
+    # name: (role, port, public URL, OIDC client id, app id)
+    #
+    # The portal's app id is `platform`, which is deliberately *not* a row in the application
+    # registry: the registry lists business applications you can be granted or denied, and the
+    # portal is where you go to see which of those you have.
+    "accounts": ("accounts", ACCOUNTS_PORT, ACCOUNTS, None, None),
+    "portal": ("portal", PORTAL_PORT, PORTAL, "portal-web", "platform"),
+    "docweave": ("app", DOCWEAVE_PORT, DOCWEAVE, "docweave-web", "docweave"),
 }
 
 
@@ -59,7 +64,7 @@ def data_dir() -> str:
 
 
 def env_for(name: str) -> dict:
-    role, port, url, client = SERVICES[name]
+    role, port, url, client, app = SERVICES[name]
     env = dict(os.environ)
     env.update({
         "DOCWEAVE_ROLE": role,
@@ -73,9 +78,13 @@ def env_for(name: str) -> dict:
         # all. This is the one local-only concession, and it is why these hostnames must never
         # be used for anything real.
         "DOCWEAVE_COOKIE_SECURE": "0",
+        # Where the account pages' "back" link goes. Server-controlled, never a query parameter.
+        "DOCWEAVE_PORTAL_URL": PORTAL,
     })
     if client:
         env["DOCWEAVE_OIDC_CLIENT_ID"] = client
+    if app:
+        env["DOCWEAVE_OIDC_APP_ID"] = app
     return env
 
 
@@ -176,7 +185,7 @@ def up(args) -> int:
     register_clients()
 
     print("\n启动服务：")
-    for name, (role, port, url, _) in SERVICES.items():
+    for name, (role, port, url, _, _app) in SERVICES.items():
         if _alive(name):
             print(f"  · {name} 已在运行（pid {_alive(name)}）")
             continue
@@ -196,7 +205,7 @@ def up(args) -> int:
     deadline = time.time() + 20
     while time.time() < deadline:
         if all(_port_busy(port, urllib.parse.urlparse(u).hostname)
-               for _, port, u, _ in SERVICES.values()):
+               for _, port, u, _, _a in SERVICES.values()):
             break
         time.sleep(0.3)
 
@@ -231,13 +240,12 @@ def down(args) -> int:
 
 def status(args) -> int:
     print(f"数据目录：{data_dir()}")
-    for name, (role, port, url, client) in SERVICES.items():
+    for name, (role, port, url, client, _app) in SERVICES.items():
         pid = _alive(name)
         listening = _port_busy(port, urllib.parse.urlparse(url).hostname)
         state = f"运行中 pid {pid}" if pid else ("端口被占用但不是我们启动的" if listening else "已停止")
         print(f"  {name:<9} role={role:<9} {url:<34} {state}")
     if any(_alive(n) for n in SERVICES):
-        import urllib.request
         try:
             with urllib.request.urlopen(f"{ACCOUNTS}/.well-known/openid-configuration", timeout=3) as r:
                 d = json.load(r)

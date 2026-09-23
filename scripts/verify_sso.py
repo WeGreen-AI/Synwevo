@@ -166,6 +166,17 @@ def main() -> int:
     check(len({a_cookies.get("dw_session"), d_cookies.get("dw_session"),
                p_cookies.get("dw_session")}) == 3, "三个来源 = 三个互不相同的会话")
 
+    home = json.load(b.open(f"{portal}/api/portal/home", follow=False))
+    check(home["user"]["email"] == args.email, "门户首页认得这个人")
+    names = [a["id"] for a in home["apps"]]
+    check(names == ["docweave"], f"只列出真实可用的应用：{names or '（空）'}")
+    check(all(a["launch_url"] for a in home["apps"]), "每张卡片都有真实的启动地址")
+    check("platform" not in names, "门户不把自己列成一个可以打开的应用")
+    blob = json.dumps(home, ensure_ascii=False)
+    check("p_" not in blob and "project" not in blob.lower(),
+          "门户不聚合业务数据——没有项目标题、任务或文件元数据")
+    check(bool(home["platform"]["name"]), f"平台名称可配置：{home['platform']['name']}")
+
     print("\n【8】跨应用登出")
     r = b.open(f"{acc}/oidc/logout?" + urllib.parse.urlencode(
         {"client_id": "docweave-web", "post_logout_redirect_uri": dw + "/signed-out"}))

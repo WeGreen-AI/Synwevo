@@ -23,6 +23,12 @@ export interface AuthState {
   registration: "open" | "invite" | "closed";
   bootstrap_required: boolean;
   password_login: boolean;
+  /** Configurable platform name. The sign-in screen is the platform's, not one application's. */
+  platform_name?: string;
+  /** Which service this process is: "accounts", "portal", "app", or "all". */
+  role?: string;
+  /** Server-controlled "back" target from the account pages; empty when there is no portal. */
+  portal_url?: string;
 }
 
 interface Ctx {
@@ -87,17 +93,33 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
 /** Wrap routes that need an account. */
 export function RequireSession({ children }: { children: React.ReactNode }) {
-  const { me, disabled } = useSession();
+  const { me, state, disabled } = useSession();
   if (disabled) return <>{children}</>;          // deployment without accounts: unchanged behaviour
   if (me === undefined) return <div className="empty">加载中…</div>;
   if (me === null) {
     const back = window.location.pathname + window.location.search;
     // Remember where they were going so signing in returns them to it rather than to the home
     // page — losing the document you were opening is a small thing that feels like a big one.
-    window.location.assign(`/login?next=${encodeURIComponent(back)}`);
+    window.location.assign(signInUrl(state, back));
     return <div className="empty">正在前往登录…</div>;
   }
   return <>{children}</>;
+}
+
+/**
+ * Where signing in happens.
+ *
+ * On a relying party there is no local password form — `/api/auth/login` is not even served —
+ * so the only correct destination is the single sign-on start, which sends the browser to the
+ * account service and brings it back to `next`. Sending someone to a local `/login` there gave
+ * them a password box that could not work, on the very page whose whole point is that the
+ * password is typed in exactly one place.
+ */
+export function signInUrl(state: AuthState | null, next: string): string {
+  const target = encodeURIComponent(next || "/");
+  return state && state.password_login === false
+    ? `/auth/start?next=${target}`
+    : `/login?next=${target}`;
 }
 
 /** Only ever returns a same-origin path, so a crafted ?next= cannot bounce someone off-site. */

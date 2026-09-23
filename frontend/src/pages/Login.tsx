@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, post } from "../lib/api";
-import { safeNext, useSession } from "../lib/session";
+import { safeNext, signInUrl, useSession } from "../lib/session";
 
 /** Sign in, and — on a deployment that has never been set up — create the first administrator.
  *
@@ -79,10 +79,31 @@ export default function Login() {
 
   if (disabled || me) return <div className="empty">正在前往…</div>;
 
+  // A relying party has no password of its own to check. Anyone who lands on /login here — from
+  // a bookmark, or a link written before the platform existed — goes on to the account service
+  // rather than being shown a form that cannot work.
+  if (state && state.password_login === false) {
+    window.location.replace(signInUrl(state, safeNext(new URLSearchParams(window.location.search).get("next"))));
+    return <div className="empty">正在前往统一登录…</div>;
+  }
+
+  // On a dedicated account service this screen belongs to the platform; on the single-process
+  // deployment it is still DocWeave's own login, and renaming it there would be the opposite
+  // mistake. The server says which it is — the client cannot deduce it from the URL.
+  const platformSide = state?.role === "accounts" || state?.role === "portal";
+  const brandName = platformSide ? state?.platform_name || "工作平台" : "DocWeave";
+  const brandMark = platformSide ? "◫" : "W";
+
   return (
     <div className="authpage">
       <form className="authcard" onSubmit={submit} noValidate>
-        <div className="authbrand"><span className="logo">W</span>DocWeave</div>
+        {/* The account service signs people in to the whole platform, so it carries the
+            platform's name. On a single-process deployment (role "all") it is still DocWeave's
+            own login screen, and saying "工作平台" there would be the opposite mistake. */}
+        <div className="authbrand">
+          <span className="logo" aria-hidden="true">{brandMark}</span>
+          {brandName}
+        </div>
 
         {ticket ? (
           <>

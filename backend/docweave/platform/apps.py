@@ -37,9 +37,22 @@ class Apps:
     def get(self, app_id: str) -> dict | None:
         return self.store.one("SELECT * FROM apps WHERE id=?", (app_id,))
 
-    def register(self, *, app_id: str, name: str, launch_url: str, icon: str | None = None,
-                 access_policy: str = "members") -> dict:
+    def register(self, *, app_id: str, name: str, launch_url: str | None, icon: str | None = None,
+                 access_policy: str = "members", keep_launch_url: bool = False) -> dict:
+        """Register or update an application.
+
+        `keep_launch_url` leaves an existing launch URL alone. It matters because every process
+        runs this at startup, and `DOCWEAVE_APP_URL` means *this service's own address*: the
+        portal process registering DocWeave would otherwise overwrite DocWeave's launch URL with
+        the portal's, producing a card on the home page that loops straight back to the home
+        page. Only the process that actually is the application sets its address.
+        """
         ts = now()
+        existing = self.get(app_id)
+        if (keep_launch_url or launch_url is None) and existing:
+            launch_url = existing["launch_url"]
+        if launch_url is None:
+            launch_url = "http://docweave.localhost:8765/"
         self.store.execute(
             "INSERT INTO apps (id,name,icon,launch_url,status,access_policy,created_at,updated_at) "
             "VALUES (?,?,?,?,'active',?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
@@ -166,10 +179,23 @@ class Apps:
 
 
 def bootstrap_docweave(store: Store, ident: Identity, *, launch_url: str | None = None) -> dict:
-    """Register DocWeave itself. Idempotent; safe to run on every start."""
+    """Register DocWeave itself. Idempotent; safe to run on every start, in any role.
+
+    The launch URL comes from `DOCWEAVE_APP_URL` **only in the process that serves DocWeave**.
+    In the portal or the account service that variable holds their own address, and writing it
+    here points the DocWeave card at the wrong service — which is exactly what happened: the
+    account service starts first, `DOCWEAVE_OIDC_APP_ID` is unset there so `app_id()` returned
+    its default of "docweave", and the card led back to the login page.
+
+    So the test is the *role*, which every process sets and which cannot default to the wrong
+    answer: only `app` (DocWeave's own process) and `all` (the single-process deployment) serve
+    DocWeave.
+    """
     import os
     apps = Apps(store, ident)
+    role = (os.environ.get("DOCWEAVE_ROLE") or "all").strip().lower()
+    mine = role in ("app", "all", "")
     return apps.register(
         app_id=DOCWEAVE_APP_ID, name="DocWeave", icon="doc",
-        launch_url=launch_url or os.environ.get("DOCWEAVE_APP_URL") or "http://docweave.localhost:8765/",
-        access_policy="members")
+        launch_url=launch_url or (os.environ.get("DOCWEAVE_APP_URL") if mine else None),
+        access_policy="members", keep_launch_url=not mine and not launch_url)

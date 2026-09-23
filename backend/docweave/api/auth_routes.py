@@ -91,10 +91,27 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         already signed in with the shared password to a first-run bootstrap screen. Whether the
         account system is active is the server's answer, not something the client can deduce.
         """
+        import os
+        from .portal_routes import platform_name
+        role = (os.environ.get("DOCWEAVE_ROLE") or "all").strip().lower()
         return {"mode": ui_auth_mode(),
                 "registration": registration_mode(),
                 "bootstrap_required": ident.bootstrap_needed(),
-                "password_login": True}
+                # False on a relying party, where `/api/auth/login` is not served at all: the
+                # password belongs to the account service and there is exactly one place to
+                # type it. A client that showed its own password form here would be collecting
+                # a credential it cannot check — and teaching people to type it anywhere.
+                "password_login": role in ("accounts", "all", ""),
+                # The sign-in screen belongs to the *platform*, not to DocWeave. Hard-coding
+                # DocWeave as the name of the platform it is only one application on would have
+                # to be undone later in every string, and would tell someone arriving from the
+                # portal that they are signing in to the wrong product.
+                "platform_name": platform_name(),
+                "role": role,
+                # Where "back" goes from the account pages. Server-controlled: a return target
+                # the page took from a query string would be an open redirect on the one origin
+                # that must never have one.
+                "portal_url": os.environ.get("DOCWEAVE_PORTAL_URL") or ""}
 
     @r.post("/bootstrap")
     def bootstrap(request: Request, response: Response, body: dict = Body(...)):

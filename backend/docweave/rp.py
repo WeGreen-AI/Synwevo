@@ -43,6 +43,16 @@ def client_id() -> str:
     return os.environ.get("DOCWEAVE_OIDC_CLIENT_ID") or "docweave-web"
 
 
+def app_id() -> str:
+    """Which application *this* service is, for the eligibility check after a sign-in.
+
+    Configured rather than read out of the id_token: the token says who the person is, and a
+    service that let a token tell it which application it was would be checking the wrong
+    entitlement. The portal runs the same code with `DOCWEAVE_OIDC_APP_ID=platform`.
+    """
+    return os.environ.get("DOCWEAVE_OIDC_APP_ID") or "docweave"
+
+
 def public_url() -> str:
     """DocWeave's own externally reachable base URL. Configured, not derived from the request:
     it has to match the redirect URI registered with the provider exactly."""

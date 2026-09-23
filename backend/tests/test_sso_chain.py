@@ -410,3 +410,41 @@ def test_the_local_session_reports_the_real_central_authentication_time(world):
                                "ORDER BY created_at DESC LIMIT 1")
     assert local["reauth_at"] < local["created_at"] - 3600, \
         "本地会话不能把两小时前的中央认证记成刚刚重认证"
+
+
+# ---------------------------------------------------------------- role boundary
+@pytest.mark.parametrize("role,expect_password", [
+    ("accounts", True), ("all", True), ("app", False), ("portal", False),
+])
+def test_auth_state_says_whether_this_service_can_check_a_password(world, monkeypatch,
+                                                                   role, expect_password):
+    """A relying party does not serve /api/auth/login, so it must not offer a password box.
+
+    Found in the browser: clicking the DocWeave card landed on DocWeave's own login form, which
+    could never work — on the one page whose whole point is that the password is typed in
+    exactly one place.
+    """
+    monkeypatch.setenv("DOCWEAVE_ROLE", role)
+    st = world["docweave"].get("/api/auth/state").json()
+    assert st["role"] == role
+    assert st["password_login"] is expect_password
+    assert st["platform_name"]
+
+
+def test_a_relying_party_does_not_serve_the_login_endpoint(world, monkeypatch):
+    monkeypatch.setenv("DOCWEAVE_ROLE", "app")
+    r = world["docweave"].post("/api/auth/login",
+                               json={"email": "alice@example.com", "password": PW})
+    assert r.status_code == 404 and r.json()["error"] == "not_in_this_role"
+    # ...while the account service still does
+    monkeypatch.setenv("DOCWEAVE_ROLE", "accounts")
+    assert world["accounts"].post("/api/auth/login",
+                                  json={"email": "alice@example.com", "password": PW}).status_code == 200
+
+
+def test_the_account_service_does_not_serve_business_data(world, monkeypatch):
+    monkeypatch.setenv("DOCWEAVE_ROLE", "accounts")
+    _sign_in_centrally(world)
+    for path in ("/api/projects", "/api/templates", "/api/v1/projects"):
+        r = world["accounts"].get(path, cookies=world["b"].jar.apply(ACCOUNTS))
+        assert r.status_code == 404, f"{path} → {r.status_code}"

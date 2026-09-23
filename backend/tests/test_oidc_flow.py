@@ -328,3 +328,33 @@ def test_provisioning_does_not_reach_the_legacy_workspace(env):
     for table in ("memberships", "workspace_apps", "app_entitlements"):
         n = store.one(f"SELECT COUNT(*) AS n FROM {table} WHERE workspace_id='default'")["n"]
         assert n == 0, f"{table} 不应因为新建账户而碰到 default 空间"
+
+
+@pytest.mark.parametrize("role", ["accounts", "portal"])
+def test_only_docweaves_own_process_sets_its_launch_url(env, monkeypatch, role):
+    """Every process registers the app at startup, and DOCWEAVE_APP_URL means *this service's*
+    address — so the portal or the account service must not repoint the card at themselves.
+
+    Keyed on the role, not on an app id: `DOCWEAVE_OIDC_APP_ID` is unset on the account service
+    and its default is "docweave", so an app-id test passes here while the real deployment
+    repoints the card at the login page. That is what happened.
+    """
+    from docweave.platform.apps import bootstrap_docweave
+    store, ident = env["store"], env["ident"]
+
+    monkeypatch.setenv("DOCWEAVE_ROLE", "app")
+    monkeypatch.setenv("DOCWEAVE_APP_URL", "http://docweave.localhost:8775")
+    assert bootstrap_docweave(store, ident)["launch_url"] == "http://docweave.localhost:8775"
+
+    monkeypatch.setenv("DOCWEAVE_ROLE", role)
+    monkeypatch.setenv("DOCWEAVE_APP_URL", f"http://{role}.localhost:8769")
+    monkeypatch.delenv("DOCWEAVE_OIDC_APP_ID", raising=False)
+    assert bootstrap_docweave(store, ident)["launch_url"] == "http://docweave.localhost:8775"
+
+
+def test_the_single_process_deployment_still_sets_its_own_launch_url(env, monkeypatch):
+    """`all` is the existing deployment's shape and must keep working unchanged."""
+    from docweave.platform.apps import bootstrap_docweave
+    monkeypatch.setenv("DOCWEAVE_ROLE", "all")
+    monkeypatch.setenv("DOCWEAVE_APP_URL", "https://docweave.example.com")
+    assert bootstrap_docweave(env["store"], env["ident"])["launch_url"] == "https://docweave.example.com"

@@ -18,7 +18,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from ..identity import Identity
-from ..rp import Rp, issuer, public_url, safe_next
+from ..rp import Rp, app_id, issuer, public_url, safe_next
 from ..services import ServiceError
 from ..sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
 from ..store import Store
@@ -67,8 +67,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: R
             raise ServiceError(403, "account_unavailable", "账户不可用，请联系管理员")
 
         # The id_token proves who signed in. It does not decide which workspace they land in —
-        # that is re-resolved here from live membership and entitlement.
-        allowed, workspace_id, reason = apps.check_access(user["id"], "docweave")
+        # that is re-resolved here from live membership and entitlement. The application asked
+        # about is this service's own, not one named in the token.
+        allowed, workspace_id, reason = apps.check_access(user["id"], app_id())
         if not allowed:
             audit(request, "sso.callback", actor_id=user["id"], result="denied",
                   meta={"reason": reason})

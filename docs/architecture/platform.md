@@ -77,10 +77,15 @@ Python 的 `http.cookiejar`（真实规则：按主机作用域、无视端口�
 其中直接检查了：三个会话值互不相同、DocWeave 的会话 Cookie `domain=docweave.localhost` 且
 非 `.`-前缀、Cookie 没有端口限定、没有任何 Cookie 落在 `localhost` 这样的共享父域上。
 
-> **本机验证的已知限制**：本会话中的沙箱浏览器按主机授权，只放行了 `accounts.localhost`，
-> 兄弟主机被拒。因此跨 origin 的重定向链路用 `http.cookiejar` 验证（上面那 32 项），
-> 浏览器仅验证单 origin 页面。这一限制在交付报告中单独列出，
-> 不写成"浏览器已验证跨域隔离"。
+**浏览器也走通了。**（此前记录的「沙箱浏览器只放行一个 `*.localhost` 主机」这一限制，本轮
+重新尝试后不再成立，故更正。）在真实浏览器里完整走过：
+
+1. 门户 → 点「登录」→ 账户服务输入一次口令 → 回到门户首页，看到 DocWeave 卡片；
+2. 点卡片 → 打开 DocWeave 工作台，不再要求口令；
+3. 平台登出 → 直接访问 `docweave.localhost:8775/capabilities` → 跳到账户服务登录 →
+   **回到 `/capabilities` 本身**，不是回到首页。
+
+浏览器验证发现了两处 HTTP 脚本测不到的问题，见下面 §3.3。
 
 ### 3.1 服务要监听自己域名解析到的地址
 
@@ -95,6 +100,19 @@ Python 的 `http.cookiejar`（真实规则：按主机作用域、无视端口�
 连接身份服务的 HTTP 客户端设 `trust_env=False`。httpx 默认遵循 `HTTP_PROXY`，而这个连接上跑的是
 授权码和客户端密钥；`NO_PROXY=localhost,127.0.0.1` **不匹配** `accounts.localhost`。本机验证时
 就是这样被静默送进代理并丢弃的。需要经代理访问发行者的部署用 `DOCWEAVE_OIDC_PROXY` 显式指定。
+
+### 3.3 只有浏览器能发现的两件事
+
+**一个二进制三个角色，外壳也要分三个。** 账户服务原本和 DocWeave 共用同一个 SPA 外壳，于是
+`accounts.localhost` 渲染出 DocWeave 的项目列表，然后被自己的角色边界拒绝，页面上浮出
+「该接口不在账户服务上」——一次**正确的拒绝被呈现成一个坏掉的页面**。现在是三个 Vite 入口：
+`index.html`（DocWeave）、`portal.html`（门户）、`accounts.html`（账户与安全），由角色决定服务哪一个。
+
+**依赖方不能有自己的口令框。** 点门户上的 DocWeave 卡片，落到了 DocWeave 自己的登录表单，
+要求再输一次口令——而 `role=app` 的进程根本不提供 `/api/auth/login`，那个框永远不可能成功。
+现在 `/api/auth/state` 里的 `password_login` 由角色决定（只有 `accounts` 和 `all` 为真），
+依赖方的 `RequireSession` 和 `/login` 都直接前往 `/auth/start`。这件事重要的地方不只是它坏了：
+一个收集口令却无法校验口令的表单，恰恰出现在「口令只在一个地方输入」这条规则最该被贯彻的页面上。
 
 生产域名未定，全部通过配置项给出，不写死。改域名会使已登记的 Passkey 失效（RP ID 绑定域名），
 这一点记在 `docs/security/sessions.md`。
@@ -143,11 +161,13 @@ app / workspace / 操作。机器配置只经 CLI 与配置文件管理，**产�
 | 应用注册与 OIDC 客户端数据模型 | 已完成（schema v4 追加表 + `V4_COLUMNS` 无条件列迁移） |
 | Provider 端点（discovery/JWKS/authorize/token/userinfo/revocation/logout） | 已完成并测试 |
 | 刷新令牌轮换 + 重放检测 | 已完成并测试 |
-| DocWeave 接入为 Client（BFF） | 已完成并测试；本机三来源链路 32/32 通过 |
+| DocWeave 接入为 Client（BFF） | 已完成并测试；本机三来源链路 38/38 通过，浏览器亦已走通 |
 | 跨应用登出（后通道）与撤权传播 | 已完成并测试 |
 | 角色边界（accounts / portal / app 三个角色） | 已完成；本机实测三种 404 边界 |
 | CLI：应用、客户端、密钥 | 已完成并本机跑通 |
-| 门户前端页面 | 未开始（后端链路已通，`portal` 角色已可运行） |
+| 门户前端页面 | 已完成：登录、空状态、应用卡片、工作空间切换、账户入口；浏览器实测 |
+| 账户服务独立外壳（accounts.html） | 已完成；账户服务不再渲染业务工作台 |
+| 真实库迁移演练（69 项目副本） | 已完成 15/15；来源只读，`default` 仍 0 成员 |
 | 管理后台与历史数据认领 | 未开始 |
 | Passkey / WebAuthn | 未开始；RP ID 策略已确定为账户服务域名 |
 | 机器身份接入 OIDC（服务账户 / 用户委托） | 未开始；现有 `/api/v1` 密钥体系不变 |
