@@ -40,10 +40,22 @@ CREATE TABLE IF NOT EXISTS ui_users (
 """
 
 
+UI_AUTH_MODES = ("none", "basic", "proxy", "session")
+
+
 def ui_auth_mode() -> str:
+    """How the browser surface is protected.
+
+    `session` is the real account system: per-user identity, workspaces, revocable sessions.
+    The older modes stay because deployments are already running on them — `basic` is what
+    dw.wegreen.ltd uses today, and pulling it out from under a live instance to ship accounts
+    would be the kind of migration that loses people their access. They are a shared password,
+    not identity, and `docs/security/permissions.md` says so.
+    """
     mode = (os.environ.get("DOCWEAVE_UI_AUTH") or "none").strip().lower()
-    if mode not in ("none", "basic", "proxy"):
-        raise ServiceError(500, "bad_config", f"DOCWEAVE_UI_AUTH 只能是 none / basic / proxy，当前为 {mode!r}")
+    if mode not in UI_AUTH_MODES:
+        raise ServiceError(500, "bad_config",
+                           f"DOCWEAVE_UI_AUTH 只能是 {' / '.join(UI_AUTH_MODES)}，当前为 {mode!r}")
     return mode
 
 

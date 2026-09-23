@@ -15,10 +15,12 @@ from fastapi.staticfiles import StaticFiles
 
 from ..auth import Auth, rate_limiter, ui_auth_mode
 from ..context import UI_TENANT, set_tenant
+from ..identity import Identity
+from ..sessions import Sessions
 from ..engine.limits import LIMITS
 from ..jobs import JobService, naming_tokens
 from ..services import App, ServiceError, safe_output_name
-from ..store import Store
+from ..store import Store, new_id
 from ..views import Views
 
 API_RATE_PER_MIN = int(os.environ.get("DOCWEAVE_API_RATE_PER_MIN", "300"))
@@ -49,6 +51,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     views = Views(app_)
     jobs = JobService(app_) if start_jobs else None
     auth = Auth(store)
+    identity = Identity(store)
+    sessions = Sessions(store)
     from ..webhooks import WebhookDispatcher
     hooks = WebhookDispatcher(store, jobs, start=start_jobs)
     app_.on_event = hooks.notify                      # job state changes wake the dispatcher
@@ -61,6 +65,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     api.state.views = views
     api.state.jobs = jobs
     api.state.auth = auth
+    api.state.identity = identity
+    api.state.sessions = sessions
     api.state.webhooks = hooks
     limiter = rate_limiter(API_RATE_PER_MIN)
 
@@ -93,6 +99,64 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
         rid = getattr(request.state, "request_id", "")
         print(f"[docweave] unhandled error request_id={rid} path={request.url.path}\n{traceback.format_exc()}", flush=True)
         return JSONResponse(_error_body(request, "internal_error", "服务器内部错误；请提供 request_id 以便排查", None), status_code=500)
+
+    # Reachable without a session, because you cannot sign in from behind a sign-in wall. Kept
+    # to an exact set rather than a prefix: "/api/auth" as a prefix would also open anything
+    # added under it later, and this list is the whole anonymous surface of the account system.
+    ANON_AUTH_PATHS = {"/api/auth/state", "/api/auth/login", "/api/auth/bootstrap", "/api/auth/logout"}
+    # The SPA shell and its assets must load so the login screen can render; every /api/ route
+    # behind them still requires the session, so no data rides along with the HTML.
+    SPA_PREFIXES = ("/assets/",)
+    SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+    def _session_gate(request: Request, path: str, finish):
+        """Resolve the session cookie into an identity, or refuse.
+
+        Returns the tenant-context token on success, or a JSONResponse to return as-is. The
+        workspace comes from the session row and is re-checked against live membership on every
+        request, so a workspace someone has been removed from stops working immediately rather
+        than at the end of their session.
+        """
+        from ..sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, csrf_ok
+        session = sessions.load(request.cookies.get(COOKIE_NAME))
+        request.state.session = session
+
+        if session and request.method not in SAFE_METHODS and path.startswith("/api/"):
+            # Double-submit CSRF on every state-changing request. Login is exempt because it has
+            # no session yet; it is protected by being useless without valid credentials.
+            if path not in ANON_AUTH_PATHS and not csrf_ok(request.cookies.get(CSRF_COOKIE),
+                                                           request.headers.get(CSRF_HEADER)):
+                return finish(JSONResponse(_error_body(request, "csrf_failed",
+                                                       "请求校验失败，请刷新页面后重试", None), status_code=403))
+
+        if path in ANON_AUTH_PATHS or any(path.startswith(p) for p in SPA_PREFIXES) or not path.startswith("/api/"):
+            # The SPA shell renders for anyone; it fetches nothing until a session exists. The
+            # fallback is deliberately an id no row carries rather than UI_TENANT — see below.
+            return set_tenant((session or {}).get("workspace_id") or "__anonymous__")
+
+        if not session:
+            return finish(JSONResponse(_error_body(request, "unauthorized", "请先登录", None), status_code=401))
+
+        user = identity.get_user(session["user_id"])
+        if not user or user["status"] != "active":
+            # Suspension and deletion take effect on the next request, not at session expiry.
+            sessions.revoke(session["id"], f"user_{user['status'] if user else 'deleted'}")
+            request.state.session = None
+            return finish(JSONResponse(_error_body(request, "unauthorized", "账户不可用，请重新登录", None), status_code=401))
+        request.state.user = user
+
+        wid = session.get("workspace_id")
+        if wid:
+            # Membership is authoritative every time; the session only remembers a preference.
+            if not identity.membership(wid, user["id"]):
+                sessions.set_workspace(session["id"], None)
+                wid = None
+        request.state.workspace_id = wid
+        # With no workspace selected the tenant becomes an id no row can ever carry, so the
+        # person sees nothing. Falling back to UI_TENANT here would be a disaster: UI_TENANT is
+        # "default", which is exactly the legacy workspace holding every pre-identity file — so
+        # the fallback would hand the historical data to every signed-in account.
+        return set_tenant(wid or f"__no_workspace__{user['id']}")
 
     @api.middleware("http")
     async def _gate(request: Request, call_next):
@@ -130,11 +194,17 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                 # 200. Only the SPA shell was reachable that way, but an authentication branch
                 # that some paths fall past is not a shape to leave in place.
                 mode = ui_auth_mode()
-                if mode == "basic" and not path.startswith("/api/v1"):
+                if mode == "session" and not path.startswith("/api/v1"):
+                    token = _session_gate(request, path, finish)
+                    if isinstance(token, JSONResponse):
+                        return token
+                elif mode == "basic" and not path.startswith("/api/v1"):
                     if not auth.check_ui_basic(request.headers.get("Authorization")):
                         return finish(JSONResponse(_error_body(request, "unauthorized", "需要登录", None), status_code=401,
                                                    headers={"WWW-Authenticate": 'Basic realm="DocWeave"'}))
-                token = set_tenant(UI_TENANT)
+                    token = set_tenant(UI_TENANT)
+                else:
+                    token = set_tenant(UI_TENANT)
         except ServiceError as e:
             return finish(await _svc_err(request, e))
         try:
@@ -572,6 +642,27 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     # ------------------------------------------------------------ machine API (documented in docs/integration/api.md)
     from .v1 import build_router
     api.include_router(build_router(app_, views, jobs, auth, attachment))
+
+    def _audit(request: Request, action: str, *, actor_id: str | None = None, actor_kind: str = "user",
+               workspace_id: str | None = None, object_kind: str | None = None,
+               object_id: str | None = None, result: str = "ok", meta: dict | None = None) -> None:
+        """Append a security event.
+
+        Metadata only — never a password, token, TOTP seed, recovery code or document content.
+        A failure to write must not be mistaken for the action not happening, so it is raised
+        rather than swallowed; callers that must not fail closed catch it deliberately.
+        """
+        import json as _json
+        store.execute(
+            "INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,"
+            "object_id,result,request_id,ip,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (new_id("ae"), time.time(), actor_kind, actor_id,
+             workspace_id or getattr(request.state, "workspace_id", None), action, object_kind, object_id,
+             result, getattr(request.state, "request_id", None),
+             (request.client.host if request.client else None), _json.dumps(meta or {}, ensure_ascii=False)))
+
+    from .auth_routes import build_router as build_auth_router
+    api.include_router(build_auth_router(identity, sessions, _audit))
 
     # ------------------------------------------------------------ static UI
     dist = Path(os.environ.get("DOCWEAVE_UI_DIR", Path(__file__).resolve().parents[3] / "frontend" / "dist"))
