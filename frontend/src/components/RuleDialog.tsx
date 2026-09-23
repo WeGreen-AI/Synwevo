@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { get, post, qs } from "../lib/api";
+import { useLatest } from "../lib/latest";
 import type { Project, RecordRule, SourceFile } from "../lib/types";
 import { Modal } from "../lib/ui";
 
@@ -47,6 +48,7 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
   const [perr, setPerr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const timer = useRef<any>(null);
+  const latest = useLatest();
 
   // header names of the chosen header row (from the representative file)
   useEffect(() => {
@@ -87,7 +89,11 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
         setPerr("请选择分组字段");
         return;
       }
-      post(`/api/projects/${project.id}/rule-preview`, rule).then((x) => { setPreview(x); setPerr(null); }).catch((e) => { setPreview(null); setPerr(e.message); });
+      latest(
+        (signal) => post(`/api/projects/${project.id}/rule-preview`, rule, signal),
+        (x) => { setPreview(x); setPerr(null); },
+        (e) => { setPreview(null); setPerr(e.message); },
+      );
     }, 250);
     return () => clearTimeout(timer.current);
   }, [JSON.stringify(rule)]);

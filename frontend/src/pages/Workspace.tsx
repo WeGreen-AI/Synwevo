@@ -42,6 +42,7 @@ export default function Workspace() {
   const { confirm } = useDialog();
   const [project, setProject] = useState<Project | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const loaded = useRef(false);          // "the workspace is on screen" — read inside reload's closure
   const [sources, setSources] = useState<SourceFile[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [srcView, setSrcView] = useState<any>(null);
@@ -108,12 +109,19 @@ export default function Workspace() {
       setProject(p);
       setSources(p.sources);
       setLoadErr(null);
+      loaded.current = true;
       return p;
     } catch (e: any) {
-      setLoadErr(e.message);
+      // Once the workspace is on screen it must not be discarded over a failed refresh. The
+      // early return further down replaces the whole editor — template pane, mappings,
+      // connectors, everything the user was working on — with an error page and a link home,
+      // and one CDN rate-limit on the 900ms parse-poll was enough to trigger it.
+      const transient = e instanceof ApiError && (e.upstream || e.status === 0 || e.status >= 500);
+      if (loaded.current && transient) toast(e.message, "err");
+      else setLoadErr(e.message);
       return null;
     }
-  }, [pid]);
+  }, [pid, toast]);
 
   useEffect(() => {
     reload().then((p) => {
@@ -128,8 +136,15 @@ export default function Workspace() {
   // poll while files are parsing
   useEffect(() => {
     if (!sources.some((s) => s.status === "parsing")) return;
-    const t = setTimeout(reload, 900);
-    return () => clearTimeout(t);
+    let alive = true;
+    let t: any = setTimeout(async function tick() {
+      const p = await reload();
+      // A refresh that failed for transport reasons says nothing about whether parsing has
+      // finished, so keep asking. On success setSources re-runs this effect, and the `alive`
+      // guard stops the old tick from scheduling a second timer alongside the new one.
+      if (alive && !p) t = setTimeout(tick, 900);
+    }, 900);
+    return () => { alive = false; clearTimeout(t); };
   }, [sources, reload]);
 
   useEffect(() => {
@@ -198,7 +213,13 @@ export default function Workspace() {
       }
       return r;
     } catch (e: any) {
-      setSave(e instanceof ApiError && e.status >= 400 && e.status < 500 ? "saved" : "error");
+      // A 4xx from DocWeave means the server rejected this edit but holds a valid state of its
+      // own, so the badge stays 已自动保存 and reload() resyncs. That reasoning does not extend
+      // to a refusal the server never made: an intermediary's 403 and the auth gate's 401 both
+      // mean the save did not arrive. The toast that says so disappears after 8s, and a stale
+      // green ✓ is what the user is left looking at when they close the tab.
+      const serverHasIt = e instanceof ApiError && !e.upstream && e.status > 401 && e.status < 500;
+      setSave(serverHasIt ? "saved" : "error");
       toast(e.message, "err");
       throw e;
     }

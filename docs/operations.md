@@ -52,7 +52,7 @@ rsync -a --delete data/blobs/ /backup/blobs/
 
 1. 备份（见上）。
 2. 更新代码与依赖，重新构建前端。
-3. 启动：迁移在进程启动时自动执行（`Store._migrate`，前进式、可重复执行）。当前 `schema_version = 2`。
+3. 启动：迁移在进程启动时自动执行（`Store._migrate`，前进式、可重复执行）。当前 `schema_version = 3`（v2 → v3 为 `projects.origin` / `projects.archived_at` 加列；迁移闸门见 DW-058，旧库就地升级不丢数据）。
 4. 用 `python backend/manage.py info` 确认 schema 版本，`/readyz` 确认就绪。
 
 v1 → v2 迁移内容：新增租户列、任务租约/运行记录/事件表、幂等表、API 密钥表、Webhook 投递表；

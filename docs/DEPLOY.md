@@ -27,8 +27,16 @@ docker compose up -d --build            # 首次构建会下载 LibreOffice、Te
 
 * 镜像包含：API + 界面、LibreOffice（Writer/Calc/Impress）、Tesseract（chi_sim + eng）、Noto CJK 字体。
 * 数据卷：`./data:/data`。备份时停止服务后复制该目录即可（SQLite + 内容寻址文件）。
-* `docker-compose.yml` 默认只绑定 `127.0.0.1:8765`。**本软件不内置登录**：对外提供服务时请放在带认证的反向代理（如 Nginx + Basic Auth / OIDC）之后，并启用 HTTPS。
-* 反向代理需允许较大的上传（例如 Nginx `client_max_body_size 100m;`），并把超时设为 300 秒以上（大文件解析/转换）。
+* `docker-compose.yml` 默认只绑定 `127.0.0.1:8765`。
+* **界面鉴权三选一**（`DOCWEAVE_UI_AUTH`）：`none`（仅限回环监听，绑定其他地址时服务拒绝启动）、
+  `basic`（内置口令，`python backend/manage.py ui-user add <用户名>`，口令以 PBKDF2-HMAC-SHA256 存储）、
+  `proxy`（由反向代理认证，需显式声明）。对外提供服务请启用 HTTPS。
+  `/api/v1` 任何情况下都需要 API 密钥，与此设置无关。
+* 反向代理需允许较大的上传（例如 Nginx `client_max_body_size 100m;`），并把超时设为 300 秒以上（大文件解析/转换），
+  同时转发 `Host` 与 `X-Forwarded-Proto`，否则签发出来的下载链接会指向 `http://127.0.0.1:8765`。
+  完整可粘贴的配置见 `integration/ports.md` 第 3 节；也可以直接设 `DOCWEAVE_PUBLIC_URL=https://你的域名`。
+* **放在 WAF / CDN（Cloudflare 等）之后时**：边缘的机器人防护会拦掉界面发出的 XHR，
+  表现为「页面能打开、点任何按钮都报错」。必读 `integration/ports.md` 第 6 节。
 
 ## 3. 多用户部署建议
 
@@ -41,4 +49,4 @@ docker compose up -d --build            # 首次构建会下载 LibreOffice、Te
 
 ## 5. 升级
 
-停止服务 → 备份 `data/` → 更新代码 → `scripts/setup.sh` → 启动。数据库表结构在启动时自动创建（当前 schema_version = 1）。
+停止服务 → 备份 `data/` → 更新代码 → `scripts/setup.sh` → 启动。数据库表结构在启动时自动创建，迁移前进式、可重复执行（当前 schema_version = 3；以 `python backend/manage.py info` 的输出为准）。

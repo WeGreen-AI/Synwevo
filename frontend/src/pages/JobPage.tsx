@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { get, post, qs } from "../lib/api";
+import { ApiError, get, post, qs } from "../lib/api";
 import { fmtSize, fmtTime, useToast } from "../lib/ui";
 
 import { ITEM_STATUS as IST, JOB_STATUS as ST } from "../lib/status";
@@ -13,16 +13,27 @@ export default function JobPage() {
   const [filter, setFilter] = useState<string>("");
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [pollKey, setPollKey] = useState(0);
+  const seen = useRef(false);            // read inside the recursing tick, where `job` would be stale
 
-  const load = async () => {
+  /** Returns the job, or "retry" when the failure says nothing about the job itself.
+   *
+   *  This page polls every 900ms while a job runs, which is exactly the traffic a CDN rate-limit
+   *  or bot rule trips on. Treating one such failure as an answer used to end the poll for good:
+   *  the tick only rescheduled itself when it got a job back, so progress froze at whatever it
+   *  last showed — on a job that was still running fine on the server. */
+  const load = async (): Promise<any | "retry" | null> => {
     try {
       const j = await get(`/api/jobs/${jid}`);
       setJob(j);
+      seen.current = true;
       setItems(await get(`/api/jobs/${jid}/items${qs({ limit: 5000 })}`));
+      setErr(null);
       return j;
     } catch (e: any) {
-      setErr(e.message);
-      return null;
+      const transient = e instanceof ApiError && (e.upstream || e.status === 0 || e.status >= 500);
+      setErr(transient && seen.current ? null : e.message);   // keep showing progress rather than a blank page
+      return transient ? "retry" : null;
     }
   };
   useEffect(() => {
@@ -30,14 +41,15 @@ export default function JobPage() {
     let t: any;
     const tick = async () => {
       const j = await load();
-      if (alive && j && ["queued", "running"].includes(j.status)) t = setTimeout(tick, 900);
+      if (!alive) return;
+      if (j === "retry" || (j && ["queued", "running"].includes(j.status))) t = setTimeout(tick, 900);
     };
     tick();
     return () => {
       alive = false;
       clearTimeout(t);
     };
-  }, [jid]);
+  }, [jid, pollKey]);
 
   const c = job?.counts || {};
   const done = (c.success || 0) + (c.failed || 0) + (c.skipped || 0) + (c.cancelled || 0);
@@ -48,11 +60,10 @@ export default function JobPage() {
     try {
       await post(`/api/jobs/${jid}/${what}`, {});
       toast(what === "cancel" ? "已请求取消，正在停止…" : "已重新排队失败项", "ok");
-      const tick = async () => {
-        const j = await load();
-        if (j && ["queued", "running"].includes(j.status)) setTimeout(tick, 900);
-      };
-      tick();
+      // Restart the one polling effect rather than starting a second loop beside it. The old
+      // loop here had no unmount guard, so leaving the page left it polling and writing state
+      // into a component that no longer existed — and cancelling then retrying ran two of them.
+      setPollKey((k) => k + 1);
     } catch (e: any) {
       toast(e.message, "err");
     }

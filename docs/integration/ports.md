@@ -39,6 +39,16 @@
 * 反向代理示例（Nginx，界面走 SSO/Basic，机器接口走密钥）：
 
 ```nginx
+# 这四项用默认值会直接坏事，别省：
+client_max_body_size 100m;        # 默认 1m：超过 1MB 的来源文件全部上传失败
+proxy_read_timeout   300s;        # 默认 60s：LibreOffice 转换 / OCR 会被切断
+proxy_send_timeout   300s;
+proxy_request_buffering off;      # 大文件边传边转，避免先落盘再转发
+
+proxy_set_header Host              $host;        # 默认是 $proxy_host，会让下载链接变成 127.0.0.1
+proxy_set_header X-Forwarded-Proto $scheme;      # 否则签发出来的下载链接是 http://
+proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+
 location /api/v1/ { proxy_pass http://127.0.0.1:8765; }          # 机器接口：由 API 密钥鉴权
 location / {                                                      # 界面：由代理认证
     auth_basic "DocWeave"; auth_basic_user_file /etc/nginx/docweave.htpasswd;
@@ -46,6 +56,12 @@ location / {                                                      # 界面：由
 }
 location = /healthz { proxy_pass http://127.0.0.1:8765; access_log off; }
 ```
+
+* 更省事的做法是直接设 `DOCWEAVE_PUBLIC_URL=https://你的域名`，下载链接就不再依赖任何转发头。
+* `auth_basic`（代理认证）和 `DOCWEAVE_UI_AUTH=basic`（应用自带口令）是**两套独立凭据，二选一**，
+  同时开会要求登录两次。
+* `DOCWEAVE_MAX_FILE_MB` 应当设得低于代理的体积上限（Cloudflare 免费/专业版 100 MB），
+  否则用户会先撞到边缘的 413，而不是 DocWeave 自己那句中文提示。
 
 ## 4. 端口冲突与变更
 
@@ -64,10 +80,59 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8765/api/v1/capabilities   # 
 ```
 
 实测记录（2026-09-23，macOS 26.0 / Python 3.14 / 本机部署）：`lsof` 显示 `Python … TCP 127.0.0.1:8765 (LISTEN)`；
-`/healthz` → `{"status":"ok","version":"1.0.0"}`；`/readyz` → `{"status":"ready","checks":{"database":"ok","storage":"ok","worker":"ok"},"schema_version":2}`；
+`/healthz` → `{"status":"ok","version":"1.0.0"}`；`/readyz` → `{"status":"ready","checks":{"database":"ok","storage":"ok","worker":"ok"},"schema_version":3}`；
 无密钥访问 `/api/v1/capabilities` → `401`。
 
 ---
+
+## 6. 放在 WAF / CDN 之后：页面能打开 ≠ 接口能用
+
+> 本节早先的版本写着「真人浏览器可以通过」「仅做浏览器访问则无需改动」。**这是错的**，
+> 2026-09-23 在 `dw.wegreen.ltd` 上被实际推翻：用户在已通过校验的浏览器里打开项目、点开
+> 「定义样本」，「识别结果预览」直接报错。页面能打开完全不代表界面能用。
+
+### 6.1 失效模式
+
+Cloudflare 的 Bot Fight / 托管质询是**靠返回一个质询页让浏览器去执行**来放行的。
+整页导航可以这样过；但页面里的 `fetch()` / `XHR` 不行——质询页没法在一个 XHR 里渲染，
+浏览器只拿到一个 `403`。于是：
+
+* 首页、项目页都能打开（导航请求过了质询）；
+* 点任何一个真正干活的按钮就报错（该动作的 XHR 被边缘挡掉）。
+
+受影响的不是「程序化访问」，而是**任何拿不到交互式质询页的请求**——浏览器里的 XHR 正是这一类。
+上传（multipart POST）通常最先中招。
+
+### 6.2 先判断这个 403 是谁返回的
+
+DocWeave 的每个响应都带 `X-Request-ID`，每个错误都是 JSON；边缘的质询页两样都没有。
+界面从 v1.0 起据此区分，直接显示「请求被 Cloudflare 拦截（HTTP 403），没有到达 DocWeave」，
+不再把中间层的拒绝说成是本服务拒绝的。人工核对：
+
+```bash
+# 服务端访问日志里有没有这条路径？没有 = 请求根本没到达服务，问题在边缘
+docker logs docweave 2>&1 | grep rule-preview
+
+# 直连源站复现同一个请求；这里成功就说明应用侧没问题
+curl -s -u <用户名>:<口令> -X POST http://127.0.0.1:8765/api/projects/<pid>/rule-preview \
+  -H 'Content-Type: application/json' -d '{"mode":"per_file"}'
+```
+
+### 6.3 要在 Cloudflare 面板改什么
+
+面板位置随 Cloudflare 改版而变，以下按功能描述，**请以面板当时的实际位置为准**：
+
+* **Bot Fight Mode**（安全 → 机器人）对该域名关闭。它不支持按主机名豁免，是整域开关。
+* 或在 **WAF → 自定义规则**里加一条 `Skip` 规则：匹配 `Hostname equals dw.wegreen.ltd`
+  （要更紧可再加 `URI Path starts with /api/`），动作选 Skip，跳过托管规则与机器人防护。
+* 若还启用了**速率限制**，注意本界面在任务运行和文件解析期间是 900ms 轮询，容易触发。
+
+### 6.4 关掉边缘防护之后还剩什么防护
+
+DocWeave 自己有口令（`DOCWEAVE_UI_AUTH=basic`，PBKDF2 存储），`/api/v1` 另外要 API 密钥，
+源站只监听回环、没有对外端口。所以为这个主机名跳过边缘防护**不等于裸奔**。
+真正失去的是：针对该主机名的自动化扫描/撞库拦截、DDoS 之前的机器人过滤，以及托管规则对
+已知漏洞特征的拦截——因此 HTTP Basic 的口令强度和及时升级就更重要了。
 
 ## 生产部署实例：vultr_tokyo（2026-09-23）
 
@@ -94,13 +159,6 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8765/api/v1/capabilities   # 
   `{"hostname":"dw.wegreen.ltd","service":"http://127.0.0.1:8765"}`。
 * 空闲占用：**123.6 MiB / 3 GiB 上限（4.02%）**，`docker stats` 实测，此时库中已有下述三个示例项目
   （LibreOffice 仅在转换时另起进程）。
-
-#### 该域名当前挂着 Cloudflare 人机校验
-
-`curl https://dw.wegreen.ltd/` 返回 `403` 且带 `cf-mitigated: challenge`（"Just a moment…"），
-真人浏览器可以通过，**但任何程序化访问（脚本、CI、`/api/v1` 客户端）都会被拦在 Cloudflare**，
-根本到不了 DocWeave 的 Basic Auth。这是 Cloudflare 的 Bot Fight / WAF 设置，不是本服务的行为。
-若要从外部调用机器接口，需要在 Cloudflare 面板为该主机名加一条跳过规则；仅做浏览器访问则无需改动。
 
 ### 实例上的三个合成示例（2026-09-23）
 

@@ -261,3 +261,42 @@ def test_every_response_carries_the_trace_id(api, keys):
     r = c.get("/api/v1/capabilities", headers={"X-Request-ID": mine})
     assert r.headers.get("X-Request-ID") == mine
     assert r.json()["error"]["request_id"] == mine
+
+
+def test_signed_link_origin_survives_a_reverse_proxy(api, keys, fixtures, monkeypatch):
+    """A download link is a credential, so the URL handed back must be the one the caller used.
+
+    uvicorn builds request.base_url from the immediate connection, so behind a TLS-terminating
+    proxy it reports http://, and behind a proxy that rewrites Host (nginx's $proxy_host default)
+    it reports the origin's own address — handing the caller a token on a plaintext URL that
+    points at their own machine.
+    """
+    import docweave.api.v1 as v1
+    c, h = api.c, keys["rw"]
+    pid = _prepared(api, keys, fixtures)
+    job = _wait(api, keys, _ok(c.post(f"/api/v1/projects/{pid}/jobs", json={"formats": ["docx"]}, headers=h))["id"])
+    art = _ok(c.get(f"/api/v1/jobs/{job['id']}/artifacts", headers=h))["items"][0]
+
+    def link(extra):
+        return _ok(c.post(f"/api/v1/artifacts/{art['id']}/link", headers={**h, **extra}))["url"]
+
+    # the scheme the user actually used, not the proxy→origin hop
+    assert link({"Host": "dw.example.com", "X-Forwarded-Proto": "https"}).startswith("https://dw.example.com/api/v1/download/")
+    # a proxy that rewrote Host still must not produce a loopback URL, if it forwarded the real one
+    assert link({"Host": "127.0.0.1:8765", "X-Forwarded-Host": "dw.example.com",
+                 "X-Forwarded-Proto": "https"}).startswith("https://dw.example.com/")
+    # comma-joined values from a chain of proxies: the first entry is the client-facing one
+    assert link({"X-Forwarded-Host": "dw.example.com, inner.local",
+                 "X-Forwarded-Proto": "https, http"}).startswith("https://dw.example.com/")
+    # an explicit public URL wins over anything a client claims, including a spoofed Host
+    monkeypatch.setattr(v1, "PUBLIC_URL", "https://docs.example.org")
+    assert link({"Host": "evil.example", "X-Forwarded-Proto": "http"}) \
+        .startswith("https://docs.example.org/api/v1/download/")
+    monkeypatch.setattr(v1, "PUBLIC_URL", "")
+    # no proxy at all keeps working
+    assert link({}).startswith("http://testserver/api/v1/download/")
+
+    # whatever the URL says, the token is verified on its own and still downloads
+    token = link({"Host": "dw.example.com", "X-Forwarded-Proto": "https"}).rsplit("/", 1)[-1]
+    got = c.get(f"/api/v1/download/{token}")
+    assert got.status_code == 200 and got.headers["X-Content-SHA256"] == art["sha256"]

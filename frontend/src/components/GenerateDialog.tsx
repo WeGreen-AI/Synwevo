@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { get, patch, post, qs } from "../lib/api";
+import { useLatest } from "../lib/latest";
 import type { Project, TemplateDetail } from "../lib/types";
 import { Modal } from "../lib/ui";
 
@@ -16,10 +17,17 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose }: { p
   const [busy, setBusy] = useState(false);
   const reqId = useRef(`r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`);
   const inputRef = useRef<HTMLInputElement>(null);
+  const latest = useLatest();
 
   useEffect(() => {
     const t = setTimeout(() => {
-      get(`/api/projects/${project.id}/generation-summary${qs({ formats: formats.join(","), naming })}`).then((s) => { setSum(s); setErr(null); }).catch((e) => setErr(e.message));
+      // The counts and filename examples this fills in are what the user checks before starting
+      // a batch, so a stale answer that outran a newer one is worse than no answer.
+      latest(
+        (signal) => get(`/api/projects/${project.id}/generation-summary${qs({ formats: formats.join(","), naming })}`, signal),
+        (s) => { setSum(s); setErr(null); },
+        (e) => setErr(e.message),
+      );
     }, 200);
     return () => clearTimeout(t);
   }, [formats.join(","), naming]);

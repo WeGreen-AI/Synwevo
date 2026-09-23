@@ -205,6 +205,12 @@ python backend/manage.py apikey revoke <key_id>
 
 产物被删除后返回 `410 artifact_deleted`；产物文件内容按 SHA-256 内容寻址存储，可用返回的 `sha256` 校验下载完整性。
 
+**链接里的域名**：`/link` 与 `/archive-link` 返回的 URL 默认取 `DOCWEAVE_PUBLIC_URL`；未设置时按
+`X-Forwarded-Proto` / `X-Forwarded-Host`（没有则用 `Host`）拼出。放在反向代理之后**务必二选一**：
+设 `DOCWEAVE_PUBLIC_URL=https://你的域名`，或让代理正确转发上述头部。两者都没有时，链接会带上
+代理到源站那一跳的协议和地址——典型结果是 `http://127.0.0.1:8765/...`，调用方拿到后连的是自己的机器。
+链接本身即凭据，因此协议写成 `http://` 不只是不好看。令牌的校验与 URL 怎么拼无关，已签发的链接不受影响。
+
 ## 4. 事件与 Webhook
 
 事件结构（`/jobs/{jid}/events` 与 Webhook 共用）：

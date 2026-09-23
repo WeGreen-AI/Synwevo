@@ -23,6 +23,32 @@ from ..store import now
 API_VERSION = "1.0"
 IMPORT_ROOTS = [p for p in (os.environ.get("DOCWEAVE_IMPORT_ROOTS") or "").split(os.pathsep) if p.strip()]
 LINK_TTL_S = int(os.environ.get("DOCWEAVE_DOWNLOAD_LINK_TTL_S", "900"))
+PUBLIC_URL = (os.environ.get("DOCWEAVE_PUBLIC_URL") or "").strip().rstrip("/")
+
+
+def public_base(request: Request) -> str:
+    """The origin to put in a download link.
+
+    ``request.base_url`` is built from what the *immediate* client said, which behind a reverse
+    proxy is wrong in two ways.  The scheme is the proxy→origin scheme, so a service reached
+    over HTTPS hands out ``http://`` links — and a signed link is a credential, so that is not
+    merely untidy.  And with a proxy that does not preserve ``Host`` (nginx's default is
+    ``$proxy_host``) the host becomes the origin's own address, so the caller is handed
+    ``http://127.0.0.1:8765/...``, which resolves to their own machine.
+
+    ``DOCWEAVE_PUBLIC_URL`` is the deterministic answer and is what a deployment behind a proxy
+    should set.  Failing that, honour the forwarded headers — uvicorn does not apply them unless
+    it is started with proxy headers enabled, and enabling those globally would also change the
+    client address the rate limiter sees.  Spoofing them only changes the URL handed back to the
+    spoofer; the token itself is signed and verified independently of how it was addressed.
+    """
+    if PUBLIC_URL:
+        return PUBLIC_URL
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    if not host:
+        return str(request.base_url).rstrip("/")
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
+    return f"{proto}://{host}"
 
 
 def _principal(request: Request) -> dict:
@@ -302,7 +328,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         p = scope(request, "read")
         a, _ = jobs.artifact(aid)
         token, exp = auth.sign_link("artifact", aid, p["tenant"], LINK_TTL_S)
-        return {"url": str(request.base_url).rstrip("/") + f"/api/v1/download/{token}", "expires_at": exp,
+        return {"url": public_base(request) + f"/api/v1/download/{token}", "expires_at": exp,
                 "filename": a["filename"], "sha256": a["blob"], "size": a["size"]}
 
     @r.get("/jobs/{jid}/archive", summary="下载全部产物（ZIP，含生成清单）")
@@ -317,7 +343,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         jobs.get(jid)
         ident = jid if not body.get("format") else f"{jid}|{body['format']}"
         token, exp = auth.sign_link("archive", ident, p["tenant"], LINK_TTL_S)
-        return {"url": str(request.base_url).rstrip("/") + f"/api/v1/download/{token}", "expires_at": exp}
+        return {"url": public_base(request) + f"/api/v1/download/{token}", "expires_at": exp}
 
     @r.get("/jobs/{jid}/report.csv", summary="生成清单（CSV）")
     def job_report(request: Request, jid: str):
