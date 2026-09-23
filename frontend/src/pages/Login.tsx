@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, post } from "../lib/api";
 import { safeNext, signInUrl, useSession } from "../lib/session";
+import { b64urlToBuf, toJSON } from "../components/PasskeySection";
 
 /** Sign in, and — on a deployment that has never been set up — create the first administrator.
  *
@@ -76,6 +77,37 @@ export default function Login() {
       setBusy(false);
     }
   };
+
+  const passkeySupported = typeof window !== "undefined"
+    && typeof window.PublicKeyCredential !== "undefined";
+
+  async function signInWithPasskey() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const options = await post<Record<string, unknown>>(
+        "/api/auth/passkeys/authenticate/begin", {});
+      const publicKey = "parseRequestOptionsFromJSON" in PublicKeyCredential
+        ? (PublicKeyCredential as unknown as {
+            parseRequestOptionsFromJSON: (o: unknown) => PublicKeyCredentialRequestOptions;
+          }).parseRequestOptionsFromJSON(options)
+        : { ...(options as unknown as PublicKeyCredentialRequestOptions),
+            challenge: b64urlToBuf(options.challenge as string) };
+      const cred = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
+      if (!cred) throw new Error("没有收到安全密钥的响应");
+      await post("/api/auth/login/passkey", { credential: toJSON(cred) });
+      await refresh();
+      window.location.assign(safeNext(new URLSearchParams(window.location.search).get("next")));
+    } catch (e) {
+      if (e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "AbortError")) {
+        setErr("已取消，或没有可用于本站的安全密钥。");
+      } else {
+        setErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
   if (disabled || me) return <div className="empty">正在前往…</div>;
 
@@ -203,6 +235,20 @@ export default function Login() {
         <button className="btn primary authsubmit" type="submit" disabled={busy}>
           {busy ? "处理中…" : bootstrap ? "创建管理员并登录" : "登录"}
         </button>
+
+        {!bootstrap && passkeySupported && (
+          <>
+            <div className="author" aria-hidden="true"><span>或</span></div>
+            <button className="btn authsubmit" type="button" disabled={busy}
+                    onClick={() => void signInWithPasskey()}>
+              使用安全密钥登录
+            </button>
+            {/* No email is typed first, and none is sent: the browser picks the credential and
+                the server learns who it belongs to from the assertion. Asking for an address
+                here would also answer "does this address have an account". */}
+            <span className="tiny muted authfoot">不需要输入邮箱——设备会选择对应的账户。</span>
+          </>
+        )}
 
         {!bootstrap && state?.registration === "invite" && (
           <p className="tiny muted authfoot">本服务目前为邀请制，账户由管理员或工作空间所有者邀请创建。</p>

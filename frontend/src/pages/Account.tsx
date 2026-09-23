@@ -4,6 +4,7 @@ import { del, get, post } from "../lib/api";
 import { fmtTime, useDialog, useToast } from "../lib/ui";
 import { useSession } from "../lib/session";
 import MfaSection from "../components/MfaSection";
+import PasskeySection from "../components/PasskeySection";
 
 interface SessionRow {
   id: string;
@@ -174,6 +175,7 @@ export default function Account() {
             </p>
           </section>
 
+          <PasskeySection />
           <MfaSection />
         </div>
       </div>

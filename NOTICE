@@ -59,7 +59,15 @@ DocWeave —— 第三方组件与许可声明（NOTICE）
 
 * cryptography
     许可：Apache-2.0 或 BSD-3-Clause
-    用途：TOTP 种子落地加密（AES-256-GCM）
+    用途：TOTP 种子落地加密（AES-256-GCM）、WebAuthn 签名校验
+
+* webauthn（Duo）
+    许可：BSD-3-Clause
+    用途：Passkey / WebAuthn 注册与登录仪式（协议实现）
+
+* cbor2 / pyOpenSSL / pyasn1
+    许可：MIT / Apache-2.0 / BSD-2-Clause
+    用途：WebAuthn 的 COSE 与证书解析依赖
 
 * Authlib
     许可：BSD-3-Clause

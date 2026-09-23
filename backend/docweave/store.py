@@ -334,6 +334,40 @@ CREATE TABLE IF NOT EXISTS oidc_keys (
   created_at REAL NOT NULL, retired_at REAL
 );
 
+CREATE TABLE IF NOT EXISTS passkeys (
+  -- A registered WebAuthn credential. Only public material is stored; the private key never
+  -- leaves the authenticator, which is the whole point of the mechanism.
+  --
+  -- `rp_id` is recorded per credential because a credential is bound to the domain it was
+  -- registered under. Changing the account service's domain does not migrate these — they have
+  -- to be registered again — and storing the id makes that a visible fact rather than a
+  -- surprise at sign-in.
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+  credential_id TEXT NOT NULL UNIQUE,     -- base64url, as the browser reports it
+  public_key TEXT NOT NULL,               -- base64url COSE key
+  sign_count INTEGER NOT NULL DEFAULT 0,  -- monotonic where the authenticator provides it
+  transports TEXT,                        -- JSON array, a hint for the next sign-in
+  rp_id TEXT NOT NULL,
+  backed_up INTEGER NOT NULL DEFAULT 0,   -- a synced credential exists on more than one device
+  uv_capable INTEGER NOT NULL DEFAULT 0,  -- user verification was performed at registration
+  name TEXT,
+  created_at REAL NOT NULL, last_used_at REAL, deleted_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_challenges (
+  -- A challenge in flight. Server-side and single use, because a challenge the client could
+  -- choose or replay is not a challenge.
+  --
+  -- Registration and authentication challenges are kept apart by `purpose` and never satisfy
+  -- each other: a registration ceremony signed with an existing credential must not be
+  -- accepted as a sign-in, and vice versa.
+  id TEXT PRIMARY KEY, user_id TEXT,      -- NULL for a discoverable-credential sign-in
+  purpose TEXT NOT NULL CHECK (purpose IN ('register','authenticate')),
+  challenge TEXT NOT NULL,                -- base64url
+  rp_id TEXT NOT NULL, origin TEXT NOT NULL,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
+);
+
 CREATE TABLE IF NOT EXISTS rp_auth_requests (
   -- DocWeave's side of a sign-in in progress. state, nonce and the PKCE verifier live here,
   -- server-side; the browser only carries an opaque id, so none of the three can be supplied by

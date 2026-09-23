@@ -526,3 +526,7 @@ table.tbl tbody:focus-visible { outline: 2px solid var(--accent); outline-offset
 .reccodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 12px;
   margin: 4px 0; padding: 0; list-style: none; }
 .reccodes li { letter-spacing: .06em; }
+
+/* "or" divider between the password form and the passkey button on the sign-in page. */
+.author { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: 12px; }
+.author::before, .author::after { content: ""; flex: 1; height: 1px; background: var(--line); }

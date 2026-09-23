@@ -182,6 +182,35 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
               object_id=user["id"], result="ok")
         return _issue(response, user, amr="password", request=request)
 
+    @r.post("/login/passkey")
+    def login_passkey(request: Request, response: Response, body: dict = Body(...)):
+        """Sign in with a passkey alone — no password step before it.
+
+        `amr` records what actually happened. `passkey_uv` means the authenticator verified the
+        person in *this* ceremony (a PIN, a fingerprint); `passkey` alone means it proved
+        possession only. A policy that needs a phishing-resistant *and* verified sign-in checks
+        the first; treating "the account owns a passkey" as either is the mistake this
+        distinction exists to prevent.
+        """
+        pk = request.app.state.passkeys
+        out = pk.verify(body.get("credential") or {})
+        user = ident.get_user(out["user_id"])
+        if not user or user["status"] != "active":
+            # Same shape as every other failed sign-in: no account state is disclosed here.
+            audit(request, "auth.login.passkey", actor_id=out["user_id"], result="denied",
+                  meta={"reason": "user_unavailable"})
+            raise ServiceError(401, *_LOGIN_FAILED)
+        amr = "passkey_uv" if out["user_verified"] else "passkey"
+        audit(request, "auth.login.passkey", actor_id=user["id"], object_kind="passkey",
+              object_id=out["passkey_id"], result="ok",
+              meta={"amr": amr, "sign_count_warning": out["sign_count_warning"]})
+        issued = _issue(response, user, amr=amr, request=request)
+        if out["sign_count_warning"]:
+            # Surfaced rather than swallowed. It is the protocol's only cloning signal, and it
+            # is also routinely zero on synced passkeys — so it is a note, not a refusal.
+            issued["sign_count_warning"] = True
+        return issued
+
     @r.post("/login/mfa")
     def login_mfa(request: Request, response: Response, body: dict = Body(...)):
         """Second half of a sign-in. Requires the ticket from /login plus one factor."""
@@ -423,6 +452,94 @@ def _issue_session(ident: Identity, sessions: Sessions, response: Response, user
     response.set_cookie(CSRF_COOKIE, new_csrf_token(), httponly=False, secure=secure,
                         samesite="lax", path="/")
     return {"user": _public_user(ident, user), "session": {"id": row["id"], "amr": amr}}
+
+
+def build_passkey_router(ident: Identity, sessions: Sessions, passkeys, audit) -> APIRouter:
+    """Passkey management for one's own account, plus the sign-in ceremony.
+
+    Enrolment and removal need a recent, scoped re-authentication; the sign-in half is
+    necessarily anonymous, because you cannot prove who you are before signing in.
+    """
+    r = APIRouter(prefix="/api/auth/passkeys", tags=["auth"])
+    SCOPE = "mfa"
+
+    def _session(request: Request) -> dict:
+        s = getattr(request.state, "session", None)
+        if not s:
+            raise ServiceError(401, "unauthorized", "请先登录")
+        return s
+
+    def _fresh(request: Request) -> dict:
+        # strict=True: adding or removing a way into the account is exactly where the prompt is
+        # the point. Without it, someone who signed in a minute ago would never be asked — and
+        # a confirmation that can be silently skipped is a confirmation in name only.
+        s = _session(request)
+        if not Sessions.reauth_fresh(s, SCOPE, strict=True):
+            raise ServiceError(403, "reauth_required", "这是敏感操作，请重新输入口令确认",
+                               {"scope": SCOPE})
+        return s
+
+    @r.get("")
+    def listing(request: Request):
+        from ..passkeys import allowed_origins, rp_id
+        s = _session(request)
+        return {"items": passkeys.list_for(s["user_id"]),
+                "reauth_fresh": Sessions.reauth_fresh(s, SCOPE, strict=True),
+                # Shown in the UI so a domain change is visible as a fact rather than as
+                # credentials that mysteriously stop being offered.
+                "rp_id": rp_id(), "origins": allowed_origins()}
+
+    @r.post("/register/begin")
+    def register_begin(request: Request):
+        s = _fresh(request)
+        user = ident.get_user(s["user_id"])
+        if not user:
+            raise ServiceError(401, "unauthorized", "请先登录")
+        return passkeys.begin_registration(user)
+
+    @r.post("/register/finish")
+    def register_finish(request: Request, body: dict = Body(...)):
+        s = _fresh(request)
+        user = ident.get_user(s["user_id"])
+        out = passkeys.finish_registration(user, body.get("credential") or {},
+                                           name=body.get("name"))
+        audit(request, "auth.passkey.register", actor_id=user["id"], object_kind="passkey",
+              object_id=out["id"], result="ok")
+        return out
+
+    @r.post("/authenticate/begin")
+    def auth_begin(request: Request, body: dict = Body(default={})):
+        """Anonymous by necessity. No credential list is returned for an address, because that
+        would answer "does this address have an account" — which the rest of sign-in avoids."""
+        return passkeys.begin_authentication(None)
+
+    @r.patch("/{pid}")
+    def rename(request: Request, pid: str, body: dict = Body(...)):
+        s = _session(request)
+        passkeys.rename(s["user_id"], pid, body.get("name") or "")
+        audit(request, "auth.passkey.rename", actor_id=s["user_id"], object_kind="passkey",
+              object_id=pid, result="ok")
+        return {"ok": True}
+
+    @r.delete("/{pid}")
+    def remove(request: Request, pid: str):
+        """Removing the last way in is refused, not confirmed away.
+
+        Someone with a passkey and no password would lock themselves out permanently, and the
+        dialog they clicked through would be the only record of how.
+        """
+        s = _fresh(request)
+        has_password = ident.store.one("SELECT 1 FROM user_passwords WHERE user_id=?",
+                                       (s["user_id"],))
+        if not has_password and passkeys.count(s["user_id"]) <= 1:
+            raise ServiceError(409, "last_factor",
+                               "这是你唯一的登录方式，删除后将无法登录。请先设置口令或再登记一个安全密钥。")
+        passkeys.remove(s["user_id"], pid)
+        audit(request, "auth.passkey.remove", actor_id=s["user_id"], object_kind="passkey",
+              object_id=pid, result="ok")
+        return {"ok": True}
+
+    return r
 
 
 def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRouter:

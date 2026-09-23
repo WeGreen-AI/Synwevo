@@ -124,7 +124,11 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
                        # is read-only and accept consumes a token that is itself the authority.
                        "/api/auth/invitations/preview", "/api/auth/invitations/accept",
                        # the second half of a sign-in: the ticket is the authority here
-                       "/api/auth/login/mfa"}
+                       "/api/auth/login/mfa",
+                       # A passkey sign-in has no password step before it, so it cannot require
+                       # a session; the signed assertion over a server-issued challenge is the
+                       # authority. Its challenge endpoint is anonymous for the same reason.
+                       "/api/auth/login/passkey", "/api/auth/passkeys/authenticate/begin"}
     # The SPA shell and its assets must load so the login screen can render; every /api/ route
     # behind them still requires the session, so no data rides along with the HTML.
     SPA_PREFIXES = ("/assets/",)
@@ -761,8 +765,12 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     from .auth_routes import build_invite_router, build_router as build_auth_router
     api.include_router(build_auth_router(identity, sessions, _audit, mfa, tickets))
     api.include_router(build_invite_router(identity, sessions, invites, mailer, _audit))
-    from .auth_routes import build_mfa_router
+    from .auth_routes import build_mfa_router, build_passkey_router
     api.include_router(build_mfa_router(identity, sessions, mfa, _audit))
+    from ..passkeys import Passkeys
+    passkeys = Passkeys(store)
+    api.state.passkeys = passkeys
+    api.include_router(build_passkey_router(identity, sessions, passkeys, _audit))
 
     # ------------------------------------------------------------ platform identity (OIDC provider)
     # Registered before the SPA catch-all so /oidc/* and /.well-known/* reach real handlers
