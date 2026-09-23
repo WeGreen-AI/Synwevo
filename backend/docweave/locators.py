@@ -7,7 +7,7 @@ import re
 from .engine import tabular
 from .engine import values as V
 from .engine.resolve import ResolveError, SourceDoc, extract_scalar, resolve_sheet, table_view
-from .services import App, ServiceError
+from .services import App, ServiceError, not_found
 
 
 def _looks_label(text: str) -> bool:
@@ -204,6 +204,11 @@ def locate_all(app: App, pid: str, sid: str, block: int | None = None) -> dict:
     rule = project.get("record_rule") or {}
     maps = app.get_mappings(pid)["mappings"]
     r = app.get_source(sid, raw=True)
+    # Both ids are checked, but they also have to belong together. Checking the project and then
+    # taking the source id on trust let a caller run their own mappings over someone else's
+    # document and read the resolved field values straight back out.
+    if r.get("project_id") != pid:
+        not_found("来源文件")
     src = app.doc_for(r, block)
     if block is not None:
         sid = src.file_id          # per-block overrides are stored under the block's id

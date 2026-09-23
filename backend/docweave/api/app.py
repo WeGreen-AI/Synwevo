@@ -596,6 +596,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
 
     @api.get("/api/jobs/{jid}/items")
     def job_items(jid: str, status: str | None = None, offset: int = 0, limit: int = Query(500, le=5000)):
+        jobs.get(jid)          # carries the workspace check, as /runs, /events and /zip already did
         return jobs.items(jid, status, offset, limit)
 
     @api.post("/api/jobs/{jid}/cancel")
@@ -623,6 +624,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
 
     @api.get("/api/jobs/{jid}/report.csv")
     def job_report(jid: str):
+        jobs.get(jid)          # same check its siblings make; without it the CSV crossed workspaces
         return attachment(jobs.report_csv(jid), f"生成清单_{jid[-6:]}.csv", "csv")
 
     @api.get("/api/artifacts/{aid}")

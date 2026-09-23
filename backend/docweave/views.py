@@ -7,6 +7,8 @@ import io
 import hashlib
 import json
 
+from . import authz
+from .context import tenant as current_tenant
 from .engine import generate as G
 from .engine import pdf_engine as pe
 from .engine import records as R
@@ -244,7 +246,11 @@ class Views:
             index = max(0, min(int(index or 0), len(recs) - 1))
             rec = recs[index]
         sig = ctx.signature()
-        cache_key = hashlib.sha1(f"{sig}|{rec['key']}|{(ctx.project.get('output') or {}).get('layout')}".encode()).hexdigest()
+        # The workspace belongs in the key. The signature covers project, template and mapping
+        # versions, so a collision across workspaces needs identical inputs — which is exactly
+        # what two people working from the same sample file would have.
+        cache_key = hashlib.sha1(
+            f"{current_tenant()}|{sig}|{rec['key']}|{(ctx.project.get('output') or {}).get('layout')}".encode()).hexdigest()
         if cache_key in self._preview_cache:
             return self._preview_cache[cache_key]
         plan = ctx.plan(rec)
@@ -265,6 +271,7 @@ class Views:
             return result
         native = G.native_format(ctx.template["format"])
         blob = self.store.put_blob(out)
+        authz.grant_blob(self.store, blob, "preview")     # nothing else can vouch for this blob
         result["output"] = {"format": native, "blob": blob, "size": len(out)}
         result["render"] = render_output(native, out, None, 0, 300, ctx.slots, highlight=True)
         result["verification"] = verify_output(native, out, ctx.slots, plan)
@@ -290,10 +297,21 @@ class Views:
         except L.LayoutUnavailable as e:
             return {"available": False, "reason": str(e)}
         pages = pe.page_count(pdf)
-        return {"available": True, "pages": pages, "template_pages": tpl_pages, "pdf_blob": self.store.put_blob(pdf)}
+        pdf_blob = self.store.put_blob(pdf)
+        authz.grant_blob(self.store, pdf_blob, "layout")
+        return {"available": True, "pages": pages, "template_pages": tpl_pages, "pdf_blob": pdf_blob}
 
     def preview_file(self, blob: str) -> bytes:
-        if not self.store.has_blob(blob):
+        """Bytes for a blob id the browser passed in.
+
+        Existence used to be the whole check, which made this — and the four routes that reach
+        it — a way to read any file in the store from any workspace. Blob ids are handed out in
+        ordinary responses, so they are not secret and cannot be treated as capabilities.
+
+        Unreachable is reported as "not found" rather than "forbidden": telling a caller that a
+        blob exists but belongs to someone else is itself the answer they were fishing for.
+        """
+        if not self.store.has_blob(blob) or not authz.blob_readable(self.store, blob):
             not_found("预览文件")
         return self.store.get_blob(blob)
 

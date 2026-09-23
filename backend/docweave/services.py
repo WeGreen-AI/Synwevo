@@ -8,6 +8,7 @@ import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
+from . import authz
 from .context import tenant as current_tenant
 from .engine import sources as S
 from .engine import templates as T
@@ -167,6 +168,9 @@ class App:
         self.store.bump_project(row["project_id"])
 
     def list_sources(self, pid: str) -> list[dict]:
+        # get_project carries the tenant check and 404s, so the listing cannot enumerate another
+        # workspace's files — which it did, sha256 included.
+        self.get_project(pid)
         rows = self.store.all("SELECT * FROM source_files WHERE project_id=? AND removed=0 ORDER BY ord", (pid,))
         return [self._source_out(r) for r in rows]
 
@@ -180,7 +184,14 @@ class App:
         return out
 
     def get_source(self, sid: str, raw: bool = False) -> dict:
-        r = self.store.one("SELECT * FROM source_files WHERE id=? AND removed=0", (sid,))
+        """Scoped by the project the file belongs to.
+
+        This looked the row up by id alone, and source_files has no tenant column of its own, so
+        every caller — view, download, search, page image, per-word text, OCR, delete — reached
+        across workspaces. Not-found rather than forbidden, so an id cannot be probed for
+        existence.
+        """
+        r = authz.source_in_scope(self.store, sid)
         if not r:
             not_found("来源文件")
         return r if raw else self._source_out(r)
@@ -195,6 +206,7 @@ class App:
         self.store.bump_project(r["project_id"])
 
     def reorder_sources(self, pid: str, ids: list[str]) -> list[dict]:
+        self.get_project(pid)      # the per-row WHERE pins the project but never checked it is ours
         for i, sid in enumerate(ids):
             self.store.execute("UPDATE source_files SET ord=? WHERE id=? AND project_id=?", (i + 1, sid, pid))
         self.store.bump_project(pid)

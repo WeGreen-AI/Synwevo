@@ -143,6 +143,19 @@ blob id 直取接口 · 临时文件 · 日志导出
 
 ### 5.2 已修复
 
+* **§5.1 全部 11 条**（本轮）：授权移入 `authz.py`，落在每个处理函数都会经过的取数据入口，
+  而不是各自记得写一遍。`get_source` 现在经 `project_id` 连到 `projects.tenant`（source_files
+  自己没有 tenant 列，这正是当初每个按 id 取文件的地方都会跨空间的原因）；`list_sources`
+  与 `reorder_sources` 先走 `get_project`；job 的 `/items`、`/report.csv` 补上与
+  `/runs`、`/events`、`/zip` 相同的 `jobs.get(jid)`。
+* **blob 层归属**（本轮，结构性）：`views.preview_file` 改为可达性判断——这条 blob 能否
+  从当前空间有权访问的对象到达。**刻意不是「归属」判断**：内容寻址会去重，同一个 blob 真的
+  同时属于多个空间，「归属者是谁」没有单一答案。预览与分页 PDF 没有任何行可以佐证，因此
+  新增 `blob_grants` 表在生成时按空间登记；主键是 `(blob, tenant)`，去重后两个空间各持各的授权，
+  撤销其一不影响另一个。不可达即拒绝，并且回的是「未找到」而不是「无权限」——
+  告诉对方「这个 blob 存在但不属于你」本身就是他要钓的答案。
+* **预览缓存键补上空间**：签名只覆盖项目/模板/映射版本，两个人拿同一份样本文件就会撞上。
+
 * **鉴权分支漏路径**（本轮修复，`api/app.py`）：`elif path.startswith("/api/") or not
   path.startswith("/api")` 对「以 `/api` 开头但没有斜杠」的路径两个条件都不满足，网关整个被跳过、
   `set_tenant` 也没执行。`DOCWEAVE_UI_AUTH=basic` 下 `/` 返回 401，而 `/api`、`/apifoo` 返回 200。
@@ -196,9 +209,9 @@ blob id 直取接口 · 临时文件 · 日志导出
 | 登录/账户/后台界面 | 待实现 | — | — |
 | 注册与邀请流程 | 待实现（模式开关已就绪） | `identity.registration_mode` | — |
 | Passkey / MFA / 恢复 | 待实现 | — | — |
-| 逐对象授权与空间隔离 | 待实现 | — | — |
+| 逐对象授权与空间隔离 | **已实现** | `authz.py`；`services.get_source/list_sources`、`views.preview_file`、`locators.locate_all`、job 路由 | `test_authz_isolation.py`（18） |
 | 管理后台 | 待实现 | — | — |
-| 旁路端点逐条覆盖（§5.1） | 待实现 | — | — |
+| 旁路端点逐条覆盖（§5.1） | **已覆盖并回归** | 同上 | 去掉修复后 10/18 失败，已验证 |
 | 历史数据认领流程 | 待实现（数据模型已就绪） | — | — |
 
 ### 9.1 口令参数（实测，非抄默认值）

@@ -238,6 +238,24 @@ CREATE INDEX IF NOT EXISTS ix_audit_at ON audit_events(at);
 CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_events(actor_id, at);
 CREATE INDEX IF NOT EXISTS ix_audit_ws ON audit_events(workspace_id, at);
 
+CREATE TABLE IF NOT EXISTS blob_grants (
+  -- Read permission for a blob that no row owns.
+  --
+  -- Most blobs are reachable from something with a workspace: a source file, a template
+  -- version, an artifact. Preview and layout outputs are not — views.py puts them in the store
+  -- and hands the id straight to the browser, so there is nothing to check them against. That
+  -- is why every /api/preview-files/{blob} route was readable across workspaces: existence on
+  -- disk was the entire test.
+  --
+  -- A grant is recorded when such a blob is produced, for the workspace it was produced in.
+  -- Per (blob, tenant) rather than per blob, because content-addressed storage deduplicates:
+  -- two workspaces that generate identical bytes share one file and must each hold their own
+  -- grant, and revoking one must not revoke the other.
+  blob TEXT NOT NULL, tenant TEXT NOT NULL, kind TEXT, created_at REAL NOT NULL,
+  PRIMARY KEY (blob, tenant)
+);
+CREATE INDEX IF NOT EXISTS ix_grant_tenant ON blob_grants(tenant, created_at);
+
 CREATE TABLE IF NOT EXISTS auth_attempts (
   -- Rate limiting and backoff have to survive a restart and be shared across workers, so they
   -- live here rather than in a per-process dict.
