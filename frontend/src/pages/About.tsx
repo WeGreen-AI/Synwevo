@@ -20,13 +20,6 @@ export default function AboutPage() {
       {err && <div className="notice err">{err}</div>}
       {a && (
         <div className="col gap12">
-          <div className={`notice ${a.agpl_component_active ? "warn" : "info"}`}>
-            <b>PDF 引擎：{a.pdf_engine === "pymupdf" ? "PyMuPDF（AGPL-3.0 或商业许可）" : "PDFium（pypdfium2，Apache-2.0 / BSD-3-Clause）"}</b>
-            <div className="mt8">{a.notice}</div>
-            {a.source_offer && (
-              <div className="mt8"><a className="btn sm primary" href="/api/source-code" download>下载本服务的完整源代码（.tar.gz）</a></div>
-            )}
-          </div>
           <div className="card">
             <div className="card-h"><b>第三方组件</b><span className="spacer" /><span className="tiny muted">版本与费用见 docs/DEPENDENCIES.md；均为免费开源组件，未使用付费组件或外部云服务</span></div>
             <table className="tbl">
