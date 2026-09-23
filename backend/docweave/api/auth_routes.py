@@ -15,6 +15,7 @@ import os
 
 from fastapi import APIRouter, Body, Request, Response
 
+from ..auth import ui_auth_mode
 from ..identity import Identity, registration_mode
 from ..passwords import PasswordError
 from ..services import ServiceError
@@ -82,8 +83,15 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
 
         Deliberately says nothing about specific accounts — only how this deployment is
         configured and whether it still needs its first administrator.
+
+        `mode` is the load-bearing field. These routes are mounted whatever DOCWEAVE_UI_AUTH
+        says, so on a `basic` deployment this endpoint answers 200 like any other — and a client
+        that inferred "accounts are in use" from a successful response sent people who had
+        already signed in with the shared password to a first-run bootstrap screen. Whether the
+        account system is active is the server's answer, not something the client can deduce.
         """
-        return {"registration": registration_mode(),
+        return {"mode": ui_auth_mode(),
+                "registration": registration_mode(),
                 "bootstrap_required": ident.bootstrap_needed(),
                 "password_login": True}
 

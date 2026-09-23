@@ -18,6 +18,8 @@ export interface Me {
 }
 
 export interface AuthState {
+  /** How this deployment protects the UI. Only "session" means accounts are in use. */
+  mode: "none" | "basic" | "proxy" | "session";
   registration: "open" | "invite" | "closed";
   bootstrap_required: boolean;
   password_login: boolean;
@@ -42,10 +44,21 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [disabled, setDisabled] = useState(false);
 
   const refresh = useCallback(async () => {
+    let st: AuthState;
     try {
-      setState(await get<AuthState>("/api/auth/state"));
+      st = await get<AuthState>("/api/auth/state");
+      setState(st);
     } catch {
-      // No account system in this deployment (older auth modes). The app works as before.
+      // Endpoint absent entirely (an older build): behave as before.
+      setDisabled(true);
+      setMe(null);
+      return;
+    }
+    // The server says whether accounts are in use. Inferring it from "the request succeeded"
+    // was wrong: these routes are mounted in every auth mode, so on a `basic` deployment this
+    // call returns 200 and the app sent people who had already signed in with the shared
+    // password to a first-run bootstrap screen.
+    if (st.mode !== "session") {
       setDisabled(true);
       setMe(null);
       return;

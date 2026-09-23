@@ -251,3 +251,27 @@ def test_basic_mode_still_works_untouched(tmp_path, monkeypatch):
     assert c.get("/api/projects").status_code == 401
     h = {"Authorization": "Basic " + base64.b64encode(b"probe:probe-pass-123").decode()}
     assert c.get("/api/projects", headers=h).status_code == 200
+
+
+@pytest.mark.parametrize("mode", ["none", "basic", "proxy", "session"])
+def test_auth_state_reports_the_mode_so_the_ui_does_not_guess(tmp_path, monkeypatch, mode):
+    """A deployment that does not use accounts must say so.
+
+    These routes are mounted in every auth mode, so /api/auth/state answers 200 on a `basic`
+    deployment too. The UI inferred "accounts are in use" from that success and redirected
+    people who had already signed in with the shared password to a first-run bootstrap screen —
+    on the live instance. Whether the account system is active is the server's answer.
+    """
+    import base64
+    d = tmp_path / f"m-{mode}"
+    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(d))
+    monkeypatch.setenv("DOCWEAVE_UI_AUTH", mode)
+    from docweave.auth import Auth
+    from docweave.store import Store
+    Auth(Store(d)).add_ui_user("probe", "probe-pass-123")
+    import docweave.api.app as app_mod
+    importlib.reload(app_mod)
+    c = TestClient(app_mod.create_app(str(d), start_jobs=False))
+    h = {"Authorization": "Basic " + base64.b64encode(b"probe:probe-pass-123").decode()} if mode == "basic" else {}
+    body = c.get("/api/auth/state", headers=h).json()
+    assert body["mode"] == mode
