@@ -467,3 +467,10 @@ body.resizing * { cursor: col-resize !important; }
   .side { width: 168px; }
   .side.right { width: 272px; }
 }
+
+/* ------------------------------------------------------------ dense project list */
+tr.rowlink { cursor: pointer; }
+tr.rowlink:hover td { background: var(--surface-hover); }
+tr.rowlink.cursor td { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
+tr.rowlink.off td { opacity: .6; }
+table.tbl tbody:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
