@@ -238,6 +238,19 @@ CREATE INDEX IF NOT EXISTS ix_audit_at ON audit_events(at);
 CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_events(actor_id, at);
 CREATE INDEX IF NOT EXISTS ix_audit_ws ON audit_events(workspace_id, at);
 
+CREATE TABLE IF NOT EXISTS mail_outbox (
+  -- Mail is queued here first and sent by a worker, so an invitation is never reported as
+  -- "sent" because an API call returned 200. A handler that sends inline has to either block on
+  -- a slow SMTP server or lie about the outcome; both are worse than saying "queued" and
+  -- showing the real state afterwards.
+  id TEXT PRIMARY KEY, to_addr TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL,
+  kind TEXT, ref_id TEXT,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','sent','failed','dropped')),
+  attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at REAL,
+  last_error TEXT, created_at REAL NOT NULL, sent_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_mail_due ON mail_outbox(status, next_attempt_at);
+
 CREATE TABLE IF NOT EXISTS blob_grants (
   -- Read permission for a blob that no row owns.
   --

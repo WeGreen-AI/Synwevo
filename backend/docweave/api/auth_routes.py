@@ -209,3 +209,114 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         return s
 
     return r
+
+
+def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, audit) -> APIRouter:
+    """Invitation and email-token endpoints.
+
+    Split from the auth router only because it needs the invite and mail services; it is mounted
+    on the same `/api/auth` prefix and the anonymous set in app.py lists exactly which of these
+    may be reached without a session.
+    """
+    from ..invites import INVITE_TTL_S, ROLE_LABEL
+    from .. import mail as mail_mod
+
+    r = APIRouter(prefix="/api/auth", tags=["auth"])
+
+    def _session(request: Request) -> dict:
+        s = getattr(request.state, "session", None)
+        if not s:
+            raise ServiceError(401, "unauthorized", "请先登录")
+        return s
+
+    # ------------------------------------------------------------------ issuing
+    @r.post("/workspaces/{wid}/invitations")
+    def invite(request: Request, wid: str, body: dict = Body(...)):
+        s = _session(request)
+        email, role = (body.get("email") or "").strip(), (body.get("role") or "viewer").strip()
+        row, raw = invites.create(workspace_id=wid, email=email, role=role, actor_id=s["user_id"],
+                                  can_export=body.get("can_export"))
+        ws = ident.get_workspace(wid)
+        me = ident.get_user(s["user_id"])
+        subject, text = mail_mod.invitation_mail(
+            workspace=ws["name"], inviter=me.get("display_name") or me["email"],
+            role_label=ROLE_LABEL.get(role, role), token=raw, expires_h=INVITE_TTL_S // 3600)
+        try:
+            mailer.enqueue(email, subject, text, kind="invite", ref_id=row["id"])
+        except ServiceError:
+            # Mail is not configured or not usable. The invitation row would be unreachable, so
+            # it is withdrawn rather than left as a link nobody will ever receive.
+            invites.revoke(row["id"], s["user_id"])
+            raise
+        audit(request, "invite.create", actor_id=s["user_id"], workspace_id=wid,
+              object_kind="invitation", object_id=row["id"], result="ok", meta={"role": role})
+        return {"id": row["id"], "email": row["email_key"], "role": role,
+                "expires_at": row["expires_at"], "mail": "queued"}
+
+    @r.get("/workspaces/{wid}/invitations")
+    def list_invites(request: Request, wid: str):
+        s = _session(request)
+        items = invites.list_for_workspace(wid, s["user_id"])
+        for it in items:
+            st = mailer.status_for(it["id"])
+            it["mail"] = (st or {}).get("status") or "unknown"
+            it["mail_error"] = (st or {}).get("last_error")
+        return {"items": items}
+
+    @r.delete("/invitations/{iid}")
+    def revoke_invite(request: Request, iid: str):
+        s = _session(request)
+        invites.revoke(iid, s["user_id"])
+        audit(request, "invite.revoke", actor_id=s["user_id"], object_kind="invitation",
+              object_id=iid, result="ok")
+        return {"ok": True}
+
+    # ------------------------------------------------------------------ accepting
+    @r.get("/invitations/preview")
+    def preview_invite(request: Request, token: str):
+        """Read-only. Opening the emailed link lands here and changes nothing, so a mail scanner
+        following the URL cannot accept on the recipient's behalf."""
+        out = invites.preview(token)
+        s = getattr(request.state, "session", None)
+        if s:
+            u = ident.get_user(s["user_id"])
+            out["signed_in_as"] = (u or {}).get("email")
+        return out
+
+    @r.post("/invitations/accept")
+    def accept_invite(request: Request, response: Response, body: dict = Body(...)):
+        token = (body.get("token") or "").strip()
+        s = getattr(request.state, "session", None)
+        out = invites.accept(token, password=body.get("password") or None,
+                             display_name=body.get("display_name"),
+                             as_user_id=s["user_id"] if s else None)
+        audit(request, "invite.accept", actor_id=out["user"]["id"], workspace_id=out["workspace_id"],
+              object_kind="membership", object_id=out["user"]["id"], result="ok",
+              meta={"role": out["role"]})
+        if s:
+            sessions.set_workspace(s["id"], out["workspace_id"])
+            return {"user": _public_user(ident, out["user"]), "workspace_id": out["workspace_id"]}
+        return _issue_session(ident, sessions, response, out["user"], amr="password", request=request)
+
+    return r
+
+
+def _public_user(ident: Identity, user: dict) -> dict:
+    spaces = ident.workspaces_for(user["id"])
+    return {"id": user["id"], "email": user["email"], "display_name": user.get("display_name"),
+            "status": user["status"], "platform_role": user["platform_role"],
+            "workspaces": [{"id": w["id"], "name": w["name"], "kind": w["kind"],
+                            "role": w["role"], "can_export": bool(w["can_export"])} for w in spaces]}
+
+
+def _issue_session(ident: Identity, sessions: Sessions, response: Response, user: dict, *,
+                   amr: str, request: Request) -> dict:
+    spaces = ident.workspaces_for(user["id"])
+    raw, row = sessions.create(user["id"], workspace_id=spaces[0]["id"] if spaces else None, amr=amr,
+                               user_agent=request.headers.get("user-agent"), ip=client_ip(request),
+                               admin=user["platform_role"] == "admin")
+    secure = cookies_secure()
+    response.set_cookie(COOKIE_NAME, raw, max_age=None, **cookie_kwargs(secure))
+    response.set_cookie(CSRF_COOKIE, new_csrf_token(), httponly=False, secure=secure,
+                        samesite="lax", path="/")
+    return {"user": _public_user(ident, user), "session": {"id": row["id"], "amr": amr}}
