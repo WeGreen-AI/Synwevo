@@ -56,28 +56,47 @@ class UrlRejected(ValueError):
 
 
 def check_url(url: str) -> str:
-    """Reject callbacks that would reach into private networks unless explicitly allowed."""
+    """Reject callbacks that would reach into private networks unless explicitly allowed.
+
+    Returns the url. Use `resolve_checked` when you are about to connect: this function answers
+    "is this address acceptable", and the answer stops being true the moment it returns.
+    """
+    resolve_checked(url)
+    return url
+
+
+def resolve_checked(url: str) -> list:
+    """Validate the callback host **and return the exact addresses that were validated.**
+
+    The caller must connect to one of these rather than to the hostname again. Resolving twice —
+    once to check and once to connect — is a hole, not a detail: a name under someone else's
+    control can answer with a public address for the check and `169.254.169.254` or `127.0.0.1`
+    a moment later for the connection. The check then proves nothing about where the request
+    actually goes, which is the whole point of having it.
+    """
     u = urlparse(url)
     if u.scheme not in ("https", "http"):
         raise UrlRejected(f"回调地址必须是 http(s)：{url}")
     if u.scheme == "http" and (os.environ.get("DOCWEAVE_WEBHOOK_ALLOW_HTTP") or "").lower() not in ("1", "true", "on", "yes"):
         raise UrlRejected("回调默认要求 https；确需 http 时设置 DOCWEAVE_WEBHOOK_ALLOW_HTTP=1")
     host = u.hostname or ""
+    port = u.port or (443 if u.scheme == "https" else 80)
     allow = _allow_private()
-    if host in allow:
-        return url
     try:
-        infos = socket.getaddrinfo(host, u.port or (443 if u.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as e:
         raise UrlRejected(f"无法解析回调地址主机 {host}：{e}") from e
+
+    ok = []
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if ip.is_global:
-            continue
-        if any(_in_allow(ip, a) for a in allow):
+        if ip.is_global or host in allow or any(_in_allow(ip, a) for a in allow):
+            ok.append(str(ip))
             continue
         raise UrlRejected(f"回调地址解析到内网地址 {ip}；如确需内网回调，请把它加入 DOCWEAVE_WEBHOOK_ALLOW_PRIVATE")
-    return url
+    if not ok:
+        raise UrlRejected(f"回调地址主机 {host} 没有解析出任何可用地址")
+    return ok
 
 
 def _in_allow(ip, entry: str) -> bool:
@@ -176,7 +195,10 @@ class WebhookDispatcher:
         ts = int(time.time())
         attempts = (d["attempts"] or 0) + 1
         try:
-            url = check_url(d["endpoint"])
+            # Validate and connect to *the same* address. Calling check_url and then letting
+            # urllib resolve the name again is the hole this closes.
+            validated = resolve_checked(d["endpoint"])
+            url = d["endpoint"]
             req = urllib.request.Request(url, data=body, method="POST", headers={
                 "Content-Type": "application/json; charset=utf-8",
                 "User-Agent": "DocWeave-Webhook/1",
@@ -186,7 +208,7 @@ class WebhookDispatcher:
                 "X-DocWeave-Timestamp": str(ts),
                 "X-DocWeave-Signature": sign(body, ts, secret()),
             })
-            opener = urllib.request.build_opener(_NoRedirect())
+            opener = _pinned_opener(validated)
             with opener.open(req, timeout=float(os.environ.get("DOCWEAVE_WEBHOOK_TIMEOUT_S", "10"))) as resp:
                 code = resp.status
             self.store.update("webhook_deliveries", {"id": d["id"]},
@@ -231,3 +253,44 @@ class WebhookDispatcher:
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise urllib.error.HTTPError(req.full_url, code, f"回调地址发生跳转（{newurl}），出于安全不跟随", headers, fp)
+
+
+def _pinned_opener(validated: list):
+    """An opener that connects **only** to an address `resolve_checked` approved.
+
+    Two things it does not do, both deliberate:
+
+    * **It does not resolve the hostname again.** urllib would, and a name under someone else's
+      control can answer with a public address for the check and a private one for the
+      connection. Pinning is what makes the check mean anything.
+    * **It does not use the ambient proxy.** `build_opener` installs a `ProxyHandler` from the
+      environment by default, and a proxy both carries the signed event body somewhere nobody
+      chose and performs its own resolution — which would bypass the address check entirely.
+    """
+    import http.client
+
+    allowed = set(validated)
+
+    class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+        def connect(self):
+            # Connect to the approved address; keep the hostname for SNI and certificate
+            # validation, so pinning does not quietly weaken TLS.
+            hostname = self.host
+            sock = socket.create_connection((validated[0], self.port), self.timeout)
+            self.sock = self._context.wrap_socket(sock, server_hostname=hostname)
+
+    class _PinnedHTTPConnection(http.client.HTTPConnection):
+        def connect(self):
+            self.sock = socket.create_connection((validated[0], self.port), self.timeout)
+
+    class _HTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(_PinnedHTTPSConnection, req, context=self._context)
+
+    class _HTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(_PinnedHTTPConnection, req)
+
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),        # no ambient proxy
+        _HTTPSHandler(), _HTTPHandler(), _NoRedirect())

@@ -1,7 +1,9 @@
 """Signed webhooks: signature, retries with backoff, duplicate suppression, SSRF allowlist."""
 import json
+import socket
 import threading
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -129,3 +131,96 @@ def test_disabled_without_secret(monkeypatch, api):
     monkeypatch.delenv("DOCWEAVE_WEBHOOK_SECRET", raising=False)
     d = W.WebhookDispatcher(api.c.app_state.app.store, start=True)
     assert not d.enabled and "DOCWEAVE_WEBHOOK_SECRET" in (d.last_error or "")
+
+
+# ---------------------------------------------------------------- SSRF: check and connect must agree
+def test_the_validated_address_is_the_one_connected_to(monkeypatch):
+    """`check_url` resolved the host, and then urllib resolved it again independently.
+
+    A name under someone else's control can answer with a public address for the check and
+    `169.254.169.254` or `127.0.0.1` a moment later for the connection — so the check proved
+    nothing about where the request actually went. `resolve_checked` now returns the addresses
+    it approved, and the opener connects only to those.
+    """
+    from docweave import webhooks
+
+    answers = iter([
+        [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],   # public: passes
+        [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 443))],  # then flips
+    ])
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: next(answers))
+
+    validated = webhooks.resolve_checked("https://rebind.example.com/hook")
+    assert validated == ["93.184.216.34"], "第一次解析通过的应当被记下来"
+
+    # The second, hostile answer is never consulted, because the opener is pinned.
+    opener = webhooks._pinned_opener(validated)
+    connected = {}
+
+    def fake_create_connection(addr, *a, **k):
+        connected["addr"] = addr
+        raise OSError("连接被测试拦截")
+
+    monkeypatch.setattr(socket, "create_connection", fake_create_connection)
+    with pytest.raises(Exception):
+        opener.open(urllib.request.Request("https://rebind.example.com/hook", data=b"{}",
+                                           method="POST"), timeout=1)
+    assert connected["addr"][0] == "93.184.216.34", \
+        f"连到了 {connected['addr'][0]}——重新解析出的地址被用上了，检查就白做了"
+
+
+def test_a_host_resolving_to_a_private_address_is_refused(monkeypatch):
+    from docweave import webhooks
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))])
+    monkeypatch.delenv("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE", raising=False)
+    with pytest.raises(webhooks.UrlRejected, match="内网"):
+        webhooks.resolve_checked("https://localhost-in-disguise.example.com/hook")
+
+
+def test_the_cloud_metadata_address_is_refused(monkeypatch):
+    """The address that turns an SSRF into cloud credentials."""
+    from docweave import webhooks
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 80))])
+    monkeypatch.delenv("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE", raising=False)
+    monkeypatch.setenv("DOCWEAVE_WEBHOOK_ALLOW_HTTP", "1")
+    with pytest.raises(webhooks.UrlRejected):
+        webhooks.resolve_checked("http://metadata.example.com/latest/meta-data/")
+
+
+def test_delivery_does_not_use_the_ambient_proxy(monkeypatch):
+    """`build_opener` installs a ProxyHandler from the environment by default. A proxy would
+    carry the signed event body somewhere nobody chose — and would do its own resolution,
+    bypassing the address check entirely."""
+    from docweave import webhooks
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:3128")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    opener = webhooks._pinned_opener(["93.184.216.34"])
+    # Passing ProxyHandler({}) means it registers no proxy methods and drops out of the handler
+    # list entirely — which is exactly "no proxying". The property to assert is that nothing in
+    # the opener carries proxy configuration, not that a particular object is present.
+    configured = [getattr(h, "proxies", None) for h in opener.handlers]
+    assert not any(configured), f"仍然带着代理配置：{[p for p in configured if p]}"
+
+    # And behaviourally: the connection goes to the pinned address, not to the proxy host.
+    seen = {}
+
+    def fake_create_connection(addr, *a, **k):
+        seen["addr"] = addr
+        raise OSError("连接被测试拦截")
+
+    monkeypatch.setattr(socket, "create_connection", fake_create_connection)
+    with pytest.raises(Exception):
+        opener.open(urllib.request.Request("https://example.com/hook", data=b"{}", method="POST"),
+                    timeout=1)
+    assert seen["addr"][0] == "93.184.216.34", f"请求发去了 {seen['addr']}"
+
+
+def test_an_explicitly_allowed_private_target_still_works(monkeypatch):
+    """The allow-list exists for real internal receivers; it must keep working."""
+    from docweave import webhooks
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 443))])
+    monkeypatch.setenv("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE", "10.0.0.0/8")
+    assert webhooks.resolve_checked("https://internal.example.com/hook") == ["10.0.0.5"]
