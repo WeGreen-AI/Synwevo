@@ -77,6 +77,7 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8765/api/v1/capabilities   # 
 | 运行方式 | Docker 容器 `docweave`，镜像 `docweave:local`（1.32 GB，含 LibreOffice 7.4.7.2、Tesseract 5.3.0 chi_sim+eng+osd、Noto CJK 字体、Python 3.12） |
 | 监听 | **`127.0.0.1:8765`**（仅回环，`-p 127.0.0.1:8765:8765`）。容器内监听 `0.0.0.0:8765` |
 | 对外 | 经 Cloudflare Tunnel（`cloudflared`，token 模式，路由在 Cloudflare Zero Trust 面板配置）。**服务器上没有开放任何公网 HTTP 端口** |
+| Tunnel Public Hostname | `dw.wegreen.ltd` → **`http://127.0.0.1:8765`**（必须写 IPv4 字面量，不要写 `localhost`，原因见下） |
 | 界面鉴权 | `DOCWEAVE_UI_AUTH=basic`，用户 `wegreen`（口令仅以 PBKDF2 哈希存储） |
 | PDF 引擎 | `DOCWEAVE_PDF_ENGINE=pymupdf`（功能完整；**AGPL-3.0 网络服务义务适用**，对应源代码经 `/api/source-code` 提供） |
 | 资源限制 | `--memory=1536m --memory-swap=2048m`。这台机器同时运行 bdr-prod / carboy / beeurei / apexterminal 四套生产服务，限制确保 DocWeave 超限时只影响自己 |
@@ -101,3 +102,17 @@ docker exec docweave python backend/manage.py ui-user add <用户名> --password
 ```
 
 改端口：修改 `-p 127.0.0.1:<新端口>:8765` 后重建容器，并同步修改 Cloudflare Tunnel 的 Public Hostname 指向。
+
+### 回源地址必须写 `http://127.0.0.1:8765`，不能写 `localhost`
+
+容器只把端口发布到 **IPv4 回环**：`ss -tlnp` 显示 `LISTEN 127.0.0.1:8765`，没有 IPv6 监听。
+而这台主机上 `localhost` 的解析顺序是 **`::1` 在前**（`getent ahosts localhost` 首行为 `::1`）：
+
+```
+http://127.0.0.1:8765  -> 200
+http://[::1]:8765      -> connection refused
+http://localhost:8765  -> 200   # 仅因为 curl 在 ::1 失败后回退到 IPv4
+```
+
+依赖这种回退是脆弱的：不做回退的客户端会直接连接失败。Public Hostname 的 URL 一律写
+`http://127.0.0.1:8765`。若将来确需 IPv6，要改成把端口同时发布到 `::1`。

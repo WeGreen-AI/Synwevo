@@ -91,6 +91,10 @@ class App:
     def update_project(self, pid: str, values: dict) -> dict:
         self.get_project(pid)
         allowed = {k: v for k, v in values.items() if k in ("name", "record_rule", "output", "template_id", "step")}
+        if "archived" in values:
+            # Archiving only hides a project from the default list; it stays fully usable and
+            # reversible.  Deleting is the separate, destructive `deleted` flag.
+            allowed["archived_at"] = now() if values["archived"] else None
         if "record_rule" in allowed:
             self._validate_rule(allowed["record_rule"])
         if "template_id" in allowed and allowed["template_id"]:

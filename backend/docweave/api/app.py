@@ -248,8 +248,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
 
     # ------------------------------------------------------------ projects
     @api.get("/api/projects")
-    def list_projects():
-        return app_.list_projects()
+    def list_projects(archived: int = 0):
+        return app_.list_projects(include_archived=bool(archived))
 
     @api.post("/api/projects")
     def create_project(body: dict = Body(...)):
