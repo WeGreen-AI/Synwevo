@@ -132,3 +132,51 @@ def test_the_blob_audit_does_not_offer_to_delete():
     src = (Path(__file__).resolve().parents[2] / "scripts" / "blob_audit.py").read_text("utf-8")
     for forbidden in ("unlink(", "os.remove", "shutil.rmtree", "DELETE FROM"):
         assert forbidden not in src, f"这个脚本不应当能删除任何东西，但出现了 {forbidden}"
+
+
+def test_a_preview_blob_is_counted_as_referenced(tmp_path):
+    """Found by adversarial review of the first version of this script, which missed it.
+
+    A preview output and a layout PDF are recorded **only** in `blob_grants` — no row owns them,
+    the grant is the reference. The first inventory copied four of `authz._REACHABLE`'s five
+    clauses and dropped that one, so bytes the server was actively serving over
+    `/api/preview-files/{blob}` were listed under `unreferenced_on_disk`.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from blob_audit import audit
+    from docweave import authz
+    from docweave.store import Store
+
+    store = Store(tmp_path)
+    (tmp_path / "blobs").mkdir(exist_ok=True)
+    preview = "e" * 64
+    (tmp_path / "blobs" / preview).write_bytes(b"rendered preview")
+    authz.grant_blob(store, preview, "preview", tenant="default")
+
+    r = audit(tmp_path)
+    assert preview not in r["unreferenced_on_disk"], \
+        "预览产物的唯一引用就是 grant——把它当孤儿，回收时就会删掉服务器正在提供的字节"
+    assert r["referenced_total"] >= 1
+
+
+def test_the_inventory_refuses_to_be_narrower_than_the_authorization_check(monkeypatch):
+    """The real fix is structural, not one more column.
+
+    `authz._REACHABLE` decides what is *readable*; this script decides what is *referenced*. If
+    the second is ever narrower, a collector built on it deletes live data. So the script
+    compares the two, and adding a sixth clause to `_REACHABLE` has to make this fail rather
+    than silently shrink the mark set.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import blob_audit
+    from docweave import authz
+
+    assert blob_audit._cross_check_against_authz() == [], "今天两者应当是一致的"
+
+    monkeypatch.setattr(
+        authz, "_REACHABLE",
+        authz._REACHABLE + ("SELECT 1 FROM some_future_table WHERE blob=:b AND tenant=:t",))
+    assert "some_future_table" in blob_audit._cross_check_against_authz(), \
+        "新增一条可达性规则必须让清点报警，而不是悄悄少算"

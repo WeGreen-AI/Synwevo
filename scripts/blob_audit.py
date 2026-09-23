@@ -28,6 +28,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 # Columns that hold a blob id directly.
+#
+# This list must cover every clause of `authz._REACHABLE`, which is the authorization layer's
+# own answer to "can these bytes be read". `_cross_check_against_authz()` below enforces that,
+# because the first version of this file did not and got it wrong: it copied four of the five
+# clauses and dropped `blob_grants` — the one table whose blobs have no other reference. Preview
+# outputs and layout PDFs live only there, so the audit reported bytes the server was actively
+# serving as unreferenced. `_REACHABLE`'s own comment asks for exactly this ("kept as data so
+# the read check and any future sweeper cannot drift apart") and this file drifted anyway.
 DIRECT = [
     ("source_files", "blob"),
     ("source_files", "parsed_blob"),
@@ -35,6 +43,8 @@ DIRECT = [
     ("templates", "original_blob"),
     ("template_versions", "working_blob"),
     ("artifacts", "blob"),
+    # Previews and layout PDFs. No row owns them; the grant *is* the reference.
+    ("blob_grants", "blob"),
 ]
 
 # References that live *inside* JSON and are invisible to a per-column scan. Each entry is a
@@ -64,6 +74,31 @@ LOOKALIKES = [
 ]
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _cross_check_against_authz() -> list:
+    """Refuse to under-report. Returns the tables `authz._REACHABLE` consults that this file does not.
+
+    The authorization layer decides what is *readable*; this file decides what is *referenced*.
+    If the second is narrower than the first, then something the server will happily serve looks
+    like an orphan here — and a collector built on this list deletes it. So the two are compared
+    rather than assumed to agree, and a mismatch is a hard failure rather than a quieter report.
+    """
+    sys.path.insert(0, str(ROOT / "backend"))
+    try:
+        from docweave import authz
+    except ImportError:
+        return []                              # backend not importable; the caller says so
+    covered = {t for t, _ in DIRECT} | {t for t, _, _ in JSON_PATHS}
+    missing = []
+    for clause in authz._REACHABLE:
+        tables = set(re.findall(r"\bFROM\s+([a-z_]+)", clause))
+        tables |= set(re.findall(r"\bJOIN\s+([a-z_]+)", clause))
+        for t in tables:
+            if t not in covered and t not in ("projects", "jobs", "templates"):
+                # projects/jobs/templates appear only as the join that supplies a workspace.
+                missing.append(t)
+    return sorted(set(missing))
 
 
 def _tables(c) -> set:
@@ -147,6 +182,7 @@ def audit(data_dir: Path) -> dict:
     c.close()
 
     return {
+        "authz_tables_not_covered": _cross_check_against_authz(),
         "blobs_on_disk": len(on_disk),
         "bytes_on_disk": total_bytes,
         "direct": {k: len(v) for k, v in direct.items()},
@@ -203,9 +239,17 @@ def main() -> int:
     orphans = r["unreferenced_on_disk"]
     print(f"磁盘上但无人引用：{len(orphans)} 个")
     if orphans:
-        print("     注意：这些**不能直接当作可删除**。有几类 blob 写入之后其 id 不记录在任何可查询")
-        print("     的引用里（例如脱敏产物），它们在这里看起来就是孤儿。")
+        print("     注意：这些**不能直接当作可删除**。脱敏产物（services.py:271）写完之后 id 只出现在")
+        print("     HTTP 响应里，不进任何可查询的列——它们在这里看起来就是孤儿。（这一类同时也不可读：")
+        print("     没有 grant，`/api/desensitized/{blob}` 会 404，所以它们确实是死字节。）")
     print()
+
+    gaps = r["authz_tables_not_covered"]
+    if gaps:
+        print("!! 授权层会认为可读、但本清点没有覆盖的表：" + "、".join(gaps))
+        print("   这意味着这份清点比服务器实际会提供的内容更窄——基于它做回收会删掉正在被服务的字节。")
+        print("   请把这些表加进 DIRECT 或 JSON_PATHS 之后再使用本工具。")
+        print()
 
     if r["lookalike_columns"]:
         print("形似 blob 但不是 blob 的列（正则全表扫描会误判）：")

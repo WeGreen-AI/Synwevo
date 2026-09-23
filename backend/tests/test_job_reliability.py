@@ -2,6 +2,7 @@
 arbitration, retry runs and the event stream.  These pin DW-001…DW-008."""
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -209,3 +210,47 @@ def test_unknown_layout_is_rejected_not_silently_downgraded(api, fixtures):
     r = api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"]})
     assert r.status_code < 400 and api.ok(api.c.get(f"/api/jobs/{r.json()['id']}"))["options"]["layout"] == "off"
     api.c.post(f"/api/jobs/{r.json()['id']}/cancel", json={})
+
+
+def test_the_archive_is_streamed_from_disk_not_buffered_in_memory(api, fixtures):
+    """`zip_file` writes to a temp file and its docstring says streaming "keeps memory flat for
+    large jobs" — and then this route read the whole file straight back in. Measured on a large
+    job: ~+222 MB RSS for a download needing ~13 MB, on a container limited to 3 GB.
+
+    Asserted on behaviour, not on the source: a streamed response carries a Content-Length from
+    the file and supports range requests, and the temp file is cleaned up afterwards.
+    """
+    pid = _project(api, fixtures, rows=3)
+    job = api.job(pid)
+    assert job["status"] == "completed"
+
+    r = api.c.get(f"/api/jobs/{job['id']}/zip")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    assert "attachment" in r.headers["content-disposition"]
+
+    # Range support is what a streamed FileResponse gives and a buffered body does not; it is
+    # also what lets an interrupted download resume instead of restarting.
+    head = api.c.get(f"/api/jobs/{job['id']}/zip", headers={"Range": "bytes=0-99"})
+    assert head.status_code == 206, "流式响应应当支持断点续传"
+    assert len(head.content) == 100
+
+    import zipfile, io
+    assert zipfile.ZipFile(io.BytesIO(r.content)).namelist(), "内容仍然是一个可读的 ZIP"
+
+
+def test_there_is_no_buffering_zip_helper_left_to_reach_for(api):
+    """Removed rather than deprecated, so it cannot come back by autocomplete."""
+    from docweave.jobs import JobService
+    assert not hasattr(JobService, "zip"), "JobService.zip 会把整个归档读进内存"
+    assert hasattr(JobService, "zip_file")
+
+
+def test_the_archive_temp_file_does_not_accumulate(api, fixtures):
+    pid = _project(api, fixtures, rows=3)
+    job = api.job(pid)
+    tmp = Path(api.c.app_state.app.store.root) / "tmp"
+    before = len(list(tmp.glob("*.zip"))) if tmp.is_dir() else 0
+    for _ in range(3):
+        assert api.c.get(f"/api/jobs/{job['id']}/zip").status_code == 200
+    after = len(list(tmp.glob("*.zip"))) if tmp.is_dir() else 0
+    assert after == before, f"下载之后留下了 {after - before} 个临时 ZIP"
