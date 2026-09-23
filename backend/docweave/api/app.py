@@ -146,7 +146,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
 
     @api.get("/healthz", tags=["system"], summary="存活检查（进程是否在运行）")
     def healthz():
-        return {"status": "ok", "version": api.version}
+        # `instance` lets destructive test tooling prove it is not pointed at real data.
+        return {"status": "ok", "version": api.version, "instance": app_.store.instance_kind()}
 
     @api.get("/readyz", tags=["system"], summary="就绪检查（能否真正处理任务）")
     def readyz():

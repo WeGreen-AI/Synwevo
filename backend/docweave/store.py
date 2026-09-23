@@ -127,6 +127,27 @@ class Store:
         c = self._c()
         c.executescript(SCHEMA)
         self._migrate(c)
+        self._stamp_instance_kind(c)
+
+    # ---------------------------------------------------------------- instance identity
+    def _stamp_instance_kind(self, c: sqlite3.Connection) -> None:
+        """Record once, at creation, whether this data directory belongs to a test run.
+
+        Destructive test tooling refuses to touch an instance that is not marked ``test``.
+        The mark is written only while the directory is still empty, so setting
+        DOCWEAVE_TEST_INSTANCE against a directory that already holds real projects can
+        never re-label it - it stays ``normal`` and stays protected."""
+        row = c.execute("SELECT value FROM meta WHERE key='instance_kind'").fetchone()
+        if row:
+            return
+        empty = c.execute("SELECT COUNT(*) AS n FROM projects").fetchone()["n"] == 0
+        want_test = (os.environ.get("DOCWEAVE_TEST_INSTANCE") or "").strip().lower() in ("1", "true", "yes", "on")
+        kind = "test" if (empty and want_test) else "normal"
+        c.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('instance_kind', ?)", (kind,))
+
+    def instance_kind(self) -> str:
+        row = self.one("SELECT value FROM meta WHERE key='instance_kind'")
+        return (row or {}).get("value") or "normal"
 
     # ---------------------------------------------------------------- schema migration
     def _migrate(self, c: sqlite3.Connection) -> None:

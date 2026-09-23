@@ -23,7 +23,11 @@ import pymupdf
 from playwright.sync_api import Page, expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8765"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _testenv import target  # noqa: E402  isolated test instance; never the user's real data
+
+ARG_BASE = sys.argv[1] if len(sys.argv) > 1 else None
+BASE = ""                     # bound in main() to an isolated (or explicitly test-marked) server
 SHOTS = ROOT / "docs" / "screenshots"
 DATA = ROOT / "testdata"
 
@@ -220,20 +224,23 @@ def flow_d(page: Page):
 
 
 def main():
-    t0 = time.time()
-    with sync_playwright() as p:
-        browser = p.chromium.launch(channel="chrome", headless=True)
-        ctx = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True, locale="zh-CN")
-        page = ctx.new_page()
-        errors: list[str] = []
-        page.on("pageerror", lambda e: errors.append(str(e)))
-        for name, fn in (("A 分组+XLSX明细", flow_a), ("B PDF框选", flow_b), ("C 内置文档编辑器", flow_c), ("D 内置表格编辑器", flow_d)):
-            t = time.time()
-            fn(page)
-            print(f"  {name}: ok ({time.time() - t:.1f}s)")
-        assert not errors, errors
-        browser.close()
-    print(f"UI E2E (more) passed in {time.time() - t0:.1f}s")
+    global BASE
+    with target(ARG_BASE) as _base:
+        BASE = _base
+        t0 = time.time()
+        with sync_playwright() as p:
+            browser = p.chromium.launch(channel="chrome", headless=True)
+            ctx = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True, locale="zh-CN")
+            page = ctx.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            for name, fn in (("A 分组+XLSX明细", flow_a), ("B PDF框选", flow_b), ("C 内置文档编辑器", flow_c), ("D 内置表格编辑器", flow_d)):
+                t = time.time()
+                fn(page)
+                print(f"  {name}: ok ({time.time() - t:.1f}s)")
+            assert not errors, errors
+            browser.close()
+        print(f"UI E2E (more) passed in {time.time() - t0:.1f}s")
 
 
 if __name__ == "__main__":

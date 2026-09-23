@@ -26,7 +26,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ui_e2e import make_field, map_field  # noqa: E402  (same helpers as the main UI flow)
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8765"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _testenv import target  # noqa: E402  isolated test instance; never the user's real data
+
+ARG_BASE = sys.argv[1] if len(sys.argv) > 1 else None
+BASE = ""                     # bound in main() to an isolated (or explicitly test-marked) server
 DATA = ROOT / "testdata"
 MOD = "Meta" if sys.platform == "darwin" else "Control"
 
@@ -199,22 +203,25 @@ def flow_layout(page: Page, pid: str):
 
 
 def main():
-    t0 = time.time()
-    with sync_playwright() as p:
-        browser = p.chromium.launch(channel="chrome", headless=True)
-        ctx = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True, locale="zh-CN")
-        page = ctx.new_page()
-        errors: list[str] = []
-        page.on("pageerror", lambda e: errors.append(str(e)))
-        pid = build_project(page)
-        for name, fn in (("E 命令面板", flow_palette), ("F 列表键盘与批量", flow_list),
-                         ("G 主题与纸张", flow_theme), ("H 布局记忆与减少动效", flow_layout)):
-            t = time.time()
-            fn(page, pid)
-            print(f"  {name}: ok ({time.time() - t:.1f}s)")
-        assert not errors, errors
-        browser.close()
-    print(f"UI E2E (keyboard) passed in {time.time() - t0:.1f}s（项目 {pid}）")
+    global BASE
+    with target(ARG_BASE) as _base:
+        BASE = _base
+        t0 = time.time()
+        with sync_playwright() as p:
+            browser = p.chromium.launch(channel="chrome", headless=True)
+            ctx = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True, locale="zh-CN")
+            page = ctx.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            pid = build_project(page)
+            for name, fn in (("E 命令面板", flow_palette), ("F 列表键盘与批量", flow_list),
+                             ("G 主题与纸张", flow_theme), ("H 布局记忆与减少动效", flow_layout)):
+                t = time.time()
+                fn(page, pid)
+                print(f"  {name}: ok ({time.time() - t:.1f}s)")
+            assert not errors, errors
+            browser.close()
+        print(f"UI E2E (keyboard) passed in {time.time() - t0:.1f}s（项目 {pid}）")
 
 
 if __name__ == "__main__":
