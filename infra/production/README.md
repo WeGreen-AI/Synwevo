@@ -8,7 +8,7 @@ shells, Python API, document workers, LibreOffice, Tesseract and CJK fonts.
 | `https://synwevo.wegreen.ltd` | Workspace portal | `http://127.0.0.1:18760` |
 | `https://accounts.wegreen.ltd` | Account/OIDC/Passkey | same gateway |
 | `https://docwave.wegreen.ltd` | Synwevo Docs | same gateway |
-| `https://dw.wegreen.ltd` | HTTP 308 to the Docs origin | same gateway |
+| `https://dw.wegreen.ltd` | HTTP 308 to the Docs origin | existing `http://127.0.0.1:8765` alias |
 
 `docwave.wegreen.ltd` is the user-selected hostname; the product name remains Synwevo Docs.
 The existing Cloudflare Tunnel supplies public HTTPS. Do not expose backend ports, change other
@@ -80,7 +80,7 @@ Monitor disk use and apply an explicit retention policy after restore verificati
 
 First migration is operator-controlled: snapshot the old instance, rehearse on a server-local copy,
 compare IDs/counts/blob hashes, stop the old writer for the final consistent copy, register the two
-RP clients, then start the new stack and switch only the four listed routes. Keep the old service
+RP clients, then start the new stack and add only the three new hostname routes (the old route keeps port 8765). Keep the old service
 and original directory until acceptance. The old database must not continue accepting writes after
 cutover. Do not restart it after new writes without a reviewed reconciliation/restore plan.
 
