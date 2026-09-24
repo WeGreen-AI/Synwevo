@@ -72,7 +72,11 @@ RUN pip install --no-cache-dir --no-deps --no-build-isolation \
 # The data directory is the volume, owned by the unprivileged user the server runs as. HOST and
 # DATA_DIR above describe the container itself; infra/docker-compose.yml pins them again so an
 # operator's .env cannot move the database out of the volume or bind the container's loopback.
-RUN useradd -m synwevo && mkdir -p /data && chown synwevo /data && chmod 700 /data
+# The SSH receiver extracts source with umask 077. COPY preserves directory modes, so
+# root-owned 0700 source directories would be unreadable to the runtime user. Only the
+# shipped application source is made readable; /data and host configuration stay private.
+RUN chmod -R a+rX /app \
+    && useradd -m synwevo && mkdir -p /data && chown synwevo /data && chmod 700 /data
 USER synwevo
 VOLUME ["/data"]
 EXPOSE 8765

@@ -74,6 +74,9 @@ Queue behaviour, local configuration and error meanings: [operations](../../docs
 Ubuntu runners install pinned Python/Node dependencies, check boundaries/brand/types, build all
 frontends, run frontend suites and deployment safety regressions. The Python suite runs in a
 test-only derivative of the actual deployment image, with no production volume or external network.
+CI first builds from the same private archive extraction used by the SSH receiver, then checks
+account startup as the unmodified non-root runtime user. Shipped source is readable inside the
+image even when the host release directories are private; data and secret permissions are unchanged.
 This keeps LibreOffice/font behaviour aligned with production. The runtime uses Debian Trixie
 (LibreOffice 25.2); Bookworm's LibreOffice 7.4 cannot evaluate the accepted XLOOKUP sample.
 Only successful main runs

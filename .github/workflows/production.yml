@@ -37,7 +37,21 @@ jobs:
           python -m unittest discover -s infra/production/tests -v
       - name: Verify the deployment runtime
         run: |
-          docker build -f infra/Dockerfile -t synwevo:ci .
+          # Reproduce the receiver's private source extraction, including 0700 directories.
+          git archive --format=tar HEAD > "$RUNNER_TEMP/source.tar"
+          (
+            umask 077
+            python - <<'PY'
+          import os, pathlib, tarfile
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          with tarfile.open(root / 'source.tar') as archive:
+              archive.extractall(root / 'private-source', filter='data')
+          PY
+          )
+          docker build -f "$RUNNER_TEMP/private-source/infra/Dockerfile" -t synwevo:ci "$RUNNER_TEMP/private-source"
+          # Check the unmodified non-root runtime before the test derivative makes source writable.
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,uid=1000,gid=1000,mode=1770 synwevo:ci \
+            python -c "from synwevo_server.app import create_app; create_app('/tmp/import-check', role='accounts', start_jobs=False)"
           docker build -f infra/production/Dockerfile.verify -t synwevo:verify .
           docker run --rm --network none --memory 3g --cpus 2 synwevo:verify
   deploy:
