@@ -87,7 +87,22 @@ python scripts/check_boundaries.py
 **schema 迁移只有一个执行者**：`synwevo_core.store.Store`。多个服务各自跑迁移，是同一个库出现
 两套结构的最短路径。任何角色启动时打开 Store，迁移都由同一段代码、按同一个版本号执行。
 
-`workspace_id = tenant` 的契约继续有效：业务表的 `tenant` 列就是工作空间 id，不新造 `org_id`。
+`workspace_id = tenant` 的契约继续有效：业务表的 `tenant` 列就是工作空间 id。
+本轮组织治理扩展在工作空间上增加可空的 `organization_id`；组织是治理范围，不是第二套业务 tenant，
+加入组织不自动授予其工作空间或文档读取权。既有 workspace/resource ID 和历史认领状态保留。
+
+v6 的新增状态由 Store 统一建表/加列：`organizations`、`organization_memberships`、
+`organization_avatars`、创建幂等记录、`account_recoveries`、`api_platform_approvals/bindings/calls`，
+以及账户语言/时区/头像/引导/删除恢复和邀请语言/拒绝状态。迁移不自动把历史空间装进组织。
+`Organizations` 位于 core，提供身份服务治理写侧和 Docs 的当前组织授权检查；它不读取文档。
+
+控制台的 `ControlPlaneAdapter` 协议在 core，Docs 实现在自身 `control_plane.py`，仅 server 组装层
+把它注入账户服务。独立 identity 工厂不需要导入或安装 Docs；无适配器时相关操作明确不可用。
+账户源站的管理接口使用中央会话；调试转入同一 Docs 业务路由时必须另有受限机器凭据。
+
+共享前端 `@synwevo/ui` 提供三语言词库、参数插值、日期/数字显示与语言选择，业务外壳登记自己的词库。
+`@synwevo/auth-client` 保存访客本机选择、同步账户偏好，并将每标签页空间绑定带入 API 请求与 SSO。
+语言切换不翻译用户文档，应用间不会通过导入私有前端模块来共用账户页面。
 
 ## 4. 数据位置怎么解析
 

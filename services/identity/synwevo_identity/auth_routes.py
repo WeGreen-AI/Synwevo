@@ -102,7 +102,7 @@ def notify_security_change(request: Request, user: dict | None, what: str) -> No
     if not mailer or not user:
         return
     try:
-        subject, text = mail_notice(what=what, when_text="刚刚")
+        subject, text = mail_notice(what=what, when_text="刚刚", locale=user.get("locale") or "zh-Hans")
         mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
     except Exception as e:  # noqa: BLE001 - mail may be deliberately unconfigured
         print(f"[synwevo] security notice not queued ({what}): {type(e).__name__}", flush=True)
@@ -200,30 +200,34 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         email, password = (body.get("email") or "").strip(), body.get("password") or ""
         if not email or not password:
             raise ServiceError(400, *_LOGIN_FAILED)
-        res = ident.authenticate(email, password, ip=client_ip(request))
-        if not res["ok"]:
-            # One shape for every failure. The reason is recorded, never returned.
+        # Password verification and issuance must serialize with activation/credential
+        # withdrawal. Otherwise an old-password request can finish hashing after every
+        # existing session was revoked and create a fresh, unrevoked session or MFA ticket.
+        with ident.store.tx():
+            res = ident.authenticate(email, password, ip=client_ip(request))
+            if res["ok"]:
+                user = res["user"]
+                if mfa and mfa.enabled_for(user["id"]):
+                    # The ticket proves only the password step, never a complete sign-in.
+                    ticket = tickets.issue(user["id"], user_agent=request.headers.get("user-agent"),
+                                           ip=client_ip(request))
+                    f = mfa.factors(user["id"])
+                    audit(request, "auth.login", actor_id=user["id"], object_kind="user",
+                          object_id=user["id"], result="ok", meta={"stage": "password", "mfa": True})
+                    return {"mfa_required": True, "ticket": ticket,
+                            "methods": {"totp": f["totp"], "recovery": f["recovery_remaining"] > 0}}
+                audit(request, "auth.login", actor_id=user["id"], object_kind="user",
+                      object_id=user["id"], result="ok")
+                return _issue(response, user, amr="password", request=request)
+            # Commit failed-attempt counters and audit before raising the HTTP error.
+            # Raising inside this transaction would roll back brute-force protection.
             audit(request, "auth.login", actor_id=(res.get("user") or {}).get("id"),
                   object_kind="user", object_id=(res.get("user") or {}).get("id"),
                   result="denied", meta={"reason": res["reason"]})
-            if res["reason"] in ("backoff", "address_blocked"):
-                raise ServiceError(429, "too_many_attempts", "尝试过于频繁，请稍后再试",
-                                   {"retry_after": int(res.get("retry_after") or 60)})
-            raise ServiceError(401, *_LOGIN_FAILED)
-        user = res["user"]
-        if mfa and mfa.enabled_for(user["id"]):
-            # The password is not enough on its own. A ticket carries the fact that it was
-            # correct; it is not a session and cannot become one without the second factor.
-            ticket = tickets.issue(user["id"], user_agent=request.headers.get("user-agent"),
-                                   ip=client_ip(request))
-            f = mfa.factors(user["id"])
-            audit(request, "auth.login", actor_id=user["id"], object_kind="user",
-                  object_id=user["id"], result="ok", meta={"stage": "password", "mfa": True})
-            return {"mfa_required": True, "ticket": ticket,
-                    "methods": {"totp": f["totp"], "recovery": f["recovery_remaining"] > 0}}
-        audit(request, "auth.login", actor_id=user["id"], object_kind="user",
-              object_id=user["id"], result="ok")
-        return _issue(response, user, amr="password", request=request)
+        if res["reason"] in ("backoff", "address_blocked"):
+            raise ServiceError(429, "too_many_attempts", "尝试过于频繁，请稍后再试",
+                               {"retry_after": int(res.get("retry_after") or 60)})
+        raise ServiceError(401, *_LOGIN_FAILED)
 
     @r.post("/login/passkey")
     def login_passkey(request: Request, response: Response, body: dict = Body(...)):
@@ -366,18 +370,28 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
     def revoke_others(request: Request):
         s = _require_session(request)
         from .provider_routes import end_central_session
+        current_root = sessions.device_root_id(s["id"]) or s["id"]
         others = ident.store.all("SELECT id FROM sessions WHERE user_id=? AND id<>? AND revoked_at IS NULL",
                                  (s["user_id"], s["id"]))
-        tokens = 0
+        tokens = n = 0
+        ended_roots = {current_root}
         for row in others:
-            tokens += end_central_session(ident.store, row["id"], "user_revoked_others")["tokens_revoked"]
-        n = sessions.revoke_all_for_user(s["user_id"], "user_revoked_others", except_session=s["id"])
+            root = sessions.device_root_id(row["id"])
+            if root is None or root in ended_roots:
+                continue
+            ended_roots.add(root)
+            # A root and its RP rows are one device. End it once and count the actual
+            # changes; a second blanket revocation both lost this count and could end
+            # the current device through one of its relying-party sessions.
+            outcome = end_central_session(ident.store, row["id"], "user_revoked_others")
+            tokens += outcome["tokens_revoked"]
+            n += outcome["sessions_revoked"]
         # Tokens not tied to any central session this account still has open — minted from a
         # session since swept, say — cannot be vouched for by the one being kept, so they go too.
         tokens += ident.store.execute(
             "UPDATE oauth_tokens SET revoked_at=?, revoked_reason='user_revoked_others' "
             "WHERE user_id=? AND revoked_at IS NULL AND (central_session_id IS NULL OR central_session_id<>?)",
-            (now_ts(), s["user_id"], s["id"]))
+            (now_ts(), s["user_id"], current_root))
         from .withdrawals import record as journal
         journaled = journal(ident.store, "sessions_revoked", user_id=s["user_id"])
         audit(request, "auth.session.revoke_others", actor_id=s["user_id"], result="ok",
@@ -438,7 +452,7 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
         them the way the page shows them (a mail that failed is its own group)."""
         s = _session(request)
         items = invites.list_for_workspace(wid, s["user_id"], state=state.strip() or None)
-        groups = {"pending": 0, "expired": 0, "revoked": 0, "accepted": 0, "mail_failed": 0}
+        groups = {"pending": 0, "expired": 0, "revoked": 0, "accepted": 0, "declined": 0, "mail_failed": 0}
         for it in items:
             st = mailer.status_for(it["id"])
             it["mail"] = (st or {}).get("status") or "unknown"
@@ -473,6 +487,13 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
             out["signed_in_as"] = (u or {}).get("email")
         return out
 
+    @r.post("/invitations/preview")
+    def preview_invite_body(request: Request, body: dict = Body(...)):
+        token = body.get("token")
+        if not isinstance(token, str) or len(token) > 256:
+            raise ServiceError(400, "bad_invite", "邀请链接无效")
+        return preview_invite(request, token)
+
     @r.post("/invitations/accept")
     def accept_invite(request: Request, response: Response, body: dict = Body(...)):
         token = (body.get("token") or "").strip()
@@ -487,6 +508,20 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
             sessions.set_workspace(s["id"], out["workspace_id"])
             return {"user": _public_user(ident, out["user"]), "workspace_id": out["workspace_id"]}
         return _issue_session(ident, sessions, response, out["user"], amr="password", request=request)
+
+    @r.post("/invitations/decline")
+    def decline_invite(request: Request, body: dict = Body(...)):
+        token = body.get("token")
+        if set(body) != {"token"} or not isinstance(token, str) or not 1 <= len(token) <= 256:
+            raise ServiceError(400, "bad_invite", "邀请链接无效")
+        state = getattr(request.state, "session", None)
+        if not state:
+            raise ServiceError(401, "unauthorized", "请先登录")
+        with ident.store.tx():
+            out = invites.decline(token, state["user_id"])
+            audit(request, "invite.decline", actor_id=state["user_id"], workspace_id=out["workspace_id"],
+                  object_kind="invitation", object_id=out["id"], result="ok")
+        return {"state": "declined"}
 
     r.include_router(governance)
     return r
@@ -546,43 +581,46 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
         # here, so a throttled request still gets `same` — it just does not send anything or
         # invalidate anything. Unthrottled, anyone who knew an address could flood it with mail
         # and keep killing the owner's real reset link, since each request supersedes the last.
-        limit, window = FORGOT_PER_ADDRESS
-        allowed, _ = ident.window_allows(f"forgot:{client_ip(request)}", limit=limit, window_s=window)
-        if not allowed:
-            audit(request, "auth.reset.request", result="denied", meta={"reason": "address_throttled"})
-            return same
-        user = ident.by_email(email)
-        # Recorded either way, so the audit log shows attempts against addresses with no
-        # account — which is what a scan of this endpoint looks like.
-        if not user or user["status"] not in ("active", "pending"):
-            audit(request, "auth.reset.request", result="denied",
-                  meta={"reason": "no_such_account"})
-            return same
-        n_max, per = FORGOT_PER_ACCOUNT
-        recent = ident.store.one(
-            "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM email_tokens "
-            "WHERE user_id=? AND kind='reset' AND created_at>?", (user["id"], now_ts() - per))
-        if recent["n"] >= n_max or (recent["last"] and now_ts() - recent["last"] < FORGOT_MIN_GAP_S):
+        # Serialize admission, per-account gap, token replacement and outbox enqueue.
+        # A concurrent request must see the first committed reset before deciding.
+        with ident.store.tx():
+            limit, window = FORGOT_PER_ADDRESS
+            allowed, _ = ident.window_allows(f"forgot:{client_ip(request)}", limit=limit, window_s=window)
+            if not allowed:
+                audit(request, "auth.reset.request", result="denied", meta={"reason": "address_throttled"})
+                return same
+            user = ident.by_email(email)
+            # Recorded either way, so the audit log shows attempts against addresses with no
+            # account — which is what a scan of this endpoint looks like.
+            if not user or user["status"] not in ("active", "pending"):
+                audit(request, "auth.reset.request", result="denied",
+                      meta={"reason": "no_such_account"})
+                return same
+            n_max, per = FORGOT_PER_ACCOUNT
+            recent = ident.store.one(
+                "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM email_tokens "
+                "WHERE user_id=? AND kind='reset' AND created_at>?", (user["id"], now_ts() - per))
+            if recent["n"] >= n_max or (recent["last"] and now_ts() - recent["last"] < FORGOT_MIN_GAP_S):
+                audit(request, "auth.reset.request", actor_id=user["id"], object_kind="user",
+                      object_id=user["id"], result="denied", meta={"reason": "account_throttled"})
+                return same
+            token = invites.issue_email_token(user["id"], "reset", ttl_s=RESET_TTL_H * 3600)
+            subject, text = mail_reset(token=token, expires_h=RESET_TTL_H, locale=user.get("locale") or "zh-Hans")
+            try:
+                mailer.enqueue(user["email"], subject, text, kind="reset", ref_id=user["id"])
+            except ServiceError as e:
+                # Swallowed *here specifically*, and nowhere else. `enqueue` raises on purpose so an
+                # invitation nobody can receive is not reported as sent — but on this endpoint the
+                # response shape is itself the security property. Letting the refusal through would
+                # answer 503 for an address that has an account and 200 for one that does not,
+                # turning the one endpoint built to resist enumeration into a perfect oracle for it.
+                # The failure is recorded loudly instead of being lost.
+                audit(request, "auth.reset.request", actor_id=user["id"], object_kind="user",
+                      object_id=user["id"], result="error", meta={"mail_error": e.code})
+                return same
             audit(request, "auth.reset.request", actor_id=user["id"], object_kind="user",
-                  object_id=user["id"], result="denied", meta={"reason": "account_throttled"})
+                  object_id=user["id"], result="ok")
             return same
-        token = invites.issue_email_token(user["id"], "reset", ttl_s=RESET_TTL_H * 3600)
-        subject, text = mail_reset(token=token, expires_h=RESET_TTL_H)
-        try:
-            mailer.enqueue(user["email"], subject, text, kind="reset", ref_id=user["id"])
-        except ServiceError as e:
-            # Swallowed *here specifically*, and nowhere else. `enqueue` raises on purpose so an
-            # invitation nobody can receive is not reported as sent — but on this endpoint the
-            # response shape is itself the security property. Letting the refusal through would
-            # answer 503 for an address that has an account and 200 for one that does not,
-            # turning the one endpoint built to resist enumeration into a perfect oracle for it.
-            # The failure is recorded loudly instead of being lost.
-            audit(request, "auth.reset.request", actor_id=user["id"], object_kind="user",
-                  object_id=user["id"], result="error", meta={"mail_error": e.code})
-            return same
-        audit(request, "auth.reset.request", actor_id=user["id"], object_kind="user",
-              object_id=user["id"], result="ok")
-        return same
 
     @r.get("/reset/preview")
     def reset_preview(request: Request, token: str = ""):
@@ -594,6 +632,13 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
         if not user:
             raise ServiceError(410, "bad_token", "链接无效或已过期，请重新申请")
         return {"email": user["email"], "expires_at": row["expires_at"]}
+
+    @r.post("/reset/preview")
+    def reset_preview_body(request: Request, body: dict = Body(...)):
+        token = body.get("token")
+        if not isinstance(token, str) or len(token) > 256:
+            raise ServiceError(410, "bad_token", "链接无效或已过期，请重新申请")
+        return reset_preview(request, token)
 
     @r.post("/reset")
     def reset(request: Request, body: dict = Body(...)):
@@ -623,7 +668,7 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
               object_id=user["id"], result="ok",
               meta={"sessions": n, "tokens": tokens, "journaled": journaled})
         try:
-            subject, text = mail_notice(what="口令已重置", when_text="刚刚")
+            subject, text = mail_notice(what="口令已重置", when_text="刚刚", locale=user.get("locale") or "zh-Hans")
             mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
         except Exception:                      # a notice that fails must not undo the reset
             pass
@@ -642,21 +687,74 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
             raise ServiceError(401, "unauthorized", "请先登录")
         if user.get("email_verified_at"):
             return {"ok": True, "already_verified": True}
-        token = invites.issue_email_token(user["id"], "verify", ttl_s=VERIFY_TTL_H * 3600)
-        subject, text = mail_verify(token=token, expires_h=VERIFY_TTL_H)
-        mailer.enqueue(user["email"], subject, text, kind="verify", ref_id=user["id"])
+        with ident.store.tx():
+            recent = ident.store.one("SELECT COUNT(*) AS n, MAX(created_at) AS last FROM email_tokens "
+                                     "WHERE user_id=? AND kind='verify' AND created_at>?", (user["id"], now_ts() - 3600))
+            if recent["n"] >= 3 or (recent["last"] and now_ts() - recent["last"] < 60):
+                raise _too_many(60)
+            token = invites.issue_email_token(user["id"], "verify", ttl_s=VERIFY_TTL_H * 3600, new_email=user["email"])
+            subject, text = mail_verify(token=token, expires_h=VERIFY_TTL_H, locale=user.get("locale") or "zh-Hans")
+            mailer.enqueue(user["email"], subject, text, kind="verify", ref_id=user["id"])
         audit(request, "auth.email.verify_sent", actor_id=user["id"], result="ok")
         return {"ok": True, "expires_h": VERIFY_TTL_H}
 
     @r.post("/verify-email")
+    @r.post("/email/verify")
     def verify_email(request: Request, body: dict = Body(...)):
-        """A POST, not a GET on the link, for the scanner reason above."""
-        row = invites.consume_email_token((body.get("token") or "").strip(), "verify")
-        ident.store.execute("UPDATE users SET email_verified_at=?, updated_at=? WHERE id=?",
-                            (now_ts(), now_ts(), row["user_id"]))
+        """The mailbox owner chooses the credential that activates a pending account.
+
+        A pre-registrant can know its old password and hold pending sessions. Merely
+        verifying a link must never promote those credentials into active access.
+        Active users only verify their current address; this is not a password reset.
+        """
+        from synwevo_core import passwords
+        from .profile import invalidate_access
+        token = body.get("token")
+        if (set(body) - {"token", "new_password"} or not isinstance(token, str)
+                or not 20 <= len(token) <= 256):
+            raise ServiceError(409, "bad_token", "链接无效或已过期，请重新申请")
+        with ident.store.tx():
+            row = invites.peek_email_token(token, "verify")
+            if not row:
+                raise ServiceError(409, "bad_token", "链接无效或已过期，请重新申请")
+            user = ident.get_user(row["user_id"])
+            if (not user or user["status"] not in ("pending", "active") or user.get("deleted_at")
+                    or row["new_email_key"] != user["email_key"]):
+                raise ServiceError(409, "bad_token", "链接无效或已过期，请重新申请")
+            pending = user["status"] == "pending"
+            phc = None
+            if pending:
+                replacement = body.get("new_password")
+                if not isinstance(replacement, str) or not replacement:
+                    raise ServiceError(400, "new_password_required", "请设置由你掌控的新口令以完成账户激活",
+                                       {"field": "new_password"})
+                try:
+                    passwords.check_policy(replacement, email=user["email"],
+                                           display_name=user.get("display_name"), single_factor=True)
+                    phc = passwords.hash_password(replacement)
+                except PasswordError as exc:
+                    raise ServiceError(400, "weak_password", str(exc), {"field": "new_password"}) from None
+            elif "new_password" in body:
+                raise ServiceError(400, "invalid_field", "已激活账户的邮箱验证不会修改口令",
+                                   {"field": "new_password"})
+            invites.consume_email_token(token, "verify")
+            if pending:
+                ident.store.execute("INSERT INTO user_passwords (user_id,phc,updated_at) VALUES (?,?,?) "
+                                    "ON CONFLICT(user_id) DO UPDATE SET phc=excluded.phc,updated_at=excluded.updated_at",
+                                    (user["id"], phc, now_ts()))
+                invalidate_access(ident.store, user["id"], "account_verified")
+                # Historical pending users may carry factors enrolled before the pending gate
+                # existed. Those factors belong to the pre-registrant, not the mailbox owner.
+                for table in ("passkeys", "webauthn_credentials", "totp_secrets", "recovery_codes"):
+                    ident.store.execute(f"DELETE FROM {table} WHERE user_id=?", (user["id"],))
+            ident.store.execute("UPDATE users SET email_verified_at=?, status='active', updated_at=? WHERE id=?",
+                                (now_ts(), now_ts(), row["user_id"]))
         audit(request, "auth.email.verified", actor_id=row["user_id"], object_kind="user",
               object_id=row["user_id"], result="ok")
-        return {"ok": True}
+        if pending:
+            from .withdrawals import record as journal
+            journal(ident.store, "password_changed", user_id=row["user_id"])
+        return {"ok": True, "sign_in_required": pending}
 
     return r
 

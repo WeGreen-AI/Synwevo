@@ -1,3 +1,4 @@
+import { t as tr, useI18n } from "@synwevo/ui";
 import { useEffect, useRef, useState } from "react";
 import { isImeKey } from "@synwevo/ui";
 
@@ -6,7 +7,8 @@ export interface MenuItem { label: string; onClick: () => unknown; disabled?: bo
 /** Accessible overflow menu: click / Enter opens, arrows move, Escape or outside click closes.
  *  Escape hands focus back to the ⋯ button (focus used to drop to <body>), and Tab closes the
  *  menu instead of leaving it open behind the next control. */
-export default function MoreMenu({ items, label = "更多", ariaLabel }: { items: MenuItem[]; label?: string; ariaLabel?: string }) {
+export default function MoreMenu({ items, label = tr("更多"), ariaLabel }: { items: MenuItem[]; label?: string; ariaLabel?: string }) {
+  useI18n();
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState(0);
   const ref = useRef<HTMLDivElement>(null);

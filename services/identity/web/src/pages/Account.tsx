@@ -1,163 +1,99 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { del, get, post } from "@synwevo/auth-client";
-import { fmtTime, useDialog, useToast } from "@synwevo/ui";
-import { useSession } from "@synwevo/auth-client";
-import { Topbar } from "../components/Topbar";
-import { LeaveDialog } from "./members/dialogs";
-import { AMR_LABEL, canExport } from "../lib/labels";
-import MfaSection from "../components/MfaSection";
-import PasskeySection from "../components/PasskeySection";
-
-interface SessionRow {
-  id: string;
-  current: boolean;
-  created_at: number;
-  last_seen_at: number;
-  expires_at: number;
-  amr: string;
-  client: string;
-  ip: string | null;
-}
-
-/** How this session was authenticated. Shown because "signed in" is not one thing — and it is
- *  read from what the server recorded at login, not inferred from what the account *has*. */
-
+import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { del, get, post, useSession } from '@synwevo/auth-client';
+import { useDialog, useI18n, useToast } from '@synwevo/ui';
+import { Topbar } from '../components/Topbar';
+import { LeaveDialog } from './members/dialogs';
+import { canExport } from '../lib/labels';
+import MfaSection from '../components/MfaSection';
+import PasskeySection from '../components/PasskeySection';
+import ProfileSection from './account/ProfileSection';
+import EmailSection from './account/EmailSection';
+import PrivacySection from './account/PrivacySection';
+import ActivitySection from './account/ActivitySection';
+import { ErrorNotice, errorText, timeText, type Profile } from './account/common';
+import './account/account.css';
+export { default as AccountRecovery } from './account/Recovery';
+interface SessionRow { id: string; current: boolean; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string; ip: string | null }
+const roles: Record<string, string> = { owner: '所有者', admin: '管理员', editor: '编辑', viewer: '只读' };
+const methods: Record<string, string> = { password: '口令', 'password+totp': '口令与动态验证码', 'password+recovery': '口令与恢复码', passkey_uv: '安全密钥（已验证身份）', passkey: '安全密钥' };
 export default function Account() {
-  const { me, state, signOut } = useSession();
+  const { me, signOut } = useSession();
+  const { t, locale, setLocale } = useI18n();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState<{ id: string; name: string } | null>(null);
   const [rows, setRows] = useState<SessionRow[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const toast = useToast();
   const { confirm } = useDialog();
-
-  const load = useCallback(() => {
-    get<{ items: SessionRow[] }>("/api/auth/sessions")
-      .then((r) => { setRows(r.items); setErr(null); })
-      .catch((e) => setErr(e.message));
+  const loadProfile = useCallback(() => {
+    get<Profile>('/api/auth/profile').then(p => { setProfile(p); setProfileError(null); setLocale(p.locale); })
+      .catch(e => setProfileError(errorText(e, t)));
+  // Loading stored preferences must not refetch whenever the language menu changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(load, [load]);
-
-  const revoke = async (row: SessionRow) => {
-    if (row.current) {
-      if (!(await confirm("退出当前设备", <>这会结束你当前的登录，需要重新登录。</>, "退出", false))) return;
-      await signOut();
-      return;
-    }
-    await del(`/api/auth/sessions/${row.id}`);
-    toast("该设备已退出登录", "ok");
-    load();
-  };
-
-  const revokeOthers = async () => {
-    const others = (rows || []).filter((r) => !r.current).length;
-    if (!others) return;
-    const ok = await confirm("退出其他所有设备",
-      <>将结束除当前设备外的 <b>{others}</b> 个登录。这些设备下次访问时需要重新登录。<br />
-        如果你怀疑账户被他人使用，建议同时修改口令。</>, "全部退出", true);
-    if (!ok) return;
-    const r = await post<{ revoked: number }>("/api/auth/sessions/revoke-others", {});
-    toast(`已退出 ${r.revoked} 个设备`, "ok");
-    load();
-  };
-
-  if (!me) return <div className="empty">加载中…</div>;
-
-
-  return (
-    <div className="app">
-      <Topbar title="账户与安全" />
-
-      <div style={{ overflow: "auto", flex: 1 }}>
-        <div className="home">
-          {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={load}>重试</button></div>}
-
-          <section className="card card-b col gap12">
-            <h2 className="secttl">账户</h2>
-            <dl className="kv">
-              <dt>邮箱</dt><dd>{me.email}</dd>
-              <dt>名称</dt><dd>{me.display_name || <span className="muted">未设置</span>}</dd>
-              <dt>平台权限</dt>
-              <dd>{me.platform_role === "admin" ? <span className="badge warn">平台管理员</span>
-                : me.platform_role === "operator" ? <span className="badge">平台运维</span>
-                  : <span className="muted">普通用户</span>}</dd>
-            </dl>
-            <p className="tiny muted">
-              平台权限与工作空间角色是两回事：平台管理员管理账户与服务状态，<b>不会</b>因此获得任何
-              工作空间内文档的读取权限。
-            </p>
-          </section>
-
-          <section className="card card-b col gap12 mt12">
-            <h2 className="secttl">工作空间</h2>
-            <table className="tbl">
-              <thead><tr><th>名称</th><th>类型</th><th>我的角色</th><th>可导出</th><th>操作</th></tr></thead>
-              <tbody>
-                {me.workspaces.map((w) => (
-                  <tr key={w.id}>
-                    <td>{w.name}</td>
-                    <td className="small muted">{w.kind === "personal" ? "个人" : w.kind === "org" ? "组织" : w.kind}</td>
-                    <td className="small">{({ owner: "所有者", admin: "管理员", editor: "编辑", viewer: "只读" } as any)[w.role] || w.role}</td>
-                    <td className="small">{canExport(w.role, w.can_export) ? "是" : <span className="muted">否</span>}</td>
-                    <td><div className="row gap4 wrap">{(w.role === "owner" || w.role === "admin") && <Link className="btn sm" to={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>成员与邀请</Link>}
-                      <button className="btn ghost sm" onClick={() => setLeaving(w)}>退出空间</button></div></td>
-                  </tr>
-                ))}
-                {!me.workspaces.length && (
-                  <tr><td colSpan={5} className="muted" style={{ textAlign: "center", padding: 16 }}>
-                    你当前不属于任何工作空间，因此看不到任何项目。请联系管理员。
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
-          </section>
-
-          <section className="card card-b col gap12 mt12">
-            <div className="row">
-              <h2 className="secttl grow">登录的设备</h2>
-              {!!rows?.some((r) => !r.current) && (
-                <button className="btn danger sm" onClick={() => void revokeOthers().catch((e) => setErr(e.message))}>退出其他所有设备</button>
-              )}
-            </div>
-            {rows === null && !err && <p role="status">正在加载登录的设备…</p>}
-            <table className="tbl" aria-label="登录会话">
-              <thead><tr><th>设备</th><th>登录方式</th><th>最近活动</th><th>到期</th><th>来源</th><th /></tr></thead>
-              <tbody>
-                {(rows || []).map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      {r.client}
-                      {r.current && <span className="badge ok" style={{ marginLeft: 6 }}>当前设备</span>}
-                    </td>
-                    <td className="small muted">{AMR_LABEL[r.amr] || r.amr || "—"}</td>
-                    <td className="small muted nowrap">{fmtTime(r.last_seen_at)}</td>
-                    <td className="small muted nowrap">{fmtTime(r.expires_at)}</td>
-                    {/* An IP, not a guessed city: a wrong location shown as fact is worse than
-                        none when you are deciding whether a session is yours. */}
-                    <td className="small muted mono">{r.ip || "—"}</td>
-                    <td className="nowrap">
-                      <button className="btn xs" onClick={() => void revoke(r).catch((e) => setErr(e.message))}>
-                        {r.current ? "退出" : "结束"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {rows && !rows.length && (
-                  <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 16 }}>没有活动的登录</td></tr>
-                )}
-              </tbody>
-            </table>
-            <p className="tiny muted">
-              只显示 User-Agent 能确定的设备信息，不猜测地理位置。结束某个登录后，该设备的下一次请求即失效。
-            </p>
-          </section>
-
-          <PasskeySection />
-          <MfaSection />
-        </div>
-      </div>
-      {leaving && <LeaveDialog wid={leaving.id} wsName={leaving.name} soleOwner={false} onClose={() => setLeaving(null)}
-        onDone={() => window.location.reload()} />}
-    </div>
-  );
+  const loadSessions = useCallback(() => {
+    get<{ items: SessionRow[] }>('/api/auth/sessions').then(r => { setRows(r.items); setError(null); })
+      .catch(e => setError(errorText(e, t)));
+  }, [t]);
+  useEffect(loadProfile, [loadProfile]);
+  useEffect(() => { if (profile?.status === 'active') loadSessions(); }, [profile?.status, loadSessions]);
+  async function revoke(row?: SessionRow) {
+    const count = rows?.filter(r => !r.current).length || 0;
+    const title = row?.current ? '退出当前设备' : row ? '结束登录会话' : '退出其他所有设备';
+    if (!await confirm(t(title), t(row ? '该设备需要重新登录才能继续使用。' : '将结束其他 {count} 个登录。', { count }), t('确认'), true)) return;
+    setBusy(true); setError(null);
+    try {
+      if (row?.current) await signOut();
+      else {
+        if (row) await del(`/api/auth/sessions/${row.id}`);
+        else await post('/api/auth/sessions/revoke-others');
+        toast(t('设备已退出登录'), 'ok'); loadSessions();
+      }
+    } catch (e) { setError(errorText(e, t)); } finally { setBusy(false); }
+  }
+  return <div className="app"><Topbar title={t('账户与安全')} /><div style={{ overflow: 'auto', flex: 1 }}>
+    <main className="account-center"><header className="account-hero"><div><p className="account-eyebrow">Synwevo Account</p>
+      <h1>{t('你的账户，由你掌控')}</h1><p className="muted">{t('管理个人资料、登录方式与隐私。')}</p></div></header>
+      <ErrorNotice error={profileError} retry={loadProfile} />
+      {!profile && !profileError && <p role="status">{t('加载中…')}</p>}
+      {profile?.status === 'pending' && <section className="card card-b col gap12"><h2>{t('请先验证邮箱')}</h2>
+        <p>{t('验证邮箱后即可管理个人资料和安全设置。')}</p><p className="muted">{profile.email}</p>
+        <ErrorNotice error={error} /><div><button className="btn primary" disabled={busy} onClick={() => {
+          setBusy(true); setError(null); post('/api/auth/verify-email/send').then(() => toast(t('验证邮件已进入队列'), 'ok'))
+            .catch(e => setError(errorText(e, t))).finally(() => setBusy(false));
+        }}>{t('重新发送验证邮件')}</button></div></section>}
+      {profile?.status === 'pending_delete' && <section className="card card-b col gap12" role="status"><h2>{t('注销申请已受理')}</h2>
+        <p>{t('账户已停用。请在 {date} 前使用邮箱中的恢复链接取消注销。', { date: timeText(profile.deletion_due_at!, locale, profile.timezone) })}</p>
+        <div><a href="/login" className="btn">{t('返回登录')}</a></div></section>}
+      {profile?.status === 'active' && me && <div className="account-layout"><nav className="account-nav" aria-label={t('账户设置导航')}>
+        {[['profile', '个人资料'], ['email', '邮箱与口令'], ['security', '登录与安全'], ['devices', '登录的设备'], ['workspaces', '工作空间'], ['activity', '安全活动'], ['privacy', '数据与账户']].map(([id, label]) => <a key={id} href={`#${id}`}>{t(label)}</a>)}
+      </nav><div className="account-content">
+        <ProfileSection profile={profile} onChange={setProfile} /><EmailSection profile={profile} />
+        <div id="security" className="col gap12 account-section"><PasskeySection timezone={profile.timezone} /><MfaSection /></div>
+        <section id="devices" className="card card-b col gap12 account-section"><div className="row gap12 wrap"><h2 className="secttl grow">{t('登录的设备')}</h2>
+          {!!rows?.some(r => !r.current) && <button className="btn danger sm" disabled={busy} onClick={() => void revoke()}>{t('退出其他所有设备')}</button>}</div>
+          <ErrorNotice error={error} retry={loadSessions} />{rows === null && !error && <p role="status">{t('加载中…')}</p>}
+          <div className="account-table"><table className="tbl" aria-label={t('登录会话')}><thead><tr><th>{t('设备')}</th><th>{t('登录方式')}</th><th>{t('最近活动')}</th><th>{t('到期')}</th><th>{t('来源')}</th><th>{t('操作')}</th></tr></thead>
+            <tbody>{rows?.map(row => <tr key={row.id}><td>{row.client} {row.current && <span className="badge ok">{t('当前设备')}</span>}</td>
+              <td className="small">{methods[row.amr] ? t(methods[row.amr]) : row.amr}</td><td className="small nowrap">{timeText(row.last_seen_at, locale, profile.timezone)}</td>
+              <td className="small nowrap">{timeText(row.expires_at, locale, profile.timezone)}</td><td className="mono small">{row.ip || '—'}</td>
+              <td><button className="btn xs" disabled={busy} onClick={() => void revoke(row)}>{t(row.current ? '退出' : '结束')}</button></td></tr>)}</tbody></table></div>
+          {rows?.length === 0 && <p className="muted">{t('没有活动的登录')}</p>}
+        </section>
+        <section id="workspaces" className="card card-b col gap12 account-section"><h2 className="secttl">{t('工作空间')}</h2>
+          <p className="tiny muted">{t('平台管理权限不会授予工作空间文档的读取权限。')}</p>
+          <div className="account-table"><table className="tbl"><thead><tr><th>{t('名称')}</th><th>{t('我的角色')}</th><th>{t('可导出')}</th><th>{t('操作')}</th></tr></thead>
+            <tbody>{me.workspaces.map(w => <tr key={w.id}><td>{w.name}</td><td>{t(roles[w.role] || w.role)}</td><td>{t(canExport(w.role, w.can_export) ? '是' : '否')}</td><td><div className="row gap4 wrap">
+              {(w.role === 'owner' || w.role === 'admin') && <Link className="btn sm" to={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>{t('成员与邀请')}</Link>}
+              <button className="btn ghost sm" onClick={() => setLeaving(w)}>{t('退出空间')}</button></div></td></tr>)}</tbody></table></div>
+          {!me.workspaces.length && <p className="muted">{t('你当前不属于任何工作空间。')}</p>}
+        </section>
+        <ActivitySection timezone={profile.timezone} /><PrivacySection profile={profile} onDeleted={due => setProfile({ ...profile, status: 'pending_delete', deletion_due_at: due })} />
+      </div></div>}
+    </main></div>
+    {leaving && <LeaveDialog wid={leaving.id} wsName={leaving.name} soleOwner={false} onClose={() => setLeaving(null)} onDone={() => window.location.reload()} />}
+  </div>;
 }

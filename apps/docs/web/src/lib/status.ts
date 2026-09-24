@@ -1,3 +1,4 @@
+import { t as tr } from "@synwevo/ui/i18n-core";
 /** The single place job/item status is turned into Chinese for the UI.
  *
  *  The machine API keeps its stable English enums — nothing here changes the wire format.
@@ -32,11 +33,13 @@ export const ITEM_STATUS: Record<string, [label: string, tone: Tone]> = {
 /** Unknown values are shown verbatim rather than hidden, so a new backend status is visible
  *  as a gap to fix instead of silently rendering as "已完成". */
 export function jobStatus(s: string | undefined | null): [string, Tone] {
-  return JOB_STATUS[s || ""] || [s || "未知", "warn"];
+  const [label, tone] = JOB_STATUS[s || ""] || [s || "未知", "warn"];
+  return [tr(label), tone];
 }
 
 export function itemStatus(s: string | undefined | null): [string, Tone] {
-  return ITEM_STATUS[s || ""] || [s || "未知", "warn"];
+  const [label, tone] = ITEM_STATUS[s || ""] || [s || "未知", "warn"];
+  return [tr(label), tone];
 }
 
 /** Sample-rule modes, including per_block which the homepage was missing. */
@@ -47,4 +50,4 @@ export const RULE_MODE: Record<string, string> = {
   per_block: "每块一份",
 };
 
-export const ruleMode = (m: string | undefined | null): string => (m ? RULE_MODE[m] || m : "未定义样本");
+export const ruleMode = (m: string | undefined | null): string => (m ? tr(RULE_MODE[m] || m) : tr("未定义样本"));

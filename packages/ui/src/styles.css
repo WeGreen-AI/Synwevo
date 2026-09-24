@@ -393,7 +393,7 @@ button.opt { width: 100%; text-align: left; background: var(--surface); font: in
 .editor-page .ProseMirror tr[data-repeat="true"] td { background: repeating-linear-gradient(135deg, #fff7e6, #fff7e6 6px, #ffffff 6px, #ffffff 12px); }
 .editor-page .ProseMirror img { max-width: 100%; }
 .editor-page .ProseMirror .page-break { border-top: 2px dashed #9ca3af; margin: 12px 0; text-align: center; color: var(--muted); font-size: 11px; }
-.editor-page .ProseMirror .page-break::after { content: "分页符"; background: var(--surface); padding: 0 6px; position: relative; top: -9px; }
+.editor-page .ProseMirror .page-break::after { content: var(--page-break-label, "分页符"); background: var(--surface); padding: 0 6px; position: relative; top: -9px; }
 .field-node { background: #e0eaff; border: 1px solid #93b0f3; color: var(--accent-strong); border-radius: 4px; padding: 0 4px; font-size: .92em; white-space: nowrap; }
 .field-node.req::after { content: "*"; color: #dc2626; margin-left: 1px; }
 .hf-box { border: 1px dashed #cbd5e1; margin: 0 0 12px; padding: 4px 8px; border-radius: 4px; }
@@ -577,3 +577,9 @@ table.tbl tbody:focus-visible { outline: 2px solid var(--accent); outline-offset
 /* "or" divider between the password form and the passkey button on the sign-in page. */
 .author { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: 12px; }
 .author::before, .author::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+.language-menu { display: inline-flex; align-items: center; flex-shrink: 0; }
+.language-menu select { width: auto; min-width: 96px; max-width: 160px; }
+
+:root:lang(en) { --page-break-label: "Page break"; }
+:root:lang(zh-Hant) { --page-break-label: "分頁符"; }

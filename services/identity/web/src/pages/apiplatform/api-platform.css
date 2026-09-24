@@ -1,0 +1,11 @@
+.api-platform-main { flex: 1; overflow: auto; }
+.api-platform-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 12px; }
+.api-platform-record { padding: 16px 0; border-top: 1px solid var(--line, #ddd); overflow-wrap: anywhere; }
+.api-platform-json { max-height: 450px; overflow: auto; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg, #f5f5f5); border-radius: 8px; font-size: 12px; }
+.api-platform-table { width: 100%; overflow-x: auto; }
+.api-platform-table table { width: 100%; border-collapse: collapse; text-align: start; }
+.api-platform-table th, .api-platform-table td { padding: 12px 8px; border-bottom: 1px solid var(--line, #ddd); vertical-align: top; }
+.api-platform-table th { white-space: nowrap; }
+.api-platform-main fieldset { border: 1px solid var(--line, #ddd); border-radius: 8px; padding: 12px; }
+.api-platform-main input[type=checkbox] { accent-color: var(--accent, #466cbd); }
+@media (max-width: 640px) { .api-platform-main .acct-page { padding: 12px; } .api-platform-main nav .btn { flex: 1 0 30%; } }

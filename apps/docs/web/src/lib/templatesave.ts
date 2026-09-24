@@ -1,3 +1,4 @@
+import { t as tr } from "@synwevo/ui/i18n-core";
 /** Saving a built-in template without silently replacing someone else's newer version.
  *
  *  The editor sends the version it loaded as `base_version`. When the template has moved on
@@ -45,8 +46,8 @@ export function loadedVersion(t: { version?: { no?: unknown } | null; head?: unk
 
 export const STALE_TITLE = "模板已被其他人修改";
 export function staleText(theirs: number | null, mine: number | null): string {
-  const was = mine ? `你打开的是 v${mine}` : "你打开这个模板之后";
-  const now = theirs ? `，现在最新的是 v${theirs}` : "，它又被保存过";
-  return `${was}${now}（在其他窗口或由其他人保存）。仍然保存会用你的内容生成一个新版本；对方保存的版本仍然保留，可以在项目中用模板的「撤销」回到它。`;
+  const was = mine ? tr("你打开的是 v{v1}", { v1: mine }) : tr("你打开这个模板之后");
+  const now = theirs ? tr("，现在最新的是 v{v1}", { v1: theirs }) : tr("，它又被保存过");
+  return tr("{v1}{v2}（在其他窗口或由其他人保存）。仍然保存会用你的内容生成一个新版本；对方保存的版本仍然保留，可以在项目中用模板的「撤销」回到它。", { v1: was, v2: now });
 }
 export const STALE_KEPT = "没有保存：你的修改仍在编辑器中。需要对方的版本时，先复制要保留的内容，再重新打开模板。";

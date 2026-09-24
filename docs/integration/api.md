@@ -1,7 +1,28 @@
 # 机器接口（`/api/v1`）
 
 与界面**共用同一套引擎、服务与任务系统**：同样的输入、模板版本和规则，通过界面或接口得到同样的业务结果。
-接口不依赖浏览器、页面、DOM 或鼠标选区。产品界面中不展示这些能力，密钥与回调通过命令行和部署配置管理。
+接口不依赖浏览器、页面、DOM 或鼠标选区。受控 CLI 与平台管理员专用 API 台可管理凭据与回调；
+普通用户的文档业务接口仍按正常空间和对象权限使用。控制台说明见下节。
+
+## 管理员 API 台（本机开发轮，2026-09-25）
+
+账户源站 `/admin/api-platform` 及 `/api/admin/api-platform/*` 要求有效平台管理员的
+`api_platform.manage`。组织所有者通过 `/account/api-approvals` 批准**自己有权管理的空间**；
+该页不展示机器秘密，也不是组织成员的 API 控制台。批准、scope、空间状态、批准人的当前所有者资格
+在凭据签发和每次机器调用时再次检查。撤销批准不能通过重新启用客户端绕过。
+
+控制台包括真实调用元数据/状态汇总、一次性秘密展示、服务身份和旧式密钥生命周期、实际 OpenAPI 文档，
+以及受限凭据调试与 Webhook 管理。请求记录只保存路由模板、关联 ID、状态与耗时，不存令牌、请求正文或文档。
+机器契约里的路径、字段、错误码和枚举不随界面语言变化。界面说明使用独立三语言资源。
+
+Docs 的实现通过组装层注入 `DocsControlPlane`，账户服务没有导入 Docs 的实现。调试必须提供显式受限
+Bearer 凭据，不使用管理员 Cookie 访问文档；只允许已列明的 API 路径，不代理任意 URL 或本机路径。
+HTTP 页面访问和每次管理调用都有服务端权限检查；仅隐藏导航不是权限控制。
+
+新凭据的 scope 不超过当前批准。正常轮换不更改批准和资源归属；安全撤销/停用阻止后续调用，
+运行任务仍按原引擎的安全检查点验证执行主体。人类登出不撤销组织服务身份。
+验证入口：`test_api_platform.py`、`test_api_platform_races.py`、`test_api_platform_pipeline.py`、
+`test_api_platform_contract_i18n.py` 以及同目录浏览器验收脚本。当前结果见 [handoff](../quality/handoff.md)。
 
 * 基础地址：`http://<host>:<port>/api/v1`（默认 `http://127.0.0.1:8765/api/v1`，端口见 [ports.md](ports.md)）
 * 机器可读规范：[openapi.yaml](openapi.yaml)（由 `python -m synwevo_docs.cli openapi` 从实际路由导出，`apps/docs/tests/test_api_docs.py` 校验其与代码一致）
@@ -42,7 +63,7 @@ python -m synwevo_docs.cli apikey revoke <key_id>
 | 生命周期 | 独立；有人退出浏览器不影响它 | 随账户状态、成员关系、应用资格一起失效 |
 | 流程 | `client_credentials` | 授权码流程签发的访问令牌 |
 
-登记一个服务账户（**只有 CLI，没有产品界面**）：
+使用受控 CLI 登记一个服务账户（管理员 API 台是另一个经过批准的入口）：
 
 ```bash
 python -m synwevo_identity.cli client register \

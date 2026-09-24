@@ -1,3 +1,6 @@
+import { formatNumber } from "@synwevo/ui";
+import { serverText, issueText } from "../lib/presentation";
+import { t as tr, useI18n, LanguageMenu } from "@synwevo/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { get, post, put } from "@synwevo/auth-client";
@@ -23,6 +26,7 @@ function parseRef(ref: string) {
 }
 
 export default function SheetEditor() {
+  useI18n();
   const { tid } = useParams();
   const [sp] = useSearchParams();
   const projectId = sp.get("project");
@@ -65,7 +69,7 @@ export default function SheetEditor() {
     get(`/api/templates/${tid}`).then((t) => {
       if (!alive) return;
       if (t.kind !== "builtin_sheet" || !t.version.editor?.sheets) {
-        setLoadErr("这个模板不是用表格编辑器创建的，不能在这里编辑。");
+        setLoadErr(tr("这个模板不是用表格编辑器创建的，不能在这里编辑。"));
         return;
       }
       setName(t.name);
@@ -86,7 +90,7 @@ export default function SheetEditor() {
 
   // In-app navigation does not fire beforeunload, so 返回 asks itself.
   const back = async () => {
-    if (dirty && !(await confirm("放弃未保存的修改？", "模板有尚未保存的修改，离开后这些修改会丢失。", "放弃修改并离开", true))) return;
+    if (dirty && !(await confirm(tr("放弃未保存的修改？"), tr("模板有尚未保存的修改，离开后这些修改会丢失。"), tr("放弃修改并离开"), true))) return;
     nav(projectId ? `/p/${projectId}` : "/");
   };
 
@@ -150,11 +154,11 @@ export default function SheetEditor() {
     return !(x.r2 < sel.r1 || x.r1 > sel.r2 || x.c2 < sel.c1 || x.c1 > sel.c2);
   };
   const addField = async (kind: Field["kind"]) => {
-    if (sh.fields.some(overlaps)) { toast("选区与已有字段重叠", "err"); return; }
+    if (sh.fields.some(overlaps)) { toast(tr("选区与已有字段重叠"), "err"); return; }
     const single = sel.r1 === sel.r2 && sel.c1 === sel.c2;
-    if (kind === "cell" && !single) { toast("字段单元格只能是一个单元格（合并单元格请选左上角）", "err"); return; }
-    if (kind === "repeat" && sel.r1 !== sel.r2) { toast("重复明细行只能选择一行中的连续单元格", "err"); return; }
-    const n = await prompt(kind === "cell" ? "字段单元格" : kind === "region" ? "固定区域" : "重复明细行", "名称", kind === "repeat" ? "明细" : "");
+    if (kind === "cell" && !single) { toast(tr("字段单元格只能是一个单元格（合并单元格请选左上角）"), "err"); return; }
+    if (kind === "repeat" && sel.r1 !== sel.r2) { toast(tr("重复明细行只能选择一行中的连续单元格"), "err"); return; }
+    const n = await prompt(kind === "cell" ? tr("字段单元格") : kind === "region" ? tr("固定区域") : tr("重复明细行"), tr("名称"), kind === "repeat" ? tr("明细") : "");
     if (!n) return;
     const f: Field = kind === "repeat" ? { id: rid(), name: n, kind, row: sel.r1, c1: sel.c1, c2: sel.c2, empty_policy: "remove_row" } : { id: rid(), name: n, kind, ref: rangeRef(sel.r1, sel.c1, sel.r2, sel.c2) };
     mutate((s) => { s.fields.push(f); return s; });
@@ -167,12 +171,12 @@ export default function SheetEditor() {
       const editor = { sheets };
       const t = tid
         ? await saveOverStale((base) => put(`/api/templates/${tid}/builtin`, { editor, name, ...(base ? { base_version: base } : {}) }),
-          baseVersion.current, (theirs, mine) => confirm(STALE_TITLE, staleText(theirs, mine), "仍然保存", true))
+          baseVersion.current, (theirs, mine) => confirm(tr(STALE_TITLE), staleText(theirs, mine), tr("仍然保存"), true))
         : await post("/api/templates/builtin", { kind: "builtin_sheet", name, editor, project_id: projectId });
-      if (!t) { toast(STALE_KEPT, "info"); return; }
+      if (!t) { toast(tr(STALE_KEPT), "info"); return; }
       baseVersion.current = loadedVersion(t);
       setDirty(false);
-      toast(`已保存（${t.version.slots.length} 个字段，v${t.version.no}）`, "ok");
+      toast(tr("已保存（{v1} 个字段，v{v2}）", { v1: t.version.slots.length, v2: t.version.no }), "ok");
       if (!tid) nav(`/templates/${t.id}/edit${projectId ? `?project=${projectId}` : ""}`, { replace: true });
     } catch (e: any) {
       toast(errorText(e), "err");
@@ -219,58 +223,59 @@ export default function SheetEditor() {
 
   if (loadErr) return (
     <div className="empty" role="alert">
-      <div className="big">无法打开模板</div>
-      <div className="notice err" style={{ maxWidth: 480 }}>{loadErr}</div>
-      <button type="button" className="btn" onClick={() => nav(projectId ? `/p/${projectId}` : "/")}>返回</button>
+      <div className="big">{tr("无法打开模板")}</div>
+      <div className="notice err" style={{ maxWidth: 480 }}>{serverText(loadErr)}</div>
+      <button type="button" className="btn" onClick={() => nav(projectId ? `/p/${projectId}` : "/")}>{tr("返回")}</button>
     </div>
   );
 
   return (
     <div className="editor-shell" inert={busy || !loaded} onMouseUp={() => (drag.current = null)}>
       <div className="topbar">
-        <button type="button" className="btn ghost sm" onClick={back}>← 返回</button>
-        <input className="input" value={name} onChange={(e) => { setName(e.target.value); setDirty(true); }} style={{ width: 240, fontWeight: 600 }} aria-label="模板名称" />
-        <span className="badge">表格型模板 → XLSX</span>
-        {!loaded ? <span className="badge info" role="status">加载中…</span> : dirty ? <span className="badge warn" role="status">未保存</span> : <span className="badge ok" role="status">已保存</span>}
+        <LanguageMenu />
+        <button type="button" className="btn ghost sm" onClick={back}>{tr("← 返回")}</button>
+        <input className="input" value={name} onChange={(e) => { setName(e.target.value); setDirty(true); }} style={{ width: 240, fontWeight: 600 }} aria-label={tr("模板名称")} />
+        <span className="badge">{tr("表格型模板 → XLSX")}</span>
+        {!loaded ? <span className="badge info" role="status">{tr("加载中…")}</span> : dirty ? <span className="badge warn" role="status">{tr("未保存")}</span> : <span className="badge ok" role="status">{tr("已保存")}</span>}
         <span className="spacer" />
-        <button type="button" className="btn primary" disabled={busy || !loaded} onClick={saveTpl}>{busy ? "保存中…" : "保存模板"}</button>
+        <button type="button" className="btn primary" disabled={busy || !loaded} onClick={saveTpl}>{busy ? tr("保存中…") : tr("保存模板")}</button>
       </div>
       <div className="toolbar">
         <span className="cellinfo">{rangeRef(sel.r1, sel.c1, sel.r2, sel.c2)}</span>
-        <button type="button" className={`btn sm${cur.s?.b ? " active" : ""}`} aria-pressed={!!cur.s?.b} aria-label="加粗" title="加粗" onClick={() => style({ b: cur.s?.b ? null : 1 })}><b>B</b></button>
-        <button type="button" className={`btn sm${cur.s?.i ? " active" : ""}`} aria-pressed={!!cur.s?.i} aria-label="斜体" title="斜体" onClick={() => style({ i: cur.s?.i ? null : 1 })}><i>I</i></button>
-        <button type="button" className={`btn sm${cur.s?.u ? " active" : ""}`} aria-pressed={!!cur.s?.u} aria-label="下划线" title="下划线" onClick={() => style({ u: cur.s?.u ? null : 1 })}><u>U</u></button>
-        <select className="input sm" aria-label="字号" value={cur.s?.sz || 11} onChange={(e) => style({ sz: Number(e.target.value) })}>{[9, 10, 11, 12, 14, 16, 18, 20, 24].map((x) => <option key={x}>{x}</option>)}</select>
-        <label className="small">字<input type="color" value={cur.s?.color || "#000000"} onChange={(e) => style({ color: e.target.value })} style={{ width: 26, height: 22, border: 0 }} /></label>
-        <label className="small">底<input type="color" value={cur.s?.bg || "#ffffff"} onChange={(e) => style({ bg: e.target.value })} style={{ width: 26, height: 22, border: 0 }} /></label>
-        <button className="btn sm" onClick={() => style({ bg: null })}>清底色</button>
-        {(["left", "center", "right"] as const).map((a) => <button key={a} className={`btn sm${cur.s?.ha === a ? " active" : ""}`} onClick={() => style({ ha: a })}>{({ left: "左", center: "中", right: "右" })[a]}</button>)}
-        <button className={`btn sm${cur.s?.wrap ? " active" : ""}`} onClick={() => style({ wrap: cur.s?.wrap ? null : 1 })}>换行</button>
-        <button className={`btn sm${cur.s?.bd ? " active" : ""}`} onClick={() => style({ bd: cur.s?.bd ? null : 1 })}>边框</button>
-        <select className="input sm" aria-label="数字格式" value={cur.s?.nf || ""} onChange={(e) => style({ nf: e.target.value || null })}>
-          <option value="">常规</option><option value="@">文本</option><option value="0">0</option><option value="0.00">0.00</option><option value="#,##0.00">#,##0.00</option><option value="¥#,##0.00">¥#,##0.00</option><option value="0%">0%</option><option value="yyyy-mm-dd">yyyy-mm-dd</option><option value='yyyy"年"m"月"d"日"'>yyyy年m月d日</option>
+        <button type="button" className={`btn sm${cur.s?.b ? " active" : ""}`} aria-pressed={!!cur.s?.b} aria-label={tr("加粗")} title={tr("加粗")} onClick={() => style({ b: cur.s?.b ? null : 1 })}><b>B</b></button>
+        <button type="button" className={`btn sm${cur.s?.i ? " active" : ""}`} aria-pressed={!!cur.s?.i} aria-label={tr("斜体")} title={tr("斜体")} onClick={() => style({ i: cur.s?.i ? null : 1 })}><i>I</i></button>
+        <button type="button" className={`btn sm${cur.s?.u ? " active" : ""}`} aria-pressed={!!cur.s?.u} aria-label={tr("下划线")} title={tr("下划线")} onClick={() => style({ u: cur.s?.u ? null : 1 })}><u>U</u></button>
+        <select className="input sm" aria-label={tr("字号")} value={cur.s?.sz || 11} onChange={(e) => style({ sz: Number(e.target.value) })}>{[9, 10, 11, 12, 14, 16, 18, 20, 24].map((x) => <option key={x}>{x}</option>)}</select>
+        <label className="small">{tr("字")}<input type="color" value={cur.s?.color || "#000000"} onChange={(e) => style({ color: e.target.value })} style={{ width: 26, height: 22, border: 0 }} /></label>
+        <label className="small">{tr("底")}<input type="color" value={cur.s?.bg || "#ffffff"} onChange={(e) => style({ bg: e.target.value })} style={{ width: 26, height: 22, border: 0 }} /></label>
+        <button className="btn sm" onClick={() => style({ bg: null })}>{tr("清底色")}</button>
+        {(["left", "center", "right"] as const).map((a) => <button key={a} className={`btn sm${cur.s?.ha === a ? " active" : ""}`} onClick={() => style({ ha: a })}>{({ left: tr("左"), center: tr("中"), right: tr("右") })[a]}</button>)}
+        <button className={`btn sm${cur.s?.wrap ? " active" : ""}`} onClick={() => style({ wrap: cur.s?.wrap ? null : 1 })}>{tr("换行")}</button>
+        <button className={`btn sm${cur.s?.bd ? " active" : ""}`} onClick={() => style({ bd: cur.s?.bd ? null : 1 })}>{tr("边框")}</button>
+        <select className="input sm" aria-label={tr("数字格式")} value={cur.s?.nf || ""} onChange={(e) => style({ nf: e.target.value || null })}>
+          <option value="">{tr("常规")}</option><option value="@">{tr("文本")}</option><option value="0">0</option><option value="0.00">0.00</option><option value="#,##0.00">#,##0.00</option><option value="¥#,##0.00">¥#,##0.00</option><option value="0%">0%</option><option value="yyyy-mm-dd">yyyy-mm-dd</option><option value='yyyy"年"m"月"d"日"'>yyyy年m月d日</option>
         </select>
-        <button className="btn sm" onClick={merge}>合并</button>
-        <button className="btn sm" onClick={unmerge}>取消合并</button>
-        <label className="small">列宽<input className="input sm" type="number" style={{ width: 56 }} value={sh.cols[sel.c1]?.w || 100} onChange={(e) => mutate((s) => { for (let c = sel.c1; c <= sel.c2; c++) s.cols[c].w = Math.max(20, Number(e.target.value)); return s; })} /></label>
-        <label className="small">行高<input className="input sm" type="number" style={{ width: 56 }} value={sh.rows[sel.r1]?.h || 24} onChange={(e) => mutate((s) => { for (let r = sel.r1; r <= sel.r2; r++) s.rows[r].h = Math.max(12, Number(e.target.value)); return s; })} /></label>
-        <button className="btn sm" onClick={() => mutate((s) => { s.rows.push(...Array.from({ length: 10 }, () => ({ h: 24 }))); return s; })}>+10 行</button>
-        <button className="btn sm" onClick={() => mutate((s) => { s.cols.push({ w: 100 }); return s; })}>+1 列</button>
-        <button type="button" className="btn sm" onClick={undo} disabled={!hist.length} aria-label="撤销" title="撤销（⌘Z）">↶</button>
+        <button className="btn sm" onClick={merge}>{tr("合并")}</button>
+        <button className="btn sm" onClick={unmerge}>{tr("取消合并")}</button>
+        <label className="small">{tr("列宽")}<input className="input sm" type="number" style={{ width: 56 }} value={sh.cols[sel.c1]?.w || 100} onChange={(e) => mutate((s) => { for (let c = sel.c1; c <= sel.c2; c++) s.cols[c].w = Math.max(20, Number(e.target.value)); return s; })} /></label>
+        <label className="small">{tr("行高")}<input className="input sm" type="number" style={{ width: 56 }} value={sh.rows[sel.r1]?.h || 24} onChange={(e) => mutate((s) => { for (let r = sel.r1; r <= sel.r2; r++) s.rows[r].h = Math.max(12, Number(e.target.value)); return s; })} /></label>
+        <button className="btn sm" onClick={() => mutate((s) => { s.rows.push(...Array.from({ length: 10 }, () => ({ h: 24 }))); return s; })}>{tr("+10 行")}</button>
+        <button className="btn sm" onClick={() => mutate((s) => { s.cols.push({ w: 100 }); return s; })}>{tr("+1 列")}</button>
+        <button type="button" className="btn sm" onClick={undo} disabled={!hist.length} aria-label={tr("撤销")} title={tr("撤销（⌘Z）")}>↶</button>
       </div>
       <div className="toolbar">
-        <b className="small">字段：</b>
-        <button className="btn sm primary" onClick={() => addField("cell")}>设为字段单元格</button>
-        <button className="btn sm" onClick={() => addField("region")}>设为固定区域</button>
-        <button className="btn sm" onClick={() => addField("repeat")}>设为重复明细行</button>
-        <span className="tiny muted">重复明细行：选中一行中的连续单元格；上一行作为表头名称。生成时有几条明细就插入几行，公式与合并随之平移。</span>
+        <b className="small">{tr("字段：")}</b>
+        <button className="btn sm primary" onClick={() => addField("cell")}>{tr("设为字段单元格")}</button>
+        <button className="btn sm" onClick={() => addField("region")}>{tr("设为固定区域")}</button>
+        <button className="btn sm" onClick={() => addField("repeat")}>{tr("设为重复明细行")}</button>
+        <span className="tiny muted">{tr("重复明细行：选中一行中的连续单元格；上一行作为表头名称。生成时有几条明细就插入几行，公式与合并随之平移。")}</span>
       </div>
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <div className="grid-scroll" ref={gridRef} tabIndex={0} onKeyDown={onKey}
-          aria-label={`表格编辑区，当前 ${rangeRef(sel.r1, sel.c1, sel.r2, sel.c2)}。方向键移动，Shift+方向键扩展选区，直接输入或 F2 编辑，Tab 离开表格`}>
+          aria-label={tr("表格编辑区，当前 {v1}。方向键移动，Shift+方向键扩展选区，直接输入或 F2 编辑，Tab 离开表格", { v1: rangeRef(sel.r1, sel.c1, sel.r2, sel.c2) })}>
           <div className="grid-canvas" style={{ width: 46 + colX[colX.length - 1], height: 22 + rowY[rowY.length - 1] }}>
             {sh.cols.map((c, ci) => <div key={`h${ci}`} className={`ghead${ci >= sel.c1 && ci <= sel.c2 ? " on" : ""}`} style={{ left: 46 + colX[ci], top: 0, width: c.w, height: 22 }}>{colLetter(ci)}</div>)}
-            {sh.rows.map((r, ri) => <div key={`r${ri}`} className={`ghead${ri >= sel.r1 && ri <= sel.r2 ? " on" : ""}`} style={{ left: 0, top: 22 + rowY[ri], width: 46, height: r.h, lineHeight: `${r.h}px` }}>{ri + 1}</div>)}
+            {sh.rows.map((r, ri) => <div key={`r${ri}`} className={`ghead${ri >= sel.r1 && ri <= sel.r2 ? " on" : ""}`} style={{ left: 0, top: 22 + rowY[ri], width: 46, height: r.h, lineHeight: `${r.h}px` }}>{formatNumber(ri + 1)}</div>)}
             {sh.rows.map((row, ri) => sh.cols.map((col, ci) => {
               const ref = cellRef(ri, ci);
               const m = covered.get(ref);
@@ -288,7 +293,7 @@ export default function SheetEditor() {
                   onMouseDown={(e) => { if (e.button !== 0) return; e.preventDefault(); if (editing) commit(); gridRef.current?.focus({ preventScroll: true }); const p = { r: ri, c: ci }; const anchor = e.shiftKey ? cursor.current.anchor : p; drag.current = anchor; cursor.current = { anchor, active: p }; setSel(rectOf(anchor, p)); }}
                   onMouseEnter={() => { if (drag.current) { const d = drag.current; cursor.current = { anchor: d, active: { r: ri, c: ci } }; setSel(rectOf(d, cursor.current.active)); } }}
                   onDoubleClick={() => { setEditing({ r: ri, c: ci, v: cell.v || "" }); }}
-                  title={f ? `字段：${f.name}` : undefined}>
+                  title={f ? tr("字段：{v1}", { v1: f.name }) : undefined}>
                   {f && ((f.kind === "repeat" && ci === f.c1) || (f.kind !== "repeat" && ref === (f.ref || "").split(":")[0])) && <span className="fldchip" style={{ background: COLORS[fi % COLORS.length], position: "absolute", left: 1, top: 1 }}>{f.name}</span>}
                   <span style={{ paddingLeft: f ? 4 : 0 }}>{cell.v}</span>
                 </div>
@@ -297,7 +302,7 @@ export default function SheetEditor() {
             <div className="gsel" style={{ left: 46 + colX[sel.c1], top: 22 + rowY[sel.r1], width: colX[sel.c2 + 1] - colX[sel.c1], height: rowY[sel.r2 + 1] - rowY[sel.r1] }} />
             {editing && (
               <input ref={inputRef} className="input" value={editing.v} onChange={(e) => setEditing({ ...editing, v: e.target.value })}
-                aria-label={`编辑单元格 ${cellRef(editing.r, editing.c)}`}
+                aria-label={tr("编辑单元格 {v1}", { v1: cellRef(editing.r, editing.c) })}
                 onKeyDown={(e) => {
                   // Enter confirms a pinyin candidate and Escape cancels one: neither may commit
                   // or discard the cell while the input method is composing.
@@ -314,26 +319,26 @@ export default function SheetEditor() {
           </div>
         </div>
         <div className="side right" style={{ width: 260 }}>
-          <div className="pane-h"><span className="title">字段 {sh.fields.length}</span></div>
+          <div className="pane-h"><span className="title">{tr("字段 ")}{formatNumber(sh.fields.length)}</span></div>
           <div className="maplist">
             {sh.fields.map((f, i) => (
               <div key={f.id} className="slotitem" onClick={() => { if (f.kind === "repeat") select({ r1: f.row!, c1: f.c1!, r2: f.row!, c2: f.c2! }); else select(parseRef(f.ref!)); }}>
                 <span className="dot" style={{ background: COLORS[i % COLORS.length] }} />
                 <span className="grow ellipsis">{f.name}{f.required && <span style={{ color: "var(--err)" }}> *</span>}</span>
-                <span className="badge">{f.kind === "cell" ? f.ref : f.kind === "region" ? `区域 ${f.ref}` : `明细行 ${f.row! + 1}`}</span>
-                <label className="check tiny" onClick={(e) => e.stopPropagation()} title="必填"><input type="checkbox" checked={!!f.required} onChange={(e) => mutate((s) => { s.fields[i].required = e.target.checked; return s; })} />必填</label>
-                <button type="button" className="btn xs ghost" aria-label={`删除字段「${f.name}」`} title="删除字段" onClick={(e) => { e.stopPropagation(); mutate((s) => { s.fields.splice(i, 1); return s; }); }}>✕</button>
+                <span className="badge">{f.kind === "cell" ? f.ref : f.kind === "region" ? tr("区域 {v1}", { v1: f.ref }) : tr("明细行 {v1}", { v1: f.row! + 1 })}</span>
+                <label className="check tiny" onClick={(e) => e.stopPropagation()} title={tr("必填")}><input type="checkbox" checked={!!f.required} onChange={(e) => mutate((s) => { s.fields[i].required = e.target.checked; return s; })} />{tr("必填")}</label>
+                <button type="button" className="btn xs ghost" aria-label={tr("删除字段「{v1}」", { v1: f.name })} title={tr("删除字段")} onClick={(e) => { e.stopPropagation(); mutate((s) => { s.fields.splice(i, 1); return s; }); }}>✕</button>
               </div>
             ))}
-            {!sh.fields.length && <div className="empty small">选中单元格后点击上方「设为字段单元格 / 固定区域 / 重复明细行」</div>}
+            {!sh.fields.length && <div className="empty small">{tr("选中单元格后点击上方「设为字段单元格 / 固定区域 / 重复明细行」")}</div>}
           </div>
         </div>
       </div>
       <div className="sheettabs">
-        {sheets.map((s, i) => <button key={i} className={`sheettab${i === si ? " on" : ""}`} onClick={() => chooseSheet(i)} onDoubleClick={async () => { const n = await prompt("重命名工作表", "名称", s.name); if (n) { setHist([...hist.slice(-50), sheets]); setSheets(sheets.map((x, k) => (k === i ? { ...x, name: n } : x))); setDirty(true); } }}>{s.name}</button>)}
+        {sheets.map((s, i) => <button key={i} className={`sheettab${i === si ? " on" : ""}`} onClick={() => chooseSheet(i)} onDoubleClick={async () => { const n = await prompt(tr("重命名工作表"), tr("名称"), s.name); if (n) { setHist([...hist.slice(-50), sheets]); setSheets(sheets.map((x, k) => (k === i ? { ...x, name: n } : x))); setDirty(true); } }}>{s.name}</button>)}
         <button className="sheettab" onClick={() => { setHist([...hist.slice(-50), sheets]); setSheets([...sheets, newSheet(`Sheet${sheets.length + 1}`)]); chooseSheet(sheets.length); setDirty(true); }}>＋</button>
-        {sheets.length > 1 && <button className="sheettab" onClick={() => { setHist([...hist.slice(-50), sheets]); setSheets(sheets.filter((_, k) => k !== si)); chooseSheet(0); setDirty(true); }}>删除当前表</button>}
-        <span className="tiny muted" style={{ alignSelf: "center", marginLeft: 8 }}>双击单元格或直接输入以编辑；双击工作表标签可重命名</span>
+        {sheets.length > 1 && <button className="sheettab" onClick={() => { setHist([...hist.slice(-50), sheets]); setSheets(sheets.filter((_, k) => k !== si)); chooseSheet(0); setDirty(true); }}>{tr("删除当前表")}</button>}
+        <span className="tiny muted" style={{ alignSelf: "center", marginLeft: 8 }}>{tr("双击单元格或直接输入以编辑；双击工作表标签可重命名")}</span>
       </div>
     </div>
   );

@@ -109,6 +109,7 @@ def env_for(name: str) -> dict:
         "SYNWEVO_ROLE": role,
         "SYNWEVO_PORT": str(port),
         "SYNWEVO_HOST": bind_addr(urllib.parse.urlparse(url).hostname),
+        "SYNWEVO_LOCAL_DUAL_STACK": "1",
         "SYNWEVO_DATA_DIR": data_dir(),
         "SYNWEVO_UI_AUTH": "session",
         "SYNWEVO_ISSUER": ACCOUNTS,
@@ -128,17 +129,11 @@ def env_for(name: str) -> dict:
 
 
 def bind_addr(host: str) -> str:
-    """The loopback address this hostname actually resolves to first.
+    """Preferred loopback for display and startup guards.
 
-    Not a detail. `*.localhost` resolves to `::1` *and* `127.0.0.1` on this machine, and
-    `getaddrinfo` returns `::1` first. uvicorn binds exactly one address, so binding
-    `127.0.0.1` left `[::1]:8770` refusing connections — which the browser hops survived,
-    because urllib and browsers try every address, and the server-to-server token call did not,
-    because httpx does not. The result was a sign-in that got all the way to the callback and
-    then failed with "Server disconnected without sending a response".
-
-    So: the service listens where its own name points. Same rule in production, where the
-    issuer hostname and the bind address must agree.
+    The local runner binds both loopback families through LOCAL_DUAL_STACK. Browsers and
+    server-side HTTP clients may resolve *.localhost differently; neither may lose SSO.
+    This helper never selects a wildcard or changes a production bind address.
     """
     try:
         for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM):
@@ -151,11 +146,14 @@ def bind_addr(host: str) -> str:
 
 
 def _port_busy(port: int, host: str = "accounts.localhost") -> bool:
-    addr = bind_addr(host)
-    fam = socket.AF_INET6 if ":" in addr else socket.AF_INET
-    with socket.socket(fam, socket.SOCK_STREAM) as s:
-        s.settimeout(0.3)
-        return s.connect_ex((addr, port)) == 0
+    for fam, addr in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        if fam == socket.AF_INET6 and not socket.has_ipv6:
+            continue
+        with socket.socket(fam, socket.SOCK_STREAM) as s:
+            s.settimeout(0.3)
+            if s.connect_ex((addr, port)) == 0:
+                return True
+    return False
 
 
 def _pidfile(name: str) -> Path:

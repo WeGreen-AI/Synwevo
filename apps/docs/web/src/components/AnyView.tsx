@@ -1,3 +1,5 @@
+import { serverText, issueText, diagnosticText } from "../lib/presentation";
+import { t as tr, useI18n } from "@synwevo/ui";
 import type { Mark, Selection } from "../lib/types";
 import DocView from "../views/DocView";
 import GridView, { CellSel, GridWindow } from "../views/GridView";
@@ -31,13 +33,14 @@ export interface ViewProps {
 }
 
 export default function AnyView(p: ViewProps) {
+  useI18n();
   const v = p.view;
-  if (!v) return <div className="empty">加载中…</div>;
-  if (v.view === "pending") return <div className="empty"><div className="big">正在解析文件…</div><div>解析完成后自动显示</div></div>;
+  if (!v) return <div className="empty">{tr("加载中…")}</div>;
+  if (v.view === "pending") return <div className="empty"><div className="big">{tr("正在解析文件…")}</div><div>{tr("解析完成后自动显示")}</div></div>;
   if (v.view === "error") return (
     <div className="empty">
-      <div className="big">无法读取此文件</div>
-      <div className="notice err" style={{ maxWidth: 480 }}>{v.error || "未知错误"}</div>
+      <div className="big">{tr("无法读取此文件")}</div>
+      <div className="notice err" style={{ maxWidth: 480 }}>{diagnosticText(v.error) || tr("未知错误")}</div>
     </div>
   );
   if (v.view === "grid") {
@@ -61,5 +64,5 @@ export default function AnyView(p: ViewProps) {
   if (v.view === "text") {
     return <TextView lines={v.lines} marks={p.marks} selection={p.selection} onSelect={p.onSelect} focusKey={p.focusKey} selectable={p.selectable} />;
   }
-  return <div className="empty">无法预览</div>;
+  return <div className="empty">{tr("无法预览")}</div>;
 }

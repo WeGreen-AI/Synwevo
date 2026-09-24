@@ -475,15 +475,32 @@ def test_resending_an_expired_invitation_kills_the_old_link(env):
     iid = post(alice, f"/api/auth/workspaces/{ws}/invitations", {"email": "n@example.com"}).json()["id"]
     body = store.one("SELECT body FROM mail_outbox WHERE ref_id=?", (iid,))["body"]
     old_token = body.split("token=")[1].split()[0]
-    store.execute("UPDATE invitations SET expires_at=? WHERE id=?", (now() - 1, iid))
+    guest = TestClient(env["api"])
+    # New policy: an immediate resend is refused, and must not burn the old link
+    # or enqueue another message. Previously this test assumed immediate resends.
+    cooldown = post(alice, f"/api/auth/invitations/{iid}/resend")
+    assert cooldown.status_code == 429 and cooldown.json()["error"] == "invite_cooldown"
+    assert int(cooldown.headers["Retry-After"]) > 0
+    assert guest.get(f"/api/auth/invitations/preview?token={old_token}").json()["state"] == "pending"
+    assert store.one("SELECT COUNT(*) AS n FROM mail_outbox WHERE ref_id=?", (iid,))["n"] == 1
+    # Isolated clock fixture: beyond the resend cooldown, and the old link expired.
+    store.execute("UPDATE invitations SET created_at=?,expires_at=? WHERE id=?", (now() - 61, now() - 1, iid))
     r = post(alice, f"/api/auth/invitations/{iid}/resend")
     assert r.status_code == 200, r.text
     new_id_ = r.json()["invitation"]["id"]
     assert new_id_ != iid
-    guest = TestClient(env["api"])
-    assert guest.get(f"/api/auth/invitations/preview?token={old_token}").json()["state"] in ("revoked", "expired")
+    assert guest.get(f"/api/auth/invitations/preview?token={old_token}").json()["state"] == "revoked"
+    assert store.one("SELECT revoked_at FROM invitations WHERE id=?", (iid,))["revoked_at"]
     items = {i["id"]: i["state"] for i in alice.get(f"/api/auth/workspaces/{ws}/invitations").json()["items"]}
     assert items[new_id_] == "pending"
+    new_body = store.one("SELECT body FROM mail_outbox WHERE ref_id=?", (new_id_,))["body"]
+    new_token = new_body.split("token=")[1].split()[0]
+    assert new_token != old_token
+    old = guest.post("/api/auth/invitations/accept", json={"token": old_token, "password": PW, "display_name": "fixture"})
+    assert old.status_code == 409 and old.json()["error"] == "invite_revoked"
+    accepted = guest.post("/api/auth/invitations/accept", json={"token": new_token, "password": PW, "display_name": "fixture"})
+    assert accepted.status_code == 200, accepted.text
+    assert store.one("SELECT accepted_at FROM invitations WHERE id=?", (new_id_,))["accepted_at"]
 
 
 def test_bulk_invitation_actions_report_per_invitation(env):

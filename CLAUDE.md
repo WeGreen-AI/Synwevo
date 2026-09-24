@@ -12,12 +12,15 @@ one set of rules, not two:
   `instance=test`. Never point a test, benchmark or script at `data/`, and never copy it out of the
   machine. Backups and restore rehearsals use `python scripts/platform.py backup` /
   `verify-restore`, which work on isolated copies.
-* **Machine interfaces have no product UI.** API keys, service accounts, webhook subscriptions and
-  developer documentation are managed through the CLIs (`python -m synwevo_docs.cli`,
-  `python -m synwevo_identity.cli`), the `/api/v1` governance routes and configuration — not through
-  pages, the command palette, onboarding dialogs or app cards.
+* **The API console is platform-admin-only.** The current user-authorized exception permits its UI
+  under platform administration, guarded by `api_platform.manage` on every management request.
+  Organization/workspace roles do not grant that permission. Management authority never bypasses
+  current workspace approval, scoped machine credentials, or business object authorization.
+  CLI/SDK/console share the existing service layer; ordinary Docs business APIs remain available.
 * **Do not push, publish packages or create releases** unless the user asks in the conversation.
   Local commits are fine; keep unrelated changes out of them.
+  The current round is local-only. `main` pushes trigger production deployment; do not push while
+  that trigger would violate this round's no-deployment constraint. Do not access the VPS or DNS.
 * **Previewing the product:** `.claude/launch.json` names the three origins (`docweave`, `accounts`,
   `portal`). Start them with `python scripts/platform.py up` (it refuses to create an empty database
   in `data/` unless given `--init`), then open them in the preview browser.

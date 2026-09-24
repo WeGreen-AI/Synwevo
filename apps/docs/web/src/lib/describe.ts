@@ -1,3 +1,4 @@
+import { t as tr } from "@synwevo/ui/i18n-core";
 import type { Mapping, Pos, Selection, Slot } from "./types";
 import { cellRef, rangeRef } from "@synwevo/ui";
 
@@ -10,33 +11,33 @@ export function describeLocator(loc: any): string {
   if (!loc) return "—";
   switch (loc.kind) {
     case "column":
-      return `列「${loc.header}」${loc.occurrence ? `（第 ${loc.occurrence} 个同名列）` : ""}`;
+      return tr("列「{v1}」{v2}", { v1: loc.header, v2: loc.occurrence ? tr("（第 {v1} 个同名列）", { v1: loc.occurrence }) : "" });
     case "cell":
-      return `${loc.sheet}!${loc.cell}${loc.anchor ? `（标签「${loc.anchor.text}」）` : ""}`;
+      return `${loc.sheet}!${loc.cell}${loc.anchor ? tr("（标签「{v1}」）", { v1: loc.anchor.text }) : ""}`;
     case "range":
       return `${loc.sheet}!${loc.range}`;
     case "table":
-      return `${loc.sheet} 明细表（表头第 ${loc.header_row + 1} 行${loc.data_end != null ? `，至第 ${loc.data_end + 1} 行` : "，至末尾"}）`;
+      return tr("{v1} 明细表（表头第 {v2} 行{v3}）", { v1: loc.sheet, v2: loc.header_row + 1, v3: loc.data_end != null ? tr("，至第 {v1} 行", { v1: loc.data_end + 1 }) : tr("，至末尾") });
     case "docx_text":
-      return `文档文字 ${loc.prefix ? `「…${loc.prefix.slice(-8)}」后` : "段首"}`;
+      return tr("文档文字 {v1}", { v1: loc.prefix ? tr("「…{v1}」后", { v1: loc.prefix.slice(-8) }) : tr("段首") });
     case "docx_cell":
-      return `文档表格单元格${loc.label ? `（「${loc.label.text}」${loc.label.where === "left" ? "右侧" : "下方"}）` : ` 第${loc.row + 1}行第${loc.col + 1}列`}`;
+      return tr("文档表格单元格{v1}", { v1: loc.label ? `（「${loc.label.text}」${loc.label.where === "left" ? tr("右侧") : tr("下方")}）` : tr(" 第{v1}行第{v2}列", { v1: loc.row + 1, v2: loc.col + 1 }) });
     case "docx_table":
-      return `文档表格明细（表头：${(loc.headers || []).slice(0, 4).join("/")}）`;
+      return tr("文档表格明细（表头：{v1}）", { v1: (loc.headers || []).slice(0, 4).join("/") });
     case "docx_table_block":
-      return "文档表格区域";
+      return tr("文档表格区域");
     case "pdf_region":
-      return `PDF 第 ${loc.page + 1} 页区域${loc.anchor ? `（标签「${loc.anchor.text}」）` : ""}`;
+      return tr("PDF 第 {v1} 页区域{v2}", { v1: loc.page + 1, v2: loc.anchor ? tr("（标签「{v1}」）", { v1: loc.anchor.text }) : "" });
     case "ocr_region":
-      return `扫描第 ${loc.page + 1} 页区域（OCR）`;
+      return tr("扫描第 {v1} 页区域（OCR）", { v1: loc.page + 1 });
     case "text_span":
-      return `第 ${loc.line + 1} 行文字`;
+      return tr("第 {v1} 行文字", { v1: loc.line + 1 });
     case "pptx_text":
-      return `第 ${loc.slide + 1} 张幻灯片「${loc.shape_name || loc.shape}」`;
+      return tr("第 {v1} 张幻灯片「{v2}」", { v1: loc.slide + 1, v2: loc.shape_name || loc.shape });
     case "constant":
-      return `固定文字「${loc.value}」`;
+      return tr("固定文字「{v1}」", { v1: loc.value });
     case "record_meta":
-      return { file_name: "来源文件名", record_index: "样本序号", group_key: "分组编号", sheet: "工作表名" }[loc.field as string] || loc.field;
+      return { file_name: tr("来源文件名"), record_index: tr("样本序号"), group_key: tr("分组编号"), sheet: tr("工作表名") }[loc.field as string] || loc.field;
     default:
       return loc.kind;
   }
@@ -44,11 +45,11 @@ export function describeLocator(loc: any): string {
 
 export function variesText(loc: any, mode?: string): string {
   if (!loc) return "";
-  if (loc.kind === "constant") return "固定值";
-  if (loc.kind === "column") return mode === "per_group" ? "随分组变化" : "随样本变化";
-  if (loc.kind === "record_meta") return "随样本变化";
-  if (mode === "per_row" || mode === "per_group") return loc.kind === "cell" || loc.kind === "range" ? "固定值（同一文件内相同）" : "随文件变化";
-  return "随文件变化";
+  if (loc.kind === "constant") return tr("固定值");
+  if (loc.kind === "column") return mode === "per_group" ? tr("随分组变化") : tr("随样本变化");
+  if (loc.kind === "record_meta") return tr("随样本变化");
+  if (mode === "per_row" || mode === "per_group") return loc.kind === "cell" || loc.kind === "range" ? tr("固定值（同一文件内相同）") : tr("随文件变化");
+  return tr("随文件变化");
 }
 
 export function slotPos(s: Slot, format: string): Pos | null {
@@ -88,31 +89,31 @@ export function describeSelection(s: Selection | null): string {
   if (!s) return "";
   switch (s.kind) {
     case "cells":
-      return `${s.sheet}!${rangeRef(s.r1, s.c1, s.r2, s.c2)}` + (s.r1 !== s.r2 || s.c1 !== s.c2 ? `（${s.r2 - s.r1 + 1} 行 × ${s.c2 - s.c1 + 1} 列）` : "");
+      return `${s.sheet}!${rangeRef(s.r1, s.c1, s.r2, s.c2)}` + (s.r1 !== s.r2 || s.c1 !== s.c2 ? tr("（{v1} 行 × {v2} 列）", { v1: s.r2 - s.r1 + 1, v2: s.c2 - s.c1 + 1 }) : "");
     case "docx_text":
-      return s.start === s.end ? "插入位置（光标）" : `文字「${s.text.length > 24 ? s.text.slice(0, 24) + "…" : s.text}」`;
+      return s.start === s.end ? tr("插入位置（光标）") : tr("文字「{v1}」", { v1: s.text.length > 24 ? s.text.slice(0, 24) + "…" : s.text });
     case "docx_blocks":
-      return `连续 ${s.count} 个段落「${s.text.length > 24 ? s.text.slice(0, 24) + "…" : s.text}」`;
+      return tr("连续 {v1} 个段落「{v2}」", { v1: s.count, v2: s.text.length > 24 ? s.text.slice(0, 24) + "…" : s.text });
     case "docx_cell":
-      return `表格单元格（第 ${s.row + 1} 行第 ${s.col + 1} 列）`;
+      return tr("表格单元格（第 {v1} 行第 {v2} 列）", { v1: s.row + 1, v2: s.col + 1 });
     case "docx_row":
-      return `表格第 ${s.row + 1} 行`;
+      return tr("表格第 {v1} 行", { v1: s.row + 1 });
     case "docx_table":
-      return s.r1 !== undefined ? `表格区域 第${s.r1 + 1}-${s.r2! + 1}行 × 第${s.c1! + 1}-${s.c2! + 1}列` : `整个表格（表头 ${s.header_rows ?? 1} 行）`;
+      return s.r1 !== undefined ? tr("表格区域 第{v1}-{v2}行 × 第{v3}-{v4}列", { v1: s.r1 + 1, v2: s.r2! + 1, v3: s.c1! + 1, v4: s.c2! + 1 }) : tr("整个表格（表头 {v1} 行）", { v1: s.header_rows ?? 1 });
     case "pdf_region":
-      return `第 ${s.page + 1} 页框选区域`;
+      return tr("第 {v1} 页框选区域", { v1: s.page + 1 });
     case "pdf_field":
-      return `表单字段「${s.field}」`;
+      return tr("表单字段「{v1}」", { v1: s.field });
     case "text_span":
-      return `第 ${s.line + 1} 行「${s.text.slice(0, 20)}」`;
+      return tr("第 {v1} 行「{v2}」", { v1: s.line + 1, v2: s.text.slice(0, 20) });
     case "pptx_text":
-      return `幻灯片 ${s.slide + 1} 文字「${s.text.slice(0, 20)}」`;
+      return tr("幻灯片 {v1} 文字「{v2}」", { v1: s.slide + 1, v2: s.text.slice(0, 20) });
     case "pptx_cell":
-      return `幻灯片 ${s.slide + 1} 表格单元格`;
+      return tr("幻灯片 {v1} 表格单元格", { v1: s.slide + 1 });
     case "pptx_row":
-      return `幻灯片 ${s.slide + 1} 表格第 ${s.row + 1} 行`;
+      return tr("幻灯片 {v1} 表格第 {v2} 行", { v1: s.slide + 1, v2: s.row + 1 });
     case "slot":
-      return "字段";
+      return tr("字段");
   }
 }
 

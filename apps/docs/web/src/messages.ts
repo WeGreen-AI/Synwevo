@@ -1,0 +1,5025 @@
+import type { Messages } from "@synwevo/ui/i18n-core";
+
+/** Docs interface only. Template contents, values and persisted enum keys are never translated. */
+export const messages = {
+  "排队中": {
+    "en": "Queued",
+    "zh-Hant": "排隊中"
+  },
+  "生成中": {
+    "en": "Generating",
+    "zh-Hant": "生成中"
+  },
+  "取消中": {
+    "en": "Cancelling",
+    "zh-Hant": "取消中"
+  },
+  "已完成": {
+    "en": "Completed",
+    "zh-Hant": "已完成"
+  },
+  "部分成功": {
+    "en": "Partially completed",
+    "zh-Hant": "部分成功"
+  },
+  "已取消": {
+    "en": "Cancelled",
+    "zh-Hant": "已取消"
+  },
+  "任务失败": {
+    "en": "Job failed",
+    "zh-Hant": "任務失敗"
+  },
+  "等待": {
+    "en": "Waiting",
+    "zh-Hant": "等待"
+  },
+  "成功": {
+    "en": "Success",
+    "zh-Hant": "成功"
+  },
+  "失败": {
+    "en": "Failed",
+    "zh-Hant": "失敗"
+  },
+  "已跳过": {
+    "en": "Skipped",
+    "zh-Hant": "已跳過"
+  },
+  "未知": {
+    "en": "Unknown",
+    "zh-Hant": "未知"
+  },
+  "每行一份": {
+    "en": "One per row",
+    "zh-Hant": "每行一份"
+  },
+  "每文件一份": {
+    "en": "One per file",
+    "zh-Hant": "每文件一份"
+  },
+  "每组一份": {
+    "en": "One per group",
+    "zh-Hant": "每組一份"
+  },
+  "每块一份": {
+    "en": "One per block",
+    "zh-Hant": "每塊一份"
+  },
+  "未定义样本": {
+    "en": "No sample rule",
+    "zh-Hant": "未定義樣本"
+  },
+  "你在当前工作空间是查看者，只能查看，不能修改。需要编辑时，请联系工作空间的所有者或管理员调整角色。": {
+    "en": "You are a viewer in this workspace. To edit, ask the workspace owner or administrator to change your role.",
+    "zh-Hant": "你在當前工作空間是查看者，只能查看，不能修改。需要編輯時，請聯繫工作空間的所有者或管理員調整角色。"
+  },
+  "你在当前工作空间没有下载和导出权限。需要时，请联系工作空间的所有者或管理员开启。": {
+    "en": "You cannot download or export in this workspace. Ask the workspace owner or administrator to enable access.",
+    "zh-Hant": "你在當前工作空間沒有下載和導出權限。需要時，請聯繫工作空間的所有者或管理員開啓。"
+  },
+  "更多": {
+    "en": "More",
+    "zh-Hant": "更多"
+  },
+  "最近更新": {
+    "en": "Recently updated",
+    "zh-Hant": "最近更新"
+  },
+  "创建时间": {
+    "en": "Created",
+    "zh-Hant": "創建時間"
+  },
+  "名称": {
+    "en": "Name",
+    "zh-Hant": "名稱"
+  },
+  "新建项目": {
+    "en": "New project",
+    "zh-Hant": "新建項目"
+  },
+  "项目名称": {
+    "en": "Project name",
+    "zh-Hant": "項目名稱"
+  },
+  "新项目": {
+    "en": "New project",
+    "zh-Hant": "新項目"
+  },
+  "已归档「{v1}」，可在「显示已归档」中取消": {
+    "en": "Archived “{v1}”. Restore it under “Show archived”.",
+    "zh-Hant": "已歸檔「{v1}」，可在「顯示已歸檔」中取消"
+  },
+  "已取消归档「{v1}」": {
+    "en": "Restored “{v1}” from archive",
+    "zh-Hant": "已取消歸檔「{v1}」"
+  },
+  "重命名项目": {
+    "en": "Rename project",
+    "zh-Hant": "重命名項目"
+  },
+  "删除项目": {
+    "en": "Delete project",
+    "zh-Hant": "刪除項目"
+  },
+  "删除项目「": {
+    "en": "Delete project “",
+    "zh-Hant": "刪除項目「"
+  },
+  "如果只是想让它从列表里消失，用": {
+    "en": "To hide it from this list, use ",
+    "zh-Hant": "如果只是想讓它從列表裡消失，用"
+  },
+  "归档": {
+    "en": "Archive",
+    "zh-Hant": "歸檔"
+  },
+  "更合适——归档随时可以撤销。": {
+    "en": " — you can restore it at any time.",
+    "zh-Hant": "更合適——歸檔隨時可以撤銷。"
+  },
+  "删除": {
+    "en": "Delete",
+    "zh-Hant": "刪除"
+  },
+  "已删除": {
+    "en": "Deleted",
+    "zh-Hant": "已刪除"
+  },
+  " · 数据映射与模板批量生成": {
+    "en": " · Data mapping and batch document generation",
+    "zh-Hant": " · 數據映射與模板批量生成"
+  },
+  "格式能力矩阵": {
+    "en": "Format capabilities",
+    "zh-Hant": "格式能力矩陣"
+  },
+  "关于与许可": {
+    "en": "About and licenses",
+    "zh-Hant": "關於與許可"
+  },
+  "＋ 新建项目": {
+    "en": "＋ New project",
+    "zh-Hant": "＋ 新建項目"
+  },
+  "项目": {
+    "en": "Projects",
+    "zh-Hant": "項目"
+  },
+  "搜索名称 / 模板…": {
+    "en": "Search names / templates…",
+    "zh-Hant": "搜索名稱 / 模板…"
+  },
+  "搜索项目": {
+    "en": "Search projects",
+    "zh-Hant": "搜索項目"
+  },
+  "排序": {
+    "en": "Sort",
+    "zh-Hant": "排序"
+  },
+  "排序方式": {
+    "en": "Sort by",
+    "zh-Hant": "排序方式"
+  },
+  "当前升序，切换为降序": {
+    "en": "Ascending; switch to descending",
+    "zh-Hant": "當前升序，切換為降序"
+  },
+  "当前降序，切换为升序": {
+    "en": "Descending; switch to ascending",
+    "zh-Hant": "當前降序，切換為升序"
+  },
+  "切换升序 / 降序": {
+    "en": "Switch ascending / descending",
+    "zh-Hant": "切換升序 / 降序"
+  },
+  "↑ 升序": {
+    "en": "↑ Ascending",
+    "zh-Hant": "↑ 升序"
+  },
+  "↓ 降序": {
+    "en": "↓ Descending",
+    "zh-Hant": "↓ 降序"
+  },
+  "显示已归档": {
+    "en": "Show archived",
+    "zh-Hant": "顯示已歸檔"
+  },
+  "项目列表加载失败：": {
+    "en": "Could not load projects: ",
+    "zh-Hant": "項目列表加載失敗："
+  },
+  "重试": {
+    "en": "Retry",
+    "zh-Hant": "重試"
+  },
+  "没有项目": {
+    "en": "No projects",
+    "zh-Hant": "沒有項目"
+  },
+  "还没有项目": {
+    "en": "No projects yet",
+    "zh-Hant": "還沒有項目"
+  },
+  "一个项目 = 一批来源文件 + 一个目标模板 + 样本规则与映射。规则可保存后用于下一批同结构文件。": {
+    "en": "A project combines source files, a target template, sample rules and mappings. Save the rules to reuse with files of the same structure.",
+    "zh-Hant": "一個項目 = 一批來源文件 + 一個目標模板 + 樣本規則與映射。規則可保存後用於下一批同結構文件。"
+  },
+  "新建第一个项目": {
+    "en": "Create your first project",
+    "zh-Hant": "新建第一個項目"
+  },
+  "加载项目…": {
+    "en": "Loading projects…",
+    "zh-Hant": "加載項目…"
+  },
+  "项目列表": {
+    "en": "Project list",
+    "zh-Hant": "項目列表"
+  },
+  "模板": {
+    "en": "Template",
+    "zh-Hant": "模板"
+  },
+  "来源": {
+    "en": "Source",
+    "zh-Hant": "來源"
+  },
+  "样本规则": {
+    "en": "Sample rules",
+    "zh-Hant": "樣本規則"
+  },
+  "最近任务": {
+    "en": "Latest job",
+    "zh-Hant": "最近任務"
+  },
+  "更新": {
+    "en": "Updated",
+    "zh-Hant": "更新"
+  },
+  "操作": {
+    "en": "Actions",
+    "zh-Hant": "操作"
+  },
+  "项目（↑↓ 移动，回车打开）": {
+    "en": "Projects (↑↓ to move, Enter to open)",
+    "zh-Hant": "項目（↑↓ 移動，回車打開）"
+  },
+  "已归档": {
+    "en": "Archived",
+    "zh-Hant": "已歸檔"
+  },
+  "未设置": {
+    "en": "Not set",
+    "zh-Hant": "未設置"
+  },
+  "项目「{v1}」的操作": {
+    "en": "Actions for project “{v1}”",
+    "zh-Hant": "項目「{v1}」的操作"
+  },
+  "打开": {
+    "en": "Open",
+    "zh-Hant": "打開"
+  },
+  "重命名…": {
+    "en": "Rename…",
+    "zh-Hant": "重命名…"
+  },
+  "取消归档": {
+    "en": "Restore from archive",
+    "zh-Hant": "取消歸檔"
+  },
+  "归档（可撤销）": {
+    "en": "Archive (reversible)",
+    "zh-Hant": "歸檔（可撤銷）"
+  },
+  "删除…": {
+    "en": "Delete…",
+    "zh-Hant": "刪除…"
+  },
+  "没有匹配「": {
+    "en": "No projects matching “",
+    "zh-Hant": "沒有匹配「"
+  },
+  "」的项目": {
+    "en": "”",
+    "zh-Hant": "」的項目"
+  },
+  "第 {v1}–{v2} 个，共 {v3} 个项目": {
+    "en": "Projects {v1}–{v2} of {v3}",
+    "zh-Hant": "第 {v1}–{v2} 個，共 {v3} 個項目"
+  },
+  "共 {v1} 个项目": {
+    "en": "{v1} projects",
+    "zh-Hant": "共 {v1} 個項目"
+  },
+  " · 加载中…": {
+    "en": " · Loading…",
+    "zh-Hant": " · 加載中…"
+  },
+  " · 列表内可用 ↑↓ 移动、回车打开": {
+    "en": " · Use ↑↓ to move and Enter to open",
+    "zh-Hant": " · 列表內可用 ↑↓ 移動、回車打開"
+  },
+  "‹ 上一页": {
+    "en": "‹ Previous",
+    "zh-Hant": "‹ 上一頁"
+  },
+  "下一页 ›": {
+    "en": "Next ›",
+    "zh-Hant": "下一頁 ›"
+  },
+  "模板库": {
+    "en": "Template library",
+    "zh-Hant": "模板庫"
+  },
+  "模板库加载失败：": {
+    "en": "Could not load templates: ",
+    "zh-Hant": "模板庫加載失敗："
+  },
+  "格式": {
+    "en": "Format",
+    "zh-Hant": "格式"
+  },
+  "字段": {
+    "en": "Fields",
+    "zh-Hant": "字段"
+  },
+  "内置文档编辑器": {
+    "en": "Built-in document editor",
+    "zh-Hant": "內置文檔編輯器"
+  },
+  "内置表格编辑器": {
+    "en": "Built-in spreadsheet editor",
+    "zh-Hant": "內置表格編輯器"
+  },
+  "编辑": {
+    "en": "Edit",
+    "zh-Hant": "編輯"
+  },
+  "模板「{v1}」的操作": {
+    "en": "Actions for template “{v1}”",
+    "zh-Hant": "模板「{v1}」的操作"
+  },
+  "复制": {
+    "en": "Duplicate",
+    "zh-Hant": "複製"
+  },
+  "已复制": {
+    "en": "Duplicated",
+    "zh-Hant": "已複製"
+  },
+  "重命名模板": {
+    "en": "Rename template",
+    "zh-Hant": "重命名模板"
+  },
+  "删除模板": {
+    "en": "Delete template",
+    "zh-Hant": "刪除模板"
+  },
+  "删除模板「{v1}」？使用它的项目需要重新选择模板。": {
+    "en": "Delete template “{v1}”? Projects using it will need a new template.",
+    "zh-Hant": "刪除模板「{v1}」？使用它的項目需要重新選擇模板。"
+  },
+  "已删除模板": {
+    "en": "Template deleted",
+    "zh-Hant": "已刪除模板"
+  },
+  "模板在项目中上传或新建后会出现在这里，可复制后用于其他项目": {
+    "en": "Templates uploaded or created in projects appear here. Duplicate one to reuse in another project.",
+    "zh-Hant": "模板在項目中上傳或新建後會出現在這裡，可複製後用於其他項目"
+  },
+  "加载模板…": {
+    "en": "Loading templates…",
+    "zh-Hant": "加載模板…"
+  },
+  "所有文件只在本机/自有服务器处理，不会发送到外部服务。": {
+    "en": "All files are processed locally or on your own server; nothing is sent to external services.",
+    "zh-Hant": "所有文件只在本機/自有服務器處理，不會發送到外部服務。"
+  },
+  "单值": {
+    "en": "Single value",
+    "zh-Hant": "單值"
+  },
+  "固定区域": {
+    "en": "Fixed region",
+    "zh-Hant": "固定區域"
+  },
+  "重复明细": {
+    "en": "Repeating detail",
+    "zh-Hant": "重復明細"
+  },
+  "文字": {
+    "en": "Text",
+    "zh-Hant": "文字"
+  },
+  "单元格": {
+    "en": "Cell",
+    "zh-Hant": "單元格"
+  },
+  "重复明细行": {
+    "en": "Repeating detail row",
+    "zh-Hant": "重復明細行"
+  },
+  "PDF 区域": {
+    "en": "PDF region",
+    "zh-Hant": "PDF 區域"
+  },
+  "PDF 表单字段": {
+    "en": "PDF form field",
+    "zh-Hant": "PDF 表單字段"
+  },
+  "幻灯片文字": {
+    "en": "Slide text",
+    "zh-Hant": "幻燈片文字"
+  },
+  "（第 {v1} 个同名列）": {
+    "en": " (occurrence {v1} of this column name)",
+    "zh-Hant": "（第 {v1} 個同名列）"
+  },
+  "列「{v1}」{v2}": {
+    "en": "Column “{v1}”{v2}",
+    "zh-Hant": "列「{v1}」{v2}"
+  },
+  "（标签「{v1}」）": {
+    "en": " (label “{v1}”)",
+    "zh-Hant": "（標籤「{v1}」）"
+  },
+  "，至第 {v1} 行": {
+    "en": ", through row {v1}",
+    "zh-Hant": "，至第 {v1} 行"
+  },
+  "，至末尾": {
+    "en": ", through the end",
+    "zh-Hant": "，至末尾"
+  },
+  "{v1} 明细表（表头第 {v2} 行{v3}）": {
+    "en": "{v1} detail table (header row {v2}{v3})",
+    "zh-Hant": "{v1} 明細表（表頭第 {v2} 行{v3}）"
+  },
+  "「…{v1}」后": {
+    "en": "after “…{v1}”",
+    "zh-Hant": "「…{v1}」後"
+  },
+  "段首": {
+    "en": "paragraph start",
+    "zh-Hant": "段首"
+  },
+  "文档文字 {v1}": {
+    "en": "Document text {v1}",
+    "zh-Hant": "文檔文字 {v1}"
+  },
+  "右侧": {
+    "en": "to the right",
+    "zh-Hant": "右側"
+  },
+  "下方": {
+    "en": "below",
+    "zh-Hant": "下方"
+  },
+  " 第{v1}行第{v2}列": {
+    "en": " row {v1}, column {v2}",
+    "zh-Hant": " 第{v1}行第{v2}列"
+  },
+  "文档表格单元格{v1}": {
+    "en": "Document table cell{v1}",
+    "zh-Hant": "文檔表格單元格{v1}"
+  },
+  "文档表格明细（表头：{v1}）": {
+    "en": "Document detail table (headers: {v1})",
+    "zh-Hant": "文檔表格明細（表頭：{v1}）"
+  },
+  "文档表格区域": {
+    "en": "Document table region",
+    "zh-Hant": "文檔表格區域"
+  },
+  "PDF 第 {v1} 页区域{v2}": {
+    "en": "PDF page {v1} region{v2}",
+    "zh-Hant": "PDF 第 {v1} 頁區域{v2}"
+  },
+  "扫描第 {v1} 页区域（OCR）": {
+    "en": "Scanned page {v1} region (OCR)",
+    "zh-Hant": "掃描第 {v1} 頁區域（OCR）"
+  },
+  "第 {v1} 行文字": {
+    "en": "Text on line {v1}",
+    "zh-Hant": "第 {v1} 行文字"
+  },
+  "第 {v1} 张幻灯片「{v2}」": {
+    "en": "Slide {v1} “{v2}”",
+    "zh-Hant": "第 {v1} 張幻燈片「{v2}」"
+  },
+  "固定文字「{v1}」": {
+    "en": "Fixed text “{v1}”",
+    "zh-Hant": "固定文字「{v1}」"
+  },
+  "来源文件名": {
+    "en": "Source filename",
+    "zh-Hant": "來源文件名"
+  },
+  "样本序号": {
+    "en": "Sample index",
+    "zh-Hant": "樣本序號"
+  },
+  "分组编号": {
+    "en": "Group key",
+    "zh-Hant": "分組編號"
+  },
+  "工作表名": {
+    "en": "Sheet name",
+    "zh-Hant": "工作表名"
+  },
+  "固定值": {
+    "en": "Fixed value",
+    "zh-Hant": "固定值"
+  },
+  "随分组变化": {
+    "en": "Varies by group",
+    "zh-Hant": "隨分組變化"
+  },
+  "随样本变化": {
+    "en": "Varies by sample",
+    "zh-Hant": "隨樣本變化"
+  },
+  "固定值（同一文件内相同）": {
+    "en": "Fixed value (same within a file)",
+    "zh-Hant": "固定值（同一文件內相同）"
+  },
+  "随文件变化": {
+    "en": "Varies by file",
+    "zh-Hant": "隨文件變化"
+  },
+  "（{v1} 行 × {v2} 列）": {
+    "en": " ({v1} rows × {v2} columns)",
+    "zh-Hant": "（{v1} 行 × {v2} 列）"
+  },
+  "插入位置（光标）": {
+    "en": "Insertion point (cursor)",
+    "zh-Hant": "插入位置（光標）"
+  },
+  "文字「{v1}」": {
+    "en": "Text “{v1}”",
+    "zh-Hant": "文字「{v1}」"
+  },
+  "连续 {v1} 个段落「{v2}」": {
+    "en": "{v1} consecutive paragraphs “{v2}”",
+    "zh-Hant": "連續 {v1} 個段落「{v2}」"
+  },
+  "表格单元格（第 {v1} 行第 {v2} 列）": {
+    "en": "Table cell (row {v1}, column {v2})",
+    "zh-Hant": "表格單元格（第 {v1} 行第 {v2} 列）"
+  },
+  "表格第 {v1} 行": {
+    "en": "Table row {v1}",
+    "zh-Hant": "表格第 {v1} 行"
+  },
+  "表格区域 第{v1}-{v2}行 × 第{v3}-{v4}列": {
+    "en": "Table region, rows {v1}–{v2} × columns {v3}–{v4}",
+    "zh-Hant": "表格區域 第{v1}-{v2}行 × 第{v3}-{v4}列"
+  },
+  "整个表格（表头 {v1} 行）": {
+    "en": "Entire table ({v1} header rows)",
+    "zh-Hant": "整個表格（表頭 {v1} 行）"
+  },
+  "第 {v1} 页框选区域": {
+    "en": "Selected region on page {v1}",
+    "zh-Hant": "第 {v1} 頁框選區域"
+  },
+  "表单字段「{v1}」": {
+    "en": "Form field “{v1}”",
+    "zh-Hant": "表單字段「{v1}」"
+  },
+  "第 {v1} 行「{v2}」": {
+    "en": "Line {v1} “{v2}”",
+    "zh-Hant": "第 {v1} 行「{v2}」"
+  },
+  "幻灯片 {v1} 文字「{v2}」": {
+    "en": "Slide {v1} text “{v2}”",
+    "zh-Hant": "幻燈片 {v1} 文字「{v2}」"
+  },
+  "幻灯片 {v1} 表格单元格": {
+    "en": "Slide {v1} table cell",
+    "zh-Hant": "幻燈片 {v1} 表格單元格"
+  },
+  "幻灯片 {v1} 表格第 {v2} 行": {
+    "en": "Slide {v1} table row {v2}",
+    "zh-Hant": "幻燈片 {v1} 表格第 {v2} 行"
+  },
+  "无法显示表格": {
+    "en": "Cannot display spreadsheet",
+    "zh-Hant": "無法顯示表格"
+  },
+  "加载中…": {
+    "en": "Loading…",
+    "zh-Hant": "加載中…"
+  },
+  "公式 {v1}": {
+    "en": "Formula {v1}",
+    "zh-Hant": "公式 {v1}"
+  },
+  "定位映射": {
+    "en": "Locate mapping",
+    "zh-Hant": "定位映射"
+  },
+  "已选 {v1}!{v2}": {
+    "en": "Selected {v1}!{v2}",
+    "zh-Hant": "已選 {v1}!{v2}"
+  },
+  "。方向键移动选区，Shift+方向键扩展选区": {
+    "en": ". Arrow keys move the selection; Shift+arrows extend it",
+    "zh-Hant": "。方向鍵移動選區，Shift+方向鍵擴展選區"
+  },
+  "工作表「{v1}」，{v2} 行 × {v3} 列{v4}": {
+    "en": "Sheet “{v1}”, {v2} rows × {v3} columns{v4}",
+    "zh-Hant": "工作表「{v1}」，{v2} 行 × {v3} 列{v4}"
+  },
+  "表头行": {
+    "en": "Header row",
+    "zh-Hant": "表頭行"
+  },
+  "工作表": {
+    "en": "Worksheet",
+    "zh-Hant": "工作表"
+  },
+  "{v1} 行 × {v2} 列": {
+    "en": "{v1} rows × {v2} columns",
+    "zh-Hant": "{v1} 行 × {v2} 列"
+  },
+  "（隐藏）": {
+    "en": "(hidden)",
+    "zh-Hant": "（隱藏）"
+  },
+  "明细「{v1}」的列「{v2}」": {
+    "en": "Column “{v2}” of detail “{v1}”",
+    "zh-Hant": "明細「{v1}」的列「{v2}」"
+  },
+  "字段：{v1}": {
+    "en": "Field: {v1}",
+    "zh-Hant": "字段：{v1}"
+  },
+  "图片": {
+    "en": "Image",
+    "zh-Hant": "圖片"
+  },
+  "嵌入对象": {
+    "en": "Embedded object",
+    "zh-Hant": "嵌入對象"
+  },
+  "公式": {
+    "en": "Formula",
+    "zh-Hant": "公式"
+  },
+  "对象": {
+    "en": "Object",
+    "zh-Hant": "對象"
+  },
+  "插入位置：{v1}": {
+    "en": "Insertion point: {v1}",
+    "zh-Hant": "插入位置：{v1}"
+  },
+  "空字段": {
+    "en": "Empty field",
+    "zh-Hant": "空字段"
+  },
+  "重复内容块：每条明细复制一次这些内容": {
+    "en": "Repeating block: copy this content once per detail row",
+    "zh-Hant": "重復內容塊：每條明細複製一次這些內容"
+  },
+  "重复内容块": {
+    "en": "Repeating block",
+    "zh-Hant": "重復內容塊"
+  },
+  "选择整个表格（作为明细表）": {
+    "en": "Select entire table (as detail table)",
+    "zh-Hant": "選擇整個表格（作為明細表）"
+  },
+  "选择整个表格": {
+    "en": "Select entire table",
+    "zh-Hant": "選擇整個表格"
+  },
+  "选择整行（可设为重复明细行）": {
+    "en": "Select entire row (can become a repeating detail row)",
+    "zh-Hant": "選擇整行（可設為重復明細行）"
+  },
+  "选择表格第 {v1} 行": {
+    "en": "Select table row {v1}",
+    "zh-Hant": "選擇表格第 {v1} 行"
+  },
+  "从此行开始作为明细表（此行为表头）": {
+    "en": "Use this row as the detail table header",
+    "zh-Hant": "從此行開始作為明細表（此行為表頭）"
+  },
+  "以第 {v1} 行为表头选择明细表": {
+    "en": "Select detail table with header at row {v1}",
+    "zh-Hant": "以第 {v1} 行為表頭選擇明細表"
+  },
+  "收起数值框选": {
+    "en": "Hide numeric selection",
+    "zh-Hant": "收起數值框選"
+  },
+  "用数值框选区域…": {
+    "en": "Select region by coordinates…",
+    "zh-Hant": "用數值框選區域…"
+  },
+  "第 {v1} 页": {
+    "en": "Page {v1}",
+    "zh-Hant": "第 {v1} 頁"
+  },
+  "{v1}（置信度 {v2}）": {
+    "en": "{v1} (confidence {v2})",
+    "zh-Hant": "{v1}（置信度 {v2}）"
+  },
+  " · 旋转 {v1}°": {
+    "en": " · Rotated {v1}°",
+    "zh-Hant": " · 旋轉 {v1}°"
+  },
+  " · 扫描页": {
+    "en": " · Scanned page",
+    "zh-Hant": " · 掃描頁"
+  },
+  " 文字层": {
+    "en": " Text layer",
+    "zh-Hant": " 文字層"
+  },
+  "左": {
+    "en": "Left",
+    "zh-Hant": "左"
+  },
+  "上": {
+    "en": "Top",
+    "zh-Hant": "上"
+  },
+  "右": {
+    "en": "Right",
+    "zh-Hant": "右"
+  },
+  "下": {
+    "en": "Bottom",
+    "zh-Hant": "下"
+  },
+  "用数值框选区域": {
+    "en": "Select region by coordinates",
+    "zh-Hant": "用數值框選區域"
+  },
+  "页": {
+    "en": "Page",
+    "zh-Hant": "頁"
+  },
+  "选中此区域": {
+    "en": "Select this region",
+    "zh-Hant": "選中此區域"
+  },
+  "右须大于左、下须大于上，数值 0–100": {
+    "en": "Right must exceed left, bottom must exceed top; values range from 0 to 100",
+    "zh-Hant": "右須大於左、下須大於上，數值 0–100"
+  },
+  "第 ": {
+    "en": "Slide ",
+    "zh-Hant": "第 "
+  },
+  " 张幻灯片": {
+    "en": " ",
+    "zh-Hant": " 張幻燈片"
+  },
+  "选择整行": {
+    "en": "Select entire row",
+    "zh-Hant": "選擇整行"
+  },
+  "正在解析文件…": {
+    "en": "Parsing file…",
+    "zh-Hant": "正在解析文件…"
+  },
+  "解析完成后自动显示": {
+    "en": "The preview appears when parsing finishes",
+    "zh-Hant": "解析完成後自動顯示"
+  },
+  "无法读取此文件": {
+    "en": "Cannot read this file",
+    "zh-Hant": "無法讀取此文件"
+  },
+  "未知错误": {
+    "en": "Unknown error",
+    "zh-Hant": "未知錯誤"
+  },
+  "无法预览": {
+    "en": "Preview unavailable",
+    "zh-Hant": "無法預覽"
+  },
+  "命令面板": {
+    "en": "Command palette",
+    "zh-Hant": "命令面板"
+  },
+  "搜索命令…（↑↓ 选择，回车执行，Esc 关闭）": {
+    "en": "Search commands… (↑↓ to select, Enter to run, Esc to close)",
+    "zh-Hant": "搜索命令…（↑↓ 選擇，回車執行，Esc 關閉）"
+  },
+  "搜索命令": {
+    "en": "Search commands",
+    "zh-Hant": "搜索命令"
+  },
+  "命令": {
+    "en": "Command",
+    "zh-Hant": "命令"
+  },
+  "没有匹配的命令": {
+    "en": "No matching commands",
+    "zh-Hant": "沒有匹配的命令"
+  },
+  "⌘K / Ctrl+K 打开 · ? 查看全部快捷键": {
+    "en": "⌘K / Ctrl+K to open · ? for all shortcuts",
+    "zh-Hant": "⌘K / Ctrl+K 打開 · ? 查看全部快捷鍵"
+  },
+  "全局": {
+    "en": "Global",
+    "zh-Hant": "全局"
+  },
+  "命令面板（所有操作）": {
+    "en": "Command palette (all actions)",
+    "zh-Hant": "命令面板（所有操作）"
+  },
+  "显示本帮助（单键快捷键）": {
+    "en": "Show this help (single-key shortcut)",
+    "zh-Hant": "顯示本幫助（單鍵快捷鍵）"
+  },
+  "撤销上一步（映射、模板字段）": {
+    "en": "Undo last action (mappings, template fields)",
+    "zh-Hant": "撤銷上一步（映射、模板字段）"
+  },
+  "重做": {
+    "en": "Redo",
+    "zh-Hant": "重做"
+  },
+  "清除选择 / 关闭对话框": {
+    "en": "Clear selection / close dialog",
+    "zh-Hant": "清除選擇 / 關閉對話框"
+  },
+  "在当前来源文件中查找": {
+    "en": "Find in the current source file",
+    "zh-Hant": "在當前來源文件中查找"
+  },
+  "映射列表（列表获得焦点时）": {
+    "en": "Mapping list (when focused)",
+    "zh-Hant": "映射列表（列表獲得焦點時）"
+  },
+  "在映射之间移动": {
+    "en": "Move between mappings",
+    "zh-Hant": "在映射之間移動"
+  },
+  "编辑当前映射": {
+    "en": "Edit current mapping",
+    "zh-Hant": "編輯當前映射"
+  },
+  "X / 空格": {
+    "en": "X / Space",
+    "zh-Hant": "X / 空格"
+  },
+  "选中 / 取消选中（可多选）": {
+    "en": "Select / deselect (multiple selection)",
+    "zh-Hant": "選中 / 取消選中（可多選）"
+  },
+  "连续范围多选": {
+    "en": "Extend selection range",
+    "zh-Hant": "連續範圍多選"
+  },
+  "全选映射": {
+    "en": "Select all mappings",
+    "zh-Hant": "全選映射"
+  },
+  "启用 / 禁用选中的映射": {
+    "en": "Enable / disable selected mappings",
+    "zh-Hant": "啓用 / 禁用選中的映射"
+  },
+  "删除选中的映射（可撤销）": {
+    "en": "Delete selected mappings (undoable)",
+    "zh-Hant": "刪除選中的映射（可撤銷）"
+  },
+  "取消多选": {
+    "en": "Clear multiple selection",
+    "zh-Hant": "取消多選"
+  },
+  "文档与表格": {
+    "en": "Documents and spreadsheets",
+    "zh-Hant": "文檔與表格"
+  },
+  "拖动 / Shift+点击": {
+    "en": "Drag / Shift+click",
+    "zh-Hant": "拖動 / Shift+點擊"
+  },
+  "选择文字、单元格区域": {
+    "en": "Select text or a cell range",
+    "zh-Hant": "選擇文字、單元格區域"
+  },
+  "方向键 / Shift+方向键": {
+    "en": "Arrow keys / Shift+arrows",
+    "zh-Hant": "方向鍵 / Shift+方向鍵"
+  },
+  "表格获得焦点时移动 / 扩展选区": {
+    "en": "Move / extend selection when the grid is focused",
+    "zh-Hant": "表格獲得焦點時移動 / 擴展選區"
+  },
+  "Alt/Option + 点击": {
+    "en": "Alt/Option + click",
+    "zh-Hant": "Alt/Option + 點擊"
+  },
+  "在文档中放置插入光标（不替换原文）": {
+    "en": "Place an insertion cursor in the document (keep original text)",
+    "zh-Hant": "在文檔中放置插入光標（不替換原文）"
+  },
+  "来源文件列表：Alt/Option + ↑ / ↓": {
+    "en": "Source list: Alt/Option + ↑ / ↓",
+    "zh-Hant": "來源文件列表：Alt/Option + ↑ / ↓"
+  },
+  "调整当前文件的顺序": {
+    "en": "Reorder the current file",
+    "zh-Hant": "調整當前文件的順序"
+  },
+  "分隔条：← / →（Shift 加大步长）": {
+    "en": "Divider: ← / → (Shift for larger steps)",
+    "zh-Hant": "分隔條：← / →（Shift 加大步長）"
+  },
+  "调整宽度；中间分隔条 Enter 恢复默认，右侧面板分隔条 Enter 收起": {
+    "en": "Adjust width; Enter resets the middle divider or collapses the side panel",
+    "zh-Hant": "調整寬度；中間分隔條 Enter 恢復默認，右側面板分隔條 Enter 收起"
+  },
+  "生成": {
+    "en": "Generate",
+    "zh-Hant": "生成"
+  },
+  "开始批量生成": {
+    "en": "Start batch generation",
+    "zh-Hant": "開始批量生成"
+  },
+  "打开 / 关闭预览（单键快捷键）": {
+    "en": "Open / close preview (single-key shortcut)",
+    "zh-Hant": "打開 / 關閉預覽（單鍵快捷鍵）"
+  },
+  "键盘快捷键": {
+    "en": "Keyboard shortcuts",
+    "zh-Hant": "鍵盤快捷鍵"
+  },
+  "输入框、编辑器与中文输入法输入时，字母快捷键不会触发。": {
+    "en": "Letter shortcuts are inactive in inputs, editors and while composing with an input method.",
+    "zh-Hant": "輸入框、編輯器與中文輸入法輸入時，字母快捷鍵不會觸發。"
+  },
+  "知道了": {
+    "en": "Got it",
+    "zh-Hant": "知道了"
+  },
+  "启用单键快捷键（P、?）。使用语音输入或经常误触时可以关闭；带 ⌘ / Ctrl 的快捷键不受影响。": {
+    "en": "Enable single-key shortcuts (P, ?). Disable for voice input or accidental activation. ⌘ / Ctrl shortcuts remain available.",
+    "zh-Hant": "啓用單鍵快捷鍵（P、?）。使用語音輸入或經常誤觸時可以關閉；帶 ⌘ / Ctrl 的快捷鍵不受影響。"
+  },
+  "{v1}失败：{v2}": {
+    "en": "{v1} failed: {v2}",
+    "zh-Hant": "{v1}失敗：{v2}"
+  },
+  "调整顺序": {
+    "en": "Reorder",
+    "zh-Hant": "調整順序"
+  },
+  "「{v1}」已移到第 {v2} 位，共 {v3} 个文件": {
+    "en": "“{v1}” moved to position {v2} of {v3} files",
+    "zh-Hant": "「{v1}」已移到第 {v2} 位，共 {v3} 個文件"
+  },
+  "展开文件列表": {
+    "en": "Expand file list",
+    "zh-Hant": "展開文件列表"
+  },
+  "展开来源文件列表": {
+    "en": "Expand source file list",
+    "zh-Hant": "展開來源文件列表"
+  },
+  "来源文件 ": {
+    "en": "Source files ",
+    "zh-Hant": "來源文件 "
+  },
+  "收起": {
+    "en": "Collapse",
+    "zh-Hant": "收起"
+  },
+  "收起来源文件列表": {
+    "en": "Collapse source file list",
+    "zh-Hant": "收起來源文件列表"
+  },
+  "＋ 拖入或点击上传": {
+    "en": "＋ Drop files here or click to upload",
+    "zh-Hant": "＋ 拖入或點擊上傳"
+  },
+  "可多选：XLSX/CSV/DOCX/PDF/图片/PPTX 等": {
+    "en": "Select multiple: XLSX/CSV/DOCX/PDF/images/PPTX, etc.",
+    "zh-Hant": "可多選：XLSX/CSV/DOCX/PDF/圖片/PPTX 等"
+  },
+  "上传 {v1}": {
+    "en": "Upload {v1}",
+    "zh-Hant": "上傳 {v1}"
+  },
+  "拖动调整顺序（也可用下方的上移 / 下移，或 Alt+↑ / ↓）": {
+    "en": "Drag to reorder (or use Move up / down, or Alt+↑ / ↓)",
+    "zh-Hant": "拖動調整順序（也可用下方的上移 / 下移，或 Alt+↑ / ↓）"
+  },
+  "，代表文件": {
+    "en": ", representative file",
+    "zh-Hant": "，代表文件"
+  },
+  "{v1}，第 {v2} 个，共 {v3} 个{v4}": {
+    "en": "{v1}, file {v2} of {v3}{v4}",
+    "zh-Hant": "{v1}，第 {v2} 個，共 {v3} 個{v4}"
+  },
+  "用于建立规则的代表文件": {
+    "en": "Representative file used to define rules",
+    "zh-Hant": "用於建立規則的代表文件"
+  },
+  "代表": {
+    "en": "Representative",
+    "zh-Hant": "代表"
+  },
+  "上移「{v1}」": {
+    "en": "Move “{v1}” up",
+    "zh-Hant": "上移「{v1}」"
+  },
+  "上移（Alt+↑）": {
+    "en": "Move up (Alt+↑)",
+    "zh-Hant": "上移（Alt+↑）"
+  },
+  "↑ 上移": {
+    "en": "↑ Move up",
+    "zh-Hant": "↑ 上移"
+  },
+  "下移「{v1}」": {
+    "en": "Move “{v1}” down",
+    "zh-Hant": "下移「{v1}」"
+  },
+  "下移（Alt+↓）": {
+    "en": "Move down (Alt+↓)",
+    "zh-Hant": "下移（Alt+↓）"
+  },
+  "↓ 下移": {
+    "en": "↓ Move down",
+    "zh-Hant": "↓ 下移"
+  },
+  "设为代表文件": {
+    "en": "Set as representative file",
+    "zh-Hant": "設為代表文件"
+  },
+  "设为代表": {
+    "en": "Set as representative",
+    "zh-Hant": "設為代表"
+  },
+  "下载原文件（未修改）": {
+    "en": "Download original (unchanged)",
+    "zh-Hant": "下載原文件（未修改）"
+  },
+  "原件": {
+    "en": "Original",
+    "zh-Hant": "原件"
+  },
+  "无下载权限": {
+    "en": "Download unavailable",
+    "zh-Hant": "無下載權限"
+  },
+  "移除来源文件": {
+    "en": "Remove source file",
+    "zh-Hant": "移除來源文件"
+  },
+  "从项目中移除「{v1}」？原文件本身不受影响；已生成的历史结果仍保留。": {
+    "en": "Remove “{v1}” from this project? The original file and previously generated results are retained.",
+    "zh-Hant": "從項目中移除「{v1}」？原文件本身不受影響；已生成的歷史結果仍保留。"
+  },
+  "移除": {
+    "en": "Remove",
+    "zh-Hant": "移除"
+  },
+  "还没有来源文件": {
+    "en": "No source files yet",
+    "zh-Hant": "還沒有來源文件"
+  },
+  "{序号}": {
+    "en": "{序号}",
+    "zh-Hant": "{序號}"
+  },
+  "，约 {v1} 秒后再试": {
+    "en": "; try again in about {v1} seconds",
+    "zh-Hant": "，約 {v1} 秒後再試"
+  },
+  "，请等已有任务结束后再试": {
+    "en": "; wait for active jobs to finish",
+    "zh-Hant": "，請等已有任務結束後再試"
+  },
+  "（当前进行中的任务已达上限{v1}）": {
+    "en": " (active job limit reached{v1})",
+    "zh-Hant": "（當前進行中的任務已達上限{v1}）"
+  },
+  "（例：{v1}：{v2}）": {
+    "en": " (example: {v1}: {v2})",
+    "zh-Hant": "（例：{v1}：{v2}）"
+  },
+  "批量生成": {
+    "en": "Batch generation",
+    "zh-Hant": "批量生成"
+  },
+  "取消": {
+    "en": "Cancel",
+    "zh-Hant": "取消"
+  },
+  "正在创建任务…": {
+    "en": "Creating job…",
+    "zh-Hant": "正在創建任務…"
+  },
+  "开始生成 {v1} 个文件": {
+    "en": "Generate {v1} files",
+    "zh-Hant": "開始生成 {v1} 個文件"
+  },
+  "等待样本检查": {
+    "en": "Waiting for sample checks",
+    "zh-Hant": "等待樣本檢查"
+  },
+  "正在检查当前设置下的所有样本…": {
+    "en": "Checking all samples with the current settings…",
+    "zh-Hant": "正在檢查當前設置下的所有樣本…"
+  },
+  "输入文件（可用 ": {
+    "en": "Input files (ready: ",
+    "zh-Hant": "輸入文件（可用 "
+  },
+  "识别样本": {
+    "en": "Detected samples",
+    "zh-Hant": "識別樣本"
+  },
+  "有效样本": {
+    "en": "Valid samples",
+    "zh-Hant": "有效樣本"
+  },
+  "有错误的样本": {
+    "en": "Samples with errors",
+    "zh-Hant": "有錯誤的樣本"
+  },
+  "警告": {
+    "en": "Warnings",
+    "zh-Hant": "警告"
+  },
+  "预计输出文件": {
+    "en": "Expected output files",
+    "zh-Hant": "預計輸出文件"
+  },
+  "选择了 ": {
+    "en": "Selected ",
+    "zh-Hant": "選擇了 "
+  },
+  " 种格式：": {
+    "en": " formats: ",
+    "zh-Hant": " 種格式："
+  },
+  " 个有效样本 × ": {
+    "en": " valid samples × ",
+    "zh-Hant": " 個有效樣本 × "
+  },
+  " 种格式 = ": {
+    "en": " formats = ",
+    "zh-Hant": " 種格式 = "
+  },
+  " 个文件（每个样本各生成一份）。": {
+    "en": " files (one per sample per format).",
+    "zh-Hant": " 個文件（每個樣本各生成一份）。"
+  },
+  " 个样本存在错误": {
+    "en": " samples have errors",
+    "zh-Hant": " 個樣本存在錯誤"
+  },
+  "输出格式": {
+    "en": "Output format",
+    "zh-Hant": "輸出格式"
+  },
+  "不可用": {
+    "en": "Unavailable",
+    "zh-Hant": "不可用"
+  },
+  "公式由内置公式引擎计算并写入结果（": {
+    "en": "Formulas are calculated by the built-in engine and saved to the output (",
+    "zh-Hant": "公式由內置公式引擎計算並寫入結果（"
+  },
+  "90 个常用函数）；少数不支持的函数会自动改用 LibreOffice 计算，结果清单中会注明。": {
+    "en": "90 common functions). Unsupported functions fall back to LibreOffice; the results manifest identifies these cases.",
+    "zh-Hant": "90 個常用函數）；少數不支持的函數會自動改用 LibreOffice 計算，結果清單中會注明。"
+  },
+  "分页检查": {
+    "en": "Pagination checks",
+    "zh-Hant": "分頁檢查"
+  },
+  "不检查（最快）": {
+    "en": "Skip checks (fastest)",
+    "zh-Hant": "不檢查（最快）"
+  },
+  "逐份用 LibreOffice 排版，页数多于模板时提示": {
+    "en": "Lay out each output with LibreOffice; flag extra pages",
+    "zh-Hant": "逐份用 LibreOffice 排版，頁數多於模板時提示"
+  },
+  "保持模板页数：先缩小允许缩小的字段，仍超出则该份失败": {
+    "en": "Keep template page count: shrink eligible fields; fail if still too long",
+    "zh-Hant": "保持模板頁數：先縮小允許縮小的字段，仍超出則該份失敗"
+  },
+  "新内容更长时分页可能变化；可在预览中打开「真实分页」查看。": {
+    "en": "Longer content can change pagination. Use “Actual pagination” in the preview to check.",
+    "zh-Hant": "新內容更長時分頁可能變化；可在預覽中打開「真實分頁」查看。"
+  },
+  "每份多一次 LibreOffice 排版（约 1 秒）；超出的样本会在结果清单中标出。": {
+    "en": "Adds one LibreOffice layout pass per output (about 1 second). Extra-page cases are listed in the manifest.",
+    "zh-Hant": "每份多一次 LibreOffice 排版（約 1 秒）；超出的樣本會在結果清單中標出。"
+  },
+  "只缩小字段设置中勾选了「超长时允许缩小字号」的字段，每一步都重新排版确认，不会估算。": {
+    "en": "Only fields allowing font shrinking are adjusted. Each step is laid out again to verify the page count.",
+    "zh-Hant": "只縮小字段設置中勾選了「超長時允許縮小字號」的字段，每一步都重新排版確認，不會估算。"
+  },
+  "模板中还没有字段勾选「超长时允许缩小字号」：超出页数的样本会直接失败。": {
+    "en": "No fields allow font shrinking. Samples exceeding the template page count will fail.",
+    "zh-Hant": "模板中還沒有字段勾選「超長時允許縮小字號」：超出頁數的樣本會直接失敗。"
+  },
+  "文件命名": {
+    "en": "Filenames",
+    "zh-Hant": "文件命名"
+  },
+  "文件命名规则": {
+    "en": "Filename pattern",
+    "zh-Hant": "文件命名規則"
+  },
+  "插入 {{v1}}": {
+    "en": "Insert {{v1}}",
+    "zh-Hant": "插入 {{v1}}"
+  },
+  "示例：": {
+    "en": "Example: ",
+    "zh-Hant": "示例："
+  },
+  "非法字符会被替换，过长会截断；重名自动加序号「(2)」，不会覆盖。": {
+    "en": "Invalid characters are replaced and long names shortened. Duplicates receive a suffix such as “(2)” without overwriting.",
+    "zh-Hant": "非法字符會被替換，過長會截斷；重名自動加序號「(2)」，不會覆蓋。"
+  },
+  "遇到错误时": {
+    "en": "On error",
+    "zh-Hant": "遇到錯誤時"
+  },
+  "有错误则不开始（默认）": {
+    "en": "Do not start if errors exist (default)",
+    "zh-Hant": "有錯誤則不開始（默認）"
+  },
+  "先修正所有错误样本": {
+    "en": "Fix all sample errors first",
+    "zh-Hant": "先修正所有錯誤樣本"
+  },
+  "跳过错误样本，生成其余样本": {
+    "en": "Skip invalid samples and generate the rest",
+    "zh-Hant": "跳過錯誤樣本，生成其餘樣本"
+  },
+  "跳过的样本会逐条列在结果清单中": {
+    "en": "Skipped samples are individually listed in the manifest",
+    "zh-Hant": "跳過的樣本會逐條列在結果清單中"
+  },
+  "缺少列": {
+    "en": "Missing column",
+    "zh-Hant": "缺少列"
+  },
+  "重名列": {
+    "en": "Duplicate column name",
+    "zh-Hant": "重名列"
+  },
+  "缺少工作表": {
+    "en": "Missing worksheet",
+    "zh-Hant": "缺少工作表"
+  },
+  "工作表歧义": {
+    "en": "Ambiguous worksheet",
+    "zh-Hant": "工作表歧義"
+  },
+  "找不到定位标签": {
+    "en": "Anchor label not found",
+    "zh-Hant": "找不到定位標籤"
+  },
+  "定位标签不唯一": {
+    "en": "Anchor label is not unique",
+    "zh-Hant": "定位標籤不唯一"
+  },
+  "版式不符": {
+    "en": "Layout mismatch",
+    "zh-Hant": "版式不符"
+  },
+  "必填为空": {
+    "en": "Required value is empty",
+    "zh-Hant": "必填為空"
+  },
+  "必填未映射": {
+    "en": "Required field is unmapped",
+    "zh-Hant": "必填未映射"
+  },
+  "组内取值冲突": {
+    "en": "Conflicting values within group",
+    "zh-Hant": "組內取值衝突"
+  },
+  "区域尺寸不符": {
+    "en": "Region size mismatch",
+    "zh-Hant": "區域尺寸不符"
+  },
+  "目标字段失效": {
+    "en": "Invalid target field",
+    "zh-Hant": "目標字段失效"
+  },
+  "多个映射写同一字段": {
+    "en": "Multiple mappings target one field",
+    "zh-Hant": "多個映射寫同一字段"
+  },
+  "需要 OCR": {
+    "en": "OCR required",
+    "zh-Hant": "需要 OCR"
+  },
+  "OCR 待确认": {
+    "en": "OCR confirmation required",
+    "zh-Hant": "OCR 待確認"
+  },
+  "结构不存在": {
+    "en": "Structure not found",
+    "zh-Hant": "結構不存在"
+  },
+  "与样本模式不符": {
+    "en": "Sample mode mismatch",
+    "zh-Hant": "與樣本模式不符"
+  },
+  "值错误": {
+    "en": "Invalid value",
+    "zh-Hant": "值錯誤"
+  },
+  "无明细": {
+    "en": "No detail rows",
+    "zh-Hant": "無明細"
+  },
+  "类型不匹配": {
+    "en": "Type mismatch",
+    "zh-Hant": "類型不匹配"
+  },
+  "缺少组合规则": {
+    "en": "Missing combine rule",
+    "zh-Hant": "缺少組合規則"
+  },
+  "去除首尾空格": {
+    "en": "Trim surrounding spaces",
+    "zh-Hant": "去除首尾空格"
+  },
+  "合并连续空白": {
+    "en": "Collapse whitespace",
+    "zh-Hant": "合併連續空白"
+  },
+  "日期显示格式": {
+    "en": "Date display format",
+    "zh-Hant": "日期顯示格式"
+  },
+  "数字小数位": {
+    "en": "Decimal places",
+    "zh-Hant": "數字小數位"
+  },
+  "千位分隔符": {
+    "en": "Thousands separator",
+    "zh-Hant": "千位分隔符"
+  },
+  "添加前缀": {
+    "en": "Add prefix",
+    "zh-Hant": "添加前綴"
+  },
+  "添加后缀": {
+    "en": "Add suffix",
+    "zh-Hant": "添加後綴"
+  },
+  "为空时使用默认值": {
+    "en": "Default for empty values",
+    "zh-Hant": "為空時使用默認值"
+  },
+  "值对照替换": {
+    "en": "Value replacement table",
+    "zh-Hant": "值對照替換"
+  },
+  "左侧补齐位数": {
+    "en": "Pad on the left",
+    "zh-Hant": "左側補齊位數"
+  },
+  "转大写": {
+    "en": "Uppercase",
+    "zh-Hant": "轉大寫"
+  },
+  "转小写": {
+    "en": "Lowercase",
+    "zh-Hant": "轉小寫"
+  },
+  " 位": {
+    "en": " decimal places",
+    "zh-Hant": " 位"
+  },
+  "千位分隔": {
+    "en": "Thousands separator",
+    "zh-Hant": "千位分隔"
+  },
+  "宽度 ": {
+    "en": "Width ",
+    "zh-Hant": "寬度 "
+  },
+  "补 ": {
+    "en": "Pad with ",
+    "zh-Hant": "補 "
+  },
+  "上移": {
+    "en": "Move up",
+    "zh-Hant": "上移"
+  },
+  "上移第 {v1} 条转换规则": {
+    "en": "Move transformation {v1} up",
+    "zh-Hant": "上移第 {v1} 條轉換規則"
+  },
+  "移除第 {v1} 条转换规则": {
+    "en": "Remove transformation {v1}",
+    "zh-Hant": "移除第 {v1} 條轉換規則"
+  },
+  "添加转换规则": {
+    "en": "Add transformation",
+    "zh-Hant": "添加轉換規則"
+  },
+  "＋ 添加转换规则…": {
+    "en": "＋ Add transformation…",
+    "zh-Hant": "＋ 添加轉換規則…"
+  },
+  "转换只使用以上受控选项，按顺序执行；不会执行任何自定义代码。": {
+    "en": "Only these controlled transformations run, in order. No custom code is executed.",
+    "zh-Hant": "轉換只使用以上受控選項，按順序執行；不會執行任何自定義代碼。"
+  },
+  "每行一条：原值=新值\n例如 TRUE=是": {
+    "en": "One per line: old=new\nExample: TRUE=Yes",
+    "zh-Hant": "每行一條：原值=新值\n例如 TRUE=是"
+  },
+  "值对照表，每行一条：原值=新值": {
+    "en": "Value map, one per line: old=new",
+    "zh-Hant": "值對照表，每行一條：原值=新值"
+  },
+  " 行还不是「原值=新值」，暂不生效": {
+    "en": " do not yet use old=new and are not applied",
+    "zh-Hant": " 行還不是「原值=新值」，暫不生效"
+  },
+  "来源区域无效，请重新选择单元格区域": {
+    "en": "Invalid source region. Select the cell range again.",
+    "zh-Hant": "來源區域無效，請重新選擇單元格區域"
+  },
+  "来源区域为 {v1} 行 × {v2} 列，目标区域「{v3}」为 {v4} 行 × {v5} 列。尺寸不一致，不能保存：请重新选择来源区域，或修改目标区域大小（系统不会自动截断、补齐或转置）。": {
+    "en": "The source has {v1} rows × {v2} columns; target “{v3}” has {v4} rows × {v5} columns. Sizes must match to save. Reselect the source or resize the target; regions are not truncated, padded or transposed automatically.",
+    "zh-Hant": "來源區域為 {v1} 行 × {v2} 列，目標區域「{v3}」為 {v4} 行 × {v5} 列。尺寸不一致，不能保存：請重新選擇來源區域，或修改目標區域大小（系統不會自動截斷、補齊或轉置）。"
+  },
+  "重复明细字段需要在左侧选择「明细表」：包含表头的多行区域，或文档中的整张表格": {
+    "en": "A repeating field needs a detail table selected on the left: multiple rows including headers, or an entire document table.",
+    "zh-Hant": "重復明細字段需要在左側選擇「明細表」：包含表頭的多行區域，或文檔中的整張表格"
+  },
+  "没有可用的来源": {
+    "en": "No usable source",
+    "zh-Hant": "沒有可用的來源"
+  },
+  "至少需要为一列设置来源列": {
+    "en": "Set a source column for at least one column",
+    "zh-Hant": "至少需要為一列設置來源列"
+  },
+  "编辑映射 #{v1}": {
+    "en": "Edit mapping #{v1}",
+    "zh-Hant": "編輯映射 #{v1}"
+  },
+  "建立映射": {
+    "en": "Create mapping",
+    "zh-Hant": "建立映射"
+  },
+  "保存中…": {
+    "en": "Saving…",
+    "zh-Hant": "保存中…"
+  },
+  "保存映射": {
+    "en": "Save mapping",
+    "zh-Hant": "保存映射"
+  },
+  "来源 ": {
+    "en": "Source ",
+    "zh-Hant": "來源 "
+  },
+  "如需更换来源，请删除后重新建立，或在「校验」中为单个文件重新定位。": {
+    "en": "To change the source, recreate the mapping or relocate it for a specific file in Validation.",
+    "zh-Hant": "如需更換來源，請刪除後重新建立，或在「校驗」中為單個文件重新定位。"
+  },
+  "目标是重复明细行：请在左侧选择包含表头的多行区域（例如表头行到最后一行），或点击文档表格左上角「▦」选择整张表。": {
+    "en": "For a repeating detail row, select a range including its header on the left, or click “▦” at the table corner to select the whole table.",
+    "zh-Hant": "目標是重復明細行：請在左側選擇包含表頭的多行區域（例如表頭行到最後一行），或點擊文檔表格左上角「▦」選擇整張表。"
+  },
+  "目标是固定区域：请在左侧框选同样大小的单元格区域。": {
+    "en": "For a fixed region, select a cell range of the same size on the left.",
+    "zh-Hant": "目標是固定區域：請在左側框選同樣大小的單元格區域。"
+  },
+  "当前选择不能作为单值来源；请选择单个单元格、文字片段或 PDF 区域。": {
+    "en": "This selection cannot supply a single value. Select a cell, text span or PDF region.",
+    "zh-Hant": "當前選擇不能作為單值來源；請選擇單個單元格、文字片段或 PDF 區域。"
+  },
+  "✔ 随样本变化：每份输出读取当前样本对应的值": {
+    "en": "✔ Varies by sample: each output reads its sample's value",
+    "zh-Hant": "✔ 隨樣本變化：每份輸出讀取當前樣本對應的值"
+  },
+  "● 固定值：同一文件中所有样本使用同一个值": {
+    "en": "● Fixed: all samples within the same file use this value",
+    "zh-Hant": "● 固定值：同一文件中所有樣本使用同一個值"
+  },
+  "◆ 随文件变化：每个来源文件在相同位置取值": {
+    "en": "◆ Varies by file: reads the same location in each source file",
+    "zh-Hant": "◆ 隨文件變化：每個來源文件在相同位置取值"
+  },
+  "示例值：": {
+    "en": "Sample value: ",
+    "zh-Hant": "示例值："
+  },
+  "（空）": {
+    "en": "(empty)",
+    "zh-Hant": "（空）"
+  },
+  "将替换字段「": {
+    "en": "Replace the existing mapping for field “",
+    "zh-Hant": "將替換字段「"
+  },
+  "」的原映射 #": {
+    "en": "”, mapping #",
+    "zh-Hant": "」的原映射 #"
+  },
+  "字段「": {
+    "en": "Field “",
+    "zh-Hant": "字段「"
+  },
+  "」已有映射 #": {
+    "en": "” already has mapping #",
+    "zh-Hant": "」已有映射 #"
+  },
+  " 作为第 ": {
+    "en": " Merge as source ",
+    "zh-Hant": " 作為第 "
+  },
+  " 个来源合并写入：": {
+    "en": ": ",
+    "zh-Hant": " 個來源合併寫入："
+  },
+  "拼接": {
+    "en": "Concatenate",
+    "zh-Hant": "拼接"
+  },
+  "换行拼接": {
+    "en": "Join with newlines",
+    "zh-Hant": "換行拼接"
+  },
+  "求和（数值）": {
+    "en": "Sum (numeric)",
+    "zh-Hant": "求和（數值）"
+  },
+  "分隔符 ": {
+    "en": "Separator ",
+    "zh-Hant": "分隔符 "
+  },
+  " 替换原映射 #": {
+    "en": " Replace mapping #",
+    "zh-Hant": " 替換原映射 #"
+  },
+  "目标字段": {
+    "en": "Target field",
+    "zh-Hant": "目標字段"
+  },
+  " 行 × ": {
+    "en": " rows × ",
+    "zh-Hant": " 行 × "
+  },
+  " 列": {
+    "en": " columns",
+    "zh-Hant": " 列"
+  },
+  "必填": {
+    "en": "Required",
+    "zh-Hant": "必填"
+  },
+  "列对应（按列名匹配，列顺序不同也不会错位；未匹配的列请手动选择）：": {
+    "en": "Match columns by name, independent of order. Select unmatched columns manually:",
+    "zh-Hant": "列對應（按列名匹配，列順序不同也不會錯位；未匹配的列請手動選擇）："
+  },
+  "目标列": {
+    "en": "Target column",
+    "zh-Hant": "目標列"
+  },
+  "来源列": {
+    "en": "Source column",
+    "zh-Hant": "來源列"
+  },
+  "（保留原常量）": {
+    "en": "(keep original constant)",
+    "zh-Hant": "（保留原常量）"
+  },
+  "（留空）": {
+    "en": "(leave empty)",
+    "zh-Hant": "（留空）"
+  },
+  "（重名）": {
+    "en": "(duplicate name)",
+    "zh-Hant": "（重名）"
+  },
+  "零条明细时的处理方式、表头跨页重复等在「字段」面板中设置。": {
+    "en": "Configure empty-detail behavior and repeating page headers in the Fields panel.",
+    "zh-Hant": "零條明細時的處理方式、表頭跨頁重復等在「字段」面板中設置。"
+  },
+  "值转换": {
+    "en": "Transform values",
+    "zh-Hant": "值轉換"
+  },
+  "组内取值规则（同一组有多行时）": {
+    "en": "Values within a group (multiple rows)",
+    "zh-Hant": "組內取值規則（同一組有多行時）"
+  },
+  "必须一致，不一致时报冲突（默认）": {
+    "en": "Require equal values; report conflicts (default)",
+    "zh-Hant": "必須一致，不一致時報衝突（默認）"
+  },
+  "取组内第一条（按排序规则）": {
+    "en": "First row (in sort order)",
+    "zh-Hant": "取組內第一條（按排序規則）"
+  },
+  "取组内最后一条": {
+    "en": "Last row",
+    "zh-Hant": "取組內最後一條"
+  },
+  "全部拼接": {
+    "en": "Join all",
+    "zh-Hant": "全部拼接"
+  },
+  "去重后拼接": {
+    "en": "Join unique values",
+    "zh-Hant": "去重後拼接"
+  },
+  "求和": {
+    "en": "Sum",
+    "zh-Hant": "求和"
+  },
+  "计数（行数）": {
+    "en": "Count (rows)",
+    "zh-Hant": "計數（行數）"
+  },
+  "分隔符": {
+    "en": "Separator",
+    "zh-Hant": "分隔符"
+  },
+  "写入方式": {
+    "en": "Write mode",
+    "zh-Hant": "寫入方式"
+  },
+  "按值类型写入（数字仍是数字，日期仍是日期；显示格式沿用目标单元格）": {
+    "en": "Preserve value types (numbers and dates); retain the target cell's display format",
+    "zh-Hant": "按值類型寫入（數字仍是數字，日期仍是日期；顯示格式沿用目標單元格）"
+  },
+  "写入来源显示文本（如 000123、¥1,000.00）": {
+    "en": "Use source display text (e.g. 000123, ¥1,000.00)",
+    "zh-Hant": "寫入來源顯示文本（如 000123、¥1,000.00）"
+  },
+  "样式": {
+    "en": "Style",
+    "zh-Hant": "樣式"
+  },
+  "只传递数据，沿用目标模板样式（默认）": {
+    "en": "Transfer data and retain template styling (default)",
+    "zh-Hant": "只傳遞數據，沿用目標模板樣式（默認）"
+  },
+  "复制来源样式（加粗/斜体/下划线/颜色）": {
+    "en": "Copy source styling (bold/italic/underline/color)",
+    "zh-Hant": "複製來源樣式（加粗/斜體/下划線/顏色）"
+  },
+  " — 仅 DOCX→DOCX 支持": {
+    "en": " — DOCX→DOCX only",
+    "zh-Hant": " — 僅 DOCX→DOCX 支持"
+  },
+  "提交任务所用的凭据已被吊销或已过期": {
+    "en": "The credentials used to submit this job were revoked or expired",
+    "zh-Hant": "提交任務所用的憑據已被吊銷或已過期"
+  },
+  "提交者已不再拥有写入权限": {
+    "en": "The submitter no longer has write access",
+    "zh-Hant": "提交者已不再擁有寫入權限"
+  },
+  "提交者在该工作空间的角色已不允许生成": {
+    "en": "The submitter's workspace role no longer allows generation",
+    "zh-Hant": "提交者在該工作空間的角色已不允許生成"
+  },
+  "提交者已不是该工作空间的成员": {
+    "en": "The submitter is no longer a workspace member",
+    "zh-Hant": "提交者已不是該工作空間的成員"
+  },
+  "提交者的账户已被停用或删除": {
+    "en": "The submitter's account was disabled or deleted",
+    "zh-Hant": "提交者的賬戶已被停用或刪除"
+  },
+  "提交者对 Synwevo Docs 的使用资格已被收回": {
+    "en": "The submitter's Synwevo Docs entitlement was revoked",
+    "zh-Hant": "提交者對 Synwevo Docs 的使用資格已被收回"
+  },
+  "提交者没有 Synwevo Docs 的使用资格": {
+    "en": "The submitter has no Synwevo Docs entitlement",
+    "zh-Hant": "提交者沒有 Synwevo Docs 的使用資格"
+  },
+  "提交任务所用的授权已被撤销": {
+    "en": "The authorization used to submit the job was revoked",
+    "zh-Hant": "提交任務所用的授權已被撤銷"
+  },
+  "提交任务所用的授权不是为 Synwevo Docs 签发的": {
+    "en": "The authorization was not issued for Synwevo Docs",
+    "zh-Hant": "提交任務所用的授權不是為 Synwevo Docs 簽發的"
+  },
+  "提交者的凭据不属于该工作空间": {
+    "en": "The submitter's credentials belong to another workspace",
+    "zh-Hant": "提交者的憑據不屬於該工作空間"
+  },
+  "工作空间当前不可用": {
+    "en": "The workspace is unavailable",
+    "zh-Hant": "工作空間當前不可用"
+  },
+  "工作空间已被冻结": {
+    "en": "The workspace is frozen",
+    "zh-Hant": "工作空間已被凍結"
+  },
+  "工作空间已被暂停": {
+    "en": "The workspace is suspended",
+    "zh-Hant": "工作空間已被暫停"
+  },
+  "Synwevo Docs 已被平台停用": {
+    "en": "Synwevo Docs is disabled on this platform",
+    "zh-Hant": "Synwevo Docs 已被平台停用"
+  },
+  "该工作空间已不再启用 Synwevo Docs": {
+    "en": "Synwevo Docs is no longer enabled for this workspace",
+    "zh-Hant": "該工作空間已不再啓用 Synwevo Docs"
+  },
+  "无法确认提交者的身份": {
+    "en": "The submitter's identity could not be verified",
+    "zh-Hant": "無法確認提交者的身份"
+  },
+  "任务已停止：数据从备份恢复时，这个任务还没有完成；恢复后不会自动继续，未完成的部分可以用「重试」重新生成。": {
+    "en": "Job stopped: it was unfinished when data was restored from backup. It will not resume automatically. Use Retry to generate unfinished outputs.",
+    "zh-Hant": "任務已停止：數據從備份恢復時，這個任務還沒有完成；恢復後不會自動繼續，未完成的部分可以用「重試」重新生成。"
+  },
+  "提交者已失去权限": {
+    "en": "The submitter lost access",
+    "zh-Hant": "提交者已失去權限"
+  },
+  "任务已停止：{v1}。已生成的文件保留，不会再生成新的文件。": {
+    "en": "Job stopped: {v1}. Existing outputs are retained; no new files will be generated.",
+    "zh-Hant": "任務已停止：{v1}。已生成的文件保留，不會再生成新的文件。"
+  },
+  "任务已停止：{v1}": {
+    "en": "Job stopped: {v1}",
+    "zh-Hant": "任務已停止：{v1}"
+  },
+  "无法重新打开": {
+    "en": "Could not reopen",
+    "zh-Hant": "無法重新打開"
+  },
+  "对应程序": {
+    "en": "the corresponding application",
+    "zh-Hant": "對應程序"
+  },
+  "{v1} 个值未找到": {
+    "en": "{v1} values not found",
+    "zh-Hant": "{v1} 個值未找到"
+  },
+  "已用 {v1} 重新打开，核对 {v2} 个值，其中 {v3} 个未在文件中找到": {
+    "en": "Reopened with {v1}; checked {v2} values, of which {v3} were not found",
+    "zh-Hant": "已用 {v1} 重新打開，核對 {v2} 個值，其中 {v3} 個未在文件中找到"
+  },
+  "✓ 已校验": {
+    "en": "✓ Verified",
+    "zh-Hant": "✓ 已校驗"
+  },
+  "已用 {v1} 重新打开并核对 {v2} 个值": {
+    "en": "Reopened with {v1} and checked {v2} values",
+    "zh-Hant": "已用 {v1} 重新打開並核對 {v2} 個值"
+  },
+  "已重新打开": {
+    "en": "Reopened",
+    "zh-Hant": "已重新打開"
+  },
+  "已用 {v1} 重新打开；此格式没有逐值核对": {
+    "en": "Reopened with {v1}; this format has no value-by-value verification",
+    "zh-Hant": "已用 {v1} 重新打開；此格式沒有逐值核對"
+  },
+  "真实样本预览": {
+    "en": "Preview actual sample",
+    "zh-Hant": "真實樣本預覽"
+  },
+  "‹ 上一条": {
+    "en": "‹ Previous",
+    "zh-Hant": "‹ 上一條"
+  },
+  "下一条 ›": {
+    "en": "Next ›",
+    "zh-Hant": "下一條 ›"
+  },
+  "按样本标识查找": {
+    "en": "Find by sample identifier",
+    "zh-Hant": "按樣本標識查找"
+  },
+  "用 LibreOffice 排版后的真实页面（含分页）": {
+    "en": "Actual pages laid out with LibreOffice (including pagination)",
+    "zh-Hant": "用 LibreOffice 排版後的真實頁面（含分頁）"
+  },
+  "✓ 真实分页": {
+    "en": "✓ Actual pagination",
+    "zh-Hant": "✓ 真實分頁"
+  },
+  "真实分页": {
+    "en": "Actual pagination",
+    "zh-Hant": "真實分頁"
+  },
+  "预览_": {
+    "en": "Preview_",
+    "zh-Hant": "預覽_"
+  },
+  "下载此预览": {
+    "en": "Download this preview",
+    "zh-Hant": "下載此預覽"
+  },
+  "缩小预览": {
+    "en": "Zoom out",
+    "zh-Hant": "縮小預覽"
+  },
+  "放大预览": {
+    "en": "Zoom in",
+    "zh-Hant": "放大預覽"
+  },
+  "返回模板": {
+    "en": "Back to template",
+    "zh-Hant": "返回模板"
+  },
+  "来源：": {
+    "en": "Source: ",
+    "zh-Hant": "來源："
+  },
+  "跨文件合并：": {
+    "en": "Merged across files: ",
+    "zh-Hant": "跨文件合併："
+  },
+  "✓ 已校验 {v1} 个值": {
+    "en": "✓ Verified {v1} values",
+    "zh-Hant": "✓ 已校驗 {v1} 個值"
+  },
+  "预览与批量生成使用同一套解析、映射与格式规则": {
+    "en": "Preview and batch generation use the same parsing, mapping and formatting rules",
+    "zh-Hant": "預覽與批量生成使用同一套解析、映射與格式規則"
+  },
+  "正在用 LibreOffice 排版…": {
+    "en": "Laying out with LibreOffice…",
+    "zh-Hant": "正在用 LibreOffice 排版…"
+  },
+  "模板 ": {
+    "en": "Template ",
+    "zh-Hant": "模板 "
+  },
+  " 页 → 本份 ": {
+    "en": " pages → this output ",
+    "zh-Hant": " 頁 → 本份 "
+  },
+  " 页": {
+    "en": " pages",
+    "zh-Hant": " 頁"
+  },
+  "（分页增加）": {
+    "en": "(extra pages)",
+    "zh-Hant": "（分頁增加）"
+  },
+  "已按「保持模板页数」处理：": {
+    "en": "Applied “Keep template page count”: ",
+    "zh-Hant": "已按「保持模板頁數」處理："
+  },
+  "，字段缩小到 {v1}%": {
+    "en": "; fields reduced to {v1}%",
+    "zh-Hant": "，字段縮小到 {v1}%"
+  },
+  "重试当前样本": {
+    "en": "Retry this sample",
+    "zh-Hant": "重試當前樣本"
+  },
+  "该样本存在错误，无法生成预览": {
+    "en": "This sample has errors and cannot be previewed",
+    "zh-Hant": "該樣本存在錯誤，無法生成預覽"
+  },
+  "请根据上方提示修正映射或数据": {
+    "en": "Fix the mapping or data using the messages above",
+    "zh-Hant": "請根據上方提示修正映射或數據"
+  },
+  "正在生成预览…": {
+    "en": "Generating preview…",
+    "zh-Hant": "正在生成預覽…"
+  },
+  "保存为回归用例": {
+    "en": "Save as regression case",
+    "zh-Hant": "保存為回歸用例"
+  },
+  "查看回归用例": {
+    "en": "View regression cases",
+    "zh-Hant": "查看回歸用例"
+  },
+  "完成": {
+    "en": "Done",
+    "zh-Hant": "完成"
+  },
+  "正在生成期望结果…": {
+    "en": "Generating expected results…",
+    "zh-Hant": "正在生成期望結果…"
+  },
+  "保存用例": {
+    "en": "Save case",
+    "zh-Hant": "保存用例"
+  },
+  "已保存「": {
+    "en": "Saved “",
+    "zh-Hant": "已保存「"
+  },
+  " 个样本的期望结果（共 ": {
+    "en": " sample expectations (of ",
+    "zh-Hant": " 個樣本的期望結果（共 "
+  },
+  " 个样本）。": {
+    "en": " samples).",
+    "zh-Hant": " 個樣本）。"
+  },
+  "用例 ": {
+    "en": "Case ",
+    "zh-Hant": "用例 "
+  },
+  " 已保存在服务器上，可以在「回归用例」页面运行和下载。其中包含本项目的文件：请只保存测试数据或已脱敏的文件，不要把它提交到代码仓库。": {
+    "en": " is stored on the server and can be run or downloaded on the Regression cases page. It contains this project's files: save only test or anonymized data and do not commit it to the repository.",
+    "zh-Hant": " 已保存在服務器上，可以在「回歸用例」頁面運行和下載。其中包含本項目的文件：請只保存測試數據或已脫敏的文件，不要把它提交到代碼倉庫。"
+  },
+  "保存当前项目的来源文件、模板、样本规则和映射，并记录前 ": {
+    "en": "Save the project's sources, template, sample rules and mappings, along with expected results for the first ",
+    "zh-Hant": "保存當前項目的來源文件、模板、樣本規則和映射，並記錄前 "
+  },
+  " 个样本（共 ": {
+    "en": " samples (of ",
+    "zh-Hant": " 個樣本（共 "
+  },
+  " 个）的期望结果：每个字段的值和输出文档的文字。 以后每次升级或修改代码，都可以重新运行并逐项比较差异。": {
+    "en": "): each field value and output document text. Rerun after upgrades or code changes to compare differences.",
+    "zh-Hant": " 個）的期望結果：每個字段的值和輸出文檔的文字。 以後每次升級或修改代碼，都可以重新運行並逐項比較差異。"
+  },
+  "请只保存测试数据或已脱敏的文件": {
+    "en": "Save only test data or anonymized files",
+    "zh-Hant": "請只保存測試數據或已脫敏的文件"
+  },
+  "（可先用「生成脱敏副本」）。": {
+    "en": " (use “Create anonymized copies” first if needed).",
+    "zh-Hant": "（可先用「生成脫敏副本」）。"
+  },
+  "用例名称": {
+    "en": "Case name",
+    "zh-Hant": "用例名稱"
+  },
+  "说明（可选）": {
+    "en": "Description (optional)",
+    "zh-Hant": "說明（可選）"
+  },
+  "例如：2026 年第三季度真实订单（已脱敏），含 3 个跨页订单": {
+    "en": "Example: anonymized Q3 2026 orders, including 3 orders spanning pages",
+    "zh-Hant": "例如：2026 年第三季度真實訂單（已脫敏），含 3 個跨頁訂單"
+  },
+  "手机号": {
+    "en": "Mobile phone",
+    "zh-Hant": "手機號"
+  },
+  "身份证号（保留出生日期）": {
+    "en": "Identity number (retain birth date)",
+    "zh-Hant": "身份證號（保留出生日期）"
+  },
+  "银行卡号": {
+    "en": "Bank card number",
+    "zh-Hant": "銀行卡號"
+  },
+  "电子邮箱": {
+    "en": "Email address",
+    "zh-Hant": "電子郵箱"
+  },
+  "固定电话": {
+    "en": "Landline",
+    "zh-Hant": "固定電話"
+  },
+  "不变": {
+    "en": "Unchanged",
+    "zh-Hant": "不變"
+  },
+  "替换为代号（同值同代号）": {
+    "en": "Replace with aliases (same value, same alias)",
+    "zh-Hant": "替換為代號（同值同代號）"
+  },
+  "保留首尾，中间打码": {
+    "en": "Mask the middle, retain both ends",
+    "zh-Hant": "保留首尾，中間打碼"
+  },
+  "数字随机替换（保持长度）": {
+    "en": "Randomize digits (retain length)",
+    "zh-Hant": "數字隨機替換（保持長度）"
+  },
+  "数值按同一比例缩放": {
+    "en": "Scale numbers by a common factor",
+    "zh-Hant": "數值按同一比例縮放"
+  },
+  "日期整体平移": {
+    "en": "Shift all dates",
+    "zh-Hant": "日期整體平移"
+  },
+  "清空": {
+    "en": "Clear",
+    "zh-Hant": "清空"
+  },
+  "生成脱敏副本": {
+    "en": "Create anonymized copies",
+    "zh-Hant": "生成脫敏副本"
+  },
+  "正在处理…": {
+    "en": "Processing…",
+    "zh-Hant": "正在處理…"
+  },
+  "生成 {v1} 个脱敏副本": {
+    "en": "Create {v1} anonymized copies",
+    "zh-Hant": "生成 {v1} 個脫敏副本"
+  },
+  "已生成 ": {
+    "en": "Created ",
+    "zh-Hant": "已生成 "
+  },
+  " 个脱敏副本": {
+    "en": " anonymized copies",
+    "zh-Hant": " 個脫敏副本"
+  },
+  "，并已加入来源文件列表": {
+    "en": " and added them to source files",
+    "zh-Hant": "，並已加入來源文件列表"
+  },
+  "。同一个原值在所有文件中替换为同一个代号（本次共 ": {
+    "en": ". Identical values receive the same alias across files (total: ",
+    "zh-Hant": "。同一個原值在所有文件中替換為同一個代號（本次共 "
+  },
+  " 个）。": {
+    "en": ").",
+    "zh-Hant": " 個）。"
+  },
+  "原文件": {
+    "en": "Original file",
+    "zh-Hant": "原文件"
+  },
+  "脱敏副本": {
+    "en": "Anonymized copy",
+    "zh-Hant": "脫敏副本"
+  },
+  "下载": {
+    "en": "Download",
+    "zh-Hant": "下載"
+  },
+  "」未处理：": {
+    "en": "” was not processed: ",
+    "zh-Hant": "」未處理："
+  },
+  "替换统计：": {
+    "en": "Replacement statistics: ",
+    "zh-Hant": "替換統計："
+  },
+  "替换对照表不会保存；请打开副本确认没有遗漏后再用于回归用例或发送给他人。": {
+    "en": "Replacement lookup tables are not saved. Check the copies for omissions before using them in regression cases or sharing them.",
+    "zh-Hant": "替換對照表不會保存；請打開副本確認沒有遺漏後再用於回歸用例或發送給他人。"
+  },
+  "要处理的文件": {
+    "en": "Files to process",
+    "zh-Hant": "要處理的文件"
+  },
+  "PDF / 图片 / 幻灯片中的文字无法在不破坏版式的前提下可靠替换": {
+    "en": "Text in PDFs, images and slides cannot be reliably replaced while preserving layout",
+    "zh-Hant": "PDF / 圖片 / 幻燈片中的文字無法在不破壞版式的前提下可靠替換"
+  },
+  "不支持": {
+    "en": "Unsupported",
+    "zh-Hant": "不支持"
+  },
+  "自动识别并替换": {
+    "en": "Automatically detect and replace",
+    "zh-Hant": "自動識別並替換"
+  },
+  "另外要替换的词（人名、单位名等，每行一个或用逗号分隔）": {
+    "en": "Additional terms (names, organizations, etc.; one per line or comma-separated)",
+    "zh-Hant": "另外要替換的詞（人名、單位名等，每行一個或用逗號分隔）"
+  },
+  "张三\n某某科技有限公司": {
+    "en": "Jane Smith\nExample Technology Ltd.",
+    "zh-Hant": "張三\n某某科技有限公司"
+  },
+  " 把脱敏副本加入当前项目的来源文件": {
+    "en": " Add anonymized copies to this project's sources",
+    "zh-Hant": " 把脫敏副本加入當前項目的來源文件"
+  },
+  "表格列的处理方式 ": {
+    "en": "Spreadsheet column treatment ",
+    "zh-Hant": "表格列的處理方式 "
+  },
+  "（按「": {
+    "en": " (headers from “",
+    "zh-Hant": "（按「"
+  },
+  "」的表头）": {
+    "en": "”)",
+    "zh-Hant": "」的表頭）"
+  },
+  "选择了表格文件（XLSX / CSV）时，可以逐列设置处理方式；其余单元格按左侧规则替换。": {
+    "en": "For spreadsheet files (XLSX / CSV), set treatment per column. Other cells follow the rules on the left.",
+    "zh-Hant": "選擇了表格文件（XLSX / CSV）時，可以逐列設置處理方式；其餘單元格按左側規則替換。"
+  },
+  "所有处理都在本服务器完成，文件不会发送到外部服务。数值缩放与日期平移对整列使用同一比例/天数，便于保留合计、排序等关系。": {
+    "en": "Processing stays on this server. No files are sent externally. Scaling and date shifts use the same factor or day offset for an entire column, preserving totals and ordering.",
+    "zh-Hant": "所有處理都在本服務器完成，文件不會發送到外部服務。數值縮放與日期平移對整列使用同一比例/天數，便於保留合計、排序等關係。"
+  },
+  "表格中每条有效数据行 = 一份输出": {
+    "en": "Each valid spreadsheet row = one output",
+    "zh-Hant": "表格中每條有效數據行 = 一份輸出"
+  },
+  "例：客户表 100 行 → 生成 100 份合同": {
+    "en": "Example: 100 customer rows → 100 contracts",
+    "zh-Hant": "例：客戶表 100 行 → 生成 100 份合同"
+  },
+  "每个来源文件 = 一份输出（文件内多处数据、多个明细表共同填入）": {
+    "en": "Each source file = one output, combining values and detail tables within that file",
+    "zh-Hant": "每個來源文件 = 一份輸出（文件內多處數據、多個明細表共同填入）"
+  },
+  "例：20 份检测表 → 生成 20 份报告": {
+    "en": "Example: 20 inspection forms → 20 reports",
+    "zh-Hant": "例：20 份檢測表 → 生成 20 份報告"
+  },
+  "按选定字段（如订单号）分组，每组 = 一份输出，组内多行作为明细": {
+    "en": "Group by selected fields (e.g. order number); each group = one output with its rows as details",
+    "zh-Hant": "按選定字段（如訂單號）分組，每組 = 一份輸出，組內多行作為明細"
+  },
+  "例：100 条明细属于 15 个订单 → 生成 15 份订单": {
+    "en": "Example: 100 detail rows across 15 orders → 15 order documents",
+    "zh-Hant": "例：100 條明細屬於 15 個訂單 → 生成 15 份訂單"
+  },
+  "一个文件里有多张表单：按每块开头的标记文字切开，每块 = 一份输出": {
+    "en": "Split forms within a file at a start marker; each block = one output",
+    "zh-Hant": "一個文件里有多張表單：按每塊開頭的標記文字切開，每塊 = 一份輸出"
+  },
+  "例：一个 PDF 里 30 张登记表 → 生成 30 份": {
+    "en": "Example: 30 forms in one PDF → 30 outputs",
+    "zh-Hant": "例：一個 PDF 里 30 張登記表 → 生成 30 份"
+  },
+  "请填写每个表单块开头的标记文字": {
+    "en": "Enter the text marking the start of each form block",
+    "zh-Hant": "請填寫每個表單塊開頭的標記文字"
+  },
+  "请选择分组字段": {
+    "en": "Select grouping fields",
+    "zh-Hant": "請選擇分組字段"
+  },
+  "定义样本：每份输出对应什么数据？": {
+    "en": "Define samples: what data makes one output?",
+    "zh-Hant": "定義樣本：每份輸出對應什麼數據？"
+  },
+  "将识别 ": {
+    "en": "Will detect ",
+    "zh-Hant": "將識別 "
+  },
+  " 条样本 → 默认生成 ": {
+    "en": " samples → by default, generate ",
+    "zh-Hant": " 條樣本 → 默認生成 "
+  },
+  " 份文档": {
+    "en": " documents",
+    "zh-Hant": " 份文檔"
+  },
+  "确认样本规则": {
+    "en": "Confirm sample rules",
+    "zh-Hant": "確認樣本規則"
+  },
+  "正在识别当前规则下的样本…": {
+    "en": "Detecting samples with these rules…",
+    "zh-Hant": "正在識別當前規則下的樣本…"
+  },
+  "样本划分只决定「哪些数据构成一份输出」，与映射数量无关；多个来源文件默认各自独立提取样本后按文件顺序追加，不会做组合。": {
+    "en": "Sample rules define what data belongs to one output, independently of mapping count. By default, files are processed separately and appended in file order, without combinations.",
+    "zh-Hant": "樣本劃分只決定「哪些數據構成一份輸出」，與映射數量無關；多個來源文件默認各自獨立提取樣本後按文件順序追加，不會做組合。"
+  },
+  "」需要表格类来源（XLSX/CSV/XLS/ODS 或含表格的 HTML）。当前没有可用的表格文件。": {
+    "en": "” requires spreadsheet sources (XLSX/CSV/XLS/ODS or HTML tables). No suitable source is ready.",
+    "zh-Hant": "」需要表格類來源（XLSX/CSV/XLS/ODS 或含表格的 HTML）。當前沒有可用的表格文件。"
+  },
+  "如何切分表单块": {
+    "en": "How to split form blocks",
+    "zh-Hant": "如何切分表單塊"
+  },
+  "每块开头的标记文字": {
+    "en": "Start marker text",
+    "zh-Hant": "每塊開頭的標記文字"
+  },
+  "例如：人员登记表、姓名：、检测报告编号": {
+    "en": "Example: Registration form, Name:, Report number",
+    "zh-Hant": "例如：人員登記表、姓名：、檢測報告編號"
+  },
+  "使用左侧当前选中的文字": {
+    "en": "Use the text selected on the left",
+    "zh-Hant": "使用左側當前選中的文字"
+  },
+  "用选中文字「": {
+    "en": "Use selected text “",
+    "zh-Hant": "用選中文字「"
+  },
+  "匹配方式": {
+    "en": "Matching mode",
+    "zh-Hant": "匹配方式"
+  },
+  "所在行 / 段落包含该文字": {
+    "en": "Line / paragraph contains this text",
+    "zh-Hant": "所在行 / 段落包含該文字"
+  },
+  "所在行 / 段落以该文字开头": {
+    "en": "Line / paragraph starts with this text",
+    "zh-Hant": "所在行 / 段落以該文字開頭"
+  },
+  "所在行 / 段落正好是该文字": {
+    "en": "Line / paragraph exactly matches this text",
+    "zh-Hant": "所在行 / 段落正好是該文字"
+  },
+  "正则表达式": {
+    "en": "Regular expression",
+    "zh-Hant": "正則表達式"
+  },
+  "结束标记（可选）": {
+    "en": "End marker (optional)",
+    "zh-Hant": "結束標記（可選）"
+  },
+  "留空 = 到下一个开头标记": {
+    "en": "Empty = until the next start marker",
+    "zh-Hant": "留空 = 到下一個開頭標記"
+  },
+  "表格文件使用的工作表": {
+    "en": "Worksheet for spreadsheet files",
+    "zh-Hant": "表格文件使用的工作表"
+  },
+  "每个标记出现的位置开始一个新块，直到下一个标记（或结束标记）为止。表格按行切分，Word 按段落/表格切分，PDF 按标记所在行切分（同一页可有多块，也可跨页），文本按行切分。 建立映射时，在左侧用块导航切换到某一块并选取数据；每一块都按相对于块开头的同一位置、并以旁边的标签校验来取值。": {
+    "en": "Each occurrence starts a block ending at the next start marker or end marker. Spreadsheets and text split by line, Word by paragraph/table, PDF by marker line (within or across pages). Navigate to a block on the left when mapping. Values are read at the same relative location and verified against nearby labels.",
+    "zh-Hant": "每個標記出現的位置開始一個新塊，直到下一個標記（或結束標記）為止。表格按行切分，Word 按段落/表格切分，PDF 按標記所在行切分（同一頁可有多塊，也可跨頁），文本按行切分。 建立映射時，在左側用塊導航切換到某一塊並選取數據；每一塊都按相對於塊開頭的同一位置、並以旁邊的標籤校驗來取值。"
+  },
+  "识别结果预览": {
+    "en": "Detection preview",
+    "zh-Hant": "識別結果預覽"
+  },
+  "识别表单块": {
+    "en": "Detected form blocks",
+    "zh-Hant": "識別表單塊"
+  },
+  "包含表单块的文件": {
+    "en": "Files containing form blocks",
+    "zh-Hant": "包含表單塊的文件"
+  },
+  "未找到标记的文件": {
+    "en": "Files without matching markers",
+    "zh-Hant": "未找到標記的文件"
+  },
+  "表单块": {
+    "en": "Form block",
+    "zh-Hant": "表單塊"
+  },
+  "位置": {
+    "en": "Position",
+    "zh-Hant": "位置"
+  },
+  "数据范围 ": {
+    "en": "Data range ",
+    "zh-Hant": "數據範圍 "
+  },
+  "（以": {
+    "en": " (based on ",
+    "zh-Hant": "（以"
+  },
+  "代表文件": {
+    "en": "Representative file",
+    "zh-Hant": "代表文件"
+  },
+  "表格文件": {
+    "en": "Spreadsheet file",
+    "zh-Hant": "表格文件"
+  },
+  "」为准）": {
+    "en": "”)",
+    "zh-Hant": "」為準）"
+  },
+  " 行）": {
+    "en": " rows)",
+    "zh-Hant": " 行）"
+  },
+  "表头行（第几行）": {
+    "en": "Header row number",
+    "zh-Hant": "表頭行（第幾行）"
+  },
+  "无表头": {
+    "en": "No header",
+    "zh-Hant": "無表頭"
+  },
+  "数据起始行（留空 = 表头下一行）": {
+    "en": "First data row (empty = after header)",
+    "zh-Hant": "數據起始行（留空 = 表頭下一行）"
+  },
+  "数据结束行（留空 = 到最后一行）": {
+    "en": "Last data row (empty = final row)",
+    "zh-Hant": "數據結束行（留空 = 到最後一行）"
+  },
+  "末尾": {
+    "en": "End",
+    "zh-Hant": "末尾"
+  },
+  "表头：": {
+    "en": "Headers: ",
+    "zh-Hant": "表頭："
+  },
+  " 排除完全空白的行（排除数量会显示）": {
+    "en": " Exclude completely empty rows (count shown)",
+    "zh-Hant": " 排除完全空白的行（排除數量會顯示）"
+  },
+  "过滤条件（可选）": {
+    "en": "Filters (optional)",
+    "zh-Hant": "過濾條件（可選）"
+  },
+  "选择列": {
+    "en": "Select column",
+    "zh-Hant": "選擇列"
+  },
+  "不为空": {
+    "en": "Is not empty",
+    "zh-Hant": "不為空"
+  },
+  "为空": {
+    "en": "Is empty",
+    "zh-Hant": "為空"
+  },
+  "等于": {
+    "en": "Equals",
+    "zh-Hant": "等於"
+  },
+  "不等于": {
+    "en": "Does not equal",
+    "zh-Hant": "不等於"
+  },
+  "包含": {
+    "en": "Contains",
+    "zh-Hant": "包含"
+  },
+  "不包含": {
+    "en": "Does not contain",
+    "zh-Hant": "不包含"
+  },
+  "＋ 添加过滤": {
+    "en": "＋ Add filter",
+    "zh-Hant": "＋ 添加過濾"
+  },
+  "样本标识列（用于查找和命名，可选）": {
+    "en": "Sample identifier column (for lookup and naming, optional)",
+    "zh-Hant": "樣本標識列（用於查找和命名，可選）"
+  },
+  "（不设置）": {
+    "en": "(not set)",
+    "zh-Hant": "（不設置）"
+  },
+  "分组": {
+    "en": "Grouping",
+    "zh-Hant": "分組"
+  },
+  "分组字段（可多选，按组合值分组）": {
+    "en": "Group fields (multiple fields form a combined key)",
+    "zh-Hant": "分組字段（可多選，按組合值分組）"
+  },
+  "组内排序": {
+    "en": "Sort within group",
+    "zh-Hant": "組內排序"
+  },
+  "保持原始顺序": {
+    "en": "Keep original order",
+    "zh-Hant": "保持原始順序"
+  },
+  "升序": {
+    "en": "Ascending",
+    "zh-Hant": "升序"
+  },
+  "降序": {
+    "en": "Descending",
+    "zh-Hant": "降序"
+  },
+  "按数值": {
+    "en": "Numeric",
+    "zh-Hant": "按數值"
+  },
+  "多文件时": {
+    "en": "Multiple files",
+    "zh-Hant": "多文件時"
+  },
+  "每个文件内部单独分组（默认，不同文件的相同编号不会合并）": {
+    "en": "Group within each file (default; equal keys in separate files stay separate)",
+    "zh-Hant": "每個文件內部單獨分組（默認，不同文件的相同編號不會合併）"
+  },
+  "跨文件按编号合并分组（会展示合并结果与冲突）": {
+    "en": "Merge groups across files by key (merged results and conflicts are shown)",
+    "zh-Hant": "跨文件按編號合併分組（會展示合併結果與衝突）"
+  },
+  "同一组内的单值字段若出现多个不同值，会报冲突，需在映射中明确选择取值规则。": {
+    "en": "If a group's single-value field contains different values, a conflict is reported. Choose an explicit aggregation rule in the mapping.",
+    "zh-Hant": "同一組內的單值字段若出現多個不同值，會報衝突，需在映射中明確選擇取值規則。"
+  },
+  "排除空白行": {
+    "en": "Empty rows excluded",
+    "zh-Hant": "排除空白行"
+  },
+  "过滤 / 分组值为空": {
+    "en": "Filtered / empty group keys",
+    "zh-Hant": "過濾 / 分組值為空"
+  },
+  "样本": {
+    "en": "Samples",
+    "zh-Hant": "樣本"
+  },
+  "合并自：": {
+    "en": "Merged from: ",
+    "zh-Hant": "合併自："
+  },
+  "仅显示前 ": {
+    "en": "Showing the first ",
+    "zh-Hant": "僅顯示前 "
+  },
+  " 条，完整清单在「样本」面板中查看。": {
+    "en": " only. Open the Samples panel for the full list.",
+    "zh-Hant": " 條，完整清單在「樣本」面板中查看。"
+  },
+  "将为 ": {
+    "en": "Generate one output for each of ",
+    "zh-Hant": "將為 "
+  },
+  " 个可用来源文件各生成一份输出。文件内不同位置的数据、多个明细区域可以共同填入同一份文档。": {
+    "en": " ready source files. Values from different locations and multiple detail regions within a file can populate the same document.",
+    "zh-Hant": " 個可用來源文件各生成一份輸出。文件內不同位置的數據、多個明細區域可以共同填入同一份文檔。"
+  },
+  "展开映射列表": {
+    "en": "Expand mapping list",
+    "zh-Hant": "展開映射列表"
+  },
+  "映射 ": {
+    "en": "Mappings ",
+    "zh-Hant": "映射 "
+  },
+  " · 字段 ": {
+    "en": " · Fields ",
+    "zh-Hant": " · 字段 "
+  },
+  "调整右侧面板宽度": {
+    "en": "Resize right panel",
+    "zh-Hant": "調整右側面板寬度"
+  },
+  "{v1} 像素": {
+    "en": "{v1} pixels",
+    "zh-Hant": "{v1} 像素"
+  },
+  "拖动或用 ← / → 调整面板宽度，Enter 收起": {
+    "en": "Drag or use ← / → to resize; Enter to collapse",
+    "zh-Hant": "拖動或用 ← / → 調整面板寬度，Enter 收起"
+  },
+  "字段 ": {
+    "en": "Fields ",
+    "zh-Hant": "字段 "
+  },
+  "校验": {
+    "en": "Validation",
+    "zh-Hant": "校驗"
+  },
+  "收起右侧面板": {
+    "en": "Collapse right panel",
+    "zh-Hant": "收起右側面板"
+  },
+  "启用": {
+    "en": "Enable",
+    "zh-Hant": "啓用"
+  },
+  "禁用": {
+    "en": "Disable",
+    "zh-Hant": "禁用"
+  },
+  "{v1} {v2} 个映射（#{v3}）": {
+    "en": "{v1} {v2} mappings (#{v3})",
+    "zh-Hant": "{v1} {v2} 個映射（#{v3}）"
+  },
+  "删除映射": {
+    "en": "Delete mappings",
+    "zh-Hant": "刪除映射"
+  },
+  "删除 {v1} 个映射（#{v2}）？可以用「撤销」恢复。": {
+    "en": "Delete {v1} mappings (#{v2})? You can restore them with Undo.",
+    "zh-Hant": "刪除 {v1} 個映射（#{v2}）？可以用「撤銷」恢復。"
+  },
+  "删除 {v1} 个映射（#{v2}）": {
+    "en": "Delete {v1} mappings (#{v2})",
+    "zh-Hant": "刪除 {v1} 個映射（#{v2}）"
+  },
+  "无法改绑": {
+    "en": "Cannot reassign",
+    "zh-Hant": "無法改綁"
+  },
+  "字段「{v1}」已被映射 #{v2} 使用。请先删除或合并该映射。": {
+    "en": "Field “{v1}” is used by mapping #{v2}. Delete or merge that mapping first.",
+    "zh-Hant": "字段「{v1}」已被映射 #{v2} 使用。請先刪除或合併該映射。"
+  },
+  "映射 #{v1} 改绑到「{v2}」": {
+    "en": "Reassign mapping #{v1} to “{v2}”",
+    "zh-Hant": "映射 #{v1} 改綁到「{v2}」"
+  },
+  "{v1}映射 #{v2}": {
+    "en": "{v1} mapping #{v2}",
+    "zh-Hant": "{v1}映射 #{v2}"
+  },
+  "删除映射 #{v1}？可以用「撤销」恢复。": {
+    "en": "Delete mapping #{v1}? You can restore it with Undo.",
+    "zh-Hant": "刪除映射 #{v1}？可以用「撤銷」恢復。"
+  },
+  "删除映射 #{v1}": {
+    "en": "Delete mapping #{v1}",
+    "zh-Hant": "刪除映射 #{v1}"
+  },
+  "撤销（Ctrl/⌘+Z）": {
+    "en": "Undo (Ctrl/⌘+Z)",
+    "zh-Hant": "撤銷（Ctrl/⌘+Z）"
+  },
+  "↶ 撤销": {
+    "en": "↶ Undo",
+    "zh-Hant": "↶ 撤銷"
+  },
+  "重做（Ctrl/⌘+Shift+Z）": {
+    "en": "Redo (Ctrl/⌘+Shift+Z)",
+    "zh-Hant": "重做（Ctrl/⌘+Shift+Z）"
+  },
+  "↷ 重做": {
+    "en": "↷ Redo",
+    "zh-Hant": "↷ 重做"
+  },
+  "列表可用键盘操作：↑↓ 移动，X 或空格多选，D 启用/禁用，Delete 删除": {
+    "en": "Keyboard: ↑↓ to move, X or Space to select, D to enable/disable, Delete to remove",
+    "zh-Hant": "列表可用鍵盤操作：↑↓ 移動，X 或空格多選，D 啓用/禁用，Delete 刪除"
+  },
+  "当前文件的实际取值": {
+    "en": "Actual value in current file",
+    "zh-Hant": "當前文件的實際取值"
+  },
+  "映射列表": {
+    "en": "Mapping list",
+    "zh-Hant": "映射列表"
+  },
+  "还没有映射": {
+    "en": "No mappings yet",
+    "zh-Hant": "還沒有映射"
+  },
+  "1. 在左侧选中来源数据（单元格、文字、区域）": {
+    "en": "1. Select source data on the left (cell, text or region)",
+    "zh-Hant": "1. 在左側選中來源數據（單元格、文字、區域）"
+  },
+  "2. 在右侧点击字段（或选中内容后「设为待填区域」）": {
+    "en": "2. Click a field on the right (or select content and choose “Set as fillable region”)",
+    "zh-Hant": "2. 在右側點擊字段（或選中內容後「設為待填區域」）"
+  },
+  "3. 点击底部「建立映射」": {
+    "en": "3. Click “Create mapping” below",
+    "zh-Hant": "3. 點擊底部「建立映射」"
+  },
+  "目标已失效": {
+    "en": "Target is invalid",
+    "zh-Hant": "目標已失效"
+  },
+  "（已禁用）": {
+    "en": " (disabled)",
+    "zh-Hant": "（已禁用）"
+  },
+  "映射 #{v1}：{v2}{v3}": {
+    "en": "Mapping #{v1}: {v2}{v3}",
+    "zh-Hant": "映射 #{v1}：{v2}{v3}"
+  },
+  "选择映射 #{v1}": {
+    "en": "Select mapping #{v1}",
+    "zh-Hant": "選擇映射 #{v1}"
+  },
+  "已禁用": {
+    "en": "Disabled",
+    "zh-Hant": "已禁用"
+  },
+  "当前文件无法定位": {
+    "en": "Cannot locate in this file",
+    "zh-Hant": "當前文件無法定位"
+  },
+  "把此映射的目标改为当前选中的字段「{v1}」": {
+    "en": "Reassign this mapping to selected field “{v1}”",
+    "zh-Hant": "把此映射的目標改為當前選中的字段「{v1}」"
+  },
+  "改绑": {
+    "en": "Reassign",
+    "zh-Hant": "改綁"
+  },
+  "目标：": {
+    "en": "Target: ",
+    "zh-Hant": "目標："
+  },
+  "（已删除）": {
+    "en": "(deleted)",
+    "zh-Hant": "（已刪除）"
+  },
+  "列：": {
+    "en": "Columns: ",
+    "zh-Hant": "列："
+  },
+  "组内：": {
+    "en": "Within group: ",
+    "zh-Hant": "組內："
+  },
+  "取第一条": {
+    "en": "First",
+    "zh-Hant": "取第一條"
+  },
+  "取最后一条": {
+    "en": "Last",
+    "zh-Hant": "取最後一條"
+  },
+  "去重拼接": {
+    "en": "Join unique",
+    "zh-Hant": "去重拼接"
+  },
+  "计数": {
+    "en": "Count",
+    "zh-Hant": "計數"
+  },
+  "转换：": {
+    "en": "Transforms: ",
+    "zh-Hant": "轉換："
+  },
+  "批量操作": {
+    "en": "Bulk actions",
+    "zh-Hant": "批量操作"
+  },
+  "已选 ": {
+    "en": "Selected ",
+    "zh-Hant": "已選 "
+  },
+  "取消选择": {
+    "en": "Clear selection",
+    "zh-Hant": "取消選擇"
+  },
+  "模板还没有字段": {
+    "en": "This template has no fields yet",
+    "zh-Hant": "模板還沒有字段"
+  },
+  "在右侧模板中选中内容，点击「设为待填区域」": {
+    "en": "Select template content on the right and click “Set as fillable region”",
+    "zh-Hant": "在右側模板中選中內容，點擊「設為待填區域」"
+  },
+  "（映射 #{v1}）": {
+    "en": " (mapping #{v1})",
+    "zh-Hant": "（映射 #{v1}）"
+  },
+  "（未映射）": {
+    "en": " (unmapped)",
+    "zh-Hant": "（未映射）"
+  },
+  "字段「{v1}」{v2}": {
+    "en": "Field “{v1}”{v2}",
+    "zh-Hant": "字段「{v1}」{v2}"
+  },
+  "与同名字段共享数据绑定": {
+    "en": "Shares the data binding with fields of the same name",
+    "zh-Hant": "與同名字段共享數據綁定"
+  },
+  "共享": {
+    "en": "Shared",
+    "zh-Hant": "共享"
+  },
+  "重复明细区域": {
+    "en": "Repeating detail region",
+    "zh-Hant": "重復明細區域"
+  },
+  "原内容：「": {
+    "en": "Original content: “",
+    "zh-Hant": "原內容：「"
+  },
+  "」（生成时替换；删除字段可恢复）": {
+    "en": "” (replaced on generation; remove the field to restore)",
+    "zh-Hant": "」（生成時替換；刪除字段可恢復）"
+  },
+  " 必填（为空时阻止该样本）": {
+    "en": " Required (empty value blocks this sample)",
+    "zh-Hant": " 必填（為空時阻止該樣本）"
+  },
+  "数据类型": {
+    "en": "Data type",
+    "zh-Hant": "數據類型"
+  },
+  "自动（保持来源类型）": {
+    "en": "Automatic (preserve source type)",
+    "zh-Hant": "自動（保持來源類型）"
+  },
+  "文本": {
+    "en": "Text",
+    "zh-Hant": "文本"
+  },
+  "数字": {
+    "en": "Number",
+    "zh-Hant": "數字"
+  },
+  "日期": {
+    "en": "Date",
+    "zh-Hant": "日期"
+  },
+  "值为空时的默认值（可选，不会臆造内容）": {
+    "en": "Default for empty values (optional; no content is invented)",
+    "zh-Hant": "值為空時的默認值（可選，不會臆造內容）"
+  },
+  " 超长导致分页增加时允许缩小字号": {
+    "en": " Allow font shrinking if extra pages are caused by long text",
+    "zh-Hant": " 超長導致分頁增加時允許縮小字號"
+  },
+  "最小": {
+    "en": "Minimum",
+    "zh-Hant": "最小"
+  },
+  "号": {
+    "en": "pt",
+    "zh-Hant": "號"
+  },
+  "字段格式（对所有映射生效）": {
+    "en": "Field format (applies to every mapping)",
+    "zh-Hant": "字段格式（對所有映射生效）"
+  },
+  "PDF 明细区域：": {
+    "en": "PDF detail region: ",
+    "zh-Hant": "PDF 明細區域："
+  },
+  " 列，行高 ": {
+    "en": " columns, row height ",
+    "zh-Hant": " 列，行高 "
+  },
+  " 点，可容纳 ": {
+    "en": " pt; capacity ",
+    "zh-Hant": " 點，可容納 "
+  },
+  " 行": {
+    "en": " rows",
+    "zh-Hant": " 行"
+  },
+  "超过可容纳行数时": {
+    "en": "When rows exceed capacity",
+    "zh-Hant": "超過可容納行數時"
+  },
+  "视为错误（该样本不生成）": {
+    "en": "Fail this sample",
+    "zh-Hant": "視為錯誤（該樣本不生成）"
+  },
+  "复制本页续写": {
+    "en": "Duplicate this page to continue",
+    "zh-Hant": "複製本頁續寫"
+  },
+  "压缩行高放入（最多 50%）": {
+    "en": "Compress row height (up to 50%)",
+    "zh-Hant": "壓縮行高放入（最多 50%）"
+  },
+  "零条明细时": {
+    "en": "When there are no detail rows",
+    "zh-Hant": "零條明細時"
+  },
+  "区域留空": {
+    "en": "Leave region empty",
+    "zh-Hant": "區域留空"
+  },
+  "第一行显示占位文字": {
+    "en": "Show placeholder in first row",
+    "zh-Hant": "第一行顯示佔位文字"
+  },
+  "视为错误": {
+    "en": "Report an error",
+    "zh-Hant": "視為錯誤"
+  },
+  "占位文字": {
+    "en": "Placeholder text",
+    "zh-Hant": "佔位文字"
+  },
+  "（无）": {
+    "en": "(none)",
+    "zh-Hant": "（無）"
+  },
+  "明细列：": {
+    "en": "Detail columns: ",
+    "zh-Hant": "明細列："
+  },
+  "中": {
+    "en": "Center",
+    "zh-Hant": "中"
+  },
+  "重复内容块：": {
+    "en": "Repeating block: ",
+    "zh-Hant": "重復內容塊："
+  },
+  " 个段落，每条明细复制一份": {
+    "en": " paragraphs, copied once per detail row",
+    "zh-Hant": " 個段落，每條明細複製一份"
+  },
+  "相邻两份之间": {
+    "en": "Between copies",
+    "zh-Hant": "相鄰兩份之間"
+  },
+  "直接相连": {
+    "en": "No separator",
+    "zh-Hant": "直接相連"
+  },
+  "空一行": {
+    "en": "Blank line",
+    "zh-Hant": "空一行"
+  },
+  "分页（每条明细一页）": {
+    "en": "Page break (one detail per page)",
+    "zh-Hant": "分頁（每條明細一頁）"
+  },
+  "删除整个内容块": {
+    "en": "Remove entire block",
+    "zh-Hant": "刪除整個內容塊"
+  },
+  "保留一份，第一列显示占位文字": {
+    "en": "Keep one copy; placeholder in first column",
+    "zh-Hant": "保留一份，第一列顯示佔位文字"
+  },
+  "明细列（在块内划选文字可添加列）：": {
+    "en": "Detail columns (select text inside the block to add columns):",
+    "zh-Hant": "明細列（在塊內划選文字可添加列）："
+  },
+  "还没有列。请在右侧内容块中划选要随明细变化的文字，选择「作为内容块的一列」。": {
+    "en": "No columns yet. Select text that should vary in the block on the right, then choose “Use as block column”.",
+    "zh-Hant": "還沒有列。請在右側內容塊中划選要隨明細變化的文字，選擇「作為內容塊的一列」。"
+  },
+  "取消该列（恢复为原文字，不随明细变化）": {
+    "en": "Remove column (restore original text; no longer varies by detail)",
+    "zh-Hant": "取消該列（恢復為原文字，不隨明細變化）"
+  },
+  "删除明细行，保留表头": {
+    "en": "Remove detail rows, keep headers",
+    "zh-Hant": "刪除明細行，保留表頭"
+  },
+  "保留一行空白": {
+    "en": "Keep one blank row",
+    "zh-Hant": "保留一行空白"
+  },
+  "保留一行并显示占位文字": {
+    "en": "Keep one row with placeholder text",
+    "zh-Hant": "保留一行並顯示佔位文字"
+  },
+  "删除整个表格（仅文档）": {
+    "en": "Remove entire table (documents only)",
+    "zh-Hant": "刪除整個表格（僅文檔）"
+  },
+  " 跨页时重复表头（": {
+    "en": " Repeat headers across pages (",
+    "zh-Hant": " 跨頁時重復表頭（"
+  },
+  "固定区域：": {
+    "en": "Fixed region: ",
+    "zh-Hant": "固定區域："
+  },
+  " 列。来源区域必须同样大小。": {
+    "en": " columns. Source region must have the same size.",
+    "zh-Hant": " 列。來源區域必須同樣大小。"
+  },
+  "文字颜色": {
+    "en": "Text color",
+    "zh-Hant": "文字顏色"
+  },
+  "（创建时取自原内容）": {
+    "en": " (taken from original content)",
+    "zh-Hant": "（創建時取自原內容）"
+  },
+  "字号": {
+    "en": "Font size",
+    "zh-Hant": "字號"
+  },
+  "对齐": {
+    "en": "Alignment",
+    "zh-Hant": "對齊"
+  },
+  "删除字段": {
+    "en": "Delete field",
+    "zh-Hant": "刪除字段"
+  },
+  "尚未定义样本": {
+    "en": "No sample rules defined",
+    "zh-Hant": "尚未定義樣本"
+  },
+  "定义样本": {
+    "en": "Define samples",
+    "zh-Hant": "定義樣本"
+  },
+  " 条样本": {
+    "en": " samples",
+    "zh-Hant": " 條樣本"
+  },
+  "修改规则": {
+    "en": "Edit rules",
+    "zh-Hant": "修改規則"
+  },
+  "排除空白行 ": {
+    "en": "Empty rows excluded ",
+    "zh-Hant": "排除空白行 "
+  },
+  " · 过滤 ": {
+    "en": " · Filtered ",
+    "zh-Hant": " · 過濾 "
+  },
+  " · 分组值为空 ": {
+    "en": " · Empty group key ",
+    "zh-Hant": " · 分組值為空 "
+  },
+  " · 使用文件 ": {
+    "en": " · Files used ",
+    "zh-Hant": " · 使用文件 "
+  },
+  "显示更多（已显示 {v1} / {v2} 条）": {
+    "en": "Show more ({v1} / {v2} shown)",
+    "zh-Hant": "顯示更多（已顯示 {v1} / {v2} 條）"
+  },
+  "在代表文件上建立的规则会逐一应用到所有来源文件；无法定位的映射会被标出，不会静默选择附近内容。": {
+    "en": "Rules created on the representative file apply to all sources. Mappings that cannot be located are flagged; nearby content is never silently substituted.",
+    "zh-Hant": "在代表文件上建立的規則會逐一應用到所有來源文件；無法定位的映射會被標出，不會靜默選擇附近內容。"
+  },
+  " 个问题": {
+    "en": " issues",
+    "zh-Hant": " 個問題"
+  },
+  "样本错误": {
+    "en": "Sample errors",
+    "zh-Hant": "樣本錯誤"
+  },
+  "通过": {
+    "en": "Passed",
+    "zh-Hant": "通過"
+  },
+  "结构特征与代表文件不同（仅提示；以下逐项核对为准）": {
+    "en": "Structure differs from representative file (informational; see detailed checks below)",
+    "zh-Hant": "結構特徵與代表文件不同（僅提示；以下逐項核對為準）"
+  },
+  "样本 ": {
+    "en": "Samples ",
+    "zh-Hant": "樣本 "
+  },
+  " 条（按首条样本核对）": {
+    "en": " (checked against the first sample)",
+    "zh-Hant": " 條（按首條樣本核對）"
+  },
+  "在此文件中重新定位": {
+    "en": "Relocate in this file",
+    "zh-Hant": "在此文件中重新定位"
+  },
+  "清除该文件的单独定位": {
+    "en": "Clear file-specific location",
+    "zh-Hant": "清除該文件的單獨定位"
+  },
+  "映射 #": {
+    "en": "Mapping #",
+    "zh-Hant": "映射 #"
+  },
+  " 在此文件": {
+    "en": " in this file",
+    "zh-Hant": " 在此文件"
+  },
+  "第 {v1} 块": {
+    "en": "Block {v1}",
+    "zh-Hant": "第 {v1} 塊"
+  },
+  "使用单独定位": {
+    "en": "Using a file-specific location",
+    "zh-Hant": "使用單獨定位"
+  },
+  "清除": {
+    "en": "Clear",
+    "zh-Hant": "清除"
+  },
+  "确认 / 修正识别值": {
+    "en": "Confirm / correct recognized value",
+    "zh-Hant": "確認 / 修正識別值"
+  },
+  "识别结果为「{v1}」。请对照左侧原图核对，确认无误直接保存，或改为正确的值：": {
+    "en": "Recognized “{v1}”. Compare with the original image on the left, then save to confirm or enter the correct value:",
+    "zh-Hant": "識別結果為「{v1}」。請對照左側原圖核對，確認無誤直接保存，或改為正確的值："
+  },
+  "确认/修正识别值": {
+    "en": "Confirm / correct recognized value",
+    "zh-Hant": "確認/修正識別值"
+  },
+  "表格竖线": {
+    "en": "Table vertical lines",
+    "zh-Hant": "表格竪線"
+  },
+  "表头文字位置": {
+    "en": "Header text positions",
+    "zh-Hant": "表頭文字位置"
+  },
+  "样例行文字": {
+    "en": "Sample row text",
+    "zh-Hant": "樣例行文字"
+  },
+  "未找到分列依据（单列）": {
+    "en": "No column boundaries found (single column)",
+    "zh-Hant": "未找到分列依據（單列）"
+  },
+  "表格横线": {
+    "en": "Table horizontal lines",
+    "zh-Hant": "表格橫線"
+  },
+  "样例行距": {
+    "en": "Sample row spacing",
+    "zh-Hant": "樣例行距"
+  },
+  "表头与样例行间距": {
+    "en": "Header-to-sample spacing",
+    "zh-Hant": "表頭與樣例行間距"
+  },
+  "默认行高": {
+    "en": "Default row height",
+    "zh-Hant": "默認行高"
+  },
+  "行高至少 6 点": {
+    "en": "Row height must be at least 6 pt",
+    "zh-Hant": "行高至少 6 點"
+  },
+  "行高超过区域高度": {
+    "en": "Row height exceeds region height",
+    "zh-Hant": "行高超過區域高度"
+  },
+  "列「{v1}」太窄": {
+    "en": "Column “{v1}” is too narrow",
+    "zh-Hant": "列「{v1}」太窄"
+  },
+  "每一列都需要名称": {
+    "en": "Every column needs a name",
+    "zh-Hant": "每一列都需要名稱"
+  },
+  "无法识别明细区域：": {
+    "en": "Cannot detect detail region: ",
+    "zh-Hant": "無法識別明細區域："
+  },
+  " 正在识别表格的列和行…": {
+    "en": " Detecting table columns and rows…",
+    "zh-Hant": " 正在識別表格的列和行…"
+  },
+  "第{v1}列": {
+    "en": "Column {v1}",
+    "zh-Hant": "第{v1}列"
+  },
+  "可容纳 ": {
+    "en": "Capacity: ",
+    "zh-Hant": "可容納 "
+  },
+  "列依据：": {
+    "en": "Column detection: ",
+    "zh-Hant": "列依據："
+  },
+  "行高依据：": {
+    "en": "Row height detection: ",
+    "zh-Hant": "行高依據："
+  },
+  "模板页面": {
+    "en": "Template page",
+    "zh-Hant": "模板頁面"
+  },
+  "拖动调整行高": {
+    "en": "Drag to adjust row height",
+    "zh-Hant": "拖動調整行高"
+  },
+  "拖动调整列宽；双击合并相邻两列": {
+    "en": "Drag to resize columns; double-click to merge adjacent columns",
+    "zh-Hant": "拖動調整列寬；雙擊合併相鄰兩列"
+  },
+  "该区域的文字方向与页面显示方向不同，请用下方数值调整列边界（单位：点）。": {
+    "en": "Text orientation differs from page orientation. Adjust column boundaries using the numeric controls below (in points).",
+    "zh-Hant": "該區域的文字方向與頁面顯示方向不同，請用下方數值調整列邊界（單位：點）。"
+  },
+  "第{v1}列名称": {
+    "en": "Column {v1} name",
+    "zh-Hant": "第{v1}列名稱"
+  },
+  "第{v1}列左边界（点）": {
+    "en": "Column {v1} left boundary (pt)",
+    "zh-Hant": "第{v1}列左邊界（點）"
+  },
+  "左边界（点）": {
+    "en": "Left boundary (pt)",
+    "zh-Hant": "左邊界（點）"
+  },
+  "第{v1}列右边界（点）": {
+    "en": "Column {v1} right boundary (pt)",
+    "zh-Hant": "第{v1}列右邊界（點）"
+  },
+  "右边界（点）": {
+    "en": "Right boundary (pt)",
+    "zh-Hant": "右邊界（點）"
+  },
+  "从中间拆成两列": {
+    "en": "Split into two equal columns",
+    "zh-Hant": "從中間拆成兩列"
+  },
+  "拆分": {
+    "en": "Split",
+    "zh-Hant": "拆分"
+  },
+  "与第{v1}列合并（同双击分隔线）": {
+    "en": "Merge with column {v1} (also available by double-clicking the divider)",
+    "zh-Hant": "與第{v1}列合併（同雙擊分隔線）"
+  },
+  "第{v1}列与第{v2}列合并": {
+    "en": "Merge columns {v1} and {v2}",
+    "zh-Hant": "第{v1}列與第{v2}列合併"
+  },
+  "合并右列": {
+    "en": "Merge right",
+    "zh-Hant": "合併右列"
+  },
+  "样例：": {
+    "en": "Example: ",
+    "zh-Hant": "樣例："
+  },
+  "行高（点）": {
+    "en": "Row height (pt)",
+    "zh-Hant": "行高（點）"
+  },
+  "恢复自动识别": {
+    "en": "Restore auto-detection",
+    "zh-Hant": "恢復自動識別"
+  },
+  "请填写字段名称": {
+    "en": "Enter a field name",
+    "zh-Hant": "請填寫字段名稱"
+  },
+  "明细区域还在识别中": {
+    "en": "Detail region detection is still running",
+    "zh-Hant": "明細區域還在識別中"
+  },
+  "设为待填区域": {
+    "en": "Set as fillable region",
+    "zh-Hant": "設為待填區域"
+  },
+  "关闭": {
+    "en": "Close",
+    "zh-Hant": "關閉"
+  },
+  "当前选择（": {
+    "en": "Current selection (",
+    "zh-Hant": "當前選擇（"
+  },
+  "）不能设为字段。请选择文字、单元格、表格行或框选区域。": {
+    "en": ") cannot become a field. Select text, a cell, a table row or a rectangular region.",
+    "zh-Hant": "）不能設為字段。請選擇文字、單元格、表格行或框選區域。"
+  },
+  "创建中…": {
+    "en": "Creating…",
+    "zh-Hant": "創建中…"
+  },
+  "创建字段": {
+    "en": "Create field",
+    "zh-Hant": "創建字段"
+  },
+  "选择内容：": {
+    "en": "Selected content: ",
+    "zh-Hant": "選擇內容："
+  },
+  "字段名称": {
+    "en": "Field name",
+    "zh-Hant": "字段名稱"
+  },
+  "例如：客户名称": {
+    "en": "Example: Customer name",
+    "zh-Hant": "例如：客戶名稱"
+  },
+  "已有同名字段「": {
+    "en": "A field named “",
+    "zh-Hant": "已有同名字段「"
+  },
+  "」：与它共享同一个数据绑定（两处各有独立 ID，但填入相同的值）": {
+    "en": "” already exists: share its data binding (independent IDs; identical values)",
+    "zh-Hant": "」：與它共享同一個數據綁定（兩處各有獨立 ID，但填入相同的值）"
+  },
+  "替换选中内容（默认）": {
+    "en": "Replace selected content (default)",
+    "zh-Hant": "替換選中內容（默認）"
+  },
+  "保留原文，在": {
+    "en": "Keep original text; at ",
+    "zh-Hant": "保留原文，在"
+  },
+  "选区末尾": {
+    "en": "the end of the selection",
+    "zh-Hant": "選區末尾"
+  },
+  "此处": {
+    "en": "this position",
+    "zh-Hant": "此處"
+  },
+  "插入": {
+    "en": "insert",
+    "zh-Hant": "插入"
+  },
+  "替换单元格内容（默认）": {
+    "en": "Replace cell content (default)",
+    "zh-Hant": "替換單元格內容（默認）"
+  },
+  "保留原文，在其后追加": {
+    "en": "Keep original text; append after it",
+    "zh-Hant": "保留原文，在其後追加"
+  },
+  "保留原文，在其前插入": {
+    "en": "Keep original text; insert before it",
+    "zh-Hant": "保留原文，在其前插入"
+  },
+  "上方表头行数（跨页时重复显示）": {
+    "en": "Header rows above (repeat on each page)",
+    "zh-Hant": "上方表頭行數（跨頁時重復顯示）"
+  },
+  "保留一行并显示「（无）」": {
+    "en": "Keep one row showing “(none)”",
+    "zh-Hant": "保留一行並顯示「（無）」"
+  },
+  "删除整个表格": {
+    "en": "Remove entire table",
+    "zh-Hant": "刪除整個表格"
+  },
+  "视为错误（阻止该样本）": {
+    "en": "Fail this sample",
+    "zh-Hant": "視為錯誤（阻止該樣本）"
+  },
+  " 自动把「标签：值」中的值设为明细列（如「品名：示例商品」→ 列「品名」）": {
+    "en": " Automatically use values in “Label: value” as detail columns (e.g. “Product: example” → column “Product”)",
+    "zh-Hant": " 自動把「標籤：值」中的值設為明細列（如「品名：示例商品」→ 列「品名」）"
+  },
+  "保留一份，第一列显示「（无）」": {
+    "en": "Keep one copy with “(none)” in the first column",
+    "zh-Hant": "保留一份，第一列顯示「（無）」"
+  },
+  "创建后，可以在内容块中继续划选文字，选择「作为内容块的一列」添加更多列；块内的其他字段（如客户名）会在每一份中填入相同的值。": {
+    "en": "After creating the block, select text within it and choose “Use as block column” to add more columns. Other fields, such as customer name, retain the same value in every copy.",
+    "zh-Hant": "創建後，可以在內容塊中繼續划選文字，選擇「作為內容塊的一列」添加更多列；塊內的其他字段（如客戶名）會在每一份中填入相同的值。"
+  },
+  "明细超过 ": {
+    "en": "When detail exceeds ",
+    "zh-Hant": "明細超過 "
+  },
+  " 行时": {
+    "en": " rows",
+    "zh-Hant": " 行時"
+  },
+  "复制本页续写（页上其他字段同样填写）": {
+    "en": "Duplicate this page to continue (other fields are also filled)",
+    "zh-Hant": "複製本頁續寫（頁上其他字段同樣填寫）"
+  },
+  "压缩行高放入（最多压缩到 50%）": {
+    "en": "Compress row height (down to 50%)",
+    "zh-Hant": "壓縮行高放入（最多壓縮到 50%）"
+  },
+  "第一行显示「（无）」": {
+    "en": "Show “(none)” in the first row",
+    "zh-Hant": "第一行顯示「（無）」"
+  },
+  "字号（留空=沿用原文字号）": {
+    "en": "Font size (empty = retain original)",
+    "zh-Hant": "字號（留空=沿用原文字號）"
+  },
+  "区域内原有文字会被真正删除（表格线保留）；每个单元格放不下时逐步缩小字号，仍放不下则报错，不会截断。": {
+    "en": "Original text in the region is removed while table lines remain. Text that does not fit is progressively shrunk; if it still cannot fit, generation fails rather than truncating.",
+    "zh-Hant": "區域內原有文字會被真正刪除（表格線保留）；每個單元格放不下時逐步縮小字號，仍放不下則報錯，不會截斷。"
+  },
+  "最小字号": {
+    "en": "Minimum font size",
+    "zh-Hant": "最小字號"
+  },
+  "框内原有文字会被真正删除（不是白色遮盖）。": {
+    "en": "Original text inside the box is removed, not covered with white.",
+    "zh-Hant": "框內原有文字會被真正刪除（不是白色遮蓋）。"
+  },
+  "框内原有像素按周围背景重建（跟随渐变和光照），文字颜色与字号沿用原内容。": {
+    "en": "Original pixels inside the box are rebuilt from surrounding gradients and lighting. Original text color and size are retained.",
+    "zh-Hant": "框內原有像素按周圍背景重建（跟隨漸變和光照），文字顏色與字號沿用原內容。"
+  },
+  "新内容放不下时逐步缩小到最小字号，仍放不下则报错，不会截断。": {
+    "en": "Text that does not fit shrinks to the minimum size. If it still cannot fit, generation fails rather than truncating.",
+    "zh-Hant": "新內容放不下時逐步縮小到最小字號，仍放不下則報錯，不會截斷。"
+  },
+  " 必填（值为空时阻止生成该样本）": {
+    "en": " Required (empty value blocks generation for this sample)",
+    "zh-Hant": " 必填（值為空時阻止生成該樣本）"
+  },
+  "这 {v1} 个段落作为一个整体：每条明细复制一份（保留格式、编号和图片）": {
+    "en": "Treat these {v1} paragraphs as one block: copy once per detail row, retaining formatting, numbering and images",
+    "zh-Hant": "這 {v1} 個段落作為一個整體：每條明細複製一份（保留格式、編號和圖片）"
+  },
+  "文字字段": {
+    "en": "Text field",
+    "zh-Hant": "文字字段"
+  },
+  "在光标处插入字段": {
+    "en": "Insert field at cursor",
+    "zh-Hant": "在光標處插入字段"
+  },
+  "选中的文字将变成字段（可跨多个格式片段）": {
+    "en": "Turn selected text into a field (may span multiple formatting runs)",
+    "zh-Hant": "選中的文字將變成字段（可跨多個格式片段）"
+  },
+  "作为内容块「{v1}」的一列": {
+    "en": "Use as a column of block “{v1}”",
+    "zh-Hant": "作為內容塊「{v1}」的一列"
+  },
+  "每一份中这里填入该条明细对应列的值": {
+    "en": "Each copy uses this detail row's value for this column",
+    "zh-Hant": "每一份中這裡填入該條明細對應列的值"
+  },
+  "每一份中这里都填入同一个值（不随明细变化）": {
+    "en": "Every copy uses the same value here (does not vary by detail)",
+    "zh-Hant": "每一份中這裡都填入同一個值（不隨明細變化）"
+  },
+  "单元格字段": {
+    "en": "Cell field",
+    "zh-Hant": "單元格字段"
+  },
+  "整个单元格的文字作为字段": {
+    "en": "Use all text in this cell as a field",
+    "zh-Hant": "整個單元格的文字作為字段"
+  },
+  "每条明细复制一次该行，保留该行样式；每个单元格成为一个明细列": {
+    "en": "Copy this row once per detail, retaining styling; each cell becomes a detail column",
+    "zh-Hant": "每條明細複製一次該行，保留該行樣式；每個單元格成為一個明細列"
+  },
+  "{v1} 行 × {v2} 列，按行列一一对应填入": {
+    "en": "{v1} rows × {v2} columns, filled cell by cell",
+    "zh-Hant": "{v1} 行 × {v2} 列，按行列一一對應填入"
+  },
+  "{v1}：{v2} 行 × {v3} 列，按行列一一对应": {
+    "en": "{v1}: {v2} rows × {v3} columns, matched cell by cell",
+    "zh-Hant": "{v1}：{v2} 行 × {v3} 列，按行列一一對應"
+  },
+  "第 {v1} 行的 {v2} 为明细模板行：有几条明细就插入几行（公式、合并单元格和条件格式随之平移）": {
+    "en": "{v2} on row {v1} is the detail template row: insert one row per detail, shifting formulas, merged cells and conditional formatting",
+    "zh-Hant": "第 {v1} 行的 {v2} 為明細模板行：有幾條明細就插入幾行（公式、合併單元格和條件格式隨之平移）"
+  },
+  "PDF 区域字段（单个值）": {
+    "en": "PDF region field (single value)",
+    "zh-Hant": "PDF 區域字段（單個值）"
+  },
+  "删除框内原文字，生成时写入新值": {
+    "en": "Remove original text in the box and insert the new value during generation",
+    "zh-Hant": "刪除框內原文字，生成時寫入新值"
+  },
+  "重复明细区域（多行）": {
+    "en": "Repeating detail region (multiple rows)",
+    "zh-Hant": "重復明細區域（多行）"
+  },
+  "框选明细表的数据行（不含表头）：每条明细写入一行，自动识别列和行高，可拖动调整": {
+    "en": "Select detail data rows, excluding the header. One row per detail; columns and row height are detected automatically and can be adjusted by dragging.",
+    "zh-Hant": "框選明細表的數據行（不含表頭）：每條明細寫入一行，自動識別列和行高，可拖動調整"
+  },
+  "使用 PDF 已定义的表单字段": {
+    "en": "Use an existing PDF form field",
+    "zh-Hant": "使用 PDF 已定義的表單字段"
+  },
+  "文本框中选中的文字": {
+    "en": "Selected text in a text box",
+    "zh-Hant": "文本框中選中的文字"
+  },
+  "表格单元格": {
+    "en": "Table cell",
+    "zh-Hant": "表格單元格"
+  },
+  "按明细条数复制该表格行（幻灯片不会自动分页）": {
+    "en": "Copy this table row for each detail (slides do not paginate automatically)",
+    "zh-Hant": "按明細條數複製該表格行（幻燈片不會自動分頁）"
+  },
+  "已导入模板「{v1}」": {
+    "en": "Imported template “{v1}”",
+    "zh-Hant": "已導入模板「{v1}」"
+  },
+  "设置目标模板": {
+    "en": "Set target template",
+    "zh-Hant": "設置目標模板"
+  },
+  "上传已有文件作为模板": {
+    "en": "Upload an existing file",
+    "zh-Hant": "上傳已有文件作為模板"
+  },
+  "在软件内新建模板": {
+    "en": "Create a template in the editor",
+    "zh-Hant": "在軟件內新建模板"
+  },
+  "从模板库选择": {
+    "en": "Choose from template library",
+    "zh-Hant": "從模板庫選擇"
+  },
+  "上传中 {v1}%…": {
+    "en": "Uploading {v1}%…",
+    "zh-Hant": "上傳中 {v1}%…"
+  },
+  "拖入模板文件，或 ": {
+    "en": "Drop a template file, or ",
+    "zh-Hant": "拖入模板文件，或 "
+  },
+  "点击选择": {
+    "en": "choose a file",
+    "zh-Hant": "點擊選擇"
+  },
+  "支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 图片（直接输出同尺寸图片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 会经 LibreOffice 转换（会提示可能的版式变化），BMP/TIFF/WEBP 输出为 PNG": {
+    "en": "Supports DOCX, XLSX, PDF, PPTX and PNG/JPEG images (same-size image output). DOC/XLS/PPT/ODT/ODS/ODP/RTF are converted with LibreOffice with layout warnings. BMP/TIFF/WEBP output as PNG.",
+    "zh-Hant": "支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 圖片（直接輸出同尺寸圖片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 會經 LibreOffice 轉換（會提示可能的版式變化），BMP/TIFF/WEBP 輸出為 PNG"
+  },
+  "上传后在右侧预览中选中文字、单元格、表格行，或在 PDF / 图片上框选区域，点击「设为待填区域」即可创建字段。原始模板保持不变，所有修改保存在工作副本中，可撤销/重做。": {
+    "en": "After uploading, select text, cells, rows or a PDF/image region in the preview and click “Set as fillable region”. The original stays unchanged; edits are saved to a working copy with undo/redo.",
+    "zh-Hant": "上傳後在右側預覽中選中文字、單元格、表格行，或在 PDF / 圖片上框選區域，點擊「設為待填區域」即可創建字段。原始模板保持不變，所有修改保存在工作副本中，可撤銷/重做。"
+  },
+  "📄 文档型模板（生成 DOCX）": {
+    "en": "📄 Document template (DOCX output)",
+    "zh-Hant": "📄 文檔型模板（生成 DOCX）"
+  },
+  "段落、标题、字体格式、表格（合并单元格、重复明细行）、图片、纸张与页边距、分页、页眉页脚；在任意位置插入填充字段。": {
+    "en": "Paragraphs, headings, fonts, tables with merged cells and repeating detail rows, images, paper size, margins, page breaks, headers and footers. Insert fields anywhere.",
+    "zh-Hant": "段落、標題、字體格式、表格（合併單元格、重復明細行）、圖片、紙張與頁邊距、分頁、頁眉頁腳；在任意位置插入填充字段。"
+  },
+  "新建文档模板": {
+    "en": "New document template",
+    "zh-Hant": "新建文檔模板"
+  },
+  "▦ 表格型模板（生成 XLSX / CSV）": {
+    "en": "▦ Spreadsheet template (XLSX / CSV output)",
+    "zh-Hant": "▦ 表格型模板（生成 XLSX / CSV）"
+  },
+  "单元格、行列尺寸、合并单元格、字体/填充/边框/对齐/数字格式；定义待填单元格、固定区域和重复明细行。": {
+    "en": "Cells, row/column dimensions, merging, fonts, fills, borders, alignment and number formats. Define fillable cells, fixed regions and repeating detail rows.",
+    "zh-Hant": "單元格、行列尺寸、合併單元格、字體/填充/邊框/對齊/數字格式；定義待填單元格、固定區域和重復明細行。"
+  },
+  "新建表格模板": {
+    "en": "New spreadsheet template",
+    "zh-Hant": "新建表格模板"
+  },
+  "更新时间": {
+    "en": "Updated",
+    "zh-Hant": "更新時間"
+  },
+  "当前": {
+    "en": "Current",
+    "zh-Hant": "當前"
+  },
+  "上传：{v1}": {
+    "en": "Uploaded: {v1}",
+    "zh-Hant": "上傳：{v1}"
+  },
+  "使用": {
+    "en": "Use",
+    "zh-Hant": "使用"
+  },
+  "复制一份后使用，避免影响其他项目": {
+    "en": "Duplicate before using to avoid affecting other projects",
+    "zh-Hant": "複製一份後使用，避免影響其他項目"
+  },
+  "复制后使用": {
+    "en": "Duplicate and use",
+    "zh-Hant": "複製後使用"
+  },
+  "加载模板库…": {
+    "en": "Loading template library…",
+    "zh-Hant": "加載模板庫…"
+  },
+  "模板库为空": {
+    "en": "Template library is empty",
+    "zh-Hant": "模板庫為空"
+  },
+  "模板可被多个项目使用；修改会产生新版本。若不希望影响其他项目，请选择「复制后使用」。": {
+    "en": "Templates can be shared across projects; edits create new versions. Choose “Duplicate and use” to keep other projects unaffected.",
+    "zh-Hant": "模板可被多個項目使用；修改會產生新版本。若不希望影響其他項目，請選擇「複製後使用」。"
+  },
+  "内容已在其他窗口或被其他人修改，这次操作没有执行。已刷新为最新内容，请在此基础上重新操作。": {
+    "en": "Someone else or another window changed this content. Your action was not applied. The latest content is loaded; apply your change again.",
+    "zh-Hant": "內容已在其他窗口或被其他人修改，這次操作沒有執行。已刷新為最新內容，請在此基礎上重新操作。"
+  },
+  "已撤销映射修改": {
+    "en": "Mapping change undone",
+    "zh-Hant": "已撤銷映射修改"
+  },
+  "已撤销模板修改": {
+    "en": "Template change undone",
+    "zh-Hant": "已撤銷模板修改"
+  },
+  "查找结果：{v1}": {
+    "en": "Search result: {v1}",
+    "zh-Hant": "查找結果：{v1}"
+  },
+  "映射 #{v1}": {
+    "en": "Mapping #{v1}",
+    "zh-Hant": "映射 #{v1}"
+  },
+  "字段「{v1}」": {
+    "en": "Field “{v1}”",
+    "zh-Hant": "字段「{v1}」"
+  },
+  "「{v1}」没有找到": {
+    "en": "“{v1}” was not found",
+    "zh-Hant": "「{v1}」沒有找到"
+  },
+  "无法从当前选择生成定位": {
+    "en": "Cannot create a locator from this selection",
+    "zh-Hant": "無法從當前選擇生成定位"
+  },
+  "「{v1}」第 {v2} 块": {
+    "en": "“{v1}”, block {v2}",
+    "zh-Hant": "「{v1}」第 {v2} 塊"
+  },
+  "映射 #{v1} 在{v2}中重新定位": {
+    "en": "Relocate mapping #{v1} in {v2}",
+    "zh-Hant": "映射 #{v1} 在{v2}中重新定位"
+  },
+  "已为「{v1}」单独设置映射 #{v2} 的定位": {
+    "en": "Set a location for mapping #{v2} in “{v1}”",
+    "zh-Hant": "已為「{v1}」單獨設置映射 #{v2} 的定位"
+  },
+  "删除字段「": {
+    "en": "Delete field “",
+    "zh-Hant": "刪除字段「"
+  },
+  "」并恢复模板中原有内容？": {
+    "en": "” and restore the original template content?",
+    "zh-Hant": "」並恢復模板中原有內容？"
+  },
+  "同时会删除 ": {
+    "en": "This also deletes ",
+    "zh-Hant": "同時會刪除 "
+  },
+  " 个相关映射": {
+    "en": " related mappings",
+    "zh-Hant": " 個相關映射"
+  },
+  "可以撤销。": {
+    "en": "You can undo this.",
+    "zh-Hant": "可以撤銷。"
+  },
+  "样本规则已保存": {
+    "en": "Sample rules saved",
+    "zh-Hant": "樣本規則已保存"
+  },
+  "，其中 {v1} 个低置信度（红色下划线）": {
+    "en": ", including {v1} low-confidence words (red underline)",
+    "zh-Hant": "，其中 {v1} 個低置信度（紅色下划線）"
+  },
+  "OCR 完成：识别 {v1} 个词{v2}": {
+    "en": "OCR complete: recognized {v1} words{v2}",
+    "zh-Hant": "OCR 完成：識別 {v1} 個詞{v2}"
+  },
+  "返回项目列表": {
+    "en": "Back to projects",
+    "zh-Hant": "返回項目列表"
+  },
+  "上传来源": {
+    "en": "Upload sources",
+    "zh-Hant": "上傳來源"
+  },
+  "设置模板": {
+    "en": "Set template",
+    "zh-Hant": "設置模板"
+  },
+  "预览生成": {
+    "en": "Preview output",
+    "zh-Hant": "預覽生成"
+  },
+  "该映射的目标字段已不存在，请删除或重新建立": {
+    "en": "This mapping's target field no longer exists. Delete or recreate the mapping.",
+    "zh-Hant": "該映射的目標字段已不存在，請刪除或重新建立"
+  },
+  "工作流": {
+    "en": "Workflow",
+    "zh-Hant": "工作流"
+  },
+  "上传来源文件…": {
+    "en": "Upload source files…",
+    "zh-Hant": "上傳來源文件…"
+  },
+  "选择要上传的文件": {
+    "en": "Choose files to upload",
+    "zh-Hant": "選擇要上傳的文件"
+  },
+  "设置 / 更换模板": {
+    "en": "Set / change template",
+    "zh-Hant": "設置 / 更換模板"
+  },
+  "定义样本规则": {
+    "en": "Define sample rules",
+    "zh-Hant": "定義樣本規則"
+  },
+  "未定义": {
+    "en": "Not defined",
+    "zh-Hant": "未定義"
+  },
+  "先选中左侧来源和右侧字段": {
+    "en": "Select a source on the left and a field on the right first",
+    "zh-Hant": "先選中左側來源和右側字段"
+  },
+  "当前映射 #{v1}": {
+    "en": "Current mapping #{v1}",
+    "zh-Hant": "當前映射 #{v1}"
+  },
+  "删除映射 #{v1}…": {
+    "en": "Delete mapping #{v1}…",
+    "zh-Hant": "刪除映射 #{v1}…"
+  },
+  "可以撤销": {
+    "en": "Undo available",
+    "zh-Hant": "可以撤銷"
+  },
+  "关闭预览": {
+    "en": "Close preview",
+    "zh-Hant": "關閉預覽"
+  },
+  "打开预览": {
+    "en": "Open preview",
+    "zh-Hant": "打開預覽"
+  },
+  "批量生成…": {
+    "en": "Batch generation…",
+    "zh-Hant": "批量生成…"
+  },
+  "撤销": {
+    "en": "Undo",
+    "zh-Hant": "撤銷"
+  },
+  "清除当前选择": {
+    "en": "Clear current selection",
+    "zh-Hant": "清除當前選擇"
+  },
+  "在来源文件中查找": {
+    "en": "Find in source file",
+    "zh-Hant": "在來源文件中查找"
+  },
+  "重新 OCR 识别当前文件": {
+    "en": "Run OCR again on current file",
+    "zh-Hant": "重新 OCR 識別當前文件"
+  },
+  "OCR 识别当前文件": {
+    "en": "Run OCR on current file",
+    "zh-Hant": "OCR 識別當前文件"
+  },
+  "面板": {
+    "en": "Panels",
+    "zh-Hant": "面板"
+  },
+  "查看映射列表": {
+    "en": "View mappings",
+    "zh-Hant": "查看映射列表"
+  },
+  "查看模板字段": {
+    "en": "View template fields",
+    "zh-Hant": "查看模板字段"
+  },
+  "查看样本列表": {
+    "en": "View samples",
+    "zh-Hant": "查看樣本列表"
+  },
+  "查看逐文件校验": {
+    "en": "View per-file validation",
+    "zh-Hant": "查看逐文件校驗"
+  },
+  "展开右侧面板": {
+    "en": "Expand right panel",
+    "zh-Hant": "展開右側面板"
+  },
+  "收起右侧面板（聚焦文档）": {
+    "en": "Collapse right panel (focus on document)",
+    "zh-Hant": "收起右側面板（聚焦文檔）"
+  },
+  "收起文件列表": {
+    "en": "Collapse file list",
+    "zh-Hant": "收起文件列表"
+  },
+  "隐藏映射连线": {
+    "en": "Hide mapping connectors",
+    "zh-Hant": "隱藏映射連線"
+  },
+  "显示映射连线": {
+    "en": "Show mapping connectors",
+    "zh-Hant": "顯示映射連線"
+  },
+  "恢复默认布局宽度": {
+    "en": "Reset layout widths",
+    "zh-Hant": "恢復默認佈局寬度"
+  },
+  "缩放恢复 100%": {
+    "en": "Reset zoom to 100%",
+    "zh-Hant": "縮放恢復 100%"
+  },
+  "外观": {
+    "en": "Appearance",
+    "zh-Hant": "外觀"
+  },
+  "界面主题：{v1} → {v2}": {
+    "en": "Theme: {v1} → {v2}",
+    "zh-Hant": "界面主題：{v1} → {v2}"
+  },
+  "不影响文档纸张与导出颜色": {
+    "en": "Document paper and export colors are unaffected",
+    "zh-Hant": "不影響文檔紙張與導出顏色"
+  },
+  "显示键盘快捷键": {
+    "en": "Show keyboard shortcuts",
+    "zh-Hant": "顯示鍵盤快捷鍵"
+  },
+  "保存为回归用例…": {
+    "en": "Save as regression case…",
+    "zh-Hant": "保存為回歸用例…"
+  },
+  "生成脱敏副本…": {
+    "en": "Create anonymized copies…",
+    "zh-Hant": "生成脫敏副本…"
+  },
+  "打开最近的生成任务": {
+    "en": "Open latest generation job",
+    "zh-Hant": "打開最近的生成任務"
+  },
+  "回归用例列表": {
+    "en": "Regression cases",
+    "zh-Hant": "回歸用例列表"
+  },
+  "切换来源文件": {
+    "en": "Switch source file",
+    "zh-Hant": "切換來源文件"
+  },
+  "模板：": {
+    "en": "Template: ",
+    "zh-Hant": "模板："
+  },
+  "更换或设置模板": {
+    "en": "Change or set template",
+    "zh-Hant": "更換或設置模板"
+  },
+  "样本：": {
+    "en": "Samples: ",
+    "zh-Hant": "樣本："
+  },
+  "只读": {
+    "en": "Read only",
+    "zh-Hant": "只讀"
+  },
+  "所有修改自动保存到服务器": {
+    "en": "All changes are saved automatically to the server",
+    "zh-Hant": "所有修改自動保存到服務器"
+  },
+  "✓ 已自动保存": {
+    "en": "✓ Saved automatically",
+    "zh-Hant": "✓ 已自動保存"
+  },
+  "保存失败": {
+    "en": "Save failed",
+    "zh-Hant": "保存失敗"
+  },
+  "最近任务：": {
+    "en": "Latest job: ",
+    "zh-Hant": "最近任務："
+  },
+  "命令面板：所有操作与快捷键": {
+    "en": "Command palette: all actions and shortcuts",
+    "zh-Hant": "命令面板：所有操作與快捷鍵"
+  },
+  "打开命令面板": {
+    "en": "Open command palette",
+    "zh-Hant": "打開命令面板"
+  },
+  "回归用例": {
+    "en": "Regression cases",
+    "zh-Hant": "回歸用例"
+  },
+  "界面主题：{v1}": {
+    "en": "Theme: {v1}",
+    "zh-Hant": "界面主題：{v1}"
+  },
+  "👁 预览": {
+    "en": "👁 Preview",
+    "zh-Hant": "👁 預覽"
+  },
+  "▶ 生成": {
+    "en": "▶ Generate",
+    "zh-Hant": "▶ 生成"
+  },
+  "（已完成）": {
+    "en": "(completed)",
+    "zh-Hant": "（已完成）"
+  },
+  "显示连线": {
+    "en": "Show connectors",
+    "zh-Hant": "顯示連線"
+  },
+  "操作指引": {
+    "en": "Workflow guide",
+    "zh-Hant": "操作指引"
+  },
+  "手机屏幕较小：建议在电脑浏览器中建立映射。手机上可以查看任务进度与下载结果（点击上方「最近任务」）。": {
+    "en": "Small screen: use a desktop browser to create mappings. On mobile, view progress and download results through “Latest job” above.",
+    "zh-Hant": "手機屏幕較小：建議在電腦瀏覽器中建立映射。手機上可以查看任務進度與下載結果（點擊上方「最近任務」）。"
+  },
+  "使用步骤：": {
+    "en": "Steps: ",
+    "zh-Hant": "使用步驟："
+  },
+  "① 左侧上传来源文件 → ② 设置右侧目标模板（上传或新建）→ ③ 定义样本（每行 / 每文件 / 每组一份）→ ④ 左侧选中数据、右侧点选字段，点底部「建立映射」→ ⑤ 预览并生成。 任何一步都可以返回修改；Ctrl/⌘+Z 撤销，Esc 清除选择。": {
+    "en": "① Upload sources on the left → ② Upload or create a target template on the right → ③ Define samples (per row/file/group) → ④ Select source data and a target field, then click “Create mapping” → ⑤ Preview and generate. You can revise any step; Ctrl/⌘+Z to undo, Esc to clear selection.",
+    "zh-Hant": "① 左側上傳來源文件 → ② 設置右側目標模板（上傳或新建）→ ③ 定義樣本（每行 / 每文件 / 每組一份）→ ④ 左側選中數據、右側點選字段，點底部「建立映射」→ ⑤ 預覽並生成。 任何一步都可以返回修改；Ctrl/⌘+Z 撤銷，Esc 清除選擇。"
+  },
+  "不再显示": {
+    "en": "Do not show again",
+    "zh-Hant": "不再顯示"
+  },
+  "来源文件": {
+    "en": "Source files",
+    "zh-Hant": "來源文件"
+  },
+  "查找…（⌘F）": {
+    "en": "Find… (⌘F)",
+    "zh-Hant": "查找…（⌘F）"
+  },
+  "在当前文件中查找": {
+    "en": "Find in current file",
+    "zh-Hant": "在當前文件中查找"
+  },
+  "上一个": {
+    "en": "Previous",
+    "zh-Hant": "上一個"
+  },
+  "上一个查找结果": {
+    "en": "Previous match",
+    "zh-Hant": "上一個查找結果"
+  },
+  "下一个": {
+    "en": "Next",
+    "zh-Hant": "下一個"
+  },
+  "下一个查找结果": {
+    "en": "Next match",
+    "zh-Hant": "下一個查找結果"
+  },
+  "使用本地 Tesseract（中文+英文）识别扫描页，不上传文件": {
+    "en": "Recognize scanned pages locally with Tesseract (Chinese + English); files are not uploaded",
+    "zh-Hant": "使用本地 Tesseract（中文+英文）識別掃描頁，不上傳文件"
+  },
+  "识别中…": {
+    "en": "Recognizing…",
+    "zh-Hant": "識別中…"
+  },
+  "重新 OCR": {
+    "en": "Run OCR again",
+    "zh-Hant": "重新 OCR"
+  },
+  "OCR 识别": {
+    "en": "Run OCR",
+    "zh-Hant": "OCR 識別"
+  },
+  "缩小来源文件": {
+    "en": "Zoom out source",
+    "zh-Hant": "縮小來源文件"
+  },
+  "放大来源文件": {
+    "en": "Zoom in source",
+    "zh-Hant": "放大來源文件"
+  },
+  "适合宽度": {
+    "en": "Fit width",
+    "zh-Hant": "適合寬度"
+  },
+  "适合": {
+    "en": "Fit",
+    "zh-Hant": "適合"
+  },
+  "上一块": {
+    "en": "Previous block",
+    "zh-Hant": "上一塊"
+  },
+  "选择表单块": {
+    "en": "Select form block",
+    "zh-Hant": "選擇表單塊"
+  },
+  " 块 · ": {
+    "en": " blocks · ",
+    "zh-Hant": " 塊 · "
+  },
+  "下一块": {
+    "en": "Next block",
+    "zh-Hant": "下一塊"
+  },
+  "该文件中没有找到表单块标记": {
+    "en": "No form block marker found in this file",
+    "zh-Hant": "該文件中沒有找到表單塊標記"
+  },
+  "重新定位映射 #": {
+    "en": "Relocate mapping #",
+    "zh-Hant": "重新定位映射 #"
+  },
+  "：请在「": {
+    "en": ": select the correct location in “",
+    "zh-Hant": "：請在「"
+  },
+  "」中选中正确的位置，然后点击保存。": {
+    "en": "”, then save.",
+    "zh-Hant": "」中選中正確的位置，然後點擊保存。"
+  },
+  "保存为此文件的定位": {
+    "en": "Save location for this file",
+    "zh-Hant": "保存為此文件的定位"
+  },
+  "第 1 步：上传来源文件": {
+    "en": "Step 1: Upload source files",
+    "zh-Hant": "第 1 步：上傳來源文件"
+  },
+  "这个项目还没有来源文件。": {
+    "en": "This project has no source files yet.",
+    "zh-Hant": "這個項目還沒有來源文件。"
+  },
+  "把 XLSX / CSV / DOCX / PDF / 图片 / PPTX 等文件拖入左侧列表，或点击左侧的上传按钮": {
+    "en": "Drop XLSX / CSV / DOCX / PDF / image / PPTX files into the left list, or use its upload button",
+    "zh-Hant": "把 XLSX / CSV / DOCX / PDF / 圖片 / PPTX 等文件拖入左側列表，或點擊左側的上傳按鈕"
+  },
+  "调整来源与模板两侧的宽度": {
+    "en": "Resize source and template panes",
+    "zh-Hant": "調整來源與模板兩側的寬度"
+  },
+  "拖动或用 ← / → 调整左右宽度，Enter 恢复默认": {
+    "en": "Drag or use ← / → to resize; Enter to reset",
+    "zh-Hant": "拖動或用 ← / → 調整左右寬度，Enter 恢復默認"
+  },
+  "目标模板": {
+    "en": "Target template",
+    "zh-Hant": "目標模板"
+  },
+  "撤销模板修改": {
+    "en": "Undo template change",
+    "zh-Hant": "撤銷模板修改"
+  },
+  "重做模板修改": {
+    "en": "Redo template change",
+    "zh-Hant": "重做模板修改"
+  },
+  "编辑模板": {
+    "en": "Edit template",
+    "zh-Hant": "編輯模板"
+  },
+  "下载带字段标记的工作副本": {
+    "en": "Download working copy with field markers",
+    "zh-Hant": "下載帶字段標記的工作副本"
+  },
+  "工作副本": {
+    "en": "Working copy",
+    "zh-Hant": "工作副本"
+  },
+  "下载未修改的原始模板": {
+    "en": "Download unchanged original template",
+    "zh-Hant": "下載未修改的原始模板"
+  },
+  "原始": {
+    "en": "Original",
+    "zh-Hant": "原始"
+  },
+  "缩小模板": {
+    "en": "Zoom out template",
+    "zh-Hant": "縮小模板"
+  },
+  "放大模板": {
+    "en": "Zoom in template",
+    "zh-Hant": "放大模板"
+  },
+  "PDF 表单字段：": {
+    "en": "PDF form field: ",
+    "zh-Hant": "PDF 表單字段："
+  },
+  "第 2 步：设置目标模板": {
+    "en": "Step 2: Set a target template",
+    "zh-Hant": "第 2 步：設置目標模板"
+  },
+  "这个项目原来使用的模板已被删除。": {
+    "en": "This project's previous template was deleted.",
+    "zh-Hant": "這個項目原來使用的模板已被刪除。"
+  },
+  "需要有编辑权限的成员重新选择模板。": {
+    "en": "A member with edit access must select a replacement.",
+    "zh-Hant": "需要有編輯權限的成員重新選擇模板。"
+  },
+  "请重新选择或新建一个模板。": {
+    "en": "Choose or create a template again.",
+    "zh-Hant": "請重新選擇或新建一個模板。"
+  },
+  "这个项目还没有设置模板。": {
+    "en": "This project has no template yet.",
+    "zh-Hant": "這個項目還沒有設置模板。"
+  },
+  "上传已有的 DOCX / XLSX / PDF / PPTX，或在软件内新建文档型、表格型模板": {
+    "en": "Upload an existing DOCX / XLSX / PDF / PPTX, or create a document or spreadsheet template in the editor",
+    "zh-Hant": "上傳已有的 DOCX / XLSX / PDF / PPTX，或在軟件內新建文檔型、表格型模板"
+  },
+  "清除单独定位": {
+    "en": "Clear file-specific location",
+    "zh-Hant": "清除單獨定位"
+  },
+  "在左侧选中数据（单元格、区域、文字或 PDF 框选）": {
+    "en": "Select data on the left (cell, region, text or PDF box)",
+    "zh-Hant": "在左側選中數據（單元格、區域、文字或 PDF 框選）"
+  },
+  "明确这几行是「每行一份」还是「写入同一份文档的明细」": {
+    "en": "Specify whether these rows are separate samples or details in a single document",
+    "zh-Hant": "明確這幾行是「每行一份」還是「寫入同一份文檔的明細」"
+  },
+  "选中区域的含义…": {
+    "en": "What does this selection represent?…",
+    "zh-Hant": "選中區域的含義…"
+  },
+  "→ 目标：": {
+    "en": "→ Target: ",
+    "zh-Hant": "→ 目標："
+  },
+  "在右侧点选字段，或选中内容后设为待填区域": {
+    "en": "Select a field on the right, or select content and mark it as fillable",
+    "zh-Hant": "在右側點選字段，或選中內容後設為待填區域"
+  },
+  "✎ 设为待填区域": {
+    "en": "✎ Set as fillable region",
+    "zh-Hant": "✎ 設為待填區域"
+  },
+  "需要同时选中左侧来源和右侧字段": {
+    "en": "Select both a source on the left and a field on the right",
+    "zh-Hant": "需要同時選中左側來源和右側字段"
+  },
+  "⇄ 建立映射": {
+    "en": "⇄ Create mapping",
+    "zh-Hant": "⇄ 建立映射"
+  },
+  "清除选择": {
+    "en": "Clear selection",
+    "zh-Hant": "清除選擇"
+  },
+  "修改映射": {
+    "en": "Edit mapping",
+    "zh-Hant": "修改映射"
+  },
+  "映射已保存": {
+    "en": "Mapping saved",
+    "zh-Hant": "映射已保存"
+  },
+  "点击修改项目名称": {
+    "en": "Click to rename project",
+    "zh-Hant": "點擊修改項目名稱"
+  },
+  "编码与分隔符": {
+    "en": "Encoding and delimiter",
+    "zh-Hant": "編碼與分隔符"
+  },
+  "CSV 设置（": {
+    "en": "CSV settings (",
+    "zh-Hant": "CSV 設置（"
+  },
+  "CSV 解析设置": {
+    "en": "CSV parsing settings",
+    "zh-Hant": "CSV 解析設置"
+  },
+  "已重新解析": {
+    "en": "Reparsed",
+    "zh-Hant": "已重新解析"
+  },
+  "重新解析": {
+    "en": "Reparse",
+    "zh-Hant": "重新解析"
+  },
+  "自动识别：编码 ": {
+    "en": "Detected encoding: ",
+    "zh-Hant": "自動識別：編碼 "
+  },
+  "，分隔符「": {
+    "en": ", delimiter “",
+    "zh-Hant": "，分隔符「"
+  },
+  "」。如出现乱码或分列错误，请手动指定。单元格内换行（带引号）按 RFC 4180 处理，不会错误分行。": {
+    "en": "”. Override if characters or columns appear incorrectly. Quoted multiline cells follow RFC 4180 and do not split into extra rows.",
+    "zh-Hant": "」。如出現亂碼或分列錯誤，請手動指定。單元格內換行（帶引號）按 RFC 4180 處理，不會錯誤分行。"
+  },
+  "编码": {
+    "en": "Encoding",
+    "zh-Hant": "編碼"
+  },
+  "自动识别": {
+    "en": "Auto-detect",
+    "zh-Hant": "自動識別"
+  },
+  "逗号 ,": {
+    "en": "Comma ,",
+    "zh-Hant": "逗號 ,"
+  },
+  "分号 ;": {
+    "en": "Semicolon ;",
+    "zh-Hant": "分號 ;"
+  },
+  "竖线 |": {
+    "en": "Pipe |",
+    "zh-Hant": "竪線 |"
+  },
+  "选中的 {v1} 行数据，代表什么？": {
+    "en": "What do these {v1} selected rows represent?",
+    "zh-Hant": "選中的 {v1} 行數據，代表什麼？"
+  },
+  "每行是一条样本 → 生成 ": {
+    "en": "Each row is a sample → generate ",
+    "zh-Hant": "每行是一條樣本 → 生成 "
+  },
+  " 行各生成一份（表头为第 ": {
+    "en": " rows each produce one output (header row ",
+    "zh-Hant": " 行各生成一份（表頭為第 "
+  },
+  " 行）；将打开样本规则确认。": {
+    "en": "); sample rule confirmation opens next.",
+    "zh-Hant": " 行）；將打開樣本規則確認。"
+  },
+  "整个区域是当前样本的明细表 → 每个文件生成 1 份（共 ": {
+    "en": "The entire region is one sample's detail table → one output per file (total: ",
+    "zh-Hant": "整個區域是當前樣本的明細表 → 每個文件生成 1 份（共 "
+  },
+  " 份）": {
+    "en": ")",
+    "zh-Hant": " 份）"
+  },
+  "这些行一起写入同一份文档的重复明细行；设置后请把该区域（含表头）映射到模板的重复明细字段。": {
+    "en": "These rows populate repeating details in the same document. After setting this rule, map the region including headers to a repeating detail field.",
+    "zh-Hant": "這些行一起寫入同一份文檔的重復明細行；設置後請把該區域（含表頭）映射到模板的重復明細字段。"
+  },
+  "全部": {
+    "en": "All",
+    "zh-Hant": "全部"
+  },
+  "跳过": {
+    "en": "Skip",
+    "zh-Hant": "跳過"
+  },
+  "任务已经结束，无需取消": {
+    "en": "This job has ended; no cancellation needed",
+    "zh-Hant": "任務已經結束，無需取消"
+  },
+  "已经请求过取消，正在停止…": {
+    "en": "Cancellation was already requested; stopping…",
+    "zh-Hant": "已經請求過取消，正在停止…"
+  },
+  "已请求取消，正在停止…": {
+    "en": "Cancellation requested; stopping…",
+    "zh-Hant": "已請求取消，正在停止…"
+  },
+  "已重新排队失败项": {
+    "en": "Failed items requeued",
+    "zh-Hant": "已重新排隊失敗項"
+  },
+  "已重新排队未完成项": {
+    "en": "Unfinished items requeued",
+    "zh-Hant": "已重新排隊未完成項"
+  },
+  "（约 {v1} 秒后再试）": {
+    "en": " (try again in about {v1} seconds)",
+    "zh-Hant": "（約 {v1} 秒後再試）"
+  },
+  "返回项目": {
+    "en": "Back to project",
+    "zh-Hant": "返回項目"
+  },
+  "Synwevo Docs 首页": {
+    "en": "Synwevo Docs home",
+    "zh-Hant": "Synwevo Docs 首頁"
+  },
+  "← 返回项目": {
+    "en": "← Back to project",
+    "zh-Hant": "← 返回項目"
+  },
+  "生成任务": {
+    "en": "Generation job",
+    "zh-Hant": "生成任務"
+  },
+  "规划中": {
+    "en": "Planning",
+    "zh-Hant": "規劃中"
+  },
+  "模板「": {
+    "en": "Template “",
+    "zh-Hant": "模板「"
+  },
+  " · 来源文件 ": {
+    "en": " · Source files ",
+    "zh-Hant": " · 來源文件 "
+  },
+  " 个 · 格式 ": {
+    "en": " · Formats ",
+    "zh-Hant": " 個 · 格式 "
+  },
+  " · 创建于 ": {
+    "en": " · Created ",
+    "zh-Hant": " · 創建於 "
+  },
+  "输入在任务开始时已固定（文件、模板版本、映射与样本规则的快照），之后的修改不会影响本任务。": {
+    "en": "Inputs were fixed when the job started: sources, template version, mappings and sample rules. Later edits do not affect this job.",
+    "zh-Hant": "輸入在任務開始時已固定（文件、模板版本、映射與樣本規則的快照），之後的修改不會影響本任務。"
+  },
+  "正在请求取消…": {
+    "en": "Requesting cancellation…",
+    "zh-Hant": "正在請求取消…"
+  },
+  "取消任务": {
+    "en": "Cancel job",
+    "zh-Hant": "取消任務"
+  },
+  "正在排队…": {
+    "en": "Queuing…",
+    "zh-Hant": "正在排隊…"
+  },
+  "仅重试失败项": {
+    "en": "Retry failed only",
+    "zh-Hant": "僅重試失敗項"
+  },
+  "重试失败、已取消以及尚未规划的样本；不包含跳过项": {
+    "en": "Retry failed, cancelled and unplanned samples; skipped items are excluded",
+    "zh-Hant": "重試失敗、已取消以及尚未規劃的樣本；不包含跳過項"
+  },
+  "继续未完成项": {
+    "en": "Continue unfinished",
+    "zh-Hant": "繼續未完成項"
+  },
+  "正在取消：不再开始新的样本，进行中的一份完成后停止并保留结果。": {
+    "en": "Cancelling: no new samples will start. The current sample finishes and its results are retained.",
+    "zh-Hant": "正在取消：不再開始新的樣本，進行中的一份完成後停止並保留結果。"
+  },
+  "正在检查样本并规划本次任务": {
+    "en": "Checking samples and planning this job",
+    "zh-Hant": "正在檢查樣本並規劃本次任務"
+  },
+  "：已规划 {v1} / {v2} 个样本": {
+    "en": ": planned {v1} / {v2} samples",
+    "zh-Hant": "：已規劃 {v1} / {v2} 個樣本"
+  },
+  "。规划完成后开始生成。": {
+    "en": ". Generation starts after planning finishes.",
+    "zh-Hant": "。規劃完成後開始生成。"
+  },
+  "规划进度": {
+    "en": "Planning progress",
+    "zh-Hant": "規劃進度"
+  },
+  "生成进度": {
+    "en": "Generation progress",
+    "zh-Hant": "生成進度"
+  },
+  "已规划 {v1} / {v2}": {
+    "en": "Planned {v1} / {v2}",
+    "zh-Hant": "已規劃 {v1} / {v2}"
+  },
+  "已处理 {v1} / {v2}": {
+    "en": "Processed {v1} / {v2}",
+    "zh-Hant": "已處理 {v1} / {v2}"
+  },
+  "跳过（生成前错误）": {
+    "en": "Skipped (errors before generation)",
+    "zh-Hant": "跳過（生成前錯誤）"
+  },
+  "取消 / 等待": {
+    "en": "Cancelled / waiting",
+    "zh-Hant": "取消 / 等待"
+  },
+  "输出文件": {
+    "en": "Output files",
+    "zh-Hant": "輸出文件"
+  },
+  "⬇ 下载全部（ZIP）": {
+    "en": "⬇ Download all (ZIP)",
+    "zh-Hant": "⬇ 下載全部（ZIP）"
+  },
+  "还没有输出文件": {
+    "en": "No output files yet",
+    "zh-Hant": "還沒有輸出文件"
+  },
+  "仅 ": {
+    "en": "Only ",
+    "zh-Hant": "僅 "
+  },
+  "⬇ 结果清单与失败说明（CSV）": {
+    "en": "⬇ Results and failure details (CSV)",
+    "zh-Hant": "⬇ 結果清單與失敗說明（CSV）"
+  },
+  "按状态筛选": {
+    "en": "Filter by status",
+    "zh-Hant": "按狀態篩選"
+  },
+  "样本列表加载失败：": {
+    "en": "Could not load samples: ",
+    "zh-Hant": "樣本列表加載失敗："
+  },
+  "样本与输出文件": {
+    "en": "Samples and outputs",
+    "zh-Hant": "樣本與輸出文件"
+  },
+  "状态": {
+    "en": "Status",
+    "zh-Hant": "狀態"
+  },
+  "说明": {
+    "en": "Details",
+    "zh-Hant": "說明"
+  },
+  " 次": {
+    "en": " attempts",
+    "zh-Hant": " 次"
+  },
+  "还有 {v1} 条": {
+    "en": "{v1} more",
+    "zh-Hant": "還有 {v1} 條"
+  },
+  "规划完成后显示样本": {
+    "en": "Samples appear after planning finishes",
+    "zh-Hant": "規劃完成後顯示樣本"
+  },
+  "没有记录": {
+    "en": "No records",
+    "zh-Hant": "沒有記錄"
+  },
+  " 条，共 ": {
+    "en": " of ",
+    "zh-Hant": " 條，共 "
+  },
+  " 条": {
+    "en": " records",
+    "zh-Hant": " 條"
+  },
+  "← 首页": {
+    "en": "← Home",
+    "zh-Hant": "← 首頁"
+  },
+  "第三方组件": {
+    "en": "Third-party components",
+    "zh-Hant": "第三方組件"
+  },
+  "版本与费用见 docs/DEPENDENCIES.md；均为免费开源组件，未使用付费组件或外部云服务": {
+    "en": "See docs/DEPENDENCIES.md for versions and costs. All components are free and open source; no paid components or external cloud services are used.",
+    "zh-Hant": "版本與費用見 docs/DEPENDENCIES.md；均為免費開源組件，未使用付費組件或外部雲服務"
+  },
+  "组件": {
+    "en": "Component",
+    "zh-Hant": "組件"
+  },
+  "许可证": {
+    "en": "License",
+    "zh-Hant": "許可證"
+  },
+  "用途": {
+    "en": "Purpose",
+    "zh-Hant": "用途"
+  },
+  "所有文件都在本服务所在的服务器上处理，不发送到外部服务；OCR 使用本机 Tesseract，格式转换与分页计算使用本机 LibreOffice。": {
+    "en": "All files are processed on this server without external transmission. OCR uses local Tesseract; conversion and pagination use local LibreOffice.",
+    "zh-Hant": "所有文件都在本服務所在的服務器上處理，不發送到外部服務；OCR 使用本機 Tesseract，格式轉換與分頁計算使用本機 LibreOffice。"
+  },
+  "删除回归用例": {
+    "en": "Delete regression case",
+    "zh-Hant": "刪除回歸用例"
+  },
+  "删除「{v1}」？其中保存的文件和期望结果会一起删除。": {
+    "en": "Delete “{v1}”? Its saved files and expected results will also be deleted.",
+    "zh-Hant": "刪除「{v1}」？其中保存的文件和期望結果會一起刪除。"
+  },
+  "全部运行": {
+    "en": "Run all",
+    "zh-Hant": "全部運行"
+  },
+  "回归用例保存了项目的原始文件（不做脱敏）、模板、样本规则、映射，以及每个样本的期望结果，只在本工作空间内可见。运行时用当前代码重新解析和生成，逐个字段、逐段文字比较； 也可以在仓库根目录运行 ": {
+    "en": "Regression cases store original project files (without anonymization), templates, sample rules, mappings and expected results, visible only within this workspace. Running a case reparses and regenerates with current code, comparing each field and text segment. You can also run from the repository root: ",
+    "zh-Hant": "回歸用例保存了項目的原始文件（不做脫敏）、模板、樣本規則、映射，以及每個樣本的期望結果，只在本工作空間內可見。運行時用當前代碼重新解析和生成，逐個字段、逐段文字比較； 也可以在倉庫根目錄運行 "
+  },
+  "回归用例加载失败：": {
+    "en": "Could not load regression cases: ",
+    "zh-Hant": "回歸用例加載失敗："
+  },
+  "还没有回归用例": {
+    "en": "No regression cases yet",
+    "zh-Hant": "還沒有回歸用例"
+  },
+  "在项目中点击「更多 → 保存为回归用例」即可创建": {
+    "en": "Open “More → Save as regression case” in a project to create one",
+    "zh-Hant": "在項目中點擊「更多 → 保存為回歸用例」即可創建"
+  },
+  "✓ 全部一致（{v1}/{v2}）": {
+    "en": "✓ All match ({v1}/{v2})",
+    "zh-Hant": "✓ 全部一致（{v1}/{v2}）"
+  },
+  "✖ {v1} 个样本有差异": {
+    "en": "✖ {v1} samples differ",
+    "zh-Hant": "✖ {v1} 個樣本有差異"
+  },
+  "运行中…": {
+    "en": "Running…",
+    "zh-Hant": "運行中…"
+  },
+  "运行": {
+    "en": "Run",
+    "zh-Hant": "運行"
+  },
+  " · 模板「": {
+    "en": " · Template “",
+    "zh-Hant": " · 模板「"
+  },
+  "）· 来源 ": {
+    "en": ") · Sources ",
+    "zh-Hant": "）· 來源 "
+  },
+  " 个 · 样本 ": {
+    "en": " · Samples ",
+    "zh-Hant": " 個 · 樣本 "
+  },
+  " 处差异": {
+    "en": " differences",
+    "zh-Hant": " 處差異"
+  },
+  "来源导入与提取": {
+    "en": "Source import and extraction",
+    "zh-Hant": "來源導入與提取"
+  },
+  "预览与可选择对象": {
+    "en": "Preview and selectable objects",
+    "zh-Hant": "預覽與可選擇對象"
+  },
+  "作为模板 / 创建字段": {
+    "en": "Template / field creation",
+    "zh-Hant": "作為模板 / 創建字段"
+  },
+  "可填充类型": {
+    "en": "Fillable types",
+    "zh-Hant": "可填充類型"
+  },
+  "原生导出": {
+    "en": "Native export",
+    "zh-Hant": "原生導出"
+  },
+  "PDF 导出": {
+    "en": "PDF export",
+    "zh-Hant": "PDF 導出"
+  },
+  "本表由当前服务端实时生成：已安装 LibreOffice：": {
+    "en": "Generated live by the current server. LibreOffice installed: ",
+    "zh-Hant": "本表由當前服務端實時生成：已安裝 LibreOffice："
+  },
+  "否": {
+    "en": "No",
+    "zh-Hant": "否"
+  },
+  "（语言：": {
+    "en": " (languages: ",
+    "zh-Hant": "（語言："
+  },
+  "无": {
+    "en": "None",
+    "zh-Hant": "無"
+  },
+  "）。 未经验证的格式不会标为支持。": {
+    "en": "). Unverified formats are not marked as supported.",
+    "zh-Hant": "）。 未經驗證的格式不會標為支持。"
+  },
+  "格式保留 / 损失": {
+    "en": "Format preservation / loss",
+    "zh-Hant": "格式保留 / 損失"
+  },
+  "处理位置": {
+    "en": "Processing location",
+    "zh-Hant": "處理位置"
+  },
+  "批量 / 重试 / 校验": {
+    "en": "Batch / retry / verification",
+    "zh-Hant": "批量 / 重試 / 校驗"
+  },
+  "已验证": {
+    "en": "Verified",
+    "zh-Hant": "已驗證"
+  },
+  "转换": {
+    "en": "Conversion",
+    "zh-Hant": "轉換"
+  },
+  "部分": {
+    "en": "Partial",
+    "zh-Hant": "部分"
+  },
+  "缺依赖": {
+    "en": "Missing dependency",
+    "zh-Hant": "缺依賴"
+  },
+  "模板已被其他人修改": {
+    "en": "Template changed by someone else",
+    "zh-Hant": "模板已被其他人修改"
+  },
+  "你打开的是 v{v1}": {
+    "en": "You opened v{v1}",
+    "zh-Hant": "你打開的是 v{v1}"
+  },
+  "你打开这个模板之后": {
+    "en": "Since you opened this template",
+    "zh-Hant": "你打開這個模板之後"
+  },
+  "，现在最新的是 v{v1}": {
+    "en": "; the latest version is now v{v1}",
+    "zh-Hant": "，現在最新的是 v{v1}"
+  },
+  "，它又被保存过": {
+    "en": "; it was saved again",
+    "zh-Hant": "，它又被保存過"
+  },
+  "{v1}{v2}（在其他窗口或由其他人保存）。仍然保存会用你的内容生成一个新版本；对方保存的版本仍然保留，可以在项目中用模板的「撤销」回到它。": {
+    "en": "{v1}{v2} (in another window or by someone else). Saving creates a new version using your content. Their version is retained and can be restored with template Undo in a project.",
+    "zh-Hant": "{v1}{v2}（在其他窗口或由其他人保存）。仍然保存會用你的內容生成一個新版本；對方保存的版本仍然保留，可以在項目中用模板的「撤銷」回到它。"
+  },
+  "没有保存：你的修改仍在编辑器中。需要对方的版本时，先复制要保留的内容，再重新打开模板。": {
+    "en": "Not saved: your edits remain in the editor. To use the other version, copy any content you want to keep, then reopen the template.",
+    "zh-Hant": "沒有保存：你的修改仍在編輯器中。需要對方的版本時，先複製要保留的內容，再重新打開模板。"
+  },
+  "文档模板": {
+    "en": "Document template",
+    "zh-Hant": "文檔模板"
+  },
+  "这个模板不是用文档编辑器创建的，不能在这里编辑。": {
+    "en": "This template was not created with the document editor and cannot be edited here.",
+    "zh-Hant": "這個模板不是用文檔編輯器創建的，不能在這裡編輯。"
+  },
+  "放弃未保存的修改？": {
+    "en": "Discard unsaved changes?",
+    "zh-Hant": "放棄未保存的修改？"
+  },
+  "模板有尚未保存的修改，离开后这些修改会丢失。": {
+    "en": "This template has unsaved changes that will be lost if you leave.",
+    "zh-Hant": "模板有尚未保存的修改，離開後這些修改會丟失。"
+  },
+  "放弃修改并离开": {
+    "en": "Discard and leave",
+    "zh-Hant": "放棄修改並離開"
+  },
+  "插入字段": {
+    "en": "Insert field",
+    "zh-Hant": "插入字段"
+  },
+  "字段名称（生成时替换为数据）": {
+    "en": "Field name (replaced by data during generation)",
+    "zh-Hant": "字段名稱（生成時替換為數據）"
+  },
+  "请先把光标放在表格的某一行中": {
+    "en": "Place the cursor in a table row first",
+    "zh-Hant": "請先把光標放在表格的某一行中"
+  },
+  "明细": {
+    "en": "Details",
+    "zh-Hant": "明細"
+  },
+  "已设为重复明细行：行内插入的字段即明细列；生成时每条明细复制一行": {
+    "en": "Marked as a repeating detail row. Fields inside it become detail columns; each detail produces one row.",
+    "zh-Hant": "已設為重復明細行：行內插入的字段即明細列；生成時每條明細複製一行"
+  },
+  "表格中请使用「设为重复明细行」；重复内容块用于表格以外的段落": {
+    "en": "Use “Set as repeating detail row” inside tables. Repeating blocks are for paragraphs outside tables.",
+    "zh-Hant": "表格中請使用「設為重復明細行」；重復內容塊用於表格以外的段落"
+  },
+  "已取消重复内容块（段落保留）": {
+    "en": "Repeating block removed; paragraphs retained",
+    "zh-Hant": "已取消重復內容塊（段落保留）"
+  },
+  "无法把选中的内容设为重复内容块（请选中表格以外的连续段落）": {
+    "en": "Cannot make this selection a repeating block. Select consecutive paragraphs outside a table.",
+    "zh-Hant": "無法把選中的內容設為重復內容塊（請選中表格以外的連續段落）"
+  },
+  "已设为重复内容块：块内插入的字段就是明细列；生成时每条明细复制一份这些段落": {
+    "en": "Marked as a repeating block. Fields inside become detail columns; each detail produces a copy of these paragraphs.",
+    "zh-Hant": "已設為重復內容塊：塊內插入的字段就是明細列；生成時每條明細複製一份這些段落"
+  },
+  "仍然保存": {
+    "en": "Save anyway",
+    "zh-Hant": "仍然保存"
+  },
+  "已保存（{v1} 个字段，v{v2}）": {
+    "en": "Saved ({v1} fields, v{v2})",
+    "zh-Hant": "已保存（{v1} 個字段，v{v2}）"
+  },
+  "无法打开模板": {
+    "en": "Cannot open template",
+    "zh-Hant": "無法打開模板"
+  },
+  "返回": {
+    "en": "Back",
+    "zh-Hant": "返回"
+  },
+  "← 返回": {
+    "en": "← Back",
+    "zh-Hant": "← 返回"
+  },
+  "模板名称": {
+    "en": "Template name",
+    "zh-Hant": "模板名稱"
+  },
+  "文档型模板 → DOCX": {
+    "en": "Document template → DOCX",
+    "zh-Hant": "文檔型模板 → DOCX"
+  },
+  "未保存": {
+    "en": "Unsaved",
+    "zh-Hant": "未保存"
+  },
+  "已保存": {
+    "en": "Saved",
+    "zh-Hant": "已保存"
+  },
+  "保存模板": {
+    "en": "Save template",
+    "zh-Hant": "保存模板"
+  },
+  "段落样式": {
+    "en": "Paragraph style",
+    "zh-Hant": "段落樣式"
+  },
+  "正文": {
+    "en": "Body",
+    "zh-Hant": "正文"
+  },
+  "标题 1": {
+    "en": "Heading 1",
+    "zh-Hant": "標題 1"
+  },
+  "标题 2": {
+    "en": "Heading 2",
+    "zh-Hant": "標題 2"
+  },
+  "标题 3": {
+    "en": "Heading 3",
+    "zh-Hant": "標題 3"
+  },
+  "字体": {
+    "en": "Font",
+    "zh-Hant": "字體"
+  },
+  "宋体": {
+    "en": "SimSun",
+    "zh-Hant": "宋體"
+  },
+  "黑体": {
+    "en": "SimHei",
+    "zh-Hant": "黑體"
+  },
+  "楷体": {
+    "en": "KaiTi",
+    "zh-Hant": "楷體"
+  },
+  "仿宋": {
+    "en": "FangSong",
+    "zh-Hant": "仿宋"
+  },
+  "微软雅黑": {
+    "en": "Microsoft YaHei",
+    "zh-Hant": "微軟雅黑"
+  },
+  "加粗": {
+    "en": "Bold",
+    "zh-Hant": "加粗"
+  },
+  "斜体": {
+    "en": "Italic",
+    "zh-Hant": "斜體"
+  },
+  "下划线": {
+    "en": "Underline",
+    "zh-Hant": "下划線"
+  },
+  "删除线": {
+    "en": "Strikethrough",
+    "zh-Hant": "刪除線"
+  },
+  "高亮": {
+    "en": "Highlight",
+    "zh-Hant": "高亮"
+  },
+  "两端": {
+    "en": "Justify",
+    "zh-Hant": "兩端"
+  },
+  "• 列表": {
+    "en": "• Bullet list",
+    "zh-Hant": "• 列表"
+  },
+  "1. 列表": {
+    "en": "1. Numbered list",
+    "zh-Hant": "1. 列表"
+  },
+  "＋ 插入字段": {
+    "en": "＋ Insert field",
+    "zh-Hant": "＋ 插入字段"
+  },
+  "▦ 表格": {
+    "en": "▦ Table",
+    "zh-Hant": "▦ 表格"
+  },
+  "把选中的连续段落设为重复内容块（每条明细复制一份）": {
+    "en": "Make selected consecutive paragraphs a repeating block (one copy per detail)",
+    "zh-Hant": "把選中的連續段落設為重復內容塊（每條明細複製一份）"
+  },
+  "✓ 重复内容块": {
+    "en": "✓ Repeating block",
+    "zh-Hant": "✓ 重復內容塊"
+  },
+  "⟳ 重复内容块": {
+    "en": "⟳ Repeating block",
+    "zh-Hant": "⟳ 重復內容塊"
+  },
+  "🖼 图片": {
+    "en": "🖼 Image",
+    "zh-Hant": "🖼 圖片"
+  },
+  "分页符": {
+    "en": "Page break",
+    "zh-Hant": "分頁符"
+  },
+  "分隔线": {
+    "en": "Horizontal rule",
+    "zh-Hant": "分隔線"
+  },
+  "表格：": {
+    "en": "Table: ",
+    "zh-Hant": "表格："
+  },
+  "下方插入行": {
+    "en": "Insert row below",
+    "zh-Hant": "下方插入行"
+  },
+  "删除行": {
+    "en": "Delete row",
+    "zh-Hant": "刪除行"
+  },
+  "右侧插入列": {
+    "en": "Insert column right",
+    "zh-Hant": "右側插入列"
+  },
+  "删除列": {
+    "en": "Delete column",
+    "zh-Hant": "刪除列"
+  },
+  "合并单元格": {
+    "en": "Merge cells",
+    "zh-Hant": "合併單元格"
+  },
+  "切换表头行": {
+    "en": "Toggle header row",
+    "zh-Hant": "切換表頭行"
+  },
+  "单元格底色": {
+    "en": "Cell fill",
+    "zh-Hant": "單元格底色"
+  },
+  "删除表格": {
+    "en": "Delete table",
+    "zh-Hant": "刪除表格"
+  },
+  "✓ 重复明细行": {
+    "en": "✓ Repeating detail row",
+    "zh-Hant": "✓ 重復明細行"
+  },
+  "设为重复明细行": {
+    "en": "Set as repeating detail row",
+    "zh-Hant": "設為重復明細行"
+  },
+  "明细名称": {
+    "en": "Detail name",
+    "zh-Hant": "明細名稱"
+  },
+  "零条：删除该行": {
+    "en": "No details: delete row",
+    "zh-Hant": "零條：刪除該行"
+  },
+  "零条：保留空行": {
+    "en": "No details: keep blank row",
+    "zh-Hant": "零條：保留空行"
+  },
+  "零条：显示（无）": {
+    "en": "No details: show (none)",
+    "zh-Hant": "零條：顯示（無）"
+  },
+  "零条：删除表格": {
+    "en": "No details: delete table",
+    "zh-Hant": "零條：刪除表格"
+  },
+  "行内的字段会成为明细列": {
+    "en": "Fields in this row become detail columns",
+    "zh-Hant": "行內的字段會成為明細列"
+  },
+  "内容块名称": {
+    "en": "Block name",
+    "zh-Hant": "內容塊名稱"
+  },
+  "相邻：直接相连": {
+    "en": "Between copies: no separator",
+    "zh-Hant": "相鄰：直接相連"
+  },
+  "相邻：空一行": {
+    "en": "Between copies: blank line",
+    "zh-Hant": "相鄰：空一行"
+  },
+  "相邻：分页": {
+    "en": "Between copies: page break",
+    "zh-Hant": "相鄰：分頁"
+  },
+  "零条：删除内容块": {
+    "en": "No details: delete block",
+    "zh-Hant": "零條：刪除內容塊"
+  },
+  "零条：视为错误": {
+    "en": "No details: report error",
+    "zh-Hant": "零條：視為錯誤"
+  },
+  "块内插入的字段会成为明细列": {
+    "en": "Fields inside this block become detail columns",
+    "zh-Hant": "塊內插入的字段會成為明細列"
+  },
+  "纸张": {
+    "en": "Paper",
+    "zh-Hant": "紙張"
+  },
+  "纸张大小": {
+    "en": "Paper size",
+    "zh-Hant": "紙張大小"
+  },
+  "纸张方向": {
+    "en": "Orientation",
+    "zh-Hant": "紙張方向"
+  },
+  "纵向": {
+    "en": "Portrait",
+    "zh-Hant": "縱向"
+  },
+  "横向": {
+    "en": "Landscape",
+    "zh-Hant": "橫向"
+  },
+  "页边距（毫米）": {
+    "en": "Margins (mm)",
+    "zh-Hant": "頁邊距（毫米）"
+  },
+  "页眉": {
+    "en": "Header",
+    "zh-Hant": "頁眉"
+  },
+  "页脚": {
+    "en": "Footer",
+    "zh-Hant": "頁腳"
+  },
+  "编辑区为近似排版；实际分页以 Word / LibreOffice 打开 DOCX 为准。": {
+    "en": "The editor approximates layout. Actual pagination is determined by opening the DOCX in Word / LibreOffice.",
+    "zh-Hant": "編輯區為近似排版；實際分頁以 Word / LibreOffice 打開 DOCX 為準。"
+  },
+  "表格模板": {
+    "en": "Spreadsheet template",
+    "zh-Hant": "表格模板"
+  },
+  "这个模板不是用表格编辑器创建的，不能在这里编辑。": {
+    "en": "This template was not created with the spreadsheet editor and cannot be edited here.",
+    "zh-Hant": "這個模板不是用表格編輯器創建的，不能在這裡編輯。"
+  },
+  "选区与已有字段重叠": {
+    "en": "The selection overlaps an existing field",
+    "zh-Hant": "選區與已有字段重疊"
+  },
+  "字段单元格只能是一个单元格（合并单元格请选左上角）": {
+    "en": "A cell field must be a single cell (select the top-left cell of a merged range)",
+    "zh-Hant": "字段單元格只能是一個單元格（合併單元格請選左上角）"
+  },
+  "重复明细行只能选择一行中的连续单元格": {
+    "en": "A repeating row must be consecutive cells within one row",
+    "zh-Hant": "重復明細行只能選擇一行中的連續單元格"
+  },
+  "字段单元格": {
+    "en": "Cell field",
+    "zh-Hant": "字段單元格"
+  },
+  "表格型模板 → XLSX": {
+    "en": "Spreadsheet template → XLSX",
+    "zh-Hant": "表格型模板 → XLSX"
+  },
+  "字": {
+    "en": "Text",
+    "zh-Hant": "字"
+  },
+  "底": {
+    "en": "Fill",
+    "zh-Hant": "底"
+  },
+  "清底色": {
+    "en": "Clear fill",
+    "zh-Hant": "清底色"
+  },
+  "换行": {
+    "en": "Wrap",
+    "zh-Hant": "換行"
+  },
+  "边框": {
+    "en": "Borders",
+    "zh-Hant": "邊框"
+  },
+  "数字格式": {
+    "en": "Number format",
+    "zh-Hant": "數字格式"
+  },
+  "常规": {
+    "en": "General",
+    "zh-Hant": "常規"
+  },
+  "yyyy年m月d日": {
+    "en": "yyyy年m月d日",
+    "zh-Hant": "yyyy年m月d日"
+  },
+  "合并": {
+    "en": "Merge",
+    "zh-Hant": "合併"
+  },
+  "取消合并": {
+    "en": "Unmerge",
+    "zh-Hant": "取消合併"
+  },
+  "列宽": {
+    "en": "Column width",
+    "zh-Hant": "列寬"
+  },
+  "行高": {
+    "en": "Row height",
+    "zh-Hant": "行高"
+  },
+  "+10 行": {
+    "en": "+10 rows",
+    "zh-Hant": "+10 行"
+  },
+  "+1 列": {
+    "en": "+1 column",
+    "zh-Hant": "+1 列"
+  },
+  "撤销（⌘Z）": {
+    "en": "Undo (⌘Z)",
+    "zh-Hant": "撤銷（⌘Z）"
+  },
+  "字段：": {
+    "en": "Fields: ",
+    "zh-Hant": "字段："
+  },
+  "设为字段单元格": {
+    "en": "Set as cell field",
+    "zh-Hant": "設為字段單元格"
+  },
+  "设为固定区域": {
+    "en": "Set as fixed region",
+    "zh-Hant": "設為固定區域"
+  },
+  "重复明细行：选中一行中的连续单元格；上一行作为表头名称。生成时有几条明细就插入几行，公式与合并随之平移。": {
+    "en": "Repeating detail row: select consecutive cells within one row. The row above supplies column names. Generation inserts one row per detail, shifting formulas and merged cells.",
+    "zh-Hant": "重復明細行：選中一行中的連續單元格；上一行作為表頭名稱。生成時有幾條明細就插入幾行，公式與合併隨之平移。"
+  },
+  "表格编辑区，当前 {v1}。方向键移动，Shift+方向键扩展选区，直接输入或 F2 编辑，Tab 离开表格": {
+    "en": "Spreadsheet editor, current cell {v1}. Arrows move, Shift+arrows extend, typing or F2 edits, Tab exits the grid",
+    "zh-Hant": "表格編輯區，當前 {v1}。方向鍵移動，Shift+方向鍵擴展選區，直接輸入或 F2 編輯，Tab 離開表格"
+  },
+  "编辑单元格 {v1}": {
+    "en": "Edit cell {v1}",
+    "zh-Hant": "編輯單元格 {v1}"
+  },
+  "区域 {v1}": {
+    "en": "Region {v1}",
+    "zh-Hant": "區域 {v1}"
+  },
+  "明细行 {v1}": {
+    "en": "Detail row {v1}",
+    "zh-Hant": "明細行 {v1}"
+  },
+  "删除字段「{v1}」": {
+    "en": "Delete field “{v1}”",
+    "zh-Hant": "刪除字段「{v1}」"
+  },
+  "选中单元格后点击上方「设为字段单元格 / 固定区域 / 重复明细行」": {
+    "en": "Select cells, then choose “Cell field / Fixed region / Repeating detail row” above",
+    "zh-Hant": "選中單元格後點擊上方「設為字段單元格 / 固定區域 / 重復明細行」"
+  },
+  "重命名工作表": {
+    "en": "Rename worksheet",
+    "zh-Hant": "重命名工作表"
+  },
+  "删除当前表": {
+    "en": "Delete current sheet",
+    "zh-Hant": "刪除當前表"
+  },
+  "双击单元格或直接输入以编辑；双击工作表标签可重命名": {
+    "en": "Double-click or type to edit a cell; double-click a sheet tab to rename",
+    "zh-Hant": "雙擊單元格或直接輸入以編輯；雙擊工作表標籤可重命名"
+  },
+  "页面不存在": {
+    "en": "Page not found",
+    "zh-Hant": "頁面不存在"
+  },
+  "返回首页": {
+    "en": "Back to home",
+    "zh-Hant": "返回首頁"
+  },
+  "该模板是上传的文件，不是内置编辑器创建的：请在项目中直接在模板预览上设置字段。": {
+    "en": "This template was uploaded, not created in the built-in editor. Set its fields directly in the template preview within a project.",
+    "zh-Hant": "該模板是上傳的文件，不是內置編輯器創建的：請在項目中直接在模板預覽上設置字段。"
+  }
+} satisfies Messages;

@@ -1,3 +1,4 @@
+import { t as tr, useI18n } from "@synwevo/ui";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { isImeKey, useModalFocus } from "@synwevo/ui";
 
@@ -17,6 +18,7 @@ export interface Command {
  *  shortcuts.  It is a modal like any other: Tab stays inside, Escape closes only the palette,
  *  and focus goes back to where it was.  The caller mounts it only while it is open. */
 export default function CommandPalette({ commands, onClose }: { commands: Command[]; onClose: () => void }) {
+  useI18n();
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -44,7 +46,7 @@ export default function CommandPalette({ commands, onClose }: { commands: Comman
   };
   return (
     <div className="cmdk-back" onMouseDown={(e) => { if (e.target === e.currentTarget && isTop()) onClose(); }}>
-      <div className="cmdk" role="dialog" aria-modal="true" aria-label="命令面板" ref={boxRef} tabIndex={-1}
+      <div className="cmdk" role="dialog" aria-modal="true" aria-label={tr("命令面板")} ref={boxRef} tabIndex={-1}
         onKeyDown={(e) => {
           if (isImeKey(e)) return;
           if (e.key === "ArrowDown") { e.preventDefault(); setI((x) => Math.min(hits.length - 1, x + 1)); return; }
@@ -53,10 +55,10 @@ export default function CommandPalette({ commands, onClose }: { commands: Comman
           trapKeys(e);          // Escape (this palette only, propagation stopped) and the Tab trap
         }}>
         <input className="cmdk-input" value={q} onChange={(e) => setQ(e.target.value)} data-autofocus
-          placeholder="搜索命令…（↑↓ 选择，回车执行，Esc 关闭）" aria-label="搜索命令" role="combobox" aria-expanded="true"
+          placeholder={tr("搜索命令…（↑↓ 选择，回车执行，Esc 关闭）")} aria-label={tr("搜索命令")} role="combobox" aria-expanded="true"
           aria-controls={`${uid}-list`} aria-autocomplete="list" aria-activedescendant={hits[i] ? optId(i) : undefined} />
-        <div className="cmdk-list" id={`${uid}-list`} role="listbox" aria-label="命令" ref={listRef}>
-          {hits.length === 0 && <div className="cmdk-empty" role="presentation">没有匹配的命令</div>}
+        <div className="cmdk-list" id={`${uid}-list`} role="listbox" aria-label={tr("命令")} ref={listRef}>
+          {hits.length === 0 && <div className="cmdk-empty" role="presentation">{tr("没有匹配的命令")}</div>}
           {hits.map((c, k) => {
             const head = k === 0 || hits[k - 1].group !== c.group;
             return (
@@ -75,7 +77,7 @@ export default function CommandPalette({ commands, onClose }: { commands: Comman
             );
           })}
         </div>
-        <div className="cmdk-foot tiny muted">⌘K / Ctrl+K 打开 · ? 查看全部快捷键</div>
+        <div className="cmdk-foot tiny muted">{tr("⌘K / Ctrl+K 打开 · ? 查看全部快捷键")}</div>
       </div>
     </div>
   );

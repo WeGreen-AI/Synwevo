@@ -1,166 +1,61 @@
-import { useEffect, useRef, useState } from "react";
-import { get, post } from "@synwevo/auth-client";
-import { fmtTime } from "@synwevo/ui";
-import { useSession } from "@synwevo/auth-client";
-
-interface Preview {
-  state: "pending" | "accepted" | "revoked" | "expired";
-  email: string;
-  role: string;
-  role_label: string;
-  workspace: string | null;
-  inviter: string | null;
-  expires_at: number;
-  needs_account: boolean;
-  signed_in_as?: string;
+import { useEffect, useState } from "react";
+import { post, setWorkspaceContext, useSession } from "@synwevo/auth-client";
+import { Modal, useI18n } from "@synwevo/ui";
+import { AuthFrame, FlowError, Loading, clearInvitation, needsVerification, readIntent, saveIntent, useAction, useLinkToken } from "./org/AuthFlow";
+export interface InvitationPreview {
+  state: "pending" | "accepted" | "revoked" | "expired" | "declined"; email: string; role: string; role_label: string;
+  workspace: string | null; inviter: string | null; expires_at: number; needs_account: boolean; signed_in_as?: string;
 }
-
-const DEAD: Record<string, { title: string; body: string }> = {
-  accepted: { title: "这个邀请已经用过了", body: "如果你已经加入过，直接登录即可；否则请让邀请人重新发送一封。" },
-  revoked: { title: "这个邀请已被撤销", body: "邀请人取消了这次邀请，或者重新发了一封新的。请使用最新的邀请邮件。" },
-  expired: { title: "这个邀请已过期", body: "为了安全，邀请链接有有效期。请让邀请人重新发送。" },
+const DEAD = {
+  declined: ["邀请已拒绝", "你没有加入这个工作空间。若改变主意，请让邀请人重新发送邀请。"],
+  accepted: ["这个邀请已经用过了", "如果你已经加入，请直接登录查看工作空间。"],
+  revoked: ["这个邀请已被撤销", "邀请人取消了这次邀请。请使用最新的邀请邮件。"],
+  expired: ["这个邀请已过期", "邀请链接有有效期，请让邀请人重新发送。"],
 };
-
-/** The page the emailed link lands on.
- *
- *  Opening it does nothing on its own — it reads the invitation and stops. Joining requires
- *  pressing a button, so a mail scanner that follows the URL cannot accept on someone's behalf.
- */
 export default function Invite() {
-  const token = new URLSearchParams(window.location.search).get("token") || "";
-  const { refresh } = useSession();
-  const [pv, setPv] = useState<Preview | null>(null);
-  const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [show, setShow] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const errRef = useRef<HTMLDivElement>(null);
-
+  const token = useLinkToken("token", readIntent().invite_token);
+  return <Invitation key={token} token={token} />;
+}
+function Invitation({ token }: { token: string }) {
+  const { t, locale } = useI18n(); const { me } = useSession(); const action = useAction();
+  const [preview, setPreview] = useState<InvitationPreview | null>(null); const [error, setError] = useState<unknown>(null); const [retry, setRetry] = useState(0);
   useEffect(() => {
-    if (!token) { setLoadErr("这个链接缺少邀请令牌，请直接使用邮件里的完整链接。"); return; }
-    get<Preview>(`/api/auth/invitations/preview?token=${encodeURIComponent(token)}`)
-      .then(setPv)
-      .catch((e) => setLoadErr(e.message));
-  }, [token]);
-
-  const accept = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (busy) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await post("/api/auth/invitations/accept", {
-        token,
-        password: pv?.needs_account ? password : undefined,
-        display_name: pv?.needs_account ? (name || null) : undefined,
-      });
-      await refresh();
-      window.location.assign("/");
-    } catch (e2: any) {
-      setErr(e2?.message || "接受邀请失败，请重试。");
-      setPassword("");
-      requestAnimationFrame(() => errRef.current?.focus());
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (loadErr) {
-    return (
-      <div className="authpage"><div className="authcard">
-        <div className="authbrand"><span className="logo">S</span>Synwevo Docs</div>
-        <h1>邀请链接无效</h1>
-        <p className="authlede">{loadErr}</p>
-        <a className="btn" href="/login">前往登录</a>
-      </div></div>
-    );
-  }
-  if (!pv) return <div className="empty">加载中…</div>;
-
-  if (pv.state !== "pending") {
-    const d = DEAD[pv.state];
-    return (
-      <div className="authpage"><div className="authcard">
-        <div className="authbrand"><span className="logo">S</span>Synwevo Docs</div>
-        <h1>{d.title}</h1>
-        <p className="authlede">{d.body}</p>
-        <a className="btn primary" href="/login">前往登录</a>
-      </div></div>
-    );
-  }
-
-  // Signed in as someone else. Said here rather than letting the server refuse after they have
-  // filled in a form — and the way out is offered, because "sign out first" with no button is
-  // an instruction, not a solution.
-  const wrongAccount = pv.signed_in_as && pv.signed_in_as.toLowerCase() !== pv.email.toLowerCase();
-
-  return (
-    <div className="authpage">
-      <form className="authcard" onSubmit={accept} noValidate>
-        <div className="authbrand"><span className="logo">S</span>Synwevo Docs</div>
-        <h1>加入「{pv.workspace}」</h1>
-        <p className="authlede">
-          {pv.inviter ? <><b>{pv.inviter}</b> 邀请 </> : "邀请 "}
-          <b>{pv.email}</b> 以「{pv.role_label}」身份加入这个工作空间。
-          <br />链接有效期至 {fmtTime(pv.expires_at)}。
-        </p>
-
-        {err && <div className="notice err autherr" role="alert" tabIndex={-1} ref={errRef}>{err}</div>}
-
-        {wrongAccount ? (
-          <>
-            <div className="notice warn">
-              你当前登录的是 <b>{pv.signed_in_as}</b>，而这个邀请是发给 <b>{pv.email}</b> 的。
-              请先退出当前账户，再用这个链接加入。
-            </div>
-            <button type="button" className="btn primary authsubmit"
-              onClick={async () => { await post("/api/auth/logout", {}); window.location.reload(); }}>
-              退出当前账户
-            </button>
-          </>
-        ) : (
-          <>
-            {pv.needs_account ? (
-              <>
-                <label className="field">
-                  <span>你的名称<span className="muted">（可选）</span></span>
-                  <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
-                </label>
-                <label className="field">
-                  <span>设置口令</span>
-                  <div className="authpw">
-                    <input className="input" type={show ? "text" : "password"} value={password}
-                      onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" required />
-                    <button type="button" className="btn ghost sm authshow" onClick={() => setShow((s) => !s)}
-                      aria-pressed={show} aria-label={show ? "隐藏口令" : "显示口令"}>{show ? "隐藏" : "显示"}</button>
-                  </div>
-                  <span className="tiny muted">至少 15 个字符。长句子比复杂符号更好记也更安全。</span>
-                </label>
-                {/* The address is fixed by the invitation, so it is shown, not asked for. */}
-                <p className="tiny muted">账户邮箱为 {pv.email}，由邀请决定，无法在这里修改。</p>
-              </>
-            ) : !pv.signed_in_as ? (
-              // Existing account, nobody signed in. Joining has to prove control of that
-              // account, so say so now instead of letting the server refuse after a click —
-              // and carry the invitation through the login so they land back here.
-              <>
-                <p className="tiny muted">这个邮箱已有 Synwevo 账户。请先登录，登录后会自动回到这个邀请。</p>
-                <a className="btn primary authsubmit"
-                  href={`/login?next=${encodeURIComponent(`/invite?token=${token}`)}`}>登录并继续</a>
-              </>
-            ) : (
-              <p className="tiny muted">点击下面的按钮，把 {pv.email} 加入这个空间。</p>
-            )}
-            {(pv.needs_account || pv.signed_in_as) && (
-              <button className="btn primary authsubmit" type="submit" disabled={busy}>
-                {busy ? "处理中…" : "接受邀请并加入"}
-              </button>
-            )}
-          </>
-        )}
-      </form>
-    </div>
-  );
+    if (!token) { setError(new Error("这个链接缺少邀请令牌，请使用邮件里的完整链接。")); return; }
+    saveIntent({ invite_token: token }); const abort = new AbortController(); setError(null);
+    post<InvitationPreview>("/api/auth/invitations/preview", { token }, abort.signal)
+      .then(setPreview).catch(e => { if (!abort.signal.aborted) setError(e); });
+    return () => abort.abort();
+  }, [token, retry]);
+  const [confirmDecline, setConfirmDecline] = useState(false);
+  const wrong = preview?.signed_in_as && preview.signed_in_as.toLowerCase() !== preview.email.toLowerCase();
+  const dead = preview && preview.state !== "pending" ? DEAD[preview.state] : null;
+  const role = preview?.role === "owner" ? "所有者" : preview?.role === "admin" ? "管理员" : preview?.role === "editor" ? "编辑者" : preview?.role === "viewer" ? "查看者" : "成员";
+  async function accept() { await action.run(async () => {
+    const out = await post<{ workspace_id?: string }>("/api/auth/invitations/accept", { token });
+    if (out.workspace_id) setWorkspaceContext(out.workspace_id);
+    clearInvitation(); window.location.assign("/onboarding");
+  }); }
+  async function decline() { await action.run(async () => {
+    await post("/api/auth/invitations/decline", { token });
+    clearInvitation(); setConfirmDecline(false); setPreview(p => p ? { ...p, state: "declined" } : p);
+  }); }
+  return <AuthFrame title={t(error ? "邀请链接无法打开" : dead ? dead[0] : "一起开始工作")} description={t(dead ? dead[1] : "查看邀请信息，再决定是否加入。打开链接不会自动接受邀请。")}>
+    <FlowError error={error || (!confirmDecline && action.error)} />
+    {error ? <><button type="button" className="btn" onClick={() => setRetry(v => v + 1)}>{t("重试")}</button><a href="/login" onClick={clearInvitation}>{t("前往登录")}</a></>
+      : !preview ? <Loading /> : dead ? <a className="btn primary" href="/login" onClick={clearInvitation}>{t("前往登录")}</a> : <>
+        <dl className="flow-facts"><dt>{t("工作空间")}</dt><dd>{preview.workspace || t("工作空间")}</dd><dt>{t("邀请邮箱")}</dt><dd>{preview.email}</dd>
+          <dt>{t("你的角色")}</dt><dd>{t(role)}</dd>{preview.inviter && <><dt>{t("邀请人")}</dt><dd>{preview.inviter}</dd></>}
+          <dt>{t("有效期至")}</dt><dd>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(preview.expires_at * 1000)}</dd></dl>
+        {wrong ? <><p className="notice warn">{t("你当前登录的是 {current}，这个邀请是发给 {email} 的。", { current: preview.signed_in_as!, email: preview.email })}</p><button type="button" className="btn" disabled={action.busy} onClick={() => void action.run(async () => { await post("/api/auth/logout", {}); window.location.reload(); })}>{t("退出当前账户")}</button></>
+          : preview.needs_account ? <><p className="tiny muted">{t("使用这封邀请创建账户，即可验证受邀邮箱并加入指定工作空间。")}</p><a className="btn primary" href={`/register#invite_token=${encodeURIComponent(token)}`}>{t("创建账户并继续")}</a><a className="authfoot" href="/login?next=%2Finvite">{t("已有账户？登录并继续")}</a></>
+          : !preview.signed_in_as ? <><p className="tiny muted">{t("请使用受邀邮箱登录，然后回来确认加入。")}</p><a className="btn primary" href="/login?next=%2Finvite">{t("登录并继续")}</a></>
+          : needsVerification(me) ? <a className="btn primary" href="/verify-email">{t("先验证邮箱")}</a>
+          : <><button type="button" className="btn primary" disabled={action.busy} onClick={() => void accept()}>{t(action.busy ? "加入中…" : "接受邀请并加入")}</button><button type="button" className="btn ghost" disabled={action.busy} onClick={() => setConfirmDecline(true)}>{t("拒绝邀请")}</button></>}
+      </>}
+    {confirmDecline && <Modal title={t("拒绝邀请")} role="alertdialog" describedBy="decline-impact" onClose={() => { if (!action.busy) setConfirmDecline(false); }}>
+      <div className="flow-stack"><p id="decline-impact">{t("拒绝后，此邀请链接将失效，你不会加入「{workspace}」。", { workspace: preview?.workspace || t("工作空间") })}</p>
+        <FlowError error={action.error} /><div className="org-actions"><button type="button" className="btn" disabled={action.busy} onClick={() => setConfirmDecline(false)}>{t("保留邀请")}</button><button type="button" className="btn danger" disabled={action.busy} onClick={() => void decline()}>{t(action.busy ? "处理中…" : "确认拒绝邀请")}</button></div>
+      </div>
+    </Modal>}
+  </AuthFrame>;
 }

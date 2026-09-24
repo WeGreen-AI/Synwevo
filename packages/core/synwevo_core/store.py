@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -459,8 +459,8 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
 # an older build of this file still receives tables added here later.
 SCHEMA_V5 = """
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
-  -- A workspace's own webhook endpoint. Managed through /api/v1 and the CLI only: there is
-  -- deliberately no product UI for it.
+  -- A workspace's own webhook endpoint. CLI/API and the separately authorized platform
+  -- admin console share current workspace approval and application authorization.
   id TEXT PRIMARY KEY, tenant TEXT NOT NULL,
   url TEXT NOT NULL, description TEXT,
   events TEXT NOT NULL,                   -- JSON array of event types; ["*"] means all
@@ -527,6 +527,20 @@ V5_COLUMNS = [
     ("webhook_deliveries", "claimed_until", "REAL"),
     # What an upload was declared for (source | template); a source upload cannot become a template.
     ("uploads", "purpose", "TEXT"),
+]
+
+# v6 extends account preferences and onboarding without changing existing identity or tenant IDs.
+V6_COLUMNS = [
+    ("rp_auth_requests", "workspace_id", "TEXT"),
+    ("users", "locale", "TEXT NOT NULL DEFAULT 'zh-Hans'"),
+    ("users", "timezone", "TEXT NOT NULL DEFAULT 'UTC'"),
+    ("users", "avatar_blob", "BLOB"),
+    ("users", "deletion_requested_at", "REAL"),
+    ("users", "deletion_due_at", "REAL"),
+    ("users", "onboarding_intent", "TEXT"),
+    ("users", "onboarding_completed_at", "REAL"),
+    ("invitations", "locale", "TEXT NOT NULL DEFAULT 'zh-Hans'"),
+    ("invitations", "declined_at", "REAL"),
 ]
 
 # columns added to v1 tables (name, table, definition)
@@ -694,8 +708,20 @@ class Store:
         c.executescript(SCHEMA_V2)                   # new tables of the current version (idempotent)
         c.executescript(SCHEMA_V4)
         c.executescript(SCHEMA_V5)
+        from .api_platform import SCHEMA_SQL as API_PLATFORM_SCHEMA
+        c.executescript(API_PLATFORM_SCHEMA)
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS account_recoveries (
+                id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+                token_hash TEXT NOT NULL UNIQUE, created_at REAL NOT NULL,
+                expires_at REAL NOT NULL, used_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS ix_account_recoveries_user ON account_recoveries(user_id);
+        """)
+        from .organizations import SCHEMA_SQL as ORGANIZATION_SCHEMA, V6_COLUMNS as ORGANIZATION_COLUMNS
+        c.executescript(ORGANIZATION_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + ORGANIZATION_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

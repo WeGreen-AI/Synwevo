@@ -131,6 +131,50 @@ class Sessions:
         return self.store.execute("UPDATE sessions SET revoked_at=?, revoked_reason=? "
                                   "WHERE id=? AND revoked_at IS NULL", (now(), reason, session_id)) > 0
 
+    def device_root_id(self, session_id: str) -> str | None:
+        """Resolve a local/RP session to its original sign-in, including older RP rows.
+
+        Callers performing revocation use this inside their write transaction. The legacy
+        linkage is scoped to the same user; a client session from another account never wins.
+        """
+        row = self.store.one("SELECT user_id,central_session_id,oidc_sid FROM sessions WHERE id=?",
+                             (session_id,))
+        if not row:
+            return None
+        if row["central_session_id"]:
+            return row["central_session_id"]
+        if row["oidc_sid"]:
+            found = self.store.one("SELECT central_session_id FROM client_sessions WHERE sid=? AND user_id=?",
+                                    (row["oidc_sid"], row["user_id"]))
+            if found:
+                return found["central_session_id"]
+        return session_id
+
+    def revoke_device(self, session_id: str, reason: str = "device_logout", *,
+                      rp_reason: str | None = None) -> dict:
+        """End this central sign-in and its relying-party sessions, never another device/service.
+
+        All hosted applications share Store, so enforcement is transactional and does not wait
+        for a network callback. The next browser request with any old cookie is refused.
+        """
+        ts = now()
+        with self.store.tx() as t:
+            row = t.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if not row:
+                return {"sessions_revoked": 0, "tokens_revoked": 0}
+            central = self.device_root_id(session_id)
+            n = t.execute("UPDATE sessions SET revoked_at=?,revoked_reason=CASE WHEN id=? THEN ? ELSE ? END WHERE user_id=? "
+                          "AND revoked_at IS NULL AND (id=? OR id=? OR central_session_id=? OR oidc_sid IN "
+                          "(SELECT sid FROM client_sessions WHERE central_session_id=? AND user_id=?))",
+                          (ts, central, reason, rp_reason or reason, row["user_id"], session_id,
+                           central, central, central, row["user_id"])).rowcount
+            tokens = t.execute("UPDATE oauth_tokens SET revoked_at=?,revoked_reason=? "
+                               "WHERE central_session_id=? AND user_id=? AND revoked_at IS NULL",
+                               (ts, reason, central, row["user_id"])).rowcount
+            t.execute("UPDATE client_sessions SET logged_out_at=? WHERE central_session_id=? AND user_id=?",
+                      (ts, central, row["user_id"]))
+            return {"sessions_revoked": n, "tokens_revoked": tokens}
+
     def revoke_all_for_user(self, user_id: str, reason: str, *, except_session: str | None = None) -> int:
         """Used by password change, MFA change, suspension and "sign out everywhere".
 

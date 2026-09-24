@@ -9,7 +9,7 @@ description = "Synwevo Account：登录仪式、MFA、Passkey、邀请与找回�
 requires-python = ">=3.12"
 # Note what is absent: nothing from Synwevo Docs. The account service must start with the document
 # engine uninstalled, and this list is where that stops being a claim.
-dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "authlib", "httpx",
+dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "pydantic", "authlib", "httpx",
                 "pyotp", "cryptography", "webauthn", "cbor2"]
 
 [tool.setuptools.packages.find]

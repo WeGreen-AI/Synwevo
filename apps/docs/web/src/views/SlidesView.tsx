@@ -1,3 +1,5 @@
+import { formatNumber } from "@synwevo/ui";
+import { t as tr, useI18n } from "@synwevo/ui";
 import { useEffect, useRef } from "react";
 import type { Mark, Selection } from "../lib/types";
 import { cssColor, markColor } from "../lib/css";
@@ -11,6 +13,7 @@ export default function SlidesView({ data, marks, selection, onSelect, side, zoo
   data: any; marks: Mark[]; selection: Selection | null; onSelect: (s: Selection | null) => void; side: "src" | "tpl"; zoom?: number;
   slotNames?: Record<string, { name: string; color: string; no?: number }>; focusKey?: string | null; onMarkClick?: (id: string) => void;
 }) {
+  useI18n();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!focusKey) return;
@@ -41,7 +44,7 @@ export default function SlidesView({ data, marks, selection, onSelect, side, zoo
     <div className="slides-scroll" ref={ref} onMouseUp={onUp}>
       {data.slides.map((s: any) => (
         <div key={s.index}>
-          <div className="slide-label" style={{ width: cx * EMU_PX * scale }}>第 {s.index + 1} 张幻灯片</div>
+          <div className="slide-label" style={{ width: cx * EMU_PX * scale }}>{tr("第 {count} 张幻灯片", { count: s.index + 1 })}</div>
           <div className="slide" style={{ width: cx * EMU_PX * scale, height: cy * EMU_PX * scale }}>
             {s.shapes.filter((sh: any) => sh.box).map((sh: any) => {
               const [x, y, w, h] = sh.box;
@@ -54,7 +57,7 @@ export default function SlidesView({ data, marks, selection, onSelect, side, zoo
               return (
                 <div key={sh.id} className="shape" style={style} title={sh.name} data-mark={sm ? `${sm.role}:${sm.id}` : undefined}>
                   {sm && sm.no != null && <button type="button" className="num" style={{ position: "absolute", right: 0, top: 0, background: markColor(sm.color), border: 0 }} aria-label={sm.label}
-                    onMouseUp={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onMarkClick?.(sm.id); }}>{sm.no}</button>}
+                    onMouseUp={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onMarkClick?.(sm.id); }}>{formatNumber(sm.no)}</button>}
                   {slotIds.map((sid) => slotNames[sid] && (
                     <button type="button" key={sid} className="fldchip" style={{ background: cssColor(slotNames[sid].color), position: "absolute", left: 0, top: -1 }}
                       onMouseUp={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onSelect({ kind: "slot", slotId: sid }); onMarkClick?.(sid); }}>{slotNames[sid].name}</button>
@@ -73,7 +76,7 @@ export default function SlidesView({ data, marks, selection, onSelect, side, zoo
                       <tr key={ri}>{row.map((c: any, ci: number) => c.hmerge || c.vmerge ? null : (
                         <td key={ci} colSpan={c.span > 1 ? c.span : undefined} rowSpan={c.rspan > 1 ? c.rspan : undefined} data-slide={s.index} data-shape={sh.id} data-row={ri} data-col={ci}
                           style={{ background: selection?.kind === "pptx_cell" && selection.shape === String(sh.id) && selection.row === ri && selection.col === ci ? hexA("#2563eb", 0.15) : undefined }}>
-                          {selectable && side === "tpl" && ci === 0 && <button type="button" className="btn xs" style={{ float: "left", marginRight: 2 }} title="选择整行" aria-label={`选择表格第 ${ri + 1} 行`}
+                          {selectable && side === "tpl" && ci === 0 && <button type="button" className="btn xs" style={{ float: "left", marginRight: 2 }} title={tr("选择整行")} aria-label={tr("选择表格第 {v1} 行", { v1: ri + 1 })}
                             onMouseUp={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onSelect({ kind: "pptx_row", slide: s.index, shape: String(sh.id), row: ri }); }}>≡</button>}
                           {c.paras.map((p: any) => p.text).join("\n")}
                         </td>))}</tr>))}</tbody></table>

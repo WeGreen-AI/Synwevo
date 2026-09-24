@@ -1,10 +1,12 @@
+import { t } from "@synwevo/ui/i18n-core";
+import { issueText } from "./presentation.ts";
 /** What the signed-in member may do in the current workspace, for the UI only.
  *
  *  The server is what enforces it (403 read_only_role / export_not_allowed); this decides which
  *  buttons and commands to offer, so a viewer is not handed actions that can only fail, and turns
  *  those two refusals into a sentence that says what happened and who can change it.
  *
- *  No imports: tested with `node --test`.
+ *  Presentation imports use the React-free shared entry point for node tests.
  */
 export const WRITE_ROLES = ["owner", "admin", "editor"];
 
@@ -38,7 +40,8 @@ export function permissionText(e: unknown): string | null {
 }
 
 export function errorText(e: unknown): string {
-  return permissionText(e) || (e as { message?: string } | null)?.message || String(e);
+  const refusal = permissionText(e);
+  return refusal ? t(refusal) : issueText(typeof e === "string" ? e : e as any);
 }
 
 /** A 403 for one of these two reasons is an answer about the person, not a failed save. */

@@ -1,3 +1,5 @@
+import { formatNumber } from "@synwevo/ui";
+import { t as tr, useI18n } from "@synwevo/ui";
 import { useEffect, useRef } from "react";
 import type { Mark, Selection } from "../lib/types";
 import { markColor } from "../lib/css";
@@ -5,6 +7,7 @@ import { hexA } from "./GridView";
 import { scrollBehavior } from "@synwevo/ui";
 
 export default function TextView({ lines, marks, selection, onSelect, focusKey, selectable = true }: { selectable?: boolean; lines: string[]; marks: Mark[]; selection: Selection | null; onSelect: (s: Selection | null) => void; focusKey?: string | null }) {
+  useI18n();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!focusKey) return;
@@ -30,7 +33,7 @@ export default function TextView({ lines, marks, selection, onSelect, focusKey, 
         const b = [...cuts].filter((x) => x >= 0 && x <= ln.length).sort((x, y) => x - y);
         return (
           <div key={i} className="tline">
-            <span className="ln">{i + 1}</span>
+            <span className="ln">{formatNumber(i + 1)}</span>
             <span className="tx" data-line={i}>
               {b.slice(0, -1).map((s0, k) => {
                 const e0 = b[k + 1];

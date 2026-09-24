@@ -8,15 +8,15 @@ would be a way to read titles you have no right to read.
 """
 from __future__ import annotations
 
-import os
 from fastapi import APIRouter, Request
 
 from synwevo_core.apps import Apps
 from synwevo_core.config import platform_name
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
+from synwevo_core.organizations import Organizations, workspace_access_failure
 from synwevo_core.sessions import Sessions
-from synwevo_core.store import Store
+from synwevo_core.store import Store, now
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=None) -> APIRouter:
@@ -49,7 +49,11 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=
                      "display_name": user.get("display_name"),
                      "platform_role": user["platform_role"]},
             "workspaces": [{"id": w["id"], "name": w["name"], "kind": w["kind"],
-                            "role": w["role"]} for w in spaces],
+                            "role": w["role"], "status": w["status"],
+                            **{key: w[key] for key in ("org_id", "org_name", "organization_id", "organization_name") if key in w}}
+                           for w in spaces],
+            "organizations": [{key: org[key] for key in ("id", "name", "status", "role")}
+                              for org in Organizations(store, ident).list_for_user(user["id"])],
             "current_workspace_id": s.get("workspace_id"),
             # Only applications this person can actually open — in the workspace this session
             # is in, when one is selected. Computed without it, switching workspace changed
@@ -58,6 +62,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=
             # cards for things that do not exist yet.
             "apps": apps.apps_for(user["id"], s.get("workspace_id")),
             "account_url": _accounts_base(),
+            # Read-side only: the portal does not mint/recover invitation tokens or accept
+            # invitations. Email verification prevents an unverified address claiming someone
+            # else's invitation metadata. Account owns the subsequent acceptance ceremony.
+            "pending_invitations": _pending_invitations(store, user),
         }
 
     @r.post("/workspace")
@@ -69,16 +77,35 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=
         """
         s = _session(request)
         wid = (body or {}).get("workspace_id")
+        if wid is not None and (not isinstance(wid, str) or not wid.strip()):
+            raise ServiceError(400, "bad_workspace", "请选择有效的工作空间")
         if wid is not None and (not ident.membership(wid, s["user_id"]) or not ident.get_workspace(wid)):
             # A deleted workspace keeps its membership rows until they are cleaned up, so the
             # membership alone would let a session select a workspace that no longer exists.
             raise ServiceError(403, "not_a_member", "你不是该工作空间的成员")
+        if wid is not None and ident.get_workspace(wid)["status"] != "active":
+            raise ServiceError(403, "workspace_unavailable", "该工作空间当前不可用")
+        if wid is not None and (failure := workspace_access_failure(store, wid, s["user_id"])):
+            raise ServiceError(403, failure, "该组织或工作空间当前不可用")
         sessions.set_workspace(s["id"], wid)
         audit(request, "portal.workspace.switch", actor_id=s["user_id"], workspace_id=wid,
               result="ok")
         return {"ok": True, "workspace_id": wid}
 
     return r
+
+
+def _pending_invitations(store: Store, user: dict) -> list[dict]:
+    if not user.get("email_verified_at"):
+        return []
+    return store.all(
+        "SELECT i.id, i.workspace_id, w.name AS workspace_name, i.role, i.expires_at "
+        "FROM invitations i JOIN workspaces w ON w.id=i.workspace_id "
+        "LEFT JOIN organizations o ON o.id=w.organization_id "
+        "WHERE i.email_key=? AND i.accepted_at IS NULL AND i.revoked_at IS NULL "
+        "AND i.expires_at>? AND w.deleted_at IS NULL AND w.status='active' "
+        "AND (w.organization_id IS NULL OR o.status='active') "
+        "ORDER BY i.expires_at, i.id", (user["email_key"], now()))
 
 
 def _accounts_base() -> str:

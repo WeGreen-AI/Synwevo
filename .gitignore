@@ -22,3 +22,7 @@ docs/screenshots/*.png
 
 # 本机三源站运行（pid、日志）与备份
 .local/
+
+# Local browser evidence can contain synthetic account URLs and must not be published.
+.playwright-cli/
+output/playwright/

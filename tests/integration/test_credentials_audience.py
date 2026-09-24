@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib
+import json
 import urllib.parse
 
 import pytest
@@ -25,6 +26,7 @@ from fastapi.testclient import TestClient
 from synwevo_core import oidc
 from synwevo_core.apps import Apps, bootstrap_docs_app
 from synwevo_core.identity import Identity
+from synwevo_core.errors import ServiceError
 from synwevo_core.machine import LEGACY_DOCS_AUDIENCE, MachineAuth, docs_resource
 from synwevo_core.store import Store
 
@@ -145,7 +147,10 @@ def test_a_service_account_of_another_application_is_refused(env):
         "scopes,audiences,token_endpoint_auth_method,require_pkce,kind,workspace_id,api_scopes,created_at,updated_at) "
         "VALUES ('reports-batch','reports','报表批处理','x','[]','[]','', '[]','client_secret_post',1,'service',?,"
         "'docweave.read docweave.write',0,0)", (env["ws"],))
-    tok = minted_service(env, "reports-batch", "docweave.read docweave.write")
+    env["store"].execute("UPDATE oauth_clients SET audiences=? WHERE client_id='reports-batch'",
+                         (json.dumps([docs_resource()]),))
+    # A mistaken audience registration must not bypass the independent application check.
+    tok = minted_service(env, "reports-batch", "docweave.read docweave.write", audience=docs_resource())
     r = call(env, tok)
     assert r.status_code == 403 and err(r) == "wrong_audience", r.text
 
@@ -173,21 +178,31 @@ def test_a_token_for_the_docs_resource_is_accepted(env):
 
 def test_the_documented_legacy_audience_still_names_the_docs_api(env):
     """`docweave-api` is written into issued tokens and into registrations made from the docs."""
+    env["store"].execute("UPDATE oauth_clients SET audiences=? WHERE client_id='nightly-batch'",
+                         (json.dumps([LEGACY_DOCS_AUDIENCE]),))
     tok = minted_service(env, "nightly-batch", "docweave.read", audience=LEGACY_DOCS_AUDIENCE)
     assert call(env, tok).status_code == 200
 
 
 def test_a_configured_resource_identifier_is_the_one_enforced(env, monkeypatch):
+    stale = minted_service(env, "nightly-batch", "docweave.read", audience=docs_resource())
     monkeypatch.setenv("SYNWEVO_DOCS_RESOURCE", "https://docs.example.com/api")
+    env["store"].execute("UPDATE oauth_clients SET audiences=? WHERE client_id='nightly-batch'",
+                         (json.dumps([docs_resource()]),))
     ok = minted_service(env, "nightly-batch", "docweave.read", audience="https://docs.example.com/api")
     assert call(env, ok).status_code == 200
-    stale = minted_service(env, "nightly-batch", "docweave.read", audience="urn:synwevo:app:docweave")
     assert call(env, stale).status_code == 401
 
 
 def test_no_audience_is_accepted_unless_the_deployment_requires_one(env, monkeypatch):
-    env["store"].execute("UPDATE oauth_clients SET audiences='[]' WHERE client_id='nightly-batch'")
     tok = minted_service(env, "nightly-batch", "docweave.read")
+    # Historical fixture: pre-audience tokens remain readable during the documented
+    # compatibility window. New issuance must still validate current registration.
+    env["store"].execute("UPDATE oauth_tokens SET audience=NULL WHERE client_id='nightly-batch'")
+    env["store"].execute("UPDATE oauth_clients SET audiences='[]' WHERE client_id='nightly-batch'")
+    with pytest.raises(ServiceError) as denied:
+        minted_service(env, "nightly-batch", "docweave.read")
+    assert denied.value.code == "invalid_target"
     row = env["store"].one("SELECT audience FROM oauth_tokens ORDER BY issued_at DESC LIMIT 1")
     assert row["audience"] is None
     assert call(env, tok).status_code == 200
@@ -227,7 +242,14 @@ def test_narrowing_a_service_accounts_registration_takes_effect_on_the_next_call
 def test_a_service_account_scope_outside_its_registration_is_ignored(env):
     """A token row carrying a scope the account was never registered for (for instance minted
     before a registration was narrowed) cannot use it."""
+    with pytest.raises(ServiceError) as denied:
+        minted_service(env, "nightly-batch", "docweave.read docweave.manage")
+    assert denied.value.code == "invalid_scope"
+    env["store"].execute("UPDATE oauth_clients SET api_scopes='docweave.read docweave.manage' "
+                         "WHERE client_id='nightly-batch'")
     tok = minted_service(env, "nightly-batch", "docweave.read docweave.manage")
+    env["store"].execute("UPDATE oauth_clients SET api_scopes='docweave.read' "
+                         "WHERE client_id='nightly-batch'")
     who = call(env, tok, "/api/v1/whoami").json()
     assert who["scopes"] == ["docweave.read"]
 

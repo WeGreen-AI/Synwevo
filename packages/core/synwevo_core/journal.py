@@ -23,11 +23,24 @@ import os
 import time
 from pathlib import Path
 
-from .store import Store
+from .store import Store, new_id
 
 FILENAME = "security-journal.jsonl"
 
+# Organization withdrawals are write-ahead intents. The same SQLite transaction
+# as the withdrawal stores a receipt in the existing meta table. A backup can be
+# taken between fsync and COMMIT, so read() must include these even before its
+# time cutoff; apply() skips only receipts actually present in that backup.
+# This also preserves explicit recovery/regrant completed before the backup.
+# No historical journal line or tenant association is rewritten.
+ORGANIZATION_KINDS = {
+    "organization_frozen", "organization_deleted", "organization_member_removed",
+    "organization_role_changed", "organization_policy_restricted",
+}
+_ORG_RECEIPT = "organization_withdrawal:"
+
 KINDS = {
+    "api_platform_approval_revoked",  # {approval_id}, including unconsumed approvals
     "api_key_revoked",          # {key_id} — and every key of its lineage
     "client_disabled",          # {client_id}
     "client_secret_rotated",    # {client_id, secret_hash}
@@ -45,9 +58,10 @@ KINDS = {
     "workspace_app_disabled",   # {workspace_id, app_id}
     "invitation_revoked",       # {invitation_id}
     "api_key_superseded",       # {key_id} — a rotated-out key; the successor is not recreated
-}
+} | ORGANIZATION_KINDS
 
 _REQUIRED = {
+    "api_platform_approval_revoked": ("approval_id",),
     "api_key_revoked": ("key_id",), "api_key_superseded": ("key_id",),
     "client_disabled": ("client_id",), "client_secret_rotated": ("client_id", "secret_hash"),
     "user_suspended": ("user_id",), "user_deleted": ("user_id",),
@@ -58,6 +72,9 @@ _REQUIRED = {
     "workspace_frozen": ("workspace_id",), "webhook_disabled": ("subscription_id",),
     "passkey_removed": ("credential_id",), "workspace_app_disabled": ("workspace_id", "app_id"),
     "invitation_revoked": ("invitation_id",), "tokens_revoked": (),
+    **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
+    "organization_member_removed": ("event_id", "organization_id", "user_id"),
+    "organization_role_changed": ("event_id", "organization_id", "user_id", "role"),
 }
 
 
@@ -79,6 +96,20 @@ def _validate(entry, line: int) -> None:
         bad()
     if kind == "role_changed" and entry["role"] not in {"owner", "admin", "editor", "viewer"}:
         bad()
+    if kind in ORGANIZATION_KINDS:
+        scope = entry.get("workspace_ids")
+        if (not isinstance(scope, list) or any(not isinstance(w, str) or not w.strip() for w in scope)
+                or len(set(scope)) != len(scope)):
+            bad()
+        if kind == "organization_role_changed" and entry["role"] not in {"admin", "member"}:
+            bad()
+        if kind == "organization_deleted":
+            if any(type(entry.get(k)) not in (int, float) or not math.isfinite(entry[k]) or entry[k] < 0
+                   for k in ("deleted_at", "recover_until")):
+                bad()
+            if (entry["recover_until"] != entry["deleted_at"] + 7 * 24 * 3600
+                    or entry.get("previous_status") not in {"active", "frozen"}):
+                bad()
 
 
 def validated_lines(p: Path) -> list[tuple[dict, str]]:
@@ -123,10 +154,113 @@ def record(store: Store, kind: str, **fields) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+    # fsync(file) alone does not make a newly created directory entry durable.
+    directory = os.open(p.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def record_organization(store: Store, kind: str, *, organization_id: str, **fields) -> None:
+    """Authorize/audit first, then call before SQL withdrawals in a write tx.
+
+    An append/fsync failure aborts that transaction. A later SQL/commit failure
+    leaves a restrictive intent without a receipt, which restore must replay.
+    The receipt commits atomically with the caller's withdrawal, never separately.
+    Only IDs and lifecycle timestamps go into the journal, not names or reasons.
+    """
+    if kind not in ORGANIZATION_KINDS:
+        raise ValueError("not an organization withdrawal")
+    with store.conn() as c:
+        if not c.in_transaction:
+            raise RuntimeError("organization withdrawal requires a write transaction")
+        eid = new_id("ow")
+        workspace_ids = [r["id"] for r in c.execute(
+            "SELECT id FROM workspaces WHERE organization_id=? ORDER BY id", (organization_id,))]
+        record(store, kind, event_id=eid, organization_id=organization_id,
+               workspace_ids=workspace_ids, **fields)
+        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_ORG_RECEIPT + eid,))
 
 
 def read(root: str | Path, since: float = 0.0) -> list[dict]:
-    return [entry for entry, _ in validated_lines(path(root)) if entry["at"] > since]
+    return [entry for entry, _ in validated_lines(path(root))
+            if entry["at"] > since or entry["kind"] in ORGANIZATION_KINDS]
+
+
+def _org_scope(c, e):
+    # Include the event's old IDs: the backup may predate explicit adoption.
+    return sorted(set(e["workspace_ids"]) | {r["id"] for r in c.execute(
+        "SELECT id FROM workspaces WHERE organization_id=?", (e["organization_id"],))})
+
+
+def _org_revoke(c, workspace_ids, at, uid=None):
+    """Match live org withdrawal scope; personal/unrelated credentials survive."""
+    for wid in workspace_ids:
+        user_sql, user_args = (" AND user_id=?", (uid,)) if uid else ("", ())
+        for table in ("sessions", "oauth_tokens"):
+            c.execute(f"UPDATE {table} SET revoked_at=?,revoked_reason='organization_access_withdrawn' "
+                      "WHERE workspace_id=? AND revoked_at IS NULL" + user_sql, (at, wid, *user_args))
+        c.execute("UPDATE oauth_codes SET used_at=? WHERE workspace_id=? AND used_at IS NULL" + user_sql,
+                  (at, wid, *user_args))
+        c.execute("UPDATE invitations SET revoked_at=? WHERE workspace_id=? AND accepted_at IS NULL "
+                  "AND revoked_at IS NULL" + (" AND invited_by=?" if uid else ""), (at, wid, *user_args))
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='api_platform_approvals'").fetchone():
+            c.execute("UPDATE api_platform_approvals SET status='revoked',revoked_at=? WHERE workspace_id=? "
+                      "AND status IN ('pending','approved')" + (" AND (requested_by=? OR approved_by=?)" if uid else ""),
+                      (at, wid, *((uid, uid) if uid else ())))
+
+
+def _apply_organization(c, e, orphan_orgs, orphan_workspaces):
+    oid, at, kind = e["organization_id"], e["at"], e["kind"]
+    if c.execute("SELECT 1 FROM meta WHERE key=?", (_ORG_RECEIPT + e["event_id"],)).fetchone():
+        return 0
+    scope = _org_scope(c, e)
+    if kind in {"organization_frozen", "organization_deleted"}:
+        if kind == "organization_frozen":
+            c.execute("UPDATE organizations SET status='frozen',updated_at=?,version=version+1 "
+                      "WHERE id=? AND status='active'", (at, oid))
+        else:
+            # Never restart the seven-day clock on restore or replace a newer deletion.
+            c.execute("UPDATE organizations SET status='deleted',deleted_at=?,recover_until=?,previous_status=?, "
+                      "updated_at=?,version=version+1 WHERE id=? AND (deleted_at IS NULL OR deleted_at<?)",
+                      (e["deleted_at"], e["recover_until"], e["previous_status"], at, oid, e["deleted_at"]))
+        _org_revoke(c, scope, at)
+        for wid in scope:
+            # An old backup can contain the historical workspace but no org row
+            # or attachment. Freeze it instead of inventing that missing grant.
+            c.execute("UPDATE workspaces SET status='frozen',updated_at=? WHERE id=? AND status='active' "
+                      "AND (organization_id IS NULL OR organization_id<>? OR NOT EXISTS "
+                      "(SELECT 1 FROM organizations WHERE id=?))", (at, wid, oid, oid))
+    elif kind == "organization_member_removed":
+        uid = e["user_id"]
+        _org_revoke(c, scope, at, uid)
+        c.execute("DELETE FROM organization_memberships WHERE organization_id=? AND user_id=?", (oid, uid))
+        for wid in scope:
+            c.execute("DELETE FROM memberships WHERE workspace_id=? AND user_id=?", (wid, uid))
+            c.execute("UPDATE app_entitlements SET revoked_at=COALESCE(revoked_at,?) "
+                      "WHERE workspace_id=? AND user_id=?", (at, wid, uid))
+        orphan_orgs.add(oid)
+        orphan_workspaces.update(scope)
+    elif kind == "organization_role_changed":
+        uid, role = e["user_id"], e["role"]
+        # A transfer's new owner is a grant and is deliberately not recreated.
+        c.execute("UPDATE organization_memberships SET role=?,updated_at=? WHERE organization_id=? AND user_id=? "
+                  "AND (role='owner' OR (role='admin' AND ?='member'))", (role, at, oid, uid, role))
+        for wid in scope:
+            c.execute("UPDATE invitations SET revoked_at=? WHERE workspace_id=? AND invited_by=? "
+                      "AND accepted_at IS NULL AND revoked_at IS NULL", (at, wid, uid))
+        orphan_orgs.add(oid)
+    elif kind == "organization_policy_restricted":
+        c.execute("UPDATE organizations SET invitation_policy='owners',updated_at=?,version=version+1 "
+                  "WHERE id=? AND invitation_policy<>'owners'", (at, oid))
+        for wid in scope:
+            c.execute("UPDATE invitations SET revoked_at=? WHERE workspace_id=? AND accepted_at IS NULL "
+                      "AND revoked_at IS NULL AND invited_by NOT IN (SELECT m.user_id FROM organization_memberships m "
+                      "JOIN users u ON u.id=m.user_id WHERE m.organization_id=? AND m.role='owner' "
+                      "AND u.status='active' AND u.deleted_at IS NULL)", (at, wid, oid))
+    c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_ORG_RECEIPT + e["event_id"],))
+    return 1
 
 
 def apply(store: Store, entries: list[dict]) -> dict:
@@ -139,12 +273,15 @@ def apply(store: Store, entries: list[dict]) -> dict:
     t = time.time()
     counts: dict[str, int] = {}
     demoted_workspaces: set[str] = set()
+    demoted_orgs: set[str] = set()
     role_rank = {"viewer": 0, "editor": 1, "admin": 2, "owner": 3}
     with store.tx() as c:
         for e in entries:
             k = e.get("kind")
             n = 0
-            if k == "api_key_revoked":
+            if k in ORGANIZATION_KINDS:
+                n = _apply_organization(c, e, demoted_orgs, demoted_workspaces)
+            elif k == "api_key_revoked":
                 kid = e.get("key_id")
                 row = c.execute("SELECT COALESCE(lineage, id) AS l FROM api_keys WHERE id=?", (kid,)).fetchone()
                 lineage = row["l"] if row else kid
@@ -168,8 +305,24 @@ def apply(store: Store, entries: list[dict]) -> dict:
                     n = c.execute(f"UPDATE oauth_tokens SET revoked_at=?, revoked_reason='journal_replay' "
                                   f"WHERE revoked_at IS NULL AND {' AND '.join(where)}", (t, *args)).rowcount
             elif k in ("user_suspended", "user_deleted"):
-                status = "suspended" if k == "user_suspended" else "deleted"
-                n = c.execute("UPDATE users SET status=? WHERE id=? AND status='active'", (status, e.get("user_id"))).rowcount
+                uid, at = e["user_id"], e["at"]
+                if k == "user_deleted":
+                    # Deletion is terminal even if an earlier withdrawal already suspended
+                    # the user. Restore must also erase the profile/credentials which the
+                    # older backup still contains. Keep the stable ID and reserved email_key;
+                    # never cascade into organization contributions or coworker documents.
+                    n = c.execute("UPDATE users SET status='deleted',deleted_at=COALESCE(deleted_at,?),"
+                                  "updated_at=?,display_name=NULL,email='',email_verified_at=NULL,"
+                                  "avatar_blob=NULL,locale='zh-Hans',timezone='UTC',platform_role='none' WHERE id=?",
+                                  (at, at, uid)).rowcount
+                    for table in ("user_passwords", "passkeys", "webauthn_credentials", "totp_secrets",
+                                  "recovery_codes", "account_recoveries", "mfa_tickets", "webauthn_challenges"):
+                        c.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
+                    c.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
+                else:
+                    n = c.execute("UPDATE users SET status='suspended' WHERE id=? AND status IN ('active','pending')",
+                                  (uid,)).rowcount
+                c.execute("UPDATE oauth_codes SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
                 c.execute("UPDATE sessions SET revoked_at=?, revoked_reason='journal_replay' WHERE user_id=? AND revoked_at IS NULL",
                           (t, e.get("user_id")))
                 c.execute("UPDATE oauth_tokens SET revoked_at=?, revoked_reason='journal_replay' WHERE user_id=? AND revoked_at IS NULL",
@@ -216,6 +369,9 @@ def apply(store: Store, entries: list[dict]) -> dict:
             elif k == "api_key_superseded":
                 n = c.execute("UPDATE api_keys SET revoked_at=COALESCE(revoked_at, ?), revoke_reason=COALESCE(revoke_reason,'rotated') "
                               "WHERE id=?", (t, e.get("key_id"))).rowcount
+            elif k == "api_platform_approval_revoked":
+                n = c.execute("UPDATE api_platform_approvals SET status='revoked',revoked_at=COALESCE(revoked_at,?) WHERE id=?",
+                              (e.get("at", t), e.get("approval_id"))).rowcount
             elif k == "entitlement_revoked":
                 # The members policy needs no grant row, so older backups can have nothing
                 # to UPDATE. A prior membership's stale revocation must also be replaced:
@@ -241,9 +397,22 @@ def apply(store: Store, entries: list[dict]) -> dict:
                     except Exception:  # noqa: BLE001 - table name differs across versions
                         pass
             counts[k] = counts.get(k, 0) + n
+        for oid in sorted(demoted_orgs):
+            owner = c.execute("SELECT 1 FROM organization_memberships m JOIN users u ON u.id=m.user_id "
+                              "WHERE m.organization_id=? AND m.role='owner' "
+                              "AND u.status='active' AND u.deleted_at IS NULL LIMIT 1", (oid,)).fetchone()
+            if not owner:
+                n = c.execute("UPDATE organizations SET status='frozen',updated_at=?,version=version+1 "
+                              "WHERE id=? AND status='active'", (t, oid)).rowcount
+                scope = [r["id"] for r in c.execute("SELECT id FROM workspaces WHERE organization_id=?", (oid,))]
+                _org_revoke(c, scope, t)
+                counts["ownerless_organizations_frozen"] = counts.get("ownerless_organizations_frozen", 0) + n
         for wid in sorted(demoted_workspaces):
             owner = c.execute("SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id "
+                              "JOIN workspaces w ON w.id=m.workspace_id LEFT JOIN organization_memberships om "
+                              "ON om.organization_id=w.organization_id AND om.user_id=u.id "
                               "WHERE m.workspace_id=? AND m.role='owner' "
+                              "AND (w.organization_id IS NULL OR om.user_id IS NOT NULL) "
                               "AND u.status='active' AND u.deleted_at IS NULL LIMIT 1", (wid,)).fetchone()
             if not owner:
                 n = c.execute("UPDATE workspaces SET status='frozen', updated_at=? "

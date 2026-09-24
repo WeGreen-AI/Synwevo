@@ -5,7 +5,9 @@
   "description": "浏览器端接入 Synwevo Account：API 客户端、会话上下文与平台导航",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./api": "./src/api.ts",
+    "./api-messages": "./src/api.messages.ts"
   },
   "dependencies": {
     "@synwevo/ui": "1.0.0"
@@ -17,5 +19,11 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/WeGreen-AI/Synwevo.git"
+  },
+  "scripts": {
+    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "rolldown": "1.2.10"
   }
 }

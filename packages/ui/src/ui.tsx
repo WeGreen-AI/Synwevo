@@ -1,3 +1,4 @@
+import { t as tr, useI18n, formatDate, formatNumber } from "./i18n";
 import { createContext, ReactNode, RefObject, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { FOCUSABLE, isImeKey, isTopModal, popModal, pushModal, strayKeyAction, trapIndex } from "./a11y";
 import { ToastTimers } from "./toasttimers";
@@ -9,6 +10,7 @@ const TOAST_MS: Record<Toast["kind"], number> = { info: 3500, ok: 3500, err: 800
 const EDGE = 16;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
+  useI18n();
   const [items, setItems] = useState<Toast[]>([]);
   const [flip, setFlip] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -79,8 +81,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         onBlur={(e) => { if (!boxRef.current?.contains(e.relatedTarget as Node | null) && !hovered()) clock.release(); }}>
         {items.map((t) => (
           <div key={t.id} className={`toast ${t.kind}`} onClick={() => remove(t.id)}>
-            <span className="grow">{t.text}</span>
-            <button type="button" className="toast-x" aria-label="关闭提示" onClick={(e) => { e.stopPropagation(); remove(t.id); }}><span aria-hidden="true">✕</span></button>
+            <span className="grow">{tr(t.text)}</span>
+            <button type="button" className="toast-x" aria-label={tr("关闭提示")} onClick={(e) => { e.stopPropagation(); remove(t.id); }}><span aria-hidden="true">✕</span></button>
           </div>
         ))}
       </div>
@@ -187,6 +189,7 @@ export function Modal({ title, onClose, children, footer, size, role = "dialog",
   title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; size?: "wide" | "narrow";
   role?: "dialog" | "alertdialog"; describedBy?: string;
 }) {
+  useI18n();
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const { onKeyDown, isTop } = useModalFocus(ref, onClose);
@@ -196,7 +199,7 @@ export function Modal({ title, onClose, children, footer, size, role = "dialog",
         aria-describedby={describedBy} tabIndex={-1} onKeyDown={onKeyDown}>
         <div className="modal-h">
           <h2 className="grow" id={titleId}>{title}</h2>
-          <button type="button" className="btn ghost icon" onClick={onClose} aria-label="关闭">✕</button>
+          <button type="button" className="btn ghost icon" onClick={onClose} aria-label={tr("关闭")}>✕</button>
         </div>
         <div className="modal-b">{children}</div>
         {footer && <div className="modal-f">{footer}</div>}
@@ -217,6 +220,7 @@ const DialogCtx = createContext<{ confirm: (t: string, b: ReactNode, ok?: string
 });
 
 export function DialogProvider({ children }: { children: ReactNode }) {
+  useI18n();
   const [st, setSt] = useState<DialogState>(null);
   const [val, setVal] = useState("");
   const cur = useRef<DialogState>(null);
@@ -250,7 +254,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       {st && (
         <Modal
           key={st.n}
-          title={st.title}
+          title={tr(st.title)}
           size="narrow"
           role={st.kind === "confirm" ? "alertdialog" : "dialog"}
           describedBy={st.kind === "confirm" ? bodyId : undefined}
@@ -260,16 +264,16 @@ export function DialogProvider({ children }: { children: ReactNode }) {
               <span className="spacer" />
               {/* For a destructive confirm the least destructive choice takes focus, so a stray
                   Enter or a second Delete press cancels rather than deletes. */}
-              <button type="button" className="btn" onClick={cancel} data-autofocus={st.kind === "confirm" && st.danger ? true : undefined}>取消</button>
-              <button type="button" className={`btn ${st.kind === "confirm" && st.danger ? "danger" : "primary"}`} onClick={() => close(st.kind === "confirm" ? true : val)}>{st.ok}</button>
+              <button type="button" className="btn" onClick={cancel} data-autofocus={st.kind === "confirm" && st.danger ? true : undefined}>{tr("取消")}</button>
+              <button type="button" className={`btn ${st.kind === "confirm" && st.danger ? "danger" : "primary"}`} onClick={() => close(st.kind === "confirm" ? true : val)}>{tr(st.ok)}</button>
             </>
           }
         >
           {st.kind === "confirm" ? (
-            <div id={bodyId} style={{ lineHeight: 1.6 }}>{st.body}</div>
+            <div id={bodyId} style={{ lineHeight: 1.6 }}>{typeof st.body === 'string' ? tr(st.body) : st.body}</div>
           ) : (
             <label className="field">
-              {st.label}
+              {tr(st.label)}
               <input className="input" value={val} data-autofocus onChange={(e) => setVal(e.target.value)}
                 onKeyDown={(e) => {
                   // Enter that confirms a pinyin candidate is not a submit.
@@ -286,16 +290,14 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 export const useDialog = () => useContext(DialogCtx);
 
 export function fmtSize(n: number) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n < 1024) return `${formatNumber(n)} B`;
+  if (n < 1024 * 1024) return `${formatNumber(n / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KB`;
+  return `${formatNumber(n / 1024 / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`;
 }
 
 export function fmtTime(t?: number | null) {
   if (!t) return "";
-  const d = new Date(t * 1000);
-  const p = (x: number) => String(x).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return formatDate(t * 1000, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 export function colLetter(c: number) {

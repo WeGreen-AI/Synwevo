@@ -24,8 +24,12 @@ def test_completion_database_failure_preserves_bytes_for_retry(api, keys, monkey
         return execute(sql, args)
 
     monkeypatch.setattr(store, "execute", fail_once)
-    with pytest.raises(OSError, match="synthetic failure"):
-        c.post(f"/api/v1/uploads/{uid}/complete", json={}, headers=h)
+    failed = c.post(f"/api/v1/uploads/{uid}/complete", json={}, headers=h)
+    assert failed.status_code == 500
+    assert failed.json()["error"]["code"] == "internal_error"
+    assert "synthetic failure" not in failed.text
+    assert store.one("SELECT status FROM uploads WHERE id=?", (uid,))["status"] == "open"
+    assert U.part_path(store, uid).read_bytes() == data
     monkeypatch.setattr(store, "execute", execute)
     completed = _ok(c.post(f"/api/v1/uploads/{uid}/complete", json={}, headers=h))
     assert completed["sha256"] == hashlib.sha256(data).hexdigest()

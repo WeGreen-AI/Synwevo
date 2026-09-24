@@ -7,7 +7,8 @@ from synwevo_core.http import (build_platform, install as install_platform, inst
                                 mount_web, new_api, role as current_role, shell_response,
                                 validate_role)
 
-ACCOUNT_SHELL_PATHS = ("/login", "/account", "/invite", "/forgot-password", "/reset-password",
+ACCOUNT_SHELL_PATHS = ("/login", "/register", "/verify-email", "/onboarding", "/organizations",
+                       "/account", "/invite", "/forgot-password", "/reset-password",
                        "/logged-out", "/admin")
 
 
@@ -62,7 +63,21 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
             bootstrap_docs_app(plat.store, plat.identity)
     if wants_accounts:
         from synwevo_identity import app as identity_app
-        identity_app.install(api, plat, start_jobs=start_jobs)
+        from synwevo_docs.control_plane import DocsControlPlane
+        if wants_app:
+            control_api = api
+        else:
+            # Private ASGI adapter, never mounted or exposed as account routes. Deployment
+            # composition owns this dependency; standalone identity works without Docs.
+            from synwevo_docs.api import app as docs_app
+            control_api = new_api("Synwevo Docs control adapter")
+            control_api.state.auth = plat.auth
+            control_api.state.identity = plat.identity
+            control_api.state.sessions = plat.sessions
+            install_platform(control_api, plat, role="app")
+            docs_app.install(control_api, plat, start_jobs=False)
+        identity_app.install(api, plat, start_jobs=start_jobs,
+                             control_plane=DocsControlPlane(control_api))
     if wants_portal:
         from synwevo_portal import app as portal_app
         portal_app.install(api, plat)

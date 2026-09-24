@@ -1,5 +1,21 @@
 # 产品行为研究与采用记录
 
+## 账户、组织与管理员 API 台（2026-09-25）
+
+以下为本轮重新查询的官方说明，证据类型均为“官方文档研究”，没有登录竞品实测。
+选择的是与现有模型直接有关的行为；实现存在、自动化验收和浏览器验收分开记录在 handoff。
+
+| 来源 | 当前差距与采用理由 | 适配实现与验收入口 |
+|---|---|---|
+| [Notion 创建与切换空间](https://www.notion.com/help/create-delete-and-switch-workspaces) | 一人多空间需要明确个人/团队归属与退出后影响。旧模型仅有 workspace，缺组织治理。 | 新增独立组织关系，保留 workspace tenant；组织成员不自动读所有空间。个人初始化幂等、创建组织事务化；`test_organizations.py`、`test_public_onboarding.py`、`test_workspace_launch.py`。不复制套餐或域名自动加入。 |
+| [Linear 邀请成员](https://linear.app/docs/invite-members) | 目标邮箱、角色与加入位置必须明确，发送/接受状态不能混淆。 | 指定邮箱邀请、组织策略、最小角色、三语言邮件、重发/撤销/拒绝、错误账户拒绝；`test_invites.py`、`test_organization_extras.py`。不采用永久通用链接。 |
+| [Microsoft 组织切换](https://support.microsoft.com/en-us/accounts-billing/work-school/switch-organizations-in-your-work-or-school-account-portal) | 门户切换应同步页面作用域，但跨标签页不能把写入目标偷偷改掉。 | 统一选择器、每标签页 workspace 绑定、SSO 携带经服务器验证的目标、拒绝无权空间，保留全局账户；`test_workspace_launch.py` 与实际浏览器检查。不复制其 home organization 账户归属模型。 |
+| [Stripe 密钥](https://docs.stripe.com/keys) | 管理员控制台不能成为全空间文档后门，长期秘密不能反复显示。 | `api_platform.manage` 与空间所有者批准分离；一次性秘密、受限资源/scope、轮换与撤销，真实请求追踪；`test_api_platform.py`、`test_api_platform_races.py`、`test_api_platform_pipeline.py`。Webhook 签名秘密与 API 凭据用途分开。 |
+| [OWASP 邮箱验证](https://cheatsheetseries.owasp.org/cheatsheets/Email_Validation_and_Verification_Cheat_Sheet.html)、[密码恢复](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html) | 邮箱归一化、待验证权限和一次性链接要防止预先抢注、并发消费与令牌泄漏。 | 保留邮箱点/+、验证前无业务资源、令牌 fragment、可信基础 URL、公开请求反枚举与限流；激活时重新确定口令并失效旧凭据；`test_registration_activation.py`、`test_account_link_privacy.py`。安全修复须以测试通过为准。 |
+| [WCAG 2.2](https://www.w3.org/TR/WCAG22/) | 认证表单、菜单、反馈、三语言长文案和窄屏需要键盘/焦点与布局验证。 | 共用组件和 `prefers-reduced-motion`，保留自动填充/粘贴、真实 loading/error 状态、文档 lang 与语言参数；三语言浏览器脚本核验。自动化检查不等于完整 AA 认证。 |
+
+## 上一轮文档与自动化研究（历史）
+
 查询日期：2026-09-24。以下均为官方文档证据，不是对第三方产品的实际试用；没有向第三方上传文档、数据库或截图。旧工作流的研究结果只作为线索，本表引用重新打开的来源。实现与验收分开记录；完整本轮状态见 [handoff](../quality/handoff.md)。
 
 | 方向与来源 | 官方行为与项目差距 | 适配决定 | 实现与验收 |
@@ -12,4 +28,4 @@
 
 安全协议补充：[RFC 9700 §4.14.2](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14.2) 的刷新轮换/重放防护用于核对现有令牌族。Synwevo 已把消费旧刷新令牌和发行继任令牌放进同一事务；新增发行失败回滚与并发撤销回归，修改前失败、修改后通过。此处是适用控制的实现证据，不是认证声明。
 
-本轮不扩展收费、签署、应用市场、开发者门户或任意远程 URL 文档输入。新增行为必须有现有引擎、授权和可复现验收支持；研究建议尚未验收时保留为未完成。
+上一轮未扩展收费、签署、应用市场或任意远程 URL 文档输入。本轮明确授权的平台管理员 API 台替代旧的技术 UI 禁令；普通用户仍无控制台入口。新增行为必须有真实服务、授权和可复现验收支持。

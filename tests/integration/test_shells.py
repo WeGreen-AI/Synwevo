@@ -14,8 +14,9 @@ from fastapi.testclient import TestClient
 
 WORKBENCH_DIST = Path(__file__).resolve().parents[2] / "apps" / "docs" / "web" / "dist"
 ACCOUNTS_DIST = Path(__file__).resolve().parents[2] / "services" / "identity" / "web" / "dist"
+PORTAL_DIST = Path(__file__).resolve().parents[2] / "apps" / "portal" / "web" / "dist"
 
-pytestmark = pytest.mark.skipif(not (WORKBENCH_DIST.exists() and ACCOUNTS_DIST.exists()),
+pytestmark = pytest.mark.skipif(not (WORKBENCH_DIST.exists() and ACCOUNTS_DIST.exists() and PORTAL_DIST.exists()),
                                 reason="前端未构建")
 
 
@@ -30,7 +31,7 @@ def _client(tmp_path, monkeypatch, *, role: str) -> TestClient:
 
 
 @pytest.mark.parametrize("role,marker", [("all", "Synwevo Docs"), ("app", "Synwevo Docs"),
-                                         ("portal", "Synwevo Workspace"), ("accounts", "Synwevo Account")])
+                                         ("portal", "/portal-assets/"), ("accounts", "Synwevo Account")])
 def test_a_role_serves_its_own_shell_even_when_another_is_named(tmp_path, monkeypatch, role, marker):
     """Each role serves its own build and no other.
 
@@ -41,7 +42,15 @@ def test_a_role_serves_its_own_shell_even_when_another_is_named(tmp_path, monkey
     """
     c = _client(tmp_path, monkeypatch, role=role)
     for path in ("/", "/index.html", "/portal.html", "/accounts.html"):
-        assert marker in c.get(path).text, f"role={role} 在 {path} 上没有返回自己的外壳"
+        response = c.get(path)
+        assert response.status_code == 200
+        assert marker in response.text, f"role={role} 在 {path} 上没有返回自己的外壳"
+        if role == "portal":
+            assert "/account-assets/" not in response.text
+            assert "/assets/" not in response.text
+    if role == "portal":
+        assert "<title>Synwevo · 让数据成为文档</title>" in c.get("/").text
+        assert '<meta name="robots" content="index, follow"' in c.get("/").text
 
 
 def test_the_account_pages_exist_once_and_the_workbench_does_not_carry_a_copy(tmp_path, monkeypatch):

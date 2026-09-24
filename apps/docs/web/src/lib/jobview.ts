@@ -1,3 +1,5 @@
+import { t as tr } from "@synwevo/ui/i18n-core";
+import { diagnosticText } from './presentation.ts';
 /** What the job page may show and offer, decided from the server's own job record.
  *
  *  Kept free of React and of imports so the rules can be tested with `node --test`: which states
@@ -82,14 +84,14 @@ const HALT: Record<string, string> = {
 export function haltText(reason: string | null | undefined): string | null {
   if (!reason) return null;
   if (reason === "restored_from_backup") {
-    return "任务已停止：数据从备份恢复时，这个任务还没有完成；恢复后不会自动继续，未完成的部分可以用「重试」重新生成。";
+    return tr("任务已停止：数据从备份恢复时，这个任务还没有完成；恢复后不会自动继续，未完成的部分可以用「重试」重新生成。");
   }
   const prefix = "authorization_revoked:";
   if (reason.startsWith(prefix)) {
     const why = reason.slice(prefix.length);
-    return `任务已停止：${HALT[why] || why || "提交者已失去权限"}。已生成的文件保留，不会再生成新的文件。`;
+    return tr("任务已停止：{v1}。已生成的文件保留，不会再生成新的文件。", { v1: tr(HALT[why] || why || "提交者已失去权限") });
   }
-  return `任务已停止：${reason}`;
+  return tr("任务已停止：{v1}", { v1: reason });
 }
 
 export interface Verification { reopened?: boolean; checks?: number; missing?: unknown[]; engine?: string | null; error?: string; note?: string }
@@ -99,11 +101,11 @@ export interface Verification { reopened?: boolean; checks?: number; missing?: u
  *  「已校验」claimed a check that did not happen. */
 export function verificationBadge(v: Verification | null | undefined): { label: string; tone: "ok" | "info" | "warn" | "err"; title: string } | null {
   if (!v) return null;
-  if (v.error) return { label: "无法重新打开", tone: "err", title: v.error };
-  const engine = v.engine || "对应程序";
+  if (v.error) return { label: tr("无法重新打开"), tone: "err", title: diagnosticText(v.error) };
+  const engine = v.engine || tr("对应程序");
   const missing = Array.isArray(v.missing) ? v.missing.length : 0;
-  if (missing) return { label: `${missing} 个值未找到`, tone: "warn", title: `已用 ${engine} 重新打开，核对 ${v.checks || 0} 个值，其中 ${missing} 个未在文件中找到` };
-  if ((v.checks || 0) > 0) return { label: "✓ 已校验", tone: "ok", title: `已用 ${engine} 重新打开并核对 ${v.checks} 个值` };
-  if (v.reopened) return { label: "已重新打开", tone: "info", title: v.note || `已用 ${engine} 重新打开；此格式没有逐值核对` };
+  if (missing) return { label: tr("{v1} 个值未找到", { v1: missing }), tone: "warn", title: tr("已用 {v1} 重新打开，核对 {v2} 个值，其中 {v3} 个未在文件中找到", { v1: engine, v2: v.checks || 0, v3: missing }) };
+  if ((v.checks || 0) > 0) return { label: tr("✓ 已校验"), tone: "ok", title: tr("已用 {v1} 重新打开并核对 {v2} 个值", { v1: engine, v2: v.checks }) };
+  if (v.reopened) return { label: tr("已重新打开"), tone: "info", title: tr("已用 {v1} 重新打开；此格式没有逐值核对", { v1: engine }) };
   return null;
 }

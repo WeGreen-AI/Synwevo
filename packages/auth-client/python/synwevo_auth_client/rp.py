@@ -131,27 +131,39 @@ class Rp:
         return keys
 
     # ------------------------------------------------------------------ start
-    def begin(self, *, next_path: str | None, prompt: str | None = None) -> tuple[str, str]:
+    def begin(self, *, next_path: str | None, prompt: str | None = None,
+              workspace_id: str | None = None, locale: str | None = None) -> tuple[str, str]:
         """Return (authorize URL, request id). The request id goes in a short-lived cookie.
 
         `state`, `nonce` and the PKCE verifier are generated here and stored server-side. The
         browser carries only an opaque id, so none of the three can be chosen by whoever sent
         the person to this link.
         """
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id
+                or len(workspace_id) > 200 or any(c.isspace() or ord(c) < 32 for c in workspace_id)):
+            raise ServiceError(400, "invalid_field", "请选择有效的工作空间", {"field": "workspace_id"})
+        if locale is not None and locale not in ("zh-Hans", "zh-Hant", "en"):
+            raise ServiceError(400, "invalid_field", "请选择支持的界面语言", {"field": "lang"})
         rid = new_id("ar")
         state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
         verifier = secrets.token_urlsafe(48)
         challenge = base64.urlsafe_b64encode(
             hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode()
         self.store.execute(
-            "INSERT INTO rp_auth_requests (id,state,nonce,code_verifier,next_path,created_at,expires_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (rid, state, nonce, verifier, safe_next(next_path), now(), now() + REQUEST_TTL_S))
+            "INSERT INTO rp_auth_requests (id,state,nonce,code_verifier,next_path,workspace_id,created_at,expires_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (rid, state, nonce, verifier, safe_next(next_path), workspace_id, now(), now() + REQUEST_TTL_S))
         q = {"client_id": client_id(), "redirect_uri": redirect_uri(), "response_type": "code",
              "scope": "openid profile email", "state": state, "nonce": nonce,
              "code_challenge": challenge, "code_challenge_method": "S256"}
         if prompt:
             q["prompt"] = prompt
+        if locale is not None:
+            q["ui_locales"] = locale
+        if workspace_id is not None:
+            # This is only a selection hint to the provider. The callback uses
+            # the stored value and reauthorizes it, never a callback parameter.
+            q["workspace_id"] = workspace_id
         # `/auth/start` is anonymous, so every visit writes a row. Reclaiming spent ones here,
         # at most every few minutes, bounds the table by traffic in the last hour rather than
         # by all traffic ever — nothing else in the process was calling sweep().
@@ -197,6 +209,7 @@ class Rp:
         return {"user_id": claims["sub"], "sid": claims.get("sid"),
                 "amr": "+".join(claims.get("amr") or []) or "password",
                 "auth_time": claims.get("auth_time"), "next_path": row["next_path"] or "/",
+                "workspace_id": row.get("workspace_id"),
                 "claims": claims, "access_token": body.get("access_token")}
 
     def verify_id_token(self, raw: str, *, nonce: str | None) -> dict:

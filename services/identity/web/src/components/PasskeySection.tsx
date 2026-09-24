@@ -10,8 +10,9 @@
  * than left as a key that mysteriously stops working.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, del, get, patch, post } from "@synwevo/auth-client";
-import { useToast } from "@synwevo/ui";
+import { del, get, patch, post } from "@synwevo/auth-client";
+import { useToast, useI18n } from "@synwevo/ui";
+import { errorText } from "../pages/account/common";
 
 type Passkey = {
   id: string;
@@ -29,7 +30,8 @@ type Listing = { items: Passkey[]; reauth_fresh: boolean; rp_id: string; origins
 const supported = typeof window !== "undefined"
   && typeof window.PublicKeyCredential !== "undefined";
 
-export default function PasskeySection() {
+export default function PasskeySection({ timezone = "UTC" }: { timezone?: string }) {
+  const { t, locale } = useI18n();
   const toast = useToast();
   const [data, setData] = useState<Listing | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,14 +44,14 @@ export default function PasskeySection() {
       setData(await get<Listing>("/api/auth/passkeys"));
       setErr(null);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(errorText(e, t));
     }
-  }, []);
+  }, [t]);
   useEffect(() => { void load(); }, [load]);
 
   async function reauth(): Promise<boolean> {
     if (!password) {
-      setErr("请输入你的口令");
+      setErr(t("请输入你的口令"));
       return false;
     }
     await post("/api/auth/reauth", { password, scope: "mfa" });
@@ -71,18 +73,18 @@ export default function PasskeySection() {
           }).parseCreationOptionsFromJSON(options)
         : manualCreationOptions(options);
       const cred = await navigator.credentials.create({ publicKey }) as PublicKeyCredential | null;
-      if (!cred) throw new Error("没有收到安全密钥的响应");
+      if (!cred) throw new Error(t("没有收到安全密钥的响应"));
       await post("/api/auth/passkeys/register/finish",
                  { credential: toJSON(cred), name: name.trim() || undefined });
       setName("");
-      toast("安全密钥已登记", "ok");
+      toast(t("安全密钥已登记"), "ok");
       await load();
     } catch (e) {
       // A cancelled prompt is not an error worth shouting about; anything else is.
       if (e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "AbortError")) {
-        setErr("已取消，或安全密钥没有响应。");
+        setErr(t("已取消，或安全密钥没有响应。"));
       } else {
-        setErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+        setErr(errorText(e, t));
       }
     } finally {
       setBusy(false);
@@ -95,10 +97,10 @@ export default function PasskeySection() {
     try {
       if (!(await reauth())) return;
       await del(`/api/auth/passkeys/${pk.id}`);
-      toast("已删除", "ok");
+      toast(t("已删除"), "ok");
       await load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(errorText(e, t));
     } finally {
       setBusy(false);
     }
@@ -110,73 +112,68 @@ export default function PasskeySection() {
       await patch(`/api/auth/passkeys/${pk.id}`, { name: next.trim() });
       await load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(errorText(e, t));
     }
   }
 
-  if (!data) return <section className="card card-b col gap12"><h2>安全密钥</h2>
-    <div className="empty">{err ? <div role="alert">{err} <button className="btn sm" onClick={() => void load()}>重试</button></div> : <span role="status">加载中…</span>}</div></section>;
+  if (!data) return <section className="card card-b col gap12"><h2>{t("安全密钥")}</h2>
+    <div className="empty">{err ? <div role="alert">{err} <button className="btn sm" onClick={() => void load()}>{t("重试")}</button></div> : <span role="status">{t("加载中…")}</span>}</div></section>;
 
   return (
     <section className="card card-b col gap12">
-      <h2>安全密钥（Passkey）</h2>
-      <p className="muted">
-        用设备上的指纹、面容或 PIN 登录，不需要输入口令。私钥永远留在你的设备上，
-        它只对 <code>{data.rp_id}</code> 生效——这也是它能防钓鱼的原因。
-      </p>
+      <h2>{t("安全密钥（Passkey）")}</h2>
+      <p className="muted">{t("用设备上的指纹、面容或 PIN 登录。私钥留在你的设备上，仅对 {domain} 生效。", { domain: data.rp_id })}</p>
 
       {!supported && (
-        <div className="notice warn">这个浏览器不支持安全密钥。你仍然可以用口令和验证器应用登录。</div>
+        <div className="notice warn">{t("这个浏览器不支持安全密钥。你仍然可以用口令和验证器应用登录。")}</div>
       )}
-      {err && <div className="notice err">{err}</div>}
+      {err && <div className="notice err" role="alert">{err}</div>}
 
       {data.items.length > 0 && (
-        <table className="tbl">
-          <thead><tr><th>名称</th><th>登记时间</th><th>最近使用</th><th>状态</th><th /></tr></thead>
+        <div className="account-table"><table className="tbl">
+          <thead><tr><th>{t("名称")}</th><th>{t("登记时间")}</th><th>{t("最近使用")}</th><th>{t("状态")}</th><th /></tr></thead>
           <tbody>
             {data.items.map((pk) => (
               <tr key={pk.id}>
                 <td>
-                  <input className="input sm" defaultValue={pk.name} aria-label="安全密钥名称"
+                  <input className="input sm" defaultValue={pk.name} aria-label={t("安全密钥名称")}
                          onBlur={(e) => void rename(pk, e.target.value)} />
                 </td>
-                <td className="muted sm">{new Date(pk.created_at * 1000).toLocaleDateString("zh-CN")}</td>
+                <td className="muted sm">{new Date(pk.created_at * 1000).toLocaleDateString(locale, { timeZone: timezone })}</td>
                 <td className="muted sm">
-                  {pk.last_used_at ? new Date(pk.last_used_at * 1000).toLocaleString("zh-CN") : "从未"}
+                  {pk.last_used_at ? new Date(pk.last_used_at * 1000).toLocaleString(locale, { timeZone: timezone }) : t("从未")}
                 </td>
                 <td className="sm">
                   {pk.usable_here
-                    ? <>{pk.backed_up ? "已同步到多个设备" : "仅此设备"}</>
-                    : <span className="badge warn" title={`登记于 ${pk.rp_id}`}>域名已变更，无法使用</span>}
+                    ? <>{pk.backed_up ? t("已同步到多个设备") : t("仅此设备")}</>
+                    : <span className="badge warn" title={t("登记于 {domain}", { domain: pk.rp_id })}>{t("域名已变更，无法使用")}</span>}
                 </td>
                 <td>
                   <button className="btn danger sm" disabled={busy}
-                          onClick={() => void remove(pk)}>删除</button>
+                          onClick={() => void remove(pk)}>{t("删除")}</button>
                 </td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
 
       {supported && (
         <div className="col gap12">
           <label className="col gap4">
-            <span>名称（可选）</span>
+            <span>{t("名称（可选）")}</span>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)}
-                   placeholder="例如：工作手机" maxLength={60} />
+                   placeholder={t("例如：工作手机")} maxLength={60} />
           </label>
           <label className="col gap4">
-            <span>你的口令</span>
-            <input className="input" type="password" aria-label="你的口令" value={password} autoComplete="current-password"
+            <span>{t("你的口令")}</span>
+            <input className="input" type="password" aria-label={t("你的口令")} value={password} autoComplete="current-password"
                    onChange={(e) => setPassword(e.target.value)} />
-            <span className="muted sm">
-              增加或删除登录方式需要重新确认身份——刚登录过也要，否则这个提示就等于没有。
-            </span>
+            <span className="muted sm">{t("增加或删除登录方式需要重新确认身份——刚登录过也要，否则这个提示就等于没有。")}</span>
           </label>
           <div className="row gap12">
             <button className="btn primary" disabled={busy || !password} onClick={() => void enrol()}>
-              {busy ? "请按照设备提示操作…" : "登记一个安全密钥"}
+              {busy ? t("请按照设备提示操作…") : t("登记一个安全密钥")}
             </button>
           </div>
         </div>

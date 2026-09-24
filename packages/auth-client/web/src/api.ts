@@ -1,4 +1,8 @@
+import { apiFailureText } from '@synwevo/auth-client/api-messages';
+
 export class ApiError extends Error {
+  /** Unmodified diagnostic for inspection; do not render unknown server prose as UI copy. */
+  readonly originalMessage: string;
   status: number;
   code: string;
   detail: any;
@@ -13,16 +17,43 @@ export class ApiError extends Error {
   requestId?: string;
   constructor(status: number, code: string, message: string, detail?: any, upstream = false) {
     super(message);
+    this.originalMessage = message;
     this.status = status;
     this.code = code;
     this.detail = detail;
     this.upstream = upstream;
+    // Read presentation at render time, including requestId set after construction.
+    Object.defineProperty(this, 'message', { configurable: true, get: () => apiFailureText(this) });
   }
 }
 
 /** Header lookup shared by the fetch and XHR paths.  Every header is readable here because the
  *  UI is served by the same origin as the API, so the response is not a CORS response. */
 type Headers_ = { get: (name: string) => string | null };
+
+// A generation belongs to this tab, not to the cookie shared by all tabs. Every delivery
+// path captures it before I/O and checks it again after I/O, including body decoding.
+let sessionGeneration = 0;
+export const getSessionGeneration = (): number => sessionGeneration;
+export function advanceSessionGeneration(): void { ++sessionGeneration; }
+export function assertSessionGeneration(generation: number, signal?: AbortSignal): void {
+  if (generation !== sessionGeneration || signal?.aborted) {
+    throw new DOMException("Session context changed", "AbortError");
+  }
+}
+
+/** Shared with authenticated binary requests. A JSON-shaped gateway response alone is not
+ * enough evidence to clear a session; require the application's request id or server mark.
+ * Async callers must pass the generation captured before sending the request. The optional
+ * default preserves the four-argument API for synchronous/legacy callers. */
+export function notifySessionExpired(status: number, code: string, headers: Headers_, requestId?: string,
+                                     generation = getSessionGeneration()): void {
+  if (generation !== sessionGeneration) return;
+  const confirmed = !!requestId || !!headers.get('X-Request-ID') || /^uvicorn\b/i.test((headers.get('server') || '').trim());
+  if (confirmed && status === 401 && ['unauthorized', 'session_expired', 'session_revoked'].includes(code) && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('synwevo:session-expired', { detail: { generation } }));
+  }
+}
 
 /** Name the intermediary for the message.  Vendor headers are good enough to name a culprit but
  *  far too narrow to *detect* one, so they are never used as the test. */
@@ -87,7 +118,8 @@ function retryAfterOf(h: Headers_, body: any): number | undefined {
 /** The error a Synwevo response describes. A 5xx without a JSON body is Synwevo's own crash
  *  handler: it is named as a server fault, with the request id when there is one, rather than
  *  as a bare status code. */
-function synwevoError(status: number, h: Headers_, body: any, fallback: string): ApiError {
+function synwevoError(status: number, h: Headers_, body: any, fallback: string,
+                     generation: number, notifyExpiry: boolean): ApiError {
   const requestId = (body && typeof body.request_id === "string" && body.request_id) || h.get("X-Request-ID") || undefined;
   const msg = body?.message || (typeof body?.detail === "string" ? body.detail : null)
     || (status >= 500
@@ -96,13 +128,26 @@ function synwevoError(status: number, h: Headers_, body: any, fallback: string):
   const err = new ApiError(status, body?.error || (status >= 500 ? "server_error" : "http_error"), msg, body?.detail);
   err.retryAfter = retryAfterOf(h, body);
   err.requestId = requestId;
+  // Only Synwevo's explicit session failures invalidate the shared UI session. A gateway's
+  // 401 or an incorrect password is not evidence that the existing session was revoked.
+  if (notifyExpiry) notifySessionExpired(status, err.code, h, requestId, generation);
   return err;
 }
 
-async function handle(res: Response) {
+async function handle(res: Response, generation: number, signal?: AbortSignal, notifyExpiry = true) {
+  assertSessionGeneration(generation, signal);
   if (res.ok) {
     const ct = res.headers.get("content-type") || "";
-    if (ct.includes("application/json")) return res.json();
+    if (ct.includes("application/json")) {
+      try {
+        const body = await res.json();
+        assertSessionGeneration(generation, signal);
+        return body;
+      } catch (error) {
+        assertSessionGeneration(generation, signal);
+        throw error;
+      }
+    }
     // An SSO gateway with an expired session answers 200 with its own login page rather than
     // 401. Returning that Response to callers used to white-screen the app the moment one of
     // them treated it as data (`projects.filter(...)`), with no error boundary to catch it.
@@ -115,13 +160,32 @@ async function handle(res: Response) {
   } catch {
     /* not json — see fromSynwevo */
   }
+  assertSessionGeneration(generation, signal);
   if (!fromSynwevo(res.headers, body)) throw gatewayError(res.status, res.headers);
-  throw synwevoError(res.status, res.headers, body, `请求失败（HTTP ${res.status}）`);
+  throw synwevoError(res.status, res.headers, body, `请求失败（HTTP ${res.status}）`, generation, notifyExpiry);
 }
 
 const CSRF_COOKIE = "dw_csrf";
 const CSRF_HEADER = "X-Synwevo-CSRF";
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
+const WORKSPACE_KEY = "synwevo.tab-workspace";
+let memoryWorkspace: string | null | undefined;
+export function setWorkspaceContext(workspaceId: string | null | undefined, options: { initial?: boolean } = {}): void {
+  const previous = workspaceContext();
+  memoryWorkspace = workspaceId || null;
+  try {
+    if (workspaceId) sessionStorage.setItem(WORKSPACE_KEY, workspaceId);
+    else sessionStorage.removeItem(WORKSPACE_KEY);
+  } catch { /* The in-memory selection still isolates this tab if storage is unavailable. */ }
+  // SessionProvider's first bootstrap has no previous business subtree. Public invitation
+  // and reset previews may already be loading and must survive that initial discovery.
+  // Every later selection (all normal callers) invalidates previous request deliveries.
+  if (previous !== memoryWorkspace && !options.initial) advanceSessionGeneration();
+}
+export function workspaceContext(): string | null {
+  if (memoryWorkspace !== undefined) return memoryWorkspace;
+  try { return sessionStorage.getItem(WORKSPACE_KEY); } catch { return null; }
+}
 
 /** The CSRF cookie is readable on purpose — the page has to echo it back in a header.
  *  It is not a credential by itself; it only proves the request came from our own page. */
@@ -134,6 +198,8 @@ function csrfToken(): string | null {
  *  Absent in deployments without the account system, where the server does not ask for it. */
 export function authHeaders(method: string, hasBody: boolean): Record<string, string> {
   const h: Record<string, string> = {};
+  const workspace = workspaceContext();
+  if (workspace) h["X-Synwevo-Workspace"] = workspace;
   if (hasBody) h["Content-Type"] = "application/json";
   if (!SAFE.has(method.toUpperCase())) {
     const t = csrfToken();
@@ -142,22 +208,35 @@ export function authHeaders(method: string, hasBody: boolean): Record<string, st
   return h;
 }
 
-export async function api<T = any>(path: string, opts: { method?: string; body?: any; signal?: AbortSignal } = {}): Promise<T> {
+export async function api<T = any>(path: string, opts: { method?: string; body?: any; signal?: AbortSignal; headers?: Record<string,string>;
+  /** null probes the server preference without changing this tab's context. */
+  workspaceId?: string | null;
+  /** SessionProvider owns the ordering of its probes and handles their 401 itself. */
+  notifySessionExpiry?: boolean;
+} = {}): Promise<T> {
   let res: Response;
+  const generation = getSessionGeneration();
   const method = opts.method || (opts.body !== undefined ? "POST" : "GET");
+  const headers = { ...opts.headers, ...authHeaders(method, opts.body !== undefined) };
+  if (opts.workspaceId !== undefined) {
+    for (const key of Object.keys(headers)) if (key.toLowerCase() === 'x-synwevo-workspace') delete headers[key];
+    if (opts.workspaceId) headers['X-Synwevo-Workspace'] = opts.workspaceId;
+  }
   try {
     res = await fetch(path, {
       method,
-      headers: authHeaders(method, opts.body !== undefined),
+      // Explicit context is still validated by the backend; it never grants authorization.
+      headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       signal: opts.signal,
     });
   } catch (e: any) {
+    assertSessionGeneration(generation, opts.signal);
     if (e?.name === "AbortError") throw e;
     // There is no `run.py` any more; the command that starts the services is the one named here.
     throw new ApiError(0, "network", "无法连接到服务器。请检查网络，或确认服务已启动（python scripts/platform.py status）。");
   }
-  return handle(res);
+  return handle(res, generation, opts.signal, opts.notifySessionExpiry !== false);
 }
 
 export const get = <T = any>(p: string, signal?: AbortSignal) => api<T>(p, { signal });
@@ -168,6 +247,7 @@ export const del = <T = any>(p: string, signal?: AbortSignal) => api<T>(p, { met
 
 /** multipart upload with progress */
 export function upload<T = any>(path: string, form: FormData, onProgress?: (p: number) => void): Promise<T> {
+  const generation = getSessionGeneration();
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", path);
@@ -175,10 +255,15 @@ export function upload<T = any>(path: string, form: FormData, onProgress?: (p: n
     // echo has to be set here as well or every upload 403s under session auth.
     for (const [k, v] of Object.entries(authHeaders("POST", false))) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      if (generation === getSessionGeneration() && e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
     };
-    xhr.onerror = () => reject(new ApiError(0, "network", "上传失败：网络错误"));
+    const current = () => {
+      try { assertSessionGeneration(generation); return true; }
+      catch (error) { reject(error); return false; }
+    };
+    xhr.onerror = () => { if (current()) reject(new ApiError(0, "network", "上传失败：网络错误")); };
     xhr.onload = () => {
+      if (!current()) return;
       let body: any = null;
       try {
         body = JSON.parse(xhr.responseText);
@@ -192,7 +277,7 @@ export function upload<T = any>(path: string, form: FormData, onProgress?: (p: n
       // unfiltered for a same-origin XHR, so the same two marks are available here.
       const h = { get: (n: string) => xhr.getResponseHeader(n) };
       if (!fromSynwevo(h, body)) return reject(gatewayError(xhr.status, h));
-      const err = synwevoError(xhr.status, h, body, `上传失败（HTTP ${xhr.status}）`);
+      const err = synwevoError(xhr.status, h, body, `上传失败（HTTP ${xhr.status}）`, generation, true);
       if (err.code === "http_error") err.code = "upload_failed";
       reject(err);
     };

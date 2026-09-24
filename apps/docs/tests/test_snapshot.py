@@ -367,7 +367,7 @@ def test_access_withdrawn_after_the_backup_stays_withdrawn_after_a_restore(insta
     """
     from synwevo_core import journal
     from synwevo_core.auth import Auth
-    from synwevo_core.oidc import Grants
+    from synwevo_core.oidc import Clients, Grants
     from synwevo_core.sessions import Sessions
     from synwevo_core.store import Store, now
 
@@ -376,7 +376,14 @@ def test_access_withdrawn_after_the_backup_stays_withdrawn_after_a_restore(insta
     _people(live, now)
     raw_key, key = Auth(live).create_key("ci", tenant="w1", scopes=("read",))
     cookie, _ = Sessions(live).create("u_alice", workspace_id="w1", amr="password")
-    token = Grants(live).issue_for_service(client={"client_id": "svc-1", "workspace_id": "w1"},
+    # A real registered service and enabled application, rather than a fabricated client dict.
+    from synwevo_core.apps import bootstrap_docs_app
+    from synwevo_core.identity import Identity
+    bootstrap_docs_app(live, Identity(live))
+    live.execute("INSERT INTO workspace_apps (workspace_id,app_id,enabled_at) VALUES ('w1','docweave',?)", (now(),))
+    service, _ = Clients(live).register(client_id="svc-1", app_id="docweave", name="Synthetic restore service",
+        redirect_uris=[], kind="service", workspace_id="w1", api_scopes="docweave.read", confidential=True)
+    token = Grants(live).issue_for_service(client=service,
                                           scope="docweave.read")["access_token"]
     ts = now()
     with live.tx() as t:

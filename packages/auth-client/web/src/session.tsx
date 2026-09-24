@@ -1,5 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { ApiError, get, post } from "./api";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { api, ApiError, post, patch, setWorkspaceContext, getSessionGeneration, advanceSessionGeneration } from "./api";
+import { getLocale, normalizeLocale, setLocale, subscribeLocale, useI18n } from "@synwevo/ui";
+import "./session.messages";
 
 /** Who is signed in, for the whole app.
  *
@@ -13,7 +15,12 @@ export interface Me {
   display_name: string | null;
   status: string;
   platform_role: "none" | "operator" | "admin";
-  workspaces: { id: string; name: string; kind: string; role: string; can_export: boolean }[];
+  locale?: "zh-Hans" | "zh-Hant" | "en";
+  timezone?: string;
+  email_verified?: boolean;
+  onboarding_completed?: boolean;
+  permissions?: string[];
+  workspaces: { id: string; name: string; kind: string; role: string; can_export: boolean; status?: string; organization_id?: string|null; organization_name?: string|null }[];
   /** The workspace this session is currently acting in; null when none is selected. */
   workspace_id?: string | null;
   session?: { id: string; amr: string };
@@ -38,6 +45,9 @@ export interface AuthState {
 interface Ctx {
   me: Me | null | undefined;
   state: AuthState | null;
+  /** Revalidate this document; a changed binding schedules a full reload. Actions that
+   * already finish with a full navigation must persist workspace context and navigate
+   * directly, rather than await refresh and race its reload with their destination. */
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
   /** True when the deployment has no account system at all (SYNWEVO_UI_AUTH is none/basic). */
@@ -54,25 +64,58 @@ const SessionCtx = createContext<Ctx>({ me: undefined, state: null, refresh: asy
 export const useSession = () => useContext(SessionCtx);
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useI18n();
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [state, setState] = useState<AuthState | null>(null);
   const [disabled, setDisabled] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  const localeAccount = useRef<string | null>(null);
+  const refreshEpoch = useRef(0);
+  const refreshController = useRef<AbortController | null>(null);
+  const validatedContext = useRef<string | null>(null);
+  const navigating = useRef(false);
+  const [resetting, setResetting] = useState(false);
+  const launchWorkspace = useRef(new URLSearchParams(window.location.search).get("synwevo_workspace"));
+
+  const invalidate = useCallback(() => {
+    ++refreshEpoch.current;
+    refreshController.current?.abort();
+    const initial = validatedContext.current === null;
+    if (!initial) advanceSessionGeneration();
+    setWorkspaceContext(null, { initial });
+    // Keep the last binding: a rapid re-login must still cross the reload boundary even
+    // if React batches the signed-out and signed-in updates before unmounting old pages.
+    setMe(null);
+    setDisabled(false);
+    setError(null);
+  }, []);
 
   const refresh = useCallback(async () => {
+    if (navigating.current) return;
+    refreshController.current?.abort();
+    const controller = new AbortController();
+    refreshController.current = controller;
+    const epoch = ++refreshEpoch.current;
+    const generation = getSessionGeneration();
+    const currentRefresh = () => epoch === refreshEpoch.current && generation === getSessionGeneration()
+      && !controller.signal.aborted && !navigating.current;
+    const probe = { signal: controller.signal, notifySessionExpiry: false };
     let st: AuthState;
     setError(null);
     try {
-      st = await get<AuthState>("/api/auth/state");
+      st = await api<AuthState>("/api/auth/state", probe);
+      if (!currentRefresh()) return;
       setState(st);
     } catch (e) {
+      if (!currentRefresh()) return;
       // Only Synwevo's own 404 means "this build has no account routes": behave as before.
       // Anything else — a 5xx, a gateway page, no network — says nothing about how the
       // deployment is configured, and treating it as "no accounts here" opened the app to
       // whoever was in front of it as if authentication were off.
       if (e instanceof ApiError && e.status === 404 && !e.upstream) {
+        if (validatedContext.current !== null) invalidate();
+        else { setWorkspaceContext(null, { initial: true }); setMe(null); }
         setDisabled(true);
-        setMe(null);
         return;
       }
       setError(asApiError(e));
@@ -83,32 +126,125 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // call returns 200 and the app sent people who had already signed in with the shared
     // password to a first-run bootstrap screen.
     if (st.mode !== "session") {
+      if (validatedContext.current !== null) invalidate();
+      else { setWorkspaceContext(null, { initial: true }); setMe(null); }
       setDisabled(true);
-      setMe(null);
       return;
     }
+    setDisabled(false);
     try {
-      setMe(await get<Me>("/api/auth/me"));
+      let current: Me;
+      try { current = await api<Me>("/api/auth/me", { ...probe, workspaceId: launchWorkspace.current || undefined }); }
+      catch (e) {
+        if (!currentRefresh()) return;
+        if (launchWorkspace.current || !(e instanceof ApiError) || e.code !== "workspace_context_invalid") throw e;
+        // Probe without this tab's header; never clear shared context while awaiting a
+        // fallback. Older refreshes cannot redirect subsequent business requests elsewhere.
+        current = await api<Me>("/api/auth/me", { ...probe, workspaceId: null });
+      }
+      if (!currentRefresh()) return;
+      if (launchWorkspace.current) {
+        launchWorkspace.current = null;
+        const url = new URL(window.location.href);
+        url.searchParams.delete("synwevo_workspace");
+        window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+      }
+      const context = JSON.stringify([current.id, current.session?.id ?? null, current.workspace_id ?? null]);
+      if (validatedContext.current !== null && validatedContext.current !== context) {
+        // Account/session/workspace rollover is a document boundary. No existing editor,
+        // query cache or delayed response may be displayed under the new identity/context.
+        navigating.current = true;
+        ++refreshEpoch.current;
+        advanceSessionGeneration();
+        setWorkspaceContext(current.workspace_id);
+        setResetting(true);
+        setMe(undefined);
+        window.location.reload();
+        return;
+      }
+      const initial = validatedContext.current === null;
+      validatedContext.current = context;
+      setWorkspaceContext(current.workspace_id, { initial });
+      setMe(current);
     } catch (e) {
+      if (!currentRefresh()) return;
       // 401 from Synwevo is the ordinary signed-out answer. Everything else is a failure to
       // find out, and is shown as one — never as "signed out", which would redirect.
-      if (e instanceof ApiError && e.status === 401 && !e.upstream) setMe(null);
+      if (e instanceof ApiError && e.status === 401 && !e.upstream) invalidate();
       else setError(asApiError(e));
     }
-  }, []);
+  }, [invalidate]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    return () => { ++refreshEpoch.current; refreshController.current?.abort(); };
+  }, [refresh]);
+  useEffect(() => {
+    if (!me) { localeAccount.current = null; return; }
+    if (localeAccount.current !== me.id) {
+      localeAccount.current = me.id;
+      const preferred = normalizeLocale(me.locale);
+      if (preferred) setLocale(preferred);
+    }
+    if (me.status !== "active") return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let serial = Promise.resolve();
+    const unsubscribe = subscribeLocale(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const locale = getLocale();
+        serial = serial.then(async () => {
+          if (!active) return;
+          try { await patch("/api/auth/locale", { locale }); }
+          catch (e) { if (active && !(e instanceof Error && e.name === "AbortError")) setError(asApiError(e)); }
+        });
+      }, 250);
+    });
+    return () => { active = false; if (timer) clearTimeout(timer); unsubscribe(); };
+  }, [me?.id, me?.status]);
+  useEffect(() => {
+    const check = (e: PageTransitionEvent) => { if (e.persisted) void refresh(); };
+    const visible = () => { if (document.visibilityState === "visible") void refresh(); };
+    const expired = (event: Event) => {
+      const generation = (event as CustomEvent<{ generation?: number }>).detail?.generation;
+      if (generation !== undefined && generation !== getSessionGeneration()) return;
+      invalidate();
+    };
+    const otherTab = (e: StorageEvent) => {
+      if (e.key === "synwevo.signed-out" && e.newValue) {
+        invalidate(); window.location.replace("/logged-out");
+      }
+    };
+    window.addEventListener("pageshow", check);
+    window.addEventListener("focus", visible);
+    document.addEventListener("visibilitychange", visible);
+    window.addEventListener("synwevo:session-expired", expired);
+    window.addEventListener("storage", otherTab);
+    return () => {
+      window.removeEventListener("pageshow", check);
+      window.removeEventListener("focus", visible);
+      document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("synwevo:session-expired", expired);
+      window.removeEventListener("storage", otherTab);
+    };
+  }, [refresh, invalidate]);
 
   const signOut = useCallback(async () => {
-    try { await post("/api/auth/logout", {}); } finally {
-      setMe(null);
+    const generation = getSessionGeneration();
+    try {
+      await post("/api/auth/logout", {});
+      invalidate();
+      try { localStorage.setItem("synwevo.signed-out", String(Date.now())); } catch { /* server revocation remains authoritative */ }
       // A full reload clears every cached query, preview and grid still holding the previous
       // account's data. Wiping React state alone would leave those in memory for the next login.
-      window.location.assign("/login");
-    }
-  }, []);
+      window.location.replace("/logged-out");
+    } catch (e) { if (generation === getSessionGeneration()) setError(asApiError(e)); throw e; }
+  }, [invalidate]);
 
-  return <SessionCtx.Provider value={{ me, state, refresh, signOut, disabled, error }}>{children}</SessionCtx.Provider>;
+  return <SessionCtx.Provider value={{ me, state, refresh, signOut, disabled, error }}>
+    {resetting ? <div className="empty" role="status">{t("加载中…")}</div> : children}
+  </SessionCtx.Provider>;
 }
 
 function asApiError(e: unknown): ApiError {
@@ -120,14 +256,15 @@ function asApiError(e: unknown): ApiError {
  *  reason — never a redirect, which is what turned an outage into a sign-in loop. */
 export function SessionError({ error, onRetry }: { error: ApiError; onRetry: () => void }) {
   const [busy, setBusy] = useState(false);
+  const { t } = useI18n();
   return (
     <div className="empty" role="alert">
-      <div className="big">暂时无法确认你的登录状态</div>
+      <div className="big">{t("暂时无法确认你的登录状态")}</div>
       <div style={{ maxWidth: 520 }}>{error.message}</div>
-      {error.requestId && <div className="tiny muted">请求编号：<span className="mono">{error.requestId}</span></div>}
+      {error.requestId && <div className="tiny muted">{t("请求编号：")}<span className="mono">{error.requestId}</span></div>}
       <button type="button" className="btn primary" disabled={busy}
         onClick={() => { setBusy(true); Promise.resolve(onRetry()).finally(() => setBusy(false)); }}>
-        {busy ? "正在重试…" : "重试"}
+        {busy ? t("正在重试…") : t("重试")}
       </button>
     </div>
   );
@@ -136,15 +273,16 @@ export function SessionError({ error, onRetry }: { error: ApiError; onRetry: () 
 /** Wrap routes that need an account. */
 export function RequireSession({ children }: { children: React.ReactNode }) {
   const { me, state, disabled, error, refresh } = useSession();
+  const { t } = useI18n();
   if (disabled) return <>{children}</>;          // deployment without accounts: unchanged behaviour
   if (error) return <SessionError error={error} onRetry={refresh} />;
-  if (me === undefined) return <div className="empty" role="status">加载中…</div>;
+  if (me === undefined) return <div className="empty" role="status">{t("加载中…")}</div>;
   if (me === null) {
     const back = window.location.pathname + window.location.search;
     // Remember where they were going so signing in returns them to it rather than to the home
     // page — losing the document you were opening is a small thing that feels like a big one.
     window.location.assign(signInUrl(state, back));
-    return <div className="empty">正在前往登录…</div>;
+    return <div className="empty">{t("正在前往登录…")}</div>;
   }
   return <>{children}</>;
 }
@@ -160,9 +298,10 @@ export function RequireSession({ children }: { children: React.ReactNode }) {
  */
 export function signInUrl(state: AuthState | null, next: string): string {
   const target = encodeURIComponent(next || "/");
+  const lang = encodeURIComponent(getLocale());
   return state && state.password_login === false
-    ? `/auth/start?next=${target}`
-    : `/login?next=${target}`;
+    ? `/auth/start?next=${target}&lang=${lang}`
+    : `/login?next=${target}&lang=${lang}`;
 }
 
 /** Only ever returns a same-origin path, so a crafted ?next= cannot bounce someone off-site. */

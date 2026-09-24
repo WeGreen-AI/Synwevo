@@ -536,15 +536,31 @@ class Grants:
         anyone's permissions. Its tenant comes from the registration, because with nobody behind
         it there is no membership to resolve one from.
         """
-        access = secrets.token_urlsafe(40)
-        tid = new_id("tok")
-        audience = audience or self.default_audience(client)
-        self.store.execute(
-            "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,refresh_hash,scope,audience,"
-            "central_session_id,workspace_id,issued_at,access_expires_at,refresh_expires_at,"
-            "family_id,parent_id) VALUES (?,?,NULL,?,NULL,?,?,NULL,?,?,?,NULL,?,NULL)",
-            (tid, client["client_id"], _sha(access), scope, audience,
-             client.get("workspace_id"), now(), now() + ACCESS_TTL_S, tid))
+        from .api_platform import approved_service_scopes
+        with self.store.tx():
+            current = Clients(self.store).get(client["client_id"])
+            if not current or current.get("disabled_at") or current.get("kind") != "service":
+                raise ServiceError(403, "invalid_client", "服务身份当前不可用")
+            if not set(scope.split()).issubset(set((current.get("api_scopes") or "").split())):
+                raise ServiceError(403, "invalid_scope", "请求超出了服务身份的授权范围")
+            scope = approved_service_scopes(self.store, current, scope)
+            audience = audience or self.default_audience(current)
+            if not audience or audience not in (current.get("audiences") or []):
+                raise ServiceError(403, "invalid_target", "请求的接口受众已不在服务身份授权范围内")
+            from .apps import Apps
+            from .identity import Identity
+            entitled, _, _ = Apps(self.store, Identity(self.store)).check_access_for_workspace(
+                current.get("workspace_id"), current["app_id"])
+            if not entitled:
+                raise ServiceError(403, "invalid_client", "服务身份的工作空间或应用授权当前不可用")
+            access = secrets.token_urlsafe(40)
+            tid = new_id("tok")
+            self.store.execute(
+                "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,refresh_hash,scope,audience,"
+                "central_session_id,workspace_id,issued_at,access_expires_at,refresh_expires_at,"
+                "family_id,parent_id) VALUES (?,?,NULL,?,NULL,?,?,NULL,?,?,?,NULL,?,NULL)",
+                (tid, current["client_id"], _sha(access), scope, audience,
+                 current.get("workspace_id"), now(), now() + ACCESS_TTL_S, tid))
         return {"access_token": access, "token_type": "Bearer", "expires_in": ACCESS_TTL_S,
                 "scope": scope}
 

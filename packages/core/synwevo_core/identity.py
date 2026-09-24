@@ -51,11 +51,16 @@ def normalise_email(email: str) -> str:
 
 
 def valid_email(email: str) -> bool:
+    from email.headerregistry import Address
     e = (email or "").strip()
-    if not e or len(e) > 254 or e.count("@") != 1:
+    if not e or len(e) > 254 or e.count("@") != 1 or any(ord(c) < 33 for c in e):
         return False
     local, _, domain = e.partition("@")
-    return bool(local) and bool(domain) and "." in domain and " " not in e
+    try:
+        parsed = Address(addr_spec=e)
+    except (ValueError, TypeError):
+        return False
+    return bool(local) and bool(domain) and "." in domain and parsed.addr_spec == e
 
 
 class Identity:
@@ -283,12 +288,15 @@ class Identity:
         "reclaim on the path that creates them" rule the challenge tables follow.
         """
         self._maybe_sweep_attempts()
-        if self._blocked(bucket, limit=limit, window_s=window_s):
-            b = self._bucket(bucket) or {}
-            until = b.get("blocked_until") or ((b.get("first_at") or now()) + window_s)
-            return False, max(1, int(until - now()))
-        self._record_address_failure(bucket, limit=limit, window_s=window_s)
-        return True, 0
+        with self.store.tx():
+            # Admission and increment must serialize across processes, not only within one
+            # request: public registration/invitation limits are cost controls as well.
+            if self._blocked(bucket, limit=limit, window_s=window_s):
+                b = self._bucket(bucket) or {}
+                until = b.get("blocked_until") or ((b.get("first_at") or now()) + window_s)
+                return False, max(1, int(until - now()))
+            self._record_address_failure(bucket, limit=limit, window_s=window_s)
+            return True, 0
 
     def sweep_attempts(self, idle_s: float = ATTEMPT_IDLE_S) -> int:
         """Delete rate-limit rows nobody has touched for `idle_s` and that block nothing.
@@ -363,6 +371,26 @@ class Identity:
                                          owner_id=owner_id, created_by=owner_id)
         return self.get_workspace(wid)
 
+    def ensure_personal_workspace(self, uid: str) -> dict:
+        """One default personal space under concurrent onboarding, preserving any older space."""
+        with self.store.tx() as t:
+            user = t.execute("SELECT * FROM users WHERE id=? AND status='active' AND deleted_at IS NULL",
+                             (uid,)).fetchone()
+            if not user:
+                raise ServiceError(403, "account_unavailable", "请先验证邮箱再创建个人空间")
+            row = t.execute("SELECT w.id FROM workspaces w JOIN memberships m ON m.workspace_id=w.id "
+                            "WHERE w.kind='personal' AND w.created_by=? AND m.user_id=? "
+                            "AND m.role='owner' AND w.deleted_at IS NULL ORDER BY w.created_at,w.id LIMIT 1",
+                            (uid, uid)).fetchone()
+            if row:
+                wid = row["id"]
+            else:
+                wid = self._create_workspace(t, name=_personal_name(user["display_name"], user["email"]),
+                                             kind="personal", owner_id=uid, created_by=uid)
+            t.execute("UPDATE users SET onboarding_completed_at=COALESCE(onboarding_completed_at,?), "
+                      "updated_at=? WHERE id=?", (now(), now(), uid))
+        return self.get_workspace(wid)
+
     def get_workspace(self, wid: str) -> dict | None:
         return self.store.one("SELECT * FROM workspaces WHERE id=? AND deleted_at IS NULL", (wid,))
 
@@ -376,9 +404,12 @@ class Identity:
         never appear here, for anybody, until someone is deliberately added to it.
         """
         return self.store.all(
-            "SELECT w.id, w.name, w.kind, w.status, m.role, m.can_export "
+            "SELECT w.id, w.name, w.kind, w.status, m.role, m.can_export,w.organization_id,o.name AS organization_name "
             "FROM memberships m JOIN workspaces w ON w.id=m.workspace_id "
-            "WHERE m.user_id=? AND w.deleted_at IS NULL ORDER BY w.created_at", (uid,))
+            "LEFT JOIN organizations o ON o.id=w.organization_id "
+            "WHERE m.user_id=? AND w.deleted_at IS NULL AND (w.organization_id IS NULL OR EXISTS "
+            "(SELECT 1 FROM organization_memberships om WHERE om.organization_id=w.organization_id AND om.user_id=m.user_id)) "
+            "ORDER BY w.created_at,w.id", (uid,))
 
     def add_member(self, wid: str, uid: str, role: str, *, can_export: bool | None = None,
                    actor_id: str | None = None) -> dict:
@@ -798,11 +829,15 @@ _DUMMY_PHC = passwords.hash_password(secrets.token_urlsafe(32))
 REGISTRATION_MODES = ("open", "invite", "closed")
 
 
-def registration_mode() -> str:
-    """Default is invite-only.
+def registration_mode(store: Store | None = None) -> str:
+    """Persisted registration.mode overrides the environment; default is invite-only.
 
     A first deployment that is reachable before anyone configures it must not let a passer-by
     open an account, so the safe mode is the default and opening it up is a deliberate act.
     """
+    if store is not None:
+        setting = store.one("SELECT value FROM meta WHERE key='registration.mode'")
+        if setting and setting["value"] in REGISTRATION_MODES:
+            return setting["value"]
     mode = (env.get("REGISTRATION") or "invite").strip().lower()
     return mode if mode in REGISTRATION_MODES else "invite"

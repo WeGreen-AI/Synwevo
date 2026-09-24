@@ -1,3 +1,8 @@
+import { formatNumber } from "@synwevo/ui";
+import { ApiImage } from "./ApiResource";
+import { serverText, issueText } from "../lib/presentation";
+import { errorText } from "../lib/perm";
+import { t as tr, useI18n } from "@synwevo/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { post } from "@synwevo/auth-client";
 
@@ -29,6 +34,7 @@ const HEADER_BAND = 34; // points of context shown above the area
 export default function PdfRepeatEditor({ templateId, page, nrect, onChange }: {
   templateId: string; page: number; nrect: number[]; onChange: (l: RepeatLayout | null, info: { capacity: number; error?: string }) => void;
 }) {
+  const { locale } = useI18n();
   const [det, setDet] = useState<Detected | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [cols, setCols] = useState<RepeatCol[]>([]);
@@ -49,7 +55,7 @@ export default function PdfRepeatEditor({ templateId, page, nrect, onChange }: {
         setCols(d.cols.map((c) => ({ ...c })));
         setRowH(d.row_height);
       })
-      .catch((e) => alive && setErr(e.message));
+      .catch((e) => alive && setErr(errorText(e)));
     return () => { alive = false; };
   }, [templateId, page, nrect]);
 
@@ -64,13 +70,13 @@ export default function PdfRepeatEditor({ templateId, page, nrect, onChange }: {
   const capacity = det ? Math.max(0, Math.floor((det.trect[3] - det.trect[1]) / (rowH || 1) + 1e-6)) : 0;
   const problem = useMemo(() => {
     if (!det) return undefined;
-    if (!(rowH >= 6)) return "行高至少 6 点";
-    if (rowH > det.trect[3] - det.trect[1] + 0.01) return "行高超过区域高度";
+    if (!(rowH >= 6)) return tr("行高至少 6 点");
+    if (rowH > det.trect[3] - det.trect[1] + 0.01) return tr("行高超过区域高度");
     const narrow = cols.find((c) => c.x1 - c.x0 < 6);
-    if (narrow) return `列「${narrow.name}」太窄`;
-    if (cols.some((c) => !c.name.trim())) return "每一列都需要名称";
+    if (narrow) return tr("列「{v1}」太窄", { v1: narrow.name });
+    if (cols.some((c) => !c.name.trim())) return tr("每一列都需要名称");
     return undefined;
-  }, [det, cols, rowH]);
+  }, [det, cols, rowH, locale]);
 
   useEffect(() => {
     if (!det) return onChange(null, { capacity: 0, error: err || undefined });
@@ -78,8 +84,8 @@ export default function PdfRepeatEditor({ templateId, page, nrect, onChange }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [det, cols, rowH, capacity, problem, err]);
 
-  if (err) return <div className="notice err">无法识别明细区域：{err}</div>;
-  if (!det) return <div className="rp-loading"><span className="spinner" /> 正在识别表格的列和行…</div>;
+  if (err) return <div className="notice err">{tr("无法识别明细区域：")}{serverText(err)}</div>;
+  if (!det) return <div className="rp-loading"><span className="spinner" />{tr(" 正在识别表格的列和行…")}</div>;
 
   const [tx0, ty0, tx1, ty1] = det.trect;
   const areaW = tx1 - tx0;
@@ -123,27 +129,27 @@ export default function PdfRepeatEditor({ templateId, page, nrect, onChange }: {
   return (
     <div className="col gap8 rp">
       <div className="row small gap8 wrap">
-        <span className="badge info">可容纳 {capacity} 行</span>
-        <span className="muted">列依据：{COL_SRC[det.source.cols] || det.source.cols}</span>
-        <span className="muted">行高依据：{ROW_SRC[det.source.rows] || det.source.rows}</span>
+        <span className="badge info">{tr("可容纳 ")}{formatNumber(capacity)}{tr(" 行")}</span>
+        <span className="muted">{tr("列依据：")}{tr(COL_SRC[det.source.cols] || det.source.cols)}</span>
+        <span className="muted">{tr("行高依据：")}{tr(ROW_SRC[det.source.rows] || det.source.rows)}</span>
       </div>
       {det.visual_aligned ? (
         <div ref={wrapRef} className="rp-wrap">
         <div className={`rp-view${drag ? " dragging" : ""}`} ref={boxRef} style={{ height: viewH, width: areaW * scale }}
           onPointerMove={onMove} onPointerUp={() => setDrag(null)} onPointerLeave={() => setDrag(null)}>
-          <img alt="模板页面" draggable={false} src={`/api/templates/${templateId}/page/${page}.png?zoom=2&which=original`}
+          <ApiImage alt={tr("模板页面")} draggable={false} src={`/api/templates/${templateId}/page/${page}.png?zoom=2&which=original`}
             style={{ width: imgW, left: imgLeft, top: imgTop }} />
           <div className="rp-band" style={{ height: band * scale }} />
           <div className="rp-area" style={{ top: py(ty0), height: (ty1 - ty0) * scale }} />
           {Array.from({ length: capacity }, (_, k) => (
             <div key={k} className={`rp-row${k === 0 ? " first" : ""}`} style={{ top: py(ty0 + (k + 1) * rowH) - 1 }}
               onPointerDown={k === 0 ? (e) => { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); setDrag({ kind: "row" }); } : undefined}
-              title={k === 0 ? "拖动调整行高" : undefined} />
+              title={k === 0 ? tr("拖动调整行高") : undefined} />
           ))}
           {cols.slice(0, -1).map((c, i) => (
             <div key={i} className="rp-div" style={{ left: px(c.x1) - 5, top: py(ty0), height: (ty1 - ty0) * scale }}
               onPointerDown={(e) => { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); setDrag({ kind: "col", i }); }}
-              onDoubleClick={() => merge(i)} title="拖动调整列宽；双击合并相邻两列"><i /></div>
+              onDoubleClick={() => merge(i)} title={tr("拖动调整列宽；双击合并相邻两列")}><i /></div>
           ))}
           {cols.map((c, i) => (
             <div key={`t${i}`} className="rp-colname" style={{ left: px(c.x0) + 2, width: px(c.x1) - px(c.x0) - 4, top: 3 }}>{c.name}</div>
@@ -151,38 +157,37 @@ export default function PdfRepeatEditor({ templateId, page, nrect, onChange }: {
         </div>
         </div>
       ) : (
-        <div className="notice">该区域的文字方向与页面显示方向不同，请用下方数值调整列边界（单位：点）。</div>
+        <div className="notice">{tr("该区域的文字方向与页面显示方向不同，请用下方数值调整列边界（单位：点）。")}</div>
       )}
       <div className="rp-cols">
         {cols.map((c, i) => (
           <div key={i} className="rp-col">
-            <span className="badge">{i + 1}</span>
-            <input className="input sm grow" value={c.name} aria-label={`第${i + 1}列名称`}
+            <span className="badge">{formatNumber(i + 1)}</span>
+            <input className="input sm grow" value={c.name} aria-label={tr("第{v1}列名称", { v1: i + 1 })}
               onChange={(e) => setCols((cs) => cs.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))} />
-            <input className="input sm w64" type="number" step={0.5} value={c.x0} aria-label={`第${i + 1}列左边界（点）`} title="左边界（点）" disabled={i === 0}
+            <input className="input sm w64" type="number" step={0.5} value={c.x0} aria-label={tr("第{v1}列左边界（点）", { v1: i + 1 })} title={tr("左边界（点）")} disabled={i === 0}
               onChange={(e) => { const v = Number(e.target.value); setCols((cs) => cs.map((x, k) => (k === i ? { ...x, x0: v } : k === i - 1 ? { ...x, x1: v } : x))); }} />
-            <input className="input sm w64" type="number" step={0.5} value={c.x1} aria-label={`第${i + 1}列右边界（点）`} title="右边界（点）" disabled={i === cols.length - 1}
+            <input className="input sm w64" type="number" step={0.5} value={c.x1} aria-label={tr("第{v1}列右边界（点）", { v1: i + 1 })} title={tr("右边界（点）")} disabled={i === cols.length - 1}
               onChange={(e) => { const v = Number(e.target.value); setCols((cs) => cs.map((x, k) => (k === i ? { ...x, x1: v } : k === i + 1 ? { ...x, x0: v } : x))); }} />
-            <div className="seg sm" role="group" aria-label="对齐">
+            <div className="seg sm" role="group" aria-label={tr("对齐")}>
               {(["left", "center", "right"] as const).map((a) => (
                 <button type="button" key={a} aria-pressed={c.align === a} className={c.align === a ? "on" : ""} onClick={() => setCols((cs) => cs.map((x, k) => (k === i ? { ...x, align: a } : x)))}>
-                  {a === "left" ? "左" : a === "center" ? "中" : "右"}
+                  {a === "left" ? tr("左") : a === "center" ? tr("中") : tr("右")}
                 </button>
               ))}
             </div>
-            <button type="button" className="btn xs" onClick={() => split(i)} disabled={c.x1 - c.x0 < 14} title="从中间拆成两列">拆分</button>
+            <button type="button" className="btn xs" onClick={() => split(i)} disabled={c.x1 - c.x0 < 14} title={tr("从中间拆成两列")}>{tr("拆分")}</button>
             {i < cols.length - 1 && (
-              <button type="button" className="btn xs" onClick={() => merge(i)} title={`与第${i + 2}列合并（同双击分隔线）`} aria-label={`第${i + 1}列与第${i + 2}列合并`}>合并右列</button>
+              <button type="button" className="btn xs" onClick={() => merge(i)} title={tr("与第{v1}列合并（同双击分隔线）", { v1: i + 2 })} aria-label={tr("第{v1}列与第{v2}列合并", { v1: i + 1, v2: i + 2 })}>{tr("合并右列")}</button>
             )}
-            {c.sample && <span className="tiny muted ellipsis" style={{ maxWidth: 110 }} title={c.sample}>样例：{c.sample}</span>}
+            {c.sample && <span className="tiny muted ellipsis" style={{ maxWidth: 110 }} title={c.sample}>{tr("样例：")}{c.sample}</span>}
           </div>
         ))}
       </div>
       <div className="row gap8 small">
-        <label className="row gap4">行高（点）
-          <input className="input sm w64" type="number" step={0.5} min={6} value={rowH} onChange={(e) => setRowH(Number(e.target.value))} />
+        <label className="row gap4">{tr("行高（点）")}<input className="input sm w64" type="number" step={0.5} min={6} value={rowH} onChange={(e) => setRowH(Number(e.target.value))} />
         </label>
-        <button type="button" className="btn xs" onClick={() => { setCols(det.cols.map((c) => ({ ...c }))); setRowH(det.row_height); }}>恢复自动识别</button>
+        <button type="button" className="btn xs" onClick={() => { setCols(det.cols.map((c) => ({ ...c }))); setRowH(det.row_height); }}>{tr("恢复自动识别")}</button>
         {problem && <span className="badge err">{problem}</span>}
       </div>
     </div>

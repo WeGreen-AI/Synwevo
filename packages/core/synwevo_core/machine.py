@@ -133,9 +133,12 @@ class MachineAuth:
         ends them.
         """
         token = _bearer(header)
+        from .api_platform import enforce_principal
         if token.startswith("dw_"):
-            return self._legacy_key(header)
-        return self._platform_token(token)
+            principal = self._legacy_key(header)
+        else:
+            principal = self._platform_token(token)
+        return enforce_principal(self.store, principal)
 
     # ------------------------------------------------------------------ legacy dw_ keys
     def _legacy_key(self, header: str | None) -> dict:
@@ -160,6 +163,9 @@ class MachineAuth:
                 "role": None, "can_export": None}
 
     def _legacy_block(self, tenant: str) -> tuple[str, str] | None:
+        from .organizations import workspace_access_failure
+        if workspace_access_failure(self.store, tenant):
+            return "organization_unavailable", "该组织当前不可用"
         app = self.store.one("SELECT status FROM apps WHERE id=?", (DOCS_APP_ID,))
         if app and app["status"] != "active":
             return "app_disabled", "Synwevo Docs 已在平台范围停用"

@@ -21,6 +21,8 @@ def web_dist() -> Path:
 def install(api: FastAPI, plat: Platform) -> None:
     from .routes import build_router
     api.include_router(build_router(plat.store, plat.identity, plat.sessions, plat.audit))
+    from .public import install_public
+    install_public(api, web_dist())
 
 
 def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:

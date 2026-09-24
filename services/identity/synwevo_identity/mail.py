@@ -20,6 +20,7 @@ writes, so a developer cannot mistake it for delivery.
 from __future__ import annotations
 
 import re
+import os
 import smtplib
 import ssl
 import math
@@ -297,11 +298,15 @@ class Mailer:
             # files hold live links, and a cwd-relative default scattered them wherever the
             # service happened to be started from.
             out = Path(env.get("MAIL_DIR") or Path(self.store.root) / "mail")
-            out.mkdir(parents=True, exist_ok=True)
+            out.mkdir(parents=True, mode=0o700, exist_ok=True)
+            out.chmod(0o700)
             # The banner exists so nobody mistakes a development sink for delivery.
             banner = ("X-Synwevo-Delivery: LOCAL FILE SINK — 这封邮件没有真正寄出，"
                       "仅写入本地文件用于开发验证\n")
-            (out / f"{int(time.time() * 1000)}-{row['id']}.eml").write_text(banner + msg.as_string(), encoding="utf-8")
+            target = out / f"{int(time.time() * 1000)}-{row['id']}.eml"
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as saved:
+                saved.write(banner + msg.as_string())
             return
 
         config = smtp_config()
@@ -348,7 +353,7 @@ class Mailer:
 
 
 # ---------------------------------------------------------------------- message bodies
-_TOKEN_IN_LINK = re.compile(r"([?&]token=)[A-Za-z0-9_\-]+")
+_TOKEN_IN_LINK = re.compile(r"([?&#]token=)[A-Za-z0-9_\-]+")
 REDACTED = "[已寄出，链接不在库内保留]"
 
 
@@ -357,18 +362,31 @@ def redact(body: str) -> str:
     return _TOKEN_IN_LINK.sub(lambda m: m.group(1) + REDACTED, body or "")
 
 
-def _link(path: str, token: str) -> str:
+def _link(path: str, token: str, locale: str = "zh-Hans") -> str:
     base = public_base() or "http://127.0.0.1:8765"
-    return f"{base}{path}?token={token}"
+    locale = locale if locale in ("zh-Hans", "zh-Hant", "en") else "zh-Hans"
+    return f"{base}{path}?lang={locale}#token={token}"
 
 
-def invitation_mail(*, workspace: str, inviter: str, role_label: str, token: str, expires_h: int) -> tuple[str, str]:
+def invitation_mail(*, workspace: str, inviter: str, role_label: str, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple[str, str]:
+    if locale == "en":
+        role = {"只读成员": "viewer", "编辑成员": "editor", "空间管理员": "workspace administrator", "空间所有者": "workspace owner"}.get(role_label, role_label)
+        return (f"Join {workspace} on Synwevo",
+                f"{inviter} invited you to {workspace} as {role}.\n\n{_link('/invite', token, locale)}\n\n"
+                f"This single-use link expires in {expires_h} hours. Opening it does not accept the invitation; confirm on the page. "
+                "Ignore this message if you do not recognize the inviter. Replies are not monitored.")
+    if locale == "zh-Hant":
+        role = {"只读成员": "檢視成員", "编辑成员": "編輯成員", "空间管理员": "工作空間管理員", "空间所有者": "工作空間擁有者"}.get(role_label, role_label)
+        return (f"邀請你加入 Synwevo 工作空間「{workspace}」",
+                f"{inviter} 邀請你以「{role}」身分加入「{workspace}」。\n\n{_link('/invite', token, locale)}\n\n"
+                f"連結有效期限為 {expires_h} 小時，僅可使用一次。開啟後仍須按下確認，才會接受邀請。"
+                "若你不認識邀請者，請忽略這封郵件。請勿直接回覆。")
     return (f"邀请你加入 Synwevo 工作空间「{workspace}」",
             f"""{inviter} 邀请你以「{role_label}」身份加入 Synwevo 工作空间「{workspace}」。
 
 打开下面的链接接受邀请：
 
-  {_link('/invite', token)}
+  {_link('/invite', token, locale)}
 
 链接 {expires_h} 小时内有效，只能使用一次。打开链接后还需要你点击确认，
 所以邮件安全扫描器预读这个链接不会替你接受邀请。
@@ -377,11 +395,19 @@ def invitation_mail(*, workspace: str, inviter: str, role_label: str, token: str
 """)
 
 
-def verify_mail(*, token: str, expires_h: int) -> tuple[str, str]:
+def verify_mail(*, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple[str, str]:
+    if locale == "en":
+        return ("Verify your Synwevo email", f"Confirm your email address:\n\n{_link('/verify-email', token, locale)}\n\n"
+                f"This single-use link expires in {expires_h} hours. Confirm on the page to complete verification. "
+                "If you did not request this, ignore this message. Replies are not monitored.")
+    if locale == "zh-Hant":
+        return ("驗證你的 Synwevo 電子郵件地址", f"請開啟以下連結驗證電子郵件地址：\n\n{_link('/verify-email', token, locale)}\n\n"
+                f"連結有效期限為 {expires_h} 小時，僅可使用一次。請在頁面按下確認以完成驗證。"
+                "若非你本人操作，請忽略這封郵件。請勿直接回覆。")
     return ("验证你的 Synwevo 邮箱",
             f"""请打开下面的链接验证这个邮箱地址：
 
-  {_link('/verify-email', token)}
+  {_link('/verify-email', token, locale)}
 
 链接 {expires_h} 小时内有效，只能使用一次。打开后需要你点击确认才会生效。
 
@@ -389,11 +415,19 @@ def verify_mail(*, token: str, expires_h: int) -> tuple[str, str]:
 """)
 
 
-def reset_mail(*, token: str, expires_h: int) -> tuple[str, str]:
+def reset_mail(*, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple[str, str]:
+    if locale == "en":
+        return ("Reset your Synwevo password", f"Set a new password:\n\n{_link('/reset-password', token, locale)}\n\n"
+                f"This single-use link expires in {expires_h} hours. Opening it does not change your password. "
+                "If you did not request this, ignore this message. Sign in to review other sessions if you are concerned. Replies are not monitored.")
+    if locale == "zh-Hant":
+        return ("重設你的 Synwevo 密碼", f"請開啟以下連結設定新密碼：\n\n{_link('/reset-password', token, locale)}\n\n"
+                f"連結有效期限為 {expires_h} 小時，僅可使用一次。開啟連結不會變更密碼。"
+                "若非你本人操作，請忽略這封郵件；如有安全疑慮，請登入並撤銷其他裝置的工作階段。請勿直接回覆。")
     return ("重置你的 Synwevo 口令",
             f"""我们收到了重置这个账户口令的请求。打开下面的链接设置新口令：
 
-  {_link('/reset-password', token)}
+  {_link('/reset-password', token, locale)}
 
 链接 {expires_h} 小时内有效，只能使用一次。
 
@@ -402,7 +436,25 @@ def reset_mail(*, token: str, expires_h: int) -> tuple[str, str]:
 """)
 
 
-def security_notice(*, what: str, when_text: str) -> tuple[str, str]:
+def security_notice(*, what: str, when_text: str, locale: str = "zh-Hans") -> tuple[str, str]:
+    events = {
+        "登录邮箱已更改": ("Sign-in email changed", "登入電子郵件地址已變更"),
+        "口令已重置": ("Password reset", "密碼已重設"),
+        "口令已更改": ("Password changed", "密碼已變更"),
+        "新增了一个安全密钥（Passkey）": ("A passkey was added", "已新增一組通行密鑰（Passkey）"),
+        "删除了一个安全密钥（Passkey）": ("A passkey was removed", "已移除一組通行密鑰（Passkey）"),
+        "启用了动态验证码（两步验证）": ("Authenticator verification enabled", "已啟用驗證器動態驗證碼（兩步驟驗證）"),
+        "关闭了动态验证码（两步验证）": ("Authenticator verification disabled", "已停用驗證器動態驗證碼（兩步驟驗證）"),
+        "重新生成了恢复码，旧的恢复码已全部失效": ("Recovery codes regenerated; all previous codes are invalid", "已重新產生復原碼；所有舊復原碼均已失效"),
+    }
+    translated = events.get(what, ("An account security setting changed", "帳戶安全設定已變更"))
+    if locale == "en":
+        return ("Synwevo security notice: " + translated[0], translated[0] + ".\n\n"
+                "If this was not you, sign in, change your password and revoke other sessions. "
+                "Security notices cannot be disabled. Replies are not monitored.")
+    if locale == "zh-Hant":
+        return ("Synwevo 帳戶安全通知：" + translated[1], translated[1] + "。\n\n"
+                "若非你本人操作，請立即登入、變更密碼並撤銷其他裝置的工作階段。安全通知無法停用。請勿直接回覆。")
     return (f"Synwevo 安全提醒：{what}",
             f"""你的 Synwevo 账户刚刚发生了一项安全相关的变更：
 
@@ -412,3 +464,12 @@ def security_notice(*, what: str, when_text: str) -> tuple[str, str]:
 如果这是你本人的操作，不需要做任何事。
 如果不是，请立即登录、修改口令，并在「账户与安全」里结束其他设备的登录。本邮件无需回复。
 """)
+
+
+def email_change_mail(*, token: str, expires_h: int = 24, locale: str = "zh-Hans") -> tuple[str, str]:
+    link = _link("/account", token, locale) + "&action=email-change"
+    if locale == "en":
+        return ("Confirm your new Synwevo email", f"Confirm this address on the account page:\n\n{link}\n\nThe link expires in {expires_h} hours. Opening it does not change your address. Ignore it if you did not request the change.")
+    if locale == "zh-Hant":
+        return ("確認你的新 Synwevo 電子郵件地址", f"請在帳戶頁面確認新地址：\n\n{link}\n\n連結有效期限為 {expires_h} 小時。開啟連結不會變更地址。若非本人操作，請忽略。")
+    return ("确认新的 Synwevo 邮箱", f"请在账户页面确认新地址：\n\n{link}\n\n链接 {expires_h} 小时内有效。打开链接不会变更邮箱。若非本人操作，请忽略。")

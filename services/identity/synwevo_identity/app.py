@@ -42,10 +42,12 @@ class Sweeper:
 
     def run_once(self) -> dict:
         from synwevo_auth_client.rp import Rp
+        from .profile import finalize_deletions
         return {"sessions": self.sessions.sweep(),
                 "mfa_tickets": self.tickets.sweep(),
                 "webauthn_challenges": self.passkeys.sweep(),
-                "rp_auth_requests": Rp(self.store).sweep()}
+                "rp_auth_requests": Rp(self.store).sweep(),
+                "account_deletions": finalize_deletions(self.store)}
 
     def _run(self) -> None:
         while not self._stop.wait(SWEEP_INTERVAL_S):
@@ -64,7 +66,7 @@ def web_dist() -> Path:
                 or Path(__file__).resolve().parents[1] / "web" / "dist")
 
 
-def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> None:
+def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_plane=None) -> None:
     """Mount the account service's routes onto an application the caller has scaffolded."""
     from .admin_routes import build_router as build_admin_router
     from .auth_routes import (build_invite_router, build_mfa_router, build_passkey_router,
@@ -91,6 +93,14 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> None:
     api.include_router(build_invite_router(identity, sessions, invites, mailer, audit))
     api.include_router(build_mfa_router(identity, sessions, mfa, audit))
     api.include_router(build_recovery_router(identity, sessions, invites, mailer, mfa, audit))
+    from .registration import build_router as build_registration_router
+    api.include_router(build_registration_router(identity, sessions, invites, mailer, audit))
+    from .account_routes import build_router as build_account_router
+    from .organization_routes import build_router as build_organization_router
+    from .api_platform import build_router as build_api_platform_router
+    api.include_router(build_account_router(identity, sessions, mailer, audit))
+    api.include_router(build_organization_router(store, identity, sessions, audit, invites, mailer))
+    api.include_router(build_api_platform_router(store, identity, sessions, audit, adapter=control_plane))
     api.include_router(build_passkey_router(identity, sessions, passkeys, audit))
 
     # Registered before any SPA catch-all so /oidc/* and /.well-known/* reach real handlers
@@ -101,7 +111,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> None:
     # silently undid each `app revoke` and `app disable --workspace` at the next restart.
     Apps(store, identity).adopt_once()
     api.include_router(build_oidc_router(store, identity, sessions, audit))
-    api.include_router(build_admin_router(store, identity, sessions, audit))
+    api.include_router(build_admin_router(store, identity, sessions, audit, mailer=mailer))
 
 
 def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:

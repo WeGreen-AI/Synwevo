@@ -1,161 +1,38 @@
-/**
- * Forgetting a password, and setting a new one.
- *
- * Two screens that share one rule: **the page never says whether an address has an account.**
- * The request screen shows the same confirmation either way, because a screen that said "no
- * such account" would be an account-existence oracle anyone could query.
- *
- * The reset screen reads the token without spending it, then spends it only when the person
- * submits. Mail security scanners follow links; a token consumed by a scanner's GET is a reset
- * the person never asked for and can no longer do.
- */
+/** Recovery never discloses account existence. Preview is read-only; reset requires submission. */
 import { useEffect, useState } from "react";
-import { ApiError, get, post } from "@synwevo/auth-client";
-import { useSession } from "@synwevo/auth-client";
-
+import { ApiError, post } from "@synwevo/auth-client";
+import { useI18n } from "@synwevo/ui";
+import { AuthFrame, FlowError, Loading, PasswordField, checkPassword, useAction, useLinkToken } from "./org/AuthFlow";
 export function ForgotPassword() {
-  const { state } = useSession();
-  const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      await post("/api/auth/forgot", { email: email.trim() });
-      setSent(true);
-    } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : String(e2));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (sent) {
-    return (
-      <div className="authpage">
-        <div className="authcard">
-          <h1>看看你的邮箱</h1>
-          {/* Deliberately the same words whether or not an account exists. */}
-          <p className="authlede">
-            如果 <b>{email.trim()}</b> 有可用账户且邮件服务正常，重置请求将进入发送队列。请稍后检查邮箱，链接 2 小时内有效，只能用一次。
-          </p>
-          <p className="tiny muted">没收到？检查垃圾邮件，或者确认这个邮箱就是注册时用的那个。</p>
-          <a className="btn authsubmit" href="/login">返回登录</a>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="authpage">
-      <form className="authcard" onSubmit={submit} noValidate>
-        <div className="authbrand">
-          <span className="logo" aria-hidden="true">◫</span>{state?.platform_name || "Synwevo Workspace"}
-        </div>
-        <h1>重置口令</h1>
-        <p className="authlede">输入你的邮箱，我们会发一个重置链接过去。</p>
-        {err && <div className="notice err">{err}</div>}
-        <label className="col gap4">
-          <span>邮箱</span>
-          <input className="input" type="email" value={email} autoComplete="username" autoFocus
-                 onChange={(e) => setEmail(e.target.value)} required />
-        </label>
-        <button className="btn primary authsubmit" type="submit" disabled={busy || !email.trim()}>
-          {busy ? "发送中…" : "发送重置链接"}
-        </button>
-        <a className="tiny muted authfoot" href="/login">想起来了？返回登录</a>
-      </form>
-    </div>
-  );
+  const { t, locale } = useI18n(); const action = useAction(); const [email, setEmail] = useState(""); const [sent, setSent] = useState(false);
+  function submit(e: React.FormEvent) { e.preventDefault(); void action.run(async () => { await post("/api/auth/forgot", { email: email.trim(), locale }); setSent(true); }); }
+  return <AuthFrame title={t(sent ? "看看你的邮箱" : "找回你的账户")} description={t(sent ? "如果这个邮箱有可用账户且邮件服务正常，重置请求将进入发送队列。" : "输入注册时使用的邮箱，申请一个口令重置链接。")}>
+    {sent ? <><p role="status">{email.trim()}</p><p className="tiny muted">{t("链接 2 小时内有效，只能用一次。没收到邮件？请检查垃圾邮件或确认邮箱地址。")}</p><a className="btn primary" href="/login">{t("返回登录")}</a><button type="button" className="btn ghost" onClick={() => setSent(false)}>{t("换个邮箱或重新申请")}</button></>
+      : <form onSubmit={submit} aria-busy={action.busy}><FlowError error={action.error} /><div className="field"><label htmlFor="forgot-email">{t("邮箱")}</label><input id="forgot-email" className="input" type="email" autoComplete="username" inputMode="email" autoCapitalize="off" spellCheck={false} autoFocus required value={email} onChange={e => setEmail(e.target.value)} /></div><button className="btn primary" disabled={action.busy}>{t(action.busy ? "提交中…" : "发送重置链接")}</button><a className="authfoot" href="/login">{t("返回登录")}</a></form>}
+  </AuthFrame>;
 }
-
 export function ResetPassword() {
-  const token = new URLSearchParams(window.location.search).get("token") || "";
-  const [target, setTarget] = useState<{ email: string } | null | "bad">(null);
-  const [password, setPassword] = useState("");
-  const [show, setShow] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState<{ mfa_required: boolean } | null>(null);
-
+  const token = useLinkToken();
+  return <PasswordReset key={token} token={token} />;
+}
+function PasswordReset({ token }: { token: string }) {
+  const { t } = useI18n(); const action = useAction();
+  const [target, setTarget] = useState<{ email: string } | null>(null); const [error, setError] = useState<unknown>(null); const [retry, setRetry] = useState(0);
+  const [password, setPassword] = useState(""); const [done, setDone] = useState<{ mfa_required: boolean } | null>(null);
   useEffect(() => {
-    if (!token) return setTarget("bad");
-    // Reads only. The token is spent by the submit below, never by opening the page.
-    get<{ email: string }>(`/api/auth/reset/preview?token=${encodeURIComponent(token)}`)
-      .then(setTarget)
-      .catch(() => setTarget("bad"));
-  }, [token]);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      const out = await post<{ mfa_required: boolean }>("/api/auth/reset", { token, password });
-      setDone(out);
-    } catch (e2) {
-      setErr(e2 instanceof ApiError ? e2.message : e2 instanceof Error ? e2.message : String(e2));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (target === null) return <div className="empty">加载中…</div>;
-
-  if (target === "bad") {
-    return (
-      <div className="authpage">
-        <div className="authcard">
-          <h1>链接无效</h1>
-          <p className="authlede">这个重置链接已经过期、已经用过，或者被一封更新的邮件取代了。</p>
-          <a className="btn primary authsubmit" href="/forgot-password">重新申请一封</a>
-        </div>
-      </div>
-    );
-  }
-
-  if (done) {
-    return (
-      <div className="authpage">
-        <div className="authcard">
-          <h1>口令已更新</h1>
-          <p className="authlede">
-            所有设备上的登录都已结束。
-            {done.mfa_required && "你的两步验证没有变化，下次登录仍然需要它。"}
-          </p>
-          <a className="btn primary authsubmit" href="/login">去登录</a>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="authpage">
-      <form className="authcard" onSubmit={submit} noValidate>
-        <h1>设置新口令</h1>
-        <p className="authlede">为 <b>{target.email}</b> 设置一个新口令。</p>
-        {err && <div className="notice err">{err}</div>}
-        <label className="col gap4">
-          <span>新口令</span>
-          <div className="row gap4">
-            <input className="input grow" type={show ? "text" : "password"} value={password}
-                   autoComplete="new-password" autoFocus minLength={15}
-                   onChange={(e) => setPassword(e.target.value)} required />
-            <button className="btn sm" type="button" onClick={() => setShow((v) => !v)}
-                    aria-pressed={show} aria-label={show ? "隐藏口令" : "显示口令"}>
-              {show ? "隐藏" : "显示"}
-            </button>
-          </div>
-          <span className="tiny muted">至少 15 个字符。长句子比复杂符号更好记也更安全。</span>
-        </label>
-        <button className="btn primary authsubmit" type="submit" disabled={busy || !password}>
-          {busy ? "处理中…" : "设置新口令并结束所有登录"}
-        </button>
-      </form>
-    </div>
-  );
+    if (!token) { setError(new Error("链接无效或已过期，请重新申请。")); return; }
+    const abort = new AbortController(); setError(null);
+    post<{ email: string }>("/api/auth/reset/preview", { token }, abort.signal).then(setTarget)
+      .catch(e => { if (!abort.signal.aborted) setError(e); });
+    return () => abort.abort();
+  }, [token, retry]);
+  function submit(e: React.FormEvent) { e.preventDefault(); void action.run(async () => {
+    checkPassword(password, target?.email);
+    const out = await post<{ mfa_required: boolean }>("/api/auth/reset", { token, password }); setDone(out); setPassword("");
+  }); }
+  return <AuthFrame title={t(done ? "口令已更新" : "设置新口令")} description={t(done ? "所有设备上的登录都已结束，请使用新口令重新登录。" : "选择一个长而独特的口令，保护你的账户。")}>
+    {done ? <>{done.mfa_required && <p role="status">{t("两步验证保持启用，下次登录仍然需要它。")}</p>}<a className="btn primary" href="/login">{t("去登录")}</a></>
+      : error ? <><FlowError error={error} />{error instanceof ApiError && (error.status === 0 || error.status >= 500) && <button type="button" className="btn" onClick={() => setRetry(v => v + 1)}>{t("重试")}</button>}<a className="btn" href="/forgot-password">{t("重新申请一封")}</a></>
+      : !target ? <Loading /> : <form onSubmit={submit} aria-busy={action.busy}><p className="tiny muted">{target.email}</p><FlowError error={action.error} /><PasswordField label={t("新口令")} value={password} onChange={setPassword} autoFocus /><button className="btn primary" disabled={action.busy}>{t(action.busy ? "处理中…" : "设置新口令并结束所有登录")}</button>{action.error instanceof ApiError && ["bad_token", "weak_password"].includes(action.error.code) && <a href="/forgot-password">{t("重新申请一封")}</a>}</form>}
+  </AuthFrame>;
 }

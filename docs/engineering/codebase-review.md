@@ -6,7 +6,27 @@
 **2026-09-24 接续说明：** 下方 288 文件与 Git blob 表是 Claude 阶段在 `51b31fe` 的历史基线，
 不是随后数百项修改的全量验收。当前工作区（含未跟踪自有代码）的逐文件 SHA-256、阅读程度、阅读者
 与证据以 [review-coverage.json](review-coverage.json) 为准；内容变动后未增量阅读的条目不会沿用“完整”。
-本轮实施、实际命令和未完成项在 [handoff](../quality/handoff.md)。当前综合验收尚未结束。
+本轮实施、实际命令和未完成项在 [handoff](../quality/handoff.md)。本轮最终验证以 handoff 的当前记录为准。
+
+### 2026-09-25 增量代码地图
+
+本轮从 `a20537b` 的当前工作树继续，按账户/组织/导航/控制面及其调用链增量阅读；没有重新声称全仓完整阅读。
+覆盖表以文件内容哈希绑定：旧哈希不匹配的条目保留历史记录，并重新标记当前阅读程度。
+Agent 的实现报告、主线审阅和实际测试分开，不把某个 agent 的“完成”直接当综合通过。
+
+| 用户动作/边界 | 当前实际入口与状态变化 |
+|---|---|
+| 注册与验证 | identity `registration.py` 注册 pending/none → `mail_outbox` →可信 URL fragment 邮件链接→ `auth_routes` 显式验证与最终口令→重新登录；待验证会话被 http gate 限制。 |
+| 门户和 Docs 登录 | Portal 公开页进入中央账户；Docs `/auth/start` 使用 auth-client PKCE/state/nonce，通过身份 provider 换码，RP 服务端会话关联中央会话。合法 next/workspace/locale 经校验后继续。 |
+| 当前 tenant | auth-client 每标签页保存 workspace；浏览器 X-Synwevo-Workspace 只提出选择，http gate 重新检查成员、组织/空间存活与应用资格，才设置 ContextVar。机器 tenant 来自已验证凭据。 |
+| 组织治理 | core `Organizations` 持有组织/成员规则，identity `organization_routes.py` 在写事务内重读会话/角色/reauth，调用服务并审计。创建组织与首个空间事务化，组织身份不替代业务空间权限。 |
+| 文档授权/生成 | Docs `authz.py` 对真实对象执行租户/导出检查；模板、映射、样本与生成仍进入原 `Services/Views/Jobs`，没有第二套引擎。任务快照固定业务输入，authority 在执行与交付时重验当前权限。 |
+| API 台 | identity 管理路由检查 api_platform.manage；core Approvals 保存所有者批准和credential binding；server 注入 Docs 适配器，适配器使用明确受限机器凭据进入同一业务 API。平台管理员不是业务内容超级用户。 |
+| 数据保存与清理 | Store 单一迁移入口；v6 新表/列不改既有 ID/tenant/key。用户图片在受限 BLOB；文档仍在内容寻址 blobs。账户删除恢复/终止在 identity profile；组织删除为7天软删除窗口；归档恢复执行当前 journal 与外发隔离。 |
+| 三语言 | UI 共用语言核心，三个外壳分别登记资源；账户 locale 跨设备持久化，访客本机保存；邮件在入队前固定语言。机器契约和上传文档不翻译。 |
+
+本轮缺陷与修复入口：激活前抢注口令/并发登录、授权码撤销、RP设备撤销、终止删除恢复、
+管理员调试请求执行中降权、同一路径邮件fragment接续、请求代次隔离和访问日志查询串保护。每项真实状态以 handoff/测试日志为准。
 
 当前已核实的链路变化：浏览器每次 Docs API 请求重验空间状态、成员、应用资格以及读/写/导出策略；
 机器身份由凭据行、服务客户端或委托令牌决定 tenant，不接受请求体提供的空间绕过。任务使用持久主体描述，

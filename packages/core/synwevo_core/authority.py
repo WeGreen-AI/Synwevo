@@ -139,6 +139,15 @@ def check(store: Store, desc: dict | None, *, need: str = "write", app_id: str =
     ws = store.one("SELECT id, status FROM workspaces WHERE id=?", (t,)) if t else None
     if ws and ws["status"] in BLOCKED_WORKSPACE_STATES:
         return False, f"workspace_{ws['status']}"
+    from .organizations import workspace_access_failure
+    why = workspace_access_failure(store, t, d.get("user_id") if kind in ("user", "delegated") else None)
+    if why:
+        return False, why
+    if kind in ("api_key", "service_account"):
+        from .api_platform import approval_failure
+        why = approval_failure(store, d, need=need)
+        if why:
+            return False, why
 
     if kind == "api_key":
         return _check_api_key(store, d, need, ws, app_id)

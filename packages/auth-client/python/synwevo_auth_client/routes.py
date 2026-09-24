@@ -21,11 +21,29 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.http import client_ip
 from synwevo_core.identity import Identity
 from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
-from synwevo_core.store import Store
+from synwevo_core.store import Store, now
 
 from .rp import Rp, app_id, issuer, public_url, safe_next
 
 REQ_COOKIE = "dw_authreq"
+
+
+def workspace_landing(next_path: str | None, workspace_id: str | None) -> str:
+    """Reserved tab handoff hint; authorization remains on /api/auth/me.
+
+    Strip markers supplied through `next`, then add only the server-bound choice.
+    Preserve unrelated deep-link query parameters and fragments.
+    """
+    safe = safe_next(next_path)
+    parts = urllib.parse.urlsplit(safe)
+    if workspace_id is None and not any(k == "synwevo_workspace" for k, _ in
+                                        urllib.parse.parse_qsl(parts.query, keep_blank_values=True)):
+        return safe
+    query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+             if k != "synwevo_workspace"]
+    if workspace_id is not None:
+        query.append(("synwevo_workspace", workspace_id))
+    return urllib.parse.urlunsplit(("", "", parts.path, urllib.parse.urlencode(query), parts.fragment))
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: Rp | None = None,
@@ -43,8 +61,14 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: R
     @r.get("/auth/start")
     def start(request: Request):
         """Send the browser to the account service, remembering the page it wanted."""
+        if len(request.query_params.getlist("workspace_id")) > 1:
+            raise ServiceError(400, "invalid_field", "请只选择一个工作空间", {"field": "workspace_id"})
+        if len(request.query_params.getlist("lang")) > 1:
+            raise ServiceError(400, "invalid_field", "请只选择一种界面语言", {"field": "lang"})
         url, rid = rp.begin(next_path=request.query_params.get("next"),
-                            prompt=request.query_params.get("prompt"))
+                            prompt=request.query_params.get("prompt"),
+                            workspace_id=request.query_params.get("workspace_id"),
+                            locale=request.query_params.get("lang"))
         resp = RedirectResponse(url, status_code=303)
         # Host-only, short-lived, and holding nothing but an opaque id. It is a pointer to the
         # server-side request row, not the request itself.
@@ -64,31 +88,45 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: R
 
         out = rp.complete(request_id=request.cookies.get(REQ_COOKIE),
                           state=q.get("state"), code=q.get("code"))
-        user = ident.get_user(out["user_id"])
-        if not user or user["status"] != "active":
-            raise ServiceError(403, "account_unavailable", "账户不可用，请联系管理员")
+        # Recheck authority and mint the session in one transaction. The provider
+        # proving identity cannot make a revoked membership valid again here.
+        with store.tx():
+            user = ident.get_user(out["user_id"])
+            if not user or user["status"] != "active":
+                raise ServiceError(403, "account_unavailable", "账户不可用，请联系管理员")
+            # The token exchange can complete immediately before logout/reset. Its signed
+            # identity proof is not permission to recreate a session after that withdrawal.
+            # This shared-Store deployment requires the same-user, same-client live binding
+            # and checks it in the transaction that inserts the RP session.
+            linkage = store.one(
+                "SELECT c.central_session_id,c.logged_out_at,s.revoked_at,s.idle_expires_at,"
+                "s.absolute_expires_at FROM client_sessions c JOIN sessions s "
+                "ON s.id=c.central_session_id AND s.user_id=c.user_id "
+                "WHERE c.sid=? AND c.user_id=? AND c.client_id=?",
+                (out.get("sid"), user["id"], _client_id()))
+            if (not linkage or linkage["logged_out_at"] is not None
+                    or linkage["revoked_at"] is not None
+                    or min(linkage["idle_expires_at"], linkage["absolute_expires_at"]) <= now()):
+                raise ServiceError(403, "session_revoked", "原登录已失效，请重新登录")
+            requested_workspace = out.get("workspace_id")
+            allowed, workspace_id, reason = apps.check_access(user["id"], app_id(), requested_workspace)
+            if not allowed or (requested_workspace is not None and workspace_id != requested_workspace):
+                audit(request, "sso.callback", actor_id=user["id"], result="denied",
+                      meta={"reason": reason, "workspace_id": requested_workspace})
+                resp = RedirectResponse(f"/no-access?reason={urllib.parse.quote(reason[:200])}", status_code=303)
+                resp.delete_cookie(REQ_COOKIE, path="/")
+                return resp
 
-        # The id_token proves who signed in. It does not decide which workspace they land in —
-        # that is re-resolved here from live membership and entitlement. The application asked
-        # about is this service's own, not one named in the token.
-        allowed, workspace_id, reason = apps.check_access(user["id"], app_id())
-        if not allowed:
-            audit(request, "sso.callback", actor_id=user["id"], result="denied",
-                  meta={"reason": reason})
-            resp = RedirectResponse(f"/no-access?reason={urllib.parse.quote(reason[:200])}",
-                                    status_code=303)
-            resp.delete_cookie(REQ_COOKIE, path="/")
-            return resp
+            raw, row = sessions.create(
+                user["id"], workspace_id=workspace_id, amr=out["amr"],
+                user_agent=request.headers.get("User-Agent"),
+                ip=client_ip(request) or None,
+                oidc_sid=out["sid"], auth_time=out.get("auth_time"),
+                central_session_id=linkage["central_session_id"])
+            audit(request, "sso.callback", actor_id=user["id"], workspace_id=workspace_id,
+                  result="ok", meta={"amr": out["amr"], "sid": out["sid"]})
 
-        raw, row = sessions.create(
-            user["id"], workspace_id=workspace_id, amr=out["amr"],
-            user_agent=request.headers.get("User-Agent"),
-            ip=client_ip(request) or None,       # the forwarded address only behind a trusted proxy
-            oidc_sid=out["sid"], auth_time=out.get("auth_time"))
-        audit(request, "sso.callback", actor_id=user["id"], workspace_id=workspace_id,
-              result="ok", meta={"amr": out["amr"], "sid": out["sid"]})
-
-        resp = RedirectResponse(safe_next(out["next_path"]), status_code=303)
+        resp = RedirectResponse(workspace_landing(out["next_path"], requested_workspace), status_code=303)
         resp.set_cookie(COOKIE_NAME, raw, max_age=None, **cookie_kwargs(_secure()))
         resp.set_cookie(CSRF_COOKIE, new_csrf_token(), max_age=None,
                         **{**cookie_kwargs(_secure()), "httponly": False})
@@ -145,8 +183,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: R
 
 # Account paths that exist only on the account service. On a relying party they are not pages,
 # they are redirects.
-ACCOUNT_PATHS = ("/login", "/account", "/invite", "/forgot-password", "/reset-password",
-                 "/logged-out")
+ACCOUNT_PATHS = ("/login", "/register", "/verify-email", "/onboarding", "/organizations",
+                 "/account", "/invite", "/forgot-password", "/reset-password", "/logged-out", "/admin")
 
 
 def build_account_redirect_router() -> APIRouter:
@@ -195,5 +233,13 @@ def build_account_redirect_router() -> APIRouter:
     @r.get("/logged-out")
     def logged_out():
         return RedirectResponse(issuer().rstrip("/") + "/logged-out", status_code=303)
+
+    def forward_account(request: Request):
+        q = ("?" + str(request.url.query)) if request.url.query else ""
+        return RedirectResponse(issuer().rstrip("/") + request.url.path + q, status_code=303)
+
+    for path in ("/register", "/verify-email", "/onboarding", "/organizations", "/admin",
+                 "/organizations/{rest:path}", "/account/{rest:path}", "/admin/{rest:path}"):
+        r.add_api_route(path, forward_account, methods=["GET"])
 
     return r

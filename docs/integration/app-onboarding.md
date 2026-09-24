@@ -1,12 +1,13 @@
 # 把一个应用接入平台账户体系
 
-本文档是可执行的：每条命令都在本机跑通过，`python tests/integration/verify_sso.py` 会把结果量出来（本轮实测 38/38）。
+本文提供应用接入命令与约束；历史 SSO 验收不代表当前修改已重测，最新证据见 `docs/quality/handoff.md`。
 
 平台账户服务是 OIDC Provider；Synwevo Workspace和 Synwevo Docs 都是接入它的独立客户端。本轮的两个客户端
 都是真实业务链路的一部分，因此它们本身就是跨客户端验证的对象。
 
-**没有产品界面。** 应用登记、客户端配置、回调地址、签名密钥、机器凭据全部通过 CLI 和配置管理。
-这不是还没做，是不做：一个能修改回调地址的网页，就是一个能让授权码送到别处去的网页。
+应用登记、交互客户端回调地址和身份签名密钥仍通过受控 CLI 与配置管理。
+本轮明确增加平台管理员 API 台，用于经过空间所有者批准的服务身份/密钥和 Webhook 管理；
+它不提供匿名动态客户端注册，也不放宽回调地址检查。范围见 [API 台契约](api.md)。
 
 ---
 
@@ -45,11 +46,11 @@ python -m synwevo_identity.cli app disable docweave                      # 停�
 ```
 
 新建的工作空间会在创建它的同一个事务里启用 `DEFAULT_WORKSPACE_APPS`（见
-`apps/docs/synwevo_docs/identity.py`）并给所有者授予资格。这不是顺手：`adopt_existing_members()` 是
+`packages/core/synwevo_core/identity.py`）并给所有者授予资格。这不是顺手：`adopt_existing_members()` 是
 一次性迁移，如果新空间不在创建时就配好，之后注册的每个账户都会登录成功、然后被告知什么都不能用。
 
-workspace `default` 是历史数据空间，`legacy / pending_claim / 0 成员`。CLI 会拒绝直接对它授权，
-必须走认领流程。
+workspace `default` 是历史数据空间，保留其实际认领状态；待认领时不能自动授予新注册者，
+已合法认领时不重置状态或成员。
 
 ---
 
@@ -84,14 +85,14 @@ python -m synwevo_identity.cli client disable --client-id my-app-web
 
 ## 3. 应用侧要实现的四个端点
 
-`apps/docs/synwevo_docs/rp.py` 和 `apps/docs/synwevo_docs/api/rp_routes.py` 是一份可以照抄的参考实现。
+共享包 `packages/auth-client/python/synwevo_auth_client/rp.py` 与 `routes.py` 是现有接入实现。
 
 | 路由 | 作用 | 关键约束 |
 |---|---|---|
 | `GET /auth/start` | 发起登录 | `state`/`nonce`/PKCE verifier 存服务端，浏览器只拿一个不透明 id |
 | `GET /auth/callback` | 换令牌、建会话 | 服务端换码；令牌不进浏览器；落地地址只能是本站路径 |
 | `POST /auth/backchannel-logout` | 接收登出通知 | 验签、验 iss/aud、拒绝带 `nonce` 的令牌、按 `jti` 去重 |
-| `POST /api/auth/sign-out` | 退出本应用 | 与「退出平台」分开，文案要说清影响范围 |
+| `POST /api/auth/sign-out` | 退出当前设备的统一登录 | 撤销相关中央/RP 会话，其他设备与服务身份保持各自生命周期 |
 
 四件容易做错的事：
 

@@ -1,3 +1,7 @@
+import { formatNumber } from "@synwevo/ui";
+import { serverText, issueText } from "../lib/presentation";
+import { errorText } from "../lib/perm";
+import { t as tr, useI18n } from "@synwevo/ui";
 import { ReactElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Mark } from "../lib/types";
 import { cssColor, markColor } from "../lib/css";
@@ -44,6 +48,7 @@ interface Props {
 }
 
 export default function GridView({ load, reloadKey, marks, selection, onSelect, onMarkClick, headerRow, focus, sheet, onSheet, onInfo, zoom = 1, selectable = true }: Props) {
+  useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [wins, setWins] = useState<Record<number, GridWindow>>({});
   const [meta, setMeta] = useState<GridWindow | null>(null);
@@ -90,7 +95,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
         onInfo?.({ sheets: w.sheets, sheet: w.sheet, totalRows: w.total_rows, totalCols: w.total_cols, notes: w.notes });
         if (!sheet) onSheet(w.sheet);
       })
-      .catch((e) => alive && setErr(e.message));
+      .catch((e) => alive && setErr(errorText(e)));
     return () => {
       alive = false;
     };
@@ -186,7 +191,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
           if (g !== gen.current || (w.sheet && w.sheet !== meta.sheet)) return;
           setWins((x) => ({ ...x, [off]: w }));
         })
-        .catch((e) => { if (g === gen.current) setErr(e.message); })
+        .catch((e) => { if (g === gen.current) setErr(errorText(e)); })
         .finally(() => pending.delete(off));
     }
   }, [first, last, meta, wins, load, totalRows]);
@@ -278,8 +283,8 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     return () => window.removeEventListener("mouseup", up);
   }, []);
 
-  if (err) return <div className="empty"><div className="big">无法显示表格</div><div>{err}</div></div>;
-  if (!meta) return <div className="empty">加载中…</div>;
+  if (err) return <div className="empty"><div className="big">{tr("无法显示表格")}</div><div>{serverText(err)}</div></div>;
+  if (!meta) return <div className="empty">{tr("加载中…")}</div>;
 
   const sel = live || (selection && selection.sheet === meta.sheet ? selection : null);
   const box = (r1: number, c1: number, r2: number, c2: number) => ({
@@ -341,7 +346,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
       if (v?.f) cls += " formula";
       else if (v?.t && ["int", "dec", "float"].includes(v.t) && !st?.ha) cls += " gnum";
       cells.push(
-        <div key={`${rr}:${cc}`} className={cls} style={style} title={v?.fx ? `公式 ${v.fx}` : v?.v && v.v.length > 12 ? v.v : undefined}>
+        <div key={`${rr}:${cc}`} className={cls} style={style} title={v?.fx ? tr("公式 {v1}", { v1: v.fx }) : v?.v && v.v.length > 12 ? v.v : undefined}>
           {v?.fx && !v.f && <span className="fxdot" aria-hidden="true" />}
           {v === undefined && Math.floor(rr / WIN) * WIN in wins === false ? "" : v?.v}
         </div>,
@@ -370,7 +375,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     heads.push(
       <div key={`r${r}`} className={`ghead${on ? " on" : ""}`} style={{ left: leftFix, top: HEAD_H + rowTop(r), width: NUM_W, height: h, lineHeight: `${h}px`, cursor: "e-resize" }}
         onMouseDown={(e) => { e.stopPropagation(); if (!selectable) return; scrollRef.current?.focus({ preventScroll: true }); onSelect({ sheet: meta.sheet, r1: r, c1: 0, r2: r, c2: Math.max(0, colW.length - 1) }); }}>
-        {r + 1}
+        {formatNumber(r + 1)}
       </div>,
     );
   }
@@ -383,7 +388,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
       return (
         <div key={m.role + m.id} className={`gmark${m.active ? " active" : ""}${m.dim ? " dim" : ""}`} data-mark={`${m.role}:${m.id}`}
           style={{ ...b, borderColor: markColor(m.color), background: hexA(markColor(m.color), m.role === "slot" ? 0.1 : 0.08), borderStyle: m.role === "slot" ? "dashed" : "solid" }}>
-          <button type="button" className="tag num" style={{ background: markColor(m.color), border: 0 }} title={m.label} aria-label={m.label || "定位映射"} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onMarkClick?.(m.id); }}>
+          <button type="button" className="tag num" style={{ background: markColor(m.color), border: 0 }} title={m.label} aria-label={m.label || tr("定位映射")} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onMarkClick?.(m.id); }}>
             {m.no ?? "✎"}
           </button>
         </div>
@@ -429,18 +434,18 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     reveal(m.active);
   };
   const done = selection && selection.sheet === meta.sheet ? selection : null;    // not the live drag
-  const selText = done ? `已选 ${meta.sheet}!${rangeRef(done.r1, done.c1, done.r2, done.c2)}` : "";
+  const selText = done ? tr("已选 {v1}!{v2}", { v1: meta.sheet, v2: rangeRef(done.r1, done.c1, done.r2, done.c2) }) : "";
 
   return (
     <div className="grid-wrap">
       <div className="sr-only" role="status" aria-live="polite">{selText}</div>
       <div className="grid-scroll" ref={scrollRef} onMouseDown={onDown} onMouseMove={onMove} tabIndex={0}
-        aria-label={`工作表「${meta.sheet}」，${totalRows} 行 × ${colW.length} 列${selectable ? "。方向键移动选区，Shift+方向键扩展选区" : ""}`}
+        aria-label={tr("工作表「{v1}」，{v2} 行 × {v3} 列{v4}", { v1: meta.sheet, v2: totalRows, v3: colW.length, v4: selectable ? tr("。方向键移动选区，Shift+方向键扩展选区") : "" })}
         onKeyDown={onGridKey}>
         <div className="grid-canvas" style={{ width: (NUM_W + totalW) * zoom, height: (HEAD_H + totalH) * zoom }}>
           <div style={{ transform: `scale(${zoom})`, transformOrigin: "0 0", position: "absolute", inset: 0 }}>
             {headerRow && headerRow.sheet === meta.sheet && headerRow.row >= 0 && (
-              <div className="gheader-row" style={{ left: NUM_W, top: HEAD_H + rowTop(headerRow.row), width: totalW, height: rowH(headerRow.row) }} title="表头行" />
+              <div className="gheader-row" style={{ left: NUM_W, top: HEAD_H + rowTop(headerRow.row), width: totalW, height: rowH(headerRow.row) }} title={tr("表头行")} />
             )}
             {cells}
             {markEls}
@@ -451,10 +456,10 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
         </div>
       </div>
       {meta.sheets.length > 1 && (
-        <div className="sheettabs" role="tablist" aria-label="工作表">
+        <div className="sheettabs" role="tablist" aria-label={tr("工作表")}>
           {meta.sheets.map((s) => (
-            <button type="button" key={s.name} role="tab" aria-selected={s.name === meta.sheet} className={`sheettab${s.name === meta.sheet ? " on" : ""}`} onClick={() => onSheet(s.name)} title={`${s.rows} 行 × ${s.cols} 列`}>
-              {s.name}{s.hidden ? "（隐藏）" : ""}
+            <button type="button" key={s.name} role="tab" aria-selected={s.name === meta.sheet} className={`sheettab${s.name === meta.sheet ? " on" : ""}`} onClick={() => onSheet(s.name)} title={tr("{v1} 行 × {v2} 列", { v1: s.rows, v2: s.cols })}>
+              {s.name}{s.hidden ? tr("（隐藏）") : ""}
             </button>
           ))}
         </div>
@@ -498,6 +503,6 @@ export function hexA(hex: string, a: number) {
 
 export function describeCells(s: CellSel) {
   const n = (s.r2 - s.r1 + 1) * (s.c2 - s.c1 + 1);
-  return `${s.sheet}!${rangeRef(s.r1, s.c1, s.r2, s.c2)}` + (n > 1 ? `（${s.r2 - s.r1 + 1} 行 × ${s.c2 - s.c1 + 1} 列）` : "");
+  return `${s.sheet}!${rangeRef(s.r1, s.c1, s.r2, s.c2)}` + (n > 1 ? tr("（{v1} 行 × {v2} 列）", { v1: s.r2 - s.r1 + 1, v2: s.c2 - s.c1 + 1 }) : "");
 }
 export { cellRef };

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { get, post } from "@synwevo/auth-client";
-import { useToast } from "@synwevo/ui";
+import { useToast, useI18n } from "@synwevo/ui";
+import { errorText } from "../pages/account/common";
 
 interface State {
   totp: boolean;
@@ -20,6 +21,7 @@ interface Begin { secret: string; uri: string; digits: number; period: number }
  *  them, because "copy these now" after the fact is a worse moment to find out.
  */
 export default function MfaSection() {
+  const { t } = useI18n();
   const [st, setSt] = useState<State | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -34,8 +36,8 @@ export default function MfaSection() {
   const errRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
-    get<State>("/api/auth/mfa").then((next) => { setSt(next); setErr(null); }).catch((e) => setErr(e.message));
-  }, []);
+    get<State>("/api/auth/mfa").then((next) => { setSt(next); setErr(null); }).catch((e) => setErr(errorText(e, t)));
+  }, [t]);
   useEffect(load, [load]);
 
   useEffect(() => {
@@ -47,7 +49,7 @@ export default function MfaSection() {
   }, [begin]);
 
   const fail = (e: any) => {
-    setErr(e?.message || "操作失败，请重试。");
+    setErr(errorText(e, t));
     requestAnimationFrame(() => errRef.current?.focus());
   };
 
@@ -74,33 +76,33 @@ export default function MfaSection() {
     const r = await post<{ recovery_codes: string[] }>("/api/auth/mfa/totp/confirm", { code });
     setCode(""); setBegin(null);
     setCodes(r.recovery_codes);
-    toast("动态验证码已启用", "ok");
+    toast(t("动态验证码已启用"), "ok");
     load();
   });
 
   const disable = () => run(async () => {
     await post("/api/auth/mfa/totp/disable", { code });
     setCode(""); setDisabling(false);
-    toast("动态验证码已关闭", "ok");
+    toast(t("动态验证码已关闭"), "ok");
     load();
   });
 
   const regen = () => run(async () => {
     const r = await post<{ recovery_codes: string[] }>("/api/auth/mfa/recovery/regenerate", {});
     setCodes(r.recovery_codes);
-    toast("已生成新的恢复码，旧的全部失效", "ok");
+    toast(t("已生成新的恢复码，旧的全部失效"), "ok");
     load();
   });
 
-  if (!st) return <section className="card card-b col gap12 mt12"><h2 className="secttl">两步验证</h2>{err ? <div className="notice err" role="alert">{err} <button className="btn sm" onClick={load}>重试</button></div> : <div role="status">加载中…</div>}</section>;
+  if (!st) return <section className="card card-b col gap12 mt12"><h2 className="secttl">{t("两步验证")}</h2>{err ? <div className="notice err" role="alert">{err} <button className="btn sm" onClick={load}>{t("重试")}</button></div> : <div role="status">{t("加载中…")}</div>}</section>;
 
   return (
     <section className="card card-b col gap12 mt12">
       <div className="row">
-        <h2 className="secttl grow">两步验证</h2>
+        <h2 className="secttl grow">{t("两步验证")}</h2>
         {st.totp
-          ? <span className="badge ok">已启用（动态验证码）</span>
-          : <span className="badge">未启用</span>}
+          ? <span className="badge ok">{t("已启用（动态验证码）")}</span>
+          : <span className="badge">{t("未启用")}</span>}
       </div>
 
       {err && <div className="notice err" role="alert" tabIndex={-1} ref={errRef}>{err}</div>}
@@ -108,59 +110,57 @@ export default function MfaSection() {
       {/* Shown once, above everything, because it is the thing people lose. */}
       {codes && (
         <div className="notice warn col gap8">
-          <b>请立刻保存这些恢复码——它们只显示这一次。</b>
-          <div>每个只能用一次。手机丢失时，用其中一个即可登录。重新生成会让以上全部失效。</div>
+          <b>{t("请立刻保存这些恢复码——它们只显示这一次。")}</b>
+          <div>{t("每个只能用一次。手机丢失时，用其中一个即可登录。重新生成会让以上全部失效。")}</div>
           <ul className="reccodes">{codes.map((c) => <li key={c} className="mono">{c}</li>)}</ul>
           <div className="row">
             <button className="btn sm" onClick={async () => {
-              try { await navigator.clipboard.writeText(codes.join("\n")); toast("恢复码已复制到剪贴板", "ok"); }
-              catch { toast("复制失败，请手动保存恢复码", "err"); }
-            }}>复制全部</button>
-            <button className="btn sm ghost" onClick={() => setCodes(null)}>我已保存</button>
+              try { await navigator.clipboard.writeText(codes.join("\n")); toast(t("恢复码已复制到剪贴板"), "ok"); }
+              catch { toast(t("复制失败，请手动保存恢复码"), "err"); }
+            }}>{t("复制全部")}</button>
+            <button className="btn sm ghost" onClick={() => setCodes(null)}>{t("我已保存")}</button>
           </div>
         </div>
       )}
 
       {needPw && (
         <div className="notice info col gap8">
-          <b>这是敏感操作，请重新输入口令确认。</b>
+          <b>{t("这是敏感操作，请重新输入口令确认。")}</b>
           <div className="row gap4">
-            <input aria-label="确认两步验证操作的口令" className="input grow" type="password" value={password} autoComplete="current-password"
+            <input aria-label={t("确认两步验证操作的口令")} className="input grow" type="password" value={password} autoComplete="current-password"
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); reauth(); } }} />
-            <button className="btn primary" onClick={reauth} disabled={busy || !password}>确认</button>
+            <button className="btn primary" onClick={reauth} disabled={busy || !password}>{t("确认")}</button>
           </div>
         </div>
       )}
 
       {!st.totp && !begin && (
         <>
-          <p className="muted">
-            启用后，登录除了口令还需要手机上的 6 位动态验证码。支持任意标准验证器应用。
-          </p>
-          <div><button className="btn primary" onClick={startEnrol} disabled={busy}>启用动态验证码</button></div>
+          <p className="muted">{t("启用后，登录除了口令还需要手机上的 6 位动态验证码。支持任意标准验证器应用。")}</p>
+          <div><button className="btn primary" onClick={startEnrol} disabled={busy}>{t("启用动态验证码")}</button></div>
         </>
       )}
 
       {begin && (
         <div className="col gap8">
-          <p className="muted">用验证器应用扫描二维码，或手动输入下面的密钥，然后填入应用显示的 6 位数字。</p>
+          <p className="muted">{t("用验证器应用扫描二维码，或手动输入下面的密钥，然后填入应用显示的 6 位数字。")}</p>
           <div className="row gap12 wrap" style={{ alignItems: "flex-start" }}>
-            {qr && <div className="qrbox" aria-label="验证器二维码" dangerouslySetInnerHTML={{ __html: qr }} />}
+            {qr && <div className="qrbox" aria-label={t("验证器二维码")} dangerouslySetInnerHTML={{ __html: qr }} />}
             <div className="col gap8">
               <div>
-                <div className="tiny muted">手动输入密钥（不方便扫码时用）</div>
+                <div className="tiny muted">{t("手动输入密钥（不方便扫码时用）")}</div>
                 <code className="mono seedbox">{begin.secret}</code>
               </div>
               <label className="field" style={{ maxWidth: 200 }}>
-                <span>应用显示的 6 位数字</span>
+                <span>{t("应用显示的 6 位数字")}</span>
                 <input className="input mono" value={code} inputMode="numeric" autoComplete="one-time-code"
                   maxLength={6} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
                   onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); confirm(); } }} />
               </label>
               <div className="row gap4">
-                <button className="btn primary" onClick={confirm} disabled={busy || code.length !== 6}>确认启用</button>
-                <button className="btn ghost" onClick={() => { setBegin(null); setCode(""); }}>取消</button>
+                <button className="btn primary" onClick={confirm} disabled={busy || code.length !== 6}>{t("确认启用")}</button>
+                <button className="btn ghost" onClick={() => { setBegin(null); setCode(""); }}>{t("取消")}</button>
               </div>
             </div>
           </div>
@@ -170,28 +170,28 @@ export default function MfaSection() {
       {st.totp && (
         <>
           <dl className="kv">
-            <dt>可用恢复码</dt>
+            <dt>{t("可用恢复码")}</dt>
             <dd>
-              {st.recovery_remaining} 个
-              {st.recovery_remaining <= 2 && <span className="badge warn" style={{ marginLeft: 6 }}>快用完了</span>}
+              {t("{count} 个", { count: st.recovery_remaining })}
+              {st.recovery_remaining <= 2 && <span className="badge warn" style={{ marginLeft: 6 }}>{t("快用完了")}</span>}
             </dd>
           </dl>
           <div className="row gap4 wrap">
-            <button className="btn" onClick={regen} disabled={busy}>重新生成恢复码</button>
+            <button className="btn" onClick={regen} disabled={busy}>{t("重新生成恢复码")}</button>
             {!disabling
-              ? <button className="btn danger" onClick={() => setDisabling(true)}>关闭动态验证码</button>
+              ? <button className="btn danger" onClick={() => setDisabling(true)}>{t("关闭动态验证码")}</button>
               : (
                 <div className="row gap4">
                   {/* A current code is required to turn it off, not just to turn it on. */}
                   <input className="input mono" style={{ width: 120 }} value={code} inputMode="numeric"
-                    aria-label="关闭两步验证的当前验证码" maxLength={6} placeholder="当前验证码" autoComplete="one-time-code"
+                    aria-label={t("关闭两步验证的当前验证码")} maxLength={6} placeholder={t("当前验证码")} autoComplete="one-time-code"
                     onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
-                  <button className="btn danger" onClick={disable} disabled={busy || code.length !== 6}>确认关闭</button>
-                  <button className="btn ghost" onClick={() => { setDisabling(false); setCode(""); }}>取消</button>
+                  <button className="btn danger" onClick={disable} disabled={busy || code.length !== 6}>{t("确认关闭")}</button>
+                  <button className="btn ghost" onClick={() => { setDisabling(false); setCode(""); }}>{t("取消")}</button>
                 </div>
               )}
           </div>
-          <p className="tiny muted">关闭两步验证需要输入一个当前有效的验证码——只有口令还不够。</p>
+          <p className="tiny muted">{t("关闭两步验证需要输入一个当前有效的验证码——只有口令还不够。")}</p>
         </>
       )}
 

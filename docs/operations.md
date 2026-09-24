@@ -7,6 +7,43 @@ Synwevo Docs 是**单进程服务**：Web 界面、机器接口、任务运行�
 `SYNWEVO_DATA_DIR`（SQLite + 内容寻址文件存储）。没有额外的队列或对象存储组件。端口见
 [integration/ports.md](integration/ports.md)，配置项见仓库根目录 `.env.example`。
 
+## 当前本机产品轮：开放注册与隔离邮件
+
+2026-09-25 本轮不操作生产。`main` 推送会触发既有生产工作流，所以本轮成果暂不推送。
+从仓库根启动独立验收环境（选择未使用的数据目录；`--init` 只用于新隔离实例）：
+
+```sh
+export SYNWEVO_DATA_DIR=/private/tmp/synwevo-local-acceptance/data
+export SYNWEVO_TEST_INSTANCE=1
+export SYNWEVO_MAIL_MODE=file
+export SYNWEVO_MAIL_DIR=/private/tmp/synwevo-local-acceptance/mail
+export SYNWEVO_REGISTRATION=open
+export SYNWEVO_ACCOUNTS_PORT=28770
+export SYNWEVO_PORTAL_PORT=28769
+export SYNWEVO_DOCS_PORT=28765
+.venv/bin/python scripts/platform.py up --init
+.venv/bin/python scripts/platform.py status
+```
+
+实际账户/门户/Docs 地址分别是 `http://accounts.localhost:28770`、`http://portal.localhost:28769`、
+`http://docweave.localhost:28765`。启动器在 IPv4 与可用 IPv6 回环同时监听，禁止将此便利模式绑定公网。
+共享库与应用数据仍在一个显式目录，端口和数据目录不会覆盖生产配置。
+已有库的 `instance_kind` 不会因后来设置 TEST_INSTANCE 变成测试库。
+
+环境 `REGISTRATION=open` 启用注册；管理员保存的 `meta.registration.mode` 若存在则优先，
+管理页支持 open/invite/closed 并由真实注册端点执行。公开注册不授予管理员，邮箱验证前不能进入业务空间。
+新实例的首位管理员沿用交互 CLI 引导，不是第一个注册者。正常用户仍能使用注册/登录，不被管理初始化表单阻挡。
+
+`.eml` 只落在 0700 目录、0600 文件，明确标记 LOCAL FILE SINK；它包含短期链接，应按秘密保护，
+不能提交、截图或粘贴到日志。三种语言的模板由账户偏好/邀请时选择固定，后台重试不改语言。
+共享 HTTP 工厂对 Uvicorn 访问日志统一移除查询串，避免保存回调授权码、签名参数和查询个人信息；
+仍保留路径/状态，业务审计与 request ID 保留原契约。另行部署的代理日志仍需按相同原则配置。
+文件接收器成功不证明 SMTP 入队、中继、远端接受或最终收件箱可见。本轮不向外部收件人发送验收邮件。
+SMTP 的已授权配置方式仍见第 6 节，不能为本轮自动获取 VPS 秘密或修改邮件服务。
+
+结束当前实例需保留相同数据目录和端口变量，再执行 `.venv/bin/python scripts/platform.py down`。
+不要按名称清理账号或删除用户实例的数据。
+
 ## 1. 生产启动
 
 **容器（推荐）**
@@ -134,7 +171,8 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 
 唯一实现是 `services/identity/synwevo_identity/mail.py`。邀请、邮箱验证、口令找回和安全提醒均调用
 `Mailer.enqueue` 写入 `mail_outbox`，账户服务的后台线程完成 SMTP 投递；业务 HTTP 不等待外部 SMTP。
-这不是新增的应用间邮件 API，Docs 和门户不导入账户服务内部实现，也没有邮件管理页面。
+这不是新增的应用间邮件 API，Docs 和门户不导入账户服务内部实现。平台管理页仅提供脱敏运行状态与
+经过重认证的有限重试，不展示 SMTP 密码、邮件正文或令牌，不把 SMTP 接受等同于最终收件。
 
 配置示例见 [.env.example](../.env.example) 和 [生产 SMTP 示例](../infra/production/smtp.env.example)。
 `MAIL_MODE` 为 `disabled`、`file` 或 `smtp`；`file` 只在本机生成明确标记的 `.eml`，不能当作送达证据。

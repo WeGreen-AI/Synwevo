@@ -1,9 +1,11 @@
+import { t as tr, useI18n } from "@synwevo/ui";
 import { useEffect, useRef, useState } from "react";
 import type { Mapping } from "../lib/types";
 import { markColor } from "../lib/css";
 
 /** Curved lines linking source and target highlights of each mapping. */
 export default function Connectors({ container, mappings, active, visible, tick }: { container: HTMLElement | null; mappings: Mapping[]; active: string | null; visible: boolean; tick: number }) {
+  useI18n();
   const [paths, setPaths] = useState<{ id: string; d: string; color: string }[]>([]);
   const raf = useRef(0);
 

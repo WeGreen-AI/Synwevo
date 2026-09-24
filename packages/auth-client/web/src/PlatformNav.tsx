@@ -17,17 +17,19 @@
  * them invites exactly the "this tab is quietly a different tenant now" problem.
  */
 import { useState } from "react";
-import { ApiError, post } from "./api";
+import { ApiError, post, setWorkspaceContext } from "./api";
 import { useSession } from "./session";
-import { useToast } from "@synwevo/ui";
+import { LanguageMenu, useI18n, useToast } from "@synwevo/ui";
+import "./session.messages";
 
 export function PlatformNav() {
-  const { me, state } = useSession();
+  const { me, state, signOut } = useSession();
+  const { t } = useI18n();
   const toast = useToast();
   const [switching, setSwitching] = useState(false);
 
   // A relying party is, by definition, part of a platform. The role comes from the server.
-  const onPlatform = state?.role === "app" || state?.role === "portal";
+  const onPlatform = state?.role === "app" || state?.role === "portal" || state?.role === "all";
   if (!onPlatform || !me) return null;
 
   const platformName = state?.platform_name || "Synwevo Workspace";
@@ -43,6 +45,7 @@ export function PlatformNav() {
     setSwitching(true);
     try {
       await post("/api/auth/workspace", { workspace_id: id });
+      setWorkspaceContext(id);
       // A full reload, not a local state update. Which projects, templates and jobs exist
       // depends on the workspace, so every open view and cached list belongs to the old one;
       // repointing the page in place would leave a tab showing another tenant's list.
@@ -56,23 +59,25 @@ export function PlatformNav() {
   return (
     <>
       {state?.portal_url && (
-        <a className="btn ghost sm" href={state.portal_url} title="返回平台首页">
+        <a className="btn ghost sm" href={state.portal_url} title={t("返回平台首页")}>
           ← {platformName}
         </a>
       )}
       {spaces.length === 0 ? (
-        <span className="muted sm desktop-only">未加入任何工作空间</span>
+        <span className="muted sm desktop-only">{t("未加入任何工作空间")}</span>
       ) : current && !others.length ? (
-        <span className="muted sm desktop-only" title="当前工作空间">{current.name}</span>
+        <span className="muted sm desktop-only" title={t("当前工作空间")}>{current.name}</span>
       ) : (
         <select className="input sm" style={{ maxWidth: 180 }} value={current?.id || ""}
-                disabled={switching} aria-label="切换工作空间"
+                disabled={switching} aria-label={t("切换工作空间")}
                 onChange={(e) => void switchTo(e.target.value)}>
-          {!current && <option value="" disabled>选择工作空间…</option>}
-          {spaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+          {!current && <option value="" disabled>{t("选择工作空间…")}</option>}
+          {spaces.map((w) => <option key={w.id} value={w.id} disabled={w.status !== "active"}>{w.kind === "personal" ? t("个人") : w.organization_name || ""} · {w.name}</option>)}
         </select>
       )}
-      <a className="btn ghost sm" href={state?.account_url || "/account"} title="账户与安全">账户</a>
+      <LanguageMenu />
+      <a className="btn ghost sm" href={state?.account_url || "/account"} title={t("账户与安全")}>{t("账户")}</a>
+      <button type="button" className="btn ghost sm" onClick={() => void signOut().catch(() => undefined)}>{t("退出登录")}</button>
     </>
   );
 }

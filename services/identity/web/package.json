@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit -p .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node src/pages/org/flow.validation.mjs"
   },
   "dependencies": {
     "@synwevo/auth-client": "1.0.0",

@@ -1,3 +1,4 @@
+import { t as tr, useI18n } from "@synwevo/ui";
 import { Modal } from "@synwevo/ui";
 
 const GROUPS: { title: string; items: [string, string][] }[] = [
@@ -50,21 +51,20 @@ const GROUPS: { title: string; items: [string, string][] }[] = [
  *  WCAG 2.1.4: single-character shortcuts (P, ?) must be possible to turn off, because speech
  *  input users trigger them by accident. The switch lives here and is remembered per browser. */
 export default function Shortcuts({ onClose, singleKeys, onSingleKeys }: { onClose: () => void; singleKeys: boolean; onSingleKeys: (v: boolean) => void }) {
+  useI18n();
   return (
-    <Modal title="键盘快捷键" size="wide" onClose={onClose}
-      footer={<><span className="tiny muted">输入框、编辑器与中文输入法输入时，字母快捷键不会触发。</span><span className="spacer" /><button type="button" className="btn primary" onClick={onClose}>知道了</button></>}>
+    <Modal title={tr("键盘快捷键")} size="wide" onClose={onClose}
+      footer={<><span className="tiny muted">{tr("输入框、编辑器与中文输入法输入时，字母快捷键不会触发。")}</span><span className="spacer" /><button type="button" className="btn primary" onClick={onClose}>{tr("知道了")}</button></>}>
       <label className="check small mb12">
-        <input type="checkbox" checked={singleKeys} onChange={(e) => onSingleKeys(e.target.checked)} />
-        启用单键快捷键（P、?）。使用语音输入或经常误触时可以关闭；带 ⌘ / Ctrl 的快捷键不受影响。
-      </label>
+        <input type="checkbox" checked={singleKeys} onChange={(e) => onSingleKeys(e.target.checked)} />{tr("启用单键快捷键（P、?）。使用语音输入或经常误触时可以关闭；带 ⌘ / Ctrl 的快捷键不受影响。")}</label>
       <div className="grid2">
         {GROUPS.map((g) => (
           <div key={g.title} className="col gap4">
-            <h3>{g.title}</h3>
+            <h3>{tr(g.title)}</h3>
             <table className="tbl small">
               <tbody>
                 {g.items.map(([k, d]) => (
-                  <tr key={k}><td style={{ width: 180 }}><kbd className="kbd">{k}</kbd></td><td>{d}</td></tr>
+                  <tr key={k}><td style={{ width: 180 }}><kbd className="kbd">{tr(k)}</kbd></td><td>{tr(d)}</td></tr>
                 ))}
               </tbody>
             </table>

@@ -39,7 +39,7 @@ def public_state(ident: Identity, role: str) -> dict:
     """What a sign-in screen needs before anyone has identified themselves."""
     r = role
     return {"mode": ui_auth_mode(),
-            "registration": registration_mode(),
+            "registration": registration_mode(ident.store),
             "bootstrap_required": ident.bootstrap_needed(),
             # False on a relying party, where `/api/auth/login` is not served at all: the
             # password belongs to the account service and there is exactly one place to type
@@ -62,7 +62,13 @@ def public_state(ident: Identity, role: str) -> dict:
 def describe_user(user: dict, spaces: list[dict]) -> dict:
     return {"id": user["id"], "email": user["email"], "display_name": user.get("display_name"),
             "status": user["status"], "platform_role": user["platform_role"],
+            "locale": user.get("locale") or "zh-Hans", "timezone": user.get("timezone") or "UTC",
+            "email_verified": bool(user.get("email_verified_at")),
+            "onboarding_completed": bool(user.get("onboarding_completed_at") or spaces),
+            "permissions": ["api_platform.manage"] if user["status"] == "active" and user["platform_role"] == "admin" else [],
             "workspaces": [{"id": w["id"], "name": w["name"], "kind": w["kind"],
+                            "status": w.get("status", "active"),
+                            "organization_id": w.get("organization_id"), "organization_name": w.get("organization_name"),
                             "role": w["role"], "can_export": bool(w["can_export"])} for w in spaces]}
 
 
@@ -102,11 +108,20 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
     def logout(request: Request, response: Response):
         s = getattr(request.state, "session", None)
         if s:
-            sessions.revoke(s["id"], "logout")
-            audit(request, "auth.logout", actor_id=s["user_id"], result="ok")
+            outcome = sessions.revoke_device(s["id"], "logout")
+            audit(request, "auth.logout", actor_id=s["user_id"], result="ok", meta=outcome)
         response.delete_cookie(COOKIE_NAME, path="/")
         response.delete_cookie(CSRF_COOKIE, path="/")
         return {"ok": True}
+
+    @r.patch("/locale")
+    def locale(request: Request, body: dict = Body(...)):
+        s = _require_session(request)
+        value = body.get("locale")
+        if value not in ("zh-Hans", "zh-Hant", "en") or set(body) != {"locale"}:
+            raise ServiceError(400, "invalid_field", "请选择支持的界面语言", {"field": "locale"})
+        ident.store.execute("UPDATE users SET locale=? WHERE id=?", (value, s["user_id"]))
+        return {"locale": value}
 
     @r.get("/me")
     def me(request: Request):
@@ -129,9 +144,18 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         guessed one cannot move the session into a workspace the person has since left.
         """
         s = _require_session(request)
-        wid = (body.get("workspace_id") or "").strip()
+        value = body.get("workspace_id")
+        if not isinstance(value, str) or set(body) != {"workspace_id"}:
+            raise ServiceError(400, "invalid_field", "请选择有效的工作空间", {"field": "workspace_id"})
+        wid = value.strip()
         if not wid or not ident.membership(wid, s["user_id"]) or not ident.get_workspace(wid):
             raise ServiceError(404, "no_workspace", "找不到该工作空间")
+        workspace = ident.get_workspace(wid)
+        if workspace["status"] != "active":
+            raise ServiceError(403, "workspace_unavailable", "该工作空间当前不可用")
+        from synwevo_core.organizations import workspace_access_failure
+        if failure := workspace_access_failure(ident.store, wid, s["user_id"]):
+            raise ServiceError(403, failure, "该组织或工作空间当前不可用")
         if _serves_app(request):
             # The same question the gate asks on every Synwevo Docs request. Asking it here too
             # means the switch fails with the reason, instead of succeeding into a workspace

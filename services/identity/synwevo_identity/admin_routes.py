@@ -17,10 +17,12 @@ reason, one transaction and an audit record.
 from __future__ import annotations
 
 import json
+import re
 from fastapi import APIRouter, Body, Query, Request
 
 from synwevo_core.errors import ServiceError
-from synwevo_core.identity import Identity
+from synwevo_core.identity import Identity, REGISTRATION_MODES, registration_mode
+from synwevo_core.organizations import Organizations
 from synwevo_core.sessions import Sessions
 from synwevo_core.store import Store, now
 
@@ -29,7 +31,7 @@ UNFREEZE_RESTORE_NOTE = ("解冻不会写入安全日志（它只记录收回访
                          "冻结会被重新应用，需要再解冻一次。")
 
 
-def build_router(store: Store, ident: Identity, sessions: Sessions, audit) -> APIRouter:
+def build_router(store: Store, ident: Identity, sessions: Sessions, audit, mailer=None) -> APIRouter:
     r = APIRouter(prefix="/api/admin", tags=["admin"])
 
     def _admin(request: Request, *, dangerous: bool = False) -> dict:
@@ -77,6 +79,166 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit) -> AP
                              (*args, limit if limit is not None else -1, offset))
         return {"items": rows, "total": total, "limit": limit, "offset": offset,
                 "snapshot": snapshot}
+
+    def _reason(body: dict) -> str:
+        reason = body.get("reason")
+        if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500:
+            raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字）")
+        return reason.strip()
+
+    # ------------------------------------------------------------------ registration policy
+    def _policy():
+        row = store.one("SELECT value FROM meta WHERE key='registration.mode'")
+        return {"mode": registration_mode(store),
+                "source": "database" if row and row["value"] in REGISTRATION_MODES else "environment"}
+
+    @r.get("/registration")
+    def registration_policy(request: Request):
+        _admin(request)
+        return _policy()
+
+    @r.post("/registration")
+    def set_registration_policy(request: Request, body: dict = Body(...)):
+        actor = _admin(request, dangerous=True)
+        reason = _reason(body)
+        mode = body.get("mode")
+        if mode not in REGISTRATION_MODES:
+            raise ServiceError(400, "bad_registration_mode", "请选择有效的注册策略")
+        with store.tx():
+            before = registration_mode(store)
+            if body.get("expected_mode", before) != before:
+                raise ServiceError(409, "policy_changed", "注册策略已更改，请刷新后重试")
+            store.execute("INSERT INTO meta(key,value) VALUES ('registration.mode',?) "
+                          "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (mode,))
+            audit(request, "admin.registration.update", actor_id=actor["id"],
+                  object_kind="setting", object_id="registration.mode", result="ok",
+                  meta={"before": before, "mode": mode, "reason": reason})
+        return _policy()
+
+    # ------------------------------------------------------------------ delivery metadata / recovery
+    def _mail(request):
+        # The application already owns the mail worker. Optional injection keeps older
+        # composers working without creating a second worker or another persistence owner.
+        sender = mailer if mailer is not None else getattr(request.app.state, "mailer", None)
+        if sender is None:
+            raise ServiceError(503, "mail_not_configured", "邮件服务尚未配置")
+        return sender
+
+    def _failure_code(value):
+        # Historical transport errors may contain credentials or the full message. Never
+        # return arbitrary provider strings, even to a platform administrator.
+        safe = {"transport_unavailable", "tls_certificate_invalid", "tls_failed",
+                "smtp_authentication_failed", "smtp_security_not_supported", "mail_delivery_failed",
+                "delivery_unknown", "delivery_in_progress", "superseded", "mail_not_configured",
+                "mail_config_invalid", "public_url_missing"}
+        if value in safe or (isinstance(value, str) and re.fullmatch(
+                r"smtp_(?:(?:sender|recipient|data)_)?rejected_[45][0-9]{2}", value)):
+            return value
+        return "mail_delivery_failed" if value else None
+
+    def _mail_row(row):
+        code = _failure_code(row.get("last_error"))
+        retryable = (row["status"] == "failed" and row["kind"] in ("reset", "verify")
+                     and bool(code) and code == row.get("last_error")
+                     and code not in ("delivery_unknown", "delivery_in_progress", "superseded"))
+        return {k: row.get(k) for k in ("id", "to_addr", "kind", "ref_id", "status", "attempts",
+                                     "created_at", "sent_at", "next_attempt_at")} | {
+            "error_code": code, "retryable": retryable}
+
+    @r.get("/mail")
+    def outbox(request: Request, q: str = Query("", max_length=100),
+               status: str = Query("", pattern="^(|queued|sent|failed)$"),
+               limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0, le=2**63-1),
+               snapshot: int | None = Query(None, ge=0, le=2**63-1)):
+        _admin(request)
+        from .mail import mode
+        page = _page("mail_outbox", columns="id,to_addr,kind,ref_id,status,attempts,created_at,"
+                     "sent_at,next_attempt_at,last_error",
+                     where="(?='' OR to_addr LIKE ? OR id LIKE ?) AND (?='' OR status=?)",
+                     params=(q, f"%{q}%", f"%{q}%", status, status),
+                     order="created_at DESC,id DESC", limit=limit, offset=offset, snapshot=snapshot)
+        page["items"] = [_mail_row(row) for row in page["items"]]
+        page["delivery_mode"] = mode()
+        return page
+
+    def _dispatch(request, uid, kind):
+        from .invites import Invites, RESET_TTL_S, VERIFY_TTL_S
+        from .mail import reset_mail, verify_mail
+        user = ident.get_user(uid)
+        if not user or user["status"] not in ("active", "pending") or user.get("deleted_at"):
+            raise ServiceError(409, "bad_target", "目标账户不存在或不可用")
+        if kind == "verify" and user.get("email_verified_at"):
+            raise ServiceError(409, "already_verified", "该邮箱已经验证")
+        recent = store.one("SELECT COUNT(*) AS n, MAX(created_at) AS last FROM email_tokens "
+                           "WHERE user_id=? AND kind=? AND created_at>?", (uid, kind, now()-3600))
+        if recent["n"] >= 3 or (recent["last"] and recent["last"] > now()-60):
+            retry_after = max(1, (3600 if recent["n"] >= 3 else 60) - (now()-recent["last"]))
+            raise ServiceError(429, "mail_rate_limited", "发送过于频繁，请稍后重试",
+                               {"retry_after": retry_after})
+        ttl = (RESET_TTL_S if kind == "reset" else VERIFY_TTL_S) // 3600
+        token = Invites(store, ident).issue_email_token(uid, kind, ttl_s=ttl*3600,
+                                                       new_email=user["email"] if kind == "verify" else None)
+        subject, body = (reset_mail if kind == "reset" else verify_mail)(
+            token=token, expires_h=ttl, locale=user.get("locale") or "zh-Hans")
+        return _mail_row(_mail(request).enqueue(user["email"], subject, body, kind=kind, ref_id=uid))
+
+    @r.post("/users/{uid}/recovery")
+    def dispatch_recovery(request: Request, uid: str, body: dict = Body(...)):
+        actor = _admin(request, dangerous=True)
+        reason = _reason(body)
+        with store.tx():
+            delivery = _dispatch(request, uid, "reset")
+            audit(request, "admin.user.recovery", actor_id=actor["id"], object_kind="user",
+                  object_id=uid, result="ok", meta={"reason": reason, "mail_id": delivery["id"]})
+        return {"ok": True, "delivery": delivery}
+
+    @r.post("/mail/{mid}/retry")
+    def retry_mail(request: Request, mid: str, body: dict = Body(...)):
+        actor = _admin(request, dangerous=True)
+        reason = _reason(body)
+        with store.tx():
+            row = store.one("SELECT id,to_addr,kind,ref_id,status,attempts,created_at,sent_at,"
+                            "next_attempt_at,last_error FROM mail_outbox WHERE id=?", (mid,))
+            if not row:
+                raise ServiceError(404, "no_mail", "找不到该邮件")
+            if not _mail_row(row)["retryable"]:
+                raise ServiceError(409, "mail_not_retryable", "该邮件不能安全重试")
+            # Terminal bodies are deliberately redacted by the worker. Regenerate a fresh
+            # token for the live account's current address; never replay a stale stored body.
+            delivery = _dispatch(request, row["ref_id"], row["kind"])
+            store.execute("UPDATE mail_outbox SET last_error='superseded' WHERE id=?", (mid,))
+            audit(request, "admin.mail.retry", actor_id=actor["id"], object_kind="mail",
+                  object_id=mid, result="ok", meta={"reason": reason, "replacement_id": delivery["id"]})
+        return {"ok": True, "delivery": delivery}
+
+    # ------------------------------------------------------------------ organizations
+    @r.get("/organizations")
+    def list_organizations(request: Request, q: str = Query("", max_length=100),
+                           status: str = Query("", pattern="^(|active|frozen|deleted)$"),
+                           limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0, le=2**63-1),
+                           snapshot: int | None = Query(None, ge=0, le=2**63-1)):
+        actor = _admin(request)
+        page = _page("organizations", columns="id,name,status,created_at,recover_until",
+                     where="(?='' OR name LIKE ? OR id LIKE ?) AND (?='' OR status=?)",
+                     params=(q, f"%{q}%", f"%{q}%", status, status), order="created_at DESC,id DESC",
+                     limit=limit, offset=offset, snapshot=snapshot)
+        mine = {o["id"]: o["role"] for o in Organizations(store, ident).list_for_user(actor["id"])}
+        for org in page["items"]:
+            org["role"] = mine.get(org["id"])
+            org["members"] = store.one("SELECT COUNT(*) AS n FROM organization_memberships "
+                                       "WHERE organization_id=?", (org["id"],))["n"]
+            org["workspaces"] = store.one("SELECT COUNT(*) AS n FROM workspaces WHERE organization_id=? "
+                                          "AND deleted_at IS NULL", (org["id"],))["n"]
+        return page
+
+    @r.post("/organizations/{oid}/{action}")
+    def govern_organization(request: Request, oid: str, action: str, body: dict = Body(...)):
+        actor = _admin(request, dangerous=True)
+        reason = _reason(body)
+        # Use the core lifecycle and the real actor. Platform governance does not add an
+        # organization membership, impersonate its owner, or bypass its ownership checks.
+        return Organizations(store, ident, lambda event, **kw: audit(request, event, **kw)).transition(
+            oid, actor["id"], action, reason=reason)
 
     # ------------------------------------------------------------------ overview
     @r.get("/overview")

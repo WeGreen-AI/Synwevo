@@ -186,8 +186,11 @@ class Apps:
             return False, None, "你不是该工作空间的成员"
 
         revoked = False
+        from .organizations import workspace_access_failure
         for w in candidates:
             if w["status"] != "active":
+                continue
+            if workspace_access_failure(self.store, w["id"], user_id):
                 continue
             if not self.store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id=?",
                                   (w["id"], app_id)):
@@ -242,6 +245,9 @@ class Apps:
         ws = self.ident.get_workspace(workspace_id)
         if not ws or ws["status"] != "active":
             return False, None, "该工作空间不可用"
+        from .organizations import workspace_access_failure
+        if workspace_access_failure(self.store, workspace_id):
+            return False, None, "该组织当前不可用"
         if not self.store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id=?",
                               (workspace_id, app_id)):
             return False, None, f"该工作空间尚未启用「{app['name']}」"
@@ -262,8 +268,14 @@ class Apps:
             ok, wid, reason = self.check_access(user_id, app["id"], workspace_id)
             if ok:
                 ws = self.ident.get_workspace(wid)
+                from urllib.parse import urlsplit, urlunsplit, urlencode
+                launch = urlsplit(app["launch_url"])
+                # The destination reauthorizes this untrusted hint during SSO and callback.
+                # Persist it in the sign-in request, never in an unscoped browser preference.
+                launch_url = urlunsplit((launch.scheme, launch.netloc, "/auth/start",
+                                        urlencode({"workspace_id": wid, "next": launch.path or "/"}), ""))
                 out.append({"id": app["id"], "name": app["name"], "icon": app["icon"],
-                            "launch_url": app["launch_url"], "workspace_id": wid,
+                            "launch_url": launch_url, "workspace_id": wid,
                             "workspace_name": (ws or {}).get("name")})
         return out
 

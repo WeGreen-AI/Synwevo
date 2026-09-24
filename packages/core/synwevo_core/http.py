@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import secrets
@@ -56,6 +57,30 @@ WRITE_ROLES = frozenset({"owner", "admin", "editor"})
 # that serves Synwevo Docs is Docs' own and is checked against workspace and application access.
 ACCOUNT_LEVEL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/portal/")
 ACCOUNT_LEVEL_EXACT = frozenset({"/api/health"})
+
+
+class PrivateAccessLog(logging.Filter):
+    """Uvicorn's request target must not retain OAuth codes or other query data.
+
+    Keep method/path/status metadata. Apply at the logger (before every handler),
+    covering direct uvicorn startup as well as the repository's launch command.
+    """
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
+            target = args[2].split("?", 1)[0].split("#", 1)[0]
+            target = "".join(c if c.isprintable() else "_" for c in target)
+            record.args = (*args[:2], target, *args[3:])
+        else:
+            # Unknown access-record formats cannot be assumed safe to persist.
+            return False
+        return True
+
+
+def install_private_access_log() -> None:
+    logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, PrivateAccessLog) for item in logger.filters):
+        logger.addFilter(PrivateAccessLog())
 
 
 def validate_role(value: str | None) -> str:
@@ -417,6 +442,7 @@ def data_dir(explicit: str | os.PathLike | None = None) -> Path:
 
 
 def build_platform(data_dir_arg: str | None = None) -> Platform:
+    install_private_access_log()
     store = Store(str(data_dir(data_dir_arg)))
     auth = Auth(store)
     identity = Identity(store)
@@ -593,7 +619,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                        # Someone who has forgotten their password cannot be signed in to ask
                        # for a way back; the emailed token is the authority for the reset.
                        "/api/auth/forgot", "/api/auth/reset", "/api/auth/reset/preview",
-                       "/api/auth/verify-email"}
+                       "/api/auth/verify-email", "/api/auth/email/verify", "/api/auth/register",
+                       "/api/auth/deletion/recovery", "/api/auth/deletion/recovery/preview",
+                       "/api/auth/email/resend"}
+    PENDING_PATHS = frozenset({"/api/auth/me", "/api/auth/profile", "/api/auth/verify-email/send"})
     # The SPA shell and its assets must load so the login screen can render; every /api/ route
     # behind them still requires the session, so no data rides along with the HTML.
     SPA_PREFIXES = ("/assets/",)
@@ -672,12 +701,17 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             return "__anonymous__"
         session = sessions.load(request.cookies.get(COOKIE_NAME))
         request.state.session = session
+        if path == "/admin" or path.startswith("/admin/"):
+            user = identity.get_user(session["user_id"]) if session else None
+            if not user or user["status"] != "active" or user["platform_role"] != "admin":
+                return _error_response(request, 404, "not_found", "页面不存在", None)
 
         if session and request.method not in SAFE_METHODS and path.startswith("/api/"):
             # Double-submit CSRF on every state-changing request. Login is exempt because it has
             # no session yet; it is protected by being useless without valid credentials.
             sent = request.headers.get(CSRF_HEADER) or request.headers.get(LEGACY_CSRF_HEADER)
-            if path not in ANON_AUTH_PATHS and not csrf_ok(request.cookies.get(CSRF_COOKIE), sent):
+            session_mutations = {"/api/auth/logout", "/api/auth/invitations/accept", "/api/auth/email/verify", "/api/auth/verify-email"}
+            if (path not in ANON_AUTH_PATHS or path in session_mutations) and not csrf_ok(request.cookies.get(CSRF_COOKIE), sent):
                 return _error_response(request, 403, "csrf_failed", "请求校验失败，请刷新页面后重试", None)
 
         if path in ANON_AUTH_PATHS or not path.startswith("/api/"):
@@ -689,6 +723,11 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             return _error_response(request, 401, "unauthorized", "请先登录", None)
 
         user = identity.get_user(session["user_id"])
+        if user and user["status"] == "pending":
+            request.state.user = user
+            if path in PENDING_PATHS and (request.method in SAFE_METHODS or path == "/api/auth/verify-email/send"):
+                return f"__pending__{user['id']}"
+            return _error_response(request, 403, "email_verification_required", "请先验证邮箱再继续", None)
         if not user or user["status"] != "active":
             # Suspension and deletion take effect on the next request, not at session expiry.
             sessions.revoke(session["id"], f"user_{user['status'] if user else 'deleted'}")
@@ -696,15 +735,27 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             return _error_response(request, 401, "unauthorized", "账户不可用，请重新登录", None)
         request.state.user = user
 
-        wid = session.get("workspace_id")
+        requested_workspace = request.headers.get("X-Synwevo-Workspace")
+        wid = requested_workspace or session.get("workspace_id")
         member = None
         if wid:
             # Membership is authoritative every time; the session only remembers a preference.
             member = identity.membership(wid, user["id"])
+            if requested_workspace:
+                from .organizations import workspace_access_failure
+                target_workspace = identity.get_workspace(wid)
+                if (not target_workspace or target_workspace["status"] != "active"
+                        or workspace_access_failure(store, wid, user["id"])):
+                    return _error_response(request, 403, "workspace_context_invalid", "此标签页的工作空间已不可用，请重新选择", None)
             if not member:
+                if requested_workspace:
+                    return _error_response(request, 403, "workspace_context_invalid", "此标签页的工作空间已不可用，请重新选择", None)
                 sessions.set_workspace(session["id"], None)
                 wid = None
                 request.state.session = {**session, "workspace_id": None}
+            elif requested_workspace:
+                # Per-request context never changes another tab's session preference.
+                request.state.session = {**session, "workspace_id": wid}
         request.state.workspace_id = wid
         request.state.membership = member
 
@@ -731,7 +782,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     # device management stay on the account service, so there is one place to change a password
     # and one place that knows about authenticators.
     APP_ACCOUNT_PATHS = ("/api/auth/state", "/api/auth/logout", "/api/auth/me",
-                         "/api/auth/workspace", "/api/auth/sign-out")
+                         "/api/auth/workspace", "/api/auth/sign-out", "/api/auth/locale")
 
     def _role_blocks(path: str) -> str | None:
         """Why this role refuses this path, or None.
@@ -770,13 +821,14 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
 
     @api.middleware("http")
     async def _gate(request: Request, call_next):
+        started = time.perf_counter()
         rid = (request.headers.get("X-Request-ID") or "")[:64] or secrets.token_hex(8)
         request.state.request_id = "".join(ch for ch in rid if ch.isalnum() or ch in "-_") or secrets.token_hex(8)
         request.state.ratelimit_left = None
         path = request.url.path
         token = None
 
-        def finish(resp):
+        async def finish(resp):
             """Every response – including the ones returned before the route runs – carries
             the trace id and the standard headers (docs/integration/api.md)."""
             resp.headers["X-Request-ID"] = request.state.request_id
@@ -784,11 +836,28 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             resp.headers.setdefault("Referrer-Policy", "no-referrer")
             if path.startswith("/api/"):
                 resp.headers.setdefault("Cache-Control", "no-store")
+            if path.startswith(("/api/", "/auth/", "/oidc/", "/account", "/admin", "/organizations")) or path in (
+                    "/login", "/register", "/invite", "/verify-email", "/forgot-password", "/reset-password", "/onboarding", "/logged-out"):
+                resp.headers.setdefault("Cache-Control", "no-store")
+                resp.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
             if request.state.ratelimit_left is not None and path.startswith("/api/v1"):
                 # On every response to an authenticated /api/v1 call, success or not, so a
                 # client can pace itself before it is refused rather than only after.
                 for k, v in buckets.headers(request.state.ratelimit_left).items():
                     resp.headers[k] = v
+            if path.startswith("/api/v1"):
+                from .api_platform import record_call
+                matched = getattr(request.scope.get("route"), "path", "")
+                template = matched if matched.startswith("/api/v1/") else "/api/v1/<unmatched>"
+                try:
+                    await run_in_threadpool(record_call, store, getattr(request.state, "principal", None),
+                                            request.method, template, resp.status_code,
+                                            (time.perf_counter() - started) * 1000, request.state.request_id)
+                except Exception:
+                    # Never change a completed business response or expose payloads in telemetry.
+                    import logging
+                    logging.getLogger(__name__).warning("API call metadata unavailable request_id=%s",
+                                                        request.state.request_id)
             return resp
 
         try:
@@ -799,7 +868,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 # and it means the account service genuinely cannot serve a document — an
                 # accounts-origin cookie reaching Synwevo Docs' data would defeat the whole point
                 # of giving them separate origins.
-                return finish(_error_response(request, 404, "not_in_this_role", off, None))
+                return await finish(_error_response(request, 404, "not_in_this_role", off, None))
             if path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):
                 # Credential checks read (and occasionally write) the database, so they run in
                 # a worker thread rather than blocking the event loop for every other request.
@@ -844,21 +913,23 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 elif mode == "session" and not path.startswith("/api/v1"):
                     outcome = await run_in_threadpool(_session_gate, request, path)
                     if isinstance(outcome, JSONResponse):
-                        return finish(outcome)
+                        return await finish(outcome)
                     token = set_tenant(outcome)
                 elif mode == "basic" and not path.startswith("/api/v1"):
                     # PBKDF2 is deliberately slow; on the event loop it stalled every other
                     # request for the length of each check.
                     if not await run_in_threadpool(auth.check_ui_basic, request.headers.get("Authorization")):
-                        return finish(_error_response(request, 401, "unauthorized", "需要登录", None,
+                        return await finish(_error_response(request, 401, "unauthorized", "需要登录", None,
                                                       headers={"WWW-Authenticate": 'Basic realm="Synwevo Docs"'}))
                     token = set_tenant(UI_TENANT)
                 else:
                     token = set_tenant(UI_TENANT)
         except ServiceError as e:
-            return finish(await _svc_err(request, e))
+            return await finish(await _svc_err(request, e))
         try:
             resp = await call_next(request)
+        except Exception as exc:
+            resp = await _unexpected(request, exc)
         finally:
             if token is not None:
                 try:
@@ -866,7 +937,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                     _tenant.reset(token)
                 except (ValueError, LookupError):
                     pass
-        return finish(resp)
+        return await finish(resp)
 
 
 def install_probes(api: FastAPI, store: Store, worker: Callable[[], bool] | None = None) -> None:

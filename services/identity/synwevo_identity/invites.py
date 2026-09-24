@@ -31,7 +31,7 @@ INVITE_TTL_MAX_S = 30 * 24 * 3600
 INVITES_PER_DAY = 50
 VERIFY_TTL_S = 24 * 3600
 RESET_TTL_S = 2 * 3600
-STATES = ("pending", "expired", "revoked", "accepted")
+STATES = ("pending", "expired", "revoked", "accepted", "declined")
 
 ROLE_LABEL = {"viewer": "只读成员", "editor": "编辑成员", "admin": "空间管理员", "owner": "空间所有者"}
 
@@ -59,6 +59,8 @@ class Invites:
         * platform role grants nothing here. A platform admin manages accounts and service
           state; it does not make them a member of a workspace they were never added to.
         """
+        from synwevo_core.organizations import require_invitation_permission
+        require_invitation_permission(self.store, workspace_id, actor_id)
         m = self.ident.membership(workspace_id, actor_id)
         if not m or m["role"] not in ("admin", "owner"):
             raise ServiceError(403, "forbidden", "只有空间管理员或所有者可以邀请成员")
@@ -67,8 +69,15 @@ class Invites:
         if ROLE_RANK[role] > ROLE_RANK[m["role"]]:
             raise ServiceError(403, "role_too_high", "不能邀请比自己权限更高的角色")
 
-    def create(self, *, workspace_id: str, email: str, role: str, actor_id: str,
+    def create(self, **kwargs) -> tuple[dict, str]:
+        # Authority, limits, superseding and issuance share one write transaction.
+        with self.store.tx():
+            return self._create(**kwargs)
+
+    def _create(self, *, workspace_id: str, email: str, role: str, actor_id: str,
                can_export: bool | None = None, ttl_s: int = INVITE_TTL_S) -> tuple[dict, str]:
+        if not INVITE_TTL_MIN_S <= ttl_s <= INVITE_TTL_MAX_S:
+            raise ServiceError(400, "bad_expiry", "邀请有效期必须在 1 到 30 天之间")
         if not valid_email(email):
             raise ServiceError(400, "bad_email", "邮箱格式不正确", {"field": "email"})
         self.may_invite(actor_id, workspace_id, role)
@@ -88,6 +97,9 @@ class Invites:
         if existing_user and self.ident.membership(workspace_id, existing_user["id"]):
             raise ServiceError(409, "already_member", "该邮箱已经是这个空间的成员")
 
+        latest = self.store.one("SELECT created_at FROM invitations WHERE workspace_id=? AND email_key=? ORDER BY created_at DESC LIMIT 1", (workspace_id, key))
+        if latest and now() - latest["created_at"] < 60:
+            raise ServiceError(429, "invite_cooldown", "请稍后再发送邀请", {"retry_after": max(1, int(60 - now() + latest["created_at"]))})
         raw = _token()
         row = {"id": new_id("iv"), "email_key": key, "workspace_id": workspace_id, "role": role,
                "can_export": 1 if (can_export if can_export is not None else role != "viewer") else 0,
@@ -128,7 +140,7 @@ class Invites:
             raise ServiceError(400, "bad_state", f"未知的邀请状态 {state!r}", {"field": "state"})
         rows = self.store.all(
             "SELECT i.id,i.email_key,i.role,i.can_export,i.invited_by,i.created_at,i.expires_at,"
-            "i.accepted_at,i.revoked_at,u.email AS invited_by_email "
+            "i.accepted_at,i.revoked_at,i.declined_at,u.email AS invited_by_email "
             "FROM invitations i LEFT JOIN users u ON u.id=i.invited_by "
             "WHERE i.workspace_id=? ORDER BY i.created_at DESC", (workspace_id,))
         out = [{**r, "state": self._state(r)} for r in rows]
@@ -183,6 +195,8 @@ class Invites:
     def _state(r: dict) -> str:
         if r.get("accepted_at"):
             return "accepted"
+        if r.get("declined_at"):
+            return "declined"
         if r.get("revoked_at"):
             return "revoked"
         return "expired" if r["expires_at"] <= now() else "pending"
@@ -220,7 +234,30 @@ class Invites:
                 # the address is registered: the client is told only what it must render.
                 "needs_account": not self.ident.by_email(r["email_key"])}
 
-    def accept(self, raw_token: str, *, password: str | None, display_name: str | None,
+    def decline(self, raw_token: str, user_id: str) -> dict:
+        with self.store.tx():
+            row = self.store.one("SELECT * FROM invitations WHERE token_hash=?", (_digest(raw_token),))
+            user = self.ident.get_user(user_id)
+            if not row or not user or user["status"] != "active" or user["email_key"] != row["email_key"]:
+                raise ServiceError(404, "bad_invite", "找不到与你的账户相符的邀请")
+            if row.get("declined_at"):
+                return {"id": row["id"], "workspace_id": row["workspace_id"], "state": "declined"}
+            if self._state(row) != "pending":
+                raise ServiceError(409, "invite_not_pending", "邀请已经处理或失效")
+            # Durable withdrawal precedes commit. A later failure stays fail-closed on restore.
+            from synwevo_core.journal import record
+            record(self.store, "invitation_revoked", invitation_id=row["id"])
+            self.store.execute("UPDATE invitations SET revoked_at=?,declined_at=? WHERE id=?",
+                               (now(), now(), row["id"]))
+            return {"id": row["id"], "workspace_id": row["workspace_id"], "state": "declined"}
+
+    def accept(self, raw_token: str, **kwargs) -> dict:
+        # Includes new-account creation and every authority check: a lost accept/revoke race
+        # cannot leave an orphaned account, membership or default workspace.
+        with self.store.tx():
+            return self._accept(raw_token, **kwargs)
+
+    def _accept(self, raw_token: str, *, password: str | None, display_name: str | None,
                as_user_id: str | None = None) -> dict:
         """Consume an invitation. Returns {"user": row, "workspace_id": ...}.
 
@@ -239,6 +276,7 @@ class Invites:
                 "accepted": "这个邀请已经被使用过了",
                 "revoked": "这个邀请已被撤销",
                 "expired": "这个邀请已过期，请让邀请人重新发送",
+                "declined": "这个邀请已经被拒绝，请联系邀请人重新发送",
             }[state])
 
         ws = self.ident.get_workspace(r["workspace_id"])
@@ -263,7 +301,11 @@ class Invites:
                 raise ServiceError(409, "wrong_account",
                                    f"这个邀请是发给 {r['email_key']} 的，而你当前登录的是"
                                    f"{(signed_in or {}).get('email', '另一个账户')}。请先退出再接受邀请。")
-            user = signed_in
+            if signed_in["status"] not in ("active", "pending"):
+                raise ServiceError(403, "account_unavailable", "账户不可用")
+            # Explicit token consumption proves this exact mailbox, not an arbitrary session.
+            self.store.execute("UPDATE users SET email_verified_at=COALESCE(email_verified_at,?),status='active' WHERE id=?", (now(), signed_in["id"]))
+            user = self.ident.get_user(signed_in["id"])
         elif existing:
             # The address already has an account. Joining it must prove control of that account,
             # so this path requires signing in first rather than accepting a password here —
@@ -273,7 +315,7 @@ class Invites:
             if not password:
                 raise ServiceError(400, "password_required", "请设置口令", {"field": "password"})
             user = self.ident.create_user(r["email_key"], password, display_name=display_name,
-                                          status="active", with_personal_workspace=True)
+                                          status="active", with_personal_workspace=False)
             # Arriving through an invitation proves control of the mailbox, so the address is
             # verified; asking for a second confirmation mail here proves nothing extra.
             self.store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), user["id"]))
@@ -285,6 +327,8 @@ class Invites:
         # correct if this ever runs outside that transaction discipline, and it is the same
         # pattern the job runner uses to claim work.
         with self.store.tx() as t:
+            from synwevo_core.organizations import accept_workspace_invitation
+            accept_workspace_invitation(self.store, r["workspace_id"], user["id"], r["invited_by"])
             claimed = t.execute(
                 "UPDATE invitations SET accepted_at=?, accepted_by=? "
                 "WHERE token_hash=? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>?",
@@ -292,6 +336,7 @@ class Invites:
             if not claimed:
                 raise ServiceError(409, "invite_accepted", "这个邀请已经被使用过了")
             ts = now()
+            t.execute("UPDATE users SET onboarding_completed_at=COALESCE(onboarding_completed_at,?),updated_at=? WHERE id=?", (ts, ts, user["id"]))
             joined = t.execute(
                 "INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) "
                 "VALUES (?,?,?,?,?,?,?) ON CONFLICT(workspace_id,user_id) DO NOTHING",

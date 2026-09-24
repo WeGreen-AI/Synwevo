@@ -1,3 +1,6 @@
+import { formatNumber } from "@synwevo/ui";
+import { ApiImage } from "../components/ApiResource";
+import { t as tr, useI18n } from "@synwevo/ui";
 import { useEffect, useRef, useState } from "react";
 import { get } from "@synwevo/auth-client";
 import type { Mark } from "../lib/types";
@@ -28,6 +31,7 @@ interface Props {
 }
 
 export default function PdfView({ pages, imageUrl, wordsUrl, marks, selection, onSelect, onMarkClick, zoom, focusKey, reloadKey, page, onPage, selectable = true }: Props) {
+  useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [words, setWords] = useState<Record<number, any>>({});
   const [draw, setDrawState] = useState<{ page: number; x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -123,7 +127,7 @@ export default function PdfView({ pages, imageUrl, wordsUrl, marks, selection, o
           2.5.7): the region is typed in as percentages of the page. */}
       {selectable && <div className="pdf-numeric">
         <button type="button" className="btn xs" aria-expanded={numeric} onClick={() => setNumeric(!numeric)}>
-          {numeric ? "收起数值框选" : "用数值框选区域…"}
+          {numeric ? tr("收起数值框选") : tr("用数值框选区域…")}
         </button>
         {numeric && <NumericRegion pages={pages.length} page={selection?.page ?? page} nrect={selection?.nrect}
           onApply={(pg, n) => { onPage(pg); onSelect({ kind: "pdf_region", page: pg, nrect: n }); }} />}
@@ -134,7 +138,7 @@ export default function PdfView({ pages, imageUrl, wordsUrl, marks, selection, o
         const wd = words[p.index];
         return (
           <div key={p.index} data-page={p.index} className="pdf-page" style={{ width: w, height: h }}>
-            <img src={imageUrl(p.index)} loading="lazy" alt={`第 ${p.index + 1} 页`} />
+            <ApiImage src={imageUrl(p.index)} loading="lazy" alt={tr("第 {v1} 页", { v1: p.index + 1 })} />
             <div className="pdf-layer"
               onMouseDown={(e) => {
                 if (e.button !== 0 || !selectable) return;
@@ -162,7 +166,7 @@ export default function PdfView({ pages, imageUrl, wordsUrl, marks, selection, o
                 finish();
               }}>
               {showWords && (wd?.words || []).map((x: any, i: number) => (
-                <div key={i} className={`pdf-word hover${x.conf !== undefined && x.conf < 80 ? " lowconf" : ""}`} title={x.conf !== undefined ? `${x.t}（置信度 ${Math.round(x.conf)}）` : x.t}
+                <div key={i} className={`pdf-word hover${x.conf !== undefined && x.conf < 80 ? " lowconf" : ""}`} title={x.conf !== undefined ? tr("{v1}（置信度 {v2}）", { v1: x.t, v2: Math.round(x.conf) }) : x.t}
                   style={{ left: `${x.r[0] * 100}%`, top: `${x.r[1] * 100}%`, width: `${(x.r[2] - x.r[0]) * 100}%`, height: `${(x.r[3] - x.r[1]) * 100}%` }} />
               ))}
               {pm.map((m) => (m.pos as any).grid?.map((g: any, gi: number) => (
@@ -190,8 +194,8 @@ export default function PdfView({ pages, imageUrl, wordsUrl, marks, selection, o
               )}
             </div>
             <div style={{ position: "absolute", right: 6, bottom: 4, fontSize: 11, color: "#666", background: "rgba(255,255,255,.8)", padding: "0 4px", borderRadius: 3 }}>
-              {p.index + 1} / {pages.length}{p.rotation ? ` · 旋转 ${p.rotation}°` : ""}{p.kind === "scanned" ? " · 扫描页" : ""}
-              <label style={{ marginLeft: 6 }}><input type="checkbox" checked={showWords} onChange={(e) => setShowWords(e.target.checked)} style={{ verticalAlign: -2 }} /> 文字层</label>
+              {formatNumber(p.index + 1)} / {formatNumber(pages.length)}{p.rotation ? tr(" · 旋转 {v1}°", { v1: p.rotation }) : ""}{p.kind === "scanned" ? tr(" · 扫描页") : ""}
+              <label style={{ marginLeft: 6 }}><input type="checkbox" checked={showWords} onChange={(e) => setShowWords(e.target.checked)} style={{ verticalAlign: -2 }} />{tr(" 文字层")}</label>
             </div>
           </div>
         );
@@ -202,23 +206,24 @@ export default function PdfView({ pages, imageUrl, wordsUrl, marks, selection, o
 
 /** Type a region instead of drawing it: page, then left / top / right / bottom in % of the page. */
 function NumericRegion({ pages, page, nrect, onApply }: { pages: number; page: number; nrect?: number[]; onApply: (page: number, n: number[]) => void }) {
+  useI18n();
   const pct = (x: number) => Math.round(x * 1000) / 10;
   const [pg, setPg] = useState(page + 1);
   const [v, setV] = useState<number[]>(nrect ? nrect.map(pct) : [10, 10, 50, 20]);
   useEffect(() => { setPg(page + 1); if (nrect) setV(nrect.map(pct)); }, [page, nrect?.join(",")]);
   const ok = pg >= 1 && pg <= pages && v.every((x) => x >= 0 && x <= 100) && v[2] > v[0] && v[3] > v[1];
   const apply = () => { if (ok) onApply(pg - 1, v.map((x) => x / 100)); };
-  const names = ["左", "上", "右", "下"];
+  const names = [tr("左"), tr("上"), tr("右"), tr("下")];
   return (
-    <div className="row gap4 wrap small" role="group" aria-label="用数值框选区域"
+    <div className="row gap4 wrap small" role="group" aria-label={tr("用数值框选区域")}
       onKeyDown={(e) => { if (!isImeKey(e) && e.key === "Enter") { e.preventDefault(); apply(); } }}>
-      <label className="row gap4">页<input className="input sm w64" type="number" min={1} max={pages} value={pg} onChange={(e) => setPg(Number(e.target.value))} /></label>
+      <label className="row gap4">{tr("页")}<input className="input sm w64" type="number" min={1} max={pages} value={pg} onChange={(e) => setPg(Number(e.target.value))} /></label>
       {names.map((n, i) => (
         <label key={n} className="row gap4">{n}%<input className="input sm w64" type="number" min={0} max={100} step={0.5} value={v[i]}
           onChange={(e) => setV(v.map((x, k) => (k === i ? Number(e.target.value) : x)))} /></label>
       ))}
-      <button type="button" className="btn xs primary" disabled={!ok} onClick={apply}>选中此区域</button>
-      {!ok && <span className="tiny" style={{ color: "var(--err)" }}>右须大于左、下须大于上，数值 0–100</span>}
+      <button type="button" className="btn xs primary" disabled={!ok} onClick={apply}>{tr("选中此区域")}</button>
+      {!ok && <span className="tiny" style={{ color: "var(--err)" }}>{tr("右须大于左、下须大于上，数值 0–100")}</span>}
     </div>
   );
 }

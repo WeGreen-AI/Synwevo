@@ -96,7 +96,7 @@ def cmd_bootstrap(args) -> int:
         print(f"平台管理员：{len(admins)} 名" + ("（需要引导）" if not admins else ""))
         for a in admins:
             print(f"  {a['email']}\t{a['id']}\t{_ts(a['created_at'])}")
-        print(f"注册模式：{registration_mode()}（SYNWEVO_REGISTRATION）")
+        print(f"注册模式：{registration_mode(store)}（持久策略优先于 SYNWEVO_REGISTRATION）")
         return 0
 
     if args.action == "token":
@@ -536,7 +536,7 @@ def cmd_info(args) -> int:
     print(f"数据库        : {store.db_path}（schema v{store.schema_version()}）")
     print(f"发行者        : {os.environ.get('SYNWEVO_ISSUER', '(未设置)')}")
     print(f"角色          : SYNWEVO_ROLE={os.environ.get('SYNWEVO_ROLE', 'all')}")
-    print(f"注册策略      : {registration_mode()}")
+    print(f"注册策略      : {registration_mode(store)}")
     from synwevo_core.passwords import parameters as pw_params
     from .mfa import key_is_external
     pp = pw_params()

@@ -79,16 +79,28 @@ def test_inviting_an_existing_member_is_refused(env):
 
 
 def test_reinviting_supersedes_the_previous_token(env):
-    """Otherwise revoking "the" invitation leaves an older one in an inbox still working."""
+    """New policy: cooldown preserves the old link; an allowed resend replaces it."""
     inv, ws, owner = env["inv"], env["ws"], env["owner"]
-    _, first = inv.create(workspace_id=ws, email="n@example.com", role="viewer", actor_id=owner["id"])
+    initial, first = inv.create(workspace_id=ws, email="n@example.com", role="viewer", actor_id=owner["id"])
+    with pytest.raises(ServiceError) as cooldown:
+        inv.create(workspace_id=ws, email="n@example.com", role="editor", actor_id=owner["id"])
+    assert cooldown.value.status == 429 and cooldown.value.code == "invite_cooldown"
+    assert 1 <= cooldown.value.detail["retry_after"] <= 60
+    assert inv.preview(first)["state"] == "pending"
+    assert env["store"].one("SELECT COUNT(*) AS n FROM invitations")["n"] == 1
+    # Isolated clock fixture: the first invitation was sent more than a minute ago.
+    env["store"].execute("UPDATE invitations SET created_at=? WHERE id=?", (now() - 61, initial["id"]))
     _, second = inv.create(workspace_id=ws, email="n@example.com", role="editor", actor_id=owner["id"])
     assert inv.preview(first)["state"] == "revoked"
     assert inv.preview(second)["state"] == "pending"
+    with pytest.raises(ServiceError) as revoked:
+        inv.accept(first, password=PW2, display_name=None)
+    assert revoked.value.code == "invite_revoked"
+    assert inv.accept(second, password=PW2, display_name=None)["role"] == "editor"
 
 
 # ---------------------------------------------------------------- accepting
-def test_accept_creates_the_account_and_the_membership(env):
+def test_accept_creates_the_account_and_the_membership(env, monkeypatch):
     inv, ws, owner, ident = env["inv"], env["ws"], env["owner"], env["ident"]
     _, raw = inv.create(workspace_id=ws, email="new@example.com", role="editor", actor_id=owner["id"])
     out = inv.accept(raw, password=PW2, display_name="新人")
@@ -97,8 +109,32 @@ def test_accept_creates_the_account_and_the_membership(env):
     assert m["role"] == "editor" and m["can_export"] == 1
     # arriving through the invitation proves the mailbox, so the address is already verified
     assert out["user"]["email_verified_at"]
-    # and they also get their own personal workspace
+    # Old policy also created an unsolicited personal space. Invitation-first
+    # onboarding now joins only the invited workspace; existing spaces are retained.
+    assert [w["id"] for w in ident.workspaces_for(out["user"]["id"])] == [ws]
+    assert env["store"].one("SELECT 1 FROM workspaces WHERE kind='personal' AND created_by=?",
+                            (out["user"]["id"],)) is None
+    from fastapi.testclient import TestClient
+    from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
+    from synwevo_identity.app import create_app
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(env["store"].root))
+    with TestClient(create_app(str(env["store"].root), start_jobs=False)) as client:
+        assert client.post("/api/auth/login", json={"email": "new@example.com", "password": PW2}).status_code == 200
+        onboarding = client.get("/api/auth/onboarding").json()
+        assert [w["id"] for w in onboarding["workspaces"]] == [ws]
+        headers = {CSRF_HEADER: client.cookies.get(CSRF_COOKIE)}
+        created = client.post("/api/auth/onboarding/personal", json={}, headers=headers)
+        assert created.status_code == 200, created.text
+        personal = created.json()["workspace"]
+        assert personal["kind"] == "personal" and personal["created_by"] == out["user"]["id"]
+        assert personal["id"] != ws
+        repeated = client.post("/api/auth/onboarding/personal", json={}, headers=headers)
+        assert repeated.status_code == 200 and repeated.json()["workspace"]["id"] == personal["id"]
+        assert client.get("/api/auth/me").json()["workspace_id"] == personal["id"]
     assert len(ident.workspaces_for(out["user"]["id"])) == 2
+    assert ident.membership(ws, out["user"]["id"])["role"] == "editor"
 
 
 def test_preview_does_not_consume_the_token(env):
@@ -304,10 +340,19 @@ def test_a_failed_send_is_recorded_and_retried_not_reported_as_sent(env, monkeyp
 
 
 def test_links_use_the_configured_public_url_not_a_request_host(monkeypatch):
+    from urllib.parse import urlsplit, urlunsplit
+
     monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "https://docs.example.org")
     subject, body = mail_mod.invitation_mail(workspace="W", inviter="I", role_label="编辑成员",
                                              token="tok123", expires_h=168)
-    assert "https://docs.example.org/invite?token=tok123" in body
+    link = "https://docs.example.org/invite?lang=zh-Hans#token=tok123"
+    assert link in body
+    parts = urlsplit(link)
+    assert parts.query == "lang=zh-Hans" and parts.fragment == "token=tok123"
+    # Fragments stay in the browser: the request target / Referer cannot carry this token.
+    assert "tok123" not in urlunsplit(parts._replace(fragment=""))
+    assert "?token=" not in body and "tok123" not in subject
+    assert "tok123" not in mail_mod.redact(body), "已投递/终止的正文不保留可用邀请令牌"
     assert "确认" in body, "邮件应说明打开链接后仍需确认"
 
 
@@ -356,8 +401,8 @@ def _token_from_mail(h) -> str:
     msg = email.message_from_string(files[-1].read_text(encoding="utf-8"))
     body = msg.get_payload(decode=True).decode("utf-8")
     assert "确认" in body, "邮件必须说明打开链接后仍需确认"
-    m = re.search(r"https://docs\.example\.org/invite\?token=([A-Za-z0-9_-]+)", body)
-    assert m, body[:400]
+    m = re.search(r"https://docs\.example\.org/invite\?lang=zh-Hans#token=([A-Za-z0-9_-]+)", body)
+    assert m, "投递邮件应包含将令牌置于 fragment 的邀请链接"
     return m.group(1)
 
 

@@ -83,7 +83,7 @@ test("the command palette lists no machine-interface management", () => {
   const start = src.indexOf("const writeCommands");
   const end = src.indexOf("return (", start);
   assert.ok(start > 0 && end > start, "command list not found");
-  const labels = [...src.slice(start, end).matchAll(/label:\s*(`[^`]*`|"[^"]*")/g)].map((m) => m[1]);
+  const labels = [...src.slice(start, end).matchAll(/label:\s*(?:tr\()?(`[^`]*`|"[^"]*")/g)].map((m) => m[1]);
   assert.ok(labels.length > 10);
   const bad = labels.filter((l) => /API|api|[Ww]ebhook|密钥|开发者|端口|服务账号|令牌|token/.test(l));
   assert.deepEqual(bad, []);

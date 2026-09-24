@@ -75,6 +75,14 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         if (q.get("response_type") or "") != "code":
             return back(error="unsupported_response_type",
                         error_description="only the authorization code flow is supported")
+        requested_workspace = q.get("workspace_id")
+        if requested_workspace is not None and (not requested_workspace or len(requested_workspace) > 200
+                or len(q.getlist("workspace_id")) != 1
+                or any(c.isspace() or ord(c) < 32 for c in requested_workspace)):
+            return back(error="invalid_request", error_description="请选择一个有效的工作空间")
+        locale = q.get("ui_locales")
+        if locale is not None and (locale not in ("zh-Hans", "zh-Hant", "en") or len(q.getlist("ui_locales")) != 1):
+            return back(error="invalid_request", error_description="请选择支持的界面语言")
         challenge, method = q.get("code_challenge"), (q.get("code_challenge_method") or "").upper()
         if client["require_pkce"] and (not challenge or method != "S256"):
             return back(error="invalid_request", error_description="PKCE with S256 is required")
@@ -97,7 +105,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
             # No central session: go and sign in, then come back to this exact request. The
             # return target is built here from our own URL, never from a client parameter.
             nxt = urllib.parse.quote(str(request.url.path) + "?" + str(request.url.query), safe="")
-            return RedirectResponse(f"/login?next={nxt}", status_code=303)
+            language = "&" + urllib.parse.urlencode({"lang": locale}) if locale is not None else ""
+            return RedirectResponse(f"/login?next={nxt}{language}", status_code=303)
 
         user = ident.get_user(session["user_id"])
         if not user or user["status"] != "active":
@@ -105,7 +114,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
             return RedirectResponse("/login", status_code=303)
 
         # Signing in proves identity. Using an application is a separate question.
-        entitled, workspace_id, reason = apps.check_access(user["id"], client["app_id"])
+        entitled, workspace_id, reason = apps.check_access(user["id"], client["app_id"], requested_workspace)
         if not entitled:
             audit(request, "oidc.authorize", actor_id=user["id"], object_kind="app",
                   object_id=client["app_id"], result="denied", meta={"reason": reason})
@@ -170,29 +179,40 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         if grant_type == "refresh_token":
             return _refresh(request, client, refresh_token or "", audience)
 
-        try:
-            row = grants.consume_code(code or "", client_id=client["client_id"],
-                                      redirect_uri=redirect_uri or "", code_verifier=code_verifier)
-        except ServiceError as e:
-            return JSONResponse({"error": "invalid_grant", "error_description": e.message}, status_code=400)
+        # Code consumption, the live sign-in check, token issuance and client linkage share
+        # a write transaction with revocation. Logout/reset either wins first and refuses
+        # this exchange, or runs afterward and finds every credential created here.
+        with store.tx():
+            try:
+                row = grants.consume_code(code or "", client_id=client["client_id"],
+                                          redirect_uri=redirect_uri or "", code_verifier=code_verifier)
+            except ServiceError as e:
+                # Commit replay-triggered revocation rather than rolling it back with the error.
+                return JSONResponse({"error": "invalid_grant", "error_description": e.message}, status_code=400)
 
-        user = ident.get_user(row["user_id"])
-        if not user or user["status"] != "active":
-            return JSONResponse({"error": "invalid_grant", "error_description": "account unavailable"},
-                                status_code=400)
+            central = store.one("SELECT user_id,revoked_at,idle_expires_at,absolute_expires_at "
+                                "FROM sessions WHERE id=?", (row["central_session_id"],))
+            if (not central or central["user_id"] != row["user_id"] or central["revoked_at"]
+                    or min(central["idle_expires_at"], central["absolute_expires_at"]) <= now()):
+                return JSONResponse({"error": "invalid_grant", "error_description": "the sign-in this code came from has ended"},
+                                    status_code=400)
+            user = ident.get_user(row["user_id"])
+            if not user or user["status"] != "active":
+                return JSONResponse({"error": "invalid_grant", "error_description": "account unavailable"},
+                                    status_code=400)
 
-        want_refresh = "offline_access" in (row["scope"] or "").split()
-        out = grants.issue_tokens(client=client, code_row=row, with_refresh=want_refresh,
-                                  audience=audience)
+            want_refresh = "offline_access" in (row["scope"] or "").split()
+            out = grants.issue_tokens(client=client, code_row=row, with_refresh=want_refresh,
+                                      audience=audience)
 
-        # One client session per grant, so a platform-wide logout can find it later.
-        sid = new_id("cs")
-        store.execute("INSERT INTO client_sessions (id,central_session_id,client_id,user_id,sid,created_at) "
-                      "VALUES (?,?,?,?,?,?)",
-                      (new_id("cl"), row["central_session_id"], client["client_id"], user["id"], sid, now()))
-        if "openid" in (row["scope"] or "").split():
-            out["id_token"] = grants.id_token(client=client, user=user, code_row=row, sid=sid,
-                                              access_token=out["access_token"])
+            # One client session per grant, so a platform-wide logout can find it later.
+            sid = new_id("cs")
+            store.execute("INSERT INTO client_sessions (id,central_session_id,client_id,user_id,sid,created_at) "
+                          "VALUES (?,?,?,?,?,?)",
+                          (new_id("cl"), row["central_session_id"], client["client_id"], user["id"], sid, now()))
+            if "openid" in (row["scope"] or "").split():
+                out["id_token"] = grants.id_token(client=client, user=user, code_row=row, sid=sid,
+                                                  access_token=out["access_token"])
         return JSONResponse(out, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
     def _client_credentials(request: Request, client: dict, requested: str, audience: str | None):
@@ -396,20 +416,27 @@ def end_central_session(store: Store, central_session_id: str, reason: str, *, d
     still sent — it is how a relying party with state of its own finds out promptly — but it is
     no longer the enforcement.
 
-    The central session row itself is revoked by the caller, which knows the reason to record.
+    An RP session id is resolved to its central device first. The root, sibling RP sessions,
+    grants and client-session linkage are revoked together before any network notification.
     `deliver=None` means the real network deliverer, looked up at call time.
     """
     deliver = oidc.deliver_logout if deliver is None else deliver
     grants, clients = oidc.Grants(store), oidc.Clients(store)
-    n_tokens = grants.revoke_for_central_session(central_session_id, reason)
-    rows = store.all("SELECT * FROM client_sessions WHERE central_session_id=? "
-                     "AND logged_out_at IS NULL", (central_session_id,))
-    notified, failed, rp_sessions = 0, 0, 0
+    sessions = Sessions(store)
+    with store.tx():
+        root = sessions.device_root_id(central_session_id)
+        if root is None:
+            return {"tokens_revoked": 0, "clients_notified": 0, "clients_failed": 0,
+                    "app_sessions_ended": 0, "sessions_revoked": 0}
+        selected = store.one("SELECT user_id FROM sessions WHERE id=?", (central_session_id,))
+        rows = store.all("SELECT * FROM client_sessions WHERE central_session_id=? "
+                         "AND user_id=? AND logged_out_at IS NULL", (root, selected["user_id"]))
+        root_live = store.one("SELECT 1 FROM sessions WHERE id=? AND user_id=? AND revoked_at IS NULL",
+                             (root, selected["user_id"]))
+        outcome = sessions.revoke_device(central_session_id, reason, rp_reason=f"central_{reason}"[:60])
+        rp_sessions = max(0, outcome["sessions_revoked"] - bool(root_live))
+    notified, failed = 0, 0
     for cs in rows:
-        rp_sessions += store.execute(
-            "UPDATE sessions SET revoked_at=?, revoked_reason=? WHERE oidc_sid=? AND revoked_at IS NULL",
-            (now(), f"central_{reason}"[:60], cs["sid"]))
-        store.execute("UPDATE client_sessions SET logged_out_at=? WHERE id=?", (now(), cs["id"]))
         client = clients.get(cs["client_id"])
         if not client or not client.get("backchannel_logout_uri"):
             continue
@@ -420,5 +447,5 @@ def end_central_session(store: Store, central_session_id: str, reason: str, *, d
         else:
             failed += 1
             store.execute("UPDATE client_sessions SET logout_error=? WHERE id=?", (err, cs["id"]))
-    return {"tokens_revoked": n_tokens, "clients_notified": notified, "clients_failed": failed,
-            "app_sessions_ended": rp_sessions}
+    return {"tokens_revoked": outcome["tokens_revoked"], "clients_notified": notified, "clients_failed": failed,
+            "app_sessions_ended": rp_sessions, "sessions_revoked": outcome["sessions_revoked"]}

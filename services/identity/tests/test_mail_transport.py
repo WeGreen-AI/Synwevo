@@ -135,14 +135,15 @@ def smtp_receiver(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('implicit', [False, True])
-def test_business_verification_route_queues_and_delivers_through_verified_tls(configured, smtp_receiver, monkeypatch, implicit):
+@pytest.mark.parametrize('status', ['active', 'pending'])
+def test_business_verification_route_queues_and_delivers_through_verified_tls(configured, smtp_receiver, monkeypatch, implicit, status):
     from synwevo_identity.app import create_app
     monkeypatch.setenv('SYNWEVO_UI_AUTH', 'session')
     monkeypatch.setenv('SYNWEVO_COOKIE_SECURE', '0')
     monkeypatch.setenv('SYNWEVO_ROLE', 'accounts')
     with smtp_receiver(implicit=implicit) as receiver:
         api = create_app(str(configured.root), start_jobs=False)
-        Identity(configured).create_user('recipient@example.test', 'synthetic-long-password', status='active')
+        Identity(configured).create_user('recipient@example.test', 'synthetic-long-password', status=status)
         with TestClient(api) as client:
             assert client.post('/api/auth/login', json={'email': 'recipient@example.test', 'password': 'synthetic-long-password'}).status_code == 200
             response = client.post('/api/auth/verify-email/send', headers={CSRF_HEADER: client.cookies.get(CSRF_COOKIE)})
@@ -163,8 +164,26 @@ def test_business_verification_route_queues_and_delivers_through_verified_tls(co
         assert message['From'] == 'Synwevo <sender@example.test>'
         assert message['Message-ID'] == f"<{row['id']}@example.test>"
         body = message.get_content()
-        assert 'https://accounts.example.test/verify-email?token=' in body
+        assert 'https://accounts.example.test/verify-email?lang=zh-Hans#token=' in body
+        assert 'verify-email?token=' not in body, 'Bearer links must not reach HTTP access logs'
         token = body.split('token=')[1].split()[0]
+        with TestClient(api) as mailbox_owner:
+            if status == 'pending':
+                blocked = mailbox_owner.post('/api/auth/email/verify', json={'token': token})
+                assert blocked.status_code == 400 and blocked.json()['error'] == 'new_password_required'
+                confirmed = mailbox_owner.post('/api/auth/email/verify', json={
+                    'token': token, 'new_password': 'Mailbox final synthetic passphrase 2026!'})
+                assert confirmed.status_code == 200 and confirmed.json()['sign_in_required'] is True
+                assert not Identity(configured).authenticate('recipient@example.test', 'synthetic-long-password')['ok']
+                assert Identity(configured).authenticate('recipient@example.test', 'Mailbox final synthetic passphrase 2026!')['ok']
+                assert mailbox_owner.get('/api/auth/me').status_code == 401
+            else:
+                blocked = mailbox_owner.post('/api/auth/email/verify', json={
+                    'token': token, 'new_password': 'Forbidden replacement synthetic phrase!'})
+                assert blocked.status_code == 400 and blocked.json()['error'] == 'invalid_field'
+                confirmed = mailbox_owner.post('/api/auth/email/verify', json={'token': token})
+                assert confirmed.status_code == 200 and confirmed.json()['sign_in_required'] is False
+                assert Identity(configured).authenticate('recipient@example.test', 'synthetic-long-password')['ok']
         stored = configured.one('SELECT * FROM mail_outbox')
         assert stored['status'] == 'sent' and stored['attempts'] == 1
         assert token not in stored['body'] and mail.REDACTED in stored['body']

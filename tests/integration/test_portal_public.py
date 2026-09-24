@@ -1,0 +1,227 @@
+"""Portal public documents and real identity visibility, using isolated test fixtures only."""
+from __future__ import annotations
+
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+import pytest
+from fastapi.testclient import TestClient
+
+from synwevo_core.apps import Apps, bootstrap_docs_app
+from synwevo_core.identity import Identity
+from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, Sessions
+from synwevo_core.store import Store, now
+from synwevo_identity.invites import Invites
+from synwevo_server.app import create_app
+
+
+@pytest.fixture()
+def portal(tmp_path, monkeypatch):
+    data = tmp_path / "fixture-data"
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(data))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_ROLE", "portal")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_ISSUER", "http://accounts.localhost:8770")
+    monkeypatch.setenv("SYNWEVO_PORTAL_URL", "https://portal.example.test")
+    # Explicit shell fixture: tests run before or after a frontend build, with no production data.
+    dist = tmp_path / "fixture-build"
+    dist.mkdir()
+    dist.joinpath("index.html").write_text('<!doctype html><html lang="zh-Hans"><head>'
+        '<title>Synwevo Workspace</title><meta name="robots" content="noindex, nofollow" />'
+        '<meta name="description" content="Synwevo Workspace" /></head><body>'
+        '<div id="root"></div></body></html>')
+    monkeypatch.setenv("SYNWEVO_PORTAL_UI_DIR", str(dist))
+    api = create_app(str(data), role="portal", start_jobs=False)
+    store = Store(data)
+    ident = Identity(store)
+    bootstrap_docs_app(store, ident, launch_url="http://docs.localhost:8765")
+    return api, store, ident
+
+
+def user(portal, name="member", *, admin=False, personal=False):
+    _, store, ident = portal
+    u = ident.create_user(f"{name}@example.test", None, status="active",
+                          platform_role="admin" if admin else "none",
+                          with_personal_workspace=personal)
+    store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), u["id"]))
+    return ident.get_user(u["id"])
+
+
+def signed_in(portal, u, wid=None):
+    api, store, _ = portal
+    client = TestClient(api)
+    token, _ = Sessions(store).create(u["id"], workspace_id=wid, amr="fixture")
+    client.cookies.set(COOKIE_NAME, token)
+    client.cookies.set(CSRF_COOKIE, "portal-fixture-csrf")
+    return client
+
+
+def switch(client, wid, *, csrf=True):
+    return client.post("/api/portal/workspace", json={"workspace_id": wid},
+                       headers={CSRF_HEADER: "portal-fixture-csrf"} if csrf else {})
+
+
+@pytest.mark.parametrize("path,language,title", [
+    ("/", "zh-Hans", "让数据成为文档"), ("/zh-Hans", "zh-Hans", "让数据成为文档"),
+    ("/zh-Hant", "zh-Hant", "讓資料成為文件"), ("/en", "en", "Turn data into documents"),
+])
+def test_public_documents_have_localized_content_and_only_public_canonicals(portal, path, language, title):
+    response = TestClient(portal[0]).get(path)
+    assert response.status_code == 200
+    assert f'lang="{language}"' in response.text
+    assert title in response.text
+    assert response.headers["X-Robots-Tag"] == "index, follow"
+    assert 'name="robots" content="index, follow"' in response.text
+    assert "noindex" not in response.text
+    assert '/auth/start?next=%2Fworkspace' in response.text
+    assert 'hreflang="en"' in response.text and 'hreflang="zh-Hant"' in response.text
+    assert '/workspace"' not in response.text
+    assert "portal.example.test" in response.text
+    assert "Cache-Control" in response.headers
+
+
+def test_robots_sitemap_and_private_shells(portal):
+    client = TestClient(portal[0])
+    robots = client.get("/robots.txt")
+    assert robots.status_code == 200 and "Disallow: /\n" in robots.text
+    assert "Allow: /$" in robots.text and "Allow: /en$" in robots.text
+    xml = client.get("/sitemap.xml")
+    locations = [node.text for node in ET.fromstring(xml.text).iter() if node.tag.endswith("loc")]
+    assert locations == ["https://portal.example.test/", "https://portal.example.test/zh-Hant", "https://portal.example.test/en"]
+    for path in ("/workspace", "/index.html", "/unknown", "/login", "/account", "/admin/api"):
+        result = client.get(path, follow_redirects=False)
+        assert result.headers["X-Robots-Tag"] == "noindex, nofollow"
+        if result.status_code == 200:
+            assert 'name="robots" content="noindex, nofollow"' in result.text
+    assert client.get("/api/portal/home").status_code == 401
+    assert client.get("/api/projects").status_code == 404
+
+
+@pytest.mark.parametrize("configured", ["", "https://user:pass@example.test", "https://portal.example.test/?secret=x", "javascript:alert(1)"])
+def test_no_unconfigured_or_host_injected_canonical(portal, monkeypatch, configured):
+    monkeypatch.setenv("SYNWEVO_PORTAL_URL", configured)
+    client = TestClient(portal[0], base_url="http://untrusted.example.test")
+    page = client.get("/")
+    assert 'rel="canonical"' not in page.text
+    assert "untrusted.example.test" not in client.get("/sitemap.xml").text
+    assert "<url>" not in client.get("/sitemap.xml").text
+
+
+def test_empty_account_and_platform_admin_do_not_inherit_business_access(portal):
+    for name, admin in (("unaffiliated", False), ("platform-admin", True)):
+        u = user(portal, name, admin=admin)
+        client = signed_in(portal, u)
+        assert client.get("/api/auth/me").json()["platform_role"] == ("admin" if admin else "none")
+        home = client.get("/api/portal/home").json()
+        assert home["workspaces"] == [] and home["apps"] == []
+        assert home["pending_invitations"] == []
+        assert home["current_workspace_id"] is None
+        assert client.get("/api/projects").status_code == 404
+        assert client.get("/api/admin/users").status_code == 404
+
+
+def test_workspace_switch_rechecks_csrf_membership_freezing_and_application_access(portal):
+    _, store, ident = portal
+    alice = user(portal, "alice")
+    owner = user(portal, "owner")
+    first = ident.create_workspace("Fixture A", owner_id=alice["id"])
+    second = ident.create_workspace("Fixture B", owner_id=alice["id"])
+    private = ident.create_workspace("PRIVATE-CANARY", owner_id=owner["id"])
+    client = signed_in(portal, alice, first["id"])
+    home = client.get("/api/portal/home").json()
+    assert {w["id"] for w in home["workspaces"]} == {first["id"], second["id"]}
+    assert "PRIVATE-CANARY" not in str(home)
+    assert home["apps"] and home["apps"][0]["workspace_id"] == first["id"]
+    assert switch(client, second["id"], csrf=False).status_code == 403
+    assert switch(client, private["id"]).status_code == 403
+    assert switch(client, [first["id"]]).status_code == 400
+    assert switch(client, second["id"]).status_code == 200
+    assert client.get("/api/auth/me").json()["workspace_id"] == second["id"]
+    assert client.get("/api/portal/home").json()["apps"][0]["workspace_id"] == second["id"]
+    Apps(store, ident).revoke(second["id"], "docweave", alice["id"])
+    assert client.get("/api/portal/home").json()["apps"] == []
+    store.execute("UPDATE workspaces SET status='frozen' WHERE id=?", (first["id"],))
+    assert switch(client, first["id"]).status_code == 403
+    store.execute("DELETE FROM memberships WHERE workspace_id=? AND user_id=?", (second["id"], alice["id"]))
+    assert switch(client, second["id"]).status_code == 403
+    assert client.get("/api/portal/home").json()["current_workspace_id"] is None
+
+
+def test_pending_invites_are_real_verified_address_scoped_and_never_tokens(portal):
+    _, store, ident = portal
+    owner, invitee, other = [user(portal, name) for name in ("inviter", "invitee", "other")]
+    invites = Invites(store, ident)
+    rows = []
+    for name in ("pending", "expired", "accepted", "revoked", "frozen", "deleted", "other-email"):
+        ws = ident.create_workspace(f"Fixture {name}", owner_id=owner["id"])
+        row, raw = invites.create(workspace_id=ws["id"], email=(other if name == "other-email" else invitee)["email"], role="editor", actor_id=owner["id"])
+        rows.append((row, raw))
+        if name == "expired": store.execute("UPDATE invitations SET expires_at=? WHERE id=?", (now() - 1, row["id"]))
+        if name == "accepted": store.execute("UPDATE invitations SET accepted_at=? WHERE id=?", (now(), row["id"]))
+        if name == "revoked": store.execute("UPDATE invitations SET revoked_at=? WHERE id=?", (now(), row["id"]))
+        if name == "frozen": store.execute("UPDATE workspaces SET status='frozen' WHERE id=?", (ws["id"],))
+        if name == "deleted": store.execute("UPDATE workspaces SET deleted_at=? WHERE id=?", (now(), ws["id"]))
+    client = signed_in(portal, invitee)
+    home = client.get("/api/portal/home").json()
+    assert home["workspaces"] == [] and home["apps"] == []
+    assert [i["id"] for i in home["pending_invitations"]] == [rows[0][0]["id"]]
+    assert set(home["pending_invitations"][0]) == {"id", "workspace_id", "workspace_name", "role", "expires_at"}
+    assert all(raw not in str(home) for _, raw in rows)
+    store.execute("UPDATE users SET email_verified_at=NULL WHERE id=?", (invitee["id"],))
+    assert client.get("/api/portal/home").json()["pending_invitations"] == []
+    store.execute("UPDATE users SET status='suspended' WHERE id=?", (invitee["id"],))
+    assert client.get("/api/portal/home").status_code == 401
+
+
+def test_organization_visibility_never_implies_workspace_or_app_access(portal):
+    from synwevo_core.organizations import Organizations
+    _, store, ident = portal
+    owner = user(portal, "org-owner")
+    member = user(portal, "org-member")
+    outsider = user(portal, "org-outsider", admin=True)
+    created = Organizations(store, ident).create(owner["id"], "Fixture Organization", "Fixture Org Space", "portal-org-fixture")
+    org, ws = created["organization"], created["workspace"]
+    store.execute("INSERT INTO organization_memberships (organization_id,user_id,role,created_at,updated_at) VALUES (?,?,'admin',?,?)",
+                  (org["id"], member["id"], now(), now()))
+    member_client = signed_in(portal, member)
+    home = member_client.get("/api/portal/home").json()
+    assert home["organizations"] == [{"id": org["id"], "name": org["name"], "status": "active", "role": "admin"}]
+    assert home["workspaces"] == [] and home["apps"] == []
+    assert member_client.get("/api/auth/me").json()["permissions"] == []
+    assert switch(member_client, ws["id"]).status_code == 403
+    assert signed_in(portal, outsider).get("/api/portal/home").json()["organizations"] == []
+    owner_client = signed_in(portal, owner, ws["id"])
+    owner_home = owner_client.get("/api/portal/home").json()
+    assert owner_home["workspaces"][0]["organization_id"] == org["id"]
+    assert owner_home["workspaces"][0]["organization_name"] == org["name"]
+    store.execute("UPDATE organizations SET status='frozen' WHERE id=?", (org["id"],))
+    assert switch(owner_client, ws["id"]).status_code == 403
+    assert owner_client.get("/api/portal/home").json()["apps"] == []
+
+
+def test_tab_workspace_headers_survive_other_tab_switches(portal):
+    _, store, ident = portal
+    person = user(portal, "tab-owner")
+    one = ident.create_workspace("Fixture tab one", owner_id=person["id"])
+    two = ident.create_workspace("Fixture tab two", owner_id=person["id"])
+    client = signed_in(portal, person, one["id"])
+    selected = client.post("/api/auth/workspace", json={"workspace_id": two["id"]},
+        headers={CSRF_HEADER: "portal-fixture-csrf", "X-Synwevo-Workspace": one["id"]})
+    assert selected.status_code == 200
+    first = client.get("/api/portal/home", headers={"X-Synwevo-Workspace": one["id"]}).json()
+    second = client.get("/api/portal/home", headers={"X-Synwevo-Workspace": two["id"]}).json()
+    assert first["current_workspace_id"] == first["apps"][0]["workspace_id"] == one["id"]
+    assert second["current_workspace_id"] == second["apps"][0]["workspace_id"] == two["id"]
+    assert client.get("/api/portal/home", headers={"X-Synwevo-Workspace": "not-a-member"}).status_code == 403
+
+
+def test_portal_exposes_account_locale_and_only_platform_admin_api_permission(portal):
+    member, admin = user(portal, "locale-member"), user(portal, "locale-admin", admin=True)
+    for person, permissions in ((member, []), (admin, ["api_platform.manage"])):
+        client = signed_in(portal, person)
+        assert client.get("/api/auth/me").json()["permissions"] == permissions
+        response = client.patch("/api/auth/locale", json={"locale": "en"}, headers={CSRF_HEADER: "portal-fixture-csrf"})
+        assert response.status_code == 200
+        assert client.get("/api/auth/me").json()["locale"] == "en"
