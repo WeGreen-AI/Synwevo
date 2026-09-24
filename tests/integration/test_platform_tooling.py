@@ -307,6 +307,8 @@ def test_up_refuses_an_occupied_port_without_registering_clients(platform, tmp_p
         listener.listen()
         port = listener.getsockname()[1]
         monkeypatch.setattr(platform, "RUN", tmp_path / "run")
+        # Use the installed test interpreter; CI/container installs need no repository .venv.
+        monkeypatch.setattr(platform, "PY", Path(sys.executable))
         monkeypatch.setattr(platform, "SERVICES", {
             "docs": ("app", port, f"http://127.0.0.1:{port}", None, None)})
         monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "synthetic"))

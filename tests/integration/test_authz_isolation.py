@@ -227,6 +227,13 @@ def test_the_page_validator_is_not_answered_for_another_workspace(two):
     Image.new("RGB", (240, 120), "white").save(buf, "PDF")      # test fixture: a one-page PDF
     with as_tenant(two["ws_a"]):
         sid = two["app"].add_source(two["pid"], "页面.pdf", buf.getvalue())["id"]
+        # Parsing is asynchronous. Wait for its classification before requesting a page.
+        import time
+        deadline = time.monotonic() + 10
+        while two["app"].get_source(sid)["status"] == "parsing" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        parsed = two["app"].get_source(sid)
+        assert parsed["status"] == "needs_ocr" and parsed["family"] == "pdf"  # image-only fixture
     r = as_a(two, "get", f"/api/sources/{sid}/page/0.png")
     assert r.status_code == 200, r.text[:200]
     etag = r.headers.get("etag")

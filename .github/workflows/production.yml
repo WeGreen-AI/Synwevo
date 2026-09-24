@@ -12,7 +12,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}
@@ -20,10 +20,6 @@ jobs:
         with: {python-version: '3.12'}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: {node-version: '22', cache: npm}
-      - name: Install document runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc libreoffice-impress tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng fonts-noto-cjk
       - name: Install locked dependencies
         run: |
           python -m pip install -r infra/server/requirements-build.txt
@@ -38,8 +34,12 @@ jobs:
           npm run typecheck
           npm run build
           npm test --workspaces --if-present
-          python -m pytest --tb=short
           python -m unittest discover -s infra/production/tests -v
+      - name: Verify the deployment runtime
+        run: |
+          docker build -f infra/Dockerfile -t synwevo:ci .
+          docker build -f infra/production/Dockerfile.verify -t synwevo:verify .
+          docker run --rm --network none --memory 3g --cpus 2 synwevo:verify
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: verify

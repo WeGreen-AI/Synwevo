@@ -29,12 +29,26 @@ The larger product roadmap remains paused; this record concerns deployment and i
 
 ## Still in progress
 
-Final Linux regression with a writable test-only checkout, production cutover, domain publication,
-first-admin password set by the operator, current-main push, and actual Actions deploy run.
+Final Linux regression with a writable test-only checkout, production cutover,
+first-admin password set by the operator, and actual successful Actions deploy run.
 Do not read this checkpoint as a completed production acceptance.
 
 The first Linux test attempt was stopped: the non-root runtime image correctly owns no source
 write permissions, while the test fixture generator writes to its checkout. Only the verification
 image grants source-write permission; production keeps its read-only filesystem and non-root user.
+
+The first Actions run (35983508407) failed: 8 failed / 1548 passed / 24 skipped. Investigation
+found an old LibreOffice version (XLOOKUP returned #NAME?), a lazy TTC font reader used after
+its file was closed, implicit page geometry in a layout fixture, an asynchronous parsing race in
+an authorization test, and a fixture assuming a local .venv. The isolated container also needed
+git for its repository-tooling tests and explicit host-mode selection for the listen guard test.
+Original assertions remain; fixtures now state and await their prerequisites. The font reader
+has a real synthetic TTC regression. New LibreOffice formula check: 44 passed; repaired Linux
+layout/font/image/guard set: 54 passed. Full rerun is still required.
+
+Source commits 599c24d and 8e652e1 were explicitly pushed to main. The operator added the three
+Cloudflare routes; server DNS resolves all three origins. Public origin readiness awaits cutover.
+Runtime version reference, checked 2026-09-24:
+https://packages.debian.org/trixie/libreoffice-calc (25.2.3-2+deb13u6).
 
 See [deployment guide](../../infra/production/README.md) for topology, commands and recovery boundaries.

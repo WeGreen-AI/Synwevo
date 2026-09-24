@@ -19,7 +19,9 @@ COPY services/identity/web/ services/identity/web/
 # 否则同名的 /assets 会互相遮盖——这正是"页面能开但样式没了"的来源。
 RUN npm run build -w @synwevo/docs-web && npm run build -w @synwevo/account-web && npm run build -w @synwevo/workspace-web
 
-FROM python:3.12-slim-bookworm
+# Trixie's LibreOffice 25 supports the XLOOKUP formulas in the real engine/reference suite.
+# Bookworm's 7.4 returns #NAME? for those workbooks.
+FROM python:3.12-slim-trixie
 ENV PYTHONUNBUFFERED=1 SYNWEVO_IN_CONTAINER=1 SYNWEVO_HOST=0.0.0.0 SYNWEVO_PORT=8765 SYNWEVO_DATA_DIR=/data \
     SYNWEVO_ROLE=all \
     SYNWEVO_DOCS_UI_DIR=/app/apps/docs/web/dist \

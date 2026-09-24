@@ -46,7 +46,11 @@ runtime.env, following the root `.env.example`, and restart the accounts service
 
 `.github/workflows/production.yml` runs on pull requests, main pushes and manual dispatch. Hosted
 Ubuntu runners install pinned Python/Node dependencies, check boundaries/brand/types, build all
-frontends, run frontend/Python suites and deployment safety regressions. Only successful main runs
+frontends, run frontend suites and deployment safety regressions. The Python suite runs in a
+test-only derivative of the actual deployment image, with no production volume or external network.
+This keeps LibreOffice/font behaviour aligned with production. The runtime uses Debian Trixie
+(LibreOffice 25.2); Bookworm's LibreOffice 7.4 cannot evaluate the accepted XLOOKUP sample.
+Only successful main runs
 can use the `production` environment. Its branch policy permits `main` only.
 
 Environment secrets: `SYNWEVO_DEPLOY_KEY`, `SYNWEVO_KNOWN_HOSTS`; environment variable:

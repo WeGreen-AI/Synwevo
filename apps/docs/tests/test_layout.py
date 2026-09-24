@@ -5,6 +5,7 @@ import pathlib
 import docx
 import pytest
 from docx.shared import Pt
+from docx.oxml.ns import qn
 
 from synwevo_docs.engine.converters import soffice_path
 
@@ -14,14 +15,31 @@ LONG = "这是一段较长的测试备注内容用于模拟新内容更长" + "�
 
 
 def _template(tmp_path):
-    """TEST-ONLY one-page template whose last line is almost at the bottom of the page."""
+    """TEST-ONLY one-page template with an explicit, font-independent height budget.
+
+    Letter minus 72 pt margins leaves 648 pt. The 44 fixed 14 pt filler lines
+    occupy 616 pt, leaving 32 pt: one 24 pt note line fits, two do not. Shrinking
+    only the note's text must bring it back to one line; filler is never shrunk.
+    """
     d = docx.Document()
+    section = d.sections[0]
+    section.page_width, section.page_height = Pt(612), Pt(792)
+    section.top_margin = section.bottom_margin = Pt(72)
+    section.left_margin = section.right_margin = Pt(72)
     st = d.styles["Normal"]
+    st.font.name = "Noto Sans CJK SC"
+    st.element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), "Noto Sans CJK SC")
     st.font.size = Pt(10.5)
+    st.paragraph_format.space_before = Pt(0)
     st.paragraph_format.space_after = Pt(0)
-    for i in range(43):
+    st.paragraph_format.line_spacing = Pt(14)
+    st.paragraph_format.widow_control = False
+    st.paragraph_format.keep_with_next = False
+    st.paragraph_format.keep_together = False
+    for i in range(44):
         d.add_paragraph(f"第 {i + 1} 行：测试填充内容（本文档为测试数据）。")
     p = d.add_paragraph("备注：")
+    p.paragraph_format.line_spacing = Pt(24)
     p.add_run("示例备注").font.size = Pt(16)
     path = tmp_path / "测试_满页模板.docx"
     d.save(path)

@@ -54,6 +54,8 @@ def test_in_container_env_flag(monkeypatch):
     monkeypatch.setenv("SYNWEVO_IN_CONTAINER", "1")
     assert auth.in_container()
     monkeypatch.setenv("SYNWEVO_IN_CONTAINER", "0")
+    monkeypatch.setattr("os.path.exists", lambda p: True)
+    assert not auth.in_container()          # explicit no overrides /.dockerenv too
     monkeypatch.setattr("os.path.exists", lambda p: False)
     assert not auth.in_container()
 
@@ -61,6 +63,7 @@ def test_in_container_env_flag(monkeypatch):
 def test_run_py_actually_calls_the_guard(tmp_path):
     """The end-to-end guarantee: starting the documented way must refuse, not serve."""
     env = {"PATH": "/usr/bin:/bin", "SYNWEVO_HOST": "0.0.0.0", "SYNWEVO_PORT": "8791",
+           "SYNWEVO_IN_CONTAINER": "0",  # exercise the strict host policy even inside Docker
            "SYNWEVO_DATA_DIR": str(tmp_path), "HOME": str(tmp_path)}
     r = subprocess.run([sys.executable, str(ROOT / "infra" / "server" / "synwevo_server" / "run.py")], env=env,
                        capture_output=True, text=True, timeout=120)

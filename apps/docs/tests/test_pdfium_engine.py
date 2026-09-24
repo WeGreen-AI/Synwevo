@@ -5,6 +5,32 @@ import pytest
 from synwevo_docs.engine import pdf_engine as pe
 
 
+def test_cjk_font_collection_reads_lazy_cmap_before_closing(tmp_path):
+    """A real TTC, built from the bundled public CJK font; no platform font dependency.
+
+    The first face deliberately lacks one required character, the second has all of
+    them. The check must inspect the selected face, while its lazy reader is open.
+    """
+    import io
+
+    import pymupdf
+    from fontTools.ttLib import TTCollection, TTFont
+
+    from synwevo_docs.engine import fonts
+
+    data = pymupdf.Font("cjk").buffer
+    path = tmp_path / "synthetic-cjk-collection.ttc"
+    with TTFont(io.BytesIO(data)) as missing, TTFont(io.BytesIO(data)) as complete:
+        for table in missing["cmap"].tables:
+            table.cmap.pop(ord("中"), None)
+        collection = TTCollection()
+        collection.fonts = [missing, complete]
+        collection.save(path)
+
+    assert not fonts._covers_chinese(str(path), index=0)
+    assert fonts._covers_chinese(str(path), index=1)
+
+
 @pytest.fixture()
 def pdfium():
     prev = pe.use_engine("pdfium")

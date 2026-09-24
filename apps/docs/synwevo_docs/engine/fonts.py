@@ -51,15 +51,18 @@ def _covers_chinese(path: str, index: int = 0) -> bool:
     """True when the font file really maps the probe characters."""
     try:
         from fontTools.ttLib import TTCollection, TTFont
+
+        def covers(font) -> bool:
+            cmap = font.getBestCmap() or {}
+            return all(ord(ch) in cmap for ch in _COVERAGE_PROBE)
+
         if path.lower().endswith(".ttc"):
             with TTCollection(path, lazy=True) as coll:
                 fonts = [coll.fonts[index]] if index < len(coll.fonts) else list(coll.fonts)
-        else:
-            fonts = [TTFont(path, lazy=True, fontNumber=index if path.lower().endswith(".ttc") else -1)]
-        for f in fonts:
-            cmap = f.getBestCmap() or {}
-            if all(ord(ch) in cmap for ch in _COVERAGE_PROBE):
-                return True
+                # Lazy cmap tables must be read before the collection closes its file.
+                return any(covers(font) for font in fonts)
+        with TTFont(path, lazy=True) as font:
+            return covers(font)
     except Exception:  # noqa: BLE001 - an unreadable candidate is simply not usable
         return False
     return False
