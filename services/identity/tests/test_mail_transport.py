@@ -153,8 +153,12 @@ def test_business_verification_route_queues_and_delivers_through_verified_tls(co
             assert api.state.mailer.drain_once() == 1
             assert api.state.mailer.drain_once() == 0
         assert receiver['auth_over_tls'] == [True]
-        assert receiver['mail_from'] == ['mail from:<sender@example.test>']
-        assert receiver['rcpt_to'] == ['rcpt to:<recipient@example.test>']
+        # SMTP command words are case-insensitive: Python 3.12 uses FROM/TO while 3.14
+        # uses from/to. Normalize only command words; envelope addresses remain exact.
+        assert [(line.partition(':')[0].upper(), line.partition(':')[2])
+                for line in receiver['mail_from']] == [('MAIL FROM', '<sender@example.test>')]
+        assert [(line.partition(':')[0].upper(), line.partition(':')[2])
+                for line in receiver['rcpt_to']] == [('RCPT TO', '<recipient@example.test>')]
         message = BytesParser(policy=policy.default).parsebytes(receiver['messages'][0])
         assert message['From'] == 'Synwevo <sender@example.test>'
         assert message['Message-ID'] == f"<{row['id']}@example.test>"
