@@ -1,17 +1,17 @@
 # 进度记录（用于接续）
 
-最后更新：2026-09-24。**当前状态以 [handoff.md](handoff.md) 为准**：Codex 主线已恢复推进；上传重放、真实进程中断恢复及 SDK/CLI/n8n 主链路已补验，综合验收仍未完成。下方品牌迁移及更早轮次的成绩是历史记录，不能视为最新工作区的通过证据。
+最后更新：2026-09-24。**部署状态以 [deployment.md](deployment.md) 为准，产品开发接续见 [handoff.md](handoff.md)**。用户已明确授权 Vultr Tokyo 部署、域名切换和 CI/CD；广泛产品路线图仍暂停。本次部署不代表原路线图全部完成。下方品牌迁移及更早轮次的成绩是历史记录，不能视为最新工作区的通过证据。
 
 ## 当前位置
 
 | 项 | 值 |
 |---|---|
 | 仓库根目录 | `/Users/lihiko/repo/wegreen/synwevo`（2026-09-23 由 `.../DocWeave` 改名为 `platform-workspace`，2026-09-24 再改名为 `synwevo`；Git 历史原样保留） |
-| 分支 | `upgrade/automation-api-ui` |
+| 分支 | `main`，跟踪 `origin/main` |
 | 基线提交 | `08f2e81`（升级前快照，可回滚到此） |
 | 最新提交 | 见 `git log -1` |
-| 远端 | `origin` → `git@github.com:WeGreen-AI/Synwevo.git`；当前接续未修改 remote。旧记录“目标仓库为空”已失效，已见远端 main 为 `51b31fe`；Codex 接续尚未提交或推送 |
-| 服务器 | **尚未部署。** 本轮全部在本机完成，未改生产 DNS、未建隧道、未公开暴露 |
+| 远端 | `origin` → `git@github.com:WeGreen-AI/Synwevo.git`；开发修改和部署修复已经授权推送。旧记录“目标仓库为空 / 尚未提交”已失效 |
+| 服务器 | `vultr_tokyo`，复用现有 Cloudflare Tunnel；切换进展和验收见 deployment.md |
 
 
 

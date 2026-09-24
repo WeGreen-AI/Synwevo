@@ -1,12 +1,14 @@
 # 当前开发接续记录
 
-更新时间：2026-09-24。**本轮收尾完成，按用户“完成这一轮后先停止”暂停。总体目标未完成；不启动下一阶段，不留开发代理或自动续跑。** 下面区分实际验证、历史证据和待做事项。
+更新时间：2026-09-24。用户随后明确授权 Vultr Tokyo 部署、域名切换和 CI/CD；当前部署进展以
+[deployment.md](deployment.md) 为准。广泛产品改进仍暂停，完成本次部署交接后停止，不启动自动续跑。
+下方是部署前开发轮的验收历史，不能覆盖新的部署状态，也不代表总体产品目标全部完成。
 
 ## 工作区与边界
 
-- 根目录 `/Users/lihiko/repo/wegreen/synwevo`；分支 `upgrade/automation-api-ui`；HEAD `51b31fed9193fb352511981730c8429a3a850a63`；origin `git@github.com:WeGreen-AI/Synwevo.git`；一个 worktree。
-- 保留全部 Claude 阶段和 Codex 接续的未提交修改；没有本轮新提交，没有 reset、clean、stash、修改 remote、推送、部署或公网隧道。main 尚未整合。
-- 用户此前已授权推送；本轮未执行。先前已见远端 main 为当前 HEAD，但管理员 Webhook、Pages、外部托管连接未核实，gh 未登录；不把 Git 可读视为不会自动部署的证据。
+- 根目录 `/Users/lihiko/repo/wegreen/synwevo`；当前分支 `main`，跟踪 `origin/main`；origin `git@github.com:WeGreen-AI/Synwevo.git`。确切 HEAD 见 `git log -1`。
+- Claude 阶段和 Codex 接续的修改已经整合并提交到 main；部署修复随后增量提交。没有 reset、clean、stash、强推或删除历史。
+- 用户已经完成 GitHub CLI 登录，授权的生产 CI/CD 已配置；通过验证的 main 提交可以部署到 Vultr Tokyo。旧的“未登录 / main 未整合 / 不部署”记录已被此授权替代。
 - 源码接续快照 `/private/tmp/synwevo-codex-resume/source-at-resume.tar.gz` 不含真实数据。测试只用隔离、明确标记的合成样本、临时库及本机服务，未触碰真实 `data/`、身份密钥或用户文件。
 - API、机器身份、Webhook、端口及开发者文档没有新增产品 UI 入口。
 
@@ -65,13 +67,12 @@ SDK 验收目录必须为空。机器调用/安装文档在 `apps/docs/sdk/pytho
 3. TypeScript 新来源接口包装/类型及对应 CLI/n8n 验收未完成；现有 .mjs 客户端不是完整带声明的 TypeScript SDK。
 4. 恢复无法从不存在的 journal 重建人类成员撤销、删除和密码历史；外部 journal 追加与数据库提交没有跨介质原子性，恢复放行仍需操作核对。blob 最终 GC、安全隔离、完整资源限制等应按原问题清单逐项闭环。
 5. 代码稳定后完成最终整合后端、三个前端外壳、门户/深链接/自动化三链路、备份恢复与负面安全的同版本回归。不能把局部通过当综合交付。
-6. 复核未提交差异、拆分本地提交；确认不会部署后处理此前已授权的 push/main 整合。不要混入无关修改或强推。
+6. main 整合和授权推送已完成；部署验收及剩余人工配置见 deployment.md。后续产品工作仍需遵守模块边界，不混入无关修改或强推。
 
 ## 仍需用户材料或外部条件
 
 - 脱敏真实复杂业务文档用于格式/排版与性能验收；当前只使用合成/公开兼容样本，未声称覆盖真实客户环境。
 - 物理 Passkey/生物认证设备及互操作；此前虚拟认证器不等于真实设备验证。
-- 云工作流账号和用户明确授权的外部可达测试环境；不部署、不建立隧道来替代。
-- 可核实的管理员 Webhook/外部托管连接信息，用于确认 push 不会触发部署。
+- 云工作流账号与相应外部测试授权；部署公网服务本身不等于完成 Make 等云工作流验收。
 
-**按用户要求暂停；未自动推送，未部署到服务器。**
+**产品路线图暂停；本次授权部署的真实状态、管理员初始化与邮件限制统一记录在 deployment.md。**
