@@ -179,6 +179,13 @@ def test_acceptance_runner_uses_real_http_two_business_flows_and_refuses_rerun(c
     import runpy
     import sys
     import json
+    import os
+    # The CLI normally runs in a separate process. Running it in-process here must restore
+    # every environment setting it changes, so later suites cannot inherit its fixture role.
+    for key in ('SYNWEVO_DATA_DIR', 'SYNWEVO_ROLE', 'SYNWEVO_UI_AUTH', 'SYNWEVO_COOKIE_SECURE',
+                'SYNWEVO_PUBLIC_URL', 'SYNWEVO_ISSUER'):
+        monkeypatch.setenv(key, os.environ.get(key, ''))
+    monkeypatch.setattr(os, 'umask', lambda _: 0o077)  # CLI filesystem is already under pytest tmp_path.
     script = Path(__file__).resolve().parents[1] / 'scripts' / 'verify_smtp.py'
     fixture_data = tmp_path / 'smtp-acceptance'
     monkeypatch.setattr(sys, 'argv', [str(script), '--data', str(fixture_data),
