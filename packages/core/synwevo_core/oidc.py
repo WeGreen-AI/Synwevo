@@ -1,6 +1,6 @@
 """OIDC 的数据模型与令牌存储：签名密钥、客户端、授权码与令牌。
 
-在共享层而不是在账户服务里，是因为**验证令牌的一方不是签发它的一方**：DocWeave 的机器接口
+在共享层而不是在账户服务里，是因为**验证令牌的一方不是签发它的一方**：Synwevo Docs 的机器接口
 要在每次调用时判断一个访问令牌是否仍然有效、属于谁、还剩哪些权限。如果这段代码住在账户服务
 里，业务应用就得 import 账户服务才能拒绝一个过期令牌——那条 import 一旦存在，"账户服务可以
 独立于业务应用运行"就不再是可检查的事实。协议端点（authorize/token/userinfo/logout）仍然
@@ -475,7 +475,7 @@ def deliver_logout(url: str, token: str, timeout: float = 3.0) -> tuple[bool, st
 def verify_logout_token(raw: str, *, jwks: dict, client_id: str, expected_issuer: str | None = None) -> dict:
     """Client side: validate a logout token before acting on it.
 
-    Used by DocWeave as a relying party. Every check here is one that, if skipped, lets someone
+    Used by Synwevo Docs as a relying party. Every check here is one that, if skipped, lets someone
     log other people out at will: signature against the issuer's published keys, issuer and
     audience, freshness, the logout event claim, and the absence of `nonce`.
     """

@@ -40,7 +40,7 @@ COPY apps/portal/requirements.txt apps/portal/requirements.txt
 COPY apps/docs/requirements.txt apps/docs/requirements.txt
 RUN pip install --no-cache-dir -r apps/docs/requirements.txt -r services/identity/requirements.txt
 # AGPL-3.0 §13：/api/source-code 提供的是**正在运行的程序**的对应源代码。重组之后"正在运行的
-# 程序"不只是 DocWeave 自己的目录——进程是由共享包、账户服务和角色组装拼起来的，所以它们都要
+# 程序"不只是 Synwevo Docs 自己的目录——进程是由共享包、账户服务和角色组装拼起来的，所以它们都要
 # 在镜像里，否则那个压缩包会在声称完整的同时少掉一半。
 COPY packages/ packages/
 COPY services/identity/ services/identity/

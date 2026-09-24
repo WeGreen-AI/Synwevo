@@ -14,7 +14,60 @@
 | 服务器 | **尚未部署。** 本轮全部在本机完成，未改生产 DNS、未建隧道、未公开暴露 |
 
 
-## 平台单仓库重组轮（本轮，2026-09-24）
+
+## Synwevo 品牌统一与仓库迁移轮（本轮，2026-09-24）
+
+平台正式定名 **Synwevo**；`origin` 切到 `git@github.com:WeGreen-AI/Synwevo.git`。
+完整映射与保留理由见 [`docs/migrations/synwevo-rebrand.md`](../migrations/synwevo-rebrand.md)。
+
+| 对象 | 名称 |
+|---|---|
+| 平台 | Synwevo |
+| 首页 / 工作空间 | Synwevo Workspace |
+| 统一账户 | Synwevo Account |
+| 文档应用 | Synwevo Docs |
+| 仓库根目录 | `/Users/lihiko/repo/wegreen/synwevo` |
+| 文档应用模块 | `apps/docs/`（Python 包 `synwevo_docs`） |
+
+### 本轮已验证完成（本机实跑）
+
+| 验证 | 结果 |
+|---|---|
+| 后端测试 | **665 passed, 1 skipped**（上一轮 650 + 15 条兼容规则新测试） |
+| 模块依赖边界 | 159 个文件 / 7 个边界 / 0 处越界 |
+| 旧品牌残留审计 `scripts/check_brand.py` | **0 处未分类**；全部归入有名字的保留理由 |
+| 前端 typecheck + build | 三个外壳全部通过 |
+| 统一登录链路 `verify_sso.py` | **38/38**，且输出里的平台名称为 `Synwevo` |
+| 浏览器实跑 | Synwevo Workspace 首页 → 登录 → 应用卡片显示「Synwevo Docs」→ 工作台；账户页、管理后台、375px 窄屏 |
+| 机器自动化 | 服务账户取令牌 → 提交 → 10 个真实 .docx，逐条打开核对；无凭据 401 |
+| 旧配置兼容 | 只设 `DOCWEAVE_*` 的真实进程正常启动，每个变量提示一次；`platform_name` 报告 Synwevo |
+| 配置冲突拒绝 | `SYNWEVO_DATA_DIR` 与 `DOCWEAVE_DATA_DIR` 不一致时**退出并报出两个值**，不猜 |
+| 口令黑名单 | 含 `synwevo` 的口令被拒（实跑时真的挡住了一次） |
+| Git | 历史完整、工作区无丢失、`origin` fetch/push 均为 Synwevo 仓库 |
+
+### 本轮修复的、由改名引入的问题
+
+| 问题 | 怎么发现的 |
+|---|---|
+| `env` 模块被同名局部变量遮蔽（5 处） | 导入即 `UnboundLocalError`；用 AST 扫描定位全部 |
+| 窄屏下品牌名变长，顶栏折成三行并压住内容 | 375px 浏览器实跑 |
+| 两次前缀替换叠加产生 `PLATFORM_SYNWEVO_PORT` | 读改完的代码 |
+| 虚拟环境里记着旧绝对路径 | 目录改名后 `import` 直接失败；重建 venv 而不是打补丁 |
+
+### 差一点被改掉的东西
+
+`mfa.py` 里的 `b"docweave/mfa-seed/v1"` 与 `"docweave/recovery/v1:"` 是**密钥派生的域分隔标签**，
+不是品牌文案。跟着改会让库里所有已加密的 TOTP 种子解不开、所有已发出的恢复码对不上，
+而且不会有任何报错指向改名。现在代码里有注释，审计脚本里有保留理由。
+
+### 本轮未做
+
+* **未推送**：没有 `push`、没有强推、没有远端删除；目标仓库仍是空的。
+* **未部署**：未改生产 DNS、未建隧道、未公开暴露；服务器上的容器仍叫 `docweave`。
+* 未创建、删除或改名任何 GitHub 仓库，未注册域名。
+* 未发布任何 npm 或 Python 包；`@synwevo` 与 `synwevo-*` 都只是仓库内部命名。
+
+## 平台单仓库重组轮（上一轮，2026-09-24）
 
 把仓库变成**平台母仓库**：一个 Git 仓库，内部分开门户、Synwevo Account、Synwevo Docs 与三个共享包，
 各自独立构建、启动与测试，根目录提供统一的运行命令。

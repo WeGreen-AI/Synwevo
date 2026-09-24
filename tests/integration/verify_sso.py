@@ -109,7 +109,7 @@ def main() -> int:
 
     print("\n【2】角色边界：一个二进制，三个角色")
     r = b.open(f"{dw}/.well-known/openid-configuration", follow=False)
-    check(r.status == 404, "DocWeave 不冒充发行方", f"HTTP {r.status}")
+    check(r.status == 404, "Synwevo Docs 不冒充发行方", f"HTTP {r.status}")
     r = b.open(f"{acc}/api/projects", follow=False)
     check(r.status == 404, "账户服务不提供业务接口", f"HTTP {r.status}")
     r = b.open(f"{dw}/api/auth/totp/begin", data=b"", follow=False)
@@ -122,10 +122,10 @@ def main() -> int:
         return 1
     check(True, "账户服务登录成功")
     check(bool(b.cookies_for(acc_host).get("dw_session")), "中央会话 Cookie 设置在账户服务主机上")
-    check(not b.cookies_for(dw_host), "此时 DocWeave 主机上一个 Cookie 也没有",
+    check(not b.cookies_for(dw_host), "此时 Synwevo Docs 主机上一个 Cookie 也没有",
           f"{dw_host}: {b.cookies_for(dw_host) or '（空）'}")
 
-    print("\n【4】应用直达：DocWeave → 统一身份 → 回到原页面")
+    print("\n【4】应用直达：Synwevo Docs → 统一身份 → 回到原页面")
     b.trail.clear()
     target = "/projects"
     r = b.open(f"{dw}/auth/start?next={urllib.parse.quote(target, safe='')}")
@@ -139,23 +139,23 @@ def main() -> int:
 
     print("\n【5】Cookie 隔离（这是用真实 Cookie 规则量出来的，不是按端口假设的）")
     a_cookies, d_cookies = b.cookies_for(acc_host), b.cookies_for(dw_host)
-    check(bool(d_cookies.get("dw_session")), "DocWeave 有了自己的会话 Cookie")
+    check(bool(d_cookies.get("dw_session")), "Synwevo Docs 有了自己的会话 Cookie")
     check(a_cookies.get("dw_session") != d_cookies.get("dw_session"),
           "两个会话值不同：没有复制中央会话")
     for c in b.cookie_objects(dw_host):
         if c.name == "dw_session":
             check(c.domain.lstrip(".") == dw_host and not c.domain.startswith("."),
-                  f"DocWeave 的会话 Cookie 是 host-only（domain={c.domain}）")
+                  f"Synwevo Docs 的会话 Cookie 是 host-only（domain={c.domain}）")
             check(c.port is None, "Cookie 没有端口限定——端口不隔离 Cookie，主机才隔离")
     check(not any(c.domain.lstrip(".") in ("localhost", ".localhost") for c in b.jar),
           "没有任何 Cookie 落在 localhost 这样的共享父域上")
 
     print("\n【6】应用会话是应用自己的")
     me = json.load(b.open(f"{dw}/api/auth/me", follow=False))
-    check(me["email"] == args.email, "DocWeave 认得这个人", me["email"])
+    check(me["email"] == args.email, "Synwevo Docs 认得这个人", me["email"])
     bare = Browser()      # no cookies at all
     r = bare.open(f"{dw}/api/auth/me", follow=False)
-    check(r.status == 401, "没有 Cookie 时 DocWeave 拒绝", f"HTTP {r.status}")
+    check(r.status == 401, "没有 Cookie 时 Synwevo Docs 拒绝", f"HTTP {r.status}")
 
     print("\n【7】平台入口：门户 → 同一个账号")
     b.trail.clear()
@@ -183,7 +183,7 @@ def main() -> int:
         {"client_id": "docweave-web", "post_logout_redirect_uri": dw + "/signed-out"}))
     check(b.trail[-1].startswith(dw), "登出后回到登记过的地址", b.trail[-1])
     r = b.open(f"{dw}/api/auth/me", follow=False)
-    check(r.status == 401, "DocWeave 的会话也结束了（后通道登出生效）", f"HTTP {r.status}")
+    check(r.status == 401, "Synwevo Docs 的会话也结束了（后通道登出生效）", f"HTTP {r.status}")
     r = b.open(f"{portal}/api/auth/me", follow=False)
     check(r.status == 401, "门户的会话也结束了——退出的是平台，不只是发起登出的那个应用",
           f"HTTP {r.status}")

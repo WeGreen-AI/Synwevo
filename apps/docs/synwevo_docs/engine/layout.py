@@ -1,6 +1,6 @@
 """Pagination guard.
 
-Word processors, not DocWeave, decide where pages break.  To know the real page
+Word processors, not Synwevo Docs, decide where pages break.  To know the real page
 count of an output we lay it out with LibreOffice (PDF export) and count pages;
 the template's own page count is the reference.  For DOCX outputs, fields the
 user marked 「超长时允许缩小字号」 can be shrunk step by step until the output

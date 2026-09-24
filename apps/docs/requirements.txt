@@ -1,5 +1,5 @@
 # 版本固定在这里；各模块的 pyproject.toml 只声明抽象依赖（名字），装什么版本以本文件为准。
-# DocWeave：文档引擎与业务栈。
+# Synwevo Docs：文档引擎与业务栈。
 -r ../../packages/auth-client/python/requirements.txt
 openpyxl==3.1.5
 python-docx==1.2.0

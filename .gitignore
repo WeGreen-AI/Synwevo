@@ -13,7 +13,7 @@ node_modules/
 data/
 .env
 
-# 生成的合成夹具（apps/docweave/scripts/make_fixtures.py）
+# 生成的合成夹具（apps/docs/scripts/make_fixtures.py）
 testdata/
 
 # 浏览器端到端运行产生的截图

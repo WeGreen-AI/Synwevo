@@ -53,7 +53,7 @@ class XlsxRenderer:
     def __init__(self, data: bytes):
         import openpyxl
         self.wb = openpyxl.load_workbook(io.BytesIO(data), data_only=False, rich_text=False)
-        # cached results (written by DocWeave's formula engine / Excel) shown instead of formula text
+        # cached results (written by Synwevo Docs' formula engine / Excel) shown instead of formula text
         self.vals = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=False)
         self._styles: dict = {}
         self._style_list: list = []

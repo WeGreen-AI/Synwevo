@@ -1,6 +1,6 @@
 """Built-in Excel formula engine.
 
-Evaluates the formulas of a workbook (after DocWeave filled it) so outputs carry
+Evaluates the formulas of a workbook (after Synwevo Docs filled it) so outputs carry
 correct cached values without Excel or LibreOffice.  Coverage: arithmetic,
 comparison, text concatenation, cross-sheet references, whole-row/column
 ranges, defined names and ~90 common functions (maths, statistics, conditional

@@ -48,7 +48,7 @@ class Apps:
 
         `keep_launch_url` leaves an existing launch URL alone. It matters because every process
         runs this at startup, and `SYNWEVO_APP_URL` means *this service's own address*: the
-        portal process registering DocWeave would otherwise overwrite DocWeave's launch URL with
+        portal process registering Synwevo Docs would otherwise overwrite Synwevo Docs' launch URL with
         the portal's, producing a card on the home page that loops straight back to the home
         page. Only the process that actually is the application sets its address.
         """
@@ -205,17 +205,17 @@ class Apps:
 
 
 def bootstrap_docs_app(store: Store, ident: Identity, *, launch_url: str | None = None) -> dict:
-    """Register DocWeave itself. Idempotent; safe to run on every start, in any role.
+    """Register Synwevo Docs itself. Idempotent; safe to run on every start, in any role.
 
-    The launch URL comes from `SYNWEVO_APP_URL` **only in the process that serves DocWeave**.
+    The launch URL comes from `SYNWEVO_APP_URL` **only in the process that serves Synwevo Docs**.
     In the portal or the account service that variable holds their own address, and writing it
-    here points the DocWeave card at the wrong service — which is exactly what happened: the
+    here points the Synwevo Docs card at the wrong service — which is exactly what happened: the
     account service starts first, `SYNWEVO_OIDC_APP_ID` is unset there so `app_id()` returned
     its default of "docweave", and the card led back to the login page.
 
     So the test is the *role*, which every process sets and which cannot default to the wrong
-    answer: only `app` (DocWeave's own process) and `all` (the single-process deployment) serve
-    DocWeave.
+    answer: only `app` (Synwevo Docs' own process) and `all` (the single-process deployment) serve
+    Synwevo Docs.
     """
     import os
     apps = Apps(store, ident)

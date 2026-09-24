@@ -1,6 +1,6 @@
 """Signed webhooks for job events (off by default, configured at deployment level).
 
-    SYNWEVO_DOCS_WEBHOOK_URLS=https://automation.example.com/hooks/docweave
+    SYNWEVO_DOCS_WEBHOOK_URLS=https://automation.example.com/hooks/synwevo
     SYNWEVO_DOCS_WEBHOOK_SECRET=<shared secret>
     SYNWEVO_DOCS_WEBHOOK_EVENTS=job.completed,job.completed_with_errors,job.failed,job.cancelled
     SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE=10.0.0.0/8,automation.internal     # only if you need it
@@ -203,6 +203,10 @@ class WebhookDispatcher:
             req = urllib.request.Request(url, data=body, method="POST", headers={
                 "Content-Type": "application/json; charset=utf-8",
                 "User-Agent": "DocWeave-Webhook/1",
+                # These header names are **not** rebranded. A receiver that was written
+                # against them parses them by name; changing them is an interface break dressed
+                # up as a brand change, and the people it breaks would find out from a missed
+                # webhook rather than from a release note.
                 "X-DocWeave-Event": d["event_id"] and json.loads(body.decode())["type"],
                 "X-DocWeave-Event-Id": d["event_id"],
                 "X-DocWeave-Delivery": d["id"],

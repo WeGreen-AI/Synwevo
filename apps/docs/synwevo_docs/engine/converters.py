@@ -25,7 +25,7 @@ _LO_LOCK = threading.Lock()
 # _LO_LOCK only serialises threads INSIDE one process, so the directory is always made
 # per-PID: SYNWEVO_DOCS_LO_PROFILE names the parent to put profiles under, not the profile
 # itself (pointing several workers at one fixed path used to corrupt it).
-_PROFILE_BASE = Path(env.docs("LO_PROFILE") or (Path(tempfile.gettempdir()) / "docweave-lo"))
+_PROFILE_BASE = Path(env.docs("LO_PROFILE") or (Path(tempfile.gettempdir()) / "synwevo-lo"))
 _PROFILE_DIR = _PROFILE_BASE / f"profile-{os.getpid()}"
 
 
@@ -72,7 +72,7 @@ def cjk_font_files() -> list[Path]:
 def _ensure_profile_fonts() -> list[str]:
     """Copy CJK fonts into the private LibreOffice profile (once per profile)."""
     fd = _PROFILE_DIR / "user" / "fonts"
-    marker = fd / ".docweave-fonts"
+    marker = fd / ".synwevo-fonts"
     if marker.exists():
         return marker.read_text(encoding="utf-8").splitlines()
     fd.mkdir(parents=True, exist_ok=True)

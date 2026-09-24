@@ -1,14 +1,14 @@
-"""DocWeave as a relying party on the platform account service.
+"""Synwevo Docs as a relying party on the platform account service.
 
 This is the client side of the chain the provider in `platform/` serves. It is deliberately a
 **back-end for front-end**: the code is exchanged server to server, the tokens never reach the
-browser, and what the browser gets is an ordinary DocWeave session cookie — host-only on
-DocWeave's own origin, carrying no platform credential at all.
+browser, and what the browser gets is an ordinary Synwevo Docs session cookie — host-only on
+Synwevo Docs' own origin, carrying no platform credential at all.
 
 That shape is the reason three otherwise tempting designs are not used here:
 
 * No shared wide-domain cookie. The central session lives on the account service's host and is
-  never copied; DocWeave's session is its own row, and "signed in over there" only becomes
+  never copied; Synwevo Docs' session is its own row, and "signed in over there" only becomes
   "signed in here" by completing the protocol.
 * No access token in `localStorage`. A token the page can read is a token an injected script can
   read, and the session cookie is `HttpOnly` precisely so that is not possible.
@@ -55,7 +55,7 @@ def app_id() -> str:
 
 
 def public_url() -> str:
-    """DocWeave's own externally reachable base URL. Configured, not derived from the request:
+    """Synwevo Docs' own externally reachable base URL. Configured, not derived from the request:
     it has to match the redirect URI registered with the provider exactly."""
     return (env.get("APP_URL") or "http://docweave.localhost:8765").rstrip("/")
 

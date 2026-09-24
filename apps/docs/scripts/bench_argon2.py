@@ -4,7 +4,7 @@
     python scripts/bench_argon2.py
 
 Run it on the machine that will actually serve logins — a laptop and a shared VPS differ by
-3-4x. The parameters in backend/docweave/passwords.py carry the measurements they came from;
+3-4x. The parameters in packages/core/synwevo_core/passwords.py carry the measurements they came from;
 re-run this and update both when the host changes.
 """
 import time, statistics

@@ -1,4 +1,4 @@
-"""Run DocWeave regression cases (projects frozen with「保存为回归用例」).
+"""Run Synwevo Docs regression cases (projects frozen with「保存为回归用例」).
 
     python scripts/regression.py            # run every case in regression/
     python scripts/regression.py --list

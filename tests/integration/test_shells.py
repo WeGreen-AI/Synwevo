@@ -34,7 +34,7 @@ def _client(tmp_path, monkeypatch, *, role: str) -> TestClient:
 def test_a_role_serves_its_own_shell_even_when_another_is_named(tmp_path, monkeypatch, role, marker):
     """Each role serves its own build and no other.
 
-    `/portal.html` on the DocWeave origin used to serve the portal's shell, because one build
+    `/portal.html` on the Synwevo Docs origin used to serve the portal's shell, because one build
     held all three and the generic-file branch matched the name before the role was consulted.
     Each shell is now a separate build, so those filenames are not files anywhere — and the
     check is that naming one still gets you the shell this role owns.

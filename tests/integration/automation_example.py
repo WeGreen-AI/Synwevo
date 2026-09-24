@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end DocWeave automation without a browser: upload → fields/rule/mappings → preflight
+"""End-to-end Synwevo Docs automation without a browser: upload → fields/rule/mappings → preflight
 → submit → wait → download → verify.
 
     export SYNWEVO_DOCS_API_KEY=dw_xxx_yyy

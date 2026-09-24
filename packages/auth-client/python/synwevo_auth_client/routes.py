@@ -1,14 +1,14 @@
-"""DocWeave's single sign-on endpoints — the relying-party side, as HTTP.
+"""Synwevo Docs' single sign-on endpoints — the relying-party side, as HTTP.
 
 Three browser routes and one machine route:
 
 * `GET  /auth/start`               begin a sign-in, remembering where to land afterwards
-* `GET  /auth/callback`            finish it and mint a DocWeave session cookie
-* `POST /auth/sign-out`            end this DocWeave session (optionally the platform one too)
+* `GET  /auth/callback`            finish it and mint a Synwevo Docs session cookie
+* `POST /auth/sign-out`            end this Synwevo Docs session (optionally the platform one too)
 * `POST /auth/backchannel-logout`  the account service telling us a sign-in has ended
 
 The callback is the only place a platform credential is ever handled, and it is handled
-server-side. What reaches the browser is DocWeave's own session cookie and nothing else.
+server-side. What reaches the browser is Synwevo Docs' own session cookie and nothing else.
 """
 from __future__ import annotations
 
@@ -96,10 +96,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: R
 
     @r.post("/api/auth/sign-out")
     def sign_out(request: Request, everywhere: bool = False):
-        """End this DocWeave session. `everywhere` continues to the platform's own logout.
+        """End this Synwevo Docs session. `everywhere` continues to the platform's own logout.
 
         The two are kept separate on purpose, because they mean different things to the person
-        doing it: leaving DocWeave is not the same as signing out of the platform and every
+        doing it: leaving Synwevo Docs is not the same as signing out of the platform and every
         application on it, and a button that quietly did the second would be lying.
         """
         session = getattr(request.state, "session", None)

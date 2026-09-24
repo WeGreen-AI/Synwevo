@@ -242,7 +242,7 @@ CREATE INDEX IF NOT EXISTS ix_audit_ws ON audit_events(workspace_id, at);
 
 CREATE TABLE IF NOT EXISTS apps (
   -- A business application on the platform. Right now there is exactly one real one
-  -- (DocWeave); the table exists so adding a second needs configuration, not a schema change.
+  -- (Synwevo Docs); the table exists so adding a second needs configuration, not a schema change.
   --
   -- app_id is NOT a client_id and NOT an audience. One app may have several OIDC clients (web,
   -- later a desktop build) that share the app but have their own redirect URIs and secrets.
@@ -266,7 +266,7 @@ CREATE TABLE IF NOT EXISTS app_entitlements (
   -- A person's right to use one app inside one workspace.
   --
   -- Deliberately its own table rather than being inferred from membership: a future second app
-  -- must not inherit DocWeave's access just because someone is a workspace admin. Migration
+  -- must not inherit Synwevo Docs' access just because someone is a workspace admin. Migration
   -- writes these explicitly for existing members so nobody is locked out, and grants nothing
   -- beyond the app they already used.
   workspace_id TEXT NOT NULL, app_id TEXT NOT NULL, user_id TEXT NOT NULL,
@@ -371,7 +371,7 @@ CREATE TABLE IF NOT EXISTS webauthn_challenges (
 );
 
 CREATE TABLE IF NOT EXISTS rp_auth_requests (
-  -- DocWeave's side of a sign-in in progress. state, nonce and the PKCE verifier live here,
+  -- Synwevo Docs' side of a sign-in in progress. state, nonce and the PKCE verifier live here,
   -- server-side; the browser only carries an opaque id, so none of the three can be supplied by
   -- whoever sent the person to the link.
   id TEXT PRIMARY KEY, state TEXT NOT NULL, nonce TEXT NOT NULL, code_verifier TEXT NOT NULL,
@@ -470,7 +470,7 @@ V4_COLUMNS = [
     ("oauth_clients", "kind", "TEXT NOT NULL DEFAULT 'user'"),
     ("oauth_clients", "workspace_id", "TEXT"),
     ("oauth_clients", "api_scopes", "TEXT NOT NULL DEFAULT ''"),
-    # A DocWeave session created by single sign-on remembers which grant produced it, so a
+    # A Synwevo Docs session created by single sign-on remembers which grant produced it, so a
     # back-channel logout can end exactly that sign-in and no one else's. NULL means the session
     # was created locally (bootstrap, or the legacy direct login), which is why revocation by
     # `sub` is scoped to rows where this is set.

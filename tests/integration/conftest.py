@@ -1,7 +1,7 @@
 """Fixtures for cross-module verification.
 
 These tests use `synwevo_server.app.create_app` — the deployment composer — because what they
-check spans modules: a sign-in that starts on the account service and ends in DocWeave, a
+check spans modules: a sign-in that starts on the account service and ends in Synwevo Docs, a
 machine token that must be refused outside its workspace, a gate that has to hold for both.
 Testing that through one module's factory would be testing something nobody deploys.
 """

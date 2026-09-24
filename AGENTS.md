@@ -38,10 +38,15 @@ synwevo_identity  synwevo_portal  synwevo_docs     ← 互相不可见
 机械检查：
 
 ```bash
-python scripts/check_boundaries.py
+python scripts/check_boundaries.py    # 跨模块导入、sys.path 改写、机器绝对路径、符号链接
+python scripts/check_brand.py         # 旧品牌残留：每一处要么改掉，要么写清为什么保留
 ```
 
-它同时检查跨模块导入、`sys.path` 改写、写死的绝对路径和符号链接。**改这个文件不能替代让检查通过。**
+**改这两个文件不能替代让检查通过。**
+
+`check_brand.py` 不数次数，它分类。有些字符串看着像旧品牌，实际上是别人系统里的主键——
+app_id 写在已签发的令牌里，MFA 的域分隔标签决定了库里的种子还能不能解开。要保留一处旧标识，
+在 `STABLE` 里加一条并写清理由；理由本身就是产出。
 
 ## 验证
 

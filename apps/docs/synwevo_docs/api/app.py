@@ -1,10 +1,10 @@
-"""DocWeave 的 HTTP 接口：浏览器工作台与机器接口。
+"""Synwevo Docs 的 HTTP 接口：浏览器工作台与机器接口。
 
 engine 包不依赖任何 Web 框架，所以将来的桌面外壳可以直接复用它；这一层只做 HTTP。
 
 会话网关、错误契约、探针和静态外壳的通用部分已经移到 `synwevo_core.http`——它们对账户服务、
-门户和这里是同一套，留在这里就意味着账户服务要导入 DocWeave 才能有一个会话。这里剩下的全部是
-DocWeave 自己的业务路由。
+门户和这里是同一套，留在这里就意味着账户服务要导入 Synwevo Docs 才能有一个会话。这里剩下的全部是
+Synwevo Docs 自己的业务路由。
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def web_dist() -> Path:
 
 
 def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
-    """Mount DocWeave's own routes onto an application the caller has already scaffolded.
+    """Mount Synwevo Docs' own routes onto an application the caller has already scaffolded.
 
     Returns the business service object so a composer can hold on to it. Nothing here touches
     accounts, the OIDC provider or the portal — those are mounted by their own modules.
@@ -511,7 +511,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
 
 
 def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
-    """DocWeave on its own: the workbench, the machine API, and the single-sign-on client.
+    """Synwevo Docs on its own: the workbench, the machine API, and the single-sign-on client.
 
     No portal build and no account pages are served here; the account service is a separate
     origin and this process is a relying party on it. `synwevo_server` is what puts several

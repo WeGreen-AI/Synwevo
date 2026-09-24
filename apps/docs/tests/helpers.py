@@ -1,4 +1,4 @@
-"""Helpers the DocWeave tests share.
+"""Helpers the Synwevo Docs tests share.
 
 These used to live in `conftest.py` and be imported as `from conftest import ...`, which works
 only because pytest puts the test directory on `sys.path`. With three test suites in one

@@ -1,6 +1,6 @@
 """The unified sign-in chain, end to end, across two origins.
 
-Two separate ASGI apps — the account service and DocWeave — with a cookie jar that enforces
+Two separate ASGI apps — the account service and Synwevo Docs — with a cookie jar that enforces
 **host scoping**, which is the property the whole design rests on. The environment's sandboxed
 browser allows one `*.localhost` host and denies its siblings, so a click-through of the real
 redirect chain is not available here; this drives the same redirects over real HTTP semantics
@@ -117,7 +117,7 @@ def world(tmp_path, monkeypatch):
     import synwevo_server.app as app_mod
     importlib.reload(app_mod)
 
-    # The provider's back-channel POST must reach DocWeave over the test transport. The router
+    # The provider's back-channel POST must reach Synwevo Docs over the test transport. The router
     # binds its deliverer when it is built, so this is patched *before* the account service is
     # created; the app it posts to is filled in below.
     import synwevo_core.oidc as oidc_mod
@@ -131,12 +131,12 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(oidc_mod, "deliver_logout", _deliver)
     accounts = Svc(app_mod.create_app(data, start_jobs=False), ACCOUNTS)
 
-    # DocWeave's relying-party client talks to the account service over that same transport, so
+    # Synwevo Docs' relying-party client talks to the account service over that same transport, so
     # the token exchange really is an HTTP request to the real provider, not a function call.
     import synwevo_auth_client.rp as rp_mod
     monkeypatch.setattr(rp_mod.Rp, "http", property(lambda self: accounts.c))
-    docweave = Svc(app_mod.create_app(data, start_jobs=False), DOCS)
-    later["docweave"] = docweave
+    docs_app = Svc(app_mod.create_app(data, start_jobs=False), DOCS)
+    later["docweave"] = docs_app
 
     store = Store(tmp_path / "d")
     ident = Identity(store)
@@ -146,14 +146,14 @@ def world(tmp_path, monkeypatch):
     bootstrap_docs_app(store, ident)
     apps.enable_for_workspace(ws, "docweave")
     oidc.Clients(store).register(
-        client_id="docweave-web", app_id="docweave", name="DocWeave",
+        client_id="docweave-web", app_id="docweave", name="Synwevo Docs",
         redirect_uris=[DOCS + "/auth/callback"],
         post_logout_redirect_uris=[DOCS + "/signed-out"],
         backchannel_logout_uri=DOCS + "/auth/backchannel-logout")
 
-    b = Browser({ACCOUNTS: accounts, DOCS: docweave})
+    b = Browser({ACCOUNTS: accounts, DOCS: docs_app})
     return {"b": b, "store": store, "ident": ident, "apps": apps, "user": user, "ws": ws,
-            "accounts": accounts, "docweave": docweave}
+            "accounts": accounts, "docweave": docs_app}
 
 
 def whoami(svc, cookies) -> str | None:
@@ -173,7 +173,7 @@ def _sign_in_centrally(world):
 
 # ---------------------------------------------------------------- chain 2: app first
 def test_docweave_first_signs_in_and_returns_to_the_page_that_was_asked_for(world):
-    """开始于 DocWeave 的受保护页面 → 统一登录 → 回到原页面。"""
+    """开始于 Synwevo Docs 的受保护页面 → 统一登录 → 回到原页面。"""
     b = world["b"]
     _sign_in_centrally(world)
     resp = b.go(DOCS + "/auth/start?next=/projects/p_abc/mappings")
@@ -182,7 +182,7 @@ def test_docweave_first_signs_in_and_returns_to_the_page_that_was_asked_for(worl
     # It really went via the account service, and really came back.
     assert any(u.startswith(ACCOUNTS + "/oidc/authorize") for u in b.trail), b.trail
 
-    # A DocWeave session now exists, and it is DocWeave's own — not the central one.
+    # A Synwevo Docs session now exists, and it is Synwevo Docs' own — not the central one.
     dw = b.jar.by_host["docweave.localhost"]
     acc = b.jar.by_host["accounts.localhost"]
     assert dw["dw_session"] and acc["dw_session"]
@@ -194,15 +194,15 @@ def test_docweave_first_signs_in_and_returns_to_the_page_that_was_asked_for(worl
     assert row["workspace_id"] == world["ws"], "落地的工作空间由服务端重新解析，不是令牌里带来的"
 
 
-def test_the_account_cookie_is_not_sent_to_docweave(world):
+def test_the_account_cookie_is_not_sent_to_the_docs_app(world):
     """不同端口不隔离 Cookie，不同主机才隔离——这里检查的是后者。"""
     b = world["b"]
     _sign_in_centrally(world)
     b.go(DOCS + "/auth/start?next=/")
     assert "docweave.localhost" in b.jar.by_host and "accounts.localhost" in b.jar.by_host
-    # The jar is keyed by host, so this is what DocWeave would actually receive.
+    # The jar is keyed by host, so this is what Synwevo Docs would actually receive.
     assert b.jar.apply(DOCS)["dw_session"] != b.jar.apply(ACCOUNTS)["dw_session"]
-    # And DocWeave's session is not usable at the account service, nor the reverse.
+    # And Synwevo Docs' session is not usable at the account service, nor the reverse.
     assert whoami(world["docweave"], {"dw_session": "not-a-session"}) is None
 
 
@@ -297,8 +297,8 @@ def test_the_provider_refusing_lands_on_our_own_page(world):
 
 
 # ---------------------------------------------------------------- entitlement
-def test_losing_the_application_stops_the_sign_in_at_docweave(world):
-    """No code is ever issued: the provider refuses at /oidc/authorize, and DocWeave shows why
+def test_losing_the_application_stops_the_sign_in_at_the_docs_app(world):
+    """No code is ever issued: the provider refuses at /oidc/authorize, and Synwevo Docs shows why
     on its own page rather than following anything the query string suggests."""
     b = world["b"]
     _sign_in_centrally(world)
@@ -340,7 +340,7 @@ def test_platform_logout_ends_the_docweave_session_too(world):
 
     b.go(ACCOUNTS + "/oidc/logout?" + urllib.parse.urlencode(
         {"client_id": "docweave-web", "post_logout_redirect_uri": DOCS + "/signed-out"}))
-    # the DocWeave session is gone even though its own cookie was never touched
+    # the Synwevo Docs session is gone even though its own cookie was never touched
     assert whoami(world["docweave"], b.jar.apply(DOCS)) is None
     row = world["store"].one("SELECT revoked_reason FROM sessions WHERE oidc_sid IS NOT NULL "
                              "ORDER BY created_at DESC LIMIT 1")

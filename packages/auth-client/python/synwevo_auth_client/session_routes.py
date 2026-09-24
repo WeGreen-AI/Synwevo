@@ -46,8 +46,8 @@ def public_state(ident: Identity, role: str) -> dict:
             # it. A client that showed its own password form here would be collecting a
             # credential it cannot check — and teaching people to type it anywhere.
             "password_login": r in ("accounts", "all", ""),
-            # The sign-in screen belongs to the *platform*, not to DocWeave. Hard-coding
-            # DocWeave as the name of the platform it is only one application on would have to
+            # The sign-in screen belongs to the *platform*, not to Synwevo Docs. Hard-coding
+            # Synwevo Docs as the name of the platform it is only one application on would have to
             # be undone later in every string, and would tell someone arriving from the portal
             # that they are signing in to the wrong product.
             "platform_name": platform_name(),

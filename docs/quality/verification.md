@@ -403,3 +403,126 @@ SYNWEVO_DATA_DIR=/tmp/does-not-exist .venv/bin/python scripts/platform.py up
 * 真实邮件送达；本轮使用本地投递目录。
 * 真实业务文件的结构差异；本轮全部使用合成夹具。
 * **未部署到服务器**，未推送任何提交，未修改远程仓库。
+
+---
+
+# Synwevo 品牌统一与仓库迁移轮（2026-09-24）
+
+环境：macOS（Apple Silicon），Python 3.14.5（仓库根目录 `.venv`，**本轮重建**），Node 22 / npm workspaces。
+运行验证都指向隔离实例 `/tmp/synwevo-live`；真实业务库全程未被任何服务打开。
+
+## 实际执行的命令与结果
+
+```bash
+.venv/bin/python -m pytest
+# → 665 passed, 1 skipped（改名前是 650 passed, 1 skipped；新增 15 条兼容规则测试）
+
+.venv/bin/python scripts/check_boundaries.py
+# → 检查了 159 个文件，覆盖 7 个模块边界。没有跨应用导入、没有 sys.path 改写、
+#   没有机器绝对路径、没有指向旧目录的链接。
+
+.venv/bin/python scripts/check_brand.py
+# → 旧品牌字符串全部归类，0 处未分类。
+
+npm run typecheck && npm run build
+# → 三个外壳（@synwevo/docs-web、@synwevo/account-web、@synwevo/workspace-web）全部通过
+
+SYNWEVO_DATA_DIR=/tmp/synwevo-live .venv/bin/python scripts/platform.py up --init
+# → accounts / portal / docs 三个角色启动，打印：
+#     Synwevo Workspace   http://portal.localhost:8769
+#     Synwevo Docs        http://docweave.localhost:8765
+#     Synwevo Account     http://accounts.localhost:8770/login
+
+.venv/bin/python tests/integration/verify_sso.py --email owner@example.test --password '***'
+# → 38/38 项通过；其中「平台名称可配置：Synwevo」
+```
+
+## 配置兼容（这是本轮唯一有外部使用者的兼容面）
+
+只用旧名字启动一个**真实进程**：
+
+```bash
+env DOCWEAVE_DATA_DIR=/tmp/synwevo-legacy DOCWEAVE_UI_AUTH=session DOCWEAVE_ROLE=all     .venv/bin/python -c "from synwevo_server.app import create_app; ..."
+```
+
+输出：
+
+```
+[synwevo] DOCWEAVE_ROLE 是旧名字，仍然可用；新名字是 SYNWEVO_ROLE。
+[synwevo] DOCWEAVE_DATA_DIR 是旧名字，仍然可用；新名字是 SYNWEVO_DATA_DIR。
+[synwevo] DOCWEAVE_UI_AUTH 是旧名字，仍然可用；新名字是 SYNWEVO_UI_AUTH。
+  state: {'mode': 'session', 'role': 'all', 'platform_name': 'Synwevo'}
+  healthz: 200
+  data dir came from the legacy name: /tmp/synwevo-legacy
+```
+
+冲突时拒绝而不是猜：
+
+```bash
+env SYNWEVO_DATA_DIR=/tmp/a DOCWEAVE_DATA_DIR=/tmp/b .venv/bin/python -c "…create_app()"
+# → synwevo_core.env.ConfigConflict: SYNWEVO_DATA_DIR='/tmp/a' 与 DOCWEAVE_DATA_DIR='/tmp/b'
+#   同时设置且不一致。这一项关系到数据位置、密钥或信任边界，不能替你猜一个。
+```
+
+`scripts/platform.py status` 在同样的条件下也拒绝。
+
+## 机器自动化（无浏览器、无 Cookie）
+
+```bash
+.venv/bin/python tests/integration/automation_example.py \
+    --base-url http://docweave.localhost:8765 --issuer http://accounts.localhost:8770 \
+    --client-id nightly-batch --client-secret '***' \
+    --source testdata/测试_客户100.xlsx --template testdata/测试_合同模板.docx \
+    --definition docs/integration/example-definition.json --out /tmp/syn-automation
+# → 任务 completed，样本 10，成功 10，输出 10 个 .docx
+```
+
+打开产物逐条核对：
+
+```
+001.docx → 甲方（客户）：示例测试钱磊敏，客户编号 000001。签约日期：2025年1月4日；金额 1,123.45 元
+002.docx → 甲方（客户）：示例测试孙涛强，客户编号 000002。签约日期：2025年1月7日；金额 1,246.90 元
+```
+
+负面用例：无凭据 → 401。
+
+## 浏览器实跑
+
+| 页面 | 观察到的 |
+|---|---|
+| `portal.localhost:8769` | 标签页标题 `Synwevo Workspace`，页头 `Synwevo` |
+| 登录页 | 品牌标记 `◫ Synwevo`，标题 `Synwevo Account · 账户与安全` |
+| 门户首页（登录后） | 应用卡片显示 **Synwevo Docs**（数据库 `apps.name` 已由 `register()` 精确更新） |
+| `docweave.localhost:8765` | 标题 `Synwevo Docs · 数据映射与批量生成`，左上角 `S Synwevo Docs`，返回链接 `← Synwevo` |
+| 账户与安全 | 账户、工作空间、登录设备、Passkey、两步验证均可操作 |
+| 平台管理后台 | 概览 / 账户 / 工作空间 / 审计 |
+| 375px 窄屏 | 首次发现顶栏折成三行并压住内容 → 把长副标题改成 `desktop-only` 后复测正常 |
+
+## 口令黑名单
+
+实跑时真的挡住了一次：用 `Synwevo-Local-Demo-2026!` 做 bootstrap 口令被拒——
+「口令不能包含本服务的名称，请换一个。」新品牌词已加入黑名单，旧品牌词保留。
+
+## Git
+
+```bash
+git remote get-url --all origin        # → git@github.com:WeGreen-AI/Synwevo.git
+git remote get-url --push --all origin # → git@github.com:WeGreen-AI/Synwevo.git
+git config --local --get-all remote.origin.pushurl   # → 未设置
+git config --get remote.pushDefault                  # → 本地与全局均未设置
+git config --get-regexp 'url\..*\.insteadof'         # → 无
+git ls-remote git@github.com:WeGreen-AI/Synwevo.git  # → 退出码 0，零个引用（存在且为空）
+git ls-remote git@github.com:WeGreen-AI/DocWeave.git # → 退出码 128，Repository not found
+```
+
+旧的 `refs/remotes/origin/*` 已移到 `refs/docweave-origin/*` 保留为历史依据。目标仓库为空，
+所以 `@{upstream}` 当前无法解析——如实保留这个状态，没有伪造远端分支。
+
+**本轮未推送、未部署。**
+
+## 未验证 / 外部条件
+
+* 真实认证器的 Passkey 互操作（需要用户生物特征）；仍由软件虚拟认证器驱动。
+* 真实邮件送达；本轮使用本地投递目录。发件显示名已改为 `Synwevo`，正文署名已改。
+* 目标仓库「为空」是当前观察；推送之后的表现需要推送时再验证。
+* 旧仓库 `Repository not found` 无法区分是改名、删除还是权限变化——只记录现象。

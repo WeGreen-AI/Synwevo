@@ -1,7 +1,7 @@
 /**
  * The account service's own shell.
  *
- * A third entry rather than a route inside DocWeave's app. The account service must not serve
+ * A third entry rather than a route inside Synwevo Docs' app. The account service must not serve
  * the document workbench: its API refuses those calls by role, so a shared shell would render
  * a project list that then fills with "this endpoint is not on the account service" — which is
  * a correct refusal presented as a broken page.

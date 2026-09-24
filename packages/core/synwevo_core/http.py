@@ -1,6 +1,6 @@
 """共享 HTTP 骨架：错误契约、请求网关、探针与静态外壳。
 
-这一层原本长在 DocWeave 的 `api/app.py` 里，于是账户服务要有一个会话网关，就得导入 DocWeave 的
+这一层原本长在 Synwevo Docs 的 `api/app.py` 里，于是账户服务要有一个会话网关，就得导入 Synwevo Docs 的
 应用工厂。会话解析、CSRF、租户上下文、角色边界和机器密钥限流**对三个角色是同一套**——它们是平台
 的运行契约，不是某个应用的实现细节，所以放在共享层，由每个角色自己的工厂装配。
 
@@ -264,7 +264,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         # the fallback would hand the historical data to every signed-in account.
         return set_tenant(wid or f"__no_workspace__{user['id']}")
 
-    # Paths the account service owns. Everything else under /api/ is DocWeave's own workbench.
+    # Paths the account service owns. Everything else under /api/ is Synwevo Docs' own workbench.
     ACCOUNT_PATHS = ("/api/auth/", "/api/admin/", "/oidc/", "/.well-known/")
     SHARED_PATHS = ("/api/health", "/healthz", "/readyz", "/assets/")
     # Liveness and readiness. An **exact set**, not a prefix: SHARED_PATHS above matches by
@@ -337,7 +337,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 # One binary, three roles, decided by configuration. Enforced here rather than by
                 # conditionally mounting routers: a filter in one place cannot be half-applied,
                 # and it means the account service genuinely cannot serve a document — an
-                # accounts-origin cookie reaching DocWeave's data would defeat the whole point
+                # accounts-origin cookie reaching Synwevo Docs' data would defeat the whole point
                 # of giving them separate origins.
                 return finish(JSONResponse(_error_body(request, "not_in_this_role", off, None),
                                            status_code=404))
@@ -381,7 +381,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 elif mode == "basic" and not path.startswith("/api/v1"):
                     if not auth.check_ui_basic(request.headers.get("Authorization")):
                         return finish(JSONResponse(_error_body(request, "unauthorized", "需要登录", None), status_code=401,
-                                                   headers={"WWW-Authenticate": 'Basic realm="DocWeave"'}))
+                                                   headers={"WWW-Authenticate": 'Basic realm="Synwevo Docs"'}))
                     token = set_tenant(UI_TENANT)
                 else:
                     token = set_tenant(UI_TENANT)
@@ -402,7 +402,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
 def install_probes(api: FastAPI, store: Store, worker: Callable[[], bool] | None = None) -> None:
     """Liveness and readiness, identical in every role.
 
-    ``worker`` is what this role's background work is: DocWeave's job runner, the account
+    ``worker`` is what this role's background work is: Synwevo Docs' job runner, the account
     service's mail sender, or nothing at all. A role with no worker reports none rather than
     reporting somebody else's.
     """

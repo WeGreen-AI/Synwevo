@@ -62,7 +62,7 @@ def env(tmp_path, monkeypatch):
     bootstrap_docs_app(store, ident)
     apps.enable_for_workspace(ws, "docweave")
     oidc.Clients(store).register(
-        client_id="docweave-web", app_id="docweave", name="DocWeave",
+        client_id="docweave-web", app_id="docweave", name="Synwevo Docs",
         redirect_uris=[REDIRECT], post_logout_redirect_uris=[POST_LOGOUT],
         backchannel_logout_uri=LOGOUT_BACK, scopes="openid profile email offline_access")
     c = TestClient(api)

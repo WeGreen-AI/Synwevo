@@ -43,7 +43,7 @@ ENGINE = _select_engine()
 if ENGINE == "pymupdf":
     import pymupdf
 else:
-    from . import pdfium_shim as pymupdf  # the read-only subset DocWeave needs, on pypdfium2
+    from . import pdfium_shim as pymupdf  # the read-only subset Synwevo Docs needs, on pypdfium2
 
 
 def use_engine(name: str) -> str:

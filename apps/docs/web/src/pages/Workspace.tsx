@@ -213,7 +213,7 @@ export default function Workspace() {
       }
       return r;
     } catch (e: any) {
-      // A 4xx from DocWeave means the server rejected this edit but holds a valid state of its
+      // A 4xx from Synwevo Docs means the server rejected this edit but holds a valid state of its
       // own, so the badge stays 已自动保存 and reload() resyncs. That reasoning does not extend
       // to a refusal the server never made: an intermediary's 403 and the auth gate's 401 both
       // mean the save did not arrive. The toast that says so disappears after 8s, and a stale

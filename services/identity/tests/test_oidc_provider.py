@@ -29,7 +29,7 @@ def env(tmp_path, monkeypatch):
     user = ident.create_user("alice@example.com", PW, display_name="Alice", status="active")
     clients = oidc.Clients(store)
     client, _ = clients.register(
-        client_id="docweave-web", app_id="docweave", name="DocWeave",
+        client_id="docweave-web", app_id="docweave", name="Synwevo Docs",
         redirect_uris=["http://docweave.localhost:8765/auth/callback"],
         audiences=["docweave-api"])
     return {"store": store, "ident": ident, "user": user, "clients": clients,

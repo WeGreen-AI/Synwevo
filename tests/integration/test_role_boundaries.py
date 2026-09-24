@@ -58,7 +58,7 @@ def test_the_portal_serves_neither(build):
 def test_auth_state_says_whether_this_service_can_check_a_password(build, role, expect_password):
     """A relying party does not serve /api/auth/login, so it must not offer a password box.
 
-    Found in the browser: clicking the DocWeave card landed on DocWeave's own login form, which
+    Found in the browser: clicking the Synwevo Docs card landed on Synwevo Docs' own login form, which
     could never work — on the one page whose whole point is that the password is typed in
     exactly one place.
     """

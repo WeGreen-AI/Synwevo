@@ -20,7 +20,7 @@ from synwevo_core.http import repo_root
 
 ROOT = repo_root() or Path(__file__).resolve().parents[3]
 # The Corresponding Source of the *running program*. After the platform restructure that is more
-# than DocWeave's own directory: the process a network user reaches is composed from the shared
+# than Synwevo Docs' own directory: the process a network user reaches is composed from the shared
 # packages, the account service and the role composer, and an archive holding only `apps/docs`
 # would be a partial source shipped under a complete-source claim — which is the exact failure
 # AGPL-3.0 §13 is about.
@@ -56,7 +56,7 @@ THIRD_PARTY = [
     ("Pillow", "MIT-CMU (HPND)", "图片处理"),
     ("fontTools", "MIT", "字体子集"),
     ("argon2-cffi（含 argon2-cffi-bindings、cffi、pycparser）", "MIT",
-     "口令哈希（Argon2id；参数经部署机实测，见 docweave/passwords.py）"),
+     "口令哈希（Argon2id；参数经部署机实测，见 synwevo_core/passwords.py）"),
     ("PyOTP", "MIT", "TOTP 第二因素"),
     ("cryptography", "Apache-2.0 或 BSD-3-Clause", "TOTP 种子落地加密（AES-256-GCM）、WebAuthn 签名校验"),
     ("webauthn（Duo）", "BSD-3-Clause", "Passkey / WebAuthn 注册与登录仪式（协议实现）"),
@@ -157,7 +157,7 @@ def source_archive() -> tuple[bytes, str]:
                         or f.suffix in (".pyc", ".log") or f.stat().st_size > MAX_FILE):
                     continue
                 tar.add(f, arcname=f"{top}/{f.relative_to(ROOT).as_posix()}", recursive=False)
-        lines = ["DocWeave 对应源代码（Corresponding Source）", "",
+        lines = ["Synwevo Docs 对应源代码（Corresponding Source）", "",
                  "本压缩包由正在运行的服务按其安装目录中的文件生成。",
                  f"生成位置：{status['root']}", ""]
         if status["complete"]:

@@ -102,7 +102,13 @@ export default function Home() {
   return (
     <div className="app">
       <div className="topbar">
-        <span className="brand"><span className="logo">S</span>Synwevo Docs · 数据映射与模板批量生成</span>
+        {/* The tagline is desktop-only: "Synwevo Docs · 数据映射与模板批量生成" is long enough that
+            at 375px it wrapped to three lines and pushed the top bar over its own content.
+            Every other page already shows just the product name there. */}
+        <span className="brand">
+          <span className="logo">S</span>Synwevo Docs
+          <span className="desktop-only"> · 数据映射与模板批量生成</span>
+        </span>
         <span className="spacer" />
         <PlatformNav />
         <Link className="btn ghost" to="/capabilities">格式能力矩阵</Link>

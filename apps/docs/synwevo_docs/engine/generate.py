@@ -139,7 +139,7 @@ def convert_output(native_bytes: bytes, native_fmt: str, target: str, options: d
 
 
 def xlsx_to_csv(data: bytes, issues: list[dict]) -> bytes:
-    """Values of the first sheet.  Formula results come from the cached values DocWeave's
+    """Values of the first sheet.  Formula results come from the cached values Synwevo Docs'
     formula engine (or LibreOffice for unsupported functions) wrote into the output."""
     import openpyxl
     from .numfmt import format_value

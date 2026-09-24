@@ -107,7 +107,7 @@ def main() -> int:
         print(f"找不到 {src_db}", file=sys.stderr)
         return 2
 
-    work = Path(tempfile.mkdtemp(prefix="docweave-rehearsal-"))
+    work = Path(tempfile.mkdtemp(prefix="synwevo-rehearsal-"))
     dst_db = work / "docweave.sqlite3"
     print(f"来源：{src_db}  （只读）")
     print(f"副本：{dst_db}\n")

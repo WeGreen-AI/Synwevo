@@ -45,7 +45,7 @@ def env(tmp_path, monkeypatch):
     ws = ident.workspaces_for(alice["id"])[0]["id"]
 
     clients = oidc.Clients(store)
-    clients.register(client_id="docweave-web", app_id="docweave", name="DocWeave",
+    clients.register(client_id="docweave-web", app_id="docweave", name="Synwevo Docs",
                      redirect_uris=[REDIRECT], scopes="openid profile email docweave.read docweave.write",
                      audiences=["docweave-api"])
     _, secret = clients.register(client_id="nightly-batch", app_id="docweave", name="夜间批处理",

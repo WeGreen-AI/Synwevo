@@ -1,5 +1,5 @@
 # 版本固定在这里；各模块的 pyproject.toml 只声明抽象依赖（名字），装什么版本以本文件为准。
-# 账户服务：登录仪式、MFA、Passkey、OIDC 授权服务器。**不含任何 DocWeave 依赖。**
+# 账户服务：登录仪式、MFA、Passkey、OIDC 授权服务器。**不含任何 Synwevo Docs 依赖。**
 -r ../../packages/auth-client/python/requirements.txt
 pyotp==2.10.0             # MIT – TOTP second factor
 cryptography==50.0.1      # Apache-2.0 OR BSD-3 – AES-GCM for TOTP seeds at rest; WebAuthn signature checks

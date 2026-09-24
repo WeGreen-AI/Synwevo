@@ -68,7 +68,8 @@ def test_nfkc_normalisation_makes_equivalent_input_methods_match():
 
 
 def test_common_and_service_related_passwords_are_refused():
-    for bad in ("password123456789", "docweave-is-my-password", "aaaaaaaaaaaaaaaaaa"):
+    for bad in ("password123456789", "docweave-is-my-password",
+                "synwevo-is-my-password", "aaaaaaaaaaaaaaaaaa"):
         with pytest.raises(passwords.PasswordError):
             passwords.check_policy(bad)
 

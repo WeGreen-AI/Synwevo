@@ -43,7 +43,7 @@ def env(tmp_path, monkeypatch):
     ws = ident.workspaces_for(user["id"])[0]["id"]
     bootstrap_docs_app(store, ident)
     apps.enable_for_workspace(ws, "docweave")
-    oidc.Clients(store).register(client_id="docweave-web", app_id="docweave", name="DocWeave",
+    oidc.Clients(store).register(client_id="docweave-web", app_id="docweave", name="Synwevo Docs",
                                  redirect_uris=[REDIRECT], audiences=["docweave-api"])
     c = TestClient(api)
     c.post("/api/auth/login", json={"email": "alice@example.com", "password": PW})
@@ -226,7 +226,7 @@ def test_a_suspended_account_cannot_exchange_its_code(env):
 def test_signing_in_does_not_by_itself_grant_an_application(env):
     """Identity and eligibility are different questions with different answers.
 
-    A new workspace starts with DocWeave enabled, so the separation is shown by taking it away:
+    A new workspace starts with Synwevo Docs enabled, so the separation is shown by taking it away:
     a live account, a live workspace, a live membership — and still no access, because
     eligibility is its own record rather than something inferred from being signed in.
     """
@@ -331,7 +331,7 @@ def test_provisioning_does_not_reach_the_legacy_workspace(env):
 
 
 @pytest.mark.parametrize("role", ["accounts", "portal"])
-def test_only_docweaves_own_process_sets_its_launch_url(env, monkeypatch, role):
+def test_only_the_docs_apps_own_process_sets_its_launch_url(env, monkeypatch, role):
     """Every process registers the app at startup, and SYNWEVO_APP_URL means *this service's*
     address — so the portal or the account service must not repoint the card at themselves.
 

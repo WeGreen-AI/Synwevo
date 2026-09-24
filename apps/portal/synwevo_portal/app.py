@@ -26,7 +26,7 @@ def install(api: FastAPI, plat: Platform) -> None:
 def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     """The portal on its own: its API, its single-sign-on client, and its shell.
 
-    It starts and answers with DocWeave stopped — the application cards report status from the
+    It starts and answers with Synwevo Docs stopped — the application cards report status from the
     registry, which is the point of having a portal rather than a link list.
     """
     from synwevo_auth_client.routes import (build_account_redirect_router,

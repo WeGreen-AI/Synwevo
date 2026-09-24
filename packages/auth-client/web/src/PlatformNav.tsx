@@ -1,5 +1,5 @@
 /**
- * The platform entries inside DocWeave: back to the platform, which workspace you are in, and
+ * The platform entries inside Synwevo Docs: back to the platform, which workspace you are in, and
  * where the account settings live.
  *
  * It renders nothing on a deployment that is not part of a platform. The single-process install

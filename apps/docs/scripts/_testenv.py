@@ -97,8 +97,8 @@ def _wait(base_url: str, proc: subprocess.Popen, log: Path, timeout: float = 60.
 
 @contextmanager
 def server(keep: bool = False):
-    """A throwaway DocWeave on a free port with its own data dir, marked as a test instance."""
-    tmp = Path(tempfile.mkdtemp(prefix="docweave-test-"))
+    """A throwaway Synwevo Docs on a free port with its own data dir, marked as a test instance."""
+    tmp = Path(tempfile.mkdtemp(prefix="synwevo-test-"))
     port = _free_port()
     base = f"http://127.0.0.1:{port}"
     log = tmp / "server.log"

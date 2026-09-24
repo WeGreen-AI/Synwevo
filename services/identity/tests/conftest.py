@@ -1,7 +1,7 @@
 """Fixtures for the account service's own tests.
 
 The application under test is `synwevo_identity.app.create_app` — the account service alone,
-with no document engine mounted. That is the point of the split: a test that needs a DocWeave
+with no document engine mounted. That is the point of the split: a test that needs a Synwevo Docs
 route to pass belongs in `tests/integration/`, and this factory makes that obvious instead of
 letting it drift.
 """

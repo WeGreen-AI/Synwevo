@@ -61,6 +61,9 @@ def _key(store: Store) -> bytes:
     """
     from synwevo_core.auth import Auth
     root = Auth(store).secret()
+    # 这个字节串**不能**跟着品牌改。它是密钥派生的域分隔标签：改掉它，派生出来的就是另一把密钥，
+    # 库里所有已加密的 TOTP 种子都解不开——表现是每个人的两步验证在部署当天同时失效，而且没有
+    # 任何报错指向改名这件事。品牌换了，密钥没换。
     return hmac.new(root, b"docweave/mfa-seed/v1", hashlib.sha256).digest()
 
 
@@ -82,7 +85,7 @@ class Mfa:
         self.store = store
 
     # ================================================================ TOTP
-    def begin_totp(self, user_id: str, account_label: str, issuer: str = "DocWeave") -> dict:
+    def begin_totp(self, user_id: str, account_label: str, issuer: str = "Synwevo Docs") -> dict:
         """Create an unconfirmed secret and return the provisioning URI.
 
         Unconfirmed on purpose: the row exists so the code can be checked, but
@@ -191,6 +194,7 @@ class Mfa:
     def _hash(code: str) -> str:
         """Normalised so the dashes and case a person copies off paper do not matter."""
         norm = (code or "").strip().upper().replace("-", "").replace(" ", "")
+        # 同上：这是摘要的域分隔前缀，改掉它等于让所有已发出的恢复码全部对不上。
         return hashlib.sha256(("docweave/recovery/v1:" + norm).encode("utf-8")).hexdigest()
 
     # ================================================================ overall state

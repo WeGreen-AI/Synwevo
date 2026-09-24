@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Take and restore a consistent snapshot of a DocWeave instance.
+"""Take and restore a consistent snapshot of a Synwevo Docs instance.
 
     python scripts/snapshot.py create --data data --out ./backups
-    python scripts/platform.py verify-restore ./backups/docweave-2026-09-23T18-40.tar.gz
+    python scripts/platform.py verify-restore ./backups/synwevo-2026-09-24T09-00.tar.gz
     python scripts/snapshot.py restore --archive <file> --into /tmp/restored
 
 **`verify` is the point.** A backup that has never been restored is a file, not a backup. It
@@ -141,9 +141,9 @@ def create(args) -> int:
     out_dir = Path(args.out) if Path(args.out).is_absolute() else ROOT / args.out
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%dT%H-%M", time.localtime())
-    archive = out_dir / f"docweave-{stamp}.tar.gz"
+    archive = out_dir / f"synwevo-{stamp}.tar.gz"
 
-    work = Path(tempfile.mkdtemp(prefix="docweave-snapshot-"))
+    work = Path(tempfile.mkdtemp(prefix="synwevo-snapshot-"))
     try:
         print(f"来源：{data}（只读打开）")
         wal = db.with_name(db.name + "-wal")
@@ -278,7 +278,7 @@ def verify(args) -> int:
         results.append(bool(ok))
         print(f"  {PASS if ok else FAIL} {title}" + (f"\n      {detail}" if detail else ""))
 
-    work = Path(tempfile.mkdtemp(prefix="docweave-verify-"))
+    work = Path(tempfile.mkdtemp(prefix="synwevo-verify-"))
     try:
         print(f"归档：{archive}（{archive.stat().st_size / 1e6:.1f} MB）")
         print(f"恢复到隔离目录：{work}\n")
