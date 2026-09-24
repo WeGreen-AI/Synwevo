@@ -4,10 +4,10 @@
 push and CI/CD. This deployment scope supersedes the earlier local-only development boundary.
 The larger product roadmap remains paused; this record concerns deployment and its blockers.
 
-**Current outcome: deployed and CI/CD verified.** Production runs release
-`e45518f86333b16c20bc288eadf61941b7be7b3e`; the subsequent evidence-only documentation
-commit does not change that running release. The first administrator was created by the user.
-This round stops after the deployment handoff, with no development agent or continuation loop left running.
+**Current outcome: deployed, SMTP enabled, CI/CD verified.** Production runs
+`d97823a06e5cb8c7e578c3a948a2978240655326`. The subsequent evidence-only documentation commit
+does not change that running release. The first administrator was created by the user.
+This SMTP round is complete; earlier cutover results below remain historical. No agent loop remains.
 
 ## Verified before cutover
 
@@ -83,8 +83,8 @@ was verified by checking role identity at all three hostnames after the rehearsa
   `https://accounts.wegreen.ltd/admin` → “待认领的历史数据” → select the intended existing account →
   “指派历史数据”; the existing recent-reauthentication and reason requirements apply. Then choose
   “历史数据” in the workspace switcher. The migration did not silently grant document access.
-- SMTP remains disabled. Real invitation/recovery mail requires actual SMTP configuration; no
-  email delivery or physical security-key validation is claimed by this deployment.
+- At the initial cutover SMTP was disabled. The later SMTP integration and its separate acceptance
+  evidence are recorded below; physical security-key validation is still not claimed.
 
 Final HTTP check: `public-smoke-final.json`; browser evidence: `output/playwright/`;
 identity aggregate: `identity-status.json`; server state: `server-final.log`; successful Actions
@@ -131,3 +131,129 @@ Runtime version reference, checked 2026-09-24:
 https://packages.debian.org/trixie/libreoffice-calc (25.2.3-2+deb13u6).
 
 See [deployment guide](../../infra/production/README.md) for topology, commands and recovery boundaries.
+
+## SMTP integration — 2026-09-24
+
+Source `06fc4cf` adds secure SMTP transport/configuration and business acceptance tooling;
+`9cb3aa2` isolates that tooling's test environment; `42c2277` makes SMTP command assertions portable
+across Python versions. [Run 35998263744](https://github.com/WeGreen-AI/Synwevo/actions/runs/35998263744)
+passed all **1600 tests / 2 skipped / 178 warnings (712.92 s)** but failed deployment.
+The private source extraction preserved root-owned 0700 directories in the image, so the non-root
+account service could not import its own package. Automatic rollback restored the previous image
+and data; SMTP was then explicitly disabled on that older transport.
+
+Source `d97823a` makes only shipped application source readable in the image, preserving non-root,
+read-only execution and private data/configuration. CI now reproduces the private archive extraction
+and checks the unmodified runtime before granting test-fixture source write access. An isolated
+non-root startup with the real SMTP settings passed without network or a production data mount.
+[Run 36000389218](https://github.com/WeGreen-AI/Synwevo/actions/runs/36000389218) **passed verification
+and deployment**: 1600 passed / 0 failed / 2 skipped, 178 warnings, 630.07 seconds for the Python
+runtime suite. The existing skips are the unselected project LICENSE and unavailable nested Docker;
+no SMTP regression is skipped. Frontend typecheck/build and both test groups (6 and 22), boundary/
+brand checks, 6 deployment regressions, private-source image startup and public readiness passed.
+
+Release `d97823a06e5cb8c7e578c3a948a2978240655326` deployed at 12:53 UTC. Its consistent pre-upgrade
+backup is `/opt/synwevo/backups/20260924T125251Z`; the runtime image ID is
+`sha256:2e6f8220a84ccc95e502f88eb9159362b44bc11859d2baadfbb15fa4e910636a`.
+Only after that successful deployment, an operator check verified the release, matching mail code
+and zero queued production mail, enabled SMTP, and recreated only accounts and the gateway.
+All three roles and the gateway are healthy. Public HTTPS readiness returned 200 for all three origins.
+The actual account container authenticated over **TLSv1.3**, with system certificate and hostname
+verification, without issuing MAIL/RCPT/DATA. Docs and portal have no SMTP password. Runtime mail
+code matches both local source and the two-message acceptance image:
+`30dfbd1ff5a5ebd01e86b6536a6fca21c3eb5da66d44f9ec456341702f5b512b`.
+
+The earlier run 35996002911 was intentionally cancelled before deployment to fix the test's
+environment leakage; it is not counted as passing.
+Run 35996533284 completed with 1598 passed / 2 failed / 2 skipped: the two failures compared SMTP
+command word capitalization emitted by Python 3.12 against Python 3.14's spelling. The correction
+normalizes only protocol command words; envelope sender/recipient, TLS and delivery assertions are
+unchanged. All 20 transport tests then passed on both Python 3.12 (isolated Linux runtime container,
+no external network) and Python 3.14 locally. The Linux container also reported a harmless pytest
+cache permission warning because application source remains owned by root in the runtime image.
+
+The user explicitly confirmed **both username and From `mail@hikosphere.com`** (the original
+message's displayed address differed from its mailto target). Only that mailbox's password was
+extracted on the VPS from the authorized credentials JSON. No other mailbox/admin/relay credential
+was used; no real password was copied to the development machine or repository.
+Host key verification remained enabled for every SSH operation.
+
+Configuration is `/opt/synwevo/config/smtp.env`, root-owned mode **0600**, parent **0700**.
+Reviewed Compose injects it only into `accounts`, using raw env values; the portal and Docs receive
+no SMTP password. Endpoint: `mail.hikosphere.com:587`, STARTTLS with system CA/hostname verification,
+15-second socket timeout, From `Synwevo <mail@hikosphere.com>`. Verified authentication did not send
+any mail. Port 465 is supported by the code with mutually exclusive implicit TLS, and was tested
+only against the synthetic local receiver. No MX, Cloudflare inbound rule, mailcow routing,
+SMTP2GO configuration, BDR state or unrelated hosted application was changed.
+
+### Actual business acceptance (two messages total; no resend)
+
+An isolated, non-root container built from `06fc4cf` ran the real account factory and loopback HTTP
+server, with new **synthetic** owner/recipient accounts and workspace. It had no production data
+mount and borrowed no production cookies. `verify_smtp.py` logged in, called the real invitation
+and email-verification routes, checked the outbox recipient/count, then executed one queue pass.
+Only the user's explicitly authorized Outlook recipient was permitted for this run; its exact
+address is in private acceptance evidence. The private fixture directory refuses reruns.
+
+| Business flow | Message-ID | mailcow queue | SMTP2GO acceptance ID |
+|---|---|---|---|
+| Workspace invitation | `ml_cef6d914689e@hikosphere.com` | `7335D51134B` | `1x9i6Y-AIkwcC8sd6r-2N6z` |
+| Email verification | `ml_6cef2594d7f8@hikosphere.com` | `1BD5451134C` | `1x9i6Y-AIkwcC8liLJ-8MXy` |
+
+Both were queued by HTTP and changed to `sent`, **one attempt each**, at 11:59:09 UTC. mailcow's
+DATA response was 250; filtered Postfix logs confirm TLSv1.3 submission, the fixed sender and
+sole authorized recipient. At 11:59:10/11 UTC it relayed both to `mail.smtp2go.com:587`, each with
+`dsn=2.0.0 status=sent (250 OK ...)`, and removed both queue entries.
+This proves application submission, mailcow acceptance and relay acceptance. **Outlook SMTP
+acceptance was not independently observed; inbox/junk-folder visibility awaits recipient
+confirmation.** No third message was sent. Test links point to a temporary local service and do
+not grant access to a production account; the recipient need not click them.
+
+### Changed files and ownership
+
+| Area | Files changed this SMTP round |
+|---|---|
+| Existing account mail and business feedback | `services/identity/synwevo_identity/mail.py`, `services/identity/synwevo_identity/auth_routes.py`, `services/identity/web/src/pages/Recover.tsx` |
+| Explicit business acceptance runner | `services/identity/scripts/verify_smtp.py` |
+| Shared configuration and local process isolation | `packages/core/synwevo_core/env.py`, `scripts/platform.py` |
+| Regression coverage | `services/identity/tests/test_mail_transport.py`, `services/identity/tests/test_invites.py`, `tests/integration/test_platform_tooling.py` |
+| Secret exclusion and placeholder examples | `.gitignore`, `.dockerignore`, `.env.example`, `infra/production/smtp.env.example` |
+| Runtime and deployment verification | `infra/production/compose.yaml`, `infra/Dockerfile`, `.github/workflows/production.yml` |
+| Current operating records | `docs/operations.md`, `docs/development/local-platform.md`, `docs/security/permissions.md`, `docs/quality/deployment.md`, `infra/production/README.md` |
+
+The existing identity module remains the sole mail implementation. No application imports another
+application's internals; no mail management page or new product navigation was added. Production
+configuration changes are limited to the reviewed Synwevo Compose file and its private SMTP env file.
+
+### Local validation and evidence
+
+- Account + integration suites: 761 passed, 0 failed, 106 dependency deprecation warnings (199.78 s).
+- SMTP/invitation/recovery/config targeted set: 92 passed, 0 failed. After adding the external-runner
+  rehearsal and local launcher isolation: 56 passed in the transport/tooling set. Follow-up order
+  regression with SSO and auth gates: 73 passed. These sets overlap; counts are not added together.
+- Synthetic local TLS covers STARTTLS/implicit TLS, untrusted certificate and missing STARTTLS
+  refusal before AUTH, fixed sender, bounded retries, stable Message-ID, concurrent claims, lost
+  DATA acknowledgment, post-acceptance database failure, and redacted error/config diagnostics.
+- Frontend typecheck/build, module boundaries and branding pass; deployment safety suite: 6 passed.
+- Real in-app browser submitted an unknown synthetic address to a loopback file-mode account
+  service. The page correctly states conditional queueing, with no observed console warning/error
+  and zero queued mail. It no longer claims an email was already sent. The temporary service and
+  browser tab were closed. External acceptance container also exited and was removed.
+- Secrets stay outside Git; `smtp.env` is ignored by Git and Docker context, examples have only
+  placeholder passwords. Local CLI/env injection instructions are in `docs/operations.md` and
+  `docs/development/local-platform.md`; host-specific instructions are in `infra/production/README.md`.
+
+Sanitized evidence stays under `/private/tmp/synwevo-smtp-20260924/`: `acceptance.log`,
+`mailcow-receipts.log`, `delivery-summary.json`, `identity-integration.xml`, targeted/runner logs,
+`browser-check.json`, `archive-check.json`, build/typecheck logs, `actions-permissions-final.log`,
+`production-activation.log`, `runtime-final.json`, `production-smtp-auth.json`, and `public-health.json`.
+A separate Python urllib public probe received HTTP 403; curl and the final CI public checks returned
+200. No edge policy was changed to obtain these results; the urllib result is not counted as passing.
+Server-side fixture evidence is
+`/opt/synwevo/smtp-acceptance-20260924/data/acceptance.json`; `/opt/synwevo/smtp-review/` holds the
+acceptance log and source build, with no SMTP password. The production queue was empty before
+activation, so no historical mail is being replayed to enable SMTP.
+
+For a rollback to a release before `06fc4cf`, restore `config/compose.before-smtp.yaml` as well,
+keeping SMTP disabled for that older transport implementation. Do not run the new SMTP credentials
+through the pre-fix transport, which lacked explicit certificate verification.

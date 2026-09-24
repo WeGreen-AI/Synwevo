@@ -170,7 +170,7 @@ python -m synwevo_identity.cli --data data client register \
 |---|---|
 | `disabled` | 默认（未设 `SYNWEVO_SMTP_HOST` 时）。发送会明确失败，不静默丢弃 |
 | `file` | **本机开发用**。排队并写入 `SYNWEVO_MAIL_DIR` 目录 |
-| `smtp` | 真实发送，需要 `SYNWEVO_SMTP_HOST` 与 `SYNWEVO_PUBLIC_URL` |
+| `smtp` | 真实发送，需要 SMTP 主机、显式 `MAIL_FROM`、验证证书的 TLS 以及账户 `PUBLIC_URL` |
 
 ```bash
 export SYNWEVO_MAIL_MODE=file
@@ -180,6 +180,10 @@ export SYNWEVO_PUBLIC_URL=http://accounts.localhost:8770
 
 `SYNWEVO_PUBLIC_URL` 是必需的：邮件里的链接**不能从请求的 Host 推导**，否则目标地址由攻击者
 控制而令牌在真实主机上仍然有效。
+
+根启动器为账户进程默认设置该本机地址，并剥离门户与 Docs 子进程的 SMTP 凭据。
+真实 SMTP 的私有 env 文件加载、587 STARTTLS / 465 隐式 TLS 互斥配置、超时和投递故障说明见
+[账户邮件运维](../operations.md#6-账户邮件仅发信)。不要把真实邮箱密码放进仓库 `.env.example`。
 
 > **投递目录是测试设施，不是生产可送达的证据。** 真实投递、域名与邮件信誉是独立的外部条件。
 > 收件箱里出现了文件，只说明代码把信写出来了。

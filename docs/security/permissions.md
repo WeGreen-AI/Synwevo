@@ -212,8 +212,16 @@
 * 完成后向本人发出安全提醒；提醒失败不会回滚重置。
 * 审计里不出现令牌原文或口令。
 
-**验证范围**：本地使用 `SYNWEVO_MAIL_MODE=file` 的投递目录验证全流程。**这是测试设施，不能
-当作生产邮件可送达的证据**——真实投递、域名与邮件信誉是独立的外部条件。
+**验证范围**：本地 `SYNWEVO_MAIL_MODE=file` 与合成 localhost TLS 接收器验证业务及故障路径；
+这些设施不能代替真实投递证据。2026-09-24 通过隔离账户的真实 HTTP 邀请/邮箱验证链路向唯一授权地址
+发送两封，mailcow 及 SMTP2GO 接受记录见 [部署记录](../quality/deployment.md)。
+收件箱可见性单独记录，不从 SMTP 接受推断。
+
+当前 SMTP 边界：固定服务器配置的 From/envelope sender；STARTTLS 或隐式 TLS 必选其一，使用系统
+信任库验证证书与主机名后才认证。仅账户进程接收邮箱密码。业务请求只入队，worker 原子领取，最多 8 次
+有限重试；DATA 确认丢失或崩溃遗留领取标记时停止自动重发并报告 `delivery_unknown`。
+日志/错误不包含密码、SMTP 原始响应或邮件正文；配置冲突中的秘密值也脱敏。详见
+[账户邮件运维](../operations.md#6-账户邮件仅发信)，回归在 `services/identity/tests/test_mail_transport.py`。
 
 ### 3.7 Webhook 的出站请求
 
