@@ -16,10 +16,11 @@ import urllib.parse
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from platform_core.errors import ServiceError
-from platform_core.identity import Identity
-from platform_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
-from platform_core.store import Store
+from synwevo_core import env
+from synwevo_core.errors import ServiceError
+from synwevo_core.identity import Identity
+from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
+from synwevo_core.store import Store
 
 from .rp import Rp, app_id, issuer, public_url, safe_next
 
@@ -31,12 +32,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: R
     r = APIRouter(tags=["sso"])
     rp = rp if rp is not None else Rp(store)
     if apps is None:
-        from platform_core.apps import Apps
+        from synwevo_core.apps import Apps
         apps = Apps(store, ident)
 
     def _secure() -> bool:
         import os
-        return (os.environ.get("DOCWEAVE_COOKIE_SECURE") or "1") not in ("0", "false", "no")
+        return (env.get("COOKIE_SECURE") or "1") not in ("0", "false", "no")
 
     @r.get("/auth/start")
     def start(request: Request):

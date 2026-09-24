@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { get, qs } from "@platform/auth-client";
+import { get, qs } from "@synwevo/auth-client";
 import { describeLocator, MAP_TYPE, mappingSlots, MODE_NAME, SLOT_KIND, variesText } from "../lib/describe";
 import type { Mapping, Project, Slot, SourceFile } from "../lib/types";
-import { useDialog } from "@platform/ui";
+import { useDialog } from "@synwevo/ui";
 import Transforms from "./Transforms";
 
 export type SideTab = "mappings" | "fields" | "samples" | "check";

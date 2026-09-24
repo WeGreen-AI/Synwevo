@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { post } from "@platform/auth-client";
+import { post } from "@synwevo/auth-client";
 
 export interface RepeatCol { name: string; x0: number; x1: number; align: "left" | "center" | "right"; sample?: string }
 export interface RepeatLayout { trect: number[]; cols: RepeatCol[]; row_height: number }

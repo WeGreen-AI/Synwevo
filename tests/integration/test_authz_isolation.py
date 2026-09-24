@@ -15,10 +15,10 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
-from platform_core.context import as_tenant
-from platform_core.identity import Identity
-from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
-from platform_core.store import Store
+from synwevo_core.context import as_tenant
+from synwevo_core.identity import Identity
+from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
+from synwevo_core.store import Store
 
 
 def _xlsx(name: str = "机密") -> bytes:
@@ -46,11 +46,11 @@ def two(tmp_path, monkeypatch):
     something the server never does — and ContextVars do not cross TestClient's portal thread
     anyway, so it would silently have tested nothing.
     """
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
     import importlib
-    import platform_server.app as app_mod
+    import synwevo_server.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"))   # job routes need the job service
     store = Store(tmp_path / "d")
@@ -145,8 +145,8 @@ def test_locate_cannot_run_your_mappings_over_someone_elses_document(two):
     refuses for its own reasons, so the test would pass without the fix — it has to be the
     pairing of ids that is rejected, which is what locate_all now checks.
     """
-    from docweave.locators import locate_all
-    from platform_core.errors import ServiceError
+    from synwevo_docs.locators import locate_all
+    from synwevo_core.errors import ServiceError
     app_, sid, pid, ws_a = two["app"], two["sid"], two["pid"], two["ws_a"]
 
     # Across workspaces get_source already refuses, so the interesting case is the one it cannot
@@ -167,7 +167,7 @@ def test_locate_cannot_run_your_mappings_over_someone_elses_document(two):
 def test_job_items_and_report_refuse_another_workspace(two):
     app_, pid = two["app"], two["pid"]
     # a job row in A's workspace, so the routes have something real to refuse B
-    from platform_core.store import new_id, now
+    from synwevo_core.store import new_id, now
     jid = new_id("j")
     app_.store.execute(
         "INSERT INTO jobs (id,project_id,status,created_at,tenant) VALUES (?,?,'completed',?,'ws_a')",
@@ -201,7 +201,7 @@ def test_reorder_refuses_another_workspace(two):
 # ---------------------------------------------------------------- blob grants
 def test_a_derived_preview_blob_is_readable_only_by_the_workspace_that_made_it(two):
     """Previews have no owning row, so they are covered by an explicit grant instead."""
-    from docweave import authz
+    from synwevo_docs import authz
     store, blob = two["store"], "a" * 64
     with as_tenant("ws_a"):
         authz.grant_blob(store, blob, "preview")
@@ -213,7 +213,7 @@ def test_a_derived_preview_blob_is_readable_only_by_the_workspace_that_made_it(t
 def test_identical_content_in_two_workspaces_needs_two_grants(two):
     """Content-addressed storage deduplicates, so one blob legitimately serves both — and each
     side must hold its own grant rather than inheriting the other's."""
-    from docweave import authz
+    from synwevo_docs import authz
     store, blob = two["store"], "b" * 64
     with as_tenant("ws_a"):
         authz.grant_blob(store, blob, "preview")
@@ -226,7 +226,7 @@ def test_identical_content_in_two_workspaces_needs_two_grants(two):
 
 
 def test_an_unknown_blob_is_refused_everywhere(two):
-    from docweave import authz
+    from synwevo_docs import authz
     with as_tenant("ws_a"):
         assert authz.blob_readable(two["store"], "c" * 64) is False
         assert authz.blob_readable(two["store"], "") is False

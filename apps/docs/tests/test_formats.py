@@ -10,7 +10,7 @@ import pytest
 from pptx import Presentation
 
 from .helpers import docx_text
-from docweave.engine.converters import convert
+from synwevo_docs.engine.converters import convert
 
 
 def test_pptx_source_and_template(api, fixtures):

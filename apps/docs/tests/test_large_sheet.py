@@ -10,7 +10,7 @@ import io
 
 import openpyxl
 
-from docweave.engine import tabular
+from synwevo_docs.engine import tabular
 
 
 def _big(rows: int = 4000, cols: int = 20) -> bytes:

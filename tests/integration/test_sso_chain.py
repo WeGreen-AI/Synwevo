@@ -18,14 +18,14 @@ import urllib.parse
 import pytest
 from fastapi.testclient import TestClient
 
-from platform_core.identity import Identity
-from platform_core import oidc
-from platform_core.apps import Apps, bootstrap_docweave
-from platform_core.store import Store
+from synwevo_core.identity import Identity
+from synwevo_core import oidc
+from synwevo_core.apps import Apps, bootstrap_docs_app
+from synwevo_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 ACCOUNTS = "http://accounts.localhost:8770"
-DOCWEAVE = "http://docweave.localhost:8765"
+DOCS = "http://docweave.localhost:8765"
 
 
 class Jar:
@@ -110,21 +110,21 @@ class Browser:
 def world(tmp_path, monkeypatch):
     """One database (one account authority), two apps, two origins."""
     data = str(tmp_path / "d")
-    for k, v in {"DOCWEAVE_DATA_DIR": data, "DOCWEAVE_UI_AUTH": "session",
-                 "DOCWEAVE_COOKIE_SECURE": "0", "DOCWEAVE_ISSUER": ACCOUNTS,
-                 "DOCWEAVE_APP_URL": DOCWEAVE, "DOCWEAVE_OIDC_CLIENT_ID": "docweave-web"}.items():
+    for k, v in {"SYNWEVO_DATA_DIR": data, "SYNWEVO_UI_AUTH": "session",
+                 "SYNWEVO_COOKIE_SECURE": "0", "SYNWEVO_ISSUER": ACCOUNTS,
+                 "SYNWEVO_APP_URL": DOCS, "SYNWEVO_OIDC_CLIENT_ID": "docweave-web"}.items():
         monkeypatch.setenv(k, v)
-    import platform_server.app as app_mod
+    import synwevo_server.app as app_mod
     importlib.reload(app_mod)
 
     # The provider's back-channel POST must reach DocWeave over the test transport. The router
     # binds its deliverer when it is built, so this is patched *before* the account service is
     # created; the app it posts to is filled in below.
-    import platform_core.oidc as oidc_mod
+    import synwevo_core.oidc as oidc_mod
     later: dict = {}
 
     def _deliver(url, token, timeout=3.0):
-        r = later["docweave"].post(url[len(DOCWEAVE):], data={"logout_token": token})
+        r = later["docweave"].post(url[len(DOCS):], data={"logout_token": token})
         return (200 <= r.status_code < 300,
                 None if r.status_code < 300 else f"HTTP {r.status_code}")
 
@@ -133,9 +133,9 @@ def world(tmp_path, monkeypatch):
 
     # DocWeave's relying-party client talks to the account service over that same transport, so
     # the token exchange really is an HTTP request to the real provider, not a function call.
-    import platform_auth_client.rp as rp_mod
+    import synwevo_auth_client.rp as rp_mod
     monkeypatch.setattr(rp_mod.Rp, "http", property(lambda self: accounts.c))
-    docweave = Svc(app_mod.create_app(data, start_jobs=False), DOCWEAVE)
+    docweave = Svc(app_mod.create_app(data, start_jobs=False), DOCS)
     later["docweave"] = docweave
 
     store = Store(tmp_path / "d")
@@ -143,15 +143,15 @@ def world(tmp_path, monkeypatch):
     apps = Apps(store, ident)
     user = ident.create_user("alice@example.com", PW, display_name="Alice", status="active")
     ws = ident.workspaces_for(user["id"])[0]["id"]
-    bootstrap_docweave(store, ident)
+    bootstrap_docs_app(store, ident)
     apps.enable_for_workspace(ws, "docweave")
     oidc.Clients(store).register(
         client_id="docweave-web", app_id="docweave", name="DocWeave",
-        redirect_uris=[DOCWEAVE + "/auth/callback"],
-        post_logout_redirect_uris=[DOCWEAVE + "/signed-out"],
-        backchannel_logout_uri=DOCWEAVE + "/auth/backchannel-logout")
+        redirect_uris=[DOCS + "/auth/callback"],
+        post_logout_redirect_uris=[DOCS + "/signed-out"],
+        backchannel_logout_uri=DOCS + "/auth/backchannel-logout")
 
-    b = Browser({ACCOUNTS: accounts, DOCWEAVE: docweave})
+    b = Browser({ACCOUNTS: accounts, DOCS: docweave})
     return {"b": b, "store": store, "ident": ident, "apps": apps, "user": user, "ws": ws,
             "accounts": accounts, "docweave": docweave}
 
@@ -176,9 +176,9 @@ def test_docweave_first_signs_in_and_returns_to_the_page_that_was_asked_for(worl
     """开始于 DocWeave 的受保护页面 → 统一登录 → 回到原页面。"""
     b = world["b"]
     _sign_in_centrally(world)
-    resp = b.go(DOCWEAVE + "/auth/start?next=/projects/p_abc/mappings")
+    resp = b.go(DOCS + "/auth/start?next=/projects/p_abc/mappings")
     assert resp.status_code == 200
-    assert b.trail[-1] == DOCWEAVE + "/projects/p_abc/mappings", b.trail
+    assert b.trail[-1] == DOCS + "/projects/p_abc/mappings", b.trail
     # It really went via the account service, and really came back.
     assert any(u.startswith(ACCOUNTS + "/oidc/authorize") for u in b.trail), b.trail
 
@@ -187,7 +187,7 @@ def test_docweave_first_signs_in_and_returns_to_the_page_that_was_asked_for(worl
     acc = b.jar.by_host["accounts.localhost"]
     assert dw["dw_session"] and acc["dw_session"]
     assert dw["dw_session"] != acc["dw_session"], "两个来源必须是两个会话，不能复制中央会话值"
-    me = world["docweave"].get("/api/auth/me", cookies=b.jar.apply(DOCWEAVE)).json()
+    me = world["docweave"].get("/api/auth/me", cookies=b.jar.apply(DOCS)).json()
     assert me["email"] == "alice@example.com"
     row = world["store"].one("SELECT workspace_id FROM sessions WHERE oidc_sid IS NOT NULL "
                              "ORDER BY created_at DESC LIMIT 1")
@@ -198,17 +198,17 @@ def test_the_account_cookie_is_not_sent_to_docweave(world):
     """不同端口不隔离 Cookie，不同主机才隔离——这里检查的是后者。"""
     b = world["b"]
     _sign_in_centrally(world)
-    b.go(DOCWEAVE + "/auth/start?next=/")
+    b.go(DOCS + "/auth/start?next=/")
     assert "docweave.localhost" in b.jar.by_host and "accounts.localhost" in b.jar.by_host
     # The jar is keyed by host, so this is what DocWeave would actually receive.
-    assert b.jar.apply(DOCWEAVE)["dw_session"] != b.jar.apply(ACCOUNTS)["dw_session"]
+    assert b.jar.apply(DOCS)["dw_session"] != b.jar.apply(ACCOUNTS)["dw_session"]
     # And DocWeave's session is not usable at the account service, nor the reverse.
     assert whoami(world["docweave"], {"dw_session": "not-a-session"}) is None
 
 
 def test_signing_in_at_docweave_when_not_signed_in_centrally_stops_at_the_login_page(world):
     b = world["b"]
-    resp = b.go(DOCWEAVE + "/auth/start?next=/projects")
+    resp = b.go(DOCS + "/auth/start?next=/projects")
     assert resp.status_code == 200
     assert b.trail[-1].startswith(ACCOUNTS + "/login?next="), b.trail
     nxt = urllib.parse.unquote(
@@ -220,13 +220,13 @@ def test_a_second_application_sign_in_does_not_ask_for_the_password_again(world)
     """有有效统一登录态时按策略完成单点登录，无须再次输入密码。"""
     b = world["b"]
     _sign_in_centrally(world)
-    b.go(DOCWEAVE + "/auth/start?next=/")
-    first = b.jar.apply(DOCWEAVE)["dw_session"]
+    b.go(DOCS + "/auth/start?next=/")
+    first = b.jar.apply(DOCS)["dw_session"]
     b.trail.clear()
-    b.go(DOCWEAVE + "/auth/start?next=/templates")
-    assert b.trail[-1] == DOCWEAVE + "/templates"
+    b.go(DOCS + "/auth/start?next=/templates")
+    assert b.trail[-1] == DOCS + "/templates"
     assert not any("/login" in u for u in b.trail), b.trail
-    assert b.jar.apply(DOCWEAVE)["dw_session"] != first, "每次授权都应换新的本地会话值"
+    assert b.jar.apply(DOCS)["dw_session"] != first, "每次授权都应换新的本地会话值"
 
 
 # ---------------------------------------------------------------- return targets
@@ -235,12 +235,12 @@ def test_a_second_application_sign_in_does_not_ask_for_the_password_again(world)
 def test_an_off_site_return_target_lands_on_a_safe_page(world, bad):
     b = world["b"]
     _sign_in_centrally(world)
-    b.go(DOCWEAVE + "/auth/start?next=" + urllib.parse.quote(bad, safe=""))
-    assert b.trail[-1] == DOCWEAVE + "/", b.trail
+    b.go(DOCS + "/auth/start?next=" + urllib.parse.quote(bad, safe=""))
+    assert b.trail[-1] == DOCS + "/", b.trail
     # The browser is never *sent* anywhere off-site. The first entry is the request under test,
     # which of course still contains the string; every hop after it must stay on a known origin
     # — and `Browser._client` fails the test outright if one does not.
-    assert all(u.startswith((DOCWEAVE, ACCOUNTS)) for u in b.trail[1:]), b.trail
+    assert all(u.startswith((DOCS, ACCOUNTS)) for u in b.trail[1:]), b.trail
 
 
 # ---------------------------------------------------------------- callback integrity
@@ -251,7 +251,7 @@ def test_a_callback_without_the_request_cookie_is_refused(world):
     start = world["docweave"].get("/auth/start?next=/", follow_redirects=False)
     auth_url = start.headers["location"]
     state = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(auth_url).query))["state"]
-    b.jar.absorb(DOCWEAVE, start)
+    b.jar.absorb(DOCS, start)
     hop = world["accounts"].get(auth_url[len(ACCOUNTS):], cookies=b.jar.apply(ACCOUNTS),
                                 follow_redirects=False)
     code = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(hop.headers["location"]).query))["code"]
@@ -260,7 +260,7 @@ def test_a_callback_without_the_request_cookie_is_refused(world):
     assert stolen.status_code == 400
     # the legitimate browser can still finish
     ok = world["docweave"].get(f"/auth/callback?code={code}&state={state}",
-                               cookies=b.jar.apply(DOCWEAVE), follow_redirects=False)
+                               cookies=b.jar.apply(DOCS), follow_redirects=False)
     assert ok.status_code == 303
 
 
@@ -268,9 +268,9 @@ def test_a_forged_state_is_refused(world):
     b = world["b"]
     _sign_in_centrally(world)
     start = world["docweave"].get("/auth/start?next=/", follow_redirects=False)
-    b.jar.absorb(DOCWEAVE, start)
+    b.jar.absorb(DOCS, start)
     out = world["docweave"].get("/auth/callback?code=whatever&state=not-the-one",
-                                cookies=b.jar.apply(DOCWEAVE))
+                                cookies=b.jar.apply(DOCS))
     assert out.status_code == 400 and "状态校验失败" in out.text
 
 
@@ -278,13 +278,13 @@ def test_a_callback_cannot_be_replayed(world):
     b = world["b"]
     _sign_in_centrally(world)
     start = world["docweave"].get("/auth/start?next=/", follow_redirects=False)
-    b.jar.absorb(DOCWEAVE, start)
+    b.jar.absorb(DOCS, start)
     auth_url = start.headers["location"]
     state = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(auth_url).query))["state"]
     hop = world["accounts"].get(auth_url[len(ACCOUNTS):], cookies=b.jar.apply(ACCOUNTS),
                                 follow_redirects=False)
     code = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(hop.headers["location"]).query))["code"]
-    args = dict(cookies=b.jar.apply(DOCWEAVE), follow_redirects=False)
+    args = dict(cookies=b.jar.apply(DOCS), follow_redirects=False)
     assert world["docweave"].get(f"/auth/callback?code={code}&state={state}", **args).status_code == 303
     again = world["docweave"].get(f"/auth/callback?code={code}&state={state}", **args)
     assert again.status_code == 400
@@ -303,11 +303,11 @@ def test_losing_the_application_stops_the_sign_in_at_docweave(world):
     b = world["b"]
     _sign_in_centrally(world)
     world["store"].execute("DELETE FROM workspace_apps WHERE workspace_id=?", (world["ws"],))
-    b.go(DOCWEAVE + "/auth/start?next=/")
-    assert b.trail[-1].startswith(DOCWEAVE + "/sign-in-failed?reason="), b.trail
+    b.go(DOCS + "/auth/start?next=/")
+    assert b.trail[-1].startswith(DOCS + "/sign-in-failed?reason="), b.trail
     reason = urllib.parse.unquote(b.trail[-1].split("reason=", 1)[1])
     assert "尚未启用" in reason, reason
-    assert "dw_session" not in b.jar.apply(DOCWEAVE)
+    assert "dw_session" not in b.jar.apply(DOCS)
     assert world["store"].one("SELECT COUNT(*) AS n FROM oauth_codes")["n"] == 0
 
 
@@ -317,7 +317,7 @@ def test_losing_the_application_between_authorize_and_callback_still_stops_it(wo
     b = world["b"]
     _sign_in_centrally(world)
     start = world["docweave"].get("/auth/start?next=/")
-    b.jar.absorb(DOCWEAVE, start)
+    b.jar.absorb(DOCS, start)
     auth_url = start.headers["location"]
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(auth_url).query))
     hop = world["accounts"].get(auth_url[len(ACCOUNTS):], cookies=b.jar.apply(ACCOUNTS))
@@ -325,7 +325,7 @@ def test_losing_the_application_between_authorize_and_callback_still_stops_it(wo
 
     world["store"].execute("DELETE FROM workspace_apps WHERE workspace_id=?", (world["ws"],))
     out = world["docweave"].get(f"/auth/callback?code={code}&state={q['state']}",
-                                cookies=b.jar.apply(DOCWEAVE))
+                                cookies=b.jar.apply(DOCS))
     assert out.status_code == 303 and out.headers["location"].startswith("/no-access?")
     assert "dw_session" not in {c.split("=")[0] for c in out.headers.get_list("set-cookie")}
 
@@ -335,13 +335,13 @@ def test_platform_logout_ends_the_docweave_session_too(world):
     """全平台退出不能只清除门户 Cookie。"""
     b = world["b"]
     _sign_in_centrally(world)
-    b.go(DOCWEAVE + "/auth/start?next=/")
-    assert whoami(world["docweave"], b.jar.apply(DOCWEAVE)) == "alice@example.com"
+    b.go(DOCS + "/auth/start?next=/")
+    assert whoami(world["docweave"], b.jar.apply(DOCS)) == "alice@example.com"
 
     b.go(ACCOUNTS + "/oidc/logout?" + urllib.parse.urlencode(
-        {"client_id": "docweave-web", "post_logout_redirect_uri": DOCWEAVE + "/signed-out"}))
+        {"client_id": "docweave-web", "post_logout_redirect_uri": DOCS + "/signed-out"}))
     # the DocWeave session is gone even though its own cookie was never touched
-    assert whoami(world["docweave"], b.jar.apply(DOCWEAVE)) is None
+    assert whoami(world["docweave"], b.jar.apply(DOCS)) is None
     row = world["store"].one("SELECT revoked_reason FROM sessions WHERE oidc_sid IS NOT NULL "
                              "ORDER BY created_at DESC LIMIT 1")
     assert row["revoked_reason"] == "backchannel_logout"
@@ -351,9 +351,9 @@ def test_a_repeated_logout_notification_is_a_no_op_success(world):
     """The provider retries; a duplicate must not be an error it retries forever on."""
     b = world["b"]
     _sign_in_centrally(world)
-    b.go(DOCWEAVE + "/auth/start?next=/")
+    b.go(DOCS + "/auth/start?next=/")
     sid = world["store"].one("SELECT sid FROM client_sessions ORDER BY created_at DESC LIMIT 1")["sid"]
-    from platform_core.oidc import Grants
+    from synwevo_core.oidc import Grants
     client = oidc.Clients(world["store"]).get("docweave-web")
     tok = Grants(world["store"]).logout_token(client=client, user_id=world["user"]["id"], sid=sid)
     first = world["docweave"].post("/auth/backchannel-logout", data={"logout_token": tok})
@@ -372,9 +372,11 @@ def test_leaving_docweave_does_not_by_itself_end_the_platform_session(world):
     """退出当前应用 ≠ 退出平台。文案和行为必须一致。"""
     b = world["b"]
     _sign_in_centrally(world)
-    b.go(DOCWEAVE + "/auth/start?next=/")
-    csrf = b.jar.apply(DOCWEAVE)["dw_csrf"]
-    out = world["docweave"].post("/api/auth/sign-out", cookies=b.jar.apply(DOCWEAVE),
+    b.go(DOCS + "/auth/start?next=/")
+    csrf = b.jar.apply(DOCS)["dw_csrf"]
+    # Deliberately the pre-rebrand header name: a page loaded before the rename still sends it,
+    # and the server has to keep accepting it. See tests/integration/test_role_boundaries.py.
+    out = world["docweave"].post("/api/auth/sign-out", cookies=b.jar.apply(DOCS),
                                  headers={"X-DocWeave-CSRF": csrf})
     assert out.status_code == 200 and out.json()["scope"] == "app"
     assert "redirect" not in out.json()
@@ -384,15 +386,15 @@ def test_leaving_docweave_does_not_by_itself_end_the_platform_session(world):
 def test_signing_out_everywhere_hands_back_the_platform_logout_url(world):
     b = world["b"]
     _sign_in_centrally(world)
-    b.go(DOCWEAVE + "/auth/start?next=/")
-    csrf = b.jar.apply(DOCWEAVE)["dw_csrf"]
+    b.go(DOCS + "/auth/start?next=/")
+    csrf = b.jar.apply(DOCS)["dw_csrf"]
     out = world["docweave"].post("/api/auth/sign-out?everywhere=true",
-                                 cookies=b.jar.apply(DOCWEAVE),
+                                 cookies=b.jar.apply(DOCS),
                                  headers={"X-DocWeave-CSRF": csrf}).json()
     assert out["scope"] == "platform" and out["redirect"].startswith(ACCOUNTS + "/oidc/logout?")
     b.trail.clear()
     b.go(out["redirect"])
-    assert b.trail[-1] == DOCWEAVE + "/signed-out"
+    assert b.trail[-1] == DOCS + "/signed-out"
     assert whoami(world["accounts"], b.jar.apply(ACCOUNTS)) is None
 
 
@@ -405,7 +407,7 @@ def test_the_local_session_reports_the_real_central_authentication_time(world):
     world["store"].execute("UPDATE sessions SET created_at=?, reauth_at=? WHERE id IN "
                            "(SELECT id FROM sessions ORDER BY created_at LIMIT 1)",
                            (central["created_at"] - 7200, central["created_at"] - 7200))
-    b.go(DOCWEAVE + "/auth/start?next=/")
+    b.go(DOCS + "/auth/start?next=/")
     local = world["store"].one("SELECT reauth_at, created_at FROM sessions WHERE oidc_sid IS NOT NULL "
                                "ORDER BY created_at DESC LIMIT 1")
     assert local["reauth_at"] < local["created_at"] - 3600, \

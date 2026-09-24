@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { get } from "@platform/auth-client";
+import { get } from "@synwevo/auth-client";
 import type { Mark } from "../lib/types";
 import { hexA } from "./GridView";
-import { useFit } from "@platform/ui";
+import { useFit } from "@synwevo/ui";
 
 const PT = 96 / 72;
 

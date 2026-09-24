@@ -1,8 +1,8 @@
 """Create / save templates made with the built-in editors."""
 from __future__ import annotations
 
-from platform_core.errors import ServiceError
-from platform_core.store import new_id, now
+from synwevo_core.errors import ServiceError
+from synwevo_core.store import new_id, now
 
 from .engine import builtin as B
 from .services import App
@@ -30,7 +30,7 @@ def create_builtin(app: App, body: dict) -> dict:
     tid = new_id("t")
     t = now()
     blob = app.store.put_blob(data)
-    from platform_core.context import tenant as current_tenant
+    from synwevo_core.context import tenant as current_tenant
     app.store.insert("templates", {"id": tid, "tenant": current_tenant(), "name": (body.get("name") or ("文档模板" if fmt == "docx" else "表格模板"))[:100],
                                    "kind": kind, "format": fmt, "original_blob": blob, "original_name": None, "head": 1,
                                    "created_at": t, "updated_at": t, "info": {"notes": []}})

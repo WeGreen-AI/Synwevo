@@ -16,11 +16,11 @@ import pytest
 from authlib.jose import JsonWebKey, jwt
 from fastapi.testclient import TestClient
 
-from platform_core.identity import Identity
-from platform_core import oidc
-from platform_core.apps import Apps, bootstrap_docweave
-from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
-from platform_core.store import Store, now
+from synwevo_core.identity import Identity
+from synwevo_core import oidc
+from synwevo_core.apps import Apps, bootstrap_docs_app
+from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
+from synwevo_core.store import Store, now
 
 PW = "a-sufficiently-long-passphrase"
 REDIRECT = "http://docweave.localhost:8765/auth/callback"
@@ -28,11 +28,11 @@ REDIRECT = "http://docweave.localhost:8765/auth/callback"
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    monkeypatch.setenv("DOCWEAVE_ISSUER", "http://accounts.localhost:8770")
-    import platform_identity.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_ISSUER", "http://accounts.localhost:8770")
+    import synwevo_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -41,7 +41,7 @@ def env(tmp_path, monkeypatch):
 
     user = ident.create_user("alice@example.com", PW, display_name="Alice", status="active")
     ws = ident.workspaces_for(user["id"])[0]["id"]
-    bootstrap_docweave(store, ident)
+    bootstrap_docs_app(store, ident)
     apps.enable_for_workspace(ws, "docweave")
     oidc.Clients(store).register(client_id="docweave-web", app_id="docweave", name="DocWeave",
                                  redirect_uris=[REDIRECT], audiences=["docweave-api"])
@@ -332,29 +332,29 @@ def test_provisioning_does_not_reach_the_legacy_workspace(env):
 
 @pytest.mark.parametrize("role", ["accounts", "portal"])
 def test_only_docweaves_own_process_sets_its_launch_url(env, monkeypatch, role):
-    """Every process registers the app at startup, and DOCWEAVE_APP_URL means *this service's*
+    """Every process registers the app at startup, and SYNWEVO_APP_URL means *this service's*
     address — so the portal or the account service must not repoint the card at themselves.
 
-    Keyed on the role, not on an app id: `DOCWEAVE_OIDC_APP_ID` is unset on the account service
+    Keyed on the role, not on an app id: `SYNWEVO_OIDC_APP_ID` is unset on the account service
     and its default is "docweave", so an app-id test passes here while the real deployment
     repoints the card at the login page. That is what happened.
     """
-    from platform_core.apps import bootstrap_docweave
+    from synwevo_core.apps import bootstrap_docs_app
     store, ident = env["store"], env["ident"]
 
-    monkeypatch.setenv("DOCWEAVE_ROLE", "app")
-    monkeypatch.setenv("DOCWEAVE_APP_URL", "http://docweave.localhost:8775")
-    assert bootstrap_docweave(store, ident)["launch_url"] == "http://docweave.localhost:8775"
+    monkeypatch.setenv("SYNWEVO_ROLE", "app")
+    monkeypatch.setenv("SYNWEVO_APP_URL", "http://docweave.localhost:8775")
+    assert bootstrap_docs_app(store, ident)["launch_url"] == "http://docweave.localhost:8775"
 
-    monkeypatch.setenv("DOCWEAVE_ROLE", role)
-    monkeypatch.setenv("DOCWEAVE_APP_URL", f"http://{role}.localhost:8769")
-    monkeypatch.delenv("DOCWEAVE_OIDC_APP_ID", raising=False)
-    assert bootstrap_docweave(store, ident)["launch_url"] == "http://docweave.localhost:8775"
+    monkeypatch.setenv("SYNWEVO_ROLE", role)
+    monkeypatch.setenv("SYNWEVO_APP_URL", f"http://{role}.localhost:8769")
+    monkeypatch.delenv("SYNWEVO_OIDC_APP_ID", raising=False)
+    assert bootstrap_docs_app(store, ident)["launch_url"] == "http://docweave.localhost:8775"
 
 
 def test_the_single_process_deployment_still_sets_its_own_launch_url(env, monkeypatch):
     """`all` is the existing deployment's shape and must keep working unchanged."""
-    from platform_core.apps import bootstrap_docweave
-    monkeypatch.setenv("DOCWEAVE_ROLE", "all")
-    monkeypatch.setenv("DOCWEAVE_APP_URL", "https://docweave.example.com")
-    assert bootstrap_docweave(env["store"], env["ident"])["launch_url"] == "https://docweave.example.com"
+    from synwevo_core.apps import bootstrap_docs_app
+    monkeypatch.setenv("SYNWEVO_ROLE", "all")
+    monkeypatch.setenv("SYNWEVO_APP_URL", "https://docweave.example.com")
+    assert bootstrap_docs_app(env["store"], env["ident"])["launch_url"] == "https://docweave.example.com"

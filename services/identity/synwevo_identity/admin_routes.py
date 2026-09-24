@@ -19,10 +19,10 @@ from __future__ import annotations
 import json
 from fastapi import APIRouter, Body, Query, Request
 
-from platform_core.errors import ServiceError
-from platform_core.identity import Identity
-from platform_core.sessions import Sessions
-from platform_core.store import Store, now
+from synwevo_core.errors import ServiceError
+from synwevo_core.identity import Identity
+from synwevo_core.sessions import Sessions
+from synwevo_core.store import Store, now
 
 REAUTH_SCOPE = "admin"
 
@@ -163,13 +163,13 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit) -> AP
                           (new_name[:100], ts, wid))
             else:
                 t.execute("UPDATE workspaces SET status='active', updated_at=? WHERE id=?", (ts, wid))
-            from platform_core.apps import DOCWEAVE_APP_ID
+            from synwevo_core.apps import DOCS_APP_ID
             t.execute("INSERT INTO workspace_apps (workspace_id,app_id,enabled_at,enabled_by) "
                       "VALUES (?,?,?,?) ON CONFLICT(workspace_id,app_id) DO NOTHING",
-                      (wid, DOCWEAVE_APP_ID, ts, actor["id"]))
+                      (wid, DOCS_APP_ID, ts, actor["id"]))
             t.execute("INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by) "
                       "VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,app_id,user_id) DO UPDATE SET "
-                      "revoked_at=NULL", (wid, DOCWEAVE_APP_ID, target_id, ts, actor["id"]))
+                      "revoked_at=NULL", (wid, DOCS_APP_ID, target_id, ts, actor["id"]))
 
         audit(request, "admin.workspace.claim", actor_id=actor["id"], workspace_id=wid,
               object_kind="workspace", object_id=wid, result="ok",
@@ -232,7 +232,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit) -> AP
         n = sessions.revoke_all_for_user(uid, "admin_revoked")
         # Tokens issued from those sessions go too; otherwise an application keeps working with
         # an access token minted by a session that no longer exists.
-        from platform_core.oidc import Grants
+        from synwevo_core.oidc import Grants
         tokens = Grants(store).revoke_for_user(uid, "admin_revoked")
         audit(request, "admin.user.revoke_sessions", actor_id=actor["id"], object_kind="user",
               object_id=uid, result="ok",

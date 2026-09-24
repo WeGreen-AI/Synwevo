@@ -10,8 +10,8 @@
  * than left as a key that mysteriously stops working.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, del, get, patch, post } from "@platform/auth-client";
-import { useToast } from "@platform/ui";
+import { ApiError, del, get, patch, post } from "@synwevo/auth-client";
+import { useToast } from "@synwevo/ui";
 
 type Passkey = {
   id: string;

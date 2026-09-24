@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from platform_core.http import (build_platform, install as install_platform, install_probes,
+from synwevo_core.http import (build_platform, install as install_platform, install_probes,
                                 mount_web, new_api, role as current_role, shell_response)
 
 ACCOUNT_SHELL_PATHS = ("/login", "/account", "/invite", "/forgot-password", "/reset-password",
@@ -21,7 +21,7 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
     """
     role = (role or current_role()).strip().lower() or "all"
     plat = build_platform(data_dir)
-    api = new_api({"accounts": "Platform accounts", "portal": "Platform portal"}.get(role, "DocWeave"))
+    api = new_api({"accounts": "Synwevo Account", "portal": "Synwevo Workspace"}.get(role, "Synwevo Docs"))
     api.state.auth = plat.auth
     api.state.identity = plat.identity
     api.state.sessions = plat.sessions
@@ -43,17 +43,17 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
 
     # Who is signed in, which workspace, how to leave. The same four routes in every role, from
     # one implementation — the account service does not get its own copy and neither does an app.
-    from platform_auth_client.session_routes import build_router as build_session_router
+    from synwevo_auth_client.session_routes import build_router as build_session_router
     api.include_router(build_session_router(plat.identity, plat.sessions, plat.audit))
 
     if wants_app:
-        from docweave.api import app as docweave_app
-        docweave_app.install(api, plat, start_jobs=start_jobs)
+        from synwevo_docs.api import app as docs_app
+        docs_app.install(api, plat, start_jobs=start_jobs)
     if wants_accounts:
-        from platform_identity import app as identity_app
+        from synwevo_identity import app as identity_app
         identity_app.install(api, plat, start_jobs=start_jobs)
     if wants_portal:
-        from platform_portal import app as portal_app
+        from synwevo_portal import app as portal_app
         portal_app.install(api, plat)
 
     # The relying-party half is mounted everywhere the account service is not the whole story.
@@ -61,7 +61,7 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
     # issuer, and the chain tests drive two origins out of one composed app. Where there is no
     # external issuer these routes simply point at this process's own provider.
     if role in ("app", "portal", "all"):
-        from platform_auth_client.routes import (build_account_redirect_router,
+        from synwevo_auth_client.routes import (build_account_redirect_router,
                                                  build_router as build_rp_router)
         api.include_router(build_rp_router(plat.store, plat.identity, plat.sessions, plat.audit))
         if role != "all":
@@ -82,9 +82,9 @@ def _mount_shells(api: FastAPI, role: str) -> None:
     carries a second copy of the sign-in screen for the single-process case — it navigates to
     the account shell, on the same origin, with the same cookie.
     """
-    from docweave.api.app import web_dist as docweave_dist
-    from platform_identity.app import ASSETS_DIR as ACCOUNT_ASSETS, web_dist as accounts_dist
-    from platform_portal.app import ASSETS_DIR as PORTAL_ASSETS, web_dist as portal_dist
+    from synwevo_docs.api.app import web_dist as docs_dist
+    from synwevo_identity.app import ASSETS_DIR as ACCOUNT_ASSETS, web_dist as accounts_dist
+    from synwevo_portal.app import ASSETS_DIR as PORTAL_ASSETS, web_dist as portal_dist
 
     if role == "portal":
         dist = portal_dist()
@@ -103,7 +103,7 @@ def _mount_shells(api: FastAPI, role: str) -> None:
         return
 
     # `app` and `all`
-    work = docweave_dist()
+    work = docs_dist()
     work_ok = mount_web(api, work)
     acct = accounts_dist()
     acct_ok = role == "all" and mount_web(api, acct, assets_dir=ACCOUNT_ASSETS)

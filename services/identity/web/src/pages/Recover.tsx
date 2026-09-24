@@ -10,8 +10,8 @@
  * the person never asked for and can no longer do.
  */
 import { useEffect, useState } from "react";
-import { ApiError, get, post } from "@platform/auth-client";
-import { useSession } from "@platform/auth-client";
+import { ApiError, get, post } from "@synwevo/auth-client";
+import { useSession } from "@synwevo/auth-client";
 
 export function ForgotPassword() {
   const { state } = useSession();
@@ -54,7 +54,7 @@ export function ForgotPassword() {
     <div className="authpage">
       <form className="authcard" onSubmit={submit} noValidate>
         <div className="authbrand">
-          <span className="logo" aria-hidden="true">◫</span>{state?.platform_name || "工作平台"}
+          <span className="logo" aria-hidden="true">◫</span>{state?.platform_name || "Synwevo Workspace"}
         </div>
         <h1>重置口令</h1>
         <p className="authlede">输入你的邮箱，我们会发一个重置链接过去。</p>

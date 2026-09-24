@@ -1,9 +1,9 @@
 """Signed webhooks for job events (off by default, configured at deployment level).
 
-    DOCWEAVE_WEBHOOK_URLS=https://automation.example.com/hooks/docweave
-    DOCWEAVE_WEBHOOK_SECRET=<shared secret>
-    DOCWEAVE_WEBHOOK_EVENTS=job.completed,job.completed_with_errors,job.failed,job.cancelled
-    DOCWEAVE_WEBHOOK_ALLOW_PRIVATE=10.0.0.0/8,automation.internal     # only if you need it
+    SYNWEVO_DOCS_WEBHOOK_URLS=https://automation.example.com/hooks/docweave
+    SYNWEVO_DOCS_WEBHOOK_SECRET=<shared secret>
+    SYNWEVO_DOCS_WEBHOOK_EVENTS=job.completed,job.completed_with_errors,job.failed,job.cancelled
+    SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE=10.0.0.0/8,automation.internal     # only if you need it
 
 Each delivery carries the event id, a timestamp and
 ``X-DocWeave-Signature: v1=<hmac-sha256(secret, "<timestamp>.<body>")>``.  Receivers should
@@ -27,7 +27,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-from platform_core.store import Store, new_id, now
+from synwevo_core import env
+from synwevo_core.store import Store, new_id, now
 
 BACKOFF_S = (30, 120, 600, 1800, 7200)
 DEFAULT_EVENTS = ("job.completed", "job.completed_with_errors", "job.failed", "job.cancelled")
@@ -35,20 +36,20 @@ LAST_SEQ_KEY = "webhook_last_seq"
 
 
 def endpoints() -> list[str]:
-    return [u.strip() for u in (os.environ.get("DOCWEAVE_WEBHOOK_URLS") or "").split(",") if u.strip()]
+    return [u.strip() for u in (env.docs("WEBHOOK_URLS") or "").split(",") if u.strip()]
 
 
 def wanted_events() -> tuple[str, ...]:
-    raw = (os.environ.get("DOCWEAVE_WEBHOOK_EVENTS") or "").strip()
+    raw = (env.docs("WEBHOOK_EVENTS") or "").strip()
     return tuple(e.strip() for e in raw.split(",") if e.strip()) or DEFAULT_EVENTS
 
 
 def secret() -> str:
-    return os.environ.get("DOCWEAVE_WEBHOOK_SECRET") or ""
+    return env.docs("WEBHOOK_SECRET") or ""
 
 
 def _allow_private() -> list[str]:
-    return [x.strip() for x in (os.environ.get("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE") or "").split(",") if x.strip()]
+    return [x.strip() for x in (env.docs("WEBHOOK_ALLOW_PRIVATE") or "").split(",") if x.strip()]
 
 
 class UrlRejected(ValueError):
@@ -77,8 +78,8 @@ def resolve_checked(url: str) -> list:
     u = urlparse(url)
     if u.scheme not in ("https", "http"):
         raise UrlRejected(f"回调地址必须是 http(s)：{url}")
-    if u.scheme == "http" and (os.environ.get("DOCWEAVE_WEBHOOK_ALLOW_HTTP") or "").lower() not in ("1", "true", "on", "yes"):
-        raise UrlRejected("回调默认要求 https；确需 http 时设置 DOCWEAVE_WEBHOOK_ALLOW_HTTP=1")
+    if u.scheme == "http" and (env.docs("WEBHOOK_ALLOW_HTTP") or "").lower() not in ("1", "true", "on", "yes"):
+        raise UrlRejected("回调默认要求 https；确需 http 时设置 SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP=1")
     host = u.hostname or ""
     port = u.port or (443 if u.scheme == "https" else 80)
     allow = _allow_private()
@@ -93,7 +94,7 @@ def resolve_checked(url: str) -> list:
         if ip.is_global or host in allow or any(_in_allow(ip, a) for a in allow):
             ok.append(str(ip))
             continue
-        raise UrlRejected(f"回调地址解析到内网地址 {ip}；如确需内网回调，请把它加入 DOCWEAVE_WEBHOOK_ALLOW_PRIVATE")
+        raise UrlRejected(f"回调地址解析到内网地址 {ip}；如确需内网回调，请把它加入 SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE")
     if not ok:
         raise UrlRejected(f"回调地址主机 {host} 没有解析出任何可用地址")
     return ok
@@ -133,7 +134,7 @@ class WebhookDispatcher:
         self._thread = None
         if start and self.enabled:
             if not secret():
-                self.last_error = "已配置 DOCWEAVE_WEBHOOK_URLS 但缺少 DOCWEAVE_WEBHOOK_SECRET，回调未启用"
+                self.last_error = "已配置 SYNWEVO_DOCS_WEBHOOK_URLS 但缺少 SYNWEVO_DOCS_WEBHOOK_SECRET，回调未启用"
                 self.enabled = False
             else:
                 self._thread = threading.Thread(target=self._loop, name="webhooks", daemon=True)
@@ -209,7 +210,7 @@ class WebhookDispatcher:
                 "X-DocWeave-Signature": sign(body, ts, secret()),
             })
             opener = _pinned_opener(validated)
-            with opener.open(req, timeout=float(os.environ.get("DOCWEAVE_WEBHOOK_TIMEOUT_S", "10"))) as resp:
+            with opener.open(req, timeout=float(env.docs("WEBHOOK_TIMEOUT_S", "10"))) as resp:
                 code = resp.status
             self.store.update("webhook_deliveries", {"id": d["id"]},
                               {"status": "delivered", "attempts": attempts, "last_code": code, "delivered_at": now(), "last_error": None})

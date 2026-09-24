@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
-SCRIPTS = ROOT / "apps" / "docweave" / "scripts"
+ROOT = __import__("synwevo_core.http", fromlist=["repo_root"]).repo_root()
+SCRIPTS = ROOT / "apps" / "docs" / "scripts"
 
 
 def _snapshot():
@@ -27,7 +27,7 @@ def _snapshot():
 @pytest.fixture()
 def instance(tmp_path):
     """A small instance with real rows and real blob files."""
-    from platform_core.store import Store, now
+    from synwevo_core.store import Store, now
     data = tmp_path / "data"
     store = Store(data)
     (data / "blobs").mkdir(exist_ok=True)
@@ -55,7 +55,7 @@ def test_a_snapshot_restores_to_the_same_content(instance, tmp_path, capsys):
     archive = next(out.glob("*.tar.gz"))
 
     # Change the original afterwards; the archive must still restore what it captured.
-    from platform_core.store import Store, now
+    from synwevo_core.store import Store, now
     Store(instance).execute(
         "INSERT INTO projects (id,name,tenant,step,rev,mapping_rev,created_at,updated_at,deleted) "
         "VALUES ('p2','备份之后才建的','default','upload',1,1,?,?,0)", (now(), now()))
@@ -118,7 +118,7 @@ def test_a_restore_warns_about_credentials_that_would_revive(instance, tmp_path,
     """Restoring an old backup is not going back in time — it brings back what was deliberately
     taken away since, including credentials revoked after the backup was taken."""
     snapshot = _snapshot()
-    from platform_core.store import Store, now
+    from synwevo_core.store import Store, now
     Store(instance).execute(
         "INSERT INTO api_keys (id,name,tenant,scopes,secret_hash,created_at) "
         "VALUES ('k1','ci','default','read','x',?)", (now(),))
@@ -127,7 +127,7 @@ def test_a_restore_warns_about_credentials_that_would_revive(instance, tmp_path,
     snapshot.verify(_args(archive=str(next(out.glob("*.tar.gz")))))
     text = capsys.readouterr().out
     assert "会复活" in text
-    assert "DOCWEAVE_UI_AUTH" in text, "还要提醒认证模式不在库里"
+    assert "SYNWEVO_UI_AUTH" in text, "还要提醒认证模式不在库里"
 
 
 def test_the_archive_is_not_world_readable(instance, tmp_path):

@@ -21,7 +21,7 @@ DocWeave 与确有共用的包。本文件是执行记录：先写映射与恢�
 | 工作区状态 | `git status --porcelain` 为空：无已暂存、未暂存或未跟踪改动 |
 | 分支清单 | `main`、`upgrade/automation-api-ui`、`origin/upgrade/automation-api-ui` |
 | 标签 / stash / 子模块 / linked worktree | 均无；`.git` 是普通目录，内部无绝对路径 |
-| 后端测试 | `644 passed, 1 skipped`（`pytest apps/docweave/tests`，186 s，退出码 0） |
+| 后端测试 | `644 passed, 1 skipped`（`pytest apps/docs/tests`，186 s，退出码 0） |
 | 数据库 | `data/docweave.sqlite3`，schema v4，44 张表 |
 | 真实数据 | 69 projects（全部 tenant=`default`）、80 templates、280 template_versions、201 mapping_revs、67 source_files、42 jobs、2175 job_items、1675 artifacts、29 job_runs、82 job_events、29 idempotency、2 api_keys |
 | 账户数据 | `users` 0、`memberships` 0、`sessions` 0、`passkeys` 0、`totp_secrets` 0、`oidc_keys` 0 |
@@ -56,7 +56,7 @@ DocWeave 与确有共用的包。本文件是执行记录：先写映射与恢�
 无 `worktrees/` 登记、无子模块、`.git/config` 与内部文件不含任何绝对路径。因此改名后提交、分支、
 标签与 remote 全部原样可达，不需要 `git init`、不需要重新 clone、不产生新仓库。
 
-**不采用**的做法及原因：新建空仓库再复制代码（丢历史）、把原仓库整份塞进 `apps/docweave` 再留一个
+**不采用**的做法及原因：新建空仓库再复制代码（丢历史）、把原仓库整份塞进 `apps/docs` 再留一个
 内部 `.git`（嵌套仓库）、submodule 包装（本轮目标是单仓库）。
 
 `data/` 随根目录一起改名移动，**绝对路径因此改变**：
@@ -69,45 +69,45 @@ DocWeave 与确有共用的包。本文件是执行记录：先写映射与恢�
 
 | 迁移前 | 迁移后 | 归属 |
 |---|---|---|
-| `apps/docweave/docweave/store.py` | `packages/platform-core/platform_core/store.py` | 共享：唯一的持久化入口与**唯一的 schema 迁移执行者** |
-| `apps/docweave/docweave/context.py` | `packages/platform-core/platform_core/context.py` | 共享：租户上下文 |
-| `apps/docweave/docweave/services.py` 中的 `ServiceError` / `not_found` | `packages/platform-core/platform_core/errors.py` | 共享：跨服务错误契约 |
-| `apps/docweave/docweave/sessions.py` | `packages/platform-core/platform_core/sessions.py` | 共享：每个依赖方都持有自己的本地会话行 |
-| `apps/docweave/docweave/identity.py` | `packages/platform-core/platform_core/identity.py` | 共享：用户 / 工作空间 / 成员 / 应用资格的读写入口 |
-| `apps/docweave/docweave/passwords.py` | `packages/platform-core/platform_core/passwords.py` | 共享：Argon2id 口令哈希 |
-| `apps/docweave/docweave/auth.py` | `packages/platform-core/platform_core/auth.py` | 共享：机器密钥校验、界面认证模式、监听地址守卫、服务端根密钥 |
-| `apps/docweave/docweave/machine.py` | `packages/platform-core/platform_core/machine.py` | 共享：机器身份解析（API key / 服务账户 / 用户委托统一成同一个 principal） |
-| `apps/docweave/docweave/rp.py` | `packages/auth-client/python/platform_auth_client/rp.py` | 共享：应用接入统一身份的 OIDC 依赖方适配 |
-| `apps/docweave/docweave/api/rp_routes.py` | `packages/auth-client/python/platform_auth_client/routes.py` | 同上（`/auth/start`、`/auth/callback`、后通道登出） |
-| `apps/docweave/docweave/mfa.py` | `services/identity/platform_identity/mfa.py` | 身份服务 |
-| `apps/docweave/docweave/passkeys.py` | `services/identity/platform_identity/passkeys.py` | 身份服务 |
-| `apps/docweave/docweave/invites.py` | `services/identity/platform_identity/invites.py` | 身份服务 |
-| `apps/docweave/docweave/mail.py` | `services/identity/platform_identity/mail.py` | 身份服务 |
-| `apps/docweave/docweave/platform/oidc.py` | `services/identity/platform_identity/oidc.py` | 身份服务（授权服务器） |
-| `apps/docweave/docweave/platform/apps.py` | `services/identity/platform_identity/apps.py` | 身份服务（应用注册与资格） |
-| `apps/docweave/docweave/platform/routes.py` | `services/identity/platform_identity/provider_routes.py` | 身份服务（discovery/JWKS/authorize/token/userinfo/revocation/logout） |
-| `apps/docweave/docweave/api/auth_routes.py` | `services/identity/platform_identity/auth_routes.py` | 身份服务（登录、MFA、Passkey、找回、邀请） |
-| `apps/docweave/docweave/api/admin_routes.py` | `services/identity/platform_identity/admin_routes.py` | 身份服务（平台管理后台） |
-| `python -m docweave.cli` 的 `bootstrap`/`ui-user`/`app`/`client`/`keys` | `services/identity/platform_identity/cli.py` | 身份服务 CLI |
-| `apps/docweave/docweave/api/portal_routes.py` | `apps/portal/platform_portal/routes.py` | 平台门户 |
-| `apps/docweave/docweave/engine/**` | `apps/docweave/docweave/engine/**` | DocWeave 业务（模板、公式、PDF/图片、OCR、渲染） |
-| `apps/docweave/docweave/{services,jobs,views,definitions,locators,capabilities,builtin_service,regression,licensing,webhooks,authz}.py` | `apps/docweave/docweave/…` | DocWeave 业务 |
-| `apps/docweave/docweave/api/{app,v1,main}.py` | `apps/docweave/docweave/api/…` | DocWeave HTTP 接口 |
-| `python -m docweave.cli` 的 `apikey`/`jobs`/`projects`/`openapi`/`info` | `apps/docweave/docweave/cli.py` | DocWeave CLI |
-| `backend/tessdata/` | `apps/docweave/tessdata/` | OCR 语言数据属 DocWeave |
-| `backend/run.py` | `infra/server/platform_server/{app,run}.py` | 部署组装：按 `DOCWEAVE_ROLE` 把上面的模块拼成一个进程 |
-| `apps/docweave/tests/**` | 按归属拆到 `apps/docweave/tests/`、`services/identity/tests/`、`tests/integration/` | 测试边界跟模块边界一致 |
+| `apps/docs/docweave/store.py` | `packages/platform-core/synwevo_core/store.py` | 共享：唯一的持久化入口与**唯一的 schema 迁移执行者** |
+| `apps/docs/docweave/context.py` | `packages/platform-core/synwevo_core/context.py` | 共享：租户上下文 |
+| `apps/docs/docweave/services.py` 中的 `ServiceError` / `not_found` | `packages/platform-core/synwevo_core/errors.py` | 共享：跨服务错误契约 |
+| `apps/docs/docweave/sessions.py` | `packages/platform-core/synwevo_core/sessions.py` | 共享：每个依赖方都持有自己的本地会话行 |
+| `apps/docs/docweave/identity.py` | `packages/platform-core/synwevo_core/identity.py` | 共享：用户 / 工作空间 / 成员 / 应用资格的读写入口 |
+| `apps/docs/docweave/passwords.py` | `packages/platform-core/synwevo_core/passwords.py` | 共享：Argon2id 口令哈希 |
+| `apps/docs/docweave/auth.py` | `packages/platform-core/synwevo_core/auth.py` | 共享：机器密钥校验、界面认证模式、监听地址守卫、服务端根密钥 |
+| `apps/docs/docweave/machine.py` | `packages/platform-core/synwevo_core/machine.py` | 共享：机器身份解析（API key / 服务账户 / 用户委托统一成同一个 principal） |
+| `apps/docs/docweave/rp.py` | `packages/auth-client/python/synwevo_auth_client/rp.py` | 共享：应用接入统一身份的 OIDC 依赖方适配 |
+| `apps/docs/docweave/api/rp_routes.py` | `packages/auth-client/python/synwevo_auth_client/routes.py` | 同上（`/auth/start`、`/auth/callback`、后通道登出） |
+| `apps/docs/docweave/mfa.py` | `services/identity/synwevo_identity/mfa.py` | 身份服务 |
+| `apps/docs/docweave/passkeys.py` | `services/identity/synwevo_identity/passkeys.py` | 身份服务 |
+| `apps/docs/docweave/invites.py` | `services/identity/synwevo_identity/invites.py` | 身份服务 |
+| `apps/docs/docweave/mail.py` | `services/identity/synwevo_identity/mail.py` | 身份服务 |
+| `apps/docs/docweave/platform/oidc.py` | `services/identity/synwevo_identity/oidc.py` | 身份服务（授权服务器） |
+| `apps/docs/docweave/platform/apps.py` | `services/identity/synwevo_identity/apps.py` | 身份服务（应用注册与资格） |
+| `apps/docs/docweave/platform/routes.py` | `services/identity/synwevo_identity/provider_routes.py` | 身份服务（discovery/JWKS/authorize/token/userinfo/revocation/logout） |
+| `apps/docs/docweave/api/auth_routes.py` | `services/identity/synwevo_identity/auth_routes.py` | 身份服务（登录、MFA、Passkey、找回、邀请） |
+| `apps/docs/docweave/api/admin_routes.py` | `services/identity/synwevo_identity/admin_routes.py` | 身份服务（平台管理后台） |
+| `python -m synwevo_docs.cli` 的 `bootstrap`/`ui-user`/`app`/`client`/`keys` | `services/identity/synwevo_identity/cli.py` | 身份服务 CLI |
+| `apps/docs/docweave/api/portal_routes.py` | `apps/portal/synwevo_portal/routes.py` | 平台门户 |
+| `apps/docs/docweave/engine/**` | `apps/docs/docweave/engine/**` | DocWeave 业务（模板、公式、PDF/图片、OCR、渲染） |
+| `apps/docs/docweave/{services,jobs,views,definitions,locators,capabilities,builtin_service,regression,licensing,webhooks,authz}.py` | `apps/docs/docweave/…` | DocWeave 业务 |
+| `apps/docs/docweave/api/{app,v1,main}.py` | `apps/docs/docweave/api/…` | DocWeave HTTP 接口 |
+| `python -m synwevo_docs.cli` 的 `apikey`/`jobs`/`projects`/`openapi`/`info` | `apps/docs/docweave/cli.py` | DocWeave CLI |
+| `backend/tessdata/` | `apps/docs/tessdata/` | OCR 语言数据属 DocWeave |
+| `backend/run.py` | `infra/server/synwevo_server/{app,run}.py` | 部署组装：按 `DOCWEAVE_ROLE` 把上面的模块拼成一个进程 |
+| `apps/docs/tests/**` | 按归属拆到 `apps/docs/tests/`、`services/identity/tests/`、`tests/integration/` | 测试边界跟模块边界一致 |
 
 ### 4.2 前端
 
 | 迁移前 | 迁移后 | 归属 |
 |---|---|---|
-| `frontend/index.html`、`src/main.tsx`、`src/pages/{Home,Workspace,JobPage,About,Regression,Capabilities,DocEditor,SheetEditor}.tsx`、`src/views/**`、业务组件 | `apps/docweave/web/` | DocWeave 工作台 |
+| `frontend/index.html`、`src/main.tsx`、`src/pages/{Home,Workspace,JobPage,About,Regression,Capabilities,DocEditor,SheetEditor}.tsx`、`src/views/**`、业务组件 | `apps/docs/web/` | DocWeave 工作台 |
 | `frontend/portal.html`、`src/portal/**` | `apps/portal/web/` | 平台门户 |
 | `frontend/accounts.html`、`src/accounts/**`、`src/pages/{Login,Account,Invite,Recover}.tsx`、`src/components/{MfaSection,PasskeySection}.tsx` | `services/identity/web/` | 账户与安全：**单一权威实现**，不复制第二套 |
-| `src/styles.css`、`src/lib/{ui.tsx,theme.ts,useFit.ts}`、`src/components/PlatformNav.tsx` | `packages/ui/`（`@platform/ui`） | 三个外壳真实共用的视觉规范与基础组件 |
-| `src/lib/{api.ts,session.tsx}` | `packages/auth-client/web/`（`@platform/auth-client`） | 应用接入统一身份的浏览器端适配 |
-| `src/lib/{types.ts,describe.ts,latest.ts,status.ts}`、其余业务组件 | `apps/docweave/web/src/…` | DocWeave 专属 |
+| `src/styles.css`、`src/lib/{ui.tsx,theme.ts,useFit.ts}`、`src/components/PlatformNav.tsx` | `packages/ui/`（`@synwevo/ui`） | 三个外壳真实共用的视觉规范与基础组件 |
+| `src/lib/{api.ts,session.tsx}` | `packages/auth-client/web/`（`@synwevo/auth-client`） | 应用接入统一身份的浏览器端适配 |
+| `src/lib/{types.ts,describe.ts,latest.ts,status.ts}`、其余业务组件 | `apps/docs/web/src/…` | DocWeave 专属 |
 
 **账户页面归属带来的一处行为调整**：此前 DocWeave 的 SPA 自己也打包了 `/login`、`/account`、
 `/invite`、`/forgot-password`、`/reset-password` 这几条路由，单进程部署（`role=all`）靠它渲染。
@@ -121,9 +121,9 @@ DocWeave 与确有共用的包。本文件是执行记录：先写映射与恢�
 |---|---|
 | `Dockerfile`、`docker-compose.yml` | `infra/` |
 | `scripts/platform_local.py` | `scripts/platform.py`（根目录统一启动/停止/状态/日志） |
-| `scripts/{make_fixtures,benchmark,seed_samples,regression,blob_audit,snapshot,ui_perf,ui_e2e*}.py` | `apps/docweave/scripts/` |
+| `scripts/{make_fixtures,benchmark,seed_samples,regression,blob_audit,snapshot,ui_perf,ui_e2e*}.py` | `apps/docs/scripts/` |
 | `scripts/{verify_sso,migration_rehearsal,automation_example}.py` | `tests/integration/` |
-| `regression/` | `apps/docweave/regression/` |
+| `regression/` | `apps/docs/regression/` |
 | `README.md`、`NOTICE`、`.gitignore`、`.env.example`、CI 配置 | 仓库根目录 |
 | `docs/**` | 仓库根目录 `docs/**`（平台级） |
 
@@ -131,7 +131,7 @@ DocWeave 与确有共用的包。本文件是执行记录：先写映射与恢�
 
 - `data/` **不跟随源码归位**。它留在仓库根目录，由 `DOCWEAVE_DATA_DIR` 显式指向；解析顺序为
   「命令行 `--data` → `DOCWEAVE_DATA_DIR` → 仓库根目录 `data/`」，其中"仓库根目录"由模块自身位置
-  推出而**不依赖进程 cwd**，所以从平台根目录启动与从 `apps/docweave/` 启动加载的是同一套数据。
+  推出而**不依赖进程 cwd**，所以从平台根目录启动与从 `apps/docs/` 启动加载的是同一套数据。
 - 数据库里**没有**指向旧目录的绝对路径：blob 按内容寻址（文件名即 SHA-256），任务快照与产物只存
   blob id 与文件名。因此本轮不需要、也不会对数据库做字符串替换。已在迁移后逐条核对（§7）。
 - 密钥材料全在库内（服务端根密钥、`oidc_keys`），不重新生成、不新建第二套账户服务。
@@ -158,7 +158,7 @@ DocWeave 与确有共用的包。本文件是执行记录：先写映射与恢�
 
 1. Git：HEAD 与迁移前一致、两个分支与 remote 未变、`git log` 可达旧提交、`git status` 无丢失。
 2. 数据：44 张表逐表行数与备份清单一致；69 个 project 的 id 与归属抽样比对；695 个 blob 摘要清单重算比对。
-3. 配置：从平台根目录与从 `apps/docweave/` 两个 cwd 启动，`manage`/`info` 报告同一个数据目录与同一套计数。
+3. 配置：从平台根目录与从 `apps/docs/` 两个 cwd 启动，`manage`/`info` 报告同一个数据目录与同一套计数。
 4. 依赖边界：自动检查"应用不得导入另一个应用的内部源码"。
 5. 运行：根目录统一启动、三个模块分别启动、停止、日志；三条主链路（平台登录 / DocWeave 直达 / 机器自动化）。
 6. 单进程部署（`role=all`）：登录 → 工作台 → 账户页仍可用。
@@ -208,7 +208,7 @@ mv /Users/lihiko/repo/wegreen/DocWeave /Users/lihiko/repo/wegreen/platform-works
 1. **`ServiceError`、`Store`、`Identity`、`Sessions`、`Apps`、机器身份、OIDC 令牌存储移入共享层。**
    理由不是"两边都用到"，而是具体的：验证令牌的一方不是签发它的一方；判断"是不是这个工作空间的
    成员"的一方不该 import 账户服务。
-2. **`/api/auth/state`、`/me`、`/logout`、`/workspace` 移入 `platform_auth_client.session_routes`。**
+2. **`/api/auth/state`、`/me`、`/logout`、`/workspace` 移入 `synwevo_auth_client.session_routes`。**
    三个角色都要提供这四条；写两遍的那一遍会忘记重新核对工作空间成员资格。
 3. **账户与安全界面收归账户服务，工作台不再打包第二份。** 单进程部署下两个外壳由同一进程、同一
    源站提供（静态资源目录不同名，互不遮盖）；依赖方上这些路径改为服务端 303 重定向。

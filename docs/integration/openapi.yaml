@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
-  title: DocWeave 机器接口
+  title: Synwevo Docs 机器接口
   version: 1.0
-  description: "文档批量生成引擎的自动化接口。所有 /api/v1 路由都需要 API 密钥（Authorization: Bearer dw_…）。详见 docs/integration/api.md。"
+  description: "Synwevo Docs 的自动化接口。所有 /api/v1 路由都需要 API 密钥（Authorization: Bearer dw_…）。详见 docs/integration/api.md。"
 paths:
   /healthz:
     get:

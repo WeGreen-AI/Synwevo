@@ -1,22 +1,22 @@
 # 进度记录（用于接续）
 
-最后更新：2026-09-24（平台单仓库重组轮）
+最后更新：2026-09-24（Synwevo 品牌统一与仓库迁移轮）
 
 ## 当前位置
 
 | 项 | 值 |
 |---|---|
-| 仓库根目录 | `/Users/lihiko/repo/wegreen/platform-workspace`（本轮由 `.../DocWeave` 改名而来，Git 历史原样保留） |
+| 仓库根目录 | `/Users/lihiko/repo/wegreen/synwevo`（2026-09-23 由 `.../DocWeave` 改名为 `platform-workspace`，2026-09-24 再改名为 `synwevo`；Git 历史原样保留） |
 | 分支 | `upgrade/automation-api-ui` |
 | 基线提交 | `08f2e81`（升级前快照，可回滚到此） |
-| 最新提交 | 见 `git log -1`（本轮三个提交：`676a6a3` / `63811c5` / `e1ae385`） |
-| 远端 | `WeGreen-AI/DocWeave`：当前环境无凭据，**尚未推送**，全部提交只在本地 |
+| 最新提交 | 见 `git log -1` |
+| 远端 | `origin` → `git@github.com:WeGreen-AI/Synwevo.git`（本轮切换）。目标仓库可访问但**是空的**；**尚未推送**，全部提交只在本地 |
 | 服务器 | **尚未部署。** 本轮全部在本机完成，未改生产 DNS、未建隧道、未公开暴露 |
 
 
 ## 平台单仓库重组轮（本轮，2026-09-24）
 
-把仓库变成**平台母仓库**：一个 Git 仓库，内部分开门户、统一账户服务、DocWeave 与三个共享包，
+把仓库变成**平台母仓库**：一个 Git 仓库，内部分开门户、Synwevo Account、Synwevo Docs 与三个共享包，
 各自独立构建、启动与测试，根目录提供统一的运行命令。
 
 上一轮的结论是「不搬目录」，理由写在 `docs/architecture/platform.md` §1。本轮搬了，但没有取消
@@ -27,14 +27,14 @@
 |---|---|
 | `676a6a3` | 先写下迁移映射、Git 保全方式、数据处理与恢复步骤，再动手 |
 | `63811c5` | 213 个文件**纯移动**（`git mv`，全部识别为重命名），不改一行导入 |
-| `e1ae385` | 真实的包边界：五个可安装发行版、账户服务不依赖 DocWeave、账户界面只剩一份、角色组装层 |
+| `e1ae385` | 真实的包边界：五个可安装发行版、账户服务不依赖 Synwevo Docs、账户界面只剩一份、角色组装层 |
 
 ### 本轮已验证完成（本机实跑，非推断）
 
 | 验证 | 结果 |
 |---|---|
 | 后端测试（三个套件） | **650 passed, 1 skipped**；迁移前基线是 644 passed, 1 skipped |
-| 模块级单跑（`apps/docweave` 目录内） | 306 passed, 1 skipped |
+| 模块级单跑（`apps/docs` 目录内） | 306 passed, 1 skipped |
 | 模块依赖边界 `scripts/check_boundaries.py` | 156 个文件 / 7 个边界 / **0 处越界**；无 `sys.path` 改写、无机器绝对路径、无指向旧目录的符号链接 |
 | 前端 `npm run typecheck && npm run build` | 三个外壳全部通过 |
 | 统一登录链路 `tests/integration/verify_sso.py` | **38/38**（在重组后的三个进程上实跑） |
@@ -42,7 +42,7 @@
 | `default` 历史数据空间 | 仍是 `legacy / pending_claim / 0 成员`——本轮没有认领，也没有重置 |
 | 真实库迁移演练 `tests/integration/migration_rehearsal.py` | **15/15**，隔离副本、来源只读 |
 | 一致性备份与恢复演练 | `backup` → `verify-restore` **20/20**，在隔离副本上真的恢复出来再逐项比对 |
-| 数据目录解析 | 从平台根目录、`apps/docweave/`、`services/identity/` 三处启动，加载的是同一个库 |
+| 数据目录解析 | 从平台根目录、`apps/docs/`、`services/identity/` 三处启动，加载的是同一个库 |
 | 空数据目录守卫 | `up` 在没有 `docweave.sqlite3` 时退出码 2 并说明原因，不静默建空库 |
 | 干净检出 | `git clone` 到新目录 → `python scripts/platform.py setup` 一条命令装好并构建成功 |
 | 浏览器实跑 | 见下 |
@@ -50,11 +50,11 @@
 
 ### 三条主链路（本轮真实执行）
 
-1. **平台入口**：门户 → 统一登录（账户服务，输一次口令）→ 门户首页看到 DocWeave 卡片 →
+1. **平台入口**：门户 → 统一登录（账户服务，输一次口令）→ 门户首页看到 Synwevo Docs 卡片 →
    打开工作台（不再要口令）→ 批量生成 10 份 → 下载。产物**打开核对**：每份内容不同，
    客户名称/编号/日期/金额逐条正确，blob 的 SHA-256 与文件名相符。
 2. **应用直达**：清空会话后直接打开深链接 `docweave.localhost:8765/p/p_…` → 跳统一登录 →
-   **回到该深链接本身**（不是首页）。停掉门户后，账户服务 + DocWeave 照常工作
+   **回到该深链接本身**（不是首页）。停掉门户后，账户服务 + Synwevo Docs 照常工作
    （`/healthz` 200 / 200，门户 000）。
 3. **机器自动化**：服务账户取令牌 → 建项目 → 上传来源与模板 → 建字段与映射 → 预检 → 提交 →
    事件流 → 下载 10 个真实 `.docx`，全程无浏览器、无 Cookie。负面用例同样实跑：
@@ -64,7 +64,7 @@
 ### 界面实跑（真实浏览器）
 
 门户首页、登录页、账户与安全（账户信息 / 工作空间 / 登录设备与撤销 / Passkey / 两步验证）、
-平台管理后台（概览 / 账户 / 工作空间 / 审计）、DocWeave 工作台与生成结果页，桌面与 375px 窄屏
+平台管理后台（概览 / 账户 / 工作空间 / 审计）、Synwevo Docs 工作台与生成结果页，桌面与 375px 窄屏
 各走一遍；静态资源、样式与字体正常，本轮没有引入运行错误。管理后台的工作空间视图只返回**数量**
 （`projects: 1`），不返回项目名称或内容——平台管理员不因迁移获得业务文档读取权限。
 
@@ -77,21 +77,21 @@
 ### 本轮未做
 
 * **未部署到服务器**：未改生产 DNS、未建隧道、未公开暴露、未推送任何提交。
-* 未创建、删除或改名远程仓库；`origin` 仍是 `git@github.com:WeGreen-AI/DocWeave.git`。
+* 未创建、删除或改名远程仓库；当时 `origin` 是 `git@github.com:WeGreen-AI/DocWeave.git`（2026-09-24 的品牌轮才切换）。
 * 未做工作流编排产品；新应用与编排类产品的接入方式写在
   [`docs/integration/app-onboarding.md`](../integration/app-onboarding.md) §10。
 
 ## 平台身份轮（上一轮）
 
-把 DocWeave 的身份体系提升为多应用平台账户体系：账户服务是 OIDC Provider（Authlib
-1.6.5，BSD-3-Clause），平台门户和 DocWeave 是两个独立接入的客户端。
+把 Synwevo Docs 的身份体系提升为多应用平台账户体系：账户服务是 OIDC Provider（Authlib
+1.6.5，BSD-3-Clause），Synwevo Workspace和 Synwevo Docs 是两个独立接入的客户端。
 
 | 提交 | 内容 |
 |---|---|
 | `b0af190` | Provider 数据模型与核心：持久化签名密钥、客户端登记、授权码（PKCE S256、单次使用、重放即撤销）、令牌、id_token 携带 `auth_time`/`amr`/`sid` |
 | `e2e9908` | 接上 HTTP 端点；刷新令牌轮换 + 重放检测；`/oidc/logout` 与后通道登出；OpenAPI 组件裁剪 |
-| `f7f11dd` | DocWeave 作为依赖方（BFF）；三角色边界；本机三来源运行与量测脚本；应用/客户端/密钥 CLI |
-| `10cd2bd` | 平台门户、账户服务独立外壳、依赖方不再显示口令框、真实库迁移演练脚本 |
+| `f7f11dd` | Synwevo Docs 作为依赖方（BFF）；三角色边界；本机三来源运行与量测脚本；应用/客户端/密钥 CLI |
+| `10cd2bd` | Synwevo Workspace、账户服务独立外壳、依赖方不再显示口令框、真实库迁移演练脚本 |
 | `3598125` | 平台管理后台与历史数据认领；带作用域的重认证（此前只有一个硬编码的 `mfa`） |
 | `7cca309` | 机器身份：服务账户（客户端凭据）与用户委托；每次调用重新核验 |
 | `1b82b9a` | Passkey / WebAuthn：登记、登录、改名、删除；`amr` 区分持有与已验证本人 |
@@ -118,15 +118,15 @@
 | 新建工作空间没有启用任何应用——登录成功后被告知什么都不能用 | 本机起服务后用 CLI 建账号，链路走不通 |
 | 换码请求被环境里的 `HTTP_PROXY` 静默劫持（`NO_PROXY` 不匹配 `accounts.localhost`） | 浏览器跳转全对，只有服务端换码失败 |
 | uvicorn 绑了 `127.0.0.1` 而域名先解析到 `::1`；浏览器会重试，httpx 不会 | 同上，逐层排查到 socket |
-| 账户服务渲染 DocWeave 工作台，把一次正确的角色拒绝显示成坏页面 | 浏览器打开 `accounts.localhost` |
-| 依赖方显示自己的口令框，而它根本不提供 `/api/auth/login` | 浏览器点门户上的 DocWeave 卡片 |
-| 门户/账户服务进程会把 DocWeave 的启动地址覆盖成自己的 | 点卡片落回登录页 |
+| 账户服务渲染 Synwevo Docs 工作台，把一次正确的角色拒绝显示成坏页面 | 浏览器打开 `accounts.localhost` |
+| 依赖方显示自己的口令框，而它根本不提供 `/api/auth/login` | 浏览器点门户上的 Synwevo Docs 卡片 |
+| 门户/账户服务进程会把 Synwevo Docs 的启动地址覆盖成自己的 | 点卡片落回登录页 |
 | 畸形的后通道登出令牌逃逸成 500，让提供方永远重试 | 写否定用例时 Authlib 抛了自己的异常类型 |
 | 只有一个硬编码 `mfa` 的重认证作用域：为加 Passkey 证明身份同时解锁了管理操作 | 写认领流程时发现 |
 | 刚登录满足所有作用域，于是刚登录的管理员永远看不到确认提示 | 同上 |
 | `/api/admin/` 在业务角色上可达（角色过滤器是「列黑名单」而非默认拒绝） | 写角色边界用例时发现 |
 | 认领完成后工作空间仍叫「历史数据（待认领）」，切换器每天这么显示 | 浏览器里看见 |
-| 门户/账户服务进程覆盖 DocWeave 的启动地址（`app_id()` 默认值是 `docweave`） | 点卡片落回登录页 |
+| 门户/账户服务进程覆盖 Synwevo Docs 的启动地址（`app_id()` 默认值是 `docweave`） | 点卡片落回登录页 |
 | `/api/auth/forgot` 在邮件失败时 503、未知地址 200——防枚举端点变成枚举工具 | 写枚举用例时发现 |
 | `deliver or default`：可调用但为假值的对象被悄悄换成真实网络投递 | 测试替身是个空列表，于是测试在偷偷打真网络 |
 | 提交的 OpenAPI 文件带着它并不描述的路由的组件 | 新增表单路由后同步检查失败 |
@@ -144,7 +144,7 @@
 | 界面与操作 | `73d8e84` | 命令面板、映射列表键盘与批量操作、主题、记忆布局、可调面板（DW-043…046） |
 | 性能 | `5a0c62b` | 大表分页复用已解析工作簿、去掉重复窗口请求、测试路径修复（DW-040…042） |
 | 文档与 E2E | `9ac6764` | `ui_e2e_keyboard.py`、`docs/design.md`、更正过时的能力声明 |
-| 安全 | `4b3bbd0` | 监听守卫真正生效（DW-047，**P0**：此前 `DOCWEAVE_HOST=0.0.0.0` 可无鉴权对外提供整个界面） |
+| 安全 | `4b3bbd0` | 监听守卫真正生效（DW-047，**P0**：此前 `SYNWEVO_HOST=0.0.0.0` 可无鉴权对外提供整个界面） |
 | 接口契约 | `cd7c6cf` | 鉴权失败的响应也带 `X-Request-ID`（DW-048） |
 | 验证记录 | `9fb975a` | `docs/quality/verification.md` |
 | 帧时间实测 | `099a926` | `scripts/ui_perf.py`，可见窗口真实帧计时 |
@@ -164,9 +164,9 @@
 | 项 | 提交 | 证据 |
 |---|---|---|
 | 唯一跳过项（§7.2） | `04d301f` | 确认是 `test_regression_cases.py::test_committed_cases_still_pass`——`regression/` 为空导致「已提交用例」链路在 CI 中等于没有覆盖。播种一个**明确标注为合成**的用例（每组一份 + 重复明细，15 样本，44 KB）。现在 **203 passed, 0 skipped**。并证明它不是空测试：把期望值改掉后 `run()` 返回 `ok=False` 并给出逐字段 diff |
-| 测试污染根因（§6.1） | `0f6b307` | 数据目录在**创建时**记录 `instance_kind` 并由 `/healthz` 暴露；只在目录还为空时写入，因此对已有真实项目的目录设置 `DOCWEAVE_TEST_INSTANCE` **永远无法**把它改成测试实例（有测试锁定）。`scripts/_testenv.py` 要么自动起一个隔离实例，要么拒绝任何 `/healthz` 不报 `instance=test` 的服务器（localhost 或 8765 端口都不算证据）。三套 E2E 默认隔离运行并通过；指向正式实例被拒绝 |
+| 测试污染根因（§6.1） | `0f6b307` | 数据目录在**创建时**记录 `instance_kind` 并由 `/healthz` 暴露；只在目录还为空时写入，因此对已有真实项目的目录设置 `SYNWEVO_TEST_INSTANCE` **永远无法**把它改成测试实例（有测试锁定）。`scripts/_testenv.py` 要么自动起一个隔离实例，要么拒绝任何 `/healthz` 不报 `instance=test` 的服务器（localhost 或 8765 端口都不算证据）。三套 E2E 默认隔离运行并通过；指向正式实例被拒绝 |
 | **DW-052（P0 崩溃）** | `0ecda3b` | 无 PyMuPDF 部署下并发读 PDF **让整个进程 SIGBUS 崩溃**（退出码 138，无 traceback）。8 线程 × 200 次读取复现。修复：`pdfium_shim.LOCK` 进程级可重入锁。修复后 `ok=200/200`、退出码 0。回归测试跑在**子进程**里，去掉锁即失败 |
-| DW-053 / DW-054 | `1d54e40` | 文档里的 `DOCWEAVE_LO_PROFILE` 固定路径会让多进程共用 LibreOffice 配置目录（`_LO_LOCK` 跨进程无效）→ 改为父目录语义，始终 `<父目录>/profile-<PID>`；图片模板忽略可配置像素上限且未加载解压炸弹防护 → 改走 `LIMITS` |
+| DW-053 / DW-054 | `1d54e40` | 文档里的 `SYNWEVO_DOCS_LO_PROFILE` 固定路径会让多进程共用 LibreOffice 配置目录（`_LO_LOCK` 跨进程无效）→ 改为父目录语义，始终 `<父目录>/profile-<PID>`；图片模板忽略可配置像素上限且未加载解压炸弹防护 → 改走 `LIMITS` |
 
 ## 第三轮调查结论（6 个并行探针，已完成）
 
@@ -248,7 +248,7 @@
 
    | 处理器 | 实测最坏情况 | 状态 |
    |---|---|---|
-   | `POST /api/projects/{pid}/jobs` | **74.4 s @ 2 万条**（= `DOCWEAVE_MAX_RECORDS_PER_JOB` 默认值） | **未修**。本该只是"接收任务"的请求，在返回 id 之前为每条记录建计划、渲染文件名、插入 job_item（jobs.py:526）。`/api/v1` 那条声明了 `202`，但这个 202 迟到 74 秒；UI 那条干脆返回 200。期间没有进度事件，也无法取消 |
+   | `POST /api/projects/{pid}/jobs` | **74.4 s @ 2 万条**（= `SYNWEVO_DOCS_MAX_RECORDS_PER_JOB` 默认值） | **未修**。本该只是"接收任务"的请求，在返回 id 之前为每条记录建计划、渲染文件名、插入 job_item（jobs.py:526）。`/api/v1` 那条声明了 `202`，但这个 202 迟到 74 秒；UI 那条干脆返回 200。期间没有进度事件，也无法取消 |
    | 预检 `generation-summary` / `/api/v1/…/preflight` | 5.3 ms @100，9.2 s @5000，**74.4 s @2 万**；线性约 3.7 ms/条，**无缓存**（同样参数第二次仍要 8.0 s） | **未修**。同一个原因；纯 Python 受 GIL 限制，4 个并发调用者基本串行 |
    | UI 的 ZIP 下载 `/api/jobs/{jid}/zip` | RSS **+222 MB**（需要约 13 MB） | **已修**：改为从磁盘流式传输，并删掉 `JobService.zip()`。`/api/v1` 一直是对的，只有 UI 这条在缓冲。3 GB 上限的容器上这是一次 OOM 而不是一个错误页 |
    | PDF 全文搜索 | 每一页都重新打开一次 PDF | 未修 |

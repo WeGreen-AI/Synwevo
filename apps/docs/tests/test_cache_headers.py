@@ -24,11 +24,11 @@ DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 
 
 def _client(tmp_path, monkeypatch, *, role: str = "all", mode: str = "none") -> TestClient:
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", mode)
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    monkeypatch.setenv("DOCWEAVE_ROLE", role)
-    import docweave.api.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", mode)
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_ROLE", role)
+    import synwevo_docs.api.app as app_mod
     importlib.reload(app_mod)
     return TestClient(app_mod.create_app(str(tmp_path), start_jobs=False))
 
@@ -119,7 +119,7 @@ def test_a_document_preview_is_revalidated_not_cached(api, fixtures):
 def test_the_etag_needs_the_same_authorization_as_the_render():
     """A validator obtainable without authorization would leak whether a document changed."""
     import inspect
-    from docweave.views import Views
+    from synwevo_docs.views import Views
     src = inspect.getsource(Views.source_page_etag)
     assert "self.app.get_source(" in src, "ETag 必须走与渲染相同的对象查找"
     assert "render_page_png" not in src, "算 ETag 不应当先把页面渲染出来"
@@ -140,7 +140,7 @@ def test_an_oversized_editor_document_is_refused_before_it_is_parsed(api):
     Images arrive inline as data URIs, so an 11 MB photo becomes ~16 MB inside the body. On a
     container limited to 3 GB that is an out-of-memory kill, not an error page.
     """
-    from docweave.engine.limits import LIMITS
+    from synwevo_docs.engine.limits import LIMITS
     oversized = "x" * (LIMITS.max_editor_body_bytes + 1024)
     r = api.c.post("/api/templates/builtin",
                    json={"name": "太大了", "kind": "builtin_doc",

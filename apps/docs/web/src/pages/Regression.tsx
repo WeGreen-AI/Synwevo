@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { del, get, post } from "@platform/auth-client";
-import { useDialog, useToast } from "@platform/ui";
+import { del, get, post } from "@synwevo/auth-client";
+import { useDialog, useToast } from "@synwevo/ui";
 
 export default function RegressionPage() {
   const [cases, setCases] = useState<any[] | null>(null);

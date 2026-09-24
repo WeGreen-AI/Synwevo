@@ -27,7 +27,7 @@ import urllib.request
 
 ACCOUNTS = "http://accounts.localhost:8770"
 PORTAL = "http://portal.localhost:8769"
-DOCWEAVE = "http://docweave.localhost:8765"   # 与 scripts/platform.py 的默认端口一致
+DOCS = "http://docweave.localhost:8765"   # 与 scripts/platform.py 的默认端口一致
 
 PASS, FAIL = "✓", "✗"
 results: list[tuple[bool, str, str]] = []
@@ -88,9 +88,10 @@ def main() -> int:
     ap.add_argument("--password", required=True)
     ap.add_argument("--accounts", default=ACCOUNTS)
     ap.add_argument("--portal", default=PORTAL)
-    ap.add_argument("--docweave", default=DOCWEAVE)
+    ap.add_argument("--docs", "--docweave", dest="docs", default=DOCS,
+                    help="Synwevo Docs 地址（--docweave 是旧名字，仍然接受）")
     args = ap.parse_args()
-    acc, portal, dw = args.accounts.rstrip("/"), args.portal.rstrip("/"), args.docweave.rstrip("/")
+    acc, portal, dw = args.accounts.rstrip("/"), args.portal.rstrip("/"), args.docs.rstrip("/")
     acc_host = urllib.parse.urlparse(acc).hostname
     dw_host = urllib.parse.urlparse(dw).hostname
     portal_host = urllib.parse.urlparse(portal).hostname

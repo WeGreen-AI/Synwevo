@@ -24,7 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from platform_core.http import repo_root
+from synwevo_core.http import repo_root
 
 ROOT = repo_root() or Path(__file__).resolve().parents[2]
 
@@ -132,7 +132,7 @@ def main() -> int:
     src_mtime = src_db.stat().st_mtime
 
     print("\n【2】在副本上跑迁移")
-    from platform_core.store import Store
+    from synwevo_core.store import Store
     store = Store(work)                       # opening it runs _migrate
     after = census(dst_db)
 

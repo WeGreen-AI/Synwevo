@@ -10,11 +10,11 @@ import threading
 
 import pytest
 
-from platform_identity import mail as mail_mod
-from platform_core.identity import Identity
-from platform_identity.invites import Invites
-from platform_core.errors import ServiceError
-from platform_core.store import Store, now
+from synwevo_identity import mail as mail_mod
+from synwevo_core.identity import Identity
+from synwevo_identity.invites import Invites
+from synwevo_core.errors import ServiceError
+from synwevo_core.store import Store, now
 
 PW = "a-sufficiently-long-passphrase"
 PW2 = "another-sufficiently-long-pass"
@@ -267,8 +267,8 @@ def test_expired_email_token_is_refused(env):
 
 # ---------------------------------------------------------------- outbox
 def test_mail_refuses_to_pretend_when_unconfigured(env, monkeypatch):
-    monkeypatch.delenv("DOCWEAVE_SMTP_HOST", raising=False)
-    monkeypatch.delenv("DOCWEAVE_MAIL_MODE", raising=False)
+    monkeypatch.delenv("SYNWEVO_SMTP_HOST", raising=False)
+    monkeypatch.delenv("SYNWEVO_MAIL_MODE", raising=False)
     m = mail_mod.Mailer(env["store"], start=False)
     assert mail_mod.mode() == "disabled"
     with pytest.raises(ServiceError) as e:
@@ -277,8 +277,8 @@ def test_mail_refuses_to_pretend_when_unconfigured(env, monkeypatch):
 
 
 def test_file_mode_writes_a_clearly_labelled_file(env, monkeypatch, tmp_path):
-    monkeypatch.setenv("DOCWEAVE_MAIL_MODE", "file")
-    monkeypatch.setenv("DOCWEAVE_MAIL_DIR", str(tmp_path / "mail"))
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "mail"))
     m = mail_mod.Mailer(env["store"], start=False)
     m.enqueue("a@example.com", "主题", "正文 https://example.com/invite?token=x", kind="invite", ref_id="iv1")
     assert m.drain_once() == 1
@@ -290,7 +290,7 @@ def test_file_mode_writes_a_clearly_labelled_file(env, monkeypatch, tmp_path):
 
 
 def test_a_failed_send_is_recorded_and_retried_not_reported_as_sent(env, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
     m = mail_mod.Mailer(env["store"], start=False)
     monkeypatch.setattr(m, "_deliver", lambda row: (_ for _ in ()).throw(OSError("连接被拒绝")))
     m.enqueue("a@example.com", "s", "b", kind="invite", ref_id="iv2")
@@ -303,7 +303,7 @@ def test_a_failed_send_is_recorded_and_retried_not_reported_as_sent(env, monkeyp
 
 
 def test_links_use_the_configured_public_url_not_a_request_host(monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_PUBLIC_URL", "https://docs.example.org")
+    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "https://docs.example.org")
     subject, body = mail_mod.invitation_mail(workspace="W", inviter="I", role_label="编辑成员",
                                              token="tok123", expires_h=168)
     assert "https://docs.example.org/invite?token=tok123" in body
@@ -316,13 +316,13 @@ def http(tmp_path, monkeypatch):
     """A real server with the file mail sink, so the link is read out of a real message."""
     import importlib
     from fastapi.testclient import TestClient
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    monkeypatch.setenv("DOCWEAVE_MAIL_MODE", "file")
-    monkeypatch.setenv("DOCWEAVE_MAIL_DIR", str(tmp_path / "mail"))
-    monkeypatch.setenv("DOCWEAVE_PUBLIC_URL", "https://docs.example.org")
-    import platform_identity.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "mail"))
+    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "https://docs.example.org")
+    import synwevo_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -336,7 +336,7 @@ def http(tmp_path, monkeypatch):
 
 
 def _csrf(c):
-    from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
+    from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
     return {CSRF_HEADER: c.cookies.get(CSRF_COOKIE)}
 
 
@@ -401,7 +401,7 @@ def test_invitation_list_shows_real_mail_state(http):
 def test_an_invitation_is_withdrawn_when_mail_cannot_be_queued(http, monkeypatch):
     """No delivery means no invitation — a link nobody receives is not an invitation."""
     c, ws, store = http["c"], http["ws"], http["store"]
-    monkeypatch.setenv("DOCWEAVE_MAIL_MODE", "disabled")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "disabled")
     r = c.post(f"/api/auth/workspaces/{ws}/invitations",
                json={"email": "nope@example.com", "role": "viewer"}, headers=_csrf(c))
     assert r.status_code == 503 and r.json()["error"] == "mail_not_configured"

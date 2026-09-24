@@ -1,17 +1,21 @@
 {
-  "name": "@platform/auth-client",
+  "name": "@synwevo/auth-client",
   "version": "1.0.0",
   "private": true,
-  "description": "浏览器端接入统一身份：API 客户端、会话上下文与平台导航",
+  "description": "浏览器端接入 Synwevo Account：API 客户端、会话上下文与平台导航",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@platform/ui": "1.0.0"
+    "@synwevo/ui": "1.0.0"
   },
   "peerDependencies": {
     "react": ">=19",
     "react-dom": ">=19"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WeGreen-AI/Synwevo.git"
   }
 }

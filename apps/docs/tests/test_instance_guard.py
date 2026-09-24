@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from platform_core.store import Store
+from synwevo_core.store import Store
 
 
 def _store(tmp_path, name="d"):
@@ -18,31 +18,31 @@ def _store(tmp_path, name="d"):
 
 
 def test_fresh_dir_without_the_env_var_is_normal(tmp_path, monkeypatch):
-    monkeypatch.delenv("DOCWEAVE_TEST_INSTANCE", raising=False)
+    monkeypatch.delenv("SYNWEVO_TEST_INSTANCE", raising=False)
     assert _store(tmp_path).instance_kind() == "normal"
 
 
 @pytest.mark.parametrize("val", ["1", "true", "YES", "on"])
 def test_fresh_dir_with_the_env_var_is_test(tmp_path, monkeypatch, val):
-    monkeypatch.setenv("DOCWEAVE_TEST_INSTANCE", val)
+    monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", val)
     assert _store(tmp_path, val).instance_kind() == "test"
 
 
 def test_dir_holding_real_projects_stays_normal(tmp_path, monkeypatch):
     """The important one: setting the env var later must NOT unlock someone's real data."""
-    monkeypatch.delenv("DOCWEAVE_TEST_INSTANCE", raising=False)
+    monkeypatch.delenv("SYNWEVO_TEST_INSTANCE", raising=False)
     s = _store(tmp_path)
     s.execute("INSERT INTO projects (id, name, created_at, updated_at) VALUES ('p_real','真实项目',1,1)")
     assert s.instance_kind() == "normal"
 
-    monkeypatch.setenv("DOCWEAVE_TEST_INSTANCE", "1")
+    monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
     assert Store(tmp_path / "d").instance_kind() == "normal", "已有真实项目的数据目录不能被重新标记为测试实例"
 
 
 def test_kind_is_stable_across_reopen(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_TEST_INSTANCE", "1")
+    monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
     assert _store(tmp_path).instance_kind() == "test"
-    monkeypatch.delenv("DOCWEAVE_TEST_INSTANCE", raising=False)
+    monkeypatch.delenv("SYNWEVO_TEST_INSTANCE", raising=False)
     assert _store(tmp_path).instance_kind() == "test", "标记一旦写入就不应随环境变量变化"
 
 
@@ -60,14 +60,14 @@ def test_healthz_marks_a_test_instance_and_stays_quiet_otherwise(tmp_path, monke
 
     def body_for(marked: bool):
         d = tmp_path / ("t" if marked else "n")
-        monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(d))
-        monkeypatch.setenv("DOCWEAVE_UI_AUTH", "none")
-        monkeypatch.delenv("DOCWEAVE_ROLE", raising=False)
+        monkeypatch.setenv("SYNWEVO_DATA_DIR", str(d))
+        monkeypatch.setenv("SYNWEVO_UI_AUTH", "none")
+        monkeypatch.delenv("SYNWEVO_ROLE", raising=False)
         if marked:
-            monkeypatch.setenv("DOCWEAVE_TEST_INSTANCE", "1")
+            monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
         else:
-            monkeypatch.delenv("DOCWEAVE_TEST_INSTANCE", raising=False)
-        import docweave.api.app as app_mod
+            monkeypatch.delenv("SYNWEVO_TEST_INSTANCE", raising=False)
+        import synwevo_docs.api.app as app_mod
         importlib.reload(app_mod)
         return TestClient(app_mod.create_app(str(d), start_jobs=False)).get("/healthz").json()
 
@@ -86,10 +86,10 @@ def test_readyz_neither_writes_a_row_nor_leaves_a_file_in_the_blob_tree(tmp_path
     import importlib
     from fastapi.testclient import TestClient
     d = tmp_path / "r"
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(d))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "none")
-    monkeypatch.delenv("DOCWEAVE_ROLE", raising=False)
-    import docweave.api.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(d))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "none")
+    monkeypatch.delenv("SYNWEVO_ROLE", raising=False)
+    import synwevo_docs.api.app as app_mod
     importlib.reload(app_mod)
     c = TestClient(app_mod.create_app(str(d), start_jobs=False))
 
@@ -101,7 +101,7 @@ def test_readyz_neither_writes_a_row_nor_leaves_a_file_in_the_blob_tree(tmp_path
     after = wal.stat().st_size if wal.exists() else 0
     assert after == before, f"50 次探针让 WAL 增长了 {after - before} 字节"
 
-    from platform_core.store import Store
+    from synwevo_core.store import Store
     assert Store(d).one("SELECT COUNT(*) AS n FROM meta WHERE key='readyz'")["n"] == 0
     assert not list((d / "blobs").glob(".*")), "探针文件不能留在内容寻址目录里"
     assert c.get("/readyz").json().keys() == {"status", "checks"}, "匿名响应不带诊断信息"

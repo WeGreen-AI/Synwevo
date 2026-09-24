@@ -7,7 +7,7 @@ import zipfile
 import docx
 import pytest
 
-from platform_core.auth import Auth
+from synwevo_core.auth import Auth
 
 
 @pytest.fixture()
@@ -161,7 +161,7 @@ def test_path_upload_is_restricted(api, keys, fixtures, monkeypatch, tmp_path):
     c, h = api.c, keys["rw"]
     pid = _ok(c.post("/api/v1/projects", json={"name": "路径"}, headers=h))["id"]
     assert c.post(f"/api/v1/projects/{pid}/files", json={"path": str(fixtures / "测试_客户100.xlsx")}, headers=h).status_code == 400
-    import docweave.api.v1 as v1
+    import synwevo_docs.api.v1 as v1
     monkeypatch.setattr(v1, "IMPORT_ROOTS", [str(tmp_path)])
     assert c.post(f"/api/v1/projects/{pid}/files", json={"path": "/etc/hosts"}, headers=h).status_code == 403
     assert c.post(f"/api/v1/projects/{pid}/files", json={"path": str(tmp_path / "nope.xlsx")}, headers=h).status_code == 404
@@ -194,7 +194,7 @@ def test_definition_validation_rejects_unknown_and_incompatible(api, keys, fixtu
 
 
 def test_rate_limit_and_request_id(api, keys, monkeypatch):
-    import platform_core.http as A
+    import synwevo_core.http as A
     c = api.c
     rid = c.get("/api/v1/whoami", headers={**keys["rw"], "X-Request-ID": "trace-123"})
     assert rid.headers["X-Request-ID"] == "trace-123"
@@ -271,7 +271,7 @@ def test_signed_link_origin_survives_a_reverse_proxy(api, keys, fixtures, monkey
     it reports the origin's own address — handing the caller a token on a plaintext URL that
     points at their own machine.
     """
-    import docweave.api.v1 as v1
+    import synwevo_docs.api.v1 as v1
     c, h = api.c, keys["rw"]
     pid = _prepared(api, keys, fixtures)
     job = _wait(api, keys, _ok(c.post(f"/api/v1/projects/{pid}/jobs", json={"formats": ["docx"]}, headers=h))["id"])

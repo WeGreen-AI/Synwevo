@@ -11,9 +11,9 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-from platform_core.identity import Identity
-from platform_core.sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER
-from platform_core.store import Store, now
+from synwevo_core.identity import Identity
+from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER
+from synwevo_core.store import Store, now
 
 PW = "a-sufficiently-long-passphrase"
 
@@ -21,10 +21,10 @@ PW = "a-sufficiently-long-passphrase"
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
     d = tmp_path / "data"
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(d))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")       # TestClient speaks http
-    import platform_server.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(d))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")       # TestClient speaks http
+    import synwevo_server.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(d), start_jobs=False)
     store = Store(d)
@@ -238,14 +238,14 @@ def test_login_success_and_failure_are_both_audited_without_secrets(env):
 
 # ---------------------------------------------------------------- backwards compatibility
 def test_basic_mode_still_works_untouched(tmp_path, monkeypatch):
-    """The deployed instance runs DOCWEAVE_UI_AUTH=basic; adding accounts must not break it."""
+    """The deployed instance runs SYNWEVO_UI_AUTH=basic; adding accounts must not break it."""
     import base64
     d = tmp_path / "b"
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(d))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "basic")
-    from platform_core.auth import Auth
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(d))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "basic")
+    from synwevo_core.auth import Auth
     Auth(Store(d)).add_ui_user("probe", "probe-pass-123")
-    import platform_server.app as app_mod
+    import synwevo_server.app as app_mod
     importlib.reload(app_mod)
     c = TestClient(app_mod.create_app(str(d), start_jobs=False))
     assert c.get("/api/projects").status_code == 401
@@ -264,12 +264,12 @@ def test_auth_state_reports_the_mode_so_the_ui_does_not_guess(tmp_path, monkeypa
     """
     import base64
     d = tmp_path / f"m-{mode}"
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(d))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", mode)
-    from platform_core.auth import Auth
-    from platform_core.store import Store
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(d))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", mode)
+    from synwevo_core.auth import Auth
+    from synwevo_core.store import Store
     Auth(Store(d)).add_ui_user("probe", "probe-pass-123")
-    import platform_server.app as app_mod
+    import synwevo_server.app as app_mod
     importlib.reload(app_mod)
     c = TestClient(app_mod.create_app(str(d), start_jobs=False))
     h = {"Authorization": "Basic " + base64.b64encode(b"probe:probe-pass-123").decode()} if mode == "basic" else {}

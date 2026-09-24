@@ -17,13 +17,13 @@ import tempfile
 import time
 from pathlib import Path
 
-APP = Path(__file__).resolve().parents[1]              # apps/docweave
+APP = Path(__file__).resolve().parents[1]              # apps/docs
 
 import openpyxl  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from docweave.api.app import create_app  # noqa: E402
-from platform_core.http import repo_root  # noqa: E402
+from synwevo_docs.api.app import create_app  # noqa: E402
+from synwevo_core.http import repo_root  # noqa: E402
 
 ROOT = repo_root() or APP.parents[1]
 DATA = ROOT / "testdata"
@@ -135,8 +135,8 @@ def case_pdf_template(a: Api, n: int):
 
 
 def case_ocr():
-    from docweave.engine.images import to_png
-    from docweave.engine.ocr import ocr_png
+    from synwevo_docs.engine.images import to_png
+    from synwevo_docs.engine.ocr import ocr_png
     png = to_png((DATA / "测试_扫描单据.png").read_bytes())
     t0 = time.time()
     r = ocr_png(png)

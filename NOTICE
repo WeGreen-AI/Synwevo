@@ -1,10 +1,10 @@
-DocWeave —— 第三方组件与许可声明（NOTICE）
+Synwevo —— 第三方组件与许可声明（NOTICE）
 
-本文件列出 DocWeave 运行时使用或分发的第三方组件及其许可。
-本文件由 backend/docweave/licensing.py 的 THIRD_PARTY 表生成，
-两者由 backend/tests/test_licensing.py 保证一致。
+本文件列出 Synwevo 运行时使用或分发的第三方组件及其许可。
+本文件由 apps/docs/synwevo_docs/licensing.py 的 THIRD_PARTY 表生成，
+两者由 apps/docs/tests/test_licensing.py 保证一致。
 
-注意：本文件不是 DocWeave 自身的许可证。DocWeave 目前没有 LICENSE 文件，
+注意：本文件不是 Synwevo 自身的许可证。Synwevo 目前没有 LICENSE 文件，
 需由项目所有者选定后添加；在此之前不要假定任何授权条款。
 
 ==============================================================================
@@ -97,7 +97,7 @@ DocWeave —— 第三方组件与许可声明（NOTICE）
 
 关于 AGPL-3.0：
   PyMuPDF 以 AGPL-3.0（或 Artifex 商业许可）分发，其 wheel 中内含 MuPDF 原生二进制。
-  只要镜像中安装了 pymupdf，无论 DOCWEAVE_PDF_ENGINE 选的是哪个引擎，
+  只要镜像中安装了 pymupdf，无论 SYNWEVO_DOCS_PDF_ENGINE 选的是哪个引擎，
   AGPL-3.0 第 13 条的「向网络用户提供对应源代码」义务都适用。
   本服务通过 /api/source-code 提供对应源代码。
   若要真正不含 AGPL 依赖，请按 backend/requirements-pdfium.txt 构建，且不安装 pymupdf。

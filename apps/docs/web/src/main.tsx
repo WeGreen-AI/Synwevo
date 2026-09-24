@@ -1,15 +1,15 @@
 import { StrictMode, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { DialogProvider, ToastProvider, initTheme } from "@platform/ui";
-import { RequireSession, SessionProvider } from "@platform/auth-client";
+import { DialogProvider, ToastProvider, initTheme } from "@synwevo/ui";
+import { RequireSession, SessionProvider } from "@synwevo/auth-client";
 import Home from "./pages/Home";
 import Workspace from "./pages/Workspace";
 import JobPage from "./pages/JobPage";
 import AboutPage from "./pages/About";
 import RegressionPage from "./pages/Regression";
 import Capabilities from "./pages/Capabilities";
-import "@platform/ui/styles.css";
+import "@synwevo/ui/styles.css";
 
 const DocEditor = lazy(() => import("./pages/DocEditor"));
 const SheetEditor = lazy(() => import("./pages/SheetEditor"));
@@ -51,7 +51,7 @@ createRoot(document.getElementById("root")!).render(
 
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { get } from "@platform/auth-client";
+import { get } from "@synwevo/auth-client";
 
 function EditorSwitch() {
   const { tid } = useParams();

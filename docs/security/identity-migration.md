@@ -9,7 +9,7 @@
 
 ## 1. 迁移模型
 
-`apps/docweave/docweave/store.py: _migrate()`。**只向前、可重复执行、纯追加**。
+`apps/docs/synwevo_docs/store.py: _migrate()`。**只向前、可重复执行、纯追加**。
 
 ```
 schema v1  →  v2  （tenant / lease / runs / events / idempotency / api_keys / webhooks）
@@ -105,7 +105,7 @@ default 空间项目数 : 68        （另有 1 个已删除）
 
 ## 4. 旧认证模式
 
-`DOCWEAVE_UI_AUTH` 有四个值。它们是**共享口令，不是身份**：
+`SYNWEVO_UI_AUTH` 有四个值。它们是**共享口令，不是身份**：
 
 | 模式 | 含义 | 平台模式下的边界 |
 |---|---|---|
@@ -135,7 +135,7 @@ OIDC 协议端点（`/oidc/*`、`/.well-known/*`）和 SSO 端点（`/auth/*`）
 | 数据库 | `data/docweave.sqlite3` | 账户、工作空间、项目、任务、审计 |
 | blob 内容 | `data/blobs/`（内容寻址目录，实测 695 个文件） | 文件正文**不在库里** |
 | 签名私钥 | `oidc_keys.private_jwk`（**在库里**） | 丢了 = 所有已签发令牌失效 |
-| MFA 种子密钥 | `DOCWEAVE_SECRET`，或库内 `meta.server_secret` | 见下 |
+| MFA 种子密钥 | `SYNWEVO_SECRET`，或库内 `meta.server_secret` | 见下 |
 
 > **必须用 SQLite 的 backup API，不能 `cp`。** 这不是"可能落后一点"的问题。在**今天这个真实库**上
 > 实测：
@@ -153,7 +153,7 @@ OIDC 协议端点（`/oidc/*`、`/.well-known/*`）和 SSO 端点（`/auth/*`）
 > 而且它能正常启动——迁移会把这些表重新建成空表——所以失败的样子是"所有人都没有账户了"，
 > 不是"备份文件损坏"。
 >
-> `apps/docweave/scripts/snapshot.py` 与 `tests/integration/migration_rehearsal.py` 都用 backup API，因此不受影响
+> `apps/docs/scripts/snapshot.py` 与 `tests/integration/migration_rehearsal.py` 都用 backup API，因此不受影响
 > （快照验证里 44 张表全部恢复，20/20 通过）。
 
 ### 5.2 密钥的实情
@@ -162,11 +162,11 @@ OIDC 协议端点（`/oidc/*`、`/.well-known/*`）和 SSO 端点（`/auth/*`）
 
 ```
 MFA 种子密钥 : 取自库内 meta.server_secret —— 与密文同库，
-               拿到数据库副本即可解出 TOTP 种子；建议设置 DOCWEAVE_SECRET
+               拿到数据库副本即可解出 TOTP 种子；建议设置 SYNWEVO_SECRET
 ```
 
 这句话是有意保留的。**把密钥和它加密的密文放在同一个文件里，不叫加密。** 设置外部
-`DOCWEAVE_SECRET` 之后，数据库副本本身不足以解出 TOTP 种子；在那之前，一份数据库备份就是一份
+`SYNWEVO_SECRET` 之后，数据库副本本身不足以解出 TOTP 种子；在那之前，一份数据库备份就是一份
 可解密的 MFA 备份，必须按密钥级别保护。
 
 签名私钥同理：它就在 `oidc_keys` 表里。
@@ -183,7 +183,7 @@ MFA 种子密钥 : 取自库内 meta.server_secret —— 与密文同库，
 |---|---|---|
 | 已撤销凭据复活 | 备份里那条 `revoked_at` 还是 NULL | 恢复后立即 `UPDATE sessions/oauth_tokens SET revoked_at=…`，或轮换签名密钥使全部令牌失效 |
 | 任务重复执行 | 备份里的任务还是 `running`/`queued` | 恢复后把未完成任务标为需要人工裁决，不要让 worker 直接接手 |
-| 旧的无认证模式重新暴露 | 备份的运行配置是 `DOCWEAVE_UI_AUTH=none` | 认证模式来自**环境变量，不在数据库里**——恢复数据库不会改变它。但恢复整台机器会，必须单独核对 |
+| 旧的无认证模式重新暴露 | 备份的运行配置是 `SYNWEVO_UI_AUTH=none` | 认证模式来自**环境变量，不在数据库里**——恢复数据库不会改变它。但恢复整台机器会，必须单独核对 |
 
 此外：已认领的工作空间恢复到认领之前，会回到 `pending_claim/0 成员`，需要重新认领。这是正确的
 （审计记录也一并回退了），但要知道会发生。
@@ -238,4 +238,4 @@ python tests/integration/migration_rehearsal.py --from data --keep   # 保留副
 - 会话、SSO、撤权：[sessions.md](sessions.md)
 - 权限契约（平台角色、应用资格、逐对象授权）：[permissions.md](permissions.md)
 - 本机启动：[../development/local-platform.md](../development/local-platform.md)
-- 测试：`apps/docweave/tests/test_migration_v4.py`、`test_admin.py`（认领流程 21 条）
+- 测试：`apps/docs/tests/test_migration_v4.py`、`test_admin.py`（认领流程 21 条）

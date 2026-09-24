@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import "@platform/ui/styles.css";
+import "@synwevo/ui/styles.css";
 import "./portal.css";
 import { Portal } from "./Portal";
 

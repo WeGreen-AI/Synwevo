@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { get } from "@platform/auth-client";
+import { get } from "@synwevo/auth-client";
 
 interface About {
   pdf_engine: "pymupdf" | "pdfium";

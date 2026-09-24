@@ -609,7 +609,7 @@ class XlsxDoc:
     # ------------------------------------------------------------ finalize
     def finalize(self) -> bytes:
         """Write back the package.  When cells changed, every formula is re-evaluated by the
-        built-in engine (docweave.engine.formula) and its cached value written; formulas the
+        built-in engine (synwevo_docs.engine.formula) and its cached value written; formulas the
         engine does not support are computed by LibreOffice when installed, otherwise their
         stale cache is removed.  ``self.calc_report`` describes what happened."""
         self.calc_report = None

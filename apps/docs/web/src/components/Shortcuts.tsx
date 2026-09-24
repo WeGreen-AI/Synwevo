@@ -1,4 +1,4 @@
-import { Modal } from "@platform/ui";
+import { Modal } from "@synwevo/ui";
 
 const GROUPS: { title: string; items: [string, string][] }[] = [
   {

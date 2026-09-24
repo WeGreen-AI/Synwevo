@@ -6,15 +6,15 @@
 
 ```bash
 # 1) 启动（默认 127.0.0.1:8765，端口与绑定见 docs/integration/ports.md）
-.venv/bin/python -m platform_server.run
+.venv/bin/python -m synwevo_server.run
 
 # 2) 生成测试数据（可选，仅用于示例）
-.venv/bin/python apps/docweave/scripts/make_fixtures.py
+.venv/bin/python apps/docs/scripts/make_fixtures.py
 
 # 3) 创建 API 密钥（只显示一次）
-.venv/bin/python -m docweave.cli apikey create --name ci --scopes read,write
-export DOCWEAVE_API_KEY=dw_xxxxxxxx_yyyyyyyyyyyyyyyyyyyy
-export DOCWEAVE_BASE_URL=http://127.0.0.1:8765
+.venv/bin/python -m synwevo_docs.cli apikey create --name ci --scopes read,write
+export SYNWEVO_DOCS_API_KEY=dw_xxxxxxxx_yyyyyyyyyyyyyyyyyyyy
+export SYNWEVO_DOCS_BASE_URL=http://127.0.0.1:8765
 ```
 
 ## 1. 一条命令跑完整流程
@@ -71,8 +71,8 @@ export DOCWEAVE_BASE_URL=http://127.0.0.1:8765
 ## 3. curl 版（最短路径）
 
 ```bash
-H="Authorization: Bearer $DOCWEAVE_API_KEY"
-B=$DOCWEAVE_BASE_URL/api/v1
+H="Authorization: Bearer $SYNWEVO_DOCS_API_KEY"
+B=$SYNWEVO_DOCS_BASE_URL/api/v1
 
 PID=$(curl -s -X POST "$B/projects" -H "$H" -H 'Content-Type: application/json' \
       -d '{"name":"curl 演示"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
@@ -131,15 +131,15 @@ curl -s -o file.docx "$LINK"       # 链接本身即凭据，默认 15 分钟
 import hmac, hashlib, time
 
 def verify(body: bytes, headers, secret: str, tolerance=300) -> bool:
-    ts = headers.get("X-DocWeave-Timestamp", "")
-    sig = headers.get("X-DocWeave-Signature", "")
+    ts = headers.get("X-Synwevo Docs-Timestamp", "")
+    sig = headers.get("X-Synwevo Docs-Signature", "")
     if abs(time.time() - int(ts)) > tolerance:          # 防重放
         return False
     expect = "v1=" + hmac.new(secret.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expect, sig)
-# 再按 X-DocWeave-Event-Id 去重（投递可能重复、可能乱序）
+# 再按 X-Synwevo Docs-Event-Id 去重（投递可能重复、可能乱序）
 ```
-`apps/docweave/docweave/webhooks.py` 里的 `verify()` 就是这段逻辑，`apps/docweave/tests/test_webhooks.py` 用它验证真实投递。
+`apps/docs/synwevo_docs/webhooks.py` 里的 `verify()` 就是这段逻辑，`apps/docs/tests/test_webhooks.py` 用它验证真实投递。
 
 **等待任务：轮询事件**
 ```bash
@@ -157,4 +157,4 @@ done
 
 * 在界面里做模板、字段、样本规则和映射 → `GET /projects/{pid}/definition` 导出 → 交给流水线按定义在新项目上复用。
 * 界面与接口的任务、产物、清单共享同一套存储：界面里能看到自动化提交的任务（同一租户），也能下载其产物。
-* 界面中不会显示密钥、Webhook 或端口配置；这些只通过 `python -m docweave.cli` 与环境变量管理。
+* 界面中不会显示密钥、Webhook 或端口配置；这些只通过 `python -m synwevo_docs.cli` 与环境变量管理。

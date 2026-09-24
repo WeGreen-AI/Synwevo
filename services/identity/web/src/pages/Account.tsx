@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { del, get, post } from "@platform/auth-client";
-import { fmtTime, useDialog, useToast } from "@platform/ui";
-import { useSession } from "@platform/auth-client";
+import { del, get, post } from "@synwevo/auth-client";
+import { fmtTime, useDialog, useToast } from "@synwevo/ui";
+import { useSession } from "@synwevo/auth-client";
 import MfaSection from "../components/MfaSection";
 import PasskeySection from "../components/PasskeySection";
 
@@ -66,7 +66,7 @@ export default function Account() {
   if (!me) return <div className="empty">加载中…</div>;
 
   const onAccountService = state?.role === "accounts";
-  const platformName = state?.platform_name || "工作平台";
+  const platformName = state?.platform_name || "Synwevo Workspace";
   const portalUrl = state?.portal_url || "";
 
   return (
@@ -86,7 +86,7 @@ export default function Account() {
           </>
         ) : (
           <>
-            <Link to="/" className="brand"><span className="logo">W</span><span className="desktop-only">DocWeave</span></Link>
+            <Link to="/" className="brand"><span className="logo">S</span><span className="desktop-only">Synwevo Docs</span></Link>
             <span className="sep" />
             <Link to="/" className="btn ghost sm">← 返回项目</Link>
           </>

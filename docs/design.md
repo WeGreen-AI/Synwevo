@@ -1,6 +1,6 @@
 # 设计记录：视觉、交互与动效
 
-本文记录 DocWeave 工作台的设计依据、规范与验证方式。内容对应实际代码（`frontend/src/styles.css`、
+本文记录 Synwevo Docs 工作台的设计依据、规范与验证方式。内容对应实际代码（`frontend/src/styles.css`、
 `frontend/src/components/`、`frontend/src/views/`），不是设计提案。
 
 ---
@@ -102,7 +102,7 @@
 
 ## 8. 动效与性能的实测结果
 
-在可见的 Chrome 窗口中用真实帧计时测量（`apps/docweave/scripts/ui_perf.py`；隐藏或无头窗口会把 `requestAnimationFrame` 节流，测到的是节流值）。本机显示器空闲节拍中位 8.3 ms（约 120 Hz）：
+在可见的 Chrome 窗口中用真实帧计时测量（`apps/docs/scripts/ui_perf.py`；隐藏或无头窗口会把 `requestAnimationFrame` 节流，测到的是节流值）。本机显示器空闲节拍中位 8.3 ms（约 120 Hz）：
 
 | 场景 | 帧间隔 |
 |---|---|

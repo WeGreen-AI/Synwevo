@@ -4,6 +4,6 @@
 也不聚合业务数据。它从不返回项目名、任务或文件——那些属于各个应用，在各自的逐对象授权后面；
 一个会列出它们的首页，就是一条读到你无权读的标题的路径。
 
-**边界**：只依赖 `platform_core` 与 `platform_auth_client`。不导入 `docweave`，也不导入
-`platform_identity`。
+**边界**：只依赖 `synwevo_core` 与 `synwevo_auth_client`。不导入 `docweave`，也不导入
+`synwevo_identity`。
 """

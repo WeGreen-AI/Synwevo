@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ApiError, del, get, patch, post, put, qs } from "@platform/auth-client";
+import { ApiError, del, get, patch, post, put, qs } from "@synwevo/auth-client";
 import { describeSelection, mappingSlots, MODE_NAME, slotPos } from "../lib/describe";
 import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, TemplateDetail } from "../lib/types";
-import { useDialog, useToast } from "@platform/ui";
-import { applyTheme, nextTheme, recall, remember, storedTheme, THEME_NAME, type Theme } from "@platform/ui";
+import { useDialog, useToast } from "@synwevo/ui";
+import { applyTheme, nextTheme, recall, remember, storedTheme, THEME_NAME, type Theme } from "@synwevo/ui";
 import { jobStatus } from "../lib/status";
 import AnyView from "../components/AnyView";
 import CommandPalette, { Command } from "../components/CommandPalette";
@@ -568,7 +568,7 @@ export default function Workspace() {
     <div className="app">
       {/* ---------------------------------------------------------------- top bar */}
       <div className="topbar">
-        <Link to="/" className="brand" title="项目列表"><span className="logo">W</span><span className="desktop-only">DocWeave</span></Link>
+        <Link to="/" className="brand" title="项目列表"><span className="logo">S</span><span className="desktop-only">Synwevo Docs</span></Link>
         <span className="sep" />
         <input className="input" style={{ width: 200, fontWeight: 600, border: "1px solid transparent" }} defaultValue={project.name}
           onBlur={(e) => e.target.value.trim() && e.target.value !== project.name && run(() => patch(`/api/projects/${pid}`, { name: e.target.value.trim() })).then(reload)} aria-label="项目名称" />

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from platform_core.errors import ServiceError
+from synwevo_core.errors import ServiceError
 
 from .services import App
 

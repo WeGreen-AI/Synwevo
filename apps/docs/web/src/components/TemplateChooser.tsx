@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { get, patch, post, upload } from "@platform/auth-client";
-import { fmtTime, Modal, useToast } from "@platform/ui";
+import { get, patch, post, upload } from "@synwevo/auth-client";
+import { fmtTime, Modal, useToast } from "@synwevo/ui";
 
 export default function TemplateChooser({ projectId, current, onDone, onClose }: { projectId: string; current?: string | null; onDone: () => void; onClose: () => void }) {
   const [tab, setTab] = useState<"upload" | "new" | "library">("upload");

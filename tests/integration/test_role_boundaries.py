@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import platform_server.app as server
+import synwevo_server.app as server
 
 ACCOUNT_ONLY = ("/api/admin/overview", "/api/auth/passkeys", "/api/auth/mfa",
                 "/api/auth/sessions")
@@ -20,9 +20,9 @@ BUSINESS_ONLY = ("/api/projects", "/api/templates", "/api/v1/projects")
 
 @pytest.fixture()
 def build(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
 
     def make(role: str) -> TestClient:
         return TestClient(server.create_app(str(tmp_path / "d"), role=role, start_jobs=False))
@@ -74,3 +74,21 @@ def test_a_relying_party_does_not_serve_the_login_endpoint(build):
     # ...while the account service still does (401 here: the account does not exist).
     assert build("accounts").post("/api/auth/login",
                                   json={"email": "nobody@example.com", "password": "x"}).status_code == 401
+
+
+# ---------------------------------------------------------------- rebrand compatibility
+def test_the_pre_rebrand_csrf_header_is_still_accepted(build):
+    """A tab that loaded yesterday's bundle keeps sending `X-DocWeave-CSRF`.
+
+    A deploy is not atomic across every open browser tab, so refusing the old header would sign
+    those people out of every state-changing action until they reloaded — which reads as "the
+    app is broken", not as "there is a new brand".
+    """
+    from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER, LEGACY_CSRF_HEADER
+    assert CSRF_HEADER == "X-Synwevo-CSRF" and LEGACY_CSRF_HEADER == "X-DocWeave-CSRF"
+    c = build("all")
+    # No session: both header names must reach the same refusal, not two different ones.
+    for header in (CSRF_HEADER, LEGACY_CSRF_HEADER):
+        r = c.post("/api/auth/workspace", json={"workspace_id": "w_nope"},
+                   headers={header: "x"}, cookies={CSRF_COOKIE: "x"})
+        assert r.status_code == 401, f"{header} -> {r.status_code}"

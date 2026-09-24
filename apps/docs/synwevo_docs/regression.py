@@ -20,6 +20,8 @@ import difflib
 import hashlib
 import json
 import os
+
+from synwevo_core import env
 import re
 import shutil
 import time
@@ -31,13 +33,13 @@ from .engine import sources as S
 from .engine.plan import build_plan
 from .engine.resolve import ResolveError, SourceDoc
 
-ROOT = Path(__file__).resolve().parents[1]   # apps/docweave
+ROOT = Path(__file__).resolve().parents[1]   # apps/docs
 CASE_VERSION = 1
 MAX_SAMPLES = 50
 
 
 def cases_dir() -> Path:
-    d = Path(os.environ.get("DOCWEAVE_REGRESSION_DIR") or (ROOT / "regression"))
+    d = Path(env.docs("REGRESSION_DIR") or (ROOT / "regression"))
     d.mkdir(parents=True, exist_ok=True)
     return d
 

@@ -12,20 +12,20 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { DialogProvider, ToastProvider, initTheme } from "@platform/ui";
-import { RequireSession, SessionProvider, useSession } from "@platform/auth-client";
+import { DialogProvider, ToastProvider, initTheme } from "@synwevo/ui";
+import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
 import Login from "./pages/Login";
 import Account from "./pages/Account";
 import Invite from "./pages/Invite";
 import { ForgotPassword, ResetPassword } from "./pages/Recover";
 import Admin from "./Admin";
-import "@platform/ui/styles.css";
+import "@synwevo/ui/styles.css";
 
 initTheme();
 
 function SignedOut() {
   const { state } = useSession();
-  const name = state?.platform_name || "工作平台";
+  const name = state?.platform_name || "Synwevo Workspace";
   return (
     <div className="authpage">
       <div className="authcard">

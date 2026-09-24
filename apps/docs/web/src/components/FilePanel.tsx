@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
-import { del, post, put, upload } from "@platform/auth-client";
+import { del, post, put, upload } from "@synwevo/auth-client";
 import type { SourceFile } from "../lib/types";
-import { FAMILY_ICON, fmtSize, STATUS_TEXT, useDialog, useToast } from "@platform/ui";
+import { FAMILY_ICON, fmtSize, STATUS_TEXT, useDialog, useToast } from "@synwevo/ui";
 
 interface Props {
   projectId: string;

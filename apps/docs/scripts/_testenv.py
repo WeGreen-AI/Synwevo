@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from synwevo_core import env
 import socket
 import subprocess
 import sys
@@ -61,8 +63,8 @@ def health(base_url: str, timeout: float = 3.0) -> dict:
 
 def require_test_instance(base_url: str) -> str:
     """Refuse to run destructive tooling against anything but a marked test instance."""
-    if (os.environ.get("DOCWEAVE_ALLOW_LIVE_TESTS") or "").strip().lower() in ("1", "true", "yes", "on"):
-        print(f"!! DOCWEAVE_ALLOW_LIVE_TESTS is set — writing test data into {base_url}", file=sys.stderr)
+    if (env.docs("ALLOW_LIVE_TESTS") or "").strip().lower() in ("1", "true", "yes", "on"):
+        print(f"!! SYNWEVO_DOCS_ALLOW_LIVE_TESTS is set — writing test data into {base_url}", file=sys.stderr)
         return base_url
     try:
         h = health(base_url)
@@ -75,8 +77,8 @@ def require_test_instance(base_url: str) -> str:
             "这些脚本会创建项目、模板和任务，写进正式实例会污染用户的真实项目。\n"
             "请任选其一：\n"
             "  1) 不传 base_url，脚本会自动启动一个隔离实例（推荐）；\n"
-            "  2) 用 DOCWEAVE_DATA_DIR=<空目录> DOCWEAVE_TEST_INSTANCE=1 另起一个服务，再指向它；\n"
-            "  3) 确需写入该实例时显式设置 DOCWEAVE_ALLOW_LIVE_TESTS=1（会打印警告）。")
+            "  2) 用 SYNWEVO_DATA_DIR=<空目录> SYNWEVO_TEST_INSTANCE=1 另起一个服务，再指向它；\n"
+            "  3) 确需写入该实例时显式设置 SYNWEVO_DOCS_ALLOW_LIVE_TESTS=1（会打印警告）。")
     return base_url
 
 
@@ -100,15 +102,15 @@ def server(keep: bool = False):
     port = _free_port()
     base = f"http://127.0.0.1:{port}"
     log = tmp / "server.log"
-    env = {
+    child_env = {
         **os.environ,
-        "DOCWEAVE_DATA_DIR": str(tmp / "data"),
-        "DOCWEAVE_PORT": str(port),
-        "DOCWEAVE_HOST": "127.0.0.1",
-        "DOCWEAVE_TEST_INSTANCE": "1",
-        "DOCWEAVE_REGRESSION_DIR": str(tmp / "regression"),   # never touch the repo's cases
+        "SYNWEVO_DATA_DIR": str(tmp / "data"),
+        "SYNWEVO_PORT": str(port),
+        "SYNWEVO_HOST": "127.0.0.1",
+        "SYNWEVO_TEST_INSTANCE": "1",
+        "SYNWEVO_DOCS_REGRESSION_DIR": str(tmp / "regression"),   # never touch the repo's cases
     }
-    env.pop("DOCWEAVE_UI_AUTH", None)
+    env.pop("SYNWEVO_UI_AUTH", None)
     with log.open("wb") as fh:
         proc = subprocess.Popen([PYTHON, str(ROOT / "backend" / "run.py")], cwd=str(ROOT), env=env, stdout=fh, stderr=fh)
     try:
@@ -124,7 +126,7 @@ def server(keep: bool = False):
             proc.wait(timeout=15)
         except subprocess.TimeoutExpired:
             proc.kill()
-        if keep or (os.environ.get("DOCWEAVE_KEEP_TEST_DATA") or "").lower() in ("1", "true", "yes", "on"):
+        if keep or (env.docs("KEEP_TEST_DATA") or "").lower() in ("1", "true", "yes", "on"):
             print(f"[testenv] 保留测试数据：{tmp}")
         else:
             import shutil

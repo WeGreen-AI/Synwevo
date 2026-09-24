@@ -22,6 +22,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import env
 from .auth import Auth, rate_limiter, ui_auth_mode
 from .context import UI_TENANT, set_tenant
 from .errors import ServiceError
@@ -30,7 +31,7 @@ from .machine import MachineAuth
 from .sessions import Sessions
 from .store import Store, new_id
 
-API_RATE_PER_MIN = int(os.environ.get("DOCWEAVE_API_RATE_PER_MIN", "300"))
+API_RATE_PER_MIN = int(env.get("API_RATE_PER_MIN", "300"))
 PUBLIC_V1 = ("/api/v1/download/",)          # signed links carry their own proof
 
 
@@ -45,7 +46,7 @@ def role() -> str:
     building one app change the behaviour of every app built afterwards in the same process,
     which is exactly what a test suite does.
     """
-    return (os.environ.get("DOCWEAVE_ROLE") or "all").strip().lower() or "all"
+    return (env.get("ROLE") or "all").strip().lower() or "all"
 
 
 def app_role(request_or_app) -> str:
@@ -70,7 +71,7 @@ class Platform:
     audit: Callable[..., None]
 
 
-MARKERS = ("packages/platform-core", "apps/docweave", "services/identity")
+MARKERS = ("packages/core", "apps/docs", "services/identity")
 
 
 def repo_root() -> Path | None:
@@ -90,7 +91,7 @@ def data_dir_default() -> Path:
     """The data directory when nothing says otherwise: the repository root's ``data/``.
 
     Resolved from this file's own location, never from the process working directory — starting
-    the same service from the platform root and from ``apps/docweave/`` has to load the same
+    the same service from the platform root and from ``apps/docs/`` has to load the same
     database, and a cwd-relative default is exactly how it would not.
 
     Outside a source checkout there is no defensible default, so this raises instead of guessing.
@@ -101,13 +102,13 @@ def data_dir_default() -> Path:
     root = repo_root()
     if root is None:
         raise RuntimeError(
-            "找不到平台仓库根目录，无法推断数据目录。请显式设置 DOCWEAVE_DATA_DIR 指向你的数据目录"
+            "找不到平台仓库根目录，无法推断数据目录。请显式设置 SYNWEVO_DATA_DIR 指向你的数据目录"
             "（容器镜像里是 /data）。这里不猜：猜错的结果是建出一个空库，服务照常启动，看起来就像数据没了。")
     return root / "data"
 
 
 def build_platform(data_dir: str | None = None) -> Platform:
-    store = Store(data_dir or os.environ.get("DOCWEAVE_DATA_DIR") or str(data_dir_default()))
+    store = Store(data_dir or env.get("DATA_DIR") or str(data_dir_default()))
     auth = Auth(store)
     identity = Identity(store)
     sessions = Sessions(store)
@@ -139,7 +140,7 @@ def build_platform(data_dir: str | None = None) -> Platform:
 
 
 def new_api(title: str) -> FastAPI:
-    show_docs = (os.environ.get("DOCWEAVE_API_DOCS") or "").strip().lower() in ("1", "true", "on", "yes")
+    show_docs = (env.get("API_DOCS") or "").strip().lower() in ("1", "true", "on", "yes")
     return FastAPI(title=title, version="1.0.0",
                    docs_url="/api/docs" if show_docs else None,
                    redoc_url=None,
@@ -179,7 +180,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     @api.exception_handler(Exception)
     async def _unexpected(request: Request, exc: Exception):
         rid = getattr(request.state, "request_id", "")
-        print(f"[docweave] unhandled error request_id={rid} path={request.url.path}\n{traceback.format_exc()}", flush=True)
+        print(f"[synwevo] unhandled error request_id={rid} path={request.url.path}\n{traceback.format_exc()}", flush=True)
 
     limiter = rate_limiter(API_RATE_PER_MIN)
 
@@ -221,15 +222,16 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         request, so a workspace someone has been removed from stops working immediately rather
         than at the end of their session.
         """
-        from .sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, csrf_ok
+        from .sessions import (COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, LEGACY_CSRF_HEADER,
+                               csrf_ok)
         session = sessions.load(request.cookies.get(COOKIE_NAME))
         request.state.session = session
 
         if session and request.method not in SAFE_METHODS and path.startswith("/api/"):
             # Double-submit CSRF on every state-changing request. Login is exempt because it has
             # no session yet; it is protected by being useless without valid credentials.
-            if path not in ANON_AUTH_PATHS and not csrf_ok(request.cookies.get(CSRF_COOKIE),
-                                                           request.headers.get(CSRF_HEADER)):
+            sent = request.headers.get(CSRF_HEADER) or request.headers.get(LEGACY_CSRF_HEADER)
+            if path not in ANON_AUTH_PATHS and not csrf_ok(request.cookies.get(CSRF_COOKIE), sent):
                 return finish(JSONResponse(_error_body(request, "csrf_failed",
                                                        "请求校验失败，请刷新页面后重试", None), status_code=403))
 
@@ -353,7 +355,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 # This used to read `elif path.startswith("/api/") or not path.startswith("/api")`,
                 # and a path beginning with "/api" but lacking the slash satisfied neither
                 # disjunct: the gate was skipped outright and set_tenant never ran. Under
-                # DOCWEAVE_UI_AUTH=basic, "/" returned 401 while "/api" and "/apifoo" returned
+                # SYNWEVO_UI_AUTH=basic, "/" returned 401 while "/api" and "/apifoo" returned
                 # 200. Only the SPA shell was reachable that way, but an authentication branch
                 # that some paths fall past is not a shape to leave in place.
                 mode = ui_auth_mode()

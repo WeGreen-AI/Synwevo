@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""平台根目录的运行入口：安装、启动、停止、状态、日志、验证。
+"""Synwevo 根目录的运行入口：安装、启动、停止、状态、日志、验证。
 
     python scripts/platform.py setup                 # 建立 .venv、装依赖、构建三个前端
     python scripts/platform.py up                    # 启动全部三个服务，登记客户端，打印地址
-    python scripts/platform.py up accounts           # 只启动其中一个（可多个）
+    python scripts/platform.py up accounts           # 只启动其中一个（可多个：accounts portal docs）
     python scripts/platform.py down [accounts …]
     python scripts/platform.py restart [accounts …]
     python scripts/platform.py status
-    python scripts/platform.py logs accounts|portal|docweave [-n 200]
-    python scripts/platform.py test [docweave|identity|integration|all]
+    python scripts/platform.py logs accounts|portal|docs [-n 200]
+    python scripts/platform.py test [docs|identity|integration|all]
     python scripts/platform.py backup [--out DIR]    # 一致性备份（SQLite 备份 API + blob 清单）
     python scripts/platform.py verify-restore DIR    # 在隔离副本上核验备份能恢复
 
 Why three hostnames and not three ports: **different ports do not isolate cookies.** A cookie
 set by `localhost:8770` is sent to `localhost:8765` as well, because the cookie protocol scopes
 by host and ignores the port entirely. Running all three on `localhost` would therefore produce
-a demonstration in which the account service's session cookie is handed to DocWeave on every
+a demonstration in which the account service's session cookie is handed to Synwevo Docs on every
 request — and a "cross-origin single sign-on" that is really one shared cookie wearing three
 hats. `*.localhost` names all resolve to the loopback address without any hosts-file edit (RFC
 6761), so this gets genuinely separate cookie jars with no system configuration at all.
 
-One database. The account service and DocWeave are the same binary in two roles, and they share
+One database. The account service and Synwevo Docs are the same binary in two roles, and they share
 the store, because there must be exactly one account authority — two databases would mean two
 answers to "is this person suspended".
 
@@ -31,6 +31,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+
+from synwevo_core import env
 import signal
 import socket
 import subprocess
@@ -44,14 +46,18 @@ ROOT = Path(__file__).resolve().parents[1]
 RUN = ROOT / ".local" / "platform"
 PY = ROOT / ".venv" / "bin" / "python"
 
-# Overridable, because a developer very often already has a DocWeave on 8765 and stopping
+# Overridable, because a developer very often already has one of these on 8765 and stopping
 # someone else's running server to demonstrate a login flow is not an acceptable trade.
-ACCOUNTS_PORT = int(os.environ.get("PLATFORM_ACCOUNTS_PORT", "8770"))
-PORTAL_PORT = int(os.environ.get("PLATFORM_PORTAL_PORT", "8769"))
-DOCWEAVE_PORT = int(os.environ.get("PLATFORM_DOCWEAVE_PORT", "8765"))
+ACCOUNTS_PORT = int(os.environ.get("SYNWEVO_ACCOUNTS_PORT", "8770"))
+PORTAL_PORT = int(os.environ.get("SYNWEVO_PORTAL_PORT", "8769"))
+DOCS_PORT = int(os.environ.get("SYNWEVO_DOCS_PORT")
+                or os.environ.get("PLATFORM_DOCWEAVE_PORT") or "8765")
 ACCOUNTS = f"http://accounts.localhost:{ACCOUNTS_PORT}"
 PORTAL = f"http://portal.localhost:{PORTAL_PORT}"
-DOCWEAVE = f"http://docweave.localhost:{DOCWEAVE_PORT}"
+# The hostname stays `docweave.localhost`. It is a registered OIDC callback, a Passkey origin
+# and a cookie scope — renaming it would invalidate every credential bound to it, in exchange
+# for a tidier URL bar on one developer machine.
+DOCS = f"http://docweave.localhost:{DOCS_PORT}"
 
 SERVICES = {
     # name: (role, port, public URL, OIDC client id, app id)
@@ -61,37 +67,37 @@ SERVICES = {
     # portal is where you go to see which of those you have.
     "accounts": ("accounts", ACCOUNTS_PORT, ACCOUNTS, None, None),
     "portal": ("portal", PORTAL_PORT, PORTAL, "portal-web", "platform"),
-    "docweave": ("app", DOCWEAVE_PORT, DOCWEAVE, "docweave-web", "docweave"),
+    "docs": ("app", DOCS_PORT, DOCS, "docweave-web", "docweave"),
 }
 
 
 def data_dir() -> str:
-    return os.environ.get("DOCWEAVE_DATA_DIR") or str(ROOT / "data")
+    return env.get("DATA_DIR") or str(ROOT / "data")
 
 
 def env_for(name: str) -> dict:
     role, port, url, client, app = SERVICES[name]
-    env = dict(os.environ)
-    env.update({
-        "DOCWEAVE_ROLE": role,
-        "DOCWEAVE_PORT": str(port),
-        "DOCWEAVE_HOST": bind_addr(urllib.parse.urlparse(url).hostname),
-        "DOCWEAVE_DATA_DIR": data_dir(),
-        "DOCWEAVE_UI_AUTH": "session",
-        "DOCWEAVE_ISSUER": ACCOUNTS,
-        "DOCWEAVE_APP_URL": url,
+    child_env = dict(os.environ)
+    child_env.update({
+        "SYNWEVO_ROLE": role,
+        "SYNWEVO_PORT": str(port),
+        "SYNWEVO_HOST": bind_addr(urllib.parse.urlparse(url).hostname),
+        "SYNWEVO_DATA_DIR": data_dir(),
+        "SYNWEVO_UI_AUTH": "session",
+        "SYNWEVO_ISSUER": ACCOUNTS,
+        "SYNWEVO_APP_URL": url,
         # Plain HTTP on loopback, so the Secure attribute would stop the cookie being stored at
         # all. This is the one local-only concession, and it is why these hostnames must never
         # be used for anything real.
-        "DOCWEAVE_COOKIE_SECURE": "0",
+        "SYNWEVO_COOKIE_SECURE": "0",
         # Where the account pages' "back" link goes. Server-controlled, never a query parameter.
-        "DOCWEAVE_PORTAL_URL": PORTAL,
+        "SYNWEVO_PORTAL_URL": PORTAL,
     })
     if client:
-        env["DOCWEAVE_OIDC_CLIENT_ID"] = client
+        child_env["SYNWEVO_OIDC_CLIENT_ID"] = client
     if app:
-        env["DOCWEAVE_OIDC_APP_ID"] = app
-    return env
+        child_env["SYNWEVO_OIDC_APP_ID"] = app
+    return child_env
 
 
 def bind_addr(host: str) -> str:
@@ -166,8 +172,8 @@ def register_clients() -> None:
     dynamic client registration endpoint and no UI for this."""
     for client_id, app_id, name, base in (
             ("portal-web", "platform", "平台门户", PORTAL),
-            ("docweave-web", "docweave", "DocWeave", DOCWEAVE)):
-        cmd = [str(PY), "-m", "platform_identity.cli", "--data", data_dir(),
+            ("docweave-web", "docweave", "Synwevo Docs", DOCS)):
+        cmd = [str(PY), "-m", "synwevo_identity.cli", "--data", data_dir(),
                "client", "register", "--client-id", client_id, "--app", app_id, "--name", name,
                "--redirect", f"{base}/auth/callback",
                "--post-logout", f"{base}/signed-out",
@@ -211,11 +217,11 @@ def up(args) -> int:
         log = (RUN / f"{name}.log").open("a")
         log.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} start role={role} =====\n")
         log.flush()
-        p = subprocess.Popen([str(PY), "-m", "platform_server.run"],
+        p = subprocess.Popen([str(PY), "-m", "synwevo_server.run"],
                              env=env_for(name), stdout=log, stderr=subprocess.STDOUT,
                              start_new_session=True)
         _pidfile(name).write_text(str(p.pid))
-        print(f"  ✓ {name:<9} role={role:<9} {url}  绑定 {env_for(name)['DOCWEAVE_HOST']}:{port}"
+        print(f"  ✓ {name:<9} role={role:<9} {url}  绑定 {env_for(name)['SYNWEVO_HOST']}:{port}"
               f"  (pid {p.pid})")
 
     deadline = time.time() + 20
@@ -233,9 +239,9 @@ def up(args) -> int:
             print(f"  ✗ {n} 没有在 20 秒内开始监听；日志：{RUN / (n + '.log')}", file=sys.stderr)
 
     print("\n打开：")
-    print(f"  平台门户   {PORTAL}")
-    print(f"  DocWeave   {DOCWEAVE}")
-    print(f"  账户服务   {ACCOUNTS}/login")
+    print(f"  Synwevo Workspace   {PORTAL}")
+    print(f"  Synwevo Docs        {DOCS}")
+    print(f"  Synwevo Account     {ACCOUNTS}/login")
     print(f"\n日志：{RUN}/<服务>.log      停止：python scripts/platform.py down")
     return 1 if failed else 0
 
@@ -311,7 +317,7 @@ def _require_data_dir(args) -> None:
     if db.exists() or getattr(args, "init", False):
         return
     print(f"数据目录 {d} 里没有 docweave.sqlite3。\n"
-          f"如果这是新装，用 --init 明确表示；如果不是，先检查 DOCWEAVE_DATA_DIR 指到哪里了。\n"
+          f"如果这是新装，用 --init 明确表示；如果不是，先检查 SYNWEVO_DATA_DIR 指到哪里了。\n"
           f"这里不会替你建一个空库：一个空库会让服务正常启动，而那正是「数据不见了」的样子。",
           file=sys.stderr)
     raise SystemExit(2)
@@ -331,7 +337,7 @@ def setup(args) -> int:
         return 1
     print("以可编辑方式安装各模块（真实的包边界，不是 sys.path 拼接）：")
     mods = ["packages/platform-core", "packages/auth-client/python", "services/identity",
-            "apps/portal", "apps/docweave", "infra/server"]
+            "apps/portal", "apps/docs", "infra/server"]
     if _run([str(PY), "-m", "pip", "install", "-q", "--no-deps"]
             + [a for m in mods for a in ("-e", m)]):
         return 1
@@ -342,7 +348,7 @@ def setup(args) -> int:
     return 0
 
 
-SUITES = {"docweave": "apps/docweave/tests", "identity": "services/identity/tests",
+SUITES = {"docs": "apps/docs/tests", "identity": "services/identity/tests",
           "integration": "tests/integration"}
 
 
@@ -356,7 +362,7 @@ def deps(args) -> int:
     return _run([str(PY), str(ROOT / "scripts" / "check_boundaries.py")])
 
 
-SNAPSHOT = ROOT / "apps" / "docweave" / "scripts" / "snapshot.py"
+SNAPSHOT = ROOT / "apps" / "docs" / "scripts" / "snapshot.py"
 
 
 def backup(args) -> int:

@@ -7,7 +7,7 @@ import pymupdf
 import pytest
 from PIL import Image
 
-from docweave.engine.ocr import ocr_png, tesseract_path
+from synwevo_docs.engine.ocr import ocr_png, tesseract_path
 
 W, H = 1190, 900
 NO_BOX = [226 / W, 214 / H, 520 / W, 254 / H]          # "DD-示例" (pixels = points in the wrapper)
@@ -120,7 +120,7 @@ def test_image_rules(api, fixtures):
 
 
 def test_exif_orientation_and_alpha(api, tmp_path):
-    from docweave.engine.image_template import make_wrapper, rasterise
+    from synwevo_docs.engine.image_template import make_wrapper, rasterise
     im = Image.new("RGBA", (300, 200), (255, 0, 0, 0))
     for x in range(300):
         for y in range(0, 20):

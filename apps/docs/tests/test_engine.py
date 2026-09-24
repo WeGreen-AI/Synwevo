@@ -8,17 +8,17 @@ import pymupdf
 import pytest
 from docx.shared import RGBColor
 
-from docweave.engine import docx_core as dc
-from docweave.engine import pdf_engine as pe
-from docweave.engine import tabular, transforms
-from docweave.engine import values as V
-from docweave.engine.detect import detect
-from docweave.engine.numfmt import format_value
-from docweave.engine.ooxml import Package
-from docweave.engine.refshift import Shift, shift_formula, shift_sqref
-from docweave.engine.xlsx_doc import XlsxDoc
-from docweave.jobs import dedupe, render_name
-from docweave.services import safe_output_name
+from synwevo_docs.engine import docx_core as dc
+from synwevo_docs.engine import pdf_engine as pe
+from synwevo_docs.engine import tabular, transforms
+from synwevo_docs.engine import values as V
+from synwevo_docs.engine.detect import detect
+from synwevo_docs.engine.numfmt import format_value
+from synwevo_docs.engine.ooxml import Package
+from synwevo_docs.engine.refshift import Shift, shift_formula, shift_sqref
+from synwevo_docs.engine.xlsx_doc import XlsxDoc
+from synwevo_docs.jobs import dedupe, render_name
+from synwevo_docs.services import safe_output_name
 
 
 # ---------------------------------------------------------------- values & number formats
@@ -213,8 +213,8 @@ def test_combine_rejects_unknown_op():
     """DW-051: a mistyped combine op used to fall through to concatenation, so a mapping
     meant to add 100 + 200 silently delivered "100 200" with nothing reported.
     aggregate() already raised for the same mistake; combine() now matches it."""
-    from docweave.engine import transforms as T
-    from docweave.engine import values as V
+    from synwevo_docs.engine import transforms as T
+    from synwevo_docs.engine import values as V
 
     a, b = V.Value(V.DEC, "100", "100"), V.Value(V.DEC, "200", "200")
     assert T.combine([a, b], "sum").text == "300"

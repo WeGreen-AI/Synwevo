@@ -1,10 +1,10 @@
-# AGPL-free installation: everything except PyMuPDF.  Run with DOCWEAVE_PDF_ENGINE=pdfium (automatic when
+# AGPL-free installation: everything except PyMuPDF.  Run with SYNWEVO_DOCS_PDF_ENGINE=pdfium (automatic when
 # PyMuPDF is absent).  PDF / image templates are unavailable in this mode; see docs/DEPENDENCIES.md.
 -r ../../packages/auth-client/python/requirements.txt
 openpyxl==3.1.5
 python-docx==1.2.0
 python-pptx==1.0.2
-pypdfium2==5.13.0        # Apache-2.0 / BSD-3 – AGPL-free PDF reading engine (DOCWEAVE_PDF_ENGINE=pdfium)
+pypdfium2==5.13.0        # Apache-2.0 / BSD-3 – AGPL-free PDF reading engine (SYNWEVO_DOCS_PDF_ENGINE=pdfium)
 fonttools==4.65.0        # PDF font subsetting
 lxml==6.1.3
 pillow==12.3.0

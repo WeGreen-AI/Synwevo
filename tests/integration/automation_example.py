@@ -2,7 +2,7 @@
 """End-to-end DocWeave automation without a browser: upload → fields/rule/mappings → preflight
 → submit → wait → download → verify.
 
-    export DOCWEAVE_API_KEY=dw_xxx_yyy
+    export SYNWEVO_DOCS_API_KEY=dw_xxx_yyy
     python scripts/automation_example.py --base-url http://127.0.0.1:8765 \
         --source testdata/测试_客户100.xlsx --template testdata/测试_合同模板.docx \
         --definition docs/integration/example-definition.json --out ./out
@@ -18,6 +18,8 @@ import hashlib
 import json
 import mimetypes
 import os
+
+from synwevo_core import env
 import sys
 import time
 import urllib.error
@@ -165,17 +167,17 @@ def download_artifacts(api: Api, jid: str, out_dir: Path, quiet: bool) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base-url", default=os.environ.get("DOCWEAVE_BASE_URL", "http://127.0.0.1:8765"))
-    ap.add_argument("--key", default=os.environ.get("DOCWEAVE_API_KEY"),
-                    help="API 密钥 dw_… 或平台访问令牌（或设置 DOCWEAVE_API_KEY）")
+    ap.add_argument("--base-url", default=env.docs("BASE_URL", "http://127.0.0.1:8765"))
+    ap.add_argument("--key", default=env.docs("API_KEY"),
+                    help="API 密钥 dw_… 或平台访问令牌（或设置 SYNWEVO_DOCS_API_KEY）")
     # A machine identity on the platform: this fetches its own token instead of carrying a
     # long-lived key. The credential is the client secret, held by whatever runs this, and the
     # token it exchanges for lives fifteen minutes.
-    ap.add_argument("--issuer", default=os.environ.get("DOCWEAVE_ISSUER"),
+    ap.add_argument("--issuer", default=env.get("ISSUER"),
                     help="账户服务地址；与 --client-id/--client-secret 一起用于服务账户")
-    ap.add_argument("--client-id", dest="client_id", default=os.environ.get("DOCWEAVE_CLIENT_ID"))
+    ap.add_argument("--client-id", dest="client_id", default=env.get("CLIENT_ID"))
     ap.add_argument("--client-secret", dest="client_secret",
-                    default=os.environ.get("DOCWEAVE_CLIENT_SECRET"))
+                    default=env.get("CLIENT_SECRET"))
     ap.add_argument("--api-scopes", dest="api_scopes", default="docweave.read docweave.write")
     ap.add_argument("--source", action="append", required=True, help="来源文件（可重复）")
     ap.add_argument("--template", help="模板文件；省略时用 --template-id 复用已有模板")
@@ -196,7 +198,7 @@ def main() -> int:
     if not a.key:
         raise SystemExit(
             "缺少凭据。二选一：\n"
-            "  · API 密钥：--key 或 DOCWEAVE_API_KEY（python backend/manage.py apikey create）\n"
+            "  · API 密钥：--key 或 SYNWEVO_DOCS_API_KEY（python backend/manage.py apikey create）\n"
             "  · 服务账户：--issuer --client-id --client-secret\n"
             "    （python backend/manage.py client register --service --workspace … --api-scopes …）")
     api = Api(a.base_url, a.key)

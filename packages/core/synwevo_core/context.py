@@ -1,7 +1,7 @@
 """Request-scoped tenant.
 
 Every resource (project, template, job) belongs to a tenant.  The web UI works as the
-tenant in ``DOCWEAVE_UI_TENANT`` (default ``default``); a machine API request works as the
+tenant in ``SYNWEVO_UI_TENANT`` (default ``default``); a machine API request works as the
 tenant of its API key.
 
 That last part used to read "service methods check the current tenant on every lookup, so an
@@ -13,11 +13,13 @@ docs/security/permissions.md §5.1 for the list that was measured, not assumed.
 from __future__ import annotations
 
 import os
+
+from . import env
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-UI_TENANT = os.environ.get("DOCWEAVE_UI_TENANT", "default")
-_tenant: ContextVar[str] = ContextVar("docweave_tenant", default=UI_TENANT)
+UI_TENANT = env.get("UI_TENANT", "default")
+_tenant: ContextVar[str] = ContextVar("synwevo_tenant", default=UI_TENANT)
 
 
 def tenant() -> str:

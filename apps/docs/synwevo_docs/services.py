@@ -8,9 +8,9 @@ import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
-from platform_core.context import tenant as current_tenant
-from platform_core.errors import ServiceError, not_found
-from platform_core.store import Store, new_id, now
+from synwevo_core.context import tenant as current_tenant
+from synwevo_core.errors import ServiceError, not_found
+from synwevo_core.store import Store, new_id, now
 
 from . import authz
 from .engine import sources as S

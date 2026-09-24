@@ -19,7 +19,7 @@
 import { useState } from "react";
 import { ApiError, post } from "./api";
 import { useSession } from "./session";
-import { useToast } from "@platform/ui";
+import { useToast } from "@synwevo/ui";
 
 export function PlatformNav() {
   const { me, state } = useSession();
@@ -30,7 +30,7 @@ export function PlatformNav() {
   const onPlatform = state?.role === "app" || state?.role === "portal";
   if (!onPlatform || !me) return null;
 
-  const platformName = state?.platform_name || "工作平台";
+  const platformName = state?.platform_name || "Synwevo Workspace";
   const spaces = me.workspaces || [];
   const current = spaces.find((w) => w.id === me.workspace_id) || spaces[0];
   const others = spaces.filter((w) => w.id !== current?.id);

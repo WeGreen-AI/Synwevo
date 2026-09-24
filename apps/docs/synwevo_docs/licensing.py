@@ -5,7 +5,7 @@ network, AGPL-3.0 §13 requires offering those users the complete source of the 
 program.  ``source_archive`` builds that archive from the files actually installed
 (backend code, frontend source, scripts, docs, dependency pins) – not from a separate
 copy that could drift.  Operators with an Artifex commercial licence, or running the
-AGPL-free pdfium engine, can switch the offer off with ``DOCWEAVE_SOURCE_OFFER=off``.
+AGPL-free pdfium engine, can switch the offer off with ``SYNWEVO_DOCS_SOURCE_OFFER=off``.
 """
 from __future__ import annotations
 
@@ -15,23 +15,24 @@ import tarfile
 import time
 from pathlib import Path
 
-from platform_core.http import repo_root
+from synwevo_core import env
+from synwevo_core.http import repo_root
 
 ROOT = repo_root() or Path(__file__).resolve().parents[3]
 # The Corresponding Source of the *running program*. After the platform restructure that is more
 # than DocWeave's own directory: the process a network user reaches is composed from the shared
-# packages, the account service and the role composer, and an archive holding only `apps/docweave`
+# packages, the account service and the role composer, and an archive holding only `apps/docs`
 # would be a partial source shipped under a complete-source claim — which is the exact failure
 # AGPL-3.0 §13 is about.
 INCLUDE = (
     # the business application
-    "apps/docweave/docweave", "apps/docweave/tests", "apps/docweave/scripts",
-    "apps/docweave/web/src", "apps/docweave/web/index.html", "apps/docweave/web/package.json",
-    "apps/docweave/web/tsconfig.json", "apps/docweave/web/vite.config.ts",
-    "apps/docweave/pyproject.toml", "apps/docweave/requirements.txt",
-    "apps/docweave/requirements-pdfium.txt",
+    "apps/docs/synwevo_docs", "apps/docs/tests", "apps/docs/scripts",
+    "apps/docs/web/src", "apps/docs/web/index.html", "apps/docs/web/package.json",
+    "apps/docs/web/tsconfig.json", "apps/docs/web/vite.config.ts",
+    "apps/docs/pyproject.toml", "apps/docs/requirements.txt",
+    "apps/docs/requirements-pdfium.txt",
     # the platform it runs on
-    "packages/platform-core", "packages/auth-client", "packages/ui",
+    "packages/core", "packages/auth-client", "packages/ui",
     "services/identity", "apps/portal", "infra/server",
     # how it is built, run and documented
     "infra/Dockerfile", "infra/docker-compose.yml", "scripts", "tests", "docs",
@@ -70,7 +71,7 @@ THIRD_PARTY = [
 
 
 def source_offer_enabled() -> bool:
-    return (os.environ.get("DOCWEAVE_SOURCE_OFFER") or "on").strip().lower() not in ("off", "0", "false", "no")
+    return (env.docs("SOURCE_OFFER") or "on").strip().lower() not in ("off", "0", "false", "no")
 
 
 def pymupdf_installed() -> bool:
@@ -92,7 +93,7 @@ def about() -> dict:
 
     "does not use PyMuPDF", "does not contain MuPDF" and "has no AGPL dependency" are not the
     same statement, and this used to report only the first while wording it as the third: with
-    ``DOCWEAVE_PDF_ENGINE=pdfium`` and PyMuPDF still installed it said 「未加载 AGPL 组件」while
+    ``SYNWEVO_DOCS_PDF_ENGINE=pdfium`` and PyMuPDF still installed it said 「未加载 AGPL 组件」while
     ~53 MB of AGPL-3.0 MuPDF binary sat in the image and the fallbacks above still called into
     it.  A service asserting a false licensing fact about itself is worse than saying nothing.
     """
@@ -101,13 +102,13 @@ def about() -> dict:
     present = pymupdf_installed()
     if engine_uses:
         notice = ("当前部署启用了 PyMuPDF（AGPL-3.0）。按 AGPL-3.0 第 13 条，通过网络向他人提供本服务时，应向其提供本程序完整的对应源代码；"
-                  "本页提供的源代码包即由正在运行的文件生成。如已取得 Artifex 商业许可，或改用 pdfium 引擎（DOCWEAVE_PDF_ENGINE=pdfium）"
-                  "并从镜像中移除 pymupdf，可关闭此下载（DOCWEAVE_SOURCE_OFFER=off）。")
+                  "本页提供的源代码包即由正在运行的文件生成。如已取得 Artifex 商业许可，或改用 pdfium 引擎（SYNWEVO_DOCS_PDF_ENGINE=pdfium）"
+                  "并从镜像中移除 pymupdf，可关闭此下载（SYNWEVO_DOCS_SOURCE_OFFER=off）。")
     elif present:
         notice = ("当前 PDF 引擎是 pdfium（pypdfium2，Apache-2.0 / BSD-3-Clause），**但本部署仍然安装了 PyMuPDF**："
                   "AGPL-3.0 的 MuPDF 二进制仍随镜像分发，且图片模板包装页与中文后备字体两处仍会调用它。"
                   "因此 AGPL-3.0 第 13 条的源代码提供义务依然适用。要真正去掉 AGPL 依赖，需按 "
-                  "apps/docweave/requirements-pdfium.txt 构建、镜像中不安装 pymupdf。")
+                  "apps/docs/requirements-pdfium.txt 构建、镜像中不安装 pymupdf。")
     else:
         notice = "本部署未安装 PyMuPDF，镜像中不含 MuPDF 二进制，无 AGPL 依赖；PDF / 图片模板的部分能力在此模式下受限。"
     return {
@@ -139,7 +140,7 @@ def source_status() -> dict:
 def source_archive() -> tuple[bytes, str]:
     buf = io.BytesIO()
     stamp = time.strftime("%Y%m%d")
-    top = f"docweave-source-{stamp}"
+    top = f"synwevo-source-{stamp}"
     status = source_status()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for rel in INCLUDE:
@@ -149,7 +150,7 @@ def source_archive() -> tuple[bytes, str]:
             files = [p] if p.is_file() else sorted(x for x in p.rglob("*") if x.is_file())
             for f in files:
                 parts = f.relative_to(ROOT).parts
-                # Suffix match as well as exact: `platform_core.egg-info` is one path component,
+                # Suffix match as well as exact: `synwevo_core.egg-info` is one path component,
                 # so a set membership test never saw it and build metadata rode along.
                 if (set(parts) & EXCLUDE_PARTS
                         or any(part.endswith(".egg-info") for part in parts)

@@ -13,17 +13,17 @@ import json
 import pytest
 from authlib.jose import JsonWebKey, jwt
 
-from platform_core.identity import Identity
-from platform_core import oidc
-from platform_core.errors import ServiceError
-from platform_core.store import Store, now
+from synwevo_core.identity import Identity
+from synwevo_core import oidc
+from synwevo_core.errors import ServiceError
+from synwevo_core.store import Store, now
 
 PW = "a-sufficiently-long-passphrase"
 
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_ISSUER", "http://accounts.localhost:8770")
+    monkeypatch.setenv("SYNWEVO_ISSUER", "http://accounts.localhost:8770")
     store = Store(tmp_path / "d")
     ident = Identity(store)
     user = ident.create_user("alice@example.com", PW, display_name="Alice", status="active")
@@ -84,7 +84,7 @@ def test_rotation_keeps_the_previous_key_verifiable(env):
 def test_the_first_rotation_on_a_fresh_service_retires_nothing(tmp_path):
     """Reported honestly, so an operator is not told a previous key is still published when
     there never was one."""
-    from platform_core.store import Store
+    from synwevo_core.store import Store
     keys = oidc.Keys(Store(tmp_path / "fresh"))
     kid, retiring = keys.rotate()
     assert kid and retiring == 0
@@ -254,7 +254,7 @@ def test_a_token_signed_by_a_foreign_key_does_not_verify(env):
 
 
 def test_issuer_comes_from_configuration_not_a_request(env, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_ISSUER", "https://id.example.org/")
+    monkeypatch.setenv("SYNWEVO_ISSUER", "https://id.example.org/")
     assert oidc.issuer() == "https://id.example.org"
 
 

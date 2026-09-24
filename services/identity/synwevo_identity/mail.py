@@ -8,7 +8,7 @@ sends inline must either block on a slow SMTP server or claim success before the
 a screen that says "we sent you a link" when nothing left the building is the worst outcome
 here — the person waits instead of asking for help.
 
-**Links are built from configured identity, never from the request.** `DOCWEAVE_PUBLIC_URL` is
+**Links are built from configured identity, never from the request.** `SYNWEVO_PUBLIC_URL` is
 the base. Taking the Host header would let anyone who can reach the service mint an invitation
 mail pointing at a host they control, carrying a token that is valid on the real one.
 
@@ -27,21 +27,22 @@ from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
 
-from platform_core.errors import ServiceError
-from platform_core.store import Store, new_id, now
+from synwevo_core import env
+from synwevo_core.errors import ServiceError
+from synwevo_core.store import Store, new_id, now
 
 # Backoff between attempts; the last value repeats until MAX_ATTEMPTS.
 RETRY_SCHEDULE = (30, 120, 600, 1800, 3600)
 MAX_ATTEMPTS = 8
-SEND_TIMEOUT_S = float(os.environ.get("DOCWEAVE_SMTP_TIMEOUT_S", "20"))
+SEND_TIMEOUT_S = float(env.get("SMTP_TIMEOUT_S", "20"))
 
 
 def mode() -> str:
     """smtp | file | disabled — decided by configuration, never guessed."""
-    explicit = (os.environ.get("DOCWEAVE_MAIL_MODE") or "").strip().lower()
+    explicit = (env.get("MAIL_MODE") or "").strip().lower()
     if explicit in ("smtp", "file", "disabled"):
         return explicit
-    return "smtp" if os.environ.get("DOCWEAVE_SMTP_HOST") else "disabled"
+    return "smtp" if env.get("SMTP_HOST") else "disabled"
 
 
 def public_base() -> str:
@@ -50,12 +51,12 @@ def public_base() -> str:
     Required in any deployment that sends mail. Deriving it from the request would make the
     destination attacker-controlled while the token stays valid on the real host.
     """
-    return (os.environ.get("DOCWEAVE_PUBLIC_URL") or "").strip().rstrip("/")
+    return (env.get("PUBLIC_URL") or "").strip().rstrip("/")
 
 
 def from_address() -> tuple[str, str]:
-    addr = (os.environ.get("DOCWEAVE_MAIL_FROM") or "docweave@localhost").strip()
-    name = (os.environ.get("DOCWEAVE_MAIL_FROM_NAME") or "DocWeave").strip()
+    addr = (env.get("MAIL_FROM") or "synwevo@localhost").strip()
+    name = (env.get("MAIL_FROM_NAME") or "Synwevo").strip()
     return name, addr
 
 
@@ -63,7 +64,7 @@ class MailNotConfigured(ServiceError):
     def __init__(self) -> None:
         super().__init__(503, "mail_not_configured",
                          "本服务尚未配置邮件发送，无法寄出邀请或验证邮件。"
-                         "请先设置 DOCWEAVE_SMTP_HOST 等参数（见 docs/DEPLOY.md）。")
+                         "请先设置 SYNWEVO_SMTP_HOST 等参数（见 docs/DEPLOY.md）。")
 
 
 class Mailer:
@@ -97,7 +98,7 @@ class Mailer:
             raise MailNotConfigured()
         if m == "smtp" and not public_base():
             raise ServiceError(503, "public_url_missing",
-                               "发送邮件前必须设置 DOCWEAVE_PUBLIC_URL，否则邮件里的链接会指向错误的地址。")
+                               "发送邮件前必须设置 SYNWEVO_PUBLIC_URL，否则邮件里的链接会指向错误的地址。")
         row = {"id": new_id("ml"), "to_addr": to_addr, "subject": subject, "body": body,
                "kind": kind, "ref_id": ref_id, "status": "queued", "attempts": 0,
                "next_attempt_at": now(), "created_at": now()}
@@ -117,7 +118,7 @@ class Mailer:
             try:
                 sent = self.drain_once()
             except Exception as e:  # noqa: BLE001 - a worker thread must not die
-                print(f"[docweave] mail worker error: {e}", flush=True)
+                print(f"[synwevo] mail worker error: {e}", flush=True)
                 sent = 0
             self._wake.wait(1.0 if sent else 15.0)
             self._wake.clear()
@@ -165,20 +166,20 @@ class Mailer:
         msg.set_content(row["body"])
 
         if m == "file":
-            out = Path(os.environ.get("DOCWEAVE_MAIL_DIR") or "./data/mail")
+            out = Path(env.get("MAIL_DIR") or "./data/mail")
             out.mkdir(parents=True, exist_ok=True)
             # The banner exists so nobody mistakes a development sink for delivery.
-            banner = ("X-DocWeave-Delivery: LOCAL FILE SINK — 这封邮件没有真正寄出，"
+            banner = ("X-Synwevo-Delivery: LOCAL FILE SINK — 这封邮件没有真正寄出，"
                       "仅写入本地文件用于开发验证\n")
             (out / f"{int(time.time() * 1000)}-{row['id']}.eml").write_text(banner + msg.as_string(), encoding="utf-8")
             return
 
-        host = os.environ.get("DOCWEAVE_SMTP_HOST") or ""
-        port = int(os.environ.get("DOCWEAVE_SMTP_PORT") or 587)
-        user = os.environ.get("DOCWEAVE_SMTP_USER") or ""
-        pw = os.environ.get("DOCWEAVE_SMTP_PASSWORD") or ""
-        use_ssl = (os.environ.get("DOCWEAVE_SMTP_SSL") or "").strip().lower() in ("1", "true", "yes", "on")
-        starttls = (os.environ.get("DOCWEAVE_SMTP_STARTTLS") or "1").strip().lower() not in ("0", "false", "no", "off")
+        host = env.get("SMTP_HOST") or ""
+        port = int(env.get("SMTP_PORT") or 587)
+        user = env.get("SMTP_USER") or ""
+        pw = env.get("SMTP_PASSWORD") or ""
+        use_ssl = (env.get("SMTP_SSL") or "").strip().lower() in ("1", "true", "yes", "on")
+        starttls = (env.get("SMTP_STARTTLS") or "1").strip().lower() not in ("0", "false", "no", "off")
         cls = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
         with cls(host, port, timeout=SEND_TIMEOUT_S) as s:
             if starttls and not use_ssl:
@@ -199,8 +200,8 @@ def _link(path: str, token: str) -> str:
 
 
 def invitation_mail(*, workspace: str, inviter: str, role_label: str, token: str, expires_h: int) -> tuple[str, str]:
-    return (f"邀请你加入 DocWeave 工作空间「{workspace}」",
-            f"""{inviter} 邀请你以「{role_label}」身份加入 DocWeave 工作空间「{workspace}」。
+    return (f"邀请你加入 Synwevo 工作空间「{workspace}」",
+            f"""{inviter} 邀请你以「{role_label}」身份加入 Synwevo 工作空间「{workspace}」。
 
 打开下面的链接接受邀请：
 
@@ -214,7 +215,7 @@ def invitation_mail(*, workspace: str, inviter: str, role_label: str, token: str
 
 
 def verify_mail(*, token: str, expires_h: int) -> tuple[str, str]:
-    return ("验证你的 DocWeave 邮箱",
+    return ("验证你的 Synwevo 邮箱",
             f"""请打开下面的链接验证这个邮箱地址：
 
   {_link('/verify-email', token)}
@@ -226,7 +227,7 @@ def verify_mail(*, token: str, expires_h: int) -> tuple[str, str]:
 
 
 def reset_mail(*, token: str, expires_h: int) -> tuple[str, str]:
-    return ("重置你的 DocWeave 口令",
+    return ("重置你的 Synwevo 口令",
             f"""我们收到了重置这个账户口令的请求。打开下面的链接设置新口令：
 
   {_link('/reset-password', token)}
@@ -239,8 +240,8 @@ def reset_mail(*, token: str, expires_h: int) -> tuple[str, str]:
 
 
 def security_notice(*, what: str, when_text: str) -> tuple[str, str]:
-    return (f"DocWeave 安全提醒：{what}",
-            f"""你的 DocWeave 账户刚刚发生了一项安全相关的变更：
+    return (f"Synwevo 安全提醒：{what}",
+            f"""你的 Synwevo 账户刚刚发生了一项安全相关的变更：
 
   {what}
   时间：{when_text}

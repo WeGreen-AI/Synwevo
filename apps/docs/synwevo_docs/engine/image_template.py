@@ -20,7 +20,7 @@ from . import images as _images  # noqa: F401  sets Image.MAX_IMAGE_PIXELS from 
 from .limits import LIMITS, LimitError
 
 NATIVE = {"png": "png", "jpeg": "jpg"}
-# The ceiling is configurable (DOCWEAVE_MAX_IMAGE_MPIX); it used to be hardcoded at 60 MP
+# The ceiling is configurable (SYNWEVO_DOCS_MAX_IMAGE_MPIX); it used to be hardcoded at 60 MP
 # here, so raising or lowering the documented limit had no effect on image templates.
 
 

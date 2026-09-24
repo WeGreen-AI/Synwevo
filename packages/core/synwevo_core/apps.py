@@ -14,11 +14,16 @@ Three things are checked, in order, and all three must hold:
 """
 from __future__ import annotations
 
+from . import env
 from .errors import ServiceError
+from .config import DOCS_NAME
 from .identity import Identity
 from .store import Store, now
 
-DOCWEAVE_APP_ID = "docweave"
+#: 应用 ID。**值保持 "docweave" 不变**：它是 `apps` / `workspace_apps` / `app_entitlements`
+#: 里的主键，也写在已经签发出去的令牌里。改这个字符串等于把现有的使用资格和机器凭据一起作废，
+#: 换来的只是一次搜索结果清零。对外显示的名字是 DOCS_NAME。
+DOCS_APP_ID = "docweave"
 
 # The portal itself. Deliberately *not* a row in `apps`: the registry lists business
 # applications someone can be granted or denied, and the portal is the place you go to find out
@@ -42,7 +47,7 @@ class Apps:
         """Register or update an application.
 
         `keep_launch_url` leaves an existing launch URL alone. It matters because every process
-        runs this at startup, and `DOCWEAVE_APP_URL` means *this service's own address*: the
+        runs this at startup, and `SYNWEVO_APP_URL` means *this service's own address*: the
         portal process registering DocWeave would otherwise overwrite DocWeave's launch URL with
         the portal's, producing a card on the home page that loops straight back to the home
         page. Only the process that actually is the application sets its address.
@@ -174,7 +179,7 @@ class Apps:
         return out
 
     # ------------------------------------------------------------------ migration
-    def adopt_existing_members(self, app_id: str = DOCWEAVE_APP_ID, actor_id: str | None = None) -> dict:
+    def adopt_existing_members(self, app_id: str = DOCS_APP_ID, actor_id: str | None = None) -> dict:
         """Give every current member of every workspace an entitlement to this application.
 
         Run once when the app registry is introduced. Without it, adding an entitlement table
@@ -199,13 +204,13 @@ class Apps:
         return {"workspaces_enabled": enabled, "entitlements": claimed}
 
 
-def bootstrap_docweave(store: Store, ident: Identity, *, launch_url: str | None = None) -> dict:
+def bootstrap_docs_app(store: Store, ident: Identity, *, launch_url: str | None = None) -> dict:
     """Register DocWeave itself. Idempotent; safe to run on every start, in any role.
 
-    The launch URL comes from `DOCWEAVE_APP_URL` **only in the process that serves DocWeave**.
+    The launch URL comes from `SYNWEVO_APP_URL` **only in the process that serves DocWeave**.
     In the portal or the account service that variable holds their own address, and writing it
     here points the DocWeave card at the wrong service — which is exactly what happened: the
-    account service starts first, `DOCWEAVE_OIDC_APP_ID` is unset there so `app_id()` returned
+    account service starts first, `SYNWEVO_OIDC_APP_ID` is unset there so `app_id()` returned
     its default of "docweave", and the card led back to the login page.
 
     So the test is the *role*, which every process sets and which cannot default to the wrong
@@ -214,9 +219,9 @@ def bootstrap_docweave(store: Store, ident: Identity, *, launch_url: str | None 
     """
     import os
     apps = Apps(store, ident)
-    role = (os.environ.get("DOCWEAVE_ROLE") or "all").strip().lower()
+    role = (env.get("ROLE") or "all").strip().lower()
     mine = role in ("app", "all", "")
     return apps.register(
-        app_id=DOCWEAVE_APP_ID, name="DocWeave", icon="doc",
-        launch_url=launch_url or (os.environ.get("DOCWEAVE_APP_URL") if mine else None),
+        app_id=DOCS_APP_ID, name=DOCS_NAME, icon="doc",
+        launch_url=launch_url or (env.get("APP_URL") if mine else None),
         access_policy="members", keep_launch_url=not mine and not launch_url)

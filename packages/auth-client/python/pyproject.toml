@@ -3,11 +3,15 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "platform-auth-client"
+name = "synwevo-auth-client"
 version = "1.0.0"
-description = "应用接入统一身份的 OIDC 依赖方适配与共用会话路由"
+description = "应用接入 Synwevo Account 的 OIDC 依赖方适配与共用会话路由"
 requires-python = ">=3.12"
-dependencies = ["platform-core", "fastapi", "httpx", "authlib"]
+dependencies = ["synwevo-core", "fastapi", "httpx", "authlib"]
 
 [tool.setuptools.packages.find]
-include = ["platform_auth_client*"]
+include = ["synwevo_auth_client*"]
+
+[project.urls]
+Homepage = "https://github.com/WeGreen-AI/Synwevo"
+Repository = "https://github.com/WeGreen-AI/Synwevo"

@@ -17,11 +17,11 @@ from pathlib import Path
 
 import pytest
 
-ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
+ROOT = __import__("synwevo_core.http", fromlist=["repo_root"]).repo_root()
 
 SCRIPT = textwrap.dedent("""
     import concurrent.futures as cf
-    from docweave.engine import pdf_engine as pe
+    from synwevo_docs.engine import pdf_engine as pe
     pe.use_engine("pdfium")
     data = open({pdf!r}, "rb").read()
 
@@ -59,7 +59,7 @@ def test_concurrent_pdfium_reads_do_not_crash_the_process():
 
 def test_lock_is_reentrant_so_nested_page_access_cannot_deadlock():
     """Page work nests (a page is opened while a document-level call already holds it)."""
-    from docweave.engine import pdfium_shim
+    from synwevo_docs.engine import pdfium_shim
     assert pdfium_shim.LOCK.__class__.__name__ == "RLock"
     with pdfium_shim.LOCK:
         with pdfium_shim.LOCK:

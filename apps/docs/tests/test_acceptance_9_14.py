@@ -11,7 +11,7 @@ import pytest
 from docx.shared import Pt
 
 from .helpers import Api, docx_text
-from docweave.engine.converters import convert
+from synwevo_docs.engine.converters import convert
 
 
 # ------------------------------------------------------------------ 9. template preservation
@@ -148,7 +148,7 @@ def test_s10b_pdf_form_template(api, fixtures):
 def test_s11_persistence_reuse_and_versions(tmp_path, fixtures):
     from fastapi.testclient import TestClient
 
-    from docweave.api.app import create_app
+    from synwevo_docs.api.app import create_app
     data_dir = str(tmp_path / "data")
     app1 = create_app(data_dir)
     with TestClient(app1) as c1:
@@ -185,8 +185,8 @@ def test_s11b_job_snapshot_isolated_from_later_edits(tmp_path, fixtures, monkeyp
     """Template / mappings edited after the job was created must not leak into that job."""
     from fastapi.testclient import TestClient
 
-    from docweave import jobs as J
-    from docweave.api.app import create_app
+    from synwevo_docs import jobs as J
+    from synwevo_docs.api.app import create_app
     gate = threading.Event()
     orig_run = J.JobService._run
 
@@ -244,7 +244,7 @@ def test_s12_partial_failure_retry_and_names(api, fixtures, tmp_path, monkeypatc
     api.rule(pid, {"mode": "per_row", "table": {"sheet": "CSV", "header_row": 0}})
     api.maps(pid, [{"type": "single", "sources": [{"kind": "column", "sheet": "CSV", "header": "备注"}], "target": {"binding": s["binding"]}}])
     # transient failure on first attempt of record 4 → retry fixes it
-    from docweave.engine import generate as G
+    from synwevo_docs.engine import generate as G
     real = G.fill_native
     calls = {"n": 0}
 
@@ -305,8 +305,8 @@ def test_s12c_restart_recovery(tmp_path, fixtures):
     """A job interrupted by a server restart resumes from the persisted state."""
     from fastapi.testclient import TestClient
 
-    from docweave.api.app import create_app
-    from platform_core.store import Store
+    from synwevo_docs.api.app import create_app
+    from synwevo_core.store import Store
     data_dir = str(tmp_path / "data")
     app = create_app(data_dir)
     with TestClient(app) as c:

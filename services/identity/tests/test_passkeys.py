@@ -23,10 +23,10 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
-from platform_core.identity import Identity
-from platform_identity.passkeys import Passkeys
-from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
-from platform_core.store import Store
+from synwevo_core.identity import Identity
+from synwevo_identity.passkeys import Passkeys
+from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
+from synwevo_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 RP_ID = "accounts.localhost"
@@ -105,12 +105,12 @@ class SoftAuthenticator:
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    monkeypatch.setenv("DOCWEAVE_ISSUER", ORIGIN)
-    monkeypatch.setenv("DOCWEAVE_RP_ID", RP_ID)
-    import platform_identity.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_ISSUER", ORIGIN)
+    monkeypatch.setenv("SYNWEVO_RP_ID", RP_ID)
+    import synwevo_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -320,7 +320,7 @@ def test_no_private_key_material_is_ever_stored(env):
     assert "PRIVATE" not in blob.upper() and "BEGIN" not in blob.upper()
     # what is stored is a COSE public key, which decodes to a public EC point and nothing else
     import cbor2
-    from platform_identity.passkeys import _b64d
+    from synwevo_identity.passkeys import _b64d
     cose = cbor2.loads(_b64d(row["public_key"]))
     assert cose[1] == 2 and cose[3] == -7 and set(cose) == {1, 3, -1, -2, -3}
 

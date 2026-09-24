@@ -8,6 +8,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+
+from . import env
 import secrets
 import sqlite3
 import threading
@@ -532,13 +534,13 @@ class Store:
 
         Destructive test tooling refuses to touch an instance that is not marked ``test``.
         The mark is written only while the directory is still empty, so setting
-        DOCWEAVE_TEST_INSTANCE against a directory that already holds real projects can
+        SYNWEVO_TEST_INSTANCE against a directory that already holds real projects can
         never re-label it - it stays ``normal`` and stays protected."""
         row = c.execute("SELECT value FROM meta WHERE key='instance_kind'").fetchone()
         if row:
             return
         empty = c.execute("SELECT COUNT(*) AS n FROM projects").fetchone()["n"] == 0
-        want_test = (os.environ.get("DOCWEAVE_TEST_INSTANCE") or "").strip().lower() in ("1", "true", "yes", "on")
+        want_test = (env.get("TEST_INSTANCE") or "").strip().lower() in ("1", "true", "yes", "on")
         kind = "test" if (empty and want_test) else "normal"
         c.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('instance_kind', ?)", (kind,))
 

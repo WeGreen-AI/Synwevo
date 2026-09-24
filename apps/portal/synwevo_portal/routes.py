@@ -11,12 +11,12 @@ from __future__ import annotations
 import os
 from fastapi import APIRouter, Request
 
-from platform_core.apps import Apps
-from platform_core.config import platform_name
-from platform_core.errors import ServiceError
-from platform_core.identity import Identity
-from platform_core.sessions import Sessions
-from platform_core.store import Store
+from synwevo_core.apps import Apps
+from synwevo_core.config import platform_name
+from synwevo_core.errors import ServiceError
+from synwevo_core.identity import Identity
+from synwevo_core.sessions import Sessions
+from synwevo_core.store import Store
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=None) -> APIRouter:
@@ -77,5 +77,5 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=
 
 
 def _accounts_base() -> str:
-    from platform_auth_client.rp import issuer
+    from synwevo_auth_client.rp import issuer
     return issuer()

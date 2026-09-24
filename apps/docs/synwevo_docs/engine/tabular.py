@@ -139,7 +139,7 @@ def normalize_header(s: str) -> str:
 
 def _check_cells(n: int):
     if n > LIMITS.max_cells:
-        raise LimitError(f"单元格数量超过上限 {LIMITS.max_cells:,}（可通过 DOCWEAVE_MAX_CELLS 调整）")
+        raise LimitError(f"单元格数量超过上限 {LIMITS.max_cells:,}（可通过 SYNWEVO_DOCS_MAX_CELLS 调整）")
 
 
 # ---------------------------------------------------------------- CSV

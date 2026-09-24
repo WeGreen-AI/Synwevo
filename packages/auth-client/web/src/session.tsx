@@ -40,7 +40,7 @@ interface Ctx {
   state: AuthState | null;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
-  /** True when the deployment has no account system at all (DOCWEAVE_UI_AUTH is none/basic). */
+  /** True when the deployment has no account system at all (SYNWEVO_UI_AUTH is none/basic). */
   disabled: boolean;
 }
 

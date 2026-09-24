@@ -18,9 +18,10 @@ import traceback
 import zipfile
 from pathlib import Path
 
-from platform_core.context import tenant as current_tenant
-from platform_core.errors import ServiceError, not_found
-from platform_core.store import new_id, now
+from synwevo_core import env
+from synwevo_core.context import tenant as current_tenant
+from synwevo_core.errors import ServiceError, not_found
+from synwevo_core.store import new_id, now
 
 from .engine import generate as G
 from .engine import records as R
@@ -286,8 +287,8 @@ def _blocks_text(blocks) -> str:
 
 
 # ------------------------------------------------------------------ job service
-LEASE_S = float(os.environ.get("DOCWEAVE_JOB_LEASE_S", "30"))
-IDEMPOTENCY_TTL_S = float(os.environ.get("DOCWEAVE_IDEMPOTENCY_TTL_HOURS", "24")) * 3600
+LEASE_S = float(env.docs("JOB_LEASE_S", "30"))
+IDEMPOTENCY_TTL_S = float(env.docs("IDEMPOTENCY_TTL_HOURS", "24")) * 3600
 TERMINAL = ("completed", "completed_with_errors", "failed", "cancelled")
 ACTIVE = ("queued", "running", "cancelling")
 EVENT_VERSION = 1

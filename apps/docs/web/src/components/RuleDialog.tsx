@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { get, post, qs } from "@platform/auth-client";
+import { get, post, qs } from "@synwevo/auth-client";
 import { useLatest } from "../lib/latest";
 import type { Project, RecordRule, SourceFile } from "../lib/types";
-import { Modal } from "@platform/ui";
+import { Modal } from "@synwevo/ui";
 
 const MODES = [
   { key: "per_row", title: "每行一份", body: "表格中每条有效数据行 = 一份输出", ex: "例：客户表 100 行 → 生成 100 份合同" },

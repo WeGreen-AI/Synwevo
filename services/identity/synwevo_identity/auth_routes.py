@@ -14,12 +14,13 @@ from __future__ import annotations
 import os
 from fastapi import APIRouter, Body, Request, Response
 
-from platform_auth_client.session_routes import describe_user
-from platform_core.errors import ServiceError
-from platform_core.identity import Identity, registration_mode
-from platform_core.passwords import PasswordError
-from platform_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
-from platform_core.store import now as now_ts
+from synwevo_auth_client.session_routes import describe_user
+from synwevo_core import env
+from synwevo_core.errors import ServiceError
+from synwevo_core.identity import Identity, registration_mode
+from synwevo_core.passwords import PasswordError
+from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
+from synwevo_core.store import now as now_ts
 
 from .mfa import TICKET_MAX_ATTEMPTS
 from .mail import reset_mail as mail_reset, security_notice as mail_notice, verify_mail as mail_verify
@@ -35,7 +36,7 @@ def cookies_secure() -> bool:
     HTTP, so inferring it would disable the flag exactly where it matters most. Defaults to on,
     and is turned off deliberately for local development over http://127.0.0.1.
     """
-    raw = (os.environ.get("DOCWEAVE_COOKIE_SECURE") or "").strip().lower()
+    raw = (env.get("COOKIE_SECURE") or "").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return False
     return True
@@ -47,7 +48,7 @@ def client_ip(request: Request) -> str:
     X-Forwarded-For is honoured only when a trusted proxy is configured, because otherwise any
     caller could rotate a header to escape their own rate-limit bucket.
     """
-    if (os.environ.get("DOCWEAVE_TRUST_PROXY") or "").strip().lower() in ("1", "true", "yes", "on"):
+    if (env.get("TRUST_PROXY") or "").strip().lower() in ("1", "true", "yes", "on"):
         fwd = request.headers.get("x-forwarded-for") or ""
         if fwd:
             return fwd.split(",")[0].strip()[:64]
@@ -208,8 +209,8 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         The scope comes from a closed set. A client-chosen string would let a page ask for
         `scope=""`, which satisfies every check — the one value that must not be requestable.
         """
-        from platform_core.passwords import verify as verify_password
-        from platform_core.sessions import REAUTH_SECONDS, REAUTH_SCOPES
+        from synwevo_core.passwords import verify as verify_password
+        from synwevo_core.sessions import REAUTH_SECONDS, REAUTH_SCOPES
         s = _require_session(request)
         scope = (body.get("scope") or "").strip()
         if scope not in REAUTH_SCOPES:
@@ -391,7 +392,7 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
       signs in normally, which means any second factor they have still applies. Signing them in
       here would make "I forgot my password" a way around their own MFA.
     """
-    from platform_core.passwords import PasswordError
+    from synwevo_core.passwords import PasswordError
     r = APIRouter(prefix="/api/auth", tags=["auth"])
 
     @r.post("/forgot")
@@ -456,7 +457,7 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
 
         # A credential change ends everything that was authorised by the old one.
         n = sessions.revoke_all_for_user(user["id"], "password_reset")
-        from platform_core.oidc import Grants
+        from synwevo_core.oidc import Grants
         tokens = Grants(ident.store).revoke_for_user(user["id"], "password_reset")
         audit(request, "auth.reset.complete", actor_id=user["id"], object_kind="user",
               object_id=user["id"], result="ok", meta={"sessions": n, "tokens": tokens})
@@ -594,8 +595,8 @@ def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRout
     this purpose. Proving yourself to add a factor must not also unlock removing one, and a
     front-end flag would unlock nothing at all.
     """
-    from platform_core.passwords import verify as verify_password
-    from platform_core.sessions import REAUTH_SECONDS
+    from synwevo_core.passwords import verify as verify_password
+    from synwevo_core.sessions import REAUTH_SECONDS
 
     r = APIRouter(prefix="/api/auth/mfa", tags=["auth"])
     SCOPE = "mfa"

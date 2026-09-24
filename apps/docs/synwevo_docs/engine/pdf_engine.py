@@ -1,6 +1,6 @@
 """PDF handling.
 
-Two engines, chosen with ``DOCWEAVE_PDF_ENGINE``:
+Two engines, chosen with ``SYNWEVO_DOCS_PDF_ENGINE``:
 
 * ``pymupdf`` (default when installed) – PyMuPDF, AGPL-3.0 or commercial licence from
   Artifex.  Everything: reading, PDF / image templates, redaction, text insertion.
@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import io
 import os
+
+from synwevo_core import env
 import re
 import unicodedata
 
@@ -27,7 +29,7 @@ from .limits import LIMITS, LimitError
 
 
 def _select_engine() -> str:
-    want = (os.environ.get("DOCWEAVE_PDF_ENGINE") or "").strip().lower()
+    want = (env.docs("PDF_ENGINE") or "").strip().lower()
     if want in ("pdfium", "pymupdf"):
         return want
     try:
@@ -82,7 +84,7 @@ def templates_available() -> bool:      # kept: older callers mean "PDF template
 TEMPLATES_UNAVAILABLE = ("当前部署使用 pdfium 引擎（未安装或未启用 AGPL 许可的 PyMuPDF），PDF 模板不可用；"
                          "PDF 来源文件的读取、预览、OCR 与取值不受影响。如需 PDF 模板，请按 docs/DEPENDENCIES.md 启用 PyMuPDF")
 IMAGE_TEMPLATES_UNAVAILABLE = ("图片模板需要一个可绘制中文的字体文件，但本机没有找到。请安装中文字体"
-                               "（Debian/Ubuntu：apt install fonts-noto-cjk），或用 DOCWEAVE_CJK_FONT_FILE 指定字体文件路径")
+                               "（Debian/Ubuntu：apt install fonts-noto-cjk），或用 SYNWEVO_DOCS_CJK_FONT_FILE 指定字体文件路径")
 
 _CJK_FONT: pymupdf.Font | None = None
 FONT_NAME = "dwcjk"

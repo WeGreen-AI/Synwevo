@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import os
+
+from synwevo_core import env
 import resource
 import shutil
 import subprocess
@@ -21,16 +23,16 @@ _LO_LOCK = threading.Lock()
 # one private profile per server process: LibreOffice profiles must not be shared by concurrent instances
 # A LibreOffice user profile must not be shared by two concurrent soffice processes.
 # _LO_LOCK only serialises threads INSIDE one process, so the directory is always made
-# per-PID: DOCWEAVE_LO_PROFILE names the parent to put profiles under, not the profile
+# per-PID: SYNWEVO_DOCS_LO_PROFILE names the parent to put profiles under, not the profile
 # itself (pointing several workers at one fixed path used to corrupt it).
-_PROFILE_BASE = Path(os.environ.get("DOCWEAVE_LO_PROFILE") or (Path(tempfile.gettempdir()) / "docweave-lo"))
+_PROFILE_BASE = Path(env.docs("LO_PROFILE") or (Path(tempfile.gettempdir()) / "docweave-lo"))
 _PROFILE_DIR = _PROFILE_BASE / f"profile-{os.getpid()}"
 
 
 def soffice_path() -> str | None:
-    env = os.environ.get("DOCWEAVE_SOFFICE")
-    if env and Path(env).exists():
-        return env
+    configured = env.docs("SOFFICE")
+    if configured and Path(configured).exists():
+        return configured
     for cand in ("soffice", "libreoffice"):
         p = shutil.which(cand)
         if p:
@@ -56,8 +58,8 @@ CJK_FONT_CANDIDATES = (
 
 
 def cjk_font_files() -> list[Path]:
-    env = os.environ.get("DOCWEAVE_CJK_FONTS")
-    cands = [p for p in (env.split(os.pathsep) if env else []) if p] + list(CJK_FONT_CANDIDATES)
+    configured = env.docs("CJK_FONTS")
+    cands = [p for p in (configured.split(os.pathsep) if configured else []) if p] + list(CJK_FONT_CANDIDATES)
     seen, out = set(), []
     for c in cands:
         p = Path(c)

@@ -14,7 +14,7 @@ the templates and the generated documents say so on their face.  Projects are cr
 the machine API, so each carries ``origin = api:<key id>`` and
 ``manage.py projects prune`` can find them later without touching anything a person made.
 
-    export DOCWEAVE_API_KEY=dw_xxx_yyy
+    export SYNWEVO_DOCS_API_KEY=dw_xxx_yyy
     python scripts/seed_samples.py --base-url http://127.0.0.1:8765
 
 Exit codes: 0 every sample generated and verified, 3 a job did not complete, 4 an artifact
@@ -30,6 +30,8 @@ import hashlib
 import io
 import json
 import os
+
+from synwevo_core import env
 import sys
 import time
 import urllib.error
@@ -355,14 +357,14 @@ SAMPLES = [
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base-url", default=os.environ.get("DOCWEAVE_BASE_URL", "http://127.0.0.1:8765"))
-    ap.add_argument("--api-key", default=os.environ.get("DOCWEAVE_API_KEY"),
-                    help="默认取 $DOCWEAVE_API_KEY；用完请 manage.py apikey revoke 撤销")
+    ap.add_argument("--base-url", default=env.docs("BASE_URL", "http://127.0.0.1:8765"))
+    ap.add_argument("--api-key", default=env.docs("API_KEY"),
+                    help="默认取 $SYNWEVO_DOCS_API_KEY；用完请 manage.py apikey revoke 撤销")
     ap.add_argument("--only", action="append", choices=["contracts", "orders", "image"],
                     help="只建某个样本（可重复）")
     args = ap.parse_args()
     if not args.api_key:
-        print("需要机器接口密钥：设置 $DOCWEAVE_API_KEY 或传 --api-key\n"
+        print("需要机器接口密钥：设置 $SYNWEVO_DOCS_API_KEY 或传 --api-key\n"
               "  python backend/manage.py apikey create --name seed-samples --scopes read,write", file=sys.stderr)
         return 1
 

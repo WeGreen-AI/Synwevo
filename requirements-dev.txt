@@ -1,9 +1,9 @@
 # 平台开发环境：所有模块 + 测试工具。安装见 scripts/platform.py setup。
--r packages/platform-core/requirements.txt
+-r packages/core/requirements.txt
 -r packages/auth-client/python/requirements.txt
 -r services/identity/requirements.txt
 -r apps/portal/requirements.txt
--r apps/docweave/requirements.txt
+-r apps/docs/requirements.txt
 pytest==9.1.1
 pyyaml==6.0.3          # 只用于测试：核对提交的 openapi.yaml 与运行中的代码一致
 httpx==0.28.1

@@ -11,11 +11,11 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-from platform_core.identity import Identity
-from platform_identity.invites import Invites
-from platform_identity.mfa import Mfa
-from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
-from platform_core.store import Store
+from synwevo_core.identity import Identity
+from synwevo_identity.invites import Invites
+from synwevo_identity.mfa import Mfa
+from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
+from synwevo_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 NEW_PW = "an-entirely-different-long-phrase"
@@ -23,16 +23,16 @@ NEW_PW = "an-entirely-different-long-phrase"
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
     # `file` is the mode meant for exactly this: messages are queued and written to a
     # directory instead of being sent. A local receiver is test equipment, never evidence that
     # real mail is deliverable.
-    monkeypatch.setenv("DOCWEAVE_MAIL_MODE", "file")
-    monkeypatch.setenv("DOCWEAVE_MAIL_DIR", str(tmp_path / "mail"))
-    monkeypatch.setenv("DOCWEAVE_PUBLIC_URL", "http://accounts.localhost:8770")
-    import platform_identity.app as app_mod
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "mail"))
+    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "http://accounts.localhost:8770")
+    import synwevo_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -90,7 +90,7 @@ def test_a_mail_failure_does_not_become_an_enumeration_oracle(env, monkeypatch):
     """Found by this test: `enqueue` raises 503 when mail is unconfigured, which made the
     endpoint answer 503 for an address that has an account and 200 for one that does not —
     turning the one endpoint built to resist enumeration into a perfect oracle for it."""
-    monkeypatch.setenv("DOCWEAVE_MAIL_MODE", "disabled")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "disabled")
     fresh = TestClient(env["api"])
     real = post(fresh, "/api/auth/forgot", {"email": "alice@example.com"})
     fake = post(fresh, "/api/auth/forgot", {"email": "nobody@example.com"})
@@ -163,7 +163,7 @@ def test_a_reset_changes_the_password_and_ends_every_session(env):
 
 
 def test_a_reset_also_revokes_platform_tokens(env):
-    from platform_core import oidc
+    from synwevo_core import oidc
     store = env["store"]
     store.execute(
         "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,scope,issued_at,"

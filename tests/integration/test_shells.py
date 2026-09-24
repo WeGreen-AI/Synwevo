@@ -2,7 +2,7 @@
 
 这些检查跨模块——它们同时需要工作台的构建、账户外壳的构建和角色组装——所以放在集成验证里，
 而不是放在任何一个应用自己的测试里。放错地方的代价不是风格问题：一个应用的测试套件里出现
-`import platform_server`，就是"应用不得导入另一个应用"这条规则的第一个例外。
+`import synwevo_server`，就是"应用不得导入另一个应用"这条规则的第一个例外。
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-WORKBENCH_DIST = Path(__file__).resolve().parents[2] / "apps" / "docweave" / "web" / "dist"
+WORKBENCH_DIST = Path(__file__).resolve().parents[2] / "apps" / "docs" / "web" / "dist"
 ACCOUNTS_DIST = Path(__file__).resolve().parents[2] / "services" / "identity" / "web" / "dist"
 
 pytestmark = pytest.mark.skipif(not (WORKBENCH_DIST.exists() and ACCOUNTS_DIST.exists()),
@@ -20,17 +20,17 @@ pytestmark = pytest.mark.skipif(not (WORKBENCH_DIST.exists() and ACCOUNTS_DIST.e
 
 
 def _client(tmp_path, monkeypatch, *, role: str) -> TestClient:
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "none")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    monkeypatch.setenv("DOCWEAVE_ROLE", role)
-    import platform_server.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "none")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_ROLE", role)
+    import synwevo_server.app as app_mod
     importlib.reload(app_mod)
     return TestClient(app_mod.create_app(str(tmp_path), role=role, start_jobs=False))
 
 
-@pytest.mark.parametrize("role,marker", [("all", "DocWeave"), ("app", "DocWeave"),
-                                         ("portal", "工作平台"), ("accounts", "账户与安全")])
+@pytest.mark.parametrize("role,marker", [("all", "Synwevo Docs"), ("app", "Synwevo Docs"),
+                                         ("portal", "Synwevo Workspace"), ("accounts", "Synwevo Account")])
 def test_a_role_serves_its_own_shell_even_when_another_is_named(tmp_path, monkeypatch, role, marker):
     """Each role serves its own build and no other.
 
@@ -53,8 +53,8 @@ def test_the_account_pages_exist_once_and_the_workbench_does_not_carry_a_copy(tm
     """
     c = _client(tmp_path, monkeypatch, role="all")
     for path in ("/login", "/account", "/forgot-password"):
-        assert "账户与安全" in c.get(path).text, f"{path} 没有返回账户外壳"
-    assert "DocWeave" in c.get("/").text
+        assert "Synwevo Account" in c.get(path).text, f"{path} 没有返回账户外壳"
+    assert "Synwevo Docs" in c.get("/").text
 
     # On a relying party the same paths are redirects to the account service, because a
     # password box that cannot check a password is worse than no page at all.

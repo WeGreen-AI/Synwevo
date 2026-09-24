@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, get, post, qs } from "@platform/auth-client";
-import { fmtSize, fmtTime, useToast } from "@platform/ui";
+import { ApiError, get, post, qs } from "@synwevo/auth-client";
+import { fmtSize, fmtTime, useToast } from "@synwevo/ui";
 
 import { ITEM_STATUS as IST, JOB_STATUS as ST } from "../lib/status";
 
@@ -77,7 +77,7 @@ export default function JobPage() {
   return (
     <div className="app">
       <div className="topbar">
-        <Link to="/" className="brand"><span className="logo">W</span><span className="desktop-only">DocWeave</span></Link>
+        <Link to="/" className="brand"><span className="logo">S</span><span className="desktop-only">Synwevo Docs</span></Link>
         <span className="sep" />
         <Link to={`/p/${pid}`} className="btn ghost sm">← 返回项目</Link>
         <span className="grow ellipsis"><b>生成任务</b> <span className="muted small mono">{job.id}</span></span>

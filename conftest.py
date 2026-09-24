@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from platform_core.http import repo_root
+from synwevo_core.http import repo_root
 
 ROOT = repo_root() or Path(__file__).resolve().parent
 

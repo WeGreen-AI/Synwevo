@@ -23,23 +23,29 @@ import hashlib
 import os
 import secrets
 
+from . import env
 from .store import Store, new_id, now
 
 COOKIE_NAME = "dw_session"
 CSRF_COOKIE = "dw_csrf"
-CSRF_HEADER = "X-DocWeave-CSRF"
+CSRF_HEADER = "X-Synwevo-CSRF"
+#: The pre-rebrand header name, still accepted. A page loaded before the rename keeps sending
+#: it, and a deploy is not atomic across every open tab — refusing it would log those people
+#: out of every state-changing action until they reloaded, which reads as "the app is broken"
+#: rather than as "there is a new brand".
+LEGACY_CSRF_HEADER = "X-DocWeave-CSRF"
 
 # What a re-authentication can be *for*. A closed set on purpose: the empty scope satisfies
 # every check, so it must never be something a request can ask for.
 REAUTH_SCOPES = ("mfa", "admin")
 
 # Defaults chosen for a document tool people keep open while they work; overridable per deployment.
-IDLE_SECONDS = int(os.environ.get("DOCWEAVE_SESSION_IDLE_S", str(12 * 3600)))
-ABSOLUTE_SECONDS = int(os.environ.get("DOCWEAVE_SESSION_ABSOLUTE_S", str(30 * 24 * 3600)))
+IDLE_SECONDS = int(env.get("SESSION_IDLE_S", str(12 * 3600)))
+ABSOLUTE_SECONDS = int(env.get("SESSION_ABSOLUTE_S", str(30 * 24 * 3600)))
 # Sudo-style window. Long enough to finish a settings page, short enough that walking away ends it.
-REAUTH_SECONDS = int(os.environ.get("DOCWEAVE_REAUTH_S", str(10 * 60)))
+REAUTH_SECONDS = int(env.get("REAUTH_S", str(10 * 60)))
 # Admin sessions get a shorter leash than ordinary ones — §4.2 of docs/security/permissions.md.
-ADMIN_IDLE_SECONDS = int(os.environ.get("DOCWEAVE_ADMIN_IDLE_S", str(60 * 60)))
+ADMIN_IDLE_SECONDS = int(env.get("ADMIN_IDLE_S", str(60 * 60)))
 
 
 def _digest(raw: str) -> str:

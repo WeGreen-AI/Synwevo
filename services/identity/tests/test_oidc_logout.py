@@ -15,11 +15,11 @@ import pytest
 from authlib.jose import JsonWebKey
 from fastapi.testclient import TestClient
 
-from platform_core.identity import Identity
-from platform_core import oidc
-from platform_core.apps import Apps, bootstrap_docweave
-from platform_core.errors import ServiceError
-from platform_core.store import Store
+from synwevo_core.identity import Identity
+from synwevo_core import oidc
+from synwevo_core.apps import Apps, bootstrap_docs_app
+from synwevo_core.errors import ServiceError
+from synwevo_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 REDIRECT = "http://docweave.localhost:8765/auth/callback"
@@ -40,15 +40,15 @@ class Deliveries(list):
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    monkeypatch.setenv("DOCWEAVE_ISSUER", "http://accounts.localhost:8770")
-    import platform_identity.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_ISSUER", "http://accounts.localhost:8770")
+    import synwevo_identity.app as app_mod
     importlib.reload(app_mod)
 
     deliveries = Deliveries()
-    import platform_identity.provider_routes as routes_mod
+    import synwevo_identity.provider_routes as routes_mod
     real_build = routes_mod.build_router
     monkeypatch.setattr(routes_mod, "build_router",
                         lambda *a, **k: real_build(*a, **{**k, "deliver": deliveries}))
@@ -59,7 +59,7 @@ def env(tmp_path, monkeypatch):
     apps = Apps(store, ident)
     user = ident.create_user("alice@example.com", PW, display_name="Alice", status="active")
     ws = ident.workspaces_for(user["id"])[0]["id"]
-    bootstrap_docweave(store, ident)
+    bootstrap_docs_app(store, ident)
     apps.enable_for_workspace(ws, "docweave")
     oidc.Clients(store).register(
         client_id="docweave-web", app_id="docweave", name="DocWeave",

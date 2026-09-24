@@ -40,7 +40,7 @@ backend/.venv/bin/python -m pytest -q          # 在 backend/ 下运行
 | `tests/test_job_reliability.py::test_unknown_layout_is_rejected_not_silently_downgraded` | 1 | `layout` 非法值返回 400 而不是静默关闭分页检查 |
 | `tests/test_engine.py::test_combine_rejects_unknown_op` | 1 | 未知合并方式抛错，不再静默拼接 |
 
-两个新回归测试都验证过「没有修复时会失败」：恢复旧调用后 `test_large_sheet.py` 报「分页时重建了 6 次工作簿对象」；修复前 `DOCWEAVE_HOST=0.0.0.0` 实际可以启动并提供服务。
+两个新回归测试都验证过「没有修复时会失败」：恢复旧调用后 `test_large_sheet.py` 报「分页时重建了 6 次工作簿对象」；修复前 `SYNWEVO_HOST=0.0.0.0` 实际可以启动并提供服务。
 
 ## 2. 构建与类型检查
 
@@ -53,7 +53,7 @@ cd frontend && npx tsc --noEmit && npm run build
 ## 3. 干净环境启动与部署一致性
 
 ```bash
-DOCWEAVE_DATA_DIR=<空目录> DOCWEAVE_PORT=8799 .venv/bin/python -m platform_server.run
+SYNWEVO_DATA_DIR=<空目录> SYNWEVO_PORT=8799 .venv/bin/python -m synwevo_server.run
 ```
 
 | 检查 | 结果 |
@@ -62,24 +62,24 @@ DOCWEAVE_DATA_DIR=<空目录> DOCWEAVE_PORT=8799 .venv/bin/python -m platform_se
 | `/readyz` | `{"status":"ready","checks":{"database":"ok","storage":"ok","worker":"ok"},"schema_version":2}` |
 | 界面首页 | HTTP 200 |
 | `/api/v1/capabilities` 无密钥 | HTTP 401 |
-| `/api/docs` 默认 | HTTP 404（未配置 `DOCWEAVE_API_DOCS`） |
+| `/api/docs` 默认 | HTTP 404（未配置 `SYNWEVO_API_DOCS`） |
 | 新建数据目录内容 | `blobs/ docweave.sqlite3(+wal,shm) tmp/` |
 
 监听与鉴权守卫：
 
 | 场景 | 结果 |
 |---|---|
-| `DOCWEAVE_HOST=0.0.0.0`，`DOCWEAVE_UI_AUTH` 未设 | **退出码 1**，打印「拒绝启动…」及三种处理方式 |
-| 同上 + `DOCWEAVE_UI_AUTH=proxy` | 正常启动：`Uvicorn running on http://0.0.0.0:8798` |
-| 容器（`DOCWEAVE_IN_CONTAINER=1`） | 打印警告而不拒绝（暴露范围由端口映射决定） |
+| `SYNWEVO_HOST=0.0.0.0`，`SYNWEVO_UI_AUTH` 未设 | **退出码 1**，打印「拒绝启动…」及三种处理方式 |
+| 同上 + `SYNWEVO_UI_AUTH=proxy` | 正常启动：`Uvicorn running on http://0.0.0.0:8798` |
+| 容器（`SYNWEVO_IN_CONTAINER=1`） | 打印警告而不拒绝（暴露范围由端口映射决定） |
 
 ## 4. 无界面调用（不打开浏览器）
 
 按 `docs/integration/automation.md` 执行：
 
 ```bash
-python -m docweave.cli apikey create --name 验收 --scopes read,write
-export DOCWEAVE_API_KEY=dw_...
+python -m synwevo_docs.cli apikey create --name 验收 --scopes read,write
+export SYNWEVO_DOCS_API_KEY=dw_...
 .venv/bin/python tests/integration/automation_example.py \
   --base-url http://127.0.0.1:8765 \
   --source testdata/测试_客户100.xlsx --template testdata/测试_合同模板.docx \
@@ -136,12 +136,12 @@ export DOCWEAVE_API_KEY=dw_...
 
 ## 8. 事件与 Webhook（真实进程，非模拟）
 
-独立实例（`DOCWEAVE_PORT=8788`，独立数据目录）+ 一个会校验签名的本地接收端。
+独立实例（`SYNWEVO_PORT=8788`，独立数据目录）+ 一个会校验签名的本地接收端。
 
 | 检查 | 结果 |
 |---|---|
-| 默认拒绝 `http://` 回调 | 「回调默认要求 https；确需 http 时设置 `DOCWEAVE_WEBHOOK_ALLOW_HTTP=1`」 |
-| 默认拒绝内网地址 | `https://127.0.0.1:8877` → 「解析到内网地址 127.0.0.1；请加入 `DOCWEAVE_WEBHOOK_ALLOW_PRIVATE`」 |
+| 默认拒绝 `http://` 回调 | 「回调默认要求 https；确需 http 时设置 `SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP=1`」 |
+| 默认拒绝内网地址 | `https://127.0.0.1:8877` → 「解析到内网地址 127.0.0.1；请加入 `SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE`」 |
 | 云元数据地址 `169.254.169.254` | 即使配置了 `127.0.0.0/8` 允许列表仍被拒绝（允许列表只放行明确网段） |
 | 配置允许列表后投递 | 收到 `job.completed`，HMAC 签名校验 **通过**；伪造签名被接收端拒绝 |
 | 接收端返回 503 | 30 秒后按退避重试，第二次 200；两次的 `event_id` 与 `delivery` **相同**（接收端可据此去重） |
@@ -152,9 +152,9 @@ export DOCWEAVE_API_KEY=dw_...
 ## 9. 浏览器端到端
 
 ```bash
-.venv/bin/python apps/docweave/scripts/ui_e2e.py           # 13.6s 通过
-.venv/bin/python apps/docweave/scripts/ui_e2e_more.py      # 10.2s 通过（4 条流程）
-.venv/bin/python apps/docweave/scripts/ui_e2e_keyboard.py  #  4.1s 通过（4 条流程）
+.venv/bin/python apps/docs/scripts/ui_e2e.py           # 13.6s 通过
+.venv/bin/python apps/docs/scripts/ui_e2e_more.py      # 10.2s 通过（4 条流程）
+.venv/bin/python apps/docs/scripts/ui_e2e_keyboard.py  #  4.1s 通过（4 条流程）
 ```
 
 `ui_e2e_keyboard.py` 覆盖本轮新增的交互，全部断言针对真实状态：
@@ -286,7 +286,7 @@ export DOCWEAVE_API_KEY=dw_...
 ## 实际执行的命令与结果
 
 ```bash
-# 迁移前基线（改名之前，在 .../DocWeave 里）
+# 迁移前基线（改名之前，在 .../Synwevo Docs 里）
 backend/.venv/bin/python -m pytest backend/tests -q
 # → 644 passed, 1 skipped in 186.36s
 
@@ -295,7 +295,7 @@ backend/.venv/bin/python -m pytest backend/tests -q
 # → 650 passed, 1 skipped in 158.49s
 
 # 模块单跑
-cd apps/docweave && ../../.venv/bin/python -m pytest tests
+cd apps/docs && ../../.venv/bin/python -m pytest tests
 # → 306 passed, 1 skipped in 104.53s
 
 # 模块依赖边界
@@ -305,10 +305,10 @@ cd apps/docweave && ../../.venv/bin/python -m pytest tests
 
 # 前端
 npm run typecheck && npm run build
-# → 三个外壳（@docweave/web、@platform/accounts-web、@platform/portal-web）全部通过
+# → 三个外壳（@synwevo/docs-web、@synwevo/account-web、@synwevo/workspace-web）全部通过
 
 # 统一登录链路（对着重组后真正跑起来的三个进程）
-DOCWEAVE_DATA_DIR=/tmp/platform-live .venv/bin/python tests/integration/verify_sso.py \
+SYNWEVO_DATA_DIR=/tmp/platform-live .venv/bin/python tests/integration/verify_sso.py \
     --email owner@example.test --password '***' --docweave http://docweave.localhost:8765
 # → 38/38 项通过
 
@@ -317,7 +317,7 @@ DOCWEAVE_DATA_DIR=/tmp/platform-live .venv/bin/python tests/integration/verify_s
 # → 15/15 项通过；来源只读；default 仍 legacy/pending_claim/0 成员
 
 # 一致性备份与恢复演练
-DOCWEAVE_DATA_DIR=/tmp/platform-live .venv/bin/python scripts/platform.py backup --out /tmp/platform-live-backups
+SYNWEVO_DATA_DIR=/tmp/platform-live .venv/bin/python scripts/platform.py backup --out /tmp/platform-live-backups
 .venv/bin/python scripts/platform.py verify-restore /tmp/platform-live-backups/docweave-2026-09-24T00-14.tar.gz
 # → 20/20 项通过。"这份备份是可恢复的。"
 #   备份同时报出：主库 0.5 MB / WAL 2.7 MB —— 只复制主库会丢掉 2.7 MB
@@ -328,13 +328,13 @@ python3 scripts/platform.py setup        # → EXIT=0，装好依赖并构建三
 .venv/bin/python -m pytest               # → 见下
 
 # 数据目录解析（三个起始目录，同一个库）
-.venv/bin/python -m docweave.cli info                                   # 平台根目录
-(cd apps/docweave && ../../.venv/bin/python -m docweave.cli info)       # 应用目录
-(cd services/identity && ../../.venv/bin/python -m platform_identity.cli info)
-# → 三者都报告 /Users/lihiko/repo/wegreen/platform-workspace/data
+.venv/bin/python -m synwevo_docs.cli info                                   # 平台根目录
+(cd apps/docs && ../../.venv/bin/python -m synwevo_docs.cli info)       # 应用目录
+(cd services/identity && ../../.venv/bin/python -m synwevo_identity.cli info)
+# → 三者都报告 /Users/lihiko/repo/wegreen/synwevo/data
 
 # 空数据目录守卫
-DOCWEAVE_DATA_DIR=/tmp/does-not-exist .venv/bin/python scripts/platform.py up
+SYNWEVO_DATA_DIR=/tmp/does-not-exist .venv/bin/python scripts/platform.py up
 # → 退出码 2，并说明「这里不会替你建一个空库」
 ```
 
@@ -353,7 +353,7 @@ DOCWEAVE_DATA_DIR=/tmp/does-not-exist .venv/bin/python scripts/platform.py up
 ## 机器自动化（无浏览器、无 Cookie）
 
 ```bash
-.venv/bin/python -m platform_identity.cli --data /tmp/platform-live client register \
+.venv/bin/python -m synwevo_identity.cli --data /tmp/platform-live client register \
     --client-id nightly-batch --app docweave --name 夜间批处理 \
     --service --workspace w_xxx --api-scopes "docweave.read docweave.write"
 
@@ -385,14 +385,14 @@ DOCWEAVE_DATA_DIR=/tmp/does-not-exist .venv/bin/python scripts/platform.py up
 
 ## 浏览器实跑
 
-门户首页 → 登录（账户服务，输一次口令）→ 门户看到 DocWeave 卡片 → 打开工作台（未再要口令）→
+门户首页 → 登录（账户服务，输一次口令）→ 门户看到 Synwevo Docs 卡片 → 打开工作台（未再要口令）→
 批量生成 10 份 → 结果页 10/10 成功且逐条「已核验」→ 取回产物核对内容。
 
-清空 DocWeave 会话后直接打开深链接 `http://docweave.localhost:8765/p/p_23578f09c418` →
+清空 Synwevo Docs 会话后直接打开深链接 `http://docweave.localhost:8765/p/p_23578f09c418` →
 跳到账户服务登录 → 登录后**回到该深链接本身**（`location.href` 实测）。
 
 停掉门户之后：`portal /healthz → 000`（不可达），`docweave /healthz → 200`，
-`accounts /healthz → 200`，DocWeave 工作台照常打开与操作。
+`accounts /healthz → 200`，Synwevo Docs 工作台照常打开与操作。
 
 账户与安全页、平台管理后台（概览 / 账户 / 工作空间 / 审计）在桌面与 375px 窄屏下都可操作，
 静态资源与样式正常。

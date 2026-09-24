@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { get, patch, post, qs } from "@platform/auth-client";
+import { get, patch, post, qs } from "@synwevo/auth-client";
 import { useLatest } from "../lib/latest";
 import type { Project, TemplateDetail } from "../lib/types";
-import { Modal } from "@platform/ui";
+import { Modal } from "@synwevo/ui";
 
 export default function GenerateDialog({ project, tpl, onStarted, onClose }: { project: Project; tpl: TemplateDetail; onStarted: (jobId: string) => void; onClose: () => void }) {
   const native = tpl.exports.find((e) => e.native)?.format || tpl.format;

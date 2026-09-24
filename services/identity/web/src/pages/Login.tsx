@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, post } from "@platform/auth-client";
-import { safeNext, signInUrl, useSession } from "@platform/auth-client";
+import { ApiError, post } from "@synwevo/auth-client";
+import { safeNext, signInUrl, useSession } from "@synwevo/auth-client";
 import { b64urlToBuf, toJSON } from "../components/PasskeySection";
 
 /** Sign in, and — on a deployment that has never been set up — create the first administrator.
@@ -120,18 +120,18 @@ export default function Login() {
   }
 
   // On a dedicated account service this screen belongs to the platform; on the single-process
-  // deployment it is still DocWeave's own login, and renaming it there would be the opposite
-  // mistake. The server says which it is — the client cannot deduce it from the URL.
+  // deployment it is still Synwevo Docs' own login, and calling it the platform there would be
+  // the opposite mistake. The server says which it is — the client cannot deduce it from the URL.
   const platformSide = state?.role === "accounts" || state?.role === "portal";
-  const brandName = platformSide ? state?.platform_name || "工作平台" : "DocWeave";
-  const brandMark = platformSide ? "◫" : "W";
+  const brandName = platformSide ? state?.platform_name || "Synwevo Workspace" : "Synwevo Docs";
+  const brandMark = platformSide ? "◫" : "S";
 
   return (
     <div className="authpage">
       <form className="authcard" onSubmit={submit} noValidate>
         {/* The account service signs people in to the whole platform, so it carries the
-            platform's name. On a single-process deployment (role "all") it is still DocWeave's
-            own login screen, and saying "工作平台" there would be the opposite mistake. */}
+            platform's name. On a single-process deployment (role "all") it is still Synwevo Docs'
+            own login screen, and calling it the platform there would be the opposite mistake. */}
         <div className="authbrand">
           <span className="logo" aria-hidden="true">{brandMark}</span>
           {brandName}

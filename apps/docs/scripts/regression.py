@@ -4,7 +4,7 @@
     python scripts/regression.py --list
     python scripts/regression.py --case 20260923-101500-ab12cd
 
-Exit code 1 when any case differs.  Cases live in regression/ (or $DOCWEAVE_REGRESSION_DIR)
+Exit code 1 when any case differs.  Cases live in regression/ (or $SYNWEVO_DOCS_REGRESSION_DIR)
 and can be committed together with the code; the pytest suite runs them too.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 
-from docweave.regression import list_cases, run  # noqa: E402
+from synwevo_docs.regression import list_cases, run  # noqa: E402
 
 
 def main() -> int:

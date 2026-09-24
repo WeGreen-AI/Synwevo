@@ -7,7 +7,7 @@ import docx
 import openpyxl
 import pytest
 
-from docweave import regression as RG
+from synwevo_docs import regression as RG
 
 
 def test_committed_cases_still_pass():
@@ -20,7 +20,7 @@ def test_committed_cases_still_pass():
 
 @pytest.fixture()
 def case_dir(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_REGRESSION_DIR", str(tmp_path / "regression"))
+    monkeypatch.setenv("SYNWEVO_DOCS_REGRESSION_DIR", str(tmp_path / "regression"))
     return tmp_path / "regression"
 
 
@@ -73,7 +73,7 @@ def test_cli(api, fixtures, case_dir):
     api.ok(api.c.post(f"/api/projects/{pid}/regression-cases", json={"name": "CLI"}))
     root = Path(__file__).resolve().parents[1]
     p = subprocess.run([sys.executable, str(root / "scripts" / "regression.py")], capture_output=True, text=True,
-                       env={**__import__("os").environ, "DOCWEAVE_REGRESSION_DIR": str(case_dir)})
+                       env={**__import__("os").environ, "SYNWEVO_DOCS_REGRESSION_DIR": str(case_dir)})
     assert p.returncode == 0 and "[通过]" in p.stdout, p.stdout + p.stderr
 
 

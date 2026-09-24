@@ -12,8 +12,8 @@ import io
 import pytest
 from PIL import Image
 
-from docweave.engine import fonts
-from docweave.engine import pdf_engine as pe
+from synwevo_docs.engine import fonts
+from synwevo_docs.engine import pdf_engine as pe
 
 pytestmark = pytest.mark.skipif(not fonts.cjk_font_file(), reason="本机没有可用的中文字体文件")
 
@@ -82,8 +82,8 @@ def test_full_image_template_flow_without_a_pdf_engine(api, fixtures, pdfium, tm
 
 def test_repeat_areas_are_refused_with_a_specific_reason_not_a_generic_error(api, fixtures, pdfium):
     """An unsupported case must name itself, not fall back to a blanket engine_unavailable."""
-    from docweave.engine.image_raster import fill
-    from docweave.engine.values import Value, STR
+    from synwevo_docs.engine.image_raster import fill
+    from synwevo_docs.engine.values import Value, STR
     meta = {"native": "png", "width": 40, "height": 20, "mode": "RGB", "dpi": [72, 72], "alpha": False}
     im = Image.new("RGB", (40, 20), "white"); buf = io.BytesIO(); im.save(buf, "PNG")
     slot = {"id": "s1", "name": "明细", "layout": {"cols": [], "trect": [0, 0, 10, 10], "row_height": 5}}
@@ -95,8 +95,8 @@ def test_repeat_areas_are_refused_with_a_specific_reason_not_a_generic_error(api
 
 
 def test_overflowing_text_fails_instead_of_being_silently_clipped(api, fixtures, pdfium):
-    from docweave.engine.image_raster import fill
-    from docweave.engine.values import Value, STR
+    from synwevo_docs.engine.image_raster import fill
+    from synwevo_docs.engine.values import Value, STR
     meta = {"native": "png", "width": 120, "height": 40, "mode": "RGB", "dpi": [72, 72], "alpha": False}
     im = Image.new("RGB", (120, 40), "white"); buf = io.BytesIO(); im.save(buf, "PNG")
     slot = {"id": "s1", "name": "备注", "locator": {"rect": [5, 5, 40, 15]}, "font_size": 12, "min_font_size": 10}

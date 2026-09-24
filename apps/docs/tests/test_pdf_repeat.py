@@ -4,7 +4,7 @@ import openpyxl
 import pymupdf
 import pytest
 
-from docweave.engine import pdf_repeat as pr
+from synwevo_docs.engine import pdf_repeat as pr
 
 AREA = pymupdf.Rect(72, 172, 523, 304)          # 6 body rows below the header (unrotated points)
 NO_BOX = pymupdf.Rect(112, 108, 290, 125)        # "DD-示例"
@@ -131,7 +131,7 @@ def test_rotated_page_and_header_only_table(api, fixtures):
         page = doc[page_no]
         rows = _row_texts(page, AREA, 22, len(exp[small]))
         assert [r.split()[1] for r in rows] == [r[3] for r in exp[small]]
-        from docweave.engine.pdf_engine import text_rotation_in
+        from synwevo_docs.engine.pdf_engine import text_rotation_in
         assert text_rotation_in(page, AREA) == 0          # written in the same direction as the template text
 
 

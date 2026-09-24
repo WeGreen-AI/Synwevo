@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { get } from "@platform/auth-client";
+import { get } from "@synwevo/auth-client";
 
 const COLS: [string, string][] = [
   ["source", "来源导入与提取"], ["preview", "预览与可选择对象"], ["template", "作为模板 / 创建字段"], ["fill", "可填充类型"],
@@ -14,7 +14,7 @@ export default function Capabilities() {
   return (
     <div className="app">
       <div className="topbar">
-        <Link to="/" className="brand"><span className="logo">W</span>DocWeave</Link>
+        <Link to="/" className="brand"><span className="logo">S</span>Synwevo Docs</Link>
         <span className="sep" /><b>格式能力矩阵</b>
       </div>
       <div style={{ overflow: "auto", flex: 1 }}>

@@ -10,11 +10,11 @@ import time
 
 import pytest
 
-from platform_core import passwords
-from platform_core.identity import Identity, normalise_email, valid_email
-from platform_core.errors import ServiceError
-from platform_core.sessions import Sessions, csrf_ok, describe_client
-from platform_core.store import Store
+from synwevo_core import passwords
+from synwevo_core.identity import Identity, normalise_email, valid_email
+from synwevo_core.errors import ServiceError
+from synwevo_core.sessions import Sessions, csrf_ok, describe_client
+from synwevo_core.store import Store
 
 
 @pytest.fixture()
@@ -118,7 +118,7 @@ def test_duplicate_email_is_refused_case_insensitively(ident):
 
 def test_legacy_workspace_never_appears_for_anyone(ident):
     """The whole point of the migration design, asserted from the account side."""
-    ts = __import__("platform_core.store", fromlist=["now"]).now()
+    ts = __import__("synwevo_core.store", fromlist=["now"]).now()
     ident.store.execute("INSERT INTO workspaces (id,name,kind,status,created_at,updated_at) "
                         "VALUES ('default','历史数据（待认领）','legacy','pending_claim',?,?)", (ts, ts))
     u = ident.create_user("alice@example.com", LONG_OK)

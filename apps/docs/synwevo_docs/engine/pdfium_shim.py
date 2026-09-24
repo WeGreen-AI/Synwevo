@@ -1,6 +1,6 @@
 """A small, read-only PyMuPDF-compatible surface on top of pypdfium2 (Apache-2.0 / BSD-3).
 
-Selected with ``DOCWEAVE_PDF_ENGINE=pdfium`` (or automatically when PyMuPDF is not
+Selected with ``SYNWEVO_DOCS_PDF_ENGINE=pdfium`` (or automatically when PyMuPDF is not
 installed) so DocWeave can be deployed without the AGPL-licensed PyMuPDF.  It covers
 what *reading* PDFs needs – page geometry and rotation, words with positions, plain
 text, image placement, rendering, page import – with PyMuPDF's conventions:

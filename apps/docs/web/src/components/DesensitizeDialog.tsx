@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { get, post, qs } from "@platform/auth-client";
+import { get, post, qs } from "@synwevo/auth-client";
 import type { SourceFile } from "../lib/types";
-import { Modal } from "@platform/ui";
+import { Modal } from "@synwevo/ui";
 
 const PATTERNS = [
   { key: "mobile", label: "手机号" }, { key: "idcard", label: "身份证号（保留出生日期）" }, { key: "bankcard", label: "银行卡号" },

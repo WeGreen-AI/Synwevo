@@ -80,7 +80,7 @@ def test_block_columns_detected_and_filled(api, fixtures):
         root = etree.fromstring(xml)
         assert not root.findall(f".//{{{W}}}sdt")               # no content controls left
         assert d.tables[0].cell(0, 0).text == "单元格内的段落"   # content after the block is untouched
-    from docweave.engine.converters import convert, soffice_path
+    from synwevo_docs.engine.converters import convert, soffice_path
     if soffice_path():                                            # a real office suite opens and renders it
         import pymupdf
         pdf = pymupdf.open(stream=convert(outs["DD-001.docx"], "docx", "pdf"), filetype="pdf")
@@ -97,7 +97,7 @@ def test_page_break_separator_and_zero_rows(api, fixtures):
     n = len(_orders(fixtures)["DD-002"])
     assert len(root.findall(f".//{{{W}}}br[@{{{W}}}type='page']")) == n - 1
     # zero detail rows: placeholder policy keeps one copy with 「（无）」 in the first column
-    from docweave.engine import templates as T
+    from synwevo_docs.engine import templates as T
     tpl = api.ok(api.c.get(f"/api/templates/{tid}"))
     slot = next(s for s in tpl["version"]["slots"] if s["id"] == rep["id"])
     work = api.c.get(f"/api/templates/{tid}/download", params={"which": "working"})

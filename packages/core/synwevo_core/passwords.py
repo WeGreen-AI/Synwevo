@@ -78,7 +78,10 @@ _COMMON = {
     "p@ssword", "p@ssw0rd", "secret", "master", "hello", "freedom", "whatever", "qazwsx",
     "correcthorsebatterystaple",          # famous enough to be in every wordlist
 }
-_SERVICE_TERMS = {"docweave", "wegreen", "dw.wegreen.ltd", "文档", "模板"}
+#: 与本服务相关、因此不该被用作口令的词。旧品牌留着——它仍然是这个服务的名字之一，
+#: 而且已经存在的口令里可能就用了它。
+_SERVICE_TERMS = {"synwevo", "synwevodocs", "docweave", "wegreen", "dw.wegreen.ltd",
+                  "文档", "模板"}
 
 
 def _squash(s: str) -> str:

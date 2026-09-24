@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "platform-core"
+name = "synwevo-core"
 version = "1.0.0"
-description = "平台共享基础库：持久化入口、租户上下文、身份读写、会话、机器身份、HTTP 骨架"
+description = "Synwevo 共享基础库：持久化入口、租户上下文、身份读写、会话、机器身份、配置兼容、HTTP 骨架"
 requires-python = ">=3.12"
 # Versions are pinned in the repository's requirements files, which stay the single source of
 # truth for what gets installed; this list is the abstract dependency set, so an import that is
@@ -13,4 +13,8 @@ requires-python = ">=3.12"
 dependencies = ["fastapi", "starlette", "argon2-cffi"]
 
 [tool.setuptools.packages.find]
-include = ["platform_core*"]
+include = ["synwevo_core*"]
+
+[project.urls]
+Homepage = "https://github.com/WeGreen-AI/Synwevo"
+Repository = "https://github.com/WeGreen-AI/Synwevo"

@@ -4,7 +4,7 @@
   CLI (`python backend/manage.py apikey create …`), stored only as a SHA-256 hash, carry a
   tenant and scopes, and can expire or be revoked.  Every resource belongs to a tenant and is
   only visible to keys of that tenant.
-* Web UI (`/api/…`, static files): `DOCWEAVE_UI_AUTH` decides:
+* Web UI (`/api/…`, static files): `SYNWEVO_UI_AUTH` decides:
   - `none`  – no check; only allowed when the server listens on loopback (default)
   - `basic` – HTTP Basic against users created with `manage.py ui-user add`
   - `proxy` – the operator's reverse proxy authenticates (explicitly acknowledged)
@@ -25,11 +25,12 @@ import sys
 import secrets
 import time
 
+from . import env
 from .errors import ServiceError
 from .store import Store, new_id, now
 
 SCOPES = ("read", "write", "admin")
-UI_TENANT = os.environ.get("DOCWEAVE_UI_TENANT", "default")
+UI_TENANT = env.get("UI_TENANT", "default")
 KEY_PREFIX = "dw"
 PBKDF2_ROUNDS = 240_000
 
@@ -52,10 +53,10 @@ def ui_auth_mode() -> str:
     would be the kind of migration that loses people their access. They are a shared password,
     not identity, and `docs/security/permissions.md` says so.
     """
-    mode = (os.environ.get("DOCWEAVE_UI_AUTH") or "none").strip().lower()
+    mode = (env.get("UI_AUTH") or "none").strip().lower()
     if mode not in UI_AUTH_MODES:
         raise ServiceError(500, "bad_config",
-                           f"DOCWEAVE_UI_AUTH 只能是 {' / '.join(UI_AUTH_MODES)}，当前为 {mode!r}")
+                           f"SYNWEVO_UI_AUTH 只能是 {' / '.join(UI_AUTH_MODES)}，当前为 {mode!r}")
     return mode
 
 
@@ -72,16 +73,16 @@ def is_loopback(host: str) -> bool:
 def in_container() -> bool:
     """Inside a container, binding 0.0.0.0 is how the port mapping reaches the process;
     what is actually exposed is decided by the mapping, which this process cannot see."""
-    if (os.environ.get("DOCWEAVE_IN_CONTAINER") or "").strip().lower() in ("1", "true", "yes", "on"):
+    if (env.get("IN_CONTAINER") or "").strip().lower() in ("1", "true", "yes", "on"):
         return True
     return os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
 
 
 REMEDIES = (
     "请任选其一：\n"
-    "  1) 仅本机监听：DOCWEAVE_HOST=127.0.0.1（默认），由反向代理对外提供；\n"
-    "  2) 启用内置口令：python backend/manage.py ui-user add <用户名>，并设置 DOCWEAVE_UI_AUTH=basic；\n"
-    "  3) 由反向代理完成认证并显式声明：DOCWEAVE_UI_AUTH=proxy。\n"
+    "  1) 仅本机监听：SYNWEVO_HOST=127.0.0.1（默认），由反向代理对外提供；\n"
+    "  2) 启用内置口令：python backend/manage.py ui-user add <用户名>，并设置 SYNWEVO_UI_AUTH=basic；\n"
+    "  3) 由反向代理完成认证并显式声明：SYNWEVO_UI_AUTH=proxy。\n"
     "机器接口 /api/v1 始终需要 API 密钥，不受此设置影响。"
 )
 
@@ -97,11 +98,11 @@ def check_listen_config(host: str, warn=None) -> None:
         return
     if in_container():
         (warn or (lambda m: print(m, file=sys.stderr)))(
-            f"警告：容器内监听 {host}，且 DOCWEAVE_UI_AUTH=none（界面无访问控制）。\n"
+            f"警告：容器内监听 {host}，且 SYNWEVO_UI_AUTH=none（界面无访问控制）。\n"
             "容器的实际暴露范围由端口映射决定：请只映射到 127.0.0.1，并在前面加带认证的反向代理。\n" + REMEDIES)
         return
     raise SystemExit(
-        f"拒绝启动：DOCWEAVE_HOST={host} 会对外监听，但 DOCWEAVE_UI_AUTH=none（界面无任何访问控制）。\n" + REMEDIES)
+        f"拒绝启动：SYNWEVO_HOST={host} 会对外监听，但 SYNWEVO_UI_AUTH=none（界面无任何访问控制）。\n" + REMEDIES)
 
 
 # ------------------------------------------------------------------ API keys
@@ -114,9 +115,9 @@ class Auth:
 
     # ---------------------------------------------------------- server secret (signed links)
     def secret(self) -> bytes:
-        env = os.environ.get("DOCWEAVE_SECRET")
-        if env:
-            return env.encode()
+        external = env.get("SECRET")
+        if external:
+            return external.encode()
         row = self.store.one("SELECT value FROM meta WHERE key='server_secret'")
         if row:
             return bytes.fromhex(row["value"])

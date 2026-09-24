@@ -11,9 +11,9 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-from platform_core.identity import Identity
-from platform_core.apps import Apps, bootstrap_docweave
-from platform_core.store import Store, now
+from synwevo_core.identity import Identity
+from synwevo_core.apps import Apps, bootstrap_docs_app
+from synwevo_core.store import Store, now
 
 PW = "a-sufficiently-long-passphrase"
 REASON = "把历史数据交给它原本的所有者"
@@ -21,15 +21,15 @@ REASON = "把历史数据交给它原本的所有者"
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    import platform_identity.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    import synwevo_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
     ident = Identity(store)
-    bootstrap_docweave(store, ident)
+    bootstrap_docs_app(store, ident)
 
     admin = ident.create_user("admin@example.com", PW, status="active", platform_role="admin")
     alice = ident.create_user("alice@example.com", PW, status="active")
@@ -58,7 +58,7 @@ def post(client, path, body=None):
     — which is the protection working, but it means a test that forgets the header proves
     nothing about the route it meant to exercise.
     """
-    from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
+    from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
     return client.post(path, json=body if body is not None else {},
                        headers={CSRF_HEADER: client.cookies.get(CSRF_COOKIE) or ""})
 
@@ -222,7 +222,7 @@ def test_the_last_administrator_cannot_be_suspended(env):
 def test_revoking_sessions_also_revokes_the_tokens_they_minted(env):
     """An application holding an access token minted by a session that no longer exists would
     otherwise keep working."""
-    from platform_core import oidc
+    from synwevo_core import oidc
     store = env["store"]
     store.execute(
         "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,scope,issued_at,"

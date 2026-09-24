@@ -2,7 +2,7 @@
 
 Three statements get conflated routinely — "does not use PyMuPDF", "does not contain MuPDF"
 and "has no AGPL dependency" — and the service used to report only the first while wording it
-as the third: with DOCWEAVE_PDF_ENGINE=pdfium and PyMuPDF still installed, /api/about said
+as the third: with SYNWEVO_DOCS_PDF_ENGINE=pdfium and PyMuPDF still installed, /api/about said
 「未加载 AGPL 组件」while the AGPL MuPDF binary was still in the image and two fallbacks still
 called into it.
 
@@ -19,14 +19,14 @@ from pathlib import Path
 
 import pytest
 
-from docweave import licensing
+from synwevo_docs import licensing
 
-ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
+ROOT = __import__("synwevo_core.http", fromlist=["repo_root"]).repo_root()
 
 
 def test_agpl_obligation_follows_the_binary_not_the_engine_setting(monkeypatch):
     """Selecting pdfium changes which engine runs; it removes nothing from the image."""
-    from docweave.engine import pdf_engine
+    from synwevo_docs.engine import pdf_engine
     monkeypatch.setattr(pdf_engine, "ENGINE", "pdfium")
     monkeypatch.setattr(licensing, "pymupdf_installed", lambda: True)
     a = licensing.about()
@@ -38,7 +38,7 @@ def test_agpl_obligation_follows_the_binary_not_the_engine_setting(monkeypatch):
 
 
 def test_no_agpl_claim_only_when_pymupdf_is_absent(monkeypatch):
-    from docweave.engine import pdf_engine
+    from synwevo_docs.engine import pdf_engine
     monkeypatch.setattr(pdf_engine, "ENGINE", "pdfium")
     monkeypatch.setattr(licensing, "pymupdf_installed", lambda: False)
     a = licensing.about()
@@ -47,7 +47,7 @@ def test_no_agpl_claim_only_when_pymupdf_is_absent(monkeypatch):
 
 
 def test_pymupdf_engine_keeps_the_section_13_offer(monkeypatch):
-    from docweave.engine import pdf_engine
+    from synwevo_docs.engine import pdf_engine
     monkeypatch.setattr(pdf_engine, "ENGINE", "pymupdf")
     monkeypatch.setattr(licensing, "pymupdf_installed", lambda: True)
     a = licensing.about()
@@ -57,22 +57,22 @@ def test_pymupdf_engine_keeps_the_section_13_offer(monkeypatch):
 
 def test_archive_says_so_when_it_is_incomplete(monkeypatch, tmp_path):
     """Simulate a partial image: the business package present, everything else absent."""
-    (tmp_path / "apps" / "docweave" / "docweave").mkdir(parents=True)
-    (tmp_path / "apps" / "docweave" / "docweave" / "x.py").write_text("# code\n", encoding="utf-8")
+    (tmp_path / "apps" / "docs" / "synwevo_docs").mkdir(parents=True)
+    (tmp_path / "apps" / "docs" / "synwevo_docs" / "x.py").write_text("# code\n", encoding="utf-8")
     monkeypatch.setattr(licensing, "ROOT", tmp_path)
 
     status = licensing.source_status()
     assert not status["complete"]
     # The shared packages and the account service are part of the running program after the
     # platform restructure, so their absence has to be reported like any other gap.
-    assert "packages/platform-core" in status["missing"] and "docs" in status["missing"]
+    assert "packages/core" in status["missing"] and "docs" in status["missing"]
     assert "services/identity" in status["missing"]
 
     blob, name = licensing.source_archive()
     tar = tarfile.open(fileobj=io.BytesIO(blob))
     offer = tar.extractfile([m for m in tar.getmembers() if m.name.endswith("SOURCE_OFFER.txt")][0]).read().decode()
     assert "并不完整" in offer, "缺内容时必须说出来，不能继续声称完整"
-    assert "packages/platform-core" in offer, "必须逐条列出缺了什么"
+    assert "packages/core" in offer, "必须逐条列出缺了什么"
     assert "包含所列全部内容" not in offer
 
 
@@ -101,7 +101,7 @@ def test_docker_image_carries_every_path_the_offer_promises():
     """
     dockerfile = (ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8")
     copied = "\n".join(l for l in dockerfile.splitlines() if l.startswith("COPY"))
-    for rel in ("packages/", "services/identity/", "apps/docweave/", "apps/portal/",
+    for rel in ("packages/", "services/identity/", "apps/docs/", "apps/portal/",
                 "infra/server/", "scripts/", "docs/", "README.md", "NOTICE"):
         assert rel in copied, f"Dockerfile 没有把 {rel} 放进镜像，对应源代码包会缺这一块"
 

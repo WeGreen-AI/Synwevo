@@ -10,9 +10,9 @@
  * the control.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, get, post } from "@platform/auth-client";
-import { useSession } from "@platform/auth-client";
-import { useToast } from "@platform/ui";
+import { ApiError, get, post } from "@synwevo/auth-client";
+import { useSession } from "@synwevo/auth-client";
+import { useToast } from "@synwevo/ui";
 
 type Overview = {
   users: number;
@@ -192,7 +192,7 @@ function ClaimCard({ ws }: { ws: Workspace }) {
     return (
       <div className="notice ok">
         已把 <b>{done.projects}</b> 个历史项目所在的工作空间指派给 <b>{done.email}</b>。
-        对方下次进入 DocWeave 时即可看到。此操作已写入审计记录。
+        对方下次进入 Synwevo Docs 时即可看到。此操作已写入审计记录。
       </div>
     );
   }

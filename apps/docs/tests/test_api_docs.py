@@ -4,16 +4,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
+ROOT = __import__("synwevo_core.http", fromlist=["repo_root"]).repo_root()
 
 
 def test_openapi_file_is_in_sync(tmp_path):
     out = tmp_path / "openapi.yaml"
-    p = subprocess.run([sys.executable, "-m", "docweave.cli", "--data", str(tmp_path / "data"),
+    p = subprocess.run([sys.executable, "-m", "synwevo_docs.cli", "--data", str(tmp_path / "data"),
                         "openapi", "--out", str(out)], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr[-800:]
     committed = (ROOT / "docs" / "integration" / "openapi.yaml").read_text(encoding="utf-8")
-    assert out.read_text(encoding="utf-8") == committed, "docs/integration/openapi.yaml 与代码不一致：运行 python -m docweave.cli openapi"
+    assert out.read_text(encoding="utf-8") == committed, "docs/integration/openapi.yaml 与代码不一致：运行 python -m synwevo_docs.cli openapi"
 
 
 def test_openapi_describes_only_machine_routes_and_needs_auth():
@@ -43,7 +43,7 @@ def test_example_definition_matches_the_documented_shape(api, fixtures):
     pid = api.project("示例定义")
     api.upload(pid, fixtures / "测试_客户100.xlsx")
     t = api.template(pid, fixtures / "测试_合同模板.docx")
-    from docweave import definitions as D
+    from synwevo_docs import definitions as D
     created = D.import_template_fields(api.c.app_state.app, t["id"], {"schema": "docweave.template-fields", "version": 1,
                                                                       "fields": doc["fields"]})
     names = [c["name"] for c in created["created"]]

@@ -36,7 +36,7 @@ class MachineAuth:
     def __init__(self, store: Store, ident: Identity, legacy):
         self.store = store
         self.ident = ident
-        self.legacy = legacy                 # platform_core.auth.Auth — the existing dw_ key checker
+        self.legacy = legacy                 # synwevo_core.auth.Auth — the existing dw_ key checker
 
     def verify(self, header: str | None) -> dict:
         """Authorization header → principal, or raise 401/403.

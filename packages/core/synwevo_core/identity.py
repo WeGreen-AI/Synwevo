@@ -18,6 +18,7 @@ import os
 import secrets
 import unicodedata
 
+from . import env
 from . import passwords
 from .errors import ServiceError
 from .store import Store, new_id, now
@@ -365,5 +366,5 @@ def registration_mode() -> str:
     A first deployment that is reachable before anyone configures it must not let a passer-by
     open an account, so the safe mode is the default and opening it up is a deliberate act.
     """
-    mode = (os.environ.get("DOCWEAVE_REGISTRATION") or "invite").strip().lower()
+    mode = (env.get("REGISTRATION") or "invite").strip().lower()
     return mode if mode in REGISTRATION_MODES else "invite"

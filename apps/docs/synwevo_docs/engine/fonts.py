@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import functools
 import os
+
+from synwevo_core import env
 import shutil
 import subprocess
 from pathlib import Path
@@ -85,7 +87,7 @@ def cjk_font_file() -> str | None:
     Order: explicit configuration, fontconfig, well-known platform paths.  Every candidate
     is checked for real glyph coverage before it is accepted.
     """
-    configured = (os.environ.get("DOCWEAVE_CJK_FONT_FILE") or "").strip()
+    configured = (env.docs("CJK_FONT_FILE") or "").strip()
     candidates = ([configured] if configured else []) + _fc_match() + list(_WELL_KNOWN)
     for c in candidates:
         if c and Path(c).is_file() and _covers_chinese(c):
@@ -98,7 +100,7 @@ def require_cjk_font() -> str:
     if not path:
         raise NoCJKFont(
             "找不到可用于绘制中文的字体文件。请安装中文字体（Debian/Ubuntu：apt install fonts-noto-cjk；"
-            "镜像内已预装），或用 DOCWEAVE_CJK_FONT_FILE 指定一个 .ttf/.ttc/.otf 路径。"
+            "镜像内已预装），或用 SYNWEVO_DOCS_CJK_FONT_FILE 指定一个 .ttf/.ttc/.otf 路径。"
             "注意：必须是字体**文件路径**，不是字体族名称。")
     return path
 

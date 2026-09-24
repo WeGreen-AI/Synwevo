@@ -2,7 +2,7 @@
 
 engine 包不依赖任何 Web 框架，所以将来的桌面外壳可以直接复用它；这一层只做 HTTP。
 
-会话网关、错误契约、探针和静态外壳的通用部分已经移到 `platform_core.http`——它们对账户服务、
+会话网关、错误契约、探针和静态外壳的通用部分已经移到 `synwevo_core.http`——它们对账户服务、
 门户和这里是同一套，留在这里就意味着账户服务要导入 DocWeave 才能有一个会话。这里剩下的全部是
 DocWeave 自己的业务路由。
 """
@@ -14,10 +14,11 @@ from pathlib import Path
 from fastapi import Body, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from platform_core.errors import ServiceError
-from platform_core.http import (Platform, build_platform, install as install_platform,
+from synwevo_core import env
+from synwevo_core.errors import ServiceError
+from synwevo_core.http import (Platform, build_platform, install as install_platform,
                                 install_probes, mount_web, new_api, shell_response)
-from platform_core.store import Store
+from synwevo_core.store import Store
 
 from ..engine.limits import LIMITS
 from ..jobs import JobService, naming_tokens
@@ -44,7 +45,7 @@ def attachment(data: bytes, filename: str, ext: str | None = None, inline: bool 
 
 def web_dist() -> Path:
     """The workbench's built shell. Its own build output, beside its own source."""
-    return Path(os.environ.get("DOCWEAVE_UI_DIR") or Path(__file__).resolve().parents[2] / "web" / "dist")
+    return Path(env.docs("UI_DIR") or Path(__file__).resolve().parents[2] / "web" / "dist")
 
 
 def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
@@ -513,18 +514,18 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     """DocWeave on its own: the workbench, the machine API, and the single-sign-on client.
 
     No portal build and no account pages are served here; the account service is a separate
-    origin and this process is a relying party on it. `platform_server` is what puts several
+    origin and this process is a relying party on it. `synwevo_server` is what puts several
     roles into one process for the single-process deployment.
     """
-    from platform_auth_client.routes import (build_account_redirect_router,
+    from synwevo_auth_client.routes import (build_account_redirect_router,
                                              build_router as build_rp_router)
-    from platform_auth_client.session_routes import build_router as build_session_router
+    from synwevo_auth_client.session_routes import build_router as build_session_router
     plat = build_platform(data_dir)
-    api = new_api("DocWeave")
+    api = new_api("Synwevo Docs")
     api.state.auth = plat.auth
     api.state.identity = plat.identity
     api.state.sessions = plat.sessions
-    install_platform(api, plat, role=os.environ.get("DOCWEAVE_ROLE") or "app")
+    install_platform(api, plat, role=env.get("ROLE") or "app")
     # Probes first, so the published OpenAPI document lists them where it always has. Route
     # order is not behaviour, but a generated file that reshuffles on every refactor is one
     # nobody reads the diff of.

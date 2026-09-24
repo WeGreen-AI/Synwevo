@@ -18,9 +18,9 @@ from __future__ import annotations
 import hashlib
 import secrets
 
-from platform_core.errors import ServiceError
-from platform_core.identity import Identity, ROLE_RANK, ROLES, normalise_email, valid_email
-from platform_core.store import Store, new_id, now
+from synwevo_core.errors import ServiceError
+from synwevo_core.identity import Identity, ROLE_RANK, ROLES, normalise_email, valid_email
+from synwevo_core.store import Store, new_id, now
 
 INVITE_TTL_S = 7 * 24 * 3600
 VERIFY_TTL_S = 24 * 3600

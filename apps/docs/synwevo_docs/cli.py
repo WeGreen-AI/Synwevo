@@ -1,16 +1,16 @@
-"""DocWeave 运维 CLI：机器接口密钥、OpenAPI 导出、任务与项目维护。
+"""Synwevo Docs 运维 CLI：机器接口密钥、OpenAPI 导出、任务与项目维护。
 
-    python -m docweave.cli apikey create --name ci --tenant default --scopes read,write
-    python -m docweave.cli apikey list|revoke <id>|rotate <id>
-    python -m docweave.cli openapi --out docs/integration/openapi.yaml
-    python -m docweave.cli jobs recover                  # resume jobs left by a stopped worker
-    python -m docweave.cli projects                      # 清单与清理（按来源证据，默认 dry-run）
-    python -m docweave.cli info                          # 数据目录、schema 版本、运行配置
+    python -m synwevo_docs.cli apikey create --name ci --tenant default --scopes read,write
+    python -m synwevo_docs.cli apikey list|revoke <id>|rotate <id>
+    python -m synwevo_docs.cli openapi --out docs/integration/openapi.yaml
+    python -m synwevo_docs.cli jobs recover                  # resume jobs left by a stopped worker
+    python -m synwevo_docs.cli projects                      # 清单与清理（按来源证据，默认 dry-run）
+    python -m synwevo_docs.cli info                          # 数据目录、schema 版本、运行配置
 
-账户、应用注册与 OIDC 客户端不在这里：它们属于账户服务，见 `python -m platform_identity.cli`。
+账户、应用注册与 OIDC 客户端不在这里：它们属于账户服务，见 `python -m synwevo_identity.cli`。
 一个能同时改业务数据和账户权限的命令行，是"业务管理员顺手成了平台管理员"的最短路径。
 
-数据库取 `$DOCWEAVE_DATA_DIR`，默认仓库根目录的 `data/`。密钥的明文只在创建时显示一次，库里只存哈希。
+数据库取 `$SYNWEVO_DATA_DIR`，默认仓库根目录的 `data/`。密钥的明文只在创建时显示一次，库里只存哈希。
 """
 from __future__ import annotations
 
@@ -22,14 +22,15 @@ import sys
 import time
 from pathlib import Path
 
-from platform_core.auth import SCOPES, Auth
-from platform_core.errors import ServiceError
-from platform_core.http import data_dir_default
-from platform_core.store import Store, now
+from synwevo_core import env
+from synwevo_core.auth import SCOPES, Auth
+from synwevo_core.errors import ServiceError
+from synwevo_core.http import data_dir_default
+from synwevo_core.store import Store, now
 
 
 def data_dir(args) -> str:
-    return args.data or os.environ.get("DOCWEAVE_DATA_DIR") or str(data_dir_default())
+    return args.data or env.get("DATA_DIR") or str(data_dir_default())
 
 
 def _ts(v) -> str:
@@ -77,12 +78,12 @@ def cmd_apikey(args) -> int:
 
 
 def cmd_openapi(args) -> int:
-    os.environ.setdefault("DOCWEAVE_DATA_DIR", data_dir(args))
-    from docweave.api.app import create_app
-    from docweave.api.v1 import openapi_subset
+    os.environ.setdefault("SYNWEVO_DATA_DIR", data_dir(args))
+    from synwevo_docs.api.app import create_app
+    from synwevo_docs.api.v1 import openapi_subset
     api = create_app(data_dir(args), start_jobs=False)
     spec = openapi_subset(api)
-    from platform_core.http import repo_root
+    from synwevo_core.http import repo_root
     root = repo_root()
     out = Path(args.out or (root / "docs" / "integration" / "openapi.yaml"))
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -147,8 +148,8 @@ def _yaml_scalar(v) -> str:
 
 
 def cmd_jobs(args) -> int:
-    from docweave.jobs import JobService
-    from docweave.services import App
+    from synwevo_docs.jobs import JobService
+    from synwevo_docs.services import App
     store = Store(data_dir(args))
     app = App(store)
     svc = JobService(app, start=False)
@@ -196,7 +197,7 @@ def _classify(e: dict) -> tuple[str, str]:
 
 
 def cmd_projects(args) -> int:
-    from docweave.services import App
+    from synwevo_docs.services import App
     store = Store(data_dir(args))
     App(store)                       # ensures migrations have run
     rows = store.all("SELECT * FROM projects WHERE deleted=0 ORDER BY updated_at DESC")
@@ -259,7 +260,7 @@ def cmd_info(args) -> int:
     d = data_dir(args)
     store = Store(d, migrate=False)          # inspect only: never upgrade the directory being looked at
     print(f"数据目录      : {Path(d).resolve()}")
-    from platform_core.store import SCHEMA_VERSION
+    from synwevo_core.store import SCHEMA_VERSION
     ver = store.schema_version()
     if not ver:
         note = "（尚未初始化，启动服务后创建）"
@@ -268,10 +269,10 @@ def cmd_info(args) -> int:
     else:
         note = ""
     print(f"数据库        : {store.db_path}（schema v{ver}）{note}")
-    print(f"监听配置      : DOCWEAVE_HOST={os.environ.get('DOCWEAVE_HOST', '127.0.0.1')} DOCWEAVE_PORT={os.environ.get('DOCWEAVE_PORT', '8765')}")
-    print(f"界面鉴权      : DOCWEAVE_UI_AUTH={os.environ.get('DOCWEAVE_UI_AUTH', 'none')}")
-    print(f"PDF 引擎      : DOCWEAVE_PDF_ENGINE={os.environ.get('DOCWEAVE_PDF_ENGINE', '(auto)')}")
-    # 口令参数、MFA 种子密钥与注册策略属于账户服务：`python -m platform_identity.cli info`
+    print(f"监听配置      : SYNWEVO_HOST={os.environ.get('SYNWEVO_HOST', '127.0.0.1')} SYNWEVO_PORT={os.environ.get('SYNWEVO_PORT', '8765')}")
+    print(f"界面鉴权      : SYNWEVO_UI_AUTH={os.environ.get('SYNWEVO_UI_AUTH', 'none')}")
+    print(f"PDF 引擎      : SYNWEVO_DOCS_PDF_ENGINE={os.environ.get('SYNWEVO_DOCS_PDF_ENGINE', '(auto)')}")
+    # 口令参数、MFA 种子密钥与注册策略属于账户服务：`python -m synwevo_identity.cli info`
     if ver:
         counts = {t: store.one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in ("projects", "templates", "jobs", "artifacts", "api_keys")}
         print("数据统计      : " + "，".join(f"{k}={v}" for k, v in counts.items()))
@@ -282,7 +283,7 @@ def cmd_info(args) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", help="数据目录（默认 $DOCWEAVE_DATA_DIR 或仓库根目录 data/）")
+    ap.add_argument("--data", help="数据目录（默认 $SYNWEVO_DATA_DIR 或仓库根目录 data/）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     k = sub.add_parser("apikey", help="机器接口密钥")

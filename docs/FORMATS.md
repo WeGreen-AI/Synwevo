@@ -2,7 +2,7 @@
 
 本表只把**有自动化测试覆盖**的能力标为「✅ 已验证」。经 LibreOffice 转换才能处理的格式标为「🔁 转换」并在界面上提示可能的损失；有限支持标为「⚠️ 部分」；未实现标为「❌」并给出原因和替代路径。界面中的「格式能力」页面（`/capabilities`）由服务端按当前环境实时生成（例如未安装 LibreOffice 时相关项会显示「缺依赖」）。
 
-测试位置：`apps/docweave/tests/`（引擎单元测试、验收场景 1–14、格式覆盖测试）与 `apps/docweave/scripts/ui_e2e*.py`（真实浏览器操作）。验证环境：macOS 27 / Apple Silicon，Python 3.14，LibreOffice 26.8，Tesseract 5.5。
+测试位置：`apps/docs/tests/`（引擎单元测试、验收场景 1–14、格式覆盖测试）与 `apps/docs/scripts/ui_e2e*.py`（真实浏览器操作）。验证环境：macOS 27 / Apple Silicon，Python 3.14，LibreOffice 26.8，Tesseract 5.5。
 
 ## 1. 总表
 
@@ -30,12 +30,12 @@
 * 编码：BOM → UTF-8 → GB18030 → charset-normalizer 猜测；出现无法解码字符时在文件上提示；可在「CSV 设置」中改编码与分隔符后重新解析（生成新的来源版本，旧预览失效）。
 
 ### XLSX
-* **公式（内置公式引擎，`apps/docweave/docweave/engine/formula.py`）**：
+* **公式（内置公式引擎，`apps/docs/synwevo_docs/engine/formula.py`）**：
   * 读取来源时优先取文件中保存的计算结果（与 Excel 最后一次计算一致）；没有保存结果的公式（例如脚本生成的文件）由内置引擎计算后使用，并在文件上注明。
   * 生成输出时，引擎在服务器上计算工作簿中**全部公式**并把结果写入文件（`<v>` 缓存值），因此 WPS、预览器、CSV 导出、其他程序读取时都能看到正确值；同时删除 `calcChain.xml` 并设置 `fullCalcOnLoad`，Excel 打开时仍会按自己的规则重算。
   * 支持 97 个常用函数：数学（SUM/SUMIF(S)/SUMPRODUCT/ROUND 系列/INT/MOD/ABS/POWER/SQRT/PRODUCT/CEILING/FLOOR…）、统计（AVERAGE(IF/IFS)/COUNT(A/BLANK/IF/IFS)/MAX/MIN/MEDIAN/LARGE/SMALL）、逻辑（IF/IFS/IFERROR/IFNA/AND/OR/NOT/XOR/SWITCH/CHOOSE）、查找（VLOOKUP/HLOOKUP/XLOOKUP/INDEX/MATCH/ROWS/COLUMNS）、文本（TEXT/CONCAT(ENATE)/TEXTJOIN/LEFT/RIGHT/MID/LEN/FIND/SEARCH/SUBSTITUTE/REPLACE/TRIM/UPPER/LOWER/PROPER/REPT/EXACT/VALUE/T/N）、日期（DATE/YEAR/MONTH/DAY/EDATE/EOMONTH/DATEDIF/DAYS/WEEKDAY/HOUR/MINUTE/SECOND/TODAY/NOW）、信息（IS* 系列、NA）；运算符含 `& = <> < <= > >= + - * / ^ %`、跨工作表引用、整列引用、定义名称；错误值（`#DIV/0!`、`#N/A`、`#VALUE!`、`#REF!`、`#NUM!`、`#NAME?`）按 Excel 规则传播。
   * **不支持时不猜测**：遇到不支持的函数、数组公式、循环引用、外部工作簿引用、INDIRECT/OFFSET 等易失函数时，该公式不写入结果；已安装 LibreOffice 时自动改用 LibreOffice 计算并**只把结果写回**我们的输出文件，未安装时由 Excel 打开时计算。任务结果清单会写明计算了多少公式、哪些改用 LibreOffice、哪些未计算、哪些结果是错误值。
-  * 与 LibreOffice 的交叉核对：`apps/docweave/tests/test_formula.py` 用同一批公式分别由内置引擎和 LibreOffice 计算并逐一比较。
+  * 与 LibreOffice 的交叉核对：`apps/docs/tests/test_formula.py` 用同一批公式分别由内置引擎和 LibreOffice 计算并逐一比较。
 * **插入明细行**（有 n 条明细时在模板行下方插入 n−1 行）：
   * 本表及其他表中指向下方行的引用、合并单元格、条件格式、数据验证、超链接、自动筛选、表格（ListObject）范围、打印区域等定义名称、图表数据引用、批注与图形锚点全部平移；
   * **末行等于模板行的区域会扩展到全部明细行**（如 `SUM(E5:E5)` → `SUM(E5:E14)`）；条件格式、数据验证和**图表数据系列**中指向模板行的单个单元格也视为明细区域一起扩展；普通公式中的单个单元格引用（如 `=E5`）不扩展；模板行内的公式按相对引用复制到每一行；模板行内的横向合并会复制到每一行；

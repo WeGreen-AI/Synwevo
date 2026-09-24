@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from docweave.services import App
-from platform_core.store import Store, now
+from synwevo_docs.services import App
+from synwevo_core.store import Store, now
 
-ROOT = __import__("platform_core.http", fromlist=["repo_root"]).repo_root()
+ROOT = __import__("synwevo_core.http", fromlist=["repo_root"]).repo_root()
 APP = Path(__file__).resolve().parents[1]
 SCRIPTS = APP / "scripts"
 
@@ -37,7 +37,7 @@ def _blob_audit():
 
 
 def _run(data_dir, *args):
-    r = subprocess.run([sys.executable, "-m", "docweave.cli", "--data", str(data_dir), "projects", *args],
+    r = subprocess.run([sys.executable, "-m", "synwevo_docs.cli", "--data", str(data_dir), "projects", *args],
                        capture_output=True, text=True, timeout=120)
     return r.returncode, r.stdout + r.stderr
 
@@ -113,7 +113,7 @@ def test_the_blob_audit_sees_references_hidden_inside_json(tmp_path):
     """A per-column scan cannot see a blob id inside `jobs.snapshot`. That is the whole reason
     the inventory exists, so it has to be the thing the test proves."""
     audit = _blob_audit().audit
-    from platform_core.store import Store, now
+    from synwevo_core.store import Store, now
 
     store = Store(tmp_path)
     only_in_json = "a" * 64
@@ -156,8 +156,8 @@ def test_a_preview_blob_is_counted_as_referenced(tmp_path):
     `/api/preview-files/{blob}` were listed under `unreferenced_on_disk`.
     """
     audit = _blob_audit().audit
-    from docweave import authz
-    from platform_core.store import Store
+    from synwevo_docs import authz
+    from synwevo_core.store import Store
 
     store = Store(tmp_path)
     (tmp_path / "blobs").mkdir(exist_ok=True)
@@ -180,7 +180,7 @@ def test_the_inventory_refuses_to_be_narrower_than_the_authorization_check(monke
     than silently shrink the mark set.
     """
     blob_audit = _blob_audit()
-    from docweave import authz
+    from synwevo_docs import authz
 
     assert blob_audit._cross_check_against_authz() == [], "今天两者应当是一致的"
 

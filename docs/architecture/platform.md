@@ -1,6 +1,6 @@
 # 平台架构：一套账户，多个应用
 
-本轮把 DocWeave 已有的身份体系升级为**平台级统一账户**，DocWeave 成为平台里的第一个业务应用。
+本轮把 Synwevo Docs 已有的身份体系升级为**平台级统一账户**，Synwevo Docs 成为平台里的第一个业务应用。
 本文件记录职责划分与关键选型**依据**，不是选型比较报告。
 
 状态：**已实施**；目录结构已在后一轮重组，见 §1 与 [`monorepo.md`](monorepo.md)。
@@ -10,8 +10,8 @@
 
 ## 1. 仓库结构：这一节已被后一轮取代
 
-**当时的决定**：不新建仓库、不搬目录，在同一个仓库内新增模块。理由是——把 DocWeave 整体搬进
-`apps/docweave` 会在同一次改动里同时动到数据库路径、静态资源 base、导入路径和启动方式，
+**当时的决定**：不新建仓库、不搬目录，在同一个仓库内新增模块。理由是——把 Synwevo Docs 整体搬进
+`apps/docs` 会在同一次改动里同时动到数据库路径、静态资源 base、导入路径和启动方式，
 而这四样恰好是"用户数据看起来不见了"最常见的来源。
 
 **现在的状态**：目录已经搬了（2026-09-24 的平台单仓库重组轮）。上面那个顾虑没有被取消，它被
@@ -66,22 +66,22 @@ Cookie 按**主机**划分，不按端口。`localhost:8765` 与 `localhost:8766
 | 角色 | 本机地址 | 会话 Cookie |
 |---|---|---|
 | 平台账户服务（OIDC Provider） | `http://accounts.localhost:8770` | `dw_session`（host-only，账户服务域） |
-| 平台门户（OIDC Client） | `http://portal.localhost:8769` | `dw_session`（host-only，门户域） |
-| DocWeave（OIDC Client） | `http://docweave.localhost:8765` | `dw_session`（host-only，DocWeave 域） |
+| Synwevo Workspace（OIDC Client） | `http://portal.localhost:8769` | `dw_session`（host-only，门户域） |
+| Synwevo Docs（OIDC Client） | `http://docweave.localhost:8765` | `dw_session`（host-only，Synwevo Docs 域） |
 
 同名 Cookie，三个不同的主机，因此是三个互不相通的值——这正是要验证的性质。
 所有 Cookie **不设 `Domain` 属性**（host-only），按 RFC 6265 不会发往兄弟主机。
 
 `python scripts/platform.py up` 启动这三个进程，`python tests/integration/verify_sso.py` 用
 Python 的 `http.cookiejar`（真实规则：按主机作用域、无视端口）把结果量出来。**已实测 32/32 通过**，
-其中直接检查了：三个会话值互不相同、DocWeave 的会话 Cookie `domain=docweave.localhost` 且
+其中直接检查了：三个会话值互不相同、Synwevo Docs 的会话 Cookie `domain=docweave.localhost` 且
 非 `.`-前缀、Cookie 没有端口限定、没有任何 Cookie 落在 `localhost` 这样的共享父域上。
 
 **浏览器也走通了。**（此前记录的「沙箱浏览器只放行一个 `*.localhost` 主机」这一限制，本轮
 重新尝试后不再成立，故更正。）在真实浏览器里完整走过：
 
-1. 门户 → 点「登录」→ 账户服务输入一次口令 → 回到门户首页，看到 DocWeave 卡片；
-2. 点卡片 → 打开 DocWeave 工作台，不再要求口令；
+1. 门户 → 点「登录」→ 账户服务输入一次口令 → 回到门户首页，看到 Synwevo Docs 卡片；
+2. 点卡片 → 打开 Synwevo Docs 工作台，不再要求口令；
 3. 平台登出 → 直接访问 `docweave.localhost:8775/capabilities` → 跳到账户服务登录 →
    **回到 `/capabilities` 本身**，不是回到首页。
 
@@ -99,17 +99,17 @@ Python 的 `http.cookiejar`（真实规则：按主机作用域、无视端口�
 
 连接身份服务的 HTTP 客户端设 `trust_env=False`。httpx 默认遵循 `HTTP_PROXY`，而这个连接上跑的是
 授权码和客户端密钥；`NO_PROXY=localhost,127.0.0.1` **不匹配** `accounts.localhost`。本机验证时
-就是这样被静默送进代理并丢弃的。需要经代理访问发行者的部署用 `DOCWEAVE_OIDC_PROXY` 显式指定。
+就是这样被静默送进代理并丢弃的。需要经代理访问发行者的部署用 `SYNWEVO_OIDC_PROXY` 显式指定。
 
 ### 3.3 只有浏览器能发现的两件事
 
-**一个二进制三个角色，外壳也要分三个。** 账户服务原本和 DocWeave 共用同一个 SPA 外壳，于是
-`accounts.localhost` 渲染出 DocWeave 的项目列表，然后被自己的角色边界拒绝，页面上浮出
-「该接口不在账户服务上」——一次**正确的拒绝被呈现成一个坏掉的页面**。现在是三个独立的 Vite 构建，各有自己的静态资源目录：`apps/docweave/web`（工作台）、
+**一个二进制三个角色，外壳也要分三个。** 账户服务原本和 Synwevo Docs 共用同一个 SPA 外壳，于是
+`accounts.localhost` 渲染出 Synwevo Docs 的项目列表，然后被自己的角色边界拒绝，页面上浮出
+「该接口不在账户服务上」——一次**正确的拒绝被呈现成一个坏掉的页面**。现在是三个独立的 Vite 构建，各有自己的静态资源目录：`apps/docs/web`（工作台）、
 `apps/portal/web`（门户）、`services/identity/web`（账户与安全），由角色决定服务哪一个；
 单进程部署同时提供工作台与账户两个外壳，账户路径归账户外壳。
 
-**依赖方不能有自己的口令框。** 点门户上的 DocWeave 卡片，落到了 DocWeave 自己的登录表单，
+**依赖方不能有自己的口令框。** 点门户上的 Synwevo Docs 卡片，落到了 Synwevo Docs 自己的登录表单，
 要求再输一次口令——而 `role=app` 的进程根本不提供 `/api/auth/login`，那个框永远不可能成功。
 现在 `/api/auth/state` 里的 `password_login` 由角色决定（只有 `accounts` 和 `all` 为真），
 依赖方的 `RequireSession` 和 `/login` 都直接前往 `/auth/start`。这件事重要的地方不只是它坏了：
@@ -145,12 +145,12 @@ Python 的 `http.cookiejar`（真实规则：按主机作用域、无视端口�
 五层都过才放行。**平台管理员只治理账户与平台配置，默认读不到任何业务文档**——这条在本轮
 不放宽；新增应用资格表也不得成为绕过 `authz.py` 的旁路。
 
-迁移时把现有合法成员显式映射为 DocWeave 的应用资格，保住他们原有能力；**不顺带授予其他应用**，
+迁移时把现有合法成员显式映射为 Synwevo Docs 的应用资格，保住他们原有能力；**不顺带授予其他应用**，
 也不因为新增资格表把老用户锁在外面。
 
 ## 6. 机器调用不走这条路
 
-`/api/v1` 的 API 密钥机制保留。ID Token **不能**当作 DocWeave API 的通用凭证——API 只接受
+`/api/v1` 的 API 密钥机制保留。ID Token **不能**当作 Synwevo Docs API 的通用凭证——API 只接受
 为自己受众签发、权限恰当且当前有效的凭据。机器身份与用户委托分别建模，授权精确到
 app / workspace / 操作。机器配置只经 CLI 与配置文件管理，**产品 UI 不新增任何自动化入口**。
 
@@ -162,7 +162,7 @@ app / workspace / 操作。机器配置只经 CLI 与配置文件管理，**产�
 | 应用注册与 OIDC 客户端数据模型 | 已完成（schema v4 追加表 + `V4_COLUMNS` 无条件列迁移） |
 | Provider 端点（discovery/JWKS/authorize/token/userinfo/revocation/logout） | 已完成并测试 |
 | 刷新令牌轮换 + 重放检测 | 已完成并测试 |
-| DocWeave 接入为 Client（BFF） | 已完成并测试；本机三来源链路 38/38 通过，浏览器亦已走通 |
+| Synwevo Docs 接入为 Client（BFF） | 已完成并测试；本机三来源链路 38/38 通过，浏览器亦已走通 |
 | 跨应用登出（后通道）与撤权传播 | 已完成并测试 |
 | 角色边界（accounts / portal / app 三个角色） | 已完成；本机实测三种 404 边界 |
 | CLI：应用、客户端、密钥 | 已完成并本机跑通 |
@@ -171,7 +171,7 @@ app / workspace / 操作。机器配置只经 CLI 与配置文件管理，**产�
 | 真实库迁移演练（69 项目副本） | 已完成 15/15；来源只读，`default` 仍 0 成员 |
 | 平台管理后台 | 已完成：概览、账户（停用/恢复/撤销会话）、工作空间、审计检索；后端 21 条测试 |
 | 历史数据认领 | 已完成；在真实 69 项目库的隔离副本上完整走通：认领 → SSO → 看到 68 个历史项目 |
-| DocWeave 内的平台入口 | 已完成：返回平台、工作空间切换、账户入口；单进程部署上不渲染 |
+| Synwevo Docs 内的平台入口 | 已完成：返回平台、工作空间切换、账户入口；单进程部署上不渲染 |
 | Passkey / WebAuthn | 已完成：登记、登录、改名、删除、域名变更提示；19 条测试用软件认证器驱动。真实浏览器 + 真实认证器互操作未验证（需用户生物特征，不擅自发起） |
 | 机器身份（服务账户 / 用户委托） | 已完成；本机实跑：取令牌 → 提交任务 → 取回 10 个真实 .docx，全程无浏览器 |
 | 找回口令与邮箱验证 | 已完成；20 条测试。本地投递目录验证，生产邮件送达属外部条件 |

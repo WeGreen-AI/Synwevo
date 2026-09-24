@@ -9,6 +9,8 @@ from __future__ import annotations
 import csv
 import io
 import os
+
+from synwevo_core import env
 import shutil
 import subprocess
 import tempfile
@@ -21,13 +23,13 @@ _TESSDATA_DEFAULT = Path(__file__).resolve().parents[2] / "tessdata"
 
 
 def tesseract_path() -> str | None:
-    return os.environ.get("DOCWEAVE_TESSERACT") or shutil.which("tesseract")
+    return env.docs("TESSERACT") or shutil.which("tesseract")
 
 
 def tessdata_dir() -> str | None:
-    env = os.environ.get("DOCWEAVE_TESSDATA")
-    if env and Path(env).exists():
-        return env
+    configured = env.docs("TESSDATA")
+    if configured and Path(configured).exists():
+        return configured
     if (_TESSDATA_DEFAULT / "chi_sim.traineddata").exists():
         return str(_TESSDATA_DEFAULT)
     return None

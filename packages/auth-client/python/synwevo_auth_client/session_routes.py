@@ -14,12 +14,13 @@ import os
 
 from fastapi import APIRouter, Body, Request, Response
 
-from platform_core.auth import ui_auth_mode
-from platform_core.http import app_role
-from platform_core.config import platform_name
-from platform_core.errors import ServiceError
-from platform_core.identity import Identity, registration_mode
-from platform_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions
+from synwevo_core import env
+from synwevo_core.auth import ui_auth_mode
+from synwevo_core.http import app_role
+from synwevo_core.config import platform_name
+from synwevo_core.errors import ServiceError
+from synwevo_core.identity import Identity, registration_mode
+from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions
 
 
 def account_url(role: str) -> str:
@@ -54,7 +55,7 @@ def public_state(ident: Identity, role: str) -> dict:
             # Where "back" goes from the account pages. Server-controlled: a return target the
             # page took from a query string would be an open redirect on the one origin that
             # must never have one.
-            "portal_url": os.environ.get("DOCWEAVE_PORTAL_URL") or "",
+            "portal_url": env.get("PORTAL_URL") or "",
             "account_url": account_url(r)}
 
 
@@ -83,7 +84,7 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         """Deliberately says nothing about specific accounts — only how this deployment is
         configured and whether it still needs its first administrator.
 
-        `mode` is the load-bearing field. These routes are mounted whatever DOCWEAVE_UI_AUTH
+        `mode` is the load-bearing field. These routes are mounted whatever SYNWEVO_UI_AUTH
         says, so on a `basic` deployment this endpoint answers 200 like any other — and a client
         that inferred "accounts are in use" from a successful response sent people who had
         already signed in with the shared password to a first-run bootstrap screen. Whether the

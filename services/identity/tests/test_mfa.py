@@ -13,22 +13,22 @@ import pyotp
 import pytest
 from fastapi.testclient import TestClient
 
-from platform_core.identity import Identity
-from platform_identity.mfa import TICKET_MAX_ATTEMPTS, Mfa, Tickets, decrypt_seed
-from platform_core.errors import ServiceError
-from platform_core.sessions import CSRF_COOKIE, CSRF_HEADER
-from platform_core.store import Store
+from synwevo_core.identity import Identity
+from synwevo_identity.mfa import TICKET_MAX_ATTEMPTS, Mfa, Tickets, decrypt_seed
+from synwevo_core.errors import ServiceError
+from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
+from synwevo_core.store import Store
 
 PW = "a-sufficiently-long-passphrase"
 
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "session")
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    monkeypatch.setenv("DOCWEAVE_SECRET", "an-external-key-for-tests-0123456789")
-    import platform_identity.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_SECRET", "an-external-key-for-tests-0123456789")
+    import synwevo_identity.app as app_mod
     importlib.reload(app_mod)
     api = app_mod.create_app(str(tmp_path / "d"), start_jobs=False)
     store = Store(tmp_path / "d")
@@ -71,7 +71,7 @@ def test_enabling_totp_requires_a_recent_authentication(env):
     """A sign-in a moment ago counts — that is what "recent" means, and it is how sudo-style
     re-authentication behaves elsewhere. What must not pass is a session that authenticated long
     ago and has been sitting open since."""
-    from platform_core.store import now as _now
+    from synwevo_core.store import now as _now
     c = env["c"]
     assert c.post("/api/auth/mfa/totp/begin", headers=_csrf(c)).status_code == 200
 
@@ -134,9 +134,9 @@ def test_a_tampered_ciphertext_fails_closed(env):
 
 
 def test_key_location_is_reported_not_assumed(env, monkeypatch):
-    from platform_identity import mfa as mfa_mod
-    assert mfa_mod.key_is_external() is True                  # the fixture sets DOCWEAVE_SECRET
-    monkeypatch.delenv("DOCWEAVE_SECRET", raising=False)
+    from synwevo_identity import mfa as mfa_mod
+    assert mfa_mod.key_is_external() is True                  # the fixture sets SYNWEVO_SECRET
+    monkeypatch.delenv("SYNWEVO_SECRET", raising=False)
     assert mfa_mod.key_is_external() is False
 
 
@@ -219,7 +219,7 @@ def test_a_ticket_is_single_use(env):
 
 
 def test_an_expired_ticket_is_refused(env):
-    from platform_core.store import now as _now
+    from synwevo_core.store import now as _now
     _enable_totp(env)
     fresh = TestClient(env["api"])
     ticket = fresh.post("/api/auth/login", json={"email": "alice@example.com",
@@ -295,7 +295,7 @@ def test_disabling_totp_needs_reauth_and_a_current_code(env):
 
 def test_disabling_without_reauth_is_refused(env):
     secret = _enable_totp(env)
-    from platform_core.store import now as _now
+    from synwevo_core.store import now as _now
     env["store"].execute("UPDATE sessions SET reauth_at=?", (_now() - 100000,))
     c = env["c"]
     r = c.post("/api/auth/mfa/totp/disable", json={"code": _code(secret)}, headers=_csrf(c))
@@ -304,7 +304,7 @@ def test_disabling_without_reauth_is_refused(env):
 
 def test_reauth_for_one_purpose_does_not_unlock_another(env):
     """The scope on a re-authentication is what stops it becoming a general skeleton key."""
-    from platform_core.sessions import Sessions
+    from synwevo_core.sessions import Sessions
     s = env["store"].one("SELECT * FROM sessions LIMIT 1")
     env["c"].post("/api/auth/mfa/reauth", json={"password": PW}, headers=_csrf(env["c"]))
     s = env["store"].one("SELECT * FROM sessions LIMIT 1")

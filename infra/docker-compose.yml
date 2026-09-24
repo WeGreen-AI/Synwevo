@@ -1,7 +1,11 @@
-# 从仓库根目录运行：docker compose -f infra/docker-compose.yml up -d
-# 构建上下文是仓库根目录（..），因为镜像要包含共享包与账户服务，不只是 apps/docweave。
+# 从 Synwevo 仓库根目录运行：docker compose -f infra/docker-compose.yml up -d
+# 构建上下文是仓库根目录（..），因为镜像要包含共享包与账户服务，不只是 apps/docs。
 services:
-  docweave:
+  # 服务名从 `docweave` 改成 `synwevo`。这会改变容器名，所以**已经在跑的那个容器不会被这份文件
+  # 接管**——它会继续运行，而 `up` 会另起一个新的。服务器上换名字时，先 `docker stop docweave`
+  # 再 `up -d`，不要让两个进程同时打开同一个 SQLite 库。
+  # 数据卷是 bind mount（`../data:/data`），所以改名不会产生第二套空卷。
+  synwevo:
     build:
       context: ..
       dockerfile: infra/Dockerfile

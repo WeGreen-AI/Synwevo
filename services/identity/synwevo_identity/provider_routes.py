@@ -18,13 +18,13 @@ import urllib.parse
 from fastapi import APIRouter, Body, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from platform_core.errors import ServiceError
-from platform_core.identity import Identity
-from platform_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions
-from platform_core.store import Store, new_id, now
+from synwevo_core.errors import ServiceError
+from synwevo_core.identity import Identity
+from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions
+from synwevo_core.store import Store, new_id, now
 
-from platform_core import oidc
-from platform_core.apps import Apps
+from synwevo_core import oidc
+from synwevo_core.apps import Apps
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliver=None) -> APIRouter:

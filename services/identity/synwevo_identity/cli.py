@@ -1,18 +1,18 @@
 """账户服务运维 CLI：首位管理员、应用与使用资格、OIDC 客户端与签名密钥。
 
-    python -m platform_identity.cli bootstrap token
-    python -m platform_identity.cli ui-user add <name> [--password ...]
-    python -m platform_identity.cli app list|enable|disable|grant|revoke
-    python -m platform_identity.cli client register --client-id portal-web --app platform \
+    python -m synwevo_identity.cli bootstrap token
+    python -m synwevo_identity.cli ui-user add <name> [--password ...]
+    python -m synwevo_identity.cli app list|enable|disable|grant|revoke
+    python -m synwevo_identity.cli client register --client-id portal-web --app platform \
         --name 平台门户 --redirect http://portal.localhost:8769/auth/callback
-    python -m platform_identity.cli client list|show|disable
-    python -m platform_identity.cli keys list|rotate|retire            # OIDC 签名密钥
-    python -m platform_identity.cli info                               # 账户侧配置
+    python -m synwevo_identity.cli client list|show|disable
+    python -m synwevo_identity.cli keys list|rotate|retire            # OIDC 签名密钥
+    python -m synwevo_identity.cli info                               # 账户侧配置
 
 刻意只有 CLI。应用注册表是平台配置，不是产品功能；一个能把应用授权给工作空间的网页，就是一个能
 授予数据访问权的网页。
 
-数据目录默认取 `$DOCWEAVE_DATA_DIR`，再退回仓库根目录的 `data/`——和业务应用同一个库，因为账户
+数据目录默认取 `$SYNWEVO_DATA_DIR`，再退回仓库根目录的 `data/`——和业务应用同一个库，因为账户
 权威只能有一个。
 """
 from __future__ import annotations
@@ -24,16 +24,17 @@ import sys
 import time
 from pathlib import Path
 
-from platform_core.auth import Auth
-from platform_core.errors import ServiceError
-from platform_core.http import data_dir_default
-from platform_core.identity import Identity, registration_mode
-from platform_core.passwords import PasswordError
-from platform_core.store import Store, now
+from synwevo_core import env
+from synwevo_core.auth import Auth
+from synwevo_core.errors import ServiceError
+from synwevo_core.http import data_dir_default
+from synwevo_core.identity import Identity, registration_mode
+from synwevo_core.passwords import PasswordError
+from synwevo_core.store import Store, now
 
 
 def data_dir(args) -> str:
-    return args.data or os.environ.get("DOCWEAVE_DATA_DIR") or str(data_dir_default())
+    return args.data or env.get("DATA_DIR") or str(data_dir_default())
 
 
 def _ts(v) -> str:
@@ -56,7 +57,7 @@ def cmd_bootstrap(args) -> int:
         print(f"平台管理员：{len(admins)} 名" + ("（需要引导）" if not admins else ""))
         for a in admins:
             print(f"  {a['email']}\t{a['id']}\t{_ts(a['created_at'])}")
-        print(f"注册模式：{registration_mode()}（DOCWEAVE_REGISTRATION）")
+        print(f"注册模式：{registration_mode()}（SYNWEVO_REGISTRATION）")
         return 0
 
     if args.action == "token":
@@ -104,7 +105,7 @@ def cmd_ui_user(args) -> int:
             print("口令至少 8 个字符")
             return 1
         auth.add_ui_user(args.username, pw)
-        print(f"已添加界面用户 {args.username}。设置 DOCWEAVE_UI_AUTH=basic 后生效。")
+        print(f"已添加界面用户 {args.username}。设置 SYNWEVO_UI_AUTH=basic 后生效。")
         return 0
     if args.action == "list":
         for u in auth.list_ui_users():
@@ -120,8 +121,8 @@ def cmd_ui_user(args) -> int:
 def _platform(args):
     store = Store(data_dir(args))
     ident = Identity(store)
-    from platform_core.apps import Apps
-    from platform_core import oidc
+    from synwevo_core.apps import Apps
+    from synwevo_core import oidc
     return store, ident, Apps(store, ident), oidc
 
 
@@ -297,18 +298,18 @@ def cmd_info(args) -> int:
     store = Store(d, migrate=False)          # inspect only: never upgrade the directory being looked at
     print(f"数据目录      : {Path(d).resolve()}")
     print(f"数据库        : {store.db_path}（schema v{store.schema_version()}）")
-    print(f"发行者        : {os.environ.get('DOCWEAVE_ISSUER', '(未设置)')}")
-    print(f"角色          : DOCWEAVE_ROLE={os.environ.get('DOCWEAVE_ROLE', 'all')}")
+    print(f"发行者        : {os.environ.get('SYNWEVO_ISSUER', '(未设置)')}")
+    print(f"角色          : SYNWEVO_ROLE={os.environ.get('SYNWEVO_ROLE', 'all')}")
     print(f"注册策略      : {registration_mode()}")
-    from platform_core.passwords import parameters as pw_params
+    from synwevo_core.passwords import parameters as pw_params
     from .mfa import key_is_external
     pp = pw_params()
     print(f"口令哈希      : argon2id m={pp['memory_kib']}KiB t={pp['time_cost']} p={pp['parallelism']}，并发上限 {pp['concurrency']}")
     # Where this key lives decides whether encrypting TOTP seeds helps against a stolen database,
     # so it is printed rather than left for someone to infer from the absence of a warning.
-    print("MFA 种子密钥  : " + ("来自 DOCWEAVE_SECRET（与数据分离）" if key_is_external()
+    print("MFA 种子密钥  : " + ("来自 SYNWEVO_SECRET（与数据分离）" if key_is_external()
                                 else "取自库内 meta.server_secret —— 与密文同库，"
-                                     "拿到数据库副本即可解出 TOTP 种子；建议设置 DOCWEAVE_SECRET"))
+                                     "拿到数据库副本即可解出 TOTP 种子；建议设置 SYNWEVO_SECRET"))
     if store.schema_version():
         counts = {t: store.one(f"SELECT COUNT(*) AS n FROM {t}")["n"]
                   for t in ("users", "workspaces", "memberships", "app_entitlements", "sessions", "oauth_clients")}
@@ -318,7 +319,7 @@ def cmd_info(args) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", help="数据目录（默认 $DOCWEAVE_DATA_DIR 或仓库根目录 data/）")
+    ap.add_argument("--data", help="数据目录（默认 $SYNWEVO_DATA_DIR 或仓库根目录 data/）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     b = sub.add_parser("bootstrap", help="建立首位平台管理员（无默认口令）")

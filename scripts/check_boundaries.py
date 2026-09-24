@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """模块依赖边界检查：应用不得导入另一个应用的内部实现。
 
-重组之后最容易悄悄退回去的一件事，就是某个文件为了省事 `from docweave.services import …`。
+重组之后最容易悄悄退回去的一件事，就是某个文件为了省事 `from synwevo_docs.services import …`。
 这个检查让它变成一次失败而不是一次习惯。规则来自目录归属本身：
 
-* `docweave`（业务应用）、`platform_portal`（门户）是**应用**，互不可见；
-* `platform_identity`（账户服务）是**服务**，应用不得导入它的实现，只能经协议与它交互；
-* `platform_core` / `platform_auth_client` 是**共享包**，谁都可以用，但它们不得反向依赖任何
+* `docweave`（业务应用）、`synwevo_portal`（门户）是**应用**，互不可见；
+* `synwevo_identity`（账户服务）是**服务**，应用不得导入它的实现，只能经协议与它交互；
+* `synwevo_core` / `synwevo_auth_client` 是**共享包**，谁都可以用，但它们不得反向依赖任何
   应用或服务——共享包一旦依赖应用，"独立运行"就只剩一句话；
-* `platform_server` 是**部署组装**，只有它可以同时导入三者。
+* `synwevo_server` 是**部署组装**，只有它可以同时导入三者。
 
 同时检查三件在重组里特别容易留下的痕迹：`sys.path` 改写、机器绝对路径、指向旧目录的符号链接。
 它们都能让"模块化"在本机看起来成立，而换一台机器就不成立。
@@ -24,27 +24,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # 目录 → 这个目录里的代码允许导入的顶层包
 ALLOWED: dict[str, set[str]] = {
-    "packages/platform-core": {"platform_core"},
+    "packages/core": {"synwevo_core"},
     # 依赖方适配需要共享层；它不认识任何应用。
-    "packages/auth-client/python": {"platform_core", "platform_auth_client"},
-    "services/identity": {"platform_core", "platform_auth_client", "platform_identity"},
-    "apps/portal": {"platform_core", "platform_auth_client", "platform_portal"},
-    "apps/docweave": {"platform_core", "platform_auth_client", "docweave"},
+    "packages/auth-client/python": {"synwevo_core", "synwevo_auth_client"},
+    "services/identity": {"synwevo_core", "synwevo_auth_client", "synwevo_identity"},
+    "apps/portal": {"synwevo_core", "synwevo_auth_client", "synwevo_portal"},
+    "apps/docs": {"synwevo_core", "synwevo_auth_client", "synwevo_docs"},
     # 部署组装：唯一可以看见全部的地方。
-    "infra/server": {"platform_core", "platform_auth_client", "platform_identity",
-                     "platform_portal", "docweave", "platform_server"},
+    "infra/server": {"synwevo_core", "synwevo_auth_client", "synwevo_identity",
+                     "synwevo_portal", "synwevo_docs", "synwevo_server"},
     # 跨模块验证本来就要跨模块。
-    "tests": {"platform_core", "platform_auth_client", "platform_identity",
-              "platform_portal", "docweave", "platform_server"},
+    "tests": {"synwevo_core", "synwevo_auth_client", "synwevo_identity",
+              "synwevo_portal", "synwevo_docs", "synwevo_server"},
 }
-OWN = {"platform_core", "platform_auth_client", "platform_identity", "platform_portal",
-       "docweave", "platform_server"}
+OWN = {"synwevo_core", "synwevo_auth_client", "synwevo_identity", "synwevo_portal",
+       "synwevo_docs", "synwevo_server"}
 SKIP_PARTS = {"__pycache__", ".venv", "node_modules", "dist", ".pytest_cache"}
 
 
 def owner(path: Path) -> str | None:
     rel = path.relative_to(ROOT).as_posix()
-    # 最长前缀优先：apps/docweave 要在 apps 之前匹配到。
+    # 最长前缀优先：apps/docs 要在 apps 之前匹配到。
     best = None
     for key in ALLOWED:
         if rel.startswith(key + "/") and (best is None or len(key) > len(best)):

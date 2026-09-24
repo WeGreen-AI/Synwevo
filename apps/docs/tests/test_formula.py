@@ -5,10 +5,10 @@ import io
 import openpyxl
 import pytest
 
-from docweave.engine import values as V
-from docweave.engine.formula import Book, Unsupported, XLError
-from docweave.engine.tabular import read_xlsx
-from docweave.engine.xlsx_doc import XlsxDoc
+from synwevo_docs.engine import values as V
+from synwevo_docs.engine.formula import Book, Unsupported, XLError
+from synwevo_docs.engine.tabular import read_xlsx
+from synwevo_docs.engine.xlsx_doc import XlsxDoc
 
 
 def _book(formulas: dict, values: dict | None = None):
@@ -55,7 +55,7 @@ def test_errors_and_unsupported():
 
 
 def test_outputs_carry_computed_values_without_libreoffice(monkeypatch):
-    import docweave.engine.converters as C
+    import synwevo_docs.engine.converters as C
     monkeypatch.setattr(C, "soffice_path", lambda: None)          # prove no LibreOffice is involved
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -109,11 +109,11 @@ CROSS = [
 ]
 
 
-@pytest.mark.skipif(not __import__("docweave.engine.converters", fromlist=["soffice_path"]).soffice_path(), reason="LibreOffice 未安装")
+@pytest.mark.skipif(not __import__("synwevo_docs.engine.converters", fromlist=["soffice_path"]).soffice_path(), reason="LibreOffice 未安装")
 def test_cross_check_against_libreoffice():
     """The same formulas computed by the built-in engine and by LibreOffice Calc must agree."""
-    from docweave.engine.converters import recalc_xlsx
-    from docweave.engine.formula import compute_workbook
+    from synwevo_docs.engine.converters import recalc_xlsx
+    from synwevo_docs.engine.formula import compute_workbook
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"

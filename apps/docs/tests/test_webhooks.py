@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from docweave import webhooks as W
+from synwevo_docs import webhooks as W
 
 
 class Receiver:
@@ -39,10 +39,10 @@ class Receiver:
 
 @pytest.fixture()
 def hook_env(monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_SECRET", "s3cret-for-tests")
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE", "127.0.0.1")
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_ALLOW_HTTP", "1")
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_EVENTS", "job.completed,job.failed")
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_SECRET", "s3cret-for-tests")
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", "127.0.0.1")
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP", "1")
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_EVENTS", "job.completed,job.failed")
     yield
 
 
@@ -58,7 +58,7 @@ def _job(api, fixtures):
 
 def test_delivery_is_signed_and_not_duplicated(api, fixtures, hook_env, monkeypatch):
     rx = Receiver()
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_URLS", rx.url)
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_URLS", rx.url)
     try:
         job = _job(api, fixtures)
         d = W.WebhookDispatcher(api.c.app_state.app.store, start=False)
@@ -79,7 +79,7 @@ def test_delivery_is_signed_and_not_duplicated(api, fixtures, hook_env, monkeypa
 
 def test_temporary_failure_is_retried_with_backoff(api, fixtures, hook_env, monkeypatch):
     rx = Receiver(behaviour=lambda n: 500 if n == 1 else 200)
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_URLS", rx.url)
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_URLS", rx.url)
     store = api.c.app_state.app.store
     try:
         _job(api, fixtures)
@@ -99,7 +99,7 @@ def test_temporary_failure_is_retried_with_backoff(api, fixtures, hook_env, monk
 
 def test_client_error_is_not_retried(api, fixtures, hook_env, monkeypatch):
     rx = Receiver(behaviour=lambda n: 400)
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_URLS", rx.url)
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_URLS", rx.url)
     try:
         _job(api, fixtures)
         d = W.WebhookDispatcher(api.c.app_state.app.store, start=False)
@@ -111,26 +111,26 @@ def test_client_error_is_not_retried(api, fixtures, hook_env, monkeypatch):
 
 
 def test_private_targets_need_the_allowlist(monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_ALLOW_HTTP", "1")
-    monkeypatch.delenv("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE", raising=False)
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP", "1")
+    monkeypatch.delenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", raising=False)
     with pytest.raises(W.UrlRejected):
         W.check_url("http://127.0.0.1:9/hook")
     with pytest.raises(W.UrlRejected):
         W.check_url("http://192.168.0.5/hook")
     with pytest.raises(W.UrlRejected):
         W.check_url("file:///etc/passwd")
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE", "127.0.0.0/8")
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", "127.0.0.0/8")
     assert W.check_url("http://127.0.0.1:9/hook")
-    monkeypatch.delenv("DOCWEAVE_WEBHOOK_ALLOW_HTTP", raising=False)
+    monkeypatch.delenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP", raising=False)
     with pytest.raises(W.UrlRejected):
         W.check_url("http://example.com/hook")            # https required by default
 
 
 def test_disabled_without_secret(monkeypatch, api):
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_URLS", "https://example.com/hook")
-    monkeypatch.delenv("DOCWEAVE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_URLS", "https://example.com/hook")
+    monkeypatch.delenv("SYNWEVO_DOCS_WEBHOOK_SECRET", raising=False)
     d = W.WebhookDispatcher(api.c.app_state.app.store, start=True)
-    assert not d.enabled and "DOCWEAVE_WEBHOOK_SECRET" in (d.last_error or "")
+    assert not d.enabled and "SYNWEVO_DOCS_WEBHOOK_SECRET" in (d.last_error or "")
 
 
 # ---------------------------------------------------------------- SSRF: check and connect must agree
@@ -142,7 +142,7 @@ def test_the_validated_address_is_the_one_connected_to(monkeypatch):
     nothing about where the request actually went. `resolve_checked` now returns the addresses
     it approved, and the opener connects only to those.
     """
-    from docweave import webhooks
+    from synwevo_docs import webhooks
 
     answers = iter([
         [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],   # public: passes
@@ -170,21 +170,21 @@ def test_the_validated_address_is_the_one_connected_to(monkeypatch):
 
 
 def test_a_host_resolving_to_a_private_address_is_refused(monkeypatch):
-    from docweave import webhooks
+    from synwevo_docs import webhooks
     monkeypatch.setattr(socket, "getaddrinfo",
                         lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))])
-    monkeypatch.delenv("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE", raising=False)
+    monkeypatch.delenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", raising=False)
     with pytest.raises(webhooks.UrlRejected, match="内网"):
         webhooks.resolve_checked("https://localhost-in-disguise.example.com/hook")
 
 
 def test_the_cloud_metadata_address_is_refused(monkeypatch):
     """The address that turns an SSRF into cloud credentials."""
-    from docweave import webhooks
+    from synwevo_docs import webhooks
     monkeypatch.setattr(socket, "getaddrinfo",
                         lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 80))])
-    monkeypatch.delenv("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE", raising=False)
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_ALLOW_HTTP", "1")
+    monkeypatch.delenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", raising=False)
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP", "1")
     with pytest.raises(webhooks.UrlRejected):
         webhooks.resolve_checked("http://metadata.example.com/latest/meta-data/")
 
@@ -193,7 +193,7 @@ def test_delivery_does_not_use_the_ambient_proxy(monkeypatch):
     """`build_opener` installs a ProxyHandler from the environment by default. A proxy would
     carry the signed event body somewhere nobody chose — and would do its own resolution,
     bypassing the address check entirely."""
-    from docweave import webhooks
+    from synwevo_docs import webhooks
     monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:3128")
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
     opener = webhooks._pinned_opener(["93.184.216.34"])
@@ -219,8 +219,8 @@ def test_delivery_does_not_use_the_ambient_proxy(monkeypatch):
 
 def test_an_explicitly_allowed_private_target_still_works(monkeypatch):
     """The allow-list exists for real internal receivers; it must keep working."""
-    from docweave import webhooks
+    from synwevo_docs import webhooks
     monkeypatch.setattr(socket, "getaddrinfo",
                         lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 443))])
-    monkeypatch.setenv("DOCWEAVE_WEBHOOK_ALLOW_PRIVATE", "10.0.0.0/8")
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", "10.0.0.0/8")
     assert webhooks.resolve_checked("https://internal.example.com/hook") == ["10.0.0.5"]

@@ -6,7 +6,7 @@ import docx
 import pytest
 from docx.shared import Pt
 
-from docweave.engine.converters import soffice_path
+from synwevo_docs.engine.converters import soffice_path
 
 pytestmark = pytest.mark.skipif(not soffice_path(), reason="需要 LibreOffice 计算真实分页")
 
@@ -91,7 +91,7 @@ def test_libreoffice_lays_out_chinese_with_a_cjk_font():
     counts and exported PDFs are wrong for Chinese documents."""
     import pymupdf
 
-    from docweave.engine.converters import convert
+    from synwevo_docs.engine.converters import convert
     d = docx.Document()
     d.styles["Normal"].font.size = Pt(12)
     d.add_paragraph("测试中文排版宽度")
@@ -111,7 +111,7 @@ def test_reported_page_count_is_measured_on_the_delivered_bytes(tmp_path, monkey
     """fit_docx used to count pages on the intermediate that still carried the field
     controls, then deliver a different byte stream with them unwrapped.  The number a user
     sees must describe the file they actually receive."""
-    from docweave.engine import layout as L
+    from synwevo_docs.engine import layout as L
 
     seen = []
     real = L.page_count
@@ -130,7 +130,7 @@ def test_reported_page_count_is_measured_on_the_delivered_bytes(tmp_path, monkey
 
 def test_effective_factor_reports_what_was_applied_not_what_was_asked(tmp_path):
     """A field pinned at its own minimum must not be reported as 'shrunk to 60%'."""
-    from docweave.engine import layout as L
+    from synwevo_docs.engine import layout as L
 
     d = docx.Document()
     d.styles["Normal"].font.size = Pt(10)
@@ -147,7 +147,7 @@ def test_effective_factor_reports_what_was_applied_not_what_was_asked(tmp_path):
 
 def test_content_lost_by_shrinking_is_detected_not_counted_as_success():
     """Page count alone is not success: a field whose text vanished must fail the sample."""
-    from docweave.engine import layout as L
+    from synwevo_docs.engine import layout as L
 
     before = {"s1": "重要内容", "s2": "保留"}
     after_lost = {"s1": "", "s2": "保留"}
@@ -161,7 +161,7 @@ def test_content_lost_by_shrinking_is_detected_not_counted_as_success():
 
 
 def test_field_texts_reads_every_field(tmp_path):
-    from docweave.engine import layout as L
+    from synwevo_docs.engine import layout as L
     tpl = pathlib.Path(_template(tmp_path)).read_bytes()
     texts = L._field_texts(tpl)
     assert isinstance(texts, dict)

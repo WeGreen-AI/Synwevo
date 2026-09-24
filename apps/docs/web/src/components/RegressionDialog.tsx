@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { get, post } from "@platform/auth-client";
+import { get, post } from "@synwevo/auth-client";
 import type { Project } from "../lib/types";
-import { Modal } from "@platform/ui";
+import { Modal } from "@synwevo/ui";
 
 /** Freeze the current project (files, template, rule, mappings) with its expected results. */
 export default function RegressionDialog({ project, onClose }: { project: Project; onClose: () => void }) {

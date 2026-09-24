@@ -1228,7 +1228,7 @@ SUPPORTED_FUNCTIONS = sorted(set(_FUNCS) | set(_LAZY))
 
 # ====================================================================== workbook integration
 def book_from_xlsx(x) -> Book:
-    """Build a :class:`Book` from a docweave.engine.xlsx_doc.XlsxDoc (after edits)."""
+    """Build a :class:`Book` from a synwevo_docs.engine.xlsx_doc.XlsxDoc (after edits)."""
     from .xlsx_doc import _CELLREF, s as S
     x.expand_shared_formulas()
     cells: dict[str, dict[tuple[int, int], tuple]] = {}

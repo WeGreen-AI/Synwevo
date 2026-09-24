@@ -3,11 +3,15 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "platform-portal"
+name = "synwevo-portal"
 version = "1.0.0"
-description = "平台门户：登录后的第一页与应用入口"
+description = "Synwevo Workspace：登录后的第一页与应用入口"
 requires-python = ">=3.12"
-dependencies = ["platform-core", "platform-auth-client", "fastapi"]
+dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi"]
 
 [tool.setuptools.packages.find]
-include = ["platform_portal*"]
+include = ["synwevo_portal*"]
+
+[project.urls]
+Homepage = "https://github.com/WeGreen-AI/Synwevo"
+Repository = "https://github.com/WeGreen-AI/Synwevo"

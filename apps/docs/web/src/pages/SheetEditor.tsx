@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { get, post, put } from "@platform/auth-client";
-import { cellRef, colLetter, rangeRef, useDialog, useToast } from "@platform/ui";
+import { get, post, put } from "@synwevo/auth-client";
+import { cellRef, colLetter, rangeRef, useDialog, useToast } from "@synwevo/ui";
 
 interface Cell { v?: string; t?: string; s?: any }
 interface Field { id: string; name: string; kind: "cell" | "region" | "repeat"; ref?: string; row?: number; c1?: number; c2?: number; required?: boolean; empty_policy?: string }

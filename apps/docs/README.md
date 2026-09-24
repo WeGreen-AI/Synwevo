@@ -1,9 +1,9 @@
-# DocWeave · 可视化数据映射与模板批量生成工作台
+# Synwevo Docs · 可视化数据映射与模板批量生成工作台
 
 左侧查看来源文件并选择数据，右侧查看目标模板并选择待填区域，建立多组可复用的对应关系；按明确的样本划分方式（每行 / 每文件 / 每组一份）把数据填入模板，批量生成真实的 DOCX / XLSX / PDF / PPTX / CSV 文件。
 
 * 所有处理在本机或自有服务器完成，不向外部服务发送文件；无需任何付费组件。
-* 浏览器应用（简体中文界面），处理引擎与界面分离（`docweave/engine` 不依赖 Web 框架）。
+* 浏览器应用（简体中文界面），处理引擎与界面分离（`synwevo_docs/engine` 不依赖 Web 框架）。
 * 样本划分、字段映射、输出生成三者分开设计：输出数量只由样本规则决定，不根据映射数量推断，不做笛卡尔积。
 
 ![工作台](../../docs/screenshots/03_映射与连线.png)
@@ -17,16 +17,16 @@ brew install --cask libreoffice && brew install tesseract      # macOS；Linux �
 # 从**平台根目录**（这个目录的上两级）一次装好所有模块并构建三个前端
 python scripts/platform.py setup
 
-# 只跑 DocWeave（账户服务也要起来，它是统一登录）
-python scripts/platform.py up accounts docweave
+# 只跑 Synwevo Docs（账户服务也要起来，它是统一登录）
+python scripts/platform.py up accounts docs
 # 打开 http://docweave.localhost:8765
 ```
 
 需要程序调用（无界面）时：
 
 ```bash
-.venv/bin/python -m docweave.cli apikey create --name ci --scopes read,write   # 生成密钥（只显示一次）
-export DOCWEAVE_API_KEY=dw_...  DOCWEAVE_BASE_URL=http://docweave.localhost:8765
+.venv/bin/python -m synwevo_docs.cli apikey create --name ci --scopes read,write   # 生成密钥（只显示一次）
+export SYNWEVO_DOCS_API_KEY=dw_...  SYNWEVO_DOCS_BASE_URL=http://docweave.localhost:8765
 .venv/bin/python tests/integration/automation_example.py \
   --source testdata/测试_客户100.xlsx --template testdata/测试_合同模板.docx \
   --definition docs/integration/example-definition.json --out ./out
@@ -86,14 +86,14 @@ Docker（单进程部署：工作台 + 账户页同一源站）：`docker compos
 * 更长的新内容可能改变 DOCX/PPTX 的分页或排版，不承诺像素级不变；演示文稿不会自动分页（超出时警告）。
 * PDF 不能转换为可编辑 Word；表单字段输出为扁平化文字。
 * 图片模板的字段区域按周围背景重建像素，非字段区域不变，但不保证与原图逐像素一致。
-* 界面为单团队自托管定位：界面鉴权支持 `basic` 或交由反向代理（`DOCWEAVE_UI_AUTH`），机器接口有独立的 API 密钥与租户隔离；不提供面向终端用户的注册/角色体系。
+* 界面为单团队自托管定位：界面鉴权支持 `basic` 或交由反向代理（`SYNWEVO_UI_AUTH`），机器接口有独立的 API 密钥与租户隔离；不提供面向终端用户的注册/角色体系。
 * 大批量为单进程串行处理；PDF 导出受 LibreOffice 串行转换速度限制。
 * 全部验收使用合成测试数据；未获得真实业务文件，真实结构差异未覆盖。
 
-## 目录（`apps/docweave/`）
+## 目录（`apps/docs/`）
 
 ```
-docweave/            Python 包：业务服务与处理引擎
+synwevo_docs/        Python 包：业务服务与处理引擎
   engine/            与 Web 无关的格式适配器、样本/映射/计划引擎
   api/               HTTP：工作台接口与 /api/v1 机器接口
   cli.py             运维 CLI（机器密钥、OpenAPI 导出、任务与项目维护）
@@ -104,5 +104,5 @@ tessdata/            Tesseract 中文/英文模型
 regression/          回归用例
 ```
 
-登录、账户与安全、平台管理不在这里：它们在 `services/identity/`，DocWeave 是它的依赖方。
+登录、账户与安全、平台管理不在这里：它们在 `services/identity/`，Synwevo Docs 是它的依赖方。
 平台整体见仓库根目录的 `README.md` 与 `docs/architecture/monorepo.md`。

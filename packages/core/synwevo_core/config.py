@@ -7,16 +7,28 @@ from __future__ import annotations
 
 import os
 
+from . import env
+
+
+#: 平台正式名称。仍然可配置——自托管的人有权把它改成自己的名字——但默认值不再是占位符。
+PLATFORM_NAME = "Synwevo"
+#: 平台首页/工作空间的正式名称。导航里写"首页""工作空间"没问题，署名处用全称。
+WORKSPACE_NAME = "Synwevo Workspace"
+#: 统一账户体系的正式名称。
+ACCOUNT_NAME = "Synwevo Account"
+#: 文档应用的对外名称。它是平台上的一个应用，不是平台本身。
+DOCS_NAME = "Synwevo Docs"
+
 
 def platform_name() -> str:
-    """Configurable, defaulting to something neutral.
+    """平台显示名，可由部署方覆盖。
 
-    The platform's real name is not decided yet, and hard-coding DocWeave as the name of the
-    platform it is only one application on would have to be undone later in every string.
+    上一版这里的默认值是占位符「工作平台」，注释写着"平台的真名还没定"。定了：Synwevo。
+    仍然读配置，因为自托管的人有权把它改成自己的名字；改的是默认值不再假装不知道。
     """
-    return os.environ.get("DOCWEAVE_PLATFORM_NAME") or "工作平台"
+    return env.get("PLATFORM_NAME") or PLATFORM_NAME
 
 
 def portal_url() -> str:
     """Where the account pages' "back" link goes. Server-controlled, never a query parameter."""
-    return (os.environ.get("DOCWEAVE_PORTAL_URL") or "").rstrip("/")
+    return (env.get("PORTAL_URL") or "").rstrip("/")

@@ -73,7 +73,7 @@ export function Portal() {
       const r = await fetch("/api/portal/workspace", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-DocWeave-CSRF": csrf() },
+        headers: { "Content-Type": "application/json", "X-Synwevo-CSRF": csrf() },
         body: JSON.stringify({ workspace_id: id }),
       });
       if (!r.ok) {
@@ -91,7 +91,7 @@ export function Portal() {
 
   if (state.phase === "loading") {
     return (
-      <Shell title="工作平台">
+      <Shell title="Synwevo Workspace">
         <div className="pt-skeleton" role="status" aria-live="polite">
           <span className="pt-sr">正在载入…</span>
           <div className="pt-skel-line" style={{ width: "40%" }} />
@@ -105,7 +105,7 @@ export function Portal() {
 
   if (state.phase === "signed-out") {
     return (
-      <Shell title="工作平台">
+      <Shell title="Synwevo Workspace">
         <div className="pt-empty">
           <h1 className="pt-h1">欢迎回来</h1>
           <p className="pt-lead">使用你的平台账号登录，查看可以使用的应用。</p>
@@ -117,7 +117,7 @@ export function Portal() {
 
   if (state.phase === "error") {
     return (
-      <Shell title="工作平台">
+      <Shell title="Synwevo Workspace">
         <div className="pt-empty">
           <h1 className="pt-h1">出了点问题</h1>
           <p className="pt-lead pt-err">{state.message}</p>

@@ -4,7 +4,7 @@
 要在每次调用时判断一个访问令牌是否仍然有效、属于谁、还剩哪些权限。如果这段代码住在账户服务
 里，业务应用就得 import 账户服务才能拒绝一个过期令牌——那条 import 一旦存在，"账户服务可以
 独立于业务应用运行"就不再是可检查的事实。协议端点（authorize/token/userinfo/logout）仍然
-只在账户服务上，见 `platform_identity.provider_routes`。
+只在账户服务上，见 `synwevo_identity.provider_routes`。
 
 Authlib owns the protocol; this module owns identity and storage. The split matters — writing
 the OAuth state machine by hand is exactly the thing not to do, but *who the user is*, *how the
@@ -29,12 +29,13 @@ import secrets
 import time
 from authlib.jose import JsonWebKey, jwt
 
+from . import env
 from .errors import ServiceError
 from .store import Store, new_id, now
 
 CODE_TTL_S = 60                      # short: a code is exchanged immediately or not at all
-ACCESS_TTL_S = int(os.environ.get("DOCWEAVE_ACCESS_TTL_S", "900"))
-REFRESH_TTL_S = int(os.environ.get("DOCWEAVE_REFRESH_TTL_S", str(14 * 24 * 3600)))
+ACCESS_TTL_S = int(env.get("ACCESS_TTL_S", "900"))
+REFRESH_TTL_S = int(env.get("REFRESH_TTL_S", str(14 * 24 * 3600)))
 ID_TOKEN_TTL_S = 300
 ALG = "RS256"
 
@@ -52,7 +53,7 @@ def issuer() -> str:
     Deriving it from Host would let anyone who can reach the service mint tokens claiming to
     come from the real issuer, and clients validate `iss` against exactly this string.
     """
-    return (os.environ.get("DOCWEAVE_ISSUER") or "http://accounts.localhost:8770").rstrip("/")
+    return (env.get("ISSUER") or "http://accounts.localhost:8770").rstrip("/")
 
 
 def _sha(raw: str) -> str:
@@ -461,7 +462,7 @@ def deliver_logout(url: str, token: str, timeout: float = 3.0) -> tuple[bool, st
         # routed through an unrelated proxy either fails silently or hands a signed token
         # naming a user and a session to a third party.
         with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False,
-                          proxy=os.environ.get("DOCWEAVE_OIDC_PROXY") or None) as c:
+                          proxy=env.get("OIDC_PROXY") or None) as c:
             r = c.post(url, data={"logout_token": token},
                        headers={"Content-Type": "application/x-www-form-urlencoded"})
         if 200 <= r.status_code < 300:

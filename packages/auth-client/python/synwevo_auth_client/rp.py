@@ -28,19 +28,20 @@ import secrets
 import time
 import urllib.parse
 
-from platform_core.errors import ServiceError
-from platform_core.store import Store, new_id, now
+from synwevo_core import env
+from synwevo_core.errors import ServiceError
+from synwevo_core.store import Store, new_id, now
 
 REQUEST_TTL_S = 600          # a sign-in someone walked away from should not stay startable
 JWKS_TTL_S = 300
 
 
 def issuer() -> str:
-    return (os.environ.get("DOCWEAVE_ISSUER") or "http://accounts.localhost:8770").rstrip("/")
+    return (env.get("ISSUER") or "http://accounts.localhost:8770").rstrip("/")
 
 
 def client_id() -> str:
-    return os.environ.get("DOCWEAVE_OIDC_CLIENT_ID") or "docweave-web"
+    return env.get("OIDC_CLIENT_ID") or "docweave-web"
 
 
 def app_id() -> str:
@@ -48,15 +49,15 @@ def app_id() -> str:
 
     Configured rather than read out of the id_token: the token says who the person is, and a
     service that let a token tell it which application it was would be checking the wrong
-    entitlement. The portal runs the same code with `DOCWEAVE_OIDC_APP_ID=platform`.
+    entitlement. The portal runs the same code with `SYNWEVO_OIDC_APP_ID=platform`.
     """
-    return os.environ.get("DOCWEAVE_OIDC_APP_ID") or "docweave"
+    return env.get("OIDC_APP_ID") or "docweave"
 
 
 def public_url() -> str:
     """DocWeave's own externally reachable base URL. Configured, not derived from the request:
     it has to match the redirect URI registered with the provider exactly."""
-    return (os.environ.get("DOCWEAVE_APP_URL") or "http://docweave.localhost:8765").rstrip("/")
+    return (env.get("APP_URL") or "http://docweave.localhost:8765").rstrip("/")
 
 
 def redirect_uri() -> str:
@@ -108,7 +109,7 @@ class Rp:
             import httpx
             self._http = httpx.Client(base_url=issuer(), timeout=10.0, follow_redirects=False,
                                       trust_env=False,
-                                      proxy=os.environ.get("DOCWEAVE_OIDC_PROXY") or None)
+                                      proxy=env.get("OIDC_PROXY") or None)
         return self._http
 
     def _jwks_now(self, *, force: bool = False) -> dict:
@@ -218,7 +219,7 @@ class Rp:
         Duplicates are expected — the provider retries — so a repeat is a success with nothing
         left to do, not an error that would make the provider retry forever.
         """
-        from platform_core import oidc as _oidc         # verification helper, not the provider itself
+        from synwevo_core import oidc as _oidc         # verification helper, not the provider itself
         claims = _oidc.verify_logout_token(raw_token, jwks=self._jwks_now(),
                                            client_id=client_id(), expected_issuer=issuer())
         jti = claims["jti"]

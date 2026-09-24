@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from docweave.jobs import JobService
-from platform_core.errors import ServiceError
+from synwevo_docs.jobs import JobService
+from synwevo_core.errors import ServiceError
 
 
 def _project(api, fixtures, rows=6, bad=False):
@@ -88,7 +88,7 @@ def test_cancel_is_arbitrated_against_completion(api, fixtures):
 
 def test_retry_is_a_recorded_run_and_is_idempotent(api, fixtures, monkeypatch):
     pid = _project(api, fixtures, rows=4)
-    from docweave.engine import generate as G
+    from synwevo_docs.engine import generate as G
     real = G.fill_checked
     state = {"fail": True}
 
@@ -240,7 +240,7 @@ def test_the_archive_is_streamed_from_disk_not_buffered_in_memory(api, fixtures)
 
 def test_there_is_no_buffering_zip_helper_left_to_reach_for(api):
     """Removed rather than deprecated, so it cannot come back by autocomplete."""
-    from docweave.jobs import JobService
+    from synwevo_docs.jobs import JobService
     assert not hasattr(JobService, "zip"), "JobService.zip 会把整个归档读进内存"
     assert hasattr(JobService, "zip_file")
 

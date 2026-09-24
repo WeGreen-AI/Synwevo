@@ -2,7 +2,7 @@
 
 本文档是可执行的：每条命令都在本机跑通过，`python tests/integration/verify_sso.py` 会把结果量出来（本轮实测 38/38）。
 
-平台账户服务是 OIDC Provider；平台门户和 DocWeave 都是接入它的独立客户端。本轮的两个客户端
+平台账户服务是 OIDC Provider；Synwevo Workspace和 Synwevo Docs 都是接入它的独立客户端。本轮的两个客户端
 都是真实业务链路的一部分，因此它们本身就是跨客户端验证的对象。
 
 **没有产品界面。** 应用登记、客户端配置、回调地址、签名密钥、机器凭据全部通过 CLI 和配置管理。
@@ -29,23 +29,23 @@
 ## 1. 登记应用
 
 ```bash
-python -m platform_identity.cli app list
+python -m synwevo_identity.cli app list
 ```
 
-DocWeave 在服务启动时自动登记（`platform_core/apps.py: bootstrap_docweave`），幂等。新增一个应用时
+Synwevo Docs 在服务启动时自动登记（`synwevo_core/apps.py: bootstrap_docs_app`），幂等。新增一个应用时
 在同一位置登记，或扩展该函数。
 
 工作空间要显式启用应用，成员要显式获得使用资格：
 
 ```bash
-python -m platform_identity.cli app enable  docweave --workspace w_xxx
-python -m platform_identity.cli app grant   docweave --workspace w_xxx --user someone@example.com
-python -m platform_identity.cli app revoke  docweave --workspace w_xxx --user someone@example.com
-python -m platform_identity.cli app disable docweave                      # 停用整个应用
+python -m synwevo_identity.cli app enable  docweave --workspace w_xxx
+python -m synwevo_identity.cli app grant   docweave --workspace w_xxx --user someone@example.com
+python -m synwevo_identity.cli app revoke  docweave --workspace w_xxx --user someone@example.com
+python -m synwevo_identity.cli app disable docweave                      # 停用整个应用
 ```
 
 新建的工作空间会在创建它的同一个事务里启用 `DEFAULT_WORKSPACE_APPS`（见
-`apps/docweave/docweave/identity.py`）并给所有者授予资格。这不是顺手：`adopt_existing_members()` 是
+`apps/docs/synwevo_docs/identity.py`）并给所有者授予资格。这不是顺手：`adopt_existing_members()` 是
 一次性迁移，如果新空间不在创建时就配好，之后注册的每个账户都会登录成功、然后被告知什么都不能用。
 
 workspace `default` 是历史数据空间，`legacy / pending_claim / 0 成员`。CLI 会拒绝直接对它授权，
@@ -56,7 +56,7 @@ workspace `default` 是历史数据空间，`legacy / pending_claim / 0 成员`�
 ## 2. 登记 OIDC 客户端
 
 ```bash
-python -m platform_identity.cli client register \
+python -m synwevo_identity.cli client register \
     --client-id my-app-web \
     --app my-app \
     --name 我的应用 \
@@ -75,16 +75,16 @@ python -m platform_identity.cli client register \
 - 没有动态客户端注册端点，将来也不会有。
 
 ```bash
-python -m platform_identity.cli client list
-python -m platform_identity.cli client show    --client-id my-app-web   # 不打印密钥，连哈希也不打印
-python -m platform_identity.cli client disable --client-id my-app-web
+python -m synwevo_identity.cli client list
+python -m synwevo_identity.cli client show    --client-id my-app-web   # 不打印密钥，连哈希也不打印
+python -m synwevo_identity.cli client disable --client-id my-app-web
 ```
 
 ---
 
 ## 3. 应用侧要实现的四个端点
 
-`apps/docweave/docweave/rp.py` 和 `apps/docweave/docweave/api/rp_routes.py` 是一份可以照抄的参考实现。
+`apps/docs/synwevo_docs/rp.py` 和 `apps/docs/synwevo_docs/api/rp_routes.py` 是一份可以照抄的参考实现。
 
 | 路由 | 作用 | 关键约束 |
 |---|---|---|
@@ -112,7 +112,7 @@ python -m platform_identity.cli client disable --client-id my-app-web
 > 发生——本机验证时就发生了：所有浏览器跳转都正常，只有服务端换码那一步被悄悄送进代理并被丢弃，
 > 表现为回调处的 `Server disconnected without sending a response`。
 
-确实需要经代理访问发行者的部署，用 `DOCWEAVE_OIDC_PROXY` 显式指定。
+确实需要经代理访问发行者的部署，用 `SYNWEVO_OIDC_PROXY` 显式指定。
 
 ---
 
@@ -122,16 +122,16 @@ python -m platform_identity.cli client disable --client-id my-app-web
 （`app` / `portal`）**根本不提供** `/api/auth/login`，因此它的 `RequireSession` 和 `/login`
 都直接前往 `/auth/start`，由账户服务完成认证。
 
-这条是浏览器验证时发现的：点门户上的 DocWeave 卡片，落到了 DocWeave 自己的登录表单，要求
+这条是浏览器验证时发现的：点门户上的 Synwevo Docs 卡片，落到了 Synwevo Docs 自己的登录表单，要求
 再输一次口令——而那个表单永远不可能成功。它重要的地方不只是坏了：一个收集口令却无法校验口令
 的表单，恰恰出现在「口令只在一个地方输入」这条规则最该被贯彻的页面上。
 
 ### 每个角色服务自己的前端外壳
 
-一个 Vite 构建，三个入口：`index.html`（DocWeave 工作台）、`portal.html`（平台门户）、
-`accounts.html`（账户与安全）。由 `DOCWEAVE_ROLE` 决定服务哪一个。
+一个 Vite 构建，三个入口：`index.html`（Synwevo Docs 工作台）、`portal.html`（Synwevo Workspace）、
+`accounts.html`（账户与安全）。由 `SYNWEVO_ROLE` 决定服务哪一个。
 
-账户服务原本和 DocWeave 共用同一个外壳，于是它渲染出 DocWeave 的项目列表，然后被自己的角色
+账户服务原本和 Synwevo Docs 共用同一个外壳，于是它渲染出 Synwevo Docs 的项目列表，然后被自己的角色
 边界拒绝，页面上浮出「该接口不在账户服务上」——一次正确的拒绝被呈现成一个坏掉的页面。
 
 新增应用时同理：给它自己的入口，不要把它塞进别人的 SPA 路由。
@@ -145,7 +145,7 @@ python tests/integration/verify_sso.py --email you@example.test --password '...'
 python scripts/platform.py down
 ```
 
-端口可用 `PLATFORM_ACCOUNTS_PORT` / `PLATFORM_PORTAL_PORT` / `PLATFORM_DOCWEAVE_PORT` 覆盖。
+端口可用 `SYNWEVO_ACCOUNTS_PORT` / `SYNWEVO_PORTAL_PORT` / `SYNWEVO_DOCS_PORT` 覆盖。
 
 ### 为什么是三个主机名而不是三个端口
 
@@ -200,7 +200,7 @@ httpx 不会，于是服务端换码那一步失败。`scripts/platform.py: bind
 ```bash
 # 认领只能在界面里做——它需要重认证、理由和事务，不是一条可以脚本化的命令。
 # 但可以先看清楚将要发生什么：
-python python -m docweave.cli --data data app list
+python python -m synwevo_docs.cli --data data app list
 ```
 
 认领的约束写在 `docs/security/permissions.md` §3.3。要点：
@@ -229,7 +229,7 @@ python python -m docweave.cli --data data app list
 登记一个服务账户：
 
 ```bash
-python -m platform_identity.cli client register \
+python -m synwevo_identity.cli client register \
     --client-id nightly-batch --app docweave --name 夜间批处理 \
     --service --workspace w_xxx --api-scopes "docweave.read docweave.write"
 ```
@@ -254,7 +254,7 @@ python tests/integration/automation_example.py \
 
 ### 每次调用都重新核验，不看令牌当初记了什么
 
-`apps/docweave/docweave/machine.py` 在**每一次**请求上重新问三个问题：账户还在不在、这个人还是不是
+`apps/docs/synwevo_docs/machine.py` 在**每一次**请求上重新问三个问题：账户还在不在、这个人还是不是
 该空间成员、该空间还有没有这个应用。令牌里记的是当初授予了什么，不是现在还成不成立。把这些
 固化进令牌，就是「已被撤权的人继续工作到令牌过期」的成因。
 
@@ -274,9 +274,9 @@ principal 形状相同，因此没有任何调用点需要知道自己拿到的�
 ## 6. 密钥
 
 ```bash
-python -m platform_identity.cli keys list
-python -m platform_identity.cli keys rotate            # 新密钥签名，旧密钥转 retiring 仍在 JWKS 中
-python -m platform_identity.cli keys retire --kid k_xxx   # 等最长令牌有效期过去之后
+python -m synwevo_identity.cli keys list
+python -m synwevo_identity.cli keys rotate            # 新密钥签名，旧密钥转 retiring 仍在 JWKS 中
+python -m synwevo_identity.cli keys retire --kid k_xxx   # 等最长令牌有效期过去之后
 ```
 
 签名密钥持久化保存。每次启动重新生成密钥，会让所有已签发令牌失效——那看起来就是一次没有原因的
@@ -288,12 +288,12 @@ python -m platform_identity.cli keys retire --kid k_xxx   # 等最长令牌有�
 
 ```bash
 # 本机用投递目录，不发真信
-export DOCWEAVE_MAIL_MODE=file
-export DOCWEAVE_MAIL_DIR=./data/mail
-export DOCWEAVE_PUBLIC_URL=http://accounts.localhost:8770
+export SYNWEVO_MAIL_MODE=file
+export SYNWEVO_MAIL_DIR=./data/mail
+export SYNWEVO_PUBLIC_URL=http://accounts.localhost:8770
 ```
 
-`DOCWEAVE_PUBLIC_URL` 是必须的：邮件里的链接不能从请求的 Host 推导，否则目标地址由攻击者控制
+`SYNWEVO_PUBLIC_URL` 是必须的：邮件里的链接不能从请求的 Host 推导，否则目标地址由攻击者控制
 而令牌在真实主机上仍然有效。
 
 流程的三条规则写在 `docs/security/permissions.md` §3.6，最容易做错的两条：
@@ -317,27 +317,27 @@ export DOCWEAVE_PUBLIC_URL=http://accounts.localhost:8770
 
 ## 10. 一个新应用放在仓库的哪里
 
-平台是单仓库，新应用有它自己的目录，和 DocWeave 平级：
+平台是单仓库，新应用有它自己的目录，和 Synwevo Docs 平级：
 
 ```
 apps/<your-app>/
 ├─ pyproject.toml        声明依赖：platform-core、platform-auth-client，**不写任何别的应用**
 ├─ requirements.txt      -r ../../packages/auth-client/python/requirements.txt + 自己的
 ├─ <your_app>/           Python 包：app.py（工厂）、routes.py、业务实现
-├─ web/                  自己的 Vite 构建；package.json 依赖 @platform/ui、@platform/auth-client
+├─ web/                  自己的 Vite 构建；package.json 依赖 @synwevo/ui、@synwevo/auth-client
 │                        build.assetsDir 取一个**不重名**的目录名，否则单进程部署里会互相遮盖
 ├─ tests/                这个应用自己的测试
 └─ AGENTS.md             这个模块的工作边界
 ```
 
-接入统一身份**不需要修改 DocWeave 的任何代码**，也不需要改账户服务的实现。要做的是四件事：
+接入统一身份**不需要修改 Synwevo Docs 的任何代码**，也不需要改账户服务的实现。要做的是四件事：
 
 1. **挂上依赖方路由**（授权码流程、回调、后通道登出，都在共享包里）：
 
    ```python
-   from platform_auth_client.routes import build_router as build_rp_router
-   from platform_auth_client.session_routes import build_router as build_session_router
-   from platform_core.http import build_platform, install as install_platform, new_api
+   from synwevo_auth_client.routes import build_router as build_rp_router
+   from synwevo_auth_client.session_routes import build_router as build_session_router
+   from synwevo_core.http import build_platform, install as install_platform, new_api
 
    def create_app(data_dir=None):
        plat = build_platform(data_dir)
@@ -351,20 +351,20 @@ apps/<your-app>/
    不要自己写授权码流程，也不要给应用加第二个口令框——`role != accounts` 的进程根本不提供
    `/api/auth/login`，那个框永远不可能成功。
 
-2. **登记应用与客户端**（§1、§2），并在 `platform_core/apps.py` 里登记 `app_id`。
+2. **登记应用与客户端**（§1、§2），并在 `synwevo_core/apps.py` 里登记 `app_id`。
 
-3. **前端用共享包**：`@platform/ui` 拿设计变量与基础组件，`@platform/auth-client` 拿
+3. **前端用共享包**：`@synwevo/ui` 拿设计变量与基础组件，`@synwevo/auth-client` 拿
    `SessionProvider` / `RequireSession` / `signInUrl`。账户与安全页面**不要复制**：链接到
    `state.account_url`。
 
-4. **把它加进组装层**：`infra/server/platform_server/app.py` 按角色挂载。这是唯一允许同时导入
+4. **把它加进组装层**：`infra/server/synwevo_server/app.py` 按角色挂载。这是唯一允许同时导入
    多个应用的地方。
 
 然后 `python scripts/check_boundaries.py` 必须通过——它会告诉你有没有不小心伸进别人的实现里。
 
 ### 自动化编排类产品怎么接
 
-不需要改 DocWeave。它已经有完整的机器接口（`/api/v1`，见
+不需要改 Synwevo Docs。它已经有完整的机器接口（`/api/v1`，见
 [api.md](api.md)）与机器身份（§5 的服务账户与用户委托）：取令牌 → 提交任务 → 查询 → 取回产物，
 全程无浏览器、无 Cookie，权限精确到 app / workspace / 操作。编排产品作为**另一个应用**接入统一
-身份，用自己的服务账户调用 DocWeave 的公开接口，而不是 import 它的 Python 包。
+身份，用自己的服务账户调用 Synwevo Docs 的公开接口，而不是 import 它的 Python 包。

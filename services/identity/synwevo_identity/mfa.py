@@ -5,7 +5,7 @@ secret — anyone holding it can generate valid codes forever — so it is store
 the key sits in the same SQLite file as the ciphertext, a copy of that file yields both, and MFA
 stops helping against exactly the scenario encryption was meant to cover.
 
-So the key is derived from ``DOCWEAVE_SECRET`` when it is supplied by the environment, which is
+So the key is derived from ``SYNWEVO_SECRET`` when it is supplied by the environment, which is
 the configuration where key and data genuinely live apart, and falls back to the database-stored
 server secret otherwise. The fallback is not silent: :func:`key_is_external` reports which one is
 in force and ``manage.py info`` prints it. MFA still does its main job in either case — password
@@ -28,8 +28,9 @@ import urllib.parse
 import pyotp
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from platform_core.errors import ServiceError
-from platform_core.store import Store, new_id, now
+from synwevo_core import env
+from synwevo_core.errors import ServiceError
+from synwevo_core.store import Store, new_id, now
 
 # A code is accepted one step either side of now, so a clock a few seconds out still works.
 # Wider than that starts extending the useful life of a phished code for no real gain.
@@ -49,7 +50,7 @@ def key_is_external() -> bool:
     Reported by `manage.py info` so an operator can see which configuration they are in without
     reading code.
     """
-    return bool(os.environ.get("DOCWEAVE_SECRET"))
+    return bool(env.get("SECRET"))
 
 
 def _key(store: Store) -> bytes:
@@ -58,7 +59,7 @@ def _key(store: Store) -> bytes:
     Separation matters: the same root secret also signs download links, and a key reused across
     unrelated purposes turns any weakness in one into a weakness in the other.
     """
-    from platform_core.auth import Auth
+    from synwevo_core.auth import Auth
     root = Auth(store).secret()
     return hmac.new(root, b"docweave/mfa-seed/v1", hashlib.sha256).digest()
 

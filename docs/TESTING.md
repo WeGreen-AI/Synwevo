@@ -3,7 +3,7 @@
 ## 1. 测试数据
 
 ```bash
-.venv/bin/python apps/docweave/scripts/make_fixtures.py        # 生成到 testdata/（pytest 首次运行时也会自动生成）
+.venv/bin/python apps/docs/scripts/make_fixtures.py        # 生成到 testdata/（pytest 首次运行时也会自动生成）
 ```
 
 全部为合成数据（姓名以「测试」开头、编号虚构），包括：100 条客户 XLSX、列顺序变化/重名列变体、合同 DOCX 模板（跨 run 文字、页眉页脚、图片、表格）、20 份同结构检测表 DOCX 与报告模板、100 条订单明细（15 个订单，行号被打乱）与 DOCX/XLSX 订单模板、3×4 区域来源与模板、文本 PDF、含旋转页的 PDF 模板、AcroForm 模板、扫描 PNG/PDF、PPTX 模板、GB18030/UTF-8 CSV（含引号内换行）、损坏文件与不支持文件。
@@ -12,8 +12,8 @@
 
 ```bash
 python scripts/platform.py setup                      # 或手动：.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest                          # 三个套件：DocWeave、账户服务、跨模块集成
-.venv/bin/python -m pytest apps/docweave/tests      # 只跑 DocWeave
+.venv/bin/python -m pytest                          # 三个套件：Synwevo Docs、账户服务、跨模块集成
+.venv/bin/python -m pytest apps/docs/tests      # 只跑 Synwevo Docs
 .venv/bin/python -m pytest services/identity/tests  # 只跑账户服务
 .venv/bin/python -m pytest tests/integration        # 只跑跨模块验证
 .venv/bin/python scripts/check_boundaries.py        # 模块依赖边界
@@ -37,10 +37,10 @@ python scripts/platform.py setup                      # 或手动：.venv/bin/pi
 
 ```bash
 python scripts/platform.py up &
-.venv/bin/python apps/docweave/scripts/ui_e2e.py           # 新建项目→上传→设模板→选文字建字段→定义样本→点选单元格建映射→预览→生成 100 份→下载 ZIP 核对→刷新→手机宽度查看任务
-.venv/bin/python apps/docweave/scripts/ui_e2e_more.py      # 分组+XLSX 明细（拖选区域）、PDF 鼠标框选字段、内置文档编辑器、内置表格编辑器
-.venv/bin/python apps/docweave/scripts/ui_e2e_keyboard.py  # 命令面板（⌘K）、映射列表键盘与批量操作+撤销、主题与文档纸张、布局记忆与减少动效
-.venv/bin/python apps/docweave/scripts/ui_perf.py <项目ID>   # 可见窗口中的真实帧时间：首个可操作视图、选区/键盘响应、滚动与拖拽帧间隔、长任务、内存
+.venv/bin/python apps/docs/scripts/ui_e2e.py           # 新建项目→上传→设模板→选文字建字段→定义样本→点选单元格建映射→预览→生成 100 份→下载 ZIP 核对→刷新→手机宽度查看任务
+.venv/bin/python apps/docs/scripts/ui_e2e_more.py      # 分组+XLSX 明细（拖选区域）、PDF 鼠标框选字段、内置文档编辑器、内置表格编辑器
+.venv/bin/python apps/docs/scripts/ui_e2e_keyboard.py  # 命令面板（⌘K）、映射列表键盘与批量操作+撤销、主题与文档纸张、布局记忆与减少动效
+.venv/bin/python apps/docs/scripts/ui_perf.py <项目ID>   # 可见窗口中的真实帧时间：首个可操作视图、选区/键盘响应、滚动与拖拽帧间隔、长任务、内存
 ```
 
 截图保存在 `docs/screenshots/`。
@@ -48,7 +48,7 @@ python scripts/platform.py up &
 ## 4. 性能
 
 ```bash
-.venv/bin/python apps/docweave/scripts/benchmark.py
+.venv/bin/python apps/docs/scripts/benchmark.py
 ```
 
 输出 JSON，包含各场景耗时与进程峰值内存（结果记录在 `docs/ACCEPTANCE.md`）。

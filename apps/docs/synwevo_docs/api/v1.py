@@ -12,18 +12,19 @@ import os
 from fastapi import APIRouter, Body, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 
-from platform_core.context import as_tenant
-from platform_core.errors import ServiceError
-from platform_core.store import now
+from synwevo_core import env
+from synwevo_core.context import as_tenant
+from synwevo_core.errors import ServiceError
+from synwevo_core.store import now
 
 from .. import definitions as D
 from ..capabilities import capability_report
 from ..engine.limits import LIMITS
 
 API_VERSION = "1.0"
-IMPORT_ROOTS = [p for p in (os.environ.get("DOCWEAVE_IMPORT_ROOTS") or "").split(os.pathsep) if p.strip()]
-LINK_TTL_S = int(os.environ.get("DOCWEAVE_DOWNLOAD_LINK_TTL_S", "900"))
-PUBLIC_URL = (os.environ.get("DOCWEAVE_PUBLIC_URL") or "").strip().rstrip("/")
+IMPORT_ROOTS = [p for p in (env.docs("IMPORT_ROOTS") or "").split(os.pathsep) if p.strip()]
+LINK_TTL_S = int(env.docs("DOWNLOAD_LINK_TTL_S", "900"))
+PUBLIC_URL = (env.get("PUBLIC_URL") or "").strip().rstrip("/")
 
 
 def public_base(request: Request) -> str:
@@ -36,7 +37,7 @@ def public_base(request: Request) -> str:
     ``$proxy_host``) the host becomes the origin's own address, so the caller is handed
     ``http://127.0.0.1:8765/...``, which resolves to their own machine.
 
-    ``DOCWEAVE_PUBLIC_URL`` is the deterministic answer and is what a deployment behind a proxy
+    ``SYNWEVO_PUBLIC_URL`` is the deterministic answer and is what a deployment behind a proxy
     should set.  Failing that, honour the forwarded headers — uvicorn does not apply them unless
     it is started with proxy headers enabled, and enabling those globally would also change the
     client address the rate limiter sees.  Spoofing them only changes the URL handed back to the
@@ -178,7 +179,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
             body = await request.json()
         path = (body or {}).get("path")
         if not path:
-            raise ServiceError(400, "invalid", "请以 multipart 上传文件，或提供 path（需配置 DOCWEAVE_IMPORT_ROOTS）", {"field": "file"})
+            raise ServiceError(400, "invalid", "请以 multipart 上传文件，或提供 path（需配置 SYNWEVO_DOCS_IMPORT_ROOTS）", {"field": "file"})
         data, name = _read_from_roots(path)
         return app_.add_source(pid, name, data)
 
@@ -395,7 +396,7 @@ def _read_from_roots(path: str) -> tuple[bytes, str]:
     """Read a file the caller names by path – only inside an explicitly configured root."""
     from pathlib import Path
     if not IMPORT_ROOTS:
-        raise ServiceError(400, "path_not_allowed", "本部署未开放按路径读取文件；请用 multipart 上传，或配置 DOCWEAVE_IMPORT_ROOTS", {"field": "path"})
+        raise ServiceError(400, "path_not_allowed", "本部署未开放按路径读取文件；请用 multipart 上传，或配置 SYNWEVO_DOCS_IMPORT_ROOTS", {"field": "path"})
     target = Path(path).expanduser()
     try:
         real = target.resolve(strict=True)
@@ -407,7 +408,7 @@ def _read_from_roots(path: str) -> tuple[bytes, str]:
             if real.stat().st_size > LIMITS.max_file_bytes:
                 raise ServiceError(413, "too_large", "文件超过大小上限")
             return real.read_bytes(), real.name
-    raise ServiceError(403, "path_not_allowed", f"路径不在授权目录内（DOCWEAVE_IMPORT_ROOTS）：{path}", {"field": "path"})
+    raise ServiceError(403, "path_not_allowed", f"路径不在授权目录内（SYNWEVO_DOCS_IMPORT_ROOTS）：{path}", {"field": "path"})
 
 
 def _reachable_schemas(spec: dict) -> dict:
@@ -442,8 +443,8 @@ def openapi_subset(api) -> dict:
     keep = {p: v for p, v in spec["paths"].items() if p.startswith("/api/v1") or p in ("/healthz", "/readyz")}
     spec = json.loads(json.dumps(spec))
     spec["paths"] = keep
-    spec["info"] = {"title": "DocWeave 机器接口", "version": API_VERSION,
-                    "description": "文档批量生成引擎的自动化接口。所有 /api/v1 路由都需要 API 密钥（Authorization: Bearer dw_…）。"
+    spec["info"] = {"title": "Synwevo Docs 机器接口", "version": API_VERSION,
+                    "description": "Synwevo Docs 的自动化接口。所有 /api/v1 路由都需要 API 密钥（Authorization: Bearer dw_…）。"
                                    "详见 docs/integration/api.md。"}
     spec["components"] = spec.get("components", {})
     spec["components"]["securitySchemes"] = {"apiKey": {"type": "http", "scheme": "bearer", "bearerFormat": "dw_<id>_<secret>"}}

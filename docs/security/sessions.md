@@ -14,8 +14,8 @@
 
 | 层 | 在哪个进程 | Cookie | 怎么产生 | 怎么结束 |
 |---|---|---|---|---|
-| 中央认证会话 | 账户服务（`DOCWEAVE_ROLE=accounts`） | `dw_session`，host-only，账户服务域名 | 口令 / Passkey 登录 | 平台登出、全设备撤销、账户停用、口令重置 |
-| 应用会话（门户、DocWeave 各一份） | 各应用自己 | `dw_session`，host-only，各自域名 | 走完授权码流程后本地签发 | 应用内退出、后通道登出、令牌撤销 |
+| 中央认证会话 | 账户服务（`SYNWEVO_ROLE=accounts`） | `dw_session`，host-only，账户服务域名 | 口令 / Passkey 登录 | 平台登出、全设备撤销、账户停用、口令重置 |
+| 应用会话（门户、Synwevo Docs 各一份） | 各应用自己 | `dw_session`，host-only，各自域名 | 走完授权码流程后本地签发 | 应用内退出、后通道登出、令牌撤销 |
 | 令牌（access / refresh） | 只在服务端之间 | **不进浏览器** | 令牌端点 | 撤销、过期、刷新时重新核验 |
 
 同名 Cookie、三个不同主机，因此是三个互不相通的值。这是本机 `verify_sso.py` 直接量过的性质之一。
@@ -32,7 +32,7 @@
   ——包括验证邮件和邀请邮件里的链接，于是人点了"确认"却落在登录页。`Lax` 仍然拒绝跨站 POST，
   剩下的由 CSRF 双提交覆盖。
 - **`Secure` 由配置传入，不猜**：猜错两个方向都坏——强制开启会让 Cookie 在本机 HTTP 上静默不写入，
-  在生产强制关闭则让它明文传输。本机用 `DOCWEAVE_COOKIE_SECURE=0`，这也是那些主机名绝不能用于
+  在生产强制关闭则让它明文传输。本机用 `SYNWEVO_COOKIE_SECURE=0`，这也是那些主机名绝不能用于
   任何真实用途的原因。
 
 > **不同端口不隔离 Cookie。** Cookie 协议按主机划分作用域并完全忽略端口。因此本机用
@@ -52,9 +52,9 @@
 
 | 时钟 | 默认 | 环境变量 | 含义 |
 |---|---|---|---|
-| 空闲过期 | 12 小时 | `DOCWEAVE_SESSION_IDLE_S` | 最后一次请求之后多久作废 |
-| 绝对过期 | 30 天 | `DOCWEAVE_SESSION_ABSOLUTE_S` | 无论多活跃，从创建起多久必须重新登录 |
-| 管理员空闲过期 | 1 小时 | `DOCWEAVE_ADMIN_IDLE_S` | 平台管理员的空闲时钟更短 |
+| 空闲过期 | 12 小时 | `SYNWEVO_SESSION_IDLE_S` | 最后一次请求之后多久作废 |
+| 绝对过期 | 30 天 | `SYNWEVO_SESSION_ABSOLUTE_S` | 无论多活跃，从创建起多久必须重新登录 |
+| 管理员空闲过期 | 1 小时 | `SYNWEVO_ADMIN_IDLE_S` | 平台管理员的空闲时钟更短 |
 
 只有绝对过期能防住"一直有人用着所以永远不过期"的会话。只有空闲过期能让离开的设备自己失效。
 两个都要。
@@ -66,7 +66,7 @@
 
 ## 3. CSRF
 
-双提交：`dw_csrf` Cookie（**非 HttpOnly**，页面要能读到并回显）+ `X-DocWeave-CSRF` 请求头。
+双提交：`dw_csrf` Cookie（**非 HttpOnly**，页面要能读到并回显）+ `X-Synwevo Docs-CSRF` 请求头。
 
 - 只对 `/api/` 下的非安全方法检查。
 - `/api/auth/login` 等匿名端点豁免——它们还没有会话，而且没有正确凭据本身就是无用的。
@@ -88,8 +88,8 @@ CSRF Cookie 可被脚本读取不是漏洞：它本身不是凭据，只证明�
 |---|---|---|
 | 授权码有效期 | 60 秒 | 短：要么立刻换掉，要么就不该换 |
 | 授权码使用次数 | 1 | 条件 UPDATE 保证；**重放会撤销该授权签发的全部令牌** |
-| access token | 15 分钟（`DOCWEAVE_ACCESS_TTL_S`） | 不透明随机值，库里只存 SHA-256 |
-| refresh token | 14 天（`DOCWEAVE_REFRESH_TTL_S`） | 仅在申请了 `offline_access` 时签发 |
+| access token | 15 分钟（`SYNWEVO_ACCESS_TTL_S`） | 不透明随机值，库里只存 SHA-256 |
+| refresh token | 14 天（`SYNWEVO_REFRESH_TTL_S`） | 仅在申请了 `offline_access` 时签发 |
 | id_token | 5 分钟 | RS256，只用于客户端验证身份一次 |
 | JWKS 客户端缓存 | 300 秒 | 遇到未知 kid 会强制刷新一次再判定签名错误 |
 
@@ -134,7 +134,7 @@ SSO 创建本地会话时，`reauth_at` 取的是**中央认证发生的时间**
 
 | 项 | 值 |
 |---|---|
-| 有效期 | 10 分钟（`DOCWEAVE_REAUTH_S`） |
+| 有效期 | 10 分钟（`SYNWEVO_REAUTH_S`） |
 | 作用域 | 封闭集合：`mfa`、`admin` |
 | 端点 | `POST /api/auth/reauth`，`{password, scope}` |
 
@@ -230,7 +230,7 @@ reauth_fresh(session, scope, strict=True)   # 严格：必须为这件事重新�
 
 ## 8. 与身份服务通信的出站连接
 
-依赖方的 HTTP 客户端和后通道投递都设 `trust_env=False`，代理必须由 `DOCWEAVE_OIDC_PROXY` 显式指定。
+依赖方的 HTTP 客户端和后通道投递都设 `trust_env=False`，代理必须由 `SYNWEVO_OIDC_PROXY` 显式指定。
 
 httpx 默认遵循环境里的 `HTTP_PROXY`，而这些连接上跑的是**授权码**和**客户端密钥**。而且
 `NO_PROXY=localhost,127.0.0.1` **不匹配** `accounts.localhost`，所以这件事极容易在无人察觉时发生
@@ -273,5 +273,5 @@ python scripts/platform.py down
 `verify_sso.py` 用 `http.cookiejar`（按主机作用域、无视端口的真实规则）量三个来源的会话值、
 host-only 属性、端口无关性，以及跨应用登出。**38/38 本机通过。**
 
-相关测试：`apps/docweave/tests/test_sso_chain.py`（26）、`test_oidc_flow.py`（28）、
+相关测试：`apps/docs/tests/test_sso_chain.py`（26）、`test_oidc_flow.py`（28）、
 `test_oidc_logout.py`（15）、`test_passkeys.py`（19）、`test_recovery.py`（20）。

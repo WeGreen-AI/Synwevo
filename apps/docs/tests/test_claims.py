@@ -9,10 +9,10 @@ from openpyxl.chart import BarChart, Reference
 from openpyxl.comments import Comment
 from openpyxl.worksheet.table import Table
 
-from docweave.engine import pdf_engine as pe
-from docweave.engine import values as V
-from docweave.engine.templates import pdf_add_slot, pdf_fill, pdf_working_copy
-from docweave.engine.xlsx_doc import XlsxDoc
+from synwevo_docs.engine import pdf_engine as pe
+from synwevo_docs.engine import values as V
+from synwevo_docs.engine.templates import pdf_add_slot, pdf_fill, pdf_working_copy
+from synwevo_docs.engine.xlsx_doc import XlsxDoc
 
 
 def test_xlsx_row_insert_shifts_tables_names_charts_comments():

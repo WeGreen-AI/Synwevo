@@ -2,7 +2,7 @@
 way PyMuPDF does; PDF / image templates are refused with an explanation."""
 import pytest
 
-from docweave.engine import pdf_engine as pe
+from synwevo_docs.engine import pdf_engine as pe
 
 
 @pytest.fixture()
@@ -95,8 +95,8 @@ def test_about_and_source_offer(api, monkeypatch):
     r = api.c.get("/api/source-code")
     assert r.status_code == 200
     names = tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz").getnames()
-    assert any(n.endswith("apps/docweave/docweave/engine/pdf_engine.py") for n in names)
-    assert any(n.endswith("apps/docweave/web/src/main.tsx") for n in names) and any(n.endswith("SOURCE_OFFER.txt") for n in names)
+    assert any(n.endswith("apps/docs/synwevo_docs/engine/pdf_engine.py") for n in names)
+    assert any(n.endswith("apps/docs/web/src/main.tsx") for n in names) and any(n.endswith("SOURCE_OFFER.txt") for n in names)
     assert not any("/data/" in n or ".venv" in n or "node_modules" in n for n in names)   # never user data
-    monkeypatch.setenv("DOCWEAVE_SOURCE_OFFER", "off")
+    monkeypatch.setenv("SYNWEVO_DOCS_SOURCE_OFFER", "off")
     assert api.c.get("/api/source-code").status_code == 404

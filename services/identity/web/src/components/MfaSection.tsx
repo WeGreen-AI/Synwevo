@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { get, post } from "@platform/auth-client";
-import { useToast } from "@platform/ui";
+import { get, post } from "@synwevo/auth-client";
+import { useToast } from "@synwevo/ui";
 
 interface State {
   totp: boolean;

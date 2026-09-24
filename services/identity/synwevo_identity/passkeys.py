@@ -32,8 +32,9 @@ import os
 import secrets
 import time
 
-from platform_core.errors import ServiceError
-from platform_core.store import Store, new_id, now
+from synwevo_core import env
+from synwevo_core.errors import ServiceError
+from synwevo_core.store import Store, new_id, now
 
 CHALLENGE_TTL_S = 300
 MAX_PASSKEYS = 10
@@ -41,7 +42,7 @@ MAX_PASSKEYS = 10
 
 def rp_id() -> str:
     """The domain credentials are bound to. Configured, never taken from the request."""
-    configured = (os.environ.get("DOCWEAVE_RP_ID") or "").strip()
+    configured = (env.get("RP_ID") or "").strip()
     if configured:
         return configured
     from urllib.parse import urlparse
@@ -50,7 +51,8 @@ def rp_id() -> str:
 
 
 def rp_name() -> str:
-    return os.environ.get("DOCWEAVE_PLATFORM_NAME") or "工作平台"
+    from synwevo_core.config import PLATFORM_NAME
+    return env.get("PLATFORM_NAME") or PLATFORM_NAME
 
 
 def allowed_origins() -> list[str]:
@@ -60,12 +62,12 @@ def allowed_origins() -> list[str]:
     expects, and accepting any origin under the RP ID would give that check nothing to do.
     """
     extra = [o.strip().rstrip("/") for o in
-             (os.environ.get("DOCWEAVE_RP_ORIGINS") or "").split(",") if o.strip()]
+             (env.get("RP_ORIGINS") or "").split(",") if o.strip()]
     return [_issuer()] + extra
 
 
 def _issuer() -> str:
-    return (os.environ.get("DOCWEAVE_ISSUER") or "http://accounts.localhost:8770").rstrip("/")
+    return (env.get("ISSUER") or "http://accounts.localhost:8770").rstrip("/")
 
 
 class Passkeys:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from platform_core.store import SCHEMA_VERSION, Store, new_id, now
+from synwevo_core.store import SCHEMA_VERSION, Store, new_id, now
 
 
 def _v3_with_data(tmp_path):

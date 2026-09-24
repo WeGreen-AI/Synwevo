@@ -28,7 +28,7 @@
 | DW-044 | P2 | 操作效率 | 映射只能逐条用鼠标操作：没有键盘导航、没有多选，批量启用/禁用/删除要点很多次 | 界面走查 + 原需求（批量字段操作） | 10 条映射全部禁用需要 10 次点击、10 次确认 | 映射列表是普通 div 列表，无选择模型 | 列表改为 `role="listbox"`：↑↓/J K 移动并联动高亮两侧文档，X 多选，Shift 范围选，⌘A 全选，D 启用/禁用，Delete 删除；批量操作走同一个事务保存，一次撤销即可回滚 | 浏览器实测：J/X 两次后 `aria-selected` 为 `[false,true,true,false,false]`、批量条显示「已选 2 / 5」；⌘A 选中 5 条且不选中页面文字；D 后服务端 `enabled` 全为 false、备注「禁用 5 个映射（#1…#5）」、rev 5→6；⌘Z 后全部恢复且 rev 回到 5 | 已修复 |
 | DW-045 | P3 | 界面 | 深色主题不完整：徽章、步骤条、选择栏、文件项等仍用写死的浅色 | 界面走查 | 12 处硬编码色值 | 设计令牌未覆盖全部组件 | 全部改为令牌；文档纸张仍固定为 paper 令牌 | 深色下实测：`.topbar` `rgb(22,28,37)`、`.side.right` `rgb(27,34,44)`，而 `.gcell`/`.doc-page` 仍为 `rgb(255,255,255)` + `rgb(17,20,24)` | 已修复 |
 | DW-046 | P3 | 操作效率 | 关闭后重开项目，栏宽、缩放、折叠状态、连线开关全部回到默认 | 界面走查 | 仅左栏宽度被记住（`dw.leftW`） | 其余状态未持久化 | 统一 `remember/recall`（存储不可用时静默降级），记住栏宽、面板宽、折叠、缩放、连线、当前标签页、指引条 | 重载后实测保留（`docweave.sideW` = 240 等） | 已修复 |
-| DW-047 | P0 | 安全 | 绑定 `0.0.0.0` 时界面（含全部来源文件、模板与生成结果）对局域网匿名开放，而文档声称会拒绝启动 | 交付前实跑验证：`DOCWEAVE_HOST=0.0.0.0 python -m platform_server.run` | 服务正常启动并监听 `0.0.0.0:8798`，无任何界面鉴权；`docs/integration/ports.md` 当时写的是「会拒绝启动」 | `check_listen_config()` 已实现但**没有任何调用点**（死代码） | `backend/run.py` 启动前调用；容器内（`DOCWEAVE_IN_CONTAINER=1`）改为打印警告，因为容器的暴露范围由端口映射决定，进程无法判断；文档按实际行为改写 | 实测：`DOCWEAVE_HOST=0.0.0.0` 退出码 1 并打印三种处理方式；加 `DOCWEAVE_UI_AUTH=proxy` 后正常启动（`Uvicorn running on http://0.0.0.0:8798`）。`tests/test_listen_guard.py` 12 项，含直接运行 `backend/run.py` 断言退出码非 0 | 已修复 |
+| DW-047 | P0 | 安全 | 绑定 `0.0.0.0` 时界面（含全部来源文件、模板与生成结果）对局域网匿名开放，而文档声称会拒绝启动 | 交付前实跑验证：`DOCWEAVE_HOST=0.0.0.0 python -m synwevo_server.run` | 服务正常启动并监听 `0.0.0.0:8798`，无任何界面鉴权；`docs/integration/ports.md` 当时写的是「会拒绝启动」 | `check_listen_config()` 已实现但**没有任何调用点**（死代码） | `backend/run.py` 启动前调用；容器内（`DOCWEAVE_IN_CONTAINER=1`）改为打印警告，因为容器的暴露范围由端口映射决定，进程无法判断；文档按实际行为改写 | 实测：`DOCWEAVE_HOST=0.0.0.0` 退出码 1 并打印三种处理方式；加 `DOCWEAVE_UI_AUTH=proxy` 后正常启动（`Uvicorn running on http://0.0.0.0:8798`）。`tests/test_listen_guard.py` 12 项，含直接运行 `backend/run.py` 断言退出码非 0 | 已修复 |
 | DW-048 | P2 | 接口 | 鉴权失败的响应没有 `X-Request-ID` 头，与文档「每个响应都带 X-Request-ID」不符，401 无法与服务端日志对上 | 交付前实跑验证 | `curl -D - /api/v1/capabilities`（无密钥）返回 401，响应头无 `x-request-id`（响应体内有 `request_id`） | 中间件在鉴权失败时提前返回，跳过了设置响应头的代码 | 把响应头设置提取为 `finish()`，三个返回路径（正常、鉴权失败、界面口令失败）都经过它 | 实测：401 的 `x-request-id` 与响应体 `request_id` 一致；调用方自带的 `X-Request-ID` 被原样回显；`tests/test_api_v1.py::test_every_response_carries_the_trace_id` | 已修复 |
 | DW-049 | P1 | 接口 | 提交任务时把 `layout` 写错（如 `strict`、`fitt`、`OFF`），接口返回 202 成功但实际**完全不做分页检查**，调用方以为检查过，结果可能交付页数不对的文档 | 交付前实跑验证（对比 `error_policy` 的处理） | `POST /api/v1/projects/{id}/jobs` 传 `layout:"strict"` → HTTP 202，存储的 `options.layout` 为 `"off"`；而 `error_policy:"nonsense"` 正确返回 400 | 枚举值不在白名单时静默退回项目默认值（通常是 `off`），没有像 `error_policy` 那样校验 | 与 `error_policy` 一致：值不在 `off/warn/fit` 内返回 400 `bad_layout` 并指明字段；省略该键仍沿用项目设置 | `tests/test_job_reliability.py::test_unknown_layout_is_rejected_not_silently_downgraded`（5 个非法值全部 400，3 个合法值生效并落库，省略时回落项目默认）；恢复旧写法后该测试失败（已验证） | 已修复 |
 | DW-050 | P1 | 数据正确性 | 字段的 `empty_policy` 写错时被静默替换：调用方要求「零条明细视为错误、不生成」，实际却按默认值生成了一份缺明细的文档，且接口报告成功 | DW-049 修复后按同一模式排查 | 创建重复明细字段时传 `empty_policy:"erro"` → 201 成功，落库为 `remove_row`；`PATCH .../slots/{id}` 同样不校验 `empty_policy`（只校验了 `separator` 与 `overflow`） | 创建路径 `req.get("empty_policy", "remove_row")` 完全不校验；`overflow`/`separator`/`align` 用 `X if X in (…) else 默认` 静默回落 | 新增 `_enum()` 统一校验，按字段种类使用对应枚举集（表格行 / 内容块 / PDF 区域），非法值抛 `bad_value` 并列出允许值；`update_slot` 补齐 `empty_policy`、`data_type`、`align`、`valign` 校验 | `tests/test_slot_options.py` 15 项（创建与 PATCH 的非法值全部 400 并带 `field`/`allowed`，合法值生效并落库）；移除修复后 10 项失败（已验证）。全量 201 passed, 1 skipped | 已修复 |
@@ -69,17 +69,17 @@
 - DW-008：新增 `job_runs` 运行记录（初次/重试）；仅终态可重试；重试支持幂等键。
 - DW-009：ZIP 改为写入临时文件后流式下载（内存不随产物总量增长）。
 
-验证：`.venv/bin/python -m pytest apps/docweave/tests -q` → **154 passed, 1 skipped**（其中 `apps/docweave/tests/test_job_reliability.py` 10 项针对上述语义）。
+验证：`.venv/bin/python -m pytest apps/docs/tests -q` → **154 passed, 1 skipped**（其中 `apps/docs/tests/test_job_reliability.py` 10 项针对上述语义）。
 
 ### 2026-09-23 自动化接口与文档（DW-010、DW-012、DW-030 … DW-032）
 
 - `/api/v1`（39 条路由）：能力查询、文件、模板与字段、规则与映射、声明式定义导入导出、预检、任务（提交/查询/事件/取消/重试）、产物与打包下载、`report.csv`、临时下载链接。UI 与自动化共用同一套引擎实现。
-- 鉴权：API 密钥 `dw_<id>_<secret>`（仅存哈希）、租户隔离、`read`/`write`/`admin` 权限范围、过期与吊销、令牌桶限流；界面访问模式 `none`/`basic`/`proxy`，非本机监听且为 `none` 时拒绝启动。密钥只能用 `python -m docweave.cli apikey` 管理，产品界面不暴露任何入口。
+- 鉴权：API 密钥 `dw_<id>_<secret>`（仅存哈希）、租户隔离、`read`/`write`/`admin` 权限范围、过期与吊销、令牌桶限流；界面访问模式 `none`/`basic`/`proxy`，非本机监听且为 `none` 时拒绝启动。密钥只能用 `python -m synwevo_docs.cli apikey` 管理，产品界面不暴露任何入口。
 - 事件与 Webhook：`job_events` 稳定事件结构（事件 ID/类型/版本/任务 ID/发生时间/状态），签名 Webhook（HMAC-SHA256、时间戳、退避重试、投递记录、SSRF 允许列表），默认关闭。
 - 健康检查：`/healthz`（进程存活）与 `/readyz`（存储可写、运行线程存活），不返回敏感诊断。
 - 文档：`docs/integration/ports.md`、`api.md`、`automation.md`、`openapi.yaml`（由实现导出）、`docs/operations.md`、`.env.example`、`scripts/automation_example.py`。
 
-验证：`apps/docweave/tests/test_api_v1.py`（9）、`test_job_reliability.py`（10）、`test_webhooks.py`（5）、`test_api_docs.py`（3）；以及对运行中的服务按 `docs/integration/automation.md` 实跑一遍无界面流程（上传 → 模板 → 规则 → 映射 → 预检 5 条有效 → 提交 → 5 份产物 → ZIP 185 190 字节，内容逐字段核对正确）。
+验证：`apps/docs/tests/test_api_v1.py`（9）、`test_job_reliability.py`（10）、`test_webhooks.py`（5）、`test_api_docs.py`（3）；以及对运行中的服务按 `docs/integration/automation.md` 实跑一遍无界面流程（上传 → 模板 → 规则 → 映射 → 预检 5 条有效 → 提交 → 5 份产物 → ZIP 185 190 字节，内容逐字段核对正确）。
 
 ### 2026-09-23 界面、操作与性能（DW-040 … DW-046）
 
@@ -93,12 +93,12 @@
 | 打开 20000×30（3.5 MB）表格 | 同上 | 上传+解析 6.63 s（服务端）；首个网格窗口 380 ms；其后每页 11–12 ms |
 | 单元格选区响应 | 页面内实测：事件派发 → React 提交 → 强制样式/布局 | 中位 5.9 ms，p95 6.7 ms（n=25） |
 | 映射列表键盘移动（联动双侧高亮） | 同上 | 中位 5.1 ms，p95 5.9 ms（n=25） |
-| 大表虚拟滚动帧间隔 | 可见窗口真实帧计时（`apps/docweave/scripts/ui_perf.py`） | 中位 8.3 ms，p95 9.7，最大 16.6（显示器空闲节拍中位 8.3 ms，即跟随刷新节奏；仅渲染视口内约 200 个单元格节点） |
+| 大表虚拟滚动帧间隔 | 可见窗口真实帧计时（`apps/docs/scripts/ui_perf.py`） | 中位 8.3 ms，p95 9.7，最大 16.6（显示器空闲节拍中位 8.3 ms，即跟随刷新节奏；仅渲染视口内约 200 个单元格节点） |
 | 校验 / 样本 / 预览 / 定位接口 | 浏览器 `fetch` 计时 | 8 / 4 / 29 / 2 ms |
 | 页面内存 | `performance.memory` | 打开大表后 7–10 MB |
-| 批量生成 | `apps/docweave/scripts/benchmark.py`（真实处理链路） | 100 份 DOCX 1.21 s（12.1 ms/份）；1 000 份 11.12 s；5 000 份 65.35 s（13.1 ms/份，峰值 RSS 452 MB）；PDF 模板 300 份 22.97 s（76.6 ms/份）；DOCX+PDF 双格式 20 样本 14.2 s（355 ms/份，LibreOffice 转换为主） |
+| 批量生成 | `apps/docs/scripts/benchmark.py`（真实处理链路） | 100 份 DOCX 1.21 s（12.1 ms/份）；1 000 份 11.12 s；5 000 份 65.35 s（13.1 ms/份，峰值 RSS 452 MB）；PDF 模板 300 份 22.97 s（76.6 ms/份）；DOCX+PDF 双格式 20 样本 14.2 s（355 ms/份，LibreOffice 转换为主） |
 
-说明：选区与键盘响应为**页面内测量**（事件处理 + React 提交 + 强制样式/布局），不含操作系统输入延迟；帧间隔另用可见窗口的真实帧计时测量（`apps/docweave/scripts/ui_perf.py`，完整数据见 `verification.md` 第 11 节）。约 100 ms 的交互反馈目标与「滚动拖拽接近刷新节奏」在上述已测项目上达成，但这是本机（Apple Silicon、约 120 Hz）实测值，不代表其他机器、刷新率与文件规模。
+说明：选区与键盘响应为**页面内测量**（事件处理 + React 提交 + 强制样式/布局），不含操作系统输入延迟；帧间隔另用可见窗口的真实帧计时测量（`apps/docs/scripts/ui_perf.py`，完整数据见 `verification.md` 第 11 节）。约 100 ms 的交互反馈目标与「滚动拖拽接近刷新节奏」在上述已测项目上达成，但这是本机（Apple Silicon、约 120 Hz）实测值，不代表其他机器、刷新率与文件规模。
 
 ---
 
@@ -109,10 +109,10 @@
 | 编号 | 级别 | 类别 | 现象 | 怎么发现的 | 原因 | 修复 | 验证 |
 |---|---|---|---|---|---|---|---|
 | PR-001 | P1 | 打包 | 三个外壳的静态资源都叫 `/assets`，单进程部署里后挂载的那个会被前一个遮盖 | 拆成三个独立 Vite 构建后，`role=all` 同时提供工作台与账户外壳 | 一个构建改成三个构建，但 `assetsDir` 还都是默认值 | 各自取 `assets` / `account-assets` / `portal-assets` | `tests/integration/test_shells.py`：每个角色在 `/`、`/index.html`、`/portal.html`、`/accounts.html` 上都只返回自己的外壳 |
-| PR-002 | P1 | 路由 | `role=app` 上 `/login`、`/account` 变成工作台 SPA 的「页面不存在」 | 把账户页收归账户服务后，依赖方不再打包这些路由 | 客户端原本靠 JS 跳转；服务端没有对应处理 | `platform_auth_client.build_account_redirect_router()`：服务端 303，`/login` 经 `/auth/start`（只有它会建可校验的请求行） | 实测 `role=app` 的 `/login` → 303 `/auth/start…`，`/account` → 303 账户服务 |
+| PR-002 | P1 | 路由 | `role=app` 上 `/login`、`/account` 变成工作台 SPA 的「页面不存在」 | 把账户页收归账户服务后，依赖方不再打包这些路由 | 客户端原本靠 JS 跳转；服务端没有对应处理 | `synwevo_auth_client.build_account_redirect_router()`：服务端 303，`/login` 经 `/auth/start`（只有它会建可校验的请求行） | 实测 `role=app` 的 `/login` → 303 `/auth/start…`，`/account` → 303 账户服务 |
 | PR-003 | P1 | 配置 | 角色由每次请求读环境变量决定，而路由改成按角色条件挂载后两者可能不一致 | 集成套件整体运行时，先建的应用把进程级角色改了，后面 20 多个用例连带失败 | 用模块级全局存角色，建一个应用就改变了后面所有应用的行为 | 角色随应用走（`api.state.role`），网关闭包捕获构建时的角色 | 全量套件从 35 failed 回到 0 failed；角色边界改为按角色各建一个应用来验证（`tests/integration/test_role_boundaries.py`） |
-| PR-004 | P1 | 数据 | `Path(__file__).parents[N]` 在模块搬家后指向了错的目录：工作台构建产物找不到、回归用例目录被创建到 `apps/regression` | 起服务后所有页面 404；`list_cases()` 返回 0 | 数了固定层数的 `..`，层数随目录深度变了 | 构建产物按各自模块位置解析；数据目录改为向上找工作区标记，找不到**报错而不是猜** | 三个 `web_dist()` 实测指向正确目录；`regression.ROOT` 指向 `apps/docweave`；空目录启动退出码 2 |
-| PR-005 | P2 | 许可 | AGPL §13 的源代码归档仍按旧布局收集，且会把 `*.egg-info` 一起打进去 | 重组后跑 `test_licensing` 与 `/api/source-code` | `INCLUDE` 是旧路径；排除规则用集合成员判断，看不到 `platform_core.egg-info` 这种整段名字 | 清单按"正在运行的程序"重写（含共享包、账户服务、组装层）；排除改为同时匹配后缀 | 归档 275 个条目，`data/`、`.sqlite3`、`node_modules`、`.venv`、`testdata/`、`.env`、`egg-info`、`dist/` **0 个泄漏** |
+| PR-004 | P1 | 数据 | `Path(__file__).parents[N]` 在模块搬家后指向了错的目录：工作台构建产物找不到、回归用例目录被创建到 `apps/regression` | 起服务后所有页面 404；`list_cases()` 返回 0 | 数了固定层数的 `..`，层数随目录深度变了 | 构建产物按各自模块位置解析；数据目录改为向上找工作区标记，找不到**报错而不是猜** | 三个 `web_dist()` 实测指向正确目录；`regression.ROOT` 指向 `apps/docs`；空目录启动退出码 2 |
+| PR-005 | P2 | 许可 | AGPL §13 的源代码归档仍按旧布局收集，且会把 `*.egg-info` 一起打进去 | 重组后跑 `test_licensing` 与 `/api/source-code` | `INCLUDE` 是旧路径；排除规则用集合成员判断，看不到 `synwevo_core.egg-info` 这种整段名字 | 清单按"正在运行的程序"重写（含共享包、账户服务、组装层）；排除改为同时匹配后缀 | 归档 275 个条目，`data/`、`.sqlite3`、`node_modules`、`.venv`、`testdata/`、`.env`、`egg-info`、`dist/` **0 个泄漏** |
 | PR-006 | P2 | 依赖 | `pyyaml` 是测试用到但没有任何清单声明的依赖，只是碰巧装在旧虚拟环境里 | 在新建的干净 `.venv` 上跑测试，`test_api_docs` 报 `No module named 'yaml'` | 旧环境里手装过，没进 `requirements-dev.txt` | 写进 `requirements-dev.txt` 并注明用途 | 干净检出 `setup` → 650 passed |
 | PR-007 | P2 | 文档 | `docs/architecture/platform.md` §1 论证"不搬目录"，而目录已经搬了 | 通读文档 | 上一轮的决定被本轮取代 | 该节改写为"已被后一轮取代"，保留原有理由并指向重组记录与新结构 | — |
 

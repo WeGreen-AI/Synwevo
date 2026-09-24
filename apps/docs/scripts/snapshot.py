@@ -36,7 +36,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from platform_core.http import repo_root
+from synwevo_core import env
+from synwevo_core.http import repo_root
 
 # 相对的 --data 以**仓库根目录**为准，而不是脚本所在的模块目录：脚本搬了家，
 # `--data data` 指的还得是同一个 data/，否则备份的是一个空实例。
@@ -173,7 +174,7 @@ def create(args) -> int:
             "census": census,
             "blobs": {"files": n_blobs, "bytes": total},
             "secret_bearing_tables": [{"table": t, "what": w, "rows": n} for t, w, n in secrets],
-            "external_secret_configured": bool(os.environ.get("DOCWEAVE_SECRET")),
+            "external_secret_configured": bool(env.get("SECRET")),
         }
         (work / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                                             encoding="utf-8")
@@ -189,7 +190,7 @@ def create(args) -> int:
             for t, w, n in secrets:
                 print(f"   · {t}：{w}（{n} 行）")
             if not manifest["external_secret_configured"]:
-                print("   · 未设置 DOCWEAVE_SECRET，因此 MFA 种子的密钥就在这个库里——")
+                print("   · 未设置 SYNWEVO_SECRET，因此 MFA 种子的密钥就在这个库里——")
                 print("     拿到这个归档即可解出 TOTP 种子。这不叫加密。")
         print("\n下一步：先验证，再依赖它。")
         print(f"  python scripts/platform.py verify-restore {archive}")
@@ -260,7 +261,7 @@ def _restore_warnings(db: Path) -> None:
             print("   建议：轮换 OIDC 签名密钥（使全部旧令牌失效）、撤销全部会话、")
             print("         把未完成任务标为需要人工裁决后再启动 worker。")
         print("\n!! 认证模式来自环境变量，不在这个库里。恢复数据库不会改变它；")
-        print("   恢复整台机器会——确认 DOCWEAVE_UI_AUTH 不会退回 none。")
+        print("   恢复整台机器会——确认 SYNWEVO_UI_AUTH 不会退回 none。")
     finally:
         c.close()
 
@@ -309,7 +310,7 @@ def verify(args) -> int:
               else f"缺失 {len(r['referenced_but_missing'])} 个")
 
         print("\n【4】应用能真的打开它")
-        from platform_core.store import Store
+        from synwevo_core.store import Store
         s = Store(work)
         check(s.schema_version() >= 4, f"schema v{s.schema_version()}")
         n_proj = s.one("SELECT COUNT(*) AS n FROM projects")["n"]

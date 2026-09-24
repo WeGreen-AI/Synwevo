@@ -25,7 +25,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from platform_core.http import repo_root
+from synwevo_core.http import repo_root
 
 # 相对的 --data 以**仓库根目录**为准，而不是脚本所在的模块目录：脚本搬了家，
 # `--data data` 指的还得是同一个 data/，否则备份的是一个空实例。
@@ -89,7 +89,7 @@ def _cross_check_against_authz() -> list:
     rather than assumed to agree, and a mismatch is a hard failure rather than a quieter report.
     """
     try:
-        from docweave import authz
+        from synwevo_docs import authz
     except ImportError:
         return []                              # backend not importable; the caller says so
     covered = {t for t, _ in DIRECT} | {t for t, _, _ in JSON_PATHS}

@@ -6,7 +6,7 @@ import openpyxl
 import pymupdf
 
 from .helpers import docx_text
-from docweave.engine.converters import convert
+from synwevo_docs.engine.converters import convert
 
 
 def _xlsx(rows, sheet="Sheet1", extra_sheets=()):

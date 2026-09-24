@@ -6,8 +6,8 @@ import io
 import hashlib
 import json
 
-from platform_core.context import tenant as current_tenant
-from platform_core.errors import ServiceError, not_found
+from synwevo_core.context import tenant as current_tenant
+from synwevo_core.errors import ServiceError, not_found
 
 from . import authz
 from .engine import generate as G

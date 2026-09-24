@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from docweave.engine import fonts
-from docweave.engine.raster_text import RasterFont, draw_box
+from synwevo_docs.engine import fonts
+from synwevo_docs.engine.raster_text import RasterFont, draw_box
 
 pytestmark = pytest.mark.skipif(not fonts.cjk_font_file(), reason="本机没有可用的中文字体文件")
 
@@ -106,7 +106,7 @@ def test_missing_font_raises_an_actionable_error(monkeypatch):
     monkeypatch.setattr(fonts, "cjk_font_file", lambda: None)
     with pytest.raises(fonts.NoCJKFont) as e:
         fonts.require_cjk_font()
-    assert "DOCWEAVE_CJK_FONT_FILE" in str(e.value) and "文件路径" in str(e.value)
+    assert "SYNWEVO_DOCS_CJK_FONT_FILE" in str(e.value) and "文件路径" in str(e.value)
 
 
 def test_drawn_width_matches_measured_width_at_fractional_sizes():

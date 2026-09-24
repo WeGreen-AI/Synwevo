@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from platform_core.errors import ServiceError, not_found
+from synwevo_core.errors import ServiceError, not_found
 
 from .engine import tabular
 from .engine import values as V

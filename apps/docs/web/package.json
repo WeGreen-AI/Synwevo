@@ -1,8 +1,8 @@
 {
-  "name": "@docweave/web",
+  "name": "@synwevo/docs-web",
   "private": true,
   "version": "1.0.0",
-  "description": "DocWeave 工作台：上传、模板、映射、预览与生成",
+  "description": "Synwevo Docs 工作台：上传、模板、映射、预览与生成",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,8 +11,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@platform/auth-client": "1.0.0",
-    "@platform/ui": "1.0.0",
+    "@synwevo/auth-client": "1.0.0",
+    "@synwevo/ui": "1.0.0",
     "@tiptap/extension-highlight": "^3.31.3",
     "@tiptap/extension-image": "^3.31.3",
     "@tiptap/extension-table": "^3.31.3",
@@ -31,5 +31,9 @@
     "@vitejs/plugin-react": "^6.1.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WeGreen-AI/Synwevo.git"
   }
 }

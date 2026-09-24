@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PlatformNav } from "@platform/auth-client";
+import { PlatformNav } from "@synwevo/auth-client";
 import { Link, useNavigate } from "react-router-dom";
-import { del, get, patch, post } from "@platform/auth-client";
-import { fmtTime, useDialog, useToast } from "@platform/ui";
+import { del, get, patch, post } from "@synwevo/auth-client";
+import { fmtTime, useDialog, useToast } from "@synwevo/ui";
 import { jobStatus, ruleMode } from "../lib/status";
 import MoreMenu from "../components/MoreMenu";
 
@@ -102,7 +102,7 @@ export default function Home() {
   return (
     <div className="app">
       <div className="topbar">
-        <span className="brand"><span className="logo">W</span>DocWeave 数据映射与模板批量生成</span>
+        <span className="brand"><span className="logo">S</span>Synwevo Docs · 数据映射与模板批量生成</span>
         <span className="spacer" />
         <PlatformNav />
         <Link className="btn ghost" to="/capabilities">格式能力矩阵</Link>

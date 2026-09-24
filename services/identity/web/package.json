@@ -1,8 +1,8 @@
 {
-  "name": "@platform/accounts-web",
+  "name": "@synwevo/account-web",
   "private": true,
   "version": "1.0.0",
-  "description": "账户与安全：登录、找回、邀请、Passkey、MFA、会话与平台管理",
+  "description": "Synwevo Account：登录、找回、邀请、Passkey、MFA、会话与平台管理",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,8 +11,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@platform/auth-client": "1.0.0",
-    "@platform/ui": "1.0.0",
+    "@synwevo/auth-client": "1.0.0",
+    "@synwevo/ui": "1.0.0",
     "@types/qrcode": "^1.5.6",
     "qrcode": "^1.5.4",
     "react": "^19.3.0",
@@ -25,5 +25,9 @@
     "@vitejs/plugin-react": "^6.1.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WeGreen-AI/Synwevo.git"
   }
 }

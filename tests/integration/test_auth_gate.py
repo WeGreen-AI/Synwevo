@@ -1,6 +1,6 @@
 """The authentication gate must have no path that falls past it.
 
-Found by running the app rather than reading it: under DOCWEAVE_UI_AUTH=basic, "/" returned 401
+Found by running the app rather than reading it: under SYNWEVO_UI_AUTH=basic, "/" returned 401
 while "/api" and "/apifoo" returned 200. The branch read
 `elif path.startswith("/api/") or not path.startswith("/api")`, and a path beginning with "/api"
 without the slash satisfied neither disjunct — so the gate was skipped and set_tenant never ran.
@@ -15,16 +15,16 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture()
 def basic_client(tmp_path, monkeypatch):
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", "basic")
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "basic")
     import importlib
 
-    from platform_core import auth as auth_mod
-    from platform_core.store import Store
+    from synwevo_core import auth as auth_mod
+    from synwevo_core.store import Store
     store = Store(tmp_path / "d")
     auth_mod.Auth(store).add_ui_user("probe", "probe-pass-123")
 
-    import platform_server.main as main
+    import synwevo_server.main as main
     importlib.reload(main)
     return TestClient(main.app)
 
@@ -32,11 +32,11 @@ def basic_client(tmp_path, monkeypatch):
 def _client(data_dir, monkeypatch, *, mode: str, role: str) -> TestClient:
     """A server in one (mode, role) combination, with its own empty data directory."""
     import importlib
-    monkeypatch.setenv("DOCWEAVE_DATA_DIR", str(data_dir))
-    monkeypatch.setenv("DOCWEAVE_UI_AUTH", mode)
-    monkeypatch.setenv("DOCWEAVE_ROLE", role)
-    monkeypatch.setenv("DOCWEAVE_COOKIE_SECURE", "0")
-    import platform_server.app as app_mod
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", mode)
+    monkeypatch.setenv("SYNWEVO_ROLE", role)
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    import synwevo_server.app as app_mod
     importlib.reload(app_mod)
     return TestClient(app_mod.create_app(str(data_dir), start_jobs=False))
 

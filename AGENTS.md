@@ -1,6 +1,7 @@
-# 在这个仓库里工作
+# 在 Synwevo 仓库里工作
 
-这是一个**平台单仓库**：一个 Git 仓库，里面清楚分开门户、统一账户服务、DocWeave 和确有共用的包。
+一个 Git 仓库，里面清楚分开 **Synwevo Workspace**（门户）、**Synwevo Account**（统一账户）、
+**Synwevo Docs**（文档应用）和确有共用的包。
 先读 `docs/architecture/monorepo.md`（目录、依赖、数据所有权），再动手。
 
 ## 从哪个目录开始
@@ -8,30 +9,30 @@
 | 你要做的 | 在哪里启动 |
 |---|---|
 | 平台级或跨模块的改动（身份、门户、共享包、运行方式） | 仓库根目录 |
-| 只改 DocWeave 的业务实现 | `apps/docweave/`（仍然遵守本文件的规则） |
+| 只改 Synwevo Docs 的业务实现 | `apps/docs/`（仍然遵守本文件的规则） |
 
 不要让人每次去猜在哪个目录跑哪条命令：根目录的命令在根目录能跑通，模块目录的命令在模块目录能跑通。
 
 ## 边界（这是本仓库存在的理由，不是风格偏好）
 
 ```
-platform_core ──────┐              共享：唯一的持久化入口、租户上下文、身份与会话、
-platform_auth_client┤                    机器身份、OIDC 令牌存储、HTTP 骨架
+synwevo_core ───────┐             共享：唯一的持久化入口、租户上下文、身份与会话、
+synwevo_auth_client ┤                   机器身份、OIDC 令牌存储、配置兼容、HTTP 骨架
                     │
     ┌───────────────┼───────────────┐
     ▼               ▼               ▼
-platform_identity  platform_portal  docweave      ← 互相不可见
+synwevo_identity  synwevo_portal  synwevo_docs     ← 互相不可见
     └───────────────┼───────────────┘
                     ▼
-             platform_server                       ← 唯一可以同时导入三者的地方（部署组装）
+             synwevo_server                       ← 唯一可以同时导入三者的地方（部署组装）
 ```
 
-* **应用不得导入另一个应用的内部实现。** `docweave` 不 import `platform_portal`，反之亦然。
-* **应用不得导入账户服务的实现。** DocWeave 是账户服务的依赖方，通过 OIDC 与它交互；
-  它需要的读侧能力（成员、资格、令牌校验）在 `platform_core` 里。
-* **共享包不反向依赖应用。** `platform_core` 里出现 `import docweave` 就意味着账户服务再也不能
+* **应用不得导入另一个应用的内部实现。** `synwevo_docs` 不 import `synwevo_portal`，反之亦然。
+* **应用不得导入账户服务的实现。** Synwevo Docs 是账户服务的依赖方，通过 OIDC 与它交互；
+  它需要的读侧能力（成员、资格、令牌校验）在 `synwevo_core` 里。
+* **共享包不反向依赖应用。** `synwevo_core` 里出现 `import synwevo_docs` 就意味着账户服务再也不能
   在没有文档引擎的机器上启动。
-* **只有真实共用的东西才进共享包。** 模板渲染、公式、PDF/图片、OCR 属于 DocWeave，不要搬进去。
+* **只有真实共用的东西才进共享包。** 模板渲染、公式、PDF/图片、OCR 属于 Synwevo Docs，不要搬进去。
 * **不用 `sys.path` 改写、机器绝对路径或指向旧目录的符号链接**来让 import 成立。包是装出来的。
 
 机械检查：
@@ -46,7 +47,7 @@ python scripts/check_boundaries.py
 
 ```bash
 python scripts/platform.py test            # 三个套件
-python scripts/platform.py test docweave   # 只跑 DocWeave
+python scripts/platform.py test docs   # 只跑 Synwevo Docs
 python scripts/platform.py test identity   # 只跑账户服务
 python scripts/platform.py test integration
 python scripts/check_boundaries.py
@@ -57,18 +58,18 @@ npm run typecheck && npm run build         # 三个前端外壳
 
 | 套件 | 内容 | 用哪个工厂 |
 |---|---|---|
-| `apps/docweave/tests/` | DocWeave 业务与它自己的 HTTP 表面 | `docweave.api.app.create_app` |
-| `services/identity/tests/` | 登录仪式、MFA、Passkey、邀请、找回、管理后台、OIDC | `platform_identity.app.create_app` |
-| `tests/integration/` | 跨模块：统一登录链路、机器身份、跨工作空间隔离、外壳归属 | `platform_server.app.create_app` |
+| `apps/docs/tests/` | Synwevo Docs 业务与它自己的 HTTP 表面 | `synwevo_docs.api.app.create_app` |
+| `services/identity/tests/` | 登录仪式、MFA、Passkey、邀请、找回、管理后台、OIDC | `synwevo_identity.app.create_app` |
+| `tests/integration/` | 跨模块：统一登录链路、机器身份、跨工作空间隔离、外壳归属 | `synwevo_server.app.create_app` |
 
 一个测试如果需要另一个模块的路由才能通过，它就属于 `tests/integration/`——不要为了让它留在原地
 而把另一个模块挂进来。
 
 ## 数据与安全
 
-* 用户数据在仓库根目录的 `data/`，由 `DOCWEAVE_DATA_DIR` 指向；解析不依赖进程 cwd。
+* 用户数据在仓库根目录的 `data/`，由 `SYNWEVO_DATA_DIR` 指向；解析不依赖进程 cwd。
   **不要把它提交、打包或写进日志。**
-* 数据库只有一个，`platform_core.store.Store` 是唯一的打开入口，也是唯一执行 schema 迁移的地方。
+* 数据库只有一个，`synwevo_core.store.Store` 是唯一的打开入口，也是唯一执行 schema 迁移的地方。
 * 密钥材料（服务端根密钥、OIDC 签名密钥、MFA 种子）在库内。**不要重新生成**，不要在文档或提交里
   写出真实值，占位符即可。
 * 平台管理员治理账户与平台配置，**默认读不到任何业务文档**。新增接口不得成为绕过 `authz.py` 的旁路。

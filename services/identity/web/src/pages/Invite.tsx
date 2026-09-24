@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { get, post } from "@platform/auth-client";
-import { fmtTime } from "@platform/ui";
-import { useSession } from "@platform/auth-client";
+import { get, post } from "@synwevo/auth-client";
+import { fmtTime } from "@synwevo/ui";
+import { useSession } from "@synwevo/auth-client";
 
 interface Preview {
   state: "pending" | "accepted" | "revoked" | "expired";
@@ -70,7 +70,7 @@ export default function Invite() {
   if (loadErr) {
     return (
       <div className="authpage"><div className="authcard">
-        <div className="authbrand"><span className="logo">W</span>DocWeave</div>
+        <div className="authbrand"><span className="logo">S</span>Synwevo Docs</div>
         <h1>邀请链接无效</h1>
         <p className="authlede">{loadErr}</p>
         <a className="btn" href="/login">前往登录</a>
@@ -83,7 +83,7 @@ export default function Invite() {
     const d = DEAD[pv.state];
     return (
       <div className="authpage"><div className="authcard">
-        <div className="authbrand"><span className="logo">W</span>DocWeave</div>
+        <div className="authbrand"><span className="logo">S</span>Synwevo Docs</div>
         <h1>{d.title}</h1>
         <p className="authlede">{d.body}</p>
         <a className="btn primary" href="/login">前往登录</a>
@@ -99,7 +99,7 @@ export default function Invite() {
   return (
     <div className="authpage">
       <form className="authcard" onSubmit={accept} noValidate>
-        <div className="authbrand"><span className="logo">W</span>DocWeave</div>
+        <div className="authbrand"><span className="logo">S</span>Synwevo Docs</div>
         <h1>加入「{pv.workspace}」</h1>
         <p className="authlede">
           {pv.inviter ? <><b>{pv.inviter}</b> 邀请 </> : "邀请 "}
@@ -146,7 +146,7 @@ export default function Invite() {
               // account, so say so now instead of letting the server refuse after a click —
               // and carry the invitation through the login so they land back here.
               <>
-                <p className="tiny muted">这个邮箱已有 DocWeave 账户。请先登录，登录后会自动回到这个邀请。</p>
+                <p className="tiny muted">这个邮箱已有 Synwevo 账户。请先登录，登录后会自动回到这个邀请。</p>
                 <a className="btn primary authsubmit"
                   href={`/login?next=${encodeURIComponent(`/invite?token=${token}`)}`}>登录并继续</a>
               </>
