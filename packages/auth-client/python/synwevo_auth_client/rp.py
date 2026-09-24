@@ -34,6 +34,8 @@ from synwevo_core.store import Store, new_id, now
 
 REQUEST_TTL_S = 600          # a sign-in someone walked away from should not stay startable
 JWKS_TTL_S = 300
+MAX_NEXT_LEN = 2048          # longer than any real deep link; anything past it lands on "/"
+SWEEP_EVERY_S = 300          # how often begin() reclaims spent sign-in rows
 
 
 def issuer() -> str:
@@ -73,6 +75,9 @@ def safe_next(raw: str | None) -> str:
     """
     if not raw or not raw.startswith("/"):
         return "/"
+    if len(raw) > MAX_NEXT_LEN:
+        # Stored in a row by an anonymous request; an unbounded value is free disk for anyone.
+        return "/"
     if raw.startswith("//") or raw.startswith("/\\") or "\\" in raw[:2]:
         return "/"
     if "://" in raw:
@@ -88,6 +93,7 @@ class Rp:
         self.store = store
         self._http = http
         self._jwks: tuple[float, dict] | None = None
+        self._swept_at = 0.0
 
     # ------------------------------------------------------------------ transport
     @property
@@ -146,6 +152,12 @@ class Rp:
              "code_challenge": challenge, "code_challenge_method": "S256"}
         if prompt:
             q["prompt"] = prompt
+        # `/auth/start` is anonymous, so every visit writes a row. Reclaiming spent ones here,
+        # at most every few minutes, bounds the table by traffic in the last hour rather than
+        # by all traffic ever — nothing else in the process was calling sweep().
+        if time.monotonic() - self._swept_at > SWEEP_EVERY_S:
+            self._swept_at = time.monotonic()
+            self.sweep()
         return f"{issuer()}/oidc/authorize?" + urllib.parse.urlencode(q), rid
 
     # ------------------------------------------------------------------ callback
@@ -160,7 +172,9 @@ class Rp:
         row = self.store.one("SELECT * FROM rp_auth_requests WHERE id=?", (request_id,))
         if not row or row["used_at"] or row["expires_at"] <= now():
             raise ServiceError(400, "bad_callback", "登录请求已过期或已使用，请重新登录")
-        if not secrets.compare_digest(row["state"], state):
+        # Bytes, not str: compare_digest raises TypeError on non-ASCII text, and `state` comes
+        # from the query string — a crafted value was an unhandled 500 instead of this 400.
+        if not secrets.compare_digest(row["state"].encode("utf-8"), state.encode("utf-8", "surrogateescape")):
             # The cookie and the query string disagree: this callback was not started here.
             raise ServiceError(400, "bad_state", "登录状态校验失败，请重新登录")
         with self.store.tx() as t:

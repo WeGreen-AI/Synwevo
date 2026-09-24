@@ -23,8 +23,15 @@ from synwevo_core.identity import Identity, ROLE_RANK, ROLES, normalise_email, v
 from synwevo_core.store import Store, new_id, now
 
 INVITE_TTL_S = 7 * 24 * 3600
+INVITE_TTL_MIN_S = 24 * 3600
+INVITE_TTL_MAX_S = 30 * 24 * 3600
+# Invitations a workspace may issue in any rolling 24 hours (GitHub: 50 for a new organisation).
+# Every invitation is a mail sent from this service in the workspace's name; without a ceiling a
+# compromised admin account turns it into a spam relay with a trusted From line.
+INVITES_PER_DAY = 50
 VERIFY_TTL_S = 24 * 3600
 RESET_TTL_S = 2 * 3600
+STATES = ("pending", "expired", "revoked", "accepted")
 
 ROLE_LABEL = {"viewer": "只读成员", "editor": "编辑成员", "admin": "空间管理员", "owner": "空间所有者"}
 
@@ -66,8 +73,15 @@ class Invites:
             raise ServiceError(400, "bad_email", "邮箱格式不正确", {"field": "email"})
         self.may_invite(actor_id, workspace_id, role)
         ws = self.ident.get_workspace(workspace_id)
-        if not ws or ws["status"] != "active":
+        if not ws:
             raise ServiceError(404, "no_workspace", "找不到该工作空间")
+        if ws["status"] != "active":
+            # The caller is an admin or owner of it (may_invite passed), so the workspace's
+            # existence is no secret from them: say what is actually wrong, with the same code
+            # every other governance route uses for a workspace that gains no access.
+            if ws["status"] == "frozen":
+                raise ServiceError(409, "workspace_frozen", "该工作空间已被冻结，暂时不能增加成员或权限")
+            raise ServiceError(409, "workspace_unavailable", "该工作空间当前不可用")
 
         key = normalise_email(email)
         existing_user = self.ident.by_email(key)
@@ -80,23 +94,90 @@ class Invites:
                "token_hash": _digest(raw), "invited_by": actor_id,
                "created_at": now(), "expires_at": now() + ttl_s}
         with self.store.tx() as t:
+            # Counted inside the same transaction as the insert, so concurrent requests cannot
+            # each see 49 and all proceed.
+            window = t.execute("SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM invitations "
+                               "WHERE workspace_id=? AND created_at>?",
+                               (workspace_id, now() - 24 * 3600)).fetchone()
+            if window["n"] >= INVITES_PER_DAY:
+                retry = int((window["oldest"] or now()) + 24 * 3600 - now()) + 1
+                raise ServiceError(429, "invite_rate_limited",
+                                   f"这个空间 24 小时内最多发出 {INVITES_PER_DAY} 个邀请，请稍后再试",
+                                   {"retry_after": max(1, retry)})
             # One live invitation per (workspace, email). Re-inviting supersedes rather than
             # accumulating, so revoking "the" invitation cannot leave an older one usable.
-            t.execute("UPDATE invitations SET revoked_at=? WHERE workspace_id=? AND email_key=? "
-                      "AND accepted_at IS NULL AND revoked_at IS NULL", (now(), workspace_id, key))
+            superseded = [r["id"] for r in t.execute(
+                "SELECT id FROM invitations WHERE workspace_id=? AND email_key=? "
+                "AND accepted_at IS NULL AND revoked_at IS NULL", (workspace_id, key)).fetchall()]
+            if superseded:
+                t.execute(f"UPDATE invitations SET revoked_at=? WHERE id IN ({','.join('?' * len(superseded))})",
+                          (now(), *superseded))
             t.execute("INSERT INTO invitations (id,email_key,workspace_id,role,can_export,token_hash,"
                       "invited_by,created_at,expires_at) VALUES (:id,:email_key,:workspace_id,:role,"
                       ":can_export,:token_hash,:invited_by,:created_at,:expires_at)", row)
+        # Named so the caller can journal each withdrawn link: a restore from before this moment
+        # must not bring back the link a resend was meant to kill.
+        row["superseded_ids"] = superseded
         return row, raw
 
-    def list_for_workspace(self, workspace_id: str, actor_id: str) -> list[dict]:
+    def list_for_workspace(self, workspace_id: str, actor_id: str, *, state: str | None = None) -> list[dict]:
         m = self.ident.membership(workspace_id, actor_id)
         if not m or m["role"] not in ("admin", "owner"):
             raise ServiceError(403, "forbidden", "只有空间管理员或所有者可以查看邀请")
+        if state and state not in STATES:
+            raise ServiceError(400, "bad_state", f"未知的邀请状态 {state!r}", {"field": "state"})
         rows = self.store.all(
-            "SELECT id,email_key,role,can_export,invited_by,created_at,expires_at,accepted_at,revoked_at "
-            "FROM invitations WHERE workspace_id=? ORDER BY created_at DESC", (workspace_id,))
-        return [{**r, "state": self._state(r)} for r in rows]
+            "SELECT i.id,i.email_key,i.role,i.can_export,i.invited_by,i.created_at,i.expires_at,"
+            "i.accepted_at,i.revoked_at,u.email AS invited_by_email "
+            "FROM invitations i LEFT JOIN users u ON u.id=i.invited_by "
+            "WHERE i.workspace_id=? ORDER BY i.created_at DESC", (workspace_id,))
+        out = [{**r, "state": self._state(r)} for r in rows]
+        return [r for r in out if not state or r["state"] == state]
+
+    def get(self, invite_id: str) -> dict | None:
+        return self.store.one("SELECT * FROM invitations WHERE id=?", (invite_id,))
+
+    def update(self, invite_id: str, actor_id: str, *, role: str | None = None,
+               can_export: bool | None = None) -> dict:
+        """Edit a pending invitation's role or export flag. The token is unchanged.
+
+        Only while pending: an accepted invitation is a membership now (change that instead), and
+        a revoked or expired one is not coming back by being edited. The role ceiling is checked
+        against both the old and the new role, so an admin can neither raise an invitation above
+        their own role nor rewrite an invitation for a role above it.
+        """
+        r = self.get(invite_id)
+        if not r:
+            raise ServiceError(404, "no_invite", "找不到该邀请")
+        self.may_invite(actor_id, r["workspace_id"], r["role"])
+        new_role = role or r["role"]
+        self.may_invite(actor_id, r["workspace_id"], new_role)
+        if self._state(r) != "pending":
+            raise ServiceError(409, "invite_not_pending", "只能修改尚未接受、未撤销、未过期的邀请")
+        export = r["can_export"] if can_export is None else (1 if can_export else 0)
+        if role and can_export is None and new_role == "viewer" and r["role"] != "viewer":
+            export = 0                       # a downgrade does not keep the wider right
+        n = self.store.execute("UPDATE invitations SET role=?, can_export=? WHERE id=? AND accepted_at IS NULL "
+                               "AND revoked_at IS NULL AND expires_at>?", (new_role, export, invite_id, now()))
+        if not n:
+            raise ServiceError(409, "invite_not_pending", "只能修改尚未接受、未撤销、未过期的邀请")
+        out = self.get(invite_id)
+        return {**out, "state": self._state(out), "before": {"role": r["role"], "can_export": bool(r["can_export"])}}
+
+    def resend(self, invite_id: str, actor_id: str, *, ttl_s: int = INVITE_TTL_S) -> tuple[dict, str]:
+        """Issue a fresh token for the same address and role; the old link stops working.
+
+        For a pending, expired or mail-failed invitation. An accepted one is a member already,
+        and a revoked one was withdrawn on purpose — bringing it back is a new invitation.
+        """
+        r = self.get(invite_id)
+        if not r:
+            raise ServiceError(404, "no_invite", "找不到该邀请")
+        state = self._state(r)
+        if state not in ("pending", "expired"):
+            raise ServiceError(409, f"invite_{state}", "已接受或已撤销的邀请不能重发")
+        return self.create(workspace_id=r["workspace_id"], email=r["email_key"], role=r["role"],
+                           actor_id=actor_id, can_export=bool(r["can_export"]), ttl_s=ttl_s)
 
     @staticmethod
     def _state(r: dict) -> str:
@@ -106,13 +187,15 @@ class Invites:
             return "revoked"
         return "expired" if r["expires_at"] <= now() else "pending"
 
-    def revoke(self, invite_id: str, actor_id: str) -> None:
+    def revoke(self, invite_id: str, actor_id: str) -> bool:
+        """Withdraw an invitation. True when it is now revoked (by this call or an earlier one);
+        False when it had already been accepted, which a revocation cannot undo."""
         r = self.store.one("SELECT * FROM invitations WHERE id=?", (invite_id,))
         if not r:
             raise ServiceError(404, "no_invite", "找不到该邀请")
         self.may_invite(actor_id, r["workspace_id"], r["role"])
-        self.store.execute("UPDATE invitations SET revoked_at=? WHERE id=? AND accepted_at IS NULL",
-                           (now(), invite_id))
+        return bool(self.store.execute("UPDATE invitations SET revoked_at=COALESCE(revoked_at, ?) "
+                                       "WHERE id=? AND accepted_at IS NULL", (now(), invite_id)))
 
     def preview(self, raw_token: str) -> dict:
         """What the landing page shows before anyone commits to anything.
@@ -209,9 +292,18 @@ class Invites:
             if not claimed:
                 raise ServiceError(409, "invite_accepted", "这个邀请已经被使用过了")
             ts = now()
-            t.execute("INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) "
-                      "VALUES (?,?,?,?,?,?,?) ON CONFLICT(workspace_id,user_id) DO NOTHING",
-                      (r["workspace_id"], user["id"], r["role"], r["can_export"], ts, ts, r["invited_by"]))
+            joined = t.execute(
+                "INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(workspace_id,user_id) DO NOTHING",
+                (r["workspace_id"], user["id"], r["role"], r["can_export"], ts, ts, r["invited_by"])).rowcount
+            if joined:
+                # A new membership starts fresh. Removing someone writes explicit revoked
+                # entitlement rows (so the removal holds under the `members` policy); left in
+                # place, a former member invited back would be a member who silently cannot
+                # open the application. Restoring their old grants is not implied either — the
+                # workspace's defaults apply, as for anyone else joining.
+                t.execute("DELETE FROM app_entitlements WHERE workspace_id=? AND user_id=? "
+                          "AND revoked_at IS NOT NULL", (r["workspace_id"], user["id"]))
         return {"user": self.ident.get_user(user["id"]), "workspace_id": r["workspace_id"],
                 "role": r["role"]}
 

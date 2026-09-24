@@ -93,3 +93,36 @@ def test_a_platform_level_name_also_reaches_the_docs_scope(monkeypatch):
     monkeypatch.delenv("DOCWEAVE_DATA_DIR", raising=False)
     monkeypatch.setenv("SYNWEVO_DATA_DIR", "/srv/platform")
     assert env.docs("DATA_DIR") == "/srv/platform"
+
+
+# ---------------------------------------------------------------- docs scope precedence
+def test_a_leftover_legacy_value_cannot_override_the_platform_name_in_the_docs_scope(monkeypatch):
+    """`docs()` compared the legacy name only with `SYNWEVO_DOCS_*`. With the platform spelling
+    set and a stale legacy one left behind, the legacy value came back — for the import
+    allow-list, that silently widened it to the whole filesystem."""
+    monkeypatch.delenv("SYNWEVO_DOCS_IMPORT_ROOTS", raising=False)
+    monkeypatch.setenv("SYNWEVO_IMPORT_ROOTS", "/srv/allowed")
+    monkeypatch.setenv("DOCWEAVE_IMPORT_ROOTS", "/")
+    with pytest.raises(env.ConfigConflict):
+        env.docs("IMPORT_ROOTS")
+
+
+def test_the_docs_scope_prefers_the_platform_name_over_the_legacy_one(monkeypatch, capsys):
+    monkeypatch.delenv("SYNWEVO_DOCS_PDF_ENGINE", raising=False)
+    monkeypatch.setenv("SYNWEVO_PDF_ENGINE", "pdfium")
+    monkeypatch.setenv("DOCWEAVE_PDF_ENGINE", "pymupdf")
+    assert env.docs("PDF_ENGINE") == "pdfium"
+    assert "不一致" in capsys.readouterr().out
+
+
+def test_the_docs_scope_wins_over_the_platform_name(monkeypatch):
+    monkeypatch.setenv("SYNWEVO_DOCS_PDF_ENGINE", "pdfium")
+    monkeypatch.setenv("SYNWEVO_PDF_ENGINE", "pymupdf")
+    monkeypatch.delenv("DOCWEAVE_PDF_ENGINE", raising=False)
+    assert env.docs("PDF_ENGINE") == "pdfium"
+
+
+def test_agreeing_values_across_all_three_names_are_fine(monkeypatch):
+    for name in ("SYNWEVO_DOCS_WEBHOOK_SECRET", "SYNWEVO_WEBHOOK_SECRET", "DOCWEAVE_WEBHOOK_SECRET"):
+        monkeypatch.setenv(name, "same")
+    assert env.docs("WEBHOOK_SECRET") == "same"

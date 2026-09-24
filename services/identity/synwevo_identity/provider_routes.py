@@ -83,6 +83,14 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         unknown = [s for s in scope.split() if s not in oidc.SUPPORTED_SCOPES]
         if unknown:
             return back(error="invalid_scope", error_description=f"unsupported scope: {' '.join(unknown)}")
+        # Supported by the platform is not the same as granted to this client. Checking only the
+        # global list let any public client — the portal's, say — ask a signed-in person for
+        # docweave.write and offline_access, minting API credentials outside the CLI-only
+        # registration that is supposed to decide who may hold them.
+        unregistered = [s for s in scope.split() if s not in oidc.Clients.allowed_scopes(client)]
+        if unregistered:
+            return back(error="invalid_scope",
+                        error_description=f"scope not registered for this client: {' '.join(unregistered)}")
 
         session = sessions.load(request.cookies.get(COOKIE_NAME))
         if not session:
@@ -114,12 +122,36 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         return back(code=code)
 
     # ------------------------------------------------------------------ token
+    def _target(client: dict, resources: list[str] | None) -> tuple[str | None, JSONResponse | None]:
+        """RFC 8707 `resource`: which API the access token is for. Returns (audience, error).
+
+        Every requested resource must be one the client was registered for; anything else is
+        `invalid_target`. A token names exactly one resource: several distinct values are
+        refused rather than folded into one token that several APIs would each accept, which is
+        the cross-API replay the audience exists to stop (RFC 9700 §2.3; RFC 8707 §2 lets the
+        server refuse a combination it will not issue).
+        """
+        wanted = sorted({(v or "").strip() for v in (resources or []) if (v or "").strip()})
+        if not wanted:
+            return None, None
+        registered = set(client.get("audiences") or [])
+        unknown = [v for v in wanted if v not in registered]
+        if unknown:
+            return None, JSONResponse({"error": "invalid_target",
+                                       "error_description": f"resource not registered for this client: {' '.join(unknown)}"},
+                                      status_code=400)
+        if len(wanted) > 1:
+            return None, JSONResponse({"error": "invalid_target",
+                                       "error_description": "one access token is issued for one resource; request them separately"},
+                                      status_code=400)
+        return wanted[0], None
+
     @r.post("/oidc/token")
     def token(request: Request,
               grant_type: str = Form(...), code: str = Form(None), redirect_uri: str = Form(None),
               client_id: str = Form(None), client_secret: str = Form(None),
               code_verifier: str = Form(None), refresh_token: str = Form(None),
-              scope: str = Form(None)):
+              scope: str = Form(None), resource: list[str] | None = Form(None)):
         """Deliberately cookie-blind. Credentials come from the request body, never the browser."""
         if grant_type not in ("authorization_code", "refresh_token", "client_credentials"):
             return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
@@ -129,11 +161,14 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         if client["token_endpoint_auth_method"] != "none":
             if not clients.check_secret(client["client_id"], client_secret or ""):
                 return JSONResponse({"error": "invalid_client"}, status_code=401)
+        audience, bad_target = _target(client, resource)
+        if bad_target:
+            return bad_target
 
         if grant_type == "client_credentials":
-            return _client_credentials(request, client, scope or "")
+            return _client_credentials(request, client, scope or "", audience)
         if grant_type == "refresh_token":
-            return _refresh(request, client, refresh_token or "")
+            return _refresh(request, client, refresh_token or "", audience)
 
         try:
             row = grants.consume_code(code or "", client_id=client["client_id"],
@@ -147,7 +182,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
                                 status_code=400)
 
         want_refresh = "offline_access" in (row["scope"] or "").split()
-        out = grants.issue_tokens(client=client, code_row=row, with_refresh=want_refresh)
+        out = grants.issue_tokens(client=client, code_row=row, with_refresh=want_refresh,
+                                  audience=audience)
 
         # One client session per grant, so a platform-wide logout can find it later.
         sid = new_id("cs")
@@ -159,7 +195,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
                                               access_token=out["access_token"])
         return JSONResponse(out, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
-    def _client_credentials(request: Request, client: dict, requested: str):
+    def _client_credentials(request: Request, client: dict, requested: str, audience: str | None):
         """A machine identity authenticating as itself.
 
         Refused for anything that is not a registered service account, and refused for a public
@@ -193,13 +229,14 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         if not entitled:
             return JSONResponse({"error": "invalid_client", "error_description": reason},
                                 status_code=400)
-        out = grants.issue_for_service(client=client, scope=" ".join(sorted(granted)))
+        out = grants.issue_for_service(client=client, scope=" ".join(sorted(granted)), audience=audience)
         audit(request, "oidc.client_credentials", actor_kind="machine",
               actor_id=client["client_id"], workspace_id=ws, object_kind="app",
-              object_id=client["app_id"], result="ok", meta={"scope": out["scope"]})
+              object_id=client["app_id"], result="ok",
+              meta={"scope": out["scope"], "audience": audience or grants.default_audience(client)})
         return JSONResponse(out, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
-    def _refresh(request: Request, client: dict, raw: str):
+    def _refresh(request: Request, client: dict, raw: str, audience: str | None = None):
         """Exchange a refresh token for a new pair — re-checking everything that can change.
 
         A refresh is not a formality. Between issue and use, the account can be suspended, the
@@ -208,9 +245,21 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         so they are all checked here rather than trusted from the original grant.
         """
         try:
-            out, old = grants.rotate_refresh(raw, client=client)
+            out, old = grants.rotate_refresh(raw, client=client, audience=audience)
         except ServiceError as e:
             return JSONResponse({"error": "invalid_grant", "error_description": e.message}, status_code=400)
+
+        # A sign-in that was deliberately ended — sign out, "end this device", an administrator
+        # revoking sessions — ends what it authorised. Expiry is not revocation: an offline grant
+        # is meant to outlive an idle browser, so only an explicit revocation counts here.
+        if old.get("central_session_id"):
+            cs = store.one("SELECT revoked_at, revoked_reason FROM sessions WHERE id=?",
+                           (old["central_session_id"],))
+            if cs and cs["revoked_at"]:
+                grants.revoke_family(old["family_id"] or old["id"], "session_ended")
+                return JSONResponse({"error": "invalid_grant",
+                                     "error_description": "the sign-in this grant came from has ended"},
+                                    status_code=400)
 
         user = ident.get_user(old["user_id"])
         if not user or user["status"] != "active":
@@ -262,39 +311,17 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         if client["token_endpoint_auth_method"] != "none" and \
                 not clients.check_secret(client["client_id"], client_secret or ""):
             return JSONResponse({"error": "invalid_client"}, status_code=401)
-        grants.revoke_token(token, "client_revoked")
+        # RFC 7009 §2.1: only a token issued to this client. Revoking anyone's token through any
+        # client identity is not what the endpoint promises, even if the holder could.
+        grants.revoke_token(token, "client_revoked", client_id=client["client_id"])
         # RFC 7009: an unknown token is still a success. Distinguishing them would turn this
         # endpoint into an oracle for whether a token is valid.
         return JSONResponse({}, status_code=200)
 
     # ------------------------------------------------------------------ logout
     def _end_central_session(request: Request, session: dict, reason: str) -> dict:
-        """End a central session everywhere: our state first, then tell the clients.
-
-        Order matters. Revocation is recorded before any notification goes out, so a client that
-        never receives the notification — offline, slow, misconfigured — still fails its next
-        token check. The back-channel POST is how apps find out *promptly*; the database is how
-        the answer stays correct if it never arrives.
-        """
-        n_tokens = grants.revoke_for_central_session(session["id"], reason)
-        rows = store.all("SELECT * FROM client_sessions WHERE central_session_id=? "
-                         "AND logged_out_at IS NULL", (session["id"],))
-        notified, failed = 0, 0
-        for cs in rows:
-            client = clients.get(cs["client_id"])
-            store.execute("UPDATE client_sessions SET logged_out_at=? WHERE id=?", (now(), cs["id"]))
-            if not client or not client.get("backchannel_logout_uri"):
-                continue
-            tok = grants.logout_token(client=client, user_id=cs["user_id"], sid=cs["sid"])
-            ok, err = deliver(client["backchannel_logout_uri"], tok)
-            if ok:
-                notified += 1
-            else:
-                failed += 1
-                store.execute("UPDATE client_sessions SET logout_error=? WHERE id=?",
-                              (err, cs["id"]))
+        out = end_central_session(store, session["id"], reason, deliver=deliver)
         sessions.revoke(session["id"], reason)
-        out = {"tokens_revoked": n_tokens, "clients_notified": notified, "clients_failed": failed}
         audit(request, "oidc.logout", actor_id=session["user_id"], result="ok", meta=out)
         return out
 
@@ -313,15 +340,19 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         if not client and hint:
             client = _client_from_hint(hint)
 
+        # Parameters are validated before anything is ended: a request with an unregistered
+        # target used to sign the person out and only then answer 400, so a malformed link was
+        # still a working logout link.
+        if target and (not client or target not in (client.get("post_logout_redirect_uris") or [])):
+            # Deliberately not a redirect and deliberately not echoed into the page.
+            raise ServiceError(400, "invalid_redirect_uri", "登出后跳转地址未登记")
+
         session = sessions.load(request.cookies.get(COOKIE_NAME))
         if session:
             _end_central_session(request, session, "rp_initiated_logout")
 
         dest = "/logged-out"
         if target:
-            if not client or target not in (client.get("post_logout_redirect_uris") or []):
-                # Deliberately not a redirect and deliberately not echoed into the page.
-                raise ServiceError(400, "invalid_redirect_uri", "登出后跳转地址未登记")
             dest = target
             if state:
                 sep = "&" if urllib.parse.urlparse(dest).query else "?"
@@ -351,3 +382,43 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
 
     r.end_central_session = _end_central_session      # reused by "sign out everywhere"
     return r
+
+
+def end_central_session(store: Store, central_session_id: str, reason: str, *, deliver=None) -> dict:
+    """End everything a central sign-in authorised: tokens, relying-party sessions, then notify.
+
+    Order matters. Revocation is recorded before any notification goes out, so a client that
+    never receives the notification — offline, slow, misconfigured — still fails its next token
+    check. The relying parties' own sessions live in the same database (there is one account
+    authority and one store), so they are ended here directly by the `sid` each was created
+    with: a back-channel POST that fails used to leave the Synwevo Docs session alive for up to
+    its idle lifetime after "sign out everywhere", because nothing ever retried it. The POST is
+    still sent — it is how a relying party with state of its own finds out promptly — but it is
+    no longer the enforcement.
+
+    The central session row itself is revoked by the caller, which knows the reason to record.
+    `deliver=None` means the real network deliverer, looked up at call time.
+    """
+    deliver = oidc.deliver_logout if deliver is None else deliver
+    grants, clients = oidc.Grants(store), oidc.Clients(store)
+    n_tokens = grants.revoke_for_central_session(central_session_id, reason)
+    rows = store.all("SELECT * FROM client_sessions WHERE central_session_id=? "
+                     "AND logged_out_at IS NULL", (central_session_id,))
+    notified, failed, rp_sessions = 0, 0, 0
+    for cs in rows:
+        rp_sessions += store.execute(
+            "UPDATE sessions SET revoked_at=?, revoked_reason=? WHERE oidc_sid=? AND revoked_at IS NULL",
+            (now(), f"central_{reason}"[:60], cs["sid"]))
+        store.execute("UPDATE client_sessions SET logged_out_at=? WHERE id=?", (now(), cs["id"]))
+        client = clients.get(cs["client_id"])
+        if not client or not client.get("backchannel_logout_uri"):
+            continue
+        tok = grants.logout_token(client=client, user_id=cs["user_id"], sid=cs["sid"])
+        ok, err = deliver(client["backchannel_logout_uri"], tok)
+        if ok:
+            notified += 1
+        else:
+            failed += 1
+            store.execute("UPDATE client_sessions SET logout_error=? WHERE id=?", (err, cs["id"]))
+    return {"tokens_revoked": n_tokens, "clients_notified": notified, "clients_failed": failed,
+            "app_sessions_ended": rp_sessions}

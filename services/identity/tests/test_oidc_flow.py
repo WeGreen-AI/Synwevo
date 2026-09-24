@@ -109,12 +109,42 @@ def test_full_authorization_code_flow(env):
 
 
 def test_offline_access_yields_a_refresh_token_only_when_asked(env):
+    # offline_access is granted only to a client registered for it (the fixture's client is
+    # not; see the next test), so this client is re-registered with it first. Before the fix
+    # this test passed without the registration — which was the bug.
+    oidc.Clients(env["store"]).register(client_id="docweave-web", app_id="docweave", name="Synwevo Docs",
+                                        redirect_uris=[REDIRECT], audiences=["docweave-api"],
+                                        scopes="openid profile email offline_access")
     c = env["c"]
     resp, verifier = _authorize(c, scope="openid offline_access")
     body = c.post("/oidc/token", data={
         "grant_type": "authorization_code", "code": _params(resp)["code"], "redirect_uri": REDIRECT,
         "client_id": "docweave-web", "code_verifier": verifier}).json()
     assert body.get("refresh_token")
+
+
+def test_a_client_gets_only_the_scopes_it_was_registered_for(env):
+    """F052: /oidc/authorize compared against the platform's scope list, not the client's, so
+    any public client (the portal's, say) could mint docweave.write and offline_access."""
+    c = env["c"]
+    for asked in ("openid offline_access", "openid docweave.write", "openid docweave.manage"):
+        resp, _ = _authorize(c, scope=asked)
+        p = _params(resp)
+        assert p.get("error") == "invalid_scope" and "code" not in p, (asked, p)
+    # the registered ones still work
+    resp, _ = _authorize(c, scope="openid profile email")
+    assert _params(resp).get("code")
+
+
+def test_the_portal_client_cannot_ask_for_docs_api_scopes(env):
+    """Registration refuses an API scope belonging to another application outright."""
+    from synwevo_core.errors import ServiceError
+    with pytest.raises(ServiceError) as e:
+        oidc.Clients(env["store"]).register(
+            client_id="portal-web", app_id="platform", name="门户",
+            redirect_uris=["http://portal.localhost:8769/auth/callback"],
+            scopes="openid profile email docweave.write")
+    assert e.value.code == "scope_wrong_app"
 
 
 # ---------------------------------------------------------------- signed out

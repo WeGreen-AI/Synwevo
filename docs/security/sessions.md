@@ -66,7 +66,7 @@
 
 ## 3. CSRF
 
-双提交：`dw_csrf` Cookie（**非 HttpOnly**，页面要能读到并回显）+ `X-Synwevo Docs-CSRF` 请求头。
+双提交：`dw_csrf` Cookie（**非 HttpOnly**，页面要能读到并回显）+ `X-Synwevo-CSRF` 请求头。
 
 - 只对 `/api/` 下的非安全方法检查。
 - `/api/auth/login` 等匿名端点豁免——它们还没有会话，而且没有正确凭据本身就是无用的。
@@ -224,7 +224,7 @@ reauth_fresh(session, scope, strict=True)   # 严格：必须为这件事重新�
 | 无使用资格 | 授权端点即拒绝（`access_denied`），依赖方落到 `/sign-in-failed`；资格在授权与回调之间被撤销则落到 `/no-access` |
 | 应用停用 | 同上，理由写明 |
 | 取消登录 | 停在登录页，不自动重试 |
-| 未登记的登出跳转地址 | 400，**不跳转也不回显**，但**会话照样结束**——拒绝跳转不能变成让人留在登录状态 |
+| 未登记的登出跳转地址 | 400 `invalid_redirect_uri`，**不跳转也不回显**；提供方先校验参数，再执行登出，因此该失败不会撤销会话或令牌、发送后通道通知或清除登录 Cookie |
 
 ---
 

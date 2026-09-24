@@ -1,25 +1,36 @@
 #!/usr/bin/env python3
 """Measure the single sign-on chain against live local servers.
 
-    python scripts/platform_local.py up
-    python scripts/verify_sso.py --email you@example.test --password '...'
+    python scripts/platform.py up
+    SYNWEVO_VERIFY_PASSWORD=… .venv/bin/python tests/integration/verify_sso.py --email sso-check@example.test
+    .venv/bin/python tests/integration/verify_sso.py --email sso-check@example.test   # prompts for it
 
 This uses Python's `http.cookiejar`, which implements the real cookie rules — **host-scoped and
 port-blind**. That is the point. A jar keyed by origin would report isolation that a browser
 does not provide, so the claim "the three services have separate sessions" is only worth making
 against a jar that would fail if they shared a hostname.
 
-The unit tests in `backend/tests/test_sso_chain.py` drive the same redirects over ASGI and cover
+The tests in `tests/integration/test_sso_chain.py` drive the same redirects over ASGI and cover
 the cases a live walk cannot express (a forged state, a stolen code). This script covers the one
 thing they cannot: that it works over real sockets, on real hostnames, through real redirects.
 
-Exit code 0 only if every check passes. Nothing here writes to a database or deploys anything.
+Exit code 0 only if every check passes. Nothing is deployed, but this **does act as the account
+it signs in with**: it logs in (a session, OIDC codes and tokens, audit rows), completes sign-in at
+Synwevo Docs and the portal, and finally calls `/oidc/logout`, which ends that person's central
+session and every per-application session — they are signed out everywhere. Use a dedicated test
+account, never someone's real one.
+
+The password is read from `SYNWEVO_VERIFY_PASSWORD` or prompted for. It is not taken as a
+command-line argument by default, because arguments end up in shell history and in the process
+list where any local user can read them.
 """
 from __future__ import annotations
 
 import argparse
+import getpass
 import http.cookiejar
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
@@ -84,13 +95,18 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--email", required=True)
-    ap.add_argument("--password", required=True)
+    ap.add_argument("--email", required=True, help="专用测试账户（脚本结束时会把它从所有应用登出）")
+    ap.add_argument("--password", help=argparse.SUPPRESS)   # accepted for old scripts; warned against
     ap.add_argument("--accounts", default=ACCOUNTS)
     ap.add_argument("--portal", default=PORTAL)
     ap.add_argument("--docs", "--docweave", dest="docs", default=DOCS,
                     help="Synwevo Docs 地址（--docweave 是旧名字，仍然接受）")
     args = ap.parse_args()
+    if args.password:
+        print("!! 口令出现在命令行参数里：它会留在 shell 历史和进程列表中。"
+              "改用 SYNWEVO_VERIFY_PASSWORD 或交互输入。", file=sys.stderr)
+    else:
+        args.password = os.environ.get("SYNWEVO_VERIFY_PASSWORD") or getpass.getpass(f"{args.email} 的口令：")
     acc, portal, dw = args.accounts.rstrip("/"), args.portal.rstrip("/"), args.docs.rstrip("/")
     acc_host = urllib.parse.urlparse(acc).hostname
     dw_host = urllib.parse.urlparse(dw).hostname

@@ -9,9 +9,10 @@ G. Theme: light/dark switch changes the chrome but never the document paper.
 H. Layout memory and the ? shortcut sheet; reduced-motion is honoured.
 
 Runs against an existing project created by this script, so it does not depend on
-other flows.  All input files are the synthetic fixtures in testdata/.
+other flows.  All input files are the synthetic fixtures in <repo>/testdata/.
 
-    python scripts/ui_e2e_keyboard.py [base_url]        (server must be running)
+    .venv/bin/python apps/docs/scripts/ui_e2e_keyboard.py              # isolated test instance
+    .venv/bin/python apps/docs/scripts/ui_e2e_keyboard.py <base_url>   # only a test-marked instance
 """
 from __future__ import annotations
 
@@ -25,11 +26,11 @@ from playwright.sync_api import Page, expect, sync_playwright
 from ui_e2e import make_field, map_field  # noqa: E402  (same helpers as the main UI flow)
 
 ROOT = Path(__file__).resolve().parents[1]
-from _testenv import target  # noqa: E402  isolated test instance; never the user's real data
+from _testenv import SHOTS, TESTDATA, target  # noqa: E402  isolated test instance; never the user's real data
 
 ARG_BASE = sys.argv[1] if len(sys.argv) > 1 else None
 BASE = ""                     # bound in main() to an isolated (or explicitly test-marked) server
-DATA = ROOT / "testdata"
+DATA = TESTDATA                # <repo>/testdata (apps/docs/scripts/make_fixtures.py)
 MOD = "Meta" if sys.platform == "darwin" else "Control"
 
 
@@ -154,12 +155,15 @@ def flow_theme(page: Page, pid: str):
       return { theme: document.documentElement.dataset.theme, topbar: bg('.topbar'), paper: bg('.doc-page'), cell: bg('.gcell') };
     }"""
 
-    page.evaluate("() => { localStorage.setItem('docweave.theme', JSON.stringify('light')); location.reload(); }")
+    # The app writes `synwevo.theme` on every load, so that is the key that decides the theme.
+    # (Writing the pre-rebrand `docweave.theme` here used to be silently ignored after the first
+    # load, and the "light" step passed only because headless Chrome defaults to light.)
+    page.evaluate("() => { localStorage.setItem('synwevo.theme', JSON.stringify('light')); location.reload(); }")
     expect(page.locator(".pane.right .doc-page")).to_be_visible(timeout=20000)
     light = page.evaluate(read)
     assert light["theme"] == "light", light
 
-    page.evaluate("() => { localStorage.setItem('docweave.theme', JSON.stringify('dark')); location.reload(); }")
+    page.evaluate("() => { localStorage.setItem('synwevo.theme', JSON.stringify('dark')); location.reload(); }")
     expect(page.locator(".pane.right .doc-page")).to_be_visible(timeout=20000)
     dark = page.evaluate(read)
     assert dark["theme"] == "dark", dark
@@ -167,7 +171,17 @@ def flow_theme(page: Page, pid: str):
     assert dark["paper"] == light["paper"] == "rgb(255, 255, 255)", (light, dark)
     assert dark["cell"] == light["cell"], (light["cell"], dark["cell"])
 
-    page.evaluate("() => localStorage.setItem('docweave.theme', JSON.stringify('system'))")
+    # The one place the legacy key still matters: with no new key present, a preference saved
+    # by the pre-rebrand build is carried forward rather than reset.
+    page.evaluate("() => { localStorage.removeItem('synwevo.theme'); "
+                  "localStorage.setItem('docweave.theme', JSON.stringify('dark')); location.reload(); }")
+    expect(page.locator(".pane.right .doc-page")).to_be_visible(timeout=20000)
+    carried = page.evaluate(read)
+    assert carried["theme"] == "dark", carried
+    assert page.evaluate("localStorage.getItem('synwevo.theme')") == '"dark"', "旧键的值应被写到新键下"
+
+    page.evaluate("() => { localStorage.removeItem('docweave.theme'); "
+                  "localStorage.setItem('synwevo.theme', JSON.stringify('system')); }")
 
 
 # ---------------------------------------------------------------- H: remembered layout + reduced motion
@@ -189,7 +203,7 @@ def flow_layout(page: Page, pid: str):
     again = page.evaluate("Math.round(document.querySelector('.side.right').getBoundingClientRect().width)")
     assert abs(again - width) <= 2, (width, again)
 
-    page.evaluate("() => localStorage.setItem('docweave.sideW', '0')")
+    page.evaluate("() => localStorage.setItem('synwevo.sideW', '0')")
 
     # reduced motion collapses the duration tokens
     page.emulate_media(reduced_motion="reduce")

@@ -165,6 +165,16 @@ def test_path_upload_is_restricted(api, keys, fixtures, monkeypatch, tmp_path):
     monkeypatch.setattr(v1, "IMPORT_ROOTS", [str(tmp_path)])
     assert c.post(f"/api/v1/projects/{pid}/files", json={"path": "/etc/hosts"}, headers=h).status_code == 403
     assert c.post(f"/api/v1/projects/{pid}/files", json={"path": str(tmp_path / "nope.xlsx")}, headers=h).status_code == 404
+    # Outside the roots, a path that exists and one that does not get the *same* answer: the
+    # 404/403 difference used to let any write key probe the server's filesystem.
+    exists, missing = (c.post(f"/api/v1/projects/{pid}/files", json={"path": p}, headers=h)
+                       for p in ("/etc/hosts", "/nonexistent-synwevo-probe/outside.xlsx"))
+    assert exists.status_code == missing.status_code == 403
+    assert exists.json()["error"]["code"] == missing.json()["error"]["code"] == "path_not_allowed"
+    assert exists.json()["error"]["message"] == missing.json()["error"]["message"]
+    # `..` is resolved lexically before the containment check, so it cannot climb out either
+    escape = c.post(f"/api/v1/projects/{pid}/files", json={"path": str(tmp_path / ".." / "nonexistent.xlsx")}, headers=h)
+    assert escape.status_code == 403
     import shutil
     shutil.copy(fixtures / "测试_客户100.xlsx", tmp_path / "ok.xlsx")
     got = _ok(c.post(f"/api/v1/projects/{pid}/files", json={"path": str(tmp_path / "ok.xlsx")}, headers=h))
@@ -193,17 +203,36 @@ def test_definition_validation_rejects_unknown_and_incompatible(api, keys, fixtu
     assert export["schema"] == "docweave.template-fields" and export["fields"][0]["name"] == "x"
 
 
-def test_rate_limit_and_request_id(api, keys, monkeypatch):
+def test_rate_limit_and_request_id(api, keys, monkeypatch, tmp_path):
+    """The real middleware answers 429 over HTTP — not a detached limiter function.
+
+    This test used to patch an attribute nothing reads (`_test_limiter`) and then exercise the
+    standalone helper, so removing the middleware's limit, its 429 body or its Retry-After
+    header would have left it green.
+    """
     import synwevo_core.http as A
+    from fastapi.testclient import TestClient
+
+    from synwevo_docs.api.app import create_app
     c = api.c
     rid = c.get("/api/v1/whoami", headers={**keys["rw"], "X-Request-ID": "trace-123"})
     assert rid.headers["X-Request-ID"] == "trace-123"
-    limiter = A.rate_limiter(2)
-    monkeypatch.setattr(api.c.app_state.app, "_test_limiter", limiter, raising=False)
-    # the limiter itself: two tokens then refusal with a wait hint
-    assert limiter("k")[0] and limiter("k")[0]
-    ok, wait = limiter("k")
-    assert not ok and wait > 0
+
+    monkeypatch.setenv("SYNWEVO_API_RATE_PER_MIN", "3")
+    monkeypatch.setattr(A, "API_RATE_PER_MIN", 3)
+    app = create_app(str(tmp_path / "limited"), start_jobs=False)
+    auth = Auth(app.state.app.store)
+    one = {"Authorization": f"Bearer {auth.create_key('one', 'default', ('read',))[0]}"}
+    two = {"Authorization": f"Bearer {auth.create_key('two', 'default', ('read',))[0]}"}
+    with TestClient(app) as lc:
+        for _ in range(3):
+            assert lc.get("/api/v1/whoami", headers=one).status_code == 200
+        r = lc.get("/api/v1/whoami", headers=one)
+        assert r.status_code == 429
+        assert r.json()["error"]["code"] == "rate_limited" and r.json()["error"]["request_id"]
+        assert int(r.headers["Retry-After"]) >= 1
+        # the bucket is per credential: another key is unaffected
+        assert lc.get("/api/v1/whoami", headers=two).status_code == 200
 
 
 def test_ui_endpoints_stay_anonymous_but_v1_never_is(api, keys):
@@ -280,12 +309,16 @@ def test_signed_link_origin_survives_a_reverse_proxy(api, keys, fixtures, monkey
     def link(extra):
         return _ok(c.post(f"/api/v1/artifacts/{art['id']}/link", headers={**h, **extra}))["url"]
 
+    # An explicitly trusted proxy supplies the client-facing origin. Without this
+    # deployment setting forwarded headers are caller input, not authority.
+    monkeypatch.setenv("SYNWEVO_TRUST_PROXY", "1")
     # the scheme the user actually used, not the proxy→origin hop
     assert link({"Host": "dw.example.com", "X-Forwarded-Proto": "https"}).startswith("https://dw.example.com/api/v1/download/")
     # a proxy that rewrote Host still must not produce a loopback URL, if it forwarded the real one
     assert link({"Host": "127.0.0.1:8765", "X-Forwarded-Host": "dw.example.com",
                  "X-Forwarded-Proto": "https"}).startswith("https://dw.example.com/")
-    # comma-joined values from a chain of proxies: the first entry is the client-facing one
+    # Two configured trusted hops select the client-facing entry from the right.
+    monkeypatch.setenv("SYNWEVO_TRUST_PROXY", "2")
     assert link({"X-Forwarded-Host": "dw.example.com, inner.local",
                  "X-Forwarded-Proto": "https, http"}).startswith("https://dw.example.com/")
     # an explicit public URL wins over anything a client claims, including a spoofed Host
@@ -293,6 +326,7 @@ def test_signed_link_origin_survives_a_reverse_proxy(api, keys, fixtures, monkey
     assert link({"Host": "evil.example", "X-Forwarded-Proto": "http"}) \
         .startswith("https://docs.example.org/api/v1/download/")
     monkeypatch.setattr(v1, "PUBLIC_URL", "")
+    monkeypatch.setenv("SYNWEVO_TRUST_PROXY", "0")
     # no proxy at all keeps working
     assert link({}).startswith("http://testserver/api/v1/download/")
 

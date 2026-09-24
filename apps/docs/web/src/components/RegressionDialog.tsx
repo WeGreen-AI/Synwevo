@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { get, post } from "@synwevo/auth-client";
 import type { Project } from "../lib/types";
 import { Modal } from "@synwevo/ui";
+import { errorText } from "../lib/perm";
 
 /** Freeze the current project (files, template, rule, mappings) with its expected results. */
 export default function RegressionDialog({ project, onClose }: { project: Project; onClose: () => void }) {
@@ -19,19 +20,22 @@ export default function RegressionDialog({ project, onClose }: { project: Projec
     try {
       setDone(await post(`/api/projects/${project.id}/regression-cases`, { name, note }));
     } catch (e: any) {
-      setErr(e.message);
+      setErr(errorText(e));
     } finally {
       setBusy(false);
     }
   };
   return (
     <Modal title="保存为回归用例" onClose={onClose}
-      footer={done ? <><span className="spacer" /><Link className="btn" to="/regression">查看回归用例</Link><button className="btn primary" onClick={onClose}>完成</button></>
-        : <>{err && <div className="notice err grow">{err}</div>}<span className="spacer" /><button className="btn" onClick={onClose}>取消</button><button className="btn primary" disabled={busy || !name.trim()} onClick={save}>{busy ? "正在生成期望结果…" : "保存用例"}</button></>}>
+      footer={done ? <><span className="spacer" /><Link className="btn" to="/regression">查看回归用例</Link><button type="button" className="btn primary" onClick={onClose}>完成</button></>
+        : <>{err && <div className="notice err grow" role="alert">{err}</div>}<span className="spacer" /><button type="button" className="btn" onClick={onClose}>取消</button><button type="button" className="btn primary" disabled={busy || !name.trim()} onClick={save}>{busy ? "正在生成期望结果…" : "保存用例"}</button></>}>
       {done ? (
         <div className="col gap8">
           <div className="notice ok">已保存「{done.name}」：{done.samples} 个样本的期望结果（共 {done.records_total} 个样本）。</div>
-          <div className="small muted">用例保存在 <code>regression/{done.id}/</code>，可以和代码一起提交；<code>python scripts/regression.py</code> 与 pytest 都会自动运行它。</div>
+          {/* It used to say the case sits in regression/ "and can be committed with the code":
+              the case holds this project's own files, and user files do not belong in a
+              repository. Where the server keeps cases is its configuration, not the UI's claim. */}
+          <div className="small muted">用例 <code>{done.id}</code> 已保存在服务器上，可以在「回归用例」页面运行和下载。其中包含本项目的文件：请只保存测试数据或已脱敏的文件，不要把它提交到代码仓库。</div>
         </div>
       ) : (
         <div className="col gap12">

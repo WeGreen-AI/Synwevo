@@ -12,10 +12,11 @@ template families, runs each one, and checks the delivered bytes:
 Everything is SYNTHETIC — invented companies, invented numbers, no personal data, and both
 the templates and the generated documents say so on their face.  Projects are created over
 the machine API, so each carries ``origin = api:<key id>`` and
-``manage.py projects prune`` can find them later without touching anything a person made.
+``python -m synwevo_docs.cli projects prune`` can find them later without touching anything a
+person made.
 
     export SYNWEVO_DOCS_API_KEY=dw_xxx_yyy
-    python scripts/seed_samples.py --base-url http://127.0.0.1:8765
+    .venv/bin/python apps/docs/scripts/seed_samples.py --base-url http://127.0.0.1:8765
 
 Exit codes: 0 every sample generated and verified, 3 a job did not complete, 4 an artifact
 failed its checksum or its content check, 1 other failures.  Only the standard library is
@@ -359,20 +360,21 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base-url", default=env.docs("BASE_URL", "http://127.0.0.1:8765"))
     ap.add_argument("--api-key", default=env.docs("API_KEY"),
-                    help="默认取 $SYNWEVO_DOCS_API_KEY；用完请 manage.py apikey revoke 撤销")
+                    help="默认取 $SYNWEVO_DOCS_API_KEY；用完请 python -m synwevo_docs.cli apikey revoke 撤销")
     ap.add_argument("--only", action="append", choices=["contracts", "orders", "image"],
                     help="只建某个样本（可重复）")
     args = ap.parse_args()
     if not args.api_key:
         print("需要机器接口密钥：设置 $SYNWEVO_DOCS_API_KEY 或传 --api-key\n"
-              "  python backend/manage.py apikey create --name seed-samples --scopes read,write", file=sys.stderr)
+              "  python -m synwevo_docs.cli apikey create --name seed-samples --scopes read,write", file=sys.stderr)
         return 1
 
     api = Api(args.base_url, args.api_key)
     wanted = {"contracts": 0, "orders": 1, "image": 2}
     chosen = SAMPLES if not args.only else [SAMPLES[wanted[k]] for k in args.only]
     state: dict = {}
-    failures = 0
+    incomplete = 0          # a job that did not complete, or produced nothing  -> exit 3
+    failures = 0            # an artifact failed its checksum or content check   -> exit 4
 
     for name, build, check, must in chosen:
         pid, job = build(api, state)
@@ -383,7 +385,7 @@ def main() -> int:
               f"failed={job['counts']['failed']}  artifacts={arts['total']}  "
               f"first={first['filename'] if first else '-'}")
         if job["status"] != "completed" or not first:
-            failures += 1
+            incomplete += 1
             for it in api(f"/api/v1/jobs/{job['id']}/items")["items"][:5]:
                 print("     ", it.get("status"), str(it.get("issues"))[:400])
             continue
@@ -397,6 +399,9 @@ def main() -> int:
         print(f"      {'字段值已核对' if not missing else '未通过：' + '；'.join(missing)}")
         failures += bool(missing)
 
+    if incomplete:
+        print(f"\n{incomplete} 个样本的任务没有完成" + (f"，另有 {failures} 个未通过校验" if failures else ""))
+        return 3
     if failures:
         print(f"\n{failures} 个样本未通过校验")
         return 4

@@ -10,13 +10,15 @@ layout, nothing is estimated.
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
+import unicodedata
 from collections import OrderedDict
 
 from lxml import etree
 
 from . import docx_core as dc
-from .ooxml import Package
+from .ooxml import NS, Package
 
 _PDF_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
 _LOCK = threading.Lock()
@@ -130,6 +132,29 @@ def scale_fields(data: bytes, slot_ids: set[str], factor: float, min_pt: dict[st
     return pkg.save(), applied
 
 
+_MC = NS["mc"]
+_MC_PREFIX_ATTRS = tuple("{%s}%s" % (_MC, a) for a in ("Ignorable", "ProcessContent", "MustUnderstand",
+                                                       "PreserveElements", "PreserveAttributes"))
+
+
+def _mc_prefixes(root) -> list[str]:
+    """Prefixes that Markup Compatibility attributes name.  They are referenced only inside
+    attribute *values*, so a namespace cleanup sees them as unused — but a document whose
+    mc:Ignorable names an undeclared prefix is not conformant, and Word reports it as
+    unreadable content."""
+    out: set[str] = set()
+    for el in root.iter():
+        if not isinstance(el.tag, str):
+            continue
+        for attr in _MC_PREFIX_ATTRS:
+            v = el.get(attr)
+            if v:
+                out.update(tok.split(":", 1)[0] for tok in v.split())
+        if el.tag == "{%s}Choice" % _MC and el.get("Requires"):
+            out.update(el.get("Requires").split())
+    return sorted(out)
+
+
 def _strip_marks(data: bytes, unwrap: bool) -> bytes:
     pkg = Package(data)
     for info in dc.list_parts(pkg):
@@ -140,21 +165,64 @@ def _strip_marks(data: bytes, unwrap: bool) -> bytes:
         if unwrap:
             for _, sdt in list(dc.iter_field_sdts(root)):
                 dc.unwrap_sdt(sdt)
-        etree.cleanup_namespaces(root)
+        # drops the declaration of our own scratch namespace, keeps every prefix the
+        # document's Markup Compatibility attributes still name
+        etree.cleanup_namespaces(root, keep_ns_prefixes=_mc_prefixes(root))
     return pkg.save()
 
 
-def _field_texts(data: bytes) -> dict[str, str]:
-    """The text currently inside each field control, for checking nothing was lost."""
-    out: dict[str, str] = {}
+def _field_occurrences(data: bytes) -> list[tuple[str, str]]:
+    """(slot id, text) for every field control, one entry per occurrence (a detail row, an
+    area cell or a field used twice each is its own entry)."""
+    out: list[tuple[str, str]] = []
     pkg = Package(data)
     for info in dc.list_parts(pkg):
         root = pkg.xml(info["part"])
         for tag, sdt in dc.iter_field_sdts(root):
             base = tag.split("#")[0].split("@")[0]
-            txt = "".join(t.text or "" for t in sdt.iter(dc.w("t")))
-            out[base] = out.get(base, "") + txt
+            out.append((base, "".join(t.text or "" for t in sdt.iter(dc.w("t")))))
     return out
+
+
+def _field_texts(data: bytes) -> dict[str, str]:
+    """The text currently inside each field control (all occurrences joined)."""
+    out: dict[str, str] = {}
+    for base, txt in _field_occurrences(data):
+        out[base] = out.get(base, "") + txt
+    return out
+
+
+_INVISIBLE = re.compile(r"[\s\u00ad\u200b-\u200d\u2060\ufeff-]+")
+
+
+def _visible_key(s: str) -> str:
+    """Text reduced to what survives a layout round trip: no whitespace or line breaks
+    (wrapping moves them), no hyphens (hyphenation adds them), case folded (w:caps)."""
+    return _INVISIBLE.sub("", unicodedata.normalize("NFKC", s or "")).casefold()
+
+
+def visible_field_check(delivered_docx: bytes, occurrences: list[tuple[str, str]], names: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Which fields' text is not fully present in the laid-out document.
+
+    The text is looked up in the PDF LibreOffice lays out from the *delivered* bytes: text
+    pushed out of an exact-height table row or a fixed-size frame is not drawn and so is
+    not in that PDF, although it is still in the XML.  (Comparing the XML before and after
+    shrinking could never find anything: shrinking changes font sizes, not text.)
+    Returns (lost field names, truncated field names)."""
+    from .pdf_engine import pdf_text
+    laid_out = _visible_key(pdf_text(render_pdf(delivered_docx, "docx")))
+    lost: list[str] = []
+    truncated: list[str] = []
+    for base, text in occurrences:
+        want = _visible_key(text)
+        if not want or want in laid_out:
+            continue
+        name = names.get(base, base)
+        head = want[:max(1, min(6, len(want) // 2))]
+        bucket = truncated if head in laid_out else lost
+        if name not in bucket:
+            bucket.append(name)
+    return lost, [n for n in truncated if n not in lost]
 
 
 def _ladder(slots: list[dict], shrink: set[str], mins: dict[str, float]) -> tuple[float, ...]:
@@ -196,7 +264,7 @@ def fit_docx(filled_keep: bytes, slots: list[dict], tpl_pages: int, keep_fields:
     shrink = {s["id"] for s in slots if s.get("shrink")}
     mins = {s["id"]: float(s.get("shrink_min") or 7) for s in slots if s.get("shrink")}
     names = {s["id"]: s.get("name") or s["id"] for s in slots}
-    before = _field_texts(filled_keep)
+    before = [(b, t) for b, t in _field_occurrences(filled_keep) if b in shrink]
 
     def deliver(b: bytes) -> bytes:
         return _strip_marks(b, not keep_fields)
@@ -221,12 +289,11 @@ def fit_docx(filled_keep: bytes, slots: list[dict], tpl_pages: int, keep_fields:
             if p <= tpl_pages:
                 break
 
-    # Page count alone is not success: shrinking can push text out of a fixed-height row or
-    # frame, and the document would still have the right number of pages.
-    after = _field_texts(final if keep_fields else data)
-    lost = [names.get(k, k) for k, v in before.items() if v.strip() and not after.get(k, "").strip()]
-    truncated = [names.get(k, k) for k, v in before.items()
-                 if v.strip() and after.get(k, "").strip() and len(after[k].strip()) < len(v.strip())]
+    # Page count alone is not success: text of a shrinkable field can sit outside an exact-height
+    # row or a fixed-size frame, and the document would still have the right number of pages.
+    # Checked on the laid-out delivered document (the page count above already rendered it,
+    # so this reuses the cached PDF).
+    lost, truncated = visible_field_check(final, before, names) if before else ([], [])
     report["lost_fields"] = lost
     report["truncated_fields"] = truncated
     return final, report

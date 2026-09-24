@@ -8,6 +8,7 @@ module does not evaluate formulas.
 """
 from __future__ import annotations
 
+import bisect
 import copy
 import re
 
@@ -27,6 +28,9 @@ REL_SST = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/s
 CT_SST = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"
 _XML_BAD = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
 _CELLREF = re.compile(r"^([A-Z]{1,3})(\d+)$")
+_STRING_LIT = re.compile(r'"(?:[^"]|"")*"')
+# network functions, DDE (app|topic!item) and external workbook references ([1]Sheet!A1)
+_OUTSIDE = re.compile(r"(?i)\b(?:_xlfn\.)?(?:WEBSERVICE|RTD|FILTERXML|IMAGE)\s*\(|\||\[\d+\]|\[[^\]]*\.xl")
 
 
 def s(local: str) -> str:
@@ -72,6 +76,10 @@ class XlsxDoc:
                 self._styles_part = self.pkg.resolve(self.wb_part, rel.target)
         self._numfmt_cache: dict[int, str] = {}
         self._normalized: set[str] = set()
+        # sheetData element -> (sorted row numbers, {row number: row element}); rebuilt after
+        # any renumbering.  Scanning every row for every written cell made a fill of N detail
+        # rows O(N²).  Keyed by the element itself, which also keeps its proxy alive.
+        self._rows: dict = {}
         self.touched = False
         self.warnings: list[str] = []
         self.calc_report: dict | None = None
@@ -164,23 +172,33 @@ class XlsxDoc:
         return fmt
 
     # ------------------------------------------------------------ rows & cells
+    def _row_index(self, sd):
+        idx = self._rows.get(sd)
+        if idx is None:
+            by: dict[int, object] = {}
+            for row in sd.findall(s("row")):
+                by.setdefault(int(row.get("r")), row)
+            idx = (sorted(by), by)
+            self._rows[sd] = idx
+        return idx
+
+    def _rows_changed(self) -> None:
+        self._rows.clear()
+
     def _find_row(self, sd, r: int, create: bool):
-        rows = sd.findall(s("row"))
-        for row in rows:
-            rr = int(row.get("r"))
-            if rr == r:
-                return row
-            if rr > r:
-                if not create:
-                    return None
-                new = etree.Element(s("row"))
-                new.set("r", str(r))
-                row.addprevious(new)
-                return new
-        if not create:
-            return None
-        new = etree.SubElement(sd, s("row"))
+        keys, by = self._row_index(sd)
+        row = by.get(r)
+        if row is not None or not create:
+            return row
+        new = etree.Element(s("row"))
         new.set("r", str(r))
+        pos = bisect.bisect_left(keys, r)
+        if pos < len(keys):
+            by[keys[pos]].addprevious(new)
+        else:
+            sd.append(new)
+        keys.insert(pos, r)
+        by[r] = new
         return new
 
     def _find_cell(self, row, c: int, create: bool, root=None):
@@ -346,7 +364,7 @@ class XlsxDoc:
             return []
         return [parse_range(m.get("ref")) for m in mc.findall(s("mergeCell"))]
 
-    def _add_merge(self, root, ref: str) -> None:
+    def _add_merge(self, root, ref: str, recount: bool = True) -> None:
         mc = root.find(s("mergeCells"))
         if mc is None:
             mc = etree.Element(s("mergeCells"))
@@ -360,7 +378,8 @@ class XlsxDoc:
             anchor.addnext(mc)
         m = etree.SubElement(mc, s("mergeCell"))
         m.set("ref", ref)
-        mc.set("count", str(len(mc.findall(s("mergeCell")))))
+        if recount:
+            mc.set("count", str(len(mc.findall(s("mergeCell")))))
 
     # ------------------------------------------------------------ shared formula expansion
     def expand_shared_formulas(self) -> None:
@@ -402,6 +421,7 @@ class XlsxDoc:
         root = self.sheet_root(sheet)
         sd = self._sheet_data(root)
         self.touched = True
+        self._rows_changed()
         # 1. rows and cells (process in reverse for insertion to avoid collisions)
         rows = sd.findall(s("row"))
         for row in rows:
@@ -572,8 +592,17 @@ class XlsxDoc:
             if r1 < template_row - 1 <= r2 or r1 <= template_row - 1 < r2:
                 if r1 != r2:
                     raise XlsxError("vertical_merge", f"模板明细行 {template_row} 与纵向合并单元格 {cell_ref(r1, c1)}:{cell_ref(r2, c2)} 相交，无法重复该行")
-        self.shift_rows(sheet, Shift(template_row + 1, count, expand_row=template_row))
         sd = self._sheet_data(root)
+        tpl0 = self._find_row(sd, template_row, False)
+        if tpl0 is not None:
+            for f in tpl0.iter(s("f")):
+                if f.get("t") == "array" and f.get("ref"):
+                    a1, _, a2 = f.get("ref").partition(":")
+                    if parse_cell(a1)[0] != parse_cell(a2 or a1)[0]:
+                        # a multi-row array formula has one master cell; copying the row cannot
+                        # make a consistent block of it
+                        raise XlsxError("array_formula", f"模板明细行 {template_row} 中的数组公式跨越多行（{f.get('ref')}），无法随明细行复制")
+        self.shift_rows(sheet, Shift(template_row + 1, count, expand_row=template_row))
         tpl = self._find_row(sd, template_row, True)
         anchor = tpl
         row_merges = [(c1, c2) for (r1, c1, r2, c2) in merges if r1 == r2 == template_row - 1]
@@ -591,13 +620,23 @@ class XlsxDoc:
                         f.text = Translator("=" + f.text, origin=old_ref).translate_formula(c.get("r"))[1:]
                     except Exception:
                         pass
-                    for a in ("t", "si", "ref"):
-                        if a in f.attrib and f.get("t") != "array":
-                            del f.attrib[a]
+                    if f.get("t") == "array":
+                        # the copy's array range is its own cells on its own row, not the template's
+                        a1, _, a2 = (f.get("ref") or old_ref).partition(":")
+                        c1_, c2_ = parse_cell(a1)[1], parse_cell(a2 or a1)[1]
+                        f.set("ref", f"{col_letter(c1_)}{new_r}" + (f":{col_letter(c2_)}{new_r}" if c2_ != c1_ else ""))
+                    else:
+                        for a in ("t", "si", "ref"):
+                            if a in f.attrib:
+                                del f.attrib[a]
             anchor.addnext(new)
             anchor = new
             for c1, c2 in row_merges:
-                self._add_merge(root, f"{col_letter(c1)}{new_r}:{col_letter(c2)}{new_r}")
+                self._add_merge(root, f"{col_letter(c1)}{new_r}:{col_letter(c2)}{new_r}", recount=False)
+        mc = root.find(s("mergeCells"))
+        if mc is not None:
+            mc.set("count", str(len(mc.findall(s("mergeCell")))))
+        self._rows_changed()
 
     def delete_row(self, sheet: str, row: int) -> None:
         merges = self.merges(sheet)
@@ -622,28 +661,40 @@ class XlsxDoc:
             calc = self.wb.find(s("calcPr"))
             if calc is None:
                 calc = etree.Element(s("calcPr"))
-                anchor = None
-                for tag in ("definedNames", "externalReferences", "pivotCaches", "functionGroups", "sheets"):
-                    anchor = self.wb.find(s(tag))
-                    if anchor is not None:
-                        break
-                anchor.addnext(calc)
+                _insert_after_last(self.wb, calc, _WB_BEFORE_CALCPR)
             # Excel/LibreOffice still recalculate on open; our cached values are what other readers see
             calc.set("fullCalcOnLoad", "1")
             for rel in self.pkg.rels(self.wb_part):
                 if rel.type.endswith("/calcChain"):
                     self.pkg.remove_part(self.pkg.resolve(self.wb_part, rel.target), self.wb_part)
             data = self.pkg.save()
-            if report["unsupported"]:
+            if report["unsupported"] and self._reaches_outside():
+                # LibreOffice would evaluate WEBSERVICE / DDE / external links on this server,
+                # i.e. make network requests chosen by whoever wrote the template
+                report["fallback"] = "blocked"
+            elif report["unsupported"]:
                 from .converters import ConversionError, soffice_path
                 if soffice_path():
                     from .xlsx_cache import fill_cached_values
-                    data, info = fill_cached_values(data)
+                    # only the cells the built-in engine could not compute: the others already
+                    # carry correct, correctly typed caches
+                    data, info = fill_cached_values(data, {(sh_, ref) for sh_, ref, _ in report["unsupported"]})
                     report["fallback"] = "libreoffice" if not any(i["level"] == "warning" for i in info) else "failed"
                 else:
                     report["fallback"] = "none"
             return data
         return self.pkg.save()
+
+    def _reaches_outside(self) -> bool:
+        """Any formula (or defined name) that fetches or links something outside the workbook."""
+        texts = []
+        for sh in self.sheets:
+            texts.extend(f.text or "" for f in self.sheet_root(sh["name"]).iter(s("f")))
+        dn = self.wb.find(s("definedNames"))
+        if dn is not None:
+            texts.extend(el.text or "" for el in dn.findall(s("definedName")))
+        return any(_OUTSIDE.search(_STRING_LIT.sub('""', t)) for t in texts) or \
+            any(rel.type.endswith("/externalLink") for rel in self.pkg.rels(self.wb_part))
 
     def _update_dimension(self, root) -> None:
         sd = self._sheet_data(root)
@@ -669,8 +720,7 @@ class XlsxDoc:
         dn = self.wb.find(s("definedNames"))
         if dn is None:
             dn = etree.Element(s("definedNames"))
-            anchor = self.wb.find(s("sheets"))
-            anchor.addnext(dn)
+            _insert_after_last(self.wb, dn, _WB_BEFORE_DEFINEDNAMES)
         for el in dn.findall(s("definedName")):
             if el.get("name") == name:
                 dn.remove(el)
@@ -681,3 +731,23 @@ class XlsxDoc:
         a = f"${col_letter(c1)}${r1 + 1}"
         b = f"${col_letter(c2)}${r2 + 1}"
         el.text = f"{qs}!{a}" + (f":{b}" if (r1, c1) != (r2, c2) else "")
+
+
+# CT_Workbook is a sequence: a new child goes right after the last element that must precede
+# it.  (calcPr used to land after pivotCaches and definedNames before functionGroups /
+# externalReferences — orders Excel reports as needing repair.)
+_WB_BEFORE_DEFINEDNAMES = ("fileVersion", "fileSharing", "workbookPr", "workbookProtection", "bookViews", "sheets",
+                           "functionGroups", "externalReferences")
+_WB_BEFORE_CALCPR = _WB_BEFORE_DEFINEDNAMES + ("definedNames",)
+
+
+def _insert_after_last(parent, el, predecessors: tuple[str, ...]) -> None:
+    wanted = {s(t) for t in predecessors}
+    last = None
+    for child in parent:
+        if child.tag in wanted:
+            last = child
+    if last is not None:
+        last.addnext(el)
+    else:
+        parent.insert(0, el)

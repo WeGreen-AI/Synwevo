@@ -6,6 +6,11 @@ export class ApiError extends Error {
    *  Call sites that branch on `status` need this: an intermediary's 403 is not a refusal by
    *  the application, and a poll must not treat it as a terminal answer. */
   upstream: boolean;
+  /** Seconds to wait before trying again, from `Retry-After` (or `detail.retry_after`) on a 429
+   *  or 503. A limit that says when it lifts is only useful if the page repeats it. */
+  retryAfter?: number;
+  /** The server's request id, when it sent one: what an operator needs to find the log line. */
+  requestId?: string;
   constructor(status: number, code: string, message: string, detail?: any, upstream = false) {
     super(message);
     this.status = status;
@@ -31,27 +36,67 @@ function gatewayName(h: Headers_): string {
 
 /** Did Synwevo itself produce this response?
  *
- *  Two independent marks say yes, and a response needs only one of them:
+ *  Three independent marks say yes, and a response needs only one of them:
  *   - the body parses as JSON — Synwevo answers *every* error with `{error, message, detail,
  *     request_id}`, including 401, 404 and 400;
  *   - an `X-Request-ID` header — stamped on every response that passes through the gate
- *     middleware. (Starlette's outermost 500 handler sits outside that middleware and can miss
- *     the header, which is exactly why the JSON mark is kept as an alternative.)
+ *     middleware;
+ *   - `Server: uvicorn` — the ASGI server Synwevo runs under. Starlette's outermost 500 handler
+ *     sits outside the gate middleware and answers an unhandled exception with a plain-text
+ *     body and no request id, so without this mark every server bug was reported to people as
+ *     "blocked by a gateway, never reached Synwevo" and operators were sent to the CDN. A
+ *     gateway that answers on its own puts its own name in `Server`, so this mark cannot be
+ *     borrowed by one.
  *
- *  Neither mark means a CDN, WAF, SSO gateway or reverse proxy answered instead and the request
- *  never reached the service. Reporting that as「请求失败（HTTP 403）」blames the application for
- *  a refusal it never made, and sends whoever debugs it to the wrong logs — the access log has
- *  no trace of the request, because it never arrived. */
+ *  No mark means a CDN, WAF, SSO gateway or reverse proxy answered instead and the request never
+ *  reached the service. Reporting that as「请求失败（HTTP 403）」blames the application for a
+ *  refusal it never made, and sends whoever debugs it to the wrong logs — the access log has no
+ *  trace of the request, because it never arrived. */
 function fromSynwevo(h: Headers_, body: any): boolean {
-  return !!body || !!h.get("X-Request-ID");
+  return !!body || !!h.get("X-Request-ID") || /^uvicorn\b/i.test((h.get("server") || "").trim());
 }
+
+/** 502/503/504 from something in front of Synwevo mean it could not reach the service (down,
+ *  restarting, timed out) — a different fault, with a different fix, from a rule that blocked
+ *  the request. Saying "blocked" for a stopped service sends people to the wrong setting. */
+const UNREACHABLE = new Set([502, 503, 504]);
 
 function gatewayError(status: number, h: Headers_): ApiError {
   const via = gatewayName(h);
+  if (UNREACHABLE.has(status)) {
+    return new ApiError(status, "upstream_unavailable",
+      `${via} 没有从 Synwevo 得到响应（HTTP ${status}）。服务可能没有启动、正在重启，或处理超时。请稍后重试。`,
+      { gateway: via, status, hint: "请检查服务进程是否在运行，以及反向代理指向的地址与端口。排查步骤见 docs/integration/ports.md。" },
+      true);
+  }
   return new ApiError(status, "gateway_blocked",
     `请求被 ${via} 拦截（HTTP ${status}），没有到达 Synwevo。请检查 CDN / WAF / 反向代理的安全规则。`,
     { gateway: via, status, hint: "服务端访问日志里不会有这条请求——它没有到达服务。排查步骤见 docs/integration/ports.md。" },
     true);
+}
+
+/** `Retry-After` in seconds (the HTTP-date form is not used by Synwevo), else the body's
+ *  `detail.retry_after`, which the account service's own limits carry. */
+function retryAfterOf(h: Headers_, body: any): number | undefined {
+  const raw = (h.get("Retry-After") || "").trim();
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const d = body?.detail?.retry_after;
+  return typeof d === "number" && isFinite(d) && d > 0 ? Math.ceil(d) : undefined;
+}
+
+/** The error a Synwevo response describes. A 5xx without a JSON body is Synwevo's own crash
+ *  handler: it is named as a server fault, with the request id when there is one, rather than
+ *  as a bare status code. */
+function synwevoError(status: number, h: Headers_, body: any, fallback: string): ApiError {
+  const requestId = (body && typeof body.request_id === "string" && body.request_id) || h.get("X-Request-ID") || undefined;
+  const msg = body?.message || (typeof body?.detail === "string" ? body.detail : null)
+    || (status >= 500
+      ? `服务内部出错（HTTP ${status}）。请稍后重试；如果一直出现，请把出错时间${requestId ? `和请求编号 ${requestId} ` : ""}告诉管理员，以便在服务日志里查找。`
+      : fallback);
+  const err = new ApiError(status, body?.error || (status >= 500 ? "server_error" : "http_error"), msg, body?.detail);
+  err.retryAfter = retryAfterOf(h, body);
+  err.requestId = requestId;
+  return err;
 }
 
 async function handle(res: Response) {
@@ -71,8 +116,7 @@ async function handle(res: Response) {
     /* not json — see fromSynwevo */
   }
   if (!fromSynwevo(res.headers, body)) throw gatewayError(res.status, res.headers);
-  const msg = body?.message || (typeof body?.detail === "string" ? body.detail : null) || `请求失败（HTTP ${res.status}）`;
-  throw new ApiError(res.status, body?.error || "http_error", msg, body?.detail);
+  throw synwevoError(res.status, res.headers, body, `请求失败（HTTP ${res.status}）`);
 }
 
 const CSRF_COOKIE = "dw_csrf";
@@ -110,7 +154,8 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     });
   } catch (e: any) {
     if (e?.name === "AbortError") throw e;
-    throw new ApiError(0, "network", "无法连接到服务器，请确认服务已启动（python run.py）");
+    // There is no `run.py` any more; the command that starts the services is the one named here.
+    throw new ApiError(0, "network", "无法连接到服务器。请检查网络，或确认服务已启动（python scripts/platform.py status）。");
   }
   return handle(res);
 }
@@ -147,7 +192,9 @@ export function upload<T = any>(path: string, form: FormData, onProgress?: (p: n
       // unfiltered for a same-origin XHR, so the same two marks are available here.
       const h = { get: (n: string) => xhr.getResponseHeader(n) };
       if (!fromSynwevo(h, body)) return reject(gatewayError(xhr.status, h));
-      reject(new ApiError(xhr.status, body?.error || "upload_failed", body?.message || `上传失败（HTTP ${xhr.status}）`, body?.detail));
+      const err = synwevoError(xhr.status, h, body, `上传失败（HTTP ${xhr.status}）`);
+      if (err.code === "http_error") err.code = "upload_failed";
+      reject(err);
     };
     xhr.send(form);
   });

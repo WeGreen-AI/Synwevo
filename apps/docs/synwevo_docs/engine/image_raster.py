@@ -90,9 +90,8 @@ def fill(original: bytes, slots: list[dict], values: dict[str, dict], meta: dict
 
     for slot in slots:
         texts = _texts(slot, values)
-        if not any(t for t in texts):
-            continue
         if slot.get("layout"):
+            # even an empty detail area would keep the template's sample rows: never deliver that
             issues.append({"level": "error", "slot": slot["id"], "code": "raster_repeat_unsupported",
                            "message": f"字段「{slot.get('name')}」是重复明细区域：无 PyMuPDF 的部署暂不支持图片模板的重复明细，"
                                       f"请改用单值字段，或按 docs/DEPENDENCIES.md 启用 PyMuPDF"})
@@ -102,16 +101,28 @@ def fill(original: bytes, slots: list[dict], values: dict[str, dict], meta: dict
             issues.append({"level": "error", "slot": slot["id"], "code": "empty_rect",
                            "message": f"字段「{slot.get('name')}」的区域太小"})
             continue
-        crop = im.crop(box)
-        bg = background_color_px(crop)
-        ink, ink_h = ink_metrics_px(crop, bg)
-        _clear(im, box)
-
+        text = "\n".join(t for t in texts if t)
+        if slot.get("clear", "text_pixels") == "none" and not text:
+            continue
         colour = slot.get("color")
+        size0 = slot.get("font_size")
+        ink = ink_h = None
+        if text and not (colour and size0):
+            # pixel analysis of the original ink only when the slot does not already say how
+            # to write (image_add_slot always records colour and size)
+            crop = im.crop(box)
+            ink, ink_h = ink_metrics_px(crop, background_color_px(crop))
+        if slot.get("clear", "text_pixels") != "none":
+            # Every field area is cleared, empty value or not: the template's sample content
+            # (a sample name, an ID number) must not survive into a record that has no value
+            # there.  The PyMuPDF path does the same when it builds the working copy.
+            _clear(im, box)
+        if not text:
+            continue
         rgb = _hex_rgb(colour) if colour else (ink or (0.0, 0.0, 0.0))
         size = float(slot.get("font_size") or (ink_h * 0.92 if ink_h else 0) or 12.0)
         res = raster_text.draw_box(
-            im, box, "\n".join(t for t in texts if t), font=font,
+            im, box, text, font=font,
             font_size=size, min_font_size=float(slot.get("min_font_size") or 5),
             align=slot.get("align") or "left", valign=slot.get("valign") or "top",
             color=tuple(v * 255 for v in rgb), rotate=int(slot.get("rotate") or 0))

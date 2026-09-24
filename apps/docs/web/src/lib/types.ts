@@ -109,6 +109,8 @@ export interface Project {
   rev: number;
   sources: SourceFile[];
   template: TemplateDetail | null;
+  /** The template this project pointed at was deleted: template is null, a new one must be chosen. */
+  template_missing?: boolean;
   mappings: { rev: number; mappings: Mapping[]; can_undo: boolean; can_redo: boolean };
   jobs?: any[];
 }

@@ -34,7 +34,7 @@ export default function MfaSection() {
   const errRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
-    get<State>("/api/auth/mfa").then(setSt).catch((e) => setErr(e.message));
+    get<State>("/api/auth/mfa").then((next) => { setSt(next); setErr(null); }).catch((e) => setErr(e.message));
   }, []);
   useEffect(load, [load]);
 
@@ -92,7 +92,7 @@ export default function MfaSection() {
     load();
   });
 
-  if (!st) return <section className="card card-b col gap12 mt12"><h2 className="secttl">两步验证</h2><div className="muted">加载中…</div></section>;
+  if (!st) return <section className="card card-b col gap12 mt12"><h2 className="secttl">两步验证</h2>{err ? <div className="notice err" role="alert">{err} <button className="btn sm" onClick={load}>重试</button></div> : <div role="status">加载中…</div>}</section>;
 
   return (
     <section className="card card-b col gap12 mt12">
@@ -112,9 +112,9 @@ export default function MfaSection() {
           <div>每个只能用一次。手机丢失时，用其中一个即可登录。重新生成会让以上全部失效。</div>
           <ul className="reccodes">{codes.map((c) => <li key={c} className="mono">{c}</li>)}</ul>
           <div className="row">
-            <button className="btn sm" onClick={() => {
-              navigator.clipboard?.writeText(codes.join("\n"));
-              toast("恢复码已复制到剪贴板", "ok");
+            <button className="btn sm" onClick={async () => {
+              try { await navigator.clipboard.writeText(codes.join("\n")); toast("恢复码已复制到剪贴板", "ok"); }
+              catch { toast("复制失败，请手动保存恢复码", "err"); }
             }}>复制全部</button>
             <button className="btn sm ghost" onClick={() => setCodes(null)}>我已保存</button>
           </div>
@@ -125,7 +125,7 @@ export default function MfaSection() {
         <div className="notice info col gap8">
           <b>这是敏感操作，请重新输入口令确认。</b>
           <div className="row gap4">
-            <input className="input grow" type="password" value={password} autoComplete="current-password"
+            <input aria-label="确认两步验证操作的口令" className="input grow" type="password" value={password} autoComplete="current-password"
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); reauth(); } }} />
             <button className="btn primary" onClick={reauth} disabled={busy || !password}>确认</button>
@@ -184,7 +184,7 @@ export default function MfaSection() {
                 <div className="row gap4">
                   {/* A current code is required to turn it off, not just to turn it on. */}
                   <input className="input mono" style={{ width: 120 }} value={code} inputMode="numeric"
-                    maxLength={6} placeholder="当前验证码" autoComplete="one-time-code"
+                    aria-label="关闭两步验证的当前验证码" maxLength={6} placeholder="当前验证码" autoComplete="one-time-code"
                     onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
                   <button className="btn danger" onClick={disable} disabled={busy || code.length !== 6}>确认关闭</button>
                   <button className="btn ghost" onClick={() => { setDisabling(false); setCode(""); }}>取消</button>
@@ -195,9 +195,7 @@ export default function MfaSection() {
         </>
       )}
 
-      <p className="tiny muted">
-        Passkey 尚未上线。{!st.key_external && "本部署的 MFA 密钥与数据库同库存放，运维可参考 docs/security/permissions.md。"}
-      </p>
+
     </section>
   );
 }

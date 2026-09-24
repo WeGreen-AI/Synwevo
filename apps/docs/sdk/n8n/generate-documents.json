@@ -1,0 +1,1450 @@
+{
+  "id": "synwevo-synthetic-http",
+  "name": "Synwevo Docs — synthetic HTTP acceptance",
+  "active": false,
+  "nodes": [
+    {
+      "id": "manual-trigger",
+      "name": "Manual trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "config",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Configure these three paths/values after import. No credentials belong here.\nconst config = { baseUrl: 'http://127.0.0.1:1', kitDir: '/replace-with-synthetic-kit',\n  outDir: '/replace-with-output-directory', runKey: 'synthetic-' + $execution.id, startedAt: Date.now() };\nconst port = config.baseUrl.slice('http://127.0.0.1:'.length);\nif (!config.baseUrl.startsWith('http://127.0.0.1:') || !/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error('Loopback service required');\nreturn [{ json: config }];"
+      }
+    },
+    {
+      "id": "health",
+      "name": "Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.baseUrl + '/healthz' }}",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "require-test-instance",
+      "name": "Require test instance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "if ($json.instance !== 'test') throw new Error('Refusing a non-test instance'); return $input.all();"
+      }
+    },
+    {
+      "id": "whoami",
+      "name": "Whoami",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/whoami' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "require-write-scope",
+      "name": "Require write scope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "if (!$json.scopes.some(s => ['write', 'docweave.write'].includes(s))) throw new Error('Write scope required'); return $input.all();"
+      }
+    },
+    {
+      "id": "create-project",
+      "name": "Create project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/projects' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { name: \"Synthetic n8n acceptance\" } }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Config').first().json.runKey + ':project' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-source",
+      "name": "Read source",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Config').first().json.kitDir + '/customers.xlsx' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "hash-source",
+      "name": "Hash source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst bytes = await this.helpers.getBinaryDataBuffer(0, 'data');\nitem.json.sha256 = require('crypto').createHash('sha256').update(bytes).digest('hex');\nreturn [item];"
+      }
+    },
+    {
+      "id": "upload-source",
+      "name": "Upload source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/projects/' + $('Create project').first().json.id + '/files' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Config').first().json.runKey + ':source' }}"
+            },
+            {
+              "name": "X-Content-SHA256",
+              "value": "={{ $json.sha256 }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "source-status",
+      "name": "Source status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/files/' + $('Upload source').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "check-source",
+      "name": "Check source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "jsCode": "if ($json.status === 'error') throw new Error('Source parsing failed'); if (Date.now() - $('Config').first().json.startedAt > 180000) throw new Error('Source timeout'); return $input.all();"
+      }
+    },
+    {
+      "id": "source-ready",
+      "name": "Source ready",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Source ready",
+              "leftValue": "={{ $json.status !== 'parsing' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "wait-source",
+      "name": "Wait source",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "read-template",
+      "name": "Read template",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Config').first().json.kitDir + '/template.docx' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "hash-template",
+      "name": "Hash template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst bytes = await this.helpers.getBinaryDataBuffer(0, 'data');\nitem.json.sha256 = require('crypto').createHash('sha256').update(bytes).digest('hex');\nreturn [item];"
+      }
+    },
+    {
+      "id": "upload-template",
+      "name": "Upload template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/templates' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Config').first().json.runKey + ':template' }}"
+            },
+            {
+              "name": "X-Content-SHA256",
+              "value": "={{ $json.sha256 }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-fields",
+      "name": "Read fields",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Config').first().json.kitDir + '/fields.json' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "parse-fields",
+      "name": "Parse fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: JSON.parse((await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8')) }];"
+      }
+    },
+    {
+      "id": "create-fields",
+      "name": "Create fields",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4180,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/templates/' + $('Upload template').first().json.id + '/fields' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Config').first().json.runKey + ':fields' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "bind-template",
+      "name": "Bind template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4400,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/projects/' + $('Create project').first().json.id + '/template' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { template_id: $('Upload template').first().json.id } }}"
+      }
+    },
+    {
+      "id": "read-definition",
+      "name": "Read definition",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        4620,
+        0
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Config').first().json.kitDir + '/project.json' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "parse-definition",
+      "name": "Parse definition",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: JSON.parse((await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8')) }];"
+      }
+    },
+    {
+      "id": "save-definition",
+      "name": "Save definition",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5060,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/projects/' + $('Create project').first().json.id + '/definition' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}"
+      }
+    },
+    {
+      "id": "preflight",
+      "name": "Preflight",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5280,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/projects/' + $('Create project').first().json.id + '/preflight' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { formats: [\"docx\"] } }}"
+      }
+    },
+    {
+      "id": "check-preflight",
+      "name": "Check preflight",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5500,
+        0
+      ],
+      "parameters": {
+        "jsCode": "if ($json.invalid || $json.expected_outputs !== 12) throw new Error('Synthetic preflight failed'); return $input.all();"
+      }
+    },
+    {
+      "id": "preview-render",
+      "name": "Preview render",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5720,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/projects/' + $('Create project').first().json.id + '/preflight' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { formats: [\"docx\"], simulate: true } }}"
+      }
+    },
+    {
+      "id": "check-preview",
+      "name": "Check preview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5940,
+        0
+      ],
+      "parameters": {
+        "jsCode": "if ($json.simulation.failed || $json.simulation.checked !== 12) throw new Error('Synthetic preview failed'); return $input.all();"
+      }
+    },
+    {
+      "id": "download-preview",
+      "name": "Download preview",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6160,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/projects/' + $('Create project').first().json.id + '/preview' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data",
+              "fullResponse": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { index: 0, signature: $('Preflight').first().json.signature } }}"
+      }
+    },
+    {
+      "id": "verify-preview",
+      "name": "Verify preview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6380,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const item = $input.first(); const h = item.json.headers;\nconst digest = require('crypto').createHash('sha256').update(await this.helpers.getBinaryDataBuffer(0, 'data')).digest('hex');\nif (digest !== h['x-content-sha256'] || !h['x-project-signature'] || !h['x-template-version'] || !h['x-record-key']) throw new Error('Invalid preview checksum/metadata');\nitem.json = { path: $('Config').first().json.outDir + '/preview.docx', sha256: digest,\n  header_sha256: h['x-content-sha256'], project_signature: h['x-project-signature'],\n  template_version: h['x-template-version'], record_key: h['x-record-key'] };\nreturn [item];"
+      }
+    },
+    {
+      "id": "write-preview",
+      "name": "Write preview",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        6600,
+        0
+      ],
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.path }}",
+        "dataPropertyName": "data",
+        "options": {}
+      }
+    },
+    {
+      "id": "submit-job",
+      "name": "Submit job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6820,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/projects/' + $('Create project').first().json.id + '/jobs' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { formats: [\"docx\"], error_policy: \"block\" } }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Config').first().json.runKey + ':job' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "poll-job",
+      "name": "Poll job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7040,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/jobs/' + $('Submit job').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "check-job",
+      "name": "Check job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7260,
+        0
+      ],
+      "parameters": {
+        "jsCode": "if (['failed', 'cancelled', 'completed_with_errors'].includes($json.status)) throw new Error('Job ended with errors'); if (Date.now() - $('Config').first().json.startedAt > 180000) throw new Error('Job timeout'); return $input.all();"
+      }
+    },
+    {
+      "id": "job-complete",
+      "name": "Job complete",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7480,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Job complete",
+              "leftValue": "={{ $json.status === 'completed' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "wait-job",
+      "name": "Wait job",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        7700,
+        0
+      ],
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "manifest",
+      "name": "Manifest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7920,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/jobs/' + $('Submit job').first().json.id + '/artifacts?limit=3' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.body.next_cursor }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.next_cursor }}",
+              "limitPagesFetched": true,
+              "maxRequests": 100,
+              "requestInterval": 50
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "artifact-items",
+      "name": "Artifact items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8140,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const pages = $input.all();\nif (pages.at(-1).json.next_cursor) throw new Error('Manifest page limit exceeded');\nconst artifacts = pages.flatMap(i => i.json.items);\nif (artifacts.length !== 12 || new Set(artifacts.map(a => a.id)).size !== 12) throw new Error('Incomplete synthetic manifest');\nreturn artifacts.map(a => ({ json: a }));"
+      }
+    },
+    {
+      "id": "download-artifacts",
+      "name": "Download artifacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        8360,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.baseUrl + '/api/v1/artifacts/' + $json.id + '/content' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data",
+              "fullResponse": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "verify-checksums",
+      "name": "Verify checksums",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8580,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all(); const artifacts = $('Artifact items').all();\nfor (let i = 0; i < items.length; i++) {\n  const bytes = await this.helpers.getBinaryDataBuffer(i, 'data');\n  const digest = require('crypto').createHash('sha256').update(bytes).digest('hex');\n  const a = artifacts[i].json; const header = items[i].json.headers['x-content-sha256'];\n  if (digest !== a.sha256 || digest !== header) throw new Error('Checksum mismatch');\n  if (/[\\/\\\\]/.test(a.filename) || a.filename === '..') throw new Error('Unsafe artifact filename');\n  items[i].json = { ...a, manifest_sha256: a.sha256, header_sha256: header,\n    path: $('Config').first().json.outDir + '/' + a.filename };\n}\nreturn items;"
+      }
+    },
+    {
+      "id": "write-artifacts",
+      "name": "Write artifacts",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        8800,
+        0
+      ],
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.path }}",
+        "dataPropertyName": "data",
+        "options": {}
+      }
+    },
+    {
+      "id": "summary",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9020,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { project_id: $('Create project').first().json.id, template_id: $('Upload template').first().json.id, job: $('Check job').first().json,\n  preflight: $('Preflight').first().json, preview: { ...$('Preview render').first().json, download: $('Verify preview').first().json },\n  artifacts: $('Verify checksums').all().map(i => i.json) } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Manual trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health": {
+      "main": [
+        [
+          {
+            "node": "Require test instance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Require test instance": {
+      "main": [
+        [
+          {
+            "node": "Whoami",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whoami": {
+      "main": [
+        [
+          {
+            "node": "Require write scope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Require write scope": {
+      "main": [
+        [
+          {
+            "node": "Create project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create project": {
+      "main": [
+        [
+          {
+            "node": "Read source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read source": {
+      "main": [
+        [
+          {
+            "node": "Hash source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash source": {
+      "main": [
+        [
+          {
+            "node": "Upload source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload source": {
+      "main": [
+        [
+          {
+            "node": "Source status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Source status": {
+      "main": [
+        [
+          {
+            "node": "Check source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check source": {
+      "main": [
+        [
+          {
+            "node": "Source ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Source ready": {
+      "main": [
+        [
+          {
+            "node": "Read template",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read template": {
+      "main": [
+        [
+          {
+            "node": "Hash template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash template": {
+      "main": [
+        [
+          {
+            "node": "Upload template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload template": {
+      "main": [
+        [
+          {
+            "node": "Read fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read fields": {
+      "main": [
+        [
+          {
+            "node": "Parse fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse fields": {
+      "main": [
+        [
+          {
+            "node": "Create fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create fields": {
+      "main": [
+        [
+          {
+            "node": "Bind template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bind template": {
+      "main": [
+        [
+          {
+            "node": "Read definition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read definition": {
+      "main": [
+        [
+          {
+            "node": "Parse definition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse definition": {
+      "main": [
+        [
+          {
+            "node": "Save definition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save definition": {
+      "main": [
+        [
+          {
+            "node": "Preflight",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preflight": {
+      "main": [
+        [
+          {
+            "node": "Check preflight",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check preflight": {
+      "main": [
+        [
+          {
+            "node": "Preview render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview render": {
+      "main": [
+        [
+          {
+            "node": "Check preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check preview": {
+      "main": [
+        [
+          {
+            "node": "Download preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download preview": {
+      "main": [
+        [
+          {
+            "node": "Verify preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify preview": {
+      "main": [
+        [
+          {
+            "node": "Write preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write preview": {
+      "main": [
+        [
+          {
+            "node": "Submit job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit job": {
+      "main": [
+        [
+          {
+            "node": "Poll job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll job": {
+      "main": [
+        [
+          {
+            "node": "Check job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check job": {
+      "main": [
+        [
+          {
+            "node": "Job complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job complete": {
+      "main": [
+        [
+          {
+            "node": "Manifest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manifest": {
+      "main": [
+        [
+          {
+            "node": "Artifact items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Artifact items": {
+      "main": [
+        [
+          {
+            "node": "Download artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download artifacts": {
+      "main": [
+        [
+          {
+            "node": "Verify checksums",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify checksums": {
+      "main": [
+        [
+          {
+            "node": "Write artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write artifacts": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait source": {
+      "main": [
+        [
+          {
+            "node": "Source status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait job": {
+      "main": [
+        [
+          {
+            "node": "Poll job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 240
+  }
+}

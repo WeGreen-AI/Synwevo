@@ -4,14 +4,44 @@
 what makes running them together mean the same thing as running each on its own: the packages
 are installed (editable) rather than reached by inserting directories into `sys.path`, so a test
 that accidentally imports across a module boundary fails here exactly as it would in production.
+
+It also makes the suites **hermetic**: the developer's shell does not leak into them. A shell with
+`SYNWEVO_UI_AUTH=session` exported made every workbench test answer 401; a set
+`SYNWEVO_DOCS_IMPORT_ROOTS` flipped an expected 400; `SYNWEVO_DATA_DIR` or `SYNWEVO_SECRET` point
+at real things. Several of these are read once, when a module is imported — which happens while
+tests are being *collected*, before any fixture could run — so they are removed here, when this
+file is imported, which is before any test module is. Tests that need one set it themselves with
+`monkeypatch.setenv`. Only settings that locate local tools are kept, because a test cannot
+supply "where LibreOffice is installed on this machine".
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
-from synwevo_core.http import repo_root
+# Suffixes after SYNWEVO_DOCS_ / SYNWEVO_ / DOCWEAVE_ that may pass through: tool locations only.
+TOOL_SETTINGS = frozenset({"SOFFICE", "TESSERACT", "TESSDATA", "CJK_FONTS", "CJK_FONT_FILE",
+                           "LO_PROFILE"})
+
+
+def _scrub_ambient_configuration() -> list[str]:
+    removed = []
+    for key in list(os.environ):
+        for prefix in ("SYNWEVO_DOCS_", "SYNWEVO_", "DOCWEAVE_"):
+            if key.startswith(prefix):
+                if key[len(prefix):] not in TOOL_SETTINGS:
+                    removed.append(key)
+                    del os.environ[key]
+                break
+    return removed
+
+
+# Before importing anything from the repository: synwevo_core reads some settings at import time.
+SCRUBBED = _scrub_ambient_configuration()
+
+from synwevo_core.http import repo_root  # noqa: E402
 
 ROOT = repo_root() or Path(__file__).resolve().parent
 

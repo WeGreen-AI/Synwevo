@@ -81,13 +81,18 @@ def docs(suffix: str, default: str | None = None) -> str | None:
     也接受不带 `DOCS_` 的 `SYNWEVO_<后缀>`，因为有几项（数据目录、监听地址）在文档应用的进程里
     读，语义上却是平台级的；让它们两种写法都成立，比让人记住哪一项属于哪一层更不容易出错。
     """
-    plain = os.environ.get(PLATFORM_PREFIX + suffix)
-    scoped = _read(DOCS_PREFIX + suffix, suffix, None)
-    if scoped is not None:
-        return scoped
-    if plain is not None:
-        return plain
-    return default
+    # Precedence is SYNWEVO_DOCS_ > SYNWEVO_ > DOCWEAVE_, and the legacy name is compared with
+    # whichever new name won. It used to be compared with SYNWEVO_DOCS_ only, so with
+    # SYNWEVO_IMPORT_ROOTS=/srv/allowed and a leftover DOCWEAVE_IMPORT_ROOTS=/ the legacy value
+    # came back — silently widening the import allow-list, on exactly the kind of key this
+    # module exists to refuse to guess about.
+    scoped_name = DOCS_PREFIX + suffix
+    if os.environ.get(scoped_name) is not None:
+        return _read(scoped_name, suffix, default)
+    plain_name = PLATFORM_PREFIX + suffix
+    if os.environ.get(plain_name) is not None:
+        return _read(plain_name, suffix, default)
+    return _read(scoped_name, suffix, default)
 
 
 def flag(suffix: str, default: bool = False, *, scope: str = "platform") -> bool:

@@ -245,13 +245,17 @@ def test_a_token_signed_by_someone_else_is_rejected(env):
     other = JsonWebKey.generate_key("RSA", 2048, is_private=True)
     d = other.as_dict(is_private=True)
     d["kid"] = env["c"].get("/oidc/jwks.json").json()["keys"][0]["kid"]     # same kid, wrong key
+    # Live iat/exp: with `"iat": 1, "exp": 2` (as this used to be) the freshness check alone made
+    # the test pass, so it proved nothing about the signature.
+    import time as _time
     forged = _jwt.encode({"alg": "RS256", "kid": d["kid"]}, {
         "iss": "http://accounts.localhost:8770", "sub": env["user"]["id"], "aud": "docweave-web",
-        "iat": 1, "exp": 2, "jti": "x", "sid": "cs_whatever",
+        "iat": int(_time.time()), "exp": int(_time.time()) + 120, "jti": "x", "sid": "cs_whatever",
         "events": {"http://schemas.openid.net/event/backchannel-logout": {}}}, d).decode()
-    with pytest.raises(Exception):
+    with pytest.raises(ServiceError) as e:
         oidc.verify_logout_token(forged, jwks=env["c"].get("/oidc/jwks.json").json(),
                                  client_id="docweave-web")
+    assert e.value.code == "bad_logout_token" and "无法验证" in e.value.message
 
 
 def test_delivery_refuses_a_non_local_plain_http_target(env):

@@ -1,0 +1,37 @@
+/* Docs-only layout: document paper and editing controls do not belong to the account shell. */
+.doc-tbl .rowhandle { display: flex; opacity: 0; }
+.doc-tbl tr:hover .rowhandle, .doc-tbl tr:focus-within .rowhandle,
+.doc-tbl .rowhandle:focus-visible { opacity: 1; }
+.slide { background: var(--paper); color: var(--paper-text); }
+.sheettabs { overflow-x: auto; flex-shrink: 0; }
+
+@media (max-width: 900px) {
+  .app { overflow: auto; }
+  .topbar { height: auto; min-height: 48px; flex-wrap: wrap; padding: 8px; gap: 6px; }
+  .topbar > .input { max-width: 100%; }
+  .work { flex: none; }
+  .work > .pane { flex: none !important; height: 70vh; min-height: 360px; }
+  .work > .side, .work > .side.right { display: flex; width: 100% !important; height: 280px; border: 0; border-bottom: 1px solid var(--line); }
+  .work > .side.collapsed { height: 44px; }
+  .side-resizer { display: none; }
+  .pane-h { height: auto; min-height: 38px; flex-wrap: wrap; padding: 6px 8px; }
+  .stepbar { display: flex; }
+  .selbar { flex-wrap: wrap; }
+  .editor-shell { overflow: auto; }
+  .editor-shell > .toolbar { flex: none; }
+  .editor-shell > .editor-body { flex: none; min-height: 70vh; }
+  .editor-shell > div:has(> .grid-scroll) { flex: none !important; height: 65vh; min-height: 320px; }
+}
+
+@media (max-width: 620px) {
+  .modal .grid2, .modal .grid3, .modal .grid4 { grid-template-columns: minmax(0, 1fr) !important; }
+  .modal-back { padding: 12px 8px; }
+  .modal { max-height: calc(100dvh - 24px); }
+  .modal-b { padding: 12px; }
+  .modal-f { flex-wrap: wrap; padding: 10px 12px; }
+  .modal-f .notice { flex-basis: 100%; }
+  .modal .stats { flex-wrap: wrap; }
+  .modal .statbox { min-width: 0; flex: 1 1 90px; }
+  .modal .field, .modal .input, .modal .col { min-width: 0; }
+  .modal .row { flex-wrap: wrap; }
+}

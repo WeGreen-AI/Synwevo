@@ -1,0 +1,762 @@
+{
+  "id": "synwevo-synthetic-receiver",
+  "name": "Synwevo Docs — signed local receiver",
+  "active": false,
+  "nodes": [
+    {
+      "id": "signed-event",
+      "name": "Signed event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "synwevo-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "webhookId": "synwevo-synthetic-events"
+    },
+    {
+      "id": "receiver-config",
+      "name": "Receiver config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const config = { baseUrl: 'http://127.0.0.1:1', verifierUrl: 'http://127.0.0.1:2',\n  outDir: '/replace-with-receiver-output', tenant: 'replace-with-workspace' };\nfor (const url of [config.baseUrl, config.verifierUrl]) {\n  const port = url.slice('http://127.0.0.1:'.length);\n  if (!url.startsWith('http://127.0.0.1:') || !/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error('Loopback required');\n}\nreturn [{ json: config, binary: $input.first().binary }];"
+      }
+    },
+    {
+      "id": "verify-raw-body",
+      "name": "Verify raw body",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Receiver config').first().json.verifierUrl + '/verify' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "webhook-id",
+              "value": "={{ $('Signed event').first().json.headers['webhook-id'] || '' }}"
+            },
+            {
+              "name": "webhook-timestamp",
+              "value": "={{ $('Signed event').first().json.headers['webhook-timestamp'] || '' }}"
+            },
+            {
+              "name": "webhook-signature",
+              "value": "={{ $('Signed event').first().json.headers['webhook-signature'] || '' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "verification-result",
+      "name": "Verification result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const value = $json;\nif (!['fetch', 'duplicate', 'pending'].includes(value.action)) return [{ json: { responseCode: 401 } }];\nreturn $input.all();"
+      }
+    },
+    {
+      "id": "needs-fetch",
+      "name": "Needs fetch",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fetch",
+              "leftValue": "={{ $json.action === \"fetch\" }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "receiver-whoami",
+      "name": "Receiver whoami",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Receiver config').first().json.baseUrl + '/api/v1/whoami' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "check-authority",
+      "name": "Check authority",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "if ($json.tenant !== $('Receiver config').first().json.tenant || !$json.scopes.includes('docweave.read')) throw new Error('Receiver credential workspace/scope mismatch'); return $input.all();"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "fetch-completed-job",
+      "name": "Fetch completed job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Receiver config').first().json.baseUrl + '/api/v1/jobs/' + $('Verify raw body').first().json.jobId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "require-completed-job",
+      "name": "Require completed job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "jsCode": "if ($json.status !== 'completed') throw new Error('Job is not complete'); return $input.all();"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "receiver-manifest",
+      "name": "Receiver manifest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Receiver config').first().json.baseUrl + '/api/v1/jobs/' + $('Verify raw body').first().json.jobId + '/artifacts?limit=3' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.body.next_cursor }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.next_cursor }}",
+              "limitPagesFetched": true,
+              "maxRequests": 100,
+              "requestInterval": 10
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "receiver-artifact-items",
+      "name": "Receiver artifact items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const pages = $input.all();\nif (pages.at(-1).json.next_cursor) throw new Error('Manifest page limit exceeded');\nconst artifacts = pages.flatMap(i => i.json.items);\nif (!artifacts.length || new Set(artifacts.map(a => a.id)).size !== artifacts.length) throw new Error('Incomplete manifest');\nreturn artifacts.map(a => ({ json: a }));"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "receiver-download",
+      "name": "Receiver download",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Receiver config').first().json.baseUrl + '/api/v1/artifacts/' + encodeURIComponent($json.id) + '/content' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data",
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "receiver-checksums",
+      "name": "Receiver checksums",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all(); const artifacts = $('Receiver artifact items').all();\nfor (let i = 0; i < items.length; i++) {\n  const a = artifacts[i].json;\n  const sha = require('crypto').createHash('sha256').update(await this.helpers.getBinaryDataBuffer(i, 'data')).digest('hex');\n  const header = items[i].json.headers['x-content-sha256'];\n  if (sha !== a.sha256 || sha !== header) throw new Error('Checksum mismatch');\n  if (!a.filename || /[\\/\\\\]/.test(a.filename) || a.filename === '..') throw new Error('Unsafe filename');\n  items[i].json = { ...a, sha256: sha, manifest_sha256: a.sha256, header_sha256: header,\n    path: $('Receiver config').first().json.outDir + '/' + $('Verify raw body').first().json.id + '-' + a.filename };\n}\nreturn items;"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "write-receiver-artifacts",
+      "name": "Write receiver artifacts",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.path }}",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "receiver-summary",
+      "name": "Receiver summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const result = { id: $('Verify raw body').first().json.id, job_id: $('Verify raw body').first().json.jobId,\n  artifacts: $('Receiver checksums').all().map(i => i.json) };\nreturn [{ json: { path: $('Receiver config').first().json.outDir + '/' + result.id + '.json' },\n  binary: { data: await this.helpers.prepareBinaryData(Buffer.from(JSON.stringify(result)), 'result.json', 'application/json') } }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "write-receiver-summary",
+      "name": "Write receiver summary",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        3300,
+        0
+      ],
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.path }}",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "complete-receipt",
+      "name": "Complete receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Receiver config').first().json.verifierUrl + '/complete' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { id: $('Verify raw body').first().json.id, lease: $('Verify raw body').first().json.lease } }}"
+      }
+    },
+    {
+      "id": "acknowledge-event",
+      "name": "Acknowledge event",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": "={{ $json.responseCode || 503 }}"
+        }
+      }
+    },
+    {
+      "id": "release-failed-receipt",
+      "name": "Release failed receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Receiver config').first().json.verifierUrl + '/release' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { id: $('Verify raw body').first().json.id, lease: $('Verify raw body').first().json.lease } }}"
+      }
+    },
+    {
+      "id": "retry-later",
+      "name": "Retry later",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        4180,
+        0
+      ],
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 503
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Signed event": {
+      "main": [
+        [
+          {
+            "node": "Receiver config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receiver config": {
+      "main": [
+        [
+          {
+            "node": "Verify raw body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify raw body": {
+      "main": [
+        [
+          {
+            "node": "Verification result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verification result": {
+      "main": [
+        [
+          {
+            "node": "Needs fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs fetch": {
+      "main": [
+        [
+          {
+            "node": "Receiver whoami",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Acknowledge event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receiver whoami": {
+      "main": [
+        [
+          {
+            "node": "Check authority",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check authority": {
+      "main": [
+        [
+          {
+            "node": "Fetch completed job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch completed job": {
+      "main": [
+        [
+          {
+            "node": "Require completed job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Require completed job": {
+      "main": [
+        [
+          {
+            "node": "Receiver manifest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receiver manifest": {
+      "main": [
+        [
+          {
+            "node": "Receiver artifact items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receiver artifact items": {
+      "main": [
+        [
+          {
+            "node": "Receiver download",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receiver download": {
+      "main": [
+        [
+          {
+            "node": "Receiver checksums",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receiver checksums": {
+      "main": [
+        [
+          {
+            "node": "Write receiver artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write receiver artifacts": {
+      "main": [
+        [
+          {
+            "node": "Receiver summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receiver summary": {
+      "main": [
+        [
+          {
+            "node": "Write receiver summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write receiver summary": {
+      "main": [
+        [
+          {
+            "node": "Complete receipt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release failed receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete receipt": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release failed receipt": {
+      "main": [
+        [
+          {
+            "node": "Retry later",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 50
+  }
+}

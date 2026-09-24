@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { get, post, qs } from "@synwevo/auth-client";
 import { useLatest } from "../lib/latest";
 import type { Project, RecordRule, SourceFile } from "../lib/types";
 import { Modal } from "@synwevo/ui";
+import { errorText } from "../lib/perm";
 
 const MODES = [
   { key: "per_row", title: "每行一份", body: "表格中每条有效数据行 = 一份输出", ex: "例：客户表 100 行 → 生成 100 份合同" },
@@ -24,8 +25,13 @@ interface Props {
 export default function RuleDialog({ project, sources, initial, selectedText, onSave, onClose }: Props) {
   const rule0: RecordRule = { ...(project.record_rule || {}), ...(initial || {}) } as RecordRule;
   const [mode, setMode] = useState<RecordRule["mode"]>(rule0.mode || "per_row");
-  const rep = sources.find((s) => s.representative && s.status === "ready") || sources.find((s) => s.status === "ready");
   const tabular = sources.filter((s) => s.family === "table" || (s.family === "text" && s.structure?.text?.tables));
+  // Sheets and header names come from a tabular file: the representative when it is one,
+  // otherwise the first ready table. A PDF/DOCX representative next to XLSX sources used to
+  // leave per_row / per_group without any sheet or column to choose.
+  const isTab = (s: SourceFile) => tabular.includes(s) && s.status === "ready";
+  const rep = sources.find((s) => s.representative && isTab(s)) || sources.find(isTab)
+    || sources.find((s) => s.representative && s.status === "ready") || sources.find((s) => s.status === "ready");
   const sheets: any[] = rep?.structure?.sheets || [];
   const [sheet, setSheet] = useState<string>(rule0.table?.sheet || sheets[0]?.name || "");
   const [headerRow, setHeaderRow] = useState<number>((rule0.table?.header_row ?? 0) + 1);
@@ -47,19 +53,22 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
   const [preview, setPreview] = useState<any>(null);
   const [perr, setPerr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const timer = useRef<any>(null);
   const latest = useLatest();
+  const [checkedKey, setCheckedKey] = useState("");
 
   // header names of the chosen header row (from the representative file)
   useEffect(() => {
+    setHeaders([]);
     if (!rep || rep.family !== "table" && !(rep.family === "text")) return;
     if (noHeader) {
       setHeaders([]);
       return;
     }
-    get(`/api/sources/${rep.id}/view${qs({ sheet, offset: Math.max(0, headerRow - 1), limit: 1 })}`)
-      .then((v) => setHeaders((v.grid?.rows?.[0] || []).map((c: any) => c.v).filter((x: string) => x !== undefined)))
-      .catch(() => setHeaders([]));
+    const ctl = new AbortController();
+    get(`/api/sources/${rep.id}/view${qs({ sheet, offset: Math.max(0, headerRow - 1), limit: 1 })}`, ctl.signal)
+      .then((v) => !ctl.signal.aborted && setHeaders((v.grid?.rows?.[0] || []).map((c: any) => c.v).filter((x: string) => x !== undefined)))
+      .catch(() => { if (!ctl.signal.aborted) setHeaders([]); });
+    return () => ctl.abort();
   }, [rep?.id, sheet, headerRow, noHeader]);
 
   const rule: RecordRule = useMemo(() => {
@@ -76,9 +85,14 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
     return r;
   }, [mode, sheet, headerRow, noHeader, dataStart, dataEnd, skipBlank, filters, idCol, groupKeys, sortCol, sortDir, sortNum, scope, anchor, match, endAnchor]);
 
+  const ruleKey = JSON.stringify(rule);
+  const ready = checkedKey === ruleKey;
   useEffect(() => {
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
+    let cancel = () => {};
+    setPreview(null);
+    setCheckedKey("");
+    setPerr(null);
+    const timer = setTimeout(() => {
       if (mode === "per_block" && !anchor.trim()) {
         setPreview(null);
         setPerr("请填写每个表单块开头的标记文字");
@@ -89,22 +103,23 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
         setPerr("请选择分组字段");
         return;
       }
-      latest(
+      cancel = latest(
         (signal) => post(`/api/projects/${project.id}/rule-preview`, rule, signal),
-        (x) => { setPreview(x); setPerr(null); },
-        (e) => { setPreview(null); setPerr(e.message); },
+        (x) => { setPreview(x); setCheckedKey(ruleKey); setPerr(null); },
+        (e) => { setPreview(null); setCheckedKey(""); setPerr(errorText(e)); },
       );
     }, 250);
-    return () => clearTimeout(timer.current);
-  }, [JSON.stringify(rule)]);
+    return () => { clearTimeout(timer); cancel(); };
+  }, [project.id, ruleKey, latest]);
 
   const save = async () => {
+    if (!ready || busy || perr) return;
     setBusy(true);
     try {
       await onSave(rule);
       onClose();
     } catch (e: any) {
-      setPerr(e.message);
+      setPerr(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -118,8 +133,10 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
         {preview && <span className="small">将识别 <b>{preview.total}</b> 条样本 → 默认生成 <b>{preview.total}</b> 份文档</span>}
         <span className="spacer" />
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={busy || noTable || !!perr} onClick={save}>确认样本规则</button>
+        <button className="btn primary" disabled={busy || !ready || noTable || !!perr} onClick={save}>确认样本规则</button>
       </>}>
+      {perr && <div className="notice err" role="alert">{perr}</div>}
+      {!ready && !perr && <div className="notice info" role="status">正在识别当前规则下的样本…</div>}
       <div className="grid4">
         {MODES.map((m) => (
           <label key={m.key} className={`opt${mode === m.key ? " on" : ""}`} style={{ flexDirection: "column", gap: 4 }}>
@@ -172,7 +189,6 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
           </div>
           <div className="col">
             <h3>识别结果预览</h3>
-            {perr && <div className="notice err">{perr}</div>}
             {preview && (
               <>
                 <div className="grid3">
@@ -195,7 +211,7 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
       {(mode === "per_row" || mode === "per_group") && !noTable && (
         <div className="grid2 mt12" style={{ gridTemplateColumns: "1fr 1fr" }}>
           <div className="col">
-            <h3>数据范围 <span className="small muted">（以代表文件「{rep?.filename}」为准）</span></h3>
+            <h3>数据范围 <span className="small muted">（以{rep?.representative ? "代表文件" : "表格文件"}「{rep?.filename}」为准）</span></h3>
             <div className="grid2">
               <label className="field">工作表
                 <select className="input" value={sheet} onChange={(e) => setSheet(e.target.value)}>
@@ -271,7 +287,6 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
           </div>
           <div className="col">
             <h3>识别结果预览</h3>
-            {perr && <div className="notice err">{perr}</div>}
             {preview && (
               <>
                 <div className="grid3">

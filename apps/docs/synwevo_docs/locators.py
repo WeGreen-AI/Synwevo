@@ -22,7 +22,10 @@ def _looks_label(text: str) -> bool:
 def build_locator(app: App, sid: str, sel: dict, project: dict | None, block: int | None = None) -> dict:
     """Return {'proposals': [ {label, locator, varies, sample} ], 'warnings': [...]}"""
     r = app.get_source(sid, raw=True)
+    if project is not None and project.get("id") != r["project_id"]:
+        not_found("来源文件")
     src = app.doc_for(r, block)
+    _validate_selection(src, sel)
     rule = (project or {}).get("record_rule") or {}
     mode = rule.get("mode")
     kind = sel.get("kind")
@@ -198,6 +201,91 @@ def build_locator(app: App, sid: str, sel: dict, project: dict | None, block: in
                                  "sample": cell_text(_cell(_table(el), int(sel["row"]), int(sel["col"])))})
         return out
     raise ServiceError(400, "bad_selection", f"不支持的选择类型：{kind}")
+
+
+def _validate_selection(src: SourceDoc, sel: dict) -> None:
+    """Reject stale or out-of-bounds selections instead of returning clipped/empty values.
+
+    The browser and machine callers use the same source geometry. This validates it
+    against the actual parsed document, beyond request-level type and size limits.
+    """
+    def require(condition):
+        if not condition:
+            raise ServiceError(400, "bad_selection", "选区与来源内容不符；请重新读取来源结构并选择", {"field": "selection"})
+
+    def index(key):
+        value = sel.get(key)
+        require(type(value) is int and value >= 0)
+        return value
+
+    def span(text):
+        require(index("start") < index("end") <= len(text))
+
+    def rectangle(rows, cols):
+        r1, r2, c1, c2 = (index(k) for k in ("r1", "r2", "c1", "c2"))
+        require(r1 <= r2 < rows and c1 <= c2 < cols)
+        require((r2 - r1 + 1) * (c2 - c1 + 1) <= 100000)
+
+    require(isinstance(sel, dict))
+    kind = sel.get("kind")
+    try:
+        if kind == "cells":
+            require(src.workbook_json is not None)
+            sh = resolve_sheet(src, {"sheet": sel.get("sheet")})
+            rectangle(sh.n_rows, sh.n_cols)
+        elif kind in ("docx_text", "docx_cell", "docx_table"):
+            from .engine import docx_core as dc
+            require(src.family == "document")
+            part = sel.get("part") or src.pkg.main_part()
+            require(part in {p["part"] for p in dc.list_parts(src.pkg)})
+            container = dc.part_container(src.pkg, part)
+            path = sel.get("path") if kind == "docx_text" else sel.get("table_path")
+            require(isinstance(path, str) and re.fullmatch(r"[0-9]+(?::[0-9]+:[0-9]+:[0-9]+)*", path))
+            element = dc.get_block(container, path)
+            if kind == "docx_text":
+                require(element.tag == dc.w("p"))
+                span(dc.para_text(element))
+            else:
+                require(element.tag == dc.w("tbl"))
+                rows = list(dc.iter_rows(element))
+                if kind == "docx_cell":
+                    dc.get_table_cell(container, path, index("row"), index("col"))
+                else:
+                    require(type(sel.get("header_rows", 1)) is int and 0 <= sel.get("header_rows", 1) <= len(rows))
+                    if any(k in sel for k in ("r1", "r2", "c1", "c2")):
+                        rectangle(len(rows), max((len(list(dc.iter_cells(row))) for row in rows), default=0))
+                        require(all(sel["c2"] < len(list(dc.iter_cells(row))) for row in rows[sel["r1"]:sel["r2"] + 1]))
+        elif kind == "pdf_region":
+            import math
+            from .engine import pdf_engine as pe
+            require(src.family in ("pdf", "image"))
+            require(index("page") < (pe.page_count(src.data) if src.family == "pdf" else 1))
+            rect = sel.get("nrect")
+            require(isinstance(rect, list) and len(rect) == 4)
+            require(all(type(v) in (float, int) and math.isfinite(v) and 0 <= v <= 1 for v in rect))
+            require(rect[0] < rect[2] and rect[1] < rect[3])
+        elif kind == "text_span":
+            require(src.family == "text")
+            lines = src.text.split("\n")
+            require(index("line") < len(lines))
+            span(lines[sel["line"]])
+        elif kind in ("pptx_text", "pptx_cell"):
+            from .engine import pptx_engine as ppt
+            require(src.family == "slides")
+            _, element = ppt._find_shape(src.pkg, index("slide"), sel.get("shape"))
+            if kind == "pptx_text":
+                paras = ppt._paras(ppt._txbody(element))
+                para = sel.get("para", 0)
+                require(type(para) is int and 0 <= para < len(paras))
+                span(ppt.para_text(paras[para]))
+            else:
+                table = ppt._table(element)
+                require(table is not None)
+                ppt._cell(table, index("row"), index("col"))
+        else:
+            require(False)
+    except (ValueError, IndexError, KeyError) as exc:
+        raise ServiceError(400, "bad_selection", "来源中找不到该选区；请重新读取来源结构并选择", {"field": "selection"}) from exc
 
 
 # ------------------------------------------------------------------ locate for highlighting

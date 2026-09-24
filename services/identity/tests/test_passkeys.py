@@ -256,6 +256,53 @@ def test_a_forged_signature_is_refused(env):
     assert post(fresh, "/api/auth/login/passkey", {"credential": cred}).status_code == 401
 
 
+@pytest.mark.parametrize("returned_count", [0, 2, 5])
+def test_a_signed_nonincreasing_counter_is_refused_without_creating_a_session(env, returned_count):
+    auth, made = enrol(env)
+    accepted = TestClient(env["api"])
+    opts = post(accepted, "/api/auth/passkeys/authenticate/begin").json()
+    auth.sign_count = 4
+    assert post(accepted, "/api/auth/login/passkey",
+                {"credential": auth.authenticate(opts["challenge"])}).status_code == 200
+    saved = env["store"].one("SELECT sign_count,last_used_at FROM passkeys WHERE id=?", (made["id"],))
+    assert saved["sign_count"] == 5
+    session_count = env["store"].one("SELECT COUNT(*) AS n FROM sessions")["n"]
+
+    fresh = TestClient(env["api"])
+    opts = post(fresh, "/api/auth/passkeys/authenticate/begin").json()
+    # Sign a fresh challenge with the registered private key, correct origin and RP ID.
+    # Only the counter is nonincreasing; no verification function is replaced.
+    auth.sign_count = returned_count - 1
+    response = post(fresh, "/api/auth/login/passkey",
+                    {"credential": auth.authenticate(opts["challenge"])})
+    assert response.status_code == 401 and response.json()["error"] == "bad_assertion"
+    assert fresh.get("/api/auth/me").status_code == 401
+    assert env["store"].one("SELECT COUNT(*) AS n FROM sessions")["n"] == session_count
+    assert env["store"].one("SELECT sign_count,last_used_at FROM passkeys WHERE id=?", (made["id"],)) == saved
+    assert env["store"].one("SELECT used_at FROM webauthn_challenges WHERE challenge=?",
+                            (opts["challenge"].rstrip("="),))["used_at"] is not None
+
+    # The same key still works with a new challenge and a strictly increasing counter.
+    opts = post(fresh, "/api/auth/passkeys/authenticate/begin").json()
+    auth.sign_count = 5
+    assert post(fresh, "/api/auth/login/passkey",
+                {"credential": auth.authenticate(opts["challenge"])}).status_code == 200
+    assert env["store"].one("SELECT sign_count FROM passkeys WHERE id=?", (made["id"],))["sign_count"] == 6
+
+
+def test_a_signed_zero_counter_is_accepted_when_the_stored_counter_is_also_zero(env):
+    auth, made = enrol(env)
+    for _ in range(2):
+        fresh = TestClient(env["api"])
+        opts = post(fresh, "/api/auth/passkeys/authenticate/begin").json()
+        auth.sign_count = -1  # authenticate increments before signing: model a zero-only device.
+        response = post(fresh, "/api/auth/login/passkey",
+                        {"credential": auth.authenticate(opts["challenge"])})
+        assert response.status_code == 200, response.text
+        assert response.json()["session"]["amr"] == "passkey_uv"
+        assert env["store"].one("SELECT sign_count FROM passkeys WHERE id=?", (made["id"],))["sign_count"] == 0
+
+
 # ---------------------------------------------------------------- account state
 def test_a_suspended_account_cannot_sign_in_with_a_passkey(env):
     auth, _ = enrol(env)
@@ -325,3 +372,100 @@ def test_no_private_key_material_is_ever_stored(env):
     assert cose[1] == 2 and cose[3] == -7 and set(cose) == {1, 3, -1, -2, -3}
 
 
+
+
+# ---------------------------------------------------------------- F053/F076: whose challenge is spent
+def test_two_people_signing_in_at_once_do_not_break_each_other(env):
+    auth, _ = enrol(env)
+    a, b = TestClient(env["api"]), TestClient(env["api"])
+    opts_a = post(a, "/api/auth/passkeys/authenticate/begin").json()
+    opts_b = post(b, "/api/auth/passkeys/authenticate/begin").json()      # someone else, later
+    r = post(a, "/api/auth/login/passkey", {"credential": auth.authenticate(opts_a["challenge"])})
+    assert r.status_code == 200, r.text
+    # and the other ceremony's challenge is still there for its owner
+    row = env["store"].one("SELECT used_at FROM webauthn_challenges WHERE challenge=?",
+                           (opts_b["challenge"].rstrip("="),))
+    assert row and row["used_at"] is None
+
+
+def test_an_anonymous_flood_of_begins_cannot_block_sign_in(env):
+    auth, _ = enrol(env)
+    mine = TestClient(env["api"])
+    opts = post(mine, "/api/auth/passkeys/authenticate/begin").json()
+    attacker = TestClient(env["api"], client=("203.0.113.9", 5000))
+    for _ in range(20):
+        post(attacker, "/api/auth/passkeys/authenticate/begin")
+    r = post(mine, "/api/auth/login/passkey", {"credential": auth.authenticate(opts["challenge"])})
+    assert r.status_code == 200, r.text
+
+
+def test_the_anonymous_challenge_endpoint_is_limited_per_address(env):
+    c = TestClient(env["api"], client=("203.0.113.7", 5000))
+    codes = [post(c, "/api/auth/passkeys/authenticate/begin").status_code for _ in range(31)]
+    assert codes[:30] == [200] * 30 and codes[30] == 429
+
+
+def test_expired_challenges_are_reclaimed(env):
+    from synwevo_core.store import now as _now
+    post(TestClient(env["api"]), "/api/auth/passkeys/authenticate/begin")
+    env["store"].execute("UPDATE webauthn_challenges SET expires_at=?", (_now() - 10,))
+    post(TestClient(env["api"]), "/api/auth/passkeys/authenticate/begin")
+    assert env["store"].one("SELECT COUNT(*) AS n FROM webauthn_challenges")["n"] == 1
+
+
+# ---------------------------------------------------------------- F067/F085: one factor is not two
+def _turn_on_totp(env):
+    import pyotp
+    from synwevo_identity.mfa import Mfa
+    mfa = Mfa(env["store"])
+    b = mfa.begin_totp(env["user"]["id"], "alice@example.com")
+    mfa.confirm_totp(env["user"]["id"], pyotp.TOTP(b["secret"]).now())
+
+
+def test_a_possession_only_passkey_cannot_skip_an_enrolled_second_factor(env):
+    auth, _ = enrol(env, SoftAuthenticator(user_verified=False))
+    _turn_on_totp(env)
+    fresh = TestClient(env["api"])
+    opts = post(fresh, "/api/auth/passkeys/authenticate/begin").json()
+    r = post(fresh, "/api/auth/login/passkey", {"credential": auth.authenticate(opts["challenge"])})
+    assert r.status_code == 401 and r.json()["error"] == "uv_required"
+    assert fresh.get("/api/auth/me").status_code == 401
+
+
+def test_a_verified_passkey_still_signs_in_an_account_with_totp(env):
+    auth, _ = enrol(env)
+    _turn_on_totp(env)
+    fresh = TestClient(env["api"])
+    opts = post(fresh, "/api/auth/passkeys/authenticate/begin").json()
+    r = post(fresh, "/api/auth/login/passkey", {"credential": auth.authenticate(opts["challenge"])})
+    assert r.status_code == 200 and r.json()["session"]["amr"] == "passkey_uv"
+
+
+def test_a_platform_admin_needs_user_verification(env):
+    auth, _ = enrol(env, SoftAuthenticator(user_verified=False))
+    env["store"].execute("UPDATE users SET platform_role='admin' WHERE id=?", (env["user"]["id"],))
+    fresh = TestClient(env["api"])
+    opts = post(fresh, "/api/auth/passkeys/authenticate/begin").json()
+    r = post(fresh, "/api/auth/login/passkey", {"credential": auth.authenticate(opts["challenge"])})
+    assert r.status_code == 401 and r.json()["error"] == "uv_required"
+
+
+# ---------------------------------------------------------------- F068: the factor count
+def test_passkeys_are_counted_but_do_not_demand_a_totp_step(env):
+    enrol(env)
+    state = env["c"].get("/api/auth/mfa").json()
+    assert state["passkeys"] == 1, "计数来自真正写入的 passkeys 表"
+    # the password path still signs in without a ticket nobody could satisfy
+    r = TestClient(env["api"]).post("/api/auth/login", json={"email": "alice@example.com", "password": PW})
+    assert r.status_code == 200 and "mfa_required" not in r.json()
+
+
+def test_removing_a_passkey_is_journalled(env):
+    from synwevo_core import journal
+    _, made = enrol(env)
+    c = env["c"]
+    reauth(c)
+    assert c.request("DELETE", f"/api/auth/passkeys/{made['id']}",
+                     headers={CSRF_HEADER: c.cookies.get(CSRF_COOKIE) or ""}).status_code == 200
+    entries = journal.read(env["store"].root)
+    assert any(e["kind"] == "passkey_removed" and e["credential_id"] == made["id"] for e in entries)

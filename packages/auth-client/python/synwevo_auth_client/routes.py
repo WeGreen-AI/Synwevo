@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from synwevo_core import env
 from synwevo_core.errors import ServiceError
+from synwevo_core.http import client_ip
 from synwevo_core.identity import Identity
 from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions, cookie_kwargs, new_csrf_token
 from synwevo_core.store import Store
@@ -82,7 +83,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, rp: R
         raw, row = sessions.create(
             user["id"], workspace_id=workspace_id, amr=out["amr"],
             user_agent=request.headers.get("User-Agent"),
-            ip=request.client.host if request.client else None,
+            ip=client_ip(request) or None,       # the forwarded address only behind a trusted proxy
             oidc_sid=out["sid"], auth_time=out.get("auth_time"))
         audit(request, "sso.callback", actor_id=user["id"], workspace_id=workspace_id,
               result="ok", meta={"amr": out["amr"], "sid": out["sid"]})
@@ -166,7 +167,10 @@ def build_account_redirect_router() -> APIRouter:
     @r.get("/login")
     def login(request: Request):
         nxt = safe_next(request.query_params.get("next")) or "/"
-        return RedirectResponse(f"/auth/start?next={urllib.parse.quote(nxt, safe='/?=&')}",
+        # Encoded as one parameter. `quote(..., safe='/?=&')` left `&` bare, so the deep link's
+        # own query string split into extra /auth/start parameters — including `prompt`, which
+        # start forwards to the authorize request.
+        return RedirectResponse("/auth/start?" + urllib.parse.urlencode({"next": nxt}),
                                 status_code=303)
 
     @r.get("/account")

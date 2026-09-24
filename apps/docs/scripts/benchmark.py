@@ -1,6 +1,6 @@
 """Measure representative batch sizes on the current machine (numbers go into docs/ACCEPTANCE.md).
 
-    backend/.venv/bin/python scripts/benchmark.py
+    .venv/bin/python apps/docs/scripts/benchmark.py
 All data is synthetic.  Each case runs through the real HTTP API in-process
 (parse → records → plan → fill → verify → store), i.e. what a user's job does.
 """

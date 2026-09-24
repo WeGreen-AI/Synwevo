@@ -310,3 +310,60 @@ def test_reauth_for_one_purpose_does_not_unlock_another(env):
     s = env["store"].one("SELECT * FROM sessions LIMIT 1")
     assert Sessions.reauth_fresh(s, "mfa") is True
     assert Sessions.reauth_fresh(s, "delete_workspace") is False
+    # The meaningful half: "delete_workspace" is not even a scope, so the line above could never
+    # fail. What must hold is that proving yourself for MFA does not unlock administration.
+    assert Sessions.reauth_fresh(s, "admin", strict=True) is False
+    assert Sessions.reauth_fresh(s, "admin") is False
+
+
+# ---------------------------------------------------------------- F050: begin cannot strip MFA
+def test_beginning_again_does_not_strip_an_enabled_factor(env):
+    """begin used to overwrite the confirmed seed and clear confirmed_at: MFA off without a code,
+    and whoever held a fresh session could enrol their own authenticator in its place."""
+    secret = _enable_totp(env)
+    c, mfa, uid = env["c"], env["mfa"], env["uid"]
+    before = env["store"].one("SELECT secret_enc, confirmed_at FROM totp_secrets WHERE user_id=?", (uid,))
+    r = c.post("/api/auth/mfa/totp/begin", headers=_csrf(c))
+    assert r.status_code == 409 and r.json()["error"] == "totp_already_on"
+    assert "secret" not in r.text
+    assert mfa.enabled_for(uid) is True
+    after = env["store"].one("SELECT secret_enc, confirmed_at FROM totp_secrets WHERE user_id=?", (uid,))
+    assert after == before
+    assert mfa.verify_totp(uid, _code(secret)) is True, "原来的验证器必须照常可用"
+
+
+def test_replacing_a_device_goes_through_disabling_with_a_code(env):
+    secret = _enable_totp(env)
+    c = env["c"]
+    assert c.post("/api/auth/mfa/totp/disable", json={"code": _code(secret)}, headers=_csrf(c)).status_code == 200
+    assert c.post("/api/auth/mfa/totp/begin", headers=_csrf(c)).status_code == 200
+
+
+def test_regenerating_recovery_codes_needs_a_deliberate_reauth(env):
+    """A session that merely signed in a moment ago cannot replace the codes on paper."""
+    _enable_totp(env)
+    fresh = TestClient(env["api"])
+    ticket = fresh.post("/api/auth/login", json={"email": "alice@example.com", "password": PW}).json()["ticket"]
+    codes = env["mfa"].generate_recovery_codes(env["uid"])
+    assert fresh.post("/api/auth/login/mfa", json={"ticket": ticket, "recovery_code": codes[0]}).status_code == 200
+    r = fresh.post("/api/auth/mfa/recovery/regenerate", headers=_csrf(fresh))
+    assert r.status_code == 403 and r.json()["error"] == "reauth_required"
+    assert env["mfa"].use_recovery_code(env["uid"], codes[1]) is True, "旧恢复码没有被悄悄换掉"
+    assert fresh.post("/api/auth/mfa/reauth", json={"password": PW}, headers=_csrf(fresh)).status_code == 200
+    assert fresh.post("/api/auth/mfa/recovery/regenerate", headers=_csrf(fresh)).status_code == 200
+
+
+def test_seeds_are_sealed_compatibly_with_the_old_format(env):
+    """encrypt_seed now goes through synwevo_core.sealed; a seed written by the old inline code
+    (same label, same associated data) must still open."""
+    import base64
+    import hashlib
+    import hmac
+    import secrets as _secrets
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from synwevo_core.auth import Auth
+    from synwevo_identity.mfa import decrypt_seed
+    key = hmac.new(Auth(env["store"]).secret(), b"docweave/mfa-seed/v1", hashlib.sha256).digest()
+    nonce = _secrets.token_bytes(12)
+    legacy = base64.b64encode(nonce + AESGCM(key).encrypt(nonce, b"JBSWY3DPEHPK3PXP", b"totp-seed")).decode()
+    assert decrypt_seed(env["store"], legacy) == "JBSWY3DPEHPK3PXP"

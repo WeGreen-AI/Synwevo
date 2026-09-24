@@ -56,7 +56,7 @@ class Value:
     def as_decimal(self) -> Decimal | None:
         if self.t in NUMERIC_TYPES:
             try:
-                return Decimal(str(self.v))
+                return _finite(Decimal(str(self.v)))
             except InvalidOperation:
                 return None
         if self.t == STR:
@@ -64,10 +64,16 @@ class Value:
             for sym in ("¥", "￥", "$", "€", "£"):
                 s = s.replace(sym, "")
             try:
-                return Decimal(s)
+                return _finite(Decimal(s))
             except InvalidOperation:
                 return None
         return None
+
+
+def _finite(d: Decimal) -> Decimal | None:
+    # "NaN", "Infinity" and "sNaN" parse as Decimals; as data they are text, not numbers:
+    # summed they printed "NaN" into money fields, sorted they raised InvalidOperation
+    return d if d.is_finite() else None
 
 
 def empty() -> Value:

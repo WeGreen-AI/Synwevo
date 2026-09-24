@@ -7,6 +7,10 @@
 * 机器可读规范：[openapi.yaml](openapi.yaml)（由 `python -m synwevo_docs.cli openapi` 从实际路由导出，`apps/docs/tests/test_api_docs.py` 校验其与代码一致）
 * 调用示例与脚本：[automation.md](automation.md)
 
+2026-09-24：API 与浏览器均继续复用业务引擎。本轮增加原生文件预览、严格仅失败项重试和当前权限复核；
+完整综合验收仍在进行，实际证据与未完成项见 [handoff](../quality/handoff.md)。以下表格按能力组织，
+路由/operationId 的完整机器清单以 OpenAPI 和 [Python SDK 覆盖清单](../../apps/docs/sdk/python/operation-coverage.json) 为准。
+
 ## 1. 鉴权
 
 ```
@@ -21,8 +25,8 @@ python -m synwevo_docs.cli apikey revoke <key_id>
 ```
 
 * 密钥只在创建时显示一次，服务器只保存 SHA-256 哈希；**不要**写进前端包、仓库或日志。
-* `--scopes`：`read`（所有 GET）、`write`（创建 / 修改 / 提交任务）、`admin`（删除项目、模板）。权限不足返回 `403 forbidden`。
-* `--tenant`：资源归属。`default` 与界面共用（界面租户由 `SYNWEVO_UI_TENANT` 决定，默认 `default`），其它租户的数据互不可见：访问他人资源一律返回 `404`，不泄露是否存在。
+* `--scopes`：`read`（业务读取）、`write`（创建 / 修改 / 提交任务）、`admin`（受控治理）。各路由还检查当前对象/空间权限；文件下载额外检查导出资格。权限不足返回 `403 forbidden` 或对应授权错误。
+* `--tenant`：凭据绑定的稳定 workspace ID，不能由请求体覆盖。`default` 是兼容空间，平台模式下保留当前认领状态；浏览器使用当前已验证会话选择的 workspace。跨空间对象返回 `404`，不泄露是否存在。
 * `--expires-days`：可选有效期；过期返回 `401 key_expired`，撤销返回 `401 key_revoked`。
 * 限流：默认每个密钥 300 次/分钟（`SYNWEVO_API_RATE_PER_MIN`，按进程计），超出返回 `429 rate_limited` 并带 `Retry-After`。
 
@@ -62,7 +66,7 @@ curl -s -X POST "$ISSUER/oidc/token" \
 
 然后 `Authorization: Bearer <access_token>`，用法与 `dw_` 密钥完全一致。
 
-接口权限词表：`docweave.read`（等价旧的 `read`）、`docweave.write`（等价旧的 `write`）。
+接口权限词表：`docweave.read`（等价旧的 `read`）、`docweave.write`（等价旧的 `write`）、`docweave.manage`（治理，独立校验）。
 两种词表在同一个检查里都接受，因此没有任何调用点需要知道自己拿到的是哪一种凭据。
 
 **三条硬规则：**
@@ -76,7 +80,7 @@ curl -s -X POST "$ISSUER/oidc/token" \
    令牌本身不需要撤销。
 
 **旧的 `dw_` 密钥继续有效**，不设废止期限。它们早于平台存在，一次性全部作废会打断正在运行的
-自动化。两种凭据走同一个解析函数（`apps/docs/synwevo_docs/machine.py`），出来的 principal 形状相同。
+自动化。两种凭据走共享包的 `packages/core/synwevo_core/machine.py`，产出包含主体种类的 principal。
 
 `tests/integration/automation_example.py` 两种都支持：给 `--key` 用旧密钥，给
 `--issuer --client-id --client-secret` 用服务账户。
@@ -102,6 +106,8 @@ curl -s -X POST "$ISSUER/oidc/token" \
 | 500 | 未预期错误（响应含 `request_id`，服务端日志打印同一个 id） |
 
 每个响应都带 `X-Request-ID`；客户端也可自带该头以串联日志。业务校验失败一律用上述状态码，不会伪装成 200。
+`Accept: application/problem+json` 可选择 RFC 9457 结构，默认保留原错误 envelope。
+限流响应包含 `RateLimit`、`RateLimit-Policy`，429 带 `Retry-After`；当前请求速率桶按进程计算，不宣称跨进程全局限速。
 
 ## 3. 资源与路由
 
@@ -129,11 +135,46 @@ curl -s -X POST "$ISSUER/oidc/token" \
 
 上传后解析是异步的：轮询 `/files/{fid}` 直到 `status != "parsing"`。
 
+来源选择接口与界面调用同一服务，所有位置从 0 开始。以下列表接口采用 `offset`/`limit`，
+默认 50（视图和词列表为 200），最大 200；返回 `total`、`next_offset` 和相对 `Link`。
+视图的分页只作用于表格行，其他格式返回现有完整文档视图；分页不代表底层解析按需执行。
+
+| operation ID | 方法 / 路径 | 权限 | 参数与结果 |
+|---|---|---|---|
+| get_source_structure | GET `/files/{fid}/structure` | read | 解析状态、版本、格式结构 |
+| get_source_view | GET `/files/{fid}/view` | read | sheet、offset、limit、block；与界面同一视图结构 |
+| list_source_blocks | GET `/files/{fid}/blocks` | read | 当前块拆分规则的样本位置，分页 |
+| search_source | GET `/files/{fid}/search` | read | q、block、offset、limit；文字与真实选区，窗口结束时明确 truncated |
+| list_source_page_words | GET `/files/{fid}/words/{page}` | read | 已有文字层或已保存 OCR 的词与归一化坐标；不触发 OCR |
+| update_source_options | PUT `/files/{fid}/options` | write | `{"csv":{"delimiter":";","encoding":"utf-8"}}`；替换 CSV 选项组并重新解析 |
+| update_source_correction | PUT `/files/{fid}/corrections/{mid}` | write | 当前映射的 value、严格布尔 confirmed；null 清除修正 |
+| select_representative_source | POST `/files/{fid}/representative` | write | 无请求体，选择当前代表来源 |
+| reorder_project_sources | PUT `/projects/{pid}/files/order` | write | ids 必须是全部当前来源的完整排列，先验证再写入 |
+| download_source_content | GET `/files/{fid}/content` | read + 当前导出权 | 原始文件附件及 X-Content-SHA256 |
+| locate_source_mappings | GET `/projects/{pid}/locate` | read | file、block；当前映射在该来源上的位置与值 |
+| list_source_records | GET `/projects/{pid}/records` | read | 按当前样本规则分页读取样本摘要 |
+
+未知参数、重复查询键、非法枚举和超范围参数拒绝；JSON 写入上限 256 KiB。
+CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解析未就绪返回 409 `source_not_ready`。
+移除来源或删除项目后，来源读取、修改及迟到的解析结果发布均被拒绝；软删除项目仍保留已生成的独立产物。
+
+续传上传使用 `/uploads` → PUT 字节范围 → `/complete`，完成后以 `upload_id` 绑定来源或模板。
+同一主体在幂等保留期内重放创建上传请求，可取回已消费会话的原响应（包括原始 open 状态）；
+随后 GET 会话取得当前 consumed 状态，并用原消费幂等键重放来源/模板创建，不再次消费字节。
+来源、所属项目或模板删除后，上传元数据、complete 及创建缓存均不能绕过对象授权；不同请求仍冲突。
+已取消或过期的未消费会话仍返回 410，新操作使用已消费会话仍返回 409 `upload_consumed`。
+完成会先持久化已核验字节，数据库确认后才清理暂存文件；数据库写入失败仍可按同一上传重试。
+暂存内容丢失或变短时返回 409 `upload_data_missing` 并将 received 重置为 0，调用方必须重新传输，
+不会补零冒充原文件。过期和取消清理涵盖上传复制的暂存文件；内容寻址 blob 由引用感知 GC 处理。
+
 ### 3.3 模板与字段定义
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | POST | `/templates` | write | 上传模板（DOCX/XLSX/PDF/PPTX/PNG/JPEG，旧格式自动转换并提示） |
+| POST | `/templates/builtin` | write | 程序化创建 DOCX/XLSX 模型与真实模板文件，支持幂等 |
+| GET | `/templates/{tid}/builtin` | read | 导出可移植 editor 模型，可带 version |
+| PUT | `/templates/{tid}/builtin` | write | base_version 并发检查；保存新版本，支持幂等 |
 | GET | `/templates` | read | 模板列表 |
 | GET | `/templates/{tid}` | read | 详情：字段、版本历史、可用导出格式 |
 | GET | `/templates/{tid}/fields` | read | 导出字段定义（`docweave.template-fields` v1） |
@@ -169,7 +210,8 @@ curl -s -X POST "$ISSUER/oidc/token" \
 | `pdf_repeat` | PDF / 图片 | 同上定位 + `layout`（列与行高，可省略由服务识别）、`overflow`(`error`/`continue`/`shrink`)、`empty_policy` |
 | `pdf_field` | PDF 表单 | `field`（AcroForm 字段名） |
 
-界面能做而 API 暂不支持的：内置编辑器里新建模板（`builtin_doc` / `builtin_sheet`）只能在界面创建，API 可读取、绑定与生成。
+内置编辑器模板也可经 `/templates/builtin` 创建，并经 `/templates/{tid}/builtin` 读回和保存版本；
+完整模型、字段与限制见 [editor-models.md](editor-models.md)。
 
 ### 3.4 规则、映射与项目定义
 
@@ -200,7 +242,9 @@ curl -s -X POST "$ISSUER/oidc/token" \
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/projects/{pid}/preflight` | read | 样本数、有效数、错误数、警告数、预计输出文件数、命名示例、静态校验问题 |
+| POST | `/projects/{pid}/preflight` | read；simulate 需 write | 样本数、错误/警告、预计输出；`simulate:true` 或有上限的整数会实际试生成，`simulation.limited` 指明未覆盖样本 |
+| GET | `/projects/{pid}/preflight/issues` | read | 按级别过滤的逐样本、逐字段问题明细，带分页和来源位置 |
+| POST | `/projects/{pid}/preview` | write + 当前导出权 | `render_project_preview`：原生文件下载，复用 UI/任务引擎与读回校验，不生成正式任务或产物 |
 | POST | `/projects/{pid}/jobs` | write | 提交任务（202）。头 `Idempotency-Key` 或 body `idempotency_key` |
 | GET | `/projects/{pid}/jobs` | read | 项目的任务列表 |
 | GET | `/jobs/{jid}` | read | 状态与计数 |
@@ -208,7 +252,7 @@ curl -s -X POST "$ISSUER/oidc/token" \
 | GET | `/jobs/{jid}/runs` | read | 运行记录（初次生成与每次重试） |
 | GET | `/jobs/{jid}/events?after=<seq>` | read | 事件流（轮询），`next_after` 用于下一次请求 |
 | POST | `/jobs/{jid}/cancel` | write | 取消 |
-| POST | `/jobs/{jid}/retry` | write | 重试失败/取消项（沿用原快照），支持 `Idempotency-Key`、`include_skipped` |
+| POST | `/jobs/{jid}/retry` | write | 默认重试失败/取消项；`failed_only:true` 只重试失败项；可选 `include_skipped`，与 failed_only 互斥，严格布尔值 |
 
 任务提交体：`{"formats": ["docx","pdf"], "naming": "{客户编号}_{客户名称}", "error_policy": "block|skip", "layout": "off|warn|fit", "keep_fields": false}`。
 
@@ -236,17 +280,30 @@ curl -s -X POST "$ISSUER/oidc/token" \
 
 `counts`：`samples`（样本总数）、`documents`（成功样本数）、`files`（产物文件数 = 成功样本 × 输出格式数）、`failed`、`skipped`、`cancelled`、`pending`、`running`。
 
-**幂等**：同一租户 + 同一路径作用域 + 同一 `Idempotency-Key`：
+**幂等**：同一主体 + 同一租户 + 同一操作作用域 + 同一 `Idempotency-Key`：
 内容相同 → 返回同一个任务并带 `"idempotent_replay": true`；内容不同 → `409 idempotency_conflict`。
 键的保留期默认 24 小时（`SYNWEVO_DOCS_IDEMPOTENCY_TTL_HOURS`），过期后同一个键会创建新任务。并发提交由数据库唯一约束裁决，只会产生一个任务。
 
 **快照**：任务创建时固定来源文件版本、模板版本、字段、映射、规则与生成参数；之后在界面或 API 修改任何内容都不影响已提交的任务。
 
 **重试**：默认沿用原任务快照，作为该任务的新一次「运行」记录（`/runs`），不会覆盖已成功的产物。若输入、模板或规则已变化，请重新预检并提交新任务（新任务与旧任务各自独立）。
+`failed_only:true` 保留取消、跳过和成功项；无失败项时返回 `409 nothing_to_retry`。改变重试选择却沿用同键返回冲突。
+
+**预览**：JSON 体仅接受 `index`（非负整数）或 `key`（不可同时提供），以及可选 `signature`。
+返回原生二进制附件及 `X-Content-SHA256`、`X-Project-Signature`、`X-Template-Version`、`X-Record-Key`。
+超范围/未知样本明确拒绝；签名变更为 409 `stale`，阻断问题为 409 `preview_blocked`。
+渲染结束再次校验当前凭据、导出权及版本；预览缓存不是绕过撤权的入口。
 
 **恢复**：任务由工作线程以租约（默认 30 秒，`SYNWEVO_DOCS_JOB_LEASE_S`）持有并定期续约。进程被杀、线程异常退出后，租约过期（同机进程已消失时立即判定）会自动把未完成样本放回队列继续；已发布的产物不会重复生成。不承诺「恰好一次执行」，但产物发布是原子的（产物与样本状态同一事务提交）。
 
 ### 3.6 结果与下载
+
+内置编辑器模型、节点、坐标与完整请求示例见 [editor-models.md](editor-models.md)。
+
+普通创建请求的幂等记录、业务数据库写入与成功响应在同一个 Store 事务内提交。提交前失败或进程中断会回滚；
+并发同键请求等待提交后重放，并继续检查当前对象权限。不可变 blob 字节和临时文件不属于 SQLite 事务，
+这里不声称整个文件系统具有数据库回滚语义。旧版本留下的无响应 claim 无法证明业务未执行，超过诊断窗口后
+返回 409 `idempotency_outcome_unknown`；禁止盲目换键重试，需先核对原操作结果。后台清理不会删除这种不确定记录。
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
@@ -259,10 +316,12 @@ curl -s -X POST "$ISSUER/oidc/token" \
 | GET | `/download/{token}` | 链接本身即凭据 | 上述链接的下载入口；过期返回 `410 link_expired`，重新调用 `/link` 即可 |
 
 产物被删除后返回 `410 artifact_deleted`；产物文件内容按 SHA-256 内容寻址存储，可用返回的 `sha256` 校验下载完整性。
+表中所有文件内容、链接、ZIP 和报告操作额外检查当前导出权限；新链接关联签发主体，撤权后立即拒绝新下载请求。
+**兼容性收紧**：旧的不含签发主体的链接返回 `403 link_revoked`；使用仍有效的凭据重新请求 `/link`，不需要更换身份密钥。
 
 **链接里的域名**：`/link` 与 `/archive-link` 返回的 URL 默认取 `SYNWEVO_PUBLIC_URL`；未设置时按
-`X-Forwarded-Proto` / `X-Forwarded-Host`（没有则用 `Host`）拼出。放在反向代理之后**务必二选一**：
-设 `SYNWEVO_PUBLIC_URL=https://你的域名`，或让代理正确转发上述头部。两者都没有时，链接会带上
+仅当 `SYNWEVO_TRUST_PROXY` 明确配置可信跳数时才使用 `X-Forwarded-Proto` / `X-Forwarded-Host`，从右向左选对应跳；否则使用直接请求源。放在反向代理之后设置
+`SYNWEVO_PUBLIC_URL=https://你的域名`，或配置可信跳数并由代理规范转发头部。两者都没有时，链接会带上
 代理到源站那一跳的协议和地址——典型结果是 `http://127.0.0.1:8765/...`，调用方拿到后连的是自己的机器。
 链接本身即凭据，因此协议写成 `http://` 不只是不好看。令牌的校验与 URL 怎么拼无关，已签发的链接不受影响。
 
@@ -275,7 +334,7 @@ curl -s -X POST "$ISSUER/oidc/token" \
   "occurred_at": 1758592000.12, "data": { "status": "completed", "run_no": 1, "counts": {...} } }
 ```
 
-类型：`job.created`、`job.started`、`job.cancel_requested`、`job.retry_requested`、`job.recovered`、
+类型：`job.created`、`job.started`、`job.planned`、`job.cancel_requested`、`job.retry_requested`、`job.recovered`、
 `job.completed`、`job.completed_with_errors`、`job.failed`、`job.cancelled`。`seq` 在同一任务内单调递增（轮询用 `after`）。
 
 Webhook 默认关闭，按部署配置开启：
@@ -284,13 +343,15 @@ Webhook 默认关闭，按部署配置开启：
 SYNWEVO_DOCS_WEBHOOK_URLS=https://automation.example.com/hooks/docweave
 SYNWEVO_DOCS_WEBHOOK_SECRET=<共享密钥>
 SYNWEVO_DOCS_WEBHOOK_EVENTS=job.completed,job.completed_with_errors,job.failed,job.cancelled
-# 仅在确需回调内网时：SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE=10.0.0.0/8,automation.internal
+# 隔离本机测试只显式允许指定接收器主机；默认不开放私网
 ```
 
-* 请求头：`X-Synwevo Docs-Event`、`X-Synwevo Docs-Event-Id`、`X-Synwevo Docs-Delivery`、`X-Synwevo Docs-Timestamp`、
-  `X-Synwevo Docs-Signature: v1=<hmac_sha256(secret, "<timestamp>.<body>")>`。
-* 接收端应：校验签名；拒绝时间戳偏差超过 5 分钟的请求；按 `X-Synwevo Docs-Event-Id` 去重（投递可能重复，顺序不保证，请以 `seq` 或任务当前状态为准）。
-* 重试：网络错误、429、5xx 按 30s → 2m → 10m → 30m → 2h 退避，最多 6 次；4xx（除 429）不再重试。投递记录保存在 `webhook_deliveries` 表。
+* 工作空间订阅由 `/webhooks/subscriptions` 管理，需管理 scope 与空间治理资格；支持版本条件更新、暂停、恢复、轮换、投递查询、受控重投。恢复订阅只接收恢复之后的事件。
+* 推荐 Standard Webhooks 头：`webhook-id`、`webhook-timestamp`、`webhook-signature`。签名为原始字节上的 HMAC-SHA256，消息为 `<id>.<timestamp>.<body>`，签名编码为 `v1,<base64>`；轮换重叠期可带多个签名。部署级回调另保留外部兼容头 `X-DocWeave-*`，不能随品牌改名。
+* 接收端校验原始字节、时间偏差和事件 ID；成功处理或持久入队后才返回 2xx。重复和乱序是正常情况，去重必须与业务处理配合，参考 [真实接收器示例](../../apps/docs/examples/webhook_receiver.py)。
+* 默认首次失败后最多 9 次重试：5、300、1800、7200、18000、36000、50400、72000、86400 秒，带 ±20% 抖动；429/503 尊重有上限的 Retry-After。410 停用订阅。投递记录保存实际状态、尝试和关联 ID。
+* DNS、连接、TLS 与响应头共用默认 15 秒总期限；每轮有界、公平访问不同接收器。暂停/撤销及恢复栅栏在发送前重查，在途结果不能复活已丢弃的投递。
+* 创建订阅、轮换签名密钥、ping、重投暂不提供持久幂等，携带 `Idempotency-Key` 明确返回 `400 idempotency_not_supported`；不要对这些操作自动重试造成重复副作用。
 * 安全：默认要求 https；回调地址每次投递前解析，解析到内网地址时拒绝，除非在 `SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE` 白名单中；不跟随跳转。
 * 回调失败不影响产物查询与下载。
 

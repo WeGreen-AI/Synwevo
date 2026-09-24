@@ -3,7 +3,11 @@
 All names, numbers and companies are synthetic ("测试"/"TEST" prefixed) and do
 not represent real people or data.
 
-    python scripts/make_fixtures.py [outdir]     (default: testdata/)
+    .venv/bin/python apps/docs/scripts/make_fixtures.py [outdir]     (default: <repo>/testdata/)
+
+The default is the repository root's testdata/, because that is where every consumer reads them
+(apps/docs/tests/conftest.py, benchmark.py, the browser E2E scripts). Defaulting to this module's
+own directory produced a second, unused copy while the stale one stayed in use.
 """
 from __future__ import annotations
 
@@ -21,7 +25,9 @@ from docx.shared import Pt, RGBColor
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from PIL import Image, ImageDraw, ImageFont
 
-OUT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1] / "testdata")
+from synwevo_core.http import repo_root  # noqa: E402
+
+OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else (repo_root() or Path(__file__).resolve().parents[3]) / "testdata"
 random.seed(20260922)
 SURN = "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜"
 GIVEN = "伟芳娜敏静丽强磊军洋勇艳杰娟涛明超秀霞平刚桂英华"

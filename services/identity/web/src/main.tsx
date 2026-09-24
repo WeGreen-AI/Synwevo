@@ -19,6 +19,8 @@ import Account from "./pages/Account";
 import Invite from "./pages/Invite";
 import { ForgotPassword, ResetPassword } from "./pages/Recover";
 import Admin from "./Admin";
+import Members from "./pages/Members";
+import "./account.css";
 import "@synwevo/ui/styles.css";
 
 initTheme();
@@ -53,6 +55,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/logged-out" element={<SignedOut />} />
+              <Route path="/account/workspaces/:wid/members" element={<RequireSession><Members /></RequireSession>} />
               <Route path="/account" element={<RequireSession><Account /></RequireSession>} />
               {/* The route exists for everyone; the server answers 404 to a non-administrator,
                   and the page renders that same answer. Access control is on the route, not on

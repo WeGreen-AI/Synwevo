@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { describeSelection, pdfLike } from "../lib/describe";
 import type { Selection, Slot, TemplateDetail } from "../lib/types";
-import { Modal, cellRef, rangeRef } from "@synwevo/ui";
+import { isImeKey, Modal, cellRef, rangeRef } from "@synwevo/ui";
+import { errorText } from "../lib/perm";
 import PdfRepeatEditor, { type RepeatLayout } from "./PdfRepeatEditor";
 
 interface Props {
@@ -77,7 +78,7 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
       await onCreate(req);
       onClose();
     } catch (e: any) {
-      setErr(e.message);
+      setErr(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -110,7 +111,12 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
           </div>
         )}
         <label className="field">字段名称
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：客户名称" onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：客户名称" data-autofocus
+            onKeyDown={(e) => {
+              // Enter that confirms a pinyin candidate must not create the field with half a name.
+              if (isImeKey(e)) return;
+              if (e.key === "Enter" && !busy) { e.preventDefault(); submit(); }
+            }} />
         </label>
         {same && (kind === "text" || kind === "cell" || kind === "pdf_box" || kind === "pptx_text") && (
           <label className="check notice info">
@@ -120,8 +126,8 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
         )}
         {(kind === "text" && (sel.kind === "docx_text" || sel.kind === "docx_cell" || sel.kind === "pptx_text")) && (
           <div className="seg">
-            <button className={mode === "replace" ? "on" : ""} onClick={() => setMode("replace")} disabled={sel.kind === "docx_text" && sel.start === sel.end}>替换选中内容（默认）</button>
-            <button className={mode === "insert" ? "on" : ""} onClick={() => setMode("insert")}>保留原文，在{sel.kind === "docx_text" && sel.start !== sel.end ? "选区末尾" : "此处"}插入</button>
+            <button type="button" aria-pressed={mode === "replace"} className={mode === "replace" ? "on" : ""} onClick={() => setMode("replace")} disabled={sel.kind === "docx_text" && sel.start === sel.end}>替换选中内容（默认）</button>
+            <button type="button" aria-pressed={mode === "insert"} className={mode === "insert" ? "on" : ""} onClick={() => setMode("insert")}>保留原文，在{sel.kind === "docx_text" && sel.start !== sel.end ? "选区末尾" : "此处"}插入</button>
           </div>
         )}
         {kind === "cell" && tpl.format === "xlsx" && (

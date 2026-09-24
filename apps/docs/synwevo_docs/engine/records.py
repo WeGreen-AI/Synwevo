@@ -2,6 +2,7 @@
 document.  The three modes are explicit; nothing is inferred from mappings."""
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 
 from . import tabular
@@ -14,6 +15,71 @@ MODES = {
     "per_group": "每组一份：按选定字段（如订单号）分组，每组生成一份文档",
     "per_block": "每块一份：一个文件里有多个表单块时，按每块开头的标记文字切分，每块生成一份文档",
 }
+
+
+def cached_table_view(src: SourceDoc, spec: dict) -> tabular.TableView:
+    """The table view of ``src`` for ``spec``, built once per source document.
+
+    A view is a pure function of the parsed workbook and the table spec, and a SourceDoc is
+    immutable for its lifetime (a new file version, OCR run or correction produces a new
+    SourceDoc), so the view can live on the document itself. Rebuilding it for every sample was
+    what made planning quadratic: each record scanned every row of its table to find its own —
+    measured 98 s to plan 20,000 samples, 4.9 ms per sample and growing with the table.
+
+    The cache sits in the instance ``__dict__`` rather than a module-level map keyed by id(), so
+    it is released with the document and can never serve a view of a different file version.
+    """
+    key = json.dumps(spec, sort_keys=True, ensure_ascii=False, default=str)
+    cache = src.__dict__.setdefault("_table_views", {})
+    tv = cache.get(key)
+    if tv is None:
+        tv = table_view(src, spec)
+        if len(cache) >= 8:                       # a handful of specs per file at most; never unbounded
+            cache.clear()
+        cache[key] = tv
+    return tv
+
+
+def group_record_key(key_values: tuple | list) -> str:
+    """The part of a per-group record key that identifies the group.
+
+    Joining with " / " is what users see as the label, but as a key it is not injective once a
+    value contains a slash: ("a / b", "c") and ("a", "b / c") produced the same key, and the
+    preview then served one group's cached document for the other. Values without "/" keep the
+    readable form (so existing keys, and regression cases that stored them, are unchanged);
+    anything else is JSON-encoded behind a prefix no plain join can produce.
+    """
+    vals = [str(v) for v in key_values]
+    if not any("/" in v for v in vals) and not (vals and vals[0].startswith("json:")):
+        return " / ".join(vals)
+    return "json:" + json.dumps(vals, ensure_ascii=False)
+
+
+def legacy_record_key(record: dict) -> str | None:
+    """The key a per-group record had before :func:`group_record_key` (plain " / " join), when
+    that differs from its key now; None otherwise.
+
+    Keys are stored outside the records themselves — regression cases, ``sample_keys``, preview
+    links — and a key that changed format is not a sample that changed behaviour."""
+    vals = record.get("group_values")
+    key = record.get("key") or ""
+    if not vals or "|" not in key:
+        return None
+    prefix, _, rest = key.partition("|")
+    if not rest.startswith("json:"):
+        return None
+    return f"{prefix}|" + " / ".join(str(v) for v in vals)
+
+
+def find_record(records: list[dict], key: str) -> dict | None:
+    """The record with this key, or — for a key stored before the per-group key format changed —
+    the one record whose former key it is. A legacy key that two records now share (the very
+    collision the new format removes) matches neither: guessing would show the wrong sample."""
+    for r in records:
+        if r.get("key") == key:
+            return r
+    hits = [r for r in records if legacy_record_key(r) == key]
+    return hits[0] if len(hits) == 1 else None
 
 
 def build_records(sources: list[SourceDoc], rule: dict) -> dict:
@@ -58,7 +124,7 @@ def build_records(sources: list[SourceDoc], rule: dict) -> dict:
                                           "message": f"「{src.filename}」不是表格文件，不能按行/按组切分样本"})
             continue
         try:
-            tv = table_view(src, table)
+            tv = cached_table_view(src, table)
         except ResolveError as e:
             result["file_errors"].append({"file_id": src.file_id, "file": src.filename, "code": e.code, "message": str(e)})
             continue
@@ -135,7 +201,8 @@ def build_records(sources: list[SourceDoc], rule: dict) -> dict:
         label = kl
         if scope != "cross_file" and label_count[kl] > 1:
             label = f"{kl} · {name_by_id[g['files'][0]]}"
-        rec = {"index": len(result["records"]), "key": ("*|" if scope == "cross_file" else g["files"][0] + "|") + kl,
+        rec = {"index": len(result["records"]),
+               "key": ("*|" if scope == "cross_file" else g["files"][0] + "|") + group_record_key(g["key_values"]),
                "label": label, "ident": kl, "file_id": g["files"][0], "file_ids": g["files"],
                "group_values": list(g["key_values"]),
                "rows": [[fid, sheet, r] for fid, sheet, r, _ in rows], "where": f"{len(rows)} 行"}
@@ -161,7 +228,7 @@ def _sort_key(v: V.Value, numeric: bool):
 
 
 def record_context(record: dict, rule: dict, srcs: dict[str, SourceDoc]) -> dict:
-    """Runtime context used by resolvers (rebuilds table views)."""
+    """Runtime context used by resolvers (table views come from the per-document cache)."""
     mode = rule["mode"]
     ctx = {"mode": mode, "index": record["index"], "record_key": record["key"], "group_label": record.get("ident", "")}
     src = srcs.get(record["file_id"])
@@ -172,7 +239,7 @@ def record_context(record: dict, rule: dict, srcs: dict[str, SourceDoc]) -> dict
         raise ResolveError("file_missing", "样本对应的来源文件已被移除")
     ctx["src"] = src
     if mode == "per_row":
-        tv = table_view(src, rule["table"])
+        tv = cached_table_view(src, rule["table"])
         ctx.update({"table_view": tv, "row": record["row"], "sheet": tv.sheet.name, "table_spec": rule["table"]})
     elif mode == "per_group":
         views = {}
@@ -180,7 +247,7 @@ def record_context(record: dict, rule: dict, srcs: dict[str, SourceDoc]) -> dict
         for fid, _sheet, r in record["rows"]:
             s = srcs[fid]
             if fid not in views:
-                views[fid] = table_view(s, rule["table"])
+                views[fid] = cached_table_view(s, rule["table"])
             rows.append((s, views[fid], r))
         ctx.update({"group_rows": rows, "table_spec": rule["table"], "sheet": rows[0][1].sheet.name if rows else "",
                     "srcs": [srcs[f] for f in record["file_ids"]]})

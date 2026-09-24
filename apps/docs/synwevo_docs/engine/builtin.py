@@ -120,13 +120,18 @@ def _emit_repeat_block(container, node: dict, ctx: dict):
     attrs = node.get("attrs") or {}
     bid = attrs.get("repeatId") or ("b" + base64.b16encode(bytes(str(len(ctx["repeats"]) + 1), "ascii")).decode().lower())
     parent = container.element.body if hasattr(container, "element") and hasattr(container.element, "body") else container._element
-    before = {id(c) for c in parent}
+    # Keep the proxies alive while emitting: lxml creates element proxies on access and
+    # frees them right away, so id() of a proxy that is no longer referenced gets reused by
+    # a new element, and an id()-based "was it there before" test picks the wrong paragraphs.
+    before_els = list(parent)
+    before = set(before_els)
     info = ctx["repeats"].setdefault(bid, {"columns": []})
     info.update(name=attrs.get("repeatName") or "明细", block=True,
                 separator=attrs.get("separator") if attrs.get("separator") in ("none", "blank", "page_break") else "none",
                 empty_policy=attrs.get("emptyPolicy") if attrs.get("emptyPolicy") in ("remove", "placeholder", "error") else "remove")
     _emit_blocks(container, node.get("content") or [], ctx, bid)
-    new = [c for c in parent if id(c) not in before and c.tag in (dc.w("p"), dc.w("tbl"))]
+    new = [c for c in parent if c not in before and c.tag in (dc.w("p"), dc.w("tbl"))]
+    del before_els, before
     if not new:
         return
     sdt = dc.make_sdt(dc.TAG_PREFIX + bid, info["name"])
@@ -257,7 +262,13 @@ def _emit_table(container, node, ctx):
             while occupancy.get((ri, ci)):
                 ci += 1
             a = cell.get("attrs") or {}
-            cs, rs = int(a.get("colspan", 1) or 1), int(a.get("rowspan", 1) or 1)
+            cs, rs = _span(a.get("colspan")), _span(a.get("rowspan"))
+            # the spans come from the request body: bounded by the table itself and by Word's
+            # 63-column limit, never looped over as sent (colspan=10**7 tied up the server)
+            if ci + cs > MAX_TABLE_COLS:
+                raise BuiltinError(f"表格第 {ri + 1} 行超过 {MAX_TABLE_COLS} 列（Word 表格的上限）")
+            if ri + rs > len(rows):
+                raise BuiltinError(f"表格第 {ri + 1} 行的单元格向下合并 {rs} 行，超出了表格的行数")
             for dr in range(rs):
                 for dcol in range(cs):
                     occupancy[(ri + dr, ci + dcol)] = True
@@ -316,6 +327,20 @@ def _emit_table(container, node, ctx):
                     sdt = dc.make_sdt(f"{dc.TAG_PREFIX}{repeat_id}#{key}", f"第{ci + 1}列", None, [dc.etree.Element(dc.w("r"))])
                     p.append(sdt)
                     info["columns"].append({"key": key, "name": f"第{ci + 1}列"})
+
+
+MAX_TABLE_COLS = 63
+MAX_MERGE_CELLS = 100_000
+
+
+def _span(v) -> int:
+    try:
+        n = int(v or 1)
+    except (TypeError, ValueError):
+        raise BuiltinError(f"表格合并单元格的跨度无效：{v!r}") from None
+    if n < 1:
+        raise BuiltinError(f"表格合并单元格的跨度无效：{n}")
+    return n
 
 
 def _collect_docx_slots(data: bytes, ctx: dict) -> list[dict]:
@@ -389,6 +414,9 @@ def build_xlsx(editor: dict) -> tuple[bytes, list[dict]]:
             v = cell.get("v")
             if v not in (None, ""):
                 target.value = _typed(v, cell.get("t"))
+                if cell.get("t") == "text":
+                    # Explicit text must stay text even if it looks like an Excel formula.
+                    target.data_type = "s"
             st = cell.get("s") or {}
             if st:
                 target.font = Font(bold=bool(st.get("b")), italic=bool(st.get("i")), underline="single" if st.get("u") else None,
@@ -401,6 +429,14 @@ def build_xlsx(editor: dict) -> tuple[bytes, list[dict]]:
                 if st.get("nf"):
                     target.number_format = st["nf"]
         for mref in sh.get("merges") or []:
+            try:
+                r1, c1, r2, c2 = tabular.parse_range(str(mref))
+            except ValueError:
+                raise BuiltinError(f"合并区域无效：{mref}") from None
+            # openpyxl materialises every cell of a merged range: "A1:XFD1048576" from a request
+            # body would be seventeen billion objects
+            if (r2 - r1 + 1) * (c2 - c1 + 1) > MAX_MERGE_CELLS:
+                raise BuiltinError(f"合并区域 {mref} 过大（最多 {MAX_MERGE_CELLS} 个单元格）")
             ws.merge_cells(mref)
     buf = io.BytesIO()
     wb.save(buf)
@@ -442,11 +478,13 @@ def _rename_defined_names(data: bytes, slots: list[dict]) -> bytes:
 
 
 def _typed(v, t):
+    if t == "text":
+        return str(v)
     if t == "number":
         try:
-            return float(v) if "." in str(v) else int(v)
-        except ValueError:
-            return v
+            return float(v) if any(c in str(v).lower() for c in (".", "e")) else int(v)
+        except (ValueError, TypeError, OverflowError):
+            raise BuiltinError("声明为数字的单元格必须提供有效数字") from None
     if isinstance(v, str) and v.startswith("="):
         return v  # formula typed in the editor
     return v

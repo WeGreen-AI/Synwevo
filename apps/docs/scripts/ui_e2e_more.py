@@ -7,7 +7,8 @@ C. Built-in document editor: type text, insert a field, insert a table, mark a r
    row, save → template usable in the workspace.
 D. Built-in spreadsheet editor: type cells, mark a field cell, save.
 
-    python scripts/ui_e2e_more.py [base_url]
+    .venv/bin/python apps/docs/scripts/ui_e2e_more.py              # isolated test instance (default)
+    .venv/bin/python apps/docs/scripts/ui_e2e_more.py <base_url>   # only a test-marked instance
 """
 from __future__ import annotations
 
@@ -23,12 +24,11 @@ import pymupdf
 from playwright.sync_api import Page, expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-from _testenv import target  # noqa: E402  isolated test instance; never the user's real data
+from _testenv import SHOTS, TESTDATA, target  # noqa: E402  isolated test instance; never the user's real data
 
 ARG_BASE = sys.argv[1] if len(sys.argv) > 1 else None
 BASE = ""                     # bound in main() to an isolated (or explicitly test-marked) server
-SHOTS = ROOT / "docs" / "screenshots"
-DATA = ROOT / "testdata"
+DATA = TESTDATA                # <repo>/testdata (apps/docs/scripts/make_fixtures.py)
 
 
 def shot(page: Page, name: str):
@@ -204,11 +204,37 @@ def flow_d(page: Page):
     page.goto(BASE + "/templates/new/sheet")
     grid = page.locator(".grid-scroll")
     grid.click(position={"x": 60, "y": 30})
+    expect(grid).to_be_focused()
+    expect(page.locator(".cellinfo")).to_have_text("A1")
+    # Playwright inserts non-ASCII text without the IME keydown that opens an editor.
+    # Use the supported F2 entry point before typing Chinese; keep actual value assertions.
+    page.keyboard.press("F2")
+    expect(page.get_by_role("textbox", name="编辑单元格 A1", exact=True)).to_be_focused()
     page.keyboard.type("报表标题")
     page.keyboard.press("Enter")
+    expect(page.locator(".cellinfo")).to_have_text("A2")
+    expect(grid.locator(".gcell", has_text=re.compile("^报表标题$"))).to_have_count(1)
+    page.keyboard.press("F2")
+    expect(page.get_by_role("textbox", name="编辑单元格 A2", exact=True)).to_be_focused()
     page.keyboard.type("金额")
+    expect(page.get_by_role("textbox", name="编辑单元格 A2", exact=True)).to_have_value("金额")
+    # One native Tab commits and leaves the grid; it must not move the selection to B2.
     page.keyboard.press("Tab")
-    page.once("dialog", lambda d: d.accept())
+    expect(grid.locator("input")).to_have_count(0)
+    expect(page.get_by_role("button", name="Sheet1", exact=True)).to_be_focused()
+    assert grid.evaluate("el => !el.contains(document.activeElement)")
+    expect(page.locator(".cellinfo")).to_have_text("A2")
+    expect(grid.locator(".gcell", has_text=re.compile("^金额$"))).to_have_count(1)
+    # Re-enter without changing the selection, then explicitly move to the field cell.
+    grid.focus()
+    expect(page.locator(".cellinfo")).to_have_text("A2")
+    page.keyboard.press("ArrowRight")
+    expect(page.locator(".cellinfo")).to_have_text("B2")
+    page.keyboard.type("123.45")
+    expect(page.get_by_role("textbox", name="编辑单元格 B2", exact=True)).to_have_value("123.45")
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("button", name="Sheet1", exact=True)).to_be_focused()
+    expect(page.locator(".cellinfo")).to_have_text("B2")
     page.get_by_role("button", name="设为字段单元格").click()
     page.locator(".modal input").fill("金额")
     page.locator(".modal").get_by_role("button", name="确定").click()
@@ -217,8 +243,40 @@ def flow_d(page: Page):
     page.get_by_role("button", name="保存模板").click()
     page.wait_for_url(re.compile(r"/templates/t_.*/edit"), timeout=20000)
     tid = page.url.split("/templates/")[1].split("/")[0]
-    t = page.request.get(f"{BASE}/api/templates/{tid}").json()
-    assert [s["locator"]["cell"] for s in t["version"]["slots"]] == ["B2"], t["version"]["slots"]
+    response = page.request.get(f"{BASE}/api/templates/{tid}")
+    assert response.ok, response.text()
+    t = response.json()
+    sheet = t["version"]["editor"]["sheets"][0]
+    assert sheet["name"] == "Sheet1", sheet
+    assert {ref: sheet["cells"][ref]["v"] for ref in ("A1", "A2", "B2")} == {
+        "A1": "报表标题", "A2": "金额", "B2": "123.45",
+    }, sheet["cells"]
+    assert sheet["cells"]["B2"]["t"] == "number", sheet["cells"]["B2"]
+    assert [(f["name"], f["kind"], f["ref"]) for f in sheet["fields"]] == [("金额", "cell", "B2")], sheet["fields"]
+    slots = t["version"]["slots"]
+    assert [(s["name"], s["kind"], s["locator"]["sheet"], s["locator"]["cell"]) for s in slots] == [
+        ("金额", "cell", "Sheet1", "B2"),
+    ], slots
+    # Read the generated file too: creating a field must preserve the neighbouring labels.
+    response = page.request.get(f"{BASE}/api/templates/{tid}/download?which=working")
+    assert response.ok, response.status
+    wb = openpyxl.load_workbook(io.BytesIO(response.body()))
+    assert wb["Sheet1"]["A1"].value == "报表标题"
+    assert wb["Sheet1"]["A2"].value == "金额"
+    wb.close()
+    page.reload()
+    expect(page.get_by_role("button", name="保存模板", exact=True)).to_be_enabled()
+    expect(grid.locator(".gcell", has_text=re.compile("^报表标题$"))).to_have_count(1)
+    expect(grid.locator(".gcell", has_text=re.compile("^金额$"))).to_have_count(1)
+    field = page.locator(".slotitem", has_text="金额")
+    expect(field.locator(".badge")).to_have_text("B2")
+    field.click()
+    expect(page.locator(".cellinfo")).to_have_text("B2")
+    grid.focus()
+    page.keyboard.press("F2")
+    expect(page.get_by_role("textbox", name="编辑单元格 B2", exact=True)).to_have_value("123.45")
+    page.keyboard.press("Escape")
+    shot(page, "14b_内置表格保存回读")
     return tid
 
 

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Inventory every reference to every blob. **Reads only — this script cannot delete.**
 
-    python scripts/blob_audit.py --data data
-    python scripts/blob_audit.py --data data --json      # machine-readable
+    .venv/bin/python apps/docs/scripts/blob_audit.py --data data
+    .venv/bin/python apps/docs/scripts/blob_audit.py --data data --json      # machine-readable
+
+Exit status 1 when a referenced blob is missing, or when this inventory does not cover every table
+the authorization layer would serve bytes from (or that comparison could not be made).
 
 Why this exists before a garbage collector does: a mark-and-sweep is only as safe as its list of
 places a reference can hide, and two of those places are inside JSON columns where a
@@ -80,8 +83,9 @@ LOOKALIKES = [
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
-def _cross_check_against_authz() -> list:
-    """Refuse to under-report. Returns the tables `authz._REACHABLE` consults that this file does not.
+def _cross_check_against_authz() -> list | None:
+    """Refuse to under-report. Returns the tables `authz._REACHABLE` consults that this file does not,
+    or None when the authorization layer cannot be imported (so the comparison was not made).
 
     The authorization layer decides what is *readable*; this file decides what is *referenced*.
     If the second is narrower than the first, then something the server will happily serve looks
@@ -91,7 +95,7 @@ def _cross_check_against_authz() -> list:
     try:
         from synwevo_docs import authz
     except ImportError:
-        return []                              # backend not importable; the caller says so
+        return None                            # not importable: "not checked", never "no gaps"
     covered = {t for t, _ in DIRECT} | {t for t, _, _ in JSON_PATHS}
     missing = []
     for clause in authz._REACHABLE:
@@ -196,6 +200,9 @@ def audit(data_dir: Path) -> dict:
         "reachable_only_from_json": sorted(only_json),
         "unreferenced_on_disk": sorted(on_disk - all_refs),
         "referenced_but_missing": sorted(all_refs - on_disk),
+        # The full reference set, so a caller can check each blob where the application reads it
+        # (snapshot.py verify) instead of trusting a file-name match anywhere under blobs/.
+        "referenced_all": sorted(all_refs),
         "lookalike_columns": lookalike_hits,
     }
 
@@ -211,10 +218,15 @@ def main() -> int:
     if not d.is_absolute():
         d = ROOT / d
     r = audit(d)
+    # Exit status carries the two findings that make this inventory unsafe to act on: bytes that
+    # are referenced but gone, and an inventory narrower than what the server serves (or one that
+    # could not be compared at all). Automation reads the status, not the prose.
+    failed = bool(r["referenced_but_missing"]) or r["authz_tables_not_covered"] != []
 
     if args.json:
-        print(json.dumps(r, ensure_ascii=False, indent=2))
-        return 0
+        out = {k: v for k, v in r.items() if k != "referenced_all"}
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 1 if failed else 0
 
     print(f"数据目录：{d}（只读）\n")
     print(f"磁盘上的 blob：{r['blobs_on_disk']} 个，{r['bytes_on_disk'] / 1e6:.1f} MB")
@@ -248,7 +260,11 @@ def main() -> int:
     print()
 
     gaps = r["authz_tables_not_covered"]
-    if gaps:
+    if gaps is None:
+        print("!! 无法导入 synwevo_docs.authz，没有核对清点是否覆盖授权层会提供的全部表。")
+        print("   在装好各模块的环境里运行（python scripts/platform.py setup）。")
+        print()
+    elif gaps:
         print("!! 授权层会认为可读、但本清点没有覆盖的表：" + "、".join(gaps))
         print("   这意味着这份清点比服务器实际会提供的内容更窄——基于它做回收会删掉正在被服务的字节。")
         print("   请把这些表加进 DIRECT 或 JSON_PATHS 之后再使用本工具。")
@@ -263,7 +279,7 @@ def main() -> int:
     print("本脚本不会删除任何东西，也没有删除模式。要实现回收，先读")
     print("docs/quality/progress.md 里的陷阱清单，并在 BEGIN IMMEDIATE 内复核候选集、")
     print("用改名隔离而不是直接删除。")
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

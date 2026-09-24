@@ -1,0 +1,1314 @@
+{
+  "schema_version": 1,
+  "api_scope": "all operations in actual v1 OpenAPI export, including health/readiness",
+  "openapi_sha256": "c2b40d3f56c95e1ce2f13b4e921ff35274ebff6d2b319d2510f91fcdcec13ca7",
+  "openapi_version": "3.1.0",
+  "sdk_source_sha256": "26d763335623231c94a009574f063e42a214b62aecb46bdf8d6444252c94df68",
+  "cli_source_sha256": "b5c72fde7da72714aef84e53115191b8d5559f254e4cc258f450e9e135bdb225",
+  "evidence": [
+    {
+      "file": "app-http.jsonl",
+      "sha256": "1949da5b578ef27af148d61a1f364e5fd60db1cea88d28f81331651c83f6c166"
+    },
+    {
+      "file": "app-http.jsonl",
+      "sha256": "32e61e2fe6b93b63e55759f9f24a2cedbd318a1058c0e19858935443fd672a21"
+    }
+  ],
+  "unmatched_http_observations": {
+    "GET /api/v1/templates/t_cd19d0dc36f9/builtin": {
+      "429": 1
+    },
+    "POST /api/v1/projects/p_6cd2a6fda93a/jobs": {
+      "429": 1
+    },
+    "GET /api/v1/artifacts/a_aa46b6867562/content": {
+      "429": 1
+    },
+    "GET /api/v1/artifacts/a_307871e1c6b9/content": {
+      "429": 1
+    }
+  },
+  "interpretation": "Implementation inventory reviewed against source; method existence and exact route/operation inventory checked. Observed statuses combine SDK/CLI and harness probes; they do not prove every parameter or behavior. Empty counts mean not exercised by this run.",
+  "limitations": [
+    "No readyz SDK method",
+    "No signed-token download SDK method; authenticated downloads are implemented",
+    "CLI is a subset; resumable session routes are exercised indirectly by uploads",
+    "Credential administration and webhooks are implemented but not part of the read/write service acceptance",
+    "failed_only verifies exclusion of cancelled items and selection fingerprint conflict, not a positive failed-item retry"
+  ],
+  "counts": {
+    "operations": 82,
+    "sdk_implemented": 80,
+    "cli_reachable": 70,
+    "real_service_success_observed": 55
+  },
+  "operations": [
+    {
+      "operationId": "artifact_content_api_v1_artifacts__aid__content_get",
+      "method": "GET",
+      "path": "/api/v1/artifacts/{aid}/content",
+      "sdk_methods": [
+        "download_artifact",
+        "download_artifacts"
+      ],
+      "cli_commands": [
+        "artifacts download",
+        "artifacts download-all"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 100
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "artifact_link_api_v1_artifacts__aid__link_post",
+      "method": "POST",
+      "path": "/api/v1/artifacts/{aid}/link",
+      "sdk_methods": [
+        "artifact_link"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "capabilities_api_v1_capabilities_get",
+      "method": "GET",
+      "path": "/api/v1/capabilities",
+      "sdk_methods": [
+        "capabilities"
+      ],
+      "cli_commands": [
+        "capabilities"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "credential_self_api_v1_credentials_self_get",
+      "method": "GET",
+      "path": "/api/v1/credentials/self",
+      "sdk_methods": [
+        "credential_self"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 1
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "revoke_self_api_v1_credentials_self_revoke_post",
+      "method": "POST",
+      "path": "/api/v1/credentials/self/revoke",
+      "sdk_methods": [
+        "revoke_own_credential"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "rotate_self_api_v1_credentials_self_rotate_post",
+      "method": "POST",
+      "path": "/api/v1/credentials/self/rotate",
+      "sdk_methods": [
+        "rotate_own_key"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "signed_download_api_v1_download__token__get",
+      "method": "GET",
+      "path": "/api/v1/download/{token}",
+      "sdk_methods": [],
+      "cli_commands": [],
+      "implementation": "missing",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "events_api_v1_events_get",
+      "method": "GET",
+      "path": "/api/v1/events",
+      "sdk_methods": [
+        "events_page",
+        "iter_event_pages",
+        "iter_events"
+      ],
+      "cli_commands": [
+        "events tail"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 1
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "delete_file_api_v1_files__fid__delete",
+      "method": "DELETE",
+      "path": "/api/v1/files/{fid}",
+      "sdk_methods": [
+        "delete_file"
+      ],
+      "cli_commands": [
+        "files delete"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "get_file_api_v1_files__fid__get",
+      "method": "GET",
+      "path": "/api/v1/files/{fid}",
+      "sdk_methods": [
+        "get_file",
+        "wait_for_file"
+      ],
+      "cli_commands": [
+        "files get"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 32
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "list_source_blocks",
+      "method": "GET",
+      "path": "/api/v1/files/{fid}/blocks",
+      "sdk_methods": [
+        "list_source_blocks",
+        "iter_source_blocks"
+      ],
+      "cli_commands": [
+        "sources blocks"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 4
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "download_source_content",
+      "method": "GET",
+      "path": "/api/v1/files/{fid}/content",
+      "sdk_methods": [
+        "download_source_content"
+      ],
+      "cli_commands": [
+        "sources content"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "update_source_correction",
+      "method": "PUT",
+      "path": "/api/v1/files/{fid}/corrections/{mid}",
+      "sdk_methods": [
+        "update_source_correction"
+      ],
+      "cli_commands": [
+        "sources correction"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 4
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "build_source_locator",
+      "method": "POST",
+      "path": "/api/v1/files/{fid}/locator",
+      "sdk_methods": [
+        "build_source_locator"
+      ],
+      "cli_commands": [
+        "sources locator"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 10
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "update_source_options",
+      "method": "PUT",
+      "path": "/api/v1/files/{fid}/options",
+      "sdk_methods": [
+        "update_source_options"
+      ],
+      "cli_commands": [
+        "sources options"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "render_source_page",
+      "method": "GET",
+      "path": "/api/v1/files/{fid}/page/{page}.png",
+      "sdk_methods": [
+        "render_source_page"
+      ],
+      "cli_commands": [
+        "sources page"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "select_representative_source",
+      "method": "POST",
+      "path": "/api/v1/files/{fid}/representative",
+      "sdk_methods": [
+        "select_representative_source"
+      ],
+      "cli_commands": [
+        "sources representative"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "search_source",
+      "method": "GET",
+      "path": "/api/v1/files/{fid}/search",
+      "sdk_methods": [
+        "search_source",
+        "iter_source_search_pages"
+      ],
+      "cli_commands": [
+        "sources search"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 8
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "get_source_structure",
+      "method": "GET",
+      "path": "/api/v1/files/{fid}/structure",
+      "sdk_methods": [
+        "get_source_structure"
+      ],
+      "cli_commands": [
+        "sources structure"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "get_source_view",
+      "method": "GET",
+      "path": "/api/v1/files/{fid}/view",
+      "sdk_methods": [
+        "get_source_view"
+      ],
+      "cli_commands": [
+        "sources view"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "list_source_page_words",
+      "method": "GET",
+      "path": "/api/v1/files/{fid}/words/{page}",
+      "sdk_methods": [
+        "list_source_page_words",
+        "iter_source_page_words"
+      ],
+      "cli_commands": [
+        "sources words"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 4
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "get_job_api_v1_jobs__jid__get",
+      "method": "GET",
+      "path": "/api/v1/jobs/{jid}",
+      "sdk_methods": [
+        "get_job",
+        "wait_for_job"
+      ],
+      "cli_commands": [
+        "jobs get",
+        "jobs wait"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 94
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "job_archive_api_v1_jobs__jid__archive_get",
+      "method": "GET",
+      "path": "/api/v1/jobs/{jid}/archive",
+      "sdk_methods": [
+        "download_archive"
+      ],
+      "cli_commands": [
+        "archive download"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "archive_link_api_v1_jobs__jid__archive_link_post",
+      "method": "POST",
+      "path": "/api/v1/jobs/{jid}/archive-link",
+      "sdk_methods": [
+        "archive_link"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "job_artifacts_api_v1_jobs__jid__artifacts_get",
+      "method": "GET",
+      "path": "/api/v1/jobs/{jid}/artifacts",
+      "sdk_methods": [
+        "list_artifacts",
+        "iter_artifacts"
+      ],
+      "cli_commands": [
+        "artifacts list"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 26
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "cancel_job_api_v1_jobs__jid__cancel_post",
+      "method": "POST",
+      "path": "/api/v1/jobs/{jid}/cancel",
+      "sdk_methods": [
+        "cancel_job"
+      ],
+      "cli_commands": [
+        "jobs cancel",
+        "jobs wait --cancel-on-interrupt"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 3
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "job_events_api_v1_jobs__jid__events_get",
+      "method": "GET",
+      "path": "/api/v1/jobs/{jid}/events",
+      "sdk_methods": [
+        "job_events",
+        "iter_job_events"
+      ],
+      "cli_commands": [
+        "jobs wait --events"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 11
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "job_items_api_v1_jobs__jid__items_get",
+      "method": "GET",
+      "path": "/api/v1/jobs/{jid}/items",
+      "sdk_methods": [
+        "list_job_items",
+        "iter_job_items"
+      ],
+      "cli_commands": [
+        "jobs items"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 20
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "job_report_api_v1_jobs__jid__report_csv_get",
+      "method": "GET",
+      "path": "/api/v1/jobs/{jid}/report.csv",
+      "sdk_methods": [
+        "download_report"
+      ],
+      "cli_commands": [
+        "report download"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "retry_job_api_v1_jobs__jid__retry_post",
+      "method": "POST",
+      "path": "/api/v1/jobs/{jid}/retry",
+      "sdk_methods": [
+        "retry_job"
+      ],
+      "cli_commands": [
+        "jobs retry"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 4,
+        "409": 4
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "job_runs_api_v1_jobs__jid__runs_get",
+      "method": "GET",
+      "path": "/api/v1/jobs/{jid}/runs",
+      "sdk_methods": [
+        "iter_job_runs"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "list_projects_api_v1_projects_get",
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "sdk_methods": [
+        "list_projects",
+        "iter_projects"
+      ],
+      "cli_commands": [
+        "projects list"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "create_project_api_v1_projects_post",
+      "method": "POST",
+      "path": "/api/v1/projects",
+      "sdk_methods": [
+        "create_project"
+      ],
+      "cli_commands": [
+        "projects create"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "201": 13,
+        "409": 1
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "delete_project_api_v1_projects__pid__delete",
+      "method": "DELETE",
+      "path": "/api/v1/projects/{pid}",
+      "sdk_methods": [
+        "delete_project"
+      ],
+      "cli_commands": [
+        "projects delete"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "403": 2
+      },
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "get_project_api_v1_projects__pid__get",
+      "method": "GET",
+      "path": "/api/v1/projects/{pid}",
+      "sdk_methods": [
+        "get_project"
+      ],
+      "cli_commands": [
+        "projects get"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "404": 1
+      },
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "get_definition_api_v1_projects__pid__definition_get",
+      "method": "GET",
+      "path": "/api/v1/projects/{pid}/definition",
+      "sdk_methods": [
+        "get_definition"
+      ],
+      "cli_commands": [
+        "definition get"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 1
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "put_definition_api_v1_projects__pid__definition_put",
+      "method": "PUT",
+      "path": "/api/v1/projects/{pid}/definition",
+      "sdk_methods": [
+        "put_definition"
+      ],
+      "cli_commands": [
+        "definition put"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 10
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "list_files_api_v1_projects__pid__files_get",
+      "method": "GET",
+      "path": "/api/v1/projects/{pid}/files",
+      "sdk_methods": [
+        "list_files",
+        "iter_files"
+      ],
+      "cli_commands": [
+        "files list"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 1
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "upload_file_api_v1_projects__pid__files_post",
+      "method": "POST",
+      "path": "/api/v1/projects/{pid}/files",
+      "sdk_methods": [
+        "upload_source"
+      ],
+      "cli_commands": [
+        "files upload"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "201": 17
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "reorder_project_sources",
+      "method": "PUT",
+      "path": "/api/v1/projects/{pid}/files/order",
+      "sdk_methods": [
+        "reorder_project_sources"
+      ],
+      "cli_commands": [
+        "sources order"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "project_jobs_api_v1_projects__pid__jobs_get",
+      "method": "GET",
+      "path": "/api/v1/projects/{pid}/jobs",
+      "sdk_methods": [
+        "list_jobs",
+        "iter_jobs"
+      ],
+      "cli_commands": [
+        "jobs list"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "create_job_api_v1_projects__pid__jobs_post",
+      "method": "POST",
+      "path": "/api/v1/projects/{pid}/jobs",
+      "sdk_methods": [
+        "create_job"
+      ],
+      "cli_commands": [
+        "jobs submit"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "202": 11
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "locate_source_mappings",
+      "method": "GET",
+      "path": "/api/v1/projects/{pid}/locate",
+      "sdk_methods": [
+        "locate_source_mappings"
+      ],
+      "cli_commands": [
+        "sources locate"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "get_mappings_api_v1_projects__pid__mappings_get",
+      "method": "GET",
+      "path": "/api/v1/projects/{pid}/mappings",
+      "sdk_methods": [
+        "get_mappings"
+      ],
+      "cli_commands": [
+        "mappings get"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "put_mappings_api_v1_projects__pid__mappings_put",
+      "method": "PUT",
+      "path": "/api/v1/projects/{pid}/mappings",
+      "sdk_methods": [
+        "put_mappings"
+      ],
+      "cli_commands": [
+        "mappings put"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 8
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "preflight_api_v1_projects__pid__preflight_post",
+      "method": "POST",
+      "path": "/api/v1/projects/{pid}/preflight",
+      "sdk_methods": [
+        "preflight"
+      ],
+      "cli_commands": [
+        "preflight"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 10
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "preflight_issues_api_v1_projects__pid__preflight_issues_get",
+      "method": "GET",
+      "path": "/api/v1/projects/{pid}/preflight/issues",
+      "sdk_methods": [
+        "list_preflight_issues",
+        "iter_preflight_issues"
+      ],
+      "cli_commands": [
+        "preflight --issues"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 8
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "render_project_preview",
+      "method": "POST",
+      "path": "/api/v1/projects/{pid}/preview",
+      "sdk_methods": [
+        "download_preview"
+      ],
+      "cli_commands": [
+        "preview"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 9,
+        "409": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "list_source_records",
+      "method": "GET",
+      "path": "/api/v1/projects/{pid}/records",
+      "sdk_methods": [
+        "list_source_records",
+        "iter_source_records"
+      ],
+      "cli_commands": [
+        "sources records"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 8
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "put_rule_api_v1_projects__pid__rule_put",
+      "method": "PUT",
+      "path": "/api/v1/projects/{pid}/rule",
+      "sdk_methods": [
+        "put_rule"
+      ],
+      "cli_commands": [
+        "rule put"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 10
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "put_template_api_v1_projects__pid__template_put",
+      "method": "PUT",
+      "path": "/api/v1/projects/{pid}/template",
+      "sdk_methods": [
+        "set_project_template"
+      ],
+      "cli_commands": [
+        "projects template"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 10
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "list_templates_api_v1_templates_get",
+      "method": "GET",
+      "path": "/api/v1/templates",
+      "sdk_methods": [
+        "list_templates",
+        "iter_templates"
+      ],
+      "cli_commands": [
+        "templates list"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "upload_template_api_v1_templates_post",
+      "method": "POST",
+      "path": "/api/v1/templates",
+      "sdk_methods": [
+        "upload_template"
+      ],
+      "cli_commands": [
+        "templates upload"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "201": 5
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "create_builtin_template",
+      "method": "POST",
+      "path": "/api/v1/templates/builtin",
+      "sdk_methods": [
+        "create_builtin_template"
+      ],
+      "cli_commands": [
+        "templates builtin create"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "201": 12,
+        "429": 1
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "delete_template_api_v1_templates__tid__delete",
+      "method": "DELETE",
+      "path": "/api/v1/templates/{tid}",
+      "sdk_methods": [
+        "delete_template"
+      ],
+      "cli_commands": [
+        "templates delete"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "get_template_api_v1_templates__tid__get",
+      "method": "GET",
+      "path": "/api/v1/templates/{tid}",
+      "sdk_methods": [
+        "get_template"
+      ],
+      "cli_commands": [
+        "templates get"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "get_builtin_template",
+      "method": "GET",
+      "path": "/api/v1/templates/{tid}/builtin",
+      "sdk_methods": [
+        "get_builtin_template"
+      ],
+      "cli_commands": [
+        "templates builtin export"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 16
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "save_builtin_template",
+      "method": "PUT",
+      "path": "/api/v1/templates/{tid}/builtin",
+      "sdk_methods": [
+        "save_builtin_template"
+      ],
+      "cli_commands": [
+        "templates builtin save"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 8,
+        "409": 4
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "template_content_api_v1_templates__tid__content_get",
+      "method": "GET",
+      "path": "/api/v1/templates/{tid}/content",
+      "sdk_methods": [
+        "download_template"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "get_fields_api_v1_templates__tid__fields_get",
+      "method": "GET",
+      "path": "/api/v1/templates/{tid}/fields",
+      "sdk_methods": [
+        "get_template_fields"
+      ],
+      "cli_commands": [
+        "templates fields get"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 1
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "post_fields_api_v1_templates__tid__fields_post",
+      "method": "POST",
+      "path": "/api/v1/templates/{tid}/fields",
+      "sdk_methods": [
+        "create_template_fields"
+      ],
+      "cli_commands": [
+        "templates fields put"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 5
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "create_upload_api_v1_uploads_post",
+      "method": "POST",
+      "path": "/api/v1/uploads",
+      "sdk_methods": [
+        "create_upload",
+        "resumable_upload"
+      ],
+      "cli_commands": [
+        "files upload --resumable",
+        "templates upload --resumable"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "201": 4
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "get_upload_api_v1_uploads__uid__get",
+      "method": "GET",
+      "path": "/api/v1/uploads/{uid}",
+      "sdk_methods": [
+        "get_upload"
+      ],
+      "cli_commands": [
+        "files upload --resumable",
+        "templates upload --resumable"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "put_bytes_api_v1_uploads__uid__put",
+      "method": "PUT",
+      "path": "/api/v1/uploads/{uid}",
+      "sdk_methods": [
+        "put_upload_chunk"
+      ],
+      "cli_commands": [
+        "files upload --resumable",
+        "templates upload --resumable"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 12
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "abort_upload_api_v1_uploads__uid__abort_post",
+      "method": "POST",
+      "path": "/api/v1/uploads/{uid}/abort",
+      "sdk_methods": [
+        "abort_upload"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "complete_upload_api_v1_uploads__uid__complete_post",
+      "method": "POST",
+      "path": "/api/v1/uploads/{uid}/complete",
+      "sdk_methods": [
+        "complete_upload"
+      ],
+      "cli_commands": [
+        "files upload --resumable",
+        "templates upload --resumable"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "usage_api_v1_usage_get",
+      "method": "GET",
+      "path": "/api/v1/usage",
+      "sdk_methods": [
+        "usage"
+      ],
+      "cli_commands": [
+        "usage"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "list_subscriptions_api_v1_webhooks_subscriptions_get",
+      "method": "GET",
+      "path": "/api/v1/webhooks/subscriptions",
+      "sdk_methods": [
+        "list_webhooks",
+        "iter_webhooks"
+      ],
+      "cli_commands": [
+        "webhooks list"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "create_subscription_api_v1_webhooks_subscriptions_post",
+      "method": "POST",
+      "path": "/api/v1/webhooks/subscriptions",
+      "sdk_methods": [
+        "create_webhook"
+      ],
+      "cli_commands": [
+        "webhooks add"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "delete_subscription_api_v1_webhooks_subscriptions__sid__delete",
+      "method": "DELETE",
+      "path": "/api/v1/webhooks/subscriptions/{sid}",
+      "sdk_methods": [
+        "delete_webhook"
+      ],
+      "cli_commands": [
+        "webhooks delete"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "get_subscription_api_v1_webhooks_subscriptions__sid__get",
+      "method": "GET",
+      "path": "/api/v1/webhooks/subscriptions/{sid}",
+      "sdk_methods": [
+        "get_webhook"
+      ],
+      "cli_commands": [
+        "webhooks get"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "update_subscription_api_v1_webhooks_subscriptions__sid__patch",
+      "method": "PATCH",
+      "path": "/api/v1/webhooks/subscriptions/{sid}",
+      "sdk_methods": [
+        "update_webhook"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "list_deliveries_api_v1_webhooks_subscriptions__sid__deliveries_get",
+      "method": "GET",
+      "path": "/api/v1/webhooks/subscriptions/{sid}/deliveries",
+      "sdk_methods": [
+        "list_webhook_deliveries",
+        "iter_webhook_deliveries"
+      ],
+      "cli_commands": [
+        "webhooks deliveries"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "get_delivery_api_v1_webhooks_subscriptions__sid__deliveries__did__get",
+      "method": "GET",
+      "path": "/api/v1/webhooks/subscriptions/{sid}/deliveries/{did}",
+      "sdk_methods": [
+        "get_webhook_delivery"
+      ],
+      "cli_commands": [],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "redeliver_api_v1_webhooks_subscriptions__sid__deliveries__did__redeliver_post",
+      "method": "POST",
+      "path": "/api/v1/webhooks/subscriptions/{sid}/deliveries/{did}/redeliver",
+      "sdk_methods": [
+        "redeliver_webhook"
+      ],
+      "cli_commands": [
+        "webhooks redeliver"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "pause_subscription_api_v1_webhooks_subscriptions__sid__pause_post",
+      "method": "POST",
+      "path": "/api/v1/webhooks/subscriptions/{sid}/pause",
+      "sdk_methods": [
+        "pause_webhook"
+      ],
+      "cli_commands": [
+        "webhooks pause"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "ping_subscription_api_v1_webhooks_subscriptions__sid__ping_post",
+      "method": "POST",
+      "path": "/api/v1/webhooks/subscriptions/{sid}/ping",
+      "sdk_methods": [
+        "ping_webhook"
+      ],
+      "cli_commands": [
+        "webhooks ping"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "resume_subscription_api_v1_webhooks_subscriptions__sid__resume_post",
+      "method": "POST",
+      "path": "/api/v1/webhooks/subscriptions/{sid}/resume",
+      "sdk_methods": [
+        "resume_webhook"
+      ],
+      "cli_commands": [
+        "webhooks resume"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "rotate_secret_api_v1_webhooks_subscriptions__sid__rotate_secret_post",
+      "method": "POST",
+      "path": "/api/v1/webhooks/subscriptions/{sid}/rotate-secret",
+      "sdk_methods": [
+        "rotate_webhook_secret"
+      ],
+      "cli_commands": [
+        "webhooks rotate"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "whoami_api_v1_whoami_get",
+      "method": "GET",
+      "path": "/api/v1/whoami",
+      "sdk_methods": [
+        "whoami"
+      ],
+      "cli_commands": [
+        "whoami"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "healthz_healthz_get",
+      "method": "GET",
+      "path": "/healthz",
+      "sdk_methods": [
+        "health"
+      ],
+      "cli_commands": [
+        "health"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 6
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "readyz_readyz_get",
+      "method": "GET",
+      "path": "/readyz",
+      "sdk_methods": [],
+      "cli_commands": [],
+      "implementation": "missing",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    }
+  ]
+}

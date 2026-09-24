@@ -1,0 +1,94 @@
+# Run from /opt/synwevo/config, with IMAGE set to a reviewed immutable image tag.
+name: synwevo
+x-app: &app
+  image: ${IMAGE:?Set IMAGE to the approved release}
+  user: '1000:1000'
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  volumes:
+    - /opt/synwevo/data:/data
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=1770
+    - /home/synwevo:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=700
+  env_file: /opt/synwevo/config/runtime.env
+  logging:
+    driver: json-file
+    options: {max-size: '10m', max-file: '3'}
+  stop_grace_period: 90s
+  pids_limit: 256
+  mem_limit: 768m
+  cpus: 1.0
+x-env: &env
+  SYNWEVO_HOST: 0.0.0.0
+  SYNWEVO_PORT: '8765'
+  SYNWEVO_DATA_DIR: /data
+  SYNWEVO_UI_AUTH: session
+  SYNWEVO_COOKIE_SECURE: '1'
+  SYNWEVO_TRUST_PROXY: '1'
+  SYNWEVO_ISSUER: https://accounts.wegreen.ltd
+  SYNWEVO_PORTAL_URL: https://synwevo.wegreen.ltd
+  SYNWEVO_REGISTRATION: invite
+  SYNWEVO_RP_ID: accounts.wegreen.ltd
+services:
+  accounts:
+    <<: *app
+    environment:
+      <<: *env
+      SYNWEVO_ROLE: accounts
+      SYNWEVO_PUBLIC_URL: https://accounts.wegreen.ltd
+  docs:
+    <<: *app
+    mem_limit: 2304m
+    cpus: 2.0
+    environment:
+      <<: *env
+      SYNWEVO_ROLE: app
+      SYNWEVO_APP_URL: https://docwave.wegreen.ltd
+      SYNWEVO_PUBLIC_URL: https://docwave.wegreen.ltd
+      SYNWEVO_OIDC_CLIENT_ID: docweave-web
+      SYNWEVO_OIDC_APP_ID: docweave
+    depends_on:
+      accounts: {condition: service_healthy}
+  portal:
+    <<: *app
+    environment:
+      <<: *env
+      SYNWEVO_ROLE: portal
+      SYNWEVO_APP_URL: https://synwevo.wegreen.ltd
+      SYNWEVO_PUBLIC_URL: https://synwevo.wegreen.ltd
+      SYNWEVO_OIDC_CLIENT_ID: portal-web
+      SYNWEVO_OIDC_APP_ID: platform
+    depends_on:
+      accounts: {condition: service_healthy}
+  gateway:
+    image: nginx:1.28-alpine
+    user: '101:101'
+    restart: unless-stopped
+    ports: ['127.0.0.1:18760:8080']
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - /opt/synwevo/config/nginx.conf:/etc/nginx/nginx.conf:ro
+    tmpfs:
+      - /var/cache/nginx:rw,nosuid,nodev,size=32m,uid=101,gid=101,mode=700
+      - /var/run:rw,nosuid,nodev,size=1m,uid=101,gid=101,mode=700
+      - /tmp:rw,nosuid,nodev,size=16m,uid=101,gid=101,mode=700
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -O /dev/null --header='Host: synwevo.wegreen.ltd' http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    pids_limit: 64
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options: {max-size: '10m', max-file: '3'}
+    depends_on:
+      accounts: {condition: service_healthy}
+      docs: {condition: service_healthy}
+      portal: {condition: service_healthy}

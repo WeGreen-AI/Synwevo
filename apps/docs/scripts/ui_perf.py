@@ -10,7 +10,7 @@ rAF runs at the display's rate, and reports:
   * long tasks (PerformanceObserver "longtask") during those interactions
   * JS heap before and after
 
-    backend/.venv/bin/python scripts/ui_perf.py <project-id> [base_url]
+    .venv/bin/python apps/docs/scripts/ui_perf.py <project-id> [base_url]
 
 Numbers go into docs/quality/verification.md with the machine they were measured on.
 """
@@ -154,7 +154,7 @@ def main() -> int:
         out["long_tasks_ms"] = page.evaluate("window.__long || []")
         out["heap_mb_after"] = page.evaluate("performance.memory ? Math.round(performance.memory.usedJSHeapSize/1048576) : null")
         out["page_errors"] = errors
-        page.evaluate("() => localStorage.setItem('docweave.sideW', '0')")
+        page.evaluate("() => localStorage.setItem('synwevo.sideW', '0')")
         browser.close()
 
     print(json.dumps(out, ensure_ascii=False, indent=2))

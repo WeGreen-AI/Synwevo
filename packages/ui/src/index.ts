@@ -4,5 +4,6 @@
  * 意味着"什么是共享的"有答案，删掉一个内部文件不会悄悄弄坏另一个应用。
  */
 export * from "./ui";
+export * from "./a11y";
 export * from "./theme";
 export * from "./useFit";

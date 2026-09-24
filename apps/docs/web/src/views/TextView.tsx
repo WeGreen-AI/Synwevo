@@ -1,17 +1,19 @@
 import { useEffect, useRef } from "react";
 import type { Mark, Selection } from "../lib/types";
+import { markColor } from "../lib/css";
 import { hexA } from "./GridView";
+import { scrollBehavior } from "@synwevo/ui";
 
-export default function TextView({ lines, marks, selection, onSelect, focusKey }: { lines: string[]; marks: Mark[]; selection: Selection | null; onSelect: (s: Selection | null) => void; focusKey?: string | null }) {
+export default function TextView({ lines, marks, selection, onSelect, focusKey, selectable = true }: { selectable?: boolean; lines: string[]; marks: Mark[]; selection: Selection | null; onSelect: (s: Selection | null) => void; focusKey?: string | null }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!focusKey) return;
     const el = ref.current?.querySelector(`[data-mark="${focusKey}"]`) as HTMLElement | null;
-    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    el?.scrollIntoView({ block: "center", behavior: scrollBehavior() });
   }, [focusKey]);
   const onUp = () => {
     const s = window.getSelection();
-    if (!s || s.isCollapsed) return;
+    if (!selectable || !s || s.isCollapsed || !ref.current?.contains(s.anchorNode) || !ref.current?.contains(s.focusNode)) return;
     const a = pt(s.anchorNode, s.anchorOffset), f = pt(s.focusNode, s.focusOffset);
     if (!a || !f || a.line !== f.line) return;
     const start = Math.min(a.off, f.off), end = Math.max(a.off, f.off);
@@ -36,7 +38,7 @@ export default function TextView({ lines, marks, selection, onSelect, focusKey }
                 const inSel = sel && sel.start <= s0 && sel.end >= e0;
                 return (
                   <span key={k} data-off={s0} data-mark={m && (m.pos as any).start === s0 ? `${m.role}:${m.id}` : undefined}
-                    style={{ background: inSel ? "rgba(37,99,235,.2)" : m ? hexA(m.color, 0.18) : undefined, borderBottom: m ? `2px solid ${m.color}` : undefined }}>
+                    style={{ background: inSel ? "rgba(37,99,235,.2)" : m ? hexA(markColor(m.color), 0.18) : undefined, borderBottom: m ? `2px solid ${markColor(m.color)}` : undefined }}>
                     {ln.slice(s0, e0)}
                   </span>
                 );

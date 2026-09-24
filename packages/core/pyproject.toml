@@ -9,8 +9,12 @@ description = "Synwevo 共享基础库：持久化入口、租户上下文、身
 requires-python = ">=3.12"
 # Versions are pinned in the repository's requirements files, which stay the single source of
 # truth for what gets installed; this list is the abstract dependency set, so an import that is
-# not declared here fails the boundary check rather than working by accident.
-dependencies = ["fastapi", "starlette", "argon2-cffi"]
+# not declared here fails the boundary check (scripts/check_boundaries.py) rather than working
+# by accident because another package happened to pull it in.
+#   authlib      — OIDC token signing and verification (synwevo_core.oidc)
+#   httpx        — back-channel logout delivery (synwevo_core.oidc)
+#   cryptography — AES-GCM for sealed secrets: TOTP seeds, webhook signing secrets (synwevo_core.sealed)
+dependencies = ["fastapi", "starlette", "argon2-cffi", "authlib", "httpx", "cryptography"]
 
 [tool.setuptools.packages.find]
 include = ["synwevo_core*"]

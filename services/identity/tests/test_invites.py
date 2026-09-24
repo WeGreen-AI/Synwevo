@@ -422,3 +422,45 @@ def test_accepting_while_signed_in_as_the_wrong_account_is_refused_over_http(htt
     r = other.post("/api/auth/invitations/accept", json={"token": token}, headers=_csrf(other))
     assert r.status_code == 409 and r.json()["error"] == "wrong_account"
     assert "target@example.com" in r.json()["message"]
+
+
+# ---------------------------------------------------------------- F056/F080: tokens in the outbox
+def test_a_sent_message_no_longer_holds_its_link_token(http):
+    c, ws, store = http["c"], http["ws"], http["store"]
+    r = c.post(f"/api/auth/workspaces/{ws}/invitations", json={"email": "new@example.com"}, headers=_csrf(c))
+    iid = r.json()["id"]
+    token = _token_from_mail(http)                      # drains: the mail is delivered first
+    body = store.one("SELECT body, status FROM mail_outbox WHERE ref_id=?", (iid,))
+    assert body["status"] == "sent"
+    assert token not in body["body"], "寄出之后，库里的邮件正文不能再带着可用的链接"
+    assert mail_mod.REDACTED in body["body"]
+    # the invitation itself still works from the delivered link
+    from fastapi.testclient import TestClient
+    assert TestClient(http["api"]).get(f"/api/auth/invitations/preview?token={token}").json()["state"] == "pending"
+
+
+def test_a_message_that_finally_fails_is_redacted_too(env, monkeypatch):
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "smtp")
+    monkeypatch.setenv("SYNWEVO_SMTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("SYNWEVO_SMTP_PORT", "1")                 # nothing listens there
+    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "https://docs.example.org")
+    m = mail_mod.Mailer(env["store"], start=False)
+    subject, text = mail_mod.reset_mail(token="SECRET-TOKEN-VALUE", expires_h=2)
+    row = m.enqueue("x@example.com", subject, text, kind="reset")
+    env["store"].execute("UPDATE mail_outbox SET attempts=? WHERE id=?", (mail_mod.MAX_ATTEMPTS - 1, row["id"]))
+    m.drain_once()
+    out = env["store"].one("SELECT status, body FROM mail_outbox WHERE id=?", (row["id"],))
+    assert out["status"] == "failed" and "SECRET-TOKEN-VALUE" not in out["body"]
+
+
+def test_the_file_sink_defaults_to_the_data_directory(env, monkeypatch, tmp_path):
+    """Not the process's working directory: these files carry live links."""
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.delenv("SYNWEVO_MAIL_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    m = mail_mod.Mailer(env["store"], start=False)
+    m.enqueue("x@example.com", "s", "b", kind="verify")
+    m.drain_once()
+    from pathlib import Path
+    assert list(Path(env["store"].root, "mail").glob("*.eml"))
+    assert not (tmp_path / "data").exists()

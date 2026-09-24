@@ -142,6 +142,13 @@ def _check_cells(n: int):
         raise LimitError(f"单元格数量超过上限 {LIMITS.max_cells:,}（可通过 SYNWEVO_DOCS_MAX_CELLS 调整）")
 
 
+def _check_rows(n: int, where: str):
+    # Blank rows hold no cells but still cost a list each; a single cell addressed at row
+    # 2,000,000,000 (a few bytes in the file) would otherwise expand into that many rows.
+    if n > LIMITS.max_rows:
+        raise LimitError(f"{where}的行数超过上限 {LIMITS.max_rows:,}（可通过 SYNWEVO_DOCS_MAX_ROWS 调整）")
+
+
 # ---------------------------------------------------------------- CSV
 def detect_encoding(data: bytes) -> tuple[str, bool]:
     if data.startswith(b"\xef\xbb\xbf"):
@@ -203,9 +210,10 @@ def read_csv(data: bytes, options: dict | None = None) -> Workbook:
     rows: list[list[V.Value]] = []
     total = 0
     for rec in reader:
-        total += len(rec)
+        total += max(1, len(rec))            # a blank line is still a row: never free
         _check_cells(total)
         rows.append([V.Value(V.STR, s, s) if s != "" else V.empty() for s in rec])
+        _check_rows(len(rows), "CSV ")
     replaced = text_.count("�")
     info = {"encoding": enc, "had_bom": had_bom, "delimiter": delim, "quotechar": quote,
             "replacement_chars": replaced}
@@ -255,8 +263,11 @@ def read_xlsx(data: bytes) -> Workbook:
             while out and out[-1].is_empty and out[-1].t == V.EMPTY:
                 out.pop()
             rows.append(out)
-            total += len(out)
+            # read-only openpyxl yields an empty row for every missing row index up to the
+            # next stored one, so rows (not only cells) are what a crafted gap inflates
+            total += max(1, len(out))
             _check_cells(total)
+            _check_rows(len(rows), f"工作表「{ws.title}」")
         while rows and not rows[-1]:
             rows.pop()
         sh = Sheet(ws.title, idx, rows, hidden=(ws.sheet_state != "visible"))

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ApiError, del, get, patch, post, put, qs } from "@synwevo/auth-client";
-import { describeSelection, mappingSlots, MODE_NAME, slotPos } from "../lib/describe";
+import { ApiError, del, get, patch, post, put, qs, useSession } from "@synwevo/auth-client";
+import { describeSelection, mappingSlots, slotPos } from "../lib/describe";
 import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, TemplateDetail } from "../lib/types";
-import { useDialog, useToast } from "@synwevo/ui";
+import { anyModalOpen, isImeKey, Modal, useDialog, useToast } from "@synwevo/ui";
 import { applyTheme, nextTheme, recall, remember, storedTheme, THEME_NAME, type Theme } from "@synwevo/ui";
-import { jobStatus } from "../lib/status";
+import { jobStatus, ruleMode } from "../lib/status";
+import { errorText, isPermissionError, NO_EXPORT_TEXT, permissions, READ_ONLY_TEXT } from "../lib/perm";
+import { markColor } from "../lib/css";
 import AnyView from "../components/AnyView";
 import CommandPalette, { Command } from "../components/CommandPalette";
 import Shortcuts from "../components/Shortcuts";
@@ -22,6 +24,14 @@ import SidePanel, { SideTab } from "../components/SidePanel";
 import SlotDialog, { suggestName } from "../components/SlotDialog";
 import TemplateChooser from "../components/TemplateChooser";
 
+/** 409 from a save or an undo/redo decided on a state that has moved on (another tab, another
+ *  member): mappings answer `stale`, the template `stale_template`. */
+const isStale = (e: unknown) => {
+  const code = (e as { code?: string } | null)?.code;
+  return code === "stale" || code === "stale_template";
+};
+const STALE_RELOADED = "内容已在其他窗口或被其他人修改，这次操作没有执行。已刷新为最新内容，请在此基础上重新操作。";
+
 type Dialog =
   | null
   | { kind: "rule"; initial?: Partial<RecordRule> }
@@ -33,13 +43,22 @@ type Dialog =
   | { kind: "regression" }
   | { kind: "desensitize" };
 
-const GREY = "#94a3b8";
 
-export default function Workspace() {
+export default function WorkspaceRoute() {
+  const { pid } = useParams();
+  return <Workspace key={pid} />;
+}
+
+function Workspace() {
   const { pid } = useParams();
   const nav = useNavigate();
   const toast = useToast();
   const { confirm } = useDialog();
+  const session = useSession();
+  // What this member may do here. The server enforces it (403 read_only_role /
+  // export_not_allowed); the UI only avoids offering actions that can only be refused.
+  const perm = permissions(session.me, session.disabled);
+  const ro = !perm.canWrite;
   const [project, setProject] = useState<Project | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const loaded = useRef(false);          // "the workspace is on screen" — read inside reload's closure
@@ -79,8 +98,12 @@ export default function Workspace() {
   const [relocate, setRelocate] = useState<{ fileId: string; mappingId: string } | null>(null);
   const [tick, setTick] = useState(0);
   const [guide, setGuide] = useState(() => recall("guide", true));
+  const [singleKeys, setSingleKeys] = useState(() => recall("singleKeys", true));
+  const [uploadReq, setUploadReq] = useState(0);
   const [ocrBusy, setOcrBusy] = useState(false);
   const [findQ, setFindQ] = useState("");
+  const findRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => findRequest.current?.abort(), []);
   const [find, setFind] = useState<{ hits: any[]; total: number; idx: number; q: string } | null>(null);
   const actions = useRef<{ undo: ("m" | "t")[]; redo: ("m" | "t")[] }>({ undo: [], redo: [] });
   const workRef = useRef<HTMLDivElement>(null);
@@ -95,6 +118,7 @@ export default function Workspace() {
   useEffect(() => { remember("sideCollapsed", sideCollapsed); }, [sideCollapsed]);
   useEffect(() => { remember("sideW", sideW); }, [sideW]);
   useEffect(() => { remember("guide", guide); }, [guide]);
+  useEffect(() => { remember("singleKeys", singleKeys); }, [singleKeys]);
 
   const tpl: TemplateDetail | null = project?.template || null;
   const slots: Slot[] = tpl?.version.slots || [];
@@ -160,11 +184,17 @@ export default function Workspace() {
       setBlockIdx(null);
       return;
     }
+    // Every fetch below is tied to the view it was made for: a slow answer for the previous file
+    // (a large XLSX next to a small CSV) must not land after the current one and be mistaken for
+    // it — selections made on that view become locators for the wrong file.
+    let alive = true;
     get(`/api/sources/${file.id}/blocks`).then((r) => {
+      if (!alive) return;
       setBlocks(r.blocks || []);
       setBlockIdx((cur) => (r.blocks?.length ? (cur != null && cur < r.blocks.length ? cur : 0) : null));
       if (r.error) toast(r.error);
-    }).catch(() => { setBlocks([]); setBlockIdx(null); });
+    }).catch(() => { if (alive) { setBlocks([]); setBlockIdx(null); } });
+    return () => { alive = false; };
   }, [file?.id, file?.version, file?.status, blockMode, blockRuleKey]);
   const bq = blockIdx != null ? { block: blockIdx } : {};
   const bAmp = blockIdx != null ? `&block=${blockIdx}` : "";
@@ -172,6 +202,7 @@ export default function Workspace() {
   // source view (non-grid parts are rendered from this response; grids page separately)
   const srcKey = file ? `${file.id}:${file.version}:${file.status}:${blockIdx ?? ""}` : "";
   useEffect(() => {
+    findRequest.current?.abort();
     setSrcView(null);
     setLeftSel(null); // never keep a selection from another file
     setFind(null);
@@ -179,16 +210,28 @@ export default function Workspace() {
     setSrcPage(0);
     if (!file) return;
     if (blockMode && blockIdx == null) return;   // wait for the block list
-    get(`/api/sources/${file.id}/view${qs({ limit: 1, ...bq })}`).then(setSrcView).catch((e) => setSrcView({ view: "error", error: e.message }));
+    let alive = true;
+    get(`/api/sources/${file.id}/view${qs({ limit: 1, ...bq })}`)
+      .then((v) => alive && setSrcView(v))
+      .catch((e) => alive && setSrcView({ view: "error", error: errorText(e) }));
+    return () => { alive = false; };
   }, [srcKey]);
 
   const tplKey = tpl ? `${tpl.id}:${tpl.head}` : "";
   useEffect(() => {
-    if (!tpl) {
-      setTplView(null);
-      return;
-    }
-    get(`/api/templates/${tpl.id}/view${qs({ limit: 1 })}`).then(setTplView).catch((e) => setTplView({ view: "error", error: e.message }));
+    setRightSel(null);
+    setTplSheet(null);
+    setTplPage(0);
+    setGridFocusR(null);
+  }, [tpl?.id]);
+  useEffect(() => {
+    setTplView(null);
+    if (!tpl) return;
+    let alive = true;
+    get(`/api/templates/${tpl.id}/view${qs({ limit: 1 })}`)
+      .then((v) => alive && setTplView(v))
+      .catch((e) => alive && setTplView({ view: "error", error: errorText(e) }));
+    return () => { alive = false; };
   }, [tplKey]);
 
   // where each mapping resolves in the active file
@@ -198,7 +241,11 @@ export default function Workspace() {
       return;
     }
     if (blockMode && blockIdx == null) return;
-    get(`/api/projects/${pid}/locate${qs({ file: file.id, ...bq })}`).then(setLocate).catch(() => setLocate({}));
+    let alive = true;
+    get(`/api/projects/${pid}/locate${qs({ file: file.id, ...bq })}`)
+      .then((l) => alive && setLocate(l))
+      .catch(() => alive && setLocate({}));
+    return () => { alive = false; };
   }, [srcKey, project?.rev]);
 
   // ------------------------------------------------------------------ persistence helpers
@@ -220,7 +267,15 @@ export default function Workspace() {
       // green ✓ is what the user is left looking at when they close the tab.
       const serverHasIt = e instanceof ApiError && !e.upstream && e.status > 401 && e.status < 500;
       setSave(serverHasIt ? "saved" : "error");
-      toast(e.message, "err");
+      if (isStale(e)) {
+        // Someone else's edit landed first; this screen is behind. Show the current state
+        // instead of leaving it to the person to find the reload button.
+        toast(STALE_RELOADED, "err");
+        void reload();
+      } else {
+        // A viewer's edit refused with read_only_role says who can change that, not「请求失败」.
+        toast(errorText(e), isPermissionError(e) ? "info" : "err");
+      }
       throw e;
     }
   };
@@ -230,65 +285,76 @@ export default function Workspace() {
     await reload();
   };
 
+  /** One undo/redo step of either stack. Every entry point (⌘Z, the ↶/↷ buttons above the
+   *  template and the mapping list, the palette) goes through here, so a refusal is reported
+   *  instead of an unhandled rejection that left the buttons looking as if they had worked. */
+  const step = async (dir: "undo" | "redo", d: "m" | "t") => {
+    try {
+      // The revision this step was decided on travels with it: when someone else changed the
+      // mappings or the template meanwhile, the server refuses with 409 (stale / stale_template)
+      // instead of undoing their edit.
+      if (d === "m") await post(`/api/projects/${pid}/mappings/${dir}`, { base_rev: project?.mappings.rev });
+      else await post(`/api/templates/${tpl!.id}/${dir}`, { head: tpl?.head });
+      (dir === "undo" ? actions.current.redo : actions.current.undo).push(d);
+      if (dir === "undo") toast(d === "m" ? "已撤销映射修改" : "已撤销模板修改");
+      await reload();
+      return true;
+    } catch (e: any) {
+      if (isStale(e)) {
+        toast(STALE_RELOADED, "err");
+        await reload();
+      } else {
+        toast(errorText(e), isPermissionError(e) ? "info" : "err");
+      }
+      return false;
+    }
+  };
   const undo = async () => {
     const d = actions.current.undo.pop() || (project?.mappings.can_undo ? "m" : tpl?.can_undo ? "t" : undefined);
-    if (!d) return;
-    try {
-      if (d === "m") await post(`/api/projects/${pid}/mappings/undo`);
-      else await post(`/api/templates/${tpl!.id}/undo`);
-      actions.current.redo.push(d);
-      toast(d === "m" ? "已撤销映射修改" : "已撤销模板修改");
-      await reload();
-    } catch (e: any) {
-      toast(e.message, "err");
-    }
+    if (d) await step("undo", d);
   };
   const redo = async () => {
     const d = actions.current.redo.pop() || (project?.mappings.can_redo ? "m" : tpl?.can_redo ? "t" : undefined);
-    if (!d) return;
-    try {
-      if (d === "m") await post(`/api/projects/${pid}/mappings/redo`);
-      else await post(`/api/templates/${tpl!.id}/redo`);
-      actions.current.undo.push(d);
-      await reload();
-    } catch (e: any) {
-      toast(e.message, "err");
-    }
+    if (d) await step("redo", d);
   };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.isComposing || (e as any).keyCode === 229) return;   // never steal keys from an IME
+      if (isImeKey(e)) return;   // never steal keys from an IME
       const t = e.target as HTMLElement;
       const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
       const mod = e.metaKey || e.ctrlKey;
-      // the palette works from anywhere, including while typing in a field
+      // the palette works from anywhere, including while typing in a field — but never over a
+      // dialog: its commands replace the dialog, and its Escape used to close both.
       if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setCmdOpen((v) => !v);
+        if (cmdOpen) setCmdOpen(false);
+        else if (!dialog && !help && !anyModalOpen()) setCmdOpen(true);
         return;
       }
+      // Anything else while a dialog (ours, a confirm, the palette) is open belongs to that
+      // dialog: ⌘Z must not undo an edit on the page behind a question still being asked.
+      if (cmdOpen || help || dialog || anyModalOpen()) return;
       if (mod && e.key.toLowerCase() === "f" && file && file.status !== "parsing" && !preview) {
         e.preventDefault();                                       // replace the browser find: ours searches the parsed file
         findRef.current?.focus();
         findRef.current?.select();
         return;
       }
-      if (cmdOpen || help) return;
       if (typing) return;
-      if (dialog) return;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        e.shiftKey ? redo() : undo();
+        if (!ro) e.shiftKey ? redo() : undo();       // a viewer has nothing to undo
       } else if (mod && e.key.toLowerCase() === "y") {
         e.preventDefault();
-        redo();
+        if (!ro) redo();
       } else if (mod && e.key === "Enter") {
-        if (tpl && rule.mode) { e.preventDefault(); setDialog({ kind: "generate" }); }
-      } else if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        if (tpl && rule.mode && !ro) { e.preventDefault(); setDialog({ kind: "generate" }); }
+      } else if (singleKeys && !mod && !e.altKey && (e.key === "?" || (e.key === "/" && e.shiftKey))) {
+        // Single-character shortcuts can be switched off in the shortcut help (WCAG 2.1.4).
         e.preventDefault();
         setHelp(true);
-      } else if (e.key === "p" && !mod && !e.altKey) {
+      } else if (singleKeys && e.key === "p" && !mod && !e.altKey) {
         if (tpl && rule.mode) { e.preventDefault(); setPreview((v) => !v); }
       } else if (e.key === "Escape") {
         setLeftSel(null);
@@ -313,7 +379,7 @@ export default function Workspace() {
     for (const m of mappings) {
       (locate[m.id] || []).forEach((r, i) => {
         if (!r.ok || !r.pos) return;
-        out.push({ id: i ? `${m.id}~${i}` : m.id, no: m.no, color: m.color, role: "src", pos: r.pos, active: m.id === activeMap, dim: !m.enabled, label: `映射 #${m.no}` });
+        out.push({ id: i ? `${m.id}~${i}` : m.id, no: m.no, color: markColor(m.color), role: "src", pos: r.pos, active: m.id === activeMap, dim: !m.enabled, label: `映射 #${m.no}` });
       });
     }
     return out;
@@ -326,7 +392,7 @@ export default function Workspace() {
       const pos = slotPos(s, tpl.format);
       if (!pos) continue;
       const m = slotMapping(s);
-      out.push({ id: m ? m.id : s.id, no: m?.no, color: m ? m.color : GREY, role: m ? "tgt" : "slot", pos, active: (m && m.id === activeMap) || (rightSel?.kind === "slot" && rightSel.slotId === s.id), label: `字段「${s.name}」` + (m ? `（映射 #${m.no}）` : "（未映射）") });
+      out.push({ id: m ? m.id : s.id, no: m?.no, color: markColor(m?.color), role: m ? "tgt" : "slot", pos, active: (m && m.id === activeMap) || (rightSel?.kind === "slot" && rightSel.slotId === s.id), label: `字段「${s.name}」` + (m ? `（映射 #${m.no}）` : "（未映射）") });
     }
     return out;
   }, [slots, mappings, activeMap, rightSel, tpl]);
@@ -335,7 +401,7 @@ export default function Workspace() {
     const o: Record<string, { name: string; color: string; no?: number; cols?: Record<string, string> }> = {};
     for (const s of slots) {
       const m = slotMapping(s);
-      o[s.id] = { name: s.name, color: m ? m.color : GREY, no: m?.no, cols: Object.fromEntries((s.columns || []).map((c) => [c.key, c.name])) };
+      o[s.id] = { name: s.name, color: markColor(m?.color), no: m?.no, cols: Object.fromEntries((s.columns || []).map((c) => [c.key, c.name])) };
     }
     return o;
   }, [slots, mappings]);
@@ -377,13 +443,18 @@ export default function Workspace() {
     setTimeout(() => { setFocusL("src:__find"); setTimeout(() => setFocusL(null), 50); }, 120);
   };
   const runFind = async () => {
+    findRequest.current?.abort();
     if (!file || !findQ.trim()) { setFind(null); return; }
+    const ctl = new AbortController();
+    findRequest.current = ctl;
     try {
-      const r = await get(`/api/sources/${file.id}/search${qs({ q: findQ.trim(), ...bq })}`);
+      const r = await get(`/api/sources/${file.id}/search${qs({ q: findQ.trim(), ...bq })}`, ctl.signal);
+      if (ctl.signal.aborted) return;
       if (!r.hits.length) { toast(`「${findQ}」没有找到`); setFind({ hits: [], total: 0, idx: 0, q: findQ.trim() }); return; }
       gotoFind({ ...r, idx: 0, q: findQ.trim() });
     } catch (e: any) {
-      toast(e.message, "err");
+      if (ctl.signal.aborted) return;
+      toast(errorText(e), "err");
     }
   };
 
@@ -418,7 +489,7 @@ export default function Workspace() {
       const existing = slotMapping(selectedSlot) || null;
       setDialog({ kind: "mapping", slot: selectedSlot, proposals: r.proposals, warnings: r.warnings, existing, editing: null });
     } catch (e: any) {
-      toast(e.message, "err");
+      toast(errorText(e), isPermissionError(e) ? "info" : "err");
     }
   };
 
@@ -438,7 +509,7 @@ export default function Workspace() {
       setRelocate(null);
       setLeftSel(null);
     } catch (e: any) {
-      toast(e.message, "err");
+      toast(errorText(e), isPermissionError(e) ? "info" : "err");
     }
   };
 
@@ -460,7 +531,11 @@ export default function Workspace() {
     const shared = slots.filter((x) => (x.binding || x.id) === (s.binding || s.id)).length > 1;
     const ok = await confirm("删除字段", <>删除字段「{s.name}」并恢复模板中原有内容？{affected.length > 0 && !shared && <><br /><b>同时会删除 {affected.length} 个相关映射</b>（#{affected.map((m) => m.no).join("、#")}）。</>}可以撤销。</>, "删除", true);
     if (!ok) return;
-    await run(() => del(`/api/templates/${tpl!.id}/slots/${s.id}${qs({ project_id: pid, cascade: 1 })}`), "t");
+    try {
+      await run(() => del(`/api/templates/${tpl!.id}/slots/${s.id}${qs({ project_id: pid, cascade: 1 })}`), "t");
+    } catch {
+      return;                                   // run() already said why
+    }
     setRightSel(null);
     await reload();
   };
@@ -479,33 +554,54 @@ export default function Workspace() {
       toast(`OCR 完成：识别 ${r.words} 个词${r.low_conf ? `，其中 ${r.low_conf} 个低置信度（红色下划线）` : ""}`, "ok");
       await reload();
     } catch (e: any) {
-      toast(e.message, "err");
+      toast(errorText(e), isPermissionError(e) ? "info" : "err");
     } finally {
       setOcrBusy(false);
     }
   };
 
   // ------------------------------------------------------------------ resizing
-  const dragResize = (e: React.MouseEvent) => {
+  const LEFT_MIN = 280;
+  const leftMax = () => Math.max(LEFT_MIN, (workRef.current?.clientWidth || 1200) - 420);
+  const leftPaneWidth = () => (workRef.current?.querySelector(".pane.left") as HTMLElement | null)?.getBoundingClientRect().width || 0;
+  const setLeft = (w: number) => {
+    const v = Math.round(Math.max(LEFT_MIN, Math.min(leftMax(), w)));
+    setLeftW(v);
+    remember("leftW", v);
+    setTick((t) => t + 1);
+  };
+  // Pointer events with capture: mouse, pen and touch, and the drag cannot be lost when the
+  // pointer crosses an iframe-like surface (the PDF layer) on the way.
+  const dragResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture?.(e.pointerId);
     const start = e.clientX;
-    const container = workRef.current!;
-    const leftPane = container.querySelector(".pane.left") as HTMLElement;
-    const w0 = leftPane.getBoundingClientRect().width;
+    const w0 = leftPaneWidth();
     document.body.classList.add("resizing");
-    const move = (ev: MouseEvent) => {
-      const w = Math.max(280, Math.min(container.clientWidth - 420, w0 + ev.clientX - start));
-      setLeftW(w);
-    };
+    const move = (ev: PointerEvent) => setLeftW(Math.max(LEFT_MIN, Math.min(leftMax(), w0 + ev.clientX - start)));
     const up = () => {
       document.body.classList.remove("resizing");
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
       remember("leftW", leftPaneWidth());
       setTick((t) => t + 1);
     };
-    const leftPaneWidth = () => (container.querySelector(".pane.left") as HTMLElement).getBoundingClientRect().width;
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  };
+  // Keyboard alternative to dragging the splitter (WCAG 2.1.1 / 2.5.7, APG window splitter).
+  const onResizerKey = (e: React.KeyboardEvent) => {
+    if (isImeKey(e)) return;
+    const stepPx = e.shiftKey ? 64 : 16;
+    if (e.key === "ArrowLeft") { e.preventDefault(); setLeft(leftPaneWidth() - stepPx); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); setLeft(leftPaneWidth() + stepPx); }
+    else if (e.key === "Home") { e.preventDefault(); setLeft(LEFT_MIN); }
+    else if (e.key === "End") { e.preventDefault(); setLeft(leftMax()); }
+    else if (e.key === "Enter") { e.preventDefault(); setLeftW(0); remember("leftW", 0); setTick((t) => t + 1); }
   };
 
   if (loadErr) return <div className="home"><div className="notice err">{loadErr}</div><Link to="/">返回项目列表</Link></div>;
@@ -525,20 +621,49 @@ export default function Workspace() {
   const rawRight = rightSel && rightSel.kind !== "slot" ? rightSel : null;
   const lastJob = project.jobs?.[0];
   const setThemeTo = (t: Theme) => { setTheme(t); applyTheme(t); };
+  const activeMapping = activeMap ? mappings.find((m) => m.id === activeMap) || null : null;
+  const editMapping = (m: Mapping) => {
+    const s = mappingSlots(m, slots)[0];
+    if (!s) { toast("该映射的目标字段已不存在，请删除或重新建立", "err"); return; }
+    setDialog({ kind: "mapping", slot: s, proposals: [], warnings: [], existing: null, editing: m });
+  };
+  const toggleMapping = (m: Mapping) =>
+    saveMappings(mappings.map((x) => (x.id === m.id ? { ...x, enabled: !x.enabled } : x)), `${m.enabled ? "禁用" : "启用"}映射 #${m.no}`).catch(() => {});
+  const deleteMapping = async (m: Mapping) => {
+    if (!(await confirm("删除映射", `删除映射 #${m.no}？可以用「撤销」恢复。`, "删除", true))) return;
+    await saveMappings(mappings.filter((x) => x.id !== m.id), `删除映射 #${m.no}`).catch(() => {});
+    setActiveMap(null);
+  };
 
   // Every palette entry runs the same handler as its button – nothing here is a separate code path.
-  const commands: Command[] = [
-    { id: "upload", group: "工作流", label: "上传来源文件", hint: "展开左侧文件列表", run: () => setFilesCollapsed(false) },
+  // Only actions this member can actually take are listed: a viewer is not offered edits that
+  // the server would refuse. Machine-interface management (keys, webhooks, ports, developer
+  // documentation) never appears here — it is managed through the CLI and configuration only.
+  const writeCommands: Command[] = ro ? [] : [
+    { id: "upload", group: "工作流", label: "上传来源文件…", hint: "选择要上传的文件", run: () => { setFilesCollapsed(false); setUploadReq((n) => n + 1); } },
     { id: "template", group: "工作流", label: "设置 / 更换模板", run: () => setDialog({ kind: "template" }) },
-    { id: "rule", group: "工作流", label: "定义样本规则", hint: rule.mode ? MODE_NAME[rule.mode] : "未定义", run: () => setDialog({ kind: "rule" }) },
+    { id: "rule", group: "工作流", label: "定义样本规则", hint: rule.mode ? ruleMode(rule.mode) : "未定义", run: () => setDialog({ kind: "rule" }) },
     { id: "map", group: "工作流", label: "建立映射", keys: "⇄", hint: canMap ? "" : "先选中左侧来源和右侧字段", disabled: !canMap, run: startMapping },
-    { id: "preview", group: "工作流", label: preview ? "关闭预览" : "打开预览", keys: "P", disabled: !tpl || !rule.mode, run: () => setPreview(!preview) },
-    { id: "generate", group: "工作流", label: "批量生成…", keys: "⌘↵", disabled: !tpl || !rule.mode, run: () => setDialog({ kind: "generate" }) },
-    { id: "undo", group: "编辑", label: "撤销", keys: "⌘Z", disabled: !project.mappings.can_undo && !tpl?.can_undo, run: undo },
-    { id: "redo", group: "编辑", label: "重做", keys: "⇧⌘Z", disabled: !project.mappings.can_redo && !tpl?.can_redo, run: redo },
+  ];
+  const mappingCommands: Command[] = ro || !activeMapping ? [] : [
+    { id: "map-edit", group: `当前映射 #${activeMapping.no}`, label: `编辑映射 #${activeMapping.no}`, run: () => editMapping(activeMapping) },
+    { id: "map-toggle", group: `当前映射 #${activeMapping.no}`, label: `${activeMapping.enabled ? "禁用" : "启用"}映射 #${activeMapping.no}`, run: () => toggleMapping(activeMapping) },
+    { id: "map-delete", group: `当前映射 #${activeMapping.no}`, label: `删除映射 #${activeMapping.no}…`, hint: "可以撤销", run: () => deleteMapping(activeMapping) },
+  ];
+  const commands: Command[] = [
+    ...mappingCommands,
+    ...writeCommands,
+    { id: "preview", group: "工作流", label: preview ? "关闭预览" : "打开预览", keys: singleKeys ? "P" : undefined, disabled: !tpl || !rule.mode, run: () => setPreview(!preview) },
+    ...(ro ? [] : [
+      { id: "generate", group: "工作流", label: "批量生成…", keys: "⌘↵", disabled: !tpl || !rule.mode, run: () => setDialog({ kind: "generate" }) },
+      { id: "undo", group: "编辑", label: "撤销", keys: "⌘Z", disabled: !project.mappings.can_undo && !tpl?.can_undo, run: undo },
+      { id: "redo", group: "编辑", label: "重做", keys: "⇧⌘Z", disabled: !project.mappings.can_redo && !tpl?.can_redo, run: redo },
+    ] as Command[]),
     { id: "clear", group: "编辑", label: "清除当前选择", keys: "Esc", disabled: !leftSel && !rightSel, run: () => { setLeftSel(null); setRightSel(null); setActiveMap(null); } },
     { id: "find", group: "编辑", label: "在来源文件中查找", keys: "⌘F", disabled: !file || file.status === "parsing", run: () => { setPreview(false); setTimeout(() => findRef.current?.focus(), 0); } },
-    { id: "ocr", group: "编辑", label: file?.ocr_pages?.length ? "重新 OCR 识别当前文件" : "OCR 识别当前文件", disabled: !file || (file.family !== "image" && file.family !== "pdf"), run: runOcr },
+    ...(ro ? [] : [
+      { id: "ocr", group: "编辑", label: file?.ocr_pages?.length ? "重新 OCR 识别当前文件" : "OCR 识别当前文件", disabled: !file || (file.family !== "image" && file.family !== "pdf"), run: runOcr },
+    ] as Command[]),
     { id: "tab-map", group: "面板", label: "查看映射列表", run: () => { setSideCollapsed(false); setTab("mappings"); } },
     { id: "tab-field", group: "面板", label: "查看模板字段", run: () => { setSideCollapsed(false); setTab("fields"); } },
     { id: "tab-sample", group: "面板", label: "查看样本列表", run: () => { setSideCollapsed(false); setTab("samples"); } },
@@ -549,15 +674,18 @@ export default function Workspace() {
     { id: "width", group: "面板", label: "恢复默认布局宽度", disabled: !leftW && !sideW, run: () => { setLeftW(0); remember("leftW", 0); setSideW(0); setTick((t) => t + 1); } },
     { id: "zoom-reset", group: "面板", label: "缩放恢复 100%", disabled: zoomL === 1 && zoomR === 1, run: () => { setZoomL(1); setZoomR(1); } },
     { id: "theme", group: "外观", label: `界面主题：${THEME_NAME[theme]} → ${THEME_NAME[nextTheme(theme)]}`, hint: "不影响文档纸张与导出颜色", run: () => setThemeTo(nextTheme(theme)) },
-    { id: "help", group: "外观", label: "显示键盘快捷键", keys: "?", run: () => setHelp(true) },
-    { id: "regression", group: "更多", label: "保存为回归用例…", disabled: !tpl || !rule.mode, run: () => setDialog({ kind: "regression" }) },
-    { id: "desensitize", group: "更多", label: "生成脱敏副本…", disabled: !sources.length, run: () => setDialog({ kind: "desensitize" }) },
+    { id: "help", group: "外观", label: "显示键盘快捷键", keys: singleKeys ? "?" : undefined, run: () => setHelp(true) },
+    ...(ro ? [] : [
+      { id: "regression", group: "更多", label: "保存为回归用例…", disabled: !tpl || !rule.mode, run: () => setDialog({ kind: "regression" }) },
+      { id: "desensitize", group: "更多", label: "生成脱敏副本…", disabled: !sources.length, run: () => setDialog({ kind: "desensitize" }) },
+    ] as Command[]),
     { id: "job", group: "更多", label: "打开最近的生成任务", disabled: !lastJob, run: () => lastJob && nav(`/p/${pid}/jobs/${lastJob.id}`) },
     { id: "regressions", group: "更多", label: "回归用例列表", run: () => nav("/regression") },
     { id: "caps", group: "更多", label: "格式能力矩阵", run: () => window.open("/capabilities", "_blank") },
     { id: "about", group: "更多", label: "关于与许可", run: () => window.open("/about", "_blank") },
     { id: "home", group: "更多", label: "返回项目列表", run: () => nav("/") },
-    ...sources.slice(0, 20).map((s) => ({
+    // every file, not only the first 20: typing filters the list
+    ...sources.map((s) => ({
       id: `file-${s.id}`, group: "切换来源文件", label: s.filename,
       hint: s.id === activeFile ? "当前" : s.representative ? "代表文件" : "", disabled: s.id === activeFile,
       run: () => setActiveFile(s.id),
@@ -570,37 +698,42 @@ export default function Workspace() {
       <div className="topbar">
         <Link to="/" className="brand" title="项目列表"><span className="logo">S</span><span className="desktop-only">Synwevo Docs</span></Link>
         <span className="sep" />
-        <input className="input" style={{ width: 200, fontWeight: 600, border: "1px solid transparent" }} defaultValue={project.name}
-          onBlur={(e) => e.target.value.trim() && e.target.value !== project.name && run(() => patch(`/api/projects/${pid}`, { name: e.target.value.trim() })).then(reload)} aria-label="项目名称" />
+        <ProjectName key={project.name} name={project.name} readOnly={ro}
+          onRename={(n) => run(() => patch(`/api/projects/${pid}`, { name: n })).then(reload)} />
         <span className="small muted desktop-only">模板：</span>
-        <button className="btn ghost sm desktop-only" onClick={() => setDialog({ kind: "template" })} title="更换或设置模板">{tpl ? `${tpl.name} · v${tpl.version.no}` : "未设置"} ▾</button>
+        <button type="button" className="btn ghost sm desktop-only" disabled={ro} onClick={() => setDialog({ kind: "template" })} title={ro ? READ_ONLY_TEXT : "更换或设置模板"}>{tpl ? `${tpl.name} · v${tpl.version.no}` : "未设置"} ▾</button>
         <span className="small muted desktop-only">样本：</span>
-        <button className="btn ghost sm desktop-only" onClick={() => setDialog({ kind: "rule" })}>{rule.mode ? MODE_NAME[rule.mode] : "未定义"} ▾</button>
-        <span className={`badge ${save === "saved" ? "ok" : save === "saving" ? "info" : "err"}`} title="所有修改自动保存到服务器">
-          {save === "saved" ? "✓ 已自动保存" : save === "saving" ? "保存中…" : "保存失败"}
-        </span>
+        <button type="button" className="btn ghost sm desktop-only" disabled={ro} title={ro ? READ_ONLY_TEXT : undefined} onClick={() => setDialog({ kind: "rule" })}>{ruleMode(rule.mode)} ▾</button>
+        {ro ? <span className="badge" title={READ_ONLY_TEXT}>只读</span> : (
+          <span className={`badge ${save === "saved" ? "ok" : save === "saving" ? "info" : "err"}`} title="所有修改自动保存到服务器" role="status">
+            {save === "saved" ? "✓ 已自动保存" : save === "saving" ? "保存中…" : "保存失败"}
+          </span>
+        )}
         <span className="spacer" />
         {lastJob && <Link className="btn ghost sm" to={`/p/${pid}/jobs/${lastJob.id}`}>最近任务：{jobStatus(lastJob.status)[0]}</Link>}
-        <button className="btn ghost sm" onClick={() => setCmdOpen(true)} title="命令面板：所有操作与快捷键">
+        <button type="button" className="btn ghost sm" onClick={() => setCmdOpen(true)} title="命令面板：所有操作与快捷键" aria-label="打开命令面板">
           ⌘K <span className="desktop-only tiny muted">命令</span>
         </button>
         <MoreMenu items={[
-          { label: "保存为回归用例…", onClick: () => setDialog({ kind: "regression" }), disabled: !tpl || !rule.mode },
-          { label: "生成脱敏副本…", onClick: () => setDialog({ kind: "desensitize" }), disabled: !sources.length },
+          ...(ro ? [] : [
+            { label: "保存为回归用例…", onClick: () => setDialog({ kind: "regression" }), disabled: !tpl || !rule.mode },
+            { label: "生成脱敏副本…", onClick: () => setDialog({ kind: "desensitize" }), disabled: !sources.length },
+          ]),
           { label: "回归用例", onClick: () => nav("/regression") },
           { label: "格式能力矩阵", onClick: () => window.open("/capabilities", "_blank") },
           { label: `界面主题：${THEME_NAME[theme]}`, onClick: () => setThemeTo(nextTheme(theme)) },
           { label: "键盘快捷键", onClick: () => setHelp(true) },
           { label: "关于与许可", onClick: () => window.open("/about", "_blank") },
         ]} />
-        <button className={`btn${preview ? " active" : ""}`} disabled={!tpl || !rule.mode} onClick={() => setPreview(!preview)}>👁 预览</button>
-        <button className="btn primary" disabled={!tpl || !rule.mode} onClick={() => setDialog({ kind: "generate" })}>▶ 生成</button>
+        <button type="button" className={`btn${preview ? " active" : ""}`} aria-pressed={preview} disabled={!tpl || !rule.mode} onClick={() => setPreview(!preview)}>👁 预览</button>
+        <button type="button" className="btn primary" disabled={!tpl || !rule.mode || ro} title={ro ? READ_ONLY_TEXT : undefined} onClick={() => setDialog({ kind: "generate" })}>▶ 生成</button>
       </div>
       <div className="stepbar">
         {steps.map((s, i) => (
           <span key={s.n} className="row gap4">
             {i > 0 && <span className="step-arrow">→</span>}
-            <button className={`step${s.done ? " done" : ""}${s.n === cur ? " cur" : ""}`} onClick={s.go}><span className="n">{s.done ? "✓" : s.n}</span>{s.t}</button>
+            <button type="button" className={`step${s.done ? " done" : ""}${s.n === cur ? " cur" : ""}`} aria-current={s.n === cur ? "step" : undefined}
+              disabled={ro && (s.n === 2 || s.n === 3)} onClick={s.go}><span className="n" aria-hidden="true">{s.done ? "✓" : s.n}</span>{s.t}{s.done ? "（已完成）" : ""}</button>
           </span>
         ))}
         <span className="spacer" />
@@ -621,8 +754,9 @@ export default function Workspace() {
       )}
       {/* ---------------------------------------------------------------- work area */}
       <div className="work" ref={workRef}>
-        <FilePanel projectId={pid!} sources={sources} active={activeFile} onActive={(id) => setActiveFile(id)} onChanged={reload} collapsed={filesCollapsed} onCollapse={setFilesCollapsed} />
-        <div className="pane left" style={{ flex: leftW ? `0 0 ${leftW}px` : "1 1 50%" }}>
+        <FilePanel projectId={pid!} sources={sources} active={activeFile} onActive={(id) => setActiveFile(id)} onChanged={reload} collapsed={filesCollapsed} onCollapse={setFilesCollapsed}
+          readOnly={ro} canExport={perm.canExport} uploadRequest={uploadReq} />
+        <div className="pane left" id="pane-left" style={{ flex: leftW ? `0 0 ${leftW}px` : "1 1 50%" }}>
           <div className="pane-h">
             <span className="title ellipsis">{file ? file.filename : "来源文件"}</span>
             {file && <span className="badge">{(file.format || "").toUpperCase()}</span>}
@@ -631,24 +765,30 @@ export default function Workspace() {
             {file && file.status !== "parsing" && (
               <span className="row gap4">
                 <input ref={findRef} className="input sm" style={{ width: 120 }} placeholder="查找…（⌘F）" value={findQ} onChange={(e) => setFindQ(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { if (find && find.hits.length && e.shiftKey) gotoFind({ ...find, idx: (find.idx - 1 + find.hits.length) % find.hits.length }); else if (find && find.hits.length && findQ.trim() === find.q) gotoFind({ ...find, idx: (find.idx + 1) % find.hits.length }); else runFind().then(() => {}); } if (e.key === "Escape") { setFind(null); setFindQ(""); } }} aria-label="在当前文件中查找" />
+                  onKeyDown={(e) => {
+                    // Enter that confirms a pinyin candidate must not search half-typed text,
+                    // and Escape that cancels a candidate must not wipe the box.
+                    if (isImeKey(e)) return;
+                    if (e.key === "Enter") { e.preventDefault(); if (find && find.hits.length && e.shiftKey) gotoFind({ ...find, idx: (find.idx - 1 + find.hits.length) % find.hits.length }); else if (find && find.hits.length && findQ.trim() === find.q) gotoFind({ ...find, idx: (find.idx + 1) % find.hits.length }); else runFind().then(() => {}); }
+                    if (e.key === "Escape") { setFind(null); setFindQ(""); }
+                  }} aria-label="在当前文件中查找" />
                 {find && <span className="tiny muted nowrap">{find.hits.length ? `${find.idx + 1}/${find.total}` : "0"}</span>}
                 {find && find.hits.length > 1 && <>
-                  <button className="btn sm icon" title="上一个" onClick={() => gotoFind({ ...find, idx: (find.idx - 1 + find.hits.length) % find.hits.length })}>↑</button>
-                  <button className="btn sm icon" title="下一个" onClick={() => gotoFind({ ...find, idx: (find.idx + 1) % find.hits.length })}>↓</button>
+                  <button type="button" className="btn sm icon" title="上一个" aria-label="上一个查找结果" onClick={() => gotoFind({ ...find, idx: (find.idx - 1 + find.hits.length) % find.hits.length })}>↑</button>
+                  <button type="button" className="btn sm icon" title="下一个" aria-label="下一个查找结果" onClick={() => gotoFind({ ...find, idx: (find.idx + 1) % find.hits.length })}>↓</button>
                 </>}
               </span>
             )}
             {file && (file.family === "image" || file.family === "pdf") && (
-              <button className="btn sm" disabled={ocrBusy} onClick={runOcr} title="使用本地 Tesseract（中文+英文）识别扫描页，不上传文件">
+              <button type="button" className="btn sm" disabled={ocrBusy || ro} onClick={runOcr} title={ro ? READ_ONLY_TEXT : "使用本地 Tesseract（中文+英文）识别扫描页，不上传文件"}>
                 {ocrBusy ? "识别中…" : file.ocr_pages.length ? "重新 OCR" : "OCR 识别"}
               </button>
             )}
-            {file?.format === "csv" && <CsvOptions file={file} onDone={reload} />}
-            <button className="btn sm icon" onClick={() => setZoomL(Math.max(0.5, +(zoomL - 0.1).toFixed(2)))} title="缩小">－</button>
-            <span className="tiny muted" style={{ width: 34, textAlign: "center" }}>{Math.round(zoomL * 100)}%</span>
-            <button className="btn sm icon" onClick={() => setZoomL(Math.min(2.5, +(zoomL + 0.1).toFixed(2)))} title="放大">＋</button>
-            <button className="btn sm" onClick={() => setZoomL(1)} title="适合宽度">适合</button>
+            {file?.format === "csv" && !ro && <CsvOptions file={file} onDone={reload} />}
+            <button type="button" className="btn sm icon" onClick={() => setZoomL(Math.max(0.5, +(zoomL - 0.1).toFixed(2)))} title="缩小来源文件" aria-label="缩小来源文件">－</button>
+            <span className="tiny muted" style={{ width: 34, textAlign: "center" }} aria-live="polite">{Math.round(zoomL * 100)}%</span>
+            <button type="button" className="btn sm icon" onClick={() => setZoomL(Math.min(2.5, +(zoomL + 0.1).toFixed(2)))} title="放大来源文件" aria-label="放大来源文件">＋</button>
+            <button type="button" className="btn sm" onClick={() => setZoomL(1)} title="适合宽度">适合</button>
           </div>
           {file?.notes?.length ? <div className="notice warn small" style={{ borderRadius: 0, maxHeight: 60, overflow: "auto" }}>{file.notes.join("；")}</div> : null}
           {blockMode && file && (
@@ -656,11 +796,11 @@ export default function Workspace() {
               <span className="small">表单块</span>
               {blocks.length ? (
                 <>
-                  <button className="btn xs icon" disabled={!blockIdx} onClick={() => { setLeftSel(null); setBlockIdx((blockIdx || 0) - 1); }} aria-label="上一块">‹</button>
+                  <button type="button" className="btn xs icon" disabled={!blockIdx} onClick={() => { setLeftSel(null); setBlockIdx((blockIdx || 0) - 1); }} aria-label="上一块">‹</button>
                   <select className="input sm" value={blockIdx ?? 0} onChange={(e) => { setLeftSel(null); setBlockIdx(Number(e.target.value)); }} aria-label="选择表单块">
                     {blocks.map((b) => <option key={b.index} value={b.index}>第 {b.index + 1} / {blocks.length} 块 · {b.label.slice(0, 18)}</option>)}
                   </select>
-                  <button className="btn xs icon" disabled={blockIdx == null || blockIdx >= blocks.length - 1} onClick={() => { setLeftSel(null); setBlockIdx((blockIdx || 0) + 1); }} aria-label="下一块">›</button>
+                  <button type="button" className="btn xs icon" disabled={blockIdx == null || blockIdx >= blocks.length - 1} onClick={() => { setLeftSel(null); setBlockIdx((blockIdx || 0) + 1); }} aria-label="下一块">›</button>
                   <span className="tiny muted ellipsis">{blocks[blockIdx ?? 0]?.where}</span>
                 </>
               ) : <span className="tiny muted">该文件中没有找到表单块标记</span>}
@@ -675,9 +815,9 @@ export default function Workspace() {
           )}
           <div className="pane-b">
             {!file ? (
-              <div className="empty"><div className="big">第 1 步：上传来源文件</div><div>把 XLSX / CSV / DOCX / PDF / 图片 / PPTX 等文件拖入左侧列表</div></div>
+              <div className="empty"><div className="big">第 1 步：上传来源文件</div><div>{ro ? "这个项目还没有来源文件。" : "把 XLSX / CSV / DOCX / PDF / 图片 / PPTX 等文件拖入左侧列表，或点击左侧的上传按钮"}</div></div>
             ) : (
-              <AnyView view={srcView} side="src" reloadKey={srcKey}
+              <AnyView selectable={!ro} view={srcView} side="src" reloadKey={srcKey}
                 loadGrid={(s, off, lim) => get(`/api/sources/${file.id}/view${qs({ sheet: s, offset: off, limit: lim, ...bq })}`).then((r) => r.grid)}
                 pageUrl={(p) => `/api/sources/${file.id}/page/${p}.png?zoom=1.5&v=${file.version}${bAmp}`}
                 wordsUrl={(p) => `/api/sources/${file.id}/words/${p}?v=${file.version}${bAmp}`}
@@ -686,7 +826,9 @@ export default function Workspace() {
             )}
           </div>
         </div>
-        <div className="resizer" onMouseDown={dragResize} title="拖动调整左右宽度" />
+        <div className="resizer" onPointerDown={dragResize} onKeyDown={onResizerKey} tabIndex={0} role="separator" aria-orientation="vertical"
+          aria-label="调整来源与模板两侧的宽度" aria-controls="pane-left" aria-valuemin={LEFT_MIN} aria-valuemax={Math.round(leftMax())}
+          aria-valuenow={Math.round(leftW || (workRef.current?.clientWidth || 0) / 2)} title="拖动或用 ← / → 调整左右宽度，Enter 恢复默认" />
         <div className="pane right" style={{ flex: "1 1 50%" }}>
           {preview ? (
             <PreviewPane projectId={pid!} rev={project.rev} mappings={mappings} slots={slots} onLocateMapping={(id) => { setPreview(false); setTimeout(() => pickMapping(id), 200); }} onClose={() => setPreview(false)} />
@@ -698,31 +840,38 @@ export default function Workspace() {
                 <span className="spacer" />
                 {tpl && (
                   <>
-                    <button className="btn sm" disabled={!tpl.can_undo} onClick={async () => { await post(`/api/templates/${tpl.id}/undo`); actions.current.redo.push("t"); reload(); }} title="撤销模板修改">↶</button>
-                    <button className="btn sm" disabled={!tpl.can_redo} onClick={async () => { await post(`/api/templates/${tpl.id}/redo`); reload(); }} title="重做模板修改">↷</button>
-                    {(tpl.kind === "builtin_doc" || tpl.kind === "builtin_sheet") && <button className="btn sm" onClick={() => nav(`/templates/${tpl.id}/edit?project=${pid}`)}>编辑模板</button>}
-                    <a className="btn sm" href={`/api/templates/${tpl.id}/download?which=working`} title="下载带字段标记的工作副本">工作副本</a>
-                    <a className="btn sm" href={`/api/templates/${tpl.id}/download?which=original`} title="下载未修改的原始模板">原始</a>
-                    <button className="btn sm icon" onClick={() => setZoomR(Math.max(0.5, +(zoomR - 0.1).toFixed(2)))}>－</button>
-                    <button className="btn sm icon" onClick={() => setZoomR(Math.min(2.5, +(zoomR + 0.1).toFixed(2)))}>＋</button>
+                    {!ro && <>
+                      <button type="button" className="btn sm" disabled={!tpl.can_undo} onClick={() => step("undo", "t")} title="撤销模板修改" aria-label="撤销模板修改">↶</button>
+                      <button type="button" className="btn sm" disabled={!tpl.can_redo} onClick={() => step("redo", "t")} title="重做模板修改" aria-label="重做模板修改">↷</button>
+                      {(tpl.kind === "builtin_doc" || tpl.kind === "builtin_sheet") && <button type="button" className="btn sm" onClick={() => nav(`/templates/${tpl.id}/edit?project=${pid}`)}>编辑模板</button>}
+                    </>}
+                    {perm.canExport ? <>
+                      <a className="btn sm" href={`/api/templates/${tpl.id}/download?which=working`} title="下载带字段标记的工作副本">工作副本</a>
+                      <a className="btn sm" href={`/api/templates/${tpl.id}/download?which=original`} title="下载未修改的原始模板">原始</a>
+                    </> : <span className="tiny muted" title={NO_EXPORT_TEXT}>无下载权限</span>}
+                    <button type="button" className="btn sm icon" onClick={() => setZoomR(Math.max(0.5, +(zoomR - 0.1).toFixed(2)))} title="缩小模板" aria-label="缩小模板">－</button>
+                    <button type="button" className="btn sm icon" onClick={() => setZoomR(Math.min(2.5, +(zoomR + 0.1).toFixed(2)))} title="放大模板" aria-label="放大模板">＋</button>
                   </>
                 )}
               </div>
               {tpl?.info?.notes?.length ? <div className="notice warn small" style={{ borderRadius: 0, maxHeight: 60, overflow: "auto" }}>{tpl.info.notes.join("；")}</div> : null}
               {tpl?.format === "pdf" && tpl.info?.pdf?.fields?.length > 0 && (
                 <div className="toolbar small">PDF 表单字段：{tpl.info!.pdf.fields.map((f: any) => (
-                  <button key={f.name} className="btn xs" onClick={() => setDialog({ kind: "slot", sel: { kind: "pdf_field", field: f.name }, name: f.name })}>{f.name}</button>
+                  <button type="button" key={f.name} className="btn xs" disabled={ro} onClick={() => setDialog({ kind: "slot", sel: { kind: "pdf_field", field: f.name }, name: f.name })}>{f.name}</button>
                 ))}</div>
               )}
               <div className="pane-b">
                 {!tpl ? (
                   <div className="empty">
                     <div className="big">第 2 步：设置目标模板</div>
-                    <div>上传已有的 DOCX / XLSX / PDF / PPTX，或在软件内新建文档型、表格型模板</div>
-                    <button className="btn primary" onClick={() => setDialog({ kind: "template" })}>设置模板</button>
+                    {project.template_missing && (
+                      <div className="notice warn" role="alert">这个项目原来使用的模板已被删除。{ro ? "需要有编辑权限的成员重新选择模板。" : "请重新选择或新建一个模板。"}</div>
+                    )}
+                    <div>{ro ? "这个项目还没有设置模板。" : "上传已有的 DOCX / XLSX / PDF / PPTX，或在软件内新建文档型、表格型模板"}</div>
+                    {!ro && <button type="button" className="btn primary" onClick={() => setDialog({ kind: "template" })}>设置模板</button>}
                   </div>
                 ) : (
-                  <AnyView view={tplView} side="tpl" reloadKey={tplKey}
+                  <AnyView selectable={!ro} view={tplView} side="tpl" reloadKey={tplKey}
                     loadGrid={(s, off, lim) => get(`/api/templates/${tpl.id}/view${qs({ sheet: s, offset: off, limit: lim })}`).then((r) => r.grid)}
                     pageUrl={(p) => `/api/templates/${tpl.id}/page/${p}.png?zoom=1.5&v=${tpl.head}`}
                     marks={rightMarks} selection={rightSel} onSelect={setRightSel} onMarkClick={onMarkClickRight} zoom={zoomR}
@@ -734,16 +883,16 @@ export default function Workspace() {
         </div>
         <SidePanel tab={tab} onTab={setTab} project={project} sources={sources} mappings={mappings} slots={slots} activeMap={activeMap}
           activeSlot={selectedSlot?.id || null} locate={locate} activeFile={activeFile} onPickMapping={pickMapping} onPickSlot={pickSlot}
-          onEditMapping={(m) => { const s = mappingSlots(m, slots)[0]; if (!s) { toast("该映射的目标字段已不存在，请删除或重新建立", "err"); return; } setDialog({ kind: "mapping", slot: s, proposals: [], warnings: [], existing: null, editing: m }); }}
+          onEditMapping={editMapping}
           onSaveMappings={saveMappings} onUpdateSlot={updateSlot} onDeleteSlot={deleteSlot}
           onRelocate={(fid, mid) => { setActiveFile(fid); setRelocate({ fileId: fid, mappingId: mid }); setActiveMap(mid); }}
-          onClearOverride={async (fid, mid) => { await saveMappings(mappings.map((x) => { if (x.id !== mid) return x; const o = { ...(x.overrides || {}) }; delete o[fid]; return { ...x, overrides: o }; }), "清除单独定位"); }}
-          onOpenRule={() => setDialog({ kind: "rule" })}
-          onCorrect={async (fid, mid, v) => { await run(() => put(`/api/sources/${fid}/corrections/${mid}`, { value: v, confirmed: true })); await reload(); }}
+          onClearOverride={(key, mid) => { saveMappings(mappings.map((x) => { if (x.id !== mid) return x; const o = { ...(x.overrides || {}) }; delete o[key]; return { ...x, overrides: o }; }), "清除单独定位").catch(() => {}); }}
+          onOpenRule={() => { if (!ro) setDialog({ kind: "rule" }); }}
+          onCorrect={async (fid, mid, v) => { await run(() => put(`/api/sources/${fid}/corrections/${mid}`, { value: v, confirmed: true })).catch(() => {}); await reload(); }}
           collapsed={sideCollapsed} onCollapse={setSideCollapsed}
           width={sideW} onWidth={(w) => { setSideW(w); setTick((t) => t + 1); }}
           canUndo={!!project.mappings.can_undo} canRedo={!!project.mappings.can_redo}
-          onUndo={async () => { await post(`/api/projects/${pid}/mappings/undo`); reload(); }} onRedo={async () => { await post(`/api/projects/${pid}/mappings/redo`); reload(); }} />
+          onUndo={() => { step("undo", "m"); }} onRedo={() => { step("redo", "m"); }} readOnly={ro} />
         <Connectors container={workRef.current} mappings={mappings} active={activeMap} visible={lines && !preview} tick={tick + (project.rev || 0) + (leftW || 0)} />
       </div>
       {/* ---------------------------------------------------------------- selection bar */}
@@ -751,19 +900,19 @@ export default function Workspace() {
         <span className="small muted">来源：</span>
         <span className="small grow ellipsis" style={{ maxWidth: "32%" }}>{leftSel ? <b>{file?.filename} · {describeSelection(leftSel)}</b> : <span className="muted">在左侧选中数据（单元格、区域、文字或 PDF 框选）</span>}</span>
         {leftSel?.kind === "cells" && (leftSel.r2 > leftSel.r1) && rule.mode !== "per_file" && (
-          <button className="btn sm" onClick={() => setDialog({ kind: "area", sel: leftSel as any })} title="明确这几行是「每行一份」还是「写入同一份文档的明细」">选中区域的含义…</button>
+          <button type="button" className="btn sm" disabled={ro} onClick={() => setDialog({ kind: "area", sel: leftSel as any })} title="明确这几行是「每行一份」还是「写入同一份文档的明细」">选中区域的含义…</button>
         )}
         <span className="small muted">→ 目标：</span>
         <span className="small grow ellipsis" style={{ maxWidth: "28%" }}>
           {selectedSlot ? <b>字段「{selectedSlot.name}」</b> : rawRight ? <b>{describeSelection(rawRight)}</b> : <span className="muted">在右侧点选字段，或选中内容后设为待填区域</span>}
         </span>
-        {rawRight && tpl && (
-          <button className="btn sm" onClick={() => setDialog({ kind: "slot", sel: rawRight, name: suggestName(rawRight, (rawRight as any).kind === "docx_text" ? findParaText(tplView, (rawRight as any).path, (rawRight as any).part) : undefined) })}>
+        {rawRight && tpl && !ro && (
+          <button type="button" className="btn sm" onClick={() => setDialog({ kind: "slot", sel: rawRight, name: suggestName(rawRight, (rawRight as any).kind === "docx_text" ? findParaText(tplView, (rawRight as any).path, (rawRight as any).part) : undefined) })}>
             ✎ 设为待填区域
           </button>
         )}
-        <button className="btn primary" disabled={!canMap} onClick={startMapping} title={canMap ? "" : "需要同时选中左侧来源和右侧字段"}>⇄ 建立映射</button>
-        {(leftSel || rightSel) && <button className="btn ghost sm" onClick={() => { setLeftSel(null); setRightSel(null); }}>清除选择</button>}
+        <button type="button" className="btn primary" disabled={!canMap || ro} onClick={startMapping} title={ro ? READ_ONLY_TEXT : canMap ? "" : "需要同时选中左侧来源和右侧字段"}>⇄ 建立映射</button>
+        {(leftSel || rightSel) && <button type="button" className="btn ghost sm" onClick={() => { setLeftSel(null); setRightSel(null); }}>清除选择</button>}
       </div>
 
       {/* ---------------------------------------------------------------- dialogs */}
@@ -788,9 +937,31 @@ export default function Workspace() {
       {dialog?.kind === "regression" && <RegressionDialog project={project} onClose={() => setDialog(null)} />}
       {dialog?.kind === "desensitize" && <DesensitizeDialog projectId={pid!} sources={sources} onDone={reload} onClose={() => setDialog(null)} />}
       {dialog?.kind === "area" && <AreaDialog project={project} sel={dialog.sel} onPick={(r) => setDialog({ kind: "rule", initial: r })} onClose={() => setDialog(null)} />}
-      <CommandPalette commands={commands} open={cmdOpen} onClose={() => setCmdOpen(false)} />
-      {help && <Shortcuts onClose={() => setHelp(false)} />}
+      {cmdOpen && <CommandPalette commands={commands} onClose={() => setCmdOpen(false)} />}
+      {help && <Shortcuts onClose={() => setHelp(false)} singleKeys={singleKeys} onSingleKeys={setSingleKeys} />}
     </div>
+  );
+}
+
+/** The project name in the top bar. It shows what the server holds: a rename that is refused
+ *  (a viewer, a validation error) puts the stored name back instead of leaving the typed one on
+ *  screen as if it had been saved. Enter commits, Escape reverts; neither acts mid-composition. */
+function ProjectName({ name, readOnly, onRename }: { name: string; readOnly: boolean; onRename: (n: string) => Promise<unknown> }) {
+  const [v, setV] = useState(name);
+  const commit = () => {
+    const n = v.trim();
+    if (!n || n === name) { setV(name); return; }
+    onRename(n).catch(() => setV(name));
+  };
+  return (
+    <input className="input" style={{ width: 200, fontWeight: 600, border: "1px solid transparent" }} value={v} readOnly={readOnly}
+      title={readOnly ? READ_ONLY_TEXT : "点击修改项目名称"} aria-label="项目名称"
+      onChange={(e) => setV(e.target.value)} onBlur={commit}
+      onKeyDown={(e) => {
+        if (isImeKey(e)) return;
+        if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+        if (e.key === "Escape") { e.preventDefault(); setV(name); }
+      }} />
   );
 }
 
@@ -815,12 +986,14 @@ function CsvOptions({ file, onDone }: { file: SourceFile; onDone: () => void }) 
   const toast = useToast();
   return (
     <>
-      <button className="btn sm" onClick={() => setOpen(true)} title="编码与分隔符">CSV 设置（{info.encoding || "?"} / {info.delimiter === "\t" ? "Tab" : info.delimiter || "?"}）</button>
+      <button type="button" className="btn sm" onClick={() => setOpen(true)} title="编码与分隔符">CSV 设置（{info.encoding || "?"} / {info.delimiter === "\t" ? "Tab" : info.delimiter || "?"}）</button>
       {open && (
-        <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && setOpen(false)}>
-          <div className="modal narrow">
-            <div className="modal-h"><h2 className="grow">CSV 解析设置</h2></div>
-            <div className="modal-b col">
+        // The shared Modal: focus moves in and stays in, Escape closes it, and page shortcuts
+        // (P, ⌘Z) no longer act on the workspace behind it.
+        <Modal title="CSV 解析设置" size="narrow" onClose={() => setOpen(false)}
+          footer={<><span className="spacer" /><button type="button" className="btn" onClick={() => setOpen(false)}>取消</button>
+            <button type="button" className="btn primary" onClick={async () => { try { await put(`/api/sources/${file.id}/options`, { csv: { encoding: enc, delimiter: delim } }); toast("已重新解析", "ok"); setOpen(false); onDone(); } catch (e: any) { toast(errorText(e), "err"); } }}>重新解析</button></>}>
+            <div className="col">
               <div className="small muted">自动识别：编码 {info.encoding}，分隔符「{info.delimiter === "\t" ? "Tab" : info.delimiter}」。如出现乱码或分列错误，请手动指定。单元格内换行（带引号）按 RFC 4180 处理，不会错误分行。</div>
               <label className="field">编码<select className="input" value={enc} onChange={(e) => setEnc(e.target.value)}>
                 {["auto", "utf-8", "utf-8-sig", "gb18030", "gbk", "big5", "utf-16", "shift_jis", "latin-1"].map((x) => <option key={x} value={x}>{x === "auto" ? "自动识别" : x}</option>)}
@@ -829,10 +1002,7 @@ function CsvOptions({ file, onDone }: { file: SourceFile; onDone: () => void }) 
                 <option value="auto">自动识别</option><option value=",">逗号 ,</option><option value="\t">Tab</option><option value=";">分号 ;</option><option value="|">竖线 |</option>
               </select></label>
             </div>
-            <div className="modal-f"><span className="spacer" /><button className="btn" onClick={() => setOpen(false)}>取消</button>
-              <button className="btn primary" onClick={async () => { try { await put(`/api/sources/${file.id}/options`, { csv: { encoding: enc, delimiter: delim } }); toast("已重新解析", "ok"); setOpen(false); onDone(); } catch (e: any) { toast(e.message, "err"); } }}>重新解析</button></div>
-          </div>
-        </div>
+        </Modal>
       )}
     </>
   );
@@ -843,24 +1013,25 @@ function AreaDialog({ project, sel, onPick, onClose }: { project: Project; sel: 
   const header = project.record_rule?.table?.header_row ?? Math.max(0, sel.r1 - 1);
   const rowsRule: RecordRule = { mode: "per_row", table: { sheet: sel.sheet, header_row: header, data_start: sel.r1 === header ? sel.r1 + 1 : sel.r1, data_end: sel.r2, skip_blank: true } };
   useEffect(() => {
-    post(`/api/projects/${project.id}/rule-preview`, rowsRule).then((x) => setCounts((c) => ({ ...c, a: x.total }))).catch(() => {});
-    post(`/api/projects/${project.id}/rule-preview`, { mode: "per_file" }).then((x) => setCounts((c) => ({ ...c, b: x.total }))).catch(() => {});
+    let alive = true;
+    post(`/api/projects/${project.id}/rule-preview`, rowsRule).then((x) => alive && setCounts((c) => ({ ...c, a: x.total }))).catch(() => {});
+    post(`/api/projects/${project.id}/rule-preview`, { mode: "per_file" }).then((x) => alive && setCounts((c) => ({ ...c, b: x.total }))).catch(() => {});
+    return () => { alive = false; };
   }, []);
   const n = sel.r2 - sel.r1 + 1;
+  // The two answers are buttons: they used to be <label>s with no control inside, which cannot
+  // be reached or activated from the keyboard.
   return (
-    <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-h"><h2 className="grow">选中的 {n} 行数据，代表什么？</h2></div>
-        <div className="modal-b col">
-          <label className="opt" onClick={() => onPick(rowsRule)}>
-            <div><div className="t">每行是一条样本 → 生成 {counts.a ?? n} 份文档</div><div className="small muted">第 {rowsRule.table!.data_start! + 1}–{sel.r2 + 1} 行各生成一份（表头为第 {header + 1} 行）；将打开样本规则确认。</div></div>
-          </label>
-          <label className="opt" onClick={() => onPick({ mode: "per_file" })}>
-            <div><div className="t">整个区域是当前样本的明细表 → 每个文件生成 1 份（共 {counts.b ?? "?"} 份）</div><div className="small muted">这些行一起写入同一份文档的重复明细行；设置后请把该区域（含表头）映射到模板的重复明细字段。</div></div>
-          </label>
-        </div>
-        <div className="modal-f"><span className="spacer" /><button className="btn" onClick={onClose}>取消</button></div>
+    <Modal title={`选中的 ${n} 行数据，代表什么？`} onClose={onClose}
+      footer={<><span className="spacer" /><button type="button" className="btn" onClick={onClose}>取消</button></>}>
+      <div className="col">
+        <button type="button" className="opt" onClick={() => onPick(rowsRule)} data-autofocus>
+          <div><div className="t">每行是一条样本 → 生成 {counts.a ?? n} 份文档</div><div className="small muted">第 {rowsRule.table!.data_start! + 1}–{sel.r2 + 1} 行各生成一份（表头为第 {header + 1} 行）；将打开样本规则确认。</div></div>
+        </button>
+        <button type="button" className="opt" onClick={() => onPick({ mode: "per_file" })}>
+          <div><div className="t">整个区域是当前样本的明细表 → 每个文件生成 1 份（共 {counts.b ?? "?"} 份）</div><div className="small muted">这些行一起写入同一份文档的重复明细行；设置后请把该区域（含表头）映射到模板的重复明细字段。</div></div>
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

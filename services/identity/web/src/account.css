@@ -1,0 +1,110 @@
+/* Account shell additions: governance pages and dialogs. Built only from the shared tokens in
+   @synwevo/ui/styles.css, so dark mode and reduced motion follow the rest of the platform with
+   no rule of their own. */
+
+/* ---------------------------------------------------------------- fields */
+/* A field whose name is a real <label for>, not a wrapping label: the password show/hide
+   button sits beside the input, and inside a wrapping label its own name became part of the
+   input's accessible name ("口令 显示口令"). */
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field > label, .authcard .field > label { font-size: 12px; color: var(--text-2); }
+.field .req { color: var(--err); font-weight: 400; margin-left: 2px; }
+.input[aria-invalid="true"] { border-color: var(--err); }
+
+/* ---------------------------------------------------------------- dialogs */
+.impact { font-size: 13px; line-height: 1.65; color: var(--text); }
+.impact ul { margin: 6px 0 0; padding-left: 20px; }
+.impact li { margin: 2px 0; }
+.impact.danger { border-left: 3px solid var(--err); padding-left: 10px; }
+.impact .names { max-height: 160px; overflow: auto; margin: 6px 0; padding: 6px 10px; border-radius: var(--radius-sm);
+  background: var(--panel-2); border: 1px solid var(--line); list-style: none; }
+.impact .names li { margin: 0; padding: 1px 0; }
+
+.bulkres { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow: auto; }
+.bulkres li { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: var(--radius-sm); }
+.bulkres li.err { background: var(--err-weak); }
+.bulkres .mark { flex: none; width: 18px; text-align: center; font-weight: 700; }
+.bulkres li.ok .mark { color: var(--ok); }
+.bulkres li.err .mark { color: var(--err); }
+.bulkres .who { display: block; font-weight: 600; word-break: break-all; }
+.bulkres .what { display: block; font-size: 12px; color: var(--text-2); }
+
+/* ---------------------------------------------------------------- page chrome */
+.acct-page { max-width: 1120px; margin: 0 auto; padding: 20px 16px 72px; }
+.acct-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.acct-head h1 { font-size: 20px; }
+.acct-head .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+.acct-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 16px 0 12px; }
+.acct-tabs [role="tab"] { border: 0; background: transparent; padding: 8px 12px; border-bottom: 2px solid transparent;
+  margin-bottom: -1px; cursor: pointer; color: var(--text-2); font-weight: 500; min-height: 36px; }
+.acct-tabs [role="tab"][aria-selected="true"] { color: var(--accent-strong); border-bottom-color: var(--accent); font-weight: 600; }
+.acct-tabs [role="tab"]:hover { color: var(--text); }
+.acct-tabs [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.acct-tabs .count { margin-left: 6px; font-size: 11px; color: var(--muted); }
+
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.filters .field { min-width: 140px; }
+.filters .field.grow { flex: 1 1 220px; }
+
+/* ---------------------------------------------------------------- lists */
+.list-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+table.gov { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.gov th, table.gov td { border-bottom: 1px solid var(--line); padding: 8px; text-align: left; vertical-align: middle; }
+table.gov th { font-weight: 600; font-size: 12px; color: var(--text-2); background: var(--panel-2); white-space: nowrap; }
+table.gov tr:last-child td { border-bottom: 0; }
+table.gov td.pick, table.gov th.pick { width: 36px; text-align: center; padding-right: 0; }
+table.gov input[type="checkbox"] { width: 16px; height: 16px; margin: 4px; cursor: pointer; accent-color: var(--accent); }
+table.gov input[type="checkbox"]:disabled { cursor: not-allowed; }
+table.gov tr.sel td { background: var(--accent-weak); }
+table.gov tr.sel td.pick { box-shadow: inset 3px 0 0 var(--accent); }
+table.gov .who { font-weight: 600; word-break: break-all; }
+table.gov .who2 { color: var(--muted); font-size: 12px; word-break: break-all; }
+table.gov td.act { width: 1%; white-space: nowrap; text-align: right; }
+table.gov .empty-row td { text-align: center; color: var(--muted); padding: 28px 8px; }
+.cell-note { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.cell-note.err { color: var(--err); }
+
+.pager { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 8px 0; font-size: 12px; color: var(--muted); }
+
+/* The bulk bar stays on screen while the list scrolls: selecting rows at the bottom of a long
+   page and then having to scroll back up to act on them is the friction it removes. */
+.acct-bulk { position: sticky; bottom: 12px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 10px; padding: 8px 10px; border: 1px solid var(--accent-line); border-radius: var(--radius);
+  background: var(--accent-weak); box-shadow: var(--shadow-lg); }
+.acct-bulk .count { font-weight: 600; color: var(--accent-strong); margin-right: 6px; }
+
+.menu-item.danger:not(:disabled) { color: var(--err); }
+.menu-item .menu-hint { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; white-space: normal; }
+.menu { max-width: 280px; }
+
+.statline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* ---------------------------------------------------------------- invite form */
+.invite-form { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(140px, 1fr) minmax(120px, 1fr); gap: 12px; align-items: start; }
+.invite-form .span2 { grid-column: 1 / -1; }
+@media (max-width: 720px) {
+  .invite-form { grid-template-columns: 1fr; }
+  .acct-page { padding: 12px 10px 60px; }
+}
+
+/* ---------------------------------------------------------------- admin picker */
+.picker { border: 1px solid var(--line); border-radius: var(--radius-sm); max-height: 260px; overflow: auto; background: var(--panel); }
+.picker label { display: flex; gap: 8px; align-items: flex-start; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.picker label:last-child { border-bottom: 0; }
+.picker label:hover { background: var(--surface-hover); }
+.picker input[type="radio"] { margin-top: 3px; accent-color: var(--accent); }
+.picker .dim { color: var(--muted); font-size: 12px; }
+
+.stat { min-width: 120px; padding: 12px 16px; }
+.stat .v { font-size: 24px; font-weight: 650; }
+
+/* Keep account navigation usable when labels and workspace names wrap. */
+table.gov tbody th { background: transparent; color: var(--text); font-size: 13px; white-space: normal; }
+table.gov tr.sel th { background: var(--accent-weak); }
+@media (max-width: 720px) {
+  .app > .topbar { height: auto; min-height: 48px; padding: 8px; flex-wrap: wrap; gap: 6px; }
+  .app > .topbar nav { flex-wrap: wrap; }
+  .acct-page .filters .field { min-width: 0; flex: 1 1 140px; }
+  .acct-page table.gov { min-width: 640px; }
+}

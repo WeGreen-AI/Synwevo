@@ -201,7 +201,11 @@ def test_pdf_overflow_is_an_error_not_truncation():
 
 # ---------------------------------------------------------------- naming
 def test_safe_names_and_dedupe():
-    assert safe_output_name("../../etc/passwd") == "__etc_passwd" or "/" not in safe_output_name("../../etc/passwd")
+    # exact output, and nothing a path could be built from (the old check was an always-true `or`)
+    assert safe_output_name("../../etc/passwd") == "____etc_passwd"
+    for bad in ("../../etc/passwd", "..\\..\\windows\\x", "a/../b", "..", "./.."):
+        out = safe_output_name(bad)
+        assert ".." not in out and "/" not in out and "\\" not in out, (bad, out)
     assert "/" not in safe_output_name("a/b\\c:d*e?f") and ".." not in safe_output_name("a..b")
     assert safe_output_name("CON") == "_CON"
     assert len(safe_output_name("长" * 200).encode()) <= 150

@@ -164,16 +164,77 @@ def test_locate_cannot_run_your_mappings_over_someone_elses_document(two):
     assert as_b(two, "get", f"/api/projects/{pid}/locate?file={sid}").status_code == 404
 
 
-def test_job_items_and_report_refuse_another_workspace(two):
-    app_, pid = two["app"], two["pid"]
-    # a job row in A's workspace, so the routes have something real to refuse B
+def _job_with_artifact(two) -> tuple[str, str]:
+    """Test fixture: a completed job in A's workspace with one published artifact whose bytes are
+    A's confidential source. Inserted directly so the routes have something real to refuse."""
     from synwevo_core.store import new_id, now
-    jid = new_id("j")
+    app_, pid = two["app"], two["pid"]
+    jid, aid = new_id("j"), new_id("a")
     app_.store.execute(
-        "INSERT INTO jobs (id,project_id,status,created_at,tenant) VALUES (?,?,'completed',?,'ws_a')",
-        (jid, pid, now()))
-    assert as_b(two, "get", f"/api/jobs/{jid}/items").status_code == 404
-    assert as_b(two, "get", f"/api/jobs/{jid}/report.csv").status_code == 404
+        "INSERT INTO jobs (id,project_id,status,created_at,tenant) VALUES (?,?,'completed',?,?)",
+        (jid, pid, now(), two["ws_a"]))
+    app_.store.execute(
+        "INSERT INTO artifacts (id,job_id,format,filename,blob,size,created_at) VALUES (?,?,?,?,?,?,?)",
+        (aid, jid, "xlsx", "机密名单.xlsx", two["blob"], 1, now()))
+    return jid, aid
+
+
+def test_job_items_and_report_refuse_another_workspace(two):
+    """The job used to be inserted with the literal tenant 'ws_a' — a workspace nobody is in —
+    so B's 404 proved nothing: A got 404 too. Now the job is A's, and A is the positive control."""
+    jid, _ = _job_with_artifact(two)
+    for suffix in ("", "/items", "/report.csv", "/runs", "/events"):
+        assert as_a(two, "get", f"/api/jobs/{jid}{suffix}").status_code == 200, suffix
+        assert as_b(two, "get", f"/api/jobs/{jid}{suffix}").status_code == 404, suffix
+    assert as_b(two, "post", f"/api/jobs/{jid}/cancel").status_code == 404
+    assert as_b(two, "post", f"/api/jobs/{jid}/retry", json={}).status_code == 404
+
+
+def test_artifact_content_refuses_another_workspace(two):
+    _, aid = _job_with_artifact(two)
+    assert as_a(two, "get", f"/api/artifacts/{aid}").status_code == 200
+    for path in (f"/api/artifacts/{aid}", f"/api/artifacts/{aid}/view"):
+        r = as_b(two, "get", path)
+        assert r.status_code == 404, f"{path} 泄漏了：{r.status_code}"
+        assert "机密" not in r.text
+
+
+def test_a_deleted_artifacts_bytes_are_no_longer_reachable_by_blob(two):
+    """Removal is revocation: a deleted artifact must not stay readable through its blob id."""
+    from synwevo_docs import authz
+    jid, aid = _job_with_artifact(two)
+    two["app"].store.execute("UPDATE source_files SET removed=1 WHERE id=?", (two["sid"],))
+    with as_tenant(two["ws_a"]):
+        assert authz.blob_readable(two["store"], two["blob"]) is True       # via the artifact
+        two["app"].store.execute("UPDATE artifacts SET deleted_at=? WHERE id=?", (1.0, aid))
+        assert authz.blob_readable(two["store"], two["blob"]) is False
+
+
+def test_a_removed_sources_bytes_are_no_longer_reachable_by_blob(two):
+    blob = two["blob"]
+    assert as_a(two, "get", f"/api/preview-files/{blob}").status_code == 200
+    assert as_a(two, "delete", f"/api/sources/{two['sid']}").status_code == 200
+    assert as_a(two, "get", f"/api/preview-files/{blob}").status_code == 404, "移除的文件仍可按 blob 下载"
+
+
+def test_the_page_validator_is_not_answered_for_another_workspace(two):
+    """A 304 to B would confirm that A's document exists and has not changed. Get A's real
+    validator, then send it as B: the answer must be the same 404 as without it — the earlier
+    check only probed a nonexistent id and read the handler's source text."""
+    import io as _io
+    from PIL import Image
+    buf = _io.BytesIO()
+    Image.new("RGB", (240, 120), "white").save(buf, "PDF")      # test fixture: a one-page PDF
+    with as_tenant(two["ws_a"]):
+        sid = two["app"].add_source(two["pid"], "页面.pdf", buf.getvalue())["id"]
+    r = as_a(two, "get", f"/api/sources/{sid}/page/0.png")
+    assert r.status_code == 200, r.text[:200]
+    etag = r.headers.get("etag")
+    assert etag
+    assert as_a(two, "get", f"/api/sources/{sid}/page/0.png", headers={"If-None-Match": etag}).status_code == 304
+    r = as_b(two, "get", f"/api/sources/{sid}/page/0.png", headers={"If-None-Match": etag})
+    assert r.status_code == 404, r.status_code
+    assert not r.headers.get("etag")
 
 
 def test_project_and_template_reads_were_already_scoped_and_stay_so(two):

@@ -66,24 +66,64 @@ def test_all_items_failed_is_reported_as_failed(api, fixtures):
     assert types[0] == "job.created" and types[-1] == "job.failed" and "job.started" in types
 
 
-def test_cancel_is_arbitrated_against_completion(api, fixtures):
-    pid = _project(api, fixtures, rows=40)
-    j = api.ok(api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"]}))
-    c1 = api.ok(api.c.post(f"/api/jobs/{j['id']}/cancel"))
-    assert c1["cancel"]["accepted"] and c1["status"] in ("cancelling", "cancelled")
-    c2 = api.ok(api.c.post(f"/api/jobs/{j['id']}/cancel"))          # repeating is stable
-    assert c2["cancel"]["accepted"] in (True, False)
+def _hold_sample(monkeypatch, index):
+    """TEST FIXTURE: block the renderer on one sample until released, so a cancel can be made to
+    land at an exact point instead of whenever a fixed sleep happens to end."""
+    from synwevo_docs.engine import generate as G
+    real = G.fill_checked
+    entered, release = threading.Event(), threading.Event()
+
+    def held(fmt, work, slots, plan, options, mode, pages):
+        if plan.record["index"] == index:
+            entered.set()
+            assert release.wait(60)
+        return real(fmt, work, slots, plan, options, mode, pages)
+
+    monkeypatch.setattr(G, "fill_checked", held)
+    return entered, release
+
+
+def _finish(api, jid):
     for _ in range(600):
-        j = api.ok(api.c.get(f"/api/jobs/{j['id']}"))
+        j = api.ok(api.c.get(f"/api/jobs/{jid}"))
         if j["status"] not in ("queued", "running", "cancelling"):
-            break
+            return j
         time.sleep(0.05)
-    assert j["status"] in ("cancelled", "completed")               # completed only if it had finished before the cancel
-    counts = j["counts"]
-    assert counts.get("success", 0) + counts.get("cancelled", 0) + counts.get("failed", 0) == counts["total"]
-    assert counts["files"] == counts.get("success", 0)             # every finished sample has exactly its output
+    raise AssertionError("job timeout")
+
+
+def test_a_cancel_during_the_last_sample_lets_the_job_complete(api, fixtures, monkeypatch):
+    """DW-002: the cancel is accepted, the sample in progress keeps its result, and since nothing
+    was left to cancel the job completes — the cancel and the completion cannot both win."""
+    pid = _project(api, fixtures, rows=3)
+    entered, release = _hold_sample(monkeypatch, 2)
+    j = api.ok(api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"]}))
+    assert entered.wait(60)
+    c1 = api.ok(api.c.post(f"/api/jobs/{j['id']}/cancel"))
+    assert c1["cancel"] == {"accepted": True, "reason": None} and c1["status"] == "cancelling"
+    c2 = api.ok(api.c.post(f"/api/jobs/{j['id']}/cancel"))          # repeating is stable
+    assert c2["cancel"] == {"accepted": True, "reason": "already_requested"} and c2["status"] == "cancelling"
+    release.set()
+    done = _finish(api, j["id"])
+    assert done["status"] == "completed" and done["counts"]["success"] == 3 and done["counts"]["files"] == 3
+    types = [e["type"] for e in api.ok(api.c.get(f"/api/jobs/{j['id']}/events"))]
+    assert types[-1] == "job.completed" and types.index("job.cancel_requested") < types.index("job.completed")
     after = api.ok(api.c.post(f"/api/jobs/{j['id']}/cancel"))      # cancelling a terminal job changes nothing
-    assert after["cancel"] == {"accepted": False, "reason": "already_terminal"} and after["status"] == j["status"]
+    assert after["cancel"] == {"accepted": False, "reason": "already_terminal"} and after["status"] == "completed"
+
+
+def test_a_cancel_mid_batch_cancels_what_has_not_started(api, fixtures, monkeypatch):
+    pid = _project(api, fixtures, rows=4)
+    entered, release = _hold_sample(monkeypatch, 1)
+    j = api.ok(api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"]}))
+    assert entered.wait(60)
+    assert api.ok(api.c.post(f"/api/jobs/{j['id']}/cancel"))["status"] == "cancelling"
+    release.set()
+    done = _finish(api, j["id"])
+    counts = done["counts"]
+    assert done["status"] == "cancelled"
+    assert counts["success"] == 2 and counts["cancelled"] == 2 and counts["files"] == 2      # the sample in progress kept its file
+    assert [i["status"] for i in api.items(j["id"])] == ["success", "success", "cancelled", "cancelled"]
 
 
 def test_retry_is_a_recorded_run_and_is_idempotent(api, fixtures, monkeypatch):

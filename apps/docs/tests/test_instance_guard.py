@@ -39,6 +39,30 @@ def test_dir_holding_real_projects_stays_normal(tmp_path, monkeypatch):
     assert Store(tmp_path / "d").instance_kind() == "normal", "已有真实项目的数据目录不能被重新标记为测试实例"
 
 
+def test_an_unstamped_directory_that_already_holds_projects_stays_normal(tmp_path, monkeypatch):
+    """The upgrade case: a data directory from before instance_kind existed — real projects, no
+    marker row — opened for the first time with SYNWEVO_TEST_INSTANCE=1 set in the environment.
+
+    The test above cannot reach this branch: its first open already stamps `normal`, and a
+    stamped directory returns early. Here the marker is removed so the stamping decision is made
+    again, against a directory that is not empty, and it must come out `normal`.
+    """
+    import sqlite3
+    monkeypatch.delenv("SYNWEVO_TEST_INSTANCE", raising=False)
+    s = _store(tmp_path, "legacy")
+    s.execute("INSERT INTO projects (id, name, created_at, updated_at) VALUES ('p_real','真实项目',1,1)")
+    s.execute("DELETE FROM meta WHERE key='instance_kind'")
+    con = sqlite3.connect(tmp_path / "legacy" / "docweave.sqlite3")
+    assert con.execute("SELECT COUNT(*) FROM meta WHERE key='instance_kind'").fetchone()[0] == 0
+    con.close()
+
+    monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
+    reopened = Store(tmp_path / "legacy")
+    assert reopened.instance_kind() == "normal", "已有真实项目、尚无标记的数据目录不能被标成测试实例"
+    assert reopened.one("SELECT value FROM meta WHERE key='instance_kind'")["value"] == "normal", \
+        "判定结果要写下来，之后再怎么设环境变量也不变"
+
+
 def test_kind_is_stable_across_reopen(tmp_path, monkeypatch):
     monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
     assert _store(tmp_path).instance_kind() == "test"

@@ -9,9 +9,11 @@ AGPL-free pdfium engine, can switch the offer off with ``SYNWEVO_DOCS_SOURCE_OFF
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import tarfile
+import threading
 import time
 from pathlib import Path
 
@@ -137,29 +139,63 @@ def source_status() -> dict:
     return {"root": str(ROOT), "missing": missing, "complete": not missing}
 
 
+def _archive_files():
+    """(path, archive-relative name) of every file the Corresponding Source contains."""
+    for rel in INCLUDE:
+        p = ROOT / rel
+        if not p.exists():
+            continue
+        files = [p] if p.is_file() else sorted(x for x in p.rglob("*") if x.is_file())
+        for f in files:
+            parts = f.relative_to(ROOT).parts
+            # Suffix match as well as exact: `synwevo_core.egg-info` is one path component,
+            # so a set membership test never saw it and build metadata rode along.
+            if (set(parts) & EXCLUDE_PARTS
+                    or any(part.endswith(".egg-info") for part in parts)
+                    or f.suffix in (".pyc", ".log") or f.stat().st_size > MAX_FILE):
+                continue
+            yield f, f.relative_to(ROOT).as_posix()
+
+
+# One archive per state of the installed files. It used to be rebuilt — the whole tree read, tarred
+# and gzipped in memory — on every request, which any signed-in user could repeat at will. The key
+# is a stat-only fingerprint (names, sizes, modification times) plus the day stamped into the name.
+_ARCHIVE_LOCK = threading.Lock()
+_ARCHIVE: dict = {}
+
+
+def _fingerprint(files: list) -> str:
+    h = hashlib.sha256(str(ROOT).encode())
+    for f, name in files:
+        st = f.stat()
+        h.update(f"{name}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+    return h.hexdigest()
+
+
 def source_archive() -> tuple[bytes, str]:
-    buf = io.BytesIO()
+    files = list(_archive_files())
     stamp = time.strftime("%Y%m%d")
+    key = (_fingerprint(files), stamp)
+    with _ARCHIVE_LOCK:
+        if _ARCHIVE.get("key") == key:
+            return _ARCHIVE["data"], _ARCHIVE["name"]
+        data, name = _build_archive(files, stamp)
+        _ARCHIVE.clear()
+        _ARCHIVE.update(key=key, data=data, name=name)
+        return data, name
+
+
+def _build_archive(files: list, stamp: str) -> tuple[bytes, str]:
+    buf = io.BytesIO()
     top = f"synwevo-source-{stamp}"
     status = source_status()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for rel in INCLUDE:
-            p = ROOT / rel
-            if not p.exists():
-                continue
-            files = [p] if p.is_file() else sorted(x for x in p.rglob("*") if x.is_file())
-            for f in files:
-                parts = f.relative_to(ROOT).parts
-                # Suffix match as well as exact: `synwevo_core.egg-info` is one path component,
-                # so a set membership test never saw it and build metadata rode along.
-                if (set(parts) & EXCLUDE_PARTS
-                        or any(part.endswith(".egg-info") for part in parts)
-                        or f.suffix in (".pyc", ".log") or f.stat().st_size > MAX_FILE):
-                    continue
-                tar.add(f, arcname=f"{top}/{f.relative_to(ROOT).as_posix()}", recursive=False)
+        for f, name in files:
+            tar.add(f, arcname=f"{top}/{name}", recursive=False)
+        # Where it was generated is described, not spelled out: the absolute path of the
+        # installation is nobody's business outside the server and was handed to every user.
         lines = ["Synwevo Docs 对应源代码（Corresponding Source）", "",
-                 "本压缩包由正在运行的服务按其安装目录中的文件生成。",
-                 f"生成位置：{status['root']}", ""]
+                 "本压缩包由正在运行的服务按其安装目录中的文件生成。", ""]
         if status["complete"]:
             lines += ["本包包含所列全部内容：业务应用、平台共享包、账户服务、门户、构建与运行脚本、文档与依赖版本清单。"]
         else:

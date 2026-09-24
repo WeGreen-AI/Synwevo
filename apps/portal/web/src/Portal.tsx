@@ -68,6 +68,7 @@ export function Portal() {
   };
 
   async function switchWorkspace(id: string) {
+    if (switching) return;
     setSwitching(id);
     try {
       const r = await fetch("/api/portal/workspace", {
@@ -84,6 +85,8 @@ export function Portal() {
       // Reload rather than patch locally: which applications are available depends on the
       // workspace, and the server is the only thing that knows the new answer.
       await load();
+    } catch {
+      setState({ phase: "error", message: "切换工作空间失败，请检查网络后重试" });
     } finally {
       setSwitching(null);
     }
@@ -120,7 +123,7 @@ export function Portal() {
       <Shell title="Synwevo Workspace">
         <div className="pt-empty">
           <h1 className="pt-h1">出了点问题</h1>
-          <p className="pt-lead pt-err">{state.message}</p>
+          <p className="pt-lead pt-err" role="alert">{state.message}</p>
           <button className="pt-btn" onClick={() => { setState({ phase: "loading" }); void load(); }}>
             重试
           </button>
@@ -137,7 +140,8 @@ export function Portal() {
       title={home.platform.name}
       right={
         <div className="pt-account">
-          <a className="pt-link" href={`${home.account_url}/account`}>账户与安全</a>
+          <a className="pt-link" href={`${home.account_url.replace(/\/$/, "")}/account`}>账户与安全</a>
+          {home.user.platform_role === "admin" && <a className="pt-link" href={`${home.account_url.replace(/\/$/, "")}/admin`}>平台管理</a>}
           <span className="pt-who" title={home.user.email}>
             {home.user.display_name || home.user.email}
           </span>
@@ -163,12 +167,18 @@ export function Portal() {
         </div>
       )}
 
+      {current && <div className="pt-ws">
+        <span className="pt-ws-label">当前空间：{current.name}</span>
+        {(current.role === "owner" || current.role === "admin") && <a className="pt-link"
+          href={`${home.account_url.replace(/\/$/, "")}/account/workspaces/${encodeURIComponent(current.id)}/members`}>成员与邀请</a>}
+      </div>}
+
       {home.apps.length === 0 ? (
         <div className="pt-none">
           <p className="pt-lead">
             {home.workspaces.length === 0
               ? "你还不属于任何工作空间。请联系管理员邀请你加入后，这里会出现可以使用的应用。"
-              : `${current ? `「${current.name}」` : "当前工作空间"}还没有启用任何应用。`}
+              : `${current ? `「${current.name}」` : "当前工作空间"}当前没有你可以使用的应用。请联系空间管理员确认应用状态与使用资格。`}
           </p>
           <p className="pt-hint">你的账户和安全设置随时可用。</p>
         </div>

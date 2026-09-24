@@ -1,6 +1,11 @@
 # 自动化调用指南（完整流程，可直接运行）
 
-本文的每条命令都在本机实跑过（记录见 [../quality/verification.md](../quality/verification.md)）。示例输入使用 `testdata/` 中的**合成测试文件**（名称以「测试」开头），输出由真实服务生成。
+本轮状态（2026-09-24）：推荐使用 [Python SDK/CLI](../../apps/docs/sdk/python/README.md)、
+[Node 客户端/CLI](../../apps/docs/sdk/typescript/README.md) 或 [n8n 工作流](../../apps/docs/sdk/n8n/README.md)。
+这些文档包含凭据文件/环境读取与隔离验收入口；不要把密钥写进仓库或必须暴露在命令行。
+本轮实际命令、输出校验与未完成项见 [handoff](../quality/handoff.md)。
+下方 2026-09-23 输出为历史示例，不能当成本轮结果。测试输入是明确标记的合成文件；验收只在临时数据目录运行，
+不要直接用仓库 `data/` 启动测试、发送真实通知或清理真实业务资源。
 
 ## 0. 准备：启动服务并创建密钥
 
@@ -114,10 +119,18 @@ curl -s -X PUT "$B/projects/$NEW/definition" -H "$H" -H 'Content-Type: applicati
 **只重试失败的样本**
 ```bash
 curl -s -X POST "$B/jobs/$JID/retry" -H "$H" -H "Idempotency-Key: $JID-retry-1" \
-     -H 'Content-Type: application/json' -d '{"include_skipped": false}'
+     -H 'Content-Type: application/json' -d '{"failed_only": true}'
 curl -s "$B/jobs/$JID/runs" -H "$H"        # 初次与每次重试的记录
 ```
-重试沿用原任务快照。换了模板或规则就不要重试，应当新建任务重新预检。
+重试沿用原任务快照，保留成功、取消和跳过项。要恢复取消项使用默认 `{}`；换模板或规则应新建任务。
+
+**下载正式引擎的预览样本**
+```bash
+curl --fail-with-body -X POST "$B/projects/$PID/preview" -H "$H" \
+     -H 'Content-Type: application/json' -d '{"index":0}' -o preview.docx
+```
+输出格式跟随模板的原生格式，此例为 DOCX。响应 `X-Content-SHA256` 用于核验；
+可带 preflight 返回的 `signature`，版本变化时得到 409 而不是悄悄预览另一版。
 
 **链接过期后重新获取**
 ```bash
@@ -131,15 +144,22 @@ curl -s -o file.docx "$LINK"       # 链接本身即凭据，默认 15 分钟
 import hmac, hashlib, time
 
 def verify(body: bytes, headers, secret: str, tolerance=300) -> bool:
-    ts = headers.get("X-Synwevo Docs-Timestamp", "")
-    sig = headers.get("X-Synwevo Docs-Signature", "")
-    if abs(time.time() - int(ts)) > tolerance:          # 防重放
+    import base64
+    ts, event_id = headers.get("webhook-timestamp", ""), headers.get("webhook-id", "")
+    try:
+        if not event_id or abs(time.time() - int(ts)) > tolerance:
+            return False
+        key = base64.b64decode(secret[6:], validate=True) if secret.startswith("whsec_") else secret.encode()
+        raw = f"{event_id}.{ts}.".encode() + body
+        expected = b"v1," + base64.b64encode(hmac.new(key, raw, hashlib.sha256).digest())
+        return any(hmac.compare_digest(expected, sig.encode()) for sig in headers.get("webhook-signature", "").split())
+    except (ValueError, TypeError):
         return False
-    expect = "v1=" + hmac.new(secret.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expect, sig)
-# 再按 X-Synwevo Docs-Event-Id 去重（投递可能重复、可能乱序）
+# 再核对 JSON 内 id 与 webhook-id 一致，并在持久处理成功后按事件 id 去重。
 ```
-`apps/docs/synwevo_docs/webhooks.py` 里的 `verify()` 就是这段逻辑，`apps/docs/tests/test_webhooks.py` 用它验证真实投递。
+完整可运行接收器见 [webhook_receiver.py](../../apps/docs/examples/webhook_receiver.py)，使用原始请求体验签，
+成功处理/持久入队后才应答 2xx；处理失败返回 503，不能先在内存里记为成功再丢失任务。
+部署级兼容回调仍使用原有 `X-DocWeave-*` 头，同时提供上述标准头；旧协议名不做品牌替换。
 
 **等待任务：轮询事件**
 ```bash

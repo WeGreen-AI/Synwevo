@@ -162,8 +162,12 @@ def draw_box(im: Image.Image, box: tuple[float, float, float, float], text: str,
         return {"ok": False, "font_size": min_font_size, "overflow": True, "lines": []}
     # in rotated space the box's width/height swap
     lay_w, lay_h = (bh, bw) if rotate in (90, 270) else (bw, bh)
+    if not text:
+        return {"ok": True, "font_size": float(font_size), "overflow": False, "lines": []}
 
     size = float(font_size)
+    # a box drawn over fine print can start below the default minimum: never fail it for that
+    min_font_size = min(float(min_font_size), size)
     while size >= float(min_font_size) - 1e-6:
         rc = font.fits(text, (0, 0, lay_w, lay_h), size)
         if rc >= 0:

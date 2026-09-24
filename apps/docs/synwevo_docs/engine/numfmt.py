@@ -102,8 +102,9 @@ def _tokenize(section: str):
             i += 1
 
 
-def format_value(value, fmt: str | None) -> tuple[str, bool]:
-    """Return (display_text, exact).  ``value`` is a Python object from openpyxl/xlrd."""
+def format_value(value, fmt: str | None, date1904: bool = False) -> tuple[str, bool]:
+    """Return (display_text, exact).  ``value`` is a Python object from openpyxl/xlrd.
+    ``date1904``: a number under a date format is a serial of the 1904 date system."""
     if value is None:
         return "", True
     if isinstance(value, bool):
@@ -122,7 +123,7 @@ def format_value(value, fmt: str | None) -> tuple[str, bool]:
         return str(value), False
     if isinstance(value, (int, float, Decimal)):
         if is_date_format(f):
-            return _format_date(serial_to_datetime(float(value)), f)
+            return _format_date(serial_to_datetime(float(value), date1904), f)
         return _format_number(value, f)
     return str(value), False
 

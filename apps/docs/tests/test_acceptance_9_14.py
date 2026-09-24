@@ -286,7 +286,13 @@ def test_s12b_cancel(api, fixtures):
     api.rule(pid, {"mode": "per_row", "table": {"sheet": "客户", "header_row": 0}})
     api.maps(pid, [{"type": "single", "sources": [{"kind": "column", "sheet": "客户", "header": "姓名"}], "target": {"binding": s["binding"]}}])
     j = api.ok(api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx", "pdf"]}))   # PDF conversion makes it slow enough
-    time.sleep(1.5)
+    # cancel once at least one sample is done, observed rather than guessed with a fixed sleep
+    for _ in range(600):
+        cur = api.ok(api.c.get(f"/api/jobs/{j['id']}"))
+        if cur["counts"].get("success", 0) >= 1 or cur["status"] not in ("queued", "running"):
+            break
+        time.sleep(0.05)
+    assert cur["status"] == "running" and cur["counts"].get("success", 0) < 100, cur
     api.ok(api.c.post(f"/api/jobs/{j['id']}/cancel"))
     for _ in range(300):
         j = api.ok(api.c.get(f"/api/jobs/{j['id']}"))
@@ -366,7 +372,7 @@ def test_s13_outputs_open_in_libreoffice(api, fixtures, fmt, tmp_path):
     pdf = convert(data, fmt, "pdf")                     # LibreOffice opens and renders the file
     doc = pymupdf.open(stream=pdf, filetype="pdf")
     assert doc.page_count >= 1 and "测试商品" in "".join(p.get_text() for p in doc)
-    zipfile.ZipFile(io.BytesIO(data)).testzip()
+    assert zipfile.ZipFile(io.BytesIO(data)).testzip() is None           # testzip returns the first bad member; it does not raise
 
 
 # ------------------------------------------------------------------ 14. capability boundary

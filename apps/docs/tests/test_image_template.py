@@ -76,6 +76,17 @@ def test_png_template_end_to_end(api, fixtures):
     # the cleared background follows the gradient instead of a flat white box
     top_px = im.convert("RGB").getpixel((600, 225))
     assert abs(top_px[2] - tpl.getpixel((600, 212))[2]) <= 6
+    # detail rows, checked without OCR: every row of the product-name column that has a
+    # record now carries ink (the template has a sample in row 1 only), and row 1 is not the
+    # template's sample any more
+    x0, y0, _x1, _y1 = det["trect"]
+    name_col = det["cols"][1]
+    boxes = [(int(name_col["x0"]) + 3, int(y0 + i * det["row_height"]) + 3, int(name_col["x1"]) - 3,
+              int(y0 + (i + 1) * det["row_height"]) - 3) for i in range(det["rows_fit"])]
+    n = len(exp[key])
+    assert all(_dark(im, b) > 100 for b in boxes[:n]), [_dark(im, b) for b in boxes]
+    assert all(_dark(im, b) == 0 for b in boxes[n:]), [_dark(im, b) for b in boxes]
+    assert list(im.convert("RGB").crop(boxes[0]).getdata()) != list(tpl.crop(boxes[0]).getdata())
     if tesseract_path():
         buf = io.BytesIO()
         im.crop((140, 200, 1050, 620)).save(buf, "PNG")

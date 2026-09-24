@@ -6,8 +6,9 @@ the template and "设为待填区域" (4 fields) → define samples (每行一�
 cells + field chips and "建立映射" (4 mappings, one with a date transform) →
 preview (prev/next) → generate 100 DOCX → job page → download ZIP → verify files.
 
-    python scripts/ui_e2e.py [base_url]        (server must be running)
-Screenshots are written to docs/screenshots/.
+    .venv/bin/python apps/docs/scripts/ui_e2e.py              # isolated test instance (default)
+    .venv/bin/python apps/docs/scripts/ui_e2e.py <base_url>   # only a test-marked instance
+Screenshots are written to <repo>/docs/screenshots/.
 """
 from __future__ import annotations
 
@@ -22,12 +23,11 @@ import docx
 from playwright.sync_api import Page, expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-from _testenv import target  # noqa: E402  isolated test instance; never the user's real data
+from _testenv import SHOTS, TESTDATA, target  # noqa: E402  isolated test instance; never the user's real data
 
 ARG_BASE = sys.argv[1] if len(sys.argv) > 1 else None
 BASE = ""                     # bound in main() to an isolated (or explicitly test-marked) server
-SHOTS = ROOT / "docs" / "screenshots"
-DATA = ROOT / "testdata"
+DATA = TESTDATA                # <repo>/testdata (apps/docs/scripts/make_fixtures.py)
 
 SELECT_JS = """
 ([pane, needle, ctx]) => {

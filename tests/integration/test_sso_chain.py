@@ -129,13 +129,17 @@ def world(tmp_path, monkeypatch):
                 None if r.status_code < 300 else f"HTTP {r.status_code}")
 
     monkeypatch.setattr(oidc_mod, "deliver_logout", _deliver)
-    accounts = Svc(app_mod.create_app(data, start_jobs=False), ACCOUNTS)
+    # Each origin is built as the role it is deployed as. Both used to default to `all`, so the
+    # relying-party deployment — Docs refusing the account surface, the account service refusing
+    # documents — was never what this chain exercised.
+    monkeypatch.delenv("SYNWEVO_ROLE", raising=False)
+    accounts = Svc(app_mod.create_app(data, role="accounts", start_jobs=False), ACCOUNTS)
 
     # Synwevo Docs' relying-party client talks to the account service over that same transport, so
     # the token exchange really is an HTTP request to the real provider, not a function call.
     import synwevo_auth_client.rp as rp_mod
     monkeypatch.setattr(rp_mod.Rp, "http", property(lambda self: accounts.c))
-    docs_app = Svc(app_mod.create_app(data, start_jobs=False), DOCS)
+    docs_app = Svc(app_mod.create_app(data, role="app", start_jobs=False), DOCS)
     later["docweave"] = docs_app
 
     store = Store(tmp_path / "d")
@@ -202,7 +206,10 @@ def test_the_account_cookie_is_not_sent_to_the_docs_app(world):
     assert "docweave.localhost" in b.jar.by_host and "accounts.localhost" in b.jar.by_host
     # The jar is keyed by host, so this is what Synwevo Docs would actually receive.
     assert b.jar.apply(DOCS)["dw_session"] != b.jar.apply(ACCOUNTS)["dw_session"]
-    # And Synwevo Docs' session is not usable at the account service, nor the reverse.
+    # A cookie value Synwevo Docs never issued is refused. (Rows are not yet bound to the
+    # origin that issued them — both services read one sessions table — so a *stolen* central
+    # value would be accepted here; every Docs request re-checks workspace and entitlement, so
+    # it grants no more than that person already has.)
     assert whoami(world["docweave"], {"dw_session": "not-a-session"}) is None
 
 
@@ -342,9 +349,15 @@ def test_platform_logout_ends_the_docweave_session_too(world):
         {"client_id": "docweave-web", "post_logout_redirect_uri": DOCS + "/signed-out"}))
     # the Synwevo Docs session is gone even though its own cookie was never touched
     assert whoami(world["docweave"], b.jar.apply(DOCS)) is None
-    row = world["store"].one("SELECT revoked_reason FROM sessions WHERE oidc_sid IS NOT NULL "
+    row = world["store"].one("SELECT revoked_at, revoked_reason FROM sessions WHERE oidc_sid IS NOT NULL "
                              "ORDER BY created_at DESC LIMIT 1")
-    assert row["revoked_reason"] == "backchannel_logout"
+    # The account service now ends relying-party sessions directly (they share its database)
+    # before it notifies, so the recorded reason is the central one; a notification that fails
+    # must not be what decides whether the session ends. It must still have been delivered.
+    assert row["revoked_at"] and row["revoked_reason"] == "central_rp_initiated_logout", row
+    cs = world["store"].one("SELECT logged_out_at, logout_error FROM client_sessions "
+                            "WHERE client_id='docweave-web' ORDER BY created_at DESC LIMIT 1")
+    assert cs["logged_out_at"] and not cs["logout_error"], "后通道通知仍然要送达"
 
 
 def test_a_repeated_logout_notification_is_a_no_op_success(world):
@@ -414,3 +427,54 @@ def test_the_local_session_reports_the_real_central_authentication_time(world):
         "本地会话不能把两小时前的中央认证记成刚刚重认证"
 
 
+
+
+# ---------------------------------------------------------------- revocation reaches open sessions
+def test_losing_the_application_ends_access_on_the_next_docs_request(world):
+    """The sign-in callback checking eligibility once is not enough: an open Docs session must
+    lose access on its next request when the workspace turns Docs off, and the reason must be
+    one the person can act on. Account routes keep working — it is their access to the
+    application that went, not their account."""
+    b = world["b"]
+    _sign_in_centrally(world)
+    b.go(DOCS + "/auth/start?next=/")
+    ck = b.jar.apply(DOCS)
+    assert world["docweave"].get("/api/projects", cookies=ck).status_code == 200
+
+    world["apps"].disable_for_workspace(world["ws"], "docweave")
+    r = world["docweave"].get("/api/projects", cookies=ck)
+    assert r.status_code == 403 and r.json()["error"] == "app_access_revoked", r.text
+    assert whoami(world["docweave"], ck) == "alice@example.com"
+
+    world["apps"].enable_for_workspace(world["ws"], "docweave")
+    assert world["docweave"].get("/api/projects", cookies=ck).status_code == 200
+
+
+def test_a_frozen_workspace_stops_an_open_docs_session(world):
+    b = world["b"]
+    _sign_in_centrally(world)
+    b.go(DOCS + "/auth/start?next=/")
+    ck = b.jar.apply(DOCS)
+    world["store"].execute("UPDATE workspaces SET status='frozen' WHERE id=?", (world["ws"],))
+    r = world["docweave"].get("/api/projects", cookies=ck)
+    assert r.status_code == 403 and r.json()["error"] == "workspace_unavailable", r.text
+
+
+def test_the_docs_session_cannot_switch_into_a_workspace_without_docs(world):
+    """A member of workspace B, which never enabled Docs, used to be able to move a Docs
+    session there with one POST and read and write documents in it."""
+    b = world["b"]
+    _sign_in_centrally(world)
+    b.go(DOCS + "/auth/start?next=/")
+    ck = b.jar.apply(DOCS)
+    w2 = world["ident"].create_workspace("Team B", owner_id=world["user"]["id"])["id"]
+    world["apps"].disable_for_workspace(w2, "docweave")
+    r = world["docweave"].post("/api/auth/workspace", json={"workspace_id": w2}, cookies=ck,
+                               headers={"X-Synwevo-CSRF": ck["dw_csrf"]})
+    assert r.status_code == 403 and r.json()["error"] == "app_access_revoked", r.text
+    row = world["store"].one("SELECT workspace_id FROM sessions WHERE oidc_sid IS NOT NULL "
+                             "ORDER BY created_at DESC LIMIT 1")
+    assert row["workspace_id"] == world["ws"], "被拒绝的切换不能改动会话所在的工作空间"
+    denied = world["store"].one("SELECT result FROM audit_events WHERE action='auth.workspace.switch' "
+                                "ORDER BY seq DESC LIMIT 1")
+    assert denied["result"] == "denied"

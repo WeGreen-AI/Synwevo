@@ -9,9 +9,42 @@ Status values:
 """
 from __future__ import annotations
 
+import copy
+import threading
+import time
+
+from synwevo_core import env
+
 from .engine import pdf_engine
 from .engine.converters import soffice_path, soffice_version
-from .engine.ocr import available_langs, tesseract_path
+from .engine.ocr import available_langs, tessdata_dir, tesseract_path
+
+# The two probes that start a process (`soffice --version`, `tesseract --list-langs`) are
+# cached. The report is served to any read-scoped key at up to the API rate limit, and forking
+# LibreOffice hundreds of times a minute starves the conversions that actually matter. Cheap,
+# in-process facts (which PDF engine is active, whether a binary is on PATH) are read fresh
+# every time, so switching engines or installing a tool is reflected without waiting.
+PROBE_TTL_S = float(env.docs("CAPABILITY_PROBE_TTL_S", "300"))
+_probe_lock = threading.Lock()
+_probes: dict[tuple, tuple[float, object]] = {}
+
+
+def _probe(name: str, key, fn):
+    """`fn()` at most once per `PROBE_TTL_S` for this key; concurrent callers wait for one run
+    instead of each starting their own process."""
+    with _probe_lock:
+        hit = _probes.get((name, key))
+        t = time.monotonic()
+        if hit is not None and t - hit[0] < PROBE_TTL_S:
+            return copy.deepcopy(hit[1])
+        value = fn()
+        _probes[(name, key)] = (t, value)
+        return copy.deepcopy(value)
+
+
+def clear_probe_cache() -> None:
+    with _probe_lock:
+        _probes.clear()
 
 
 def _pymupdf_installed() -> bool:
@@ -28,9 +61,11 @@ def _engine_license(engine: str) -> str:
 
 
 def capability_report() -> dict:
-    lo = bool(soffice_path())
-    tess = bool(tesseract_path())
-    langs = available_langs() if tess else []
+    lo_exe = soffice_path()
+    lo = bool(lo_exe)
+    tess_exe = tesseract_path()
+    tess = bool(tess_exe)
+    langs = _probe("tesseract_langs", (tess_exe, tessdata_dir()), available_langs) if tess else []
     chi = "chi_sim" in langs
     conv = "conversion" if lo else "unavailable"
     ocr = ("verified" if chi else "partial") if tess else "unavailable"
@@ -59,7 +94,8 @@ def capability_report() -> dict:
                                       if (is_mixed_row and images_ok)
                                       else ("unavailable", "PDF 模板不可用，因此没有原生输出"))
             r["processing"] = "服务端本地（pypdfium2，Apache-2.0 / BSD-3）" + ("" if "Tesseract" not in r["processing"] else " + Tesseract")
-    return {"rows": rows, "environment": {"libreoffice": soffice_version() if lo else None, "tesseract": tesseract_path(),
+    return {"rows": rows, "environment": {"libreoffice": _probe("soffice_version", lo_exe, soffice_version) if lo else None,
+                                          "tesseract": tess_exe,
                                           "ocr_languages": langs, "pdf_engine": pdf_engine.ENGINE,
                                           # The engine says which code runs; it says nothing about what is
                                           # installed. Reporting "Apache-2.0 / BSD-3-Clause" while the AGPL

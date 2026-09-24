@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { isImeKey, useModalFocus } from "@synwevo/ui";
 
 export interface Command {
   id: string;
@@ -12,12 +13,16 @@ export interface Command {
 
 /** Command palette (⌘K / Ctrl+K).  Every entry runs a real action of the current screen;
  *  typing filters by label, hint and group.  Safe with Chinese input methods: keys typed
- *  while composing are never treated as shortcuts. */
-export default function CommandPalette({ commands, open, onClose }: { commands: Command[]; open: boolean; onClose: () => void }) {
+ *  while composing (isComposing, or keyCode 229 as Safari reports it) are never treated as
+ *  shortcuts.  It is a modal like any other: Tab stays inside, Escape closes only the palette,
+ *  and focus goes back to where it was.  The caller mounts it only while it is open. */
+export default function CommandPalette({ commands, onClose }: { commands: Command[]; onClose: () => void }) {
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const uid = useId();
+  const { onKeyDown: trapKeys, isTop } = useModalFocus(boxRef, onClose);
 
   const hits = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -26,44 +31,38 @@ export default function CommandPalette({ commands, open, onClose }: { commands: 
     return usable.filter((c) => `${c.label} ${c.hint || ""} ${c.group}`.toLowerCase().includes(t));
   }, [commands, q]);
 
-  useEffect(() => {
-    if (open) {
-      setQ("");
-      setI(0);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
-  }, [open]);
   useEffect(() => { setI(0); }, [q]);
   useEffect(() => {
     listRef.current?.querySelectorAll<HTMLElement>("[data-cmd]")[i]?.scrollIntoView({ block: "nearest" });
   }, [i]);
 
-  if (!open) return null;
+  const optId = (k: number) => `${uid}-opt-${k}`;
   const pick = (c: Command | undefined) => {
     if (!c || c.disabled) return;
     onClose();
-    setTimeout(c.run, 0);       // let the dialog close before the action opens another one
+    setTimeout(c.run, 0);       // let the palette close (and hand focus back) before the action opens anything
   };
   return (
-    <div className="cmdk-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="cmdk" role="dialog" aria-modal="true" aria-label="命令面板"
+    <div className="cmdk-back" onMouseDown={(e) => { if (e.target === e.currentTarget && isTop()) onClose(); }}>
+      <div className="cmdk" role="dialog" aria-modal="true" aria-label="命令面板" ref={boxRef} tabIndex={-1}
         onKeyDown={(e) => {
-          if (e.nativeEvent.isComposing) return;
-          if (e.key === "ArrowDown") { e.preventDefault(); setI((x) => Math.min(hits.length - 1, x + 1)); }
-          if (e.key === "ArrowUp") { e.preventDefault(); setI((x) => Math.max(0, x - 1)); }
-          if (e.key === "Enter") { e.preventDefault(); pick(hits[i]); }
-          if (e.key === "Escape") { e.preventDefault(); onClose(); }
+          if (isImeKey(e)) return;
+          if (e.key === "ArrowDown") { e.preventDefault(); setI((x) => Math.min(hits.length - 1, x + 1)); return; }
+          if (e.key === "ArrowUp") { e.preventDefault(); setI((x) => Math.max(0, x - 1)); return; }
+          if (e.key === "Enter") { e.preventDefault(); pick(hits[i]); return; }
+          trapKeys(e);          // Escape (this palette only, propagation stopped) and the Tab trap
         }}>
-        <input ref={inputRef} className="cmdk-input" value={q} onChange={(e) => setQ(e.target.value)}
-          placeholder="搜索命令…（↑↓ 选择，回车执行，Esc 关闭）" aria-label="搜索命令" role="combobox" aria-expanded aria-controls="cmdk-list" />
-        <div className="cmdk-list" id="cmdk-list" role="listbox" ref={listRef}>
-          {hits.length === 0 && <div className="cmdk-empty">没有匹配的命令</div>}
+        <input className="cmdk-input" value={q} onChange={(e) => setQ(e.target.value)} data-autofocus
+          placeholder="搜索命令…（↑↓ 选择，回车执行，Esc 关闭）" aria-label="搜索命令" role="combobox" aria-expanded="true"
+          aria-controls={`${uid}-list`} aria-autocomplete="list" aria-activedescendant={hits[i] ? optId(i) : undefined} />
+        <div className="cmdk-list" id={`${uid}-list`} role="listbox" aria-label="命令" ref={listRef}>
+          {hits.length === 0 && <div className="cmdk-empty" role="presentation">没有匹配的命令</div>}
           {hits.map((c, k) => {
             const head = k === 0 || hits[k - 1].group !== c.group;
             return (
-              <div key={c.id}>
-                {head && <div className="cmdk-group">{c.group}</div>}
-                <div data-cmd role="option" aria-selected={k === i} aria-disabled={c.disabled}
+              <div key={c.id} role="presentation">
+                {head && <div className="cmdk-group" role="presentation">{c.group}</div>}
+                <div data-cmd id={optId(k)} role="option" aria-selected={k === i} aria-disabled={c.disabled || undefined}
                   className={`cmdk-item${k === i ? " on" : ""}${c.disabled ? " off" : ""}`}
                   onMouseMove={() => setI(k)} onClick={() => pick(c)}>
                   <span className="grow">

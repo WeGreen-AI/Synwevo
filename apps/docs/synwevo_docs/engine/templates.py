@@ -38,8 +38,12 @@ EMPTY_POLICIES = {
     "area": ("blank", "placeholder", "error"),
 }
 ALIGNS = ("left", "center", "right")
+VALIGNS = ("top", "middle", "bottom")
+CLEARS = ("text", "text_pixels", "none")
 SEPARATORS = ("none", "blank", "page_break")
 OVERFLOWS = ("error", "shrink", "continue")
+DOC_MODES = ("replace", "insert")
+XLSX_MODES = ("replace", "insert_after", "insert_before")
 
 
 def _enum(req: dict, key: str, allowed: tuple[str, ...], default: str) -> str:
@@ -49,6 +53,20 @@ def _enum(req: dict, key: str, allowed: tuple[str, ...], default: str) -> str:
     if v not in allowed:
         raise TemplateError("bad_value", f"{key} 只能是 {' / '.join(allowed)}；收到「{v}」")
     return v
+
+
+def _num(req: dict, key: str, default: float | None, lo: float, hi: float) -> float | None:
+    """A numeric slot option within [lo, hi]; anything else is refused with the field named."""
+    v = req.get(key)
+    if v is None or v == "":
+        return default
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        raise TemplateError("bad_value", f"{key} 应为数字；收到「{v}」") from None
+    if not lo <= f <= hi:
+        raise TemplateError("bad_value", f"{key} 应在 {lo:g}–{hi:g} 之间；收到「{v}」")
+    return f
 
 
 def _base_slot(name: str, kind: str, **kw) -> dict:
@@ -75,7 +93,7 @@ def docx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
                 raise TemplateError("not_paragraph", "请在段落文字中选择")
             text = dc.para_text(el)
             start, end = int(req["start"]), int(req["end"])
-            mode = req.get("mode", "replace")
+            mode = _enum(req, "mode", DOC_MODES, "replace")
             if mode == "insert":
                 start = end
             original = text[start:end]
@@ -89,7 +107,7 @@ def docx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
             tc = dc.get_table_cell(container, req["table_path"], int(req["row"]), int(req["col"]))
             p = dc.cell_first_paragraph(tc)
             text = dc.para_text(p)
-            mode = req.get("mode", "replace")
+            mode = _enum(req, "mode", DOC_MODES, "replace")
             slot = _base_slot(name, "text", mode=mode if text else "insert", original_text=dc.cell_text(tc) if mode == "replace" else "",
                               locator={"part": part, "table_path": req["table_path"], "row": int(req["row"]), "col": int(req["col"])})
             if mode == "replace" and text:
@@ -235,16 +253,26 @@ def docx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
     pkg = Package(work)
     issues: list[dict] = []
     slot_by_id = {s["id"]: s for s in slots}
+    repeats = [s for s in slots if s["kind"] == "repeat"]
+    found: set[str] = set()
+    for sl in slots:
+        if any(dc.has_unwritable_chars(t) for t in _value_texts(values.get(sl["id"]))):
+            issues.append({"level": "warning", "slot": sl["id"], "code": "control_chars",
+                           "message": f"字段「{sl['name']}」的值含有文档中无法保存的控制字符，已去除（换行类字符按换行写入）"})
     for info in dc.list_parts(pkg):
         root = pkg.xml(info["part"])
-        # 1) repeat rows and repeat content blocks
-        for sl in [s for s in slots if s["kind"] == "repeat"]:
+        # 1) repeat rows and repeat content blocks.  A repeat lives in exactly one part (body,
+        #    a header or a footer); every other part simply does not contain it, so "missing"
+        #    can only be decided after all parts were visited.
+        for sl in repeats:
             fv = values.get(sl["id"]) or {"kind": "rows", "rows": []}
             if sl.get("block"):
                 from .docx_blocks import fill_block
-                fill_block(root, sl, fv["rows"], keep, issues)
+                hit = fill_block(root, sl, fv["rows"], keep, issues, report_missing=False)
             else:
-                _docx_fill_repeat(root, sl, fv["rows"], keep, issues)
+                hit = _docx_fill_repeat(root, sl, fv["rows"], keep, issues)
+            if hit:
+                found.add(sl["id"])
         # 2) everything else
         for tag, sdt in list(dc.iter_field_sdts(root)):
             base = re.split(r"[#@]", tag)[0]
@@ -265,23 +293,47 @@ def docx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
             else:
                 val = fv["value"] if fv and fv["kind"] == "scalar" else V.empty()
                 dc.fill_sdt(sdt, val.text or "", keep, style=val.style if val.style else None)
+    for sl in repeats:
+        if sl["id"] in found:
+            continue
+        if sl.get("block"):
+            issues.append({"level": "error", "slot": sl["id"], "code": "block_lost", "message": f"重复内容块「{sl['name']}」在模板中已找不到"})
+        else:
+            issues.append({"level": "error", "slot": sl["id"], "code": "repeat_lost", "message": f"重复明细「{sl['name']}」的模板行已丢失"})
     return pkg.save(), issues
 
 
-def _docx_fill_repeat(root, sl: dict, rows: list[dict], keep: bool, issues: list[dict]) -> None:
+def _value_texts(fv: dict | None) -> list[str]:
+    if not fv:
+        return []
+    if fv.get("kind") == "scalar":
+        return [fv["value"].text or ""]
+    if fv.get("kind") == "matrix":
+        return [c.text or "" for row in fv["rows"] for c in row]
+    return [v.text or "" for row in fv.get("rows") or [] for v in row.values() if v is not None]
+
+
+def _docx_fill_repeat(root, sl: dict, rows: list[dict], keep: bool, issues: list[dict]) -> bool:
+    """Fill a repeat row in ``root``.  Returns False when this part does not contain it."""
     prefix = dc.TAG_PREFIX + sl["id"] + "#"
     sdts = [(t, s) for t, s in dc.iter_field_sdts(root) if (dc.TAG_PREFIX + t).startswith(prefix)]
     if not sdts:
-        return
+        return False
     tr = sdts[0][1]
     while tr is not None and tr.tag != dc.w("tr"):
         tr = tr.getparent()
     if tr is None:
         issues.append({"level": "error", "slot": sl["id"], "code": "repeat_lost", "message": f"重复明细「{sl['name']}」的模板行已丢失"})
-        return
+        return True
+    _fill_repeat_row(tr, sl, rows, keep)
+    return True
+
+
+def _fill_repeat_row(tr, sl: dict, rows: list[dict], keep: bool) -> None:
     tbl = tr.getparent()
     while tbl is not None and tbl.tag != dc.w("tbl"):
         tbl = tbl.getparent()
+    tbl_parent = tbl.getparent()        # a removed table may leave a cell / header needing a paragraph
     all_rows = list(dc.iter_rows(tbl))
     ri = all_rows.index(tr)
     header_rows = all_rows[max(0, ri - int(sl.get("header_rows", 0))):ri]
@@ -293,6 +345,7 @@ def _docx_fill_repeat(root, sl: dict, rows: list[dict], keep: bool, issues: list
         policy = sl.get("empty_policy", "remove_row")
         if policy == "remove_table":
             tbl.getparent().remove(tbl)
+            _keep_container_valid(tbl_parent)
             return
         if policy == "remove_row":
             tr.getparent().remove(tr)
@@ -301,6 +354,7 @@ def _docx_fill_repeat(root, sl: dict, rows: list[dict], keep: bool, issues: list
                     h.getparent().remove(h)
             if not list(dc.iter_rows(tbl)):
                 tbl.getparent().remove(tbl)
+                _keep_container_valid(tbl_parent)
             return
         new = copy.deepcopy(tr)
         first = True
@@ -313,15 +367,22 @@ def _docx_fill_repeat(root, sl: dict, rows: list[dict], keep: bool, issues: list
         return
     anchor = tr
     for row in rows:
+        # each copy keeps the template row's own trPr: forcing cantSplit made a detail row
+        # taller than a page unbreakable, and Word then clips it at the page bottom
         new = copy.deepcopy(tr)
         for t, sdt in list(dc.iter_field_sdts(new)):
             key = t.split("#", 1)[1] if "#" in t else ""
             v = row.get(key)
             dc.fill_sdt(sdt, v.text if v is not None else "", keep)
-        dc.set_row_cant_split(new)
         anchor.addnext(new)
         anchor = new
     tr.getparent().remove(tr)
+
+
+def _keep_container_valid(parent) -> None:
+    from .docx_blocks import _keep_valid
+    if parent is not None:
+        _keep_valid(parent)
 
 
 def _para_text_from_runs(el) -> str:
@@ -350,11 +411,10 @@ def xlsx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
                 raise TemplateError("merged_inner", f"{req['cell']} 位于合并单元格内部，请选择合并区域左上角 {tabular.cell_ref(r1, c1)}")
         _check_overlap(slots, sheet, r, c, r, c)
         info = x.get_cell(sheet, r, c)
-        mode = req.get("mode", "replace")
+        # an unknown mode used to become "replace" and overwrite the template's text; refuse it
+        mode = _enum(req, "mode", XLSX_MODES, "replace")
         slot = _base_slot(name, "cell", mode=mode, original_text=info["text"], had_formula=bool(info["formula"]),
                           locator={"sheet": sheet, "cell": tabular.cell_ref(r, c)})
-        if mode not in ("replace", "insert_after", "insert_before"):
-            slot["mode"] = "replace"
         x.set_defined_name("_dw_" + slot["id"], sheet, tabular.cell_ref(r, c))
     elif kind == "region":
         r1, c1, r2, c2 = tabular.parse_range(req["range"])
@@ -507,6 +567,12 @@ def xlsx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
                     continue
                 for i, rw in enumerate(mat):
                     nr = mapped_row(sheet, r1 + i)
+                    if nr is None:
+                        # the row went away with an empty detail row ("remove_row"): say so for
+                        # this field instead of failing the whole document with an exception
+                        issues.append({"level": "error", "slot": sl["id"], "code": "slot_removed",
+                                       "message": f"区域「{sl['name']}」的第 {i + 1} 行所在行已被删除（零条明细时删除了该行）"})
+                        break
                     for j, v in enumerate(rw):
                         if v.is_empty:
                             x.clear_cell(sheet, nr, c1 + j)
@@ -532,6 +598,10 @@ def calc_issues(rep: dict | None) -> list[dict]:
         fb = rep.get("fallback")
         if fb == "libreoffice":
             out.append({"level": "info", "code": "formula_fallback", "message": f"{len(rep['unsupported'])} 个公式（{reasons}）由 LibreOffice 计算：{cells}"})
+        elif fb == "blocked":
+            out.append({"level": "warning", "code": "formula_unsupported",
+                        "message": f"{len(rep['unsupported'])} 个公式无法在服务器计算（{reasons}）；工作簿含联网或外部链接的公式（WEBSERVICE、DDE、外部工作簿等），"
+                                   f"服务器不会替它发出请求，将由 Excel 打开时计算：{cells}"})
         else:
             out.append({"level": "warning", "code": "formula_unsupported",
                         "message": f"{len(rep['unsupported'])} 个公式无法在服务器计算（{reasons}），将由 Excel 打开时计算：{cells}"})
@@ -554,15 +624,20 @@ def pdf_add_slot(original: bytes, req: dict, slots: list[dict]) -> dict:
     name = req.get("name") or "字段"
     if kind == "pdf_field":
         fname = req["field"]
-        for p in doc:
-            for wdg in p.widgets() or []:
-                if wdg.field_name == fname:
-                    slot = _base_slot(name or fname, "pdf_field", locator={"page": p.number, "field": fname, "rect": list(wdg.rect)},
-                                      font_size=req.get("font_size") or (wdg.text_fontsize or 10), min_font_size=req.get("min_font_size", 6),
-                                      align=req.get("align", "left"), original_text=str(wdg.field_value or ""))
-                    doc.close()
-                    return slot
-        doc.close()
+        try:
+            for p in doc:
+                for wdg in p.widgets() or []:
+                    if wdg.field_name == fname:
+                        if wdg.field_type not in pe.TEXT_WIDGET_TYPES:
+                            raise TemplateError("field_type_unsupported",
+                                                f"表单字段「{fname}」是 {wdg.field_type_string}，目前只能填写文本类表单字段")
+                        fs = _num(req, "font_size", float(wdg.text_fontsize or 10), 1, 400)
+                        slot = _base_slot(name or fname, "pdf_field", locator={"page": p.number, "field": fname, "rect": list(wdg.rect)},
+                                          font_size=fs, min_font_size=min(_num(req, "min_font_size", 6.0, 1, 400), fs),
+                                          align=_enum(req, "align", ALIGNS, "left"), original_text=str(wdg.field_value or ""))
+                        return slot
+        finally:
+            doc.close()
         raise TemplateError("field_missing", f"PDF 中没有表单字段「{fname}」")
     pno = int(req["page"])
     if not 0 <= pno < doc.page_count:
@@ -579,8 +654,14 @@ def pdf_add_slot(original: bytes, req: dict, slots: list[dict]) -> dict:
     removed = pe.join_words(pe.words_in_rect(page, rect))
     partial = [w for w in pe.words_in_rect(page, rect, "intersect") if w not in pe.words_in_rect(page, rect)]
     kind_page = pe.page_kind(page)
-    clear = req.get("clear") or ("text_pixels" if kind_page == "scanned" else "text")
-    size = req.get("font_size")
+    # A searchable scan (an OCR text layer, drawn invisibly over the page image) counts as a
+    # text page, but removing its invisible text removes nothing that can be seen: the
+    # visible characters are pixels, so they are what has to be cleared.
+    over_scan = kind_page != "scanned" and pe.invisible_text_over_image(page, rect)
+    clear = _enum(req, "clear", CLEARS, "text_pixels" if kind_page == "scanned" or over_scan else "text")
+    align = _enum(req, "align", ALIGNS, "left")
+    valign = _enum(req, "valign", VALIGNS, "middle")
+    size = _num(req, "font_size", None, 1, 400)
     if not size:
         # default: size of the removed text, else 11
         sizes = []
@@ -593,14 +674,21 @@ def pdf_add_slot(original: bytes, req: dict, slots: list[dict]) -> dict:
     color, fill, ink_size = _ink_and_fill(page, rect, clear)
     if ink_size and not req.get("font_size") and not sizes:
         size = ink_size
+    # a box over fine print (5.5 pt) must not start below its own minimum: it could never fit
+    min_size = min(_num(req, "min_font_size", 6.0, 1, 400), float(size))
     slot = _base_slot(name, "pdf_box", locator={"page": pno, "rect": [round(x, 2) for x in rect], "page_size": [page.mediabox.width, page.mediabox.height],
                                                 "rotation": page.rotation},
                       text_rotate=text_rot if text_rot is not None else page.rotation,
-                      font_size=size, min_font_size=req.get("min_font_size", 6), align=req.get("align", "left"),
-                      valign=req.get("valign", "middle"), clear=clear, original_text=removed,
+                      font_size=size, min_font_size=min_size, align=align,
+                      valign=valign, clear=clear, original_text=removed,
                       color=_valid_hex(req.get("color")) or color, fill=fill)
+    warns = []
     if partial:
-        slot["warning"] = f"有 {len(partial)} 个文字只部分位于框内，它们不会被移除：{pe.join_words(partial)[:40]}"
+        warns.append(f"有 {len(partial)} 个文字只部分位于框内，它们不会被移除：{pe.join_words(partial)[:40]}")
+    if clear == "text" and pe.invisible_text_over_image(page, rect):
+        warns.append("框内的文字是扫描图像上的隐藏文字层：只移除文字层时，图像上原有的文字仍会显示；建议把清除方式改为「清除像素」")
+    if warns:
+        slot["warning"] = "；".join(warns)
     doc.close()
     return slot
 
@@ -633,12 +721,13 @@ def image_add_slot(image_bytes: bytes, req: dict, slots: list[dict]) -> dict:
     ink, height = ink_metrics_px(crop, bg)
     size = round(min(72.0, max(5.0, height / 0.86)) * 2) / 2 if height else 11.0   # CJK ink ~ 0.86 em
     from . import pdf_engine as pe
+    fs = _num(req, "font_size", size, 1, 400)
     return _base_slot(req.get("name") or "字段", "pdf_box",
                       locator={"page": 0, "rect": [round(v, 2) for v in (x0, y0, x1, y1)],
                                "page_size": [float(W), float(H)], "rotation": 0},
-                      text_rotate=0, font_size=req.get("font_size") or size,
-                      min_font_size=req.get("min_font_size", 6), align=req.get("align", "left"),
-                      valign=req.get("valign", "middle"), clear="text_pixels", original_text="",
+                      text_rotate=0, font_size=fs,
+                      min_font_size=min(_num(req, "min_font_size", 6.0, 1, 400), fs), align=_enum(req, "align", ALIGNS, "left"),
+                      valign=_enum(req, "valign", VALIGNS, "middle"), clear="text_pixels", original_text="",
                       color=_valid_hex(req.get("color")) or (pe.hexcolor(ink) if ink else "#000000"),
                       fill=list(bg))
 

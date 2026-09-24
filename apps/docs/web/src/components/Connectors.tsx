@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Mapping } from "../lib/types";
+import { markColor } from "../lib/css";
 
 /** Curved lines linking source and target highlights of each mapping. */
 export default function Connectors({ container, mappings, active, visible, tick }: { container: HTMLElement | null; mappings: Mapping[]; active: string | null; visible: boolean; tick: number }) {
@@ -58,8 +59,8 @@ export default function Connectors({ container, mappings, active, visible, tick 
     <svg className="connectors" aria-hidden="true">
       {paths.map((p) => (
         <g key={p.id}>
-          <path d={p.d} stroke={p.color} className={p.id === active ? "active" : ""} strokeDasharray={p.id === active ? undefined : "5 4"} />
-          <circle cx={p.d.split(" ")[0].slice(1).split(",")[0]} cy={p.d.split(" ")[0].split(",")[1]} r={3.5} fill={p.color} />
+          <path d={p.d} stroke={markColor(p.color)} className={p.id === active ? "active" : ""} strokeDasharray={p.id === active ? undefined : "5 4"} />
+          <circle cx={p.d.split(" ")[0].slice(1).split(",")[0]} cy={p.d.split(" ")[0].split(",")[1]} r={3.5} fill={markColor(p.color)} />
         </g>
       ))}
     </svg>

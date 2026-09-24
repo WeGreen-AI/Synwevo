@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { describeLocator, MAP_TYPE } from "../lib/describe";
+import { mergeSource, repeatColumns, withSettings, type MappingSettings } from "../lib/mapping";
+import { errorText } from "../lib/perm";
 import type { Mapping, Project, Slot } from "../lib/types";
 import { Modal } from "@synwevo/ui";
 import Transforms from "./Transforms";
@@ -28,11 +30,14 @@ export default function MappingDialog(p: Props) {
   const mode = p.project.record_rule?.mode;
   const slotType = p.slot.kind === "repeat" ? "repeat" : p.slot.kind === "region" ? "region" : "single";
   const [pick, setPick] = useState(0);
-  const [transforms, setTransforms] = useState<any[]>(p.editing?.transforms || []);
-  const [agg, setAgg] = useState(p.editing?.agg || "unique");
-  const [aggSep, setAggSep] = useState(p.editing?.agg_sep || "、");
-  const [valueMode, setValueMode] = useState(p.editing?.value_mode || "auto");
-  const [style, setStyle] = useState(p.editing?.style || "target");
+  // Settings start from the mapping being edited or, when a source is being added to a field that
+  // already has a mapping, from that mapping — the controls on screen are what gets saved.
+  const seed = p.editing || (slotType === "single" ? p.existing : null);
+  const [transforms, setTransforms] = useState<any[]>(seed?.transforms || []);
+  const [agg, setAgg] = useState(seed?.agg || "unique");
+  const [aggSep, setAggSep] = useState(seed?.agg_sep || "、");
+  const [valueMode, setValueMode] = useState(seed?.value_mode || "auto");
+  const [style, setStyle] = useState(seed?.style || "target");
   const [combineMode, setCombineMode] = useState<"merge" | "replace">("merge");
   const [combineOp, setCombineOp] = useState(p.existing?.combine?.op || "concat");
   const [combineSep, setCombineSep] = useState(p.existing?.combine?.sep ?? " ");
@@ -67,7 +72,8 @@ export default function MappingDialog(p: Props) {
   const regionMismatch = useMemo(() => {
     if (slotType !== "region" || !loc || loc.kind !== "range") return null;
     const [a, b] = String(loc.range).split(":");
-    const m1 = /([A-Z]+)(\d+)/.exec(a)!, m2 = /([A-Z]+)(\d+)/.exec(b || a)!;
+    const m1 = /^([A-Z]+)(\d+)$/.exec(a), m2 = /^([A-Z]+)(\d+)$/.exec(b || a);
+    if (!m1 || !m2) return "来源区域无效，请重新选择单元格区域";
     const rows = Number(m2[2]) - Number(m1[2]) + 1;
     const colsN = colN(m2[1]) - colN(m1[1]) + 1;
     if (rows !== p.slot.rows || colsN !== p.slot.cols) return `来源区域为 ${rows} 行 × ${colsN} 列，目标区域「${p.slot.name}」为 ${p.slot.rows} 行 × ${p.slot.cols} 列。尺寸不一致，不能保存：请重新选择来源区域，或修改目标区域大小（系统不会自动截断、补齐或转置）。`;
@@ -100,26 +106,33 @@ export default function MappingDialog(p: Props) {
     }
     if (slotType === "repeat") {
       const missing = (p.slot.columns || []).filter((c) => !cols[c.key]);
-      base.columns = (p.slot.columns || []).map((c) => ({ slot_col: c.key, source: cols[c.key] ? { header: cols[c.key] } : { kind: "constant", value: "" } }));
-      if (missing.length === (p.slot.columns || []).length) {
+      base.columns = repeatColumns((p.slot.columns || []).map((c) => c.key), cols, p.editing?.columns);
+      if (!p.editing && missing.length === (p.slot.columns || []).length) {
         setErr("至少需要为一列设置来源列");
         return;
       }
     }
+    // What the dialog shows, applied the same way to an edit and to a merge (lib/mapping.ts):
+    // a merge used to drop these, and an edit re-enabled a disabled mapping.
+    const settings: MappingSettings = {
+      transforms: base.transforms,
+      columns: base.columns,
+      agg: base.agg, agg_sep: base.agg_sep, value_mode: base.value_mode,
+      style: slotType === "single" ? (style === "source" ? "source" : "target") : undefined,
+    };
     setSaving(true);
     try {
       if (p.editing) {
-        await p.onSave({ ...p.editing, ...base, sources: p.editing.sources }, null, `修改映射 #${p.editing.no}`);
+        await p.onSave(withSettings({ ...p.editing, type: base.type, target: base.target }, settings), null, `修改映射 #${p.editing.no}`);
       } else if (p.existing && combineMode === "merge" && slotType === "single") {
-        const merged: Mapping = { ...p.existing, sources: [...p.existing.sources, loc], combine: { op: combineOp, sep: combineSep } };
-        await p.onSave(merged, null, `映射 #${p.existing.no} 增加来源`);
+        await p.onSave(mergeSource(p.existing, loc, { op: combineOp, sep: combineSep }, settings), null, `映射 #${p.existing.no} 增加来源`);
       } else {
         const m: any = { ...base, sources: [loc], source_file: p.fileId, label: chosen?.label, varies: chosen?.varies };
-        await p.onSave(m, p.existing && combineMode === "replace" ? p.existing.id : null, `新建映射 → ${p.slot.name}`);
+        await p.onSave(m, p.existing ? p.existing.id : null, `新建映射 → ${p.slot.name}`);
       }
       p.onClose();
     } catch (e: any) {
-      setErr(e.message);
+      setErr(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -165,6 +178,7 @@ export default function MappingDialog(p: Props) {
             ))
           )}
           {p.warnings.map((w, i) => <div key={i} className="notice warn">{w}</div>)}
+          {!p.editing && p.existing && slotType !== "single" && <div className="notice info">将替换字段「{p.slot.name}」的原映射 #{p.existing.no}。</div>}
           {!p.editing && p.existing && slotType === "single" && (
             <div className="notice info col gap4">
               <b>字段「{p.slot.name}」已有映射 #{p.existing.no}</b>
@@ -200,7 +214,7 @@ export default function MappingDialog(p: Props) {
                       <td>{c.name}</td>
                       <td>
                         <select className="input sm" value={cols[c.key] || ""} onChange={(e) => setCols({ ...cols, [c.key]: e.target.value })}>
-                          <option value="">（留空）</option>
+                          <option value="">{p.editing?.columns?.find((x) => x.slot_col === c.key)?.source?.kind === "constant" ? "（保留原常量）" : "（留空）"}</option>
                           {srcHeaders.map((h, i) => <option key={i} value={h}>{h}{srcHeaders.filter((x) => norm(x) === norm(h)).length > 1 ? "（重名）" : ""}</option>)}
                         </select>
                       </td>

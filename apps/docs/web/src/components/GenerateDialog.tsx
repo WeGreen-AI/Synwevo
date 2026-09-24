@@ -2,7 +2,28 @@ import { useEffect, useRef, useState } from "react";
 import { get, patch, post, qs } from "@synwevo/auth-client";
 import { useLatest } from "../lib/latest";
 import type { Project, TemplateDetail } from "../lib/types";
+import { errorText } from "../lib/perm";
 import { Modal } from "@synwevo/ui";
+
+/** The request id of a batch the user is starting, kept per project and per settings for the
+ *  browser tab. Closing the dialog while the server was still creating a large job and opening it
+ *  again used to mint a new id, so the second 开始生成 queued a second full job for the same
+ *  batch. The same settings now reuse the same id (the server answers with the job it already
+ *  has); a successful start forgets it, so the next batch is a new one. */
+const REQ_KEY = (pid: string) => `synwevo.docs.genreq.${pid}`;
+function requestId(pid: string, settings: string): string {
+  try {
+    const raw = sessionStorage.getItem(REQ_KEY(pid));
+    const hit = raw ? JSON.parse(raw) : null;
+    if (hit && hit.settings === settings && typeof hit.id === "string") return hit.id;
+  } catch { /* storage unavailable: fall through to a fresh id */ }
+  const id = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  try { sessionStorage.setItem(REQ_KEY(pid), JSON.stringify({ id, settings })); } catch { /* not remembered */ }
+  return id;
+}
+function forgetRequest(pid: string) {
+  try { sessionStorage.removeItem(REQ_KEY(pid)); } catch { /* nothing to forget */ }
+}
 
 export default function GenerateDialog({ project, tpl, onStarted, onClose }: { project: Project; tpl: TemplateDetail; onStarted: (jobId: string) => void; onClose: () => void }) {
   const native = tpl.exports.find((e) => e.native)?.format || tpl.format;
@@ -15,32 +36,43 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose }: { p
   const [sum, setSum] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const reqId = useRef(`r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`);
   const inputRef = useRef<HTMLInputElement>(null);
   const latest = useLatest();
+  const summaryKey = JSON.stringify([project.id, formats, naming]);
+  const [checkedKey, setCheckedKey] = useState("");
+  const ready = checkedKey === summaryKey;
 
   useEffect(() => {
+    let cancel = () => {};
+    setCheckedKey("");
+    setErr(null);
     const t = setTimeout(() => {
       // The counts and filename examples this fills in are what the user checks before starting
       // a batch, so a stale answer that outran a newer one is worse than no answer.
-      latest(
+      cancel = latest(
         (signal) => get(`/api/projects/${project.id}/generation-summary${qs({ formats: formats.join(","), naming })}`, signal),
-        (s) => { setSum(s); setErr(null); },
-        (e) => setErr(e.message),
+        (s) => { setSum(s); setCheckedKey(summaryKey); setErr(null); },
+        (e) => { setCheckedKey(""); setErr(errorText(e)); },
       );
     }, 200);
-    return () => clearTimeout(t);
-  }, [formats.join(","), naming]);
+    return () => { clearTimeout(t); cancel(); };
+  }, [summaryKey, latest]);
 
   const start = async () => {
+    if (!ready || busy) return;
     setBusy(true);
     setErr(null);
     try {
+      const body = { formats, naming, error_policy: policy, layout: pageable ? layout : "off" };
+      const rid = requestId(project.id, JSON.stringify(body));
       await patch(`/api/projects/${project.id}`, { output: { naming, formats, error_policy: policy, layout } });
-      const j = await post(`/api/projects/${project.id}/jobs`, { formats, naming, error_policy: policy, layout: pageable ? layout : "off", request_id: reqId.current });
+      const j = await post(`/api/projects/${project.id}/jobs`, { ...body, request_id: rid });
+      forgetRequest(project.id);
       onStarted(j.id);
     } catch (e: any) {
-      setErr(e.message + (e.detail?.invalid ? `（例：${e.detail.invalid[0]?.record}：${e.detail.invalid[0]?.issues?.[0]?.message}）` : ""));
+      // 429 queue_full: the workspace already has as many active jobs as it may; say when to retry.
+      const wait = e?.code === "queue_full" ? `（当前进行中的任务已达上限${e.detail?.retry_after ? `，约 ${e.detail.retry_after} 秒后再试` : "，请等已有任务结束后再试"}）` : "";
+      setErr(errorText(e) + wait + (e.detail?.invalid ? `（例：${e.detail.invalid[0]?.record}：${e.detail.invalid[0]?.issues?.[0]?.message}）` : ""));
     } finally {
       setBusy(false);
     }
@@ -56,18 +88,20 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose }: { p
   const nFormats = formats.filter((f) => sum?.formats?.find((x: any) => x.format === f)?.available).length;
 
   return (
-    <Modal title="批量生成" size="wide" onClose={onClose}
+    // While the job is being created the dialog stays open: closing it would not stop the request.
+    <Modal title="批量生成" size="wide" onClose={() => { if (!busy) onClose(); }}
       footer={<>
-        {err && <div className="notice err grow">{err}</div>}
+        {err && <div className="notice err grow" role="alert">{err}</div>}
         <span className="spacer" />
-        <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={busy || !sum || blocked || !nFormats || (sum && sum.valid === 0)} onClick={start}>
-          {busy ? "正在创建任务…" : sum ? `开始生成 ${policy === "skip" ? sum.valid * nFormats : sum.records * nFormats} 个文件` : "开始生成"}
+        <button type="button" className="btn" disabled={busy} onClick={onClose}>取消</button>
+        <button type="button" className="btn primary" disabled={busy || !ready || !sum || blocked || !nFormats || (sum && sum.valid === 0)} onClick={start}>
+          {busy ? "正在创建任务…" : ready && sum ? `开始生成 ${policy === "skip" ? sum.valid * nFormats : sum.records * nFormats} 个文件` : "等待样本检查"}
         </button>
       </>}>
-      {!sum && !err && <div className="empty">正在检查所有样本…</div>}
+      {!ready && !err && <div className="notice info" role="status">正在检查当前设置下的所有样本…</div>}
       {sum && (
-        <div className="col gap12">
+        <fieldset className="col gap12" disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+          {ready && <>
           <div className="stats">
             <div className="statbox"><div className="v">{sum.input_files}</div><div className="k">输入文件（可用 {sum.ready_files}）</div></div>
             <div className="statbox"><div className="v">{sum.records}</div><div className="k">识别样本</div></div>
@@ -89,6 +123,7 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose }: { p
               </ul>
             </div>
           )}
+          </>}
           <div className="grid2">
             <div className="col">
               <h3>输出格式</h3>
@@ -124,16 +159,16 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose }: { p
             </div>
             <div className="col">
               <h3>文件命名</h3>
-              <input ref={inputRef} className="input mono" value={naming} onChange={(e) => setNaming(e.target.value)} />
-              <div className="row wrap gap4">{sum.tokens.map((t: string) => <button key={t} className="btn xs" onClick={() => insertToken(t)}>{`{${t}}`}</button>)}</div>
-              <div className="small muted">示例：{sum.naming_examples.length ? sum.naming_examples.map((n: string, i: number) => <code key={i} style={{ marginRight: 8 }}>{n}.{formats[0] || native}</code>) : "—"}</div>
+              <input ref={inputRef} className="input mono" value={naming} onChange={(e) => setNaming(e.target.value)} aria-label="文件命名规则" />
+              <div className="row wrap gap4">{sum.tokens.map((t: string) => <button type="button" key={t} className="btn xs" onClick={() => insertToken(t)} aria-label={`插入 {${t}}`}>{`{${t}}`}</button>)}</div>
+              <div className="small muted">示例：{ready && sum.naming_examples.length ? sum.naming_examples.map((n: string, i: number) => <code key={i} style={{ marginRight: 8 }}>{n}.{formats[0] || native}</code>) : "—"}</div>
               <div className="tiny muted">非法字符会被替换，过长会截断；重名自动加序号「(2)」，不会覆盖。</div>
               <h3 className="mt8">遇到错误时</h3>
               <label className={`opt${policy === "block" ? " on" : ""}`}><input type="radio" checked={policy === "block"} onChange={() => setPolicy("block")} /><div><div className="t">有错误则不开始（默认）</div><div className="small muted">先修正所有错误样本</div></div></label>
               <label className={`opt${policy === "skip" ? " on" : ""}`}><input type="radio" checked={policy === "skip"} onChange={() => setPolicy("skip")} /><div><div className="t">跳过错误样本，生成其余样本</div><div className="small muted">跳过的样本会逐条列在结果清单中</div></div></label>
             </div>
           </div>
-        </div>
+        </fieldset>
       )}
     </Modal>
   );

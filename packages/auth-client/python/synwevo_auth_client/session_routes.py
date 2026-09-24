@@ -16,7 +16,7 @@ from fastapi import APIRouter, Body, Request, Response
 
 from synwevo_core import env
 from synwevo_core.auth import ui_auth_mode
-from synwevo_core.http import app_role
+from synwevo_core.http import app_access_refusal, app_role
 from synwevo_core.config import platform_name
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity, registration_mode
@@ -79,6 +79,12 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
             raise ServiceError(401, "unauthorized", "请先登录")
         return s
 
+    def _serves_app(request: Request) -> bool:
+        """Does this process serve a business application (and so need its access checked)?
+        The account service and the portal switch workspaces for a live account alone."""
+        return (app_role(request) in ("app", "all")
+                and getattr(request.app.state, "route_policy", None) is not None)
+
     @r.get("/state")
     def state(request: Request):
         """Deliberately says nothing about specific accounts — only how this deployment is
@@ -124,9 +130,21 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         """
         s = _require_session(request)
         wid = (body.get("workspace_id") or "").strip()
-        if not ident.membership(wid, s["user_id"]):
+        if not wid or not ident.membership(wid, s["user_id"]) or not ident.get_workspace(wid):
             raise ServiceError(404, "no_workspace", "找不到该工作空间")
+        if _serves_app(request):
+            # The same question the gate asks on every Synwevo Docs request. Asking it here too
+            # means the switch fails with the reason, instead of succeeding into a workspace
+            # where every following request is refused — and a member can no longer move a
+            # session into a workspace that never enabled the application, or is frozen.
+            err = app_access_refusal(ident.store, ident, s["user_id"], wid,
+                                     getattr(request.app.state, "app_id", None))
+            if err:
+                audit(request, "auth.workspace.switch", actor_id=s["user_id"], workspace_id=wid,
+                      result="denied", meta={"reason": err.code})
+                raise err
         sessions.set_workspace(s["id"], wid)
+        audit(request, "auth.workspace.switch", actor_id=s["user_id"], workspace_id=wid, result="ok")
         return {"ok": True, "workspace_id": wid}
 
     return r

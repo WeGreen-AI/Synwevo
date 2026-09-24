@@ -14,10 +14,11 @@ import secrets
 import sqlite3
 import threading
 import time
+import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -61,6 +62,12 @@ CREATE TABLE IF NOT EXISTS artifacts (
   trace TEXT, verification TEXT, created_at REAL, attempt INTEGER DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS ix_art_job ON artifacts(job_id);
+-- HTTP Basic users of the UI (SYNWEVO_UI_AUTH=basic). Declared here so this file stays the one
+-- place the schema is created; synwevo_core.auth used to create it on its own, which made a
+-- second migrator and a write on every Auth(...) construction.
+CREATE TABLE IF NOT EXISTS ui_users (
+  username TEXT PRIMARY KEY, salt TEXT NOT NULL, hash TEXT NOT NULL, rounds INTEGER NOT NULL, created_at REAL
+);
 """
 
 # v2: tenancy, job leases / runs / events, persistent idempotency, API keys, webhook deliveries
@@ -446,6 +453,82 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
 );
 """
 
+# v5: the machine-facing platform — webhook subscriptions per workspace, resumable uploads.
+#
+# Like v4 these are pure additions and are created on every start, so a database stamped v5 by
+# an older build of this file still receives tables added here later.
+SCHEMA_V5 = """
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+  -- A workspace's own webhook endpoint. Managed through /api/v1 and the CLI only: there is
+  -- deliberately no product UI for it.
+  id TEXT PRIMARY KEY, tenant TEXT NOT NULL,
+  url TEXT NOT NULL, description TEXT,
+  events TEXT NOT NULL,                   -- JSON array of event types; ["*"] means all
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','disabled')),
+  disabled_reason TEXT,
+  -- The signing secret has to be read back to sign each delivery, so it is sealed
+  -- (synwevo_core.sealed), not hashed. During a rotation the previous secret keeps signing
+  -- alongside the new one until secret_prev_expires_at.
+  secret_enc TEXT NOT NULL, secret_prev_enc TEXT, secret_prev_expires_at REAL,
+  created_by TEXT,                        -- JSON principal descriptor (synwevo_core.authority)
+  created_at REAL NOT NULL, updated_at REAL NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,     -- optimistic concurrency for PATCH
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  last_success_at REAL, last_failure_at REAL,
+  deleted_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_whsub_tenant ON webhook_subscriptions(tenant, deleted_at);
+
+CREATE TABLE IF NOT EXISTS uploads (
+  -- A resumable upload: bytes arrive in ranges into a private temp file, and nothing can use it
+  -- until `complete` has checked the declared size and SHA-256.
+  id TEXT PRIMARY KEY, tenant TEXT NOT NULL, principal TEXT,
+  filename TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT,
+  received INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','complete','consumed','aborted','expired')),
+  blob TEXT, consumed_by TEXT,
+  created_at REAL NOT NULL, updated_at REAL NOT NULL, expires_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_uploads_tenant ON uploads(tenant, status);
+CREATE INDEX IF NOT EXISTS ix_uploads_expiry ON uploads(status, expires_at);
+"""
+
+# Columns added in v5 to tables that already exist. Applied unconditionally, like V4_COLUMNS.
+V5_COLUMNS = [
+    # Who asked for this job, as a principal descriptor (synwevo_core.authority). The runner
+    # re-checks it before starting, between samples and before publishing: a job must not keep
+    # delivering for a credential or a person whose access has since been withdrawn.
+    ("jobs", "principal", "TEXT"),
+    # 'planning' while the runner builds the sample plans, 'generating' after. NULL for jobs
+    # created before v5 (they were planned synchronously).
+    ("jobs", "phase", "TEXT"),
+    ("jobs", "last_slice_at", "REAL"),
+    ("jobs", "halt_reason", "TEXT"),
+    # The principal that requested each run: a retry is authorised by whoever asked for it.
+    ("job_runs", "principal", "TEXT"),
+    # Stored responses, so every creating POST can be replayed, not only job creation.
+    ("idempotency", "response_status", "INTEGER"),
+    ("idempotency", "response_body", "TEXT"),
+    ("idempotency", "resource_id", "TEXT"),
+    ("idempotency", "principal", "TEXT"),
+    # Key rotation keeps a lineage: a rotated key's jobs are still the same automation's jobs,
+    # a revoked lineage's jobs are not.
+    ("api_keys", "lineage", "TEXT"),
+    ("api_keys", "replaced_by", "TEXT"),
+    ("api_keys", "revoke_reason", "TEXT"),
+    # Deliveries to subscriptions. `endpoint` keeps its UNIQUE(event_id, endpoint) meaning by
+    # holding 'sub:<id>' (or 'sub:<id>:re:<n>' for a manual redelivery).
+    ("webhook_deliveries", "subscription_id", "TEXT"),
+    ("webhook_deliveries", "tenant", "TEXT"),
+    ("webhook_deliveries", "event_type", "TEXT"),
+    ("webhook_deliveries", "redelivery_of", "TEXT"),
+    ("webhook_deliveries", "duration_ms", "INTEGER"),
+    ("webhook_deliveries", "claimed_by", "TEXT"),
+    ("webhook_deliveries", "claimed_until", "REAL"),
+    # What an upload was declared for (source | template); a source upload cannot become a template.
+    ("uploads", "purpose", "TEXT"),
+]
+
 # columns added to v1 tables (name, table, definition)
 V3_COLUMNS = [
     # Provenance: which run created this project.  Without it a cleanup tool cannot prove a
@@ -476,6 +559,39 @@ V4_COLUMNS = [
     # `sub` is scoped to rows where this is set.
     ("sessions", "oidc_sid", "TEXT"),
     ("sessions", "central_session_id", "TEXT"),
+]
+
+# Supporting indexes for lookups that run on every request or on every revocation, created
+# unconditionally after the columns above exist (several index columns added by ALTER TABLE).
+# (index name, table, columns). Each is created only when every column is present, so a database
+# that somehow lacks one keeps opening instead of failing on an index it cannot build.
+#
+# Why these: authz.blob_readable asks "is this blob reachable from something in this workspace"
+# for every preview/blob read, filtering on the blob columns; without an index each read scans
+# artifacts and source_files in full, and 20k-record jobs make that the largest table. The token
+# and session columns are what back-channel logout, refresh-family revocation, client disable and
+# the security journal replay filter on.
+INDEXES = [
+    ("ix_art_blob", "artifacts", ("blob",)),
+    ("ix_src_blob", "source_files", ("blob",)),
+    ("ix_src_parsed_blob", "source_files", ("parsed_blob",)),
+    ("ix_src_working_blob", "source_files", ("working_blob",)),
+    ("ix_tpl_original_blob", "templates", ("original_blob",)),
+    ("ix_tplv_working_blob", "template_versions", ("working_blob",)),
+    ("ix_projects_tenant", "projects", ("tenant",)),
+    ("ix_templates_tenant", "templates", ("tenant",)),
+    ("ix_jobs_tenant", "jobs", ("tenant", "status")),
+    ("ix_jobs_status", "jobs", ("status", "created_at")),
+    ("ix_tok_family", "oauth_tokens", ("family_id",)),
+    ("ix_tok_client", "oauth_tokens", ("client_id", "revoked_at")),
+    ("ix_sess_oidc_sid", "sessions", ("oidc_sid",)),
+    ("ix_keys_lineage", "api_keys", ("lineage",)),
+    # Runner: next pending item of a job and per-status counts on 20k-item jobs.
+    ("ix_items_job_status", "job_items", ("job_id", "status", "seq")),
+    # The workspace events feed (/api/v1/events) and subscription fan-out read by tenant.
+    ("ix_events_tenant", "job_events", ("tenant", "seq")),
+    # A subscription's delivery log, and dropping its pending deliveries on pause/delete.
+    ("ix_wh_sub", "webhook_deliveries", ("subscription_id", "status")),
 ]
 
 V2_COLUMNS = [
@@ -514,16 +630,22 @@ class Store:
         unconditionally, which made `manage.py info` (the command the upgrade docs tell you to
         run to *check* the version) silently rewrite a v2 database to v3 in place. Pointed at a
         backup, an inspection command that mutates its subject defeats the backup.
+
+        So ``migrate=False`` is read-only in the literal sense: no directory is created, no
+        database file is created, the connection is opened ``mode=ro`` and no PRAGMA that writes
+        (journal mode) is issued. A mistyped path therefore reports "nothing here" instead of
+        leaving an empty database behind, and any write through this store fails loudly.
         """
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / "blobs").mkdir(exist_ok=True)
         self.db_path = self.root / "docweave.sqlite3"
+        self.read_only = not migrate
         self._local = threading.local()
         self._write_lock = threading.RLock()     # serialises writers inside this process; SQLite locks across processes
-        c = self._c()
-        if not migrate:
+        if self.read_only:
             return
+        self.root.mkdir(parents=True, exist_ok=True)
+        (self.root / "blobs").mkdir(exist_ok=True)
+        c = self._c()
         c.executescript(SCHEMA)
         self._migrate(c)
         self._stamp_instance_kind(c)
@@ -561,6 +683,7 @@ class Store:
             # received v3's columns and the app then failed with "no such column".
             c.executescript(SCHEMA_V2)
             c.executescript(SCHEMA_V4)
+            c.executescript(SCHEMA_V5)
             with self.tx() as t:
                 for table, col, decl in V2_COLUMNS + V3_COLUMNS:
                     have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -570,11 +693,16 @@ class Store:
                 t.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
         c.executescript(SCHEMA_V2)                   # new tables of the current version (idempotent)
         c.executescript(SCHEMA_V4)
+        c.executescript(SCHEMA_V5)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+            for name, table, cols in INDEXES:
+                have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
+                if set(cols) <= have:
+                    t.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({', '.join(cols)})")
 
     @staticmethod
     def _seed_legacy_workspace(t: sqlite3.Connection) -> None:
@@ -611,7 +739,29 @@ class Store:
         return int(row["value"]) if row else 0
 
     # ---------------------------------------------------------------- connection
+    def _connect_read_only(self) -> sqlite3.Connection:
+        """A connection that cannot change the directory it looks at.
+
+        Not just ``mode=ro``: opening a WAL database read-only when its ``-wal``/``-shm`` files
+        are absent makes SQLite *create* them (measured: both files appear and stay after close).
+        With no ``-wal`` present there is no writer and nothing uncheckpointed, so the main file
+        is the whole truth and ``immutable=1`` reads it without touching anything. With a
+        ``-wal`` present someone may be writing, so it is read through the log as usual.
+        """
+        if not self.db_path.is_file():
+            # schema_version() turns this into 0, "nothing here yet".
+            raise sqlite3.OperationalError(f"no database at {self.db_path}")
+        uri = "file:" + urllib.parse.quote(str(self.db_path.resolve())) + "?mode=ro"
+        if not self.db_path.with_name(self.db_path.name + "-wal").exists():
+            uri += "&immutable=1"
+        c = sqlite3.connect(uri, uri=True, timeout=30, check_same_thread=False, isolation_level=None)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA busy_timeout=30000")
+        return c
+
     def _connect(self) -> sqlite3.Connection:
+        if self.read_only:
+            return self._connect_read_only()
         c = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False, isolation_level=None)  # explicit transactions
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")

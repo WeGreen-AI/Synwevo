@@ -8,9 +8,12 @@ stops helping against exactly the scenario encryption was meant to cover.
 So the key is derived from ``SYNWEVO_SECRET`` when it is supplied by the environment, which is
 the configuration where key and data genuinely live apart, and falls back to the database-stored
 server secret otherwise. The fallback is not silent: :func:`key_is_external` reports which one is
-in force and ``manage.py info`` prints it. MFA still does its main job in either case — password
-compromise is what it mostly defends against, and a stolen database is not a stolen password —
-but the difference is real and is stated rather than papered over.
+in force and ``python -m synwevo_identity.cli info`` prints it. Moving between the two is
+``python -m synwevo_identity.cli secret rekey``; just setting the variable on a database that
+already holds seeds is refused at startup rather than silently breaking every authenticator.
+MFA still does its main job in either case — password compromise is what it mostly defends
+against, and a stolen database is not a stolen password — but the difference is real and is
+stated rather than papered over.
 
 Recovery codes are the other half. They are what stands between "lost my phone" and "lost my
 account", so they are high-entropy, stored only as hashes, single-use, and regenerating them
@@ -18,15 +21,13 @@ invalidates every old one.
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
-import os
 import secrets
 import time
 import urllib.parse
 import pyotp
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.exceptions import InvalidTag
 
 from synwevo_core import env
 from synwevo_core.errors import ServiceError
@@ -47,37 +48,31 @@ _ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"        # no I/O/0/1 — these get
 def key_is_external() -> bool:
     """True when the encryption key comes from the environment rather than the database.
 
-    Reported by `manage.py info` so an operator can see which configuration they are in without
-    reading code.
+    Reported by `python -m synwevo_identity.cli info` so an operator can see which configuration
+    they are in without reading code.
     """
     return bool(env.get("SECRET"))
 
 
-def _key(store: Store) -> bytes:
-    """32 bytes for AES-GCM, domain-separated from every other use of the server secret.
-
-    Separation matters: the same root secret also signs download links, and a key reused across
-    unrelated purposes turns any weakness in one into a weakness in the other.
-    """
-    from synwevo_core.auth import Auth
-    root = Auth(store).secret()
-    # 这个字节串**不能**跟着品牌改。它是密钥派生的域分隔标签：改掉它，派生出来的就是另一把密钥，
-    # 库里所有已加密的 TOTP 种子都解不开——表现是每个人的两步验证在部署当天同时失效，而且没有
-    # 任何报错指向改名这件事。品牌换了，密钥没换。
-    return hmac.new(root, b"docweave/mfa-seed/v1", hashlib.sha256).digest()
+SEED_PURPOSE = "mfa-seed"
 
 
 def encrypt_seed(store: Store, seed: str) -> str:
     """AES-256-GCM, nonce prefixed. Authenticated, so a tampered ciphertext fails to decrypt
-    rather than yielding a different seed."""
-    nonce = secrets.token_bytes(12)
-    ct = AESGCM(_key(store)).encrypt(nonce, seed.encode("utf-8"), b"totp-seed")
-    return base64.b64encode(nonce + ct).decode("ascii")
+    rather than yielding a different seed.
+
+    Sealed through `synwevo_core.sealed` under the `mfa-seed` purpose, whose derivation label
+    (`docweave/mfa-seed/v1`) and associated data (`totp-seed`) are byte-for-byte the ones this
+    module used to apply itself — so every seed already in a database still opens, and a root
+    secret change is handled in one place (`secret rekey`) instead of silently breaking MFA.
+    """
+    from synwevo_core import sealed
+    return sealed.seal(store, SEED_PURPOSE, seed)
 
 
 def decrypt_seed(store: Store, blob: str) -> str:
-    raw = base64.b64decode(blob)
-    return AESGCM(_key(store)).decrypt(raw[:12], raw[12:], b"totp-seed").decode("utf-8")
+    from synwevo_core import sealed
+    return sealed.unseal(store, SEED_PURPOSE, blob)
 
 
 class Mfa:
@@ -91,14 +86,25 @@ class Mfa:
         Unconfirmed on purpose: the row exists so the code can be checked, but
         :meth:`enabled_for` ignores it until one real code has been verified. Enabling MFA on the
         strength of a secret nobody has proved they can read is how people lock themselves out.
+
+        Refused when TOTP is already on. Beginning used to overwrite the confirmed secret and
+        clear `confirmed_at` — turning MFA off without a code, and letting whoever held a fresh
+        session enrol their own authenticator in its place. Replacing a factor goes through
+        disabling it, which takes a current code.
         """
         secret = pyotp.random_base32()
         ts = now()
-        self.store.execute(
-            "INSERT INTO totp_secrets (user_id,secret_enc,confirmed_at,last_step,created_at) "
-            "VALUES (?,?,NULL,NULL,?) ON CONFLICT(user_id) DO UPDATE SET "
-            "secret_enc=excluded.secret_enc, confirmed_at=NULL, last_step=NULL, created_at=excluded.created_at",
-            (user_id, encrypt_seed(self.store, secret), ts))
+        sealed_seed = encrypt_seed(self.store, secret)
+        with self.store.tx() as t:
+            n = t.execute(
+                "INSERT INTO totp_secrets (user_id,secret_enc,confirmed_at,last_step,created_at) "
+                "VALUES (?,?,NULL,NULL,?) ON CONFLICT(user_id) DO UPDATE SET "
+                "secret_enc=excluded.secret_enc, confirmed_at=NULL, last_step=NULL, created_at=excluded.created_at "
+                "WHERE totp_secrets.confirmed_at IS NULL",
+                (user_id, sealed_seed, ts)).rowcount
+            if not n:
+                raise ServiceError(409, "totp_already_on",
+                                   "动态验证码已经启用。要更换设备，请先用当前的动态验证码关闭它，再重新设置。")
         uri = pyotp.TOTP(secret, digits=TOTP_DIGITS, interval=TOTP_PERIOD).provisioning_uri(
             name=account_label, issuer_name=issuer)
         # The secret is returned once, for manual entry when a camera is not an option. It is
@@ -144,7 +150,14 @@ class Mfa:
             return None
         try:
             secret = decrypt_seed(self.store, row["secret_enc"])
-        except Exception:  # noqa: BLE001 - an unreadable seed is a failed check, never a crash
+        except (InvalidTag, ValueError, TypeError):
+            # A tampered or corrupt ciphertext is a failed check, never a crash — but it is said
+            # out loud: silently answering "wrong code" is how a key problem turned into every
+            # user being told their authenticator was wrong. A root secret that does not match
+            # the sealed data raises RootSecretMismatch from Auth.secret() and is not caught
+            # here, so that case fails loudly with its own explanation.
+            print(f"[synwevo] TOTP seed for {row.get('user_id')} could not be decrypted "
+                  "(tampered or corrupt ciphertext)", flush=True)
             return None
         totp = pyotp.TOTP(secret, digits=TOTP_DIGITS, interval=TOTP_PERIOD)
         nowt = int(time.time())
@@ -199,16 +212,23 @@ class Mfa:
 
     # ================================================================ overall state
     def factors(self, user_id: str) -> dict:
-        passkeys = self.store.one("SELECT COUNT(*) AS n FROM webauthn_credentials WHERE user_id=?",
+        # Counted from `passkeys`, the table registration actually writes. It used to count
+        # `webauthn_credentials`, which nothing writes, so the page always said zero.
+        passkeys = self.store.one("SELECT COUNT(*) AS n FROM passkeys WHERE user_id=? AND deleted_at IS NULL",
                                   (user_id,))["n"]
         return {"totp": self.totp_enabled(user_id), "passkeys": passkeys,
                 "recovery_remaining": self.recovery_remaining(user_id),
                 "key_external": key_is_external()}
 
     def enabled_for(self, user_id: str) -> bool:
-        """Is a second factor required to sign this account in?"""
-        f = self.factors(user_id)
-        return bool(f["totp"] or f["passkeys"])
+        """Is a second factor required after the password to sign this account in?
+
+        TOTP only, deliberately. A passkey is a separate way in, not a step the password path can
+        ask for: `login/mfa` accepts a TOTP or a recovery code, so counting passkeys here would
+        demand a second factor that no screen can supply and lock passkey users out of password
+        sign-in. Passkey sign-in itself is governed in `login_passkey`.
+        """
+        return self.totp_enabled(user_id)
 
 
 # ---------------------------------------------------------------------- sign-in tickets
@@ -232,6 +252,9 @@ class Tickets:
         return hashlib.sha256((raw or "").encode("utf-8")).hexdigest()
 
     def issue(self, user_id: str, *, user_agent: str | None = None, ip: str | None = None) -> str:
+        # Dead tickets are reclaimed here, on the path that creates them: the sweep existed but
+        # nothing ever called it, so every password-correct sign-in left a row behind for good.
+        self.sweep()
         raw = secrets.token_urlsafe(32)
         self.store.execute(
             "INSERT INTO mfa_tickets (id,user_id,created_at,expires_at,user_agent,ip) VALUES (?,?,?,?,?,?)",
@@ -244,6 +267,21 @@ class Tickets:
             return None
         return r
 
+    def claim_attempt(self, raw: str) -> int | None:
+        """Take one attempt slot *before* the code is checked. Returns attempts used, or None.
+
+        The check and the increment are one conditional UPDATE. Loading the ticket, verifying,
+        and counting the failure afterwards let parallel requests all pass the check before any
+        of them counted, so five attempts per ticket was really "as many as fit in one burst".
+        """
+        d = self._digest(raw)
+        with self.store.tx() as t:
+            n = t.execute("UPDATE mfa_tickets SET attempts=attempts+1 WHERE id=? AND used_at IS NULL "
+                          "AND expires_at>? AND attempts<?", (d, now(), TICKET_MAX_ATTEMPTS)).rowcount
+            if not n:
+                return None
+            return int(t.execute("SELECT attempts FROM mfa_tickets WHERE id=?", (d,)).fetchone()["attempts"])
+
     def count_failure(self, raw: str) -> int:
         """Returns attempts used. At the limit the ticket is dead and a new sign-in is required."""
         d = self._digest(raw)
@@ -252,11 +290,15 @@ class Tickets:
         return int((r or {}).get("attempts") or 0)
 
     def redeem(self, raw: str) -> dict | None:
-        """Spend the ticket. The WHERE clause is the check, so it cannot be spent twice."""
+        """Spend the ticket. The WHERE clause is the check, so it cannot be spent twice.
+
+        Attempts are not re-checked here: a successful code arrives *through* a claimed attempt
+        (`claim_attempt`), and the fifth attempt being the right one must still sign in.
+        """
         d = self._digest(raw)
         with self.store.tx() as t:
-            n = t.execute("UPDATE mfa_tickets SET used_at=? WHERE id=? AND used_at IS NULL AND expires_at>? "
-                          "AND attempts<?", (now(), d, now(), TICKET_MAX_ATTEMPTS)).rowcount
+            n = t.execute("UPDATE mfa_tickets SET used_at=? WHERE id=? AND used_at IS NULL AND expires_at>?",
+                          (now(), d, now())).rowcount
             if not n:
                 return None
             return t.execute("SELECT * FROM mfa_tickets WHERE id=?", (d,)).fetchone()

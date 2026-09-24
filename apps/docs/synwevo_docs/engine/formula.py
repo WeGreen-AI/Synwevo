@@ -16,6 +16,7 @@ import datetime as _dt
 import math
 import re
 from dataclasses import dataclass
+from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Context, Decimal
 
 from openpyxl.formula.tokenizer import Token, Tokenizer
 
@@ -223,6 +224,7 @@ class Book:
             self.stack.discard(key)
         if isinstance(v, Range):
             v = v.rows[0][0] if v.rows and v.rows[0] else None
+        v = _finite_result(v)
         self.cache[key] = v
         return v
 
@@ -235,6 +237,13 @@ class Book:
             return _Eval(self, sheet).ev(node)
         except _Raise as e:
             return e.err
+        # Numeric edge cases are Excel error values, not a failed document: POWER(0,-1) is
+        # #DIV/0!, DATE(10000,1,1) and an overflowing product are #NUM!.  Dependent cells then
+        # see the error value exactly as they would in Excel.
+        except ZeroDivisionError:
+            return DIV0
+        except (ArithmeticError, ValueError):         # overflow, decimal InvalidOperation, domain errors
+            return NUM
 
     # ---------------------------------------------------------------- references
     def resolve_ref(self, host: str, text: str):
@@ -288,6 +297,15 @@ class Book:
 
 
 # ====================================================================== coercion
+def _finite_result(v):
+    """inf / nan / complex never reach a cell: Excel shows #NUM! for all of them."""
+    if isinstance(v, complex):
+        return NUM
+    if isinstance(v, float) and not math.isfinite(v):
+        return NUM
+    return v
+
+
 def _num(v):
     if isinstance(v, XLError):
         raise _Raise(v)
@@ -595,11 +613,20 @@ _LAZY = {"IF": _if, "IFERROR": _iferror, "IFNA": _ifna, "IFS": _ifs, "CHOOSE": _
 
 
 # ---------------------------------------------------------------- eager functions
+def _dec15(x: float) -> Decimal:
+    """The number as Excel sees it: 15 significant digits.  Rounding the binary float (with a
+    fudge term) got ROUND(0.4999999999, 0) = 1 and TRUNC(1.15, 2) = 1.14."""
+    return Decimal(format(x, ".15g"))
+
+
+def _round_dec(x: float, n: int, mode) -> float:
+    n = max(-400, min(400, n))
+    q = Decimal(1).scaleb(-n)
+    return float(_dec15(x).quantize(q, rounding=mode, context=Context(prec=1000)))
+
+
 def _round_half_away(x: float, n: int) -> float:
-    q = 10 ** n
-    v = abs(x) * q
-    r = math.floor(v + 0.5 + 1e-9)
-    return math.copysign(r / q, x)
+    return _round_dec(x, n, ROUND_HALF_UP)
 
 
 def _rng_list(a):
@@ -726,12 +753,19 @@ def f_sumif(b, a):
     return float(sum(float(s) for v, s in zip(cells, sums) if p(v) and isinstance(s, (int, float)) and not isinstance(s, bool)))
 
 
+def _same_size(first: list, preds: list) -> None:
+    # every range of a *IFS function must have the size of the first: #VALUE! otherwise
+    if any(len(r) != len(first) for r, _ in preds):
+        raise _Raise(VALUE)
+
+
 def f_sumifs(b, a):
     sumr = _rng_list(a[0])
     preds = [(_rng_list(a[i]), _criteria(_scalar(a[i + 1]))) for i in range(1, len(a), 2)]
+    _same_size(sumr, preds)
     tot = 0.0
     for idx, s in enumerate(sumr):
-        if all(idx < len(r) and p(r[idx]) for r, p in preds) and isinstance(s, (int, float)) and not isinstance(s, bool):
+        if all(p(r[idx]) for r, p in preds) and isinstance(s, (int, float)) and not isinstance(s, bool):
             tot += float(s)
     return tot
 
@@ -743,8 +777,9 @@ def f_countif(b, a):
 
 def f_countifs(b, a):
     preds = [(_rng_list(a[i]), _criteria(_scalar(a[i + 1]))) for i in range(0, len(a), 2)]
+    _same_size(preds[0][0], preds)
     n = len(preds[0][0])
-    return float(sum(1 for idx in range(n) if all(idx < len(r) and p(r[idx]) for r, p in preds)))
+    return float(sum(1 for idx in range(n) if all(p(r[idx]) for r, p in preds)))
 
 
 def f_averageif(b, a):
@@ -759,6 +794,7 @@ def f_averageif(b, a):
 def f_averageifs(b, a):
     avg = _rng_list(a[0])
     preds = [(_rng_list(a[i]), _criteria(_scalar(a[i + 1]))) for i in range(1, len(a), 2)]
+    _same_size(avg, preds)
     xs = [float(s) for idx, s in enumerate(avg) if all(p(r[idx]) for r, p in preds) and isinstance(s, (int, float)) and not isinstance(s, bool)]
     if not xs:
         raise _Raise(DIV0)
@@ -771,10 +807,7 @@ def f_round(kind):
         n = int(_num(_scalar(a[1]))) if len(a) > 1 else 0
         if kind == "round":
             return _round_half_away(x, n)
-        q = 10 ** n
-        if kind == "up":
-            return math.copysign(math.ceil(abs(x) * q - 1e-9) / q, x)
-        return math.copysign(math.floor(abs(x) * q + 1e-9) / q, x)
+        return _round_dec(x, n, ROUND_UP if kind == "up" else ROUND_DOWN)     # away from / towards zero
     return f
 
 
@@ -785,8 +818,7 @@ def f_int(b, a):
 def f_trunc(b, a):
     x = _num(_scalar(a[0]))
     n = int(_num(_scalar(a[1]))) if len(a) > 1 else 0
-    q = 10 ** n
-    return math.trunc(x * q) / q
+    return _round_dec(x, n, ROUND_DOWN)
 
 
 def f_mod(b, a):
@@ -804,7 +836,16 @@ def f_sqrt(b, a):
 
 
 def f_power(b, a):
-    return _num(_scalar(a[0])) ** _num(_scalar(a[1]))
+    x, y = _num(_scalar(a[0])), _num(_scalar(a[1]))
+    if x == 0 and y < 0:
+        raise _Raise(DIV0)
+    try:
+        r = x ** y
+    except OverflowError:
+        raise _Raise(NUM)
+    if isinstance(r, complex):          # a fractional power of a negative number
+        raise _Raise(NUM)
+    return r
 
 
 def f_ceiling(b, a):
@@ -854,6 +895,39 @@ def f_large_small(kind):
     return f
 
 
+def _exact(key):
+    """Exact-match predicate of VLOOKUP / HLOOKUP / MATCH(…,0): type-strict equality (text
+    "5" is not the number 5), case-insensitive for text, with Excel's * ? ~ wildcards — but
+    no comparison operators: a key "">1"" is looked up as the text >1, not as a condition."""
+    if isinstance(key, XLError):
+        raise _Raise(key)
+    if isinstance(key, str):
+        if any(ch in key for ch in "*?~"):
+            pat = _wildcard(key)
+            return lambda v: isinstance(v, str) and bool(pat.match(v))
+        low = key.lower()
+        return lambda v: isinstance(v, str) and v.lower() == low
+    if isinstance(key, bool):
+        return lambda v: isinstance(v, bool) and v is key
+    if key is None:
+        key = 0.0
+    k = float(key)
+    return lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and float(v) == k
+
+
+def _wildcard(text: str):
+    out, i = [], 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "~" and i + 1 < len(text) and text[i + 1] in "*?~":
+            out.append(re.escape(text[i + 1]))
+            i += 2
+            continue
+        out.append(".*" if ch == "*" else "." if ch == "?" else re.escape(ch))
+        i += 1
+    return re.compile("^" + "".join(out) + "$", re.I | re.S)
+
+
 def _as_rows(a) -> list[list]:
     if isinstance(a, Range):
         return a.rows
@@ -870,7 +944,7 @@ def f_vlookup(b, a, horizontal=False):
     if idx < 1 or (table and idx > len(table[0])):
         raise _Raise(REF)
     if not approx:
-        p = _criteria(key) if isinstance(key, str) else (lambda v: _compare("=", v, key))
+        p = _exact(key)
         for row in table:
             if row and p(row[0]):
                 return row[idx - 1]
@@ -897,7 +971,7 @@ def f_match(b, a):
     vals = _rng_list(a[1])
     mtype = int(_num(_scalar(a[2]))) if len(a) > 2 and a[2] is not None else 1
     if mtype == 0:
-        p = _criteria(key) if isinstance(key, str) else (lambda v: _compare("=", v, key))
+        p = _exact(key)
         for i, v in enumerate(vals):
             if p(v):
                 return float(i + 1)
@@ -920,8 +994,12 @@ def f_index(b, a):
     rows = _as_rows(a[0])
     r = int(_num(_scalar(a[1]))) if len(a) > 1 and a[1] is not None else 0
     c = int(_num(_scalar(a[2]))) if len(a) > 2 and a[2] is not None else 0
+    if r < 0 or c < 0:
+        raise _Raise(VALUE)            # a negative index used to pick a row from the end
     if len(rows) == 1 and c == 0 and len(a) == 2:
         c, r = r, 1
+    if r > len(rows) or (rows and c > len(rows[0])):
+        raise _Raise(REF)
     if r == 0 or c == 0:
         if r == 0 and c == 0:
             raise Unsupported("INDEX 返回整块区域")
@@ -941,10 +1019,38 @@ def f_xlookup(b, a):
     flat_ret = [row[0] for row in ret] if len(ret) == len(look) else (ret[0] if ret and len(ret[0]) == len(look) else None)
     if flat_ret is None:
         raise _Raise(VALUE)
-    p = _criteria(key) if isinstance(key, str) else (lambda v: _compare("=", v, key))
-    for i, v in enumerate(look):
-        if p(v):
+    match_mode = int(_num(_scalar(a[4]))) if len(a) > 4 and a[4] is not None else 0
+    search_mode = int(_num(_scalar(a[5]))) if len(a) > 5 and a[5] is not None else 1
+    if match_mode not in (0, -1, 1, 2) or search_mode not in (1, -1, 2, -2):
+        raise _Raise(VALUE)
+    if search_mode in (2, -2):
+        raise Unsupported("XLOOKUP 二分查找模式")     # its result on unsorted data is not guessed
+    order = range(len(look)) if search_mode == 1 else range(len(look) - 1, -1, -1)
+    if match_mode == 2:
+        p = _exact(key)                              # wildcards only in match_mode 2
+    else:
+        k = key
+        if isinstance(k, str):
+            low = k.lower()
+            p = lambda v: isinstance(v, str) and v.lower() == low  # noqa: E731
+        else:
+            p = _exact(k)
+    for i in order:
+        if p(look[i]):
             return flat_ret[i]
+    if match_mode in (-1, 1):
+        # exact or the next smaller (-1) / larger (1) item, compared in Excel's order
+        best = None
+        for i in order:
+            v = look[i]
+            if v is None or isinstance(v, XLError) or _cmp_key(v)[0] != _cmp_key(key)[0]:
+                continue
+            if (match_mode == -1 and _compare("<", v, key)) or (match_mode == 1 and _compare(">", v, key)):
+                if best is None or (match_mode == -1 and _compare(">", v, look[best])) or \
+                        (match_mode == 1 and _compare("<", v, look[best])):
+                    best = i
+        if best is not None:
+            return flat_ret[best]
     if len(a) > 3 and a[3] is not None:
         return a[3]
     raise _Raise(NA)
@@ -965,13 +1071,17 @@ def f_textjoin(b, a):
 
 def f_left(b, a):
     n = int(_num(_scalar(a[1]))) if len(a) > 1 else 1
-    return _text(_scalar(a[0]))[:max(n, 0)]
+    if n < 0:
+        raise _Raise(VALUE)
+    return _text(_scalar(a[0]))[:n]
 
 
 def f_right(b, a):
     n = int(_num(_scalar(a[1]))) if len(a) > 1 else 1
+    if n < 0:
+        raise _Raise(VALUE)
     s = _text(_scalar(a[0]))
-    return s[len(s) - n:] if n > 0 else ""
+    return s[max(0, len(s) - n):] if n > 0 else ""        # RIGHT("abc", 5) is "abc", not "bc"
 
 
 def f_mid(b, a):
@@ -994,6 +1104,8 @@ def f_substitute(b, a):
     s, old, new = _text(_scalar(a[0])), _text(_scalar(a[1])), _text(_scalar(a[2]))
     if len(a) > 3:
         n = int(_num(_scalar(a[3])))
+        if n < 1:
+            raise _Raise(VALUE)
         idx = -1
         for _ in range(n):
             idx = s.find(old, idx + 1)
@@ -1006,6 +1118,8 @@ def f_substitute(b, a):
 def f_replace(b, a):
     s = _text(_scalar(a[0]))
     start, n, new = int(_num(_scalar(a[1]))), int(_num(_scalar(a[2]))), _text(_scalar(a[3]))
+    if start < 1 or n < 0:
+        raise _Raise(VALUE)
     return s[:start - 1] + new + s[start - 1 + n:]
 
 
@@ -1039,7 +1153,7 @@ def f_text(b, a):
     if isinstance(v, bool):
         return "TRUE" if v else "FALSE"
     x = _num(v)
-    text, _exact = format_value(x, fmt)
+    text, _exact_fmt = format_value(x, fmt, b.date1904)      # a 1904 workbook counts days from 1904
     return text
 
 
@@ -1308,6 +1422,11 @@ def compute_workbook(x) -> dict:
                 val = book.value(sh["name"], key[0], key[1])
             except Unsupported as e:
                 report["unsupported"].append((sh["name"], ref, str(e)))
+                if "t" in c.attrib:
+                    del c.attrib["t"]
+                continue
+            except Exception as e:  # noqa: BLE001 - one cell the engine cannot evaluate is not a failed document
+                report["unsupported"].append((sh["name"], ref, f"内置引擎无法计算（{type(e).__name__}）"))
                 if "t" in c.attrib:
                     del c.attrib["t"]
                 continue

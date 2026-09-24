@@ -99,9 +99,14 @@ def test_s6b_xlsx_zero_rows_removes_template_row(api, fixtures):
     api.maps(pid, [{"type": "repeat", "sources": [{"kind": "table", "sheet": "明细", "header_row": 0}], "target": {"binding": rep["binding"]},
                     "columns": [{"slot_col": "c0", "source": {"header": "行号"}}, {"slot_col": "c1", "source": {"header": "品名"}}]}])
     job = api.job(pid)
+    assert job["status"] == "completed"
     ws = openpyxl.load_workbook(io.BytesIO(next(iter(api.outputs(job["id"]).values()))))["订单"]
     assert ws["D5"].value == "合计" and ws["A7"].value == "备注：测试模板"        # rows below moved up by one
     assert ws["E5"].value == "=SUM(#REF!)" or "#REF!" in str(ws["E5"].value)     # total over removed rows is reported as #REF! (documented)
+    # …and reported, not left for the reader to discover: the item names the broken formula cell
+    item = api.items(job["id"])[0]
+    warn = next(i for i in item["issues"] if i["code"] == "ref_removed")
+    assert warn["level"] == "warning" and "E5" in warn["message"] and "明细" in warn["message"]
 
 
 def test_s7_one_to_many_and_conflicts(api, fixtures):
@@ -151,7 +156,6 @@ def test_s8_structure_changes(api, fixtures):
     api.upload(pid, fixtures / "测试_客户_重名列.xlsx")
     summ = api.ok(api.c.get(f"/api/projects/{pid}/generation-summary"))
     assert summ["issues_by_code"].get("ambiguous_column") == 1
-    r = api.c.post(f"/api/projects/{pid}/jobs", json={"error_policy": "skip"})
     j = api.job(pid, error_policy="skip")
     assert j["counts"]["skipped"] == 1 and j["counts"]["success"] == 105            # not silently dropped: reported as skipped
     skipped = [i for i in api.items(j["id"]) if i["status"] == "skipped"][0]

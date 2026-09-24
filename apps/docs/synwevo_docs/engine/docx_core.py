@@ -543,8 +543,25 @@ def unwrap_sdt(sdt) -> None:
     parent.remove(sdt)
 
 
+_XML_ILLEGAL = re.compile("[\x00-\x08\x0e-\x1f\ufffe\uffff\ud800-\udfff]")
+
+
+def xml_text(text: str) -> str:
+    """Text as XML can carry it.  Line breaks of every flavour — CR LF, CR, the vertical tab
+    Excel uses for a line break inside a cell (_x000B_), form feed — become "\n"; other
+    control characters, which XML 1.0 cannot contain at all, are dropped.  lxml refused such
+    a value outright, which failed the whole record with an opaque exception."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x0b", "\n").replace("\x0c", "\n")
+    return _XML_ILLEGAL.sub("", text)
+
+
+def has_unwritable_chars(text: str) -> bool:
+    return bool(_XML_ILLEGAL.search(text or ""))
+
+
 def value_runs(text: str, rpr) -> list:
     """Build runs for ``text`` using run properties ``rpr``; newlines → w:br, tabs → w:tab."""
+    text = xml_text(text or "")
     runs = []
     r = etree.Element(w("r"))
     if rpr is not None:

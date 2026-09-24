@@ -2,7 +2,18 @@
 from __future__ import annotations
 
 import io
+import re
+import struct
 import zipfile
+
+from .limits import LIMITS, LimitError
+
+# Parts read while sniffing a zip.  Both are tiny in any real file; their declared size is
+# checked before a single byte is inflated, so a crafted archive cannot make detection itself
+# expand gigabytes (detection runs before the package limits in ooxml.Package).
+_MAX_MIMETYPE_BYTES = 256
+_MAX_CONTENT_TYPES_BYTES = 1024 * 1024
+_PDF_HEADER = re.compile(rb"%PDF-\d\.\d")
 
 FAMILY = {
     "csv": "table", "tsv": "table", "xlsx": "table", "xlsm": "table", "xls": "table", "ods": "table",
@@ -31,7 +42,9 @@ def detect(data: bytes, filename: str) -> dict:
     macros = False
     if not data:
         raise ValueError("文件为空")
-    if b"%PDF" in data[:1024]:
+    if _PDF_HEADER.match(data) or (ext == "pdf" and _PDF_HEADER.search(data[:1024])):
+        # the header belongs at offset 0; readers tolerate a little junk before it, which we
+        # accept only for a file that also says it is a PDF (a CSV quoting "%PDF-1.4" is text)
         fmt = "pdf"
     elif head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06"):
         fmt, macros = _zip_format(data)
@@ -45,7 +58,7 @@ def detect(data: bytes, filename: str) -> dict:
         fmt = "jpeg"
     elif head[:4] in (b"II*\x00", b"MM\x00*"):
         fmt = "tiff"
-    elif head.startswith(b"BM"):
+    elif head.startswith(b"BM") and _is_bmp(head):
         fmt = "bmp"
     elif head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         fmt = "webp"
@@ -64,14 +77,39 @@ def detect(data: bytes, filename: str) -> dict:
             "convert_via": CONVERT_VIA.get(fmt)}
 
 
+def _is_bmp(head: bytes) -> bool:
+    """A real BITMAPFILEHEADER, not just text that starts with "BM" (a CSV column "BMI")."""
+    if len(head) < 26:
+        return False
+    reserved = head[6:10]
+    offset, dib = struct.unpack("<II", head[10:18])
+    return reserved == b"\0\0\0\0" and dib in (12, 16, 40, 52, 56, 64, 108, 124) and 14 + dib <= offset
+
+
+def _bounded_read(z: zipfile.ZipFile, name: str, cap: int) -> bytes:
+    info = z.getinfo(name)
+    if info.file_size > cap:
+        raise LimitError(f"压缩包中的「{name}」声明大小 {info.file_size:,} 字节，超过正常文件的上限，已拒绝")
+    with z.open(info) as f:
+        data = f.read(cap + 1)
+    if len(data) > cap:
+        raise LimitError(f"压缩包中的「{name}」实际大小超过上限，已拒绝")
+    return data
+
+
 def _zip_format(data: bytes) -> tuple[str | None, bool]:
     try:
         z = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
         raise ValueError("压缩结构损坏，无法打开")
+    infos = z.infolist()
+    if len(infos) > LIMITS.max_zip_entries:
+        raise LimitError("压缩包条目数量超过上限")
+    if sum(i.file_size for i in infos) > LIMITS.max_unzipped_bytes:
+        raise LimitError(f"压缩包展开后超过上限 {LIMITS.max_unzipped_bytes // (1024 * 1024)} MB")
     names = set(z.namelist())
     if "mimetype" in names:
-        mt = z.read("mimetype").decode("ascii", "ignore").strip()
+        mt = _bounded_read(z, "mimetype", _MAX_MIMETYPE_BYTES).decode("ascii", "ignore").strip()
         if mt == "application/vnd.oasis.opendocument.text":
             return "odt", False
         if mt == "application/vnd.oasis.opendocument.spreadsheet":
@@ -79,7 +117,7 @@ def _zip_format(data: bytes) -> tuple[str | None, bool]:
         if mt == "application/vnd.oasis.opendocument.presentation":
             return "odp", False
     if "[Content_Types].xml" in names:
-        ct = z.read("[Content_Types].xml").decode("utf-8", "ignore")
+        ct = _bounded_read(z, "[Content_Types].xml", _MAX_CONTENT_TYPES_BYTES).decode("utf-8", "ignore")
         macros = any(n.endswith("vbaProject.bin") for n in names)
         if "word/document.xml" in names or "wordprocessingml.document" in ct:
             return ("docm" if "macroEnabled" in ct else "docx"), macros

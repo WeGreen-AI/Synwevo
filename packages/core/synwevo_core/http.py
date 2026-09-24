@@ -10,20 +10,29 @@
 """
 from __future__ import annotations
 
+import json
+import math
 import os
 import secrets
+import sys
+import threading
 import time
 import traceback
 from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
 from typing import Callable
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import env
-from .auth import Auth, rate_limiter, ui_auth_mode
+from .auth import Auth, rate_limiter, ui_auth_mode  # noqa: F401  (rate_limiter: re-exported for callers)
 from .context import UI_TENANT, set_tenant
 from .errors import ServiceError
 from .identity import Identity
@@ -33,6 +42,279 @@ from .store import Store, new_id
 
 API_RATE_PER_MIN = int(env.get("API_RATE_PER_MIN", "300"))
 PUBLIC_V1 = ("/api/v1/download/",)          # signed links carry their own proof
+
+#: The roles a process can be composed as. Anything else is refused at startup: an unknown role
+#: used to fall through every branch and start a server whose API answered 404 everywhere while
+#: its health probes reported ready.
+ROLES = ("all", "accounts", "portal", "app")
+
+#: Workspace roles that may change content (permissions.md §4.2). Viewers read.
+WRITE_ROLES = frozenset({"owner", "admin", "editor"})
+
+# Paths under /api/ that belong to the account system or the portal rather than to a business
+# application. They need a live account and nothing more; everything else under /api/ on a role
+# that serves Synwevo Docs is Docs' own and is checked against workspace and application access.
+ACCOUNT_LEVEL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/portal/")
+ACCOUNT_LEVEL_EXACT = frozenset({"/api/health"})
+
+
+def validate_role(value: str | None) -> str:
+    """Normalise a role name, refusing anything that is not one of :data:`ROLES`."""
+    r = (value or "all").strip().lower() or "all"
+    if r not in ROLES:
+        raise RuntimeError(
+            f"SYNWEVO_ROLE={value!r} 不是可用的角色。只能是 {' / '.join(ROLES)}"
+            "（accounts=账户服务，portal=门户，app=Synwevo Docs，all=单进程部署）。"
+            "未知角色不会被猜成其中任何一个：那样会启动一个所有接口都返回 404、健康检查却报告就绪的进程。")
+    return r
+
+
+def trusted_proxy_hops() -> int:
+    """How many reverse proxies in front of this service are trusted: `SYNWEVO_TRUST_PROXY`.
+
+    A count, with ``1``/``true``/``yes``/``on`` meaning one. Unset, ``0`` or anything else means
+    none, and X-Forwarded-For is not read at all.
+    """
+    raw = (env.get("TRUST_PROXY") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return 1
+    return int(raw) if raw.isdigit() else 0
+
+
+def client_ip(request: Request) -> str:
+    """The caller's address, for audit rows, session rows and address-based rate limits.
+
+    X-Forwarded-For is honoured only when `SYNWEVO_TRUST_PROXY` says trusted proxies are in
+    front, because otherwise any caller could write whatever address they liked. And then only
+    the entry *our* proxies wrote: each proxy appends the address it received the request from,
+    so the left end is whatever the client chose to send. This used to take the left-most entry,
+    which let anyone put any address into `audit_events.ip` and into their session row — and it
+    read ``TRUST_PROXY=2`` as "no proxy", so a two-proxy deployment recorded the inner proxy.
+    With N trusted proxies the address is the entry N places from the right; repeated header
+    lines are joined in order first, as HTTP allows.
+
+    The account service's rate limiter asks the same question and must get the same answer, or
+    the address that was throttled and the address that was audited are two different ones.
+    """
+    hops = trusted_proxy_hops()
+    if hops:
+        raw = ",".join(request.headers.getlist("x-forwarded-for"))
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if parts:
+            return (parts[-hops] if len(parts) >= hops else parts[0])[:64]
+    return (request.client.host if request.client else "") or ""
+
+
+# --------------------------------------------------------------------- RFC 9457 problem details
+PROBLEM_JSON = "application/problem+json"
+PROBLEM_TITLES = {400: "请求无效", 401: "需要认证", 403: "没有权限", 404: "资源不存在",
+                  405: "不支持该请求方法", 409: "状态冲突", 410: "资源已失效", 413: "内容过大",
+                  415: "不支持的内容类型", 422: "无法处理的请求", 429: "请求过于频繁",
+                  500: "服务器内部错误", 502: "上游服务错误", 503: "服务暂不可用"}
+
+
+def wants_problem(request: Request) -> bool:
+    """Did the caller ask for `application/problem+json` (with a non-zero q)?
+
+    Opt-in through Accept, so every existing /api/v1 client keeps the envelope it was written
+    against — the v1 promise does not allow removing it — while tooling that speaks RFC 9457
+    gets the standard shape.
+    """
+    for part in (request.headers.get("accept") or "").split(","):
+        media, _, params = part.strip().partition(";")
+        if media.strip().lower() != PROBLEM_JSON:
+            continue
+        q = 1.0
+        for p in params.split(";"):
+            k, _, v = p.strip().partition("=")
+            if k.strip().lower() == "q":
+                try:
+                    q = float(v)
+                except ValueError:
+                    q = 1.0
+        if q > 0:
+            return True
+    return False
+
+
+def json_pointer(field) -> str:
+    """`#/a/b` for a field name (dotted for nesting) or a validation location tuple (RFC 6901)."""
+    segs = [str(s) for s in field] if isinstance(field, (list, tuple)) else str(field).split(".")
+    return "#/" + "/".join(s.replace("~", "~0").replace("/", "~1") for s in segs if s != "")
+
+
+def problem_body(request_id: str, status: int, code: str, message: str, detail: dict | None) -> dict:
+    """The RFC 9457 rendering of one error. `code` and `request_id` are kept as extension
+    members so a client can switch formats without losing what it already keys on."""
+    try:
+        phrase = HTTPStatus(status).phrase
+    except ValueError:
+        phrase = "Error"
+    body = {"type": f"urn:synwevo:problem:{code}", "title": PROBLEM_TITLES.get(status, phrase),
+            "status": status, "detail": message, "instance": f"urn:synwevo:request:{request_id}",
+            "code": code, "request_id": request_id}
+    detail = detail if isinstance(detail, dict) else {}
+    errors = []
+    for e in detail.get("errors") or ():
+        if isinstance(e, dict) and (e.get("field") or e.get("loc")):
+            errors.append({"detail": e.get("message") or message,
+                           "pointer": json_pointer(e.get("loc") or e.get("field"))})
+    if not errors and detail.get("field"):
+        errors.append({"detail": message, "pointer": json_pointer(detail["field"])})
+    if errors:
+        body["errors"] = errors
+    rest = {k: v for k, v in detail.items() if k not in ("field", "errors")}
+    if rest:
+        body["details"] = rest
+    return body
+
+
+def retry_after_seconds(detail) -> int | None:
+    """`Retry-After` delay-seconds for an error detail carrying ``retry_after``, or None.
+
+    Rounded up and never below 1: a client told "0" retries at once, which is what the refusal
+    was about. Anything that is not a positive number is ignored rather than guessed at.
+    """
+    raw = detail.get("retry_after") if isinstance(detail, dict) else None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if not math.isfinite(raw) or raw <= 0:
+        return None
+    return max(1, math.ceil(raw))
+
+
+# --------------------------------------------------------------------- rate limiting
+RATELIMIT_POLICY_NAME = "key"
+
+
+class RateBuckets:
+    """One token bucket per credential, per process.
+
+    Per process on purpose and documented as such: with N worker processes the effective limit
+    is N × the configured rate. Sharing the bucket would need a shared store written on every
+    request, which is a cost this deployment (one worker) does not need to pay.
+
+    The same arithmetic as `synwevo_core.auth.rate_limiter`, but it also reports how much is
+    left, so every response can tell the client how to pace itself instead of only the 429 that
+    tells it it went too fast.
+    """
+
+    WINDOW_S = 60
+    #: Buckets idle this long are full again and carry no information; dropping them keeps the
+    #: map bounded by recent callers rather than by every caller ever — which matters once a
+    #: bucket is keyed by client address.
+    PRUNE_EVERY = 1024
+
+    def __init__(self, per_min: int, *, name: str = RATELIMIT_POLICY_NAME):
+        self.cap = max(1, int(per_min))
+        self.name = name
+        self._state: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+        self._takes = 0
+
+    def take(self, key: str) -> tuple[bool, float, float]:
+        """(allowed, tokens left after this request, seconds until a request would be allowed)."""
+        with self._lock:
+            t = time.monotonic()
+            self._takes += 1
+            if self._takes % self.PRUNE_EVERY == 0:
+                idle = self.WINDOW_S * 2
+                for k in [k for k, v in self._state.items() if t - v[1] > idle]:
+                    del self._state[k]
+            b = self._state.setdefault(key, [float(self.cap), t])
+            tokens = min(float(self.cap), b[0] + (t - b[1]) * self.cap / self.WINDOW_S)
+            if tokens < 1:
+                b[0], b[1] = tokens, t
+                return False, tokens, (1 - tokens) * self.WINDOW_S / self.cap
+            b[0], b[1] = tokens - 1, t
+            return True, tokens - 1, 0.0
+
+    def headers(self, tokens_left: float) -> dict[str, str]:
+        """`RateLimit-Policy` and `RateLimit` (draft-ietf-httpapi-ratelimit-headers).
+
+        Kept in one place because the fields are still an Internet-Draft: a rename is a change
+        here and nowhere else. `t` is delay-seconds — how long until the next whole request is
+        available — so client and server clocks never need to agree.
+        """
+        remaining = max(0, math.floor(tokens_left + 1e-9))
+        if tokens_left >= self.cap:
+            reset = 0
+        else:
+            reset = max(1, math.ceil((remaining + 1 - tokens_left) * self.WINDOW_S / self.cap))
+        name = self.name
+        return {"RateLimit-Policy": f'"{name}";q={self.cap};w={self.WINDOW_S}',
+                "RateLimit": f'"{name}";r={remaining};t={reset}'}
+
+
+def app_access_refusal(store: Store, identity: Identity, user_id: str, workspace_id: str,
+                       app_id: str | None = None) -> ServiceError | None:
+    """Why this person may not use the application in this workspace right now, or None.
+
+    Two answers, kept apart because they need different fixes: the workspace itself is not
+    usable (frozen, awaiting a claim, deleted — nobody may act in it), or the workspace is fine
+    but this person's access to the application is not (the application is off platform-wide or
+    for this workspace, or their entitlement was revoked). Checked on every request and on every
+    workspace switch — the sign-in callback checking it once is how revoked access used to
+    survive for the rest of a 30-day session.
+    """
+    from .apps import DOCS_APP_ID, Apps
+    ws = identity.get_workspace(workspace_id)
+    if not ws or ws["status"] != "active":
+        status = (ws or {}).get("status") or "deleted"
+        message = {"frozen": "该工作空间已被冻结，暂时不能使用。请联系工作空间所有者或平台管理员。",
+                   "pending_claim": "该工作空间尚未完成认领，暂时不能使用。"}.get(
+                       status, "该工作空间已删除，不能再使用。")
+        return ServiceError(403, "workspace_unavailable", message,
+                            {"workspace_id": workspace_id, "workspace_status": status})
+    ok, _, reason = Apps(store, identity).check_access(user_id, app_id or DOCS_APP_ID, workspace_id)
+    if not ok:
+        return ServiceError(403, "app_access_revoked", reason,
+                            {"workspace_id": workspace_id, "app_id": app_id or DOCS_APP_ID})
+    return None
+
+
+def check_standalone_listen(argv: list[str] | None = None) -> None:
+    """Refuse to serve an unprotected UI to the network, for a server started without `run.py`.
+
+    `python -m uvicorn synwevo_docs.api.main:app --host 0.0.0.0` never went through
+    `check_listen_config`, which only `synwevo_server.run` called — so the documented standalone
+    start served the legacy workspace to the network with `SYNWEVO_UI_AUTH` unset. The ASGI app
+    cannot see the bind address, so the uvicorn/gunicorn command line is read for it, falling
+    back to `SYNWEVO_HOST`.
+    """
+    from .auth import check_listen_config
+    args = list(sys.argv if argv is None else argv)
+    binds: list[str] = []
+    for i, a in enumerate(args):
+        if a in ("--host", "-b", "--bind") and i + 1 < len(args):
+            binds.append(args[i + 1])
+        elif a.startswith("--host=") or a.startswith("--bind="):
+            binds.append(a.split("=", 1)[1])
+    # gunicorn takes `-b` more than once and listens on all of them, so every one is checked;
+    # checking only the last let `-b 127.0.0.1:8765 -b 0.0.0.0:8766` through.
+    hosts = [h for h in (bind_host(b) for b in binds) if h is not None]
+    if not binds:
+        hosts = [env.get("HOST") or "127.0.0.1"]
+    for host in hosts:
+        check_listen_config(host)
+
+
+def bind_host(bind: str) -> str | None:
+    """The address part of a uvicorn `--host` or gunicorn `-b` value; None for a socket.
+
+    ``[::1]:8765`` is an IPv6 address with a port. Stripping brackets from the whole string
+    turned it into ``::1]:8765``, which is not loopback, so a local IPv6 bind was refused.
+    """
+    b = bind.strip()
+    if b.startswith(("unix:", "fd:")):
+        return None                                   # a socket file or descriptor: not a network
+    if b.startswith("["):
+        end = b.find("]")
+        return b[1:end] if end != -1 else b[1:]
+    if b.count(":") == 1:
+        # gunicorn's host:port. An empty host (`-b :8765`) is every interface, not "unset".
+        return b.split(":", 1)[0] or "0.0.0.0"
+    return b or "0.0.0.0"                             # a hostname, IPv4 or bare IPv6
 
 
 def role() -> str:
@@ -46,7 +328,7 @@ def role() -> str:
     building one app change the behaviour of every app built afterwards in the same process,
     which is exactly what a test suite does.
     """
-    return (env.get("ROLE") or "all").strip().lower() or "all"
+    return validate_role(env.get("ROLE"))
 
 
 def app_role(request_or_app) -> str:
@@ -107,8 +389,35 @@ def data_dir_default() -> Path:
     return root / "data"
 
 
-def build_platform(data_dir: str | None = None) -> Platform:
-    store = Store(data_dir or env.get("DATA_DIR") or str(data_dir_default()))
+def data_dir(explicit: str | os.PathLike | None = None) -> Path:
+    """The data directory this process uses: `explicit`, else `SYNWEVO_DATA_DIR`, else the default.
+
+    An `explicit` path (a `--data` argument, a test's temporary directory) is the caller's own
+    and is taken as given. A **relative** `SYNWEVO_DATA_DIR` is resolved against the repository
+    root, never against the process working directory — the rule `scripts/platform.py` and
+    `snapshot.py --data` already follow. Taken relative to cwd, `SYNWEVO_DATA_DIR=data` meant
+    the repository's database when started from the root and a brand-new empty one when started
+    from `apps/docs/`, and an empty database starts up looking exactly like lost data. Outside a
+    source checkout there is no root to resolve against, so a relative value is refused.
+    """
+    if explicit:
+        return Path(explicit)
+    raw = env.get("DATA_DIR")
+    if not raw:
+        return data_dir_default()
+    p = Path(raw).expanduser()
+    if p.is_absolute():
+        return p
+    root = repo_root()
+    if root is None:
+        raise RuntimeError(
+            f"SYNWEVO_DATA_DIR={raw!r} 是相对路径，而这里不是平台仓库的源码目录，没有可以相对的根。"
+            "请改成绝对路径（容器镜像里是 /data）。这里不按当前工作目录去猜：从不同目录启动会落到不同的库。")
+    return (root / p).resolve()
+
+
+def build_platform(data_dir_arg: str | None = None) -> Platform:
+    store = Store(str(data_dir(data_dir_arg)))
     auth = Auth(store)
     identity = Identity(store)
     sessions = Sessions(store)
@@ -133,7 +442,7 @@ def build_platform(data_dir: str | None = None) -> Platform:
             (new_id("ae"), time.time(), actor_kind, actor_id,
              workspace_id or getattr(request.state, "workspace_id", None), action, object_kind, object_id,
              result, getattr(request.state, "request_id", None),
-             (request.client.host if request.client else None), _json.dumps(meta or {}, ensure_ascii=False)))
+             client_ip(request) or None, _json.dumps(meta or {}, ensure_ascii=False)))
 
     return Platform(store=store, auth=auth, identity=identity, sessions=sessions,
                     machine=machine, audit=audit)
@@ -150,8 +459,13 @@ def new_api(title: str) -> FastAPI:
 def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     """Error contract + the request gate. Every role installs exactly this."""
     store, auth, identity, sessions, machine = plat.store, plat.auth, plat.identity, plat.sessions, plat.machine
-    api.state.role = (role or globals()["role"]()).strip().lower()
+    api.state.role = validate_role(role or env.get("ROLE"))
     this_role_static = api.state.role
+    # Read when the application is built, not when this module was first imported, so a
+    # process (or a test) that sets the rate before building an app gets that rate.
+    rate_per_min = int(env.get("API_RATE_PER_MIN", str(API_RATE_PER_MIN)))
+    buckets = RateBuckets(rate_per_min)
+    api.state.rate_buckets = buckets
 
     def _error_body(request: Request, code: str, message: str, detail: dict | None):
         rid = getattr(request.state, "request_id", "")
@@ -166,23 +480,101 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             return body
         return {"error": code, "message": message, "detail": detail, "request_id": rid}
 
+    def _error_response(request: Request, status: int, code: str, message: str,
+                        detail: dict | None = None, headers: dict | None = None) -> JSONResponse:
+        """One error, in whichever format this caller gets.
+
+        /api/v1 callers that send `Accept: application/problem+json` get RFC 9457 problem
+        details; everyone else gets the envelope they were written against, byte for byte.
+        """
+        if request.url.path.startswith("/api/v1") and wants_problem(request):
+            return JSONResponse(problem_body(getattr(request.state, "request_id", ""), status, code,
+                                             message, detail),
+                                status_code=status, media_type=PROBLEM_JSON, headers=headers)
+        return JSONResponse(_error_body(request, code, message, detail), status_code=status,
+                            headers=headers)
+
+    def _v1_extra_headers(request: Request) -> dict:
+        """Headers every /api/v1 response carries, including ones built outside the gate."""
+        out = {"X-Request-ID": getattr(request.state, "request_id", "") or ""}
+        left = getattr(request.state, "ratelimit_left", None)
+        if left is not None and request.url.path.startswith("/api/v1"):
+            out.update(buckets.headers(left))
+        return out
+
     @api.exception_handler(ServiceError)
     async def _svc_err(request: Request, exc: ServiceError):
-        resp = JSONResponse(_error_body(request, exc.code, exc.message, exc.detail), status_code=exc.status)
-        if exc.code == "rate_limited" and (exc.detail or {}).get("retry_after"):
-            resp.headers["Retry-After"] = str(int((exc.detail or {})["retry_after"]) + 1)
+        resp = _error_response(request, exc.status, exc.code, exc.message, exc.detail)
+        wait = retry_after_seconds(exc.detail)
+        if wait is not None:
+            # Any refusal that knows when to come back says so in the header too — a full job
+            # queue, too many sign-in attempts, an invitation limit, sources still parsing — not
+            # only the API rate limiter. Clients and proxies read the header, not our body.
+            resp.headers["Retry-After"] = str(wait)
         return resp
 
     @api.exception_handler(ValueError)
     async def _val_err(request: Request, exc: ValueError):
-        return JSONResponse(_error_body(request, getattr(exc, "code", "invalid"), str(exc), None), status_code=400)
+        if isinstance(exc, json.JSONDecodeError):
+            # A request body that is not JSON never gets here — FastAPI refuses it first — so
+            # this is stored data that failed to parse: the server's fault, not the caller's.
+            return await _unexpected(request, exc)
+        return _error_response(request, 400, getattr(exc, "code", "invalid"), str(exc), None)
+
+    @api.exception_handler(RequestValidationError)
+    async def _validation_err(request: Request, exc: RequestValidationError):
+        """Malformed parameters on /api/v1 get the documented 400 envelope (api.md §2), with
+        every failing field listed — not FastAPI's bare 422 `{"detail": [...]}`. The browser
+        API keeps FastAPI's own shape, which its client already handles."""
+        if not request.url.path.startswith("/api/v1"):
+            return await request_validation_exception_handler(request, exc)
+        errors = []
+        for e in exc.errors():
+            if e.get("type") == "json_invalid":
+                # The body is not JSON at all. FastAPI reports it at ("body", <character
+                # offset>), and that offset was being rendered as a field called "1" with the
+                # pointer "#/1" — naming a member that does not exist in a document that does
+                # not parse. There is no field to point at; say what is wrong instead.
+                return _error_response(request, 400, "invalid", "请求体不是合法的 JSON", None)
+            # Integer segments stay: inside a parsed body they are array indices, which RFC 6901
+            # writes as decimal segments (`#/mappings/0/field`).
+            loc = [str(x) for x in (e.get("loc") or ()) if x not in ("body", "query", "path", "header", "cookie")]
+            errors.append({"field": ".".join(loc) or None, "loc": loc or None,
+                           "message": str(e.get("msg") or "取值不合法")})
+        first = errors[0] if errors else {"field": None, "message": "请求参数不合法"}
+        where = f"「{first['field']}」" if first.get("field") else ""
+        detail = {"field": first.get("field"), "errors": errors} if first.get("field") else {"errors": errors}
+        return _error_response(request, 400, "invalid", f"请求参数{where}不合法：{first['message']}", detail)
+
+    @api.exception_handler(StarletteHTTPException)
+    async def _http_err(request: Request, exc: StarletteHTTPException):
+        if not request.url.path.startswith("/api/v1"):
+            return await http_exception_handler(request, exc)
+        code, message = {404: ("not_found", "接口不存在"),
+                         405: ("method_not_allowed", "该接口不支持这个请求方法")}.get(
+                             exc.status_code, (f"http_{exc.status_code}", str(exc.detail or "请求失败")))
+        return _error_response(request, exc.status_code, code, message, None,
+                               headers=getattr(exc, "headers", None))
 
     @api.exception_handler(Exception)
     async def _unexpected(request: Request, exc: Exception):
-        rid = getattr(request.state, "request_id", "")
-        print(f"[synwevo] unhandled error request_id={rid} path={request.url.path}\n{traceback.format_exc()}", flush=True)
+        """The contract holds for failures nobody anticipated too: a JSON body, the request id
+        in body and header, and nothing about the internals — the traceback goes to the log
+        under the same id, never to the caller.
 
-    limiter = rate_limiter(API_RATE_PER_MIN)
+        This handler used to print and return nothing, so Starlette answered with a bare 500
+        that carried neither the envelope nor X-Request-ID. It runs outside the gate middleware,
+        so the headers the gate would add are added here.
+        """
+        rid = getattr(request.state, "request_id", "")
+        print(f"[synwevo] unhandled error request_id={rid} path={request.url.path}\n"
+              + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)), flush=True)
+        resp = _error_response(request, 500, "internal_error",
+                               f"服务器内部错误，请稍后重试；如果持续出现，请把请求编号 {rid} 提供给管理员", None)
+        resp.headers.update(_v1_extra_headers(request))
+        if request.url.path.startswith("/api/"):
+            resp.headers.setdefault("Cache-Control", "no-store")
+        return resp
 
     # Reachable without a session, because you cannot sign in from behind a sign-in wall. Kept
     # to an exact set rather than a prefix: "/api/auth" as a prefix would also open anything
@@ -214,16 +606,70 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     SSO_PREFIXES = ("/auth/",)
     SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
-    def _session_gate(request: Request, path: str, finish):
+    def _refuse(request: Request, err: ServiceError) -> JSONResponse:
+        return _error_response(request, err.status, err.code, err.message, err.detail)
+
+    def _serves_app() -> bool:
+        return this_role_static in ("app", "all")
+
+    def _is_app_path(path: str) -> bool:
+        """A business-application route, as opposed to the account system or the portal."""
+        return (_serves_app() and path.startswith("/api/") and path not in ACCOUNT_LEVEL_EXACT
+                and not path.startswith(ACCOUNT_LEVEL_PREFIXES))
+
+    def _app_route_check(request: Request, path: str, user: dict, wid: str | None,
+                         member: dict | None) -> JSONResponse | None:
+        """Workspace, application and role, for one Synwevo Docs request. None means go ahead.
+
+        Order matters for the answer someone sees: a frozen workspace is about the workspace, a
+        revoked entitlement is about them, and a viewer pressing "save" is about their role —
+        three different people to ask, so three different codes.
+        """
+        policy_fn = getattr(api.state, "route_policy", None)
+        method = request.method.upper()
+        policy = policy_fn(method, path) if policy_fn else (None if method in SAFE_METHODS else "write")
+        if not wid:
+            if policy:
+                return _refuse(request, ServiceError(
+                    403, "no_workspace", "你当前没有可用的工作空间，不能进行这个操作。请先选择或加入一个工作空间。"))
+            return None                                  # reads see nothing; see the tenant below
+        err = app_access_refusal(store, identity, user["id"], wid, getattr(api.state, "app_id", None))
+        if err:
+            return _refuse(request, err)
+        role = member["role"]
+        can_export = bool(member.get("can_export"))
+        request.state.workspace_role = role
+        request.state.can_export = can_export
+        if policy == "write" and role not in WRITE_ROLES:
+            return _refuse(request, ServiceError(
+                403, "read_only_role", "你在该工作空间是查看者，只能查看，不能修改内容或运行任务。需要编辑请联系工作空间管理员。",
+                {"workspace_id": wid, "role": role}))
+        if policy == "export" and not (can_export or role in WRITE_ROLES):
+            return _refuse(request, ServiceError(
+                403, "export_not_allowed", "你在该工作空间没有导出权限，不能把文件下载到平台之外。需要导出请联系工作空间管理员开通。",
+                {"workspace_id": wid, "role": role}))
+        return None
+
+    def _session_gate(request: Request, path: str):
         """Resolve the session cookie into an identity, or refuse.
 
-        Returns the tenant-context token on success, or a JSONResponse to return as-is. The
-        workspace comes from the session row and is re-checked against live membership on every
-        request, so a workspace someone has been removed from stops working immediately rather
-        than at the end of their session.
+        Returns the tenant this request acts in, or a JSONResponse to return as-is. Runs in a
+        worker thread (it reads and sometimes writes the database), so it sets no context
+        variables itself; the caller sets the tenant on the event loop.
+
+        The workspace comes from the session row and is re-checked against live membership on
+        every request, so a workspace someone has been removed from stops working immediately
+        rather than at the end of their session. For Synwevo Docs' own routes the workspace's
+        status, the application's availability and the person's entitlement are re-checked too,
+        and the route's role requirement is enforced (`api.state.route_policy`).
         """
         from .sessions import (COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, LEGACY_CSRF_HEADER,
                                csrf_ok)
+        if any(path.startswith(p) for p in SPA_PREFIXES):
+            # Hashed static files carry no data and need no identity. Loading the session here
+            # meant a database read and an idle-clock write for every script and stylesheet.
+            request.state.session = None
+            return "__anonymous__"
         session = sessions.load(request.cookies.get(COOKIE_NAME))
         request.state.session = session
 
@@ -232,37 +678,45 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             # no session yet; it is protected by being useless without valid credentials.
             sent = request.headers.get(CSRF_HEADER) or request.headers.get(LEGACY_CSRF_HEADER)
             if path not in ANON_AUTH_PATHS and not csrf_ok(request.cookies.get(CSRF_COOKIE), sent):
-                return finish(JSONResponse(_error_body(request, "csrf_failed",
-                                                       "请求校验失败，请刷新页面后重试", None), status_code=403))
+                return _error_response(request, 403, "csrf_failed", "请求校验失败，请刷新页面后重试", None)
 
-        if path in ANON_AUTH_PATHS or any(path.startswith(p) for p in SPA_PREFIXES) or not path.startswith("/api/"):
+        if path in ANON_AUTH_PATHS or not path.startswith("/api/"):
             # The SPA shell renders for anyone; it fetches nothing until a session exists. The
             # fallback is deliberately an id no row carries rather than UI_TENANT — see below.
-            return set_tenant((session or {}).get("workspace_id") or "__anonymous__")
+            return (session or {}).get("workspace_id") or "__anonymous__"
 
         if not session:
-            return finish(JSONResponse(_error_body(request, "unauthorized", "请先登录", None), status_code=401))
+            return _error_response(request, 401, "unauthorized", "请先登录", None)
 
         user = identity.get_user(session["user_id"])
         if not user or user["status"] != "active":
             # Suspension and deletion take effect on the next request, not at session expiry.
             sessions.revoke(session["id"], f"user_{user['status'] if user else 'deleted'}")
             request.state.session = None
-            return finish(JSONResponse(_error_body(request, "unauthorized", "账户不可用，请重新登录", None), status_code=401))
+            return _error_response(request, 401, "unauthorized", "账户不可用，请重新登录", None)
         request.state.user = user
 
         wid = session.get("workspace_id")
+        member = None
         if wid:
             # Membership is authoritative every time; the session only remembers a preference.
-            if not identity.membership(wid, user["id"]):
+            member = identity.membership(wid, user["id"])
+            if not member:
                 sessions.set_workspace(session["id"], None)
                 wid = None
+                request.state.session = {**session, "workspace_id": None}
         request.state.workspace_id = wid
+        request.state.membership = member
+
+        if _is_app_path(path):
+            refused = _app_route_check(request, path, user, wid, member)
+            if refused is not None:
+                return refused
         # With no workspace selected the tenant becomes an id no row can ever carry, so the
         # person sees nothing. Falling back to UI_TENANT here would be a disaster: UI_TENANT is
         # "default", which is exactly the legacy workspace holding every pre-identity file — so
         # the fallback would hand the historical data to every signed-in account.
-        return set_tenant(wid or f"__no_workspace__{user['id']}")
+        return wid or f"__no_workspace__{user['id']}"
 
     # Paths the account service owns. Everything else under /api/ is Synwevo Docs' own workbench.
     ACCOUNT_PATHS = ("/api/auth/", "/api/admin/", "/oidc/", "/.well-known/")
@@ -318,6 +772,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     async def _gate(request: Request, call_next):
         rid = (request.headers.get("X-Request-ID") or "")[:64] or secrets.token_hex(8)
         request.state.request_id = "".join(ch for ch in rid if ch.isalnum() or ch in "-_") or secrets.token_hex(8)
+        request.state.ratelimit_left = None
         path = request.url.path
         token = None
 
@@ -329,6 +784,11 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             resp.headers.setdefault("Referrer-Policy", "no-referrer")
             if path.startswith("/api/"):
                 resp.headers.setdefault("Cache-Control", "no-store")
+            if request.state.ratelimit_left is not None and path.startswith("/api/v1"):
+                # On every response to an authenticated /api/v1 call, success or not, so a
+                # client can pace itself before it is refused rather than only after.
+                for k, v in buckets.headers(request.state.ratelimit_left).items():
+                    resp.headers[k] = v
             return resp
 
         try:
@@ -339,14 +799,21 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 # and it means the account service genuinely cannot serve a document — an
                 # accounts-origin cookie reaching Synwevo Docs' data would defeat the whole point
                 # of giving them separate origins.
-                return finish(JSONResponse(_error_body(request, "not_in_this_role", off, None),
-                                           status_code=404))
+                return finish(_error_response(request, 404, "not_in_this_role", off, None))
             if path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):
-                principal = machine.verify(request.headers.get("Authorization"))
+                # Credential checks read (and occasionally write) the database, so they run in
+                # a worker thread rather than blocking the event loop for every other request.
+                principal = await run_in_threadpool(machine.verify, request.headers.get("Authorization"))
+                if not principal.get("tenant"):
+                    # Defence in depth: an empty tenant would otherwise become the legacy
+                    # workspace through set_tenant's fallback.
+                    raise ServiceError(403, "no_workspace", "该凭据没有绑定工作空间，不能调用业务接口")
                 request.state.principal = principal
-                ok, wait = limiter(principal["key_id"])
+                ok, left, wait = buckets.take(principal["key_id"])
+                request.state.ratelimit_left = left
                 if not ok:
-                    raise ServiceError(429, "rate_limited", f"请求过于频繁（限制 {API_RATE_PER_MIN} 次/分钟）", {"retry_after": wait})
+                    raise ServiceError(429, "rate_limited", f"请求过于频繁（限制 {buckets.cap} 次/分钟）",
+                                       {"retry_after": wait})
                 token = set_tenant(principal["tenant"])
             else:
                 # Everything that is not a key-authenticated /api/v1 route goes through the UI
@@ -375,13 +842,16 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                     # would put an HTTP auth dialog in the middle of a redirect chain.
                     token = set_tenant("__platform__")
                 elif mode == "session" and not path.startswith("/api/v1"):
-                    token = _session_gate(request, path, finish)
-                    if isinstance(token, JSONResponse):
-                        return token
+                    outcome = await run_in_threadpool(_session_gate, request, path)
+                    if isinstance(outcome, JSONResponse):
+                        return finish(outcome)
+                    token = set_tenant(outcome)
                 elif mode == "basic" and not path.startswith("/api/v1"):
-                    if not auth.check_ui_basic(request.headers.get("Authorization")):
-                        return finish(JSONResponse(_error_body(request, "unauthorized", "需要登录", None), status_code=401,
-                                                   headers={"WWW-Authenticate": 'Basic realm="Synwevo Docs"'}))
+                    # PBKDF2 is deliberately slow; on the event loop it stalled every other
+                    # request for the length of each check.
+                    if not await run_in_threadpool(auth.check_ui_basic, request.headers.get("Authorization")):
+                        return finish(_error_response(request, 401, "unauthorized", "需要登录", None,
+                                                      headers={"WWW-Authenticate": 'Basic realm="Synwevo Docs"'}))
                     token = set_tenant(UI_TENANT)
                 else:
                     token = set_tenant(UI_TENANT)
@@ -531,7 +1001,9 @@ def shell_response(dist: Path, full_path: str) -> FileResponse | JSONResponse:
     """
     dist = Path(dist)
     if full_path.startswith("api/"):
-        return JSONResponse({"error": "not_found", "message": "接口不存在"}, status_code=404)
+        # Raised rather than returned so the error handlers render it: the right envelope for
+        # /api/v1 (or problem details when asked for), and the request id in the body.
+        raise ServiceError(404, "not_found", "接口不存在")
     target = (dist / full_path).resolve()
     if full_path and full_path != "index.html" and target.is_file() and dist.resolve() in target.parents:
         return FileResponse(target)

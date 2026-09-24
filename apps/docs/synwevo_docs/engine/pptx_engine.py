@@ -1,9 +1,10 @@
 """PPTX: slides, shapes, text frames and tables (DrawingML), edited as XML.
 
 Locators: slide index → shape id (cNvPr/@id) → paragraph index → character offsets,
-or table cell (row, col).  Word-style pagination rules are *not* applied: text
-that does not fit a shape is reported, tables that grow past the slide bottom are
-reported, nothing flows to a new slide automatically.
+or table cell (row, col).  Word-style pagination rules are *not* applied and nothing
+flows to a new slide automatically.  Tables that grow past the slide bottom are
+reported; whether text fits its shape or cell is *not* measured (PowerPoint's own
+autofit settings of the shape apply when the deck is opened).
 """
 from __future__ import annotations
 
@@ -148,10 +149,10 @@ def _table(el):
 
 def _cell(tbl, r, c):
     rows = tbl.findall(a("tr"))
-    if r >= len(rows):
+    if not 0 <= r < len(rows):                  # a negative index would silently pick from the end
         raise PptxError("row_missing", f"表格没有第 {r + 1} 行")
     cells = rows[r].findall(a("tc"))
-    if c >= len(cells):
+    if not 0 <= c < len(cells):
         raise PptxError("col_missing", f"表格没有第 {c + 1} 列")
     return cells[c]
 
@@ -176,7 +177,9 @@ def inspect_pptx(data: bytes) -> dict:
             "inventory": inv}
 
 
-def render_pptx(data: bytes, slots: list[dict] | None = None) -> dict:
+def render_pptx(data: bytes, slots: list[dict] | None = None, images: bool = True) -> dict:
+    """Slides as JSON for the viewer.  ``images=False`` skips embedding pictures as data URLs
+    (up to 2 MB each): callers that only read text (verification, search) should pass it."""
     pkg = Package(data)
     cx, cy = slide_size(pkg)
     slides = []
@@ -206,7 +209,7 @@ def render_pptx(data: bytes, slots: list[dict] | None = None) -> dict:
                                  for tc in tr.findall(a("tc"))] for tr in tbl.findall(a("tr"))]
             elif el.tag == p_("pic"):
                 item["kind"] = "picture"
-                item["img"] = _pic_data(pkg, part, el)
+                item["img"] = _pic_data(pkg, part, el) if images else None
             else:
                 item["kind"] = "other"
             item["slots"] = [s["id"] for s in marks.get((si, sid), [])]
@@ -349,6 +352,7 @@ def pptx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
         tbl = _table(el)
         if tbl is None:
             raise TemplateError("not_table", "该形状不是表格")
+        _check_table_rows(req, kind, loc, slots)
         if kind == "cell":
             tc = _cell(tbl, int(req["row"]), int(req["col"]))
             slot = _base_slot(name, "pptx_text", mode="replace", original_text=cell_text(tc),
@@ -371,11 +375,46 @@ def pptx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
     return pkg.save(), slot
 
 
+def _slot_rows(sl: dict) -> set[int] | None:
+    """Template table rows a table slot occupies (None for non-table slots)."""
+    loc = sl.get("locator") or {}
+    if sl.get("kind") == "repeat" and "row" in loc:
+        return {int(loc["row"])}
+    if sl.get("kind") == "pptx_text" and "row" in loc:
+        return {int(loc["row"])}
+    if sl.get("kind") == "region" and "r1" in loc:
+        return set(range(int(loc["r1"]), int(loc["r2"]) + 1))
+    return None
+
+
+def _check_table_rows(req: dict, kind: str, loc: dict, slots: list[dict]) -> None:
+    """A detail row is copied once per record and the template row is dropped, so a single
+    cell or area on that row would have no defined target.  Refuse it when the field is made."""
+    from .templates import TemplateError
+    if kind == "repeat":
+        mine = {int(req["row"])}
+    elif kind == "cell":
+        mine = {int(req["row"])}
+    else:
+        mine = set(range(int(req["r1"]), int(req["r2"]) + 1))
+    for s in slots:
+        l2 = s.get("locator") or {}
+        if l2.get("slide") != loc["slide"] or str(l2.get("shape")) != loc["shape"]:
+            continue
+        rows = _slot_rows(s)
+        if not rows or not rows & mine:
+            continue
+        if kind == "repeat" or s.get("kind") == "repeat":
+            raise TemplateError("overlap", f"与已有字段「{s['name']}」位于同一表格行；重复明细行会按记录复制，不能再放单值或固定区域")
+
+
 def pptx_remove_slot(work: bytes, slot: dict) -> bytes:
     return work  # slots are kept in the slot list; the working copy only has split runs (text unchanged)
 
 
 def _set_para_range(p, start: int, end: int, text: str) -> None:
+    from .docx_core import xml_text
+    text = xml_text(text or "")
     split_para_at(p, start)
     split_para_at(p, end)
     runs = para_runs(p)
@@ -408,6 +447,8 @@ def _set_para_range(p, start: int, end: int, text: str) -> None:
 
 
 def _set_cell_text(tc, text: str) -> None:
+    from .docx_core import xml_text
+    text = xml_text(text or "")
     body = tc.find(a("txBody"))
     ps = body.findall(a("p"))
     p0 = ps[0]
@@ -424,7 +465,10 @@ def _set_cell_text(tc, text: str) -> None:
         if i:
             br = etree.Element(a("br"))
             if rpr is not None:
-                br.append(copy.deepcopy(rpr))
+                # a:br only takes a:rPr; the properties may have come from a:endParaRPr
+                br_rpr = copy.deepcopy(rpr)
+                br_rpr.tag = a("rPr")
+                br.append(br_rpr)
             (anchor_end.addprevious(br) if anchor_end is not None else p0.append(br))
         r = etree.Element(a("r"))
         if rpr is not None:
@@ -440,28 +484,89 @@ def pptx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
     pkg = Package(work)
     issues: list[dict] = []
     cx, cy = slide_size(pkg)
-    # repeats first (row duplication), then cells/regions, then in-paragraph text (right-to-left per paragraph)
-    for sl in [s for s in slots if s["kind"] == "repeat"]:
-        loc = sl["locator"]
+
+    def err(sl, code, message):
+        issues.append({"level": "error", "slot": sl["id"], "code": code, "message": message})
+
+    # 1) Resolve every table target (a:tr / a:tc elements) against the *template* rows before
+    #    anything is duplicated.  Locators hold template row indices; once detail rows are
+    #    expanded those indices point at copied detail rows instead of the total or
+    #    signature row below them.
+    repeats: list[tuple[dict, object, object, object]] = []      # (slot, graphicFrame, tbl, template tr)
+    targets: list[tuple[dict, object]] = []                      # (slot, tc or matrix of tc)
+    repeat_rows: dict[int, dict] = {}                             # id(tr) -> repeat slot (tr kept alive in `repeats`)
+    for sl in slots:
+        loc = sl.get("locator", {})
+        is_cell = sl["kind"] == "pptx_text" and "row" in loc
+        if sl["kind"] not in ("repeat", "region") and not is_cell:
+            continue
         try:
             _, el = _find_shape(pkg, loc["slide"], loc["shape"])
         except PptxError as e:
-            issues.append({"level": "error", "slot": sl["id"], "code": e.code, "message": str(e)})
+            err(sl, e.code, str(e))
             continue
         tbl = _table(el)
-        rows_el = tbl.findall(a("tr"))
-        tr = rows_el[loc["row"]]
+        if tbl is None:
+            err(sl, "not_table", f"字段「{sl['name']}」所在的形状已不是表格")
+            continue
+        try:
+            if sl["kind"] == "repeat":
+                rows_el = tbl.findall(a("tr"))
+                if not 0 <= int(loc["row"]) < len(rows_el):
+                    raise PptxError("row_missing", f"表格没有第 {int(loc['row']) + 1} 行")
+                tr = rows_el[int(loc["row"])]
+                if id(tr) in repeat_rows:
+                    raise PptxError("overlap", f"与重复明细「{repeat_rows[id(tr)]['name']}」使用同一表格行")
+                repeat_rows[id(tr)] = sl
+                repeats.append((sl, el, tbl, tr))
+            elif is_cell:
+                targets.append((sl, _cell(tbl, int(loc["row"]), int(loc["col"]))))
+            else:
+                targets.append((sl, [[_cell(tbl, int(loc["r1"]) + i, int(loc["c1"]) + j) for j in range(int(sl["cols"]))]
+                                     for i in range(int(sl["rows"]))]))
+        except PptxError as e:
+            err(sl, e.code, f"字段「{sl['name']}」：{e}")
+    # a single cell / area on a detail row has no defined target once the row is copied
+    ok_targets = []
+    for sl, tgt in targets:
+        tcs = [tgt] if not isinstance(tgt, list) else [tc for row in tgt for tc in row]
+        rep = next((repeat_rows[id(tc.getparent())] for tc in tcs if id(tc.getparent()) in repeat_rows), None)
+        if rep is not None:
+            err(sl, "overlap", f"字段「{sl['name']}」与重复明细「{rep['name']}」位于同一表格行，明细行按记录复制后无法确定写入位置；请把该字段移到明细行以外")
+            continue
+        ok_targets.append((sl, tgt))
+
+    # 2) cells and areas, written into the resolved elements
+    for sl, tgt in ok_targets:
+        fv = values.get(sl["id"])
+        if not isinstance(tgt, list):
+            _set_cell_text(tgt, fv["value"].text if fv and fv.get("kind") == "scalar" else "")
+            continue
+        mat = (fv or {}).get("rows") or []
+        for i, row in enumerate(tgt):
+            for j, tc in enumerate(row):
+                _set_cell_text(tc, mat[i][j].text if i < len(mat) and j < len(mat[i]) else "")
+
+    # 3) detail rows: copies of the template row, inserted after it; the template row goes
+    removed_frames: set[int] = set()
+    for sl, el, tbl, tr in repeats:
+        if id(el) in removed_frames:
+            continue
         data = (values.get(sl["id"]) or {"rows": []})["rows"]
         h_tpl = int(tr.get("h", "0"))
         if not data:
-            if sl.get("empty_policy", "remove_row") == "remove_row":
+            policy = sl.get("empty_policy", "remove_row")
+            if policy == "remove_row":
                 tbl.remove(tr)
                 _grow_frame(el, -h_tpl)
-            else:
+            elif policy == "remove_table":
+                el.getparent().remove(el)
+                removed_frames.add(id(el))
+            else:   # blank_row / placeholder (error never reaches the fill: the plan blocks it)
+                tcs = tr.findall(a("tc"))
                 for col in sl.get("columns", []):
-                    tcs = tr.findall(a("tc"))
                     if col["col"] < len(tcs):
-                        _set_cell_text(tcs[col["col"]], sl.get("placeholder", "（无）") if (sl.get("empty_policy") == "placeholder" and col["col"] == 0) else "")
+                        _set_cell_text(tcs[col["col"]], sl.get("placeholder", "（无）") if (policy == "placeholder" and col["col"] == 0) else "")
             continue
         anchor = tr
         for rv in data:
@@ -479,28 +584,12 @@ def pptx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
         if box and box[1] + box[3] > cy:
             issues.append({"level": "warning", "slot": sl["id"], "code": "slide_overflow",
                            "message": f"重复明细「{sl['name']}」共 {len(data)} 行，表格超出幻灯片底部；演示文稿不会自动分页，请减少行数或调整模板"})
+
+    # 4) in-paragraph text, right-to-left per paragraph so earlier offsets stay valid
     by_para: dict[tuple, list[dict]] = {}
     for sl in slots:
         loc = sl.get("locator", {})
-        fv = values.get(sl["id"])
-        if sl["kind"] == "pptx_text" and "row" in loc:
-            try:
-                _, el = _find_shape(pkg, loc["slide"], loc["shape"])
-                _set_cell_text(_cell(_table(el), loc["row"], loc["col"]), fv["value"].text if fv else "")
-            except PptxError as e:
-                issues.append({"level": "error", "slot": sl["id"], "code": e.code, "message": str(e)})
-        elif sl["kind"] == "region":
-            try:
-                _, el = _find_shape(pkg, loc["slide"], loc["shape"])
-                tbl = _table(el)
-                mat = (fv or {}).get("rows") or []
-                for i in range(sl["rows"]):
-                    for j in range(sl["cols"]):
-                        txt = mat[i][j].text if i < len(mat) and j < len(mat[i]) else ""
-                        _set_cell_text(_cell(tbl, loc["r1"] + i, loc["c1"] + j), txt)
-            except PptxError as e:
-                issues.append({"level": "error", "slot": sl["id"], "code": e.code, "message": str(e)})
-        elif sl["kind"] == "pptx_text":
+        if sl["kind"] == "pptx_text" and "row" not in loc:
             by_para.setdefault((loc["slide"], loc["shape"], loc["para"]), []).append(sl)
     for (slide, shape, para), sls in by_para.items():
         try:

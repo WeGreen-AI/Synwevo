@@ -1,5 +1,8 @@
 # 运维手册（部署、备份、升级、回滚）
 
+Vultr Tokyo 三域名部署与 CI/CD 见 [生产部署说明](../infra/production/README.md)，实际执行状态见
+[部署记录](quality/deployment.md)。下面保留通用单进程与本机运行方式。
+
 Synwevo Docs 是**单进程服务**：Web 界面、机器接口、任务运行线程与 Webhook 投递线程在同一进程内，状态放在
 `SYNWEVO_DATA_DIR`（SQLite + 内容寻址文件存储）。没有额外的队列或对象存储组件。端口见
 [integration/ports.md](integration/ports.md)，配置项见仓库根目录 `.env.example`。
@@ -11,7 +14,7 @@ Synwevo Docs 是**单进程服务**：Web 界面、机器接口、任务运行�
 ```bash
 cp .env.example .env            # 按需修改；密钥不要写进文件，用 CLI 创建
 docker compose -f infra/docker-compose.yml up -d --build    # 监听 127.0.0.1:8765，数据卷 ./data
-docker compose exec docweave python -m synwevo_docs.cli apikey create --name ci --scopes read,write
+docker compose -f infra/docker-compose.yml exec synwevo python -m synwevo_docs.cli apikey create --name ci --tenant <工作空间ID> --scopes read,write
 curl -s localhost:8765/readyz
 ```
 
@@ -21,12 +24,29 @@ curl -s localhost:8765/readyz
 **直接运行**
 
 ```bash
-backend/.venv/bin/pip install -r apps/docs/requirements.txt     # 或 requirements-pdfium.txt（AGPL-free）
-cd frontend && npm ci && npm run build && cd ..
-SYNWEVO_HOST=127.0.0.1 .venv/bin/python -m synwevo_server.run
+# 在仓库根目录；Python >= 3.12，Node >= 22.12（或 20.19），npm 可用
+python3.12 scripts/platform.py setup
+npm run typecheck
+# 已有实例：先设置现有数据目录，再启动。新实例才加 --init。
+export SYNWEVO_DATA_DIR=/srv/synwevo/data
+.venv/bin/python scripts/platform.py up
+.venv/bin/python scripts/platform.py status
+.venv/bin/python scripts/platform.py down
 ```
 
-绑定非本机地址时必须先决定界面鉴权方式（`SYNWEVO_UI_AUTH=basic` 并 `manage.py ui-user add`，或 `proxy`），
+`setup` 从 `infra/server/requirements.lock` 约束 Python 直接与传递依赖，从 `infra/server/requirements-build.txt` 固定构建工具，
+再以 `--no-deps --no-build-isolation` 安装六个本地包；前端使用 `npm ci` 与根锁文件。
+各模块的 requirements 文件继续声明所属依赖。主动升级依赖时，在干净 venv 中重新解析并更新约束，
+再运行 `pip check`、三个测试套件与前端检查。版本约束不等于镜像字节可复现：基础镜像标签与 apt 包尚未锁定。
+
+`up` 是本机三源站启动器，默认地址分别为 `http://accounts.localhost:8770`、
+`http://portal.localhost:8769`、`http://docweave.localhost:8765`。它要求域名解析到回环地址；
+端口可通过 `SYNWEVO_ACCOUNTS_PORT`、`SYNWEVO_PORTAL_PORT`、`SYNWEVO_DOCS_PORT` 调整。
+成功以本副本进程的 `/readyz` 为准，端口被其他进程占用会失败。生产单进程按需设置鉴权与对外 URL 后，
+用 `.venv/bin/python -m synwevo_server.run` 启动；拆分部署的发行者与回调配置见
+[integration/ports.md](integration/ports.md)。
+
+绑定非本机地址时必须先决定界面鉴权方式（`SYNWEVO_UI_AUTH=basic` 并 `python -m synwevo_identity.cli ui-user add`，或 `proxy`），
 否则服务会拒绝启动并打印处理方式——这是为了避免「以为有代理其实裸奔」。
 
 ## 2. 持久化与备份
@@ -36,30 +56,50 @@ SYNWEVO_HOST=127.0.0.1 .venv/bin/python -m synwevo_server.run
 | `data/docweave.sqlite3`（含 `-wal`、`-shm`） | 项目、模板版本、映射、任务、事件、密钥哈希 | 必须 |
 | `data/blobs/` | 来源文件、模板工作副本、输出产物（按 SHA-256 存放） | 必须 |
 | `data/tmp/` | 下载用临时 ZIP（超过 1 小时自动清理） | 不需要 |
-| `regression/` | 回归用例（如已创建） | 建议随代码一起提交 |
+| `data/regression/`（或显式配置的目录） | 回归用例（可能含业务来源与模板） | 按业务数据保护与备份，不提交 Git |
 
-**一致备份**（服务可继续运行）：
+**一致备份**（服务可继续运行，命令使用上面配置的数据目录）：
 
 ```bash
-sqlite3 data/docweave.sqlite3 ".backup '/backup/docweave-$(date +%F).sqlite3'"
-rsync -a --delete data/blobs/ /backup/blobs/
+.venv/bin/python scripts/platform.py backup --out /srv/synwevo/backups
+.venv/bin/python scripts/platform.py verify-restore /srv/synwevo/backups/<归档文件>
 ```
 
-**恢复**：停止服务 → 还原上述两项（数据库与 blobs 必须来自同一时间点）→ 启动 → `curl /readyz`。
-数据库里引用的 blob 若缺失，下载会返回 `410 artifact_missing`，不会返回损坏文件。
+归档工具通过 SQLite backup API 获取数据库，再校验引用的 blob。不要把运行中的数据库文件与另一个时点的
+blob 目录自行拼成备份。`verify-restore` 在隔离目录核验，并读取原实例的安全日志以检查撤销记录。
+备份包含账户、密钥和业务数据，应按原实例同等级保护。
+
+**恢复**：先停止服务，再向显式目标目录恢复；已有目标需按工具提示使用 `--force`。
+`SYNWEVO_DATA_DIR` 仍指向保存安全日志的原实例，以重放备份之后的撤销记录。
+
+```bash
+.venv/bin/python scripts/platform.py restore /srv/synwevo/backups/<归档文件> --into /srv/synwevo/restored
+```
+
+原实例整体丢失时，才显式使用 `--no-journal`。此模式会撤销恢复库里的全部旧 API 密钥，并停用服务客户端、
+机密客户端；不会重新生成根密钥、OIDC 签名密钥或改写密码。公共交互客户端仍须重新登录。两种恢复模式都会
+结束旧会话/令牌、作废未用的一次性凭据、停止排队任务，丢弃待发邮件及 Webhook，不自动续跑或外发。
+
+安全日志只记录权限收回，不重建备份之后的新授权。若所有权已转移，恢复会应用原所有者的降权；新所有者
+尚不在备份中、且没有其他有效所有者时，该空间会冻结，等待经过授权的人工核对，不让原所有者恢复旧权力。
+`--no-journal` 无法判定备份之后的成员移除、账户停用、密码变更和删除。必须在隔离恢复副本核对这些变更，
+按当前权限重新授权机器访问，再考虑切换服务数据目录；不能把命令成功当作可直接上线。
+
+撤权操作的数据库提交与外部日志追加不是跨介质原子事务。管理响应中的 `journaled=false` 表示本次撤权已生效，
+但恢复记录未可靠写入，须处理日志故障并补充核对，不能靠删除日志消除错误。恢复后逐文件核验 blob；下载时
+已引用但缺失的产物返回 `410 artifact_missing`。
 
 ## 3. 升级与数据库迁移
 
 1. 备份（见上）。
 2. 更新代码与依赖，重新构建前端。
-3. 启动：迁移在进程启动时自动执行（`Store._migrate`，前进式、可重复执行）。当前 `schema_version = 3`（v2 → v3 为 `projects.origin` / `projects.archived_at` 加列；迁移闸门见 DW-058，旧库就地升级不丢数据）。
+3. 启动：迁移在进程启动时自动执行（`Store._migrate`，前进式、可重复执行）。实际版本以 `synwevo_core.store.SCHEMA_VERSION` 与 CLI 输出为准。
 4. 用 `python -m synwevo_docs.cli info` 确认 schema 版本，`/readyz` 确认就绪。
 
-v1 → v2 迁移内容：新增租户列、任务租约/运行记录/事件表、幂等表、API 密钥表、Webhook 投递表；
-旧数据保持可读（历史项目与任务归属 `default` 租户）。迁移在真实 v1 数据库副本上验证通过。
+迁移测试用隔离夹具验证；生产升级前须用自己的受保护备份完成恢复演练。
 
-**回滚**：本服务不做破坏性迁移（只增列/增表），旧版本代码可以直接读回新库中的旧字段；
-如需完全回退，停止服务并还原备份即可。回滚前请确认没有正在运行的任务（`manage.py jobs list`）。
+**回滚**：先停止服务并确认任务状态（`python -m synwevo_docs.cli jobs list`），再恢复经过核验的备份。
+不要假定旧代码能安全读取新 schema 或新的安全状态；回滚还须保留并重放之后的撤销记录。
 
 ## 4. 日常运维
 
@@ -83,7 +123,7 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 
 | 现象 | 处理 |
 |---|---|
-| 任务长期停在 `running` | 工作进程可能已退出：等待租约过期（默认 30 秒）自动恢复，或 `manage.py jobs recover`；`/readyz` 的 `worker` 字段会显示 `stopped` |
+| 任务长期停在 `running` | 工作进程可能已退出：等待租约过期（默认 30 秒）自动恢复，或 `python -m synwevo_docs.cli jobs recover`；`/readyz` 的 `worker` 字段会显示 `stopped` |
 | `/readyz` 返回 503 `database: error` | 磁盘满或权限问题；检查 `SYNWEVO_DATA_DIR` 可写、磁盘剩余空间 |
 | 生成 PDF 报「未检测到 LibreOffice」 | 安装 LibreOffice 或设置 `SYNWEVO_DOCS_SOFFICE`；`/api/v1/capabilities` 会如实显示该能力不可用 |
 | 导出 PDF 中文不显示 | 安装中文字体（容器镜像已含 Noto CJK），或用 `SYNWEVO_DOCS_CJK_FONTS` 指定字体文件 |

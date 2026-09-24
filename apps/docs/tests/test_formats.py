@@ -115,7 +115,17 @@ def test_csv_export_from_xlsx_template(api, fixtures):
     csv_text = api.outputs(job["id"])["DD-001.csv"].decode("utf-8-sig")
     lines = csv_text.strip().splitlines()
     assert lines[1].startswith("订单号,DD-001") and any(l.startswith("1,测试商品") for l in lines)
-    assert any("合计" in l for l in lines)                                            # formula results computed (LibreOffice)
+    # the total is a formula over the expanded rows: its computed value, not only the label
+    total = next(l for l in lines if "合计" in l).split(",")
+    want = sum(q * p for _o, _c, _n, _i, q, p in _order_rows(fixtures, "DD-001"))
+    assert float(total[total.index("合计") + 1]) == pytest.approx(want)
+    subtotals = [float(l.split(",")[4]) for l in lines if l.startswith(tuple(f"{i}," for i in range(1, 10)))]
+    assert sum(subtotals) == pytest.approx(want) and len(subtotals) == len(_order_rows(fixtures, "DD-001"))
+
+
+def _order_rows(fixtures, order_no):
+    ws = openpyxl.load_workbook(fixtures / "测试_订单明细100.xlsx")["明细"]
+    return [r for r in ws.iter_rows(min_row=2, values_only=True) if r[0] == order_no]
 
 
 def _png_data_url():
@@ -191,7 +201,10 @@ def test_builtin_sheet_template(api, fixtures):
     assert not any(n.startswith("_dw_") for n in ws.parent.defined_names)             # working-copy markers removed from outputs
 
 
-def test_upload_guards(api, fixtures):
+def test_upload_guards(api, fixtures, monkeypatch):
+    from synwevo_docs.engine.limits import LIMITS
+    # a small limit keeps the bomb small: the test used to deflate 700 MB in this process
+    monkeypatch.setattr(LIMITS, "max_unzipped_bytes", 4 * 1024 * 1024)
     pid = api.project("guards")
     out = api.upload_bytes(pid, "../../etc/passwd.xlsx", (fixtures / "测试_客户100.xlsx").read_bytes())
     assert "/" not in out[0]["filename"]
@@ -204,13 +217,50 @@ def test_upload_guards(api, fixtures):
     with zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", "<Types/>")
         z.writestr("xl/workbook.xml", "<workbook/>")
-        z.writestr("xl/huge.bin", b"\0" * (700 * 1024 * 1024))
+        z.writestr("xl/huge.bin", b"\0" * (8 * 1024 * 1024))
     api.upload_bytes(pid, "炸弹.xlsx", b.getvalue())
     bomb = [s for s in api.ok(api.c.get(f"/api/projects/{pid}/sources")) if s["filename"] == "炸弹.xlsx"][0]
     assert bomb["status"] == "error" and "上限" in bomb["error"]
-    # macros are detected and never executed
-    r = api.c.get("/api/capabilities")
-    assert r.status_code == 200
+
+
+def _xlsm_fixture() -> bytes:
+    """TEST fixture: a macro-enabled workbook (a placeholder vbaProject part, never executed)."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "S"
+    ws["A1"], ws["B1"] = "姓名", "占位"
+    b = io.BytesIO()
+    wb.save(b)
+    zin = zipfile.ZipFile(io.BytesIO(b.getvalue()))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for n in zin.namelist():
+            d = zin.read(n)
+            if n == "[Content_Types].xml":
+                d = d.replace(b"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+                              b"application/vnd.ms-excel.sheet.macroEnabled.main+xml")
+                d = d.replace(b"</Types>", b'<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>')
+            z.writestr(n, d)
+        z.writestr("xl/vbaProject.bin", b"\0" * 16)
+    return out.getvalue()
+
+
+def test_macro_template_is_detected_and_macros_never_reach_outputs(api):
+    """Replaces a check that only asserted /api/capabilities answered 200."""
+    pid = api.project("宏模板")
+    t = api.ok(api.c.post("/api/templates/upload", files={"file": ("宏.xlsm", _xlsm_fixture())}, data={"project_id": pid}))
+    assert t["format"] == "xlsx" and any("宏" in n for n in t["info"]["notes"])
+    api.upload_bytes(pid, "src.csv", "姓名\n张三\n".encode("utf-8"))
+    s = api.slot(t["id"], kind="cell", sheet="S", cell="B1", name="姓名")
+    api.rule(pid, {"mode": "per_row", "table": {"sheet": "CSV", "header_row": 0}})
+    api.maps(pid, [{"type": "single", "sources": [{"kind": "column", "sheet": "CSV", "header": "姓名"}], "target": {"binding": s["binding"]}}])
+    job = api.job(pid)
+    assert job["status"] == "completed"
+    out = next(iter(api.outputs(job["id"]).values()))
+    z = zipfile.ZipFile(io.BytesIO(out))
+    assert not any("vbaProject" in n for n in z.namelist())
+    assert b"macroEnabled" not in z.read("[Content_Types].xml")
+    assert openpyxl.load_workbook(io.BytesIO(out))["S"]["B1"].value == "张三"
 
 
 def test_legacy_odp_template(api, fixtures):

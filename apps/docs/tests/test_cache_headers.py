@@ -33,10 +33,14 @@ def _client(tmp_path, monkeypatch, *, role: str = "all", mode: str = "none") -> 
     return TestClient(app_mod.create_app(str(tmp_path), start_jobs=False))
 
 
-pytestmark = pytest.mark.skipif(not DIST.exists(), reason="前端未构建")
+# Only the tests that serve built files need the build. The authorization and body-size tests
+# below are API properties and must run in a Python-only checkout too — they used to be skipped
+# along with everything else whenever `npm run build` had not been run.
+needs_build = pytest.mark.skipif(not DIST.exists(), reason="前端未构建")
 
 
 # ---------------------------------------------------------------- entry HTML
+@needs_build
 @pytest.mark.parametrize("path", ["/", "/projects/p_x", "/index.html",
                                   "/portal.html", "/accounts.html"])
 def test_every_entry_document_must_revalidate(tmp_path, monkeypatch, path):
@@ -54,6 +58,7 @@ def _asset_names():
     return [os.path.basename(p) for p in glob.glob(str(DIST / "assets" / "*"))]
 
 
+@needs_build
 def test_content_hashed_assets_are_immutable(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     names = [n for n in _asset_names() if "-" in n]
@@ -63,6 +68,7 @@ def test_content_hashed_assets_are_immutable(tmp_path, monkeypatch):
         assert "immutable" in cc and "max-age=31536000" in cc, f"{name}: {cc!r}"
 
 
+@needs_build
 def test_an_asset_without_a_hash_is_not_marked_immutable(tmp_path, monkeypatch):
     """A file whose name carries no hash can change under that name. Telling a browser to keep
     it for a year is how a deploy silently fails to reach people."""
@@ -76,6 +82,7 @@ def test_an_asset_without_a_hash_is_not_marked_immutable(tmp_path, monkeypatch):
         plain.unlink(missing_ok=True)
 
 
+@needs_build
 def test_assets_are_still_behind_the_auth_gate(tmp_path, monkeypatch):
     """Adding a header must not move the mount outside the gate."""
     c = _client(tmp_path, monkeypatch, mode="basic")

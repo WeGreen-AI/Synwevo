@@ -2,10 +2,9 @@
 # 账户服务：登录仪式、MFA、Passkey、OIDC 授权服务器。**不含任何 Synwevo Docs 依赖。**
 -r ../../packages/auth-client/python/requirements.txt
 pyotp==2.10.0             # MIT – TOTP second factor
-cryptography==50.0.1      # Apache-2.0 OR BSD-3 – AES-GCM for TOTP seeds at rest; WebAuthn signature checks
+# cryptography 与 authlib 固定在 packages/core/requirements.txt（经上面的 -r 引入）。
 webauthn==3.0.0           # BSD-3-Clause (Duo) – WebAuthn/passkey ceremonies. Pulls cryptography>=49,
 cbor2==6.1.4              # MIT – COSE key encoding, via webauthn
 pyOpenSSL==26.4.0         # Apache-2.0 – attestation certificate parsing, via webauthn
 pyasn1==0.6.4             # BSD-2-Clause – via webauthn
 pyasn1-modules==0.4.2     # BSD-2-Clause – via webauthn
-authlib==1.6.5            # BSD-3-Clause – OAuth 2.0 / OIDC authorization server (protocol impl; identity stays ours)

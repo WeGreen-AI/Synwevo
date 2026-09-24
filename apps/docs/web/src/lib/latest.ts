@@ -25,5 +25,7 @@ export function useLatest() {
       (v) => { if (!mine.signal.aborted) ok(v); },
       (e) => { if (!mine.signal.aborted && e?.name !== "AbortError") fail?.(e); },
     );
+    // Effect cleanup invalidates the answer immediately, including the next debounce window.
+    return () => mine.abort();
   }, []);
 }

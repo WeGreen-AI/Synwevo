@@ -2,14 +2,14 @@
 extraction, while keeping the native bytes for format-specific locators."""
 from __future__ import annotations
 
-import html as _html
 import json
 import re
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 
 from . import tabular
 from .detect import detect
-from .limits import LIMITS
+from .limits import LIMITS, LimitError
 
 
 @dataclass
@@ -30,6 +30,8 @@ def parse_source(data: bytes, filename: str, options: dict | None = None) -> Par
     options = options or {}
     try:
         info = detect(data, filename)
+    except LimitError as e:            # a recognised container over a limit: refused, not "unknown format"
+        return ParsedSource("unknown", "unknown", "error", str(e))
     except ValueError as e:
         return ParsedSource("unknown", "unknown", "unsupported", str(e))
     fmt, fam = info["format"], info["family"]
@@ -146,6 +148,8 @@ def _docx_result(fmt, fam, data: bytes, notes, working, wfmt) -> ParsedSource:
 def _text_result(fmt, fam, data: bytes, notes) -> ParsedSource:
     enc, _ = tabular.detect_encoding(data)
     text = data.decode(enc, errors="replace")
+    if len(text) > LIMITS.max_text_chars:
+        raise LimitError(f"文本内容超过 {LIMITS.max_text_chars // (1024 * 1024)} M 字符上限（可通过 SYNWEVO_DOCS_MAX_TEXT_MB 调整）")
     if text.startswith("﻿"):
         text = text[1:]
     struct: dict = {"text": {"encoding": enc, "lines": text.count("\n") + 1, "chars": len(text)}}
@@ -163,16 +167,118 @@ def _text_result(fmt, fam, data: bytes, notes) -> ParsedSource:
 
 
 # ------------------------------------------------------------------ text helpers
-_TAG_RE = re.compile(r"<[^>]+>")
+_SKIP_TAGS = {"script", "style", "noscript", "template"}
+_LINE_END_TAGS = {"p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "table", "section", "article"}
+_MAX_COLSPAN = 1000          # the HTML limit; colspan="1000000000" must not become a billion cells
+
+
+class _HtmlReader(HTMLParser):
+    """One linear pass over an HTML source: its readable text and its tables.
+
+    This replaces lazy ``.*?`` regular expressions over the whole document, which are
+    quadratic on unclosed tags (112 KB of ``<table>`` took seconds while holding the GIL,
+    stalling every other thread of the server)."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.text: list[str] = []
+        self.skip = 0
+        self.tables: list[list | None] = []        # in start order; None until the table closes
+        self.open: list[dict] = []                # open tables, innermost last
+        self.cells = 0
+
+    # ---- tables
+    def _close_cell(self, t: dict) -> None:
+        if t["cell"] is None:
+            return
+        from . import values as V
+        txt, span = "".join(t["cell"]).strip(), t["span"]
+        t["row"].append(V.text(txt) if txt else V.empty())
+        t["row"].extend(V.empty() for _ in range(span - 1))
+        self.cells += span
+        tabular._check_cells(self.cells)
+        t["cell"] = None
+
+    def _close_row(self, t: dict) -> None:
+        self._close_cell(t)
+        t["row"] = None
+
+    def _close_table(self) -> None:
+        t = self.open.pop()
+        self._close_row(t)
+        self.tables[t["slot"]] = t["rows"] or None
+
+    # ---- parser events
+    def handle_starttag(self, tag, attrs):
+        if tag in _SKIP_TAGS:
+            self.skip += 1
+            return
+        if tag == "br":
+            self._data("\n")
+        elif tag == "table":
+            self.open.append({"rows": [], "row": None, "cell": None, "span": 1, "slot": len(self.tables)})
+            self.tables.append(None)
+        elif tag == "tr" and self.open:
+            t = self.open[-1]
+            self._close_row(t)
+            t["row"] = []
+            t["rows"].append(t["row"])
+        elif tag in ("td", "th") and self.open:
+            t = self.open[-1]
+            if t["row"] is None:               # a cell without <tr>: HTML implies the row
+                t["row"] = []
+                t["rows"].append(t["row"])
+            self._close_cell(t)
+            span = dict(attrs).get("colspan") or "1"
+            try:
+                t["span"] = max(1, min(int(str(span).strip() or 1), _MAX_COLSPAN))
+            except ValueError:
+                t["span"] = 1
+            t["cell"] = []
+
+    def handle_endtag(self, tag):
+        if tag in _SKIP_TAGS:
+            self.skip = max(0, self.skip - 1)
+            return
+        if tag in _LINE_END_TAGS:
+            self.text.append("\n")
+        elif tag in ("td", "th"):
+            self.text.append("\t")
+        if not self.open:
+            return
+        if tag == "table":
+            self._close_table()
+        elif tag == "tr":
+            self._close_row(self.open[-1])
+        elif tag in ("td", "th"):
+            self._close_cell(self.open[-1])
+
+    def handle_data(self, data):
+        if not self.skip:
+            self._data(data)
+
+    def _data(self, data: str) -> None:
+        self.text.append(data)
+        if self.open and self.open[-1]["cell"] is not None:
+            self.open[-1]["cell"].append(data)
+
+    def finish(self) -> None:
+        self.close()
+        while self.open:
+            self._close_table()
+
+
+def _read_html(src: str) -> _HtmlReader:
+    if len(src) > LIMITS.max_text_chars:
+        raise LimitError(f"HTML 内容超过 {LIMITS.max_text_chars // (1024 * 1024)} M 字符上限")
+    r = _HtmlReader()
+    r.feed(src)
+    r.finish()
+    return r
 
 
 def html_to_text(src: str) -> str:
-    src = re.sub(r"(?is)<(script|style|noscript|template)[^>]*>.*?</\1>", "", src)
-    src = re.sub(r"(?i)<br\s*/?>", "\n", src)
-    src = re.sub(r"(?i)</(p|div|li|tr|h[1-6]|table|section|article)>", "\n", src)
-    src = re.sub(r"(?i)</t[dh]>", "\t", src)
-    text = _TAG_RE.sub("", src)
-    text = _html.unescape(text)
+    text = "".join(_read_html(src).text)
     lines = [ln.rstrip() for ln in text.splitlines()]
     out, blank = [], 0
     for ln in lines:
@@ -187,24 +293,7 @@ def html_to_text(src: str) -> str:
 
 
 def html_tables(src: str):
-    from . import values as V
-    src = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", src)
-    tables = []
-    for tm in re.finditer(r"(?is)<table[^>]*>(.*?)</table>", src):
-        rows = []
-        for rm in re.finditer(r"(?is)<tr[^>]*>(.*?)</tr>", tm.group(1)):
-            cells = []
-            for cm in re.finditer(r"(?is)<t([dh])([^>]*)>(.*?)</t[dh]>", rm.group(1)):
-                txt = _html.unescape(_TAG_RE.sub("", re.sub(r"(?i)<br\s*/?>", "\n", cm.group(3)))).strip()
-                span = re.search(r'colspan\s*=\s*"?(\d+)', cm.group(2) or "", re.I)
-                cells.append(V.text(txt) if txt else V.empty())
-                if span:
-                    for _ in range(int(span.group(1)) - 1):
-                        cells.append(V.empty())
-            rows.append(cells)
-        if rows:
-            tables.append(rows)
-    return tables
+    return [t for t in _read_html(src).tables if t]
 
 
 def text_content(data: bytes, fmt: str) -> str:

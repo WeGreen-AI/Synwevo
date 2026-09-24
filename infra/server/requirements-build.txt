@@ -1,0 +1,5 @@
+# Python builds use explicit tooling versions; no isolated floating setuptools.
+pip==26.2.1
+setuptools==84.0.0
+wheel==0.48.0
+packaging==26.3

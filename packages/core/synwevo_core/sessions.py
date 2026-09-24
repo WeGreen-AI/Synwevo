@@ -46,6 +46,8 @@ ABSOLUTE_SECONDS = int(env.get("SESSION_ABSOLUTE_S", str(30 * 24 * 3600)))
 REAUTH_SECONDS = int(env.get("REAUTH_S", str(10 * 60)))
 # Admin sessions get a shorter leash than ordinary ones — §4.2 of docs/security/permissions.md.
 ADMIN_IDLE_SECONDS = int(env.get("ADMIN_IDLE_S", str(60 * 60)))
+# How stale the stored idle deadline may be before a request rewrites it. See load().
+TOUCH_SLACK_SECONDS = 60
 
 
 def _digest(raw: str) -> str:
@@ -106,9 +108,23 @@ class Sessions:
         if ts >= row["idle_expires_at"] or ts >= row["absolute_expires_at"]:
             return None
         if touch:
-            # Extend the idle clock but never the absolute one.
-            self.store.execute("UPDATE sessions SET last_seen_at=?, idle_expires_at=? WHERE id=?",
-                               (ts, min(ts + IDLE_SECONDS, row["absolute_expires_at"]), row["id"]))
+            # Extend the idle clock by *this session's own* window, never the absolute one.
+            #
+            # The window used to be IDLE_SECONDS for everybody, so an admin session created with
+            # a 1-hour idle limit got 12 hours after its first request. The row has no column
+            # for the window, but it does not need one: create() writes
+            # `idle_expires_at = last_seen_at + window` and every touch below preserves that, so
+            # the window is the difference. Once the absolute deadline caps it the difference
+            # shrinks, and it stays capped from then on — which is the correct behaviour anyway.
+            window = max(0.0, row["idle_expires_at"] - row["last_seen_at"])
+            deadline = min(ts + window, row["absolute_expires_at"])
+            # A write per request (every asset, every poll) is a write lock taken for nothing
+            # when the stored deadline is already within a minute of the right one. Skipping
+            # it costs at most a minute of idle time and never extends anything.
+            if deadline - row["idle_expires_at"] > TOUCH_SLACK_SECONDS or deadline < row["idle_expires_at"]:
+                self.store.execute("UPDATE sessions SET last_seen_at=?, idle_expires_at=? WHERE id=?",
+                                   (ts, deadline, row["id"]))
+                row = {**row, "last_seen_at": ts, "idle_expires_at": deadline}
         return row
 
     def revoke(self, session_id: str, reason: str) -> bool:
@@ -204,7 +220,10 @@ def csrf_ok(cookie_value: str | None, header_value: str | None) -> bool:
     """
     if not cookie_value or not header_value:
         return False
-    return secrets.compare_digest(cookie_value, header_value)
+    # Compared as bytes: compare_digest raises TypeError on a str with non-ASCII characters, and
+    # both values arrive from the client, so a header of "é" was an unhandled 500 instead of 403.
+    return secrets.compare_digest(cookie_value.encode("utf-8", "surrogateescape"),
+                                  header_value.encode("utf-8", "surrogateescape"))
 
 
 def cookie_kwargs(secure: bool) -> dict:

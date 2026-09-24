@@ -9,9 +9,21 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile
-    # 绑定到回环地址；对外发布请用你自己的、带鉴权的反向代理。
+    # 绑定到宿主机的回环地址；对外发布请用你自己的、带鉴权的反向代理。
     ports: ["127.0.0.1:8765:8765"]
-    # 具名卷保持不变，所以目录改名不会让 Compose 建出第二套空卷。
+    # 宿主机的 data/ 挂到容器的 /data：数据库、blob 与安全日志都在这里，重建容器不丢。
     volumes: ["../data:/data"]
-    env_file: [../.env.example]
+    # 运营方自己的配置：仓库根目录的 .env（`cp .env.example .env` 后按需修改），可以没有。
+    # 以前这里读的是 .env.example 本身——示例里写着本机开发用的监听地址与相对数据目录，
+    # 它们覆盖了镜像的设置：进程只监听容器内的回环地址（映射出来的端口连不上），数据库建在
+    # /app/data（非 root 用户无权创建，容器反复重启；有权限时又落在卷外，重建即丢）。
+    env_file:
+      - path: ../.env
+        required: false
+    # 描述**容器自身**的两项固定在这里。`environment` 的优先级高于 `env_file`，所以 .env 里无论
+    # 写了什么监听地址或数据目录，容器都监听所有接口（能被端口映射到达），数据都写进卷里。
+    # 暴露范围由上面的 ports 决定，不由容器内的监听地址决定。
+    environment:
+      SYNWEVO_HOST: 0.0.0.0
+      SYNWEVO_DATA_DIR: /data
     restart: unless-stopped

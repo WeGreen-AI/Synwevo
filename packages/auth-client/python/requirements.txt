@@ -1,5 +1,5 @@
 # 版本固定在这里；各模块的 pyproject.toml 只声明抽象依赖（名字），装什么版本以本文件为准。
 # 依赖方适配：授权码换令牌、JWT 校验。
+# httpx 与 authlib 的版本固定在共享基础库（packages/core/requirements.txt）：它自己也导入它们，
+# 两处各写一个版本迟早会写成两个版本。
 -r ../../core/requirements.txt
-httpx==0.28.1
-authlib==1.6.5            # BSD-3-Clause – OAuth 2.0 / OIDC authorization server (protocol impl; identity stays ours)

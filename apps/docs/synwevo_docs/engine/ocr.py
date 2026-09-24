@@ -35,19 +35,34 @@ def tessdata_dir() -> str | None:
     return None
 
 
+_LANGS: dict[tuple, list[str]] = {}
+
+
+def _child_env() -> dict:
+    # One Tesseract thread per process: parallel OCR requests each spawning a full set of
+    # OpenMP threads oversubscribe the CPU the job runner and the API share.
+    return {**os.environ, "OMP_THREAD_LIMIT": "1"}
+
+
 def available_langs() -> list[str]:
     exe = tesseract_path()
     if not exe:
         return []
-    cmd = [exe, "--list-langs"]
     td = tessdata_dir()
+    key = (exe, td)
+    if key in _LANGS:                   # asked on every OCR call: one extra process each time before
+        return _LANGS[key]
+    cmd = [exe, "--list-langs"]
     if td:
         cmd += ["--tessdata-dir", td]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        return [l.strip() for l in out.stdout.splitlines()[1:] if l.strip()]
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=_child_env())
+        langs = [l.strip() for l in out.stdout.splitlines()[1:] if l.strip()]
     except Exception:
         return []
+    if langs:
+        _LANGS[key] = langs
+    return langs
 
 
 class OcrError(RuntimeError):
@@ -66,6 +81,8 @@ def ocr_png(png: bytes, langs: str = "chi_sim+eng", psm: int = 3) -> dict:
     from PIL import Image
     im = Image.open(io.BytesIO(png))
     w, h = im.size
+    if w * h > LIMITS.max_image_pixels:
+        raise OcrError(f"图片 {w}×{h} 像素超过 OCR 上限（{LIMITS.max_image_pixels // 1_000_000} MP）")
     with tempfile.TemporaryDirectory(prefix="dwocr-") as tmp:
         src = Path(tmp) / "page.png"
         src.write_bytes(png)
@@ -77,7 +94,7 @@ def ocr_png(png: bytes, langs: str = "chi_sim+eng", psm: int = 3) -> dict:
         # directory, which is not the one used when our bundled models are selected
         cmd += [str(src), "stdout", "-l", "+".join(use), "--psm", str(psm), "-c", "tessedit_create_tsv=1"]
         try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=LIMITS.ocr_timeout_s)
+            proc = subprocess.run(cmd, capture_output=True, timeout=LIMITS.ocr_timeout_s, env=_child_env())
         except subprocess.TimeoutExpired as e:
             raise OcrError(f"OCR 超时（{LIMITS.ocr_timeout_s} 秒）") from e
         err = proc.stderr.decode("utf-8", "ignore")

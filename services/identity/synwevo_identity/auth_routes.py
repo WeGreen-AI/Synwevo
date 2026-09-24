@@ -42,17 +42,97 @@ def cookies_secure() -> bool:
     return True
 
 
+def _trusted_hops() -> int:
+    raw = (env.get("TRUST_PROXY") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return 1
+    return int(raw) if raw.isdigit() else 0
+
+
 def client_ip(request: Request) -> str:
     """The address used for rate limiting and audit.
 
     X-Forwarded-For is honoured only when a trusted proxy is configured, because otherwise any
-    caller could rotate a header to escape their own rate-limit bucket.
+    caller could rotate a header to escape their own rate-limit bucket. And then only the entry
+    our own proxy wrote: each proxy *appends* the address it received the request from, so the
+    left end is whatever the client chose to send. Taking the leftmost entry — as this used to —
+    let anyone rotate that value per request and never fill an address bucket. `TRUST_PROXY` is
+    the number of trusted proxies in front of the service (`1`/`true` for one); the address is
+    the entry that many places from the right.
     """
-    if (env.get("TRUST_PROXY") or "").strip().lower() in ("1", "true", "yes", "on"):
-        fwd = request.headers.get("x-forwarded-for") or ""
-        if fwd:
-            return fwd.split(",")[0].strip()[:64]
+    hops = _trusted_hops()
+    if hops:
+        parts = [p.strip() for p in (request.headers.get("x-forwarded-for") or "").split(",") if p.strip()]
+        if parts:
+            return (parts[-hops] if len(parts) >= hops else parts[0])[:64]
     return (request.client.host if request.client else "") or "unknown"
+
+
+# Second-factor guesses are limited per account across tickets, not only per ticket: every
+# correct password buys a fresh ticket, so a per-ticket limit alone let someone who knew the
+# password keep guessing codes indefinitely.
+MFA_BUCKET = "mfa:{uid}"
+# One ticket's worth of mistakes is free; beyond that each further wrong code across tickets
+# waits longer, up to 15 minutes. At the cap that is under a hundred guesses a day against a
+# million codes, where the per-ticket limit alone allowed as many as sign-ins could be made.
+MFA_BACKOFF = (0, 0, 0, 0, 0, 2, 5, 15, 30, 60, 120, 300, 600, 900)
+# A session whose holder keeps failing re-authentication is ended: the cookie is the only thing
+# they have, and continuing to accept guesses through it is an online password oracle.
+REAUTH_MAX_FAILURES = 5
+# Anonymous endpoints that do work or send mail per call: counted per source address.
+FORGOT_PER_ADDRESS = (10, 900)            # 10 requests per 15 minutes per source address
+FORGOT_PER_ACCOUNT = (3, 3600)            # at most 3 reset mails an hour to one account...
+FORGOT_MIN_GAP_S = 60                     # ...and not two within a minute
+PASSKEY_BEGIN_PER_ADDRESS = (30, 60)      # 30 challenges per minute per source address
+BOOTSTRAP_PER_ADDRESS = (10, 900)
+
+
+def _too_many(retry_after: float) -> ServiceError:
+    return ServiceError(429, "too_many_attempts", "尝试过于频繁，请稍后再试",
+                        {"retry_after": max(1, int(retry_after or 60))})
+
+
+def notify_security_change(request: Request, user: dict | None, what: str) -> None:
+    """Tell the account holder a factor or credential changed. Best effort, never blocking.
+
+    The notice is what lets someone notice an attacker's change from their inbox; failing to
+    queue it must not undo the change they (or the attacker) just made, so errors are logged.
+    """
+    mailer = getattr(request.app.state, "mailer", None)
+    if not mailer or not user:
+        return
+    try:
+        subject, text = mail_notice(what=what, when_text="刚刚")
+        mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
+    except Exception as e:  # noqa: BLE001 - mail may be deliberately unconfigured
+        print(f"[synwevo] security notice not queued ({what}): {type(e).__name__}", flush=True)
+
+
+def check_reauth_password(ident: Identity, sessions: Sessions, request: Request, s: dict,
+                          password: str, audit, scope: str) -> None:
+    """Re-verify the password for a sensitive action, under the login limits. Raises on failure.
+
+    Shared by both re-authentication routes so neither can drift back to an unthrottled check.
+    """
+    res = ident.check_password(s["user_id"], password or "", ip=client_ip(request))
+    if res["ok"]:
+        ident.backoff_clear(f"reauth:{s['id']}")
+        return
+    audit(request, "auth.reauth", actor_id=s["user_id"], result="denied",
+          meta={"scope": scope, "reason": res["reason"]})
+    if res["reason"] in ("backoff", "address_blocked"):
+        raise _too_many(res.get("retry_after"))
+    bucket = f"reauth:{s['id']}"
+    ident.backoff_fail(bucket)
+    if ident.attempt_count(bucket) >= REAUTH_MAX_FAILURES:
+        sessions.revoke(s["id"], "reauth_failures")
+        from .provider_routes import end_central_session
+        end_central_session(ident.store, s["id"], "reauth_failures")
+        ident.backoff_clear(bucket)
+        audit(request, "auth.session.ended", actor_id=s["user_id"], object_kind="session",
+              object_id=s["id"], result="ok", meta={"reason": "reauth_failures"})
+        raise ServiceError(401, "session_ended", "口令错误次数过多，这个登录已结束，请重新登录")
+    raise ServiceError(401, "bad_credentials", "口令不正确")
 
 
 def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=None) -> APIRouter:
@@ -90,15 +170,25 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
             raise ServiceError(400, "missing_fields", "请填写引导令牌、邮箱与口令")
         if not ident.bootstrap_needed():
             raise ServiceError(409, "already_bootstrapped", "本服务已经有平台管理员了")
+        # The token is checked before anything is created. Creating the account first (so a
+        # failed creation would not burn the token) let any anonymous caller trigger an Argon2
+        # hash and leave an orphaned workspace behind on every attempt with a made-up token.
+        limit, window = BOOTSTRAP_PER_ADDRESS
+        allowed, wait = ident.window_allows(f"bootstrap:{client_ip(request)}", limit=limit, window_s=window)
+        if not allowed:
+            raise _too_many(wait)
+        if not ident.peek_bootstrap_token(token):
+            audit(request, "auth.bootstrap", result="denied", meta={"reason": "bad_token"})
+            raise ServiceError(403, "bad_token", "引导令牌无效或已过期，请重新生成")
         try:
             user = ident.create_user(email, password, display_name=body.get("display_name"),
                                      status="active", platform_role="admin")
         except PasswordError as e:
             raise ServiceError(400, "weak_password", str(e), {"field": "password"}) from None
-        # Consumed after the account exists so a failed creation does not burn the token.
+        # Consumed after the account exists so a failed creation does not burn the token; a
+        # concurrent bootstrap that spent it first leaves nothing of this attempt behind.
         if not ident.consume_bootstrap_token(token, user_id=user["id"]):
-            ident.store.execute("DELETE FROM users WHERE id=?", (user["id"],))
-            ident.store.execute("DELETE FROM memberships WHERE user_id=?", (user["id"],))
+            ident.purge_new_account(user["id"])
             raise ServiceError(403, "bad_token", "引导令牌无效或已过期，请重新生成")
         audit(request, "auth.bootstrap", actor_id=user["id"], object_kind="user",
               object_id=user["id"], result="ok")
@@ -154,6 +244,19 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
                   meta={"reason": "user_unavailable"})
             raise ServiceError(401, *_LOGIN_FAILED)
         amr = "passkey_uv" if out["user_verified"] else "passkey"
+        # A passkey used *without* user verification proves possession of a device and nothing
+        # else — one factor. An account whose owner turned on a second factor, and a platform
+        # administrator, must not be entered on one factor, so for them the authenticator has to
+        # verify the person in this ceremony (a PIN or biometric: possession plus knowledge or
+        # inherence). Everyone else may still sign in with possession alone, as before; `amr`
+        # records which it was.
+        if not out["user_verified"] and (user["platform_role"] == "admin"
+                                         or (mfa and mfa.enabled_for(user["id"]))):
+            audit(request, "auth.login.passkey", actor_id=user["id"], object_kind="passkey",
+                  object_id=out["passkey_id"], result="denied", meta={"reason": "uv_required"})
+            raise ServiceError(401, "uv_required",
+                               "这个账户要求两步验证：使用安全密钥登录时需要验证 PIN、指纹或面容；"
+                               "也可以用口令加动态验证码登录。")
         audit(request, "auth.login.passkey", actor_id=user["id"], object_kind="passkey",
               object_id=out["passkey_id"], result="ok",
               meta={"amr": amr, "sign_count_warning": out["sign_count_warning"]})
@@ -177,6 +280,14 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         user = ident.get_user(t["user_id"])
         if not user or user["status"] != "active":
             raise ServiceError(401, "ticket_invalid", "验证已超时或失败次数过多，请重新登录")
+        bucket = MFA_BUCKET.format(uid=user["id"])
+        wait = ident.backoff_wait(bucket, MFA_BACKOFF)
+        if wait > 0:
+            # Checked before the attempt is spent, so waiting out the backoff costs nothing.
+            raise _too_many(wait)
+        used_attempts = tickets.claim_attempt(raw)
+        if used_attempts is None:
+            raise ServiceError(401, "ticket_invalid", "验证已超时或失败次数过多，请重新登录")
 
         used_recovery = False
         if code and mfa.verify_totp(user["id"], code):
@@ -184,10 +295,13 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         elif recovery and mfa.use_recovery_code(user["id"], recovery):
             amr, used_recovery = "password+recovery", True
         else:
-            left = TICKET_MAX_ATTEMPTS - tickets.count_failure(raw)
+            ident.backoff_fail(bucket)
+            left = TICKET_MAX_ATTEMPTS - used_attempts
             audit(request, "auth.login.mfa", actor_id=user["id"], object_kind="user",
-                  object_id=user["id"], result="denied", meta={"remaining": max(0, left)})
+                  object_id=user["id"], result="denied",
+                  meta={"remaining": max(0, left), "account_failures": ident.attempt_count(bucket)})
             raise ServiceError(401, "bad_code", "验证码不正确" + (f"，还可尝试 {left} 次" if left > 0 else "，请重新登录"))
+        ident.backoff_clear(bucket)
 
         if not tickets.redeem(raw):
             raise ServiceError(401, "ticket_invalid", "验证已超时，请重新登录")
@@ -209,18 +323,12 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         The scope comes from a closed set. A client-chosen string would let a page ask for
         `scope=""`, which satisfies every check — the one value that must not be requestable.
         """
-        from synwevo_core.passwords import verify as verify_password
         from synwevo_core.sessions import REAUTH_SECONDS, REAUTH_SCOPES
         s = _require_session(request)
         scope = (body.get("scope") or "").strip()
         if scope not in REAUTH_SCOPES:
             raise ServiceError(400, "bad_scope", f"未知的重认证用途 {scope!r}")
-        user = ident.get_user(s["user_id"])
-        row = ident.store.one("SELECT phc FROM user_passwords WHERE user_id=?", (s["user_id"],))
-        if not user or not row or not verify_password(row["phc"], body.get("password") or ""):
-            audit(request, "auth.reauth", actor_id=s["user_id"], result="denied",
-                  meta={"scope": scope})
-            raise ServiceError(401, "bad_credentials", "口令不正确")
+        check_reauth_password(ident, sessions, request, s, body.get("password") or "", audit, scope)
         sessions.mark_reauth(s["id"], scope)
         audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": scope})
         return {"ok": True, "scope": scope, "valid_for_s": REAUTH_SECONDS}
@@ -238,18 +346,43 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         owned = ident.store.one("SELECT user_id FROM sessions WHERE id=?", (sid,))
         if not owned or owned["user_id"] != s["user_id"]:
             raise ServiceError(404, "no_session", "找不到该会话")
+        # Ending a device's sign-in ends what it authorised: the platform tokens minted from it
+        # and the application sessions it opened. Revoking only the row left stolen delegated
+        # refresh tokens working for up to two weeks after "sign out this device".
+        from .provider_routes import end_central_session
+        out = end_central_session(ident.store, sid, "user_revoked")
         sessions.revoke(sid, "user_revoked")
+        # Broader than the action on purpose: the journal has no kind that re-revokes one session
+        # row, and a restore that brought this device's sign-in back would undo exactly what the
+        # person asked for. Replaying ends every session and token of the account instead —
+        # fail-safe, at the cost of signing them in again after a restore.
+        from .withdrawals import record as journal
+        journaled = journal(ident.store, "sessions_revoked", user_id=s["user_id"])
         audit(request, "auth.session.revoke", actor_id=s["user_id"], object_kind="session",
-              object_id=sid, result="ok")
-        return {"ok": True, "was_current": sid == s["id"]}
+              object_id=sid, result="ok", meta={**out, "journaled": journaled})
+        return {"ok": True, "was_current": sid == s["id"], "tokens_revoked": out["tokens_revoked"]}
 
     @r.post("/sessions/revoke-others")
     def revoke_others(request: Request):
         s = _require_session(request)
+        from .provider_routes import end_central_session
+        others = ident.store.all("SELECT id FROM sessions WHERE user_id=? AND id<>? AND revoked_at IS NULL",
+                                 (s["user_id"], s["id"]))
+        tokens = 0
+        for row in others:
+            tokens += end_central_session(ident.store, row["id"], "user_revoked_others")["tokens_revoked"]
         n = sessions.revoke_all_for_user(s["user_id"], "user_revoked_others", except_session=s["id"])
+        # Tokens not tied to any central session this account still has open — minted from a
+        # session since swept, say — cannot be vouched for by the one being kept, so they go too.
+        tokens += ident.store.execute(
+            "UPDATE oauth_tokens SET revoked_at=?, revoked_reason='user_revoked_others' "
+            "WHERE user_id=? AND revoked_at IS NULL AND (central_session_id IS NULL OR central_session_id<>?)",
+            (now_ts(), s["user_id"], s["id"]))
+        from .withdrawals import record as journal
+        journaled = journal(ident.store, "sessions_revoked", user_id=s["user_id"])
         audit(request, "auth.session.revoke_others", actor_id=s["user_id"], result="ok",
-              meta={"count": n})
-        return {"ok": True, "revoked": n}
+              meta={"count": n, "tokens_revoked": tokens, "journaled": journaled})
+        return {"ok": True, "revoked": n, "tokens_revoked": tokens}
 
 
     def _require_session(request: Request) -> dict:
@@ -268,10 +401,13 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
     on the same `/api/auth` prefix and the anonymous set in app.py lists exactly which of these
     may be reached without a session.
     """
-    from .invites import INVITE_TTL_S, ROLE_LABEL
-    from . import mail as mail_mod
+    from .members import build_router as build_members_router, error_response
 
     r = APIRouter(prefix="/api/auth", tags=["auth"])
+    # Member, role, entitlement, ownership and invitation-lifecycle routes live in members.py and
+    # share this router's prefix; including them here keeps the account service's composition
+    # (app.py) unchanged.
+    governance = build_members_router(ident, sessions, invites, mailer, audit)
 
     def _session(request: Request) -> dict:
         s = getattr(request.state, "session", None)
@@ -282,44 +418,48 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
     # ------------------------------------------------------------------ issuing
     @r.post("/workspaces/{wid}/invitations")
     def invite(request: Request, wid: str, body: dict = Body(...)):
+        """`{"email", "role", "can_export"?, "expires_in_days"? (1–30, default 7)}`.
+
+        429 `invite_rate_limited` with `Retry-After` once the workspace has sent 50 in 24 hours.
+        """
         s = _session(request)
         email, role = (body.get("email") or "").strip(), (body.get("role") or "viewer").strip()
-        row, raw = invites.create(workspace_id=wid, email=email, role=role, actor_id=s["user_id"],
-                                  can_export=body.get("can_export"))
-        ws = ident.get_workspace(wid)
-        me = ident.get_user(s["user_id"])
-        subject, text = mail_mod.invitation_mail(
-            workspace=ws["name"], inviter=me.get("display_name") or me["email"],
-            role_label=ROLE_LABEL.get(role, role), token=raw, expires_h=INVITE_TTL_S // 3600)
         try:
-            mailer.enqueue(email, subject, text, kind="invite", ref_id=row["id"])
-        except ServiceError:
-            # Mail is not configured or not usable. The invitation row would be unreachable, so
-            # it is withdrawn rather than left as a link nobody will ever receive.
-            invites.revoke(row["id"], s["user_id"])
+            return governance.issue_invitation(request, s, wid, email, role, body.get("can_export"),
+                                               governance.invite_ttl(body))
+        except ServiceError as e:
+            if e.status == 429:
+                return error_response(request, e)
             raise
-        audit(request, "invite.create", actor_id=s["user_id"], workspace_id=wid,
-              object_kind="invitation", object_id=row["id"], result="ok", meta={"role": role})
-        return {"id": row["id"], "email": row["email_key"], "role": role,
-                "expires_at": row["expires_at"], "mail": "queued"}
 
     @r.get("/workspaces/{wid}/invitations")
-    def list_invites(request: Request, wid: str):
+    def list_invites(request: Request, wid: str, state: str = ""):
+        """Every invitation with its real state and mail state; `state=` filters. `groups` counts
+        them the way the page shows them (a mail that failed is its own group)."""
         s = _session(request)
-        items = invites.list_for_workspace(wid, s["user_id"])
+        items = invites.list_for_workspace(wid, s["user_id"], state=state.strip() or None)
+        groups = {"pending": 0, "expired": 0, "revoked": 0, "accepted": 0, "mail_failed": 0}
         for it in items:
             st = mailer.status_for(it["id"])
             it["mail"] = (st or {}).get("status") or "unknown"
             it["mail_error"] = (st or {}).get("last_error")
-        return {"items": items}
+            it["can_export"] = bool(it["can_export"])
+            groups[it["state"]] += 1
+            if it["state"] == "pending" and it["mail"] == "failed":
+                groups["mail_failed"] += 1
+        return {"items": items, "groups": groups}
 
     @r.delete("/invitations/{iid}")
     def revoke_invite(request: Request, iid: str):
         s = _session(request)
-        invites.revoke(iid, s["user_id"])
+        journaled = None
+        if invites.revoke(iid, s["user_id"]):
+            # A withdrawn link stays withdrawn when an older database is restored.
+            from .withdrawals import record as journal
+            journaled = journal(ident.store, "invitation_revoked", invitation_id=iid)
         audit(request, "invite.revoke", actor_id=s["user_id"], object_kind="invitation",
-              object_id=iid, result="ok")
-        return {"ok": True}
+              object_id=iid, result="ok", meta={"journaled": journaled})
+        return {"ok": True, "journaled": journaled}
 
     # ------------------------------------------------------------------ accepting
     @r.get("/invitations/preview")
@@ -348,6 +488,7 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
             return {"user": _public_user(ident, out["user"]), "workspace_id": out["workspace_id"]}
         return _issue_session(ident, sessions, response, out["user"], amr="password", request=request)
 
+    r.include_router(governance)
     return r
 
 
@@ -401,12 +542,29 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
         same = {"ok": True, "message": "如果这个邮箱有账户，我们已经发送了重置链接。"}
         if not email:
             return same
+        # Throttled without changing the answer: the response shape is the security property
+        # here, so a throttled request still gets `same` — it just does not send anything or
+        # invalidate anything. Unthrottled, anyone who knew an address could flood it with mail
+        # and keep killing the owner's real reset link, since each request supersedes the last.
+        limit, window = FORGOT_PER_ADDRESS
+        allowed, _ = ident.window_allows(f"forgot:{client_ip(request)}", limit=limit, window_s=window)
+        if not allowed:
+            audit(request, "auth.reset.request", result="denied", meta={"reason": "address_throttled"})
+            return same
         user = ident.by_email(email)
         # Recorded either way, so the audit log shows attempts against addresses with no
         # account — which is what a scan of this endpoint looks like.
         if not user or user["status"] not in ("active", "pending"):
             audit(request, "auth.reset.request", result="denied",
                   meta={"reason": "no_such_account"})
+            return same
+        n_max, per = FORGOT_PER_ACCOUNT
+        recent = ident.store.one(
+            "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM email_tokens "
+            "WHERE user_id=? AND kind='reset' AND created_at>?", (user["id"], now_ts() - per))
+        if recent["n"] >= n_max or (recent["last"] and now_ts() - recent["last"] < FORGOT_MIN_GAP_S):
+            audit(request, "auth.reset.request", actor_id=user["id"], object_kind="user",
+                  object_id=user["id"], result="denied", meta={"reason": "account_throttled"})
             return same
         token = invites.issue_email_token(user["id"], "reset", ttl_s=RESET_TTL_H * 3600)
         subject, text = mail_reset(token=token, expires_h=RESET_TTL_H)
@@ -459,8 +617,11 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
         n = sessions.revoke_all_for_user(user["id"], "password_reset")
         from synwevo_core.oidc import Grants
         tokens = Grants(ident.store).revoke_for_user(user["id"], "password_reset")
+        from .withdrawals import record as journal
+        journaled = journal(ident.store, "password_changed", user_id=user["id"])
         audit(request, "auth.reset.complete", actor_id=user["id"], object_kind="user",
-              object_id=user["id"], result="ok", meta={"sessions": n, "tokens": tokens})
+              object_id=user["id"], result="ok",
+              meta={"sessions": n, "tokens": tokens, "journaled": journaled})
         try:
             subject, text = mail_notice(what="口令已重置", when_text="刚刚")
             mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
@@ -551,12 +712,20 @@ def build_passkey_router(ident: Identity, sessions: Sessions, passkeys, audit) -
                                            name=body.get("name"))
         audit(request, "auth.passkey.register", actor_id=user["id"], object_kind="passkey",
               object_id=out["id"], result="ok")
+        notify_security_change(request, user, "新增了一个安全密钥（Passkey）")
         return out
 
     @r.post("/authenticate/begin")
     def auth_begin(request: Request, body: dict = Body(default={})):
         """Anonymous by necessity. No credential list is returned for an address, because that
-        would answer "does this address have an account" — which the rest of sign-in avoids."""
+        would answer "does this address have an account" — which the rest of sign-in avoids.
+
+        Limited per source address: each call writes a challenge row, and an unlimited anonymous
+        writer is a way to grow the one database everything shares."""
+        limit, window = PASSKEY_BEGIN_PER_ADDRESS
+        allowed, wait = ident.window_allows(f"pkbegin:{client_ip(request)}", limit=limit, window_s=window)
+        if not allowed:
+            raise _too_many(wait)
         return passkeys.begin_authentication(None)
 
     @r.patch("/{pid}")
@@ -581,8 +750,12 @@ def build_passkey_router(ident: Identity, sessions: Sessions, passkeys, audit) -
             raise ServiceError(409, "last_factor",
                                "这是你唯一的登录方式，删除后将无法登录。请先设置口令或再登记一个安全密钥。")
         passkeys.remove(s["user_id"], pid)
+        # A key removed because it was lost must stay removed after a restore from backup.
+        from .withdrawals import record as journal
+        journaled = journal(ident.store, "passkey_removed", credential_id=pid)
         audit(request, "auth.passkey.remove", actor_id=s["user_id"], object_kind="passkey",
-              object_id=pid, result="ok")
+              object_id=pid, result="ok", meta={"journaled": journaled})
+        notify_security_change(request, ident.get_user(s["user_id"]), "删除了一个安全密钥（Passkey）")
         return {"ok": True}
 
     return r
@@ -595,7 +768,6 @@ def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRout
     this purpose. Proving yourself to add a factor must not also unlock removing one, and a
     front-end flag would unlock nothing at all.
     """
-    from synwevo_core.passwords import verify as verify_password
     from synwevo_core.sessions import REAUTH_SECONDS
 
     r = APIRouter(prefix="/api/auth/mfa", tags=["auth"])
@@ -607,9 +779,9 @@ def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRout
             raise ServiceError(401, "unauthorized", "请先登录")
         return s
 
-    def _fresh(request: Request) -> dict:
+    def _fresh(request: Request, *, strict: bool = False) -> dict:
         s = _session(request)
-        if not Sessions.reauth_fresh(s, SCOPE):
+        if not Sessions.reauth_fresh(s, SCOPE, strict=strict):
             raise ServiceError(403, "reauth_required",
                                "这是敏感操作，请重新输入口令确认", {"scope": SCOPE})
         return s
@@ -618,11 +790,7 @@ def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRout
     def reauth(request: Request, body: dict = Body(...)):
         """Re-prove the password, for this purpose only and for a few minutes."""
         s = _session(request)
-        user = ident.get_user(s["user_id"])
-        row = ident.store.one("SELECT phc FROM user_passwords WHERE user_id=?", (s["user_id"],))
-        if not user or not row or not verify_password(row["phc"], body.get("password") or ""):
-            audit(request, "auth.reauth", actor_id=s["user_id"], result="denied")
-            raise ServiceError(401, "bad_credentials", "口令不正确")
+        check_reauth_password(ident, sessions, request, s, body.get("password") or "", audit, SCOPE)
         sessions.mark_reauth(s["id"], SCOPE)
         audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": SCOPE})
         return {"ok": True, "valid_for_s": REAUTH_SECONDS}
@@ -650,6 +818,7 @@ def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRout
         # Recovery codes are issued with the first factor, not left for later: the moment MFA
         # starts mattering is the moment losing the phone starts mattering.
         codes = mfa.generate_recovery_codes(s["user_id"])
+        notify_security_change(request, ident.get_user(s["user_id"]), "启用了动态验证码（两步验证）")
         return {"ok": True, "recovery_codes": codes}
 
     @r.post("/totp/disable")
@@ -662,17 +831,23 @@ def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRout
             raise ServiceError(400, "bad_code", "请输入当前的动态验证码以确认关闭", {"field": "code"})
         mfa.disable_totp(s["user_id"])
         audit(request, "mfa.totp.disable", actor_id=s["user_id"], result="ok")
+        notify_security_change(request, ident.get_user(s["user_id"]), "关闭了动态验证码（两步验证）")
         return {"ok": True, **mfa.factors(s["user_id"])}
 
     # ------------------------------------------------------------------ recovery codes
     @r.post("/recovery/regenerate")
     def recovery_regen(request: Request):
-        s = _fresh(request)
+        # strict: regenerating replaces every code the person wrote down, so "signed in a
+        # moment ago" is not enough — the password has to be re-entered for this purpose.
+        # Otherwise anyone at an unlocked, freshly signed-in browser could invalidate the
+        # owner's way back in and walk away with a working set.
+        s = _fresh(request, strict=True)
         if not mfa.enabled_for(s["user_id"]):
             raise ServiceError(409, "no_mfa", "还没有启用任何第二因素，恢复码暂时没有用处")
         codes = mfa.generate_recovery_codes(s["user_id"])
         audit(request, "mfa.recovery.regenerate", actor_id=s["user_id"], result="ok",
               meta={"count": len(codes)})
+        notify_security_change(request, ident.get_user(s["user_id"]), "重新生成了恢复码，旧的恢复码已全部失效")
         return {"recovery_codes": codes}
 
     return r

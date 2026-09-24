@@ -19,9 +19,13 @@
   --line-strong: #cfd4dc;
   --text: #1c2330;
   --text-2: #4a5568;
-  --muted: #7a8394;
+  /* 5.6:1 on --panel and 5.2:1 on --bg: secondary text is still text (WCAG 1.4.3). */
+  --muted: #5f6878;
   /* accents & states */
   --accent: #2563eb;
+  /* text drawn on an --accent / --ok fill (primary buttons, step numbers, the logo) */
+  --on-accent: #ffffff;
+  --on-ok: #ffffff;
   --accent-strong: #1d4ed8;
   --accent-weak: #e8efff;
   --accent-line: #a9c1f7;
@@ -64,8 +68,11 @@
   --line-strong: #3a4656;
   --text: #e7ecf3;
   --text-2: #b6c0ce;
-  --muted: #8b95a5;
+  --muted: #9aa4b3;
   --accent: #5b91f5;
+  /* white on #5b91f5 is 3.1:1 and on the hover shade 2.4:1; dark text is 6.0:1 and 7.7:1 */
+  --on-accent: #0f141b;
+  --on-ok: #0f141b;
   --accent-strong: #7aa7f8;
   --accent-weak: #1b2942;
   --accent-line: #33507f;
@@ -109,6 +116,8 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .gap4 { gap: 4px; } .gap12 { gap: 12px; } .gap16 { gap: 16px; }
 .mt8 { margin-top: 8px; } .mt12 { margin-top: 12px; } .mt16 { margin-top: 16px; } .mb8 { margin-bottom: 8px; }
 .hidden { display: none !important; }
+/* Present for screen readers (live announcements), invisible on screen. */
+.sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* ------------------------------------------------------------ buttons */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 6px;
@@ -116,14 +125,15 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--line-strong); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn.primary:hover:not(:disabled) { background: var(--accent-strong); }
 .btn.danger { color: var(--err); border-color: var(--err-line); }
 .btn.danger:hover:not(:disabled) { background: var(--err-weak); }
 .btn.ghost { border-color: transparent; background: transparent; }
 .btn.ghost:hover:not(:disabled) { background: var(--surface-hover); }
 .btn.sm { height: 24px; padding: 0 8px; font-size: 12px; }
-.btn.xs { height: 20px; padding: 0 6px; font-size: 11px; border-radius: 4px; }
+/* 24px is the WCAG 2.5.8 minimum target; the label stays small, the hit area does not. */
+.btn.xs { height: 24px; min-width: 24px; padding: 0 6px; font-size: 11px; border-radius: 4px; }
 .btn.icon { width: 30px; padding: 0; }
 .btn.sm.icon { width: 24px; }
 .btn.active { background: var(--accent-weak); border-color: var(--accent-line); color: var(--accent-strong); }
@@ -131,6 +141,12 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .seg button { border: 0; background: var(--surface); height: 28px; padding: 0 10px; cursor: pointer; border-right: 1px solid var(--line); }
 .seg button:last-child { border-right: 0; }
 .seg button.on { background: var(--accent-weak); color: var(--accent-strong); font-weight: 600; }
+/* One visible focus ring for everything focusable that has no ring of its own (WCAG 2.4.7).
+   :where() keeps its specificity at zero so any component rule below can still restyle it. */
+:where(a[href], button, [role="button"], [role="option"], [role="tab"], [role="separator"][tabindex], [tabindex="0"], summary, input[type="checkbox"], input[type="radio"]):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.seg button:focus-visible, .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ------------------------------------------------------------ inputs */
 .input, select.input, textarea.input { height: 30px; border: 1px solid var(--line-strong); border-radius: 6px; padding: 0 8px; background: var(--surface); min-width: 0; }
@@ -170,15 +186,15 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .app { display: flex; flex-direction: column; height: 100%; }
 .topbar { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 12px; background: var(--surface); border-bottom: 1px solid var(--line); flex: none; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--text); }
-.brand .logo { width: 24px; height: 24px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: #fff; font-size: 13px; }
+.brand .logo { width: 24px; height: 24px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: var(--on-accent); font-size: 13px; }
 .topbar .sep { width: 1px; height: 22px; background: var(--line); }
 .stepbar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--line); flex: none; overflow-x: auto; }
 .step { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 14px; border: 1px solid transparent; background: transparent; cursor: pointer; color: var(--text-2); white-space: nowrap; }
 .step:hover { background: var(--surface-hover); }
 .step .n { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--surface-active); color: var(--text-2); }
-.step.done .n { background: var(--ok); color: #fff; }
+.step.done .n { background: var(--ok); color: var(--on-ok); }
 .step.cur { border-color: var(--accent-line); background: var(--accent-weak); color: var(--accent-strong); }
-.step.cur .n { background: var(--accent); color: #fff; }
+.step.cur .n { background: var(--accent); color: var(--on-accent); }
 .step-arrow { color: var(--muted); }
 
 .work { flex: 1; display: flex; min-height: 0; position: relative; }
@@ -190,7 +206,8 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .side.collapsed { width: 34px; }
 .side.right { border-right: 0; border-left: 1px solid var(--line); width: 330px; position: relative; }
 .resizer { width: 6px; flex: none; cursor: col-resize; background: var(--line); position: relative; z-index: 3; }
-.resizer:hover, .resizer.drag { background: var(--accent-line); }
+.resizer:hover, .resizer.drag, .resizer:focus-visible { background: var(--accent-line); }
+.resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 .gutter { width: 30px; flex: none; background: var(--panel-2); border-left: 1px solid var(--line); border-right: 1px solid var(--line); position: relative; }
 .toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--surface); flex: none; flex-wrap: wrap; }
 .selbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--panel-2); flex: none; min-height: 40px; }
@@ -201,10 +218,16 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .fileitem:hover { background: var(--surface-hover); }
 .fileitem.on { background: var(--surface); border-color: var(--accent-line); box-shadow: var(--shadow); }
 .fileitem .fname { font-weight: 500; word-break: break-all; line-height: 1.35; }
+button.fname { display: block; width: 100%; padding: 0; border: 0; background: none; font: inherit; font-weight: 500; color: inherit; text-align: left; cursor: pointer; }
 .fileitem .fmeta { font-size: 11px; color: var(--muted); }
 .fileitem .handle { cursor: grab; color: var(--muted); padding-top: 1px; }
 .fileitem.dragover { border-top: 2px solid var(--accent); }
+.fileitem:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fileitem .moves { display: inline-flex; gap: 4px; }
 .dropzone { border: 1.5px dashed var(--line-strong); border-radius: 8px; padding: 14px 8px; text-align: center; color: var(--muted); cursor: pointer; margin: 6px; background: var(--surface); }
+/* The upload targets are real buttons now (keyboard and screen reader), styled as the drop area. */
+button.dropzone { display: block; width: calc(100% - 12px); font: inherit; }
+button.dropzone:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dropzone.hot { border-color: var(--accent); background: var(--accent-weak); color: var(--accent-strong); }
 
 /* ------------------------------------------------------------ grid viewer */
@@ -243,12 +266,17 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .doc-tbl.b td { border-color: var(--text-2); }
 .doc-tbl td.cellsel { outline: 2px solid var(--accent); outline-offset: -2px; background: rgba(37,99,235,.06); }
 .doc-tbl tr.rowsel td { background: rgba(37,99,235,.08); }
-.doc-tbl .rowhandle { position: absolute; left: -22px; top: 2px; width: 18px; height: 18px; border-radius: 4px; display: none; align-items: center; justify-content: center; font-size: 11px; cursor: pointer; background: var(--surface); border: 1px solid var(--line-strong); color: var(--text-2); z-index: 3; }
-.doc-tbl tr:hover .rowhandle { display: flex; }
+.doc-tbl .rowhandle { position: absolute; left: -26px; top: 0; width: 24px; height: 24px; padding: 0; border-radius: 4px; display: none; align-items: center; justify-content: center; font: inherit; font-size: 11px; cursor: pointer; background: var(--surface); border: 1px solid var(--line-strong); color: var(--text-2); z-index: 3; }
+/* Shown on hover, and whenever it (or anything in its row) has keyboard focus: a control that
+   only exists under the mouse pointer cannot be reached with Tab. */
+.doc-tbl tr:hover .rowhandle, .doc-tbl tr:focus-within .rowhandle, .doc-tbl .rowhandle:focus-visible { display: flex; }
 .fld { border-radius: 3px; padding: 0 1px; box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer; }
 .fld-empty { display: inline-block; min-width: 10px; height: 1.1em; vertical-align: text-bottom; border: 1.5px dashed; border-radius: 3px; }
 .fldchip { display: inline-block; font-size: 10px; line-height: 14px; padding: 0 4px; border-radius: 3px; color: #fff; margin: 0 2px; vertical-align: 1px; user-select: none; cursor: pointer; font-family: var(--font); font-style: normal; font-weight: 600; text-decoration: none; }
 .mkspan { border-bottom: 2px solid; }
+/* field chips and block tags are buttons (keyboard-operable) that look like the inline chips */
+button.fldchip, button.doc-blk-tag { border: 0; }
+button.fldchip:focus-visible, button.doc-blk-tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .textsel-hint { position: fixed; z-index: 50; }
 
 /* ------------------------------------------------------------ pdf / image viewer */
@@ -262,6 +290,8 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .pdf-box { position: absolute; border: 2px solid; pointer-events: none; }
 .pdf-box .tag { position: absolute; top: -10px; left: -2px; pointer-events: auto; cursor: pointer; }
 .pdf-draw { position: absolute; border: 2px dashed var(--accent); background: rgba(37,99,235,.08); pointer-events: none; }
+/* the typed alternative to drawing a region: stays at the top of the scrolling page column */
+.pdf-numeric { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 8px; background: var(--surface-active); border-bottom: 1px solid var(--line); }
 
 /* ------------------------------------------------------------ slides */
 .slides-scroll { position: absolute; inset: 0; overflow: auto; background: var(--surface-active); padding: 16px; }
@@ -288,7 +318,7 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .mapitem .line1 { display: flex; align-items: center; gap: 6px; }
 .mapitem .srcdesc, .mapitem .tgtdesc { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mapitem .sample { font-size: 12px; color: var(--text); background: var(--surface-hover); padding: 1px 6px; border-radius: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
-.mapitem .acts { display: flex; gap: 2px; }
+.mapitem .acts { display: flex; gap: 4px; }
 .slotitem { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .slotitem:hover { background: var(--panel-2); }
 .slotitem.on { background: var(--accent-weak); }
@@ -305,6 +335,9 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .modal-back { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: flex-start; justify-content: center; z-index: 100; padding: 5vh 16px; overflow: auto; }
 .modal { background: var(--surface); border-radius: 10px; box-shadow: var(--shadow-lg); width: min(720px, 100%); display: flex; flex-direction: column; max-height: 90vh; }
 .modal.wide { width: min(1040px, 100%); }
+/* The dialog itself only takes focus as a fallback (nothing focusable inside yet); the dialog
+   is its own indicator, a ring around the whole box adds nothing. */
+.modal:focus, .cmdk:focus { outline: none; }
 .modal.narrow { width: min(460px, 100%); }
 .modal-h { display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .modal-b { padding: 16px 18px; overflow: auto; flex: 1; }
@@ -314,6 +347,7 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .opt.on { border-color: var(--accent); background: var(--accent-weak); box-shadow: 0 0 0 1px var(--accent) inset; }
 .opt .t { font-weight: 600; }
 .opt input { margin-top: 2px; }
+button.opt { width: 100%; text-align: left; background: var(--surface); font: inherit; color: inherit; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
@@ -328,7 +362,12 @@ table.tbl tr:hover td { background: var(--panel-2); }
 
 /* toasts */
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 200; max-width: 420px; }
-.toast { background: #1f2937; color: #ffffff; padding: 10px 14px; border-radius: 8px; box-shadow: var(--shadow-lg); font-size: 13px; line-height: 1.45; animation: tin .18s ease-out; }
+/* moved out of the way while the focused control would sit underneath it (WCAG 2.4.11) */
+.toasts.flip { right: auto; left: 16px; }
+.toast { display: flex; align-items: flex-start; gap: 8px; background: #1f2937; color: #ffffff; padding: 10px 8px 10px 14px; border-radius: 8px; box-shadow: var(--shadow-lg); font-size: 13px; line-height: 1.45; animation: tin .18s ease-out; }
+.toast-x { flex: none; width: 24px; height: 24px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; opacity: .8; }
+.toast-x:hover { opacity: 1; background: rgba(255, 255, 255, .12); }
+.toast-x:focus-visible { outline: 2px solid #ffffff; outline-offset: 0; }
 .toast.err { background: #a11c1c; }
 .toast.ok { background: #16663a; }
 @keyframes tin { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -409,7 +448,9 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .menu-wrap { position: relative; }
 .menu { position: absolute; right: 0; top: calc(100% + 4px); min-width: 190px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-lg); padding: 4px; z-index: 60; }
 .menu-item { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
-.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--accent-weak); outline: none; }
+.menu-item:hover:not(:disabled) { background: var(--accent-weak); }
+/* The tinted background alone is 1.15:1 against the menu; the ring is what shows focus. */
+.menu-item:focus-visible { background: var(--accent-weak); outline: 2px solid var(--accent); outline-offset: -2px; }
 .menu-item:disabled { color: var(--text-2); opacity: .55; cursor: not-allowed; }
 .diffbox { white-space: pre-wrap; font-size: 12px; background: #0f172a; color: #e2e8f0; padding: 10px; border-radius: 8px; max-height: 320px; overflow: auto; }
 
@@ -440,6 +481,7 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .cmdk-item.on { background: var(--accent-weak); }
 .cmdk-item.on .t { color: var(--accent-strong); font-weight: 600; }
 .cmdk-item.off { opacity: .45; cursor: not-allowed; }
+.cmdk-group[role="presentation"] { user-select: none; }
 .cmdk-empty { padding: 22px; text-align: center; color: var(--muted); font-size: 12px; }
 .cmdk-foot { padding: 7px 12px; border-top: 1px solid var(--line); background: var(--panel-2); }
 
@@ -447,10 +489,11 @@ table.tbl tr:hover td { background: var(--panel-2); }
 .maplist:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mapitem.cursor { box-shadow: inset 3px 0 0 var(--accent); }
 .mapitem.picked { background: var(--accent-weak); }
-.mapitem .pick { flex: none; width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line-strong);
-  display: grid; place-items: center; font-size: 10px; color: #fff; background: var(--surface); cursor: pointer;
+.mapitem .pick { flex: none; width: 24px; height: 24px; margin: -3px 0; border-radius: 5px; border: 1px solid var(--line-strong);
+  display: grid; place-items: center; font-size: 12px; color: var(--on-accent); background: var(--surface); cursor: pointer;
   opacity: 0; transition: opacity var(--dur-1) var(--ease); }
-.mapitem:hover .pick, .mapitem.picked .pick, .maplist.picking .pick { opacity: 1; }
+/* Visible whenever it can be used from the keyboard too, not only under the mouse. */
+.mapitem:hover .pick, .mapitem.picked .pick, .maplist.picking .pick, .maplist:focus-within .pick { opacity: 1; }
 .mapitem.picked .pick { background: var(--accent); border-color: var(--accent); }
 .bulkbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--accent-line);
   background: var(--accent-weak); flex: none; animation: bulk-in var(--dur-2) var(--ease); }
@@ -458,7 +501,8 @@ table.tbl tr:hover td { background: var(--panel-2); }
 
 /* draggable side panel + tighter chrome on smaller desktops, so the document keeps the space */
 .side-resizer { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 6; }
-.side-resizer:hover { background: var(--accent-line); }
+.side-resizer:hover, .side-resizer:focus-visible { background: var(--accent-line); }
+.side-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 body.resizing { user-select: none; cursor: col-resize; }
 body.resizing * { cursor: col-resize !important; }
 @media (max-width: 1500px) {
@@ -475,6 +519,9 @@ tr.rowlink { cursor: pointer; }
 tr.rowlink:hover td { background: var(--surface-hover); }
 tr.rowlink.cursor td { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
 tr.rowlink.off td { opacity: .6; }
+/* the project name is a real link: Tab reaches every row, Enter opens it, middle-click works */
+tr.rowlink .projlink { color: var(--text); font-weight: 600; }
+tr.rowlink .projlink:hover { text-decoration: underline; }
 table.tbl tbody:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ---------------------------------------------------------------- account & sign-in

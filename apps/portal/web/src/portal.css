@@ -132,3 +132,7 @@
   .pt-main { padding: var(--sp-4) var(--sp-4) 48px; }
   .pt-grid { grid-template-columns: 1fr; }
 }
+
+@media (max-width: 560px) {
+  .pt-top, .pt-account { flex-wrap: wrap; }
+}

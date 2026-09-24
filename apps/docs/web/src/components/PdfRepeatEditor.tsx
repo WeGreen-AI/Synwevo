@@ -23,7 +23,9 @@ const ROW_SRC: Record<string, string> = { rules: "表格横线", text: "样例�
 const HEADER_BAND = 34; // points of context shown above the area
 
 /** Interactive column / row-height editor for a PDF repeat area.
- *  Dividers can be dragged, double-clicked to merge; the first row line sets the row height. */
+ *  Dividers can be dragged, double-clicked to merge; the first row line sets the row height.
+ *  Everything the pointer does has a control too (WCAG 2.5.7 / 2.1.1): the numeric boundaries
+ *  are always shown, 合并 sits next to each column, and the row height is a number field. */
 export default function PdfRepeatEditor({ templateId, page, nrect, onChange }: {
   templateId: string; page: number; nrect: number[]; onChange: (l: RepeatLayout | null, info: { capacity: number; error?: string }) => void;
 }) {
@@ -157,22 +159,21 @@ export default function PdfRepeatEditor({ templateId, page, nrect, onChange }: {
             <span className="badge">{i + 1}</span>
             <input className="input sm grow" value={c.name} aria-label={`第${i + 1}列名称`}
               onChange={(e) => setCols((cs) => cs.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))} />
-            {!det.visual_aligned && (
-              <>
-                <input className="input sm w64" type="number" step={0.5} value={c.x0} aria-label="左边界" disabled={i === 0}
-                  onChange={(e) => { const v = Number(e.target.value); setCols((cs) => cs.map((x, k) => (k === i ? { ...x, x0: v } : k === i - 1 ? { ...x, x1: v } : x))); }} />
-                <input className="input sm w64" type="number" step={0.5} value={c.x1} aria-label="右边界" disabled={i === cols.length - 1}
-                  onChange={(e) => { const v = Number(e.target.value); setCols((cs) => cs.map((x, k) => (k === i ? { ...x, x1: v } : k === i + 1 ? { ...x, x0: v } : x))); }} />
-              </>
-            )}
+            <input className="input sm w64" type="number" step={0.5} value={c.x0} aria-label={`第${i + 1}列左边界（点）`} title="左边界（点）" disabled={i === 0}
+              onChange={(e) => { const v = Number(e.target.value); setCols((cs) => cs.map((x, k) => (k === i ? { ...x, x0: v } : k === i - 1 ? { ...x, x1: v } : x))); }} />
+            <input className="input sm w64" type="number" step={0.5} value={c.x1} aria-label={`第${i + 1}列右边界（点）`} title="右边界（点）" disabled={i === cols.length - 1}
+              onChange={(e) => { const v = Number(e.target.value); setCols((cs) => cs.map((x, k) => (k === i ? { ...x, x1: v } : k === i + 1 ? { ...x, x0: v } : x))); }} />
             <div className="seg sm" role="group" aria-label="对齐">
               {(["left", "center", "right"] as const).map((a) => (
-                <button key={a} className={c.align === a ? "on" : ""} onClick={() => setCols((cs) => cs.map((x, k) => (k === i ? { ...x, align: a } : x)))}>
+                <button type="button" key={a} aria-pressed={c.align === a} className={c.align === a ? "on" : ""} onClick={() => setCols((cs) => cs.map((x, k) => (k === i ? { ...x, align: a } : x)))}>
                   {a === "left" ? "左" : a === "center" ? "中" : "右"}
                 </button>
               ))}
             </div>
-            <button className="btn xs" onClick={() => split(i)} disabled={c.x1 - c.x0 < 14} title="从中间拆成两列">拆分</button>
+            <button type="button" className="btn xs" onClick={() => split(i)} disabled={c.x1 - c.x0 < 14} title="从中间拆成两列">拆分</button>
+            {i < cols.length - 1 && (
+              <button type="button" className="btn xs" onClick={() => merge(i)} title={`与第${i + 2}列合并（同双击分隔线）`} aria-label={`第${i + 1}列与第${i + 2}列合并`}>合并右列</button>
+            )}
             {c.sample && <span className="tiny muted ellipsis" style={{ maxWidth: 110 }} title={c.sample}>样例：{c.sample}</span>}
           </div>
         ))}
@@ -181,7 +182,7 @@ export default function PdfRepeatEditor({ templateId, page, nrect, onChange }: {
         <label className="row gap4">行高（点）
           <input className="input sm w64" type="number" step={0.5} min={6} value={rowH} onChange={(e) => setRowH(Number(e.target.value))} />
         </label>
-        <button className="btn xs" onClick={() => { setCols(det.cols.map((c) => ({ ...c }))); setRowH(det.row_height); }}>恢复自动识别</button>
+        <button type="button" className="btn xs" onClick={() => { setCols(det.cols.map((c) => ({ ...c }))); setRowH(det.row_height); }}>恢复自动识别</button>
         {problem && <span className="badge err">{problem}</span>}
       </div>
     </div>

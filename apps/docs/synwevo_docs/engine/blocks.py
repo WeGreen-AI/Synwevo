@@ -19,13 +19,25 @@ with the block named in the error; nothing is guessed.
 """
 from __future__ import annotations
 
+import json
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 
 from . import tabular
+from .limits import LIMITS
 from .resolve import ResolveError, SourceDoc
 
 MAX_BLOCKS = 5000
+REGEX_TIMEOUT_S = 10
+_MAX_MATCH_TEXT = 2000       # a block marker sits at the start of its line; longer lines are cut for matching
+_REGEX_CHILD = r"""
+import json, re, sys
+req = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+rx = re.compile(req["pattern"])
+sys.stdout.write(json.dumps([bool(rx.search(t)) for t in req["texts"]]))
+"""
 
 
 @dataclass
@@ -36,17 +48,60 @@ class Block:
     doc: SourceDoc
 
 
+class _RegexMarker:
+    """A user-written marker regex, evaluated in a separate process with a time limit.
+
+    Python's ``re`` backtracks without bound and holds the GIL while it does: one pattern
+    like ``(a+)+$`` against a long line stalls every thread of the server — every workspace
+    — for as long as it runs.  The child process is killed at the limit instead, and all
+    lines of a split are matched in one batch so the process is started once per split."""
+
+    def __init__(self, pattern: str):
+        if len(pattern) > LIMITS.max_regex_chars:
+            raise ResolveError("bad_regex", f"标记的正则表达式最多 {LIMITS.max_regex_chars} 个字符")
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            raise ResolveError("bad_regex", f"标记的正则表达式无效：{e}") from e
+        self.pattern = pattern
+        self.cache: dict[str, bool] = {}
+
+    def prime(self, texts) -> None:
+        todo = list(dict.fromkeys((t or "")[:_MAX_MATCH_TEXT] for t in texts))
+        todo = [t for t in todo if t not in self.cache]
+        if not todo:
+            return
+        req = json.dumps({"pattern": self.pattern, "texts": todo}, ensure_ascii=False).encode("utf-8")
+        try:
+            proc = subprocess.run([sys.executable, "-I", "-S", "-c", _REGEX_CHILD], input=req, capture_output=True,
+                                  timeout=REGEX_TIMEOUT_S)
+        except subprocess.TimeoutExpired as e:
+            raise ResolveError("regex_timeout", f"标记的正则表达式在 {REGEX_TIMEOUT_S} 秒内没有完成匹配（可能存在嵌套重复等写法），"
+                                                "请改用更简单的写法或「包含 / 开头是」匹配") from e
+        if proc.returncode != 0:
+            raise ResolveError("bad_regex", "标记的正则表达式无法执行：" + proc.stderr.decode("utf-8", "ignore")[-200:])
+        for t, hit in zip(todo, json.loads(proc.stdout.decode("utf-8"))):
+            self.cache[t] = bool(hit)
+
+    def __call__(self, s) -> bool:
+        t = (s or "")[:_MAX_MATCH_TEXT]
+        if t not in self.cache:
+            self.prime([t])
+        return self.cache[t]
+
+
+def _prime(m, texts) -> None:
+    if isinstance(m, _RegexMarker):
+        m.prime(texts)
+
+
 def matcher(spec: dict):
     text = (spec.get("anchor") or "").strip()
     if not text:
         raise ResolveError("no_anchor", "请填写每个表单块开头的标记文字（例如「姓名：」或表单标题）")
     how = spec.get("match", "contains")
     if how == "regex":
-        try:
-            rx = re.compile(text)
-        except re.error as e:
-            raise ResolveError("bad_regex", f"标记的正则表达式无效：{e}") from e
-        return lambda s: bool(rx.search(s or ""))
+        return _RegexMarker(text)
     if how == "exact":
         return lambda s: (s or "").strip() == text
     if how == "starts":
@@ -95,8 +150,16 @@ def _split(src: SourceDoc, spec: dict) -> list[Block]:
 
 
 def _virtual(src: SourceDoc, k: int, **kw) -> SourceDoc:
+    # Only the values confirmed on *this* block (stored as "<mapping id>~<k>", see
+    # resolve.correction_key).  Handing the file's corrections to every block wrote one
+    # form's confirmed OCR value into every other form of the same file.
+    corr = {}
+    for key, c in (src.corrections or {}).items():
+        mid, sep, n = key.rpartition("~")
+        if sep and n == str(k):                  # exactly this block: "m~1" must not match "m~11"
+            corr[mid] = c
     return SourceDoc(file_id=f"{src.file_id}~{k}", filename=f"{src.filename} · 第 {k + 1} 块", format=src.format, family=src.family,
-                     corrections=src.corrections, **kw)
+                     corrections=corr, **kw)
 
 
 def _cap(n: int, src: SourceDoc):
@@ -110,6 +173,9 @@ def _split_table(src: SourceDoc, spec: dict, is_start, end_m) -> list[Block]:
     sh = wb.sheet(spec["sheet"]) if spec.get("sheet") else (wb.sheets[0] if wb.sheets else None)
     if sh is None:
         raise ResolveError("sheet_missing", f"「{src.filename}」中没有工作表「{spec.get('sheet')}」")
+    texts = [v.text for row in sh.rows for v in row]
+    _prime(is_start, texts)
+    _prime(end_m, texts)
     starts = [r for r, row in enumerate(sh.rows) if any(is_start(v.text) for v in row)]
     if not starts:
         raise ResolveError("no_blocks", f"「{src.filename}」的工作表「{sh.name}」中找不到标记「{spec['anchor']}」")
@@ -141,6 +207,8 @@ def _split_docx(src: SourceDoc, is_start, end_m) -> list[Block]:
     children = [c for c in body if isinstance(c.tag, str)]
     top = [c for c in children if c.tag in (dc.w("p"), dc.w("tbl"), dc.w("sdt"))]
     texts = [dc.block_text(c) for c in top]
+    _prime(is_start, texts)
+    _prime(end_m, texts)
     starts = [i for i, t in enumerate(texts) if is_start(t)]
     if not starts:
         raise ResolveError("no_blocks", f"「{src.filename}」中找不到标记文字")
@@ -173,6 +241,9 @@ def _split_pdf(src: SourceDoc, is_start, end_m) -> list[Block]:
     import pymupdf
     doc = pe.open_pdf(src.data)
     marks: list[tuple[int, float, str]] = []     # (page, y in unrotated coords, line text)
+    all_lines = [t for pno in range(doc.page_count) for _, t in _pdf_lines(doc[pno], (src.ocr or {}).get(str(pno)))]
+    _prime(is_start, all_lines)
+    _prime(end_m, all_lines)
     for pno in range(doc.page_count):
         page = doc[pno]
         lines = _pdf_lines(page, (src.ocr or {}).get(str(pno)))
@@ -231,6 +302,7 @@ def _split_pdf_pages(src: SourceDoc, is_start, end_m) -> list[Block]:
     from . import pdf_engine as pe
     doc = pe.open_pdf(src.data)
     starts = []
+    _prime(is_start, [t for pno in range(doc.page_count) for _, t in _pdf_lines(doc[pno], (src.ocr or {}).get(str(pno)))])
     for pno in range(doc.page_count):
         lines = _pdf_lines(doc[pno], (src.ocr or {}).get(str(pno)))
         hits = [t for _, t in lines if is_start(t)]
@@ -333,6 +405,8 @@ def _shift_ocr(src: SourceDoc, doc, p0: int, y0: float, p1: int, y1: float | Non
 # ------------------------------------------------------------------ text
 def _split_text(src: SourceDoc, is_start, end_m) -> list[Block]:
     lines = src.text.split("\n")
+    _prime(is_start, lines)
+    _prime(end_m, lines)
     starts = [i for i, t in enumerate(lines) if is_start(t)]
     if not starts:
         raise ResolveError("no_blocks", f"「{src.filename}」中找不到标记文字")

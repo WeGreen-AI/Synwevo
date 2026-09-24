@@ -3,7 +3,8 @@ import { cellRef, rangeRef } from "@synwevo/ui";
 
 export const MAP_TYPE: Record<string, string> = { single: "单值", region: "固定区域", repeat: "重复明细" };
 export const SLOT_KIND: Record<string, string> = { text: "文字", cell: "单元格", region: "固定区域", repeat: "重复明细行", pdf_box: "PDF 区域", pdf_field: "PDF 表单字段", pptx_text: "幻灯片文字" };
-export const MODE_NAME: Record<string, string> = { per_row: "每行一份", per_file: "每文件一份", per_group: "每组一份" };
+// Sample-rule mode names live in status.ts (RULE_MODE / ruleMode): the copy that was here had no
+// per_block, so 「每块一份」 projects showed a blank label in the top bar and the check panel.
 
 export function describeLocator(loc: any): string {
   if (!loc) return "—";

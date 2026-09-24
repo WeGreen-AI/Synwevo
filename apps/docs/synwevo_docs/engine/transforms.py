@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
 
 from . import values as V
 from .numfmt import format_value
@@ -62,28 +62,96 @@ def parse_date_text(s: str) -> _dt.date | _dt.datetime | None:
     return None
 
 
+# Parameters each operation takes.  Anything else is refused: an option nobody reads is an
+# option the caller believes was applied.
+_PARAMS = {
+    "trim": (), "collapse_spaces": (), "upper": (), "lower": (), "number_to_text": (), "thousands": (),
+    "date_format": ("pattern",), "decimals": ("n", "thousands"), "prefix": ("text",), "suffix": ("text",),
+    "default": ("text",), "map": ("table",), "pad_left": ("width", "char"),
+}
+MAX_AFFIX = 200                 # prefix / suffix characters
+MAX_DEFAULT = 1000
+MAX_PAD_WIDTH = 64              # pad_left used to take any width: 10**9 allocated gigabytes per record
+MAX_MAP_ENTRIES = 5000
+MAX_MAP_TEXT = 1000
+
+
+def _int_in(op: dict, key: str, default: int, lo: int, hi: int, label: str, errs: list[str]) -> None:
+    v = op.get(key, default)
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        errs.append(f"{label}必须是整数")
+        return
+    try:
+        n = int(v)
+        if float(v) != n:
+            raise ValueError
+    except (TypeError, ValueError):
+        errs.append(f"{label}必须是整数")
+        return
+    if not lo <= n <= hi:
+        errs.append(f"{label}需在 {lo}–{hi} 之间")
+
+
+def _text_param(op: dict, key: str, cap: int, label: str, errs: list[str]) -> None:
+    v = op.get(key, "")
+    if not isinstance(v, (str, int, float)) or isinstance(v, bool):
+        errs.append(f"{label}必须是文字")
+    elif len(str(v)) > cap:
+        errs.append(f"{label}最多 {cap} 个字符")
+
+
 def validate(ops: list[dict]) -> list[str]:
-    errs = []
-    for op in ops or []:
+    errs: list[str] = []
+    if ops is None:
+        return errs
+    if not isinstance(ops, list):
+        return ["转换列表格式无效"]
+    for op in ops:
+        if not isinstance(op, dict):
+            errs.append("转换格式无效")
+            continue
         name = op.get("op")
         if name not in OPS:
             errs.append(f"不支持的转换：{name}")
+            continue
+        extra = sorted(k for k in op if k != "op" and k not in _PARAMS[name])
+        if extra:
+            errs.append(f"转换「{OPS[name]}」不接受参数：{'、'.join(map(str, extra))}")
         if name == "date_format" and op.get("pattern") not in DATE_PATTERNS:
             got = op.get("pattern")
             errs.append((f"日期格式转换缺少 pattern" if got is None else f"不支持的日期格式：{got}")
                         + f"；可用：{'、'.join(DATE_PATTERNS)}")
-        if name == "decimals":
-            try:
-                n = int(op.get("n", 2))
-                if not 0 <= n <= 10:
-                    errs.append("小数位需在 0–10 之间")
-            except (TypeError, ValueError):
-                errs.append("小数位必须是整数")
+        elif name == "decimals":
+            _int_in(op, "n", 2, 0, 10, "小数位", errs)
+            if "thousands" in op and not isinstance(op["thousands"], bool):
+                errs.append("千位分隔设置必须是 true / false")
+        elif name in ("prefix", "suffix"):
+            _text_param(op, "text", MAX_AFFIX, "前后缀", errs)
+        elif name == "default":
+            _text_param(op, "text", MAX_DEFAULT, "默认值", errs)
+        elif name == "pad_left":
+            _int_in(op, "width", 0, 0, MAX_PAD_WIDTH, "补齐宽度", errs)
+            ch = op.get("char", "0")
+            if not isinstance(ch, str) or len(ch) > 1:
+                errs.append("补齐字符必须是单个字符")
+        elif name == "map":
+            table = op.get("table", {})
+            if not isinstance(table, dict):
+                errs.append("对照表必须是「原值 → 新值」的对应关系")
+            elif len(table) > MAX_MAP_ENTRIES:
+                errs.append(f"对照表最多 {MAX_MAP_ENTRIES} 条")
+            elif any(not isinstance(k, str) or isinstance(v, (dict, list)) or v is None
+                     or len(k) > MAX_MAP_TEXT or len(str(v)) > MAX_MAP_TEXT for k, v in table.items()):
+                errs.append(f"对照表的原值和新值必须是文字（每项最多 {MAX_MAP_TEXT} 个字符）")
     return errs
 
 
 def apply(value: V.Value, ops: list[dict] | None, warnings: list[str] | None = None) -> V.Value:
     warnings = warnings if warnings is not None else []
+    errs = validate(ops)
+    if errs:
+        # never run an unchecked parameter (a slot format that skipped validation, an import)
+        raise TransformError("；".join(errs))
     v = V.Value(value.t, value.v, value.text, value.fmt, value.src, value.style)
     for op in ops or []:
         name = op.get("op")
@@ -116,17 +184,20 @@ def apply(value: V.Value, ops: list[dict] | None, warnings: list[str] | None = N
                 continue
             n = int(op.get("n", 2)) if name == "decimals" else _decimals_of(v)
             if name == "decimals":
-                num = num.quantize(Decimal(1).scaleb(-n), rounding=ROUND_HALF_UP)
+                # enough precision for any digit count: the default context (28 digits) raised
+                # InvalidOperation on long identifiers-as-numbers
+                ctx = Context(prec=max(28, len(num.as_tuple().digits) + n + 2))
+                num = num.quantize(Decimal(1).scaleb(-n), rounding=ROUND_HALF_UP, context=ctx)
             sep = bool(op.get("thousands")) or name == "thousands"
             body = f"{abs(num):,.{n}f}" if sep else f"{abs(num):.{n}f}"
             text = ("-" if num < 0 and num != 0 else "") + body
             v = V.Value(V.DEC, str(num), text, None, v.src)
-        elif name == "prefix":
+        elif name in ("prefix", "suffix"):
             if not v.is_empty:
-                v = V.Value(V.STR if v.t != V.DEC else v.t, v.v, str(op.get("text", "")) + v.text, v.fmt, v.src)
-        elif name == "suffix":
-            if not v.is_empty:
-                v = V.Value(V.STR if v.t != V.DEC else v.t, v.v, v.text + str(op.get("text", "")), v.fmt, v.src)
+                t = str(op.get("text", "")) + v.text if name == "prefix" else v.text + str(op.get("text", ""))
+                # a decimal keeps its number (the affix is display); anything else becomes that
+                # text in both fields, so a later trim / upper / lower keeps the affix
+                v = V.Value(V.DEC, v.v, t, v.fmt, v.src) if v.t == V.DEC else V.Value(V.STR, t, t, v.fmt, v.src)
         elif name == "default":
             if v.is_empty or (v.t == V.STR and not str(v.v).strip()):
                 t = str(op.get("text", ""))

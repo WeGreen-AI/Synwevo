@@ -26,6 +26,8 @@ export interface ViewProps {
   focusKey?: string | null;
   slotNames?: Record<string, { name: string; color: string; no?: number }>;
   onGridInfo?: (i: any) => void;
+  /** False for read-only surfaces such as the preview. */
+  selectable?: boolean;
 }
 
 export default function AnyView(p: ViewProps) {
@@ -42,21 +44,22 @@ export default function AnyView(p: ViewProps) {
     const sel = p.selection?.kind === "cells" ? (p.selection as CellSel) : null;
     return (
       <GridView load={p.loadGrid} reloadKey={p.reloadKey} marks={p.marks} selection={sel} onSelect={(s) => p.onSelect(s ? { kind: "cells", ...s } : null)}
-        onMarkClick={p.onMarkClick} headerRow={p.headerRow} focus={p.gridFocus} sheet={p.sheet} onSheet={p.onSheet} zoom={p.zoom} onInfo={p.onGridInfo} />
+        onMarkClick={p.onMarkClick} headerRow={p.headerRow} focus={p.gridFocus} sheet={p.sheet} onSheet={p.onSheet} zoom={p.zoom} onInfo={p.onGridInfo}
+        selectable={p.selectable !== false} />
     );
   }
-  if (v.view === "docx") return <DocView doc={v.doc} marks={p.marks} selection={p.selection} onSelect={p.onSelect} onMarkClick={p.onMarkClick} side={p.side} zoom={p.zoom} slotNames={p.slotNames} focusKey={p.focusKey} />;
+  if (v.view === "docx") return <DocView doc={v.doc} marks={p.marks} selection={p.selection} onSelect={p.onSelect} onMarkClick={p.onMarkClick} side={p.side} zoom={p.zoom} slotNames={p.slotNames} focusKey={p.focusKey} selectable={p.selectable} />;
   if (v.view === "pdf" || v.view === "image") {
     const pages = v.view === "pdf" ? v.pdf.pages : [{ index: 0, w: (v.image?.width || 800) * 0.75, h: (v.image?.height || 1000) * 0.75, rotation: 0, kind: "scanned" }];
     const sel = p.selection?.kind === "pdf_region" ? p.selection : null;
     return (
       <PdfView pages={pages} imageUrl={p.pageUrl!} wordsUrl={p.wordsUrl} marks={p.marks} selection={sel} onSelect={(s) => p.onSelect(s)} onMarkClick={p.onMarkClick}
-        zoom={p.zoom} focusKey={p.focusKey} reloadKey={p.reloadKey} page={p.page} onPage={p.onPage} />
+        zoom={p.zoom} focusKey={p.focusKey} reloadKey={p.reloadKey} page={p.page} onPage={p.onPage} selectable={p.selectable !== false} />
     );
   }
-  if (v.view === "slides") return <SlidesView data={v.slides} marks={p.marks} selection={p.selection} onSelect={p.onSelect} side={p.side} zoom={p.zoom} slotNames={p.slotNames} focusKey={p.focusKey} onMarkClick={p.onMarkClick} />;
+  if (v.view === "slides") return <SlidesView data={v.slides} marks={p.marks} selection={p.selection} onSelect={p.onSelect} side={p.side} zoom={p.zoom} slotNames={p.slotNames} focusKey={p.focusKey} onMarkClick={p.onMarkClick} selectable={p.selectable} />;
   if (v.view === "text") {
-    return <TextView lines={v.lines} marks={p.marks} selection={p.selection} onSelect={p.onSelect} focusKey={p.focusKey} />;
+    return <TextView lines={v.lines} marks={p.marks} selection={p.selection} onSelect={p.onSelect} focusKey={p.focusKey} selectable={p.selectable} />;
   }
   return <div className="empty">无法预览</div>;
 }

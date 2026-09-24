@@ -65,7 +65,12 @@ def static_check(mappings: list[dict], slots: list[dict], rule: dict | None) -> 
         tslots = [s for s in slots if (s.get("binding") or s["id"]) == tgt]
         cls = {slot_kind_class(s) for s in tslots}
         mtype = m.get("type", "single")
-        if cls and mtype not in cls:
+        if len(cls) > 1:
+            # one value cannot be a single value, a fixed area and detail rows at once
+            names = {"single": "单值", "region": "固定区域", "repeat": "重复明细"}
+            issues.append({"level": "error", "code": "binding_mixed", "mapping": m["id"],
+                           "message": f"映射 #{m.get('no')} 的目标同时绑定了{'、'.join(names[c] for c in sorted(cls))}字段；请取消这些字段之间的共享绑定"})
+        elif cls and mtype not in cls:
             names = {"single": "单值", "region": "固定区域", "repeat": "重复明细"}
             issues.append({"level": "error", "code": "type_mismatch", "mapping": m["id"],
                            "message": f"映射 #{m.get('no')} 是{names.get(mtype, mtype)}映射，但目标是{names.get(next(iter(cls)), '')}字段"})
@@ -102,6 +107,7 @@ def build_plan(record: dict, rule: dict, srcs: dict[str, SourceDoc], mappings: l
         for mid in i.get("mappings", []) or []:
             bad_mappings.add(mid)
     mapped_bindings: dict[str, dict] = {}
+    mapping_of: dict[str, dict] = {}
     for m in mappings:
         if not m.get("enabled", True) or m["id"] in bad_mappings:
             continue
@@ -109,6 +115,7 @@ def build_plan(record: dict, rule: dict, srcs: dict[str, SourceDoc], mappings: l
         try:
             fv, trace, warns = _resolve_mapping(m, ctx, srcs, slots, tgt)
             mapped_bindings[tgt] = fv
+            mapping_of[tgt] = m
             for sl in slots:
                 if (sl.get("binding") or sl["id"]) == tgt:
                     plan.trace[sl["id"]] = trace
@@ -123,7 +130,9 @@ def build_plan(record: dict, rule: dict, srcs: dict[str, SourceDoc], mappings: l
             if e.detail:
                 issue["detail"] = e.detail
             plan.issues.append(issue)
-        except (transforms.TransformError, ValueError) as e:
+        except (transforms.TransformError, ValueError, ArithmeticError, TypeError) as e:
+            # ArithmeticError: decimal.InvalidOperation on "Infinity"/"NaN"/overlong numbers is not
+            # a ValueError; one bad cell must fail its own record with a located issue, not the call
             plan.issues.append({"level": "error", "code": "value_error", "mapping": m["id"], "message": f"映射 #{m.get('no')}：{e}"})
     # every slot gets a value: mapped value, explicit default, or empty – never the template's sample text
     for sl in slots:
@@ -135,27 +144,49 @@ def build_plan(record: dict, rule: dict, srcs: dict[str, SourceDoc], mappings: l
                          and m.get("enabled", True) for m in mappings)
             if mapped:
                 continue  # mapping failed: already reported
-            if sl.get("required") and cls == "single" and not sl.get("default"):
+            if sl.get("required") and cls == "single" and not _has_default(sl):
                 plan.issues.append({"level": "error", "code": "unmapped_required", "slot": sl["id"],
                                     "message": f"必填字段「{sl.get('name')}」没有映射"})
                 continue
             if cls == "single":
-                d = sl.get("default")
-                fv = {"kind": "scalar", "value": V.text(d) if d else V.empty()}
+                fv = {"kind": "scalar", "value": V.empty()}
             elif cls == "region":
                 fv = {"kind": "matrix", "rows": [[V.empty()] * int(sl.get("cols", 1)) for _ in range(int(sl.get("rows", 1)))]}
             else:
                 fv = {"kind": "rows", "rows": []}
+        want_kind = {"single": "scalar", "region": "matrix", "repeat": "rows"}[cls]
+        if fv.get("kind") != want_kind:
+            continue    # a shared binding across slot kinds: reported by static_check (binding_mixed)
         if cls == "single":
             val = fv["value"]
+            if _blank(val) and _has_default(sl):
+                # the field panel promises 「值为空时的默认值」: it stands in for an empty mapped
+                # value as well as for a field nobody mapped
+                val = V.text(str(sl["default"]))
             fmt_ops = sl.get("format") or []
             if fmt_ops:
                 warns: list[str] = []
-                val = transforms.apply(val, fmt_ops, warns)
-                fv = {"kind": "scalar", "value": val}
-            if sl.get("required") and (val.is_empty or (val.t == V.STR and not str(val.v).strip())):
+                try:
+                    val = transforms.apply(val, fmt_ops, warns)
+                except (transforms.TransformError, ValueError, ArithmeticError, TypeError) as e:
+                    plan.issues.append({"level": "error", "code": "format_error", "slot": sl["id"],
+                                        "message": f"字段「{sl.get('name')}」的格式设置无法应用：{e}"})
+                    continue
+                for w in warns:
+                    plan.issues.append({"level": "warning", "code": "transform", "slot": sl["id"],
+                                        "message": f"字段「{sl.get('name')}」：{w}"})
+            fv = {**fv, "kind": "scalar", "value": val}
+            if sl.get("required") and _blank(val):
                 plan.issues.append({"level": "error", "code": "required_empty", "slot": sl["id"],
                                     "message": f"必填字段「{sl.get('name')}」的值为空"})
+            elif _blank(val):
+                # not blocking, but never silent: the document will show nothing here
+                issue = {"level": "warning", "code": "optional_empty", "slot": sl["id"],
+                         "message": f"字段「{sl.get('name')}」的值为空，生成的文档中该处将留空"}
+                m = mapping_of.get(b)
+                if m is not None:
+                    issue["mapping"] = m["id"]
+                plan.issues.append(issue)
         elif cls == "region":
             rows = fv["rows"]
             want_r, want_c = int(sl.get("rows", 0)), int(sl.get("cols", 0))
@@ -178,6 +209,16 @@ def build_plan(record: dict, rule: dict, srcs: dict[str, SourceDoc], mappings: l
     return plan
 
 
+def _blank(val: V.Value) -> bool:
+    return val.is_empty or (val.t == V.STR and not str(val.v).strip())
+
+
+def _has_default(sl: dict) -> bool:
+    d = sl.get("default")
+    # 0 is a real default; only None / "" mean "no default"
+    return d is not None and str(d) != ""
+
+
 def _sources_for(ctx: dict) -> list[SourceDoc]:
     if ctx["mode"] == "per_group":
         return ctx.get("srcs") or [ctx["src"]]
@@ -185,7 +226,12 @@ def _sources_for(ctx: dict) -> list[SourceDoc]:
 
 
 def _loc_for(m: dict, loc: dict, src: SourceDoc) -> dict:
-    ov = (m.get("overrides") or {}).get(src.file_id)
+    overrides = m.get("overrides") or {}
+    ov = overrides.get(src.file_id)
+    if ov is None and "~" in src.file_id:
+        # a per-block sample "<file id>~<n>": the override was set on the real file and,
+        # like the mapping's own locator, addresses each block relative to its start
+        ov = overrides.get(src.file_id.rpartition("~")[0])
     if ov and isinstance(ov, dict):
         idx = ov.get("source_index", 0)
         if ov.get("locator") and (m.get("sources") or [None])[idx] is loc:
@@ -251,6 +297,8 @@ def _resolve_mapping(m: dict, ctx: dict, srcs, slots, binding):
         head_count: dict[str, int] = {}
         for h in heads:
             head_count[h] = head_count.get(h, 0) + 1
+        from .resolve import missing_in_group
+        partly: list[str] = []
         for col in cols:
             src_h = tabular.normalize_header((col.get("source") or {}).get("header", ""))
             if col.get("source", {}).get("kind") == "constant":
@@ -259,8 +307,15 @@ def _resolve_mapping(m: dict, ctx: dict, srcs, slots, binding):
                 missing.append((col.get("source") or {}).get("header", ""))
             elif head_count[src_h] > 1:
                 raise ResolveError("ambiguous_column", f"明细表中有 {head_count[src_h]} 个同名列「{src_h}」，请改名后再映射")
+            else:
+                lacking = missing_in_group(ctx, src_h)
+                if lacking:
+                    partly.append(f"「{src_h}」（{'、'.join(lacking[:3])}）")
         if missing:
             raise ResolveError("missing_column", f"明细表中找不到列：{'、'.join(missing)}")
+        if partly:
+            raise ResolveError("missing_column", f"跨文件分组中，这些列在部分文件里不存在：{'；'.join(partly)}。"
+                                                 f"这些文件的明细行不会被填成空白，请统一各文件的表头")
         for row in rows:
             o = {}
             for col in cols:
@@ -285,6 +340,7 @@ def _scalar_for_record(m: dict, loc: dict, ctx: dict, trace: dict) -> V.Value:
     kind = loc.get("kind")
     sctx = dict(ctx)
     sctx["mapping_id"] = m["id"]
+    sctx["mapping_sources"] = len(m.get("sources") or [])
     if mode == "per_group" and kind == "column":
         vals = []
         for s, tv, r in ctx["group_rows"]:

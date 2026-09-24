@@ -71,9 +71,8 @@ def make_wrapper(data: bytes) -> tuple[bytes, dict, list[str]]:
     im = open_image(data)
     src_fmt = (im.format or "").upper()
     notes: list[str] = []
-    n_frames = getattr(im, "n_frames", 1)
-    if n_frames > 1:
-        notes.append(f"图片有 {n_frames} 帧，只使用第一帧")
+    if getattr(im, "is_animated", False):            # n_frames would decode every frame to count them
+        notes.append("图片有多帧，只使用第一帧")
     try:
         orientation = int(im.getexif().get(0x0112, 1) or 1)
     except Exception:  # noqa: BLE001
@@ -150,8 +149,24 @@ def rasterise(pdf: bytes, meta: dict) -> bytes:
 
 
 def to_pdf(image_bytes: bytes) -> bytes:
-    """An output image as a one-page PDF (for PDF export and page rendering)."""
-    import pymupdf
+    """An output image as a one-page PDF (for PDF export and page rendering).
+
+    PyMuPDF when installed; Pillow otherwise, so image-template previews, page images and
+    PDF export keep working in the AGPL-free (pdfium) deployment that advertises them."""
+    try:
+        import pymupdf
+    except ImportError:
+        im = open_image(image_bytes)
+        dpi = im.info.get("dpi") or (72, 72)
+        try:
+            res = float(dpi[0]) or 72.0
+        except Exception:  # noqa: BLE001
+            res = 72.0
+        if im.mode not in ("RGB", "L", "CMYK"):
+            im = im.convert("RGB")
+        buf = io.BytesIO()
+        im.save(buf, "PDF", resolution=res)
+        return buf.getvalue()
     src = pymupdf.open(stream=image_bytes)
     try:
         pdf = src.convert_to_pdf()
@@ -173,9 +188,11 @@ def check(data: bytes, meta: dict) -> dict:
 def region_pixels(page, rect, zoom: float = 1.0) -> Image.Image:
     """Render ``rect`` (unrotated coords) of the page's *unrotated* content."""
     import pymupdf
+    from .pdf_engine import render_zoom
     r = pymupdf.Rect(rect) & page.mediabox
     if r.is_empty:
         return Image.new("RGB", (1, 1), "white")
+    zoom = render_zoom(r.width, r.height, zoom)      # the box size comes from the template file
     m = pymupdf.Matrix(zoom, zoom).prerotate(0)
     rot = page.rotation
     if rot:

@@ -38,7 +38,11 @@ COPY packages/auth-client/python/requirements.txt packages/auth-client/python/re
 COPY services/identity/requirements.txt services/identity/requirements.txt
 COPY apps/portal/requirements.txt apps/portal/requirements.txt
 COPY apps/docs/requirements.txt apps/docs/requirements.txt
-RUN pip install --no-cache-dir -r apps/docs/requirements.txt -r services/identity/requirements.txt
+COPY infra/server/requirements.txt infra/server/requirements.txt
+COPY infra/server/requirements.lock infra/server/requirements-build.txt infra/server/
+# 部署组装的 requirements 就是三个模块的并集，版本全部来自各模块固定的文件。
+RUN pip install --no-cache-dir -r infra/server/requirements-build.txt \
+    && pip install --no-cache-dir -r infra/server/requirements.txt
 # AGPL-3.0 §13：/api/source-code 提供的是**正在运行的程序**的对应源代码。重组之后"正在运行的
 # 程序"不只是 Synwevo Docs 自己的目录——进程是由共享包、账户服务和角色组装拼起来的，所以它们都要
 # 在镜像里，否则那个压缩包会在声称完整的同时少掉一半。
@@ -55,13 +59,21 @@ COPY infra/Dockerfile infra/docker-compose.yml infra/
 COPY --from=ui /ui/apps/docs/web/dist apps/docs/web/dist
 COPY --from=ui /ui/services/identity/web/dist services/identity/web/dist
 COPY --from=ui /ui/apps/portal/web/dist apps/portal/web/dist
-RUN pip install --no-cache-dir --no-deps \
+# `pip check`: every module's declared dependencies must be satisfied by the pinned set, or the
+# image fails here instead of at the first request that reaches an undeclared import.
+RUN pip install --no-cache-dir --no-deps --no-build-isolation \
       -e packages/core -e packages/auth-client/python \
-      -e services/identity -e apps/portal -e apps/docs -e infra/server
+      -e services/identity -e apps/portal -e apps/docs -e infra/server \
+    && pip check
 # LICENSE is deliberately absent: this project has not chosen one yet, and COPY of a missing
 # file fails the build. The source archive reports it as missing rather than pretending.
-RUN useradd -m synwevo && mkdir -p /data && chown synwevo /data
+# The data directory is the volume, owned by the unprivileged user the server runs as. HOST and
+# DATA_DIR above describe the container itself; infra/docker-compose.yml pins them again so an
+# operator's .env cannot move the database out of the volume or bind the container's loopback.
+RUN useradd -m synwevo && mkdir -p /data && chown synwevo /data && chmod 700 /data
 USER synwevo
 VOLUME ["/data"]
 EXPOSE 8765
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/readyz', timeout=4).status == 200 else 1)"]
 CMD ["python", "-m", "synwevo_server.run"]

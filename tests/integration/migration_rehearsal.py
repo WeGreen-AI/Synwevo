@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Rehearse a schema migration on an isolated copy of a real database.
 
-    python scripts/migration_rehearsal.py --from data
-    python scripts/migration_rehearsal.py --from data --keep     # leave the copy for inspection
+    .venv/bin/python tests/integration/migration_rehearsal.py --from data
+    .venv/bin/python tests/integration/migration_rehearsal.py --from data --keep   # keep the copy
 
 Takes a consistent snapshot, migrates the copy, and checks that everything that was there is
 still there. **The source is opened read-only and is never written to.**

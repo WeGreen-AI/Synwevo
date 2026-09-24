@@ -146,22 +146,47 @@ def test_effective_factor_reports_what_was_applied_not_what_was_asked(tmp_path):
 
 
 def test_content_lost_by_shrinking_is_detected_not_counted_as_success():
-    """Page count alone is not success: a field whose text vanished must fail the sample."""
+    """Page count alone is not success.  This used to recompute the rule on literal dicts;
+    the real check was comparing XML text before and after shrinking, which never differs."""
+    from docx.enum.table import WD_ROW_HEIGHT_RULE
+    from synwevo_docs.engine import docx_core as dc
     from synwevo_docs.engine import layout as L
+    from synwevo_docs.engine.ooxml import Package
 
-    before = {"s1": "重要内容", "s2": "保留"}
-    after_lost = {"s1": "", "s2": "保留"}
-    after_trunc = {"s1": "重要", "s2": "保留"}
+    d = docx.Document()
+    t = d.add_table(rows=1, cols=1)
+    t.rows[0].height = Pt(14)
+    t.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY           # a fixed-height row clips its text
+    t.cell(0, 0).paragraphs[0].text = "占位"
+    buf = io.BytesIO()
+    d.save(buf)
+    pkg = Package(buf.getvalue())
+    p = list(dc.part_container(pkg, pkg.main_part()).iter(dc.w("tc")))[0].find(dc.w("p"))
+    sdt = dc.wrap_range(p, 0, 2, dc.TAG_PREFIX + "s1", "备注")
+    dc.fill_sdt(sdt, "测试内容" * 60 + "结束标记", True)
+    slots = [{"id": "s1", "name": "备注", "shrink": True, "shrink_min": 7}]
+    _, rep = L.fit_docx(pkg.save(), slots, 1, False)
+    assert rep["pages"] == 1, "页数满足要求"
+    assert rep["truncated_fields"] + rep["lost_fields"] == ["备注"], "被固定行高截掉的内容必须被发现"
 
-    lost = [k for k, v in before.items() if v.strip() and not after_lost.get(k, "").strip()]
-    trunc = [k for k, v in before.items()
-             if v.strip() and after_trunc.get(k, "").strip() and len(after_trunc[k].strip()) < len(v.strip())]
-    assert lost == ["s1"] and trunc == ["s1"], "这是 fit_docx 用来判定内容完整性的同一条规则"
-    assert hasattr(L, "_field_texts"), "内容完整性检查依赖按字段取文本"
+    # the same check does not fire when everything is visible
+    pkg = Package(buf.getvalue())
+    p = list(dc.part_container(pkg, pkg.main_part()).iter(dc.w("tc")))[0].find(dc.w("p"))
+    dc.fill_sdt(dc.wrap_range(p, 0, 2, dc.TAG_PREFIX + "s1", "备注"), "短内容", True)
+    _, rep = L.fit_docx(pkg.save(), slots, 1, False)
+    assert rep["truncated_fields"] == [] and rep["lost_fields"] == []
 
 
 def test_field_texts_reads_every_field(tmp_path):
     from synwevo_docs.engine import layout as L
     tpl = pathlib.Path(_template(tmp_path)).read_bytes()
-    texts = L._field_texts(tpl)
-    assert isinstance(texts, dict)
+    assert L._field_texts(tpl) == {}                                   # the plain template has no fields
+    from synwevo_docs.engine import docx_core as dc
+    from synwevo_docs.engine.ooxml import Package
+    pkg = Package(tpl)
+    body = dc.part_container(pkg, pkg.main_part())
+    p = [x for x in body.iter(dc.w("p")) if dc.para_text(x).startswith("备注")][0]
+    dc.wrap_range(p, 3, 7, dc.TAG_PREFIX + "s9", "备注")
+    data = pkg.save()
+    assert L._field_texts(data) == {"s9": "示例备注"}
+    assert L._field_occurrences(data) == [("s9", "示例备注")]

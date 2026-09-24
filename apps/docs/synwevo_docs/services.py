@@ -44,6 +44,9 @@ class App:
         self.store.insert("mapping_revs", {"project_id": pid, "rev": 0, "parent_rev": None, "data": [], "note": "初始", "created_at": t})
         return self.get_project(pid)
 
+    _PROJECT_COLS = "id, name, created_at, updated_at, template_id, record_rule, step, origin, archived_at, template_version"
+    _PROJECT_SORT = {"updated": "updated_at", "created": "created_at", "name": "name COLLATE NOCASE"}
+
     def list_projects(self, include_archived: bool = False) -> list[dict]:
         """Three queries regardless of project count.
 
@@ -52,19 +55,86 @@ class App:
         tenant = current_tenant()
         arch = "" if include_archived else " AND archived_at IS NULL"
         rows = self.store.all(
-            "SELECT id, name, created_at, updated_at, template_id, record_rule, step, origin, archived_at "
+            f"SELECT {self._PROJECT_COLS} "
             f"FROM projects WHERE deleted=0 AND tenant=?{arch} ORDER BY updated_at DESC", (tenant,))
+        return self._with_list_details(rows)
+
+    def list_projects_page(self, q: str | None = None, sort: str | None = None, order: str | None = None,
+                           offset: int = 0, limit: int = 50, include_archived: bool = False) -> dict:
+        """One page of the project list, searched and sorted in SQL.
+
+        The unpaged list sends every project with its details on every visit to the home page;
+        with a few thousand projects that is the whole table, every time."""
+        sort = sort or "updated"
+        order = (order or ("asc" if sort == "name" else "desc")).lower()
+        if sort not in self._PROJECT_SORT:
+            raise ServiceError(400, "bad_value", "sort 只能是 updated / created / name", {"field": "sort"})
+        if order not in ("asc", "desc"):
+            raise ServiceError(400, "bad_value", "order 只能是 asc / desc", {"field": "order"})
+        try:
+            offset, limit = int(offset), int(limit)
+        except (TypeError, ValueError) as e:
+            raise ServiceError(400, "bad_value", "offset / limit 必须是整数", {"field": "limit"}) from e
+        if offset < 0:
+            raise ServiceError(400, "bad_value", "offset 不能为负数", {"field": "offset"})
+        if not 1 <= limit <= 200:
+            raise ServiceError(400, "bad_value", "limit 取值范围是 1–200", {"field": "limit"})
+        where = "deleted=0 AND tenant=?" + ("" if include_archived else " AND archived_at IS NULL")
+        args: tuple = (current_tenant(),)
+        q = (q or "").strip()
+        if q:
+            # What the list shows is what can be searched: the project name, the template's name
+            # and the sample mode's label (the list used to be filtered on the client by name and
+            # template name). LIKE wildcards in the search text are literal characters.
+            esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{esc}%"
+            conds = ["name LIKE ? ESCAPE '\\'",
+                     "template_id IN (SELECT id FROM templates WHERE deleted=0 AND tenant=? AND name LIKE ? ESCAPE '\\')"]
+            args += (like, current_tenant(), like)
+            from .engine.records import MODES
+            modes = [k for k, text in MODES.items() if q.lower() in text.split("：", 1)[0].lower()]
+            if modes:
+                conds.append(f"json_extract(record_rule, '$.mode') IN ({','.join('?' * len(modes))})")
+                args += tuple(modes)
+            where += " AND (" + " OR ".join(conds) + ")"
+        total = self.store.one(f"SELECT COUNT(*) AS n FROM projects WHERE {where}", args)["n"]
+        direction = "ASC" if order == "asc" else "DESC"
+        rows = self.store.all(f"SELECT {self._PROJECT_COLS} FROM projects WHERE {where} "
+                              f"ORDER BY {self._PROJECT_SORT[sort]} {direction}, id {direction} LIMIT ? OFFSET ?",
+                              args + (limit, offset))
+        items = self._with_list_details(rows)
+        nxt = offset + len(items)
+        return {"items": items, "total": total, "offset": offset, "limit": limit, "next_offset": nxt if nxt < total else None}
+
+    _IN_CHUNK = 500          # well under SQLite's variable limit (999 on older builds)
+
+    def _chunks(self, ids: list) -> list[list]:
+        return [ids[i:i + self._IN_CHUNK] for i in range(0, len(ids), self._IN_CHUNK)]
+
+    def _with_list_details(self, rows: list[dict]) -> list[dict]:
+        """Source count, last job and template name for exactly these projects.
+
+        The ids are bound in chunks: the unpaged list passes every project of the workspace,
+        and one ``IN (…)`` parameter per project fails past SQLite's variable limit."""
         if not rows:
             return rows
-        counts = {r["project_id"]: r["n"] for r in self.store.all(
-            "SELECT project_id, COUNT(*) AS n FROM source_files WHERE removed=0 GROUP BY project_id")}
-        last = {r["project_id"]: r for r in self.store.all(
-            "SELECT id, project_id, status, counts, created_at FROM ("
-            "  SELECT id, project_id, status, counts, created_at,"
-            "         ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY created_at DESC, id DESC) AS rn"
-            "  FROM jobs) WHERE rn = 1")}
-        names = {r["id"]: r["name"] for r in self.store.all(
-            "SELECT id, name FROM templates WHERE deleted=0 AND tenant=?", (tenant,))}
+        counts: dict = {}
+        last: dict = {}
+        for ids in self._chunks([r["id"] for r in rows]):
+            marks = ",".join("?" * len(ids))
+            counts.update({r["project_id"]: r["n"] for r in self.store.all(
+                f"SELECT project_id, COUNT(*) AS n FROM source_files WHERE removed=0 AND project_id IN ({marks}) GROUP BY project_id",
+                tuple(ids))})
+            last.update({r["project_id"]: r for r in self.store.all(
+                "SELECT id, project_id, status, counts, created_at FROM ("
+                "  SELECT id, project_id, status, counts, created_at,"
+                "         ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY created_at DESC, id DESC) AS rn"
+                f"  FROM jobs WHERE project_id IN ({marks})) WHERE rn = 1", tuple(ids))})
+        names: dict = {}
+        for tids in self._chunks(sorted({r["template_id"] for r in rows if r.get("template_id")})):
+            names.update({r["id"]: r["name"] for r in self.store.all(
+                f"SELECT id, name FROM templates WHERE deleted=0 AND tenant=? AND id IN ({','.join('?' * len(tids))})",
+                (current_tenant(), *tids))})
         for r in rows:
             r["sources"] = counts.get(r["id"], 0)
             j = last.get(r["id"])
@@ -79,7 +149,7 @@ class App:
         return p
 
     def update_project(self, pid: str, values: dict) -> dict:
-        self.get_project(pid)
+        p = self.get_project(pid)
         allowed = {k: v for k, v in values.items() if k in ("name", "record_rule", "output", "template_id", "step")}
         if "archived" in values:
             # Archiving only hides a project from the default list; it stays fully usable and
@@ -87,13 +157,58 @@ class App:
             allowed["archived_at"] = now() if values["archived"] else None
         if "record_rule" in allowed:
             self._validate_rule(allowed["record_rule"])
+        if "output" in allowed:
+            allowed["output"] = self._validate_output(allowed["output"])
         if "template_id" in allowed and allowed["template_id"]:
             self.get_template(allowed["template_id"])
+        if "template_version" in values:
+            # Pinning used to be accepted and dropped here, so a caller who pinned version N got
+            # 200 and then jobs generated from whatever head the template had moved to.
+            allowed["template_version"] = self._validate_pin(values["template_version"],
+                                                             allowed.get("template_id") or p.get("template_id"))
+        elif "template_id" in allowed and allowed["template_id"] != p.get("template_id"):
+            allowed["template_version"] = None          # a pin belongs to the template it was made on
         allowed["updated_at"] = now()
         self.store.update("projects", {"id": pid}, allowed)
         if set(allowed) - {"name", "step", "updated_at", "output"}:
             self.store.bump_project(pid)
         return self.get_project(pid)
+
+    def _validate_pin(self, version, tid: str | None) -> int | None:
+        if version is None or version == "":
+            return None
+        if isinstance(version, bool):
+            raise ServiceError(400, "bad_value", "模板版本必须是正整数", {"field": "template_version"})
+        try:
+            no = int(version)
+        except (TypeError, ValueError) as e:
+            raise ServiceError(400, "bad_value", "模板版本必须是正整数", {"field": "template_version"}) from e
+        if not tid:
+            raise ServiceError(400, "no_template", "请先绑定模板，再固定模板版本", {"field": "template_version"})
+        self.get_template(tid)
+        if not self.store.one("SELECT 1 AS x FROM template_versions WHERE template_id=? AND version_no=?", (tid, no)):
+            raise ServiceError(400, "bad_value", f"模板没有第 {no} 版", {"field": "template_version"})
+        return no
+
+    @staticmethod
+    def _validate_output(out) -> dict:
+        """Project output defaults are checked when they are saved, not coerced when a job runs:
+        a stored layout "fitt" used to become "off" at generation time and the job succeeded."""
+        if out is None:
+            return {}
+        if not isinstance(out, dict):
+            raise ServiceError(400, "bad_output", "output 必须是对象", {"field": "output"})
+        if out.get("layout") not in (None, "", "off", "warn", "fit"):
+            raise ServiceError(400, "bad_layout", "layout 只能是 off / warn / fit", {"field": "output.layout"})
+        if out.get("error_policy") not in (None, "", "block", "skip"):
+            raise ServiceError(400, "bad_error_policy", "error_policy 只能是 block 或 skip", {"field": "output.error_policy"})
+        naming = out.get("naming")
+        if naming is not None and (not isinstance(naming, str) or len(naming) > 300):
+            raise ServiceError(400, "bad_naming", "naming 必须是不超过 300 个字符的文本", {"field": "output.naming"})
+        fmts = out.get("formats")
+        if fmts is not None and (not isinstance(fmts, list) or not all(isinstance(f, str) for f in fmts)):
+            raise ServiceError(400, "bad_formats", "formats 必须是格式名称的数组", {"field": "output.formats"})
+        return out
 
     def delete_project(self, pid: str) -> None:
         self.get_project(pid)
@@ -138,23 +253,53 @@ class App:
         self.parse_pool.submit(self._parse_source, sid)
         return self.get_source(sid)
 
+    def resume_parsing(self) -> int:
+        """Parse again whatever a previous process left half-parsed.
+
+        Parsing runs on an in-memory pool, so a restart during an upload left the file
+        'parsing' forever: API clients told to poll until it changes polled forever, and job
+        creation (which waits for parsing to finish) could never start. Parsing is a pure
+        function of the stored bytes and options, so doing it twice is harmless."""
+        rows = self.store.all("SELECT s.id FROM source_files s JOIN projects p ON p.id=s.project_id "
+                              "WHERE s.status='parsing' AND s.removed=0 AND p.deleted=0")
+        for r in rows:
+            self.parse_pool.submit(self._parse_source, r["id"])
+        return len(rows)
+
     def _parse_source(self, sid: str) -> None:
-        row = self.store.one("SELECT * FROM source_files WHERE id=?", (sid,))
+        # An idempotent upload schedules us before its outer transaction commits. Wait for
+        # that writer so an uncommitted source is not mistaken for a missing one. Release
+        # the transaction before parsing; a rolled-back upload correctly leaves no row.
+        with self.store.tx():
+            row = self.store.one("SELECT s.* FROM source_files s JOIN projects p ON p.id=s.project_id "
+                                 "WHERE s.id=? AND s.removed=0 AND COALESCE(p.deleted,0)=0", (sid,))
         if not row:
             return
+        ps = None
         try:
             data = self.store.get_blob(row["blob"])
             ps = S.parse_source(data, row["filename"], row.get("options") or {})
             values = {"format": ps.format, "family": ps.family, "status": ps.status, "error": ps.error, "notes": ps.notes,
                       "structure": ps.structure, "signature": ps.signature, "updated_at": now()}
-            if ps.workbook is not None:
-                values["parsed_blob"] = self.store.put_json_blob(ps.workbook)
-            if ps.working_bytes is not None:
-                values["working_blob"] = self.store.put_blob(ps.working_bytes)
-            self.store.update("source_files", {"id": sid}, values)
         except Exception as e:  # noqa: BLE001
-            self.store.update("source_files", {"id": sid}, {"status": "error", "error": f"解析失败：{e}", "updated_at": now()})
-        self.store.bump_project(row["project_id"])
+            values = {"status": "error", "error": f"解析失败：{e}", "updated_at": now()}
+        # Parsing can outlive removal, project deletion or a newer options request. Publish
+        # only the version we read, atomically with its derived references and revision.
+        with self.store.tx():
+            current = self.store.one("SELECT s.version,s.blob FROM source_files s JOIN projects p ON p.id=s.project_id "
+                                     "WHERE s.id=? AND s.removed=0 AND COALESCE(p.deleted,0)=0", (sid,))
+            if not current or current["version"] != row["version"] or current["blob"] != row["blob"]:
+                return
+            if ps is not None:
+                try:
+                    if ps.workbook is not None:
+                        values["parsed_blob"] = self.store.put_json_blob(ps.workbook)
+                    if ps.working_bytes is not None:
+                        values["working_blob"] = self.store.put_blob(ps.working_bytes)
+                except Exception:  # noqa: BLE001 - leave a retryable terminal state, not eternal parsing
+                    values = {"status": "error", "error": "解析结果保存失败，请检查存储空间后重试", "updated_at": now()}
+            self.store.update("source_files", {"id": sid}, values)
+            self.store.bump_project(row["project_id"])
 
     def list_sources(self, pid: str) -> list[dict]:
         # get_project carries the tenant check and 404s, so the listing cannot enumerate another
@@ -208,12 +353,13 @@ class App:
         return self.get_source(sid)
 
     def set_source_options(self, sid: str, options: dict) -> dict:
-        r = self.get_source(sid, raw=True)
-        opts = dict(r.get("options") or {})
-        opts.update(options or {})
-        self.store.update("source_files", {"id": sid}, {"options": opts, "status": "parsing", "version": r["version"] + 1,
-                                                        "updated_at": now()})
-        self.store.bump_project(r["project_id"])
+        with self.store.tx():
+            r = self.get_source(sid, raw=True)
+            opts = dict(r.get("options") or {})
+            opts.update(options or {})
+            self.store.update("source_files", {"id": sid}, {"options": opts, "status": "parsing", "version": r["version"] + 1,
+                                                            "updated_at": now()})
+            self.store.bump_project(r["project_id"])
         self._parse_source(sid)
         return self.get_source(sid)
 
@@ -257,7 +403,11 @@ class App:
                 continue
             stem = r["filename"].rsplit(".", 1)[0]
             name = f"脱敏_{stem}.{ext}"
-            item = {"source": r["filename"], "filename": name, "blob": self.store.put_blob(data), "size": len(data)}
+            blob = self.store.put_blob(data)
+            # The copy is offered for download whether or not it is added to the project; without a
+            # grant nothing vouched for it and every download link answered 404.
+            authz.grant_blob(self.store, blob, "desensitized")
+            item = {"source": r["filename"], "filename": name, "blob": blob, "size": len(data)}
             if body.get("add_to_project"):
                 item["source_id"] = self.add_source(pid, name, data)["id"]
             out.append(item)
@@ -291,6 +441,11 @@ class App:
         doc = SourceDoc(r["id"], r["filename"], fmt, r["family"] or FAMILY.get(fmt, "unknown"), data, wb,
                         r.get("ocr") or {}, r.get("corrections") or {})
         with self._cache_lock:
+            # Older versions of the same file (before a correction, an OCR run, new options)
+            # are dropped: each held the raw bytes and the parsed workbook until the cache
+            # passed 64 entries. Holders of an old version (a running job) keep their reference.
+            for k in [k for k in self._src_cache if k[0] == r["id"] and k != key]:
+                del self._src_cache[k]
             if len(self._src_cache) > 64:
                 self._src_cache.clear()
             self._src_cache[key] = doc
@@ -366,6 +521,28 @@ class App:
         from .engine.generate import export_formats
         return export_formats(fmt, bool(soffice_path()))
 
+    def _fields_by_name(self, project: dict) -> dict[str, list[str]] | None:
+        """Field name -> bindings, for the template version this project generates with.
+
+        None when no template is bound. A pinned project resolves against its pinned version,
+        because that is the version its jobs will use.
+        """
+        tid = project.get("template_id")
+        if not tid:
+            return None
+        t = self.store.one("SELECT head FROM templates WHERE id=?", (tid,))
+        if not t:
+            return None
+        no = project.get("template_version") or t["head"]
+        v = self.store.one("SELECT slots FROM template_versions WHERE template_id=? AND version_no=?", (tid, no))
+        out: dict[str, list[str]] = {}
+        for s in (v or {}).get("slots") or []:
+            b = s.get("binding") or s["id"]
+            names = out.setdefault((s.get("name") or "").strip(), [])
+            if b not in names:
+                names.append(b)
+        return out
+
     def get_version(self, tid: str, no: int) -> dict:
         v = self.store.one("SELECT * FROM template_versions WHERE template_id=? AND version_no=?", (tid, no))
         if not v:
@@ -400,6 +577,15 @@ class App:
                 fmt = "xlsx"
             except ConversionError as e:
                 raise ServiceError(400, "convert_failed", str(e)) from e
+        if info["macros"] or fmt in ("docm", "xlsm", "pptm"):
+            # Outputs are named .docx/.xlsx/.pptx. Keeping the macro-enabled main-part content
+            # type (and the VBA project) inside a file with that extension is exactly what Office
+            # refuses to open ("file format or extension is not valid"), while LibreOffice-based
+            # checks pass — so the macros are removed from the template, not "kept but disabled".
+            try:
+                working = strip_macros(working)
+            except ValueError as e:
+                raise ServiceError(400, "bad_template", f"模板无法解析：{e}") from e
         fmt = {"docm": "docx", "xlsm": "xlsx", "pptm": "pptx"}.get(fmt, fmt)
         image_meta = None
         from .engine import pdf_engine as _pe
@@ -424,7 +610,7 @@ class App:
             raise ServiceError(400, "bad_template", f"模板无法解析：{e}") from e
         notes.extend(check.get("notes", []))
         if info["macros"]:
-            notes.append("模板包含宏；宏不会被执行。输出文件为不含宏的标准格式（.docx/.xlsx/.pptx），宏代码会保留在包内但扩展名不启用宏")
+            notes.append("模板包含宏：宏不会被执行，并已从模板中移除。输出文件为不含宏的标准格式（.docx/.xlsx/.pptx）")
         tid = new_id("t")
         t = now()
         orig = self.store.put_blob(working)
@@ -436,14 +622,28 @@ class App:
                                                 "slots": [], "note": "上传原始模板", "created_at": t})
         return self.template_detail(tid)
 
-    def new_version(self, tid: str, working: bytes, slots: list[dict], note: str, editor: dict | None = None) -> dict:
-        r = self.get_template(tid)
-        mx = self.store.one("SELECT MAX(version_no) AS m FROM template_versions WHERE template_id=?", (tid,))["m"] or 0
-        no = mx + 1
-        self.store.insert("template_versions", {"template_id": tid, "version_no": no, "parent_no": r["head"],
-                                                "working_blob": self.store.put_blob(working), "slots": slots, "note": note,
-                                                "editor": editor, "created_at": now()})
-        self.store.update("templates", {"id": tid}, {"head": no, "updated_at": now()})
+    def new_version(self, tid: str, working: bytes, slots: list[dict], note: str, editor: dict | None = None,
+                    base_head: int | None = None) -> dict:
+        """Add a version and make it head — only if head is still ``base_head`` (the version the
+        edit was computed from).
+
+        Read-head, insert and move-head used to be three separate statements: two concurrent
+        edits (two tabs, or the UI and POST /templates/{tid}/fields) either collided on the
+        primary key with a 500, or the later one was built from the old slot list and silently
+        dropped the other's field."""
+        self.get_template(tid)
+        blob = self.store.put_blob(working)
+        t = now()
+        with self.store.tx() as c:
+            head = c.execute("SELECT head FROM templates WHERE id=?", (tid,)).fetchone()["head"]
+            if base_head is not None and head != base_head:
+                raise ServiceError(409, "stale_template", "模板已在其他窗口或被其他人修改，请刷新后再操作",
+                                   {"head": head, "base_version": base_head})
+            no = (c.execute("SELECT MAX(version_no) AS m FROM template_versions WHERE template_id=?", (tid,)).fetchone()["m"] or 0) + 1
+            c.execute("INSERT INTO template_versions (template_id, version_no, parent_no, working_blob, slots, note, editor, created_at) "
+                      "VALUES (?,?,?,?,?,?,?,?)", (tid, no, head, blob, json.dumps(slots, ensure_ascii=False), note,
+                                                   json.dumps(editor, ensure_ascii=False) if editor is not None else None, t))
+            c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
         self._bump_projects_using(tid)
         return self.template_detail(tid)
 
@@ -451,22 +651,37 @@ class App:
         for p in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
             self.store.bump_project(p["id"])
 
-    def template_undo(self, tid: str) -> dict:
-        r = self.get_template(tid)
-        v = self.get_version(tid, r["head"])
-        if v["parent_no"] is None:
-            raise ServiceError(400, "nothing_to_undo", "没有可撤销的模板修改")
-        self.store.update("templates", {"id": tid}, {"head": v["parent_no"], "updated_at": now()})
+    def _move_template_head(self, tid: str, base_head: int | None, redo: bool) -> None:
+        """Undo (to the parent) or redo (to the newest child), decided and applied in one
+        transaction. ``base_head`` is the version the client's step was decided on: when the
+        template moved on since (another tab, another person), the step would undo *their*
+        edit, so it is refused with 409 ``stale_template``."""
+        self.get_template(tid)
+        with self.store.tx() as c:
+            head = c.execute("SELECT head FROM templates WHERE id=?", (tid,)).fetchone()["head"]
+            if base_head is not None and base_head != head:
+                raise ServiceError(409, "stale_template", "模板已在其他窗口或被其他人修改，请刷新后再撤销或重做",
+                                   {"head": head, "base_version": base_head})
+            if redo:
+                kid = c.execute("SELECT version_no FROM template_versions WHERE template_id=? AND parent_no=? "
+                                "ORDER BY version_no DESC LIMIT 1", (tid, head)).fetchone()
+                if not kid:
+                    raise ServiceError(400, "nothing_to_redo", "没有可重做的模板修改")
+                target = kid["version_no"]
+            else:
+                v = c.execute("SELECT parent_no FROM template_versions WHERE template_id=? AND version_no=?", (tid, head)).fetchone()
+                if not v or v["parent_no"] is None:
+                    raise ServiceError(400, "nothing_to_undo", "没有可撤销的模板修改")
+                target = v["parent_no"]
+            c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (target, now(), tid))
         self._bump_projects_using(tid)
+
+    def template_undo(self, tid: str, base_head: int | None = None) -> dict:
+        self._move_template_head(tid, base_head, redo=False)
         return self.template_detail(tid)
 
-    def template_redo(self, tid: str) -> dict:
-        r = self.get_template(tid)
-        kids = self.store.all("SELECT version_no FROM template_versions WHERE template_id=? AND parent_no=? ORDER BY version_no DESC", (tid, r["head"]))
-        if not kids:
-            raise ServiceError(400, "nothing_to_redo", "没有可重做的模板修改")
-        self.store.update("templates", {"id": tid}, {"head": kids[0]["version_no"], "updated_at": now()})
-        self._bump_projects_using(tid)
+    def template_redo(self, tid: str, base_head: int | None = None) -> dict:
+        self._move_template_head(tid, base_head, redo=True)
         return self.template_detail(tid)
 
     def duplicate_template(self, tid: str, name: str | None = None) -> dict:
@@ -488,7 +703,20 @@ class App:
         return self.template_detail(tid)
 
     def delete_template(self, tid: str) -> None:
-        self.get_template(tid)
+        """Delete a template no project uses.
+
+        Deleting one that projects still pointed at left those projects unopenable (their detail
+        request 404ed on the template) and every job on them failed. Refused instead, with the
+        projects named, so the person can re-point or delete them first. Archived projects count:
+        they are still usable."""
+        t = self.get_template(tid)
+        users = self.store.all("SELECT id, name FROM projects WHERE template_id=? AND deleted=0 AND COALESCE(tenant,'default')=? "
+                               "ORDER BY updated_at DESC", (tid, current_tenant()))
+        if users:
+            raise ServiceError(409, "template_in_use",
+                               f"模板「{t['name']}」正被 {len(users)} 个项目使用（如「{users[0]['name']}」）。"
+                               "请先在这些项目中更换模板或删除这些项目，再删除模板",
+                               {"projects": [{"id": u["id"], "name": u["name"]} for u in users[:20]], "total": len(users)})
         self.store.update("templates", {"id": tid}, {"deleted": 1, "updated_at": now()})
 
     def add_slot(self, tid: str, req: dict) -> dict:
@@ -504,7 +732,8 @@ class App:
             except T.TemplateError as e:
                 raise ServiceError(400, e.code, str(e)) from e
             slots = [blk if s["id"] == blk["id"] else s for s in slots]
-            detail = self.new_version(tid, work2, slots, f"为重复内容块「{blk['name']}」添加列「{blk['columns'][-1]['name']}」")
+            detail = self.new_version(tid, work2, slots, f"为重复内容块「{blk['name']}」添加列「{blk['columns'][-1]['name']}」",
+                                      base_head=r["head"])
             detail["created_slot"] = blk
             return detail
         try:
@@ -543,7 +772,7 @@ class App:
             if other:
                 slot["binding"] = other.get("binding") or other["id"]
         slots.append(slot)
-        detail = self.new_version(tid, work2, slots, f"添加字段「{slot['name']}」")
+        detail = self.new_version(tid, work2, slots, f"添加字段「{slot['name']}」", base_head=r["head"])
         detail["created_slot"] = slot
         return detail
 
@@ -628,7 +857,7 @@ class App:
             key = sl.pop("_remove_column")
             work = T.docx_remove_block_column(work, sl, key)
             note = f"从重复内容块「{sl['name']}」移除一列"
-        return self.new_version(tid, work, slots, note)
+        return self.new_version(tid, work, slots, note, base_head=r["head"])
 
     def remove_slot(self, tid: str, slot_id: str, project_id: str | None = None, cascade: bool = True) -> dict:
         r = self.get_template(tid)
@@ -649,16 +878,18 @@ class App:
         elif fmt == "pptx":
             from .engine.pptx_engine import pptx_remove_slot
             work = pptx_remove_slot(work, sl)
-        removed_maps = []
+        removed_maps, keep = [], None
         binding = sl.get("binding") or sl["id"]
         still_bound = any((s.get("binding") or s["id"]) == binding for s in remaining)
         if cascade and project_id and not still_bound:
             ms = self.get_mappings(project_id)["mappings"]
             keep = [m for m in ms if ((m.get("target") or {}).get("binding") or (m.get("target") or {}).get("slot_id")) != binding]
             removed_maps = [m for m in ms if m not in keep]
-            if removed_maps:
-                self.save_mappings(project_id, keep, f"删除字段「{sl['name']}」并移除相关映射")
-        detail = self.new_version(tid, work, remaining, f"删除字段「{sl['name']}」" + (f"（同时移除 {len(removed_maps)} 个映射）" if removed_maps else ""))
+        # The version first: if it is refused as stale, the mappings must still be as they were.
+        detail = self.new_version(tid, work, remaining, f"删除字段「{sl['name']}」" + (f"（同时移除 {len(removed_maps)} 个映射）" if removed_maps else ""),
+                                  base_head=r["head"])
+        if removed_maps:
+            self.save_mappings(project_id, keep, f"删除字段「{sl['name']}」并移除相关映射")
         detail["removed_mappings"] = [m["id"] for m in removed_maps]
         return detail
 
@@ -676,42 +907,82 @@ class App:
             raise ServiceError(409, "stale", "映射已在其他窗口被修改，请刷新后重试")
         clean = []
         used_no = set()
-        for m in mappings:
+        by_name = self._fields_by_name(p)
+        for i, m in enumerate(mappings):
+            if not isinstance(m, dict):
+                raise ServiceError(400, "bad_mapping", f"第 {i + 1} 个映射必须是对象", {"field": f"mappings[{i}]"})
             m = dict(m)
             m.setdefault("id", new_id("m"))
             m.setdefault("enabled", True)
             m.setdefault("type", "single")
             if not isinstance(m.get("sources"), list):
                 raise ServiceError(400, "bad_mapping", "映射缺少来源")
+            # A mapping may name its target field by name (`field`) instead of by binding: that is
+            # how a definition written by hand, or by a program that never saw the UI, refers to
+            # a field. It is resolved here, against the template version this project actually
+            # uses, and an unknown or ambiguous name is refused — saving it unresolved would make
+            # a mapping that fills nothing and a document that keeps the template's placeholder.
+            if m.get("field") is not None and not (m.get("target") or {}).get("binding"):
+                name = m.pop("field")
+                hits = by_name.get(str(name).strip(), []) if by_name is not None else []
+                if by_name is None:
+                    raise ServiceError(400, "bad_mapping", "项目还没有绑定模板，不能按字段名建立映射",
+                                       {"field": f"mappings[{i}].field"})
+                if not hits:
+                    raise ServiceError(400, "bad_mapping", f"第 {i + 1} 个映射的目标字段「{name}」在模板中不存在",
+                                       {"field": f"mappings[{i}].field"})
+                if len({h for h in hits}) > 1:
+                    raise ServiceError(400, "bad_mapping", f"模板中有多个名为「{name}」的字段，请改用 target.binding 指明",
+                                       {"field": f"mappings[{i}].field"})
+                m["target"] = {"binding": hits[0]}
             if not m.get("no") or m["no"] in used_no:
                 m["no"] = max(used_no | {0}) + 1
             used_no.add(m["no"])
             m.setdefault("color", PALETTE[(m["no"] - 1) % len(PALETTE)])
             m["updated_at"] = now()
             clean.append(m)
-        mx = self.store.one("SELECT MAX(rev) AS m FROM mapping_revs WHERE project_id=?", (pid,))["m"] or 0
-        self.store.insert("mapping_revs", {"project_id": pid, "rev": mx + 1, "parent_rev": p["mapping_rev"], "data": clean,
-                                           "note": note, "created_at": now()})
-        self.store.update("projects", {"id": pid}, {"mapping_rev": mx + 1})
+        # Check, read MAX(rev), insert and move the project's pointer in one transaction: the
+        # base_rev check used to run before three separate statements, so two saves in the same
+        # moment could both pass it (or collide on the primary key).
+        with self.store.tx() as c:
+            cur = c.execute("SELECT mapping_rev FROM projects WHERE id=?", (pid,)).fetchone()["mapping_rev"]
+            if base_rev is not None and base_rev != cur:
+                raise ServiceError(409, "stale", "映射已在其他窗口被修改，请刷新后重试")
+            mx = c.execute("SELECT MAX(rev) AS m FROM mapping_revs WHERE project_id=?", (pid,)).fetchone()["m"] or 0
+            c.execute("INSERT INTO mapping_revs (project_id, rev, parent_rev, data, note, created_at) VALUES (?,?,?,?,?,?)",
+                      (pid, mx + 1, cur, json.dumps(clean, ensure_ascii=False), note, now()))
+            c.execute("UPDATE projects SET mapping_rev=? WHERE id=?", (mx + 1, pid))
         self.store.bump_project(pid)
         return self.get_mappings(pid)
 
-    def mappings_undo(self, pid: str) -> dict:
-        p = self.get_project(pid)
-        row = self.store.one("SELECT parent_rev FROM mapping_revs WHERE project_id=? AND rev=?", (pid, p["mapping_rev"]))
-        if not row or row["parent_rev"] is None:
-            raise ServiceError(400, "nothing_to_undo", "没有可撤销的映射修改")
-        self.store.update("projects", {"id": pid}, {"mapping_rev": row["parent_rev"]})
+    def _move_mapping_rev(self, pid: str, base_rev: int | None, redo: bool) -> None:
+        """Undo / redo of the mapping list, checked against ``base_rev`` (the revision the
+        client's step was decided on) inside the transaction that moves the pointer."""
+        self.get_project(pid)
+        with self.store.tx() as c:
+            cur = c.execute("SELECT mapping_rev FROM projects WHERE id=?", (pid,)).fetchone()["mapping_rev"]
+            if base_rev is not None and base_rev != cur:
+                raise ServiceError(409, "stale", "映射已在其他窗口被修改，请刷新后再撤销或重做", {"rev": cur, "base_rev": base_rev})
+            if redo:
+                kid = c.execute("SELECT rev FROM mapping_revs WHERE project_id=? AND parent_rev=? ORDER BY rev DESC LIMIT 1",
+                                (pid, cur)).fetchone()
+                if not kid:
+                    raise ServiceError(400, "nothing_to_redo", "没有可重做的映射修改")
+                target = kid["rev"]
+            else:
+                row = c.execute("SELECT parent_rev FROM mapping_revs WHERE project_id=? AND rev=?", (pid, cur)).fetchone()
+                if not row or row["parent_rev"] is None:
+                    raise ServiceError(400, "nothing_to_undo", "没有可撤销的映射修改")
+                target = row["parent_rev"]
+            c.execute("UPDATE projects SET mapping_rev=? WHERE id=?", (target, pid))
         self.store.bump_project(pid)
+
+    def mappings_undo(self, pid: str, base_rev: int | None = None) -> dict:
+        self._move_mapping_rev(pid, base_rev, redo=False)
         return self.get_mappings(pid)
 
-    def mappings_redo(self, pid: str) -> dict:
-        p = self.get_project(pid)
-        kids = self.store.all("SELECT rev FROM mapping_revs WHERE project_id=? AND parent_rev=? ORDER BY rev DESC", (pid, p["mapping_rev"]))
-        if not kids:
-            raise ServiceError(400, "nothing_to_redo", "没有可重做的映射修改")
-        self.store.update("projects", {"id": pid}, {"mapping_rev": kids[0]["rev"]})
-        self.store.bump_project(pid)
+    def mappings_redo(self, pid: str, base_rev: int | None = None) -> dict:
+        self._move_mapping_rev(pid, base_rev, redo=True)
         return self.get_mappings(pid)
 
 
@@ -791,6 +1062,14 @@ def template_inventory(fmt: str, data: bytes) -> dict:
 
 
 PDF_LIKE = ("pdf", "png", "jpeg")
+
+def strip_macros(data: bytes) -> bytes:
+    """The package with its VBA project removed and a macro-free main-part content type.
+
+    The work is done by the engine's ``ooxml.strip_vba`` (it also runs on desensitized copies);
+    one implementation, so templates and copies cannot drift apart on what "macro-free" means."""
+    from .engine.ooxml import strip_vba
+    return strip_vba(data)
 
 
 def pdf_slots_with_nrect(pdf_bytes: bytes, slots: list[dict]) -> list[dict]:

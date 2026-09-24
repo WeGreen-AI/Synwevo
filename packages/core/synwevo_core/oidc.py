@@ -27,7 +27,7 @@ import json
 import os
 import secrets
 import time
-from authlib.jose import JsonWebKey, jwt
+from authlib.jose import JsonWebKey, JsonWebToken, jwt
 
 from . import env
 from .errors import ServiceError
@@ -38,13 +38,53 @@ ACCESS_TTL_S = int(env.get("ACCESS_TTL_S", "900"))
 REFRESH_TTL_S = int(env.get("REFRESH_TTL_S", str(14 * 24 * 3600)))
 ID_TOKEN_TTL_S = 300
 ALG = "RS256"
+# The longest an old client secret may keep working after a rotation. Bounded because a grace
+# period is a second valid credential: it exists so a running automation can be redeployed with
+# the new secret without an outage, not so a leaked one can linger.
+MAX_SECRET_GRACE_S = 24 * 3600
 
-SUPPORTED_SCOPES = ("openid", "profile", "email", "offline_access",
-                    # API scopes. Separate vocabulary from the identity scopes on purpose: a
-                    # token that proves who signed in is not a token that may run a job, and
-                    # keeping them in one list is how the two quietly become the same thing.
-                    "docweave.read", "docweave.write")
-API_SCOPES = ("docweave.read", "docweave.write")
+IDENTITY_SCOPES = ("openid", "profile", "email", "offline_access")
+# API scopes. Separate vocabulary from the identity scopes on purpose: a token that proves who
+# signed in is not a token that may run a job, and keeping them in one list is how the two
+# quietly become the same thing. `docweave.manage` is governance (webhook subscriptions, the
+# caller's own credentials) and corresponds to the legacy key scope `admin`.
+API_SCOPES = ("docweave.read", "docweave.write", "docweave.manage")
+SUPPORTED_SCOPES = IDENTITY_SCOPES + API_SCOPES
+
+# Only these algorithms are ever accepted on a token this platform verifies. Authlib's module
+# level `jwt` accepts every registered JWS algorithm — including `none`, which is an unsigned
+# token that "verifies" against any key set.
+_RS256 = JsonWebToken([ALG])
+
+
+def decode_signed(raw: str, jwks: dict):
+    """Verify a JWT's RS256 signature against a published key set and return its claims.
+
+    The one place a signed token from this issuer is decoded. Pinning the algorithm here is the
+    whole defence against `alg: none` and against algorithm confusion; claim checks are the
+    caller's, because what "valid" means differs between an id_token and a logout token.
+    """
+    return _RS256.decode(raw, JsonWebKey.import_key_set(jwks))
+
+
+def docs_resource() -> str:
+    """The resource indicator (RFC 8707) that names the Synwevo Docs API.
+
+    Tokens meant for the Docs API carry this as their audience, and the Docs side refuses a
+    token whose audience is set to anything else. Built from the app id rather than written out,
+    so the one stable identifier stays in one place.
+    """
+    return (env.get("DOCS_RESOURCE") or f"urn:synwevo:app:{_docs_app_id()}").strip()
+
+
+def api_scope_app(scope: str) -> str | None:
+    """The application an API scope belongs to (`docweave.read` -> `docweave`), or None."""
+    return scope.split(".", 1)[0] if scope in API_SCOPES else None
+
+
+def _docs_app_id() -> str:
+    from .apps import DOCS_APP_ID               # lazy: apps imports identity, which is heavier
+    return DOCS_APP_ID
 
 
 def issuer() -> str:
@@ -117,21 +157,45 @@ class Clients:
     def __init__(self, store: Store):
         self.store = store
 
-    def get(self, client_id: str) -> dict | None:
-        r = self.store.one("SELECT * FROM oauth_clients WHERE client_id=? AND disabled_at IS NULL",
-                           (client_id,))
+    @staticmethod
+    def _decode(r: dict | None) -> dict | None:
         if r:
             r["redirect_uris"] = json.loads(r["redirect_uris"])
             r["post_logout_redirect_uris"] = json.loads(r["post_logout_redirect_uris"] or "[]")
             r["audiences"] = json.loads(r["audiences"] or "[]")
         return r
 
+    def get(self, client_id: str) -> dict | None:
+        return self._decode(self.store.one(
+            "SELECT * FROM oauth_clients WHERE client_id=? AND disabled_at IS NULL", (client_id,)))
+
+    def get_any(self, client_id: str) -> dict | None:
+        """Including a disabled registration — for the operator's CLI, never for a grant."""
+        return self._decode(self.store.one("SELECT * FROM oauth_clients WHERE client_id=?", (client_id,)))
+
+    @staticmethod
+    def allowed_scopes(client: dict) -> set[str]:
+        """Every scope this client may ever be granted: what it was registered for.
+
+        `scopes` holds the identity scopes (and, for a user client, the API scopes it may ask a
+        person to delegate); `api_scopes` is the service-account ceiling. A scope in neither is
+        not the client's to ask for, however valid it is on the platform.
+        """
+        return set((client.get("scopes") or "").split()) | set((client.get("api_scopes") or "").split())
+
     def register(self, *, client_id: str, app_id: str, name: str, redirect_uris: list[str],
                  scopes: str = "openid profile email", audiences: list[str] | None = None,
                  confidential: bool = False, post_logout_redirect_uris: list[str] | None = None,
                  backchannel_logout_uri: str | None = None, kind: str = "user",
                  workspace_id: str | None = None, api_scopes: str = "") -> tuple[dict, str | None]:
-        """Register a client. Returns (row, secret) — the secret is shown once and hashed here.
+        """Register a client, or update an existing registration's metadata.
+
+        Returns (row, secret). `secret` is not None **only when a new secret was actually
+        stored** — on first registration of a confidential client, or when a public client is
+        re-registered as confidential. Re-registering an existing confidential client keeps its
+        secret: this used to print a freshly generated secret that was never stored, so an
+        operator "rotating" a leaked secret got one that failed while the leaked one kept
+        working. Rotation is `rotate_secret`, which is explicit about what it replaces.
 
         Registration is a CLI/configuration action by design. Dynamic client registration is not
         exposed: anything that lets an unauthenticated caller create a client with its own
@@ -151,7 +215,39 @@ class Clients:
         bad = [s for s in api_scopes.split() if s not in API_SCOPES]
         if bad:
             raise ServiceError(400, "bad_scope", f"未知的接口权限：{' '.join(bad)}")
-        secret = secrets.token_urlsafe(40) if confidential else None
+        unknown = [s for s in (scopes or "").split() if s not in SUPPORTED_SCOPES]
+        if unknown:
+            raise ServiceError(400, "bad_scope", f"未知的权限：{' '.join(unknown)}")
+        # An API scope names the application it opens. A client registered for another
+        # application (the portal, say) asking for `docweave.write` would be a way to reach the
+        # Docs API that the Docs app registry never approved.
+        foreign = [s for s in set(api_scopes.split()) | set((scopes or "").split())
+                   if api_scope_app(s) and api_scope_app(s) != app_id]
+        if foreign:
+            raise ServiceError(400, "scope_wrong_app",
+                               f"接口权限 {' '.join(sorted(foreign))} 不属于应用 {app_id}")
+
+        existing = self.store.one("SELECT * FROM oauth_clients WHERE client_id=?", (client_id,))
+        if existing and existing["disabled_at"]:
+            # Re-registering used to report success while the client stayed disabled (and the
+            # CLI then crashed on the missing row). Re-enabling is its own, audited decision.
+            raise ServiceError(409, "client_disabled",
+                               f"客户端 {client_id} 已停用；如确需恢复，请用 client enable")
+        was_confidential = bool(existing) and existing["token_endpoint_auth_method"] != "none"
+        if was_confidential and not confidential:
+            # Downgrading silently would publish the credential's replacement: a confidential
+            # client's existing secret would be dropped and anyone could act as it with PKCE.
+            raise ServiceError(409, "confidentiality_change",
+                               "机密客户端不能改登记为公共客户端；请停用它并换一个 client_id 登记")
+        secret = secrets.token_urlsafe(40) if confidential and not was_confidential else None
+
+        auds = list(audiences or [])
+        has_api = bool(api_scopes.split()) or any(api_scope_app(s) for s in (scopes or "").split())
+        if not auds and app_id == _docs_app_id() and has_api:
+            # RFC 8707 / RFC 9700 §2.3: a token meant for an API names that API. With no explicit
+            # audience a token for this client would be accepted by any resource server that
+            # trusts this issuer, so a Docs API client defaults to the Docs resource.
+            auds = [docs_resource()]
         ts = now()
         self.store.execute(
             "INSERT INTO oauth_clients (client_id,app_id,name,secret_hash,redirect_uris,"
@@ -163,20 +259,100 @@ class Clients:
             "redirect_uris=excluded.redirect_uris, post_logout_redirect_uris=excluded.post_logout_redirect_uris, "
             "backchannel_logout_uri=excluded.backchannel_logout_uri, scopes=excluded.scopes, "
             "audiences=excluded.audiences, kind=excluded.kind, workspace_id=excluded.workspace_id, "
-            "api_scopes=excluded.api_scopes, updated_at=excluded.updated_at",
+            "api_scopes=excluded.api_scopes, "
+            "secret_hash=COALESCE(excluded.secret_hash, secret_hash), "
+            "token_endpoint_auth_method=excluded.token_endpoint_auth_method, "
+            "updated_at=excluded.updated_at",
             (client_id, app_id, name, _sha(secret) if secret else None,
              json.dumps(redirect_uris), json.dumps(post_logout_redirect_uris or []),
-             backchannel_logout_uri, scopes, json.dumps(audiences or []),
+             backchannel_logout_uri, scopes, json.dumps(auds),
              "client_secret_post" if confidential else "none", kind, workspace_id, api_scopes,
              ts, ts))
         return self.get(client_id), secret
+
+    # -------------------------------------------------------------- secret lifecycle
+    @staticmethod
+    def _grace_key(client_id: str) -> str:
+        return f"client_secret_grace:{client_id}"
+
+    def rotate_secret(self, client_id: str, *, grace_s: float = 0) -> dict:
+        """Replace a confidential client's secret. Returns {secret, secret_hash, grace_until}.
+
+        The new secret is returned once and only its hash is stored. With `grace_s` the previous
+        secret keeps working until `grace_until` (at most MAX_SECRET_GRACE_S) so a running
+        automation can be redeployed without an outage. The grace entry is bound to the hash it
+        was created alongside: if the current secret changes again — another rotation, or a
+        restore that re-applies a later rotation from the security journal — the old secret
+        stops working at once rather than surviving under a stale entry.
+        """
+        row = self.store.one("SELECT * FROM oauth_clients WHERE client_id=?", (client_id,))
+        if not row:
+            raise ServiceError(404, "no_client", f"找不到客户端 {client_id}")
+        if row["disabled_at"]:
+            raise ServiceError(409, "client_disabled", f"客户端 {client_id} 已停用，停用的客户端没有可轮换的密钥")
+        if row["token_endpoint_auth_method"] == "none" or not row["secret_hash"]:
+            raise ServiceError(409, "public_client", f"{client_id} 是公共客户端，没有密钥可以轮换")
+        grace_s = max(0.0, min(float(grace_s or 0), MAX_SECRET_GRACE_S))
+        secret = secrets.token_urlsafe(40)
+        digest = _sha(secret)
+        ts = now()
+        until = ts + grace_s if grace_s else None
+        with self.store.tx() as t:
+            n = t.execute("UPDATE oauth_clients SET secret_hash=?, updated_at=? "
+                          "WHERE client_id=? AND secret_hash=? AND disabled_at IS NULL",
+                          (digest, ts, client_id, row["secret_hash"])).rowcount
+            if not n:
+                raise ServiceError(409, "concurrent_change", "客户端在轮换过程中被修改了，请重试")
+            if until:
+                t.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                          (self._grace_key(client_id),
+                           json.dumps({"hash": row["secret_hash"], "until": until, "current": digest})))
+            else:
+                t.execute("DELETE FROM meta WHERE key=?", (self._grace_key(client_id),))
+        return {"secret": secret, "secret_hash": digest, "grace_until": until}
+
+    def disable(self, client_id: str) -> bool:
+        """Stop the client authenticating, and end its grace period. Tokens: see Grants."""
+        with self.store.tx() as t:
+            n = t.execute("UPDATE oauth_clients SET disabled_at=?, updated_at=? "
+                          "WHERE client_id=? AND disabled_at IS NULL", (now(), now(), client_id)).rowcount
+            t.execute("DELETE FROM meta WHERE key=?", (self._grace_key(client_id),))
+        return bool(n)
+
+    def enable(self, client_id: str) -> bool:
+        return bool(self.store.execute("UPDATE oauth_clients SET disabled_at=NULL, updated_at=? "
+                                       "WHERE client_id=? AND disabled_at IS NOT NULL", (now(), client_id)))
+
+    def grace_until(self, client_id: str) -> float | None:
+        """When the previous secret stops working, or None when there is no live grace period."""
+        row = self.store.one("SELECT secret_hash FROM oauth_clients WHERE client_id=?", (client_id,))
+        g = self._grace(client_id)
+        if not row or not g or g.get("current") != row["secret_hash"] or g.get("until", 0) <= now():
+            return None
+        return g["until"]
+
+    def _grace(self, client_id: str) -> dict | None:
+        m = self.store.one("SELECT value FROM meta WHERE key=?", (self._grace_key(client_id),))
+        if not m:
+            return None
+        try:
+            return json.loads(m["value"])
+        except (TypeError, ValueError):
+            return None
 
     def check_secret(self, client_id: str, secret: str) -> bool:
         r = self.store.one("SELECT secret_hash FROM oauth_clients WHERE client_id=? AND disabled_at IS NULL",
                            (client_id,))
         if not r or not r["secret_hash"]:
             return False
-        return secrets.compare_digest(r["secret_hash"], _sha(secret))
+        digest = _sha(secret)
+        if secrets.compare_digest(r["secret_hash"], digest):
+            return True
+        g = self._grace(client_id)
+        # The previous secret counts only inside its window *and* only while the secret it was
+        # rotated to is still the current one.
+        return bool(g and g.get("current") == r["secret_hash"] and float(g.get("until") or 0) > now()
+                    and isinstance(g.get("hash"), str) and secrets.compare_digest(g["hash"], digest))
 
     @staticmethod
     def redirect_allowed(client: dict, uri: str) -> bool:
@@ -278,12 +454,19 @@ class Grants:
             (now(), reason, row["user_id"], row["client_id"]))
 
     # -------------------------------------------------------------- tokens
+    @staticmethod
+    def default_audience(client: dict) -> str | None:
+        return (client.get("audiences") or [None])[0]
+
     def issue_tokens(self, *, client: dict, code_row: dict, with_refresh: bool,
-                     family_id: str | None = None, parent_id: str | None = None) -> dict:
+                     family_id: str | None = None, parent_id: str | None = None,
+                     audience: str | None = None) -> dict:
+        """`audience` is the RFC 8707 resource the token is for, already checked against the
+        client's registered audiences by the caller; None means the client's default."""
         access = secrets.token_urlsafe(40)
         refresh = secrets.token_urlsafe(40) if with_refresh else None
         tid = new_id("tok")
-        audience = (client.get("audiences") or [None])[0]
+        audience = audience or self.default_audience(client)
         self.store.execute(
             "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,refresh_hash,scope,audience,"
             "central_session_id,workspace_id,issued_at,access_expires_at,refresh_expires_at,"
@@ -299,7 +482,7 @@ class Grants:
             out["refresh_token"] = refresh
         return out
 
-    def rotate_refresh(self, raw: str, *, client: dict) -> tuple[dict, dict]:
+    def rotate_refresh(self, raw: str, *, client: dict, audience: str | None = None) -> tuple[dict, dict]:
         """Spend a refresh token and issue its successor. Returns (token response, old row).
 
         Rotation with replay detection, which is the part that makes a long-lived refresh token
@@ -329,15 +512,23 @@ class Grants:
                 # this caller must not get a second one.
                 raise ServiceError(400, "invalid_grant", "刷新令牌已被使用")
 
-        out = self.issue_tokens(
-            client=client,
-            code_row={"user_id": row["user_id"], "scope": row["scope"],
-                      "central_session_id": row["central_session_id"],
-                      "workspace_id": row["workspace_id"]},
-            with_refresh=True, family_id=row["family_id"] or row["id"], parent_id=row["id"])
+            # Consumption and replacement share one transaction. Otherwise a concurrent
+            # security revocation can see no live row, finish successfully, and miss the
+            # successor inserted afterwards. Failed issuance must also leave the original
+            # grant usable rather than consuming its only refresh token.
+            out = self.issue_tokens(
+                client=client,
+                code_row={"user_id": row["user_id"], "scope": row["scope"],
+                          "central_session_id": row["central_session_id"],
+                          "workspace_id": row["workspace_id"]},
+                with_refresh=True, family_id=row["family_id"] or row["id"], parent_id=row["id"],
+                # A refresh keeps the audience the grant was issued for unless the client narrows it
+                # to another registered resource; falling back to the client default here would let
+                # a refresh silently widen a token that was minted for one API.
+                audience=audience or row.get("audience"))
         return out, row
 
-    def issue_for_service(self, *, client: dict, scope: str) -> dict:
+    def issue_for_service(self, *, client: dict, scope: str, audience: str | None = None) -> dict:
         """The client credentials grant: a machine acting as itself.
 
         No user, no refresh token, no `openid`. A service account has its own lifecycle on
@@ -347,7 +538,7 @@ class Grants:
         """
         access = secrets.token_urlsafe(40)
         tid = new_id("tok")
-        audience = (client.get("audiences") or [None])[0]
+        audience = audience or self.default_audience(client)
         self.store.execute(
             "INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,refresh_hash,scope,audience,"
             "central_session_id,workspace_id,issued_at,access_expires_at,refresh_expires_at,"
@@ -373,12 +564,34 @@ class Grants:
             return None
         return r
 
-    def revoke_token(self, raw: str, reason: str = "client_revoked") -> bool:
+    def revoke_token(self, raw: str, reason: str = "client_revoked", *, client_id: str | None = None) -> bool:
+        """RFC 7009 §2.1: a client may revoke only tokens issued to it. `client_id=None` is the
+        platform's own revocation (logout, admin action), which is not a client request."""
         d = _sha(raw)
-        n = self.store.execute(
+        sql = ("UPDATE oauth_tokens SET revoked_at=?, revoked_reason=? "
+               "WHERE (access_hash=? OR refresh_hash=?) AND revoked_at IS NULL")
+        args: list = [now(), reason, d, d]
+        if client_id is not None:
+            sql += " AND client_id=?"
+            args.append(client_id)
+        return bool(self.store.execute(sql, tuple(args)))
+
+    def revoke_for_user_in_workspace(self, user_id: str, workspace_id: str, reason: str) -> int:
+        """Every token this person holds that acts in this workspace — used when they leave it.
+
+        Scoped to the workspace on purpose: being removed from one workspace must not sign the
+        person out of the others they still belong to.
+        """
+        return self.store.execute(
             "UPDATE oauth_tokens SET revoked_at=?, revoked_reason=? "
-            "WHERE (access_hash=? OR refresh_hash=?) AND revoked_at IS NULL", (now(), reason, d, d))
-        return bool(n)
+            "WHERE user_id=? AND workspace_id=? AND revoked_at IS NULL",
+            (now(), reason, user_id, workspace_id))
+
+    def revoke_for_workspace(self, workspace_id: str, reason: str) -> int:
+        """Every token acting in this workspace, people's and service accounts' alike (freeze)."""
+        return self.store.execute(
+            "UPDATE oauth_tokens SET revoked_at=?, revoked_reason=? WHERE workspace_id=? AND revoked_at IS NULL",
+            (now(), reason, workspace_id))
 
     def revoke_for_central_session(self, central_session_id: str, reason: str) -> int:
         """Used by platform-wide logout: every token that came from this sign-in."""
@@ -449,13 +662,19 @@ def deliver_logout(url: str, token: str, timeout: float = 3.0) -> tuple[bool, st
     everywhere" quietly becomes "signed out on whichever apps happened to answer".
 
     The URL is not attacker-supplied — it comes from a client registration made by CLI — but it
-    is still validated, because a registration mistake should not turn this into a way to make
-    the server issue requests to arbitrary internal addresses.
+    is still validated. What the validation does, precisely: plain http only to loopback names
+    (local development); and no request to an address that no relying party can legitimately
+    live on — link-local (which includes cloud metadata at 169.254.169.254), multicast,
+    unspecified or reserved ranges. Private ranges over https stay allowed, because a relying
+    party on the same private network as the account service is an ordinary deployment.
     """
     try:
         _check_redirect(url)
     except ServiceError as e:
         return False, e.message
+    why = _unroutable_target(url)
+    if why:
+        return False, why
     import httpx
     try:
         # Same reasoning as the relying party's client: no ambient proxy. A logout notification
@@ -472,6 +691,26 @@ def deliver_logout(url: str, token: str, timeout: float = 3.0) -> tuple[bool, st
         return False, f"{type(e).__name__}: {e}"[:200]
 
 
+def _unroutable_target(url: str) -> str | None:
+    """Why this URL must not be posted to, or None. Resolves the host the way the request will."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    host = urlparse(url).hostname or ""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return None                           # unresolvable: the POST fails on its own and says so
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+        except ValueError:
+            continue
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+            return f"拒绝向 {host} 投递：它解析到不可能是应用的地址 {ip}"
+    return None
+
+
 def verify_logout_token(raw: str, *, jwks: dict, client_id: str, expected_issuer: str | None = None) -> dict:
     """Client side: validate a logout token before acting on it.
 
@@ -481,7 +720,9 @@ def verify_logout_token(raw: str, *, jwks: dict, client_id: str, expected_issuer
     """
     iss = expected_issuer or issuer()
     try:
-        claims = jwt.decode(raw, JsonWebKey.import_key_set(jwks))
+        # RS256 only. Authlib's module-level decoder also accepts `alg: none`, which made an
+        # unsigned token naming any sid or sub "verify" — an anonymous way to log anyone out.
+        claims = decode_signed(raw, jwks)
     except ServiceError:
         raise
     except Exception as e:
@@ -501,8 +742,18 @@ def verify_logout_token(raw: str, *, jwks: dict, client_id: str, expected_issuer
         raise ServiceError(400, "bad_logout_token", "缺少后通道登出事件声明")
     if not claims.get("sid") and not claims.get("sub"):
         raise ServiceError(400, "bad_logout_token", "登出令牌必须指明 sid 或 sub")
-    if abs(int(time.time()) - int(claims.get("iat") or 0)) > 300:
+    if not isinstance(claims.get("jti"), str) or not claims.get("jti"):
+        # The relying party de-duplicates retries by jti; without one a replay is not detectable.
+        raise ServiceError(400, "bad_logout_token", "登出令牌缺少 jti")
+    ts = int(time.time())
+    if abs(ts - int(claims.get("iat") or 0)) > 300:
         raise ServiceError(400, "bad_logout_token", "登出令牌不在有效时间窗内")
+    try:
+        exp = int(claims.get("exp"))
+    except (TypeError, ValueError):
+        raise ServiceError(400, "bad_logout_token", "登出令牌缺少有效的 exp") from None
+    if exp + 60 < ts:                                 # a minute of clock skew, no more
+        raise ServiceError(400, "bad_logout_token", "登出令牌已过期")
     return dict(claims)
 
 

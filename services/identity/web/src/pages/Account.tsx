@@ -3,6 +3,9 @@ import { Link } from "react-router-dom";
 import { del, get, post } from "@synwevo/auth-client";
 import { fmtTime, useDialog, useToast } from "@synwevo/ui";
 import { useSession } from "@synwevo/auth-client";
+import { Topbar } from "../components/Topbar";
+import { LeaveDialog } from "./members/dialogs";
+import { AMR_LABEL, canExport } from "../lib/labels";
 import MfaSection from "../components/MfaSection";
 import PasskeySection from "../components/PasskeySection";
 
@@ -19,15 +22,10 @@ interface SessionRow {
 
 /** How this session was authenticated. Shown because "signed in" is not one thing — and it is
  *  read from what the server recorded at login, not inferred from what the account *has*. */
-const AMR: Record<string, string> = {
-  password: "口令",
-  "password+totp": "口令 + 动态码",
-  passkey_uv: "Passkey（含设备验证）",
-  passkey: "Passkey",
-};
 
 export default function Account() {
   const { me, state, signOut } = useSession();
+  const [leaving, setLeaving] = useState<{ id: string; name: string } | null>(null);
   const [rows, setRows] = useState<SessionRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const toast = useToast();
@@ -65,38 +63,14 @@ export default function Account() {
 
   if (!me) return <div className="empty">加载中…</div>;
 
-  const onAccountService = state?.role === "accounts";
-  const platformName = state?.platform_name || "Synwevo Workspace";
-  const portalUrl = state?.portal_url || "";
 
   return (
     <div className="app">
-      <div className="topbar">
-        {/* On the account service there is no project list to go back to, and the brand is the
-            platform's. Where "back" leads is the server's answer (state.portal_url), never a
-            query parameter — this is the one origin that must not carry an open redirect. */}
-        {onAccountService ? (
-          <>
-            <span className="brand"><span className="logo" aria-hidden="true">◫</span>
-              <span className="desktop-only">{platformName}</span></span>
-            <span className="sep" />
-            {portalUrl
-              ? <a href={portalUrl} className="btn ghost sm">← 返回{platformName}</a>
-              : <span className="btn ghost sm" aria-disabled="true" style={{ visibility: "hidden" }} />}
-          </>
-        ) : (
-          <>
-            <Link to="/" className="brand"><span className="logo">S</span><span className="desktop-only">Synwevo Docs</span></Link>
-            <span className="sep" />
-            <Link to="/" className="btn ghost sm">← 返回项目</Link>
-          </>
-        )}
-        <span className="grow"><b>账户与安全</b></span>
-      </div>
+      <Topbar title="账户与安全" />
 
       <div style={{ overflow: "auto", flex: 1 }}>
         <div className="home">
-          {err && <div className="notice err">{err}</div>}
+          {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={load}>重试</button></div>}
 
           <section className="card card-b col gap12">
             <h2 className="secttl">账户</h2>
@@ -117,18 +91,20 @@ export default function Account() {
           <section className="card card-b col gap12 mt12">
             <h2 className="secttl">工作空间</h2>
             <table className="tbl">
-              <thead><tr><th>名称</th><th>类型</th><th>我的角色</th><th>可导出</th></tr></thead>
+              <thead><tr><th>名称</th><th>类型</th><th>我的角色</th><th>可导出</th><th>操作</th></tr></thead>
               <tbody>
                 {me.workspaces.map((w) => (
                   <tr key={w.id}>
                     <td>{w.name}</td>
                     <td className="small muted">{w.kind === "personal" ? "个人" : w.kind === "org" ? "组织" : w.kind}</td>
                     <td className="small">{({ owner: "所有者", admin: "管理员", editor: "编辑", viewer: "只读" } as any)[w.role] || w.role}</td>
-                    <td className="small">{w.can_export ? "是" : <span className="muted">否</span>}</td>
+                    <td className="small">{canExport(w.role, w.can_export) ? "是" : <span className="muted">否</span>}</td>
+                    <td><div className="row gap4 wrap">{(w.role === "owner" || w.role === "admin") && <Link className="btn sm" to={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>成员与邀请</Link>}
+                      <button className="btn ghost sm" onClick={() => setLeaving(w)}>退出空间</button></div></td>
                   </tr>
                 ))}
                 {!me.workspaces.length && (
-                  <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: 16 }}>
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: "center", padding: 16 }}>
                     你当前不属于任何工作空间，因此看不到任何项目。请联系管理员。
                   </td></tr>
                 )}
@@ -140,9 +116,10 @@ export default function Account() {
             <div className="row">
               <h2 className="secttl grow">登录的设备</h2>
               {!!rows?.some((r) => !r.current) && (
-                <button className="btn danger sm" onClick={revokeOthers}>退出其他所有设备</button>
+                <button className="btn danger sm" onClick={() => void revokeOthers().catch((e) => setErr(e.message))}>退出其他所有设备</button>
               )}
             </div>
+            {rows === null && !err && <p role="status">正在加载登录的设备…</p>}
             <table className="tbl" aria-label="登录会话">
               <thead><tr><th>设备</th><th>登录方式</th><th>最近活动</th><th>到期</th><th>来源</th><th /></tr></thead>
               <tbody>
@@ -152,14 +129,14 @@ export default function Account() {
                       {r.client}
                       {r.current && <span className="badge ok" style={{ marginLeft: 6 }}>当前设备</span>}
                     </td>
-                    <td className="small muted">{AMR[r.amr] || r.amr || "—"}</td>
+                    <td className="small muted">{AMR_LABEL[r.amr] || r.amr || "—"}</td>
                     <td className="small muted nowrap">{fmtTime(r.last_seen_at)}</td>
                     <td className="small muted nowrap">{fmtTime(r.expires_at)}</td>
                     {/* An IP, not a guessed city: a wrong location shown as fact is worse than
                         none when you are deciding whether a session is yours. */}
                     <td className="small muted mono">{r.ip || "—"}</td>
                     <td className="nowrap">
-                      <button className="btn xs" onClick={() => revoke(r)}>
+                      <button className="btn xs" onClick={() => void revoke(r).catch((e) => setErr(e.message))}>
                         {r.current ? "退出" : "结束"}
                       </button>
                     </td>
@@ -179,6 +156,8 @@ export default function Account() {
           <MfaSection />
         </div>
       </div>
+      {leaving && <LeaveDialog wid={leaving.id} wsName={leaving.name} soleOwner={false} onClose={() => setLeaving(null)}
+        onDone={() => window.location.reload()} />}
     </div>
   );
 }

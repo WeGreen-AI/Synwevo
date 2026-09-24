@@ -17,7 +17,7 @@ from .engine.docx_render import DocxRenderer, render_docx
 from .engine.ooxml import Package
 from .engine.sheet_render import XlsxRenderer, workbook_window
 from .jobs import ProjectContext, verify_output
-from .services import App
+from .services import App, pdf_slots_with_nrect
 
 
 class Views:
@@ -169,29 +169,50 @@ class Views:
             return {"index": 0, "words": ocr["words"], "source": "ocr", "engine": ocr.get("engine"), "w": ocr["w"], "h": ocr["h"]}
         raise ServiceError(400, "no_words", "该文件没有页面文字层")
 
+    MAX_OCR_PAGES = 50
+
     def run_ocr(self, sid: str, pages: list[int] | None = None) -> dict:
         from .engine.images import to_png
         from .engine.ocr import OcrError, ocr_png
         r = self.app.get_source(sid, raw=True)
         doc = self.app._doc_from_row(r)
-        results = dict(r.get("ocr") or {})
+        done: dict[str, dict] = {}
         try:
             if r["family"] == "image":
-                results["0"] = ocr_png(to_png(doc.data))
+                done["0"] = ocr_png(to_png(doc.data))
             elif r["family"] == "pdf":
                 meta = pe.inspect(doc.data)
-                targets = pages if pages is not None else [p["index"] for p in meta["pages"] if p["kind"] in ("scanned", "mixed")]
+                n_pages = len(meta["pages"])
+                if pages is None:
+                    targets = [p["index"] for p in meta["pages"] if p["kind"] in ("scanned", "mixed")]
+                else:
+                    # A page list straight from the request used to be trusted: repeated or
+                    # out-of-range numbers kept a worker busy for minutes.
+                    if not isinstance(pages, list) or not all(isinstance(p, int) and not isinstance(p, bool) for p in pages):
+                        raise ServiceError(400, "bad_pages", "pages 必须是页码（从 0 开始）的数组", {"field": "pages"})
+                    bad = [p for p in pages if not 0 <= p < n_pages]
+                    if bad:
+                        raise ServiceError(400, "bad_pages", f"页码超出范围：{bad[:5]}（该文件共 {n_pages} 页，页码从 0 开始）", {"field": "pages"})
+                    targets = sorted(set(pages))
+                if len(targets) > self.MAX_OCR_PAGES:
+                    raise ServiceError(400, "too_many_pages", f"一次最多识别 {self.MAX_OCR_PAGES} 页，本次 {len(targets)} 页；请分批指定页码",
+                                       {"field": "pages", "limit": self.MAX_OCR_PAGES})
                 for pno in targets:
                     png = pe.render_page_png(doc.data, pno, 300 / 72)
-                    results[str(pno)] = ocr_png(png)
+                    done[str(pno)] = ocr_png(png)
             else:
                 raise ServiceError(400, "no_ocr", "该文件类型不需要 OCR")
         except OcrError as e:
             raise ServiceError(400, "ocr_failed", str(e)) from e
-        status = r["status"]
-        if status == "needs_ocr":
-            status = "ready"
-        self.store.update("source_files", {"id": sid}, {"ocr": results, "status": status, "version": r["version"] + 1})
+        # Merge into what is stored *now*, inside one transaction: reading at the start and
+        # writing the whole dict at the end lost the pages a concurrent OCR run had added.
+        with self.store.tx() as c:
+            cur = c.execute("SELECT ocr, status, version FROM source_files WHERE id=?", (sid,)).fetchone()
+            results = dict(json.loads(cur["ocr"]) if cur["ocr"] else {})
+            results.update(done)
+            status = "ready" if cur["status"] == "needs_ocr" else cur["status"]
+            c.execute("UPDATE source_files SET ocr=?, status=?, version=? WHERE id=?",
+                      (json.dumps(results, ensure_ascii=False), status, cur["version"] + 1, sid))
         self.store.bump_project(r["project_id"])
         return {"pages": sorted(int(k) for k in results), "words": sum(len(v["words"]) for v in results.values()),
                 "low_conf": sum(1 for v in results.values() for w in v["words"] if w["conf"] < 60)}
@@ -215,7 +236,8 @@ class Views:
         fmt = t["format"]
         slots = [dict(s) for s in v["slots"]]
         if fmt in ("pdf", "png", "jpeg") and slots:
-            from ..services import pdf_slots_with_nrect
+            # This was `from ..services import …` — one level above the top-level package — so
+            # the template pane of every PDF or image template with a field answered 500.
             slots = pdf_slots_with_nrect(work, slots)
         out = {"id": tid, "format": fmt, "version": v["version_no"], "slots": slots}
         out.update(render_output("pdf" if fmt in ("png", "jpeg") else fmt, work, sheet, offset, limit, slots))
@@ -247,30 +269,40 @@ class Views:
         return R.summarize(res, 20)
 
     # ================================================================ preview
-    def preview(self, pid: str, index: int | None = None, key: str | None = None, search: str | None = None) -> dict:
+    def preview(self, pid: str, index: int | None = None, key: str | None = None, search: str | None = None,
+                *, strict: bool = False, expected_signature: str | None = None) -> dict:
         ctx = ProjectContext(self.app, pid)
+        sig = ctx.signature()
+        if expected_signature is not None and expected_signature != sig:
+            raise ServiceError(409, "stale", "项目输入或模板已改变，请重新预检", {"field": "signature", "signature": sig})
         if not ctx.template:
-            raise ServiceError(400, "no_template", "请先选择或创建模板")
+            raise ServiceError(400, "no_template", "项目使用的模板已被删除，请重新选择或创建模板" if ctx.template_missing
+                               else "请先选择或创建模板")
         recs = ctx.records["records"]
         if not recs:
             raise ServiceError(400, "no_records", "没有识别到样本")
         rec = None
         if key:
-            rec = next((r for r in recs if r["key"] == key), None)
+            rec = R.find_record(recs, key)        # also a link saved before the per-group key format changed
+            if rec is None and strict:
+                raise ServiceError(404, "not_found", "没有找到该样本", {"field": "key"})
         elif search:
             s = search.strip().lower()
             rec = next((r for r in recs if s in (r.get("ident") or "").lower() or s in r["label"].lower()), None)
             if rec is None:
                 raise ServiceError(404, "not_found", f"没有找到包含「{search}」的样本")
         if rec is None:
+            if strict and not 0 <= (index or 0) < len(recs):
+                raise ServiceError(400, "invalid", "index 超出样本范围", {"field": "index", "total": len(recs)})
             index = max(0, min(int(index or 0), len(recs) - 1))
             rec = recs[index]
-        sig = ctx.signature()
+        out_cfg = ctx.project.get("output") or {}
+        layout_mode = out_cfg.get("layout") if out_cfg.get("layout") in ("off", "warn", "fit") else "off"
+        keep = bool(out_cfg.get("keep_fields"))
         # The workspace belongs in the key. The signature covers project, template and mapping
         # versions, so a collision across workspaces needs identical inputs — which is exactly
         # what two people working from the same sample file would have.
-        cache_key = hashlib.sha1(
-            f"{current_tenant()}|{sig}|{rec['key']}|{(ctx.project.get('output') or {}).get('layout')}".encode()).hexdigest()
+        cache_key = hashlib.sha1(f"{current_tenant()}|{sig}|{rec['key']}|{layout_mode}|{keep}".encode()).hexdigest()
         if cache_key in self._preview_cache:
             return self._preview_cache[cache_key]
         plan = ctx.plan(rec)
@@ -280,21 +312,28 @@ class Views:
             result["blocked"] = True
             result["issues"] = plan.issues
             return result
-        layout_mode = (ctx.project.get("output") or {}).get("layout") or "off"
-        tpl_pages = G.template_pages(ctx.template["format"], ctx.working()) if layout_mode == "fit" else None
+        # The options a job would use: "warn" used to become "off" here and keep_fields was
+        # never passed, so the preview lacked the page warnings and field retention the export has.
+        tpl_pages = G.template_pages(ctx.template["format"], ctx.working()) if layout_mode != "off" else None
         out, issues, lay = G.fill_checked(ctx.template["format"], ctx.working(), ctx.slots, plan,
-                                          self.app.with_image_bytes(self.app.fill_options(ctx.template)),
-                                          "fit" if layout_mode == "fit" else "off", tpl_pages)
+                                          {**self.app.with_image_bytes(self.app.fill_options(ctx.template)), "keep_fields": keep},
+                                          layout_mode, tpl_pages)
         result["issues"] = plan.issues + issues
-        if not out:
+        if not out or any(i.get("level") == "error" for i in issues):
             result["blocked"] = True
             return result
         native = G.native_format(ctx.template["format"])
+        verification = verify_output(native, out, ctx.slots, plan)
+        result["verification"] = verification
+        if not verification.get("reopened") or verification.get("missing"):
+            result["blocked"] = True
+            result["issues"].append({"level": "error", "code": "export_failed", "stage": "verify",
+                                     "message": "生成的预览未通过文档内容校验，请检查模板与映射"})
+            return result
         blob = self.store.put_blob(out)
         authz.grant_blob(self.store, blob, "preview")     # nothing else can vouch for this blob
         result["output"] = {"format": native, "blob": blob, "size": len(out)}
         result["render"] = render_output(native, out, None, 0, 300, ctx.slots, highlight=True)
-        result["verification"] = verify_output(native, out, ctx.slots, plan)
         if lay:
             result["layout"] = lay
         if len(self._preview_cache) > 200:

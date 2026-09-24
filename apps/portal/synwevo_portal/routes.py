@@ -51,9 +51,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=
             "workspaces": [{"id": w["id"], "name": w["name"], "kind": w["kind"],
                             "role": w["role"]} for w in spaces],
             "current_workspace_id": s.get("workspace_id"),
-            # Only applications this person can actually open. An entry here is a door that
-            # opens; there are no placeholder cards for things that do not exist yet.
-            "apps": apps.apps_for(user["id"]),
+            # Only applications this person can actually open — in the workspace this session
+            # is in, when one is selected. Computed without it, switching workspace changed
+            # nothing on the page and a card could name a different workspace than the
+            # highlighted one. An entry here is a door that opens; there are no placeholder
+            # cards for things that do not exist yet.
+            "apps": apps.apps_for(user["id"], s.get("workspace_id")),
             "account_url": _accounts_base(),
         }
 
@@ -66,7 +69,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=
         """
         s = _session(request)
         wid = (body or {}).get("workspace_id")
-        if wid is not None and not ident.membership(wid, s["user_id"]):
+        if wid is not None and (not ident.membership(wid, s["user_id"]) or not ident.get_workspace(wid)):
+            # A deleted workspace keeps its membership rows until they are cleaned up, so the
+            # membership alone would let a session select a workspace that no longer exists.
             raise ServiceError(403, "not_a_member", "你不是该工作空间的成员")
         sessions.set_workspace(s["id"], wid)
         audit(request, "portal.workspace.switch", actor_id=s["user_id"], workspace_id=wid,

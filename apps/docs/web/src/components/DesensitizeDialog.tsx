@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { get, post, qs } from "@synwevo/auth-client";
 import type { SourceFile } from "../lib/types";
 import { Modal } from "@synwevo/ui";
+import { useSession } from "@synwevo/auth-client";
+import { errorText, NO_EXPORT_TEXT, permissions } from "../lib/perm";
 
 const PATTERNS = [
   { key: "mobile", label: "手机号" }, { key: "idcard", label: "身份证号（保留出生日期）" }, { key: "bankcard", label: "银行卡号" },
@@ -25,6 +27,8 @@ export default function DesensitizeDialog({ projectId, sources, onDone, onClose 
   const [res, setRes] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const table = usable.find((s) => ids.includes(s.id) && s.family === "table");
+  const session = useSession();
+  const perm = permissions(session.me, session.disabled);
 
   useEffect(() => {
     if (!table) { setHeaders([]); return; }
@@ -40,7 +44,7 @@ export default function DesensitizeDialog({ projectId, sources, onDone, onClose 
       setRes(r);
       if (addToProject) onDone();
     } catch (e: any) {
-      setErr(e.message);
+      setErr(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -48,15 +52,17 @@ export default function DesensitizeDialog({ projectId, sources, onDone, onClose 
 
   return (
     <Modal title="生成脱敏副本" size="wide" onClose={onClose}
-      footer={res ? <><span className="spacer" /><button className="btn primary" onClick={onClose}>完成</button></>
-        : <>{err && <div className="notice err grow">{err}</div>}<span className="spacer" /><button className="btn" onClick={onClose}>取消</button><button className="btn primary" disabled={busy || !ids.length} onClick={run}>{busy ? "正在处理…" : `生成 ${ids.length} 个脱敏副本`}</button></>}>
+      footer={res ? <><span className="spacer" /><button type="button" className="btn primary" onClick={onClose}>完成</button></>
+        : <>{err && <div className="notice err grow" role="alert">{err}</div>}<span className="spacer" /><button type="button" className="btn" onClick={onClose}>取消</button><button type="button" className="btn primary" disabled={busy || !ids.length} onClick={run}>{busy ? "正在处理…" : `生成 ${ids.length} 个脱敏副本`}</button></>}>
       {res ? (
         <div className="col gap8">
           <div className="notice ok">已生成 {res.files.length} 个脱敏副本{addToProject ? "，并已加入来源文件列表" : ""}。同一个原值在所有文件中替换为同一个代号（本次共 {res.mapping_size} 个）。</div>
           <table className="tbl small">
             <thead><tr><th>原文件</th><th>脱敏副本</th><th /></tr></thead>
             <tbody>{res.files.map((f: any) => (
-              <tr key={f.blob}><td>{f.source}</td><td>{f.filename}</td><td><a className="btn xs" href={`/api/desensitized/${f.blob}${qs({ name: f.filename })}`}>下载</a></td></tr>
+              <tr key={f.blob}><td>{f.source}</td><td>{f.filename}</td><td>{perm.canExport
+                ? <a className="btn xs" href={`/api/desensitized/${f.blob}${qs({ name: f.filename })}`}>下载</a>
+                : <span className="tiny muted" title={NO_EXPORT_TEXT}>无下载权限</span>}</td></tr>
             ))}</tbody>
           </table>
           {res.skipped.map((s: any, i: number) => <div key={i} className="notice warn small">「{s.file}」未处理：{s.reason}</div>)}

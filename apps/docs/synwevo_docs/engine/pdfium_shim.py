@@ -225,6 +225,12 @@ class Page:
 
     def _build_from(self, page):
         tp = page.get_textpage()
+        try:
+            self._build_words(tp)
+        finally:
+            tp.close()           # never left to a finalizer on another thread
+
+    def _build_words(self, tp):
         n = tp.count_chars()
         words, cur = [], None
         line = word = 0
@@ -262,7 +268,6 @@ class Page:
             words.append(cur)
         self._words = [tuple(w) for w in words]
         self._text = "".join(text_all).replace("\r\n", "\n").replace("\r", "\n")
-        tp.close()
 
     def get_text(self, kind: str = "text", clip=None):
         if self._words is None:
@@ -298,8 +303,10 @@ class Page:
         scale = (dpi / 72.0) if dpi else (matrix.a if matrix is not None else 1.0)
         with self._page() as page:
             bm = page.render(scale=max(0.05, abs(scale)), may_draw_forms=True, fill_color=(255, 255, 255, 0 if alpha else 255))
-            im = bm.to_pil().copy()
-            bm.close()
+            try:
+                im = bm.to_pil().copy()
+            finally:
+                bm.close()
         im = im.convert("RGBA" if alpha else "RGB")
         if clip is not None:
             r = Rect(clip) * self.rotation_matrix
@@ -361,31 +368,45 @@ class Document:
         for i in range(self.page_count):
             yield self[i]
 
+    # Every method below touches PDFium: each one holds LOCK for the whole call (see LOCK).
     def insert_pdf(self, src: "Document", from_page: int = 0, to_page: int = -1):
-        to_page = src.page_count - 1 if to_page < 0 else to_page
-        self._pdf.import_pages(src._pdf, list(range(from_page, to_page + 1)))
-        self._pages.clear()
+        with LOCK:
+            to_page = src.page_count - 1 if to_page < 0 else to_page
+            self._pdf.import_pages(src._pdf, list(range(from_page, to_page + 1)))
+            self._pages.clear()
 
     def tobytes(self, **_kw) -> bytes:
         buf = io.BytesIO()
-        self._pdf.save(buf)
+        with LOCK:
+            self._pdf.save(buf)
         return buf.getvalue()
 
     def signature_count(self) -> int:
-        try:
-            return int(raw.FPDF_GetSignatureCount(self._pdf.raw))
-        except Exception:  # noqa: BLE001
-            return 0
+        with LOCK:
+            try:
+                return int(raw.FPDF_GetSignatureCount(self._pdf.raw))
+            except Exception:  # noqa: BLE001
+                return 0
 
     def javascript_count(self) -> int:
+        with LOCK:
+            try:
+                return int(raw.FPDFDoc_GetJavaScriptActionCount(self._pdf.raw))
+            except Exception:  # noqa: BLE001
+                return 0
+
+    def __del__(self):
+        # A document nobody closed would otherwise be closed by pypdfium2's own finalizer,
+        # on whatever thread the garbage collector runs, without LOCK.  Closing it here,
+        # before its PdfDocument is released, keeps that call serialised as well.
         try:
-            return int(raw.FPDFDoc_GetJavaScriptActionCount(self._pdf.raw))
-        except Exception:  # noqa: BLE001
-            return 0
+            self.close()
+        except Exception:  # noqa: BLE001 - never raise from a finalizer
+            pass
 
     def close(self):
         with LOCK:
-            if self._closed:
+            if getattr(self, "_closed", True):
                 return
             self._closed = True
             if hasattr(self, "_pages"):

@@ -1,6 +1,8 @@
 import { ReactElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Mark } from "../lib/types";
-import { cellRef, colLetter, rangeRef } from "@synwevo/ui";
+import { cssColor, markColor } from "../lib/css";
+import { cornersOf, moveCursor, type Cell } from "../lib/gridsel";
+import { cellRef, colLetter, isImeKey, rangeRef, scrollBehavior } from "@synwevo/ui";
 
 export interface GridWindow {
   sheet: string;
@@ -37,9 +39,11 @@ interface Props {
   onSheet: (s: string) => void;
   onInfo?: (info: { sheets: GridWindow["sheets"]; sheet: string; totalRows: number; totalCols: number; notes?: string[] }) => void;
   zoom?: number;
+  /** False for read-only surfaces (the preview): arrow keys scroll instead of selecting. */
+  selectable?: boolean;
 }
 
-export default function GridView({ load, reloadKey, marks, selection, onSelect, onMarkClick, headerRow, focus, sheet, onSheet, onInfo, zoom = 1 }: Props) {
+export default function GridView({ load, reloadKey, marks, selection, onSelect, onMarkClick, headerRow, focus, sheet, onSheet, onInfo, zoom = 1, selectable = true }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [wins, setWins] = useState<Record<number, GridWindow>>({});
   const [meta, setMeta] = useState<GridWindow | null>(null);
@@ -55,6 +59,14 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
   };
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  // Which file / sheet / record the windows in `wins` belong to. Every window request carries the
+  // generation it was made for; an answer for an earlier one is dropped. The grid is not remounted
+  // when the workspace switches files or the preview switches records, so without this a slow
+  // window of the previous document merged into the new one — rows 200+ showing the old values,
+  // never refetched, and mapped as if they were the new file's.
+  const gen = useRef(0);
+  // keyboard selection: the fixed corner and the moving one (see lib/gridsel.ts)
+  const kb = useRef<{ anchor: Cell; active: Cell; key: string } | null>(null);
 
   // reset on file / sheet change.  The first load is made with sheet=null and the
   // server answers which sheet that was; telling the parent must not re-fetch the
@@ -62,14 +74,16 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
   const loadedRef = useRef("");
   useEffect(() => {
     if (sheet && loadedRef.current === `${reloadKey}::${sheet}`) return;
+    const g = ++gen.current;
     setWins({});
     setMeta(null);
     setErr(null);
     loading.current = new Set();
+    kb.current = null;
     let alive = true;
     load(sheet, 0, WIN)
       .then((w) => {
-        if (!alive) return;
+        if (!alive || g !== gen.current) return;
         loadedRef.current = `${reloadKey}::${w.sheet}`;
         setMeta(w);
         setWins({ 0: w });
@@ -162,13 +176,18 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     const need = new Set<number>();
     for (let r = first; r <= last; r += WIN) need.add(Math.floor(r / WIN) * WIN);
     need.add(Math.floor(last / WIN) * WIN);
+    const g = gen.current;
+    const pending = loading.current;       // the set of this generation; a reset replaces it
     for (const off of need) {
-      if (wins[off] || loading.current.has(off) || off >= totalRows) continue;
-      loading.current.add(off);
+      if (wins[off] || pending.has(off) || off >= totalRows) continue;
+      pending.add(off);
       load(meta.sheet, off, WIN)
-        .then((w) => setWins((x) => ({ ...x, [off]: w })))
-        .catch((e) => setErr(e.message))
-        .finally(() => loading.current.delete(off));
+        .then((w) => {
+          if (g !== gen.current || (w.sheet && w.sheet !== meta.sheet)) return;
+          setWins((x) => ({ ...x, [off]: w }));
+        })
+        .catch((e) => { if (g === gen.current) setErr(e.message); })
+        .finally(() => pending.delete(off));
     }
   }, [first, last, meta, wins, load, totalRows]);
 
@@ -198,7 +217,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     if (!el) return;
     const y = rowTop(focus.r) * zoom;
     const x = (colX[focus.c] || 0) * zoom;
-    el.scrollTo({ top: Math.max(0, y - el.clientHeight / 3), left: Math.max(0, x - 80), behavior: "smooth" });
+    el.scrollTo({ top: Math.max(0, y - el.clientHeight / 3), left: Math.max(0, x - 80), behavior: scrollBehavior() });
   }, [focus?.key, meta?.sheet]);
 
   const cellValue = (r: number, c: number) => {
@@ -231,7 +250,8 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
   };
 
   const onDown = (e: React.MouseEvent) => {
-    if (!meta || e.button !== 0) return;
+    if (!selectable || !meta || e.button !== 0) return;
+    scrollRef.current?.focus({ preventScroll: true });
     const p = posFromEvent(e);
     if (e.shiftKey && selection && selection.sheet === meta.sheet) {
       const s = norm({ sheet: meta.sheet, r1: selection.r1, c1: selection.c1, r2: p.r, c2: p.c });
@@ -242,7 +262,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     setLive(expandMerge(norm({ sheet: meta.sheet, r1: p.r, c1: p.c, r2: p.r, c2: p.c }), merges));
   };
   const onMove = (e: React.MouseEvent) => {
-    if (!drag.current || !meta) return;
+    if (!selectable || !drag.current || !meta) return;
     const p = posFromEvent(e);
     setLive(expandMerge(norm({ sheet: meta.sheet, r1: drag.current.r, c1: drag.current.c, r2: p.r, c2: p.c }), merges));
   };
@@ -299,8 +319,9 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
         if (st.b) style.fontWeight = 700;
         if (st.i) style.fontStyle = "italic";
         if (st.u) style.textDecoration = "underline";
-        if (st.color) style.color = st.color;
-        if (st.bg) style.background = st.bg;
+        // cell colours come from the uploaded workbook: plain colours only (lib/css.ts)
+        if (st.color) style.color = cssColor(st.color);
+        if (st.bg) style.background = cssColor(st.bg);
         if (st.sz) style.fontSize = Math.max(9, Math.min(22, st.sz * 1.1));
         if (st.ha === "center" || st.ha === "centerContinuous") style.textAlign = "center";
         if (st.ha === "right") style.textAlign = "right";
@@ -337,7 +358,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     const on = sel && c >= sel.c1 && c <= sel.c2;
     heads.push(
       <div key={`h${c}`} className={`ghead${on ? " on" : ""}`} style={{ left: NUM_W + colX[c], top: topFix, width: colW[c], height: HEAD_H, cursor: "s-resize" }}
-        onMouseDown={(e) => { e.stopPropagation(); onSelect({ sheet: meta.sheet, r1: 0, c1: c, r2: Math.max(0, totalRows - 1), c2: c }); }}>
+        onMouseDown={(e) => { e.stopPropagation(); if (!selectable) return; scrollRef.current?.focus({ preventScroll: true }); onSelect({ sheet: meta.sheet, r1: 0, c1: c, r2: Math.max(0, totalRows - 1), c2: c }); }}>
         {colLetter(c)}
       </div>,
     );
@@ -348,7 +369,7 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     const on = sel && r >= sel.r1 && r <= sel.r2;
     heads.push(
       <div key={`r${r}`} className={`ghead${on ? " on" : ""}`} style={{ left: leftFix, top: HEAD_H + rowTop(r), width: NUM_W, height: h, lineHeight: `${h}px`, cursor: "e-resize" }}
-        onMouseDown={(e) => { e.stopPropagation(); onSelect({ sheet: meta.sheet, r1: r, c1: 0, r2: r, c2: Math.max(0, colW.length - 1) }); }}>
+        onMouseDown={(e) => { e.stopPropagation(); if (!selectable) return; scrollRef.current?.focus({ preventScroll: true }); onSelect({ sheet: meta.sheet, r1: r, c1: 0, r2: r, c2: Math.max(0, colW.length - 1) }); }}>
         {r + 1}
       </div>,
     );
@@ -361,27 +382,61 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
       const b = box(p.r1, p.c1, Math.min(p.r2, totalRows - 1), Math.min(p.c2, colW.length - 1));
       return (
         <div key={m.role + m.id} className={`gmark${m.active ? " active" : ""}${m.dim ? " dim" : ""}`} data-mark={`${m.role}:${m.id}`}
-          style={{ ...b, borderColor: m.color, background: hexA(m.color, m.role === "slot" ? 0.1 : 0.08), borderStyle: m.role === "slot" ? "dashed" : "solid" }}>
-          <span className="tag num" style={{ background: m.color }} title={m.label} onMouseDown={(e) => { e.stopPropagation(); onMarkClick?.(m.id); }}>
+          style={{ ...b, borderColor: markColor(m.color), background: hexA(markColor(m.color), m.role === "slot" ? 0.1 : 0.08), borderStyle: m.role === "slot" ? "dashed" : "solid" }}>
+          <button type="button" className="tag num" style={{ background: markColor(m.color), border: 0 }} title={m.label} aria-label={m.label || "定位映射"} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onMarkClick?.(m.id); }}>
             {m.no ?? "✎"}
-          </span>
+          </button>
         </div>
       );
     });
 
+  /** Keep the active cell on screen after a keyboard move (it used to move off-screen). */
+  const reveal = (c: Cell) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const top = (HEAD_H + rowTop(c.r)) * zoom, bottom = (HEAD_H + rowTop(c.r + 1)) * zoom;
+    const left = (NUM_W + (colX[c.c] || 0)) * zoom, right = (NUM_W + (colX[c.c + 1] || 0)) * zoom;
+    let y = el.scrollTop, x = el.scrollLeft;
+    if (top - HEAD_H * zoom < y) y = top - HEAD_H * zoom;
+    else if (bottom > y + el.clientHeight) y = bottom - el.clientHeight;
+    if (left - NUM_W * zoom < x) x = left - NUM_W * zoom;
+    else if (right > x + el.clientWidth) x = right - el.clientWidth;
+    if (y !== el.scrollTop || x !== el.scrollLeft) el.scrollTo({ top: Math.max(0, y), left: Math.max(0, x) });
+  };
+  const onGridKey = (e: React.KeyboardEvent) => {
+    if (isImeKey(e) || !selectable) return;
+    const d: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+    const k = d[e.key];
+    if (!k) return;
+    e.preventDefault();
+    const cur = selection && selection.sheet === meta.sheet ? selection : null;
+    const key = cur ? `${cur.r1},${cur.c1},${cur.r2},${cur.c2}` : "";
+    let anchor: Cell, active: Cell;
+    if (kb.current && kb.current.key === key) ({ anchor, active } = kb.current);
+    else if (cur) ({ anchor, active } = cornersOf(cur));
+    else {
+      // Nothing selected yet: start on the first visible cell, so the grid can be used without
+      // ever touching the mouse. The first arrow press only places the cursor.
+      const start = { r: first, c: visibleCols[0] ?? 0 };
+      kb.current = { anchor: start, active: start, key: `${start.r},${start.c},${start.r},${start.c}` };
+      onSelect({ sheet: meta.sheet, r1: start.r, c1: start.c, r2: start.r, c2: start.c });
+      return;
+    }
+    const m = moveCursor(anchor, active, k[0], k[1], e.shiftKey, totalRows, colW.length);
+    const next = { sheet: meta.sheet, ...m.rect };
+    kb.current = { anchor: m.anchor, active: m.active, key: `${next.r1},${next.c1},${next.r2},${next.c2}` };
+    onSelect(next);
+    reveal(m.active);
+  };
+  const done = selection && selection.sheet === meta.sheet ? selection : null;    // not the live drag
+  const selText = done ? `已选 ${meta.sheet}!${rangeRef(done.r1, done.c1, done.r2, done.c2)}` : "";
+
   return (
     <div className="grid-wrap">
+      <div className="sr-only" role="status" aria-live="polite">{selText}</div>
       <div className="grid-scroll" ref={scrollRef} onMouseDown={onDown} onMouseMove={onMove} tabIndex={0}
-        onKeyDown={(e) => {
-          if (!sel) return;
-          const d: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
-          const k = d[e.key];
-          if (!k) return;
-          e.preventDefault();
-          const r = Math.max(0, Math.min(totalRows - 1, (e.shiftKey ? sel.r2 : sel.r1) + k[0]));
-          const c = Math.max(0, Math.min(colW.length - 1, (e.shiftKey ? sel.c2 : sel.c1) + k[1]));
-          onSelect(e.shiftKey ? norm({ ...sel, r2: r, c2: c }) : { sheet: sel.sheet, r1: r, c1: c, r2: r, c2: c });
-        }}>
+        aria-label={`工作表「${meta.sheet}」，${totalRows} 行 × ${colW.length} 列${selectable ? "。方向键移动选区，Shift+方向键扩展选区" : ""}`}
+        onKeyDown={onGridKey}>
         <div className="grid-canvas" style={{ width: (NUM_W + totalW) * zoom, height: (HEAD_H + totalH) * zoom }}>
           <div style={{ transform: `scale(${zoom})`, transformOrigin: "0 0", position: "absolute", inset: 0 }}>
             {headerRow && headerRow.sheet === meta.sheet && headerRow.row >= 0 && (
@@ -396,9 +451,9 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
         </div>
       </div>
       {meta.sheets.length > 1 && (
-        <div className="sheettabs" role="tablist">
+        <div className="sheettabs" role="tablist" aria-label="工作表">
           {meta.sheets.map((s) => (
-            <button key={s.name} role="tab" className={`sheettab${s.name === meta.sheet ? " on" : ""}`} onClick={() => onSheet(s.name)} title={`${s.rows} 行 × ${s.cols} 列`}>
+            <button type="button" key={s.name} role="tab" aria-selected={s.name === meta.sheet} className={`sheettab${s.name === meta.sheet ? " on" : ""}`} onClick={() => onSheet(s.name)} title={`${s.rows} 行 × ${s.cols} 列`}>
               {s.name}{s.hidden ? "（隐藏）" : ""}
             </button>
           ))}

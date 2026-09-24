@@ -7,6 +7,8 @@ nearby content.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -31,7 +33,8 @@ class SourceDoc:
     data: bytes | None = None                 # working bytes (converted OOXML for legacy formats)
     workbook_json: dict | None = None
     ocr: dict | None = None                   # {page_index: {"words": [...], "w":..., "h":...}}
-    corrections: dict = field(default_factory=dict)  # {mapping_id: {"value": str, "confirmed": bool}}
+    # {mapping_id | "<mapping_id>~<block>": {"value": str, "confirmed": bool, "fp": locator fingerprint}}
+    corrections: dict = field(default_factory=dict)
     _wb: tabular.Workbook | None = None
     _pkg: object | None = None
     _pdf: object | None = None
@@ -346,11 +349,49 @@ def _docx_headers(tbl, header_rows: int) -> list[str]:
 
 
 # ------------------------------------------------------------------ PDF / OCR
-def _pdf_region(src: SourceDoc, loc: dict, ctx: dict) -> V.Value:
+def locator_fingerprint(loc: dict) -> str:
+    """What a confirmed OCR value was read from: locator kind, page and box.
+
+    A person confirms the value they saw in one box.  When the mapping is later drawn
+    somewhere else, the confirmation no longer describes what the locator reads, so it
+    must stop applying instead of silently overriding the new position."""
+    key: dict = {"kind": loc.get("kind"), "page": int(loc.get("page", 0) or 0)}
+    for k in ("nrect", "rect"):
+        if loc.get(k) is not None:
+            key[k] = [round(float(x), 4) for x in loc[k]]
+    return hashlib.sha1(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def correction_key(doc_id: str, mapping_id: str) -> tuple[str, str]:
+    """(source file id, key in that file's ``corrections``) for a value confirmed on the
+    sample document ``doc_id``.  A per-block sample ``<file id>~<n>`` stores its own entry
+    ``<mapping id>~<n>``: one form's confirmed value must never reach the other forms of
+    the same file."""
+    parent, sep, n = doc_id.rpartition("~")
+    if sep and n.isdigit():
+        return parent, f"{mapping_id}~{n}"
+    return doc_id, mapping_id
+
+
+def _correction(src: SourceDoc, loc: dict, ctx: dict) -> dict | None:
     mid = ctx.get("mapping_id")
     corr = src.corrections.get(mid) if mid else None
-    if corr is not None and corr.get("value") is not None:
-        v = V.text(corr["value"])
+    if not isinstance(corr, dict) or corr.get("value") is None:
+        return None
+    fp = corr.get("fp")
+    if fp is not None:
+        return corr if fp == locator_fingerprint(loc) else None
+    # Recorded before corrections carried their locator: nothing tells which of several
+    # sources it was confirmed for, so it may only stand in for a single-source mapping.
+    if int(ctx.get("mapping_sources", 1) or 1) > 1:
+        return None
+    return corr
+
+
+def _pdf_region(src: SourceDoc, loc: dict, ctx: dict) -> V.Value:
+    corr = _correction(src, loc, ctx)
+    if corr is not None:
+        v = V.text(str(corr["value"]))
         return _with_src(v, src, page=loc.get("page"), corrected=True)
     if loc.get("kind") == "ocr_region" or src.family == "image":
         return _ocr_region(src, loc)
@@ -390,8 +431,10 @@ def _ocr_region(src: SourceDoc, loc: dict) -> V.Value:
     v = _with_src(v, src, page=pno, ocr=True, conf=conf)
     threshold = loc.get("min_conf", 80)
     if words and conf < threshold:
+        # doc + fp tell the confirmation endpoint exactly which sample and which box the
+        # person is confirming (see correction_key / locator_fingerprint)
         raise ResolveError("ocr_low_confidence", f"「{src.filename}」第 {pno + 1} 页识别结果「{text}」置信度 {conf:.0f} 低于 {threshold}，需要人工确认",
-                           {"value": text, "conf": conf})
+                           {"value": text, "conf": conf, "doc": src.file_id, "fp": locator_fingerprint(loc)})
     return v
 
 
@@ -487,10 +530,20 @@ def extract_detail(src: SourceDoc, loc: dict, ctx: dict) -> tuple[list[str], lis
 
 def _rows_from_group(ctx: dict) -> tuple[list[str], list[dict[str, V.Value]]]:
     heads = None
+    per_file: dict[str, tuple[str, set[str]]] = {}
     rows = []
     for src, tv, r in ctx["group_rows"]:
         h = [tabular.normalize_header(x) for x in tv.headers]
         heads = heads or h
+        per_file.setdefault(src.file_id, (src.filename, set(h)))
         rows.append({name: _with_src(tv.sheet.cell(r, i + tv.first_col), src, sheet=tv.sheet.name,
                                      cell=tabular.cell_ref(r, i + tv.first_col)) for i, name in enumerate(h) if name})
+    # A cross-file group takes rows from several files.  A column only the first file has used
+    # to be filled blank for the rows of the others; report it instead (see missing_in_group).
+    ctx["group_headers"] = list(per_file.values())
     return heads or [], rows
+
+
+def missing_in_group(ctx: dict, header: str) -> list[str]:
+    """Files of a cross-file group whose detail table lacks ``header`` (normalised)."""
+    return [name for name, hs in ctx.get("group_headers") or [] if header not in hs]

@@ -32,7 +32,10 @@ export function PlatformNav() {
 
   const platformName = state?.platform_name || "Synwevo Workspace";
   const spaces = me.workspaces || [];
-  const current = spaces.find((w) => w.id === me.workspace_id) || spaces[0];
+  // The session's own answer, or nothing. Falling back to the first workspace claimed a tenant
+  // the session is not acting in (after losing a membership, or before choosing one) — and made
+  // choosing that very workspace a no-op, because it already looked selected.
+  const current = spaces.find((w) => w.id === me.workspace_id) || null;
   const others = spaces.filter((w) => w.id !== current?.id);
 
   async function switchTo(id: string) {
@@ -57,15 +60,18 @@ export function PlatformNav() {
           ← {platformName}
         </a>
       )}
-      {current && (others.length ? (
-        <select className="input sm" style={{ maxWidth: 180 }} value={current.id}
+      {spaces.length === 0 ? (
+        <span className="muted sm desktop-only">未加入任何工作空间</span>
+      ) : current && !others.length ? (
+        <span className="muted sm desktop-only" title="当前工作空间">{current.name}</span>
+      ) : (
+        <select className="input sm" style={{ maxWidth: 180 }} value={current?.id || ""}
                 disabled={switching} aria-label="切换工作空间"
                 onChange={(e) => void switchTo(e.target.value)}>
+          {!current && <option value="" disabled>选择工作空间…</option>}
           {spaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
         </select>
-      ) : (
-        <span className="muted sm desktop-only" title="当前工作空间">{current.name}</span>
-      ))}
+      )}
       <a className="btn ghost sm" href={state?.account_url || "/account"} title="账户与安全">账户</a>
     </>
   );

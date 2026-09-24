@@ -16,8 +16,11 @@ def test_archive_hides_from_the_default_list_but_keeps_the_project(api):
     default = api.ok(api.c.get("/api/projects"))
     assert not any(p["id"] == pid for p in default), "归档后不应出现在默认列表"
 
+    # Any list parameter asks for the paged shape {items, total, ...}; archived=1 includes
+    # archived projects alongside the others.
     with_arch = api.ok(api.c.get("/api/projects", params={"archived": 1}))
-    row = next(p for p in with_arch if p["id"] == pid)
+    assert with_arch["total"] == len(with_arch["items"]) and with_arch["next_offset"] is None
+    row = next(p for p in with_arch["items"] if p["id"] == pid)
     assert row["archived_at"], "归档时间必须记录下来"
 
     # the project itself is untouched and still fully usable

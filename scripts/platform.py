@@ -10,7 +10,13 @@
     python scripts/platform.py logs accounts|portal|docs [-n 200]
     python scripts/platform.py test [docs|identity|integration|all]
     python scripts/platform.py backup [--out DIR]    # 一致性备份（SQLite 备份 API + blob 清单）
-    python scripts/platform.py verify-restore DIR    # 在隔离副本上核验备份能恢复
+    python scripts/platform.py verify-restore FILE   # 在隔离副本上核验备份能恢复
+    python scripts/platform.py restore FILE --into DIR [--force]
+                                                     # 恢复并补上备份之后的撤销（安全日志）
+
+`setup` runs with any Python ≥ 3.12 on a clean checkout: it imports nothing from this repository,
+because nothing from this repository is installed until it has run. Every other command needs
+the workspace virtualenv and re-executes itself inside it when started with another interpreter.
 
 Why three hostnames and not three ports: **different ports do not isolate cookies.** A cookie
 set by `localhost:8770` is sent to `localhost:8765` as well, because the cookie protocol scopes
@@ -31,8 +37,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-
-from synwevo_core import env
+import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -72,7 +78,20 @@ SERVICES = {
 
 
 def data_dir() -> str:
-    return env.get("DATA_DIR") or str(ROOT / "data")
+    """Where the one database lives, as an absolute path.
+
+    Read through `synwevo_core.env` so a conflicting `SYNWEVO_DATA_DIR` / `DOCWEAVE_DATA_DIR`
+    pair is refused rather than guessed. Imported here, not at the top of the file: `setup` must
+    run before `synwevo_core` is installed anywhere. A relative value is taken relative to the
+    repository root — the same rule `snapshot.py --data` uses — so the three services and the
+    backup tool resolve one directory whichever directory they were started from.
+    """
+    from synwevo_core import env
+    raw = env.get("DATA_DIR")
+    if not raw:
+        return str(ROOT / "data")
+    p = Path(raw).expanduser()
+    return str(p if p.is_absolute() else (ROOT / p).resolve())
 
 
 def env_for(name: str) -> dict:
@@ -135,6 +154,42 @@ def _pidfile(name: str) -> Path:
     return RUN / f"{name}.pid"
 
 
+def _is_ours(pid: int) -> bool:
+    """Is this pid still the server we started, rather than whatever reused the number?
+
+    A pid file outlives a crash or a reboot, and pids are reused. Signalling on the strength of
+    "some process has this number" is how `down` would terminate an unrelated program, so the
+    command line has to say it is `synwevo_server.run` before anything is sent to it.
+    """
+    try:
+        out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True,
+                             text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    try:
+        command = shlex.split(out.strip())
+    except ValueError:
+        return False
+    if len(command) != 3 or command[1:] != ["-m", "synwevo_server.run"]:
+        return False
+    # macOS replaces the venv executable in ps output with the framework interpreter.
+    # Check the working directory instead: up always sets cwd=ROOT, and a different
+    # checkout running the same module must never be stopped through our stale pid file.
+    try:
+        if sys.platform.startswith("linux"):
+            cwd = Path(f"/proc/{pid}/cwd").resolve(strict=True)
+        else:
+            result = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                                    capture_output=True, text=True, timeout=5, check=True)
+            paths = [line[1:] for line in result.stdout.splitlines() if line.startswith("n")]
+            if len(paths) != 1:
+                return False
+            cwd = Path(paths[0]).resolve()
+        return cwd == ROOT.resolve()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _alive(name: str) -> int | None:
     f = _pidfile(name)
     if not f.exists():
@@ -142,9 +197,9 @@ def _alive(name: str) -> int | None:
     try:
         pid = int(f.read_text().strip())
         os.kill(pid, 0)
-        return pid
     except (ValueError, ProcessLookupError, PermissionError):
         return None
+    return pid if _is_ours(pid) else None
 
 
 def check_hostnames() -> bool:
@@ -167,7 +222,7 @@ def check_hostnames() -> bool:
     return ok
 
 
-def register_clients() -> None:
+def register_clients() -> bool:
     """Register the two relying parties. Idempotent, and by CLI on purpose — there is no
     dynamic client registration endpoint and no UI for this."""
     for client_id, app_id, name, base in (
@@ -181,13 +236,33 @@ def register_clients() -> None:
         p = subprocess.run(cmd, capture_output=True, text=True)
         if p.returncode != 0:
             print(f"  ✗ {client_id}: {p.stderr.strip()[:200]}")
+            return False
         else:
             print(f"  ✓ {client_id} → {base}/auth/callback")
+    return True
+
+
+def _service(value: str) -> str:
+    if value not in SERVICES:
+        raise argparse.ArgumentTypeError(f"未知服务 {value!r}；可选：{', '.join(SERVICES)}")
+    return value
 
 
 def _selected(args) -> list[str]:
-    names = [n for n in getattr(args, "services", []) or [] if n in SERVICES]
+    names = list(dict.fromkeys(_service(n) for n in getattr(args, "services", []) or []))
     return names or list(SERVICES)
+
+
+def _ready(name: str) -> bool:
+    if not _alive(name):
+        return False
+    # Local readiness must not travel through an ambient HTTP proxy.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(f"{SERVICES[name][2]}/readyz", timeout=1) as response:
+            return response.status == 200 and json.load(response).get("status") == "ready"
+    except (OSError, ValueError):
+        return False
 
 
 def up(args) -> int:
@@ -201,42 +276,50 @@ def up(args) -> int:
         print("\n这些名字必须解析到回环地址，否则请求会离开本机。中止。", file=sys.stderr)
         return 2
 
+    selected = _selected(args)
+    occupied = [name for name in selected if not _alive(name)
+                and _port_busy(SERVICES[name][1], urllib.parse.urlparse(SERVICES[name][2]).hostname)]
+    if occupied:
+        for name in occupied:
+            print(f"  ✗ {name}: 端口 {SERVICES[name][1]} 已被其他进程占用；未启动", file=sys.stderr)
+        return 1
+
     print(f"\n数据目录：{data_dir()}（三个服务共用一个账户权威）")
     print("登记 OIDC 客户端：")
-    register_clients()
+    if not register_clients():
+        return 1
 
     print("\n启动服务：")
-    for name in _selected(args):
+    for name in selected:
         role, port, url, _, _app = SERVICES[name]
         if _alive(name):
             print(f"  · {name} 已在运行（pid {_alive(name)}）")
             continue
         if _port_busy(port, urllib.parse.urlparse(url).hostname):
             print(f"  ✗ {name}: 端口 {port} 已被占用", file=sys.stderr)
-            continue
-        log = (RUN / f"{name}.log").open("a")
-        log.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} start role={role} =====\n")
-        log.flush()
-        p = subprocess.Popen([str(PY), "-m", "synwevo_server.run"],
-                             env=env_for(name), stdout=log, stderr=subprocess.STDOUT,
-                             start_new_session=True)
+            return 1
+        child_env = env_for(name)
+        with (RUN / f"{name}.log").open("a") as log:
+            log.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} start role={role} =====\n")
+            log.flush()
+            p = subprocess.Popen([str(PY), "-m", "synwevo_server.run"],
+                                 env=child_env, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                                 start_new_session=True)
         _pidfile(name).write_text(str(p.pid))
         print(f"  ✓ {name:<9} role={role:<9} {url}  绑定 {env_for(name)['SYNWEVO_HOST']}:{port}"
               f"  (pid {p.pid})")
 
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        if all(_port_busy(SERVICES[n][1], urllib.parse.urlparse(SERVICES[n][2]).hostname)
-               for n in _selected(args)):
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if all(_ready(n) for n in selected):
             break
         time.sleep(0.3)
-    failed = [n for n in _selected(args)
-              if not _port_busy(SERVICES[n][1], urllib.parse.urlparse(SERVICES[n][2]).hostname)]
+    failed = [n for n in selected if not _ready(n)]
     if failed:
         # A start script whose only output is "OK" is worse than no script: the next thing that
         # fails looks unrelated. Say which one, and where to read why.
         for n in failed:
-            print(f"  ✗ {n} 没有在 20 秒内开始监听；日志：{RUN / (n + '.log')}", file=sys.stderr)
+            print(f"  ✗ {n} 没有在 20 秒内就绪；日志：{RUN / (n + '.log')}", file=sys.stderr)
 
     print("\n打开：")
     print(f"  Synwevo Workspace   {PORTAL}")
@@ -250,7 +333,9 @@ def down(args) -> int:
     for name in _selected(args):
         pid = _alive(name)
         if not pid:
-            print(f"  · {name} 未在运行")
+            stale = _pidfile(name).exists()
+            print(f"  · {name} 未在运行" + ("（pid 文件已过期：那个编号现在不是我们的服务，未发送信号）"
+                                         if stale else ""))
             _pidfile(name).unlink(missing_ok=True)
             continue
         os.kill(pid, signal.SIGTERM)
@@ -323,28 +408,54 @@ def _require_data_dir(args) -> None:
     raise SystemExit(2)
 
 
+MODULES = ["packages/core", "packages/auth-client/python", "services/identity",
+           "apps/portal", "apps/docs", "infra/server"]
+IMPORTS = ["synwevo_core", "synwevo_auth_client", "synwevo_identity", "synwevo_portal",
+           "synwevo_docs", "synwevo_server"]
+
+
 def setup(args) -> int:
-    """Create the workspace virtualenv, install every module, build the three shells."""
-    py = sys.executable
+    """Create the workspace virtualenv, install every module, build the three shells.
+
+    Reproducible means: third-party versions come from the requirements files, the front end
+    from package-lock.json (`npm ci`, never `npm install`, which may rewrite the lock), and the
+    result is checked — `pip check` proves every module's declared dependencies are installed,
+    and each module is imported once, from the venv, before this reports success.
+    """
+    if sys.version_info < (3, 12):
+        print(f"需要 Python 3.12 或更高（当前 {sys.version.split()[0]}，{sys.executable}）。\n"
+              f"换一个解释器运行：python3.12 scripts/platform.py setup", file=sys.stderr)
+        return 2
+    missing = [m for m in MODULES if not (ROOT / m / "pyproject.toml").is_file()]
+    if missing:
+        print(f"找不到这些模块：{', '.join(missing)}", file=sys.stderr)
+        return 2
     if not PY.exists():
         print(f"建立 {ROOT / '.venv'}：")
-        if _run([py, "-m", "venv", str(ROOT / ".venv")]):
+        if _run([sys.executable, "-m", "venv", str(ROOT / ".venv")]):
             return 1
     print("安装 Python 依赖（按各模块固定的版本）：")
-    if _run([str(PY), "-m", "pip", "install", "-q", "-U", "pip"]):
+    if _run([str(PY), "-m", "pip", "install", "-q", "-r", "infra/server/requirements-build.txt"]):
         return 1
     if _run([str(PY), "-m", "pip", "install", "-q", "-r", "requirements-dev.txt"]):
         return 1
     print("以可编辑方式安装各模块（真实的包边界，不是 sys.path 拼接）：")
-    mods = ["packages/platform-core", "packages/auth-client/python", "services/identity",
-            "apps/portal", "apps/docs", "infra/server"]
-    if _run([str(PY), "-m", "pip", "install", "-q", "--no-deps"]
-            + [a for m in mods for a in ("-e", m)]):
+    if _run([str(PY), "-m", "pip", "install", "-q", "--no-deps", "--no-build-isolation"]
+            + [a for m in MODULES for a in ("-e", m)]):
         return 1
-    print("安装前端依赖并构建三个外壳：")
-    if _run(["npm", "install"]) or _run(["npm", "run", "build"]):
+    print("核对：每个模块声明的依赖都已安装，并且都能导入：")
+    if _run([str(PY), "-m", "pip", "check"]):
         return 1
-    print("\n完成。启动：python scripts/platform.py up")
+    if _run([str(PY), "-c", "import " + ", ".join(IMPORTS)]):
+        return 1
+    if shutil.which("npm") is None:
+        print("找不到 npm：构建三个前端外壳需要 Node.js（容器镜像用的是 Node 22）。",
+              file=sys.stderr)
+        return 1
+    print("按锁文件安装前端依赖并构建三个外壳：")
+    if _run(["npm", "ci"]) or _run(["npm", "run", "build"]):
+        return 1
+    print("\n完成。启动：python scripts/platform.py up --init（新装）或 python scripts/platform.py up")
     return 0
 
 
@@ -353,8 +464,10 @@ SUITES = {"docs": "apps/docs/tests", "identity": "services/identity/tests",
 
 
 def test(args) -> int:
-    targets = [SUITES[k] for k in (args.suite if args.suite != "all" else SUITES)]
-    return _run([str(PY), "-m", "pytest", *targets])
+    # `args.suite` is one name. Iterating the string itself walked its letters ('d','o',…) and
+    # raised KeyError for every suite except "all".
+    keys = list(SUITES) if args.suite == "all" else [args.suite]
+    return _run([str(PY), "-m", "pytest", *(SUITES[k] for k in keys)])
 
 
 def deps(args) -> int:
@@ -365,6 +478,17 @@ def deps(args) -> int:
 SNAPSHOT = ROOT / "apps" / "docs" / "scripts" / "snapshot.py"
 
 
+def _here(path: str) -> str:
+    """A path the person typed, made absolute against *their* working directory.
+
+    The snapshot tool runs with the repository root as its working directory and resolves a
+    relative `--into` / `--out` against that root, so `platform.py verify-restore ./b.tar.gz`
+    typed anywhere else looked for the archive in the wrong place. Resolving here, before the
+    hand-over, is the only point that still knows where the person was standing.
+    """
+    return str(Path(path).expanduser().resolve())
+
+
 def backup(args) -> int:
     """A consistent snapshot: SQLite's own backup API plus the blob tree, in one archive.
 
@@ -372,16 +496,34 @@ def backup(args) -> int:
     Copying the `.sqlite3` file is not a backup while a write-ahead log exists — it is a backup
     missing whatever had not been checkpointed.
     """
-    out = Path(args.out or (ROOT / ".local" / "backups"))
-    return _run([str(PY), str(SNAPSHOT), "create", "--data", data_dir(), "--out", str(out)])
+    out = _here(args.out) if args.out else str(ROOT / ".local" / "backups")
+    return _run([str(PY), str(SNAPSHOT), "create", "--data", data_dir(), "--out", out])
 
 
 def verify_restore(args) -> int:
     """Restore into a throwaway directory and compare, row by row, against what was captured.
 
-    A backup that has never been restored is a file, not a backup.
+    A backup that has never been restored is a file, not a backup. The live security journal is
+    read (never written) so the rehearsal also shows which withdrawals a real restore would
+    re-apply.
     """
-    return _run([str(PY), str(SNAPSHOT), "verify", "--archive", args.backup])
+    return _run([str(PY), str(SNAPSHOT), "verify", "--archive", _here(args.backup),
+                 "--journal-from", data_dir()])
+
+
+def restore(args) -> int:
+    """Restore an archive, then re-apply every withdrawal of access recorded after it was taken.
+
+    The services must be stopped first when restoring over the live data directory; the tool
+    checks, and refuses while the database is open.
+    """
+    cmd = [str(PY), str(SNAPSHOT), "restore", "--archive", _here(args.backup), "--into", _here(args.into),
+           "--journal-from", data_dir()]
+    if args.force:
+        cmd.append("--force")
+    if args.no_journal:
+        cmd.append("--no-journal")
+    return _run(cmd)
 
 
 def restart(args) -> int:
@@ -397,16 +539,16 @@ def main() -> int:
     sub.add_parser("setup", help="建立 .venv、安装各模块、构建前端").set_defaults(func=setup)
 
     u = sub.add_parser("up", help="启动服务（不指定则全部）")
-    u.add_argument("services", nargs="*", choices=list(SERVICES) + [], default=[])
+    u.add_argument("services", nargs="*", type=_service, default=[])
     u.add_argument("--init", action="store_true", help="允许在空数据目录上初始化一个新实例")
     u.set_defaults(func=up)
 
     d = sub.add_parser("down", help="停止服务（不指定则全部）")
-    d.add_argument("services", nargs="*", default=[])
+    d.add_argument("services", nargs="*", type=_service, default=[])
     d.set_defaults(func=down)
 
     rs = sub.add_parser("restart", help="重启服务")
-    rs.add_argument("services", nargs="*", default=[])
+    rs.add_argument("services", nargs="*", type=_service, default=[])
     rs.add_argument("--init", action="store_true")
     rs.set_defaults(func=restart)
 
@@ -431,8 +573,69 @@ def main() -> int:
     vr.add_argument("backup", help="备份归档文件（python scripts/platform.py backup 的产物）")
     vr.set_defaults(func=verify_restore)
 
+    rt = sub.add_parser("restore", help="恢复备份，并重放备份之后的撤销记录")
+    rt.add_argument("backup", help="备份归档文件")
+    rt.add_argument("--into", required=True, help="恢复到的目录；覆盖正在使用的数据目录需要 --force")
+    rt.add_argument("--force", action="store_true",
+                    help="目录里已有数据库时，先把它移到隔离区再恢复（服务必须已停止）")
+    rt.add_argument("--no-journal", action="store_true",
+                    help="原撤销日志丢失时使用：会话、令牌、旧 API key 全部作废，机密/服务客户端停用；"
+                         "保留公开交互客户端。无法补回备份后的成员与账户撤权历史，恢复后需人工核对")
+    rt.set_defaults(func=restore)
+
     args = ap.parse_args()
+    if args.cmd != "setup" and _needs_venv():
+        return _reexec_in_venv()
+    # Handed over successfully: the mark is not for the services or test runs started from here.
+    os.environ.pop(REEXEC_MARK, None)
     return args.func(args)
+
+
+def _needs_venv() -> bool:
+    """Everything but `setup` reads configuration through `synwevo_core`, which lives in the
+    workspace virtualenv. Started with another interpreter, hand over to that one instead of
+    failing on an import — or, worse, carrying a second copy of the configuration rules here."""
+    try:
+        import synwevo_core  # noqa: F401
+        return False
+    except ImportError:
+        return True
+
+
+REEXEC_MARK = "SYNWEVO_PLATFORM_REEXEC"
+
+
+def _running_in_venv() -> bool:
+    try:
+        return Path(sys.prefix).resolve() == (ROOT / ".venv").resolve()
+    except OSError:
+        return False
+
+
+def _reexec_in_venv() -> int:
+    """Hand over to the workspace interpreter — once.
+
+    A `.venv` that exists but cannot import `synwevo_core` (setup failed after creating it, or
+    the package itself raises on import) used to hand over to itself forever: every command but
+    `setup` spun in an exec loop and never printed anything. So the hand-over is marked, and an
+    interpreter that already is the venv, or was already handed over to, says what is wrong.
+    """
+    if not PY.exists():
+        print(f"没有 {PY}。先运行：python scripts/platform.py setup", file=sys.stderr)
+        return 2
+    if os.environ.get(REEXEC_MARK) or _running_in_venv():
+        try:
+            import synwevo_core  # noqa: F401
+            why = ""
+        except ImportError as e:
+            why = f"（{e}）"
+        print(f"{ROOT / '.venv'} 里导入不了 synwevo_core{why}。\n"
+              f"安装没有完成，或者包本身导入失败。重新运行：python3.12 scripts/platform.py setup",
+              file=sys.stderr)
+        return 2
+    os.environ[REEXEC_MARK] = "1"
+    os.execv(str(PY), [str(PY), str(Path(__file__).resolve()), *sys.argv[1:]])
+    return 2  # not reached
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure Argon2id cost on THIS host, so password parameters are chosen from numbers.
 
-    python scripts/bench_argon2.py
+    .venv/bin/python apps/docs/scripts/bench_argon2.py
 
 Run it on the machine that will actually serve logins — a laptop and a shared VPS differ by
 3-4x. The parameters in packages/core/synwevo_core/passwords.py carry the measurements they came from;

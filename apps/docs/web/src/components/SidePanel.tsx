@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { get, qs } from "@synwevo/auth-client";
-import { describeLocator, MAP_TYPE, mappingSlots, MODE_NAME, SLOT_KIND, variesText } from "../lib/describe";
+import { describeLocator, MAP_TYPE, mappingSlots, SLOT_KIND, variesText } from "../lib/describe";
+import { ruleMode } from "../lib/status";
+import { READ_ONLY_TEXT } from "../lib/perm";
+import { markColor } from "../lib/css";
 import type { Mapping, Project, Slot, SourceFile } from "../lib/types";
-import { useDialog } from "@synwevo/ui";
+import { isImeKey, useDialog } from "@synwevo/ui";
 import Transforms from "./Transforms";
 
 export type SideTab = "mappings" | "fields" | "samples" | "check";
@@ -25,7 +28,8 @@ interface Props {
   onUpdateSlot: (id: string, patch: any) => Promise<void>;
   onDeleteSlot: (s: Slot) => Promise<void>;
   onRelocate: (fileId: string, mappingId: string) => void;
-  onClearOverride: (fileId: string, mappingId: string) => void;
+  /** `key` is the override's own key: the file id, or `<file id>~<block>` in 「每块一份」. */
+  onClearOverride: (key: string, mappingId: string) => void;
   onOpenRule: () => void;
   onCorrect: (fileId: string, mappingId: string, value: string | null) => Promise<void>;
   collapsed: boolean;
@@ -36,41 +40,68 @@ interface Props {
   onRedo: () => void;
   width: number;
   onWidth: (w: number) => void;
+  /** Viewer role: every edit is offered disabled, with the reason, instead of failing on click. */
+  readOnly?: boolean;
 }
+
+const SIDE_MIN = 240;
+const sideMax = () => Math.max(SIDE_MIN, window.innerWidth - 560);
 
 export default function SidePanel(p: Props) {
   if (p.collapsed) {
     return (
       <div className="side right collapsed" style={{ width: 34 }}>
-        <button className="btn ghost icon" title="展开映射列表" onClick={() => p.onCollapse(false)}>«</button>
+        <button type="button" className="btn ghost icon" title="展开映射列表" aria-label="展开映射列表" onClick={() => p.onCollapse(false)}>«</button>
         <div className="tiny muted" style={{ writingMode: "vertical-rl", margin: "8px auto" }}>映射 {p.mappings.length} · 字段 {p.slots.length}</div>
       </div>
     );
   }
-  // drag the panel's left edge; the document panes keep the rest of the window
-  const drag = (e: React.MouseEvent) => {
+  // drag the panel's left edge; the document panes keep the rest of the window.
+  // Pointer events with capture work for mouse, pen and touch alike.
+  const drag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
     e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture?.(e.pointerId);
     const x0 = e.clientX;
-    const w0 = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect().width;
+    const w0 = (el.parentElement as HTMLElement).getBoundingClientRect().width;
     document.body.classList.add("resizing");
-    const move = (ev: MouseEvent) => p.onWidth(Math.max(240, Math.min(window.innerWidth - 560, w0 + x0 - ev.clientX)));
+    const move = (ev: PointerEvent) => p.onWidth(Math.max(SIDE_MIN, Math.min(sideMax(), w0 + x0 - ev.clientX)));
     const up = () => {
       document.body.classList.remove("resizing");
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
   };
+  // The keyboard alternative to dragging (WCAG 2.1.1 / 2.5.7, APG window splitter):
+  // ← widens the panel, → narrows it, Shift for bigger steps, Home/End for the limits, Enter collapses.
+  const cur = () => p.width || (document.querySelector(".side.right") as HTMLElement | null)?.getBoundingClientRect().width || 330;
+  const onSepKey = (e: React.KeyboardEvent) => {
+    if (isImeKey(e)) return;
+    const step = e.shiftKey ? 64 : 16;
+    const set = (w: number) => { e.preventDefault(); p.onWidth(Math.round(Math.max(SIDE_MIN, Math.min(sideMax(), w)))); };
+    if (e.key === "ArrowLeft") set(cur() + step);
+    else if (e.key === "ArrowRight") set(cur() - step);
+    else if (e.key === "Home") set(SIDE_MIN);
+    else if (e.key === "End") set(sideMax());
+    else if (e.key === "Enter") { e.preventDefault(); p.onCollapse(true); }
+  };
+  const w = Math.round(p.width || 330);
   return (
-    <div className="side right" style={p.width ? { width: p.width } : undefined}>
-      <div className="side-resizer" onMouseDown={drag} role="separator" aria-orientation="vertical" title="拖动调整面板宽度" />
+    <div className="side right" id="side-panel" style={p.width ? { width: p.width } : undefined}>
+      <div className="side-resizer" onPointerDown={drag} onKeyDown={onSepKey} tabIndex={0} role="separator" aria-orientation="vertical"
+        aria-label="调整右侧面板宽度" aria-controls="side-panel" aria-valuemin={SIDE_MIN} aria-valuemax={Math.round(sideMax())} aria-valuenow={w}
+        aria-valuetext={`${w} 像素`} title="拖动或用 ← / → 调整面板宽度，Enter 收起" />
       <div className="tabs">
-        <button className={p.tab === "mappings" ? "on" : ""} onClick={() => p.onTab("mappings")}>映射 {p.mappings.length}</button>
-        <button className={p.tab === "fields" ? "on" : ""} onClick={() => p.onTab("fields")}>字段 {p.slots.length}</button>
-        <button className={p.tab === "samples" ? "on" : ""} onClick={() => p.onTab("samples")}>样本</button>
-        <button className={p.tab === "check" ? "on" : ""} onClick={() => p.onTab("check")}>校验</button>
-        <button className="btn ghost sm icon" style={{ flex: "none", width: 30 }} title="收起" onClick={() => p.onCollapse(true)}>»</button>
+        <button type="button" aria-pressed={p.tab === "mappings"} className={p.tab === "mappings" ? "on" : ""} onClick={() => p.onTab("mappings")}>映射 {p.mappings.length}</button>
+        <button type="button" aria-pressed={p.tab === "fields"} className={p.tab === "fields" ? "on" : ""} onClick={() => p.onTab("fields")}>字段 {p.slots.length}</button>
+        <button type="button" aria-pressed={p.tab === "samples"} className={p.tab === "samples" ? "on" : ""} onClick={() => p.onTab("samples")}>样本</button>
+        <button type="button" aria-pressed={p.tab === "check"} className={p.tab === "check" ? "on" : ""} onClick={() => p.onTab("check")}>校验</button>
+        <button type="button" className="btn ghost sm icon" style={{ flex: "none", width: 30 }} title="收起右侧面板" aria-label="收起右侧面板" onClick={() => p.onCollapse(true)}>»</button>
       </div>
       {p.tab === "mappings" && <MappingList {...p} />}
       {p.tab === "fields" && <FieldList {...p} />}
@@ -91,7 +122,11 @@ function MappingList(p: Props) {
   const [picked, setPicked] = useState<string[]>([]);
   const [anchor, setAnchor] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const uid = useId();
+  const ro = !!p.readOnly;
   useEffect(() => { setPicked((xs) => xs.filter((x) => ids.includes(x))); }, [idKey]);
+  // keep the cursor on a real row after mappings are deleted
+  useEffect(() => { if (cursor > 0 && cursor >= ids.length) setCursor(Math.max(0, ids.length - 1)); }, [idKey]);
   useEffect(() => {
     const i = ids.indexOf(p.activeMap || "");
     if (i >= 0 && i !== cursor) setCursor(i);
@@ -114,20 +149,25 @@ function MappingList(p: Props) {
     setPicked((xs) => (additive || xs.includes(id) ? (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]) : [id]));
   };
   const selection = picked.length ? p.mappings.filter((m) => picked.includes(m.id)) : [];
+  // The workspace's save already reports a refusal (toast, save badge); here a refusal only
+  // means "nothing changed", so the list keeps its selection instead of pretending it worked.
+  const save = (ms: Mapping[], note: string) => p.onSaveMappings(ms, note).then(() => true, () => false);
   const setEnabled = async (list: Mapping[], on: boolean) => {
     const set = new Set(list.map((m) => m.id));
-    await p.onSaveMappings(p.mappings.map((x) => (set.has(x.id) ? { ...x, enabled: on } : x)),
+    await save(p.mappings.map((x) => (set.has(x.id) ? { ...x, enabled: on } : x)),
       `${on ? "启用" : "禁用"} ${list.length} 个映射（#${list.map((m) => m.no).join("、#")}）`);
   };
   const removeMany = async (list: Mapping[]) => {
     const nos = list.map((m) => m.no);
     if (!(await confirm("删除映射", `删除 ${list.length} 个映射（#${nos.join("、#")}）？可以用「撤销」恢复。`, "删除", true))) return;
     const set = new Set(list.map((m) => m.id));
-    await p.onSaveMappings(p.mappings.filter((x) => !set.has(x.id)), `删除 ${list.length} 个映射（#${nos.join("、#")}）`);
-    setPicked([]);
+    if (await save(p.mappings.filter((x) => !set.has(x.id)), `删除 ${list.length} 个映射（#${nos.join("、#")}）`)) setPicked([]);
   };
   const onListKey = (e: React.KeyboardEvent) => {
-    if (e.nativeEvent.isComposing) return;
+    if (isImeKey(e)) return;
+    // Keys pressed on a button inside a row (编辑 / 禁用 / ✕) belong to that button. Enter used to
+    // be caught here, cancelled, and turned into "edit the cursor mapping" instead.
+    if (e.target !== e.currentTarget) return;
     const n = p.mappings.length;
     if (!n) return;
     const mod = e.metaKey || e.ctrlKey;
@@ -136,10 +176,11 @@ function MappingList(p: Props) {
     if (k === "ArrowDown" || (!mod && (k === "j" || k === "J"))) { e.preventDefault(); move(1, e.shiftKey); }
     else if (k === "ArrowUp" || (!mod && (k === "k" || k === "K"))) { e.preventDefault(); move(-1, e.shiftKey); }
     else if (mod && (k === "a" || k === "A")) { e.preventDefault(); setPicked(ids); }
-    else if (!mod && (k === "x" || k === "X")) { e.preventDefault(); togglePick(clamp(cursor), true); }
-    else if (k === "Enter") { e.preventDefault(); p.onEditMapping(p.mappings[clamp(cursor)]); }
-    else if (!mod && (k === "d" || k === "D")) { e.preventDefault(); setEnabled(target, !target.every((m) => m.enabled)); }
-    else if (k === "Delete" || k === "Backspace") { e.preventDefault(); removeMany(target); }
+    else if (!mod && (k === "x" || k === "X" || (k === " " && !e.shiftKey))) { e.preventDefault(); togglePick(clamp(cursor), true); }
+    else if (k === " " && e.shiftKey) { e.preventDefault(); setPicked(range(anchor, clamp(cursor))); }
+    else if (k === "Enter") { e.preventDefault(); if (!ro) p.onEditMapping(p.mappings[clamp(cursor)]); }
+    else if (!mod && (k === "d" || k === "D")) { e.preventDefault(); if (!ro) setEnabled(target, !target.every((m) => m.enabled)); }
+    else if (k === "Delete" || k === "Backspace") { e.preventDefault(); if (!ro) removeMany(target); }
     else if (k === "Escape" && picked.length) { e.preventDefault(); e.stopPropagation(); setPicked([]); }
   };
   const rebind = async (m: Mapping) => {
@@ -150,22 +191,24 @@ function MappingList(p: Props) {
       await confirm("无法改绑", `字段「${selSlot.name}」已被映射 #${taken.no} 使用。请先删除或合并该映射。`, "知道了");
       return;
     }
-    await p.onSaveMappings(p.mappings.map((x) => (x.id === m.id ? { ...x, target: { binding: b } } : x)), `映射 #${m.no} 改绑到「${selSlot.name}」`);
+    await save(p.mappings.map((x) => (x.id === m.id ? { ...x, target: { binding: b } } : x)), `映射 #${m.no} 改绑到「${selSlot.name}」`);
   };
   const mode = p.project.record_rule?.mode;
-  const toggle = (m: Mapping) => p.onSaveMappings(p.mappings.map((x) => (x.id === m.id ? { ...x, enabled: !x.enabled } : x)), `${m.enabled ? "禁用" : "启用"}映射 #${m.no}`);
+  const toggle = (m: Mapping) => save(p.mappings.map((x) => (x.id === m.id ? { ...x, enabled: !x.enabled } : x)), `${m.enabled ? "禁用" : "启用"}映射 #${m.no}`);
   const remove = async (m: Mapping) => {
-    if (await confirm("删除映射", `删除映射 #${m.no}？可以用「撤销」恢复。`, "删除", true)) await p.onSaveMappings(p.mappings.filter((x) => x.id !== m.id), `删除映射 #${m.no}`);
+    if (await confirm("删除映射", `删除映射 #${m.no}？可以用「撤销」恢复。`, "删除", true)) await save(p.mappings.filter((x) => x.id !== m.id), `删除映射 #${m.no}`);
   };
   return (
     <>
       <div className="toolbar">
-        <button className="btn sm" disabled={!p.canUndo} onClick={p.onUndo} title="撤销（Ctrl/⌘+Z）">↶ 撤销</button>
-        <button className="btn sm" disabled={!p.canRedo} onClick={p.onRedo} title="重做（Ctrl/⌘+Shift+Z）">↷ 重做</button>
+        <button type="button" className="btn sm" disabled={ro || !p.canUndo} onClick={p.onUndo} title={ro ? READ_ONLY_TEXT : "撤销（Ctrl/⌘+Z）"}>↶ 撤销</button>
+        <button type="button" className="btn sm" disabled={ro || !p.canRedo} onClick={p.onRedo} title={ro ? READ_ONLY_TEXT : "重做（Ctrl/⌘+Shift+Z）"}>↷ 重做</button>
         <span className="spacer" />
-        <span className="tiny muted" title="列表可用键盘操作：↑↓ 移动，X 多选，D 启用/禁用，Delete 删除">当前文件的实际取值</span>
+        <span className="tiny muted" title="列表可用键盘操作：↑↓ 移动，X 或空格多选，D 启用/禁用，Delete 删除">当前文件的实际取值</span>
       </div>
-      <div className={`maplist${picked.length ? " picking" : ""}`} ref={listRef} tabIndex={0} role="listbox" aria-multiselectable aria-label="映射列表" onKeyDown={onListKey}>
+      {ro && <div className="notice small" style={{ borderRadius: 0 }}>{READ_ONLY_TEXT}</div>}
+      <div className={`maplist${picked.length ? " picking" : ""}`} ref={listRef} tabIndex={0} role="listbox" aria-multiselectable aria-label="映射列表"
+        aria-activedescendant={p.mappings.length ? `${uid}-m-${p.mappings[clamp(cursor)]?.id}` : undefined} onKeyDown={onListKey}>
         {!p.mappings.length && (
           <div className="empty small">
             <div className="big">还没有映射</div>
@@ -181,7 +224,8 @@ function MappingList(p: Props) {
           const val = loc.map((x) => x.value).filter((x) => x !== undefined && x !== null).join(" + ");
           const on = picked.includes(m.id);
           return (
-            <div key={m.id} data-map role="option" aria-selected={on}
+            <div key={m.id} id={`${uid}-m-${m.id}`} data-map role="option" aria-selected={on}
+              aria-label={`映射 #${m.no}：${tslots.map((s) => s.name).join("、") || "目标已失效"}${m.enabled ? "" : "（已禁用）"}`}
               className={`mapitem${m.id === p.activeMap ? " on" : ""}${m.enabled ? "" : " off"}${i === cursor ? " cursor" : ""}${on ? " picked" : ""}`}
               onClick={(e) => {
                 listRef.current?.focus({ preventScroll: true });   // keyboard works straight after a click
@@ -195,19 +239,21 @@ function MappingList(p: Props) {
               <div className="line1">
                 <span className="pick" role="checkbox" aria-checked={on} tabIndex={-1} aria-label={`选择映射 #${m.no}`}
                   onClick={(e) => { e.stopPropagation(); setCursor(i); togglePick(i, true); }}>{on ? "✓" : ""}</span>
-                <span className="num" style={{ background: m.color }}>{m.no}</span>
+                <span className="num" style={{ background: markColor(m.color) }}>{m.no}</span>
                 <span className="badge">{MAP_TYPE[m.type]}</span>
                 {!m.enabled && <span className="badge warn">已禁用</span>}
                 {bad && <span className="badge err" title={bad.error}>当前文件无法定位</span>}
                 {!tslots.length && <span className="badge err">目标已失效</span>}
                 <span className="spacer" />
                 <span className="acts" onClick={(e) => e.stopPropagation()}>
-                  {selSlot && kindOf(selSlot) === m.type && (selSlot.binding || selSlot.id) !== (m.target.binding || m.target.slot_id) && (
-                    <button className="btn xs ghost" title={`把此映射的目标改为当前选中的字段「${selSlot.name}」`} onClick={() => rebind(m)}>改绑</button>
+                  {!ro && selSlot && kindOf(selSlot) === m.type && (selSlot.binding || selSlot.id) !== (m.target.binding || m.target.slot_id) && (
+                    <button type="button" className="btn xs ghost" title={`把此映射的目标改为当前选中的字段「${selSlot.name}」`} onClick={() => rebind(m)}>改绑</button>
                   )}
-                  <button className="btn xs ghost" title="编辑" onClick={() => p.onEditMapping(m)}>编辑</button>
-                  <button className="btn xs ghost" title={m.enabled ? "禁用" : "启用"} onClick={() => toggle(m)}>{m.enabled ? "禁用" : "启用"}</button>
-                  <button className="btn xs ghost" title="删除" onClick={() => remove(m)}>✕</button>
+                  {!ro && <>
+                    <button type="button" className="btn xs ghost" title={`编辑映射 #${m.no}`} onClick={() => p.onEditMapping(m)}>编辑</button>
+                    <button type="button" className="btn xs ghost" title={`${m.enabled ? "禁用" : "启用"}映射 #${m.no}`} onClick={() => toggle(m)}>{m.enabled ? "禁用" : "启用"}</button>
+                    <button type="button" className="btn xs ghost" title={`删除映射 #${m.no}`} aria-label={`删除映射 #${m.no}`} onClick={() => remove(m)}>✕</button>
+                  </>}
                 </span>
               </div>
               <div className="srcdesc" title={m.sources.map(describeLocator).join(" + ")}>来源：{m.sources.map(describeLocator).join(m.combine ? ` ${m.combine.op === "sum" ? "＋" : m.combine.op === "newline" ? "⏎" : "&"} ` : " + ")}</div>
@@ -224,11 +270,11 @@ function MappingList(p: Props) {
         <div className="bulkbar" role="toolbar" aria-label="批量操作">
           <span className="small"><b>已选 {picked.length}</b> / {p.mappings.length}</span>
           <span className="spacer" />
-          <button className="btn sm" onClick={() => setEnabled(selection, !selection.every((m) => m.enabled))}>
+          <button type="button" className="btn sm" disabled={ro} title={ro ? READ_ONLY_TEXT : undefined} onClick={() => setEnabled(selection, !selection.every((m) => m.enabled))}>
             {selection.every((m) => m.enabled) ? "禁用" : "启用"}
           </button>
-          <button className="btn sm danger" onClick={() => removeMany(selection)}>删除</button>
-          <button className="btn ghost sm" onClick={() => setPicked([])} title="Esc">取消选择</button>
+          <button type="button" className="btn sm danger" disabled={ro} title={ro ? READ_ONLY_TEXT : undefined} onClick={() => removeMany(selection)}>删除</button>
+          <button type="button" className="btn ghost sm" onClick={() => setPicked([])} title="Esc">取消选择</button>
         </div>
       )}
     </>
@@ -246,8 +292,10 @@ function FieldList(p: Props) {
         const shared = p.slots.filter((x) => (x.binding || x.id) === (s.binding || s.id)).length > 1;
         return (
           <div key={s.id}>
-            <div className={`slotitem${s.id === p.activeSlot ? " on" : ""}`} onClick={() => p.onPickSlot(s.id)}>
-              <span className="num" style={{ background: m ? m.color : "#94a3b8" }}>{m ? m.no : "–"}</span>
+            <div className={`slotitem${s.id === p.activeSlot ? " on" : ""}`} onClick={() => p.onPickSlot(s.id)} role="button" tabIndex={0}
+              aria-pressed={s.id === p.activeSlot} aria-label={`字段「${s.name}」${m ? `（映射 #${m.no}）` : "（未映射）"}`}
+              onKeyDown={(e) => { if (isImeKey(e) || e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); p.onPickSlot(s.id); } }}>
+              <span className="num" style={{ background: markColor(m?.color) }}>{m ? m.no : "–"}</span>
               <span className="grow ellipsis">{s.name}{s.required && <span style={{ color: "var(--err)" }}> *</span>}</span>
               {shared && <span className="badge info" title="与同名字段共享数据绑定">共享</span>}
               <span className="badge">{s.layout ? "重复明细区域" : s.block ? "重复内容块" : SLOT_KIND[s.kind] || s.kind}</span>
@@ -266,9 +314,12 @@ function SlotEditor(p: Props & { slot: Slot }) {
   const [name, setName] = useState(s.name);
   const [def, setDef] = useState(s.default || "");
   useEffect(() => { setName(s.name); setDef(s.default || ""); }, [s.id, s.name, s.default]);
-  const up = (patch: any) => p.onUpdateSlot(s.id, patch);
+  // The field shows what the server holds: a refused change (a viewer, a conflict) puts the
+  // stored value back instead of leaving the typed one on screen looking saved.
+  const up = (patch: any) => p.onUpdateSlot(s.id, patch).catch(() => { setName(s.name); setDef(s.default || ""); });
   return (
-    <div className="col gap4" style={{ padding: "8px 10px 12px 34px", background: "#fafbfd", borderBottom: "1px solid var(--line)" }} onClick={(e) => e.stopPropagation()}>
+    <fieldset disabled={!!p.readOnly} className="col gap4" style={{ padding: "8px 10px 12px 34px", margin: 0, border: 0, borderBottom: "1px solid var(--line)", background: "var(--panel-2)", minWidth: 0 }} onClick={(e) => e.stopPropagation()}>
+      {p.readOnly && <div className="tiny muted">{READ_ONLY_TEXT}</div>}
       <label className="field">名称<input className="input sm" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() && name !== s.name && up({ name: name.trim() })} /></label>
       {s.original_text !== undefined && s.original_text !== "" && <div className="tiny muted">原内容：「{s.original_text.slice(0, 60)}」（生成时替换；删除字段可恢复）</div>}
       {s.warning && <div className="notice warn tiny">{s.warning}</div>}
@@ -379,28 +430,49 @@ function SlotEditor(p: Props & { slot: Slot }) {
       )}
       <div className="row mt8">
         <span className="spacer" />
-        <button className="btn sm danger" onClick={() => p.onDeleteSlot(s)}>删除字段</button>
+        <button type="button" className="btn sm danger" onClick={() => p.onDeleteSlot(s)}>删除字段</button>
       </div>
-    </div>
+    </fieldset>
   );
 }
+
+const SAMPLE_PAGE = 300;
 
 function Samples(p: Props) {
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [limit, setLimit] = useState(300);
+  const [more, setMore] = useState(false);
+  // The first page is reloaded whenever the project changes; 显示更多 appends the next page by
+  // offset. It used to re-request everything from offset 0 with a growing limit, which the
+  // server caps at 5000 — the fifth click answered 422 and the list stopped at ~4300.
   useEffect(() => {
     if (!p.project.record_rule?.mode) return;
-    get(`/api/projects/${p.project.id}/records${qs({ limit })}`).then((d) => { setData(d); setErr(null); }).catch((e) => setErr(e.message));
-  }, [p.project.rev, limit]);
-  if (!p.project.record_rule?.mode) return <div className="empty small"><div className="big">尚未定义样本</div><button className="btn primary" onClick={p.onOpenRule}>定义样本</button></div>;
+    let alive = true;
+    get(`/api/projects/${p.project.id}/records${qs({ offset: 0, limit: SAMPLE_PAGE })}`)
+      .then((d) => { if (alive) { setData(d); setErr(null); } })
+      .catch((e) => alive && setErr(e.message));
+    return () => { alive = false; };
+  }, [p.project.rev]);
+  const loadMore = async () => {
+    if (!data) return;
+    setMore(true);
+    try {
+      const d = await get(`/api/projects/${p.project.id}/records${qs({ offset: data.records.length, limit: SAMPLE_PAGE })}`);
+      setData((cur: any) => (cur ? { ...cur, total: d.total, records: [...cur.records, ...d.records] } : d));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setMore(false);
+    }
+  };
+  if (!p.project.record_rule?.mode) return <div className="empty small"><div className="big">尚未定义样本</div><button type="button" className="btn primary" disabled={p.readOnly} title={p.readOnly ? READ_ONLY_TEXT : undefined} onClick={p.onOpenRule}>定义样本</button></div>;
   return (
     <>
       <div className="toolbar">
-        <span className="badge info">{MODE_NAME[p.project.record_rule.mode!]}</span>
+        <span className="badge info">{ruleMode(p.project.record_rule.mode)}</span>
         {data && <span className="small"><b>{data.total}</b> 条样本</span>}
         <span className="spacer" />
-        <button className="btn sm" onClick={p.onOpenRule}>修改规则</button>
+        <button type="button" className="btn sm" disabled={p.readOnly} title={p.readOnly ? READ_ONLY_TEXT : undefined} onClick={p.onOpenRule}>修改规则</button>
       </div>
       <div className="maplist">
         {err && <div className="notice err">{err}</div>}
@@ -418,7 +490,11 @@ function Samples(p: Props) {
             <span className="tiny muted">{r.where}</span>
           </div>
         ))}
-        {data && data.total > data.records.length && <button className="btn sm" style={{ margin: 8 }} onClick={() => setLimit(limit + 1000)}>显示更多（共 {data.total} 条）</button>}
+        {data && data.total > data.records.length && (
+          <button type="button" className="btn sm" style={{ margin: 8 }} disabled={more} onClick={loadMore}>
+            {more ? "加载中…" : `显示更多（已显示 ${data.records.length} / ${data.total} 条）`}
+          </button>
+        )}
       </div>
     </>
   );
@@ -452,20 +528,26 @@ function Check(p: Props) {
             {f.records !== undefined && <div className="tiny muted">样本 {f.records} 条（按首条样本核对）</div>}
             {bad.map(([mid, r]: any) => {
               const m = byId[mid];
-              const ov = m?.overrides?.[f.id];
+              const ov = m?.overrides?.[f.id] ? f.id : null;
               return (
                 <div key={mid} className="col gap4" style={{ borderTop: "1px dashed var(--line)", paddingTop: 4, marginTop: 4 }}>
-                  <div className="row small"><span className="num" style={{ background: m?.color }}>{m?.no}</span><span className="grow" style={{ color: "var(--err)" }}>{r.message}</span></div>
+                  <div className="row small"><span className="num" style={{ background: markColor(m?.color) }}>{m?.no}</span><span className="grow" style={{ color: "var(--err)" }}>{r.message}</span></div>
                   <div className="row gap4">
-                    <button className="btn xs" onClick={() => p.onRelocate(f.id, mid)}>在此文件中重新定位</button>
-                    {r.code === "ocr_low_confidence" && <OcrFix fileId={f.id} mid={mid} initial={r.value || ""} onCorrect={p.onCorrect} />}
-                    {ov && <button className="btn xs" onClick={() => p.onClearOverride(f.id, mid)}>清除该文件的单独定位</button>}
+                    <button type="button" className="btn xs" disabled={p.readOnly} onClick={() => p.onRelocate(f.id, mid)}>在此文件中重新定位</button>
+                    {r.code === "ocr_low_confidence" && !p.readOnly && <OcrFix fileId={f.id} mid={mid} initial={r.value || ""} onCorrect={p.onCorrect} />}
+                    {ov && !p.readOnly && <button type="button" className="btn xs" onClick={() => p.onClearOverride(ov, mid)}>清除该文件的单独定位</button>}
                   </div>
                 </div>
               );
             })}
-            {Object.entries(f.results || {}).filter(([mid]) => byId[mid]?.overrides?.[f.id]).map(([mid]) => (
-              <div key={mid} className="tiny muted">映射 #{byId[mid]?.no} 在此文件使用单独定位 <button className="btn xs ghost" onClick={() => p.onClearOverride(f.id, mid)}>清除</button></div>
+            {/* Overrides saved for the whole file (`<file>`) and, in 「每块一份」, for one block of
+                it (`<file>~<block>`). Block overrides used to be invisible here and could only be
+                removed by undo. */}
+            {p.mappings.flatMap((m) => overrideKeys(m, f.id).map((key) => ({ m, key }))).map(({ m, key }) => (
+              <div key={`${m.id}/${key}`} className="tiny muted">
+                映射 #{m.no} 在此文件{key === f.id ? "" : `第 ${Number(key.slice(f.id.length + 1)) + 1} 块`}使用单独定位{" "}
+                {!p.readOnly && <button type="button" className="btn xs ghost" onClick={() => p.onClearOverride(key, m.id)}>清除</button>}
+              </div>
             ))}
           </div>
         );
@@ -474,7 +556,12 @@ function Check(p: Props) {
   );
 }
 
+/** Override keys of mapping `m` that belong to file `fid`: the file itself and its blocks. */
+function overrideKeys(m: Mapping, fid: string): string[] {
+  return Object.keys(m.overrides || {}).filter((k) => k === fid || (k.startsWith(`${fid}~`) && /^\d+$/.test(k.slice(fid.length + 1))));
+}
+
 function OcrFix({ fileId, mid, initial, onCorrect }: { fileId: string; mid: string; initial: string; onCorrect: Props["onCorrect"] }) {
   const { prompt } = useDialog();
-  return <button className="btn xs" onClick={async () => { const v = await prompt("确认 / 修正识别值", `识别结果为「${initial}」。请对照左侧原图核对，确认无误直接保存，或改为正确的值：`, initial); if (v !== null) await onCorrect(fileId, mid, v); }}>确认/修正识别值</button>;
+  return <button type="button" className="btn xs" onClick={async () => { const v = await prompt("确认 / 修正识别值", `识别结果为「${initial}」。请对照左侧原图核对，确认无误直接保存，或改为正确的值：`, initial); if (v !== null) await onCorrect(fileId, mid, v); }}>确认/修正识别值</button>;
 }

@@ -12,6 +12,9 @@ const OPS: Record<string, string> = {
   upper: "转大写",
   lower: "转小写",
 };
+import { useEffect, useState } from "react";
+import { formatValueMap, parseValueMap, sameTable } from "../lib/valuemap";
+
 const DATES = ["yyyy-mm-dd", "yyyy/m/d", "yyyy/mm/dd", "yyyy年m月d日", "yyyy年mm月dd日", "yyyy年m月", "mm/dd/yyyy", "dd.mm.yyyy", "yyyymmdd", "yyyy-mm-dd hh:mm", "yyyy-mm-dd hh:mm:ss", "hh:mm"];
 
 export default function Transforms({ value, onChange }: { value: any[]; onChange: (v: any[]) => void }) {
@@ -42,24 +45,13 @@ export default function Transforms({ value, onChange }: { value: any[]; onChange
               补 <input className="input sm" style={{ width: 36 }} maxLength={1} value={o.char ?? "0"} onChange={(e) => set(i, { char: e.target.value })} />
             </>
           )}
-          {o.op === "map" && (
-            <textarea className="input" rows={2} style={{ width: 220, fontSize: 12 }} placeholder={"每行一条：原值=新值\n例如 TRUE=是"}
-              value={Object.entries(o.table || {}).map(([k, v]) => `${k}=${v}`).join("\n")}
-              onChange={(e) => {
-                const table: Record<string, string> = {};
-                for (const line of e.target.value.split("\n")) {
-                  const k = line.indexOf("=");
-                  if (k > 0) table[line.slice(0, k)] = line.slice(k + 1);
-                }
-                set(i, { table });
-              }} />
-          )}
+          {o.op === "map" && <ValueMap table={o.table} onChange={(table) => set(i, { table })} />}
           <span className="spacer" />
-          <button className="btn xs ghost" disabled={i === 0} onClick={() => { const n = [...ops]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; onChange(n); }} title="上移">↑</button>
-          <button className="btn xs ghost" onClick={() => onChange(ops.filter((_, k) => k !== i))} title="移除">✕</button>
+          <button type="button" className="btn xs ghost" disabled={i === 0} onClick={() => { const n = [...ops]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; onChange(n); }} title="上移" aria-label={`上移第 ${i + 1} 条转换规则`}>↑</button>
+          <button type="button" className="btn xs ghost" onClick={() => onChange(ops.filter((_, k) => k !== i))} title="移除" aria-label={`移除第 ${i + 1} 条转换规则`}>✕</button>
         </div>
       ))}
-      <select className="input sm" value="" onChange={(e) => {
+      <select className="input sm" value="" aria-label="添加转换规则" onChange={(e) => {
         const op = e.target.value;
         if (!op) return;
         const init: any = { op };
@@ -73,6 +65,27 @@ export default function Transforms({ value, onChange }: { value: any[]; onChange
         {Object.entries(OPS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
       </select>
       <div className="tiny muted">转换只使用以上受控选项，按顺序执行；不会执行任何自定义代码。</div>
+    </div>
+  );
+}
+
+/** The 值对照替换 editor keeps the text exactly as typed and hands the parsed table up.
+ *  It used to redraw the textarea from the parsed table on every keystroke, which deleted any
+ *  line that was not `原值=新值` yet — a new line could not be typed at all. */
+function ValueMap({ table, onChange }: { table: Record<string, string> | undefined; onChange: (t: Record<string, string>) => void }) {
+  const [text, setText] = useState(() => formatValueMap(table));
+  // Follow changes made elsewhere (undo, another row reordering) but never overwrite what is
+  // being typed when the parent simply echoes our own table back.
+  useEffect(() => {
+    if (!sameTable(parseValueMap(text).table, table)) setText(formatValueMap(table));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(table || {})]);
+  const { bad } = parseValueMap(text);
+  return (
+    <div className="col gap4">
+      <textarea className="input" rows={3} style={{ width: 220, fontSize: 12 }} placeholder={"每行一条：原值=新值\n例如 TRUE=是"} aria-label="值对照表，每行一条：原值=新值"
+        value={text} onChange={(e) => { setText(e.target.value); onChange(parseValueMap(e.target.value).table); }} />
+      {bad.length > 0 && <div className="tiny" style={{ color: "var(--warn)" }}>第 {bad.join("、")} 行还不是「原值=新值」，暂不生效</div>}
     </div>
   );
 }

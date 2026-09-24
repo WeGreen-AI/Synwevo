@@ -22,9 +22,12 @@
 | `infra/server/` | 部署组装：按 `SYNWEVO_ROLE` 把上面的模块拼成一个进程 | `synwevo_server` |
 | `infra/` | 容器构建与 Compose |
 | `scripts/` | 根目录命令：安装、启动/停止/状态/日志、测试、备份、边界检查 |
-| `tests/integration/` | 跨模块验证：统一登录链路、机器身份、跨工作空间隔离、角色边界、外壳归属 |
+| `tests/integration/`（含 `sdk_acceptance/`） | 跨模块验证：统一登录链路、机器身份、跨工作空间隔离、角色边界、外壳归属 |
 | `docs/` | 平台文档 |
 | `data/` | 运行数据（数据库 + blob）。**不进 Git** |
+
+SDK 运行时留在 `apps/docs/sdk/`，只通过 HTTP 访问服务；会启动部署工厂、初始化身份夹具的 SDK 验收脚本
+属于 `tests/integration/sdk_acceptance/`，不随客户端运行时包发布。
 
 `packages/contracts/` 不存在，这是有意的：目前没有哪一组类型是三方共用而又不属于
 `synwevo_core` 的。需要时再建，不为了对上一张表而先建空目录。
@@ -58,7 +61,7 @@ python scripts/check_boundaries.py
 ```
 
 同时检查：跨模块导入、`sys.path` 改写、写死的机器绝对路径、指向旧目录的符号链接。
-本轮实测：156 个文件，7 个模块边界，0 处越界。
+检查范围与计数以命令当次输出为准，包含尚未提交的当前源码。
 
 ### 为什么 OIDC 的令牌存储在共享层
 

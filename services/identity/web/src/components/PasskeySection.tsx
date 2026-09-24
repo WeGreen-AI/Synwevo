@@ -40,6 +40,7 @@ export default function PasskeySection() {
   const load = useCallback(async () => {
     try {
       setData(await get<Listing>("/api/auth/passkeys"));
+      setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -114,7 +115,7 @@ export default function PasskeySection() {
   }
 
   if (!data) return <section className="card card-b col gap12"><h2>安全密钥</h2>
-    <div className="empty">加载中…</div></section>;
+    <div className="empty">{err ? <div role="alert">{err} <button className="btn sm" onClick={() => void load()}>重试</button></div> : <span role="status">加载中…</span>}</div></section>;
 
   return (
     <section className="card card-b col gap12">
@@ -167,7 +168,7 @@ export default function PasskeySection() {
           </label>
           <label className="col gap4">
             <span>你的口令</span>
-            <input className="input" type="password" value={password} autoComplete="current-password"
+            <input className="input" type="password" aria-label="你的口令" value={password} autoComplete="current-password"
                    onChange={(e) => setPassword(e.target.value)} />
             <span className="muted sm">
               增加或删除登录方式需要重新确认身份——刚登录过也要，否则这个提示就等于没有。

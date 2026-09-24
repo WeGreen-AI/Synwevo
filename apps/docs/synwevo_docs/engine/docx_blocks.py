@@ -168,12 +168,17 @@ def _max_docpr_id(root) -> int:
     return max(ids)
 
 
-def fill_block(root, sl: dict, rows: list[dict], keep: bool, issues: list[dict]) -> None:
-    """Replace the block with one filled copy per row (``rows``: column key → Value)."""
+def fill_block(root, sl: dict, rows: list[dict], keep: bool, issues: list[dict], report_missing: bool = True) -> bool:
+    """Replace the block with one filled copy per row (``rows``: column key → Value).
+
+    Returns False when ``root`` does not contain the block.  A caller that visits every
+    part of a document (body, headers, footers) passes ``report_missing=False`` and
+    reports ``block_lost`` only when no part had it: a block lives in exactly one part."""
     sdt = find_block(root, sl["id"])
     if sdt is None:
-        issues.append({"level": "error", "slot": sl["id"], "code": "block_lost", "message": f"重复内容块「{sl['name']}」在模板中已找不到"})
-        return
+        if report_missing:
+            issues.append({"level": "error", "slot": sl["id"], "code": "block_lost", "message": f"重复内容块「{sl['name']}」在模板中已找不到"})
+        return False
     content = sdt.find(dc.w("sdtContent"))
     proto = list(content)
     policy = sl.get("empty_policy", "remove")
@@ -185,7 +190,7 @@ def fill_block(root, sl: dict, rows: list[dict], keep: bool, issues: list[dict])
             parent = sdt.getparent()
             parent.remove(sdt)
             _keep_valid(parent)
-            return
+            return True
     else:
         placeholder = None
     sep = sl.get("separator", "none")
@@ -222,6 +227,7 @@ def fill_block(root, sl: dict, rows: list[dict], keep: bool, issues: list[dict])
     parent = sdt.getparent()
     parent.remove(sdt)
     _keep_valid(parent)
+    return True
 
 
 def _keep_valid(parent) -> None:

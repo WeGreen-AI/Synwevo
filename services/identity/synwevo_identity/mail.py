@@ -20,6 +20,7 @@ writes, so a developer cannot mistake it for delivery.
 from __future__ import annotations
 
 import os
+import re
 import smtplib
 import threading
 import time
@@ -132,16 +133,21 @@ class Mailer:
         for row in due:
             try:
                 self._deliver(row)
-                self.store.execute("UPDATE mail_outbox SET status='sent', sent_at=?, last_error=NULL WHERE id=?",
-                                   (now(), row["id"]))
+                # The body is redacted the moment it has left: it carries a live invitation,
+                # reset or verification link, and the outbox is kept (its status is what the
+                # invitation list shows). Kept verbatim, any copy of the database — a backup, a
+                # support export — was a set of working reset links.
+                self.store.execute("UPDATE mail_outbox SET status='sent', sent_at=?, last_error=NULL, body=? "
+                                   "WHERE id=?", (now(), redact(row["body"]), row["id"]))
                 sent += 1
             except Exception as e:  # noqa: BLE001 - every failure is recorded, never swallowed
                 attempts = int(row["attempts"]) + 1
                 if attempts >= MAX_ATTEMPTS:
                     # Terminal. The row stays so the failure remains visible in the UI and the
-                    # audit trail; it is not deleted to make a dashboard look clean.
-                    self.store.execute("UPDATE mail_outbox SET status='failed', attempts=?, last_error=? WHERE id=?",
-                                       (attempts, str(e)[:500], row["id"]))
+                    # audit trail; it is not deleted to make a dashboard look clean. Nothing will
+                    # send it again, so the link in it is redacted too.
+                    self.store.execute("UPDATE mail_outbox SET status='failed', attempts=?, last_error=?, body=? "
+                                       "WHERE id=?", (attempts, str(e)[:500], redact(row["body"]), row["id"]))
                 else:
                     delay = RETRY_SCHEDULE[min(attempts - 1, len(RETRY_SCHEDULE) - 1)]
                     self.store.execute(
@@ -166,7 +172,10 @@ class Mailer:
         msg.set_content(row["body"])
 
         if m == "file":
-            out = Path(env.get("MAIL_DIR") or "./data/mail")
+            # Under the data directory by default, never the process's working directory: these
+            # files hold live links, and a cwd-relative default scattered them wherever the
+            # service happened to be started from.
+            out = Path(env.get("MAIL_DIR") or Path(self.store.root) / "mail")
             out.mkdir(parents=True, exist_ok=True)
             # The banner exists so nobody mistakes a development sink for delivery.
             banner = ("X-Synwevo-Delivery: LOCAL FILE SINK — 这封邮件没有真正寄出，"
@@ -194,6 +203,15 @@ class Mailer:
 
 
 # ---------------------------------------------------------------------- message bodies
+_TOKEN_IN_LINK = re.compile(r"([?&]token=)[A-Za-z0-9_\-]+")
+REDACTED = "[已寄出，链接不在库内保留]"
+
+
+def redact(body: str) -> str:
+    """The message with every link token replaced — what the outbox keeps once a mail is done."""
+    return _TOKEN_IN_LINK.sub(lambda m: m.group(1) + REDACTED, body or "")
+
+
 def _link(path: str, token: str) -> str:
     base = public_base() or "http://127.0.0.1:8765"
     return f"{base}{path}?token={token}"

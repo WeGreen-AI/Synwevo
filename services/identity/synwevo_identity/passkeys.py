@@ -127,8 +127,13 @@ class Passkeys:
             # Excluding what is already registered stops the same authenticator being enrolled
             # twice, which presents later as a key that mysteriously cannot be removed.
             exclude_credentials=existing,
+            # REQUIRED, not PREFERRED: sign-in here is always usernameless (no credential list is
+            # ever sent, so an address cannot be probed), and a non-discoverable credential can
+            # never be offered in that ceremony. Preferring one registered keys that were listed
+            # on the account page and then silently never usable. An authenticator that cannot
+            # store a discoverable credential now fails at registration, where it can be seen.
             authenticator_selection=AuthenticatorSelectionCriteria(
-                resident_key=ResidentKeyRequirement.PREFERRED,
+                resident_key=ResidentKeyRequirement.REQUIRED,
                 user_verification=UserVerificationRequirement.PREFERRED),
         )
         self._store_challenge(user["id"], "register", opts.challenge)
@@ -136,7 +141,7 @@ class Passkeys:
 
     def finish_registration(self, user: dict, response: dict, *, name: str | None = None) -> dict:
         import webauthn
-        row = self._spend_challenge(user["id"], "register")
+        row = self._spend_challenge_for(response, "register", user_id=user["id"])
         try:
             v = webauthn.verify_registration_response(
                 credential=response, expected_challenge=_b64d(row["challenge"]),
@@ -180,6 +185,9 @@ class Passkeys:
         opts = webauthn.generate_authentication_options(
             rp_id=rp_id(), allow_credentials=allow,
             user_verification=UserVerificationRequirement.PREFERRED)
+        # This endpoint is anonymous and writes a row per call, so the dead rows are reclaimed
+        # here rather than by a sweep nothing ever scheduled.
+        self.sweep(older_than_s=0)
         self._store_challenge(user_id, "authenticate", opts.challenge)
         return json.loads(webauthn.options_to_json(opts))
 
@@ -199,7 +207,8 @@ class Passkeys:
                             (cred_id,))
         if not pk:
             raise ServiceError(401, "unknown_passkey", "这个安全密钥没有登记过")
-        row = self._spend_challenge(pk["user_id"], "authenticate", also_anonymous=True)
+        row = self._spend_challenge_for(response, "authenticate", user_id=pk["user_id"],
+                                        also_anonymous=True)
 
         try:
             v = webauthn.verify_authentication_response(
@@ -228,24 +237,30 @@ class Passkeys:
             (new_id("wc"), user_id, purpose, _b64e(challenge), rp_id(), _issuer(),
              now(), now() + CHALLENGE_TTL_S))
 
-    def _spend_challenge(self, user_id: str | None, purpose: str, *,
-                         also_anonymous: bool = False) -> dict:
-        """Consume the newest live challenge for this purpose, or refuse.
+    def _spend_challenge_for(self, response: dict, purpose: str, *, user_id: str | None,
+                             also_anonymous: bool = False) -> dict:
+        """Consume exactly the challenge this ceremony was answering, or refuse.
 
-        Single use, enforced by a conditional UPDATE. A challenge that could be spent twice is a
-        replayable ceremony, and the scope is narrowed to one purpose so a registration cannot
-        be redeemed as a sign-in.
+        The challenge is read from the client data the authenticator signed, and the row with
+        that value is spent. Taking "the newest live challenge" instead meant an anonymous
+        sign-in spent whichever challenge anyone had asked for last: two people signing in at
+        once failed each other, and anyone looping on the anonymous begin endpoint could make
+        every passkey sign-in fail. The signature check then still has to pass against this
+        exact value, so reading it from the response grants the client nothing.
         """
-        if also_anonymous:
-            row = self.store.one(
-                "SELECT * FROM webauthn_challenges WHERE purpose=? AND used_at IS NULL "
-                "AND expires_at > ? AND (user_id=? OR user_id IS NULL) "
-                "ORDER BY created_at DESC LIMIT 1", (purpose, now(), user_id))
-        else:
-            row = self.store.one(
-                "SELECT * FROM webauthn_challenges WHERE purpose=? AND used_at IS NULL "
-                "AND expires_at > ? AND user_id=? ORDER BY created_at DESC LIMIT 1",
-                (purpose, now(), user_id))
+        import base64 as _b64
+        try:
+            raw = (response.get("response") or {}).get("clientDataJSON") or ""
+            client_data = json.loads(_b64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+            value = str(client_data.get("challenge") or "").rstrip("=")
+        except Exception:  # noqa: BLE001 - any malformed client data is simply "no challenge"
+            value = ""
+        if not value:
+            raise ServiceError(400, "no_challenge", "挑战已过期或不存在，请重新开始")
+        owner = "(user_id=? OR user_id IS NULL)" if also_anonymous else "user_id=?"
+        row = self.store.one(
+            "SELECT * FROM webauthn_challenges WHERE challenge=? AND purpose=? AND used_at IS NULL "
+            f"AND expires_at > ? AND {owner}", (value, purpose, now(), user_id))
         if not row:
             raise ServiceError(400, "no_challenge", "挑战已过期或不存在，请重新开始")
         with self.store.tx() as t:

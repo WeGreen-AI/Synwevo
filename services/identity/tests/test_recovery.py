@@ -123,13 +123,39 @@ def test_a_token_can_only_be_spent_once(env):
 
 
 def test_asking_again_invalidates_the_previous_link(env):
-    """An old reset link sitting in an inbox stops working the moment a new one is requested."""
+    """An old reset link sitting in an inbox stops working the moment a new one is requested.
+
+    The first request is moved two minutes into the past: a second request within a minute is
+    now throttled (see the next test), and this one is about a genuine second request."""
     first = reset_token(env)
+    env["store"].execute("UPDATE email_tokens SET created_at=created_at-120 WHERE kind='reset'")
     second = reset_token(env)
     assert first != second
     fresh = TestClient(env["api"])
     assert fresh.get(f"/api/auth/reset/preview?token={first}").status_code == 410
     assert fresh.get(f"/api/auth/reset/preview?token={second}").status_code == 200
+
+
+def test_rapid_requests_neither_flood_the_mailbox_nor_kill_the_real_link(env):
+    """F081: every request used to send a mail and supersede the previous link, so anyone who
+    knew an address could bomb it and keep the owner's real reset link dead. Throttled requests
+    answer exactly the same, send nothing and invalidate nothing."""
+    first = reset_token(env)
+    fresh = TestClient(env["api"])
+    answers = {post(fresh, "/api/auth/forgot", {"email": "alice@example.com"}).text for _ in range(5)}
+    assert len(answers) == 1, "被限流的请求与正常请求的回答必须一模一样"
+    assert len(outbox(env, "reset")) == 1, "一分钟内不能再发第二封重置邮件"
+    assert fresh.get(f"/api/auth/reset/preview?token={first}").status_code == 200, "真正的链接不能被刷掉"
+
+
+def test_reset_requests_from_one_address_are_capped(env):
+    """Spread across many addresses so the per-account limit is not what stops it."""
+    for i in range(12):
+        env["ident"].create_user(f"u{i}@example.com", PW, status="active")
+    fresh = TestClient(env["api"])
+    for i in range(12):
+        assert post(fresh, "/api/auth/forgot", {"email": f"u{i}@example.com"}).status_code == 200
+    assert len(outbox(env, "reset")) == 10, "同一来源地址 15 分钟内最多触发 10 次"
 
 
 def test_a_made_up_token_is_refused(env):

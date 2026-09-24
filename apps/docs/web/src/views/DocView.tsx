@@ -1,12 +1,10 @@
 import { ReactElement, useEffect, useRef } from "react";
 import type { Mark, Selection } from "../lib/types";
+import { cssColor, highlightColor, markColor } from "../lib/css";
 import { hexA } from "./GridView";
-import { useFit } from "@synwevo/ui";
+import { scrollBehavior, useFit } from "@synwevo/ui";
 
 const PT = 96 / 72;
-const HL: Record<string, string> = { yellow: "#ffff00", green: "#00ff00", cyan: "#00ffff", magenta: "#ff00ff", blue: "#0000ff", red: "#ff0000",
-  darkBlue: "#000080", darkCyan: "#008080", darkGreen: "#008000", darkMagenta: "#800080", darkRed: "#800000", darkYellow: "#808000",
-  darkGray: "#808080", lightGray: "#c0c0c0", black: "#000000", white: "#ffffff" };
 
 interface Props {
   doc: any;
@@ -18,9 +16,10 @@ interface Props {
   zoom?: number;
   slotNames?: Record<string, { name: string; color: string; no?: number; cols?: Record<string, string> }>;
   focusKey?: string | null;
+  selectable?: boolean;
 }
 
-export default function DocView({ doc, marks, selection, onSelect, onMarkClick, side, zoom = 1, slotNames = {}, focusKey }: Props) {
+export default function DocView({ doc, marks, selection, onSelect, onMarkClick, side, zoom = 1, slotNames = {}, focusKey, selectable = true }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const fit = useFit(ref, ((doc.page?.w || 595) - (doc.page?.margin?.left || 90) - (doc.page?.margin?.right || 90) + Math.min(doc.page?.margin?.left || 90, 40) + Math.min(doc.page?.margin?.right || 90, 40)) * PT, 36);
 
@@ -28,7 +27,7 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
     if (!focusKey || !ref.current) return;
     const el = ref.current.querySelector(`[data-mark="${cssEsc(focusKey)}"]`) as HTMLElement | null;
     if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.scrollIntoView({ block: "center", behavior: scrollBehavior() });
       el.classList.add("flash");
       setTimeout(() => el.classList.remove("flash"), 1900);
     }
@@ -36,7 +35,8 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
 
   const onMouseUp = (e: React.MouseEvent) => {
     const s = window.getSelection();
-    if (!s || !ref.current) return;
+    if (!selectable || !s || !ref.current) return;
+    if (!s.isCollapsed && (!ref.current.contains(s.anchorNode) || !ref.current.contains(s.focusNode))) return;
     const target = e.target as HTMLElement;
     if (target.closest("[data-skip-select]")) return;
     const a = boundary(s.anchorNode, s.anchorOffset);
@@ -104,7 +104,9 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
       marginTop: st.sp_before ? st.sp_before * PT : undefined,
       marginBottom: st.sp_after ? Math.min(st.sp_after, 24) * PT : undefined,
       lineHeight: st.line ? Math.max(1.1, st.line * 1.25) : undefined,
-      background: st.shd,
+      // Colours come from the uploaded file: only plain colour syntax reaches the style
+      // attribute, never a url() the file's author chose (see lib/css.ts).
+      background: cssColor(st.shd),
     };
     const base = b.rbase || {};
     if (base.sz) pstyle.fontSize = base.sz * PT;
@@ -121,10 +123,10 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
         const colKey = String(r.field).includes("#") ? String(r.field).split("#")[1] : "";
         const colName = colKey ? slotInfo.cols?.[colKey] || colKey : "";
         children.push(
-          <span key={`chip${ri}`} className="fldchip" data-skip-select style={{ background: slotInfo.color }} data-mark={fieldMarks[0] ? `${fieldMarks[0].role}:${fieldMarks[0].id}` : `slot:${baseField}`}
-            title={colName ? `明细「${slotInfo.name}」的列「${colName}」` : `字段：${slotInfo.name}`} onMouseUp={(e) => { e.stopPropagation(); onMarkClick?.(baseField!); onSelect({ kind: "slot", slotId: baseField! }); }}>
+          <button type="button" key={`chip${ri}`} className="fldchip" data-skip-select style={{ background: cssColor(slotInfo.color) }} data-mark={fieldMarks[0] ? `${fieldMarks[0].role}:${fieldMarks[0].id}` : `slot:${baseField}`}
+            title={colName ? `明细「${slotInfo.name}」的列「${colName}」` : `字段：${slotInfo.name}`} onClick={(e) => { e.stopPropagation(); onMarkClick?.(baseField!); onSelect({ kind: "slot", slotId: baseField! }); }}>
             {slotInfo.no != null ? `${slotInfo.no} ` : ""}{colName || slotInfo.name}
-          </span>,
+          </button>,
         );
       }
       if (r.obj) {
@@ -137,7 +139,7 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
         return;
       }
       if (r.empty) {
-        children.push(<span key={ri} className="fld-empty" data-off={r.off} data-len={0} style={{ borderColor: slotInfo?.color || "#999" }} title={slotInfo ? `插入位置：${slotInfo.name}` : "空字段"} />);
+        children.push(<span key={ri} className="fld-empty" data-off={r.off} data-len={0} style={{ borderColor: markColor(slotInfo?.color, "#999") }} title={slotInfo ? `插入位置：${slotInfo.name}` : "空字段"} />);
         return;
       }
       // split run at cut points
@@ -151,11 +153,11 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
         if (r.i) style.fontStyle = "italic";
         const deco = [r.u ? "underline" : "", r.s ? "line-through" : ""].filter(Boolean).join(" ");
         if (deco) style.textDecoration = deco;
-        if (r.color) style.color = r.color;
+        if (r.color) style.color = cssColor(r.color);
         if (r.sz) style.fontSize = r.sz * PT;
         if (r.font) style.fontFamily = `"${r.font}", var(--font)`;
-        if (r.hl) style.background = HL[r.hl] || r.hl;
-        if (r.shd) style.background = r.shd;
+        if (r.hl) style.background = highlightColor(r.hl);
+        if (r.shd) style.background = cssColor(r.shd) ?? style.background;
         if (r.va === "superscript") style.verticalAlign = "super";
         if (r.va === "subscript") style.verticalAlign = "sub";
         if (r.hidden) style.opacity = 0.4;
@@ -163,15 +165,15 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
         let dataMark: string | undefined;
         if (slotInfo) {
           cls = "fld";
-          style.background = hexA(slotInfo.color, fieldMarks.some((m) => m.active) ? 0.32 : 0.16);
-          style.boxShadow = `inset 0 -2px 0 ${slotInfo.color}`;
+          style.background = hexA(markColor(slotInfo.color), fieldMarks.some((m) => m.active) ? 0.32 : 0.16);
+          style.boxShadow = `inset 0 -2px 0 ${markColor(slotInfo.color)}`;
         }
         const covering = pm.filter((m) => (m.pos as any).start <= s0 && (m.pos as any).end >= e0 && (m.pos as any).end > (m.pos as any).start);
         if (covering.length) {
           const m = covering[covering.length - 1];
           cls += " mkspan";
-          style.borderBottomColor = m.color;
-          style.background = hexA(m.color, m.active ? 0.3 : 0.15);
+          style.borderBottomColor = markColor(m.color);
+          style.background = hexA(markColor(m.color), m.active ? 0.3 : 0.15);
           if ((m.pos as any).start === s0) dataMark = `${m.role}:${m.id}`;
         }
         if (selHere && selHere.start <= s0 && selHere.end >= e0 && selHere.end > selHere.start) {
@@ -186,7 +188,7 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
         );
         for (const m of covering) {
           if ((m.pos as any).end === e0 && m.no != null) {
-            children.push(<span key={`tag${ri}-${i}-${m.id}`} className="num" data-skip-select style={{ background: m.color, marginLeft: 2, cursor: "pointer" }} title={m.label}
+            children.push(<span key={`tag${ri}-${i}-${m.id}`} className="num" data-skip-select style={{ background: markColor(m.color), marginLeft: 2, cursor: "pointer" }} title={m.label}
               onMouseUp={(e) => { e.stopPropagation(); onMarkClick?.(m.id); }}>{m.no}</span>);
           }
         }
@@ -215,14 +217,14 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
         const info = slotNames[b.blk];
         const blkMarks = marks.filter((m) => m.pos.kind === "field" && (m.pos as any).field === b.blk);
         const active = blkMarks.some((m) => m.active);
-        const color = info?.color || "#7c3aed";
+        const color = markColor(info?.color, "#7c3aed");
         out.push(
           <div key={`${kp}blk${i}`} className={`doc-blk${active ? " on" : ""}`} style={{ borderColor: color, background: hexA(color, active ? 0.08 : 0.035) }}
             data-mark={blkMarks[0] ? `${blkMarks[0].role}:${blkMarks[0].id}` : `slot:${b.blk}`}>
-            <span className="doc-blk-tag" data-skip-select style={{ background: color }} title="重复内容块：每条明细复制一次这些内容"
-              onMouseUp={(e) => { e.stopPropagation(); onMarkClick?.(b.blk); onSelect({ kind: "slot", slotId: b.blk }); }}>
+            <button type="button" className="doc-blk-tag" data-skip-select style={{ background: color }} title="重复内容块：每条明细复制一次这些内容"
+              onClick={(e) => { e.stopPropagation(); onMarkClick?.(b.blk); onSelect({ kind: "slot", slotId: b.blk }); }}>
               ⟳ {info?.no != null ? `${info.no} ` : ""}{info?.name || "重复内容块"}
-            </span>
+            </button>
             {blocks.slice(i, j).map((x: any, k: number) => (x.t === "p" ? renderPara(x, `${kp}${i + k}`) : renderTable(x, `${kp}${i + k}`)))}
           </div>,
         );
@@ -264,17 +266,19 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
     const selRow = selection?.kind === "docx_row" && selection.table_path === t.path ? selection.row : -1;
     const tableSel = selection?.kind === "docx_table" && selection.table_path === t.path ? selection : null;
     return (
-      <div key={key} style={{ position: "relative", margin: "4px 0", outline: tableMark ? `2px solid ${tableMark.color}` : undefined }} data-mark={tableMark ? `${tableMark.role}:${tableMark.id}` : undefined}>
-        <button className="btn xs" data-skip-select style={{ position: "absolute", left: -26, top: -2 }} title="选择整个表格（作为明细表）"
-          onMouseUp={(e) => { e.stopPropagation(); onSelect({ kind: "docx_table", part: t.part, table_path: t.path, header_rows: 1 }); }}>▦</button>
-        {tableMark && <span className="num" style={{ position: "absolute", right: -8, top: -9, background: tableMark.color }}>{tableMark.no}</span>}
+      <div key={key} style={{ position: "relative", margin: "4px 0", outline: tableMark ? `2px solid ${markColor(tableMark.color)}` : undefined }} data-mark={tableMark ? `${tableMark.role}:${tableMark.id}` : undefined}>
+        {/* onClick, not onMouseUp: Enter and Space on a focused button fire click only, so the
+            old handler made this control mouse-only. */}
+        {selectable && <button type="button" className="btn xs" data-skip-select style={{ position: "absolute", left: -28, top: -2 }} title="选择整个表格（作为明细表）"
+          aria-label="选择整个表格" onClick={(e) => { e.stopPropagation(); onSelect({ kind: "docx_table", part: t.part, table_path: t.path, header_rows: 1 }); }}>▦</button>}
+        {tableMark && <span className="num" style={{ position: "absolute", right: -8, top: -9, background: markColor(tableMark.color) }}>{tableMark.no}</span>}
         <table className={`doc-tbl${t.borders ? " b" : ""}`} style={{ width: t.grid?.length ? t.grid.reduce((a: number, b: number) => a + b, 0) * PT : "100%", maxWidth: "100%" }}>
           {t.grid?.length > 0 && <colgroup>{t.grid.map((g: number, i: number) => <col key={i} style={{ width: g * PT }} />)}</colgroup>}
           <tbody>
             {grid.map((row, ri) => {
               const rowMark = colMarks.find((m) => m.pos.kind === "docx_row" && (m.pos as any).row === ri);
               return (
-                <tr key={ri} className={selRow === ri ? "rowsel" : undefined} style={rowMark ? { outline: `2px dashed ${rowMark.color}`, outlineOffset: -2 } : undefined}
+                <tr key={ri} className={selRow === ri ? "rowsel" : undefined} style={rowMark ? { outline: `2px dashed ${markColor(rowMark.color)}`, outlineOffset: -2 } : undefined}
                   data-mark={rowMark ? `${rowMark.role}:${rowMark.id}` : undefined}>
                   {row.map(({ gc, cell, ci }, k) => {
                     if (cell.vmerge === "continue") return null;
@@ -284,17 +288,17 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
                     return (
                       <td key={k} colSpan={cell.span > 1 ? cell.span : undefined} rowSpan={rowspan.get(`${ri},${gc}`)} data-tbl={t.path} data-part={t.part} data-row={ri} data-col={ci}
                         className={inSel ? "cellsel" : undefined}
-                        style={{ background: cm[0] ? hexA(cm[0].color, 0.15) : cell.shd, boxShadow: cm[0] ? `inset 0 0 0 2px ${cm[0].color}` : undefined }}
+                        style={{ background: cm[0] ? hexA(markColor(cm[0].color), 0.15) : cssColor(cell.shd), boxShadow: cm[0] ? `inset 0 0 0 2px ${markColor(cm[0].color)}` : undefined }}
                         data-mark={cm[0] ? `${cm[0].role}:${cm[0].id}` : undefined}>
-                        {k === 0 && side === "tpl" && (
-                          <span className="rowhandle" data-skip-select title="选择整行（可设为重复明细行）"
-                            onMouseUp={(e) => { e.stopPropagation(); onSelect({ kind: "docx_row", part: t.part, table_path: t.path, row: ri }); }}>≡</span>
+                        {selectable && k === 0 && side === "tpl" && (
+                          <button type="button" className="rowhandle" data-skip-select title="选择整行（可设为重复明细行）" aria-label={`选择表格第 ${ri + 1} 行`}
+                            onClick={(e) => { e.stopPropagation(); onSelect({ kind: "docx_row", part: t.part, table_path: t.path, row: ri }); }}>≡</button>
                         )}
-                        {k === 0 && side === "src" && (
-                          <span className="rowhandle" data-skip-select title="从此行开始作为明细表（此行为表头）"
-                            onMouseUp={(e) => { e.stopPropagation(); onSelect({ kind: "docx_table", part: t.part, table_path: t.path, header_rows: ri + 1 }); }}>≡</span>
+                        {selectable && k === 0 && side === "src" && (
+                          <button type="button" className="rowhandle" data-skip-select title="从此行开始作为明细表（此行为表头）" aria-label={`以第 ${ri + 1} 行为表头选择明细表`}
+                            onClick={(e) => { e.stopPropagation(); onSelect({ kind: "docx_table", part: t.part, table_path: t.path, header_rows: ri + 1 }); }}>≡</button>
                         )}
-                        {cm[0] && cm[0].no != null && <span className="num" style={{ position: "absolute", right: 1, top: 1, background: cm[0].color }}>{cm[0].no}</span>}
+                        {cm[0] && cm[0].no != null && <span className="num" style={{ position: "absolute", right: 1, top: 1, background: markColor(cm[0].color) }}>{cm[0].no}</span>}
                         {renderSeq(cell.blocks, `c${ri}-${ci}-`)}
                       </td>
                     );

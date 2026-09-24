@@ -28,10 +28,14 @@ import hmac
 import re
 import threading
 import unicodedata
+from contextlib import contextmanager
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from argon2.low_level import Type
+
+from . import env
+from .errors import ServiceError
 
 # measured above; change together with the benchmark note
 MEMORY_KIB = 47104          # 46 MiB
@@ -42,6 +46,23 @@ CONCURRENCY = 4             # bounds peak memory at ~184 MiB and keeps hashing o
 _hasher = PasswordHasher(time_cost=TIME_COST, memory_cost=MEMORY_KIB, parallelism=PARALLELISM,
                          hash_len=32, salt_len=16, type=Type.ID)
 _slots = threading.BoundedSemaphore(CONCURRENCY)
+# How long a request waits for a hashing slot before it is turned away. The handlers that hash
+# are synchronous and run on the server's shared worker threads, so waiting without a bound let a
+# burst of anonymous logins park every worker on this semaphore and stall every other route —
+# document routes included, in the single-process deployment.
+SLOT_WAIT_S = float(env.get("HASH_WAIT_S", "5"))
+
+
+@contextmanager
+def _slot():
+    if not _slots.acquire(timeout=SLOT_WAIT_S):
+        # Raised before anything is compared, so it says nothing about any account: every
+        # caller gets it alike while the service is saturated.
+        raise ServiceError(503, "busy", "当前登录请求过多，请稍后再试", {"retry_after": 5})
+    try:
+        yield
+    finally:
+        _slots.release()
 
 # A single-factor password is the only thing standing between an attacker and the account, so it
 # carries the longer floor. As one factor among several the requirement drops — but not below the
@@ -124,7 +145,7 @@ def check_policy(password: str, *, email: str | None = None, display_name: str |
 
 def hash_password(password: str) -> str:
     """A PHC string: algorithm, parameters and salt travel with the digest."""
-    with _slots:
+    with _slot():
         return _hasher.hash(normalise(password))
 
 
@@ -133,9 +154,11 @@ def verify(phc: str, password: str) -> bool:
 
     Deliberately total: a mismatch, a corrupt stored hash and an unexpected library error must be
     indistinguishable to the caller, because any difference between them — including a different
-    exception reaching a different error path — is a signal about the account.
+    exception reaching a different error path — is a signal about the account. The one exception
+    that can escape is the 503 `busy` from `_slot()`, raised before any comparison and identical
+    for every account.
     """
-    with _slots:
+    with _slot():
         try:
             return _hasher.verify(phc, normalise(password))
         except (VerifyMismatchError, InvalidHashError):

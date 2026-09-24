@@ -1,7 +1,12 @@
 """Regression cases: capture a project with its expected results, replay it, detect changes.
-Also runs every committed case in regression/ (real, desensitized files once available)."""
+Also runs every built-in case committed in apps/docs/regression/ (synthetic test fixtures).
+
+Captured cases are workspace data (the workspace's source files, verbatim): they live under the
+data directory, scoped to the workspace. Cross-workspace behaviour is covered in
+test_regression_isolation.py."""
 import io
 import json
+from pathlib import Path
 
 import docx
 import openpyxl
@@ -11,10 +16,11 @@ from synwevo_docs import regression as RG
 
 
 def test_committed_cases_still_pass():
-    cases = RG.list_cases()
+    # Built-in cases only: this test must never read a data directory (least of all a real one).
+    cases = RG.list_builtin()
     if not cases:
-        pytest.skip("regression/ 中还没有回归用例（拿到脱敏的真实文件后，在界面中「保存为回归用例」即可加入）")
-    bad = [(c["id"], r) for c in cases for r in [RG.run(c["id"])] if not r["ok"]]
+        pytest.skip("apps/docs/regression/ 中还没有内置用例")
+    bad = [(c["id"], r) for c in cases for r in [RG.run_builtin(c["id"])] if not r["ok"]]
     assert not bad, json.dumps(bad, ensure_ascii=False, indent=1)[:4000]
 
 
@@ -44,6 +50,7 @@ def _project(api, fixtures):
 def test_capture_replay_and_detect_changes(api, fixtures, case_dir):
     pid = _project(api, fixtures)
     c = api.ok(api.c.post(f"/api/projects/{pid}/regression-cases", json={"name": "订单（测试数据）", "note": "15 个订单"}))
+    case_dir = case_dir / "default"                          # one directory per workspace
     assert c["samples"] == 15 and c["records_total"] == 15 and (case_dir / c["id"] / "case.json").exists()
     assert [x["id"] for x in api.ok(api.c.get("/api/regression-cases"))] == [c["id"]]
     r = api.ok(api.c.post(f"/api/regression-cases/{c['id']}/run"))
@@ -62,7 +69,30 @@ def test_capture_replay_and_detect_changes(api, fixtures, case_dir):
     assert api.ok(api.c.delete(f"/api/regression-cases/{c['id']}"))["ok"] and not api.ok(api.c.get("/api/regression-cases"))
     assert api.c.post("/api/regression-cases/..%2Fetc/run").status_code in (400, 404, 405)
     with pytest.raises(RG.RegressionError):
-        RG.load("../etc")
+        RG.load("../etc", "default")
+
+
+def test_captured_cases_live_in_the_data_directory_not_the_source_tree(api, fixtures, monkeypatch):
+    """F221/F133: capture used to write the workspace's files into apps/docs/regression — the
+    source tree, outside backups, one `git add` from a commit — and call them desensitized."""
+    for name in ("SYNWEVO_DOCS_REGRESSION_DIR", "SYNWEVO_REGRESSION_DIR", "DOCWEAVE_REGRESSION_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    before = sorted(p.name for p in RG.builtin_dir().iterdir())
+    pid = _project(api, fixtures)
+    c = api.ok(api.c.post(f"/api/projects/{pid}/regression-cases", json={"name": "数据目录"}))
+    data_root = Path(api.c.app_state.app.store.root)
+    stored = data_root / "regression" / "default" / c["id"]
+    assert (stored / "case.json").is_file() and any((stored / "sources").iterdir())
+    assert sorted(p.name for p in RG.builtin_dir().iterdir()) == before, "不得写入源码目录"
+    case = json.loads((stored / "case.json").read_text(encoding="utf-8"))
+    assert case["workspace"] == "default" and case["project_id"] == pid and case["desensitized"] is False
+    listed = api.ok(api.c.get("/api/regression-cases"))
+    assert [x["id"] for x in listed] == [c["id"]] and listed[0]["desensitized"] is False
+    # built-in fixtures are for tests and the CLI; the HTTP API never offers them
+    builtin = [x["id"] for x in RG.list_builtin()]
+    assert builtin and not set(builtin) & {x["id"] for x in listed}
+    assert api.c.post(f"/api/regression-cases/{builtin[0]}/run").status_code == 404
+    assert api.c.get(f"/api/regression-cases/{builtin[0]}/download").status_code == 404
 
 
 def test_cli(api, fixtures, case_dir):

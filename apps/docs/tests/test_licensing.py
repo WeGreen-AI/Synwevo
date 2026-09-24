@@ -93,17 +93,59 @@ def test_archive_reports_complete_when_everything_is_present(monkeypatch, tmp_pa
     assert "包含所列全部内容" in offer and "并不完整" not in offer
 
 
+def _dockerfile_copy_sources(text: str) -> list[str]:
+    """The source paths of every COPY from the build context (not from another stage), exactly.
+
+    Parsed, not substring-matched: `"docs/" in copied` was satisfied by `COPY apps/docs/ …`, so
+    removing `COPY docs/ docs/` would not have failed the test that exists to catch it.
+    """
+    logical, buf = [], ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") and buf:
+            continue                                # comment inside a continued instruction
+        if stripped.endswith("\\"):
+            buf += stripped[:-1] + " "
+            continue
+        logical.append(buf + stripped)
+        buf = ""
+    sources = []
+    for instr in logical:
+        tokens = instr.split()
+        if not tokens or tokens[0].upper() != "COPY":
+            continue
+        args = [t for t in tokens[1:] if not t.startswith("--")]
+        if any(t.startswith("--from=") for t in tokens[1:]):
+            continue                                # built output from another stage
+        sources += [a.rstrip("/") for a in args[:-1]]
+    return sources
+
+
+def _covered(rel: str, sources: list[str]) -> bool:
+    return any(rel == src or rel.startswith(src + "/") for src in sources)
+
+
 def test_docker_image_carries_every_path_the_offer_promises():
-    """The archive is built from the files on disk, so the image must contain them.
+    """The archive is built from the files on disk, so the image must contain them — every entry
+    of licensing.INCLUDE, not a hand-picked list that can drift from it.
 
     The deployed container served a backend-only archive because the Dockerfile COPYed only
-    backend/ and the compiled frontend/dist.
+    backend/ and the compiled frontend/dist. An entry that does not exist in the checkout (LICENSE,
+    until one is chosen) cannot be copied and is reported as missing by the offer itself.
     """
-    dockerfile = (ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8")
-    copied = "\n".join(l for l in dockerfile.splitlines() if l.startswith("COPY"))
-    for rel in ("packages/", "services/identity/", "apps/docs/", "apps/portal/",
-                "infra/server/", "scripts/", "docs/", "README.md", "NOTICE"):
-        assert rel in copied, f"Dockerfile 没有把 {rel} 放进镜像，对应源代码包会缺这一块"
+    sources = _dockerfile_copy_sources((ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8"))
+    assert sources, "没有解析出任何 COPY"
+    for rel in licensing.INCLUDE:
+        if not (ROOT / rel).exists():
+            continue
+        assert _covered(rel, sources), f"Dockerfile 没有把 {rel} 放进镜像，对应源代码包会缺这一块"
+
+
+def test_the_copy_parser_is_not_fooled_by_a_similar_path():
+    """The regression the parser exists for: apps/docs/ is not docs/."""
+    sources = _dockerfile_copy_sources("COPY apps/docs/ apps/docs/\nCOPY --from=ui /ui/docs docs\n")
+    assert _covered("apps/docs/synwevo_docs", sources)
+    assert not _covered("docs", sources)
 
 
 def test_notice_lists_every_third_party_component():

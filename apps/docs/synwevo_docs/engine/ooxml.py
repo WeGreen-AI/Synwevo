@@ -89,6 +89,12 @@ class Package:
 
     def xml(self, name: str) -> etree._Element:
         if name not in self._xml:
+            info = self._infos.get(name)
+            if info is not None and name not in self._raw and info.file_size > LIMITS.max_xml_part_bytes:
+                # huge_tree lifts libxml2's own depth/size guards, so the size is checked here,
+                # before one part becomes a DOM many times its size
+                raise LimitError(f"部件「{name}」展开后 {info.file_size // (1024 * 1024)} MB，超过单个部件上限 "
+                                 f"{LIMITS.max_xml_part_bytes // (1024 * 1024)} MB")
             self._xml[name] = etree.fromstring(self.read(name), _PARSER)
         return self._xml[name]
 
@@ -238,3 +244,79 @@ class Package:
                 if pat in n and not n.endswith(".rels"):
                     out[k] = out.get(k, 0) + 1
         return out
+
+
+# ------------------------------------------------------------------ macros
+_MACRO_FREE_MAIN = {
+    "application/vnd.ms-word.document.macroEnabled.main+xml":
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+    "application/vnd.ms-word.template.macroEnabledTemplate.main+xml":
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+    "application/vnd.ms-excel.sheet.macroEnabled.main+xml":
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    "application/vnd.ms-excel.template.macroEnabled.main+xml":
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    "application/vnd.ms-excel.addin.macroEnabled.main+xml":
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml":
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+    "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml":
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+    "application/vnd.ms-powerpoint.template.macroEnabled.main+xml":
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+    "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml":
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+}
+_MACRO_PART_TYPES = {
+    "application/vnd.ms-office.vbaProject", "application/vnd.ms-word.vbaData+xml",
+    "application/vnd.ms-word.keyMapCustomizations+xml", "application/vnd.ms-word.attachedToolbars",
+    "application/vnd.ms-office.vbaProjectSignature", "application/vnd.ms-office.vbaProjectSignatureAgile",
+    "application/vnd.ms-office.vbaProjectSignatureV3",
+}
+_MACRO_REL_SUFFIXES = ("/vbaProject", "/wordVbaData", "/keyMapCustomizations", "/attachedToolbars",
+                       "/vbaProjectSignature", "/vbaProjectSignatureAgile", "/vbaProjectSignatureV3")
+
+
+def strip_vba(data: bytes) -> bytes:
+    """The package with its VBA project removed and a macro-free main-part content type;
+    everything else is left as it was.  Engine-side twin of ``services.strip_macros`` (the
+    engine cannot import the service layer); a package without macros comes back unchanged."""
+    pkg = Package(data)
+    ct = pkg.content_types()
+    defaults = {el.get("Extension", "").lower(): el.get("ContentType") for el in ct if el.tag == q("ct", "Default")}
+    overrides = {el.get("PartName"): el.get("ContentType") for el in ct if el.tag == q("ct", "Override")}
+
+    def ctype(name: str) -> str | None:
+        return overrides.get("/" + name) or defaults.get(posixpath.splitext(name)[1].lstrip(".").lower())
+
+    macro_parts = {n for n in pkg.names if not n.endswith(".rels") and (ctype(n) in _MACRO_PART_TYPES or n.endswith("vbaProject.bin"))}
+    macro_main = any(v in _MACRO_FREE_MAIN for v in overrides.values())
+    if not macro_parts and not macro_main:
+        return data
+    for rn in [n for n in pkg.names if n.endswith(".rels")]:
+        owner_dir = posixpath.dirname(posixpath.dirname(rn))
+        owner = posixpath.join(owner_dir, posixpath.basename(rn)[:-len(".rels")]) if posixpath.basename(rn) != ".rels" else ""
+        if owner in macro_parts:
+            continue
+        root = pkg.xml(rn)
+        for el in list(root):
+            target = el.get("Target") or ""
+            resolved = pkg.resolve(owner, target) if owner or not target.startswith("/") else target.lstrip("/")
+            if (el.get("Type") or "").endswith(_MACRO_REL_SUFFIXES) or resolved in macro_parts:
+                root.remove(el)
+    for n in macro_parts:
+        pkg.delete(n)
+        rn = pkg.rels_name(n)
+        if pkg.has(rn):
+            pkg.delete(rn)
+    remaining_exts = {posixpath.splitext(n)[1].lstrip(".").lower() for n in pkg.names if "/" + n not in overrides}
+    for el in list(ct):
+        if el.tag == q("ct", "Override"):
+            if el.get("PartName", "").lstrip("/") in macro_parts:
+                ct.remove(el)
+            elif el.get("ContentType") in _MACRO_FREE_MAIN:
+                el.set("ContentType", _MACRO_FREE_MAIN[el.get("ContentType")])
+        elif el.tag == q("ct", "Default") and el.get("ContentType") in _MACRO_PART_TYPES \
+                and el.get("Extension", "").lower() not in remaining_exts:
+            ct.remove(el)
+    return pkg.save()

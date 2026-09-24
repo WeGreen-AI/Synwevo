@@ -33,6 +33,38 @@ DOCS_APP_ID = "docweave"
 PLATFORM_APP_ID = "platform"
 
 
+def entitlement_state(store: Store, workspace_id: str, app_id: str, user_id: str) -> str:
+    """``granted``, ``revoked`` or ``none``: this person's entitlement row, as it applies to
+    their **current** membership of the workspace.
+
+    A revocation older than the membership it would apply to is stale and reads as ``none``.
+    Removing someone from a workspace writes explicit revocations (so the removal holds under
+    the ``members`` policy, where membership alone would otherwise let them in), and nothing on
+    the way back in clears them — `Identity.add_member` does not, and neither did invitation
+    acceptance at first. Honoured as-is, those rows locked every re-added or re-invited member
+    out of the application for good: every member of an upgraded database (adoption gave them
+    all rows) and every owner of a new one. Removing the membership deletes its row, so a re-add
+    starts a fresh ``created_at``; a revocation written after that is in force, one written
+    before it belonged to the membership that ended.
+
+    Equal timestamps count as in force: on a coarse clock the tie goes to the withdrawal.
+
+    One indexed read. Shared with `synwevo_core.authority`, which asks the same question for
+    deferred work and must give the same answer as the browser gate.
+    """
+    row = store.one(
+        "SELECT e.revoked_at, m.created_at AS member_since FROM app_entitlements e "
+        "LEFT JOIN memberships m ON m.workspace_id=e.workspace_id AND m.user_id=e.user_id "
+        "WHERE e.workspace_id=? AND e.app_id=? AND e.user_id=?", (workspace_id, app_id, user_id))
+    if not row:
+        return "none"
+    if row["revoked_at"] is None:
+        return "granted"
+    if row["member_since"] is not None and row["revoked_at"] < row["member_since"]:
+        return "none"
+    return "revoked"
+
+
 class Apps:
     def __init__(self, store: Store, ident: Identity):
         self.store = store
@@ -43,7 +75,7 @@ class Apps:
         return self.store.one("SELECT * FROM apps WHERE id=?", (app_id,))
 
     def register(self, *, app_id: str, name: str, launch_url: str | None, icon: str | None = None,
-                 access_policy: str = "members", keep_launch_url: bool = False) -> dict:
+                 access_policy: str | None = None, keep_launch_url: bool = False) -> dict:
         """Register or update an application.
 
         `keep_launch_url` leaves an existing launch URL alone. It matters because every process
@@ -51,6 +83,11 @@ class Apps:
         portal process registering Synwevo Docs would otherwise overwrite Synwevo Docs' launch URL with
         the portal's, producing a card on the home page that loops straight back to the home
         page. Only the process that actually is the application sets its address.
+
+        `access_policy=None` keeps whatever the registry already says (``members`` for a new
+        row). Startup registration used to pass ``members`` unconditionally, so an operator who
+        had switched Synwevo Docs to per-user ``explicit`` grants had that decision reverted —
+        and access re-opened to every member — on the next restart of any service.
         """
         ts = now()
         existing = self.get(app_id)
@@ -58,6 +95,10 @@ class Apps:
             launch_url = existing["launch_url"]
         if launch_url is None:
             launch_url = "http://docweave.localhost:8765/"
+        if access_policy is None:
+            access_policy = existing["access_policy"] if existing else "members"
+        if access_policy not in ("members", "explicit"):
+            raise ServiceError(400, "bad_policy", f"未知的访问策略 {access_policy!r}（members / explicit）")
         self.store.execute(
             "INSERT INTO apps (id,name,icon,launch_url,status,access_policy,created_at,updated_at) "
             "VALUES (?,?,?,?,'active',?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
@@ -79,9 +120,45 @@ class Apps:
             (workspace_id, app_id, user_id, now(), actor_id))
 
     def revoke(self, workspace_id: str, app_id: str, user_id: str) -> None:
+        """Withdraw one person's right to use one application in one workspace.
+
+        Written as an upsert, not an UPDATE. Under the ``members`` policy most people have no
+        entitlement row at all — membership is what lets them in — so an UPDATE matched nothing
+        and `app revoke` printed "已撤销" while changing nothing. The revocation has to exist as a
+        row for the eligibility check to see it.
+
+        Journalled after the database write, so a restore can re-apply it (`synwevo_core.journal`).
+        For a ``members``-policy person the backup usually has no row at all, so replay has to
+        insert one, not only update — see `journal.apply`. A journal failure raises: a withdrawal
+        that cannot be made durable must not be reported as done.
+
+        The row's ``revoked_at`` is always set to now, even over an older revocation: an older
+        one may predate the current membership and be stale (:func:`entitlement_state`).
+        """
+        from . import journal
+        ts = now()
         self.store.execute(
-            "UPDATE app_entitlements SET revoked_at=? WHERE workspace_id=? AND app_id=? AND user_id=?",
-            (now(), workspace_id, app_id, user_id))
+            "INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by,revoked_at) "
+            "VALUES (?,?,?,?,NULL,?) ON CONFLICT(workspace_id,app_id,user_id) DO UPDATE SET "
+            "revoked_at=excluded.revoked_at",
+            (workspace_id, app_id, user_id, ts, ts))
+        journal.record(self.store, "entitlement_revoked", workspace_id=workspace_id, app_id=app_id,
+                       user_id=user_id)
+
+    def disable_for_workspace(self, workspace_id: str, app_id: str) -> bool:
+        """Turn an application off for one workspace. Takes effect on the next request of every
+        open session, because the platform gate re-checks eligibility on each one.
+
+        Journalled like every other withdrawal, so restoring a backup taken while the
+        application was still on does not quietly turn it back on. Only when something was
+        actually turned off; a journal failure raises, as in :meth:`revoke`.
+        """
+        from . import journal
+        changed = self.store.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
+                                     (workspace_id, app_id)) > 0
+        if changed:
+            journal.record(self.store, "workspace_app_disabled", workspace_id=workspace_id, app_id=app_id)
+        return changed
 
     # ------------------------------------------------------------------ eligibility
     def check_access(self, user_id: str, app_id: str,
@@ -108,18 +185,26 @@ class Apps:
         if workspace_id and not candidates:
             return False, None, "你不是该工作空间的成员"
 
+        revoked = False
         for w in candidates:
             if w["status"] != "active":
                 continue
             if not self.store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id=?",
                                   (w["id"], app_id)):
                 continue
-            ent = self.store.one(
-                "SELECT 1 FROM app_entitlements WHERE workspace_id=? AND app_id=? AND user_id=? "
-                "AND revoked_at IS NULL", (w["id"], app_id, user_id))
-            if ent or app["access_policy"] == "members":
+            state = entitlement_state(self.store, w["id"], app_id, user_id)
+            if state == "revoked":
+                # An explicit revocation outranks the policy. `members` means "membership is
+                # enough when nobody has said otherwise"; it used to mean "membership is enough,
+                # full stop", which made `app revoke` a no-op for the only policy in use. Only a
+                # revocation of the *current* membership counts — see entitlement_state().
+                revoked = True
+                continue
+            if state == "granted" or app["access_policy"] == "members":
                 return True, w["id"], "ok"
 
+        if workspace_id and revoked:
+            return False, None, f"你在该工作空间使用「{app['name']}」的资格已被撤销，请联系工作空间管理员"
         return False, None, f"你所在的工作空间尚未启用「{app['name']}」，或你没有使用它的资格"
 
     def _check_platform(self, user_id: str, workspace_id: str | None) -> tuple[bool, str | None, str]:
@@ -162,15 +247,19 @@ class Apps:
             return False, None, f"该工作空间尚未启用「{app['name']}」"
         return True, workspace_id, "ok"
 
-    def apps_for(self, user_id: str) -> list[dict]:
+    def apps_for(self, user_id: str, workspace_id: str | None = None) -> list[dict]:
         """What the portal shows. Only applications this person can actually open.
+
+        With `workspace_id`, only what is usable *in that workspace* — the portal passes the
+        workspace its session is in, so switching workspace changes the cards rather than being
+        decorative. Without it, the first workspace where each application is usable.
 
         Returns nothing about the contents of any workspace — the portal must not become a place
         where project names leak to someone who cannot read them.
         """
         out = []
         for app in self.store.all("SELECT * FROM apps WHERE status='active' ORDER BY name"):
-            ok, wid, reason = self.check_access(user_id, app["id"])
+            ok, wid, reason = self.check_access(user_id, app["id"], workspace_id)
             if ok:
                 ws = self.ident.get_workspace(wid)
                 out.append({"id": app["id"], "name": app["name"], "icon": app["icon"],
@@ -182,15 +271,23 @@ class Apps:
     def adopt_existing_members(self, app_id: str = DOCS_APP_ID, actor_id: str | None = None) -> dict:
         """Give every current member of every workspace an entitlement to this application.
 
-        Run once when the app registry is introduced. Without it, adding an entitlement table
-        would lock out everyone who already had access — the table starts empty, and an empty
-        table means "nobody" under a default-deny rule.
+        The one-time migration for when the app registry was introduced. Without it, adding an
+        entitlement table would lock out everyone who already had access — the table starts
+        empty, and an empty table means "nobody" under a default-deny rule. Services call
+        :meth:`adopt_once`, which runs this at most once per database; calling it directly is for
+        the CLI and tests.
+
+        It never clears a revocation: an existing entitlement row, revoked or not, is left
+        exactly as it is. It used to go through `grant()`, whose upsert sets `revoked_at=NULL`,
+        and it ran on every start of the account service — so every `app revoke` was undone by
+        the next restart.
 
         Deliberately scoped to one application and to workspaces that already exist. It grants
         nothing else, and it does not touch workspace `default`, which stays memberless and
         unclaimed.
         """
         enabled = claimed = 0
+        ts = now()
         rows = self.store.all("SELECT DISTINCT workspace_id FROM memberships")
         for row in rows:
             wid = row["workspace_id"]
@@ -199,9 +296,34 @@ class Apps:
                 self.enable_for_workspace(wid, app_id, actor_id)
                 enabled += 1
         for m in self.store.all("SELECT workspace_id, user_id FROM memberships"):
-            self.grant(m["workspace_id"], app_id, m["user_id"], actor_id)
+            self.store.execute(
+                "INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,app_id,user_id) DO NOTHING",
+                (m["workspace_id"], app_id, m["user_id"], ts, actor_id))
             claimed += 1
         return {"workspaces_enabled": enabled, "entitlements": claimed}
+
+    def adopt_once(self, app_id: str = DOCS_APP_ID) -> dict | None:
+        """Run :meth:`adopt_existing_members` once per database, recorded in `meta`.
+
+        Returns the adoption's counts when it ran now, None when it had already happened.
+
+        A database that predates the marker but already has registry rows for this application
+        was adopted by the earlier every-start code; running the adoption again would re-enable
+        the application in every workspace an operator has since turned it off in, so it is only
+        marked done. Only a database with no registry rows at all — one from before the registry
+        existed — is actually adopted.
+        """
+        key = f"apps_adopted:{app_id}"
+        if self.store.one("SELECT 1 FROM meta WHERE key=?", (key,)):
+            return None
+        had_rows = bool(
+            self.store.one("SELECT 1 FROM workspace_apps WHERE app_id=? LIMIT 1", (app_id,))
+            or self.store.one("SELECT 1 FROM app_entitlements WHERE app_id=? LIMIT 1", (app_id,)))
+        out = None if had_rows else self.adopt_existing_members(app_id)
+        self.store.execute("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                           (key, str(now())))
+        return out
 
 
 def bootstrap_docs_app(store: Store, ident: Identity, *, launch_url: str | None = None) -> dict:
@@ -221,7 +343,9 @@ def bootstrap_docs_app(store: Store, ident: Identity, *, launch_url: str | None 
     apps = Apps(store, ident)
     role = (env.get("ROLE") or "all").strip().lower()
     mine = role in ("app", "all", "")
+    # access_policy=None: a new registration starts as `members`, an existing one keeps the
+    # policy an operator chose.
     return apps.register(
         app_id=DOCS_APP_ID, name=DOCS_NAME, icon="doc",
         launch_url=launch_url or (env.get("APP_URL") if mine else None),
-        access_policy="members", keep_launch_url=not mine and not launch_url)
+        access_policy=None, keep_launch_url=not mine and not launch_url)

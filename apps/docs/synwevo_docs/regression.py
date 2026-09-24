@@ -1,12 +1,23 @@
-"""Regression cases: freeze a working project (real, desensitized files) together with
-its expected results, and replay it with the current code.
+"""Regression cases: freeze a working project together with its expected results, and
+replay it with the current code.
 
-A case is a plain directory, so it can be committed next to the code and run in CI::
+A case is a plain directory::
 
-    regression/<case id>/
-        case.json          rule, mappings, template slots, expectations
+    <case id>/
+        case.json          rule, mappings, template slots, expectations, owning workspace
         template.<ext>     the template working copy (fields included)
-        sources/NN_<name>  the uploaded source files, byte for byte
+        sources/NN_<name>  the uploaded source files, byte for byte — NOT desensitized
+
+Where cases live, and who can see them:
+
+* **Captured cases are workspace data.** They hold the workspace's own source files verbatim, so
+  they are stored under the data directory (``<SYNWEVO_DATA_DIR>/regression/<workspace>/``, or
+  ``$SYNWEVO_DOCS_REGRESSION_DIR/<workspace>/``) and every list / load / run / delete is scoped
+  to one workspace. They used to be written into ``apps/docs/regression`` — inside the source
+  tree, outside backups, one `git add` away from a commit — and listed, downloaded, replayed and
+  deleted across every workspace.
+* **Built-in cases** are synthetic fixtures committed under ``apps/docs/regression/``. They are
+  read-only, run by the test suite and the CLI, and never offered through the HTTP API.
 
 Replaying parses the stored sources again, rebuilds the samples, resolves every mapping
 and fills the template – the same code path as preview and batch generation – then
@@ -36,11 +47,38 @@ from .engine.resolve import ResolveError, SourceDoc
 ROOT = Path(__file__).resolve().parents[1]   # apps/docs
 CASE_VERSION = 1
 MAX_SAMPLES = 50
+_ID_RE = re.compile(r"[0-9A-Za-z._-]{1,80}")
 
 
-def cases_dir() -> Path:
-    d = Path(env.docs("REGRESSION_DIR") or (ROOT / "regression"))
-    d.mkdir(parents=True, exist_ok=True)
+def builtin_dir() -> Path:
+    """Committed synthetic cases (test fixtures). Read-only; never written by capture."""
+    return ROOT / "regression"
+
+
+def cases_root(data_root: Path | str | None = None) -> Path:
+    """Where captured (workspace) cases live: never inside the source tree."""
+    configured = env.docs("REGRESSION_DIR")
+    if configured:
+        return Path(configured)
+    if data_root is None:
+        from synwevo_core.http import data_dir_default
+        data_root = env.get("DATA_DIR") or data_dir_default()
+    return Path(data_root) / "regression"
+
+
+def _tenant_dirname(tenant: str) -> str:
+    # Workspace ids are safe path components in practice; anything else is hashed so a crafted
+    # tenant value can never climb out of the root.
+    t = tenant or "default"
+    if _ID_RE.fullmatch(t) and not t.startswith("."):
+        return t
+    return "t-" + hashlib.sha256(t.encode()).hexdigest()[:32]
+
+
+def cases_dir(tenant: str, data_root: Path | str | None = None, create: bool = False) -> Path:
+    d = cases_root(data_root) / _tenant_dirname(tenant)
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 
@@ -130,17 +168,22 @@ def _values(plan, slots: list[dict]) -> dict:
 
 
 # ------------------------------------------------------------------ capture
-def capture(app, pid: str, name: str, note: str = "", sample_keys: list[str] | None = None) -> dict:
+def capture(app, pid: str, name: str, note: str = "", sample_keys: list[str] | None = None,
+            tenant: str | None = None) -> dict:
+    from synwevo_core.context import tenant as current_tenant
     from .jobs import ProjectContext
-    ctx = ProjectContext(app, pid)
+    tenant = tenant or current_tenant()
+    ctx = ProjectContext(app, pid)                   # 404s for another workspace's project
     if not ctx.template:
         raise RegressionError("no_template", "项目还没有模板，无法保存回归用例")
     recs = ctx.records["records"]
     if not recs:
         raise RegressionError("no_records", "没有识别到样本，无法保存回归用例")
-    chosen = [r for r in recs if not sample_keys or r["key"] in sample_keys][:MAX_SAMPLES]
+    wanted = set(sample_keys or [])
+    # A key saved before the per-group key format changed still names its sample.
+    chosen = [r for r in recs if not wanted or r["key"] in wanted or R.legacy_record_key(r) in wanted][:MAX_SAMPLES]
     cid = time.strftime("%Y%m%d-%H%M%S") + "-" + hashlib.sha1(f"{pid}{time.time()}".encode()).hexdigest()[:6]
-    d = cases_dir() / cid
+    d = cases_dir(tenant, app.store.root, create=True) / cid
     (d / "sources").mkdir(parents=True)
     tpl_fmt = ctx.template["format"]
     native = G.native_format(tpl_fmt)
@@ -170,6 +213,7 @@ def capture(app, pid: str, name: str, note: str = "", sample_keys: list[str] | N
         samples.append(entry)
     case = {"version": CASE_VERSION, "id": cid, "name": name.strip()[:100] or ctx.project["name"], "note": note[:1000],
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"), "project": ctx.project["name"],
+            "workspace": tenant, "project_id": pid, "desensitized": False,
             "rule": ctx.rule, "mappings": ctx.mappings,
             "template": {"format": tpl_fmt, "name": ctx.template["name"], "file": tpl_file, "slots": ctx.slots, "fill_options": fill_opts},
             "sources": sources, "records_total": len(recs), "samples": samples}
@@ -178,14 +222,19 @@ def capture(app, pid: str, name: str, note: str = "", sample_keys: list[str] | N
 
 
 def summary(case: dict) -> dict:
+    # "desensitized" is only ever what the case says about itself; a captured case copies the
+    # workspace's files as they are and says False.
     return {k: case.get(k) for k in ("id", "name", "note", "created_at", "project", "records_total")} | {
         "samples": len(case.get("samples", [])), "sources": [s["filename"] for s in case.get("sources", [])],
-        "template": case.get("template", {}).get("name"), "format": case.get("template", {}).get("format")}
+        "template": case.get("template", {}).get("name"), "format": case.get("template", {}).get("format"),
+        "desensitized": bool(case.get("desensitized"))}
 
 
-def list_cases() -> list[dict]:
+def _list_in(root: Path) -> list[dict]:
     out = []
-    for p in sorted(cases_dir().glob("*/case.json"), reverse=True):
+    if not root.is_dir():
+        return out
+    for p in sorted(root.glob("*/case.json"), reverse=True):
         try:
             out.append(summary(json.loads(p.read_text(encoding="utf-8"))))
         except (OSError, ValueError):
@@ -193,18 +242,54 @@ def list_cases() -> list[dict]:
     return out
 
 
-def load(cid: str) -> tuple[dict, Path]:
-    if not re.fullmatch(r"[0-9A-Za-z._-]{1,80}", cid or ""):
+def list_cases(tenant: str, data_root: Path | str | None = None) -> list[dict]:
+    """This workspace's captured cases — and only this workspace's."""
+    return _list_in(cases_dir(tenant, data_root))
+
+
+def list_builtin() -> list[dict]:
+    return _list_in(builtin_dir())
+
+
+def list_all(data_root: Path | str | None = None) -> list[dict]:
+    """Operator view for the CLI on the host (it can read the data directory anyway): the
+    built-in cases and every workspace's captured cases, each tagged with where it lives."""
+    out = [{**c, "scope": "builtin"} for c in list_builtin()]
+    root = cases_root(data_root)
+    if root.is_dir():
+        for d in sorted(p for p in root.iterdir() if p.is_dir()):
+            out += [{**c, "scope": d.name} for c in _list_in(d)]
+    return out
+
+
+def _check_id(cid: str) -> None:
+    if not _ID_RE.fullmatch(cid or "") or cid.startswith("."):
         raise RegressionError("bad_id", "用例编号无效")
-    d = cases_dir() / cid
+
+
+def _load_from(d: Path) -> tuple[dict, Path]:
     p = d / "case.json"
-    if not p.exists():
+    if not p.is_file():
         raise RegressionError("not_found", "回归用例不存在")
     return json.loads(p.read_text(encoding="utf-8")), d
 
 
-def delete(cid: str) -> None:
-    _, d = load(cid)
+def load(cid: str, tenant: str, data_root: Path | str | None = None) -> tuple[dict, Path]:
+    """A case of this workspace. Another workspace's id is "not found", never "forbidden"."""
+    _check_id(cid)
+    case, d = _load_from(cases_dir(tenant, data_root) / cid)
+    if case.get("workspace") not in (None, tenant):
+        raise RegressionError("not_found", "回归用例不存在")
+    return case, d
+
+
+def load_builtin(cid: str) -> tuple[dict, Path]:
+    _check_id(cid)
+    return _load_from(builtin_dir() / cid)
+
+
+def delete(cid: str, tenant: str, data_root: Path | str | None = None) -> None:
+    _, d = load(cid, tenant, data_root)
     shutil.rmtree(d)
 
 
@@ -220,8 +305,30 @@ def _source_doc(d: Path, s: dict) -> SourceDoc:
     return SourceDoc(s["id"], s["filename"], fmt, ps.family, ps.working_bytes or data, ps.workbook, s.get("ocr") or {}, s.get("corrections") or {})
 
 
-def run(cid: str) -> dict:
-    case, d = load(cid)
+def run(cid: str, tenant: str, data_root: Path | str | None = None) -> dict:
+    case, d = load(cid, tenant, data_root)
+    return replay(case, d)
+
+
+def run_builtin(cid: str) -> dict:
+    case, d = load_builtin(cid)
+    return replay(case, d)
+
+
+def run_any(cid: str, data_root: Path | str | None = None) -> dict:
+    """CLI: a built-in case, or a captured case of any workspace (operator on the host)."""
+    _check_id(cid)
+    if (builtin_dir() / cid / "case.json").is_file():
+        return run_builtin(cid)
+    root = cases_root(data_root)
+    for d in (sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []):
+        if (d / cid / "case.json").is_file():
+            return replay(*_load_from(d / cid))
+    raise RegressionError("not_found", "回归用例不存在")
+
+
+def replay(case: dict, d: Path) -> dict:
+    cid = case.get("id") or d.name
     t0 = time.time()
     res = {"id": cid, "name": case["name"], "ok": True, "samples": [], "errors": []}
     try:
@@ -240,7 +347,10 @@ def run(cid: str) -> dict:
     native = G.native_format(tpl["format"])
     for exp in case["samples"]:
         item = {"key": exp["key"], "label": exp["label"], "ok": True, "diffs": []}
-        rec = by_key.get(exp["key"])
+        # Cases captured before the per-group key format changed stored the plain " / " join;
+        # find_record still finds their sample, so a key-format change is not reported as a
+        # behaviour change.
+        rec = by_key.get(exp["key"]) or R.find_record(recs["records"], exp["key"])
         if rec is None:
             item.update(ok=False, diffs=["样本已不存在（样本标识变化）"])
             res["samples"].append(item)

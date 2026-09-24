@@ -42,8 +42,15 @@ def fill_checked(template_format: str, work: bytes, slots: list[dict], plan: Pla
     Returns (bytes, issues, layout report or None)."""
     options = dict(options or {})
     fmt = native_format(template_format)
-    if layout_mode not in ("warn", "fit") or fmt not in LAYOUT_FORMATS or tpl_pages is None:
+    if layout_mode not in ("warn", "fit") or fmt not in LAYOUT_FORMATS:
         out, issues = fill_native(template_format, work, slots, plan, options)
+        return out, issues, None
+    if tpl_pages is None:
+        # The template's own page count is the reference; without it no page check happens.
+        # That must be said on every document, and under "fit" (a page guarantee) it is not
+        # a success at all.
+        out, issues = fill_native(template_format, work, slots, plan, options)
+        issues.append(_layout_unavailable(layout_mode, "无法计算模板本身的页数（未安装 LibreOffice，或模板排版失败）"))
         return out, issues, None
     from . import layout as L
     try:
@@ -83,8 +90,15 @@ def fill_checked(template_format: str, work: bytes, slots: list[dict], plan: Pla
         return out, issues, {"template_pages": tpl_pages, "pages": pages, "factor": 1.0, "renders": 1}
     except L.LayoutUnavailable as e:
         out, issues = fill_native(template_format, work, slots, plan, options)
-        issues.append({"level": "warning", "code": "layout_unavailable", "message": str(e)})
+        issues.append(_layout_unavailable(layout_mode, str(e)))
         return out, issues, None
+
+
+def _layout_unavailable(layout_mode: str, reason: str) -> dict:
+    if layout_mode == "fit":
+        return {"level": "error", "code": "layout_unavailable",
+                "message": f"{reason}，无法保证页数不增加（layout=fit），因此不产出这一份；可安装 LibreOffice，或改用 layout=warn / off"}
+    return {"level": "warning", "code": "layout_unavailable", "message": f"{reason}，本份未做分页检查"}
 
 
 def template_pages(template_format: str, work: bytes) -> int | None:
@@ -138,6 +152,29 @@ def convert_output(native_bytes: bytes, native_fmt: str, target: str, options: d
     raise T.TemplateError("unsupported_export", f"不支持从 {native_fmt.upper()} 导出 {target.upper()}")
 
 
+_CSV_ACTIVE = ("=", "+", "-", "@", "\t", "\r")
+
+
+def neutralize_csv_cell(text: str) -> str:
+    """A text cell as a spreadsheet program will read it back from CSV: a leading = + - @ TAB
+    or CR makes Excel / LibreOffice evaluate the cell as a formula (or a DDE call), so such
+    text gets a leading apostrophe, which both programs show as plain text.  Only for *text*
+    values; numbers (a negative amount) are written as they are."""
+    return "'" + text if text and text.startswith(_CSV_ACTIVE) else text
+
+
+def _uncomputed_formulas(data: bytes) -> list[str]:
+    """Formula cells of the first sheet that carry no cached value at all.  A formula whose
+    result is the empty string has an (empty) cached value; openpyxl reads both as None, so
+    the decision is made on the XML."""
+    from .xlsx_doc import XlsxDoc, s
+    x = XlsxDoc(data)
+    if not x.sheets:
+        return []
+    root = x.sheet_root(x.sheets[0]["name"])
+    return [c.get("r") for c in root.iter(s("c")) if c.find(s("f")) is not None and c.find(s("v")) is None]
+
+
 def xlsx_to_csv(data: bytes, issues: list[dict]) -> bytes:
     """Values of the first sheet.  Formula results come from the cached values Synwevo Docs'
     formula engine (or LibreOffice for unsupported functions) wrote into the output."""
@@ -146,8 +183,7 @@ def xlsx_to_csv(data: bytes, issues: list[dict]) -> bytes:
     wbf = openpyxl.load_workbook(io.BytesIO(data), data_only=False)
     wbv = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
     ws, wv = wbf.worksheets[0], wbv.worksheets[0]
-    missing = [c.coordinate for row in ws.iter_rows() for c in row
-               if isinstance(c.value, str) and c.value.startswith("=") and wv[c.coordinate].value is None]
+    missing = _uncomputed_formulas(data)
     if missing:
         raise T.TemplateError("formula_uncomputed", f"第一个工作表有 {len(missing)} 个公式无法在服务器计算（如 {'、'.join(missing[:3])}），CSV 无法写出它们的结果；请改为导出 XLSX 或安装 LibreOffice")
     out = io.StringIO()
@@ -157,7 +193,7 @@ def xlsx_to_csv(data: bytes, issues: list[dict]) -> bytes:
         for c, vc in zip(row, vrow):
             v = vc.value
             text, _ = format_value(v, c.number_format)
-            vals.append(text)
+            vals.append(neutralize_csv_cell(text) if isinstance(v, str) else text)
         while vals and vals[-1] == "":
             vals.pop()
         wr.writerow(vals)

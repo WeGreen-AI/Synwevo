@@ -1,0 +1,16 @@
+# Build context for infra/Dockerfile. User data, secrets and local tooling never enter an image.
+data/
+.local/
+.env
+.env.*
+!.env.example
+.venv/
+**/node_modules/
+**/dist/
+**/*.egg-info/
+**/__pycache__/
+.pytest_cache/
+testdata/
+docs/screenshots/
+.git/
+.claude/

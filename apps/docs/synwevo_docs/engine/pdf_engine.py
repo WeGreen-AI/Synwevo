@@ -19,6 +19,7 @@ Coordinate conventions
 from __future__ import annotations
 
 import io
+import math
 import os
 
 from synwevo_core import env
@@ -110,10 +111,16 @@ def open_pdf(data: bytes) -> pymupdf.Document:
         doc = pymupdf.open(stream=data, filetype="pdf")
     except Exception as e:
         raise PdfError("corrupt", f"无法打开 PDF：{e}") from e
-    if doc.needs_pass:
-        raise PdfError("encrypted", "PDF 已加密，需要密码才能打开；请先在原软件中移除密码后重新上传")
-    if doc.page_count > LIMITS.max_pages:
-        raise LimitError(f"PDF 页数 {doc.page_count} 超过上限 {LIMITS.max_pages}")
+    try:
+        if doc.needs_pass:
+            raise PdfError("encrypted", "PDF 已加密，需要密码才能打开；请先在原软件中移除密码后重新上传")
+        if doc.page_count > LIMITS.max_pages:
+            raise LimitError(f"PDF 页数 {doc.page_count} 超过上限 {LIMITS.max_pages}")
+    except Exception:
+        # close here, on this thread: a document left to the garbage collector is closed on
+        # whichever thread happens to collect it, outside the pdfium engine's lock
+        doc.close()
+        raise
     return doc
 
 
@@ -136,8 +143,31 @@ def page_kind(page: pymupdf.Page) -> str:
     return "empty"
 
 
+def invisible_text_over_image(page, rect) -> bool:
+    """True when the text inside ``rect`` is an invisible layer (render mode 3, how OCR tools
+    make scans searchable) lying over an image: what the reader sees there are pixels."""
+    r = pymupdf.Rect(rect)
+    try:
+        spans = [t for t in page.get_texttrace() if pymupdf.Rect(t["bbox"]).intersects(r)]
+    except Exception:  # noqa: BLE001 - engines without text tracing: no evidence either way
+        return False
+    if not spans or any(t.get("type") != 3 and t.get("opacity", 1) != 0 for t in spans):
+        return False
+    try:
+        return any(pymupdf.Rect(info["bbox"]).intersects(r) for info in page.get_image_info())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def inspect(data: bytes) -> dict:
     doc = open_pdf(data)
+    try:
+        return _inspect(doc)
+    finally:
+        doc.close()
+
+
+def _inspect(doc) -> dict:
     pages = []
     kinds = set()
     for p in doc:
@@ -161,10 +191,8 @@ def inspect(data: bytes) -> dict:
         kind = "mixed"
     else:
         kind = "text"
-    meta = {"page_count": doc.page_count, "kind": kind, "pages": pages, "fields": fields,
+    return {"page_count": doc.page_count, "kind": kind, "pages": pages, "fields": fields,
             "has_js": _has_javascript(doc), "signed": _has_signature(doc)}
-    doc.close()
-    return meta
 
 
 def _has_javascript(doc) -> bool:
@@ -189,16 +217,30 @@ def _has_signature(doc) -> bool:
         return False
 
 
+def render_zoom(width_pt: float, height_pt: float, zoom: float) -> float:
+    """The requested zoom, lowered so the page image stays within ``LIMITS.max_render_pixels``.
+
+    Page size is chosen by whoever made the PDF: a 14400 × 14400 pt page at 4× is a
+    57600² pixmap (about 10 GB), allocated inside the server process.  Coordinates stored
+    anywhere are page-relative, so a smaller image changes resolution, never positions."""
+    area = max(1.0, float(width_pt) * float(height_pt))
+    cap = math.sqrt(LIMITS.max_render_pixels / area)
+    if cap < 0.01:
+        raise LimitError(f"页面尺寸 {width_pt:.0f}×{height_pt:.0f} pt 过大，无法生成页面图像")
+    return min(zoom, cap)
+
+
 def render_page_png(data: bytes, index: int, zoom: float = 1.5) -> bytes:
     doc = open_pdf(data)
-    if not 0 <= index < doc.page_count:
-        raise PdfError("page_missing", f"没有第 {index + 1} 页")
-    page = doc[index]
-    zoom = max(0.2, min(zoom, 4.0))
-    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
-    out = pix.tobytes("png")
-    doc.close()
-    return out
+    try:
+        if not 0 <= index < doc.page_count:
+            raise PdfError("page_missing", f"没有第 {index + 1} 页")
+        page = doc[index]
+        zoom = render_zoom(page.rect.width, page.rect.height, max(0.2, min(zoom, 4.0)))
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+        return pix.tobytes("png")
+    finally:
+        doc.close()
 
 
 # ------------------------------------------------------------------ coordinates
@@ -220,17 +262,18 @@ def unrot_to_visual_norm(page: pymupdf.Page, rect) -> list[float]:
 
 def page_words(data: bytes, index: int) -> dict:
     doc = open_pdf(data)
-    if not 0 <= index < doc.page_count:
-        raise PdfError("page_missing", f"没有第 {index + 1} 页")
-    page = doc[index]
-    words = []
-    for w in page.get_text("words"):
-        words.append({"t": w[4], "r": unrot_to_visual_norm(page, w[:4]), "u": [round(x, 2) for x in w[:4]],
-                      "b": w[5], "l": w[6], "n": w[7]})
-    out = {"index": index, "w": page.rect.width, "h": page.rect.height, "rotation": page.rotation,
-           "kind": page_kind(page), "words": words}
-    doc.close()
-    return out
+    try:
+        if not 0 <= index < doc.page_count:
+            raise PdfError("page_missing", f"没有第 {index + 1} 页")
+        page = doc[index]
+        words = []
+        for w in page.get_text("words"):
+            words.append({"t": w[4], "r": unrot_to_visual_norm(page, w[:4]), "u": [round(x, 2) for x in w[:4]],
+                          "b": w[5], "l": w[6], "n": w[7]})
+        return {"index": index, "w": page.rect.width, "h": page.rect.height, "rotation": page.rotation,
+                "kind": page_kind(page), "words": words}
+    finally:
+        doc.close()
 
 
 def _is_cjk(ch: str) -> bool:
@@ -275,9 +318,13 @@ def words_in_rect(page: pymupdf.Page, rect: pymupdf.Rect, mode: str = "center") 
 
 
 def extract_region_text(data_or_doc, index: int, rect) -> str:
-    doc = open_pdf(data_or_doc) if isinstance(data_or_doc, (bytes, bytearray)) else data_or_doc
-    page = doc[index]
-    return join_words(words_in_rect(page, pymupdf.Rect(rect)))
+    own = isinstance(data_or_doc, (bytes, bytearray))
+    doc = open_pdf(data_or_doc) if own else data_or_doc
+    try:
+        return join_words(words_in_rect(doc[index], pymupdf.Rect(rect)))
+    finally:
+        if own:
+            doc.close()
 
 
 def find_anchor(page: pymupdf.Page, rect: pymupdf.Rect, max_dist: float = 200) -> dict | None:
@@ -413,6 +460,9 @@ def as_pdf_bytes(data: bytes) -> bytes:
 
 
 # ------------------------------------------------------------------ template operations
+# Widget types a text value can be written into (PyMuPDF's PDF_WIDGET_TYPE_* numbers:
+# 3 combo box, 4 list box, 7 text).  Check boxes, radio buttons and signatures are not text.
+TEXT_WIDGET_TYPES = (3, 4, 7)
 REDACT_TEXT_ONLY = "text"
 REDACT_TEXT_AND_IMAGE_PIXELS = "text_pixels"
 
@@ -494,6 +544,11 @@ def fill_box(page: pymupdf.Page, rect, text: str, *, font_size: float = 11, min_
     Returns {'ok': bool, 'font_size': float, 'overflow': bool}."""
     rect = pymupdf.Rect(rect)
     rotate = page.rotation if rotate is None else int(rotate) % 360
+    if not text:
+        return {"ok": True, "font_size": float(font_size), "overflow": False}
+    # A box drawn over fine print gets the removed text's size (5.5 pt, say) with the default
+    # minimum of 6: the shrink loop would never run and every record would "overflow".
+    min_font_size = min(float(min_font_size), float(font_size))
     if FONT_NAME not in [f[4] for f in page.get_fonts()]:
         page.insert_font(fontname=FONT_NAME, fontbuffer=cjk_font().buffer)
     al = {"left": pymupdf.TEXT_ALIGN_LEFT, "center": pymupdf.TEXT_ALIGN_CENTER, "right": pymupdf.TEXT_ALIGN_RIGHT}.get(align, 0)
@@ -539,20 +594,29 @@ def fill_pdf(template_bytes: bytes, slots: list[dict], values: dict[str, str],
             continue
         text = values[sid]
         if sl["kind"] == "pdf_field":
-            page = doc[sl["locator"]["page"]]
-            target = None
-            for wdg in page.widgets() or []:
-                if wdg.field_name == sl["locator"]["field"]:
-                    target = wdg
-                    break
-            if target is None:
+            # every widget of the field, on every page (a field shown in a repeated header
+            # has one widget per page, all of which would otherwise keep the sample value)
+            targets = [(page, wdg) for page in doc for wdg in (page.widgets() or [])
+                       if wdg.field_name == sl["locator"]["field"]]
+            if not targets:
                 issues.append({"level": "error", "slot": sid, "code": "field_missing", "message": f"模板中找不到表单字段「{sl['locator']['field']}」"})
                 continue
-            rect = pymupdf.Rect(target.rect)
-            fs = sl.get("font_size") or (target.text_fontsize or 11)
-            page.delete_widget(target)
-            res = fill_box(page, rect, text, font_size=fs or 11, min_font_size=sl.get("min_font_size", 6),
-                           align=sl.get("align", "left"), measurer=measurer, color=rgb(sl.get("color")))
+            bad = sorted({w.field_type_string for _, w in targets if w.field_type not in TEXT_WIDGET_TYPES})
+            if bad:
+                issues.append({"level": "error", "slot": sid, "code": "field_type_unsupported",
+                               "message": f"表单字段「{sl['locator']['field']}」是 {'、'.join(bad)}，目前只能填写文本类表单字段"})
+                continue
+            res = {"ok": True, "font_size": float(sl.get("font_size") or 11)}
+            for page, target in targets:
+                rect = pymupdf.Rect(target.rect)
+                fs = sl.get("font_size") or (target.text_fontsize or 11)
+                page.delete_widget(target)
+                r1 = fill_box(page, rect, text, font_size=fs or 11, min_font_size=sl.get("min_font_size", 6),
+                              align=sl.get("align", "left"), measurer=measurer, color=rgb(sl.get("color")))
+                if not r1["ok"] or r1["font_size"] < res["font_size"]:
+                    res = r1
+                if not r1["ok"]:
+                    break
         else:
             page = doc[sl["locator"]["page"]]
             res = fill_box(page, sl["locator"]["rect"], text, font_size=sl.get("font_size", 11),
@@ -625,16 +689,18 @@ def make_working_copy(original: bytes, slots: list[dict]) -> tuple[bytes, list[s
 
 def preview_removed_text(original: bytes, page_index: int, rect) -> str:
     doc = open_pdf(original)
-    txt = join_words(words_in_rect(doc[page_index], pymupdf.Rect(rect)))
-    doc.close()
-    return txt
+    try:
+        return join_words(words_in_rect(doc[page_index], pymupdf.Rect(rect)))
+    finally:
+        doc.close()
 
 
 def page_count(data: bytes) -> int:
     doc = open_pdf(data)
-    n = doc.page_count
-    doc.close()
-    return n
+    try:
+        return doc.page_count
+    finally:
+        doc.close()
 
 
 def pdf_text(data: bytes) -> str:

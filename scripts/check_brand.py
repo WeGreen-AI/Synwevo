@@ -25,6 +25,9 @@ HISTORICAL_FILES = {
     "docs/quality/issues.md",
     "docs/quality/progress.md",
     "docs/quality/verification.md",
+    # Audit findings quote the behaviour and names at the reviewed revision; these are evidence.
+    "docs/engineering/codebase-review.md",
+    "docs/engineering/review-findings.md",
     "scripts/check_brand.py",
 }
 
@@ -32,20 +35,27 @@ HISTORICAL_FILES = {
 STABLE: list[tuple[str, str]] = [
     (r"docweave-web",                    "OIDC client_id：登记在 oauth_clients，与回调白名单绑定"),
     (r"docweave-api",                    "API audience：写在已签发的访问令牌的 aud 里"),
-    (r"docweave\.(read|write|\*)",       "API scope：写在已签发的访问令牌的 scope 里"),
+    (r"docweave\.(read|write|manage|\*)", "API scope：写在已签发的访问令牌的 scope 里"),
     (r"docweave\.localhost",             "本机主机名：注册过的 OIDC 回调、Passkey 可信 origin、Cookie 作用域"),
     (r"docweave\.sqlite3",               "数据库文件名：改名是一次数据迁移，收益只有看起来一致"),
-    (r"[xX]-[dD]oc[wW]eave-[a-zA-Z-]+",  "HTTP 头：Webhook 接收方与已打开的页面按名字解析它"),
+    (r"[xX]-[dD]oc[wW]eave-([a-zA-Z-]+|\*)", "HTTP 头：Webhook 接收方与已打开的页面按名字解析它"),
+    (r"[\"']x-docweave-[\"']",          "Webhook 旧 HTTP 头前缀：测试确认内部投递头不会泄漏到接收方"),
     (r"urn:docweave",                    "协议里的稳定 URN"),
-    (r"docweave\.template-fields",       "字段定义 schema 标识：版本化契约"),
+    (r"urn:synwevo:app:docweave",        "令牌受众（RFC 8707 resource）：写在已签发令牌的 aud 里，由 app_id 派生"),
+    (r"docweave\.(template-fields|project)\b", "定义文件的 schema 标识：版本化契约，已导出的文件按它识别"),
     (r"DOCWEAVE_[A-Z0-9_]+",             "旧环境变量名：兼容读取（见 synwevo_core/env.py）"),
+    (r"DOCWEAVE_(?![A-Z0-9])",           "旧环境变量前缀本身：按前缀识别旧名字（兼容读取、隔离测试环境剥离）"),
     (r"PLATFORM_DOCWEAVE_PORT",          "旧运行器变量：兼容读取"),
     (r"--docweave\b",                    "旧命令行参数：保留为别名"),
     (r"(app_id|--app|app (enable|grant|revoke|disable)|OIDC_APP_ID).*docweave|docweave.*app_id",
                                           "app_id 值：apps / workspace_apps / app_entitlements 的主键"),
     (r"[\"'`]docweave[\"'`]",            "app_id 值（字面量）"),
-    (r"docker (exec|logs|restart|stop|compose exec).*docweave|容器 `docweave`|docweave:local|/opt/docweave",
-                                          "已部署实例的容器名与主机路径：本轮未部署，命令仍然有效"),
+    (r"apps_adopted:docweave",           "数据库中的一次性应用接纳标记：避免服务重启时重新授予已撤销的资格"),
+    # `docker exec/logs/…` name a *container*, and the deployed one is still called docweave.
+    # `docker compose exec` names a *compose service*, which is `synwevo` now — so the two are
+    # separate rules, and a compose command with the old name is not "still valid".
+    (r"docker (exec|logs|restart|stop)( -\w+)* docweave|容器 `docweave`|docweave:local|/opt/docweave|/etc/nginx/docweave\.htpasswd",
+                                          "旧实例容器名与主机路径：迁移和回滚时必须准确指向保留的实例"),
     (r"服务名.*`docweave`|仍然叫 `docweave`",
                                           "Compose 服务改名的说明"),
     (r"hooks/docweave",                  "文档里的示例 Webhook 地址"),
@@ -59,21 +69,47 @@ STABLE: list[tuple[str, str]] = [
     (r"later\[\"docweave\"\]",           "测试内部的服务字典键"),
     (r"docweave-rehearsal-|docweave-test-|docweave-snapshot-",
                                           "临时目录前缀"),
-    (r"docweave\.[a-z_]+",               "内部稳定标识 / 本地存储旧键"),
+    # Named keys only. A catch-all for `docweave.<anything>` classified E2E scripts writing a
+    # storage key the app no longer reads as "stable", which hid a test that tested nothing.
+    (r"docweave\.(theme|sideW|leftW)\b",  "本地存储旧键：旧版本写下的偏好；新版本只在新键缺失时读取并迁移（E2E 专门验证）"),
+    (r"docweave\.example\.com",          "测试里的示例域名"),
 ]
 SKIP_SUFFIX = (".png", ".jpg", ".xlsx", ".docx", ".pdf", ".pptx", ".traineddata", ".bin", ".csv", ".zip")
 
 
 def main() -> int:
-    files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+    # New source must be checked before it is staged, including names with spaces / Unicode.
+    # A failed Git inventory is a failed audit, never an empty successful one.
+    try:
+        inventory = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=ROOT, capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        print(f"无法枚举待检查的源码：{e}", file=sys.stderr)
+        return 2
+    files = sorted(set(inventory.stdout.split("\0")) - {""})
     buckets: dict[str, list[str]] = defaultdict(list)
+    errors = []
     for f in files:
         p = ROOT / f
+        # Even accidentally tracked runtime files must not expose data or secrets in diagnostics.
+        if (Path(f).parts[0] in {"data", ".local", ".venv", "testdata", ".claude"}
+                or any(part in {"node_modules", "dist", "__pycache__", ".git"}
+                       or part.endswith(".egg-info") for part in Path(f).parts)
+                or any(part.startswith(".env") and part != ".env.example"
+                       for part in Path(f).parts)):
+            continue
         if p.suffix in SKIP_SUFFIX or "package-lock" in f:
+            continue
+        if p.is_symlink():
+            errors.append(f"{f}: 符号链接不能作为源码检查")
             continue
         try:
             text = p.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, FileNotFoundError, OSError):
+        except (UnicodeDecodeError, FileNotFoundError):
+            continue
+        except OSError as e:
+            errors.append(f"{f}: 无法读取（{e.strerror}）")
             continue
         if not re.search(r"docweave", text, re.I):
             continue
@@ -95,12 +131,16 @@ def main() -> int:
         where = sorted({h.split(":")[0] for h in hits})
         print(f"  [{len(hits):>3}] {reason}")
         print(f"        {', '.join(where[:4])}{' …' if len(where) > 4 else ''}")
+    if errors:
+        print("\n" + "\n".join(errors), file=sys.stderr)
     if unclassified:
         print(f"\n✗ {len(unclassified)} 处没有归类：", file=sys.stderr)
         for line in unclassified:
             print("    " + line, file=sys.stderr)
         print("\n要么改掉它，要么在 STABLE 里加一条并写清为什么必须保留。", file=sys.stderr)
         return 1
+    if errors:
+        return 2
     print("\n✓ 没有未分类的旧品牌字符串。")
     return 0
 

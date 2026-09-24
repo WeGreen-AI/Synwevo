@@ -18,6 +18,45 @@ from synwevo_core.http import (Platform, build_platform, install as install_plat
 
 ASSETS_DIR = "account-assets"
 
+SWEEP_INTERVAL_S = 3600
+
+
+class Sweeper:
+    """Reclaims expired sign-in state on a schedule.
+
+    Each of these tables already had a `sweep()` and nothing called any of them, so rows written
+    by anonymous traffic — sign-in attempts started and abandoned, MFA tickets, passkey
+    challenges — and every dead session accumulated forever. Expiry was always enforced on read;
+    this only reclaims the space, so a sweep that fails is logged and retried next time rather
+    than stopping the service.
+    """
+
+    def __init__(self, store, sessions, tickets, passkeys, *, start: bool = True):
+        import threading
+        self.store, self.sessions, self.tickets, self.passkeys = store, sessions, tickets, passkeys
+        self._stop = threading.Event()
+        self._thread = None
+        if start:
+            self._thread = threading.Thread(target=self._run, name="auth-sweeper", daemon=True)
+            self._thread.start()
+
+    def run_once(self) -> dict:
+        from synwevo_auth_client.rp import Rp
+        return {"sessions": self.sessions.sweep(),
+                "mfa_tickets": self.tickets.sweep(),
+                "webauthn_challenges": self.passkeys.sweep(),
+                "rp_auth_requests": Rp(self.store).sweep()}
+
+    def _run(self) -> None:
+        while not self._stop.wait(SWEEP_INTERVAL_S):
+            try:
+                self.run_once()
+            except Exception as e:  # noqa: BLE001 - reclamation must never take the service down
+                print(f"[synwevo] auth sweep failed: {type(e).__name__}: {e}", flush=True)
+
+    def stop(self) -> None:
+        self._stop.set()
+
 
 def web_dist() -> Path:
     """The account shell's built output, beside its own source."""
@@ -44,6 +83,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> None:
     passkeys = Passkeys(store)
     api.state.invites = invites
     api.state.mailer = mailer
+    api.state.auth_sweeper = Sweeper(store, sessions, tickets, passkeys, start=start_jobs)
     api.state.mfa = mfa
     api.state.passkeys = passkeys
 
@@ -56,7 +96,10 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> None:
     # Registered before any SPA catch-all so /oidc/* and /.well-known/* reach real handlers
     # instead of being served the shell.
     bootstrap_docs_app(store, identity)
-    Apps(store, identity).adopt_existing_members()
+    # Once per database, not once per start: the adoption grants every member an entitlement
+    # and enables the application in every workspace with members, so running it on every start
+    # silently undid each `app revoke` and `app disable --workspace` at the next restart.
+    Apps(store, identity).adopt_once()
     api.include_router(build_oidc_router(store, identity, sessions, audit))
     api.include_router(build_admin_router(store, identity, sessions, audit))
 

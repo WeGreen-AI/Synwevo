@@ -4,7 +4,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from synwevo_core.http import (build_platform, install as install_platform, install_probes,
-                                mount_web, new_api, role as current_role, shell_response)
+                                mount_web, new_api, role as current_role, shell_response,
+                                validate_role)
 
 ACCOUNT_SHELL_PATHS = ("/login", "/account", "/invite", "/forgot-password", "/reset-password",
                        "/logged-out", "/admin")
@@ -19,7 +20,9 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
     host, so one origin means one cookie jar, and that is exactly why the split deployment uses
     three hostnames instead of three ports.
     """
-    role = (role or current_role()).strip().lower() or "all"
+    # Validated before anything is built: `docs` or `app,accounts` used to start a process that
+    # served a shell whose every API call was a 404 while /healthz and /readyz said ready.
+    role = validate_role(role) if role else current_role()
     plat = build_platform(data_dir)
     api = new_api({"accounts": "Synwevo Account", "portal": "Synwevo Workspace"}.get(role, "Synwevo Docs"))
     api.state.auth = plat.auth
@@ -49,6 +52,14 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
     if wants_app:
         from synwevo_docs.api import app as docs_app
         docs_app.install(api, plat, start_jobs=start_jobs)
+        if role == "app":
+            # Only the process that *is* Synwevo Docs knows its own address. Registration used
+            # to happen only in the account service, where `SYNWEVO_APP_URL` is the account
+            # service's own address and is deliberately not used — so in a split deployment
+            # the portal card pointed at the built-in development URL. Idempotent; it keeps
+            # the access policy an operator chose.
+            from synwevo_core.apps import bootstrap_docs_app
+            bootstrap_docs_app(plat.store, plat.identity)
     if wants_accounts:
         from synwevo_identity import app as identity_app
         identity_app.install(api, plat, start_jobs=start_jobs)

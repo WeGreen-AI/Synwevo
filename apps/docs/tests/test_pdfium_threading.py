@@ -21,14 +21,26 @@ ROOT = __import__("synwevo_core.http", fromlist=["repo_root"]).repo_root()
 
 SCRIPT = textwrap.dedent("""
     import concurrent.futures as cf
+    import sys
     from synwevo_docs.engine import pdf_engine as pe
     pe.use_engine("pdfium")
     data = open({pdf!r}, "rb").read()
+
+    def split():                       # what blocks._split_pdf_pages does per block
+        d = pe.open_pdf(data)
+        new = pe.pymupdf.open()
+        new.insert_pdf(d, 0, d.page_count - 1)
+        new.tobytes()
+        new.close()
+        d.close()
 
     def work(i):
         try:
             pe.page_words(data, i % 2)
             pe.pdf_text(data)
+            pe.inspect(data)           # signature / JavaScript counts: unserialised before the fix
+            split()
+            pe.open_pdf(data)          # never closed: finalised by the garbage collector
             return "ok"
         except BaseException as e:
             return f"{{type(e).__name__}}: {{e}}"
@@ -43,10 +55,10 @@ SCRIPT = textwrap.dedent("""
 """)
 
 
-def test_concurrent_pdfium_reads_do_not_crash_the_process():
-    pdf = ROOT / "testdata" / "测试_多表单登记表.pdf"
-    if not pdf.is_file():
-        pytest.skip(f"缺少测试文件 {pdf}")
+def test_concurrent_pdfium_reads_do_not_crash_the_process(fixtures):
+    # the fixtures fixture generates testdata/ on a fresh checkout: this guard used to skip
+    # silently when run alone or first
+    pdf = fixtures / "测试_多表单登记表.pdf"
     src = SCRIPT.format(pdf=str(pdf), n=200)
     r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=300)
 

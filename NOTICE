@@ -100,4 +100,4 @@ Synwevo —— 第三方组件与许可声明（NOTICE）
   只要镜像中安装了 pymupdf，无论 SYNWEVO_DOCS_PDF_ENGINE 选的是哪个引擎，
   AGPL-3.0 第 13 条的「向网络用户提供对应源代码」义务都适用。
   本服务通过 /api/source-code 提供对应源代码。
-  若要真正不含 AGPL 依赖，请按 backend/requirements-pdfium.txt 构建，且不安装 pymupdf。
+  若要真正不含 AGPL 依赖，请按 apps/docs/requirements-pdfium.txt 构建，且不安装 pymupdf。
