@@ -46,6 +46,14 @@ Original assertions remain; fixtures now state and await their prerequisites. Th
 has a real synthetic TTC regression. New LibreOffice formula check: 44 passed; repaired Linux
 layout/font/image/guard set: 54 passed. Full rerun is still required.
 
+Trixie Actions run 35989630759: 1578 passed / 1 failed / 2 skipped. The remaining snapshot-test
+fixture left its SQLite writer unclosed before hashing the main database file. A separate Linux
+reproduction showed garbage collection checkpoints its WAL and changes the main-file hash even
+without a restore; explicit close before the baseline preserves it. The original unchanged-file
+assertion remains. The production verifier only uses its isolated copy and reads the live journal.
+The two skips are the unselected project LICENSE and a nested Docker check unavailable inside the
+isolated verification container (no host Docker socket is mounted).
+
 Source commits 599c24d and 8e652e1 were explicitly pushed to main. The operator added the three
 Cloudflare routes; server DNS resolves all three origins. Public origin readiness awaits cutover.
 Runtime version reference, checked 2026-09-24:

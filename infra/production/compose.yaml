@@ -2,6 +2,9 @@
 name: synwevo
 x-app: &app
   image: ${IMAGE:?Set IMAGE to the approved release}
+  # Uvicorn's request-line log would record one-use codes/reset links in query strings.
+  # The ASGI entry point enforces the same listen guard; structured audit/error logs remain.
+  command: [python, -m, uvicorn, 'synwevo_server.main:app', --host, '0.0.0.0', --port, '8765', --no-access-log]
   user: '1000:1000'
   restart: unless-stopped
   init: true

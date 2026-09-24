@@ -15,6 +15,8 @@ The existing Cloudflare Tunnel supplies public HTTPS. Do not expose backend port
 tunnel routes, occupy the mail server's 80/443 ports, or widen cookie domains. RP clients retain
 `portal-web` / `docweave-web`; callbacks are each origin's `/auth/callback`, logout return is
 `/signed-out`, and backchannel logout is `/auth/backchannel-logout`.
+Gateway and Uvicorn access logs are disabled so request-line queries do not record one-use
+authorization/invitation/reset proofs; application audit and error logs remain enabled.
 
 ## Host layout and operations
 

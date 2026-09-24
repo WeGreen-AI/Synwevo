@@ -619,9 +619,13 @@ def test_verify_rehearses_the_fence_and_names_what_needs_review(instance, tmp_pa
     """Verification shows what a real restore would do, on the throwaway copy only."""
     from synwevo_core.store import Store, now
     snapshot = _snapshot()
-    Store(instance).execute(
+    live = Store(instance)
+    live.execute(
         "INSERT INTO api_keys (id,name,tenant,scopes,secret_hash,created_at) "
         "VALUES ('k1','ci','default','read','x',?)", (now(),))
+    # Settle the fixture writer before hashing physical database bytes. Leaving its SQLite
+    # connection to GC lets a later collection checkpoint WAL pages during the rehearsal.
+    _release(live)
     archive = _backup(snapshot, instance, tmp_path / "b")
     before = hashlib.sha256((instance / "docweave.sqlite3").read_bytes()).hexdigest()
     assert snapshot.verify(_args(archive=str(archive), journal_from=str(instance))) == 0
