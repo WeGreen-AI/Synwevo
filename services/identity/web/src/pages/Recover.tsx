@@ -41,7 +41,7 @@ export function ForgotPassword() {
           <h1>看看你的邮箱</h1>
           {/* Deliberately the same words whether or not an account exists. */}
           <p className="authlede">
-            如果 <b>{email.trim()}</b> 有账户，我们已经把重置链接发过去了。链接 2 小时内有效，只能用一次。
+            如果 <b>{email.trim()}</b> 有可用账户且邮件服务正常，重置请求将进入发送队列。请稍后检查邮箱，链接 2 小时内有效，只能用一次。
           </p>
           <p className="tiny muted">没收到？检查垃圾邮件，或者确认这个邮箱就是注册时用的那个。</p>
           <a className="btn authsubmit" href="/login">返回登录</a>

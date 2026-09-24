@@ -129,3 +129,68 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 | 导出 PDF 中文不显示 | 安装中文字体（容器镜像已含 Noto CJK），或用 `SYNWEVO_DOCS_CJK_FONTS` 指定字体文件 |
 | Webhook 未送达 | 查看 `webhook_deliveries` 表的 `status`/`last_error`；内网地址需加入 `SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE`；回调失败不影响产物下载 |
 | 接口返回 429 | 调整 `SYNWEVO_API_RATE_PER_MIN` 或在客户端退避重试（响应带 `Retry-After`） |
+
+## 6. 账户邮件（仅发信）
+
+唯一实现是 `services/identity/synwevo_identity/mail.py`。邀请、邮箱验证、口令找回和安全提醒均调用
+`Mailer.enqueue` 写入 `mail_outbox`，账户服务的后台线程完成 SMTP 投递；业务 HTTP 不等待外部 SMTP。
+这不是新增的应用间邮件 API，Docs 和门户不导入账户服务内部实现，也没有邮件管理页面。
+
+配置示例见 [.env.example](../.env.example) 和 [生产 SMTP 示例](../infra/production/smtp.env.example)。
+`MAIL_MODE` 为 `disabled`、`file` 或 `smtp`；`file` 只在本机生成明确标记的 `.eml`，不能当作送达证据。
+SMTP 要求显式 `MAIL_FROM`、有效端口，以及 `SMTP_STARTTLS` / `SMTP_SSL` 恰好启用一项。
+超时 `SMTP_TIMEOUT_S` 限制在 1–60 秒（每次套接字操作），默认 20 秒，当前生产设为 15 秒。
+AUTH 始终在验证证书的 TLS 通道里进行。From 和 envelope sender 固定取服务端配置；业务请求不能覆盖。
+
+本机如需真实 SMTP，将原始 `KEY=value` 文件放在 `~/.config/synwevo/smtp.env`，目录 0700、文件 0600；
+密码无引号、不作 shell 展开。当前真实秘密只保存在 VPS，没有复制到开发机。本机可按下面方式加载
+自己已授权的私有文件（从仓库根目录执行；已有服务需显式 `restart accounts` 才会更新其配置）：
+
+```sh
+.venv/bin/python - <<'PY'
+import os, pathlib, subprocess, sys
+path = pathlib.Path.home() / '.config/synwevo/smtp.env'
+if path.stat().st_mode & 0o077 or path.parent.stat().st_mode & 0o077:
+    raise SystemExit('SMTP 配置目录与文件不能允许其他用户读取')
+child = dict(os.environ)
+for line in path.read_text().splitlines():
+    if not line or line.startswith('#'):
+        continue
+    key, value = line.split('=', 1)
+    if not key.startswith(('SYNWEVO_SMTP_', 'SYNWEVO_MAIL_')):
+        raise SystemExit('SMTP 文件包含不支持的配置项')
+    child[key] = value
+subprocess.run([sys.executable, 'scripts/platform.py', 'up', 'accounts'], env=child, check=True)
+PY
+```
+
+启动器默认邮件链接使用 `http://accounts.localhost:8770`，生产使用
+`https://accounts.wegreen.ltd`，均取配置而非请求 Host。启动器不会将 SMTP/MAIL 配置传给门户或 Docs。
+生产按 [部署说明](../infra/production/README.md) 注入账户容器专用 env 文件；不要使用
+`env`、`docker inspect` 的完整环境输出或 SMTP debug 来诊断认证问题。
+
+投递状态与故障边界：
+
+- `queued` 仅表示应用已提交；原子领取标记保证多个 worker 不重复领取同一行。
+- `sent` 仅表示 SMTP DATA 返回 250（当前即 mailcow 接受），不是最终收件箱可见。
+  日志只记录邮件 ID、250 和可用的 mailcow queue ID；可据此在服务器上关联有限投递日志。
+- 明确的 SMTP 4xx、发送 DATA 之前的连接故障有限重试，间隔 30/120/600/1800/3600 秒，最多 8 次。
+  同一行所有尝试保留同一 Message-ID；显式 5xx、认证或证书错误直接终止。
+- `tls_certificate_invalid`、`smtp_authentication_failed`、`smtp_security_not_supported` 等是脱敏错误码，
+  不存 SMTP 响应原文、认证内容或正文。配置冲突也不打印密码。
+- DATA 后连接丢失、超时，或进程崩溃留下领取标记（15 分钟后判定）进入 `failed/delivery_unknown`。
+  不自动重发，因为无法区分“服务器未接受”和“接受后确认丢失”。先用 Message-ID/queue ID 核实，
+  再由业务方决定是否重新申请。SMTP 与 SQLite 不是分布式事务，不承诺 exactly-once。
+- 完成或终止时清除邮件链接令牌；数据库权限/备份要求仍适用。恢复副本仍按现有恢复策略丢弃待发邮件，
+  不自动重放。`/readyz` 正常不能代替 SMTP 或外部投递验收。
+
+真实验收必须分别记录：应用入队、mailcow 接受、SMTP2GO 接受、目标邮件服务器接受、用户在收件箱/垃圾箱可见。
+后两项需要相应服务日志或收件人确认，不能由 SMTP 250 推断。自动化回归只使用合成 localhost TLS 接收器，
+不会给外部地址发信。外发验收单独授权、限制收件人及数量，不触发真实账户恢复或修改收信域名配置。
+
+可复现的外发验收入口是 `services/identity/scripts/verify_smtp.py`。在已注入 SMTP 环境的隔离进程/容器中，
+使用 `python services/identity/scripts/verify_smtp.py --data /acceptance/new-fixture --recipient '<已授权邮箱>' --send`。
+父目录须为本次专用私有目录，`new-fixture` 必须不存在。脚本创建合成账户和空间，通过真实回环 HTTP
+登录并调用邀请、邮箱验证接口，再只执行一次队列扫描，最多两封邮件；同一目录重复运行直接拒绝。
+不挂载生产数据，不使用管理员 Cookie，不打印测试口令或邮件令牌。邮件中的链接只指向临时本地服务，
+无需收件人操作。结果保存到该目录的 `acceptance.json`；保留此目录作为防重复发送标记，不盲目重跑。

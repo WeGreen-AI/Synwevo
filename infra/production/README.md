@@ -40,9 +40,33 @@ docker compose exec accounts python -m synwevo_identity.cli bootstrap admin --em
 
 The first admin's personal workspace is separate from historical `default` data. Claim that
 workspace through the existing protected admin flow after signing in; first login never claims it.
-SMTP is disabled until actual SMTP settings are supplied. Invitation/recovery requests report the
-missing configuration; do not pretend an email was sent. Configure account mail only in the private
-runtime.env, following the root `.env.example`, and restart the accounts service.
+Account mail uses `/opt/synwevo/config/smtp.env` (root-owned, mode 0600, private parent directory).
+Only `accounts` receives this file; `docs` and `portal` do not receive mailbox credentials.
+The later file overrides `SYNWEVO_MAIL_MODE=disabled` in the shared `runtime.env`.
+Compose 2.30+ `format: raw` preserves literal password characters, including `$` and `#`.
+Do not quote or shell-source this raw env file, print expanded `docker compose config`, or put it
+in a deployment archive. The committed [example](smtp.env.example) contains only a placeholder.
+
+The configured mailbox and fixed From are `mail@hikosphere.com`, display name `Synwevo`, connecting
+to `mail.hikosphere.com:587` with STARTTLS. Certificate chain and hostname verification are mandatory;
+credentials are transmitted only after TLS. Port 465 is an alternative only with `SMTP_SSL=1` and
+`SMTP_STARTTLS=0`; there is no automatic downgrade/fallback. The project connects to mailcow;
+mailcow handles its existing SMTP2GO relay. MX, inbound routing and relay configuration are unchanged.
+
+For a future credential update, edit the private file on the host through an authorized channel,
+run `docker compose config --quiet`, then recreate **only** the account role and gateway (nginx
+caches upstream container IPs):
+
+```sh
+cd /opt/synwevo/config
+docker compose up -d --no-deps --force-recreate --wait accounts
+docker compose up -d --no-deps --force-recreate --wait gateway
+```
+
+No SMTP password belongs in GitHub Actions: CI preserves these host-owned files. A code deployment
+continues through the existing verified release/backup pipeline. SMTP readiness is checked by a
+controlled send, not by `/readyz` (which checks the worker and database, not external delivery).
+Queue behaviour, local configuration and error meanings: [operations](../../docs/operations.md#6-账户邮件仅发信).
 
 ## CI/CD
 

@@ -97,6 +97,14 @@ def data_dir() -> str:
 def env_for(name: str) -> dict:
     role, port, url, client, app = SERVICES[name]
     child_env = dict(os.environ)
+    if name != "accounts":
+        # Only the identity service sends account mail; sibling applications never need
+        # the mailbox password, even when the parent shell has loaded an SMTP env file.
+        for key in list(child_env):
+            if key.startswith(("SYNWEVO_SMTP_", "SYNWEVO_MAIL_", "DOCWEAVE_SMTP_", "DOCWEAVE_MAIL_")):
+                del child_env[key]
+    else:
+        child_env.setdefault("SYNWEVO_PUBLIC_URL", url)
     child_env.update({
         "SYNWEVO_ROLE": role,
         "SYNWEVO_PORT": str(port),

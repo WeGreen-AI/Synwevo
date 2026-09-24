@@ -19,13 +19,17 @@ writes, so a developer cannot mistake it for delivery.
 """
 from __future__ import annotations
 
-import os
 import re
 import smtplib
+import ssl
+import math
+from dataclasses import dataclass, field
+from email.headerregistry import Address
+from email.policy import SMTP as SMTP_POLICY
 import threading
 import time
 from email.message import EmailMessage
-from email.utils import formataddr, formatdate, make_msgid
+from email.utils import formataddr, formatdate
 from pathlib import Path
 
 from synwevo_core import env
@@ -35,13 +39,99 @@ from synwevo_core.store import Store, new_id, now
 # Backoff between attempts; the last value repeats until MAX_ATTEMPTS.
 RETRY_SCHEDULE = (30, 120, 600, 1800, 3600)
 MAX_ATTEMPTS = 8
-SEND_TIMEOUT_S = float(env.get("SMTP_TIMEOUT_S", "20"))
+# A claimed row stays queued for schema/backward compatibility, but is never claimed twice.
+# After a crash we cannot know if SMTP accepted DATA: expire to a visible failure, never resend.
+IN_PROGRESS = "delivery_in_progress"
+CLAIM_TIMEOUT_S = 900
+
+
+class DeliveryFailure(Exception):
+    def __init__(self, code: str, *, retryable: bool = False):
+        self.code, self.retryable = code, retryable
+        super().__init__(code)
+
+
+def _config_error():
+    return ServiceError(503, "mail_config_invalid",
+                        "邮件配置无效：请检查发件地址、SMTP 主机、端口、TLS、凭据与超时设置。")
+
+
+def _flag(key: str, default: str) -> bool:
+    value = (env.get(key) or default).strip().lower()
+    if value not in ("1", "true", "yes", "on", "0", "false", "no", "off"):
+        raise _config_error()
+    return value in ("1", "true", "yes", "on")
+
+
+def _address(value: str) -> str:
+    try:
+        if any(c.isspace() for c in value) or any(c in value for c in "<>,;\r\n"):
+            raise ValueError()
+        value.encode("ascii")
+        parsed = Address(addr_spec=value)
+        if not parsed.username or not parsed.domain or "@" not in value:
+            raise ValueError()
+    except (ValueError, UnicodeError):
+        raise ServiceError(400, "mail_address_invalid", "邮件地址必须是单个有效邮箱地址。") from None
+    return value
+
+
+@dataclass(frozen=True)
+class SmtpConfig:
+    host: str
+    port: int
+    user: str
+    password: str = field(repr=False)
+    implicit_tls: bool
+    timeout: float
+
+
+def smtp_config() -> SmtpConfig:
+    try:
+        host = (env.get("SMTP_HOST") or "").strip()
+        port = int(env.get("SMTP_PORT") or "587")
+        user, password = env.get("SMTP_USER") or "", env.get("SMTP_PASSWORD") or ""
+        implicit_tls = _flag("SMTP_SSL", "0")
+        starttls = _flag("SMTP_STARTTLS", "1")
+        timeout = float(env.get("SMTP_TIMEOUT_S") or "20")
+        _, sender = from_address()
+        _address(sender)
+        if (not host or any(c.isspace() for c in host) or not 1 <= port <= 65535
+                or implicit_tls == starttls or not math.isfinite(timeout) or not 1 <= timeout <= 60
+                or bool(user) != bool(password) or not env.get("MAIL_FROM")):
+            raise ValueError()
+    except (ValueError, ServiceError):
+        raise _config_error() from None
+    return SmtpConfig(host, port, user, password, implicit_tls, timeout)
+
+
+def _failure(exc: Exception) -> DeliveryFailure:
+    # Never persist server-controlled response text: it can echo credentials, recipients or DATA.
+    if isinstance(exc, DeliveryFailure):
+        return exc
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return DeliveryFailure("tls_certificate_invalid")
+    if isinstance(exc, ssl.SSLError):
+        return DeliveryFailure("tls_failed")
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return DeliveryFailure("smtp_authentication_failed")
+    if isinstance(exc, smtplib.SMTPNotSupportedError):
+        return DeliveryFailure("smtp_security_not_supported")
+    if isinstance(exc, smtplib.SMTPResponseException):
+        return DeliveryFailure(f"smtp_rejected_{int(exc.smtp_code)}", retryable=400 <= exc.smtp_code < 500)
+    if isinstance(exc, (OSError, smtplib.SMTPServerDisconnected)):
+        return DeliveryFailure("transport_unavailable", retryable=True)
+    if isinstance(exc, ServiceError):
+        return DeliveryFailure(exc.code)
+    return DeliveryFailure("mail_delivery_failed")
 
 
 def mode() -> str:
     """smtp | file | disabled — decided by configuration, never guessed."""
     explicit = (env.get("MAIL_MODE") or "").strip().lower()
-    if explicit in ("smtp", "file", "disabled"):
+    if explicit:
+        if explicit not in ("smtp", "file", "disabled"):
+            raise _config_error()
         return explicit
     return "smtp" if env.get("SMTP_HOST") else "disabled"
 
@@ -58,6 +148,8 @@ def public_base() -> str:
 def from_address() -> tuple[str, str]:
     addr = (env.get("MAIL_FROM") or "synwevo@localhost").strip()
     name = (env.get("MAIL_FROM_NAME") or "Synwevo").strip()
+    if any(c in name for c in "\r\n"):
+        raise _config_error()
     return name, addr
 
 
@@ -74,6 +166,8 @@ class Mailer:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        if mode() == "smtp":
+            smtp_config()  # Fail before starting a misconfigured production worker.
         if start:
             self._thread = threading.Thread(target=self._run, name="mail", daemon=True)
             self._thread.start()
@@ -100,6 +194,11 @@ class Mailer:
         if m == "smtp" and not public_base():
             raise ServiceError(503, "public_url_missing",
                                "发送邮件前必须设置 SYNWEVO_PUBLIC_URL，否则邮件里的链接会指向错误的地址。")
+        if m == "smtp":
+            smtp_config()
+        _address(to_addr)
+        if any(c in subject for c in "\r\n"):
+            raise ServiceError(400, "mail_subject_invalid", "邮件主题不能包含换行。")
         row = {"id": new_id("ml"), "to_addr": to_addr, "subject": subject, "body": body,
                "kind": kind, "ref_id": ref_id, "status": "queued", "attempts": 0,
                "next_attempt_at": now(), "created_at": now()}
@@ -119,43 +218,65 @@ class Mailer:
             try:
                 sent = self.drain_once()
             except Exception as e:  # noqa: BLE001 - a worker thread must not die
-                print(f"[synwevo] mail worker error: {e}", flush=True)
+                print(f"[synwevo] mail worker error: {type(e).__name__}", flush=True)
                 sent = 0
             self._wake.wait(1.0 if sent else 15.0)
             self._wake.clear()
 
     def drain_once(self, limit: int = 20) -> int:
-        """Attempt every message that is due. Returns how many were sent."""
+        """Atomically claim each due message; SMTP uncertainty never causes automatic resends."""
+        expired = self.store.all(
+            "SELECT id,body FROM mail_outbox WHERE status='queued' AND last_error=? "
+            "AND next_attempt_at<=?", (IN_PROGRESS, now()))
+        for row in expired:
+            self.store.execute(
+                "UPDATE mail_outbox SET status='failed', last_error='delivery_unknown', "
+                "body=?, next_attempt_at=NULL WHERE id=? AND status='queued' AND last_error=?",
+                (redact(row["body"]), row["id"], IN_PROGRESS))
         due = self.store.all(
-            "SELECT * FROM mail_outbox WHERE status='queued' AND (next_attempt_at IS NULL OR next_attempt_at<=?) "
-            "ORDER BY created_at LIMIT ?", (now(), limit))
+            "SELECT * FROM mail_outbox WHERE status='queued' AND COALESCE(last_error,'')!=? "
+            "AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY created_at LIMIT ?",
+            (IN_PROGRESS, now(), max(1, min(limit, 100))))
         sent = 0
         for row in due:
+            if self._stop.is_set():
+                break
+            claimed = self.store.execute(
+                "UPDATE mail_outbox SET last_error=?, next_attempt_at=?, attempts=attempts+1 "
+                "WHERE id=? AND status='queued' AND COALESCE(last_error,'')!=? "
+                "AND attempts=? AND (next_attempt_at IS NULL OR next_attempt_at<=?)",
+                (IN_PROGRESS, now() + CLAIM_TIMEOUT_S, row["id"], IN_PROGRESS, row["attempts"], now()))
+            if not claimed:
+                continue
             try:
-                self._deliver(row)
-                # The body is redacted the moment it has left: it carries a live invitation,
-                # reset or verification link, and the outbox is kept (its status is what the
-                # invitation list shows). Kept verbatim, any copy of the database — a backup, a
-                # support export — was a set of working reset links.
-                self.store.execute("UPDATE mail_outbox SET status='sent', sent_at=?, last_error=NULL, body=? "
-                                   "WHERE id=?", (now(), redact(row["body"]), row["id"]))
-                sent += 1
-            except Exception as e:  # noqa: BLE001 - every failure is recorded, never swallowed
+                receipt = self._deliver(row)
+            except Exception as e:
+                failure = _failure(e)
                 attempts = int(row["attempts"]) + 1
-                if attempts >= MAX_ATTEMPTS:
-                    # Terminal. The row stays so the failure remains visible in the UI and the
-                    # audit trail; it is not deleted to make a dashboard look clean. Nothing will
-                    # send it again, so the link in it is redacted too.
-                    self.store.execute("UPDATE mail_outbox SET status='failed', attempts=?, last_error=?, body=? "
-                                       "WHERE id=?", (attempts, str(e)[:500], redact(row["body"]), row["id"]))
+                if not failure.retryable or attempts >= MAX_ATTEMPTS:
+                    self.store.execute(
+                        "UPDATE mail_outbox SET status='failed', last_error=?, body=?, next_attempt_at=NULL "
+                        "WHERE id=? AND status='queued' AND last_error=?",
+                        (failure.code, redact(row["body"]), row["id"], IN_PROGRESS))
                 else:
                     delay = RETRY_SCHEDULE[min(attempts - 1, len(RETRY_SCHEDULE) - 1)]
                     self.store.execute(
-                        "UPDATE mail_outbox SET attempts=?, next_attempt_at=?, last_error=? WHERE id=?",
-                        (attempts, now() + delay, str(e)[:500], row["id"]))
+                        "UPDATE mail_outbox SET next_attempt_at=?, last_error=? "
+                        "WHERE id=? AND status='queued' AND last_error=?",
+                        (now() + delay, failure.code, row["id"], IN_PROGRESS))
+                continue
+            # Keep this outside the delivery try block. A database error AFTER SMTP acceptance
+            # leaves the claim intact; it must not be interpreted as a safe SMTP retry.
+            self.store.execute(
+                "UPDATE mail_outbox SET status='sent', sent_at=?, last_error=NULL, body=?, next_attempt_at=NULL "
+                "WHERE id=? AND status='queued' AND last_error=?",
+                (now(), redact(row["body"]), row["id"], IN_PROGRESS))
+            if receipt:
+                print(f"[synwevo] mail accepted id={row['id']} smtp_code=250 queue_id={receipt}", flush=True)
+            sent += 1
         return sent
 
-    def _deliver(self, row: dict) -> None:
+    def _deliver(self, row: dict) -> str | None:
         m = mode()
         if m == "disabled":
             raise MailNotConfigured()
@@ -164,8 +285,8 @@ class Mailer:
         msg["From"] = formataddr((name, addr))
         msg["To"] = row["to_addr"]
         msg["Subject"] = row["subject"]
-        msg["Date"] = formatdate(localtime=True)
-        msg["Message-ID"] = make_msgid()
+        msg["Date"] = formatdate(row["created_at"], localtime=True)
+        msg["Message-ID"] = f"<{row['id']}@{addr.rsplit('@', 1)[-1]}>"
         # Tells well-behaved scanners and clients not to auto-fetch or auto-reply.
         msg["Auto-Submitted"] = "auto-generated"
         msg["X-Auto-Response-Suppress"] = "All"
@@ -183,19 +304,43 @@ class Mailer:
             (out / f"{int(time.time() * 1000)}-{row['id']}.eml").write_text(banner + msg.as_string(), encoding="utf-8")
             return
 
-        host = env.get("SMTP_HOST") or ""
-        port = int(env.get("SMTP_PORT") or 587)
-        user = env.get("SMTP_USER") or ""
-        pw = env.get("SMTP_PASSWORD") or ""
-        use_ssl = (env.get("SMTP_SSL") or "").strip().lower() in ("1", "true", "yes", "on")
-        starttls = (env.get("SMTP_STARTTLS") or "1").strip().lower() not in ("0", "false", "no", "off")
-        cls = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
-        with cls(host, port, timeout=SEND_TIMEOUT_S) as s:
-            if starttls and not use_ssl:
-                s.starttls()
-            if user:
-                s.login(user, pw)
-            s.send_message(msg)
+        config = smtp_config()
+        context = ssl.create_default_context()  # CERT_REQUIRED + hostname verification; no opt-out.
+        smtp = None
+        try:
+            if config.implicit_tls:
+                smtp = smtplib.SMTP_SSL(config.host, config.port, timeout=config.timeout, context=context)
+            else:
+                smtp = smtplib.SMTP(config.host, config.port, timeout=config.timeout)
+                smtp.ehlo()
+                smtp.starttls(context=context)  # A missing/rejected STARTTLS is terminal, never plaintext AUTH.
+            smtp.ehlo()
+            if config.user:
+                smtp.login(config.user, config.password)
+            code, _ = smtp.mail(addr)
+            if code != 250:
+                raise DeliveryFailure(f"smtp_sender_rejected_{code}", retryable=400 <= code < 500)
+            code, _ = smtp.rcpt(row["to_addr"])
+            if code not in (250, 251):
+                raise DeliveryFailure(f"smtp_recipient_rejected_{code}", retryable=400 <= code < 500)
+            try:
+                code, response = smtp.data(msg.as_bytes(policy=SMTP_POLICY))
+            except smtplib.SMTPResponseException:
+                raise  # An explicit refusal is distinguishable from a lost acknowledgement.
+            except (OSError, smtplib.SMTPServerDisconnected):
+                raise DeliveryFailure("delivery_unknown") from None
+            if code != 250:
+                raise DeliveryFailure(f"smtp_data_rejected_{code}", retryable=400 <= code < 500)
+            # Only keep a bounded queue identifier, never the arbitrary SMTP response text.
+            match = re.search(rb"queued as ([A-Za-z0-9]{5,64})(?:\b|$)", response)
+            return match.group(1).decode("ascii") if match else "accepted"
+        finally:
+            # A failing QUIT after DATA 250 must not turn a delivered message into a retry.
+            if smtp is not None:
+                try:
+                    smtp.close()
+                except OSError:
+                    pass
 
     def stop(self) -> None:
         self._stop.set()

@@ -51,6 +51,21 @@ def test_setup_installs_the_modules_that_exist(platform):
         assert (ROOT / m / "pyproject.toml").is_file(), f"setup 会去装一个不存在的模块：{m}"
 
 
+def test_local_launcher_keeps_mail_credentials_in_accounts_only(platform, monkeypatch):
+    monkeypatch.setenv("SYNWEVO_SMTP_PASSWORD", "synthetic-smtp-password")
+    monkeypatch.setenv("DOCWEAVE_SMTP_PASSWORD", "synthetic-smtp-password")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "smtp")
+    monkeypatch.delenv("SYNWEVO_PUBLIC_URL", raising=False)
+    accounts = platform.env_for("accounts")
+    assert accounts["SYNWEVO_SMTP_PASSWORD"] == "synthetic-smtp-password"
+    assert accounts["SYNWEVO_PUBLIC_URL"] == platform.ACCOUNTS
+    for name in ("docs", "portal"):
+        child = platform.env_for(name)
+        assert "SYNWEVO_SMTP_PASSWORD" not in child
+        assert "DOCWEAVE_SMTP_PASSWORD" not in child
+        assert "SYNWEVO_MAIL_MODE" not in child
+
+
 @pytest.mark.parametrize("suite, dirs", [
     ("docs", ["apps/docs/tests"]),
     ("identity", ["services/identity/tests"]),

@@ -2,6 +2,7 @@
 data/
 .local/
 .env
+**/smtp.env
 .env.*
 !.env.example
 .venv/

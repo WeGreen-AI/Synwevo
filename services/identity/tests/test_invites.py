@@ -296,7 +296,8 @@ def test_a_failed_send_is_recorded_and_retried_not_reported_as_sent(env, monkeyp
     m.enqueue("a@example.com", "s", "b", kind="invite", ref_id="iv2")
     assert m.drain_once() == 0
     st = m.status_for("iv2")
-    assert st["status"] == "queued" and st["attempts"] == 1 and "连接被拒绝" in st["last_error"]
+    assert st["status"] == "queued" and st["attempts"] == 1
+    assert st["last_error"] == "transport_unavailable"  # Never expose arbitrary exception text.
     # still due only in the future, so a tight loop does not hammer a dead server
     row = env["store"].one("SELECT next_attempt_at FROM mail_outbox WHERE ref_id='iv2'")
     assert row["next_attempt_at"] > now()
@@ -444,6 +445,7 @@ def test_a_message_that_finally_fails_is_redacted_too(env, monkeypatch):
     monkeypatch.setenv("SYNWEVO_SMTP_HOST", "127.0.0.1")
     monkeypatch.setenv("SYNWEVO_SMTP_PORT", "1")                 # nothing listens there
     monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "https://docs.example.org")
+    monkeypatch.setenv("SYNWEVO_MAIL_FROM", "sender@example.org")
     m = mail_mod.Mailer(env["store"], start=False)
     subject, text = mail_mod.reset_mail(token="SECRET-TOKEN-VALUE", expires_h=2)
     row = m.enqueue("x@example.com", subject, text, kind="reset")

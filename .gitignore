@@ -12,6 +12,7 @@ node_modules/
 # 运行数据：用户文件、数据库、任务结果 —— 永不提交
 data/
 .env
+smtp.env
 
 # 生成的合成夹具（apps/docs/scripts/make_fixtures.py）
 testdata/

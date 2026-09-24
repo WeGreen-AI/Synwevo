@@ -31,7 +31,8 @@ CRITICAL = frozenset({
     "DATA_DIR", "SECRET", "ISSUER", "UI_AUTH", "UI_TENANT", "ROLE",
     "RP_ID", "RP_ORIGINS", "COOKIE_SECURE", "TRUST_PROXY",
     "APP_URL", "PUBLIC_URL", "PORTAL_URL", "OIDC_CLIENT_ID", "OIDC_APP_ID", "APP_ID",
-    "SMTP_PASSWORD", "SMTP_USER", "WEBHOOK_SECRET", "API_KEY",
+    "SMTP_PASSWORD", "SMTP_USER", "SMTP_HOST", "SMTP_PORT", "SMTP_SSL", "SMTP_STARTTLS",
+    "MAIL_FROM", "WEBHOOK_SECRET", "API_KEY",
     "IMPORT_ROOTS", "REGISTRATION", "TEST_INSTANCE", "UI_DIR", "TESSDATA",
 })
 
@@ -56,8 +57,10 @@ def _read(new_name: str, suffix: str, default: str | None) -> str | None:
 
     if new is not None and old is not None and new != old:
         if suffix in CRITICAL:
+            sensitive = suffix in {"SECRET", "SMTP_PASSWORD", "WEBHOOK_SECRET", "API_KEY"}
+            values = "" if sensitive else f"（{new!r} / {old!r}）"
             raise ConfigConflict(
-                f"{new_name}={new!r} 与 {legacy_name}={old!r} 同时设置且不一致。"
+                f"{new_name} 与 {legacy_name} 同时设置且不一致{values}。"
                 f"这一项关系到数据位置、密钥或信任边界，不能替你猜一个。"
                 f"请删掉其中一个再启动（推荐保留 {new_name}）。")
         _warn_once(new_name, f"{new_name} 与 {legacy_name} 不一致，用的是 {new_name}；"

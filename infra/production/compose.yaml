@@ -38,6 +38,12 @@ x-env: &env
 services:
   accounts:
     <<: *app
+    # Only the identity service receives SMTP credentials. Raw preserves literal $/# in passwords.
+    env_file:
+      - /opt/synwevo/config/runtime.env
+      - path: /opt/synwevo/config/smtp.env
+        required: false
+        format: raw
     environment:
       <<: *env
       SYNWEVO_ROLE: accounts

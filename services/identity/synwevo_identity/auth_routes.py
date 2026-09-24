@@ -539,7 +539,7 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
     @r.post("/forgot")
     def forgot(request: Request, body: dict = Body(...)):
         email = (body.get("email") or "").strip()
-        same = {"ok": True, "message": "如果这个邮箱有账户，我们已经发送了重置链接。"}
+        same = {"ok": True, "message": "如果这个邮箱有可用账户且邮件服务正常，重置请求将进入发送队列，请稍后检查邮箱。"}
         if not email:
             return same
         # Throttled without changing the answer: the response shape is the security property
