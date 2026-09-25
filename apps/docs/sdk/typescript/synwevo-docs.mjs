@@ -47,6 +47,8 @@ export const WEBHOOK_TOLERANCE_S = 300;
 const SAFE_METHODS = new Set(['GET', 'HEAD']);
 // 409 idempotency_in_progress means "the first request with this key is still running": the
 // server asks for a retry with the same key, so it is transient like a 503.
+// 429 rate_limited is Synwevo's own gate refusing before the route runs: nothing executed, so it
+// is retried after Retry-After even for writes that are otherwise not retry-safe.
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const RETRYABLE_CODES = new Set(['idempotency_in_progress', 'upload_busy']);
 const MIB = 1024 * 1024;
@@ -457,7 +459,8 @@ export class Client {
           }
         }
       }
-      if (!retryable || attempt >= this.maxRetries || !isRetryable(failure)) throw failure;
+      const gateRefusal = failure.status === 429 && failure.code === 'rate_limited';
+      if ((!retryable && !gateRefusal) || attempt >= this.maxRetries || !isRetryable(failure)) throw failure;
       const wait = this.backoffMs(attempt, failure.retryAfter);
       if (wait == null) throw failure;      // the server asked for longer than we are willing to wait
       this.onRetry?.({ method, path, attempt: attempt + 1, delayMs: wait, status: failure.status, code: failure.code });

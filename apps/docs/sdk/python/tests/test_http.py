@@ -120,6 +120,28 @@ class HTTPTests(unittest.TestCase):
                 c.put_mappings("p", [])
         self.assertEqual(len(paths), 2)
 
+    def test_the_gates_own_rate_limit_is_retried_even_for_unsafe_writes(self):
+        """`429 rate_limited` is Synwevo's gate refusing before the route runs — nothing executed,
+        so even a non-idempotent PUT is sent again after Retry-After. An acceptance flow of ~400
+        calls in a minute tripped the 300/min limit on `definition put` and failed outright."""
+        paths, delays = [], []
+        def respond(h):
+            paths.append(h.path)
+            if len(paths) == 1:
+                h.answer(429, {"error": {"code": "rate_limited", "message": "fixture", "details": {"retry_after": 0.05}}}, {"Retry-After": "0"})
+            else:
+                h.answer(200, {"rev": 2, "mappings": []})
+        with fixture(respond) as base, Client(base, ApiKey("fixture"), sleep=delays.append) as c:
+            self.assertEqual(c.put_mappings("p", [])["rev"], 2)
+        self.assertEqual(len(paths), 2)
+        self.assertEqual(delays, [0])
+        # a limiter that never relents still ends in the error, after the bounded retries
+        def always(h):
+            h.answer(429, {"error": {"code": "rate_limited", "message": "fixture"}}, {"Retry-After": "0"})
+        with fixture(always) as base, Client(base, ApiKey("fixture"), sleep=lambda _s: None, max_retries=2) as c:
+            with self.assertRaises(RateLimitError):
+                c.put_mappings("p", [])
+
     def test_cursor_and_offset_pagination(self):
         paths = []
         def respond(h):

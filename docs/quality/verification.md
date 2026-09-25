@@ -520,6 +520,22 @@ send what's necessary at the very beginning"，按路由/组件懒加载减少�
 `.topbar` 任何宽度都允许换行（`flex-wrap: wrap; min-height: 48px`），`PlatformNav` 的切换器 `flex: none; min-width: 140px`。
 Bob（375/1280，默认语言）与管理员（375/1280，英文）重审 0 发现；`ui_e2e.py` 与外壳回归通过。
 
+### 16.14 SDK / CLI 与 Node 验收复跑（CI-14）
+
+网关、会话、安全头与路由拆分之后，把机器路径的验收脚本在新鲜隔离实例上复跑（`apps/docs/sdk/acceptance/python_full_flow.py`、
+`tests/integration/sdk_acceptance/ts_run.py --builtin-only`；合成数据，真实 HTTP，服务凭据经空间批准）：
+
+| 脚本 | 首次结果 | 根因 | 处理 | 复跑 |
+|---|---|---|---|---|
+| Node 内置模板 service-auth 冒烟 | 通过（12 + 12 份文档） | — | — | — |
+| Python SDK + CLI 全流程 | **失败**：`definition put` 收到 `429 rate_limited`（该流程 1 分钟内约 400 次调用，超出每密钥 300 次/分钟） | SDK 有意不对"非幂等写"重试任何 429（担心中间层转发后才产生的 429）；但 Synwevo 自己的 `rate_limited` 是网关在路由执行前的拒绝，没有副作用 | 两个 SDK 只对 `429 rate_limited` 放行有界重试（含非幂等写，按 Retry-After），其他 429 维持原策略；Python `test_http.py` 与 Node `client.test.mjs` 各增一项（首次 429 后重试成功；持续 429 仍抛错；其他错误码的 429 不重试） | 通过：24 份文档、52 项内置输出读回；期间服务端实际拒绝 4 次（`app-http.jsonl` 中 4 条 429），SDK 全部重试成功 |
+
+依据：Stripe「Rate limits — Handle limiting」（访问 2026-09-25）：对 429 实施带抖动的指数退避重试；Synwevo 网关的 429 在 `_gate`
+中间件里于路由之前返回（`packages/core/synwevo_core/http.py`），因此对它重试不会重复副作用。
+
+注意：本机 `.venv` 里的 SDK 是非可编辑安装（`pip install apps/docs/sdk/python`），改 SDK 源码后要重新安装才会被测试与验收脚本用到；
+本次首次复跑"通过"的一次是时序未触发限流，不是修复生效，已以重装后的第三次复跑为准。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

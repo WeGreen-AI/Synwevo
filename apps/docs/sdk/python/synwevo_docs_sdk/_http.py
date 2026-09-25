@@ -6,7 +6,9 @@ Retry policy, and why:
   GET/HEAD, a POST/PUT that carries an ``Idempotency-Key`` (the server replays the first answer
   or refuses with 409), and the few calls the server documents as naturally repeatable
   (``retry_safe=True``: completing an upload twice, cancelling twice). Unsafe writes are not
-  retried even on 429: an intermediary might have produced that answer after forwarding them.
+  retried on a bare 429: an intermediary might have produced that answer after forwarding them.
+  The one exception is Synwevo's own ``rate_limited`` envelope — the gate answers it before the
+  route runs, so nothing was executed and the same request can be sent again after Retry-After.
 * **When.** Network failures, 408/425/429/500/502/503/504, and two 409s that mean "not yet"
   rather than "no": ``idempotency_in_progress`` (the first attempt with this key is still
   running) and ``sources_not_ready`` (uploaded files are still being parsed).
@@ -186,6 +188,10 @@ class Transport:
 
     @staticmethod
     def _retryable(err: APIError, safe: bool) -> bool:
+        if err.status == 429 and err.code == "rate_limited":
+            # The service's own limiter refused the request at the gate, before any handler ran:
+            # a definite non-execution, safe to repeat whatever the method.
+            return True
         if not safe:
             return False
         if err.status in RETRY_STATUSES:

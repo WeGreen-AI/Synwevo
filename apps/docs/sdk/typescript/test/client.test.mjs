@@ -79,3 +79,24 @@ test('minimal receiver acknowledges only successful handling and retries a faile
     assert.equal(attempts, 2);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
+
+test('the gate\'s own rate limit is retried after Retry-After even for a non-idempotent write', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), method: init.method });
+    if (calls.length === 1) {
+      return new Response(JSON.stringify({ error: { code: 'rate_limited', message: 'fixture', details: { retry_after: 0.01 } } }),
+        { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '0' } });
+    }
+    return new Response(JSON.stringify({ rev: 2, mappings: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const client = new Client('http://fixture.invalid', new ApiKey('fixture'), { fetch: fetchImpl, sleep: async () => {} });
+  const out = await client.putMappings('p', []);
+  assert.equal(out.rev, 2);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((c) => c.method === 'PUT'));
+  // a bare 429 with another code on a non-idempotent write is still not retried
+  const bare = async () => new Response(JSON.stringify({ error: { code: 'limited', message: 'fixture' } }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '0' } });
+  const strict = new Client('http://fixture.invalid', new ApiKey('fixture'), { fetch: bare, sleep: async () => {} });
+  await assert.rejects(() => strict.putMappings('p', []), RateLimitError);
+});

@@ -50,6 +50,8 @@ python -m synwevo_docs.cli apikey revoke <key_id>
 * `--tenant`：凭据绑定的稳定 workspace ID，不能由请求体覆盖。`default` 是兼容空间，平台模式下保留当前认领状态；浏览器使用当前已验证会话选择的 workspace。跨空间对象返回 `404`，不泄露是否存在。
 * `--expires-days`：可选有效期；过期返回 `401 key_expired`，撤销返回 `401 key_revoked`。
 * 限流：默认每个密钥 300 次/分钟（`SYNWEVO_API_RATE_PER_MIN`，按进程计），超出返回 `429 rate_limited` 并带 `Retry-After`。
+  官方 Python 与 Node SDK/CLI 对 `429 rate_limited`（网关在路由执行前的拒绝，未产生副作用）按 `Retry-After` 有界重试——包括没有幂等键的写操作；
+  其他来源的 429 或没有该错误码的 429 仍只对幂等/带键的调用重试。自写客户端请照此处理，并加抖动退避。
 
 ### 1.1 平台机器身份（推荐）
 
