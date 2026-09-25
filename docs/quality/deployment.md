@@ -14,8 +14,17 @@ receiver rebuilt the image, took the pre-upgrade backup `/opt/synwevo/backups/20
 (`{"deployed": "synwevo:a342994…", "backup": …}` in the run log) and the public readiness step saw
 `database/storage/worker: ok` on all three hosts.
 
-**Follow-up cutover:** `93777c3` (the portal fetches its dashboard once per cold load instead of twice)
-was pushed right after together with this record; its run is recorded below once it lands.
+**Running source (current):** `61f6354b1c5d01d6e497afaeaa9c56be9fdc18e2` on `main` — `93777c3` (the
+portal fetches its dashboard once per cold load instead of twice) plus this record.
+[Actions 36106993829](https://github.com/WeGreen-AI/Synwevo/actions/runs/36106993829) (created 07:18 UTC,
+finished 07:37 UTC) passed the same verification and deployment; pre-upgrade backup
+`/opt/synwevo/backups/20260925T073728Z` (`{"deployed": "synwevo:61f6354…"}`). Anonymous checks at
+~07:40 UTC: `/readyz` ready on all three hosts (`database/storage/worker: ok`; the portal has no worker),
+`/api/auth/state` `app_id` = `null` / `platform` / `docweave`, every bundle referenced by `/`, `/workspace`,
+`/login` and the Docs shell 200, `GET /api/admin/identity-providers` anonymous 401. One request to the
+portal's `/api/auth/state` in the first seconds after the cutover returned an empty body; three retries
+a few seconds later all returned 200 with the full document — the gateway switched containers at that
+moment, nothing was found wrong afterwards. The documentation-only commit that follows carries `[skip ci]`.
 
 ### What changed for production
 
