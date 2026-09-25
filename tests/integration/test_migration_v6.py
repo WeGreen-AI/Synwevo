@@ -10,7 +10,7 @@ import pytest
 from synwevo_core.auth import Auth
 from synwevo_core.identity import Identity
 from synwevo_core.oidc import Keys
-from synwevo_core.store import Store, V6_COLUMNS, now
+from synwevo_core.store import SCHEMA_VERSION, Store, V6_COLUMNS, now
 
 
 @pytest.mark.parametrize("claimed", [False, True])
@@ -59,7 +59,7 @@ def test_v5_upgrade_preserves_identity_business_and_legacy_claim(tmp_path, claim
 
     for _ in range(2):
         migrated = Store(root)
-        assert migrated.schema_version() == 6
+        assert migrated.schema_version() == SCHEMA_VERSION
         assert {table: migrated.all(f"SELECT {cols} FROM {table}")
                 for table, cols in comparisons.items()} == before
         assert migrated.get_blob(digest) == b"Synthetic v5 source content, not a user document"

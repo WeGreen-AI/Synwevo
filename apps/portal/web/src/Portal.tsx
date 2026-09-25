@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { LanguageMenu, useI18n } from "@synwevo/ui";
+import { Brand, LanguageMenu, useI18n } from "@synwevo/ui";
 import { ApiError, get, post, setWorkspaceContext, useSession, type Me } from "@synwevo/auth-client";
 import { PublicHome } from "./PublicHome";
 import "./messages";
@@ -93,9 +93,9 @@ export function Portal() {
       {state.phase === "loading" ? <><span className="pt-loader" aria-hidden="true" /><h1 role="status">{t("正在载入工作空间…")}</h1></> : state.phase === "signed-out" ? <>
         <p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("欢迎回来")}</h1>
         <p>{t("登录你的统一账户，继续你的任务与团队工作。")}</p>
-        <div className="pt-actions"><a className="pt-btn pt-btn-primary" href={signInUrl}>{t("登录")}</a><a className="pt-btn" href={accountLink(account, "/register")}>{t("注册账户")}</a></div>
+        <div className="pt-actions"><a className="btn primary lg" href={signInUrl}>{t("登录")}</a><a className="btn lg" href={accountLink(account, "/register")}>{t("注册账户")}</a></div>
       </> : <><h1>{t("暂时无法载入工作空间")}</h1><p role="alert">{t("请检查网络连接后重试。")}{state.status ? ` (HTTP ${state.status})` : null}</p>
-        <button className="pt-btn" onClick={() => { void session.refresh(); setRevision(n => n + 1); }}>{t("重试")}</button></>}
+        <button className="btn lg" onClick={() => { void session.refresh(); setRevision(n => n + 1); }}>{t("重试")}</button></>}
     </section>
   </Shell>;
 
@@ -119,7 +119,7 @@ export function Portal() {
     <span className="pt-avatar" title={me.email} aria-label={me.display_name || me.email}>{(me.display_name || me.email).slice(0, 1).toUpperCase()}</span>
   </div>}>
     <div className="pt-dashboard-head"><div><p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("你的工作，从这里继续。")}</h1><p className="pt-muted">{me.display_name || me.email}</p></div>
-      <a className="pt-btn" href={accountLink(account, "/onboarding")}>{t("创建或加入工作空间")}</a></div>
+      <a className="btn" href={accountLink(account, "/onboarding")}>{t("创建或加入工作空间")}</a></div>
     <div className="pt-dashboard">
       <aside className="pt-spaces" aria-label={t("工作空间")}>
         <h2>{t("工作空间")}</h2><p className="pt-hint">{t("只显示你已加入的空间。")}</p>
@@ -143,7 +143,7 @@ export function Portal() {
           <p className="pt-context-note">{t("应用与文档权限按工作空间分别管理。切换空间不会合并内容。")}</p>
         </section>
         <section className="pt-invites" aria-labelledby="pt-invites-title"><div className="pt-section-head"><h2 id="pt-invites-title">{t("下一步")}</h2><a className="pt-link" href={accountLink(account, "/onboarding")}>{t("查看邀请")}</a></div>
-          {invitations?.length ? <><p className="pt-muted">{t("这些邀请尚未授予你空间访问权。请通过邀请邮件中的链接确认加入，账户页可核对邀请状态。")}</p><ul className="pt-invite-list">{invitations.map(invite => <li key={invite.id}><div><strong>{invite.workspace_name}</strong><p>{role(invite.role)} · {t("有效期至 {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: me.timezone || "UTC" }).format(invite.expires_at * 1000) })}</p></div><a className="pt-btn" href={accountLink(account, "/onboarding")}>{t("查看加入方式")}</a></li>)}</ul></> : <p className="pt-muted">{t(invitations ? "当前没有可显示的待接受邀请。你也可以到账户页核对邮箱和邀请状态。" : "到账户页查看发给你的邀请并完成空间设置。")}</p>}
+          {invitations?.length ? <><p className="pt-muted">{t("这些邀请尚未授予你空间访问权。请通过邀请邮件中的链接确认加入，账户页可核对邀请状态。")}</p><ul className="pt-invite-list">{invitations.map(invite => <li key={invite.id}><div><strong>{invite.workspace_name}</strong><p>{role(invite.role)} · {t("有效期至 {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: me.timezone || "UTC" }).format(invite.expires_at * 1000) })}</p></div><a className="btn sm" href={accountLink(account, "/onboarding")}>{t("查看加入方式")}</a></li>)}</ul></> : <p className="pt-muted">{t(invitations ? "当前没有可显示的待接受邀请。你也可以到账户页核对邮箱和邀请状态。" : "到账户页查看发给你的邀请并完成空间设置。")}</p>}
         </section>
         {isPlatformAdmin && <p className="pt-admin-note">{t("平台管理权限不授予业务文档访问权。")}</p>}
       </div>
@@ -157,7 +157,7 @@ export function DocumentIcon() {
 export function Shell({ right, children, publicHome = false }: { right?: ReactNode; children: ReactNode; publicHome?: boolean }) {
   const { t } = useI18n();
   return <div className={`pt${publicHome ? " pt-public" : ""}`}><a className="pt-skip" href="#pt-main">{t("跳到主要内容")}</a>
-    <header className="pt-top"><a className="pt-brand" href="/" aria-label={t("Synwevo 首页")}><span className="pt-brand-mark" aria-hidden="true">s</span>synwevo<span className="pt-brand-period">.</span></a>
+    <header className="pt-top"><Brand href="/" size="lg" product={publicHome ? undefined : "Workspace"} label={t("Synwevo 首页")} />
       <nav className="pt-nav" aria-label={t("主导航")}>{right}<LanguageMenu /></nav></header>
     <main className="pt-main" id="pt-main" tabIndex={-1}>{children}</main>
     <footer className="pt-footer"><span>Synwevo</span><a href="/#privacy">{t("数据与隐私")}</a><a href="/#service">{t("服务说明")}</a><span>{t("让工作流程，持续运转。")}</span></footer>

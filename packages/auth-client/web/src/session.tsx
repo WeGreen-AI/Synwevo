@@ -40,6 +40,8 @@ export interface AuthState {
   portal_url?: string;
   /** Where the account and security pages live: this app's own, or the account service's. */
   account_url?: string;
+  /** External OpenID providers the account service offers — only the configured ones. */
+  external_providers?: { id: string; label: string }[];
 }
 
 interface Ctx {

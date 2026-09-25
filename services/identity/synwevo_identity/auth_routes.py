@@ -138,21 +138,17 @@ def check_reauth_password(ident: Identity, sessions: Sessions, request: Request,
 def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=None) -> APIRouter:
     r = APIRouter(prefix="/api/auth", tags=["auth"])
 
-    def _issue(response: Response, user: dict, *, amr: str, request: Request) -> dict:
+    def _issue(response: Response, user: dict, *, amr: str, request: Request,
+               persistent: bool = False, auth_provider: str | None = None) -> dict:
         """Start a session and set both cookies. Always called after authentication succeeds,
-        never reusing anything the client supplied, so a pre-set session id cannot be promoted."""
-        spaces = ident.workspaces_for(user["id"])
-        raw, row = sessions.create(
-            user["id"], workspace_id=spaces[0]["id"] if spaces else None, amr=amr,
-            user_agent=request.headers.get("user-agent"), ip=client_ip(request),
-            admin=user["platform_role"] == "admin")
-        secure = cookies_secure()
-        response.set_cookie(COOKIE_NAME, raw, max_age=None, **cookie_kwargs(secure))
-        csrf = new_csrf_token()
-        # Readable by script on purpose: the page has to echo it in a header. It is not a
-        # credential on its own — it only proves the request came from our own page.
-        response.set_cookie(CSRF_COOKIE, csrf, httponly=False, secure=secure, samesite="lax", path="/")
-        return {"user": _me(user, spaces), "session": {"id": row["id"], "amr": amr}}
+        never reusing anything the client supplied, so a pre-set session id cannot be promoted.
+
+        `persistent` is the "keep me signed in" choice made on the form that authenticated. It
+        changes the cookie's lifetime and the idle window (sessions.py); it never lowers what a
+        later sensitive action asks for — re-authentication and second factors are unchanged.
+        """
+        return issue_session(ident, sessions, response, user, amr=amr, request=request,
+                             persistent=persistent, auth_provider=auth_provider, describe=_me)
 
     def _me(user: dict, spaces: list[dict]) -> dict:
         return describe_user(user, spaces)
@@ -198,6 +194,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
     @r.post("/login")
     def login(request: Request, response: Response, body: dict = Body(...)):
         email, password = (body.get("email") or "").strip(), body.get("password") or ""
+        remember = remember_choice(body)
         if not email or not password:
             raise ServiceError(400, *_LOGIN_FAILED)
         # Password verification and issuance must serialize with activation/credential
@@ -217,8 +214,8 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
                     return {"mfa_required": True, "ticket": ticket,
                             "methods": {"totp": f["totp"], "recovery": f["recovery_remaining"] > 0}}
                 audit(request, "auth.login", actor_id=user["id"], object_kind="user",
-                      object_id=user["id"], result="ok")
-                return _issue(response, user, amr="password", request=request)
+                      object_id=user["id"], result="ok", meta={"remember": remember})
+                return _issue(response, user, amr="password", request=request, persistent=remember)
             # Commit failed-attempt counters and audit before raising the HTTP error.
             # Raising inside this transaction would roll back brute-force protection.
             audit(request, "auth.login", actor_id=(res.get("user") or {}).get("id"),
@@ -240,6 +237,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         distinction exists to prevent.
         """
         pk = request.app.state.passkeys
+        remember = remember_choice(body)
         out = pk.verify(body.get("credential") or {})
         user = ident.get_user(out["user_id"])
         if not user or user["status"] != "active":
@@ -264,7 +262,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         audit(request, "auth.login.passkey", actor_id=user["id"], object_kind="passkey",
               object_id=out["passkey_id"], result="ok",
               meta={"amr": amr, "sign_count_warning": out["sign_count_warning"]})
-        issued = _issue(response, user, amr=amr, request=request)
+        issued = _issue(response, user, amr=amr, request=request, persistent=remember)
         if out["sign_count_warning"]:
             # Surfaced rather than swallowed. It is the protocol's only cloning signal, and it
             # is also routinely zero on synced passkeys — so it is a note, not a refusal.
@@ -277,6 +275,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         raw = (body.get("ticket") or "").strip()
         code = (body.get("code") or "").strip()
         recovery = (body.get("recovery_code") or "").strip()
+        remember = remember_choice(body)
         t = tickets.load(raw)
         if not t:
             # Expired, spent, or out of attempts — all indistinguishable, all mean start again.
@@ -294,10 +293,13 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
             raise ServiceError(401, "ticket_invalid", "验证已超时或失败次数过多，请重新登录")
 
         used_recovery = False
+        # The ticket says which first factor it proved (password, or a code mailed to the
+        # account's address); the session's amr records the pair that actually happened.
+        first = t.get("first_factor") or "password"
         if code and mfa.verify_totp(user["id"], code):
-            amr = "password+totp"
+            amr = f"{first}+totp"
         elif recovery and mfa.use_recovery_code(user["id"], recovery):
-            amr, used_recovery = "password+recovery", True
+            amr, used_recovery = f"{first}+recovery", True
         else:
             ident.backoff_fail(bucket)
             left = TICKET_MAX_ATTEMPTS - used_attempts
@@ -311,7 +313,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
             raise ServiceError(401, "ticket_invalid", "验证已超时，请重新登录")
         audit(request, "auth.login.mfa", actor_id=user["id"], object_kind="user",
               object_id=user["id"], result="ok", meta={"amr": amr})
-        out = _issue(response, user, amr=amr, request=request)
+        out = _issue(response, user, amr=amr, request=request, persistent=remember)
         if used_recovery:
             # Says it plainly: a spent recovery code is one fewer way back in, and the moment
             # someone notices is when they are already in the account and can act on it.
@@ -535,17 +537,39 @@ def _public_user(ident: Identity, user: dict) -> dict:
                             "role": w["role"], "can_export": bool(w["can_export"])} for w in spaces]}
 
 
-def _issue_session(ident: Identity, sessions: Sessions, response: Response, user: dict, *,
-                   amr: str, request: Request) -> dict:
+def remember_choice(body: dict) -> bool:
+    """The "keep me signed in" checkbox. Only a JSON true counts; a string "false" is false."""
+    return body.get("remember") is True
+
+
+def issue_session(ident: Identity, sessions: Sessions, response: Response, user: dict, *,
+                  amr: str, request: Request, persistent: bool = False,
+                  auth_provider: str | None = None, describe=None) -> dict:
+    """Start a central session and set both cookies.
+
+    A remembered session gets cookies with an expiry (bounded by the session's absolute
+    deadline); otherwise they are browser-session cookies. The server-side clocks apply in both
+    cases, so a cookie that outlives its row is simply refused.
+    """
     spaces = ident.workspaces_for(user["id"])
     raw, row = sessions.create(user["id"], workspace_id=spaces[0]["id"] if spaces else None, amr=amr,
                                user_agent=request.headers.get("user-agent"), ip=client_ip(request),
-                               admin=user["platform_role"] == "admin")
+                               admin=user["platform_role"] == "admin", persistent=persistent,
+                               auth_provider=auth_provider)
     secure = cookies_secure()
-    response.set_cookie(COOKIE_NAME, raw, max_age=None, **cookie_kwargs(secure))
-    response.set_cookie(CSRF_COOKIE, new_csrf_token(), httponly=False, secure=secure,
+    max_age = sessions.cookie_max_age(row)
+    response.set_cookie(COOKIE_NAME, raw, max_age=max_age, **cookie_kwargs(secure))
+    # Readable by script on purpose: the page has to echo it in a header. It is not a
+    # credential on its own — it only proves the request came from our own page.
+    response.set_cookie(CSRF_COOKIE, new_csrf_token(), max_age=max_age, httponly=False, secure=secure,
                         samesite="lax", path="/")
-    return {"user": _public_user(ident, user), "session": {"id": row["id"], "amr": amr}}
+    user_view = describe(user, spaces) if describe else _public_user(ident, user)
+    return {"user": user_view, "session": {"id": row["id"], "amr": amr, "persistent": bool(row["persistent"])}}
+
+
+def _issue_session(ident: Identity, sessions: Sessions, response: Response, user: dict, *,
+                   amr: str, request: Request) -> dict:
+    return issue_session(ident, sessions, response, user, amr=amr, request=request)
 
 
 RESET_TTL_H = 2

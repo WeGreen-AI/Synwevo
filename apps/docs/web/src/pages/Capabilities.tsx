@@ -1,6 +1,6 @@
 import { serverText, issueText } from "../lib/presentation";
 import { errorText } from "../lib/perm";
-import { t as tr, useI18n, LanguageMenu } from "@synwevo/ui";
+import { t as tr, useI18n, LanguageMenu, BrandMark } from "@synwevo/ui";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { get } from "@synwevo/auth-client";
@@ -19,7 +19,7 @@ export default function Capabilities() {
     <div className="app">
       <div className="topbar">
         <LanguageMenu />
-        <Link to="/" className="brand"><span className="logo">S</span>Synwevo Docs</Link>
+        <Link to="/" className="brand"><BrandMark product="Docs" /></Link>
         <span className="sep" /><b>{tr("格式能力矩阵")}</b>
       </div>
       <div style={{ overflow: "auto", flex: 1 }}>

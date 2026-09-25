@@ -175,7 +175,7 @@ export default function MappingDialog(p: Props) {
                     {x.varies === "per_record" ? tr("✔ 随样本变化：每份输出读取当前样本对应的值") : x.varies === "fixed" ? tr("● 固定值：同一文件中所有样本使用同一个值") : tr("◆ 随文件变化：每个来源文件在相同位置取值")}
                   </div>
                   {x.sample !== undefined && (
-                    <div className="small">{tr("示例值：")}<span className="mono" style={{ background: "#f3f4f6", padding: "0 4px" }}>{Array.isArray(x.sample) ? (Array.isArray(x.sample[0]) ? x.sample.map((r: any) => r.join(" | ")).join(" ⏎ ") : x.sample.join(" | ")) : String(x.sample) || tr("（空）")}</span></div>
+                    <div className="small">{tr("示例值：")}<span className="mono" style={{ background: "var(--surface-hover)", padding: "0 4px", borderRadius: 3 }}>{Array.isArray(x.sample) ? (Array.isArray(x.sample[0]) ? x.sample.map((r: any) => r.join(" | ")).join(" ⏎ ") : x.sample.join(" | ")) : String(x.sample) || tr("（空）")}</span></div>
                   )}
                 </div>
               </label>

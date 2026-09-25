@@ -102,7 +102,13 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         already signed in with the shared password to a first-run bootstrap screen. Whether the
         account system is active is the server's answer, not something the client can deduce.
         """
-        return public_state(ident, app_role(request))
+        out = public_state(ident, app_role(request))
+        # Which external OpenID providers this account service offers. Only ever the configured
+        # ones (see synwevo_identity.external): a provider without credentials is not listed, so
+        # the sign-in page never shows a button that cannot work.
+        external = getattr(request.app.state, "external", None)
+        out["external_providers"] = external.public() if external is not None else []
+        return out
 
     @r.post("/logout")
     def logout(request: Request, response: Response):

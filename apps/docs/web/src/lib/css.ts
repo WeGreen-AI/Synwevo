@@ -51,6 +51,9 @@ export function highlightColor(v: unknown): string | undefined {
  *  keeps them valid input for hexA(). Anything else becomes the neutral grey of an unmapped field.
  */
 export const MARK_GREY = "#94a3b8";
+/** The find-in-file highlight: amber, so it is never confused with a mapping colour. Part of the
+ *  document marker palette (with the per-slot colours the server assigns), not the shell theme. */
+export const FIND_MARK = "#b45309";
 const MARK_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 
 export function markColor(v: unknown, fallback: string = MARK_GREY): string {

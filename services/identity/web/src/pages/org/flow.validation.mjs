@@ -91,6 +91,7 @@ try {
     assert.ok(!html.includes('fixture-verification-token')); // The bearer token is not rendered in markup.
   });
   const css = await readFile(new URL('./flow.css', import.meta.url), 'utf8');
+  const sharedCss = await readFile(new URL('../../../../../../packages/ui/src/styles.css', import.meta.url), 'utf8');
   check('legacy query and fragment verification links both present explicit confirmation', () => {
     location.hash = ''; location.search = '?token=fixture-legacy-token';
     const html = renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(verify.default)));
@@ -147,6 +148,8 @@ try {
       assert.ok(text.includes('2'), `${locale}: ${text}`); assert.ok(!text.includes('{count}'));
     }
   });
-  check('reduced motion and narrow layouts have explicit scoped rules', () => { assert.match(css, /prefers-reduced-motion:reduce/); assert.match(css, /max-width:760px/); });
+  check('reduced motion comes from the shared design system; narrow layouts have explicit scoped rules', () => {
+    assert.match(sharedCss, /prefers-reduced-motion: reduce/); assert.doesNotMatch(css, /prefers-reduced-motion/); assert.match(css, /max-width:760px/);
+  });
   console.log(`${checks} component/contract validations passed.`);
 } finally { await server.close(); }

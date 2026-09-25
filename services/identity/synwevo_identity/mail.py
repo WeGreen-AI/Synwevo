@@ -354,12 +354,42 @@ class Mailer:
 
 # ---------------------------------------------------------------------- message bodies
 _TOKEN_IN_LINK = re.compile(r"([?&#]token=)[A-Za-z0-9_\-]+")
+# The sign-in code line in every locale's template below: "<label>: 123456".
+_CODE_LINE = re.compile(r"((?:登录验证码|登入驗證碼|Sign-in code)[:：]\s*)\d{6}\b")
 REDACTED = "[已寄出，链接不在库内保留]"
 
 
 def redact(body: str) -> str:
-    """The message with every link token replaced — what the outbox keeps once a mail is done."""
-    return _TOKEN_IN_LINK.sub(lambda m: m.group(1) + REDACTED, body or "")
+    """The message with every link token and sign-in code replaced — what the outbox keeps once
+    a mail is done, and what an operator sees in the queue."""
+    body = _TOKEN_IN_LINK.sub(lambda m: m.group(1) + REDACTED, body or "")
+    return _CODE_LINE.sub(lambda m: m.group(1) + REDACTED, body)
+
+
+def login_code_mail(*, code: str, expires_min: int, locale: str = "zh-Hans") -> tuple[str, str]:
+    """A one-time sign-in code. Deliberately a code rather than a link: nothing a mail scanner
+    can follow, and the person types it into the page they already have open."""
+    if locale == "en":
+        return ("Your Synwevo sign-in code",
+                f"Sign-in code: {code}\n\n"
+                f"Enter this code on the Synwevo sign-in page within {expires_min} minutes. It works once. "
+                "Synwevo will never ask you for it by phone or chat — anyone asking for it is not us.\n\n"
+                "If you did not try to sign in, ignore this message; nobody can use the code without "
+                "also having this mailbox. Replies are not monitored.")
+    if locale == "zh-Hant":
+        return ("你的 Synwevo 登入驗證碼",
+                f"登入驗證碼：{code}\n\n"
+                f"請在 {expires_min} 分鐘內於 Synwevo 登入頁面輸入此驗證碼，僅可使用一次。"
+                "Synwevo 不會透過電話或聊天向你索取驗證碼，任何索取者都不是我們。\n\n"
+                "若非你本人嘗試登入，請忽略這封郵件；沒有這個信箱，任何人都無法使用此驗證碼。請勿直接回覆。")
+    return ("你的 Synwevo 登录验证码",
+            f"""登录验证码：{code}
+
+请在 {expires_min} 分钟内，在 Synwevo 登录页面输入这个验证码。它只能使用一次。
+Synwevo 不会通过电话或聊天向你索要验证码——任何索要验证码的人都不是我们。
+
+如果不是你本人在尝试登录，忽略这封邮件即可：没有这个邮箱，谁也用不了这个验证码。本邮件无需回复。
+""")
 
 
 def _link(path: str, token: str, locale: str = "zh-Hans") -> str:

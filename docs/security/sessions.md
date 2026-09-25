@@ -55,12 +55,37 @@
 | 空闲过期 | 12 小时 | `SYNWEVO_SESSION_IDLE_S` | 最后一次请求之后多久作废 |
 | 绝对过期 | 30 天 | `SYNWEVO_SESSION_ABSOLUTE_S` | 无论多活跃，从创建起多久必须重新登录 |
 | 管理员空闲过期 | 1 小时 | `SYNWEVO_ADMIN_IDLE_S` | 平台管理员的空闲时钟更短 |
+| 「保持登录」空闲过期 | 14 天 | `SYNWEVO_SESSION_PERSISTENT_IDLE_S` | 登录时勾选「在此设备上保持登录」的中央会话；绝对过期不变 |
 
 只有绝对过期能防住"一直有人用着所以永远不过期"的会话。只有空闲过期能让离开的设备自己失效。
 两个都要。
 
 **在读取时执行**是关键：一个已过期的会话行即使还在表里，`Sessions.load()` 也不会返回它。所以
 清理任务的延迟不会变成一个可用的过期会话。
+
+### 2.1 保持登录（记住登录）
+
+登录表单上的「在此设备上保持登录」是一个**明确的、默认不勾选**的选择，只影响两件事：
+
+| 项 | 普通登录 | 勾选「保持登录」 |
+|---|---|---|
+| 空闲过期 | 12 小时 | 14 天（`SYNWEVO_SESSION_PERSISTENT_IDLE_S`） |
+| 绝对过期 | 30 天 | 30 天，**不变** |
+| Cookie | 浏览器会话 Cookie（无 `Max-Age`） | `Max-Age` = 距绝对过期的剩余秒数，`dw_session` 与 `dw_csrf` 同步 |
+| 平台管理员 | 1 小时空闲 | **忽略此选项**：仍是 1 小时空闲、会话 Cookie |
+| 记录 | `sessions.persistent = 0` | `sessions.persistent = 1`，设备列表标记「保持登录」 |
+
+它**不是**：
+
+- 保存口令，或把长期令牌写进 `localStorage`——Cookie 里仍然只有不透明会话值，服务端行才是会话；
+- 降低任何敏感操作的要求——重认证（§5）、第二因素和 `strict` 检查与普通会话完全一样；
+- 「信任此设备、减少 MFA」——本轮没有这种能力，勾选框也不会悄悄变成它；
+- 应用会话的持久化——门户与 Synwevo Docs 的应用会话仍是浏览器会话 Cookie。重开浏览器后应用会
+  经统一登录**静默**续接：账户服务的中央会话还在，`/oidc/authorize` 不再要求输入口令就签发授权码。
+
+只接受 JSON `true`；字符串 `"true"`、`1`、`"on"` 都视为未勾选（`remember_choice()`）。
+服务端行过期后，浏览器里仍在的 Cookie 被 `load()` 拒绝，`/api/auth/me` 返回 401。
+验证：`services/identity/tests/test_remember_me.py`。
 
 ---
 
@@ -119,6 +144,13 @@ CSRF Cookie 可被脚本读取不是漏洞：它本身不是凭据，只证明�
 | `password+recovery` | 口令 + 恢复码 |
 | `passkey` | Passkey，但认证器**只证明了持有** |
 | `passkey_uv` | Passkey，且认证器在这次仪式里**验证了本人**（PIN / 指纹） |
+| `email` | 发到账户邮箱的一次性验证码（证明控制邮箱，**一个因素**） |
+| `email+totp` / `email+recovery` | 邮箱验证码 + 第二因素 |
+| `idp:<provider>` | 外部 OpenID 提供商（如 `idp:google`）登录 |
+| `idp:<provider>+totp` / `+recovery` | 外部提供商 + 第二因素 |
+
+第二步 `/api/auth/login/mfa` 从 MFA 票据的 `first_factor` 得知第一步是什么（`password`、`email`
+或 `idp:<id>`），所以 `amr` 记录的永远是**实际发生的组合**，而不是"口令+TOTP"这一种写法。
 
 **「账户有 Passkey」不是这里面任何一个值。** 需要抗钓鱼且已验证本人的策略查 `passkey_uv`；
 用"账户拥有什么"代替"这次用了什么"是这套区分存在的原因。
@@ -127,6 +159,50 @@ SSO 创建本地会话时，`reauth_at` 取的是**中央认证发生的时间**
 两小时前中央会话的登录，会被记成刚刚重认证。
 
 ---
+
+### 4.4 邮箱验证码登录
+
+`POST /api/auth/login/email/start {email}` → 一律 202、同一响应形状（不说明地址有没有账户）；
+`POST /api/auth/login/email/verify {email, code, remember}`。
+
+| 项 | 值 |
+|---|---|
+| 形式 | 6 位数字**验证码**，不是链接——邮件扫描器点开链接不会替人登录 |
+| 有效期 / 使用次数 | 10 分钟 / 一次；新请求让旧码失效 |
+| 错误尝试 | 每个码 5 次后作废；账户级退避桶与 TOTP 相同 |
+| 限流 | 每来源地址 15 分钟 10 次；每地址（含不存在的地址，按哈希计）每小时 3 次且间隔 ≥ 60 秒 |
+| 存储 | 只存 `sha256(row_id:code)`；发出后 `mail_outbox` 中的正文把验证码替换为占位（`redact()`） |
+| 资格 | 账户 `active` 且邮箱已验证；**平台管理员必须已启用 TOTP**，否则不发码（响应形状不变，审计记录 `admin_requires_totp`） |
+| 第二因素 | 启用 TOTP 的账户在验证码之后仍要完成第二步；不是绕过 MFA 的备用路径 |
+
+验证：`services/identity/tests/test_email_code_login.py`。
+
+### 4.5 外部 OpenID 提供商（Google / Microsoft）
+
+账户服务对外部提供商是**依赖方**，实现与 §4.1 的平台内依赖方同构：授权码 + PKCE S256，`state`、
+`nonce`、verifier 存在 `external_auth_requests` 行里，浏览器只带一个 host-only、10 分钟的
+`dw_extreq` 请求 id；回调时单次消费该行，然后服务端换码（`client_secret` 与 `code_verifier` 在
+请求体里、`trust_env=False`），校验 id_token 的签名（JWKS）、`iss`（Microsoft 多租户按 `tid`
+代入模板）、`aud`/`azp`、`nonce`、`exp`/`iat`、`sub`。
+
+| 情形 | 结果 |
+|---|---|
+| `(provider, sub)` 已关联 | 直接登录（`amr=idp:<id>`）；启用 TOTP 的账户走第二步 |
+| 未关联，提供商**已验证**的邮箱对应现有账户 | **不合并**。写入 10 分钟的关联要约，落到 `/login#offer=…`；输入该账户口令（启用 TOTP 时再加验证码）后才关联并登录 |
+| 未关联，邮箱已验证，无现有账户，注册开放 | 创建已激活、无口令的账户并关联；落到 `/onboarding` |
+| 邮箱未验证 | 不注册、不匹配；提示用口令登录后在账户页关联（按 `sub` 关联，不看邮箱） |
+| 注册未开放 | `registration_closed` |
+| 平台管理员 | 未启用 TOTP 时拒绝（`admin_requires_totp`） |
+
+关联/解除关联在账户页进行，都要求 `scope=mfa` 且 `strict` 的近期重认证；解除关联不能移除账户
+最后一种登录方式（口令、Passkey、其他外部身份至少剩一个）。两者都发安全通知邮件。
+提供商只在配置了 `client_id`/`client_secret` 时出现在登录页（`/api/auth/state.external_providers`）；
+配置不完整的提供商让账户服务在启动时拒绝，而不是显示一个不能用的按钮。
+回调地址固定为 `<SYNWEVO_ISSUER>/auth/external/<id>/callback`。
+
+验证：`services/identity/tests/test_external_identity.py`——用一个**测试用 OpenID 提供商替身**
+（真实 RS256 签名、可注入篡改）覆盖正反用例；它证明 Synwevo 这一侧的检查，不证明与 Google /
+Microsoft 的实际联调。
 
 ## 5. 重认证（reauth）
 

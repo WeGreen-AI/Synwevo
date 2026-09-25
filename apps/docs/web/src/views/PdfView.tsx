@@ -193,7 +193,7 @@ export default function PdfView({ pages, imageUrl, wordsUrl, marks, selection, o
                 <div className="pdf-draw" style={{ left: `${Math.min(draw.x0, draw.x1) * 100}%`, top: `${Math.min(draw.y0, draw.y1) * 100}%`, width: `${Math.abs(draw.x1 - draw.x0) * 100}%`, height: `${Math.abs(draw.y1 - draw.y0) * 100}%` }} />
               )}
             </div>
-            <div style={{ position: "absolute", right: 6, bottom: 4, fontSize: 11, color: "#666", background: "rgba(255,255,255,.8)", padding: "0 4px", borderRadius: 3 }}>
+            <div style={{ position: "absolute", right: 6, bottom: 4, fontSize: 11, color: "var(--text-2)", background: "rgba(255,255,255,.85)", padding: "0 4px", borderRadius: 3 }}>
               {formatNumber(p.index + 1)} / {formatNumber(pages.length)}{p.rotation ? tr(" · 旋转 {v1}°", { v1: p.rotation }) : ""}{p.kind === "scanned" ? tr(" · 扫描页") : ""}
               <label style={{ marginLeft: 6 }}><input type="checkbox" checked={showWords} onChange={(e) => setShowWords(e.target.checked)} style={{ verticalAlign: -2 }} />{tr(" 文字层")}</label>
             </div>

@@ -41,7 +41,7 @@ export default function TextView({ lines, marks, selection, onSelect, focusKey, 
                 const inSel = sel && sel.start <= s0 && sel.end >= e0;
                 return (
                   <span key={k} data-off={s0} data-mark={m && (m.pos as any).start === s0 ? `${m.role}:${m.id}` : undefined}
-                    style={{ background: inSel ? "rgba(37,99,235,.2)" : m ? hexA(markColor(m.color), 0.18) : undefined, borderBottom: m ? `2px solid ${markColor(m.color)}` : undefined }}>
+                    style={{ background: inSel ? "color-mix(in srgb, var(--accent) 20%, transparent)" : m ? hexA(markColor(m.color), 0.18) : undefined, borderBottom: m ? `2px solid ${markColor(m.color)}` : undefined }}>
                     {ln.slice(s0, e0)}
                   </span>
                 );

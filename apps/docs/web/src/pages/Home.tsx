@@ -1,4 +1,4 @@
-import { formatNumber, LanguageMenu } from "@synwevo/ui";
+import { formatNumber, LanguageMenu, BrandMark } from "@synwevo/ui";
 import { serverText, issueText } from "../lib/presentation";
 import { t as tr, useI18n } from "@synwevo/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -138,7 +138,7 @@ export default function Home() {
             at 375px it wrapped to three lines and pushed the top bar over its own content.
             Every other page already shows just the product name there. */}
         <span className="brand">
-          <span className="logo" aria-hidden="true">S</span>Synwevo Docs
+          <BrandMark product="Docs" />
           <span className="desktop-only">{tr(" · 数据映射与模板批量生成")}</span>
         </span>
         <span className="spacer" />

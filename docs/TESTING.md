@@ -17,6 +17,7 @@ python scripts/platform.py setup                      # 或手动：.venv/bin/pi
 .venv/bin/python -m pytest services/identity/tests  # 只跑账户服务
 .venv/bin/python -m pytest tests/integration        # 只跑跨模块验证
 .venv/bin/python scripts/check_boundaries.py        # 模块依赖边界
+.venv/bin/python scripts/check_design.py            # 统一白蓝设计系统：颜色只来自共享令牌，无私有色板/深色残留
 npm test --workspaces --if-present                 # 语言资源、UI/会话/二进制请求竞态及账户组件契约
 ```
 

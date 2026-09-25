@@ -2,6 +2,7 @@ import { registerMessages } from "@synwevo/ui";
 
 registerMessages({
   "账户导航": { en: "Account navigation", "zh-Hant": "帳戶導覽" },
+  "返回平台首页": { en: "Back to platform home", "zh-Hant": "返回平台首頁" },
   "账户与安全": { en: "Account & security", "zh-Hant": "帳戶與安全" },
   "组织": { en: "Organizations", "zh-Hant": "組織" },
   "平台管理": { en: "Platform management", "zh-Hant": "平台管理" },

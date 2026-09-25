@@ -3710,17 +3710,9 @@ export const messages = {
     "en": "Reset zoom to 100%",
     "zh-Hant": "縮放恢復 100%"
   },
-  "外观": {
-    "en": "Appearance",
-    "zh-Hant": "外觀"
-  },
-  "界面主题：{v1} → {v2}": {
-    "en": "Theme: {v1} → {v2}",
-    "zh-Hant": "界面主題：{v1} → {v2}"
-  },
-  "不影响文档纸张与导出颜色": {
-    "en": "Document paper and export colors are unaffected",
-    "zh-Hant": "不影響文檔紙張與導出顏色"
+  "帮助": {
+    "en": "Help",
+    "zh-Hant": "說明"
   },
   "显示键盘快捷键": {
     "en": "Show keyboard shortcuts",
@@ -3789,10 +3781,6 @@ export const messages = {
   "回归用例": {
     "en": "Regression cases",
     "zh-Hant": "回歸用例"
-  },
-  "界面主题：{v1}": {
-    "en": "Theme: {v1}",
-    "zh-Hant": "界面主題：{v1}"
   },
   "👁 预览": {
     "en": "👁 Preview",

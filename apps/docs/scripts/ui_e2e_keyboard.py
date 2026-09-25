@@ -5,7 +5,7 @@ E. Command palette (⌘K/Ctrl+K): opens, filters, runs a real action; Esc closes
 F. Mapping list as a listbox: ↑↓/J K move and highlight, X multi-selects, Shift extends,
    ⌘A selects all without selecting page text, D bulk-disables through the real save,
    ⌘Z undoes the whole bulk change.
-G. Theme: light/dark switch changes the chrome but never the document paper.
+G. Theme: one white-blue theme; stored dark/system preferences and OS dark mode change nothing, paper stays white.
 H. Layout memory and the ? shortcut sheet; reduced-motion is honoured.
 
 Runs against an existing project created by this script, so it does not depend on
@@ -146,42 +146,42 @@ def flow_list(page: Page, pid: str):
     assert back["rev"] == before["rev"], (before["rev"], back["rev"])
 
 
-# ---------------------------------------------------------------- G: theme vs paper
+# ---------------------------------------------------------------- G: one theme, paper untouched
 def flow_theme(page: Page, pid: str):
+    """The platform ships one white-blue theme. A preference left behind by an older build (light,
+    dark or system, under the new or the pre-rebrand key) must neither throw nor bring the old
+    palette back, and the document paper stays white in every case."""
     page.goto(f"{BASE}/p/{pid}")
     expect(page.locator(".pane.right .doc-page")).to_be_visible(timeout=20000)
     read = """() => {
       const bg = (s) => { const e = document.querySelector(s); return e ? getComputedStyle(e).backgroundColor : null; };
-      return { theme: document.documentElement.dataset.theme, topbar: bg('.topbar'), paper: bg('.doc-page'), cell: bg('.gcell') };
+      return { theme: document.documentElement.dataset.theme, scheme: getComputedStyle(document.documentElement).colorScheme,
+               topbar: bg('.topbar'), paper: bg('.doc-page'), cell: bg('.gcell') };
     }"""
+    baseline = page.evaluate(read)
+    assert baseline["theme"] == "light", baseline
+    assert baseline["topbar"] == "rgb(255, 255, 255)", baseline
+    assert baseline["paper"] == "rgb(255, 255, 255)", baseline
 
-    # The app writes `synwevo.theme` on every load, so that is the key that decides the theme.
-    # (Writing the pre-rebrand `docweave.theme` here used to be silently ignored after the first
-    # load, and the "light" step passed only because headless Chrome defaults to light.)
-    page.evaluate("() => { localStorage.setItem('synwevo.theme', JSON.stringify('light')); location.reload(); }")
+    for key, value in (("synwevo.theme", "dark"), ("synwevo.theme", "system"), ("docweave.theme", "dark")):
+        page.evaluate("([k, v]) => { localStorage.removeItem('synwevo.theme'); localStorage.removeItem('docweave.theme'); "
+                      "localStorage.setItem(k, JSON.stringify(v)); location.reload(); }", [key, value])
+        expect(page.locator(".pane.right .doc-page")).to_be_visible(timeout=20000)
+        got = page.evaluate(read)
+        assert got["theme"] == "light", (key, value, got)
+        assert got["scheme"] == "light", (key, value, got)
+        assert got["topbar"] == baseline["topbar"], (key, value, got)
+        assert got["paper"] == baseline["paper"] == "rgb(255, 255, 255)", (key, value, got)
+        assert got["cell"] == baseline["cell"], (key, value, got)
+
+    # System dark mode is not a theme switch either: emulate it and the chrome must not change.
+    page.emulate_media(color_scheme="dark")
+    page.reload()
     expect(page.locator(".pane.right .doc-page")).to_be_visible(timeout=20000)
-    light = page.evaluate(read)
-    assert light["theme"] == "light", light
-
-    page.evaluate("() => { localStorage.setItem('synwevo.theme', JSON.stringify('dark')); location.reload(); }")
-    expect(page.locator(".pane.right .doc-page")).to_be_visible(timeout=20000)
-    dark = page.evaluate(read)
-    assert dark["theme"] == "dark", dark
-    assert dark["topbar"] != light["topbar"], "深色主题应改变界面外壳"
-    assert dark["paper"] == light["paper"] == "rgb(255, 255, 255)", (light, dark)
-    assert dark["cell"] == light["cell"], (light["cell"], dark["cell"])
-
-    # The one place the legacy key still matters: with no new key present, a preference saved
-    # by the pre-rebrand build is carried forward rather than reset.
-    page.evaluate("() => { localStorage.removeItem('synwevo.theme'); "
-                  "localStorage.setItem('docweave.theme', JSON.stringify('dark')); location.reload(); }")
-    expect(page.locator(".pane.right .doc-page")).to_be_visible(timeout=20000)
-    carried = page.evaluate(read)
-    assert carried["theme"] == "dark", carried
-    assert page.evaluate("localStorage.getItem('synwevo.theme')") == '"dark"', "旧键的值应被写到新键下"
-
-    page.evaluate("() => { localStorage.removeItem('docweave.theme'); "
-                  "localStorage.setItem('synwevo.theme', JSON.stringify('system')); }")
+    forced = page.evaluate(read)
+    assert forced["topbar"] == baseline["topbar"] and forced["paper"] == "rgb(255, 255, 255)", forced
+    page.emulate_media(color_scheme="light")
+    page.evaluate("() => { localStorage.removeItem('docweave.theme'); localStorage.removeItem('synwevo.theme'); }")
 
 
 # ---------------------------------------------------------------- H: remembered layout + reduced motion
@@ -227,7 +227,7 @@ def main():
             page.on("pageerror", lambda e: errors.append(str(e)))
             pid = build_project(page)
             for name, fn in (("E 命令面板", flow_palette), ("F 列表键盘与批量", flow_list),
-                             ("G 主题与纸张", flow_theme), ("H 布局记忆与减少动效", flow_layout)):
+                             ("G 单一主题与纸张", flow_theme), ("H 布局记忆与减少动效", flow_layout)):
                 t = time.time()
                 fn(page, pid)
                 print(f"  {name}: ok ({time.time() - t:.1f}s)")

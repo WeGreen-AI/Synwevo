@@ -75,7 +75,7 @@ export default function SlidesView({ data, marks, selection, onSelect, side, zoo
                     <table><tbody>{sh.rows.map((row: any[], ri: number) => (
                       <tr key={ri}>{row.map((c: any, ci: number) => c.hmerge || c.vmerge ? null : (
                         <td key={ci} colSpan={c.span > 1 ? c.span : undefined} rowSpan={c.rspan > 1 ? c.rspan : undefined} data-slide={s.index} data-shape={sh.id} data-row={ri} data-col={ci}
-                          style={{ background: selection?.kind === "pptx_cell" && selection.shape === String(sh.id) && selection.row === ri && selection.col === ci ? hexA("#2563eb", 0.15) : undefined }}>
+                          style={{ background: selection?.kind === "pptx_cell" && selection.shape === String(sh.id) && selection.row === ri && selection.col === ci ? "color-mix(in srgb, var(--accent) 15%, transparent)" : undefined }}>
                           {selectable && side === "tpl" && ci === 0 && <button type="button" className="btn xs" style={{ float: "left", marginRight: 2 }} title={tr("选择整行")} aria-label={tr("选择表格第 {v1} 行", { v1: ri + 1 })}
                             onMouseUp={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onSelect({ kind: "pptx_row", slide: s.index, shape: String(sh.id), row: ri }); }}>≡</button>}
                           {c.paras.map((p: any) => p.text).join("\n")}

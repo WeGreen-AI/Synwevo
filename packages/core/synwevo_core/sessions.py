@@ -42,6 +42,10 @@ REAUTH_SCOPES = ("mfa", "admin")
 # Defaults chosen for a document tool people keep open while they work; overridable per deployment.
 IDLE_SECONDS = int(env.get("SESSION_IDLE_S", str(12 * 3600)))
 ABSOLUTE_SECONDS = int(env.get("SESSION_ABSOLUTE_S", str(30 * 24 * 3600)))
+# "Keep me signed in": a longer idle window and a persistent cookie. The absolute clock is the
+# same — remembering a device never turns into a session that cannot expire. Platform
+# administrators keep their short leash: the option is accepted and ignored for them.
+PERSISTENT_IDLE_SECONDS = int(env.get("SESSION_PERSISTENT_IDLE_S", str(14 * 24 * 3600)))
 # Sudo-style window. Long enough to finish a settings page, short enough that walking away ends it.
 REAUTH_SECONDS = int(env.get("REAUTH_S", str(10 * 60)))
 # Admin sessions get a shorter leash than ordinary ones — §4.2 of docs/security/permissions.md.
@@ -62,20 +66,27 @@ class Sessions:
     def create(self, user_id: str, *, workspace_id: str | None, amr: str,
                user_agent: str | None = None, ip: str | None = None,
                admin: bool = False, oidc_sid: str | None = None,
-               central_session_id: str | None = None, auth_time: float | None = None) -> tuple[str, dict]:
+               central_session_id: str | None = None, auth_time: float | None = None,
+               persistent: bool = False, auth_provider: str | None = None) -> tuple[str, dict]:
         """Return (cookie value, row). The caller sets the cookie; the raw value is never stored.
 
         Always called *after* authentication succeeds and never reuses an id the client supplied,
         so a session fixed in advance by an attacker cannot be promoted into an authenticated one.
+
+        `persistent` is the person's "keep me signed in" choice: a longer idle window and, at the
+        caller, a cookie with an expiry instead of a browser-session cookie. It is ignored for
+        platform administrators, whose idle limit stays short by policy.
         """
         raw = secrets.token_urlsafe(32)
         sid = _digest(raw)
         ts = now()
-        idle = ADMIN_IDLE_SECONDS if admin else IDLE_SECONDS
+        persistent = bool(persistent) and not admin
+        idle = ADMIN_IDLE_SECONDS if admin else (PERSISTENT_IDLE_SECONDS if persistent else IDLE_SECONDS)
         row = {
             "id": sid, "user_id": user_id, "workspace_id": workspace_id,
             "created_at": ts, "last_seen_at": ts,
-            "idle_expires_at": ts + idle, "absolute_expires_at": ts + ABSOLUTE_SECONDS,
+            "idle_expires_at": ts + min(idle, ABSOLUTE_SECONDS), "absolute_expires_at": ts + ABSOLUTE_SECONDS,
+            "persistent": 1 if persistent else 0, "auth_provider": auth_provider,
             # A fresh login is itself a recent authentication, scoped to nothing in particular.
             # For a session created by SSO, `auth_time` is when the *central* authentication
             # actually happened. Taking "now" instead would let a sign-in that only replayed an
@@ -87,11 +98,24 @@ class Sessions:
         with self.store.tx() as t:
             t.execute(
                 "INSERT INTO sessions (id,user_id,workspace_id,created_at,last_seen_at,idle_expires_at,"
-                "absolute_expires_at,reauth_at,reauth_scope,amr,user_agent,ip,oidc_sid,central_session_id) "
+                "absolute_expires_at,reauth_at,reauth_scope,amr,user_agent,ip,oidc_sid,central_session_id,"
+                "persistent,auth_provider) "
                 "VALUES (:id,:user_id,:workspace_id,:created_at,:last_seen_at,:idle_expires_at,"
                 ":absolute_expires_at,:reauth_at,:reauth_scope,:amr,:user_agent,:ip,:oidc_sid,"
-                ":central_session_id)", row)
+                ":central_session_id,:persistent,:auth_provider)", row)
         return raw, row
+
+    @staticmethod
+    def cookie_max_age(row: dict) -> int | None:
+        """How long the cookie for this session may live in the browser.
+
+        A remembered session gets a cookie that survives closing the browser, bounded by the
+        session's own absolute deadline so the two can never disagree. Everything else is a
+        browser-session cookie (no Max-Age): the server-side clocks still apply either way.
+        """
+        if not row.get("persistent"):
+            return None
+        return max(60, int(row["absolute_expires_at"] - now()))
 
     def load(self, raw_cookie: str | None, *, touch: bool = True) -> dict | None:
         """The live session for this cookie, or None. Expiry is enforced here, on read.
@@ -198,8 +222,8 @@ class Sessions:
         """
         ts = now()
         rows = self.store.all(
-            "SELECT id,created_at,last_seen_at,idle_expires_at,absolute_expires_at,amr,user_agent,ip "
-            "FROM sessions WHERE user_id=? AND revoked_at IS NULL "
+            "SELECT id,created_at,last_seen_at,idle_expires_at,absolute_expires_at,amr,user_agent,ip,"
+            "persistent,auth_provider FROM sessions WHERE user_id=? AND revoked_at IS NULL "
             "AND idle_expires_at>? AND absolute_expires_at>? ORDER BY last_seen_at DESC",
             (user_id, ts, ts))
         out = []
@@ -208,7 +232,8 @@ class Sessions:
                         "created_at": r["created_at"], "last_seen_at": r["last_seen_at"],
                         "expires_at": min(r["idle_expires_at"], r["absolute_expires_at"]),
                         "amr": r["amr"], "client": describe_client(r["user_agent"]),
-                        "ip": r["ip"] or None})
+                        "ip": r["ip"] or None, "persistent": bool(r.get("persistent")),
+                        "auth_provider": r.get("auth_provider")})
         return out
 
     def sweep(self, older_than_s: float = 7 * 24 * 3600) -> int:

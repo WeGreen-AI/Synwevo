@@ -251,14 +251,19 @@ class Tickets:
     def _digest(raw: str) -> str:
         return hashlib.sha256((raw or "").encode("utf-8")).hexdigest()
 
-    def issue(self, user_id: str, *, user_agent: str | None = None, ip: str | None = None) -> str:
+    def issue(self, user_id: str, *, user_agent: str | None = None, ip: str | None = None,
+              first_factor: str = "password") -> str:
         # Dead tickets are reclaimed here, on the path that creates them: the sweep existed but
         # nothing ever called it, so every password-correct sign-in left a row behind for good.
         self.sweep()
+        if first_factor not in ("password", "email") and not first_factor.startswith("idp:"):
+            raise ValueError(f"unknown first factor {first_factor!r}")
         raw = secrets.token_urlsafe(32)
         self.store.execute(
-            "INSERT INTO mfa_tickets (id,user_id,created_at,expires_at,user_agent,ip) VALUES (?,?,?,?,?,?)",
-            (self._digest(raw), user_id, now(), now() + TICKET_TTL_S, (user_agent or "")[:300], (ip or "")[:64]))
+            "INSERT INTO mfa_tickets (id,user_id,created_at,expires_at,user_agent,ip,first_factor) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (self._digest(raw), user_id, now(), now() + TICKET_TTL_S, (user_agent or "")[:300],
+             (ip or "")[:64], first_factor))
         return raw
 
     def load(self, raw: str) -> dict | None:

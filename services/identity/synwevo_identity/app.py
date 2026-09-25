@@ -92,6 +92,10 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.include_router(build_auth_router(identity, sessions, audit, mfa, tickets))
     api.include_router(build_invite_router(identity, sessions, invites, mailer, audit))
     api.include_router(build_mfa_router(identity, sessions, mfa, audit))
+    from .email_login import build_router as build_email_login_router
+    from synwevo_auth_client.session_routes import describe_user
+    api.include_router(build_email_login_router(identity, sessions, mailer, mfa, tickets, audit,
+                                                describe=describe_user))
     api.include_router(build_recovery_router(identity, sessions, invites, mailer, mfa, audit))
     from .registration import build_router as build_registration_router
     api.include_router(build_registration_router(identity, sessions, invites, mailer, audit))
@@ -102,6 +106,13 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.include_router(build_organization_router(store, identity, sessions, audit, invites, mailer))
     api.include_router(build_api_platform_router(store, identity, sessions, audit, adapter=control_plane))
     api.include_router(build_passkey_router(identity, sessions, passkeys, audit))
+    # External OpenID providers: configured ones are validated here, at start-up, so a half
+    # configured provider is a refusal to start rather than a button that fails at sign-in.
+    from .external import ExternalIdentities, build_router as build_external_router, load_providers
+    external = ExternalIdentities(store, load_providers())
+    api.state.external = external
+    api.include_router(build_external_router(store, identity, sessions, external, mfa, tickets, mailer, audit,
+                                             describe=describe_user))
 
     # Registered before any SPA catch-all so /oidc/* and /.well-known/* reach real handlers
     # instead of being served the shell.

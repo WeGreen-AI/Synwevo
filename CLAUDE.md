@@ -37,6 +37,7 @@ one set of rules, not two:
 .venv/bin/python -m pytest                    # all three suites (from the repository root)
 .venv/bin/python scripts/check_boundaries.py
 .venv/bin/python scripts/check_brand.py
+.venv/bin/python scripts/check_design.py         # 统一白蓝设计系统：颜色只来自共享令牌
 npm run typecheck && npm run build
 ```
 

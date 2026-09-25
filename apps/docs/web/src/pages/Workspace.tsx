@@ -1,4 +1,4 @@
-import { formatNumber, LanguageMenu } from "@synwevo/ui";
+import { formatNumber, LanguageMenu, BrandMark } from "@synwevo/ui";
 import { DownloadLink } from "../components/ApiResource";
 import { serverText, issueText, diagnosticText } from "../lib/presentation";
 import { t as tr, useI18n } from "@synwevo/ui";
@@ -8,10 +8,10 @@ import { ApiError, del, get, patch, post, put, qs, useSession } from "@synwevo/a
 import { describeSelection, mappingSlots, slotPos } from "../lib/describe";
 import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, TemplateDetail } from "../lib/types";
 import { anyModalOpen, isImeKey, Modal, useDialog, useToast } from "@synwevo/ui";
-import { applyTheme, nextTheme, recall, remember, storedTheme, THEME_NAME, type Theme } from "@synwevo/ui";
+import { recall, remember } from "@synwevo/ui";
 import { jobStatus, ruleMode } from "../lib/status";
 import { errorText, isPermissionError, NO_EXPORT_TEXT, permissions, READ_ONLY_TEXT } from "../lib/perm";
-import { markColor } from "../lib/css";
+import { markColor, FIND_MARK } from "../lib/css";
 import AnyView from "../components/AnyView";
 import CommandPalette, { Command } from "../components/CommandPalette";
 import Shortcuts from "../components/Shortcuts";
@@ -94,7 +94,6 @@ function Workspace() {
   const [sideW, setSideW] = useState(() => recall("sideW", 0));
   const [cmdOpen, setCmdOpen] = useState(false);
   const [help, setHelp] = useState(false);
-  const [theme, setTheme] = useState<Theme>(() => storedTheme());
   const [focusL, setFocusL] = useState<string | null>(null);
   const [focusR, setFocusR] = useState<string | null>(null);
   const [gridFocusL, setGridFocusL] = useState<any>(null);
@@ -380,7 +379,7 @@ function Workspace() {
     const fh = find?.hits[find.idx];
     if (fh) {
       const pos: any = fh.kind === "cells" ? { kind: "cells", sheet: fh.sheet, r1: fh.r, c1: fh.c, r2: fh.r, c2: fh.c } : fh.kind === "pptx" ? { kind: "pptx", slide: fh.slide, shape: fh.shape } : fh;
-      out.push({ id: "__find", color: "#f59e0b", role: "src", pos, active: true, label: tr("查找结果：{v1}", { v1: fh.text }) });
+      out.push({ id: "__find", color: FIND_MARK, role: "src", pos, active: true, label: tr("查找结果：{v1}", { v1: fh.text }) });
     }
     for (const m of mappings) {
       (locate[m.id] || []).forEach((r, i) => {
@@ -626,7 +625,6 @@ function Workspace() {
   const canMap = !!(leftSel && selectedSlot && file && !relocate);
   const rawRight = rightSel && rightSel.kind !== "slot" ? rightSel : null;
   const lastJob = project.jobs?.[0];
-  const setThemeTo = (t: Theme) => { setTheme(t); applyTheme(t); };
   const activeMapping = activeMap ? mappings.find((m) => m.id === activeMap) || null : null;
   const editMapping = (m: Mapping) => {
     const s = mappingSlots(m, slots)[0];
@@ -679,8 +677,7 @@ function Workspace() {
     { id: "lines", group: tr("面板"), label: lines ? tr("隐藏映射连线") : tr("显示映射连线"), run: () => setLines(!lines) },
     { id: "width", group: tr("面板"), label: tr("恢复默认布局宽度"), disabled: !leftW && !sideW, run: () => { setLeftW(0); remember("leftW", 0); setSideW(0); setTick((t) => t + 1); } },
     { id: "zoom-reset", group: tr("面板"), label: tr("缩放恢复 100%"), disabled: zoomL === 1 && zoomR === 1, run: () => { setZoomL(1); setZoomR(1); } },
-    { id: "theme", group: tr("外观"), label: tr("界面主题：{v1} → {v2}", { v1: tr(THEME_NAME[theme]), v2: tr(THEME_NAME[nextTheme(theme)]) }), hint: tr("不影响文档纸张与导出颜色"), run: () => setThemeTo(nextTheme(theme)) },
-    { id: "help", group: tr("外观"), label: tr("显示键盘快捷键"), keys: singleKeys ? "?" : undefined, run: () => setHelp(true) },
+    { id: "help", group: tr("帮助"), label: tr("显示键盘快捷键"), keys: singleKeys ? "?" : undefined, run: () => setHelp(true) },
     ...(ro ? [] : [
       { id: "regression", group: tr("更多"), label: tr("保存为回归用例…"), disabled: !tpl || !rule.mode, run: () => setDialog({ kind: "regression" }) },
       { id: "desensitize", group: tr("更多"), label: tr("生成脱敏副本…"), disabled: !sources.length, run: () => setDialog({ kind: "desensitize" }) },
@@ -702,7 +699,7 @@ function Workspace() {
     <div className="app">
       {/* ---------------------------------------------------------------- top bar */}
       <div className="topbar">
-        <Link to="/" className="brand" title={tr("项目列表")}><span className="logo">S</span><span className="desktop-only">Synwevo Docs</span></Link>
+        <Link to="/" className="brand" title={tr("项目列表")}><BrandMark product="Docs" hideTextOnMobile /></Link>
         <LanguageMenu />
         <span className="sep" />
         <ProjectName key={project.name} name={project.name} readOnly={ro}
@@ -728,7 +725,6 @@ function Workspace() {
           ]),
           { label: tr("回归用例"), onClick: () => nav("/regression") },
           { label: tr("格式能力矩阵"), onClick: () => window.open("/capabilities", "_blank") },
-          { label: tr("界面主题：{v1}", { v1: tr(THEME_NAME[theme]) }), onClick: () => setThemeTo(nextTheme(theme)) },
           { label: tr("键盘快捷键"), onClick: () => setHelp(true) },
           { label: tr("关于与许可"), onClick: () => window.open("/about", "_blank") },
         ]} />

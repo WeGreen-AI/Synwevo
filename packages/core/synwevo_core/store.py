@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -530,6 +530,63 @@ V5_COLUMNS = [
 ]
 
 # v6 extends account preferences and onboarding without changing existing identity or tenant IDs.
+# v7: remember-me sessions, one-time e-mail sign-in codes, external identity providers.
+SCHEMA_V7 = """
+CREATE TABLE IF NOT EXISTS login_codes (
+  -- A six-digit code mailed to the account's address. Stored hashed with the row id as salt, so
+  -- a database read cannot be replayed as a sign-in; attempts are counted on the row and the
+  -- code dies after LOGIN_CODE_MAX_ATTEMPTS whether or not anyone comes back.
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL,
+  attempts INTEGER NOT NULL DEFAULT 0, ip TEXT, user_agent TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_login_codes_user ON login_codes(user_id, used_at);
+
+CREATE TABLE IF NOT EXISTS external_identities (
+  -- Link between a Synwevo account and an identity at an external OpenID provider. The link is
+  -- (provider, subject): the provider's stable identifier, never the e-mail string, which can
+  -- change hands or be spoofed at providers that do not verify it.
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+  provider TEXT NOT NULL, subject TEXT NOT NULL, issuer TEXT NOT NULL,
+  email TEXT, email_verified INTEGER NOT NULL DEFAULT 0, display_name TEXT,
+  created_at REAL NOT NULL, last_used_at REAL,
+  UNIQUE (provider, subject)
+);
+CREATE INDEX IF NOT EXISTS ix_extid_user ON external_identities(user_id);
+
+CREATE TABLE IF NOT EXISTS external_auth_requests (
+  -- One outbound authorization request: state, nonce and PKCE verifier live here, on the
+  -- server, and the browser carries only an opaque request id. purpose 'link' attaches the
+  -- result to an already signed-in account; 'login' signs in or registers.
+  id TEXT PRIMARY KEY, provider TEXT NOT NULL,
+  state_hash TEXT NOT NULL UNIQUE, nonce TEXT NOT NULL, code_verifier TEXT NOT NULL,
+  next_path TEXT NOT NULL, purpose TEXT NOT NULL CHECK (purpose IN ('login','link')),
+  link_user_id TEXT, link_session_id TEXT, locale TEXT, remember INTEGER NOT NULL DEFAULT 0,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS external_link_offers (
+  -- An external identity whose verified e-mail matches an existing account that is not yet
+  -- linked. Nothing is merged on the strength of the e-mail alone: the person proves the
+  -- existing account (password, and any second factor) and only then is the link written.
+  id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL, provider TEXT NOT NULL, subject TEXT NOT NULL, issuer TEXT NOT NULL,
+  email TEXT, email_verified INTEGER NOT NULL DEFAULT 0, display_name TEXT,
+  next_path TEXT NOT NULL, remember INTEGER NOT NULL DEFAULT 0,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
+);
+"""
+
+V7_COLUMNS = [
+    # A remembered ("keep me signed in") session: longer idle window, persistent cookie.
+    ("sessions", "persistent", "INTEGER NOT NULL DEFAULT 0"),
+    # Which first factor the ticket proved (password or e-mail code); the final amr is built from it.
+    ("mfa_tickets", "first_factor", "TEXT NOT NULL DEFAULT 'password'"),
+    # Which linked provider signed this session in, for the device list.
+    ("sessions", "auth_provider", "TEXT"),
+]
+
 V6_COLUMNS = [
     ("rp_auth_requests", "workspace_id", "TEXT"),
     ("users", "locale", "TEXT NOT NULL DEFAULT 'zh-Hans'"),
@@ -698,6 +755,7 @@ class Store:
             c.executescript(SCHEMA_V2)
             c.executescript(SCHEMA_V4)
             c.executescript(SCHEMA_V5)
+            c.executescript(SCHEMA_V7)
             with self.tx() as t:
                 for table, col, decl in V2_COLUMNS + V3_COLUMNS:
                     have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -708,6 +766,7 @@ class Store:
         c.executescript(SCHEMA_V2)                   # new tables of the current version (idempotent)
         c.executescript(SCHEMA_V4)
         c.executescript(SCHEMA_V5)
+        c.executescript(SCHEMA_V7)
         from .api_platform import SCHEMA_SQL as API_PLATFORM_SCHEMA
         c.executescript(API_PLATFORM_SCHEMA)
         c.executescript("""
@@ -721,7 +780,7 @@ class Store:
         from .organizations import SCHEMA_SQL as ORGANIZATION_SCHEMA, V6_COLUMNS as ORGANIZATION_COLUMNS
         c.executescript(ORGANIZATION_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + ORGANIZATION_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + ORGANIZATION_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

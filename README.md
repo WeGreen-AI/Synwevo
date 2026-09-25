@@ -68,6 +68,7 @@ python scripts/platform.py down / restart / status / logs <服务> [-n 200]
 python scripts/platform.py test [docs|identity|integration|all]
 python scripts/check_boundaries.py                            # 模块依赖边界
 python scripts/check_brand.py                                 # 旧品牌残留分类审计
+python scripts/check_design.py                                # 统一白蓝设计系统守卫：颜色只来自共享令牌
 python scripts/platform.py backup                             # 一致性备份
 python scripts/platform.py verify-restore <归档>              # 恢复演练（隔离副本）
 npm run build        # 三个前端外壳       npm run typecheck

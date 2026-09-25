@@ -1,5 +1,8 @@
 # 进度记录（用于接续）
 
+最后更新：2026-09-25（统一白蓝设计系统与多种登录方式轮，Claude Code）。本轮实现、证据与边界以 [handoff.md](handoff.md) 顶部一节为准；
+CI/CD 与线上状态以 [deployment.md](deployment.md) 为准。设计系统契约在 [design.md](../design.md)，守卫为 `scripts/check_design.py`。
+
 最后更新：2026-09-25。本轮本机账户/组织/API 台/三语言产品已完成关键流程集成验收；具体实现、通过/失败/跳过记录及未验证边界以 [handoff.md](handoff.md) 为单一状态。
 用户随后明确授权部署。平台首页已改为工作流程自动化主题，Docs 为独立应用区；`main` 代码 `1a48359` 已通过 CI 并部署，线上开放注册生效。
 CI/CD、备份和线上验证的当前状态统一记录在 [deployment.md](deployment.md)，不把本机验收当作线上验收。

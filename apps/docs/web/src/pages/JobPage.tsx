@@ -1,4 +1,4 @@
-import { formatNumber } from "@synwevo/ui";
+import { formatNumber, BrandMark } from "@synwevo/ui";
 import { DownloadLink } from "../components/ApiResource";
 import { serverText, issueText } from "../lib/presentation";
 import { t as tr, useI18n, LanguageMenu } from "@synwevo/ui";
@@ -133,7 +133,7 @@ function Job() {
     <div className="app">
       <div className="topbar">
         <LanguageMenu />
-        <Link to="/" className="brand" aria-label={tr("Synwevo Docs 首页")}><span className="logo" aria-hidden="true">S</span><span className="desktop-only">Synwevo Docs</span></Link>
+        <Link to="/" className="brand" aria-label={tr("Synwevo Docs 首页")}><BrandMark product="Docs" hideTextOnMobile /></Link>
         <span className="sep" />
         <Link to={`/p/${pid}`} className="btn ghost sm">{tr("← 返回项目")}</Link>
         <span className="grow ellipsis"><b>{tr("生成任务")}</b> <span className="muted small mono">{job.id}</span></span>

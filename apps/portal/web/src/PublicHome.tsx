@@ -19,7 +19,7 @@ export function PublicHome({ signedIn, registerUrl: registerBase }: { signedIn: 
     <a className="pt-nav-detail" href="#workflow">{t("工作流程")}</a>
     <a className="pt-nav-detail" href="#applications">{t("平台应用")}</a>
     <a className="pt-link" href={signedIn ? "/workspace" : signInUrl}>{t(signedIn ? "进入工作空间" : "登录")}</a>
-    {!signedIn && <a className="pt-btn pt-btn-primary pt-nav-register" href={registerUrl}>{t("注册账户")}</a>}
+    {!signedIn && <a className="btn primary pt-nav-register" href={registerUrl}>{t("注册账户")}</a>}
   </>}>
     <section className="pt-hero" aria-labelledby="pt-hero-title">
       <div className="pt-hero-copy">
@@ -27,7 +27,7 @@ export function PublicHome({ signedIn, registerUrl: registerBase }: { signedIn: 
         <h1 id="pt-hero-title">{t("把重复的工作，")}<span>{t("交给流程。")}</span></h1>
         <p className="pt-hero-lead">{t("连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。")}</p>
         <div className="pt-actions">
-          <a className="pt-btn pt-btn-primary pt-btn-large" href={signedIn ? "/workspace" : registerUrl}>{t(signedIn ? "进入工作空间" : "创建你的账户")} <span aria-hidden="true">↗</span></a>
+          <a className="btn primary lg" href={signedIn ? "/workspace" : registerUrl}>{t(signedIn ? "进入工作空间" : "创建你的账户")} <span aria-hidden="true">↗</span></a>
           <a className="pt-text-action" href="#workflow">{t("了解工作流程")} <span aria-hidden="true">↓</span></a>
         </div>
         <p className="pt-hero-note">{t("一个账户，连接你有权使用的工作空间和应用。")}</p>
@@ -56,7 +56,7 @@ export function PublicHome({ signedIn, registerUrl: registerBase }: { signedIn: 
         <div className="pt-featured-heading"><span className="pt-doc-icon"><DocumentIcon/></span><div><p className="pt-eyebrow">{t("文档自动化")}</p><h3>Synwevo Docs</h3></div></div>
         <p>{t("选择来源数据，连接模板，完成检查与批量生成。把重复的文档制作交给可复用的规则。")}</p>
         <div className="pt-app-formats" aria-label={t("文档格式")}>{["DOCX", "XLSX", "PDF", "PPTX", "CSV"].map(format => <span key={format}>{format}</span>)}</div>
-        <div className="pt-featured-bottom"><p className="pt-hint">{t("不同格式支持的能力以应用内选项为准。可用应用由工作空间授权决定。")}</p><a className="pt-btn" href={signedIn ? "/workspace" : signInUrl}>{t("进入空间，打开应用")} <span aria-hidden="true">↗</span></a></div>
+        <div className="pt-featured-bottom"><p className="pt-hint">{t("不同格式支持的能力以应用内选项为准。可用应用由工作空间授权决定。")}</p><a className="btn" href={signedIn ? "/workspace" : signInUrl}>{t("进入空间，打开应用")} <span aria-hidden="true">↗</span></a></div>
       </article>
     </section>
     <section className="pt-principles pt-public-section" id="privacy">
@@ -69,7 +69,7 @@ export function PublicHome({ signedIn, registerUrl: registerBase }: { signedIn: 
     </section>
     <section className="pt-service pt-public-section" id="service">
       <div><p className="pt-eyebrow">{t("服务说明")}</p><h2>{t("从一个工作空间开始。")}</h2><p>{t("创建账户，选择个人使用或加入团队，再打开适合当前任务的应用。你的账户、空间和应用权限在平台中统一管理。")}</p><p className="pt-hint">{t("业务数据保存在当前部署中。数据保留、备份与可用能力由实际部署配置决定。")}</p></div>
-      <div className="pt-service-cta"><a className="pt-btn pt-btn-primary pt-btn-large" href={signedIn ? "/workspace" : registerUrl}>{t(signedIn ? "进入工作空间" : "注册账户")} <span aria-hidden="true">↗</span></a>{!signedIn && <a className="pt-link" href={signInUrl}>{t("已有账户？登录")}</a>}</div>
+      <div className="pt-service-cta"><a className="btn primary lg" href={signedIn ? "/workspace" : registerUrl}>{t(signedIn ? "进入工作空间" : "注册账户")} <span aria-hidden="true">↗</span></a>{!signedIn && <a className="pt-link" href={signInUrl}>{t("已有账户？登录")}</a>}</div>
     </section>
   </Shell>;
 }

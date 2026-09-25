@@ -621,7 +621,16 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                        "/api/auth/forgot", "/api/auth/reset", "/api/auth/reset/preview",
                        "/api/auth/verify-email", "/api/auth/email/verify", "/api/auth/register",
                        "/api/auth/deletion/recovery", "/api/auth/deletion/recovery/preview",
-                       "/api/auth/email/resend"}
+                       "/api/auth/email/resend",
+                       # A mailed one-time code is the authority for this sign-in; requesting it
+                       # cannot need a session, and the answer never says whether an account exists.
+                       "/api/auth/login/email/start", "/api/auth/login/email/verify",
+                       # Sign in / register through an external OpenID provider: the callback
+                       # arrives from the provider, before any session exists.
+                       "/api/auth/external/providers",
+                       # A verified provider e-mail that matches an existing account: the offer
+                       # token identifies the pending link, the password proves the account.
+                       "/api/auth/external/offer/preview", "/api/auth/external/offer/confirm"}
     PENDING_PATHS = frozenset({"/api/auth/me", "/api/auth/profile", "/api/auth/verify-email/send"})
     # The SPA shell and its assets must load so the login screen can render; every /api/ route
     # behind them still requires the session, so no data rides along with the HTML.
@@ -770,7 +779,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         return wid or f"__no_workspace__{user['id']}"
 
     # Paths the account service owns. Everything else under /api/ is Synwevo Docs' own workbench.
-    ACCOUNT_PATHS = ("/api/auth/", "/api/admin/", "/oidc/", "/.well-known/")
+    # `/auth/external/` is the account service's outbound sign-in through an external OpenID
+    # provider — account-owned, unlike `/auth/start` and `/auth/callback`, which are the
+    # relying-party side that every application serves for itself.
+    ACCOUNT_PATHS = ("/api/auth/", "/api/admin/", "/oidc/", "/.well-known/", "/auth/external/")
     SHARED_PATHS = ("/api/health", "/healthz", "/readyz", "/assets/")
     # Liveness and readiness. An **exact set**, not a prefix: SHARED_PATHS above matches by
     # prefix, so a route added later called /healthz-debug would inherit anonymity by accident.

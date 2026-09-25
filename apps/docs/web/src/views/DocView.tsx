@@ -181,8 +181,8 @@ export default function DocView({ doc, marks, selection, onSelect, onMarkClick, 
           if ((m.pos as any).start === s0) dataMark = `${m.role}:${m.id}`;
         }
         if (selHere && selHere.start <= s0 && selHere.end >= e0 && selHere.end > selHere.start) {
-          style.outline = "1px solid #2563eb";
-          style.background = "rgba(37,99,235,.18)";
+          style.outline = "1px solid var(--accent)";
+          style.background = "color-mix(in srgb, var(--accent) 18%, transparent)";
         }
         children.push(
           <span key={`${ri}-${i}`} data-off={s0} className={cls || undefined} style={style} data-mark={dataMark}

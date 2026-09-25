@@ -758,3 +758,31 @@ registerMessages({
   '验证邮件已进入队列': { en: 'Verification email queued', 'zh-Hant': '驗證郵件已進入佇列' },
   '重新发送验证邮件': { en: 'Resend verification email', 'zh-Hant': '重新傳送驗證郵件' },
 });
+
+// External sign-in methods, remembered sessions and e-mail code sign-in (account page).
+registerMessages({
+  '外部登录方式': { en: 'External sign-in methods', 'zh-Hant': '外部登入方式' },
+  '用已关联的 Google 或 Microsoft 等账户登录。关联按提供商的稳定标识进行，不会仅凭邮箱合并账户；两步验证仍然适用。': { en: "Sign in with a linked Google, Microsoft or other account. Links use the provider's stable identifier, never just the email address, and two-step verification still applies.", 'zh-Hant': '以已關聯的 Google、Microsoft 等帳戶登入。關聯依提供者的穩定識別碼進行，不會僅憑電子郵件合併帳戶；兩步驟驗證仍然適用。' },
+  '已关联 {label}。': { en: '{label} is now linked.', 'zh-Hant': '已關聯 {label}。' },
+  '提供商': { en: 'Provider', 'zh-Hant': '提供者' },
+  '提供商中的邮箱': { en: 'Email at provider', 'zh-Hant': '提供者中的電子郵件' },
+  '关联时间': { en: 'Linked', 'zh-Hant': '關聯時間' },
+  '已停用': { en: 'Disabled', 'zh-Hant': '已停用' },
+  '未验证': { en: 'Unverified', 'zh-Hant': '未驗證' },
+  '解除关联': { en: 'Unlink', 'zh-Hant': '解除關聯' },
+  '这是账户唯一的登录方式。请先设置口令或添加安全密钥，再解除关联。': { en: 'This is the only way into your account. Set a password or add a passkey before unlinking it.', 'zh-Hant': '這是帳戶唯一的登入方式。請先設定密碼或新增安全金鑰，再解除關聯。' },
+  '关联 {label}': { en: 'Link {label}', 'zh-Hant': '關聯 {label}' },
+  '已解除关联': { en: 'Unlinked', 'zh-Hant': '已解除關聯' },
+  '邮箱验证码': { en: 'Email code', 'zh-Hant': '電子郵件驗證碼' },
+  '邮箱验证码与动态验证码': { en: 'Email code and authenticator code', 'zh-Hant': '電子郵件驗證碼與動態驗證碼' },
+  '邮箱验证码与恢复码': { en: 'Email code and recovery code', 'zh-Hant': '電子郵件驗證碼與復原碼' },
+  '{label} 登录与动态验证码': { en: '{label} sign-in and authenticator code', 'zh-Hant': '{label} 登入與動態驗證碼' },
+  '{label} 登录与恢复码': { en: '{label} sign-in and recovery code', 'zh-Hant': '{label} 登入與復原碼' },
+  '{label} 登录': { en: '{label} sign-in', 'zh-Hant': '{label} 登入' },
+  '保持登录': { en: 'Kept signed in', 'zh-Hant': '保持登入' },
+  '勾选了「保持登录」的会话：最长 14 天不活动仍有效': { en: 'A session with “Keep me signed in”: valid for up to 14 days without activity', 'zh-Hant': '勾選「保持登入」的工作階段：最長 14 天未使用仍有效' },
+  '验证码已失效，请重新获取': { en: 'This code is no longer valid. Request a new one.', 'zh-Hant': '驗證碼已失效，請重新取得' },
+  '这是账户唯一的登录方式。请先设置口令或添加安全密钥，再解除关联': { en: 'This is the only way into your account. Set a password or add a passkey before unlinking it.', 'zh-Hant': '這是帳戶唯一的登入方式。請先設定密碼或新增安全金鑰，再解除關聯' },
+  '这个外部账户已关联到另一个 Synwevo 账户': { en: 'This external account is already linked to another Synwevo account.', 'zh-Hant': '此外部帳戶已關聯到另一個 Synwevo 帳戶' },
+  '未启用这个外部身份提供商': { en: 'This external identity provider is not enabled.', 'zh-Hant': '未啟用此外部身分提供者' },
+});

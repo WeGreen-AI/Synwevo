@@ -73,7 +73,7 @@ def map_field(page: Page, cell_text: str, field: str, date_fmt: str | None = Non
     page.locator(".pane.right .fldchip", has_text=field).click()
     page.get_by_role("button", name="⇄ 建立映射").click()
     dlg = page.locator(".modal")
-    expect(dlg.get_by_text("随样本变化：每条样本的", exact=False)).to_be_visible()
+    expect(dlg.get_by_text("随样本变化：每份输出读取当前样本对应的值", exact=False)).to_be_visible()
     if date_fmt:
         dlg.locator("select").filter(has_text="添加转换规则").select_option("date_format")
         dlg.locator("select").filter(has_text="yyyy-mm-dd").first.select_option(date_fmt)

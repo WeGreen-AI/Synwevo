@@ -43,6 +43,7 @@ synwevo_identity  synwevo_portal  synwevo_docs     ← 互相不可见
 ```bash
 python scripts/check_boundaries.py    # 跨模块导入、sys.path 改写、机器绝对路径、符号链接
 python scripts/check_brand.py         # 旧品牌残留：每一处要么改掉，要么写清为什么保留
+python scripts/check_design.py        # 设计系统：字面颜色只允许出现在共享令牌里，无私有色板、无深色主题残留
 ```
 
 **改这两个文件不能替代让检查通过。**
@@ -59,6 +60,7 @@ python scripts/platform.py test docs   # 只跑 Synwevo Docs
 python scripts/platform.py test identity   # 只跑账户服务
 python scripts/platform.py test integration
 python scripts/check_boundaries.py
+python scripts/check_design.py
 npm run typecheck && npm run build         # 三个前端外壳
 ```
 

@@ -26,7 +26,7 @@ export default function Transforms({ value, onChange }: { value: any[]; onChange
   return (
     <div className="col gap4">
       {ops.map((o, i) => (
-        <div key={i} className="row wrap" style={{ background: "#f7f8fa", padding: "4px 6px", borderRadius: 6 }}>
+        <div key={i} className="row wrap" style={{ background: "var(--panel-2)", border: "1px solid var(--line)", padding: "4px 6px", borderRadius: 6 }}>
           <span className="small" style={{ minWidth: 96 }}>{formatNumber(i + 1)}. {tr(OPS[o.op] || o.op)}</span>
           {o.op === "date_format" && (
             <select className="input sm" value={o.pattern} onChange={(e) => set(i, { pattern: e.target.value })}>

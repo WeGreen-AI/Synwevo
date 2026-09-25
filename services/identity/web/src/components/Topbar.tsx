@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from "react";
 import { ApiError, useSession } from "@synwevo/auth-client";
-import { LanguageMenu, useI18n } from "@synwevo/ui";
+import { Brand, LanguageMenu, useI18n } from "@synwevo/ui";
 import "./Topbar.messages";
 
 /** Account and governance share one header. The server supplies the portal destination;
@@ -19,7 +19,7 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
     } catch { return `/?lang=${locale}`; }
   };
   return <><header className="topbar wrap" style={{ height: "auto", minHeight: 48, paddingBlock: 8 }}>
-    <a className="brand" href={link(state?.portal_url || "/")}>Synwevo</a>
+    <Brand href={link(state?.portal_url || "/")} product="Account" label={t("返回平台首页")} />
     <b className="grow">{title}</b>{children}
     <nav className="row wrap gap4" aria-label={t("账户导航")}>
       <a className="btn ghost sm" href={link("/account")}>{t("账户与安全")}</a>

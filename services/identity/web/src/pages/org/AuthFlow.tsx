@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { ApiError, safeNext, useSession } from "@synwevo/auth-client";
-import { LanguageMenu, hasMessage, useI18n, type Locale, type Translator } from "@synwevo/ui";
+import { Brand, LanguageMenu, hasMessage, useI18n, type Locale, type Translator } from "@synwevo/ui";
 import { passwordProblem } from "../../lib/password";
 import "../../auth-flow.messages";
 import "./flow.css";
@@ -109,7 +109,7 @@ export function AuthFrame({ title, description, children, wide = false }: {
   const headingId = useId();
   useEffect(() => { document.title = `${title} · Synwevo Account`; }, [title]);
   return <main className={`flow-page${wide ? " flow-wide" : ""}`}>
-    <header className="flow-top"><a className="flow-brand" href="/login"><span className="logo" aria-hidden="true">S</span><span>Synwevo <span className="muted">Account</span></span></a><LanguageMenu /></header>
+    <header className="flow-top"><Brand href="/login" product="Account" size="lg" /><LanguageMenu /></header>
     <div className="flow-layout">
       <aside className="flow-intro"><span className="flow-eyebrow">{state?.platform_name || "Synwevo Workspace"}</span>
         <h2>{t("一个账户，连接你的工作。")}</h2>

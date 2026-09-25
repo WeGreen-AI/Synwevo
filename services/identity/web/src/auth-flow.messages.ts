@@ -661,7 +661,147 @@ export const messages = {
   "验证请求已收到。请检查收件箱和垃圾邮件；是否投递取决于账户状态和邮件服务。": {
     "en": "Verification request received. Check your inbox and spam folder; delivery depends on account status and the email service.",
     "zh-Hant": "驗證請求已收到。請檢查收件匣和垃圾郵件；是否投遞取決於帳戶狀態和郵件服務。"
-  }
+  },
+  "已取消外部登录。": {
+    "en": "External sign-in was cancelled.",
+    "zh-Hant": "已取消外部登入。"
+  },
+  "外部身份提供商拒绝了这次登录，请重试。": {
+    "en": "The external identity provider refused this sign-in. Please try again.",
+    "zh-Hant": "外部身分提供者拒絕了這次登入，請重試。"
+  },
+  "登录状态校验失败，请重新开始。": {
+    "en": "The sign-in state could not be verified. Please start again.",
+    "zh-Hant": "登入狀態驗證失敗，請重新開始。"
+  },
+  "登录请求已过期或已使用，请重新开始。": {
+    "en": "This sign-in request has expired or was already used. Please start again.",
+    "zh-Hant": "登入請求已過期或已使用，請重新開始。"
+  },
+  "外部身份提供商返回的身份信息无法验证，请重试。": {
+    "en": "The identity returned by the external provider could not be verified. Please try again.",
+    "zh-Hant": "外部身分提供者回傳的身分資訊無法驗證，請重試。"
+  },
+  "外部身份提供商未接受这次登录，请重试。": {
+    "en": "The external identity provider did not accept this sign-in. Please try again.",
+    "zh-Hant": "外部身分提供者未接受這次登入，請重試。"
+  },
+  "暂时无法连接外部身份提供商，请稍后再试。": {
+    "en": "The external identity provider cannot be reached right now. Please try again later.",
+    "zh-Hant": "暫時無法連線外部身分提供者，請稍後再試。"
+  },
+  "该提供商没有验证你的邮箱，无法用它创建或匹配账户。请用口令登录后，在「账户与安全」里关联。": {
+    "en": "This provider has not verified your email address, so it cannot create or match an account. Sign in with your password and link it under Account & security.",
+    "zh-Hant": "此提供者未驗證你的電子郵件地址，無法用它建立或比對帳戶。請以密碼登入後，在「帳戶與安全」中關聯。"
+  },
+  "这个邮箱已有账户，请先用口令登录，再在「账户与安全」里关联。": {
+    "en": "An account already uses this email address. Sign in with your password first, then link the provider under Account & security.",
+    "zh-Hant": "此電子郵件地址已有帳戶，請先以密碼登入，再在「帳戶與安全」中關聯。"
+  },
+  "账户不可用，请联系管理员。": {
+    "en": "This account is unavailable. Contact an administrator.",
+    "zh-Hant": "帳戶無法使用，請聯絡管理員。"
+  },
+  "平台管理员需先启用动态验证码，才能使用外部登录。": {
+    "en": "Platform administrators must enable authenticator codes before signing in through an external provider.",
+    "zh-Hant": "平台管理員需先啟用驗證器動態驗證碼，才能使用外部登入。"
+  },
+  "关联登录方式时登录状态发生了变化，请重新登录后再试。": {
+    "en": "Your sign-in changed while the provider was being linked. Sign in again and retry.",
+    "zh-Hant": "關聯登入方式時登入狀態發生變化，請重新登入後再試。"
+  },
+  "这个外部账户已关联到另一个 Synwevo 账户。": {
+    "en": "This external account is already linked to another Synwevo account.",
+    "zh-Hant": "此外部帳戶已關聯到另一個 Synwevo 帳戶。"
+  },
+  "未启用这个外部身份提供商。": {
+    "en": "This external identity provider is not enabled.",
+    "zh-Hant": "未啟用此外部身分提供者。"
+  },
+  "外部登录失败，请重试。": {
+    "en": "External sign-in failed. Please try again.",
+    "zh-Hant": "外部登入失敗，請重試。"
+  },
+  "邮件服务尚未配置，请改用口令或安全密钥登录。": {
+    "en": "Email is not configured on this service. Sign in with your password or a passkey instead.",
+    "zh-Hant": "此服務尚未設定電子郵件，請改用密碼或安全金鑰登入。"
+  },
+  "关联外部登录": {
+    "en": "Link external sign-in",
+    "zh-Hant": "關聯外部登入"
+  },
+  "用邮箱验证码登录": {
+    "en": "Sign in with an email code",
+    "zh-Hant": "以電子郵件驗證碼登入"
+  },
+  "这个 {label} 账户的邮箱已有 Synwevo 账户。输入该账户的口令以关联并登录；以后可以直接用 {label} 登录。": {
+    "en": "The email address of this {label} account already has a Synwevo account. Enter that account's password to link and sign in; afterwards you can sign in with {label} directly.",
+    "zh-Hant": "此 {label} 帳戶的電子郵件地址已有 Synwevo 帳戶。請輸入該帳戶的密碼以關聯並登入；之後可直接以 {label} 登入。"
+  },
+  "外部": {
+    "en": "external",
+    "zh-Hant": "外部"
+  },
+  "验证码已发送到你的邮箱（如果该邮箱有账户），请在 10 分钟内输入。": {
+    "en": "If this address has an account, a code has been sent to it. Enter it within 10 minutes.",
+    "zh-Hant": "若此電子郵件地址有帳戶，驗證碼已寄出，請在 10 分鐘內輸入。"
+  },
+  "我们会把一次性验证码发到你的账户邮箱。": {
+    "en": "We will send a one-time code to your account's email address.",
+    "zh-Hant": "我們會將一次性驗證碼寄到你的帳戶電子郵件地址。"
+  },
+  "在此设备上保持登录": {
+    "en": "Keep me signed in on this device",
+    "zh-Hant": "在此裝置上保持登入"
+  },
+  "最长 14 天不活动仍保持登录；公共或共享设备请勿勾选。": {
+    "en": "Stays signed in for up to 14 days without activity. Leave unchecked on public or shared devices.",
+    "zh-Hant": "最長 14 天未使用仍保持登入；公用或共用裝置請勿勾選。"
+  },
+  "这个账户还没有口令。请先通过邮箱验证码或安全密钥登录，再在「账户与安全」里关联。": {
+    "en": "This account has no password yet. Sign in with an email code or a passkey first, then link the provider under Account & security.",
+    "zh-Hant": "此帳戶尚未設定密碼。請先以電子郵件驗證碼或安全金鑰登入，再在「帳戶與安全」中關聯。"
+  },
+  "关联并登录": {
+    "en": "Link and sign in",
+    "zh-Hant": "關聯並登入"
+  },
+  "不关联，返回登录": {
+    "en": "Don't link, back to sign-in",
+    "zh-Hant": "不關聯，返回登入"
+  },
+  "邮箱验证码": {
+    "en": "Email code",
+    "zh-Hant": "電子郵件驗證碼"
+  },
+  "重新发送或换个邮箱": {
+    "en": "Resend or use another address",
+    "zh-Hant": "重新傳送或更換地址"
+  },
+  "发送中…": {
+    "en": "Sending…",
+    "zh-Hant": "傳送中…"
+  },
+  "发送验证码": {
+    "en": "Send code",
+    "zh-Hant": "傳送驗證碼"
+  },
+  "改用口令登录": {
+    "en": "Sign in with password instead",
+    "zh-Hant": "改用密碼登入"
+  },
+  "其他登录方式": {
+    "en": "Other ways to sign in",
+    "zh-Hant": "其他登入方式"
+  },
+  "使用 {label} 登录": {
+    "en": "Sign in with {label}",
+    "zh-Hant": "以 {label} 登入"
+  },
+  "验证码已失效，请重新获取。": {
+    "en": "This code is no longer valid. Request a new one.",
+    "zh-Hant": "驗證碼已失效，請重新取得。"
+  },
 };
 
 registerMessages(messages);

@@ -1,5 +1,45 @@
 # 当前产品轮交付记录
 
+## 2026-09-25 统一白蓝设计系统与多种登录方式（本轮，进行中）
+
+**目标**：平台、账户、Docs、平台后台与 API 台形成一套白蓝浅色体系；补齐「保持登录」、邮箱验证码登录与
+外部身份提供商（Google / Microsoft 等 OpenID）登录、关联与解绑。执行代理为 Claude Code。
+本节先于下方历史记录；部署状态以 [deployment.md](deployment.md) 为准。
+
+### 已实现（本机实跑）
+
+| 范围 | 实际行为与证据 |
+|---|---|
+| 设计令牌 | `packages/ui/src/styles.css` 收敛为白蓝基线（`--bg #F8FAFC`、`--accent #2563EB`、hover `#1D4ED8`、pressed `#1E40AF`、`--accent-weak #EFF6FF`、`--text #0F172A`、`--text-2 #475569`、`--line #E2E8F0`），控件边界 `--line-strong #8894A8`（3.1:1），对比度写在令牌旁；深色主题退役，`data-theme`/系统深色不再改变外壳（E2E G 流程验证）。 |
+| 门户 | `portal.css` 从独立绿色主题迁移到共享令牌与共享 `.btn`；公开首页、登录后门户、状态页；品牌标记统一为 `Brand`。桌面 1024 与 375 窄屏截图检查通过。 |
+| 账户 / Docs 外壳 | 顶栏、登录框架、Docs 三种页面共用 `Brand`/`BrandMark`；API 台去掉兜底色；Toast 改为白卡+状态条；内联字面色改令牌或 `color-mix()`；三个 `index.html` 统一 `lang`、`theme-color`、`color-scheme`。 |
+| 守卫 | 新增 `scripts/check_design.py`（CI 与验证清单已接入）：共享令牌外的字面颜色必须归入有理由的例外；禁止深色主题、私有色板、自选字体、`@media` 外 `!important`。当前通过。 |
+| 保持登录 | Store v7 `sessions.persistent`；勾选后中央会话空闲 14 天（`SYNWEVO_SESSION_PERSISTENT_IDLE_S`）、绝对 30 天不变、两个 Cookie 带 `Max-Age`；平台管理员忽略；只接受 JSON `true`；设备列表标记。契约见 sessions.md §2.1。`test_remember_me.py` 7 项。 |
+| 邮箱验证码登录 | `/api/auth/login/email/start|verify`：6 位码、10 分钟、单次、5 次错误作废、同形响应防枚举、发出后 outbox 脱敏；启用 TOTP 仍走第二步（`amr=email+totp`）；管理员未启用 TOTP 不发码。三语言邮件模板。`test_email_code_login.py` 9 项。 |
+| 外部身份提供商 | `synwevo_identity/external.py`：发现文档、PKCE S256、服务端 state/nonce、id_token 全量校验（签名/iss/aud/azp/nonce/exp/iat/sub，Microsoft 多租户模板）、按 `(provider, subject)` 关联、已验证邮箱匹配只生成关联要约、注册策略生效、管理员需 TOTP、关联/解绑需 strict 重认证且不能移除最后一种登录方式、安全通知。配置不完整拒绝启动；未配置不显示。`test_external_identity.py` 16 项（测试替身提供商，含篡改用例）。 |
+| 登录页 / 账户页 | 登录：保持登录复选框、「其他登录方式」（安全密钥 / 邮箱验证码 / 已配置提供商）、外部登录错误解释、关联要约表单、片段续接 MFA；账户：外部登录方式卡片（关联/解绑）、设备列表登录方式与「保持登录」标记。三语言资源补齐，账户外壳 19 项校验通过。 |
+| 文档 | `docs/design.md` 重写为平台设计系统；`sessions.md` §2.1/§4.3–4.5、`permissions.md` 契约表、`.env.example`、README/TESTING/AGENTS/CLAUDE 验证命令。 |
+
+### 本轮运行证据（本机，2026-09-25）
+
+| 运行范围 | 结果 |
+|---|---|
+| `services/identity/tests` + `tests/integration` | 全部通过（退出码 0；含新增 32 项与 v7 迁移测试） |
+| `apps/docs/tests` | 全部通过（退出码 0；1 项既有 LICENSE 跳过） |
+| 前端 | typecheck/build 三外壳通过；UI 11、auth-client 31、Docs 45、账户外壳 19 项通过 |
+| 守卫 | `check_boundaries` / `check_brand` / `check_design` 通过 |
+| Docs 浏览器 E2E | `ui_e2e.py`（主链路：上传→模板→字段→映射→样本→预览→生成 100 份→下载核对）与 `ui_e2e_keyboard.py`（命令面板、列表键盘、单一主题与纸面、布局记忆）在各自隔离实例上通过。`ui_e2e.py` 中一处早已过时的对话框文案断言按当前界面更正。 |
+| 隔离实例浏览器实跑（317xx，`instance=test`，file 邮件，本机 OpenID 替身 `idp_double.py`） | 引导管理员→验证邮件；公开注册 Bob→邮件激活；勾选保持登录登录（会话 `persistent=1`、空闲 336h）；账户页关联 Test IdP→替身同意页→回到账户页显示关联；登出后「以 Test IdP 登入」直接登录（`amr=idp:testidp`）；登出后邮箱验证码登录（outbox 发出后不再含验证码）；门户与 Docs 经统一登录静默进入。 |
+
+### 边界与未完成
+
+- 外部提供商只用**测试替身**验证了 Synwevo 一侧的协议与关联规则；Google / Microsoft 的实际应用注册、回调与联调需要运营方在提供商处登记并填入凭据后才能完成，生产未配置任何提供商（登录页不显示按钮）。
+- 邮箱验证码在生产依赖已配置的 SMTP；本机只证明 file 投递。
+- 仍未做：本轮未重做 Docs 引擎、API 控制台、组织/空间流程的功能性变更；它们沿用上一轮的实现与验证，本轮只改外壳样式并跑通既有回归与 E2E。
+- 部署：见 [deployment.md](deployment.md)；未部署前本节不构成线上验收。
+
+---
+
 **部署接续（2026-09-25）**：用户已在本机交付之后明确授权部署，主页已更正为工作流程自动化平台，
 Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署；1893 项运行环境测试通过、2 项明确跳过。
 线上注册已开放，原有账户/文档/密钥和 57 个 blob 核验保留。发布、浏览器与 SMTP 验证见 [deployment.md](deployment.md)。

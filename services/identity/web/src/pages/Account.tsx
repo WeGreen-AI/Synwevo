@@ -7,6 +7,7 @@ import { LeaveDialog } from './members/dialogs';
 import { canExport } from '../lib/labels';
 import MfaSection from '../components/MfaSection';
 import PasskeySection from '../components/PasskeySection';
+import LinkedIdentities from '../components/LinkedIdentities';
 import ProfileSection from './account/ProfileSection';
 import EmailSection from './account/EmailSection';
 import PrivacySection from './account/PrivacySection';
@@ -14,11 +15,20 @@ import ActivitySection from './account/ActivitySection';
 import { ErrorNotice, errorText, timeText, type Profile } from './account/common';
 import './account/account.css';
 export { default as AccountRecovery } from './account/Recovery';
-interface SessionRow { id: string; current: boolean; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string; ip: string | null }
+interface SessionRow { id: string; current: boolean; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string; ip: string | null; persistent?: boolean; auth_provider?: string | null }
 const roles: Record<string, string> = { owner: '所有者', admin: '管理员', editor: '编辑', viewer: '只读' };
-const methods: Record<string, string> = { password: '口令', 'password+totp': '口令与动态验证码', 'password+recovery': '口令与恢复码', passkey_uv: '安全密钥（已验证身份）', passkey: '安全密钥' };
+const methods: Record<string, string> = { password: '口令', 'password+totp': '口令与动态验证码', 'password+recovery': '口令与恢复码', passkey_uv: '安全密钥（已验证身份）', passkey: '安全密钥',
+  email: '邮箱验证码', 'email+totp': '邮箱验证码与动态验证码', 'email+recovery': '邮箱验证码与恢复码' };
+/** `idp:<provider>` and `idp:<provider>+totp`: the provider's configured label, then the second factor. */
+function methodLabel(amr: string, t: (s: string, p?: Record<string, string>) => string, providers: { id: string; label: string }[] = []): string {
+  if (methods[amr]) return t(methods[amr]);
+  const m = /^idp:([a-z0-9_-]+)(?:\+(totp|recovery))?$/.exec(amr);
+  if (!m) return amr;
+  const label = providers.find(p => p.id === m[1])?.label || (m[1] === 'google' ? 'Google' : m[1] === 'microsoft' ? 'Microsoft' : m[1]);
+  return m[2] ? t(m[2] === 'totp' ? '{label} 登录与动态验证码' : '{label} 登录与恢复码', { label }) : t('{label} 登录', { label });
+}
 export default function Account() {
-  const { me, signOut } = useSession();
+  const { me, state, signOut } = useSession();
   const { t, locale, setLocale } = useI18n();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -72,13 +82,13 @@ export default function Account() {
         {[['profile', '个人资料'], ['email', '邮箱与口令'], ['security', '登录与安全'], ['devices', '登录的设备'], ['workspaces', '工作空间'], ['activity', '安全活动'], ['privacy', '数据与账户']].map(([id, label]) => <a key={id} href={`#${id}`}>{t(label)}</a>)}
       </nav><div className="account-content">
         <ProfileSection profile={profile} onChange={setProfile} /><EmailSection profile={profile} />
-        <div id="security" className="col gap12 account-section"><PasskeySection timezone={profile.timezone} /><MfaSection /></div>
+        <div id="security" className="col gap12 account-section"><PasskeySection timezone={profile.timezone} /><LinkedIdentities timezone={profile.timezone} /><MfaSection /></div>
         <section id="devices" className="card card-b col gap12 account-section"><div className="row gap12 wrap"><h2 className="secttl grow">{t('登录的设备')}</h2>
           {!!rows?.some(r => !r.current) && <button className="btn danger sm" disabled={busy} onClick={() => void revoke()}>{t('退出其他所有设备')}</button>}</div>
           <ErrorNotice error={error} retry={loadSessions} />{rows === null && !error && <p role="status">{t('加载中…')}</p>}
           <div className="account-table"><table className="tbl" aria-label={t('登录会话')}><thead><tr><th>{t('设备')}</th><th>{t('登录方式')}</th><th>{t('最近活动')}</th><th>{t('到期')}</th><th>{t('来源')}</th><th>{t('操作')}</th></tr></thead>
             <tbody>{rows?.map(row => <tr key={row.id}><td>{row.client} {row.current && <span className="badge ok">{t('当前设备')}</span>}</td>
-              <td className="small">{methods[row.amr] ? t(methods[row.amr]) : row.amr}</td><td className="small nowrap">{timeText(row.last_seen_at, locale, profile.timezone)}</td>
+              <td className="small">{methodLabel(row.amr, t, state?.external_providers)}{row.persistent && <span className="badge info" style={{ marginLeft: 6 }} title={t('勾选了「保持登录」的会话：最长 14 天不活动仍有效')}>{t('保持登录')}</span>}</td><td className="small nowrap">{timeText(row.last_seen_at, locale, profile.timezone)}</td>
               <td className="small nowrap">{timeText(row.expires_at, locale, profile.timezone)}</td><td className="mono small">{row.ip || '—'}</td>
               <td><button className="btn xs" disabled={busy} onClick={() => void revoke(row)}>{t(row.current ? '退出' : '结束')}</button></td></tr>)}</tbody></table></div>
           {rows?.length === 0 && <p className="muted">{t('没有活动的登录')}</p>}
