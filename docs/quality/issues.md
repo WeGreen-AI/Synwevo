@@ -8,6 +8,7 @@
 
 | ID | 问题与基线 | 依据 | 修复 | 验证 | 状态 |
 |---|---|---|---|---|---|
+| CI-10 | 账户外壳单一包：登录页下载 709.7 KB JS（gzip 219 KB），手机网络下首屏慢 | web.dev 代码拆分指南；Docs 外壳既有做法 | 13 个路由 `lazy()`，登录页留在入口块；块失败一次重载 | 登录页 380.7 KB（−46%）；外壳校验、`test_shells.py`、两引擎回归、审计、块失败演练通过 | 已修复，待部署 |
 | CI-09 | 手机上提示条（toast）盖住对话框底栏的主按钮（WebKit 手机主链路在「确认样本规则」处点到提示条） | 截图证据；Fluent 2 Toast 指南「不遮挡主要操作」 | ≤620 px 提示条置顶、整行宽，容器不拦截指针 | WebKit/Chromium 手机主链路通过；外壳回归与审计复跑 | 已修复，待部署 |
 | CI-06 | 线上 CSP 拦下 Cloudflare 边缘注入的 Web Analytics 信标（`static.cloudflareinsights.com/beacon.min.js`），每页一次控制台违规、区域分析静默失效 | 线上匿名 Chromium 检查；Cloudflare Web Analytics 文档描述的信标注入行为 | 带 `CF-Ray` 的请求得到只多出该脚本源与 `cloudflareinsights.com` 上报源的策略变体；其余请求与显式 `SYNWEVO_CSP` 不变 | `test_security_headers.py` 7 项；部署后线上复查见 deployment.md | 已修复，待部署 |
 | CI-05 | WebKit 下抽屉内 Tab 跳出对话框；Esc 关闭后焦点不回到按钮（Chromium 不出现） | WAI-ARIA APG Dialog/Menu Button 模式；WCAG 2.1.1、2.4.3 | 焦点陷阱每次 Tab 自行移动；`lastPointerTarget()` 记住点击打开者 | `ui_e2e_shell.py` 键盘检查 Chromium + WebKit 四组通过；Docs 键盘套件通过 | 已修复，待部署 |

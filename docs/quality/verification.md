@@ -463,6 +463,31 @@ WebKit 下通过。
 修复在共享样式：≤620 px 时提示条改在顶部（安全区之下、整行宽），容器 `pointer-events: none` 只有提示条本身可点。
 修复后 WebKit 与 Chromium 手机主链路均通过；外壳回归、Docs 三套桌面套件与 375 px 审计复跑通过。
 
+### 16.11 账户外壳按路由拆分（CI-10）
+
+**问题与基线**：账户外壳是单一包——登录页也要先下载平台管理、API 台、成员治理、MFA 二维码渲染等全部代码。隔离实例实测
+（Chromium 手机模拟，`/login`）：**709.7 KB JavaScript（gzip 219 KB）**，`/register`、`/account` 相同。
+
+**依据**（访问 2026-09-25）：web.dev「Reduce JavaScript payloads with code splitting」——"Split your bundle into multiple pieces and only
+send what's necessary at the very beginning"，按路由/组件懒加载减少解析、编译与执行的启动成本，改善 INP；Docs 外壳已用同一做法
+（`DocEditor`/`SheetEditor` 懒加载）。
+
+**实现**：`services/identity/web/src/main.tsx` 只保留登录页与两个状态页在入口块，其余 13 个路由 `lazy()`；`Suspense` 回退为与各页
+一致的「加载中…」状态（三语言）。发布后旧标签页里的 HTML 仍指向上一版块名时，块加载失败会**只重载一次**（sessionStorage 记路径），
+第二次失败照常报错，不会循环。
+
+**结果**（同一实测方法）：
+
+| 路由 | 修复前 | 修复后 |
+|---|---|---|
+| `/login` | 709.7 KB（1 文件） | **380.7 KB**（入口 302 KB + 共享 86 KB + 运行时；gzip ≈ 125 KB） |
+| `/register` | 709.7 KB | 386.0 KB（+ Register 5 KB） |
+| `/forgot-password` | 709.7 KB | 384.3 KB（+ Recover 4 KB） |
+| 其他页面 | — | 进入时加载各自的块：Account 62 KB、Members 38 KB、Admin 36 KB、ApiPlatform 65 KB、Organizations 21 KB（原始大小） |
+
+入口块减少 46%（gzip 约 43%）。验证：账户外壳 19 项校验、`test_shells.py`、两引擎外壳回归、375 px 审计；
+块失败演练：首次失败 → 恢复并渲染（1 次重载），持续失败 → 不循环。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

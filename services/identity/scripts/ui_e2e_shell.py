@@ -38,6 +38,9 @@ from playwright.sync_api import Browser, Page, expect, sync_playwright
 from localhost_proxy import LocalhostProxy  # sibling module: this directory is first on the import path when run as a script
 
 REPO = Path(__file__).resolve().parents[3]
+# Route chunks load on entry now (the account shell is split by route); give every expectation
+# 10 s instead of Playwright's 5 s so a slow chunk fetch on a busy machine is not a false failure.
+expect.set_options(timeout=10000)
 SHOTS = REPO / "docs" / "screenshots"
 SHOTS.mkdir(parents=True, exist_ok=True)
 

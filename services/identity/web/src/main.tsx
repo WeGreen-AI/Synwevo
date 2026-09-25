@@ -9,23 +9,48 @@
  * Only what the account service is actually for: signing in, the account and security centre,
  * accepting an invitation, and the pages the redirect chain lands on.
  */
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, Suspense, lazy, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { DialogProvider, ToastProvider, initTheme, I18nProvider, StatusPage, useI18n, registerMessages } from "@synwevo/ui";
 import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
 import Login from "./pages/Login";
-import Account, { AccountRecovery } from "./pages/Account";
-import Invite from "./pages/Invite";
-import { ForgotPassword, ResetPassword } from "./pages/Recover";
-import Admin from "./Admin";
-import Members from "./pages/Members";
-import Register from "./pages/Register";
-import VerifyEmail from "./pages/VerifyEmail";
-import Onboarding from "./pages/Onboarding";
-import Organizations from "./pages/Organizations";
 import { AccountCapabilityGate } from "./pages/org/AuthFlow";
-import ApiPlatform, { OwnerApiApprovals } from "./pages/ApiPlatform";
+
+/* Route-level code splitting. The sign-in page is what most visits start with, and it used to
+ * download the whole shell — platform administration, the API console, member governance, the
+ * MFA enrolment with its QR renderer — 710 KB of JavaScript before the first field could be
+ * typed into. Only Login (and the two status pages) stay in the entry chunk; every other page
+ * loads when its route is entered. A chunk that fails to load right after a deployment (the
+ * page in the tab still names the previous build's file) reloads the page once, which fetches
+ * the current HTML and its chunks; a second failure surfaces as an error. */
+function lazyRoute<T extends ComponentType<any>>(load: () => Promise<{ default: T }>): T {
+  return lazy(() => load().catch((error: unknown) => {
+    const key = "synwevo.account.chunk-reload";
+    let already = false;
+    try { already = sessionStorage.getItem(key) === window.location.pathname; } catch { /* storage unavailable: no retry */ }
+    if (!already) {
+      try { sessionStorage.setItem(key, window.location.pathname); } catch { /* ignore */ }
+      window.location.reload();
+      return new Promise<never>(() => {});   // the reload takes over; never resolve
+    }
+    throw error;
+  })) as unknown as T;
+}
+const pick = <M, K extends keyof M>(load: () => Promise<M>, name: K) => () => load().then((m) => ({ default: m[name] as unknown as ComponentType<any> }));
+const Account = lazyRoute(() => import("./pages/Account"));
+const AccountRecovery = lazyRoute(pick(() => import("./pages/Account"), "AccountRecovery"));
+const Invite = lazyRoute(() => import("./pages/Invite"));
+const ForgotPassword = lazyRoute(pick(() => import("./pages/Recover"), "ForgotPassword"));
+const ResetPassword = lazyRoute(pick(() => import("./pages/Recover"), "ResetPassword"));
+const Admin = lazyRoute(() => import("./Admin"));
+const Members = lazyRoute(() => import("./pages/Members"));
+const Register = lazyRoute(() => import("./pages/Register"));
+const VerifyEmail = lazyRoute(() => import("./pages/VerifyEmail"));
+const Onboarding = lazyRoute(() => import("./pages/Onboarding"));
+const Organizations = lazyRoute(() => import("./pages/Organizations"));
+const ApiPlatform = lazyRoute(() => import("./pages/ApiPlatform"));
+const OwnerApiApprovals = lazyRoute(pick(() => import("./pages/ApiPlatform"), "OwnerApiApprovals"));
 import "./account.css";
 import "@synwevo/ui/styles.css";
 
@@ -38,8 +63,13 @@ registerMessages({
   "前往账户设置": {en:"Go to account settings", "zh-Hant":"前往帳戶設定"},
   "仅平台管理员可访问": {en:"Platform administrators only", "zh-Hant":"僅平台管理員可存取"},
   "这个地址在 Synwevo Account 里不存在。": {en:"This address does not exist in Synwevo Account.", "zh-Hant":"這個地址在 Synwevo Account 裡不存在。"},
+  "加载中…": {en:"Loading…", "zh-Hant":"載入中…"},
 });
 
+function RouteLoading() {
+  const {t} = useI18n();
+  return <div className="empty" role="status" aria-live="polite">{t("加载中…")}</div>;
+}
 function AdminOnly({children}: {children: ReactNode}) {
   const {me} = useSession(); const {t} = useI18n();
   // The role, not the current permission set: an administrator whose session proved one factor
@@ -70,6 +100,7 @@ createRoot(document.getElementById("root")!).render(
       <SessionProvider>
         <DialogProvider>
           <BrowserRouter>
+            <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
@@ -97,6 +128,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/" element={<RequireSession><Navigate to="/account" replace /></RequireSession>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </Suspense>
           </BrowserRouter>
         </DialogProvider>
       </SessionProvider>
