@@ -1,10 +1,110 @@
 # Vultr Tokyo deployment — current record
 
+## 2026-09-25 product and workflow-platform homepage — deployed
+
+The user explicitly requested “部署好” after the local-only product round, then corrected the
+homepage positioning: **Synwevo is the workflow automation platform; Synwevo Docs is one application**.
+That later deployment authorization governs this release. No DNS, tunnel, mail routing or other
+hosted application was changed.
+
+**Running source:** `1a48359df0936ccaff129df27757eaacfdcba44a` on `main`.
+[Actions 36086079530](https://github.com/WeGreen-AI/Synwevo/actions/runs/36086079530) passed verification,
+restricted SSH deployment and public health checks; cutover completed at 2026-09-25 02:43 UTC.
+Image ID: `sha256:3460b3d451a737e4e09546d4a345c529816cff8f77b3b03e08e89513f82d6db7`.
+The following documentation-only `[skip ci]` commit records this result without redeploying unchanged code.
+
+### Public entry points and homepage behavior
+
+- Platform: https://synwevo.wegreen.ltd — teams, applications, inputs/rules, tasks/results and scoped automation.
+- Account: https://accounts.wegreen.ltd — shared registration, login and account management.
+- Docs: https://docwave.wegreen.ltd — existing independent document application.
+- https://dw.wegreen.ltd retains its HTTP 308 redirect to the Docs origin.
+
+The homepage hero is “把重复的工作，交给流程。”; the application section introduces Synwevo Docs
+and its document formats separately. The illustrated flow is explicitly an illustration, not an
+advertised visual workflow builder. No fictional application or usage statistics were introduced.
+Simplified/Traditional Chinese and English cover the React page, SSR titles/descriptions,
+navigation and calls to action. AGENTS.md and the architecture map preserve this product distinction.
+
+### Current verification
+
+| Check | Result in this deployment round |
+|---|---|
+| Production-runtime Python suite | **1893 passed / 0 failed / 2 skipped**, 178 dependency warnings, 945.85 seconds; isolated Linux container, synthetic fixtures |
+| Frontend | All typechecks/builds pass; shared UI 11, auth-client 31, Docs 45 tests and Account 19 component/contract validations pass |
+| Deployment regressions | 6 passed; archive rejection, idle admission and candidate failure behavior |
+| Targeted homepage/shell regressions | 20 passed / 0 failed / 0 skipped after fixing the initial CI failure |
+| Boundaries/branding | Passed without relaxing checks |
+| Public HTTPS smoke | All three readiness URLs and built JS/CSS pass; expected anonymous 401 and cross-role 404; API console rejects anonymous access |
+| Identity routing | Registration open at all roles; existing administrator means bootstrap is not offered; host-only Secure/HttpOnly OIDC state, S256, account login destination and issuer unchanged |
+| Production browser | Chrome 153: Simplified desktop 1440×1000, English/Traditional mobile 390×844; workflow copy, actual language switch, English registration link reaches the English Account form; no horizontal overflow or observed JavaScript exception |
+| Existing SMTP | Actual Account container authenticates to mail.hikosphere.com:587 over certificate/hostname-verified STARTTLS, TLSv1.3; fixed sender mail@hikosphere.com; **no mail sent this round** |
+| Running services | Accounts, portal, Docs and gateway healthy; zero observed ERROR/traceback lines since their final restart |
+
+The two Python skips remain the operator-unselected project LICENSE and a nested Docker check
+unavailable inside the isolated verifier (no host Docker socket). They are not represented as passes.
+Earlier attempt [36084520872](https://github.com/WeGreen-AI/Synwevo/actions/runs/36084520872) failed:
+1888 passed / 1 failed / 4 setup errors / 2 skipped. The verification image omitted root `conftest.py`,
+and one shell assertion still expected the previous homepage title. Commit `1a48359` copies the
+fixture/config file only into the test derivative and updates the exact title assertion; no test
+assertion or security gate was removed. The full rerun above supersedes that failure.
+Run 36083449711 was cancelled before deployment to incorporate the homepage correction.
+
+Local browser checks additionally covered all three locales at both sizes, language persistence
+on reload, keyboard focus/skip link and reduced motion. Browser console entries were expected
+anonymous `/api/auth/me` 401 responses. These checks do not assert full WCAG certification.
+
+### Data preservation and configuration
+
+The receiver made the offline pre-upgrade backup `/opt/synwevo/backups/20260925T024313Z` before
+Store migrated schema **5 → 6**. On-server read-only comparison checked every old column value by
+primary key, preserving 2 users/password rows, 3 spaces/memberships, 5 projects, 4 sources,
+5 templates, 17 template versions, 9 mapping revisions, 6 jobs/24 items, 36 artifacts,
+1 OIDC key and 2 OAuth clients. All **57 existing blob files** have identical bytes.
+Root-secret bytes match; historical `default` remains `pending_claim`. Production content and
+secret values never left the server. No accounts, data or keys were rebuilt.
+
+After the healthy image cutover, the reviewed host-owned Compose was installed under the deployment
+lock. The gateway was stopped, active jobs/mail/Webhook queues checked idle, and only Synwevo's
+three application roles and gateway restarted. Registration is now **open** with mailbox verification;
+it grants no platform administration. A later persisted administrator policy still overrides the
+environment setting. Previous Compose: `/opt/synwevo/config/compose.before-open-20260925T024541Z.yaml`.
+No data rollback was performed. Once new user traffic is admitted, do not restore this backup over
+later writes as an automatic rollback.
+
+Existing `/opt/synwevo/config/runtime.env` and `smtp.env` remain mode 0600; data/backup directories
+remain 0700. Only Account receives SMTP secrets. Docs/portal remain without SMTP passwords.
+The authenticated SMTP check did not submit a message; it proves transport/authentication, not
+mailcow queueing, relay acceptance, remote acceptance or final inbox visibility in this round.
+Prior external-mail evidence below is explicitly historical.
+
+### Evidence and limits
+
+Private evidence directory: `/private/tmp/synwevo-deploy-20260925/`:
+`actions-final.log`, `server-data-verification.json`, `registration-activation.log`,
+`server-final.json`, `public-smoke-final.json`, `smtp-tls-final.json`, local test logs and
+`homepage-local-evidence.json`. The corresponding read-only verifier scripts are retained there.
+Screenshots: `output/playwright/homepage-automation-{language}-{desktop|mobile}.png` (six local)
+and `homepage-production-zh-Hans-desktop.png`, `homepage-production-en-mobile.png`,
+`homepage-production-zh-Hant-mobile.png`. Evidence/screenshots are ignored by Git.
+
+Authenticated registration/invitation/Docs/admin/API flows were exercised with isolated accounts,
+file-mail and synthetic documents in the preceding product round ([handoff](handoff.md)); this
+production pass did not create users, impersonate the administrator or send test mail.
+Physical Passkey devices, another external inbox delivery and operator legal/contact information
+remain external acceptance inputs. There is no claim that anonymous production smoke alone proves
+all authenticated workflows. Local preview remains at ports 28769/28770/28765 with isolated data;
+no recurring agent or hidden background deployment loop was established.
+
+Operational commands and recovery limits: [production guide](../../infra/production/README.md).
+
+## Historical deployment and SMTP acceptance — 2026-09-24
+
 2026-09-24. User explicitly authorized replacement of the old Docker service, public domain changes,
 push and CI/CD. This deployment scope supersedes the earlier local-only development boundary.
 The larger product roadmap remains paused; this record concerns deployment and its blockers.
 
-**Current outcome: deployed, SMTP enabled, CI/CD verified.** Production runs
+**Outcome of the 2026-09-24 round: deployed, SMTP enabled, CI/CD verified.** Its release was
 `d97823a06e5cb8c7e578c3a948a2978240655326`. The subsequent evidence-only documentation commit
 does not change that running release. The first administrator was created by the user.
 This SMTP round is complete; earlier cutover results below remain historical. No agent loop remains.
