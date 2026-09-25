@@ -260,6 +260,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
     def capabilities(request: Request):
         scope(request, "read")
         rep = capability_report()
+        rep["environment"]["malware_scan"] = app_.scan_policy.describe()
         return {"api_version": API_VERSION, **rep, "limits": {
             "max_file_mb": LIMITS.max_file_bytes // (1024 * 1024), "max_pages": LIMITS.max_pages,
             "max_cells": LIMITS.max_cells, "max_records_per_job": LIMITS.max_records_per_job}}

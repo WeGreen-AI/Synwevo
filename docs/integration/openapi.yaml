@@ -5114,6 +5114,59 @@ components:
         - varies
         - locator
       title: LocatorProposal
+    ScanVerdict:
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+            - clean
+            - infected
+            - error
+            - too_large
+            - not_configured
+            - unscanned
+          title: Status
+        signature:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Signature
+        engine:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Engine
+        reason:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Reason
+        sha256:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Sha256
+        checked_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Checked At
+        attempts:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Attempts
+        retry_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Retry At
+      type: object
+      required:
+        - status
+      title: ScanVerdict
+      description: "What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows\nwritten before scanning existed and `not_configured` deployments without a scanner — neither is\nclean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`."
     SourceBlock:
       properties:
         index:
@@ -5210,11 +5263,14 @@ components:
         status:
           type: string
           enum:
+            - scanning
             - parsing
             - ready
             - needs_ocr
             - error
             - unsupported
+            - rejected
+            - scan_failed
           title: Status
         error:
           anyOf:
@@ -5261,6 +5317,8 @@ components:
         sha256:
           type: string
           title: Sha256
+        scan:
+          $ref: "#/components/schemas/ScanVerdict"
       type: object
       required:
         - id
@@ -5282,6 +5340,7 @@ components:
         - ocr_pages
         - corrections
         - sha256
+        - scan
       title: SourceFile
     SourceHit:
       properties:
@@ -5544,11 +5603,14 @@ components:
         status:
           type: string
           enum:
+            - scanning
             - parsing
             - ready
             - needs_ocr
             - error
             - unsupported
+            - rejected
+            - scan_failed
           title: Status
         error:
           anyOf:
@@ -5602,11 +5664,14 @@ components:
         status:
           type: string
           enum:
+            - scanning
             - parsing
             - ready
             - needs_ocr
             - error
             - unsupported
+            - rejected
+            - scan_failed
           title: Status
         error:
           anyOf:

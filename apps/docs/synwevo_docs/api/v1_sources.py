@@ -16,7 +16,7 @@ from typing import Annotated, Generic, Literal, TypeVar
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Path, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator, model_serializer
 from starlette.concurrency import run_in_threadpool
 
 from synwevo_core.errors import ServiceError, not_found
@@ -31,7 +31,9 @@ Offset = Annotated[int, Query(ge=0, le=MAX_OFFSET)]
 Limit = Annotated[int, Query(ge=1, le=MAX_PAGE)]
 BlockIndex = Annotated[int | None, Query(ge=0, le=4999)]
 Mode = Literal["per_row", "per_file", "per_group", "per_block"]
-Status = Literal["parsing", "ready", "needs_ocr", "error", "unsupported"]
+# scanning → (parsing → ready | needs_ocr | error | unsupported) | rejected | scan_failed;
+# the malware check precedes parsing (docs/security/file-acceptance.md).
+Status = Literal["scanning", "parsing", "ready", "needs_ocr", "error", "unsupported", "rejected", "scan_failed"]
 SelectionIndex = Annotated[int, Field(ge=0, le=1048575)]
 SelectionColumn = Annotated[int, Field(ge=0, le=16383)]
 TextOffset = Annotated[int, Field(ge=0, le=20000000)]
@@ -192,6 +194,26 @@ class CorrectionValue(BaseModel):
     confirmed: bool
 
 
+class ScanVerdict(BaseModel):
+    """What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows
+    written before scanning existed and `not_configured` deployments without a scanner — neither is
+    clean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`."""
+    status: Literal["pending", "clean", "infected", "error", "too_large", "not_configured", "unscanned"]
+    signature: str | None = None
+    engine: str | None = None
+    reason: str | None = None
+    sha256: str | None = None
+    checked_at: float | None = None
+    attempts: int | None = None
+    retry_at: float | None = None
+
+    @model_serializer(mode="wrap")
+    def _only_known(self, handler):
+        # The verdict carries the keys it knows, exactly as the workbench API returns it;
+        # a `signature: null` on a clean file would be noise in every listing.
+        return {k: v for k, v in handler(self).items() if v is not None}
+
+
 class SourceFile(BaseModel):
     id: str
     project_id: str
@@ -212,6 +234,7 @@ class SourceFile(BaseModel):
     ocr_pages: list[int]
     corrections: dict[str, CorrectionValue]
     sha256: str
+    scan: ScanVerdict
 
 
 class SourceStructure(BaseModel):
@@ -601,6 +624,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
     def content(request: Request, fid: FileID):
         gate(request, "export")
         row = source(fid)
+        app_.require_accepted(row)        # quarantined or rejected bytes are never served
         if not app_.store.has_blob(row["blob"]):
             raise ServiceError(410, "source_content_missing", "来源文件内容已不在存储中")
         result = attachment(app_.store.get_blob(row["blob"]), row["filename"])

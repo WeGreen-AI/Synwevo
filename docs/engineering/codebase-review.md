@@ -108,7 +108,15 @@ id_token（签名、iss、aud、nonce、exp），`Apps.check_access` 一次，�
 
 ## 4. 本轮对上述链路的改动
 
-（实施与验证完成后在此更新，只写已验证的事实。）
+**2026-09-25 CI-20 文件接纳链（已验证）。** 新模块 `apps/docs/synwevo_docs/malware.py`（clamd `INSTREAM`/`PING`/`VERSION`
+适配器、策略、健康）；`services.py` 的 `add_source` 现在先写 `scanning` 并把 `_scan_then_parse` 交给解析线程池，
+`_parse_source` 对 `scanning`/`scan_failed`/`rejected` 直接返回，`require_accepted` 在 `api/app.py:source_download` 与
+`api/v1_sources.py:content` 的授权之后执行（409/410），`upload_template` 的第一行是同步扫描 `scan_template_bytes`；
+`synwevo_core/store.py` schema v8 加两列 `scan`（JSON）；`synwevo_core/http.py:install_probes` 增加不影响就绪判定的
+`degradable` 组件。授权链路本身未变：接纳状态检查发生在 `get_source`/`authz` 之后，所以不改变逐租户可见性。
+验证：`apps/docs/tests/test_malware_scan.py`（协议替身 8 项）、真实 ClamAV 1.5.4 探针与 HTTP 链（verification.md §16.20）、
+Docs/账户/集成三套件与 v1 契约测试通过。代码地图第 5 节的基线表未重算（services.py 等哈希为基线值）；
+`review-coverage.json` 新增 `malware.py` 条目，其余条目沿用。
 
 
 ## 5. 覆盖清单（基线 `51b31fe`）

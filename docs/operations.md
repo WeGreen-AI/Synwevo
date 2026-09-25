@@ -179,6 +179,9 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 | 导出 PDF 中文不显示 | 安装中文字体（容器镜像已含 Noto CJK），或用 `SYNWEVO_DOCS_CJK_FONTS` 指定字体文件 |
 | Webhook 未送达 | 查看 `webhook_deliveries` 表的 `status`/`last_error`；内网地址需加入 `SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE`；回调失败不影响产物下载 |
 | 接口返回 429 | 调整 `SYNWEVO_API_RATE_PER_MIN` 或在客户端退避重试（响应带 `Retry-After`） |
+| 来源文件停在「安全检查暂不可用」（`scan_failed`）、`/readyz` 的 `malware_scanner` 为 `down: …` | clamd 不可达：`docker compose logs clamav`（首次启动要先下载病毒库，`start_period` 15 分钟）；恢复后文件按 30 s→10 min 的间隔自动重试，不需要重新上传。文件超过扫描上限（`scan.status=too_large`）则调大 `SYNWEVO_CLAMD_MAX_BYTES` 与 clamd 的 `StreamMaxLength` 后让用户重新上传 |
+| 上传返回 400 `malware_detected`、文件显示「安全检查未通过」 | 引擎命中签名（`scan.signature`、`scan.engine` 记录了判定时的引擎与病毒库）。字节已从 blob 存储删除；没有"仍然处理"的入口。怀疑误报按 docs/security/file-acceptance.md §8 处理 |
+| 模板上传返回 503 `scan_unavailable` | 模板是同步扫描：clamd 不可达时拒绝并给 `Retry-After`，clamd 恢复后重试即可 |
 
 ## 6. 账户邮件（仅发信）
 
@@ -308,3 +311,18 @@ SYNWEVO_IDP_MICROSOFT_TENANT=common
 持有 Google Cloud 项目与 Microsoft Entra 租户管理权的人：按 7.1 登记两个 Web 应用（回调逐字），在
 VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose restart accounts`，然后按 7.2 第 2、3
 步验证。代理不能替代这一步，也不要把 client secret 贴进聊天或提交。
+
+## 8. 上传内容的恶意软件扫描（ClamAV）
+
+策略、状态机与验收在 `docs/security/file-acceptance.md`。运维要点：
+
+| 项 | 值 |
+|---|---|
+| 服务 | `infra/production/compose.yaml` 的 `clamav`（官方镜像 `clamav/clamav:1.4`，GPLv2，独立容器，端口只在内网） |
+| Docs 环境 | `SYNWEVO_CLAMD_ADDRESS=tcp://clamav:3310`、`SYNWEVO_MALWARE_SCAN=required`；可选 `SYNWEVO_CLAMD_TIMEOUT_S`（60）、`SYNWEVO_CLAMD_MAX_BYTES`（25 MiB，与 clamd `StreamMaxLength` 一致） |
+| 病毒库 | 容器内 freshclam 每小时检查 `database.clamav.net`（VPS 需允许出站 HTTPS）；库持久化在 `/opt/synwevo/clamav`，重建容器不重新下载 |
+| 内存 | 守护进程加载 3.6 M 条签名后约 1 GiB 常驻（本机 ClamAV 1.5.4 实测 950 MiB），重载新库时短暂翻倍；服务限额 2 GiB。**加入前确认 VPS 余量**（当前四个服务限额合计约 4 GiB） |
+| 上线顺序 | 合并 compose → `docker compose up -d clamav` → 等 `healthy`（首次 5–15 分钟）→ 重建 `docs`。Docs 不依赖 clamav 健康即可启动：引擎未就绪时新文件停在隔离态并自动重试，已接纳的文件照常 |
+| 观察 | `/readyz` 的 `checks.malware_scanner`（`ok`/`off`/`down: …`，不影响就绪判定）；`/api/v1/capabilities` 的 `environment.malware_scan`；审计事件 `source.rejected`（见 file-acceptance §8） |
+| 回滚 | 从 docs 服务去掉两个环境变量并重建；已写入的 `scan` 列保留，`rejected` 的行保持拒绝 |
+| 不做 | 不把用户文件送往 VirusTotal 等外部平台；不提供跳过扫描的按钮；不用测试密钥或关闭检查让流水线变绿 |

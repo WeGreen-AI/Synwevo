@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -587,6 +587,14 @@ V7_COLUMNS = [
     ("sessions", "auth_provider", "TEXT"),
 ]
 
+V8_COLUMNS = [
+    # The malware-scan verdict of the stored bytes (synwevo_docs.malware): status, signature,
+    # engine, the content hash it was made for, when. NULL on rows written before scanning
+    # existed — reported as "unscanned", never as clean.
+    ("source_files", "scan", "TEXT"),
+    ("templates", "scan", "TEXT"),
+]
+
 V6_COLUMNS = [
     ("rp_auth_requests", "workspace_id", "TEXT"),
     ("users", "locale", "TEXT NOT NULL DEFAULT 'zh-Hans'"),
@@ -681,7 +689,7 @@ V2_COLUMNS = [
 ]
 
 JSON_COLS = {"record_rule", "output", "notes", "structure", "options", "ocr", "corrections", "slots", "editor", "data",
-             "snapshot", "counts", "record", "issues", "trace", "verification", "info", "summary"}
+             "snapshot", "counts", "record", "issues", "trace", "verification", "info", "summary", "scan"}
 
 
 def new_id(prefix: str) -> str:
@@ -780,7 +788,7 @@ class Store:
         from .organizations import SCHEMA_SQL as ORGANIZATION_SCHEMA, V6_COLUMNS as ORGANIZATION_COLUMNS
         c.executescript(ORGANIZATION_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + ORGANIZATION_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

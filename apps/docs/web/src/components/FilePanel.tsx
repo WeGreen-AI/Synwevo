@@ -178,7 +178,7 @@ export default function FilePanel({ projectId, sources, active, onActive, onChan
                 }}>{s.filename}</button>
               <div className="fmeta row gap4 wrap">
                 <span>{(s.format || "?").toUpperCase()}</span><span>{fmtSize(s.size)}</span>
-                <span className={`badge ${s.status === "ready" ? "ok" : s.status === "parsing" ? "info" : s.status === "needs_ocr" ? "warn" : "err"}`}>{tr(STATUS_TEXT[s.status] || s.status)}</span>
+                <span className={`badge ${s.status === "ready" ? "ok" : s.status === "parsing" || s.status === "scanning" ? "info" : s.status === "needs_ocr" || s.status === "scan_failed" ? "warn" : "err"}`}>{tr(STATUS_TEXT[s.status] || s.status)}</span>
                 {s.representative && <span className="badge info" title={tr("用于建立规则的代表文件")}>{tr("代表")}</span>}
               </div>
               {s.error && <div className="tiny" style={{ color: "var(--err)" }}>{diagnosticText(s.error)}</div>}

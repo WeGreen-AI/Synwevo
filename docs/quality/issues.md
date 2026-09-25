@@ -8,6 +8,8 @@
 
 | ID | 问题与基线 | 依据 | 修复 | 验证 | 状态 |
 |---|---|---|---|---|---|
+| CI-20 | 任何上传（工作台、机器 API、分片上传、路径导入、模板）都直接进入解析与下载；没有恶意软件扫描，也没有"隔离/拒绝"状态 | OWASP File Upload Cheat Sheet；ClamAV clamd 协议文档；EICAR 标准测试文件（均 2026-09-25 读取） | 接纳链：`add_source` 先写 `scanning`，`_scan_then_parse` 经 clamd `INSTREAM` 判定后才进入 `parsing`；命中 → `rejected` + 删除 blob + 同字节再上传 400；引擎不可用/超限 → `scan_failed` 隔离并按 30 s→10 min 重试；下载与内容接口 409/410；模板同步扫描 400/503/413；schema v8 `scan` 列；`/readyz` 可降级组件 `malware_scanner`；`/capabilities` 报告策略；SDK 等待穿过 `scanning`/`scan_failed`；三语言状态标签；参考 compose `clamav` 服务 | 协议替身 8 项通过（EICAR 拒绝隔离、离线重试恢复、超限、模板三种错误、未配置可见）；真实引擎见 verification §16.20 | 已实现（本机），待部署；生产需运维合并 compose 与确认内存 |
+| CI-19 | 注册 → 邮件验证 → 登录 → 引导 → 被邀请 → 接受 → 退出 的完整平台闭环此前没有浏览器回归；只有分段测试 | 产品自身流程；`verify_email` 的"邮箱持有人选择凭据"规则 | 新脚本 `ui_e2e_onboarding.py`：读取隔离实例的 `.eml` 取链接，Chromium + WebKit（经本地 `*.localhost` 代理），手机视口；核对邀请结果对话框（拒绝即失败） | 两引擎全程通过，0 页面错误、0 CSP 违规；发现夹具空间 50/24h 邀请预算已满属预期限流，改用新建团队空间 | 通过（回归脚本） |
 | CI-18 | 折叠头 `<summary>` 与页脚链接（门户、API 台）只有 20 px 高，「API」链接 20 px 宽；此前审计只测首屏漏掉了它们 | WCAG 2.2 SC 2.5.8；整页测量 | 共享 `summary`/`footer a` 最小 24 px（粗指针 32）、页脚链接最小宽 24 px；门户页脚同样 | 两组账户 320/375/1280 审计 0 发现；繁體残留 0 处 | 已修复，待部署 |
 | CI-17 | 手机上工作台连线覆盖层越出视口；映射编号标记 18 px；英文长按钮标签在 320 px 越出 | 审计（内容态 + 英文） | ≤900 px 隐藏 `.connectors`；粗指针标记 24 px；≤620 px 按钮文字换行 | Bob 320/375 审计 0 发现；手机主链路与外壳回归通过 | 已修复，待部署 |
 | CI-16 | 所有外壳的 `<button class="btn primary">` 悬停/按下时文字变深色压在深蓝上（2.66:1，WCAG 1.4.3 不达标） | 审计对比度采样（API 台页签）；WCAG 2.2 SC 1.4.3 | `.btn.primary:hover/:active` 重申 `color: var(--on-accent)`（此前只修了 `a.btn.primary`） | 悬停实测 8.6:1；API 台六页签 × 320/375 审计 0 发现 | 已修复，待部署 |

@@ -543,4 +543,5 @@ export const cellRef = (r: number, c: number) => `${colLetter(c)}${r + 1}`;
 export const rangeRef = (r1: number, c1: number, r2: number, c2: number) => (r1 === r2 && c1 === c2 ? cellRef(r1, c1) : `${cellRef(r1, c1)}:${cellRef(r2, c2)}`);
 
 export const FAMILY_ICON: Record<string, string> = { table: "▦", document: "¶", pdf: "⎙", image: "▣", slides: "▭", text: "≡", unknown: "?" };
-export const STATUS_TEXT: Record<string, string> = { parsing: "解析中", ready: "可用", error: "错误", unsupported: "不支持", needs_ocr: "需 OCR" };
+export const STATUS_TEXT: Record<string, string> = { scanning: "安全检查中", parsing: "解析中", ready: "可用", error: "错误", unsupported: "不支持", needs_ocr: "需 OCR",
+  rejected: "安全检查未通过", scan_failed: "安全检查暂不可用" };

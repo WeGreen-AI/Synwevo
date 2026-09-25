@@ -637,7 +637,10 @@ export class Client {
     return this.requestJson('POST', `/uploads/${up.id}/complete`, { json: { sha256 }, retry: true });
   }
 
-  /** Poll a source file until the server has parsed it; throws if parsing failed. */
+  /** Poll a source file until the server has accepted and parsed it; throws if parsing failed or the
+   *  file was rejected by the malware check. `scanning` and `scan_failed` (check not run yet; the server
+   *  keeps the file quarantined and retries — re-uploading would only queue the same bytes again) are
+   *  waited through until `timeoutMs`; the WaitTimeoutError then carries the last record in `details`. */
   async waitForFile(fid, { timeoutMs = 120_000, pollMs = 300, maxPollMs = 3_000, signal } = {}) {
     const t0 = Date.now();
     let wait = pollMs;
@@ -649,7 +652,10 @@ export class Client {
       if (f.status === 'error') {
         throw new APIError(`来源文件 ${f.filename || fid} 解析失败：${f.error || '未知原因'}`, { code: 'file_parse_failed', details: f });
       }
-      if (f.status !== 'parsing') return f;
+      if (f.status === 'rejected') {
+        throw new APIError(`来源文件 ${f.filename || fid} 未通过安全检查：${f.error || '已拒绝'}`, { code: 'file_rejected', details: f });
+      }
+      if (f.status !== 'parsing' && f.status !== 'scanning' && f.status !== 'scan_failed') return f;
       if (Date.now() - t0 + wait > timeoutMs) throw new WaitTimeoutError(`来源文件 ${fid} 超过 ${timeoutMs} ms 仍在解析`, { details: f });
       await this.sleep(wait, signal);
       wait = Math.min(maxPollMs, Math.ceil(wait * 1.5));

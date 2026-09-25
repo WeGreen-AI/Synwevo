@@ -162,10 +162,21 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 | DELETE | `/projects/{pid}` | admin | 删除项目（软删除，产物保留） |
 | POST | `/projects/{pid}/files` | write | 上传来源文件：`multipart/form-data` 的 `file` 字段；或 JSON `{"path": "..."}`（仅限 `SYNWEVO_DOCS_IMPORT_ROOTS` 下） |
 | GET | `/projects/{pid}/files` | read | 来源文件与解析状态 |
-| GET | `/files/{fid}` | read | 单个文件：`status`（`parsing`/`ready`/`needs_ocr`/`error`）、`structure`（工作表、页数、表头等）、`sha256` |
+| GET | `/files/{fid}` | read | 单个文件：`status`（`scanning`/`scan_failed`/`parsing`/`ready`/`needs_ocr`/`error`/`rejected`）、`scan`（安全检查结论，见下）、`structure`（工作表、页数、表头等）、`sha256` |
 | DELETE | `/files/{fid}` | write | 从项目移除 |
 
-上传后解析是异步的：轮询 `/files/{fid}` 直到 `status != "parsing"`。
+上传后接纳与解析都是异步的：轮询 `/files/{fid}` 直到 `status` 不再是 `scanning`、`scan_failed` 或 `parsing`
+（两个 SDK 的 `wait_for_file` / `waitForFile` 就是这样等的）。部署配置了恶意软件扫描时，文件先进入 `scanning`：
+引擎判定干净才进入 `parsing`；命中签名则变为 `rejected`（字节已隔离删除，`/files/{fid}/content` 返回 410
+`rejected_malware`，同样的字节再上传直接 400 `malware_detected`）；引擎暂不可用或文件超过扫描上限则停在
+`scan_failed`（服务端按 30 s→10 min 的间隔自动重试，下载返回 409 `not_yet_accepted`）。**不要因为 `scan_failed`
+重新上传**：那只会把同样的字节再排一次队。`scan` 对象给出结论：`status`（`pending`/`clean`/`infected`/`error`/
+`too_large`/`not_configured`/`unscanned`）、`signature`、`engine`（引擎与病毒库版本）、`sha256`（结论绑定的内容摘要）、
+`checked_at`、`attempts`、`retry_at`。未配置扫描器的部署把每个文件标为 `not_configured`，扫描功能上线前的历史文件为
+`unscanned`——两者都不是"干净"。模板上传是同步扫描：命中返回 400 `malware_detected`，引擎不可用返回 503
+`scan_unavailable`（`detail.retry_after` 秒后重试），超过扫描上限返回 413 `scan_limit`。`/capabilities` 的
+`environment.malware_scan` 说明本部署是否扫描；`/readyz` 的 `checks.malware_scanner` 报告引擎是否可达（`ok`/`off`/
+`down: …`），引擎不可达不会让整个服务变为未就绪——已接纳的文件照常工作，新文件留在隔离态。
 
 来源选择接口与界面调用同一服务，所有位置从 0 开始。以下列表接口采用 `offset`/`limit`，
 默认 50（视图和词列表为 200），最大 200；返回 `total`、`next_offset` 和相对 `Link`。

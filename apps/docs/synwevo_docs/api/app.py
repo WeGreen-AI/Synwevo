@@ -295,6 +295,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     @api.get("/api/sources/{sid}/download")
     def source_download(sid: str):
         r = app_.get_source(sid, raw=True)
+        app_.require_accepted(r)          # quarantined or rejected bytes are never served
         return attachment(store.get_blob(r["blob"]), r["filename"])
 
     # ------------------------------------------------------------ templates
@@ -590,7 +591,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     # Probes first, so the published OpenAPI document lists them where it always has. Route
     # order is not behaviour, but a generated file that reshuffles on every refactor is one
     # nobody reads the diff of.
-    install_probes(api, plat.store, worker=lambda: bool(getattr(api.state, "jobs", None) and api.state.jobs.runner_alive()))
+    install_probes(api, plat.store, worker=lambda: bool(getattr(api.state, "jobs", None) and api.state.jobs.runner_alive()),
+                   degradable={"malware_scanner": lambda: api.state.app.scanner_health()})
     app_ = install(api, plat, start_jobs=start_jobs)
     # The process that *is* Synwevo Docs registers it, as the composer does for role=app: the
     # gate's application checks (enabled, entitlement, per-workspace) and the portal card read

@@ -1018,12 +1018,19 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         return await finish(resp)
 
 
-def install_probes(api: FastAPI, store: Store, worker: Callable[[], bool] | None = None) -> None:
+def install_probes(api: FastAPI, store: Store, worker: Callable[[], bool] | None = None,
+                   degradable: dict[str, Callable[[], str]] | None = None) -> None:
     """Liveness and readiness, identical in every role.
 
     ``worker`` is what this role's background work is: Synwevo Docs' job runner, the account
     service's mail sender, or nothing at all. A role with no worker reports none rather than
     reporting somebody else's.
+
+    ``degradable`` are components whose outage must be *visible* in ``checks`` but must not take
+    the whole role out of rotation: Synwevo Docs' malware scanner is one — when it is down, new
+    uploads stay quarantined and are retried, while everything already accepted keeps working,
+    so restarting the container (what an unhealthy readiness does under compose) would only add
+    an outage. Each callable returns ``"ok"`` or a short reason; anything else is reported as is.
     """
 
     @api.get("/api/health")
@@ -1089,6 +1096,11 @@ def install_probes(api: FastAPI, store: Store, worker: Callable[[], bool] | None
         if worker is not None:
             checks["worker"] = "ok" if worker() else "stopped"
         ready = all(v == "ok" for v in checks.values())
+        for name, probe in (degradable or {}).items():
+            try:
+                checks[name] = probe()
+            except Exception as e:  # noqa: BLE001
+                checks[name] = f"error: {type(e).__name__}"
         return JSONResponse({"status": "ready" if ready else "not_ready", "checks": checks},
                             status_code=200 if ready else 503)
 

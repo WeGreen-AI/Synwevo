@@ -12,7 +12,7 @@
   "counts": {
     "indexed": 123,
     "partial": 127,
-    "full": 308,
+    "full": 309,
     "excluded": 7
   },
   "agent_snapshot_drift": [
@@ -1593,6 +1593,14 @@
       },
       "reader": "Codex main",
       "coverage_source": "Current-task full-read / authoring transcript"
+    },
+    {
+      "path": "apps/docs/synwevo_docs/malware.py",
+      "sha256": "e6936c62e43ffedc2340cfb37b64efa4b5887d6e9ac9ffe1dc349fb23c5f748b",
+      "bytes": 8026,
+      "lines": 187,
+      "status": "full",
+      "evidence": "Authored and fully read in CI-20 (2026-09-25); behaviour verified by apps/docs/tests/test_malware_scan.py (clamd protocol double) and against a real ClamAV 1.5.4 daemon (verification.md §16.20)"
     },
     {
       "path": "apps/docs/synwevo_docs/regression.py",

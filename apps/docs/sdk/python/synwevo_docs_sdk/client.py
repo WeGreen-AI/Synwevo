@@ -335,7 +335,7 @@ class Client:
             out = self._json("POST", route, json={"upload_id": up["id"]}, idempotency_key=key)
         else:
             out = self._multipart(route, path, name, key, on_progress=on_progress)
-        if wait and out.get("status") == "parsing":
+        if wait and out.get("status") in ("parsing", "scanning", "scan_failed"):
             done = self.wait_for_file(out["id"], timeout=wait_timeout)
             return wrap_like(done, out)
         return out
@@ -370,13 +370,17 @@ class Client:
         return self._json("DELETE", f"{API}/files/{_q(file_id)}", retry_safe=True)
 
     def wait_for_file(self, file_id: str, *, timeout: float = 120.0, poll_interval: float = 0.5) -> dict:
-        """Poll until the server has finished parsing the file (status is no longer ``parsing``)."""
+        """Poll until the server has accepted and parsed the file: the status is no longer
+        ``scanning`` (the malware check), ``scan_failed`` (the check could not run yet — the server
+        keeps the file quarantined and retries it, so re-uploading would only queue the same bytes
+        again) or ``parsing``. ``rejected`` (a signature matched) and ``error`` are returned as
+        they are; ``error``/``scan`` say why. A ``WaitTimeoutError`` carries the last file record."""
         _check_wait(timeout, poll_interval)
         deadline = self._clock() + timeout
         interval = poll_interval
         while True:
             f = self.get_file(file_id)
-            if f.get("status") != "parsing":
+            if f.get("status") not in ("parsing", "scanning", "scan_failed"):
                 return f
             if self._clock() >= deadline:
                 raise WaitTimeoutError(f"来源文件 {file_id} 在 {timeout:g} 秒内没有解析完成", f)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import threading
 import unicodedata
@@ -13,11 +14,25 @@ from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import Store, new_id, now
 
 from . import authz
+from . import malware as M
+
+# Acceptance events for the operator's log: ids, hashes, verdicts and engine versions — never
+# file names chosen by users, never bytes, never paths (docs/security/file-acceptance.md §8).
+acceptance_log = logging.getLogger("synwevo_docs.acceptance")
 from .engine import sources as S
 from .engine import templates as T
 from .engine.detect import FAMILY
 from .engine.limits import LIMITS
 from .engine.resolve import SourceDoc
+
+
+def scan_out(rec: dict | None) -> dict:
+    """What clients see of a scan verdict: never the engine's raw reply, never a path.
+    Rows written before scanning existed are `unscanned` — honest, and distinct from clean."""
+    if not rec:
+        return {"status": "unscanned"}
+    keys = ("status", "signature", "engine", "reason", "sha256", "checked_at", "attempts", "retry_at")
+    return {k: rec[k] for k in keys if k in rec}
 
 PALETTE = ["#2563eb", "#db2777", "#059669", "#d97706", "#7c3aed", "#0891b2", "#dc2626", "#65a30d", "#c026d3",
            "#0d9488", "#ea580c", "#4f46e5", "#be123c", "#15803d", "#a16207", "#0369a1"]
@@ -27,6 +42,12 @@ class App:
     def __init__(self, store: Store):
         self.store = store
         self.parse_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="parse")
+        # Malware scanning policy (synwevo_docs.malware): decided once at start-up so a bad
+        # configuration fails the process instead of silently scanning nothing.
+        self.scan_policy = M.policy()
+        self.scanner = M.scanner_for(self.scan_policy)
+        self._scan_retry_lock = threading.Lock()
+        self._scan_timers: dict[str, threading.Timer] = {}
         self._src_cache: dict[tuple, SourceDoc] = {}
         self._cache_lock = threading.Lock()
         self.on_event = None          # set by the API layer: called after a job event is stored
@@ -239,19 +260,155 @@ class App:
             raise ServiceError(413, "too_large", f"文件「{filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限")
         filename = safe_display_name(filename)
         blob = self.store.put_blob(data)
+        if self.scanner is not None and self.store.one("SELECT 1 AS x FROM source_files WHERE blob=? AND status='rejected'", (blob,)):
+            # The same bytes were already judged malicious: no second look, no new row.
+            raise ServiceError(400, "malware_detected", f"文件「{filename}」的内容此前已被判定为恶意内容，已拒绝")
         sid = new_id("s")
         mx = self.store.one("SELECT MAX(ord) AS m FROM source_files WHERE project_id=?", (pid,))["m"] or 0
         t = now()
+        scanning = self.scanner is not None
         self.store.insert("source_files", {"id": sid, "project_id": pid, "filename": filename, "ord": mx + 1, "blob": blob,
-                                           "size": len(data), "status": "parsing", "notes": [], "structure": {},
+                                           "size": len(data), "status": "scanning" if scanning else "parsing", "notes": [], "structure": {},
                                            "options": {}, "version": 1, "created_at": t, "updated_at": t,
-                                           "ocr": {}, "corrections": {}})
+                                           "ocr": {}, "corrections": {},
+                                           "scan": {"status": "pending"} if scanning else {"status": "not_configured"}})
         has_rep = self.store.one("SELECT 1 AS x FROM source_files WHERE project_id=? AND representative=1 AND removed=0", (pid,))
         if not has_rep:
             self.store.update("source_files", {"id": sid}, {"representative": 1})
         self.store.bump_project(pid)
-        self.parse_pool.submit(self._parse_source, sid)
+        self.parse_pool.submit(self._scan_then_parse if scanning else self._parse_source, sid)
         return self.get_source(sid)
+
+    # ------------------------------------------------------------------ malware scanning
+    SCAN_RETRY_DELAYS = (30, 60, 120, 300, 600)
+
+    def _scan_then_parse(self, sid: str) -> None:
+        """The acceptance gate for a source file: nothing parses until the engine said OK.
+
+        Outcomes are terminal states the API and the page can explain: `parsing` (clean, the
+        parser takes over), `rejected` (a signature matched; the bytes are quarantined — the
+        blob is unlinked and every row sharing that hash is rejected), `scan_failed` (the engine
+        was unreachable, timed out or refused the size; the file stays unusable and is retried
+        with backoff — an engine outage never lets a file through). The verdict is published
+        only if the row is the version and blob that were scanned."""
+        with self.store.tx():
+            row = self.store.one("SELECT s.* FROM source_files s JOIN projects p ON p.id=s.project_id "
+                                 "WHERE s.id=? AND s.removed=0 AND COALESCE(p.deleted,0)=0", (sid,))
+        if not row or row["status"] not in ("scanning", "scan_failed"):
+            return
+        if self.scanner is None:
+            self._publish_scan(row, {"status": "not_configured"}, "parsing")
+            self._parse_source(sid)
+            return
+        try:
+            data = self.store.get_blob(row["blob"])
+        except OSError:
+            self._publish_scan(row, {"status": "error", "reason": "content missing"}, "error", error="来源文件内容已不在存储中")
+            return
+        attempt = int((row.get("scan") or {}).get("attempts") or 0) + 1
+        try:
+            res = self.scanner.scan(data, sha256=row["blob"])
+        except M.ScanUnavailable as e:
+            rec = {"status": "error", "reason": str(e)[:200], "attempts": attempt, "checked_at": now()}
+            delay = self.SCAN_RETRY_DELAYS[min(attempt, len(self.SCAN_RETRY_DELAYS)) - 1]
+            rec["retry_at"] = now() + delay
+            self._publish_scan(row, rec, "scan_failed", error="安全检查服务暂不可用，文件已隔离，稍后自动重试")
+            acceptance_log.warning("scan.unavailable source=%s tenant=%s sha256=%s attempt=%s retry_in=%ss reason=%s",
+                                   sid, row.get("tenant") or "-", row["blob"], attempt, delay, str(e)[:160])
+            self._schedule_scan_retry(sid, delay)
+            return
+        rec = res.as_record() | {"attempts": attempt}
+        if res.status == "clean":
+            self._publish_scan(row, rec, "parsing", error=None)
+            acceptance_log.info("scan.clean source=%s tenant=%s sha256=%s engine=%s attempt=%s",
+                                sid, row.get("tenant") or "-", row["blob"], res.engine, attempt)
+            self._parse_source(sid)
+        elif res.status == "infected":
+            self._publish_scan(row, rec, "rejected", error=f"安全检查未通过：文件被判定为恶意内容（{res.signature}），已拒绝并隔离")
+            acceptance_log.warning("scan.rejected source=%s tenant=%s sha256=%s signature=%s engine=%s",
+                                   sid, row.get("tenant") or "-", row["blob"], res.signature, res.engine)
+            self._quarantine_blob(row["blob"], res)
+        else:   # too_large: not scanned is never clean
+            self._publish_scan(row, rec, "scan_failed", error=f"文件超过安全检查的大小上限（{self.scan_policy.max_bytes // (1024 * 1024)} MB），无法接纳；请拆分或压缩后重新上传")
+            acceptance_log.warning("scan.too_large source=%s tenant=%s sha256=%s size=%s limit=%s",
+                                   sid, row.get("tenant") or "-", row["blob"], len(data), self.scan_policy.max_bytes)
+
+    def _publish_scan(self, row: dict, rec: dict, status: str, error: str | None = "") -> None:
+        values = {"scan": rec, "status": status, "updated_at": now()}
+        if error != "":
+            values["error"] = error
+        with self.store.tx():
+            current = self.store.one("SELECT version, blob FROM source_files WHERE id=? AND removed=0", (row["id"],))
+            if not current or current["version"] != row["version"] or current["blob"] != row["blob"]:
+                return
+            self.store.update("source_files", {"id": row["id"]}, values)
+
+    def _schedule_scan_retry(self, sid: str, delay: float) -> None:
+        def fire():
+            with self._scan_retry_lock:
+                self._scan_timers.pop(sid, None)
+            self.parse_pool.submit(self._scan_then_parse, sid)
+        with self._scan_retry_lock:
+            old = self._scan_timers.pop(sid, None)
+            if old:
+                old.cancel()
+            t = threading.Timer(delay, fire)
+            t.daemon = True
+            self._scan_timers[sid] = t
+            t.start()
+
+    def _quarantine_blob(self, blob: str, res: M.ScanResult) -> None:
+        """Malicious bytes leave the store. Every source row that shares the hash is rejected
+        with the same verdict (same bytes, same judgement), then the file is unlinked so no
+        download, preview or parser path can read it back."""
+        with self.store.tx():
+            for r in self.store.all("SELECT id FROM source_files WHERE blob=? AND status!='rejected'", (blob,)):
+                self.store.update("source_files", {"id": r["id"]}, {
+                    "status": "rejected", "scan": res.as_record(),
+                    "error": f"安全检查未通过：文件被判定为恶意内容（{res.signature}），已拒绝并隔离", "updated_at": now()})
+        try:
+            path = self.store.blob_path(blob)
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+    @staticmethod
+    def require_accepted(row: dict) -> None:
+        """The original bytes of a source may leave the server only once the scan said OK."""
+        st = row.get("status")
+        if st == "rejected":
+            raise ServiceError(410, "rejected_malware", "该文件未通过安全检查，已被拒绝并隔离", {"scan": scan_out(row.get("scan"))})
+        if st in ("scanning", "scan_failed"):
+            raise ServiceError(409, "not_yet_accepted", "该文件尚未通过安全检查，暂不能下载", {"status": st, "scan": scan_out(row.get("scan"))})
+
+    def scanner_health(self) -> str:
+        """For /readyz: `ok`, `off` (no scanner configured — visible, not silent) or `down: <why>`."""
+        h = M.health(self.scan_policy)
+        if h["status"] == "ok":
+            return "ok"
+        if h["status"] == "off":
+            return "off"
+        return "down: " + (h.get("error") or "no PONG")[:120]
+
+    def scan_template_bytes(self, filename: str, data: bytes) -> dict:
+        """Templates are small and parsed on the request: the scan is synchronous and a bad
+        verdict is the request's error, so nothing is stored."""
+        if self.scanner is None:
+            return {"status": "not_configured"}
+        sha = hashlib.sha256(data).hexdigest()
+        try:
+            res = self.scanner.scan(data, sha256=sha)
+        except M.ScanUnavailable as e:
+            acceptance_log.warning("scan.unavailable template sha256=%s reason=%s", sha, str(e)[:160])
+            raise ServiceError(503, "scan_unavailable", "安全检查服务暂不可用，请稍后重试", {"retry_after": 30, "reason": str(e)[:120]}) from e
+        if res.status == "infected":
+            acceptance_log.warning("scan.rejected template sha256=%s signature=%s engine=%s", sha, res.signature, res.engine)
+            raise ServiceError(400, "malware_detected", f"文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝", {"signature": res.signature})
+        if res.status == "too_large":
+            acceptance_log.warning("scan.too_large template sha256=%s size=%s limit=%s", sha, len(data), self.scan_policy.max_bytes)
+            raise ServiceError(413, "scan_limit", f"文件超过安全检查的大小上限（{self.scan_policy.max_bytes // (1024 * 1024)} MB），无法接纳")
+        return res.as_record()
 
     def resume_parsing(self) -> int:
         """Parse again whatever a previous process left half-parsed.
@@ -260,10 +417,10 @@ class App:
         'parsing' forever: API clients told to poll until it changes polled forever, and job
         creation (which waits for parsing to finish) could never start. Parsing is a pure
         function of the stored bytes and options, so doing it twice is harmless."""
-        rows = self.store.all("SELECT s.id FROM source_files s JOIN projects p ON p.id=s.project_id "
-                              "WHERE s.status='parsing' AND s.removed=0 AND p.deleted=0")
+        rows = self.store.all("SELECT s.id, s.status FROM source_files s JOIN projects p ON p.id=s.project_id "
+                              "WHERE s.status IN ('parsing','scanning','scan_failed') AND s.removed=0 AND p.deleted=0")
         for r in rows:
-            self.parse_pool.submit(self._parse_source, r["id"])
+            self.parse_pool.submit(self._scan_then_parse if r["status"] in ("scanning", "scan_failed") else self._parse_source, r["id"])
         return len(rows)
 
     def _parse_source(self, sid: str) -> None:
@@ -273,8 +430,8 @@ class App:
         with self.store.tx():
             row = self.store.one("SELECT s.* FROM source_files s JOIN projects p ON p.id=s.project_id "
                                  "WHERE s.id=? AND s.removed=0 AND COALESCE(p.deleted,0)=0", (sid,))
-        if not row:
-            return
+        if not row or row["status"] in ("scanning", "scan_failed", "rejected"):
+            return              # not accepted (yet): the scan gate decides, never the parser
         ps = None
         try:
             data = self.store.get_blob(row["blob"])
@@ -315,6 +472,7 @@ class App:
         out["ocr_pages"] = sorted(int(k) for k in (r.get("ocr") or {}).keys())
         out["corrections"] = r.get("corrections") or {}
         out["sha256"] = r.get("blob")
+        out["scan"] = scan_out(r.get("scan"))
         return out
 
     def get_source(self, sid: str, raw: bool = False) -> dict:
@@ -468,6 +626,7 @@ class App:
 
     def _template_out(self, r: dict) -> dict:
         out = {k: r.get(k) for k in ("id", "name", "kind", "format", "original_name", "head", "created_at", "updated_at", "info")}
+        out["scan"] = scan_out(r.get("scan"))
         img = (out.get("info") or {}).get("image")
         if img:   # the ICC profile can be large; clients only need to know it is kept
             out["info"] = {**out["info"], "image": {k: v for k, v in img.items() if k not in ("icc", "original_blob")} | {"icc": bool(img.get("icc"))}}
@@ -552,6 +711,7 @@ class App:
     def upload_template(self, filename: str, data: bytes, name: str | None = None) -> dict:
         from .engine.detect import detect
         filename = safe_display_name(filename)
+        scan_record = self.scan_template_bytes(filename, data)
         try:
             info = detect(data, filename)
         except ValueError as e:
@@ -617,7 +777,7 @@ class App:
         self.store.insert("templates", {"id": tid, "tenant": current_tenant(), "name": (name or filename.rsplit(".", 1)[0])[:100], "kind": "uploaded",
                                         "format": fmt, "original_blob": orig, "original_name": filename, "head": 1,
                                         "created_at": t, "updated_at": t, "info": {"notes": notes, "inventory": check.get("inventory", {}),
-                                                                                    "pdf": check.get("pdf"), "image": image_meta}})
+                                                                                    "pdf": check.get("pdf"), "image": image_meta}, "scan": scan_record})
         self.store.insert("template_versions", {"template_id": tid, "version_no": 1, "parent_no": None, "working_blob": orig,
                                                 "slots": [], "note": "上传原始模板", "created_at": t})
         return self.template_detail(tid)

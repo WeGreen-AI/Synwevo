@@ -7,10 +7,15 @@ export interface SourceFile {
   size: number;
   format: string;
   family: Family;
-  status: "parsing" | "ready" | "error" | "unsupported" | "needs_ocr";
+  /** scanning → (parsing → ready | needs_ocr | error | unsupported) | rejected | scan_failed; the
+   *  malware check comes first and `scan` says what it concluded (docs/security/file-acceptance.md). */
+  status: "scanning" | "parsing" | "ready" | "error" | "unsupported" | "needs_ocr" | "rejected" | "scan_failed";
   error?: string | null;
   notes: string[];
   structure: any;
+  scan?: { status: "pending" | "clean" | "infected" | "error" | "too_large" | "not_configured" | "unscanned";
+           signature?: string; engine?: string; reason?: string; sha256?: string; checked_at?: number;
+           attempts?: number; retry_at?: number };
   version: number;
   representative: boolean;
   ocr_pages: number[];

@@ -7,7 +7,7 @@ tables; an existing session must keep working, as a non-remembered one, after th
 from synwevo_core.auth import Auth
 from synwevo_core.identity import Identity
 from synwevo_core.sessions import Sessions
-from synwevo_core.store import Store, V7_COLUMNS, now
+from synwevo_core.store import Store, V7_COLUMNS, now, SCHEMA_VERSION
 
 
 def test_v6_upgrade_adds_columns_and_tables_without_touching_existing_rows(tmp_path):
@@ -36,7 +36,11 @@ def test_v6_upgrade_adds_columns_and_tables_without_touching_existing_rows(tmp_p
 
     for _ in range(2):                                   # idempotent: a second open changes nothing
         migrated = Store(root)
-        assert migrated.schema_version() == 7
+        assert migrated.schema_version() == SCHEMA_VERSION
+        # v8 (CI-20): the scan verdict columns exist and rows written before scanning existed read
+        # as "no verdict" (NULL → `unscanned` at the API), never as clean.
+        assert all(migrated.one(f"SELECT COUNT(*) AS n FROM pragma_table_info('{t}') WHERE name='scan'")["n"] == 1
+                   for t in ("source_files", "templates"))
         assert {table: migrated.all(f"SELECT {cols} FROM {table}")
                 for table, cols in comparisons.items()} == before
         assert Auth(migrated).secret() == root_secret

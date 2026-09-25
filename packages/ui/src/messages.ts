@@ -10,4 +10,7 @@ export const messages = {
   '错误': { en: 'Error', 'zh-Hant': '錯誤' },
   '不支持': { en: 'Unsupported', 'zh-Hant': '不支援' },
   '需 OCR': { en: 'OCR required', 'zh-Hant': '需 OCR' },
+  '安全检查中': { en: 'Security check', 'zh-Hant': '安全檢查中' },
+  '安全检查未通过': { en: 'Failed security check', 'zh-Hant': '安全檢查未通過' },
+  '安全检查暂不可用': { en: 'Security check unavailable', 'zh-Hant': '安全檢查暫不可用' },
 } satisfies Messages;

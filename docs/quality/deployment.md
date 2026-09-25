@@ -41,9 +41,21 @@ deploy finished ~13:23 UTC) passed verification and deployment; pre-upgrade back
 Anonymous Chromium at 375 px ~13:58 UTC: `/login` loads the entry, the shared and the runtime chunk only; `/register` adds its own
 chunk; the Docs shell loads its entry plus the shared chunk; 0 CSP violations on all four pages.
 
-**Pushed, queued:** `9578158` and the CI-17 commit that follows (CI-12 language-composed device names and workspace naming, CI-13
-top bar wrap, CI-14 SDK retry of the gate's rate limit, CI-16 primary-button hover colour, CI-17 phone fixes on a workspace with
-mappings; the runs for `6fe46b0` and `6e1faa2` were superseded). Recorded here when the receiver reports it.
+**Running source:** `9578158b3c7e32545737234f95de682bda2e7aa4` (CI-12 language-composed device names and workspace naming, CI-13
+top bar wrap, CI-14 SDK retry of the gate's rate limit, CI-16 primary-button hover colour; the runs for `6fe46b0` and `6e1faa2`
+were superseded). [Actions 36140073009](https://github.com/WeGreen-AI/Synwevo/actions/runs/36140073009) passed verification and
+deployment; pre-upgrade backup `/opt/synwevo/backups/20260925T134315Z`. Anonymous check: the production sign-in button under the
+pointer renders white on `#1D4ED8` (CI-16 live).
+
+**Running source:** `88dd2795741e3f6b4937eeaed02aa5f852bb23e1` (CI-17 phone fixes on a workspace with mappings, CI-18
+whole-page target sizes; the run for `0727348` was superseded). [Actions 36142441078](https://github.com/WeGreen-AI/Synwevo/actions/runs/36142441078)
+(created 13:40 UTC, verify and deploy both passed, finished 14:05 UTC); pre-upgrade backup `/opt/synwevo/backups/20260925T140436Z`.
+
+**Pushed, in flight (CI-19 onboarding browser regression; CI-20 malware scanning chain: quarantine-first sources and templates,
+clamd adapter, schema v7→v8 `scan` columns):** recorded here with hash, run and backup when the receiver reports it. Production
+runtime has no `SYNWEVO_CLAMD_ADDRESS`, so after this deployment every file's `scan.status` is `not_configured` and behaviour is
+otherwise unchanged; the ClamAV service is an operator decision (memory headroom, compose merge) recorded in
+`docs/security/file-acceptance.md` §8 and `docs/operations.md` §8.
 
 ## 2026-09-25 navigation, layers, phone layouts and step-up admin auth — deployed
 

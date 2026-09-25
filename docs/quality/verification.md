@@ -583,6 +583,90 @@ Bob 与管理员两组：产品文案 **0 处**；唯一命中的是用户数据
 审计本身：API 台页签遍历改为只找控制台自己的导航（原选择器也命中顶栏导航，其中唯一的按钮是「退出登录」——在 1280 px 桌面下
 点到它就退出了）；语言切换的恢复注册到进程退出，脚本中途失败也会把账户语言改回去。
 
+### 16.19 平台闭环浏览器回归：注册 → 验证 → 引导 → 邀请 → 接受 → 退出（CI-19）
+
+`services/identity/scripts/ui_e2e_onboarding.py`，隔离实例（`instance=test`，文件邮件），手机视口 390×844，
+Chromium（安装的 Google Chrome）与 WebKit（Playwright 构建，经本地 `*.localhost` 代理）各走一遍：
+
+```
+== chromium (Google Chrome)
+  - registered newcomer.af0ae7@example.test → /verify-email
+  - e-mail verified, signed in with the chosen password → /onboarding
+  - personal workspace chosen → handed over to portal.localhost:31769
+  - onboarding done, personal workspace present, status active
+  - bob.verify@example.test invited newcomer.af0ae7@example.test through the members page
+  - invitation accepted; now a member of w_1072f9c03849
+  - signed out → /login; /api/auth/me 401
+  - 0 page errors, 0 CSP violations
+== webkit (Playwright build; *.localhost through http://127.0.0.1:55416)
+  - … 同样八步通过；signed out → /logged-out; /api/auth/me 401
+```
+
+脚本像人一样读邮箱：从 `.eml` 取验证链接与邀请链接；验证页按产品规则走两段（先「验证此邮箱」，服务端要求
+邮箱持有人设置自己的口令后再「设置新口令并验证邮箱」），验证**不会**自动登录（`verify_email` 拒绝把预注册者的
+凭据提升为有效访问），所以脚本随后用新口令登录再进入引导。邀请结果对话框被读取：任何一项「失败」都让脚本失败——
+第一次跑就撞上夹具空间 24 小时 50 个邀请的预算（预期限流，`invite_rate_limited`），改用当场新建的团队空间。
+两引擎退出登录后的落点不同（`/login` 与 `/logged-out`），两者都是登出成功且 `/api/auth/me` 401；差异记入候选队列核对。
+
+### 16.20 恶意上传防护：EICAR、离线与超限（CI-20）
+
+**协议替身（pytest，8 项通过）**——`apps/docs/tests/test_malware_scan.py` 起一个真实监听 TCP 的 clamd 协议实现，
+证明的是集成而不是引擎：
+
+```
+apps/docs/tests/test_malware_scan.py ........                             [100%]
+```
+
+| 场景 | 观察 |
+|---|---|
+| 干净 XLSX 上传 | `scanning`（`scan.pending`）→ `ready`，`scan.clean`，`scan.sha256` 等于文件 sha256，下载 200 |
+| 含 EICAR 的 CSV | `rejected`，`scan.infected`，签名 `Win.Test.EICAR_HDB-1`，下载 410 `rejected_malware`，blob 已不存在，同字节再上传 400 `malware_detected` |
+| 引擎离线 | `scan_failed`（`scan.error`，attempts=1），下载 409 `not_yet_accepted`；引擎恢复后自动重试至 `ready`（attempts≥2） |
+| 超过扫描上限 | `scan_failed`（`scan.too_large`），下载 409 |
+| 模板 | 干净 200 带 `scan.clean`；EICAR 400 `malware_detected`（`detail.signature`）；离线 503 `scan_unavailable`（`retry_after=30`） |
+| 未配置扫描器 | 来源 `parsing` + `scan.not_configured`；模板 `scan.not_configured`——可见的缺失 |
+
+Docs 全套件（含 v1 契约与 OpenAPI 定义测试）通过；`tests/integration/test_migration_v7.py` 改为断言当前 schema
+（v8）并检查两张表的 `scan` 列；账户服务与集成套件其余全部通过。SDK：Python 20 项、Node 7 项通过（等待函数穿过
+`scanning`/`scan_failed`）。前端 typecheck 与三外壳构建通过；三项守卫通过。
+
+**真实引擎（本机，ClamAV 1.5.4，Homebrew；官方 Docker 镜像只有 amd64，在这台 Apple Silicon 上拉取 30 分钟未完成）**——
+守护进程用 scratchpad 内的独立配置（`TCPSocket 33100`、`StreamMaxLength 25M`），签名库 `main 63 / daily 28134 / bytecode 339`
+由 freshclam 当场下载，`Loaded 3628083 signatures`，常驻 950 MiB。适配器直连探针：
+
+```
+ping: True
+version: ClamAV 1.5.4/28134/Fri Sep 25 14:25:58 2026
+eicar (68 B)                        68 B  infected  sig=Eicar-Test-Signature   0.00s
+eicar inside csv (a,b\n + EICAR)     73 B  clean     ← 标准如此：EICAR 只在偏移 0 是签名
+eicar inside zip                   184 B  infected  sig=Eicar-Test-Signature   0.00s
+clean xlsx fixture                8310 B  clean                                0.04s
+clean docx fixture               39521 B  clean                                0.10s
+clean pdf fixture                19640 B  clean                                0.11s
+26 MiB, policy limit 25 MiB   27262976 B  too_large（未发送，适配器先拒）
+26 MiB, policy 64 MiB > daemon 25M        too_large reason='INSTREAM size limit exceeded. ERROR'（守护进程的回复被正确解析）
+eicar + 40 spaces (≤128 B)                 infected  sig=Eicar-Signature
+eicar + 61 B tail (129 B)                  clean
+eicar after one byte                       clean
+```
+
+HTTP 接纳链（`create_app` 指向真实 clamd，独立数据目录）：
+
+```
+readyz: {'database': 'ok', 'storage': 'ok', 'worker': 'stopped', 'malware_scanner': 'ok'}
+clean upload: scanning {'status': 'pending'}
+clean final: ready  scan={'status': 'clean', 'engine': 'ClamAV 1.5.4/28134/…', 'attempts': 1}  download 200
+eicar final: rejected scan={'status': 'infected', 'signature': 'Eicar-Signature', 'engine': 'ClamAV 1.5.4/28134/…'}  download 410 rejected_malware  blob present: False
+eicar again: 400 malware_detected
+template clean: 200 scan={'status': 'clean', 'engine': 'ClamAV 1.5.4/28134/…'}
+template eicar: 400 malware_detected {'signature': 'Eicar-Test-Signature'}
+capabilities malware_scan: {'mode': 'required', 'configured': True, 'max_bytes': 26214400}
+log: scan.rejected source=s_… tenant=- sha256=131f95c5… signature=Eicar-Signature engine=ClamAV 1.5.4/28134/…
+```
+
+测试替身随后按真实行为收紧（只在偏移 0 命中），避免替身放过真实引擎会判"干净"的样本。EICAR 命中证明检测链路可用，
+不证明能拦截所有恶意文件；真实引擎的常驻内存与签名数是 compose 内存限额的依据。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

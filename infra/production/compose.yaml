@@ -61,8 +61,48 @@ services:
       SYNWEVO_PUBLIC_URL: https://docwave.wegreen.ltd
       SYNWEVO_OIDC_CLIENT_ID: docweave-web
       SYNWEVO_OIDC_APP_ID: docweave
+      # Every uploaded file (sources, templates, resumable uploads, imports) is held in quarantine
+      # until clamd says OK; while clamd is unreachable new files stay quarantined and are retried,
+      # nothing already accepted stops working (docs/security/file-acceptance.md).
+      SYNWEVO_CLAMD_ADDRESS: tcp://clamav:3310
+      SYNWEVO_MALWARE_SCAN: required
     depends_on:
       accounts: {condition: service_healthy}
+      # Not `service_healthy`: Synwevo Docs must start (and serve already-accepted files) even
+      # while clamav is still loading its database; the scanner's state is in /readyz `checks`.
+      clamav: {condition: service_started}
+  clamav:
+    # Official image (Cisco Talos; GPLv2 engine, its own container). Only the internal network
+    # reaches port 3310; nothing is published on the host. Signature updates: freshclam inside
+    # the container checks database.clamav.net hourly (outbound HTTPS from the VPS is required).
+    # Memory: with the 3.6 M signatures of 2026-09 the daemon sits at ~1 GiB resident (measured
+    # 950 MiB on ClamAV 1.5.4) and briefly doubles while reloading a fresh database; the limit
+    # below covers that — check the host's free memory before adding the service.
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      CLAMAV_NO_MILTERD: 'true'
+      CLAMD_STARTUP_TIMEOUT: '1800'
+    volumes:
+      - /opt/synwevo/clamav:/var/lib/clamav
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m
+      - /run/clamav:rw,nosuid,nodev,size=8m
+    healthcheck:
+      test: [CMD, clamdcheck.sh]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 900s
+    pids_limit: 128
+    mem_limit: 2048m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options: {max-size: '10m', max-file: '3'}
   portal:
     <<: *app
     environment:
