@@ -133,3 +133,18 @@ ZIP 内的 EICAR 命中 `Eicar-Test-Signature`，三种仓库夹具 `OK`，守�
 * 产物（生成的 DOCX/PDF/XLSX）不扫描：它们由模板与数据生成，不包含上传的原始字节；若将来允许把上传文件原样
   打包进产物，需要在打包前复用 `scan_template_bytes`。
 * 生产尚未部署扫描器（需运维确认内存并合并 compose）。
+
+
+## 附：成员导入上传（账户服务，CI-25）
+
+组织成员批量导入让账户服务第一次接收用户文件。它走同一条接纳链，只是由账户服务自己执行：
+
+| 环节 | 实现 | 说明 |
+|---|---|---|
+| 接收 | `POST /api/auth/organizations/{oid}/imports`（multipart，≤ 20 MB，`org.members.import`） | 同一 clamd 策略（`synwevo_core.malware`，已从 Docs 搬入共享包）：感染 400、扫描器不可用 503（不放行）、超限 413；未配置扫描器时 `scan.status=not_configured` 如实返回并显示在页面上 |
+| 读取 | `synwevo_docs.ingest.DocumentIngest`（由 `synwevo_server` 注入）或 `synwevo_core.member_import.BasicIngest` | 引擎的全部结构与资源上限照用；导入另加：每表 2000 行、5000 行文本、200 页文字、20 页 OCR、单次 500 行计划 |
+| 保留 | 原文件仅在 `extracted/planned` 阶段保存在 `<data>/member_imports/<id>`（0600，7 天），供按需 OCR；执行结束或过期即删除 | 库里只留提取出的行（有界）与逐行结果 |
+| 输出 | 报告 CSV 对 `= + - @` 开头的单元格加前缀，`no-store` | 不下载原文件 |
+
+Tesseract 子进程现在与 LibreOffice 一样只继承最小环境（`engine/ocr.py:_child_env`），账户服务的 SMTP 密码不会进入 OCR 子进程。
+生产 compose 目前只给 `docs` 容器配置了 `SYNWEVO_CLAMD_ADDRESS`；给 `accounts` 加上同样两项后，导入上传才会真正扫描（见 operations.md §8）。

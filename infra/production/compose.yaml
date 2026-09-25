@@ -50,6 +50,12 @@ services:
       <<: *env
       SYNWEVO_ROLE: accounts
       SYNWEVO_PUBLIC_URL: https://accounts.wegreen.ltd
+      # Member-import uploads are scanned with the same daemon as Docs uploads; `required`
+      # means an import is refused (503) while the scanner is down, never waved through.
+      SYNWEVO_CLAMD_ADDRESS: tcp://clamav:3310
+      SYNWEVO_MALWARE_SCAN: required
+    depends_on:
+      clamav: {condition: service_started}
   docs:
     <<: *app
     mem_limit: 2304m

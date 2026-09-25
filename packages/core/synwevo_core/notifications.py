@@ -119,6 +119,13 @@ CATALOGUE: dict[str, dict] = {
     "organization.roles_assigned": {"category": "organization", "severity": "info", "email": "immediate", "title": {
         "zh-Hans": "你在组织「{organization}」的角色已更新", "zh-Hant": "你在組織「{organization}」的角色已更新", "en": "Your roles in the organization “{organization}” changed"}, "body": {
         "zh-Hans": "当前自定义角色：{roles}。由 {actor} 更改。", "zh-Hant": "目前自訂角色：{roles}。由 {actor} 變更。", "en": "Current custom roles: {roles}. Changed by {actor}."}},
+    "member_import.finished": {"category": "organization", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "成员导入「{filename}」{outcome}", "zh-Hant": "成員匯入「{filename}」{outcome}", "en": "Member import “{filename}” {outcome}"}, "body": {
+        "zh-Hans": "已发出邀请 {invited}，更新成员 {updated}，跳过 {skipped}，失败 {failed}。", "zh-Hant": "已發出邀請 {invited}，更新成員 {updated}，略過 {skipped}，失敗 {failed}。",
+        "en": "{invited} invited, {updated} updated, {skipped} skipped, {failed} failed."}},
+    "member_import.roles_applied": {"category": "organization", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "你在组织「{organization}」获得了导入时指定的角色", "zh-Hant": "你在組織「{organization}」獲得了匯入時指定的角色", "en": "Roles from a member import were applied in “{organization}”"}, "body": {
+        "zh-Hans": "自定义角色：{roles}。由 {actor} 在导入时指定。", "zh-Hant": "自訂角色：{roles}。由 {actor} 在匯入時指定。", "en": "Custom roles: {roles}. Specified by {actor} in the import."}},
     # ---- Synwevo Docs
     "docs.file_rejected": {"category": "docs", "severity": "action", "email": "immediate", "title": {
         "zh-Hans": "文件「{filename}」未通过安全检查", "zh-Hant": "檔案「{filename}」未通過安全檢查", "en": "“{filename}” failed the security check"}, "body": {

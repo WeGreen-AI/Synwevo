@@ -349,8 +349,17 @@ class Invites:
                 # workspace's defaults apply, as for anyone else joining.
                 t.execute("DELETE FROM app_entitlements WHERE workspace_id=? AND user_id=? "
                           "AND revoked_at IS NOT NULL", (r["workspace_id"], user["id"]))
+        # A bulk import may have named organization roles for this person. They are applied now,
+        # as the importer and under the rules that hold now (not when the file was uploaded): if
+        # the importer may no longer assign them, nothing is assigned and the import row says so.
+        import_roles = None
+        try:
+            from synwevo_core.member_import import MemberImports
+            import_roles = MemberImports(self.store, self.ident).on_invitation_accepted(r["id"], user["id"])
+        except Exception:  # noqa: BLE001 - roles are an extra on top of the membership, never a reason to fail the accept
+            import_roles = None
         return {"user": self.ident.get_user(user["id"]), "workspace_id": r["workspace_id"], "invitation_id": r["id"], "invited_by": r["invited_by"],
-                "role": r["role"]}
+                "role": r["role"], "import_roles": import_roles}
 
     # ================================================================ email tokens
     def issue_email_token(self, user_id: str, kind: str, *, ttl_s: int,

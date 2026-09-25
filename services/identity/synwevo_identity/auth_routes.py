@@ -108,6 +108,27 @@ def _inbox(request: Request):
     return getattr(request.app.state, "notifier", None)
 
 
+def _inbox_import_roles(request: Request, out: dict) -> None:
+    """The new member learns which organization roles a bulk import gave them. Best effort."""
+    notifier = _inbox(request)
+    roles = out.get("import_roles") or {}
+    if notifier is None or not roles.get("assigned"):
+        return
+    try:
+        ident = request.app.state.identity
+        from synwevo_core.org_roles import OrgRoles
+        org = ident.store.one("SELECT name FROM organizations WHERE id=?", (roles["organization_id"],)) or {}
+        actor = ident.get_user(roles["actor_id"]) or {}
+        names = [r["name"] for r in OrgRoles(ident.store).assigned(roles["organization_id"], out["user"]["id"])]
+        notifier.emit(out["user"]["id"], "member_import.roles_applied",
+                      params={"organization": org.get("name") or "—", "roles": "、".join(names) or "—",
+                              "actor": actor.get("display_name") or actor.get("email") or "—"},
+                      organization_id=roles["organization_id"], object_kind="member_import", object_id=roles["import_id"],
+                      target={"origin": "accounts", "path": f"/organizations/{roles['organization_id']}"})
+    except Exception as e:  # noqa: BLE001
+        print(f"[synwevo] inbox import roles skipped: {type(e).__name__}", flush=True)
+
+
 def _inbox_invitation_answered(request: Request, out: dict, kind: str) -> None:
     """The recipient's to-do is done or void; the inviter learns the answer. Best effort."""
     notifier = _inbox(request)
@@ -582,6 +603,7 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
               object_kind="membership", object_id=out["user"]["id"], result="ok",
               meta={"role": out["role"]})
         _inbox_invitation_answered(request, out, "invitation.accepted")
+        _inbox_import_roles(request, out)
         if s:
             sessions.set_workspace(s["id"], out["workspace_id"])
             return {"user": _public_user(ident, out["user"]), "workspace_id": out["workspace_id"]}

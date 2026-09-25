@@ -812,6 +812,40 @@ quoted-printable 且含链接；已有活跃账户再注册 → 同形应答、�
 **未验证（需要外部条件）**：真实 CUHK 信箱的最终收件（隔离区/垃圾箱/收件箱）与 SMTP2GO 对 `1xA8Ua-…` 的投递记录；这两项只有
 账户持有人能看。SPF 补 `include:spf.smtp2go.com`、在 SMTP2GO 验证发件域（对齐的回信地址与 DKIM）、关闭事务邮件的链接/打开跟踪、
 把 From 改到 `wegreen.ltd`（mailcow 已为该域发布 `mailcow2026` DKIM）均为 DNS/供应商侧操作，步骤在 operations.md §6.1。
+
+### 16.25 多格式成员批量导入：文件不是同意，角色不从名字来（CI-25）
+
+**架构**：文档引擎的读取器由组装根 `synwevo_server` 作为 `DocumentIngest` 注入账户服务（与 `DocsControlPlane` 同一模式）；账户服务不导入
+Docs（`check_boundaries.py` 通过，348 个 Python 文件）。clamd 适配器搬入 `synwevo_core.malware`，Docs 保留再导出；Tesseract 子进程改为最小环境。
+schema v11 新增 `member_imports`/`member_import_rows`。决策记录、状态机、原因目录、格式与限制：`docs/platform/member-import.md`。
+
+**接口测试**：`services/identity/tests/test_member_import.py`（3 项，标准库读取器）：JSON/Markdown/TXT 读取与映射建议；含表头的 CSV 计划出
+邀请 2 / 更新 1 / 跳过 2（文件内重复、导入者本人）/ 阻断 3（坏地址、空间 owner、未映射的组织角色文字）；确认前无人成为成员；有阻断行时必须显式
+「只导入有效行」；版本冲突 409；执行后邀请邮件入队、已有成员空间角色 viewer→editor 并获得自定义角色、导入者收 `member_import.finished`；
+新人通过邮件链接接受后加入组织、获得导入指定角色、收 `member_import.roles_applied`；委派被撤销的导入者：计划时 `role_not_delegable`、执行时行失败且
+不发邮件；无权限成员 403；按行模式、取消（剩余行 skipped）、XLSX 在无引擎实例上如实报 `needs_engine`。
+`tests/integration/test_member_import_engine.py`（3 项，`synwevo_server` role=all）：XLSX（含隐藏工作表、前导零本地部分保留、映射建议）；
+DOCX 表格 + 段落行、有文字层的 PDF 按页/行、JSON；PNG → `needs_ocr` → 按需 OCR（本机 Tesseract chi_sim+eng）识别出两行地址并带页码/行号/置信度。
+本轮相关套件（导入 6 项 + 外壳资源对等）全部通过；组织页资源新增 73 条三语言字符串。
+
+**浏览器（隔离实例，文件邮件，390×844，Chromium + WebKit）**，`services/identity/scripts/ui_e2e_member_import.py`——全部真实：新所有者经邮件链接注册、
+建组织与自定义角色；上传由 openpyxl 生成的工作簿；引擎读取；表头映射自动建议、组织角色文字需手动映射；预览「邀请 1 / 跳过 2 / 阻断 1」；确认对话框
+理由 + 重认证；后台执行完成、报告可下载；新人经邮件接受邀请后恰好持有该角色的两项权限并在收件箱看到通知：
+
+```
+== chromium (Google Chrome)
+  - fresh owner registered through the mailed link, created an organization and a custom role
+  - workbook read by the document engine; header mapping suggested; the role text needed an explicit mapping; preview: invite 1, skip 2, blocked 1
+  - confirmed with a reason and re-authentication; the runner finished (invited 1); the CSV report downloads
+  - the newcomer accepted the mailed invitation, is an organization member with exactly the imported role's permissions, and was told in the inbox
+  - 0 CSP violations, 0 page errors
+== webkit（五条同上）
+```
+
+截图 `import-read/preview/done-chromium.png`：390 px 内表格预览换行、筛选标签与逐行原因可读。
+
+**未做/外部条件**：生产 `accounts` 容器要合并 compose 里新增的扫描器两项才会真正扫描导入文件（未合并前页面如实显示未配置）；
+XLS/ODS/DOC 经 LibreOffice 的路径只在引擎单测覆盖，本轮未在导入链路单独跑；PDF 没有表格结构（按行）。
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

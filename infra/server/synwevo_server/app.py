@@ -43,9 +43,16 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
 
     # Probes first: they are the same in every role, and the published OpenAPI document lists
     # them where it always has.
+    def scanner_health() -> dict:
+        # Synwevo Docs' malware scanner: reported, never gating (see synwevo_core.http.install_probes).
+        # The account role scans member-import uploads with the same policy, so it reports too.
+        if wants_app:
+            return api.state.app.scanner_health()
+        from synwevo_core import malware as M
+        h = M.health(M.policy())                     # same shape as the Docs role: ok / off / down: <why>
+        return h["status"] if h["status"] in ("ok", "off") else "down: " + (h.get("error") or "no PONG")[:120]
     install_probes(api, plat.store, worker=worker_alive if (wants_app or wants_accounts) else None,
-                   # Synwevo Docs' malware scanner: reported, never gating (see synwevo_core.http.install_probes).
-                   degradable={"malware_scanner": lambda: api.state.app.scanner_health()} if wants_app else None)
+                   degradable={"malware_scanner": scanner_health} if (wants_app or wants_accounts) else None)
 
     # Who is signed in, which workspace, how to leave. The same four routes in every role, from
     # one implementation — the account service does not get its own copy and neither does an app.
@@ -78,8 +85,12 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
             control_api.state.sessions = plat.sessions
             install_platform(control_api, plat, role="app")
             docs_app.install(control_api, plat, start_jobs=False)
+        # The document engine for member imports (any file → rows), injected here because only
+        # the composition root may see both the account service and Synwevo Docs. Standalone,
+        # the account service falls back to its standard-library readers and says so.
+        from synwevo_docs.ingest import DocumentIngest
         identity_app.install(api, plat, start_jobs=start_jobs,
-                             control_plane=DocsControlPlane(control_api))
+                             control_plane=DocsControlPlane(control_api), ingest=DocumentIngest())
     if wants_portal:
         from synwevo_portal import app as portal_app
         portal_app.install(api, plat)

@@ -68,8 +68,12 @@ def web_dist() -> Path:
                 or Path(__file__).resolve().parents[1] / "web" / "dist")
 
 
-def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_plane=None) -> None:
-    """Mount the account service's routes onto an application the caller has scaffolded."""
+def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_plane=None, ingest=None) -> None:
+    """Mount the account service's routes onto an application the caller has scaffolded.
+
+    `ingest` is the document engine used to turn a member-import upload into rows (injected by
+    the composition root); without one, the standard-library readers in ``synwevo_core`` handle
+    CSV/TSV/JSON/TXT/Markdown and every other format is reported as needing the engine."""
     from .admin_routes import build_router as build_admin_router
     from .auth_routes import (build_invite_router, build_mfa_router, build_passkey_router,
                               build_recovery_router, build_router as build_auth_router)
@@ -119,6 +123,13 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     from .api_platform import build_router as build_api_platform_router
     api.include_router(build_account_router(identity, sessions, mailer, audit))
     api.include_router(build_organization_router(store, identity, sessions, audit, invites, mailer))
+    from synwevo_core.member_import import BasicIngest
+    from .member_import_routes import build_router as build_member_import_router
+    api.state.ingest = ingest or BasicIngest()
+    member_imports = build_member_import_router(store, identity, sessions, audit, invites, mailer,
+                                                ingest=api.state.ingest, start_jobs=start_jobs)
+    api.state.member_import_runner = member_imports.runner
+    api.include_router(member_imports)
     api.include_router(build_api_platform_router(store, identity, sessions, audit, adapter=control_plane))
     api.include_router(build_passkey_router(identity, sessions, passkeys, audit))
     # External OpenID providers: configured ones are validated here, at start-up, so a half

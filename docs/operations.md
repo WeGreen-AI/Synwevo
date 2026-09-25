@@ -356,6 +356,10 @@ VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose re
 | 回滚 | 从 docs 服务去掉两个环境变量并重建；已写入的 `scan` 列保留，`rejected` 的行保持拒绝 |
 | 不做 | 不把用户文件送往 VirusTotal 等外部平台；不提供跳过扫描的按钮；不用测试密钥或关闭检查让流水线变绿 |
 
+自 CI-25 起账户服务也接收上传（组织成员批量导入）。仓库 compose 已给 `accounts` 加上同样的 `SYNWEVO_CLAMD_ADDRESS`/`SYNWEVO_MALWARE_SCAN=required`
+与 `depends_on: clamav`；接收器不同步 compose，运维把这两项与依赖合并进 `/opt/synwevo/config` 的 compose 后 `up -d accounts` 即生效。
+未配置时导入页面显示「安全检查：此实例未配置扫描引擎」，`/readyz` 的 `malware_scanner` 组件在账户角色同样报告状态。
+
 ## 9. 人机验证（Cloudflare Turnstile）
 
 策略、校验与验收在 `docs/security/human-verification.md`。运维要点：

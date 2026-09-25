@@ -39,9 +39,16 @@ _LANGS: dict[tuple, list[str]] = {}
 
 
 def _child_env() -> dict:
-    # One Tesseract thread per process: parallel OCR requests each spawning a full set of
-    # OpenMP threads oversubscribe the CPU the job runner and the API share.
-    return {**os.environ, "OMP_THREAD_LIMIT": "1"}
+    """What Tesseract needs and nothing else. The server's environment carries secrets (SMTP
+    password on the account role, signing keys, webhook secrets) that a child working on an
+    untrusted image must never inherit — the same rule the LibreOffice launcher applies.
+    One OpenMP thread per process: parallel OCR requests each spawning a full set of threads
+    oversubscribe the CPU the job runner and the API share."""
+    keep = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TESSDATA_PREFIX", "SYSTEMROOT", "TMPDIR")
+    out = {k: os.environ[k] for k in keep if k in os.environ}
+    out.setdefault("PATH", "/usr/bin:/bin")
+    out["OMP_THREAD_LIMIT"] = "1"
+    return out
 
 
 def available_langs() -> list[str]:

@@ -23,8 +23,15 @@ def test_app_role_reports_the_scanner_without_gating_on_it(tmp_path, monkeypatch
         r = c.get("/readyz")
         assert r.status_code == 200 and r.json()["status"] == "ready"
         assert r.json()["checks"]["malware_scanner"].startswith("down:")
+    # The account role scans member-import uploads with the same policy, so it reports the same
+    # component in the same shape — and stays ready while the engine is down (imports wait).
     with TestClient(create_app(str(tmp_path / "d3"), role="accounts", start_jobs=False)) as c:
-        assert "malware_scanner" not in c.get("/readyz").json()["checks"]
+        r = c.get("/readyz")
+        assert r.status_code == 200 and r.json()["status"] == "ready"
+        assert r.json()["checks"]["malware_scanner"].startswith("down:")
+    monkeypatch.delenv("SYNWEVO_CLAMD_ADDRESS", raising=False)
+    with TestClient(create_app(str(tmp_path / "d4"), role="accounts", start_jobs=False)) as c:
+        assert c.get("/readyz").json()["checks"]["malware_scanner"] == "off"
 
 
 def test_every_role_serves_the_inbox_routes_to_its_sessions(tmp_path, monkeypatch):

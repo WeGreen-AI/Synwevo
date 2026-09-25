@@ -49,6 +49,8 @@
 | `member.left` | organization / info | 空间的 owner/admin | 成员自行退出 | 汇总 | 空间成员页 |
 | `organization.role_changed` | organization / info | 当事成员 | 组织角色变化 | 立即 | 组织页 |
 | `docs.file_rejected`、`docs.job_finished` | docs | 上传者 / 任务发起人 | **目录已定义，Docs 侧的发射点在下一批接入**（需要任务与来源行携带发起人） | 立即 / 汇总 | Docs |
+| `member_import.finished` | organization / info | 发起导入的人 | 一次批量导入结束（完成/部分完成/失败/取消），附邀请/更新/跳过/失败计数 | 汇总 | 组织页 → 批量导入成员（`?import=<id>` 打开该批次） |
+| `member_import.roles_applied` | organization / info | 接受邀请的新成员 | 导入指定的组织自定义角色在其接受邀请时由导入者身份分配成功 | 汇总 | 组织页 |
 
 不发的：普通登录成功、任务进度百分比、每次路由切换——目录里没有这些 kind，就不会有人凑出通知。审批、成员导入、消息三个类别随各自功能接入。
 
