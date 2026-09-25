@@ -33,7 +33,9 @@ x-env: &env
   SYNWEVO_TRUST_PROXY: '1'
   SYNWEVO_ISSUER: https://accounts.wegreen.ltd
   SYNWEVO_PORTAL_URL: https://synwevo.wegreen.ltd
-  SYNWEVO_REGISTRATION: invite
+  # Public registration uses mailbox verification; never grants platform administration.
+  # A subsequently persisted administrator policy takes precedence over this environment value.
+  SYNWEVO_REGISTRATION: open
   SYNWEVO_RP_ID: accounts.wegreen.ltd
 services:
   accounts:

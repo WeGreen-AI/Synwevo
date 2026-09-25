@@ -3,6 +3,13 @@
 Three roles share one existing database and blob directory. The image contains the built React
 shells, Python API, document workers, LibreOffice, Tesseract and CJK fonts.
 
+The 2026-09-25 product release enables verified public registration (`SYNWEVO_REGISTRATION=open`).
+An explicit persisted administrator registration policy still takes precedence; deployment does
+not overwrite it. Existing users, workspace IDs, historical claims and identity keys remain intact.
+The user has authorized deploying the previously local-only product round. Because host Compose
+is not replaced by CI, install the reviewed Compose change after the new application is healthy,
+then recreate accounts and gateway. Keep the private SMTP configuration unchanged.
+
 | Public origin | Role | Tunnel target |
 |---|---|---|
 | `https://synwevo.wegreen.ltd` | Workspace portal | `http://127.0.0.1:18760` |
