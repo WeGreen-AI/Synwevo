@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -796,6 +796,10 @@ class Store:
         # v11: bulk member imports (the batch, its planned rows and their outcomes).
         from .member_import import SCHEMA as MEMBER_IMPORT_SCHEMA
         c.executescript(MEMBER_IMPORT_SCHEMA)
+        # v12: organization messaging (conversations, memberships with join sequence, messages,
+        # reactions, attachments).
+        from .messaging import SCHEMA as MESSAGING_SCHEMA
+        c.executescript(MESSAGING_SCHEMA)
         with self.tx() as t:
             for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}

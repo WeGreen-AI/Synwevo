@@ -9,7 +9,7 @@ from synwevo_core.http import (build_platform, install as install_platform, inst
 
 ACCOUNT_SHELL_PATHS = ("/login", "/register", "/verify-email", "/onboarding", "/organizations",
                        "/account", "/invite", "/forgot-password", "/reset-password",
-                       "/logged-out", "/admin")
+                       "/logged-out", "/admin", "/messages")
 
 
 def create_app(data_dir: str | None = None, *, role: str | None = None,

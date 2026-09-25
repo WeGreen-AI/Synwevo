@@ -428,6 +428,8 @@ class Organizations:
             self.store.execute("DELETE FROM organization_memberships WHERE organization_id=? AND user_id=?", (oid, uid))
             from .org_roles import OrgRoles
             OrgRoles(self.store).unassign_all(oid, uid)       # custom roles go with the membership
+            from .messaging import Messaging
+            Messaging(self.store, self.ident).withdraw_from_organization(oid, uid)   # and so do the conversations
             # Withdraw explicit workspace grants so a later invitation into one
             # workspace cannot resurrect previous access to every other workspace.
             self.store.execute("UPDATE app_entitlements SET revoked_at=COALESCE(revoked_at,?) WHERE user_id=? "

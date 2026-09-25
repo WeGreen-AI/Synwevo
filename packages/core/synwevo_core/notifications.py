@@ -119,6 +119,22 @@ CATALOGUE: dict[str, dict] = {
     "organization.roles_assigned": {"category": "organization", "severity": "info", "email": "immediate", "title": {
         "zh-Hans": "你在组织「{organization}」的角色已更新", "zh-Hant": "你在組織「{organization}」的角色已更新", "en": "Your roles in the organization “{organization}” changed"}, "body": {
         "zh-Hans": "当前自定义角色：{roles}。由 {actor} 更改。", "zh-Hant": "目前自訂角色：{roles}。由 {actor} 變更。", "en": "Current custom roles: {roles}. Changed by {actor}."}},
+    # ---- conversations (the sender is never told about their own message; modes and mute apply)
+    "conversation.dm": {"category": "conversation", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "{sender} 给你发了私信", "zh-Hant": "{sender} 傳了私訊給你", "en": "{sender} sent you a direct message"}, "body": {
+        "zh-Hans": "{preview}", "zh-Hant": "{preview}", "en": "{preview}"}},
+    "conversation.mention": {"category": "conversation", "severity": "action", "email": "digest", "title": {
+        "zh-Hans": "{sender} 在「{conversation}」中提到了你", "zh-Hant": "{sender} 在「{conversation}」中提到了你", "en": "{sender} mentioned you in “{conversation}”"}, "body": {
+        "zh-Hans": "{preview}", "zh-Hant": "{preview}", "en": "{preview}"}},
+    "conversation.group": {"category": "conversation", "severity": "info", "email": "off", "title": {
+        "zh-Hans": "「{conversation}」有新消息", "zh-Hant": "「{conversation}」有新訊息", "en": "New messages in “{conversation}”"}, "body": {
+        "zh-Hans": "{sender}：{preview}", "zh-Hant": "{sender}：{preview}", "en": "{sender}: {preview}"}},
+    "conversation.added": {"category": "conversation", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "{actor} 把你加入了群聊「{conversation}」", "zh-Hant": "{actor} 把你加入了群組「{conversation}」", "en": "{actor} added you to “{conversation}”"}, "body": {
+        "zh-Hans": "你能看到加入之后的消息。", "zh-Hant": "你能看到加入之後的訊息。", "en": "You can read messages from the moment you joined."}},
+    "conversation.removed": {"category": "conversation", "severity": "info", "email": "off", "title": {
+        "zh-Hans": "你已被移出群聊「{conversation}」", "zh-Hant": "你已被移出群組「{conversation}」", "en": "You were removed from “{conversation}”"}, "body": {
+        "zh-Hans": "由 {actor} 操作。", "zh-Hant": "由 {actor} 操作。", "en": "By {actor}."}},
     "member_import.finished": {"category": "organization", "severity": "info", "email": "digest", "title": {
         "zh-Hans": "成员导入「{filename}」{outcome}", "zh-Hant": "成員匯入「{filename}」{outcome}", "en": "Member import “{filename}” {outcome}"}, "body": {
         "zh-Hans": "已发出邀请 {invited}，更新成员 {updated}，跳过 {skipped}，失败 {failed}。", "zh-Hant": "已發出邀請 {invited}，更新成員 {updated}，略過 {skipped}，失敗 {failed}。",

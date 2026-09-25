@@ -66,6 +66,10 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-23 organization custom roles, run 36169761487, 2026-09-25 18:13 UTC):** `{"deployed": "synwevo:07af1f08d6f2203318a88c9a1c7230d5e0c0d052", "backup": "/opt/synwevo/backups/20260925T181327Z"}`; verify and deploy jobs both succeeded (22 min). The paragraph below was written before the run landed.
 
+**Deployed (CI-25 member import, run 36180128756, 2026-09-25 19:52 UTC):** `{"deployed": "synwevo:33f17c62db029e5a38fe6dca046ee1a6990d58b0", "backup": "/opt/synwevo/backups/20260925T195245Z"}`; verify and deploy succeeded. Live `/readyz` on the account origin now lists `malware_scanner` (reported `off` until the operator merges the scanner variables into the account service).
+
+**Pushed next (CI-26 messaging):** schema v11 + v12 are additive; the account role now reports `malware_scanner` on `/readyz` and the repository compose gives it the scanner address (operator merges it); messaging adds `/messages` on the account origin and a server-sent-events stream that the gateway passes as-is (buffering off, 300 s read timeout, 25 s heartbeat). Recorded here with run and backup when the receiver reports it.
+
 **Deployed (CI-24 institutional mailbox registration, 2026-09-25 19:01 UTC):** `{"deployed": "synwevo:544f6074c47af9e1cbb474cbb7270752090354c3", "backup": "/opt/synwevo/backups/20260925T190122Z"}`; verify and deploy jobs succeeded. The paragraph below was written before the run landed.
 
 **Pushed next (CI-24 institutional mailbox registration):** no schema change; `valid_email` no longer raises on malformed domains, account mail bodies are quoted-printable, `/api/auth/state` publishes `mail_sender`, the verify-email screen carries sender/gateway/resend guidance in three languages, and registering an address that already has an active account mails an "account already exists" notice. Production DNS/relay state and the operator steps that remain (SMTP2GO domain verification, SPF include, tracking off, From domain) are in `docs/operations.md` §6.1. Recorded here with run and backup when the receiver reports it.

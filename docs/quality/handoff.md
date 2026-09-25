@@ -82,7 +82,8 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-22 | 平台通知中心（核心表 + 每角色接口 + 邮件 outbox 调度器 + 铃铛与偏好页；安全/邀请/角色/移出/退出事件接入） | 已部署（a02baf0） | Docs 侧发射点（文件被拒、任务完成）随下一批；Web Push 未做；`docs/platform/notifications.md` 是权威记录 |
 | CI-23 | 组织自定义角色（权限目录 + 角色表 + 委派不越权 + 有效权限视图 + 组织页 UI） | 已部署（07af1f0） | `org.members.import`/`org.approvals.decide`/`org.messaging.manage` 由 CI-24/26/25 消费；组织审计页未做；`docs/platform/organization-roles.md` 是权威记录 |
 | CI-24 | 机构邮箱注册（CUHK）：根因定位到收件网关（Trend Micro）之后；校验器不再 500、正文 QP、收件页发件人与网关提示、活跃账户再注册寄提示 | 已部署（544f607） | 真实 CUHK 收件、SMTP2GO Activity 记录、SPF/发件域验证/跟踪关闭/From 改域均为账户持有人或运营步骤（operations.md §6.1）；验证脚本 `ui_e2e_institutional_mail.py` |
-| CI-25 | 多格式成员批量导入（核心模块 + Docs 读取器注入 + 账户路由/执行器 + 组织页向导 + 接受时分配角色） | 已实现（本机），待推送 | 生产 accounts 容器合并 compose 的扫描器两项；`docs/platform/member-import.md` 是权威记录；脚本 `ui_e2e_member_import.py` |
+| CI-25 | 多格式成员批量导入（核心模块 + Docs 读取器注入 + 账户路由/执行器 + 组织页向导 + 接受时分配角色） | 已部署（33f17c6） | 生产 accounts 容器合并 compose 的扫描器两项；`docs/platform/member-import.md` 是权威记录；脚本 `ui_e2e_member_import.py` |
+| CI-26 | 组织内私聊与群聊（核心模块 + REST/SSE + 页面 + 平台栏徽标 + 通知事件 + 附件接纳链 + 撤权关门） | 已实现（本机），待推送 | Docs 链接卡片、Web Push、多 worker 事件总线未做；`docs/platform/messaging.md` 是权威记录；脚本 `ui_e2e_messaging.py` |
 
 已核对、无需改动（记录以免重复研究）：
 

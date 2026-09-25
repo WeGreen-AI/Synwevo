@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { ApiError, useSession, NotificationBell } from "@synwevo/auth-client";
+import { ApiError, useSession, MessagesLink, NotificationBell } from "@synwevo/auth-client";
 import { Brand, Drawer, LanguageMenu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { chooseReturnTarget, rememberOrigin } from "../lib/returnTarget";
 import "./Topbar.messages";
@@ -41,6 +41,7 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
     <>
       <a className="btn ghost sm" href={link("/account")} aria-current={pathname === "/account" ? "page" : undefined}>{t("账户与安全")}</a>
       <a className="btn ghost sm" href={link("/organizations")} aria-current={current("/organizations")}>{t("组织")}</a>
+      <MessagesLink href={link("/messages")} current={!!current("/messages")} />
       {isAdmin && <a className="btn ghost sm" href={link("/admin")} aria-current={pathname === "/admin" ? "page" : undefined}>{t("平台管理")}</a>}
       {canApi && <a className="btn ghost sm" href={link("/admin/api-platform")} aria-current={current("/admin/api-platform")}>{t("API 管理")}</a>}
     </>

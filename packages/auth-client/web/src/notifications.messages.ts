@@ -18,4 +18,6 @@ registerMessages({
  '标为已读': {en:'Mark as read','zh-Hant':'標為已讀'},
  '归档': {en:'Archive','zh-Hant':'封存'},
  '加载更早的通知': {en:'Load earlier notifications','zh-Hant':'載入更早的通知'},
+ '消息': {en:'Messages','zh-Hant':'訊息'},
+ '消息，{n} 条未读': {en:'Messages, {n} unread','zh-Hant':'訊息，{n} 則未讀'},
 });

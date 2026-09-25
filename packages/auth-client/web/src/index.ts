@@ -8,3 +8,4 @@ export * from "./api";
 export * from "./session";
 export { PlatformNav } from "./PlatformNav";
 export { NotificationBell, NotificationDrawer, useUnreadCount } from "./NotificationBell";
+export { MessagesLink, useMessagesUnread, announceMessagesUnread } from "./MessagesLink";

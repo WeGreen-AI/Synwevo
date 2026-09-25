@@ -882,7 +882,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                          # The platform inbox is one list read from every origin (session_routes).
                          "/api/auth/notifications", "/api/auth/notifications/unread-count",
                          "/api/auth/notifications/mark", "/api/auth/notifications/read-all",
-                         "/api/auth/notifications/preferences")
+                         "/api/auth/notifications/preferences",
+                         # The messages badge in the platform bar; the conversations themselves
+                         # live on the account origin.
+                         "/api/auth/messaging/unread-count")
 
     def _role_blocks(path: str) -> str | None:
         """Why this role refuses this path, or None.
@@ -935,7 +938,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             apply_security_headers(request, resp)
             if path.startswith("/api/"):
                 resp.headers.setdefault("Cache-Control", "no-store")
-            if path.startswith(("/api/", "/auth/", "/oidc/", "/account", "/admin", "/organizations")) or path in (
+            if path.startswith(("/api/", "/auth/", "/oidc/", "/account", "/admin", "/organizations", "/messages")) or path in (
                     "/login", "/register", "/invite", "/verify-email", "/forgot-password", "/reset-password", "/onboarding", "/logged-out"):
                 resp.headers.setdefault("Cache-Control", "no-store")
                 resp.headers.setdefault("X-Robots-Tag", "noindex, nofollow")

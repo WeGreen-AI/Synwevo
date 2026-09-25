@@ -12,7 +12,7 @@
 import { StrictMode, Suspense, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { DialogProvider, ToastProvider, initTheme, I18nProvider, StatusPage, useI18n, registerMessages, lazyRoute, pick } from "@synwevo/ui";
+import { DialogProvider, ToastProvider, initTheme, I18nProvider, PageState, StatusPage, useI18n, registerMessages, lazyRoute, pick } from "@synwevo/ui";
 import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
 import Login from "./pages/Login";
 import { AccountCapabilityGate } from "./pages/org/AuthFlow";
@@ -35,6 +35,7 @@ const Onboarding = lazyRoute(() => import("./pages/Onboarding"));
 const Organizations = lazyRoute(() => import("./pages/Organizations"));
 const ApiPlatform = lazyRoute(() => import("./pages/ApiPlatform"));
 const OwnerApiApprovals = lazyRoute(pick(() => import("./pages/ApiPlatform"), "OwnerApiApprovals"));
+const Messages = lazyRoute(() => import("./pages/Messages"));
 import "./account.css";
 import "@synwevo/ui/styles.css";
 
@@ -52,14 +53,14 @@ registerMessages({
 
 function RouteLoading() {
   const {t} = useI18n();
-  return <div className="empty" role="status" aria-live="polite">{t("加载中…")}</div>;
+  return <PageState>{t("加载中…")}</PageState>;
 }
 function AdminOnly({children}: {children: ReactNode}) {
   const {me} = useSession(); const {t} = useI18n();
   // The role, not the current permission set: an administrator whose session proved one factor
   // (`admin_locked`) must reach the page to see what is missing and confirm the password there;
   // the page itself withholds every management view until then, and the server answers 403.
-  return me?.platform_role === "admin" ? children : <div className="empty" role="alert">{t("仅平台管理员可访问")}</div>;
+  return me?.platform_role === "admin" ? children : <PageState role="alert">{t("仅平台管理员可访问")}</PageState>;
 }
 
 function SignedOut() {
@@ -92,6 +93,8 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/organizations" element={<RequireSession><Organizations /></RequireSession>} />
               <Route path="/organizations/:oid" element={<RequireSession><Organizations /></RequireSession>} />
+              <Route path="/messages" element={<RequireSession><Messages /></RequireSession>} />
+              <Route path="/messages/:cid" element={<RequireSession><Messages /></RequireSession>} />
               <Route path="/invite" element={<Invite />} />
               {/* Both render signed out by necessity: someone who has forgotten their password
                   cannot sign in to ask for a way back. */}

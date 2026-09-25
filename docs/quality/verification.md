@@ -846,6 +846,37 @@ DOCX 表格 + 段落行、有文字层的 PDF 按页/行、JSON；PNG → `needs
 
 **未做/外部条件**：生产 `accounts` 容器要合并 compose 里新增的扫描器两项才会真正扫描导入文件（未合并前页面如实显示未配置）；
 XLS/ODS/DOC 经 LibreOffice 的路径只在引擎单测覆盖，本轮未在导入链路单独跑；PDF 没有表格结构（按行）。
+
+### 16.26 组织内私聊与群聊：显式成员、从加入起的历史、撤权即关门、流只是提示（CI-26）
+
+**架构**：`synwevo_core.messaging`（schema v12：会话、带 `joined_seq` 的成员、按会话单调 `seq` 的消息、反应、附件），账户路由 `/api/auth/messaging/*`，
+异步生成器实现的 SSE 流（每标签页一个队列与协程，25 s 心跳并复查会话/账户，会话撤销即 `end`），进程内扇出；客户端 `EventSource` 自动重连、
+每次 `hello` 后按最后序号补取，连续失败或 `end` 后转 5 s 轮询并显示「轮询中」。附件走 `accept_upload`（同一 clamd 策略）+ 核心 blob（内容哈希），
+下载只给能读到该消息的成员，图片内联带 `nosniff`/`sandbox`/`X-Content-SHA256`/`no-store`。组织移除（`remove_member`）一次关闭该组织全部会话。
+决策记录、规则、接口：`docs/platform/messaging.md`。
+
+**接口测试**（`services/identity/tests/test_messaging.py`，4 项）：目录只列同组织活跃成员、外人 404；私聊两侧打开是同一会话；`client_id` 重试不重复；
+阅读位置与未读（对方 2 → 读到 1 → 读完）；私聊一次爆发只产生一项收件箱、发送者不收；反应固定集合、编辑/删除仅本人；第三人对会话 id 一律 404。
+群：创建后成员收 `conversation.added`；后加入者只看到加入之后（`floor`>0）、搜索也搜不到之前；提及产生 `conversation.mention`、普通群消息默认不打扰；
+成员不能管理；移除后 404/列表空/未读 0；再加入从新起点；群主须交接才能退出；归档后不能发；`Organizations.remove_member` 后所有会话消失。
+附件：PNG 嗅探为 image/png、未用附件只对上传者可见、发送后一次性绑定、成员下载 200（内联/附件两种 disposition）、非成员 404、删除消息后 404、
+超 20 MB 413。流：`hello` → 另一线程发布的事件到达 → 会话撤销后在下一次心跳发出 `end` 并结束，连接计数归零。
+
+**浏览器（隔离实例，文件邮件，两个独立上下文：所有者 1280 px、成员 390 px，Chromium + WebKit）**，`services/identity/scripts/ui_e2e_messaging.py`：
+
+```
+== chromium (Google Chrome)
+  - owner registered and created an organization; the member joined through the mailed invitation (phone-sized session)
+  - the DM reached the member's list and badge over the stream; reply-with-quote and a reaction from the phone showed up live on the owner's desktop
+  - an image attachment was scanned, stored once by content hash and rendered inline for the member (image/png, hash header, no-store)
+  - group created, the member read it, was removed from the group info drawer, and from then on history is 404 and the group is gone from their list
+  - search returned the owner's DM hit; the removed member's search of the group's text found nothing
+  - 0 CSP violations, 0 page errors
+== webkit（六条同上）
+```
+
+**未做/外部条件**：Docs 项目/任务链接卡片（按接收者权限生成摘要）未做，链接只做净化后的可点击文本；在线/他人已读不做（无可靠依据）；
+多 worker 部署前需共享事件总线（compose 当前每角色单 worker）；Web Push 未做。
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
