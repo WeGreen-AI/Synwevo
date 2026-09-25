@@ -80,7 +80,7 @@ export function PlatformNav() {
       ) : current && !others.length ? (
         <span className="muted sm desktop-only" title={t("当前工作空间")}>{current.name}</span>
       ) : (
-        <select className="input sm" style={{ maxWidth: 180 }} value={current?.id || ""}
+        <select className="input sm" style={{ maxWidth: 180, minWidth: 140, flex: "none" }} value={current?.id || ""}
                 disabled={switching} aria-label={t("切换工作空间")}
                 onChange={(e) => void switchTo(e.target.value)}>
           {!current && <option value="" disabled>{t("选择工作空间…")}</option>}

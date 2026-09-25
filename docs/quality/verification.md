@@ -502,6 +502,24 @@ send what's necessary at the very beginning"，按路由/组件懒加载减少�
 共享块 `perm` 274 KB 仍由列表页加载（两页共用的视图与表现层），是下一步可再拆的对象；本轮不为此再动结构。
 验证：四套 Docs 浏览器套件、两引擎外壳回归、单测与守卫。
 
+### 16.13 英文界面残留与顶栏溢出（CI-12、CI-13）
+
+**工具**：审计新增 `--locale=en`——先把账户语言切到英文（`PATCH /api/auth/locale`），再在每页扫描含 CJK 的可见文本节点与
+`aria-label`/`placeholder`/`title`，排除调用方声明的夹具内容（组织/空间/项目名）与 `.who/.mono/code`。
+
+**发现**（Bob，英文，1280 px）：
+| 文本 | 来源 | 修复 |
+|---|---|---|
+| 「macOS 上的 Chrome」「未知设备」（设备列表） | 服务端 `describe_client` 把句子拼成中文 | 会话行新增 `client_parts {browser, platform}`（保留 `client` 兼容），账户页用三语言模板拼句 |
+| 「Bob Verify 的空间」（个人空间名） | 注册时服务端用中文模板起名，之后是数据 | `PERSONAL_NAME` 按账户语言取模板（`zh-Hant`「…的空間」、`en`「…'s space」）；已有名称不动 |
+
+`test_locale_defaults.py` 10 项（UA → 产品名、三语言默认名、注册/创建/会话行）。复跑 Bob 英文：0 处残留。
+
+**顺带发现（CI-13，与语言无关）**：Docs 首页顶栏在 1280 px 英文下横向溢出 51 px（`scrollWidth 1331`，「＋ New project」被推出窗口），
+以及账户有两个空间时顶栏里的空间切换 `<select>` 被压到 21 px 宽（`flex: 0 1 auto` + `min-width: 0`）。修复在共享层：
+`.topbar` 任何宽度都允许换行（`flex-wrap: wrap; min-height: 48px`），`PlatformNav` 的切换器 `flex: none; min-width: 140px`。
+Bob（375/1280，默认语言）与管理员（375/1280，英文）重审 0 发现；`ui_e2e.py` 与外壳回归通过。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

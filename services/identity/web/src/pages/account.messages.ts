@@ -800,3 +800,7 @@ registerMessages({
   '这个账户还没有口令。请通过邮箱中的重置链接设置口令': { en: 'This account has no password yet. Set one through the reset link sent to your email.', 'zh-Hant': '此帳戶尚未設定密碼。請透過電子郵件中的重設連結設定密碼' },
   '新口令不能与当前口令相同': { en: 'The new password must differ from the current one.', 'zh-Hant': '新密碼不能與目前密碼相同' },
 });
+registerMessages({
+  '{platform} 上的 {browser}': { en: '{browser} on {platform}', 'zh-Hant': '{platform} 上的 {browser}' },
+  '未知设备': { en: 'Unknown device', 'zh-Hant': '未知裝置' },
+});

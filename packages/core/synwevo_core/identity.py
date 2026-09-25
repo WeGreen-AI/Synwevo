@@ -77,7 +77,7 @@ class Identity:
 
     def create_user(self, email: str, password: str | None, *, display_name: str | None = None,
                     status: str = "pending", platform_role: str = "none",
-                    with_personal_workspace: bool = True) -> dict:
+                    with_personal_workspace: bool = True, locale: str | None = None) -> dict:
         if not valid_email(email):
             raise ServiceError(400, "bad_email", "邮箱格式不正确", {"field": "email"})
         if platform_role not in PLATFORM_ROLES:
@@ -96,10 +96,12 @@ class Identity:
             t.execute("INSERT INTO users (id,email,email_key,display_name,status,platform_role,created_at,updated_at) "
                       "VALUES (?,?,?,?,?,?,?,?)",
                       (uid, email.strip(), key, display_name or None, status, platform_role, ts, ts))
+            if locale:
+                t.execute("UPDATE users SET locale=? WHERE id=?", (locale, uid))
             if phc:
                 t.execute("INSERT INTO user_passwords (user_id,phc,updated_at) VALUES (?,?,?)", (uid, phc, ts))
             if with_personal_workspace:
-                self._create_workspace(t, name=_personal_name(display_name, email), kind="personal",
+                self._create_workspace(t, name=_personal_name(display_name, email, locale), kind="personal",
                                        owner_id=uid, created_by=uid)
         return self.get_user(uid)
 
@@ -385,7 +387,7 @@ class Identity:
             if row:
                 wid = row["id"]
             else:
-                wid = self._create_workspace(t, name=_personal_name(user["display_name"], user["email"]),
+                wid = self._create_workspace(t, name=_personal_name(user["display_name"], user["email"], dict(user).get("locale")),
                                              kind="personal", owner_id=uid, created_by=uid)
             t.execute("UPDATE users SET onboarding_completed_at=COALESCE(onboarding_completed_at,?), "
                       "updated_at=? WHERE id=?", (now(), now(), uid))
@@ -816,9 +818,15 @@ class Identity:
 DEFAULT_WORKSPACE_APPS = ("docweave",)
 
 
-def _personal_name(display_name: str | None, email: str) -> str:
+#: The default personal workspace name, in the account's interface language. It is data once
+#: written (renaming is the owner's), so it is composed at creation in the language the person
+#: registered in rather than always in Simplified Chinese.
+PERSONAL_NAME = {"zh-Hans": "{who} 的空间", "zh-Hant": "{who} 的空間", "en": "{who}'s space"}
+
+
+def _personal_name(display_name: str | None, email: str, locale: str | None = None) -> str:
     who = (display_name or "").strip() or (email or "").split("@")[0]
-    return f"{who} 的空间"
+    return PERSONAL_NAME.get(locale or "zh-Hans", PERSONAL_NAME["zh-Hans"]).format(who=who)
 
 
 # A real Argon2id hash of a random value, used to spend the same time on an unknown account as on

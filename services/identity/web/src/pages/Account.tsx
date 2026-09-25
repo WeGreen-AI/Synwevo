@@ -16,7 +16,14 @@ import ActivitySection from './account/ActivitySection';
 import { ErrorNotice, errorText, timeText, type Profile } from './account/common';
 import './account/account.css';
 export { default as AccountRecovery } from './account/Recovery';
-interface SessionRow { id: string; current: boolean; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string; ip: string | null; persistent?: boolean; auth_provider?: string | null }
+interface SessionRow { id: string; current: boolean; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string; client_parts?: { browser: string | null; platform: string | null }; ip: string | null; persistent?: boolean; auth_provider?: string | null }
+/** "Chrome on macOS" in the reader's language; the server sends product names, not a sentence. */
+function deviceLabel(row: SessionRow, t: (s: string, p?: Record<string, string>) => string): string {
+  const parts = row.client_parts;
+  if (!parts) return row.client;
+  if (parts.browser && parts.platform) return t('{platform} 上的 {browser}', { platform: parts.platform, browser: parts.browser });
+  return parts.browser || parts.platform || t('未知设备');
+}
 const roles: Record<string, string> = { owner: '所有者', admin: '管理员', editor: '编辑', viewer: '只读' };
 const methods: Record<string, string> = { password: '口令', 'password+totp': '口令与动态验证码', 'password+recovery': '口令与恢复码', passkey_uv: '安全密钥（已验证身份）', passkey: '安全密钥',
   email: '邮箱验证码', 'email+totp': '邮箱验证码与动态验证码', 'email+recovery': '邮箱验证码与恢复码' };
@@ -89,7 +96,7 @@ export default function Account() {
           {!!rows?.some(r => !r.current) && <button className="btn danger sm" disabled={busy} onClick={() => void revoke()}>{t('退出其他所有设备')}</button>}</div>
           <ErrorNotice error={error} retry={loadSessions} />{rows === null && !error && <p role="status">{t('加载中…')}</p>}
           <div className="account-table"><table className="tbl" aria-label={t('登录会话')}><thead><tr><th>{t('设备')}</th><th>{t('登录方式')}</th><th>{t('最近活动')}</th><th>{t('到期')}</th><th>{t('来源')}</th><th>{t('操作')}</th></tr></thead>
-            <tbody>{rows?.map(row => <tr key={row.id}><td>{row.client} {row.current && <span className="badge ok">{t('当前设备')}</span>}</td>
+            <tbody>{rows?.map(row => <tr key={row.id}><td>{deviceLabel(row, t)} {row.current && <span className="badge ok">{t('当前设备')}</span>}</td>
               <td className="small">{methodLabel(row.amr, t, state?.external_providers)}{row.persistent && <span className="badge info" style={{ marginLeft: 6 }} title={t('勾选了「保持登录」的会话：最长 14 天不活动仍有效')}>{t('保持登录')}</span>}</td><td className="small nowrap">{timeText(row.last_seen_at, locale, profile.timezone)}</td>
               <td className="small nowrap">{timeText(row.expires_at, locale, profile.timezone)}</td><td className="mono small">{row.ip || '—'}</td>
               <td><button className="btn xs" disabled={busy} onClick={() => void revoke(row)}>{t(row.current ? '退出' : '结束')}</button></td></tr>)}</tbody></table></div>

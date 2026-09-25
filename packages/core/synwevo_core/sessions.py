@@ -268,6 +268,7 @@ class Sessions:
                         "created_at": r["created_at"], "last_seen_at": r["last_seen_at"],
                         "expires_at": min(r["idle_expires_at"], r["absolute_expires_at"]),
                         "amr": r["amr"], "client": describe_client(r["user_agent"]),
+                        "client_parts": client_parts(r["user_agent"]),
                         "ip": r["ip"] or None, "persistent": bool(r.get("persistent")),
                         "auth_provider": r.get("auth_provider")})
         return out
@@ -360,17 +361,26 @@ def cookie_kwargs(secure: bool) -> dict:
     return {"httponly": True, "secure": secure, "samesite": "lax", "path": "/"}
 
 
-def describe_client(user_agent: str | None) -> str:
-    """A short, honest description. Returns "未知设备" rather than inventing specificity."""
+def client_parts(user_agent: str | None) -> dict:
+    """What can honestly be read from a User-Agent: the browser family and the platform, or
+    nothing. Product names only — the *sentence* ("macOS 上的 Chrome", "Chrome on macOS") is the
+    reader's language and is composed by the page, so the device list translates like the rest
+    of the account page instead of being the one Chinese string on an English screen."""
     ua = user_agent or ""
-    if not ua:
-        return "未知设备"
     browser = next((n for k, n in (("Edg/", "Edge"), ("OPR/", "Opera"), ("Chrome/", "Chrome"),
                                    ("Firefox/", "Firefox"), ("Safari/", "Safari")) if k in ua), None)
-    # Chrome's UA contains "Safari/"; check order above already handles that.
+    # Chrome's UA contains "Safari/"; the order above already handles that.
     platform = next((n for k, n in (("Windows NT", "Windows"), ("Macintosh", "macOS"),
                                     ("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
                                     ("Linux", "Linux")) if k in ua), None)
+    return {"browser": browser, "platform": platform}
+
+
+def describe_client(user_agent: str | None) -> str:
+    """The legacy one-line description (zh-Hans), kept for clients that still read `client`.
+    Returns "未知设备" rather than inventing specificity."""
+    parts = client_parts(user_agent)
+    browser, platform = parts["browser"], parts["platform"]
     if browser and platform:
         return f"{platform} 上的 {browser}"
     return browser or platform or "未知设备"

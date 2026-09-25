@@ -86,10 +86,42 @@ MEASURE_JS = r"""
     if (rr < need && !seen.has(key) && !el.closest('[disabled], .btn:disabled, [aria-disabled="true"], ::placeholder')) { seen.add(key); out.contrast.push({ tag: el.tagName.toLowerCase(), cls: (el.className || '').toString().slice(0, 40), color: cs.color, bg: `rgb(${Math.round(bg.r)}, ${Math.round(bg.g)}, ${Math.round(bg.b)})`, size: Math.round(size * 10) / 10, weight, ratio: Math.round(rr * 100) / 100, text: text.slice(0, 30) }); }
   }
   out.contrast = out.contrast.slice(0, 10);
+  // Untranslated text: when the page is rendered in English, any CJK text that is not user
+  // content (the caller names the fixture strings) is a string that never reached the catalog.
+  const [, lang, fixtures] = args;
+  out.untranslated = [];
+  if (lang === 'en') {
+    const seenT = new Set();
+    const w2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let n2;
+    while ((n2 = w2.nextNode())) {
+      const t = n2.textContent.trim();
+      if (!/[\u3400-\u9fff]/.test(t) || seenT.has(t)) continue;
+      const el = n2.parentElement; if (!el || !visible(el)) continue;
+      if ((fixtures || []).some(f => f && t.includes(f))) continue;
+      if (el.closest('[lang]:not([lang^="en"]), .who, .who2, .mono, code')) continue;
+      seenT.add(t);
+      out.untranslated.push({ tag: el.tagName.toLowerCase(), cls: (el.className || '').toString().slice(0, 40), text: t.slice(0, 60) });
+    }
+    // attributes the reader hears: aria-label, placeholder, title
+    for (const el of document.querySelectorAll('[aria-label], [placeholder], [title]')) {
+      if (!visible(el)) continue;
+      for (const a of ['aria-label', 'placeholder', 'title']) {
+        const v = el.getAttribute(a) || '';
+        if (/[\u3400-\u9fff]/.test(v) && !seenT.has(v) && !(fixtures || []).some(f => f && v.includes(f))) { seenT.add(v); out.untranslated.push({ tag: el.tagName.toLowerCase() + '[' + a + ']', cls: (el.className || '').toString().slice(0, 40), text: v.slice(0, 60) }); }
+      }
+    }
+    out.untranslated = out.untranslated.slice(0, 15);
+  }
   out.overflow = out.overflow.slice(0, 8); out.small = out.small.slice(0, 12);
   return out;
 }
 """
+
+
+LOCALE = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--locale=")), None)
+#: User content that legitimately stays in its own language on an English page (fixture names).
+FIXTURE_STRINGS = [f for f in next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--fixtures=")), "").split("|") if f]
 
 
 def require_test_instance(base: str) -> str:
@@ -120,7 +152,7 @@ def measure(page: Page, url: str, settle: str | None = None) -> dict:
         except Exception:
             pass
     page.wait_for_timeout(300)
-    r = page.evaluate(MEASURE_JS, [SCROLL_CONTAINERS])
+    r = page.evaluate(MEASURE_JS, [SCROLL_CONTAINERS, LOCALE, FIXTURE_STRINGS])
     r["url"] = url.split("?")[0].replace("http://", "")
     r["title"] = page.title()[:30]
     return r
@@ -141,8 +173,15 @@ def main():
         for width in widths:
             ctx = browser.new_context(viewport={"width": width, "height": 740}, is_mobile=width < 800, has_touch=width < 800, locale="zh-CN")
             page = ctx.new_page()
-            rows = [measure(page, u) for u in anon_pages]
+            rows = [measure(page, u + (f"?lang={LOCALE}" if LOCALE else "")) for u in anon_pages]
             sign_in(page, accounts, email, password)
+            previous_locale = None
+            if LOCALE:
+                from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
+                csrf = next((c["value"] for c in ctx.cookies() if c["name"] == CSRF_COOKIE), "")
+                previous_locale = page.request.get(f"{accounts}/api/auth/me").json().get("locale")
+                r = page.request.patch(f"{accounts}/api/auth/locale", data={"locale": LOCALE}, headers={CSRF_HEADER: csrf})
+                assert r.status == 200, ("could not set the locale", r.status, r.text()[:120])
             me = page.request.get(f"{accounts}/api/auth/me").json()
             signed = [f"{accounts}/account", f"{accounts}/organizations", f"{accounts}/onboarding"]
             try:
@@ -176,10 +215,12 @@ def main():
             print(f"\n== {width} px (Chromium mobile emulation{' — is_mobile' if width < 800 else ''})")
             print(f"{'page':44} {'scrollW':>7} {'overflow':>8} {'<24px':>5} {'prim<44':>7} {'contrast':>8}  targets")
             for r in rows:
-                bad = r["scrollWidth"] > r["innerWidth"] or r["overflow"] or r["small"] or r.get("contrast")
+                bad = r["scrollWidth"] > r["innerWidth"] or r["overflow"] or r["small"] or r.get("contrast") or r.get("untranslated")
                 failures += 1 if bad else 0
                 flag = "✗" if bad else "✓"
                 print(f"{flag} {r['url'][:42]:42} {r['scrollWidth']:>7} {len(r['overflow']):>8} {len(r['small']):>5} {len(r['primarySmall']):>7} {len(r.get('contrast', [])):>8}  {r['targets']}")
+                for u_ in r.get("untranslated", [])[:8]:
+                    print(f"      untranslated: <{u_['tag']} class='{u_['cls']}'> “{u_['text']}”")
                 for c_ in r.get("contrast", [])[:6]:
                     print(f"      contrast {c_['ratio']}:1 <{c_['tag']} class='{c_['cls']}'> {c_['color']} on {c_['bg']} {c_['size']}px/{c_['weight']} “{c_['text']}”")
                 for o in r["overflow"][:4]:
@@ -188,9 +229,14 @@ def main():
                     print(f"      small: <{s_['tag']} class='{s_['cls']}'> {s_['w']}×{s_['h']} “{s_['label']}”")
                 for s_ in r["primarySmall"][:3]:
                     print(f"      primary<44: {s_['w']}×{s_['h']} “{s_['label']}”")
+            if LOCALE and previous_locale and previous_locale != LOCALE:
+                # leave the account as it was found
+                from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
+                csrf = next((c["value"] for c in ctx.cookies() if c["name"] == CSRF_COOKIE), "")
+                page.request.patch(f"{accounts}/api/auth/locale", data={"locale": previous_locale}, headers={CSRF_HEADER: csrf})
             ctx.close()
         browser.close()
-    print(f"\n{failures} page(s) with reflow or target-size findings")
+    print(f"\n{failures} page(s) with reflow, target-size, contrast or translation findings")
     sys.exit(1 if failures else 0)
 
 

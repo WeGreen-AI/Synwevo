@@ -190,7 +190,9 @@ table.tbl tr:hover td { background: var(--panel-2); }
 
 /* ------------------------------------------------------------ app shell */
 .app { display: flex; flex-direction: column; height: 100%; }
-.topbar { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 12px; background: var(--surface); border-bottom: 1px solid var(--line); flex: none; }
+/* Wraps when its controls do not fit — in English the Docs home bar overflowed a 1280 px window
+   by 51 px and pushed 新建项目 off-screen; a second line is the honest answer at any width. */
+.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 48px; padding: 4px 12px; background: var(--surface); border-bottom: 1px solid var(--line); flex: none; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--text); text-decoration: none; white-space: nowrap; }
 .brand:hover { text-decoration: none; color: var(--text); }
 .logo, .brand .logo { width: 24px; height: 24px; flex: none; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: var(--on-accent); font-size: 13px; font-weight: 700; font-family: var(--font); line-height: 1; }

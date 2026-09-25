@@ -111,7 +111,7 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
         back = page.locator(".acct-back-link").first
         expect(back).to_be_visible()
         back_text = back.inner_text()
-        assert "返回" in back_text, back_text
+        assert re.search("返回|Back to", back_text), back_text   # the account's own language
         href = back.get_attribute("href") or ""
         listed = {t["url"].split("/auth/start")[0].rstrip("/") for t in page.request.get(f"{accounts}/api/auth/me").json().get("return_targets", [])}
         assert any(href.startswith(origin) for origin in listed), f"back link goes to {href!r}, not a server-listed origin {sorted(listed)}"
