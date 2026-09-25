@@ -232,3 +232,20 @@ PY
 登录并调用邀请、邮箱验证接口，再只执行一次队列扫描，最多两封邮件；同一目录重复运行直接拒绝。
 不挂载生产数据，不使用管理员 Cookie，不打印测试口令或邮件令牌。邮件中的链接只指向临时本地服务，
 无需收件人操作。结果保存到该目录的 `acceptance.json`；保留此目录作为防重复发送标记，不盲目重跑。
+
+## 7. 登录方式：保持登录、邮箱验证码与外部身份提供商
+
+本轮（2026-09-25）之后账户服务提供四种登录路径：口令、Passkey、邮箱一次性验证码、外部 OpenID 提供商；
+契约见 [sessions.md](security/sessions.md) §2.1、§4.4、§4.5。运维上只有两件事需要配置：
+
+| 项 | 怎么做 |
+|---|---|
+| 邮箱验证码 | 复用账户服务的 SMTP（§6）。`SYNWEVO_MAIL_MODE=disabled` 时验证码请求仍返回同形 202，但不发信；登录页会把 `delivery=unavailable` 解释为「邮件服务尚未配置」。 |
+| 保持登录 | 默认即生效；`SYNWEVO_SESSION_PERSISTENT_IDLE_S`（默认 14 天）可调，绝对过期仍由 `SYNWEVO_SESSION_ABSOLUTE_S` 决定。平台管理员忽略此项。 |
+| 外部提供商 | 在提供商处登记 Web 应用，回调地址填 `<SYNWEVO_ISSUER>/auth/external/<id>/callback`（生产为 `https://accounts.wegreen.ltd/auth/external/google/callback` 等）。把 `SYNWEVO_IDP_PROVIDERS=google,microsoft` 与各自的 `SYNWEVO_IDP_<ID>_CLIENT_ID` / `_CLIENT_SECRET`（Microsoft 另有 `SYNWEVO_IDP_MICROSOFT_TENANT`）写入**账户服务**的 `runtime.env`（0600，与 SMTP 秘密同样只给 accounts 容器），重启 accounts。 |
+
+启动时校验：列出的提供商缺少任一凭据，账户服务拒绝启动并在日志里点名缺失的变量；没有列出的提供商
+不会出现在登录页（`/api/auth/state.external_providers` 为空）。启用后先用一个受控账户走一遍
+「登录页 → 提供商 → 回到账户页」再对外宣布；本机可用 `services/identity/scripts/idp_double.py`
+（测试替身，非真实提供商）预演完整链路。关联按提供商稳定 `sub` 进行，不凭邮箱合并账户；
+平台管理员必须先启用 TOTP 才能用外部提供商或邮箱验证码登录。

@@ -1,5 +1,65 @@
 # Vultr Tokyo deployment — current record
 
+## 2026-09-25 unified white-blue design system and sign-in methods — deployed
+
+Authorized by the user's standing instruction for this round (commit, push and deploy through the
+existing CI/CD once verified). No DNS, tunnel, mail routing or provider credentials were changed.
+
+**Running source (first cutover):** `4ecdfb0985ec46542159f8dd8433aef439756282` on `main`.
+[Actions 36092928683](https://github.com/WeGreen-AI/Synwevo/actions/runs/36092928683) passed
+verification (boundaries, brand, the new design guard, three shells, Python suites in the isolated
+runtime image, deployment regressions), the restricted SSH deployment and public health checks.
+The image is labelled with that revision; the receiver rebuilt it on the host, took the pre-upgrade
+backup `/opt/synwevo/backups/20260925T042037Z`, and the accounts, docs and portal containers reported
+healthy before the gateway cutover (`{"deployed": "synwevo:4ecdfb0…", "backup": …}` in the run log).
+
+**Running source (current):** `dbd4c941c63f5ae5a754856497a3ccd12bf8a831` on `main` (shared
+not-found / signed-out page, in-account password change, remember-me checkbox never pre-checked).
+[Actions 36093474438](https://github.com/WeGreen-AI/Synwevo/actions/runs/36093474438) passed the same
+verification, deployed through the restricted SSH receiver with pre-upgrade backup
+`/opt/synwevo/backups/20260925T044056Z` (`{"deployed": "synwevo:dbd4c94…"}`), and the accounts, docs,
+portal and gateway containers reported healthy; public readiness passed at 2026-09-25 ~04:45 UTC.
+The pending run for `ba56412` was superseded by GitHub's concurrency rule, so its content shipped
+with `dbd4c94`. The documentation-only commits that follow carry `[skip ci]` and do not redeploy.
+
+### What changed for production
+
+- Store schema **6 → 7**, additive only: `sessions.persistent`, `sessions.auth_provider`,
+  `mfa_tickets.first_factor`, and the empty `login_codes`, `external_identities`,
+  `external_auth_requests`, `external_link_offers` tables. Existing sessions keep working as
+  non-remembered sessions; the receiver's pre-upgrade backup precedes the migration as before.
+- All three shells serve the unified tokens (`--bg #f8fafc`, `--accent #2563eb`, pressed
+  `#1e40af`); the portal stylesheet no longer carries its private green palette.
+- Sign-in page offers "keep me signed in" and e-mail code sign-in; **no external provider is
+  configured**, so `/api/auth/state.external_providers` is `[]` and no provider button is shown.
+  E-mail codes use the existing production SMTP; the platform administrator account has no
+  TOTP enrolled, so it is deliberately not offered an e-mail code (documented policy).
+
+### Post-deploy checks (first cutover, 2026-09-25 ~04:25 UTC)
+
+| Check | Result |
+|---|---|
+| `/readyz` on synwevo / accounts / docwave | `ready`; database, storage (and worker on accounts/docs) `ok` |
+| `/api/auth/state` on accounts | `mode=session`, `registration=open`, `bootstrap_required=false`, `external_providers=[]` |
+| Served account CSS | contains `--accent:#2563eb`, `--bg:#f8fafc`, `--accent-pressed:#1e40af`; no dark token block |
+| Served account JS | contains the remember-me and e-mail code strings and the `external_providers` field |
+| Served portal CSS | zero occurrences of the old `--pt-green` palette; shared `--accent` present |
+| Browser (Chrome, anonymous) | homepage and sign-in page render in the unified system with the new controls; no provider button |
+
+### Post-deploy checks (current cutover `dbd4c94`, 2026-09-25 ~04:47 UTC)
+
+| Check | Result |
+|---|---|
+| `/readyz` on synwevo / accounts / docwave | `ready`; database, storage (and worker) `ok` |
+| Served account JS | contains the password-change form strings, `/api/auth/password` and the shared status page |
+| Served portal / Docs JS | contain their not-found messages |
+| Browser (Chrome, anonymous) | `accounts…/does-not-exist` and `synwevo…/does-not-exist` render the shared not-found page (brand bar, message, one way forward), in the unified system |
+| `/api/auth/state` | unchanged: `registration=open`, `external_providers=[]` |
+
+Not exercised on production in this round: authenticated flows, e-mail code delivery to a real
+inbox, and any external provider (none configured). Those were verified on the isolated local
+instance recorded in [handoff.md](handoff.md).
+
 ## 2026-09-25 product and workflow-platform homepage — deployed
 
 The user explicitly requested “部署好” after the local-only product round, then corrected the
