@@ -18,6 +18,7 @@ from synwevo_core.api_platform import (Approvals, ControlPlaneAdapter, MANAGE_PE
 from synwevo_core.apps import DOCS_APP_ID
 from synwevo_core.auth import Auth, JournalWriteFailed, MAX_ROTATION_GRACE_S
 from synwevo_core.errors import ServiceError
+from synwevo_core.sessions import admin_capable
 from synwevo_core.machine import SCOPE_MANAGE, SCOPE_READ, SCOPE_WRITE
 from synwevo_core.oidc import Clients, Grants, MAX_SECRET_GRACE_S, docs_resource
 from synwevo_core.sessions import COOKIE_NAME, Sessions
@@ -39,7 +40,11 @@ def build_router(store: Store, ident, sessions, audit,
             raise ServiceError(401, "unauthorized", "请先登录")
         request.state.session = session
         if admin:
-            return require_manage(ident, session["user_id"])
+            user = require_manage(ident, session["user_id"])
+            if not admin_capable(session.get("amr") or ""):
+                raise ServiceError(403, "step_up_required", "当前登录只验证了一个因素：请在账户页输入口令确认身份后再使用 API 管理",
+                                   {"scope": "admin"})
+            return user
         user = ident.get_user(session["user_id"])
         if not user or user["status"] != "active":
             raise ServiceError(401, "unauthorized", "账户不可用，请重新登录")

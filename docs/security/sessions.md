@@ -172,7 +172,7 @@ SSO 创建本地会话时，`reauth_at` 取的是**中央认证发生的时间**
 | 错误尝试 | 每个码 5 次后作废；账户级退避桶与 TOTP 相同 |
 | 限流 | 每来源地址 15 分钟 10 次；每地址（含不存在的地址，按哈希计）每小时 3 次且间隔 ≥ 60 秒 |
 | 存储 | 只存 `sha256(row_id:code)`；发出后 `mail_outbox` 中的正文把验证码替换为占位（`redact()`） |
-| 资格 | 账户 `active` 且邮箱已验证；**平台管理员必须已启用 TOTP**，否则不发码（响应形状不变，审计记录 `admin_requires_totp`） |
+| 资格 | 账户 `active` 且邮箱已验证。平台管理员同样可以收码登录，但得到的是一因素会话（§4.6）——按钮和响应形状不因账户是否为管理员而不同，验证前不泄露任何账户属性 |
 | 第二因素 | 启用 TOTP 的账户在验证码之后仍要完成第二步；不是绕过 MFA 的备用路径 |
 
 验证：`services/identity/tests/test_email_code_login.py`。
@@ -192,7 +192,7 @@ SSO 创建本地会话时，`reauth_at` 取的是**中央认证发生的时间**
 | 未关联，邮箱已验证，无现有账户，注册开放 | 创建已激活、无口令的账户并关联；落到 `/onboarding` |
 | 邮箱未验证 | 不注册、不匹配；提示用口令登录后在账户页关联（按 `sub` 关联，不看邮箱） |
 | 注册未开放 | `registration_closed` |
-| 平台管理员 | 未启用 TOTP 时拒绝（`admin_requires_totp`） |
+| 平台管理员 | 与其他账户相同地登录（`amr=idp:<id>`），但会话在补上第二个因素前不能进入平台管理（§4.6） |
 
 关联/解除关联在账户页进行，都要求 `scope=mfa` 且 `strict` 的近期重认证；解除关联不能移除账户
 最后一种登录方式（口令、Passkey、其他外部身份至少剩一个）。两者都发安全通知邮件。
@@ -203,6 +203,39 @@ SSO 创建本地会话时，`reauth_at` 取的是**中央认证发生的时间**
 验证：`services/identity/tests/test_external_identity.py`——用一个**测试用 OpenID 提供商替身**
 （真实 RS256 签名、可注入篡改）覆盖正反用例；它证明 Synwevo 这一侧的检查，不证明与 Google /
 Microsoft 的实际联调。
+
+### 4.6 认证强度与管理会话（分阶段认证）
+
+三个问题分开回答：提供商/邮箱在平台层是否可用；这个人是否完成了第一阶段身份验证；这次会话的**认证强度**
+是否满足其角色的要求。前两者决定能否登录；只有第三个决定能否管理。
+
+`synwevo_core.sessions.admin_capable(amr)` 是唯一的判定点：
+
+| `amr` | 因素 | 管理能力 |
+|---|---|---|
+| `password`、`password+totp`、`password+recovery` | 口令（本平台策略把口令视为满足管理的基线，保持既有管理员登录方式） | 有 |
+| `passkey_uv` | 认证器验证了本人（PIN / 生物特征） | 有 |
+| `passkey` | 只证明持有 | 无 |
+| `email`、`idp:<id>` | 一个因素 | **无** |
+| `email+totp`、`idp:<id>+totp`、`email+password`、`idp:<id>+password` | 两个不同因素 | 有 |
+
+一因素会话下，`/api/auth/me` 的 `permissions` 为空、`admin_locked=true`；`/api/admin/*` 与 `/api/admin/api-platform/*`
+返回 `403 step_up_required {scope: admin}`（`admin_routes._admin`、`api_platform.actor`）。管理外壳仍然发给管理员
+（角色是真的），页面用这个字段显示「当前登录只验证了一个因素」和口令表单，而不是伪装成不存在。普通账户
+功能（设备、口令、Passkey、关联）不受影响。
+
+补第二个因素的方式：`POST /api/auth/reauth {password, scope}` 成功时把 `password` **追加进 `amr`**
+（`Sessions.add_factor`），因为口令是与验证码/提供商不同的因素；`/api/auth/mfa/reauth` 同样。TOTP 账户在登录
+第二步就已得到 `+totp`。没有口令的管理员（只用外部登录建立的账户）要先通过邮箱重置链接设置口令，或以
+`passkey_uv` 登录。这一升级只作用于当前会话行，不改变账户，不延长会话时钟；页面切换不会再次挑战。
+
+不要在登录页按"这个邮箱是不是管理员"改变按钮：验证前的登录页对所有地址同形。也不要因为某个管理员没有
+绑定 TOTP 就全局隐藏别人可用的登录方式——这是本轮从上一轮策略改掉的部分。
+
+验证：`services/identity/tests/test_session_strength.py`（判定表）、`test_email_code_login.py` 与
+`test_external_identity.py` 中的管理员用例（403 → 口令 → `amr` 升级 → 200）。
+
+---
 
 ## 5. 重认证（reauth）
 
@@ -351,3 +384,47 @@ host-only 属性、端口无关性，以及跨应用登出。**38/38 本机通�
 
 相关测试：`apps/docs/tests/test_sso_chain.py`（26）、`test_oidc_flow.py`（28）、
 `test_oidc_logout.py`（15）、`test_passkeys.py`（19）、`test_recovery.py`（20）。
+
+---
+
+## 12. 前端会话状态、重验证与「返回工作」
+
+### 12.1 状态机
+
+`SessionProvider`（`packages/auth-client/web/src/session.tsx`）只暴露三个字段，含义固定：
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `me` | `undefined` | **尚未确定**：首次恢复中。页面显示中性占位，不显示「登录」，也不渲染受保护内容 |
+| `me` | `null` | 已确认未登录 / 会话失效 |
+| `me` | 对象 | 已确认登录（含 `admin_locked`、`return_targets`、`workspace_id`） |
+| `error` | `ApiError` | 临时网络/服务异常（非 401）：保留已知外壳并提示，不当成未登录 |
+
+规则：**状态未知时不渲染未登录界面；已确认登录后的普通路由切换不把身份重置为未知或未登录。**
+公开首页的顶栏在 `me === undefined` 时是占位块，之后才决定「登录」还是「进入工作空间」（`PublicHome`
+的 `signedIn` 三值）。
+
+### 12.2 请求去重与重验证
+
+| 场景 | 行为 |
+|---|---|
+| 首次进入 | `/api/auth/state` 与 `/api/auth/me` **并行**发出（原来串行，白等一轮 RTT）；门户同时发 `/api/portal/home`，先到者先填 |
+| 站内路由切换 | 不发认证请求；页面请求各自发，外壳不重建 |
+| 回到标签页（`focus` / `visibilitychange` / bfcache `pageshow`） | 后台重验证，**间隔不小于 30 秒**（`REVALIDATE_MIN_MS`）；期间已知身份保持显示，结果只替换数据。门户不再把仪表盘退回加载态——那正是「侧栏点了没反应」的根因：正在被点击的元素被卸载了 |
+| 会话过期（401，非上游） | 一次可恢复的登录流程；`ApiError.upstream` 区分应用自身 401 与 Docs 转发上游的 401 |
+| 403 / 404 / 429 / 网络 / 5xx | 各自提示，不清空会话、不跳登录 |
+| 注销 / 切换账号 / 切换空间 | 请求代次递增，旧响应丢弃；切空间整页导航 |
+
+前端去重与缓存**不替代**服务端鉴权：每个受保护请求仍由 `synwevo_core.http` 与业务 `authz` 检查。
+
+### 12.3 「返回工作空间 / 返回 Synwevo Docs」
+
+账户页所有子页都有两条出口：返回来源工作（顶栏与手机抽屉）、返回账户概览（子页）。候选目标来自服务端
+（`/api/auth/me.return_targets`：配置的门户 `PORTAL_URL/workspace`，以及 `Apps.apps_for` 列出的、该人当前可
+打开的应用的 `/auth/start?workspace_id=…` 入口）。页面只**选择**其一：门户与 Docs 链接到账户页时附
+`from=platform` / `from=docweave`（`/api/auth/state.app_id`），账户页把它当作 id 在列表里匹配，匹配不到就回门户；
+这个 id 只在 `sessionStorage` 保留到标签页关闭。**不接受任何 URL 形式的 returnTo、不读 Referer**，因此账户源
+没有开放重定向。目标空间已删除或失去权限时，`apps_for` 不会列出它，返回门户由门户决定去向；不落入历史 `default`
+空间，也不自动创建空间。
+
+验证：`tests/integration/test_return_targets.py`；浏览器回归 `services/identity/scripts/ui_e2e_shell.py`。

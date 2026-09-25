@@ -22,6 +22,18 @@ import { useSession } from "./session";
 import { LanguageMenu, useI18n, useToast } from "@synwevo/ui";
 import "./session.messages";
 
+/** The account page with `from=<app id>`, so its "back" link returns here. The id is only a hint
+ *  the account service matches against the applications this person may open. */
+export function accountHref(accountUrl: string | undefined, appId: string | null | undefined): string {
+  const base = accountUrl || "/account";
+  if (!appId) return base;
+  try {
+    const url = new URL(base, window.location.origin);
+    url.searchParams.set("from", appId);
+    return url.origin === window.location.origin ? url.pathname + url.search : url.href;
+  } catch { return base; }
+}
+
 export function PlatformNav() {
   const { me, state, signOut } = useSession();
   const { t } = useI18n();
@@ -76,7 +88,7 @@ export function PlatformNav() {
         </select>
       )}
       <LanguageMenu />
-      <a className="btn ghost sm" href={state?.account_url || "/account"} title={t("账户与安全")}>{t("账户")}</a>
+      <a className="btn ghost sm" href={accountHref(state?.account_url, state?.app_id)} title={t("账户与安全")}>{t("账户")}</a>
       <button type="button" className="btn ghost sm" onClick={() => void signOut().catch(() => undefined)}>{t("退出登录")}</button>
     </>
   );

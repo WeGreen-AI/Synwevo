@@ -1,4 +1,4 @@
-import { formatNumber, LanguageMenu, BrandMark } from "@synwevo/ui";
+import { formatNumber, LanguageMenu, BrandMark, useMediaQuery } from "@synwevo/ui";
 import { DownloadLink } from "../components/ApiResource";
 import { serverText, issueText, diagnosticText } from "../lib/presentation";
 import { t as tr, useI18n } from "@synwevo/ui";
@@ -48,6 +48,9 @@ type Dialog =
   | { kind: "desensitize" };
 
 
+/** Which panel a phone shows: the source file, the target template (or preview), or the mapping list. */
+type MobilePane = "files" | "source" | "target" | "map";
+
 export default function WorkspaceRoute() {
   useI18n();
   const { pid } = useParams();
@@ -89,6 +92,8 @@ function Workspace() {
   const [preview, setPreview] = useState(false);
   const [lines, setLines] = useState(() => recall("lines", true));
   const [leftW, setLeftW] = useState<number>(() => recall("leftW", 0));
+  const [mobilePane, setMobilePane] = useState<MobilePane>("source");
+  const narrow = useMediaQuery("(max-width: 900px)");
   const [zoomL, setZoomL] = useState(() => recall("zoomL", 1));
   const [zoomR, setZoomR] = useState(() => recall("zoomR", 1));
   const [sideW, setSideW] = useState(() => recall("sideW", 0));
@@ -743,7 +748,18 @@ function Workspace() {
         <label className="check small"><input type="checkbox" checked={lines} onChange={(e) => setLines(e.target.checked)} />{tr("显示连线")}</label>
         {!guide && <button className="btn ghost sm" onClick={() => setGuide(true)}>{tr("操作指引")}</button>}
       </div>
-      <div className="notice warn mobile-only small" style={{ borderRadius: 0 }}>{tr("手机屏幕较小：建议在电脑浏览器中建立映射。手机上可以查看任务进度与下载结果（点击上方「最近任务」）。")}</div>
+      {/* On a phone the two panes and the mapping list take turns. One is visible at a time; the
+          selection bar underneath keeps both selections and the "建立映射" button in reach, so a
+          mapping is made by choosing on 来源, switching to 目标 and choosing there — no side-by-side
+          layout is needed to complete upload → map → preview → generate. */}
+      <div className="pane-switch mobile-only" role="tablist" aria-label={tr("切换显示的面板")}>
+        {([["files", tr("文件")], ["source", tr("来源")], ["target", preview ? tr("预览") : tr("目标")], ["map", tr("映射")]] as [MobilePane, string][]).map(([id, label]) => (
+          <button key={id} type="button" role="tab" aria-selected={mobilePane === id} className={`btn sm${mobilePane === id ? " active" : ""}`}
+            onClick={() => setMobilePane(id)}>
+            {label}{id === "files" ? ` ${formatNumber(sources.length)}` : ""}{id === "source" && leftSel ? " ●" : ""}{id === "target" && (selectedSlot || rawRight) ? " ●" : ""}{id === "map" ? ` ${formatNumber(mappings.length)}` : ""}
+          </button>
+        ))}
+      </div>
       {guide && (
         <div className="notice info row" style={{ borderRadius: 0, borderLeft: 0, borderRight: 0 }}>
           <span className="grow small">
@@ -752,8 +768,8 @@ function Workspace() {
         </div>
       )}
       {/* ---------------------------------------------------------------- work area */}
-      <div className="work" ref={workRef}>
-        <FilePanel projectId={pid!} sources={sources} active={activeFile} onActive={(id) => setActiveFile(id)} onChanged={reload} collapsed={filesCollapsed} onCollapse={setFilesCollapsed}
+      <div className={`work m-${mobilePane}`} ref={workRef}>
+        <FilePanel projectId={pid!} sources={sources} active={activeFile} onActive={(id) => setActiveFile(id)} onChanged={reload} collapsed={filesCollapsed && !narrow} onCollapse={setFilesCollapsed}
           readOnly={ro} canExport={perm.canExport} uploadRequest={uploadReq} />
         <div className="pane left" id="pane-left" style={{ flex: leftW ? `0 0 ${leftW}px` : "1 1 50%" }}>
           <div className="pane-h">
@@ -888,7 +904,7 @@ function Workspace() {
           onClearOverride={(key, mid) => { saveMappings(mappings.map((x) => { if (x.id !== mid) return x; const o = { ...(x.overrides || {}) }; delete o[key]; return { ...x, overrides: o }; }), "清除单独定位").catch(() => {}); }}
           onOpenRule={() => { if (!ro) setDialog({ kind: "rule" }); }}
           onCorrect={async (fid, mid, v) => { await run(() => put(`/api/sources/${fid}/corrections/${mid}`, { value: v, confirmed: true })).catch(() => {}); await reload(); }}
-          collapsed={sideCollapsed} onCollapse={setSideCollapsed}
+          collapsed={sideCollapsed && !narrow} onCollapse={setSideCollapsed}
           width={sideW} onWidth={(w) => { setSideW(w); setTick((t) => t + 1); }}
           canUndo={!!project.mappings.can_undo} canRedo={!!project.mappings.can_redo}
           onUndo={() => { step("undo", "m"); }} onRedo={() => { step("redo", "m"); }} readOnly={ro} />

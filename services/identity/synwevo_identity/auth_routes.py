@@ -150,8 +150,8 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         return issue_session(ident, sessions, response, user, amr=amr, request=request,
                              persistent=persistent, auth_provider=auth_provider, describe=_me)
 
-    def _me(user: dict, spaces: list[dict]) -> dict:
-        return describe_user(user, spaces)
+    def _me(user: dict, spaces: list[dict], session: dict | None = None) -> dict:
+        return describe_user(user, spaces, session)
 
     @r.post("/bootstrap")
     def bootstrap(request: Request, response: Response, body: dict = Body(...)):
@@ -336,8 +336,11 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
             raise ServiceError(400, "bad_scope", f"未知的重认证用途 {scope!r}")
         check_reauth_password(ident, sessions, request, s, body.get("password") or "", audit, scope)
         sessions.mark_reauth(s["id"], scope)
-        audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": scope})
-        return {"ok": True, "scope": scope, "valid_for_s": REAUTH_SECONDS}
+        # The password is a second, distinct factor for a session that began with a mailed code
+        # or an external provider; recording it is what unlocks platform administration.
+        amr = sessions.add_factor(s["id"], "password")
+        audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": scope, "amr": amr})
+        return {"ok": True, "scope": scope, "valid_for_s": REAUTH_SECONDS, "amr": amr}
 
     # ------------------------------------------------------------------ sessions
     @r.get("/sessions")
@@ -563,7 +566,7 @@ def issue_session(ident: Identity, sessions: Sessions, response: Response, user:
     # credential on its own — it only proves the request came from our own page.
     response.set_cookie(CSRF_COOKIE, new_csrf_token(), max_age=max_age, httponly=False, secure=secure,
                         samesite="lax", path="/")
-    user_view = describe(user, spaces) if describe else _public_user(ident, user)
+    user_view = describe(user, spaces, row) if describe else _public_user(ident, user)
     return {"user": user_view, "session": {"id": row["id"], "amr": amr, "persistent": bool(row["persistent"])}}
 
 
@@ -914,8 +917,9 @@ def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRout
         s = _session(request)
         check_reauth_password(ident, sessions, request, s, body.get("password") or "", audit, SCOPE)
         sessions.mark_reauth(s["id"], SCOPE)
-        audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": SCOPE})
-        return {"ok": True, "valid_for_s": REAUTH_SECONDS}
+        amr = sessions.add_factor(s["id"], "password")
+        audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": SCOPE, "amr": amr})
+        return {"ok": True, "valid_for_s": REAUTH_SECONDS, "amr": amr}
 
     @r.get("")
     def state(request: Request):

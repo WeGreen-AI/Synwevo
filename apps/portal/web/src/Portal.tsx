@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Brand, LanguageMenu, useI18n } from "@synwevo/ui";
+import { Brand, LanguageMenu, Menu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { ApiError, get, post, setWorkspaceContext, useSession, type Me } from "@synwevo/auth-client";
 import { PublicHome } from "./PublicHome";
 import "./messages";
@@ -23,7 +23,9 @@ export function safeLink(value: string, fallback = "/account"): string {
   } catch { return fallback; }
 }
 function accountLink(base: string, path: string): string {
-  return safeLink(`${base.replace(/\/$/, "")}${path}`, path);
+  // `from=platform` lets the account page's "back" link return to the portal.
+  const joiner = path.includes("?") ? "&" : "?";
+  return safeLink(`${base.replace(/\/$/, "")}${path}${path.startsWith("/register") ? "" : `${joiner}from=platform`}`, path);
 }
 export function Portal() {
   const { t, locale } = useI18n();
@@ -34,33 +36,38 @@ export function Portal() {
   const [switching, setSwitching] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState(false);
   const accountBase = session.state?.account_url?.replace(/\/account\/?$/, "") || "";
+  const narrow = useMediaQuery("(max-width: 760px)");
 
+  // The dashboard request does not wait for the session probe: the two leave together on a
+  // fresh page, and the one that answers second completes the picture. A later revalidation
+  // (returning to the tab) replaces the data in place — the page never drops back to a
+  // spinner while it already shows a dashboard, which is what made the sidebar "not respond":
+  // it was being unmounted under the pointer.
+  const [dash, setDash] = useState<{ value: Home | null; error: ApiError | null; at: number }>({ value: null, error: null, at: 0 });
   useEffect(() => {
+    if (publicPage) return;
     const controller = new AbortController();
+    void get<Home>("/api/portal/home", controller.signal)
+      .then(value => { if (!controller.signal.aborted) setDash({ value, error: null, at: Date.now() }); })
+      .catch(error => { if (!controller.signal.aborted) setDash(h => ({ value: error instanceof ApiError && error.status === 401 ? null : h.value, error: error instanceof ApiError ? error : new ApiError(0, "network", String(error)), at: Date.now() })); });
+    return () => controller.abort();
+  }, [publicPage, revision, session.me === null ? "out" : session.me?.id]);
+  useEffect(() => {
     const me = session.me;
     if (session.error) { setState({ phase: "error", status: session.error.status }); return; }
-    if (me === undefined) { setState({ phase: "loading" }); return; }
-    if (me === null) { setState({ phase: "signed-out" }); return; }
-    setState({ phase: "loading" });
-    void get<Home>("/api/portal/home", controller.signal).then(home => {
-      if (controller.signal.aborted) return;
-      if (me.id !== home.user.id) { setState({ phase: "error" }); return; }
-      setState({ phase: "ready", me, home });
-    }).catch(error => {
-      if (!controller.signal.aborted) setState(error instanceof ApiError && error.status === 401
-        ? { phase: "signed-out" } : { phase: "error", status: error instanceof ApiError ? error.status : undefined });
-    });
-    return () => controller.abort();
-  }, [session.me, session.error, revision]);
+    if (me === null || (dash.error && dash.error.status === 401 && !dash.error.upstream)) { setState({ phase: "signed-out" }); return; }
+    if (me === undefined) { setState(s => (s.phase === "ready" ? s : { phase: "loading" })); return; }
+    if (dash.value && dash.value.user.id === me.id) { setState({ phase: "ready", me, home: dash.value }); return; }
+    if (dash.error) { setState(s => (s.phase === "ready" ? s : { phase: "error", status: dash.error?.status })); return; }
+    setState(s => (s.phase === "ready" ? s : { phase: "loading" }));
+  }, [session.me, session.error, dash]);
 
   useEffect(() => {
-    // Revalidate membership/account state without inheriting another tab's workspace selection.
-    const refresh = () => { setState({ phase: "loading" }); void session.refresh(); };
+    // A page restored from the back-forward cache may show another account's dashboard: reload.
     const restore = (event: PageTransitionEvent) => { if (event.persisted) window.location.reload(); };
-    window.addEventListener("focus", refresh);
     window.addEventListener("pageshow", restore);
-    return () => { window.removeEventListener("focus", refresh); window.removeEventListener("pageshow", restore); };
-  }, [session.refresh]);
+    return () => window.removeEventListener("pageshow", restore);
+  }, []);
 
   useEffect(() => {
     document.title = publicPage ? t("Synwevo · 工作流程自动化平台") : t("Synwevo Workspace · 你的工作空间");
@@ -87,7 +94,7 @@ export function Portal() {
   }
 
   const account = state.phase === "ready" ? state.home.account_url : accountBase;
-  if (publicPage) return <PublicHome signedIn={state.phase === "ready"} registerUrl={accountLink(account, "/register")} />;
+  if (publicPage) return <PublicHome signedIn={session.error ? false : session.me === undefined ? undefined : session.me !== null} registerUrl={accountLink(account, "/register")} />;
   if (window.location.pathname !== "/workspace") return <Shell right={<a className="pt-link" href="/">{t("返回首页")}</a>}>
     <section className="pt-status" role="status"><p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("页面不存在")}</h1>
       <p>{t("这个地址在 Synwevo Workspace 里不存在。")}</p>
@@ -119,7 +126,13 @@ export function Portal() {
     const group = groups.get(key) || { name: workspace.organization_name || workspace.org_name || t(workspace.kind === "personal" ? "个人空间" : "团队空间"), workspaces: [] };
     group.workspaces.push(workspace); groups.set(key, group);
   }
-  return <Shell right={<div className="pt-account">
+  const accountItems = [
+    { label: t("账户与安全"), onSelect: () => window.location.assign(accountLink(account, "/account")) },
+    ...(isPlatformAdmin ? [{ label: t("平台管理"), onSelect: () => window.location.assign(accountLink(account, "/admin")) }] : []),
+    ...(canManageApi ? [{ label: t("API 管理"), onSelect: () => window.location.assign(accountLink(account, "/admin/api-platform")) }] : []),
+  ];
+  return <Shell right={narrow ? <Menu ariaLabel={t("账户菜单")} buttonClass="btn ghost pt-account-btn" items={accountItems}
+      trigger={<><span className="pt-avatar" aria-hidden="true">{(me.display_name || me.email).slice(0, 1).toUpperCase()}</span>{t("账户")}</>} /> : <div className="pt-account">
     <a className="pt-link" href={accountLink(account, "/account")}>{t("账户与安全")}</a>
     {isPlatformAdmin && <><a className="pt-link" href={accountLink(account, "/admin")}>{t("平台管理")}</a>{canManageApi && <a className="pt-link" href={accountLink(account, "/admin/api-platform")}>{t("API 管理")}</a>}</>}
     <span className="pt-avatar" title={me.email} aria-label={me.display_name || me.email}>{(me.display_name || me.email).slice(0, 1).toUpperCase()}</span>

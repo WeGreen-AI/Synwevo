@@ -23,7 +23,7 @@ from fastapi import APIRouter, Body, Query, Request
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity, REGISTRATION_MODES, registration_mode
 from synwevo_core.organizations import Organizations
-from synwevo_core.sessions import Sessions
+from synwevo_core.sessions import admin_capable, Sessions
 from synwevo_core.store import Store, now
 
 REAUTH_SCOPE = "admin"
@@ -50,6 +50,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         if user["platform_role"] != "admin":
             # Same shape as a missing page: an ordinary account learns nothing about what exists.
             raise ServiceError(404, "not_found", "页面不存在")
+        if not admin_capable(s.get("amr") or ""):
+            # The role is real; this session proved one factor (a mailed code, an external
+            # provider). Platform administration waits for a second one — the password on the
+            # account page, or a second-factor sign-in.
+            raise ServiceError(403, "step_up_required", "当前登录只验证了一个因素：请在账户页输入口令确认身份后再使用平台管理",
+                               {"scope": "admin"})
         # strict=True: signing in a moment ago is not the same as confirming *this*. Without
         # it, an administrator who had just logged in would never see the prompt at all.
         if dangerous and not Sessions.reauth_fresh(s, REAUTH_SCOPE, strict=True):
@@ -241,6 +247,17 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             oid, actor["id"], action, reason=reason)
 
     # ------------------------------------------------------------------ overview
+    @r.get("/identity-providers")
+    def identity_providers(request: Request, probe: int = Query(0, ge=0, le=1)):
+        """Masked configuration state of the external sign-in providers (see
+        ExternalIdentities.status). Reading it is ordinary administration; it discloses
+        nothing an administrator could not read from the deployment's own environment file,
+        and it never returns the client secret."""
+        _admin(request)
+        external = getattr(request.app.state, "external", None)
+        return {"items": external.status(probe=bool(probe)) if external is not None else [],
+                "enabled": external is not None}
+
     @r.get("/overview")
     def overview(request: Request):
         _admin(request)

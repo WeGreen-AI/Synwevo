@@ -14,8 +14,9 @@ module decides what that is worth. The decisions, in order of how much can go wr
   `iss`, our `aud`, `exp`/`iat`, a signature against the provider's JWKS, and single-use of the
   request row. The browser carries an opaque request id in a host-only cookie and nothing else.
 * **A second factor still applies.** An account with TOTP enabled finishes the sign-in on the
-  ordinary two-step page; the session records `idp:<provider>+totp`. Platform administrators are
-  not signed in through a provider unless they have TOTP.
+  ordinary two-step page; the session records `idp:<provider>+totp`. A platform administrator
+  without TOTP gets a one-factor session that cannot use the role until the password is
+  re-entered on the account page (`sessions.admin_capable`).
 * **Linking and unlinking are account-security actions**: they need a recent re-authentication
   for the `mfa` scope, exactly like adding or removing a passkey, and unlinking refuses to remove
   the last way into the account.
@@ -169,6 +170,52 @@ class ExternalIdentities:
 
     def public(self) -> list[dict]:
         return [{"id": p.id, "label": p.label} for p in self.providers.values()]
+
+    def status(self, *, probe: bool = False) -> list[dict]:
+        """What an administrator may see about each provider: never a secret.
+
+        Configured providers come with the values the provider console must agree with — the
+        exact redirect URI, the scopes, the issuer — plus whether the client id and secret are
+        present (and the id's first characters, enough to tell two registrations apart). The
+        known providers that are *not* configured are listed too, with the variable names that
+        are missing, so "why is there no Google button" has an answer on the page rather than
+        in a shell. `probe=True` fetches the discovery document now (10 s budget, cached after);
+        otherwise the last cached result is reported.
+        """
+        out = []
+        for pid in sorted(set(KNOWN) | set(self.providers)):
+            key = pid.upper().replace("-", "_")
+            names = {"providers": "SYNWEVO_IDP_PROVIDERS", "client_id": f"SYNWEVO_IDP_{key}_CLIENT_ID",
+                     "client_secret": f"SYNWEVO_IDP_{key}_CLIENT_SECRET", "issuer": f"SYNWEVO_IDP_{key}_ISSUER",
+                     "tenant": f"SYNWEVO_IDP_{key}_TENANT", "label": f"SYNWEVO_IDP_{key}_LABEL", "scopes": f"SYNWEVO_IDP_{key}_SCOPES"}
+            p = self.providers.get(pid)
+            if p is None:
+                missing = [names["providers"], names["client_id"], names["client_secret"]]
+                if pid not in KNOWN:
+                    missing.append(names["issuer"])
+                out.append({"id": pid, "label": KNOWN.get(pid, {}).get("label", pid), "configured": False,
+                            "redirect_uri": self.redirect_uri(Provider(id=pid, label=pid, issuer="", client_id="", client_secret="")),
+                            "missing": missing, "env": names})
+                continue
+            discovery: dict = {"checked": False}
+            if probe:
+                try:
+                    doc = self.discovery(p, force=True)
+                    discovery = {"checked": True, "ok": True, "issuer": doc.get("issuer"), "at": int(time.time())}
+                except ServiceError as e:
+                    discovery = {"checked": True, "ok": False, "error": e.code, "message": e.message, "at": int(time.time())}
+                except Exception as e:  # network layer
+                    discovery = {"checked": True, "ok": False, "error": "idp_unreachable", "message": type(e).__name__, "at": int(time.time())}
+            elif p._discovery:
+                discovery = {"checked": True, "ok": True, "issuer": p._discovery[1].get("issuer"), "at": int(p._discovery[0] - DISCOVERY_TTL_S)}
+            out.append({"id": p.id, "label": p.label, "configured": True, "issuer": p.issuer,
+                        "issuer_template": p.issuer_template, "scopes": p.scopes,
+                        "redirect_uri": self.redirect_uri(p),
+                        "client_id_hint": (p.client_id[:8] + "…") if len(p.client_id) > 10 else "…",
+                        "client_secret_set": bool(p.client_secret), "env": names,
+                        "linked_accounts": self.store.one("SELECT COUNT(*) AS n FROM external_identities WHERE provider=?", (p.id,))["n"],
+                        "discovery": discovery})
+        return out
 
     def provider(self, pid: str) -> Provider:
         p = self.providers.get(pid or "")
@@ -492,10 +539,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, external: Ex
                 audit(request, "auth.external.login", actor_id=(user or {}).get("id"), result="denied",
                       meta={"provider": p.id, "reason": "user_unavailable"})
                 return _failed("account_unavailable", locale)
-            if user["platform_role"] == "admin" and not (mfa and mfa.enabled_for(user["id"])):
-                audit(request, "auth.external.login", actor_id=user["id"], result="denied",
-                      meta={"provider": p.id, "reason": "admin_requires_totp"})
-                return _failed("admin_requires_totp", locale)
+            # A platform administrator may sign in here too; the one-factor session it yields
+            # cannot use the role until a second factor is proved (sessions.admin_capable).
             external.touch(identity["id"])
             return _signed_in(request, user, p, out, locale)
 

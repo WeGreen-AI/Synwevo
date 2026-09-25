@@ -1,4 +1,5 @@
 import { RegistrationTab, MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
+import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
 import { useAdminData, useAdminPage } from "./governance/data";
 import { t as tr, useI18n } from "@synwevo/ui";
 import "./governance/messages";
@@ -24,6 +25,7 @@ import { ACCOUNT_STATUS, WORKSPACE_KIND, WORKSPACE_STATUS } from "./governance/l
 import { post, qs } from "@synwevo/auth-client";
 import { useSession } from "@synwevo/auth-client";
 import { fmtTime, useToast } from "@synwevo/ui";
+import AdminStepUp from "./components/AdminStepUp";
 
 type Overview = {
   users: number;
@@ -46,13 +48,13 @@ type AuditRow = {
   meta: Record<string, unknown>;
 };
 
-type Tab = "overview" | "users" | "workspaces" | "organizations" | "registration" | "mail" | "audit";
+type Tab = "overview" | "users" | "workspaces" | "organizations" | "registration" | "identity" | "mail" | "audit";
 
 export default function Admin() {
   useI18n();
   const { me } = useSession();
   const [params, setParams] = useSearchParams();
-  const tab = (["overview", "users", "workspaces", "organizations", "registration", "mail", "audit"].includes(params.get("tab") || "") ? params.get("tab") : "overview") as Tab;
+  const tab = (["overview", "users", "workspaces", "organizations", "registration", "identity", "mail", "audit"].includes(params.get("tab") || "") ? params.get("tab") : "overview") as Tab;
   const setTab = (tab: Tab) => setParams({ tab });
   const [denied, setDenied] = useState(false);
 
@@ -79,22 +81,24 @@ export default function Admin() {
 
       <main style={{ overflow: "auto", flex: 1 }}>
         <div className="acct-page">
-        <nav className="acct-tabs row gap4 wrap" aria-label={tr("管理后台")}>
-          {(["overview", "users", "workspaces", "organizations", "registration", "mail", "audit"] as Tab[]).map((t) => (
+        {me?.admin_locked && <AdminStepUp compact />}
+        {!me?.admin_locked && <nav className="acct-tabs row gap4 wrap" aria-label={tr("管理后台")}>
+          {(["overview", "users", "workspaces", "organizations", "registration", "identity", "mail", "audit"] as Tab[]).map((t) => (
             <button key={t} className={"btn ghost sm" + (tab === t ? " on" : "")}
                     aria-current={tab === t ? "page" : undefined}
                     onClick={() => setTab(t)}>
-              {{ overview: tr("概览"), users: tr("账户"), workspaces: tr("工作空间"), organizations: tr("组织"), registration: tr("注册策略"), mail: tr("邮件投递"), audit: tr("审计") }[t]}
+              {{ overview: tr("概览"), users: tr("账户"), workspaces: tr("工作空间"), organizations: tr("组织"), registration: tr("注册策略"), identity: tr("登录方式"), mail: tr("邮件投递"), audit: tr("审计") }[t]}
             </button>
           ))}
-        </nav>
-          {tab === "overview" && <OverviewTab onDenied={onDenied} />}
-          {tab === "users" && <UsersTab onDenied={onDenied} />}
-          {tab === "workspaces" && <WorkspacesTab onDenied={onDenied} />}
-          {tab === "organizations" && <OrganizationsTab onDenied={onDenied} />}
-          {tab === "registration" && <RegistrationTab onDenied={onDenied} />}
-          {tab === "mail" && <MailTab onDenied={onDenied} />}
-          {tab === "audit" && <AuditTab onDenied={onDenied} />}
+        </nav>}
+          {!me?.admin_locked && tab === "overview" && <OverviewTab onDenied={onDenied} />}
+          {!me?.admin_locked && tab === "users" && <UsersTab onDenied={onDenied} />}
+          {!me?.admin_locked && tab === "workspaces" && <WorkspacesTab onDenied={onDenied} />}
+          {!me?.admin_locked && tab === "organizations" && <OrganizationsTab onDenied={onDenied} />}
+          {!me?.admin_locked && tab === "registration" && <RegistrationTab onDenied={onDenied} />}
+          {!me?.admin_locked && tab === "identity" && <IdentityProvidersTab onDenied={onDenied} />}
+          {!me?.admin_locked && tab === "mail" && <MailTab onDenied={onDenied} />}
+          {!me?.admin_locked && tab === "audit" && <AuditTab onDenied={onDenied} />}
         </div>
       </main>
     </div>

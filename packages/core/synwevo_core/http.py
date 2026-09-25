@@ -714,6 +714,8 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             user = identity.get_user(session["user_id"]) if session else None
             if not user or user["status"] != "active" or user["platform_role"] != "admin":
                 return _error_response(request, 404, "not_found", "页面不存在", None)
+            # The shell itself is served to every administrator; whether this *session* may use
+            # the role is decided per request by the admin routes (sessions.admin_capable).
 
         if session and request.method not in SAFE_METHODS and path.startswith("/api/"):
             # Double-submit CSRF on every state-changing request. Login is exempt because it has

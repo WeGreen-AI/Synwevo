@@ -42,7 +42,10 @@ registerMessages({
 
 function AdminOnly({children}: {children: ReactNode}) {
   const {me} = useSession(); const {t} = useI18n();
-  return me?.permissions?.includes("api_platform.manage") ? children : <div className="empty" role="alert">{t("仅平台管理员可访问")}</div>;
+  // The role, not the current permission set: an administrator whose session proved one factor
+  // (`admin_locked`) must reach the page to see what is missing and confirm the password there;
+  // the page itself withholds every management view until then, and the server answers 403.
+  return me?.platform_role === "admin" ? children : <div className="empty" role="alert">{t("仅平台管理员可访问")}</div>;
 }
 
 function SignedOut() {

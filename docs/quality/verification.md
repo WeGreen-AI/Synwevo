@@ -270,6 +270,80 @@ export SYNWEVO_DOCS_API_KEY=dw_...
 | 多实例共享数据目录的长时间并发 | 只做了同进程 4 线程并发与单次中断恢复 | 多进程部署的长稳未验证 |
 | 大规模并发负载（多客户端同时提交） | 未运行 | 上表所有数字均为单客户端、单进程 |
 
+## 16. 2026-09-25 导航、弹层与移动端轮
+
+### 16.1 隔离实例（浏览器证据的来源）
+
+三服务隔离实例 `SYNWEVO_DATA_DIR=<scratchpad>/live/data SYNWEVO_TEST_INSTANCE=1 SYNWEVO_MAIL_MODE=file …`，端口
+31770/31769/31765，本机 OpenID 替身 31780（`services/identity/scripts/idp_double.py`）。`/healthz` 报告
+`instance=test`；两套浏览器脚本都拒绝驾驭非测试实例。**没有任何测试指向 `data/`。**
+
+### 16.2 浏览器回归（Chromium = 本机 Google Chrome，WebKit = Playwright 构建）
+
+```bash
+.venv/bin/python services/identity/scripts/ui_e2e_shell.py http://accounts.localhost:31770 \
+    http://portal.localhost:31769 http://docweave.localhost:31765 <受控账户> <口令> --webkit --webkit-accounts=http://127.0.0.1:31770
+.venv/bin/python apps/docs/scripts/ui_e2e_mobile.py          # 自起隔离实例，390×844 触摸模拟
+```
+
+| 检查（每项在 1280×720 与 375×740 各跑一次） | Chromium | WebKit |
+|---|---|---|
+| 账户页顶栏「← 返回工作空间」指向服务端 `return_targets` 列出的源；375px 出现「菜单」→ 抽屉含账户导航与退出，Esc 关闭 | 通过 | 通过 |
+| 账户子页冷启动 `/api/auth/state`=1、`/api/auth/me`=1；随后触发 `focus`+`visibilitychange` → 0 次请求 | 通过 | 通过 |
+| 成员列表末行「操作」菜单：5 个菜单项全部落在视口内；Esc 关闭并把焦点还给按钮；375px 下 `td.act` 为 `sticky` | 通过 | 通过 |
+| 门户仪表盘触发 `focus`+`visibilitychange` 后无 `.pt-loader`、仪表盘仍挂载 | 通过 | 未跑（见下） |
+| 公开首页对已登录访客：加载期间每 50 ms 采样顶栏，只出现「進入工作空間」，从未出现「登录/登入」 | 通过 | 未跑 |
+| Docs 工作台 375px：「文件/来源/目标/映射」四页签；点「目标」后来源面板 `display:none`、选择栏可见；1280px 页签隐藏 | 通过 | 未跑 |
+| Docs 手机主链路：新建→上传 XLSX→上传 DOCX→4 字段→样本→4 映射（跨面板切换）→预览→生成 100 份→下载 ZIP 读回；无横向滚动；主按钮 ≥ 40px 且在首屏 | 通过，11.3 s | 未跑 |
+| 管理员分阶段认证（隔离实例的独立管理员账户，scratchpad 脚本）：口令登录 `amr=password` 且有权限；后台「登录方式」3 张卡（Google/Microsoft 未配置、Test IdP 已启用，连接检查「可达」），页面源码不含 secret 与完整 client id；邮箱验证码登录 → `amr=email`、`permissions=[]`、`admin_locked=true`、`/api/admin/overview` 403；`/admin` 显示提示与「前往账户页确认身份」；账户页 `#step-up`：错口令 →「口令不正确。」，正确口令 → `amr=email+password`、权限恢复、「已确认」提示；`/admin` 8 个页签 | 通过 | 未跑 |
+
+WebKit 通过系统解析器解析主机名，本机没有 `*.localhost` 记录，所以 WebKit 只能对账户源（同一进程的 `127.0.0.1:31770`）
+运行；门户与 Docs 的 WebKit 检查**没有执行**，脚本如实打印这一点。截图：`docs/screenshots/shell-*.png`（含 `shell-admin-identity-providers.png`、`shell-admin-step-up-prompt.png`、`shell-account-step-up.png`）、`2x_手机_*.png`。
+
+**这不是真机验证。** 两套脚本证明的是 Chromium/WebKit 引擎下的布局与行为；iOS Safari（工具栏收缩、软键盘、
+`100dvh`）、Android Chrome、系统字体缩放 200% 需要真机清单：
+
+| 真机项 | 做什么 | 通过条件 |
+|---|---|---|
+| 账户页返回 | 手机从门户进账户页，再点「返回工作空间」 | 回到门户仪表盘，无中间登录页 |
+| 抽屉 | 打开菜单，切换语言，点「退出登录」 | 背景不可滚动；退出后落到「已退出」页 |
+| 成员菜单 | 在 5 人以上的空间打开末行菜单 | 菜单完整、可点；键盘弹出时不遮住输入框 |
+| Docs 主链路 | 上传→映射→预览→生成→下载 | 下载在系统文件应用可打开 |
+| 登录/MFA/Passkey | 邮箱验证码粘贴、TOTP 输入、平台认证器 Passkey | 验证码框不被键盘遮挡；Passkey 用生物特征完成 |
+
+### 16.3 后端与前端测试
+
+```bash
+.venv/bin/python -m pytest                       # 三个套件（结果见下）
+.venv/bin/python scripts/check_boundaries.py     # 通过
+.venv/bin/python scripts/check_brand.py          # 通过
+.venv/bin/python scripts/check_design.py         # 通过（一处字面阴影色改为 var(--shadow) 后）
+npm run typecheck && npm run build               # 三外壳通过
+cd packages/ui && npm test                       # 16 项（含 layer.test.ts 5 项）
+```
+
+新增：`services/identity/tests/test_session_strength.py`（12）、`test_identity_provider_status.py`（3）、
+`tests/integration/test_return_targets.py`（4）；`test_email_code_login.py` 与 `test_external_identity.py` 的
+管理员用例改为「一因素 → 403 step_up_required → 口令 → amr 升级 → 200」。
+
+全量结果（2026-09-25，仓库根目录 `.venv/bin/python -m pytest`，8 分 47 秒）：**1964 passed / 2 failed / 1 skipped**。
+两处失败都在本轮新增内容上，修正后重跑对应模块 51 项通过，整体再未变动其他代码：
+
+| 失败 | 原因 | 处理 |
+|---|---|---|
+| `test_platform_tooling.py::test_the_repository_itself_passes` | 新脚本 `ui_e2e_mobile.py` 用了 `sys.path.insert`，被边界守卫拒绝 | 去掉插入：脚本目录本来就在导入路径首位 |
+| `test_portal_public.py::…only_platform_admin_api_permission` | 夹具用 `amr="fixture"` 造会话，在新策略下是"未知的单一因素"，管理员被锁 | 夹具改为 `amr="password"`（它模拟的正是口令 SSO 登录），并注明原因 |
+
+1 项 skipped 是既有的 LICENSE 检查，与本轮无关。
+
+### 16.4 真实外部邮箱与真实业务样本（接续项）
+
+| 项 | 本轮完成 | 需要真实条件 |
+|---|---|---|
+| 外部邮箱 | 验证码/激活/安全通知模板三语言、file 投递、outbox 脱敏、限流与单次消费均有测试；生产 SMTP 沿用上一轮验收 | 授权收件箱实际收到验证码并完成登录：需要用户指定一个可用的测试地址 |
+| 业务文档 | 合成样本主链路桌面与手机各一次读回；格式矩阵、回归用例工具沿用 | 用户拥有使用权的真实模板与来源（脱敏副本）；最小清单：1 份 DOCX/XLSX/PDF 模板 + 对应 100 行以内来源 + 期望结果 2 份 |
+| Passkey | 隔离环境软件认证器回归沿用；RP ID 未改 | 本人在手机/电脑平台认证器或硬件钥匙上注册并再次登录 |
+
 ## 15. 发布判断
 
 * 本轮范围内**已确认缺陷为 0**：`docs/quality/issues.md` 中 DW-001…DW-012、DW-030…DW-032、DW-040…DW-051 全部为「已修复」并附验证证据。

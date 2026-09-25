@@ -8,8 +8,9 @@ this device. Three things it deliberately is not:
   on the device they are actually using, so nothing a scanner does can complete a sign-in.
 * **Not a way around a second factor.** The code proves control of the mailbox — one factor.
   An account with TOTP enabled still goes through the second step (`/api/auth/login/mfa`) and
-  the session records `email+totp`. A platform administrator without TOTP is not offered this
-  path at all: mailbox control alone must never open platform administration.
+  the session records `email+totp`. A platform administrator without TOTP gets an ordinary
+  one-factor session that cannot use the role (`sessions.admin_capable`) until the password is
+  re-entered on the account page or a second factor is enrolled and used.
 * **Not an account-existence oracle.** Requesting a code answers the same way for every address,
   and the limiter counts unknown addresses too. Only the audit log knows the difference.
 
@@ -62,10 +63,9 @@ def build_router(ident: Identity, sessions: Sessions, mailer, mfa, tickets, audi
         """Whether this account may sign in with a mailed code. Returns (user, denial reason)."""
         if not user or user["status"] != "active" or not user.get("email_verified_at"):
             return None, "no_such_account"
-        if user["platform_role"] == "admin" and not (mfa and mfa.enabled_for(user["id"])):
-            # Mailbox control is one factor; platform administration needs two. The person
-            # keeps password and passkey sign-in, and gains this path by enrolling TOTP.
-            return None, "admin_requires_totp"
+        # Platform administrators may sign in this way too. Mailbox control is one factor, so
+        # the session they get cannot use the role (sessions.admin_capable) until a second
+        # factor is proved: TOTP at sign-in when enrolled, or the password on the account page.
         return user, None
 
     @r.post("/start", status_code=202)

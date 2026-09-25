@@ -20,6 +20,12 @@ export interface Me {
   email_verified?: boolean;
   onboarding_completed?: boolean;
   permissions?: string[];
+  /** A platform administrator whose current session proved one factor only: the role exists
+   *  but cannot be used until the password is re-entered or a second factor signs in. */
+  admin_locked?: boolean;
+  /** Where "back to my work" may go from the account pages: the portal and each application
+   *  this person can open, as the server lists them. */
+  return_targets?: { id: string; name: string; url: string; workspace_id?: string | null; workspace_name?: string | null }[];
   workspaces: { id: string; name: string; kind: string; role: string; can_export: boolean; status?: string; organization_id?: string|null; organization_name?: string|null }[];
   /** The workspace this session is currently acting in; null when none is selected. */
   workspace_id?: string | null;
@@ -40,6 +46,8 @@ export interface AuthState {
   portal_url?: string;
   /** Where the account and security pages live: this app's own, or the account service's. */
   account_url?: string;
+  /** This application's id (a relying party), sent as `from=` when linking to the account page. */
+  app_id?: string | null;
   /** External OpenID providers the account service offers — only the configured ones. */
   external_providers?: { id: string; label: string }[];
 }
@@ -61,6 +69,9 @@ interface Ctx {
   error: ApiError | null;
 }
 
+/** Minimum gap between background revalidations triggered by focus / visibility. */
+export const REVALIDATE_MIN_MS = 30_000;
+
 const SessionCtx = createContext<Ctx>({ me: undefined, state: null, refresh: async () => {}, signOut: async () => {}, disabled: true, error: null });
 
 export const useSession = () => useContext(SessionCtx);
@@ -78,6 +89,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const navigating = useRef(false);
   const [resetting, setResetting] = useState(false);
   const launchWorkspace = useRef(new URLSearchParams(window.location.search).get("synwevo_workspace"));
+  const lastRefreshAt = useRef(0);
 
   const invalidate = useCallback(() => {
     ++refreshEpoch.current;
@@ -104,6 +116,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const probe = { signal: controller.signal, notifySessionExpiry: false };
     let st: AuthState;
     setError(null);
+    lastRefreshAt.current = Date.now();
+    // Both probes leave together: which deployment this is and who is signed in are independent
+    // questions, and asking them one after the other doubled the wait on every fresh page.
+    const mePromise = api<Me>("/api/auth/me", { ...probe, workspaceId: launchWorkspace.current || undefined })
+      .then((v) => ({ ok: true as const, value: v }), (e) => ({ ok: false as const, error: e }));
     try {
       st = await api<AuthState>("/api/auth/state", probe);
       if (!currentRefresh()) return;
@@ -136,7 +153,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setDisabled(false);
     try {
       let current: Me;
-      try { current = await api<Me>("/api/auth/me", { ...probe, workspaceId: launchWorkspace.current || undefined }); }
+      const answer = await mePromise;
+      try { if (answer.ok) current = answer.value; else throw answer.error; }
       catch (e) {
         if (!currentRefresh()) return;
         if (launchWorkspace.current || !(e instanceof ApiError) || e.code !== "workspace_context_invalid") throw e;
@@ -207,7 +225,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [me?.id, me?.status]);
   useEffect(() => {
     const check = (e: PageTransitionEvent) => { if (e.persisted) void refresh(); };
-    const visible = () => { if (document.visibilityState === "visible") void refresh(); };
+    // Returning to the tab revalidates in the background (the known identity stays on screen),
+    // and not more often than REVALIDATE_MIN_MS: focus and visibilitychange fire together, and
+    // every click that moved focus back into the window used to cost two more requests.
+    const visible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastRefreshAt.current < REVALIDATE_MIN_MS) return;
+      void refresh();
+    };
     const expired = (event: Event) => {
       const generation = (event as CustomEvent<{ generation?: number }>).detail?.generation;
       if (generation !== undefined && generation !== getSessionGeneration()) return;

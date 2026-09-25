@@ -134,6 +134,6 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         workspace = ident.ensure_personal_workspace(user["id"])
         sessions.set_workspace(session["id"], workspace["id"])
         audit(request, "auth.onboarding.personal", actor_id=user["id"], workspace_id=workspace["id"], result="ok")
-        return {"workspace": workspace, "user": describe_user(ident.get_user(user["id"]), ident.workspaces_for(user["id"]))}
+        return {"workspace": workspace, "user": describe_user(ident.get_user(user["id"]), ident.workspaces_for(user["id"]), session)}
 
     return router

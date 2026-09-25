@@ -235,17 +235,63 @@ PY
 
 ## 7. 登录方式：保持登录、邮箱验证码与外部身份提供商
 
-本轮（2026-09-25）之后账户服务提供四种登录路径：口令、Passkey、邮箱一次性验证码、外部 OpenID 提供商；
-契约见 [sessions.md](security/sessions.md) §2.1、§4.4、§4.5。运维上只有两件事需要配置：
+账户服务提供四种登录路径：口令、Passkey、邮箱一次性验证码、外部 OpenID 提供商；契约见
+[sessions.md](security/sessions.md) §2.1、§4.4–§4.6。运维上要配置的只有下面几项。
 
 | 项 | 怎么做 |
 |---|---|
 | 邮箱验证码 | 复用账户服务的 SMTP（§6）。`SYNWEVO_MAIL_MODE=disabled` 时验证码请求仍返回同形 202，但不发信；登录页会把 `delivery=unavailable` 解释为「邮件服务尚未配置」。 |
 | 保持登录 | 默认即生效；`SYNWEVO_SESSION_PERSISTENT_IDLE_S`（默认 14 天）可调，绝对过期仍由 `SYNWEVO_SESSION_ABSOLUTE_S` 决定。平台管理员忽略此项。 |
-| 外部提供商 | 在提供商处登记 Web 应用，回调地址填 `<SYNWEVO_ISSUER>/auth/external/<id>/callback`（生产为 `https://accounts.wegreen.ltd/auth/external/google/callback` 等）。把 `SYNWEVO_IDP_PROVIDERS=google,microsoft` 与各自的 `SYNWEVO_IDP_<ID>_CLIENT_ID` / `_CLIENT_SECRET`（Microsoft 另有 `SYNWEVO_IDP_MICROSOFT_TENANT`）写入**账户服务**的 `runtime.env`（0600，与 SMTP 秘密同样只给 accounts 容器），重启 accounts。 |
+| 外部提供商 | 按下面的配置表在提供商处登记 Web 应用，把变量写入**账户服务**的 `runtime.env`（0600，与 SMTP 秘密同样只给 accounts 容器；保留文件里已有的其他行），只重启 accounts 一个服务。 |
 
-启动时校验：列出的提供商缺少任一凭据，账户服务拒绝启动并在日志里点名缺失的变量；没有列出的提供商
-不会出现在登录页（`/api/auth/state.external_providers` 为空）。启用后先用一个受控账户走一遍
-「登录页 → 提供商 → 回到账户页」再对外宣布；本机可用 `services/identity/scripts/idp_double.py`
-（测试替身，非真实提供商）预演完整链路。关联按提供商稳定 `sub` 进行，不凭邮箱合并账户；
-平台管理员必须先启用 TOTP 才能用外部提供商或邮箱验证码登录。
+### 7.1 Google / Microsoft 配置表（本项目实际使用的值）
+
+提供商 id 是固定的 `google` 与 `microsoft`（`synwevo_identity.external.KNOWN`），不是占位符。生产
+`SYNWEVO_ISSUER=https://accounts.wegreen.ltd`，因此回调地址是下面这两条，必须逐字登记：
+
+| 项 | Google | Microsoft |
+|---|---|---|
+| 提供商 id | `google` | `microsoft` |
+| 在哪里登记 | Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID，类型 **Web application**；OAuth consent screen 需先建立（外部用户类型；正式对外前把发布状态从 Testing 切到 In production，否则只有测试用户名单能登录） | Microsoft Entra 管理中心 → App registrations → New registration；平台选择 **Web** |
+| 回调地址（Authorized redirect URI / Redirect URI） | `https://accounts.wegreen.ltd/auth/external/google/callback` | `https://accounts.wegreen.ltd/auth/external/microsoft/callback` |
+| 授权的 JavaScript 来源（Google 要求） | `https://accounts.wegreen.ltd` | — |
+| 支持的账户类型 | 任何 Google 账户（个人与 Workspace） | 由注册时的 *Supported account types* 决定，并与 `SYNWEVO_IDP_MICROSOFT_TENANT` 对应：`common`（个人 + 任意组织，默认）、`organizations`（仅工作/学校账户）、`consumers`（仅个人）、或具体 tenant id（仅该组织）。发行者模板 `https://login.microsoftonline.com/{tenant}/v2.0`；`common`/`organizations`/`consumers` 时 id_token 的 `iss` 按令牌里的 `tid` 校验。 |
+| 最小 scopes | `openid email profile`（默认值；不申请 Gmail、Drive 或任何读写邮件/文件的权限） | `openid email profile`（默认值；不申请 Graph 的邮件/文件权限） |
+| 客户端类型 / 凭据 | Web 应用，机密客户端：client id + client secret | Web 应用，机密客户端：Application (client) ID + Certificates & secrets 里新建的 client secret **值**（不是 secret id）；记下过期日期 |
+| 需要写入 `runtime.env` 的变量 | `SYNWEVO_IDP_PROVIDERS` 含 `google`；`SYNWEVO_IDP_GOOGLE_CLIENT_ID`；`SYNWEVO_IDP_GOOGLE_CLIENT_SECRET` | `SYNWEVO_IDP_PROVIDERS` 含 `microsoft`；`SYNWEVO_IDP_MICROSOFT_CLIENT_ID`；`SYNWEVO_IDP_MICROSOFT_CLIENT_SECRET`；`SYNWEVO_IDP_MICROSOFT_TENANT`（省略即 `common`） |
+| 可选 | `SYNWEVO_IDP_GOOGLE_LABEL`（按钮文字）、`SYNWEVO_IDP_GOOGLE_SCOPES` | `SYNWEVO_IDP_MICROSOFT_LABEL`、`SYNWEVO_IDP_MICROSOFT_SCOPES`、`SYNWEVO_IDP_MICROSOFT_ISSUER`（一般不需要） |
+| 邮箱声明 | `email_verified=false` 或缺失时不注册、不匹配现有账户，只允许口令登录后在账户页按 `sub` 关联 | 同左；Microsoft 个人账户的 `email` 常为未验证声明，按同一规则处理 |
+
+无秘密示例（`.env.example` 同样有）：
+
+```
+SYNWEVO_IDP_PROVIDERS=google,microsoft
+SYNWEVO_IDP_GOOGLE_CLIENT_ID=<Google OAuth client id>
+SYNWEVO_IDP_GOOGLE_CLIENT_SECRET=<在受保护文件里填写，不进聊天、不进仓库>
+SYNWEVO_IDP_MICROSOFT_CLIENT_ID=<Entra application (client) id>
+SYNWEVO_IDP_MICROSOFT_CLIENT_SECRET=<同上>
+SYNWEVO_IDP_MICROSOFT_TENANT=common
+```
+
+### 7.2 配置检查与启用步骤
+
+1. 填好 `runtime.env` 后 `docker compose restart accounts`（或等价的单服务重启）。启动时校验：列出的
+   提供商缺任一凭据，账户服务**拒绝启动**并在日志里点名缺失的变量；没有列出的提供商不出现在登录页
+   （`/api/auth/state.external_providers` 为空）。
+2. 以平台管理员打开 **平台管理 → 登录方式**（`GET /api/admin/identity-providers`）：每个提供商显示已启用 /
+   未配置、要登记的精确回调地址、scopes、发行者、客户端 id 前 8 位、密钥是否已填写、已关联账户数；
+   「立即检查连接」实时拉取发现文档并报告可达与否。这一页**永不显示秘密，也不能输入秘密**。
+3. 用一个受控账户走一遍「登录页 → 提供商 → 回到账户页」再对外宣布；本机可用
+   `services/identity/scripts/idp_double.py`（测试替身，非真实提供商）预演完整链路。关联按提供商稳定 `sub`
+   进行，不凭邮箱合并账户。
+4. 平台管理员用外部提供商或邮箱验证码登录后得到的是**一因素会话**：账户功能正常，平台管理与 API 管理
+   返回 `403 step_up_required`，账户页顶部提示输入口令确认；口令确认后 `amr` 变为 `idp:<id>+password` /
+   `email+password`，管理页即可使用。见 [sessions.md](security/sessions.md) §4.6。不再全局禁止管理员使用
+   这两种登录方式。
+
+### 7.3 尚需账户持有人完成的步骤（生产）
+
+生产的 `runtime.env` 目前**没有**任何外部提供商（登录页无按钮，管理页「登录方式」两卡均为未配置）。需要
+持有 Google Cloud 项目与 Microsoft Entra 租户管理权的人：按 7.1 登记两个 Web 应用（回调逐字），在
+VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose restart accounts`，然后按 7.2 第 2、3
+步验证。代理不能替代这一步，也不要把 client secret 贴进聊天或提交。

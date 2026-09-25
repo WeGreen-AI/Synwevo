@@ -52,6 +52,23 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 **未推送、未部署、未访问 VPS、未改 DNS、未发送外部测试邮件。** `main` push 会触发生产工作流，因此本轮不推送。
 上轮生产及 SMTP 记录仍见 [deployment.md](deployment.md)，不计入本轮验证。
 
+## 2026-09-25 导航、弹层与移动端轮（最新）
+
+范围与状态见 [progress.md](progress.md) 同名节；缺陷—根因—修复—验证表见 [issues.md](issues.md)。
+运行入口：隔离实例配方见 [verification.md](verification.md) §16；`services/identity/scripts/ui_e2e_shell.py`
+（账户/门户/Docs 外壳回归，Chromium + WebKit）与 `apps/docs/scripts/ui_e2e_mobile.py`（390×844 主链路）。
+
+接续点（需要人或外部条件）：
+
+1. **Google / Microsoft**：按 [operations.md](../operations.md) §7.1 登记两个 Web 应用（回调逐字
+   `https://accounts.wegreen.ltd/auth/external/google/callback`、`…/microsoft/callback`，scopes `openid email profile`），
+   在 VPS `/opt/synwevo/runtime.env` 追加变量，`docker compose restart accounts`，然后在后台「登录方式」页点「立即检查连接」，
+   再用受控账户走登录页→提供商→账户页。代理不能替代；secret 不进聊天。
+2. **生产管理员的 TOTP**：本人登录账户页 → 安全因素 → 绑定：输入口令（近期重认证）→ 扫码或手动录入 → 输入一次
+   动态码确认 → 保存恢复码。在这之前，用邮箱验证码或外部提供商登录得到的管理员会话会看到「当前登录只验证了一个
+   因素」的提示，输入口令即可解锁管理页；口令登录本身不受影响。
+3. **真机**：verification.md §16 的 iOS Safari / Android Chrome 清单；**真实外部邮箱**与**真实业务样本**同节。
+
 ## 实现与已关闭缺口
 
 | 范围 | 实际行为与验证 |

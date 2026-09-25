@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { get, useSession } from '@synwevo/auth-client';
 import { useI18n } from '@synwevo/ui';
 import { Topbar } from '../components/Topbar';
+import AdminStepUp from '../components/AdminStepUp';
 import { useLoad } from '../lib/hooks';
 import { ApprovalsPanel } from './apiplatform/Approvals';
 import { Credentials } from './apiplatform/Credentials';
@@ -28,6 +29,7 @@ export default function ApiPlatform() {
   const load = useLoad<Overview>(key, signal => get(key!, signal));
   useEffect(() => { document.title = `${t('API 管理平台')} · Synwevo Account`; }, [t]);
   if (!allowed) return <main className="empty"><h1>{t('页面不存在')}</h1><a href="/account">{t('账户与安全')}</a></main>;
+  if (me?.admin_locked) return <div className="app"><Topbar title={t('API 管理平台')} /><main className="api-platform-main"><div className="acct-page col gap16"><AdminStepUp compact /></div></main></div>;
   const done = (out: Outcome) => {
     setAction(null); setRevision(n => n + 1); setSuccess(true);
     if (out.key || out.client_secret || out.secret) setSecret(out);

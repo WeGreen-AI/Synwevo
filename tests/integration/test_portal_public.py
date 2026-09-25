@@ -50,7 +50,10 @@ def user(portal, name="member", *, admin=False, personal=False):
 def signed_in(portal, u, wid=None):
     api, store, _ = portal
     client = TestClient(api)
-    token, _ = Sessions(store).create(u["id"], workspace_id=wid, amr="fixture")
+    # The session stands in for a completed password sign-in: `amr` decides what an
+    # administrator may do (sessions.admin_capable), so a made-up value would leave the role
+    # locked and test a policy the fixture never meant to exercise.
+    token, _ = Sessions(store).create(u["id"], workspace_id=wid, amr="password")
     client.cookies.set(COOKIE_NAME, token)
     client.cookies.set(CSRF_COOKIE, "portal-fixture-csrf")
     return client

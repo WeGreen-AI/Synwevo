@@ -8,6 +8,7 @@ import { canExport } from '../lib/labels';
 import MfaSection from '../components/MfaSection';
 import PasskeySection from '../components/PasskeySection';
 import LinkedIdentities from '../components/LinkedIdentities';
+import AdminStepUp from '../components/AdminStepUp';
 import ProfileSection from './account/ProfileSection';
 import EmailSection from './account/EmailSection';
 import PrivacySection from './account/PrivacySection';
@@ -75,6 +76,7 @@ export default function Account() {
           setBusy(true); setError(null); post('/api/auth/verify-email/send').then(() => toast(t('验证邮件已进入队列'), 'ok'))
             .catch(e => setError(errorText(e, t))).finally(() => setBusy(false));
         }}>{t('重新发送验证邮件')}</button></div></section>}
+      <AdminStepUp />
       {profile?.status === 'pending_delete' && <section className="card card-b col gap12" role="status"><h2>{t('注销申请已受理')}</h2>
         <p>{t('账户已停用。请在 {date} 前使用邮箱中的恢复链接取消注销。', { date: timeText(profile.deletion_due_at!, locale, profile.timezone) })}</p>
         <div><a href="/login" className="btn">{t('返回登录')}</a></div></section>}

@@ -8,3 +8,4 @@ export * from "./a11y";
 export * from "./theme";
 export * from "./useFit";
 export * from "./i18n";
+export * from "./layer";

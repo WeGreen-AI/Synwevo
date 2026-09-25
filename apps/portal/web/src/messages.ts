@@ -415,6 +415,8 @@ export const portalMessages = {
   },
   "页面不存在": {"en": "Page not found", "zh-Hant": "找不到頁面"},
   "这个地址在 Synwevo Workspace 里不存在。": {"en": "This address does not exist in Synwevo Workspace.", "zh-Hant": "這個地址在 Synwevo Workspace 裡不存在。"},
+  "账户菜单": {"en": "Account menu", "zh-Hant": "帳戶選單"},
+  "账户": {"en": "Account", "zh-Hant": "帳戶"},
 };
 
 registerMessages(portalMessages);

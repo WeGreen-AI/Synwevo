@@ -5014,4 +5014,9 @@ export const messages = {
     "en": "This address does not exist in Synwevo Docs, or you do not have access to it.",
     "zh-Hant": "這個地址在 Synwevo Docs 裡不存在，或你沒有存取權限。"
   },
+  "切换显示的面板": { "en": "Choose the panel to show", "zh-Hant": "切換顯示的面板" },
+  "文件": { "en": "Files", "zh-Hant": "檔案" },
+  "目标": { "en": "Target", "zh-Hant": "目標" },
+  "预览": { "en": "Preview", "zh-Hant": "預覽" },
+  "映射": { "en": "Mappings", "zh-Hant": "映射" },
 } satisfies Messages;

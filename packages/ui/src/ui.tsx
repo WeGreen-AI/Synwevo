@@ -1,5 +1,8 @@
 import { t as tr, useI18n, formatDate, formatNumber, LanguageMenu } from "./i18n";
 import { createContext, ReactNode, RefObject, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { anchorVisible, placeLayer } from "./layer";
+import type { KeyLike } from "./a11y";
 import { FOCUSABLE, isImeKey, isTopModal, popModal, pushModal, strayKeyAction, trapIndex } from "./a11y";
 import { ToastTimers } from "./toasttimers";
 
@@ -44,6 +47,144 @@ export function StatusPage({ product, brandHref = "/", title, children, role = "
         <div className="big">{title}</div>
         {children}
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ anchored layers & menus */
+/** Position a layer next to an anchor, in viewport coordinates, at the document root.
+ *
+ *  Re-measures on scroll (any scroll container, captured), resize and orientation change, closes
+ *  when the anchor leaves the viewport or is removed, and caps the height so a long menu scrolls
+ *  inside itself instead of running off the screen. See layer.ts for the placement rules. */
+export function useAnchoredLayer(open: boolean, anchor: RefObject<HTMLElement | null>, layer: RefObject<HTMLElement | null>,
+                                 onClose: () => void, align: "start" | "end" = "end") {
+  const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", top: -9999, left: -9999, visibility: "hidden" });
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useLayoutEffect(() => {
+    if (!open) return;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const a = anchor.current, l = layer.current;
+      if (!a || !a.isConnected) { closeRef.current(); return; }
+      const r = a.getBoundingClientRect();
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
+      if (!anchorVisible(r, viewport)) { closeRef.current(); return; }
+      const size = l ? { width: l.offsetWidth, height: l.scrollHeight } : { width: 0, height: 0 };
+      const p = placeLayer(r, size, viewport, { align });
+      setStyle({ position: "fixed", top: p.top, left: p.left, maxHeight: p.maxHeight, overflowY: "auto", visibility: "visible" });
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    measure();
+    window.addEventListener("scroll", schedule, true);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("orientationchange", schedule);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", schedule, true);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("orientationchange", schedule);
+    };
+  }, [open, anchor, layer, align]);
+  return style;
+}
+
+export interface MenuItem {
+  label: ReactNode;
+  onSelect: () => unknown;
+  disabled?: boolean;
+  /** Why it is disabled; shown under the label and read by assistive technology. */
+  hint?: string;
+  danger?: boolean;
+  title?: string;
+}
+
+/** The one action menu: a trigger button and a list rendered at the document root.
+ *
+ *  Keyboard: Enter/Space opens, arrows move, Home/End jump, Escape closes and returns focus to
+ *  the button, Tab closes. Disabled items stay in the list with their reason, so the menu has
+ *  the same shape for everyone and nothing is learned by an item's absence. The list is placed
+ *  by useAnchoredLayer, so it is never clipped by a scrolling table or panel and flips above
+ *  the button near the bottom of the screen. */
+export function Menu({ items, label, trigger, buttonClass = "btn ghost sm", align = "end", ariaLabel }: {
+  items: MenuItem[]; label?: ReactNode; trigger?: ReactNode; buttonClass?: string; align?: "start" | "end"; ariaLabel?: string;
+}) {
+  useI18n();
+  const [open, setOpen] = useState(false);
+  const [focus, setFocus] = useState(0);
+  const btn = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const enabled = items.map((it, i) => (it.disabled ? -1 : i)).filter((i) => i >= 0);
+  const close = useCallback((refocus: boolean) => {
+    setOpen(false);
+    if (refocus) btn.current?.focus();
+  }, []);
+  const style = useAnchoredLayer(open, btn, list, () => close(false), align);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!btn.current?.contains(t) && !list.current?.contains(t)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  // Focus moves into the list only once the layer is placed: an element that is still
+  // `visibility: hidden` refuses focus, and the first placement happens after the first render.
+  const placed = style.visibility === "visible";
+  useEffect(() => {
+    if (open && placed) list.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]")[focus]?.focus();
+  }, [open, placed, focus]);
+  const handleKey = useCallback((key: string, e: { preventDefault: () => void; stopPropagation: () => void }) => {
+    const pos = enabled.indexOf(focus);
+    if (key === "Escape") { e.preventDefault(); e.stopPropagation(); close(true); }
+    else if (key === "Tab") close(false);
+    else if (key === "ArrowDown" && enabled.length) { e.preventDefault(); setFocus(enabled[(pos + 1) % enabled.length]); }
+    else if (key === "ArrowUp" && enabled.length) { e.preventDefault(); setFocus(enabled[(pos - 1 + enabled.length) % enabled.length]); }
+    else if (key === "Home" && enabled.length) { e.preventDefault(); setFocus(enabled[0]); }
+    else if (key === "End" && enabled.length) { e.preventDefault(); setFocus(enabled[enabled.length - 1]); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled.join(","), focus, close]);
+  const onKey = (e: React.KeyboardEvent) => {
+    if (!open || isImeKey(e)) return;
+    handleKey(e.key, e);
+  };
+  // Keys pressed while the menu is open but focus is elsewhere (WebKit does not focus a button
+  // on click, so a pointer-opened menu has focus on <body> until the list takes it). Escape must
+  // close the menu wherever focus is; the handler on the list is for the normal case.
+  useEffect(() => {
+    if (!open) return;
+    const onDocKey = (e: KeyboardEvent) => {
+      const inside = list.current?.contains(e.target as Node) || btn.current?.contains(e.target as Node);
+      if (inside || isImeKey(e as unknown as KeyLike)) return;
+      if (e.key === "Escape" || e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp") handleKey(e.key, e);
+    };
+    document.addEventListener("keydown", onDocKey);
+    return () => document.removeEventListener("keydown", onDocKey);
+  }, [open, handleKey]);
+  const name = ariaLabel || (typeof label === "string" ? label : undefined);
+  return (
+    <div className="menu-wrap" onKeyDown={onKey}>
+      <button ref={btn} type="button" className={`${buttonClass}${open ? " active" : ""}`} aria-haspopup="menu" aria-expanded={open}
+        aria-label={name} onClick={() => { setOpen((o) => !o); setFocus(enabled[0] ?? 0); }}>
+        {trigger ?? <>{label ?? tr("更多")} <span aria-hidden="true">▾</span></>}
+      </button>
+      {open && createPortal(
+        <div ref={list} className="menu layer" role="menu" aria-label={name} style={style} onKeyDown={onKey}>
+          {items.map((it, i) => (
+            <button type="button" key={i} role="menuitem" tabIndex={-1}
+              className={`menu-item${it.danger ? " danger" : ""}`}
+              disabled={it.disabled} title={it.title ?? (it.disabled ? it.hint : undefined)}
+              aria-description={it.disabled ? it.hint : undefined}
+              onMouseEnter={() => !it.disabled && setFocus(i)}
+              onClick={() => { close(true); Promise.resolve(it.onSelect()).catch(() => { /* callers report their own errors */ }); }}>
+              {it.label}
+              {it.disabled && it.hint && <span className="menu-hint">{it.hint}</span>}
+            </button>
+          ))}
+        </div>, document.body)}
     </div>
   );
 }
@@ -248,6 +389,45 @@ export function Modal({ title, onClose, children, footer, size, role = "dialog",
         </div>
         <div className="modal-b">{children}</div>
         {footer && <div className="modal-f">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ drawer (mobile navigation) */
+/** Matches a CSS media query and follows it. Rendering on `window.innerWidth` alone misses
+ *  rotation and split-screen; this listens like the stylesheet does. */
+export function useMediaQuery(query: string): boolean {
+  const [match, setMatch] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const onChange = () => setMatch(mq.matches);
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [query]);
+  return match;
+}
+
+/** A side sheet for navigation on small screens: same focus management as Modal (trap, Escape,
+ *  focus returned to the opener), the page behind it inert to pointer and scroll, closes on
+ *  backdrop press. It is a `dialog`, not a `menu`: its items are links and controls of several
+ *  kinds, and menu semantics would promise arrow-key behaviour they do not have. */
+export function Drawer({ title, onClose, children, side = "end" }: {
+  title: ReactNode; onClose: () => void; children: ReactNode; side?: "start" | "end";
+}) {
+  useI18n();
+  const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const { onKeyDown, isTop } = useModalFocus(ref, onClose);
+  return (
+    <div className="modal-back drawer-back" onMouseDown={(e) => { if (e.target === e.currentTarget && isTop()) onClose(); }}>
+      <div className={`drawer ${side}`} ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onKeyDown}>
+        <div className="modal-h">
+          <h2 className="grow" id={titleId}>{title}</h2>
+          <button type="button" className="btn ghost icon" onClick={onClose} aria-label={tr("关闭")}>✕</button>
+        </div>
+        <div className="drawer-b">{children}</div>
       </div>
     </div>
   );

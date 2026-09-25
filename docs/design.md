@@ -137,8 +137,19 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
   重复区块用 `--block` 紫色虚线框 + 标签。这些是「统一规则」内的类别色，不是应用私有主题。
 * 键盘：所有主要操作有键盘路径（命令面板 ⌘K、列表 j/k、批量选择、分隔条方向键）；全局按键先查
   IME 组合状态；弹层管理保证 Esc 只关最上层并归还焦点。
-* 窄屏：门户与账户页在 760px 以下单栏；Docs 工作台在 900px 以下切换为纵向叠放并给出「建议在电脑上
-  建立映射」的提示，任务查看与下载保持可用。
+* 弹层：所有菜单、下拉与提示层用 `@synwevo/ui` 的 `Menu` / `useAnchoredLayer`——`createPortal` 到
+  `document.body`、以视口坐标定位（`layer.ts` 的纯函数决定翻转/贴边/限高），滚动、缩放与旋转时重算，锚点
+  离开视口即关闭。**不允许**在滚动容器里用 `position:absolute` 的菜单，也不允许用 `z-index: 99999` 解决
+  裁切。菜单是 `role=menu`，抽屉与对话框是 `role=dialog`，不给所有弹层套同一个 role。Esc 在任意焦点位置
+  关闭并把焦点还给触发按钮（WebKit 点击按钮不聚焦，所以监听在 `document`）。
+* 窄屏（内容驱动断点：账户 720px、门户 760px、Docs 900px；在 320/360/390/430/768 上核对）：
+  - 导航收进 `Drawer`（右侧、焦点陷阱、背景不可交互、Esc/遮罩关闭）；返回工作的链接留在栏内。
+  - 表格保留列并在 `.list-wrap` 内横向滚动，选择列 sticky 左、操作列 sticky 右；批量条贴底并加安全区。
+  - 触控目标：`@media (pointer: coarse)` 下 `.btn`/菜单项/页签 ≥ 44px，`.btn.sm` ≥ 40px；不改鼠标下的外观。
+  - Docs 工作台 ≤ 900px：「文件 / 来源 / 目标 / 映射」一次只显示一个面板，占满剩余高度；选择栏跨面板保留
+    两侧选择，「建立映射」始终可达；侧面板不渲染 34px 折叠条。手机能完成上传→映射→预览→生成→下载
+    （`apps/docs/scripts/ui_e2e_mobile.py`）。
+  - 不禁止浏览器缩放，不全局拦截触摸滚动；用 `100dvh` 与 `env(safe-area-inset-bottom)`。
 
 ## 6. 覆盖清单（本轮迁移）
 
@@ -181,3 +192,6 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
 * `npm run typecheck && npm run build`；`npm test --workspaces --if-present`（共享 UI 11、auth-client 31、
   Docs 45 项测试与账户外壳 19 项校验，其中包含"减少动效来自共享样式表"的检查）。
 * 浏览器实跑：三个外壳桌面 1440 与窄屏 390 的截图与对比度抽样见 `docs/quality/handoff.md`。
+* 弹层与移动端：`services/identity/scripts/ui_e2e_shell.py`（Chromium + WebKit；末行菜单在视口内、抽屉、
+  返回链接、探测次数、门户重聚焦、公开首页三态）与 `apps/docs/scripts/ui_e2e_mobile.py`（390×844 主链路）。
+  它们是浏览器引擎证据，不是 iOS Safari / Android Chrome 真机证据。

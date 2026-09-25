@@ -5,14 +5,24 @@
 .slide { background: var(--paper); color: var(--paper-text); }
 .sheettabs { overflow-x: auto; flex-shrink: 0; }
 
+.pane-switch { display: none; }
 @media (max-width: 900px) {
   .app { overflow: auto; }
   .topbar { height: auto; min-height: 48px; flex-wrap: wrap; padding: 8px; gap: 6px; }
   .topbar > .input { max-width: 100%; }
+  /* One panel at a time (see the pane switch in Workspace.tsx). The visible panel takes the
+     height left under the bars, so the sheet or document scrolls inside it and the page itself
+     does not; the selection bar below stays reachable. */
+  .pane-switch { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--surface); flex: none; }
+  .pane-switch .btn { flex: 1 1 0; min-height: 40px; }
   .work { flex: none; }
-  .work > .pane { flex: none !important; height: 70vh; min-height: 360px; }
-  .work > .side, .work > .side.right { display: flex; width: 100% !important; height: 280px; border: 0; border-bottom: 1px solid var(--line); }
+  .work > .pane { flex: none !important; height: max(360px, calc(100dvh - 260px)); }
+  .work > .side, .work > .side.right { display: flex; width: 100% !important; height: max(360px, calc(100dvh - 260px)); border: 0; border-bottom: 1px solid var(--line); }
   .work > .side.collapsed { height: 44px; }
+  .work.m-files > .pane, .work.m-files > .side.right { display: none; }
+  .work.m-source > .pane.right, .work.m-source > .side { display: none; }
+  .work.m-target > .pane.left, .work.m-target > .side { display: none; }
+  .work.m-map > .pane, .work.m-map > .side:not(.right) { display: none; }
   .side-resizer { display: none; }
   .pane-h { height: auto; min-height: 38px; flex-wrap: wrap; padding: 6px 8px; }
   .stepbar { display: flex; }

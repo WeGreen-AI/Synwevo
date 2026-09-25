@@ -4,6 +4,26 @@
 
 当前轮（2026-09-25）的范围、状态与执行证据统一维护在 [handoff.md](handoff.md)。以下 DW 表及修复记录是历史记录，日期、旧路径和旧 CLI-only UI 约束不代表当前状态；管理员 API 台的当前权限以 [permissions.md](../security/permissions.md) 为准。
 
+## 2026-09-25 导航、弹层与移动端轮（Claude Code）
+
+用户反馈八条，逐条在隔离实例（317xx，`instance=test`）复现后定位。每条的根因来自 DOM/网络/代码，不来自截图推断。
+
+| 反馈 | 复现与真实根因 | 修复（共享组件，全站生效） | 验证 |
+|---|---|---|---|
+| 每次跳转都在重新检查登录 | `SessionProvider` 串行请求 `/api/auth/state` → `/api/auth/me`；每次 `focus`/`visibilitychange` 都再发一轮，门户在 `focus` 时还把仪表盘重置为加载态 | 两个探测并行；回到标签页的重验证间隔 ≥ 30 s（`REVALIDATE_MIN_MS`），只在后台替换数据；门户仪表盘请求与探测并行发出、重验证不再卸载页面 | `ui_e2e_shell.py`：账户子页冷启动 state=1/me=1，30 s 内重聚焦 0 次请求（Chromium + WebKit，桌面与 375px） |
+| 已登录却闪「登录」 | 公开首页把 `signedIn` 写成布尔 `phase === "ready"`，在 `/api/portal/home` 返回前一律显示「登录」 | `PublicHome.signedIn` 三值（未知 / 是 / 否），未知时是尺寸稳定的占位块 | 同上：加载期间每 50 ms 采样顶栏文字，只出现「進入工作空間」，从未出现「登录/登入」 |
+| 账户页没有出口 | `Topbar` 只有品牌链接与账户内导航；没有回到工作/应用的入口，子页也没有回到概览 | 服务端 `/api/auth/me.return_targets`（门户 + `apps_for` 可打开的应用）；顶栏「← 返回工作空间 / 返回 Synwevo Docs」按 `from=<id>` 选择，子页加「账户概览」；手机为抽屉 | `test_return_targets.py` 4 项；浏览器回归中返回链接指向服务端列出的源 |
+| 侧栏点击有时无效 | 门户 `focus` 处理器 `setState({phase:"loading"})` 后 `session.refresh()`：任何把焦点带回窗口的点击都先卸载了仪表盘（含被点的空间按钮），再挂回来 | 移除该处理器；重验证走 `SessionProvider` 的节流后台刷新，仪表盘保持挂载 | 回归中触发 `focus`+`visibilitychange` 后 `.pt-loader` 数量 0、仪表盘仍可见 |
+| 成员列表操作菜单被裁切 | `.menu` 绝对定位在 `.list-wrap` 内，而 `.list-wrap { overflow-x: auto }` 同时裁切纵向；末行菜单落在容器之外不可见（桌面与 375px 都复现） | 共享 `Menu`/`useAnchoredLayer`（`packages/ui`）：`createPortal` 到 `document.body`，视口坐标定位，底部空间不足时翻转到上方、限制高度内部滚动、水平贴边、滚动/缩放重算、锚点离开视口关闭；Esc 在任何焦点位置都关闭（WebKit 点击不聚焦按钮）；账户 `RowMenu` 与 Docs `MoreMenu` 改为其薄封装 | `packages/ui/tests/layer.test.ts` 5 项；浏览器回归：末行菜单 5 项全部在 1280×720 与 375×740 视口内，Esc 关闭并把焦点还给按钮 |
+| 表格首行内容显示不完整 | 375px 下 `table.gov` 强制 `min-width:640px` 横向滚动，首列/操作列随之滚出视口 | 窄屏下选择列 sticky 左、操作列 sticky 右（带背景与阴影），批量条贴底并留安全区 | 回归中 `td.act` 的 `position: sticky` 在 375px 成立 |
+| 手机不能完成 Docs 主链路 | ≤900px 两栏各占 70vh 上下堆叠，文件面板与映射面板隐藏，页面提示「建议在电脑浏览器中建立映射」 | 「文件 / 来源 / 目标 / 映射」面板切换（一次只显示一个，占满剩余高度），选择栏跨切换保留两侧选择；侧面板在手机上不再渲染 34px 折叠条 | `apps/docs/scripts/ui_e2e_mobile.py`：390×844 触摸模拟下新建→上传→模板→4 字段→样本→4 映射→预览→生成 100 份→下载读回，11.3 s 通过 |
+| 管理员未绑 TOTP 就全局禁用邮箱码/第三方登录 | `email_login.eligible()` 与 `external` 登录路径对管理员直接拒绝；按钮不因此改变，但策略把"提供商可用""第一阶段身份""认证强度"混为一个判断 | 分阶段认证：`sessions.admin_capable(amr)`；一因素会话正常登录但 `permissions=[]`、`admin_locked`，管理接口 `403 step_up_required`；口令确认把 `password` 追加进 `amr` 解锁；账户页/管理页/API 台显示同一提示 | `test_session_strength.py` 12 项、邮箱与外部登录的管理员用例（403 → 口令 → 200） |
+| Google / Microsoft 状态不可见 | 只有环境变量，管理员无处看配置是否完整 | `GET /api/admin/identity-providers` + 后台「登录方式」页：精确回调、scopes、发行者、客户端 id 前 8 位、密钥有无、缺失变量、实时连接检查；永不显示或接收秘密 | `test_identity_provider_status.py` 3 项 |
+
+顺带清理：`services/identity/web/src/pages/members/{MembersPanel,InvitesPanel}.tsx` 与 `components/RowMenu.tsx` 是未被引用的旧副本（治理页用的是 `governance/` 下的实现），已删除；`describe_user` 里一行无用的 `rp.issuer` 导入已删。
+
+未在本轮改变：RP ID、Cookie 域、CORS、会话时钟、任何用户数据或身份 ID；生产未配置外部提供商。
+
 ## 2026-09-25 统一白蓝与登录方式轮（Claude Code）
 
 | 问题 | 修复与验证入口 | 状态 |

@@ -56,28 +56,69 @@ def public_state(ident: Identity, role: str) -> dict:
             # page took from a query string would be an open redirect on the one origin that
             # must never have one.
             "portal_url": env.get("PORTAL_URL") or "",
+            # Which application this process is, for the account page's "back to <app>" link.
+            # An id, matched server-side against the applications the person may open; the
+            # account page never takes a URL from a query string.
+            "app_id": (env.get("OIDC_APP_ID") or "docweave") if r in ("app", "all") else ("platform" if r == "portal" else None),
             "account_url": account_url(r)}
 
 
-def describe_user(user: dict, spaces: list[dict]) -> dict:
+def describe_user(user: dict, spaces: list[dict], session: dict | None = None) -> dict:
+    """The signed-in person as every shell sees them.
+
+    `permissions` depends on the *session*, not only on the account: a platform administrator
+    who signed in with one factor (a mailed code, an external provider) holds the role but may
+    not use it until a second factor is proved (`sessions.admin_capable`). `admin_locked` tells
+    the account page to say so and to offer the password step-up.
+    """
+    from synwevo_core.sessions import admin_capable
+    is_admin = user["status"] == "active" and user["platform_role"] == "admin"
+    capable = admin_capable(session.get("amr") or "") if session is not None else True
     return {"id": user["id"], "email": user["email"], "display_name": user.get("display_name"),
             "status": user["status"], "platform_role": user["platform_role"],
             "locale": user.get("locale") or "zh-Hans", "timezone": user.get("timezone") or "UTC",
             "email_verified": bool(user.get("email_verified_at")),
             "onboarding_completed": bool(user.get("onboarding_completed_at") or spaces),
-            "permissions": ["api_platform.manage"] if user["status"] == "active" and user["platform_role"] == "admin" else [],
+            "permissions": ["api_platform.manage"] if is_admin and capable else [],
+            "admin_locked": bool(is_admin and not capable),
             "workspaces": [{"id": w["id"], "name": w["name"], "kind": w["kind"],
                             "status": w.get("status", "active"),
                             "organization_id": w.get("organization_id"), "organization_name": w.get("organization_name"),
                             "role": w["role"], "can_export": bool(w["can_export"])} for w in spaces]}
 
 
+def return_targets(ident: Identity, user_id: str, workspace_id: str | None) -> list[dict]:
+    """Where "back to my work" may go from the account pages.
+
+    The list is the server's: the configured portal and every application this person can open
+    (`Apps.apps_for`, which re-checks entitlement and workspace status). The account page picks
+    one of these by *id* — a `from=<app id>` hint in its URL selects an entry, it never supplies
+    a URL — so the one origin that must never have an open redirect does not get one. Each
+    application target is its sign-in start URL, which re-authorizes the workspace hint on the
+    way in; nothing here is a deep link into content.
+    """
+    from synwevo_core.apps import Apps
+    from synwevo_core.config import portal_url
+    out: list[dict] = []
+    portal = portal_url()
+    if portal:
+        out.append({"id": "portal", "name": "Synwevo Workspace", "url": portal + "/workspace"})
+    try:
+        apps = Apps(ident.store, ident).apps_for(user_id, workspace_id)
+    except Exception:  # a broken registry must not take the account page down
+        apps = []
+    for app in apps:
+        out.append({"id": app["id"], "name": app["name"], "url": app["launch_url"],
+                    "workspace_id": app["workspace_id"], "workspace_name": app.get("workspace_name")})
+    return out
+
+
 def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
     """The session routes every role serves: /state, /me, /logout, /workspace."""
     r = APIRouter(prefix="/api/auth", tags=["auth"])
 
-    def _me(user: dict, spaces: list[dict]) -> dict:
-        return describe_user(user, spaces)
+    def _me(user: dict, spaces: list[dict], session: dict | None = None) -> dict:
+        return describe_user(user, spaces, session)
 
     def _require_session(request: Request) -> dict:
         s = getattr(request.state, "session", None)
@@ -135,11 +176,12 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         user = ident.get_user(s["user_id"])
         if not user:
             raise ServiceError(401, "unauthorized", "请先登录")
-        return {**_me(user, ident.workspaces_for(user["id"])),
+        return {**_me(user, ident.workspaces_for(user["id"]), s),
                 # Which workspace this session is acting in. The page needs it to show the
                 # switcher's current value; without it the switcher would guess, and guessing
                 # wrong tells someone they are in a tenant they are not.
                 "workspace_id": s.get("workspace_id"),
+                "return_targets": return_targets(ident, user["id"], s.get("workspace_id")),
                 "session": {"id": s["id"], "amr": s["amr"]}}
 
     @r.post("/workspace")

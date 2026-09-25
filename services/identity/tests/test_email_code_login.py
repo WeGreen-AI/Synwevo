@@ -3,8 +3,9 @@
 Pinned: the request answers identically for every address and stores nothing readable; a code
 signs in once and never twice; five wrong guesses kill it; a newer code retires the older one;
 an account with TOTP still has to complete the second step and records `email+totp`; a platform
-administrator without TOTP gets no code at all; an unverified address gets no code; and the
-outbox keeps the message without the code once it has left.
+administrator signs in like anyone else but holds a one-factor session that cannot manage until
+the password is re-entered (`sessions.admin_capable`); an unverified address gets no code; and
+the outbox keeps the message without the code once it has left.
 """
 from __future__ import annotations
 
@@ -151,11 +152,26 @@ def test_code_sign_in_does_not_bypass_totp_and_records_the_pair(env):
     assert done.status_code == 200 and done.json()["session"]["amr"] == "email+totp"
 
 
-def test_platform_administrators_without_totp_get_no_code(env):
+def test_platform_administrators_get_a_one_factor_session_that_cannot_manage_until_stepped_up(env):
     c = TestClient(env["api"])
     assert _start(c, "root@example.com").status_code == 202
-    assert _mails(env) == []
-    assert c.post("/api/auth/login/email/verify", json={"email": "root@example.com", "code": "123456"}).status_code == 401
+    r = c.post("/api/auth/login/email/verify", json={"email": "root@example.com", "code": _latest_code(env)})
+    assert r.status_code == 200 and r.json()["session"]["amr"] == "email"
+    me = c.get("/api/auth/me").json()
+    assert me["platform_role"] == "admin" and me["permissions"] == [] and me["admin_locked"] is True
+    csrf = {CSRF_HEADER: c.cookies.get(CSRF_COOKIE)}
+    denied = c.get("/api/admin/overview")
+    assert denied.status_code == 403 and denied.json()["error"] == "step_up_required"
+    assert c.get("/api/admin/api-platform/overview").status_code == 403
+    # The password, re-entered on the account page, is the second distinct factor.
+    wrong = c.post("/api/auth/reauth", json={"password": "not-it", "scope": "admin"}, headers=csrf)
+    assert wrong.status_code == 401 and c.get("/api/admin/overview").status_code == 403
+    ok = c.post("/api/auth/reauth", json={"password": PW, "scope": "admin"}, headers=csrf)
+    assert ok.status_code == 200 and ok.json()["amr"] == "email+password"
+    me = c.get("/api/auth/me").json()
+    assert me["permissions"] == ["api_platform.manage"] and me["admin_locked"] is False
+    assert c.get("/api/admin/overview").status_code == 200
+    assert c.get("/api/auth/sessions").json()["items"][0]["amr"] == "email+password"
 
 
 def test_the_outbox_never_keeps_the_code_once_the_mail_is_done(env):

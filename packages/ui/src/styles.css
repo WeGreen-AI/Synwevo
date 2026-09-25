@@ -345,6 +345,35 @@ button.fldchip:focus-visible, button.doc-blk-tag:focus-visible { outline: 2px so
    is its own indicator, a ring around the whole box adds nothing. */
 .modal:focus, .cmdk:focus { outline: none; }
 .modal.narrow { width: min(460px, 100%); }
+/* Drawer: the modal overlay with the panel against one edge, full height, sized to its content
+   up to 320px. Its links are laid out as a list with 44px rows (see .drawer-b a). */
+.drawer-back { align-items: stretch; justify-content: flex-end; padding: 0; }
+.drawer-back:has(.drawer.start) { justify-content: flex-start; }
+.drawer { background: var(--surface); width: min(320px, 88vw); height: 100dvh; display: flex; flex-direction: column; box-shadow: var(--shadow-lg);
+  padding-bottom: env(safe-area-inset-bottom); }
+.drawer-b { padding: 8px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.drawer-b a, .drawer-b button.btn { justify-content: flex-start; min-height: 44px; height: auto; padding: 10px 12px; font-size: 14px; border-radius: 8px; width: 100%; text-align: left; }
+.drawer-b a[aria-current="page"] { background: var(--accent-weak); color: var(--accent-strong); }
+.drawer-b hr { border: 0; border-top: 1px solid var(--line); margin: 6px 0; width: 100%; }
+.drawer-b .drawer-label { font-size: 11px; color: var(--muted); padding: 8px 12px 2px; text-transform: uppercase; letter-spacing: .04em; }
+@media (prefers-reduced-motion: no-preference) {
+  .drawer.end { animation: drawer-in-end .18s ease-out; }
+  .drawer.start { animation: drawer-in-start .18s ease-out; }
+}
+@keyframes drawer-in-end { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+@keyframes drawer-in-start { from { transform: translateX(-24px); opacity: .6; } to { transform: none; opacity: 1; } }
+
+/* Touch: the main controls reach 44px without changing their look on a mouse. The hit area is
+   the button; menus and tabs get the same treatment because those are the targets a thumb
+   actually misses. */
+@media (pointer: coarse) {
+  .btn, .input, select.input { min-height: 44px; }
+  .btn.sm, .btn.xs, .input.sm { min-height: 40px; }
+  .menu-item { min-height: 44px; padding-block: 10px; }
+  .acct-tabs [role="tab"], .acct-tabs .btn { min-height: 44px; }
+  .btn.icon { min-width: 44px; }
+  .btn.sm.icon { min-width: 40px; }
+}
 .modal-h { display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .modal-b { padding: 16px 18px; overflow: auto; flex: 1; }
 .modal-f { display: flex; align-items: center; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--panel-2); border-radius: 0 0 10px 10px; }
@@ -454,6 +483,9 @@ button.opt { width: 100%; text-align: left; background: var(--surface); font: in
 .mb12 { margin-bottom: 12px; }
 .menu-wrap { position: relative; }
 .menu { position: absolute; right: 0; top: calc(100% + 4px); min-width: 190px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-lg); padding: 4px; z-index: 60; }
+/* Rendered at the document root and placed in viewport coordinates (useAnchoredLayer): no
+   scrolling table or panel can clip it, and it scrolls inside itself when the screen is short. */
+.menu.layer { position: fixed; right: auto; top: auto; z-index: 320; max-width: calc(100vw - 16px); overscroll-behavior: contain; }
 .menu-item { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
 .menu-item:hover:not(:disabled) { background: var(--accent-weak); }
 /* The tinted background alone is 1.15:1 against the menu; the ring is what shows focus. */

@@ -1,7 +1,10 @@
 import { useI18n } from "@synwevo/ui";
 import { DocumentIcon, Shell, signInUrl as signInBase } from "./Portal";
 
-export function PublicHome({ signedIn, registerUrl: registerBase }: { signedIn: boolean; registerUrl: string }) {
+/** `signedIn` is three-valued: undefined while the session is still being confirmed. The header
+ *  then shows neither "登录" nor "进入工作空间" — a signed-in person must never see a sign-in
+ *  link flash before the page knows who they are. */
+export function PublicHome({ signedIn, registerUrl: registerBase }: { signedIn: boolean | undefined; registerUrl: string }) {
   const { t, locale } = useI18n();
   const registerUrl = `${registerBase}${registerBase.includes("?") ? "&" : "?"}lang=${locale}`;
   const signInUrl = `${signInBase}&lang=${locale}`;
@@ -18,8 +21,8 @@ export function PublicHome({ signedIn, registerUrl: registerBase }: { signedIn: 
   return <Shell publicHome right={<>
     <a className="pt-nav-detail" href="#workflow">{t("工作流程")}</a>
     <a className="pt-nav-detail" href="#applications">{t("平台应用")}</a>
-    <a className="pt-link" href={signedIn ? "/workspace" : signInUrl}>{t(signedIn ? "进入工作空间" : "登录")}</a>
-    {!signedIn && <a className="btn primary pt-nav-register" href={registerUrl}>{t("注册账户")}</a>}
+    {signedIn === undefined ? <span className="pt-nav-pending" aria-hidden="true" /> : <a className="pt-link" href={signedIn ? "/workspace" : signInUrl}>{t(signedIn ? "进入工作空间" : "登录")}</a>}
+    {signedIn === false && <a className="btn primary pt-nav-register" href={registerUrl}>{t("注册账户")}</a>}
   </>}>
     <section className="pt-hero" aria-labelledby="pt-hero-title">
       <div className="pt-hero-copy">

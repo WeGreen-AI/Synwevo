@@ -337,7 +337,7 @@ def test_unlinking_needs_reauth_and_never_removes_the_last_way_in(env):
     assert len(notices) == 2
 
 
-def test_platform_administrators_need_totp_to_sign_in_through_a_provider(env):
+def test_platform_administrators_through_a_provider_are_restricted_until_a_second_factor(env):
     root = env["ident"].create_user("root@example.com", PW, status="active", platform_role="admin")
     env["store"].execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), root["id"]))
     c = TestClient(env["api"])
@@ -345,9 +345,17 @@ def test_platform_administrators_need_totp_to_sign_in_through_a_provider(env):
     r = _callback(c, code, state)
     assert r.headers["location"].startswith("/login?link=testidp#offer=")
     offer = urllib.parse.unquote(r.headers["location"].split("#offer=", 1)[1])
-    assert c.post("/api/auth/external/offer/confirm", json={"offer": offer, "password": PW}).status_code == 200
+    linked = c.post("/api/auth/external/offer/confirm", json={"offer": offer, "password": PW})
+    assert linked.status_code == 200 and linked.json()["session"]["amr"] == "password"
     fresh = TestClient(env["api"])
     code, state = env["idp"].accept(_start(fresh), subject="idp-root", email="root@example.com")
     r = _callback(fresh, code, state)
-    assert "ext_error=admin_requires_totp" in r.headers["location"]
-    assert fresh.get("/api/auth/me").status_code == 401
+    assert r.status_code == 303 and r.headers["location"] == "/account"
+    me = fresh.get("/api/auth/me").json()
+    assert me["platform_role"] == "admin" and me["permissions"] == [] and me["admin_locked"] is True
+    assert fresh.get("/api/admin/overview").status_code == 403
+    csrf = {CSRF_HEADER: fresh.cookies.get(CSRF_COOKIE)}
+    assert fresh.post("/api/auth/reauth", json={"password": PW, "scope": "admin"}, headers=csrf).status_code == 200
+    assert fresh.get("/api/auth/me").json()["permissions"] == ["api_platform.manage"]
+    assert fresh.get("/api/admin/overview").status_code == 200
+    assert fresh.get("/api/auth/sessions").json()["items"][0]["amr"] == "idp:testidp+password"

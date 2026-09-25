@@ -15,6 +15,8 @@
 .pt-nav a, .pt-link { color: var(--text-2); text-decoration: none; font-weight: 500; }
 .pt-nav a:hover, .pt-link:hover, .pt-footer a:hover { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 4px; }
 .pt-nav .btn, .pt-nav .language-menu select { font-size: 13px; }
+/* Holds the place of the sign-in / enter link while the session is still being confirmed. */
+.pt-nav-pending { display: inline-block; width: 64px; height: 18px; border-radius: 4px; background: var(--surface-hover); }
 .pt .language-menu select { min-width: 0; }
 .pt-main { flex: 1; width: 100%; max-width: calc(var(--content-w) + 80px); margin: auto; padding: 36px 40px 80px; }
 .pt-main:focus { outline: none; }
@@ -164,7 +166,8 @@
   .pt-service { grid-template-columns: 1fr; gap: 24px; } .pt-service-cta { align-items: flex-start; }
   .pt-dashboard-head { align-items: flex-start; flex-direction: column; margin: 6px 0 24px; } .pt-dashboard-head h1 { font-size: 26px; }
   .pt-dashboard { grid-template-columns: 1fr; gap: 26px; } .pt-spaces { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 18px; } .pt-space-group { margin-top: 16px; }
-  .pt-account { gap: 6px 12px; } .pt-avatar { display: none; }
+  .pt-account { gap: 6px 12px; }
+  .pt-account-btn { gap: 8px; min-height: 40px; } .pt-account-btn .pt-avatar { width: 26px; height: 26px; font-size: 12px; }
   .pt-section-head { gap: 10px; } .pt-section-head h2 { font-size: 19px; }
   .pt-app-card { padding: 20px 16px; gap: 16px; } .pt-app-body strong { font-size: 16px; }
   .pt-empty { padding: 24px; }

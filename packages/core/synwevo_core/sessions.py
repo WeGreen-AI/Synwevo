@@ -58,6 +58,42 @@ def _digest(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def factor_kinds(amr: str) -> set[str]:
+    """The distinct kinds of factor an `amr` value records ("password+totp" -> {password, totp})."""
+    kinds: set[str] = set()
+    for part in (amr or "").split("+"):
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith("idp:"):
+            kinds.add("idp")
+        elif part == "passkey_uv":
+            kinds.update({"passkey", "user_verification"})
+        else:
+            kinds.add(part)
+    return kinds
+
+
+def admin_capable(amr: str) -> bool:
+    """May a session authenticated this way exercise platform administration?
+
+    The rule keeps every existing administrator path (a password sign-in, a verified passkey,
+    any password + second factor pair) and restricts only the newer single-factor paths: a
+    mailed code or an external provider proves one thing, so such a session may manage the
+    person's own account but not the platform until a second, distinct factor is proved — a
+    TOTP code at sign-in, or the password re-entered on the account page (`Sessions.add_factor`).
+    Nothing here grants a role; it only says whether the role may be *used* in this session.
+    """
+    kinds = factor_kinds(amr)
+    if not kinds:
+        return False
+    if "user_verification" in kinds:
+        return True
+    if kinds == {"password"}:
+        return True
+    return len(kinds - {"user_verification"}) >= 2
+
+
 class Sessions:
     def __init__(self, store: Store):
         self.store = store
@@ -247,6 +283,20 @@ class Sessions:
     def mark_reauth(self, session_id: str, scope: str) -> None:
         self.store.execute("UPDATE sessions SET reauth_at=?, reauth_scope=? WHERE id=?",
                            (now(), scope, session_id))
+
+    def add_factor(self, session_id: str, factor: str) -> str:
+        """Record that this session proved one more factor (the password, re-entered on the
+        account page). `amr` then names every factor actually proved, and a session that began
+        with a mailed code becomes `email+password`: two distinct factors, admin-capable."""
+        row = self.store.one("SELECT amr FROM sessions WHERE id=?", (session_id,))
+        if not row:
+            return ""
+        amr = row["amr"] or ""
+        if factor in factor_kinds(amr) or factor in amr.split("+"):
+            return amr
+        amr = f"{amr}+{factor}" if amr else factor
+        self.store.execute("UPDATE sessions SET amr=? WHERE id=?", (amr, session_id))
+        return amr
 
     @staticmethod
     def reauth_fresh(session: dict, scope: str, *, strict: bool = False) -> bool:
