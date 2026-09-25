@@ -12,7 +12,7 @@
 import { StrictMode, Suspense, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { DialogProvider, ToastProvider, initTheme, I18nProvider, PageState, StatusPage, useI18n, registerMessages, lazyRoute, pick } from "@synwevo/ui";
+import { DialogProvider, ToastProvider, initTheme, I18nProvider, StatusPage, useI18n, registerMessages, lazyRoute, pick } from "@synwevo/ui";
 import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
 import Login from "./pages/Login";
 import { AccountCapabilityGate } from "./pages/org/AuthFlow";
@@ -53,14 +53,14 @@ registerMessages({
 
 function RouteLoading() {
   const {t} = useI18n();
-  return <PageState>{t("加载中…")}</PageState>;
+  return <div className="empty" role="status" aria-live="polite">{t("加载中…")}</div>;
 }
 function AdminOnly({children}: {children: ReactNode}) {
   const {me} = useSession(); const {t} = useI18n();
   // The role, not the current permission set: an administrator whose session proved one factor
   // (`admin_locked`) must reach the page to see what is missing and confirm the password there;
   // the page itself withholds every management view until then, and the server answers 403.
-  return me?.platform_role === "admin" ? children : <PageState role="alert">{t("仅平台管理员可访问")}</PageState>;
+  return me?.platform_role === "admin" ? children : <div className="empty" role="alert">{t("仅平台管理员可访问")}</div>;
 }
 
 function SignedOut() {
