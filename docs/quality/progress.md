@@ -1,6 +1,12 @@
 # 进度记录（用于接续）
 
-最后更新：2026-09-25（统一白蓝设计系统与多种登录方式轮，Claude Code）。本轮实现、证据与边界以 [handoff.md](handoff.md) 顶部一节为准；
+最后更新：2026-09-25（导航稳定、弹层与移动端轮，Claude Code）。本轮八条反馈的复现—根因—修复—验证表在
+[issues.md](issues.md)「导航、弹层与移动端轮」；接续点（Google/Microsoft 登记、生产管理员本人绑定 TOTP、真机/真实邮箱/真实样本）
+在 [handoff.md](handoff.md) 顶部；浏览器与测试证据在 [verification.md](verification.md) §16；契约在 [sessions.md](../security/sessions.md) §4.6、§12 与
+[permissions.md](../security/permissions.md)。`a342994` 与 `61f6354` 已依次经 CI 验证并部署（备份 `20260925T071558Z`、`20260925T073728Z`），
+线上匿名检查见 [deployment.md](deployment.md)；线上未做登录态流程验收。
+
+上一轮（统一白蓝设计系统与多种登录方式轮，Claude Code）：本轮实现、证据与边界以 [handoff.md](handoff.md) 顶部一节为准；
 CI/CD 与线上状态以 [deployment.md](deployment.md) 为准。设计系统契约在 [design.md](../design.md)，守卫为 `scripts/check_design.py`。
 
 最后更新：2026-09-25。本轮本机账户/组织/API 台/三语言产品已完成关键流程集成验收；具体实现、通过/失败/跳过记录及未验证边界以 [handoff.md](handoff.md) 为单一状态。
