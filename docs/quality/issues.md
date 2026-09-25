@@ -8,6 +8,7 @@
 
 | ID | 问题与基线 | 依据 | 修复 | 验证 | 状态 |
 |---|---|---|---|---|---|
+| CI-06 | 线上 CSP 拦下 Cloudflare 边缘注入的 Web Analytics 信标（`static.cloudflareinsights.com/beacon.min.js`），每页一次控制台违规、区域分析静默失效 | 线上匿名 Chromium 检查；Cloudflare Web Analytics 文档描述的信标注入行为 | 带 `CF-Ray` 的请求得到只多出该脚本源与 `cloudflareinsights.com` 上报源的策略变体；其余请求与显式 `SYNWEVO_CSP` 不变 | `test_security_headers.py` 7 项；部署后线上复查见 deployment.md | 已修复，待部署 |
 | CI-05 | WebKit 下抽屉内 Tab 跳出对话框；Esc 关闭后焦点不回到按钮（Chromium 不出现） | WAI-ARIA APG Dialog/Menu Button 模式；WCAG 2.1.1、2.4.3 | 焦点陷阱每次 Tab 自行移动；`lastPointerTarget()` 记住点击打开者 | `ui_e2e_shell.py` 键盘检查 Chromium + WebKit 四组通过；Docs 键盘套件通过 | 已修复，待部署 |
 | CI-04 | 内容态下的手机问题：组织页返回链接 20 px；Docs 首页项目表在 320/375 px 把页面撑宽；工作台选择栏提示被截断越出 | WCAG 2.2 1.4.10（数据表在自身容器内滚动）、2.5.8 | `.action-link`；共享 `.tbl-wrap` 包住首页两张表；≤900 px 选择栏提示换行 | `ui_mobile_audit.py` Bob（组织 + 3 邀请 + 项目）与管理员两组 × 三宽度 0 发现；Docs 三套 E2E 与外壳回归通过 | 已修复，待部署 |
 | CI-02 | 线上三个源的响应缺少 HSTS、`nosniff`、CSP、Permissions-Policy、COOP/CORP（匿名 `curl -I` 基线），XSS 影响面与点击劫持/嗅探缓解不足 | OWASP ASVS 4.0.3 V14.4.1–14.4.7；OWASP HTTP Headers Cheat Sheet | `synwevo_core.http.apply_security_headers`：每个响应带 nosniff、强制 CSP（`script-src 'self'`、`frame-ancestors 'self'`、`object-src 'none'`…）、COOP/CORP、Permissions-Policy；TLS 时 HSTS 一年；`SYNWEVO_CSP` 覆盖 | `test_security_headers.py` 6 项；五套浏览器脚本捕获 CSP 违规 = 0；隔离实例 curl | 已修复，待部署（[verification.md §16.6](verification.md)） |

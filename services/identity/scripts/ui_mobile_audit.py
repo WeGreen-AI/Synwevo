@@ -7,6 +7,8 @@ WCAG 2.2 makes checkable:
   (`documentElement.scrollWidth <= innerWidth`), and no visible element may extend past the
   viewport, except content that is two-dimensional by nature (data tables inside their own
   scroll container, the document canvas) — those are allowed to scroll *inside* a container.
+* **1.4.3 Contrast (Minimum, AA)** — every visible text node against its effective background:
+  4.5:1, or 3:1 for large text (≥ 24 px, or ≥ 18.66 px bold); disabled controls are exempt.
 * **2.5.8 Target Size (Minimum, AA)** — every pointer target is at least 24×24 CSS px or has
   24 px of spacing; here we simply require ≥ 24 px for buttons, links styled as buttons, inputs,
   selects and menu items, and report the primary actions that fall short of the 44 px enhanced
@@ -31,7 +33,7 @@ from playwright.sync_api import Page, sync_playwright
 # Two-dimensional content is allowed its own horizontal scroll container (1.4.10 exceptions).
 SCROLL_CONTAINERS = ".list-wrap, .account-table, .grid-scroll, .doc-page, .sheettabs, .stepbar, .pane-switch, .api-platform-main table, .tbl-wrap, pre, code"
 
-MEASURE_JS = """
+MEASURE_JS = r"""
 (args) => {
   const [containersSel] = args;
   const vw = window.innerWidth;
@@ -41,7 +43,7 @@ MEASURE_JS = """
   const clipped = (el) => { for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) { const o = getComputedStyle(a).overflowX; if (o === 'hidden' || o === 'clip') return true; } return false; };
   const inContainer = (el) => containers.some(c => c.contains(el)) || clipped(el);
   const visible = (el) => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-  const label = (el) => (el.getAttribute('aria-label') || el.textContent || el.getAttribute('placeholder') || el.tagName).trim().replace(/\\s+/g, ' ').slice(0, 40);
+  const label = (el) => (el.getAttribute('aria-label') || el.textContent || el.getAttribute('placeholder') || el.tagName).trim().replace(/\s+/g, ' ').slice(0, 40);
   for (const el of document.querySelectorAll('body *')) {
     if (!visible(el) || inContainer(el)) continue;
     const r = el.getBoundingClientRect();
@@ -59,6 +61,31 @@ MEASURE_JS = """
     if (size < 24 && !inline && !(el.tagName === 'INPUT' && ['checkbox','radio'].includes(el.type))) out.small.push({ tag: el.tagName.toLowerCase(), cls: (el.className || '').toString().slice(0, 50), w: Math.round(r.width), h: Math.round(r.height), label: label(el) });
     if (el.classList.contains('primary') && size < 44) out.primarySmall.push({ w: Math.round(r.width), h: Math.round(r.height), label: label(el) });
   }
+  // Contrast (SC 1.4.3): each visible text node's colour against the first opaque background
+  // behind it. Alpha-blended colours are composited; gradients and images are skipped (rare here).
+  const parse = (c) => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(',').map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
+  const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  const blend = (top, under) => ({ r: top.r * top.a + under.r * (1 - top.a), g: top.g * top.a + under.g * (1 - top.a), b: top.b * top.a + under.b * (1 - top.a), a: 1 });
+  const bgOf = (el) => { let acc = null; for (let a = el; a; a = a.parentElement) { const cs = getComputedStyle(a); if (cs.backgroundImage && cs.backgroundImage !== 'none') return null; const c = parse(cs.backgroundColor); if (c && c.a > 0) { acc = acc ? blend(acc, c) : c; if (acc.a >= 1 && c.a >= 1) return acc; } } return acc ? blend(acc, { r: 255, g: 255, b: 255, a: 1 }) : { r: 255, g: 255, b: 255, a: 1 }; };
+  const ratio = (a, b) => { const l1 = lum(a), l2 = lum(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); };
+  out.contrast = []; const seen = new Set();
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const text = node.textContent.trim(); if (text.length < 2) continue;
+    const el = node.parentElement; if (!el || !visible(el)) continue;
+    const r = el.getBoundingClientRect(); if (r.bottom < 0 || r.top > window.innerHeight) continue;
+    const cs = getComputedStyle(el); const fg = parse(cs.color); if (!fg) continue;
+    const bg = bgOf(el); if (!bg) continue;
+    const fgc = fg.a < 1 ? blend(fg, bg) : fg;
+    const size = parseFloat(cs.fontSize), weight = parseInt(cs.fontWeight, 10) || 400;
+    const large = size >= 24 || (size >= 18.66 && weight >= 700);
+    const need = large ? 3 : 4.5;
+    const rr = ratio(fgc, bg);
+    const key = cs.color + '|' + (el.className || el.tagName) + '|' + Math.round(rr * 10);
+    if (rr < need && !seen.has(key) && !el.closest('[disabled], .btn:disabled, [aria-disabled="true"], ::placeholder')) { seen.add(key); out.contrast.push({ tag: el.tagName.toLowerCase(), cls: (el.className || '').toString().slice(0, 40), color: cs.color, bg: `rgb(${Math.round(bg.r)}, ${Math.round(bg.g)}, ${Math.round(bg.b)})`, size: Math.round(size * 10) / 10, weight, ratio: Math.round(rr * 100) / 100, text: text.slice(0, 30) }); }
+  }
+  out.contrast = out.contrast.slice(0, 10);
   out.overflow = out.overflow.slice(0, 8); out.small = out.small.slice(0, 12);
   return out;
 }
@@ -147,12 +174,14 @@ def main():
                 href = cards.first.get_attribute("href")
                 rows.append(measure(page, f"{docs}{href}", settle=".work"))
             print(f"\n== {width} px (Chromium mobile emulation{' — is_mobile' if width < 800 else ''})")
-            print(f"{'page':44} {'scrollW':>7} {'overflow':>8} {'<24px':>5} {'prim<44':>7}  targets")
+            print(f"{'page':44} {'scrollW':>7} {'overflow':>8} {'<24px':>5} {'prim<44':>7} {'contrast':>8}  targets")
             for r in rows:
-                bad = r["scrollWidth"] > r["innerWidth"] or r["overflow"] or r["small"]
+                bad = r["scrollWidth"] > r["innerWidth"] or r["overflow"] or r["small"] or r.get("contrast")
                 failures += 1 if bad else 0
                 flag = "✗" if bad else "✓"
-                print(f"{flag} {r['url'][:42]:42} {r['scrollWidth']:>7} {len(r['overflow']):>8} {len(r['small']):>5} {len(r['primarySmall']):>7}  {r['targets']}")
+                print(f"{flag} {r['url'][:42]:42} {r['scrollWidth']:>7} {len(r['overflow']):>8} {len(r['small']):>5} {len(r['primarySmall']):>7} {len(r.get('contrast', [])):>8}  {r['targets']}")
+                for c_ in r.get("contrast", [])[:6]:
+                    print(f"      contrast {c_['ratio']}:1 <{c_['tag']} class='{c_['cls']}'> {c_['color']} on {c_['bg']} {c_['size']}px/{c_['weight']} “{c_['text']}”")
                 for o in r["overflow"][:4]:
                     print(f"      overflow: <{o['tag']} class='{o['cls']}'> right={o['right']} “{o['label']}”")
                 for s_ in r["small"][:6]:

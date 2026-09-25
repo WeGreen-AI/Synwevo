@@ -63,10 +63,17 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-03 | 明细表映射对话框语义（每组一份显示错误的「随文件变化」） | 已修复，`ui_e2e_more.py` 恢复运行并通过，待部署 | 五套 Docs/外壳浏览器脚本都进入每次发布前的回归 |
 | CI-04 | 内容态手机补审（组织页链接、Docs 首页表格、选择栏提示） | 已修复，两组账户 × 三宽度 0 发现，待部署 | 隔离实例已有组织/邀请夹具，后续审计直接复用 |
 | CI-05 | 共享菜单/抽屉键盘模式回归；WebKit 焦点陷阱与开启者回焦两处修复 | 已修复，双引擎通过，待部署 | 后续所有对话框都经 `useModalFocus`，无需逐个处理 |
+| CI-06 | Cloudflare 信标与 CSP：仅 `CF-Ray` 请求放行 Web Analytics 两个源 | 已实现，7 项契约测试通过，`59aa880` 已推送 | 部署后用匿名 Chromium 复查线上 CSP 违规应为 0 |
+| CI-07 | 对比度采样加入 `ui_mobile_audit.py`（SC 1.4.3） | 采样器已验证；两组账户 0 发现，无需改动 | 每次改令牌或新增文本样式后重跑 |
 
 已核对、无需改动（记录以免重复研究）：
 
 * **值保真**：`test_engine.py::test_value_fidelity_xlsx` / `test_number_formats` 已覆盖前导零、18 位长编号、0 与空、布尔、货币显示与精确值、日期序列与 1904 体系；`Value` 模型分开 exact/display。未发现缺口。
+* **不可信/超大输入**：`test_engine_untrusted.py`（27 项：zip 声明总量与伪造成员大小、超大 XML 部件、行号空洞放大、像素预算、
+  GIF 逐帧、正则超时不阻塞其他线程、LibreOffice 无服务端秘密/宏与链接禁用/网络公式不重算、Tesseract 语言列表一次）、
+  `test_api_contract_uploads.py`（分片续传、校验和、大小上限、过期、配额）、`test_large_sheet.py` 已覆盖 §六「文件识别与解析」的
+  资源上限与损坏输入要求。未发现缺口。
+* **批量生成性能**：2026-09-25 复测无退化（verification.md §16.8）。
 * **API 幂等**（对照 Stripe「Idempotent requests」，访问 2026-09-25）：Stripe——所有 POST 接受键、键 ≤255 字符、保存首个响应含 500、24 小时后清理、参数不同即报错、并发冲突不保存。Synwevo（api.md §3「幂等」）——按主体+租户+作用域+键、24 小时 TTL 可配、内容不同 `409 idempotency_conflict`、并发由唯一约束裁决、不确定结果 `409 idempotency_outcome_unknown` 且不清理、不支持的操作显式 `400 idempotency_not_supported`。语义等价或更严格；差异只在 Stripe 保存 5xx 结果而 Synwevo 让失败的创建可重试，这是有意选择。无需改动。
 
 候选队列（按风险与价值）：共享 `Menu`/`Drawer` 的键盘模式回归（已加入 `ui_e2e_shell.py`，见 CI-05）；成员列表大数据量（≥50 行）的手机滚动与批量条；API 台各页签的内容态手机审计（需凭据夹具）。
