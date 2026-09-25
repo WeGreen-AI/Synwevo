@@ -12,7 +12,7 @@
 import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { DialogProvider, ToastProvider, initTheme, I18nProvider, LanguageMenu, useI18n, registerMessages } from "@synwevo/ui";
+import { DialogProvider, ToastProvider, initTheme, I18nProvider, StatusPage, useI18n, registerMessages } from "@synwevo/ui";
 import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
 import Login from "./pages/Login";
 import Account, { AccountRecovery } from "./pages/Account";
@@ -37,6 +37,7 @@ registerMessages({
   "页面不存在": {en:"Page not found", "zh-Hant":"找不到頁面"},
   "前往账户设置": {en:"Go to account settings", "zh-Hant":"前往帳戶設定"},
   "仅平台管理员可访问": {en:"Platform administrators only", "zh-Hant":"僅平台管理員可存取"},
+  "这个地址在 Synwevo Account 里不存在。": {en:"This address does not exist in Synwevo Account.", "zh-Hant":"這個地址在 Synwevo Account 裡不存在。"},
 });
 
 function AdminOnly({children}: {children: ReactNode}) {
@@ -46,21 +47,17 @@ function AdminOnly({children}: {children: ReactNode}) {
 
 function SignedOut() {
   const { t } = useI18n();
-  return (
-    <div className="authpage">
-      <div className="authcard">
-        <LanguageMenu /><h1>{t("已退出")}</h1>
-        <p className="authlede">
-          {t("当前设备的统一登录与关联应用会话已退出。其他设备不受影响。")}
-        </p>
-        <a className="btn primary" href="/login">{t("重新登录")}</a>
-      </div>
-    </div>
-  );
+  return <StatusPage product="Account" brandHref="/login" title={t("已退出")}>
+    <p>{t("当前设备的统一登录与关联应用会话已退出。其他设备不受影响。")}</p>
+    <a className="btn primary" href="/login">{t("重新登录")}</a>
+  </StatusPage>;
 }
 function NotFound() {
   const {t} = useI18n();
-  return <div className="empty"><LanguageMenu /><div className="big">{t("页面不存在")}</div><a href="/account">{t("前往账户设置")}</a></div>;
+  return <StatusPage product="Account" brandHref="/account" title={t("页面不存在")}>
+    <p>{t("这个地址在 Synwevo Account 里不存在。")}</p>
+    <a className="btn" href="/account">{t("前往账户设置")}</a>
+  </StatusPage>;
 }
 
 createRoot(document.getElementById("root")!).render(

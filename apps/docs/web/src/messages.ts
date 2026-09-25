@@ -5009,5 +5009,9 @@ export const messages = {
   "该模板是上传的文件，不是内置编辑器创建的：请在项目中直接在模板预览上设置字段。": {
     "en": "This template was uploaded, not created in the built-in editor. Set its fields directly in the template preview within a project.",
     "zh-Hant": "該模板是上傳的文件，不是內置編輯器創建的：請在項目中直接在模板預覽上設置字段。"
-  }
+  },
+  "这个地址在 Synwevo Docs 里不存在，或你没有访问权限。": {
+    "en": "This address does not exist in Synwevo Docs, or you do not have access to it.",
+    "zh-Hant": "這個地址在 Synwevo Docs 裡不存在，或你沒有存取權限。"
+  },
 } satisfies Messages;

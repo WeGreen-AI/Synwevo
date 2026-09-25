@@ -88,6 +88,12 @@ export function Portal() {
 
   const account = state.phase === "ready" ? state.home.account_url : accountBase;
   if (publicPage) return <PublicHome signedIn={state.phase === "ready"} registerUrl={accountLink(account, "/register")} />;
+  if (window.location.pathname !== "/workspace") return <Shell right={<a className="pt-link" href="/">{t("返回首页")}</a>}>
+    <section className="pt-status" role="status"><p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("页面不存在")}</h1>
+      <p>{t("这个地址在 Synwevo Workspace 里不存在。")}</p>
+      <div className="pt-actions"><a className="btn primary" href="/workspace">{t("进入工作空间")}</a><a className="btn" href="/">{t("返回首页")}</a></div>
+    </section>
+  </Shell>;
   if (state.phase !== "ready") return <Shell right={<a className="pt-link" href="/">{t("返回首页")}</a>}>
     <section className="pt-status">
       {state.phase === "loading" ? <><span className="pt-loader" aria-hidden="true" /><h1 role="status">{t("正在载入工作空间…")}</h1></> : state.phase === "signed-out" ? <>

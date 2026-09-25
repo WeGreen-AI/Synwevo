@@ -1,7 +1,7 @@
 import { serverText, issueText } from "./lib/presentation";
 import "./lib/presentation";
 import { messages } from "./messages";
-import { t as tr, useI18n, I18nProvider, LanguageMenu, registerMessages } from "@synwevo/ui";
+import { t as tr, useI18n, I18nProvider, StatusPage, registerMessages } from "@synwevo/ui";
 import { StrictMode, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
@@ -47,7 +47,7 @@ function DocsRoot() {
               <Route path="/templates/new/doc" element={<RequireSession><RequireEditor><DocEditor /></RequireEditor></RequireSession>} />
               <Route path="/templates/new/sheet" element={<RequireSession><RequireEditor><SheetEditor /></RequireEditor></RequireSession>} />
               <Route path="/templates/:tid/edit" element={<RequireSession><RequireEditor><EditorSwitch /></RequireEditor></RequireSession>} />
-              <Route path="*" element={<div className="empty"><LanguageMenu /><div className="big">{tr("页面不存在")}</div><a href="/">{tr("返回首页")}</a></div>} />
+              <Route path="*" element={<StatusPage product="Docs" title={tr("页面不存在")}><p>{tr("这个地址在 Synwevo Docs 里不存在，或你没有访问权限。")}</p><a className="btn" href="/">{tr("返回首页")}</a></StatusPage>} />
             </Routes>
           </Suspense>
         </BrowserRouter>

@@ -1,4 +1,4 @@
-import { t as tr, useI18n, formatDate, formatNumber } from "./i18n";
+import { t as tr, useI18n, formatDate, formatNumber, LanguageMenu } from "./i18n";
 import { createContext, ReactNode, RefObject, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { FOCUSABLE, isImeKey, isTopModal, popModal, pushModal, strayKeyAction, trapIndex } from "./a11y";
 import { ToastTimers } from "./toasttimers";
@@ -23,6 +23,28 @@ export function Brand({ href = "/", product, size, label, hideTextOnMobile }: {
     <a className={`brand${size ? ` ${size}` : ""}`} href={href} aria-label={label}>
       <BrandMark product={product} hideTextOnMobile={hideTextOnMobile} />
     </a>
+  );
+}
+
+/* ------------------------------------------------------------ status pages */
+/** The one shape for "page not found", "signed out" and similar whole-page states: the shell's
+ *  top bar (brand, language menu), then a centred message with one clear way forward. Every
+ *  shell renders these through here so a wrong URL looks the same product everywhere. */
+export function StatusPage({ product, brandHref = "/", title, children, role = "status" }: {
+  product?: string; brandHref?: string; title: ReactNode; children?: ReactNode; role?: "status" | "alert";
+}) {
+  return (
+    <div className="app">
+      <div className="topbar">
+        <Brand href={brandHref} product={product} />
+        <span className="spacer" />
+        <LanguageMenu />
+      </div>
+      <div className="empty status-page" role={role}>
+        <div className="big">{title}</div>
+        {children}
+      </div>
+    </div>
   );
 }
 

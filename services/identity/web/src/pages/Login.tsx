@@ -6,7 +6,6 @@ import { AuthFrame, FlowError, Loading, PasswordField, checkPassword, saveIntent
 
 type Methods = { totp: boolean; recovery: boolean };
 type Mode = "password" | "code";
-const REMEMBER_KEY = "synwevo.auth.remember";
 /** Messages for the `ext_error` code an external-provider sign-in lands here with. */
 const EXTERNAL_ERRORS: Record<string, string> = {
   cancelled: "已取消外部登录。",
@@ -22,13 +21,6 @@ const EXTERNAL_ERRORS: Record<string, string> = {
   unknown_provider: "未启用这个外部身份提供商。",
 };
 
-/** Remembered as a convenience only: the checkbox's last state on this browser, never a credential. */
-function rememberedChoice(): boolean {
-  try { return localStorage.getItem(REMEMBER_KEY) === "1"; } catch { return false; }
-}
-function keepChoice(value: boolean) {
-  try { localStorage.setItem(REMEMBER_KEY, value ? "1" : "0"); } catch { /* fine */ }
-}
 /** A sign-in continued from another page: an MFA ticket after a provider sign-in, or a link offer. */
 function fragment(): URLSearchParams {
   return new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -45,7 +37,9 @@ export default function Login() {
   const [ticket, setTicket] = useState<string | null>(null);
   const [methods, setMethods] = useState<Methods | null>(null);
   const [code, setCode] = useState(""); const [useRecovery, setUseRecovery] = useState(false);
-  const [remember, setRemember] = useState(rememberedChoice);
+  // Always unchecked to begin with: a shared or public computer must never inherit the last
+  // person's choice, so nothing about it is remembered between sign-ins.
+  const [remember, setRemember] = useState(false);
   const [setupRequested, setSetupRequested] = useState(false);
   const [codeSent, setCodeSent] = useState<{ email: string; expires: number } | null>(null);
   const [offer, setOffer] = useState<string | null>(null);
@@ -95,7 +89,7 @@ export default function Login() {
     const user = out?.user || await get<FlowUser>("/api/auth/me");
     window.location.assign(signedInDestination(user, out?.next ? safeNext(out.next) : next));
   }
-  function chooseRemember(value: boolean) { setRemember(value); keepChoice(value); }
+  function chooseRemember(value: boolean) { setRemember(value); }
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     void action.run(async () => {

@@ -412,7 +412,9 @@ export const portalMessages = {
   "已有账户？登录": {
     "en": "Already have an account? Sign in",
     "zh-Hant": "已有帳戶？登入"
-  }
+  },
+  "页面不存在": {"en": "Page not found", "zh-Hant": "找不到頁面"},
+  "这个地址在 Synwevo Workspace 里不存在。": {"en": "This address does not exist in Synwevo Workspace.", "zh-Hant": "這個地址在 Synwevo Workspace 裡不存在。"},
 };
 
 registerMessages(portalMessages);
