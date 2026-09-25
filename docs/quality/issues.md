@@ -10,7 +10,7 @@
 
 | 反馈 | 复现与真实根因 | 修复（共享组件，全站生效） | 验证 |
 |---|---|---|---|
-| 每次跳转都在重新检查登录 | `SessionProvider` 串行请求 `/api/auth/state` → `/api/auth/me`；每次 `focus`/`visibilitychange` 都再发一轮，门户在 `focus` 时还把仪表盘重置为加载态 | 两个探测并行；回到标签页的重验证间隔 ≥ 30 s（`REVALIDATE_MIN_MS`），只在后台替换数据；门户仪表盘请求与探测并行发出、重验证不再卸载页面 | `ui_e2e_shell.py`：账户子页冷启动 state=1/me=1，30 s 内重聚焦 0 次请求（Chromium + WebKit，桌面与 375px） |
+| 每次跳转都在重新检查登录 | `SessionProvider` 串行请求 `/api/auth/state` → `/api/auth/me`；每次 `focus`/`visibilitychange` 都再发一轮，门户在 `focus` 时还把仪表盘重置为加载态 | 两个探测并行；回到标签页的重验证间隔 ≥ 30 s（`REVALIDATE_MIN_MS`），只在后台替换数据；门户仪表盘请求与探测并行发出、只按「换了人」重取、重验证不再卸载页面 | `ui_e2e_shell.py`：账户子页冷启动 state=1/me=1，30 s 内重聚焦 0 次请求（Chromium + WebKit，桌面与 375px）。门户已登录冷启动 `/workspace` 的 API 请求：修复中间态 `home×2 + me + state`，最终 `home×1 + me×1 + state×1`；重聚焦 0 次、无加载态 |
 | 已登录却闪「登录」 | 公开首页把 `signedIn` 写成布尔 `phase === "ready"`，在 `/api/portal/home` 返回前一律显示「登录」 | `PublicHome.signedIn` 三值（未知 / 是 / 否），未知时是尺寸稳定的占位块 | 同上：加载期间每 50 ms 采样顶栏文字，只出现「進入工作空間」，从未出现「登录/登入」 |
 | 账户页没有出口 | `Topbar` 只有品牌链接与账户内导航；没有回到工作/应用的入口，子页也没有回到概览 | 服务端 `/api/auth/me.return_targets`（门户 + `apps_for` 可打开的应用）；顶栏「← 返回工作空间 / 返回 Synwevo Docs」按 `from=<id>` 选择，子页加「账户概览」；手机为抽屉 | `test_return_targets.py` 4 项；浏览器回归中返回链接指向服务端列出的源 |
 | 侧栏点击有时无效 | 门户 `focus` 处理器 `setState({phase:"loading"})` 后 `session.refresh()`：任何把焦点带回窗口的点击都先卸载了仪表盘（含被点的空间按钮），再挂回来 | 移除该处理器；重验证走 `SessionProvider` 的节流后台刷新，仪表盘保持挂载 | 回归中触发 `focus`+`visibilitychange` 后 `.pt-loader` 数量 0、仪表盘仍可见 |

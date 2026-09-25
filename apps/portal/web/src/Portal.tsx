@@ -44,14 +44,22 @@ export function Portal() {
   // spinner while it already shows a dashboard, which is what made the sidebar "not respond":
   // it was being unmounted under the pointer.
   const [dash, setDash] = useState<{ value: Home | null; error: ApiError | null; at: number }>({ value: null, error: null, at: 0 });
+  const signedOut = session.me === null;
+  const meId = session.me?.id;
+  // The dashboard belongs to one person: when the session turns out to be someone else's (a
+  // different account signed in meanwhile), fetch again. Learning *who* after a cold start is not
+  // a change of person, so it does not refetch — one request per load, not two.
   useEffect(() => {
-    if (publicPage) return;
+    if (meId && dash.value && dash.value.user.id !== meId) setRevision(n => n + 1);
+  }, [meId, dash.value]);
+  useEffect(() => {
+    if (publicPage || signedOut) return;
     const controller = new AbortController();
     void get<Home>("/api/portal/home", controller.signal)
       .then(value => { if (!controller.signal.aborted) setDash({ value, error: null, at: Date.now() }); })
       .catch(error => { if (!controller.signal.aborted) setDash(h => ({ value: error instanceof ApiError && error.status === 401 ? null : h.value, error: error instanceof ApiError ? error : new ApiError(0, "network", String(error)), at: Date.now() })); });
     return () => controller.abort();
-  }, [publicPage, revision, session.me === null ? "out" : session.me?.id]);
+  }, [publicPage, revision, signedOut]);
   useEffect(() => {
     const me = session.me;
     if (session.error) { setState({ phase: "error", status: session.error.status }); return; }
