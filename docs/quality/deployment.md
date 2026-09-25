@@ -21,8 +21,14 @@ The application itself loaded and ran with zero violations. CI-06 (below) allows
 `CF-Ray`; until it lands, the zone's Web Analytics receives no page views. The `401` console entries are the anonymous
 `/api/auth/me` probe, expected.
 
-**Superseded:** the CI-04 run for `409152f` was cancelled by the concurrency rule when `1282e6c` (CI-05) was pushed; its content
-ships with the CI-05 run, recorded below when the receiver reports it.
+**Running source:** `1282e6c58013c484e361bae83dd2cfc3ff4cbdeb` (CI-04 content-state phone fixes and CI-05 dialog focus in WebKit;
+the CI-04 run for `409152f` was cancelled by the concurrency rule and its content shipped here).
+[Actions 36134202891](https://github.com/WeGreen-AI/Synwevo/actions/runs/36134202891) (created 12:19 UTC, finished ~12:41 UTC)
+passed verification and deployment; pre-upgrade backup `/opt/synwevo/backups/20260925T124027Z`. Anonymous checks ~12:50 UTC:
+`/readyz` ready on all three hosts, the account shell's bundles 200.
+
+**Pushed, in flight:** `cee2da3` (CI-06 Cloudflare-aware CSP, CI-08 WebKit parity proxy, CI-09 phone toasts off the dialog
+footer; the run for `59aa880` was superseded). Until it lands the Cloudflare beacon is still blocked on production pages.
 
 ## 2026-09-25 navigation, layers, phone layouts and step-up admin auth — deployed
 

@@ -232,7 +232,11 @@ def flow_d(page: Page):
     # One native Tab commits and leaves the grid; it must not move the selection to B2.
     page.keyboard.press("Tab")
     expect(grid.locator("input")).to_have_count(0)
-    expect(page.get_by_role("button", name="Sheet1", exact=True)).to_be_focused()
+    # The grid hands Tab to the browser (no keyboard trap). Chromium lands on the next focusable
+    # element, the Sheet1 tab button; WebKit follows Safari's default Tab policy, which skips
+    # buttons and links, so only "focus left the grid, selection stayed" is engine-independent.
+    if os.environ.get("E2E_ENGINE") != "webkit":
+        expect(page.get_by_role("button", name="Sheet1", exact=True)).to_be_focused()
     assert grid.evaluate("el => !el.contains(document.activeElement)")
     expect(page.locator(".cellinfo")).to_have_text("A2")
     expect(grid.locator(".gcell", has_text=re.compile("^金额$"))).to_have_count(1)
@@ -244,7 +248,10 @@ def flow_d(page: Page):
     page.keyboard.type("123.45")
     expect(page.get_by_role("textbox", name="编辑单元格 B2", exact=True)).to_have_value("123.45")
     page.keyboard.press("Tab")
-    expect(page.get_by_role("button", name="Sheet1", exact=True)).to_be_focused()
+    if os.environ.get("E2E_ENGINE") != "webkit":   # see the note above: Safari's Tab skips buttons
+        expect(page.get_by_role("button", name="Sheet1", exact=True)).to_be_focused()
+    else:
+        assert grid.evaluate("el => !el.contains(document.activeElement)")
     expect(page.locator(".cellinfo")).to_have_text("B2")
     page.get_by_role("button", name="设为字段单元格").click()
     page.locator(".modal input").fill("金额")
@@ -297,7 +304,8 @@ def main():
         BASE = _base
         t0 = time.time()
         with sync_playwright() as p:
-            browser = p.chromium.launch(channel="chrome", headless=True)
+            # E2E_ENGINE=webkit runs the same flow in Playwright's WebKit build; default is the installed Chrome
+            browser = p.webkit.launch(headless=True) if os.environ.get("E2E_ENGINE") == "webkit" else p.chromium.launch(channel="chrome", headless=True)
             # E2E_DPR=2 runs the same flows on a high-density display (coordinate mapping of box drawing,
             # cell hit-testing and PDF regions must not depend on the device pixel ratio)
             ctx = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True, locale="zh-CN",

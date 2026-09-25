@@ -453,6 +453,11 @@ frame-ancestors；github.com/OWASP/ASVS v4.0.3 `0x22-V14-Config.md`）；OWASP H
 **CI-08**：`localhost_proxy.py` 让 Playwright WebKit 访问 `*.localhost` 三个源（见 16.2 说明）；`ui_e2e_mobile.py` 增加 `E2E_ENGINE=webkit`。
 WebKit 现在跑完与 Chromium 相同的外壳检查（账户/门户/Docs、桌面与手机、键盘、CSP）和 Docs 手机主链路。
 
+三套桌面 Docs 套件也加了 `E2E_ENGINE=webkit`：`ui_e2e.py`、`ui_e2e_keyboard.py` 直接通过；`ui_e2e_more.py` 的表格编辑器流程里
+两处「原生 Tab 离开网格后焦点落在 Sheet1 页签按钮」的断言在 WebKit 不成立——网格有意不截获 Tab（无键盘陷阱，WCAG 2.1.2），
+而 Safari 默认 Tab 跳过按钮与链接，这是浏览器策略不是产品缺陷；断言改为引擎无关的「编辑器已关闭、焦点离开网格、选区未移动」，
+WebKit 下通过。
+
 **CI-09**：WebKit 手机主链路首次运行在「确认样本规则」处卡住。截图（`docs/screenshots/25_手机_样本规则_失败.png`）显示原因：
 底部的提示条（toast「已导入模板…」）正好盖住对话框底栏的主按钮，点击落在提示条上。Chromium 只是因为时序不同没碰上。
 修复在共享样式：≤620 px 时提示条改在顶部（安全区之下、整行宽），容器 `pointer-events: none` 只有提示条本身可点。

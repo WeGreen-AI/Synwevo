@@ -88,7 +88,8 @@ def main():
         BASE = _base
         t0 = time.time()
         with sync_playwright() as p:
-            browser = p.chromium.launch(channel="chrome", headless=True)
+            # E2E_ENGINE=webkit runs the same flow in Playwright's WebKit build; default is the installed Chrome
+            browser = p.webkit.launch(headless=True) if os.environ.get("E2E_ENGINE") == "webkit" else p.chromium.launch(channel="chrome", headless=True)
             # E2E_DPR=2 runs the same flows on a high-density display (coordinate mapping of box drawing,
             # cell hit-testing and PDF regions must not depend on the device pixel ratio)
             ctx = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True, locale="zh-CN",
