@@ -38,6 +38,7 @@ one set of rules, not two:
 .venv/bin/python scripts/check_boundaries.py
 .venv/bin/python scripts/check_brand.py
 .venv/bin/python scripts/check_design.py         # 统一白蓝设计系统：颜色只来自共享令牌
+.venv/bin/python scripts/check_component_names.py # 自有界面只写能力名，不写底层组件名（例外表要写理由）
 npm run typecheck && npm run build
 ```
 

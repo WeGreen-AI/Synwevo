@@ -58,11 +58,16 @@ export function notifySessionExpired(status: number, code: string, headers: Head
 /** Name the intermediary for the message.  Vendor headers are good enough to name a culprit but
  *  far too narrow to *detect* one, so they are never used as the test. */
 function gatewayName(h: Headers_): string {
-  const v = (n: string) => h.get(n) || "";
-  if (v("cf-mitigated") || v("cf-ray") || /cloudflare/i.test(v("server"))) return "Cloudflare";
-  const server = v("server").split("/")[0].trim();
-  if (server && server !== "uvicorn") return server;
+  // The person sees the role ("前置网关"); which product answered is diagnostic detail, kept in
+  // `gatewayServer` for operators and never shown as the culprit's brand.
+  void h;
   return "前置网关";
+}
+
+function gatewayServer(h: Headers_): string {
+  const v = (n: string) => h.get(n) || "";
+  if (v("cf-mitigated") || v("cf-ray")) return "edge";
+  return v("server").split("/")[0].trim();
 }
 
 /** Did Synwevo itself produce this response?
@@ -97,12 +102,12 @@ function gatewayError(status: number, h: Headers_): ApiError {
   if (UNREACHABLE.has(status)) {
     return new ApiError(status, "upstream_unavailable",
       `${via} 没有从 Synwevo 得到响应（HTTP ${status}）。服务可能没有启动、正在重启，或处理超时。请稍后重试。`,
-      { gateway: via, status, hint: "请检查服务进程是否在运行，以及反向代理指向的地址与端口。排查步骤见 docs/integration/ports.md。" },
+      { gateway: via, server: gatewayServer(h), status, hint: "请检查服务进程是否在运行，以及反向代理指向的地址与端口。排查步骤见 docs/integration/ports.md。" },
       true);
   }
   return new ApiError(status, "gateway_blocked",
     `请求被 ${via} 拦截（HTTP ${status}），没有到达 Synwevo。请检查 CDN / WAF / 反向代理的安全规则。`,
-    { gateway: via, status, hint: "服务端访问日志里不会有这条请求——它没有到达服务。排查步骤见 docs/integration/ports.md。" },
+    { gateway: via, server: gatewayServer(h), status, hint: "服务端访问日志里不会有这条请求——它没有到达服务。排查步骤见 docs/integration/ports.md。" },
     true);
 }
 

@@ -795,7 +795,7 @@ function Workspace() {
               </span>
             )}
             {file && (file.family === "image" || file.family === "pdf") && (
-              <button type="button" className="btn sm" disabled={ocrBusy || ro} onClick={runOcr} title={ro ? tr(READ_ONLY_TEXT) : tr("使用本地 Tesseract（中文+英文）识别扫描页，不上传文件")}>
+              <button type="button" className="btn sm" disabled={ocrBusy || ro} onClick={runOcr} title={ro ? tr(READ_ONLY_TEXT) : tr("使用本地文字识别（中文+英文）识别扫描页，不上传文件")}>
                 {ocrBusy ? tr("识别中…") : file.ocr_pages.length ? tr("重新 OCR") : tr("OCR 识别")}
               </button>
             )}

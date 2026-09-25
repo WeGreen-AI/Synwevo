@@ -72,7 +72,7 @@ export default function TemplateChooser({ projectId, current, onDone, onClose }:
           <button type="button" className={`dropzone${hot ? " hot" : ""}`} style={{ padding: 36 }} disabled={busy} onClick={() => fileRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setHot(true); }} onDragLeave={() => setHot(false)}
             onDrop={(e) => { e.preventDefault(); setHot(false); const f = e.dataTransfer.files[0]; if (f) doUpload(f); }}>
-            {busy ? tr("上传中 {v1}%…", { v1: Math.round(prog * 100) }) : <>{tr("拖入模板文件，或 ")}<b>{tr("点击选择")}</b><div className="small mt8">{tr("支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 图片（直接输出同尺寸图片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 会经 LibreOffice 转换（会提示可能的版式变化），BMP/TIFF/WEBP 输出为 PNG")}</div></>}
+            {busy ? tr("上传中 {v1}%…", { v1: Math.round(prog * 100) }) : <>{tr("拖入模板文件，或 ")}<b>{tr("点击选择")}</b><div className="small mt8">{tr("支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 图片（直接输出同尺寸图片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 会先经格式转换（会提示可能的版式变化），BMP/TIFF/WEBP 输出为 PNG")}</div></>}
           </button>
           <input ref={fileRef} type="file" hidden accept=".docx,.docm,.xlsx,.xlsm,.pdf,.pptx,.pptm,.doc,.xls,.ppt,.odt,.ods,.odp,.rtf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp" onChange={(e) => e.target.files?.[0] && doUpload(e.target.files[0])} />
           <div className="notice small">{tr("上传后在右侧预览中选中文字、单元格、表格行，或在 PDF / 图片上框选区域，点击「设为待填区域」即可创建字段。原始模板保持不变，所有修改保存在工作副本中，可撤销/重做。")}</div>

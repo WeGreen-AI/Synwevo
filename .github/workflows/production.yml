@@ -32,6 +32,7 @@ jobs:
           python scripts/check_boundaries.py
           python scripts/check_brand.py
           python scripts/check_design.py
+          python scripts/check_component_names.py
           npm run typecheck
           npm run build
           npm test --workspaces --if-present

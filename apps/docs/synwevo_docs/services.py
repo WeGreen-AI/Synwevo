@@ -725,7 +725,7 @@ class App:
             from .engine.converters import ConversionError, convert
             try:
                 working = convert(data, fmt, info["convert_via"])
-                notes.append(f"{fmt.upper()} 模板已通过 LibreOffice 转换为 {info['convert_via'].upper()}；输出为 {info['convert_via'].upper()}。转换可能改变部分排版")
+                notes.append(f"{fmt.upper()} 模板已经格式转换为 {info['convert_via'].upper()}；输出为 {info['convert_via'].upper()}。转换可能改变部分排版")
                 fmt = info["convert_via"]
             except ConversionError as e:
                 raise ServiceError(400, "convert_failed", str(e)) from e
@@ -733,7 +733,7 @@ class App:
             from .engine.converters import ConversionError, convert
             try:
                 working = convert(data, "xls", "xlsx")
-                notes.append("XLS 模板已通过 LibreOffice 转换为 XLSX；输出为 XLSX")
+                notes.append("XLS 模板已经格式转换为 XLSX；输出为 XLSX")
                 fmt = "xlsx"
             except ConversionError as e:
                 raise ServiceError(400, "convert_failed", str(e)) from e

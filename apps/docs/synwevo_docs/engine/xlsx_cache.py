@@ -26,7 +26,7 @@ def fill_cached_values(data: bytes, only: set[tuple[str, str]] | None = None) ->
     try:
         calc = recalc_xlsx(data)
     except ConversionError as e:
-        return data, [{"level": "warning", "code": "recalc_failed", "message": f"公式未能用 LibreOffice 计算：{e}；Excel 打开时会重新计算"}]
+        return data, [{"level": "warning", "code": "recalc_failed", "message": f"公式未能由排版引擎计算：{e}；Excel 打开时会重新计算"}]
     wb = openpyxl.load_workbook(io.BytesIO(calc), data_only=True, read_only=True)
     x = XlsxDoc(data)
     epoch = getattr(wb, "epoch", None)
@@ -75,4 +75,4 @@ def fill_cached_values(data: bytes, only: set[tuple[str, str]] | None = None) ->
             n += 1
     wb.close()
     out = x.pkg.save()
-    return out, [{"level": "info", "code": "recalc", "message": f"已用 LibreOffice 计算 {n} 个公式的结果并写入缓存值"}]
+    return out, [{"level": "info", "code": "recalc", "message": f"已由排版引擎计算 {n} 个公式的结果并写入缓存值"}]

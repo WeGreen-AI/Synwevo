@@ -78,7 +78,7 @@ def test_pdf_source_flow_and_template_refusal(api, fixtures, pdfium):
     prop = api.ok(api.c.post(f"/api/sources/{sid}/locator", json={"project_id": pid, "selection": {"kind": "pdf_region", "page": 0, "nrect": nrect}}))["proposals"][0]
     assert prop["sample"] == "TEST00000001" and prop["locator"]["anchor"]["text"].startswith("证件号")
     r = api.c.post("/api/templates/upload", files={"file": ("t.pdf", (fixtures / "测试_通知书模板.pdf").read_bytes())}, data={"project_id": pid})
-    assert r.status_code == 400 and "pdfium" in r.text and "PyMuPDF" in r.text
+    assert r.status_code == 400 and "基础模式" in r.text and "完整模式" in r.text
     # Image templates DO work without PyMuPDF: they are raster work and now use the Pillow
     # fill path (they used to be refused for a reason that had nothing to do with images).
     r = api.c.post("/api/templates/upload", files={"file": ("t.png", (fixtures / "测试_发货单图片模板.png").read_bytes())}, data={"project_id": pid})

@@ -27,7 +27,7 @@ export default function Capabilities() {
           {err && <div className="notice err">{serverText(err)}</div>}
           {d && (
             <>
-              <div className="notice info mb8">{tr("本表由当前服务端实时生成：已安装 LibreOffice：")}<b>{d.environment.libreoffice || tr("否")}</b>；Tesseract：<b>{d.environment.tesseract || tr("否")}</b>{tr("（语言：")}{d.environment.ocr_languages.join(", ") || tr("无")}{tr("）。 未经验证的格式不会标为支持。")}</div>
+              <div className="notice info mb8">{tr("本表由当前服务端实时生成：排版引擎：")}<b>{d.environment.libreoffice ? tr("已启用") : tr("未启用")}</b>{tr("；本地文字识别：")}<b>{d.environment.tesseract ? tr("已启用") : tr("未启用")}</b>{tr("（语言：")}{d.environment.ocr_languages.join(", ") || tr("无")}{tr("）。 未经验证的格式不会标为支持。")}</div>
               <div className="row wrap gap4 mb8">{Object.entries(d.legend).map(([k, v]) => <span key={k} className={`badge ${cls(k)}`}>{lab(k)}：{serverText(v as string)}</span>)}</div>
               <div className="card" style={{ overflow: "auto" }}>
                 <table className="tbl small" style={{ minWidth: 1700, tableLayout: "fixed" }}>

@@ -404,7 +404,7 @@ export default function DocEditor() {
           <EditorContent editor={body} />
           <div className="hf-box" style={{ marginTop: 24 }}><div className="tiny muted">{tr("页脚")}</div><EditorContent editor={footer} /></div>
         </div>
-        <div className="tiny muted" style={{ textAlign: "center", marginTop: 10 }}>{tr("编辑区为近似排版；实际分页以 Word / LibreOffice 打开 DOCX 为准。")}</div>
+        <div className="tiny muted" style={{ textAlign: "center", marginTop: 10 }}>{tr("编辑区为近似排版；实际分页以桌面办公软件打开 DOCX 为准。")}</div>
       </div>
     </div>
   );

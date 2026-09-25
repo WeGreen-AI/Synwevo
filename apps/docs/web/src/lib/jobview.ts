@@ -99,10 +99,14 @@ export interface Verification { reopened?: boolean; checks?: number; missing?: u
 /** 已校验 only when values were actually compared. A PDF export of a DOCX template and every
  *  image output are reopened but not compared value by value (checks = 0); calling those
  *  「已校验」claimed a check that did not happen. */
+// The server reports which reader reopened an output by format family; the label names the
+// capability, never the library behind it.
+const ENGINE_LABEL: Record<string, string> = { docx: "文档读取器", xlsx: "表格读取器", pdf: "PDF 引擎", pptx: "演示文稿读取器", csv: "CSV 读取器", image: "图像读取器" };
+
 export function verificationBadge(v: Verification | null | undefined): { label: string; tone: "ok" | "info" | "warn" | "err"; title: string } | null {
   if (!v) return null;
   if (v.error) return { label: tr("无法重新打开"), tone: "err", title: diagnosticText(v.error) };
-  const engine = v.engine || tr("对应程序");
+  const engine = v.engine && ENGINE_LABEL[v.engine] ? tr(ENGINE_LABEL[v.engine]) : tr("对应程序");
   const missing = Array.isArray(v.missing) ? v.missing.length : 0;
   if (missing) return { label: tr("{v1} 个值未找到", { v1: missing }), tone: "warn", title: tr("已用 {v1} 重新打开，核对 {v2} 个值，其中 {v3} 个未在文件中找到", { v1: engine, v2: v.checks || 0, v3: missing }) };
   if ((v.checks || 0) > 0) return { label: tr("✓ 已校验"), tone: "ok", title: tr("已用 {v1} 重新打开并核对 {v2} 个值", { v1: engine, v2: v.checks }) };

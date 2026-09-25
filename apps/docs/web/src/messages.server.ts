@@ -3,7 +3,10 @@ import type { Messages } from "@synwevo/ui/i18n-core";
 /** Presentation catalog for server-owned interface descriptions, not document content. */
 export const serverMessages = {
   '内置公式引擎已计算公式并写入结果。': { en: 'The built-in formula engine calculated formulas and saved the results.', 'zh-Hant': '內建公式引擎已計算公式並寫入結果。' },
-  '部分公式无法计算，无法导出 CSV。请改用 XLSX 或安装 LibreOffice。': { en: 'Some formulas could not be calculated, so CSV export is unavailable. Use XLSX or install LibreOffice.', 'zh-Hant': '部分公式無法計算，無法匯出 CSV。請改用 XLSX 或安裝 LibreOffice。' },
+  "部分公式无法计算，无法导出 CSV。请改用 XLSX，或请管理员启用排版引擎。": {
+    "en": "Some formulas could not be calculated, so CSV export is unavailable. Use XLSX, or ask an administrator to enable the layout engine.",
+    "zh-Hant": "部分公式無法計算，無法匯出 CSV。請改用 XLSX，或請管理員啟用排版引擎。"
+  },
   '处理提示（{code}）。': { en: 'Processing notice ({code}).', 'zh-Hant': '處理提示（{code}）。' },
   '第 {start}–{end} 页': { en: 'Pages {start}–{end}', 'zh-Hant': '第 {start}–{end} 頁' },
   '第 {start}–{end} 行': { en: 'Rows {start}–{end}', 'zh-Hant': '第 {start}–{end} 行' },
@@ -17,7 +20,10 @@ export const serverMessages = {
   "明细已续排到新增页面。": {"en": "Details continue on additional pages.", "zh-Hant": "明細已續排到新增頁面。"},
   "已移除不支持的控制字符。": {"en": "Unsupported control characters were removed.", "zh-Hant": "已移除不支援的控制字元。"},
   "字段引用已被移除，请检查映射。": {"en": "A field reference was removed. Check the mappings.", "zh-Hant": "欄位引用已被移除，請檢查映射。"},
-  "公式已交由 LibreOffice 计算。": {"en": "Formulas were calculated using LibreOffice.", "zh-Hant": "公式已交由 LibreOffice 計算。"},
+  "公式已交由排版引擎计算。": {
+    "en": "Formulas were calculated by the layout engine.",
+    "zh-Hant": "公式已交由排版引擎計算。"
+  },
   "部分公式无法在服务器计算，请在 Excel 中检查。": {"en": "Some formulas cannot be calculated on the server. Check them in Excel.", "zh-Hant": "部分公式無法在伺服器計算，請在 Excel 中檢查。"},
   "部分公式的计算结果是错误值。": {"en": "Some formulas evaluated to error values.", "zh-Hant": "部分公式的計算結果是錯誤值。"},
   "公式未能重新计算，Excel 打开时会再次计算。": {"en": "Formulas could not be recalculated. Excel will recalculate on opening.", "zh-Hant": "公式未能重新計算，Excel 開啟時會再次計算。"},
@@ -42,9 +48,9 @@ export const serverMessages = {
     "en": "Implemented and covered by automated tests",
     "zh-Hant": "已實現並有自動化測試"
   },
-  "经 LibreOffice 转换（可能有损，已提示）": {
-    "en": "Converted with LibreOffice (possible losses are disclosed)",
-    "zh-Hant": "經 LibreOffice 轉換（可能有損，已提示）"
+  "经格式转换（可能有损，已提示）": {
+    "en": "Converted (possible losses are disclosed)",
+    "zh-Hant": "經格式轉換（可能有損，已提示）"
   },
   "有限支持（见说明）": {
     "en": "Limited support (see details)",
@@ -58,13 +64,17 @@ export const serverMessages = {
     "en": "Unsupported",
     "zh-Hant": "不支持"
   },
-  "图片模板（PNG/JPEG）可用：在像素上直接清除与写入，支持中文、换行与缩放；扫描型 PDF 模板仍需 PyMuPDF。": {
-    "en": "PNG/JPEG templates support direct pixel removal and writing, Chinese text, wrapping and scaling. Scanned PDF templates still require PyMuPDF.",
-    "zh-Hant": "圖片模板（PNG/JPEG）可用：在像素上直接清除與寫入，支持中文、換行與縮放；掃描型 PDF 模板仍需 PyMuPDF。"
+  "图片模板（PNG/JPEG）可用：在像素上直接清除与写入，支持中文、换行与缩放；扫描型 PDF 模板仍需 PDF 引擎完整模式。": {
+    "en": "PNG/JPEG templates support direct pixel removal and writing, Chinese text, wrapping and scaling. Scanned PDF templates still require the PDF engine's full mode.",
+    "zh-Hant": "圖片模板（PNG/JPEG）可用：在像素上直接清除與寫入，支持中文、換行與縮放；掃描型 PDF 模板仍需 PDF 引擎完整模式。"
   },
-  "服务端本地（pypdfium2，Apache-2.0 / BSD-3）": {
-    "en": "Local server (pypdfium2, Apache-2.0 / BSD-3)",
-    "zh-Hant": "服務端本地（pypdfium2，Apache-2.0 / BSD-3）"
+  "服务端本地（PDF 引擎基础模式） + 本地文字识别": {
+    "en": "Local server (PDF engine, basic mode) + local text recognition",
+    "zh-Hant": "服務端本地（PDF 引擎基礎模式） + 本機文字辨識"
+  },
+  "服务端本地（PDF 引擎基础模式）": {
+    "en": "Local server (PDF engine, basic mode)",
+    "zh-Hant": "服務端本地（PDF 引擎基礎模式）"
   },
   "图片模板输出同尺寸 PNG/JPEG；扫描型 PDF 无原生输出": {
     "en": "Image templates produce same-size PNG/JPEG; scanned PDF templates have no native output",
@@ -74,9 +84,9 @@ export const serverMessages = {
     "en": "PDF templates are unavailable, so no native output is available",
     "zh-Hant": "PDF 模板不可用，因此沒有原生輸出"
   },
-  "内置公式引擎（90+ 常用函数）计算并写入结果，其他软件读取也能看到正确值；不支持的函数自动改用 LibreOffice 计算，Excel 打开时仍会重算。XLSM 输出扩展名为 .xlsx，宏不执行": {
-    "en": "The built-in engine calculates and stores results for 90+ common functions, readable by other software. Unsupported functions fall back to LibreOffice. Excel still recalculates on open. XLSM exports as .xlsx; macros do not run.",
-    "zh-Hant": "內置公式引擎（90+ 常用函數）計算並寫入結果，其他軟件讀取也能看到正確值；不支持的函數自動改用 LibreOffice 計算，Excel 打開時仍會重算。XLSM 輸出擴展名為 .xlsx，宏不執行"
+  "内置公式引擎（90+ 常用函数）计算并写入结果，其他软件读取也能看到正确值；不支持的函数自动改由排版引擎计算，Excel 打开时仍会重算。XLSM 输出扩展名为 .xlsx，宏不执行": {
+    "en": "The built-in engine calculates and stores results for 90+ common functions, readable by other software. Unsupported functions fall back to the layout engine, and Excel recalculates on open. XLSM outputs use the .xlsx extension; macros do not run",
+    "zh-Hant": "內置公式引擎（90+ 常用函數）計算並寫入結果，其他軟件讀取也能看到正確值；不支持的函數自動改由排版引擎計算，Excel 打開時仍會重算。XLSM 輸出擴展名為 .xlsx，宏不執行"
   },
   "服务端本地": {
     "en": "Local server",
@@ -98,9 +108,9 @@ export const serverMessages = {
     "en": "Conversion may alter formatting; macros do not run",
     "zh-Hant": "轉換可能改變部分格式；宏不執行"
   },
-  "服务端本地 + LibreOffice": {
-    "en": "Local server + LibreOffice",
-    "zh-Hant": "服務端本地 + LibreOffice"
+  "服务端本地 + 排版引擎": {
+    "en": "Local server + layout engine",
+    "zh-Hant": "服務端本地 + 排版引擎"
   },
   "转换可能损失部分格式": {
     "en": "Conversion may lose some formatting",
@@ -122,9 +132,9 @@ export const serverMessages = {
     "en": "Only text within boxes is replaced; cannot reconstruct editable Word files. Detail row height is fixed; cells may wrap or shrink but rows do not grow automatically.",
     "zh-Hant": "只替換框內文字；不能恢復為可編輯 Word；明細區域行高固定（單元格內可換行縮字，不會自動加高行）"
   },
-  "服务端本地（PyMuPDF，AGPL/商业许可）": {
-    "en": "Local server (PyMuPDF, AGPL/commercial license)",
-    "zh-Hant": "服務端本地（PyMuPDF，AGPL/商業許可）"
+  "服务端本地（PDF 引擎完整模式）": {
+    "en": "Local server (PDF engine, full mode)",
+    "zh-Hant": "服務端本地（PDF 引擎完整模式）"
   },
   "PDF（表单型 AcroForm）": {
     "en": "PDF (AcroForm)",
@@ -142,9 +152,9 @@ export const serverMessages = {
     "en": "OCR supplies values, without rebuilding the full file. JPEG output is recompressed at quality 95. Image templates have one page; overflowing details must fail or compress row height.",
     "zh-Hant": "OCR 結果用於取值，不會用 OCR 重建整份文件；JPEG 輸出重新壓縮（質量 95）；圖片模板只有一頁，明細超出時只能報錯或壓縮行高"
   },
-  "服务端本地（Tesseract）": {
-    "en": "Local server (Tesseract)",
-    "zh-Hant": "服務端本地（Tesseract）"
+  "服务端本地（本地文字识别）": {
+    "en": "Local server (local text recognition)",
+    "zh-Hant": "服務端本地（本機文字辨識）"
   },
   "不套用 Word 分页规则；动画/母版不受影响": {
     "en": "Word pagination rules do not apply; animations and masters are unaffected",
@@ -178,9 +188,9 @@ export const serverMessages = {
     "en": "Edits XML directly; untouched parts, including charts, images and pivot tables, are retained",
     "zh-Hant": "直接改寫 XML，未修改部分原樣保留（圖表、圖片、透視表等部件不被重寫）"
   },
-  "经 LibreOffice 转换": {
-    "en": "Converted with LibreOffice",
-    "zh-Hant": "經 LibreOffice 轉換"
+  "经排版引擎转换": {
+    "en": "Converted by the layout engine",
+    "zh-Hant": "經排版引擎轉換"
   },
   "RFC 4180 解析；自动识别 UTF-8/GB18030/UTF-16 编码与分隔符，可手动修正；单元格内换行不拆行；全部按文本保留（前导零、长数字不变）": {
     "en": "RFC 4180 parsing; automatic UTF-8/GB18030/UTF-16 and delimiter detection with manual overrides. Multiline cells stay intact; text preserves leading zeros and long numbers.",
@@ -198,9 +208,9 @@ export const serverMessages = {
     "en": "Spreadsheet templates can export CSV (values from the first worksheet only)",
     "zh-Hant": "可由表格型模板導出 CSV（僅第一個工作表的值）"
   },
-  "有 LibreOffice 时转换为 XLSX 读取；否则直接读取值与数字格式（xlrd）": {
-    "en": "Converts to XLSX with LibreOffice when available; otherwise reads values and number formats directly with xlrd",
-    "zh-Hant": "有 LibreOffice 時轉換為 XLSX 讀取；否則直接讀取值與數字格式（xlrd）"
+  "排版引擎可用时转换为 XLSX 读取；否则用内置读取器直接读取值与数字格式": {
+    "en": "Converts to XLSX for reading when the layout engine is available; otherwise the built-in reader reads values and number formats directly",
+    "zh-Hant": "排版引擎可用時轉換為 XLSX 讀取；否則用內建讀取器直接讀取值與數字格式"
   },
   "转换为 XLSX 后作为模板，输出为 XLSX": {
     "en": "Converts to an XLSX template and exports XLSX",
@@ -214,13 +224,13 @@ export const serverMessages = {
     "en": "Exports XLSX (does not write XLS)",
     "zh-Hant": "輸出 XLSX（不回寫 XLS）"
   },
-  "经 LibreOffice": {
-    "en": "Via LibreOffice",
-    "zh-Hant": "經 LibreOffice"
+  "经排版引擎导出": {
+    "en": "Exported by the layout engine",
+    "zh-Hant": "經排版引擎匯出"
   },
-  "经 LibreOffice 转换为 XLSX 读取": {
-    "en": "Converts to XLSX with LibreOffice for reading",
-    "zh-Hant": "經 LibreOffice 轉換為 XLSX 讀取"
+  "经格式转换为 XLSX 读取": {
+    "en": "Converted to XLSX for reading",
+    "zh-Hant": "經格式轉換為 XLSX 讀取"
   },
   "转换为 XLSX 模板": {
     "en": "Converts to an XLSX template",
@@ -250,9 +260,9 @@ export const serverMessages = {
     "en": "Untouched parts are retained; only paragraphs containing fields are rewritten",
     "zh-Hant": "未修改部件原樣保留；只改寫包含字段的段落"
   },
-  "经 LibreOffice 转换为 DOCX 读取": {
-    "en": "Converts to DOCX with LibreOffice for reading",
-    "zh-Hant": "經 LibreOffice 轉換為 DOCX 讀取"
+  "经格式转换为 DOCX 读取": {
+    "en": "Converted to DOCX for reading",
+    "zh-Hant": "經格式轉換為 DOCX 讀取"
   },
   "同 DOCX": {
     "en": "Same as DOCX",
@@ -302,9 +312,9 @@ export const serverMessages = {
     "en": "Filled fields flatten to page text with an embedded Chinese font subset",
     "zh-Hant": "填寫後扁平化為頁面文字（嵌入中文字體子集）"
   },
-  "有文字层优先直接提取；无文字层时本地 Tesseract OCR（chi_sim+eng），识别词含置信度，低置信度需人工确认，可逐项修正": {
-    "en": "Uses existing text layers first; otherwise runs local Tesseract (chi_sim+eng). Recognized words include confidence; low-confidence values require manual confirmation and can be corrected individually.",
-    "zh-Hant": "有文字層優先直接提取；無文字層時本地 Tesseract OCR（chi_sim+eng），識別詞含置信度，低置信度需人工確認，可逐項修正"
+  "有文字层优先直接提取；无文字层时本地文字识别（中文+英文），识别词含置信度，低置信度需人工确认，可逐项修正": {
+    "en": "Uses existing text layers first; otherwise runs local text recognition (Chinese + English). Recognized words include confidence; low-confidence values require manual confirmation and can be corrected individually.",
+    "zh-Hant": "有文字層優先直接提取；無文字層時本機文字辨識（中文+英文），識別詞含置信度，低置信度需人工確認，可逐項修正"
   },
   "原始图像预览与识别文字分开保存": {
     "en": "Original image previews and recognized text are stored separately",
@@ -342,9 +352,9 @@ export const serverMessages = {
     "en": "Untouched parts are retained",
     "zh-Hant": "未修改部件原樣保留"
   },
-  "经 LibreOffice 转换为 PPTX": {
-    "en": "Converts to PPTX with LibreOffice",
-    "zh-Hant": "經 LibreOffice 轉換為 PPTX"
+  "经格式转换为 PPTX": {
+    "en": "Converted to PPTX",
+    "zh-Hant": "經格式轉換為 PPTX"
   },
   "同 PPTX": {
     "en": "Same as PPTX",
@@ -689,13 +699,13 @@ export const serverMessages = {
     "en": "{format} (same size as template image)",
     "zh-Hant": "{format}（與模板圖片同尺寸）"
   },
-  "PDF（经 LibreOffice 转换）": {
-    "en": "PDF (converted with LibreOffice)",
-    "zh-Hant": "PDF（經 LibreOffice 轉換）"
+  "PDF（经排版引擎转换）": {
+    "en": "PDF (converted by the layout engine)",
+    "zh-Hant": "PDF（經排版引擎轉換）"
   },
-  "未检测到 LibreOffice，无法转换 PDF": {
-    "en": "LibreOffice was not detected; PDF conversion is unavailable",
-    "zh-Hant": "未檢測到 LibreOffice，無法轉換 PDF"
+  "此部署未启用排版引擎，无法导出 PDF": {
+    "en": "PDF export is unavailable: the layout engine is not enabled on this server",
+    "zh-Hant": "此部署未啟用排版引擎，無法匯出 PDF"
   },
   "CSV（仅第一个工作表的值，不含样式）": {
     "en": "CSV (first worksheet values only, without styles)",
@@ -729,9 +739,9 @@ export const serverMessages = {
     "en": "Footer (section {section})",
     "zh-Hant": "頁腳（第 {section} 節）"
   },
-  "当前部署使用 pdfium 引擎（未安装或未启用 AGPL 许可的 PyMuPDF），PDF 模板不可用；PDF 来源文件的读取、预览、OCR 与取值不受影响。如需 PDF 模板，请按 docs/DEPENDENCIES.md 启用 PyMuPDF": {
-    "en": "PDF templates require PyMuPDF, which is not installed or enabled in this pdfium deployment. Source PDF reading, preview, OCR and value extraction remain available. See docs/DEPENDENCIES.md to enable PyMuPDF.",
-    "zh-Hant": "當前部署使用 pdfium 引擎（未安裝或未啓用 AGPL 許可的 PyMuPDF），PDF 模板不可用；PDF 來源文件的讀取、預覽、OCR 與取值不受影響。如需 PDF 模板，請按 docs/DEPENDENCIES.md 啓用 PyMuPDF"
+  "当前部署的 PDF 引擎处于基础模式，PDF 模板不可用；PDF 来源文件的读取、预览、OCR 与取值不受影响。如需 PDF 模板，请管理员按部署文档启用 PDF 引擎完整模式": {
+    "en": "The PDF engine on this server runs in basic mode, so PDF templates are unavailable. Source PDF reading, preview, OCR and value extraction remain available. Ask an administrator to enable the PDF engine's full mode (see the deployment guide).",
+    "zh-Hant": "當前部署的 PDF 引擎處於基礎模式，PDF 模板不可用；PDF 來源文件的讀取、預覽、OCR 與取值不受影響。如需 PDF 模板，請管理員按部署文件啟用 PDF 引擎完整模式"
   },
   "图片模板需要一个可绘制中文的字体文件，但本机没有找到。请安装中文字体（Debian/Ubuntu：apt install fonts-noto-cjk），或用 SYNWEVO_DOCS_CJK_FONT_FILE 指定字体文件路径": {
     "en": "Image templates require a Chinese font. Install a CJK font (Debian/Ubuntu: apt install fonts-noto-cjk) or configure SYNWEVO_DOCS_CJK_FONT_FILE.",

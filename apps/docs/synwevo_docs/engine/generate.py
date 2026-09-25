@@ -50,7 +50,7 @@ def fill_checked(template_format: str, work: bytes, slots: list[dict], plan: Pla
         # That must be said on every document, and under "fit" (a page guarantee) it is not
         # a success at all.
         out, issues = fill_native(template_format, work, slots, plan, options)
-        issues.append(_layout_unavailable(layout_mode, "无法计算模板本身的页数（未安装 LibreOffice，或模板排版失败）"))
+        issues.append(_layout_unavailable(layout_mode, "无法计算模板本身的页数（排版引擎未启用，或模板排版失败）"))
         return out, issues, None
     from . import layout as L
     try:
@@ -97,7 +97,7 @@ def fill_checked(template_format: str, work: bytes, slots: list[dict], plan: Pla
 def _layout_unavailable(layout_mode: str, reason: str) -> dict:
     if layout_mode == "fit":
         return {"level": "error", "code": "layout_unavailable",
-                "message": f"{reason}，无法保证页数不增加（layout=fit），因此不产出这一份；可安装 LibreOffice，或改用 layout=warn / off"}
+                "message": f"{reason}，无法保证页数不增加（layout=fit），因此不产出这一份；可请管理员启用排版引擎，或改用 layout=warn / off"}
     return {"level": "warning", "code": "layout_unavailable", "message": f"{reason}，本份未做分页检查"}
 
 
@@ -118,8 +118,8 @@ def export_formats(template_format: str, soffice_available: bool) -> list[dict]:
     fmt = native_format(template_format)
     out = [{"format": fmt, "label": f"{fmt.upper()}（模板原生格式）", "available": True, "native": True}]
     if fmt in ("docx", "xlsx", "pptx"):
-        out.append({"format": "pdf", "label": "PDF（经 LibreOffice 转换）", "available": soffice_available,
-                    "reason": None if soffice_available else "未检测到 LibreOffice，无法转换 PDF"})
+        out.append({"format": "pdf", "label": "PDF（经排版引擎转换）", "available": soffice_available,
+                    "reason": None if soffice_available else "此部署未启用排版引擎，无法导出 PDF"})
     if fmt == "xlsx":
         out.append({"format": "csv", "label": "CSV（仅第一个工作表的值，不含样式）", "available": True,
                     "note": "CSV 只保存单元格值，不保存字体、颜色、合并单元格和多工作表；公式写出计算结果"})
@@ -143,7 +143,8 @@ def convert_output(native_bytes: bytes, native_fmt: str, target: str, options: d
         return native_bytes, issues
     if target == "pdf" and native_fmt in ("docx", "xlsx", "pptx"):
         from .converters import convert
-        return convert(native_bytes, native_fmt, "pdf"), issues
+        from .pdf_engine import stamp_output_metadata
+        return stamp_output_metadata(convert(native_bytes, native_fmt, "pdf")), issues
     if target == "csv" and native_fmt == "xlsx":
         return xlsx_to_csv(native_bytes, issues), issues
     if target == "pdf" and native_fmt in IMAGE_FORMATS:
@@ -185,7 +186,7 @@ def xlsx_to_csv(data: bytes, issues: list[dict]) -> bytes:
     ws, wv = wbf.worksheets[0], wbv.worksheets[0]
     missing = _uncomputed_formulas(data)
     if missing:
-        raise T.TemplateError("formula_uncomputed", f"第一个工作表有 {len(missing)} 个公式无法在服务器计算（如 {'、'.join(missing[:3])}），CSV 无法写出它们的结果；请改为导出 XLSX 或安装 LibreOffice")
+        raise T.TemplateError("formula_uncomputed", f"第一个工作表有 {len(missing)} 个公式无法在服务器计算（如 {'、'.join(missing[:3])}），CSV 无法写出它们的结果；请改为导出 XLSX，或请管理员启用排版引擎")
     out = io.StringIO()
     wr = csv.writer(out, lineterminator="\r\n")
     for row, vrow in zip(ws.iter_rows(), wv.iter_rows()):

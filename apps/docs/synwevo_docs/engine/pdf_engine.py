@@ -63,6 +63,28 @@ def use_engine(name: str) -> str:
     return prev
 
 
+def stamp_output_metadata(data: bytes) -> bytes:
+    """A delivered PDF says which product made it. The layout engine that converted the
+    document writes its own name into Producer/Creator; those two fields describe the pipeline,
+    not the person's document, so they become the product's name. Everything the person's
+    template carried (author, title, subject, keywords, dates) is kept untouched. Only the
+    full-mode engine can rewrite the trailer; in basic mode the bytes are returned as they are,
+    which the capability record documents."""
+    if ENGINE != "pymupdf":
+        return data
+    from synwevo_core.config import DOCS_NAME
+    try:
+        doc = pymupdf.open(stream=data, filetype="pdf")
+        meta = dict(doc.metadata or {})
+        if meta.get("producer") == DOCS_NAME and meta.get("creator") == DOCS_NAME:
+            return data
+        meta.update(producer=DOCS_NAME, creator=DOCS_NAME)
+        doc.set_metadata({k: v for k, v in meta.items() if k != "format" and v is not None})
+        return doc.tobytes(garbage=0, deflate=False, incremental=False)
+    except Exception:  # noqa: BLE001 - a PDF that cannot be re-saved is still the person's output
+        return data
+
+
 def pdf_templates_available() -> bool:
     """PDF templates need an engine that can rewrite page content (PyMuPDF today)."""
     return ENGINE == "pymupdf"
@@ -82,8 +104,8 @@ def templates_available() -> bool:      # kept: older callers mean "PDF template
     return pdf_templates_available()
 
 
-TEMPLATES_UNAVAILABLE = ("当前部署使用 pdfium 引擎（未安装或未启用 AGPL 许可的 PyMuPDF），PDF 模板不可用；"
-                         "PDF 来源文件的读取、预览、OCR 与取值不受影响。如需 PDF 模板，请按 docs/DEPENDENCIES.md 启用 PyMuPDF")
+TEMPLATES_UNAVAILABLE = ("当前部署的 PDF 引擎处于基础模式，PDF 模板不可用；"
+                         "PDF 来源文件的读取、预览、OCR 与取值不受影响。如需 PDF 模板，请管理员按部署文档启用 PDF 引擎完整模式")
 IMAGE_TEMPLATES_UNAVAILABLE = ("图片模板需要一个可绘制中文的字体文件，但本机没有找到。请安装中文字体"
                                "（Debian/Ubuntu：apt install fonts-noto-cjk），或用 SYNWEVO_DOCS_CJK_FONT_FILE 指定字体文件路径")
 

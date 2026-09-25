@@ -142,19 +142,19 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose }: { p
                 </label>
               ))}
               {native === "xlsx" && (
-                <div className="notice small">{tr("公式由内置公式引擎计算并写入结果（")}{">"}{tr("90 个常用函数）；少数不支持的函数会自动改用 LibreOffice 计算，结果清单中会注明。")}</div>
+                <div className="notice small">{tr("公式由内置公式引擎计算并写入结果（")}{">"}{tr("90 个常用函数）；少数不支持的函数会自动改由排版引擎计算，结果清单中会注明。")}</div>
               )}
               {pageable && (
                 <>
                   <h3 className="mt8">{tr("分页检查")}</h3>
                   <select className="input" value={layout} onChange={(e) => setLayout(e.target.value)} aria-label={tr("分页检查")}>
                     <option value="off">{tr("不检查（最快）")}</option>
-                    <option value="warn">{tr("逐份用 LibreOffice 排版，页数多于模板时提示")}</option>
+                    <option value="warn">{tr("逐份用排版引擎排版，页数多于模板时提示")}</option>
                     <option value="fit">{tr("保持模板页数：先缩小允许缩小的字段，仍超出则该份失败")}</option>
                   </select>
                   <div className="tiny muted">
                     {layout === "off" ? tr("新内容更长时分页可能变化；可在预览中打开「真实分页」查看。") :
-                      layout === "warn" ? tr("每份多一次 LibreOffice 排版（约 1 秒）；超出的样本会在结果清单中标出。") :
+                      layout === "warn" ? tr("每份多一次排版引擎排版（约 1 秒）；超出的样本会在结果清单中标出。") :
                         hasShrink ? tr("只缩小字段设置中勾选了「超长时允许缩小字号」的字段，每一步都重新排版确认，不会估算。") :
                           tr("模板中还没有字段勾选「超长时允许缩小字号」：超出页数的样本会直接失败。")}
                   </div>

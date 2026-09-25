@@ -911,6 +911,34 @@ XLS/ODS/DOC 经 LibreOffice 的路径只在引擎单测覆盖，本轮未在导�
 
 **未做/外部条件**：反向或组织间复制、审批人裁剪清单、邮件一键批准（决定必须在会话内重认证）均不做；生产复制执行器随 Docs 角色单 worker，
 多实例时 `claim_approved` 条件更新保证一次。
+### 16.28 自有界面只写能力名：词表、守卫、例外表与产物元数据（CI-28）
+
+**盘点**（源码 + 隔离实例三语言实跑，2026-09-26）：Docs 能力矩阵、生成对话框、预览徽标、OCR 按钮、关于页正文、编辑器提示、模板选择器与引擎错误/说明
+文案写出 LibreOffice（81 处）、PyMuPDF/pdfium（22）、Tesseract（19）、xlrd；账户外壳把拦截网关按厂商命名；任务校验徽标提示写出 python-docx/openpyxl/PDFium/Pillow；
+经排版引擎转换的 PDF 产物 `Producer`/`Creator` 是转换器的名字。词表、边界与不改的项：`docs/platform/component-names.md`。
+
+**守卫** `scripts/check_component_names.py`：扫描前端消息目录与 `tr()/t()` 字面量、六个 Python 包的自然语言字面量（错误、说明、能力行、邮件），
+排除注释/文档字符串/标识符/URL/测试；`licensing.py` 整文件是归属页；`STABLE` 逐条写理由（当前 1 条：能力矩阵的许可声明字段 + 其三语言）。
+首次运行 151 处；改完 0 处。已接入 CI verify、CLAUDE.md、AGENTS.md。
+
+**改动**：后端 13 个模块 40 余条文案；`messages.server.ts` 19 条键与三语言、`messages.ts` 10 条改写 + 9 条新能力名；8 个组件/页面；`jobview.ts` 校验 `engine`
+从库名改为格式族 id 并显示能力名；`auth-client/api.ts` 网关文案只说角色、厂商线索进 `detail.server`；`pdf_engine.stamp_output_metadata` 在完整模式下把转换得到的
+PDF 产物 `Producer`/`Creator` 写成 Synwevo Docs、保留模板自带的作者/标题/关键词（基础模式原样返回）。测试更新 4 处，新增 `test_output_metadata.py`（2 项）。
+
+**接口/单元**：Docs 套件全部通过（含更新的 `test_pdfium_engine`、`test_image_raster`、`test_image_template`）；外壳测试通过（`api-i18n` 的网关断言改为角色文案 + `detail.server`）；
+真实转换验证：python-docx 生成的 DOCX 经 `convert_output` → PDF 的 metadata 为 `creator/producer = Synwevo Docs`，`author` 保持模板值。
+
+**浏览器（隔离实例，Chromium + WebKit）**，`services/identity/scripts/ui_e2e_component_names.py`：
+
+```
+== chromium (Google Chrome)
+  - capability matrix, About page prose and home are free of component names in zh-Hans / zh-Hant / en; the licence table still attributes the PDF engine
+  - project, preview, generate dialog and the finished job (three languages, tooltips included) name readers and engines by capability only
+== webkit（两条同上）
+```
+
+**不改/做不到**：关于与许可页的组件表与 AGPL 通知；人机验证 iframe 内的供应商品牌（不在 Synwevo 控制范围，若要去除是「是否继续使用该供应商」的产品决定）；
+PDF 引擎基础模式下的 PDF 产物元数据；Google/Microsoft 登录主体。
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

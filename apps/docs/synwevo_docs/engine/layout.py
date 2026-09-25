@@ -36,7 +36,7 @@ def render_pdf(data: bytes, fmt: str) -> bytes:
     if fmt == "pdf":
         return data
     if not soffice_path():
-        raise LayoutUnavailable("未安装 LibreOffice，无法计算真实分页")
+        raise LayoutUnavailable("排版引擎未启用，无法计算真实分页")
     key = hashlib.sha256(data).hexdigest() + fmt
     with _LOCK:
         if key in _PDF_CACHE:

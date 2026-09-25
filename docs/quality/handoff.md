@@ -84,7 +84,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-24 | 机构邮箱注册（CUHK）：根因定位到收件网关（Trend Micro）之后；校验器不再 500、正文 QP、收件页发件人与网关提示、活跃账户再注册寄提示 | 已部署（544f607） | 真实 CUHK 收件、SMTP2GO Activity 记录、SPF/发件域验证/跟踪关闭/From 改域均为账户持有人或运营步骤（operations.md §6.1）；验证脚本 `ui_e2e_institutional_mail.py` |
 | CI-25 | 多格式成员批量导入（核心模块 + Docs 读取器注入 + 账户路由/执行器 + 组织页向导 + 接受时分配角色） | 已部署（33f17c6） | 生产 accounts 容器合并 compose 的扫描器两项；`docs/platform/member-import.md` 是权威记录；脚本 `ui_e2e_member_import.py` |
 | CI-26 | 组织内私聊与群聊（核心模块 + REST/SSE + 页面 + 平台栏徽标 + 通知事件 + 附件接纳链 + 撤权关门） | 已部署（085667e + 构建修复 7d4d567） | Docs 链接卡片、Web Push、多 worker 事件总线未做；`docs/platform/messaging.md` 是权威记录；脚本 `ui_e2e_messaging.py` |
-| CI-27 | 个人 Docs 项目经目标审批复制到组织工作空间（核心状态机 + Docs 清单/执行器/路由 + 账户审批路由 + 组织页审批区 + Docs 对话框 + 通知事件） | 已实现（本机），待推送 | 反向/组织间复制、审批人裁剪清单不做；`docs/platform/project-copy.md` 是权威记录；测试 `tests/integration/test_project_copy.py`；脚本 `ui_e2e_project_copy.py` |
+| CI-27 | 个人 Docs 项目经目标审批复制到组织工作空间（核心状态机 + Docs 清单/执行器/路由 + 账户审批路由 + 组织页审批区 + Docs 对话框 + 通知事件） | 已部署（bcf8729） | 反向/组织间复制、审批人裁剪清单不做；`docs/platform/project-copy.md` 是权威记录；测试 `tests/integration/test_project_copy.py`；脚本 `ui_e2e_project_copy.py` |
 
 已核对、无需改动（记录以免重复研究）：
 
@@ -96,6 +96,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 * **批量生成性能**：2026-09-25 复测无退化（verification.md §16.8）。
 * **API 幂等**（对照 Stripe「Idempotent requests」，访问 2026-09-25）：Stripe——所有 POST 接受键、键 ≤255 字符、保存首个响应含 500、24 小时后清理、参数不同即报错、并发冲突不保存。Synwevo（api.md §3「幂等」）——按主体+租户+作用域+键、24 小时 TTL 可配、内容不同 `409 idempotency_conflict`、并发由唯一约束裁决、不确定结果 `409 idempotency_outcome_unknown` 且不清理、不支持的操作显式 `400 idempotency_not_supported`。语义等价或更严格；差异只在 Stripe 保存 5xx 结果而 Synwevo 让失败的创建可重试，这是有意选择。无需改动。
 
+| CI-28 | 自有界面只写能力名（词表 + 守卫 + 例外表 + PDF 产物元数据） | 已实现（本机），待推送 | 人机验证 iframe 内的供应商品牌、基础模式 PDF 元数据、关于页归属表按记录不改；`docs/platform/component-names.md` 是权威记录；脚本 `ui_e2e_component_names.py` |
 候选队列（按风险与价值，2026-09-26 更新；第九节的批次顺序见 docs/platform/notifications.md §7 与 handoff 本表）：
 - 运营/账户持有人（CI-24 接续）：SMTP2GO Activity 查 `1xA8Ua-AIkwcC8lNJx-F8I8` 的最终投递；`hikosphere.com` SPF 加 `include:spf.smtp2go.com`；在 SMTP2GO 验证发件域（对齐回信地址与 DKIM）并关闭事务邮件链接/打开跟踪；评估把 From 改到 `wegreen.ltd`（mailcow 已发布其 DKIM）。
 第九节余下批次——多格式成员导入（CI-25，已部署）、私聊/群聊（CI-26）、个人项目复制审批（CI-27）均已交付；第三方组件名清理（CI-28）与 Docs 升级（§9.8）待做；

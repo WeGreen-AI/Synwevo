@@ -91,9 +91,9 @@ test("editing detail columns preserves constants, occurrence and transforms", ()
 });
 
 test("an output is called 已校验 only when values were compared", () => {
-  assert.equal(verificationBadge({ reopened: true, checks: 0, engine: "PDFium" })?.label, "已重新打开");
-  assert.equal(verificationBadge({ reopened: true, checks: 0, engine: "Pillow", note: "图片" })?.label, "已重新打开");
-  assert.equal(verificationBadge({ reopened: true, checks: 5, engine: "openpyxl" })?.label, "✓ 已校验");
+  assert.equal(verificationBadge({ reopened: true, checks: 0, engine: "pdf" })?.label, "已重新打开");
+  assert.equal(verificationBadge({ reopened: true, checks: 0, engine: "image", note: "图片" })?.label, "已重新打开");
+  assert.equal(verificationBadge({ reopened: true, checks: 5, engine: "xlsx" })?.label, "✓ 已校验");
   assert.equal(verificationBadge({ error: "输出文件无法重新打开" })?.tone, "err");
   assert.equal(verificationBadge({ reopened: true, checks: 3, missing: [{}] })?.tone, "warn");
   assert.equal(verificationBadge(null), null);

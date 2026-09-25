@@ -80,11 +80,11 @@ def ocr_png(png: bytes, langs: str = "chi_sim+eng", psm: int = 3) -> dict:
     """OCR a PNG image.  Returns {'w', 'h', 'words': [{'t', 'r' (normalised), 'conf', 'line'}], 'engine'}"""
     exe = tesseract_path()
     if not exe:
-        raise OcrError("未安装 Tesseract OCR，无法识别扫描件/图片（安装说明见 docs/DEPLOY.md）")
+        raise OcrError("本地文字识别未启用，无法识别扫描件/图片（部署说明见 docs/DEPLOY.md）")
     have = available_langs()
     use = [l for l in langs.split("+") if l in have] or (["eng"] if "eng" in have else [])
     if not use:
-        raise OcrError("Tesseract 缺少识别语言数据（chi_sim / eng）")
+        raise OcrError("文字识别缺少语言数据（中文简体 / 英文）")
     from PIL import Image
     im = Image.open(io.BytesIO(png))
     w, h = im.size
@@ -108,7 +108,7 @@ def ocr_png(png: bytes, langs: str = "chi_sim+eng", psm: int = 3) -> dict:
         if proc.returncode != 0:
             raise OcrError("OCR 失败：" + err[-300:])
         if "Failed loading language" in err or "Error opening data file" in err:
-            raise OcrError("Tesseract 无法加载识别语言数据：" + err.strip()[-300:])
+            raise OcrError("文字识别无法加载语言数据：" + err.strip()[-300:])
     words = []
     reader = csv.DictReader(io.StringIO(proc.stdout.decode("utf-8", "ignore")), delimiter="\t", quoting=csv.QUOTE_NONE)
     for row in reader:

@@ -307,7 +307,7 @@ def _split_pdf_pages(src: SourceDoc, is_start, end_m) -> list[Block]:
         lines = _pdf_lines(doc[pno], (src.ocr or {}).get(str(pno)))
         hits = [t for _, t in lines if is_start(t)]
         if len(hits) > 1:
-            raise ResolveError("engine_limited", f"「{src.filename}」第 {pno + 1} 页有 {len(hits)} 个表单块；当前 pdfium 引擎只能按整页切分（页内切分需要启用 PyMuPDF）")
+            raise ResolveError("engine_limited", f"「{src.filename}」第 {pno + 1} 页有 {len(hits)} 个表单块；PDF 引擎基础模式只能按整页切分（页内切分需要完整模式）")
         if hits:
             starts.append((pno, hits[0]))
     if not starts:

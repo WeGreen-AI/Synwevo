@@ -597,7 +597,7 @@ def calc_issues(rep: dict | None) -> list[dict]:
         reasons = "、".join(sorted({why for _, _, why in rep["unsupported"]}))[:120]
         fb = rep.get("fallback")
         if fb == "libreoffice":
-            out.append({"level": "info", "code": "formula_fallback", "message": f"{len(rep['unsupported'])} 个公式（{reasons}）由 LibreOffice 计算：{cells}"})
+            out.append({"level": "info", "code": "formula_fallback", "message": f"{len(rep['unsupported'])} 个公式（{reasons}）由排版引擎计算：{cells}"})
         elif fb == "blocked":
             out.append({"level": "warning", "code": "formula_unsupported",
                         "message": f"{len(rep['unsupported'])} 个公式无法在服务器计算（{reasons}）；工作簿含联网或外部链接的公式（WEBSERVICE、DDE、外部工作簿等），"
@@ -705,8 +705,8 @@ def image_add_slot(image_bytes: bytes, req: dict, slots: list[dict]) -> dict:
     kind = req.get("kind", "pdf_box")
     if kind != "pdf_box":
         raise TemplateError("raster_kind_unsupported",
-                            "无 PyMuPDF 的部署目前只支持图片模板的单值文本框字段；重复明细区域请按 "
-                            "docs/DEPENDENCIES.md 启用 PyMuPDF")
+                            "当前部署的 PDF 引擎处于基础模式，图片模板只支持单值文本框字段；"
+                            "重复明细区域需要管理员按部署文档启用 PDF 引擎完整模式")
     im = open_image(image_bytes).convert("RGB")
     W, H = im.size
     r = [float(v) for v in req["rect"]]

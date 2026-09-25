@@ -93,8 +93,8 @@ def fill(original: bytes, slots: list[dict], values: dict[str, dict], meta: dict
         if slot.get("layout"):
             # even an empty detail area would keep the template's sample rows: never deliver that
             issues.append({"level": "error", "slot": slot["id"], "code": "raster_repeat_unsupported",
-                           "message": f"字段「{slot.get('name')}」是重复明细区域：无 PyMuPDF 的部署暂不支持图片模板的重复明细，"
-                                      f"请改用单值字段，或按 docs/DEPENDENCIES.md 启用 PyMuPDF"})
+                           "message": f"字段「{slot.get('name')}」是重复明细区域：当前部署的 PDF 引擎处于基础模式，暂不支持图片模板的重复明细，"
+                                      f"请改用单值字段，或请管理员按部署文档启用 PDF 引擎完整模式"})
             continue
         box = _box(slot)
         if box[2] - box[0] < 1 or box[3] - box[1] < 1:

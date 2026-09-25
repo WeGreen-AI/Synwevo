@@ -91,7 +91,7 @@ def test_repeat_areas_are_refused_with_a_specific_reason_not_a_generic_error(api
     assert out == b""
     codes = [i["code"] for i in issues]
     assert "raster_repeat_unsupported" in codes, issues
-    assert "PyMuPDF" in issues[0]["message"], "必须说明如何取得该能力"
+    assert "完整模式" in issues[0]["message"], "必须说明如何取得该能力"
 
 
 def test_overflowing_text_fails_instead_of_being_silently_clipped(api, fixtures, pdfium):

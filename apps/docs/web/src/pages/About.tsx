@@ -31,7 +31,7 @@ export default function AboutPage() {
               <tbody>{a.third_party.map((t) => <tr key={t.name}><td>{serverText(t.name)}</td><td>{serverText(t.license)}</td><td className="muted">{serverText(t.role)}</td></tr>)}</tbody>
             </table>
           </div>
-          <div className="notice small">{tr("所有文件都在本服务所在的服务器上处理，不发送到外部服务；OCR 使用本机 Tesseract，格式转换与分页计算使用本机 LibreOffice。")}</div>
+          <div className="notice small">{tr("所有文件都在本服务所在的服务器上处理，不发送到外部服务；文字识别、格式转换与分页计算都由本机引擎完成。")}</div>
         </div>
       )}
     </div>

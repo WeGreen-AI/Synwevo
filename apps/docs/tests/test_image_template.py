@@ -95,7 +95,7 @@ def test_png_template_end_to_end(api, fixtures):
         assert exp[key][0][3].replace("测试", "") in txt                        # first detail row's product name
     items = api.items(job["id"])
     ver = items[0]["artifacts"][0]["verification"]
-    assert ver["reopened"] and ver["engine"] == "Pillow"
+    assert ver["reopened"] and ver["engine"] == "image"
 
 
 def test_jpeg_template_and_pdf_export(api, fixtures):

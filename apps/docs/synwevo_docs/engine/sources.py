@@ -46,7 +46,7 @@ def parse_source(data: bytes, filename: str, options: dict | None = None) -> Par
             try:
                 working = convert(data, fmt, info["convert_via"])
                 wfmt = info["convert_via"]
-                notes.append(f"{fmt.upper()} 已通过 LibreOffice 转换为 {wfmt.upper()} 后读取；复杂排版、宏和嵌入对象可能丢失")
+                notes.append(f"{fmt.upper()} 已经格式转换为 {wfmt.upper()} 后读取；复杂排版、宏和嵌入对象可能丢失")
             except ConversionError as e:
                 if fmt == "xls":
                     wfmt = "xls"

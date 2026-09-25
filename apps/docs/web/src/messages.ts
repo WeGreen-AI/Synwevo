@@ -1198,9 +1198,9 @@ export const messages = {
     "en": "Formulas are calculated by the built-in engine and saved to the output (",
     "zh-Hant": "公式由內置公式引擎計算並寫入結果（"
   },
-  "90 个常用函数）；少数不支持的函数会自动改用 LibreOffice 计算，结果清单中会注明。": {
-    "en": "90 common functions). Unsupported functions fall back to LibreOffice; the results manifest identifies these cases.",
-    "zh-Hant": "90 個常用函數）；少數不支持的函數會自動改用 LibreOffice 計算，結果清單中會注明。"
+  "90 个常用函数）；少数不支持的函数会自动改由排版引擎计算，结果清单中会注明。": {
+    "en": "90 common functions). Unsupported functions fall back to the layout engine; the results manifest identifies these cases.",
+    "zh-Hant": "90 個常用函數）；少數不支持的函數會自動改由排版引擎計算，結果清單中會注明。"
   },
   "分页检查": {
     "en": "Pagination checks",
@@ -1210,9 +1210,9 @@ export const messages = {
     "en": "Skip checks (fastest)",
     "zh-Hant": "不檢查（最快）"
   },
-  "逐份用 LibreOffice 排版，页数多于模板时提示": {
-    "en": "Lay out each output with LibreOffice; flag extra pages",
-    "zh-Hant": "逐份用 LibreOffice 排版，頁數多於模板時提示"
+  "逐份用排版引擎排版，页数多于模板时提示": {
+    "en": "Lay out each output with the layout engine; flag extra pages",
+    "zh-Hant": "逐份用排版引擎排版，頁數多於模板時提示"
   },
   "保持模板页数：先缩小允许缩小的字段，仍超出则该份失败": {
     "en": "Keep template page count: shrink eligible fields; fail if still too long",
@@ -1222,9 +1222,9 @@ export const messages = {
     "en": "Longer content can change pagination. Use “Actual pagination” in the preview to check.",
     "zh-Hant": "新內容更長時分頁可能變化；可在預覽中打開「真實分頁」查看。"
   },
-  "每份多一次 LibreOffice 排版（约 1 秒）；超出的样本会在结果清单中标出。": {
-    "en": "Adds one LibreOffice layout pass per output (about 1 second). Extra-page cases are listed in the manifest.",
-    "zh-Hant": "每份多一次 LibreOffice 排版（約 1 秒）；超出的樣本會在結果清單中標出。"
+  "每份多一次排版引擎排版（约 1 秒）；超出的样本会在结果清单中标出。": {
+    "en": "Adds one layout-engine pass per output (about 1 second). Extra-page cases are listed in the manifest.",
+    "zh-Hant": "每份多一次排版引擎排版（約 1 秒）；超出的樣本會在結果清單中標出。"
   },
   "只缩小字段设置中勾选了「超长时允许缩小字号」的字段，每一步都重新排版确认，不会估算。": {
     "en": "Only fields allowing font shrinking are adjusted. Each step is laid out again to verify the page count.",
@@ -1818,9 +1818,9 @@ export const messages = {
     "en": "Find by sample identifier",
     "zh-Hant": "按樣本標識查找"
   },
-  "用 LibreOffice 排版后的真实页面（含分页）": {
-    "en": "Actual pages laid out with LibreOffice (including pagination)",
-    "zh-Hant": "用 LibreOffice 排版後的真實頁面（含分頁）"
+  "用排版引擎排版后的真实页面（含分页）": {
+    "en": "Actual pages laid out by the layout engine (including pagination)",
+    "zh-Hant": "用排版引擎排版後的真實頁面（含分頁）"
   },
   "✓ 真实分页": {
     "en": "✓ Actual pagination",
@@ -1866,9 +1866,45 @@ export const messages = {
     "en": "Preview and batch generation use the same parsing, mapping and formatting rules",
     "zh-Hant": "預覽與批量生成使用同一套解析、映射與格式規則"
   },
-  "正在用 LibreOffice 排版…": {
-    "en": "Laying out with LibreOffice…",
-    "zh-Hant": "正在用 LibreOffice 排版…"
+  "；本地文字识别：": {
+    "en": "; Local text recognition: ",
+    "zh-Hant": "；本機文字辨識："
+  },
+  "已启用": {
+    "en": "Enabled",
+    "zh-Hant": "已啟用"
+  },
+  "未启用": {
+    "en": "Not enabled",
+    "zh-Hant": "未啟用"
+  },
+  "文档读取器": {
+    "en": "the document reader",
+    "zh-Hant": "文件讀取器"
+  },
+  "表格读取器": {
+    "en": "the spreadsheet reader",
+    "zh-Hant": "試算表讀取器"
+  },
+  "PDF 引擎": {
+    "en": "the PDF engine",
+    "zh-Hant": "PDF 引擎"
+  },
+  "演示文稿读取器": {
+    "en": "the presentation reader",
+    "zh-Hant": "簡報讀取器"
+  },
+  "CSV 读取器": {
+    "en": "the CSV reader",
+    "zh-Hant": "CSV 讀取器"
+  },
+  "图像读取器": {
+    "en": "the image reader",
+    "zh-Hant": "圖像讀取器"
+  },
+  "正在用排版引擎排版…": {
+    "en": "Laying out with the layout engine…",
+    "zh-Hant": "正在用排版引擎排版…"
   },
   "模板 ": {
     "en": "Template ",
@@ -3426,9 +3462,9 @@ export const messages = {
     "en": "choose a file",
     "zh-Hant": "點擊選擇"
   },
-  "支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 图片（直接输出同尺寸图片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 会经 LibreOffice 转换（会提示可能的版式变化），BMP/TIFF/WEBP 输出为 PNG": {
-    "en": "Supports DOCX, XLSX, PDF, PPTX and PNG/JPEG images (same-size image output). DOC/XLS/PPT/ODT/ODS/ODP/RTF are converted with LibreOffice with layout warnings. BMP/TIFF/WEBP output as PNG.",
-    "zh-Hant": "支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 圖片（直接輸出同尺寸圖片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 會經 LibreOffice 轉換（會提示可能的版式變化），BMP/TIFF/WEBP 輸出為 PNG"
+  "支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 图片（直接输出同尺寸图片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 会先经格式转换（会提示可能的版式变化），BMP/TIFF/WEBP 输出为 PNG": {
+    "en": "Supports DOCX, XLSX, PDF, PPTX and PNG/JPEG images (same-size image output). DOC/XLS/PPT/ODT/ODS/ODP/RTF are converted first, with layout warnings. BMP/TIFF/WEBP output as PNG.",
+    "zh-Hant": "支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 圖片（直接輸出同尺寸圖片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 會先經格式轉換（會提示可能的版式變化），BMP/TIFF/WEBP 輸出為 PNG"
   },
   "上传后在右侧预览中选中文字、单元格、表格行，或在 PDF / 图片上框选区域，点击「设为待填区域」即可创建字段。原始模板保持不变，所有修改保存在工作副本中，可撤销/重做。": {
     "en": "After uploading, select text, cells, rows or a PDF/image region in the preview and click “Set as fillable region”. The original stays unchanged; edits are saved to a working copy with undo/redo.",
@@ -3846,9 +3882,9 @@ export const messages = {
     "en": "Next match",
     "zh-Hant": "下一個查找結果"
   },
-  "使用本地 Tesseract（中文+英文）识别扫描页，不上传文件": {
-    "en": "Recognize scanned pages locally with Tesseract (Chinese + English); files are not uploaded",
-    "zh-Hant": "使用本地 Tesseract（中文+英文）識別掃描頁，不上傳文件"
+  "使用本地文字识别（中文+英文）识别扫描页，不上传文件": {
+    "en": "Recognize scanned pages with local text recognition (Chinese + English); files are not uploaded",
+    "zh-Hant": "使用本機文字辨識（中文+英文）辨識掃描頁，不上傳文件"
   },
   "识别中…": {
     "en": "Recognizing…",
@@ -4358,9 +4394,9 @@ export const messages = {
     "en": "Purpose",
     "zh-Hant": "用途"
   },
-  "所有文件都在本服务所在的服务器上处理，不发送到外部服务；OCR 使用本机 Tesseract，格式转换与分页计算使用本机 LibreOffice。": {
-    "en": "All files are processed on this server without external transmission. OCR uses local Tesseract; conversion and pagination use local LibreOffice.",
-    "zh-Hant": "所有文件都在本服務所在的服務器上處理，不發送到外部服務；OCR 使用本機 Tesseract，格式轉換與分頁計算使用本機 LibreOffice。"
+  "所有文件都在本服务所在的服务器上处理，不发送到外部服务；文字识别、格式转换与分页计算都由本机引擎完成。": {
+    "en": "All files are processed on this server without external transmission; text recognition, conversion and pagination run on local engines.",
+    "zh-Hant": "所有文件都在本服務所在的伺服器上處理，不發送到外部服務；文字辨識、格式轉換與分頁計算都由本機引擎完成。"
   },
   "删除回归用例": {
     "en": "Delete regression case",
@@ -4446,9 +4482,9 @@ export const messages = {
     "en": "PDF export",
     "zh-Hant": "PDF 導出"
   },
-  "本表由当前服务端实时生成：已安装 LibreOffice：": {
-    "en": "Generated live by the current server. LibreOffice installed: ",
-    "zh-Hant": "本表由當前服務端實時生成：已安裝 LibreOffice："
+  "本表由当前服务端实时生成：排版引擎：": {
+    "en": "Generated live by the current server. Layout engine: ",
+    "zh-Hant": "本表由當前服務端實時生成：排版引擎："
   },
   "否": {
     "en": "No",
@@ -4854,9 +4890,9 @@ export const messages = {
     "en": "Footer",
     "zh-Hant": "頁腳"
   },
-  "编辑区为近似排版；实际分页以 Word / LibreOffice 打开 DOCX 为准。": {
-    "en": "The editor approximates layout. Actual pagination is determined by opening the DOCX in Word / LibreOffice.",
-    "zh-Hant": "編輯區為近似排版；實際分頁以 Word / LibreOffice 打開 DOCX 為準。"
+  "编辑区为近似排版；实际分页以桌面办公软件打开 DOCX 为准。": {
+    "en": "The editor approximates layout. Actual pagination is determined by opening the DOCX in a desktop office application.",
+    "zh-Hant": "編輯區為近似排版；實際分頁以桌面辦公軟體打開 DOCX 為準。"
   },
   "表格模板": {
     "en": "Spreadsheet template",

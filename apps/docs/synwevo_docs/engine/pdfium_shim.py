@@ -280,7 +280,7 @@ class Page:
         if kind == "text":
             return self._text
         if kind == "dict":
-            raise _Unsupported("pdfium 引擎不提供文字样式信息")
+            raise _Unsupported("PDF 引擎基础模式不提供文字样式信息")
         raise _Unsupported(f"不支持的文字提取方式：{kind}")
 
     def _image_boxes(self):

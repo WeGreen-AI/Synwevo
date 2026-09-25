@@ -75,7 +75,7 @@ test('gateway identity, application request id and retry information survive loc
   setLocale('en');
   try {
     globalThis.fetch = async () => new Response('<html>blocked</html>', { status: 503, headers: { Server: 'cloudflare' } });
-    await assert.rejects(api('/api/fixture'), (e: any) => e instanceof ApiError && e.upstream && e.code === 'upstream_unavailable' && e.message.includes('Cloudflare could not reach Synwevo (HTTP 503)'));
+    await assert.rejects(api('/api/fixture'), (e: any) => e instanceof ApiError && e.upstream && e.code === 'upstream_unavailable' && e.message.includes('Gateway could not reach Synwevo (HTTP 503)') && !/cloudflare/i.test(e.message) && e.detail?.server === 'cloudflare');
     globalThis.fetch = async () => new Response(JSON.stringify({ error: 'rate_limited', message: 'backend diagnostic', request_id: 'request-429' }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '8' } });
     await assert.rejects(api('/api/fixture'), (e: any) => e.code === 'rate_limited' && e.retryAfter === 8 && e.requestId === 'request-429' && e.message.includes('Too many requests.') && !e.message.includes('backend diagnostic'));
   } finally { globalThis.fetch = original; setLocale('zh-Hans'); }

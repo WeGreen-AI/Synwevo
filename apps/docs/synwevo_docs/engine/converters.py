@@ -49,9 +49,9 @@ def _private_base() -> None:
         _PROFILE_BASE.mkdir(mode=0o700, parents=True, exist_ok=True)
         st = os.lstat(_PROFILE_BASE)
     except OSError as e:
-        raise ConversionError(f"无法创建 LibreOffice 配置目录：{e}") from e
+        raise ConversionError(f"无法创建排版引擎配置目录：{e}") from e
     if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
-        raise ConversionError(f"LibreOffice 配置目录 {_PROFILE_BASE} 不属于当前用户（或是符号链接），拒绝使用；"
+        raise ConversionError(f"排版引擎配置目录 {_PROFILE_BASE} 不属于当前用户（或是符号链接），拒绝使用；"
                               "请删除它，或用 SYNWEVO_DOCS_LO_PROFILE 指定一个私有目录")
     if st.st_mode & 0o077:
         os.chmod(_PROFILE_BASE, 0o700)
@@ -267,7 +267,7 @@ FILTERS = {
 def convert(data: bytes, src_ext: str, dst_ext: str, timeout: int | None = None) -> bytes:
     exe = soffice_path()
     if not exe:
-        raise ConversionError("未安装 LibreOffice，无法进行此格式转换（安装说明见 docs/DEPLOY.md）")
+        raise ConversionError("排版引擎未启用，无法进行此格式转换（部署说明见 docs/DEPLOY.md）")
     timeout = timeout or LIMITS.converter_timeout_s
     with _LO_LOCK:
         try:
@@ -297,11 +297,11 @@ def _convert_once(exe: str, data: bytes, src_ext: str, dst_ext: str, timeout: in
         try:
             proc = _run(cmd, timeout)
         except subprocess.TimeoutExpired as e:
-            raise ConversionError(f"LibreOffice 转换超时（{timeout} 秒）") from e
+            raise ConversionError(f"格式转换超时（{timeout} 秒）") from e
         outs = list(outdir.glob(f"*.{dst_ext}"))
         if not outs:
             msg = (proc.stderr or proc.stdout or b"").decode("utf-8", "ignore").strip()[-400:]
-            raise ConversionError(f"LibreOffice 未生成 {dst_ext.upper()} 文件（退出码 {proc.returncode}）：{msg or '无输出'}")
+            raise ConversionError(f"排版引擎未生成 {dst_ext.upper()} 文件（退出码 {proc.returncode}）：{msg or '无输出'}")
         return outs[0].read_bytes()
 
 

@@ -226,16 +226,16 @@ def verify_output(fmt: str, data: bytes, slots: list[dict], plan) -> dict:
             from .engine.docx_render import render_docx
             rend = render_docx(data)
             text = "\n".join(_blocks_text(p["blocks"]) for p in rend["parts"])
-            res.update(reopened=True, engine="python-docx " + getattr(docx, "__version__", ""), paragraphs=len(d.paragraphs))
+            res.update(reopened=True, engine="docx", paragraphs=len(d.paragraphs))
         elif fmt == "xlsx":
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(data))
             text = "\n".join(str(c.value) for ws in wb.worksheets for row in ws.iter_rows() for c in row if c.value is not None)
-            res.update(reopened=True, engine="openpyxl", sheets=len(wb.worksheets))
+            res.update(reopened=True, engine="xlsx", sheets=len(wb.worksheets))
         elif fmt == "pdf":
             from .engine import pdf_engine as pe
             text = pe.pdf_text(data)
-            res.update(reopened=True, engine={"pymupdf": "PyMuPDF", "pdfium": "PDFium"}[pe.ENGINE], pages=pe.page_count(data))
+            res.update(reopened=True, engine="pdf", pages=pe.page_count(data))
         elif fmt == "pptx":
             import pptx
             prs = pptx.Presentation(io.BytesIO(data))
@@ -243,7 +243,7 @@ def verify_output(fmt: str, data: bytes, slots: list[dict], plan) -> dict:
             rend = render_pptx(data)
             text = "\n".join(p["text"] for s in rend["slides"] for sh in s["shapes"] for p in sh.get("paras", [])) + "\n" + \
                 "\n".join(p["text"] for s in rend["slides"] for sh in s["shapes"] for row in sh.get("rows", []) for c in row for p in c["paras"])
-            res.update(reopened=True, engine="python-pptx", slides=len(prs.slides))
+            res.update(reopened=True, engine="pptx", slides=len(prs.slides))
         elif fmt == "csv":
             text = data.decode("utf-8-sig")
             res.update(reopened=True, engine="csv")
@@ -252,7 +252,7 @@ def verify_output(fmt: str, data: bytes, slots: list[dict], plan) -> dict:
             im = Image.open(io.BytesIO(data))
             im.verify()
             im = Image.open(io.BytesIO(data))
-            res.update(reopened=True, engine="Pillow", size=list(im.size),
+            res.update(reopened=True, engine="image", size=list(im.size),
                        note="图片中的文字无法直接读取：已在栅格化前的页面中逐值核对（未写入则该样本失败）")
             return res
         else:
