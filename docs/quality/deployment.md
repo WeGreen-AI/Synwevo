@@ -70,6 +70,8 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-27 project copy with target approval, run 36189260515, 2026-09-25 21:22 UTC):** `{"deployed": "synwevo:bcf8729f192956ed3dfb0cc9b9f2c969072929c0", "backup": "/opt/synwevo/backups/20260925T212138Z"}`; verify and deploy succeeded (20 minutes); schema v13 applied by the Docs role's Store on start.
 
+**Pushed next (CI-31 Docs links on the account side):** notification links to Docs objects now come from the app registry's Docs address in every role (the account service's own `SYNWEVO_APP_URL` produced `accounts…/p/<id>` links in mails); new `GET /api/auth/messaging/link-card` and message cards. No schema change.
+
 **Pushed next (CI-30 phone-width check of the copy surfaces):** one shared stylesheet change (compact inbox toolbar inside drawers) plus a new browser proof; no schema or API change.
 
 **Deployed (CI-29 Docs edit safety and outcome notifications, run 36196271384, 2026-09-25 22:44 UTC):** `{"deployed": "synwevo:cd90aa3d3b6c47e2de50153fa1ec26b2bc87c69d", "backup": "/opt/synwevo/backups/20260925T224359Z"}`; verify and deploy succeeded in 23 minutes; schema v14 applied on start; all three public origins report ready afterwards.

@@ -123,6 +123,19 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
     def unread(request: Request):
         return svc.unread_total(uid_of(request))
 
+    @r.get("/link-card")
+    def link_card(request: Request, url: str = Query(..., max_length=2048)):
+        """The card for a link to a Docs project or job, as *this* reader may see it: no access,
+        no such object and not a Docs link all answer 404 alike. Rate-limited per reader because
+        each card is a membership check."""
+        uid = uid_of(request)
+        limited(uid, "msg-card", 600, 60)
+        from synwevo_core.docs_links import DocsLinkCards
+        card = DocsLinkCards(store, ident).card(uid, url)
+        if not card:
+            raise ServiceError(404, "no_card", "没有可显示的卡片")
+        return card
+
     @r.get("/directory")
     def directory(request: Request, organization_id: str = Query(...), q: str = Query("", max_length=80)):
         return {"items": svc.directory(organization_id, uid_of(request), q)}

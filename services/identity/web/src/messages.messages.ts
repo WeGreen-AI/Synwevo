@@ -2,6 +2,16 @@ import { registerMessages } from "@synwevo/ui";
 
 export const messages = {
   "消息": { en: "Messages", "zh-Hant": "訊息" },
+  "生成任务": { en: "Generation job", "zh-Hant": "產生任務" },
+  "项目": { en: "Project", "zh-Hant": "專案" },
+  "排队中": { en: "Queued", "zh-Hant": "排隊中" },
+  "生成中": { en: "Generating", "zh-Hant": "產生中" },
+  "取消中": { en: "Cancelling", "zh-Hant": "取消中" },
+  "已完成": { en: "Completed", "zh-Hant": "已完成" },
+  "部分失败": { en: "Completed with errors", "zh-Hant": "部分失敗" },
+  "失败": { en: "Failed", "zh-Hant": "失敗" },
+  "已取消": { en: "Cancelled", "zh-Hant": "已取消" },
+  "{done} 份成功，{failed} 份失败": { en: "{done} succeeded, {failed} failed", "zh-Hant": "{done} 份成功，{failed} 份失敗" },
   "会话列表": { en: "Conversations", "zh-Hant": "會話清單" },
   "筛选或搜索消息…": { en: "Filter or search messages…", "zh-Hant": "篩選或搜尋訊息…" },
   "新私聊": { en: "New direct message", "zh-Hant": "新私訊" },

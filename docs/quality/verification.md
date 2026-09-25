@@ -982,6 +982,27 @@ CI-27/29 的浏览器证据里申请人一直在桌面宽度；这里把申请�
 第一次量在动画中途得到 394 > 390 的假阳性，脚本改为等抽屉位置稳定）。截图人工复核发现一处真实的手机问题：收件箱抽屉里的筛选按钮（全部/未读/待处理/全部标为已读/偏好）
 继承了导航抽屉「每项一行 44 px」的规则，五个按钮竖排占去约 250 px；`notifications.css` 给抽屉内的 `.notif-tools .btn` 改回紧凑工具条尺寸（32 px、自动宽度、可并排换行）。
 `check_design.py` 通过；三外壳重建后复跑通过。
+### 16.31 账户侧的 Docs 链接：通知链接指错主机的修正，消息里的按读者解析卡片（CI-31）
+
+**缺陷（有证据）**：`resolve_target` 对 `docs` 目标一律用 `SYNWEVO_APP_URL`，而账户服务里这个变量是账户服务自己的地址（`infra/server/app.py` 注释早已说明，
+`bootstrap_docs_app` 也因此只在 Docs 进程登记地址）。隔离实例账户角色发出的邮件里出现 5 处 `http://accounts.localhost:31770/p/p_…`；生产 compose 的
+accounts 容器同样不知道 Docs 地址。影响：CI-27/29 的复制、任务、文件拒绝通知在邮件与账户外壳铃铛里的链接不可用（Docs 内的铃铛不受影响，
+因为它由 Docs 进程回答）。修正：`Notifier.docs_base()` 从应用注册表读 Docs 启动地址（缓存 60 s），`resolve_target(target, docs_base=)` 优先用它，
+只有 `app`/`all` 角色才回退到 `SYNWEVO_APP_URL`。测试 `test_notification_docs_links.py`：账户角色 + 账户地址的 `APP_URL` → 未登记时无链接、登记后
+链接到 Docs 地址、账户目标仍走签发者、Docs 进程可回退。
+
+**新能力（9.4 A 未完项）**：消息中的 Docs 项目/任务链接卡片，按读者权限解析（`docs_links.py` 读侧能力 + `/api/auth/messaging/link-card`）。
+`test_messaging.py::test_docs_link_cards_follow_the_readers_own_access`：所有者看到团队项目、任务（部分失败 8/2）与自己的草稿；团队空间成员看到
+团队项目、看不到草稿；组织内非空间成员与外人一律 404；非 Docs 链接、异主机同路径、不存在的项目、别的项目的任务均 404。
+
+**浏览器（隔离实例，所有者 1280 px、成员 390 px 触摸，Chromium + WebKit）**，`ui_e2e_link_cards.py`：
+
+```
+== chromium (Google Chrome)
+  - the owner's three links became cards — team project (with workspace), the finished job (outcome and counts), and their own personal draft
+  - the member (phone) got cards for the team project and the job, and only the plain link for the owner's personal draft; nothing scrolls sideways
+== webkit（两条同上）
+```
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

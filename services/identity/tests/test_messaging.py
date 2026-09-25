@@ -227,3 +227,41 @@ def test_the_stream_delivers_events_and_ends_when_the_session_is_revoked(org):
     assert "event: hello" in text and '"conversation_id": "cv_test"' in text and "event: read" in text
     assert "event: end" in text, text
     assert hub.connections() == 0
+
+
+def test_docs_link_cards_follow_the_readers_own_access(org, monkeypatch):
+    """A link to a Docs project or job in a message gets a card only for readers who can open
+    that project; the same conversation is not access. Cards come from the registered Docs
+    address, and a link to anything else is just a link."""
+    from synwevo_core.apps import bootstrap_docs_app
+    from synwevo_core.store import new_id, now
+    st = org.ident.store
+    bootstrap_docs_app(st, org.ident, launch_url="http://docs.testserver/")
+    team = st.one("SELECT id FROM workspaces WHERE organization_id=? AND kind='org'", (org.oid,))["id"]
+    st.execute("INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) VALUES (?,?,'editor',1,1,1,?)",
+               (team, org.users["ann"]["id"], org.users["owner"]["id"]))
+    personal = org.ident.ensure_personal_workspace(org.users["owner"]["id"])["id"]
+    t = now()
+    st.execute("INSERT INTO projects (id,name,created_at,updated_at,tenant,record_rule,output,mapping_rev,rev,step) VALUES (?,?,?,?,?,'{}','{}',0,1,'sources')", ("p_team1", "团队合同", t, t, team))
+    st.execute("INSERT INTO projects (id,name,created_at,updated_at,tenant,record_rule,output,mapping_rev,rev,step) VALUES (?,?,?,?,?,'{}','{}',0,1,'sources')", ("p_mine1", "我的草稿", t, t, personal))
+    st.execute("INSERT INTO jobs (id,project_id,status,created_at,counts,tenant,run_no) VALUES (?,?,?,?,?,?,1)", ("j_team1", "p_team1", "completed_with_errors", t, '{"success": 8, "failed": 2}', team))
+    login(org, "owner")
+    C = "/api/auth/messaging/link-card"
+    card = org.get(C, params={"url": "http://docs.testserver/p/p_team1"}).json()
+    assert card["kind"] == "project" and card["title"] == "团队合同" and card["workspace"] == "Chat Team" and card["path"] == "/p/p_team1"
+    job = org.get(C, params={"url": "http://docs.testserver/p/p_team1/jobs/j_team1"}).json()
+    assert job["kind"] == "job" and job["status"] == "completed_with_errors" and job["done"] == 8 and job["failed"] == 2
+    assert org.get(C, params={"url": "http://docs.testserver/p/p_mine1"}).json()["title"] == "我的草稿"
+    # ann is in the team workspace: the team project yes, the owner's personal draft no
+    login(org, "ann")
+    assert org.get(C, params={"url": "http://docs.testserver/p/p_team1"}).status_code == 200
+    assert org.get(C, params={"url": "http://docs.testserver/p/p_mine1"}).status_code == 404
+    # ben is in the organization but not in the team workspace; an outsider sees nothing at all
+    login(org, "ben")
+    assert org.get(C, params={"url": "http://docs.testserver/p/p_team1"}).status_code == 404
+    login(org, "outsider")
+    assert org.get(C, params={"url": "http://docs.testserver/p/p_team1"}).status_code == 404
+    # not a Docs link, a foreign host with the same path, an unknown project, a job of another project
+    login(org, "owner")
+    for url in ("https://example.com/p/p_team1", "http://docs.testserver/about", "http://docs.testserver/p/p_nope", "http://docs.testserver/p/p_mine1/jobs/j_team1"):
+        assert org.get(C, params={"url": url}).status_code == 404, url

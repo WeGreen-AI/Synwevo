@@ -40,6 +40,37 @@ function linkify(text: string) {
 }
 function draftKey(uid: string, cid: string) { return `synwevo.msg.draft.${uid}.${cid}`; }
 
+type LinkCardData = { kind: "project" | "job"; title: string; workspace?: string | null; archived?: boolean; path: string;
+  status?: string; done?: number; failed?: number };
+// One lookup per link per page: the answer is this reader's, and a 404 (no access, no such
+// object, not a Docs link) simply leaves the plain link as it is.
+const cardCache = new Map<string, Promise<LinkCardData | null>>();
+function cardFor(url: string): Promise<LinkCardData | null> {
+  let p = cardCache.get(url);
+  if (!p) {
+    p = get(`${M}/link-card?url=${encodeURIComponent(url)}`).then((c: LinkCardData) => c, () => null);
+    cardCache.set(url, p);
+  }
+  return p;
+}
+const JOB_STATE: Record<string, string> = { queued: "排队中", running: "生成中", cancelling: "取消中", completed: "已完成", completed_with_errors: "部分失败", failed: "失败", cancelled: "已取消" };
+function linksIn(text: string): string[] {
+  const out: string[] = [];
+  for (const p of text.split(urlRe)) if (urlRe.test(p) && /^https?:\/\//.test(p) && !out.includes(p)) out.push(p);
+  return out.slice(0, 3);
+}
+function LinkCard({ url }: { url: string }) {
+  const { t } = useI18n();
+  const [card, setCard] = useState<LinkCardData | null | undefined>(undefined);
+  useEffect(() => { let live = true; void cardFor(url).then(c => { if (live) setCard(c); }); return () => { live = false; }; }, [url]);
+  if (!card) return null;
+  return <a className="msg-card" href={url} target="_blank" rel="noopener noreferrer nofollow">
+    <span className="msg-card-kind">{card.kind === "job" ? t("生成任务") : t("项目")}</span>
+    <span className="msg-card-title">{card.title}</span>
+    <span className="msg-card-meta">{card.workspace}{card.kind === "job" && card.status && <> · {t(JOB_STATE[card.status] || card.status)}{card.status !== "queued" && card.status !== "running" && <> · {t("{done} 份成功，{failed} 份失败", { done: String(card.done ?? 0), failed: String(card.failed ?? 0) })}</>}</>}{card.archived && <> · {t("已归档")}</>}</span>
+  </a>;
+}
+
 export default function Messages() {
   const { t, locale } = useI18n(); const { me } = useSession(); const navigate = useNavigate(); const { cid } = useParams();
   const narrow = useMediaQuery("(max-width: 720px)");
@@ -245,6 +276,7 @@ function Thread({ conv, uid, live, narrow, onBack, onOpenInfo, onChanged, bind }
                 <div className="msg-meta"><span>{own ? t("我") : m.sender}</span><span>{timeOf(m.created_at, locale)}</span>{m.edited_at && <span>{t("已编辑")}</span>}{m.pending && <span className="msg-pending">{t("发送中…")}</span>}</div>
                 {m.reply && <div className="msg-reply"><strong>{m.reply.sender}</strong> {m.reply.deleted ? t("消息已删除") : m.reply.body}</div>}
                 {m.deleted ? <div className="msg-deleted">{t("消息已删除")}</div> : <div className="msg-body">{linkify(m.body)}</div>}
+                {!m.deleted && !m.pending && linksIn(m.body).map(u => <LinkCard key={u} url={u} />)}
                 {m.attachment && !m.deleted && <div className="msg-attach">{m.attachment.inline && !m.pending ? <a href={`${M}/attachments/${m.attachment.id}`}><img src={`${M}/attachments/${m.attachment.id}?inline=1`} alt={m.attachment.filename} loading="lazy" /></a>
                   : <a href={m.pending ? undefined : `${M}/attachments/${m.attachment.id}`}>📎 {m.attachment.filename} <span className="tiny muted">({fmtSize(m.attachment.size)})</span></a>}</div>}
                 {m.reactions.length > 0 && <div className="msg-reactions">{m.reactions.map(r => <button key={r.emoji} type="button" className={`msg-reaction ${r.users.includes(uid) ? "mine" : ""}`} onClick={() => void react(m, r.emoji)} aria-pressed={r.users.includes(uid)}>{r.emoji} {r.count}</button>)}</div>}

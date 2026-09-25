@@ -213,6 +213,27 @@ def _locale(value: str | None) -> str:
 class Notifier:
     def __init__(self, store: Store):
         self.store = store
+        self._docs_base: tuple[float, str | None] | None = None
+
+    def docs_base(self) -> str | None:
+        """The Synwevo Docs origin for links, from the app registry (written by the process that
+        serves Docs), so the account service — whose own `SYNWEVO_APP_URL` is its own address —
+        never builds a Docs link on the wrong host. Cached for a minute."""
+        if self._docs_base and time.time() - self._docs_base[0] < 60:
+            return self._docs_base[1]
+        base = None
+        try:
+            from .apps import DOCS_APP_ID
+            row = self.store.one("SELECT launch_url FROM apps WHERE id=?", (DOCS_APP_ID,))
+            url = (row or {}).get("launch_url") or ""
+            if url.startswith(("http://", "https://")):
+                from urllib.parse import urlsplit
+                u = urlsplit(url)
+                base = f"{u.scheme}://{u.netloc}"
+        except Exception:  # noqa: BLE001 - a link is optional; the notification is not
+            base = None
+        self._docs_base = (time.time(), base)
+        return base
 
     # ------------------------------------------------------------------ emitting
     def emit(self, user_id: str, kind: str, *, params: dict | None = None, organization_id: str | None = None,
@@ -312,7 +333,7 @@ class Notifier:
         return {"id": row["id"], "seq": row["seq"], "kind": row["kind"], "category": row["category"], "severity": row["severity"],
                 "title": title, "body": body, "organization_id": row.get("organization_id"), "workspace_id": row.get("workspace_id"),
                 "object_kind": row.get("object_kind"), "object_id": row.get("object_id"),
-                "href": resolve_target(target), "action_state": row.get("action_state"),
+                "href": resolve_target(target, docs_base=self.docs_base()), "action_state": row.get("action_state"),
                 "created_at": row["created_at"], "read_at": row.get("read_at"), "archived_at": row.get("archived_at")}
 
     # ------------------------------------------------------------------ state changes
@@ -502,10 +523,12 @@ def _valid_hhmm(v) -> bool:
     return 0 <= h <= 23 and 0 <= m <= 59
 
 
-def resolve_target(target: dict | None) -> str | None:
+def resolve_target(target: dict | None, *, docs_base: str | None = None) -> str | None:
     """The absolute link for a stored target, from this deployment's configured origins only.
-    `docs` links resolve through SYNWEVO_APP_URL when this process knows it; otherwise the item
-    has no link rather than a guessed one."""
+    `docs` links resolve through the registered Docs origin (`docs_base`, from the app registry)
+    and, failing that, through SYNWEVO_APP_URL only in a process that serves Docs itself — in the
+    account service that variable is the account service's own address (mails once carried
+    `accounts…/p/<id>`). Otherwise the item has no link rather than a guessed one."""
     if not target or not isinstance(target, dict):
         return None
     path = target.get("path") or "/"
@@ -518,7 +541,8 @@ def resolve_target(target: dict | None) -> str | None:
     elif origin == "portal":
         base = env.get("PORTAL_URL")
     elif origin == "docs":
-        base = env.get("APP_URL")
+        role = (env.get("ROLE") or "all").strip().lower()
+        base = docs_base or (env.get("APP_URL") if role in ("app", "all", "") else None)
     if not base:
         return None
     return base.rstrip("/") + path
