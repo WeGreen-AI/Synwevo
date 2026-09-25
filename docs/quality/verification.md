@@ -765,6 +765,53 @@ services/identity/tests/test_notifications.py ......                       [100%
 过程中发现并修正：成员面板的角色列表在页面挂载时取一次，刚在角色面板创建的角色在「分配角色」对话框里不出现——改为打开对话框时重取；
 敏感写操作的重认证提示是异步出现的，脚本要等待口令框而不是立刻判断。WebKit（经本地 `*.localhost` 代理）同一脚本五条全部通过。
 
+
+### 16.24 机构邮箱注册（CUHK）：根因定位与在产品内能修的部分（CI-24）
+
+**生产现场（2026-09-26 只读、脱敏查询；不含本地部分、不含正文）**：`link.cuhk.edu.hk` 与 `cuhk.edu.hk` 的 MX 都是
+Trend Micro Email Security（`*.in.tmes.trendmicro.com`）。生产库里唯一一次 CUHK 注册（2026-09-25 16:09:20Z）：账户已建（`pending`）、
+验证令牌已签（24 h）、outbox 行 `sent`（1 次尝试，16:09:37Z）；mailcow 队列 `E0C8450BA22` 由 rspamd 以 `hikosphere.com s=mailcow2026`
+签 DKIM，16:09:45Z 中继到 `mail.smtp2go.com:587` 得到 `250 OK id=1xA8Ua-…`；令牌到期前从未被使用；同一来源 3 分钟后改用消费邮箱注册并在
+1 分钟内完成验证。发件信箱在此后没有收到任何退信/DSN。DNS：`hikosphere.com` SPF 为 `ip4:149.28.18.222 include:_spf.mx.cloudflare.net ~all`
+（不含 SMTP2GO 出口），DKIM `mailcow2026` 已发布且与 rspamd 持有的公钥一致（对齐），DMARC `p=none`。
+
+**结论**：不是前端正则、不是服务端语法校验、不是注册策略、不是限流、不是发信失败——应用与中继链完整；最终裁决发生在 SMTP2GO 之后的
+收件网关（延迟/隔离/垃圾箱，或拒收退给 SMTP2GO 的回信地址），只在 SMTP2GO 的 Activity 报表里可见（需要账户持有人查看，见
+operations.md §6.1）。产品侧的真实缺口是：收件页不说明邮件来自谁、不提示机构网关会延迟/隔离、不说明重发规则；已有活跃账户的邮箱再注册时
+服务端静默不发信，人会一直等一封不会来的邮件；校验器遇到尾随点域名会抛异常（500）。
+
+**修改**：`valid_email` 不再抛异常（尾随点、空标签、连字符开头/结尾标签 → False → 400 `bad_email`）；邮件正文改为 quoted-printable
+（rspamd `MIME_BASE64_TEXT` 这类信号不再出现）；`/api/auth/state` 公布 `mail_sender`（名称 + 地址，本就在每封邮件里）；`/verify-email`
+无令牌态新增提示框（发件地址与搜索建议、机构网关延迟/垃圾箱/隔离区与允许名单、每小时最多 3 封且只有最新一封有效、链接 24 h、
+「换一个邮箱注册」），三语言；对已有活跃账户的地址再注册，同形 202 之外向该信箱寄「账户已经存在」提示（登录/找回链接，无令牌，
+每小时最多一封，审计 `auth.registration.existing_account`）。
+
+**接口测试**：`services/identity/tests/test_email_addresses.py`（CUHK 学生/教职员/别名、多级子域、公司域名、加号标签共 10 种接受；
+尾随点、无点、连字符边界、空标签、控制字符等 11 种拒绝且不抛异常；去空白；规范化只做 casefold，不合并点号/加号/不同子域）；
+`test_registration_activation.py` 新增 3 项（尾随点 400 而非 500；CUHK 形式注册 → `state.mail_sender` → outbox `verify` → 落盘 .eml 为
+quoted-printable 且含链接；已有活跃账户再注册 → 同形应答、仅一封 `account_exists`、无令牌、口令与状态不变、一小时内不重复）。
+上述文件与邮件传输、身份、外壳资源对等测试合计 35 项通过。
+
+**浏览器（隔离实例，文件邮件，390×844，Chromium + WebKit）**，`services/identity/scripts/ui_e2e_institutional_mail.py`：
+
+```
+== chromium (Google Chrome)
+  - chromium: trailing-dot address → 400 bad_email (not a 500)
+  - chromium: registered 1155…@link.cuhk.edu.hk on a 390px viewport; the inbox screen names the sender and the gateway/quarantine guidance in zh-Hans, en and zh-Hant
+  - chromium: the verification mail is quoted-printable UTF-8 with a fragment-carried link (subject: 验证你的 Synwevo 邮箱)
+  - chromium: the link only landed; confirming with a mailbox-owner password activated the account
+  - chromium: signed in with the institutional address (status active), signed out
+  - chromium: re-registering the now-active address showed the same screen and mailed an "account already exists" notice without any token
+  - chromium: 0 CSP violations, 0 page errors
+== webkit (Playwright build; *.localhost through http://127.0.0.1:52017)
+  - （七条同上）
+```
+
+截图 `verify-email-chromium-zh-Hans.png`：白蓝提示框在 390 px 内完整可读，无横向滚动。
+
+**未验证（需要外部条件）**：真实 CUHK 信箱的最终收件（隔离区/垃圾箱/收件箱）与 SMTP2GO 对 `1xA8Ua-…` 的投递记录；这两项只有
+账户持有人能看。SPF 补 `include:spf.smtp2go.com`、在 SMTP2GO 验证发件域（对齐的回信地址与 DKIM）、关闭事务邮件的链接/打开跟踪、
+把 From 改到 `wegreen.ltd`（mailcow 已为该域发布 `mailcow2026` DKIM）均为 DNS/供应商侧操作，步骤在 operations.md §6.1。
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

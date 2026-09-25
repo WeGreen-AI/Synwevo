@@ -374,6 +374,10 @@ export const messages = {
     "en": "Confirm this is your email, then select the button below to verify it.",
     "zh-Hant": "確認這是你的電郵後，點擊下方按鈕完成驗證。"
   },
+  "邮件由 {sender} 发出，通常几分钟内送达；找不到时可按发件地址搜索。": { en: "The mail comes from {sender} and usually arrives within minutes; search for that sender if you cannot find it.", "zh-Hant": "郵件由 {sender} 發出，通常幾分鐘內送達；找不到時可按寄件地址搜尋。" },
+  "学校或公司邮箱通常经过安全网关：邮件可能延迟数分钟、被放入垃圾邮件或隔离区。请一并检查这些位置和隔离通知，必要时把发件地址加入允许名单。": { en: "University and company mailboxes usually sit behind a security gateway: the mail may be delayed by minutes, land in junk, or be held in quarantine. Check those places and any quarantine digest too, and allow-list the sender if needed.", "zh-Hant": "學校或公司信箱通常經過安全閘道：郵件可能延遲數分鐘、被放入垃圾郵件或隔離區。請一併檢查這些位置和隔離通知，必要時把寄件地址加入允許名單。" },
+  "每小时最多发送 3 封验证邮件，只有最新一封有效；链接 24 小时内有效。": { en: "At most 3 verification mails are sent per hour and only the latest link works; each link is valid for 24 hours.", "zh-Hant": "每小時最多寄送 3 封驗證郵件，只有最新一封有效；連結 24 小時內有效。" },
+  "收不到邮件？换一个邮箱注册": { en: "Not receiving mail? Register with another address", "zh-Hant": "收不到郵件？換一個信箱註冊" },
   "我们已收到请求。请检查邮箱，使用最新邮件中的验证链接。": {
     "en": "Your request has been received. Check your inbox and use the verification link in the latest email.",
     "zh-Hant": "我們已收到請求。請檢查電郵，使用最新郵件中的驗證連結。"

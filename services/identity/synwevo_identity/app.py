@@ -88,6 +88,10 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     passkeys = Passkeys(store)
     api.state.invites = invites
     api.state.mailer = mailer
+    # The address account mail comes from, for the "check your inbox" screen: it is in every
+    # mail we send, so publishing it costs nothing and lets people search or allow-list it.
+    from .mail import from_address, mode as mail_mode
+    api.state.mail_sender = dict(zip(("name", "address"), from_address())) if mail_mode() != "disabled" else None
     # Human verification (Cloudflare Turnstile) for the anonymous mail-sending entrances and
     # for sign-ins after repeated failures. Built here so a half-configured pair of keys fails
     # the start-up rather than one request in a thousand; disabled when neither key is set.

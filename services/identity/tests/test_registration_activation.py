@@ -125,3 +125,49 @@ def test_h10_concurrent_old_password_login_cannot_survive_activation(review):
     finally:
         for caller in attackers:
             caller.close()
+
+
+def test_malformed_address_is_a_400_not_a_crash(review):
+    app, client, ident = review
+    response = register(client, email='1155123456@link.cuhk.edu.hk.')
+    assert response.status_code == 400 and response.json()['error'] == 'bad_email'
+    assert ident.by_email('1155123456@link.cuhk.edu.hk.') is None
+
+
+def test_institutional_address_registers_and_is_told_where_the_mail_comes_from(review):
+    app, client, ident = review
+    state = client.get('/api/auth/state').json()
+    assert state['mail_sender'] == {'name': 'Synwevo', 'address': 'synwevo@localhost'}, state['mail_sender']
+    response = register(client, email='1155123456@link.cuhk.edu.hk')
+    assert response.status_code == 202 and response.json() == {'status': 'verification_pending', 'delivery': 'requested'}
+    user = ident.by_email('1155123456@LINK.cuhk.edu.hk')
+    assert user and user['status'] == 'pending'
+    row = ident.store.one("SELECT to_addr,kind,status FROM mail_outbox WHERE ref_id=?", (user['id'],))
+    assert row['to_addr'] == '1155123456@link.cuhk.edu.hk' and row['kind'] == 'verify' and row['status'] == 'queued'
+    # the body leaves as quoted-printable text, not base64 (a spam signal on institutional gateways)
+    import os, pathlib
+    assert app.state.mailer.drain_once(limit=5) >= 1
+    eml = next(pathlib.Path(os.environ['SYNWEVO_MAIL_DIR']).glob('*.eml')).read_text()
+    assert 'Content-Transfer-Encoding: quoted-printable' in eml and 'base64' not in eml
+    assert 'http://testserver/verify-email' in eml
+
+
+def test_registering_an_address_that_already_has_an_active_account_tells_that_mailbox(review):
+    app, client, ident = review
+    user = ident.create_user('already-there@example.test', PW, status='active')
+    ident.store.execute('UPDATE users SET email_verified_at=1 WHERE id=?', (user['id'],))
+    fresh = register(client, email='nobody-yet@example.test').json()
+    again = register(client, email='Already-There@example.test', password=ATTACKER_PW)
+    # same answer as a fresh registration: nothing here says whether the address was known
+    assert again.status_code == 202 and again.json() == fresh
+    rows = ident.store.all("SELECT to_addr,kind FROM mail_outbox WHERE ref_id=? ORDER BY created_at", (user['id'],))
+    assert [r['kind'] for r in rows] == ['account_exists'] and rows[0]['to_addr'] == 'already-there@example.test'
+    body = ident.store.one("SELECT body FROM mail_outbox WHERE ref_id=?", (user['id'],))['body']
+    assert 'token=' not in body and '/login' in body and '/forgot' in body
+    # nothing about the account changed, and the other password does not work
+    assert ident.authenticate('already-there@example.test', PW)['ok']
+    assert not ident.authenticate('already-there@example.test', ATTACKER_PW)['ok']
+    assert ident.get_user(user['id'])['status'] == 'active'
+    # a second attempt within the hour does not send a second notice
+    register(client, email='already-there@example.test')
+    assert len(ident.store.all("SELECT id FROM mail_outbox WHERE ref_id=?", (user['id'],))) == 1

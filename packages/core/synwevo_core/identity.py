@@ -58,7 +58,12 @@ def valid_email(email: str) -> bool:
     local, _, domain = e.partition("@")
     try:
         parsed = Address(addr_spec=e)
-    except (ValueError, TypeError):
+    except Exception:  # noqa: BLE001 - HeaderParseError is not a ValueError; a validator never raises
+        return False
+    # A trailing dot ("user@example.com.") parses as an empty last label; refuse it here so the
+    # caller gets a 400, not a crash further down when the address is used.
+    labels = domain.split(".")
+    if any(not label or label.startswith("-") or label.endswith("-") for label in labels):
         return False
     return bool(local) and bool(domain) and "." in domain and parsed.addr_spec == e
 

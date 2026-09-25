@@ -153,6 +153,9 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         # challenged — never the secret. `null` tells the shell to render no widget anywhere.
         challenge = getattr(request.app.state, "challenge", None)
         out["challenge"] = challenge.public() if challenge is not None else None
+        # The account service's configured sender (name + address, no credentials) so the
+        # "check your inbox" screen can say where the mail comes from. `null` when mail is off.
+        out["mail_sender"] = getattr(request.app.state, "mail_sender", None)
         return out
 
     @r.post("/logout")

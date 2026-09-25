@@ -79,8 +79,9 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-19 | 平台闭环浏览器回归 `services/identity/scripts/ui_e2e_onboarding.py`（注册→验证→登录→引导→邀请→接受→退出，Chromium + WebKit，手机视口） | 通过 | 每个里程碑复跑；需要一个 24 小时内邀请数未达 50 的团队空间（脚本参数），注册限 10 次 / IP / 15 分钟 |
 | CI-20 | 恶意上传防护：隔离优先的接纳链（clamd 扫描、`rejected`/`scan_failed` 状态、下载门、模板同步扫描、schema v8、readyz 组件、SDK 等待、三语言标签、compose 参考服务） | 已实现（本机），待部署 | 生产：运维确认 VPS 内存余量 ≥2 GiB，合并 `clamav` 服务与两个环境变量到 `/opt/synwevo/config/compose.yaml`；`rescan` CLI 与加密文件流程未做（file-acceptance §9） |
 | CI-21 | 风险触发的人机验证（Turnstile 服务端校验：四个匿名邮件入口每次、口令登录同地址 3 次失败后；`challenge_required/failed/unavailable`；故障不放行；账户外壳组件三语言） | 已实现（本机），待推送 | 生产：账户持有人在 Cloudflare 创建 Widget（`accounts.wegreen.ltd`）并把两把密钥写入 `runtime.env`；测试密钥的令牌不带 action，浏览器完整通路要等真实 Widget |
-| CI-22 | 平台通知中心（核心表 + 每角色接口 + 邮件 outbox 调度器 + 铃铛与偏好页；安全/邀请/角色/移出/退出事件接入） | 已实现（本机），待推送 | Docs 侧发射点（文件被拒、任务完成）随下一批；Web Push 未做；`docs/platform/notifications.md` 是权威记录 |
-| CI-23 | 组织自定义角色（权限目录 + 角色表 + 委派不越权 + 有效权限视图 + 组织页 UI） | 已实现（本机），待推送 | `org.members.import`/`org.approvals.decide`/`org.messaging.manage` 由 CI-24/26/25 消费；组织审计页未做；`docs/platform/organization-roles.md` 是权威记录 |
+| CI-22 | 平台通知中心（核心表 + 每角色接口 + 邮件 outbox 调度器 + 铃铛与偏好页；安全/邀请/角色/移出/退出事件接入） | 已部署（a02baf0） | Docs 侧发射点（文件被拒、任务完成）随下一批；Web Push 未做；`docs/platform/notifications.md` 是权威记录 |
+| CI-23 | 组织自定义角色（权限目录 + 角色表 + 委派不越权 + 有效权限视图 + 组织页 UI） | 已部署（07af1f0） | `org.members.import`/`org.approvals.decide`/`org.messaging.manage` 由 CI-24/26/25 消费；组织审计页未做；`docs/platform/organization-roles.md` 是权威记录 |
+| CI-24 | 机构邮箱注册（CUHK）：根因定位到收件网关（Trend Micro）之后；校验器不再 500、正文 QP、收件页发件人与网关提示、活跃账户再注册寄提示 | 已实现（本机），待推送 | 真实 CUHK 收件、SMTP2GO Activity 记录、SPF/发件域验证/跟踪关闭/From 改域均为账户持有人或运营步骤（operations.md §6.1）；验证脚本 `ui_e2e_institutional_mail.py` |
 
 已核对、无需改动（记录以免重复研究）：
 
@@ -93,6 +94,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 * **API 幂等**（对照 Stripe「Idempotent requests」，访问 2026-09-25）：Stripe——所有 POST 接受键、键 ≤255 字符、保存首个响应含 500、24 小时后清理、参数不同即报错、并发冲突不保存。Synwevo（api.md §3「幂等」）——按主体+租户+作用域+键、24 小时 TTL 可配、内容不同 `409 idempotency_conflict`、并发由唯一约束裁决、不确定结果 `409 idempotency_outcome_unknown` 且不清理、不支持的操作显式 `400 idempotency_not_supported`。语义等价或更严格；差异只在 Stripe 保存 5xx 结果而 Synwevo 让失败的创建可重试，这是有意选择。无需改动。
 
 候选队列（按风险与价值，2026-09-26 更新；第九节的批次顺序见 docs/platform/notifications.md §7 与 handoff 本表）：
+- 运营/账户持有人（CI-24 接续）：SMTP2GO Activity 查 `1xA8Ua-AIkwcC8lNJx-F8I8` 的最终投递；`hikosphere.com` SPF 加 `include:spf.smtp2go.com`；在 SMTP2GO 验证发件域（对齐回信地址与 DKIM）并关闭事务邮件链接/打开跟踪；评估把 From 改到 `wegreen.ltd`（mailcow 已发布其 DKIM）。
 第九节余下批次——多格式成员导入（CI-24，解析器须放进真实共用的包才能绕开 identity↔docs 边界）、私聊/群聊（CI-25，附件复用接纳链）、个人项目复制审批（CI-26）、第三方组件名清理（CI-27）；
 恶意上传防护的后续——`rescan` CLI 与管理端补扫入口、加密压缩包/Office 文件的用户流程（file-acceptance §9）、生产 `clamav`
 服务上线后的真实引擎复核；登出落点差异——CI-19 中 Chromium 登出后到 `/login`、WebKit 到 `/logged-out`（两者 `/api/auth/me`

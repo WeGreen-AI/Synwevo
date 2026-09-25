@@ -9,7 +9,8 @@ export default function VerifyEmail() {
   return <EmailVerification key={token} token={token} />;
 }
 function EmailVerification({ token }: { token: string }) {
-  const { t, locale } = useI18n(); const { me, refresh } = useSession(); const action = useAction();
+  const { t, locale } = useI18n(); const { me, refresh, state } = useSession(); const action = useAction();
+  const sender = state?.mail_sender ? `${state.mail_sender.name} <${state.mail_sender.address}>` : "";
   const [email, setEmail] = useState(() => me?.email || readIntent().email || "");
   const [verified, setVerified] = useState(false); const [resent, setResent] = useState(false);
   const [passwordRequired, setPasswordRequired] = useState(false); const [password, setPassword] = useState("");
@@ -60,6 +61,12 @@ function EmailVerification({ token }: { token: string }) {
           {challenge.element}
           <button className="btn" disabled={action.busy || me === undefined}>{t(action.busy ? "处理中…" : "重新发送验证邮件")}</button>
         </form>
+        {!token && <div className="notice" role="note"><ul className="col gap4 small">
+          {sender && <li>{t("邮件由 {sender} 发出，通常几分钟内送达；找不到时可按发件地址搜索。", { sender })}</li>}
+          <li>{t("学校或公司邮箱通常经过安全网关：邮件可能延迟数分钟、被放入垃圾邮件或隔离区。请一并检查这些位置和隔离通知，必要时把发件地址加入允许名单。")}</li>
+          <li>{t("每小时最多发送 3 封验证邮件，只有最新一封有效；链接 24 小时内有效。")}</li>
+          <li><a href={`/register?lang=${locale}`}>{t("收不到邮件？换一个邮箱注册")}</a></li>
+        </ul></div>}
         <p className="tiny muted">{t("验证完成前，账户无法进入工作空间。打开邮件链接不会自动验证邮箱。")}</p>
         <a className="authfoot" href="/login">{t("返回登录")}</a>{me && <button type="button" className="btn ghost" disabled={action.busy} onClick={() => void action.run(async () => { await post("/api/auth/logout", {}); window.location.assign("/login"); })}>{t("退出当前账户")}</button>}
       </>}

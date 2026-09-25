@@ -291,7 +291,10 @@ class Mailer:
         # Tells well-behaved scanners and clients not to auto-fetch or auto-reply.
         msg["Auto-Submitted"] = "auto-generated"
         msg["X-Auto-Response-Suppress"] = "All"
-        msg.set_content(row["body"])
+        # Quoted-printable, not base64: our bodies are mostly text with some CJK, and several
+        # institutional filters (rspamd's MIME_BASE64_TEXT among them) score base64-encoded text
+        # as a spam signal. Quoted-printable stays 7-bit safe on every relay.
+        msg.set_content(row["body"], cte="quoted-printable")
 
         if m == "file":
             # Under the data directory by default, never the process's working directory: these
@@ -442,6 +445,42 @@ def verify_mail(*, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple
 链接 {expires_h} 小时内有效，只能使用一次。打开后需要你点击确认才会生效。
 
 如果这不是你本人的操作，忽略这封邮件即可。本邮件无需回复。
+""")
+
+
+def account_exists_mail(*, locale: str = "zh-Hans") -> tuple[str, str]:
+    """Sent to a mailbox that just tried to register while it already has an active account.
+
+    The HTTP answer to that registration is the same "check your inbox" as for a new address (no
+    enumeration), so without this mail the person waits for a verification link that will never
+    come. Telling the mailbox owner — and only them — is the OWASP-recommended way out.
+    """
+    base = public_base() or "http://127.0.0.1:8765"
+    lang = locale if locale in ("zh-Hans", "zh-Hant", "en") else "zh-Hans"
+    login, forgot = f"{base}/login?lang={lang}", f"{base}/forgot?lang={lang}"
+    if lang == "en":
+        return ("Your Synwevo account already exists",
+                "Someone — probably you — just tried to register a Synwevo account with this address, but an account "
+                f"for it already exists.\n\nSign in here:\n\n{login}\n\nForgot the password? Reset it here:\n\n{forgot}\n\n"
+                "If this was not you, nothing has changed: no new account was created and your password was not touched. "
+                "Replies are not monitored.")
+    if lang == "zh-Hant":
+        return ("你的 Synwevo 帳戶已經存在",
+                "剛才有人（很可能是你本人）用這個電子郵件地址註冊 Synwevo，但這個地址已經有帳戶了。\n\n"
+                f"直接登入：\n\n{login}\n\n忘記密碼？在這裡重設：\n\n{forgot}\n\n"
+                "若不是你本人操作，也不需要做任何事：沒有建立新帳戶，你的密碼也沒有變動。請勿直接回覆。")
+    return ("你的 Synwevo 账户已经存在",
+            f"""刚才有人（很可能是你本人）用这个邮箱注册 Synwevo，但这个邮箱已经有账户了。
+
+直接登录：
+
+  {login}
+
+忘记口令？在这里重置：
+
+  {forgot}
+
+如果这不是你本人的操作，你不需要做任何事：没有创建新账户，你的口令也没有改变。本邮件无需回复。
 """)
 
 

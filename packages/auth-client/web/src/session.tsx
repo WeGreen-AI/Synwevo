@@ -48,6 +48,8 @@ export interface AuthState {
   challenge?: { provider: "turnstile"; site_key: string; actions: Record<string, "always" | "risk"> } | null;
   /** Server-controlled "back" target from the account pages; empty when there is no portal. */
   portal_url?: string;
+  /** The account service's configured mail sender (in every mail it sends); null when mail is off. */
+  mail_sender?: { name: string; address: string } | null;
   /** Where the account and security pages live: this app's own, or the account service's. */
   account_url?: string;
   /** This application's id (a relying party), sent as `from=` when linking to the account page. */

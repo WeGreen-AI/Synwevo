@@ -13,7 +13,7 @@ from synwevo_core.store import now
 from synwevo_auth_client.session_routes import describe_user
 
 from .auth_routes import _challenge, client_ip, _too_many
-from .mail import mode, verify_mail
+from .mail import account_exists_mail, mode, verify_mail
 
 LOCALES = frozenset(("zh-Hans", "zh-Hant", "en"))
 
@@ -36,6 +36,21 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
             subject, body = verify_mail(token=token, expires_h=24, locale=user.get("locale") or "zh-Hans")
             mailer.enqueue(user["email"], subject, body, kind="verify", ref_id=user["id"])
             audit(request, "auth.email.verify_requested", actor_id=user["id"], result="ok")
+
+    def _notify_existing(user: dict, request: Request) -> None:
+        """The address already has an active account: tell the mailbox, once an hour at most.
+
+        The HTTP answer stays the same as for a fresh registration, so this mail is the only
+        thing that distinguishes the two cases — and it goes to the mailbox owner alone.
+        """
+        with ident.store.tx():
+            recent = ident.store.one("SELECT COUNT(*) AS n FROM mail_outbox WHERE kind='account_exists' AND ref_id=? "
+                                     "AND created_at>?", (user["id"], now() - 3600))
+            if recent["n"]:
+                return
+            subject, body = account_exists_mail(locale=user.get("locale") or "zh-Hans")
+            mailer.enqueue(user["email"], subject, body, kind="account_exists", ref_id=user["id"])
+            audit(request, "auth.registration.existing_account", actor_id=user["id"], result="ok")
 
     def _limited(request: Request, email: str):
         allowed, wait = ident.window_allows(f"registration:{client_ip(request)}", limit=10, window_s=900)
@@ -95,6 +110,12 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
                 _queue_verification(user, request)
             except ServiceError as exc:
                 audit(request, "auth.email.verify_requested", actor_id=user["id"], result="error",
+                      meta={"mail_error": exc.code})
+        elif user and user["status"] == "active":
+            try:
+                _notify_existing(user, request)
+            except ServiceError as exc:
+                audit(request, "auth.registration.existing_account", actor_id=user["id"], result="error",
                       meta={"mail_error": exc.code})
         return _delivery_state()
 

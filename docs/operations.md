@@ -249,6 +249,35 @@ PY
 不挂载生产数据，不使用管理员 Cookie，不打印测试口令或邮件令牌。邮件中的链接只指向临时本地服务，
 无需收件人操作。结果保存到该目录的 `acceptance.json`；保留此目录作为防重复发送标记，不盲目重跑。
 
+### 6.1 机构邮箱（学校/公司）投递与排障
+
+一封验证邮件从提交到「人看见」要过五道门，每道门的证据在不同地方；前四道可以在本机或 VPS 上只读核对，第五道只有
+SMTP2GO 账户或收件人能看：
+
+| 环节 | 在哪里看 | 只读命令 / 位置 |
+|---|---|---|
+| 应用入队与状态 | 账户库 `mail_outbox`（`sent` = mailcow DATA 250） | 平台管理页「邮件」，或容器内 `sqlite3 'file:/data/docweave.sqlite3?mode=ro'` 按 `ref_id` 查 |
+| mailcow 接受 / DKIM | postfix 与 rspamd 日志（队列 ID、`DKIM_SIGNED{hikosphere.com:s=mailcow2026}`） | `docker logs mailcowdockerized-postfix-mailcow-1 \| grep <queue id>` |
+| 中继接受 | postfix `relay=mail.smtp2go.com … status=sent (250 OK id=<SMTP2GO id>)` | 同上；这个 id 是向 SMTP2GO 查询的钥匙 |
+| 收件网关裁决 | 只在 SMTP2GO Reports → Activity（按 id 搜索）里：delivered / deferred / bounced 与对方服务器回话 | 账户持有人 |
+| 用户可见 | 收件箱、垃圾箱、机构隔离区通知（CUHK 两个域的 MX 都是 Trend Micro Email Security） | 收件人 |
+
+排查时把地址的本地部分遮掉；不要导出正文或令牌。`docker logs` 只保留最近三份 10 MB，超过两周的记录要看 SMTP2GO。
+
+2026-09-26 核对的发信域状态（`hikosphere.com`）：SPF `v=spf1 ip4:149.28.18.222 include:_spf.mx.cloudflare.net ~all`
+**没有** SMTP2GO 出口；DKIM `mailcow2026._domainkey` 已发布且与 rspamd 持有的公钥一致；DMARC `p=none`。
+`wegreen.ltd` 也已有 mailcow 签发并发布的 `mailcow2026` DKIM。要提高机构网关的接受率，按顺序做（都是 DNS/供应商侧，不改代码）：
+
+1. SMTP2GO 后台验证发件域 `hikosphere.com`（按其给出的 CNAME 记录发布），这样回信地址（Return-Path）与 DKIM 都与 From 对齐，
+   退信也会回到可查的地方；同时给事务邮件关闭「链接跟踪 / 打开跟踪」，否则 SMTP2GO 重写正文会破坏 mailcow 的签名，机构网关还会再重写一次链接。
+2. SPF 加 `include:spf.smtp2go.com`（若 SMTP2GO 使用自己的回信域，这一条不影响 DMARC，但让 From 域的 SPF 记录与实际出口一致）。
+3. DMARC 先保持 `p=none` 并把 `rua` 指向能看到的报表；对齐验证一周无失败后再考虑 `quarantine`。
+4. 评估把 From 改到产品域 `wegreen.ltd`（链接域与发件域一致是常见评分项）：需要 mailcow 里该域的信箱或 send-as 授权，
+   再改 `smtp.env` 的 `SYNWEVO_MAIL_FROM` 并重启 `accounts`。
+
+应用侧已经做的（CI-24）：正文 quoted-printable；`Auto-Submitted`/`X-Auto-Response-Suppress`；令牌只在链接的 `#` 片段里且必须在页面上确认，
+所以网关的预取/时点点击重写不会消费它；收件页写明发件地址、网关延迟/隔离与重发规则；已有账户的地址再注册寄「账户已经存在」提示而不是沉默。
+
 ## 7. 登录方式：保持登录、邮箱验证码与外部身份提供商
 
 账户服务提供四种登录路径：口令、Passkey、邮箱一次性验证码、外部 OpenID 提供商；契约见

@@ -64,6 +64,10 @@ and preferences UI). Run 36166772633 passed verify (21 min) and deploy (created 
 `/opt/synwevo/backups/20260925T174518Z`. Anonymous checks: `/api/auth/notifications/unread-count` answers 401 (session required)
 on the accounts and Docs origins, i.e. the routes are served by both roles; all three `/readyz` ready.
 
+**Deployed (CI-23 organization custom roles, run 36169761487, 2026-09-25 18:13 UTC):** `{"deployed": "synwevo:07af1f08d6f2203318a88c9a1c7230d5e0c0d052", "backup": "/opt/synwevo/backups/20260925T181327Z"}`; verify and deploy jobs both succeeded (22 min). The paragraph below was written before the run landed.
+
+**Pushed next (CI-24 institutional mailbox registration):** no schema change; `valid_email` no longer raises on malformed domains, account mail bodies are quoted-printable, `/api/auth/state` publishes `mail_sender`, the verify-email screen carries sender/gateway/resend guidance in three languages, and registering an address that already has an active account mails an "account already exists" notice. Production DNS/relay state and the operator steps that remain (SMTP2GO domain verification, SPF include, tracking off, From domain) are in `docs/operations.md` §6.1. Recorded here with run and backup when the receiver reports it.
+
 **Pushed next (CI-23 organization custom roles):** schema v10 (`organization_roles`, `organization_role_assignments`), the
 permission catalogue behind every organization-level check, roles routes and UI. Recorded here with run and backup when the
 receiver reports it.
