@@ -125,6 +125,12 @@ ROUTE_POLICY: dict[tuple[str, str], str | None] = {
     ("GET", "/api/about"): None,
     ("GET", "/api/source-code"): None,
     ("GET", "/api/capabilities"): None,
+    # copying a personal project into an organization workspace (approval lives on the account service)
+    ("GET", "/api/copy-targets"): None,
+    ("GET", "/api/projects/{pid}/copy-manifest"): None,
+    ("GET", "/api/projects/{pid}/copy-requests"): None,
+    ("POST", "/api/projects/{pid}/copy-requests"): "write",
+    ("POST", "/api/copy-requests/{cid}/withdraw"): "write",
     # projects
     ("GET", "/api/projects"): None,
     ("POST", "/api/projects"): "write",

@@ -10,6 +10,7 @@ import OrganizationMembers from "./org/OrganizationMembers";
 import OrganizationWorkspaces from "./org/OrganizationWorkspaces";
 import OrganizationRoles from "./org/OrganizationRoles";
 import OrganizationImport from "./org/OrganizationImport";
+import OrganizationApprovals from "./org/OrganizationApprovals";
 import { orgPath, roleSource, statusSource, type Organization, type OrganizationWorkspace, type PermissionInfo } from "./org/types";
 import "../organization.messages";
 
@@ -75,6 +76,7 @@ function OrganizationDetail({ id }: { id: string }) {
       {seeMembers && <OrganizationMembers organization={org} mine={mine} catalogue={catalogue} onChanged={changed} />}
       {seeMembers && <OrganizationRoles organization={org} mine={mine} catalogue={catalogue} onChanged={changed} />}
       <OrganizationImport organization={org} workspaces={workspaces} mine={mine} onChanged={changed} />
+      <OrganizationApprovals organization={org} mine={mine} />
       {manage && <section className="org-section"><h2>{t("组织设置")}</h2><p className="tiny muted">{t(org.invitation_policy === "owners" ? "仅组织所有者可发送工作空间邀请。" : "组织所有者和管理员可发送工作空间邀请。")}</p>{org.status === "active" && <button type="button" className="btn" onClick={() => { setName(org.name); setPolicy(org.invitation_policy); setModal("settings"); }}>{t("编辑组织设置")}</button>}</section>}
       <section className="org-section"><h2>{t("组织访问")}</h2><div className="org-actions">
         {org.role === "owner" && <>{org.status === "active" && <button type="button" className="btn" onClick={() => setModal("freeze")}>{t("冻结组织")}</button>}{org.status === "frozen" && <button type="button" className="btn" onClick={() => setModal("unfreeze")}>{t("解冻组织")}</button>}{org.status !== "deleted" ? <button type="button" className="btn danger" onClick={() => setModal("delete")}>{t("删除组织")}</button> : org.recover_until && org.recover_until * 1000 > Date.now() ? <button type="button" className="btn primary" onClick={() => setModal("recover")}>{t("恢复组织")}</button> : <span className="muted">{t("恢复期限已过。")}</span>}</>}

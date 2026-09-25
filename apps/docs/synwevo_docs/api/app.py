@@ -74,6 +74,93 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     if start_jobs:
         # A file left 'parsing' by a previous process is parsed again, instead of forever.
         app_.resume_parsing()
+    # Approved copies of personal projects into organization workspaces are executed here, the
+    # only process that can read the source rows and write the target rows.
+    from synwevo_core.notifications import Notifier as _Notifier
+    from synwevo_core.project_copies import ProjectCopies as _ProjectCopies
+    from ..copies import CopyExecutor, CopyRunner, build_manifest
+    copies = _ProjectCopies(store, plat.identity)
+    notifier = _Notifier(store)
+    api.state.copy_runner = CopyRunner(CopyExecutor(app_, copies, notifier), copies, start=start_jobs)
+
+    def _uid(request: Request) -> str:
+        s = getattr(request.state, "session", None)
+        if not s:
+            raise ServiceError(401, "unauthorized", "请先登录")
+        return s["user_id"]
+
+    @api.get("/api/copy-targets")
+    def copy_targets(request: Request):
+        """Organization workspaces this person can write to, with their organizations — the only
+        targets a copy request may name. A workspace they cannot see is not listed."""
+        uid = _uid(request)
+        out = []
+        for w in plat.identity.workspaces_for(uid):
+            if w.get("kind") == "org" and w.get("status") == "active" and w.get("organization_id") and w.get("role") in ("editor", "admin", "owner"):
+                org = store.one("SELECT name, status FROM organizations WHERE id=?", (w["organization_id"],)) or {}
+                if org.get("status") == "active":
+                    out.append({"id": w["id"], "name": w["name"], "role": w["role"], "organization_id": w["organization_id"], "organization_name": org.get("name"),
+                                "can_self_approve": copies.can_decide(w["organization_id"], w["id"], uid)})
+        here = store.one("SELECT kind FROM workspaces WHERE id=?", (current_tenant(),)) or {}
+        return {"items": out, "source_is_personal": here.get("kind") == "personal"}
+
+    @api.get("/api/projects/{pid}/copy-manifest")
+    def copy_manifest(request: Request, pid: str, sources: int = 0, corrections: int = 0):
+        _uid(request)
+        manifest, digest = build_manifest(app_, pid, {"sources": bool(sources), "corrections": bool(corrections)})
+        return {"manifest": manifest, "digest": digest}
+
+    @api.get("/api/projects/{pid}/copy-requests")
+    def copy_requests(request: Request, pid: str):
+        uid = _uid(request)
+        app_.get_project(pid)
+        return {"items": [copies.public(r, for_requester=True) for r in copies.list_for_requester(uid, source_project_id=pid)]}
+
+    @api.post("/api/projects/{pid}/copy-requests", status_code=201)
+    def request_copy(request: Request, pid: str, body: dict = Body(...)):
+        """`{"target_workspace_id", "name", "purpose"?, "scope": {"sources"?, "corrections"?}, "decide"?: "approve"}`.
+        The manifest is built now and frozen with the request; `decide` lets a requester who
+        also holds the deciding authority approve in the same step (recorded as self-approval)."""
+        uid = _uid(request)
+        if set(body) - {"target_workspace_id", "name", "purpose", "scope", "decide", "reason"}:
+            raise ServiceError(400, "invalid_field", "复制申请包含不支持的字段")
+        scope = body.get("scope") or {}
+        if not isinstance(scope, dict):
+            raise ServiceError(400, "invalid_field", "scope 必须是对象", {"field": "scope"})
+        manifest, digest = build_manifest(app_, pid, scope)
+        r = copies.create(requester_id=uid, source_workspace_id=current_tenant(), source_project_id=pid,
+                          target_workspace_id=str(body.get("target_workspace_id") or ""), name=str(body.get("name") or manifest["project"]["name"]),
+                          purpose=body.get("purpose"), scope=scope, manifest=manifest, digest=digest)
+        plat.audit(request, "docs.copy.request", actor_id=uid, workspace_id=current_tenant(), object_kind="project_copy", object_id=r["id"], result="ok",
+                   meta={"project_id": pid, "target_workspace_id": r["target_workspace_id"], "scope": r["scope"], "digest": digest})
+        me = plat.identity.get_user(uid) or {}
+        ws = store.one("SELECT name FROM workspaces WHERE id=?", (r["target_workspace_id"],)) or {}
+        if body.get("decide") == "approve":
+            r = copies.decide(r["id"], uid, "approve", reason=str(body.get("reason") or ""))
+            plat.audit(request, "docs.copy.decide", actor_id=uid, object_kind="project_copy", object_id=r["id"], result="ok",
+                       meta={"action": "approve", "self_approved": True, "organization_id": r["target_organization_id"]})
+            api.state.copy_runner.wake()
+        else:
+            for who in copies.deciders(r["target_organization_id"], r["target_workspace_id"]):
+                if who == uid:
+                    continue
+                try:
+                    notifier.emit(who, "copy.requested", params={"requester": me.get("display_name") or me.get("email") or "—", "project": manifest["project"]["name"],
+                                                                 "workspace": ws.get("name") or "—"},
+                                  organization_id=r["target_organization_id"], workspace_id=r["target_workspace_id"], object_kind="project_copy", object_id=r["id"],
+                                  dedupe_key=f"copy:{r['id']}:requested:{who}", actionable=True,
+                                  target={"origin": "accounts", "path": f"/organizations/{r['target_organization_id']}?approval={r['id']}"})
+                except Exception as e:  # noqa: BLE001
+                    import logging as _logging
+                    _logging.getLogger("synwevo.copies").warning("copy request notification skipped: %s", type(e).__name__)
+        return copies.public(r, for_requester=True)
+
+    @api.post("/api/copy-requests/{cid}/withdraw")
+    def withdraw_copy(request: Request, cid: str):
+        uid = _uid(request)
+        r = copies.withdraw(cid, uid)
+        plat.audit(request, "docs.copy.withdraw", actor_id=uid, object_kind="project_copy", object_id=cid, result="ok")
+        return copies.public(r, for_requester=True)
 
     # ------------------------------------------------------------ regression cases & desensitization
     # Captured cases hold the workspace's source files verbatim, so every route works inside the

@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -800,6 +800,9 @@ class Store:
         # reactions, attachments).
         from .messaging import SCHEMA as MESSAGING_SCHEMA
         c.executescript(MESSAGING_SCHEMA)
+        # v13: approved copies of personal Docs projects into organization workspaces.
+        from .project_copies import SCHEMA as PROJECT_COPIES_SCHEMA
+        c.executescript(PROJECT_COPIES_SCHEMA)
         with self.tx() as t:
             for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}

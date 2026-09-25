@@ -119,6 +119,22 @@ CATALOGUE: dict[str, dict] = {
     "organization.roles_assigned": {"category": "organization", "severity": "info", "email": "immediate", "title": {
         "zh-Hans": "你在组织「{organization}」的角色已更新", "zh-Hant": "你在組織「{organization}」的角色已更新", "en": "Your roles in the organization “{organization}” changed"}, "body": {
         "zh-Hans": "当前自定义角色：{roles}。由 {actor} 更改。", "zh-Hant": "目前自訂角色：{roles}。由 {actor} 變更。", "en": "Current custom roles: {roles}. Changed by {actor}."}},
+    # ---- approvals: copying a personal Docs project into an organization workspace
+    "copy.requested": {"category": "approval", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "{requester} 申请把项目「{project}」复制到「{workspace}」", "zh-Hant": "{requester} 申請把專案「{project}」複製到「{workspace}」", "en": "{requester} asks to copy “{project}” into “{workspace}”"}, "body": {
+        "zh-Hans": "请查看清单后批准或拒绝。", "zh-Hant": "請查看清單後批准或拒絕。", "en": "Review the manifest, then approve or reject."}},
+    "copy.approved": {"category": "approval", "severity": "info", "email": "immediate", "title": {
+        "zh-Hans": "复制申请「{project}」已批准", "zh-Hant": "複製申請「{project}」已批准", "en": "Copy request for “{project}” approved"}, "body": {
+        "zh-Hans": "由 {decider} 批准；副本正在创建。", "zh-Hant": "由 {decider} 批准；副本正在建立。", "en": "Approved by {decider}; the copy is being created."}},
+    "copy.rejected": {"category": "approval", "severity": "info", "email": "immediate", "title": {
+        "zh-Hans": "复制申请「{project}」被拒绝", "zh-Hant": "複製申請「{project}」被拒絕", "en": "Copy request for “{project}” rejected"}, "body": {
+        "zh-Hans": "{decider}：{reason}", "zh-Hant": "{decider}：{reason}", "en": "{decider}: {reason}"}},
+    "copy.done": {"category": "approval", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "项目「{project}」已复制到「{workspace}」", "zh-Hant": "專案「{project}」已複製到「{workspace}」", "en": "“{project}” was copied into “{workspace}”"}, "body": {
+        "zh-Hans": "副本已可用；原项目保持不变。", "zh-Hant": "副本已可用；原專案保持不變。", "en": "The copy is ready; the original is unchanged."}},
+    "copy.failed": {"category": "approval", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "项目「{project}」的复制{outcome}", "zh-Hant": "專案「{project}」的複製{outcome}", "en": "Copying “{project}” {outcome}"}, "body": {
+        "zh-Hans": "{reason}", "zh-Hant": "{reason}", "en": "{reason}"}},
     # ---- conversations (the sender is never told about their own message; modes and mute apply)
     "conversation.dm": {"category": "conversation", "severity": "info", "email": "digest", "title": {
         "zh-Hans": "{sender} 给你发了私信", "zh-Hant": "{sender} 傳了私訊給你", "en": "{sender} sent you a direct message"}, "body": {

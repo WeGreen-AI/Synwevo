@@ -11,6 +11,7 @@ import { errorText, isPermissionError, permissions, READ_ONLY_TEXT } from "../li
 import { clampCursor, defaultOrder, listQuery, PAGE_SIZE, toPage, type ListParams, type Page, type ProjectSort } from "../lib/projects";
 import { useLatest } from "../lib/latest";
 import MoreMenu from "../components/MoreMenu";
+import CopyRequestDialog from "../components/CopyRequestDialog";
 
 const SORTS: { k: ProjectSort; label: string }[] = [
   { k: "updated", label: "最近更新" },
@@ -26,6 +27,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [templates, setTemplates] = useState<any[] | null>(null);
+  const [copyFor, setCopyFor] = useState<{ id: string; name: string } | null>(null);
   const [tplErr, setTplErr] = useState<string | null>(null);
   const [cursor, setCursor] = useState(0);
   const listRef = useRef<HTMLTableSectionElement>(null);
@@ -36,6 +38,9 @@ export default function Home() {
   const session = useSession();
   const perm = permissions(session.me, session.disabled);
   const ro = !perm.canWrite;
+  // The copy-to-organization action exists only in a personal workspace: an organization
+  // project has nothing to ask approval for, and the server refuses such a request anyway.
+  const personal = session.me?.workspaces?.find((w) => w.id === session.me?.workspace_id)?.kind === "personal";
 
   // Search, sort and paging happen on the server (the list used to download every project, and
   // aggregate every tenant's sources and jobs, on each visit). An older server that ignores the
@@ -221,6 +226,7 @@ export default function Home() {
                                 { label: tr("重命名…"), onClick: () => rename(p) },
                                 { label: p.archived_at ? tr("取消归档") : tr("归档（可撤销）"), onClick: () => archive(p, !p.archived_at) },
                                 { label: tr("删除…"), onClick: () => remove(p) },
+                                ...(personal ? [{ label: tr("复制到组织工作空间…"), onClick: () => setCopyFor({ id: p.id, name: p.name }) }] : []),
                               ]),
                             ]} />
                           </td>
@@ -281,6 +287,7 @@ export default function Home() {
           <div className="tiny muted mt16">{tr("所有文件只在本机/自有服务器处理，不会发送到外部服务。")}</div>
         </div>
       </div>
+      {copyFor && <CopyRequestDialog project={copyFor} onClose={() => { setCopyFor(null); load(); }} />}
     </div>
   );
 }

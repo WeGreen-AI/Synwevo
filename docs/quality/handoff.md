@@ -83,7 +83,8 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-23 | 组织自定义角色（权限目录 + 角色表 + 委派不越权 + 有效权限视图 + 组织页 UI） | 已部署（07af1f0） | `org.members.import`/`org.approvals.decide`/`org.messaging.manage` 由 CI-24/26/25 消费；组织审计页未做；`docs/platform/organization-roles.md` 是权威记录 |
 | CI-24 | 机构邮箱注册（CUHK）：根因定位到收件网关（Trend Micro）之后；校验器不再 500、正文 QP、收件页发件人与网关提示、活跃账户再注册寄提示 | 已部署（544f607） | 真实 CUHK 收件、SMTP2GO Activity 记录、SPF/发件域验证/跟踪关闭/From 改域均为账户持有人或运营步骤（operations.md §6.1）；验证脚本 `ui_e2e_institutional_mail.py` |
 | CI-25 | 多格式成员批量导入（核心模块 + Docs 读取器注入 + 账户路由/执行器 + 组织页向导 + 接受时分配角色） | 已部署（33f17c6） | 生产 accounts 容器合并 compose 的扫描器两项；`docs/platform/member-import.md` 是权威记录；脚本 `ui_e2e_member_import.py` |
-| CI-26 | 组织内私聊与群聊（核心模块 + REST/SSE + 页面 + 平台栏徽标 + 通知事件 + 附件接纳链 + 撤权关门） | 已实现（本机），待推送 | Docs 链接卡片、Web Push、多 worker 事件总线未做；`docs/platform/messaging.md` 是权威记录；脚本 `ui_e2e_messaging.py` |
+| CI-26 | 组织内私聊与群聊（核心模块 + REST/SSE + 页面 + 平台栏徽标 + 通知事件 + 附件接纳链 + 撤权关门） | 已部署（085667e + 构建修复 7d4d567） | Docs 链接卡片、Web Push、多 worker 事件总线未做；`docs/platform/messaging.md` 是权威记录；脚本 `ui_e2e_messaging.py` |
+| CI-27 | 个人 Docs 项目经目标审批复制到组织工作空间（核心状态机 + Docs 清单/执行器/路由 + 账户审批路由 + 组织页审批区 + Docs 对话框 + 通知事件） | 已实现（本机），待推送 | 反向/组织间复制、审批人裁剪清单不做；`docs/platform/project-copy.md` 是权威记录；测试 `tests/integration/test_project_copy.py`；脚本 `ui_e2e_project_copy.py` |
 
 已核对、无需改动（记录以免重复研究）：
 
@@ -97,7 +98,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 
 候选队列（按风险与价值，2026-09-26 更新；第九节的批次顺序见 docs/platform/notifications.md §7 与 handoff 本表）：
 - 运营/账户持有人（CI-24 接续）：SMTP2GO Activity 查 `1xA8Ua-AIkwcC8lNJx-F8I8` 的最终投递；`hikosphere.com` SPF 加 `include:spf.smtp2go.com`；在 SMTP2GO 验证发件域（对齐回信地址与 DKIM）并关闭事务邮件链接/打开跟踪；评估把 From 改到 `wegreen.ltd`（mailcow 已发布其 DKIM）。
-第九节余下批次——多格式成员导入（CI-24，解析器须放进真实共用的包才能绕开 identity↔docs 边界）、私聊/群聊（CI-25，附件复用接纳链）、个人项目复制审批（CI-26）、第三方组件名清理（CI-27）；
+第九节余下批次——多格式成员导入（CI-25，已部署）、私聊/群聊（CI-26）、个人项目复制审批（CI-27）均已交付；第三方组件名清理（CI-28）与 Docs 升级（§9.8）待做；
 恶意上传防护的后续——`rescan` CLI 与管理端补扫入口、加密压缩包/Office 文件的用户流程（file-acceptance §9）、生产 `clamav`
 服务上线后的真实引擎复核；登出落点差异——CI-19 中 Chromium 登出后到 `/login`、WebKit 到 `/logged-out`（两者 `/api/auth/me`
 都 401），核对是登出重定向的竞态还是引擎差异并统一；第七节其余专项——分层限流的多实例契约（API 网关按密钥的 300/分钟仍是单进程内存）、WAF/源站清单与规则观察；

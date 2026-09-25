@@ -134,6 +134,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     messaging = build_messaging_router(store, identity, sessions, audit, notifier=api.state.notifier)
     api.state.message_hub = messaging.hub
     api.include_router(messaging)
+    from .approval_routes import build_router as build_approval_router
+    api.include_router(build_approval_router(store, identity, sessions, audit, notifier=api.state.notifier))
     api.include_router(build_api_platform_router(store, identity, sessions, audit, adapter=control_plane))
     api.include_router(build_passkey_router(identity, sessions, passkeys, audit))
     # External OpenID providers: configured ones are validated here, at start-up, so a half

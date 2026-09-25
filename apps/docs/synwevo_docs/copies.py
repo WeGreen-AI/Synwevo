@@ -1,0 +1,234 @@
+"""Copying a personal project into an organization workspace: the manifest the approver sees,
+the digest that pins what was approved, and the executor that clones rows into the target
+tenant once everything still holds (state machine: synwevo_core.project_copies).
+
+What is copied: the template (its pinned version, or the head, as a new template with one
+version), the project's rule/output/step, the current mapping revision, and — only when the
+requester chose it — the ready source files, with or without their OCR text and corrections.
+Blobs are content-addressed and shared; new rows in the target tenant make them reachable there
+(authz.blob_readable) without moving bytes. Never copied: jobs, artifacts, uploads, grants,
+webhooks, API keys, provenance of the original, or anything from another project.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import threading
+
+from synwevo_core.context import as_tenant
+from synwevo_core.errors import ServiceError
+from synwevo_core.notifications import Notifier
+from synwevo_core.project_copies import ProjectCopies
+from synwevo_core.store import new_id, now
+
+log = logging.getLogger("synwevo.copies")
+
+
+def _canonical(obj) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def build_manifest(app, pid: str, scope: dict) -> tuple[dict, str]:
+    """Inside the source tenant. Names, sizes, hashes and counts — never file bodies."""
+    p = app.get_project(pid)
+    tpl = ver = None
+    if p.get("template_id"):
+        tpl = app.get_template(p["template_id"])
+        ver = app.get_version(tpl["id"], p.get("template_version") or tpl["head"])
+    mappings = (app.get_mappings(pid) or {}).get("mappings") or []
+    # The public source view deliberately hides the blob hash; the manifest needs it (the approver
+    # sees what will be copied, the executor re-checks it), so read the rows after get_project's
+    # tenant check — the same check list_sources relies on.
+    sources = [s for s in app.store.all("SELECT * FROM source_files WHERE project_id=? AND removed=0 ORDER BY ord", (pid,))
+               if s.get("status") == "ready"]
+    src_rows = [{"id": s["id"], "filename": s["filename"], "size": s.get("size") or 0, "format": s.get("format"), "family": s.get("family"),
+                 "sha256": s.get("blob"), "version": s.get("version") or 1, "scan": ((s.get("scan") or {}).get("status") if isinstance(s.get("scan"), dict) else None),
+                 "has_ocr": bool(s.get("ocr")), "has_corrections": bool(s.get("corrections"))} for s in sources]
+    manifest = {
+        "project": {"id": p["id"], "name": p["name"], "step": p.get("step"), "rev": p.get("rev"), "record_rule": p.get("record_rule") or {}, "output": p.get("output") or {}},
+        "template": ({"id": tpl["id"], "name": tpl["name"], "kind": tpl.get("kind"), "format": tpl.get("format"), "version_no": ver["version_no"],
+                      "pinned": bool(p.get("template_version")), "working_sha256": ver.get("working_blob"), "slots": len(ver.get("slots") or []),
+                      "scan": ((tpl.get("scan") or {}).get("status") if isinstance(tpl.get("scan"), dict) else None)} if tpl else None),
+        "mappings": {"rev": p.get("mapping_rev") or 0, "count": len(mappings), "enabled": sum(1 for m in mappings if m.get("enabled", True))},
+        "sources": {"included": bool(scope.get("sources")), "count": len(src_rows), "total_bytes": sum(s["size"] for s in src_rows),
+                    "items": src_rows if scope.get("sources") else [{k: s[k] for k in ("filename", "size", "format")} for s in src_rows]},
+        "corrections": {"included": bool(scope.get("sources")) and bool(scope.get("corrections"))},
+        "excluded": ["jobs", "artifacts", "uploads", "blob_grants", "webhooks", "api_keys", "provenance"],
+    }
+    digest = hashlib.sha256(_canonical({
+        "project": [p["id"], p.get("rev"), p.get("template_id"), p.get("template_version"), p.get("mapping_rev"), p.get("record_rule"), p.get("output")],
+        "template": [tpl["id"], ver["version_no"], ver.get("working_blob"), _canonical(ver.get("slots") or [])] if tpl else None,
+        "sources": sorted([s["id"], s["sha256"], s["version"]] for s in src_rows) if scope.get("sources") else None,
+    }).encode()).hexdigest()
+    return manifest, digest
+
+
+class CopyExecutor:
+    """Runs one approved copy. All authority and the digest are re-checked here, not trusted
+    from the approval; the copy is one transaction and the original is never written to."""
+
+    def __init__(self, app, copies: ProjectCopies, notifier: Notifier | None = None):
+        self.app, self.copies, self.notifier = app, copies, notifier
+
+    def run(self, cid: str) -> dict:
+        r = self.copies.get(cid)
+        if not r:
+            raise ServiceError(404, "no_copy_request", "找不到该复制申请")
+        why = self.copies.preconditions(r)
+        if why:
+            out = self.copies.reset_stale(cid, error=why)
+            self._tell(out, "copy.failed", outcome_key="stale", reason=why)
+            return out
+        with as_tenant(r["source_workspace_id"]):
+            try:
+                manifest, digest = build_manifest(self.app, r["source_project_id"], r["scope"] or {})
+            except ServiceError as e:
+                out = self.copies.reset_stale(cid, error=f"source:{e.code}")
+                self._tell(out, "copy.failed", outcome_key="stale", reason=e.code)
+                return out
+        if digest != r["digest"]:
+            out = self.copies.reset_stale(cid, error="source_changed")
+            self._tell(out, "copy.failed", outcome_key="stale", reason="source_changed")
+            return out
+        claimed = self.copies.claim_approved(cid)
+        if not claimed:
+            return self.copies.get(cid)
+        try:
+            result = self._copy(claimed, manifest)
+        except Exception as e:  # noqa: BLE001 - whatever failed, the request records it and nothing half-made stays visible
+            log.warning("project copy %s failed: %s", cid, type(e).__name__)
+            out = self.copies.finish(cid, "failed", error=f"{type(e).__name__}")
+            self._tell(out, "copy.failed", outcome_key="failed", reason=type(e).__name__)
+            return out
+        out = self.copies.finish(cid, "done", result=result)
+        self._tell(out, "copy.done")
+        return out
+
+    def _copy(self, r: dict, manifest: dict) -> dict:
+        src_ws, dst_ws, pid = r["source_workspace_id"], r["target_workspace_id"], r["source_project_id"]
+        scope = r["scope"] or {}
+        store = self.app.store
+        with as_tenant(src_ws):
+            p = self.app.get_project(pid)
+            tpl = self.app.get_template(p["template_id"]) if p.get("template_id") else None
+            ver = self.app.get_version(tpl["id"], p.get("template_version") or tpl["head"]) if tpl else None
+            mappings = (self.app.get_mappings(pid) or {}).get("mappings") or []
+            sources = ([s for s in store.all("SELECT * FROM source_files WHERE project_id=? AND removed=0 ORDER BY ord", (pid,)) if s.get("status") == "ready"]
+                       if scope.get("sources") else [])
+            full_sources = {s["id"]: s for s in sources}
+        ts = now()
+        new_pid = new_id("p")
+        warnings: list[str] = []
+        with store.tx():
+            new_tid = None
+            if tpl:
+                new_tid = new_id("t")
+                store.insert("templates", {"id": new_tid, "tenant": dst_ws, "name": tpl["name"][:100], "kind": tpl.get("kind"), "format": tpl.get("format"),
+                                           "original_blob": tpl.get("original_blob"), "original_name": tpl.get("original_name"), "head": 1,
+                                           "created_at": ts, "updated_at": ts, "info": tpl.get("info"), "scan": tpl.get("scan")})
+                store.insert("template_versions", {"template_id": new_tid, "version_no": 1, "parent_no": None, "working_blob": ver.get("working_blob"),
+                                                   "slots": ver.get("slots"), "editor": ver.get("editor"),
+                                                   "note": f"复制自个人项目模板「{tpl['name']}」v{ver['version_no']}（申请 {r['id']}）", "created_at": ts})
+            store.insert("projects", {"id": new_pid, "name": r["name"][:100], "created_at": ts, "updated_at": ts, "tenant": dst_ws,
+                                      "origin": f"copy:{r['id']}"[:80], "record_rule": p.get("record_rule") or {}, "output": p.get("output") or {},
+                                      "template_id": new_tid, "template_version": (1 if (tpl and p.get("template_version")) else None),
+                                      "mapping_rev": 1, "rev": 1, "step": p.get("step") or "sources"})
+            id_map: dict[str, str] = {}
+            for s in sources:
+                row = full_sources[s["id"]]
+                nid = new_id("s")
+                id_map[s["id"]] = nid
+                store.insert("source_files", {
+                    "id": nid, "project_id": new_pid, "filename": row["filename"], "ord": row.get("ord"), "blob": row.get("blob"), "size": row.get("size"),
+                    "format": row.get("format"), "family": row.get("family"), "status": "ready", "error": None, "notes": row.get("notes"),
+                    "structure": row.get("structure"), "signature": row.get("signature"), "parsed_blob": row.get("parsed_blob"), "working_blob": row.get("working_blob"),
+                    "options": row.get("options"), "version": row.get("version") or 1, "representative": row.get("representative") or 0,
+                    "ocr": row.get("ocr") if scope.get("corrections") else None, "corrections": row.get("corrections") if scope.get("corrections") else None,
+                    "scan": row.get("scan"), "created_at": ts, "updated_at": ts, "removed": 0})
+            data = []
+            for m in mappings:
+                m = json.loads(json.dumps(m))
+                if m.get("source_file"):
+                    m["source_file"] = id_map.get(m["source_file"]) if id_map else None
+                    if m["source_file"] is None:
+                        m.pop("source_file", None)
+                if isinstance(m.get("overrides"), dict):
+                    if id_map:
+                        remapped = {}
+                        for k, v in m["overrides"].items():
+                            head, sep, rest = k.partition("~")
+                            if head in id_map:
+                                remapped[id_map[head] + sep + rest] = v
+                        m["overrides"] = remapped
+                    else:
+                        m.pop("overrides", None)
+                data.append(m)
+            if not sources and any(m.get("source_file") or m.get("overrides") for m in mappings):
+                warnings.append("mappings_source_refs_dropped")
+            store.insert("mapping_revs", {"project_id": new_pid, "rev": 0, "parent_rev": None, "data": [], "note": "初始", "created_at": ts})
+            store.insert("mapping_revs", {"project_id": new_pid, "rev": 1, "parent_rev": 0, "data": data, "note": f"复制自申请 {r['id']}", "created_at": ts})
+        return {"project_id": new_pid, "template_id": new_tid, "sources": len(sources), "mappings": len(data), "warnings": warnings,
+                "manifest_digest": r["digest"]}
+
+    def _tell(self, r: dict, kind: str, *, outcome_key: str | None = None, reason: str | None = None) -> None:
+        if not self.notifier:
+            return
+        m = r.get("manifest") or {}
+        ws = self.app.store.one("SELECT name FROM workspaces WHERE id=?", (r["target_workspace_id"],)) or {}
+        base = {"project": (m.get("project") or {}).get("name") or r["name"], "workspace": ws.get("name") or "—"}
+        for who, locale_user in ((r["requester_id"], r["requester_id"]), (r.get("decided_by"), r.get("decided_by"))):
+            if not who or (who == r["requester_id"] and locale_user != r["requester_id"]):
+                continue
+            params = dict(base)
+            if kind == "copy.failed":
+                u = self.app.store.one("SELECT locale FROM users WHERE id=?", (who,)) or {}
+                loc = u.get("locale") or "zh-Hans"
+                outcome = {"stale": {"zh-Hans": "需要重新申请", "zh-Hant": "需要重新申請", "en": "needs a new request"},
+                           "failed": {"zh-Hans": "失败", "zh-Hant": "失敗", "en": "failed"}}[outcome_key or "failed"]
+                params["outcome"] = outcome.get(loc, outcome["en"])
+                params["reason"] = {"source_changed": "源项目在批准后有改动，批准范围不再有效。", "approval_expired": "批准已过期。",
+                                    "source_authority_lost": "申请人不再拥有源项目。", "decider_authority_lost": "审批者不再具有审批权限。"}.get(reason or "", reason or "")
+            path = f"/p/{(r.get('result') or {}).get('project_id')}" if kind == "copy.done" and who == r["requester_id"] else None
+            try:
+                self.notifier.emit(who, kind, params=params, organization_id=r["target_organization_id"], workspace_id=r["target_workspace_id"],
+                                   object_kind="project_copy", object_id=r["id"], dedupe_key=f"copy:{r['id']}:{kind}:{who}",
+                                   target=({"origin": "docs", "path": path} if path else {"origin": "accounts", "path": f"/organizations/{r['target_organization_id']}?approval={r['id']}"}))
+            except Exception as e:  # noqa: BLE001
+                log.warning("copy notification skipped: %s", type(e).__name__)
+
+
+class CopyRunner:
+    """Executes approved copies in the background of the Docs process (10 s tick)."""
+
+    def __init__(self, executor: CopyExecutor, copies: ProjectCopies, *, start: bool = True):
+        self.executor, self.copies = executor, copies
+        self._wake, self._stop = threading.Event(), threading.Event()
+        self._thread: threading.Thread | None = None
+        # a copy left `running` by a previous process: nothing half-made is visible (one transaction), so it is retried
+        self.copies.store.execute("UPDATE project_copies SET status='approved', updated_at=? WHERE status='running'", (now(),))
+        if start:
+            self._thread = threading.Thread(target=self._run, name="project-copies", daemon=True)
+            self._thread.start()
+
+    def wake(self) -> None:
+        self._wake.set()
+
+    def alive(self) -> bool:
+        return self._thread is None or self._thread.is_alive()
+
+    def run_once(self) -> int:
+        self.copies.sweep()
+        n = 0
+        for r in self.copies.next_approved():
+            self.executor.run(r["id"]); n += 1
+        return n
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.run_once()
+            except Exception as e:  # noqa: BLE001
+                log.warning("copy runner error: %s", type(e).__name__)
+            self._wake.wait(10.0)
+            self._wake.clear()

@@ -877,6 +877,40 @@ XLS/ODS/DOC 经 LibreOffice 的路径只在引擎单测覆盖，本轮未在导�
 
 **未做/外部条件**：Docs 项目/任务链接卡片（按接收者权限生成摘要）未做，链接只做净化后的可点击文本；在线/他人已读不做（无可靠依据）；
 多 worker 部署前需共享事件总线（compose 当前每角色单 worker）；Web Push 未做。
+### 16.27 个人项目复制到组织工作空间：目标说了算，批准的是清单，复制的是快照（CI-27）
+
+**架构**：`synwevo_core.project_copies`（schema v13：`project_copies`，状态机 pending→approved→running→done，旁路 rejected/withdrawn/expired/stale/failed，
+`version` 乐观锁，待审批与批准后各 7 天时效），Docs `synwevo_docs.copies`（清单与摘要、执行器一次事务复制、10 s 运行器、自行批准即唤醒）与 5 个路由
+（`/api/copy-targets`、`/copy-manifest`、`/copy-requests` 申请/列出、`/copy-requests/{id}/withdraw`），账户 `approval_routes.py`（组织审批列出/查看/决定，
+决定 = `org.approvals.decide` + 目标空间 admin/owner + 近期重认证 + 理由）。清单只含名称/大小/哈希/数量/扫描状态；执行前重查来源方、目标可写、
+决定者权限、组织活跃与摘要，任何一项变了都不复制（`stale`）。原项目不被写入；来源 blob 共享，其余对象在目标租户新建。
+决策记录、规则、接口：`docs/platform/project-copy.md`。
+
+**接口测试**（`tests/integration/test_project_copy.py`，2 项，`role=all` 组合服务器 + 真实引擎）：个人项目（工作簿 + DOCX 模板一个字段 + 逐行规则 + 映射）；
+目标列表只有可写的组织空间、`can_self_approve=false`；清单 1 字段/1 映射/1 来源含哈希；外人目标为空；重复申请 409；只有可决定者收到 `copy.requested`；
+无权限成员 403、外人 404；持权限的组织管理员但只是目标 viewer：能看、`can_decide=false`、决定 403；审批人在目标空间对源项目 404；未重认证 → `reauth_required`；
+理由过短 → `reason_required`；批准记录决定者、申请人收到 `copy.approved`；二次决定 `not_pending`；运行器执行 → `done`，副本在目标空间：模板新建 v1 一个字段、
+来源新 id 同 blob、`mapping_rev=1`、`origin=copy:*`；**副本真实生成 2 个 DOCX，产物读回含「张三」「李四」**；原项目 rev/mapping_rev/模板不变、无任务；
+副本对个人空间 404。第二项：批准后改名摘要不变、改样本规则摘要变化 → 执行为 `stale: source_changed`，目标无副本、申请人收 `copy.failed`；撤回后决定 `not_pending`；
+拒绝带理由到达申请人；目标空间 owner 的个人项目自行批准（`self_approved=true`）→ 执行 `done`；组织空间项目作为来源 409 `source_not_personal`。
+
+**浏览器（隔离实例，文件邮件，两个独立上下文：审批人 390 px 触摸、申请人 1280 px，Chromium + WebKit）**，`services/identity/scripts/ui_e2e_project_copy.py`：
+
+```
+== chromium (Google Chrome)
+  - owner created an organization; the requester joined its workspace as an editor through the mailed invitation
+  - the requester asked from the project menu; the dialog showed the manifest (1 template field, 1 mapping, 1 workbook) and no self-approval offer
+  - the owner approved at phone width with a reason; the step demanded a fresh password before it went through
+  - the copy opened in the target workspace, previewed the first row, generated 2 documents; the downloaded ZIP read back both names
+  - original unchanged (same revision, mapping revision, template, name) and invisible to the approver; the copy is unreachable from the personal workspace
+== webkit（五条同上）
+```
+
+过程中修正的两处：审批条目原来只显示源项目名，现在显示副本名并注明「源项目「…」」；来源文件的扫描状态原来直接显示内部值（`not_configured`），
+现在按目录翻译（等待检查 / 未配置扫描 / 检查失败 / 超出扫描大小 / 检出威胁）。WebKit 首次失败是脚本按 CSS 顺序填写而非按标签填写；改为 `get_by_label` 后两引擎一致。
+
+**未做/外部条件**：反向或组织间复制、审批人裁剪清单、邮件一键批准（决定必须在会话内重认证）均不做；生产复制执行器随 Docs 角色单 worker，
+多实例时 `claim_approved` 条件更新保证一次。
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

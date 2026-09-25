@@ -33,12 +33,12 @@
 | `org.members.view` | members | 成员列表 | ✓ | ✓ |
 | `org.members.invite` | members | 向组织空间发邀请（受邀请策略约束） | ✓ | ✓ |
 | `org.members.manage` | members | 改普通成员的组织角色、移除普通成员（管理员/所有者仍只由所有者处理） | ✓ | ✓ |
-| `org.members.import` | members | 批量导入（CI-24） | ✓ | ✓ |
+| `org.members.import` | members | 批量导入（CI-25） | ✓ | ✓ |
 | `org.roles.manage` | roles | 管理与分配自定义角色 | — | ✓（所有者委派） |
 | `org.workspaces.create` / `org.workspaces.adopt` | workspaces | 建空间 / 纳入空间 | ✓ | ✓ |
 | `org.audit.read` | governance | 组织审计 | ✓ | ✓ |
-| `org.approvals.decide` | governance | 复制审批（CI-26，还需目标空间管理员） | ✓ | ✓ |
-| `org.messaging.manage` | governance | 群聊治理（CI-25） | ✓ | ✓ |
+| `org.approvals.decide` | governance | 复制审批（CI-27，还需目标空间管理员；见 project-copy.md） | ✓ | ✓ |
+| `org.messaging.manage` | governance | 群聊治理（CI-26） | ✓ | ✓ |
 | `org.ownership.transfer` / `org.lifecycle.manage` | owner | 交接所有权 / 冻结删除恢复 | — | ✗ 仅所有者 |
 
 有效权限 = 基础角色集合 ∪ 已分配角色的并集。普通成员默认为空集（与实现前一致：成员看不到成员列表）。

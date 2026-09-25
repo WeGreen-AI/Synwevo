@@ -5031,4 +5031,132 @@ export const messages = {
     "en": "◆ Repeating rows: each source file's detail block is written whole into its own document",
     "zh-Hant": "◆ 重複明細：每個來源檔案的該明細區域整體寫入同一份文件"
   },
+  "复制到组织工作空间…": {
+    "en": "Copy to an organization workspace…",
+    "zh-Hant": "複製到組織工作空間…"
+  },
+  "复制到组织工作空间": {
+    "en": "Copy to an organization workspace",
+    "zh-Hant": "複製到組織工作空間"
+  },
+  "副本由目标工作空间的管理员批准后创建，之后独立于原项目，受目标空间的成员与保留策略管理。原项目保持不变。": {
+    "en": "The copy is created after an administrator of the target workspace approves; it is then independent of the original and governed by the target workspace's members and retention. The original stays unchanged.",
+    "zh-Hant": "副本由目標工作空間的管理員批准後建立，之後獨立於原專案，受目標空間的成員與保留策略管理。原專案保持不變。"
+  },
+  "已有申请": {
+    "en": "Existing requests",
+    "zh-Hant": "已有申請"
+  },
+  "撤回": {
+    "en": "Withdraw",
+    "zh-Hant": "撤回"
+  },
+  "切换到目标空间并打开副本": {
+    "en": "Switch to the target workspace and open the copy",
+    "zh-Hant": "切換到目標空間並開啟副本"
+  },
+  "你还不是任何组织工作空间的编辑成员。请先让组织把你加入目标空间（编辑成员或以上），再来申请复制。": {
+    "en": "You are not yet an editor in any organization workspace. Ask the organization to add you to the target workspace (editor or above), then request the copy.",
+    "zh-Hant": "你還不是任何組織工作空間的編輯成員。請先讓組織把你加入目標空間（編輯成員或以上），再來申請複製。"
+  },
+  "这个项目已有未完成的复制申请；撤回后才能再次申请。": {
+    "en": "This project already has an open copy request; withdraw it before asking again.",
+    "zh-Hant": "這個專案已有未完成的複製申請；撤回後才能再次申請。"
+  },
+  "目标工作空间": {
+    "en": "Target workspace",
+    "zh-Hant": "目標工作空間"
+  },
+  "请选择…": {
+    "en": "Choose…",
+    "zh-Hant": "請選擇…"
+  },
+  "副本名称": {
+    "en": "Copy name",
+    "zh-Hant": "副本名稱"
+  },
+  "用途说明（给审批人看，可选）": {
+    "en": "Purpose (shown to the approver, optional)",
+    "zh-Hant": "用途說明（給審批人看，可選）"
+  },
+  "复制内容": {
+    "en": "What to copy",
+    "zh-Hant": "複製內容"
+  },
+  "项目配置、样本规则、映射与模板（始终复制）": {
+    "en": "Project configuration, sample rule, mappings and template (always)",
+    "zh-Hant": "專案設定、樣本規則、對應與範本（始終複製）"
+  },
+  "来源数据文件（{n} 个）": {
+    "en": "Source data files ({n})",
+    "zh-Hant": "來源資料檔案（{n} 個）"
+  },
+  "来源文件的修正与识别文字": {
+    "en": "Corrections and recognized text of the source files",
+    "zh-Hant": "來源檔案的修正與辨識文字"
+  },
+  "不会复制：任务、产物、上传记录、授权、Webhook、API 凭据。": {
+    "en": "Never copied: jobs, artifacts, upload records, grants, webhooks, API credentials.",
+    "zh-Hant": "不會複製：任務、產物、上傳記錄、授權、Webhook、API 憑證。"
+  },
+  "（已固定）": {
+    "en": "(pinned)",
+    "zh-Hant": "（已固定）"
+  },
+  "{n} 个字段": {
+    "en": "{n} fields",
+    "zh-Hant": "{n} 個欄位"
+  },
+  "修订 {rev}，{n} 条": {
+    "en": "Revision {rev}, {n} mappings",
+    "zh-Hant": "修訂 {rev}，{n} 條"
+  },
+  "{n} 个文件，共 {size}": {
+    "en": "{n} files, {size} in total",
+    "zh-Hant": "{n} 個檔案，共 {size}"
+  },
+  "我也是目标空间的审批人：批准并复制（记录为自行批准）": {
+    "en": "I am also an approver of the target: approve and copy now (recorded as a self-approval)",
+    "zh-Hant": "我也是目標空間的審批人：批准並複製（記錄為自行批准）"
+  },
+  "批准理由": {
+    "en": "Reason for approval",
+    "zh-Hant": "批准理由"
+  },
+  "批准并复制": {
+    "en": "Approve and copy",
+    "zh-Hant": "批准並複製"
+  },
+  "提交申请": {
+    "en": "Submit request",
+    "zh-Hant": "送出申請"
+  },
+  "等待审批": {
+    "en": "Awaiting approval",
+    "zh-Hant": "等待審批"
+  },
+  "已批准，复制中": {
+    "en": "Approved, copying",
+    "zh-Hant": "已批准，複製中"
+  },
+  "已拒绝": {
+    "en": "Rejected",
+    "zh-Hant": "已拒絕"
+  },
+  "已撤回": {
+    "en": "Withdrawn",
+    "zh-Hant": "已撤回"
+  },
+  "已过期": {
+    "en": "Expired",
+    "zh-Hant": "已過期"
+  },
+  "复制中": {
+    "en": "Copying",
+    "zh-Hant": "複製中"
+  },
+  "需重新申请": {
+    "en": "Needs a new request",
+    "zh-Hant": "需重新申請"
+  },
 } satisfies Messages;

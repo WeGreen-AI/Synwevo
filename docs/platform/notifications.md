@@ -55,6 +55,10 @@
 | `conversation.added` / `conversation.removed` | conversation / info | 被加入或移出群的人 | 群成员变化 | 汇总 / 关 | 消息 → 该会话 / 消息列表 |
 | `member_import.finished` | organization / info | 发起导入的人 | 一次批量导入结束（完成/部分完成/失败/取消），附邀请/更新/跳过/失败计数 | 汇总 | 组织页 → 批量导入成员（`?import=<id>` 打开该批次） |
 | `member_import.roles_applied` | organization / info | 接受邀请的新成员 | 导入指定的组织自定义角色在其接受邀请时由导入者身份分配成功 | 汇总 | 组织页 |
+| `copy.requested` | approval / action | 能决定该申请的成员（持 `org.approvals.decide` 且是目标空间 admin/owner） | 个人项目申请复制到组织工作空间（`dedupe_key=copy:{id}:requested:{reader}`）；申请人自行批准时不发 | 立即 | 组织页 → 审批（`?approval=<id>` 展开该申请） |
+| `copy.approved` / `copy.rejected` | approval / info | 申请人 | 目标空间决定了申请；拒绝附理由 | 立即 | Docs → 源项目（对话框里显示状态） |
+| `copy.done` | approval / info | 申请人与决定者 | Docs 执行器已在目标空间创建副本 | 汇总 | Docs → 源项目 / 组织页 → 审批 |
+| `copy.failed` | approval / action | 申请人与决定者 | 执行前复核失败（来源已变、授权丢失、批准过期）或复制出错；附原因 | 立即 | Docs → 源项目 / 组织页 → 审批 |
 
 不发的：普通登录成功、任务进度百分比、每次路由切换——目录里没有这些 kind，就不会有人凑出通知。审批、成员导入、消息三个类别随各自功能接入。
 
