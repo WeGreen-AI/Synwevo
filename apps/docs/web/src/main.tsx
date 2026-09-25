@@ -1,23 +1,28 @@
 import { serverText, issueText } from "./lib/presentation";
 import "./lib/presentation";
 import { messages } from "./messages";
-import { t as tr, useI18n, I18nProvider, StatusPage, registerMessages } from "@synwevo/ui";
-import { StrictMode, lazy, Suspense } from "react";
+import { t as tr, useI18n, I18nProvider, StatusPage, registerMessages, lazyRoute } from "@synwevo/ui";
+import { StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DialogProvider, ToastProvider, initTheme } from "@synwevo/ui";
 import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
 import Home from "./pages/Home";
-import Workspace from "./pages/Workspace";
-import JobPage from "./pages/JobPage";
-import AboutPage from "./pages/About";
-import RegressionPage from "./pages/Regression";
-import Capabilities from "./pages/Capabilities";
 import "@synwevo/ui/styles.css";
 import "./styles.css";
 
-const DocEditor = lazy(() => import("./pages/DocEditor"));
-const SheetEditor = lazy(() => import("./pages/SheetEditor"));
+/* Route-level code splitting (see @synwevo/ui lazyRoute). The project list is the entry; the
+ * workbench with its four document viewers, the job page, the built-in editors and the
+ * secondary pages load when their route is entered. A chunk missing right after a deployment
+ * reloads the page once. */
+const KEY = "synwevo.docs.chunk-reload";
+const Workspace = lazyRoute(() => import("./pages/Workspace"), KEY);
+const JobPage = lazyRoute(() => import("./pages/JobPage"), KEY);
+const AboutPage = lazyRoute(() => import("./pages/About"), KEY);
+const RegressionPage = lazyRoute(() => import("./pages/Regression"), KEY);
+const Capabilities = lazyRoute(() => import("./pages/Capabilities"), KEY);
+const DocEditor = lazyRoute(() => import("./pages/DocEditor"), KEY);
+const SheetEditor = lazyRoute(() => import("./pages/SheetEditor"), KEY);
 
 registerMessages(messages);
 initTheme();

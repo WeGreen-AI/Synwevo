@@ -9,35 +9,19 @@
  * Only what the account service is actually for: signing in, the account and security centre,
  * accepting an invitation, and the pages the redirect chain lands on.
  */
-import { StrictMode, Suspense, lazy, type ComponentType, type ReactNode } from "react";
+import { StrictMode, Suspense, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { DialogProvider, ToastProvider, initTheme, I18nProvider, StatusPage, useI18n, registerMessages } from "@synwevo/ui";
+import { DialogProvider, ToastProvider, initTheme, I18nProvider, StatusPage, useI18n, registerMessages, lazyRoute, pick } from "@synwevo/ui";
 import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
 import Login from "./pages/Login";
 import { AccountCapabilityGate } from "./pages/org/AuthFlow";
 
-/* Route-level code splitting. The sign-in page is what most visits start with, and it used to
- * download the whole shell — platform administration, the API console, member governance, the
- * MFA enrolment with its QR renderer — 710 KB of JavaScript before the first field could be
- * typed into. Only Login (and the two status pages) stay in the entry chunk; every other page
- * loads when its route is entered. A chunk that fails to load right after a deployment (the
- * page in the tab still names the previous build's file) reloads the page once, which fetches
- * the current HTML and its chunks; a second failure surfaces as an error. */
-function lazyRoute<T extends ComponentType<any>>(load: () => Promise<{ default: T }>): T {
-  return lazy(() => load().catch((error: unknown) => {
-    const key = "synwevo.account.chunk-reload";
-    let already = false;
-    try { already = sessionStorage.getItem(key) === window.location.pathname; } catch { /* storage unavailable: no retry */ }
-    if (!already) {
-      try { sessionStorage.setItem(key, window.location.pathname); } catch { /* ignore */ }
-      window.location.reload();
-      return new Promise<never>(() => {});   // the reload takes over; never resolve
-    }
-    throw error;
-  })) as unknown as T;
-}
-const pick = <M, K extends keyof M>(load: () => Promise<M>, name: K) => () => load().then((m) => ({ default: m[name] as unknown as ComponentType<any> }));
+/* Route-level code splitting (see @synwevo/ui lazyRoute). The sign-in page is what most visits
+ * start with, and it used to download the whole shell — platform administration, the API
+ * console, member governance, the MFA enrolment with its QR renderer — 710 KB of JavaScript
+ * before the first field could be typed into. Only Login (and the two status pages) stay in the
+ * entry chunk; every other page loads when its route is entered. */
 const Account = lazyRoute(() => import("./pages/Account"));
 const AccountRecovery = lazyRoute(pick(() => import("./pages/Account"), "AccountRecovery"));
 const Invite = lazyRoute(() => import("./pages/Invite"));
