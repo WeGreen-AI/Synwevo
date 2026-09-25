@@ -967,6 +967,21 @@ PDF 引擎基础模式下的 PDF 产物元数据；Google/Microsoft 登录主体
 过程中的一处修正：陈旧保存的对话框内文案原来说「请刷新后…」，而页面已经自动重载；改为与映射冲突一致的「已刷新为最新设置，请在此基础上重新操作」。
 
 **未做**：实时协同/自动合并、评论与提及、其它 Docs 事件（模板/映射变更、产物过期）。
+### 16.30 手机宽度复查：复制对话框、副本来源行、Docs 内的平台铃铛（CI-30）
+
+CI-27/29 的浏览器证据里申请人一直在桌面宽度；这里把申请人放到 390 px 触摸视口（Chromium + WebKit），`services/identity/scripts/ui_e2e_phone_copy.py`：
+
+```
+== chromium (Google Chrome)
+  - at 390 px the project menu, the copy dialog and its submit button fit without sideways scroll; the request shows as pending in the dialog
+  - the copy's provenance line, the generate dialog, the job page and the bell item all fit at 390 px; the bell item opened the job page
+== webkit（两条同上）
+```
+
+检查方式：每一步断言 `scrollWidth <= innerWidth`，对话框、提交按钮、来源行、生成对话框、铃铛条目的 `getBoundingClientRect` 落在视口内（抽屉在滑入动画结束后再量——
+第一次量在动画中途得到 394 > 390 的假阳性，脚本改为等抽屉位置稳定）。截图人工复核发现一处真实的手机问题：收件箱抽屉里的筛选按钮（全部/未读/待处理/全部标为已读/偏好）
+继承了导航抽屉「每项一行 44 px」的规则，五个按钮竖排占去约 250 px；`notifications.css` 给抽屉内的 `.notif-tools .btn` 改回紧凑工具条尺寸（32 px、自动宽度、可并排换行）。
+`check_design.py` 通过；三外壳重建后复跑通过。
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

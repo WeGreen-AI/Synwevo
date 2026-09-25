@@ -3,6 +3,9 @@
 .bell-count { position: absolute; top: 0; right: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
   background: var(--accent); color: var(--on-accent); font-size: 11px; line-height: 16px; text-align: center; font-weight: 600; }
 .notif-tools { margin-bottom: 8px; }
+/* Inside a drawer every link/button is a 44px navigation row; the inbox's filter tabs and tools
+   are a toolbar, not a menu, so they stay compact and wrap side by side on a phone. */
+.drawer-b .notif-tools .btn { min-height: 32px; height: auto; width: auto; padding: 6px 10px; font-size: 13px; justify-content: center; }
 .notif-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .notif-item { display: flex; gap: 8px; align-items: flex-start; padding: 10px 8px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface); }
 .notif-item.unread { border-color: var(--accent-line); background: var(--accent-weak); }
