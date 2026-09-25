@@ -49,7 +49,7 @@ def test_a_role_serves_its_own_shell_even_when_another_is_named(tmp_path, monkey
             assert "/account-assets/" not in response.text
             assert "/assets/" not in response.text
     if role == "portal":
-        assert "<title>Synwevo · 让数据成为文档</title>" in c.get("/").text
+        assert "<title>Synwevo · 工作流程自动化平台</title>" in c.get("/").text
         assert '<meta name="robots" content="index, follow"' in c.get("/").text
 
 
