@@ -94,8 +94,14 @@ def require_invitation_permission(store: Store, workspace_id: str, actor_id: str
     if org["status"] != "active":
         raise ServiceError(409, "organization_unavailable", "该组织当前不可用")
     member = current_membership(store, org["id"], actor_id)
-    allowed = ("owner",) if org["invitation_policy"] == "owners" else ("owner", "admin")
-    if not member or member["role"] not in allowed:
+    if not member:
+        raise ServiceError(403, "organization_invitation_forbidden", "当前组织邀请策略不允许此操作")
+    if org["invitation_policy"] == "owners":
+        ok = member["role"] == "owner"
+    else:
+        from .org_roles import OrgRoles
+        ok = OrgRoles(store).has(org["id"], actor_id, "org.members.invite")
+    if not ok:
         raise ServiceError(403, "organization_invitation_forbidden", "当前组织邀请策略不允许此操作")
 
 
@@ -160,13 +166,22 @@ class Organizations:
             raise ServiceError(401, "unauthorized", "账户不可用，请重新登录")
         return user
 
-    def require(self, oid, actor_id, *, manage=False, owner=False, active=False):
+    def require(self, oid, actor_id, *, manage=False, owner=False, active=False, permission=None):
+        """Membership plus authority. `permission` names a catalogue id (org_roles) and is the
+        rule going forward: the base role and any custom roles decide. `owner` stays for the
+        owner-only acts; `manage` is the legacy shorthand for the administrative set."""
         self._user(actor_id)
         org = self.store.one("SELECT * FROM organizations WHERE id=?", (oid,))
         member = current_membership(self.store, oid, actor_id)
         if not org or not member:
             raise ServiceError(404, "no_organization", "找不到该组织")
-        if (owner and member["role"] != "owner") or (manage and member["role"] == "member"):
+        if owner and member["role"] != "owner":
+            raise ServiceError(403, "forbidden", "当前组织角色无权执行此操作")
+        if permission is not None:
+            from .org_roles import OrgRoles
+            if not OrgRoles(self.store).has(oid, actor_id, permission):
+                raise ServiceError(403, "forbidden", "当前组织角色无权执行此操作", {"permission": permission})
+        elif manage and member["role"] == "member":
             raise ServiceError(403, "forbidden", "当前组织角色无权执行此操作")
         if active and org["status"] != "active":
             raise ServiceError(409, "organization_unavailable", "该组织当前不可用")
@@ -235,7 +250,7 @@ class Organizations:
         if invitation_policy is not None and invitation_policy not in ("admins", "owners"):
             raise ServiceError(400, "invalid_field", "请选择有效的邀请策略", {"field": "invitation_policy"})
         with self.store.tx():
-            org, _ = self.require(oid, actor_id, manage=True, owner=invitation_policy is not None, active=True)
+            org, _ = self.require(oid, actor_id, permission="org.settings.manage", owner=invitation_policy is not None, active=True)
             if version is not None and (type(version) is not int or version != org["version"]):
                 raise ServiceError(409, "organization_changed", "组织设置已更新，请刷新后重试")
             after = {"name": name if name is not None else org["name"],
@@ -264,7 +279,7 @@ class Organizations:
     def create_workspace(self, oid, actor_id, name):
         name = _name(name)
         with self.store.tx():
-            self.require(oid, actor_id, manage=True, active=True)
+            self.require(oid, actor_id, permission="org.workspaces.create", active=True)
             self._creation_budget(actor_id, "workspace", 30)
             ws = self._new_workspace(oid, actor_id, name)
             self._record(actor_id, oid, "organization.workspace.create", {"workspace_id": ws["id"]})
@@ -282,7 +297,7 @@ class Organizations:
     def adopt_workspace(self, oid, actor_id, wid, *, reason):
         reason = _reason(reason)
         with self.store.tx():
-            self.require(oid, actor_id, manage=True, active=True)
+            self.require(oid, actor_id, permission="org.workspaces.adopt", active=True)
             ws = self.ident.get_workspace(wid)
             member = self.ident.membership(wid, actor_id)
             if not ws or not member:
@@ -308,7 +323,7 @@ class Organizations:
             return self.ident.get_workspace(wid)
 
     def members(self, oid, actor_id, *, q="", role="", offset=0, limit=50):
-        _, caller = self.require(oid, actor_id, manage=True)
+        _, caller = self.require(oid, actor_id, permission="org.members.view")
         if role and role not in ROLES:
             raise ServiceError(400, "bad_role", "请选择有效的组织角色", {"field": "role"})
         if not isinstance(q, str) or len(q) > 100 or type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 200:
@@ -325,9 +340,16 @@ class Organizations:
         rows = self.store.all("SELECT m.user_id,m.role,m.created_at AS joined_at,u.email,u.display_name, "
                               "u.status AS account_status" + base + " ORDER BY CASE m.role WHEN 'owner' THEN 0 "
                               "WHEN 'admin' THEN 1 ELSE 2 END,m.created_at,m.user_id LIMIT ? OFFSET ?", tuple(args + [limit, offset]))
+        names = {}
+        if rows:
+            marks = ",".join("?" for _ in rows)
+            for a in self.store.all("SELECT a.user_id, r.id, r.name FROM organization_role_assignments a JOIN organization_roles r ON r.id=a.role_id "
+                                    f"WHERE a.organization_id=? AND a.user_id IN ({marks}) ORDER BY r.name", (oid, *[r["user_id"] for r in rows])):
+                names.setdefault(a["user_id"], []).append({"id": a["id"], "name": a["name"]})
         for row in rows:
             row["is_self"] = row["user_id"] == actor_id
             row["manageable"] = not row["is_self"] and (caller["role"] == "owner" or row["role"] == "member")
+            row["custom_roles"] = names.get(row["user_id"], [])
         owners = self.store.one("SELECT COUNT(*) AS n FROM organization_memberships m JOIN users u ON u.id=m.user_id "
                                 "WHERE m.organization_id=? AND m.role='owner' AND u.status='active' "
                                 "AND u.deleted_at IS NULL", (oid,))["n"]
@@ -353,7 +375,7 @@ class Organizations:
         if role not in ROLES:
             raise ServiceError(400, "bad_role", "请选择有效的组织角色", {"field": "role"})
         with self.store.tx():
-            org, actor = self.require(oid, actor_id, manage=True)
+            org, actor = self.require(oid, actor_id, permission="org.members.manage")
             target = self._target(oid, uid)
             if actor["role"] != "owner" and (target["role"] != "member" or role != "member"):
                 raise ServiceError(403, "role_too_high", "只有组织所有者可以管理管理员和所有者")
@@ -381,7 +403,7 @@ class Organizations:
     def remove_member(self, oid, actor_id, uid, *, reason, leave=False):
         reason = _reason(reason)
         with self.store.tx():
-            _, actor = self.require(oid, actor_id, manage=not leave)
+            _, actor = self.require(oid, actor_id, permission=None if leave else "org.members.manage")
             target = self._target(oid, uid)
             if leave and actor_id != uid:
                 raise ServiceError(403, "forbidden", "只能退出自己的组织成员身份")
@@ -404,6 +426,8 @@ class Organizations:
             record_organization(self.store, "organization_member_removed", organization_id=oid, user_id=uid)
             revoked = self._revoke_workspace_authority(oid, uid=uid)
             self.store.execute("DELETE FROM organization_memberships WHERE organization_id=? AND user_id=?", (oid, uid))
+            from .org_roles import OrgRoles
+            OrgRoles(self.store).unassign_all(oid, uid)       # custom roles go with the membership
             # Withdraw explicit workspace grants so a later invitation into one
             # workspace cannot resurrect previous access to every other workspace.
             self.store.execute("UPDATE app_entitlements SET revoked_at=COALESCE(revoked_at,?) WHERE user_id=? "

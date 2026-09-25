@@ -6,7 +6,10 @@ export interface Organization {
   recover_until: number | null; usage?: { workspaces: number; members: number }; quota?: null;
 }
 export interface OrganizationWorkspace { id: string; name: string; kind: string; status: string; organization_id: string; workspace_role: string | null }
-export interface OrganizationMember { user_id: string; email: string; display_name: string | null; role: OrganizationRole; account_status: string; is_self: boolean; manageable: boolean }
+export interface CustomRole { id: string; name: string; description: string | null; permissions: string[]; version: number; assigned_count?: number | null }
+export interface PermissionInfo { id: string; group: string; owner_only: boolean; label: string; description: string }
+export interface EffectivePermissions { base_role: OrganizationRole | null; roles: CustomRole[]; permissions: string[]; sources: Record<string, string[]> }
+export interface OrganizationMember { custom_roles?: { id: string; name: string }[]; user_id: string; email: string; display_name: string | null; role: OrganizationRole; account_status: string; is_self: boolean; manageable: boolean }
 export interface MemberPage { items: OrganizationMember[]; total: number; offset: number; limit: number; active_owner_count: number; single_owner: boolean; caller: { user_id: string; role: OrganizationRole } }
 export const roleSource = (role: string) => role === "owner" ? "所有者" : role === "admin" ? "管理员" : role === "editor" ? "编辑者" : role === "viewer" ? "查看者" : "成员";
 export const statusSource = (status: string) => status === "active" ? "正常" : status === "frozen" ? "已冻结" : status === "deleted" ? "已删除" : "不可用";

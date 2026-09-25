@@ -743,6 +743,28 @@ services/identity/tests/test_notifications.py ......                       [100%
 第一次跑时 Docs 与门户对 `/api/auth/notifications/*` 回 404 `not_in_this_role`——角色门只放行明确列出的账户路径；把五条收件箱路径
 加入 `APP_ACCOUNT_PATHS` 后通过，并有 `tests/integration/test_readyz_components.py` 断言三种角色都以 401（无会话）而非 404 应答。
 
+### 16.23 组织自定义角色：委派不越权、有效权限可见（CI-23）
+
+**接口测试**（`services/identity/tests/test_org_roles.py`，5 项）：目录与基础集合一致（admin 默认集合不含 `org.roles.manage`，两项所有者专属不可委派）；
+所有者建角色并分配后，成员恰好获得那两项（能建空间、能看成员，仍不能改设置/管角色）并收到 `organization.roles_assigned`；受委派的角色管理员
+不能铸造未持有的权限（403 `permission_not_held`）、不能编辑或分配含更高权限的角色、能分配自己创建的角色；邀请权限经
+`require_invitation_permission` 生效，「仅所有者」策略压过任何角色；删除已分配角色 409 `role_assigned` → `unassign` 后清除；同名 409、
+未知权限 400、版本冲突 409；移除成员清空其角色；admin 基础角色照旧（仍不管角色）。组织路由、邀请、通知三套测试 33 项一起通过。
+
+**浏览器（隔离实例，390×844，所有者为繁體读者、成员为简体读者）**：
+
+```
+== chromium (Google Chrome)
+  - owner created role “Space builder 1a7a” with workspaces.create + members.view; owner-only boxes were disabled
+  - assigned; the effective-permissions view lists the two permissions and names the role as their source
+  - member holds exactly the two permissions, created a workspace (201), was refused a rename (403), and found the assignment in the inbox in English
+  - deleting the assigned role said 1 member was affected and left the member with no organization permissions
+  - 0 CSP violations, 0 page errors
+```
+
+过程中发现并修正：成员面板的角色列表在页面挂载时取一次，刚在角色面板创建的角色在「分配角色」对话框里不出现——改为打开对话框时重取；
+敏感写操作的重认证提示是异步出现的，脚本要等待口令框而不是立刻判断。WebKit（经本地 `*.localhost` 代理）同一脚本五条全部通过。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

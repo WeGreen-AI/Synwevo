@@ -51,15 +51,22 @@ pointer renders white on `#1D4ED8` (CI-16 live).
 whole-page target sizes; the run for `0727348` was superseded). [Actions 36142441078](https://github.com/WeGreen-AI/Synwevo/actions/runs/36142441078)
 (created 13:40 UTC, verify and deploy both passed, finished 14:05 UTC); pre-upgrade backup `/opt/synwevo/backups/20260925T140436Z`.
 
-**Local, not pushed:** CI-22 platform inbox (schema v9: `notifications`, `notification_deliveries`, `notification_preferences`;
-inbox routes in every role; the account service's e-mail dispatcher; bell and preferences UI). The first CI-21 run (36158250147)
-was cancelled by the 45-minute job timeout: a test had replaced `time.sleep` for the rest of the session and every later polling
-loop spun; `729d694` scopes the patch to that test and re-runs the deployment.
+**Running source:** `729d6945077db9ab2fc41e736e68784bdb7ca19a` (CI-21 risk-triggered human verification, Turnstile verified
+server-side; the composed server's `malware_scanner` readiness component; the challenge test's sleep patch scoped to itself).
+The first CI-21 run, 36158250147, was cancelled by the 45-minute job timeout — that test had replaced `time.sleep` for the rest of
+the session and every later polling loop spun on the two-CPU verify container. Run 36163781043 for `729d694` passed verify and
+deploy (created 16:54 UTC, deployed 17:11 UTC); pre-upgrade backup `/opt/synwevo/backups/20260925T171110Z`. Anonymous checks:
+`/api/auth/state.challenge` is `null` (no Turnstile keys in the runtime), Docs `/readyz` now lists `malware_scanner: off`.
 
-**Pushed, in flight (CI-21 risk-triggered human verification, Turnstile verified server-side; the composed server's
-`malware_scanner` readiness component):** recorded here with hash, run and backup when the receiver reports it. Production
-runtime has no `SYNWEVO_TURNSTILE_*` keys, so after this deployment `/api/auth/state.challenge` is `null`, no page loads the
-widget script and behaviour is unchanged; enabling it is the account holder's step (`docs/operations.md` §9).
+**Running source:** `a02baf0bd57706f9b9d9199862ce552fd7c03d19` (CI-22 platform inbox: schema v9 `notifications`/
+`notification_deliveries`/`notification_preferences`, inbox routes in every role, the account service's e-mail dispatcher, bell
+and preferences UI). Run 36166772633 passed verify (21 min) and deploy (created 17:23 UTC, deployed 17:45 UTC); pre-upgrade backup
+`/opt/synwevo/backups/20260925T174518Z`. Anonymous checks: `/api/auth/notifications/unread-count` answers 401 (session required)
+on the accounts and Docs origins, i.e. the routes are served by both roles; all three `/readyz` ready.
+
+**Pushed next (CI-23 organization custom roles):** schema v10 (`organization_roles`, `organization_role_assignments`), the
+permission catalogue behind every organization-level check, roles routes and UI. Recorded here with run and backup when the
+receiver reports it.
 
 **Running source:** `af81bcfcebc552e92dcd91f54e772afe5bd34201` (CI-19 onboarding browser regression; CI-20 malware scanning
 chain: quarantine-first sources and templates, clamd adapter, schema v7→v8 `scan` columns, degradable `malware_scanner`

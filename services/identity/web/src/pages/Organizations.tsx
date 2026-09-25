@@ -8,7 +8,8 @@ import OrganizationAction, { type OrganizationActionSpec } from "./org/Organizat
 import OrganizationAvatar from "./org/OrganizationAvatar";
 import OrganizationMembers from "./org/OrganizationMembers";
 import OrganizationWorkspaces from "./org/OrganizationWorkspaces";
-import { orgPath, roleSource, statusSource, type Organization, type OrganizationWorkspace } from "./org/types";
+import OrganizationRoles from "./org/OrganizationRoles";
+import { orgPath, roleSource, statusSource, type Organization, type OrganizationWorkspace, type PermissionInfo } from "./org/types";
 import "../organization.messages";
 
 export default function Organizations() {
@@ -38,16 +39,21 @@ function OrganizationDetail({ id }: { id: string }) {
   const [org, setOrg] = useState<Organization | null>(null); const [workspaces, setWorkspaces] = useState<OrganizationWorkspace[]>([]);
   const [error, setError] = useState<unknown>(null); const [revision, setRevision] = useState(0); const [modal, setModal] = useState<string | null>(null);
   const [name, setName] = useState(""); const [policy, setPolicy] = useState<"admins" | "owners">("admins");
+  const [mine, setMine] = useState<string[]>([]); const [catalogue, setCatalogue] = useState<PermissionInfo[]>([]);
   useEffect(() => {
     if (!me || needsVerification(me)) return;
     const abort = new AbortController(); setError(null);
-    Promise.all([get<{ organization: Organization }>(orgPath(id), abort.signal), get<{ items: OrganizationWorkspace[] }>(`${orgPath(id)}/workspaces`, abort.signal)])
-      .then(([a, b]) => { setOrg(a.organization); setWorkspaces(b.items); setName(a.organization.name); setPolicy(a.organization.invitation_policy); })
+    Promise.all([get<{ organization: Organization }>(orgPath(id), abort.signal), get<{ items: OrganizationWorkspace[] }>(`${orgPath(id)}/workspaces`, abort.signal),
+                 get<{ catalogue: PermissionInfo[]; mine: string[] }>(`${orgPath(id)}/permissions?lang=${encodeURIComponent(locale)}`, abort.signal)])
+      .then(([a, b, c]) => { setOrg(a.organization); setWorkspaces(b.items); setName(a.organization.name); setPolicy(a.organization.invitation_policy); setMine(c.mine); setCatalogue(c.catalogue); })
       .catch(e => { if (!abort.signal.aborted) setError(e); });
     return () => abort.abort();
-  }, [id, me?.id, revision, needsVerification(me)]);
+  }, [id, me?.id, revision, needsVerification(me), locale]);
   const changed = () => { setRevision(v => v + 1); void refresh(); };
-  const manage = org?.role === "owner" || org?.role === "admin";
+  // What this member may do here comes from the server's permission catalogue (base role plus
+  // custom roles), not from the base role alone.
+  const manage = mine.includes("org.settings.manage");
+  const seeMembers = mine.includes("org.members.view");
   const lifecycle: Record<string, { title: string; impact: string; danger?: boolean }> = {
     freeze: { title: "冻结组织", impact: "冻结后，所属工作空间将停止访问，相关会话、令牌与待处理邀请会被撤销。之后可以解冻，已撤销的凭据不会恢复。", danger: true },
     unfreeze: { title: "解冻组织", impact: "恢复组织访问。已撤销的会话、令牌和邀请不会恢复，成员需要重新登录。" },
@@ -65,7 +71,8 @@ function OrganizationDetail({ id }: { id: string }) {
       {org.status !== "active" && <p className="notice warn">{t(org.status === "frozen" ? "组织已冻结，工作空间暂时无法访问。" : "组织已删除，工作空间暂时无法访问。")}{org.status === "deleted" && org.recover_until && ` ${t("可恢复至 {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(org.recover_until * 1000) })}`}</p>}
       <OrganizationAvatar organization={org} onChanged={changed} />
       <OrganizationWorkspaces organization={org} workspaces={workspaces} onChanged={changed} />
-      {manage && <OrganizationMembers organization={org} onChanged={changed} />}
+      {seeMembers && <OrganizationMembers organization={org} mine={mine} catalogue={catalogue} onChanged={changed} />}
+      {seeMembers && <OrganizationRoles organization={org} mine={mine} catalogue={catalogue} onChanged={changed} />}
       {manage && <section className="org-section"><h2>{t("组织设置")}</h2><p className="tiny muted">{t(org.invitation_policy === "owners" ? "仅组织所有者可发送工作空间邀请。" : "组织所有者和管理员可发送工作空间邀请。")}</p>{org.status === "active" && <button type="button" className="btn" onClick={() => { setName(org.name); setPolicy(org.invitation_policy); setModal("settings"); }}>{t("编辑组织设置")}</button>}</section>}
       <section className="org-section"><h2>{t("组织访问")}</h2><div className="org-actions">
         {org.role === "owner" && <>{org.status === "active" && <button type="button" className="btn" onClick={() => setModal("freeze")}>{t("冻结组织")}</button>}{org.status === "frozen" && <button type="button" className="btn" onClick={() => setModal("unfreeze")}>{t("解冻组织")}</button>}{org.status !== "deleted" ? <button type="button" className="btn danger" onClick={() => setModal("delete")}>{t("删除组织")}</button> : org.recover_until && org.recover_until * 1000 > Date.now() ? <button type="button" className="btn primary" onClick={() => setModal("recover")}>{t("恢复组织")}</button> : <span className="muted">{t("恢复期限已过。")}</span>}</>}

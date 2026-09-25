@@ -116,6 +116,9 @@ CATALOGUE: dict[str, dict] = {
     "organization.role_changed": {"category": "organization", "severity": "info", "email": "immediate", "title": {
         "zh-Hans": "你在组织「{organization}」的角色变为 {role}", "zh-Hant": "你在組織「{organization}」的角色變為 {role}", "en": "Your role in the organization “{organization}” is now {role}"}, "body": {
         "zh-Hans": "由 {actor} 更改。", "zh-Hant": "由 {actor} 變更。", "en": "Changed by {actor}."}},
+    "organization.roles_assigned": {"category": "organization", "severity": "info", "email": "immediate", "title": {
+        "zh-Hans": "你在组织「{organization}」的角色已更新", "zh-Hant": "你在組織「{organization}」的角色已更新", "en": "Your roles in the organization “{organization}” changed"}, "body": {
+        "zh-Hans": "当前自定义角色：{roles}。由 {actor} 更改。", "zh-Hant": "目前自訂角色：{roles}。由 {actor} 變更。", "en": "Current custom roles: {roles}. Changed by {actor}."}},
     # ---- Synwevo Docs
     "docs.file_rejected": {"category": "docs", "severity": "action", "email": "immediate", "title": {
         "zh-Hans": "文件「{filename}」未通过安全检查", "zh-Hant": "檔案「{filename}」未通過安全檢查", "en": "“{filename}” failed the security check"}, "body": {

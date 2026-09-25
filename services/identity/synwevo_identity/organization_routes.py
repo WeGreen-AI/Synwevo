@@ -86,7 +86,7 @@ def build_router(store, ident, sessions, audit, invites, mailer) -> APIRouter:
         if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500:
             raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字），它会写入审计记录")
         def operation(orgs, uid):
-            orgs.require(oid, uid, manage=True, active=True)
+            orgs.require(oid, uid, permission="org.settings.manage", active=True)
             if remove:
                 store.execute("DELETE FROM organization_avatars WHERE organization_id=?", (oid,))
             else:
@@ -151,6 +151,90 @@ def build_router(store, ident, sessions, audit, invites, mailer) -> APIRouter:
             _inbox(request, oid, uid, member_id, "member.removed", workspace=(store.one("SELECT name FROM organizations WHERE id=?", (oid,)) or {}).get("name"))
             return out
         return write(request, op, sensitive=True)
+
+    # ------------------------------------------------------------------ custom roles
+    from synwevo_core.org_roles import OrgRoles, catalogue as permission_catalogue
+
+    def _locale(request: Request) -> str:
+        lang = request.query_params.get("lang")
+        if lang in ("zh-Hans", "zh-Hant", "en"):
+            return lang
+        u = store.one("SELECT locale FROM users WHERE id=?", (session(request)["user_id"],)) or {}
+        return u.get("locale") or "zh-Hans"
+
+    @r.get("/{oid}/permissions")
+    def list_permissions(request: Request, oid: str):
+        """The catalogue in the reader's language, plus what the caller holds here."""
+        uid = session(request)["user_id"]
+        service(request).require(oid, uid)
+        eff = OrgRoles(store).effective(oid, uid)
+        return {"catalogue": permission_catalogue(_locale(request)), "mine": eff["permissions"], "base_role": eff["base_role"]}
+
+    @r.get("/{oid}/roles")
+    def list_roles(request: Request, oid: str):
+        uid = session(request)["user_id"]
+        service(request).require(oid, uid, permission="org.members.view")
+        return {"items": OrgRoles(store).list(oid)}
+
+    @r.post("/{oid}/roles", status_code=201)
+    def create_role(request: Request, oid: str, body: dict = Body(...)):
+        if set(body) - {"name", "description", "permissions"}:
+            raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
+        def op(orgs, uid):
+            orgs.require(oid, uid, active=True)
+            role = OrgRoles(store).create(oid, uid, name=body.get("name"), description=body.get("description"), permissions=body.get("permissions"))
+            audit(request, "organization.role.create", actor_id=uid, object_kind="organization_role", object_id=role["id"], result="ok",
+                  meta={"organization_id": oid, "permissions": role["permissions"]})
+            return {"role": role}
+        return write(request, op, sensitive=True)
+
+    @r.patch("/{oid}/roles/{rid}")
+    def update_role(request: Request, oid: str, rid: str, body: dict = Body(...)):
+        if set(body) - {"name", "description", "permissions", "version"}:
+            raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
+        def op(orgs, uid):
+            orgs.require(oid, uid, active=True)
+            role = OrgRoles(store).update(oid, uid, rid, name=body.get("name"), description=body.get("description"),
+                                          permissions=body.get("permissions"), version=body.get("version"))
+            audit(request, "organization.role.update", actor_id=uid, object_kind="organization_role", object_id=rid, result="ok",
+                  meta={"organization_id": oid, "permissions": role["permissions"]})
+            return {"role": role}
+        return write(request, op, sensitive=True)
+
+    @r.delete("/{oid}/roles/{rid}")
+    def delete_role(request: Request, oid: str, rid: str, body: dict = Body(default={})):
+        if set(body) - {"unassign"}:
+            raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
+        def op(orgs, uid):
+            orgs.require(oid, uid, active=True)
+            out = OrgRoles(store).delete(oid, uid, rid, unassign=bool(body.get("unassign")))
+            audit(request, "organization.role.delete", actor_id=uid, object_kind="organization_role", object_id=rid, result="ok",
+                  meta={"organization_id": oid, "unassigned": out["unassigned"]})
+            return out
+        return write(request, op, sensitive=True)
+
+    @r.put("/{oid}/members/{member_id}/roles")
+    def assign_roles(request: Request, oid: str, member_id: str, body: dict = Body(...)):
+        if set(body) - {"role_ids"}:
+            raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
+        def op(orgs, uid):
+            orgs.require(oid, uid, active=True)
+            out = OrgRoles(store).assign(oid, uid, member_id, body.get("role_ids"))
+            audit(request, "organization.role.assign", actor_id=uid, object_kind="organization_membership", object_id=member_id, result="ok",
+                  meta={"organization_id": oid, "added": out["added"], "removed": out["removed"]})
+            if (out["added"] or out["removed"]) and member_id != uid:
+                _inbox(request, oid, uid, member_id, "organization.roles_assigned",
+                       roles="、".join(r["name"] for r in out["roles"]) or "—")
+            return out
+        return write(request, op, sensitive=True)
+
+    @r.get("/{oid}/members/{member_id}/permissions")
+    def member_permissions(request: Request, oid: str, member_id: str):
+        """What a member can do here and where each permission comes from — computed from the
+        rows, never by acting as that member."""
+        uid = session(request)["user_id"]
+        service(request).require(oid, uid, permission="org.members.view")
+        return OrgRoles(store).effective(oid, member_id)
 
     @r.post("/{oid}/leave")
     def leave(request: Request, oid: str, body: dict = Body(...)):
