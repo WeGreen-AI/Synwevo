@@ -1,5 +1,58 @@
 # Vultr Tokyo deployment — current record
 
+## 2026-09-25 navigation, layers, phone layouts and step-up admin auth — deployed
+
+Authorized by the user's standing instruction for this round (commit, push and deploy through the
+existing CI/CD once verified). No DNS, tunnel, mail routing, provider credentials, cookie scope, RP ID
+or session clocks were changed; no data was migrated (the Store schema stays at v7).
+
+**Running source (first cutover of this round):** `a342994deb11d185ef7c3066f3deec2fb5a6f81f` on `main`.
+[Actions 36105544422](https://github.com/WeGreen-AI/Synwevo/actions/runs/36105544422) (created 07:01 UTC,
+finished 07:16 UTC) passed verification (boundaries, brand and design guards, three shells, the Python
+suites in the isolated runtime image, deployment regressions) and the restricted SSH deployment; the
+receiver rebuilt the image, took the pre-upgrade backup `/opt/synwevo/backups/20260925T071558Z`
+(`{"deployed": "synwevo:a342994…", "backup": …}` in the run log) and the public readiness step saw
+`database/storage/worker: ok` on all three hosts.
+
+**Follow-up cutover:** `93777c3` (the portal fetches its dashboard once per cold load instead of twice)
+was pushed right after together with this record; its run is recorded below once it lands.
+
+### What changed for production
+
+* Session probes leave in parallel; returning to a tab revalidates at most every 30 s in the
+  background; the portal keeps its dashboard mounted while revalidating; the public home never shows
+  the sign-in link to a signed-in visitor while the session is still unknown.
+* Account pages carry "← 返回工作空间 / 返回 Synwevo Docs" and "账户概览"; a drawer below 720 px.
+  Targets come from `/api/auth/me.return_targets`; `from=` is an id, never a URL.
+* Every row/overflow menu renders at the document root with viewport placement (flip, height cap,
+  edge shift); the last member row's menu is no longer clipped. Narrow tables keep the selection and
+  action columns sticky; coarse pointers get 44/40 px targets; Docs ≤ 900 px shows one panel at a time.
+* Administrators who sign in with an e-mail code or an external provider get a one-factor session:
+  account features work, `/api/admin/*` and the API console answer `403 step_up_required` until the
+  password is confirmed on the account page (`amr` becomes `email+password` / `idp:<id>+password`).
+  Password sign-in is unchanged. **The production administrator's own TOTP enrolment is still theirs to
+  do** on the account page; nothing was enrolled, seeded or flagged on their behalf.
+* New read-only administrator view "登录方式" (`GET /api/admin/identity-providers`): masked provider
+  configuration, the exact callback URIs, missing variables, live discovery check. It shows Google and
+  Microsoft as **not configured** on production — no provider credentials exist in `runtime.env`, and
+  the sign-in page shows no provider buttons. Configuring them is the account holder's step
+  ([operations.md](../operations.md) §7.1–7.3).
+
+### Post-deploy checks (a342994, 2026-09-25 ~07:20 UTC, anonymous, no production sign-in)
+
+| Check | Result |
+|---|---|
+| `/healthz` on `synwevo.` / `accounts.` / `docwave.wegreen.ltd` | `{"status":"ok"}` ×3 |
+| `/api/auth/state` | accounts `app_id=null`, portal `app_id=platform`, docs `app_id=docweave` (the new field is live on all three); `external_providers=[]`; `portal_url=https://synwevo.wegreen.ltd` |
+| Shell HTML + referenced assets | `/`, `/workspace`, `/login`, docs `/` each 200 with both referenced bundles 200 (no missing chunk) |
+| `GET /api/admin/identity-providers` anonymous | 401 |
+| `/admin` anonymous | 404 (unchanged shape: nothing learned about what exists) |
+| `/account`, `/login` anonymous | 200 shell |
+
+Not verified on production: any signed-in path (members menu, back link, step-up, mobile). Those were
+verified on the isolated instance in Chromium and WebKit ([verification.md](verification.md) §16); the
+production administrator can confirm them from a phone and a desktop after signing in.
+
 ## 2026-09-25 unified white-blue design system and sign-in methods — deployed
 
 Authorized by the user's standing instruction for this round (commit, push and deploy through the
