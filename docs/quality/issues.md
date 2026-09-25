@@ -8,6 +8,7 @@
 
 | ID | 问题与基线 | 依据 | 修复 | 验证 | 状态 |
 |---|---|---|---|---|---|
+| CI-16 | 所有外壳的 `<button class="btn primary">` 悬停/按下时文字变深色压在深蓝上（2.66:1，WCAG 1.4.3 不达标） | 审计对比度采样（API 台页签）；WCAG 2.2 SC 1.4.3 | `.btn.primary:hover/:active` 重申 `color: var(--on-accent)`（此前只修了 `a.btn.primary`） | 悬停实测 8.6:1；API 台六页签 × 320/375 审计 0 发现 | 已修复，待部署 |
 | CI-14 | SDK/CLI 全流程在每密钥 300 次/分钟限流下失败（`definition put` 429），SDK 对非幂等写不重试任何 429 | Stripe 限流指南（429 退避重试）；网关限流在路由前返回、无副作用 | 两个 SDK 对 `429 rate_limited` 有界重试（含非幂等写） | SDK 单测 Python 20 / Node 7；验收复跑通过且期间 4 次 429 均重试成功 | 已修复，待发布（SDK 随仓库） |
 | CI-12 | 英文界面里设备列表仍是中文句子；个人空间默认名永远是中文 | 审计 `--locale=en` 扫描；三语言是产品要求 | 会话行 `client_parts` + 页面拼句；`PERSONAL_NAME` 按账户语言 | `test_locale_defaults.py` 10 项；英文审计 0 残留 | 已修复，待部署 |
 | CI-13 | Docs 首页顶栏 1280 px 英文横向溢出 51 px；两个空间时切换器被压成 21 px | 审计（scrollWidth、目标尺寸） | `.topbar` 允许换行；切换器 `flex: none; min-width: 140px` | 两组账户重审 0 发现；`ui_e2e.py`、外壳回归 | 已修复，待部署 |

@@ -121,8 +121,10 @@ a.btn.primary:hover { color: var(--on-accent); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.btn.primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
-.btn.primary:active:not(:disabled) { background: var(--accent-pressed); border-color: var(--accent-pressed); }
+/* `.btn:hover` (three selectors) outranked `.btn.primary` (two) and turned the label dark on the
+   darker blue — 2.66:1 while the pointer rests on any primary button. Restate the label colour. */
+.btn.primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); }
+.btn.primary:active:not(:disabled) { background: var(--accent-pressed); border-color: var(--accent-pressed); color: var(--on-accent); }
 .btn.danger { color: var(--err); border-color: var(--err-line); }
 .btn.danger:hover:not(:disabled) { background: var(--err-weak); }
 .btn.ghost { border-color: transparent; background: transparent; }

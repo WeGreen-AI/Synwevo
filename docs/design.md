@@ -139,6 +139,7 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
   IME 组合状态；弹层管理保证 Esc 只关最上层并归还焦点。
   对话框与抽屉（`useModalFocus`）每次 Tab 自行按 DOM 顺序移动焦点（Safari 默认 Tab 跳过按钮/链接，交给浏览器会跳出），
   关闭后回到打开者——`activeElement` 为 body 时回到指针最后按下的元素（WebKit 点击不聚焦按钮）。回归：`ui_e2e_shell.py` 键盘段。
+* 按钮状态：`.btn.primary` 的 hover/active 必须重申 `color: var(--on-accent)`——通用 `.btn:hover` 选择器优先级更高，否则主按钮悬停时深字压深蓝（CI-16 实测 2.66:1）。新增按钮变体时同样检查四态对比度。
 * 弹层：所有菜单、下拉与提示层用 `@synwevo/ui` 的 `Menu` / `useAnchoredLayer`——`createPortal` 到
   `document.body`、以视口坐标定位（`layer.ts` 的纯函数决定翻转/贴边/限高），滚动、缩放与旋转时重算，锚点
   离开视口即关闭。**不允许**在滚动容器里用 `position:absolute` 的菜单，也不允许用 `z-index: 99999` 解决

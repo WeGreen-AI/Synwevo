@@ -199,6 +199,16 @@ def main():
                 signed += [f"{accounts}/admin/api-platform"]
             for u in signed:
                 rows.append(measure(page, u, settle="section.card, table.gov, .acct-page, .idp-card, .empty"))
+                if u.endswith("/admin/api-platform"):
+                    # the console keeps its sections as in-page tabs: measure each one with content
+                    tabs = page.locator("nav[aria-label] button")
+                    for i in range(tabs.count()):
+                        tabs.nth(i).click()
+                        page.wait_for_timeout(600)
+                        r = page.evaluate(MEASURE_JS, [SCROLL_CONTAINERS, LOCALE, FIXTURE_STRINGS])
+                        r["url"] = u.replace("http://", "") + f" [{tabs.nth(i).inner_text().strip()[:12]}]"
+                        r["title"] = page.title()[:30]
+                        rows.append(r)
             # portal dashboard and Docs home (SSO once per context)
             page.goto(f"{portal}/workspace"); page.wait_for_selector(".pt-dashboard, .pt-status", timeout=20000)
             if page.locator(".pt-status a[href*='/auth/start']").count():
