@@ -8,7 +8,8 @@ An explicit persisted administrator registration policy still takes precedence; 
 not overwrite it. Existing users, workspace IDs, historical claims and identity keys remain intact.
 The user has authorized deploying the previously local-only product round. Because host Compose
 is not replaced by CI, install the reviewed Compose change after the new application is healthy,
-then recreate accounts and gateway. Keep the private SMTP configuration unchanged.
+then recreate accounts, portal and docs (the shared registration setting reaches all three),
+followed by gateway. Keep the private SMTP configuration unchanged.
 
 | Public origin | Role | Tunnel target |
 |---|---|---|

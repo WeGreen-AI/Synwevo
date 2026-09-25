@@ -19,8 +19,9 @@ one set of rules, not two:
   CLI/SDK/console share the existing service layer; ordinary Docs business APIs remain available.
 * **Do not push, publish packages or create releases** unless the user asks in the conversation.
   Local commits are fine; keep unrelated changes out of them.
-  The current round is local-only. `main` pushes trigger production deployment; do not push while
-  that trigger would violate this round's no-deployment constraint. Do not access the VPS or DNS.
+  `main` pushes trigger production deployment. Local-only rounds must not push or access the VPS.
+  Deploy only when explicitly authorized in the current conversation; preserve host data and keys.
+  The latest deployment status is recorded in `docs/quality/deployment.md`.
 * **Previewing the product:** `.claude/launch.json` names the three origins (`docweave`, `accounts`,
   `portal`). Start them with `python scripts/platform.py up` (it refuses to create an empty database
   in `data/` unless given `--init`), then open them in the preview browser.

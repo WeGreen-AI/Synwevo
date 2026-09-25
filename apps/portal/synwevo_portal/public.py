@@ -14,16 +14,16 @@ from synwevo_core import env
 PUBLIC_PATHS = {"/": "zh-Hans", "/zh-Hans": "zh-Hans", "/zh-Hant": "zh-Hant", "/en": "en"}
 COPY = {
     "zh-Hans": (
-        "Synwevo · 让数据成为文档", "在 Synwevo Docs 中选择数据、映射模板、检查并批量生成文档。通过统一账户进入你的工作空间。",
-        "让数据成为文档", "注册账户", "登录", "Synwevo Workspace · 你的工作空间",
+        "Synwevo · 工作流程自动化平台", "连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。",
+        "把重复的工作，交给流程。", "注册账户", "登录", "Synwevo Workspace · 你的工作空间",
     ),
     "zh-Hant": (
-        "Synwevo · 讓資料成為文件", "在 Synwevo Docs 中選取資料、對應範本、檢查並批次產生文件。透過統一帳戶進入你的工作空間。",
-        "讓資料成為文件", "註冊帳戶", "登入", "Synwevo Workspace · 你的工作空間",
+        "Synwevo · 工作流程自動化平台", "連接團隊、應用與資料，讓重複工作成為清晰、可追蹤的自動化流程。",
+        "把重複的工作，交給流程。", "註冊帳戶", "登入", "Synwevo Workspace · 你的工作空間",
     ),
     "en": (
-        "Synwevo · Turn data into documents", "Select data, map templates, check and generate documents in batches with Synwevo Docs. Access your workspaces with one account.",
-        "Turn data into documents", "Create an account", "Sign in", "Synwevo Workspace · Your workspace",
+        "Synwevo · Workflow automation platform", "Connect teams, applications and data in clear, traceable automated workflows.",
+        "Let workflows handle the repetitive work.", "Create an account", "Sign in", "Synwevo Workspace · Your workspace",
     ),
 }
 

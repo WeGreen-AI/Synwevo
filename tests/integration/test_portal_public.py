@@ -28,10 +28,8 @@ def portal(tmp_path, monkeypatch):
     # Explicit shell fixture: tests run before or after a frontend build, with no production data.
     dist = tmp_path / "fixture-build"
     dist.mkdir()
-    dist.joinpath("index.html").write_text('<!doctype html><html lang="zh-Hans"><head>'
-        '<title>Synwevo Workspace</title><meta name="robots" content="noindex, nofollow" />'
-        '<meta name="description" content="Synwevo Workspace" /></head><body>'
-        '<div id="root"></div></body></html>')
+    source = Path(__file__).resolve().parents[2] / "apps/portal/web/index.html"
+    dist.joinpath("index.html").write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setenv("SYNWEVO_PORTAL_UI_DIR", str(dist))
     api = create_app(str(data), role="portal", start_jobs=False)
     store = Store(data)
@@ -63,23 +61,49 @@ def switch(client, wid, *, csrf=True):
                        headers={CSRF_HEADER: "portal-fixture-csrf"} if csrf else {})
 
 
-@pytest.mark.parametrize("path,language,title", [
-    ("/", "zh-Hans", "让数据成为文档"), ("/zh-Hans", "zh-Hans", "让数据成为文档"),
-    ("/zh-Hant", "zh-Hant", "讓資料成為文件"), ("/en", "en", "Turn data into documents"),
-])
-def test_public_documents_have_localized_content_and_only_public_canonicals(portal, path, language, title):
+@pytest.mark.parametrize("path,language,title,description,heading", [
+    ("/", "zh-Hans", "Synwevo · 工作流程自动化平台",
+     "连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。", "把重复的工作，交给流程。"),
+    ("/zh-Hans", "zh-Hans", "Synwevo · 工作流程自动化平台",
+     "连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。", "把重复的工作，交给流程。"),
+    ("/zh-Hant", "zh-Hant", "Synwevo · 工作流程自動化平台",
+     "連接團隊、應用與資料，讓重複工作成為清晰、可追蹤的自動化流程。", "把重複的工作，交給流程。"),
+    ("/en", "en", "Synwevo · Workflow automation platform",
+     "Connect teams, applications and data in clear, traceable automated workflows.",
+     "Let workflows handle the repetitive work."),
+], ids=["root", "zh-Hans", "zh-Hant", "en"])
+def test_public_documents_have_localized_content_and_only_public_canonicals(
+    portal, platform_root, path, language, title, description, heading,
+):
+    if path == "/":
+        # SSR replaces these tags, so also guard the defaults it could otherwise conceal.
+        source = (platform_root / "apps/portal/web/index.html").read_text(encoding="utf-8")
+        assert f'<title>{title}</title>' in source
+        assert f'<meta name="description" content="{description}" />' in source
+        assert '<html lang="zh-Hans">' in source
+        assert 'name="robots" content="noindex, nofollow"' in source
     response = TestClient(portal[0]).get(path)
     assert response.status_code == 200
     assert f'lang="{language}"' in response.text
-    assert title in response.text
+    assert f'<title>{title}</title>' in response.text
+    assert f'<meta name="description" content="{description}" />' in response.text
+    assert f'<h1>{heading}</h1>' in response.text
+    assert f'<p>{description}</p>' in response.text
+    assert response.text.count('<title>') == 1
+    assert response.text.count('<meta name="description"') == 1
+    assert response.text.count('<meta name="robots"') == 1
     assert response.headers["X-Robots-Tag"] == "index, follow"
     assert 'name="robots" content="index, follow"' in response.text
     assert "noindex" not in response.text
-    assert '/auth/start?next=%2Fworkspace' in response.text
-    assert 'hreflang="en"' in response.text and 'hreflang="zh-Hant"' in response.text
+    assert f'href="/register?lang={language}"' in response.text
+    assert f'href="/auth/start?next=%2Fworkspace&amp;lang={language}"' in response.text
+    canonical_path = "/" if language == "zh-Hans" else path
+    assert f'<link rel="canonical" href="https://portal.example.test{canonical_path}" />' in response.text
+    assert response.text.count('rel="canonical"') == 1
+    for alternate, suffix in (("zh-Hans", "/"), ("zh-Hant", "/zh-Hant"), ("en", "/en"), ("x-default", "/")):
+        assert f'<link rel="alternate" hreflang="{alternate}" href="https://portal.example.test{suffix}" />' in response.text
     assert '/workspace"' not in response.text
-    assert "portal.example.test" in response.text
-    assert "Cache-Control" in response.headers
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 def test_robots_sitemap_and_private_shells(portal):
@@ -95,6 +119,8 @@ def test_robots_sitemap_and_private_shells(portal):
         assert result.headers["X-Robots-Tag"] == "noindex, nofollow"
         if result.status_code == 200:
             assert 'name="robots" content="noindex, nofollow"' in result.text
+            assert 'rel="canonical"' not in result.text
+            assert 'hreflang=' not in result.text
     assert client.get("/api/portal/home").status_code == 401
     assert client.get("/api/projects").status_code == 404
 

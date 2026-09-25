@@ -63,8 +63,8 @@ export function Portal() {
   }, [session.refresh]);
 
   useEffect(() => {
-    document.title = publicPage ? t("Synwevo · 让数据成为文档") : t("Synwevo Workspace · 你的工作空间");
-    document.querySelector('meta[name="description"]')?.setAttribute("content", t("在 Synwevo Docs 中选择数据、映射模板、检查并批量生成文档。通过统一账户进入你的工作空间。"));
+    document.title = publicPage ? t("Synwevo · 工作流程自动化平台") : t("Synwevo Workspace · 你的工作空间");
+    document.querySelector('meta[name="description"]')?.setAttribute("content", t("连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。"));
     document.querySelector('meta[name="robots"]')?.setAttribute("content", publicPage ? "index, follow" : "noindex, nofollow");
     // Keep the shareable public URL and canonical metadata aligned with the language menu.
     if (publicPage) {
@@ -92,7 +92,7 @@ export function Portal() {
     <section className="pt-status">
       {state.phase === "loading" ? <><span className="pt-loader" aria-hidden="true" /><h1 role="status">{t("正在载入工作空间…")}</h1></> : state.phase === "signed-out" ? <>
         <p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("欢迎回来")}</h1>
-        <p>{t("登录你的统一账户，继续处理文档和团队工作。")}</p>
+        <p>{t("登录你的统一账户，继续你的任务与团队工作。")}</p>
         <div className="pt-actions"><a className="pt-btn pt-btn-primary" href={signInUrl}>{t("登录")}</a><a className="pt-btn" href={accountLink(account, "/register")}>{t("注册账户")}</a></div>
       </> : <><h1>{t("暂时无法载入工作空间")}</h1><p role="alert">{t("请检查网络连接后重试。")}{state.status ? ` (HTTP ${state.status})` : null}</p>
         <button className="pt-btn" onClick={() => { void session.refresh(); setRevision(n => n + 1); }}>{t("重试")}</button></>}
@@ -160,6 +160,6 @@ export function Shell({ right, children, publicHome = false }: { right?: ReactNo
     <header className="pt-top"><a className="pt-brand" href="/" aria-label={t("Synwevo 首页")}><span className="pt-brand-mark" aria-hidden="true">s</span>synwevo<span className="pt-brand-period">.</span></a>
       <nav className="pt-nav" aria-label={t("主导航")}>{right}<LanguageMenu /></nav></header>
     <main className="pt-main" id="pt-main" tabIndex={-1}>{children}</main>
-    <footer className="pt-footer"><span>Synwevo</span><a href="/#privacy">{t("数据与隐私")}</a><a href="/#service">{t("服务说明")}</a><span>{t("让数据成为文档。")}</span></footer>
+    <footer className="pt-footer"><span>Synwevo</span><a href="/#privacy">{t("数据与隐私")}</a><a href="/#service">{t("服务说明")}</a><span>{t("让工作流程，持续运转。")}</span></footer>
   </div>;
 }

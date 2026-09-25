@@ -14,7 +14,7 @@
 | 路径 | 职责 | Python 包 / npm 包 |
 |---|---|---|
 | `apps/docs/` | Synwevo Docs：文档引擎、业务接口、`/api/v1` 机器接口、工作台前端、应用专属测试与脚本 | `synwevo_docs` / `@synwevo/docs-web` |
-| `apps/portal/` | Synwevo Workspace：登录后的第一页与应用入口 | `synwevo_portal` / `@synwevo/workspace-web` |
+| `apps/portal/` | Synwevo Workspace：工作流程自动化平台的公开首页、登录后门户与应用入口 | `synwevo_portal` / `@synwevo/workspace-web` |
 | `services/identity/` | Synwevo Account：登录仪式、MFA、Passkey、邀请与找回、平台管理后台、OIDC 授权服务器、**账户与安全界面** | `synwevo_identity` / `@synwevo/account-web` |
 | `packages/core/` | 共享：`Store`（唯一的持久化入口与迁移执行者）、租户上下文、身份/会话/口令、机器身份、OIDC 令牌存储、HTTP 骨架、错误契约 | `synwevo_core` |
 | `packages/auth-client/` | 应用接入统一身份：OIDC 依赖方（`python/`）、共用会话路由、浏览器端会话上下文与平台导航（`web/`） | `synwevo_auth_client` / `@synwevo/auth-client` |
