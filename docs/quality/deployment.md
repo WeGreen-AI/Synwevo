@@ -35,8 +35,15 @@ CI-09 phone toasts off the dialog footer; the run for `59aa880` was superseded).
 Chromium at 1280 and 375 px loaded the public home, the signed-out workspace page, sign-in, register and the Docs shell with
 **0 CSP violations** and the Cloudflare beacon tag present, so the zone's Web Analytics receives page views again.
 
-**Pushed, queued:** `6fe46b0` (CI-10/11 route-split shells, CI-12 language-composed device names and workspace naming, CI-13
-top bar wrap; the runs for `32726cd` and `4147d3b` were superseded). Recorded here when the receiver reports it.
+**Running source:** `4147d3b5169639b98300337955e3d202af1649fb` (CI-10/CI-11 route-split account and Docs shells; the run for
+`32726cd` was superseded). [Actions 36137305594](https://github.com/WeGreen-AI/Synwevo/actions/runs/36137305594) (created 12:50 UTC,
+deploy finished ~13:23 UTC) passed verification and deployment; pre-upgrade backup `/opt/synwevo/backups/20260925T132231Z`.
+Anonymous Chromium at 375 px ~13:58 UTC: `/login` loads the entry, the shared and the runtime chunk only; `/register` adds its own
+chunk; the Docs shell loads its entry plus the shared chunk; 0 CSP violations on all four pages.
+
+**Pushed, queued:** `9578158` and the CI-17 commit that follows (CI-12 language-composed device names and workspace naming, CI-13
+top bar wrap, CI-14 SDK retry of the gate's rate limit, CI-16 primary-button hover colour, CI-17 phone fixes on a workspace with
+mappings; the runs for `6fe46b0` and `6e1faa2` were superseded). Recorded here when the receiver reports it.
 
 ## 2026-09-25 navigation, layers, phone layouts and step-up admin auth — deployed
 

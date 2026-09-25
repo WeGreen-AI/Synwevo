@@ -74,6 +74,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-14 | SDK 对网关 `rate_limited` 的有界重试；SDK/CLI 与 Node 验收复跑 | 已修复并复跑通过 | SDK 源码改动后 `pip install apps/docs/sdk/python` 重装再跑验收 |
 | CI-15 | API 台浏览器验收在强制 CSP 下复跑（脚本改用 instance=test 规则与函数形式页面脚本） | 通过 | 每个里程碑复跑；夹具在 scratchpad（0600，合成账户） |
 | CI-16 | 主按钮悬停对比度（全站 `<button class="btn primary">`）；API 台六页签内容态审计 0 发现 | 已修复，待部署 | 审计已覆盖 API 台页签，移出候选队列 |
+| CI-17 | 有映射的工作台与英文长标签的三处手机问题 | 已修复，待部署 | — |
 
 已核对、无需改动（记录以免重复研究）：
 

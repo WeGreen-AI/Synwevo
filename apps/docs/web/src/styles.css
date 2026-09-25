@@ -23,6 +23,8 @@
   .work.m-source > .pane.right, .work.m-source > .side { display: none; }
   .work.m-target > .pane.left, .work.m-target > .side { display: none; }
   .work.m-map > .pane, .work.m-map > .side:not(.right) { display: none; }
+  /* One panel at a time: there are no two sides to connect, and the overlay ran past the viewport. */
+  .connectors { display: none; }
   .side-resizer { display: none; }
   .pane-h { height: auto; min-height: 38px; flex-wrap: wrap; padding: 6px 8px; }
   .stepbar { display: flex; }
@@ -46,4 +48,10 @@
   .modal .statbox { min-width: 0; flex: 1 1 90px; }
   .modal .field, .modal .input, .modal .col { min-width: 0; }
   .modal .row { flex-wrap: wrap; }
+}
+
+/* Touch: the numbered mapping markers on cells and fields are pointer targets (WCAG 2.2 SC 2.5.8);
+   24px on coarse pointers, the compact 18px stays for a mouse. */
+@media (pointer: coarse) {
+  .tag.num, .gmark .tag { min-width: 24px; min-height: 24px; }
 }
