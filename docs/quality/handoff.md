@@ -17,6 +17,7 @@
 | 保持登录 | Store v7 `sessions.persistent`；勾选后中央会话空闲 14 天（`SYNWEVO_SESSION_PERSISTENT_IDLE_S`）、绝对 30 天不变、两个 Cookie 带 `Max-Age`；平台管理员忽略；只接受 JSON `true`；设备列表标记。契约见 sessions.md §2.1。`test_remember_me.py` 7 项。 |
 | 邮箱验证码登录 | `/api/auth/login/email/start|verify`：6 位码、10 分钟、单次、5 次错误作废、同形响应防枚举、发出后 outbox 脱敏；启用 TOTP 仍走第二步（`amr=email+totp`）；管理员未启用 TOTP 不发码。三语言邮件模板。`test_email_code_login.py` 9 项。 |
 | 外部身份提供商 | `synwevo_identity/external.py`：发现文档、PKCE S256、服务端 state/nonce、id_token 全量校验（签名/iss/aud/azp/nonce/exp/iat/sub，Microsoft 多租户模板）、按 `(provider, subject)` 关联、已验证邮箱匹配只生成关联要约、注册策略生效、管理员需 TOTP、关联/解绑需 strict 重认证且不能移除最后一种登录方式、安全通知。配置不完整拒绝启动；未配置不显示。`test_external_identity.py` 16 项（测试替身提供商，含篡改用例）。 |
+| 账户内改口令 | `POST /api/auth/password`：当前口令 + 新口令；本会话保留、其他会话与令牌失效、安全通知、审计；账户页「邮箱与口令」内置表单，邮箱重置保留为备用。`test_password_change.py` 8 项。 |
 | 登录页 / 账户页 | 登录：保持登录复选框、「其他登录方式」（安全密钥 / 邮箱验证码 / 已配置提供商）、外部登录错误解释、关联要约表单、片段续接 MFA；账户：外部登录方式卡片（关联/解绑）、设备列表登录方式与「保持登录」标记。三语言资源补齐，账户外壳 19 项校验通过。 |
 | 文档 | `docs/design.md` 重写为平台设计系统；`sessions.md` §2.1/§4.3–4.5、`permissions.md` 契约表、`.env.example`、README/TESTING/AGENTS/CLAUDE 验证命令。 |
 

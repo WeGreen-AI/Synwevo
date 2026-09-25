@@ -116,6 +116,51 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             audit(request, "auth.avatar.remove", actor_id=user["id"], result="ok")
         return {"ok": True}
 
+    @r.post("/password")
+    def change_password(request: Request, body: dict = Body(...)):
+        """Change the password from inside the account: current password, new password.
+
+        Distinct from the mailed reset (§3.6): the person is signed in and proves the current
+        password here, under the same throttling as any re-authentication. The session doing
+        the change survives; every other session and every issued token ends, so a password
+        changed because someone else knew it also ends that someone else's access. An account
+        without a password (external provider only) sets one through the mailed reset link,
+        which proves the mailbox instead.
+        """
+        from synwevo_core import passwords
+        from synwevo_core.oidc import Grants
+        fields(body, {"current_password", "new_password"})
+        session, user = current(request)
+        if not store.one("SELECT 1 FROM user_passwords WHERE user_id=?", (user["id"],)):
+            raise ServiceError(409, "no_password", "这个账户还没有口令。请通过邮箱中的重置链接设置口令")
+        check_reauth_password(ident, sessions, request, session, body.get("current_password", ""), audit, "account_password")
+        replacement = body.get("new_password")
+        if not isinstance(replacement, str) or not replacement:
+            raise ServiceError(400, "weak_password", "请输入新口令", {"field": "new_password"})
+        if replacement == body.get("current_password"):
+            raise ServiceError(400, "weak_password", "新口令不能与当前口令相同", {"field": "new_password"})
+        ts = now()
+        with store.tx():
+            session, user = current(request)
+            try:
+                ident.set_password(user["id"], replacement)
+            except passwords.PasswordError as e:
+                raise ServiceError(400, "weak_password", str(e), {"field": "new_password"}) from None
+            ended = sessions.revoke_all_for_user(user["id"], "password_changed", except_session=session["id"])
+            tokens = Grants(store).revoke_for_user(user["id"], "password_changed")
+            store.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=? AND kind='reset'", (ts, user["id"]))
+            store.execute("DELETE FROM mfa_tickets WHERE user_id=?", (user["id"],))
+            subject, text = security_notice(what="口令已更改", when_text="刚刚", locale=user["locale"])
+            try:
+                mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
+            except ServiceError:
+                # The change stands; the notice is best effort and the audit row is the record.
+                pass
+            audit(request, "auth.password.changed", actor_id=user["id"], object_kind="user", object_id=user["id"],
+                  result="ok", meta={"sessions": ended, "tokens": tokens})
+        journaled = journal(store, "password_changed", user_id=user["id"])
+        return {"ok": True, "sessions_revoked": ended, "journaled": journaled}
+
     @r.post("/email-change")
     def email_change(request: Request, body: dict = Body(...)):
         fields(body, {"email", "password"})

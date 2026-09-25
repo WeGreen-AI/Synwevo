@@ -786,3 +786,17 @@ registerMessages({
   '这个外部账户已关联到另一个 Synwevo 账户': { en: 'This external account is already linked to another Synwevo account.', 'zh-Hant': '此外部帳戶已關聯到另一個 Synwevo 帳戶' },
   '未启用这个外部身份提供商': { en: 'This external identity provider is not enabled.', 'zh-Hant': '未啟用此外部身分提供者' },
 });
+
+// In-account password change.
+registerMessages({
+  '输入当前口令并设置新口令。其他设备将退出登录，此设备保持登录；两步验证仍然有效。': { en: 'Enter your current password and choose a new one. Other devices are signed out; this device stays signed in, and two-step verification still applies.', 'zh-Hant': '輸入目前密碼並設定新密碼。其他裝置將登出，此裝置保持登入；兩步驟驗證仍然有效。' },
+  '口令已更改，其他 {count} 个登录已结束。': { en: 'Password changed. {count} other sign-ins were ended.', 'zh-Hant': '密碼已變更，其他 {count} 個登入已結束。' },
+  '两次输入的新口令不一致': { en: 'The new passwords do not match.', 'zh-Hant': '兩次輸入的新密碼不一致' },
+  '新口令': { en: 'New password', 'zh-Hant': '新密碼' },
+  '至少 15 个字符。使用一句容易记住的长句子。': { en: 'At least 15 characters. Use a long sentence you can remember.', 'zh-Hant': '至少 15 個字元。使用一句容易記住的長句子。' },
+  '再次输入新口令': { en: 'Repeat new password', 'zh-Hant': '再次輸入新密碼' },
+  '更改口令': { en: 'Change password', 'zh-Hant': '變更密碼' },
+  '忘记当前口令？通过邮箱重置': { en: 'Forgot your current password? Reset by email', 'zh-Hant': '忘記目前密碼？透過電子郵件重設' },
+  '这个账户还没有口令。请通过邮箱中的重置链接设置口令': { en: 'This account has no password yet. Set one through the reset link sent to your email.', 'zh-Hant': '此帳戶尚未設定密碼。請透過電子郵件中的重設連結設定密碼' },
+  '新口令不能与当前口令相同': { en: 'The new password must differ from the current one.', 'zh-Hant': '新密碼不能與目前密碼相同' },
+});

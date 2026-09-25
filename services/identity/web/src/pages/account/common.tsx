@@ -22,6 +22,10 @@ const errors: Record<string, string> = {
   reauth_required: '这是敏感操作，请重新输入口令确认。', bad_code: '验证码不正确，请检查手机上的时间是否准确',
   last_factor: '请先添加另一种登录方式，再删除最后一个安全密钥',
   session_ended: '登录已失效，请重新登录', no_challenge: '验证已过期，请重新开始',
+  code_expired: '验证码已失效，请重新获取', last_sign_in_method: '这是账户唯一的登录方式。请先设置口令或添加安全密钥，再解除关联',
+  identity_linked_elsewhere: '这个外部账户已关联到另一个 Synwevo 账户', unknown_provider: '未启用这个外部身份提供商',
+  no_password: '这个账户还没有口令。请通过邮箱中的重置链接设置口令',
+  weak_password: '这个口令不符合要求，请使用更长且不包含个人信息的口令',
 };
 export function errorText(error: unknown, t: Translator) {
   if (error instanceof ApiError) return t(errors[error.code] || '操作失败，请重试。') + (error.requestId ? ` (${error.requestId})` : '');
