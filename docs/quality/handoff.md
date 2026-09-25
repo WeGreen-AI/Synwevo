@@ -25,8 +25,8 @@
 
 | 运行范围 | 结果 |
 |---|---|
-| `services/identity/tests` + `tests/integration` | 全部通过（退出码 0；含新增 32 项与 v7 迁移测试） |
-| `apps/docs/tests` | 全部通过（退出码 0；1 项既有 LICENSE 跳过） |
+| `services/identity/tests` + `tests/integration` | **1104 passed / 0 failed**（296s；含本轮新增 40 项与 v7 迁移测试） |
+| `apps/docs/tests` | 全部通过：840 项收集、0 失败、1 项既有 LICENSE 跳过（退出码 0） |
 | 前端 | typecheck/build 三外壳通过；UI 11、auth-client 31、Docs 45、账户外壳 19 项通过 |
 | 守卫 | `check_boundaries` / `check_brand` / `check_design` 通过 |
 | Docs 浏览器 E2E | `ui_e2e.py`（主链路：上传→模板→字段→映射→样本→预览→生成 100 份→下载核对）与 `ui_e2e_keyboard.py`（命令面板、列表键盘、单一主题与纸面、布局记忆）在各自隔离实例上通过。`ui_e2e.py` 中一处早已过时的对话框文案断言按当前界面更正。 |

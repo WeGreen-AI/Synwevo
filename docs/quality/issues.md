@@ -4,6 +4,17 @@
 
 当前轮（2026-09-25）的范围、状态与执行证据统一维护在 [handoff.md](handoff.md)。以下 DW 表及修复记录是历史记录，日期、旧路径和旧 CLI-only UI 约束不代表当前状态；管理员 API 台的当前权限以 [permissions.md](../security/permissions.md) 为准。
 
+## 2026-09-25 统一白蓝与登录方式轮（Claude Code）
+
+| 问题 | 修复与验证入口 | 状态 |
+|---|---|---|
+| 门户使用独立绿色主题、Docs 保留浅/深色切换、API 台带兜底色值，三个外壳视觉不一致 | 共享令牌收敛为白蓝基线，深色主题退役，门户/账户/Docs 改用共享 `Brand`、`.btn`、`StatusPage`；`scripts/check_design.py` 进 CI | 已修复，守卫通过 |
+| 没有「保持登录」选项，所有会话同一空闲期 | Store v7 `sessions.persistent`；`test_remember_me.py` | 已修复 |
+| 只有口令/Passkey 两种登录；无邮箱验证码、无第三方身份登录 | `email_login.py`、`external.py`；`test_email_code_login.py`、`test_external_identity.py` | 已修复（外部提供商生产未配置，见 handoff 边界） |
+| 账户内无法直接修改口令，只能走邮箱重置 | `POST /api/auth/password`；`test_password_change.py`；账户页表单 | 已修复 |
+| `apps/docs/scripts/ui_e2e.py` 断言的映射对话框文案早已与界面不一致，E2E 主链路脚本无法通过 | 文案断言按当前界面更正；两套 E2E 在隔离实例上通过 | 已修复（发现于本轮，非本轮引入） |
+| 门户任意未知地址渲染工作空间/登录态而非 404 | 门户非 `/workspace` 路径渲染共享结构的「找不到页面」 | 已修复 |
+
 ## 2026-09-25 增量安全审查
 
 | 问题 | 修复与验证入口 | 状态 |
