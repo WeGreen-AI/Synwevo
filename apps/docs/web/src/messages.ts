@@ -5019,4 +5019,16 @@ export const messages = {
   "目标": { "en": "Target", "zh-Hant": "目標" },
   "预览": { "en": "Preview", "zh-Hant": "預覽" },
   "映射": { "en": "Mappings", "zh-Hant": "映射" },
+  "✔ 重复明细：每份输出写入当前分组的全部明细行（按分组与排序规则取行，与所选行数无关）": {
+    "en": "✔ Repeating rows: each output receives all detail rows of its group (rows follow the grouping and sort rule, not the selection height)",
+    "zh-Hant": "✔ 重複明細：每份輸出寫入當前分組的全部明細行（按分組與排序規則取行，與所選行數無關）"
+  },
+  "◆ 重复明细：所选明细行整体写入每一份输出（每行一份时，明细区域不随样本变化）": {
+    "en": "◆ Repeating rows: the selected detail rows are written whole into every output (with one output per row, the detail block does not vary by sample)",
+    "zh-Hant": "◆ 重複明細：所選明細行整體寫入每一份輸出（每行一份時，明細區域不隨樣本變化）"
+  },
+  "◆ 重复明细：每个来源文件的该明细区域整体写入同一份文档": {
+    "en": "◆ Repeating rows: each source file's detail block is written whole into its own document",
+    "zh-Hant": "◆ 重複明細：每個來源檔案的該明細區域整體寫入同一份文件"
+  },
 } satisfies Messages;

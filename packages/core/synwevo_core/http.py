@@ -42,6 +42,57 @@ from .sessions import Sessions
 from .store import Store, new_id
 
 API_RATE_PER_MIN = int(env.get("API_RATE_PER_MIN", "300"))
+
+#: HTTP security headers (OWASP ASVS 4.0.3 V14.4; OWASP HTTP Headers Cheat Sheet, read 2026-09-25).
+#: The policy is one string for all three shells because they are built the same way: Vite
+#: bundles under the origin (no inline scripts), React inline `style=` attributes (hence
+#: 'unsafe-inline' for styles only), images from the origin plus the `data:` favicon and the
+#: `blob:` object URLs the Docs viewer and avatar preview create, no third-party resource at all.
+#: `frame-ancestors 'self'` is the modern form of X-Frame-Options SAMEORIGIN (kept for old
+#: browsers); `form-action 'self'` holds because every form submits through fetch to its own
+#: origin and the OpenID hand-offs are plain navigations. `SYNWEVO_CSP` replaces the policy
+#: (`off` sends none) so an operator can loosen it without a build; the default is the contract.
+DEFAULT_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+               "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
+               "frame-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'self'; "
+               "base-uri 'self'; form-action 'self'; object-src 'none'")
+HSTS = "max-age=31536000; includeSubDomains"          # one year, per host; no `preload` (not the apex)
+PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+
+
+def content_security_policy() -> str | None:
+    """The CSP to send, or None when the operator turned it off (`SYNWEVO_CSP=off`)."""
+    raw = (env.get("CSP") or "").strip()
+    if not raw:
+        return DEFAULT_CSP
+    if raw.lower() == "off":
+        return None
+    return raw
+
+
+def request_is_https(request: Request) -> bool:
+    """Whether the client reached us over TLS: the scheme uvicorn saw, or the proxy's word
+    (`X-Forwarded-Proto`, as the production gateway sets it). A forged header from a direct
+    plain-HTTP client only earns it an HSTS header a browser ignores over HTTP."""
+    if request.url.scheme == "https":
+        return True
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return proto == "https"
+
+
+def apply_security_headers(request: Request, resp) -> None:
+    """The headers every response carries (see docs/integration/api.md)."""
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Permissions-Policy", PERMISSIONS_POLICY)
+    resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    resp.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    csp = content_security_policy()
+    if csp:
+        resp.headers.setdefault("Content-Security-Policy", csp)
+    if request_is_https(request):
+        resp.headers.setdefault("Strict-Transport-Security", HSTS)
 PUBLIC_V1 = ("/api/v1/download/",)          # signed links carry their own proof
 
 #: The roles a process can be composed as. Anything else is refused at startup: an unknown role
@@ -846,8 +897,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             """Every response – including the ones returned before the route runs – carries
             the trace id and the standard headers (docs/integration/api.md)."""
             resp.headers["X-Request-ID"] = request.state.request_id
-            resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-            resp.headers.setdefault("Referrer-Policy", "no-referrer")
+            apply_security_headers(request, resp)
             if path.startswith("/api/"):
                 resp.headers.setdefault("Cache-Control", "no-store")
             if path.startswith(("/api/", "/auth/", "/oidc/", "/account", "/admin", "/organizations")) or path in (

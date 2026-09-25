@@ -367,6 +367,35 @@ Fluent 2 Layout：断点 small 320–479 / medium 480–639 / large 640–1023 /
 
 这仍是 Chromium 引擎测量，不是真机；真机项见 16.2。
 
+### 16.6 HTTP 安全头（持续迭代 CI-02，2026-09-25）
+
+**基线（线上匿名 `curl -I`，2026-09-25）**：`accounts.` / `synwevo.` / `docwave.wegreen.ltd` 的 HTML 与 JSON 响应只有
+`X-Frame-Options: SAMEORIGIN`、`Referrer-Policy: no-referrer`（API 另有 `Cache-Control: no-store`）；没有 `Strict-Transport-Security`、
+`X-Content-Type-Options`、`Content-Security-Policy`、`Permissions-Policy`、COOP/CORP。
+
+**依据**（访问日期 2026-09-25）：OWASP ASVS 4.0.3 V14.4.1–14.4.7（Content-Type 字符集、CSP、nosniff、HSTS、Referrer-Policy、
+frame-ancestors；github.com/OWASP/ASVS v4.0.3 `0x22-V14-Config.md`）；OWASP HTTP Headers Cheat Sheet 的推荐值
+（`nosniff`、HSTS、`Cross-Origin-Opener-Policy: same-origin`、`Cross-Origin-Resource-Policy: same-site`、`Permissions-Policy`、
+不再使用 `X-XSS-Protection`/Expect-CT/HPKP）。14.4.2（API 响应 `Content-Disposition: attachment`）未采用：与浏览器内 JSON 查看和
+现有 SDK 行为冲突，`nosniff` + 正确 Content-Type 已覆盖其针对的嗅探风险；记录为有意的偏差。
+
+**实现**：`synwevo_core.http.apply_security_headers`——所有三个角色的每个响应（含 401/404/网关拒绝）。CSP 为强制模式，策略依据
+三个外壳的实际资源清单确定：Vite 构建无内联脚本（dist `index.html` 0 个内联 `<script>`）、无第三方资源、无 WebAssembly/eval
+（bundle grep 为 0），React 内联 `style=` 需要 `style-src 'unsafe-inline'`，favicon 为 `data:`，Docs 查看器/头像预览用 `blob:`，
+17 个表单全部经 fetch 提交（无 `action=`）。HSTS 仅在 TLS（直接或 `X-Forwarded-Proto: https`）时发出，`max-age=31536000; includeSubDomains`，
+不加 `preload`（非顶级域）。`SYNWEVO_CSP` 可替换/关闭，作为无需构建的临时措施（operations.md §4.0）。
+
+**验证**：`tests/integration/test_security_headers.py` 6 项（三角色、HTML/JSON/404、HSTS 条件、覆盖开关、setdefault 不覆盖路由自设头）；
+五套浏览器脚本都新增 CSP 违规捕获并断言为 0：`ui_e2e_shell.py`（Chromium 桌面/手机 + WebKit 账户源）、`ui_e2e.py`（两次）、
+`ui_e2e_more.py`、`ui_e2e_keyboard.py`、`ui_e2e_mobile.py` 在强制 CSP 下全部通过、0 违规。隔离实例 `curl` 三个源均带全部头。
+
+### 16.7 映射对话框语义回归（CI-03，顺带发现）
+
+`ui_e2e_more.py` 自 2026-09-24 后未再运行；本轮重跑发现明细表映射对话框对所有 `detail` 提案一律显示「◆ 随文件变化：每个来源文件在
+相同位置取值」，而服务端 `locators.py` 对每组一份模式的语义是「每份输出写入当前分组的全部明细行」——4caea87 起客户端改用
+`describeLocator` 后丢掉了服务端标签的解释。修复：对话框按 `record_rule.mode` 给明细提案专门的三语言说明（每组一份 / 每行一份 /
+每文件一份）；脚本断言改为当前正确文案；`ui_e2e.py` 删除字段后的重建增加等待恢复文本（此前偶发竞态）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

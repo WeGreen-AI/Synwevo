@@ -13,6 +13,7 @@ Screenshots are written to <repo>/docs/screenshots/.
 from __future__ import annotations
 
 import io
+import os
 import re
 import sys
 import time
@@ -92,6 +93,11 @@ def main():
             page = ctx.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
+            if os.environ.get("E2E_DEBUG"):   # print the browser console live while diagnosing a failure
+                page.on("console", lambda m: print(f"[console.{m.type}] {m.text[:300]}", flush=True))
+                page.on("pageerror", lambda e: print(f"[pageerror] {str(e)[:300]}", flush=True))
+            # a Content-Security-Policy violation is a real defect: a blocked script, image or style
+            page.on("console", lambda m: errors.append("CSP: " + m.text[:200]) if "Content Security Policy" in m.text else None)
             page.goto(BASE + "/")
             # 1. create project
             page.get_by_role("button", name="＋ 新建项目").click()
@@ -117,6 +123,8 @@ def main():
             page.get_by_role("button", name="删除字段").click()
             page.locator(".modal").get_by_role("button", name="删除").click()
             expect(page.locator(".pane.right .fldchip", has_text="客户编号")).to_have_count(0, timeout=10000)
+            # the chip disappears first; the paragraph's restored text arrives with the next render
+            page.wait_for_function("() => [...document.querySelectorAll('.pane.right p.doc-p')].some(p => (p.dataset.text || '').includes('客户编号 000000'))", timeout=10000)
             make_field(page, "000000", "客户编号", "客户编号 000000")
             make_field(page, "HT-000000", "合同编号", "合同编号：HT")  # a field inside the page header
             make_field(page, "2020-01-01", "签约日期")

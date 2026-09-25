@@ -127,6 +127,14 @@ curl -s -X POST "$ISSUER/oidc/token" \
 | 500 | 未预期错误（响应含 `request_id`，服务端日志打印同一个 id） |
 
 每个响应都带 `X-Request-ID`；客户端也可自带该头以串联日志。业务校验失败一律用上述状态码，不会伪装成 200。
+每个响应还带同一组安全头（`synwevo_core.http.apply_security_headers`，OWASP ASVS 4.0.3 V14.4）：`X-Content-Type-Options: nosniff`、
+`Content-Security-Policy`（默认 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;
+font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self';
+form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Referrer-Policy: no-referrer`、
+`Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()`、
+`Cross-Origin-Opener-Policy: same-origin`、`Cross-Origin-Resource-Policy: same-site`，以及经 TLS 到达时的
+`Strict-Transport-Security: max-age=31536000; includeSubDomains`。机器客户端可以忽略它们；浏览器客户端不能依赖内联脚本或第三方资源。
+`SYNWEVO_CSP` 可替换策略（`off` 关闭），见 operations.md §4。契约测试：`tests/integration/test_security_headers.py`。
 `Accept: application/problem+json` 可选择 RFC 9457 结构，默认保留原错误 envelope。
 限流响应包含 `RateLimit`、`RateLimit-Policy`，429 带 `Retry-After`；当前请求速率桶按进程计算，不宣称跨进程全局限速。
 

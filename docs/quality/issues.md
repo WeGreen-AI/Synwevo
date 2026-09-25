@@ -8,6 +8,8 @@
 
 | ID | 问题与基线 | 依据 | 修复 | 验证 | 状态 |
 |---|---|---|---|---|---|
+| CI-02 | 线上三个源的响应缺少 HSTS、`nosniff`、CSP、Permissions-Policy、COOP/CORP（匿名 `curl -I` 基线），XSS 影响面与点击劫持/嗅探缓解不足 | OWASP ASVS 4.0.3 V14.4.1–14.4.7；OWASP HTTP Headers Cheat Sheet | `synwevo_core.http.apply_security_headers`：每个响应带 nosniff、强制 CSP（`script-src 'self'`、`frame-ancestors 'self'`、`object-src 'none'`…）、COOP/CORP、Permissions-Policy；TLS 时 HSTS 一年；`SYNWEVO_CSP` 覆盖 | `test_security_headers.py` 6 项；五套浏览器脚本捕获 CSP 违规 = 0；隔离实例 curl | 已修复，待部署（[verification.md §16.6](verification.md)） |
+| CI-03 | 明细表映射对话框对每组一份模式显示「随文件变化」，语义错误（4caea87 起，未被运行的 `ui_e2e_more.py` 掩盖） | 服务端 `locators.py` 的模式语义；产品规则「每份输出写入当前分组的全部明细行」 | `MappingDialog` 按 `record_rule.mode` 给明细提案三语言说明 | `ui_e2e_more.py` 通过；Docs i18n 单测 45 项 | 已修复，待部署 |
 | CI-01 | 手机上注册/登录/账户/组织/后台/API 台的独立链接、单选行、文件输入只有 19–22 px 高，后台「登录方式」卡片在 320 px 越出 5 px；用户反馈"手机上实际操作"未覆盖这些页面 | WCAG 2.2 SC 1.4.10（320 px 回流，AA）、SC 2.5.8（24 px 目标，AA）、SC 2.5.5（44 px，AAA）；Fluent 2 断点与 44/48 触控目标 | 共享层：`label.check`、独立操作链接、`input[type=file]` ≥24（粗指针 32/40）；`.btn.primary`/提交 44；`.idp-grid` `minmax(min(300px,100%),1fr)` | `ui_mobile_audit.py` 320/375/768 三宽度 26 页：修复前 30 页次有发现 → 修复后 0；守卫、typecheck、单测、外壳回归通过 | 已修复，工具进回归清单（[verification.md §16.5](verification.md)） |
 
 ## 2026-09-25 导航、弹层与移动端轮（Claude Code）

@@ -13,6 +13,7 @@ D. Built-in spreadsheet editor: type cells, mark a field cell, save.
 from __future__ import annotations
 
 import io
+import os
 import re
 import sys
 import time
@@ -105,7 +106,17 @@ def flow_a(page: Page):
     drag(page, hb, {**last, "y": last["y"] + 22 * 5})
     page.get_by_role("button", name="⇄ 建立映射").click()
     dlg = page.locator(".modal")
-    expect(dlg.get_by_text("明细表（表头：第 1 行）：每份输出写入当前分组的全部明细行", exact=False)).to_be_visible()
+    try:
+        # per-group rule: the dialog must say the group's rows are written, not "varies per file"
+        expect(dlg.get_by_text("明细表（表头第 1 行", exact=False)).to_be_visible()
+        expect(dlg.get_by_text("每份输出写入当前分组的全部明细行", exact=False)).to_be_visible()
+    except AssertionError:
+        # say what the dialog (or the page) actually shows, so a classification change is diagnosable
+        print("[diag] modal count:", dlg.count(), "| selbar:", page.locator(".selbar").inner_text()[:200].replace("\n", " "), flush=True)
+        if dlg.count():
+            print("[diag] modal text:", dlg.first.inner_text()[:600].replace("\n", " | "), flush=True)
+        shot(page, "10_明细映射对话框_失败")
+        raise
     shot(page, "10_明细映射对话框")
     dlg.get_by_role("button", name="保存映射").click()
     expect(page.locator(".modal")).to_have_count(0)
@@ -291,6 +302,11 @@ def main():
             page = ctx.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
+            if os.environ.get("E2E_DEBUG"):   # print the browser console live while diagnosing a failure
+                page.on("console", lambda m: print(f"[console.{m.type}] {m.text[:300]}", flush=True))
+                page.on("pageerror", lambda e: print(f"[pageerror] {str(e)[:300]}", flush=True))
+            # a Content-Security-Policy violation is a real defect: a blocked script, image or style
+            page.on("console", lambda m: errors.append("CSP: " + m.text[:200]) if "Content Security Policy" in m.text else None)
             for name, fn in (("A 分组+XLSX明细", flow_a), ("B PDF框选", flow_b), ("C 内置文档编辑器", flow_c), ("D 内置表格编辑器", flow_d)):
                 t = time.time()
                 fn(page)

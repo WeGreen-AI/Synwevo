@@ -172,7 +172,10 @@ export default function MappingDialog(p: Props) {
                 <div className="col gap4 grow">
                   <div className="t">{describeLocator(x.locator)}</div>
                   <div className="small muted">
-                    {x.varies === "per_record" ? tr("✔ 随样本变化：每份输出读取当前样本对应的值") : x.varies === "fixed" ? tr("● 固定值：同一文件中所有样本使用同一个值") : tr("◆ 随文件变化：每个来源文件在相同位置取值")}
+                    {x.detail ? (mode === "per_group" ? tr("✔ 重复明细：每份输出写入当前分组的全部明细行（按分组与排序规则取行，与所选行数无关）")
+                      : mode === "per_row" ? tr("◆ 重复明细：所选明细行整体写入每一份输出（每行一份时，明细区域不随样本变化）")
+                      : tr("◆ 重复明细：每个来源文件的该明细区域整体写入同一份文档"))
+                      : x.varies === "per_record" ? tr("✔ 随样本变化：每份输出读取当前样本对应的值") : x.varies === "fixed" ? tr("● 固定值：同一文件中所有样本使用同一个值") : tr("◆ 随文件变化：每个来源文件在相同位置取值")}
                   </div>
                   {x.sample !== undefined && (
                     <div className="small">{tr("示例值：")}<span className="mono" style={{ background: "var(--surface-hover)", padding: "0 4px", borderRadius: 3 }}>{Array.isArray(x.sample) ? (Array.isArray(x.sample[0]) ? x.sample.map((r: any) => r.join(" | ")).join(" ⏎ ") : x.sample.join(" | ")) : String(x.sample) || tr("（空）")}</span></div>

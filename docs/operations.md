@@ -140,6 +140,15 @@ blob 目录自行拼成备份。`verify-restore` 在隔离目录核验，并读�
 
 ## 4. 日常运维
 
+### 4.0 HTTP 安全头
+
+三个服务的每个响应都由共享网关加上 OWASP ASVS V14.4 要求的安全头（清单见 [api.md](integration/api.md) §2）。
+HSTS 只在请求经 TLS 到达时发出——生产 nginx 设置 `X-Forwarded-Proto https`，本机 HTTP 不会把浏览器钉在 HTTPS 上。
+CSP 是**强制**模式；若某次发布后浏览器控制台出现 `Content Security Policy` 拦截（三套浏览器回归在提交前都会因此失败），
+可在账户/门户/Docs 的 `runtime.env` 里设置 `SYNWEVO_CSP="<替代策略>"` 或 `SYNWEVO_CSP=off` 并重启对应服务作为临时措施，
+然后修正策略再发布；不要长期保留 `off`。
+
+
 ```bash
 python -m synwevo_docs.cli info                 # 数据目录、schema、当前监听配置、数据量
 python -m synwevo_docs.cli jobs list            # 最近 20 个任务及计数

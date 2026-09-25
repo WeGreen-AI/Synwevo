@@ -92,6 +92,8 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
                                   is_mobile=width < 400, has_touch=width < 400)
         page = ctx.new_page()
         probe = Probe(page)
+        csp: list[str] = []
+        page.on("console", lambda m: csp.append(m.text[:200]) if "Content Security Policy" in m.text else None)
         sign_in(page, accounts, email, password)
 
         # ---- account page: back link + drawer -------------------------------------------------
@@ -171,6 +173,8 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
             notes.append(f"{engine}/{tag}: no governed workspace for {email}; members check skipped")
 
         if not cross_origin:
+            assert not csp, ("Content-Security-Policy violations", csp[:5])
+            notes.append(f"{engine}/{tag}: 0 CSP violations on the account pages")
             ctx.close()
             continue
         # ---- portal: signed-in dashboard, no spinner on refocus, public home tri-state -------
@@ -237,6 +241,8 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
             page.screenshot(path=SHOTS / f"shell-{engine}-{tag}-docs.png")
         else:
             notes.append(f"{engine}/{tag}: no Docs project visible for {email} at {page.url.split('?')[0]}; workspace check skipped")
+        assert not csp, ("Content-Security-Policy violations", csp[:5])
+        notes.append(f"{engine}/{tag}: 0 CSP violations across the pages above")
         ctx.close()
     return notes
 

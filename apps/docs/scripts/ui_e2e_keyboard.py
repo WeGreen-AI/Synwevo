@@ -16,6 +16,7 @@ other flows.  All input files are the synthetic fixtures in <repo>/testdata/.
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 import time
@@ -225,6 +226,11 @@ def main():
             page = ctx.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
+            if os.environ.get("E2E_DEBUG"):   # print the browser console live while diagnosing a failure
+                page.on("console", lambda m: print(f"[console.{m.type}] {m.text[:300]}", flush=True))
+                page.on("pageerror", lambda e: print(f"[pageerror] {str(e)[:300]}", flush=True))
+            # a Content-Security-Policy violation is a real defect: a blocked script, image or style
+            page.on("console", lambda m: errors.append("CSP: " + m.text[:200]) if "Content Security Policy" in m.text else None)
             pid = build_project(page)
             for name, fn in (("E 命令面板", flow_palette), ("F 列表键盘与批量", flow_list),
                              ("G 单一主题与纸张", flow_theme), ("H 布局记忆与减少动效", flow_layout)):

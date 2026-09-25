@@ -14,6 +14,7 @@ docs/quality/verification.md.
 from __future__ import annotations
 
 import io
+import os
 import re
 import sys
 import time
@@ -85,6 +86,10 @@ def main():
             page = ctx.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
+            if os.environ.get("E2E_DEBUG"):   # print the browser console live while diagnosing a failure
+                page.on("console", lambda m: print(f"[console.{m.type}] {m.text[:300]}", flush=True))
+                page.on("pageerror", lambda e: print(f"[pageerror] {str(e)[:300]}", flush=True))
+            page.on("console", lambda m: errors.append("CSP: " + m.text[:200]) if "Content Security Policy" in m.text else None)
             page.goto(base + "/")
             # 1. project
             page.get_by_role("button", name="＋ 新建项目").click()
