@@ -626,6 +626,9 @@ apps/docs/tests/test_malware_scan.py ........                             [100%]
 | 模板 | 干净 200 带 `scan.clean`；EICAR 400 `malware_detected`（`detail.signature`）；离线 503 `scan_unavailable`（`retry_after=30`） |
 | 未配置扫描器 | 来源 `parsing` + `scan.not_configured`；模板 `scan.not_configured`——可见的缺失 |
 
+首次推送（`4061731`）的生产流水线在 verify 阶段失败：Docs 外壳的 Node 测试要求 `presentation.ts` 错误目录里每条消息在
+`messages.server.ts` 都有英文与繁體资源，五条新错误消息缺资源（本机只跑了 typecheck/build，未跑 `npm test --workspaces`）；
+补齐五条三语言资源后 `npm test --workspaces --if-present`（111 项）、`unittest infra/production/tests`（6 项）通过，部署未发生。
 Docs 全套件（含 v1 契约与 OpenAPI 定义测试）通过；`tests/integration/test_migration_v7.py` 改为断言当前 schema
 （v8）并检查两张表的 `scan` 列；账户服务与集成套件其余全部通过。SDK：Python 20 项、Node 7 项通过（等待函数穿过
 `scanning`/`scan_failed`）。前端 typecheck 与三外壳构建通过；三项守卫通过。

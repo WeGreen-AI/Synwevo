@@ -566,6 +566,26 @@ export const serverMessages = {
     "en": "The template is encrypted. Remove its password before uploading.",
     "zh-Hant": "模板文件已加密，請移除密碼後再上傳。"
   },
+  "安全检查未通过：文件被判定为恶意内容，已拒绝。": {
+    "en": "Security check failed: the file was identified as malicious content and has been rejected.",
+    "zh-Hant": "安全檢查未通過：文件被判定為惡意內容，已拒絕。"
+  },
+  "安全检查服务暂不可用，请稍后重试。": {
+    "en": "The security check service is temporarily unavailable. Please try again later.",
+    "zh-Hant": "安全檢查服務暫不可用，請稍後重試。"
+  },
+  "文件超过安全检查的大小上限，无法接纳；请拆分或压缩后重新上传。": {
+    "en": "The file exceeds the security check size limit and cannot be accepted. Split or compress it and upload again.",
+    "zh-Hant": "文件超過安全檢查的大小上限，無法接納；請拆分或壓縮後重新上傳。"
+  },
+  "该文件尚未通过安全检查，暂不能下载。": {
+    "en": "This file has not passed the security check yet and cannot be downloaded.",
+    "zh-Hant": "該文件尚未通過安全檢查，暫不能下載。"
+  },
+  "该文件未通过安全检查，已被拒绝并隔离。": {
+    "en": "This file failed the security check and has been rejected and quarantined.",
+    "zh-Hant": "該文件未通過安全檢查，已被拒絕並隔離。"
+  },
   "当前没有可以撤销的修改。": {
     "en": "There are no changes to undo.",
     "zh-Hant": "當前沒有可以撤銷的修改。"
