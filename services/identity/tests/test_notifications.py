@@ -91,8 +91,8 @@ def test_preferences_drop_in_app_rows_for_a_category_but_never_security(acct):
     uid = acct.member["id"]
     prefs = n.set_preferences(uid, {"categories": {"organization": {"in_app": False, "email": "off"}, "security": {"in_app": False, "email": "off"}},
                                     "quiet_start": "22:00", "quiet_end": "08:00", "timezone": "Asia/Shanghai"})
-    assert prefs["categories"]["organization"] == {"in_app": False, "email": "off"}
-    assert prefs["categories"]["security"] == {"in_app": True, "email": "immediate"}, "security cannot be silenced"
+    assert prefs["categories"]["organization"] == {"in_app": False, "email": "off", "push": True}
+    assert prefs["categories"]["security"] == {"in_app": True, "email": "immediate", "push": True}, "security cannot be silenced"
     assert n.emit(uid, "member.left", params={"member": "x", "workspace": "W"}) is None
     row = n.security_change(uid, "password_changed")
     assert row and n.render(row | {"seq": 1}, "en")["title"] == "Account security change: Password changed"

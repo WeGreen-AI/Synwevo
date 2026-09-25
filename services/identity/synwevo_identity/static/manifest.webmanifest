@@ -1,0 +1,13 @@
+{
+  "name": "Synwevo",
+  "short_name": "Synwevo",
+  "description": "Synwevo Account",
+  "start_url": "/account",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F8FAFC",
+  "theme_color": "#2563EB",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "48x48", "type": "image/x-icon" }
+  ]
+}

@@ -6,16 +6,17 @@ import { useEffect, useState } from 'react';
 import { ApiError, get, put } from '@synwevo/auth-client';
 import { useI18n, useToast } from '@synwevo/ui';
 import { ErrorNotice, errorText } from './common';
+import PushSection from './PushSection';
 import './notifications.messages';
 
 type EmailMode = 'immediate' | 'digest' | 'off';
 interface Prefs {
-  categories: Record<string, { in_app: boolean; email: EmailMode }>;
+  categories: Record<string, { in_app: boolean; email: EmailMode; push: boolean }>;
   categories_order: string[];
   quiet_start: string | null; quiet_end: string | null; timezone: string | null;
   preview: 'full' | 'minimal';
 }
-type PrefsPatch = { categories?: Record<string, Partial<{ in_app: boolean; email: EmailMode }>>; quiet_start?: string | null;
+type PrefsPatch = { categories?: Record<string, Partial<{ in_app: boolean; email: EmailMode; push: boolean }>>; quiet_start?: string | null;
   quiet_end?: string | null; timezone?: string | null; preview?: 'full' | 'minimal' };
 const CATEGORY_LABEL: Record<string, string> = {
   security: '账户安全', organization: '组织与工作空间', members: '成员导入', approval: '审批',
@@ -52,11 +53,11 @@ export default function NotificationsSection({ timezone }: { timezone?: string }
   const zoneOptions = Array.from(new Set([prefs?.timezone, timezone, ...ZONES].filter(Boolean) as string[]));
   return <section id="notifications" className="card card-b col gap12 account-section">
     <h2 className="secttl">{t('通知')}</h2>
-    <p className="tiny muted">{t('站内通知始终记录在通知中心；这里决定每类通知是否出现在通知中心、以及是否发邮件。账户安全通知始终发送。')}</p>
+    <p className="tiny muted">{t('站内通知始终记录在通知中心；这里决定每类通知是否出现在通知中心、是否发邮件、是否推送到已开启的设备。账户安全通知始终发送。')}</p>
     <ErrorNotice error={error} retry={() => void load()} />
     {prefs && <>
       <div className="account-table"><table className="tbl" aria-label={t('通知偏好')}>
-        <thead><tr><th>{t('类别')}</th><th>{t('通知中心')}</th><th>{t('邮件')}</th></tr></thead>
+        <thead><tr><th>{t('类别')}</th><th>{t('通知中心')}</th><th>{t('邮件')}</th><th>{t('浏览器推送')}</th></tr></thead>
         <tbody>{prefs.categories_order.map(cat => {
           const c = prefs.categories[cat]; const locked = cat === 'security';
           return <tr key={cat}>
@@ -67,9 +68,12 @@ export default function NotificationsSection({ timezone }: { timezone?: string }
               onChange={e => void save({ categories: { [cat]: { email: e.target.value as EmailMode } } })}>
               {(Object.keys(EMAIL_LABEL) as EmailMode[]).map(m => <option key={m} value={m}>{t(EMAIL_LABEL[m])}</option>)}
             </select></td>
+            <td><label className="check"><input type="checkbox" checked={c.push} disabled={locked || busy} aria-label={t('{category}：浏览器推送', { category: t(CATEGORY_LABEL[cat] || cat) })}
+              onChange={e => void save({ categories: { [cat]: { push: e.target.checked } } })} /><span>{t(c.push ? '推送' : '不推送')}</span></label></td>
           </tr>;
         })}</tbody>
       </table></div>
+      <PushSection />
       <div className="col gap8">
         <label className="check"><input type="checkbox" checked={quiet} disabled={busy} onChange={e => {
           if (!e.target.checked) { setQuiet(false); void save({ quiet_start: null, quiet_end: null, timezone: prefs.timezone }); }

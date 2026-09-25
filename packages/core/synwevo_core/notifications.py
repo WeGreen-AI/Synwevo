@@ -200,7 +200,7 @@ OUTCOME_WORDS = {
 
 
 def default_preferences() -> dict:
-    cats = {c: {"in_app": True, "email": "immediate"} for c in CATEGORIES}
+    cats = {c: {"in_app": True, "email": "immediate", "push": True} for c in CATEGORIES}
     cats["docs"]["email"] = "digest"
     cats["conversation"]["email"] = "digest"
     return {"categories": cats, "quiet_start": None, "quiet_end": None, "timezone": None, "preview": "full"}
@@ -270,7 +270,49 @@ class Notifier:
             else:
                 t.execute("INSERT INTO notification_deliveries (notification_id,channel,status,not_before,updated_at,last_error) "
                           "VALUES (?,?,?,?,?,?)", (row["id"], "email", "skipped", None, now(), "channel off"))
+            # Web Push: only when the reader has a device subscribed and the category's push
+            # switch is on (security always). The dispatcher fans out per subscription later.
+            if (critical or cat.get("push", True)) and self._has_push_device(user_id):
+                t.execute("INSERT INTO push_queue (notification_id,user_id,status,not_before,updated_at) VALUES (?,?,?,?,?)",
+                          (row["id"], user_id, "pending", row["created_at"], now()))
         return row
+
+    def _has_push_device(self, user_id: str) -> bool:
+        try:
+            from .push import PushSubscriptions
+            return PushSubscriptions(self.store).has_active(user_id)
+        except Exception:  # noqa: BLE001 - the inbox row must land even if the push tables are unavailable
+            return False
+
+    # ------------------------------------------------------------------ the Web Push queue
+    def due_push(self, limit: int = 200) -> list[dict]:
+        ts = now()
+        return self.store.all("SELECT q.notification_id, q.user_id, q.attempts, n.kind, n.category, n.severity, n.params, n.target, n.created_at AS notified_at "
+                              "FROM push_queue q JOIN notifications n ON n.id=q.notification_id "
+                              "WHERE q.status='pending' AND (q.not_before IS NULL OR q.not_before<=?) ORDER BY q.not_before LIMIT ?", (ts, limit))
+
+    def defer_push(self, notification_id: str, until: float) -> None:
+        self.store.execute("UPDATE push_queue SET not_before=?, updated_at=? WHERE notification_id=?", (until, now(), notification_id))
+
+    def claim_push(self, notification_id: str) -> bool:
+        return self.store.execute("UPDATE push_queue SET status='claimed', updated_at=? WHERE notification_id=? AND status='pending'",
+                                  (now(), notification_id)) > 0
+
+    def finish_push(self, notification_id: str, status: str, *, error: str | None = None) -> None:
+        if status not in ("sent", "skipped", "failed"):
+            raise ValueError(status)
+        self.store.execute("UPDATE push_queue SET status=?, last_error=?, updated_at=? WHERE notification_id=?",
+                           (status, (error or None) and error[:200], now(), notification_id))
+
+    def retry_push(self, notification_id: str, error: str) -> None:
+        row = self.store.one("SELECT attempts FROM push_queue WHERE notification_id=?", (notification_id,))
+        attempts = int((row or {}).get("attempts") or 0) + 1
+        if attempts > len(RETRY_DELAYS_S):
+            self.store.execute("UPDATE push_queue SET status='failed', attempts=?, last_error=?, updated_at=? WHERE notification_id=?",
+                               (attempts, error[:200], now(), notification_id))
+            return
+        self.store.execute("UPDATE push_queue SET status='pending', attempts=?, not_before=?, last_error=?, updated_at=? WHERE notification_id=?",
+                           (attempts, now() + RETRY_DELAYS_S[attempts - 1], error[:200], now(), notification_id))
 
     def security_change(self, user_id: str, what: str) -> dict | None:
         """`what` is a SECURITY_WHAT key, or the zh-Hans sentence legacy callers still pass
@@ -377,7 +419,8 @@ class Notifier:
             for c in CATEGORIES:
                 if c in saved and isinstance(saved[c], dict):
                     out["categories"][c] = {"in_app": bool(saved[c].get("in_app", True)),
-                                            "email": saved[c].get("email") if saved[c].get("email") in EMAIL_MODES else "immediate"}
+                                            "email": saved[c].get("email") if saved[c].get("email") in EMAIL_MODES else "immediate",
+                                            "push": bool(saved[c].get("push", True))}
             out.update({"quiet_start": row["quiet_start"], "quiet_end": row["quiet_end"], "timezone": row["timezone"], "preview": row["preview"]})
         return out
 
@@ -387,7 +430,7 @@ class Notifier:
         current = self.preferences(user_id)
         cats = current["categories"]
         for c, v in (data.get("categories") or {}).items():
-            if c not in CATEGORIES or not isinstance(v, dict) or set(v) - {"in_app", "email"}:
+            if c not in CATEGORIES or not isinstance(v, dict) or set(v) - {"in_app", "email", "push"}:
                 raise ServiceError(400, "invalid_field", "未知的通知类别或字段", {"field": "categories"})
             if "in_app" in v:
                 cats[c]["in_app"] = bool(v["in_app"])
@@ -395,8 +438,10 @@ class Notifier:
                 if v["email"] not in EMAIL_MODES:
                     raise ServiceError(400, "invalid_field", "邮件方式必须是 immediate、digest 或 off", {"field": "categories"})
                 cats[c]["email"] = v["email"]
+            if "push" in v:
+                cats[c]["push"] = bool(v["push"])
         # Security stays on: the switches are stored (so the page can say "always on"), never honoured.
-        cats["security"] = {"in_app": True, "email": "immediate"}
+        cats["security"] = {"in_app": True, "email": "immediate", "push": True}
         qs, qe, tz = data.get("quiet_start", current["quiet_start"]), data.get("quiet_end", current["quiet_end"]), data.get("timezone", current["timezone"])
         for v, field in ((qs, "quiet_start"), (qe, "quiet_end")):
             if v is not None and not _valid_hhmm(v):

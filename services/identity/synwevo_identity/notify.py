@@ -19,6 +19,7 @@ import threading
 
 from synwevo_core.identity import Identity
 from synwevo_core.notifications import Notifier
+from synwevo_core.push import PushSubscriptions, WebPush, payload_for
 from synwevo_core.store import Store, now
 
 from .mail import Mailer, MailNotConfigured, public_base
@@ -111,6 +112,66 @@ class NotificationDispatcher:
                 self._mail_digest(user, others, locale)
                 out["queued"] += len(others)
                 out["digested"] += 1
+        out.update(self._push_pass())
+        return out
+
+    # ------------------------------------------------------------------ Web Push
+    def _push_pass(self) -> dict:
+        """One item at a time to every live device of the reader; quiet hours defer everything
+        but critical, a device that answers gone/keeps failing is revoked, a push service that
+        cannot be reached puts the item back with backoff. The inbox row is the record; a push is
+        a hint that it exists."""
+        out = {"pushed": 0, "push_deferred": 0, "push_skipped": 0, "push_failed": 0}
+        due = self.notifier.due_push(BATCH)
+        if not due:
+            return out
+        subs, sender = PushSubscriptions(self.store), WebPush(self.store)
+        by_user: dict[str, list[dict]] = {}
+        for d in due:
+            by_user.setdefault(d["user_id"], []).append(d)
+        for uid, rows in by_user.items():
+            user = self.ident.get_user(uid)
+            if not user or user.get("deleted_at") or user["status"] not in ("active", "pending"):
+                for d in rows:
+                    self.notifier.finish_push(d["notification_id"], "skipped", error="reader inactive")
+                out["push_skipped"] += len(rows)
+                continue
+            prefs = self.notifier.preferences(uid)
+            locale = user.get("locale") or "zh-Hans"
+            quiet_until = self.notifier.quiet_until(prefs)
+            devices = subs.active_for(uid)
+            for d in rows:
+                if quiet_until and d["severity"] != "critical":
+                    self.notifier.defer_push(d["notification_id"], quiet_until)
+                    out["push_deferred"] += 1
+                    continue
+                if not devices:
+                    self.notifier.finish_push(d["notification_id"], "skipped", error="no device")
+                    out["push_skipped"] += 1
+                    continue
+                if not self.notifier.claim_push(d["notification_id"]):
+                    continue
+                item = self._render(d, locale)
+                data = payload_for({**item, "id": d["notification_id"], "kind": d["kind"], "severity": d["severity"], "created_at": d["notified_at"]})
+                urgency = "high" if d["severity"] in ("critical", "action") else "normal"
+                sent = retry_error = None
+                for sub in devices:
+                    outcome, status, error = sender.send(sub, data, urgency=urgency)
+                    subs.record(sub["id"], outcome, error)
+                    if outcome == "sent":
+                        sent = True
+                    elif outcome == "retry":
+                        retry_error = error
+                if sent:
+                    self.notifier.finish_push(d["notification_id"], "sent")
+                    out["pushed"] += 1
+                elif retry_error:
+                    self.notifier.retry_push(d["notification_id"], retry_error)
+                    out["push_failed"] += 1
+                else:
+                    self.notifier.finish_push(d["notification_id"], "failed", error="no device accepted the push")
+                    out["push_failed"] += 1
+            devices = subs.active_for(uid)     # a device revoked above must not be pushed again for this reader
         return out
 
     # ------------------------------------------------------------------ rendering

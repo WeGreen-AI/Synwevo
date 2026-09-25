@@ -9,3 +9,5 @@ argon2-cffi==25.1.0       # MIT – Argon2id password hashing (parameters measur
 authlib==1.6.5            # BSD-3-Clause – JOSE/JWT for OIDC tokens (synwevo_core.oidc)
 httpx==0.28.1             # BSD-3-Clause – back-channel logout calls (synwevo_core.oidc)
 cryptography==50.0.1      # Apache-2.0 OR BSD-3 – AES-GCM for sealed secrets (synwevo_core.sealed); WebAuthn signature checks
+py-vapid==1.9.4           # MPL-2.0 (Mozilla) – VAPID keys and JWT for Web Push, RFC 8292 (synwevo_core.push); needs cryptography only
+http-ece==1.2.1           # MIT – Web Push payload encryption, RFC 8188/8291 (synwevo_core.push); needs cryptography only

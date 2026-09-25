@@ -163,6 +163,11 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         s = getattr(request.state, "session", None)
         if s:
             outcome = sessions.revoke_device(s["id"], "logout")
+            try:
+                from synwevo_core.push import PushSubscriptions
+                PushSubscriptions(ident.store).revoke_for_session(s["id"], "signed_out")
+            except Exception:  # noqa: BLE001 - signing out must not fail because a push table is missing
+                pass
             audit(request, "auth.logout", actor_id=s["user_id"], result="ok", meta=outcome)
         response.delete_cookie(COOKIE_NAME, path="/")
         response.delete_cookie(CSRF_COOKIE, path="/")

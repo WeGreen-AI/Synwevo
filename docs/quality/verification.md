@@ -1003,6 +1003,36 @@ accounts 容器同样不知道 Docs 地址。影响：CI-27/29 的复制、任�
   - the member (phone) got cards for the team project and the job, and only the plain link for the owner's personal draft; nothing scrolls sideways
 == webkit（两条同上）
 ```
+### 16.32 浏览器推送：VAPID 密钥、订阅与队列、派发、账户页设备管理（CI-32）
+
+**研究与取舍**：MDN Push API、WebKit 官方博文（iOS 16.4+ 须加主屏幕且 manifest standalone、权限须来自用户手势、无需 Apple 开发者账号）、RFC 8030/8188/8291/8292；
+依赖：pywebpush 2.5.0 会把 `requests`+`aiohttp`（十余个传递包）带进镜像，改用它的两块基石 py-vapid 1.9.4（MPL-2.0）+ http-ece 1.2.1（MIT，都只依赖已有的
+`cryptography`）+ 平台已有的 httpx；在 venv 里先装后卸验证过依赖树，`pip check` 与锁文件一致。决策记录：`docs/platform/web-push.md`。
+
+**实现**：schema v15（`push_keys`/`push_subscriptions`/`push_queue`）；`synwevo_core.push`（首次使用生成并入库的 VAPID 密钥、订阅校验与合并、每读者 ≤ 10 台、
+aes128gcm 加密 + VAPID JWT（≤ 12 h）+ TTL/Urgency、结果分类 sent/gone/retry/failed、410 与连续失败撤销）；`Notifier`：类别 `push` 开关（安全始终开）、
+有活跃设备才入队、队列的 due/claim/finish/retry；派发器每趟增加推送（免打扰推迟非紧急、每设备一次、不可达退避）；`/api/auth/push/*` 五个接口；
+账户服务提供 `/sw.js`（`Service-Worker-Allowed: /`）与 `/manifest.webmanifest`（standalone）；登出撤销该会话的设备；账户页：每类「浏览器推送」列 +
+「浏览器推送」小节（状态说明、在此设备上开启、设备列表、发送测试、移除），三语言 28 条。
+
+**接口测试**（`services/identity/tests/test_push.py`，4 项，本机推送服务替身）：公钥稳定；订阅返回不含端点/密钥、同端点合并、`this_device` 标记、坏订阅 400、
+移除后 404；测试推送带 `Authorization: vapid t=…,k=…`、`Content-Encoding: aes128gcm`、`TTL: 60`、`Urgency: high`，密文不含明文；一条通知推到两台设备各一次，
+答 410 的设备被撤销、`push_queue=sent`、第二趟不重复；`docs` 类关推送不入队而安全类不能关；免打扰时段普通项推迟、紧急项照发；推送服务关闭后队列回退
+（attempts=1、not_before>0）且设备保留；登出后 `revoked_reason=signed_out`。
+
+**浏览器（隔离实例，Chromium + WebKit）**，`ui_e2e_push.py`：
+
+```
+== chromium (Google Chrome)
+  - /sw.js (Service-Worker-Allowed: /) and /manifest.webmanifest (standalone) are served; the push config offers a public key
+  - the service worker registered but this headless browser has no push service; the page said so and kept in-app notifications
+== webkit（两条同上）
+```
+
+截图复核：偏好表多出「推送」列（安全行锁定勾选），小节按钮与说明可见，无头 Chromium 的订阅失败以 toast 说明「此浏览器无法完成推送订阅：Registration failed - permission denied」。
+
+**未验证/外部条件**：真实设备上的收到与点击（Chrome/Android、iOS 16.4+ 主屏幕 web app、macOS Safari）需要人工在生产上开启一次并按「发送测试」；
+无头浏览器背后没有推送服务，无法在自动化里真实订阅。VAPID 密钥轮换未做。
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

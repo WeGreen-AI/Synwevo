@@ -79,7 +79,7 @@
 
 ## 7. 明确未做
 
-* Web Push / Service Worker（需 VAPID 密钥、订阅表、`pywebpush` 依赖与真机验证）；SMS 与第三方 IM 无业务需求不接。
+* Web Push：已在 CI-32 接入（`docs/platform/web-push.md`：VAPID 密钥、订阅表、每通知一行的推送队列、派发器推送趟、账户页设备管理）；真实设备上的收到与点击待人工验证。SMS 与第三方 IM 无业务需求不接。
 * Docs 侧其它事件（评论/提及、模板或映射变更、产物即将失效）：随对应功能接入；文件被拒与任务结束已在 CI-29 接入。
 * 链接来源（CI-31 修正）：`docs` 目标的链接取应用注册表里 Docs 进程登记的启动地址；账户服务的 `SYNWEVO_APP_URL` 是它自己的地址，曾让邮件与账户外壳铃铛里的 Docs 链接指向 `accounts…/p/<id>`。只有 Docs 自己的进程才回退到 `SYNWEVO_APP_URL`；两者都没有时不给链接。
 * 每会话静音、仅提及：随消息功能接入。

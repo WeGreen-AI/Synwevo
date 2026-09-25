@@ -70,6 +70,12 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-27 project copy with target approval, run 36189260515, 2026-09-25 21:22 UTC):** `{"deployed": "synwevo:bcf8729f192956ed3dfb0cc9b9f2c969072929c0", "backup": "/opt/synwevo/backups/20260925T212138Z"}`; verify and deploy succeeded (20 minutes); schema v13 applied by the Docs role's Store on start.
 
+**Deployed (CI-30 phone-width check and compact inbox toolbar, run 36198746759):** `{"deployed": "synwevo:2d77f08f4a3acbd0015c0518c7f8d1053bb7bbd5", "backup": "/opt/synwevo/backups/20260925T231552Z"}`; verify and deploy succeeded (the verify job took longer than usual, 40 minutes in the Docker step).
+
+**Deployed (CI-31 Docs links on the account side, run 36200404143, 2026-09-25 23:36 UTC):** `{"deployed": "synwevo:0c73abbb9af4d213f302444b988b4cf3f432aed7", "backup": "/opt/synwevo/backups/20260925T233622Z"}`; verify and deploy succeeded. Notification mails and account-side bell items now link to the Docs address registered by the Docs container.
+
+**Pushed next (CI-32 Web Push):** schema v15 adds `push_keys`, `push_subscriptions`, `push_queue` (additive, no migration); two new Python dependencies pinned in the lock (`py-vapid`, `http-ece`, both `cryptography`-only); the account service now serves `/sw.js` and `/manifest.webmanifest`; the dispatcher gains a push pass. The VAPID key pair is generated on first use and stored in the database; `SYNWEVO_PUSH=off` disables the channel. Rollback to v14 code is safe (tables ignored).
+
 **Pushed next (CI-31 Docs links on the account side):** notification links to Docs objects now come from the app registry's Docs address in every role (the account service's own `SYNWEVO_APP_URL` produced `accounts…/p/<id>` links in mails); new `GET /api/auth/messaging/link-card` and message cards. No schema change.
 
 **Pushed next (CI-30 phone-width check of the copy surfaces):** one shared stylesheet change (compact inbox toolbar inside drawers) plus a new browser proof; no schema or API change.

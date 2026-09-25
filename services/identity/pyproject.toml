@@ -15,6 +15,9 @@ dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "pydantic", "a
 [tool.setuptools.packages.find]
 include = ["synwevo_identity*"]
 
+[tool.setuptools.package-data]
+synwevo_identity = ["static/*"]
+
 [project.urls]
 Homepage = "https://github.com/WeGreen-AI/Synwevo"
 Repository = "https://github.com/WeGreen-AI/Synwevo"
