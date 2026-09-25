@@ -60,7 +60,11 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     store, machine = plat.store, plat.machine
     app_ = App(store)
     views = Views(app_)
-    jobs = JobService(app_) if start_jobs else None
+    # The platform inbox: job outcomes and refused files are told to the person concerned.
+    from synwevo_core.notifications import Notifier as _Notifier
+    notifier = _Notifier(store)
+    api.state.notifier = notifier
+    jobs = JobService(app_, notifier=notifier) if start_jobs else None
     hooks = WebhookDispatcher(store, jobs, start=start_jobs)
     app_.on_event = hooks.notify                      # job state changes wake the dispatcher
     api.state.app = app_
@@ -76,11 +80,9 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
         app_.resume_parsing()
     # Approved copies of personal projects into organization workspaces are executed here, the
     # only process that can read the source rows and write the target rows.
-    from synwevo_core.notifications import Notifier as _Notifier
     from synwevo_core.project_copies import ProjectCopies as _ProjectCopies
     from ..copies import CopyExecutor, CopyRunner, build_manifest
     copies = _ProjectCopies(store, plat.identity)
-    notifier = _Notifier(store)
     api.state.copy_runner = CopyRunner(CopyExecutor(app_, copies, notifier), copies, start=start_jobs)
 
     def _uid(request: Request) -> str:
@@ -256,10 +258,27 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     def create_project(body: dict = Body(...)):
         return app_.create_project(body.get("name", ""), origin="ui")
 
+    def _copied_from(p: dict) -> dict | None:
+        """Where a copied project came from, for the people who can open it: the request, the
+        source project's name, who asked and who approved. Never the source workspace or files."""
+        origin = p.get("origin") or ""
+        if not origin.startswith("copy:"):
+            return None
+        r = copies.get(origin[5:])
+        if not r:
+            return {"request_id": origin[5:]}
+        m = r.get("manifest") or {}
+        view = copies.public(r, for_requester=True)
+        return {"request_id": r["id"], "source_project_name": (m.get("project") or {}).get("name") or r["name"],
+                "requester": view.get("requester"), "decider": view.get("decider"), "decided_at": r.get("decided_at"),
+                "executed_at": r.get("executed_at"), "self_approved": bool(r.get("self_approved")),
+                "organization_id": r["target_organization_id"], "sources_included": bool((r.get("scope") or {}).get("sources"))}
+
     @api.get("/api/projects/{pid}")
     def get_project(pid: str):
         p = app_.get_project(pid)
         p["sources"] = app_.list_sources(pid)
+        p["copied_from"] = _copied_from(p)
         p["template"] = None
         if p.get("template_id"):
             try:
@@ -287,11 +306,13 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
 
     # ------------------------------------------------------------ sources
     @api.post("/api/projects/{pid}/sources")
-    async def upload_sources(pid: str, files: list[UploadFile] = File(...)):
+    async def upload_sources(request: Request, pid: str, files: list[UploadFile] = File(...)):
+        desc = authority.describe_request(request)
+        actor = desc.get("user_id") if desc.get("kind") == "user" else None
         out = []
         for f in files:
             data = await _read_limited(f)
-            out.append(app_.add_source(pid, f.filename or "file", data))
+            out.append(app_.add_source(pid, f.filename or "file", data, actor=actor))
         return out
 
     @api.get("/api/projects/{pid}/sources")

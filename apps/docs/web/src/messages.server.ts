@@ -20,6 +20,10 @@ export const serverMessages = {
   "明细已续排到新增页面。": {"en": "Details continue on additional pages.", "zh-Hant": "明細已續排到新增頁面。"},
   "已移除不支持的控制字符。": {"en": "Unsupported control characters were removed.", "zh-Hant": "已移除不支援的控制字元。"},
   "字段引用已被移除，请检查映射。": {"en": "A field reference was removed. Check the mappings.", "zh-Hant": "欄位引用已被移除，請檢查映射。"},
+  "项目设置已在其他窗口或被其他人修改，这次操作没有执行。已刷新为最新设置，请在此基础上重新操作。": {
+    "en": "The project settings were changed in another window or by someone else, so this action was not applied. The latest settings have been loaded; redo it on them.",
+    "zh-Hant": "專案設定已在其他視窗或被其他人修改，這次操作沒有執行。已更新為最新設定，請在此基礎上重新操作。"
+  },
   "公式已交由排版引擎计算。": {
     "en": "Formulas were calculated by the layout engine.",
     "zh-Hant": "公式已交由排版引擎計算。"

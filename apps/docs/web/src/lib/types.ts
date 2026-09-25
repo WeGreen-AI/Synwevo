@@ -104,6 +104,18 @@ export interface RecordRule {
   id_column?: { header: string } | null;
 }
 
+export interface CopiedFrom {
+  request_id: string;
+  source_project_name?: string;
+  requester?: { user_id: string; name: string } | null;
+  decider?: { user_id: string; name: string } | null;
+  decided_at?: number | null;
+  executed_at?: number | null;
+  self_approved?: boolean;
+  organization_id?: string;
+  sources_included?: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -112,6 +124,12 @@ export interface Project {
   output: { naming?: string; formats?: string[]; error_policy?: string; layout?: "off" | "warn" | "fit" };
   mapping_rev: number;
   rev: number;
+  /** Revision of the settings (name, rule, output, template choice); sent back as
+   *  `base_settings_rev` so a stale screen's save is refused instead of overwriting. */
+  settings_rev: number;
+  origin?: string;
+  /** Present on a project created by an approved copy from a personal workspace. */
+  copied_from?: CopiedFrom | null;
   sources: SourceFile[];
   template: TemplateDetail | null;
   /** The template this project pointed at was deleted: template is null, a new one must be chosen. */

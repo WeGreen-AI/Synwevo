@@ -60,6 +60,7 @@ export const ERROR_SOURCE: Record<string, string> = {
   shrunk_to_fit: '为保持页数，已缩小允许缩小的字段。', layout_unavailable: '无法完成真实分页检查。',
   stale: '内容已在其他窗口或被其他人修改，这次操作没有执行。已刷新为最新内容，请在此基础上重新操作。',
   stale_template: '模板已被其他人修改',
+  stale_project: '项目设置已在其他窗口或被其他人修改，这次操作没有执行。已刷新为最新设置，请在此基础上重新操作。',
   conflict: '映射已被修改',
   optional_empty: '可选字段为空，已跳过。',
   transform: '部分值未能应用指定的转换，请检查映射。',

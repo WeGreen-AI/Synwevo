@@ -32,7 +32,7 @@ import TemplateChooser from "../components/TemplateChooser";
  *  member): mappings answer `stale`, the template `stale_template`. */
 const isStale = (e: unknown) => {
   const code = (e as { code?: string } | null)?.code;
-  return code === "stale" || code === "stale_template";
+  return code === "stale" || code === "stale_template" || code === "stale_project";
 };
 const STALE_RELOADED = "内容已在其他窗口或被其他人修改，这次操作没有执行。已刷新为最新内容，请在此基础上重新操作。";
 
@@ -551,7 +551,7 @@ function Workspace() {
   };
 
   const saveRule = async (r: RecordRule) => {
-    await run(() => patch(`/api/projects/${pid}`, { record_rule: r }));
+    await run(() => patch(`/api/projects/${pid}`, { record_rule: r, base_settings_rev: project?.settings_rev }));
     await reload();
     toast(tr("样本规则已保存"), "ok");
   };
@@ -708,7 +708,7 @@ function Workspace() {
         <LanguageMenu />
         <span className="sep" />
         <ProjectName key={project.name} name={project.name} readOnly={ro}
-          onRename={(n) => run(() => patch(`/api/projects/${pid}`, { name: n })).then(reload)} />
+          onRename={(n) => run(() => patch(`/api/projects/${pid}`, { name: n, base_settings_rev: project.settings_rev })).then(reload)} />
         <span className="small muted desktop-only">{tr("模板：")}</span>
         <button type="button" className="btn ghost sm desktop-only" disabled={ro} onClick={() => setDialog({ kind: "template" })} title={ro ? tr(READ_ONLY_TEXT) : tr("更换或设置模板")}>{tpl ? `${tpl.name} · v${tpl.version.no}` : tr("未设置")} ▾</button>
         <span className="small muted desktop-only">{tr("样本：")}</span>
@@ -736,6 +736,16 @@ function Workspace() {
         <button type="button" className={`btn${preview ? " active" : ""}`} aria-pressed={preview} disabled={!tpl || !rule.mode} onClick={() => setPreview(!preview)}>{tr("👁 预览")}</button>
         <button type="button" className="btn primary" disabled={!tpl || !rule.mode || ro} title={ro ? tr(READ_ONLY_TEXT) : undefined} onClick={() => setDialog({ kind: "generate" })}>{tr("▶ 生成")}</button>
       </div>
+      {project.copied_from && (
+        <div className="notice info small" role="note" data-testid="copied-from">
+          {tr("此项目由 {who} 的个人项目「{name}」经审批复制而来", { who: project.copied_from.requester?.name || "—", name: project.copied_from.source_project_name || "—" })}
+          {project.copied_from.decider && <>{" · "}{project.copied_from.self_approved
+            ? tr("{who} 自行批准", { who: project.copied_from.decider.name })
+            : tr("由 {who} 批准", { who: project.copied_from.decider.name })}</>}
+          {!project.copied_from.sources_included && <>{" · "}{tr("未包含来源文件，请上传本空间的数据后再生成")}</>}
+          {project.copied_from.organization_id && <>{" · "}<a href={`${(session.state?.account_url || "/account").replace(/\/account$/, "")}/organizations/${project.copied_from.organization_id}?approval=${project.copied_from.request_id}`}>{tr("查看审批记录")}</a></>}
+        </div>
+      )}
       <div className="stepbar">
         {steps.map((s, i) => (
           <span key={s.n} className="row gap4">
@@ -929,7 +939,7 @@ function Workspace() {
       </div>
 
       {/* ---------------------------------------------------------------- dialogs */}
-      {dialog?.kind === "template" && <TemplateChooser projectId={pid!} current={tpl?.id} onDone={reload} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "template" && <TemplateChooser projectId={pid!} settingsRev={project.settings_rev} current={tpl?.id} onDone={reload} onClose={() => setDialog(null)} />}
       {dialog?.kind === "rule" && <RuleDialog project={project} sources={sources} initial={dialog.initial} selectedText={(leftSel as any)?.text} onSave={saveRule} onClose={() => setDialog(null)} />}
       {dialog?.kind === "slot" && tpl && <SlotDialog tpl={tpl} sel={dialog.sel} suggestedName={dialog.name} onCreate={createSlot} onClose={() => setDialog(null)} />}
       {dialog?.kind === "mapping" && tpl && (

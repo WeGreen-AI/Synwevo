@@ -48,7 +48,8 @@
 | `member.removed` | organization / info | 当事成员 | 被移出空间 / 被移出组织 | 立即 | 账户页 |
 | `member.left` | organization / info | 空间的 owner/admin | 成员自行退出 | 汇总 | 空间成员页 |
 | `organization.role_changed` | organization / info | 当事成员 | 组织角色变化 | 立即 | 组织页 |
-| `docs.file_rejected`、`docs.job_finished` | docs | 上传者 / 任务发起人 | **目录已定义，Docs 侧的发射点在下一批接入**（需要任务与来源行携带发起人） | 立即 / 汇总 | Docs |
+| `docs.file_rejected` | docs / action | 上传者（登录用户；机器上传无人可通知） | 来源文件被安全检查判定为恶意并拒绝（`dedupe=source:{sid}:rejected`；同内容再传即拒，不重复通知）（CI-29） | 立即 | Docs → 项目页 |
+| `docs.job_finished` | docs / info | 任务发起人（登录用户） | 生成任务结束：完成 / 部分失败 / 失败 / 已取消，附成功与失败份数；每次运行一条（`dedupe=job:{jid}:{run_no}`），与终态在同一事务写入（CI-29） | 汇总 | Docs → 任务页 |
 | `conversation.dm` | conversation / info | 私聊对方 | 私聊里的新消息；同一会话在读者读到上次位置之前只产生一项（去重键含读者的 last_read_seq） | 汇总 | 消息 → 该会话 |
 | `conversation.mention` | conversation / action | 被提及的成员 | 群聊或私聊里被 @ 提及；静音或「不通知」的会话不产生 | 汇总 | 消息 → 该会话 |
 | `conversation.group` | conversation / info | 把群设为「所有消息」的成员 | 群里的新消息（默认「仅提及」，因此默认不产生） | 关 | 消息 → 该会话 |
@@ -79,6 +80,6 @@
 ## 7. 明确未做
 
 * Web Push / Service Worker（需 VAPID 密钥、订阅表、`pywebpush` 依赖与真机验证）；SMS 与第三方 IM 无业务需求不接。
-* Docs 侧发射点（文件被拒、任务完成）：目录已定义，等 Docs 的任务/来源行带上发起人后接入。
+* Docs 侧其它事件（评论/提及、模板或映射变更、产物即将失效）：随对应功能接入；文件被拒与任务结束已在 CI-29 接入。
 * 每会话静音、仅提及：随消息功能接入。
 * 管理端不新增"通知仪表盘"；投递可在邮件管理页按 kind=`notification` 追踪。

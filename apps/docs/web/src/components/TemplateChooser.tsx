@@ -7,7 +7,7 @@ import { get, patch, post, upload } from "@synwevo/auth-client";
 import { fmtTime, Modal, useToast } from "@synwevo/ui";
 import { errorText } from "../lib/perm";
 
-export default function TemplateChooser({ projectId, current, onDone, onClose }: { projectId: string; current?: string | null; onDone: () => void; onClose: () => void }) {
+export default function TemplateChooser({ projectId, settingsRev, current, onDone, onClose }: { settingsRev?: number; projectId: string; current?: string | null; onDone: () => void; onClose: () => void }) {
   useI18n();
   const [tab, setTab] = useState<"upload" | "new" | "library">("upload");
   const [lib, setLib] = useState<any[] | null>(null);
@@ -48,7 +48,7 @@ export default function TemplateChooser({ projectId, current, onDone, onClose }:
     try {
       let id = tid;
       if (copy) id = (await post(`/api/templates/${tid}/duplicate`, {})).id;
-      await patch(`/api/projects/${projectId}`, { template_id: id });
+      await patch(`/api/projects/${projectId}`, { template_id: id, base_settings_rev: settingsRev });
       onDone();
       onClose();
     } catch (e: any) {

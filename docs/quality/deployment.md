@@ -70,6 +70,10 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-27 project copy with target approval, run 36189260515, 2026-09-25 21:22 UTC):** `{"deployed": "synwevo:bcf8729f192956ed3dfb0cc9b9f2c969072929c0", "backup": "/opt/synwevo/backups/20260925T212138Z"}`; verify and deploy succeeded (20 minutes); schema v13 applied by the Docs role's Store on start.
 
+**Pushed next (CI-29 Docs edit safety and outcome notifications):** schema v14 adds `projects.settings_rev` and `source_files.created_by` (additive, defaults keep old behaviour); `PATCH /api/projects/{pid}` gains the optional `base_settings_rev` (409 `stale_project` on mismatch), the Docs role now writes `docs.job_finished` / `docs.file_rejected` inbox rows, and project details carry `copied_from`. Rollback to v13 code is safe.
+
+**Deployed (CI-28 component names, run 36191490199, 2026-09-25 21:48 UTC):** `{"deployed": "synwevo:8ac8e5508dd90ea517fb187c4ca7f3e79e0adf66", "backup": "/opt/synwevo/backups/20260925T214811Z"}`; verify (with the new `check_component_names.py` step) and deploy succeeded in 23 minutes.
+
 **Pushed next (CI-28 component names):** text and output-metadata changes only, no schema change; the job verification `engine` field now carries a format family (`docx/xlsx/pdf/pptx/csv/image`) instead of a library name; converted PDF outputs are stamped `Producer/Creator = Synwevo Docs` in the full-mode PDF engine (production runs the full-mode engine). New guard `scripts/check_component_names.py` runs in the verify job.
 
 **Pushed next (CI-27 project copy with target approval):** schema v13 adds one table (`project_copies`), no data migration; the Docs role starts a copy runner thread (10 s tick) and the account role gains `/api/auth/organizations/{oid}/approvals*`; five inbox kinds. Rollback to a v12 build is safe (the table is ignored; created copies are ordinary projects). Verified before push: 2057 backend tests (three suites, 0 failed), four guards, typecheck, build, front-end tests, infra tests, and the two-engine browser proof on the isolated instance.

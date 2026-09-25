@@ -1902,6 +1902,26 @@ export const messages = {
     "en": "the image reader",
     "zh-Hant": "圖像讀取器"
   },
+  "此项目由 {who} 的个人项目「{name}」经审批复制而来": {
+    "en": "This project was copied, with approval, from {who}’s personal project “{name}”",
+    "zh-Hant": "此專案由 {who} 的個人專案「{name}」經審批複製而來"
+  },
+  "{who} 自行批准": {
+    "en": "Self-approved by {who}",
+    "zh-Hant": "{who} 自行批准"
+  },
+  "由 {who} 批准": {
+    "en": "Approved by {who}",
+    "zh-Hant": "由 {who} 批准"
+  },
+  "未包含来源文件，请上传本空间的数据后再生成": {
+    "en": "Source files were not included; upload this workspace’s data before generating",
+    "zh-Hant": "未包含來源檔案，請上傳本空間的資料後再產生"
+  },
+  "查看审批记录": {
+    "en": "View the approval",
+    "zh-Hant": "查看審批記錄"
+  },
   "正在用排版引擎排版…": {
     "en": "Laying out with the layout engine…",
     "zh-Hant": "正在用排版引擎排版…"

@@ -939,6 +939,34 @@ PDF 产物 `Producer`/`Creator` 写成 Synwevo Docs、保留模板自带的作�
 
 **不改/做不到**：关于与许可页的组件表与 AGPL 通知；人机验证 iframe 内的供应商品牌（不在 Synwevo 控制范围，若要去除是「是否继续使用该供应商」的产品决定）；
 PDF 引擎基础模式下的 PDF 产物元数据；Google/Microsoft 登录主体。
+### 16.29 Docs 编辑安全与结果通知：设置修订、任务/拒绝通知、副本来源（CI-29）
+
+**问题**（代码证据）：`PATCH /api/projects/{pid}` 对名称/规则/输出/模板选择没有任何版本检查，两个窗口后到者静默覆盖（映射与模板早有 409）；
+通知目录里的 `docs.job_finished`/`docs.file_rejected` 从未发出（来源行不记录上传者）；副本页面看不出来源与批准人。决策记录：`docs/platform/docs-edit-safety.md`。
+
+**实现**：schema v14（`projects.settings_rev`、`source_files.created_by`）；`update_project` 接受可选 `base_settings_rev` → 409 `stale_project`（带当前修订），
+名称/规则/输出/模板变化推进修订，`step`/归档不推进；上传路由记录登录上传者；`JobService._notify_finished` 在终态事务内写收件箱（发起人为登录用户时，
+每次运行一条，结果词按读者语言）；`_notify_rejected` 在拒绝路径写收件箱（上传者）；项目详情 `copied_from`；外壳：`isStale` 识别 `stale_project`、规则/改名/换模板/
+输出保存带修订、副本来源行与审批链接、错误文案与 6 条三语言字符串。
+
+**接口测试**：`test_project_settings_rev.py`（1 项：陈旧 409 + 当前修订、新鲜推进、`step` 不推进、非整数 400、不带令牌不检查、列表带修订）；
+`tests/integration/test_docs_notifications.py`（2 项：真实任务 → 一条 `docs.job_finished`，链接 `…/p/{pid}/jobs/{jid}`、"2 succeeded, 0 failed"（读者语言 en）；
+扫描替身 → `rejected`、一条 `docs.file_rejected` 链接项目页、同内容再传 400 `malware_detected` 且不重复通知、`add_source` 无上传者不通知）；
+`test_project_copy.py` 增 `copied_from`（申请 id、源项目名、申请人、批准人、组织、含来源；无源空间 id；源项目为 null）。
+
+**浏览器（隔离实例，Chromium + WebKit）**，`ui_e2e_docs_upgrades.py` 与 `ui_e2e_project_copy.py`：
+
+```
+== chromium (Google Chrome)
+  - the second tab's stale rule save was refused and reloaded (revision unchanged); after the reload its save went through
+  - the job's end reached the bell inside Docs (title, counts) and its link opened the job page
+  - (copy proof) the copy's page shows 「由 Member 的个人项目「…」经审批复制而来 · 由 Owner 批准 · 查看审批记录」 with the link to ?approval=<id>
+== webkit（同上）
+```
+
+过程中的一处修正：陈旧保存的对话框内文案原来说「请刷新后…」，而页面已经自动重载；改为与映射冲突一致的「已刷新为最新设置，请在此基础上重新操作」。
+
+**未做**：实时协同/自动合并、评论与提及、其它 Docs 事件（模板/映射变更、产物过期）。
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

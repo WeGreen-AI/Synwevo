@@ -96,7 +96,8 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 * **批量生成性能**：2026-09-25 复测无退化（verification.md §16.8）。
 * **API 幂等**（对照 Stripe「Idempotent requests」，访问 2026-09-25）：Stripe——所有 POST 接受键、键 ≤255 字符、保存首个响应含 500、24 小时后清理、参数不同即报错、并发冲突不保存。Synwevo（api.md §3「幂等」）——按主体+租户+作用域+键、24 小时 TTL 可配、内容不同 `409 idempotency_conflict`、并发由唯一约束裁决、不确定结果 `409 idempotency_outcome_unknown` 且不清理、不支持的操作显式 `400 idempotency_not_supported`。语义等价或更严格；差异只在 Stripe 保存 5xx 结果而 Synwevo 让失败的创建可重试，这是有意选择。无需改动。
 
-| CI-28 | 自有界面只写能力名（词表 + 守卫 + 例外表 + PDF 产物元数据） | 已实现（本机），待推送 | 人机验证 iframe 内的供应商品牌、基础模式 PDF 元数据、关于页归属表按记录不改；`docs/platform/component-names.md` 是权威记录；脚本 `ui_e2e_component_names.py` |
+| CI-29 | Docs 编辑安全与结果通知（设置修订冲突、任务/拒绝收件箱事件、副本来源行） | 已实现（本机），待推送 | 评论/提及与其它 Docs 事件另批；`docs/platform/docs-edit-safety.md` 是权威记录；脚本 `ui_e2e_docs_upgrades.py` |
+| CI-28 | 自有界面只写能力名（词表 + 守卫 + 例外表 + PDF 产物元数据） | 已部署（8ac8e55） | 人机验证 iframe 内的供应商品牌、基础模式 PDF 元数据、关于页归属表按记录不改；`docs/platform/component-names.md` 是权威记录；脚本 `ui_e2e_component_names.py` |
 候选队列（按风险与价值，2026-09-26 更新；第九节的批次顺序见 docs/platform/notifications.md §7 与 handoff 本表）：
 - 运营/账户持有人（CI-24 接续）：SMTP2GO Activity 查 `1xA8Ua-AIkwcC8lNJx-F8I8` 的最终投递；`hikosphere.com` SPF 加 `include:spf.smtp2go.com`；在 SMTP2GO 验证发件域（对齐回信地址与 DKIM）并关闭事务邮件链接/打开跟踪；评估把 From 改到 `wegreen.ltd`（mailcow 已发布其 DKIM）。
 第九节余下批次——多格式成员导入（CI-25，已部署）、私聊/群聊（CI-26）、个人项目复制审批（CI-27）均已交付；第三方组件名清理（CI-28）与 Docs 升级（§9.8）待做；

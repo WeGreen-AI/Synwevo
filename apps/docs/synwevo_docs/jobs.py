@@ -2,6 +2,8 @@
 outputs, keep state in SQLite so a page refresh or server restart can resume."""
 from __future__ import annotations
 
+import logging
+
 import csv
 import hashlib
 import io
@@ -507,9 +509,11 @@ class JobService:
       samples and immediately before anything is published (synwevo_core.authority).
     """
 
-    def __init__(self, app: App, start: bool = True):
+    def __init__(self, app: App, start: bool = True, notifier=None):
         self.app = app
         self.store = app.store
+        # The platform inbox (synwevo_core.notifications.Notifier); None in deployments without one.
+        self.notifier = notifier
         self._ns = _pid_namespace()
         self.worker_id = f"{socket.gethostname()}:{os.getpid()}:{secrets.token_hex(3)}:{self._ns}"
         self._wake = threading.Event()
@@ -1767,7 +1771,37 @@ class JobService:
         c.execute("UPDATE jobs SET status=?, finished_at=?, lease_owner=NULL, lease_until=NULL WHERE id=?", (status, t, jid))
         c.execute("UPDATE job_runs SET status=?, finished_at=? WHERE job_id=? AND run_no=?", (status, t, jid, j["run_no"]))
         self._emit(c, jid, j["tenant"], f"job.{status}", {"status": status, "run_no": j["run_no"], "counts": counts})
+        self._notify_finished(c, jid, j, status, counts)
         return status
+
+    _OUTCOME = {"completed": {"zh-Hans": "已完成", "zh-Hant": "已完成", "en": "finished"},
+                "completed_with_errors": {"zh-Hans": "部分失败", "zh-Hant": "部分失敗", "en": "finished with errors"},
+                "failed": {"zh-Hans": "失败", "zh-Hant": "失敗", "en": "failed"},
+                "cancelled": {"zh-Hans": "已取消", "zh-Hant": "已取消", "en": "was cancelled"}}
+
+    def _notify_finished(self, c: sqlite3.Connection, jid: str, j, status: str, counts: dict) -> None:
+        """Tell the person who asked for the job (a signed-in user; machine principals have nobody
+        to tell) that it ended, once per run, with the counts and a link to the job page. Written on
+        the finalising connection so it lands with the status or not at all."""
+        if not self.notifier:
+            return
+        try:
+            row = c.execute("SELECT project_id, principal FROM jobs WHERE id=?", (jid,)).fetchone()
+            desc = authority.loads(row["principal"] if row else None) or {}
+            who = desc.get("user_id") if desc.get("kind") == "user" else None
+            if not who:
+                return
+            p = c.execute("SELECT name FROM projects WHERE id=?", (row["project_id"],)).fetchone()
+            u = c.execute("SELECT locale FROM users WHERE id=?", (who,)).fetchone()
+            locale = (u["locale"] if u and u["locale"] in ("zh-Hans", "zh-Hant", "en") else "zh-Hans")
+            self.notifier.emit(who, "docs.job_finished",
+                               params={"project": (p["name"] if p else None) or "—", "outcome": self._OUTCOME[status][locale],
+                                       "done": str(counts.get("success", 0) or 0),
+                                       "failed": str((counts.get("failed", 0) or 0) + (counts.get("skipped", 0) or 0) + (counts.get("cancelled", 0) or 0))},
+                               workspace_id=j["tenant"], object_kind="job", object_id=jid, dedupe_key=f"job:{jid}:{j['run_no']}",
+                               target={"origin": "docs", "path": f"/p/{row['project_id']}/jobs/{jid}"})
+        except Exception:  # noqa: BLE001 - the job's outcome must stand even if the inbox write fails
+            logging.getLogger("synwevo_docs.jobs").exception("docs.job_finished notification failed for %s", jid)
 
     def _item_done(self, item_id: str, status: str, issues: list[dict]) -> None:
         # Guarded by the lease: a worker that lost its lease must not fail an item another

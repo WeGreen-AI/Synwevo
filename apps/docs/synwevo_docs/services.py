@@ -65,7 +65,7 @@ class App:
         self.store.insert("mapping_revs", {"project_id": pid, "rev": 0, "parent_rev": None, "data": [], "note": "初始", "created_at": t})
         return self.get_project(pid)
 
-    _PROJECT_COLS = "id, name, created_at, updated_at, template_id, record_rule, step, origin, archived_at, template_version"
+    _PROJECT_COLS = "id, name, created_at, updated_at, template_id, record_rule, step, origin, archived_at, template_version, settings_rev"
     _PROJECT_SORT = {"updated": "updated_at", "created": "created_at", "name": "name COLLATE NOCASE"}
 
     def list_projects(self, include_archived: bool = False) -> list[dict]:
@@ -171,6 +171,18 @@ class App:
 
     def update_project(self, pid: str, values: dict) -> dict:
         p = self.get_project(pid)
+        # A caller that says which settings revision it edited is refused when someone else's
+        # edit landed first (409 stale_project, with the current revision so it can resync).
+        # Callers that say nothing keep the old behaviour; machine clients rarely edit settings.
+        base = values.get("base_settings_rev")
+        if base is not None:
+            try:
+                base = int(base)
+            except (TypeError, ValueError):
+                raise ServiceError(400, "bad_value", "base_settings_rev 必须是整数", {"field": "base_settings_rev"})
+            if base != int(p.get("settings_rev") or 0):
+                raise ServiceError(409, "stale_project", "项目设置已在其他窗口或被其他人修改，请刷新后再改",
+                                   {"settings_rev": int(p.get("settings_rev") or 0), "base_settings_rev": base})
         allowed = {k: v for k, v in values.items() if k in ("name", "record_rule", "output", "template_id", "step")}
         if "archived" in values:
             # Archiving only hides a project from the default list; it stays fully usable and
@@ -190,8 +202,10 @@ class App:
         elif "template_id" in allowed and allowed["template_id"] != p.get("template_id"):
             allowed["template_version"] = None          # a pin belongs to the template it was made on
         allowed["updated_at"] = now()
+        if set(allowed) & {"name", "record_rule", "output", "template_id", "template_version"}:
+            allowed["settings_rev"] = int(p.get("settings_rev") or 0) + 1
         self.store.update("projects", {"id": pid}, allowed)
-        if set(allowed) - {"name", "step", "updated_at", "output"}:
+        if set(allowed) - {"name", "step", "updated_at", "output", "settings_rev"}:
             self.store.bump_project(pid)
         return self.get_project(pid)
 
@@ -254,7 +268,9 @@ class App:
                     raise ServiceError(400, "bad_rule", f"标记的正则表达式无效：{e}") from e
 
     # ================================================================ sources
-    def add_source(self, pid: str, filename: str, data: bytes) -> dict:
+    def add_source(self, pid: str, filename: str, data: bytes, actor: str | None = None) -> dict:
+        """`actor` is the signed-in person who uploaded (None for machine principals): they are the
+        one told if the file is later rejected by the security check."""
         self.get_project(pid)
         if len(data) > LIMITS.max_file_bytes:
             raise ServiceError(413, "too_large", f"文件「{filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限")
@@ -269,7 +285,7 @@ class App:
         scanning = self.scanner is not None
         self.store.insert("source_files", {"id": sid, "project_id": pid, "filename": filename, "ord": mx + 1, "blob": blob,
                                            "size": len(data), "status": "scanning" if scanning else "parsing", "notes": [], "structure": {},
-                                           "options": {}, "version": 1, "created_at": t, "updated_at": t,
+                                           "options": {}, "version": 1, "created_at": t, "updated_at": t, "created_by": actor,
                                            "ocr": {}, "corrections": {},
                                            "scan": {"status": "pending"} if scanning else {"status": "not_configured"}})
         has_rep = self.store.one("SELECT 1 AS x FROM source_files WHERE project_id=? AND representative=1 AND removed=0", (pid,))
@@ -328,10 +344,27 @@ class App:
             acceptance_log.warning("scan.rejected source=%s tenant=%s sha256=%s signature=%s engine=%s",
                                    sid, row.get("tenant") or "-", row["blob"], res.signature, res.engine)
             self._quarantine_blob(row["blob"], res)
+            self._notify_rejected(row)
         else:   # too_large: not scanned is never clean
             self._publish_scan(row, rec, "scan_failed", error=f"文件超过安全检查的大小上限（{self.scan_policy.max_bytes // (1024 * 1024)} MB），无法接纳；请拆分或压缩后重新上传")
             acceptance_log.warning("scan.too_large source=%s tenant=%s sha256=%s size=%s limit=%s",
                                    sid, row.get("tenant") or "-", row["blob"], len(data), self.scan_policy.max_bytes)
+
+    def _notify_rejected(self, row: dict) -> None:
+        """The uploader hears that their file was refused (inbox + immediate mail per the
+        catalogue); nobody else does, and machine uploads have nobody to tell."""
+        who = row.get("created_by")
+        if not who:
+            return
+        try:
+            from synwevo_core.notifications import Notifier
+            p = self.store.one("SELECT name, tenant FROM projects WHERE id=?", (row["project_id"],)) or {}
+            Notifier(self.store).emit(who, "docs.file_rejected", params={"filename": row["filename"], "project": p.get("name") or "—"},
+                                      workspace_id=p.get("tenant"), object_kind="source", object_id=row["id"],
+                                      dedupe_key=f"source:{row['id']}:rejected", actionable=True,
+                                      target={"origin": "docs", "path": f"/p/{row['project_id']}"})
+        except Exception:  # noqa: BLE001 - the refusal itself must stand even if the inbox write fails
+            logging.getLogger("synwevo_docs.services").exception("docs.file_rejected notification failed for %s", row.get("id"))
 
     def _publish_scan(self, row: dict, rec: dict, status: str, error: str | None = "") -> None:
         values = {"scan": rec, "status": status, "updated_at": now()}

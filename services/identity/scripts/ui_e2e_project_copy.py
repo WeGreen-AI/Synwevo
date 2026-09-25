@@ -227,6 +227,11 @@ def run(browser: Browser, engine: str, accounts: str, docs: str, mail_dir: Path,
     dlg.get_by_role("button", name=re.compile("切换到目标空间并打开副本")).click()
     pb.wait_for_url(re.compile(rf"/p/{new_pid}"), timeout=30000)
     expect(pb.locator(".fileitem", has_text="客户.xlsx").get_by_text("可用")).to_be_visible(timeout=20000)
+    # the copy says where it came from and links to the approval; the approval page is the owner's
+    prov = pb.locator("[data-testid=copied-from]")
+    expect(prov).to_contain_text(re.compile(f"由 Member {tag} 的个人项目「个人合同项目 {tag}」经审批复制而来"))
+    expect(prov).to_contain_text(re.compile(f"由 Owner {tag} 批准"))
+    assert prov.locator("a").get_attribute("href").endswith(f"/organizations/{oid}?approval={req['id']}")
     pb.get_by_role("button", name="👁 预览").click()
     expect(pb.locator(".pane.right p.doc-p", has_text="张三")).to_be_visible(timeout=20000)
     pb.screenshot(path=str(SHOTS / f"{engine}-03-copy-preview.png"))

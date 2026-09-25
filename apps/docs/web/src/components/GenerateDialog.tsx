@@ -69,7 +69,7 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose }: { p
     try {
       const body = { formats, naming, error_policy: policy, layout: pageable ? layout : "off" };
       const rid = requestId(project.id, JSON.stringify(body));
-      await patch(`/api/projects/${project.id}`, { output: { naming, formats, error_policy: policy, layout } });
+      await patch(`/api/projects/${project.id}`, { output: { naming, formats, error_policy: policy, layout }, base_settings_rev: project.settings_rev });
       const j = await post(`/api/projects/${project.id}/jobs`, { ...body, request_id: rid });
       forgetRequest(project.id);
       onStarted(j.id);

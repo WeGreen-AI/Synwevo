@@ -104,7 +104,7 @@ export default function Home() {
 
   const rename = async (p: any) => {
     const n = await prompt(tr("重命名项目"), tr("名称"), p.name);
-    if (n && n !== p.name && await act(() => patch(`/api/projects/${p.id}`, { name: n }))) load();
+    if (n && n !== p.name && await act(() => patch(`/api/projects/${p.id}`, { name: n, base_settings_rev: p.settings_rev }))) load();
   };
 
   const remove = async (p: any) => {

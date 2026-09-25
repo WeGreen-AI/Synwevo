@@ -64,6 +64,7 @@ pending ──approve──▶ approved ──claim──▶ running ──▶ d
 5. `finish(done, result={project_id, template_id, sources, mappings, warnings, manifest_digest})`，通知申请人与决定者 `copy.done`；异常 → `failed` + `copy.failed`。
 
 复制出的项目此后与原项目无关：目标空间的成员按目标空间的角色使用它，它的任务/产物在目标租户里生成；原项目的 `rev`、`mapping_rev`、模板与来源都不变。
+副本的项目详情带 `copied_from`（申请 id、源项目名、申请人、批准人、时间、是否自批、是否含来源；不含源空间 id），Docs 页面顶部据此显示来源一行并链接到组织页的审批记录（CI-29）。
 
 ## 5. 验收
 

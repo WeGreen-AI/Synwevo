@@ -192,6 +192,11 @@ def test_copy_needs_the_target_to_approve_and_copies_exactly_the_approved_manife
     assert alice.get(f"/api/projects/{new_pid}").status_code == 404, "the copy is not in the personal workspace"
     copy = bob.get(f"/api/projects/{new_pid}").json()
     assert copy["name"] == "合同项目（组织副本）" and copy["template_id"] != tid and copy["origin"].startswith("copy:") and copy["mapping_rev"] == 1
+    # the copy says where it came from — names and the approval, never the source workspace
+    cf = copy["copied_from"]
+    assert cf["request_id"] == req["id"] and cf["source_project_name"] == "个人合同项目" and cf["requester"]["name"] == "Alice Owner"
+    assert cf["decider"]["name"] == "Bob Boss" and cf["self_approved"] is False and cf["organization_id"] == oid and cf["sources_included"] is True
+    assert "source_workspace_id" not in cf and alice.get(f"/api/projects/{pid}").json()["copied_from"] is None
     srcs = bob.get(f"/api/projects/{new_pid}/sources").json()
     assert [s["status"] for s in srcs] == ["ready"] and srcs[0]["id"] != manifest["sources"]["items"][0]["id"]
     blob = w["ident"].store.one("SELECT blob FROM source_files WHERE id=?", (srcs[0]["id"],))["blob"]
