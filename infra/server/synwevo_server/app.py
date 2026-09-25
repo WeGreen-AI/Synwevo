@@ -43,7 +43,9 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
 
     # Probes first: they are the same in every role, and the published OpenAPI document lists
     # them where it always has.
-    install_probes(api, plat.store, worker=worker_alive if (wants_app or wants_accounts) else None)
+    install_probes(api, plat.store, worker=worker_alive if (wants_app or wants_accounts) else None,
+                   # Synwevo Docs' malware scanner: reported, never gating (see synwevo_core.http.install_probes).
+                   degradable={"malware_scanner": lambda: api.state.app.scanner_health()} if wants_app else None)
 
     # Who is signed in, which workspace, how to leave. The same four routes in every role, from
     # one implementation — the account service does not get its own copy and neither does an app.

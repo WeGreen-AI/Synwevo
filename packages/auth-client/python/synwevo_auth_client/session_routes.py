@@ -149,6 +149,10 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         # the sign-in page never shows a button that cannot work.
         external = getattr(request.app.state, "external", None)
         out["external_providers"] = external.public() if external is not None else []
+        # Human verification (account service only): the site key and which actions are
+        # challenged — never the secret. `null` tells the shell to render no widget anywhere.
+        challenge = getattr(request.app.state, "challenge", None)
+        out["challenge"] = challenge.public() if challenge is not None else None
         return out
 
     @r.post("/logout")

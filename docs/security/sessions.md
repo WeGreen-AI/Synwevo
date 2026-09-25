@@ -237,6 +237,15 @@ Microsoft 的实际联调。
 
 ---
 
+### 4.7 人机验证（风险触发，服务端校验）
+
+配置了 `SYNWEVO_TURNSTILE_SITE_KEY`/`SECRET` 的部署：`POST /api/auth/register`、`/api/auth/email/resend`、`/api/auth/forgot`、
+`/api/auth/login/email/start` 每次都要在请求体带 `challenge_token`（Turnstile 组件产生），`/api/auth/login` 只在同一来源地址
+15 分钟内失败 ≥ 3 次后才要求。服务端用 Cloudflare siteverify 核验并检查 `hostname`、`action`、有效期与一次性；缺失 400
+`challenge_required`，不通过 400 `challenge_failed{reason}`，验证服务不可达 503 `challenge_unavailable`（不放行）。
+`/api/auth/state.challenge` 给出站点密钥与被挑战的动作，未配置时为 `null`，页面不加载任何外部脚本。挑战状态与会话状态
+无关：不改 `SessionProvider`，不重载，不影响已登录的导航。细节与验收见 `human-verification.md`。
+
 ## 5. 重认证（reauth）
 
 危险操作要求近期、**带作用域**的重认证。

@@ -670,6 +670,39 @@ log: scan.rejected source=s_… tenant=- sha256=131f95c5… signature=Eicar-Sign
 测试替身随后按真实行为收紧（只在偏移 0 命中），避免替身放过真实引擎会判"干净"的样本。EICAR 命中证明检测链路可用，
 不证明能拦截所有恶意文件；真实引擎的常驻内存与签名数是 compose 内存限额的依据。
 
+### 16.21 风险触发的人机验证：服务端校验、绑定与故障策略（CI-21）
+
+**接口测试**（`services/identity/tests/test_challenge.py`，9 项，siteverify 替身记录每次表单）：
+
+```
+services/identity/tests/test_challenge.py .........                       [100%]
+```
+
+覆盖：秘密与幂等键只发往 siteverify；缺失/畸形令牌不上网；跨 action、跨 hostname、已用（`timeout-or-duplicate`）、无效、过期
+分别拒绝；网络错误用同一幂等键重试一次，再失败与 `invalid-input-secret`、5xx 都是「不可用」；`/api/auth/state` 有 site key 无 secret；
+注册无令牌 400 且无账户无邮件、坏令牌 400、找回表单的令牌用于注册 400（`reason: action`）、好令牌 202 且一封邮件；不可达 503 +
+`Retry-After: 30` 且无副作用；找回、验证码登录、重发同样被挡；口令登录首次不挑战、同地址 3 次失败后必须先带令牌；未配置时一切照旧。
+`tests/integration/test_readyz_components.py` 另外证明组合服务器的 `/readyz` 报告 `malware_scanner`（首次部署时漏接的那一处）。
+
+**浏览器（隔离实例，Cloudflare 公布的测试密钥；两引擎，390×844，三种语言）**：
+
+```
+== chromium (Google Chrome)
+  - state exposes site key ending …00AA and actions ['forgot', 'login', 'login_email', 'register', 'resend']; no secret
+  - zh-Hans: widget solved → token sent → Cloudflare siteverify accepted it (test key: hostname example.com, no action) → server refused on the action binding; message in the page's language
+  - zh-Hans: 0 CSP violations, 0 page errors with the widget script and iframe loaded
+  - zh-Hant / en: 同上
+  - recovery and mailed-code forms show the widget; the password sign-in form does not
+== webkit (Playwright build; *.localhost through the local proxy)
+  - 同样八条通过
+== 失败密钥 2x…AA（Chromium）
+  - zh-Hans / zh-Hant / en: widget solved → token sent → Cloudflare siteverify rejected it → challenge_failed/invalid; form stays, message in the page's language
+```
+
+审计行（隔离库）证实服务端确实问过 Cloudflare：`{"action": "register", "reason": "hostname", "hostname": "example.com"}`，允许
+`example.com` 后 `{"reason": "action", "token_action": null}`。**结论边界**：测试密钥的令牌不带 `action`，所以浏览器里的注册无法
+用测试密钥走到 202；这不是缺陷，是绑定检查在起作用。完整通路要等生产 Widget（账户持有人创建）。运行后隔离实例已恢复为无密钥配置。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

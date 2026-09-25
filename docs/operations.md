@@ -326,3 +326,16 @@ VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose re
 | 观察 | `/readyz` 的 `checks.malware_scanner`（`ok`/`off`/`down: …`，不影响就绪判定）；`/api/v1/capabilities` 的 `environment.malware_scan`；审计事件 `source.rejected`（见 file-acceptance §8） |
 | 回滚 | 从 docs 服务去掉两个环境变量并重建；已写入的 `scan` 列保留，`rejected` 的行保持拒绝 |
 | 不做 | 不把用户文件送往 VirusTotal 等外部平台；不提供跳过扫描的按钮；不用测试密钥或关闭检查让流水线变绿 |
+
+## 9. 人机验证（Cloudflare Turnstile）
+
+策略、校验与验收在 `docs/security/human-verification.md`。运维要点：
+
+| 项 | 值 |
+|---|---|
+| 启用 | `runtime.env` 同时设置 `SYNWEVO_TURNSTILE_SITE_KEY` 与 `SYNWEVO_TURNSTILE_SECRET`（只设一个则 accounts 拒绝启动）；`SYNWEVO_TURNSTILE_HOSTNAMES` 默认 `SYNWEVO_ISSUER` 的主机 |
+| 创建 Widget | Cloudflare 仪表盘 → Turnstile → Add widget → 主机名 `accounts.wegreen.ltd`，模式 Managed；由持有 Cloudflare 账户的人完成，密钥不经聊天或提交 |
+| 生效 | `docker compose restart accounts`；核对 `GET /api/auth/state` 的 `challenge.site_key`（无 secret）、注册页出现组件、审计 `auth.challenge result=ok` |
+| 故障 | siteverify 不可达时注册/找回/验证码登录返回 503 `challenge_unavailable`（`Retry-After: 30`），不放行；已登录业务、未触发风险的口令登录、机器接口不受影响。审计 `auth.challenge result=error` 记录原因 |
+| 回滚 | 删除两个变量并重启；页面不再加载 Cloudflare 脚本，CSP 回到默认 |
+| 不做 | 不在生产使用测试密钥（测试密钥对任何令牌都通过，且令牌不带 action）；不给机器接口、Webhook、探针返回挑战 |

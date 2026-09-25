@@ -227,6 +227,15 @@ class Identity:
             return False
         return b["count"] >= limit
 
+    def address_failures(self, ip: str | None, *, window_s: float = ADDRESS_WINDOW_S) -> int:
+        """Failed sign-ins recorded for this source address in the current window (0 when the
+        window ran out). Read-only: the account service's risk-triggered challenge asks this
+        before deciding whether a sign-in attempt must carry a solved token."""
+        b = self._bucket(f"ip:{ip or 'unknown'}")
+        if not b or now() - b["first_at"] > window_s:
+            return 0
+        return int(b["count"])
+
     def _blocked_for(self, name: str) -> int:
         b = self._bucket(name) or {}
         until = b.get("blocked_until") or ((b.get("first_at") or now()) + ADDRESS_WINDOW_S)

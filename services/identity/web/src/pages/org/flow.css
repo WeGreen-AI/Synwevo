@@ -32,3 +32,6 @@
 .flow-alt { display:flex; flex-direction:column; gap:10px; }
 .flow-provider { justify-content:flex-start; gap:10px; }
 .flow-provider-mark { width:22px; height:22px; border-radius:6px; display:grid; place-items:center; flex:none; font-size:12px; font-weight:700; background:var(--accent-weak); color:var(--accent-strong); border:1px solid var(--accent-line); }
+/* Human verification (Turnstile) — the widget is Cloudflare's iframe; reserve its height so the form does not jump. */
+.challenge-widget { min-height: 65px; }
+.challenge-field[data-status="idle"] .challenge-widget, .challenge-field[data-status="error"] .challenge-widget { min-height: 0; }

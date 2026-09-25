@@ -3,12 +3,15 @@ import { useEffect, useState } from "react";
 import { ApiError, post } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { AuthFrame, FlowError, Loading, PasswordField, checkPassword, useAction, useLinkToken } from "./org/AuthFlow";
+import { isChallengeError, useChallenge } from "./org/Challenge";
 export function ForgotPassword() {
   const { t, locale } = useI18n(); const action = useAction(); const [email, setEmail] = useState(""); const [sent, setSent] = useState(false);
-  function submit(e: React.FormEvent) { e.preventDefault(); void action.run(async () => { await post("/api/auth/forgot", { email: email.trim(), locale }); setSent(true); }); }
+  const challenge = useChallenge("forgot");
+  useEffect(() => { if (isChallengeError(action.error)) challenge.reset(); }, [action.error]);   // eslint-disable-line react-hooks/exhaustive-deps
+  function submit(e: React.FormEvent) { e.preventDefault(); void action.run(async () => { await post("/api/auth/forgot", { email: email.trim(), locale, ...challenge.body() }); setSent(true); }); }
   return <AuthFrame title={t(sent ? "看看你的邮箱" : "找回你的账户")} description={t(sent ? "如果这个邮箱有可用账户且邮件服务正常，重置请求将进入发送队列。" : "输入注册时使用的邮箱，申请一个口令重置链接。")}>
     {sent ? <><p role="status">{email.trim()}</p><p className="tiny muted">{t("链接 2 小时内有效，只能用一次。没收到邮件？请检查垃圾邮件或确认邮箱地址。")}</p><a className="btn primary" href="/login">{t("返回登录")}</a><button type="button" className="btn ghost" onClick={() => setSent(false)}>{t("换个邮箱或重新申请")}</button></>
-      : <form onSubmit={submit} aria-busy={action.busy}><FlowError error={action.error} /><div className="field"><label htmlFor="forgot-email">{t("邮箱")}</label><input id="forgot-email" className="input" type="email" autoComplete="username" inputMode="email" autoCapitalize="off" spellCheck={false} autoFocus required value={email} onChange={e => setEmail(e.target.value)} /></div><button className="btn primary" disabled={action.busy}>{t(action.busy ? "提交中…" : "发送重置链接")}</button><a className="authfoot" href="/login">{t("返回登录")}</a></form>}
+      : <form onSubmit={submit} aria-busy={action.busy}><FlowError error={action.error} /><div className="field"><label htmlFor="forgot-email">{t("邮箱")}</label><input id="forgot-email" className="input" type="email" autoComplete="username" inputMode="email" autoCapitalize="off" spellCheck={false} autoFocus required value={email} onChange={e => setEmail(e.target.value)} /></div>{challenge.element}<button className="btn primary" disabled={action.busy}>{t(action.busy ? "提交中…" : "发送重置链接")}</button><a className="authfoot" href="/login">{t("返回登录")}</a></form>}
   </AuthFrame>;
 }
 export function ResetPassword() {

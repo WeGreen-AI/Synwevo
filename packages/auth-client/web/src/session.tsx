@@ -42,6 +42,10 @@ export interface AuthState {
   platform_name?: string;
   /** Which service this process is: "accounts", "portal", "app", or "all". */
   role?: string;
+  /** Human verification, when the deployment has it: the widget's public site key and which
+   *  actions are challenged (`always`, or `risk` = only after the server asked). The secret
+   *  never appears here; the token a widget produces is verified by the server. `null` = none. */
+  challenge?: { provider: "turnstile"; site_key: string; actions: Record<string, "always" | "risk"> } | null;
   /** Server-controlled "back" target from the account pages; empty when there is no portal. */
   portal_url?: string;
   /** Where the account and security pages live: this app's own, or the account service's. */

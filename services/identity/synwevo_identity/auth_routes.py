@@ -87,6 +87,18 @@ PASSKEY_BEGIN_PER_ADDRESS = (30, 60)      # 30 challenges per minute per source 
 BOOTSTRAP_PER_ADDRESS = (10, 900)
 
 
+LOGIN_CHALLENGE_AFTER = 3                 # failed sign-ins from one source address before a challenge
+
+
+def _challenge(request: Request):
+    """The process's human-verification policy; a disabled one is a no-op on every call."""
+    ch = getattr(request.app.state, "challenge", None)
+    if ch is None:
+        from synwevo_core.challenge import Policy, Turnstile
+        ch = request.app.state.challenge = Turnstile(Policy(None, None, frozenset(), 5))
+    return ch
+
+
 def _too_many(retry_after: float) -> ServiceError:
     return ServiceError(429, "too_many_attempts", "尝试过于频繁，请稍后再试",
                         {"retry_after": max(1, int(retry_after or 60))})
@@ -197,6 +209,14 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         remember = remember_choice(body)
         if not email or not password:
             raise ServiceError(400, *_LOGIN_FAILED)
+        # Risk-triggered: an ordinary sign-in never sees a challenge. Once this source address
+        # has failed LOGIN_CHALLENGE_AFTER times in the address window, every further attempt
+        # must carry a solved token *before* the password is checked — so a guesser without one
+        # burns no attempt, learns nothing from timing, and cannot use the failure counters to
+        # lock the account holder out (the holder solves the challenge and continues).
+        ch = _challenge(request)
+        if ch.enabled and ident.address_failures(client_ip(request)) >= LOGIN_CHALLENGE_AFTER:
+            ch.require(request, body, "login", audit=audit)
         # Password verification and issuance must serialize with activation/credential
         # withdrawal. Otherwise an old-password request can finish hashing after every
         # existing session was revoked and create a fresh, unrevoked session or MFA ticket.
@@ -604,6 +624,10 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
         same = {"ok": True, "message": "如果这个邮箱有可用账户且邮件服务正常，重置请求将进入发送队列，请稍后检查邮箱。"}
         if not email:
             return same
+        # The challenge is the one thing here that is *not* the same answer: a request without
+        # a solved token is refused outright, because sending nothing silently would teach a
+        # person that the form is broken while a bot learns nothing either way.
+        _challenge(request).require(request, body, "forgot", audit=audit)
         # Throttled without changing the answer: the response shape is the security property
         # here, so a throttled request still gets `same` — it just does not send anything or
         # invalidate anything. Unthrottled, anyone who knew an address could flood it with mail

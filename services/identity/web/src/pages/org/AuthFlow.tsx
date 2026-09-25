@@ -140,6 +140,8 @@ const ERROR_SOURCES: Record<string, string> = {
   invite_expired: "邀请已过期，请让邀请人重新发送。", invite_revoked: "邀请已被撤销，请使用最新的邀请邮件。",
   invite_accepted: "此邀请已被接受。", bad_token: "链接无效或已过期，请重新申请。",
   forbidden: "你没有执行此操作的权限。", not_found: "找不到此内容，或你没有访问权限。",
+  challenge_required: "请先完成人机验证。", challenge_failed: "人机验证未通过，请重试。",
+  challenge_unavailable: "人机验证服务暂不可用，请稍后重试。",
 };
 export function errorText(error: unknown, t: Translator): string {
   if (error instanceof ApiError) {

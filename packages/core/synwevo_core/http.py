@@ -80,8 +80,23 @@ def content_security_policy(request: Request | None = None) -> str | None:
     if raw:
         return raw
     if request is not None and request.headers.get("cf-ray"):
-        return CLOUDFLARE_CSP
-    return DEFAULT_CSP
+        return _with_challenge_origins(CLOUDFLARE_CSP)
+    return _with_challenge_origins(DEFAULT_CSP)
+
+
+def _with_challenge_origins(csp: str) -> str:
+    """When human verification is configured, the Turnstile widget script and its iframe come
+    from exactly one origin (Turnstile "Content Security Policy", read 2026-09-25: script-src
+    and frame-src ``https://challenges.cloudflare.com``); nothing else widens."""
+    from .challenge import WIDGET_ORIGIN, policy as challenge_policy
+    try:
+        enabled = challenge_policy().enabled
+    except ValueError:            # half-configured: the account service refuses to start anyway
+        enabled = False
+    if not enabled:
+        return csp
+    return (csp.replace("script-src 'self'", f"script-src 'self' {WIDGET_ORIGIN}", 1)
+               .replace("frame-src 'self' blob:", f"frame-src 'self' blob: {WIDGET_ORIGIN}", 1))
 
 
 def request_is_https(request: Request) -> bool:

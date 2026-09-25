@@ -30,7 +30,7 @@ from synwevo_core.identity import Identity, normalise_email, valid_email
 from synwevo_core.sessions import Sessions
 from synwevo_core.store import new_id, now
 
-from .auth_routes import MFA_BACKOFF, _too_many, client_ip, issue_session, remember_choice
+from .auth_routes import MFA_BACKOFF, _challenge, _too_many, client_ip, issue_session, remember_choice
 from .mail import login_code_mail, mode as mail_mode
 
 CODE_TTL_S = 10 * 60
@@ -73,8 +73,11 @@ def build_router(ident: Identity, sessions: Sessions, mailer, mfa, tickets, audi
         email = body.get("email")
         if not isinstance(email, str) or len(email) > 254 or not valid_email(email):
             raise ServiceError(400, "bad_email", "请输入有效的邮箱地址", {"field": "email"})
-        if set(body) - {"email"}:
+        if set(body) - {"email", "challenge_token"}:
             raise ServiceError(400, "invalid_field", "请求包含不支持的字段")
+        # A mailed code is a mail per request; the challenge is what makes the request cost a
+        # real browser interaction (docs/security/human-verification.md).
+        _challenge(request).require(request, body, "login_email", audit=audit)
         with ident.store.tx():
             limit, window = START_PER_ADDRESS
             allowed, _ = ident.window_allows(f"login-code:{client_ip(request)}", limit=limit, window_s=window)

@@ -51,10 +51,18 @@ pointer renders white on `#1D4ED8` (CI-16 live).
 whole-page target sizes; the run for `0727348` was superseded). [Actions 36142441078](https://github.com/WeGreen-AI/Synwevo/actions/runs/36142441078)
 (created 13:40 UTC, verify and deploy both passed, finished 14:05 UTC); pre-upgrade backup `/opt/synwevo/backups/20260925T140436Z`.
 
-**Pushed, in flight (CI-19 onboarding browser regression; CI-20 malware scanning chain: quarantine-first sources and templates,
-clamd adapter, schema v7→v8 `scan` columns):** recorded here with hash, run and backup when the receiver reports it. Production
-runtime has no `SYNWEVO_CLAMD_ADDRESS`, so after this deployment every file's `scan.status` is `not_configured` and behaviour is
-otherwise unchanged; the ClamAV service is an operator decision (memory headroom, compose merge) recorded in
+**Pushed, in flight (CI-21 risk-triggered human verification, Turnstile verified server-side; the composed server's
+`malware_scanner` readiness component):** recorded here with hash, run and backup when the receiver reports it. Production
+runtime has no `SYNWEVO_TURNSTILE_*` keys, so after this deployment `/api/auth/state.challenge` is `null`, no page loads the
+widget script and behaviour is unchanged; enabling it is the account holder's step (`docs/operations.md` §9).
+
+**Running source:** `af81bcfcebc552e92dcd91f54e772afe5bd34201` (CI-19 onboarding browser regression; CI-20 malware scanning
+chain: quarantine-first sources and templates, clamd adapter, schema v7→v8 `scan` columns, degradable `malware_scanner`
+readiness component; plus the five scan error messages' resources). The first push, `4061731`, failed verify on the Docs
+shell's message-resource parity test and deployed nothing; `af81bcf` fixed it. [Actions 36152940549](https://github.com/WeGreen-AI/Synwevo/actions/runs/36152940549)
+verify and deploy passed (created 15:15 UTC, finished 15:35 UTC); pre-upgrade backup `/opt/synwevo/backups/20260925T153500Z`.
+Production runtime has no `SYNWEVO_CLAMD_ADDRESS`, so every file's `scan.status` is `not_configured` and behaviour is otherwise
+unchanged; the ClamAV service is an operator decision (memory headroom, compose merge) recorded in
 `docs/security/file-acceptance.md` §8 and `docs/operations.md` §8.
 
 ## 2026-09-25 navigation, layers, phone layouts and step-up admin auth — deployed

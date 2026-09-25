@@ -802,6 +802,17 @@ export const messages = {
     "en": "This code is no longer valid. Request a new one.",
     "zh-Hant": "驗證碼已失效，請重新取得。"
   },
+  "人机验证": { en: "Human verification", "zh-Hant": "人機驗證" },
+  "正在加载人机验证…": { en: "Loading human verification…", "zh-Hant": "正在載入人機驗證…" },
+  "人机验证已过期，正在刷新。": { en: "The verification expired and is being refreshed.", "zh-Hant": "人機驗證已過期，正在重新整理。" },
+  "人机验证无法加载或未完成。请检查网络或浏览器的内容拦截设置后重试。": { en: "Human verification could not load or was not completed. Check your network or your browser’s content blocking, then try again.", "zh-Hant": "人機驗證無法載入或未完成。請檢查網路或瀏覽器的內容攔截設定後重試。" },
+  "请先完成人机验证。": { en: "Complete the human verification first.", "zh-Hant": "請先完成人機驗證。" },
+  "请先完成人机验证": { en: "Complete the human verification first", "zh-Hant": "請先完成人機驗證" },
+  "人机验证未通过，请重试。": { en: "Human verification did not pass. Please try again.", "zh-Hant": "人機驗證未通過，請重試。" },
+  "人机验证未通过，请重试": { en: "Human verification did not pass. Please try again", "zh-Hant": "人機驗證未通過，請重試" },
+  "人机验证服务暂不可用，请稍后重试。": { en: "The human verification service is temporarily unavailable. Please try again later.", "zh-Hant": "人機驗證服務暫不可用，請稍後重試。" },
+  "人机验证服务暂不可用，请稍后重试": { en: "The human verification service is temporarily unavailable. Please try again later", "zh-Hant": "人機驗證服務暫不可用，請稍後重試" },
+  "此地址已多次登录失败，请完成人机验证后再试。": { en: "There were several failed sign-ins from this address. Complete the human verification and try again.", "zh-Hant": "此位址已多次登入失敗，請完成人機驗證後再試。" },
 };
 
 registerMessages(messages);

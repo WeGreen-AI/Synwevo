@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, post, useSession } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { AuthFrame, FlowError, PasswordField, checkPassword, continuation, signedInDestination, readIntent, useAction, useLinkToken } from "./org/AuthFlow";
+import { isChallengeError, useChallenge } from "./org/Challenge";
 
 export default function VerifyEmail() {
   const token = useLinkToken();
@@ -34,10 +35,12 @@ function EmailVerification({ token }: { token: string }) {
       throw error;
     }
   }); }
+  const challenge = useChallenge("resend", { enabled: !activeSession });
+  useEffect(() => { if (isChallengeError(action.error)) challenge.reset(); }, [action.error]);   // eslint-disable-line react-hooks/exhaustive-deps
   function resend(e: React.FormEvent) { e.preventDefault(); if (me === undefined) return; void action.run(async () => {
     const out = activeSession
       ? await post<{ delivery?: "requested" | "unavailable"; already_verified?: boolean }>("/api/auth/verify-email/send", {})
-      : await post<{ delivery?: "requested" | "unavailable"; already_verified?: boolean }>("/api/auth/email/resend", { email: email.trim(), locale });
+      : await post<{ delivery?: "requested" | "unavailable"; already_verified?: boolean }>("/api/auth/email/resend", { email: email.trim(), locale, ...challenge.body() });
     setResent(true); setUnavailable(out.delivery === "unavailable");
     if (out.already_verified) { setVerified(true); await refresh(); }
   }); }
@@ -54,6 +57,7 @@ function EmailVerification({ token }: { token: string }) {
         {resent && !unavailable && <p className="notice" role="status">{t("验证请求已收到。请检查收件箱和垃圾邮件；是否投递取决于账户状态和邮件服务。")}</p>}
         <form onSubmit={resend} aria-busy={action.busy}>
           <div className="field"><label htmlFor="verify-email">{t("邮箱")}</label><input id="verify-email" className="input" type="email" autoComplete="email" inputMode="email" value={activeSession ? me.email : email} readOnly={activeSession} onChange={e => { setEmail(e.target.value); setResent(false); }} autoCapitalize="off" spellCheck={false} required /></div>
+          {challenge.element}
           <button className="btn" disabled={action.busy || me === undefined}>{t(action.busy ? "处理中…" : "重新发送验证邮件")}</button>
         </form>
         <p className="tiny muted">{t("验证完成前，账户无法进入工作空间。打开邮件链接不会自动验证邮箱。")}</p>

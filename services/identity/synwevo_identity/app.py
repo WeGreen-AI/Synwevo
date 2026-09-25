@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from synwevo_auth_client.session_routes import build_router as build_session_router
 from synwevo_core import env
 from synwevo_core.apps import Apps, bootstrap_docs_app
+from synwevo_core.challenge import Turnstile, policy as challenge_policy
 from synwevo_core.http import (Platform, build_platform, install as install_platform,
                                 install_probes, mount_web, new_api, shell_response)
 
@@ -85,6 +86,10 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     passkeys = Passkeys(store)
     api.state.invites = invites
     api.state.mailer = mailer
+    # Human verification (Cloudflare Turnstile) for the anonymous mail-sending entrances and
+    # for sign-ins after repeated failures. Built here so a half-configured pair of keys fails
+    # the start-up rather than one request in a thousand; disabled when neither key is set.
+    api.state.challenge = Turnstile(challenge_policy())
     api.state.auth_sweeper = Sweeper(store, sessions, tickets, passkeys, start=start_jobs)
     api.state.mfa = mfa
     api.state.passkeys = passkeys

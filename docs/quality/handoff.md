@@ -78,6 +78,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-18 | 繁體残留检测（0 处）；整页目标测量；折叠头与页脚链接目标尺寸 | 已修复，待部署 | 审计三种语言（默认 / `--locale=en` / `--locale=zh-Hant`）都纳入回归 |
 | CI-19 | 平台闭环浏览器回归 `services/identity/scripts/ui_e2e_onboarding.py`（注册→验证→登录→引导→邀请→接受→退出，Chromium + WebKit，手机视口） | 通过 | 每个里程碑复跑；需要一个 24 小时内邀请数未达 50 的团队空间（脚本参数），注册限 10 次 / IP / 15 分钟 |
 | CI-20 | 恶意上传防护：隔离优先的接纳链（clamd 扫描、`rejected`/`scan_failed` 状态、下载门、模板同步扫描、schema v8、readyz 组件、SDK 等待、三语言标签、compose 参考服务） | 已实现（本机），待部署 | 生产：运维确认 VPS 内存余量 ≥2 GiB，合并 `clamav` 服务与两个环境变量到 `/opt/synwevo/config/compose.yaml`；`rescan` CLI 与加密文件流程未做（file-acceptance §9） |
+| CI-21 | 风险触发的人机验证（Turnstile 服务端校验：四个匿名邮件入口每次、口令登录同地址 3 次失败后；`challenge_required/failed/unavailable`；故障不放行；账户外壳组件三语言） | 已实现（本机），待推送 | 生产：账户持有人在 Cloudflare 创建 Widget（`accounts.wegreen.ltd`）并把两把密钥写入 `runtime.env`；测试密钥的令牌不带 action，浏览器完整通路要等真实 Widget |
 
 已核对、无需改动（记录以免重复研究）：
 
@@ -92,7 +93,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 候选队列（按风险与价值，2026-09-25 14:50 UTC 更新）：
 恶意上传防护的后续——`rescan` CLI 与管理端补扫入口、加密压缩包/Office 文件的用户流程（file-acceptance §9）、生产 `clamav`
 服务上线后的真实引擎复核；登出落点差异——CI-19 中 Chromium 登出后到 `/login`、WebKit 到 `/logged-out`（两者 `/api/auth/me`
-都 401），核对是登出重定向的竞态还是引擎差异并统一；第七节其余专项——Turnstile 服务端校验、分层限流的多实例契约、WAF/源站清单；
+都 401），核对是登出重定向的竞态还是引擎差异并统一；第七节其余专项——分层限流的多实例契约（API 网关按密钥的 300/分钟仍是单进程内存）、WAF/源站清单与规则观察；
 Docs 项目列表页仍加载的共享块 `perm`（274 KB，列表页与工作台共用的视图层可再拆）；SDK/CLI 与 Node/n8n 验收脚本
 （`apps/docs/sdk/acceptance/python_full_flow.py`、`tests/integration/sdk_acceptance/ts_run.py`）纳入每个里程碑的回归——本轮已在
 网关/安全头改动后复跑（结果见 verification.md §16.14）。已完成并移出队列：成员列表 50 行审计（CI-04 补审）、键盘模式（CI-05）。

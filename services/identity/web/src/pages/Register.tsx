@@ -3,6 +3,7 @@ import { patch, post, safeNext, setWorkspaceContext, useSession } from "@synwevo
 import { useI18n } from "@synwevo/ui";
 import { AuthFrame, FlowError, Loading, PasswordField, clearInvitation, checkPassword, readIntent, saveIntent, signedInDestination, useAction, useLinkToken } from "./org/AuthFlow";
 import type { InvitationPreview } from "./Invite";
+import { isChallengeError, useChallenge } from "./org/Challenge";
 
 export default function Register() {
   const inviteToken = useLinkToken("invite_token", readIntent().invite_token);
@@ -10,6 +11,8 @@ export default function Register() {
 }
 function Registration({ inviteToken }: { inviteToken: string }) {
   const { t, locale } = useI18n(); const { state, me, error, refresh } = useSession(); const action = useAction();
+  const challenge = useChallenge("register", { enabled: !inviteToken });
+  useEffect(() => { if (isChallengeError(action.error)) challenge.reset(); }, [action.error]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [joined, setJoined] = useState(false);
   const [preview, setPreview] = useState<InvitationPreview | null>(null); const [loadError, setLoadError] = useState<unknown>(null);
   const [email, setEmail] = useState(""); const [name, setName] = useState(""); const [password, setPassword] = useState("");
@@ -35,7 +38,7 @@ function Registration({ inviteToken }: { inviteToken: string }) {
         await patch("/api/auth/profile", { locale });
         window.location.assign("/onboarding"); return;
       }
-      const result = await post<{ status: "verification_pending"; delivery: "requested" | "unavailable" }>("/api/auth/register", { email: email.trim(), password, display_name: name.trim(), locale, intent, ...(inviteToken ? { invite_token: inviteToken } : {}) });
+      const result = await post<{ status: "verification_pending"; delivery: "requested" | "unavailable" }>("/api/auth/register", { email: email.trim(), password, display_name: name.trim(), locale, intent, ...(inviteToken ? { invite_token: inviteToken } : {}), ...challenge.body() });
       setPassword("");
       window.location.assign(`/verify-email${result.delivery === "unavailable" ? "?delivery=unavailable" : ""}`);
     });
@@ -55,6 +58,7 @@ function Registration({ inviteToken }: { inviteToken: string }) {
           <label className="flow-option"><input type="radio" name="intent" value="personal" checked={intent === "personal"} onChange={() => setIntent("personal")} /><span>{t("个人使用")}<small>{t("为自己的文档和项目建立空间。")}</small></span></label>
           <label className="flow-option"><input type="radio" name="intent" value="organization" checked={intent === "organization"} onChange={() => setIntent("organization")} /><span>{t("团队协作")}<small>{t("创建组织，再邀请团队成员。")}</small></span></label>
         </fieldset>}
+        {!preview && challenge.element}
         <button className="btn primary" disabled={action.busy}>{t(action.busy ? "提交中…" : preview ? "创建账户并接受邀请" : "创建账户并验证邮箱")}</button>
         <p className="authfoot">{t("已有账户？")} <a href="/login" onClick={() => saveIntent({ invite_token: inviteToken || undefined })}>{t("登录")}</a></p>
       </form>}

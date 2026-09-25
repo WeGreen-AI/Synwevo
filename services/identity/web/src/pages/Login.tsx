@@ -3,6 +3,7 @@ import { ApiError, get, post, safeNext, signInUrl, useSession } from "@synwevo/a
 import { useI18n } from "@synwevo/ui";
 import { b64urlToBuf, toJSON } from "../components/PasskeySection";
 import { AuthFrame, FlowError, Loading, PasswordField, checkPassword, saveIntent, signedInDestination, useAction, type FlowUser } from "./org/AuthFlow";
+import { isChallengeError, useChallenge } from "./org/Challenge";
 
 type Methods = { totp: boolean; recovery: boolean };
 type Mode = "password" | "code";
@@ -49,6 +50,12 @@ export default function Login() {
   // An unconfigured deployment may already have legitimate registered users. The server's
   // bootstrap flag enables an explicit setup choice; it must never replace ordinary sign-in.
   const bootstrap = !!state?.bootstrap_required && setupRequested;
+  // Human verification: the mailed-code request is always challenged when the deployment has
+  // it; the password form only after the server answered challenge_required.
+  const codeChallenge = useChallenge("login_email", { enabled: mode === "code" && !codeSent && !bootstrap });
+  const [loginChallengeArmed, setLoginChallengeArmed] = useState(false);
+  const loginChallenge = useChallenge("login", { armed: loginChallengeArmed, enabled: mode !== "code" && !bootstrap && !offer && !ticket });
+  useEffect(() => { if (isChallengeError(action.error)) { codeChallenge.reset(); loginChallenge.reset(); } }, [action.error]);   // eslint-disable-line react-hooks/exhaustive-deps
   const providers = state?.external_providers || [];
 
   useEffect(() => {
@@ -106,7 +113,7 @@ export default function Login() {
           if (out.recovery_remaining !== undefined) { try { sessionStorage.setItem("dw_recovery_notice", String(out.recovery_remaining)); } catch { /* optional notice */ } }
           await finish(out);
         } else if (mode === "code" && !codeSent) {
-          const out = await post<{ delivery: "requested" | "unavailable"; expires_min: number }>("/api/auth/login/email/start", { email: email.trim() });
+          const out = await post<{ delivery: "requested" | "unavailable"; expires_min: number }>("/api/auth/login/email/start", { email: email.trim(), ...codeChallenge.body() });
           if (out.delivery === "unavailable") throw new Error("邮件服务尚未配置，请改用口令或安全密钥登录。");
           setCodeSent({ email: email.trim(), expires: out.expires_min }); setCode("");
         } else if (mode === "code" && codeSent) {
@@ -114,13 +121,18 @@ export default function Login() {
           if (out.mfa_required && out.ticket) { setTicket(out.ticket); setMethods(out.methods || null); setUseRecovery(out.methods?.totp === false); setCode(""); return; }
           await finish(out);
         } else {
-          const out = await post<{ mfa_required?: boolean; ticket?: string; methods?: Methods; status?: string; user?: FlowUser }>("/api/auth/login", { email: email.trim(), password, remember });
+          const out = await post<{ mfa_required?: boolean; ticket?: string; methods?: Methods; status?: string; user?: FlowUser }>("/api/auth/login", { email: email.trim(), password, remember, ...loginChallenge.body() });
           if (out.mfa_required && out.ticket) {
             setTicket(out.ticket); setMethods(out.methods || null); setUseRecovery(out.methods?.totp === false); setPassword(""); return;
           }
           await finish(out);
         }
-      } catch (e) { setPassword(""); throw e; }
+      } catch (e) {
+        // The server asks for a solved challenge after repeated failures from this address: keep
+        // the typed password, show the widget, and let the person submit again.
+        if (e instanceof ApiError && e.code === "challenge_required") { setLoginChallengeArmed(true); throw e; }
+        setPassword(""); throw e;
+      }
     });
   }
   async function signInWithPasskey() {
@@ -183,6 +195,7 @@ export default function Login() {
           <button type="button" className="btn ghost" disabled={action.busy} onClick={() => { setCodeSent(null); setCode(""); action.setError(null); }}>{t("重新发送或换个邮箱")}</button>
         </> : <>
           <div className="field"><label htmlFor="login-email">{t("邮箱")}</label><input id="login-email" className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" inputMode="email" autoCapitalize="off" spellCheck={false} autoFocus required /></div>
+          {codeChallenge.element}
           <button className="btn primary" disabled={action.busy || !email.trim()}>{t(action.busy ? "发送中…" : "发送验证码")}</button>
         </>}
         <button type="button" className="btn ghost" disabled={action.busy} onClick={() => { setMode("password"); setCodeSent(null); setCode(""); action.setError(null); }}>{t("改用口令登录")}</button>
@@ -193,6 +206,7 @@ export default function Login() {
         <PasswordField value={password} onChange={setPassword} fresh={bootstrap} />
         {!bootstrap && <div className="row wrap" style={{ justifyContent: "space-between" }}><a className="authfoot" href="/forgot-password">{t("忘记口令？")}</a></div>}
         {!bootstrap && rememberBox}
+        {!bootstrap && loginChallenge.element}
         <button className="btn primary" disabled={action.busy}>{t(action.busy ? "处理中…" : bootstrap ? "创建管理员并登录" : "登录")}</button>
         {!bootstrap && <>
           <div className="flow-divider">{t("其他登录方式")}</div>

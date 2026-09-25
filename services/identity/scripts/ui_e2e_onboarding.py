@@ -95,6 +95,11 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, inviter: s
     pw_fields = page.locator("input[type=password]")
     for i in range(pw_fields.count()):
         pw_fields.nth(i).fill(password)
+    if page.locator(".challenge-field").count():
+        # The deployment challenges registration: wait for the Turnstile widget (Cloudflare's
+        # iframe) to hand the page a token before submitting, as a person would see it turn green.
+        page.wait_for_selector('.challenge-field[data-status="solved"]', timeout=30000)
+        notes.append(f"{engine}: human verification solved before registering")
     page.get_by_role("button", name=re.compile("创建账户")).click()
     page.wait_for_function("() => document.body.innerText.includes('邮件') || location.pathname !== '/register'", timeout=15000)
     notes.append(f"{engine}: registered {newcomer} → {page.url.split(accounts)[-1].split('?')[0]}")

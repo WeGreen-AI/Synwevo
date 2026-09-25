@@ -12,7 +12,7 @@ from synwevo_core.sessions import Sessions
 from synwevo_core.store import now
 from synwevo_auth_client.session_routes import describe_user
 
-from .auth_routes import client_ip, _too_many
+from .auth_routes import _challenge, client_ip, _too_many
 from .mail import mode, verify_mail
 
 LOCALES = frozenset(("zh-Hans", "zh-Hant", "en"))
@@ -50,7 +50,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
     def register(request: Request, body: dict = Body(...)):
         if registration_mode(ident.store) != "open":
             raise ServiceError(403, "registration_closed", "当前不开放公开注册，请使用有效邀请")
-        allowed_fields = {"email", "password", "display_name", "locale", "intent", "invite_token"}
+        allowed_fields = {"email", "password", "display_name", "locale", "intent", "invite_token", "challenge_token"}
         if set(body) - allowed_fields:
             raise ServiceError(400, "invalid_field", "注册请求包含不支持的字段")
         email, password = body.get("email"), body.get("password")
@@ -65,6 +65,11 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
             raise ServiceError(400, "invalid_field", "语言或首次使用方式无效")
         if not isinstance(name, str) or len(name) > 100 or any(ord(c) < 32 for c in name):
             raise ServiceError(400, "invalid_field", "显示名称不得超过 100 个字符", {"field": "display_name"})
+        # Human verification first (when the deployment has it): a registration is an account
+        # row plus a mail, and the address windows alone do not stop a bot with many addresses.
+        # Checked after the cheap field validation so malformed requests cost no siteverify call,
+        # and before the windows and the Argon2 hash so a tokenless bot burns nothing.
+        _challenge(request).require(request, body, "register", audit=audit)
         if not _limited(request, email):
             return _delivery_state()
         # create_user always checks policy and hashes before checking uniqueness. No timing fast
@@ -98,6 +103,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         email = body.get("email", "")
         if not isinstance(email, str) or len(email) > 254:
             raise ServiceError(400, "bad_email", "邮箱格式不正确", {"field": "email"})
+        _challenge(request).require(request, body, "resend", audit=audit)
         if not _limited(request, email):
             return _delivery_state()
         user = ident.by_email(email)
