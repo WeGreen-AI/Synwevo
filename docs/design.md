@@ -137,6 +137,8 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
   重复区块用 `--block` 紫色虚线框 + 标签。这些是「统一规则」内的类别色，不是应用私有主题。
 * 键盘：所有主要操作有键盘路径（命令面板 ⌘K、列表 j/k、批量选择、分隔条方向键）；全局按键先查
   IME 组合状态；弹层管理保证 Esc 只关最上层并归还焦点。
+  对话框与抽屉（`useModalFocus`）每次 Tab 自行按 DOM 顺序移动焦点（Safari 默认 Tab 跳过按钮/链接，交给浏览器会跳出），
+  关闭后回到打开者——`activeElement` 为 body 时回到指针最后按下的元素（WebKit 点击不聚焦按钮）。回归：`ui_e2e_shell.py` 键盘段。
 * 弹层：所有菜单、下拉与提示层用 `@synwevo/ui` 的 `Menu` / `useAnchoredLayer`——`createPortal` 到
   `document.body`、以视口坐标定位（`layer.ts` 的纯函数决定翻转/贴边/限高），滚动、缩放与旋转时重算，锚点
   离开视口即关闭。**不允许**在滚动容器里用 `position:absolute` 的菜单，也不允许用 `z-index: 99999` 解决

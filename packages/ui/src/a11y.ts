@@ -96,3 +96,22 @@ export function isTopModal(id: string): boolean {
 export function anyModalOpen(): boolean {
   return stack.length > 0;
 }
+
+/* The element the pointer last pressed. WebKit does not focus a button on click, so when a
+ * dialog opens from a click `document.activeElement` is <body> and the dialog would have nowhere
+ * to return focus to; this remembers the real opener. Installed once, on first use. */
+let lastPressed: Element | null = null;
+let pressListening = false;
+export function lastPointerTarget(): HTMLElement | null {
+  if (!pressListening && typeof document !== "undefined") {
+    pressListening = true;
+    document.addEventListener("pointerdown", (e) => {
+      const t = e.target instanceof Element ? e.target.closest(FOCUSABLE) : null;
+      lastPressed = t;
+    }, true);
+  }
+  // `HTMLElement` may not exist where this module is evaluated without a DOM (the account shell's
+  // validation script imports the package under Vite SSR), so test the shape, not the class.
+  const el = lastPressed as (HTMLElement & { isConnected: boolean }) | null;
+  return el && el.isConnected && typeof el.focus === "function" ? el : null;
+}

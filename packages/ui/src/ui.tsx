@@ -2,8 +2,9 @@ import { t as tr, useI18n, formatDate, formatNumber, LanguageMenu } from "./i18n
 import { createContext, ReactNode, RefObject, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { anchorVisible, placeLayer } from "./layer";
+if (typeof document !== "undefined") lastPointerTarget();  // install the opener tracker before any dialog can open
 import type { KeyLike } from "./a11y";
-import { FOCUSABLE, isImeKey, isTopModal, popModal, pushModal, strayKeyAction, trapIndex } from "./a11y";
+import { FOCUSABLE, isImeKey, isTopModal, popModal, pushModal, strayKeyAction, trapIndex, lastPointerTarget } from "./a11y";
 import { ToastTimers } from "./toasttimers";
 
 /* ------------------------------------------------------------ brand */
@@ -301,7 +302,10 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, onClose: () =>
   useEffect(() => {
     const id = pushModal();
     idRef.current = id;
-    const opener = document.activeElement as HTMLElement | null;
+    // Where focus returns on close: the focused element, or — when the click that opened us did
+    // not focus its button (WebKit) — the element the pointer last pressed.
+    const active = document.activeElement as HTMLElement | null;
+    const opener = active && active !== document.body ? active : lastPointerTarget();
     const root = ref.current;
     if (root) {
       const fields = Array.from(root.querySelectorAll<HTMLElement>(
@@ -357,12 +361,12 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, onClose: () =>
       if (!items.length) { e.preventDefault(); root.focus(); return; }
       const at = items.indexOf(document.activeElement as HTMLElement);
       const next = trapIndex(items.length, at, e.shiftKey);
-      // Let the browser move focus inside the dialog; step in only at the edges (and when focus
-      // is on the container), so native order within the dialog stays untouched.
-      if (at < 0 || (e.shiftKey && at === 0) || (!e.shiftKey && at === items.length - 1)) {
-        e.preventDefault();
-        items[next]?.focus();
-      }
+      // Move focus ourselves, every time, in DOM order (positive tabindex is not used here). Letting
+      // the browser move it and stepping in only at the edges left the dialog in WebKit: Safari's
+      // default Tab skips buttons and links, so from a select in the middle it jumped straight out
+      // of the drawer. Doing the step here also gives Safari users every control by keyboard.
+      e.preventDefault();
+      items[next]?.focus();
     }
   }, [ref]);
 

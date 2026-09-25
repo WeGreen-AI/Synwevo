@@ -402,6 +402,41 @@ frame-ancestors；github.com/OWASP/ASVS v4.0.3 `0x22-V14-Config.md`）；OWASP H
 `describeLocator` 后丢掉了服务端标签的解释。修复：对话框按 `record_rule.mode` 给明细提案专门的三语言说明（每组一份 / 每行一份 /
 每文件一份）；脚本断言改为当前正确文案；`ui_e2e.py` 删除字段后的重建增加等待恢复文本（此前偶发竞态）。
 
+### 16.8 批量生成性能基线复测（2026-09-25，同一台 Apple Silicon，`apps/docs/scripts/benchmark.py`）
+
+与 §11 记录的 2026-09-23 基线对照（真实处理链路：解析 → 记录 → 计划 → 填充 → 校验 → 存储；合成数据；单进程）：
+
+| 场景 | 2026-09-23 | 2026-09-25 |
+|---|---|---|
+| XLSX 100 行 → DOCX | 1.21 s（12.1 ms/份） | 1.19 s（11.9 ms/份） |
+| XLSX 1 000 行 → DOCX | 11.12 s（11.1） | 11.10 s（11.1） |
+| XLSX 5 000 行 → DOCX | 65.35 s（13.1） | 56.39 s（11.3） |
+| XLSX 20 行 → DOCX + PDF（LibreOffice） | 14.2 s（355） | 15.83 s（396） |
+| 2 000 条明细 / 200 组 → XLSX | 1.0 s（5.0） | 0.83 s（4.1） |
+| PDF 模板 300 份 | 22.97 s（76.6） | 22.88 s（76.3） |
+| OCR 1240×700 | 0.21 s | 0.26 s |
+| 峰值 RSS | 452 MB | 407.5 MB |
+
+两天之间加入了统一网关、会话/授权检查、安全头等中间件，吞吐没有退化（5 000 行一档更快，PDF 转换在 LibreOffice 抖动范围内）。
+这是回归检查点，不是性能改进声明；数值随机器与并发变化。
+
+### 16.9 共享菜单与抽屉的键盘模式（CI-05）
+
+**依据**：WAI-ARIA APG「Menu Button」与「Dialog (Modal)」模式（Enter/Space 打开并聚焦首项，方向键移动且首尾回绕，Home/End，Esc 关闭并把焦点
+还给触发按钮；对话框内 Tab 不离开、关闭后焦点回到打开者）；WCAG 2.2 SC 2.1.1 键盘、2.4.3 焦点顺序。
+
+`ui_e2e_shell.py` 新增：在有 ≥2 个可用项的行菜单上用 Enter 打开、ArrowDown/End/ArrowDown（回绕）/ArrowUp（回绕）/Home、Esc 后焦点回到
+按钮；手机抽屉内连按 12 次 Tab 焦点不离开、Esc 关闭后焦点回到「菜单」按钮。
+
+首次运行在 WebKit 暴露两处真实缺陷（Chromium 不出现）：
+
+| 缺陷 | 根因 | 修复 |
+|---|---|---|
+| 抽屉内 Tab 从 `<select>` 跳出对话框 | 焦点陷阱只在首尾两端接管，中间交给浏览器；Safari 默认 Tab 跳过按钮与链接，于是从中间直接跳出 | `useModalFocus` 每次 Tab 都自行按 DOM 顺序移动（`trapIndex`），Safari 用户也能用键盘到达按钮和链接 |
+| Esc 关闭抽屉后焦点不回到按钮 | WebKit 点击不聚焦按钮，打开时 `document.activeElement` 是 `<body>`，无处可回 | `a11y.lastPointerTarget()` 记录指针最后按下的可聚焦元素；对话框在 `activeElement` 为 body 时回到它 |
+
+修复后 Chromium 与 WebKit 的桌面/手机四组全部通过；Docs 三套桌面/手机 E2E 与键盘套件复跑通过。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

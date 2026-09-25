@@ -115,8 +115,17 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
             expect(drawer.get_by_role("link", name=re.compile("账户与安全|帳戶與安全|Account & security"))).to_be_visible()
             expect(drawer.get_by_role("button", name=re.compile("退出登录|登出|Sign out"))).to_be_visible()
             page.screenshot(path=SHOTS / f"shell-{engine}-{tag}-account-drawer.png")
+            # focus is trapped inside the drawer: Tab from the last control wraps to the first
+            inside = lambda: page.evaluate("() => { const d = document.querySelector('.drawer'); return !!(d && document.activeElement && d.contains(document.activeElement)); }")
+            assert inside(), "focus did not move into the drawer"
+            for _ in range(12):
+                page.keyboard.press("Tab")
+                assert inside(), "Tab escaped the drawer"
+            # the page behind is inert to the pointer: the backdrop, not the content, receives the click
             page.keyboard.press("Escape")
             expect(drawer).to_have_count(0)
+            assert page.evaluate("() => document.activeElement && document.activeElement.getAttribute('aria-haspopup') === 'dialog'"), "focus did not return to the menu button"
+            notes.append(f"{engine}/{tag}: drawer — focus trapped over 12 Tabs, Escape closes and returns focus to the button")
         page.screenshot(path=SHOTS / f"shell-{engine}-{tag}-account.png")
         notes.append(f"{engine}/{tag}: account back link → {href.split('?')[0]}")
 
@@ -164,6 +173,53 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
             page.keyboard.press("Escape")
             expect(page.get_by_role("menu")).to_have_count(0)
             assert page.evaluate("() => document.activeElement && document.activeElement.closest('td.act') !== null"), "focus did not return to the row button"
+            # keyboard operation of the shared menu (WAI-ARIA menu button pattern): Enter opens with
+            # focus on the first enabled item, arrows move and wrap, Home/End jump, Escape closes
+            # and returns focus; disabled items stay listed but are skipped.
+            # A row whose menu has enabled items: the sole owner's own row has none (every action
+            # on oneself is refused with a reason), so look across the governed workspaces' member
+            # and invitation lists for one that does.
+            kb_btn = None
+            for w in governed[:3]:
+                for tab in ("members", "invites"):
+                    page.goto(f"{accounts}/account/workspaces/{w['id']}/members?tab={tab}")
+                    page.wait_for_selector("table.gov:visible", timeout=15000)
+                    cands = page.locator("table.gov:visible tbody tr:has(td.act button)")
+                    for i in range(cands.count()):
+                        b = cands.nth(i).locator("td.act button").first
+                        b.click()
+                        m = page.get_by_role("menu").first
+                        expect(m).to_be_visible()
+                        en = [j for j in range(m.get_by_role("menuitem").count()) if m.get_by_role("menuitem").nth(j).is_enabled()]
+                        page.keyboard.press("Escape")
+                        expect(page.get_by_role("menu")).to_have_count(0)
+                        if len(en) >= 2:
+                            kb_btn = b
+                            break
+                    if kb_btn is not None:
+                        break
+                if kb_btn is not None:
+                    break
+            assert kb_btn is not None, "no row menu with two enabled items found for the keyboard check (add an invitation to a governed workspace)"
+            kb_btn.focus()
+            page.keyboard.press("Enter")
+            menu = page.get_by_role("menu").first
+            expect(menu).to_be_visible()
+            items_all = menu.get_by_role("menuitem")
+            n_all = items_all.count()
+            enabled_idx = [i for i in range(n_all) if items_all.nth(i).is_enabled()]
+            focused = lambda: page.evaluate("() => { const a = document.activeElement; const items = [...document.querySelectorAll('[role=menu] [role=menuitem]')]; return items.indexOf(a); }")
+            assert focused() == enabled_idx[0], ("first enabled item not focused on open", focused(), enabled_idx)
+            if len(enabled_idx) > 1:
+                page.keyboard.press("ArrowDown"); assert focused() == enabled_idx[1], ("ArrowDown", focused())
+                page.keyboard.press("End"); assert focused() == enabled_idx[-1], ("End", focused())
+                page.keyboard.press("ArrowDown"); assert focused() == enabled_idx[0], ("wrap to first", focused())
+                page.keyboard.press("ArrowUp"); assert focused() == enabled_idx[-1], ("wrap to last", focused())
+                page.keyboard.press("Home"); assert focused() == enabled_idx[0], ("Home", focused())
+            page.keyboard.press("Escape")
+            expect(page.get_by_role("menu")).to_have_count(0)
+            assert page.evaluate("() => document.activeElement && document.activeElement.closest('td.act') !== null"), "focus did not return after keyboard close"
+            notes.append(f"{engine}/{tag}: menu keyboard — Enter opens on item {enabled_idx[0]}, arrows wrap, Home/End, Escape returns focus ({len(enabled_idx)} enabled of {n_all})")
             if width < 400:
                 act = rows.nth(0).locator("td.act")
                 pos = page.evaluate("el => getComputedStyle(el).position", act.element_handle())

@@ -8,6 +8,7 @@
 
 | ID | 问题与基线 | 依据 | 修复 | 验证 | 状态 |
 |---|---|---|---|---|---|
+| CI-05 | WebKit 下抽屉内 Tab 跳出对话框；Esc 关闭后焦点不回到按钮（Chromium 不出现） | WAI-ARIA APG Dialog/Menu Button 模式；WCAG 2.1.1、2.4.3 | 焦点陷阱每次 Tab 自行移动；`lastPointerTarget()` 记住点击打开者 | `ui_e2e_shell.py` 键盘检查 Chromium + WebKit 四组通过；Docs 键盘套件通过 | 已修复，待部署 |
 | CI-04 | 内容态下的手机问题：组织页返回链接 20 px；Docs 首页项目表在 320/375 px 把页面撑宽；工作台选择栏提示被截断越出 | WCAG 2.2 1.4.10（数据表在自身容器内滚动）、2.5.8 | `.action-link`；共享 `.tbl-wrap` 包住首页两张表；≤900 px 选择栏提示换行 | `ui_mobile_audit.py` Bob（组织 + 3 邀请 + 项目）与管理员两组 × 三宽度 0 发现；Docs 三套 E2E 与外壳回归通过 | 已修复，待部署 |
 | CI-02 | 线上三个源的响应缺少 HSTS、`nosniff`、CSP、Permissions-Policy、COOP/CORP（匿名 `curl -I` 基线），XSS 影响面与点击劫持/嗅探缓解不足 | OWASP ASVS 4.0.3 V14.4.1–14.4.7；OWASP HTTP Headers Cheat Sheet | `synwevo_core.http.apply_security_headers`：每个响应带 nosniff、强制 CSP（`script-src 'self'`、`frame-ancestors 'self'`、`object-src 'none'`…）、COOP/CORP、Permissions-Policy；TLS 时 HSTS 一年；`SYNWEVO_CSP` 覆盖 | `test_security_headers.py` 6 项；五套浏览器脚本捕获 CSP 违规 = 0；隔离实例 curl | 已修复，待部署（[verification.md §16.6](verification.md)） |
 | CI-03 | 明细表映射对话框对每组一份模式显示「随文件变化」，语义错误（4caea87 起，未被运行的 `ui_e2e_more.py` 掩盖） | 服务端 `locators.py` 的模式语义；产品规则「每份输出写入当前分组的全部明细行」 | `MappingDialog` 按 `record_rule.mode` 给明细提案三语言说明 | `ui_e2e_more.py` 通过；Docs i18n 单测 45 项 | 已修复，待部署 |
