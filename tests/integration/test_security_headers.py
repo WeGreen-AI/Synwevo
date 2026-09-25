@@ -93,3 +93,18 @@ def test_a_route_that_sets_its_own_header_keeps_it(make):
     c = make("accounts")
     r = c.get("/api/auth/state")
     assert r.headers["cache-control"] == "no-store"
+
+
+def test_behind_cloudflare_only_its_own_beacon_is_allowed(make):
+    """The edge injects static.cloudflareinsights.com/beacon.min.js into HTML when Web Analytics is
+    on; that script (and its connect target) is allowed only when CF-Ray says the request came
+    through Cloudflare, and nothing else widens."""
+    c = make("portal")
+    strict = c.get("/api/auth/state").headers["content-security-policy"]
+    assert "cloudflareinsights" not in strict
+    edge = c.get("/api/auth/state", headers={"CF-Ray": "8f1c2d3e4a5b6c7d-HKG"}).headers["content-security-policy"]
+    assert "script-src 'self' https://static.cloudflareinsights.com;" in edge
+    assert "connect-src 'self' https://cloudflareinsights.com;" in edge
+    assert edge.replace(" https://static.cloudflareinsights.com", "").replace(" https://cloudflareinsights.com", "") == strict
+    custom = make("accounts", SYNWEVO_CSP="default-src 'self'")
+    assert custom.get("/api/auth/state", headers={"CF-Ray": "x"}).headers["content-security-policy"] == "default-src 'self'"

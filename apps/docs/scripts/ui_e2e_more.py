@@ -298,7 +298,10 @@ def main():
         t0 = time.time()
         with sync_playwright() as p:
             browser = p.chromium.launch(channel="chrome", headless=True)
-            ctx = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True, locale="zh-CN")
+            # E2E_DPR=2 runs the same flows on a high-density display (coordinate mapping of box drawing,
+            # cell hit-testing and PDF regions must not depend on the device pixel ratio)
+            ctx = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True, locale="zh-CN",
+                                      device_scale_factor=float(os.environ.get("E2E_DPR", "1")))
             page = ctx.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))

@@ -56,18 +56,32 @@ DEFAULT_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-
                "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
                "frame-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'self'; "
                "base-uri 'self'; form-action 'self'; object-src 'none'")
+#: Behind Cloudflare (`CF-Ray` on the request) the edge injects its Web Analytics beacon
+#: (`static.cloudflareinsights.com/beacon.min.js`, posting to `cloudflareinsights.com`) into every
+#: HTML page when the zone owner has enabled Web Analytics. The strict policy blocked it — one
+#: console error per page view and analytics the operator had turned on silently gone. Allowing
+#: exactly those two origins, only on requests that came through Cloudflare, keeps the operator's
+#: choice working without loosening the policy anywhere else: the edge already controls every byte
+#: it forwards, so naming its beacon adds no trust the deployment had not granted.
+CLOUDFLARE_CSP = DEFAULT_CSP.replace("script-src 'self';", "script-src 'self' https://static.cloudflareinsights.com;") \
+                            .replace("connect-src 'self';", "connect-src 'self' https://cloudflareinsights.com;")
 HSTS = "max-age=31536000; includeSubDomains"          # one year, per host; no `preload` (not the apex)
 PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
 
 
-def content_security_policy() -> str | None:
-    """The CSP to send, or None when the operator turned it off (`SYNWEVO_CSP=off`)."""
+def content_security_policy(request: Request | None = None) -> str | None:
+    """The CSP to send, or None when the operator turned it off (`SYNWEVO_CSP=off`).
+
+    An explicit `SYNWEVO_CSP` is sent verbatim. The default is the strict policy, widened for the
+    Cloudflare beacon only when the request carries `CF-Ray` (see CLOUDFLARE_CSP)."""
     raw = (env.get("CSP") or "").strip()
-    if not raw:
-        return DEFAULT_CSP
     if raw.lower() == "off":
         return None
-    return raw
+    if raw:
+        return raw
+    if request is not None and request.headers.get("cf-ray"):
+        return CLOUDFLARE_CSP
+    return DEFAULT_CSP
 
 
 def request_is_https(request: Request) -> bool:
@@ -88,7 +102,7 @@ def apply_security_headers(request: Request, resp) -> None:
     resp.headers.setdefault("Permissions-Policy", PERMISSIONS_POLICY)
     resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
     resp.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
-    csp = content_security_policy()
+    csp = content_security_policy(request)
     if csp:
         resp.headers.setdefault("Content-Security-Policy", csp)
     if request_is_https(request):

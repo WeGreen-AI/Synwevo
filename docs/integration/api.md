@@ -134,6 +134,7 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()`、
 `Cross-Origin-Opener-Policy: same-origin`、`Cross-Origin-Resource-Policy: same-site`，以及经 TLS 到达时的
 `Strict-Transport-Security: max-age=31536000; includeSubDomains`。机器客户端可以忽略它们；浏览器客户端不能依赖内联脚本或第三方资源。
+带 `CF-Ray`（经 Cloudflare）的请求在 `script-src`/`connect-src` 里多出 Cloudflare Web Analytics 的两个源，其余相同。
 `SYNWEVO_CSP` 可替换策略（`off` 关闭），见 operations.md §4。契约测试：`tests/integration/test_security_headers.py`。
 `Accept: application/problem+json` 可选择 RFC 9457 结构，默认保留原错误 envelope。
 限流响应包含 `RateLimit`、`RateLimit-Policy`，429 带 `Retry-After`；当前请求速率桶按进程计算，不宣称跨进程全局限速。

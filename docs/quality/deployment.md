@@ -8,11 +8,21 @@ restricted SSH deployment; pre-upgrade backup `/opt/synwevo/backups/20260925T115
 Anonymous checks ~12:05 UTC: `/readyz` ready on all three hosts, the account shell's bundles 200 and the shipped stylesheet
 carries the new 24 px rule.
 
-**Pushed, awaiting their runs:** `ccdd950` (CI-02 security headers on every response — nosniff, enforced CSP, HSTS over TLS,
-COOP/CORP, Permissions-Policy; CI-03 mapping-dialog wording) and the CI-04 content-state fixes that follow this record. The
-results are appended here when the receiver reports them. After CI-02 lands, `curl -I` on the three hosts must show the headers
-listed in [api.md §2](../integration/api.md); should a browser console report a CSP block, `SYNWEVO_CSP` in the affected
-service's `runtime.env` is the documented temporary measure ([operations.md §4.0](../operations.md)).
+**Running source:** `ccdd95005e8d50c91b923bcf12da023c03a87a12` (CI-02 security headers on every response; CI-03 mapping-dialog
+wording). [Actions 36132038032](https://github.com/WeGreen-AI/Synwevo/actions/runs/36132038032) (created 11:55 UTC, finished
+~12:20 UTC) passed verification and deployment; pre-upgrade backup `/opt/synwevo/backups/20260925T121944Z`. Anonymous checks
+~12:22 UTC: all three hosts answer HTML and JSON with `Strict-Transport-Security: max-age=31536000; includeSubDomains`,
+`X-Content-Type-Options: nosniff`, the enforced `Content-Security-Policy`, `Cross-Origin-Opener-Policy: same-origin`,
+`Cross-Origin-Resource-Policy: same-site`, `Permissions-Policy`, `Referrer-Policy: no-referrer`, `X-Frame-Options: SAMEORIGIN`.
+Chromium (anonymous, 1280 and 375 px) loaded the public home, the signed-out workspace page, sign-in, register, forgot-password
+and the Docs shell with no horizontal scroll and **one kind of CSP violation on every page: Cloudflare's edge injects
+`static.cloudflareinsights.com/beacon.min.js` (Web Analytics is enabled on the zone) and the strict `script-src 'self'` blocks it.**
+The application itself loaded and ran with zero violations. CI-06 (below) allows exactly that beacon, only on requests carrying
+`CF-Ray`; until it lands, the zone's Web Analytics receives no page views. The `401` console entries are the anonymous
+`/api/auth/me` probe, expected.
+
+**Superseded:** the CI-04 run for `409152f` was cancelled by the concurrency rule when `1282e6c` (CI-05) was pushed; its content
+ships with the CI-05 run, recorded below when the receiver reports it.
 
 ## 2026-09-25 navigation, layers, phone layouts and step-up admin auth — deployed
 

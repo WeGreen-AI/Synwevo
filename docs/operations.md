@@ -148,6 +148,10 @@ CSP 是**强制**模式；若某次发布后浏览器控制台出现 `Content Se
 可在账户/门户/Docs 的 `runtime.env` 里设置 `SYNWEVO_CSP="<替代策略>"` 或 `SYNWEVO_CSP=off` 并重启对应服务作为临时措施，
 然后修正策略再发布；不要长期保留 `off`。
 
+生产在 Cloudflare 之后：区域开启了 Cloudflare Web Analytics 时，边缘会把 `static.cloudflareinsights.com/beacon.min.js` 注入每个 HTML
+页面。带 `CF-Ray` 的请求因此得到默认策略的 Cloudflare 变体（仅多出该脚本源与其 `cloudflareinsights.com` 上报源，其余不变）；
+不经 Cloudflare 的请求仍是严格策略。不想要这个信标就在 Cloudflare 控制台关闭 Web Analytics，策略无需改动。
+
 
 ```bash
 python -m synwevo_docs.cli info                 # 数据目录、schema、当前监听配置、数据量
