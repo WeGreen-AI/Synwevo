@@ -52,8 +52,7 @@ MEASURE_JS = r"""
   const targets = document.querySelectorAll('button, a[href], input:not([type=hidden]), select, textarea, [role=menuitem], [role=tab], [role=button], label.check, summary');
   for (const el of targets) {
     if (!visible(el)) continue;
-    const r = el.getBoundingClientRect();
-    if (r.bottom < 0 || r.top > window.innerHeight) continue;   // off-screen: measured when scrolled to
+    const r = el.getBoundingClientRect();     // below the fold counts too: a footer link is a target
     out.targets++;
     const size = Math.min(r.width, r.height);
     const cs = getComputedStyle(el);
@@ -74,7 +73,6 @@ MEASURE_JS = r"""
   while ((node = walker.nextNode())) {
     const text = node.textContent.trim(); if (text.length < 2) continue;
     const el = node.parentElement; if (!el || !visible(el)) continue;
-    const r = el.getBoundingClientRect(); if (r.bottom < 0 || r.top > window.innerHeight) continue;
     const cs = getComputedStyle(el); const fg = parse(cs.color); if (!fg) continue;
     const bg = bgOf(el); if (!bg) continue;
     const fgc = fg.a < 1 ? blend(fg, bg) : fg;
@@ -90,6 +88,32 @@ MEASURE_JS = r"""
   // content (the caller names the fixture strings) is a string that never reached the catalog.
   const [, lang, fixtures] = args;
   out.untranslated = [];
+  if (lang === 'zh-Hant') {
+    // A Traditional Chinese page must not fall back to Simplified strings: characters that exist
+    // only in the simplified script (a common subset) betray a string that never got its zh-Hant
+    // entry. User content named by the caller is skipped.
+    const simplifiedOnly = /[设账务录页击时间开关体点读写发选择这样将后当会岁办变边参补称档导对儿发丰给观归过际继荐见节几进举据决览联练龙楼录码没门们难内农区确认让认识识术数术态团务务习细现响项写选养业义议应营与语员员则这证织质众专转组认]/;
+    const seenT = new Set();
+    const w3 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let n3;
+    while ((n3 = w3.nextNode())) {
+      const t = n3.textContent.trim();
+      if (!simplifiedOnly.test(t) || seenT.has(t)) continue;
+      const el = n3.parentElement; if (!el || !visible(el)) continue;
+      if ((fixtures || []).some(f => f && t.includes(f))) continue;
+      if (el.closest('[lang]:not([lang^="zh-Hant"]), .who, .who2, .mono, code')) continue;
+      seenT.add(t);
+      out.untranslated.push({ tag: el.tagName.toLowerCase(), cls: (el.className || '').toString().slice(0, 40), text: t.slice(0, 60) });
+    }
+    for (const el of document.querySelectorAll('[aria-label], [placeholder], [title]')) {
+      if (!visible(el)) continue;
+      for (const a of ['aria-label', 'placeholder', 'title']) {
+        const v = el.getAttribute(a) || '';
+        if (simplifiedOnly.test(v) && !seenT.has(v) && !(fixtures || []).some(f => f && v.includes(f))) { seenT.add(v); out.untranslated.push({ tag: el.tagName.toLowerCase() + '[' + a + ']', cls: (el.className || '').toString().slice(0, 40), text: v.slice(0, 60) }); }
+      }
+    }
+    out.untranslated = out.untranslated.slice(0, 15);
+  }
   if (lang === 'en') {
     const seenT = new Set();
     const w2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -176,12 +200,18 @@ def main():
             rows = [measure(page, u + (f"?lang={LOCALE}" if LOCALE else "")) for u in anon_pages]
             sign_in(page, accounts, email, password)
             previous_locale = None
+            restore = None
             if LOCALE:
                 from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
                 csrf = next((c["value"] for c in ctx.cookies() if c["name"] == CSRF_COOKIE), "")
                 previous_locale = page.request.get(f"{accounts}/api/auth/me").json().get("locale")
                 r = page.request.patch(f"{accounts}/api/auth/locale", data={"locale": LOCALE}, headers={CSRF_HEADER: csrf})
                 assert r.status == 200, ("could not set the locale", r.status, r.text()[:120])
+                if previous_locale and previous_locale != LOCALE:
+                    def restore(prev=previous_locale, csrf=csrf):   # runs on the way out, crash or not
+                        page.request.patch(f"{accounts}/api/auth/locale", data={"locale": prev}, headers={CSRF_HEADER: csrf})
+                    import atexit
+                    atexit.register(restore)
             me = page.request.get(f"{accounts}/api/auth/me").json()
             signed = [f"{accounts}/account", f"{accounts}/organizations", f"{accounts}/onboarding"]
             try:
@@ -201,7 +231,9 @@ def main():
                 rows.append(measure(page, u, settle="section.card, table.gov, .acct-page, .idp-card, .empty"))
                 if u.endswith("/admin/api-platform"):
                     # the console keeps its sections as in-page tabs: measure each one with content
-                    tabs = page.locator("nav[aria-label] button")
+                    # the console's own tab bar ("API 管理导航" / "API administration navigation"), not the
+                    # account top bar's nav — whose one button signs out
+                    tabs = page.locator("nav[aria-label*='API'] button")
                     for i in range(tabs.count()):
                         tabs.nth(i).click()
                         page.wait_for_timeout(600)
@@ -239,11 +271,10 @@ def main():
                     print(f"      small: <{s_['tag']} class='{s_['cls']}'> {s_['w']}×{s_['h']} “{s_['label']}”")
                 for s_ in r["primarySmall"][:3]:
                     print(f"      primary<44: {s_['w']}×{s_['h']} “{s_['label']}”")
-            if LOCALE and previous_locale and previous_locale != LOCALE:
-                # leave the account as it was found
-                from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
-                csrf = next((c["value"] for c in ctx.cookies() if c["name"] == CSRF_COOKIE), "")
-                page.request.patch(f"{accounts}/api/auth/locale", data={"locale": previous_locale}, headers={CSRF_HEADER: csrf})
+            if restore is not None:
+                restore()          # leave the account as it was found (also registered for a crash)
+                import atexit
+                atexit.unregister(restore)
             ctx.close()
         browser.close()
     print(f"\n{failures} page(s) with reflow, target-size, contrast or translation findings")

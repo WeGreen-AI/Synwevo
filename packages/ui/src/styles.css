@@ -384,7 +384,7 @@ button.fldchip:focus-visible, button.doc-blk-tag:focus-visible { outline: 2px so
   .btn, .input, select.input { min-height: 44px; }
   .btn.sm, .btn.xs, .input.sm { min-height: 40px; }
   .btn.primary, button[type="submit"].btn { min-height: 44px; }   /* primary actions: 2.5.5 enhanced size */
-  label.check, a.authfoot, .authfoot > a, .org-actions a, .action-link { min-height: 32px; }
+  label.check, a.authfoot, .authfoot > a, .org-actions a, .action-link, summary, footer a { min-height: 32px; }
   input[type="file"] { min-height: 40px; }
   .menu-item { min-height: 44px; padding-block: 10px; }
   .acct-tabs [role="tab"], .acct-tabs .btn { min-height: 44px; }
@@ -615,6 +615,9 @@ table.tbl tbody:focus-visible { outline: 2px solid var(--accent); outline-offset
 /* Standalone action links (not links inside a sentence) are pointer targets in their own right
    and get the 24px minimum through line box padding; inline links in prose are exempt. */
 a.authfoot, .authfoot > a, .org-actions a, .action-link { display: inline-flex; align-items: center; min-height: 24px; padding: 0 2px; }
+/* Disclosure headers and footer links are pointer targets too (found below the fold by the audit). */
+summary { display: flex; align-items: center; min-height: 24px; cursor: pointer; }
+footer a { display: inline-flex; align-items: center; min-height: 24px; min-width: 24px; padding: 0 4px; justify-content: center; }
 input[type="file"] { min-height: 24px; }
 
 .secttl { margin: 0; font-size: 14px; }

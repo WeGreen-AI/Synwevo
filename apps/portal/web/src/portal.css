@@ -22,7 +22,7 @@
 .pt-main:focus { outline: none; }
 .pt-footer { border-top: 1px solid var(--line); width: 100%; max-width: calc(var(--content-w) + 80px); margin: auto; padding: 24px 40px 32px; display: flex; gap: 28px; align-items: center; color: var(--muted); font-size: 12px; }
 .pt-footer > :last-child { margin-left: auto; }
-.pt-footer a { text-decoration: none; }
+.pt-footer a { text-decoration: none; display: inline-flex; align-items: center; min-height: 24px; }
 .pt-skip { position: absolute; z-index: 30; top: -100px; left: 20px; background: var(--surface); color: var(--accent-strong); padding: 10px 16px; border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
 .pt-skip:focus { top: 10px; }
 
