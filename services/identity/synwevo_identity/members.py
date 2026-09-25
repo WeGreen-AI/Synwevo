@@ -208,6 +208,20 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
                 # one person in it and that is fine.
                 "single_owner": out["active_owner_count"] <= 1}
 
+    def _notify(request: Request, user_id: str, kind: str, **kw) -> None:
+        """An inbox row for a member, best effort: the change happened whether or not the row lands."""
+        notifier = getattr(request.app.state, "notifier", None)
+        if notifier is None:
+            return
+        try:
+            notifier.emit(user_id, kind, **kw)
+        except Exception as e:  # noqa: BLE001
+            print(f"[synwevo] notification not recorded ({kind}): {type(e).__name__}", flush=True)
+
+    def _actor_name(s: dict) -> str:
+        me = ident.get_user(s["user_id"]) or {}
+        return me.get("display_name") or me.get("email") or "—"
+
     def _change_one(request: Request, s: dict, m: dict, wid: str, uid: str, role: str | None,
                     can_export, reason: str | None, *, reauthed: bool) -> dict:
         target = _precheck(s, m, wid, uid, role)
@@ -228,6 +242,11 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
               object_id=uid, result="ok",
               meta={"before": before, "after": {"role": out["role"], "can_export": bool(out["can_export"])},
                     "reason": reason, "journaled": journaled})
+        if out["role"] != before["role"]:
+            ws = ident.get_workspace(wid) or {}
+            _notify(request, uid, "member.role_changed", params={"workspace": ws.get("name"), "role": out["role"], "actor": _actor_name(s)},
+                    workspace_id=wid, object_kind="membership", object_id=uid,
+                    target={"origin": "accounts", "path": "/account#workspaces"})
         return {"member": _member_view(wid, uid, s["user_id"]), "before": before,
                 "after": {"role": out["role"], "can_export": bool(out["can_export"])},
                 "journaled": journaled}
@@ -329,6 +348,9 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         journaled = _journal_removal(wid, uid, out)
         audit(request, "member.remove", actor_id=s["user_id"], workspace_id=wid, object_kind="membership",
               object_id=uid, result="ok", meta={**out, "reason": reason, "journaled": journaled})
+        ws = ident.get_workspace(wid) or {}
+        _notify(request, uid, "member.removed", params={"workspace": ws.get("name"), "actor": _actor_name(s)},
+                workspace_id=wid, object_kind="membership", object_id=uid, target={"origin": "accounts", "path": "/account#workspaces"})
         return {"removed": out, "journaled": journaled}
 
     def _journal_removal(wid: str, uid: str, out: dict) -> bool:
@@ -442,6 +464,11 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         journaled = _journal_removal(wid, s["user_id"], out)
         audit(request, "member.leave", actor_id=s["user_id"], workspace_id=wid, object_kind="membership",
               object_id=s["user_id"], result="ok", meta={**out, "journaled": journaled})
+        ws = ident.get_workspace(wid) or {}
+        for admin in store.all("SELECT user_id FROM memberships WHERE workspace_id=? AND role IN ('owner','admin')", (wid,)):
+            _notify(request, admin["user_id"], "member.left", params={"member": _actor_name(s), "workspace": ws.get("name")},
+                    workspace_id=wid, object_kind="membership", object_id=s["user_id"],
+                    target={"origin": "accounts", "path": f"/account/workspaces/{wid}/members"})
         return {"ok": True, "removed": out, "journaled": journaled}
 
     # ================================================================== invitations
@@ -493,6 +520,14 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         audit(request, action, actor_id=s["user_id"], workspace_id=row["workspace_id"],
               object_kind="invitation", object_id=row["id"], result="ok",
               meta={"role": row["role"], "resend_of": resend_of})
+        if recipient:
+            # The person already has an account: the inbox carries the invitation too. The mail
+            # keeps the link; the inbox item leads to the onboarding page, which lists what is
+            # waiting and says to open the mailed link — a click here never accepts anything.
+            _notify(request, recipient["id"], "invitation.received",
+                    params={"workspace": ws["name"], "inviter": me.get("display_name") or me["email"], "role": row["role"]},
+                    workspace_id=row["workspace_id"], object_kind="invitation", object_id=row["id"],
+                    dedupe_key=f"invite:{row['id']}", actionable=True, target={"origin": "accounts", "path": "/onboarding"})
         return {"id": row["id"], "email": row["email_key"], "role": row["role"],
                 "can_export": bool(row["can_export"]), "expires_at": row["expires_at"], "mail": "queued"}
 

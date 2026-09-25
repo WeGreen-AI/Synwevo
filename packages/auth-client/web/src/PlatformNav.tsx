@@ -20,6 +20,7 @@ import { useState } from "react";
 import { ApiError, post, setWorkspaceContext } from "./api";
 import { useSession } from "./session";
 import { LanguageMenu, useI18n, useToast } from "@synwevo/ui";
+import { NotificationBell } from "./NotificationBell";
 import "./session.messages";
 
 /** The account page with `from=<app id>`, so its "back" link returns here. The id is only a hint
@@ -87,6 +88,7 @@ export function PlatformNav() {
           {spaces.map((w) => <option key={w.id} value={w.id} disabled={w.status !== "active"}>{w.kind === "personal" ? t("个人") : w.organization_name || ""} · {w.name}</option>)}
         </select>
       )}
+      <NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} />
       <LanguageMenu />
       <a className="btn ghost sm" href={accountHref(state?.account_url, state?.app_id)} title={t("账户与安全")}>{t("账户")}</a>
       <button type="button" className="btn ghost sm" onClick={() => void signOut().catch(() => undefined)}>{t("退出登录")}</button>

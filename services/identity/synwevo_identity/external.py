@@ -526,7 +526,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, external: Ex
                 return _failed(e.code, locale)
             audit(request, "auth.external.link", actor_id=user["id"], object_kind="external_identity",
                   object_id=row["id"], result="ok", meta={"provider": p.id})
-            _notify(user, f"关联了外部登录方式（{p.label}）")
+            _notify(request, user, f"关联了外部登录方式（{p.label}）")
             resp = RedirectResponse("/account?linked=" + urllib.parse.quote(p.id) + "#security", status_code=303)
             resp.delete_cookie(REQ_COOKIE, path="/")
             return resp
@@ -602,8 +602,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, external: Ex
         resp.delete_cookie(REQ_COOKIE, path="/")
         return resp
 
-    def _notify(user: dict, what: str) -> None:
+    def _notify(request: Request, user: dict, what: str) -> None:
         try:
+            from .notify import inbox_security
+            inbox_security(request, user, what)
             subject, text = security_notice(what=what, when_text="刚刚", locale=user.get("locale") or "zh-Hans")
             mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
         except Exception:                      # a notice that fails must not undo the change
@@ -661,7 +663,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, external: Ex
         linked = external.link(user["id"], out)
         audit(request, "auth.external.link", actor_id=user["id"], object_kind="external_identity",
               object_id=linked["id"], result="ok", meta={"provider": p.id, "via": "offer"})
-        _notify(user, f"关联了外部登录方式（{p.label}）")
+        _notify(request, user, f"关联了外部登录方式（{p.label}）")
         remember = bool(consumed["remember"]) and body.get("remember") is not False
         result = issue_session(ident, sessions, response, user, amr=amr, request=request,
                                persistent=remember, auth_provider=p.id, describe=describe)
@@ -697,7 +699,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, external: Ex
         audit(request, "auth.external.unlink", actor_id=s["user_id"], object_kind="external_identity",
               object_id=iid, result="ok", meta={"provider": row["provider"]})
         if user:
-            _notify(user, f"解除了外部登录方式（{label}）")
+            _notify(request, user, f"解除了外部登录方式（{label}）")
         return {"ok": True}
 
     return r

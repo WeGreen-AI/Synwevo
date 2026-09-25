@@ -104,14 +104,64 @@ def _too_many(retry_after: float) -> ServiceError:
                         {"retry_after": max(1, int(retry_after or 60))})
 
 
+def _inbox(request: Request):
+    return getattr(request.app.state, "notifier", None)
+
+
+def _inbox_invitation_answered(request: Request, out: dict, kind: str) -> None:
+    """The recipient's to-do is done or void; the inviter learns the answer. Best effort."""
+    notifier = _inbox(request)
+    if notifier is None:
+        return
+    try:
+        ident = request.app.state.identity
+        iid = out.get("invitation_id")
+        if iid:
+            notifier.set_action_state("invitation", iid, "done" if kind == "invitation.accepted" else "void")
+        inviter = out.get("invited_by")
+        if not inviter:
+            return
+        ws = ident.get_workspace(out["workspace_id"]) or {}
+        who = (out.get("user") or {})
+        notifier.emit(inviter, kind, params={"member": who.get("display_name") or who.get("email") or "—", "workspace": ws.get("name"),
+                                             "role": out.get("role")},
+                      workspace_id=out["workspace_id"], object_kind="invitation", object_id=iid,
+                      target={"origin": "accounts", "path": f"/account/workspaces/{out['workspace_id']}/members"})
+    except Exception as e:  # noqa: BLE001
+        print(f"[synwevo] notification not recorded ({kind}): {type(e).__name__}", flush=True)
+
+
+def _inbox_invitation_closed(request: Request, iid: str, before: dict | None, kind: str) -> None:
+    """A withdrawn invitation: the recipient's to-do becomes void and, if they have an account, they hear."""
+    notifier = _inbox(request)
+    if notifier is None or not before:
+        return
+    try:
+        ident = request.app.state.identity
+        notifier.set_action_state("invitation", iid, "void")
+        recipient = ident.by_email(before["email_key"])
+        if recipient:
+            ws = ident.get_workspace(before["workspace_id"]) or {}
+            notifier.emit(recipient["id"], kind, params={"workspace": ws.get("name")}, workspace_id=before["workspace_id"],
+                          object_kind="invitation", object_id=iid, target={"origin": "accounts", "path": "/onboarding"})
+    except Exception as e:  # noqa: BLE001
+        print(f"[synwevo] notification not recorded ({kind}): {type(e).__name__}", flush=True)
+
+
 def notify_security_change(request: Request, user: dict | None, what: str) -> None:
     """Tell the account holder a factor or credential changed. Best effort, never blocking.
 
     The notice is what lets someone notice an attacker's change from their inbox; failing to
     queue it must not undo the change they (or the attacker) just made, so errors are logged.
     """
+    if not user:
+        return
+    # The inbox row first: it exists whether or not this deployment can send mail, and the
+    # dispatcher mails it from there too. The direct security mail stays as the fast path.
+    from .notify import inbox_security
+    inbox_security(request, user, what)
     mailer = getattr(request.app.state, "mailer", None)
-    if not mailer or not user:
+    if not mailer:
         return
     try:
         subject, text = mail_notice(what=what, when_text="刚刚", locale=user.get("locale") or "zh-Hans")
@@ -492,10 +542,12 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
     def revoke_invite(request: Request, iid: str):
         s = _session(request)
         journaled = None
+        before = ident.store.one("SELECT email_key, workspace_id FROM invitations WHERE id=?", (iid,))
         if invites.revoke(iid, s["user_id"]):
             # A withdrawn link stays withdrawn when an older database is restored.
             from .withdrawals import record as journal
             journaled = journal(ident.store, "invitation_revoked", invitation_id=iid)
+            _inbox_invitation_closed(request, iid, before, "invitation.revoked")
         audit(request, "invite.revoke", actor_id=s["user_id"], object_kind="invitation",
               object_id=iid, result="ok", meta={"journaled": journaled})
         return {"ok": True, "journaled": journaled}
@@ -529,6 +581,7 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
         audit(request, "invite.accept", actor_id=out["user"]["id"], workspace_id=out["workspace_id"],
               object_kind="membership", object_id=out["user"]["id"], result="ok",
               meta={"role": out["role"]})
+        _inbox_invitation_answered(request, out, "invitation.accepted")
         if s:
             sessions.set_workspace(s["id"], out["workspace_id"])
             return {"user": _public_user(ident, out["user"]), "workspace_id": out["workspace_id"]}
@@ -546,6 +599,7 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
             out = invites.decline(token, state["user_id"])
             audit(request, "invite.decline", actor_id=state["user_id"], workspace_id=out["workspace_id"],
                   object_kind="invitation", object_id=out["id"], result="ok")
+        _inbox_invitation_answered(request, {**out, "invitation_id": out["id"], "user": ident.get_user(state["user_id"]) or {}}, "invitation.declined")
         return {"state": "declined"}
 
     r.include_router(governance)
@@ -719,6 +773,8 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
               object_id=user["id"], result="ok",
               meta={"sessions": n, "tokens": tokens, "journaled": journaled})
         try:
+            from .notify import inbox_security
+            inbox_security(request, user, "password_reset")
             subject, text = mail_notice(what="口令已重置", when_text="刚刚", locale=user.get("locale") or "zh-Hans")
             mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
         except Exception:                      # a notice that fails must not undo the reset

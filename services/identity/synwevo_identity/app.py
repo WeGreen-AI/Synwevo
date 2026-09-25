@@ -14,6 +14,7 @@ from synwevo_auth_client.session_routes import build_router as build_session_rou
 from synwevo_core import env
 from synwevo_core.apps import Apps, bootstrap_docs_app
 from synwevo_core.challenge import Turnstile, policy as challenge_policy
+from synwevo_core.notifications import Notifier
 from synwevo_core.http import (Platform, build_platform, install as install_platform,
                                 install_probes, mount_web, new_api, shell_response)
 
@@ -74,6 +75,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
                               build_recovery_router, build_router as build_auth_router)
     from .invites import Invites
     from .mail import Mailer
+    from .notify import NotificationDispatcher
     from .mfa import Mfa, Tickets
     from .passkeys import Passkeys
     from .provider_routes import build_router as build_oidc_router
@@ -90,6 +92,10 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     # for sign-ins after repeated failures. Built here so a half-configured pair of keys fails
     # the start-up rather than one request in a thousand; disabled when neither key is set.
     api.state.challenge = Turnstile(challenge_policy())
+    # The platform inbox: every role writes rows; this role alone turns e-mail deliveries into
+    # outbox mail (it is the one with a mailer). start=False in tests keeps the worker quiet.
+    api.state.notifier = Notifier(store)
+    api.state.notify_dispatcher = NotificationDispatcher(store, plat.identity, mailer, start=start_jobs)
     api.state.auth_sweeper = Sweeper(store, sessions, tickets, passkeys, start=start_jobs)
     api.state.mfa = mfa
     api.state.passkeys = passkeys

@@ -51,6 +51,11 @@ pointer renders white on `#1D4ED8` (CI-16 live).
 whole-page target sizes; the run for `0727348` was superseded). [Actions 36142441078](https://github.com/WeGreen-AI/Synwevo/actions/runs/36142441078)
 (created 13:40 UTC, verify and deploy both passed, finished 14:05 UTC); pre-upgrade backup `/opt/synwevo/backups/20260925T140436Z`.
 
+**Local, not pushed:** CI-22 platform inbox (schema v9: `notifications`, `notification_deliveries`, `notification_preferences`;
+inbox routes in every role; the account service's e-mail dispatcher; bell and preferences UI). The first CI-21 run (36158250147)
+was cancelled by the 45-minute job timeout: a test had replaced `time.sleep` for the rest of the session and every later polling
+loop spun; `729d694` scopes the patch to that test and re-runs the deployment.
+
 **Pushed, in flight (CI-21 risk-triggered human verification, Turnstile verified server-side; the composed server's
 `malware_scanner` readiness component):** recorded here with hash, run and backup when the receiver reports it. Production
 runtime has no `SYNWEVO_TURNSTILE_*` keys, so after this deployment `/api/auth/state.challenge` is `null`, no page loads the

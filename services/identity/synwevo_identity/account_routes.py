@@ -22,6 +22,7 @@ from synwevo_core.store import new_id, now
 
 from .auth_routes import check_reauth_password
 from .mail import email_change_mail, security_notice
+from .notify import inbox_security
 from .profile import (GRACE_SECONDS, canonical_avatar, check_deletion_constraints, digest,
                       invalidate_access, public_profile, validate_preferences)
 from .withdrawals import record as journal
@@ -150,6 +151,7 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             tokens = Grants(store).revoke_for_user(user["id"], "password_changed")
             store.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=? AND kind='reset'", (ts, user["id"]))
             store.execute("DELETE FROM mfa_tickets WHERE user_id=?", (user["id"],))
+            inbox_security(request, user, "password_changed")
             subject, text = security_notice(what="口令已更改", when_text="刚刚", locale=user["locale"])
             try:
                 mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
@@ -200,6 +202,7 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
                 raise ServiceError(409, "email_unavailable", "此邮箱无法使用")
             # Queue the security notification BEFORE committing the address change. A disabled
             # transport cannot leave the old inbox silently disconnected from its account.
+            inbox_security(request, user, "email_changed")
             subject, text = security_notice(what="登录邮箱已更改", when_text="刚刚", locale=user["locale"])
             mailer.enqueue(user["email"], subject, text,
                            kind="security", ref_id=user["id"])

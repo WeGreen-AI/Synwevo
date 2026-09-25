@@ -1,0 +1,21 @@
+import { registerMessages } from '@synwevo/ui';
+registerMessages({
+ '通知': {en:'Notifications','zh-Hant':'通知'},
+ '通知，{count} 条未读': {en:'Notifications, {count} unread','zh-Hant':'通知，{count} 則未讀'},
+ '通知筛选': {en:'Notification filters','zh-Hant':'通知篩選'},
+ '全部': {en:'All','zh-Hant':'全部'},
+ '未读': {en:'Unread','zh-Hant':'未讀'},
+ '待处理': {en:'To do','zh-Hant':'待處理'},
+ '已处理': {en:'Done','zh-Hant':'已處理'},
+ '已失效': {en:'No longer valid','zh-Hant':'已失效'},
+ '全部标为已读': {en:'Mark all as read','zh-Hant':'全部標為已讀'},
+ '偏好': {en:'Preferences','zh-Hant':'偏好'},
+ '无法加载通知，请稍后重试。': {en:'Notifications could not be loaded. Please try again later.','zh-Hant':'無法載入通知，請稍後重試。'},
+ '没有未读通知。': {en:'No unread notifications.','zh-Hant':'沒有未讀通知。'},
+ '没有待处理的事项。': {en:'Nothing to do.','zh-Hant':'沒有待處理的事項。'},
+ '还没有通知。': {en:'No notifications yet.','zh-Hant':'還沒有通知。'},
+ '标为未读': {en:'Mark as unread','zh-Hant':'標為未讀'},
+ '标为已读': {en:'Mark as read','zh-Hant':'標為已讀'},
+ '归档': {en:'Archive','zh-Hant':'封存'},
+ '加载更早的通知': {en:'Load earlier notifications','zh-Hant':'載入更早的通知'},
+});

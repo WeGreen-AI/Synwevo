@@ -1,0 +1,17 @@
+/* The platform inbox (bell + drawer). Colours come from the shared tokens only. */
+.bell { position: relative; }
+.bell-count { position: absolute; top: 0; right: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: var(--accent); color: var(--on-accent); font-size: 11px; line-height: 16px; text-align: center; font-weight: 600; }
+.notif-tools { margin-bottom: 8px; }
+.notif-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.notif-item { display: flex; gap: 8px; align-items: flex-start; padding: 10px 8px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface); }
+.notif-item.unread { border-color: var(--accent-line); background: var(--accent-weak); }
+.notif-item.sev-critical { border-left: 3px solid var(--err); }
+.notif-main { flex: 1 1 auto; min-width: 0; }
+.notif-title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
+.notif-title:hover, .notif-title:focus-visible { text-decoration: underline; }
+.notif-body { margin: 4px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+.notif-meta { margin: 4px 0 0; }
+.notif-actions { display: flex; flex-direction: column; gap: 2px; flex: none; }
+.notif-empty { padding: 24px 8px; text-align: center; }
+@media (max-width: 620px) { .notif-actions { flex-direction: row; } }

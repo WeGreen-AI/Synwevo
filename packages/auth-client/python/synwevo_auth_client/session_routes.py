@@ -188,6 +188,65 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
                 "return_targets": return_targets(ident, user["id"], s.get("workspace_id")),
                 "session": {"id": s["id"], "amr": s["amr"]}}
 
+    # ------------------------------------------------------------------ the inbox
+    # Served by every role from the shared table: the bell in the portal, in Synwevo Docs and on
+    # the account pages shows one list. Reading never changes business state; approvals and jobs
+    # report back through `action_state` from their own flows.
+    from synwevo_core.notifications import CATEGORIES, Notifier
+    notifier = Notifier(ident.store)
+
+    def _reader_locale(request: Request, s: dict) -> str:
+        lang = request.query_params.get("lang")
+        if lang in ("zh-Hans", "zh-Hant", "en"):
+            return lang
+        user = ident.get_user(s["user_id"]) or {}
+        return user.get("locale") or "zh-Hans"
+
+    @r.get("/notifications")
+    def notifications(request: Request, filter: str = "all", category: str | None = None,
+                      before_seq: int | None = None, limit: int = 30):
+        s = _require_session(request)
+        return notifier.list(s["user_id"], filter=filter, category=category, before_seq=before_seq, limit=limit,
+                             locale=_reader_locale(request, s))
+
+    @r.get("/notifications/unread-count")
+    def notifications_unread(request: Request):
+        s = _require_session(request)
+        return {"unread_count": notifier.unread_count(s["user_id"]), "latest_seq": notifier.latest_seq(s["user_id"])}
+
+    @r.post("/notifications/mark")
+    def notifications_mark(request: Request, body: dict = Body(...)):
+        """`ids` plus `read` and/or `archived` booleans; only the caller's own rows change."""
+        s = _require_session(request)
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids) or set(body) - {"ids", "read", "archived"}:
+            raise ServiceError(400, "invalid_field", "需要 ids 与 read/archived", {"field": "ids"})
+        n = notifier.mark(s["user_id"], ids, read=body.get("read"), archived=body.get("archived"))
+        return {"updated": n, "unread_count": notifier.unread_count(s["user_id"])}
+
+    @r.post("/notifications/read-all")
+    def notifications_read_all(request: Request, body: dict = Body(default={})):
+        """Everything up to `up_to_seq` (the list's `latest_seq` when it was opened): a notification
+        that arrived while the list was open stays unread."""
+        s = _require_session(request)
+        up_to = body.get("up_to_seq")
+        if not isinstance(up_to, int) or set(body) - {"up_to_seq"}:
+            raise ServiceError(400, "invalid_field", "需要整数 up_to_seq", {"field": "up_to_seq"})
+        n = notifier.read_all(s["user_id"], up_to)
+        return {"updated": n, "unread_count": notifier.unread_count(s["user_id"])}
+
+    @r.get("/notifications/preferences")
+    def notification_preferences(request: Request):
+        s = _require_session(request)
+        return {**notifier.preferences(s["user_id"]), "categories_order": list(CATEGORIES)}
+
+    @r.put("/notifications/preferences")
+    def set_notification_preferences(request: Request, body: dict = Body(...)):
+        s = _require_session(request)
+        out = notifier.set_preferences(s["user_id"], body)
+        audit(request, "notifications.preferences", actor_id=s["user_id"], result="ok")
+        return {**out, "categories_order": list(CATEGORIES)}
+
     @r.post("/workspace")
     def switch_workspace(request: Request, body: dict = Body(...)):
         """Change the workspace this session is working in.

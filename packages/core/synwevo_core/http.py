@@ -876,7 +876,11 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     # device management stay on the account service, so there is one place to change a password
     # and one place that knows about authenticators.
     APP_ACCOUNT_PATHS = ("/api/auth/state", "/api/auth/logout", "/api/auth/me",
-                         "/api/auth/workspace", "/api/auth/sign-out", "/api/auth/locale")
+                         "/api/auth/workspace", "/api/auth/sign-out", "/api/auth/locale",
+                         # The platform inbox is one list read from every origin (session_routes).
+                         "/api/auth/notifications", "/api/auth/notifications/unread-count",
+                         "/api/auth/notifications/mark", "/api/auth/notifications/read-all",
+                         "/api/auth/notifications/preferences")
 
     def _role_blocks(path: str) -> str | None:
         """Why this role refuses this path, or None.

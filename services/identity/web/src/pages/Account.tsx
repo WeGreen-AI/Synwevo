@@ -13,6 +13,7 @@ import ProfileSection from './account/ProfileSection';
 import EmailSection from './account/EmailSection';
 import PrivacySection from './account/PrivacySection';
 import ActivitySection from './account/ActivitySection';
+import NotificationsSection from './account/NotificationsSection';
 import { ErrorNotice, errorText, timeText, type Profile } from './account/common';
 import './account/account.css';
 export { default as AccountRecovery } from './account/Recovery';
@@ -88,7 +89,7 @@ export default function Account() {
         <p>{t('账户已停用。请在 {date} 前使用邮箱中的恢复链接取消注销。', { date: timeText(profile.deletion_due_at!, locale, profile.timezone) })}</p>
         <div><a href="/login" className="btn">{t('返回登录')}</a></div></section>}
       {profile?.status === 'active' && me && <div className="account-layout"><nav className="account-nav" aria-label={t('账户设置导航')}>
-        {[['profile', '个人资料'], ['email', '邮箱与口令'], ['security', '登录与安全'], ['devices', '登录的设备'], ['workspaces', '工作空间'], ['activity', '安全活动'], ['privacy', '数据与账户']].map(([id, label]) => <a key={id} href={`#${id}`}>{t(label)}</a>)}
+        {[['profile', '个人资料'], ['email', '邮箱与口令'], ['security', '登录与安全'], ['devices', '登录的设备'], ['workspaces', '工作空间'], ['notifications', '通知'], ['activity', '安全活动'], ['privacy', '数据与账户']].map(([id, label]) => <a key={id} href={`#${id}`}>{t(label)}</a>)}
       </nav><div className="account-content">
         <ProfileSection profile={profile} onChange={setProfile} /><EmailSection profile={profile} />
         <div id="security" className="col gap12 account-section"><PasskeySection timezone={profile.timezone} /><LinkedIdentities timezone={profile.timezone} /><MfaSection /></div>
@@ -102,6 +103,7 @@ export default function Account() {
               <td><button className="btn xs" disabled={busy} onClick={() => void revoke(row)}>{t(row.current ? '退出' : '结束')}</button></td></tr>)}</tbody></table></div>
           {rows?.length === 0 && <p className="muted">{t('没有活动的登录')}</p>}
         </section>
+        <NotificationsSection timezone={profile.timezone} />
         <section id="workspaces" className="card card-b col gap12 account-section"><h2 className="secttl">{t('工作空间')}</h2>
           <p className="tiny muted">{t('平台管理权限不会授予工作空间文档的读取权限。')}</p>
           <div className="account-table"><table className="tbl"><thead><tr><th>{t('名称')}</th><th>{t('我的角色')}</th><th>{t('可导出')}</th><th>{t('操作')}</th></tr></thead>

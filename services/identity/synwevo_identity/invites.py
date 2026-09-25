@@ -241,7 +241,7 @@ class Invites:
             if not row or not user or user["status"] != "active" or user["email_key"] != row["email_key"]:
                 raise ServiceError(404, "bad_invite", "找不到与你的账户相符的邀请")
             if row.get("declined_at"):
-                return {"id": row["id"], "workspace_id": row["workspace_id"], "state": "declined"}
+                return {"id": row["id"], "workspace_id": row["workspace_id"], "state": "declined", "invited_by": row["invited_by"]}
             if self._state(row) != "pending":
                 raise ServiceError(409, "invite_not_pending", "邀请已经处理或失效")
             # Durable withdrawal precedes commit. A later failure stays fail-closed on restore.
@@ -249,7 +249,7 @@ class Invites:
             record(self.store, "invitation_revoked", invitation_id=row["id"])
             self.store.execute("UPDATE invitations SET revoked_at=?,declined_at=? WHERE id=?",
                                (now(), now(), row["id"]))
-            return {"id": row["id"], "workspace_id": row["workspace_id"], "state": "declined"}
+            return {"id": row["id"], "workspace_id": row["workspace_id"], "state": "declined", "invited_by": row["invited_by"]}
 
     def accept(self, raw_token: str, **kwargs) -> dict:
         # Includes new-account creation and every authority check: a lost accept/revoke race
@@ -349,7 +349,7 @@ class Invites:
                 # workspace's defaults apply, as for anyone else joining.
                 t.execute("DELETE FROM app_entitlements WHERE workspace_id=? AND user_id=? "
                           "AND revoked_at IS NOT NULL", (r["workspace_id"], user["id"]))
-        return {"user": self.ident.get_user(user["id"]), "workspace_id": r["workspace_id"],
+        return {"user": self.ident.get_user(user["id"]), "workspace_id": r["workspace_id"], "invitation_id": r["id"], "invited_by": r["invited_by"],
                 "role": r["role"]}
 
     # ================================================================ email tokens

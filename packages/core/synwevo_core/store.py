@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -787,6 +787,9 @@ class Store:
         """)
         from .organizations import SCHEMA_SQL as ORGANIZATION_SCHEMA, V6_COLUMNS as ORGANIZATION_COLUMNS
         c.executescript(ORGANIZATION_SCHEMA)
+        # v9: the platform inbox (notifications, their e-mail deliveries, reader preferences).
+        from .notifications import SCHEMA as NOTIFICATION_SCHEMA
+        c.executescript(NOTIFICATION_SCHEMA)
         with self.tx() as t:
             for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}

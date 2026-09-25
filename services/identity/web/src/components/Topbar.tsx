@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { ApiError, useSession } from "@synwevo/auth-client";
+import { ApiError, useSession, NotificationBell } from "@synwevo/auth-client";
 import { Brand, Drawer, LanguageMenu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { chooseReturnTarget, rememberOrigin } from "../lib/returnTarget";
 import "./Topbar.messages";
@@ -67,13 +67,14 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
           {back && <a className="btn ghost" href={link(back.url)}>← {backLabel}</a>}
           {items}
           <hr />
-          <div className="row gap8 wrap" style={{ padding: "4px 8px" }}><LanguageMenu /></div>
+          <div className="row gap8 wrap" style={{ padding: "4px 8px" }}><NotificationBell preferencesHref={link("/account#notifications")} /><LanguageMenu /></div>
           {signOutButton}
         </Drawer>}
       </>
     ) : (
       <nav className="row wrap gap4" aria-label={t("账户导航")}>
         {items}
+        <NotificationBell preferencesHref={link("/account#notifications")} />
         <LanguageMenu />
         {signOutButton}
       </nav>

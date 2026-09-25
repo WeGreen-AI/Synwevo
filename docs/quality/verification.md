@@ -703,6 +703,46 @@ services/identity/tests/test_challenge.py .........                       [100%]
 `example.com` 后 `{"reason": "action", "token_action": null}`。**结论边界**：测试密钥的令牌不带 `action`，所以浏览器里的注册无法
 用测试密钥走到 202；这不是缺陷，是绑定检查在起作用。完整通路要等生产 Widget（账户持有人创建）。运行后隔离实例已恢复为无密钥配置。
 
+### 16.22 平台通知中心：真实事件、读者语言、邮件 outbox（CI-22）
+
+**接口与调度器测试**（`services/identity/tests/test_notifications.py`，6 项）：
+
+```
+services/identity/tests/test_notifications.py ......                       [100%]
+```
+
+覆盖：同一行按读者语言渲染（英文/繁體）与服务端链接；他人不可读、不可标记；`dedupe_key` 去重；`read-all` 只到打开列表时的
+`latest_seq`，之后到达的仍未读；偏好关掉类别则不落行，安全类别始终落行且投递 pending；偏好校验（未知类别、25:00、火星时区、
+非法预览）；路由层：owner 批量邀请已有账户的成员 → 成员收到英文标题的待处理项 → 标记已读不接受邀请（仍在「待处理」）→
+改口令产生 `critical` 行；调度器：两条投递恰好各寄一封、第二轮 0 封；汇总偏好把两条合成一封含两条正文的邮件；免打扰时段推迟
+普通通知而安全通知照发；邮件未配置时投递 `skipped`（原因可见）而站内行照常。
+
+**浏览器（隔离实例，Chromium 与 WebKit，390×844）**——先跑一遍 CI-19 的注册→邀请→接受闭环（真实产生 `invitation.received`
+→ 接受后 `done`，邀请人得到 `invitation.accepted`），再跑 `ui_e2e_inbox.py`：
+
+```
+== chromium (Google Chrome)
+  - bob.verify@example.test (zh-Hant) has 1 notifications, 1 unread
+  - drawer lists the same first item the API renders for this reader: Newcomer 50f520 已加入「Loop Team d946」
+  - marking one item read took the unread count from 1 to 0
+  - and back to 1 after marking it unread
+  - mark-all-read → 0 unread; the items stay listed
+  - preferences section saves (organization e-mail immediate→digest→immediate); the security row is locked on
+  - 0 CSP violations, 0 page errors
+== webkit — 同样通过
+```
+
+铃铛在手机视口位于账户外壳的菜单抽屉内；徽标数字与 `/api/auth/notifications/unread-count` 一致；读者的繁體界面下标题为繁體，
+成员名保持原文。跨源：同一账户会话经单点登录进入门户与 Synwevo Docs 后，两处顶栏的铃铛与未读数来自各自源的接口、同一张表：
+
+```
+  - portal bell present; portal origin reports 1 unread from the shared table
+  - Synwevo Docs (after single sign-on) shows the same bell, count 1 and the same first item from its own origin
+```
+
+第一次跑时 Docs 与门户对 `/api/auth/notifications/*` 回 404 `not_in_this_role`——角色门只放行明确列出的账户路径；把五条收件箱路径
+加入 `APP_ACCOUNT_PATHS` 后通过，并有 `tests/integration/test_readyz_components.py` 断言三种角色都以 401（无会话）而非 404 应答。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

@@ -122,15 +122,35 @@ def build_router(store, ident, sessions, audit, invites, mailer) -> APIRouter:
                      limit: int = Query(50, ge=1, le=200)):
         return service(request).members(oid, session(request)["user_id"], q=q, role=role, offset=offset, limit=limit)
 
+    def _inbox(request: Request, oid: str, actor_id: str, member_id: str, kind: str, **params) -> None:
+        """An inbox row for the affected member; the change stands whether or not the row lands."""
+        notifier = getattr(request.app.state, "notifier", None)
+        if notifier is None or member_id == actor_id:
+            return
+        try:
+            org = store.one("SELECT name FROM organizations WHERE id=?", (oid,)) or {}
+            actor = store.one("SELECT display_name, email FROM users WHERE id=?", (actor_id,)) or {}
+            notifier.emit(member_id, kind, params={"organization": org.get("name"), "actor": actor.get("display_name") or actor.get("email") or "—", **params},
+                          organization_id=oid, object_kind="organization_membership", object_id=member_id,
+                          target={"origin": "accounts", "path": "/organizations"})
+        except Exception as e:  # noqa: BLE001
+            print(f"[synwevo] notification not recorded ({kind}): {type(e).__name__}", flush=True)
+
     @r.patch("/{oid}/members/{member_id}")
     def change_member(request: Request, oid: str, member_id: str, body: dict = Body(...)):
-        return write(request, lambda orgs, uid: {"member": orgs.change_role(oid, uid, member_id,
-                     body.get("role"), reason=body.get("reason"))}, sensitive=True)
+        def op(orgs, uid):
+            member = orgs.change_role(oid, uid, member_id, body.get("role"), reason=body.get("reason"))
+            _inbox(request, oid, uid, member_id, "organization.role_changed", role=(member or {}).get("role") or body.get("role"))
+            return {"member": member}
+        return write(request, op, sensitive=True)
 
     @r.delete("/{oid}/members/{member_id}")
     def remove_member(request: Request, oid: str, member_id: str, body: dict = Body(...)):
-        return write(request, lambda orgs, uid: orgs.remove_member(oid, uid, member_id, reason=body.get("reason")),
-                     sensitive=True)
+        def op(orgs, uid):
+            out = orgs.remove_member(oid, uid, member_id, reason=body.get("reason"))
+            _inbox(request, oid, uid, member_id, "member.removed", workspace=(store.one("SELECT name FROM organizations WHERE id=?", (oid,)) or {}).get("name"))
+            return out
+        return write(request, op, sensitive=True)
 
     @r.post("/{oid}/leave")
     def leave(request: Request, oid: str, body: dict = Body(...)):
