@@ -99,9 +99,12 @@ def test_verifier_sends_secret_and_idempotency_key_and_checks_action_and_hostnam
     assert len(double.calls) == 6, "missing and malformed tokens never reach the network"
 
 
-def test_verifier_retries_once_with_the_same_key_then_reports_an_outage(double):
+def test_verifier_retries_once_with_the_same_key_then_reports_an_outage(double, monkeypatch):
     t = C.Turnstile(C.Policy(SITE, SECRET, frozenset({HOST}), 5), transport=double)
-    C.time.sleep = lambda s: None
+    # Patched for this test only: the earlier module-level assignment leaked a no-op sleep into
+    # every later test of the session, which spun their polling loops and, on the CI runner,
+    # stretched the suite past the job's timeout.
+    monkeypatch.setattr(C.time, "sleep", lambda s: None)
     double.script = [ConnectionError("boom")]; double.answer("register")
     assert t.verify("tok", action="register").ok
     assert double.calls[-1]["idempotency_key"] == double.calls[-2]["idempotency_key"]
