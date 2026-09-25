@@ -35,6 +35,8 @@ from pathlib import Path
 
 from playwright.sync_api import Browser, Page, expect, sync_playwright
 
+from localhost_proxy import LocalhostProxy  # sibling module: this directory is first on the import path when run as a script
+
 REPO = Path(__file__).resolve().parents[3]
 SHOTS = REPO / "docs" / "screenshots"
 SHOTS.mkdir(parents=True, exist_ok=True)
@@ -71,8 +73,8 @@ def sign_in(page: Page, accounts: str, email: str, password: str):
     page.wait_for_url(lambda u: "/login" not in u, timeout=15000)
 
 
-def reachable(browser: Browser, base: str) -> bool:
-    ctx = browser.new_context()
+def reachable(browser: Browser, base: str, ctx_extra: dict | None = None) -> bool:
+    ctx = browser.new_context(**(ctx_extra or {}))
     try:
         ctx.new_page().goto(base + "/healthz", timeout=5000)
         return True
@@ -82,14 +84,16 @@ def reachable(browser: Browser, base: str) -> bool:
         ctx.close()
 
 
-def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, email: str, password: str) -> list[str]:
+def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, email: str, password: str,
+        ctx_extra: dict | None = None) -> list[str]:
     notes: list[str] = []
-    cross_origin = reachable(browser, portal) and reachable(browser, docs)
+    ctx_extra = ctx_extra or {}
+    cross_origin = reachable(browser, portal, ctx_extra) and reachable(browser, docs, ctx_extra)
     if not cross_origin:
         notes.append(f"{engine}: {portal} / {docs} not resolvable in this engine (system resolver has no *.localhost); portal and Docs checks not run here")
     for width, tag in ((1280, "desktop"), (375, "phone")):
         ctx = browser.new_context(viewport={"width": width, "height": 720 if width > 400 else 740}, locale="zh-CN",
-                                  is_mobile=width < 400, has_touch=width < 400)
+                                  is_mobile=width < 400, has_touch=width < 400, **ctx_extra)
         page = ctx.new_page()
         probe = Probe(page)
         csp: list[str] = []
@@ -310,8 +314,9 @@ def main():
     accounts, portal, docs = (require_test_instance(a) for a in args[:3])
     email, password = args[3], args[4]
     want_webkit = "--webkit" in sys.argv
-    # WebKit resolves hostnames through the system, which has no *.localhost entries; the account
-    # service is the same process on the loopback address, so its shell is checked there.
+    # WebKit resolves hostnames through the system, which has no *.localhost entries. A local
+    # forward proxy (localhost_proxy.py) resolves them to the loopback address while the browser
+    # keeps one cookie jar per origin, so the cross-origin sign-on hops run for real in WebKit too.
     loop = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--webkit-accounts=")), None)
 
     def show(engine: str, notes: list[str]):
@@ -332,8 +337,15 @@ def main():
                 show("webkit", [f"not run: {type(e).__name__}: {str(e).splitlines()[0][:120]}"])
             else:
                 try:
-                    base = require_test_instance(loop) if loop else accounts
-                    show(f"webkit (Playwright build; account origin {base})", run(wk, "webkit", base, portal, docs, email, password))
+                    if reachable(wk, portal):
+                        show("webkit (Playwright build)", run(wk, "webkit", accounts, portal, docs, email, password))
+                    elif loop:
+                        base = require_test_instance(loop)
+                        show(f"webkit (Playwright build; account origin {base}, no proxy)", run(wk, "webkit", base, portal, docs, email, password))
+                    else:
+                        with LocalhostProxy() as proxy:
+                            show(f"webkit (Playwright build; *.localhost through {proxy.url})",
+                                 run(wk, "webkit", accounts, portal, docs, email, password, {"proxy": {"server": proxy.url}}))
                 finally:
                     wk.close()
 

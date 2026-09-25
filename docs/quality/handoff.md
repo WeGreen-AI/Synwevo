@@ -65,6 +65,8 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-05 | 共享菜单/抽屉键盘模式回归；WebKit 焦点陷阱与开启者回焦两处修复 | 已修复，双引擎通过，待部署 | 后续所有对话框都经 `useModalFocus`，无需逐个处理 |
 | CI-06 | Cloudflare 信标与 CSP：仅 `CF-Ray` 请求放行 Web Analytics 两个源 | 已实现，7 项契约测试通过，`59aa880` 已推送 | 部署后用匿名 Chromium 复查线上 CSP 违规应为 0 |
 | CI-07 | 对比度采样加入 `ui_mobile_audit.py`（SC 1.4.3） | 采样器已验证；两组账户 0 发现，无需改动 | 每次改令牌或新增文本样式后重跑 |
+| CI-08 | WebKit 经本地代理覆盖三个源；Docs 手机主链路 `E2E_ENGINE=webkit` | 已实现，WebKit 与 Chromium 同等覆盖 | 每次发布前两引擎都跑 |
+| CI-09 | 手机提示条遮挡对话框主按钮（WebKit 发现） | 已修复，待部署 | — |
 
 已核对、无需改动（记录以免重复研究）：
 

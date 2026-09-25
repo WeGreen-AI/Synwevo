@@ -80,7 +80,10 @@ def main():
     with target(ARG_BASE) as base:
         t0 = time.time()
         with sync_playwright() as p:
-            browser = p.chromium.launch(channel="chrome", headless=True)
+            # E2E_ENGINE=webkit runs the same flow in Playwright's WebKit build (the instance is on
+            # 127.0.0.1, so no hostname resolution is involved); default is the installed Chrome.
+            engine = os.environ.get("E2E_ENGINE", "chromium")
+            browser = p.webkit.launch(headless=True) if engine == "webkit" else p.chromium.launch(channel="chrome", headless=True)
             ctx = browser.new_context(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=2, is_mobile=True,
                                       has_touch=True, accept_downloads=True, locale="zh-CN")
             page = ctx.new_page()
@@ -120,7 +123,12 @@ def main():
             dlg.locator("select").filter(has_text="（不设置）").select_option("客户编号")
             expect(dlg.locator(".statbox .v").first).to_have_text("100", timeout=10000)
             dlg.get_by_role("button", name="确认样本规则").click()
-            expect(page.locator(".modal")).to_have_count(0)
+            try:
+                expect(page.locator(".modal")).to_have_count(0)
+            except AssertionError:
+                print("[diag] rule dialog still open:", page.locator(".modal").first.inner_text()[:500].replace("\n", " | "), flush=True)
+                shot(page, "25_手机_样本规则_失败")
+                raise
             # 6. mappings across the panel switch
             map_field(page, "测试钱磊敏", "客户名称")
             map_field(page, "000001", "客户编号")
@@ -163,7 +171,7 @@ def main():
             assert "签约日期：2025年1月4日；合同金额：人民币 1,123.45 元。" in text, text
             assert not errors, errors
             browser.close()
-        print(f"phone flow ok in {time.time() - t0:.1f}s: 100 documents generated and read back at {WIDTH}×{HEIGHT}")
+        print(f"phone flow ok in {time.time() - t0:.1f}s: 100 documents generated and read back at {WIDTH}×{HEIGHT} ({os.environ.get('E2E_ENGINE', 'chromium')})")
 
 
 if __name__ == "__main__":

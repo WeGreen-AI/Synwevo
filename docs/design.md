@@ -154,6 +154,7 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
     两侧选择，「建立映射」始终可达；侧面板不渲染 34px 折叠条。手机能完成上传→映射→预览→生成→下载
     （`apps/docs/scripts/ui_e2e_mobile.py`）。
   - 不禁止浏览器缩放，不全局拦截触摸滚动；用 `100dvh` 与 `env(safe-area-inset-bottom)`。
+  - 提示条（toast）在 ≤620 px 置顶、整行宽：手机上对话框底栏就是主按钮所在，底部提示条会盖住它（CI-09）。容器不拦截指针。
 
 ## 6. 覆盖清单（本轮迁移）
 

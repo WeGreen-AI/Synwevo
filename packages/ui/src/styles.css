@@ -403,7 +403,14 @@ button.opt { width: 100%; text-align: left; background: var(--surface); font: in
 .progress.ok > div { background: var(--ok); }
 
 /* toasts */
-.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 200; max-width: 420px; }
+.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 200; max-width: 420px; pointer-events: none; }
+.toasts > * { pointer-events: auto; }
+/* On a phone the dialog footer — and its primary action — sits at the bottom of the screen, where
+   a toast would cover it (the WebKit phone run clicked a toast instead of 确认). Toasts stack at
+   the top there, under the safe area, full width minus the gutters. */
+@media (max-width: 620px) {
+  .toasts, .toasts.flip { top: calc(8px + env(safe-area-inset-top)); bottom: auto; left: 12px; right: 12px; max-width: none; }
+}
 /* moved out of the way while the focused control would sit underneath it (WCAG 2.4.11) */
 .toasts.flip { right: auto; left: 16px; }
 .toast { display: flex; align-items: flex-start; gap: 8px; background: var(--surface); color: var(--text); padding: 10px 8px 10px 14px; border-radius: var(--radius); border: 1px solid var(--line); border-left: 4px solid var(--accent); box-shadow: var(--shadow-lg); font-size: 13px; line-height: 1.45; animation: tin var(--dur-2) var(--ease); }
