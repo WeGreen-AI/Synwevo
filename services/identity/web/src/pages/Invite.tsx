@@ -41,7 +41,7 @@ function Invitation({ token }: { token: string }) {
   }); }
   return <AuthFrame title={t(error ? "邀请链接无法打开" : dead ? dead[0] : "一起开始工作")} description={t(dead ? dead[1] : "查看邀请信息，再决定是否加入。打开链接不会自动接受邀请。")}>
     <FlowError error={error || (!confirmDecline && action.error)} />
-    {error ? <><button type="button" className="btn" onClick={() => setRetry(v => v + 1)}>{t("重试")}</button><a href="/login" onClick={clearInvitation}>{t("前往登录")}</a></>
+    {error ? <><button type="button" className="btn" onClick={() => setRetry(v => v + 1)}>{t("重试")}</button><a className="action-link" href="/login" onClick={clearInvitation}>{t("前往登录")}</a></>
       : !preview ? <Loading /> : dead ? <a className="btn primary" href="/login" onClick={clearInvitation}>{t("前往登录")}</a> : <>
         <dl className="flow-facts"><dt>{t("工作空间")}</dt><dd>{preview.workspace || t("工作空间")}</dd><dt>{t("邀请邮箱")}</dt><dd>{preview.email}</dd>
           <dt>{t("你的角色")}</dt><dd>{t(role)}</dd>{preview.inviter && <><dt>{t("邀请人")}</dt><dd>{preview.inviter}</dd></>}

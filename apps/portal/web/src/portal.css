@@ -12,7 +12,7 @@
 .pt-top { position: sticky; top: 0; z-index: 20; min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 24px;
   padding: 8px max(20px, calc((100% - var(--content-w) - 80px) / 2)); background: var(--surface); border-bottom: 1px solid var(--line); }
 .pt-nav, .pt-account { display: flex; align-items: center; justify-content: flex-end; gap: 4px 18px; flex-wrap: wrap; font-size: 13px; }
-.pt-nav a, .pt-link { color: var(--text-2); text-decoration: none; font-weight: 500; }
+.pt-nav a, .pt-link { color: var(--text-2); text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; min-height: 24px; }
 .pt-nav a:hover, .pt-link:hover, .pt-footer a:hover { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 4px; }
 .pt-nav .btn, .pt-nav .language-menu select { font-size: 13px; }
 /* Holds the place of the sign-in / enter link while the session is still being confirmed. */
@@ -32,7 +32,7 @@
 .pt-muted, .pt-hint { color: var(--muted); }
 .pt-hint { font-size: 12px; }
 .pt-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
-.pt-text-action { color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 550; }
+.pt-text-action { color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 550; display: inline-flex; align-items: center; min-height: 24px; }
 .pt-text-action:hover { color: var(--accent-strong); text-decoration: underline; }
 .pt-text-action span { margin-left: 8px; }
 
@@ -167,7 +167,8 @@
   .pt-dashboard-head { align-items: flex-start; flex-direction: column; margin: 6px 0 24px; } .pt-dashboard-head h1 { font-size: 26px; }
   .pt-dashboard { grid-template-columns: 1fr; gap: 26px; } .pt-spaces { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 18px; } .pt-space-group { margin-top: 16px; }
   .pt-account { gap: 6px 12px; }
-  .pt-account-btn { gap: 8px; min-height: 40px; } .pt-account-btn .pt-avatar { width: 26px; height: 26px; font-size: 12px; }
+  .pt-account-btn { gap: 8px; min-height: 40px; }
+  .pt-nav a, .pt-link, .pt-text-action { min-height: 32px; } .pt-account-btn .pt-avatar { width: 26px; height: 26px; font-size: 12px; }
   .pt-section-head { gap: 10px; } .pt-section-head h2 { font-size: 19px; }
   .pt-app-card { padding: 20px 16px; gap: 16px; } .pt-app-body strong { font-size: 16px; }
   .pt-empty { padding: 24px; }

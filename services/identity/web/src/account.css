@@ -133,7 +133,7 @@ table.gov tr.sel th { background: var(--accent-weak); }
 }
 
 /* ---------------------------------------------------------------- identity providers (admin) */
-.idp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.idp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 12px; }
 .idp-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; }
 .idp-card.on { border-color: var(--accent-line); }
 .idp-card h3 { font-size: 15px; margin: 0; }

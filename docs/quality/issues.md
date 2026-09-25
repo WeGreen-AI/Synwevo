@@ -4,6 +4,12 @@
 
 当前轮（2026-09-25）的范围、状态与执行证据统一维护在 [handoff.md](handoff.md)。以下 DW 表及修复记录是历史记录，日期、旧路径和旧 CLI-only UI 约束不代表当前状态；管理员 API 台的当前权限以 [permissions.md](../security/permissions.md) 为准。
 
+## 持续迭代（2026-09-25 起，Claude Code）
+
+| ID | 问题与基线 | 依据 | 修复 | 验证 | 状态 |
+|---|---|---|---|---|---|
+| CI-01 | 手机上注册/登录/账户/组织/后台/API 台的独立链接、单选行、文件输入只有 19–22 px 高，后台「登录方式」卡片在 320 px 越出 5 px；用户反馈"手机上实际操作"未覆盖这些页面 | WCAG 2.2 SC 1.4.10（320 px 回流，AA）、SC 2.5.8（24 px 目标，AA）、SC 2.5.5（44 px，AAA）；Fluent 2 断点与 44/48 触控目标 | 共享层：`label.check`、独立操作链接、`input[type=file]` ≥24（粗指针 32/40）；`.btn.primary`/提交 44；`.idp-grid` `minmax(min(300px,100%),1fr)` | `ui_mobile_audit.py` 320/375/768 三宽度 26 页：修复前 30 页次有发现 → 修复后 0；守卫、typecheck、单测、外壳回归通过 | 已修复，工具进回归清单（[verification.md §16.5](verification.md)） |
+
 ## 2026-09-25 导航、弹层与移动端轮（Claude Code）
 
 用户反馈八条，逐条在隔离实例（317xx，`instance=test`）复现后定位。每条的根因来自 DOM/网络/代码，不来自截图推断。

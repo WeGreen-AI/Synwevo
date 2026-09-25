@@ -13,7 +13,7 @@
 .account-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .account-avatar { width: 72px; height: 72px; border-radius: 24px; display: grid; place-items: center; overflow: hidden; background: var(--panel-2); border: 1px solid var(--line); font-size: 26px; color: var(--accent-strong); flex-shrink: 0; }
 .account-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.account-table { width: 100%; overflow-x: auto; }
+.account-table { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .account-danger, .account-divider { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 18px; }
 .account-danger { border-left: 3px solid var(--err); padding-left: 16px; }
 .account-center p { line-height: 1.65; }

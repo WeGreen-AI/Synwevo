@@ -336,6 +336,37 @@ cd packages/ui && npm test                       # 16 项（含 layer.test.ts 5 
 
 1 项 skipped 是既有的 LICENSE 检查，与本轮无关。
 
+### 16.5 回流与触控目标审计（持续迭代 CI-01，2026-09-25）
+
+**依据**（访问日期 2026-09-25）：WCAG 2.2 SC 1.4.10 Reflow（AA）——纵向滚动内容在 320 CSS px 宽度下不得要求二维滚动，
+数据表格等本质二维的内容例外但其表头/搜索/分页仍须回流（w3.org/WAI/WCAG22/Understanding/reflow）；SC 2.5.8 Target Size (Minimum)（AA）
+——指针目标至少 24×24 CSS px，句中内联链接例外（…/target-size-minimum）；SC 2.5.5（AAA）44×44 作为主要操作的增强目标；
+Fluent 2 Layout：断点 small 320–479 / medium 480–639 / large 640–1023 / x-large ≥1024，触控目标 iOS 与 Web 44×44、Android 48×48
+（fluent2.microsoft.design/layout）。这些是可核查的官方规范，不是从竞品界面推断。
+
+**工具**：`services/identity/scripts/ui_mobile_audit.py`——Chromium 手机模拟下逐页测 `scrollWidth`、越出视口的可见元素（允许
+`.list-wrap`/`.account-table`/表格画布等自身滚动容器）、所有指针目标的最小边（<24 报告）、主要操作（<44 报告为信息）。只驾驭
+`instance=test` 实例。页面：登录/注册/找回/邀请/404、账户/组织/引导/成员/邀请、后台 8 页签、API 台、门户首页与仪表盘、Docs 首页与工作台。
+
+```bash
+.venv/bin/python services/identity/scripts/ui_mobile_audit.py http://accounts.localhost:31770 \
+    http://portal.localhost:31769 http://docweave.localhost:31765 <管理员账户> <口令> --widths=320,375,768
+```
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 页面级横向滚动（`scrollWidth > innerWidth`） | 0 页 | 0 页 |
+| 越出视口的元素（320 px） | 后台「登录方式」卡片右缘 325 px（`minmax(300px,1fr)`） | 0 |
+| 目标 < 24 px 的页面（3 个宽度合计） | 30 页次：`a.authfoot`「忘记口令？/返回登录」、邀请页「前往登录」、`.org-actions a`、门户 `.pt-link`/`.pt-text-action`（20–22 px）、`label.check` 单选/复选行（19–20 px）、头像 `input[type=file]`（20 px） | 0 |
+| 主要操作 < 44 px（粗指针，信息项） | `.btn.sm.primary` 40 px；后台页签 42 px 宽 × 44 px 高 | `.btn.primary` 与 `submit` 在粗指针下 44 px；页签宽度按文字（高 44）保留 |
+
+修复都在共享层：`label.check` 最小 24 px（粗指针 32）；独立操作链接（`a.authfoot`、`.org-actions a`、`.action-link`、门户 `.pt-link`/
+`.pt-text-action`）改为 `inline-flex` + 最小高 24（粗指针 32）；`input[type=file]` 24/40；`.btn.primary` 与提交按钮在粗指针下 44；
+`.idp-grid` 用 `minmax(min(300px,100%),1fr)`。账户页会话表本来就在 `.account-table { overflow-x:auto }` 内滚动，审计把它列为
+允许的二维容器（首轮的 8 处"越界"是审计未识别该容器，非页面缺陷）。三个宽度重跑：**0 页有回流或目标尺寸发现**。
+
+这仍是 Chromium 引擎测量，不是真机；真机项见 16.2。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

@@ -145,7 +145,9 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
 * 窄屏（内容驱动断点：账户 720px、门户 760px、Docs 900px；在 320/360/390/430/768 上核对）：
   - 导航收进 `Drawer`（右侧、焦点陷阱、背景不可交互、Esc/遮罩关闭）；返回工作的链接留在栏内。
   - 表格保留列并在 `.list-wrap` 内横向滚动，选择列 sticky 左、操作列 sticky 右；批量条贴底并加安全区。
-  - 触控目标：`@media (pointer: coarse)` 下 `.btn`/菜单项/页签 ≥ 44px，`.btn.sm` ≥ 40px；不改鼠标下的外观。
+  - 目标尺寸：所有指针目标 ≥ 24×24 CSS px（WCAG 2.2 SC 2.5.8，句中内联链接除外）——独立操作链接、单选/复选行、文件输入也算；
+    `@media (pointer: coarse)` 下 `.btn`/主要操作/提交/菜单项/页签 ≥ 44px（SC 2.5.5、Fluent 2 iOS/Web 44），`.btn.sm` ≥ 40px，链接与勾选行 ≥ 32px；不改鼠标下的外观。
+    回归：`services/identity/scripts/ui_mobile_audit.py`（320/375/768）。
   - Docs 工作台 ≤ 900px：「文件 / 来源 / 目标 / 映射」一次只显示一个面板，占满剩余高度；选择栏跨面板保留
     两侧选择，「建立映射」始终可达；侧面板不渲染 34px 折叠条。手机能完成上传→映射→预览→生成→下载
     （`apps/docs/scripts/ui_e2e_mobile.py`）。
