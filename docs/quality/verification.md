@@ -536,6 +536,18 @@ Bob（375/1280，默认语言）与管理员（375/1280，英文）重审 0 发�
 注意：本机 `.venv` 里的 SDK 是非可编辑安装（`pip install apps/docs/sdk/python`），改 SDK 源码后要重新安装才会被测试与验收脚本用到；
 本次首次复跑"通过"的一次是时序未触发限流，不是修复生效，已以重装后的第三次复跑为准。
 
+### 16.15 API 台浏览器验收复跑（CI-15）
+
+`tests/integration/api_platform_browser_acceptance.py`（真实 Chrome，1440×1050，en-US；管理员在 API 台发起凭据申请 → 空间所有者在
+账户页批准 → 管理员签发并只在弹层里看一次秘密 → 已安装的 Python SDK 用该凭据经真实 Docs HTTP 完成来源/模板/字段/规则/映射/预检/
+原生预览/任务/ZIP/12 份 DOCX 读回 → 轮换与撤销后被拒；门户 SSO 不参与）在 317xx 隔离实例上复跑，**通过**：`page_errors: []`、
+`blocked_external_requests: []`。
+
+脚本本身改了两处，都是验收基础设施而非产品：① 原来把 Docs 源硬编码为上一轮批准的 `docweave.localhost:28765`，改为与其他脚本
+一致的「`/healthz` 报告 `instance=test` 才驾驭」规则；② 三处 `wait_for_function`/`evaluate` 传的是**表达式字符串**，Playwright 用
+eval 求值，被强制 CSP（无 `'unsafe-eval'`）拒绝——改成函数字符串后由 `callFunctionOn` 执行，CSP 保持强制。这也证明 API 台整个
+签发流程在强制 CSP 下没有依赖 eval。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

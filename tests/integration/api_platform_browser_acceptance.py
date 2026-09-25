@@ -261,7 +261,11 @@ def run(fixture_file: Path, output: Path):
             "accounts.localhost", "docweave.localhost", "portal.localhost"}, "Only isolated local origins are accepted"
         assert parts.port and 1024 <= parts.port <= 65535
         assert not parts.username and not parts.password and not parts.query and not parts.fragment and not parts.path
-    assert fixture["docs"] == "http://docweave.localhost:28765", "Use the explicitly approved live synthetic Docs service"
+    # The same rule as every other browser script: only a server that says it is a test instance.
+    import urllib.request
+    for origin in origins:
+        with urllib.request.urlopen(origin + "/healthz", timeout=5) as r:
+            assert json.loads(r.read().decode()).get("instance") == "test", f"{origin} is not a test-marked instance; refusing"
     assert all(identity["email"].endswith("@example.test") for identity in fixture["identities"].values())
     data = Path(fixture["data"]).resolve()
     assert any(data.is_relative_to(root) for root in (Path("/tmp").resolve(), Path(tempfile.gettempdir()).resolve()))
@@ -294,7 +298,7 @@ def run(fixture_file: Path, output: Path):
             page.get_by_role("textbox", name="Email", exact=True).fill(identity["email"])
             page.get_by_label("Password", exact=True).fill(identity["password"])
             page.get_by_role("button", name="Sign in", exact=True).click()
-            page.wait_for_function("location.pathname !== '/login'")
+            page.wait_for_function("() => location.pathname !== '/login'")
             assert "/verify-email" not in page.url, "Verify the synthetic fixture mailbox before running acceptance"
             return context, page
 
@@ -313,7 +317,7 @@ def run(fixture_file: Path, output: Path):
             dialog.get_by_role("textbox", name=copy["reason"], exact=True).fill(copy["audit_reason"])
             dialog.screenshot(path=str(output / f"confirmation-{locale}.png"), mask=[dialog.locator("input")], animations="disabled")
             dialog.get_by_role("button", name=copy["confirm"], exact=True).click()
-            page.wait_for_function("!document.querySelector('[role=alertdialog]') || document.querySelector('[role=alertdialog] input[type=password]')")
+            page.wait_for_function("() => !document.querySelector('[role=alertdialog]') || document.querySelector('[role=alertdialog] input[type=password]')")
             if dialog.is_visible():
                 dialog.get_by_label(copy["password"], exact=True).fill(identity["password"])
                 dialog.get_by_role("button", name=copy["confirm"], exact=True).click()
@@ -329,7 +333,7 @@ def run(fixture_file: Path, output: Path):
             secrets.append(token)
             dialog.get_by_role("button", name=copy["close"], exact=True).click()
             expect(dialog).not_to_be_visible()
-            stored = page.evaluate("JSON.stringify({local: {...localStorage}, session: {...sessionStorage}})")
+            stored = page.evaluate("() => JSON.stringify({local: {...localStorage}, session: {...sessionStorage}})")
             assert token not in stored, "One-time secret must not enter browser storage"
             return token
 

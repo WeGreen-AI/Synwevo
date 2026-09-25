@@ -72,6 +72,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-12 | 英文残留：设备句子与个人空间默认名改为按语言 | 已修复，待部署 | 审计 `--locale=en` 纳入回归 |
 | CI-13 | 顶栏溢出与空间切换器塌缩（共享 `.topbar` 换行） | 已修复，待部署 | — |
 | CI-14 | SDK 对网关 `rate_limited` 的有界重试；SDK/CLI 与 Node 验收复跑 | 已修复并复跑通过 | SDK 源码改动后 `pip install apps/docs/sdk/python` 重装再跑验收 |
+| CI-15 | API 台浏览器验收在强制 CSP 下复跑（脚本改用 instance=test 规则与函数形式页面脚本） | 通过 | 每个里程碑复跑；夹具在 scratchpad（0600，合成账户） |
 
 已核对、无需改动（记录以免重复研究）：
 
