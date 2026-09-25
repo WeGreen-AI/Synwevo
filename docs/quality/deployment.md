@@ -1,5 +1,19 @@
 # Vultr Tokyo deployment — current record
 
+## 2026-09-25 continuous iteration — CI-01 deployed, CI-02/03/04 in flight
+
+**Running source:** `9b10602d362feffa8af05079703162adf15727b0` (CI-01: WCAG 2.2 reflow and target-size minimums on every
+shell). [Actions 36130548667](https://github.com/WeGreen-AI/Synwevo/actions/runs/36130548667) passed verification and the
+restricted SSH deployment; pre-upgrade backup `/opt/synwevo/backups/20260925T115851Z` (`{"deployed": "synwevo:9b10602…"}`).
+Anonymous checks ~12:05 UTC: `/readyz` ready on all three hosts, the account shell's bundles 200 and the shipped stylesheet
+carries the new 24 px rule.
+
+**Pushed, awaiting their runs:** `ccdd950` (CI-02 security headers on every response — nosniff, enforced CSP, HSTS over TLS,
+COOP/CORP, Permissions-Policy; CI-03 mapping-dialog wording) and the CI-04 content-state fixes that follow this record. The
+results are appended here when the receiver reports them. After CI-02 lands, `curl -I` on the three hosts must show the headers
+listed in [api.md §2](../integration/api.md); should a browser console report a CSP block, `SYNWEVO_CSP` in the affected
+service's `runtime.env` is the documented temporary measure ([operations.md §4.0](../operations.md)).
+
 ## 2026-09-25 navigation, layers, phone layouts and step-up admin auth — deployed
 
 Authorized by the user's standing instruction for this round (commit, push and deploy through the

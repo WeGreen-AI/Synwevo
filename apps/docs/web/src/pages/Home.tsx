@@ -187,7 +187,7 @@ export default function Home() {
           {page && (page.total > 0 || searching) && (
             <>
               <div className="card" style={{ overflow: "auto" }} aria-busy={loading}>
-                <table className="tbl" aria-label={tr("项目列表")} aria-rowcount={page.total + 1}>
+                <div className="tbl-wrap"><table className="tbl" aria-label={tr("项目列表")} aria-rowcount={page.total + 1}>
                   <thead>
                     <tr><th>{tr("名称")}</th><th>{tr("模板")}</th><th>{tr("来源")}</th><th>{tr("样本规则")}</th><th>{tr("最近任务")}</th><th>{tr("更新")}</th><th><span className="sr-only">{tr("操作")}</span></th></tr>
                   </thead>
@@ -231,7 +231,7 @@ export default function Home() {
                       <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("没有匹配「")}{params.q}{tr("」的项目")}</td></tr>
                     )}
                   </tbody>
-                </table>
+                </table></div>
               </div>
               <div className="row mt8 wrap tiny muted">
                 <span className="grow" aria-live="polite">
@@ -253,7 +253,7 @@ export default function Home() {
             </div>
           )}
           <div className="card" style={{ overflow: "auto" }}>
-            <table className="tbl" aria-label={tr("模板库")}>
+            <div className="tbl-wrap"><table className="tbl" aria-label={tr("模板库")}>
               <thead><tr><th>{tr("名称")}</th><th>{tr("格式")}</th><th>{tr("来源")}</th><th>{tr("字段")}</th><th>{tr("更新")}</th><th><span className="sr-only">{tr("操作")}</span></th></tr></thead>
               <tbody>
                 {(templates || []).map((t) => (
@@ -276,7 +276,7 @@ export default function Home() {
                 {templates && !templates.length && !tplErr && <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("模板在项目中上传或新建后会出现在这里，可复制后用于其他项目")}</td></tr>}
                 {!templates && !tplErr && <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("加载模板…")}</td></tr>}
               </tbody>
-            </table>
+            </table></div>
           </div>
           <div className="tiny muted mt16">{tr("所有文件只在本机/自有服务器处理，不会发送到外部服务。")}</div>
         </div>

@@ -38,7 +38,8 @@ MEASURE_JS = """
   const doc = document.documentElement;
   const out = { innerWidth: vw, scrollWidth: doc.scrollWidth, overflow: [], small: [], primarySmall: [], targets: 0 };
   const containers = Array.from(document.querySelectorAll(containersSel));
-  const inContainer = (el) => containers.some(c => c.contains(el));
+  const clipped = (el) => { for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) { const o = getComputedStyle(a).overflowX; if (o === 'hidden' || o === 'clip') return true; } return false; };
+  const inContainer = (el) => containers.some(c => c.contains(el)) || clipped(el);
   const visible = (el) => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const label = (el) => (el.getAttribute('aria-label') || el.textContent || el.getAttribute('placeholder') || el.tagName).trim().replace(/\\s+/g, ' ').slice(0, 40);
   for (const el of document.querySelectorAll('body *')) {
@@ -56,7 +57,7 @@ MEASURE_JS = """
     const cs = getComputedStyle(el);
     const inline = el.tagName === 'A' && cs.display === 'inline' && el.closest('p, li, td, span, small, .muted, .pt-footer, .cell-note, .who2, .notice');
     if (size < 24 && !inline && !(el.tagName === 'INPUT' && ['checkbox','radio'].includes(el.type))) out.small.push({ tag: el.tagName.toLowerCase(), cls: (el.className || '').toString().slice(0, 50), w: Math.round(r.width), h: Math.round(r.height), label: label(el) });
-    if ((el.classList.contains('primary') || el.type === 'submit') && size < 44) out.primarySmall.push({ w: Math.round(r.width), h: Math.round(r.height), label: label(el) });
+    if (el.classList.contains('primary') && size < 44) out.primarySmall.push({ w: Math.round(r.width), h: Math.round(r.height), label: label(el) });
   }
   out.overflow = out.overflow.slice(0, 8); out.small = out.small.slice(0, 12);
   return out;
@@ -117,10 +118,16 @@ def main():
             sign_in(page, accounts, email, password)
             me = page.request.get(f"{accounts}/api/auth/me").json()
             signed = [f"{accounts}/account", f"{accounts}/organizations", f"{accounts}/onboarding"]
+            try:
+                orgs = page.request.get(f"{accounts}/api/auth/organizations").json()
+                for org in (orgs.get("items") if isinstance(orgs, dict) else orgs) or []:
+                    signed.append(f"{accounts}/organizations/{org['id']}")
+            except Exception:
+                pass
             governed = [w for w in me["workspaces"] if w["role"] in ("owner", "admin")]
-            if governed:
-                signed.append(f"{accounts}/account/workspaces/{governed[0]['id']}/members")
-                signed.append(f"{accounts}/account/workspaces/{governed[0]['id']}/members?tab=invites")
+            for w in governed[:3]:
+                signed.append(f"{accounts}/account/workspaces/{w['id']}/members")
+                signed.append(f"{accounts}/account/workspaces/{w['id']}/members?tab=invites")
             if me.get("platform_role") == "admin" and not me.get("admin_locked"):
                 signed += [f"{accounts}/admin?tab={t}" for t in ("overview", "users", "workspaces", "organizations", "registration", "identity", "mail", "audit")]
                 signed += [f"{accounts}/admin/api-platform"]

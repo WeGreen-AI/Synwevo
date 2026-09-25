@@ -59,7 +59,7 @@ function OrganizationDetail({ id }: { id: string }) {
   if (modal === "settings" && org) spec = { title: t("编辑组织设置"), impact: t("更新组织名称或邀请策略。更严格的策略可能撤销不再符合条件的待处理邀请。"), run: reason => patch(orgPath(id), { name: name.trim(), ...(org.role === "owner" ? { invitation_policy: policy } : {}), version: org.version, reason }) };
   else if (modal && lifecycle[modal]) spec = { title: t(lifecycle[modal].title), impact: t(lifecycle[modal].impact), danger: lifecycle[modal].danger, run: reason => post(`${orgPath(id)}/${modal}`, { reason }) };
   return <AuthFrame wide title={org?.name || t("组织详情")} description={t("成员、空间与组织设置，在这里保持清晰。")}>
-    <a href="/organizations">{t("返回我的组织")}</a><FlowError error={error} />
+    <a className="action-link" href="/organizations">{t("返回我的组织")}</a><FlowError error={error} />
     {needsVerification(me) ? <a href="/verify-email">{t("先验证邮箱")}</a> : error ? <button type="button" className="btn" onClick={() => setRevision(v => v + 1)}>{t("重试")}</button> : !org ? <Loading /> : <>
       <div className="org-actions"><span className="badge">{t(statusSource(org.status))}</span><span>{t("你的角色：{role}", { role: t(roleSource(org.role)) })}</span>{org.usage && <span className="org-count">{t("{workspaces} 个空间 · {members} 位成员", { workspaces: org.usage.workspaces, members: org.usage.members })}</span>}</div>
       {org.status !== "active" && <p className="notice warn">{t(org.status === "frozen" ? "组织已冻结，工作空间暂时无法访问。" : "组织已删除，工作空间暂时无法访问。")}{org.status === "deleted" && org.recover_until && ` ${t("可恢复至 {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(org.recover_until * 1000) })}`}</p>}

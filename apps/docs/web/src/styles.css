@@ -27,6 +27,8 @@
   .pane-h { height: auto; min-height: 38px; flex-wrap: wrap; padding: 6px 8px; }
   .stepbar { display: flex; }
   .selbar { flex-wrap: wrap; }
+  /* the two hints get the full width and wrap; the desktop truncation to 32% / 28% is a desktop layout */
+  .selbar .ellipsis { white-space: normal; max-width: none !important; flex-basis: 100%; }
   .editor-shell { overflow: auto; }
   .editor-shell > .toolbar { flex: none; }
   .editor-shell > .editor-body { flex: none; min-height: 70vh; }

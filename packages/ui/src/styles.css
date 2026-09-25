@@ -181,6 +181,9 @@ label.check { display: inline-flex; align-items: center; gap: 6px; cursor: point
 .status-page p { max-width: 460px; color: var(--text-2); margin: 0; }
 
 table.tbl { border-collapse: collapse; width: 100%; }
+/* A data table is two-dimensional by nature: on a narrow screen it scrolls inside this wrapper
+   instead of widening the page (WCAG 2.2 SC 1.4.10 exception for data tables). */
+.tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
 table.tbl th, table.tbl td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
 table.tbl th { font-weight: 600; color: var(--text-2); background: var(--panel-2); position: sticky; top: 0; z-index: 1; }
 table.tbl tr:hover td { background: var(--panel-2); }
