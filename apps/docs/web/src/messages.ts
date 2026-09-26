@@ -6043,4 +6043,60 @@ export const messages = {
     "en": "This template's earlier unsaved live edits could not be read; version {v1} is in use instead. Check the content before continuing.",
     "zh-Hant": "這個範本之前未儲存的即時修改無法讀取，已改用第 {v1} 版的內容；請檢查後再繼續。"
   },
+  "另一个模板": {
+    "en": "another template",
+    "zh-Hant": "另一個範本"
+  },
+  "固定第 {v1} 版": {
+    "en": "pinned to v{v1}",
+    "zh-Hant": "固定第 {v1} 版"
+  },
+  "每个文件一份": {
+    "en": "one per file",
+    "zh-Hant": "每個檔案一份"
+  },
+  "按组一份": {
+    "en": "one per group",
+    "zh-Hant": "按組一份"
+  },
+  "按标记块一份": {
+    "en": "one per marked block",
+    "zh-Hant": "按標記區塊一份"
+  },
+  "（工作表「{v1}」）": {
+    "en": "(sheet “{v1}”)",
+    "zh-Hant": "（工作表「{v1}」）"
+  },
+  "（按「{v1}」）": {
+    "en": "(by “{v1}”)",
+    "zh-Hant": "（按「{v1}」）"
+  },
+  "（标记「{v1}」）": {
+    "en": "(marker “{v1}”)",
+    "zh-Hant": "（標記「{v1}」）"
+  },
+  "出错跳过": {
+    "en": "skip on error",
+    "zh-Hant": "出錯跳過"
+  },
+  "出错阻止": {
+    "en": "stop on error",
+    "zh-Hant": "出錯阻止"
+  },
+  "自动缩放": {
+    "en": "fit to page",
+    "zh-Hant": "自動縮放"
+  },
+  "溢出提醒": {
+    "en": "warn on overflow",
+    "zh-Hant": "溢出提醒"
+  },
+  "命名「{v1}」": {
+    "en": "named “{v1}”",
+    "zh-Hant": "命名「{v1}」"
+  },
+  "默认": {
+    "en": "default",
+    "zh-Hant": "預設"
+  },
 } satisfies Messages;

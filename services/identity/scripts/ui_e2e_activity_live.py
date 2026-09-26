@@ -153,6 +153,17 @@ def _flow(a, b, pa, pb, engine, accounts, docs, mail_dir, tag, owner, member, no
     note(notes, f"{engine}: on the next visit the record counted one change since the owner last looked, marked the reply and drew the line under it")
     pa.keyboard.press("Escape")
 
+    # ---- a setting change reads as before → after (CI-56): the owner switches the sample rule over the API
+    r = pa.request.patch(f"{docs}/api/projects/{pid}", data={"record_rule": {"mode": "per_file"}}, headers=ha)
+    assert r.ok, r.text()[:200]
+    pa.get_by_role("button", name="活动记录").click()
+    act = pa.locator("[data-testid=project-activity]")
+    row = act.locator(".collab-log li[data-kind='project.update']").first
+    expect(row).to_contain_text("样本规则：未设置 → 每个文件一份", timeout=10000)
+    pa.screenshot(path=str(SHOTS / f"{engine}-05-setting-before-after.png"))
+    note(notes, f"{engine}: the sample-rule change reads as 样本规则：未设置 → 每个文件一份 in the activity record")
+    pa.keyboard.press("Escape")
+
     # ---- the editor's phone: the activity record is usable at 390 px
     pb.goto(f"{docs}/p/{pid}?lang=zh-Hans")
     expect(pb.locator("[data-testid=project-presence] .collab-status")).to_have_text("实时更新中", timeout=20000)

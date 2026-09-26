@@ -253,3 +253,22 @@ def test_comments_reach_the_project_room_and_the_activity_feed_without_their_bod
     assert all("这个字段" not in json.dumps(it, ensure_ascii=False) for it in feed)
     assert {it["by"]["name"] for it in feed if it["kind"].startswith("comment.")} == {"Editor", "Owner"}
     v.close()
+
+
+def test_a_settings_change_carries_its_values_before_and_after(world):
+    """9.13 D: a sample-rule or name change reads as what it was → what it is, in the change
+    frame and in the activity feed, so the record explains itself without opening the project."""
+    pid = world["pid"]
+    v = Peer(world["client_for"](world["viewer"]), pid, origin="http://testserver", path="projects")
+    v.hello = v.connect()
+    co = world["client_for"](world["owner"])
+    r = co.patch(f"/api/projects/{pid}", json={"name": "改名后的项目", "record_rule": {"mode": "per_file"}})
+    assert r.status_code == 200, r.text
+    change = v.recv_meta("change", tries=30)
+    assert change["kind"] == "project.update" and change["by"]["name"] == "Owner"
+    assert change["detail"]["before"]["name"] == "协同项目" and change["detail"]["after"]["name"] == "改名后的项目"
+    assert change["detail"]["before"]["record_rule"]["mode"] == "per_row" and change["detail"]["after"]["record_rule"] == {"mode": "per_file"}
+    assert "output" not in change["detail"]["after"], "only what changed is shown"
+    feed = co.get(f"/api/projects/{pid}/activity").json()["items"]
+    assert feed[0]["kind"] == "project.update" and feed[0]["detail"]["after"]["name"] == "改名后的项目"
+    v.close()

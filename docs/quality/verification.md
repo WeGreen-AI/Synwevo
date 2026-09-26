@@ -1499,6 +1499,12 @@ owner 把段首「注段」换成「忘录」；owner 的变更记录里编辑�
 **前端**：`hello.recovered` 进入房间状态，编辑器一次性提示「之前未保存的实时修改无法读取，已改用第 N 版」；4400 的 `frame_too_large`/`template_deleted` 用人话显示；typecheck/build、Docs 前端 49 项通过。
 **测量**（`ui_e2e_collab.py`，同一台 Mac、回环、两账户、模板级文档）：最后一次按键后对方可见——Chromium 桌面→手机 1 ms、手机→桌面 2 ms；WebKit 2 ms、8 ms（16 个里程碑全部通过）。这是本地上限，公网以 RTT 为主。
 
+### 16.58 项目设置变更显示前后值（CI-56）
+
+`update_project` 的变更帧与活动记录带 `before`/`after`（仅真正变化的名称/样本规则/输出/模板/固定版本），前端按字段读成人话（`docs-project-collab.md` §5）。
+**pytest**：`test_project_collab.py` +1（改名 + 样本规则：`before.name`「协同项目」→`after.name`「改名后的项目」，`before.record_rule.mode` per_row → `after` `{mode: per_file}`，未改的 `output` 不在 `after` 里；活动记录同样）。
+**浏览器**：`ui_e2e_activity_live.py` 新增里程碑——owner 改样本规则后活动记录第一行读作「样本规则：未设置 → 每个文件一份」（截图 `chromium-05`）；**Chromium 6/6、WebKit 6/6**。typecheck、Docs 前端 49 项通过。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

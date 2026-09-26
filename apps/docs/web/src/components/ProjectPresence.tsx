@@ -79,7 +79,12 @@ const KIND_TEXT: Record<string, (d: any, slotName: (b: string) => string) => str
   "source.order": () => tr("调整了文件顺序"),
   "source.representative": () => tr("更换了代表文件"),
   "source.options": () => tr("修改了文件读取选项"),
-  "project.update": (d) => tr("修改了项目设置（{v1}）", { v1: (d.fields || []).map((f: string) => ({ name: tr("名称"), record_rule: tr("样本规则"), template_id: tr("模板"), template_version: tr("模板版本"), output: tr("输出设置") } as Record<string, string>)[f] || f).join("、") || "—" }),
+  "project.update": (d) => {
+    const label = (f: string) => ({ name: tr("名称"), record_rule: tr("样本规则"), template_id: tr("模板"), template_version: tr("模板版本"), output: tr("输出设置") } as Record<string, string>)[f] || f;
+    const before = d.before || {}, after = d.after || {};
+    const parts = Object.keys(after).map((f) => `${label(f)}：${settingText(f, before[f])} → ${settingText(f, after[f])}`);
+    return parts.length ? tr("修改了项目设置（{v1}）", { v1: parts.join("；") }) : tr("修改了项目设置（{v1}）", { v1: (d.fields || []).map(label).join("、") || "—" });
+  },
   "template.save": (d) => tr("更新了模板（第 {v1} 版）", { v1: d.head }),
   "template.restore": (d) => tr("恢复了模板版本（现为第 {v1} 版）", { v1: d.head }),
   "template.undo": (d) => tr("撤销了模板修改（现为第 {v1} 版）", { v1: d.head }),
@@ -123,6 +128,29 @@ export function readSeen(uid: string | null | undefined, pid: string): number {
 export function markSeen(uid: string | null | undefined, pid: string): void {
   if (!uid) return;
   try { localStorage.setItem(seenKey(uid, pid), String(Date.now() / 1000)); } catch { /* private mode or blocked storage: no marker */ }
+}
+
+/** A project setting's value in words: the sample rule's mode and key, the output's formats and
+ *  error policy, a template pin; never raw JSON. */
+function settingText(field: string, v: any): string {
+  if (v === undefined || v === null || v === "") return tr("未设置");
+  if (field === "name") return `「${String(v)}」`;
+  if (field === "template_id") return tr("另一个模板");
+  if (field === "template_version") return tr("固定第 {v1} 版", { v1: v });
+  if (field === "record_rule") {
+    const mode = ({ per_row: tr("每行一份"), per_file: tr("每个文件一份"), per_group: tr("按组一份"), per_block: tr("按标记块一份") } as Record<string, string>)[v.mode] || (v.mode ? String(v.mode) : tr("未设置"));
+    const where = v.table?.sheet ? tr("（工作表「{v1}」）", { v1: v.table.sheet }) : v.group?.key ? tr("（按「{v1}」）", { v1: v.group.key }) : v.block?.anchor ? tr("（标记「{v1}」）", { v1: v.block.anchor }) : "";
+    return mode + where;
+  }
+  if (field === "output") {
+    const bits: string[] = [];
+    if (Array.isArray(v.formats) && v.formats.length) bits.push(v.formats.map((f: string) => String(f).toUpperCase()).join("/"));
+    if (v.error_policy) bits.push(v.error_policy === "skip" ? tr("出错跳过") : tr("出错阻止"));
+    if (v.layout && v.layout !== "off") bits.push(v.layout === "fit" ? tr("自动缩放") : tr("溢出提醒"));
+    if (v.naming) bits.push(tr("命名「{v1}」", { v1: String(v.naming) }));
+    return bits.join("，") || tr("默认");
+  }
+  return String(v);
 }
 
 export function changeText(kind: string, detail: any, slots: Slot[]): string {

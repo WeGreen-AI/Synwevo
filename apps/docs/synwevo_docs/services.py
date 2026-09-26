@@ -219,7 +219,11 @@ class App:
         self.store.update("projects", {"id": pid}, allowed)
         if set(allowed) - {"name", "step", "updated_at", "output", "settings_rev"}:
             self.store.bump_project(pid)
-        self._project_changed(pid, "project.update", {"fields": sorted(k for k in allowed if k not in ("updated_at", "settings_rev"))})
+        # The activity feed shows the values before and after (9.13 D: a sample rule or output
+        # setting change reads as what it was → what it is), for the settings that carry meaning.
+        shown = [k for k in ("name", "record_rule", "output", "template_id", "template_version") if k in allowed and allowed[k] != p.get(k)]
+        self._project_changed(pid, "project.update", {"fields": sorted(k for k in allowed if k not in ("updated_at", "settings_rev")),
+                                                      "before": {k: p.get(k) for k in shown}, "after": {k: allowed[k] for k in shown}})
         return self.get_project(pid)
 
     def _validate_pin(self, version, tid: str | None) -> int | None:
