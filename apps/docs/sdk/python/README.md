@@ -232,13 +232,15 @@ The script accepts no live server URL and never uses external user data.
 ## API coverage and limits
 
 [`operation-coverage.json`](operation-coverage.json) inventories every operationId from
-the actual exported v1 OpenAPI, including probes. The reviewed snapshot contains 68
-operations: 66 have SDK methods and 56 have CLI commands (some upload operations are
-reached indirectly). The missing SDK operations are `GET /readyz` and the signed-link
-`GET /api/v1/download/{token}`. Authenticated artifact/archive downloads are supported.
-The real scoped run observed successful responses for 40 operations; implementation
-coverage is not test coverage. Credential administration, webhook administration and
-several peripheral methods remain outside that acceptance chain. CLI coverage is a subset.
+the actual exported v1 OpenAPI, including probes. The reviewed snapshot (2026-09-26) contains
+88 operations: 84 have SDK methods and 62 have CLI commands (some upload
+operations are reached indirectly). The SDK operations without a method are `GET /readyz`, the
+signed-link `GET /api/v1/download/{token}`, the source page image and the source locator probe.
+The real scoped acceptance run (a service account) observed successful responses for
+40 operations; implementation coverage is not test coverage. The organization-shared
+template operations need a delegated token and are covered by `tests/integration/test_org_templates_v1.py`
+rather than by that run. Credential administration, webhook administration and several
+peripheral methods remain outside the acceptance chain. CLI coverage is a subset.
 
 Re-audit an actual JSON export; new/stale routes or nonexistent mapped methods fail:
 

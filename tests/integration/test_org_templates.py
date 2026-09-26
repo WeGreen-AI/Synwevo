@@ -7,6 +7,8 @@ restore) needs the maintainer's authority."""
 from __future__ import annotations
 
 import io
+import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -37,7 +39,7 @@ def world(tmp_path, monkeypatch):
                  "MAIL_FROM": "synwevo@example.test", "PUBLIC_URL": "http://testserver", "ROLE": "all"}.items():
         monkeypatch.setenv("SYNWEVO_" + k, v)
     from synwevo_server.app import create_app
-    api = create_app(str(tmp_path / "d"), role="all", start_jobs=False)
+    api = create_app(str(tmp_path / "d"), role="all", start_jobs=True)
     ident = api.state.identity
     users = {}
     for key, name in (("ann", "Ann Editor"), ("bob", "Bob Viewer"), ("cid", "Cid Editor"), ("dan", "Dan Owner"), ("eve", "Eve Elsewhere")):
@@ -67,6 +69,8 @@ def world(tmp_path, monkeypatch):
     finally:
         for c in clients.values():
             c.close()
+        if api.state.jobs:
+            api.state.jobs.stop()
 
 
 def build(c) -> tuple[str, str]:
@@ -149,3 +153,97 @@ def test_publish_use_release_and_deprecate(world):
     assert got["source_gone"] is True and got["slot_count"] == 2
     assert cid.post(f"/api/organization-templates/{pub['id']}/use", json={}).status_code == 201
     assert ann.post(f"/api/organization-templates/{pub['id']}/update", json={}).json()["error"] == "source_gone"
+
+
+TESTDATA = Path(__file__).resolve().parents[2] / "testdata"
+W, H = 1190, 900
+NO_BOX = [226 / W, 214 / H, 520 / W, 254 / H]          # the order number box of the synthetic picture template
+AREA = [146 / W, 346 / H, 1044 / W, 606 / H]           # its 6 body rows
+
+
+def _xlsx() -> bytes:
+    import openpyxl
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "客户"
+    ws.append(["姓名", "编号"]); ws.append(["张三", "0007"]); ws.append(["李四", "0008"])
+    buf = io.BytesIO(); wb.save(buf); return buf.getvalue()
+
+
+def _wait_parsed(c, pid, timeout=60):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        srcs = c.get(f"/api/projects/{pid}/sources").json()
+        if all(s["status"] not in ("parsing", "scanning") for s in srcs):
+            assert [s["status"] for s in srcs] == ["ready"], srcs
+            return srcs
+        time.sleep(0.2)
+    raise AssertionError("sources did not settle")
+
+
+def _run(c, pid, formats, timeout=180):
+    j = c.post(f"/api/projects/{pid}/jobs", json={"formats": formats}).json()
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        j = c.get(f"/api/jobs/{j['id']}").json()
+        if j["status"] not in ("queued", "running", "cancelling"):
+            return j
+        time.sleep(0.2)
+    raise AssertionError("job timeout")
+
+
+def test_copies_generate_like_ordinary_templates_in_every_format(world):
+    """The claim behind "使用即复制" is that nothing downstream learns a new kind of template:
+    a copy made from a release binds, maps and generates exactly like an uploaded one — for a
+    DOCX template and for a picture (PNG) template with a repeat area."""
+    C = world["c"]
+    ann, cid = C["ann"], C["cid"]
+    # ---- DOCX: published from Team A, generated in Team B from Team B's own rows
+    pid_a, tid = build(ann)
+    pub = ann.post(f"/api/templates/{tid}/publish", json={}).json()
+    pid_b = cid.post("/api/projects", json={"name": "B 函件"}).json()["id"]
+    copy = cid.post(f"/api/organization-templates/{pub['id']}/use", json={"project_id": pid_b}).json()
+    assert cid.post(f"/api/projects/{pid_b}/sources", files={"files": ("客户.xlsx", _xlsx(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}).status_code in (200, 201)
+    _wait_parsed(cid, pid_b)
+    binding = copy["version"]["slots"][0]["binding"]
+    assert cid.patch(f"/api/projects/{pid_b}", json={"record_rule": {"mode": "per_row", "table": {"sheet": "客户", "header_row": 0}}}).status_code == 200
+    r = cid.put(f"/api/projects/{pid_b}/mappings", json={"mappings": [{"type": "single", "sources": [{"kind": "column", "sheet": "客户", "header": "姓名"}], "target": {"binding": binding}}]})
+    assert r.status_code == 200, r.text
+    job = _run(cid, pid_b, ["docx"])
+    assert job["status"] == "completed", job
+    items = cid.get(f"/api/jobs/{job['id']}/items", params={"limit": 100}).json()
+    import docx
+    texts = ["\n".join(p.text for p in docx.Document(io.BytesIO(cid.get(f"/api/artifacts/{a['id']}").content)).paragraphs) for it in items for a in it["artifacts"]]
+    assert len(texts) == 2 and any("张三" in t for t in texts) and any("李四" in t for t in texts), texts
+    assert job["snapshot"]["template"]["id"] == copy["id"] if "snapshot" in job else True
+    # ---- PNG: a picture template with a number box and a repeat area, published and used the same way
+    png = (TESTDATA / "测试_发货单图片模板.png").read_bytes()
+    orders = (TESTDATA / "测试_订单明细100.xlsx").read_bytes()
+    pid_img = ann.post("/api/projects", json={"name": "图片模板"}).json()["id"]
+    t = ann.post("/api/templates/upload", files={"file": ("发货单.png", png, "image/png")}, data={"project_id": pid_img}).json()
+    assert t["format"] == "png", t
+    assert ann.post(f"/api/templates/{t['id']}/slots", json={"kind": "pdf_box", "page": 0, "nrect": NO_BOX, "name": "单号"}).status_code == 200
+    assert ann.post(f"/api/templates/{t['id']}/slots", json={"kind": "pdf_repeat", "page": 0, "nrect": AREA, "name": "明细", "overflow": "shrink"}).status_code == 200
+    pub2 = ann.post(f"/api/templates/{t['id']}/publish", json={"description": "发货单图片"}).json()
+    assert pub2["format"] == "png" and pub2["slot_count"] == 2
+    pid_b2 = cid.post("/api/projects", json={"name": "B 发货单"}).json()["id"]
+    copy2 = cid.post(f"/api/organization-templates/{pub2['id']}/use", json={"project_id": pid_b2}).json()
+    assert copy2["format"] == "png" and copy2["info"]["image"]["width"] == W and copy2["info"]["origin"]["publication_id"] == pub2["id"]
+    assert cid.post(f"/api/projects/{pid_b2}/sources", files={"files": ("订单.xlsx", orders, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}).status_code in (200, 201)
+    _wait_parsed(cid, pid_b2)
+    slots = {s_["name"]: s_["binding"] for s_ in copy2["version"]["slots"]}
+    assert cid.patch(f"/api/projects/{pid_b2}", json={"record_rule": {"mode": "per_group", "table": {"sheet": "明细", "header_row": 0},
+                                                                       "group": {"keys": [{"header": "订单号"}], "sort": [{"header": "行号", "dir": "asc", "numeric": True}]}}}).status_code == 200
+    r = cid.put(f"/api/projects/{pid_b2}/mappings", json={"mappings": [
+        {"type": "single", "sources": [{"kind": "column", "sheet": "明细", "header": "订单号"}], "target": {"binding": slots["单号"]}},
+        {"type": "repeat", "sources": [{"kind": "table", "sheet": "明细", "header_row": 0}], "target": {"binding": slots["明细"]},
+         "columns": [{"slot_col": "c0", "source": {"header": "行号"}}, {"slot_col": "c1", "source": {"header": "品名"}},
+                     {"slot_col": "c2", "source": {"header": "数量"}}, {"slot_col": "c3", "source": {"header": "单价"}}]}]})
+    assert r.status_code == 200, r.text
+    job = _run(cid, pid_b2, ["png"])
+    assert job["status"] == "completed", job
+    items = cid.get(f"/api/jobs/{job['id']}/items", params={"limit": 200}).json()
+    assert items and all(it["status"] == "success" for it in items), [it["status"] for it in items]
+    first = cid.get(f"/api/artifacts/{items[0]['artifacts'][0]['id']}").content
+    assert first[:8] == b"\x89PNG\r\n\x1a\n"
+    from PIL import Image
+    im = Image.open(io.BytesIO(first))
+    assert im.size == (W, H), "the output keeps the picture template's pixel size"

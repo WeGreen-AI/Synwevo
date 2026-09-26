@@ -224,6 +224,12 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 | POST | `/templates/{tid}/fields` | write | 按定义创建字段（每次调用产生一个新模板版本） |
 | GET | `/templates/{tid}/content?which=original\|working` | read | 下载原始模板或含字段的工作副本 |
 | DELETE | `/templates/{tid}` | admin | 删除模板 |
+| GET | `/organization-templates?include_deprecated=` | read | 当前空间所属组织的共享模板（offset/cursor 分页；个人空间 `organization=null`）。**需委托令牌**：组织成员身份属于人，服务账户/API 密钥答 403 `delegated_required` |
+| GET | `/organization-templates/{pid}` | read | 共享模板详情与发布历史（需委托令牌） |
+| POST | `/templates/{tid}/publish` | write | 把本空间模板发布到组织：冻结 head 版本为第 1 次发布；源空间编辑者；支持幂等（需委托令牌） |
+| POST | `/organization-templates/{pid}/releases` | write | 更新发布：源模板 head 有新版本则产生新一次发布，或只改说明；维护者（需委托令牌） |
+| POST | `/organization-templates/{pid}/deprecate` | write | `{deprecated, note}` 弃用/恢复；维护者（需委托令牌） |
+| POST | `/organization-templates/{pid}/use` | write | 把当前发布复制成本空间的模板（`origin` 记录发布），可 `project_id` 同时绑定；支持幂等（需委托令牌） |
 
 字段定义（可手写，也可从界面制作后导出复用）：
 

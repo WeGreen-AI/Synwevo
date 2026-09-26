@@ -76,7 +76,9 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-32 Web Push, run 36201832754, 2026-09-25 23:57 UTC):** `{"deployed": "synwevo:c39b04abacc7d406ac11fd9c352c585ca42ec365", "backup": "/opt/synwevo/backups/20260925T235729Z"}`; verify and deploy succeeded; schema v15 applied on start; the VAPID key pair is created on the first push configuration request. Remaining manual step: enable push on a real device from the account page and press 发送测试.
 
-**Pushed next (CI-35 organization-shared templates):** schema v18 adds `organization_templates` and `organization_template_releases` (additive); six Docs routes under the existing workspace gate; no new dependencies. Rollback to v17 code is safe: the tables idle and copies made from releases are ordinary templates.
+**Pushed next (CI-36 machine API for shared templates):** six `/api/v1` operations (delegated tokens only), OpenAPI and coverage manifest regenerated, SDK/CLI additions; no schema change, no new dependencies.
+
+**Deployed (CI-35 organization-shared templates, run 36207199003, 2026-09-26 01:29 UTC):** `{"deployed": "synwevo:81f113fbb102a69e578ea92d573dda291bb4c208", "backup": "/opt/synwevo/backups/20260926T012909Z"}`; verify and deploy succeeded; schema v18 applied on start.
 
 **Deployed (CI-34 group announcements and message reports, run 36205658531, 2026-09-26 01:03 UTC):** `{"deployed": "synwevo:48996f3a54d1863c3f0c6421392b4460959df1cf", "backup": "/opt/synwevo/backups/20260926T010332Z"}`; verify and deploy succeeded; schema v17 applied on start.
 

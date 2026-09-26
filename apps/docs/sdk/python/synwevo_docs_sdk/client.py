@@ -597,6 +597,48 @@ class Client:
         return self._download(f"{API}/templates/{_q(template_id)}/content", dest, params={"which": which},
                               fallback_name=f"template_{template_id}")
 
+    # ================================================================== organization-shared templates
+    # These need a delegated token (a person acting through a client): membership in an
+    # organization belongs to a person. A service account gets 403 `delegated_required`.
+    def list_organization_templates(self, *, include_deprecated: bool = False, limit: int | None = None,
+                                    cursor: str | None = None, offset: int | None = None) -> dict:
+        return self._get(f"{API}/organization-templates", self._page_params(limit, cursor, offset, include_deprecated=include_deprecated))
+
+    def iter_organization_templates(self, page_size: int | None = None, *, include_deprecated: bool = False) -> Iterator[dict]:
+        return self._iterate(f"{API}/organization-templates", page_size=page_size, params={"include_deprecated": include_deprecated})
+
+    def get_organization_template(self, publication_id: str) -> dict:
+        return self._get(f"{API}/organization-templates/{_q(publication_id)}")
+
+    def publish_template(self, template_id: str, *, description: str | None = None, idempotency_key: str | None = None) -> dict:
+        """Publish this workspace's template to its organization: the head version is frozen as
+        release 1. Editors of the workspace only; a personal workspace has no organization."""
+        body = {"description": description} if description is not None else {}
+        return self._json("POST", f"{API}/templates/{_q(template_id)}/publish", json=body, idempotency_key=self._key(idempotency_key))
+
+    def release_organization_template(self, publication_id: str, *, description: str | None = None, set_description: bool = False) -> dict:
+        """A new release from the source template's current head (409 `unchanged` when there is
+        none), and/or a new description when `set_description` is true."""
+        body = {"description": description} if set_description or description is not None else {}
+        return self._json("POST", f"{API}/organization-templates/{_q(publication_id)}/releases", json=body)
+
+    def deprecate_organization_template(self, publication_id: str, *, deprecated: bool = True, note: str | None = None) -> dict:
+        body: dict = {"deprecated": deprecated}
+        if note is not None:
+            body["note"] = note
+        return self._json("POST", f"{API}/organization-templates/{_q(publication_id)}/deprecate", json=body)
+
+    def use_organization_template(self, publication_id: str, *, name: str | None = None, project_id: str | None = None,
+                                  idempotency_key: str | None = None) -> dict:
+        """Copy the current release into this workspace as an ordinary template (origin recorded),
+        optionally binding it to a project."""
+        body: dict = {}
+        if name is not None:
+            body["name"] = name
+        if project_id is not None:
+            body["project_id"] = project_id
+        return self._json("POST", f"{API}/organization-templates/{_q(publication_id)}/use", json=body, idempotency_key=self._key(idempotency_key))
+
     # ================================================================== resumable uploads
     def create_upload(self, filename: str, size: int, sha256: str | None = None, purpose: str | None = None, *,
                       idempotency_key: str | None = None) -> dict:

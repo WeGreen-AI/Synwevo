@@ -1134,6 +1134,31 @@ Docs 首页模板库行的「发布到组织… / 更新组织发布 / 弃用共
 
 **未做**：发布审核队列与分类、发布通知、复制前预览、副本里「源发布有新版本」的提示、跨组织共享。
 
+### 16.36 机器 API 与 SDK/CLI 的组织共享模板：委托令牌代表人，服务账户按名拒绝；覆盖清单重新审计（CI-36）
+
+**问题**（代码证据）：CI-35 只在浏览器 API 提供组织共享模板；9.8「API 自动化一致」要求新能力进入真实契约。另外 `operation-coverage.json`
+自上次审计后已过期：OpenAPI 里 14 个来源文件操作（结构/视图/块/搜索/词/内容/页图/选项/修正/代表文件/定位器/排序/定位/记录）在审计表里没有条目，
+工具直接报 `unreviewed_routes`。
+
+**实现**：`/api/v1` 新增 6 个操作（列表分页、详情含发布历史、发布（幂等）、更新发布、弃用/恢复、使用（幂等，可绑定项目）），全部要求
+**委托令牌**——组织成员身份属于人，服务账户/API 密钥答 403 `delegated_required`；OpenAPI 重新导出（73 路径）；Python SDK 7 个方法、CLI
+`org-templates list|get|publish|release|deprecate|restore|use`；审计表补上 14 条来源操作（12 条有 SDK 方法，页图与定位器探针没有）；
+`docs/integration/api.md` §3 与 `docs/platform/org-templates.md` §2 记录机器契约。
+
+**验证**：`tests/integration/test_org_templates_v1.py`（真实授权码流程取委托令牌、client_credentials 取服务令牌：发布幂等重放同一发布、重复 409；
+服务账户读写皆 `delegated_required`；另一空间成员分页列表、详情发布历史、非维护者更新 403、使用幂等并绑定项目、副本只在本空间可见（他空间 404）；
+个人空间 `organization=null`；无新版本 409 `unchanged`、机器 API 加字段后更新 → 第 2 次发布；弃用后隐藏/`include_deprecated`/使用 409；恢复；副本仍第 1 版）；
+`test_gate_roles.py`、`test_api_docs.py`（OpenAPI 与代码一致、每个机器路由都有文档）通过；SDK 单元 20 项通过；
+**SDK 验收**（`python_full_flow.py`，临时隔离服务，服务账户）：`{"result": "passed", "clients": ["sdk", "cli"], "documents_verified": 24, "builtin_outputs_verified": 52}`，
+以其 `app-http.jsonl` 重新生成覆盖清单：`{"operations": 88, "sdk_implemented": 84, "cli_reachable": 62, "real_service_success_observed": 40}`——共享模板 6 个操作需要委托令牌，验收流程用服务账户，因此它们的「真实观察」为 0，
+以集成测试为证据，README 已写明。
+
+**顺带补证 CI-35 的核心主张**（`test_org_templates.py` 第 2 项，作业线程真实运行）：从发布复制出的模板与普通模板一样生成——DOCX 副本在 Team B 用
+Team B 自己的来源行生成 2 份并读回「张三」「李四」；PNG 图片模板（单号框 + 明细重复区）发布→复制→按订单分组生成，全部样本成功，产物是与模板同尺寸
+（1190×900）的 PNG。
+
+**未做**：验收流程的委托令牌分支；CLI 对来源文件 14 个操作的命令（SDK 方法已有）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

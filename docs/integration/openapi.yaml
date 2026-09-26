@@ -1438,6 +1438,368 @@ paths:
             - write
         - platformToken:
             - docweave.write
+  /api/v1/organization-templates:
+    get:
+      tags:
+        - v1
+      summary: 组织共享模板列表（当前空间所属组织；offset 或 cursor 分页；需委托令牌）
+      operationId: list_shared_templates_api_v1_organization_templates_get
+      parameters:
+        - name: include_deprecated
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+            title: Include Deprecated
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            description: 跳过的条数（与 cursor 二选一）
+            minimum: 0
+            default: 0
+            title: Offset
+          description: 跳过的条数（与 cursor 二选一）
+        - name: limit
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: integer
+              - type: "null"
+            description: 每页条数，默认 50，最大 200
+            minimum: 1
+            maximum: 200
+            title: Limit
+          description: 每页条数，默认 50，最大 200
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: string
+              - type: "null"
+            description: 上一页返回的 next_cursor（不透明，按稳定排序续读；与 offset 二选一）
+            title: Cursor
+          description: 上一页返回的 next_cursor（不透明，按稳定排序续读；与 offset 二选一）
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+            Link:
+              $ref: "#/components/headers/Link"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - read
+        - platformToken:
+            - docweave.read
+  "/api/v1/organization-templates/{pid}":
+    get:
+      tags:
+        - v1
+      summary: 组织共享模板详情与发布历史（需委托令牌）
+      operationId: get_shared_template_api_v1_organization_templates__pid__get
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Pid
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - read
+        - platformToken:
+            - docweave.read
+  "/api/v1/templates/{tid}/publish":
+    post:
+      tags:
+        - v1
+      summary: 把模板发布到组织（冻结 head 版本为第 1 次发布；需委托令牌；支持 Idempotency-Key）
+      operationId: publish_template_api_v1_templates__tid__publish_post
+      parameters:
+        - name: tid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Tid
+        - $ref: "#/components/parameters/XRequestID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              default: {}
+              title: Body
+              properties:
+                description:
+                  type: string
+                  maxLength: 500
+      responses:
+        "201":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/Idempotent-Replayed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
+  "/api/v1/organization-templates/{pid}/releases":
+    post:
+      tags:
+        - v1
+      summary: 更新发布：源模板 head 有新版本时产生新一次发布，或只改说明（需委托令牌）
+      operationId: release_shared_template_api_v1_organization_templates__pid__releases_post
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Pid
+        - $ref: "#/components/parameters/XRequestID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              default: {}
+              title: Body
+              properties:
+                description:
+                  type: string
+                  maxLength: 500
+      responses:
+        "201":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
+  "/api/v1/organization-templates/{pid}/deprecate":
+    post:
+      tags:
+        - v1
+      summary: 弃用或恢复组织共享模板（需委托令牌）
+      operationId: deprecate_shared_template_api_v1_organization_templates__pid__deprecate_post
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Pid
+        - $ref: "#/components/parameters/XRequestID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              default: {}
+              title: Body
+              properties:
+                deprecated:
+                  type: boolean
+                  default: true
+                note:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
+  "/api/v1/organization-templates/{pid}/use":
+    post:
+      tags:
+        - v1
+      summary: 把当前发布复制成本空间的模板，可同时绑定项目（需委托令牌；支持 Idempotency-Key）
+      operationId: use_shared_template_api_v1_organization_templates__pid__use_post
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Pid
+        - $ref: "#/components/parameters/XRequestID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              default: {}
+              title: Body
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                project_id:
+                  type: string
+      responses:
+        "201":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/Idempotent-Replayed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
   "/api/v1/templates/{tid}":
     get:
       tags:

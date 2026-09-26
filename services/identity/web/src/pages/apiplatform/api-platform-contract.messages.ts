@@ -607,6 +607,36 @@ export const contractEntries: [string, string, string][] = [
     "文本词",
     "Words",
     "文字詞"
+  ],
+  [
+    "组织共享模板列表（当前空间所属组织；offset 或 cursor 分页；需委托令牌）",
+    "Organization-shared templates (the current workspace's organization; offset or cursor paging; delegated token required)",
+    "組織共享範本列表（目前空間所屬組織；offset 或 cursor 分頁；需委託權杖）"
+  ],
+  [
+    "组织共享模板详情与发布历史（需委托令牌）",
+    "A shared template with its release history (delegated token required)",
+    "組織共享範本詳情與發布歷史（需委託權杖）"
+  ],
+  [
+    "把模板发布到组织（冻结 head 版本为第 1 次发布；需委托令牌；支持 Idempotency-Key）",
+    "Publish a template to the organization (the head version is frozen as release 1; delegated token required; Idempotency-Key supported)",
+    "把範本發布到組織（凍結 head 版本為第 1 次發布；需委託權杖；支援 Idempotency-Key）"
+  ],
+  [
+    "更新发布：源模板 head 有新版本时产生新一次发布，或只改说明（需委托令牌）",
+    "New release: a new release when the source template's head moved, or a description change only (delegated token required)",
+    "更新發布：來源範本 head 有新版本時產生新一次發布，或只改說明（需委託權杖）"
+  ],
+  [
+    "弃用或恢复组织共享模板（需委托令牌）",
+    "Deprecate or restore a shared template (delegated token required)",
+    "棄用或恢復組織共享範本（需委託權杖）"
+  ],
+  [
+    "把当前发布复制成本空间的模板，可同时绑定项目（需委托令牌；支持 Idempotency-Key）",
+    "Copy the current release into this workspace as a template, optionally binding a project (delegated token required; Idempotency-Key supported)",
+    "把目前發布複製成本空間的範本，可同時繫結專案（需委託權杖；支援 Idempotency-Key）"
   ]
 ];
 registerMessages(Object.fromEntries(contractEntries.map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }])));

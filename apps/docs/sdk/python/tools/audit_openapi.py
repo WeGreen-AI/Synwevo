@@ -42,6 +42,26 @@ PUT /api/v1/templates/{tid}/builtin | save_builtin_template | templates builtin 
 GET /api/v1/templates | list_templates,iter_templates | templates list
 GET /api/v1/templates/{tid} | get_template | templates get
 DELETE /api/v1/templates/{tid} | delete_template | templates delete
+GET /api/v1/files/{fid}/structure | get_source_structure |
+GET /api/v1/files/{fid}/view | get_source_view |
+GET /api/v1/files/{fid}/blocks | list_source_blocks,iter_source_blocks |
+GET /api/v1/files/{fid}/search | search_source,iter_source_search_pages |
+GET /api/v1/files/{fid}/words/{page} | list_source_page_words,iter_source_page_words |
+GET /api/v1/files/{fid}/content | download_source_content |
+GET /api/v1/files/{fid}/page/{page}.png | |
+PUT /api/v1/files/{fid}/options | update_source_options |
+PUT /api/v1/files/{fid}/corrections/{mid} | update_source_correction |
+POST /api/v1/files/{fid}/representative | select_representative_source |
+POST /api/v1/files/{fid}/locator | |
+PUT /api/v1/projects/{pid}/files/order | reorder_project_sources |
+GET /api/v1/projects/{pid}/locate | locate_source_mappings |
+GET /api/v1/projects/{pid}/records | list_source_records,iter_source_records |
+GET /api/v1/organization-templates | list_organization_templates,iter_organization_templates | org-templates list
+GET /api/v1/organization-templates/{pid} | get_organization_template | org-templates get
+POST /api/v1/templates/{tid}/publish | publish_template | org-templates publish
+POST /api/v1/organization-templates/{pid}/releases | release_organization_template | org-templates release
+POST /api/v1/organization-templates/{pid}/deprecate | deprecate_organization_template | org-templates deprecate; org-templates restore
+POST /api/v1/organization-templates/{pid}/use | use_organization_template | org-templates use
 GET /api/v1/templates/{tid}/fields | get_template_fields | templates fields get
 POST /api/v1/templates/{tid}/fields | create_template_fields | templates fields put
 GET /api/v1/templates/{tid}/content | download_template |

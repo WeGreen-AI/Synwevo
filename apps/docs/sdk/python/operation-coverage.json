@@ -1,31 +1,27 @@
 {
   "schema_version": 1,
   "api_scope": "all operations in actual v1 OpenAPI export, including health/readiness",
-  "openapi_sha256": "c2b40d3f56c95e1ce2f13b4e921ff35274ebff6d2b319d2510f91fcdcec13ca7",
+  "openapi_sha256": "b3001c0e1cde0533d67068c2b78c62667673defd4b2fe09e9188ea3227220606",
   "openapi_version": "3.1.0",
-  "sdk_source_sha256": "26d763335623231c94a009574f063e42a214b62aecb46bdf8d6444252c94df68",
-  "cli_source_sha256": "b5c72fde7da72714aef84e53115191b8d5559f254e4cc258f450e9e135bdb225",
+  "sdk_source_sha256": "ed679abd8cace2397b951a4fde720fe9554693eb1f32e4514c91ca6c853f3980",
+  "cli_source_sha256": "f931b37d1ec5d41a4920bfeaa1de3f8b2e10144bb3dd8c0bce5b32984f2690af",
   "evidence": [
     {
       "file": "app-http.jsonl",
-      "sha256": "1949da5b578ef27af148d61a1f364e5fd60db1cea88d28f81331651c83f6c166"
-    },
-    {
-      "file": "app-http.jsonl",
-      "sha256": "32e61e2fe6b93b63e55759f9f24a2cedbd318a1058c0e19858935443fd672a21"
+      "sha256": "b7cf6d3ede096fbfa17d211cc368fa10d71586a16cd216d33a9f7d688f53b880"
     }
   ],
   "unmatched_http_observations": {
-    "GET /api/v1/templates/t_cd19d0dc36f9/builtin": {
+    "GET /api/v1/templates/t_07a8a1dc0236/builtin": {
       "429": 1
     },
-    "POST /api/v1/projects/p_6cd2a6fda93a/jobs": {
+    "POST /api/v1/projects/p_27fa301b563e/preflight": {
       "429": 1
     },
-    "GET /api/v1/artifacts/a_aa46b6867562/content": {
+    "GET /api/v1/artifacts/a_210c339b4d96/content": {
       "429": 1
     },
-    "GET /api/v1/artifacts/a_307871e1c6b9/content": {
+    "GET /api/v1/artifacts/a_85644e9c1372/content": {
       "429": 1
     }
   },
@@ -38,10 +34,10 @@
     "failed_only verifies exclusion of cancelled items and selection fingerprint conflict, not a positive failed-item retry"
   ],
   "counts": {
-    "operations": 82,
-    "sdk_implemented": 80,
-    "cli_reachable": 70,
-    "real_service_success_observed": 55
+    "operations": 88,
+    "sdk_implemented": 84,
+    "cli_reachable": 62,
+    "real_service_success_observed": 40
   },
   "operations": [
     {
@@ -58,7 +54,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 100
+        "200": 76
       },
       "real_service_success_observed": true
     },
@@ -183,7 +179,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 32
+        "200": 12
       },
       "real_service_success_observed": true
     },
@@ -195,14 +191,10 @@
         "list_source_blocks",
         "iter_source_blocks"
       ],
-      "cli_commands": [
-        "sources blocks"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 4
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "download_source_content",
@@ -211,14 +203,10 @@
       "sdk_methods": [
         "download_source_content"
       ],
-      "cli_commands": [
-        "sources content"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 2
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "update_source_correction",
@@ -227,30 +215,20 @@
       "sdk_methods": [
         "update_source_correction"
       ],
-      "cli_commands": [
-        "sources correction"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 4
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "build_source_locator",
       "method": "POST",
       "path": "/api/v1/files/{fid}/locator",
-      "sdk_methods": [
-        "build_source_locator"
-      ],
-      "cli_commands": [
-        "sources locator"
-      ],
-      "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 10
-      },
-      "real_service_success_observed": true
+      "sdk_methods": [],
+      "cli_commands": [],
+      "implementation": "missing",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "update_source_options",
@@ -259,30 +237,20 @@
       "sdk_methods": [
         "update_source_options"
       ],
-      "cli_commands": [
-        "sources options"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 2
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "render_source_page",
       "method": "GET",
       "path": "/api/v1/files/{fid}/page/{page}.png",
-      "sdk_methods": [
-        "render_source_page"
-      ],
-      "cli_commands": [
-        "sources page"
-      ],
-      "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 2
-      },
-      "real_service_success_observed": true
+      "sdk_methods": [],
+      "cli_commands": [],
+      "implementation": "missing",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "select_representative_source",
@@ -291,14 +259,10 @@
       "sdk_methods": [
         "select_representative_source"
       ],
-      "cli_commands": [
-        "sources representative"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 2
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "search_source",
@@ -308,14 +272,10 @@
         "search_source",
         "iter_source_search_pages"
       ],
-      "cli_commands": [
-        "sources search"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 8
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "get_source_structure",
@@ -324,14 +284,10 @@
       "sdk_methods": [
         "get_source_structure"
       ],
-      "cli_commands": [
-        "sources structure"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 2
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "get_source_view",
@@ -340,14 +296,10 @@
       "sdk_methods": [
         "get_source_view"
       ],
-      "cli_commands": [
-        "sources view"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 2
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "list_source_page_words",
@@ -357,14 +309,10 @@
         "list_source_page_words",
         "iter_source_page_words"
       ],
-      "cli_commands": [
-        "sources words"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 4
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "get_job_api_v1_jobs__jid__get",
@@ -380,7 +328,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 94
+        "200": 84
       },
       "real_service_success_observed": true
     },
@@ -425,7 +373,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 26
+        "200": 24
       },
       "real_service_success_observed": true
     },
@@ -528,6 +476,78 @@
       "real_service_success_observed": true
     },
     {
+      "operationId": "list_shared_templates_api_v1_organization_templates_get",
+      "method": "GET",
+      "path": "/api/v1/organization-templates",
+      "sdk_methods": [
+        "list_organization_templates",
+        "iter_organization_templates"
+      ],
+      "cli_commands": [
+        "org-templates list"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "get_shared_template_api_v1_organization_templates__pid__get",
+      "method": "GET",
+      "path": "/api/v1/organization-templates/{pid}",
+      "sdk_methods": [
+        "get_organization_template"
+      ],
+      "cli_commands": [
+        "org-templates get"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "deprecate_shared_template_api_v1_organization_templates__pid__deprecate_post",
+      "method": "POST",
+      "path": "/api/v1/organization-templates/{pid}/deprecate",
+      "sdk_methods": [
+        "deprecate_organization_template"
+      ],
+      "cli_commands": [
+        "org-templates deprecate",
+        "org-templates restore"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "release_shared_template_api_v1_organization_templates__pid__releases_post",
+      "method": "POST",
+      "path": "/api/v1/organization-templates/{pid}/releases",
+      "sdk_methods": [
+        "release_organization_template"
+      ],
+      "cli_commands": [
+        "org-templates release"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
+      "operationId": "use_shared_template_api_v1_organization_templates__pid__use_post",
+      "method": "POST",
+      "path": "/api/v1/organization-templates/{pid}/use",
+      "sdk_methods": [
+        "use_organization_template"
+      ],
+      "cli_commands": [
+        "org-templates use"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
+    },
+    {
       "operationId": "list_projects_api_v1_projects_get",
       "method": "GET",
       "path": "/api/v1/projects",
@@ -554,7 +574,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "201": 13,
+        "201": 9,
         "409": 1
       },
       "real_service_success_observed": true
@@ -619,7 +639,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 10
+        "200": 8
       },
       "real_service_success_observed": true
     },
@@ -652,7 +672,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "201": 17
+        "201": 9
       },
       "real_service_success_observed": true
     },
@@ -663,14 +683,10 @@
       "sdk_methods": [
         "reorder_project_sources"
       ],
-      "cli_commands": [
-        "sources order"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 2
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "project_jobs_api_v1_projects__pid__jobs_get",
@@ -701,7 +717,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "202": 11
+        "202": 9
       },
       "real_service_success_observed": true
     },
@@ -712,14 +728,10 @@
       "sdk_methods": [
         "locate_source_mappings"
       ],
-      "cli_commands": [
-        "sources locate"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 2
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "get_mappings_api_v1_projects__pid__mappings_get",
@@ -732,10 +744,8 @@
         "mappings get"
       ],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 2
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "put_mappings_api_v1_projects__pid__mappings_put",
@@ -765,7 +775,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 10
+        "200": 8
       },
       "real_service_success_observed": true
     },
@@ -798,7 +808,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 9,
+        "200": 7,
         "409": 2
       },
       "real_service_success_observed": true
@@ -811,14 +821,10 @@
         "list_source_records",
         "iter_source_records"
       ],
-      "cli_commands": [
-        "sources records"
-      ],
+      "cli_commands": [],
       "implementation": "implemented",
-      "observed_http_status_counts": {
-        "200": 8
-      },
-      "real_service_success_observed": true
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "put_rule_api_v1_projects__pid__rule_put",
@@ -832,7 +838,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 10
+        "200": 6
       },
       "real_service_success_observed": true
     },
@@ -848,7 +854,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 10
+        "200": 8
       },
       "real_service_success_observed": true
     },
@@ -879,7 +885,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "201": 5
+        "201": 3
       },
       "real_service_success_observed": true
     },
@@ -895,8 +901,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "201": 12,
-        "429": 1
+        "201": 12
       },
       "real_service_success_observed": true
     },
@@ -1001,9 +1006,23 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 5
+        "200": 3
       },
       "real_service_success_observed": true
+    },
+    {
+      "operationId": "publish_template_api_v1_templates__tid__publish_post",
+      "method": "POST",
+      "path": "/api/v1/templates/{tid}/publish",
+      "sdk_methods": [
+        "publish_template"
+      ],
+      "cli_commands": [
+        "org-templates publish"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {},
+      "real_service_success_observed": false
     },
     {
       "operationId": "create_upload_api_v1_uploads_post",
@@ -1296,7 +1315,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 6
+        "200": 3
       },
       "real_service_success_observed": true
     },

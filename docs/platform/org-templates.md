@@ -27,6 +27,12 @@
 
 模板列表项（`GET /api/templates`）多出 `publication`：`{id, release_no, version_no, deprecated, updated_at, use_count}` 或 `null`。
 
+**机器 API（CI-36）**：同一能力在 `/api/v1` 下——`GET /organization-templates`（分页）、`GET /organization-templates/{pid}`、`POST /templates/{tid}/publish`（幂等）、
+`POST /organization-templates/{pid}/releases`、`POST /organization-templates/{pid}/deprecate`、`POST /organization-templates/{pid}/use`（幂等，可绑定项目）。
+全部要求**委托令牌**（代表某个成员的客户端）：组织成员身份属于人，服务账户与 API 密钥没有它，答 403 `delegated_required`，不做静默降级。
+Python SDK：`list/iter/get_organization_template(s)`、`publish_template`、`release_organization_template`、`deprecate_organization_template`、`use_organization_template`；
+CLI：`synwevo-docs org-templates list|get|publish|release|deprecate|restore|use`。
+
 ## 3. 明确未做
 
 * 发布审核队列（Google 的「审核」模式）与分类。

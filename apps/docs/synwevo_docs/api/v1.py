@@ -643,6 +643,101 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                                       lambda: save_builtin(app_, tid, body),
                                       replay_check=lambda out: app_.get_template(out["id"]), status=200)
 
+    # ------------------------------------------------------------ organization-shared templates
+    # Membership in an organization belongs to a person, so these operations need a delegated
+    # token (someone acting through a client); a service account or an API key has no person
+    # behind it and is refused with a code that says so rather than a bare 403.
+    from ..org_templates import OrgTemplates as _OrgTemplates
+    shared = _OrgTemplates(app_, auth.ident)          # the machine verifier already holds the identity service
+
+    def person(request: Request, needed: str) -> tuple[dict, str]:
+        p = scope(request, needed)
+        if not p.get("user_id"):
+            raise ServiceError(403, "delegated_required", "组织共享模板只对代表某个成员的委托令牌开放；服务账户与 API 密钥没有组织成员身份")
+        return p, p["user_id"]
+
+    def shared_out(x: dict) -> dict:
+        keep = ("id", "organization_id", "name", "description", "format", "kind", "slot_count", "release_no", "version_no", "source_workspace",
+                "published_by", "published_at", "updated_by", "updated_at", "deprecated", "deprecated_at", "deprecation_note", "use_count",
+                "can_manage", "source_ahead", "source_gone")
+        return {k: x.get(k) for k in keep}
+
+    @r.get("/organization-templates", summary="组织共享模板列表（当前空间所属组织；offset 或 cursor 分页；需委托令牌）", openapi_extra=_ox("read"))
+    def list_shared_templates(request: Request, response: Response, include_deprecated: bool = False, offset: int = _offset_q(),
+                              limit: int | None = _limit_q(DEFAULT_LIMIT, MAX_LIMIT), cursor: str | None = _cursor_q()):
+        _, uid = person(request, "read")
+        org = shared.organization_of(current_tenant())
+        if not org:
+            page = {"items": [], "total": 0, "next_offset": None, "next_cursor": None}
+            return {**page, "organization": None}
+        member = shared._org_member(org["id"], uid)
+        page = _paged(store, request, response, name="organization-templates", select="SELECT *",
+                      frm="FROM organization_templates WHERE organization_id=?" + ("" if include_deprecated else " AND deprecated_at IS NULL"),
+                      args=(org["id"],), keys=("COALESCE(updated_at, 0)", "id"), desc=True, offset=offset, limit=limit, cursor=cursor,
+                      filters={"include_deprecated": include_deprecated})
+        page["items"] = [shared_out(shared._out(x, uid, member)) for x in page["items"]]
+        page["organization"] = {"id": org["id"], "name": org["name"]}
+        return page
+
+    @r.get("/organization-templates/{pid}", summary="组织共享模板详情与发布历史（需委托令牌）", openapi_extra=_ox("read"))
+    def get_shared_template(request: Request, pid: str):
+        _, uid = person(request, "read")
+        out = shared.get(pid, uid)
+        return {**shared_out(out), "releases": out["releases"]}
+
+    @r.post("/templates/{tid}/publish", status_code=201, summary="把模板发布到组织（冻结 head 版本为第 1 次发布；需委托令牌；支持 Idempotency-Key）",
+            openapi_extra=_ox("write", idempotent=True, requestBody={"content": {"application/json": {"schema": {
+                "type": "object", "properties": {"description": {"type": "string", "maxLength": 500}}}}}}))
+    def publish_template(request: Request, tid: str, body: dict = Body(default={})):
+        _, uid = person(request, "write")
+        desc = body.get("description")
+        if desc is not None and not isinstance(desc, str):
+            raise ServiceError(400, "invalid", "description 必须是字符串", {"field": "description"})
+        return idem.run(request, "/api/v1/templates/{tid}/publish", {"tid": tid, "body": body},
+                        lambda: shared_out(shared.publish(tid, uid, desc)),
+                        replay_check=lambda out: shared.get(out["id"], uid), status=201)
+
+    @r.post("/organization-templates/{pid}/releases", status_code=201, summary="更新发布：源模板 head 有新版本时产生新一次发布，或只改说明（需委托令牌）",
+            openapi_extra=_ox("write", requestBody={"content": {"application/json": {"schema": {
+                "type": "object", "properties": {"description": {"type": "string", "maxLength": 500}}}}}}))
+    def release_shared_template(request: Request, pid: str, body: dict = Body(default={})):
+        _, uid = person(request, "write")
+        desc = body.get("description")
+        if desc is not None and not isinstance(desc, str):
+            raise ServiceError(400, "invalid", "description 必须是字符串", {"field": "description"})
+        out = shared.update(pid, uid, desc, set_description="description" in body)
+        return {**shared_out(out), "released": out["released"]}
+
+    @r.post("/organization-templates/{pid}/deprecate", summary="弃用或恢复组织共享模板（需委托令牌）",
+            openapi_extra=_ox("write", requestBody={"content": {"application/json": {"schema": {
+                "type": "object", "properties": {"deprecated": {"type": "boolean", "default": True}, "note": {"type": "string", "maxLength": 500}}}}}}))
+    def deprecate_shared_template(request: Request, pid: str, body: dict = Body(default={})):
+        _, uid = person(request, "write")
+        note = body.get("note")
+        if note is not None and not isinstance(note, str):
+            raise ServiceError(400, "invalid", "note 必须是字符串", {"field": "note"})
+        return shared_out(shared.set_deprecated(pid, uid, body.get("deprecated", True) is not False, note))
+
+    @r.post("/organization-templates/{pid}/use", status_code=201, summary="把当前发布复制成本空间的模板，可同时绑定项目（需委托令牌；支持 Idempotency-Key）",
+            openapi_extra=_ox("write", idempotent=True, requestBody={"content": {"application/json": {"schema": {
+                "type": "object", "properties": {"name": {"type": "string", "maxLength": 100}, "project_id": {"type": "string"}}}}}}))
+    def use_shared_template(request: Request, pid: str, body: dict = Body(default={})):
+        _, uid = person(request, "write")
+        name, project_id = body.get("name"), body.get("project_id")
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            raise ServiceError(400, "invalid", "name 必须是非空字符串", {"field": "name"})
+        if project_id is not None and not isinstance(project_id, str):
+            raise ServiceError(400, "invalid", "project_id 必须是字符串", {"field": "project_id"})
+
+        def work():
+            t = shared.use(pid, uid, name)
+            if project_id:
+                app_.update_project(project_id, {"template_id": t["id"]})
+            return {"id": t["id"], "name": t["name"], "format": t["format"], "kind": t["kind"], "head": t["head"], "version": t["version"]["no"],
+                    "fields": t["version"]["slots"], "origin": (t.get("info") or {}).get("origin"), "project_id": project_id}
+        return idem.run(request, "/api/v1/organization-templates/{pid}/use", {"pid": pid, "body": body}, work,
+                        replay_check=lambda out: app_.template_detail(out["id"]), status=201)
+
     @r.get("/templates/{tid}", summary="模板详情与版本", openapi_extra=_ox("read"))
     def get_template(request: Request, tid: str):
         scope(request, "read")
