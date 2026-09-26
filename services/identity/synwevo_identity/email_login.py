@@ -111,10 +111,10 @@ def build_router(ident: Identity, sessions: Sessions, mailer, mfa, tickets, audi
                 "VALUES (?,?,?,?,?,?,?)",
                 (row_id, user["id"], _hash(row_id, code), now(), now() + CODE_TTL_S,
                  client_ip(request)[:64], (request.headers.get("user-agent") or "")[:300]))
-            subject, text = login_code_mail(code=code, expires_min=CODE_TTL_S // 60,
+            subject, text, html = login_code_mail(code=code, expires_min=CODE_TTL_S // 60,
                                             locale=user.get("locale") or "zh-Hans")
             try:
-                mailer.enqueue(user["email"], subject, text, kind="login_code", ref_id=user["id"])
+                mailer.enqueue(user["email"], subject, text, kind="login_code", ref_id=user["id"], html=html)
             except ServiceError as e:
                 # Same shape whatever happened: the response must not say which addresses have
                 # accounts. The failure is loud in the audit log instead.

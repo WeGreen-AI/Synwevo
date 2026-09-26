@@ -99,6 +99,14 @@ def static_routes() -> APIRouter:
         return Response((STATIC / "sw.js").read_bytes(), media_type="application/javascript",
                         headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
+    @r.get("/brand/email-logo.png", include_in_schema=False)
+    def email_logo():
+        """The brand image every mail references: a stable public path (no cookie, no fingerprint)
+        so mail clients' image proxies can fetch it; a day of caching, and the file itself is
+        derived from the confirmed logo (docs/design.md §2.5)."""
+        return Response((STATIC / "email-logo.png").read_bytes(), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
     @r.get("/manifest.webmanifest", include_in_schema=False)
     def manifest():
         return Response((STATIC / "manifest.webmanifest").read_bytes(), media_type="application/manifest+json",

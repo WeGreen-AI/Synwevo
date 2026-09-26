@@ -163,7 +163,9 @@ def test_business_verification_route_queues_and_delivers_through_verified_tls(co
         message = BytesParser(policy=policy.default).parsebytes(receiver['messages'][0])
         assert message['From'] == 'Synwevo <sender@example.test>'
         assert message['Message-ID'] == f"<{row['id']}@example.test>"
-        body = message.get_content()
+        body = message.get_body(preferencelist=("plain",)).get_content()      # text part of the multipart/alternative
+        html = message.get_body(preferencelist=("html",))
+        assert html is not None and "<html" in html.get_content() and "#token=" in html.get_content(), "the HTML alternative carries the same link"
         assert 'https://accounts.example.test/verify-email?lang=zh-Hans#token=' in body
         assert 'verify-email?token=' not in body, 'Bearer links must not reach HTTP access logs'
         token = body.split('token=')[1].split()[0]

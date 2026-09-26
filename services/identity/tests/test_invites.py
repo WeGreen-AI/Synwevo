@@ -343,16 +343,17 @@ def test_links_use_the_configured_public_url_not_a_request_host(monkeypatch):
     from urllib.parse import urlsplit, urlunsplit
 
     monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "https://docs.example.org")
-    subject, body = mail_mod.invitation_mail(workspace="W", inviter="I", role_label="编辑成员",
-                                             token="tok123", expires_h=168)
+    subject, body, html = mail_mod.invitation_mail(workspace="W", inviter="I", role_label="编辑成员",
+                                                   token="tok123", expires_h=168)
     link = "https://docs.example.org/invite?lang=zh-Hans#token=tok123"
-    assert link in body
+    assert link in body and f'href="{link}"' in html
     parts = urlsplit(link)
     assert parts.query == "lang=zh-Hans" and parts.fragment == "token=tok123"
     # Fragments stay in the browser: the request target / Referer cannot carry this token.
     assert "tok123" not in urlunsplit(parts._replace(fragment=""))
     assert "?token=" not in body and "tok123" not in subject
     assert "tok123" not in mail_mod.redact(body), "已投递/终止的正文不保留可用邀请令牌"
+    assert "tok123" not in mail_mod.redact(html), "HTML 部分同样不保留令牌"
     assert "确认" in body, "邮件应说明打开链接后仍需确认"
 
 
@@ -394,12 +395,14 @@ def _token_from_mail(h) -> str:
     link cannot tell a missing link from an encoded one.
     """
     import email
+    import email.policy
     import re
     h["mailer"].drain_once()
     files = sorted(h["maildir"].glob("*.eml"))
     assert files, "没有任何邮件被写出"
-    msg = email.message_from_string(files[-1].read_text(encoding="utf-8"))
-    body = msg.get_payload(decode=True).decode("utf-8")
+    msg = email.message_from_string(files[-1].read_text(encoding="utf-8"), policy=email.policy.default)
+    # multipart/alternative since the shared layout: the plain part carries the same link as the HTML
+    body = msg.get_body(preferencelist=("plain",)).get_content()
     assert "确认" in body, "邮件必须说明打开链接后仍需确认"
     m = re.search(r"https://docs\.example\.org/invite\?lang=zh-Hans#token=([A-Za-z0-9_-]+)", body)
     assert m, "投递邮件应包含将令牌置于 fragment 的邀请链接"
@@ -492,12 +495,12 @@ def test_a_message_that_finally_fails_is_redacted_too(env, monkeypatch):
     monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "https://docs.example.org")
     monkeypatch.setenv("SYNWEVO_MAIL_FROM", "sender@example.org")
     m = mail_mod.Mailer(env["store"], start=False)
-    subject, text = mail_mod.reset_mail(token="SECRET-TOKEN-VALUE", expires_h=2)
-    row = m.enqueue("x@example.com", subject, text, kind="reset")
+    subject, text, html = mail_mod.reset_mail(token="SECRET-TOKEN-VALUE", expires_h=2)
+    row = m.enqueue("x@example.com", subject, text, kind="reset", html=html)
     env["store"].execute("UPDATE mail_outbox SET attempts=? WHERE id=?", (mail_mod.MAX_ATTEMPTS - 1, row["id"]))
     m.drain_once()
-    out = env["store"].one("SELECT status, body FROM mail_outbox WHERE id=?", (row["id"],))
-    assert out["status"] == "failed" and "SECRET-TOKEN-VALUE" not in out["body"]
+    out = env["store"].one("SELECT status, body, html FROM mail_outbox WHERE id=?", (row["id"],))
+    assert out["status"] == "failed" and "SECRET-TOKEN-VALUE" not in out["body"] and "SECRET-TOKEN-VALUE" not in out["html"]
 
 
 def test_the_file_sink_defaults_to_the_data_directory(env, monkeypatch, tmp_path):

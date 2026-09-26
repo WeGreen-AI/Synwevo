@@ -185,8 +185,8 @@ def notify_security_change(request: Request, user: dict | None, what: str) -> No
     if not mailer:
         return
     try:
-        subject, text = mail_notice(what=what, when_text="刚刚", locale=user.get("locale") or "zh-Hans")
-        mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
+        subject, text, html = mail_notice(what=what, when_text="刚刚", locale=user.get("locale") or "zh-Hans")
+        mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"], html=html)
     except Exception as e:  # noqa: BLE001 - mail may be deliberately unconfigured
         print(f"[synwevo] security notice not queued ({what}): {type(e).__name__}", flush=True)
 
@@ -732,9 +732,9 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
                       object_id=user["id"], result="denied", meta={"reason": "account_throttled"})
                 return same
             token = invites.issue_email_token(user["id"], "reset", ttl_s=RESET_TTL_H * 3600)
-            subject, text = mail_reset(token=token, expires_h=RESET_TTL_H, locale=user.get("locale") or "zh-Hans")
+            subject, text, html = mail_reset(token=token, expires_h=RESET_TTL_H, locale=user.get("locale") or "zh-Hans")
             try:
-                mailer.enqueue(user["email"], subject, text, kind="reset", ref_id=user["id"])
+                mailer.enqueue(user["email"], subject, text, kind="reset", ref_id=user["id"], html=html)
             except ServiceError as e:
                 # Swallowed *here specifically*, and nowhere else. `enqueue` raises on purpose so an
                 # invitation nobody can receive is not reported as sent — but on this endpoint the
@@ -797,8 +797,8 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
         try:
             from .notify import inbox_security
             inbox_security(request, user, "password_reset")
-            subject, text = mail_notice(what="口令已重置", when_text="刚刚", locale=user.get("locale") or "zh-Hans")
-            mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
+            subject, text, html = mail_notice(what="口令已重置", when_text="刚刚", locale=user.get("locale") or "zh-Hans")
+            mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"], html=html)
         except Exception:                      # a notice that fails must not undo the reset
             pass
         # Deliberately not signed in: the next sign-in goes through the normal path, so a second
@@ -822,8 +822,8 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
             if recent["n"] >= 3 or (recent["last"] and now_ts() - recent["last"] < 60):
                 raise _too_many(60)
             token = invites.issue_email_token(user["id"], "verify", ttl_s=VERIFY_TTL_H * 3600, new_email=user["email"])
-            subject, text = mail_verify(token=token, expires_h=VERIFY_TTL_H, locale=user.get("locale") or "zh-Hans")
-            mailer.enqueue(user["email"], subject, text, kind="verify", ref_id=user["id"])
+            subject, text, html = mail_verify(token=token, expires_h=VERIFY_TTL_H, locale=user.get("locale") or "zh-Hans")
+            mailer.enqueue(user["email"], subject, text, kind="verify", ref_id=user["id"], html=html)
         audit(request, "auth.email.verify_sent", actor_id=user["id"], result="ok")
         return {"ok": True, "expires_h": VERIFY_TTL_H}
 

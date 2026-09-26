@@ -33,8 +33,8 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
                 return
             token = invites.issue_email_token(user["id"], "verify", ttl_s=24 * 3600,
                                                new_email=user["email"])
-            subject, body = verify_mail(token=token, expires_h=24, locale=user.get("locale") or "zh-Hans")
-            mailer.enqueue(user["email"], subject, body, kind="verify", ref_id=user["id"])
+            subject, body, html = verify_mail(token=token, expires_h=24, locale=user.get("locale") or "zh-Hans")
+            mailer.enqueue(user["email"], subject, body, kind="verify", ref_id=user["id"], html=html)
             audit(request, "auth.email.verify_requested", actor_id=user["id"], result="ok")
 
     def _notify_existing(user: dict, request: Request) -> None:
@@ -48,8 +48,8 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
                                      "AND created_at>?", (user["id"], now() - 3600))
             if recent["n"]:
                 return
-            subject, body = account_exists_mail(locale=user.get("locale") or "zh-Hans")
-            mailer.enqueue(user["email"], subject, body, kind="account_exists", ref_id=user["id"])
+            subject, body, html = account_exists_mail(locale=user.get("locale") or "zh-Hans")
+            mailer.enqueue(user["email"], subject, body, kind="account_exists", ref_id=user["id"], html=html)
             audit(request, "auth.registration.existing_account", actor_id=user["id"], result="ok")
 
     def _limited(request: Request, email: str):

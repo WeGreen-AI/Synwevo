@@ -21,7 +21,7 @@ from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE
 from synwevo_core.store import new_id, now
 
 from .auth_routes import check_reauth_password
-from .mail import email_change_mail, security_notice
+from .mail import deletion_mail, email_change_mail, security_notice
 from .notify import inbox_security
 from .profile import (GRACE_SECONDS, canonical_avatar, check_deletion_constraints, digest,
                       invalidate_access, public_profile, validate_preferences)
@@ -152,9 +152,9 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             store.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=? AND kind='reset'", (ts, user["id"]))
             store.execute("DELETE FROM mfa_tickets WHERE user_id=?", (user["id"],))
             inbox_security(request, user, "password_changed")
-            subject, text = security_notice(what="口令已更改", when_text="刚刚", locale=user["locale"])
+            subject, text, html = security_notice(what="口令已更改", when_text="刚刚", locale=user["locale"])
             try:
-                mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
+                mailer.enqueue(user["email"], subject, text, html=html, kind="security", ref_id=user["id"])
             except ServiceError:
                 # The change stands; the notice is best effort and the audit row is the record.
                 pass
@@ -173,7 +173,7 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             raise ServiceError(400, "bad_email", "请输入不同的有效邮箱")
         raw, ts = secrets.token_urlsafe(32), now()
         link("/account", raw, user["locale"])  # Refuse an unconfigured origin before minting a mail capability.
-        subject, text = email_change_mail(token=raw, expires_h=1, locale=user["locale"])
+        subject, text, html = email_change_mail(token=raw, expires_h=1, locale=user["locale"])
         with store.tx():
             _, user = current(request)
             if taken(key, user["id"]):
@@ -203,8 +203,8 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             # Queue the security notification BEFORE committing the address change. A disabled
             # transport cannot leave the old inbox silently disconnected from its account.
             inbox_security(request, user, "email_changed")
-            subject, text = security_notice(what="登录邮箱已更改", when_text="刚刚", locale=user["locale"])
-            mailer.enqueue(user["email"], subject, text,
+            subject, text, html = security_notice(what="登录邮箱已更改", when_text="刚刚", locale=user["locale"])
+            mailer.enqueue(user["email"], subject, text, html=html,
                            kind="security", ref_id=user["id"])
             store.execute("UPDATE users SET email=?,email_key=?,email_verified_at=?,updated_at=? WHERE id=?",
                           (token["new_email"], token["new_email_key"], ts, ts, user["id"]))
@@ -255,9 +255,9 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             _, user = current(request)
             check_deletion_constraints(store, user)
             due = ts + GRACE_SECONDS
-            subject, text = deletion_mail(user["locale"], url)
+            subject, text, html = deletion_mail(user["locale"], url)
             mailer.enqueue(user["email"], subject, text,
-                           kind="account_recovery", ref_id=user["id"])
+                           kind="account_recovery", ref_id=user["id"], html=html)
             store.execute("UPDATE account_recoveries SET used_at=? WHERE user_id=? AND used_at IS NULL", (ts, user["id"]))
             store.execute("INSERT INTO account_recoveries (id,user_id,token_hash,created_at,expires_at) VALUES (?,?,?,?,?)",
                           (new_id("ar"), user["id"], digest(raw), ts, due))
@@ -309,15 +309,3 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
 def base64_avatar(user):
     import base64
     return base64.b64encode(user["avatar_blob"]).decode() if user.get("avatar_blob") else None
-
-
-def deletion_mail(locale, url):
-    if locale == "en":
-        return ("Synwevo account deletion requested", "Your account is disabled. You can cancel deletion "
-                f"within seven days using this link:\n\n{url}\n\nYour contributions to organizations are retained. "
-                "Opening the link does not automatically restore your account or sign you in.")
-    if locale == "zh-Hant":
-        return ("Synwevo 帳戶註銷申請", f"帳戶已停用。你可以在七天內透過以下連結取消註銷：\n\n{url}\n\n"
-                "組織中的貢獻將保留。開啟連結不會自動復原帳戶或登入。")
-    return ("Synwevo 账户注销申请", f"账户已停用。你可以在七天内通过以下链接取消注销：\n\n{url}\n\n"
-            "组织中的贡献将保留。打开链接不会自动恢复账户或登录。")

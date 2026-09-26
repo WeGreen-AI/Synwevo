@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -610,6 +610,9 @@ V17_COLUMNS = [
     ("conversations", "announcement_at", "REAL"),
 ]
 
+# v19: mails carry an HTML alternative next to the plain text (same content, one layout).
+V19_COLUMNS = [("mail_outbox", "html", "TEXT")]
+
 V6_COLUMNS = [
     ("rp_auth_requests", "workspace_id", "TEXT"),
     ("users", "locale", "TEXT NOT NULL DEFAULT 'zh-Hans'"),
@@ -828,7 +831,7 @@ class Store:
         from .docs_templates import SCHEMA as DOCS_TEMPLATES_SCHEMA
         c.executescript(DOCS_TEMPLATES_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

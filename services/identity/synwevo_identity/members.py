@@ -508,12 +508,12 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         recipient = ident.by_email(row["email_key"])
         locale = (recipient or {}).get("locale") or (me or {}).get("locale") or "zh-Hans"
         store.execute("UPDATE invitations SET locale=? WHERE id=?", (locale, row["id"]))
-        subject, text = mail_mod.invitation_mail(
+        subject, text, html = mail_mod.invitation_mail(
             workspace=ws["name"], inviter=me.get("display_name") or me["email"],
             role_label=ROLE_LABEL.get(row["role"], row["role"]), token=raw,
             expires_h=max(1, int(ttl_s // 3600)), locale=locale)
         try:
-            mailer.enqueue(row["email_key"], subject, text, kind="invite", ref_id=row["id"])
+            mailer.enqueue(row["email_key"], subject, text, kind="invite", ref_id=row["id"], html=html)
         except ServiceError:
             invites.revoke(row["id"], s["user_id"])
             raise

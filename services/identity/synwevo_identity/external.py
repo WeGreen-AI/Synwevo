@@ -606,8 +606,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, external: Ex
         try:
             from .notify import inbox_security
             inbox_security(request, user, what)
-            subject, text = security_notice(what=what, when_text="刚刚", locale=user.get("locale") or "zh-Hans")
-            mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"])
+            subject, text, html = security_notice(what=what, when_text="刚刚", locale=user.get("locale") or "zh-Hans")
+            mailer.enqueue(user["email"], subject, text, kind="security", ref_id=user["id"], html=html)
         except Exception:                      # a notice that fails must not undo the change
             pass
 

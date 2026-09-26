@@ -180,33 +180,27 @@ class NotificationDispatcher:
         return self.notifier.render(row, locale) if row else {"title": "", "body": "", "href": None}
 
     def _mail_one(self, user: dict, d: dict, locale: str) -> None:
+        from .mail_layout import Mail, render
         item = self._render(d, locale)
         subject = SUBJECT.get(locale, SUBJECT["zh-Hans"]).format(title=item["title"])
-        lines = [item["title"], ""]
-        if item.get("body"):
-            lines += [item["body"], ""]
-        if item.get("href"):
-            lines += [f"{OPEN.get(locale, OPEN['zh-Hans'])}: {item['href']}", ""]
-        lines.append(FOOTER.get(locale, FOOTER["zh-Hans"]))
-        self._enqueue(user, [d], subject, "\n".join(lines))
+        m = Mail(locale, item["title"], [item["body"]] if item.get("body") else [],
+                 action=(OPEN.get(locale, OPEN["zh-Hans"]), item["href"]) if item.get("href") else None)
+        text, html = render(m)
+        self._enqueue(user, [d], subject, text, html)
 
     def _mail_digest(self, user: dict, rows: list[dict], locale: str) -> None:
+        from .mail_layout import Mail, render
         subject = DIGEST_SUBJECT.get(locale, DIGEST_SUBJECT["zh-Hans"]).format(n=len(rows))
-        lines = []
+        items = []
         for d in rows:
             item = self._render(d, locale)
-            lines.append(f"• {item['title']}")
-            if item.get("body"):
-                lines.append(f"  {item['body']}")
-            if item.get("href"):
-                lines.append(f"  {OPEN.get(locale, OPEN['zh-Hans'])}: {item['href']}")
-            lines.append("")
-        lines.append(FOOTER.get(locale, FOOTER["zh-Hans"]))
-        self._enqueue(user, rows, subject, "\n".join(lines))
+            items.append({"title": item["title"], "body": item.get("body") or "", "href": item.get("href") or ""})
+        text, html = render(Mail(locale, subject, items=items))
+        self._enqueue(user, rows, subject, text, html)
 
-    def _enqueue(self, user: dict, rows: list[dict], subject: str, body: str) -> None:
+    def _enqueue(self, user: dict, rows: list[dict], subject: str, body: str, html: str | None = None) -> None:
         try:
-            mail = self.mailer.enqueue(user["email"], subject, body, kind="notification", ref_id=rows[0]["notification_id"])
+            mail = self.mailer.enqueue(user["email"], subject, body, kind="notification", ref_id=rows[0]["notification_id"], html=html)
         except MailNotConfigured:
             for d in rows:
                 self.notifier.finish_delivery(d["notification_id"], "skipped", error="mail not configured")

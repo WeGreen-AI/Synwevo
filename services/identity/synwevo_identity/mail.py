@@ -183,7 +183,7 @@ class Mailer:
         """
         return self._thread is None or self._thread.is_alive()
 
-    def enqueue(self, to_addr: str, subject: str, body: str, *, kind: str, ref_id: str | None = None) -> dict:
+    def enqueue(self, to_addr: str, subject: str, body: str, *, kind: str, ref_id: str | None = None, html: str | None = None) -> dict:
         """Queue one message. Raises when mail is not configured, rather than silently dropping.
 
         The caller is expected to let that refusal reach the person who pressed the button: an
@@ -200,12 +200,12 @@ class Mailer:
         _address(to_addr)
         if any(c in subject for c in "\r\n"):
             raise ServiceError(400, "mail_subject_invalid", "邮件主题不能包含换行。")
-        row = {"id": new_id("ml"), "to_addr": to_addr, "subject": subject, "body": body,
+        row = {"id": new_id("ml"), "to_addr": to_addr, "subject": subject, "body": body, "html": html,
                "kind": kind, "ref_id": ref_id, "status": "queued", "attempts": 0,
                "next_attempt_at": now(), "created_at": now()}
         self.store.execute(
-            "INSERT INTO mail_outbox (id,to_addr,subject,body,kind,ref_id,status,attempts,next_attempt_at,created_at) "
-            "VALUES (:id,:to_addr,:subject,:body,:kind,:ref_id,:status,:attempts,:next_attempt_at,:created_at)", row)
+            "INSERT INTO mail_outbox (id,to_addr,subject,body,html,kind,ref_id,status,attempts,next_attempt_at,created_at) "
+            "VALUES (:id,:to_addr,:subject,:body,:html,:kind,:ref_id,:status,:attempts,:next_attempt_at,:created_at)", row)
         self._wake.set()
         return row
 
@@ -227,13 +227,13 @@ class Mailer:
     def drain_once(self, limit: int = 20) -> int:
         """Atomically claim each due message; SMTP uncertainty never causes automatic resends."""
         expired = self.store.all(
-            "SELECT id,body FROM mail_outbox WHERE status='queued' AND last_error=? "
+            "SELECT id,body,html FROM mail_outbox WHERE status='queued' AND last_error=? "
             "AND next_attempt_at<=?", (IN_PROGRESS, now()))
         for row in expired:
             self.store.execute(
                 "UPDATE mail_outbox SET status='failed', last_error='delivery_unknown', "
-                "body=?, next_attempt_at=NULL WHERE id=? AND status='queued' AND last_error=?",
-                (redact(row["body"]), row["id"], IN_PROGRESS))
+                "body=?, html=?, next_attempt_at=NULL WHERE id=? AND status='queued' AND last_error=?",
+                (redact(row["body"]), redact(row["html"]) if row.get("html") else None, row["id"], IN_PROGRESS))
         due = self.store.all(
             "SELECT * FROM mail_outbox WHERE status='queued' AND COALESCE(last_error,'')!=? "
             "AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY created_at LIMIT ?",
@@ -256,9 +256,9 @@ class Mailer:
                 attempts = int(row["attempts"]) + 1
                 if not failure.retryable or attempts >= MAX_ATTEMPTS:
                     self.store.execute(
-                        "UPDATE mail_outbox SET status='failed', last_error=?, body=?, next_attempt_at=NULL "
+                        "UPDATE mail_outbox SET status='failed', last_error=?, body=?, html=?, next_attempt_at=NULL "
                         "WHERE id=? AND status='queued' AND last_error=?",
-                        (failure.code, redact(row["body"]), row["id"], IN_PROGRESS))
+                        (failure.code, redact(row["body"]), redact(row["html"]) if row.get("html") else None, row["id"], IN_PROGRESS))
                 else:
                     delay = RETRY_SCHEDULE[min(attempts - 1, len(RETRY_SCHEDULE) - 1)]
                     self.store.execute(
@@ -269,9 +269,9 @@ class Mailer:
             # Keep this outside the delivery try block. A database error AFTER SMTP acceptance
             # leaves the claim intact; it must not be interpreted as a safe SMTP retry.
             self.store.execute(
-                "UPDATE mail_outbox SET status='sent', sent_at=?, last_error=NULL, body=?, next_attempt_at=NULL "
+                "UPDATE mail_outbox SET status='sent', sent_at=?, last_error=NULL, body=?, html=?, next_attempt_at=NULL "
                 "WHERE id=? AND status='queued' AND last_error=?",
-                (now(), redact(row["body"]), row["id"], IN_PROGRESS))
+                (now(), redact(row["body"]), redact(row["html"]) if row.get("html") else None, row["id"], IN_PROGRESS))
             if receipt:
                 print(f"[synwevo] mail accepted id={row['id']} smtp_code=250 queue_id={receipt}", flush=True)
             sent += 1
@@ -295,6 +295,10 @@ class Mailer:
         # institutional filters (rspamd's MIME_BASE64_TEXT among them) score base64-encoded text
         # as a spam signal. Quoted-printable stays 7-bit safe on every relay.
         msg.set_content(row["body"], cte="quoted-printable")
+        if row.get("html"):
+            # The same content as the text part, in the shared layout (mail_layout.render): a
+            # client that renders HTML gets the card and the button, every other reads the text.
+            msg.add_alternative(row["html"], subtype="html", cte="quoted-printable")
 
         if m == "file":
             # Under the data directory by default, never the process's working directory: these
@@ -369,30 +373,32 @@ def redact(body: str) -> str:
     return _CODE_LINE.sub(lambda m: m.group(1) + REDACTED, body)
 
 
-def login_code_mail(*, code: str, expires_min: int, locale: str = "zh-Hans") -> tuple[str, str]:
+def _lang(locale: str | None) -> str:
+    return locale if locale in ("zh-Hans", "zh-Hant", "en") else "zh-Hans"
+
+
+def _render(m) -> tuple[str, str, str]:
+    from .mail_layout import render
+    text, html = render(m)
+    return m.title, text, html
+
+
+def login_code_mail(*, code: str, expires_min: int, locale: str = "zh-Hans") -> tuple[str, str, str]:
     """A one-time sign-in code. Deliberately a code rather than a link: nothing a mail scanner
     can follow, and the person types it into the page they already have open."""
-    if locale == "en":
-        return ("Your Synwevo sign-in code",
-                f"Sign-in code: {code}\n\n"
-                f"Enter this code on the Synwevo sign-in page within {expires_min} minutes. It works once. "
-                "Synwevo will never ask you for it by phone or chat — anyone asking for it is not us.\n\n"
-                "If you did not try to sign in, ignore this message; nobody can use the code without "
-                "also having this mailbox. Replies are not monitored.")
-    if locale == "zh-Hant":
-        return ("你的 Synwevo 登入驗證碼",
-                f"登入驗證碼：{code}\n\n"
-                f"請在 {expires_min} 分鐘內於 Synwevo 登入頁面輸入此驗證碼，僅可使用一次。"
-                "Synwevo 不會透過電話或聊天向你索取驗證碼，任何索取者都不是我們。\n\n"
-                "若非你本人嘗試登入，請忽略這封郵件；沒有這個信箱，任何人都無法使用此驗證碼。請勿直接回覆。")
-    return ("你的 Synwevo 登录验证码",
-            f"""登录验证码：{code}
-
-请在 {expires_min} 分钟内，在 Synwevo 登录页面输入这个验证码。它只能使用一次。
-Synwevo 不会通过电话或聊天向你索要验证码——任何索要验证码的人都不是我们。
-
-如果不是你本人在尝试登录，忽略这封邮件即可：没有这个邮箱，谁也用不了这个验证码。本邮件无需回复。
-""")
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    if lang == "en":
+        m = Mail(lang, "Your Synwevo sign-in code", ["Enter this code on the Synwevo sign-in page you already have open."], code=code, code_label="Sign-in code",
+                 after=[f"It works once and expires in {expires_min} minutes.",
+                        "If you did not try to sign in, ignore this message: nobody can use the code without this mailbox."])
+    elif lang == "zh-Hant":
+        m = Mail(lang, "你的 Synwevo 登入驗證碼", ["請在你已開啟的 Synwevo 登入頁面輸入這個驗證碼。"], code=code, code_label="登入驗證碼",
+                 after=[f"驗證碼僅可使用一次，{expires_min} 分鐘內有效。", "若非你本人嘗試登入，請忽略這封郵件：沒有這個信箱，任何人都無法使用此驗證碼。"])
+    else:
+        m = Mail(lang, "你的 Synwevo 登录验证码", ["请在你已经打开的 Synwevo 登录页面输入这个验证码。"], code=code, code_label="登录验证码",
+                 after=[f"验证码只能使用一次，{expires_min} 分钟内有效。", "如果不是你本人在尝试登录，忽略这封邮件即可：没有这个邮箱，谁也用不了这个验证码。"])
+    return _render(m)
 
 
 def _link(path: str, token: str, locale: str = "zh-Hans") -> str:
@@ -401,111 +407,89 @@ def _link(path: str, token: str, locale: str = "zh-Hans") -> str:
     return f"{base}{path}?lang={locale}#token={token}"
 
 
-def invitation_mail(*, workspace: str, inviter: str, role_label: str, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple[str, str]:
-    if locale == "en":
+def invitation_mail(*, workspace: str, inviter: str, role_label: str, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple[str, str, str]:
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    url = _link("/invite", token, lang)
+    if lang == "en":
         role = {"只读成员": "viewer", "编辑成员": "editor", "空间管理员": "workspace administrator", "空间所有者": "workspace owner"}.get(role_label, role_label)
-        return (f"Join {workspace} on Synwevo",
-                f"{inviter} invited you to {workspace} as {role}.\n\n{_link('/invite', token, locale)}\n\n"
-                f"This single-use link expires in {expires_h} hours. Opening it does not accept the invitation; confirm on the page. "
-                "Ignore this message if you do not recognize the inviter. Replies are not monitored.")
-    if locale == "zh-Hant":
+        m = Mail(lang, f"Join {workspace} on Synwevo", [f"{inviter} invited you to the workspace {workspace} as {role}."],
+                 facts=[("Workspace", workspace), ("Invited by", inviter), ("Role", role)], action=("Accept the invitation", url),
+                 after=[f"The link works once and expires in {expires_h} hours. Opening it does not accept the invitation; you confirm on the page.",
+                        "Ignore this message if you do not recognize the inviter; the invitation expires by itself."])
+    elif lang == "zh-Hant":
         role = {"只读成员": "檢視成員", "编辑成员": "編輯成員", "空间管理员": "工作空間管理員", "空间所有者": "工作空間擁有者"}.get(role_label, role_label)
-        return (f"邀請你加入 Synwevo 工作空間「{workspace}」",
-                f"{inviter} 邀請你以「{role}」身分加入「{workspace}」。\n\n{_link('/invite', token, locale)}\n\n"
-                f"連結有效期限為 {expires_h} 小時，僅可使用一次。開啟後仍須按下確認，才會接受邀請。"
-                "若你不認識邀請者，請忽略這封郵件。請勿直接回覆。")
-    return (f"邀请你加入 Synwevo 工作空间「{workspace}」",
-            f"""{inviter} 邀请你以「{role_label}」身份加入 Synwevo 工作空间「{workspace}」。
-
-打开下面的链接接受邀请：
-
-  {_link('/invite', token, locale)}
-
-链接 {expires_h} 小时内有效，只能使用一次。打开链接后还需要你点击确认，
-所以邮件安全扫描器预读这个链接不会替你接受邀请。
-
-如果你不认识邀请人，忽略这封邮件即可，邀请会自动过期。本邮件无需回复。
-""")
+        m = Mail(lang, f"邀請你加入 Synwevo 工作空間「{workspace}」", [f"{inviter} 邀請你以「{role}」身分加入工作空間「{workspace}」。"],
+                 facts=[("工作空間", workspace), ("邀請人", inviter), ("身分", role)], action=("接受邀請", url),
+                 after=[f"連結僅可使用一次，{expires_h} 小時內有效。開啟後仍須在頁面按下確認，才會接受邀請。", "若你不認識邀請者，請忽略這封郵件，邀請會自動過期。"])
+    else:
+        m = Mail(lang, f"邀请你加入 Synwevo 工作空间「{workspace}」", [f"{inviter} 邀请你以「{role_label}」身份加入工作空间「{workspace}」。"],
+                 facts=[("工作空间", workspace), ("邀请人", inviter), ("身份", role_label)], action=("接受邀请", url),
+                 after=[f"链接只能使用一次，{expires_h} 小时内有效。打开链接后还需要你在页面上点击确认，邮件安全扫描器预读链接不会替你接受邀请。",
+                        "如果你不认识邀请人，忽略这封邮件即可，邀请会自动过期。"])
+    return _render(m)
 
 
-def verify_mail(*, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple[str, str]:
-    if locale == "en":
-        return ("Verify your Synwevo email", f"Confirm your email address:\n\n{_link('/verify-email', token, locale)}\n\n"
-                f"This single-use link expires in {expires_h} hours. Confirm on the page to complete verification. "
-                "If you did not request this, ignore this message. Replies are not monitored.")
-    if locale == "zh-Hant":
-        return ("驗證你的 Synwevo 電子郵件地址", f"請開啟以下連結驗證電子郵件地址：\n\n{_link('/verify-email', token, locale)}\n\n"
-                f"連結有效期限為 {expires_h} 小時，僅可使用一次。請在頁面按下確認以完成驗證。"
-                "若非你本人操作，請忽略這封郵件。請勿直接回覆。")
-    return ("验证你的 Synwevo 邮箱",
-            f"""请打开下面的链接验证这个邮箱地址：
-
-  {_link('/verify-email', token, locale)}
-
-链接 {expires_h} 小时内有效，只能使用一次。打开后需要你点击确认才会生效。
-
-如果这不是你本人的操作，忽略这封邮件即可。本邮件无需回复。
-""")
+def verify_mail(*, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple[str, str, str]:
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    url = _link("/verify-email", token, lang)
+    if lang == "en":
+        m = Mail(lang, "Verify your Synwevo email", ["Confirm that this address is yours to finish setting up your Synwevo account."], action=("Verify this address", url),
+                 after=[f"The link works once and expires in {expires_h} hours. Opening it does not verify anything by itself; you confirm on the page.",
+                        "If you did not request this, ignore this message."])
+    elif lang == "zh-Hant":
+        m = Mail(lang, "驗證你的 Synwevo 電子郵件地址", ["請確認這個地址屬於你，以完成 Synwevo 帳戶設定。"], action=("驗證這個地址", url),
+                 after=[f"連結僅可使用一次，{expires_h} 小時內有效。開啟連結本身不會完成驗證，請在頁面按下確認。", "若非你本人操作，請忽略這封郵件。"])
+    else:
+        m = Mail(lang, "验证你的 Synwevo 邮箱", ["请确认这个邮箱地址是你的，以完成 Synwevo 账户设置。"], action=("验证这个邮箱", url),
+                 after=[f"链接只能使用一次，{expires_h} 小时内有效。打开链接本身不会完成验证，需要你在页面上点击确认。", "如果这不是你本人的操作，忽略这封邮件即可。"])
+    return _render(m)
 
 
-def account_exists_mail(*, locale: str = "zh-Hans") -> tuple[str, str]:
+def account_exists_mail(*, locale: str = "zh-Hans") -> tuple[str, str, str]:
     """Sent to a mailbox that just tried to register while it already has an active account.
 
     The HTTP answer to that registration is the same "check your inbox" as for a new address (no
     enumeration), so without this mail the person waits for a verification link that will never
     come. Telling the mailbox owner — and only them — is the OWASP-recommended way out.
     """
+    from .mail_layout import Mail
     base = public_base() or "http://127.0.0.1:8765"
-    lang = locale if locale in ("zh-Hans", "zh-Hant", "en") else "zh-Hans"
+    lang = _lang(locale)
     login, forgot = f"{base}/login?lang={lang}", f"{base}/forgot?lang={lang}"
     if lang == "en":
-        return ("Your Synwevo account already exists",
-                "Someone — probably you — just tried to register a Synwevo account with this address, but an account "
-                f"for it already exists.\n\nSign in here:\n\n{login}\n\nForgot the password? Reset it here:\n\n{forgot}\n\n"
-                "If this was not you, nothing has changed: no new account was created and your password was not touched. "
-                "Replies are not monitored.")
-    if lang == "zh-Hant":
-        return ("你的 Synwevo 帳戶已經存在",
-                "剛才有人（很可能是你本人）用這個電子郵件地址註冊 Synwevo，但這個地址已經有帳戶了。\n\n"
-                f"直接登入：\n\n{login}\n\n忘記密碼？在這裡重設：\n\n{forgot}\n\n"
-                "若不是你本人操作，也不需要做任何事：沒有建立新帳戶，你的密碼也沒有變動。請勿直接回覆。")
-    return ("你的 Synwevo 账户已经存在",
-            f"""刚才有人（很可能是你本人）用这个邮箱注册 Synwevo，但这个邮箱已经有账户了。
-
-直接登录：
-
-  {login}
-
-忘记口令？在这里重置：
-
-  {forgot}
-
-如果这不是你本人的操作，你不需要做任何事：没有创建新账户，你的口令也没有改变。本邮件无需回复。
-""")
+        m = Mail(lang, "Your Synwevo account already exists", ["Someone — probably you — just tried to register a Synwevo account with this address, but an account for it already exists."],
+                 action=("Sign in", login), after=[f"Forgot the password? Reset it here: {forgot}",
+                                                   "If this was not you, nothing has changed: no new account was created and your password was not touched."])
+    elif lang == "zh-Hant":
+        m = Mail(lang, "你的 Synwevo 帳戶已經存在", ["剛才有人（很可能是你本人）用這個電子郵件地址註冊 Synwevo，但這個地址已經有帳戶了。"],
+                 action=("直接登入", login), after=[f"忘記密碼？在這裡重設：{forgot}", "若不是你本人操作，也不需要做任何事：沒有建立新帳戶，你的密碼也沒有變動。"])
+    else:
+        m = Mail(lang, "你的 Synwevo 账户已经存在", ["刚才有人（很可能是你本人）用这个邮箱注册 Synwevo，但这个邮箱已经有账户了。"],
+                 action=("直接登录", login), after=[f"忘记口令？在这里重置：{forgot}", "如果这不是你本人的操作，你不需要做任何事：没有创建新账户，你的口令也没有改变。"])
+    return _render(m)
 
 
-def reset_mail(*, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple[str, str]:
-    if locale == "en":
-        return ("Reset your Synwevo password", f"Set a new password:\n\n{_link('/reset-password', token, locale)}\n\n"
-                f"This single-use link expires in {expires_h} hours. Opening it does not change your password. "
-                "If you did not request this, ignore this message. Sign in to review other sessions if you are concerned. Replies are not monitored.")
-    if locale == "zh-Hant":
-        return ("重設你的 Synwevo 密碼", f"請開啟以下連結設定新密碼：\n\n{_link('/reset-password', token, locale)}\n\n"
-                f"連結有效期限為 {expires_h} 小時，僅可使用一次。開啟連結不會變更密碼。"
-                "若非你本人操作，請忽略這封郵件；如有安全疑慮，請登入並撤銷其他裝置的工作階段。請勿直接回覆。")
-    return ("重置你的 Synwevo 口令",
-            f"""我们收到了重置这个账户口令的请求。打开下面的链接设置新口令：
-
-  {_link('/reset-password', token, locale)}
-
-链接 {expires_h} 小时内有效，只能使用一次。
-
-如果这不是你本人的操作，你不需要做任何事——没有点击链接，口令不会改变。
-若你担心账户安全，请登录后在「账户与安全」里结束其他设备的登录。本邮件无需回复。
-""")
+def reset_mail(*, token: str, expires_h: int, locale: str = "zh-Hans") -> tuple[str, str, str]:
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    url = _link("/reset-password", token, lang)
+    if lang == "en":
+        m = Mail(lang, "Reset your Synwevo password", ["We received a request to reset the password of this account."], action=("Set a new password", url),
+                 after=[f"The link works once and expires in {expires_h} hours. Opening it does not change your password.",
+                        "If you did not request this, ignore this message; the password stays as it is. Sign in and end other sessions if you are concerned."])
+    elif lang == "zh-Hant":
+        m = Mail(lang, "重設你的 Synwevo 密碼", ["我們收到了重設這個帳戶密碼的請求。"], action=("設定新密碼", url),
+                 after=[f"連結僅可使用一次，{expires_h} 小時內有效。開啟連結不會變更密碼。", "若非你本人操作，請忽略這封郵件，密碼不會改變；如有安全疑慮，請登入並結束其他裝置的工作階段。"])
+    else:
+        m = Mail(lang, "重置你的 Synwevo 口令", ["我们收到了重置这个账户口令的请求。"], action=("设置新口令", url),
+                 after=[f"链接只能使用一次，{expires_h} 小时内有效。打开链接不会改变口令。", "如果这不是你本人的操作，忽略这封邮件即可，口令不会改变；若担心账户安全，请登录后在「账户与安全」里结束其他设备的登录。"])
+    return _render(m)
 
 
-def security_notice(*, what: str, when_text: str, locale: str = "zh-Hans") -> tuple[str, str]:
+def security_notice(*, what: str, when_text: str, locale: str = "zh-Hans") -> tuple[str, str, str]:
+    from .mail_layout import Mail
     events = {
         "登录邮箱已更改": ("Sign-in email changed", "登入電子郵件地址已變更"),
         "口令已重置": ("Password reset", "密碼已重設"),
@@ -517,28 +501,53 @@ def security_notice(*, what: str, when_text: str, locale: str = "zh-Hans") -> tu
         "重新生成了恢复码，旧的恢复码已全部失效": ("Recovery codes regenerated; all previous codes are invalid", "已重新產生復原碼；所有舊復原碼均已失效"),
     }
     translated = events.get(what, ("An account security setting changed", "帳戶安全設定已變更"))
-    if locale == "en":
-        return ("Synwevo security notice: " + translated[0], translated[0] + ".\n\n"
-                "If this was not you, sign in, change your password and revoke other sessions. "
-                "Security notices cannot be disabled. Replies are not monitored.")
-    if locale == "zh-Hant":
-        return ("Synwevo 帳戶安全通知：" + translated[1], translated[1] + "。\n\n"
-                "若非你本人操作，請立即登入、變更密碼並撤銷其他裝置的工作階段。安全通知無法停用。請勿直接回覆。")
-    return (f"Synwevo 安全提醒：{what}",
-            f"""你的 Synwevo 账户刚刚发生了一项安全相关的变更：
+    lang = _lang(locale)
+    base = public_base() or "http://127.0.0.1:8765"
+    if lang == "en":
+        m = Mail(lang, "Synwevo security notice: " + translated[0], ["A security-related setting of your Synwevo account just changed."],
+                 facts=[("What changed", translated[0]), ("When", when_text)], action=("Review account security", f"{base}/account?lang=en"),
+                 after=["If this was you, nothing else is needed.", "If it was not, sign in now, change your password and end the sessions on other devices. Security notices cannot be disabled."], security=True)
+    elif lang == "zh-Hant":
+        m = Mail(lang, "Synwevo 帳戶安全通知：" + translated[1], ["你的 Synwevo 帳戶剛剛發生了一項與安全相關的變更。"],
+                 facts=[("變更內容", translated[1]), ("時間", when_text)], action=("檢視帳戶安全", f"{base}/account?lang=zh-Hant"),
+                 after=["若這是你本人的操作，不需要再做任何事。", "若不是，請立即登入、變更密碼並結束其他裝置的工作階段。安全通知無法停用。"], security=True)
+    else:
+        m = Mail(lang, f"Synwevo 安全提醒：{what}", ["你的 Synwevo 账户刚刚发生了一项安全相关的变更。"],
+                 facts=[("变更内容", what), ("时间", when_text)], action=("查看账户与安全", f"{base}/account?lang=zh-Hans"),
+                 after=["如果这是你本人的操作，不需要做任何事。", "如果不是，请立即登录、修改口令，并在「账户与安全」里结束其他设备的登录。安全提醒无法关闭。"], security=True)
+    return _render(m)
 
-  {what}
-  时间：{when_text}
 
-如果这是你本人的操作，不需要做任何事。
-如果不是，请立即登录、修改口令，并在「账户与安全」里结束其他设备的登录。本邮件无需回复。
-""")
+def email_change_mail(*, token: str, expires_h: int = 24, locale: str = "zh-Hans") -> tuple[str, str, str]:
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    link = _link("/account", token, lang) + "&action=email-change"
+    if lang == "en":
+        m = Mail(lang, "Confirm your new Synwevo email", ["This address was entered as the new sign-in email of a Synwevo account. Confirm it on the account page."],
+                 action=("Confirm this address", link), after=[f"The link expires in {expires_h} hours. Opening it does not change the address; you confirm on the page.", "Ignore this message if this was not you."])
+    elif lang == "zh-Hant":
+        m = Mail(lang, "確認你的新 Synwevo 電子郵件地址", ["有人把這個地址設為 Synwevo 帳戶的新登入信箱，請在帳戶頁面確認。"],
+                 action=("確認這個地址", link), after=[f"連結 {expires_h} 小時內有效。開啟連結不會變更地址，請在頁面按下確認。", "若非本人操作，請忽略這封郵件。"])
+    else:
+        m = Mail(lang, "确认新的 Synwevo 邮箱", ["有人把这个地址设为 Synwevo 账户的新登录邮箱，请在账户页面确认。"],
+                 action=("确认这个邮箱", link), after=[f"链接 {expires_h} 小时内有效。打开链接不会变更邮箱，需要你在页面上点击确认。", "如果这不是你本人的操作，忽略这封邮件即可。"])
+    return _render(m)
 
 
-def email_change_mail(*, token: str, expires_h: int = 24, locale: str = "zh-Hans") -> tuple[str, str]:
-    link = _link("/account", token, locale) + "&action=email-change"
-    if locale == "en":
-        return ("Confirm your new Synwevo email", f"Confirm this address on the account page:\n\n{link}\n\nThe link expires in {expires_h} hours. Opening it does not change your address. Ignore it if you did not request the change.")
-    if locale == "zh-Hant":
-        return ("確認你的新 Synwevo 電子郵件地址", f"請在帳戶頁面確認新地址：\n\n{link}\n\n連結有效期限為 {expires_h} 小時。開啟連結不會變更地址。若非本人操作，請忽略。")
-    return ("确认新的 Synwevo 邮箱", f"请在账户页面确认新地址：\n\n{link}\n\n链接 {expires_h} 小时内有效。打开链接不会变更邮箱。若非本人操作，请忽略。")
+def deletion_mail(locale: str | None, url: str) -> tuple[str, str, str]:
+    """Account deletion requested: the account is disabled now and the person has seven days to
+    cancel through the link (which opens a page; it neither restores the account nor signs in)."""
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    if lang == "en":
+        m = Mail(lang, "Synwevo account deletion requested", ["Your Synwevo account is now disabled and will be deleted in seven days."],
+                 action=("Cancel the deletion", url),
+                 after=["Your contributions to organizations are retained.", "Opening the link does not restore the account or sign you in by itself; you confirm on the page.",
+                        "If you did not request this, cancel the deletion now and change your password."], security=True)
+    elif lang == "zh-Hant":
+        m = Mail(lang, "Synwevo 帳戶註銷申請", ["你的 Synwevo 帳戶已停用，七天後將被刪除。"], action=("取消註銷", url),
+                 after=["你在組織中的貢獻將保留。", "開啟連結本身不會復原帳戶或登入，請在頁面上確認。", "若這不是你本人的操作，請立即取消註銷並變更密碼。"], security=True)
+    else:
+        m = Mail(lang, "Synwevo 账户注销申请", ["你的 Synwevo 账户已停用，七天后将被删除。"], action=("取消注销", url),
+                 after=["你在组织中的贡献将保留。", "打开链接本身不会恢复账户或登录，需要你在页面上确认。", "如果这不是你本人的操作，请立即取消注销并修改口令。"], security=True)
+    return _render(m)

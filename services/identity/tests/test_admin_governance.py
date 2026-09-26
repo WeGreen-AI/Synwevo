@@ -241,8 +241,8 @@ def test_verification_retry_regenerates_only_for_unverified_accounts(fixture):
     f = fixture
     user = f["user"]
     token = Invites(f["store"], f["ident"]).issue_email_token(user["id"], "verify", ttl_s=86400, new_email=user["email"])
-    subject, body = verify_mail(token=token, expires_h=24)
-    mail = f["api"].state.mailer.enqueue(user["email"], subject, body, kind="verify", ref_id=user["id"])
+    subject, body, html = verify_mail(token=token, expires_h=24)
+    mail = f["api"].state.mailer.enqueue(user["email"], subject, body, kind="verify", ref_id=user["id"], html=html)
     f["store"].execute("UPDATE mail_outbox SET status='failed',last_error='smtp_recipient_rejected_550' WHERE id=?", (mail["id"],))
     f["store"].execute("UPDATE email_tokens SET created_at=?", (now()-61,))
     reauth(f["c"])

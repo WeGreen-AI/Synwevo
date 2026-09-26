@@ -145,11 +145,11 @@ class MemberImportRunner:
             recipient = self.ident.by_email(inv["email_key"])
             locale = (recipient or {}).get("locale") or me.get("locale") or "zh-Hans"
             self.store.execute("UPDATE invitations SET locale=? WHERE id=?", (locale, inv["id"]))
-            subject, text = mail_mod.invitation_mail(workspace=ws["name"], inviter=me.get("display_name") or me.get("email") or "—",
-                                                     role_label=ROLE_LABEL.get(inv["role"], inv["role"]), token=raw,
-                                                     expires_h=INVITE_TTL_S // 3600, locale=locale)
+            subject, text, html = mail_mod.invitation_mail(workspace=ws["name"], inviter=me.get("display_name") or me.get("email") or "—",
+                                                           role_label=ROLE_LABEL.get(inv["role"], inv["role"]), token=raw,
+                                                           expires_h=INVITE_TTL_S // 3600, locale=locale)
             try:
-                self.mailer.enqueue(inv["email_key"], subject, text, kind="invite", ref_id=inv["id"])
+                self.mailer.enqueue(inv["email_key"], subject, text, kind="invite", ref_id=inv["id"], html=html)
             except ServiceError:
                 self.invites.revoke(inv["id"], actor)
                 raise

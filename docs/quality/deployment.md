@@ -76,11 +76,13 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-32 Web Push, run 36201832754, 2026-09-25 23:57 UTC):** `{"deployed": "synwevo:c39b04abacc7d406ac11fd9c352c585ca42ec365", "backup": "/opt/synwevo/backups/20260925T235729Z"}`; verify and deploy succeeded; schema v15 applied on start; the VAPID key pair is created on the first push configuration request. Remaining manual step: enable push on a real device from the account page and press 发送测试.
 
+**Pushed next (CI-44 mail design system):** schema v19 adds `mail_outbox.html` (additive); every account-service mail is now multipart/alternative on one layout; the account service serves `/brand/email-logo.png`. Rollback to v18 code is safe (mails return to plain text).
+
 **Pushed next (CI-43 logo launch):** the confirmed logo in all three shells (fingerprinted PNG icons, `/favicon.ico` with `no-cache`, top bars and footers), `scripts/brand_assets.py --check` added to the verify job; no backend schema change (one response-header change for root files).
 
 **Pushed next (CI-42 machine API for template usage and restore):** two `/api/v1` operations, OpenAPI and coverage manifest regenerated, SDK/CLI additions; no schema change.
 
-**Pushed next (CI-41 template version restore):** two Docs routes (usage, restore) with policy entries and a dialog in the Docs shell; no schema change.
+**Deployed (CI-41 template version restore, CI-42 machine API/SDK/CLI parity for usage and restore, CI-43 confirmed-logo launch, run 36212722189, 2026-09-26 03:07 UTC):** `{"deployed": "synwevo:30a5cfdc2a996e1763a09107ed4511864680d7ba", "backup": "/opt/synwevo/backups/20260926T030742Z"}`; verify (including the new `brand_assets.py --check` step) and deploy succeeded. Anonymous read-only checks ~03:10 UTC: `/favicon.ico` answers 200 `image/vnd.microsoft.icon` (5336 B, `Cache-Control: no-cache`) on all three hosts; each shell's HTML links fingerprinted `icon-16`, `icon-32` and `apple-touch-icon` PNGs and all of them answer 200 `image/png` (Docs under `/assets/`, the portal under `/portal-assets/`, the account service under `/account-assets/`). The signed-in top bars and footers were proven on the isolated instance (verification.md §16.44); no production account was signed in for screenshots. `/brand/email-logo.png` still falls through to the SPA shell on production until CI-44 lands.
 
 **Deployed (CI-38 SDK acceptance person leg, CI-39 preflight fix path, CI-40 comments refresh and deep-link notice, run 36211498761, 2026-09-26 02:45 UTC):** `{"deployed": "synwevo:efd3259ab1fe9bbf7221de79af80ced44abfa834", "backup": "/opt/synwevo/backups/20260926T024442Z"}`; verify and deploy succeeded; no schema change.
 

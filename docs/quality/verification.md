@@ -1316,6 +1316,22 @@ SDK 验收（临时隔离服务，服务账户 + 人）通过：`{"result": "pas
 
 **邮件里的 Logo**：现有邮件是纯文本，没有品牌图；随 9.15 的邮件设计系统一并交付（公共品牌资源 HTTPS 可取，见 CI-44）。
 
+**生产核实（run 36212722189 部署 30a5cfd 后，2026-09-26 03:10 UTC，匿名只读）**：三个源 `/favicon.ico` 均 200 `image/vnd.microsoft.icon`（5336 B，`no-cache`）；三个外壳 HTML 引用带指纹的 icon-16 / icon-32 / apple-touch-icon PNG，全部 200 `image/png`（Docs `/assets/`、门户 `/portal-assets/`、账户 `/account-assets/`）。登录态顶栏与页脚只在隔离实例上截图核对（生产未用真实账户登录）。
+
+### 16.45 系统邮件设计系统：一个布局、文本与 HTML 同源、三语言、带 Logo（CI-44）
+
+决策记录与邮件清单：`docs/platform/mail-design.md`。
+
+**实现**：`mail_layout.py`（`Mail` + `render` → 文本与 HTML）；`mail.py` 八类邮件重写为三元组（主题、文本、HTML；账户注销申请邮件从 `account_routes.py` 的两段纯文本并入目录），`enqueue(html=)`、`multipart/alternative`
+投递、存档时 HTML 同样脱敏；`notify.py` 单条/汇总通知邮件同一布局；13 处调用点改为传 HTML；`/brand/email-logo.png` 公共品牌路由（一天缓存）；
+schema v19 `mail_outbox.html`。
+
+**验证**：`test_mail_catalogue.py` 5 项、`test_mail_transport.py`（multipart，文本与 HTML 同链接）、验证码登录/地址/通知套件通过；三套件全跑第一轮暴露 6 个仍按二元组解包或直接 `get_payload` 读多部件正文的旧测试（`test_invites.py`、`test_admin_governance.py`），改为三元组与 `get_body(plain)` 后通过，并顺带把失败投递的 HTML 脱敏也纳入断言；`mail_preview.py` 生成
+30 份预览（8 类 + 通知单条 + 汇总 × 3 语言），Chromium 720/390 px 无横向滚动；以隔离实例为公共源渲染时 Logo 图片真实加载（`/brand/email-logo.png`
+200 `image/png`）；隔离实例上真实注册（zh-Hant）产生的 `.eml`：`multipart/alternative`，文本部分首行为主题、含 `#token=` 链接，HTML 部分含同一链接与 Logo。
+
+**未做**：真实邮箱客户端（Gmail/Outlook/Apple Mail）渲染与真实收件——需要授权的测试收件箱；邮件 Logo 纳入 `brand_assets.py` 清单。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

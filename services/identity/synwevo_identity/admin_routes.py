@@ -184,9 +184,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         ttl = (RESET_TTL_S if kind == "reset" else VERIFY_TTL_S) // 3600
         token = Invites(store, ident).issue_email_token(uid, kind, ttl_s=ttl*3600,
                                                        new_email=user["email"] if kind == "verify" else None)
-        subject, body = (reset_mail if kind == "reset" else verify_mail)(
+        subject, body, html = (reset_mail if kind == "reset" else verify_mail)(
             token=token, expires_h=ttl, locale=user.get("locale") or "zh-Hans")
-        return _mail_row(_mail(request).enqueue(user["email"], subject, body, kind=kind, ref_id=uid))
+        return _mail_row(_mail(request).enqueue(user["email"], subject, body, kind=kind, ref_id=uid, html=html))
 
     @r.post("/users/{uid}/recovery")
     def dispatch_recovery(request: Request, uid: str, body: dict = Body(...)):
