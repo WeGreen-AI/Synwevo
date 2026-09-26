@@ -263,22 +263,35 @@ def verify_output(fmt: str, data: bytes, slots: list[dict], plan) -> dict:
         res["error"] = f"输出文件无法重新打开：{e}"
         return res
     norm = _squash(text)
+    from .engine import values as _V
     for s in slots:
         fv = plan.values.get(s["id"]) if plan else None
         if not fv:
             continue
         vals = []
         if fv["kind"] == "scalar":
-            vals = [fv["value"].text]
+            vals = [fv["value"]]
         elif fv["kind"] == "rows":
-            vals = [v.text for row in fv["rows"][:50] for v in row.values()]
+            vals = [v for row in fv["rows"][:50] for v in row.values()]
         elif fv["kind"] == "matrix":
-            vals = [c.text for row in fv["rows"] for c in row]
-        for v in vals:
-            if not v or (fmt == "xlsx" and _numeric(v)):
+            vals = [c for row in fv["rows"] for c in row]
+        for val in vals:
+            v = val.text
+            if not v:
                 continue
+            candidates = [v]
+            if fmt == "xlsx":
+                # A spreadsheet target gets the *value*, and the cell's own number format decides
+                # how it shows: a ratio 1 under "0%" reads "100%" at the source and may read
+                # "100.0%" in the output. So numbers are not looked for by their source display
+                # (they are checked as numbers by openpyxl's reopen), and a date is looked for by
+                # its ISO date, which is how openpyxl prints the cell.
+                if val.t in _V.NUMERIC_TYPES or _numeric(v):
+                    continue
+                if val.t in (_V.DATE, _V.DATETIME, _V.TIME):
+                    candidates.append(str(val.v)[:10] if val.t in (_V.DATE, _V.DATETIME) else str(val.v))
             res["checks"] += 1
-            if _squash(v) not in norm:
+            if not any(_squash(c) in norm for c in candidates):
                 res["missing"].append({"slot": s["name"], "value": v[:80]})
     return res
 

@@ -59,9 +59,12 @@ def fill_cached_values(data: bytes, only: set[tuple[str, str]] | None = None) ->
             if isinstance(val, bool):
                 c.set("t", "b")
                 v.text = "1" if val else "0"
-            elif isinstance(val, (int, float)):
+            elif isinstance(val, int):
+                # exact: an identifier-sized integer (beyond 2**53) must not pass through a double
+                v.text = str(val)
+            elif isinstance(val, float):
                 from .values import float_repr
-                v.text = float_repr(float(val))
+                v.text = float_repr(val)
             elif isinstance(val, (_dt.datetime, _dt.date, _dt.time, _dt.timedelta)):
                 # a date-formatted number: back to the serial it is in the file
                 from .values import float_repr

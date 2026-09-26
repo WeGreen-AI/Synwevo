@@ -96,7 +96,9 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 * **批量生成性能**：2026-09-25 复测无退化（verification.md §16.8）。
 * **API 幂等**（对照 Stripe「Idempotent requests」，访问 2026-09-25）：Stripe——所有 POST 接受键、键 ≤255 字符、保存首个响应含 500、24 小时后清理、参数不同即报错、并发冲突不保存。Synwevo（api.md §3「幂等」）——按主体+租户+作用域+键、24 小时 TTL 可配、内容不同 `409 idempotency_conflict`、并发由唯一约束裁决、不确定结果 `409 idempotency_outcome_unknown` 且不清理、不支持的操作显式 `400 idempotency_not_supported`。语义等价或更严格；差异只在 Stripe 保存 5xx 结果而 Synwevo 让失败的创建可重试，这是有意选择。无需改动。
 
-| CI-36 | 机器 API/SDK/CLI 的组织共享模板（委托令牌；幂等发布与使用）与覆盖清单重审计 | 已本地验证，待推送 | 验收流程的委托分支未做；`docs/integration/api.md` §3 与 `apps/docs/sdk/python/operation-coverage.json` 是权威记录 |
+| 审计 | CI-33…36 新增界面的手机/平板回归审计（320/375/768 px，45 页无回流/目标尺寸/对比度/未翻译发现） | 已完成，verification.md §16.38 | 评论抽屉与模板对话框页签由各自的手机证明覆盖 |
+| CI-37 | 取值语义端到端核实（XLSX 显示值/前导零/长编号/大整数/空行；CSV 全文本；XLSX 目标六种单元格）；修复 XLSX 目标产物核对按来源显示文本导致百分比/日期样本误判失败 | 已本地验证，待推送 | DOCX 表格/页眉未并入本套件（既有验收覆盖） |
+| CI-36 | 机器 API/SDK/CLI 的组织共享模板（委托令牌；幂等发布与使用）与覆盖清单重审计 | 已部署（0f1c810，run 36208724682） | 验收流程的委托分支未做；`docs/integration/api.md` §3 与 `apps/docs/sdk/python/operation-coverage.json` 是权威记录 |
 | CI-35 | 组织共享模板（发布冻结 head 版本、组织成员在任一空间复制使用、显式更新发布、弃用/恢复、维护者 = 源空间编辑者或组织管理员） | 已部署（81f113f，run 36207199003） | 审核队列/分类/通知/复制前预览未做；`docs/platform/org-templates.md` 是权威记录；脚本 `ui_e2e_org_templates.py` |
 | CI-34 | 群公告（管理者写、钉在顶部、成员汇总通知）与举报处理（只快照被举报消息、`org.messaging.manage` 在组织页删除/驳回、重认证、举报人得到结果） | 已部署（48996f3，run 36205658531） | 平台级举报视图与举报人匿名化未做；`docs/platform/messaging.md` §4.2 是权威记录；脚本 `ui_e2e_moderation.py` |
 | CI-33 | 项目评论与提及（一级+回复、四种锚点读取时判断、提及只到空间成员、参与者通知、解决/重开、深链高亮） | 已部署（89c706b，run 36203384969） | 行内文字批注与实时推送未做；`docs/platform/docs-comments.md` 是权威记录；脚本 `ui_e2e_comments.py` |
