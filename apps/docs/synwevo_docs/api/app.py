@@ -571,6 +571,19 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
 
     # Undo / redo carry the state they were decided on (``head`` / ``base_rev``); when someone
     # else changed it meanwhile the step is refused with 409 instead of undoing their edit.
+    @api.get("/api/templates/{tid}/usage")
+    def template_usage(tid: str):
+        return app_.template_usage(tid)
+
+    @api.post("/api/templates/{tid}/restore")
+    def restore_template_version(tid: str, body: dict = Body(...)):
+        try:
+            no = int(body.get("version"))
+        except (TypeError, ValueError):
+            raise ServiceError(400, "bad_value", "version 必须是正整数", {"field": "version"}) from None
+        base = body.get("base_head")
+        return app_.restore_version(tid, no, int(base) if base is not None else None)
+
     @api.post("/api/templates/{tid}/undo")
     def t_undo(tid: str, body: dict = Body(default={})):
         return app_.template_undo(tid, _opt_int(body, "head"))

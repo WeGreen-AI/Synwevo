@@ -871,6 +871,37 @@ class App:
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (target, now(), tid))
         self._bump_projects_using(tid)
 
+    def template_usage(self, tid: str) -> dict:
+        """Who follows this template: the projects bound to it, split into those that follow the
+        head and those pinned to a version — what a restore will and will not change."""
+        self.get_template(tid)
+        rows = self.store.all("SELECT id, name, template_version FROM projects WHERE template_id=? AND deleted=0 AND tenant=? ORDER BY updated_at DESC",
+                              (tid, current_tenant()))
+        items = [{"id": r["id"], "name": r["name"], "pinned_version": r.get("template_version")} for r in rows]
+        return {"projects": items, "following": sum(1 for r in items if not r["pinned_version"]), "pinned": sum(1 for r in items if r["pinned_version"])}
+
+    def restore_version(self, tid: str, version_no: int, base_head: int | None = None) -> dict:
+        """Make an earlier version current *as a new version*: its file and fields are copied
+        into version head+1 (parent = the current head), so the history keeps every step and
+        the undo/redo chain stays linear — the way Google Docs and OneDrive restore. Refused
+        with 409 stale_template when the head moved since the client decided."""
+        self.get_template(tid)
+        target = self.get_version(tid, version_no)
+        t = now()
+        with self.store.tx() as c:
+            head = c.execute("SELECT head FROM templates WHERE id=?", (tid,)).fetchone()["head"]
+            if base_head is not None and head != base_head:
+                raise ServiceError(409, "stale_template", "模板已在其他窗口或被其他人修改，请刷新后再恢复", {"head": head, "base_version": base_head})
+            if version_no == head:
+                raise ServiceError(400, "already_current", "这已经是当前版本")
+            no = (c.execute("SELECT MAX(version_no) AS m FROM template_versions WHERE template_id=?", (tid,)).fetchone()["m"] or 0) + 1
+            c.execute("INSERT INTO template_versions (template_id, version_no, parent_no, working_blob, slots, note, editor, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                      (tid, no, head, target["working_blob"], json.dumps(target["slots"] or [], ensure_ascii=False), f"恢复自 v{version_no}",
+                       json.dumps(target.get("editor"), ensure_ascii=False) if target.get("editor") is not None else None, t))
+            c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
+        self._bump_projects_using(tid)
+        return self.template_detail(tid)
+
     def template_undo(self, tid: str, base_head: int | None = None) -> dict:
         self._move_template_head(tid, base_head, redo=False)
         return self.template_detail(tid)

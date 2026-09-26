@@ -1259,6 +1259,33 @@ WebKit：五条同上（第一次 WebKit 运行只在最后的「无页面错误
 **浏览器**（`ui_e2e_preflight_fix.py` 第 6 条，Chromium + WebKit）：`?locate=slot:s_nope` 与 `?locate=mapping:m_nope` 分别显示对应提示，地址参数被去掉。
 静默刷新没有浏览器断言（30 s 定时 + 可见性事件，纯客户端），以代码审阅与 Docs 外壳单元测试（45 项）为准。
 
+### 16.42 模板版本历史与恢复：恢复即新版本，恢复前说明影响（CI-41）
+
+**问题**（9.8「项目与模板版本：版本记录、恢复前影响预览」）：模板详情早就返回 `versions`，但界面只有撤销/重做两个按钮——看不到版本列表，
+回到更早的版本只能连按撤销，且撤销会被下一次编辑截断（重做链丢失）；也没有任何地方说明恢复会影响哪些项目。
+
+**研究**（2026-09-26 读取）：Microsoft 支持「Restore a previous version of a file stored in OneDrive」——被选版本成为当前版本，原当前版本变成历史里的
+上一版（历史保留）；Google 文档帮助「See what's changed in a file」——需要编辑权限才能浏览版本，「Restore this version」使之成为当前文档。
+本项目沿用「恢复 = 新版本」：`restore_version` 以目标版本的文件与字段插入 head+1（parent = 当前 head），历史不删、撤销链保持线性；
+`template_usage` 给出跟随 head 与固定版本的项目数，作为恢复前的影响说明。
+
+**实现**：`GET /api/templates/{tid}/usage`（可读）、`POST /api/templates/{tid}/restore {version, base_head}`（写；`stale_template` 409、当前版本 400、
+不存在 404）；项目页目标面板「版本」按钮与命令面板「模板版本历史…」→ 对话框：版本表（当前标记、说明、时间）、影响说明、逐行「恢复此版本 → 确认恢复」
+并写明「将以第 N 版的内容新建第 K 版」；三语言 11 条（复用 2 条）。
+
+**验证**：`apps/docs/tests/test_template_restore.py`（用量计数跟随/固定；旧 base 409；当前版本 400；坏版本号 400/404；恢复 v2 → v4 含 v2 字段、
+说明「恢复自 v2」、历史 [1,2,3,4]、可撤销回 v3；固定版本的项目不变）；`test_gate_roles.py` 通过；浏览器 `ui_e2e_template_versions.py`
+（Chromium + WebKit，桌面 + 手机）：
+
+```
+== chromium (Google Chrome)
+  - 版本 listed v1–v3 with v3 marked current and one following project; restoring v2 made v4 the current version with only 客户名称, and v3 stayed in the history
+  - undo after the restore returned to v3 with both fields
+  - on the phone the 目标 pane's 版本 button opened the same list (four versions) without sideways scroll
+```
+
+**未做**：版本间字段差异的并排对比；机器 API 的 restore/usage（浏览器 API 先行，v1 契约待下一批）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

@@ -179,6 +179,8 @@ ROUTE_POLICY: dict[tuple[str, str], str | None] = {
     ("POST", "/api/templates/{tid}/pdf-repeat-detect"): None,       # detection only, stores nothing
     ("PATCH", "/api/templates/{tid}/slots/{slot_id}"): "write",
     ("DELETE", "/api/templates/{tid}/slots/{slot_id}"): "write",
+    ("GET", "/api/templates/{tid}/usage"): None,
+    ("POST", "/api/templates/{tid}/restore"): "write",
     ("POST", "/api/templates/{tid}/undo"): "write",
     ("POST", "/api/templates/{tid}/redo"): "write",
     ("GET", "/api/templates/{tid}/download"): "export",

@@ -76,6 +76,8 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-32 Web Push, run 36201832754, 2026-09-25 23:57 UTC):** `{"deployed": "synwevo:c39b04abacc7d406ac11fd9c352c585ca42ec365", "backup": "/opt/synwevo/backups/20260925T235729Z"}`; verify and deploy succeeded; schema v15 applied on start; the VAPID key pair is created on the first push configuration request. Remaining manual step: enable push on a real device from the account page and press 发送测试.
 
+**Pushed next (CI-41 template version restore):** two Docs routes (usage, restore) with policy entries and a dialog in the Docs shell; no schema change.
+
 **Pushed next (CI-40 comments refresh and deep-link notice):** Docs shell only; no backend change.
 
 **Pushed next (CI-39 preflight fix path):** Docs shell only (generate dialog, job page links, workspace `?locate=` deep link, three strings); no backend change.

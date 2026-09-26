@@ -5475,4 +5475,48 @@ export const messages = {
     "en": "The {v1} this link points to no longer exists",
     "zh-Hant": "連結指向的{v1}已不存在"
   },
+  "版本": {
+    "en": "Versions",
+    "zh-Hant": "版本"
+  },
+  "版本历史与恢复": {
+    "en": "Version history and restore",
+    "zh-Hant": "版本歷史與恢復"
+  },
+  "模板版本": {
+    "en": "Template versions",
+    "zh-Hant": "範本版本"
+  },
+  "模板版本历史…": {
+    "en": "Template version history…",
+    "zh-Hant": "範本版本歷史…"
+  },
+  "每次修改字段或保存编辑器都会产生一个版本。恢复某个版本不会删除之后的版本：它的内容会成为一个新的当前版本，随时可以撤销。": {
+    "en": "Every field change or editor save makes a version. Restoring one deletes nothing after it: its content becomes a new current version, which you can undo at any time.",
+    "zh-Hant": "每次修改欄位或儲存編輯器都會產生一個版本。恢復某個版本不會刪除之後的版本：它的內容會成為新的目前版本，隨時可以復原。"
+  },
+  "使用此模板的项目：{v1} 个跟随当前版本，{v2} 个固定了版本（恢复后不受影响）": {
+    "en": "Projects using this template: {v1} follow the current version, {v2} are pinned to a version (unaffected by a restore)",
+    "zh-Hant": "使用此範本的專案：{v1} 個跟隨目前版本，{v2} 個固定了版本（恢復後不受影響）"
+  },
+  "时间": {
+    "en": "Time",
+    "zh-Hant": "時間"
+  },
+  "确认恢复": {
+    "en": "Confirm restore",
+    "zh-Hant": "確認恢復"
+  },
+  "恢复此版本": {
+    "en": "Restore this version",
+    "zh-Hant": "恢復此版本"
+  },
+  "将以第 {v1} 版的内容新建第 {v2} 版并成为当前版本；跟随当前版本的项目会随之变化，固定了版本的项目不变。": {
+    "en": "Version {v2} will be created from version {v1}'s content and become current; projects following the current version move with it, pinned projects do not.",
+    "zh-Hant": "將以第 {v1} 版的內容新建第 {v2} 版並成為目前版本；跟隨目前版本的專案會隨之變化，固定了版本的專案不變。"
+  },
+  "已把第 {v1} 版的内容恢复为第 {v2} 版（当前）": {
+    "en": "Version {v1}'s content is now version {v2} (current)",
+    "zh-Hant": "已把第 {v1} 版的內容恢復為第 {v2} 版（目前）"
+  },
 } satisfies Messages;

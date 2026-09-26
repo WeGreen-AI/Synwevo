@@ -19,6 +19,7 @@ import Shortcuts from "../components/Shortcuts";
 import Connectors from "../components/Connectors";
 import FilePanel from "../components/FilePanel";
 import GenerateDialog from "../components/GenerateDialog";
+import TemplateVersionsDialog from "../components/TemplateVersionsDialog";
 import MappingDialog, { Proposal } from "../components/MappingDialog";
 import PreviewPane from "../components/PreviewPane";
 import RegressionDialog from "../components/RegressionDialog";
@@ -44,6 +45,7 @@ type Dialog =
   | { kind: "slot"; sel: Selection; name: string }
   | { kind: "mapping"; slot: Slot; proposals: Proposal[]; warnings: string[]; existing: Mapping | null; editing: Mapping | null }
   | { kind: "generate" }
+  | { kind: "versions" }
   | { kind: "area"; sel: Selection & { kind: "cells" } }
   | { kind: "regression" }
   | { kind: "desensitize" };
@@ -693,6 +695,7 @@ function Workspace() {
   const writeCommands: Command[] = ro ? [] : [
     { id: "upload", group: tr("工作流"), label: tr("上传来源文件…"), hint: tr("选择要上传的文件"), run: () => { setFilesCollapsed(false); setUploadReq((n) => n + 1); } },
     { id: "template", group: tr("工作流"), label: tr("设置 / 更换模板"), run: () => setDialog({ kind: "template" }) },
+    { id: "versions", group: tr("工作流"), label: tr("模板版本历史…"), disabled: !tpl, run: () => setDialog({ kind: "versions" }) },
     { id: "rule", group: tr("工作流"), label: tr("定义样本规则"), hint: rule.mode ? ruleMode(rule.mode) : tr("未定义"), run: () => setDialog({ kind: "rule" }) },
     { id: "map", group: tr("工作流"), label: tr("建立映射"), keys: "⇄", hint: canMap ? "" : tr("先选中左侧来源和右侧字段"), disabled: !canMap, run: startMapping },
   ];
@@ -914,6 +917,7 @@ function Workspace() {
                       <button type="button" className="btn sm" disabled={!tpl.can_redo} onClick={() => step("redo", "t")} title={tr("重做模板修改")} aria-label={tr("重做模板修改")}>↷</button>
                       {(tpl.kind === "builtin_doc" || tpl.kind === "builtin_sheet") && <button type="button" className="btn sm" onClick={() => nav(`/templates/${tpl.id}/edit?project=${pid}`)}>{tr("编辑模板")}</button>}
                     </>}
+                    <button type="button" className="btn sm" onClick={() => setDialog({ kind: "versions" })} title={tr("版本历史与恢复")}>{tr("版本")}</button>
                     {perm.canExport ? <>
                       <DownloadLink className="btn sm" href={`/api/templates/${tpl.id}/download?which=working`} title={tr("下载带字段标记的工作副本")}>{tr("工作副本")}</DownloadLink>
                       <DownloadLink className="btn sm" href={`/api/templates/${tpl.id}/download?which=original`} title={tr("下载未修改的原始模板")}>{tr("原始")}</DownloadLink>
@@ -1002,6 +1006,7 @@ function Workspace() {
           }}
           onClose={() => setDialog(null)} />
       )}
+      {dialog?.kind === "versions" && tpl && <TemplateVersionsDialog tpl={tpl} canWrite={!ro} onChanged={reload} onClose={() => setDialog(null)} />}
       {dialog?.kind === "generate" && tpl && <GenerateDialog project={project} tpl={tpl} onStarted={(jid) => nav(`/p/${pid}/jobs/${jid}`)} onClose={() => setDialog(null)}
         onLocate={(target) => { setDialog(null); locateComment(target); }} />}
       {dialog?.kind === "regression" && <RegressionDialog project={project} onClose={() => setDialog(null)} />}
