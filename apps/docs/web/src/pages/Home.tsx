@@ -41,6 +41,33 @@ export default function Home() {
   // The copy-to-organization action exists only in a personal workspace: an organization
   // project has nothing to ask approval for, and the server refuses such a request anyway.
   const personal = session.me?.workspaces?.find((w) => w.id === session.me?.workspace_id)?.kind === "personal";
+  // an organization workspace can publish templates to its organization and use what others published
+  const inOrg = !!session.me?.workspaces?.find((w) => w.id === session.me?.workspace_id)?.organization_id;
+  const [shared, setShared] = useState<{ organization: { id: string; name: string } | null; items: any[] } | null>(null);
+  const [sharedErr, setSharedErr] = useState<string | null>(null);
+  const loadShared = useCallback(() => {
+    if (!inOrg) return;
+    get("/api/organization-templates?include_deprecated=1").then((x) => { setShared(x); setSharedErr(null); }).catch((e) => setSharedErr(errorText(e)));
+  }, [inOrg]);
+  useEffect(loadShared, [loadShared]);
+  const sharing = (id: string) => shared?.items.find((x) => x.source_template_id === id);
+  const shareItems = (t: any) => {
+    if (!inOrg) return [];
+    const pub = sharing(t.id);
+    if (!pub) return [{ label: tr("发布到组织…"), onClick: async () => {
+      const d = await prompt(tr("发布到组织"), tr("说明（可选）"), "", tr("发布"));
+      if (d !== null && await act(() => post(`/api/templates/${t.id}/publish`, { description: d }), tr("已发布到组织"))) { loadTemplates(); loadShared(); }
+    } }];
+    const items = [];
+    if (!pub.deprecated) {
+      items.push({ label: tr("更新组织发布"), disabled: !pub.source_ahead, title: pub.source_ahead ? tr("源模板有新版本，可更新发布") : undefined,
+        onClick: async () => { const r: any = await post(`/api/organization-templates/${pub.id}/update`, {}).catch((e) => { toast(errorText(e), "err"); return null; }); if (r) { toast(tr("已发布第 {v1} 次", { v1: r.release_no }), "ok"); loadTemplates(); loadShared(); } } });
+      items.push({ label: tr("弃用共享…"), onClick: async () => { if (await confirm(tr("弃用共享模板"), tr("弃用后组织成员不能再用它建立新项目；已复制到各空间的模板与任务不受影响。"), tr("弃用"), true) && await act(() => post(`/api/organization-templates/${pub.id}/deprecate`, {}), tr("已弃用"))) { loadTemplates(); loadShared(); } } });
+    } else {
+      items.push({ label: tr("恢复共享"), onClick: async () => { if (await act(() => post(`/api/organization-templates/${pub.id}/deprecate`, { deprecated: false }), tr("已恢复共享"))) { loadTemplates(); loadShared(); } } });
+    }
+    return items;
+  };
 
   // Search, sort and paging happen on the server (the list used to download every project, and
   // aggregate every tenant's sources and jobs, on each visit). An older server that ignores the
@@ -264,8 +291,8 @@ export default function Home() {
               <tbody>
                 {(templates || []).map((t) => (
                   <tr key={t.id}>
-                    <td>{t.name}</td><td>{t.format.toUpperCase()}</td>
-                    <td className="small muted">{t.kind === "uploaded" ? t.original_name : t.kind === "builtin_doc" ? tr("内置文档编辑器") : tr("内置表格编辑器")}</td>
+                    <td>{t.name}{t.publication && <span className={`badge ${t.publication.deprecated ? "" : "info"}`} style={{ marginLeft: 6 }}>{t.publication.deprecated ? tr("共享已弃用") : tr("已共享 · 第 {v1} 次发布", { v1: t.publication.release_no })}</span>}</td><td>{t.format.toUpperCase()}</td>
+                    <td className="small muted">{t.info?.origin ? tr("组织共享模板") : t.kind === "uploaded" ? t.original_name : t.kind === "builtin_doc" ? tr("内置文档编辑器") : tr("内置表格编辑器")}</td>
                     <td>{formatNumber(t.slot_count)}</td><td className="small muted">{fmtTime(t.updated_at)}</td>
                     <td className="nowrap">
                       {!ro && (t.kind === "builtin_doc" || t.kind === "builtin_sheet") && <><Link className="btn xs" to={`/templates/${t.id}/edit`}>{tr("编辑")}</Link>{" "}</>}
@@ -274,6 +301,7 @@ export default function Home() {
                           { label: tr("复制"), onClick: async () => { if (await act(() => post(`/api/templates/${t.id}/duplicate`, {}), tr("已复制"))) loadTemplates(); } },
                           { label: tr("重命名…"), onClick: async () => { const n = await prompt(tr("重命名模板"), tr("名称"), t.name); if (n && n !== t.name && await act(() => patch(`/api/templates/${t.id}`, { name: n }))) loadTemplates(); } },
                           { label: tr("删除…"), onClick: async () => { if (await confirm(tr("删除模板"), tr("删除模板「{v1}」？使用它的项目需要重新选择模板。", { v1: t.name }), tr("删除"), true) && await act(() => del(`/api/templates/${t.id}`), tr("已删除模板"))) { loadTemplates(); load(); } } },
+                          ...shareItems(t),
                         ]} />
                       )}
                     </td>
@@ -284,6 +312,40 @@ export default function Home() {
               </tbody>
             </table></div>
           </div>
+          {inOrg && (
+            <>
+              <div className="row mt16 mb8"><h2 className="grow" style={{ marginTop: 16 }}>{tr("组织共享模板")}{shared?.organization ? ` · ${shared.organization.name}` : ""}</h2></div>
+              {sharedErr && <div className="notice err row mb8" role="alert"><span className="grow">{tr("组织共享模板加载失败：")}{serverText(sharedErr)}</span><button type="button" className="btn sm" onClick={loadShared}>{tr("重试")}</button></div>}
+              <div className="card" style={{ overflow: "auto" }}>
+                <div className="tbl-wrap"><table className="tbl" aria-label={tr("组织共享模板")}>
+                  <thead><tr><th>{tr("名称")}</th><th>{tr("格式")}</th><th>{tr("字段")}</th><th>{tr("发布")}</th><th>{tr("来源空间")}</th><th>{tr("维护者")}</th><th><span className="sr-only">{tr("操作")}</span></th></tr></thead>
+                  <tbody>
+                    {(shared?.items || []).map((x) => (
+                      <tr key={x.id}>
+                        <td>{x.name}{x.deprecated && <span className="badge" style={{ marginLeft: 6 }}>{tr("已弃用")}</span>}{x.description && <div className="tiny muted">{x.description}</div>}</td>
+                        <td>{String(x.format).toUpperCase()}</td><td>{formatNumber(x.slot_count)}</td>
+                        <td className="small muted">{tr("第 {v1} 次发布 · 模板第 {v2} 版", { v1: x.release_no, v2: x.version_no })}<div className="tiny">{fmtTime(x.updated_at)}{x.use_count ? ` · ${tr("已用于 {v1} 个空间", { v1: x.use_count })}` : ""}</div></td>
+                        <td className="small muted">{x.source_workspace?.name || "—"}</td>
+                        <td className="small muted">{(x.updated_by || x.published_by)?.name}</td>
+                        <td className="nowrap">
+                          {!ro && !x.deprecated && <><button type="button" className="btn xs" onClick={async () => { if (await act(() => post(`/api/organization-templates/${x.id}/use`, {}), tr("已从组织共享模板复制「{v1}」", { v1: x.name }))) { loadTemplates(); loadShared(); } }}>{tr("复制到本空间")}</button>{" "}</>}
+                          {x.can_manage && !ro && (
+                            <MoreMenu label="⋯" ariaLabel={tr("模板「{v1}」的共享操作", { v1: x.name })} items={x.deprecated
+                              ? [{ label: tr("恢复共享"), onClick: async () => { if (await act(() => post(`/api/organization-templates/${x.id}/deprecate`, { deprecated: false }), tr("已恢复共享"))) { loadTemplates(); loadShared(); } } }]
+                              : [{ label: tr("更新组织发布"), disabled: !x.source_ahead, title: x.source_ahead ? tr("源模板有新版本，可更新发布") : undefined,
+                                   onClick: async () => { const r: any = await post(`/api/organization-templates/${x.id}/update`, {}).catch((e) => { toast(errorText(e), "err"); return null; }); if (r) { toast(tr("已发布第 {v1} 次", { v1: r.release_no }), "ok"); loadTemplates(); loadShared(); } } },
+                                 { label: tr("弃用共享…"), onClick: async () => { if (await confirm(tr("弃用共享模板"), tr("弃用后组织成员不能再用它建立新项目；已复制到各空间的模板与任务不受影响。"), tr("弃用"), true) && await act(() => post(`/api/organization-templates/${x.id}/deprecate`, {}), tr("已弃用"))) { loadTemplates(); loadShared(); } } }]} />
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {shared && !shared.items.length && !sharedErr && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("组织里还没有共享模板。在模板库里对模板选择「发布到组织…」即可共享。")}</td></tr>}
+                    {!shared && !sharedErr && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("加载模板…")}</td></tr>}
+                  </tbody>
+                </table></div>
+              </div>
+            </>
+          )}
           <div className="tiny muted mt16">{tr("所有文件只在本机/自有服务器处理，不会发送到外部服务。")}</div>
         </div>
       </div>

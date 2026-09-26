@@ -9,9 +9,12 @@ import { errorText } from "../lib/perm";
 
 export default function TemplateChooser({ projectId, settingsRev, current, onDone, onClose }: { settingsRev?: number; projectId: string; current?: string | null; onDone: () => void; onClose: () => void }) {
   useI18n();
-  const [tab, setTab] = useState<"upload" | "new" | "library">("upload");
+  const [tab, setTab] = useState<"upload" | "new" | "library" | "shared">("upload");
   const [lib, setLib] = useState<any[] | null>(null);
   const [libErr, setLibErr] = useState<string | null>(null);
+  // templates the organization shares; absent (not just empty) in a personal workspace
+  const [shared, setShared] = useState<{ organization: { id: string; name: string } | null; items: any[] } | null>(null);
+  const [sharedErr, setSharedErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState(0);
   const [err, setErr] = useState<string | null>(null);
@@ -22,7 +25,24 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
 
   // A library that failed to load is not an empty library: say which it is.
   const loadLib = () => { setLibErr(null); get("/api/templates").then(setLib).catch((e) => setLibErr(errorText(e))); };
-  useEffect(loadLib, []);
+  const loadShared = () => { setSharedErr(null); get("/api/organization-templates").then(setShared).catch((e) => setSharedErr(errorText(e))); };
+  useEffect(() => { loadLib(); loadShared(); }, []);
+
+  // a copy of the organization's release becomes this workspace's own template and the project's
+  const useShared = async (id: string) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const t = await post(`/api/organization-templates/${id}/use`, { project_id: projectId, base_settings_rev: settingsRev });
+      toast(tr("已从组织共享模板复制「{v1}」", { v1: t.name }), "ok");
+      onDone();
+      onClose();
+    } catch (e: any) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const doUpload = async (f: File) => {
     setBusy(true);
@@ -64,6 +84,7 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
         <button type="button" aria-pressed={tab === "upload"} className={tab === "upload" ? "on" : ""} onClick={() => setTab("upload")}>{tr("上传已有文件作为模板")}</button>
         <button type="button" aria-pressed={tab === "new"} className={tab === "new" ? "on" : ""} onClick={() => setTab("new")}>{tr("在软件内新建模板")}</button>
         <button type="button" aria-pressed={tab === "library"} className={tab === "library" ? "on" : ""} onClick={() => setTab("library")}>{tr("从模板库选择")}{lib ? `（${lib.length}）` : ""}</button>
+        {(shared?.organization || sharedErr) && <button type="button" aria-pressed={tab === "shared"} className={tab === "shared" ? "on" : ""} onClick={() => setTab("shared")}>{tr("从组织共享选择")}{shared ? `（${shared.items.length}）` : ""}</button>}
       </div>
       {err && <div className="notice err mt12">{serverText(err)}</div>}
       {tab === "upload" && (
@@ -115,6 +136,28 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
             </tbody>
           </table>
           <div className="tiny muted mt8">{tr("模板可被多个项目使用；修改会产生新版本。若不希望影响其他项目，请选择「复制后使用」。")}</div>
+        </div>
+      )}
+      {tab === "shared" && (
+        <div className="mt12" style={{ maxHeight: 420, overflow: "auto" }}>
+          <table className="tbl">
+            <thead><tr><th>{tr("名称")}</th><th>{tr("格式")}</th><th>{tr("字段")}</th><th>{tr("发布")}</th><th>{tr("来源空间")}</th><th /></tr></thead>
+            <tbody>
+              {(shared?.items || []).map((x) => (
+                <tr key={x.id}>
+                  <td>{x.name}{x.description && <div className="tiny muted">{x.description}</div>}</td>
+                  <td>{String(x.format).toUpperCase()}</td>
+                  <td>{formatNumber(x.slot_count)}</td>
+                  <td className="small muted">{tr("第 {v1} 次发布 · 模板第 {v2} 版", { v1: x.release_no, v2: x.version_no })}<div className="tiny">{fmtTime(x.updated_at)}</div></td>
+                  <td className="small muted">{x.source_workspace?.name || "—"}</td>
+                  <td className="nowrap"><button type="button" className="btn sm" disabled={busy} onClick={() => useShared(x.id)} title={tr("复制到本空间并用于这个项目")}>{tr("使用")}</button></td>
+                </tr>
+              ))}
+              {sharedErr && <tr><td colSpan={6}><div className="notice err row"><span className="grow">{tr("组织共享模板加载失败：")}{serverText(sharedErr)}</span><button type="button" className="btn sm" onClick={loadShared}>{tr("重试")}</button></div></td></tr>}
+              {!sharedErr && shared && !shared.items.length && <tr><td colSpan={6} className="muted" style={{ textAlign: "center" }}>{tr("组织里还没有共享模板。在模板库里对模板选择「发布到组织…」即可共享。")}</td></tr>}
+            </tbody>
+          </table>
+          <div className="tiny muted mt8">{tr("使用组织共享模板会把当前发布复制成本空间自己的模板；之后组织更新或弃用它，不会改变这里的项目和任务。")}</div>
         </div>
       )}
     </Modal>

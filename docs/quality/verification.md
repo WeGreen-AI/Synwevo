@@ -1101,6 +1101,39 @@ viewer 不能解决、编辑可解决、默认列表隐藏已解决线程与其�
 
 **未做**：多条公告/历史；举报附带前后文（有意不做）；举报的邮件/推送以外的渠道；对举报人的匿名化（Teams 合规版的做法）；平台级（跨组织）的举报视图。
 
+### 16.35 组织共享模板：发布即冻结、使用即复制、维护有权属（CI-35）
+
+**研究**：Microsoft Learn「Create an organization assets library」（组织模板库在 Office 新建页作为「你的组织」标签；必须是模板文件；读权限；≤30 库），
+Google Workspace 管理员帮助「Turn custom Drive templates on or off for users」（开放/审核/限制三种提交模式，Docs Templates 权限审批，分类），均 2026-09-26 读取。
+两者的模板都是「新建时复制一份」，模板更新不改变已创建文档——本项目沿用这一模型。决策记录：`docs/platform/org-templates.md`。
+
+**实现**：schema v18（`organization_templates`、`organization_template_releases`）；`synwevo_docs.org_templates.OrgTemplates`（发布冻结 head 版本的文件/字段/元数据；
+列表与详情按当前空间所属组织与组织成员资格；使用 = 在当前空间复制成普通模板并记 `info.origin`；更新发布只在源 head 更新时产生新一次发布；弃用/恢复；
+维护者 = 源空间编辑者或组织 owner/admin）；6 个路由（读 `None`、写 `write`）+ 审计 5 种；`GET /api/templates` 项多出 `publication`；
+Docs 首页模板库行的「发布到组织… / 更新组织发布 / 弃用共享… / 恢复共享」与徽标、「组织共享模板」区（组织空间可见）；项目「设置模板」对话框的
+「从组织共享选择」页签；三语言 31 条。
+
+**接口测试**（`tests/integration/test_org_templates.py`，1 项，组合服务器，两个组织、三个空间）：viewer 发布 403；个人空间发布 400 `no_organization`、列表 `organization=null`；
+发布冻结 v2（1 字段）、说明去空白、`can_manage`/`source_ahead`；重复发布 409；模板列表带 `publication`；另一空间的成员可见但 `can_manage=false`；
+另一组织的成员列表为空、详情/使用 404；viewer 可看不可复制、非维护者更新 403；复制得到本空间 head=1 的模板（字段、`info.origin`）并绑定项目、`use_count=1`；
+源模板加字段后发布仍 v2、`source_ahead=true`、副本不变；显式更新 → 第 2 次/第 3 版/2 字段，未变 409，只改说明可行，发布历史 [2,1]，副本仍 1 字段；
+弃用后默认隐藏、`include_deprecated` 可见含说明、使用 409 `deprecated`、副本无恙；组织 owner 恢复，重复 409；源模板删除后发布仍可用（`source_gone`）而更新 409。
+
+**浏览器（隔离实例，群主 1280 px、成员 390 px 触摸，Chromium + WebKit）**，`ui_e2e_org_templates.py`：
+
+```
+== chromium (Google Chrome)
+  - the owner published the library template to the organization from its row menu; the row shows 已共享 and the shared section lists release 1 (template v2) from Team A
+  - on the phone the member chose 从组织共享选择 → 使用; the project got a copy of release 1 in Team B with the field 客户名称
+  - the owner released version 2 after adding a field, then deprecated the publication; both tables say so
+  - the member's copy still has one field and release 1; the deprecated publication is hidden from the picker and refuses new uses
+== webkit（四条同上）
+```
+
+脚本修正一处（非产品缺陷）：手机上的项目页有两个「设置模板」（步骤列表与目标面板），脚本取面板的那个。
+
+**未做**：发布审核队列与分类、发布通知、复制前预览、副本里「源发布有新版本」的提示、跨组织共享。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

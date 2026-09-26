@@ -5343,4 +5343,120 @@ export const messages = {
     "en": "Needs a new request",
     "zh-Hant": "需重新申請"
   },
+  "从组织共享选择": {
+    "en": "From organization shared",
+    "zh-Hant": "從組織共享選擇"
+  },
+  "组织共享模板": {
+    "en": "Organization shared templates",
+    "zh-Hant": "組織共享範本"
+  },
+  "发布": {
+    "en": "Release",
+    "zh-Hant": "發布"
+  },
+  "来源空间": {
+    "en": "Source workspace",
+    "zh-Hant": "來源空間"
+  },
+  "维护者": {
+    "en": "Maintainer",
+    "zh-Hant": "維護者"
+  },
+  "第 {v1} 次发布 · 模板第 {v2} 版": {
+    "en": "Release {v1} · template version {v2}",
+    "zh-Hant": "第 {v1} 次發布 · 範本第 {v2} 版"
+  },
+  "复制到本空间并用于这个项目": {
+    "en": "Copy into this workspace and use it for this project",
+    "zh-Hant": "複製到本空間並用於這個專案"
+  },
+  "组织共享模板加载失败：": {
+    "en": "Shared templates failed to load: ",
+    "zh-Hant": "組織共享範本載入失敗："
+  },
+  "组织里还没有共享模板。在模板库里对模板选择「发布到组织…」即可共享。": {
+    "en": "The organization has no shared templates yet. Choose “Publish to organization…” on a template in the library to share it.",
+    "zh-Hant": "組織裡還沒有共享範本。在範本庫裡對範本選擇「發布到組織…」即可共享。"
+  },
+  "使用组织共享模板会把当前发布复制成本空间自己的模板；之后组织更新或弃用它，不会改变这里的项目和任务。": {
+    "en": "Using a shared template copies the current release into this workspace as its own template; later releases or deprecation in the organization do not change the projects and jobs here.",
+    "zh-Hant": "使用組織共享範本會把目前發布複製成本空間自己的範本；之後組織更新或棄用它，不會改變這裡的專案和任務。"
+  },
+  "已从组织共享模板复制「{v1}」": {
+    "en": "Copied “{v1}” from the organization's shared templates",
+    "zh-Hant": "已從組織共享範本複製「{v1}」"
+  },
+  "已共享 · 第 {v1} 次发布": {
+    "en": "Shared · release {v1}",
+    "zh-Hant": "已共享 · 第 {v1} 次發布"
+  },
+  "共享已弃用": {
+    "en": "Sharing deprecated",
+    "zh-Hant": "共享已棄用"
+  },
+  "发布到组织…": {
+    "en": "Publish to organization…",
+    "zh-Hant": "發布到組織…"
+  },
+  "发布到组织": {
+    "en": "Publish to organization",
+    "zh-Hant": "發布到組織"
+  },
+  "已发布到组织": {
+    "en": "Published to the organization",
+    "zh-Hant": "已發布到組織"
+  },
+  "更新组织发布": {
+    "en": "Release new version",
+    "zh-Hant": "更新組織發布"
+  },
+  "已发布第 {v1} 次": {
+    "en": "Release {v1} published",
+    "zh-Hant": "已發布第 {v1} 次"
+  },
+  "弃用共享…": {
+    "en": "Deprecate sharing…",
+    "zh-Hant": "棄用共享…"
+  },
+  "弃用共享模板": {
+    "en": "Deprecate shared template",
+    "zh-Hant": "棄用共享範本"
+  },
+  "弃用后组织成员不能再用它建立新项目；已复制到各空间的模板与任务不受影响。": {
+    "en": "Once deprecated, members can no longer use it for new projects; copies already made in workspaces and their jobs are unaffected.",
+    "zh-Hant": "棄用後組織成員不能再用它建立新專案；已複製到各空間的範本與任務不受影響。"
+  },
+  "弃用": {
+    "en": "Deprecate",
+    "zh-Hant": "棄用"
+  },
+  "已弃用": {
+    "en": "Deprecated",
+    "zh-Hant": "已棄用"
+  },
+  "恢复共享": {
+    "en": "Restore sharing",
+    "zh-Hant": "恢復共享"
+  },
+  "已恢复共享": {
+    "en": "Sharing restored",
+    "zh-Hant": "已恢復共享"
+  },
+  "复制到本空间": {
+    "en": "Copy into this workspace",
+    "zh-Hant": "複製到本空間"
+  },
+  "源模板有新版本，可更新发布": {
+    "en": "The source template has a newer version; release it to share",
+    "zh-Hant": "來源範本有新版本，可更新發布"
+  },
+  "已用于 {v1} 个空间": {
+    "en": "Used {v1} times",
+    "zh-Hant": "已用於 {v1} 次"
+  },
+  "模板「{v1}」的共享操作": {
+    "en": "Sharing actions for template “{v1}”",
+    "zh-Hant": "範本「{v1}」的共享操作"
+  },
 } satisfies Messages;

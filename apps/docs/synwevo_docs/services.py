@@ -651,10 +651,12 @@ class App:
     # ================================================================ templates
     def list_templates(self) -> list[dict]:
         rows = self.store.all("SELECT * FROM templates WHERE deleted=0 AND tenant=? ORDER BY updated_at DESC", (current_tenant(),))
+        from .org_templates import OrgTemplates
+        published = OrgTemplates(self, None).status_for_templates([r["id"] for r in rows])
         out = []
         for r in rows:
             v = self.store.one("SELECT slots FROM template_versions WHERE template_id=? AND version_no=?", (r["id"], r["head"]))
-            out.append({**self._template_out(r), "slot_count": len((v or {}).get("slots") or [])})
+            out.append({**self._template_out(r), "slot_count": len((v or {}).get("slots") or []), "publication": published.get(r["id"])})
         return out
 
     def _template_out(self, r: dict) -> dict:

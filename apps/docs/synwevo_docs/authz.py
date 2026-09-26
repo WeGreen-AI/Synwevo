@@ -182,6 +182,14 @@ ROUTE_POLICY: dict[tuple[str, str], str | None] = {
     ("POST", "/api/templates/{tid}/undo"): "write",
     ("POST", "/api/templates/{tid}/redo"): "write",
     ("GET", "/api/templates/{tid}/download"): "export",
+    # organization-shared templates: any member may browse; publishing, maintaining and copying
+    # one into this workspace are writes (the service checks the organization side)
+    ("GET", "/api/organization-templates"): None,
+    ("GET", "/api/organization-templates/{pid}"): None,
+    ("POST", "/api/templates/{tid}/publish"): "write",
+    ("POST", "/api/organization-templates/{pid}/update"): "write",
+    ("POST", "/api/organization-templates/{pid}/deprecate"): "write",
+    ("POST", "/api/organization-templates/{pid}/use"): "write",
     # records / rules
     ("GET", "/api/projects/{pid}/records"): None,
     ("POST", "/api/projects/{pid}/rule-preview"): None,              # counts for a candidate rule, not saved

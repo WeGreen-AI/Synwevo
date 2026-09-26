@@ -483,6 +483,55 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     def template_detail(tid: str):
         return app_.template_detail(tid)
 
+    # ------------------------------------------------------------------ organization-shared templates
+    from ..org_templates import OrgTemplates as _OrgTemplates
+    shared = _OrgTemplates(app_, plat.identity)
+
+    @api.get("/api/organization-templates")
+    def list_shared_templates(request: Request, include_deprecated: bool = False):
+        return shared.list(_uid(request), include_deprecated=include_deprecated)
+
+    @api.get("/api/organization-templates/{pid}")
+    def shared_template(request: Request, pid: str):
+        return shared.get(pid, _uid(request))
+
+    @api.post("/api/templates/{tid}/publish", status_code=201)
+    def publish_template(request: Request, tid: str, body: dict = Body(default={})):
+        uid = _uid(request)
+        out = shared.publish(tid, uid, body.get("description"))
+        plat.audit(request, "docs.template.publish", actor_id=uid, workspace_id=current_tenant(), object_kind="organization_template", object_id=out["id"], result="ok",
+                   meta={"template_id": tid, "organization_id": out["organization_id"], "version_no": out["version_no"]})
+        return out
+
+    @api.post("/api/organization-templates/{pid}/update")
+    def update_shared_template(request: Request, pid: str, body: dict = Body(default={})):
+        uid = _uid(request)
+        out = shared.update(pid, uid, body.get("description"), set_description="description" in body)
+        plat.audit(request, "docs.template.release", actor_id=uid, workspace_id=current_tenant(), object_kind="organization_template", object_id=pid, result="ok",
+                   meta={"release_no": out["release_no"], "version_no": out["version_no"], "released": out["released"]})
+        return out
+
+    @api.post("/api/organization-templates/{pid}/deprecate")
+    def deprecate_shared_template(request: Request, pid: str, body: dict = Body(default={})):
+        uid = _uid(request)
+        out = shared.set_deprecated(pid, uid, body.get("deprecated", True) is not False, body.get("note"))
+        plat.audit(request, "docs.template.deprecate" if out["deprecated"] else "docs.template.restore", actor_id=uid, workspace_id=current_tenant(),
+                   object_kind="organization_template", object_id=pid, result="ok")
+        return out
+
+    @api.post("/api/organization-templates/{pid}/use", status_code=201)
+    def use_shared_template(request: Request, pid: str, body: dict = Body(default={})):
+        uid = _uid(request)
+        t = shared.use(pid, uid, body.get("name"))
+        if body.get("project_id"):
+            values = {"template_id": t["id"]}
+            if body.get("base_settings_rev") is not None:
+                values["base_settings_rev"] = body["base_settings_rev"]
+            app_.update_project(body["project_id"], values)
+        plat.audit(request, "docs.template.use_shared", actor_id=uid, workspace_id=current_tenant(), object_kind="organization_template", object_id=pid, result="ok",
+                   meta={"template_id": t["id"], "project_id": body.get("project_id")})
+        return t
+
     @api.patch("/api/templates/{tid}")
     def rename_template(tid: str, body: dict = Body(...)):
         return app_.rename_template(tid, body.get("name", ""))
