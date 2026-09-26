@@ -1362,6 +1362,25 @@ owner 把 editor 降为查看者后，editor 的连接在复核间隔内转为�
 **未做**：表格型模板与项目页（字段/映射）的实时协同；逐字符差异视图；多进程房间共享；生产 nginx 副本的 Upgrade 头需运维同步
 （见 deployment.md）。
 
+### 16.47 Docs 项目页协同：在场、按映射合并、实时变更与归属活动（CI-46）
+
+决策记录与接口：`docs/platform/docs-project-collab.md`。
+
+**实现**：核心包 `context.actor()`（会话用户或委托令牌背后的人，由请求中间件设置，只用于归属）与 schema v21 `project_activity`；`services.py` 的
+`merge_mappings`（按映射 id 三方合并，冲突与 `force_ids`）、`mapping_diff`、`save_mappings` 在 `base_rev` 落后时合并（无 id 的整份列表与空列表仍按旧规则
+409；内容与已保存完全一致时不产生空修订）、`on_project_change` 钩子（项目设置、文件增删/顺序/代表/选项、映射保存/撤销/重做）；`collab.py` 项目房间
+（在场 + 变更帧，不接受文档帧）、`on_project_change`（记录活动 + 推帧）、模板版本变化按使用项目扇出、`GET /api/projects/{pid}/activity`；`WS /api/collab/projects/{pid}`；
+`PUT …/mappings` 的 `force_ids`。浏览器端 `ProjectPresence.tsx`（在场条、点击定位到对方所在对象、活动记录抽屉）、`Workspace.tsx`（房间、focus 随选择变化、他人
+变更即时刷新并提示、冲突对话框「以我的为准 / 以对方为准」）；39 条三语言字符串。
+
+**验证**：`test_project_collab.py` 6 项（合并算法 2 项 + HTTP/房间 4 项）与调整后的 `test_services_templates.py` 并发保存用例（六次相同保存 → 一个修订、六个 200）；
+Docs 相关套件 48 项通过；三套件全跑见下；typecheck/build/`npm test` 通过；五个守卫通过。浏览器 `ui_e2e_project_collab.py`（隔离实例，两账户同一组织空间，
+编辑者手机 390 px）：**Chromium 与 WebKit 各 7 个里程碑全部通过**——双方顶栏互见；owner 选中字段后 editor 的芯片显示「正在看字段「客户名称」」；editor 的
+保存即时到达 owner 页面（提示「Editor 新增映射 #2→第二字段（第 2 版）」并刷新）；editor 从旧修订保存另一条映射 → 自动合并（200，`merged_with`）；同一映射
+双方从同一修订各改 → 409 `both_changed`；活动记录按人列出含自动合并；owner 关闭页面后 editor 的在场名单清空。截图 `chromium-01…04`、`webkit-01…04`。
+
+**未做**：`SheetEditor` 的共同编辑；映射对话框内的字段级实时锁；活动记录筛选。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

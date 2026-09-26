@@ -5711,4 +5711,164 @@ export const messages = {
     "en": " (viewing)",
     "zh-Hant": "（檢視）"
   },
+  "{v1} {v2}": {
+    "en": "{v1} {v2}",
+    "zh-Hant": "{v1} {v2}"
+  },
+  "{v1} 正在看{v2}（点击定位）": {
+    "en": "{v1} is on {v2} (click to go there)",
+    "zh-Hant": "{v1} 正在看{v2}（點擊定位）"
+  },
+  "{v1}（第 {v2} 版）": {
+    "en": "{v1} (revision {v2})",
+    "zh-Hant": "{v1}（第 {v2} 版）"
+  },
+  "{v1}（第 {v2} 版，与第 {v3} 版自动合并）": {
+    "en": "{v1} (revision {v2}, merged with revision {v3})",
+    "zh-Hant": "{v1}（第 {v2} 版，與第 {v3} 版自動合併）"
+  },
+  "以我的为准": {
+    "en": "Keep mine",
+    "zh-Hant": "以我的為準"
+  },
+  "你删除了它，对方改了它": {
+    "en": "you deleted it, they changed it",
+    "zh-Hant": "你刪除了它，對方改了它"
+  },
+  "保存了映射": {
+    "en": "saved the mappings",
+    "zh-Hant": "儲存了對應"
+  },
+  "修改了文件读取选项": {
+    "en": "changed a file's reading options",
+    "zh-Hant": "修改了檔案讀取選項"
+  },
+  "修改了项目": {
+    "en": "changed the project",
+    "zh-Hant": "修改了專案"
+  },
+  "修改了项目设置（{v1}）": {
+    "en": "changed project settings ({v1})",
+    "zh-Hant": "修改了專案設定（{v1}）"
+  },
+  "修改映射 {v1}": {
+    "en": "changed mapping {v1}",
+    "zh-Hant": "修改對應 {v1}"
+  },
+  "其他成员在你之后也保存了映射。没有冲突的修改已可合并；下面这些映射双方都动过，请选择保留哪一方：{v1}": {
+    "en": "Another member saved the mappings after you loaded them. Changes that do not collide merge; both of you changed the mappings below, so choose whose version to keep: {v1}",
+    "zh-Hant": "其他成員在你之後也儲存了對應。沒有衝突的修改已可合併；下面這些對應雙方都動過，請選擇保留哪一方：{v1}"
+  },
+  "删除映射 {v1}": {
+    "en": "removed mapping {v1}",
+    "zh-Hant": "刪除對應 {v1}"
+  },
+  "双方各自新增": {
+    "en": "both sides added it",
+    "zh-Hant": "雙方各自新增"
+  },
+  "双方都改了它": {
+    "en": "both of you changed it",
+    "zh-Hant": "雙方都改了它"
+  },
+  "实时更新不可用": {
+    "en": "Live updates unavailable",
+    "zh-Hant": "即時更新不可用"
+  },
+  "实时更新中": {
+    "en": "Live",
+    "zh-Hant": "即時更新中"
+  },
+  "对方已删除它": {
+    "en": "they deleted it",
+    "zh-Hant": "對方已刪除它"
+  },
+  "已改为对方的版本；你对这些映射的修改未保存": {
+    "en": "Switched to their version; your changes to those mappings were not saved",
+    "zh-Hant": "已改為對方的版本；你對這些對應的修改未儲存"
+  },
+  "恢复了模板版本（现为第 {v1} 版）": {
+    "en": "restored a template version (now v{v1})",
+    "zh-Hant": "復原了範本版本（現為第 {v1} 版）"
+  },
+  "撤销了映射修改（回到第 {v1} 版）": {
+    "en": "undid a mapping change (back to revision {v1})",
+    "zh-Hant": "復原了對應修改（回到第 {v1} 版）"
+  },
+  "撤销了模板修改（现为第 {v1} 版）": {
+    "en": "undid a template change (now v{v1})",
+    "zh-Hant": "復原了範本修改（現為第 {v1} 版）"
+  },
+  "新增映射 {v1}": {
+    "en": "added mapping {v1}",
+    "zh-Hant": "新增對應 {v1}"
+  },
+  "映射 #{v1}：{v2}": {
+    "en": "mapping #{v1}: {v2}",
+    "zh-Hant": "對應 #{v1}：{v2}"
+  },
+  "映射有冲突": {
+    "en": "Mapping conflict",
+    "zh-Hant": "對應有衝突"
+  },
+  "更换了代表文件": {
+    "en": "changed the representative file",
+    "zh-Hant": "更換了代表檔案"
+  },
+  "更新了模板（第 {v1} 版）": {
+    "en": "updated the template (v{v1})",
+    "zh-Hant": "更新了範本（第 {v1} 版）"
+  },
+  "此页面收不到其他人的实时修改；刷新页面重试。": {
+    "en": "This page cannot receive others' live changes; reload to retry.",
+    "zh-Hant": "此頁面收不到其他人的即時修改；重新整理頁面重試。"
+  },
+  "活动记录": {
+    "en": "Activity",
+    "zh-Hant": "活動記錄"
+  },
+  "活动记录…": {
+    "en": "Activity…",
+    "zh-Hant": "活動記錄…"
+  },
+  "添加了文件「{v1}」": {
+    "en": "added the file “{v1}”",
+    "zh-Hant": "新增了檔案「{v1}」"
+  },
+  "移除了文件「{v1}」": {
+    "en": "removed the file “{v1}”",
+    "zh-Hant": "移除了檔案「{v1}」"
+  },
+  "谁在什么时候改了什么：映射按条记录，文件、样本规则、模板版本的变化也在这里。": {
+    "en": "Who changed what and when: mappings one by one; files, sample rules and template versions too.",
+    "zh-Hant": "誰在什麼時候改了什麼：對應逐條記錄，檔案、樣本規則、範本版本的變化也在這裡。"
+  },
+  "调整了文件顺序": {
+    "en": "reordered the files",
+    "zh-Hant": "調整了檔案順序"
+  },
+  "输出设置": {
+    "en": "output settings",
+    "zh-Hant": "輸出設定"
+  },
+  "还没有记录。": {
+    "en": "No activity yet.",
+    "zh-Hant": "還沒有記錄。"
+  },
+  "重做了映射修改（第 {v1} 版）": {
+    "en": "redid a mapping change (revision {v1})",
+    "zh-Hant": "重做了對應修改（第 {v1} 版）"
+  },
+  "重做了模板修改（现为第 {v1} 版）": {
+    "en": "redid a template change (now v{v1})",
+    "zh-Hant": "重做了範本修改（現為第 {v1} 版）"
+  },
+  "，启用": {
+    "en": ", enabled",
+    "zh-Hant": "，啟用"
+  },
+  "，禁用": {
+    "en": ", disabled",
+    "zh-Hant": "，停用"
+  },
 } satisfies Messages;

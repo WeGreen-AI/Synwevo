@@ -54,6 +54,9 @@ class App:
         # Set by the API layer: (tid, head, editor, reason) after a template version operation, so an
         # open live-editing room follows a save, restore, undo, redo or deletion.
         self.on_template_change = None
+        # Set by the API layer: (pid, kind, detail) after a change to a project's sources, mappings or
+        # settings — recorded as attributed activity and pushed to whoever has the project open.
+        self.on_project_change = None
 
     # ================================================================ projects
     def create_project(self, name: str, origin: str | None = None) -> dict:
@@ -210,6 +213,7 @@ class App:
         self.store.update("projects", {"id": pid}, allowed)
         if set(allowed) - {"name", "step", "updated_at", "output", "settings_rev"}:
             self.store.bump_project(pid)
+        self._project_changed(pid, "project.update", {"fields": sorted(k for k in allowed if k not in ("updated_at", "settings_rev"))})
         return self.get_project(pid)
 
     def _validate_pin(self, version, tid: str | None) -> int | None:
@@ -296,6 +300,7 @@ class App:
             self.store.update("source_files", {"id": sid}, {"representative": 1})
         self.store.bump_project(pid)
         self.parse_pool.submit(self._scan_then_parse if scanning else self._parse_source, sid)
+        self._project_changed(pid, "source.add", {"source_id": sid, "name": filename})
         return self.get_source(sid)
 
     # ------------------------------------------------------------------ malware scanning
@@ -532,18 +537,21 @@ class App:
             if nxt:
                 self.store.update("source_files", {"id": nxt["id"]}, {"representative": 1})
         self.store.bump_project(r["project_id"])
+        self._project_changed(r["project_id"], "source.remove", {"source_id": sid, "name": r.get("name") or r.get("filename")})
 
     def reorder_sources(self, pid: str, ids: list[str]) -> list[dict]:
         self.get_project(pid)      # the per-row WHERE pins the project but never checked it is ours
         for i, sid in enumerate(ids):
             self.store.execute("UPDATE source_files SET ord=? WHERE id=? AND project_id=?", (i + 1, sid, pid))
         self.store.bump_project(pid)
+        self._project_changed(pid, "source.order", {})
         return self.list_sources(pid)
 
     def set_representative(self, sid: str) -> dict:
         r = self.get_source(sid, raw=True)
         self.store.execute("UPDATE source_files SET representative=0 WHERE project_id=?", (r["project_id"],))
         self.store.update("source_files", {"id": sid}, {"representative": 1})
+        self._project_changed(self.get_source(sid, raw=True)["project_id"], "source.representative", {"source_id": sid})
         return self.get_source(sid)
 
     def set_source_options(self, sid: str, options: dict) -> dict:
@@ -555,6 +563,7 @@ class App:
                                                             "updated_at": now()})
             self.store.bump_project(r["project_id"])
         self._parse_source(sid)
+        self._project_changed(r["project_id"], "source.options", {"source_id": sid})
         return self.get_source(sid)
 
     def source_doc(self, sid: str) -> SourceDoc:
@@ -855,6 +864,15 @@ class App:
         except Exception:                                    # noqa: BLE001 — the version is saved; the room catches up on reopen
             logging.getLogger("synwevo.docs").exception("template change hook failed for %s (%s)", tid, reason)
 
+    def _project_changed(self, pid: str, kind: str, detail: dict | None = None) -> None:
+        hook = self.on_project_change
+        if hook is None:
+            return
+        try:
+            hook(pid, kind, detail or {})
+        except Exception:                                    # noqa: BLE001 — the change is saved; the feed catches up on reload
+            logging.getLogger("synwevo.docs").exception("project change hook failed for %s (%s)", pid, kind)
+
     def _bump_projects_using(self, tid: str) -> None:
         for p in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
             self.store.bump_project(p["id"])
@@ -1143,10 +1161,88 @@ class App:
         return {"rev": p["mapping_rev"], "mappings": (row or {}).get("data") or [], "can_undo": bool(row and row["parent_rev"] is not None),
                 "can_redo": bool(kids), "note": (row or {}).get("note")}
 
-    def save_mappings(self, pid: str, mappings: list[dict], note: str = "修改映射", base_rev: int | None = None) -> dict:
+    @staticmethod
+    def _mapping_key(m: dict) -> str:
+        """A mapping's content, for equality: its identity and what it maps, not when it was saved."""
+        return json.dumps({k: v for k, v in m.items() if k not in ("updated_at",)}, sort_keys=True, ensure_ascii=False)
+
+    @classmethod
+    def merge_mappings(cls, base: list[dict], current: list[dict], incoming: list[dict], force_ids: set[str] | None = None) -> tuple[list[dict], list[dict]]:
+        """Three-way merge of the mapping list at the granularity of one mapping (its stable id).
+
+        ``base`` is the revision the client loaded, ``current`` what the project holds now
+        (someone else saved since), ``incoming`` the client's list. A mapping only one side
+        touched takes that side; one both sides changed the same way is fine; one both sides
+        changed differently — or one side deleted and the other edited — is a conflict, unless its
+        id is in ``force_ids`` (the person chose their version after seeing the other's).
+        Returns (merged list, conflicts). Order: the current order, then the client's additions."""
+        force_ids = force_ids or set()
+        kb = {m["id"]: m for m in base if m.get("id")}
+        kc = {m["id"]: m for m in current if m.get("id")}
+        ki = {m["id"]: m for m in incoming if m.get("id")}
+        key = cls._mapping_key
+        merged: dict[str, dict] = {}
+        conflicts: list[dict] = []
+        for mid in list(kb) + [x for x in kc if x not in kb] + [x for x in ki if x not in kb and x not in kc]:
+            b, c, i = kb.get(mid), kc.get(mid), ki.get(mid)
+            if b is None:                                    # created since the base, by one side or the other
+                chosen = i if i is not None and (c is None or mid in force_ids) else c
+                if i is not None and c is not None and key(i) != key(c) and mid not in force_ids:
+                    conflicts.append({"id": mid, "no": (c or i).get("no"), "reason": "both_added"})
+                    continue
+                merged[mid] = chosen
+                continue
+            c_changed = c is None or key(c) != key(b)
+            i_changed = i is None or key(i) != key(b)
+            if not c_changed:                                # only the client touched it (or nobody)
+                if i is not None:
+                    merged[mid] = i
+                continue                                     # client deleted, nobody else touched: gone
+            if not i_changed:                                # only someone else touched it
+                if c is not None:
+                    merged[mid] = c
+                continue                                     # they deleted it; the client did not touch it
+            if c is not None and i is not None and key(c) == key(i):
+                merged[mid] = c                              # the same change from both sides
+                continue
+            if mid in force_ids:
+                if i is not None:
+                    merged[mid] = i
+                continue
+            conflicts.append({"id": mid, "no": (c or i or b).get("no"),
+                              "reason": "deleted_by_other" if c is None else "deleted_by_you" if i is None else "both_changed"})
+        order = [m["id"] for m in current if m.get("id")] + [m["id"] for m in incoming if m.get("id") and m["id"] not in kc]
+        out = [merged[mid] for mid in order if mid in merged]
+        out += [m for mid, m in merged.items() if mid not in order]
+        return out, conflicts
+
+    @staticmethod
+    def _mapping_label(m: dict) -> dict:
+        target = (m.get("target") or {}).get("binding") or (m.get("target") or {}).get("field") or ""
+        srcs = []
+        for src in m.get("sources") or []:
+            if isinstance(src, dict):
+                srcs.append(src.get("header") or src.get("cell") or src.get("locator", {}).get("text") if isinstance(src.get("locator"), dict) else src.get("header") or src.get("cell") or src.get("kind") or "")
+        return {"id": m.get("id"), "no": m.get("no"), "target": str(target)[:80], "sources": [str(x)[:60] for x in srcs if x][:4],
+                "enabled": bool(m.get("enabled", True)), "type": m.get("type")}
+
+    @classmethod
+    def mapping_diff(cls, before: list[dict], after: list[dict]) -> dict:
+        kb = {m["id"]: m for m in before if m.get("id")}
+        ka = {m["id"]: m for m in after if m.get("id")}
+        added = [cls._mapping_label(m) for mid, m in ka.items() if mid not in kb]
+        removed = [cls._mapping_label(m) for mid, m in kb.items() if mid not in ka]
+        changed = [{"before": cls._mapping_label(kb[mid]), "after": cls._mapping_label(m)} for mid, m in ka.items()
+                   if mid in kb and cls._mapping_key(kb[mid]) != cls._mapping_key(m)]
+        return {"added": added, "removed": removed, "changed": changed}
+
+    def save_mappings(self, pid: str, mappings: list[dict], note: str = "修改映射", base_rev: int | None = None,
+                      force_ids: list[str] | None = None) -> dict:
         p = self.get_project(pid)
-        if base_rev is not None and base_rev != p["mapping_rev"]:
-            raise ServiceError(409, "stale", "映射已在其他窗口被修改，请刷新后重试")
+        # Merging by mapping needs the client to know the saved mappings' ids: entries without an
+        # id are then additions. A list that names no id at all (a definition posted by a program,
+        # an empty list) can only replace the whole revision, so a stale base refuses it as before.
+        mergeable = bool(mappings) and any(isinstance(m, dict) and m.get("id") for m in mappings)
         clean = []
         used_no = set()
         by_name = self._fields_by_name(p)
@@ -1186,16 +1282,47 @@ class App:
         # Check, read MAX(rev), insert and move the project's pointer in one transaction: the
         # base_rev check used to run before three separate statements, so two saves in the same
         # moment could both pass it (or collide on the primary key).
+        merged_with = None
+        unchanged = False
         with self.store.tx() as c:
             cur = c.execute("SELECT mapping_rev FROM projects WHERE id=?", (pid,)).fetchone()["mapping_rev"]
+            cur_row = c.execute("SELECT data FROM mapping_revs WHERE project_id=? AND rev=?", (pid, cur)).fetchone()
+            current = json.loads(cur_row["data"]) if cur_row and cur_row["data"] else []
+            if isinstance(current, str):
+                current = json.loads(current)
             if base_rev is not None and base_rev != cur:
-                raise ServiceError(409, "stale", "映射已在其他窗口被修改，请刷新后重试")
-            mx = c.execute("SELECT MAX(rev) AS m FROM mapping_revs WHERE project_id=?", (pid,)).fetchone()["m"] or 0
-            c.execute("INSERT INTO mapping_revs (project_id, rev, parent_rev, data, note, created_at) VALUES (?,?,?,?,?,?)",
-                      (pid, mx + 1, cur, json.dumps(clean, ensure_ascii=False), note, now()))
-            c.execute("UPDATE projects SET mapping_rev=? WHERE id=?", (mx + 1, pid))
-        self.store.bump_project(pid)
-        return self.get_mappings(pid)
+                # Someone else saved since this list was loaded. Merge mapping by mapping instead of
+                # refusing outright: what only one side touched goes through, what both touched
+                # is refused with the ids, so the person sees exactly which mappings collided.
+                base_row = c.execute("SELECT data FROM mapping_revs WHERE project_id=? AND rev=?", (pid, base_rev)).fetchone()
+                if not base_row or not mergeable:
+                    raise ServiceError(409, "stale", "映射已在其他窗口被修改，请刷新后重试", {"rev": cur, "base_rev": base_rev})
+                base = json.loads(base_row["data"]) if base_row["data"] else []
+                if isinstance(base, str):
+                    base = json.loads(base)
+                clean, conflicts = self.merge_mappings(base, current, clean, set(force_ids or []))
+                if conflicts:
+                    raise ServiceError(409, "stale", "有映射同时被其他人修改，请查看冲突后选择保留哪一方",
+                                       {"rev": cur, "base_rev": base_rev, "conflicts": conflicts})
+                merged_with = cur
+                note = f"{note}（已与第 {cur} 版合并）"
+                if [self._mapping_key(x) for x in clean] == [self._mapping_key(x) for x in current]:
+                    unchanged = True                         # nothing of theirs differs from what is saved: no revision to add
+            if unchanged:
+                mx = cur - 1
+            else:
+                mx = c.execute("SELECT MAX(rev) AS m FROM mapping_revs WHERE project_id=?", (pid,)).fetchone()["m"] or 0
+                c.execute("INSERT INTO mapping_revs (project_id, rev, parent_rev, data, note, created_at) VALUES (?,?,?,?,?,?)",
+                          (pid, mx + 1, cur, json.dumps(clean, ensure_ascii=False), note, now()))
+                c.execute("UPDATE projects SET mapping_rev=? WHERE id=?", (mx + 1, pid))
+        if not unchanged:
+            self.store.bump_project(pid)
+            self._project_changed(pid, "mappings.save", {"rev": mx + 1, "note": note, "merged_with": merged_with, **self.mapping_diff(current, clean)})
+        out = self.get_mappings(pid)
+        if merged_with is not None:
+            out["merged_with"] = merged_with
+            out["unchanged"] = unchanged
+        return out
 
     def _move_mapping_rev(self, pid: str, base_rev: int | None, redo: bool) -> None:
         """Undo / redo of the mapping list, checked against ``base_rev`` (the revision the
@@ -1221,10 +1348,12 @@ class App:
 
     def mappings_undo(self, pid: str, base_rev: int | None = None) -> dict:
         self._move_mapping_rev(pid, base_rev, redo=False)
+        self._project_changed(pid, "mappings.undo", {"rev": self.get_project(pid)["mapping_rev"]})
         return self.get_mappings(pid)
 
     def mappings_redo(self, pid: str, base_rev: int | None = None) -> dict:
         self._move_mapping_rev(pid, base_rev, redo=True)
+        self._project_changed(pid, "mappings.redo", {"rev": self.get_project(pid)["mapping_rev"]})
         return self.get_mappings(pid)
 
 

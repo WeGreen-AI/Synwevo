@@ -96,6 +96,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     collab = _CollabHub(store, app_, plat.identity, plat.sessions, gate=lambda req, path: api.state.session_gate(req, path))
     api.state.collab = collab
     app_.on_template_change = collab.on_template_change
+    app_.on_project_change = collab.on_project_change
 
     def _actor_id(request: Request) -> str | None:
         s = getattr(request.state, "session", None)
@@ -111,6 +112,17 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     def collab_changes(tid: str, limit: int = Query(100, ge=1, le=500)):
         app_.get_template(tid)
         return collab.changes(tid, limit)
+
+    @api.websocket("/api/collab/projects/{pid}")
+    async def project_socket(websocket: WebSocket, pid: str):
+        """Who has this project open and what they are on, plus live change frames for it —
+        no shared document: mappings, sources and settings keep their own saved revisions."""
+        await collab.serve(websocket, pid, kind="project")
+
+    @api.get("/api/projects/{pid}/activity")
+    def project_activity(pid: str, limit: int = Query(100, ge=1, le=500)):
+        app_.get_project(pid)
+        return collab.activity(pid, limit)
 
     @api.get("/api/copy-targets")
     def copy_targets(request: Request):
@@ -653,7 +665,10 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
 
     @api.put("/api/projects/{pid}/mappings")
     def put_mappings(pid: str, body: dict = Body(...)):
-        return app_.save_mappings(pid, body.get("mappings", []), body.get("note", "修改映射"), body.get("base_rev"))
+        force = body.get("force_ids")
+        if force is not None and (not isinstance(force, list) or not all(isinstance(x, str) for x in force)):
+            raise ServiceError(400, "bad_value", "force_ids 必须是映射 id 列表", {"field": "force_ids"})
+        return app_.save_mappings(pid, body.get("mappings", []), body.get("note", "修改映射"), body.get("base_rev"), force_ids=force)
 
     @api.post("/api/projects/{pid}/mappings/undo")
     def m_undo(pid: str, body: dict = Body(default={})):

@@ -37,3 +37,24 @@ def as_tenant(name: str):
         yield name
     finally:
         _tenant.reset(token)
+
+
+# Who is acting in this request: the signed-in person's id, the delegated person behind a machine
+# token, or None (a service account, a probe, a background job). Read by services that record
+# attribution — never by authorization, which stays with the gate and the object checks.
+_actor: ContextVar[str | None] = ContextVar("synwevo_actor", default=None)
+
+
+def actor() -> str | None:
+    return _actor.get()
+
+
+def set_actor(user_id: str | None):
+    return _actor.set(user_id)
+
+
+def reset_actor(token) -> None:
+    try:
+        _actor.reset(token)
+    except (ValueError, LookupError):
+        pass

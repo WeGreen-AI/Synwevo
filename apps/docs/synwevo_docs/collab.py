@@ -49,7 +49,7 @@ from starlette.responses import JSONResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from synwevo_core import env
-from synwevo_core.context import as_tenant
+from synwevo_core.context import actor as current_actor, as_tenant
 from synwevo_core.http import WRITE_ROLES
 from synwevo_core.store import Store, new_id, now
 
@@ -122,11 +122,13 @@ class Conn:
 
 
 class Room:
-    def __init__(self, hub: "CollabHub", tid: str, tenant: str):
+    def __init__(self, hub: "CollabHub", tid: str, tenant: str, *, kind: str = "template"):
         self.hub = hub
         self.tid = tid
-        self.key = f"template:{tid}"
+        self.kind = kind
+        self.key = f"{kind}:{tid}"
         self.tenant = tenant
+        self.writable = kind == "template"          # a project room carries presence and change frames, no shared document
         self.doc = Doc()
         self.awareness = Awareness(self.doc)
         self.clients: set[Conn] = set()
@@ -291,13 +293,60 @@ class CollabHub:
     def actor(self, tid: str) -> str | None:
         with self._lock:
             entry = self._acting.get(tid)
-        return entry[0] if entry and entry[1] > time.monotonic() else None
+        if entry and entry[1] > time.monotonic():
+            return entry[0]
+        return current_actor()
+
+    def _who(self, user_id: str | None) -> dict | None:
+        if not user_id:
+            return None
+        return {"id": user_id, "name": display_name(self.identity.get_user(user_id)), "color": peer_color(user_id)}
+
+    def on_project_change(self, pid: str, kind: str, detail: dict) -> None:
+        """Called by the project service after a change, from any thread: recorded as attributed
+        activity, then pushed to everyone who has the project open."""
+        uid = current_actor()
+        row = {"id": new_id("pa"), "tenant": (self.store.one("SELECT tenant FROM projects WHERE id=?", (pid,)) or {}).get("tenant") or "",
+               "project_id": pid, "user_id": uid, "kind": kind, "detail": json.dumps(detail, ensure_ascii=False), "at": now()}
+        try:
+            self.store.insert("project_activity", row)
+            self.store.execute("DELETE FROM project_activity WHERE project_id=? AND id NOT IN (SELECT id FROM project_activity WHERE project_id=? ORDER BY at DESC LIMIT ?)",
+                               (pid, pid, KEEP_CHANGES))
+        except Exception:                                    # noqa: BLE001
+            log.exception("project activity for %s (%s) not recorded", pid, kind)
+        self._push_project_change(pid, kind, detail, uid, row["at"])
+
+    def _push_project_change(self, pid: str, kind: str, detail: dict, uid: str | None, at: float) -> None:
+        room = self.rooms.get(f"project:{pid}")
+        if room is None or self.loop is None:
+            return
+        payload = {"type": "change", "kind": kind, "detail": detail, "by": self._who(uid), "at": at}
+        self.loop.call_soon_threadsafe(room.broadcast_meta, payload)
+
+    def activity(self, pid: str, limit: int = 100) -> dict:
+        rows = self.store.all("SELECT * FROM project_activity WHERE project_id=? ORDER BY at DESC LIMIT ?", (pid, max(1, min(int(limit), KEEP_CHANGES))))
+        who: dict[str, dict | None] = {}
+        items = []
+        for r in rows:
+            uid = r.get("user_id")
+            if uid not in who:
+                who[uid] = self._who(uid)
+            try:
+                detail = json.loads(r.get("detail") or "{}")
+            except Exception:                                # noqa: BLE001
+                detail = {}
+            items.append({"id": r["id"], "kind": r["kind"], "detail": detail, "by": who[uid], "at": r["at"]})
+        room = self.rooms.get(f"project:{pid}")
+        return {"items": items, "online": room.peers() if room else []}
 
     def on_template_change(self, tid: str, head: int | None, editor: dict | None, reason: str) -> None:
         """Called by the template service after a version operation, from any thread."""
         key = f"template:{tid}"
         actor = self.actor(tid)
         room = self.rooms.get(key)
+        if reason != "delete":
+            for prow in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
+                self.on_project_change(prow["id"], f"template.{reason}", {"template_id": tid, "head": head})
         if reason == "delete":
             self.store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
             self.store.execute("DELETE FROM collab_changes WHERE room=?", (key,))
@@ -404,6 +453,23 @@ class CollabHub:
         role = getattr(req.state, "workspace_role", None)
         return None, {"tenant": tenant, "user": user, "role": role, "wid": wid}
 
+    async def _project_room(self, pid: str, tenant: str) -> Room | None:
+        key = f"project:{pid}"
+        lock = self._room_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            room = self.rooms.get(key)
+            if room is not None:
+                return room
+
+            def read():
+                with as_tenant(tenant):
+                    return self.app.get_project(pid)
+            await run_in_threadpool(read)                    # raises the service's 404 for a project not in this workspace
+            room = Room(self, pid, tenant, kind="project")
+            room.pending.clear()
+            self.rooms[key] = room
+            return room
+
     async def _room(self, tid: str, tenant: str) -> Room | None:
         key = f"template:{tid}"
         lock = self._room_locks.setdefault(key, asyncio.Lock())
@@ -428,7 +494,7 @@ class CollabHub:
             self.rooms[key] = room
             return room
 
-    async def serve(self, ws: WebSocket, tid: str) -> None:
+    async def serve(self, ws: WebSocket, tid: str, *, kind: str = "template") -> None:
         self.loop = asyncio.get_running_loop()
         if not self._origin_ok(ws):
             await ws.close(code=CLOSE_FORBIDDEN, reason="origin")
@@ -440,7 +506,7 @@ class CollabHub:
             return
         assert isinstance(info, dict)
         try:
-            room = await self._room(tid, info["tenant"])
+            room = await (self._project_room(tid, info["tenant"]) if kind == "project" else self._room(tid, info["tenant"]))
         except Exception as e:                                # noqa: BLE001 — a 404 from get_template, or worse
             status = getattr(e, "status", 500)
             await ws.close(code=CLOSE_NOT_FOUND if status == 404 else CLOSE_ERROR, reason=getattr(e, "code", "error"))
@@ -453,7 +519,7 @@ class CollabHub:
                     readonly=info["role"] not in WRITE_ROLES, workspace_id=info["wid"], request=req, path=path)
         await ws.accept()
         room.clients.add(conn)
-        await conn.meta({"type": "hello", "user": {"id": conn.user_id, "name": conn.name, "color": conn.color}, "readonly": conn.readonly,
+        await conn.meta({"type": "hello", "kind": room.kind, "user": {"id": conn.user_id, "name": conn.name, "color": conn.color}, "readonly": conn.readonly,
                          "head": room.head, "dirty": room.dirty, "changes_rev": room.changes_rev, "peers": room.peers(exclude=conn),
                          "recheck_s": recheck_seconds()})
         await conn.send(create_sync_message(room.doc))
@@ -491,6 +557,8 @@ class CollabHub:
                     await conn.send(reply)
                 return
             if sub in (YSyncMessageType.SYNC_STEP2, YSyncMessageType.SYNC_UPDATE):
+                if not room.writable:
+                    return                                    # presence-only room: the document is not a thing here
                 if conn.readonly:
                     # A viewer's step-2 answer to our step 1 is normally empty (they lack nothing
                     # we need); anything with content is a write and is not applied — told once.
@@ -592,6 +660,7 @@ class CollabHub:
             if room.activity_handle is not None:
                 room.activity_handle.cancel()
                 room.activity_handle = None
-            room.persist_now()
+            if room.writable:
+                room.persist_now()
             if self.rooms.get(room.key) is room:
                 del self.rooms[room.key]

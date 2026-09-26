@@ -16,9 +16,13 @@ import * as Y from "yjs";
 
 export const MESSAGE_META = 100;
 
-export interface PeerInfo { id: string; name: string; color: number; readonly?: boolean }
+export interface PeerInfo { id: string; name: string; color: number; readonly?: boolean; focus?: Focus | null }
+/** Where a person is in a project: a stable object, never a screen position. */
+export interface Focus { kind: "slot" | "mapping" | "source"; id: string }
+export interface ChangeFrame { kind: string; detail: Record<string, any>; by: PeerInfo | null; at: number; seq: number }
 export type MetaFrame =
-  | { type: "hello"; user: PeerInfo; readonly: boolean; head: number | null; dirty: boolean; changes_rev: number; peers: PeerInfo[]; recheck_s: number }
+  | { type: "hello"; kind?: "template" | "project"; user: PeerInfo; readonly: boolean; head: number | null; dirty: boolean; changes_rev: number; peers: PeerInfo[]; recheck_s: number }
+  | { type: "change"; kind: string; detail: Record<string, any>; by: PeerInfo | null; at: number }
   | { type: "state"; head: number | null; dirty: boolean; changes_rev: number; online: number }
   | { type: "head"; head: number | null; dirty: boolean; changes_rev: number; online: number; reason: "save" | "restore" | "undo" | "redo" | string; by: string | null }
   | { type: "role"; readonly: boolean; role: string }
@@ -46,14 +50,18 @@ export interface RoomState {
   refused: boolean;
   /** The last version operation someone performed on the template while we were connected. */
   lastHead: { reason: string; by: string | null; head: number | null } | null;
+  /** The last change frame of a project room (a save, a file, a setting), numbered so effects can key on it. */
+  lastChange: ChangeFrame | null;
 }
 
 export const initialState = (): RoomState => ({
-  status: "connecting", synced: false, me: null, readonly: false, head: null, dirty: false, changesRev: 0, peers: [], closed: null, refused: false, lastHead: null,
+  status: "connecting", synced: false, me: null, readonly: false, head: null, dirty: false, changesRev: 0, peers: [], closed: null, refused: false, lastHead: null, lastChange: null,
 });
 
-export function roomUrl(origin: string): string {
-  return origin.replace(/^http/, "ws") + "/api/collab/templates";
+export type RoomKind = "template" | "project";
+
+export function roomUrl(origin: string, kind: RoomKind = "template"): string {
+  return origin.replace(/^http/, "ws") + `/api/collab/${kind}s`;
 }
 
 export interface Room {
@@ -64,6 +72,8 @@ export interface Room {
   state(): RoomState;
   /** Tell everyone who we are (the server checks it is really us). */
   setUser(user: PeerInfo): void;
+  /** Tell everyone which object we are on (null when none). */
+  setFocus(focus: Focus | null): void;
   destroy(): void;
 }
 
@@ -73,17 +83,22 @@ export function peersOf(states: Map<number, any>, myClientId: number, meId: stri
   states.forEach((st, clientId) => {
     const u = st?.user;
     if (clientId === myClientId || !u || typeof u.id !== "string" || u.id === meId) return;
-    if (!seen.has(u.id)) seen.set(u.id, { id: u.id, name: String(u.name || "—"), color: Number(u.color) || 1, readonly: !!u.readonly });
+    const f = st?.focus;
+    const focus: Focus | null = f && typeof f === "object" && typeof f.id === "string" && ["slot", "mapping", "source"].includes(f.kind) ? { kind: f.kind, id: f.id.slice(0, 64) } : null;
+    const prev = seen.get(u.id);
+    if (!prev) seen.set(u.id, { id: u.id, name: String(u.name || "—"), color: Number(u.color) || 1, readonly: !!u.readonly, focus });
+    else if (!prev.focus && focus) prev.focus = focus;
   });
   return [...seen.values()];
 }
 
-export function openRoom(tid: string, opts: { origin: string; workspaceId: string | null }): Room {
+export function openRoom(id: string, opts: { origin: string; workspaceId: string | null; kind?: RoomKind }): Room {
   const doc = new Y.Doc();
   const params: Record<string, string> = {};
   if (opts.workspaceId) params.workspace = opts.workspaceId;
+  let changeSeq = 0;
   // No BroadcastChannel between tabs: the server is the only source of truth for what was applied.
-  const provider = new WebsocketProvider(roomUrl(opts.origin), tid, doc, { params, disableBc: true, maxBackoffTime: 5000 });
+  const provider = new WebsocketProvider(roomUrl(opts.origin, opts.kind || "template"), id, doc, { params, disableBc: true, maxBackoffTime: 5000 });
   let state = initialState();
   const listeners = new Set<(s: RoomState) => void>();
   const set = (patch: Partial<RoomState>) => {
@@ -128,6 +143,9 @@ export function openRoom(tid: string, opts: { origin: string; workspaceId: strin
       case "activity":
         set({ changesRev: frame.changes_rev });
         break;
+      case "change":
+        set({ lastChange: { kind: String(frame.kind), detail: frame.detail || {}, by: frame.by, at: frame.at, seq: ++changeSeq } });
+        break;
       case "closed":
         break;                                   // the close event that follows carries the code
     }
@@ -143,6 +161,7 @@ export function openRoom(tid: string, opts: { origin: string; workspaceId: strin
     subscribe(fn) { listeners.add(fn); fn(state); return () => { listeners.delete(fn); }; },
     state: () => state,
     setUser(user) { provider.awareness.setLocalStateField("user", user); },
+    setFocus(focus) { provider.awareness.setLocalStateField("focus", focus); },
     destroy() { provider.awareness.off("change", refreshPeers); provider.destroy(); doc.destroy(); listeners.clear(); },
   };
 }

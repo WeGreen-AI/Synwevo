@@ -1033,11 +1033,18 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                     token = set_tenant(UI_TENANT)
         except ServiceError as e:
             return await finish(await _svc_err(request, e))
+        # Who acts, for attribution: the session's person, or the person a delegated machine
+        # token acts for; None for service accounts and anonymous paths.
+        from .context import reset_actor, set_actor
+        _user = getattr(request.state, "user", None)
+        _principal = getattr(request.state, "principal", None)
+        actor_token = set_actor((_user or {}).get("id") or (_principal or {}).get("user_id"))
         try:
             resp = await call_next(request)
         except Exception as exc:
             resp = await _unexpected(request, exc)
         finally:
+            reset_actor(actor_token)
             if token is not None:
                 try:
                     from .context import _tenant

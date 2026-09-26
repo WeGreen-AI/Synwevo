@@ -76,8 +76,8 @@ def world(tmp_path, monkeypatch):
 class Peer:
     """A browser's share of the protocol: a local document kept in sync through the socket."""
 
-    def __init__(self, client, tid, *, origin="http://testserver", workspace=None):
-        url = f"/api/collab/templates/{tid}" + (f"?workspace={workspace}" if workspace else "")
+    def __init__(self, client, tid, *, origin="http://testserver", workspace=None, path="templates"):
+        url = f"/api/collab/{path}/{tid}" + (f"?workspace={workspace}" if workspace else "")
         self.cm = client.websocket_connect(url, headers={"origin": origin})
         self.ws = self.cm.__enter__()
         self.doc = Doc()

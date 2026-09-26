@@ -4,7 +4,9 @@ import { serverText, issueText, diagnosticText } from "../lib/presentation";
 import { t as tr, useI18n } from "@synwevo/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ApiError, del, get, patch, post, put, qs, useSession } from "@synwevo/auth-client";
+import { ApiError, del, get, patch, post, put, qs, useSession, workspaceContext } from "@synwevo/auth-client";
+import { initialState, openRoom, type Focus, type Room, type RoomState } from "../lib/collab";
+import ProjectPresence, { ActivityDrawer, changeText } from "../components/ProjectPresence";
 import { describeSelection, mappingSlots, slotPos } from "../lib/describe";
 import CommentsDrawer, { type AnchorOption, type CommentAnchor } from "../components/CommentsDrawer";
 import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, TemplateDetail } from "../lib/types";
@@ -102,6 +104,11 @@ function Workspace() {
   const [sideW, setSideW] = useState(() => recall("sideW", 0));
   const [cmdOpen, setCmdOpen] = useState(false);
   const [help, setHelp] = useState(false);
+  // ---- the project room: who is here and on what, and other people's saves as they happen
+  const roomRef = useRef<Room | null>(null);
+  if (pid && !roomRef.current) roomRef.current = openRoom(pid, { origin: window.location.origin, workspaceId: workspaceContext(), kind: "project" });
+  const [room, setRoom] = useState<RoomState>(initialState());
+  const [activityOpen, setActivityOpen] = useState(false);
   const [comments, setComments] = useState<string | null | false>(() => { const c = new URLSearchParams(window.location.search).get("comment"); return c ? c : false; });
   const [focusL, setFocusL] = useState<string | null>(null);
   const [focusR, setFocusR] = useState<string | null>(null);
@@ -161,6 +168,32 @@ function Workspace() {
       return null;
     }
   }, [pid, toast]);
+
+  useEffect(() => {
+    const r = roomRef.current;
+    if (!r) return;
+    const off = r.subscribe(setRoom);
+    return () => { off(); r.destroy(); roomRef.current = null; };
+  }, []);
+  useEffect(() => {
+    if (!roomRef.current || !room.me) return;
+    roomRef.current.setUser({ ...room.me, slot: room.me.color, readonly: room.readonly } as any);
+  }, [room.me, room.readonly]);
+  // where we are, as a stable object: the selected field, the active mapping, or the open file
+  useEffect(() => {
+    const focus: Focus | null = rightSel?.kind === "slot" ? { kind: "slot", id: rightSel.slotId }
+      : activeMap ? { kind: "mapping", id: activeMap }
+      : activeFile ? { kind: "source", id: activeFile } : null;
+    roomRef.current?.setFocus(focus);
+  }, [rightSel, activeMap, activeFile, room.me]);
+  // someone else changed the project: show it now, and say who did what
+  useEffect(() => {
+    const c = room.lastChange;
+    if (!c || !room.me || (c.by && c.by.id === room.me.id)) return;
+    void reload();
+    toast(tr("{v1} {v2}", { v1: c.by?.name || tr("成员"), v2: changeText(c.kind, c.detail, tpl?.version.slots || []) }), "info");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.lastChange?.seq]);
 
   useEffect(() => {
     reload().then((p) => {
@@ -321,8 +354,24 @@ function Workspace() {
     }
   };
 
+  /** Save the mapping list. Someone else's save since this list was loaded is merged mapping by
+   *  mapping on the server; only a mapping both sides changed comes back as a conflict, and the
+   *  person then chooses their version (sent again with `force_ids`) or theirs (reload). */
   const saveMappings = async (ms: Mapping[], note: string) => {
-    await run(() => put(`/api/projects/${pid}/mappings`, { mappings: ms, note, base_rev: project?.mappings.rev }), "m");
+    const base = project?.mappings.rev;
+    await run(async () => {
+      try {
+        return await put(`/api/projects/${pid}/mappings`, { mappings: ms, note, base_rev: base });
+      } catch (e: any) {
+        const conflicts: { id: string; no: number; reason: string }[] | undefined = isStale(e) ? e.detail?.conflicts : undefined;
+        if (!conflicts?.length) throw e;
+        const reasons: Record<string, string> = { both_changed: tr("双方都改了它"), deleted_by_other: tr("对方已删除它"), deleted_by_you: tr("你删除了它，对方改了它"), both_added: tr("双方各自新增") };
+        const list = conflicts.map((c) => tr("映射 #{v1}：{v2}", { v1: c.no, v2: reasons[c.reason] || c.reason })).join("；");
+        const mine = await confirm(tr("映射有冲突"), tr("其他成员在你之后也保存了映射。没有冲突的修改已可合并；下面这些映射双方都动过，请选择保留哪一方：{v1}", { v1: list }), tr("以我的为准"), true);
+        if (!mine) { toast(tr("已改为对方的版本；你对这些映射的修改未保存"), "info"); await reload(); return undefined; }
+        return await put(`/api/projects/${pid}/mappings`, { mappings: ms, note, base_rev: base, force_ids: conflicts.map((c) => c.id) });
+      }
+    }, "m");
     await reload();
   };
 
@@ -765,6 +814,8 @@ function Workspace() {
           </span>
         )}
         <span className="spacer" />
+        <ProjectPresence room={room} slots={slots} mappings={mappings} sources={sources} onActivity={() => setActivityOpen(true)}
+          onLocate={(f) => { if (f.kind === "slot") locateComment({ kind: "slot", id: f.id } as any); else if (f.kind === "mapping") locateComment({ kind: "mapping", id: f.id } as any); else setActiveFile(f.id); }} />
         {lastJob && <Link className="btn ghost sm" to={`/p/${pid}/jobs/${lastJob.id}`}>{tr("最近任务：")}{jobStatus(lastJob.status)[0]}</Link>}
         <button type="button" className="btn ghost sm" onClick={() => setCmdOpen(true)} title={tr("命令面板：所有操作与快捷键")} aria-label={tr("打开命令面板")}>
           ⌘K <span className="desktop-only tiny muted">{tr("命令")}</span>
@@ -775,6 +826,7 @@ function Workspace() {
             { label: tr("生成脱敏副本…"), onClick: () => setDialog({ kind: "desensitize" }), disabled: !sources.length },
           ]),
           { label: tr("评论…"), onClick: () => setComments(null) },
+          { label: tr("活动记录…"), onClick: () => setActivityOpen(true) },
           { label: tr("回归用例"), onClick: () => nav("/regression") },
           { label: tr("格式能力矩阵"), onClick: () => window.open("/capabilities", "_blank") },
           { label: tr("键盘快捷键"), onClick: () => setHelp(true) },
@@ -987,6 +1039,7 @@ function Workspace() {
       </div>
 
       {/* ---------------------------------------------------------------- dialogs */}
+      {activityOpen && <ActivityDrawer pid={pid!} slots={slots} seq={room.lastChange?.seq || 0} onClose={() => setActivityOpen(false)} />}
       {comments !== false && <CommentsDrawer pid={pid!} me={session.me?.id || null} canWrite={!ro} options={commentOptions} highlight={comments || null}
         onLocate={a => { locateComment(a); }} onClose={() => { setComments(false); if (new URLSearchParams(window.location.search).get("comment")) window.history.replaceState(window.history.state, "", window.location.pathname); }} />}
       {dialog?.kind === "template" && <TemplateChooser projectId={pid!} settingsRev={project.settings_rev} current={tpl?.id} onDone={reload} onClose={() => setDialog(null)} />}

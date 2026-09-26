@@ -1,4 +1,4 @@
-"""Schema of Synwevo Docs' live co-editing (v20): the persisted state of a live document and
+"""Schema of Synwevo Docs' live co-editing (v20, v21): the persisted state of a live document and
 its attributed change log. The rooms themselves live in the Docs process (``synwevo_docs.collab``);
 this module only lets the single store own the tables, like every other schema."""
 
@@ -27,4 +27,16 @@ CREATE TABLE IF NOT EXISTS collab_changes (
   updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_collab_changes_room ON collab_changes (room, updated_at);
+-- v21: what happened to a project, attributed (mappings saved/merged/undone, sources, fields,
+-- template versions, settings); the project page's activity list and its live change frames.
+CREATE TABLE IF NOT EXISTS project_activity (
+  id TEXT PRIMARY KEY,
+  tenant TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  user_id TEXT,
+  kind TEXT NOT NULL,
+  detail TEXT,                          -- JSON: what changed, in the service's own words
+  at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_project_activity_project ON project_activity (project_id, at);
 """

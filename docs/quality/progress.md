@@ -6,7 +6,8 @@
 |---|---|
 | CI-43 正式 Logo 上线 | 已部署（`30a5cfd`，run 36212722189）；生产三源 favicon 与带指纹图标 200（deployment.md）。 |
 | CI-44 系统邮件 | 八类账户邮件 + 通知邮件统一布局（文本 + HTML 同源、三语言、Logo）；已部署（`e04ff01`，run 36214183403），`/brand/email-logo.png` 生产 200。真实邮箱客户端渲染待授权收件箱。 |
-| CI-45 实时协同 | 文档型模板的多人共同编辑：服务端房间（pycrdt）、命名光标、在线名单、逐块归属、草稿持久化、只读与单人回退；12 项 pytest、Chromium/WebKit 两账户证明（verification.md §16.46）。待推送；生产 nginx 副本需运维加 Upgrade 头。 |
+| CI-46 项目页协同 | 在场与定位、按映射三方合并（冲突才 409）、他人变更即时提示、归属活动记录；6 项 pytest、Chromium/WebKit 两账户各 7 里程碑（verification.md §16.47）。待推送。 |
+| CI-45 实时协同 | 文档型模板的多人共同编辑：服务端房间（pycrdt）、命名光标、在线名单、逐块归属、草稿持久化、只读与单人回退；12 项 pytest、Chromium/WebKit 两账户证明（verification.md §16.46）。已部署（`c2d78d0`，run 36218166471）；生产 nginx 副本需运维加 Upgrade 头后实时协同才在线上生效，此前编辑器自动退回单人模式。 |
 
 ## 2026-09-26 正式 Logo 接入轮（Claude Code，本机）
 

@@ -184,6 +184,8 @@ ROUTE_POLICY: dict[tuple[str, str], str | None] = {
     # whether a connection may change the document is decided per message from the live role.
     ("GET", "/api/collab/templates/{tid}"): None,
     ("GET", "/api/templates/{tid}/collab/changes"): None,
+    ("GET", "/api/collab/projects/{pid}"): None,
+    ("GET", "/api/projects/{pid}/activity"): None,
     ("POST", "/api/templates/{tid}/restore"): "write",
     ("POST", "/api/templates/{tid}/undo"): "write",
     ("POST", "/api/templates/{tid}/redo"): "write",

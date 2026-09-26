@@ -201,6 +201,9 @@ def test_a_builtin_save_from_a_stale_editor_is_refused(api):
 
 
 def test_concurrent_mapping_saves_from_the_same_base_accept_exactly_one(api, fixtures):
+    """Six identical saves from one revision: one becomes a revision; the others arrive on a moved
+    base, merge mapping by mapping to exactly what is saved and add nothing (they answer 200 with
+    `unchanged`), so the history holds one new revision rather than five refusals or six copies."""
     pid, _ = _pinned_project(api, fixtures)
     base = api.ok(api.c.get(f"/api/projects/{pid}/mappings"))
     codes = []
@@ -213,7 +216,9 @@ def test_concurrent_mapping_saves_from_the_same_base_accept_exactly_one(api, fix
         th.start()
     for th in threads:
         th.join(60)
-    assert sorted(codes) == [200] + [409] * 5, codes
+    assert codes == [200] * 6, codes
+    after = api.ok(api.c.get(f"/api/projects/{pid}/mappings"))
+    assert after["rev"] == base["rev"] + 1 and after["mappings"] == [dict(m, updated_at=x["updated_at"]) for m, x in zip(base["mappings"], after["mappings"])]
     assert api.ok(api.c.get(f"/api/projects/{pid}/mappings"))["rev"] == base["rev"] + 1
 
 
