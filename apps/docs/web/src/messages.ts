@@ -6031,4 +6031,16 @@ export const messages = {
     "en": "Live edits not yet saved as a version ({v1})",
     "zh-Hant": "尚未儲存為版本的即時修改（{v1} 條）"
   },
+  "这次发送的内容超过实时协同允许的大小，连接已关闭（{v1}）": {
+    "en": "What was sent exceeds the size live co-editing allows; the connection was closed ({v1})",
+    "zh-Hant": "這次傳送的內容超過即時協同允許的大小，連線已關閉（{v1}）"
+  },
+  "模板已被删除（{v1}）": {
+    "en": "The template was deleted ({v1})",
+    "zh-Hant": "範本已被刪除（{v1}）"
+  },
+  "这个模板之前未保存的实时修改无法读取，已改用第 {v1} 版的内容；请检查后再继续。": {
+    "en": "This template's earlier unsaved live edits could not be read; version {v1} is in use instead. Check the content before continuing.",
+    "zh-Hant": "這個範本之前未儲存的即時修改無法讀取，已改用第 {v1} 版的內容；請檢查後再繼續。"
+  },
 } satisfies Messages;

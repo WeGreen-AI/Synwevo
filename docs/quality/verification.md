@@ -1492,6 +1492,13 @@ owner 把段首「注段」换成「忘录」；owner 的变更记录里编辑�
 **浏览器**：`ui_e2e_restore_live.py` 第 2 里程碑扩展——展开后第一行为「Editor … 修改了正文第 4 段（N 次）」，插入串为手机上输入的「——手机上未保存的补充」（截图 `chromium-01`）；
 **Chromium 5/5、WebKit 5/5**。typecheck/build、Docs 前端 49 项、设计守卫通过；无后端改动。
 
+### 16.57 有界更新包、损坏草稿恢复、远端可见延迟（CI-55）
+
+决策记录见 `docs/platform/docs-collaboration.md` §11。**pytest**：`test_collab.py` 新增 2 项（5000 字节帧在 4096 上限下 → 该连接 4400 `frame_too_large`，owner 收到 `left` 后照常编辑；
+`collab_docs.state` 写入垃圾字节后连接 → `hello.recovered=true`、head 1、dirty false、内容为 head 版本，随后编辑与离开把该行修复为可读状态）；协同三套测试 26 项通过。
+**前端**：`hello.recovered` 进入房间状态，编辑器一次性提示「之前未保存的实时修改无法读取，已改用第 N 版」；4400 的 `frame_too_large`/`template_deleted` 用人话显示；typecheck/build、Docs 前端 49 项通过。
+**测量**（`ui_e2e_collab.py`，同一台 Mac、回环、两账户、模板级文档）：最后一次按键后对方可见——Chromium 桌面→手机 1 ms、手机→桌面 2 ms；WebKit 2 ms、8 ms（16 个里程碑全部通过）。这是本地上限，公网以 RTT 为主。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

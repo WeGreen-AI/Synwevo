@@ -34,6 +34,7 @@ import contextlib
 import difflib
 import hashlib
 import json
+import os
 import logging
 import threading
 import time
@@ -61,6 +62,11 @@ MESSAGE_META = 100                 # this server's own frames beside sync (0), a
 MESSAGE_QUERY_AWARENESS = 3
 CLOSE_BAD_REQUEST, CLOSE_UNAUTHORIZED, CLOSE_FORBIDDEN, CLOSE_NOT_FOUND, CLOSE_GONE, CLOSE_ERROR = 4400, 4401, 4403, 4404, 4410, 1011
 PERSIST_DELAY_S = 1.0
+# The largest frame a client may send. A keystroke is bytes, a paste a few KB, a whole document's
+# sync step well under a megabyte for the templates this editor holds; uvicorn's own ceiling is
+# 16 MiB, which is a lot of memory and fan-out to hand to any writer. Over the limit the connection
+# is closed with a 44xx code the client does not retry (it works alone and says why).
+MAX_FRAME_BYTES = int(os.environ.get("SYNWEVO_COLLAB_MAX_FRAME_BYTES") or 2 * 1024 * 1024)
 COALESCE_S = 120.0
 KEEP_CHANGES = 500
 EXCERPT = 80
@@ -133,6 +139,7 @@ class Room:
         self.writable = (kind == "template") if writable is None else writable
         self.doc = Doc()
         self.awareness = Awareness(self.doc)
+        self.recovered = False                     # the persisted draft was unreadable and the head version was used instead
         self.clients: set[Conn] = set()
         self.head: int | None = None
         self.dirty = False
@@ -148,8 +155,16 @@ class Room:
     def load(self, template: dict, row: dict | None, editor_of_head: Callable[[], dict | None]) -> None:
         """Persisted live state if it belongs to the current head, else the head version."""
         if row and row.get("head") == template["head"] and row.get("state"):
-            self.doc.apply_update(bytes(row["state"]))
-            self.dirty = bool(row.get("dirty"))
+            try:
+                self.doc.apply_update(bytes(row["state"]))
+                self.dirty = bool(row.get("dirty"))
+            except Exception:                                # noqa: BLE001 — a corrupt draft must not keep the room from opening
+                log.exception("collab %s: the persisted live state could not be read; reseeding from v%s (the draft is lost)", self.key, template["head"])
+                self.doc = Doc()
+                self.awareness = Awareness(self.doc)
+                seed(self.doc, editor_of_head())
+                self.dirty = False
+                self.recovered = True
         else:
             if row:
                 log.info("collab %s: persisted live state was for v%s, head is v%s — reseeding", self.key, row.get("head"), template["head"])
@@ -538,7 +553,15 @@ class CollabHub:
                 self.rooms[key] = room
                 return room
             room = Room(self, tid, tenant)
-            room.load(t, row, lambda: editor)
+
+            def head_editor() -> dict | None:
+                # Read lazily: when a matching draft exists the head version is normally not needed,
+                # but a draft that turns out to be unreadable falls back to it (Room.load).
+                if editor is not None:
+                    return editor
+                with as_tenant(tenant):
+                    return self.app.get_version(tid, t["head"]).get("editor") or {}
+            room.load(t, row, head_editor)
             self.rooms[key] = room
             return room
 
@@ -567,7 +590,7 @@ class CollabHub:
                     readonly=info["role"] not in WRITE_ROLES, workspace_id=info["wid"], request=req, path=path)
         await ws.accept()
         room.clients.add(conn)
-        await conn.meta({"type": "hello", "kind": room.kind, "writable": room.writable, "user": {"id": conn.user_id, "name": conn.name, "color": conn.color}, "readonly": conn.readonly,
+        await conn.meta({"type": "hello", "kind": room.kind, "writable": room.writable, "recovered": room.recovered, "user": {"id": conn.user_id, "name": conn.name, "color": conn.color}, "readonly": conn.readonly,
                          "head": room.head, "dirty": room.dirty, "changes_rev": room.changes_rev, "peers": room.peers(exclude=conn),
                          "recheck_s": recheck_seconds()})
         await conn.send(create_sync_message(room.doc))
@@ -584,6 +607,10 @@ class CollabHub:
                 data = message.get("bytes")
                 if not data:
                     continue
+                if len(data) > MAX_FRAME_BYTES:
+                    log.warning("collab %s: %s sent a %d-byte frame (limit %d); closing", room.key, conn.user_id, len(data), MAX_FRAME_BYTES)
+                    await ws.close(code=CLOSE_BAD_REQUEST, reason="frame_too_large")
+                    break
                 await self._handle(room, conn, data)
         except WebSocketDisconnect:
             pass

@@ -532,3 +532,40 @@ def test_the_change_log_keeps_what_a_block_said_before_an_edit(world):
     assert edit["before"] == "客户：【客户】" and edit["excerpt"] == "客户：第一次第二次【客户】" and edit["count"] == 2   # the field atom reads as 【name】
     assert ins["before"] is None and ins["excerpt"] == "新段落"
     a.close()
+
+
+# ------------------------------------------------------------------ bounded frames, corrupt drafts
+def test_an_oversized_frame_closes_only_that_connection(world, monkeypatch):
+    """9.13 E 「恶意大更新」: a writer's frame over the limit closes their connection with a code
+    the client does not retry; the room and the other people in it are untouched."""
+    a = _connect(world, "editor")
+    b = _connect(world, "owner")
+    from synwevo_docs import collab as C
+    monkeypatch.setattr(C, "MAX_FRAME_BYTES", 4096)
+    a.ws.send_bytes(bytes([YMessageType.SYNC, YSyncMessageType.SYNC_UPDATE]) + b"\x00" * 5000)
+    with pytest.raises(WebSocketDisconnect) as e:
+        for _ in range(20):
+            a.ws.receive_bytes()
+    assert e.value.code == 4400 and e.value.reason == "frame_too_large"
+    assert b.recv_meta("left")["user"]["name"] == "Editor"          # gone, cleanly
+    b.append_text("其他人照常")
+    assert b.texts() == ["客户：其他人照常"]
+    b.close()
+
+
+def test_a_corrupt_persisted_draft_does_not_keep_the_room_from_opening(world):
+    """9.13 C.5 「损坏检测」: an unreadable draft is logged and the room reseeds from the head
+    version, saying so in hello; the alternative was a room nobody could ever open again."""
+    store, tid = world["store"], world["tid"]
+    store.execute("INSERT INTO collab_docs (room, tenant, template_id, state, head, dirty, updated_at) VALUES (?,?,?,?,?,?,?) "
+                  "ON CONFLICT(room) DO UPDATE SET state=excluded.state, head=excluded.head, dirty=excluded.dirty",
+                  (f"template:{tid}", world["wid"], tid, b"\xff\xfe not a yjs update \x00", 1, 1, 1.0))
+    a = _connect(world, "editor")
+    assert a.hello["recovered"] is True and a.hello["head"] == 1 and a.hello["dirty"] is False
+    assert a.texts() == ["客户："]                                    # the head version, not garbage
+    a.append_text("修好了")
+    a.close()                                                        # the next persist replaces the corrupt row
+    row = store.one("SELECT state FROM collab_docs WHERE room=?", (f"template:{tid}",))
+    fixed = Doc()
+    fixed.apply_update(bytes(row["state"]))
+    assert "修好了" in json.dumps(read_doc(fixed), ensure_ascii=False)

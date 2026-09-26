@@ -211,7 +211,9 @@ def _flow(a, b, pa, pb, engine, accounts, docs, mail_dir, tag, owner, member, no
     ed_a.locator("p", has_text="备注段").click()
     pa.keyboard.press("End")
     pa.keyboard.type("——协同追加 XYZ")
+    t_typed = time.time()
     expect(body_editor(pb)).to_contain_text("备注段——协同追加 XYZ", timeout=10000)
+    remote_ms = (time.time() - t_typed) * 1000
     expect(pb.locator(".collaboration-carets__label", has_text=f"Owner {tag}")).to_be_visible(timeout=10000)
     expect(bar_a.locator(".badge, .collab-status")).to_be_visible()
     expect(pa.locator(".topbar .badge.warn")).to_have_text(re.compile("有未保存为版本的修改"), timeout=10000)
@@ -221,10 +223,13 @@ def _flow(a, b, pa, pb, engine, accounts, docs, mail_dir, tag, owner, member, no
     ed_b.locator("p", has_text="备注段").click()
     pb.keyboard.press("End")
     pb.keyboard.type(" +手机补充")
+    t_typed = time.time()
     expect(body_editor(pa)).to_contain_text("协同追加 XYZ +手机补充", timeout=10000)
+    remote_ms_back = (time.time() - t_typed) * 1000
     expect(pa.locator(".collaboration-carets__label", has_text=f"Editor {tag}")).to_be_visible(timeout=10000)
     pa.screenshot(path=str(SHOTS / f"{engine}-02-owner-sees-editor-caret.png"))
-    note(notes, f"{engine}: text typed by either person appeared in the other's editor within the wait, each with the other's named caret")
+    note(notes, f"{engine}: text typed by either person appeared in the other's editor within the wait, each with the other's named caret "
+                f"(remote visibility after the last keystroke: desktop→phone {remote_ms:.0f} ms, phone→desktop {remote_ms_back:.0f} ms; same machine, loopback)")
 
     # ---- the change log attributes the edits to the people who made them
     pa.get_by_role("button", name="变更记录").click()

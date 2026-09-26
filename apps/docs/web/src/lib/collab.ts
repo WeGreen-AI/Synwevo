@@ -21,7 +21,7 @@ export interface PeerInfo { id: string; name: string; color: number; readonly?: 
 export interface Focus { kind: "slot" | "mapping" | "source" | "cell" | "sheet"; id: string }
 export interface ChangeFrame { kind: string; detail: Record<string, any>; by: PeerInfo | null; at: number; seq: number }
 export type MetaFrame =
-  | { type: "hello"; kind?: "template" | "project"; writable?: boolean; user: PeerInfo; readonly: boolean; head: number | null; dirty: boolean; changes_rev: number; peers: PeerInfo[]; recheck_s: number }
+  | { type: "hello"; kind?: "template" | "project"; writable?: boolean; recovered?: boolean; user: PeerInfo; readonly: boolean; head: number | null; dirty: boolean; changes_rev: number; peers: PeerInfo[]; recheck_s: number }
   | { type: "change"; kind: string; detail: Record<string, any>; by: PeerInfo | null; at: number }
   | { type: "state"; head: number | null; dirty: boolean; changes_rev: number; online: number }
   | { type: "head"; head: number | null; dirty: boolean; changes_rev: number; online: number; reason: "save" | "restore" | "undo" | "redo" | string; by: string | null; by_id?: string | null }
@@ -44,6 +44,8 @@ export interface RoomState {
   changesRev: number;
   /** Other people currently in the room, one entry per person (a person may have several tabs). */
   peers: PeerInfo[];
+  /** The server could not read the persisted draft and seeded the room from the head version instead. */
+  recovered: boolean;
   /** The server closed for good (44xx): the reason it gave. */
   closed: { code: number; reason: string } | null;
   /** The server dropped this connection's writes (read-only) at least once since the last role change. */
@@ -55,7 +57,7 @@ export interface RoomState {
 }
 
 export const initialState = (): RoomState => ({
-  status: "connecting", synced: false, me: null, readonly: false, head: null, dirty: false, changesRev: 0, peers: [], closed: null, refused: false, lastHead: null, lastChange: null,
+  status: "connecting", synced: false, me: null, readonly: false, head: null, dirty: false, changesRev: 0, peers: [], recovered: false, closed: null, refused: false, lastHead: null, lastChange: null,
 });
 
 export type RoomKind = "template" | "project";
@@ -117,7 +119,7 @@ export function openRoom(id: string, opts: { origin: string; workspaceId: string
       case "hello":
         // My other devices and tabs are not "others": the same person never shows up as a peer of themselves.
         set({ me: frame.user, readonly: frame.readonly, head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev,
-              peers: (frame.peers || []).filter((p: PeerInfo) => p.id !== frame.user.id), refused: false });
+              peers: (frame.peers || []).filter((p: PeerInfo) => p.id !== frame.user.id), recovered: frame.recovered === true, refused: false });
         break;
       case "state":
         set({ head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev });

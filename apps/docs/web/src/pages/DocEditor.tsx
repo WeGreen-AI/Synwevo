@@ -149,6 +149,15 @@ const EMPTY = { type: "doc", content: [{ type: "paragraph" }] };
 /** How long the room may take to deliver the document before the editor works alone on the saved version. */
 const ROOM_TIMEOUT_MS = 10000;
 
+/** A 44xx close reason in the person's words; the code stays in the message for support. */
+function closeReasonText(reason: string | undefined, code: number): string {
+  switch (reason) {
+    case "frame_too_large": return tr("这次发送的内容超过实时协同允许的大小，连接已关闭（{v1}）", { v1: code });
+    case "template_deleted": return tr("模板已被删除（{v1}）", { v1: code });
+    default: return reason || String(code);
+  }
+}
+
 export default function DocEditor() {
   useI18n();
   const { tid } = useParams();
@@ -231,6 +240,11 @@ export default function DocEditor() {
     roomRef.current.setUser({ ...room.me, slot: room.me.color, readonly: room.readonly } as any);
   }, [room.me, room.readonly]);
 
+  // The server could not read the persisted draft: everyone starts from the saved version, and is told.
+  useEffect(() => {
+    if (room.recovered && room.synced) toast(tr("这个模板之前未保存的实时修改无法读取，已改用第 {v1} 版的内容；请检查后再继续。", { v1: room.head ?? "?" }), "err");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.recovered, room.synced]);
   // The version the live document belongs to moves with saves and restores by anyone in the room.
   useEffect(() => { if (live && room.head) baseVersion.current = room.head; }, [live, room.head]);
 
@@ -251,7 +265,7 @@ export default function DocEditor() {
       setAlone(c === 4401 ? tr("登录已失效：实时协同已停止，请重新登录后刷新。")
         : c === 4403 ? tr("实时协同不可用：你在该工作空间的权限不允许加入编辑。")
         : c === 4404 || c === 4410 ? tr("实时协同不可用：模板不存在或已删除。")
-        : tr("实时协同不可用（{v1}）。", { v1: room.closed.reason || String(c) }));
+        : tr("实时协同不可用（{v1}）。", { v1: closeReasonText(room.closed.reason, c) }));
       return;
     }
     if (room.synced) return;
