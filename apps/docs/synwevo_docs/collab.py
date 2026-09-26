@@ -122,13 +122,15 @@ class Conn:
 
 
 class Room:
-    def __init__(self, hub: "CollabHub", tid: str, tenant: str, *, kind: str = "template"):
+    def __init__(self, hub: "CollabHub", tid: str, tenant: str, *, kind: str = "template", writable: bool | None = None):
         self.hub = hub
         self.tid = tid
         self.kind = kind
         self.key = f"{kind}:{tid}"
         self.tenant = tenant
-        self.writable = kind == "template"          # a project room carries presence and change frames, no shared document
+        # A project room, and a table template's room, carry presence and frames only: no shared
+        # document (a table is merged cell by cell on save instead).
+        self.writable = (kind == "template") if writable is None else writable
         self.doc = Doc()
         self.awareness = Awareness(self.doc)
         self.clients: set[Conn] = set()
@@ -249,10 +251,10 @@ class Room:
         self.broadcast_meta({"type": "activity", "changes_rev": self.changes_rev})
 
     # ---- outside changes (version operations) ---------------------------------------------------
-    def apply_head_change(self, head: int | None, editor: dict | None, reason: str, actor: str | None, snapshot: bool) -> None:
+    def apply_head_change(self, head: int | None, editor: dict | None, reason: str, actor: str | None, snapshot: bool, actor_id: str | None = None) -> None:
         """Runs on the event loop. A collaborator's save is a snapshot of this document; anything
         else (restore, undo, redo, a save from the machine API) replaces the live document."""
-        if not snapshot:
+        if not snapshot and self.writable:
             seed(self.doc, editor)
             self.blocks = block_texts(self.doc)
             updates, self.pending = self.pending, []
@@ -260,8 +262,9 @@ class Room:
                 self.broadcast(create_update_message(u))
         self.head = head
         self.dirty = False
-        self.schedule_persist()
-        self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor})
+        if self.writable:
+            self.schedule_persist()
+        self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor, "by_id": actor_id})
 
 
 class CollabHub:
@@ -358,11 +361,11 @@ class CollabHub:
             self.store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
             return
         snapshot = reason == "save" and actor is not None and any(c.user_id == actor for c in room.clients)
-        if reason != "save" or not snapshot:
+        if room.writable and (reason != "save" or not snapshot):
             self.record_changes(room, actor, [("body", "restore" if reason in ("restore", "undo", "redo") else "replace", 0, "", f"v{head}")], coalesce=False)
             room.changes_rev += 1
         actor_name = display_name(self.identity.get_user(actor)) if actor else None
-        self.loop.call_soon_threadsafe(room.apply_head_change, head, editor, reason, actor_name, snapshot)
+        self.loop.call_soon_threadsafe(room.apply_head_change, head, editor, reason, actor_name, snapshot, actor)
 
     def changes(self, tid: str, limit: int = 100) -> dict:
         key = f"template:{tid}"
@@ -481,6 +484,8 @@ class CollabHub:
             def read_all():
                 with as_tenant(tenant):
                     t = self.app.get_template(tid)
+                    if t.get("kind") == "builtin_sheet":
+                        return t, None, "presence"
                     if t.get("kind") != "builtin_doc":
                         return None, None, None
                     row = self.store.one("SELECT * FROM collab_docs WHERE room=?", (key,))
@@ -489,6 +494,14 @@ class CollabHub:
             t, row, editor = await run_in_threadpool(read_all)
             if t is None:
                 return None
+            if editor == "presence":
+                # A table template: who is here and what they are on, plus version frames; the
+                # cells themselves are merged on save (builtin_service.merge_sheets).
+                room = Room(self, tid, tenant, kind="template", writable=False)
+                room.head = t["head"]
+                room.pending.clear()
+                self.rooms[key] = room
+                return room
             room = Room(self, tid, tenant)
             room.load(t, row, lambda: editor)
             self.rooms[key] = room
@@ -519,7 +532,7 @@ class CollabHub:
                     readonly=info["role"] not in WRITE_ROLES, workspace_id=info["wid"], request=req, path=path)
         await ws.accept()
         room.clients.add(conn)
-        await conn.meta({"type": "hello", "kind": room.kind, "user": {"id": conn.user_id, "name": conn.name, "color": conn.color}, "readonly": conn.readonly,
+        await conn.meta({"type": "hello", "kind": room.kind, "writable": room.writable, "user": {"id": conn.user_id, "name": conn.name, "color": conn.color}, "readonly": conn.readonly,
                          "head": room.head, "dirty": room.dirty, "changes_rev": room.changes_rev, "peers": room.peers(exclude=conn),
                          "recheck_s": recheck_seconds()})
         await conn.send(create_sync_message(room.doc))

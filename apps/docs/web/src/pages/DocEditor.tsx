@@ -261,7 +261,8 @@ export default function DocEditor() {
   useEffect(() => {
     const h = room.lastHead;
     if (!h || !room.me) return;
-    if (h.reason === "save") { if (h.by && h.by !== room.me.name) toast(tr("{v1} 已把当前内容保存为 v{v2}", { v1: h.by, v2: h.head }), "info"); return; }
+    if (h.byId && h.byId === room.me.id) return;             // our own operation: the response already told us
+    if (h.reason === "save") { if (h.by) toast(tr("{v1} 已把当前内容保存为 v{v2}", { v1: h.by, v2: h.head }), "info"); return; }
     const what = h.reason === "restore" ? tr("恢复") : h.reason === "undo" ? tr("撤销") : h.reason === "redo" ? tr("重做") : tr("更换");
     toast(tr("{v1} 已{v2}模板版本（现为 v{v3}），编辑内容已随之更新", { v1: h.by || tr("成员"), v2: what, v3: h.head }), "info");
   }, [room.lastHead]);   // eslint-disable-line react-hooks/exhaustive-deps

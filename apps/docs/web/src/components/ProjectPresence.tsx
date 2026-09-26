@@ -20,21 +20,23 @@ export function focusLabel(focus: Focus | null | undefined, slots: Slot[], mappi
   return f ? tr("文件「{v1}」", { v1: f.filename }) : null;
 }
 
-export default function ProjectPresence({ room, slots, mappings, sources, onLocate, onActivity }: {
-  room: RoomState; slots: Slot[]; mappings: { id: string; no: number }[]; sources: SourceFile[];
-  onLocate: (f: Focus) => void; onActivity: () => void;
+/** The presence bar shared by the project page and the table editor: status, me, the others
+ *  (with where they are, as a label this page computes from its own data), and an optional
+ *  activity button. */
+export function PresenceBar({ room, labelFor, onLocate, onActivity, testId = "project-presence" }: {
+  room: RoomState; labelFor: (f: Focus) => string | null; onLocate: (f: Focus) => void; onActivity?: () => void; testId?: string;
 }) {
   useI18n();
   const status = room.closed ? "disconnected" : room.status;
   const label = room.closed ? tr("实时更新不可用") : status === "connected" ? tr("实时更新中") : status === "connecting" ? tr("连接中…") : tr("连接已断开，重试中");
   return (
-    <div className="collab-bar" data-testid="project-presence">
+    <div className="collab-bar" data-testid={testId}>
       <span className={`collab-status tiny ${status}`} role="status" aria-live="polite" title={room.closed ? tr("此页面收不到其他人的实时修改；刷新页面重试。") : undefined}>{label}</span>
       {!room.closed && (
         <ul className="collab-peers" aria-label={tr("在线成员")}>
           {room.me && <li className={`collab-peer me ${peerClass(room.me.color)}`} title={room.me.name}><span className="collab-avatar" aria-hidden="true">{initialOf(room.me.name)}</span><span className="name">{tr("我")}</span></li>}
           {room.peers.map((p: PeerInfo) => {
-            const where = focusLabel(p.focus, slots, mappings, sources);
+            const where = p.focus ? labelFor(p.focus) : null;
             const title = where ? tr("{v1} 正在看{v2}（点击定位）", { v1: p.name, v2: where }) : p.name;
             return (
               <li key={p.id} className={`collab-peer ${peerClass(p.color)}`} data-testid="project-peer" data-focus={where || ""}>
@@ -48,9 +50,16 @@ export default function ProjectPresence({ room, slots, mappings, sources, onLoca
           })}
         </ul>
       )}
-      <button type="button" className="btn ghost sm" onClick={onActivity} aria-haspopup="dialog">{tr("活动记录")}</button>
+      {onActivity && <button type="button" className="btn ghost sm" onClick={onActivity} aria-haspopup="dialog">{tr("活动记录")}</button>}
     </div>
   );
+}
+
+export default function ProjectPresence({ room, slots, mappings, sources, onLocate, onActivity }: {
+  room: RoomState; slots: Slot[]; mappings: { id: string; no: number }[]; sources: SourceFile[];
+  onLocate: (f: Focus) => void; onActivity: () => void;
+}) {
+  return <PresenceBar room={room} labelFor={(f) => focusLabel(f, slots, mappings, sources)} onLocate={onLocate} onActivity={onActivity} />;
 }
 
 // ---------------------------------------------------------------- what happened, in words

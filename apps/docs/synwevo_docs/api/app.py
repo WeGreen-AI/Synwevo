@@ -511,7 +511,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
         body = await _editor_body(request)
         from ..builtin_service import save_builtin as sb
         with collab.acting(tid, _actor_id(request)):
-            return sb(app_, tid, body)
+            return sb(app_, tid, body, merge=True)
 
     @api.get("/api/templates/{tid}")
     def template_detail(tid: str):

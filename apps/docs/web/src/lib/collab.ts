@@ -18,13 +18,13 @@ export const MESSAGE_META = 100;
 
 export interface PeerInfo { id: string; name: string; color: number; readonly?: boolean; focus?: Focus | null }
 /** Where a person is in a project: a stable object, never a screen position. */
-export interface Focus { kind: "slot" | "mapping" | "source"; id: string }
+export interface Focus { kind: "slot" | "mapping" | "source" | "cell" | "sheet"; id: string }
 export interface ChangeFrame { kind: string; detail: Record<string, any>; by: PeerInfo | null; at: number; seq: number }
 export type MetaFrame =
-  | { type: "hello"; kind?: "template" | "project"; user: PeerInfo; readonly: boolean; head: number | null; dirty: boolean; changes_rev: number; peers: PeerInfo[]; recheck_s: number }
+  | { type: "hello"; kind?: "template" | "project"; writable?: boolean; user: PeerInfo; readonly: boolean; head: number | null; dirty: boolean; changes_rev: number; peers: PeerInfo[]; recheck_s: number }
   | { type: "change"; kind: string; detail: Record<string, any>; by: PeerInfo | null; at: number }
   | { type: "state"; head: number | null; dirty: boolean; changes_rev: number; online: number }
-  | { type: "head"; head: number | null; dirty: boolean; changes_rev: number; online: number; reason: "save" | "restore" | "undo" | "redo" | string; by: string | null }
+  | { type: "head"; head: number | null; dirty: boolean; changes_rev: number; online: number; reason: "save" | "restore" | "undo" | "redo" | string; by: string | null; by_id?: string | null }
   | { type: "role"; readonly: boolean; role: string }
   | { type: "refused"; reason: string }
   | { type: "closed"; reason: string }
@@ -49,7 +49,7 @@ export interface RoomState {
   /** The server dropped this connection's writes (read-only) at least once since the last role change. */
   refused: boolean;
   /** The last version operation someone performed on the template while we were connected. */
-  lastHead: { reason: string; by: string | null; head: number | null } | null;
+  lastHead: { reason: string; by: string | null; byId: string | null; head: number | null } | null;
   /** The last change frame of a project room (a save, a file, a setting), numbered so effects can key on it. */
   lastChange: ChangeFrame | null;
 }
@@ -84,7 +84,7 @@ export function peersOf(states: Map<number, any>, myClientId: number, meId: stri
     const u = st?.user;
     if (clientId === myClientId || !u || typeof u.id !== "string" || u.id === meId) return;
     const f = st?.focus;
-    const focus: Focus | null = f && typeof f === "object" && typeof f.id === "string" && ["slot", "mapping", "source"].includes(f.kind) ? { kind: f.kind, id: f.id.slice(0, 64) } : null;
+    const focus: Focus | null = f && typeof f === "object" && typeof f.id === "string" && ["slot", "mapping", "source", "cell", "sheet"].includes(f.kind) ? { kind: f.kind, id: f.id.slice(0, 64) } : null;
     const prev = seen.get(u.id);
     if (!prev) seen.set(u.id, { id: u.id, name: String(u.name || "—"), color: Number(u.color) || 1, readonly: !!u.readonly, focus });
     else if (!prev.focus && focus) prev.focus = focus;
@@ -121,7 +121,7 @@ export function openRoom(id: string, opts: { origin: string; workspaceId: string
         set({ head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev });
         break;
       case "head":
-        set({ head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev, lastHead: { reason: frame.reason, by: frame.by, head: frame.head } });
+        set({ head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev, lastHead: { reason: frame.reason, by: frame.by, byId: frame.by_id ?? null, head: frame.head } });
         break;
       case "role":
         set({ readonly: frame.readonly, refused: false });

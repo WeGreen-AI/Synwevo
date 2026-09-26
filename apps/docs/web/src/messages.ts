@@ -5871,4 +5871,52 @@ export const messages = {
     "en": ", disabled",
     "zh-Hant": "，停用"
   },
+  "{v1} 已{v2}第 {v3} 版，已载入": {
+    "en": "{v1} {v2} version {v3}; it is loaded",
+    "zh-Hant": "{v1} 已{v2}第 {v3} 版，已載入"
+  },
+  "{v1} 已{v2}第 {v3} 版；你的修改会在保存时按单元格与之合并": {
+    "en": "{v1} {v2} version {v3}; your changes merge with it cell by cell when you save",
+    "zh-Hant": "{v1} 已{v2}第 {v3} 版；你的修改會在儲存時按儲存格與之合併"
+  },
+  "{v1} 的 {v2}": {
+    "en": "{v2} on {v1}",
+    "zh-Hant": "{v1} 的 {v2}"
+  },
+  "保存": {
+    "en": "saved",
+    "zh-Hant": "儲存"
+  },
+  "其他成员在你之后也保存了这个模板。没有冲突的单元格已可合并；下面这些双方都动过，请选择保留哪一方：{v1}": {
+    "en": "Another member saved this template after you loaded it. Cells that do not collide merge; both of you changed the items below, so choose whose version to keep: {v1}",
+    "zh-Hant": "其他成員在你之後也儲存了這個範本。沒有衝突的儲存格已可合併；下面這些雙方都動過，請選擇保留哪一方：{v1}"
+  },
+  "内容与已保存的第 {v1} 版相同，无需新版本": {
+    "en": "Same content as saved version {v1}; no new version needed",
+    "zh-Hant": "內容與已儲存的第 {v1} 版相同，無需新版本"
+  },
+  "单元格 {v1}（{v2}）": {
+    "en": "cell {v1} ({v2})",
+    "zh-Hant": "儲存格 {v1}（{v2}）"
+  },
+  "工作表「{v1}」": {
+    "en": "sheet “{v1}”",
+    "zh-Hant": "工作表「{v1}」"
+  },
+  "工作表「{v1}」的行列与合并": {
+    "en": "rows, columns and merges of sheet “{v1}”",
+    "zh-Hant": "工作表「{v1}」的行列與合併"
+  },
+  "已保存并与第 {v1} 版合并（{v2} 个字段，v{v3}）": {
+    "en": "Saved and merged with version {v1} ({v2} fields, v{v3})",
+    "zh-Hant": "已儲存並與第 {v1} 版合併（{v2} 個欄位，v{v3}）"
+  },
+  "没有保存：已改为对方的版本，你的修改仍在编辑器中": {
+    "en": "Not saved: switched to their version; your changes are still in the editor",
+    "zh-Hant": "沒有儲存：已改為對方的版本，你的修改仍在編輯器中"
+  },
+  "表格有冲突": {
+    "en": "Table conflict",
+    "zh-Hant": "表格有衝突"
+  },
 } satisfies Messages;

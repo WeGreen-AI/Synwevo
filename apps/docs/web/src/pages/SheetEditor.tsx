@@ -3,12 +3,14 @@ import { serverText, issueText } from "../lib/presentation";
 import { t as tr, useI18n, LanguageMenu, PageState } from "@synwevo/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { get, post, put } from "@synwevo/auth-client";
+import { get, post, put, workspaceContext } from "@synwevo/auth-client";
 import { cellRef, colLetter, isImeKey, rangeRef, useDialog, useToast } from "@synwevo/ui";
+import { initialState, openRoom, type Focus, type Room, type RoomState } from "../lib/collab";
+import { PresenceBar } from "../components/ProjectPresence";
 import { moveCursor, rectOf } from "../lib/gridsel";
 import { cssColor } from "../lib/css";
 import { errorText } from "../lib/perm";
-import { loadedVersion, saveOverStale, STALE_KEPT, STALE_TITLE, staleText } from "../lib/templatesave";
+import { loadedVersion, saveOverStale, STALE_TITLE, staleText } from "../lib/templatesave";
 
 interface Cell { v?: string; t?: string; s?: any }
 interface Field { id: string; name: string; kind: "cell" | "region" | "repeat"; ref?: string; row?: number; c1?: number; c2?: number; required?: boolean; empty_policy?: string }
@@ -48,6 +50,10 @@ export default function SheetEditor() {
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [hist, setHist] = useState<SheetData[][]>([]);
+  // ---- the template's room: who else has it open and where they are; their saves as they happen
+  const roomRef = useRef<Room | null>(null);
+  if (tid && !roomRef.current) roomRef.current = openRoom(tid, { origin: window.location.origin, workspaceId: workspaceContext(), kind: "template" });
+  const [room, setRoom] = useState<RoomState>(initialState());
   const cursor = useRef({ anchor: { r: 0, c: 0 }, active: { r: 0, c: 0 } });
   const select = (rect: typeof sel) => {
     cursor.current = { anchor: { r: rect.r1, c: rect.c1 }, active: { r: rect.r2, c: rect.c2 } };
@@ -61,13 +67,10 @@ export default function SheetEditor() {
   }, [!!editing]);
   const sh = sheets[si];
 
-  useEffect(() => {
-    if (!tid) return;
-    let alive = true;
-    setLoaded(false);
-    setLoadErr(null);
-    get(`/api/templates/${tid}`).then((t) => {
-      if (!alive) return;
+  const loadTemplate = (quiet = false) => {
+    if (!tid) return Promise.resolve();
+    if (!quiet) { setLoaded(false); setLoadErr(null); }
+    return get(`/api/templates/${tid}`).then((t) => {
       if (t.kind !== "builtin_sheet" || !t.version.editor?.sheets) {
         setLoadErr(tr("这个模板不是用表格编辑器创建的，不能在这里编辑。"));
         return;
@@ -75,11 +78,63 @@ export default function SheetEditor() {
       setName(t.name);
       baseVersion.current = loadedVersion(t);
       setSheets(t.version.editor.sheets);
+      setHist([]);
       setDirty(false);
       setLoaded(true);
-    }).catch((e) => alive && setLoadErr(errorText(e)));
+    }).catch((e) => setLoadErr(errorText(e)));
+  };
+  useEffect(() => {
+    if (!tid) return;
+    let alive = true;
+    loadTemplate().then(() => { if (!alive) return; });
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tid]);
+
+  useEffect(() => {
+    const r = roomRef.current;
+    if (!r) return;
+    const off = r.subscribe(setRoom);
+    return () => { off(); r.destroy(); roomRef.current = null; };
+  }, []);
+  useEffect(() => {
+    if (!roomRef.current || !room.me) return;
+    roomRef.current.setUser({ ...room.me, slot: room.me.color, readonly: room.readonly } as any);
+  }, [room.me, room.readonly]);
+  // where we are: the active cell of the active sheet (a stable address, not a screen position)
+  useEffect(() => {
+    if (!roomRef.current || !loaded) return;
+    roomRef.current.setFocus(sh ? { kind: "cell", id: `${sh.name}!${cellRef(sel.r1, sel.c1)}` } : null);
+  }, [sel.r1, sel.c1, si, loaded, room.me]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // someone else saved (or restored) a version: take it when nothing is pending here, say so otherwise
+  useEffect(() => {
+    const h = room.lastHead;
+    if (!h || !room.me || !loaded) return;
+    if (h.byId && h.byId === room.me.id) return;             // our own save: the response already carried it
+    if (h.head && h.head === baseVersion.current) return;
+    const who = h.by || tr("成员");
+    const what = h.reason === "save" ? tr("保存") : h.reason === "restore" ? tr("恢复") : h.reason === "undo" ? tr("撤销") : h.reason === "redo" ? tr("重做") : tr("更换");
+    if (dirty) {
+      toast(tr("{v1} 已{v2}第 {v3} 版；你的修改会在保存时按单元格与之合并", { v1: who, v2: what, v3: h.head }), "info");
+    } else {
+      void loadTemplate(true).then(() => toast(tr("{v1} 已{v2}第 {v3} 版，已载入", { v1: who, v2: what, v3: h.head }), "info"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.lastHead]);
+  const focusLabel = (f: Focus): string | null => {
+    if (f.kind !== "cell" && f.kind !== "sheet") return null;
+    const [sheetName, ref] = f.id.includes("!") ? [f.id.slice(0, f.id.lastIndexOf("!")), f.id.slice(f.id.lastIndexOf("!") + 1)] : [f.id, ""];
+    if (!sheets.some((x) => x.name === sheetName)) return null;
+    return ref ? (sheets.length > 1 ? tr("{v1} 的 {v2}", { v1: sheetName, v2: ref }) : ref) : sheetName;
+  };
+  const locateFocus = (f: Focus) => {
+    const sheetName = f.id.includes("!") ? f.id.slice(0, f.id.lastIndexOf("!")) : f.id;
+    const ref = f.id.includes("!") ? f.id.slice(f.id.lastIndexOf("!") + 1) : "";
+    const i = sheets.findIndex((x) => x.name === sheetName);
+    if (i < 0) return;
+    if (i !== si) chooseSheet(i);
+    if (ref) { const x = parseRef(ref); select({ r1: x.r1, c1: x.c1, r2: x.r1, c2: x.c1 }); }
+  };
 
   // Closing the tab or reloading with unsaved edits asks first (this editor had no guard at all).
   useEffect(() => {
@@ -169,14 +224,30 @@ export default function SheetEditor() {
     setBusy(true);
     try {
       const editor = { sheets };
+      // Someone else's save since this template was loaded is merged cell by cell on the server;
+      // only a cell, a field or a sheet's layout both sides changed comes back as a conflict.
+      const send = async (base: number | null) => {
+        try {
+          return await put(`/api/templates/${tid}/builtin`, { editor, name, ...(base ? { base_version: base } : {}) });
+        } catch (e: any) {
+          const conflicts: any[] | undefined = e?.code === "stale_template" ? e.detail?.conflicts : undefined;
+          if (!conflicts?.length) throw e;
+          const reasons: Record<string, string> = { both_changed: tr("双方都改了它"), deleted_by_other: tr("对方已删除它"), deleted_by_you: tr("你删除了它，对方改了它"), both_added: tr("双方各自新增") };
+          const list = conflicts.map((c) => (c.kind === "cell" ? tr("单元格 {v1}（{v2}）", { v1: c.ref, v2: c.sheet }) : c.kind === "field" ? tr("字段「{v1}」", { v1: c.name || c.id }) : c.kind === "layout" ? tr("工作表「{v1}」的行列与合并", { v1: c.sheet }) : tr("工作表「{v1}」", { v1: c.sheet })) + "：" + (reasons[c.reason] || c.reason)).join("；");
+          const mine = await confirm(tr("表格有冲突"), tr("其他成员在你之后也保存了这个模板。没有冲突的单元格已可合并；下面这些双方都动过，请选择保留哪一方：{v1}", { v1: list }), tr("以我的为准"), true);
+          if (!mine) return null;
+          const force = conflicts.map((c) => (c.kind === "cell" ? `cell:${c.sheet}!${c.ref}` : c.kind === "field" ? `field:${c.id}` : c.kind === "layout" ? `layout:${c.sheet}` : `sheet:${c.sheet}`));
+          return await put(`/api/templates/${tid}/builtin`, { editor, name, ...(base ? { base_version: base } : {}), force_ids: force });
+        }
+      };
       const t = tid
-        ? await saveOverStale((base) => put(`/api/templates/${tid}/builtin`, { editor, name, ...(base ? { base_version: base } : {}) }),
-          baseVersion.current, (theirs, mine) => confirm(tr(STALE_TITLE), staleText(theirs, mine), tr("仍然保存"), true))
+        ? await saveOverStale(send, baseVersion.current, (theirs, mine) => confirm(tr(STALE_TITLE), staleText(theirs, mine), tr("仍然保存"), true))
         : await post("/api/templates/builtin", { kind: "builtin_sheet", name, editor, project_id: projectId });
-      if (!t) { toast(tr(STALE_KEPT), "info"); return; }
+      if (!t) { toast(tr("没有保存：已改为对方的版本，你的修改仍在编辑器中"), "info"); await loadTemplate(true); return; }
       baseVersion.current = loadedVersion(t);
       setDirty(false);
-      toast(tr("已保存（{v1} 个字段，v{v2}）", { v1: t.version.slots.length, v2: t.version.no }), "ok");
+      if (t.unchanged) toast(tr("内容与已保存的第 {v1} 版相同，无需新版本", { v1: t.version.no }), "info");
+      else toast(t.merged_with ? tr("已保存并与第 {v1} 版合并（{v2} 个字段，v{v3}）", { v1: t.merged_with, v2: t.version.slots.length, v3: t.version.no }) : tr("已保存（{v1} 个字段，v{v2}）", { v1: t.version.slots.length, v2: t.version.no }), "ok");
       if (!tid) nav(`/templates/${t.id}/edit${projectId ? `?project=${projectId}` : ""}`, { replace: true });
     } catch (e: any) {
       toast(errorText(e), "err");
@@ -238,6 +309,7 @@ export default function SheetEditor() {
         <span className="badge">{tr("表格型模板 → XLSX")}</span>
         {!loaded ? <span className="badge info" role="status">{tr("加载中…")}</span> : dirty ? <span className="badge warn" role="status">{tr("未保存")}</span> : <span className="badge ok" role="status">{tr("已保存")}</span>}
         <span className="spacer" />
+        {tid && <PresenceBar room={room} labelFor={focusLabel} onLocate={locateFocus} testId="sheet-presence" />}
         <button type="button" className="btn primary" disabled={busy || !loaded} onClick={saveTpl}>{busy ? tr("保存中…") : tr("保存模板")}</button>
       </div>
       <div className="toolbar">
@@ -286,7 +358,7 @@ export default function SheetEditor() {
               const f = fieldAt(ri, ci);
               const fi = f ? sh.fields.indexOf(f) : -1;
               return (
-                <div key={ref} className={`gcell${s.wrap ? " wrap" : ""}`}
+                <div key={ref} className={`gcell${s.wrap ? " wrap" : ""}`} data-ref={ref}
                   style={{ left: 46 + colX[ci], top: 22 + rowY[ri], width: w, height: h, fontWeight: s.b ? 700 : undefined, fontStyle: s.i ? "italic" : undefined, textDecoration: s.u ? "underline" : undefined,
                     fontSize: s.sz ? s.sz * 1.1 : undefined, color: cssColor(s.color), background: f ? `${COLORS[fi % COLORS.length]}22` : cssColor(s.bg), textAlign: s.ha, border: s.bd ? "1px solid #333" : undefined,
                     boxShadow: f ? `inset 0 0 0 2px ${COLORS[fi % COLORS.length]}` : undefined }}

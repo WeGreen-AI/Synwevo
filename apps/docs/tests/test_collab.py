@@ -258,9 +258,17 @@ def test_no_session_other_site_other_workspace_and_wrong_kind_are_refused(world)
     assert x.value.code == 4403
     r = world["co"].post("/api/templates/builtin", json={"kind": "builtin_sheet", "editor": {"sheets": [{"name": "S", "cells": {"A1": {"v": "x"}}, "fields": []}]}})
     assert r.status_code == 200, r.text
-    with pytest.raises(WebSocketDisconnect) as x:
-        world["client_for"](world["editor"]).websocket_connect(f"/api/collab/templates/{r.json()['id']}", headers={"origin": "http://testserver"}).__enter__()
-    assert x.value.code == 4400 and x.value.reason == "not_builtin_doc"
+    # a table template has a presence-only room (cells merge on save), never a shared document
+    p = Peer(world["client_for"](world["editor"]), r.json()["id"])
+    hello = p.connect()
+    assert hello["kind"] == "template" and hello["writable"] is False
+    p.close()
+    # an uploaded template has no editor at all: no room
+    up = world["co"].post("/api/templates/upload", files={"file": ("t.docx", b"PK\x03\x04 not really", "application/octet-stream")})
+    if up.status_code == 200:
+        with pytest.raises(WebSocketDisconnect) as x:
+            world["client_for"](world["editor"]).websocket_connect(f"/api/collab/templates/{up.json()['id']}", headers={"origin": "http://testserver"}).__enter__()
+        assert x.value.code == 4400 and x.value.reason == "not_builtin_doc"
 
 
 # ------------------------------------------------------------------ persistence, save, restore
