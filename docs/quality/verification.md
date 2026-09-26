@@ -1332,6 +1332,36 @@ schema v19 `mail_outbox.html`。
 
 **未做**：真实邮箱客户端（Gmail/Outlook/Apple Mail）渲染与真实收件——需要授权的测试收件箱；邮件 Logo 纳入 `brand_assets.py` 清单。
 
+### 16.46 Docs 实时多人协同：文档型模板的共同编辑、在场、归属与草稿（CI-45）
+
+决策记录、接口与边界：`docs/platform/docs-collaboration.md`。
+
+**实现**：服务端 `apps/docs/synwevo_docs/collab.py`（每模板一个房间：pycrdt 共享文档 + Yjs 同步/awareness 协议 + 自有元数据帧；握手复用平台会话门与
+`Origin` 同源检查；查看者只读、写入丢弃并告知；每 30 s 以 `touch=False` 复核会话/账户/成员/应用资格——连接不延长会话；awareness 只接受连接证明的身份；
+整体状态持久化到 `collab_docs`，逐块归属到 `collab_changes`）、`collab_pm.py`（ProseMirror JSON ⇄ 共享 XML，按 y-prosemirror 规则；索引单位为库的
+UTF-8 字节）；模板服务在保存/恢复/撤销/重做/删除后通知房间（协作者的保存 = 快照；房间外的保存/恢复 = 替换实时文档）；schema v20；路由策略两条；
+`WS /api/collab/templates/{tid}`、`GET /api/templates/{tid}/collab/changes`；核心包暴露 `api.state.session_gate`；新依赖 `pycrdt==0.14.6` 与 uvicorn
+所需的 `websockets==15.0.1`（纯 `uvicorn` 不带 WebSocket 实现——隔离实例首次连接 404 暴露了这一点，生产镜像同样缺少，本批次一并修）。浏览器端
+`apps/docs/web/src/lib/collab.ts`（y-websocket provider + 元数据帧 + 状态）、`DocEditor.tsx`（Collaboration/CollaborationCaret，关闭自带撤销栈；在线
+成员条、命名光标、只读/断线/单人回退提示、变更记录抽屉；房间连不上或被拒即回退单人编辑已保存版本），共享令牌 `--peer-1…8`，48 条三语言字符串；
+`infra/production/nginx.conf` 为 `/api/collab/` 加 Upgrade 头；Vite 代理 `ws: true`。
+
+**验证**：`test_collab_pm.py` 4 项、`test_collab.py` 8 项（两编辑者收敛与名单、冒名 awareness 丢弃、查看者只读且被告知、无会话 4401/外站 4403/无 Origin
+4403/他空间 4404/他人空间参数 4403/非文档模板 4400、离开后持久化与再进入、保存→v2 且房间已保存、恢复→所有人替换、房间外保存→重播种、逐块归属与
+合并、在线降级与移出即时生效、撤销会话即断开且会话行不变）；typecheck/build/`npm test` 通过；五个守卫通过。
+浏览器 `ui_e2e_collab.py`（隔离实例，两个真实账户在同一组织空间）：Chromium（Chrome，桌面 owner + 手机 390 px editor）8 个里程碑全部通过——
+房间投递播种文档；**房间读出的文档保存为 v3 与单人路径保存的 v2 逐字节相同**（正文/页眉/页脚）；双方顶栏互见；任一方输入即时出现在对方编辑器并带
+对方姓名的光标；变更记录按人按段落归属并带摘录（连续输入合并为一条计数）；owner 保存为 v4 且 editor 收到提示，editor 随后保存为 v5 无版本冲突对话框；
+owner 把 editor 降为查看者后，editor 的连接在复核间隔内转为只读（角标「只读」、提示、保存禁用）；socket 永不应答时页面在等待后明确说明并单人
+编辑已保存的 v5。截图 `chromium-01…05`。无 CSP 违规（`connect-src 'self'` 覆盖同源 `ws:`）。**WebKit** 同一脚本 8 个里程碑全部通过（截图 `webkit-01…05`；无 CSP 违规）——前提是测试用的本地代理助手 `localhost_proxy.py` 学会两件事：WebKit 把 WebSocket 握手作为绝对 `ws://` 请求行发给代理，且握手后要双向直通字节（此前答 400，页面走 10 s 超时回退）。三套件全跑：2098 通过、0 失败（`pytest-ci45.log`）。
+
+**发现并修复的真实缺陷**：(1) 纯 `uvicorn` 没有 WebSocket 实现，升级请求答 404（生产镜像同样）；(2) CI-44 之后共享的浏览器证明助手
+`link_in` 仍按单部件读取邮件正文，所有读邮件的 UI 证明都会失败——改为读取 `text/plain` 部件（`mail_text`），三个脚本同改；(3) 查看者的空 step-2
+应答被当作写入而「告知」一次，之后真正的写入不再被告知——空更新现在静默忽略。
+
+**未做**：表格型模板与项目页（字段/映射）的实时协同；逐字符差异视图；多进程房间共享；生产 nginx 副本的 Upgrade 头需运维同步
+（见 deployment.md）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

@@ -3,6 +3,7 @@
 fastapi==0.141.1
 starlette==1.6.0
 uvicorn==0.53.0
+websockets==15.0.1       # BSD-3 – uvicorn's WebSocket protocol (plain `uvicorn` ships none); Docs live co-editing needs it
 python-multipart==0.0.32
 pydantic==2.13.5
 argon2-cffi==25.1.0       # MIT – Argon2id password hashing (parameters measured: synwevo_core/passwords.py)

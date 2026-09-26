@@ -5519,4 +5519,196 @@ export const messages = {
     "en": "Version {v1}'s content is now version {v2} (current)",
     "zh-Hant": "已把第 {v1} 版的內容恢復為第 {v2} 版（目前）"
   },
+  "{v1} 分钟前": {
+    "en": "{v1} min ago",
+    "zh-Hant": "{v1} 分鐘前"
+  },
+  "{v1} 小时前": {
+    "en": "{v1} h ago",
+    "zh-Hant": "{v1} 小時前"
+  },
+  "{v1} 已{v2}模板版本（现为 v{v3}），编辑内容已随之更新": {
+    "en": "{v1} {v2} a template version (now v{v3}); the editor content followed",
+    "zh-Hant": "{v1} 已{v2}範本版本（現為 v{v3}），編輯內容已隨之更新"
+  },
+  "{v1} 已把当前内容保存为 v{v2}": {
+    "en": "{v1} saved the current content as v{v2}",
+    "zh-Hant": "{v1} 已把目前內容儲存為 v{v2}"
+  },
+  "{v1}（查看）": {
+    "en": "{v1} (viewing)",
+    "zh-Hant": "{v1}（檢視）"
+  },
+  "与协同服务的连接已断开，正在重试；你的修改会在重新连接后同步。": {
+    "en": "The connection to the collaboration service dropped; retrying. Your changes sync once it is back.",
+    "zh-Hant": "與協同服務的連線已中斷，正在重試；你的修改會在重新連線後同步。"
+  },
+  "你现在只能查看：你在该工作空间的角色是查看者，修改不会被接受。": {
+    "en": "You can only view: your role in this workspace is viewer, so changes are not accepted.",
+    "zh-Hant": "你現在只能檢視：你在該工作空間的角色是檢視者，修改不會被接受。"
+  },
+  "你现在只能查看：刚才的修改没有被接受。你在该工作空间的角色已变为查看者。": {
+    "en": "You can only view now: your last change was not accepted. Your role in this workspace changed to viewer.",
+    "zh-Hant": "你現在只能檢視：剛才的修改沒有被接受。你在該工作空間的角色已變為檢視者。"
+  },
+  "修改了{v1}第 {v2} 个{v3}": {
+    "en": "edited {v3} {v2} of the {v1}",
+    "zh-Hant": "修改了{v1}第 {v2} 個{v3}"
+  },
+  "修改已实时同步给协作者并保留为草稿，但还没有保存为新版本；生成文档时使用的是已保存的版本。": {
+    "en": "Your changes are synced to collaborators and kept as a draft, but not saved as a new version yet; documents are generated from the saved version.",
+    "zh-Hant": "修改已即時同步給協作者並保留為草稿，但還沒有儲存為新版本；產生文件時使用的是已儲存的版本。"
+  },
+  "内容": {
+    "en": "content",
+    "zh-Hant": "內容"
+  },
+  "列表": {
+    "en": "list",
+    "zh-Hant": "清單"
+  },
+  "刚刚": {
+    "en": "just now",
+    "zh-Hant": "剛剛"
+  },
+  "删除了{v1}第 {v2} 个{v3}": {
+    "en": "deleted {v3} {v2} of the {v1}",
+    "zh-Hant": "刪除了{v1}第 {v2} 個{v3}"
+  },
+  "单人编辑": {
+    "en": "Editing alone",
+    "zh-Hant": "單人編輯"
+  },
+  "变更记录": {
+    "en": "Change log",
+    "zh-Hant": "變更記錄"
+  },
+  "同步中…": {
+    "en": "Syncing…",
+    "zh-Hant": "同步中…"
+  },
+  "在{v1}第 {v2} 处新增了{v3}": {
+    "en": "inserted a {v3} at position {v2} of the {v1}",
+    "zh-Hant": "在{v1}第 {v2} 處新增了{v3}"
+  },
+  "在线成员": {
+    "en": "People here",
+    "zh-Hant": "線上成員"
+  },
+  "在编辑器之外保存了 {v1}（编辑内容随之更新）": {
+    "en": "saved {v1} outside the editor (the editor content followed)",
+    "zh-Hant": "在編輯器之外儲存了 {v1}（編輯內容隨之更新）"
+  },
+  "实时协同不可用（{v1}）。": {
+    "en": "Live collaboration is unavailable ({v1}).",
+    "zh-Hant": "即時協同不可用（{v1}）。"
+  },
+  "实时协同不可用：你在该工作空间的权限不允许加入编辑。": {
+    "en": "Live collaboration is unavailable: your permissions in this workspace do not allow joining the editing session.",
+    "zh-Hant": "即時協同不可用：你在該工作空間的權限不允許加入編輯。"
+  },
+  "实时协同不可用：模板不存在或已删除。": {
+    "en": "Live collaboration is unavailable: the template does not exist or was deleted.",
+    "zh-Hant": "即時協同不可用：範本不存在或已刪除。"
+  },
+  "实时协同中": {
+    "en": "Live",
+    "zh-Hant": "即時協同中"
+  },
+  "引用": {
+    "en": "quote",
+    "zh-Hant": "引用"
+  },
+  "恢复": {
+    "en": "restored",
+    "zh-Hant": "復原"
+  },
+  "成员": {
+    "en": "A member",
+    "zh-Hant": "成員"
+  },
+  "我": {
+    "en": "Me",
+    "zh-Hant": "我"
+  },
+  "把模板恢复为 {v1}（编辑内容随之更新）": {
+    "en": "restored the template to {v1} (the editor content followed)",
+    "zh-Hant": "把範本復原為 {v1}（編輯內容隨之更新）"
+  },
+  "按内容块记录谁改了什么；保存模板会把当前内容记为新版本。": {
+    "en": "Who changed what, block by block; saving the template records the current content as a new version.",
+    "zh-Hant": "按內容區塊記錄誰改了什麼；儲存範本會把目前內容記為新版本。"
+  },
+  "撤销（只撤销我自己的修改）": {
+    "en": "Undo (only my own changes)",
+    "zh-Hant": "復原（只復原我自己的修改）"
+  },
+  "无法连接实时协同：正在单人编辑已保存的版本；其他人的修改不会显示，保存时若版本已被更新会先询问。": {
+    "en": "Cannot reach live collaboration: editing the saved version alone. Others' changes are not shown; if the version moved on, saving asks first.",
+    "zh-Hant": "無法連線即時協同：正在單人編輯已儲存的版本；其他人的修改不會顯示，儲存時若版本已被更新會先詢問。"
+  },
+  "更换": {
+    "en": "replaced",
+    "zh-Hant": "更換"
+  },
+  "有未保存为版本的修改": {
+    "en": "Changes not saved as a version",
+    "zh-Hant": "有未儲存為版本的修改"
+  },
+  "有未保存为版本的修改。保存模板会把当前内容记为新版本；版本历史见项目页的「版本」。": {
+    "en": "There are changes not saved as a version. Saving the template records the current content as a new version; the history is under 版本 on the project page.",
+    "zh-Hant": "有未儲存為版本的修改。儲存範本會把目前內容記為新版本；版本歷史見專案頁的「版本」。"
+  },
+  "标题": {
+    "en": "heading",
+    "zh-Hant": "標題"
+  },
+  "段落": {
+    "en": "paragraph",
+    "zh-Hant": "段落"
+  },
+  "登录已失效：实时协同已停止，请重新登录后刷新。": {
+    "en": "Your sign-in ended: live collaboration stopped. Sign in again and reload.",
+    "zh-Hant": "登入已失效：即時協同已停止，請重新登入後重新整理。"
+  },
+  "离开": {
+    "en": "Leave",
+    "zh-Hant": "離開"
+  },
+  "离开编辑器？": {
+    "en": "Leave the editor?",
+    "zh-Hant": "離開編輯器？"
+  },
+  "系统": {
+    "en": "System",
+    "zh-Hant": "系統"
+  },
+  "表格": {
+    "en": "table",
+    "zh-Hant": "表格"
+  },
+  "还没有协同修改记录。": {
+    "en": "No collaborative changes recorded yet.",
+    "zh-Hant": "還沒有協同修改記錄。"
+  },
+  "连接中…": {
+    "en": "Connecting…",
+    "zh-Hant": "連線中…"
+  },
+  "连接已断开，重试中": {
+    "en": "Disconnected, retrying",
+    "zh-Hant": "連線已中斷，重試中"
+  },
+  "重新连接": {
+    "en": "Reconnect",
+    "zh-Hant": "重新連線"
+  },
+  "（{v1} 次）": {
+    "en": " ({v1} times)",
+    "zh-Hant": "（{v1} 次）"
+  },
+  "（查看）": {
+    "en": " (viewing)",
+    "zh-Hant": "（檢視）"
+  },
 } satisfies Messages;

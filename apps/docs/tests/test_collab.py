@@ -1,0 +1,370 @@
+"""Live co-editing of a built-in document template over the WebSocket room, with real sessions:
+two editors converge, a viewer follows but cannot write, outsiders and other sites are refused,
+the live document survives everyone leaving, a save turns it into a version, a restore replaces it
+for everyone, changes are attributed, and a role change while connected takes effect."""
+from __future__ import annotations
+
+import json
+import time
+
+import pytest
+from pycrdt import (Doc, XmlElement, XmlFragment, XmlText, YMessageType, YSyncMessageType, create_awareness_message,
+                    create_sync_message, create_update_message, handle_sync_message, read_message, write_message)
+from starlette.websockets import WebSocketDisconnect
+
+from synwevo_docs.collab import MESSAGE_META, decode_awareness
+from synwevo_docs.collab_pm import read as read_doc
+
+PW = "a-sufficiently-long-passphrase"
+DOC = {"page": {"size": "A4", "orientation": "portrait", "margins": {"top": 25.4, "bottom": 25.4, "left": 31.8, "right": 31.8}},
+       "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "客户："},
+                                                                            {"type": "field", "attrs": {"id": "customer", "name": "客户", "required": True}}]}]},
+       "header": {"type": "doc", "content": [{"type": "paragraph"}]}, "footer": {"type": "doc", "content": [{"type": "paragraph"}]}}
+
+
+@pytest.fixture()
+def world(tmp_path, monkeypatch):
+    """One workspace with an owner, an editor and a viewer; one built-in document template; a
+    second workspace whose owner is a stranger. Sessions are real cookies."""
+    from fastapi.testclient import TestClient
+
+    from synwevo_core.apps import bootstrap_docs_app
+    from synwevo_core.identity import Identity
+    from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, Sessions
+    from synwevo_docs.api.app import create_app
+
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_COLLAB_RECHECK_S", "0.2")
+    app = create_app(str(tmp_path / "data"), start_jobs=False)
+    store = app.state.app.store
+    ident = Identity(store)
+    bootstrap_docs_app(store, ident)
+    sessions = Sessions(store)
+
+    def person(email, wid=None, role=None):
+        u = ident.create_user(email, PW, status="active", display_name=email.split("@")[0].title())
+        if wid and role:
+            ident.add_member(wid, u["id"], role)
+        return u
+
+    owner = person("owner@example.com")
+    wid = ident.workspaces_for(owner["id"])[0]["id"]
+    editor = person("editor@example.com", wid, "editor")
+    viewer = person("viewer@example.com", wid, "viewer")
+    stranger = person("stranger@example.com")
+    other_wid = ident.workspaces_for(stranger["id"])[0]["id"]
+
+    def client_for(user, workspace=None):
+        raw, _ = sessions.create(user["id"], workspace_id=workspace or wid, amr="password")
+        c = TestClient(app)
+        c.cookies.set(COOKIE_NAME, raw)
+        c.cookies.set(CSRF_COOKIE, "t")
+        c.headers[CSRF_HEADER] = "t"
+        c.user = user
+        return c
+
+    with TestClient(app) as lifespan:  # noqa: F841 — keeps the loop alive for the sockets below
+        co = client_for(owner)
+        r = co.post("/api/templates/builtin", json={"kind": "builtin_doc", "editor": DOC, "name": "协同模板"})
+        assert r.status_code == 200, r.text
+        tid = r.json()["id"]
+        yield {"app": app, "store": store, "ident": ident, "sessions": sessions, "wid": wid, "other_wid": other_wid, "tid": tid,
+               "owner": owner, "editor": editor, "viewer": viewer, "stranger": stranger, "client_for": client_for, "co": co}
+
+
+class Peer:
+    """A browser's share of the protocol: a local document kept in sync through the socket."""
+
+    def __init__(self, client, tid, *, origin="http://testserver", workspace=None):
+        url = f"/api/collab/templates/{tid}" + (f"?workspace={workspace}" if workspace else "")
+        self.cm = client.websocket_connect(url, headers={"origin": origin})
+        self.ws = self.cm.__enter__()
+        self.doc = Doc()
+        self.updates: list[bytes] = []
+        self.doc.observe(lambda ev: self.updates.append(ev.update))
+        self.meta: list[dict] = []
+        self.awareness: list[bytes] = []
+        self.synced = False
+
+    def close(self):
+        self.cm.__exit__(None, None, None)
+
+    def recv(self, *, want: str | None = None, tries: int = 12):
+        """Read frames until one of ``want`` (meta/sync/update/awareness) arrives; frames of the
+        other kinds are handled and kept along the way."""
+        for _ in range(tries):
+            data = self.ws.receive_bytes()
+            kind = data[0]
+            if kind == MESSAGE_META:
+                payload = json.loads(read_message(data[1:]))
+                self.meta.append(payload)
+                if want in (None, "meta"):
+                    return payload
+            elif kind == YMessageType.SYNC:
+                sub = data[1]
+                if sub == YSyncMessageType.SYNC_STEP1:
+                    reply = handle_sync_message(data[1:], self.doc)
+                    self.ws.send_bytes(reply)
+                    if want in (None, "sync"):
+                        return "step1"
+                elif sub == YSyncMessageType.SYNC_STEP2:
+                    handle_sync_message(data[1:], self.doc)
+                    self.synced = True
+                    if want in (None, "sync"):
+                        return "step2"
+                else:
+                    handle_sync_message(data[1:], self.doc)
+                    if want in (None, "update"):
+                        return "update"
+            elif kind == YMessageType.AWARENESS:
+                self.awareness.append(data)
+                if want in (None, "awareness"):
+                    return data
+        raise AssertionError(f"no {want} frame within {tries} frames; meta so far: {self.meta}")
+
+    def recv_meta(self, kind: str, tries: int = 12) -> dict:
+        """The next server frame of this kind; other room frames in between are kept."""
+        for _ in range(tries):
+            payload = self.recv(want="meta", tries=tries)
+            if payload.get("type") == kind:
+                return payload
+        raise AssertionError(f"no {kind} frame; meta so far: {self.meta}")
+
+    def connect(self):
+        hello = self.recv(want="meta")
+        assert hello["type"] == "hello", hello
+        self.recv(want="sync")                                 # the server's step 1 (answered)
+        self.ws.send_bytes(create_sync_message(self.doc))     # ask for what we miss
+        while not self.synced:
+            self.recv(want="sync")
+        return hello
+
+    def body(self) -> XmlFragment:
+        return self.doc.get("body", type=XmlFragment)
+
+    def edit(self, fn):
+        """Change the local document and send the resulting update, like a keystroke."""
+        self.updates.clear()
+        with self.doc.transaction():
+            fn()
+        assert self.updates, "the edit produced no update"
+        for u in self.updates:
+            self.ws.send_bytes(create_update_message(u))
+
+    def append_text(self, text: str, block: int = 0):
+        def fn():
+            p = self.body().children[block]
+            t = p.children[0] if len(p.children) and isinstance(p.children[0], XmlText) else p.children.insert(0, XmlText())
+            t.insert(len(t), text)
+        self.edit(fn)
+
+    def add_paragraph(self, text: str):
+        def fn():
+            p = self.body().children.append(XmlElement("paragraph"))
+            p.children.append(XmlText(text))
+        self.edit(fn)
+
+    def texts(self) -> list[str]:
+        out = []
+        for child in self.body().children:
+            out.append("".join(str(c) if isinstance(c, XmlText) else "" for c in child.children))
+        return out
+
+    def send_awareness(self, client_id: int, clock: int, state: dict | None):
+        from pycrdt._sync import Encoder
+        enc = Encoder()
+        enc.write_var_uint(1)
+        enc.write_var_uint(client_id)
+        enc.write_var_uint(clock)
+        enc.write_var_string(json.dumps(state) if state is not None else "")
+        self.ws.send_bytes(create_awareness_message(enc.to_bytes()))
+
+
+def _connect(world, who, **kw) -> Peer:
+    p = Peer(world["client_for"](world[who]), world["tid"], **kw)
+    p.hello = p.connect()
+    return p
+
+
+# ------------------------------------------------------------------ two editors converge
+def test_two_editors_see_each_other_s_changes_and_who_is_there(world):
+    a = _connect(world, "owner")
+    assert a.hello["readonly"] is False and a.hello["head"] == 1 and a.hello["dirty"] is False and a.hello["peers"] == []
+    assert a.hello["user"]["name"] == "Owner" and 1 <= a.hello["user"]["color"] <= 8
+    assert a.texts() == ["客户："]                                 # seeded from the saved version
+    b = _connect(world, "editor")
+    assert [p["name"] for p in b.hello["peers"]] == ["Owner"]
+    joined = a.recv(want="meta")
+    assert joined["type"] == "joined" and joined["user"]["name"] == "Editor" and joined["online"] == 2
+
+    a.append_text("张三")
+    assert b.recv(want="update") == "update" and b.texts() == ["客户：张三"]
+    b.add_paragraph("第二段")
+    assert a.recv(want="update") == "update" and a.texts() == ["客户：张三", "第二段"]
+    # the room told everyone it now holds unsaved changes (the frame may already have been read past)
+    states = [m for m in a.meta if m["type"] == "state"] or [a.recv_meta("state")]
+    assert states[-1]["dirty"] is True
+
+    # awareness (caret / name) travels to everyone and only for the identity the connection proved
+    b.send_awareness(777, 1, {"user": {"id": world["stranger"]["id"], "name": "Impostor"}, "cursor": None})
+    b.send_awareness(778, 1, {"user": {"id": world["editor"]["id"], "name": "Editor"}, "cursor": {"anchor": 1}})
+    frame = a.recv(want="awareness")
+    entries = decode_awareness(read_message(frame[1:]))
+    assert [e[0] for e in entries] == [778] and entries[0][2]["user"]["name"] == "Editor"
+
+    b.close()
+    left = a.recv(want="meta")
+    assert left["type"] == "left" and left["online"] == 1
+    a.close()
+
+
+# ------------------------------------------------------------------ viewers follow, cannot write
+def test_a_viewer_follows_but_their_writes_are_dropped(world):
+    v = _connect(world, "viewer")
+    assert v.hello["readonly"] is True
+    e = _connect(world, "editor")
+    v.recv(want="meta")                                            # editor joined
+    e.append_text("A")
+    assert v.recv(want="update") == "update" and v.texts() == ["客户：A"]
+    v.append_text("HACK")                                          # locally applied, refused by the server
+    assert v.recv_meta("refused") == {"type": "refused", "reason": "read_only"}
+    e.add_paragraph("B")                                           # the editor's next change still flows
+    assert v.recv(want="update") == "update"
+    v.close(); e.close()
+    fresh = _connect(world, "owner")
+    assert fresh.texts() == ["客户：A", "B"], "the viewer's text never reached the shared document"
+    fresh.close()
+
+
+# ------------------------------------------------------------------ refusals
+def test_no_session_other_site_other_workspace_and_wrong_kind_are_refused(world):
+    from fastapi.testclient import TestClient
+    tid = world["tid"]
+    with pytest.raises(WebSocketDisconnect) as x:
+        TestClient(world["app"]).websocket_connect(f"/api/collab/templates/{tid}", headers={"origin": "http://testserver"}).__enter__()
+    assert x.value.code == 4401
+    with pytest.raises(WebSocketDisconnect) as x:
+        world["client_for"](world["editor"]).websocket_connect(f"/api/collab/templates/{tid}", headers={"origin": "https://evil.example"}).__enter__()
+    assert x.value.code == 4403 and x.value.reason == "origin"
+    with pytest.raises(WebSocketDisconnect) as x:
+        world["client_for"](world["editor"]).websocket_connect(f"/api/collab/templates/{tid}").__enter__()   # no Origin at all
+    assert x.value.code == 4403
+    with pytest.raises(WebSocketDisconnect) as x:                  # a member of another workspace: the template does not exist for them
+        world["client_for"](world["stranger"], world["other_wid"]).websocket_connect(f"/api/collab/templates/{tid}", headers={"origin": "http://testserver"}).__enter__()
+    assert x.value.code == 4404
+    with pytest.raises(WebSocketDisconnect) as x:                  # a per-tab workspace this person is not in
+        world["client_for"](world["stranger"], world["other_wid"]).websocket_connect(f"/api/collab/templates/{tid}?workspace={world['wid']}", headers={"origin": "http://testserver"}).__enter__()
+    assert x.value.code == 4403
+    r = world["co"].post("/api/templates/builtin", json={"kind": "builtin_sheet", "editor": {"sheets": [{"name": "S", "cells": {"A1": {"v": "x"}}, "fields": []}]}})
+    assert r.status_code == 200, r.text
+    with pytest.raises(WebSocketDisconnect) as x:
+        world["client_for"](world["editor"]).websocket_connect(f"/api/collab/templates/{r.json()['id']}", headers={"origin": "http://testserver"}).__enter__()
+    assert x.value.code == 4400 and x.value.reason == "not_builtin_doc"
+
+
+# ------------------------------------------------------------------ persistence, save, restore
+def test_live_edits_survive_everyone_leaving_and_a_save_makes_them_a_version(world):
+    store, tid = world["store"], world["tid"]
+    a = _connect(world, "editor")
+    a.append_text("未保存")
+    a.close()                                                      # the last one out persists the live document
+    row = store.one("SELECT head, dirty FROM collab_docs WHERE room=?", (f"template:{tid}",))
+    assert row and row["head"] == 1 and row["dirty"] == 1
+    b = _connect(world, "owner")
+    assert b.hello["dirty"] is True and b.texts() == ["客户：未保存"]
+    # saving from the editor: the live document becomes v2 and the room is clean
+    editor = {**DOC, **read_doc(b.doc)}
+    c = world["client_for"](world["owner"])
+    r = c.put(f"/api/templates/{tid}/builtin", json={"editor": editor, "base_version": 1})
+    assert r.status_code == 200, r.text
+    assert r.json()["version"]["no"] == 2 and r.json()["version"]["slots"][0]["name"] == "客户"
+    head = b.recv_meta("head")
+    assert head["head"] == 2 and head["dirty"] is False and head["reason"] == "save" and head["by"] == "Owner"
+    assert b.texts() == ["客户：未保存"], "a collaborator's save is a snapshot: the live document is not touched"
+    # restoring v1 replaces the live document for everyone in the room
+    r = c.post(f"/api/templates/{tid}/restore", json={"version": 1, "base_head": 2})
+    assert r.status_code == 200, r.text
+    assert b.recv(want="update") == "update" and b.texts() == ["客户："]
+    head = b.recv_meta("head")
+    assert head["head"] == 3 and head["reason"] == "restore"
+    b.close()
+    row = store.one("SELECT head, dirty FROM collab_docs WHERE room=?", (f"template:{tid}",))
+    assert row["head"] == 3 and row["dirty"] == 0
+    # a save from outside the room (nobody connected) makes the next opener start from the head
+    r = c.put(f"/api/templates/{tid}/builtin", json={"editor": {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "机器写入"}]}]}}, "base_version": 3})
+    assert r.status_code == 200, r.text
+    assert store.one("SELECT 1 AS x FROM collab_docs WHERE room=?", (f"template:{tid}",)) is None
+    d = _connect(world, "editor")
+    assert d.texts() == ["机器写入"] and d.hello["head"] == 4 and d.hello["dirty"] is False
+    d.close()
+
+
+def test_a_save_from_outside_the_room_replaces_the_live_document_while_people_are_in_it(world):
+    tid = world["tid"]
+    a = _connect(world, "editor")
+    a.append_text("正在输入")
+    a.recv(want="meta")                                            # dirty
+    # the owner is not connected: their save (e.g. through a script) is the document now
+    r = world["client_for"](world["owner"]).put(f"/api/templates/{tid}/builtin",
+                                                 json={"editor": {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "外部版本"}]}]}}, "base_version": 1})
+    assert r.status_code == 200, r.text
+    assert a.recv(want="update") == "update" and a.texts() == ["外部版本"]
+    head = a.recv_meta("head")
+    assert head["head"] == 2 and head["by"] == "Owner"
+    changes = world["client_for"](world["viewer"]).get(f"/api/templates/{tid}/collab/changes").json()
+    assert changes["items"][0]["kind"] == "replace" and changes["items"][0]["user"]["name"] == "Owner"
+    a.close()
+
+
+# ------------------------------------------------------------------ attribution
+def test_changes_are_attributed_per_block_and_consecutive_typing_coalesces(world):
+    tid = world["tid"]
+    a = _connect(world, "owner")
+    b = _connect(world, "editor")
+    a.recv(want="meta")
+    a.append_text("张")
+    b.recv(want="update")
+    a.append_text("三")
+    b.recv(want="update")
+    b.add_paragraph("备注")
+    a.recv(want="update")
+    time.sleep(0.3)
+    items = world["client_for"](world["viewer"]).get(f"/api/templates/{tid}/collab/changes").json()["items"]
+    kinds = [(i["user"]["name"], i["kind"], i["part"], i["block_no"], i["excerpt"], i["count"]) for i in items]
+    assert kinds[0] == ("Editor", "insert", "body", 1, "备注", 1)
+    assert kinds[1] == ("Owner", "edit", "body", 0, "客户：张三【客户】", 2), "two keystrokes in one block are one entry"
+    assert len(items) == 2
+    a.close(); b.close()
+
+
+# ------------------------------------------------------------------ revocation while connected
+def test_a_role_change_and_a_removal_take_effect_on_the_open_connection(world):
+    ident, wid = world["ident"], world["wid"]
+    e = _connect(world, "editor")
+    ident.change_role(wid, world["editor"]["id"], "viewer")
+    assert e.recv_meta("role", tries=20) == {"type": "role", "readonly": True, "role": "viewer"}
+    e.append_text("late")
+    assert e.recv_meta("refused") == {"type": "refused", "reason": "read_only"}
+    ident.remove_member(wid, world["editor"]["id"])
+    assert e.recv_meta("closed", tries=20) == {"type": "closed", "reason": "membership_ended"}
+    with pytest.raises(WebSocketDisconnect) as x:
+        e.ws.receive_bytes()
+    assert x.value.code == 4403
+    e.close()
+
+
+def test_a_revoked_session_closes_the_connection_without_extending_it(world):
+    sessions, store = world["sessions"], world["store"]
+    e = _connect(world, "editor")
+    sid = store.one("SELECT id FROM sessions WHERE user_id=? ORDER BY created_at DESC LIMIT 1", (world["editor"]["id"],))["id"]
+    before = store.one("SELECT * FROM sessions WHERE id=?", (sid,))
+    time.sleep(0.5)                                                # two re-checks pass without touching the session
+    after = store.one("SELECT * FROM sessions WHERE id=?", (sid,))
+    assert {k: v for k, v in after.items() if k != "revoked_at"} == {k: v for k, v in before.items() if k != "revoked_at"}
+    sessions.revoke(sid, "test")
+    assert e.recv_meta("closed", tries=20) == {"type": "closed", "reason": "session_ended"}
+    with pytest.raises(WebSocketDisconnect) as x:
+        e.ws.receive_bytes()
+    assert x.value.code == 4401
+    e.close()

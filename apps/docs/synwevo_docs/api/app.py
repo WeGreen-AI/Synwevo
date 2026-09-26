@@ -12,7 +12,7 @@ import json
 import os
 import urllib.parse
 from pathlib import Path
-from fastapi import Body, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Query, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from synwevo_core import authority, env
@@ -90,6 +90,27 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
         if not s:
             raise ServiceError(401, "unauthorized", "请先登录")
         return s["user_id"]
+
+    # ------------------------------------------------------------------ live co-editing (built-in document templates)
+    from ..collab import CollabHub as _CollabHub
+    collab = _CollabHub(store, app_, plat.identity, plat.sessions, gate=lambda req, path: api.state.session_gate(req, path))
+    api.state.collab = collab
+    app_.on_template_change = collab.on_template_change
+
+    def _actor_id(request: Request) -> str | None:
+        s = getattr(request.state, "session", None)
+        return s["user_id"] if s else None
+
+    @api.websocket("/api/collab/templates/{tid}")
+    async def collab_socket(websocket: WebSocket, tid: str):
+        """The live document of a built-in document template. Session, workspace, application and
+        role are decided by the platform gate on the handshake (collab.CollabHub.serve)."""
+        await collab.serve(websocket, tid)
+
+    @api.get("/api/templates/{tid}/collab/changes")
+    def collab_changes(tid: str, limit: int = Query(100, ge=1, le=500)):
+        app_.get_template(tid)
+        return collab.changes(tid, limit)
 
     @api.get("/api/copy-targets")
     def copy_targets(request: Request):
@@ -477,7 +498,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     async def save_builtin(request: Request, tid: str):
         body = await _editor_body(request)
         from ..builtin_service import save_builtin as sb
-        return sb(app_, tid, body)
+        with collab.acting(tid, _actor_id(request)):
+            return sb(app_, tid, body)
 
     @api.get("/api/templates/{tid}")
     def template_detail(tid: str):
@@ -537,8 +559,9 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
         return app_.rename_template(tid, body.get("name", ""))
 
     @api.delete("/api/templates/{tid}")
-    def delete_template(tid: str):
-        app_.delete_template(tid)
+    def delete_template(request: Request, tid: str):
+        with collab.acting(tid, _actor_id(request)):
+            app_.delete_template(tid)
         return {"ok": True}
 
     @api.post("/api/templates/{tid}/duplicate")
@@ -576,21 +599,24 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
         return app_.template_usage(tid)
 
     @api.post("/api/templates/{tid}/restore")
-    def restore_template_version(tid: str, body: dict = Body(...)):
+    def restore_template_version(request: Request, tid: str, body: dict = Body(...)):
         try:
             no = int(body.get("version"))
         except (TypeError, ValueError):
             raise ServiceError(400, "bad_value", "version 必须是正整数", {"field": "version"}) from None
         base = body.get("base_head")
-        return app_.restore_version(tid, no, int(base) if base is not None else None)
+        with collab.acting(tid, _actor_id(request)):
+            return app_.restore_version(tid, no, int(base) if base is not None else None)
 
     @api.post("/api/templates/{tid}/undo")
-    def t_undo(tid: str, body: dict = Body(default={})):
-        return app_.template_undo(tid, _opt_int(body, "head"))
+    def t_undo(request: Request, tid: str, body: dict = Body(default={})):
+        with collab.acting(tid, _actor_id(request)):
+            return app_.template_undo(tid, _opt_int(body, "head"))
 
     @api.post("/api/templates/{tid}/redo")
-    def t_redo(tid: str, body: dict = Body(default={})):
-        return app_.template_redo(tid, _opt_int(body, "head"))
+    def t_redo(request: Request, tid: str, body: dict = Body(default={})):
+        with collab.acting(tid, _actor_id(request)):
+            return app_.template_redo(tid, _opt_int(body, "head"))
 
     @api.get("/api/templates/{tid}/download")
     def template_download(tid: str, which: str = "working"):

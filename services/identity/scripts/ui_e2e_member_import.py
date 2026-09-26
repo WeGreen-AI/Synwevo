@@ -24,6 +24,7 @@ from pathlib import Path
 from playwright.sync_api import Browser, expect, sync_playwright
 
 from localhost_proxy import LocalhostProxy
+from ui_e2e_messaging import mail_text
 
 expect.set_options(timeout=15000)
 PW = "harbor lights guide the evening ferry home"
@@ -49,7 +50,7 @@ def mail_to(mail_dir: Path, address: str, after: float, *, subject_re: str) -> e
 
 
 def link_in(m: email.message.Message, accounts: str, path: str) -> str:
-    text = m.get_payload(decode=True).decode()
+    text = mail_text(m)
     found = re.search(r"https?://\S+" + re.escape(path) + r"\?lang=[\w-]+#token=[A-Za-z0-9_-]+", text)[0]
     return accounts + found[found.index(path):]
 

@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -830,6 +830,9 @@ class Store:
         # v18: templates published to an organization, as frozen releases.
         from .docs_templates import SCHEMA as DOCS_TEMPLATES_SCHEMA
         c.executescript(DOCS_TEMPLATES_SCHEMA)
+        # v20: live co-editing of built-in document templates (persisted state + change log).
+        from .docs_collab import SCHEMA as DOCS_COLLAB_SCHEMA
+        c.executescript(DOCS_COLLAB_SCHEMA)
         with self.tx() as t:
             for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}

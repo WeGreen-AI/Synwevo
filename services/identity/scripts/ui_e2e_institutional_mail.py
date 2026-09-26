@@ -23,6 +23,7 @@ from pathlib import Path
 from playwright.sync_api import Browser, expect, sync_playwright
 
 from localhost_proxy import LocalhostProxy
+from ui_e2e_messaging import mail_text
 
 expect.set_options(timeout=10000)
 PW = "harbor lights guide the evening ferry home"
@@ -43,7 +44,7 @@ def newest_mail_to(mail_dir: Path, address: str, after: float, *, with_token: bo
         cands = sorted((p for p in mail_dir.glob("*.eml") if p.stat().st_mtime >= after), key=lambda p: p.stat().st_mtime, reverse=True)
         for p in cands:
             m = email.message_from_bytes(p.read_bytes())
-            if (m["To"] or "").strip().lower() == address.lower() and ("token=" in m.get_payload(decode=True).decode()) == with_token:
+            if (m["To"] or "").strip().lower() == address.lower() and ("token=" in mail_text(m)) == with_token:
                 return m
         time.sleep(0.25)
     raise AssertionError(f"no {'link' if with_token else 'notice'} mail to {address} appeared in {mail_dir}")
@@ -86,7 +87,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
     # ---- the mail: quoted-printable, with the link
     m = newest_mail_to(mail_dir, address, started, with_token=True)
     assert m["Content-Transfer-Encoding"] == "quoted-printable", m["Content-Transfer-Encoding"]
-    text = m.get_payload(decode=True).decode()
+    text = mail_text(m)
     link = re.search(r"https?://\S+/verify-email\?lang=zh-Hans#token=[A-Za-z0-9_-]+", text)[0]
     link = accounts + link[link.index("/verify-email"):]
     subject = str(email.header.make_header(email.header.decode_header(m["Subject"] or "")))
@@ -126,7 +127,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
     page.wait_for_url(lambda u: "/verify-email" in u, timeout=15000)
     m2 = newest_mail_to(mail_dir, address, started, with_token=False)
     subject = str(email.header.make_header(email.header.decode_header(m2["Subject"] or "")))
-    assert "token=" not in m2.get_payload(decode=True).decode(), "the notice must carry no token"
+    assert "token=" not in mail_text(m2), "the notice must carry no token"
     assert re.search("已经存在|already exists|已經存在", subject), subject
     notes.append(f"{engine}: re-registering the now-active address showed the same screen and mailed an \"account already exists\" notice without any token")
     assert not violations, violations[:4]

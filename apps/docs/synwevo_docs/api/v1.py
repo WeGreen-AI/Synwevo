@@ -639,9 +639,12 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         scope(request, "write")
         app_.get_template(tid)
         body = await builtin_body(request, saving=True)
+
+        def run_save():
+            with request.app.state.collab.acting(tid, (_principal(request) or {}).get("user_id")):
+                return save_builtin(app_, tid, body)
         return await run_in_threadpool(idem.run, request, "/api/v1/templates/{tid}/builtin", {"tid": tid, "body": body},
-                                      lambda: save_builtin(app_, tid, body),
-                                      replay_check=lambda out: app_.get_template(out["id"]), status=200)
+                                      run_save, replay_check=lambda out: app_.get_template(out["id"]), status=200)
 
     # ------------------------------------------------------------ organization-shared templates
     # Membership in an organization belongs to a person, so these operations need a delegated
@@ -761,7 +764,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         base = body.get("base_head")
         if base is not None and (type(base) is not int or base < 1):
             raise ServiceError(400, "invalid", "base_head 必须是正整数", {"field": "base_head"})
-        d = app_.restore_version(tid, body["version"], base)
+        with request.app.state.collab.acting(tid, (_principal(request) or {}).get("user_id")):
+            d = app_.restore_version(tid, body["version"], base)
         return {"id": d["id"], "name": d["name"], "format": d["format"], "kind": d["kind"], "head": d["head"],
                 "version": d["version"]["no"], "fields": d["version"]["slots"], "versions": d["versions"], "exports": d["exports"], "info": d.get("info")}
 
@@ -805,7 +809,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
     @r.delete("/templates/{tid}", summary="删除模板", openapi_extra=_ox("admin"))
     def delete_template(request: Request, tid: str):
         scope(request, "admin")
-        app_.delete_template(tid)
+        with request.app.state.collab.acting(tid, (_principal(request) or {}).get("user_id")):
+            app_.delete_template(tid)
         return {"deleted": tid}
 
     # ------------------------------------------------------------ jobs

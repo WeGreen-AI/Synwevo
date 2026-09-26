@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 # does not contain one.
 dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "python-multipart", "httpx",
                 "openpyxl", "python-docx", "python-pptx", "lxml", "pillow", "fonttools",
-                "charset-normalizer", "xlrd", "olefile"]
+                "charset-normalizer", "xlrd", "olefile", "pycrdt"]
 
 [project.optional-dependencies]
 # PyMuPDF is AGPL-3.0 (or an Artifex commercial licence). It is a real option, not the only

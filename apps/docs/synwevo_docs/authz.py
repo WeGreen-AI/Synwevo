@@ -180,6 +180,10 @@ ROUTE_POLICY: dict[tuple[str, str], str | None] = {
     ("PATCH", "/api/templates/{tid}/slots/{slot_id}"): "write",
     ("DELETE", "/api/templates/{tid}/slots/{slot_id}"): "write",
     ("GET", "/api/templates/{tid}/usage"): None,
+    # Live co-editing: joining the room is reading (a viewer follows along and sees who is there);
+    # whether a connection may change the document is decided per message from the live role.
+    ("GET", "/api/collab/templates/{tid}"): None,
+    ("GET", "/api/templates/{tid}/collab/changes"): None,
     ("POST", "/api/templates/{tid}/restore"): "write",
     ("POST", "/api/templates/{tid}/undo"): "write",
     ("POST", "/api/templates/{tid}/redo"): "write",

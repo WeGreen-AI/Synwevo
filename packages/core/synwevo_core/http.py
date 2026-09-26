@@ -922,6 +922,11 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             return "该接口不在平台门户上"
         return None
 
+    # A WebSocket handshake is not an HTTP request to the middleware below, but it is the same
+    # session, workspace and role decision: the Docs live-editing route runs this on a request
+    # built from the handshake scope, so a socket never gets a looser gate than a request.
+    api.state.session_gate = _session_gate
+
     @api.middleware("http")
     async def _gate(request: Request, call_next):
         started = time.perf_counter()

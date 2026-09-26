@@ -16,8 +16,28 @@ part of a deployment.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import threading
 from urllib.parse import urlsplit
+
+
+async def _pipe(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
+    """Copy bytes one way until the source ends; used for CONNECT tunnels and WebSocket upgrades."""
+    try:
+        while True:
+            chunk = await src.read(65536)
+            if not chunk:
+                break
+            dst.write(chunk)
+            await dst.drain()
+    except (ConnectionError, asyncio.CancelledError):
+        pass
+    finally:
+        try:
+            dst.close()
+        except Exception:
+            pass
 
 
 class LocalhostProxy:
@@ -63,6 +83,8 @@ class LocalhostProxy:
                 head = await reader.readuntil(b"\r\n\r\n")
                 request_line, _, header_block = head.partition(b"\r\n")
                 method, target, version = request_line.decode("latin-1").split(" ", 2)
+                if os.environ.get("SYNWEVO_E2E_DEBUG"):
+                    print(f"[proxy] {method} {target}", file=sys.stderr, flush=True)
                 if method == "CONNECT":
                     # Playwright's API request context tunnels even plain-HTTP targets through
                     # CONNECT: open the TCP connection to the loopback address and pipe bytes.
@@ -95,7 +117,8 @@ class LocalhostProxy:
                     await asyncio.gather(pipe(reader, up_w), pipe(up_r, writer))
                     return
                 parts = urlsplit(target)
-                if parts.scheme != "http" or not parts.hostname:
+                # WebKit sends a WebSocket handshake to a proxy as an absolute ws:// request line.
+                if parts.scheme not in ("http", "ws") or not parts.hostname:
                     writer.write(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                     await writer.drain()
                     return
@@ -105,19 +128,26 @@ class LocalhostProxy:
                 headers = [h for h in header_block.split(b"\r\n") if h]
                 length = 0
                 out_headers = []
+                # A WebSocket handshake (ws:// through a proxy is a plain GET with Upgrade) must keep
+                # its Connection/Upgrade pair and, once answered, becomes a two-way byte pipe.
+                upgrade = any(h.split(b":", 1)[0].strip().lower() == b"upgrade" for h in headers)
                 for h in headers:
                     name, _, value = h.partition(b":")
                     lname = name.strip().lower()
                     if lname == b"content-length":
                         length = int(value.strip() or 0)
-                    if lname in (b"proxy-connection", b"connection", b"keep-alive"):
+                    if lname in (b"proxy-connection", b"keep-alive") or (lname == b"connection" and not upgrade):
                         continue
                     out_headers.append(h)
                 body = await reader.readexactly(length) if length else b""
                 path = (parts.path or "/") + (("?" + parts.query) if parts.query else "")
                 upstream_r, upstream_w = await asyncio.open_connection(addr, port)
-                upstream_w.write(f"{method} {path} HTTP/1.1\r\n".encode("latin-1") + b"\r\n".join(out_headers) + b"\r\nConnection: close\r\n\r\n" + body)
+                tail = b"\r\n\r\n" if upgrade else b"\r\nConnection: close\r\n\r\n"
+                upstream_w.write(f"{method} {path} HTTP/1.1\r\n".encode("latin-1") + b"\r\n".join(out_headers) + tail + body)
                 await upstream_w.drain()
+                if upgrade:
+                    await asyncio.gather(_pipe(upstream_r, writer), _pipe(reader, upstream_w))
+                    return
                 # relay the response as-is; the upstream closes, so `Connection: close` tells the
                 # browser to open a fresh connection for the next request
                 resp_head = await upstream_r.readuntil(b"\r\n\r\n")

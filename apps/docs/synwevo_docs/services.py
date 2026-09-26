@@ -51,6 +51,9 @@ class App:
         self._src_cache: dict[tuple, SourceDoc] = {}
         self._cache_lock = threading.Lock()
         self.on_event = None          # set by the API layer: called after a job event is stored
+        # Set by the API layer: (tid, head, editor, reason) after a template version operation, so an
+        # open live-editing room follows a save, restore, undo, redo or deletion.
+        self.on_template_change = None
 
     # ================================================================ projects
     def create_project(self, name: str, origin: str | None = None) -> dict:
@@ -840,7 +843,17 @@ class App:
                                                    json.dumps(editor, ensure_ascii=False) if editor is not None else None, t))
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
         self._bump_projects_using(tid)
+        self._template_changed(tid, no, editor, "save")
         return self.template_detail(tid)
+
+    def _template_changed(self, tid: str, head: int | None, editor: dict | None, reason: str) -> None:
+        hook = self.on_template_change
+        if hook is None:
+            return
+        try:
+            hook(tid, head, editor, reason)
+        except Exception:                                    # noqa: BLE001 — the version is saved; the room catches up on reopen
+            logging.getLogger("synwevo.docs").exception("template change hook failed for %s (%s)", tid, reason)
 
     def _bump_projects_using(self, tid: str) -> None:
         for p in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
@@ -870,6 +883,7 @@ class App:
                 target = v["parent_no"]
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (target, now(), tid))
         self._bump_projects_using(tid)
+        self._template_changed(tid, target, self.get_version(tid, target).get("editor"), "redo" if redo else "undo")
 
     def template_usage(self, tid: str) -> dict:
         """Who follows this template: the projects bound to it, split into those that follow the
@@ -900,6 +914,7 @@ class App:
                        json.dumps(target.get("editor"), ensure_ascii=False) if target.get("editor") is not None else None, t))
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
         self._bump_projects_using(tid)
+        self._template_changed(tid, no, target.get("editor"), "restore")
         return self.template_detail(tid)
 
     def template_undo(self, tid: str, base_head: int | None = None) -> dict:
@@ -944,6 +959,7 @@ class App:
                                "请先在这些项目中更换模板或删除这些项目，再删除模板",
                                {"projects": [{"id": u["id"], "name": u["name"]} for u in users[:20]], "total": len(users)})
         self.store.update("templates", {"id": tid}, {"deleted": 1, "updated_at": now()})
+        self._template_changed(tid, None, None, "delete")
 
     def add_slot(self, tid: str, req: dict) -> dict:
         r = self.get_template(tid)

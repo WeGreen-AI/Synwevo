@@ -1,5 +1,13 @@
 # 进度记录（用于接续）
 
+## 2026-09-26 邮件设计系统与 Docs 实时协同轮（Claude Code，本机）
+
+| 项 | 结果 |
+|---|---|
+| CI-43 正式 Logo 上线 | 已部署（`30a5cfd`，run 36212722189）；生产三源 favicon 与带指纹图标 200（deployment.md）。 |
+| CI-44 系统邮件 | 八类账户邮件 + 通知邮件统一布局（文本 + HTML 同源、三语言、Logo）；已部署（`e04ff01`，run 36214183403），`/brand/email-logo.png` 生产 200。真实邮箱客户端渲染待授权收件箱。 |
+| CI-45 实时协同 | 文档型模板的多人共同编辑：服务端房间（pycrdt）、命名光标、在线名单、逐块归属、草稿持久化、只读与单人回退；12 项 pytest、Chromium/WebKit 两账户证明（verification.md §16.46）。待推送；生产 nginx 副本需运维加 Upgrade 头。 |
+
 ## 2026-09-26 正式 Logo 接入轮（Claude Code，本机）
 
 三张确认 Logo（完整版 / 图形版 / 字标版）接入全部平台自有品牌位。契约在 [design.md](../design.md) §2.5，

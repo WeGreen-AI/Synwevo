@@ -50,6 +50,10 @@
   --err-line: #fca5a5;
   /* categorical marker for repeat blocks / detail groups in Docs (labelled, numbered) */
   --block: #7c3aed;
+  /* collaborators: one stable slot per person for carets, selections and avatars; all read on white
+     at label size and distinct from the status colours above */
+  --peer-1: #2563eb; --peer-2: #c2410c; --peer-3: #0f766e; --peer-4: #7c3aed;
+  --peer-5: #be185d; --peer-6: #4d7c0f; --peer-7: #0369a1; --peer-8: #a16207;
   /* paper: never themed – matches the generated document */
   --paper: #ffffff;
   --paper-text: #111418;

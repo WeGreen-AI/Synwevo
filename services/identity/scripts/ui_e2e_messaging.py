@@ -47,8 +47,19 @@ def mail_to(mail_dir: Path, address: str, after: float, *, subject_re: str) -> e
     raise AssertionError(f"no mail matching {subject_re!r} to {address}")
 
 
+def mail_text(m) -> str:
+    """The plain-text part of a delivered mail: since the shared layout every account mail is
+    multipart/alternative (text + HTML); older single-part messages read the same way."""
+    if m.is_multipart():
+        for part in m.walk():
+            if part.get_content_type() == "text/plain":
+                return part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", "replace")
+        raise AssertionError("mail has no text/plain part")
+    return m.get_payload(decode=True).decode(m.get_content_charset() or "utf-8", "replace")
+
+
 def link_in(m, accounts: str, path: str) -> str:
-    text = m.get_payload(decode=True).decode()
+    text = mail_text(m)
     found = re.search(r"https?://\S+" + re.escape(path) + r"\?lang=[\w-]+#token=[A-Za-z0-9_-]+", text)[0]
     return accounts + found[found.index(path):]
 

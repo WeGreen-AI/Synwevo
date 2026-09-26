@@ -1,19 +1,22 @@
-import { serverText, issueText } from "../lib/presentation";
-import { t as tr, useI18n, LanguageMenu, PageState } from "@synwevo/ui";
+import { serverText } from "../lib/presentation";
+import { t as tr, useI18n, LanguageMenu, PageState, Drawer } from "@synwevo/ui";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, Node, mergeAttributes, useEditor, Editor, ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import Collaboration from "@tiptap/extension-collaboration";
+import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import { TextStyle, Color, FontSize, FontFamily } from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
 import Image from "@tiptap/extension-image";
 import Highlight from "@tiptap/extension-highlight";
-import { get, post, put } from "@synwevo/auth-client";
+import { get, post, put, workspaceContext } from "@synwevo/auth-client";
 import { useDialog, useToast } from "@synwevo/ui";
 import { cssColor } from "../lib/css";
 import { errorText } from "../lib/perm";
 import { loadedVersion, saveOverStale, STALE_KEPT, STALE_TITLE, staleText } from "../lib/templatesave";
+import { initialState, openRoom, type Room, type RoomState } from "../lib/collab";
 
 const rid = () => "f" + Math.random().toString(16).slice(2, 12);
 
@@ -99,8 +102,26 @@ const CellBg = (Base: any) => Base.extend({
   },
 });
 
-const extensions = (placeholder?: string) => [
-  StarterKit.configure({ link: false, code: false, codeBlock: false } as any),
+/** Collaborators are told apart by a colour slot (1–8) the server assigns per person; the slot
+ *  selects a shared token through a class, so no colour value ever comes from the network. */
+const peerClass = (slot: unknown) => `peer-c${Math.min(8, Math.max(1, Number(slot) || 1))}`;
+const initialOf = (name: string) => (name || "—").trim().slice(0, 1).toUpperCase() || "—";
+const caretRender = (user: Record<string, any>) => {
+  const cursor = document.createElement("span");
+  cursor.classList.add("collaboration-carets__caret", peerClass(user.slot));
+  const label = document.createElement("div");
+  label.classList.add("collaboration-carets__label");
+  label.textContent = String(user.name || "—");
+  cursor.appendChild(label);
+  return cursor;
+};
+const selectionRender = (user: Record<string, any>) => ({ nodeName: "span", class: `collaboration-carets__selection ${peerClass(user.slot)}` });
+
+type Live = { room: Room; field: "body" | "header" | "footer" };
+
+const extensions = (live?: Live) => [
+  // With a shared document the history is the shared document's own (per person, own changes only).
+  StarterKit.configure({ link: false, code: false, codeBlock: false, ...(live ? { undoRedo: false } : {}) } as any),
   Table.configure({ resizable: false }),
   RepeatRow,
   CellBg(TableHeader),
@@ -115,10 +136,43 @@ const extensions = (placeholder?: string) => [
   Field,
   PageBreak,
   RepeatBlock,
+  ...(live ? [
+    Collaboration.configure({ document: live.room.doc, field: live.field }),
+    // The identity is set once the server has said who we are (setUser); until then the state is empty.
+    CollaborationCaret.configure({ provider: live.room.provider, user: { id: "", name: "", slot: 0 }, render: caretRender, selectionRender }),
+  ] : []),
 ];
 
 const PAPERS: Record<string, [number, number]> = { A4: [210, 297], A3: [297, 420], A5: [148, 210], B5: [176, 250], Letter: [215.9, 279.4], Legal: [215.9, 355.6] };
 const EMPTY = { type: "doc", content: [{ type: "paragraph" }] };
+/** How long the room may take to deliver the document before the editor works alone on the saved version. */
+const ROOM_TIMEOUT_MS = 10000;
+
+const PART_LABEL: Record<string, () => string> = { body: () => tr("正文"), header: () => tr("页眉"), footer: () => tr("页脚") };
+const NODE_LABEL: Record<string, () => string> = {
+  paragraph: () => tr("段落"), heading: () => tr("标题"), table: () => tr("表格"), bulletList: () => tr("列表"), orderedList: () => tr("列表"),
+  image: () => tr("图片"), repeatBlock: () => tr("重复内容块"), pageBreak: () => tr("分页符"), horizontalRule: () => tr("分隔线"), blockquote: () => tr("引用"),
+};
+function changeText(item: any): string {
+  const part = PART_LABEL[item.part]?.() || item.part;
+  const node = NODE_LABEL[item.node_type]?.() || tr("内容");
+  const n = (item.block_no ?? 0) + 1;
+  switch (item.kind) {
+    case "edit": return tr("修改了{v1}第 {v2} 个{v3}", { v1: part, v2: n, v3: node });
+    case "insert": return tr("在{v1}第 {v2} 处新增了{v3}", { v1: part, v2: n, v3: node });
+    case "delete": return tr("删除了{v1}第 {v2} 个{v3}", { v1: part, v2: n, v3: node });
+    case "restore": return tr("把模板恢复为 {v1}（编辑内容随之更新）", { v1: item.excerpt });
+    case "replace": return tr("在编辑器之外保存了 {v1}（编辑内容随之更新）", { v1: item.excerpt });
+    default: return item.kind;
+  }
+}
+function ago(ts: number): string {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (s < 60) return tr("刚刚");
+  if (s < 3600) return tr("{v1} 分钟前", { v1: Math.floor(s / 60) });
+  if (s < 86400) return tr("{v1} 小时前", { v1: Math.floor(s / 3600) });
+  return new Date(ts * 1000).toLocaleString();
+}
 
 export default function DocEditor() {
   useI18n();
@@ -134,27 +188,50 @@ export default function DocEditor() {
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [name, setName] = useState("文档模板");
   const [page, setPage] = useState<any>({ size: "A4", orientation: "portrait", margins: { top: 25.4, bottom: 25.4, left: 31.8, right: 31.8 } });
-  const [loaded, setLoaded] = useState(!tid);
+  const [template, setTemplate] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const focused = useRef<Editor | null>(null);
   const imgInput = useRef<HTMLInputElement>(null);
   const [, force] = useState(0);
 
-  const mk = (content: any) => ({
-    extensions: extensions(),
-    content,
+  // ---- the live room: an existing template is edited together; a new one is written alone until it exists
+  const live = !!tid;
+  const roomRef = useRef<Room | null>(null);
+  if (live && !roomRef.current) roomRef.current = openRoom(tid!, { origin: window.location.origin, workspaceId: workspaceContext() });
+  const [room, setRoom] = useState<RoomState>(initialState());
+  /** Set when the room could not be used: the editor then works alone on the saved version. */
+  const [alone, setAlone] = useState<string | null>(null);
+  const aloneRef = useRef(false);
+  aloneRef.current = !!alone;
+  const seeded = useRef(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [log, setLog] = useState<any | null>(null);
+
+  const mk = (field: "body" | "header" | "footer") => ({
+    extensions: extensions(roomRef.current ? { room: roomRef.current, field } : undefined),
+    // A shared document brings its own content; setting it here would duplicate it on every client.
+    ...(roomRef.current ? {} : { content: EMPTY }),
     onFocus: ({ editor }: any) => { focused.current = editor; force((x) => x + 1); },
-    onUpdate: () => setDirty(true),
+    // In a room the document's saved/unsaved state is the room's (everyone's edits count); the
+    // local flag then only tracks the name and page settings, which are not shared.
+    onUpdate: () => { if (!roomRef.current || aloneRef.current) setDirty(true); },
     onSelectionUpdate: () => force((x) => x + 1),
     // The row / block attribute inputs read the editor state while rendering, and @tiptap/react
     // does not re-render on transactions by default: once the document was dirty, each keystroke
     // in 明细名称 was reset to the old value and the policy selects showed a stale choice.
     onTransaction: () => force((x) => x + 1),
   });
-  const body = useEditor(mk(EMPTY));
-  const header = useEditor(mk(EMPTY));
-  const footer = useEditor(mk(EMPTY));
+  const body = useEditor(mk("body"));
+  const header = useEditor(mk("header"));
+  const footer = useEditor(mk("footer"));
+
+  useEffect(() => {
+    const r = roomRef.current;
+    if (!r) return;
+    const off = r.subscribe(setRoom);
+    return () => { off(); r.destroy(); roomRef.current = null; };
+  }, []);
 
   useEffect(() => {
     if (!tid || !body || !header || !footer) return;
@@ -166,26 +243,85 @@ export default function DocEditor() {
       baseVersion.current = loadedVersion(t);
       const ed = t.version.editor || {};
       if (ed.page) setPage(ed.page);
-      body.commands.setContent(ed.body || EMPTY);
-      header.commands.setContent(ed.header || EMPTY);
-      footer.commands.setContent(ed.footer || EMPTY);
-      setLoaded(true);
+      setTemplate(t);
       setDirty(false);
     }).catch((e) => { if (alive) setLoadErr(errorText(e)); });
     return () => { alive = false; };
   }, [tid, body, header, footer]);
 
+  // The server says who we are; only then does our caret carry a name (and only ours is accepted).
+  useEffect(() => {
+    if (!roomRef.current || !room.me) return;
+    roomRef.current.setUser({ ...room.me, slot: room.me.color, readonly: room.readonly } as any);
+  }, [room.me, room.readonly]);
+
+  // The version the live document belongs to moves with saves and restores by anyone in the room.
+  useEffect(() => { if (live && room.head) baseVersion.current = room.head; }, [live, room.head]);
+
+  useEffect(() => {
+    const h = room.lastHead;
+    if (!h || !room.me) return;
+    if (h.reason === "save") { if (h.by && h.by !== room.me.name) toast(tr("{v1} 已把当前内容保存为 v{v2}", { v1: h.by, v2: h.head }), "info"); return; }
+    const what = h.reason === "restore" ? tr("恢复") : h.reason === "undo" ? tr("撤销") : h.reason === "redo" ? tr("重做") : tr("更换");
+    toast(tr("{v1} 已{v2}模板版本（现为 v{v3}），编辑内容已随之更新", { v1: h.by || tr("成员"), v2: what, v3: h.head }), "info");
+  }, [room.lastHead]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Working alone: the room refused for good (44xx), or it never delivered the document in time.
+  useEffect(() => {
+    if (!live || alone) return;
+    if (room.closed) {
+      const c = room.closed.code;
+      setAlone(c === 4401 ? tr("登录已失效：实时协同已停止，请重新登录后刷新。")
+        : c === 4403 ? tr("实时协同不可用：你在该工作空间的权限不允许加入编辑。")
+        : c === 4404 || c === 4410 ? tr("实时协同不可用：模板不存在或已删除。")
+        : tr("实时协同不可用（{v1}）。", { v1: room.closed.reason || String(c) }));
+      return;
+    }
+    if (room.synced) return;
+    const timer = window.setTimeout(() => { if (!roomRef.current?.state().synced) setAlone(tr("无法连接实时协同：正在单人编辑已保存的版本；其他人的修改不会显示，保存时若版本已被更新会先询问。")); }, ROOM_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [live, alone, room.closed, room.synced]);
+
+  // Alone with a shared-document binding: stop talking to the room and put the saved version in.
+  useEffect(() => {
+    if (!alone || !template || seeded.current || !body || !header || !footer) return;
+    seeded.current = true;
+    try { roomRef.current?.provider.disconnect(); } catch { /* already gone */ }
+    const ed = template.version.editor || {};
+    body.commands.setContent(ed.body || EMPTY);
+    header.commands.setContent(ed.header || EMPTY);
+    footer.commands.setContent(ed.footer || EMPTY);
+    setDirty(false);
+  }, [alone, template, body, header, footer]);
+
+  const loaded = !live || (!!template && (alone ? seeded.current : room.synced && !!room.me));
+  const readonly = live && !alone && room.readonly;
+  useEffect(() => {
+    for (const e of [body, header, footer]) e?.setEditable(loaded && !readonly);
+  }, [body, header, footer, loaded, readonly]);
+
+  // The change log: fetched when opened and whenever the room reports new activity while open.
+  useEffect(() => {
+    if (!logOpen || !tid) return;
+    let alive = true;
+    get(`/api/templates/${tid}/collab/changes?limit=200`).then((r) => { if (alive) setLog(r); }).catch((e) => { if (alive) toast(errorText(e), "err"); });
+    return () => { alive = false; };
+  }, [logOpen, tid, room.changesRev]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   // In-app navigation does not fire beforeunload, so 返回 asks itself before discarding edits.
   const back = async () => {
-    if (dirty && !(await confirm(tr("放弃未保存的修改？"), tr("模板有尚未保存的修改，离开后这些修改会丢失。"), tr("放弃修改并离开"), true))) return;
+    if (live && !alone) {
+      if ((dirty || room.dirty) && !(await confirm(tr("离开编辑器？"), tr("修改已实时同步给协作者并保留为草稿，但还没有保存为新版本；生成文档时使用的是已保存的版本。"), tr("离开"), false))) return;
+    } else if (dirty && !(await confirm(tr("放弃未保存的修改？"), tr("模板有尚未保存的修改，离开后这些修改会丢失。"), tr("放弃修改并离开"), true))) return;
     nav(projectId ? `/p/${projectId}` : "/");
   };
 
   useEffect(() => {
-    const warn = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); } };
+    // Live edits are kept by the room; only lone edits would be lost with the tab.
+    const warn = (e: BeforeUnloadEvent) => { if (dirty && (!live || alone)) { e.preventDefault(); } };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  }, [dirty, live, alone]);
 
   const ed = () => focused.current || body!;
   const chain = () => ed().chain().focus();
@@ -307,6 +443,8 @@ export default function DocEditor() {
   const e = focused.current || body;
   const inTable = body?.isActive("table");
   const rowAttrs = inTable ? body!.getAttributes("tableRow") : {};
+  const unsaved = dirty || (live && !alone && room.dirty);
+  const statusLabel = alone ? tr("单人编辑") : room.status === "connected" ? (room.synced ? tr("实时协同中") : tr("同步中…")) : room.status === "connecting" ? tr("连接中…") : tr("连接已断开，重试中");
 
   if (loadErr) return (
     <PageState role="alert">
@@ -321,12 +459,45 @@ export default function DocEditor() {
       <div className="topbar">
         <LanguageMenu />
         <button type="button" className="btn ghost sm" onClick={back}>{tr("← 返回")}</button>
-        <input className="input" value={name} onChange={(ev) => { setName(ev.target.value); setDirty(true); }} style={{ width: 240, fontWeight: 600 }} aria-label={tr("模板名称")} />
+        <input className="input" value={name} onChange={(ev) => { setName(ev.target.value); setDirty(true); }} style={{ width: 240, fontWeight: 600 }} aria-label={tr("模板名称")} readOnly={readonly} />
         <span className="badge">{tr("文档型模板 → DOCX")}</span>
-        {!loaded ? <span className="badge info" role="status">{tr("加载中…")}</span> : dirty ? <span className="badge warn" role="status">{tr("未保存")}</span> : <span className="badge ok" role="status">{tr("已保存")}</span>}
+        {!loaded ? <span className="badge info" role="status">{live ? statusLabel : tr("加载中…")}</span>
+          : readonly ? <span className="badge warn" role="status">{tr("只读")}</span>
+          : unsaved ? <span className="badge warn" role="status">{live && !alone ? tr("有未保存为版本的修改") : tr("未保存")}</span>
+          : <span className="badge ok" role="status">{tr("已保存")}</span>}
         <span className="spacer" />
-        <button type="button" className="btn primary" disabled={busy || !loaded} onClick={saveTpl}>{busy ? tr("保存中…") : tr("保存模板")}</button>
+        {live && (
+          <div className="collab-bar" data-testid="collab-bar">
+            <span className={`collab-status tiny ${alone ? "disconnected" : room.status}`} role="status" aria-live="polite">{statusLabel}</span>
+            {!alone && (
+              <ul className="collab-peers" aria-label={tr("在线成员")}>
+                {room.me && <li className={`collab-peer me ${peerClass(room.me.color)}`} title={room.me.name}><span className="collab-avatar" aria-hidden="true">{initialOf(room.me.name)}</span><span className="name">{tr("我")}</span></li>}
+                {room.peers.map((p) => (
+                  <li key={p.id} className={`collab-peer ${peerClass(p.color)}`} title={p.readonly ? tr("{v1}（查看）", { v1: p.name }) : p.name} data-testid="collab-peer">
+                    <span className="collab-avatar" aria-hidden="true">{initialOf(p.name)}</span><span className="name">{p.name}{p.readonly ? tr("（查看）") : ""}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button type="button" className="btn ghost sm" onClick={() => setLogOpen(true)} aria-haspopup="dialog">{tr("变更记录")}</button>
+          </div>
+        )}
+        <button type="button" className="btn primary" disabled={busy || !loaded || readonly} onClick={saveTpl}>{busy ? tr("保存中…") : tr("保存模板")}</button>
       </div>
+      {live && alone && (
+        <div className="collab-notice" role="status">
+          <span>{alone}</span>
+          <button type="button" className="btn xs" onClick={() => window.location.reload()}>{tr("重新连接")}</button>
+        </div>
+      )}
+      {readonly && (
+        <div className="collab-notice" role="status">
+          <span>{room.refused ? tr("你现在只能查看：刚才的修改没有被接受。你在该工作空间的角色已变为查看者。") : tr("你现在只能查看：你在该工作空间的角色是查看者，修改不会被接受。")}</span>
+        </div>
+      )}
+      {live && !alone && !readonly && room.status === "disconnected" && !room.closed && (
+        <div className="collab-notice info" role="status"><span>{tr("与协同服务的连接已断开，正在重试；你的修改会在重新连接后同步。")}</span></div>
+      )}
       <div className="toolbar">
         <select className="input sm" aria-label={tr("段落样式")} value={e?.isActive("heading", { level: 1 }) ? "h1" : e?.isActive("heading", { level: 2 }) ? "h2" : e?.isActive("heading", { level: 3 }) ? "h3" : "p"}
           onChange={(ev) => { const v = ev.target.value; v === "p" ? chain().setParagraph().run() : chain().setHeading({ level: Number(v[1]) as any }).run(); }}>
@@ -356,7 +527,7 @@ export default function DocEditor() {
         <input ref={imgInput} type="file" accept="image/png,image/jpeg,image/gif" hidden onChange={(ev) => ev.target.files?.[0] && onImage(ev.target.files[0])} />
         <button className="btn sm" onClick={() => body!.chain().focus().insertContent({ type: "pageBreak" }).run()}>{tr("分页符")}</button>
         <button className="btn sm" onClick={() => chain().setHorizontalRule().run()}>{tr("分隔线")}</button>
-        <button type="button" className="btn sm" aria-label={tr("撤销")} title={tr("撤销")} onClick={() => chain().undo().run()}>↶</button>
+        <button type="button" className="btn sm" aria-label={tr("撤销")} title={live && !alone ? tr("撤销（只撤销我自己的修改）") : tr("撤销")} onClick={() => chain().undo().run()}>↶</button>
         <button type="button" className="btn sm" aria-label={tr("重做")} title={tr("重做")} onClick={() => chain().redo().run()}>↷</button>
       </div>
       {inTable && (
@@ -406,6 +577,27 @@ export default function DocEditor() {
         </div>
         <div className="tiny muted" style={{ textAlign: "center", marginTop: 10 }}>{tr("编辑区为近似排版；实际分页以桌面办公软件打开 DOCX 为准。")}</div>
       </div>
+      {logOpen && (
+        <Drawer title={tr("变更记录")} onClose={() => setLogOpen(false)}>
+          <div className="col gap8" data-testid="collab-log">
+            <div className="tiny muted">{live && !alone && room.dirty ? tr("有未保存为版本的修改。保存模板会把当前内容记为新版本；版本历史见项目页的「版本」。") : tr("按内容块记录谁改了什么；保存模板会把当前内容记为新版本。")}</div>
+            {log === null ? <div className="tiny muted" role="status">{tr("加载中…")}</div>
+              : log.items.length === 0 ? <div className="tiny muted">{tr("还没有协同修改记录。")}</div>
+              : <ul className="collab-log">
+                {log.items.map((it: any) => (
+                  <li key={it.id}>
+                    <span className={`collab-avatar big ${peerClass(it.user?.color)}`} aria-hidden="true">{initialOf(it.user?.name || "—")}</span>
+                    <div>
+                      <div className="what"><b>{it.user?.name || tr("系统")}</b> {changeText(it)}{it.count > 1 ? tr("（{v1} 次）", { v1: it.count }) : ""}</div>
+                      {it.excerpt && it.kind !== "restore" && it.kind !== "replace" && <span className="excerpt">{it.excerpt}</span>}
+                      <div className="when">{ago(it.updated_at)}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>}
+          </div>
+        </Drawer>
+      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@
 |---|---|---|---|---|---|
 | FastAPI / Starlette / Uvicorn | 0.141.1 / 1.6.0 / 0.53.0 | MIT / BSD-3 / BSD-3 | 免费 | HTTP API、静态界面、上传下载 | 单进程运行（后台任务线程在进程内） |
 | python-multipart | 0.0.32 | Apache-2.0 | 免费 | 多文件上传 | 上传大小由 `SYNWEVO_DOCS_MAX_FILE_MB` 限制 |
+| websockets | 15.0.1 | BSD-3-Clause | 免费 | Uvicorn 的 WebSocket 协议实现（纯 `uvicorn` 不带任何一种）；Docs 实时协同的连接靠它握手 | 未安装时 uvicorn 对升级请求答 404 并打警告，编辑器退回单人模式 |
 | openpyxl | 3.1.5 | MIT | 免费 | **读取** XLSX 值/格式、预览渲染、构建内置表格模板 | 其保存会丢失图表等对象，因此**填充不经 openpyxl 保存**（见 xlsx_doc.py） |
 | python-docx | 1.2.0 | MIT | 免费 | 构建内置文档模板、重新打开校验输出 | 字段标记/填充使用 lxml 直接处理 XML |
 | python-pptx | 1.0.2 | MIT | 免费 | 重新打开校验 PPTX 输出、生成测试数据 | PPTX 填充使用 lxml 直接处理 XML |
@@ -18,6 +19,7 @@
 | Pillow | 12.3.0 | MIT-CMU | 免费 | 图片读取、EXIF 方向校正、OCR 前处理 | 像素上限 `SYNWEVO_DOCS_MAX_IMAGE_MPIX` |
 | charset-normalizer | 3.5.1 | MIT | 免费 | CSV/TXT 编码猜测（兜底） | 优先按 BOM / UTF-8 / GB18030 判断 |
 | xlrd | 2.0.2 | BSD | 免费 | 无 LibreOffice 时直接读取 XLS | 只支持 .xls |
+| pycrdt | 0.14.6 | MIT | 免费 | 内置文档模板的多人实时协同：服务端的共享文档（y-crdt 的 Python 绑定），与浏览器端 Yjs 同一协议 | 房间在 Docs 进程内存中，状态持久化到唯一数据库；多 worker 部署需要粘性路由（见 docs/platform/docs-collaboration.md） |
 | olefile | 0.47 | BSD | 免费 | 识别 DOC/XLS/PPT 与加密的 OOXML | — |
 
 ## 2. 系统组件（可选，但决定部分能力）

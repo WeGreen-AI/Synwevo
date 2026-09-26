@@ -12,3 +12,4 @@ pillow==12.3.0
 charset-normalizer==3.5.1
 xlrd==2.0.2
 olefile==0.47
+pycrdt==0.14.6           # MIT – shared-document CRDT (y-crdt bindings) for live co-editing of built-in templates
