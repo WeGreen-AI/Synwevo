@@ -122,3 +122,7 @@
    (<ins>/<del>); the tints only underline it, so a reader who cannot see colour loses nothing. */
 .collab-log .excerpt ins.diff-ins { background: var(--ok-weak); text-decoration: none; border-bottom: 2px solid var(--ok); border-radius: 2px; }
 .collab-log .excerpt del.diff-del { background: var(--err-weak); text-decoration: line-through; border-radius: 2px; }
+/* The version dialog's fold of unsaved live changes (CI-54): the editor's change-log rows, denser. */
+.collab-live-changes > summary { cursor: pointer; color: var(--text-2); }
+.collab-log.compact { max-height: 40vh; overflow: auto; margin-top: 6px; }
+.collab-log.compact li { padding: 4px 0; }

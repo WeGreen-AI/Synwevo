@@ -6,11 +6,14 @@ import { useEffect, useState } from "react";
 import { get, post } from "@synwevo/auth-client";
 import { fmtTime, formatNumber, Modal, t as tr, useI18n, useToast } from "@synwevo/ui";
 import { errorText } from "../lib/perm";
+import { ChangeExcerpt, ago, changeText } from "../lib/changes";
+import { peerClass } from "./ProjectPresence";
 import type { TemplateDetail } from "../lib/types";
 
 interface Usage { projects: { id: string; name: string; pinned_version: number | null }[]; following: number; pinned: number }
 /** The editing room's state (GET …/collab/changes): edits not yet saved as a version, and who is there. */
-interface Live { dirty: boolean; online: { id: string; name: string; readonly?: boolean }[]; items: { user?: { name: string } | null }[] }
+interface LiveItem { id: string; user?: { id: string; name: string; color?: number } | null; part: string; kind: string; block_no?: number; node_type?: string; excerpt: string; before?: string | null; count: number; updated_at: number }
+interface Live { dirty: boolean; online: { id: string; name: string; readonly?: boolean }[]; items: LiveItem[] }
 
 const liveText = (online: string[], lastBy: string | null | undefined) =>
   online.length ? tr("编辑器里有尚未保存为版本的实时修改（在线：{v1}）。恢复会丢弃这些修改。", { v1: online.join("、") })
@@ -26,13 +29,13 @@ export default function TemplateVersionsDialog({ tpl, canWrite, onChanged, onClo
   const [busy, setBusy] = useState(false);
   // What the restore would throw away besides moving the head: unsaved live edits in the editing
   // room. Read when the dialog opens; the server re-checks at the moment of the restore.
-  const [live, setLive] = useState<{ dirty: boolean; online: string[]; lastBy: string | null } | null>(null);
+  const [live, setLive] = useState<{ dirty: boolean; online: string[]; lastBy: string | null; items: LiveItem[] } | null>(null);
   useEffect(() => { get<Usage>(`/api/templates/${tpl.id}/usage`).then(setUsage).catch((e) => setUsageErr(errorText(e))); }, [tpl.id]);
   useEffect(() => {
-    if (tpl.kind !== "builtin_doc") { setLive({ dirty: false, online: [], lastBy: null }); return; }
-    get<Live>(`/api/templates/${tpl.id}/collab/changes?limit=1`)
-      .then((l) => setLive({ dirty: !!l.dirty, online: (l.online || []).filter((p) => !p.readonly).map((p) => p.name), lastBy: l.items?.[0]?.user?.name || null }))
-      .catch(() => setLive({ dirty: false, online: [], lastBy: null }));   // unknown here; the server still guards
+    if (tpl.kind !== "builtin_doc") { setLive({ dirty: false, online: [], lastBy: null, items: [] }); return; }
+    get<Live>(`/api/templates/${tpl.id}/collab/changes?limit=20`)
+      .then((l) => setLive({ dirty: !!l.dirty, online: (l.online || []).filter((p) => !p.readonly).map((p) => p.name), lastBy: l.items?.[0]?.user?.name || null, items: l.items || [] }))
+      .catch(() => setLive({ dirty: false, online: [], lastBy: null, items: [] }));   // unknown here; the server still guards
   }, [tpl.id, tpl.kind]);
 
   const restore = async (no: number) => {
@@ -47,7 +50,7 @@ export default function TemplateVersionsDialog({ tpl, canWrite, onChanged, onClo
     } catch (e: any) {
       if (e?.code === "live_edits") {
         const det = (e.detail || {}) as { online?: string[]; last_by?: string | null };
-        setLive({ dirty: true, online: det.online || [], lastBy: det.last_by || null });
+        setLive((prev) => ({ dirty: true, online: det.online || [], lastBy: det.last_by || null, items: prev?.items || [] }));
         toast(tr("有人刚刚修改了编辑器内容，这次没有恢复；请看清将丢弃的内容后再确认。"), "info");
         setBusy(false);
         return;                                                // stay on the confirmation, now with the names
@@ -88,6 +91,23 @@ export default function TemplateVersionsDialog({ tpl, canWrite, onChanged, onClo
             ))}
           </tbody>
         </table>
+        {live?.dirty && live.items.length > 0 && (
+          <details className="collab-live-changes" data-testid="live-changes">
+            <summary className="small">{tr("尚未保存为版本的实时修改（{v1} 条）", { v1: live.items.length })}</summary>
+            <ul className="collab-log compact">
+              {live.items.filter((it) => it.kind !== "restore" && it.kind !== "replace").map((it) => (
+                <li key={it.id}>
+                  <span className={`collab-avatar big ${peerClass(it.user?.color)}`} aria-hidden="true">{(it.user?.name || "—").trim().slice(0, 1).toUpperCase()}</span>
+                  <div>
+                    <div className="what"><b>{it.user?.name || tr("系统")}</b> {changeText(it)}{it.count > 1 ? tr("（{v1} 次）", { v1: it.count }) : ""}</div>
+                    {it.excerpt && <ChangeExcerpt item={it} />}
+                    <div className="when">{ago(it.updated_at)}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         {confirming !== null && live?.dirty && <div className="notice warn small" role="alert" data-testid="restore-live-warning">{liveText(live.online, live.lastBy)}</div>}
         {confirming !== null && <p className="small" role="status">{tr("将以第 {v1} 版的内容新建第 {v2} 版并成为当前版本；跟随当前版本的项目会随之变化，固定了版本的项目不变。", { v1: confirming, v2: (tpl.versions?.length ? Math.max(...tpl.versions.map((x: { version_no: number }) => x.version_no)) : tpl.head) + 1 })}</p>}
       </div>

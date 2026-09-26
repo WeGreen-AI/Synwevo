@@ -123,8 +123,15 @@ def _flow(a, b, pa, pb, engine, accounts, docs, mail_dir, tag, owner, member, no
     expect(warning).to_contain_text(f"Editor {tag}")
     confirm = dialog.get_by_role("button", name="确认恢复并丢弃实时修改")
     expect(confirm).to_be_visible()
+    # the dialog also lists what those unsaved edits are, in the editor's own words (CI-54)
+    fold = dialog.locator("[data-testid=live-changes]")
+    expect(fold).to_be_visible()
+    expect(fold.locator("summary")).to_contain_text("尚未保存为版本的实时修改")
+    fold.locator("summary").click()
+    expect(fold.locator(".collab-log li").first).to_contain_text(f"Editor {tag}")
+    expect(fold.locator(".collab-log li ins.diff-ins").first).to_contain_text("手机上未保存的补充")
     pa.screenshot(path=str(SHOTS / f"{engine}-01-owner-warned-before-restore.png"))
-    note(notes, f"{engine}: before restoring v1 the dialog said the editor (by name) holds live edits not saved as a version, and the confirmation reads 'restore and discard'")
+    note(notes, f"{engine}: before restoring v1 the dialog said the editor (by name) holds live edits not saved as a version, listed that edit with its inserted text, and the confirmation reads 'restore and discard'")
 
     # ---- the owner confirms: v3 is the restored v1; the editor's page follows and is told who did it
     confirm.click()

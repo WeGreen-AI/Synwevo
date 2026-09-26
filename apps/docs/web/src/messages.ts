@@ -6027,4 +6027,8 @@ export const messages = {
     "en": "Deleted",
     "zh-Hant": "刪除的內容"
   },
+  "尚未保存为版本的实时修改（{v1} 条）": {
+    "en": "Live edits not yet saved as a version ({v1})",
+    "zh-Hant": "尚未儲存為版本的即時修改（{v1} 條）"
+  },
 } satisfies Messages;

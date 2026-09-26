@@ -104,6 +104,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-51 | 服务重启不丢正在编辑的内容：退出时写出、新进程播种、客户端重连带离线输入汇合 | 已验证：pytest +1、Chromium/WebKit 各 3 里程碑；待推送 | 多实例仍需粘性路由；SIGKILL 下最后 1 秒依赖客户端重连补上 |
 | CI-52 | 命名检查点：保存时可填版本说明（浏览器、机器 API、SDK `note=`、CLI `--note`），历史显示 | 已验证：pytest +1、Chromium/WebKit 各 4 里程碑；待推送 | 不改已有版本的说明；无单独命名对话框 |
 | CI-53 | 变更记录显示块内插入/删除（`before` 列，schema v22；前端 LCS 差异渲染） | 已验证：pytest +1、前端 4 项、Chromium/WebKit 各 4 里程碑；待推送 | 恢复/替换行无 before；把变更记录并入版本对话框仍未做 |
+| CI-54 | 版本对话框列出尚未保存为版本的实时修改（共用变更记录渲染） | 已验证：Chromium/WebKit 5/5；待推送 | — |
 | 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 随 CI-53 推送 |
 | 回归 | 个人项目复制不携带私人协同房间/未批准历史（9.16）：目标无活动记录、无实时草稿与变更记录，副本只有来源 head 版本 | 已验证，tests/integration/test_project_copy.py（verification.md §16.54） | — |
 | CI-46 | Docs 项目页协同（在场与定位、按映射三方合并、他人变更即时提示、归属活动记录） | 已部署（e6197c1，run 36219721565）；生产 nginx 副本待运维加 Upgrade 头 | SheetEditor 协同与活动筛选未做 |
@@ -151,6 +152,12 @@ Docs 项目列表页仍加载的共享块 `perm`（274 KB，列表页与工作�
    动态码确认 → 保存恢复码。在这之前，用邮箱验证码或外部提供商登录得到的管理员会话会看到「当前登录只验证了一个
    因素」的提示，输入口令即可解锁管理页；口令登录本身不受影响。
 3. **真机**：verification.md §16 的 iOS Safari / Android Chrome 清单；**真实外部邮箱**与**真实业务样本**同节。
+4. **生产网关的 WebSocket 升级**：把 `infra/production/nginx.conf` 里的 `map $http_upgrade $connection_upgrade` 与 `location /api/collab/`
+   两段复制进 VPS 手工维护的 `/opt/synwevo/config/nginx.conf`，`nginx -t` 后 reload；完成前浏览器端的实时协同在生产回退为
+   单人编辑并明确提示（`docs/platform/docs-collaboration.md` §9 的「发布闭环」行）。完成后用两个受控账户复跑
+   `ui_e2e_collab.py` 式的手工检查（顶栏「实时协同中」、对方光标）。
+5. **真实邮箱客户端**：CI-44 的邮件模板在授权测试收件箱（Gmail / Outlook / Apple Mail，桌面与手机、深色与图片屏蔽）的渲染仍未做；
+   代码侧无待办。
 
 ## 实现与已关闭缺口
 
