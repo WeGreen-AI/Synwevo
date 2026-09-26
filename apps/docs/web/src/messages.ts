@@ -5947,4 +5947,68 @@ export const messages = {
     "en": "The editor holds live edits not yet saved as a version; this step was not applied. To drop those edits, restore a version from the template history.",
     "zh-Hant": "編輯器裡有尚未儲存為版本的即時修改，這一步沒有執行。要放棄這些修改，請在範本版本歷史裡還原版本。"
   },
+  "添加了评论": {
+    "en": "added a comment",
+    "zh-Hant": "新增了留言"
+  },
+  "回复了评论": {
+    "en": "replied to a comment",
+    "zh-Hant": "回覆了留言"
+  },
+  "修改了评论": {
+    "en": "edited a comment",
+    "zh-Hant": "修改了留言"
+  },
+  "把评论标记为已解决": {
+    "en": "marked a comment resolved",
+    "zh-Hant": "把留言標記為已解決"
+  },
+  "重新打开了评论": {
+    "en": "reopened a comment",
+    "zh-Hant": "重新開啟了留言"
+  },
+  "删除了评论": {
+    "en": "deleted a comment",
+    "zh-Hant": "刪除了留言"
+  },
+  "项目设置": {
+    "en": "Project settings",
+    "zh-Hant": "專案設定"
+  },
+  "谁在什么时候改了什么：映射按条记录，文件、样本规则、模板版本和评论的变化也在这里。点一行可以跳到它改的对象。": {
+    "en": "Who changed what, and when: mappings one by one; files, sample rules, template versions and comments too. Click a row to jump to what it changed.",
+    "zh-Hant": "誰在什麼時候改了什麼：對應逐條記錄，檔案、樣本規則、範本版本和留言的變化也在這裡。點一列可以跳到它改的物件。"
+  },
+  "全部成员": {
+    "en": "Everyone",
+    "zh-Hant": "全部成員"
+  },
+  "按成员筛选": {
+    "en": "Filter by member",
+    "zh-Hant": "按成員篩選"
+  },
+  "按对象筛选": {
+    "en": "Filter by object",
+    "zh-Hant": "按物件篩選"
+  },
+  "上次查看后 {v1} 条": {
+    "en": "{v1} since you last looked",
+    "zh-Hant": "上次查看後 {v1} 條"
+  },
+  "没有符合筛选的记录。": {
+    "en": "Nothing matches the filter.",
+    "zh-Hant": "沒有符合篩選的記錄。"
+  },
+  "跳转": {
+    "en": "jump",
+    "zh-Hant": "跳轉"
+  },
+  "以上是上次查看后的更改": {
+    "en": "Above: changes since you last looked",
+    "zh-Hant": "以上是上次查看後的更改"
+  },
+  "跳到 {v1} 改的对象": {
+    "en": "Jump to what {v1} changed",
+    "zh-Hant": "跳到 {v1} 改的物件"
+  },
 } satisfies Messages;

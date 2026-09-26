@@ -109,6 +109,7 @@ function Workspace() {
   if (pid && !roomRef.current) roomRef.current = openRoom(pid, { origin: window.location.origin, workspaceId: workspaceContext(), kind: "project" });
   const [room, setRoom] = useState<RoomState>(initialState());
   const [activityOpen, setActivityOpen] = useState(false);
+  const [commentSeq, setCommentSeq] = useState(0);            // bumped by comment change frames: the comments drawer reloads
   const [comments, setComments] = useState<string | null | false>(() => { const c = new URLSearchParams(window.location.search).get("comment"); return c ? c : false; });
   const [focusL, setFocusL] = useState<string | null>(null);
   const [focusR, setFocusR] = useState<string | null>(null);
@@ -190,7 +191,10 @@ function Workspace() {
   useEffect(() => {
     const c = room.lastChange;
     if (!c || !room.me || (c.by && c.by.id === room.me.id)) return;
-    void reload();
+    // A comment changes nothing in the project's data: the comments drawer reloads (when open)
+    // and the notice says who wrote; everything else refreshes the page's data.
+    if (c.kind.startsWith("comment.")) setCommentSeq((n) => n + 1);
+    else void reload();
     toast(tr("{v1} {v2}", { v1: c.by?.name || tr("成员"), v2: changeText(c.kind, c.detail, tpl?.version.slots || []) }), "info");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.lastChange?.seq]);
@@ -1045,8 +1049,14 @@ function Workspace() {
       </div>
 
       {/* ---------------------------------------------------------------- dialogs */}
-      {activityOpen && <ActivityDrawer pid={pid!} slots={slots} seq={room.lastChange?.seq || 0} onClose={() => setActivityOpen(false)} />}
-      {comments !== false && <CommentsDrawer pid={pid!} me={session.me?.id || null} canWrite={!ro} options={commentOptions} highlight={comments || null}
+      {activityOpen && <ActivityDrawer pid={pid!} slots={slots} seq={room.lastChange?.seq || 0} me={session.me?.id || null} onClose={() => setActivityOpen(false)}
+        onLocate={(t) => {
+          setActivityOpen(false);
+          if (t.kind === "comment") setComments(t.id);
+          else if (t.kind === "source") setActiveFile(t.id);
+          else locateComment({ kind: t.kind, id: t.id } as any);
+        }} />}
+      {comments !== false && <CommentsDrawer pid={pid!} me={session.me?.id || null} canWrite={!ro} options={commentOptions} highlight={comments || null} liveSeq={commentSeq}
         onLocate={a => { locateComment(a); }} onClose={() => { setComments(false); if (new URLSearchParams(window.location.search).get("comment")) window.history.replaceState(window.history.state, "", window.location.pathname); }} />}
       {dialog?.kind === "template" && <TemplateChooser projectId={pid!} settingsRev={project.settings_rev} current={tpl?.id} onDone={reload} onClose={() => setDialog(null)} />}
       {dialog?.kind === "rule" && <RuleDialog project={project} sources={sources} initial={dialog.initial} selectedText={(leftSel as any)?.text} onSave={saveRule} onClose={() => setDialog(null)} />}

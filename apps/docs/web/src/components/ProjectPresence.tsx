@@ -2,7 +2,7 @@
  *  share of the live room (see lib/collab.ts). Colours are the shared per-person slots; names and
  *  objects come from the server-checked identity and from this page's own data, never from a
  *  label another client sent. */
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Drawer, t as tr, useI18n } from "@synwevo/ui";
 import { get } from "@synwevo/auth-client";
 import type { Focus, PeerInfo, RoomState } from "../lib/collab";
@@ -84,7 +84,46 @@ const KIND_TEXT: Record<string, (d: any, slotName: (b: string) => string) => str
   "template.restore": (d) => tr("恢复了模板版本（现为第 {v1} 版）", { v1: d.head }),
   "template.undo": (d) => tr("撤销了模板修改（现为第 {v1} 版）", { v1: d.head }),
   "template.redo": (d) => tr("重做了模板修改（现为第 {v1} 版）", { v1: d.head }),
+  "comment.add": () => tr("添加了评论"),
+  "comment.reply": () => tr("回复了评论"),
+  "comment.edit": () => tr("修改了评论"),
+  "comment.resolve": () => tr("把评论标记为已解决"),
+  "comment.reopen": () => tr("重新打开了评论"),
+  "comment.delete": () => tr("删除了评论"),
 };
+
+/** Which part of the project an activity row is about — the filter groups of the drawer. */
+export type ActivityGroup = "all" | "mappings" | "sources" | "template" | "project" | "comments";
+const GROUP_OF = (kind: string): Exclude<ActivityGroup, "all"> =>
+  kind.startsWith("mappings.") ? "mappings" : kind.startsWith("source.") ? "sources" : kind.startsWith("template.") ? "template" : kind.startsWith("comment.") ? "comments" : "project";
+const GROUP_LABEL: Record<ActivityGroup, () => string> = {
+  all: () => tr("全部"), mappings: () => tr("映射"), sources: () => tr("文件"), template: () => tr("模板"), project: () => tr("项目设置"), comments: () => tr("评论"),
+};
+
+/** What a row can jump to: the object it changed, when the detail still names one. */
+export type ActivityTarget = Focus | { kind: "comment"; id: string };
+export function activityTarget(kind: string, detail: any): ActivityTarget | null {
+  if (kind.startsWith("comment.") && detail?.id) return kind === "comment.delete" ? null : { kind: "comment", id: String(detail.id) };
+  if (kind.startsWith("source.") && detail?.source_id && kind !== "source.remove") return { kind: "source", id: String(detail.source_id) };
+  if (kind === "mappings.save") {
+    const m = (detail?.changed?.[0]?.after?.id) || detail?.added?.[0]?.id;
+    return m ? { kind: "mapping", id: String(m) } : null;
+  }
+  return null;
+}
+
+// "Since you last looked": one timestamp per person and project, kept in this browser only (a
+// per-viewer convenience, keyed by the account so a shared device never shows another person's
+// marker). The server-side feed is the record; this only draws the line in it.
+const seenKey = (uid: string, pid: string) => `synwevo.docs.activity.seen:${uid}:${pid}`;
+export function readSeen(uid: string | null | undefined, pid: string): number {
+  if (!uid) return 0;
+  try { return Number(localStorage.getItem(seenKey(uid, pid)) || 0) || 0; } catch { return 0; }
+}
+export function markSeen(uid: string | null | undefined, pid: string): void {
+  if (!uid) return;
+  try { localStorage.setItem(seenKey(uid, pid), String(Date.now() / 1000)); } catch { /* private mode or blocked storage: no marker */ }
+}
 
 export function changeText(kind: string, detail: any, slots: Slot[]): string {
   const slotName = (binding: string) => slots.find((s) => s.binding === binding)?.name || binding || "—";
@@ -100,32 +139,75 @@ function ago(ts: number): string {
   return new Date(ts * 1000).toLocaleString();
 }
 
-export function ActivityDrawer({ pid, slots, seq, onClose }: { pid: string; slots: Slot[]; seq: number; onClose: () => void }) {
+export function ActivityDrawer({ pid, slots, seq, me, onLocate, onClose }: {
+  pid: string; slots: Slot[]; seq: number; me?: string | null; onLocate?: (target: ActivityTarget) => void; onClose: () => void;
+}) {
   useI18n();
   const [data, setData] = useState<{ items: any[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [who, setWho] = useState<string>("");                 // a member's id, or everyone
+  const [group, setGroup] = useState<ActivityGroup>("all");
+  // The marker is read once when the drawer opens and written when it closes, so rows that arrive
+  // while it is open still count as new until the next visit.
+  const [seenAt] = useState(() => readSeen(me, pid));
+  useEffect(() => () => markSeen(me, pid), [me, pid]);
   useEffect(() => {
     let alive = true;
     get(`/api/projects/${pid}/activity?limit=200`).then((r) => { if (alive) { setData(r); setErr(null); } }).catch((e) => { if (alive) setErr(errorText(e)); });
     return () => { alive = false; };
   }, [pid, seq]);
+  const people = (() => {
+    const seen = new Map<string, string>();
+    for (const it of data?.items || []) if (it.by?.id && !seen.has(it.by.id)) seen.set(it.by.id, it.by.name);
+    return [...seen.entries()];
+  })();
+  const shown = (data?.items || []).filter((it) => (!who || it.by?.id === who) && (group === "all" || GROUP_OF(it.kind) === group));
+  const firstOld = shown.findIndex((it) => it.at <= seenAt);   // rows are newest first
+  const fresh = seenAt > 0 ? shown.filter((it) => it.at > seenAt).length : 0;
   return (
     <Drawer title={tr("活动记录")} onClose={onClose}>
       <div className="col gap8" data-testid="project-activity">
-        <div className="tiny muted">{tr("谁在什么时候改了什么：映射按条记录，文件、样本规则、模板版本的变化也在这里。")}</div>
+        <div className="tiny muted">{tr("谁在什么时候改了什么：映射按条记录，文件、样本规则、模板版本和评论的变化也在这里。点一行可以跳到它改的对象。")}</div>
+        <div className="row gap8 wrap collab-filters">
+          <label className="row gap4 small">{tr("成员")}
+            <select className="input sm" value={who} onChange={(e) => setWho(e.target.value)} aria-label={tr("按成员筛选")} data-testid="activity-who">
+              <option value="">{tr("全部成员")}</option>
+              {people.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+          </label>
+          <label className="row gap4 small">{tr("对象")}
+            <select className="input sm" value={group} onChange={(e) => setGroup(e.target.value as ActivityGroup)} aria-label={tr("按对象筛选")} data-testid="activity-group">
+              {(Object.keys(GROUP_LABEL) as ActivityGroup[]).map((g) => <option key={g} value={g}>{GROUP_LABEL[g]()}</option>)}
+            </select>
+          </label>
+          {fresh > 0 && <span className="badge info" data-testid="activity-fresh">{tr("上次查看后 {v1} 条", { v1: fresh })}</span>}
+        </div>
         {err ? <div className="notice err">{err}</div>
           : data === null ? <div className="tiny muted" role="status">{tr("加载中…")}</div>
-          : data.items.length === 0 ? <div className="tiny muted">{tr("还没有记录。")}</div>
+          : shown.length === 0 ? <div className="tiny muted">{data.items.length === 0 ? tr("还没有记录。") : tr("没有符合筛选的记录。")}</div>
           : <ul className="collab-log">
-            {data.items.map((it) => (
-              <li key={it.id}>
-                <span className={`collab-avatar big ${peerClass(it.by?.color)}`} aria-hidden="true">{initialOf(it.by?.name || "—")}</span>
-                <div>
-                  <div className="what"><b>{it.by?.name || tr("系统")}</b> {changeText(it.kind, it.detail, slots)}</div>
-                  <div className="when">{ago(it.at)}</div>
-                </div>
-              </li>
-            ))}
+            {shown.map((it, i) => {
+              const target = onLocate ? activityTarget(it.kind, it.detail) : null;
+              const row = (
+                <>
+                  <span className={`collab-avatar big ${peerClass(it.by?.color)}`} aria-hidden="true">{initialOf(it.by?.name || "—")}</span>
+                  <div>
+                    <div className="what"><b>{it.by?.name || tr("系统")}</b> {changeText(it.kind, it.detail, slots)}</div>
+                    <div className="when">{ago(it.at)}{target && <span className="tiny muted"> · {tr("跳转")}</span>}</div>
+                  </div>
+                </>
+              );
+              return (
+                <Fragment key={it.id}>
+                  {i === firstOld && firstOld > 0 && <li className="collab-seen-line tiny muted" role="separator">{tr("以上是上次查看后的更改")}</li>}
+                  <li className={`${it.at > seenAt && seenAt > 0 ? "fresh" : ""}${target ? " jump" : ""}`.trim() || undefined} data-kind={it.kind}>
+                    {target
+                      ? <button type="button" className="collab-log-btn" onClick={() => onLocate!(target)} aria-label={tr("跳到 {v1} 改的对象", { v1: it.by?.name || tr("系统") })}>{row}</button>
+                      : row}
+                  </li>
+                </Fragment>
+              );
+            })}
           </ul>}
       </div>
     </Drawer>

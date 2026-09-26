@@ -91,6 +91,10 @@ class Comments:
                "resolved_at": None, "resolved_by": None, "created_at": now(), "edited_at": None, "deleted_at": None}
         self.store.insert("project_comments", row)
         self._tell(p, row, mentioned, author_id)
+        # Whoever has the project open sees the comment arrive (the project room's change frame)
+        # and the activity feed attributes it. The body itself is not copied into the feed: it is
+        # read from the comment, which can be edited or deleted later.
+        self._changed(pid, "comment.reply" if parent_id else "comment.add", {"id": row["id"], "parent_id": parent_id or None, "anchored": bool(anchor), "mentions": len(mentioned)})
         return self._public(self.store.one("SELECT * FROM project_comments WHERE id=?", (row["id"],)), self._anchor_context(p), self._names({author_id}))
 
     def edit(self, cid: str, actor_id: str, body, *, mentions=None) -> dict:
@@ -104,6 +108,7 @@ class Comments:
         self.store.update("project_comments", {"id": cid}, {"body": text, "mentions": json.dumps(mentioned) if mentioned else None, "edited_at": now()})
         row = self.store.one("SELECT * FROM project_comments WHERE id=?", (cid,))
         self._tell(p, row, [m for m in mentioned if m not in before], actor_id, only_mentions=True)
+        self._changed(r["project_id"], "comment.edit", {"id": cid, "parent_id": r.get("parent_id")})
         return self._public(row, self._anchor_context(p), self._names({actor_id}))
 
     def delete(self, cid: str, actor_id: str) -> None:
@@ -112,6 +117,7 @@ class Comments:
             raise ServiceError(403, "forbidden", "只有作者或工作空间管理员可以删除这条评论")
         self.store.update("project_comments", {"id": cid}, {"deleted_at": now()})
         self.store.execute("UPDATE project_comments SET deleted_at=? WHERE parent_id=? AND deleted_at IS NULL", (now(), cid))
+        self._changed(r["project_id"], "comment.delete", {"id": cid, "parent_id": r.get("parent_id")})
 
     def resolve(self, cid: str, actor_id: str, resolved: bool) -> dict:
         r = self.get(cid)
@@ -127,7 +133,13 @@ class Comments:
         self.store.update("project_comments", {"id": cid}, {"resolved_at": now() if resolved else None, "resolved_by": actor_id if resolved else None})
         p = self.app.get_project(r["project_id"])
         row = self.store.one("SELECT * FROM project_comments WHERE id=?", (cid,))
+        self._changed(r["project_id"], "comment.resolve" if resolved else "comment.reopen", {"id": cid})
         return self._public(row, self._anchor_context(p), self._names({row["author_id"], actor_id}))
+
+    def _changed(self, pid: str, kind: str, detail: dict) -> None:
+        hook = getattr(self.app, "_project_changed", None)
+        if hook is not None:
+            hook(pid, kind, detail)
 
     # ------------------------------------------------------------------ anchors
     def _anchor_context(self, p: dict) -> dict:

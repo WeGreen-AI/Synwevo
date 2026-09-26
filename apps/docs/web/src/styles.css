@@ -94,6 +94,15 @@
 .collab-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; font-size: 13px; border-bottom: 1px solid var(--line); background: var(--warn-weak); color: var(--warn); }
 .collab-notice.err { background: var(--err-weak); color: var(--err); }
 .collab-notice.info { background: var(--accent-weak); color: var(--accent-strong); }
+/* Activity drawer (CI-50): filters, the "since you last looked" line, rows that jump to their object. */
+.collab-filters { align-items: center; }
+.collab-filters .input.sm { min-height: 32px; padding: 2px 8px; }
+.collab-log li.fresh .what b { color: var(--accent); }
+.collab-log li.jump { display: block; }
+.collab-log-btn { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; align-items: start; width: 100%; text-align: left; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; border-radius: 6px; }
+.collab-log-btn:hover .what, .collab-log-btn:focus-visible .what { text-decoration: underline; }
+.collab-log-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.collab-log li.collab-seen-line { display: block; text-align: center; padding: 2px 0 6px; border-top: 1px dashed var(--line); border-bottom: 0; margin-top: 4px; }
 .collab-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .collab-log li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; align-items: start; padding: 6px 0; border-bottom: 1px solid var(--line); min-width: 0; }
 .collab-log .what { overflow-wrap: anywhere; }

@@ -1445,6 +1445,24 @@ owner 在项目页打开「版本」并点「恢复此版本」(v1)，对话框�
 owner 按「撤销模板修改」被拒，提示点名 Editor 并指向版本历史，head 仍为 v3、编辑者文字原样；裸 `POST …/restore` 得 409 `live_edits`。
 typecheck/build、四项守卫、`npm test --workspaces` 通过。
 
+### 16.51 活动记录可筛选、标记上次查看后的更改并可跳转；评论经项目房间实时到达（CI-50）
+
+决策记录见 `docs/platform/docs-project-collab.md` §4。**pytest**：`apps/docs/tests/test_project_collab.py` 新增 1 项（编辑者评论、回复、修改，owner 标记解决，编辑者删除——
+查看者的连接依次收到 `comment.add/reply/edit/resolve/delete` 帧且 `by` 为真实操作者；活动记录按倒序列出五条、只含评论 id、不含正文）。
+**浏览器**（`ui_e2e_activity_live.py`，隔离实例，两个真实账户，编辑者 390 px 手机视口）：**Chromium 5/5、WebKit 5/5**——owner 开着评论抽屉，编辑者发评论后
+抽屉在同一秒内出现该评论（不等 30 秒轮询）且顶部提示「Editor … 添加了评论」；活动记录把评论归到编辑者，按成员筛选剩 1 行、按对象「文件」只剩来源行；
+点评论行打开评论抽屉并定位到该评论；编辑者再回复后，owner 再开活动记录看到「上次查看后 1 条」、新行着色与分割线（截图 `chromium-03`）；编辑者手机上同一记录无横向滚动。
+typecheck/build、`npm test --workspaces`（Docs 45 项含字面翻译资源检查）、设计与组件名守卫通过。
+
+### 16.52 服务重启期间的实时编辑：不丢、能重连、离线输入随重连汇合（CI-51）
+
+决策记录见 `docs/platform/docs-collaboration.md` §6。**pytest**：`apps/docs/tests/test_collab.py` 新增 1 项（进程 1 的退出钩子写出实时文档；编辑者离线继续输入；
+同一数据目录的进程 2 从草稿播种（head 1、dirty），owner 连上看到重启前内容；编辑者带本地文档重连后 owner 收到离线输入，双方一致；进程 2 退出时库中为两者之并）。
+`Peer` 助手新增 `doc=`（重连带上本地文档）与 `append_text_offline`。**浏览器**（`ui_e2e_restart_live.py`，隔离实例，两个真实账户，编辑者 390 px 手机视口；
+脚本真的执行 `platform.py restart docs`，仅可指向隔离实例）：**Chromium 与 WebKit 各 3 个里程碑全部通过**——服务停机 1.2–1.4 秒（SIGTERM → 优雅关闭 → 新进程），
+编辑者在停机期间输入的文字在双方重连后出现在 owner 的编辑器里，顶栏仍显示「有未保存为版本的修改」（同一房间而非新房间），随后 owner 保存的 v2 含重启前与停机中输入的全部文字，
+编辑者收到「Owner … 已把当前内容保存为 v2」。停机短于客户端首个重连退避，所以「断开」状态在检查前已恢复——脚本如实记录（未伪称看到断线提示）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

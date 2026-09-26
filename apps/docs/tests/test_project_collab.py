@@ -220,3 +220,36 @@ def test_outsiders_cannot_join_a_project_room(world):
         TestClient(world["app"]).websocket_connect(f"/api/collab/projects/{pid}", headers={"origin": "http://testserver"}).__enter__()
     assert x.value.code == 4401
     assert world["client_for"](world["stranger"], world["other_wid"]).get(f"/api/projects/{pid}/activity").status_code == 404
+
+
+def test_comments_reach_the_project_room_and_the_activity_feed_without_their_bodies(world):
+    """A comment, reply, edit, resolve and delete each arrive as a change frame for whoever has
+    the project open (attributed to the verified actor) and as an activity row; the feed carries
+    the comment's id, never its text, so a later edit or deletion is not contradicted by history."""
+    pid = world["pid"]
+    v = Peer(world["client_for"](world["viewer"]), pid, origin="http://testserver", path="projects")
+    v.hello = v.connect()
+    ce = world["client_for"](world["editor"])
+    r = ce.post(f"/api/projects/{pid}/comments", json={"body": "这个字段的来源对吗？"})
+    assert r.status_code == 201, r.text
+    cid = r.json()["id"]
+    change = v.recv_meta("change", tries=30)
+    assert change["kind"] == "comment.add" and change["by"]["name"] == "Editor" and change["detail"]["id"] == cid
+    assert "这个字段" not in json.dumps(change, ensure_ascii=False)
+    r = ce.post(f"/api/projects/{pid}/comments", json={"body": "补充一句", "parent_id": cid})
+    assert r.status_code == 201, r.text
+    assert v.recv_meta("change", tries=30)["kind"] == "comment.reply"
+    assert ce.patch(f"/api/comments/{cid}", json={"body": "这个字段的来源对吗？（改）"}).status_code == 200
+    assert v.recv_meta("change", tries=30)["kind"] == "comment.edit"
+    co = world["client_for"](world["owner"])
+    assert co.post(f"/api/comments/{cid}/resolve").status_code == 200
+    change = v.recv_meta("change", tries=30)
+    assert change["kind"] == "comment.resolve" and change["by"]["name"] == "Owner"
+    assert ce.delete(f"/api/comments/{cid}").status_code in (200, 204)
+    assert v.recv_meta("change", tries=30)["kind"] == "comment.delete"
+    feed = co.get(f"/api/projects/{pid}/activity").json()["items"]
+    kinds = [it["kind"] for it in feed if it["kind"].startswith("comment.")]
+    assert kinds == ["comment.delete", "comment.resolve", "comment.edit", "comment.reply", "comment.add"]
+    assert all("这个字段" not in json.dumps(it, ensure_ascii=False) for it in feed)
+    assert {it["by"]["name"] for it in feed if it["kind"].startswith("comment.")} == {"Editor", "Owner"}
+    v.close()

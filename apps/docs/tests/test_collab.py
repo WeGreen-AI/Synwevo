@@ -76,11 +76,11 @@ def world(tmp_path, monkeypatch):
 class Peer:
     """A browser's share of the protocol: a local document kept in sync through the socket."""
 
-    def __init__(self, client, tid, *, origin="http://testserver", workspace=None, path="templates"):
+    def __init__(self, client, tid, *, origin="http://testserver", workspace=None, path="templates", doc: Doc | None = None):
         url = f"/api/collab/{path}/{tid}" + (f"?workspace={workspace}" if workspace else "")
         self.cm = client.websocket_connect(url, headers={"origin": origin})
         self.ws = self.cm.__enter__()
-        self.doc = Doc()
+        self.doc = doc if doc is not None else Doc()          # a browser reconnecting brings its own document along
         self.updates: list[bytes] = []
         self.doc.observe(lambda ev: self.updates.append(ev.update))
         self.meta: list[dict] = []
@@ -158,6 +158,14 @@ class Peer:
             t = p.children[0] if len(p.children) and isinstance(p.children[0], XmlText) else p.children.insert(0, XmlText())
             t.insert(len(t), text)
         self.edit(fn)
+
+    def append_text_offline(self, text: str, block: int = 0):
+        """Typed while the socket is gone: the local document changes, nothing is sent; the next
+        connection's sync step carries it (what y-websocket does after a reconnect)."""
+        with self.doc.transaction():
+            p = self.body().children[block]
+            t = p.children[0] if len(p.children) and isinstance(p.children[0], XmlText) else p.children.insert(0, XmlText())
+            t.insert(len(t), text)
 
     def add_paragraph(self, text: str):
         def fn():
@@ -459,3 +467,49 @@ def test_a_persisted_draft_with_nobody_in_the_room_still_guards_a_restore(world)
     d = _connect(world, "owner")
     assert d.texts() == ["客户："] and d.hello["dirty"] is False and d.hello["head"] == 3
     d.close()
+
+
+# ------------------------------------------------------------------ a restart in the middle of editing loses nothing
+def test_a_process_restart_in_the_middle_of_editing_loses_nothing(world, tmp_path):
+    """9.16「进程重启…不丢已确认修改」. Process 1's shutdown hook writes the live document; process 2,
+    on the same data directory, seeds its room from that draft; an editor who kept typing while the
+    service was down brings those edits along on reconnect, and everyone converges on the union."""
+    from fastapi.testclient import TestClient
+    from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER
+    from synwevo_docs.api.app import create_app
+    store, tid, app, sessions = world["store"], world["tid"], world["app"], world["sessions"]
+    a = _connect(world, "editor")
+    b = _connect(world, "owner")
+    a.append_text("重启前")
+    assert b.recv(want="update") == "update" and b.texts() == ["客户：重启前"]
+    for hook in list(app.state.shutdown_hooks):                                 # process 1 goes down mid-session
+        hook()
+    a.close()
+    b.close()
+    a.append_text_offline("（离线补充）")                                        # the editor keeps typing on their own copy
+    app2 = create_app(str(tmp_path / "data"), start_jobs=False)                # process 2, same data directory
+
+    def client2(user):
+        raw, _ = sessions.create(user["id"], workspace_id=world["wid"], amr="password")
+        c = TestClient(app2)
+        c.cookies.set(COOKIE_NAME, raw)
+        c.cookies.set(CSRF_COOKIE, "t")
+        c.headers[CSRF_HEADER] = "t"
+        return c
+
+    with TestClient(app2):
+        c = Peer(client2(world["owner"]), tid)
+        c.hello = c.connect()
+        assert c.hello["dirty"] is True and c.hello["head"] == 1 and c.texts() == ["客户：重启前"], "process 2 starts from what process 1 wrote at shutdown"
+        a2 = Peer(client2(world["editor"]), tid, doc=a.doc)                    # the editor reconnects with the offline edit in hand
+        a2.hello = a2.connect()
+        assert c.recv(want="update") == "update" and c.texts() == ["客户：重启前（离线补充）"]
+        assert a2.texts() == ["客户：重启前（离线补充）"]
+        c.close()
+        a2.close()                                                             # the last one out persists in process 2
+        for hook in list(app2.state.shutdown_hooks):
+            hook()
+    row = store.one("SELECT state, dirty FROM collab_docs WHERE room=?", (f"template:{tid}",))
+    kept = Doc()
+    kept.apply_update(bytes(row["state"]))
+    assert row["dirty"] == 1 and "重启前（离线补充）" in json.dumps(read_doc(kept), ensure_ascii=False)

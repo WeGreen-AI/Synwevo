@@ -22,8 +22,11 @@ const REASON: Record<string, string> = { slot_gone: "该字段已删除", templa
 
 function whenText(ts: number, locale: string) { return new Date(ts * 1000).toLocaleString(locale, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }
 
-export default function CommentsDrawer({ pid, me, canWrite, options, highlight, onLocate, onClose }: {
+export default function CommentsDrawer({ pid, me, canWrite, options, highlight, liveSeq = 0, onLocate, onClose }: {
   pid: string; me: string | null; canWrite: boolean; options: AnchorOption[]; highlight?: string | null;
+  /** Bumped by the page when the project room reports a comment change by someone else (CI-50):
+   *  the list reloads at once; the 30 s tick below stays as the fallback when the room is down. */
+  liveSeq?: number;
   onLocate: (anchor: CommentAnchor) => void; onClose: () => void;
 }) {
   const { locale } = useI18n();
@@ -49,7 +52,7 @@ export default function CommentsDrawer({ pid, me, canWrite, options, highlight, 
       setItems(c.items); setMembers(m.items); setError(null);
     } catch (e) { setError(errorText(e)); }
   };
-  useEffect(() => { void load(); }, [pid, showResolved]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load(); }, [pid, showResolved, liveSeq]);   // eslint-disable-line react-hooks/exhaustive-deps
   // While the drawer is open, other people's comments arrive without reopening it: a quiet
   // reload every 30 s and whenever the tab becomes visible again. The composer's draft is
   // separate state, so a reload never touches what is being typed.
