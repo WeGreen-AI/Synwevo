@@ -104,6 +104,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-51 | 服务重启不丢正在编辑的内容：退出时写出、新进程播种、客户端重连带离线输入汇合 | 已验证：pytest +1、Chromium/WebKit 各 3 里程碑；待推送 | 多实例仍需粘性路由；SIGKILL 下最后 1 秒依赖客户端重连补上 |
 | CI-52 | 命名检查点：保存时可填版本说明（浏览器、机器 API、SDK `note=`、CLI `--note`），历史显示 | 已验证：pytest +1、Chromium/WebKit 各 4 里程碑；待推送 | 不改已有版本的说明；无单独命名对话框 |
 | CI-53 | 变更记录显示块内插入/删除（`before` 列，schema v22；前端 LCS 差异渲染） | 已验证：pytest +1、前端 4 项、Chromium/WebKit 各 4 里程碑；待推送 | 恢复/替换行无 before；把变更记录并入版本对话框仍未做 |
+| 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 随 CI-53 推送 |
 | 回归 | 个人项目复制不携带私人协同房间/未批准历史（9.16）：目标无活动记录、无实时草稿与变更记录，副本只有来源 head 版本 | 已验证，tests/integration/test_project_copy.py（verification.md §16.54） | — |
 | CI-46 | Docs 项目页协同（在场与定位、按映射三方合并、他人变更即时提示、归属活动记录） | 已部署（e6197c1，run 36219721565）；生产 nginx 副本待运维加 Upgrade 头 | SheetEditor 协同与活动筛选未做 |
 | CI-45 | Docs 实时多人协同（文档型模板：共同编辑、命名光标、在线名单、逐块归属、草稿持久化、只读/回退） | 已部署（c2d78d0，run 36218166471）；生产 nginx 副本待运维加 Upgrade 头 | 生产 nginx 副本要加 `/api/collab/` 的 Upgrade 头（运维）；表格型模板与项目页协同未做；多进程需粘性路由 |
