@@ -35,3 +35,6 @@
 /* Human verification (Turnstile) — the widget is Cloudflare's iframe; reserve its height so the form does not jump. */
 .challenge-widget { min-height: 65px; }
 .challenge-field[data-status="idle"] .challenge-widget, .challenge-field[data-status="error"] .challenge-widget { min-height: 0; }
+/* a reported message, quoted for the reviewer and in the report dialog (both shells load this file through AuthFlow) */
+.msg-quote { margin: 0; padding: 6px 10px; border-left: 3px solid var(--line-strong); background: var(--panel-2); border-radius: 4px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.org-list li.org-focus { border-color: var(--accent); box-shadow: var(--shadow); }

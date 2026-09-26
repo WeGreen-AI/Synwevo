@@ -22,6 +22,7 @@ def org(tmp_path, monkeypatch):
     monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "mail"))
     monkeypatch.setenv("SYNWEVO_MAIL_FROM", "synwevo@example.test")
     monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "http://testserver")
+    monkeypatch.setenv("SYNWEVO_ISSUER", "http://testserver")          # inbox links to the account origin resolve against it
     from synwevo_identity.app import create_app
     api = create_app(str(tmp_path / "d"), start_jobs=False)
     ident = api.state.identity
@@ -265,3 +266,74 @@ def test_docs_link_cards_follow_the_readers_own_access(org, monkeypatch):
     login(org, "owner")
     for url in ("https://example.com/p/p_team1", "http://docs.testserver/about", "http://docs.testserver/p/p_nope", "http://docs.testserver/p/p_mine1/jobs/j_team1"):
         assert org.get(C, params={"url": url}).status_code == 404, url
+
+
+def test_announcements_and_reports_go_to_the_right_people_and_a_review_settles_the_message(org):
+    """A group's announcement is one pinned text set by its managers and told once as a digest;
+    a report of a message reaches the organization's messaging managers with a snapshot, not the
+    conversation; reviewing it needs the permission and a fresh reauth, settles every open report
+    of that message, deletes the message when the decision says so, and tells the reporter."""
+    c = org
+    U, n = c.users, c.api.state.notifier
+    ho = login(c, "owner")
+    g = c.post(f"{M}/groups", headers=ho, json={"organization_id": c.oid, "name": "公告群", "member_ids": [U["ann"]["id"], U["ben"]["id"]]}).json()
+    # ---- announcement: managers only; members get a digest item once; clearing tells nobody
+    ha = login(c, "ann")
+    assert c.put(f"{M}/conversations/{g['id']}/announcement", headers=ha, json={"text": "我来定"}).status_code == 403
+    ho = login(c, "owner")
+    assert c.put(f"{M}/conversations/{g['id']}/announcement", headers=ho, json={"text": "  下周一交周报 ", "extra": 1}).status_code == 400
+    out = c.put(f"{M}/conversations/{g['id']}/announcement", headers=ho, json={"text": "  下周一交周报 "}).json()
+    assert out["announcement"] == "下周一交周报" and out["announcement_at"]
+    assert [x["kind"] for x in n.list(U["ann"]["id"], locale="en")["items"]] == ["conversation.announcement", "conversation.added"]
+    assert n.list(U["ann"]["id"], locale="en")["items"][0]["title"] == "Ola Owner updated the announcement in “公告群”"
+    assert n.list(U["owner"]["id"])["items"] == []
+    hist = c.get(f"{M}/conversations/{g['id']}/messages").json()["items"]
+    assert hist[-1]["kind"] == "system" and hist[-1]["system"]["event"] == "announcement" and hist[-1]["system"]["cleared"] is False
+    assert c.put(f"{M}/conversations/{g['id']}/announcement", headers=ho, json={"text": None}).json()["announcement"] is None
+    assert len(n.list(U["ann"]["id"])["items"]) == 2, "clearing an announcement tells nobody"
+    # ---- a report: not your own message, one open report per message and reporter, unknown reason refused
+    ha = login(c, "ann")
+    mid = c.post(f"{M}/conversations/{g['id']}/messages", headers=ha, json={"body": "把你的账号密码发我"}).json()["message"]["id"]
+    assert c.post(f"{M}/messages/{mid}/report", headers=ha, json={"reason": "spam"}).status_code == 400
+    hb = login(c, "ben")
+    assert c.post(f"{M}/messages/{mid}/report", headers=hb, json={"reason": "rude"}).status_code == 400
+    r = c.post(f"{M}/messages/{mid}/report", headers=hb, json={"reason": "privacy", "note": "索要密码"})
+    assert r.status_code == 201, r.text
+    rep = r.json()
+    assert rep["status"] == "open" and rep["body_snapshot"] == "把你的账号密码发我" and rep["sender"]["name"] == "Ann Member" and rep["reporter"]["name"] == "Ben Member"
+    assert rep["conversation"] == {"kind": "group", "name": "公告群"}
+    assert c.post(f"{M}/messages/{mid}/report", headers=hb, json={"reason": "spam"}).status_code == 409
+    # the owner (holds org.messaging.manage) is told with an actionable item pointing at the organization page; the sender is not
+    items = n.list(U["owner"]["id"], locale="en")["items"]
+    assert items[0]["kind"] == "conversation.reported" and items[0]["title"] == "Ben Member reported a message in “公告群”" and items[0]["href"].endswith(f"/organizations/{c.oid}?report={rep['id']}")
+    assert all(x["kind"] != "conversation.reported" for x in n.list(U["ann"]["id"])["items"])
+    # the sender edits the message afterwards: the snapshot still shows what was reported
+    ha = login(c, "ann")
+    c.patch(f"{M}/messages/{mid}", headers=ha, json={"body": "开玩笑的"})
+    # ---- who may read and review: a member cannot; the owner can, but only after a fresh reauth
+    assert c.get(f"{M}/reports?organization_id={c.oid}").status_code == 403
+    ho = login(c, "owner")
+    listed = c.get(f"{M}/reports?organization_id={c.oid}").json()
+    assert [x["id"] for x in listed["items"]] == [rep["id"]] and listed["items"][0]["body_snapshot"] == "把你的账号密码发我" and listed["reasons"] == ["harassment", "spam", "privacy", "other"]
+    assert c.post(f"{M}/reports/{rep['id']}/review", headers=ho, json={"decision": "removed"}).json()["error"] == "reauth_required"
+    assert c.post("/api/auth/reauth", headers=ho, json={"password": PW, "scope": "admin"}).status_code == 200
+    assert c.post(f"{M}/reports/{rep['id']}/review", headers=ho, json={"decision": "maybe"}).status_code == 400
+    # a second reporter of the same message, settled by the same decision
+    hc = login(c, "cid")
+    assert c.post(f"{M}/conversations/{g['id']}/members", headers=login(c, "owner"), json={"user_ids": [U["cid"]["id"]]}).status_code == 200
+    # cid joined after the message: he cannot see it, so he cannot report it
+    hc = login(c, "cid")
+    assert c.post(f"{M}/messages/{mid}/report", headers=hc, json={"reason": "spam"}).status_code == 404
+    ho = login(c, "owner")
+    assert c.post("/api/auth/reauth", headers=ho, json={"password": PW, "scope": "admin"}).status_code == 200
+    done = c.post(f"{M}/reports/{rep['id']}/review", headers=ho, json={"decision": "removed", "note": "已删除，并提醒发送者"}).json()
+    assert done["status"] == "removed" and done["reviewed_by"]["name"] == "Ola Owner" and done["decision_note"] == "已删除，并提醒发送者"
+    assert c.post(f"{M}/reports/{rep['id']}/review", headers=ho, json={"decision": "dismissed"}).status_code == 409
+    assert c.get(f"{M}/reports?organization_id={c.oid}").json()["items"] == []
+    assert c.get(f"{M}/reports?organization_id={c.oid}&status=all").json()["items"][0]["status"] == "removed"
+    # the message is gone for everyone; the reporter was told the outcome
+    hb = login(c, "ben")
+    msg = [m for m in c.get(f"{M}/conversations/{g['id']}/messages").json()["items"] if m["id"] == mid][0]
+    assert msg["deleted"] is True and msg["body"] == ""
+    mine = n.list(U["ben"]["id"], locale="en")["items"]
+    assert mine[0]["kind"] == "conversation.report_removed" and mine[0]["title"] == "Your report was reviewed: the message was removed" and mine[0]["body"] == "已删除，并提醒发送者"

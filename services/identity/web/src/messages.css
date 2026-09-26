@@ -19,6 +19,11 @@
 .msg-thread { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); }
 .msg-thread-h { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .msg-thread-h .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.msg-announce { display: flex; align-items: flex-start; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); font-size: 13px; }
+.msg-announce .badge { flex: none; margin-top: 1px; }
+.msg-announce-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.msg-announce.open .msg-announce-text, .msg-announce-text.open { display: block; -webkit-line-clamp: unset; }
+.msg-announce .btn { flex: none; }
 .msg-status { font-size: 11px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
 .msg-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .msg-status.live::before { background: var(--ok); }

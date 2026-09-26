@@ -56,6 +56,9 @@
 | `conversation.mention` | conversation / action | 被提及的成员 | 群聊或私聊里被 @ 提及；静音或「不通知」的会话不产生 | 汇总 | 消息 → 该会话 |
 | `conversation.group` | conversation / info | 把群设为「所有消息」的成员 | 群里的新消息（默认「仅提及」，因此默认不产生） | 关 | 消息 → 该会话 |
 | `conversation.added` / `conversation.removed` | conversation / info | 被加入或移出群的人 | 群成员变化 | 汇总 / 关 | 消息 → 该会话 / 消息列表 |
+| `conversation.announcement` | conversation / info | 群的其他成员 | 群主/群管理员写了群公告（清除不发；去重键含公告时间） | 汇总 | 消息 → 该会话 |
+| `conversation.reported` | conversation / action | 持 `org.messaging.manage` 的组织成员（举报人本人除外） | 成员举报了一条消息；正文不含原因与内容，只说去组织页处理 | 立即 | 组织页 → 举报处理（`?report=<id>` 聚焦该条） |
+| `conversation.report_removed` / `conversation.report_dismissed` | conversation / info | 举报人 | 举报已处理：消息已删除 / 消息保留；正文是处理人的说明 | 汇总 | 消息 → 该会话 |
 | `member_import.finished` | organization / info | 发起导入的人 | 一次批量导入结束（完成/部分完成/失败/取消），附邀请/更新/跳过/失败计数 | 汇总 | 组织页 → 批量导入成员（`?import=<id>` 打开该批次） |
 | `member_import.roles_applied` | organization / info | 接受邀请的新成员 | 导入指定的组织自定义角色在其接受邀请时由导入者身份分配成功 | 汇总 | 组织页 |
 | `copy.requested` | approval / action | 能决定该申请的成员（持 `org.approvals.decide` 且是目标空间 admin/owner） | 个人项目申请复制到组织工作空间（`dedupe_key=copy:{id}:requested:{reader}`）；申请人自行批准时不发 | 立即 | 组织页 → 审批（`?approval=<id>` 展开该申请） |

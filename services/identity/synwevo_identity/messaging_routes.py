@@ -24,8 +24,10 @@ from fastapi.concurrency import run_in_threadpool
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
 from synwevo_core.member_import import accept_upload
-from synwevo_core.messaging import INLINE_TYPES, MAX_ATTACHMENT_BYTES, MAX_BODY, REACTIONS, Messaging
+from synwevo_core.messaging import INLINE_TYPES, MAX_ATTACHMENT_BYTES, MAX_BODY, REACTIONS, REPORT_REASONS, Messaging
 from synwevo_core.notifications import Notifier
+from synwevo_core.organizations import Organizations
+from synwevo_core.sessions import Sessions
 from synwevo_core.store import now
 
 log = logging.getLogger("synwevo.messaging")
@@ -34,6 +36,8 @@ QUEUE_MAX = 200                 # a tab that cannot keep up resyncs from history
 MESSAGES_PER_MINUTE = 60
 ATTACHMENTS_PER_HOUR = 30
 GROUPS_PER_DAY = 20
+REPORTS_PER_DAY = 20
+REAUTH_SCOPE = "admin"          # reviewing a report is an organization write like deciding an approval
 
 
 class MessageHub:
@@ -88,6 +92,7 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
     r = APIRouter(prefix="/api/auth/messaging", tags=["messaging"])
     hub = MessageHub()
     svc = Messaging(store, ident, publish=hub.publish)
+    orgs = Organizations(store, ident)
     r.hub, r.messaging = hub, svc
 
     def session(request: Request) -> dict:
@@ -172,6 +177,23 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
         uid = uid_of(request)
         out = svc.update_group(cid, uid, name=body.get("name"), description=body.get("description"))
         audit(request, "messaging.group.update", actor_id=uid, object_kind="conversation", object_id=cid, result="ok", meta={"fields": sorted(body)})
+        return out
+
+    @r.put("/conversations/{cid}/announcement")
+    def set_announcement(request: Request, cid: str, body: dict = Body(...)):
+        """The group's pinned announcement (managers). Members are told once through the inbox
+        as a digest item; clearing it tells nobody."""
+        if set(body) - {"text"} or not (body.get("text") is None or isinstance(body.get("text"), str)):
+            raise ServiceError(400, "invalid_field", "只能设置 text", {"field": "text"})
+        uid = uid_of(request)
+        out = svc.set_announcement(cid, uid, body.get("text"))
+        audit(request, "messaging.group.announcement", actor_id=uid, object_kind="conversation", object_id=cid, result="ok", meta={"cleared": not out["announcement"]})
+        if out["announcement"]:
+            stamp = int(out["announcement_at"] or now())
+            for m in out["members"]:
+                if m["user_id"] != uid:
+                    _notify(m["user_id"], "conversation.announcement", {"actor": svc._name(uid), "conversation": out["name"], "excerpt": out["announcement"][:120]}, out,
+                            dedupe=f"announcement:{cid}:{stamp}:{m['user_id']}")
         return out
 
     @r.post("/conversations/{cid}/members")
@@ -275,6 +297,56 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
         uid = uid_of(request)
         out = svc.delete(mid, uid)
         audit(request, "messaging.message.delete", actor_id=uid, object_kind="message", object_id=mid, result="ok", meta={"own": out["sender_id"] == uid})
+        return out
+
+    @r.post("/messages/{mid}/report", status_code=201)
+    def report(request: Request, mid: str, body: dict = Body(...)):
+        """A member reports a message they can see. The organization's messaging managers get an
+        actionable inbox item; the reporter is told when it is reviewed. Rate-limited per reporter."""
+        if set(body) - {"reason", "note"}:
+            raise ServiceError(400, "invalid_field", "只能提交 reason 和 note")
+        uid = uid_of(request)
+        limited(uid, "msg-report", REPORTS_PER_DAY, 86400)
+        out = svc.report(mid, uid, str(body.get("reason") or ""), body.get("note"))
+        audit(request, "messaging.message.report", actor_id=uid, object_kind="message", object_id=mid, result="ok",
+              meta={"report_id": out["id"], "reason": out["reason"], "organization_id": out["organization_id"]})
+        for manager in svc.messaging_managers(out["organization_id"]):
+            if manager != uid:
+                try:
+                    notifier.emit(manager, "conversation.reported", params={"who": out["reporter"]["name"], "conversation": out["conversation"]["name"] or out["sender"]["name"]},
+                                  organization_id=out["organization_id"], object_kind="message_report", object_id=out["id"], dedupe_key=f"report:{out['id']}:{manager}",
+                                  actionable=True, target={"origin": "accounts", "path": f"/organizations/{out['organization_id']}?report={out['id']}"})
+                except Exception as e:  # noqa: BLE001
+                    log.warning("report inbox item skipped: %s", type(e).__name__)
+        return out
+
+    def _moderator(request: Request, oid: str, *, sensitive: bool = False) -> str:
+        s = session(request)
+        if sensitive and not Sessions.reauth_fresh(s, REAUTH_SCOPE, strict=True):
+            raise ServiceError(403, "reauth_required", "这一步需要重新验证身份", {"scope": REAUTH_SCOPE})
+        orgs.require(oid, s["user_id"], permission="org.messaging.manage", active=True)
+        return s["user_id"]
+
+    @r.get("/reports")
+    def list_reports(request: Request, organization_id: str = Query(...), status: str = Query("open", pattern="^(open|removed|dismissed|all)$")):
+        """Reports of an organization, for holders of org.messaging.manage: the reported message's
+        snapshot, sender, reporter and reason — never the rest of the conversation."""
+        _moderator(request, organization_id)
+        return {"items": svc.reports_for_organization(organization_id, status=None if status == "all" else status), "reasons": list(REPORT_REASONS)}
+
+    @r.post("/reports/{rid}/review")
+    def review_report(request: Request, rid: str, body: dict = Body(...)):
+        current = svc.report_get(rid)
+        uid = _moderator(request, current["organization_id"], sensitive=True)
+        out = svc.review_report(rid, uid, str(body.get("decision") or ""), body.get("note"))
+        audit(request, "messaging.report.review", actor_id=uid, object_kind="message_report", object_id=rid, result="ok",
+              meta={"decision": out["status"], "message_id": out["message_id"], "organization_id": out["organization_id"]})
+        try:
+            notifier.emit(out["reporter"]["user_id"], f"conversation.report_{out['status']}", params={"note": out["decision_note"] or ""},
+                          organization_id=out["organization_id"], object_kind="message_report", object_id=rid, dedupe_key=f"report:{rid}:reviewed",
+                          target={"origin": "accounts", "path": f"/messages/{out['conversation_id']}"})
+        except Exception as e:  # noqa: BLE001
+            log.warning("report outcome inbox item skipped: %s", type(e).__name__)
         return out
 
     @r.put("/messages/{mid}/reactions")

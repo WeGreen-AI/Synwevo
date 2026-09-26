@@ -3,7 +3,7 @@
  *  personal workspace — and decides with a reason under re-authentication. Only a holder of
  *  org.approvals.decide who also administers the target workspace can decide (the server says
  *  so per request in `can_decide`). */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { get, post } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { FlowError, Loading } from "./AuthFlow";
@@ -39,7 +39,9 @@ export default function OrganizationApprovals({ organization, mine }: { organiza
     get<{ items: Approval[] }>(`${orgPath(organization.id)}/approvals${status ? `?status=${status}` : ""}`, abort.signal).then(x => setItems(x.items)).catch(e => { if (!abort.signal.aborted) setError(e); });
     return () => abort.abort();
   }, [organization.id, status, revision, can]);
-  useEffect(() => { if (open && items && !items.some(i => i.id === open)) setStatus(""); }, [open, items]);
+  // a deep link to an approval that is no longer pending moves to 全部 once; after that the tabs are the reader's
+  const widened = useRef(false);
+  useEffect(() => { if (open && items && status === "pending" && !widened.current && !items.some(i => i.id === open)) { widened.current = true; setStatus(""); } }, [open, items, status]);
   if (!can) return null;
   const when = (ts: number | null) => ts ? new Date(ts * 1000).toLocaleString(locale) : "—";
   return <section className="org-section" id="org-approvals"><h2>{t("审批")}</h2>

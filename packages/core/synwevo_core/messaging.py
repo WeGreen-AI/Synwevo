@@ -45,6 +45,13 @@ CREATE TABLE IF NOT EXISTS conversations (
   created_at REAL NOT NULL, updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_conversations_org ON conversations(organization_id, updated_at);
+CREATE TABLE IF NOT EXISTS message_reports (
+  id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, conversation_id TEXT NOT NULL, message_id TEXT NOT NULL, reporter_id TEXT NOT NULL,
+  sender_id TEXT NOT NULL, reason TEXT NOT NULL, note TEXT, body_snapshot TEXT NOT NULL, attachment_name TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','removed','dismissed')),
+  reviewed_by TEXT, reviewed_at REAL, decision_note TEXT, created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_message_reports_org ON message_reports(organization_id, status, created_at);
 CREATE TABLE IF NOT EXISTS conversation_members (
   conversation_id TEXT NOT NULL, user_id TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
@@ -72,6 +79,9 @@ CREATE TABLE IF NOT EXISTS message_attachments (
 CREATE INDEX IF NOT EXISTS ix_message_attachments_conv ON message_attachments(conversation_id, created_at);
 """
 
+MAX_ANNOUNCEMENT = 1000
+MAX_REPORT_NOTE = 500
+REPORT_REASONS = ("harassment", "spam", "privacy", "other")
 MAX_BODY = 4000
 MAX_GROUP_MEMBERS = 200
 MAX_NAME = 80
@@ -247,6 +257,98 @@ class Messaging:
             self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
         return self.get(cid, uid)
 
+    def set_announcement(self, cid: str, uid: str, text) -> dict:
+        """A group's announcement: one pinned text at the top of the thread, set or cleared by
+        its managers. The route tells the members through the inbox (digest)."""
+        conv, _ = self._manager(cid, uid)
+        if conv["archived_at"]:
+            raise ServiceError(409, "archived", "已归档的群不能修改公告")
+        text = (str(text).strip()[:MAX_ANNOUNCEMENT] if text is not None else "") or None
+        with self.store.tx() as t:
+            t.execute("UPDATE conversations SET announcement=?, announcement_by=?, announcement_at=?, updated_at=? WHERE id=?",
+                      (text, uid if text else None, now() if text else None, now(), cid))
+            self._system(t, cid, uid, {"event": "announcement", "cleared": text is None})
+        self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
+        return self.get(cid, uid)
+
+    # ------------------------------------------------------------------ reports (abuse, harassment, spam)
+    def report(self, mid: str, uid: str, reason: str, note: str | None = None) -> dict:
+        """A member reports a message they can see. What the organization's messaging managers
+        get is exactly this: the reported message as it was at that moment (a snapshot, so a
+        later edit cannot hide it), who sent it, who reported it and why — not the rest of the
+        conversation. One open report per message and reporter."""
+        if reason not in REPORT_REASONS:
+            raise ServiceError(400, "invalid_field", "举报原因无效", {"field": "reason", "allowed": list(REPORT_REASONS)})
+        msg = self.store.one("SELECT * FROM messages WHERE id=?", (mid,))
+        if not msg:
+            raise ServiceError(404, "no_message", "找不到该消息")
+        conv, me = self._member(msg["conversation_id"], uid)
+        if msg["seq"] < me["joined_seq"] or msg["kind"] != "text" or msg.get("deleted_at"):
+            raise ServiceError(404, "no_message", "找不到该消息")
+        if msg["sender_id"] == uid:
+            raise ServiceError(400, "invalid_field", "不能举报自己的消息", {"field": "message"})
+        if self.store.one("SELECT 1 AS x FROM message_reports WHERE message_id=? AND reporter_id=? AND status='open'", (mid, uid)):
+            raise ServiceError(409, "already_reported", "你已经举报过这条消息，管理员处理后会通知你")
+        att = (self.store.one("SELECT filename FROM message_attachments WHERE id=?", (msg["attachment_id"],)) if msg.get("attachment_id") else None) or {}
+        row = {"id": new_id("rp"), "organization_id": conv["organization_id"], "conversation_id": conv["id"], "message_id": mid, "reporter_id": uid,
+               "sender_id": msg["sender_id"], "reason": reason, "note": (str(note).strip()[:MAX_REPORT_NOTE] or None) if note else None,
+               "body_snapshot": msg["body"] or "", "attachment_name": att.get("filename"), "status": "open", "reviewed_by": None, "reviewed_at": None,
+               "decision_note": None, "created_at": now()}
+        self.store.insert("message_reports", row)
+        return self._report_out(row)
+
+    def reports_for_organization(self, oid: str, *, status: str | None = "open") -> list[dict]:
+        rows = self.store.all("SELECT * FROM message_reports WHERE organization_id=? " + ("AND status=? " if status else "") + "ORDER BY created_at DESC LIMIT 200",
+                              (oid, status) if status else (oid,))
+        return [self._report_out(r) for r in rows]
+
+    def review_report(self, rid: str, uid: str, decision: str, note: str | None = None) -> dict:
+        """`removed` deletes the reported message for everyone (as a group moderator would),
+        `dismissed` leaves it. Other open reports of the same message are settled by the same
+        decision. Who may review is the route's check (org.messaging.manage, fresh reauth)."""
+        if decision not in ("removed", "dismissed"):
+            raise ServiceError(400, "invalid_field", "处理结果只能是 removed 或 dismissed", {"field": "decision"})
+        r = self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,))
+        if not r:
+            raise ServiceError(404, "no_report", "找不到该举报")
+        if r["status"] != "open":
+            raise ServiceError(409, "already_reviewed", "这条举报已经处理过了")
+        if decision == "removed":
+            with self.store.tx() as t:
+                t.execute("UPDATE messages SET deleted_at=COALESCE(deleted_at,?), body='' WHERE id=?", (now(), r["message_id"]))
+                t.execute("DELETE FROM message_reactions WHERE message_id=?", (r["message_id"],))
+            msg = self.store.one("SELECT * FROM messages WHERE id=?", (r["message_id"],))
+            if msg:
+                self.publish(self._active_user_ids(r["conversation_id"]), {"type": "message_updated", "conversation_id": r["conversation_id"], "message": self._message_out(dict(msg))})
+        self.store.update("message_reports", {"id": rid}, {"status": decision, "reviewed_by": uid, "reviewed_at": now(), "decision_note": (str(note).strip()[:MAX_REPORT_NOTE] or None) if note else None})
+        # other open reports of the same message are settled by the same decision
+        self.store.execute("UPDATE message_reports SET status=?, reviewed_by=?, reviewed_at=?, decision_note=? WHERE message_id=? AND status='open'",
+                           (decision, uid, now(), None, r["message_id"]))
+        return self._report_out(self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,)))
+
+    def report_get(self, rid: str) -> dict:
+        r = self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,))
+        if not r:
+            raise ServiceError(404, "no_report", "找不到该举报")
+        return self._report_out(r)
+
+    def messaging_managers(self, oid: str) -> list[str]:
+        """Active members holding org.messaging.manage — the people a report goes to."""
+        from .org_roles import OrgRoles
+        roles = OrgRoles(self.store)
+        rows = self.store.all("SELECT m.user_id FROM organization_memberships m JOIN users u ON u.id=m.user_id "
+                              "WHERE m.organization_id=? AND u.status='active' AND u.deleted_at IS NULL", (oid,))
+        return [r["user_id"] for r in rows if roles.has(oid, r["user_id"], "org.messaging.manage")]
+
+    def _report_out(self, r: dict) -> dict:
+        conv = self.store.one("SELECT kind, name FROM conversations WHERE id=?", (r["conversation_id"],)) or {}
+        return {"id": r["id"], "organization_id": r["organization_id"], "conversation_id": r["conversation_id"], "message_id": r["message_id"],
+                "conversation": {"kind": conv.get("kind"), "name": conv.get("name") if conv.get("kind") == "group" else None},
+                "reporter": {"user_id": r["reporter_id"], "name": self._name(r["reporter_id"])}, "sender": {"user_id": r["sender_id"], "name": self._name(r["sender_id"])},
+                "reason": r["reason"], "note": r.get("note"), "body_snapshot": r["body_snapshot"], "attachment_name": r.get("attachment_name"),
+                "status": r["status"], "reviewed_by": ({"user_id": r["reviewed_by"], "name": self._name(r["reviewed_by"])} if r.get("reviewed_by") else None),
+                "reviewed_at": r.get("reviewed_at"), "decision_note": r.get("decision_note"), "created_at": r["created_at"]}
+
     def add_members(self, cid: str, uid: str, member_ids: list[str]) -> dict:
         conv, _ = self._manager(cid, uid)
         if conv["archived_at"]:
@@ -385,6 +487,7 @@ class Messaging:
         return {"id": conv["id"], "organization_id": conv["organization_id"], "kind": conv["kind"], "workspace_id": conv["workspace_id"],
                 "name": conv["name"] if conv["kind"] == "group" else (peer["display_name"] or peer["email"].split("@")[0] if peer else "—"),
                 "description": conv["description"], "archived": bool(conv["archived_at"]), "created_by": conv["created_by"],
+                "announcement": conv.get("announcement") or None, "announcement_at": conv.get("announcement_at"),
                 "last_seq": conv["last_seq"], "last_message_at": conv["last_message_at"], "updated_at": conv["updated_at"],
                 "me": {"role": me["role"], "joined_seq": me["joined_seq"], "last_read_seq": me["last_read_seq"], "muted": bool(me["muted"]),
                        "pinned": bool(me["pinned"]), "notify": me["notify"]},

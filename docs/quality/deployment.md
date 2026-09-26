@@ -76,7 +76,9 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-32 Web Push, run 36201832754, 2026-09-25 23:57 UTC):** `{"deployed": "synwevo:c39b04abacc7d406ac11fd9c352c585ca42ec365", "backup": "/opt/synwevo/backups/20260925T235729Z"}`; verify and deploy succeeded; schema v15 applied on start; the VAPID key pair is created on the first push configuration request. Remaining manual step: enable push on a real device from the account page and press 发送测试.
 
-**Pushed next (CI-33 project comments and mentions):** schema v16 adds `project_comments` (additive); seven Docs routes under the existing workspace gate; two inbox kinds. Rollback to v15 code is safe.
+**Pushed next (CI-34 group announcements and message reports):** schema v17 adds three `conversations` columns and the `message_reports` table (additive); four account routes (report, announcement, report list, review under fresh reauth); four inbox kinds; the service worker now also posts a message to open tabs so the bell refreshes at once. Rollback to v16 code is safe: the columns are ignored and the table idles.
+
+**Deployed (CI-33 project comments and mentions, run 36203384969, 2026-09-26 00:28 UTC):** `{"deployed": "synwevo:89c706b62fe16340ce044fcc1497e996925932cd", "backup": "/opt/synwevo/backups/20260926T002750Z"}`; verify and deploy succeeded; schema v16 applied on start.
 
 **Pushed next (CI-32 Web Push):** schema v15 adds `push_keys`, `push_subscriptions`, `push_queue` (additive, no migration); two new Python dependencies pinned in the lock (`py-vapid`, `http-ece`, both `cryptography`-only); the account service now serves `/sw.js` and `/manifest.webmanifest`; the dispatcher gains a push pass. The VAPID key pair is generated on first use and stored in the database; `SYNWEVO_PUSH=off` disables the channel. Rollback to v14 code is safe (tables ignored).
 

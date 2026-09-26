@@ -24,7 +24,13 @@ self.addEventListener('push', (event) => {
     badge: '/favicon.ico',
     timestamp: data.created_at ? Math.round(data.created_at * 1000) : undefined,
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(title, options),
+    // open Synwevo tabs refresh their bell right away instead of at the next poll
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((all) => {
+      for (const client of all) client.postMessage({ type: 'synwevo:push', id: data.id || null, href: data.href || null });
+    }),
+  ]));
 });
 
 self.addEventListener('notificationclick', (event) => {

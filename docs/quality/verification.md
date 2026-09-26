@@ -1062,6 +1062,45 @@ viewer 不能解决、编辑可解决、默认列表隐藏已解决线程与其�
 隔离实例的账户进程未重启时，新增的通知种类在旧目录里渲染成空标题（部署时三容器同镜像，不会出现），重启后通过。
 
 **未做**：文字范围级行内批注、富文本/附件/表情、评论的实时推送到已打开的项目页、跨项目待办视图。
+### 16.34 群公告与举报处理：钉在顶部的一段文字、只快照被举报消息的审核、重认证下的删除或驳回（CI-34）
+
+**研究**：Telegram FAQ「Groups and Channels」（钉住消息显示在聊天顶部、所有成员得到通知），Microsoft 支持「Report a concern in Microsoft Teams (free)」
+（任何人可举报、选类别附说明；提交线程信息/时间/举报人/类别/说明，群聊连带最近十条），Google Workspace 管理员帮助「Take action on reported Chat content」
+（持服务设置权限的管理员审核；删除消息/删除空间/解决并附评论；解决后状态不可改），均 2026-09-26 读取。两处官方页面都没写举报人是否被告知结果，本项目补上。
+决策记录：`docs/platform/messaging.md` §4.2。
+
+**实现**：schema v17（`conversations.announcement/announcement_by/announcement_at`，新表 `message_reports`）；`synwevo_core.messaging`：`set_announcement`
+（管理者、≤1000 字、系统行、归档群 409）、`report`（成员、非本人、可见的文本消息、一人一条未处理、快照正文与附件名）、`reports_for_organization`、
+`review_report`（removed 走与群内删除相同的路径并推 `message_updated`；dismissed 保留；同一消息其它未处理举报随之处理；重复 409）、`messaging_managers`
+（持 `org.messaging.manage` 的活跃成员）；4 个路由（举报每人每天 20 条；列表/处理要求权限，处理另要求 `admin` 范围严格重认证）；通知目录 4 种；
+账户外壳：线程顶部公告条（两行截断可展开）、系统行、群信息里的公告表单、别人消息上的「举报」与说明弹窗、组织页「举报处理」区
+（待处理/全部、快照引用块、`?report=` 聚焦、OrganizationAction 原因+重认证）；三语言 41 条。
+顺带修正两处既有缺陷：线程收到 `conversation` 事件时不重读历史，改名/加人/公告的系统行要等下次打开才出现（改为收到即重读）；
+审批区与举报区带深链进入时若该项不在当前页签会自动切到「全部」，但此前会一直切回，读者点不回「待处理」（改为只切一次）。
+
+**接口测试**（`test_messaging.py`，新增 1 项）：成员改公告 403、多余字段 400、保存后去空白、成员各得一条 `conversation.announcement`（英文标题正确）、
+群主不通知、系统行 `event=announcement`、清除后不再通知；举报自己的消息 400、无效原因 400、举报 201 且快照/发送者/举报人/会话正确、重复 409、
+群主得到 `conversation.reported`（可操作、链接到 `/organizations/{oid}?report=`）、发送者不知情；发送者事后编辑不改快照；成员读列表 403；
+群主读到列表与原因表；处理无重认证 → `reauth_required`；无效决定 400；加入后看不到该消息的成员举报 404；删除后 `reviewed_by`/`decision_note` 正确、
+重复处理 409、待处理清空、`status=all` 可见；消息对所有人 `deleted=true` 正文为空；举报人收到 `conversation.report_removed`（标题与说明正确）。
+
+**浏览器（隔离实例，群主与发送者 1280 px、举报人 390 px 触摸，Chromium + WebKit）**，`ui_e2e_moderation.py`：
+
+```
+== chromium (Google Chrome)
+  - the owner pinned an announcement from 群信息; it sits at the top of the thread and the thread shows the system line
+  - on the phone the announcement is pinned above the messages without sideways scroll; the inbox carries one conversation.announcement item
+  - Ben reported Ann's message from the phone with a reason and a note; the dialog said what the managers will see
+  - the owner's bell led to the organization page with the report focused (snapshot, reason, note); removing it demanded a reason and a fresh reauth; the item moved to 全部 as 已删除消息
+  - Ben's thread shows 消息已删除 in place of the message and his bell (phone) carries the outcome with the owner's note
+== webkit（五条同上）
+```
+
+过程中发现并修正（产品缺陷，非脚本问题）：群主保存公告后自己的线程没有出现系统行——线程只处理 `message`/`message_updated` 事件；
+以及处理完举报后点「待处理」页签被立刻切回「全部」。两处都在上面的实现里修好并重跑通过。
+
+**未做**：多条公告/历史；举报附带前后文（有意不做）；举报的邮件/推送以外的渠道；对举报人的匿名化（Teams 合规版的做法）；平台级（跨组织）的举报视图。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

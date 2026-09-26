@@ -145,6 +145,18 @@ CATALOGUE: dict[str, dict] = {
     "conversation.group": {"category": "conversation", "severity": "info", "email": "off", "title": {
         "zh-Hans": "「{conversation}」有新消息", "zh-Hant": "「{conversation}」有新訊息", "en": "New messages in “{conversation}”"}, "body": {
         "zh-Hans": "{sender}：{preview}", "zh-Hant": "{sender}：{preview}", "en": "{sender}: {preview}"}},
+    "conversation.announcement": {"category": "conversation", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "{actor} 更新了群聊「{conversation}」的公告", "zh-Hant": "{actor} 更新了群組「{conversation}」的公告", "en": "{actor} updated the announcement in “{conversation}”"}, "body": {
+        "zh-Hans": "{excerpt}", "zh-Hant": "{excerpt}", "en": "{excerpt}"}},
+    "conversation.reported": {"category": "conversation", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "{who} 举报了「{conversation}」里的一条消息", "zh-Hant": "{who} 檢舉了「{conversation}」裡的一則訊息", "en": "{who} reported a message in “{conversation}”"}, "body": {
+        "zh-Hans": "请在组织页查看被举报的内容并处理。", "zh-Hant": "請在組織頁檢視被檢舉的內容並處理。", "en": "Review the reported message on the organization page."}},
+    "conversation.report_removed": {"category": "conversation", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "你的举报已处理：消息已删除", "zh-Hant": "你的檢舉已處理：訊息已刪除", "en": "Your report was reviewed: the message was removed"}, "body": {
+        "zh-Hans": "{note}", "zh-Hant": "{note}", "en": "{note}"}},
+    "conversation.report_dismissed": {"category": "conversation", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "你的举报已处理：消息保留", "zh-Hant": "你的檢舉已處理：訊息保留", "en": "Your report was reviewed: the message stays"}, "body": {
+        "zh-Hans": "{note}", "zh-Hant": "{note}", "en": "{note}"}},
     "conversation.added": {"category": "conversation", "severity": "info", "email": "digest", "title": {
         "zh-Hans": "{actor} 把你加入了群聊「{conversation}」", "zh-Hant": "{actor} 把你加入了群組「{conversation}」", "en": "{actor} added you to “{conversation}”"}, "body": {
         "zh-Hans": "你能看到加入之后的消息。", "zh-Hant": "你能看到加入之後的訊息。", "en": "You can read messages from the moment you joined."}},

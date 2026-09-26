@@ -44,7 +44,11 @@ export function useUnreadCount(enabled: boolean): number {
     document.addEventListener("visibilitychange", onVisible);
     const onChanged = (e: Event) => { const n = (e as CustomEvent<number>).detail; if (typeof n === "number") setCount(n); };
     window.addEventListener("synwevo:unread", onChanged);
-    return () => { stop = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("synwevo:unread", onChanged); };
+    // a push delivered to this browser (the service worker relays it) refreshes the count now, not at the next poll
+    const sw = typeof navigator !== "undefined" ? navigator.serviceWorker : undefined;
+    const onPush = (e: MessageEvent) => { if (e.data && e.data.type === "synwevo:push") void tick(); };
+    sw?.addEventListener("message", onPush);
+    return () => { stop = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("synwevo:unread", onChanged); sw?.removeEventListener("message", onPush); };
   }, [enabled]);
   return count;
 }

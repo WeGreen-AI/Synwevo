@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -603,6 +603,13 @@ V14_COLUMNS = [
     ("source_files", "created_by", "TEXT"),
 ]
 
+# v17: a group's announcement (pinned text at the top of the thread), set by its managers.
+V17_COLUMNS = [
+    ("conversations", "announcement", "TEXT"),
+    ("conversations", "announcement_by", "TEXT"),
+    ("conversations", "announcement_at", "REAL"),
+]
+
 V6_COLUMNS = [
     ("rp_auth_requests", "workspace_id", "TEXT"),
     ("users", "locale", "TEXT NOT NULL DEFAULT 'zh-Hans'"),
@@ -818,7 +825,7 @@ class Store:
         from .docs_comments import SCHEMA as DOCS_COMMENTS_SCHEMA
         c.executescript(DOCS_COMMENTS_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

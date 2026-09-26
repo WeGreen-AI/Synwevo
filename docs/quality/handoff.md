@@ -96,7 +96,8 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 * **批量生成性能**：2026-09-25 复测无退化（verification.md §16.8）。
 * **API 幂等**（对照 Stripe「Idempotent requests」，访问 2026-09-25）：Stripe——所有 POST 接受键、键 ≤255 字符、保存首个响应含 500、24 小时后清理、参数不同即报错、并发冲突不保存。Synwevo（api.md §3「幂等」）——按主体+租户+作用域+键、24 小时 TTL 可配、内容不同 `409 idempotency_conflict`、并发由唯一约束裁决、不确定结果 `409 idempotency_outcome_unknown` 且不清理、不支持的操作显式 `400 idempotency_not_supported`。语义等价或更严格；差异只在 Stripe 保存 5xx 结果而 Synwevo 让失败的创建可重试，这是有意选择。无需改动。
 
-| CI-33 | 项目评论与提及（一级+回复、四种锚点读取时判断、提及只到空间成员、参与者通知、解决/重开、深链高亮） | 已实现（本机），待推送 | 行内文字批注与实时推送未做；`docs/platform/docs-comments.md` 是权威记录；脚本 `ui_e2e_comments.py` |
+| CI-34 | 群公告（管理者写、钉在顶部、成员汇总通知）与举报处理（只快照被举报消息、`org.messaging.manage` 在组织页删除/驳回、重认证、举报人得到结果） | 已本地验证，待推送 | 平台级举报视图与举报人匿名化未做；`docs/platform/messaging.md` §4.2 是权威记录；脚本 `ui_e2e_moderation.py` |
+| CI-33 | 项目评论与提及（一级+回复、四种锚点读取时判断、提及只到空间成员、参与者通知、解决/重开、深链高亮） | 已部署（89c706b，run 36203384969） | 行内文字批注与实时推送未做；`docs/platform/docs-comments.md` 是权威记录；脚本 `ui_e2e_comments.py` |
 | CI-32 | 浏览器推送：VAPID 密钥、订阅、队列、派发、账户页设备管理、Service Worker 与 manifest | 已部署（c39b04a） | 真机（Chrome/Android、iOS 主屏幕 web app、macOS Safari）收到与点击须人工验证；密钥轮换未做；`docs/platform/web-push.md` 是权威记录；脚本 `ui_e2e_push.py` |
 | CI-31 | 账户侧 Docs 链接：通知链接主机修正（注册表地址）+ 消息里的按读者解析链接卡片 | 已部署（0c73abb） | 脚本 `ui_e2e_link_cards.py`；下一项：评论/提及或 Web Push 研究 |
 | CI-30 | 手机宽度复查：复制对话框、来源行、生成对话框、Docs 内铃铛（两引擎）；收件箱抽屉工具条改紧凑 | 已部署（2d77f08） | 脚本 `ui_e2e_phone_copy.py`；下一项：评论/提及（9.8 协作）或 Web Push 研究 |

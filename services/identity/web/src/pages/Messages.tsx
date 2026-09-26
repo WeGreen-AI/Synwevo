@@ -5,7 +5,7 @@
  *  never becomes a duplicate); history is whatever the server lets this member read; the stream
  *  is a hint that something changed and every (re)connect resyncs from the history API with the
  *  last sequence this tab knows. When the stream cannot be held open the page polls and says so. */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, announceMessagesUnread, api, get, post, put, upload, useSession } from "@synwevo/auth-client";
 import { Drawer, Modal, useI18n, useMediaQuery } from "@synwevo/ui";
@@ -16,6 +16,7 @@ import "../messages.messages";
 
 interface Member { user_id: string; name: string; role: "owner" | "admin" | "member" }
 interface Conversation { id: string; organization_id: string; kind: "dm" | "group"; name: string; description: string | null; archived: boolean; last_seq: number;
+  announcement: string | null; announcement_at: number | null;
   last_message_at: number | null; me: { role: string; joined_seq: number; last_read_seq: number; muted: boolean; pinned: boolean; notify: "all" | "mentions" | "none" };
   unread: number; peer: { user_id: string; name: string } | null; members: Member[]; member_count: number;
   last_message: { seq: number; sender: string; body: string; deleted: boolean; attachment: boolean; kind: string } | null }
@@ -28,6 +29,7 @@ interface Org { id: string; name: string; status: string }
 
 const M = "/api/auth/messaging";
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👀", "✅", "❓", "🙏"];
+export const REPORT_REASONS: Record<string, string> = { harassment: "骚扰或辱骂", spam: "垃圾信息", privacy: "泄露隐私或索要凭据", other: "其他" };
 const urlRe = /(https?:\/\/[^\s<>"']+)/g;
 
 function initials(name: string) { return (name || "?").trim().slice(0, 1).toUpperCase(); }
@@ -166,6 +168,7 @@ function Thread({ conv, uid, live, narrow, onBack, onOpenInfo, onChanged, bind }
   const [attachment, setAttachment] = useState<{ id: string; filename: string; size: number } | null>(null); const [uploading, setUploading] = useState<number | null>(null);
   const [picker, setPicker] = useState<string | null>(null); const [fresh, setFresh] = useState(0); const [busy, setBusy] = useState(false);
   const [mention, setMention] = useState<Member[]>([]);
+  const [reporting, setReporting] = useState<Message | null>(null); const [announceOpen, setAnnounceOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null); const atBottom = useRef(true); const lastSeq = useRef(0); const fileRef = useRef<HTMLInputElement>(null);
   const composing = useRef(false); const textRef = useRef<HTMLTextAreaElement>(null);
 
@@ -193,6 +196,8 @@ function Thread({ conv, uid, live, narrow, onBack, onOpenInfo, onChanged, bind }
       onEvent: ev => {
         if (ev.conversation_id !== conv.id) return;
         if (ev.type === "message" || ev.type === "message_updated") { merge([ev.message]); if (ev.type === "message" && ev.message.sender_id !== uid && !atBottom.current) setFresh(n => n + 1); }
+        // a conversation change (rename, members, announcement) also wrote a system line: pick it up from history
+        if (ev.type === "conversation") void resync();
       },
       resync: () => { void resync(); },
     });
@@ -249,7 +254,8 @@ function Thread({ conv, uid, live, narrow, onBack, onOpenInfo, onChanged, bind }
   const systemText = (m: Message) => { const s = m.system || {}; const who = (id: string) => conv.members.find(x => x.user_id === id)?.name || t("某成员"); const list = (ids: string[]) => (ids || []).map(who).join("、");
     switch (s.event) { case "created": return t("{actor} 创建了群聊", { actor: who(s.actor) }); case "added": return t("{actor} 把 {who} 加入了群聊", { actor: who(s.actor), who: list(s.added) }); case "removed": return t("{actor} 移除了 {who}", { actor: who(s.actor), who: list(s.removed) });
       case "left": return t("{actor} 退出了群聊", { actor: who(s.actor) }); case "renamed": return t("{actor} 把群名改为「{name}」", { actor: who(s.actor), name: s.name }); case "transferred": return t("{actor} 把群主交接给了 {who}", { actor: who(s.actor), who: who(s.to) });
-      case "archived": return t("{actor} 归档了群聊", { actor: who(s.actor) }); case "unarchived": return t("{actor} 恢复了群聊", { actor: who(s.actor) }); default: return ""; } };
+      case "archived": return t("{actor} 归档了群聊", { actor: who(s.actor) }); case "unarchived": return t("{actor} 恢复了群聊", { actor: who(s.actor) });
+      case "announcement": return s.cleared ? t("{actor} 清除了群公告", { actor: who(s.actor) }) : t("{actor} 更新了群公告", { actor: who(s.actor) }); default: return ""; } };
 
   let lastDay = "";
   return <>
@@ -260,6 +266,11 @@ function Thread({ conv, uid, live, narrow, onBack, onOpenInfo, onChanged, bind }
       <span className={`msg-status ${live}`} role="status">{t(live === "live" ? "实时" : live === "polling" ? "轮询中" : "连接中")}</span>
       <button type="button" className="btn ghost sm" onClick={onOpenInfo}>{t(conv.kind === "group" ? "群信息" : "会话设置")}</button>
     </div>
+    {conv.announcement && <div className={`msg-announce ${announceOpen ? "open" : ""}`} role="note">
+      <span className="badge">{t("公告")}</span>
+      <span className="msg-announce-text">{conv.announcement}</span>
+      {conv.announcement.length > 80 && <button type="button" className="btn ghost sm" aria-expanded={announceOpen} onClick={() => setAnnounceOpen(o => !o)}>{t(announceOpen ? "收起" : "展开")}</button>}
+    </div>}
     <FlowError error={error} />
     <div className="msg-scroll" ref={scrollRef} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("消息记录")}>
       {items === null ? <Loading /> : <>
@@ -287,6 +298,7 @@ function Thread({ conv, uid, live, narrow, onBack, onOpenInfo, onChanged, bind }
                 <button type="button" onClick={() => { setReplyTo(m); textRef.current?.focus(); }} aria-label={t("回复")} title={t("回复")}>↩</button>
                 {own && <button type="button" onClick={() => { setEditing(m); setDraft(m.body); textRef.current?.focus(); }} aria-label={t("编辑")} title={t("编辑")}>✎</button>}
                 {(own || (conv.kind === "group" && conv.me.role !== "member")) && <button type="button" onClick={() => void del(m)} aria-label={t("删除")} title={t("删除")}>🗑</button>}
+                {!own && <button type="button" onClick={() => setReporting(m)} aria-label={t("举报")} title={t("举报")}>⚑</button>}
                 {picker === m.id && <div className="msg-picker" role="group" aria-label={t("表情回应")}>{REACTIONS.map(e => <button key={e} type="button" onClick={() => void react(m, e)}>{e}</button>)}</div>}
               </div>}
             </div>}
@@ -315,7 +327,29 @@ function Thread({ conv, uid, live, narrow, onBack, onOpenInfo, onChanged, bind }
           <option value="">{t("@ 提及…")}</option>{conv.members.filter(m => m.user_id !== uid).map(m => <option key={m.user_id} value={m.user_id}>{m.name}</option>)}</select>}
       </div>
     </form>}
+    {reporting && <ReportDialog message={reporting} onClose={() => setReporting(null)} />}
   </>;
+}
+
+// ---------------------------------------------------------------- reporting a message
+/** What the organization's messaging managers will see is said before anything is sent: this
+ *  message as it is now, its sender, the reporter and the reason — not the conversation. */
+function ReportDialog({ message, onClose }: { message: Message; onClose: () => void }) {
+  const { t } = useI18n(); const id = useId();
+  const [reason, setReason] = useState("harassment"); const [note, setNote] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>(null); const [done, setDone] = useState(false);
+  const submit = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setError(null);
+    try { await post(`${M}/messages/${message.id}/report`, { reason, note: note.trim() || undefined }); setDone(true); } catch (err) { setError(err); } finally { setBusy(false); } };
+  return <Modal title={t("举报消息")} onClose={onClose} size="narrow">
+    {done ? <div className="col gap8"><p className="notice ok" role="status">{t("已提交举报。组织的群聊管理员处理后，你会在通知里看到结果。")}</p><div className="org-actions"><button type="button" className="btn primary" onClick={onClose}>{t("知道了")}</button></div></div>
+      : <form className="col gap8" onSubmit={submit} aria-busy={busy}>
+        <p className="tiny muted">{t("组织的群聊管理员会看到这条消息的内容、发送者、你的姓名和说明，看不到会话的其它内容。")}</p>
+        <blockquote className="msg-quote"><strong>{message.sender}</strong> {message.body ? message.body.slice(0, 200) : message.attachment ? `📎 ${message.attachment.filename}` : ""}</blockquote>
+        <FlowError error={error} />
+        <div className="field"><label htmlFor={`${id}-reason`}>{t("举报原因")}</label><select id={`${id}-reason`} className="input" value={reason} disabled={busy} onChange={e => setReason(e.target.value)}>{Object.entries(REPORT_REASONS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}</select></div>
+        <div className="field"><label htmlFor={`${id}-note`}>{t("补充说明（可选）")}</label><textarea id={`${id}-note`} className="input" rows={3} maxLength={500} value={note} disabled={busy} onChange={e => setNote(e.target.value)} /></div>
+        <div className="org-actions"><button type="submit" className="btn primary" disabled={busy}>{t("提交举报")}</button><button type="button" className="btn" disabled={busy} onClick={onClose}>{t("取消")}</button></div>
+      </form>}
+  </Modal>;
 }
 
 // ---------------------------------------------------------------- conversation info / group management
@@ -323,6 +357,7 @@ function ConversationInfo({ conv, uid, onClose, onChanged, onLeft }: { conv: Con
   const { t } = useI18n();
   const [error, setError] = useState<unknown>(null); const [busy, setBusy] = useState(false);
   const [name, setName] = useState(conv.name); const [q, setQ] = useState(""); const [people, setPeople] = useState<{ user_id: string; name: string }[]>([]);
+  const [announcement, setAnnouncement] = useState(conv.announcement || "");
   const manage = conv.kind === "group" && conv.me.role !== "member"; const owner = conv.kind === "group" && conv.me.role === "owner";
   const run = async (fn: () => Promise<unknown>, after?: () => void) => { setBusy(true); setError(null); try { await fn(); onChanged(); after?.(); } catch (e) { setError(e); } finally { setBusy(false); } };
   useEffect(() => { if (!manage || !q.trim()) { setPeople([]); return; } const timer = window.setTimeout(() => { get<{ items: { user_id: string; name: string }[] }>(`${M}/directory?organization_id=${encodeURIComponent(conv.organization_id)}&q=${encodeURIComponent(q.trim())}`).then(x => setPeople(x.items.filter(p => !conv.members.some(m => m.user_id === p.user_id)))).catch(() => setPeople([])); }, 250); return () => window.clearTimeout(timer); }, [q, manage, conv.organization_id, conv.members]);
@@ -336,6 +371,10 @@ function ConversationInfo({ conv, uid, onClose, onChanged, onLeft }: { conv: Con
       {conv.kind === "group" && <>
         <hr />
         {manage && !conv.archived ? <form className="field" onSubmit={e => { e.preventDefault(); void run(() => api(`${M}/conversations/${conv.id}`, { method: "PATCH", body: { name } })); }}><label htmlFor="msg-name">{t("群名称")}</label><div className="row gap4"><input id="msg-name" className="input" value={name} maxLength={80} onChange={e => setName(e.target.value)} /><button className="btn" disabled={busy || !name.trim() || name === conv.name}>{t("保存")}</button></div></form> : null}
+        {manage && !conv.archived ? <form className="field" onSubmit={e => { e.preventDefault(); void run(() => put(`${M}/conversations/${conv.id}/announcement`, { text: announcement.trim() || null })); }}><label htmlFor="msg-announce">{t("群公告")}</label>
+          <textarea id="msg-announce" className="input" rows={3} maxLength={1000} value={announcement} placeholder={t("置顶在会话顶部；保存后成员会收到一条通知。")} onChange={e => setAnnouncement(e.target.value)} />
+          <div className="row gap4"><button className="btn" disabled={busy || announcement.trim() === (conv.announcement || "")}>{t("保存公告")}</button>{conv.announcement && <button type="button" className="btn ghost" disabled={busy} onClick={() => void run(() => put(`${M}/conversations/${conv.id}/announcement`, { text: null }), () => setAnnouncement(""))}>{t("清除公告")}</button>}</div></form>
+          : conv.announcement ? <div className="field"><span className="tiny muted">{t("群公告")}</span><p className="small msg-announce-text open">{conv.announcement}</p></div> : null}
         <p className="tiny muted">{t("新成员只能看到加入之后的消息；退出或被移除后不再能看到这个群。")}</p>
         <h3 className="small">{t("成员（{n}）", { n: conv.member_count })}</h3>
         <div className="msg-members">{conv.members.map(m => <div key={m.user_id} className="msg-member"><span>{m.name}{m.user_id === uid && <span className="tiny muted"> · {t("我")}</span>}<span className="tiny muted"> · {t(m.role === "owner" ? "群主" : m.role === "admin" ? "管理员" : "成员")}</span></span>
