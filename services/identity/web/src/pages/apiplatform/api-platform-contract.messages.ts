@@ -637,6 +637,16 @@ export const contractEntries: [string, string, string][] = [
     "把当前发布复制成本空间的模板，可同时绑定项目（需委托令牌；支持 Idempotency-Key）",
     "Copy the current release into this workspace as a template, optionally binding a project (delegated token required; Idempotency-Key supported)",
     "把目前發布複製成本空間的範本，可同時繫結專案（需委託權杖；支援 Idempotency-Key）"
+  ],
+  [
+    "使用此模板的项目：跟随当前版本的与固定了版本的",
+    "Projects using this template: those following the current version and those pinned to a version",
+    "使用此範本的專案：跟隨目前版本的與固定了版本的"
+  ],
+  [
+    "恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template）",
+    "Restore a version: its content becomes a new current version (history kept; a mismatched base_head is 409 stale_template)",
+    "恢復某個版本：以它的內容新建目前版本（歷史保留；base_head 不符則 409 stale_template）"
   ]
 ];
 registerMessages(Object.fromEntries(contractEntries.map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }])));

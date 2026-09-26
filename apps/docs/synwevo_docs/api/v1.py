@@ -746,6 +746,25 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                 "version": d["version"]["no"], "fields": d["version"]["slots"], "versions": d["versions"],
                 "exports": d["exports"], "info": d.get("info")}
 
+    @r.get("/templates/{tid}/usage", summary="使用此模板的项目：跟随当前版本的与固定了版本的", openapi_extra=_ox("read"))
+    def template_usage(request: Request, tid: str):
+        scope(request, "read")
+        return app_.template_usage(tid)
+
+    @r.post("/templates/{tid}/restore", status_code=201, summary="恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template）",
+            openapi_extra=_ox("write", requestBody={"content": {"application/json": {"schema": {
+                "type": "object", "required": ["version"], "properties": {"version": {"type": "integer", "minimum": 1}, "base_head": {"type": "integer", "minimum": 1}}}}}}))
+    def restore_template_version(request: Request, tid: str, body: dict = Body(...)):
+        scope(request, "write")
+        if type(body.get("version")) is not int or body["version"] < 1:
+            raise ServiceError(400, "invalid", "version 必须是正整数", {"field": "version"})
+        base = body.get("base_head")
+        if base is not None and (type(base) is not int or base < 1):
+            raise ServiceError(400, "invalid", "base_head 必须是正整数", {"field": "base_head"})
+        d = app_.restore_version(tid, body["version"], base)
+        return {"id": d["id"], "name": d["name"], "format": d["format"], "kind": d["kind"], "head": d["head"],
+                "version": d["version"]["no"], "fields": d["version"]["slots"], "versions": d["versions"], "exports": d["exports"], "info": d.get("info")}
+
     @r.get("/templates/{tid}/fields", summary="导出字段定义", openapi_extra=_ox("read"))
     def get_fields(request: Request, tid: str):
         scope(request, "read")

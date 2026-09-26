@@ -262,8 +262,26 @@ def run(kit, out):
     finally:
         denied = cli("projects", "delete", p["id"], code=3)
         assert denied["error"]["status"] == 403
+    with Client.from_env() as c:
+        template_versions_flow(c, kit, record, fields)
     results["person"] = person_flow(kit, out, record, fields)
     (out / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2))
+
+
+def template_versions_flow(c, kit, record, fields):
+    """Usage and restore over the service account: who follows the template, then an earlier
+    version brought back as a new head (history kept), and a stale base refused."""
+    t = record("versions upload_template", c.upload_template(kit / "template.docx", name="SYNTHETIC versions"))
+    c.create_template_fields(t["id"], fields)                       # v2
+    use = record("get_template_usage", c.get_template_usage(t["id"]))
+    assert use["following"] == 0 and use["pinned"] == 0
+    try:
+        c.restore_template_version(t["id"], 1, base_head=1)
+        raise AssertionError("a stale base must be refused")
+    except ConflictError as e:
+        assert e.code == "stale_template"
+    back = record("restore_template_version", c.restore_template_version(t["id"], 1, base_head=2))
+    assert back["head"] == 3 and back["fields"] == [] and [v["version_no"] for v in back["versions"]] == [1, 2, 3]
 
 
 def delegated_token(accounts: str, email: str, password: str, client_id: str, redirect: str, workspace_id: str) -> str:

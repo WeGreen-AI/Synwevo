@@ -1,30 +1,21 @@
 {
   "schema_version": 1,
   "api_scope": "all operations in actual v1 OpenAPI export, including health/readiness",
-  "openapi_sha256": "b3001c0e1cde0533d67068c2b78c62667673defd4b2fe09e9188ea3227220606",
+  "openapi_sha256": "d90a6ec93a0a45a5e161975d78d7ad95c1600e93337d8663e74a0578a8813f31",
   "openapi_version": "3.1.0",
-  "sdk_source_sha256": "ed679abd8cace2397b951a4fde720fe9554693eb1f32e4514c91ca6c853f3980",
-  "cli_source_sha256": "f931b37d1ec5d41a4920bfeaa1de3f8b2e10144bb3dd8c0bce5b32984f2690af",
+  "sdk_source_sha256": "9cc1046a23037632bea1f3582dd4dc9d4346d22bb9e95217d17b5a3dc2850cba",
+  "cli_source_sha256": "6af14974a92c779825e4cf5e193538519a354b0c3e58664ac17b2188147c86ca",
   "evidence": [
     {
       "file": "app-http.jsonl",
-      "sha256": "8eb659ba06eed4fabb88960fccb8c94704bf85ec36ece0769e853ea9ec3ef1fa"
+      "sha256": "787ffd8714f17236ca3f489fa026cb5caf9487c02f1ba4c30c7327c11d06103c"
     }
   ],
   "unmatched_http_observations": {
-    "PUT /api/v1/templates/t_2b3da930263f/builtin": {
+    "GET /api/v1/artifacts/a_46a6b9e6e6fe/content": {
       "429": 1
     },
-    "PUT /api/v1/projects/p_d8349b751d30/template": {
-      "429": 1
-    },
-    "GET /api/v1/artifacts/a_f0b3dd6c50bb/content": {
-      "429": 1
-    },
-    "GET /api/v1/artifacts/a_144613c15af1/content": {
-      "429": 1
-    },
-    "GET /api/v1/artifacts/a_2eb8ff90bca8/content": {
+    "GET /api/v1/artifacts/a_00d8259f0196/content": {
       "429": 1
     }
   },
@@ -37,10 +28,10 @@
     "failed_only verifies exclusion of cancelled items and selection fingerprint conflict, not a positive failed-item retry"
   ],
   "counts": {
-    "operations": 88,
-    "sdk_implemented": 84,
-    "cli_reachable": 62,
-    "real_service_success_observed": 48
+    "operations": 90,
+    "sdk_implemented": 86,
+    "cli_reachable": 64,
+    "real_service_success_observed": 50
   },
   "operations": [
     {
@@ -331,7 +322,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 88
+        "200": 92
       },
       "real_service_success_observed": true
     },
@@ -900,7 +891,8 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "201": 4
+        "201": 5,
+        "429": 1
       },
       "real_service_success_observed": true
     },
@@ -1023,7 +1015,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 4
+        "200": 5
       },
       "real_service_success_observed": true
     },
@@ -1040,6 +1032,39 @@
       "implementation": "implemented",
       "observed_http_status_counts": {
         "201": 2
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "restore_template_version_api_v1_templates__tid__restore_post",
+      "method": "POST",
+      "path": "/api/v1/templates/{tid}/restore",
+      "sdk_methods": [
+        "restore_template_version"
+      ],
+      "cli_commands": [
+        "templates restore"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "201": 1,
+        "409": 1
+      },
+      "real_service_success_observed": true
+    },
+    {
+      "operationId": "template_usage_api_v1_templates__tid__usage_get",
+      "method": "GET",
+      "path": "/api/v1/templates/{tid}/usage",
+      "sdk_methods": [
+        "get_template_usage"
+      ],
+      "cli_commands": [
+        "templates usage"
+      ],
+      "implementation": "implemented",
+      "observed_http_status_counts": {
+        "200": 1
       },
       "real_service_success_observed": true
     },

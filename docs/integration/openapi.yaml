@@ -1887,6 +1887,111 @@ paths:
             - admin
         - platformToken:
             - docweave.manage
+  "/api/v1/templates/{tid}/usage":
+    get:
+      tags:
+        - v1
+      summary: 使用此模板的项目：跟随当前版本的与固定了版本的
+      operationId: template_usage_api_v1_templates__tid__usage_get
+      parameters:
+        - name: tid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Tid
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - read
+        - platformToken:
+            - docweave.read
+  "/api/v1/templates/{tid}/restore":
+    post:
+      tags:
+        - v1
+      summary: 恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template）
+      operationId: restore_template_version_api_v1_templates__tid__restore_post
+      parameters:
+        - name: tid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Tid
+        - $ref: "#/components/parameters/XRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              title: Body
+              required:
+                - version
+              properties:
+                version:
+                  type: integer
+                  minimum: 1
+                base_head:
+                  type: integer
+                  minimum: 1
+      responses:
+        "201":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
   "/api/v1/templates/{tid}/fields":
     get:
       tags:

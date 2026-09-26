@@ -76,6 +76,10 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-32 Web Push, run 36201832754, 2026-09-25 23:57 UTC):** `{"deployed": "synwevo:c39b04abacc7d406ac11fd9c352c585ca42ec365", "backup": "/opt/synwevo/backups/20260925T235729Z"}`; verify and deploy succeeded; schema v15 applied on start; the VAPID key pair is created on the first push configuration request. Remaining manual step: enable push on a real device from the account page and press 发送测试.
 
+**Pushed next (CI-43 logo launch):** the confirmed logo in all three shells (fingerprinted PNG icons, `/favicon.ico` with `no-cache`, top bars and footers), `scripts/brand_assets.py --check` added to the verify job; no backend schema change (one response-header change for root files).
+
+**Pushed next (CI-42 machine API for template usage and restore):** two `/api/v1` operations, OpenAPI and coverage manifest regenerated, SDK/CLI additions; no schema change.
+
 **Pushed next (CI-41 template version restore):** two Docs routes (usage, restore) with policy entries and a dialog in the Docs shell; no schema change.
 
 **Pushed next (CI-40 comments refresh and deep-link notice):** Docs shell only; no backend change.

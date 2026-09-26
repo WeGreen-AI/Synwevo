@@ -1286,6 +1286,36 @@ WebKit：五条同上（第一次 WebKit 运行只在最后的「无页面错误
 
 **未做**：版本间字段差异的并排对比；机器 API 的 restore/usage（浏览器 API 先行，v1 契约待下一批）。
 
+### 16.43 机器 API 的模板用量与版本恢复（CI-42）
+
+**问题**：CI-41 只在浏览器 API 提供 `usage`/`restore`；9.8「API 自动化一致」要求新版本能力进入真实契约。
+
+**实现**：`/api/v1/templates/{tid}/usage`（read）与 `/api/v1/templates/{tid}/restore`（write，`{version, base_head?}`，答案与 `GET /templates/{tid}` 同形），
+OpenAPI 重导出（75 路径），API 台契约表补两条三语言摘要；SDK `get_template_usage` / `restore_template_version`，CLI `templates usage|restore`；
+审计表补两行；验收 worker 的服务账户段多出用量 + 旧 base 409 + 恢复到 v1（历史 [1,2,3]）三步，以其证据重生成覆盖清单。
+
+**验证**：`tests/integration/test_template_restore_v1.py`（服务令牌：用量计数、旧 base `stale_template`、非整数 400、恢复 v2 → head 4 含 v2 字段、
+历史 [1,2,3,4]、详情一致）；`test_api_docs.py`、`test_api_platform_contract_i18n.py`、`test_gate_roles.py` 通过；SDK 单元 20 项通过；
+SDK 验收（临时隔离服务，服务账户 + 人）通过：`{"result": "passed", "clients": ["sdk", "cli", "person"], "documents_verified": 24, "builtin_outputs_verified": 52}`；覆盖清单重生成：`{"operations": 90, "sdk_implemented": 86, "cli_reachable": 64, "real_service_success_observed": 50}`（用量与恢复两个操作有真实观察）。
+
+### 16.44 正式 Logo 上线：三种确认资产、三个外壳、图标与缓存（CI-43）
+
+**来源与分工**：品牌接入代码由并行会话「顶尖 README 文档」完成并留在工作树（`packages/ui/src/brand.tsx`、`brand-name.ts`、`brand/`、`public-brand/`、
+`vite/brand-icons.ts`、`scripts/brand_assets.py`、三外壳 `index.html`/`vite.config.ts`、`PageState`、页脚字标等，见 `docs/design.md` §2.5 与
+`docs/quality/progress.md` 顶部）；本会话按第 9.14 节复核、补一处手机品牌位、验证并作为一批提交发布（已通过跨会话消息与其确认文件清单）。
+
+**资产**：`packages/ui/brand/originals/` 三张确认原图（完整版 1942×809、S 图形 1254×1254、字标 webp）；产品里的图形与字标从完整版像素裁出
+（`brand_assets.py`：裁切、按比例重采样、图标底板、白色版，不重画不重排），`--check` 校验 20 个衍生文件与原图一致；favicon/触屏图标为 PNG，
+由各外壳 Vite 指纹化（一年缓存、改图换名），`/favicon.ico` 由 `publicDir` 提供并以 `no-cache` 回答。
+
+**复核（隔离实例，Chromium 1280 / 390 px，登录态）**：三个源各链接 3 个图标（全部 200 `image/png`）、`/favicon.ico` 200；顶栏 Logo `<img>` 真实加载
+（naturalWidth>0）：账户页完整版 107×24、门户完整版 142×32 + 页脚字标、Docs 完整版 107×24；手机：账户与 Docs 顶栏为 S 图形（Docs 首页原为完整版，
+本批加 `markBelow={720}` 与账户顶栏一致），门户登录页保留完整版（品牌位有空间，符合 9.14 表）。`test_shells.py` 新增 5 例（各角色的图标链接指向自己的
+指纹目录、无 data: 占位、`favicon.ico` 类型与缓存头）；`brand_assets.py --check`、`@synwevo/ui` 19 项、auth-client 31 项、设计守卫通过；
+强制颜色模式下用同图 mask 以 CanvasText 上色（Windows 高对比）。
+
+**邮件里的 Logo**：现有邮件是纯文本，没有品牌图；随 9.15 的邮件设计系统一并交付（公共品牌资源 HTTPS 可取，见 CI-44）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

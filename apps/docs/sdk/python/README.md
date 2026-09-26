@@ -233,10 +233,10 @@ The script accepts no live server URL and never uses external user data.
 
 [`operation-coverage.json`](operation-coverage.json) inventories every operationId from
 the actual exported v1 OpenAPI, including probes. The reviewed snapshot (2026-09-26) contains
-88 operations: 84 have SDK methods and 62 have CLI commands (some upload
+90 operations: 86 have SDK methods and 64 have CLI commands (some upload
 operations are reached indirectly). The SDK operations without a method are `GET /readyz`, the
 signed-link `GET /api/v1/download/{token}`, the source page image and the source locator probe.
-The real acceptance run observed successful responses for 48 operations over two legs: a
+The real acceptance run observed successful responses for 50 operations over two legs: a
 service account (client_credentials) for the document flows, and a person signing in at the
 account service and authorizing a public client (authorization_code with PKCE) for the
 organization-shared template operations, which need a delegated token. Implementation

@@ -42,6 +42,8 @@ PUT /api/v1/templates/{tid}/builtin | save_builtin_template | templates builtin 
 GET /api/v1/templates | list_templates,iter_templates | templates list
 GET /api/v1/templates/{tid} | get_template | templates get
 DELETE /api/v1/templates/{tid} | delete_template | templates delete
+GET /api/v1/templates/{tid}/usage | get_template_usage | templates usage
+POST /api/v1/templates/{tid}/restore | restore_template_version | templates restore
 GET /api/v1/files/{fid}/structure | get_source_structure |
 GET /api/v1/files/{fid}/view | get_source_view |
 GET /api/v1/files/{fid}/blocks | list_source_blocks,iter_source_blocks |
