@@ -236,10 +236,11 @@ the actual exported v1 OpenAPI, including probes. The reviewed snapshot (2026-09
 88 operations: 84 have SDK methods and 62 have CLI commands (some upload
 operations are reached indirectly). The SDK operations without a method are `GET /readyz`, the
 signed-link `GET /api/v1/download/{token}`, the source page image and the source locator probe.
-The real scoped acceptance run (a service account) observed successful responses for
-40 operations; implementation coverage is not test coverage. The organization-shared
-template operations need a delegated token and are covered by `tests/integration/test_org_templates_v1.py`
-rather than by that run. Credential administration, webhook administration and several
+The real acceptance run observed successful responses for 48 operations over two legs: a
+service account (client_credentials) for the document flows, and a person signing in at the
+account service and authorizing a public client (authorization_code with PKCE) for the
+organization-shared template operations, which need a delegated token. Implementation
+coverage is not test coverage. Credential administration, webhook administration and several
 peripheral methods remain outside the acceptance chain. CLI coverage is a subset.
 
 Re-audit an actual JSON export; new/stale routes or nonexistent mapped methods fail:

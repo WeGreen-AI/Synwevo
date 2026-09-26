@@ -30,10 +30,32 @@ def bootstrap(root):
     secret_file = root / "client-secret"
     with open(secret_file, "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as f:
         f.write(secret)
+    # A person with an organization of two workspaces, and a public client they sign in through:
+    # the delegated leg of the acceptance (organization-shared templates need a person).
+    from synwevo_core.organizations import Organizations
+    password = secrets.token_urlsafe(24)
+    person = ident.create_user("python-person@example.invalid", password, status="active", display_name="SYNTHETIC person",
+                               with_personal_workspace=True)
+    store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (1.0, person["id"]))
+    orgs = Organizations(store, ident)
+    created = orgs.create(person["id"], "SYNTHETIC org", "SYNTHETIC team A", "fixture-idem-python-person-org")
+    ws_a = created["workspace"]["id"]
+    ws_b = orgs.create_workspace(created["organization"]["id"], person["id"], "SYNTHETIC team B")["id"]
+    for wid in (ws_a, ws_b):
+        store.execute("INSERT OR IGNORE INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) "
+                      "VALUES (?,?,'owner',1,1,1,?)", (wid, person["id"], person["id"]))
+        Apps(store, ident).enable_for_workspace(wid, "docweave")
+    redirect = "http://127.0.0.1:1/synthetic-callback"        # never fetched: the code is read from the Location header
+    Clients(store).register(client_id="synthetic-python-person", app_id="docweave", name="SYNTHETIC person client",
+                            redirect_uris=[redirect], scopes="openid docweave.read docweave.write", audiences=["docweave-api"])
+    with open(root / "person-password", "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as f:
+        f.write(password)
     (root / "identity.json").write_text(json.dumps({
         "client_id": client["client_id"], "kind": client["kind"], "workspace": workspace,
         "scopes": client["api_scopes"].split(), "audiences": client["audiences"],
-        "bootstrap": "Store + Identity + Apps + Clients fixture APIs; no business-table writes"}))
+        "person": {"email": "python-person@example.invalid", "client_id": "synthetic-python-person", "redirect_uri": redirect,
+                   "organization": created["organization"]["id"], "workspace_a": ws_a, "workspace_b": ws_b},
+        "bootstrap": "Store + Identity + Apps + Clients + Organizations fixture APIs; no business-table writes"}))
 
 
 class Evidence:

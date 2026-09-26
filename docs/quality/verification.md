@@ -1197,6 +1197,23 @@ CSV：`0007`、`00000000000000000001`、`1e5`、`1.10`、`2.50` 原样。测试�
 结果：`0 page(s) with reflow, target-size, contrast or translation findings`（三种宽度共 45 页全部 ✓）。未量：评论抽屉与「设置模板」对话框的
 「从组织共享选择」页签（对话框内容不在页面量测范围；CI-33/35 的手机证明里分别断言过无横向滚动）。
 
+### 16.39 SDK 验收的「人」分支：真实登录 + 授权码（PKCE）取委托令牌，组织共享模板在真实服务上跑通（CI-38）
+
+**问题**：CI-36 的覆盖清单里共享模板 6 个操作「真实观察」为 0——验收流程只有服务账户，而这些操作要求委托令牌。
+
+**实现**：`tests/integration/sdk_acceptance/python_service.py` 的引导多出一个人（口令写入 0600 文件）、一个两空间的组织、一个公共客户端（登记回调地址，
+从不真正访问，授权码从 Location 读取）；`python_full_flow.py` 把这些坐标交给 worker，并把证据断言拆成两条链：Cookie 只允许出现在 `/api/auth/login` 与
+`/oidc/authorize`，令牌请求 = 服务账户的 client_credentials + 人的 authorization_code，业务请求的主体只能是 service_account 或 delegated，
+且 6 个共享模板操作都必须以委托主体成功出现；`python_worker.py` 的 `person_flow`：A 空间上传并发布（幂等键重放同一发布——同键不同正文被 409
+`idempotency_conflict` 拒绝，是契约不是缺陷）、B 空间 SDK 与 CLI 列表/详情/使用（幂等）并绑定项目、A 加字段后更新发布、弃用（B 列表为空、
+`--include-deprecated` 可见、使用 409 `deprecated`）、恢复。
+
+**结果**：`{"result": "passed", "clients": ["sdk", "cli", "person"], "documents_verified": 24, "builtin_outputs_verified": 52}`；
+人的令牌请求 2 次、委托业务请求 22 次、Cookie 只出现在 ['/api/auth/login', '/oidc/authorize']；覆盖清单重生成：
+`{"operations": 88, "sdk_implemented": 84, "cli_reachable": 62, "real_service_success_observed": 48}`（共享模板 6 个操作全部有真实观察）。SDK 单元 20 项与集成测试不变。
+
+**未做**：CLI 对来源文件 14 个操作的命令；验收流程里 viewer 角色的委托令牌（写操作应被 403）——集成测试已覆盖。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

@@ -76,6 +76,8 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-32 Web Push, run 36201832754, 2026-09-25 23:57 UTC):** `{"deployed": "synwevo:c39b04abacc7d406ac11fd9c352c585ca42ec365", "backup": "/opt/synwevo/backups/20260925T235729Z"}`; verify and deploy succeeded; schema v15 applied on start; the VAPID key pair is created on the first push configuration request. Remaining manual step: enable push on a real device from the account page and press 发送测试.
 
+**Pushed next (CI-38 SDK acceptance person leg):** acceptance scripts and the regenerated coverage manifest only; no product code change.
+
 **Pushed next (CI-37 value-semantics kit):** five Docs tests, a fix in `jobs.verify_output` (XLSX outputs are verified by value type, so percent and date samples no longer fail verification when the target's number format differs from the source's) and one engine hardening (formula-result integers written to the cache exactly); no schema or dependency change.
 
 **Deployed (CI-36 machine API for shared templates, run 36208724682, 2026-09-26 01:56 UTC):** `{"deployed": "synwevo:0f1c8100024d0f4c878c0333dc55f582788161a5", "backup": "/opt/synwevo/backups/20260926T015619Z"}`; verify and deploy succeeded; no schema change.

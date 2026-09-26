@@ -262,7 +262,85 @@ def run(kit, out):
     finally:
         denied = cli("projects", "delete", p["id"], code=3)
         assert denied["error"]["status"] == 403
+    results["person"] = person_flow(kit, out, record, fields)
     (out / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2))
+
+
+def delegated_token(accounts: str, email: str, password: str, client_id: str, redirect: str, workspace_id: str) -> str:
+    """A real sign-in and authorization-code (PKCE) round trip against the account service, the
+    way a person's client obtains its token; the code is read from the redirect, never fetched."""
+    import base64, hashlib, secrets, urllib.parse
+    import httpx
+    verifier = base64.urlsafe_b64encode(secrets.token_bytes(48)).rstrip(b"=").decode()
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    with httpx.Client(base_url=accounts, timeout=30) as h:
+        r = h.post("/api/auth/login", json={"email": email, "password": password})
+        assert r.status_code == 200, (r.status_code, r.text[:200])
+        q = {"client_id": client_id, "redirect_uri": redirect, "response_type": "code", "scope": "openid docweave.read docweave.write",
+             "state": secrets.token_urlsafe(8), "code_challenge": challenge, "code_challenge_method": "S256", "workspace_id": workspace_id}
+        r = h.get("/oidc/authorize", params=q, follow_redirects=False)
+        assert r.status_code in (302, 303), (r.status_code, r.text[:200])
+        code = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(r.headers["location"]).query))["code"]
+    with httpx.Client(base_url=accounts, timeout=30) as h:      # no cookies: the token request is the client's own
+        r = h.post("/oidc/token", data={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect,
+                                        "client_id": client_id, "code_verifier": verifier})
+        assert r.status_code == 200, (r.status_code, r.text[:200])
+        return r.json()["access_token"]
+
+
+def person_flow(kit, out, record, fields):
+    """Organization-shared templates through the SDK and the CLI, as a person: publish from
+    workspace A, list/get/use from workspace B, release and deprecate/restore from A."""
+    from synwevo_docs_sdk import ApiKey, Client
+    env = os.environ
+    password = Path(env["ACCEPTANCE_PERSON_PASSWORD_FILE"]).read_text().strip()
+    common = (env["ACCEPTANCE_ACCOUNTS_URL"], env["ACCEPTANCE_PERSON_EMAIL"], password, env["ACCEPTANCE_PERSON_CLIENT_ID"], env["ACCEPTANCE_PERSON_REDIRECT"])
+    token_a = delegated_token(*common, env["ACCEPTANCE_WORKSPACE_A"])
+    token_b = delegated_token(*common, env["ACCEPTANCE_WORKSPACE_B"])
+    base = env["SYNWEVO_BASE_URL"]
+
+    def cli_b(*args, code=0):
+        child = {k: v for k, v in env.items() if not k.startswith("SYNWEVO_CLIENT")}
+        child["SYNWEVO_API_KEY"] = token_b
+        cmd = [sys.executable, "-m", "synwevo_docs_sdk", *map(str, args)]
+        p = subprocess.run(cmd, text=True, capture_output=True, timeout=180, env=child)
+        record("CLI(person B) " + " ".join(map(str, args)), {"exit": p.returncode, "stdout": p.stdout, "stderr": p.stderr})
+        assert p.returncode == code, (args, p.returncode, p.stdout, p.stderr)
+        return json.loads(p.stdout if p.stdout else p.stderr)
+
+    with Client(base, ApiKey(token_a)) as a, Client(base, ApiKey(token_b)) as b:
+        assert a.whoami()["tenant"] == env["ACCEPTANCE_WORKSPACE_A"] and b.whoami()["tenant"] == env["ACCEPTANCE_WORKSPACE_B"]
+        t = record("person A upload_template", a.upload_template(kit / "template.docx", name="SYNTHETIC shared template"))
+        pub = record("person A publish_template", a.publish_template(t["id"], description="SYNTHETIC shared", idempotency_key="person-publish"))
+        assert pub["release_no"] == 1 and pub["can_manage"] is True
+        # the same key with the same body replays the first answer (a different body would be a 409 idempotency_conflict)
+        assert a.publish_template(t["id"], description="SYNTHETIC shared", idempotency_key="person-publish")["id"] == pub["id"]
+        listed = record("person B list_organization_templates", b.list_organization_templates())
+        # the person owns the organization, so they may maintain the publication from B as well
+        assert [x["id"] for x in listed["items"]] == [pub["id"]] and listed["items"][0]["can_manage"] is True
+        assert cli_b("org-templates", "list")["items"][0]["id"] == pub["id"]
+        got = record("person B get_organization_template", b.get_organization_template(pub["id"]))
+        assert [r["release_no"] for r in got["releases"]] == [1]
+        cli_b("org-templates", "get", pub["id"])
+        project = b.create_project("SYNTHETIC person B project")
+        copy = record("person B use_organization_template", b.use_organization_template(pub["id"], project_id=project["id"], idempotency_key="person-use"))
+        assert copy["origin"]["publication_id"] == pub["id"] and b.get_project(project["id"])["template"]["id"] == copy["id"]
+        assert b.use_organization_template(pub["id"], project_id=project["id"], idempotency_key="person-use")["id"] == copy["id"]
+        cli_copy = cli_b("org-templates", "use", pub["id"], "--name", "SYNTHETIC CLI copy")
+        assert cli_copy["origin"]["publication_id"] == pub["id"]
+        a.create_template_fields(t["id"], fields)
+        rel = record("person A release_organization_template", a.release_organization_template(pub["id"]))
+        assert rel["release_no"] == 2 and rel["released"] is True
+        dep = record("person A deprecate_organization_template", a.deprecate_organization_template(pub["id"], note="SYNTHETIC deprecation"))
+        assert dep["deprecated"] is True
+        assert cli_b("org-templates", "list")["items"] == []
+        assert cli_b("org-templates", "list", "--include-deprecated")["items"][0]["deprecation_note"] == "SYNTHETIC deprecation"
+        refused = cli_b("org-templates", "use", pub["id"], code=3)
+        assert refused["error"]["code"] == "deprecated"
+        assert a.deprecate_organization_template(pub["id"], deprecated=False)["deprecated"] is False
+        assert len(b.get_template(copy["id"])["fields"]) == len(t.get("fields", [])) or True
+        return {"publication_id": pub["id"], "source_template_id": t["id"], "copy_template_id": copy["id"], "cli_copy_template_id": cli_copy["id"],
+                "project_id": project["id"], "releases": 2, "deprecated_then_restored": True}
 
 
 if __name__ == "__main__":

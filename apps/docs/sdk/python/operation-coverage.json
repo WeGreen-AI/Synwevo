@@ -8,20 +8,23 @@
   "evidence": [
     {
       "file": "app-http.jsonl",
-      "sha256": "b7cf6d3ede096fbfa17d211cc368fa10d71586a16cd216d33a9f7d688f53b880"
+      "sha256": "8eb659ba06eed4fabb88960fccb8c94704bf85ec36ece0769e853ea9ec3ef1fa"
     }
   ],
   "unmatched_http_observations": {
-    "GET /api/v1/templates/t_07a8a1dc0236/builtin": {
+    "PUT /api/v1/templates/t_2b3da930263f/builtin": {
       "429": 1
     },
-    "POST /api/v1/projects/p_27fa301b563e/preflight": {
+    "PUT /api/v1/projects/p_d8349b751d30/template": {
       "429": 1
     },
-    "GET /api/v1/artifacts/a_210c339b4d96/content": {
+    "GET /api/v1/artifacts/a_f0b3dd6c50bb/content": {
       "429": 1
     },
-    "GET /api/v1/artifacts/a_85644e9c1372/content": {
+    "GET /api/v1/artifacts/a_144613c15af1/content": {
+      "429": 1
+    },
+    "GET /api/v1/artifacts/a_2eb8ff90bca8/content": {
       "429": 1
     }
   },
@@ -37,7 +40,7 @@
     "operations": 88,
     "sdk_implemented": 84,
     "cli_reachable": 62,
-    "real_service_success_observed": 40
+    "real_service_success_observed": 48
   },
   "operations": [
     {
@@ -328,7 +331,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 84
+        "200": 88
       },
       "real_service_success_observed": true
     },
@@ -487,8 +490,10 @@
         "org-templates list"
       ],
       "implementation": "implemented",
-      "observed_http_status_counts": {},
-      "real_service_success_observed": false
+      "observed_http_status_counts": {
+        "200": 4
+      },
+      "real_service_success_observed": true
     },
     {
       "operationId": "get_shared_template_api_v1_organization_templates__pid__get",
@@ -501,8 +506,10 @@
         "org-templates get"
       ],
       "implementation": "implemented",
-      "observed_http_status_counts": {},
-      "real_service_success_observed": false
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
     },
     {
       "operationId": "deprecate_shared_template_api_v1_organization_templates__pid__deprecate_post",
@@ -516,8 +523,10 @@
         "org-templates restore"
       ],
       "implementation": "implemented",
-      "observed_http_status_counts": {},
-      "real_service_success_observed": false
+      "observed_http_status_counts": {
+        "200": 2
+      },
+      "real_service_success_observed": true
     },
     {
       "operationId": "release_shared_template_api_v1_organization_templates__pid__releases_post",
@@ -530,8 +539,10 @@
         "org-templates release"
       ],
       "implementation": "implemented",
-      "observed_http_status_counts": {},
-      "real_service_success_observed": false
+      "observed_http_status_counts": {
+        "201": 1
+      },
+      "real_service_success_observed": true
     },
     {
       "operationId": "use_shared_template_api_v1_organization_templates__pid__use_post",
@@ -544,8 +555,11 @@
         "org-templates use"
       ],
       "implementation": "implemented",
-      "observed_http_status_counts": {},
-      "real_service_success_observed": false
+      "observed_http_status_counts": {
+        "201": 3,
+        "409": 1
+      },
+      "real_service_success_observed": true
     },
     {
       "operationId": "list_projects_api_v1_projects_get",
@@ -574,7 +588,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "201": 9,
+        "201": 10,
         "409": 1
       },
       "real_service_success_observed": true
@@ -607,9 +621,10 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
+        "200": 1,
         "404": 1
       },
-      "real_service_success_observed": false
+      "real_service_success_observed": true
     },
     {
       "operationId": "get_definition_api_v1_projects__pid__definition_get",
@@ -885,7 +900,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "201": 3
+        "201": 4
       },
       "real_service_success_observed": true
     },
@@ -930,8 +945,10 @@
         "templates get"
       ],
       "implementation": "implemented",
-      "observed_http_status_counts": {},
-      "real_service_success_observed": false
+      "observed_http_status_counts": {
+        "200": 1
+      },
+      "real_service_success_observed": true
     },
     {
       "operationId": "get_builtin_template",
@@ -1006,7 +1023,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 3
+        "200": 4
       },
       "real_service_success_observed": true
     },
@@ -1021,8 +1038,10 @@
         "org-templates publish"
       ],
       "implementation": "implemented",
-      "observed_http_status_counts": {},
-      "real_service_success_observed": false
+      "observed_http_status_counts": {
+        "201": 2
+      },
+      "real_service_success_observed": true
     },
     {
       "operationId": "create_upload_api_v1_uploads_post",
@@ -1299,7 +1318,7 @@
       ],
       "implementation": "implemented",
       "observed_http_status_counts": {
-        "200": 2
+        "200": 4
       },
       "real_service_success_observed": true
     },

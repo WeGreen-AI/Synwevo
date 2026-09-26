@@ -53,9 +53,15 @@ def services(testenv, out):
                 processes.append(proc)
                 testenv._wait(base, proc, log)
                 assert testenv.health(base)["instance"] == "test"
+            person = identity["person"]
             yield {"SYNWEVO_BASE_URL": docs, "SYNWEVO_TOKEN_URL": account + "/oidc/token",
                    "SYNWEVO_CLIENT_ID": identity["client_id"], "SYNWEVO_CLIENT_SECRET_FILE": str(root / "client-secret"),
-                   "SYNWEVO_TOKEN_SCOPE": "docweave.read docweave.write", "SYNWEVO_TOKEN_RESOURCE": "docweave-api"}
+                   "SYNWEVO_TOKEN_SCOPE": "docweave.read docweave.write", "SYNWEVO_TOKEN_RESOURCE": "docweave-api",
+                   # the delegated leg: a person signs in at the account service and authorizes a public client
+                   "ACCEPTANCE_ACCOUNTS_URL": account, "ACCEPTANCE_PERSON_EMAIL": person["email"],
+                   "ACCEPTANCE_PERSON_PASSWORD_FILE": str(root / "person-password"), "ACCEPTANCE_PERSON_CLIENT_ID": person["client_id"],
+                   "ACCEPTANCE_PERSON_REDIRECT": person["redirect_uri"], "ACCEPTANCE_WORKSPACE_A": person["workspace_a"],
+                   "ACCEPTANCE_WORKSPACE_B": person["workspace_b"]}
         finally:
             for proc in reversed(processes):
                 proc.terminate()
@@ -100,6 +106,8 @@ def main():
         results = json.loads((out / "flow" / "results.json").read_text())
         checks = []
         for channel, flow in results.items():
+            if channel == "person":                 # the delegated leg is checked below, by its operations
+                continue
             files = flow["artifacts"]
             assert len(files) == expected["samples"]
             by_name = {f["filename"]: f for f in files}
@@ -141,16 +149,34 @@ def main():
     # Services have stopped and their temporary database, blobs and secret are removed.
     audits = [json.loads(line) for role in ("accounts", "app")
               for line in (out / (role + "-http.jsonl")).read_text().splitlines()]
-    assert not any(r["cookie"] or r["set_cookie"] or r["authorization"] == "legacy_api_key" for r in audits)
+    assert not any(r["authorization"] == "legacy_api_key" for r in audits)
+    # Cookies exist only where a person signs in and authorizes (the delegated leg); the machine
+    # calls carry none.
+    cookie_paths = {r["path"] for r in audits if r["cookie"] or r["set_cookie"]}
+    assert cookie_paths <= {"/api/auth/login", "/oidc/authorize"}, cookie_paths
     tokens = [r for r in audits if r["path"] == "/oidc/token"]
-    assert tokens and all(r["status"] == 200 and r["grant"]["grant_type"] == ["client_credentials"] for r in tokens)
-    assert all(set(r["token_response"]["scope"].split()) == {"docweave.read", "docweave.write"} for r in tokens)
+    service_tokens = [r for r in tokens if r["grant"]["grant_type"] == ["client_credentials"]]
+    person_tokens = [r for r in tokens if r["grant"]["grant_type"] == ["authorization_code"]]
+    assert service_tokens and all(r["status"] == 200 for r in service_tokens)
+    assert all(set(r["token_response"]["scope"].split()) == {"docweave.read", "docweave.write"} for r in service_tokens)
+    assert len(person_tokens) >= 2 and all(r["status"] == 200 and {"docweave.read", "docweave.write"} <= set(r["token_response"]["scope"].split())
+                                           for r in person_tokens)
+    assert len(tokens) == len(service_tokens) + len(person_tokens)
     business = [r for r in audits if r["path"].startswith("/api/v1/")]
-    assert business and all(r["authorization"] == "bearer" and r["principal"]["kind"] == "service_account" and
-                            set(r["principal"]["scopes"]) == {"docweave.read", "docweave.write"} for r in business)
-    summary = {"instance": "test", "authorization": "Account client_credentials over HTTP; Docs read/write only",
+    assert business and all(r["authorization"] == "bearer" and r["principal"]["kind"] in ("service_account", "delegated") and
+                            set(r["principal"]["scopes"]) <= {"docweave.read", "docweave.write"} for r in business)
+    delegated = [r for r in business if r["principal"]["kind"] == "delegated"]
+    shared_ops = {(r["method"], r["route"]) for r in delegated
+                  if 200 <= r["status"] < 300 and ("organization-templates" in (r["route"] or "") or (r["route"] or "").endswith("/publish"))}
+    assert {("GET", "/api/v1/organization-templates"), ("GET", "/api/v1/organization-templates/{pid}"), ("POST", "/api/v1/templates/{tid}/publish"),
+            ("POST", "/api/v1/organization-templates/{pid}/releases"), ("POST", "/api/v1/organization-templates/{pid}/deprecate"),
+            ("POST", "/api/v1/organization-templates/{pid}/use")} <= shared_ops, shared_ops
+    person = results["person"]
+    summary = {"instance": "test", "authorization": "Account client_credentials over HTTP for the service leg; authorization_code (PKCE) for the person leg; Docs read/write only",
                "clients": list(results), "documents_verified": len(checks), "checks": checks,
-               "token_requests": len(tokens), "machine_requests": len(business), "cookies": 0, "admin_scope": False,
+               "token_requests": len(tokens), "service_token_requests": len(service_tokens), "person_token_requests": len(person_tokens),
+               "machine_requests": len(business), "delegated_requests": len(delegated), "shared_template_operations": sorted(shared_ops),
+               "person_flow": person, "cookies_only_on": sorted(cookie_paths), "admin_scope": False,
                "preview": preview_checks, "cancellation_retry": "two real 300-item batches; see flow/calls.json",
                "builtin_documents_verified": 48, "builtin_previews_verified": 4, "builtin_checks": builtin_checks,
                "failed_only": "cancelled-item exclusion and fingerprint conflict; no injected failed-item fixture",
