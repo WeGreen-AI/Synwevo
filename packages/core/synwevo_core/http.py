@@ -46,8 +46,8 @@ API_RATE_PER_MIN = int(env.get("API_RATE_PER_MIN", "300"))
 #: HTTP security headers (OWASP ASVS 4.0.3 V14.4; OWASP HTTP Headers Cheat Sheet, read 2026-09-25).
 #: The policy is one string for all three shells because they are built the same way: Vite
 #: bundles under the origin (no inline scripts), React inline `style=` attributes (hence
-#: 'unsafe-inline' for styles only), images from the origin plus the `data:` favicon and the
-#: `blob:` object URLs the Docs viewer and avatar preview create, no third-party resource at all.
+#: 'unsafe-inline' for styles only), images from the origin plus `data:` (Vite inlines assets under
+#: 4 KiB, e.g. the 1x logo mark of the loading states) and the `blob:` object URLs the Docs viewer and avatar preview create, no third-party resource at all.
 #: `frame-ancestors 'self'` is the modern form of X-Frame-Options SAMEORIGIN (kept for old
 #: browsers); `form-action 'self'` holds because every form submits through fetch to its own
 #: origin and the OpenID hand-offs are plain navigations. `SYNWEVO_CSP` replaces the policy
@@ -1191,5 +1191,7 @@ def shell_response(dist: Path, full_path: str) -> FileResponse | JSONResponse:
         raise ServiceError(404, "not_found", "接口不存在")
     target = (dist / full_path).resolve()
     if full_path and full_path != "index.html" and target.is_file() and dist.resolve() in target.parents:
-        return FileResponse(target)
+        # Root files of a build (favicon.ico) keep their name across releases, so a browser or
+        # edge cache must revalidate them; fingerprinted assets are cached by HashedAssets.
+        return FileResponse(target, headers={"Cache-Control": "no-cache"})
     return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache, must-revalidate"})

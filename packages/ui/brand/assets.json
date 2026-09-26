@@ -165,6 +165,20 @@
       ]
     },
     {
+      "path": "packages/ui/src/brand/icon-16.png",
+      "kind": "favicon",
+      "size": [
+        16,
+        16
+      ],
+      "sha256": "bf66faa3e8e0217922d1f9b4540dd87812c76cf553c3f0ea07a0d6030615a9cc",
+      "derived_from": "packages/ui/brand/originals/synwevo-logo-full.png",
+      "steps": [
+        "crop [241, 238, 578, 567] from the lockup",
+        "mark fitted to 80% of a white rounded 16px tile"
+      ]
+    },
+    {
       "path": "packages/ui/src/brand/icon-32.png",
       "kind": "favicon",
       "size": [

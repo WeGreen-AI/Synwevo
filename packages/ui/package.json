@@ -10,7 +10,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
-    "./i18n-core": "./src/i18n-core.ts"
+    "./i18n-core": "./src/i18n-core.ts",
+    "./vite": "./vite/brand-icons.ts"
   },
   "peerDependencies": {
     "react": ">=19",

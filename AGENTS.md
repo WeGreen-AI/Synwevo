@@ -45,6 +45,7 @@ python scripts/check_boundaries.py    # 跨模块导入、sys.path 改写、机�
 python scripts/check_brand.py         # 旧品牌残留：每一处要么改掉，要么写清为什么保留
 python scripts/check_design.py        # 设计系统：字面颜色只允许出现在共享令牌里，无私有色板、无深色主题残留
 python scripts/check_component_names.py # 自有界面只写能力名（排版引擎、PDF 引擎、本地文字识别…），不写底层组件名；例外表要写理由
+python scripts/brand_assets.py --check # Logo：衍生文件必须由确认原图生成，不手改（见 docs/design.md §2.5）
 ```
 
 **改这两个文件不能替代让检查通过。**
@@ -63,6 +64,7 @@ python scripts/platform.py test integration
 python scripts/check_boundaries.py
 python scripts/check_design.py
 python scripts/check_component_names.py
+python scripts/brand_assets.py --check
 npm run typecheck && npm run build         # 三个前端外壳
 ```
 

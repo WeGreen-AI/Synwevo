@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Brand, LanguageMenu, Menu, useI18n, useMediaQuery } from "@synwevo/ui";
+import { Brand, LanguageMenu, Logo, Menu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { ApiError, get, post, setWorkspaceContext, useSession, type Me } from "@synwevo/auth-client";
 import { PublicHome } from "./PublicHome";
 import "./messages";
@@ -189,6 +189,6 @@ export function Shell({ right, children, publicHome = false }: { right?: ReactNo
     <header className="pt-top"><Brand href="/" size="lg" product={publicHome ? undefined : "Workspace"} label={t("Synwevo 首页")} />
       <nav className="pt-nav" aria-label={t("主导航")}>{right}<NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} /><LanguageMenu /></nav></header>
     <main className="pt-main" id="pt-main" tabIndex={-1}>{children}</main>
-    <footer className="pt-footer"><span>Synwevo</span><a href="/#privacy">{t("数据与隐私")}</a><a href="/#service">{t("服务说明")}</a><span>{t("让工作流程，持续运转。")}</span></footer>
+    <footer className="pt-footer"><Logo version="wordmark" height={14} /><a href="/#privacy">{t("数据与隐私")}</a><a href="/#service">{t("服务说明")}</a><span>{t("让工作流程，持续运转。")}</span></footer>
   </div>;
 }

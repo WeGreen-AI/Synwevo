@@ -1,7 +1,7 @@
 import { serverText, issueText } from "./lib/presentation";
 import "./lib/presentation";
 import { messages } from "./messages";
-import { t as tr, useI18n, I18nProvider, StatusPage, registerMessages, lazyRoute } from "@synwevo/ui";
+import { t as tr, useI18n, I18nProvider, StatusPage, registerMessages, lazyRoute, PageState } from "@synwevo/ui";
 import { StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
@@ -35,7 +35,7 @@ function DocsRoot() {
       <SessionProvider>
         <DialogProvider>
         <BrowserRouter>
-          <Suspense fallback={<div className="empty">{tr("加载中…")}</div>}>
+          <Suspense fallback={<PageState>{tr("加载中…")}</PageState>}>
             <Routes>
               {/* No /login, /account, /invite or password-recovery route here. Those pages
                   belong to the account service and exist exactly once, in its own shell —
@@ -72,7 +72,7 @@ import { errorText, permissions, READ_ONLY_TEXT } from "./lib/perm";
 function RequireEditor({ children }: { children: React.ReactNode }) {
   useI18n();
   const { me, disabled } = useSession();
-  if (!permissions(me, disabled).canWrite) return <div className="empty"><div className="notice info">{tr(READ_ONLY_TEXT)}</div><Link to="/">{tr("返回首页")}</Link></div>;
+  if (!permissions(me, disabled).canWrite) return <PageState><div className="notice info">{tr(READ_ONLY_TEXT)}</div><Link to="/">{tr("返回首页")}</Link></PageState>;
   return children;
 }
 
@@ -91,9 +91,9 @@ function EditorSwitch() {
     get(`/api/templates/${tid}`).then((t) => alive && setKind(t.kind)).catch((e) => alive && setErr(errorText(e)));
     return () => { alive = false; };
   }, [tid]);
-  if (err) return <div className="empty" role="alert"><div className="big">{tr("无法打开模板")}</div><div className="notice err" style={{ maxWidth: 480 }}>{serverText(err)}</div><Link to="/">{tr("返回首页")}</Link></div>;
-  if (!kind) return <div className="empty" role="status">{tr("加载中…")}</div>;
+  if (err) return <PageState role="alert"><div className="big">{tr("无法打开模板")}</div><div className="notice err" style={{ maxWidth: 480 }}>{serverText(err)}</div><Link to="/">{tr("返回首页")}</Link></PageState>;
+  if (!kind) return <PageState>{tr("加载中…")}</PageState>;
   if (kind === "builtin_doc") return <DocEditor key={tid} />;
   if (kind === "builtin_sheet") return <SheetEditor key={tid} />;
-  return <div className="empty"><div>{tr("该模板是上传的文件，不是内置编辑器创建的：请在项目中直接在模板预览上设置字段。")}</div><Link to="/">{tr("返回首页")}</Link></div>;
+  return <PageState><div>{tr("该模板是上传的文件，不是内置编辑器创建的：请在项目中直接在模板预览上设置字段。")}</div><Link to="/">{tr("返回首页")}</Link></PageState>;
 }

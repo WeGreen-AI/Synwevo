@@ -1,6 +1,6 @@
 import { formatNumber } from "@synwevo/ui";
 import { serverText, issueText } from "../lib/presentation";
-import { t as tr, useI18n, LanguageMenu } from "@synwevo/ui";
+import { t as tr, useI18n, LanguageMenu, PageState } from "@synwevo/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { get, post, put } from "@synwevo/auth-client";
@@ -222,11 +222,11 @@ export default function SheetEditor() {
   };
 
   if (loadErr) return (
-    <div className="empty" role="alert">
+    <PageState role="alert">
       <div className="big">{tr("无法打开模板")}</div>
       <div className="notice err" style={{ maxWidth: 480 }}>{serverText(loadErr)}</div>
       <button type="button" className="btn" onClick={() => nav(projectId ? `/p/${projectId}` : "/")}>{tr("返回")}</button>
-    </div>
+    </PageState>
   );
 
   return (

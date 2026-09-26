@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { api, ApiError, post, patch, setWorkspaceContext, getSessionGeneration, advanceSessionGeneration } from "./api";
-import { getLocale, normalizeLocale, setLocale, subscribeLocale, useI18n } from "@synwevo/ui";
+import { getLocale, normalizeLocale, PageState, setLocale, subscribeLocale, useI18n } from "@synwevo/ui";
 import "./session.messages";
 
 /** Who is signed in, for the whole app.
@@ -276,7 +276,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [invalidate]);
 
   return <SessionCtx.Provider value={{ me, state, refresh, signOut, disabled, error }}>
-    {resetting ? <div className="empty" role="status">{t("加载中…")}</div> : children}
+    {resetting ? <PageState>{t("加载中…")}</PageState> : children}
   </SessionCtx.Provider>;
 }
 
@@ -291,7 +291,7 @@ export function SessionError({ error, onRetry }: { error: ApiError; onRetry: () 
   const [busy, setBusy] = useState(false);
   const { t } = useI18n();
   return (
-    <div className="empty" role="alert">
+    <PageState role="alert">
       <div className="big">{t("暂时无法确认你的登录状态")}</div>
       <div style={{ maxWidth: 520 }}>{error.message}</div>
       {error.requestId && <div className="tiny muted">{t("请求编号：")}<span className="mono">{error.requestId}</span></div>}
@@ -299,7 +299,7 @@ export function SessionError({ error, onRetry }: { error: ApiError; onRetry: () 
         onClick={() => { setBusy(true); Promise.resolve(onRetry()).finally(() => setBusy(false)); }}>
         {busy ? t("正在重试…") : t("重试")}
       </button>
-    </div>
+    </PageState>
   );
 }
 
@@ -309,13 +309,13 @@ export function RequireSession({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
   if (disabled) return <>{children}</>;          // deployment without accounts: unchanged behaviour
   if (error) return <SessionError error={error} onRetry={refresh} />;
-  if (me === undefined) return <div className="empty" role="status">{t("加载中…")}</div>;
+  if (me === undefined) return <PageState>{t("加载中…")}</PageState>;
   if (me === null) {
     const back = window.location.pathname + window.location.search;
     // Remember where they were going so signing in returns them to it rather than to the home
     // page — losing the document you were opening is a small thing that feels like a big one.
     window.location.assign(signInUrl(state, back));
-    return <div className="empty">{t("正在前往登录…")}</div>;
+    return <PageState>{t("正在前往登录…")}</PageState>;
   }
   return <>{children}</>;
 }

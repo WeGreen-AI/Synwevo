@@ -54,7 +54,7 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
     }}>{t(busy ? "正在退出…" : "退出登录")}</button>
   );
   return <><header className="topbar wrap acct-topbar">
-    <Brand href={link(state?.portal_url || "/")} product="Account" label={t("返回平台首页")} />
+    <Brand href={link(state?.portal_url || "/")} product="Account" label={t("返回平台首页")} markBelow={720} />
     <nav className="acct-back row gap4" aria-label={t("返回")}>
       {back && <a className="btn ghost sm acct-back-link" href={link(back.url)} title={back.workspace_name ? t("回到「{name}」继续之前的任务", { name: back.workspace_name }) : undefined}>← {backLabel}</a>}
       {overview && <a className="btn ghost sm acct-back-link" href={link("/account")}>{back ? t("账户概览") : `← ${t("账户概览")}`}</a>}

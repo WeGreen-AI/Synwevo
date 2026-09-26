@@ -1,5 +1,19 @@
 # 进度记录（用于接续）
 
+## 2026-09-26 正式 Logo 接入轮（Claude Code，本机）
+
+三张确认 Logo（完整版 / 图形版 / 字标版）接入全部平台自有品牌位。契约在 [design.md](../design.md) §2.5，
+衍生文件由 `scripts/brand_assets.py` 从 `packages/ui/brand/originals/` 生成并由 `--check` 守护（CI 已接入）。
+
+| 项 | 结果 |
+|---|---|
+| 原图识别 | 按像素识别：`1.png` 完整版 1942×809、`2.webp` 字标 2000×667、`3.png` 图形 1254×1254，均为真实透明背景（墨色 alpha 251–254）。独立图形/字标与完整版不一致（IoU 0.83 / 0.78），以完整版为准无损裁出 |
+| 接入位置 | 三个外壳顶栏与状态页（完整版，窄屏按各自断点换图形版或去掉产品名）、登录/注册框架与账户恢复卡片（完整版）、门户页脚/登录框架页脚/首页流程示意卡标题（字标版）、整页载入/跳转/错误状态 `PageState`（图形版）、三个外壳的 favicon 与 apple-touch-icon（图形版）、README 页首 |
+| 刻意不放 | 卡片、对话框、按钮、组织/用户头像、外部身份提供商标记、用户文档/模板/生成产物、纯文本邮件、CSV 报表；外壳只有浅色主题，界面不用白色版本；无 PWA/manifest |
+| 浏览器验证 | Chrome（Playwright）隔离实例 `instance=test`：41 个页面/状态 × 1440/375/320，签入与未签入、强制色、系统深色、路由与会话载入态；0 个问题。首页头、登录、状态页、Docs/账户顶栏手机宽度无溢出、无裁切 |
+| 测试与检查 | 前端 typecheck/build 三外壳通过；UI 19、auth-client 31、Docs 45、账户外壳 19 项通过（新增 `brandLinkName` 3 项）；`check_boundaries` / `check_brand` / `check_design` / `brand_assets.py --check` 通过；集成测试新增各角色 favicon 与 /favicon.ico 断言（含单进程角色）。Python 全量在同一工作区跑了三次（并行会话在同时修改身份服务）：2006/1 skipped/0 failed；2012/1 skipped/1 failed；2012/1 skipped/1 failed。两次各 1 项失败都在并行会话半写的代码上（`external.py` 的 `_notify`、`Organizations.require()` 的签名），与 Logo 无关；对应测试文件在其修正后重跑通过（28 passed、3 passed） |
+| 未做 | 未推送、未部署；PWA/manifest 不存在故无 maskable 图标；邮件为纯文本不放图片；Vite 开发服务器的图标由 `@synwevo/ui/vite` 插件提供（已用 curl 验证） |
+
 最后更新：2026-09-25（导航稳定、弹层与移动端轮，Claude Code）。本轮八条反馈的复现—根因—修复—验证表在
 [issues.md](issues.md)「导航、弹层与移动端轮」；接续点（Google/Microsoft 登记、生产管理员本人绑定 TOTP、真机/真实邮箱/真实样本）
 在 [handoff.md](handoff.md) 顶部；浏览器与测试证据在 [verification.md](verification.md) §16；契约在 [sessions.md](../security/sessions.md) §4.6、§12 与

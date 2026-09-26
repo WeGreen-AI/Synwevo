@@ -59,9 +59,9 @@ ALLOWED: list[tuple[str, str, str]] = [
     ("apps/docs/web/src/views/GridView.tsx", r"return `rgba\(",
      "hexA()：把色板颜色转成带透明度的叠加色，供文档标记使用"),
     # 浏览器外壳元数据
-    ("apps/docs/web/index.html", r"theme-color|fill=", "favicon 与浏览器标签色：品牌蓝 / 白"),
-    ("apps/portal/web/index.html", r"theme-color|fill=", "favicon 与浏览器标签色：品牌蓝 / 白"),
-    ("services/identity/web/index.html", r"theme-color|fill=", "favicon 与浏览器标签色：品牌蓝 / 白"),
+    ("apps/docs/web/index.html", r"theme-color", "浏览器标签栏颜色：白（favicon 是由确认的 Logo 生成的 PNG，不含字面颜色）"),
+    ("apps/portal/web/index.html", r"theme-color", "浏览器标签栏颜色：白（favicon 是由确认的 Logo 生成的 PNG，不含字面颜色）"),
+    ("services/identity/web/index.html", r"theme-color", "浏览器标签栏颜色：白（favicon 是由确认的 Logo 生成的 PNG，不含字面颜色）"),
 ]
 
 #: 任何应用源码里都不该再出现的东西。

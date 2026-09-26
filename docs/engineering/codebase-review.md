@@ -238,7 +238,7 @@ Docs/账户/集成三套件与 v1 契约测试通过。代码地图第 5 节的�
 | `apps/docs/tests/test_snapshot.py` | 158 | `29213d63c2` | 完整 | Docs 测试 B | scripts/snapshot.py create/verify/restore, missing-blob detection, credential-revival warnings, 0600 archive, ../ path refusal |
 | `apps/docs/tests/test_webhooks.py` | 226 | `bd1de60968` | 完整 | Docs 测试 B | Env-configured webhook dispatcher: HMAC signature, no duplicate, 5xx backoff, 4xx no retry, SSRF allowlist, DNS pinning, no ambient proxy |
 | `apps/docs/tests/test_workflow.py` | 82 | `36a2ec86e2` | 完整 | Docs 测试 B | Per-file locator overrides, undo/redo with slot-delete cascade, preview invalidation, stale base_rev 409, template duplicate isolation |
-| `apps/docs/web/index.html` | 13 | `64ee91e38d` | 完整 | 工作台页面 | SPA HTML shell (lang zh-CN, inline SVG favicon, loads /src/main.tsx) |
+| `apps/docs/web/index.html` | 20 | `0cbaf8afde` | 完整 | 工作台页面 | SPA HTML shell (lang zh-Hans, fingerprinted icons from the confirmed Synwevo mark, loads /src/main.tsx) |
 | `apps/docs/web/package.json` | 39 | `bd62c8e785` | 完整 | 工作台页面 | @synwevo/docs-web workspace manifest: React 19, react-router 7, Tiptap 3, Vite 8, TS 7; scripts dev/build/typecheck |
 | `apps/docs/web/src/components/AnyView.tsx` | 62 | `d2e176264a` | 完整 | 工作台组件 | Dispatcher choosing Grid/Doc/Pdf/Slides/Text view from a /view response; loading/pending/error states |
 | `apps/docs/web/src/components/CommandPalette.tsx` | 83 | `c13f8d8097` | 完整 | 工作台组件 | Cmd/Ctrl+K palette listing Workspace commands with filter and arrow/Enter/Esc handling |
@@ -283,7 +283,7 @@ Docs/账户/集成三套件与 v1 契约测试通过。代码地图第 5 节的�
 | `apps/portal/synwevo_portal/__init__.py` | 9 | `e445dec87f` | 完整 | 门户/接入/UI包/组装/脚本 | Portal package docstring/boundary statement |
 | `apps/portal/synwevo_portal/app.py` | 53 | `97e3558d7d` | 完整 | 门户/接入/UI包/组装/脚本 | Standalone portal ASGI factory (gate, portal API, probes, session and RP routers, shell) |
 | `apps/portal/synwevo_portal/routes.py` | 81 | `10527f1d70` | 完整 | 门户/接入/UI包/组装/脚本 | GET /api/portal/home and POST /api/portal/workspace |
-| `apps/portal/web/index.html` | 13 | `0893ca69c5` | 完整 | 门户/接入/UI包/组装/脚本 | Portal shell HTML |
+| `apps/portal/web/index.html` | 22 | `a0dd405339` | 完整 | 门户/接入/UI包/组装/脚本 | Portal shell HTML (fingerprinted icons from the confirmed Synwevo mark) |
 | `apps/portal/web/package.json` | 29 | `ef31186df8` | 完整 | 门户/接入/UI包/组装/脚本 | Portal web workspace manifest |
 | `apps/portal/web/src/Portal.tsx` | 223 | `98c9183845` | 完整 | 门户/接入/UI包/组装/脚本 | Portal home UI: loading, signed-out, error and ready states, workspace chips, app cards |
 | `apps/portal/web/src/main.tsx` | 11 | `ae8db405dd` | 完整 | 门户/接入/UI包/组装/脚本 | Portal React entry |
@@ -355,13 +355,18 @@ Docs/账户/集成三套件与 v1 契约测试通过。代码地图第 5 节的�
 | `packages/core/synwevo_core/sessions.py` | 242 | `dd8d6bd21a` | 完整 | 共享核心 | Server-side sessions (hashed cookie ids, idle/absolute clocks, reauth scope), CSRF double-submit, cookie attributes |
 | `packages/core/synwevo_core/store.py` | 740 | `bd32339baa` | 完整 | 共享核心 | SQLite schema v1-v4 plus unconditional column migrations, legacy workspace seeding, tx/locking, content-addressed blob store |
 | `packages/ui/package.json` | 19 | `c7605fa381` | 完整 | 门户/接入/UI包/组装/脚本 | UI package manifest |
+| `packages/ui/src/brand-name.ts` | 11 | `6a51b581fc` | 完整 | 门户/接入/UI包/组装/脚本 | Accessible name of brand links: contains the visible words, never says the brand twice |
+| `packages/ui/src/brand.tsx` | 134 | `a0b07a1822` | 完整 | 门户/接入/UI包/组装/脚本 | Confirmed Synwevo logo (full / mark / wordmark): Logo, Brand, BrandMark, PageState |
+| `packages/ui/src/brand/assets.ts` | 29 | `1fb8810231` | 完整 | 门户/接入/UI包/组装/脚本 | Generated rendition table imported by brand.tsx (scripts/brand_assets.py) |
 | `packages/ui/src/index.ts` | 8 | `5abca7514b` | 完整 | 门户/接入/UI包/组装/脚本 | Barrel export |
 | `packages/ui/src/styles.css` | 532 | `7229de0467` | 完整 | 门户/接入/UI包/组装/脚本 | Design tokens, dark theme, reduced motion, and most Docs component CSS |
 | `packages/ui/src/theme.ts` | 62 | `5d6fa775b2` | 完整 | 门户/接入/UI包/组装/脚本 | Theme and localStorage remember/recall with legacy docweave.* fallback |
-| `packages/ui/src/ui.tsx` | 135 | `f569b93c1d` | 完整 | 门户/接入/UI包/组装/脚本 | Toast, Modal, confirm/prompt dialog, formatting helpers |
+| `packages/ui/src/ui.tsx` | 525 | `b496616489` | 部分 | 门户/接入/UI包/组装/脚本 | Status page, Toast, Modal, confirm/prompt dialog, formatting helpers (brand moved to brand.tsx) |
 | `packages/ui/src/useFit.ts` | 16 | `6123a36075` | 完整 | 门户/接入/UI包/组装/脚本 | ResizeObserver scale hook |
+| `packages/ui/vite/brand-icons.ts` | 36 | `5293a0fda3` | 完整 | 门户/接入/UI包/组装/脚本 | Vite dev-server middleware serving the logo icons that index.html links |
 | `pyproject.toml` | 6 | `565b167bce` | 完整 | 门户/接入/UI包/组装/脚本 | Root pytest config |
 | `requirements-dev.txt` | 10 | `b30e421078` | 完整 | 门户/接入/UI包/组装/脚本 | Dev/test pins aggregating all modules |
+| `scripts/brand_assets.py` | 359 | `617d2c1eeb` | 完整 | 门户/接入/UI包/组装/脚本 | Derives every logo file from the confirmed originals (lossless crops of the lockup) and checks them |
 | `scripts/check_boundaries.py` | 110 | `e3749b787c` | 完整 | 门户/接入/UI包/组装/脚本 | AST import-boundary, sys.path, abs-path and symlink check (Python only) |
 | `scripts/check_brand.py` | 109 | `2d9c27523b` | 完整 | 门户/接入/UI包/组装/脚本 | Legacy-brand residue classifier |
 | `scripts/platform.py` | 439 | `34b43d6808` | 完整 | 门户/接入/UI包/组装/脚本 | Root CLI: setup/up/down/restart/status/logs/test/deps/backup/verify-restore |
@@ -388,7 +393,7 @@ Docs/账户/集成三套件与 v1 契约测试通过。代码地图第 5 节的�
 | `services/identity/tests/test_oidc_provider.py` | 308 | `6621eb31a1` | 完整 | 账户界面与测试 | OIDC provider core: key persistence and rotation, client registration, codes, PKCE, id_token claims, token storage and revocation, discovery |
 | `services/identity/tests/test_passkeys.py` | 327 | `3162e6239c` | 完整 | 账户界面与测试 | WebAuthn ceremonies driven by a software authenticator labelled as test equipment: register, sign in, replay, origin, RP ID, removal, last f |
 | `services/identity/tests/test_recovery.py` | 260 | `718cedc636` | 完整 | 账户界面与测试 | Forgot/reset password and email verification over HTTP: enumeration resistance, preview not spending the token, single use, session and toke |
-| `services/identity/web/index.html` | 13 | `978769f98a` | 完整 | 账户界面与测试 | Vite HTML entry for the account shell (zh-CN, inline SVG favicon) |
+| `services/identity/web/index.html` | 20 | `6900700f87` | 完整 | 账户界面与测试 | Vite HTML entry for the account shell (zh-Hans, fingerprinted icons from the confirmed Synwevo mark) |
 | `services/identity/web/package.json` | 33 | `b56a572b31` | 完整 | 账户界面与测试 | Account web package manifest: React 19, react-router 7, qrcode, workspace packages @synwevo/auth-client and @synwevo/ui |
 | `services/identity/web/src/Admin.tsx` | 399 | `64617d9b4e` | 完整 | 账户界面与测试 | Platform admin console: overview, legacy-data ClaimCard, Users tab (suspend/restore, revoke sessions), Workspaces tab (read-only), Audit tab |
 | `services/identity/web/src/components/MfaSection.tsx` | 203 | `6094a62bd7` | 完整 | 账户界面与测试 | TOTP enrol/confirm/disable and recovery-code regeneration, with an inline password reauth prompt |

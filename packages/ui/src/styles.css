@@ -81,7 +81,11 @@
 /* System high-contrast / forced colours: keep boundaries and focus visible with system colours. */
 @media (forced-colors: active) {
   .btn, .input, .seg, .card, .notice, .badge, .modal, .menu, .toast { border: 1px solid CanvasText; }
-  .btn.primary, .step.cur .n, .brand .logo, .logo { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+  .btn.primary, .step.cur .n { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+  /* Forced colours leave raster images untouched, so the near-black logo could vanish on a
+     dark Canvas. Paint the same artwork, used as a mask, in the text colour instead. */
+  .logo { forced-color-adjust: none; background: CanvasText; -webkit-mask: var(--logo-mask) center / contain no-repeat; mask: var(--logo-mask) center / contain no-repeat; }
+  .logo-img { opacity: 0; }
   :focus-visible { outline: 2px solid Highlight; }
 }
 * { box-sizing: border-box; }
@@ -195,12 +199,27 @@ table.tbl tr:hover td { background: var(--panel-2); }
 /* Wraps when its controls do not fit — in English the Docs home bar overflowed a 1280 px window
    by 51 px and pushed 新建项目 off-screen; a second line is the honest answer at any width. */
 .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 48px; padding: 4px 12px; background: var(--surface); border-bottom: 1px solid var(--line); flex: none; }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--text); text-decoration: none; white-space: nowrap; }
+/* Brand: the confirmed logo (packages/ui/src/brand.tsx) followed by the product name as text.
+   The logo's size comes from its width/height attributes; nothing here may stretch it. */
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--text); text-decoration: none; white-space: nowrap; border-radius: var(--radius-sm); }
 .brand:hover { text-decoration: none; color: var(--text); }
-.logo, .brand .logo { width: 24px; height: 24px; flex: none; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: var(--on-accent); font-size: 13px; font-weight: 700; font-family: var(--font); line-height: 1; }
-.brand .product { font-weight: 500; color: var(--text-2); }
-.brand.lg .logo { width: 32px; height: 32px; border-radius: 8px; font-size: 17px; }
-.brand.lg { font-size: 17px; gap: 10px; }
+.brand .product { font-size: 15px; font-weight: 500; line-height: 1; color: var(--text-2); padding-top: 1px; }
+.brand.lg { gap: 10px; }
+.brand.lg .product { font-size: 18px; }
+.brand .brand-tagline { font-weight: 400; color: var(--muted); }
+.logo { display: inline-flex; flex: none; line-height: 0; }
+.logo picture { display: contents; }
+.logo-img { display: block; max-width: none; object-fit: contain; }
+@media (max-width: 900px) { .hide-below-900 { display: none; } }
+@media (max-width: 720px) { .hide-below-720 { display: none; } }
+@media (max-width: 480px) { .hide-below-480 { display: none; } }
+@media (max-width: 380px) { .hide-below-380 { display: none; } }
+@media (forced-colors: active) and (max-width: 900px) { .logo-mark-below-900 { -webkit-mask-image: var(--logo-mask-compact); mask-image: var(--logo-mask-compact); } }
+@media (forced-colors: active) and (max-width: 720px) { .logo-mark-below-720 { -webkit-mask-image: var(--logo-mask-compact); mask-image: var(--logo-mask-compact); } }
+@media (forced-colors: active) and (max-width: 480px) { .logo-mark-below-480 { -webkit-mask-image: var(--logo-mask-compact); mask-image: var(--logo-mask-compact); } }
+@media (forced-colors: active) and (max-width: 380px) { .logo-mark-below-380 { -webkit-mask-image: var(--logo-mask-compact); mask-image: var(--logo-mask-compact); } }
+/* A whole page that is only a message (loading, redirecting, a session or route error). */
+.page-state-mark { margin-bottom: 6px; }
 .topbar .sep { width: 1px; height: 22px; background: var(--line); }
 .stepbar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--line); flex: none; overflow-x: auto; }
 .step { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 14px; border: 1px solid transparent; background: transparent; cursor: pointer; color: var(--text-2); white-space: nowrap; }
@@ -598,6 +617,7 @@ table.tbl tbody:focus-visible { outline: 2px solid var(--accent); outline-offset
 @keyframes auth-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .authbrand { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-2); }
 .authcard h1 { margin: 2px 0 0; font-size: 19px; }
+.authcard-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
 .authlede { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .authcard .field { display: flex; flex-direction: column; gap: 5px; }
 .authcard .field > span { font-size: 12px; color: var(--text-2); }

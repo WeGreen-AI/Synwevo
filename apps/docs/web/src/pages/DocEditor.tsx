@@ -1,5 +1,5 @@
 import { serverText, issueText } from "../lib/presentation";
-import { t as tr, useI18n, LanguageMenu } from "@synwevo/ui";
+import { t as tr, useI18n, LanguageMenu, PageState } from "@synwevo/ui";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, Node, mergeAttributes, useEditor, Editor, ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent, type NodeViewProps } from "@tiptap/react";
@@ -309,11 +309,11 @@ export default function DocEditor() {
   const rowAttrs = inTable ? body!.getAttributes("tableRow") : {};
 
   if (loadErr) return (
-    <div className="empty" role="alert">
+    <PageState role="alert">
       <div className="big">{tr("无法打开模板")}</div>
       <div className="notice err" style={{ maxWidth: 480 }}>{serverText(loadErr)}</div>
       <button type="button" className="btn" onClick={() => nav(projectId ? `/p/${projectId}` : "/")}>{tr("返回")}</button>
-    </div>
+    </PageState>
   );
 
   return (

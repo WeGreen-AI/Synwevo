@@ -72,3 +72,31 @@ def test_the_account_pages_exist_once_and_the_workbench_does_not_carry_a_copy(tm
     assert r.status_code == 303 and r.headers["location"].startswith("/auth/start")
     r = rp.get("/account", follow_redirects=False)
     assert r.status_code == 303 and "/account" in r.headers["location"]
+
+
+@pytest.mark.parametrize("role,path,assets", [("all", "/", "/assets/"), ("all", "/login", "/account-assets/"),
+                                              ("app", "/", "/assets/"), ("portal", "/", "/portal-assets/"),
+                                              ("accounts", "/login", "/account-assets/")])
+def test_every_shell_names_its_own_fingerprinted_logo_icons(tmp_path, monkeypatch, role, path, assets):
+    """The tab and home-screen icons come from the confirmed logo, through each shell's own build.
+
+    Each page links icons fingerprinted into its own asset directory — cached for a year and
+    replaced by a new name when the artwork changes — and never an inline placeholder. On the
+    single-process deployment the account pages and the workbench share an origin, and each
+    must still find its own files. `/favicon.ico` answers requests that name no icon (a JSON
+    response opened in a tab) instead of falling through to the page shell.
+    """
+    import re
+    c = _client(tmp_path, monkeypatch, role=role)
+    html = c.get(path).text
+    links = re.findall(r'<link rel="(icon|apple-touch-icon)"[^>]*href="([^"]+)"', html)
+    assert {rel for rel, _ in links} == {"icon", "apple-touch-icon"}, links
+    assert "data:image" not in html
+    for _, href in links:
+        assert href.startswith(assets), (role, href)
+        r = c.get(href)
+        assert r.status_code == 200 and r.headers["content-type"] == "image/png", (href, r.status_code)
+        assert "immutable" in r.headers.get("cache-control", ""), (href, r.headers.get("cache-control"))
+    ico = c.get("/favicon.ico")
+    assert ico.status_code == 200 and ico.headers["content-type"] in ("image/x-icon", "image/vnd.microsoft.icon")
+    assert ico.headers.get("cache-control") == "no-cache"   # same name every release: revalidate

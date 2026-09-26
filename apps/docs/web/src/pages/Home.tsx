@@ -170,8 +170,8 @@ export default function Home() {
             at 375px it wrapped to three lines and pushed the top bar over its own content.
             Every other page already shows just the product name there. */}
         <span className="brand">
-          <BrandMark product="Docs" />
-          <span className="desktop-only">{tr(" · 数据映射与模板批量生成")}</span>
+          <BrandMark product="Docs" markBelow={720} />
+          <span className="desktop-only brand-tagline">{tr(" · 数据映射与模板批量生成")}</span>
         </span>
         <span className="spacer" />
         <PlatformNav />

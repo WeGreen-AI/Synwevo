@@ -6,29 +6,7 @@ if (typeof document !== "undefined") lastPointerTarget();  // install the opener
 import type { KeyLike } from "./a11y";
 import { FOCUSABLE, isImeKey, isTopModal, popModal, pushModal, strayKeyAction, trapIndex, lastPointerTarget } from "./a11y";
 import { ToastTimers } from "./toasttimers";
-
-/* ------------------------------------------------------------ brand */
-/** The one Synwevo wordmark: a blue square with an S and the platform name, optionally followed
- *  by the product (Workspace, Account, Docs). Every shell's top bar and the sign-in frame render
- *  this, so a change to the mark happens once. `BrandMark` is the inner content for callers that
- *  need their own anchor (a router Link); `Brand` wraps it in a plain link. */
-export function BrandMark({ product, hideTextOnMobile = false }: { product?: string; hideTextOnMobile?: boolean }) {
-  return (
-    <>
-      <span className="logo" aria-hidden="true">S</span>
-      <span className={hideTextOnMobile ? "brand-text desktop-only" : "brand-text"}>Synwevo{product ? <> <span className="product">{product}</span></> : null}</span>
-    </>
-  );
-}
-export function Brand({ href = "/", product, size, label, hideTextOnMobile }: {
-  href?: string; product?: string; size?: "lg"; label?: string; hideTextOnMobile?: boolean;
-}) {
-  return (
-    <a className={`brand${size ? ` ${size}` : ""}`} href={href} aria-label={label}>
-      <BrandMark product={product} hideTextOnMobile={hideTextOnMobile} />
-    </a>
-  );
-}
+import { Brand } from "./brand";
 
 /* ------------------------------------------------------------ status pages */
 /** The one shape for "page not found", "signed out" and similar whole-page states: the shell's

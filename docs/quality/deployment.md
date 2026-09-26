@@ -82,11 +82,7 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Pushed next (CI-41 template version restore):** two Docs routes (usage, restore) with policy entries and a dialog in the Docs shell; no schema change.
 
-**Pushed next (CI-40 comments refresh and deep-link notice):** Docs shell only; no backend change.
-
-**Pushed next (CI-39 preflight fix path):** Docs shell only (generate dialog, job page links, workspace `?locate=` deep link, three strings); no backend change.
-
-**Pushed next (CI-38 SDK acceptance person leg):** acceptance scripts and the regenerated coverage manifest only; no product code change.
+**Deployed (CI-38 SDK acceptance person leg, CI-39 preflight fix path, CI-40 comments refresh and deep-link notice, run 36211498761, 2026-09-26 02:45 UTC):** `{"deployed": "synwevo:efd3259ab1fe9bbf7221de79af80ced44abfa834", "backup": "/opt/synwevo/backups/20260926T024442Z"}`; verify and deploy succeeded; no schema change.
 
 **Deployed (CI-37 value-semantics kit and XLSX verifier fix, run 36210142096, 2026-09-26 02:21 UTC):** `{"deployed": "synwevo:d30d9f4869e69aa80a77bb0a783b7f29ef2ebfb5", "backup": "/opt/synwevo/backups/20260926T022042Z"}`; verify and deploy succeeded; no schema change.
 

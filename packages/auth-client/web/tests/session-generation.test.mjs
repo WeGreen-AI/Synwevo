@@ -75,7 +75,8 @@ async function setup({ search = '', blockedStorage = false } = {}) {
     finish(status, body) { this.status = status; this.responseText = JSON.stringify(body); this.onload(); }
   }
   const ui = { getLocale: () => 'en', normalizeLocale: value => value, setLocale: () => {},
-    subscribeLocale: () => () => {}, useI18n: () => ({ t: value => value }) };
+    subscribeLocale: () => () => {}, useI18n: () => ({ t: value => value }),
+    PageState: ({ children, role }) => ({ type: 'PageState', props: { children, role } }) };
   const context = vm.createContext({ window, document, sessionStorage, localStorage: { setItem: () => {} },
     URL, URLSearchParams, DOMException, CustomEvent, AbortController, Error, XMLHttpRequest: XHR,
     setTimeout, clearTimeout, fetch: (path, opts) => new Promise((resolve, reject) => requests.push({ path, opts, resolve, reject })) });

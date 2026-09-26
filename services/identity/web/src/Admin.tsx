@@ -1,7 +1,7 @@
 import { RegistrationTab, MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
 import { useAdminData, useAdminPage } from "./governance/data";
-import { t as tr, useI18n } from "@synwevo/ui";
+import { t as tr, useI18n, PageState } from "@synwevo/ui";
 import "./governance/messages";
 /**
  * Platform administration.
@@ -65,10 +65,10 @@ export default function Admin() {
   // nothing about what exists here. The page mirrors that rather than saying "forbidden".
   if (denied || (me && me.platform_role !== "admin")) {
     return (
-      <div className="empty">
+      <PageState>
         <div className="big">{tr("页面不存在")}</div>
         <a href="/account">{tr("前往账户设置")}</a>
-      </div>
+      </PageState>
     );
   }
 

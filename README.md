@@ -1,6 +1,11 @@
 <div align="center">
 
-# Synwevo
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="packages/ui/brand/derived/synwevo-logo-full-white.png">
+    <img src="packages/ui/brand/derived/synwevo-logo-full.png" alt="Synwevo" width="320">
+  </picture>
+</h1>
 
 **把重复的工作，交给流程。**
 

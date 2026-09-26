@@ -12,7 +12,7 @@
 ## 1. 原则
 
 1. **白与浅中性色构成页面，蓝只用于操作与强调。** 主表面、卡片、输入区是 `#FFFFFF`；页面背景是
-   `#F8FAFC`；品牌蓝 `#2563EB` 只出现在主要操作、链接、选中、焦点、品牌标记和少量提示背景上。
+   `#F8FAFC`；品牌蓝 `#2563EB` 只出现在主要操作、链接、选中、焦点和少量提示背景上；Logo 保持确认原图的墨色，不染品牌蓝（§2.5）。
    不把正文、卡片、标签整体染蓝，不用大面积深色背景。
 2. **一处定义，处处引用。** 颜色、字号、间距、圆角、阴影、动效时长全部是 `:root` 令牌；应用样式表
    只写布局，不定义自己的色板、不写字面颜色。守卫脚本把每一处例外归到有名字的理由里（§7）。
@@ -65,7 +65,7 @@
   （布局折叠）；`--ease` `cubic-bezier(.2,.8,.2,1)`。`prefers-reduced-motion: reduce` 把三者置 0 并
   把所有动画压到 1ms——只在共享样式表里写一次，应用样式表不再各写一份。
 * **强制高对比 / 系统高对比**：`@media (forced-colors: active)` 给控件补系统色边框，焦点用
-  `Highlight`，品牌标记用 `Highlight/HighlightText`。
+  `Highlight`。强制色不会给位图重新着色，所以 Logo 以自身图形为蒙版、用 `CanvasText` 绘制（§2.5）。
 
 ### 2.3 纸面：文档内容不被主题化
 
@@ -82,11 +82,47 @@
 E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 dark/system、模拟系统深色，
 外壳与纸面都不变。
 
+### 2.5 Logo：三种确认版本
+
+| 版本 | 内容 | 用在哪里 |
+|---|---|---|
+| 完整版 `full` | 编织式 S 图形 + Synwevo 字标 | 三个外壳的顶栏、登录/注册框架、状态页顶栏、账户恢复卡片；README 页首 |
+| 图形版 `mark` | 只有 S 图形 | 顶栏在窄屏放不下完整版时（Docs 工作台与任务页 ≤900px、账户顶栏 ≤720px）；整页的载入/跳转/错误状态（`PageState`）；favicon 与主屏图标 |
+| 字标版 `wordmark` | 只有 Synwevo 字样 | 门户页脚、登录框架页脚、公开首页流程示意卡的标题 |
+
+* **来源**：三张确认原图原样保存在 `packages/ui/brand/originals/`。它们彼此并不逐像素一致（独立图形版与
+  完整版中的图形 IoU≈0.83，独立字标与完整版中的字标 IoU≈0.78，字距不同），因此**以完整版为准**：
+  图形版与字标版都从完整版的像素里裁出，不重绘、不重排字、不描摹。
+* **生成**：`python scripts/brand_assets.py` 生成全部衍生文件与 `packages/ui/brand/assets.json`（每个文件的
+  来源哈希、裁切框、尺寸、哈希与处理步骤）；`--check` 在内存里重建并与已提交文件逐像素比较。允许的处理只有：
+  裁去透明留白（保留原图 4px 抗锯齿边）、在预乘 alpha 上等比例 Lanczos 缩放、把图形放进图标底板、把前景改成白色
+  （只改 RGB，alpha 不变）。全部是位图，不提供"内嵌位图的 SVG"。
+* **组件**：只通过 `Logo` / `Brand` / `BrandMark` / `PageState` 使用，页面不直接引用图片路径。尺寸以 CSS 高度给出
+  （顶栏 24px、`lg` 32px、页脚字标 13–14px），宽度随原图比例；`srcSet` 提供 1×–3× 屏幕的清晰度，
+  `width/height` 属性预留空间，`object-fit: contain` 保证不拉伸。
+* **不要**：用字体重新输入 Synwevo 冒充字标；在完整版或字标版旁再写一遍 "Synwevo"（产品名 Docs / Account /
+  Workspace 可以跟在完整版后面）；在列表卡片、对话框、按钮或每个列表项上重复放 Logo（公开首页流程示意卡原本就有一个
+  品牌名称标题，它换成字标版，是一处既有品牌位而不是重复）；用 Logo 替代组织头像、用户头像或
+  外部身份提供商标记；给用户文档、模板、生成产物加平台水印。
+* **窄屏**：先去掉产品名（`lg` 品牌在 ≤380px 默认如此，完整版保持可读），仍放不下时换图形版（`markBelow`），
+  不把完整版缩小到字标无法辨认。
+* **可访问名称**：品牌链接的名称以可见文字开头（例如「Synwevo Account · 返回平台首页」）；链接已有名称时图片
+  `alt=""`，避免重复朗读；`PageState` 里的图形是装饰（`alt=""`），状态文字负责说明。
+* **浏览器图标**：由图形版生成：16/32px PNG 与 180px `apple-touch-icon` 经 Vite 指纹化进各外壳的资源目录（缓存一年，
+  换图即换名）；`favicon.ico`（16/32/48）放在各外壳根目录，供没有声明图标的响应（例如新标签页里的 JSON）。
+  标签页图标带白色圆角底板：浏览器标签栏可能是深色，而 Logo 墨色接近黑色。没有 PWA 与 manifest，因此不提供
+  maskable 图标。
+* **白色版本**：`packages/ui/brand/derived/*-white.png` 只用于深色背景上的平台自有文档（GitHub 深色模式下的 README）；
+  外壳只有浅色主题，界面里不使用。
+* **邮件**：系统邮件是纯文本（§6），不放图片 Logo。
+
 ## 3. 基础组件（`@synwevo/ui`）
 
 | 组件 / 类 | 规则 |
 |---|---|
-| `Brand` / `BrandMark` | 唯一的品牌标记：24px 蓝方块 + `S` + `Synwevo` + 灰色产品名（Workspace / Account / Docs）。三个外壳的顶栏、登录框架、门户首页都用它；`size="lg"` 用于公开首页与登录页 |
+| `Brand` / `BrandMark` | 唯一的品牌位：完整版 Logo（24px；`size="lg"` 32px）+ 灰色产品名（Workspace / Account / Docs）。三个外壳的顶栏、登录框架、门户首页都用它；`markBelow` / `productBelow` 控制窄屏（§2.5） |
+| `Logo` | 三种确认版本之一（`full` / `mark` / `wordmark`），按高度等比显示；页脚与流程示意卡的字标用它 |
+| `PageState` | 整页只有一条消息的状态（载入中、正在前往登录、会话或路由错误）：图形版在上，消息在下 |
 | `.btn` | 30px 高、6px 圆角、`--line-strong` 边界；`primary`（蓝底白字，hover strong，active pressed）、`danger`（红字红边）、`ghost`、`sm`/`xs`/`lg`/`icon`。`<a class="btn">` 与 `<button>` 外观一致 |
 | `.input` `select.input` `textarea.input` | 30px、`--line-strong` 边界，聚焦蓝边 + 淡蓝环；占位符用 `--muted`；复选框/单选 `accent-color: var(--accent)` |
 | `.badge` | 中性 / `ok` / `warn` / `err` / `info`，文字始终随色 |
@@ -166,7 +202,7 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
 | 账户：登录（口令 / 安全密钥 / 邮箱验证码 / 外部提供商 / 两步验证 / 关联要约）、注册、验证邮箱、邀请、找回、账户中心、组织、成员、平台管理、API 控制台 | 使用共享令牌；API 台去掉兜底色值；顶栏与登录框架改用 `Brand` |
 | Docs：项目列表、工作台、任务页、能力矩阵、内置文档/表格编辑器、对话框 | 主题切换退役；内联字面色改为令牌或 `color-mix()`；纸面规则不变 |
 | 邮件 | 纯文本模板（无 HTML 配色），三语言；验证码行在发出后脱敏 |
-| 浏览器外壳 | 三个 `index.html`：`lang="zh-Hans"`、`theme-color #ffffff`、`color-scheme light`、蓝底白图 favicon |
+| 浏览器外壳 | 三个 `index.html`：`lang="zh-Hans"`、`theme-color #ffffff`、`color-scheme light`、由确认 Logo 图形版生成的 favicon 与 apple-touch-icon（§2.5） |
 | 未纳入 | 邮件客户端与系统原生认证弹窗（Passkey 提示）的外观由系统决定，不受本体系控制 |
 
 ## 7. 守卫：`scripts/check_design.py`
@@ -174,7 +210,8 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
 扫描三个外壳与共享包的 `.css/.ts/.tsx/.html`：
 
 * 共享令牌文件之外的字面颜色（`#rgb(a)`、`rgb()/hsl()`）必须落入 `ALLOWED` 中一条有名字的理由
-  （文档内容、标记色板、透明叠加、favicon）；否则退出码非零。
+  （文档内容、标记色板、透明叠加、浏览器标签栏颜色）；否则退出码非零。Logo 是图片文件，不在扫描范围内，
+  由 `scripts/brand_assets.py --check` 保证与确认原图一致。
 * 禁止：`data-theme="dark"`、`prefers-color-scheme: dark`、门户旧色板变量、自选字体族。
 * 应用样式表不得定义 `:root` 令牌，`@media` 之外不得用 `!important` 盖住共享规则。
 * 三个入口必须引入 `@synwevo/ui/styles.css`；令牌文件必须包含 §2.1 的基线值且没有深色块。

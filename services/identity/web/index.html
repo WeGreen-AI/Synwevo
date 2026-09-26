@@ -6,7 +6,12 @@
     <meta name="theme-color" content="#ffffff" />
     <meta name="color-scheme" content="light" />
     <title>Synwevo Account · 账户与安全</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><circle cx='16' cy='13' r='4.2' fill='white'/><path d='M8 25c0-4.4 3.6-7 8-7s8 2.6 8 7z' fill='white'/></svg>" />
+    <!-- Icons from the confirmed Synwevo mark (scripts/brand_assets.py). Vite fingerprints these
+         files, so a new icon is picked up on the next page load; /favicon.ico is for requests
+         that name no icon (a JSON response opened in a tab). -->
+    <link rel="icon" type="image/png" sizes="32x32" href="../../../packages/ui/src/brand/icon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="../../../packages/ui/src/brand/icon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="../../../packages/ui/src/brand/apple-touch-icon.png" />
   </head>
   <body>
     <div id="root"></div>

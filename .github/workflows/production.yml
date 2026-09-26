@@ -33,6 +33,7 @@ jobs:
           python scripts/check_brand.py
           python scripts/check_design.py
           python scripts/check_component_names.py
+          python scripts/brand_assets.py --check
           npm run typecheck
           npm run build
           npm test --workspaces --if-present

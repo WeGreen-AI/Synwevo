@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { post } from '@synwevo/auth-client';
-import { LanguageMenu, useI18n } from '@synwevo/ui';
+import { Brand, LanguageMenu, useI18n } from '@synwevo/ui';
 import { ErrorNotice, errorText, timeText } from './common';
 import { useAccountToken } from './linkToken';
 export default function AccountRecovery() {
@@ -15,7 +15,7 @@ export default function AccountRecovery() {
     post<{ deletion_due_at: number }>('/api/auth/deletion/recovery/preview', { token })
       .then(r => setDue(r.deletion_due_at)).catch(e => setError(errorText(e, t)));
   }, [token, t, done]);
-  return <main className="authpage"><section className="authcard col gap12"><LanguageMenu /><h1>{t('取消账户注销')}</h1>
+  return <main className="authpage"><section className="authcard col gap12"><div className="authcard-top"><Brand href="/login" product="Account" productBelow={380} /><LanguageMenu /></div><h1>{t('取消账户注销')}</h1>
     <ErrorNotice error={error} />
     {done ? <p role="status">{t('注销已取消。请正常登录，之前的会话仍然失效。')}</p> : due ? <>
       <p>{t('你可以在 {date} 前取消注销。此操作不会自动登录。', { date: timeText(due, locale, 'UTC') + ' UTC' })}</p>

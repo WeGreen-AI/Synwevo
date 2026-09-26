@@ -1,4 +1,4 @@
-import { formatNumber, BrandMark } from "@synwevo/ui";
+import { formatNumber, BrandMark, PageState } from "@synwevo/ui";
 import { DownloadLink } from "../components/ApiResource";
 import { serverText, issueText } from "../lib/presentation";
 import { fixTargetOf } from "../components/GenerateDialog";
@@ -117,8 +117,8 @@ function Job() {
     }
   };
 
-  if (err) return <div className="home"><div className="notice err" role="alert">{serverText(err)}</div><Link to={`/p/${pid}`}>{tr("返回项目")}</Link></div>;
-  if (!job) return <div className="empty" role="status">{tr("加载中…")}</div>;
+  if (err) return <PageState role="alert"><div className="notice err">{serverText(err)}</div><Link to={`/p/${pid}`}>{tr("返回项目")}</Link></PageState>;
+  if (!job) return <PageState>{tr("加载中…")}</PageState>;
   const c = job.counts || {};
   const { pct, done, total } = progress(job);
   const [stText, stKind] = jobStatus(job.status);

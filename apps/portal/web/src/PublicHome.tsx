@@ -1,4 +1,4 @@
-import { useI18n } from "@synwevo/ui";
+import { Logo, useI18n } from "@synwevo/ui";
 import { DocumentIcon, Shell, signInUrl as signInBase } from "./Portal";
 
 /** `signedIn` is three-valued: undefined while the session is still being confirmed. The header
@@ -36,7 +36,7 @@ export function PublicHome({ signedIn, registerUrl: registerBase }: { signedIn: 
         <p className="pt-hero-note">{t("一个账户，连接你有权使用的工作空间和应用。")}</p>
       </div>
       <div className="pt-automation-visual" aria-label={t("工作流程示意")}>
-        <div className="pt-automation-header"><span>Synwevo</span><span>{t("工作流程示意")}</span></div>
+        <div className="pt-automation-header"><Logo version="wordmark" height={18} /><span>{t("工作流程示意")}</span></div>
         <ol className="pt-automation-stages">{stages.map(([title, detail, number]) => <li key={number}>
           <span className="pt-automation-number" aria-hidden="true">{number}</span>
           <div><h3>{t(title)}</h3><p>{t(detail)}</p></div>

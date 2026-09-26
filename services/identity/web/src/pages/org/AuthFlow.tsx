@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { ApiError, safeNext, useSession } from "@synwevo/auth-client";
-import { Brand, LanguageMenu, hasMessage, useI18n, type Locale, type Translator } from "@synwevo/ui";
+import { Brand, LanguageMenu, Logo, hasMessage, useI18n, type Locale, type Translator } from "@synwevo/ui";
 import { passwordProblem } from "../../lib/password";
 import "../../auth-flow.messages";
 import "./flow.css";
@@ -122,7 +122,7 @@ export function AuthFrame({ title, description, children, wide = false }: {
         {children}
       </section>
     </div>
-    <footer className="flow-footer">Synwevo <span aria-hidden="true">/</span> {t("为专注的工作留出空间")}</footer>
+    <footer className="flow-footer"><Logo version="wordmark" height={13} /><span aria-hidden="true">/</span> {t("为专注的工作留出空间")}</footer>
   </main>;
 }
 

@@ -1,4 +1,4 @@
-import { formatNumber, LanguageMenu, BrandMark, useMediaQuery } from "@synwevo/ui";
+import { formatNumber, LanguageMenu, BrandMark, PageState, useMediaQuery } from "@synwevo/ui";
 import { DownloadLink } from "../components/ApiResource";
 import { serverText, issueText, diagnosticText } from "../lib/presentation";
 import { t as tr, useI18n } from "@synwevo/ui";
@@ -658,8 +658,8 @@ function Workspace() {
     else if (e.key === "Enter") { e.preventDefault(); setLeftW(0); remember("leftW", 0); setTick((t) => t + 1); }
   };
 
-  if (loadErr) return <div className="home"><div className="notice err">{serverText(loadErr)}</div><Link to="/">{tr("返回项目列表")}</Link></div>;
-  if (!project) return <div className="empty">{tr("加载项目…")}</div>;
+  if (loadErr) return <PageState role="alert"><div className="notice err">{serverText(loadErr)}</div><Link to="/">{tr("返回项目列表")}</Link></PageState>;
+  if (!project) return <PageState>{tr("加载项目…")}</PageState>;
 
   const readySources = sources.filter((s) => s.status === "ready" || s.status === "needs_ocr");
   const steps = [

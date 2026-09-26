@@ -10,9 +10,9 @@
     "excluded": "排除逐字阅读；仍需来源/用途审查"
   },
   "counts": {
-    "indexed": 123,
-    "partial": 127,
-    "full": 309,
+    "indexed": 121,
+    "partial": 141,
+    "full": 306,
     "excluded": 7
   },
   "agent_snapshot_drift": [
@@ -116,11 +116,13 @@
     },
     {
       "path": ".github/workflows/production.yml",
-      "sha256": "244c2e983dd9d0f143ab6214cd7e8d1087d5fd1965126ac7f7a94ac3fc285b1c",
-      "bytes": 4037,
-      "lines": 84,
-      "status": "indexed",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Identified in current inventory; no complete-reading claim"
+      "sha256": "6be28aeee95899fdf2740b3ecbb49b44007949605fcc07c4bd767a646a61ad6e",
+      "bytes": 4127,
+      "lines": 86,
+      "status": "partial",
+      "evidence": "Verify step read; logo check added (2026-09-26 logo integration).",
+      "historical_status": "indexed",
+      "historical_sha256": "244c2e983dd9d0f143ab6214cd7e8d1087d5fd1965126ac7f7a94ac3fc285b1c"
     },
     {
       "path": ".gitignore",
@@ -133,21 +135,25 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "11aa08b0baf15da32343f1b9051c9f525fc6f0a53eb2009cd0649b9d183b1711",
-      "bytes": 5522,
-      "lines": 92,
-      "status": "full",
+      "sha256": "926f7a55034dad6d9b357b34f7629529479640604aa8050f948e67f655494283",
+      "bytes": 6124,
+      "lines": 99,
+      "status": "partial",
       "reader": "main",
-      "evidence": "Current-round complete read/authored file"
+      "evidence": "Verification lists read; logo check added (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "11aa08b0baf15da32343f1b9051c9f525fc6f0a53eb2009cd0649b9d183b1711"
     },
     {
       "path": "CLAUDE.md",
-      "sha256": "30a9181c49a819fe32c3588ef7bb7358f822a99eb5400e530886318a787fef7e",
-      "bytes": 2654,
-      "lines": 43,
-      "status": "full",
+      "sha256": "0051b4627ae3da8151d35948122e9e3522feadac49671f2e252ca63de2942ba7",
+      "bytes": 2970,
+      "lines": 46,
+      "status": "partial",
       "reader": "main",
-      "evidence": "Current-round complete read/authored file"
+      "evidence": "Verification list read; logo check added (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "30a9181c49a819fe32c3588ef7bb7358f822a99eb5400e530886318a787fef7e"
     },
     {
       "path": "NOTICE",
@@ -159,15 +165,24 @@
       "historical_status": "full"
     },
     {
-      "path": "README.md",
-      "sha256": "8ff3e34145147e9d6274284fddbca4bc110628ae8a0b8eaef64d9244d65e9287",
-      "bytes": 6676,
-      "lines": 107,
+      "path": "README.en.md",
+      "sha256": "c712481c14e44c953b6aef9c68fef0c4392944aca37f8a6036ee8462cddfde5d",
+      "bytes": 23345,
+      "lines": 340,
       "status": "full",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: main agent full untruncated read plus reviewed/authored changes in this task",
+      "evidence": "Authored; logo header (2026-09-26 logo integration)."
+    },
+    {
+      "path": "README.md",
+      "sha256": "f8234f80ab88314d2d772b98e9848ed2e9447b782f842b8a2f62221e1023ec13",
+      "bytes": 21410,
+      "lines": 314,
+      "status": "full",
+      "evidence": "Authored; logo header (2026-09-26 logo integration).",
       "historical_git_blob": "f331b370d7",
       "reader": "shell-portal-infra",
-      "historical_status": "full"
+      "historical_status": "full",
+      "historical_sha256": "8ff3e34145147e9d6274284fddbca4bc110628ae8a0b8eaef64d9244d65e9287"
     },
     {
       "path": "apps/docs/AGENTS.md",
@@ -2542,13 +2557,15 @@
     },
     {
       "path": "apps/docs/web/index.html",
-      "sha256": "b656ea28f3b84acd10048469249bb95326825ef735d13e74d47f8fc2f00df39b",
-      "bytes": 560,
-      "lines": 13,
-      "status": "partial",
+      "sha256": "0cbaf8afde4d60e2d0b18b9c361454fa639154b8d88e7be70f0c3b0e6188a201",
+      "bytes": 1002,
+      "lines": 20,
+      "status": "full",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Original calling flow and task-specific implementation/translation deltas reviewed; whole current file not independently re-reviewed at consolidation. Unchanged from the prior reviewed SHA."
+      "evidence": "Read in full (2026-09-26 logo integration); fingerprinted icons from the confirmed mark.",
+      "historical_status": "partial",
+      "historical_sha256": "b656ea28f3b84acd10048469249bb95326825ef735d13e74d47f8fc2f00df39b"
     },
     {
       "path": "apps/docs/web/package.json",
@@ -2910,13 +2927,15 @@
     },
     {
       "path": "apps/docs/web/src/main.tsx",
-      "sha256": "5a4391492ddf63bb13d4b43260b9d5ecd49ccd253a092a1c24e5c19e76b46360",
-      "bytes": 5166,
-      "lines": 94,
-      "status": "full",
+      "sha256": "f1c9c51a673653d50bd6016e1292c55979b4d58b4cc35aa2857f3e98ac00160e",
+      "bytes": 5709,
+      "lines": 99,
+      "status": "partial",
       "reader": "D",
       "coverage_source": "/private/tmp/synwevo-platform-round/portal-governance-review.json",
-      "evidence": "Full source read to check whether authenticated children remount on identity/workspace changes; no edit."
+      "evidence": "Suspense fallback, RequireEditor and EditorSwitch states read; now PageState (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "5a4391492ddf63bb13d4b43260b9d5ecd49ccd253a092a1c24e5c19e76b46360"
     },
     {
       "path": "apps/docs/web/src/messages.server.ts",
@@ -2960,33 +2979,39 @@
     },
     {
       "path": "apps/docs/web/src/pages/DocEditor.tsx",
-      "sha256": "1b26d755be0b2207e49eb79e031b0225cd2faa52e48b4bd266c13a8a94ddbd16",
-      "bytes": 25486,
+      "sha256": "dac204a26fde525e482a1c0dde8faee654a1f3de084998c75ff93805979ccd34",
+      "bytes": 25491,
       "lines": 411,
       "status": "partial",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Original calling flow and task-specific implementation/translation deltas reviewed; whole current file not independently re-reviewed at consolidation. Unchanged from the prior reviewed SHA."
+      "evidence": "Load error state read; now PageState (2026-09-26 logo integration).",
+      "historical_status": "partial",
+      "historical_sha256": "1b26d755be0b2207e49eb79e031b0225cd2faa52e48b4bd266c13a8a94ddbd16"
     },
     {
       "path": "apps/docs/web/src/pages/Home.tsx",
-      "sha256": "696a053a9152c3642d428e87d819d05297ac52da1be5ab173badb1b7e0082189",
-      "bytes": 17292,
+      "sha256": "d6fcecca43d7a7ad9d730159ff4c4fc30fb47d2243f444d14b6ea515629e453b",
+      "bytes": 17347,
       "lines": 286,
       "status": "partial",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Original calling flow and task-specific implementation/translation deltas reviewed; whole current file not independently re-reviewed at consolidation. Browser artifact follow-up changes reviewed in current turn."
+      "evidence": "Top bar brand read; tagline class added (2026-09-26 logo integration).",
+      "historical_status": "partial",
+      "historical_sha256": "696a053a9152c3642d428e87d819d05297ac52da1be5ab173badb1b7e0082189"
     },
     {
       "path": "apps/docs/web/src/pages/JobPage.tsx",
-      "sha256": "29a770d44cdb869e9035f96f9b6157118c3bd432bf493afb1f47f443f6e71571",
-      "bytes": 15434,
+      "sha256": "ce5ec2e1ed97aa07ebcc5305c77bfc986f4fe20e6ce8d9e3c6044e8911c9e1dd",
+      "bytes": 15376,
       "lines": 248,
       "status": "partial",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Original calling flow and task-specific implementation/translation deltas reviewed; whole current file not independently re-reviewed at consolidation. Unchanged from the prior reviewed SHA."
+      "evidence": "Whole-page load error/loading states read; now PageState (2026-09-26 logo integration).",
+      "historical_status": "partial",
+      "historical_sha256": "29a770d44cdb869e9035f96f9b6157118c3bd432bf493afb1f47f443f6e71571"
     },
     {
       "path": "apps/docs/web/src/pages/Regression.tsx",
@@ -3000,23 +3025,27 @@
     },
     {
       "path": "apps/docs/web/src/pages/SheetEditor.tsx",
-      "sha256": "56bdd44c234b8bec4e12309936b737a4cbd47fb686d0a942dfa6ac88e2a79dbd",
-      "bytes": 24975,
+      "sha256": "56add20b335ce5b9e42317c059f073e589a978dcba924fe64526cdf11f040a5c",
+      "bytes": 24980,
       "lines": 345,
       "status": "partial",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Original calling flow and task-specific implementation/translation deltas reviewed; whole current file not independently re-reviewed at consolidation. Unchanged from the prior reviewed SHA."
+      "evidence": "Load error state read; now PageState (2026-09-26 logo integration).",
+      "historical_status": "partial",
+      "historical_sha256": "56bdd44c234b8bec4e12309936b737a4cbd47fb686d0a942dfa6ac88e2a79dbd"
     },
     {
       "path": "apps/docs/web/src/pages/Workspace.tsx",
-      "sha256": "38b1737362ac1edff5710d8d35aa9d4580e7ffbfef587aab26de2086b979e3d5",
-      "bytes": 67885,
-      "lines": 1041,
+      "sha256": "27d23823d3a401ae954f13a667e8256798bccb2efb94a8e6cea29e39f9133067",
+      "bytes": 68574,
+      "lines": 1053,
       "status": "partial",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Original calling flow and task-specific implementation/translation deltas reviewed; whole current file not independently re-reviewed at consolidation. Browser artifact follow-up changes reviewed in current turn."
+      "evidence": "Whole-page load error/loading states read; now PageState (2026-09-26 logo integration).",
+      "historical_status": "partial",
+      "historical_sha256": "38b1737362ac1edff5710d8d35aa9d4580e7ffbfef587aab26de2086b979e3d5"
     },
     {
       "path": "apps/docs/web/src/styles.css",
@@ -3237,15 +3266,16 @@
     },
     {
       "path": "apps/docs/web/vite.config.ts",
-      "sha256": "5b26e2c3c2c1c209ab25be0da4e279f9d20dfbd897fcf8500fe5793ad5416d58",
-      "bytes": 970,
-      "lines": 16,
+      "sha256": "d1f29601120a59fd335553fd1818acd5f41225d985f8e6d65990804aab02e488",
+      "bytes": 1188,
+      "lines": 19,
       "status": "full",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Current-task full reading matches SHA-256",
+      "evidence": "Read in full (2026-09-26 logo integration); publicDir for /favicon.ico, dev icon plugin.",
       "historical_status": "full",
       "reader": "docs-ui",
       "coverage_source": "/private/tmp/synwevo-codex-docs-ui/coverage-final.json",
-      "read_note": "unchanged fully read baseline"
+      "read_note": "unchanged fully read baseline",
+      "historical_sha256": "ff7aaa5952f19eff2b534d3bf674a810c630a8aeb06bcda99b09e706f06f712a"
     },
     {
       "path": "apps/portal/IMPLEMENTATION.md",
@@ -3336,13 +3366,15 @@
     },
     {
       "path": "apps/portal/web/index.html",
-      "sha256": "c2dd0f34c1165973a8ecd6a5348cd3df5d9123e2b4144a067b5625f023bf4f37",
-      "bytes": 888,
-      "lines": 15,
+      "sha256": "a0dd4053396cbe751f22cc4be8ec48d25ced638f11736b1c686d424f0d2a2841",
+      "bytes": 1200,
+      "lines": 22,
       "status": "full",
       "reader": "D",
       "coverage_source": "/private/tmp/synwevo-platform-round/portal-governance-review.json",
-      "evidence": "Full current implementation source read in this follow-up or authored here; no claim that every runtime path has been exercised."
+      "evidence": "Read in full (2026-09-26 logo integration); fingerprinted icons from the confirmed mark.",
+      "historical_status": "full",
+      "historical_sha256": "c2dd0f34c1165973a8ecd6a5348cd3df5d9123e2b4144a067b5625f023bf4f37"
     },
     {
       "path": "apps/portal/web/package.json",
@@ -3356,22 +3388,26 @@
     },
     {
       "path": "apps/portal/web/src/Portal.tsx",
-      "sha256": "48da0d1c72bb7f45a2ee2b1aaacf7098885dcb70287abfbaac2f04cdd8cce6ad",
-      "bytes": 14831,
-      "lines": 165,
-      "status": "full",
+      "sha256": "26e513e648da284411fb20388053ea0bf9178d6fa365a1761a61239e2fcfd20a",
+      "bytes": 17515,
+      "lines": 192,
+      "status": "partial",
       "reader": "D",
       "coverage_source": "/private/tmp/synwevo-platform-round/portal-governance-review.json",
-      "evidence": "Full current implementation source read in this follow-up or authored here; no claim that every runtime path has been exercised."
+      "evidence": "Shell header/footer read; footer name became the wordmark (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "48da0d1c72bb7f45a2ee2b1aaacf7098885dcb70287abfbaac2f04cdd8cce6ad"
     },
     {
       "path": "apps/portal/web/src/PublicHome.tsx",
-      "sha256": "9740cc763658710bafa922240fb045c599e26a58bcc94162c58698008cbfdbbf",
-      "bytes": 5752,
-      "lines": 33,
-      "status": "full",
+      "sha256": "f2b80eca4fe33d75bdf9a9b20342240c17e616709dcc92bd3f0ed41aa11ed609",
+      "bytes": 7421,
+      "lines": 78,
+      "status": "partial",
       "reader": "main",
-      "evidence": "Current-round complete read/authored file"
+      "evidence": "Hero and illustration header read; illustration label became the wordmark (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "9740cc763658710bafa922240fb045c599e26a58bcc94162c58698008cbfdbbf"
     },
     {
       "path": "apps/portal/web/src/main.tsx",
@@ -3431,16 +3467,17 @@
     },
     {
       "path": "apps/portal/web/vite.config.ts",
-      "sha256": "d585742275a39c138917fa61e5546f2e739865855ccb38ff81f50291cbaf279d",
-      "bytes": 606,
-      "lines": 13,
+      "sha256": "4ebbfd36eb0e82873b6cc2775ce46b41defdb073d62ca2a3c43ba0c9dc2fc1b2",
+      "bytes": 824,
+      "lines": 16,
       "status": "full",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Current-task full reading matches SHA-256",
+      "evidence": "Read in full (2026-09-26 logo integration); publicDir for /favicon.ico, dev icon plugin.",
       "historical_git_blob": "020a62f3d6",
       "reader": "account-ui",
       "historical_status": "full",
       "coverage_source": "/private/tmp/synwevo-codex-account-ui/phase2/read-coverage.json",
-      "read_note": "Prior full untruncated UI read (new files: post-write full read); current bytes match prior final manifest. Not edited this continuation."
+      "read_note": "Prior full untruncated UI read (new files: post-write full read); current bytes match prior final manifest. Not edited this continuation.",
+      "historical_sha256": "aa396e519de16ea55b6b9adea19a88a7c2369377ace2b60853342b4c044657bd"
     },
     {
       "path": "conftest.py",
@@ -3590,19 +3627,20 @@
     },
     {
       "path": "docs/design.md",
-      "sha256": "4f57cb4c68a0daafbaf05fea8c875b98b6164052e4af379b3aab08a05e616f91",
-      "bytes": 9533,
-      "lines": 118,
-      "status": "indexed",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Current source inventory; historical review or changed bytes do not count as current full read",
+      "sha256": "705ff34d05cecec891d509342a88464125095f5278058ebeb192c4c89748a67d",
+      "bytes": 22311,
+      "lines": 240,
+      "status": "partial",
+      "evidence": "Principles, brand, favicon, forced-colours and guard passages read; §2.5 Logo added (2026-09-26 logo integration).",
       "historical_git_blob": "3e0b65ad97",
       "reader": "docs-general-quality",
-      "historical_status": "full",
+      "historical_status": "partial",
       "previous_read": {
         "sha256": "4f57cb4c68a0daafbaf05fea8c875b98b6164052e4af379b3aab08a05e616f91",
         "status": "full",
         "evidence": "historical Claude full-read ledger; current Git blob exactly matches recorded prefix"
-      }
+      },
+      "historical_sha256": "2df2279958ac37b7c69a11ac91e6c94368fcf564c04064098a99021ec894fe8a"
     },
     {
       "path": "docs/development/local-platform.md",
@@ -4210,23 +4248,27 @@
     },
     {
       "path": "packages/auth-client/web/src/session.tsx",
-      "sha256": "3f4c712156da858f4543c889e19490f03690e3f90b6a76b22feb99b5e3d1c17d",
-      "bytes": 14823,
-      "lines": 317,
-      "status": "full",
+      "sha256": "47878acf016e0f87dbf8e6f265cbf074676c8de855fd2ce761ad42e7bb7211c4",
+      "bytes": 16911,
+      "lines": 348,
+      "status": "partial",
       "reader": "D",
       "coverage_source": "/private/tmp/synwevo-platform-round/portal-governance-review.json",
-      "evidence": "Fully read and implemented ordered probes, no shared-header fallback mutation, validated account/session/workspace reload boundary, locale cancellation handling, explicit-handoff contract and initial/public-flow compatibility."
+      "evidence": "Session loading/redirect/error states read; now PageState (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "3f4c712156da858f4543c889e19490f03690e3f90b6a76b22feb99b5e3d1c17d"
     },
     {
       "path": "packages/auth-client/web/tests/session-generation.test.mjs",
-      "sha256": "8c222bc5d78295981f3d194b83fc83a3983884f1941c6a1e7cc11930ae558dd4",
-      "bytes": 21893,
-      "lines": 397,
-      "status": "full",
+      "sha256": "7b815133a5f618c7a8c2aa4f4a1de66fc7213f5d3955190a610bd991dd0f1619",
+      "bytes": 21984,
+      "lines": 398,
+      "status": "partial",
       "reader": "D",
       "coverage_source": "/private/tmp/synwevo-platform-round/portal-governance-review.json",
-      "evidence": "Authored and ran31 deterministic tests against compiled actual API/session sources. Explicit scheduling/DOM/hook doubles, not browser or React E2E."
+      "evidence": "Synthetic @synwevo/ui module read; PageState stand-in added (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "8c222bc5d78295981f3d194b83fc83a3983884f1941c6a1e7cc11930ae558dd4"
     },
     {
       "path": "packages/core/pyproject.toml",
@@ -4369,12 +4411,14 @@
     },
     {
       "path": "packages/core/synwevo_core/http.py",
-      "sha256": "8cd84ce09846230e310657d81baa8213b3012e0b77c910c85e30c244b13854c7",
-      "bytes": 60472,
-      "lines": 1081,
+      "sha256": "8755f5735efd03d5ffb7af760fa224cf4a34bd9853791d7529efb9b0ef51a10b",
+      "bytes": 67673,
+      "lines": 1188,
       "status": "partial",
       "reader": "main",
-      "evidence": "Incremental changed sections and relevant call paths; not a whole-file reading claim"
+      "evidence": "shell_response and DEFAULT_CSP comment read; root build files revalidate (2026-09-26 logo integration).",
+      "historical_status": "partial",
+      "historical_sha256": "8cd84ce09846230e310657d81baa8213b3012e0b77c910c85e30c244b13854c7"
     },
     {
       "path": "packages/core/synwevo_core/identity.py",
@@ -4458,14 +4502,24 @@
       "evidence": "Incremental changed sections and relevant call paths; not a whole-file reading claim"
     },
     {
+      "path": "packages/ui/brand/assets.json",
+      "sha256": "4712249ba855638ed788940d450b43553080984473a2486dc7aca628d3378167",
+      "bytes": 10327,
+      "lines": 322,
+      "status": "full",
+      "evidence": "Generated provenance manifest of every logo file (2026-09-26 logo integration); read in full."
+    },
+    {
       "path": "packages/ui/package.json",
-      "sha256": "6429bf81b5e4c881c0d7edb7e439eea6d11c3a45b78fe0dc04587e1073e70c45",
-      "bytes": 652,
-      "lines": 23,
+      "sha256": "c5dd6477c7211fec4acfd0e64af23e4a87b958090edf04ecab86c4e95226a8c6",
+      "bytes": 691,
+      "lines": 24,
       "status": "full",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Current entire file read and reviewed at consolidation for assigned behavior; no claim of independent security audit. Unchanged from the prior reviewed SHA."
+      "evidence": "Read in full (2026-09-26 logo integration); \"./vite\" export added.",
+      "historical_status": "full",
+      "historical_sha256": "6429bf81b5e4c881c0d7edb7e439eea6d11c3a45b78fe0dc04587e1073e70c45"
     },
     {
       "path": "packages/ui/src/a11y.ts",
@@ -4477,6 +4531,30 @@
       "reader": "docs-ui",
       "coverage_source": "/private/tmp/synwevo-codex-docs-ui/coverage-final.json",
       "read_note": "unchanged fully read baseline"
+    },
+    {
+      "path": "packages/ui/src/brand-name.ts",
+      "sha256": "6a51b581fc248da27cada2874d22844d3c1ede91be840a354dd5c271b7d6b35b",
+      "bytes": 725,
+      "lines": 11,
+      "status": "full",
+      "evidence": "Authored (2026-09-26 logo integration): accessible name of brand links (label-in-name, no double brand)."
+    },
+    {
+      "path": "packages/ui/src/brand.tsx",
+      "sha256": "a0b07a182278dca4bfa6eddc9ffb3fd49ef6914b058a31ae62260261dd0f6019",
+      "bytes": 6904,
+      "lines": 134,
+      "status": "full",
+      "evidence": "Authored (2026-09-26 logo integration): Logo/Brand/BrandMark/PageState, responsive swap, forced-colours mask."
+    },
+    {
+      "path": "packages/ui/src/brand/assets.ts",
+      "sha256": "1fb8810231dca87aee04dd2b8ba0b8a15e721ed5b0c4020dc6d8ff6f3fcac474",
+      "bytes": 1541,
+      "lines": 29,
+      "status": "full",
+      "evidence": "Generated by scripts/brand_assets.py (2026-09-26 logo integration); read in full."
     },
     {
       "path": "packages/ui/src/i18n-core.ts",
@@ -4500,13 +4578,15 @@
     },
     {
       "path": "packages/ui/src/index.ts",
-      "sha256": "e0c3fd5954bcac064567a777629aed4b9fe39d62ee63b48dfad0bfaa7044150a",
-      "bytes": 410,
-      "lines": 10,
+      "sha256": "b7c10c8ba1f9bcbda273c0acd6b43492c8fe072eaceecbead23b4b7d363cbfe9",
+      "bytes": 484,
+      "lines": 13,
       "status": "full",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Current entire file read and reviewed at consolidation for assigned behavior; no claim of independent security audit. Unchanged from the prior reviewed SHA."
+      "evidence": "Read in full (2026-09-26 logo integration); exports the brand module.",
+      "historical_status": "full",
+      "historical_sha256": "e0c3fd5954bcac064567a777629aed4b9fe39d62ee63b48dfad0bfaa7044150a"
     },
     {
       "path": "packages/ui/src/messages.ts",
@@ -4520,13 +4600,15 @@
     },
     {
       "path": "packages/ui/src/styles.css",
-      "sha256": "8aea93d4ea5ce2e28c4b4b2cc3ecfb6ec6aed0de5652cdb33fe419e70c901386",
-      "bytes": 44294,
-      "lines": 585,
+      "sha256": "a1e68b7139bc25d6f454db1124d1866f36563eb2b09dbb0d752778cb88cb4673",
+      "bytes": 53368,
+      "lines": 671,
       "status": "partial",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Language control, responsive presentation and editor chrome style changes reviewed; unrelated stylesheet rules not comprehensively audited. Unchanged from the prior reviewed SHA."
+      "evidence": "Brand, logo, forced-colours, responsive-hide, tagline and auth-card rules read and changed (2026-09-26 logo integration).",
+      "historical_status": "partial",
+      "historical_sha256": "0fd2c96e87a49b24048fac714e0cef2bbccc483b7f2e1cb9edbc6767cda7f327"
     },
     {
       "path": "packages/ui/src/theme.ts",
@@ -4554,13 +4636,15 @@
     },
     {
       "path": "packages/ui/src/ui.tsx",
-      "sha256": "b5da9c5d1fbae4d461be4f7c2a24f3e59a4126267d9424bc241e7bf585a364ba",
-      "bytes": 14886,
-      "lines": 317,
+      "sha256": "b496616489a328ffb27a581d50a2b58e069882abfc88c43a8bb01f40152bac39",
+      "bytes": 26003,
+      "lines": 525,
       "status": "partial",
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
-      "evidence": "Original calling flow and task-specific implementation/translation deltas reviewed; whole current file not independently re-reviewed at consolidation. Unchanged from the prior reviewed SHA."
+      "evidence": "Brand moved to brand.tsx; StatusPage and imports read (2026-09-26 logo integration).",
+      "historical_status": "partial",
+      "historical_sha256": "b5da9c5d1fbae4d461be4f7c2a24f3e59a4126267d9424bc241e7bf585a364ba"
     },
     {
       "path": "packages/ui/src/useFit.ts",
@@ -4587,6 +4671,14 @@
       "read_note": "unchanged fully read baseline"
     },
     {
+      "path": "packages/ui/tests/brand-name.test.ts",
+      "sha256": "e535c4714a9903f03e419e06b0a4e6695006107872d05f1a3e6a57d5f4737509",
+      "bytes": 1209,
+      "lines": 21,
+      "status": "full",
+      "evidence": "Authored (2026-09-26 logo integration): unit tests for brandLinkName."
+    },
+    {
       "path": "packages/ui/tests/i18n.test.ts",
       "sha256": "ed5568dde7a1e777e5b8595c10de419cbb228f9abe703f89838c593388ca1a9c",
       "bytes": 3845,
@@ -4595,6 +4687,14 @@
       "reader": "A",
       "coverage_source": "/tmp/synwevo-task-a-review-20260925/review-fullstack-final.json",
       "evidence": "Current entire file read and reviewed at consolidation for assigned behavior; no claim of independent security audit. Unchanged from the prior reviewed SHA."
+    },
+    {
+      "path": "packages/ui/vite/brand-icons.ts",
+      "sha256": "5293a0fda3d991e90650507faabe026b8ccf8e6419c957055e1f876a6d0bc934",
+      "bytes": 1679,
+      "lines": 36,
+      "status": "full",
+      "evidence": "Authored (2026-09-26 logo integration): dev-server middleware serving the logo icons named by index.html."
     },
     {
       "path": "pyproject.toml",
@@ -4626,6 +4726,14 @@
       "read_note": "Full original content plus reviewed complete task diff"
     },
     {
+      "path": "scripts/brand_assets.py",
+      "sha256": "617d2c1eeb2eb82d00d38f033862cc89cfca9be74299e71c51018eb377a79ce8",
+      "bytes": 16825,
+      "lines": 359,
+      "status": "full",
+      "evidence": "Authored (2026-09-26 logo integration): lossless crops from the confirmed lockup, renditions, icons, provenance manifest, --check."
+    },
+    {
       "path": "scripts/check_boundaries.py",
       "sha256": "bbca6b1448c30812bd1141f0d2a7778c01a4957f11f21ae59c926d28770b33ba",
       "bytes": 13679,
@@ -4650,6 +4758,14 @@
       "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Identified in current inventory; no complete-reading claim",
       "historical_status": "full",
       "historical_sha256": "513b787cc8502dc04c7d6c93ea421e5427a89b56f2fa0f9ae8eedaae68be8c72"
+    },
+    {
+      "path": "scripts/check_design.py",
+      "sha256": "750787b9d8a39034cfbd551e3e2338ea8f2e308910881c1bd6980dc9259bfb88",
+      "bytes": 9244,
+      "lines": 161,
+      "status": "partial",
+      "evidence": "ALLOWED favicon entries read and corrected (2026-09-26 logo integration)."
     },
     {
       "path": "scripts/platform.py",
@@ -5171,16 +5287,17 @@
     },
     {
       "path": "services/identity/web/index.html",
-      "sha256": "007257238eb3029081e01af543954d3b6da4ec6d9f415947661e369aa7c4e891",
-      "bytes": 598,
-      "lines": 13,
+      "sha256": "6900700f879212c8bf1ecb33ec688386c5e238023ba83c050dd402f9cf3e9413",
+      "bytes": 1005,
+      "lines": 20,
       "status": "full",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Current-task full reading matches SHA-256",
+      "evidence": "Read in full (2026-09-26 logo integration); fingerprinted icons from the confirmed mark.",
       "historical_git_blob": "978769f98a",
       "reader": "account-ui",
       "historical_status": "full",
       "coverage_source": "/private/tmp/synwevo-codex-account-ui/phase2/read-coverage.json",
-      "read_note": "Prior full untruncated UI read (new files: post-write full read); current bytes match prior final manifest. Not edited this continuation."
+      "read_note": "Prior full untruncated UI read (new files: post-write full read); current bytes match prior final manifest. Not edited this continuation.",
+      "historical_sha256": "007257238eb3029081e01af543954d3b6da4ec6d9f415947661e369aa7c4e891"
     },
     {
       "path": "services/identity/web/package.json",
@@ -5193,13 +5310,15 @@
     },
     {
       "path": "services/identity/web/src/Admin.tsx",
-      "sha256": "1d318120545ecfafcea0aaa4532d14208ce2f06b81c4a360e95a20996e71170d",
-      "bytes": 21797,
-      "lines": 292,
-      "status": "full",
+      "sha256": "4ea26518fb951f4524be7c587943a16e7829e8b831ac63f0e3eb1ed11f25127a",
+      "bytes": 22319,
+      "lines": 296,
+      "status": "partial",
       "reader": "D",
       "coverage_source": "/private/tmp/synwevo-platform-round/portal-governance-review.json",
-      "evidence": "Full current implementation source read in this follow-up or authored here; no claim that every runtime path has been exercised."
+      "evidence": "Denied state read; now PageState (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "1d318120545ecfafcea0aaa4532d14208ce2f06b81c4a360e95a20996e71170d"
     },
     {
       "path": "services/identity/web/src/account.css",
@@ -5298,13 +5417,15 @@
     },
     {
       "path": "services/identity/web/src/components/Topbar.tsx",
-      "sha256": "0238d73363eb8bcc4d9a47c3a0c5f8e5985313c5dad342ee255d431cfa5bf864",
-      "bytes": 2354,
-      "lines": 37,
-      "status": "full",
+      "sha256": "7a738585f8f9e698c62114ad601377af495070d24772ff4daabc136a3cf89156",
+      "bytes": 4958,
+      "lines": 82,
+      "status": "partial",
       "reader": "D",
       "coverage_source": "/private/tmp/synwevo-platform-round/portal-governance-review.json",
-      "evidence": "Full current implementation source read in this follow-up or authored here; no claim that every runtime path has been exercised."
+      "evidence": "Top bar read; brand switches to the mark at 720px (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "0238d73363eb8bcc4d9a47c3a0c5f8e5985313c5dad342ee255d431cfa5bf864"
     },
     {
       "path": "services/identity/web/src/components/selection.ts",
@@ -5481,13 +5602,15 @@
     },
     {
       "path": "services/identity/web/src/main.tsx",
-      "sha256": "afe1402a35aecd8882781db24e17b14a009da8229cbd551cc7c237fd96664272",
-      "bytes": 5814,
-      "lines": 106,
-      "status": "full",
+      "sha256": "65ce79bb178b09c5581868d5220f5478feb23b10a8cecdd5885e6a94b468820a",
+      "bytes": 7414,
+      "lines": 122,
+      "status": "partial",
       "reader": "F",
       "coverage_source": "/private/tmp/synwevo-platform-round/task-f-evidence/coverage.json",
-      "evidence": "Shared parent-owned file. F authorized edits are only AccountCapabilityGate import and /account route wrapping."
+      "evidence": "Route loading and AdminOnly states read; now PageState (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "afe1402a35aecd8882781db24e17b14a009da8229cbd551cc7c237fd96664272"
     },
     {
       "path": "services/identity/web/src/organization.messages.ts",
@@ -5511,13 +5634,15 @@
     },
     {
       "path": "services/identity/web/src/pages/ApiPlatform.tsx",
-      "sha256": "40d0caae444327423767133b8f716801ba05dbeedfff980f81b74d30f8f892ef",
-      "bytes": 5636,
-      "lines": 82,
-      "status": "full",
+      "sha256": "8475a5c7038ced8a446b1acdf57434637294c0641483e0eb0969d9d4ec43c1ce",
+      "bytes": 5911,
+      "lines": 84,
+      "status": "partial",
       "reader": "C",
       "coverage_source": "/private/tmp/synwevo-platform-round/api-platform-evidence/coverage.json",
-      "evidence": "Full owned console and narrow owner page; shared Topbar restored, no duplicate page header."
+      "evidence": "Non-admin fallback read; now PageState as main (2026-09-26 logo integration).",
+      "historical_status": "partial",
+      "historical_sha256": "16c8f90f67469ddce0fd5589bf5c320d23a6684bcfd7c55b180a1c0274c48b1d"
     },
     {
       "path": "services/identity/web/src/pages/Invite.tsx",
@@ -5651,13 +5776,15 @@
     },
     {
       "path": "services/identity/web/src/pages/account/Recovery.tsx",
-      "sha256": "e6ca4734bc4c2a6144ab4e9ace82ef65106514e9a61099b0f0a57f52705499f9",
-      "bytes": 1651,
+      "sha256": "e05570795071e879b6c43fd52c439bc3f90743032c85afbe9043baea25344567",
+      "bytes": 1754,
       "lines": 28,
       "status": "full",
       "reader": "B",
       "coverage_source": "/private/tmp/synwevo-platform-round/account-review.json",
-      "evidence": "Owned implementation/test fully read or authored; current bytes hashed."
+      "evidence": "Read in full (2026-09-26 logo integration); brand row added to the signed-out recovery card.",
+      "historical_status": "full",
+      "historical_sha256": "e6ca4734bc4c2a6144ab4e9ace82ef65106514e9a61099b0f0a57f52705499f9"
     },
     {
       "path": "services/identity/web/src/pages/account/account.css",
@@ -5815,13 +5942,15 @@
     },
     {
       "path": "services/identity/web/src/pages/org/AuthFlow.tsx",
-      "sha256": "f0da8880c2144f0d486e3084a7d6bebe1a445f741666b41a44c9c5f7866b1d13",
-      "bytes": 12743,
-      "lines": 196,
-      "status": "full",
+      "sha256": "b838a967536fb7f204aec4b013832ba3166f07971d145e55b0de36bd4627747d",
+      "bytes": 12876,
+      "lines": 198,
+      "status": "partial",
       "reader": "F",
       "coverage_source": "/private/tmp/synwevo-platform-round/task-f-evidence/coverage.json",
-      "evidence": "Configured-host portalWorkspaceUrl helper carries next=/workspace, workspace_id and locale; existing token/capability helpers preserved."
+      "evidence": "AuthFrame read; footer name became the wordmark (2026-09-26 logo integration).",
+      "historical_status": "full",
+      "historical_sha256": "f0da8880c2144f0d486e3084a7d6bebe1a445f741666b41a44c9c5f7866b1d13"
     },
     {
       "path": "services/identity/web/src/pages/org/OrganizationAction.tsx",
@@ -5931,16 +6060,17 @@
     },
     {
       "path": "services/identity/web/vite.config.ts",
-      "sha256": "e5865218c37f4ccac741338227d27f49b78f4a7fbc3858a643daa506db1a5cea",
-      "bytes": 627,
-      "lines": 13,
+      "sha256": "bd2d0c15593aa5e2c7e913a7c270fe2b0d0ffc1261a710b6f9cd47618ff10324",
+      "bytes": 845,
+      "lines": 16,
       "status": "full",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Current-task full reading matches SHA-256",
+      "evidence": "Read in full (2026-09-26 logo integration); publicDir for /favicon.ico, dev icon plugin.",
       "historical_git_blob": "1846c4d67e",
       "reader": "account-ui",
       "historical_status": "full",
       "coverage_source": "/private/tmp/synwevo-codex-account-ui/phase2/read-coverage.json",
-      "read_note": "Prior full untruncated UI read (new files: post-write full read); current bytes match prior final manifest. Not edited this continuation."
+      "read_note": "Prior full untruncated UI read (new files: post-write full read); current bytes match prior final manifest. Not edited this continuation.",
+      "historical_sha256": "b92ced2c7b6d0d7936b82ecec10fa08a35600eb4aa68b0fc76324f2cee4a1f76"
     },
     {
       "path": "tests/integration/api_platform_browser_acceptance.py",
@@ -6334,13 +6464,15 @@
     },
     {
       "path": "tests/integration/test_shells.py",
-      "sha256": "ae3dd55b5da2548bef6590ef50ec0bb77c8f2f4a7903e8b31707d952fb1e15af",
-      "bytes": 3964,
-      "lines": 74,
+      "sha256": "945789764bce737e3d9be14d0e95514d5215ec446642b7cc14f98a91217de5af",
+      "bytes": 5794,
+      "lines": 102,
       "status": "full",
       "reader": "D",
       "coverage_source": "/private/tmp/synwevo-platform-round/portal-governance-review.json",
-      "evidence": "Full current implementation source read in this follow-up or authored here; no claim that every runtime path has been exercised."
+      "evidence": "Read in full (2026-09-26 logo integration); per-role fingerprinted logo icon test.",
+      "historical_status": "full",
+      "historical_sha256": "5e0a987a1e412342534b805228de9f32917da1c535d3759cf7b519b3108da046"
     },
     {
       "path": "tests/integration/test_sso_chain.py",
