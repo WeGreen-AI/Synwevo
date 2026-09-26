@@ -6019,4 +6019,12 @@ export const messages = {
     "en": "A note for the version this save creates; may be left empty",
     "zh-Hant": "這次儲存的版本說明，可留空"
   },
+  "新增的内容": {
+    "en": "Inserted",
+    "zh-Hant": "新增的內容"
+  },
+  "删除的内容": {
+    "en": "Deleted",
+    "zh-Hant": "刪除的內容"
+  },
 } satisfies Messages;

@@ -221,7 +221,7 @@ class Room:
     async def log_changes(self, conn: Conn) -> None:
         after = block_texts(self.doc)
         before, self.blocks = self.blocks, after
-        rows: list[tuple[str, str, int, str, str]] = []
+        rows: list[tuple[str, str, int, str, str, str | None]] = []
         for part in PARTS:
             a, b = before.get(part, []), after.get(part, [])
             if a == b:
@@ -231,9 +231,13 @@ class Room:
                 if tag == "equal":
                     continue
                 if tag == "delete":
-                    rows.append((part, "delete", i1, a[i1][0], a[i1][1][:EXCERPT]))
+                    rows.append((part, "delete", i1, a[i1][0], a[i1][1][:EXCERPT], None))
+                elif tag == "replace":
+                    # what the block said before the edit travels with the row (bounded like the
+                    # excerpt), so the log can show the insertions and deletions
+                    rows.append((part, "edit", j1, b[j1][0], b[j1][1][:EXCERPT], a[i1][1][:EXCERPT]))
                 else:
-                    rows.append((part, "edit" if tag == "replace" else "insert", j1, b[j1][0], b[j1][1][:EXCERPT]))
+                    rows.append((part, "insert", j1, b[j1][0], b[j1][1][:EXCERPT], None))
         if not rows:
             return
         try:
@@ -404,7 +408,7 @@ class CollabHub:
             if uid and uid not in names:
                 names[uid] = display_name(self.identity.get_user(uid))
             items.append({"id": r["id"], "user": {"id": uid, "name": names.get(uid, "—"), "color": peer_color(uid)} if uid else None, "part": r["part"], "kind": r["kind"],
-                          "block_no": r.get("block_no"), "node_type": r.get("node_type"), "excerpt": r.get("excerpt") or "",
+                          "block_no": r.get("block_no"), "node_type": r.get("node_type"), "excerpt": r.get("excerpt") or "", "before": r.get("before"),
                           "count": r.get("count") or 1, "started_at": r["started_at"], "updated_at": r["updated_at"]})
         room = self.rooms.get(key)
         live = self.store.one("SELECT head, dirty, updated_at FROM collab_docs WHERE room=?", (key,))
@@ -418,19 +422,23 @@ class CollabHub:
             "ON CONFLICT(room) DO UPDATE SET state=excluded.state, head=excluded.head, dirty=excluded.dirty, updated_at=excluded.updated_at",
             (room.key, room.tenant, room.tid, state, room.head, 1 if room.dirty else 0, now()))
 
-    def record_changes(self, room: Room, user_id: str | None, rows: list[tuple[str, str, int, str, str]], *, coalesce: bool = True) -> None:
+    def record_changes(self, room: Room, user_id: str | None, rows: list[tuple], *, coalesce: bool = True) -> None:
         t = now()
         with self.store.tx() as c:
             last = c.execute("SELECT * FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT 1", (room.key,)).fetchone()
-            for part, kind, block_no, node_type, excerpt in rows:
+            for row in rows:
+                part, kind, block_no, node_type, excerpt = row[:5]
+                before = row[5] if len(row) > 5 else None
                 if (coalesce and last and last["user_id"] == user_id and last["part"] == part and last["kind"] == kind == "edit"
                         and last["block_no"] == block_no and t - last["updated_at"] <= COALESCE_S):
+                    # consecutive typing in one block: the row keeps the text from before the first
+                    # keystroke and takes the latest excerpt, so its diff spans the whole run
                     c.execute("UPDATE collab_changes SET excerpt=?, node_type=?, count=count+1, updated_at=? WHERE id=?", (excerpt, node_type, t, last["id"]))
                     last = {**dict(last), "excerpt": excerpt, "updated_at": t}
                     continue
                 cid = new_id("cc")
-                c.execute("INSERT INTO collab_changes (id, room, tenant, user_id, part, kind, block_no, node_type, excerpt, count, started_at, updated_at) "
-                          "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (cid, room.key, room.tenant, user_id, part, kind, block_no, node_type, excerpt, 1, t, t))
+                c.execute("INSERT INTO collab_changes (id, room, tenant, user_id, part, kind, block_no, node_type, excerpt, before, count, started_at, updated_at) "
+                          "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (cid, room.key, room.tenant, user_id, part, kind, block_no, node_type, excerpt, before, 1, t, t))
                 last = {"id": cid, "user_id": user_id, "part": part, "kind": kind, "block_no": block_no, "updated_at": t}
             c.execute("DELETE FROM collab_changes WHERE room=? AND id NOT IN (SELECT id FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT ?)",
                       (room.key, room.key, KEEP_CHANGES))

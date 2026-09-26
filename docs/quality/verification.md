@@ -1476,6 +1476,16 @@ typecheck/build、`npm test --workspaces`（Docs 45 项含字面翻译资源检�
 执行器完成后——目标项目的 `project_activity` 为 0 条，新模板没有 `collab_docs`/`collab_changes` 行，副本只有 v1（来源 head 版本，不是草稿），来源草稿原样保留。
 通过（本地）。
 
+### 16.55 变更记录显示块内的插入与删除；schema v22（CI-53）
+
+决策记录见 `docs/platform/docs-collaboration.md` §8。**pytest**：`apps/docs/tests/test_collab.py` 新增 1 项（连续输入合并为一行，`before`=首次按键前的块文本
+「客户：【客户】」、摘录=「客户：第一次第二次【客户】」、count 2；插入块 `before` 为空）；`test_migration_v3/v4` 不变通过。**前端**：`tests/diff.test.ts` 4 项（Docs 前端 49 项通过）。
+**浏览器**（`ui_e2e_change_diff.py`，隔离实例——重启时完成 v21→v22 迁移——两个真实账户，编辑者 390 px 手机）：**Chromium 4/4、WebKit 4/4**——编辑者在段末追加「 +手机补充」，
+owner 把段首「注段」换成「忘录」；owner 的变更记录里编辑者一行是一个插入串，owner 一行显示「注段」删除并列「忘录」插入、前后文字不变（截图 `chromium-01`）；
+`GET …/collab/changes` 返回 owner 行的 `before`=「备注段 +手机补充」、摘录=「备忘录 +手机补充」；编辑者手机同一记录无横向滚动。
+过程中发现证明脚本用 Home/方向键/退格在 ProseMirror 里删字不可靠（退格未生效），改为显式 DOM 选区后输入；他人光标标签在段落内，文本断言改为跨标签匹配。
+顺带：`hello` 帧的在线名单过滤掉自己的其他设备（CI-52 手机截图里同一人出现第二个芯片）；半开连接的清理依赖 uvicorn 的 WebSocket ping 默认值（`--ws-ping-interval 20`、`--ws-ping-timeout 20`，已核对帮助输出），生产启动命令未覆盖这两项。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

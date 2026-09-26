@@ -115,7 +115,9 @@ export function openRoom(id: string, opts: { origin: string; workspaceId: string
     try { frame = JSON.parse(decoding.readVarString(decoder)); } catch { return; }
     switch (frame.type) {
       case "hello":
-        set({ me: frame.user, readonly: frame.readonly, head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev, peers: frame.peers, refused: false });
+        // My other devices and tabs are not "others": the same person never shows up as a peer of themselves.
+        set({ me: frame.user, readonly: frame.readonly, head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev,
+              peers: (frame.peers || []).filter((p: PeerInfo) => p.id !== frame.user.id), refused: false });
         break;
       case "state":
         set({ head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev });

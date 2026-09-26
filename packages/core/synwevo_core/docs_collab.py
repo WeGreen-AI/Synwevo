@@ -40,3 +40,9 @@ CREATE TABLE IF NOT EXISTS project_activity (
 );
 CREATE INDEX IF NOT EXISTS ix_project_activity_project ON project_activity (project_id, at);
 """
+
+# v22: the text of the block as it was before an edit (bounded), beside the excerpt of what it became,
+# so the change log can show the insertions and deletions rather than only naming the block.
+# Added with ALTER TABLE by the store (guarded by PRAGMA table_info like every other column).
+COLUMNS = [("collab_changes", "before", "TEXT")]
+

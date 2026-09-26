@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -832,10 +832,10 @@ class Store:
         c.executescript(DOCS_TEMPLATES_SCHEMA)
         # v20/v21: live co-editing of built-in document templates (persisted state + change log) and
         # the attributed project activity behind the project page's live updates.
-        from .docs_collab import SCHEMA as DOCS_COLLAB_SCHEMA
+        from .docs_collab import COLUMNS as DOCS_COLLAB_COLUMNS, SCHEMA as DOCS_COLLAB_SCHEMA
         c.executescript(DOCS_COLLAB_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

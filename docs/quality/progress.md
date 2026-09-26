@@ -12,6 +12,7 @@
 | CI-50 可追溯 | 活动记录：成员/对象筛选、「上次查看后 N 条」与分割线、整行跳到对象（文件/映射/评论）；评论增/回复/改/解决/重开/删经项目房间实时到达并进活动记录（只存 id）。pytest +1，Chromium/WebKit 各 5 里程碑（verification.md §16.51）。待推送。 |
 | CI-51 重启不丢 | 优雅关闭写出实时文档、新进程从草稿播种、客户端重连带离线输入汇合；pytest +1，Chromium/WebKit 真实重启各 3 里程碑（verification.md §16.52）。待推送。 |
 | CI-52 命名检查点 | 保存体可选 `note`（≤200 字），两个编辑器的说明输入框，SDK/CLI 同契约，历史显示；pytest +1，Chromium/WebKit 各 4 里程碑（verification.md §16.53）。待推送。 |
+| CI-53 变更差异 | 变更记录每行显示块内的插入与删除（schema v22 加 `before` 列，前端逐码点差异）；pytest +1，前端 4 项，Chromium/WebKit 各 4 里程碑（verification.md §16.55）。待推送。 |
 | 本轮暂停点 | 用户要求本轮完成后暂停（2026-09-26 05:30 UTC）。接续：运维在生产主机同步 nginx 的 Upgrade 配置并 reload（deployment.md）；`SheetEditor` 协同；真实邮箱客户端渲染（需授权收件箱）；本条记录提交在本地、未推送，下一批推送时一并带上。 |
 | CI-46 项目页协同 | 在场与定位、按映射三方合并（冲突才 409）、他人变更即时提示、归属活动记录；6 项 pytest、Chromium/WebKit 两账户各 7 里程碑（verification.md §16.47）。已部署（`e6197c1`，run 36219721565）。 |
 | CI-45 实时协同 | 文档型模板的多人共同编辑：服务端房间（pycrdt）、命名光标、在线名单、逐块归属、草稿持久化、只读与单人回退；12 项 pytest、Chromium/WebKit 两账户证明（verification.md §16.46）。已部署（`c2d78d0`，run 36218166471）；生产 nginx 副本需运维加 Upgrade 头后实时协同才在线上生效，此前编辑器自动退回单人模式。 |

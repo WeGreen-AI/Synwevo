@@ -15,6 +15,7 @@ import { get, post, put, workspaceContext } from "@synwevo/auth-client";
 import { useDialog, useToast } from "@synwevo/ui";
 import { cssColor } from "../lib/css";
 import { errorText } from "../lib/perm";
+import { charDiff } from "../lib/diff";
 import { loadedVersion, saveOverStale, STALE_KEPT, STALE_TITLE, staleText } from "../lib/templatesave";
 import { initialState, openRoom, type Room, type RoomState } from "../lib/collab";
 
@@ -153,6 +154,25 @@ const NODE_LABEL: Record<string, () => string> = {
   paragraph: () => tr("段落"), heading: () => tr("标题"), table: () => tr("表格"), bulletList: () => tr("列表"), orderedList: () => tr("列表"),
   image: () => tr("图片"), repeatBlock: () => tr("重复内容块"), pageBreak: () => tr("分页符"), horizontalRule: () => tr("分隔线"), blockquote: () => tr("引用"),
 };
+/** What the block said before and after, as insertions and deletions the reader can see (9.13 D):
+ *  an edit row carries the block's text from before the run of keystrokes and the excerpt after it;
+ *  an inserted block is all new, a deleted block all gone. <ins>/<del> carry the meaning for a
+ *  screen reader, the colours only underline it. */
+function ChangeExcerpt({ item }: { item: any }) {
+  if (item.kind === "insert") return <span className="excerpt"><ins className="diff-ins" title={tr("新增的内容")}>{item.excerpt}</ins></span>;
+  if (item.kind === "delete") return <span className="excerpt"><del className="diff-del" title={tr("删除的内容")}>{item.excerpt}</del></span>;
+  if (item.kind === "edit" && typeof item.before === "string" && item.before !== item.excerpt) {
+    const runs = charDiff(item.before, item.excerpt);
+    return (
+      <span className="excerpt" data-testid="change-diff">
+        {runs.map((r, i) => r.kind === "equal" ? <span key={i}>{r.text}</span>
+          : r.kind === "ins" ? <ins key={i} className="diff-ins" title={tr("新增的内容")}>{r.text}</ins>
+          : <del key={i} className="diff-del" title={tr("删除的内容")}>{r.text}</del>)}
+      </span>
+    );
+  }
+  return <span className="excerpt">{item.excerpt}</span>;
+}
 function changeText(item: any): string {
   const part = PART_LABEL[item.part]?.() || item.part;
   const node = NODE_LABEL[item.node_type]?.() || tr("内容");
@@ -593,7 +613,7 @@ export default function DocEditor() {
                     <span className={`collab-avatar big ${peerClass(it.user?.color)}`} aria-hidden="true">{initialOf(it.user?.name || "—")}</span>
                     <div>
                       <div className="what"><b>{it.user?.name || tr("系统")}</b> {changeText(it)}{it.count > 1 ? tr("（{v1} 次）", { v1: it.count }) : ""}</div>
-                      {it.excerpt && it.kind !== "restore" && it.kind !== "replace" && <span className="excerpt">{it.excerpt}</span>}
+                      {it.excerpt && it.kind !== "restore" && it.kind !== "replace" && <ChangeExcerpt item={it} />}
                       <div className="when">{ago(it.updated_at)}</div>
                     </div>
                   </li>

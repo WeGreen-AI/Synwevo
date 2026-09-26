@@ -513,3 +513,22 @@ def test_a_process_restart_in_the_middle_of_editing_loses_nothing(world, tmp_pat
     kept = Doc()
     kept.apply_update(bytes(row["state"]))
     assert row["dirty"] == 1 and "重启前（离线补充）" in json.dumps(read_doc(kept), ensure_ascii=False)
+
+
+def test_the_change_log_keeps_what_a_block_said_before_an_edit(world):
+    """9.13 D 「文本展示插入/删除等可理解差异」: an edit row carries the block's text from before the
+    first keystroke of a run and the excerpt after the last one; inserts and deletes carry none."""
+    tid = world["tid"]
+    a = _connect(world, "editor")
+    a.append_text("第一次")
+    time.sleep(0.05)
+    a.append_text("第二次")                                    # coalesced into the same row
+    a.add_paragraph("新段落")
+    time.sleep(0.3)
+    c = world["client_for"](world["owner"])
+    items = c.get(f"/api/templates/{tid}/collab/changes").json()["items"]
+    edit = next(it for it in items if it["kind"] == "edit")
+    ins = next(it for it in items if it["kind"] == "insert")
+    assert edit["before"] == "客户：【客户】" and edit["excerpt"] == "客户：第一次第二次【客户】" and edit["count"] == 2   # the field atom reads as 【name】
+    assert ins["before"] is None and ins["excerpt"] == "新段落"
+    a.close()

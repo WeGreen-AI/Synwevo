@@ -118,3 +118,7 @@
 /* The version note beside the save button: narrow, never wider than what the bar leaves (CI-52). */
 .topbar .version-note { flex: 0 1 180px; min-width: 0; width: auto; }
 @media (max-width: 620px) { .topbar .version-note { flex-basis: 110px; } }
+/* Change log diffs (CI-53): what a block said before and after. The element carries the meaning
+   (<ins>/<del>); the tints only underline it, so a reader who cannot see colour loses nothing. */
+.collab-log .excerpt ins.diff-ins { background: var(--ok-weak); text-decoration: none; border-bottom: 2px solid var(--ok); border-radius: 2px; }
+.collab-log .excerpt del.diff-del { background: var(--err-weak); text-decoration: line-through; border-radius: 2px; }
