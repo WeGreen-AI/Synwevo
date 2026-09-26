@@ -9,9 +9,9 @@
 | CI-47 表格协同 | 表格型模板：在场与跳转、单元格/字段/行列级三方合并（同一对象双方都改才冲突，可选保留）、他人保存即时载入；4 项 pytest、Chromium/WebKit 两账户各 5 里程碑（verification.md §16.48）。已部署（随 CI-48，`cb2090e`）。 |
 | CI-48 发布链路 | CI-47 的生产运行被 45 分钟上限取消的根因（每个测试的应用泄漏后台线程，verify 容器 3 GiB 耗尽）已修复：worker 登记表、lifespan 退出钩子（生产优雅退出同时写出实时文档）、conftest 兜底、CI 容器 `--init`；三套件 2110 通过且结束只剩主线程（verification.md §16.49）。已部署（`cb2090e`，run 36249289199）：CI verify 容器步骤通过、三源 readyz 就绪；CI-47 随之进入生产。 |
 | CI-49 版本操作与实时修改 | 恢复/撤销/重做不再无声丢掉房间里别人未保存的输入：服务端 409 `live_edits` 点名在线者/最后修改者，`discard_live` 才丢弃（浏览器、机器 API、SDK、CLI 同契约）；版本对话框先说明再确认、快捷撤销只拒绝并指路；手机提示栈最多两条。pytest +2，Chromium/WebKit 各 5 里程碑（verification.md §16.50）。已部署（`ba539af`，run 36250980928）。 |
-| CI-50 可追溯 | 活动记录：成员/对象筛选、「上次查看后 N 条」与分割线、整行跳到对象（文件/映射/评论）；评论增/回复/改/解决/重开/删经项目房间实时到达并进活动记录（只存 id）。pytest +1，Chromium/WebKit 各 5 里程碑（verification.md §16.51）。待推送。 |
-| CI-51 重启不丢 | 优雅关闭写出实时文档、新进程从草稿播种、客户端重连带离线输入汇合；pytest +1，Chromium/WebKit 真实重启各 3 里程碑（verification.md §16.52）。待推送。 |
-| CI-52 命名检查点 | 保存体可选 `note`（≤200 字），两个编辑器的说明输入框，SDK/CLI 同契约，历史显示；pytest +1，Chromium/WebKit 各 4 里程碑（verification.md §16.53）。待推送。 |
+| CI-50 可追溯 | 活动记录：成员/对象筛选、「上次查看后 N 条」与分割线、整行跳到对象（文件/映射/评论）；评论增/回复/改/解决/重开/删经项目房间实时到达并进活动记录（只存 id）。pytest +1，Chromium/WebKit 各 5 里程碑（verification.md §16.51）。已部署（`b46a403`，run 36252593410）。 |
+| CI-51 重启不丢 | 优雅关闭写出实时文档、新进程从草稿播种、客户端重连带离线输入汇合；pytest +1，Chromium/WebKit 真实重启各 3 里程碑（verification.md §16.52）。已部署（`b46a403`）。 |
+| CI-52 命名检查点 | 保存体可选 `note`（≤200 字），两个编辑器的说明输入框，SDK/CLI 同契约，历史显示；pytest +1，Chromium/WebKit 各 4 里程碑（verification.md §16.53）。已部署（`b46a403`）。 |
 | CI-53 变更差异 | 变更记录每行显示块内的插入与删除（schema v22 加 `before` 列，前端逐码点差异）；pytest +1，前端 4 项，Chromium/WebKit 各 4 里程碑（verification.md §16.55）。待推送。 |
 | CI-54 版本对话框 | 恢复前可展开看到尚未保存为版本的实时修改（谁、改了哪块、插入/删除），与编辑器变更记录同源渲染（verification.md §16.56）。待推送。 |
 | 本轮暂停点 | 用户要求本轮完成后暂停（2026-09-26 05:30 UTC）。接续：运维在生产主机同步 nginx 的 Upgrade 配置并 reload（deployment.md）；`SheetEditor` 协同；真实邮箱客户端渲染（需授权收件箱）；本条记录提交在本地、未推送，下一批推送时一并带上。 |
