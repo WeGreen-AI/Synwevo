@@ -595,12 +595,16 @@ class Client:
         """Projects bound to this template: those following its head and those pinned to a version."""
         return self._get(f"{API}/templates/{_q(template_id)}/usage")
 
-    def restore_template_version(self, template_id: str, version: int, *, base_head: int | None = None) -> dict:
+    def restore_template_version(self, template_id: str, version: int, *, base_head: int | None = None, discard_live: bool = False) -> dict:
         """Make an earlier version current as a new version (history kept). `base_head` names the
-        head this decision was made on; a moved head is refused with 409 stale_template."""
+        head this decision was made on; a moved head is refused with 409 stale_template. Live edits in
+        the template's editing room that nobody saved as a version yet are refused with 409 live_edits
+        (detail.online / detail.last_by) unless ``discard_live`` says to throw them away."""
         body: dict = {"version": version}
         if base_head is not None:
             body["base_head"] = base_head
+        if discard_live:
+            body["discard_live"] = True
         return self._json("POST", f"{API}/templates/{_q(template_id)}/restore", json=body)
 
     def download_template(self, template_id: str, dest: str | os.PathLike, *, which: str = "original") -> dict:

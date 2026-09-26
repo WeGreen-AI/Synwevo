@@ -367,6 +367,24 @@ class CollabHub:
         actor_name = display_name(self.identity.get_user(actor)) if actor else None
         self.loop.call_soon_threadsafe(room.apply_head_change, head, editor, reason, actor_name, snapshot, actor)
 
+    def live_state(self, tid: str) -> dict:
+        """What a restore, undo or redo would throw away: whether the live document carries edits
+        not yet saved as a version, who is in the room with write access, and who made the last
+        recorded change. Read from the room when it is open, from the persisted draft otherwise."""
+        key = f"template:{tid}"
+        room = self.rooms.get(key)
+        if room is not None:
+            dirty, online = bool(room.dirty and room.writable), [p["name"] for p in room.peers() if not p.get("readonly")]
+        else:
+            live = self.store.one("SELECT dirty FROM collab_docs WHERE room=?", (key,))
+            dirty, online = bool(live and live["dirty"]), []
+        last_by = None
+        if dirty:
+            last = self.store.one("SELECT user_id FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT 1", (key,))
+            if last and last.get("user_id"):
+                last_by = display_name(self.identity.get_user(last["user_id"]))
+        return {"dirty": dirty, "online": online, "last_by": last_by}
+
     def shutdown(self) -> None:
         """Process shutdown: write every live document now. The delayed persist runs on the event
         loop, which is about to stop; a save that waits for it would be lost with the process."""

@@ -59,6 +59,10 @@ class App:
         # Set by the API layer: (pid, kind, detail) after a change to a project's sources, mappings or
         # settings — recorded as attributed activity and pushed to whoever has the project open.
         self.on_project_change = None
+        # Set by the API layer: (tid) -> {dirty, online, last_by} — whether the template's live
+        # editing room holds edits not yet saved as a version, so a restore/undo/redo does not
+        # silently throw other people's work away (9.13: never overwrite unsynced content unasked).
+        self.live_template_state = None
 
     # ================================================================ projects
     def create_project(self, name: str, origin: str | None = None) -> dict:
@@ -886,12 +890,30 @@ class App:
         for p in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
             self.store.bump_project(p["id"])
 
-    def _move_template_head(self, tid: str, base_head: int | None, redo: bool) -> None:
+    def _guard_live_edits(self, tid: str, discard_live: bool, action: str) -> None:
+        """A version operation replaces the live document for everyone in the editing room. When
+        that document carries edits nobody has saved as a version yet, refuse with 409
+        ``live_edits`` naming who is there, unless the caller said ``discard_live`` explicitly."""
+        hook = self.live_template_state
+        if hook is None or discard_live:
+            return
+        try:
+            live = hook(tid)
+        except Exception:                                    # noqa: BLE001 — the room is a cache of the store; not knowing must not wedge versions
+            logging.getLogger("synwevo.docs").exception("live state of %s unavailable before %s", tid, action)
+            return
+        if live.get("dirty"):
+            raise ServiceError(409, "live_edits", "编辑器里有尚未保存为版本的实时修改；这一步会丢弃它们，请确认后再试",
+                               {"action": action, "online": live.get("online") or [], "last_by": live.get("last_by")})
+
+    def _move_template_head(self, tid: str, base_head: int | None, redo: bool, *, discard_live: bool = False) -> None:
         """Undo (to the parent) or redo (to the newest child), decided and applied in one
         transaction. ``base_head`` is the version the client's step was decided on: when the
         template moved on since (another tab, another person), the step would undo *their*
-        edit, so it is refused with 409 ``stale_template``."""
+        edit, so it is refused with 409 ``stale_template``. Live edits not yet saved as a version
+        are refused with 409 ``live_edits`` unless ``discard_live`` (see ``_guard_live_edits``)."""
         self.get_template(tid)
+        self._guard_live_edits(tid, discard_live, "redo" if redo else "undo")
         with self.store.tx() as c:
             head = c.execute("SELECT head FROM templates WHERE id=?", (tid,)).fetchone()["head"]
             if base_head is not None and base_head != head:
@@ -921,13 +943,15 @@ class App:
         items = [{"id": r["id"], "name": r["name"], "pinned_version": r.get("template_version")} for r in rows]
         return {"projects": items, "following": sum(1 for r in items if not r["pinned_version"]), "pinned": sum(1 for r in items if r["pinned_version"])}
 
-    def restore_version(self, tid: str, version_no: int, base_head: int | None = None) -> dict:
+    def restore_version(self, tid: str, version_no: int, base_head: int | None = None, *, discard_live: bool = False) -> dict:
         """Make an earlier version current *as a new version*: its file and fields are copied
         into version head+1 (parent = the current head), so the history keeps every step and
         the undo/redo chain stays linear — the way Google Docs and OneDrive restore. Refused
-        with 409 stale_template when the head moved since the client decided."""
+        with 409 stale_template when the head moved since the client decided, and with 409
+        live_edits when the editing room holds unsaved edits and ``discard_live`` was not given."""
         self.get_template(tid)
         target = self.get_version(tid, version_no)
+        self._guard_live_edits(tid, discard_live, "restore")
         t = now()
         with self.store.tx() as c:
             head = c.execute("SELECT head FROM templates WHERE id=?", (tid,)).fetchone()["head"]
@@ -944,12 +968,12 @@ class App:
         self._template_changed(tid, no, target.get("editor"), "restore")
         return self.template_detail(tid)
 
-    def template_undo(self, tid: str, base_head: int | None = None) -> dict:
-        self._move_template_head(tid, base_head, redo=False)
+    def template_undo(self, tid: str, base_head: int | None = None, *, discard_live: bool = False) -> dict:
+        self._move_template_head(tid, base_head, redo=False, discard_live=discard_live)
         return self.template_detail(tid)
 
-    def template_redo(self, tid: str, base_head: int | None = None) -> dict:
-        self._move_template_head(tid, base_head, redo=True)
+    def template_redo(self, tid: str, base_head: int | None = None, *, discard_live: bool = False) -> dict:
+        self._move_template_head(tid, base_head, redo=True, discard_live=discard_live)
         return self.template_detail(tid)
 
     def duplicate_template(self, tid: str, name: str | None = None) -> dict:

@@ -89,6 +89,8 @@ def parser():
     q = leaf(ts, "restore", "restore_template_version", ("template_id",))
     q.add_argument("version", type=int)
     q.add_argument("--base-head", type=int)
+    q.add_argument("--discard-live", action="store_true", default=None,
+                   help="Also throw away live edits in the editing room that nobody saved as a version (otherwise 409 live_edits)")
     builtin = group(ts, "builtin")
     q = keyed(leaf(builtin, "create", "create_builtin_template"))
     q.add_argument("kind", choices=("builtin_doc", "builtin_sheet"))

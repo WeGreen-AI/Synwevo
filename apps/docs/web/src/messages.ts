@@ -5919,4 +5919,32 @@ export const messages = {
     "en": "Table conflict",
     "zh-Hant": "表格有衝突"
   },
+  "编辑器里有尚未保存为版本的实时修改（在线：{v1}）。恢复会丢弃这些修改。": {
+    "en": "The editor holds live edits not yet saved as a version (online: {v1}). Restoring discards them.",
+    "zh-Hant": "編輯器裡有尚未儲存為版本的即時修改（線上：{v1}）。還原會捨棄這些修改。"
+  },
+  "编辑器里有尚未保存为版本的实时修改（最后由 {v1} 修改）。恢复会丢弃这些修改。": {
+    "en": "The editor holds live edits not yet saved as a version (last changed by {v1}). Restoring discards them.",
+    "zh-Hant": "編輯器裡有尚未儲存為版本的即時修改（最後由 {v1} 修改）。還原會捨棄這些修改。"
+  },
+  "编辑器里有尚未保存为版本的实时修改。恢复会丢弃这些修改。": {
+    "en": "The editor holds live edits not yet saved as a version. Restoring discards them.",
+    "zh-Hant": "編輯器裡有尚未儲存為版本的即時修改。還原會捨棄這些修改。"
+  },
+  "确认恢复并丢弃实时修改": {
+    "en": "Restore and discard live edits",
+    "zh-Hant": "確認還原並捨棄即時修改"
+  },
+  "有人刚刚修改了编辑器内容，这次没有恢复；请看清将丢弃的内容后再确认。": {
+    "en": "Someone just changed the editor's content, so nothing was restored; check what would be discarded, then confirm.",
+    "zh-Hant": "有人剛剛修改了編輯器內容，這次沒有還原；請看清將捨棄的內容後再確認。"
+  },
+  "编辑器里有尚未保存为版本的实时修改（{v1}），这一步没有执行。要放弃这些修改，请在模板版本历史里恢复版本。": {
+    "en": "The editor holds live edits not yet saved as a version ({v1}); this step was not applied. To drop those edits, restore a version from the template history.",
+    "zh-Hant": "編輯器裡有尚未儲存為版本的即時修改（{v1}），這一步沒有執行。要放棄這些修改，請在範本版本歷史裡還原版本。"
+  },
+  "编辑器里有尚未保存为版本的实时修改，这一步没有执行。要放弃这些修改，请在模板版本历史里恢复版本。": {
+    "en": "The editor holds live edits not yet saved as a version; this step was not applied. To drop those edits, restore a version from the template history.",
+    "zh-Hant": "編輯器裡有尚未儲存為版本的即時修改，這一步沒有執行。要放棄這些修改，請在範本版本歷史裡還原版本。"
+  },
 } satisfies Messages;

@@ -97,6 +97,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     api.state.collab = collab
     app_.on_template_change = collab.on_template_change
     app_.on_project_change = collab.on_project_change
+    app_.live_template_state = collab.live_state
 
     def _shutdown() -> None:
         """The end of this process (uvicorn's graceful shutdown, a test client leaving its
@@ -631,17 +632,17 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
             raise ServiceError(400, "bad_value", "version 必须是正整数", {"field": "version"}) from None
         base = body.get("base_head")
         with collab.acting(tid, _actor_id(request)):
-            return app_.restore_version(tid, no, int(base) if base is not None else None)
+            return app_.restore_version(tid, no, int(base) if base is not None else None, discard_live=body.get("discard_live") is True)
 
     @api.post("/api/templates/{tid}/undo")
     def t_undo(request: Request, tid: str, body: dict = Body(default={})):
         with collab.acting(tid, _actor_id(request)):
-            return app_.template_undo(tid, _opt_int(body, "head"))
+            return app_.template_undo(tid, _opt_int(body, "head"), discard_live=body.get("discard_live") is True)
 
     @api.post("/api/templates/{tid}/redo")
     def t_redo(request: Request, tid: str, body: dict = Body(default={})):
         with collab.acting(tid, _actor_id(request)):
-            return app_.template_redo(tid, _opt_int(body, "head"))
+            return app_.template_redo(tid, _opt_int(body, "head"), discard_live=body.get("discard_live") is True)
 
     @api.get("/api/templates/{tid}/download")
     def template_download(tid: str, which: str = "working"):

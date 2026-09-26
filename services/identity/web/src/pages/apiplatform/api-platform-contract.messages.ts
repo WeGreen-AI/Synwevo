@@ -644,9 +644,9 @@ export const contractEntries: [string, string, string][] = [
     "使用此範本的專案：跟隨目前版本的與固定了版本的"
   ],
   [
-    "恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template）",
-    "Restore a version: its content becomes a new current version (history kept; a mismatched base_head is 409 stale_template)",
-    "恢復某個版本：以它的內容新建目前版本（歷史保留；base_head 不符則 409 stale_template）"
+    "恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template；编辑器里有未保存为版本的实时修改则 409 live_edits，除非 discard_live=true）",
+    "Restore a version: its content becomes a new current version (history kept; a mismatched base_head is 409 stale_template; live edits in the editing room not yet saved as a version are 409 live_edits unless discard_live=true)",
+    "恢復某個版本：以它的內容新建目前版本（歷史保留；base_head 不符則 409 stale_template；編輯器裡有未儲存為版本的即時修改則 409 live_edits，除非 discard_live=true）"
   ]
 ];
 registerMessages(Object.fromEntries(contractEntries.map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }])));

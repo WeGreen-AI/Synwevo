@@ -9,6 +9,13 @@ import { errorText } from "../lib/perm";
 import type { TemplateDetail } from "../lib/types";
 
 interface Usage { projects: { id: string; name: string; pinned_version: number | null }[]; following: number; pinned: number }
+/** The editing room's state (GET …/collab/changes): edits not yet saved as a version, and who is there. */
+interface Live { dirty: boolean; online: { id: string; name: string; readonly?: boolean }[]; items: { user?: { name: string } | null }[] }
+
+const liveText = (online: string[], lastBy: string | null | undefined) =>
+  online.length ? tr("编辑器里有尚未保存为版本的实时修改（在线：{v1}）。恢复会丢弃这些修改。", { v1: online.join("、") })
+    : lastBy ? tr("编辑器里有尚未保存为版本的实时修改（最后由 {v1} 修改）。恢复会丢弃这些修改。", { v1: lastBy })
+    : tr("编辑器里有尚未保存为版本的实时修改。恢复会丢弃这些修改。");
 
 export default function TemplateVersionsDialog({ tpl, canWrite, onChanged, onClose }: { tpl: TemplateDetail; canWrite: boolean; onChanged: () => void; onClose: () => void }) {
   useI18n();
@@ -17,16 +24,34 @@ export default function TemplateVersionsDialog({ tpl, canWrite, onChanged, onClo
   const [usageErr, setUsageErr] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  // What the restore would throw away besides moving the head: unsaved live edits in the editing
+  // room. Read when the dialog opens; the server re-checks at the moment of the restore.
+  const [live, setLive] = useState<{ dirty: boolean; online: string[]; lastBy: string | null } | null>(null);
   useEffect(() => { get<Usage>(`/api/templates/${tpl.id}/usage`).then(setUsage).catch((e) => setUsageErr(errorText(e))); }, [tpl.id]);
+  useEffect(() => {
+    if (tpl.kind !== "builtin_doc") { setLive({ dirty: false, online: [], lastBy: null }); return; }
+    get<Live>(`/api/templates/${tpl.id}/collab/changes?limit=1`)
+      .then((l) => setLive({ dirty: !!l.dirty, online: (l.online || []).filter((p) => !p.readonly).map((p) => p.name), lastBy: l.items?.[0]?.user?.name || null }))
+      .catch(() => setLive({ dirty: false, online: [], lastBy: null }));   // unknown here; the server still guards
+  }, [tpl.id, tpl.kind]);
 
   const restore = async (no: number) => {
     setBusy(true);
     try {
-      const d = await post<TemplateDetail>(`/api/templates/${tpl.id}/restore`, { version: no, base_head: tpl.head });
+      // `discard_live` is said only when the dialog has shown what it discards (below, or after a
+      // 409 `live_edits` — someone typed after the dialog opened — which re-asks with the names).
+      const d = await post<TemplateDetail>(`/api/templates/${tpl.id}/restore`, { version: no, base_head: tpl.head, discard_live: !!live?.dirty });
       toast(tr("已把第 {v1} 版的内容恢复为第 {v2} 版（当前）", { v1: no, v2: d.head }), "ok");
       onChanged();
       onClose();
     } catch (e: any) {
+      if (e?.code === "live_edits") {
+        const det = (e.detail || {}) as { online?: string[]; last_by?: string | null };
+        setLive({ dirty: true, online: det.online || [], lastBy: det.last_by || null });
+        toast(tr("有人刚刚修改了编辑器内容，这次没有恢复；请看清将丢弃的内容后再确认。"), "info");
+        setBusy(false);
+        return;                                                // stay on the confirmation, now with the names
+      }
       toast(errorText(e), "err");
       setBusy(false);
       setConfirming(null);
@@ -54,7 +79,7 @@ export default function TemplateVersionsDialog({ tpl, canWrite, onChanged, onClo
                 <td className="nowrap">
                   {canWrite && v.version_no !== tpl.head && (confirming === v.version_no
                     ? <span className="row gap4">
-                        <button type="button" className="btn primary sm" disabled={busy} onClick={() => void restore(v.version_no)}>{tr("确认恢复")}</button>
+                        <button type="button" className={`btn sm ${live?.dirty ? "danger" : "primary"}`} disabled={busy || live === null} onClick={() => void restore(v.version_no)}>{live?.dirty ? tr("确认恢复并丢弃实时修改") : tr("确认恢复")}</button>
                         <button type="button" className="btn sm" disabled={busy} onClick={() => setConfirming(null)}>{tr("取消")}</button>
                       </span>
                     : <button type="button" className="btn sm" disabled={busy} onClick={() => setConfirming(v.version_no)}>{tr("恢复此版本")}</button>)}
@@ -63,6 +88,7 @@ export default function TemplateVersionsDialog({ tpl, canWrite, onChanged, onClo
             ))}
           </tbody>
         </table>
+        {confirming !== null && live?.dirty && <div className="notice warn small" role="alert" data-testid="restore-live-warning">{liveText(live.online, live.lastBy)}</div>}
         {confirming !== null && <p className="small" role="status">{tr("将以第 {v1} 版的内容新建第 {v2} 版并成为当前版本；跟随当前版本的项目会随之变化，固定了版本的项目不变。", { v1: confirming, v2: (tpl.versions?.length ? Math.max(...tpl.versions.map((x: { version_no: number }) => x.version_no)) : tpl.head) + 1 })}</p>}
       </div>
     </Modal>

@@ -754,9 +754,11 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         scope(request, "read")
         return app_.template_usage(tid)
 
-    @r.post("/templates/{tid}/restore", status_code=201, summary="恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template）",
+    @r.post("/templates/{tid}/restore", status_code=201, summary="恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template；"
+                                                                  "编辑器里有未保存为版本的实时修改则 409 live_edits，除非 discard_live=true）",
             openapi_extra=_ox("write", requestBody={"content": {"application/json": {"schema": {
-                "type": "object", "required": ["version"], "properties": {"version": {"type": "integer", "minimum": 1}, "base_head": {"type": "integer", "minimum": 1}}}}}}))
+                "type": "object", "required": ["version"], "properties": {"version": {"type": "integer", "minimum": 1}, "base_head": {"type": "integer", "minimum": 1},
+                                                                          "discard_live": {"type": "boolean", "default": False}}}}}}))
     def restore_template_version(request: Request, tid: str, body: dict = Body(...)):
         scope(request, "write")
         if type(body.get("version")) is not int or body["version"] < 1:
@@ -764,8 +766,11 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         base = body.get("base_head")
         if base is not None and (type(base) is not int or base < 1):
             raise ServiceError(400, "invalid", "base_head 必须是正整数", {"field": "base_head"})
+        discard = body.get("discard_live", False)
+        if type(discard) is not bool:
+            raise ServiceError(400, "invalid", "discard_live 必须是布尔值", {"field": "discard_live"})
         with request.app.state.collab.acting(tid, (_principal(request) or {}).get("user_id")):
-            d = app_.restore_version(tid, body["version"], base)
+            d = app_.restore_version(tid, body["version"], base, discard_live=discard)
         return {"id": d["id"], "name": d["name"], "format": d["format"], "kind": d["kind"], "head": d["head"],
                 "version": d["version"]["no"], "fields": d["version"]["slots"], "versions": d["versions"], "exports": d["exports"], "info": d.get("info")}
 

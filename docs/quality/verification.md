@@ -1433,6 +1433,18 @@ GitHub 运行器有交换分区，所以在那里表现为抖动而不是被杀�
 | 验收 | `tests/integration/test_process_hygiene.py`：离开 `with TestClient` 后 8 类 worker 线程全部退出；未用上下文的应用由 `stop_all` 兜底且幂等。`test_collab.py` 新增：两人在房间里、一人刚输入未保存时运行退出钩子，`collab_docs` 立刻写入含该输入的实时文档（head 1、dirty 1）——重启不丢两次保存之间的修改（9.13 E）。三套件 + 线程统计插件：**2110 passed, 1 skipped，10 分 54 秒，结束时只剩主线程**，全程只有 4 次「+1」（正在退出的线程被数到，下一测试即消失）。**同参数容器复跑**（工作树按接收端方式解包重建镜像，`--init --network none --memory 3g --cpus 2`）：**2109 passed, 2 skipped，10 分 26 秒，rc 0**；`docker stats` 20 次采样峰值 **1.50 GiB、PID 最多 9**（修复前 34 % 处 2.98 GiB/721 PID 被杀），每 72 项耗时 1–54 秒、无异常段。内存从 0.56 GiB 缓慢升到 1.50 GiB（进程内缓存与字体/PDF 引擎，未再随线程增长），记为观察项。四项守卫 + `brand_assets --check` + infra unittest 6 项通过。 |
 | 发布与恢复 | 无 schema 变化，无前端变化；回滚即回到不停止 worker 的旧行为。CI-47 的代码随本批次一起发布（a0c3f18 未部署）。 |
 
+### 16.50 恢复/撤销/重做不再无声丢掉别人未保存的实时修改；手机提示栈限两条（CI-49）
+
+决策记录见 `docs/platform/docs-collaboration.md` §5。**pytest**：`apps/docs/tests/test_collab.py` 新增 2 项（房间 dirty 时三种版本操作均 409
+`live_edits` 且 `detail.online` 点名 Editor/Owner、`GET …/collab/changes` 读到同一状态、`discard_live` 后恢复为 v3 并向双方推送替换与
+`head{reason:restore, by:Owner}`、干净后撤销不需标志；最后一人带未保存修改离开后恢复仍 409 且 `last_by=Editor`）；`test_sheet_collab.py`、
+`test_template_restore.py`、`test_services_templates.py` 不变通过；SDK 20 项通过（`restore_template_version(discard_live=)`、CLI `--discard-live` 出现在帮助里）。
+**浏览器**（`ui_e2e_restore_live.py`，隔离实例，两个真实账户，编辑者 390 px 手机视口）：**Chromium 5/5、WebKit 5/5**——编辑者在手机编辑器输入未保存文字；
+owner 在项目页打开「版本」并点「恢复此版本」(v1)，对话框先显示「编辑器里有尚未保存为版本的实时修改（在线：Editor …）。恢复会丢弃这些修改。」且确认按钮为红色
+「确认恢复并丢弃实时修改」（截图 `chromium-01`）；确认后 v1 成为 v3，编辑者手机内容随之替换并收到「Owner … 已恢复模板版本（现为 v3）」；编辑者再次输入后
+owner 按「撤销模板修改」被拒，提示点名 Editor 并指向版本历史，head 仍为 v3、编辑者文字原样；裸 `POST …/restore` 得 409 `live_edits`。
+typecheck/build、四项守卫、`npm test --workspaces` 通过。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

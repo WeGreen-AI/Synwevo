@@ -442,6 +442,9 @@ button.opt { width: 100%; text-align: left; background: var(--surface); font: in
    a toast would cover it (the WebKit phone run clicked a toast instead of 确认). Toasts stack at
    the top there, under the safe area, full width minus the gutters. */
 @media (max-width: 620px) {
+  /* A burst of notices (someone saved, someone joined, a merge) stacked over the whole top bar on a
+     phone; only the two newest stay visible, the older ones still time out (CI-49). */
+  .toasts > :not(:nth-last-child(-n + 2)) { display: none; }
   .toasts, .toasts.flip { top: calc(8px + env(safe-area-inset-top)); bottom: auto; left: 12px; right: 12px; max-width: none; }
 }
 /* moved out of the way while the focused control would sit underneath it (WCAG 2.4.11) */

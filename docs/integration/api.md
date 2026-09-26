@@ -225,7 +225,7 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 | GET | `/templates/{tid}/content?which=original\|working` | read | 下载原始模板或含字段的工作副本 |
 | DELETE | `/templates/{tid}` | admin | 删除模板 |
 | GET | `/templates/{tid}/usage` | read | 使用此模板的项目：跟随当前版本的与固定了版本的（恢复前的影响说明） |
-| POST | `/templates/{tid}/restore` | write | `{version, base_head?}`：以该版本的内容新建当前版本，历史保留；`base_head` 不符 409 `stale_template` |
+| POST | `/templates/{tid}/restore` | write | `{version, base_head?, discard_live?}`：以该版本的内容新建当前版本，历史保留；`base_head` 不符 409 `stale_template`；编辑器里有尚未保存为版本的实时修改时 409 `live_edits`（`detail.online` 在线编辑者、`detail.last_by` 最后修改者），`discard_live: true` 表示确认丢弃 |
 | GET | `/organization-templates?include_deprecated=` | read | 当前空间所属组织的共享模板（offset/cursor 分页；个人空间 `organization=null`）。**需委托令牌**：组织成员身份属于人，服务账户/API 密钥答 403 `delegated_required` |
 | GET | `/organization-templates/{pid}` | read | 共享模板详情与发布历史（需委托令牌） |
 | POST | `/templates/{tid}/publish` | write | 把本空间模板发布到组织：冻结 head 版本为第 1 次发布；源空间编辑者；支持幂等（需委托令牌） |

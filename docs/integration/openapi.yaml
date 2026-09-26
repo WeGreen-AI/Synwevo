@@ -1935,7 +1935,7 @@ paths:
     post:
       tags:
         - v1
-      summary: 恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template）
+      summary: 恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template；编辑器里有未保存为版本的实时修改则 409 live_edits，除非 discard_live=true）
       operationId: restore_template_version_api_v1_templates__tid__restore_post
       parameters:
         - name: tid
@@ -1962,6 +1962,9 @@ paths:
                 base_head:
                   type: integer
                   minimum: 1
+                discard_live:
+                  type: boolean
+                  default: false
       responses:
         "201":
           description: Successful Response

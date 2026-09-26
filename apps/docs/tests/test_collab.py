@@ -397,3 +397,65 @@ def test_a_process_shutdown_writes_the_live_document_while_people_are_still_in_i
     assert "关机前" in json.dumps(read_doc(written), ensure_ascii=False)
     a.close()
     b.close()
+
+
+# ------------------------------------------------------------------ version operations never discard unsaved live edits unasked
+def test_restore_undo_and_redo_refuse_to_throw_away_unsaved_live_edits_unless_told(world):
+    """9.13 C: restoring a version replaces the live document for everyone in the room. While it
+    carries edits nobody has saved as a version, the operation is refused with 409 ``live_edits``
+    naming who is there; ``discard_live`` is the explicit way through, and the room then follows."""
+    store, tid = world["store"], world["tid"]
+    c = world["client_for"](world["owner"])
+    # a second version to have something to undo / restore
+    r = c.put(f"/api/templates/{tid}/builtin", json={"editor": {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "第二版"}]}]}}, "base_version": 1})
+    assert r.status_code == 200 and r.json()["version"]["no"] == 2
+    a = _connect(world, "editor")
+    b = _connect(world, "owner")
+    assert a.texts() == ["第二版"]
+    a.append_text("（未保存）")
+    assert b.recv(want="update") == "update" and b.texts() == ["第二版（未保存）"]
+    # restore, undo, redo: all refused while the room is dirty; the refusal names the editor
+    for path, body in (("restore", {"version": 1, "base_head": 2}), ("undo", {"head": 2}), ("redo", {"head": 2})):
+        r = c.post(f"/api/templates/{tid}/{path}", json=body)
+        assert r.status_code == 409 and r.json()["error"] == "live_edits", (path, r.text)
+        assert "Editor" in r.json()["detail"]["online"] and "Owner" in r.json()["detail"]["online"]
+        assert r.json()["detail"]["action"] == path
+    assert c.get(f"/api/templates/{tid}").json()["head"] == 2, "nothing moved"
+    assert store.one("SELECT head FROM templates WHERE id=?", (tid,))["head"] == 2
+    # the same live state the dialog reads before asking
+    live = c.get(f"/api/templates/{tid}/collab/changes?limit=1").json()
+    assert live["dirty"] is True and {p["name"] for p in live["online"]} == {"Editor", "Owner"}
+    # told explicitly: the restore happens, becomes v3, and replaces the live document for both
+    r = c.post(f"/api/templates/{tid}/restore", json={"version": 1, "base_head": 2, "discard_live": True})
+    assert r.status_code == 200 and r.json()["head"] == 3, r.text
+    assert a.recv(want="update") == "update" and a.texts() == ["客户："]
+    head = a.recv_meta("head")
+    assert head["reason"] == "restore" and head["head"] == 3 and head["dirty"] is False and head["by"] == "Owner"
+    assert b.recv(want="update") == "update" and b.texts() == ["客户："]
+    # clean again: an undo needs no flag (back to v2 as the head)
+    r = c.post(f"/api/templates/{tid}/undo", json={"head": 3})
+    assert r.status_code == 200 and r.json()["head"] == 2, r.text
+    assert a.recv(want="update") == "update" and a.texts() == ["第二版"]
+    a.close()
+    b.close()
+
+
+def test_a_persisted_draft_with_nobody_in_the_room_still_guards_a_restore(world):
+    """The last person out leaves a dirty draft behind; the guard reads it from the store and
+    names the last editor, so a restore from the project page cannot silently drop it."""
+    tid = world["tid"]
+    c = world["client_for"](world["owner"])
+    r = c.put(f"/api/templates/{tid}/builtin", json={"editor": {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "第二版"}]}]}}, "base_version": 1})
+    assert r.status_code == 200
+    a = _connect(world, "editor")
+    a.append_text("离开前")
+    time.sleep(0.2)                                          # the change log row is written by the room's loop
+    a.close()                                                # persists the dirty draft
+    r = c.post(f"/api/templates/{tid}/restore", json={"version": 1, "base_head": 2})
+    assert r.status_code == 409 and r.json()["error"] == "live_edits", r.text
+    assert r.json()["detail"]["online"] == [] and r.json()["detail"]["last_by"] == "Editor"
+    r = c.post(f"/api/templates/{tid}/restore", json={"version": 1, "base_head": 2, "discard_live": True})
+    assert r.status_code == 200 and r.json()["head"] == 3
+    d = _connect(world, "owner")
+    assert d.texts() == ["客户："] and d.hello["dirty"] is False and d.hello["head"] == 3
+    d.close()

@@ -178,6 +178,9 @@ reads stdin. Only the editor is imported from an envelope: kind/name and expecte
 base version come from the command arguments. Export returns the model, fields and
 version metadata as JSON. Saving requires the current head as `base_version` and
 returns `409 stale_template` on a concurrent edit (CLI exit 3). A save replay with
+Restoring a version while the template's editing room holds live edits nobody saved yet
+returns `409 live_edits` (who is online, who changed it last); pass `discard_live=True` /
+`--discard-live` only when throwing those edits away is intended.
 the same idempotency key/body returns its original result without adding a revision.
 Use a new key for each intentional edit. Omitting `version` exports the current head;
 an explicit positive version exports that historical editor model.

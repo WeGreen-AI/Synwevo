@@ -393,6 +393,12 @@ function Workspace() {
       if (isStale(e)) {
         toast(STALE_RELOADED, "err");
         await reload();
+      } else if (e?.code === "live_edits") {
+        // The editing room holds edits nobody saved as a version yet. A keyboard undo is not the
+        // place to throw them away: say who, and point at the one deliberate path (restore).
+        const who = ((e.detail || {}).online as string[] | undefined) || [];
+        toast(who.length ? tr("编辑器里有尚未保存为版本的实时修改（{v1}），这一步没有执行。要放弃这些修改，请在模板版本历史里恢复版本。", { v1: who.join("、") })
+          : tr("编辑器里有尚未保存为版本的实时修改，这一步没有执行。要放弃这些修改，请在模板版本历史里恢复版本。"), "err");
       } else {
         toast(errorText(e), isPermissionError(e) ? "info" : "err");
       }
