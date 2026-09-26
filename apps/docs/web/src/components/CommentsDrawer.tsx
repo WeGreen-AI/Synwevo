@@ -50,6 +50,15 @@ export default function CommentsDrawer({ pid, me, canWrite, options, highlight, 
     } catch (e) { setError(errorText(e)); }
   };
   useEffect(() => { void load(); }, [pid, showResolved]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // While the drawer is open, other people's comments arrive without reopening it: a quiet
+  // reload every 30 s and whenever the tab becomes visible again. The composer's draft is
+  // separate state, so a reload never touches what is being typed.
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === "visible") void load(); };
+    const timer = window.setInterval(tick, 30_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", tick); };
+  }, [pid, showResolved]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!highlight || !items) return;
     const el = listRef.current?.querySelector(`[data-comment="${highlight}"]`) as HTMLElement | null;

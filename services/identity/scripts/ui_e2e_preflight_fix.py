@@ -164,6 +164,14 @@ def _flow(a, b, pa, pb, engine, accounts, docs, mail_dir, tag, owner, notes, vio
     assert "locate=" not in pa.url, "the deep link parameter is dropped once applied"
     assert "字段「问候」" in anchor_options(pa), "the job page's link selected the field it named"
     notes.append(f"{engine}: the job page's skipped sample linked 定位到字段 into the project, which opened with that field selected and the locate parameter dropped")
+
+    # ---- a deep link to an object that no longer exists says so
+    pa.goto(f"{docs}/p/{pid}?locate=slot:s_nope&lang=zh-Hans")
+    expect(pa.get_by_text(re.compile("链接指向的字段已不存在"))).to_be_visible(timeout=20000)
+    pa.goto(f"{docs}/p/{pid}?locate=mapping:m_nope&lang=zh-Hans")
+    expect(pa.get_by_text(re.compile("链接指向的映射已不存在"))).to_be_visible(timeout=20000)
+    assert "locate=" not in pa.url
+    notes.append(f"{engine}: deep links to a removed field or mapping show 链接指向的…已不存在 instead of silently doing nothing")
     assert not violations, violations
     a.close(); b.close()
     return notes

@@ -5471,4 +5471,8 @@ export const messages = {
     "en": "Go to file",
     "zh-Hant": "定位到檔案"
   },
+  "链接指向的{v1}已不存在": {
+    "en": "The {v1} this link points to no longer exists",
+    "zh-Hant": "連結指向的{v1}已不存在"
+  },
 } satisfies Messages;

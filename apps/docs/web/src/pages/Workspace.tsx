@@ -175,7 +175,11 @@ function Workspace() {
         const target = { kind: m[1] as "slot" | "mapping" | "source", id: m[2] };
         // a field selection is applied after the template has loaded: loading it resets the
         // right-hand selection (the effect on tpl?.id), which would wipe a selection made now
-        if (target.kind === "slot" && p.template) pendingLocate.current = target;
+        const gone = (target.kind === "mapping" && !(p.mappings?.mappings || []).some((mm) => mm.id === target.id))
+          || (target.kind === "source" && !p.sources.some((sf) => sf.id === target.id))
+          || (target.kind === "slot" && !p.template);
+        if (gone) toast(tr("链接指向的{v1}已不存在", { v1: { slot: tr("字段"), mapping: tr("映射"), source: tr("文件") }[target.kind] }), "info");
+        else if (target.kind === "slot") pendingLocate.current = target;
         else locateComment(target);
         q.delete("locate");
         const rest = q.toString();
@@ -254,7 +258,8 @@ function Workspace() {
     if (tpl && pendingLocate.current) {          // a deep link's field, once the template is here
       const target = pendingLocate.current;
       pendingLocate.current = null;
-      locateComment(target);
+      if (tpl.version.slots.some((sl) => sl.id === target.id)) locateComment(target);
+      else toast(tr("链接指向的{v1}已不存在", { v1: tr("字段") }), "info");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tpl?.id]);
