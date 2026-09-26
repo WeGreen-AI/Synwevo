@@ -10,7 +10,7 @@
 | GET `/templates/{tid}/builtin?version=1` | `get_builtin_template` | read；读取指定版本的 editor、fields；省略 version 取当前 head |
 | PUT `/templates/{tid}/builtin` | `save_builtin_template` | write；创建新版本；必须带 base_version；可带 Idempotency-Key |
 
-创建体包含 `kind`、`editor` 和可选 `name`。保存体包含 `editor`、`base_version` 和可选 `name`。
+创建体包含 `kind`、`editor` 和可选 `name`。保存体包含 `editor`、`base_version`、可选 `name` 与可选 `note`（≤200 字，这个版本的说明；留空即「在编辑器中保存」）。
 旧版本不会被覆盖；版本已前进时返回 409 `stale_template`，同键同请求的成功重放仍返回原版本。
 当前对象权限检查也适用于重放、历史版本及模型读取；跨空间和已删除模板返回 404。
 请求体按 `SYNWEVO_DOCS_MAX_EDITOR_BODY_BYTES` 限制，包括没有 Content-Length 的分块请求。

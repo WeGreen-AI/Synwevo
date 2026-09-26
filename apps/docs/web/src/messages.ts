@@ -6011,4 +6011,12 @@ export const messages = {
     "en": "Jump to what {v1} changed",
     "zh-Hant": "跳到 {v1} 改的物件"
   },
+  "版本说明（可选）": {
+    "en": "Version note (optional)",
+    "zh-Hant": "版本說明（選填）"
+  },
+  "这次保存的版本说明，可留空": {
+    "en": "A note for the version this save creates; may be left empty",
+    "zh-Hant": "這次儲存的版本說明，可留空"
+  },
 } satisfies Messages;

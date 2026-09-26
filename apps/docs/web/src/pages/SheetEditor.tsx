@@ -49,6 +49,7 @@ export default function SheetEditor() {
   const [editing, setEditing] = useState<{ r: number; c: number; v: string } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");                     // names the version this save creates (a checkpoint in the history)
   const [hist, setHist] = useState<SheetData[][]>([]);
   // ---- the template's room: who else has it open and where they are; their saves as they happen
   const roomRef = useRef<Room | null>(null);
@@ -228,7 +229,7 @@ export default function SheetEditor() {
       // only a cell, a field or a sheet's layout both sides changed comes back as a conflict.
       const send = async (base: number | null) => {
         try {
-          return await put(`/api/templates/${tid}/builtin`, { editor, name, ...(base ? { base_version: base } : {}) });
+          return await put(`/api/templates/${tid}/builtin`, { editor, name, ...(note.trim() ? { note: note.trim() } : {}), ...(base ? { base_version: base } : {}) });
         } catch (e: any) {
           const conflicts: any[] | undefined = e?.code === "stale_template" ? e.detail?.conflicts : undefined;
           if (!conflicts?.length) throw e;
@@ -237,7 +238,7 @@ export default function SheetEditor() {
           const mine = await confirm(tr("表格有冲突"), tr("其他成员在你之后也保存了这个模板。没有冲突的单元格已可合并；下面这些双方都动过，请选择保留哪一方：{v1}", { v1: list }), tr("以我的为准"), true);
           if (!mine) return null;
           const force = conflicts.map((c) => (c.kind === "cell" ? `cell:${c.sheet}!${c.ref}` : c.kind === "field" ? `field:${c.id}` : c.kind === "layout" ? `layout:${c.sheet}` : `sheet:${c.sheet}`));
-          return await put(`/api/templates/${tid}/builtin`, { editor, name, ...(base ? { base_version: base } : {}), force_ids: force });
+          return await put(`/api/templates/${tid}/builtin`, { editor, name, ...(note.trim() ? { note: note.trim() } : {}), ...(base ? { base_version: base } : {}), force_ids: force });
         }
       };
       const t = tid
@@ -246,6 +247,7 @@ export default function SheetEditor() {
       if (!t) { toast(tr("没有保存：已改为对方的版本，你的修改仍在编辑器中"), "info"); await loadTemplate(true); return; }
       baseVersion.current = loadedVersion(t);
       setDirty(false);
+      setNote("");
       if (t.unchanged) toast(tr("内容与已保存的第 {v1} 版相同，无需新版本", { v1: t.version.no }), "info");
       else toast(t.merged_with ? tr("已保存并与第 {v1} 版合并（{v2} 个字段，v{v3}）", { v1: t.merged_with, v2: t.version.slots.length, v3: t.version.no }) : tr("已保存（{v1} 个字段，v{v2}）", { v1: t.version.slots.length, v2: t.version.no }), "ok");
       if (!tid) nav(`/templates/${t.id}/edit${projectId ? `?project=${projectId}` : ""}`, { replace: true });
@@ -310,6 +312,7 @@ export default function SheetEditor() {
         {!loaded ? <span className="badge info" role="status">{tr("加载中…")}</span> : dirty ? <span className="badge warn" role="status">{tr("未保存")}</span> : <span className="badge ok" role="status">{tr("已保存")}</span>}
         <span className="spacer" />
         {tid && <PresenceBar room={room} labelFor={focusLabel} onLocate={locateFocus} testId="sheet-presence" />}
+        {tid && <input className="input sm version-note" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder={tr("版本说明（可选）")} aria-label={tr("这次保存的版本说明，可留空")} disabled={busy} data-testid="version-note" />}
         <button type="button" className="btn primary" disabled={busy || !loaded} onClick={saveTpl}>{busy ? tr("保存中…") : tr("保存模板")}</button>
       </div>
       <div className="toolbar">

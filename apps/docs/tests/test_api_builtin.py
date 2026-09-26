@@ -133,3 +133,22 @@ def test_explicit_text_formula_and_numbers_keep_their_types_in_real_workbook(api
     assert (ws["B1"].value, ws["B1"].data_type) == ("=1+2", "f")
     assert ws["A2"].value == "00123" and ws["A2"].data_type == "s"
     assert ws["B2"].value == 1000 and ws["B2"].data_type == "n"
+
+
+def test_a_save_can_name_its_version_and_the_note_is_bounded_plain_text(client):
+    """9.13 D 「命名检查点」: the person saving may name the version; the history shows that name,
+    a merge suffix is still appended, and the note is plain bounded text."""
+    r = client.post("/api/templates/builtin", json={"kind": "builtin_doc", "editor": DOC, "name": "命名"})
+    assert r.status_code == 200, r.text
+    tid = r.json()["id"]
+    r = client.put(f"/api/templates/{tid}/builtin", json={"editor": DOC, "base_version": 1, "note": "  合同定稿  \n（法务已审）"})
+    assert r.status_code == 200, r.text
+    assert r.json()["version"]["no"] == 2
+    notes = {v["version_no"]: v["note"] for v in r.json()["versions"]}
+    assert notes[2] == "合同定稿 （法务已审）" and notes[1] == "在软件内创建"
+    r = client.put(f"/api/templates/{tid}/builtin", json={"editor": DOC, "base_version": 2})
+    assert r.status_code == 200 and {v["version_no"]: v["note"] for v in r.json()["versions"]}[3] == "在编辑器中保存"
+    r = client.put(f"/api/templates/{tid}/builtin", json={"editor": DOC, "base_version": 3, "note": "x" * 201})
+    assert r.status_code == 400 and r.json()["detail"]["field"] == "note", r.text
+    r = client.put(f"/api/templates/{tid}/builtin", json={"editor": DOC, "base_version": 3, "note": ["not", "text"]})
+    assert r.status_code == 400 and r.json()["detail"]["field"] == "note", r.text

@@ -253,3 +253,33 @@ def test_a_changed_source_withdrawal_and_self_approval(world):
     # an organization workspace project cannot be the source of a request
     r = acting(w["c"]["bob"], wid).post(f"/api/projects/{mine['result']['project_id']}/copy-requests", json={"target_workspace_id": wid, "name": "x", "scope": {}})
     assert r.status_code == 409 and r.json()["error"] == "source_not_personal"
+
+
+def test_a_copy_carries_neither_the_source_s_live_room_nor_its_history(world):
+    """9.13 D / 9.16 「个人复制不携带私人协同房间/未批准历史」: the copy is the approved snapshot
+    (the template's head version), never the live draft; the source project's activity feed, the
+    template's live draft and its change log stay with the source."""
+    w = world; oid, wid = w["oid"], w["wid"]
+    alice = acting(w["c"]["alice"], w["personal"]["alice"])
+    pid, tid = build_project(alice)
+    store = w["ident"].store
+    assert store.one("SELECT COUNT(*) AS n FROM project_activity WHERE project_id=?", (pid,))["n"] >= 1, "the source has history"
+    # a live draft nobody saved as a version, as the shutdown hook or the last person out would leave it
+    store.execute("INSERT INTO collab_docs (room, tenant, template_id, state, head, dirty, updated_at) VALUES (?,?,?,?,?,?,?)",
+                  (f"template:{tid}", w["personal"]["alice"], tid, b"\x00\x00", 1, 1, 1.0))
+    r = alice.post(f"/api/projects/{pid}/copy-requests", json={"target_workspace_id": wid, "name": "只带已批准的快照", "purpose": "复用配置", "scope": {}})
+    assert r.status_code == 201, r.text
+    req = r.json()
+    bob = w["c"]["bob"]; reauth(bob)
+    out = bob.post(f"/api/auth/organizations/{oid}/approvals/{req['id']}/decide", json={"action": "approve", "reason": "team needs it", "version": req["version"]}).json()
+    assert out["status"] == "approved", out
+    done = settle(w, alice, pid)
+    assert done["status"] == "done", done
+    new_pid, new_tid = done["result"]["project_id"], done["result"]["template_id"]
+    assert new_tid and new_tid != tid
+    assert store.one("SELECT COUNT(*) AS n FROM project_activity WHERE project_id=?", (new_pid,))["n"] == 0, "no history travels with the copy"
+    assert store.one("SELECT 1 AS x FROM collab_docs WHERE room=?", (f"template:{new_tid}",)) is None, "no live draft travels with the copy"
+    assert store.one("SELECT COUNT(*) AS n FROM collab_changes WHERE room=?", (f"template:{new_tid}",))["n"] == 0
+    t = acting(bob, wid).get(f"/api/templates/{new_tid}").json()
+    assert t["head"] == 1 and len(t["versions"]) == 1, "the copy starts from the approved head version alone"
+    assert store.one("SELECT dirty FROM collab_docs WHERE room=?", (f"template:{tid}",))["dirty"] == 1, "the source keeps its draft"

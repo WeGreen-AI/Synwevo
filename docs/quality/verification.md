@@ -1463,6 +1463,19 @@ typecheck/build、`npm test --workspaces`（Docs 45 项含字面翻译资源检�
 编辑者在停机期间输入的文字在双方重连后出现在 owner 的编辑器里，顶栏仍显示「有未保存为版本的修改」（同一房间而非新房间），随后 owner 保存的 v2 含重启前与停机中输入的全部文字，
 编辑者收到「Owner … 已把当前内容保存为 v2」。停机短于客户端首个重连退避，所以「断开」状态在检查前已恢复——脚本如实记录（未伪称看到断线提示）。
 
+### 16.53 命名检查点：保存时给版本起名（CI-52）
+
+决策记录见 `docs/platform/docs-collaboration.md` §7。**pytest**：`apps/docs/tests/test_api_builtin.py` 新增 1 项（说明折叠空白后入历史、默认说明保留、201 字与数组 → 400 `invalid_field`）；
+`test_api_docs.py`（OpenAPI 重新生成，`note` 进入保存体 schema）与契约三语言检查通过；SDK 20 项通过，CLI `templates builtin save --note` 在帮助里。
+**浏览器**（`ui_e2e_version_note.py`，隔离实例）：**Chromium 4/4、WebKit 4/4**——文档编辑器输入「合同定稿（法务已审）」保存 → v2 且字段清空；项目页「版本」对话框 v2 显示该名、v1 仍为「在软件内创建」；
+不带说明再保存 → v3「在编辑器中保存」（API 读回一致）；390 px 手机顶栏含说明字段，不横向滚动（截图 `chromium-03`）。typecheck/build、Docs 前端 45 项、设计守卫通过。
+
+### 16.54 个人项目复制不携带私人协同房间与历史（9.16「生成与复制」回归）
+
+`tests/integration/test_project_copy.py` 新增 1 项：来源项目已有活动记录，来源模板留有未保存为版本的实时草稿（`collab_docs.dirty=1`）；alice 申请、bob 批准、
+执行器完成后——目标项目的 `project_activity` 为 0 条，新模板没有 `collab_docs`/`collab_changes` 行，副本只有 v1（来源 head 版本，不是草稿），来源草稿原样保留。
+通过（本地）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

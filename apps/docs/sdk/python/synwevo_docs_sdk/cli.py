@@ -99,6 +99,7 @@ def parser():
     q = keyed(leaf(builtin, "save", "save_builtin_template", ("template_id", "input")))
     q.add_argument("--base-version", type=int, required=True, help="Expected current head; stale edits fail")
     q.add_argument("--name")
+    q.add_argument("--note", help="Name this version (a checkpoint shown in the history; at most 200 characters)")
     q = leaf(builtin, "export", "get_builtin_template", ("template_id",))
     q.add_argument("--version", type=int, help="Historical revision; default current head")
     fields = group(ts, "fields")

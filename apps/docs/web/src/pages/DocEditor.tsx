@@ -190,6 +190,7 @@ export default function DocEditor() {
   const [page, setPage] = useState<any>({ size: "A4", orientation: "portrait", margins: { top: 25.4, bottom: 25.4, left: 31.8, right: 31.8 } });
   const [template, setTemplate] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");                     // names the version this save creates (a checkpoint in the history)
   const [dirty, setDirty] = useState(false);
   const focused = useRef<Editor | null>(null);
   const imgInput = useRef<HTMLInputElement>(null);
@@ -423,12 +424,13 @@ export default function DocEditor() {
     try {
       let t;
       if (tid) {
-        t = await saveOverStale((base) => put(`/api/templates/${tid}/builtin`, { editor, name, ...(base ? { base_version: base } : {}) }),
+        t = await saveOverStale((base) => put(`/api/templates/${tid}/builtin`, { editor, name, ...(note.trim() ? { note: note.trim() } : {}), ...(base ? { base_version: base } : {}) }),
           baseVersion.current, (theirs, mine) => confirm(tr(STALE_TITLE), staleText(theirs, mine), tr("仍然保存"), true));
         if (!t) { toast(tr(STALE_KEPT), "info"); return; }
       } else t = await post("/api/templates/builtin", { kind: "builtin_doc", name, editor, project_id: projectId });
       baseVersion.current = loadedVersion(t);
       setDirty(false);
+      setNote("");
       toast(tr("已保存（{v1} 个字段，v{v2}）", { v1: t.version.slots.length, v2: t.version.no }), "ok");
       if (!tid) nav(`/templates/${t.id}/edit${projectId ? `?project=${projectId}` : ""}`, { replace: true });
     } catch (e: any) {
@@ -483,6 +485,7 @@ export default function DocEditor() {
             <button type="button" className="btn ghost sm" onClick={() => setLogOpen(true)} aria-haspopup="dialog">{tr("变更记录")}</button>
           </div>
         )}
+        {tid && <input className="input sm version-note" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder={tr("版本说明（可选）")} aria-label={tr("这次保存的版本说明，可留空")} disabled={busy} data-testid="version-note" />}
         <button type="button" className="btn primary" disabled={busy || !loaded || readonly} onClick={saveTpl}>{busy ? tr("保存中…") : tr("保存模板")}</button>
       </div>
       {live && alone && (

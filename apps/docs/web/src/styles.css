@@ -115,3 +115,6 @@
 .collab-peer-btn:disabled { cursor: default; }
 .collab-peer .where { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
 @media (max-width: 720px) { .collab-peer .where { display: none; } .topbar .collab-bar { width: 100%; } }
+/* The version note beside the save button: narrow, never wider than what the bar leaves (CI-52). */
+.topbar .version-note { flex: 0 1 180px; min-width: 0; width: auto; }
+@media (max-width: 620px) { .topbar .version-note { flex-basis: 110px; } }

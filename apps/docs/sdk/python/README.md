@@ -182,7 +182,8 @@ Restoring a version while the template's editing room holds live edits nobody sa
 returns `409 live_edits` (who is online, who changed it last); pass `discard_live=True` /
 `--discard-live` only when throwing those edits away is intended.
 the same idempotency key/body returns its original result without adding a revision.
-Use a new key for each intentional edit. Omitting `version` exports the current head;
+Use a new key for each intentional edit. `note=` / `--note` names the version the save creates
+(a checkpoint people can find in the history; at most 200 characters). Omitting `version` exports the current head;
 an explicit positive version exports that historical editor model.
 
 ## Verification

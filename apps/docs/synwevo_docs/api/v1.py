@@ -588,12 +588,13 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                            "required": ["editor", "base_version"], "properties": {
                                "name": builtin_schema["properties"]["name"],
                                "editor": builtin_schema["properties"]["editor"],
-                               "base_version": {"type": "integer", "minimum": 1}}}
+                               "base_version": {"type": "integer", "minimum": 1},
+                               "note": {"type": "string", "maxLength": 200, "description": "这个版本的说明（命名检查点）；留空时为「在编辑器中保存」"}}}
 
     async def builtin_body(request, *, saving=False):
         from .app import _editor_body
         body = await _editor_body(request)  # bounded streaming JSON, including chunked bodies
-        allowed = {"editor", "name", "base_version"} if saving else {"editor", "name", "kind"}
+        allowed = {"editor", "name", "base_version", "note"} if saving else {"editor", "name", "kind"}
         unknown = set(body) - allowed
         if unknown:
             raise ServiceError(400, "invalid", "不认识的字段", {"field": sorted(unknown)[0]})

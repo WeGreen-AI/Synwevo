@@ -206,6 +206,15 @@ def save_builtin(app: App, tid: str, body: dict, *, merge: bool = False) -> dict
                 detail["unchanged"] = True
                 return detail
             merged_with = r["head"]
+    # The version's note: a name the person gives this checkpoint (9.13 D 「命名检查点」), or the
+    # default wording. Bounded and plain text; never trusted as markup.
+    raw_note = body.get("note")
+    if raw_note is not None and not isinstance(raw_note, str):
+        raise ServiceError(400, "invalid_field", "note 必须是字符串", {"field": "note"})
+    note = " ".join((raw_note or "").split())
+    if len(note) > 200:
+        raise ServiceError(400, "invalid_field", "版本说明最多 200 个字符", {"field": "note", "max": 200})
+    note = note or "在编辑器中保存"
     data, slots, _ = _build(r["kind"], editor)
     # keep extra slot settings (required, formats, defaults) for fields that still exist
     old = {s["id"]: s for s in app.get_version(tid, r["head"])["slots"]}
@@ -217,7 +226,7 @@ def save_builtin(app: App, tid: str, body: dict, *, merge: bool = False) -> dict
                 if k in prev and k not in ("required",) or (k == "required" and prev.get("required") and not s.get("required")):
                     s[k] = prev[k]
     with app.store.tx():
-        detail = app.new_version(tid, data, slots, "在编辑器中保存" + (f"（已与第 {merged_with} 版合并）" if merged_with else ""), editor, base_head=r["head"])
+        detail = app.new_version(tid, data, slots, note + (f"（已与第 {merged_with} 版合并）" if merged_with else ""), editor, base_head=r["head"])
         app.store.update("templates", {"id": tid}, {"original_blob": app.store.put_blob(data)})
         if body.get("name"):
             app.store.update("templates", {"id": tid}, {"name": body["name"][:100]})
