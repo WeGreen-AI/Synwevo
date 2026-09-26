@@ -376,3 +376,24 @@ def test_a_revoked_session_closes_the_connection_without_extending_it(world):
         e.ws.receive_bytes()
     assert x.value.code == 4401
     e.close()
+
+
+# ------------------------------------------------------------------ a process shutdown writes the live document
+def test_a_process_shutdown_writes_the_live_document_while_people_are_still_in_it(world):
+    """uvicorn's graceful shutdown runs the lifespan's hooks (CI-48). The room's delayed persist
+    lives on the event loop that is about to stop, so the hook writes synchronously what everyone
+    in the room has — a restart between two saves loses nothing."""
+    store, tid, app = world["store"], world["tid"], world["app"]
+    a = _connect(world, "editor")
+    b = _connect(world, "owner")
+    a.append_text("关机前")
+    assert b.recv(want="update") == "update" and b.texts() == ["客户：关机前"]      # the server has applied it
+    for hook in list(app.state.shutdown_hooks):                                       # what the lifespan runs at exit
+        hook()
+    row = store.one("SELECT state, head, dirty FROM collab_docs WHERE room=?", (f"template:{tid}",))
+    assert row and row["head"] == 1 and row["dirty"] == 1
+    written = Doc()
+    written.apply_update(bytes(row["state"]))
+    assert "关机前" in json.dumps(read_doc(written), ensure_ascii=False)
+    a.close()
+    b.close()
