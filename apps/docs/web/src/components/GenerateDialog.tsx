@@ -28,8 +28,32 @@ function forgetRequest(pid: string) {
   try { sessionStorage.removeItem(REQ_KEY(pid)); } catch { /* nothing to forget */ }
 }
 
-export default function GenerateDialog({ project, tpl, onStarted, onClose }: { project: Project; tpl: TemplateDetail; onStarted: (jobId: string) => void; onClose: () => void }) {
+export type FixTarget = { kind: "slot" | "mapping" | "source"; id: string };
+
+/** Where a preflight issue can be fixed: the field, the mapping or the file it names. The server
+ *  puts the object's id on the issue (`slot`, `mapping`, `mappings`, `source`); nothing is guessed
+ *  from the message text. */
+export function fixTargetOf(issue: any): FixTarget | null {
+  if (!issue || typeof issue !== "object") return null;
+  if (issue.slot) return { kind: "slot", id: String(issue.slot) };
+  if (issue.mapping) return { kind: "mapping", id: String(issue.mapping) };
+  if (Array.isArray(issue.mappings) && issue.mappings.length) return { kind: "mapping", id: String(issue.mappings[0]) };
+  if (issue.source || issue.file_id) return { kind: "source", id: String(issue.source || issue.file_id) };
+  return null;
+}
+
+export default function GenerateDialog({ project, tpl, onStarted, onClose, onLocate }: {
+  project: Project; tpl: TemplateDetail; onStarted: (jobId: string) => void; onClose: () => void; onLocate?: (target: FixTarget) => void;
+}) {
   useI18n();
+  // "去修复": close the dialog and put the named object in front of the person (field panel with
+  // the field selected, mapping list with the mapping active, or the file)
+  const fixLink = (issue: any) => {
+    const target = fixTargetOf(issue);
+    if (!target || !onLocate) return null;
+    const label = { slot: tr("定位到字段"), mapping: tr("定位到映射"), source: tr("定位到文件") }[target.kind];
+    return <button type="button" className="btn xs ghost" style={{ marginLeft: 6 }} onClick={() => { onClose(); onLocate(target); }}>{label} ↗</button>;
+  };
   const native = tpl.exports.find((e) => e.native)?.format || tpl.format;
   const [formats, setFormats] = useState<string[]>(project.output?.formats?.length ? project.output.formats : [native]);
   const [naming, setNaming] = useState(project.output?.naming || "{序号}");
@@ -115,15 +139,15 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose }: { p
             <div className="statbox"><div className="v">{formatNumber(policy === "skip" ? sum.valid * nFormats : sum.invalid ? 0 : sum.records * nFormats)}</div><div className="k">{tr("预计输出文件")}</div></div>
           </div>
           {formats.length > 1 && <div className="notice info small">{tr("选择了 ")}{formatNumber(nFormats)}{tr(" 种格式：")}{formatNumber(sum.valid)}{tr(" 个有效样本 × ")}{formatNumber(nFormats)}{tr(" 种格式 = ")}{formatNumber(sum.valid * nFormats)}{tr(" 个文件（每个样本各生成一份）。")}</div>}
-          {sum.file_errors.map((e: any, i: number) => <div key={i} className="notice err small">{issueText(e)}</div>)}
-          {sum.static_issues.map((e: any, i: number) => <div key={i} className="notice err small">{issueText(e)}</div>)}
+          {sum.file_errors.map((e: any, i: number) => <div key={i} className="notice err small">{issueText(e)}{fixLink(e)}</div>)}
+          {sum.static_issues.map((e: any, i: number) => <div key={i} className="notice err small">{issueText(e)}{fixLink(e)}</div>)}
           {sum.record_warnings.map((w: string, i: number) => <div key={i} className="notice warn small">{diagnosticText(w)}</div>)}
           {sum.invalid > 0 && (
             <div className="notice err small">
               <b>{formatNumber(sum.invalid)}{tr(" 个样本存在错误")}</b>：
               {Object.entries(sum.issues_by_code).map(([k, v]) => <span key={k} className="badge err" style={{ margin: "0 4px" }}>{tr(CODE[k] || k)} × {v as number}</span>)}
               <ul style={{ margin: "6px 0 0", paddingLeft: 18, maxHeight: 120, overflow: "auto" }}>
-                {sum.invalid_samples.slice(0, 20).map((x: any, i: number) => <li key={i}>{x.record}：{issueText(x.issues[0])}</li>)}
+                {sum.invalid_samples.slice(0, 20).map((x: any, i: number) => <li key={i}>{x.record}：{issueText(x.issues[0])}{fixLink(x.issues[0])}</li>)}
               </ul>
             </div>
           )}

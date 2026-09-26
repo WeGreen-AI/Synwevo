@@ -1,6 +1,7 @@
 import { formatNumber, BrandMark } from "@synwevo/ui";
 import { DownloadLink } from "../components/ApiResource";
 import { serverText, issueText } from "../lib/presentation";
+import { fixTargetOf } from "../components/GenerateDialog";
 import { t as tr, useI18n, LanguageMenu } from "@synwevo/ui";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -219,7 +220,8 @@ function Job() {
                         })}
                       </td>
                       <td className="small">
-                        {iss.slice(0, open === it.id ? 50 : 2).map((x: any, i: number) => <div key={i} className={x.level === "error" ? "" : "muted"} style={{ color: x.level === "error" ? "var(--err)" : undefined }}>{issueText(x)}</div>)}
+                        {iss.slice(0, open === it.id ? 50 : 2).map((x: any, i: number) => { const fix = fixTargetOf(x); return <div key={i} className={x.level === "error" ? "" : "muted"} style={{ color: x.level === "error" ? "var(--err)" : undefined }}>{issueText(x)}
+                          {fix && <Link className="btn xs ghost" style={{ marginLeft: 6 }} to={`/p/${pid}?locate=${fix.kind}:${encodeURIComponent(fix.id)}`}>{{ slot: tr("定位到字段"), mapping: tr("定位到映射"), source: tr("定位到文件") }[fix.kind]} ↗</Link>}</div>; })}
                         {iss.length > 2 && <button type="button" className="btn xs ghost" aria-expanded={open === it.id} onClick={() => setOpen(open === it.id ? null : it.id)}>{open === it.id ? tr("收起") : tr("还有 {v1} 条", { v1: iss.length - 2 })}</button>}
                       </td>
                     </tr>

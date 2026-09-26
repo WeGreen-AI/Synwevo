@@ -1214,6 +1214,39 @@ CSV：`0007`、`00000000000000000001`、`1e5`、`1.10`、`2.50` 原样。测试�
 
 **未做**：CLI 对来源文件 14 个操作的命令；验收流程里 viewer 角色的委托令牌（写操作应被 403）——集成测试已覆盖。
 
+### 16.40 预检问题带修复路径：从「生成」对话框一步到达它点名的字段或映射（CI-39）
+
+**问题**（代码证据 + 9.8「预检与修复：显示受影响样本/页/区域及具体修复路径」）：`GenerateDialog` 把预检问题渲染成纯文本（`issueText`），
+而服务端的每条问题早已带着对象 id（`slot` / `mapping` / `mappings`，见 `engine/plan.py`），界面没有用它——读者看到「必填未映射」「缺少列」后
+要自己关掉对话框、切到字段或映射面板、再找到那一项。依据：NN/g 十项启发式 #9「错误信息……精确指出问题并建设性地提出解决办法」（2026-09-26 读取）；
+项目自己的评论锚点定位（CI-33 `locateComment`）已经是同一种交互。
+
+**实现**：`GenerateDialog` 导出 `fixTargetOf(issue)`（只认服务端给的 id，不从文案猜），静态问题与每个样本的首条问题旁多出「定位到字段 / 定位到映射 /
+定位到文件 ↗」，按下即关闭对话框并调用 `onLocate`；`Workspace` 把它接到既有的 `locateComment`（字段 → 字段面板并选中；映射 → 映射列表并激活；
+文件 → 切换文件；手机上切到对应面板）。三语言 3 条。
+
+**浏览器（隔离实例，桌面 1280 px 与手机 390 px，Chromium）**，`ui_e2e_preflight_fix.py`：
+
+```
+== chromium (Google Chrome)
+  - the generate dialog listed 必填未映射 for 问候 with 定位到字段; pressing it closed the dialog and selected that field
+  - a mapping naming a missing column showed 缺少列 with 定位到映射; pressing it closed the dialog and made that mapping the active one
+  - a rule naming a missing sheet showed 缺少工作表 with 定位到文件; pressing it closed the dialog and made that file the active one
+  - on the phone the same button closed the dialog and the 目标 pane tab shows a selection (●)
+  - the job page's skipped sample linked 定位到字段 into the project, which opened with that field selected and the locate parameter dropped
+```
+
+WebKit：五条同上（第一次 WebKit 运行只在最后的「无页面错误」断言失败——脚本在 `sign_in` 前多做了一次 `goto`，被取消的会话探测在 WebKit 里报成
+"access control checks" 的 pageerror；去掉多余导航后通过，产品无 CORS 问题）。选中状态的断言走评论抽屉的「关于」候选（它按当前选中的字段/映射生成），不依赖内部 class。
+
+文件级错误（`file_errors`，服务端带 `file_id`：工作表不存在、不是表格等）同样得到「定位到文件」，按下即切到该文件（手机上切到来源面板）。
+
+**任务页**：失败/跳过样本的每条问题同样带「定位到字段/映射/文件 ↗」，是指向项目页的链接 `/p/{pid}?locate=<kind>:<id>`；项目页在首次加载后应用它并从地址里
+去掉参数。字段选择要等模板加载完成再应用——加载模板的副作用会清空右侧选择（`tpl?.id` 的 effect），第一次实现时选择被这一步抹掉，
+改为挂起到模板到位后再选。证明第 5 条：`error_policy=skip` 的批次把未映射必填字段的样本留成「已跳过」，任务页链接进入项目并选中该字段。
+
+**未做**：任务页问题引用的对象在任务之后被删除时，链接只会落到项目页（无该对象可选）；没有提示「对象已不存在」。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

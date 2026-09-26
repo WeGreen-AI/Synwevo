@@ -5459,4 +5459,16 @@ export const messages = {
     "en": "Sharing actions for template “{v1}”",
     "zh-Hant": "範本「{v1}」的共享操作"
   },
+  "定位到字段": {
+    "en": "Go to field",
+    "zh-Hant": "定位到欄位"
+  },
+  "定位到映射": {
+    "en": "Go to mapping",
+    "zh-Hant": "定位到對應"
+  },
+  "定位到文件": {
+    "en": "Go to file",
+    "zh-Hant": "定位到檔案"
+  },
 } satisfies Messages;

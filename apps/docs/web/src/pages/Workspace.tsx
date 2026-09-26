@@ -139,6 +139,7 @@ function Workspace() {
   const file = sources.find((s) => s.id === activeFile) || null;
 
   // ------------------------------------------------------------------ loading
+  const pendingLocate = useRef<{ kind: "slot" | "mapping" | "source"; id: string } | null>(null);
   const reload = useCallback(async () => {
     try {
       const p: Project = await get(`/api/projects/${pid}`);
@@ -164,6 +165,21 @@ function Workspace() {
       if (p && !activeFile) {
         const rep = p.sources.find((s) => s.representative) || p.sources[0];
         if (rep) setActiveFile(rep.id);
+      }
+      // a deep link from a job's failed sample (?locate=slot:<id> | mapping:<id> | source:<id>):
+      // put that object in front of the person once, then drop the parameter from the address
+      const q = new URLSearchParams(window.location.search);
+      const want = q.get("locate");
+      const m = p && want ? /^(slot|mapping|source):([A-Za-z0-9_-]{1,64})$/.exec(want) : null;
+      if (m && p) {
+        const target = { kind: m[1] as "slot" | "mapping" | "source", id: m[2] };
+        // a field selection is applied after the template has loaded: loading it resets the
+        // right-hand selection (the effect on tpl?.id), which would wipe a selection made now
+        if (target.kind === "slot" && p.template) pendingLocate.current = target;
+        else locateComment(target);
+        q.delete("locate");
+        const rest = q.toString();
+        window.history.replaceState(window.history.state, "", window.location.pathname + (rest ? `?${rest}` : "") + window.location.hash);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -235,6 +251,12 @@ function Workspace() {
     setTplSheet(null);
     setTplPage(0);
     setGridFocusR(null);
+    if (tpl && pendingLocate.current) {          // a deep link's field, once the template is here
+      const target = pendingLocate.current;
+      pendingLocate.current = null;
+      locateComment(target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tpl?.id]);
   useEffect(() => {
     setTplView(null);
@@ -975,7 +997,8 @@ function Workspace() {
           }}
           onClose={() => setDialog(null)} />
       )}
-      {dialog?.kind === "generate" && tpl && <GenerateDialog project={project} tpl={tpl} onStarted={(jid) => nav(`/p/${pid}/jobs/${jid}`)} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "generate" && tpl && <GenerateDialog project={project} tpl={tpl} onStarted={(jid) => nav(`/p/${pid}/jobs/${jid}`)} onClose={() => setDialog(null)}
+        onLocate={(target) => { setDialog(null); locateComment(target); }} />}
       {dialog?.kind === "regression" && <RegressionDialog project={project} onClose={() => setDialog(null)} />}
       {dialog?.kind === "desensitize" && <DesensitizeDialog projectId={pid!} sources={sources} onDone={reload} onClose={() => setDialog(null)} />}
       {dialog?.kind === "area" && <AreaDialog project={project} sel={dialog.sel} onPick={(r) => setDialog({ kind: "rule", initial: r })} onClose={() => setDialog(null)} />}
