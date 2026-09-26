@@ -157,6 +157,51 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
                     _logging.getLogger("synwevo.copies").warning("copy request notification skipped: %s", type(e).__name__)
         return copies.public(r, for_requester=True)
 
+    # ------------------------------------------------------------------ comments and mentions
+    from ..comments import Comments as _Comments
+    comments = _Comments(app_, plat.identity, notifier)
+
+    def _limited(uid: str, bucket: str, limit: int, window_s: int) -> None:
+        allowed, wait = plat.identity.window_allows(f"{bucket}:{uid}", limit=limit, window_s=window_s)
+        if not allowed:
+            raise ServiceError(429, "too_many_attempts", "操作过于频繁，请稍后再试", {"retry_after": max(1, int(wait or 60))})
+
+    @api.get("/api/projects/{pid}/comments")
+    def list_comments(request: Request, pid: str, include_resolved: bool = False):
+        _uid(request)
+        return {"items": comments.list(pid, include_resolved=include_resolved)}
+
+    @api.get("/api/projects/{pid}/comment-members")
+    def comment_members(request: Request, pid: str):
+        _uid(request)
+        return {"items": comments.members(pid)}
+
+    @api.post("/api/projects/{pid}/comments", status_code=201)
+    def create_comment(request: Request, pid: str, body: dict = Body(...)):
+        uid = _uid(request)
+        _limited(uid, "comment", 60, 60)
+        return comments.create(pid, uid, body.get("body"), anchor=body.get("anchor"), mentions=body.get("mentions"), parent_id=body.get("parent_id"))
+
+    @api.patch("/api/comments/{cid}")
+    def edit_comment(request: Request, cid: str, body: dict = Body(...)):
+        uid = _uid(request)
+        return comments.edit(cid, uid, body.get("body"), mentions=body.get("mentions"))
+
+    @api.delete("/api/comments/{cid}")
+    def delete_comment(request: Request, cid: str):
+        uid = _uid(request)
+        comments.delete(cid, uid)
+        plat.audit(request, "docs.comment.delete", actor_id=uid, object_kind="comment", object_id=cid, result="ok")
+        return {"ok": True}
+
+    @api.post("/api/comments/{cid}/resolve")
+    def resolve_comment(request: Request, cid: str):
+        return comments.resolve(cid, _uid(request), True)
+
+    @api.post("/api/comments/{cid}/reopen")
+    def reopen_comment(request: Request, cid: str):
+        return comments.resolve(cid, _uid(request), False)
+
     @api.post("/api/copy-requests/{cid}/withdraw")
     def withdraw_copy(request: Request, cid: str):
         uid = _uid(request)

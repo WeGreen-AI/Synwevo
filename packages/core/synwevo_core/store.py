@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -814,6 +814,9 @@ class Store:
         # v15: Web Push keys, subscriptions and the per-notification push queue.
         from .push import SCHEMA as PUSH_SCHEMA
         c.executescript(PUSH_SCHEMA)
+        # v16: comments and mentions on Docs projects.
+        from .docs_comments import SCHEMA as DOCS_COMMENTS_SCHEMA
+        c.executescript(DOCS_COMMENTS_SCHEMA)
         with self.tx() as t:
             for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}

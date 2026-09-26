@@ -131,6 +131,15 @@ ROUTE_POLICY: dict[tuple[str, str], str | None] = {
     ("GET", "/api/projects/{pid}/copy-requests"): None,
     ("POST", "/api/projects/{pid}/copy-requests"): "write",
     ("POST", "/api/copy-requests/{cid}/withdraw"): "write",
+    # Comments: reading and writing a comment is part of reading the project (a viewer may ask a
+    # question); who may edit, delete or resolve is decided per comment in the service.
+    ("GET", "/api/projects/{pid}/comments"): None,
+    ("GET", "/api/projects/{pid}/comment-members"): None,
+    ("POST", "/api/projects/{pid}/comments"): None,
+    ("PATCH", "/api/comments/{cid}"): None,
+    ("DELETE", "/api/comments/{cid}"): None,
+    ("POST", "/api/comments/{cid}/resolve"): None,
+    ("POST", "/api/comments/{cid}/reopen"): None,
     # projects
     ("GET", "/api/projects"): None,
     ("POST", "/api/projects"): "write",

@@ -49,6 +49,8 @@
 | `member.left` | organization / info | 空间的 owner/admin | 成员自行退出 | 汇总 | 空间成员页 |
 | `organization.role_changed` | organization / info | 当事成员 | 组织角色变化 | 立即 | 组织页 |
 | `docs.file_rejected` | docs / action | 上传者（登录用户；机器上传无人可通知） | 来源文件被安全检查判定为恶意并拒绝（`dedupe=source:{sid}:rejected`；同内容再传即拒，不重复通知）（CI-29） | 立即 | Docs → 项目页 |
+| `docs.mention` | docs / action | 评论里被 `@` 的成员（须是项目所在空间的活跃成员；作者不通知） | 项目评论提及（`dedupe=comment:{id}:mention:{uid}`；编辑评论只通知新增的提及）（CI-33） | 立即 | Docs → 项目页 `?comment=<id>`（打开抽屉并高亮） |
+| `docs.comment` | docs / info | 该项目此前评论过、仍在空间内的成员（作者与被提及者除外） | 项目新评论或回复（`dedupe=comment:{id}:participant:{uid}`）（CI-33） | 汇总 | Docs → 项目页 `?comment=<id>` |
 | `docs.job_finished` | docs / info | 任务发起人（登录用户） | 生成任务结束：完成 / 部分失败 / 失败 / 已取消，附成功与失败份数；每次运行一条（`dedupe=job:{jid}:{run_no}`），与终态在同一事务写入（CI-29） | 汇总 | Docs → 任务页 |
 | `conversation.dm` | conversation / info | 私聊对方 | 私聊里的新消息；同一会话在读者读到上次位置之前只产生一项（去重键含读者的 last_read_seq） | 汇总 | 消息 → 该会话 |
 | `conversation.mention` | conversation / action | 被提及的成员 | 群聊或私聊里被 @ 提及；静音或「不通知」的会话不产生 | 汇总 | 消息 → 该会话 |
@@ -80,7 +82,7 @@
 ## 7. 明确未做
 
 * Web Push：已在 CI-32 接入（`docs/platform/web-push.md`：VAPID 密钥、订阅表、每通知一行的推送队列、派发器推送趟、账户页设备管理）；真实设备上的收到与点击待人工验证。SMS 与第三方 IM 无业务需求不接。
-* Docs 侧其它事件（评论/提及、模板或映射变更、产物即将失效）：随对应功能接入；文件被拒与任务结束已在 CI-29 接入。
+* Docs 侧其它事件（模板或映射变更、产物即将失效）：随对应功能接入；文件被拒与任务结束（CI-29）、评论与提及（CI-33）已接入。
 * 链接来源（CI-31 修正）：`docs` 目标的链接取应用注册表里 Docs 进程登记的启动地址；账户服务的 `SYNWEVO_APP_URL` 是它自己的地址，曾让邮件与账户外壳铃铛里的 Docs 链接指向 `accounts…/p/<id>`。只有 Docs 自己的进程才回退到 `SYNWEVO_APP_URL`；两者都没有时不给链接。
 * 每会话静音、仅提及：随消息功能接入。
 * 管理端不新增"通知仪表盘"；投递可在邮件管理页按 kind=`notification` 追踪。

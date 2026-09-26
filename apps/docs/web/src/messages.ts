@@ -1922,6 +1922,134 @@ export const messages = {
     "en": "View the approval",
     "zh-Hant": "查看審批記錄"
   },
+  "整个项目": {
+    "en": "The whole project",
+    "zh-Hant": "整個專案"
+  },
+  "当前映射": {
+    "en": "The selected mapping",
+    "zh-Hant": "目前的對應"
+  },
+  "文件「{v1}」": {
+    "en": "File “{v1}”",
+    "zh-Hant": "檔案「{v1}」"
+  },
+  "评论…": {
+    "en": "Comments…",
+    "zh-Hant": "評論…"
+  },
+  "评论": {
+    "en": "Comments",
+    "zh-Hant": "評論"
+  },
+  "显示已解决": {
+    "en": "Show resolved",
+    "zh-Hant": "顯示已解決"
+  },
+  "还没有评论。选中一个字段、映射或文件后评论，可以把问题定位到它。": {
+    "en": "No comments yet. Select a field, a mapping or a file before commenting to pin the question to it.",
+    "zh-Hant": "還沒有評論。選取一個欄位、對應或檔案後評論，可以把問題定位到它。"
+  },
+  "回复 {who}": {
+    "en": "Replying to {who}",
+    "zh-Hant": "回覆 {who}"
+  },
+  "正在编辑你的评论": {
+    "en": "Editing your comment",
+    "zh-Hant": "正在編輯你的評論"
+  },
+  "关于": {
+    "en": "About",
+    "zh-Hant": "關於"
+  },
+  "写评论… 输入 @ 提及成员": {
+    "en": "Write a comment… type @ to mention a member",
+    "zh-Hant": "寫評論… 輸入 @ 提及成員"
+  },
+  "保存修改": {
+    "en": "Save changes",
+    "zh-Hant": "儲存修改"
+  },
+  "发布评论": {
+    "en": "Post comment",
+    "zh-Hant": "發佈評論"
+  },
+  "评论已修改": {
+    "en": "Comment updated",
+    "zh-Hant": "評論已修改"
+  },
+  "评论已发布，已通知被提及的成员": {
+    "en": "Comment posted; mentioned members were notified",
+    "zh-Hant": "評論已發佈，已通知被提及的成員"
+  },
+  "评论已发布": {
+    "en": "Comment posted",
+    "zh-Hant": "評論已發佈"
+  },
+  "任务": {
+    "en": "Job",
+    "zh-Hant": "任務"
+  },
+  "已失效": {
+    "en": "stale",
+    "zh-Hant": "已失效"
+  },
+  "定位到该对象": {
+    "en": "Go to it",
+    "zh-Hant": "定位到該物件"
+  },
+  "已更新": {
+    "en": "updated since",
+    "zh-Hant": "已更新"
+  },
+  "该字段已删除": {
+    "en": "That field was deleted",
+    "zh-Hant": "該欄位已刪除"
+  },
+  "模板已更换": {
+    "en": "The template was replaced",
+    "zh-Hant": "模板已更換"
+  },
+  "该映射已删除": {
+    "en": "That mapping was deleted",
+    "zh-Hant": "該對應已刪除"
+  },
+  "该文件已移除": {
+    "en": "That file was removed",
+    "zh-Hant": "該檔案已移除"
+  },
+  "锚点已失效": {
+    "en": "The anchor is stale",
+    "zh-Hant": "錨點已失效"
+  },
+  "已编辑": {
+    "en": "edited",
+    "zh-Hant": "已編輯"
+  },
+  "回复": {
+    "en": "Reply",
+    "zh-Hant": "回覆"
+  },
+  "删除评论": {
+    "en": "Delete comment",
+    "zh-Hant": "刪除評論"
+  },
+  "删除后无法恢复。": {
+    "en": "This cannot be undone.",
+    "zh-Hant": "刪除後無法復原。"
+  },
+  "重新打开": {
+    "en": "Reopen",
+    "zh-Hant": "重新開啟"
+  },
+  "标记解决": {
+    "en": "Resolve",
+    "zh-Hant": "標記解決"
+  },
+  "由 {who} 标记解决": {
+    "en": "Resolved by {who}",
+    "zh-Hant": "由 {who} 標記解決"
+  },
   "正在用排版引擎排版…": {
     "en": "Laying out with the layout engine…",
     "zh-Hant": "正在用排版引擎排版…"

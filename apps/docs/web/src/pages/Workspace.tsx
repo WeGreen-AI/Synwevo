@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, del, get, patch, post, put, qs, useSession } from "@synwevo/auth-client";
 import { describeSelection, mappingSlots, slotPos } from "../lib/describe";
+import CommentsDrawer, { type AnchorOption, type CommentAnchor } from "../components/CommentsDrawer";
 import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, TemplateDetail } from "../lib/types";
 import { anyModalOpen, isImeKey, Modal, useDialog, useToast } from "@synwevo/ui";
 import { recall, remember } from "@synwevo/ui";
@@ -99,6 +100,7 @@ function Workspace() {
   const [sideW, setSideW] = useState(() => recall("sideW", 0));
   const [cmdOpen, setCmdOpen] = useState(false);
   const [help, setHelp] = useState(false);
+  const [comments, setComments] = useState<string | null | false>(() => { const c = new URLSearchParams(window.location.search).get("comment"); return c ? c : false; });
   const [focusL, setFocusL] = useState<string | null>(null);
   const [focusR, setFocusR] = useState<string | null>(null);
   const [gridFocusL, setGridFocusL] = useState<any>(null);
@@ -491,6 +493,19 @@ function Workspace() {
   };
 
   const selectedSlot = rightSel?.kind === "slot" ? slots.find((s) => s.id === rightSel.slotId) || null : null;
+  // What a new comment can be about: the project, and whatever is selected right now.
+  const commentOptions: AnchorOption[] = [
+    { anchor: { kind: "project" }, label: tr("整个项目") },
+    ...(selectedSlot ? [{ anchor: { kind: "slot" as const, id: selectedSlot.id }, label: tr("字段「{v1}」", { v1: selectedSlot.name }) }] : []),
+    ...(activeMap ? [{ anchor: { kind: "mapping" as const, id: activeMap }, label: tr("当前映射") }] : []),
+    ...(activeFile ? [{ anchor: { kind: "source" as const, id: activeFile }, label: tr("文件「{v1}」", { v1: sources.find(f => f.id === activeFile)?.filename || "" }) }] : []),
+  ];
+  const locateComment = (a: CommentAnchor) => {
+    if (a.kind === "slot") { setSideCollapsed(false); setTab("fields"); setRightSel({ kind: "slot", slotId: a.id }); }
+    else if (a.kind === "mapping") { setSideCollapsed(false); setTab("mappings"); setActiveMap(a.id); }
+    else if (a.kind === "source") { setActiveFile(a.id); if (narrow) setMobilePane("source"); }
+    else if (a.kind === "job") { nav(`/p/${pid}/jobs/${a.id}`); }
+  };
 
   const startMapping = async () => {
     if (!file || !leftSel || !selectedSlot) return;
@@ -688,6 +703,7 @@ function Workspace() {
       { id: "desensitize", group: tr("更多"), label: tr("生成脱敏副本…"), disabled: !sources.length, run: () => setDialog({ kind: "desensitize" }) },
     ] as Command[]),
     { id: "job", group: tr("更多"), label: tr("打开最近的生成任务"), disabled: !lastJob, run: () => lastJob && nav(`/p/${pid}/jobs/${lastJob.id}`) },
+    { id: "comments", group: tr("更多"), label: tr("评论…"), run: () => setComments(null) },
     { id: "regressions", group: tr("更多"), label: tr("回归用例列表"), run: () => nav("/regression") },
     { id: "caps", group: tr("更多"), label: tr("格式能力矩阵"), run: () => window.open("/capabilities", "_blank") },
     { id: "about", group: tr("更多"), label: tr("关于与许可"), run: () => window.open("/about", "_blank") },
@@ -728,6 +744,7 @@ function Workspace() {
             { label: tr("保存为回归用例…"), onClick: () => setDialog({ kind: "regression" }), disabled: !tpl || !rule.mode },
             { label: tr("生成脱敏副本…"), onClick: () => setDialog({ kind: "desensitize" }), disabled: !sources.length },
           ]),
+          { label: tr("评论…"), onClick: () => setComments(null) },
           { label: tr("回归用例"), onClick: () => nav("/regression") },
           { label: tr("格式能力矩阵"), onClick: () => window.open("/capabilities", "_blank") },
           { label: tr("键盘快捷键"), onClick: () => setHelp(true) },
@@ -939,6 +956,8 @@ function Workspace() {
       </div>
 
       {/* ---------------------------------------------------------------- dialogs */}
+      {comments !== false && <CommentsDrawer pid={pid!} me={session.me?.id || null} canWrite={!ro} options={commentOptions} highlight={comments || null}
+        onLocate={a => { locateComment(a); }} onClose={() => { setComments(false); if (new URLSearchParams(window.location.search).get("comment")) window.history.replaceState(window.history.state, "", window.location.pathname); }} />}
       {dialog?.kind === "template" && <TemplateChooser projectId={pid!} settingsRev={project.settings_rev} current={tpl?.id} onDone={reload} onClose={() => setDialog(null)} />}
       {dialog?.kind === "rule" && <RuleDialog project={project} sources={sources} initial={dialog.initial} selectedText={(leftSel as any)?.text} onSave={saveRule} onClose={() => setDialog(null)} />}
       {dialog?.kind === "slot" && tpl && <SlotDialog tpl={tpl} sel={dialog.sel} suggestedName={dialog.name} onCreate={createSlot} onClose={() => setDialog(null)} />}

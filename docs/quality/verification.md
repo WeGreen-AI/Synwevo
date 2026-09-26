@@ -1033,6 +1033,35 @@ aes128gcm 加密 + VAPID JWT（≤ 12 h）+ TTL/Urgency、结果分类 sent/gone
 
 **未验证/外部条件**：真实设备上的收到与点击（Chrome/Android、iOS 16.4+ 主屏幕 web app、macOS Safari）需要人工在生产上开启一次并按「发送测试」；
 无头浏览器背后没有推送服务，无法在自动化里真实订阅。VAPID 密钥轮换未做。
+### 16.33 项目评论与提及：锚点读取时判断、提及只到有权的人、待解决线程（CI-33）
+
+**研究**：Notion 帮助中心（页面级/行内评论、`@` 实时搜索、对无权页面的提及不通知、解决/重开）、Linear 文档（线程回复、`…` 编辑删除、线程解决），均 2026-09-26 读取；
+锚定内容变化后的处理二者未写明，按 9.8 自定为「读取时重新判断」。决策记录：`docs/platform/docs-comments.md`。
+
+**实现**：schema v16 `project_comments`；`synwevo_docs.comments`（成员名单只含姓名、一级+回复、四种锚点写入校验/读取判断、提及只限空间活跃成员且作者不算、
+参与者通知、作者/管理员/可编辑者的权限分工、限流 60/分钟）；7 个路由（viewer 可读写评论，逐评论判权）；通知目录 `docs.mention`（立即）/`docs.comment`（汇总）；
+项目页「更多 → 评论…」抽屉（未解决在前、锚点定位按钮或「已失效」徽标、关于=整个项目/当前字段/当前映射/当前文件、`@` 候选、回复/编辑/删除/解决/重开、
+`?comment=` 深链高亮），三语言 32 条。
+
+**接口测试**（`tests/integration/test_project_comments.py`，1 项，组合服务器）：成员名单只有姓名；提及 viewer → `docs.mention`（标题、`?comment=` 链接），
+非成员与作者本人被丢弃且无通知；viewer 回复 → 参与者 `docs.comment`，回复者不通知；外人 403（空间门）/404（他空间）；他人不能编辑、作者编辑不重复提及；
+viewer 不能解决、编辑可解决、默认列表隐藏已解决线程与其回复、重复解决 409、重开；删字段后 `anchor.valid=false, reason=slot_gone` 且标签保留；
+坏锚点/空正文/回复的回复 400；viewer 不能删他人评论、空间 owner 可删且回复随线程消失。
+
+**浏览器（隔离实例，编辑者 1280 px、查看者 390 px 触摸，Chromium + WebKit）**，`ui_e2e_comments.py`：
+
+```
+== chromium (Google Chrome)
+  - the editor commented on the selected field and mentioned the viewer from the @ list
+  - the viewer's bell (phone) carried the mention; its link opened the project with the comment highlighted; the anchor located the field and the viewer replied
+  - the editor was told of the reply; after deleting the field the comment's anchor reads 已失效 with no jump; resolving hid the thread until 显示已解决
+== webkit（三条同上）
+```
+
+过程中的两处脚本修正（非产品缺陷）：手机宽度的账户页铃铛在导航抽屉里，抽屉在窄屏钩子稳定前会自动关闭，脚本改为等页面静止后再开；
+隔离实例的账户进程未重启时，新增的通知种类在旧目录里渲染成空标题（部署时三容器同镜像，不会出现），重启后通过。
+
+**未做**：文字范围级行内批注、富文本/附件/表情、评论的实时推送到已打开的项目页、跨项目待办视图。
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

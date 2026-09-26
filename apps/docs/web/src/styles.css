@@ -55,3 +55,17 @@
 @media (pointer: coarse) {
   .tag.num, .gmark .tag { min-width: 24px; min-height: 24px; }
 }
+
+/* ---- comments drawer (project page) */
+.cmt-drawer { min-height: 0; flex: 1 1 auto; }
+.cmt-list { overflow: auto; max-height: calc(100dvh - 300px); padding-right: 2px; }
+.cmt-thread { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; background: var(--surface); }
+.cmt-reply { margin-left: 12px; padding-left: 8px; border-left: 2px solid var(--line); }
+.cmt-body { white-space: pre-wrap; word-break: break-word; line-height: 1.45; margin: 4px 0; }
+.cmt-resolved .cmt-body { color: var(--muted); }
+.cmt-hl { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.cmt-box { position: relative; }
+.cmt-pick { position: absolute; left: 6px; bottom: 100%; margin: 0 0 4px; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 2px; z-index: 2; }
+/* Inside a drawer every button is a 44px navigation row; comment actions are a toolbar. */
+.drawer-b .cmt-drawer .btn { min-height: 28px; height: auto; width: auto; padding: 3px 8px; font-size: 12px; justify-content: center; }
+.drawer-b .cmt-drawer .btn.primary { min-height: 34px; padding: 6px 12px; font-size: 13px; }

@@ -162,6 +162,12 @@ CATALOGUE: dict[str, dict] = {
     "docs.file_rejected": {"category": "docs", "severity": "action", "email": "immediate", "title": {
         "zh-Hans": "文件「{filename}」未通过安全检查", "zh-Hant": "檔案「{filename}」未通過安全檢查", "en": "“{filename}” failed the security check"}, "body": {
         "zh-Hans": "项目「{project}」中的这个文件被判定为恶意内容，已拒绝并隔离。", "zh-Hant": "專案「{project}」中的這個檔案被判定為惡意內容，已拒絕並隔離。", "en": "The file in project “{project}” was identified as malicious and has been rejected and quarantined."}},
+    "docs.mention": {"category": "docs", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "{who} 在项目「{project}」的评论中提到了你", "zh-Hant": "{who} 在專案「{project}」的評論中提到了你", "en": "{who} mentioned you in a comment on “{project}”"}, "body": {
+        "zh-Hans": "{excerpt}", "zh-Hant": "{excerpt}", "en": "{excerpt}"}},
+    "docs.comment": {"category": "docs", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "{who} 评论了项目「{project}」", "zh-Hant": "{who} 評論了專案「{project}」", "en": "{who} commented on “{project}”"}, "body": {
+        "zh-Hans": "{excerpt}", "zh-Hant": "{excerpt}", "en": "{excerpt}"}},
     "docs.job_finished": {"category": "docs", "severity": "info", "email": "digest", "title": {
         "zh-Hans": "项目「{project}」的生成任务{outcome}", "zh-Hant": "專案「{project}」的產生任務{outcome}", "en": "Generation for “{project}” {outcome}"}, "body": {
         "zh-Hans": "{done} 份成功，{failed} 份失败。", "zh-Hant": "{done} 份成功，{failed} 份失敗。", "en": "{done} succeeded, {failed} failed."}},
