@@ -20,3 +20,13 @@ def identity_client(tmp_path, monkeypatch):
     with TestClient(api) as c:
         c.app_state = api.state
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _no_worker_outlives_its_test():
+    """An application built outside `with TestClient(...)` never runs its shutdown hook. Without
+    this net every such test left its runner, dispatcher and sweeper threads — and through them
+    its store — alive; the verify container ran out of memory a third of the way through."""
+    yield
+    from synwevo_core.workers import stop_all
+    stop_all(wait=3.0)

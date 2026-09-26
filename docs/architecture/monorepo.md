@@ -145,6 +145,20 @@ v6 的新增状态由 Store 统一建表/加列：`organizations`、`organizatio
 角色边界仍由 `synwevo_core.http` 里**集中的网关**判定，而不是靠"哪些路由被挂上去了"。少挂一个
 路由只会得到一个没有解释的 404；集中判定的网关无法被漏掉一半，账户服务也就真的不可能服务一份文档。
 
+### 6.1 后台线程与进程退出
+
+每个角色的进程里都有几条守护线程：Docs 的作业执行器与其监督者、回调分发、复制执行；账户服务的
+邮件、通知、会话清理、成员导入；以及 Docs 业务对象的解析线程池。它们**启动时在
+`synwevo_core.workers` 登记自己与线程**，而 `synwevo_core.http.new_api` 建出来的应用带一个
+lifespan：进程退出（uvicorn 优雅关闭，或测试客户端离开 `with` 块）时按顺序运行
+`api.state.shutdown_hooks`——Docs 与账户服务的 `install` 各追加一个，停止自己启动的 worker，
+同步写出仍在编辑的实时协同文档，释放解析池。`workers.stop_all()` 是这之下的兜底：停止进程里
+仍然活着的每个 worker（三个测试套件的 conftest 在每个测试后调用它）。
+
+这条契约存在的原因见 `docs/quality/verification.md` §16.49：worker 从不停止时，测试里每个应用连同
+它的 `Store` 都活到进程结束，验证容器在三分之一处耗尽 3 GiB。停止不释放已持有的作业租约——
+正在执行的切片先完成，其余按租约过期由下一个进程接管，与崩溃恢复是同一条路径。
+
 ## 7. 前端：三个外壳，两个共享包
 
 三个独立的 Vite 构建，**静态资源目录各不相同**（`assets/`、`portal-assets/`、`account-assets/`）。

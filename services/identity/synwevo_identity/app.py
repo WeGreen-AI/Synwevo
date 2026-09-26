@@ -41,6 +41,8 @@ class Sweeper:
         if start:
             self._thread = threading.Thread(target=self._run, name="auth-sweeper", daemon=True)
             self._thread.start()
+            from synwevo_core import workers
+            workers.register(self, self._thread)
 
     def run_once(self) -> dict:
         from synwevo_auth_client.rp import Rp
@@ -130,6 +132,15 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
                                                 ingest=api.state.ingest, start_jobs=start_jobs)
     api.state.member_import_runner = member_imports.runner
     api.include_router(member_imports)
+
+    def _shutdown() -> None:
+        """The end of this process: stop the account service's workers (mail, notifications,
+        session sweeping, member imports). Queued mail and imports wait in the store for the next
+        process; nothing is sent twice because sending is claimed per row."""
+        for worker in (mailer, api.state.notify_dispatcher, api.state.auth_sweeper, api.state.member_import_runner):
+            if worker is not None:
+                worker.stop()
+    api.state.shutdown_hooks.append(_shutdown)
     from .messaging_routes import build_router as build_messaging_router
     messaging = build_messaging_router(store, identity, sessions, audit, notifier=api.state.notifier)
     api.state.message_hub = messaging.hub

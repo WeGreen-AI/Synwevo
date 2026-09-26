@@ -54,6 +54,7 @@ from urllib.parse import urlparse
 from synwevo_core import authority, env, journal, sealed
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id
+from synwevo_core import workers
 
 # Standard Webhooks' example schedule: after the first attempt, 9 more over ~3.1 days.
 BACKOFF_S = (5, 300, 1800, 7200, 18000, 36000, 50400, 72000, 86400)
@@ -425,6 +426,7 @@ class WebhookDispatcher:
         if start:
             self._thread = threading.Thread(target=self._loop, name="webhooks", daemon=True)
             self._thread.start()
+            workers.register(self, self._thread)
 
     def notify(self) -> None:
         self._wake.set()

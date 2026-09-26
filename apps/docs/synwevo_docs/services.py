@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from synwevo_core.context import tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import Store, new_id, now
+from synwevo_core import workers
 
 from . import authz
 from . import malware as M
@@ -42,6 +43,7 @@ class App:
     def __init__(self, store: Store):
         self.store = store
         self.parse_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="parse")
+        workers.register(self)                          # so a process shutdown releases the pool
         # Malware scanning policy (synwevo_docs.malware): decided once at start-up so a bad
         # configuration fails the process instead of silently scanning nothing.
         self.scan_policy = M.policy()
@@ -863,6 +865,13 @@ class App:
             hook(tid, head, editor, reason)
         except Exception:                                    # noqa: BLE001 — the version is saved; the room catches up on reopen
             logging.getLogger("synwevo.docs").exception("template change hook failed for %s (%s)", tid, reason)
+
+    def close(self) -> None:
+        """Release the parse pool at the end of the process. A parse that had not started stays
+        'parsing' in the store and is picked up by the next process (`resume_parsing`)."""
+        self.parse_pool.shutdown(wait=False, cancel_futures=True)
+
+    stop = close                                        # the worker registry speaks stop()
 
     def _project_changed(self, pid: str, kind: str, detail: dict | None = None) -> None:
         hook = self.on_project_change

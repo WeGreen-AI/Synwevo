@@ -28,6 +28,7 @@ from synwevo_core.org_roles import OrgRoles
 from synwevo_core.organizations import Organizations
 from synwevo_core.sessions import Sessions
 from synwevo_core.store import now
+from synwevo_core import workers
 
 from . import mail as mail_mod
 from .invites import INVITE_TTL_S, ROLE_LABEL
@@ -51,6 +52,7 @@ class MemberImportRunner:
         if start:
             self._thread = threading.Thread(target=self._run, name="member-import", daemon=True)
             self._thread.start()
+            workers.register(self, self._thread)
 
     def alive(self) -> bool:
         return self._thread is None or self._thread.is_alive()

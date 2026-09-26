@@ -367,6 +367,15 @@ class CollabHub:
         actor_name = display_name(self.identity.get_user(actor)) if actor else None
         self.loop.call_soon_threadsafe(room.apply_head_change, head, editor, reason, actor_name, snapshot, actor)
 
+    def shutdown(self) -> None:
+        """Process shutdown: write every live document now. The delayed persist runs on the event
+        loop, which is about to stop; a save that waits for it would be lost with the process."""
+        with self._lock:
+            rooms = list(self.rooms.values())
+        for room in rooms:
+            if room.writable and room.clients:
+                room.persist_now()
+
     def changes(self, tid: str, limit: int = 100) -> dict:
         key = f"template:{tid}"
         rows = self.store.all("SELECT * FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT ?", (key, max(1, min(int(limit), KEEP_CHANGES))))

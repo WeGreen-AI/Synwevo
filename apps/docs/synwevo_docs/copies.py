@@ -21,6 +21,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.notifications import Notifier
 from synwevo_core.project_copies import ProjectCopies
 from synwevo_core.store import new_id, now
+from synwevo_core import workers
 
 log = logging.getLogger("synwevo.copies")
 
@@ -210,8 +211,14 @@ class CopyRunner:
         if start:
             self._thread = threading.Thread(target=self._run, name="project-copies", daemon=True)
             self._thread.start()
+            workers.register(self, self._thread)
 
     def wake(self) -> None:
+        self._wake.set()
+
+    def stop(self) -> None:
+        """A copy in progress finishes its transaction; nothing half-made is ever visible."""
+        self._stop.set()
         self._wake.set()
 
     def alive(self) -> bool:

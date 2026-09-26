@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import contextlib
+
 import json
 import logging
 import math
@@ -558,10 +560,26 @@ def build_platform(data_dir_arg: str | None = None) -> Platform:
 
 def new_api(title: str) -> FastAPI:
     show_docs = (env.get("API_DOCS") or "").strip().lower() in ("1", "true", "on", "yes")
-    return FastAPI(title=title, version="1.0.0",
-                   docs_url="/api/docs" if show_docs else None,
-                   redoc_url=None,
-                   openapi_url="/api/openapi.json" if show_docs else None)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        # The end of the process (uvicorn's graceful shutdown, a test client leaving its
+        # context): every installer appended what it started — worker threads to stop, live
+        # documents to write. One hook failing must not skip the others.
+        for hook in list(getattr(app.state, "shutdown_hooks", ())):
+            try:
+                hook()
+            except Exception:                                # noqa: BLE001
+                logging.getLogger("synwevo.http").exception("shutdown hook %s failed", getattr(hook, "__qualname__", hook))
+
+    api = FastAPI(title=title, version="1.0.0",
+                  docs_url="/api/docs" if show_docs else None,
+                  redoc_url=None,
+                  openapi_url="/api/openapi.json" if show_docs else None,
+                  lifespan=lifespan)
+    api.state.shutdown_hooks = []
+    return api
 
 
 def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:

@@ -36,6 +36,7 @@ from pathlib import Path
 from synwevo_core import env
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id, now
+from synwevo_core import workers
 
 # Backoff between attempts; the last value repeats until MAX_ATTEMPTS.
 RETRY_SCHEDULE = (30, 120, 600, 1800, 3600)
@@ -172,6 +173,7 @@ class Mailer:
         if start:
             self._thread = threading.Thread(target=self._run, name="mail", daemon=True)
             self._thread.start()
+            workers.register(self, self._thread)
 
     # ------------------------------------------------------------------ enqueue
     def alive(self) -> bool:

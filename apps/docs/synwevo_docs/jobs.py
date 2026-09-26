@@ -26,6 +26,7 @@ from synwevo_core import authority, env
 from synwevo_core.context import tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import new_id, now
+from synwevo_core import workers
 
 from .engine import generate as G
 from .engine import records as R
@@ -531,6 +532,7 @@ class JobService:
         self.worker_id = f"{socket.gethostname()}:{os.getpid()}:{secrets.token_hex(3)}:{self._ns}"
         self._wake = threading.Event()
         self._stop = False
+        self._stopped = threading.Event()               # set by stop(); the supervisor sleeps on it
         self._thread: threading.Thread | None = None
         self._supervisor: threading.Thread | None = None
         self._held: dict[str, _Lease] = {}
@@ -551,18 +553,24 @@ class JobService:
             self._start_runner()
             self._supervisor = threading.Thread(target=self._supervise, name="job-supervisor", daemon=True)
             self._supervisor.start()
+            workers.register(self, self._supervisor)
 
     # -------------------------------------------------------------- lifecycle
     def _start_runner(self) -> None:
         self._thread = threading.Thread(target=self._loop, name="job-runner", daemon=True)
         self._thread.start()
+        workers.register(self, self._thread)
 
     def runner_alive(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
 
     def stop(self):
+        """Stop the runner and the supervisor. Held leases are not released here: a job in the
+        middle of a slice finishes that slice, and anything still leased lapses for another
+        process to recover (LEASE_S), which is the crash path and therefore already correct."""
         self._stop = True
         self._wake.set()
+        self._stopped.set()
 
     def held(self) -> list[str]:
         with self._held_lock:
@@ -592,7 +600,7 @@ class JobService:
                     self.maintain(t)
             except Exception:  # noqa: BLE001 - the supervisor must keep running; errors surface through /readyz
                 traceback.print_exc()
-            time.sleep(tick)
+            self._stopped.wait(tick)
 
     def maintain(self, t: float | None = None) -> dict:
         """Housekeeping that keeps tables and the temp directory from growing without bound.

@@ -21,6 +21,7 @@ from synwevo_core.identity import Identity
 from synwevo_core.notifications import Notifier
 from synwevo_core.push import PushSubscriptions, WebPush, payload_for
 from synwevo_core.store import Store, now
+from synwevo_core import workers
 
 from .mail import Mailer, MailNotConfigured, public_base
 
@@ -48,6 +49,7 @@ class NotificationDispatcher:
         if start:
             self._thread = threading.Thread(target=self._run, name="notify", daemon=True)
             self._thread.start()
+            workers.register(self, self._thread)
 
     def alive(self) -> bool:
         return self._thread is None or self._thread.is_alive()

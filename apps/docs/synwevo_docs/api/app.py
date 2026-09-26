@@ -98,6 +98,19 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     app_.on_template_change = collab.on_template_change
     app_.on_project_change = collab.on_project_change
 
+    def _shutdown() -> None:
+        """The end of this process (uvicorn's graceful shutdown, a test client leaving its
+        context): stop what this installer started, write the live documents, release the parse
+        pool. Before this nothing was ever stopped; every application built in a test kept its
+        runner, dispatcher and copy threads — and through them its store — alive."""
+        if jobs is not None:
+            jobs.stop()
+        hooks.stop()
+        api.state.copy_runner.stop()
+        collab.shutdown()
+        app_.close()
+    api.state.shutdown_hooks.append(_shutdown)
+
     def _actor_id(request: Request) -> str | None:
         s = getattr(request.state, "session", None)
         return s["user_id"] if s else None

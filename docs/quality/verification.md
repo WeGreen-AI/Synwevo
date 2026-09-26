@@ -1404,6 +1404,35 @@ v2 上改 C1、owner 保存 v3（B4）后编辑者保存 → 自动合并为 v4�
 
 **未做**：表格的逐键实时同步（仍是保存即合并）；手机上多条提示叠放遮住顶栏（共享提示组件的既有行为，另记）。
 
+### 16.49 发布链路：验证容器内存耗尽的根因与进程退出时停止后台线程（CI-48）
+
+**现象**：CI-47 的生产运行（`a0c3f18`，run 36236626210）在 verify 作业「Verify the deployment runtime」一步被 45 分钟作业上限取消，
+deploy 未运行。容器内 pytest 的进度戳（每 72 项一行）与 CI-46（run 36219721565，同一容器 20 分 29 秒跑完 2105 项）对比：
+前 23 段各慢 10–25 %（运行器差异），第 24 段（81 %→85 %，`tests/integration/test_credentials_*`…）**905 秒对 65 秒**，
+第 25 段 278 秒对 64 秒，第 27 段超过 280 秒未完成。全程只有 `.` 与一个 `s`，没有失败——是慢，不是错。
+
+**本机复现**（2026-09-26，Docker 28.3.3 arm64，`git archive HEAD` 按接收端方式解包后构建 `infra/Dockerfile` 与
+`infra/production/Dockerfile.verify`，`docker run --network none --memory 3g --cpus 2`）：容器在 **34 % 处被 OOM 杀死**
+（rc 137，`docker events` 记录 `oom`）；`docker stats` 每 30 秒采样——1.09 GiB/209 PID → 1.68/259 → 1.95/451 → 2.42/496 →
+2.81/641 → **2.98 GiB/721 PID**，即每分钟约 1 GiB 线性增长、线程数随测试数增长。容器内 `ps`：Python 主进程 30 秒时已有
+150 个线程、RSS 1.1 GB；另有 gpgconf/gpg/gpgsm 僵尸进程（排版引擎每次转换派生，Python 作为 1 号进程不回收）。
+GitHub 运行器有交换分区，所以在那里表现为抖动而不是被杀；CI-46 能过只是因为泄漏页面一直是冷页。
+
+**根因**（按测试逐项统计线程增量的插件，本机 Python 3.14 与 3.12 均复现）：每个测试构建的应用都启动守护线程——
+`job-runner`、`job-supervisor`、`webhooks`、`project-copies`（Docs），`mail`、`notify`、`auth-sweeper`、`member-import`
+（账户服务），以及 `parse_N`（解析线程池）——**从未被停止**。线程持有各自的应用与 `Store`，于是每个测试的整套对象都活到进程结束；
+2100 个测试就是数千个线程与数 GB 常驻内存。生产进程不受影响（一个进程一套 worker），但 uvicorn 优雅退出时同样没有停止它们，
+也没有把实时协同文档的延迟落盘写出去。
+
+| 项目 | 结论 |
+|---|---|
+| 成熟参考 | Starlette/FastAPI **lifespan** 契约（应用退出时运行清理，`TestClient` 作为上下文管理器时同样触发；`add_event_handler` 在当前 Starlette 已不存在）；Python `concurrent.futures` 文档：`shutdown(wait=False, cancel_futures=True)` 让空闲工作线程立即退出；Docker `--init`/compose `init: true`（tini 回收僵尸，生产 compose 已有）。 |
+| 对比与选择 | (a) 只在 conftest 里按线程名杀线程：拿不到对象引用，做不到；(b) 每个测试改成 `with TestClient(...)`：92 处直接 `create_app` 的测试要逐个改，且不修生产退出；(c) **本方案**：`synwevo_core.workers` 登记表（弱引用，worker 启动时登记自己与线程），`new_api` 的 lifespan 在退出时运行 `api.state.shutdown_hooks`，Docs 与账户服务的 `install` 各追加一个钩子（停 runner/supervisor/dispatcher/copy runner/mailer/notify/sweeper/member-import，`collab.shutdown()` 同步写出所有在编辑的实时文档，`App.close()` 释放解析池）；三个套件的 conftest 各加一个 autouse 夹具在每个测试后 `workers.stop_all(wait=3)` 兜底。 |
+| 预期变化 | 生产：uvicorn 优雅退出时 worker 停止、实时文档落盘、租约按既有崩溃路径过期由下一进程接管（无新语义）；测试：每个应用随测试结束释放。CI：两条 `docker run` 加 `--init`；自托管 `infra/docker-compose.yml` 加 `init: true`。 |
+| 边界与风险 | `JobService.stop()` 不释放已持有租约（正在执行的切片先完成，其余按 LEASE_S 过期，与崩溃恢复一致）；supervisor 的 `time.sleep(tick)` 改为可被唤醒的 `Event.wait(tick)`；`CopyRunner` 新增 `stop()`；`stop_all` 只等待 3 秒，仍在长切片中的线程会被点名返回。 |
+| 验收 | `tests/integration/test_process_hygiene.py`：离开 `with TestClient` 后 8 类 worker 线程全部退出；未用上下文的应用由 `stop_all` 兜底且幂等。三套件 + 线程统计插件：**2110 passed, 1 skipped，10 分 54 秒，结束时只剩主线程**，全程只有 4 次「+1」（正在退出的线程被数到，下一测试即消失）。**同参数容器复跑**（工作树按接收端方式解包重建镜像，`--init --network none --memory 3g --cpus 2`）：**2109 passed, 2 skipped，10 分 26 秒，rc 0**；`docker stats` 20 次采样峰值 **1.50 GiB、PID 最多 9**（修复前 34 % 处 2.98 GiB/721 PID 被杀），每 72 项耗时 1–54 秒、无异常段。内存从 0.56 GiB 缓慢升到 1.50 GiB（进程内缓存与字体/PDF 引擎，未再随线程增长），记为观察项。四项守卫 + `brand_assets --check` + infra unittest 6 项通过。 |
+| 发布与恢复 | 无 schema 变化，无前端变化；回滚即回到不停止 worker 的旧行为。CI-47 的代码随本批次一起发布（a0c3f18 未部署）。 |
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

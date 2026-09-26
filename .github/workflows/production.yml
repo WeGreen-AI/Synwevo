@@ -53,10 +53,10 @@ jobs:
           )
           docker build -f "$RUNNER_TEMP/private-source/infra/Dockerfile" -t synwevo:ci "$RUNNER_TEMP/private-source"
           # Check the unmodified non-root runtime before the test derivative makes source writable.
-          docker run --rm --network none --read-only --tmpfs /tmp:rw,uid=1000,gid=1000,mode=1770 synwevo:ci \
+          docker run --rm --init --network none --read-only --tmpfs /tmp:rw,uid=1000,gid=1000,mode=1770 synwevo:ci \
             python -c "from synwevo_server.app import create_app; create_app('/tmp/import-check', role='accounts', start_jobs=False)"
           docker build -f infra/production/Dockerfile.verify -t synwevo:verify .
-          docker run --rm --network none --memory 3g --cpus 2 synwevo:verify
+          docker run --rm --init --network none --memory 3g --cpus 2 synwevo:verify
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: verify

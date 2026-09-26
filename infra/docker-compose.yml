@@ -26,4 +26,7 @@ services:
     environment:
       SYNWEVO_HOST: 0.0.0.0
       SYNWEVO_DATA_DIR: /data
+    # 进程是容器的 1 号进程；排版引擎每次转换会派生 gpg 辅助进程，没有 init 时它们成为僵尸进程
+    # 越积越多（生产 compose 已有同样一行）。
+    init: true
     restart: unless-stopped
