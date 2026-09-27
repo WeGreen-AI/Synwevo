@@ -60,7 +60,24 @@ def public_state(ident: Identity, role: str) -> dict:
             # An id, matched server-side against the applications the person may open; the
             # account page never takes a URL from a query string.
             "app_id": (env.get("OIDC_APP_ID") or "docweave") if r in ("app", "all") else ("platform" if r == "portal" else None),
-            "account_url": account_url(r)}
+            "account_url": account_url(r),
+            # After a domain change, passkeys registered under the previous host cannot be
+            # offered on this one (a WebAuthn credential is bound to its RP ID). One deployment-
+            # wide boolean — never per account — so the sign-in screen can explain a "no passkey
+            # here" result instead of leaving the person to guess.
+            "passkeys_elsewhere": passkeys_registered_elsewhere(ident.store)}
+
+
+def passkeys_registered_elsewhere(store) -> bool:
+    """Whether any live passkey in this deployment is bound to a domain other than the current
+    RP ID (`SYNWEVO_RP_ID`, else the issuer's host — the same rule the account service applies)."""
+    from urllib.parse import urlparse
+    from .rp import issuer
+    current = (env.get("RP_ID") or "").strip() or (urlparse(issuer()).hostname or "localhost")
+    try:
+        return store.one("SELECT 1 AS x FROM passkeys WHERE deleted_at IS NULL AND rp_id<>? LIMIT 1", (current,)) is not None
+    except Exception:  # noqa: BLE001 - a deployment without the table has nothing registered anywhere
+        return False
 
 
 def describe_user(user: dict, spaces: list[dict], session: dict | None = None) -> dict:

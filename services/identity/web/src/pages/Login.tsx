@@ -150,7 +150,13 @@ export default function Login() {
         if (!credential) throw new Error("没有收到安全密钥的响应。");
         await finish(await post("/api/auth/login/passkey", { credential: toJSON(credential), remember }));
       } catch (e) {
-        if (e instanceof DOMException && ["NotAllowedError", "AbortError"].includes(e.name)) throw new Error("已取消，或没有可用于本站的安全密钥。");
+        if (e instanceof DOMException && ["NotAllowedError", "AbortError"].includes(e.name)) {
+          // A credential is bound to the domain it was registered on. After the platform moved
+          // hosts, the honest answer is where the old key went and how to get a new one.
+          throw new Error(state?.passkeys_elsewhere
+            ? "已取消，或此设备上没有可用于本站的安全密钥。平台域名已更换，在旧域名登记的安全密钥不能在这里使用：请先用口令或邮箱验证码登录，再在「账户 → 安全」重新登记。"
+            : "已取消，或没有可用于本站的安全密钥。");
+        }
         throw e;
       }
     });

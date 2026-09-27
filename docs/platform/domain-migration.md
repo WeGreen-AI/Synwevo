@@ -49,7 +49,7 @@ issuer 写进令牌并由三个依赖方校验，不能双跑；Cookie 只属于
 | 影响 | 原因 | 处理 |
 |---|---|---|
 | 所有浏览器需要重新登录 | Cookie 只属于主机 | 旧主机 308 到新主机；登录后回到原目标 |
-| 已注册的 Passkey 不能在新域使用 | RP ID 从 `accounts.wegreen.ltd` 变为 `accounts.synwevo.com`，WebAuthn 凭证按 RP ID 绑定，改域名字符串不能迁移凭证 | 账户页已有「域名变更」提示与重新登记路径；口令/邮箱验证码/外部登录不受影响。可选的 Related Origin Requests 需要长期保留旧主机且浏览器支持不齐，本轮不采用 |
+| 已注册的 Passkey 不能在新域使用 | RP ID 从 `accounts.wegreen.ltd` 变为 `accounts.synwevo.com`，WebAuthn 凭证按 RP ID 绑定，改域名字符串不能迁移凭证 | 账户页已有「域名变更」提示与重新登记路径；口令/邮箱验证码/外部登录不受影响。登录页的 Passkey 登录是可发现凭证（匿名，不列凭证以免枚举账户），切换后浏览器会报「没有可用凭证」——公开状态多一个全部署布尔值 `passkeys_elsewhere`（库里存在绑定到其它 RP ID 的有效 Passkey），登录页据此把「已取消或没有可用密钥」改成解释域名已换、请用口令/验证码登录后到「账户 → 安全」重新登记（CI-70）。可选的 Related Origin Requests 需要长期保留旧主机且浏览器支持不齐，本轮不采用 |
 | 浏览器推送需要重新开启 | 订阅属于旧源的 Service Worker | VAPID 密钥不变；旧源订阅按 404/410 自然失效 |
 | 本机草稿、语言/主题偏好、上次返回目标 | localStorage/sessionStorage 按源隔离 | 一次性；不迁移 |
 | 聊天里粘贴的旧域名 Docs 链接不再渲染成卡片 | 卡片只认当前注册表源 | 链接仍经 308 可打开；如需，`docs_links` 可加旧源白名单 |

@@ -56,6 +56,9 @@ export interface AuthState {
   app_id?: string | null;
   /** External OpenID providers the account service offers — only the configured ones. */
   external_providers?: { id: string; label: string }[];
+  /** True when passkeys registered under a previous domain exist in this deployment: a "no passkey
+   *  for this site" result then deserves an explanation and the way to re-register. */
+  passkeys_elsewhere?: boolean;
 }
 
 interface Ctx {

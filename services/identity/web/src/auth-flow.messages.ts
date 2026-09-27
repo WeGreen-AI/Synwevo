@@ -182,6 +182,10 @@ export const messages = {
     "en": "Cancelled, or no security key is available for this site.",
     "zh-Hant": "已取消，或沒有可用於本站的安全金鑰。"
   },
+  "已取消，或此设备上没有可用于本站的安全密钥。平台域名已更换，在旧域名登记的安全密钥不能在这里使用：请先用口令或邮箱验证码登录，再在「账户 → 安全」重新登记。": {
+    "en": "Cancelled, or this device has no security key for this site. The platform moved to a new domain and keys registered on the old one cannot be used here: sign in with your password or an e-mail code, then register a new key under Account → Security.",
+    "zh-Hant": "已取消，或此裝置上沒有可用於本站的安全金鑰。平台網域已更換，在舊網域登記的安全金鑰不能在這裡使用：請先用密碼或電子郵件驗證碼登入，再到「帳戶 → 安全」重新登記。"
+  },
   "两步验证": {
     "en": "Two-step verification",
     "zh-Hant": "兩步驗證"

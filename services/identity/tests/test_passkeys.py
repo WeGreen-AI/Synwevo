@@ -469,3 +469,26 @@ def test_removing_a_passkey_is_journalled(env):
                      headers={CSRF_HEADER: c.cookies.get(CSRF_COOKIE) or ""}).status_code == 200
     entries = journal.read(env["store"].root)
     assert any(e["kind"] == "passkey_removed" and e["credential_id"] == made["id"] for e in entries)
+
+
+# ---------------------------------------------------------------- after a domain change
+def test_the_sign_in_screen_learns_that_passkeys_live_on_another_domain(env):
+    """A credential is bound to its RP ID. Once the platform moves hosts, the anonymous public
+    state says — deployment-wide, never per account — that keys registered elsewhere exist, so
+    the sign-in screen can explain an empty passkey prompt; the account page marks the key."""
+    c = env["c"]
+    assert c.get("/api/auth/state").json()["passkeys_elsewhere"] is False
+    enrol(env)
+    assert c.get("/api/auth/state").json()["passkeys_elsewhere"] is False, "registered here: nothing to explain"
+    # the deployment moves: the same database, a new RP ID
+    env["store"].execute("UPDATE passkeys SET rp_id='accounts.old.example'")
+    assert c.get("/api/auth/state").json()["passkeys_elsewhere"] is True
+    mine = c.get("/api/auth/passkeys").json()["items"]
+    assert len(mine) == 1 and mine[0]["usable_here"] is False and mine[0]["rp_id"] == "accounts.old.example"
+    # the sign-in ceremony on the new host offers no credential list at all (anonymous by design)
+    fresh = TestClient(env["api"])
+    opts = post(fresh, "/api/auth/passkeys/authenticate/begin").json()
+    assert opts.get("allowCredentials") in (None, [])
+    # a deleted old key no longer counts
+    env["store"].execute("UPDATE passkeys SET deleted_at=1")
+    assert c.get("/api/auth/state").json()["passkeys_elsewhere"] is False
