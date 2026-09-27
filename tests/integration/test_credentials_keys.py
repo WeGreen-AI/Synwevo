@@ -388,9 +388,14 @@ def test_the_descriptor_is_signed(env):
     with pytest.raises(ServiceError) as e:
         a.open_link(f"{forged}.{sig}")
     assert e.value.code == "bad_link"
-    # The current format is sealed: any change to it is refused.
+    # The current format is sealed: any change to it is refused. The flips land inside complete
+    # base64 quanta: a padding-stripped tail carries 2 or 4 unused bits, and a flip that only
+    # touches those decodes to the very same bytes — no change to the content, so nothing for the
+    # seal to refuse (the last-character flip failed that way once on 2026-09-27).
     sealed, _ = a.sign_link("artifact", "a_1", env["ws"], 60, principal=a.verify(f"Bearer {tok}") | {"kind": "api_key"})
-    for i in (3, len(sealed) // 2, len(sealed) - 1):
+    blob_start = sealed.index(".") + 1
+    last_full = blob_start + (len(sealed) - blob_start) // 4 * 4 - 1
+    for i in (3, len(sealed) // 2, last_full):
         flipped = sealed[:i] + ("A" if sealed[i] != "A" else "B") + sealed[i + 1:]
         with pytest.raises(ServiceError) as e:
             a.open_link(flipped)
