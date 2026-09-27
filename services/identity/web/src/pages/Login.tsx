@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, get, post, safeNext, signInUrl, useSession } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { b64urlToBuf, toJSON } from "../components/PasskeySection";
-import { AuthFrame, FlowError, Loading, PasswordField, checkPassword, saveIntent, signedInDestination, useAction, type FlowUser } from "./org/AuthFlow";
+import { AuthFrame, FlowError, Loading, PasswordField, checkPassword, platformHomeUrl, saveIntent, signedInDestination, useAction, type FlowUser } from "./org/AuthFlow";
 import { isChallengeError, useChallenge } from "./org/Challenge";
 
 type Methods = { totp: boolean; recovery: boolean };
@@ -29,7 +29,7 @@ function fragment(): URLSearchParams {
 
 export default function Login() {
   const { me, state, refresh, disabled, error } = useSession();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const query = new URLSearchParams(window.location.search);
   const [next, setNext] = useState(() => safeNext(query.get("next")));
   const [mode, setMode] = useState<Mode>("password");
@@ -57,6 +57,9 @@ export default function Login() {
   const loginChallenge = useChallenge("login", { armed: loginChallengeArmed, enabled: mode !== "code" && !bootstrap && !offer && !ticket });
   useEffect(() => { if (isChallengeError(action.error)) { codeChallenge.reset(); loginChallenge.reset(); } }, [action.error]);   // eslint-disable-line react-hooks/exhaustive-deps
   const providers = state?.external_providers || [];
+  // A sign-in that was not on the way to a particular page ends on the platform (user feedback
+  // 2026-09-27: landing on the account settings after signing in read as "the logic is wrong").
+  const home = platformHomeUrl(state?.portal_url, locale);
 
   useEffect(() => {
     // Continuations arrive in the fragment so they never reach server logs or referrers.
@@ -86,15 +89,15 @@ export default function Login() {
   useEffect(() => {
     if (action.busy) return;
     if (disabled) window.location.assign(next);
-    else if (me) window.location.assign(signedInDestination(me, next));
+    else if (me) window.location.assign(signedInDestination(me, next, home));
     else if (state?.password_login === false) window.location.replace(signInUrl(state, next));
-  }, [me, disabled, state, next, action.busy]);
+  }, [me, disabled, state, next, action.busy, home]);
 
   async function finish(out?: { status?: string; user?: FlowUser; next?: string }) {
     saveIntent({ email: out?.user?.email || email, next });
     if ((out?.status === "verification_pending" || out?.status === "pending")) { window.location.assign("/verify-email"); return; }
     const user = out?.user || await get<FlowUser>("/api/auth/me");
-    window.location.assign(signedInDestination(user, out?.next ? safeNext(out.next) : next));
+    window.location.assign(signedInDestination(user, out?.next ? safeNext(out.next) : next, home));
   }
   function chooseRemember(value: boolean) { setRemember(value); }
   function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -157,7 +160,6 @@ export default function Login() {
     if (remember) p.set("remember", "1");
     return `/auth/external/${encodeURIComponent(id)}/start?${p}`;
   }
-  const { locale } = useI18n();
   const title = t(offer ? "关联外部登录" : ticket ? "两步验证" : bootstrap ? "建立首位管理员" : mode === "code" ? "用邮箱验证码登录" : "欢迎回来");
   const description = offer ? t("这个 {label} 账户的邮箱已有 Synwevo 账户。输入该账户的口令以关联并登录；以后可以直接用 {label} 登录。", { label: offerInfo?.label || t("外部") })
     : t(ticket ? useRecovery ? "输入一个恢复码。每个恢复码只能用一次。" : "打开验证器应用，输入其中显示的 6 位数字。" : bootstrap ? "使用服务器生成的一次性引导令牌，建立这个部署的首位管理员。" : mode === "code" ? (codeSent ? "验证码已发送到你的邮箱（如果该邮箱有账户），请在 10 分钟内输入。" : "我们会把一次性验证码发到你的账户邮箱。") : "登录你的 Synwevo 账户，继续手头的工作。");

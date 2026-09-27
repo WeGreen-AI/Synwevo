@@ -73,7 +73,7 @@ def sign_in(page: Page, accounts: str, email: str, password: str):
     page.get_by_label("邮箱").fill(email)
     page.get_by_label("口令", exact=True).fill(password)
     page.get_by_role("button", name="登录", exact=True).click()
-    page.wait_for_url(lambda u: "/login" not in u, timeout=15000)
+    page.wait_for_url(lambda u: not re.search(r"/(login|auth/start|auth/callback|oidc/)", u), timeout=15000)
 
 
 def reachable(browser: Browser, base: str, ctx_extra: dict | None = None) -> bool:
@@ -102,6 +102,23 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
         csp: list[str] = []
         page.on("console", lambda m: csp.append(m.text[:200]) if "Content Security Policy" in m.text else None)
         sign_in(page, accounts, email, password)
+
+        # ---- a sign-in with no return target lands on the platform, not on account settings -----
+        # (user feedback 2026-09-27). The account service hands the browser to the portal's own
+        # sign-in start, so the portal has its session when the workspace renders; the account
+        # service's root goes the same way, and an explicit target is still honoured.
+        if cross_origin:
+            page.wait_for_url(re.compile(re.escape(portal) + r"/workspace(\?|$)"), timeout=15000)
+            page.wait_for_load_state("networkidle")
+            expect(page.locator(".pt-status a[href*='/auth/start']")).to_have_count(0)   # not the signed-out view
+            landed = page.url.split(portal)[-1]
+            page.goto(f"{accounts}/")
+            page.wait_for_url(re.compile(re.escape(portal) + r"/workspace(\?|$)"), timeout=15000)
+            page.goto(f"{accounts}/login?next=%2Faccount&lang=zh-Hans")
+            page.wait_for_url(re.compile(re.escape(accounts) + r"/account(\?|$)"), timeout=15000)
+            notes.append(f"{engine}/{tag}: signed in without a target → platform {landed}; account root → platform; /login?next=/account → account page")
+        else:
+            notes.append(f"{engine}/{tag}: landing after sign-in not checked here (portal origin not resolvable in this engine)")
 
         # ---- account page: back link + drawer -------------------------------------------------
         page.goto(f"{accounts}/account?from=platform")

@@ -134,7 +134,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, inviter: s
         page.get_by_label(re.compile("邮箱|電子郵件|Email")).fill(newcomer)
         page.locator("input[type=password]").first.fill(password + " final")
         page.get_by_role("button", name=re.compile("^(登录|登入|Sign in)$")).click()
-        page.wait_for_url(lambda u: "/login" not in u, timeout=15000)
+        page.wait_for_url(lambda u: not re.search(r"/(login|auth/start|auth/callback|oidc/)", u), timeout=15000)
     notes.append(f"{engine}: e-mail verified, signed in with the chosen password → {page.url.split(accounts)[-1].split('?')[0]}")
 
     # 3. onboarding: a personal space
@@ -165,7 +165,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, inviter: s
     ip.get_by_label("邮箱").fill(inviter)
     ip.get_by_label("口令", exact=True).fill(inviter_pw)
     ip.get_by_role("button", name="登录", exact=True).click()
-    ip.wait_for_url(lambda u: "/login" not in u, timeout=15000)
+    ip.wait_for_url(lambda u: not re.search(r"/(login|auth/start|auth/callback|oidc/)", u), timeout=15000)
     t1 = time.time()
     ip.goto(f"{accounts}/account/workspaces/{team_wid}/members?tab=invites")
     ip.wait_for_selector("table.gov:visible", timeout=15000)

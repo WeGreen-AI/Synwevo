@@ -75,7 +75,7 @@ def sign_in(page, accounts: str, address: str) -> None:
     page.get_by_label(re.compile("邮箱|Email")).fill(address)
     page.locator("input[type=password]").first.fill(PW)
     page.get_by_role("button", name=re.compile("^(登录|登入|Sign in)$")).click()
-    page.wait_for_url(lambda u: "/login" not in u)
+    page.wait_for_url(lambda u: not re.search(r"/(login|auth/start|auth/callback|oidc/)", u))
 
 
 def workbook(rows: list[list[str]]) -> bytes:

@@ -1524,6 +1524,30 @@ owner 把段首「注段」换成「忘录」；owner 的变更记录里编辑�
 `ui_e2e_roles` / `ui_e2e_onboarding` / `ui_e2e_inbox` 需要预置账户与组织（批量跑时参数错误），单独补跑——期间隔离实例的注册限流按设计生效（同一地址短时多次注册 → 429 `too_many_attempts`，`retry_after` 788 秒），
 等窗口过后再跑：`ui_e2e_roles` Chromium 5/5（自定义角色只含持有者可授的权限、分配与有效权限来源、成员恰好拥有两项权限并在收件箱看到英文通知、删除已分配角色提示影响 1 人）；`ui_e2e_onboarding` Chromium 8/8（注册→验证邮件→引导→个人空间→邀请→接受→登出）。`ui_e2e_inbox` 首跑在偏好表「安全」行的断言处 strict-mode 失败：该行自 Web Push 起有两个渠道复选框（站内、推送），脚本只预期一个——脚本过时，不是产品缺陷；改为断言该行全部复选框均锁定后 Chromium 9/9（未读计数 2→1→2→0、抽屉与 API 首项一致、偏好保存、门户与 Docs 从各自源站显示同一未读数与首项）。
 
+### 16.60 登录后的落点：无目标的登录落到平台，不停在账户设置页（CI-58）
+
+**问题与基线**：用户反馈（2026-09-27）「登录完之后直接跳转的是 accounts.wegreen.ltd/account，所有的逻辑存在重大错误」。复现（代码与隔离实例）：
+`Login.tsx` 的 `next = safeNext(query.next)`，没有 `next` 时是 `/`；`signedInDestination` 原样返回 `/`；账户服务的 `/` 路由把已登录者 `Navigate` 到 `/account`。
+走到这条路的入口：直接打开 `accounts.wegreen.ltd/login`、`/logged-out` 页的「重新登录」、忘记口令后重新登录、书签。从门户「登录」（`/auth/start?next=/workspace`）或
+Docs 发起的登录经 `/login?next=/oidc/authorize…` 回到发起方，本来就不受影响（`ui_e2e_shell.py` 门户段一直覆盖）。生产 `/api/auth/state` 公开字段确认
+`portal_url = https://synwevo.wegreen.ltd`（只读检查，2026-09-27），引导页的 `portalWorkspaceUrl` 因此不在受影响范围。
+**成熟参考**：Microsoft Entra 登录门户把已登录者放到应用启动页 My Apps（learn.microsoft.com `entra/identity/enterprise-apps/myapps-overview`，
+"When signed in to the My Apps portal, the applications that are made visible are shown"，访问 2026-09-27）；账户资料页是另一处。OIDC RP 发起的登录回到 RP 的 `next`（已有行为）。
+**对比与选择**：(a) 无目标登录改落平台，经门户 `/auth/start` 交接（选）；(b) 保持 `/account` 加显眼「进入平台」按钮——与用户要求相反；(c) 直接链到门户公开首页——门户还要再回账户服务拿会话，多一跳且首页不是工作空间。
+**预期变化**：无目标登录与账户根路径 → `<portal_url>/auth/start?next=/workspace&lang=<界面语言>` → 门户拿到自己的会话 → `/workspace`；显式 `next`（含 `/account`、`/oidc/authorize…`）、
+邮箱验证/邀请/引导的优先级、无门户部署（`portal_url` 空 → `/account`）都不变；`/logged-out` 增加「返回平台首页」次级入口。
+**边界与风险**：门户地址只来自服务端 `portal_url`，不来自查询参数或 Referer——不构成开放重定向（`safeNext` 继续只放同源路径）；配置成非 http(s) 绝对地址时
+`platformHandoffUrl` 抛错（引导页按钮显示为错误，与既有 `flow.validation` 契约一致），登录页的 `platformHomeUrl` 捕获后回退 `/account`，不让配置错误拖垮登录页；
+不改 Cookie 作用域、不改 RP ID、不涉及数据迁移；三语言新增两条文案（「正在前往平台…」，`/logged-out` 复用「返回平台首页」）。
+**验收**：`packages/auth-client/web/tests/platform-handoff.test.mjs` 5 项（origin 替换配置里的路径、参数顺序 `next/workspace_id/lang`、空配置为 `null`、
+相对/非 http(s)/`javascript:` 配置抛错）；`flow.validation.mjs` 19 项（含原有「相对配置必须抛错」）；`npm run typecheck && npm run build` 通过；
+`ui_e2e_shell.py`（隔离实例，受控账户）**Chromium 与 WebKit、桌面 1280 与手机 375 px 四组全部通过**：无目标登录 → `portal.localhost:31769/workspace`（不是登出态视图）、
+账户根路径 `/` → 门户 `/workspace`、`/login?next=/account` → 账户页；其余外壳断言（返回链接、抽屉焦点圈闭、菜单键盘、末行菜单、门户重聚焦、Docs 面板）不变，0 CSP 违规。
+八条在账户服务直接登录的证明（inbox / shell / roles / messaging / member_import / institutional_mail / onboarding / mobile_audit）的等待条件从「离开 `/login`」改为
+「交接完成」（不在 `/login`、`/auth/start`、`/auth/callback`、`/oidc/`），否则下一步 `goto` 会和交接中的导航竞争。改后复跑 `ui_e2e_roles.py` Chromium 5/5 与 `ui_e2e_inbox.py` Chromium 9/9（读者换成刚收到角色通知的受控成员——脚本前置条件），
+均通过；机器路径不受影响，同日 `python_full_flow.py`（sdk/cli/person，24 份文档、52 份内置输出）与 `ts_run.py --builtin-only`（12+12）在新鲜隔离服务上通过。
+**发布与恢复**：纯前端（账户外壳 + 共享 auth-client），无 schema 变化；回滚即重新部署上一镜像。部署后用受控账户在生产直接登录一次核对落点。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

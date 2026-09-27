@@ -9,13 +9,13 @@
  * Only what the account service is actually for: signing in, the account and security centre,
  * accepting an invitation, and the pages the redirect chain lands on.
  */
-import { StrictMode, Suspense, type ReactNode } from "react";
+import { StrictMode, Suspense, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { DialogProvider, ToastProvider, initTheme, I18nProvider, PageState, StatusPage, useI18n, registerMessages, lazyRoute, pick } from "@synwevo/ui";
 import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
 import Login from "./pages/Login";
-import { AccountCapabilityGate } from "./pages/org/AuthFlow";
+import { AccountCapabilityGate, platformHomeUrl } from "./pages/org/AuthFlow";
 
 /* Route-level code splitting (see @synwevo/ui lazyRoute). The sign-in page is what most visits
  * start with, and it used to download the whole shell — platform administration, the API
@@ -44,6 +44,8 @@ registerMessages({
   "已退出": {en:"Signed out", "zh-Hant":"已登出"},
   "当前设备的统一登录与关联应用会话已退出。其他设备不受影响。": {en:"You have signed out of Synwevo and linked app sessions on this device. Other devices are unchanged.", "zh-Hant":"目前裝置的統一登入與關聯應用程式工作階段已登出。其他裝置不受影響。"},
   "重新登录": {en:"Sign in again", "zh-Hant":"重新登入"},
+  "返回平台首页": {en:"Back to platform home", "zh-Hant":"返回平台首頁"},
+  "正在前往平台…": {en:"Taking you to the platform…", "zh-Hant":"正在前往平台…"},
   "页面不存在": {en:"Page not found", "zh-Hant":"找不到頁面"},
   "前往账户设置": {en:"Go to account settings", "zh-Hant":"前往帳戶設定"},
   "仅平台管理员可访问": {en:"Platform administrators only", "zh-Hant":"僅平台管理員可存取"},
@@ -64,11 +66,22 @@ function AdminOnly({children}: {children: ReactNode}) {
 }
 
 function SignedOut() {
-  const { t } = useI18n();
+  const { t } = useI18n(); const { state } = useSession();
   return <StatusPage product="Account" brandHref="/login" title={t("已退出")}>
     <p>{t("当前设备的统一登录与关联应用会话已退出。其他设备不受影响。")}</p>
     <a className="btn primary" href="/login">{t("重新登录")}</a>
+    {state?.portal_url && <a className="btn" href={state.portal_url}>{t("返回平台首页")}</a>}
   </StatusPage>;
+}
+/** The root of the account service: a signed-in person is handed to the platform (the account
+ *  page is one click away there); without a portal the account page is the only home. */
+function Home() {
+  const { state } = useSession(); const { t, locale } = useI18n();
+  const home = platformHomeUrl(state?.portal_url, locale);
+  const local = home.startsWith("/");
+  useEffect(() => { if (!local) window.location.replace(home); }, [home, local]);
+  if (local) return <Navigate to={home} replace />;
+  return <PageState>{t("正在前往平台…")}</PageState>;
 }
 function NotFound() {
   const {t} = useI18n();
@@ -110,9 +123,9 @@ createRoot(document.getElementById("root")!).render(
                   whether a link is drawn. */}
               <Route path="/admin" element={<RequireSession><AdminOnly><Admin /></AdminOnly></RequireSession>} />
               <Route path="/admin/api-platform" element={<RequireSession><AdminOnly><ApiPlatform /></AdminOnly></RequireSession>} />
-              {/* There is no home page here. Someone who arrives at the root either has an
-                  account to manage or needs to sign in; both are one redirect away. */}
-              <Route path="/" element={<RequireSession><Navigate to="/account" replace /></RequireSession>} />
+              {/* There is no home page here. Someone who arrives at the root either needs to sign
+                  in or is handed to the platform, where their work is (Home). */}
+              <Route path="/" element={<RequireSession><Home /></RequireSession>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
             </Suspense>

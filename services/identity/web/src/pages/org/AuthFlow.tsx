@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
-import { ApiError, safeNext, useSession } from "@synwevo/auth-client";
+import { ApiError, isDefaultNext, platformHandoffUrl, safeNext, useSession } from "@synwevo/auth-client";
 import { Brand, LanguageMenu, Logo, hasMessage, useI18n, type Locale, type Translator } from "@synwevo/ui";
 import { passwordProblem } from "../../lib/password";
 import "../../auth-flow.messages";
@@ -87,18 +87,37 @@ export type FlowUser = { email?: string; email_verified?: boolean; status?: stri
 export function needsVerification(user: FlowUser | null | undefined): boolean {
   return !!user && (user.email_verified === false || user.status === "pending" || user.status === "pending_verification");
 }
-export function signedInDestination(user: FlowUser, next: string): string {
+/**
+ * Where a person goes once signed in. `next` is the page they were trying to reach; `home` is
+ * where a sign-in with no such page ends (see platformHomeUrl). Verification, an invitation in
+ * progress and an unfinished onboarding come first, because each of them is a step the person
+ * has to take before any page can be useful.
+ */
+export function signedInDestination(user: FlowUser, next: string, home?: string): string {
   if (needsVerification(user)) return "/verify-email";
   if (readIntent().invite_token) return continuation();
   if (user.onboarding_completed === false || user.workspaces?.length === 0) return "/onboarding";
+  // "/" is what safeNext answers when nobody asked for a particular page. That is a sign-in for
+  // its own sake, and a sign-in is for getting to one's work: the platform, not the account
+  // settings (which stay one click away in the top bar). An explicit `/account`, `/messages`
+  // or `/oidc/authorize…` is honoured as before.
+  if (home && isDefaultNext(next)) return home;
   return next;
+}
+/**
+ * The platform, entered through the portal's own sign-in start so the portal has a session of
+ * its own when the workspace renders. A deployment without a portal (`portal_url` unset — Docs
+ * on its own) keeps the account page as the only home there is.
+ */
+export function platformHomeUrl(portalUrl: string | undefined, locale: Locale): string {
+  // A misconfigured portal address must not take the sign-in page down with it: the account
+  // page is a usable place to land, and the top bar there shows the same broken link plainly.
+  try { return platformHandoffUrl(portalUrl, { next: "/workspace", lang: locale }) ?? "/account"; }
+  catch { return "/account"; }
 }
 /** Start a new RP handoff so its server-bound choice replaces any stale portal tab context. */
 export function portalWorkspaceUrl(portalUrl: string | undefined, workspaceId: string, locale: Locale): string {
-  if (!portalUrl) return "/account";
-  const url = new URL("/auth/start", portalUrl);
-  url.search = new URLSearchParams({ next: "/workspace", workspace_id: workspaceId, lang: locale }).toString();
-  return url.href;
+  return platformHandoffUrl(portalUrl, { next: "/workspace", workspaceId, lang: locale }) ?? "/account";
 }
 
 export function AuthFrame({ title, description, children, wide = false }: {

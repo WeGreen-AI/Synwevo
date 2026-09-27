@@ -177,3 +177,29 @@ app / workspace / 操作。机器配置只经 CLI 与配置文件管理，**产�
 | 找回口令与邮箱验证 | 已完成；20 条测试。本地投递目录验证，生产邮件送达属外部条件 |
 
 **未部署到服务器。** 本轮全部在本机完成，未修改生产 DNS，未创建隧道，未公开暴露服务。
+
+## 8. 登录后的落点（2026-09-27）
+
+账户服务只负责认证；工作在平台（Synwevo Workspace）里。因此**没有明确返回目标的登录，落点是平台，不是账户设置页**：
+用户反馈（2026-09-27）在 `accounts.wegreen.ltd` 登录后直接停在 `/account` 被理解为"逻辑有重大错误"——
+登录是为了去工作，账户设置在顶栏一键可达。参照：Microsoft Entra 的登录门户把已登录者放到应用启动页 My Apps
+（"When signed in to the My Apps portal, the applications that are made visible are shown"，learn.microsoft.com
+`entra/identity/enterprise-apps/myapps-overview`，访问 2026-09-27），而不是账户资料页。
+
+| 情形 | 落点 | 实现 |
+|---|---|---|
+| 从门户或应用发起（`/auth/start?next=…` → `/login?next=/oidc/authorize…`） | 回到发起方的 `next`（不变） | `signedInDestination` 尊重明确的 `next` |
+| 在账户服务直接登录、`/logged-out` 的「重新登录」、忘记口令后重新登录（`next` 为空或 `/`） | 平台工作空间：`<portal_url>/auth/start?next=/workspace&lang=<界面语言>` | `platformHomeUrl`（`@synwevo/auth-client` 的 `platformHandoffUrl`） |
+| 已登录者打开账户服务根路径 `/` | 同上 | `main.tsx` 的 `Home` |
+| 明确要去账户页（`/login?next=/account`、门户账户入口的 `?from=platform`） | 账户页 | 不变 |
+| 邮箱未验证 / 有进行中的邀请 / 未完成引导 | `/verify-email` / `/invite` / `/onboarding`（先于一切） | 不变 |
+| 部署没有门户（`SYNWEVO_PORTAL_URL` 未设，Docs 单独自托管） | `/account`（唯一的落点） | `platformHandoffUrl` 返回 `null` 时回退 |
+
+落点经过门户自己的 `/auth/start`，而不是直接链到门户首页：这样门户在同一跳里拿到自己的会话，
+渲染工作空间时不必再回账户服务一次。门户地址来自服务端配置（`/api/auth/state` 的 `portal_url`），
+从不来自查询参数或 Referer，因此不构成开放重定向；配置成非 http(s) 绝对地址时该辅助函数抛错
+（引导页的按钮显示为错误），登录页则回退到 `/account`，不让配置错误把登录页拖垮。
+`/logged-out` 页同时给出「返回平台首页」的次级入口。验证：`platform-handoff.test.mjs`（5 项）、
+`flow.validation.mjs`、`ui_e2e_shell.py`（Chromium/WebKit：无目标登录 → 门户 `/workspace`；账户根路径 → 门户；
+`/login?next=/account` → 账户页）。
+

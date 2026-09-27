@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, post, useSession } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
-import { AuthFrame, FlowError, PasswordField, checkPassword, continuation, signedInDestination, readIntent, useAction, useLinkToken } from "./org/AuthFlow";
+import { AuthFrame, FlowError, PasswordField, checkPassword, continuation, platformHomeUrl, signedInDestination, readIntent, useAction, useLinkToken } from "./org/AuthFlow";
 import { isChallengeError, useChallenge } from "./org/Challenge";
 
 export default function VerifyEmail() {
@@ -48,7 +48,7 @@ function EmailVerification({ token }: { token: string }) {
   const continueSignedIn = !!me && !signInRequired;
   return <AuthFrame title={t(verified ? "邮箱已验证" : "验证你的邮箱")} description={t(verified ? signInRequired ? "邮箱验证和新口令设置已完成。请使用新口令重新登录。" : "邮箱验证已完成，可以继续设置你的空间。" : token ? "确认这是你的邮箱后，点击下方按钮完成验证。" : "我们已收到请求。请检查邮箱，使用最新邮件中的验证链接。")}>
     <FlowError error={action.error} />
-    {verified ? <><p className="flow-success" role="status">{t("验证完成")}</p><a className="btn primary" href={continueSignedIn ? signedInDestination(me!, continuation()) : `/login?next=${encodeURIComponent(readIntent().invite_token ? "/invite" : "/onboarding")}`}>{t(continueSignedIn ? "继续" : "登录并继续")}</a></>
+    {verified ? <><p className="flow-success" role="status">{t("验证完成")}</p><a className="btn primary" href={continueSignedIn ? signedInDestination(me!, continuation(), platformHomeUrl(state?.portal_url, locale)) : `/login?next=${encodeURIComponent(readIntent().invite_token ? "/invite" : "/onboarding")}`}>{t(continueSignedIn ? "继续" : "登录并继续")}</a></>
       : <>{token && (passwordRequired ? <form onSubmit={verify} aria-busy={action.busy}>
           <p className="notice" role="status">{t("为确保只有邮箱持有人能使用账户，请设置由你掌控的新口令。此前的口令和登录会话将失效。")}</p>
           <PasswordField value={password} onChange={setPassword} label={t("新口令")} autoFocus disabled={action.busy} />

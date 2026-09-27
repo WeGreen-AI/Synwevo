@@ -161,7 +161,7 @@ def sign_in(page: Page, accounts: str, email: str, password: str):
     page.get_by_label("邮箱").fill(email)
     page.get_by_label("口令", exact=True).fill(password)
     page.get_by_role("button", name="登录", exact=True).click()
-    page.wait_for_url(lambda u: "/login" not in u, timeout=15000)
+    page.wait_for_url(lambda u: not re.search(r"/(login|auth/start|auth/callback|oidc/)", u), timeout=15000)
 
 
 def measure(page: Page, url: str, settle: str | None = None) -> dict:

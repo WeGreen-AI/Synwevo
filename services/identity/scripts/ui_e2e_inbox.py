@@ -41,7 +41,7 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, email: str, p
     page.get_by_label(re.compile("邮箱|電子郵件|Email")).fill(email)
     page.locator("input[type=password]").first.fill(password)
     page.get_by_role("button", name=re.compile("^(登录|登入|Sign in)$")).click()
-    page.wait_for_url(lambda u: "/login" not in u, timeout=15000)
+    page.wait_for_url(lambda u: not re.search(r"/(login|auth/start|auth/callback|oidc/)", u), timeout=15000)
     page.goto(f"{accounts}/account")
     page.wait_for_selector("#devices", timeout=15000)
     me = page.request.get(f"{accounts}/api/auth/me").json()

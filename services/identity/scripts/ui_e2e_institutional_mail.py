@@ -110,7 +110,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
     page.get_by_label(re.compile("邮箱|Email")).fill(address)
     page.locator("input[type=password]").first.fill(PW2)
     page.get_by_role("button", name=re.compile("^(登录|登入|Sign in)$")).click()
-    page.wait_for_url(lambda u: "/login" not in u, timeout=15000)
+    page.wait_for_url(lambda u: not re.search(r"/(login|auth/start|auth/callback|oidc/)", u), timeout=15000)
     me = page.request.get(f"{accounts}/api/auth/me").json()
     assert me["email"].lower() == address.lower() and me["status"] == "active", me
     csrf = next(c["value"] for c in ctx.cookies() if c["name"] == "dw_csrf")
