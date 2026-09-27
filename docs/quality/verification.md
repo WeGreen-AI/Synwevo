@@ -1775,7 +1775,7 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 **协调者发现**：平台 `Permissions-Policy: microphone=()` 使所有源无法录音——改为提供消息的源（`messages`、`all`）`microphone=(self)`，`test_security_headers.py` +1（五个角色逐一断言）；
 本机无头 Chrome（`channel=chrome` + fake-device 参数）`getUserMedia` 永不结算——外壳加「正在等待麦克风授权…」状态与 20 s 超时说明，`ui_e2e_messaging.py` 区分等待态与录音态。
 主分支 cherry-pick 为 `d30b55f`/`4b818e8`：typecheck/build、`npm test --workspaces`（+messages-web 17）、四守卫、`test_security_headers` + `apps/messages/tests` 通过；
-协调者隔离实例（消息/账户角色以合并代码重启）`ui_e2e_messaging.py` Chromium 27/27 通过（麦克风路径走等待/取消）；WebKit 结果记在本节末尾；四套件全量结果亦记在末尾。
+协调者隔离实例（消息/账户角色以合并代码重启）`ui_e2e_messaging.py` Chromium 27/27 通过（麦克风路径走等待/取消）；`--webkit` 运行两引擎共 54 条里程碑全部通过（WebKit 的麦克风被用户代理拒绝并如实报告）；四套件全量 **2186 passed, 1 skipped**，exit 0；导出树复核（typecheck/build/`npm test --workspaces` 19+39+49+17+19）与五守卫通过。
 **未验证**：真实录音（需要权限提示能结算的浏览器/真机）、真机 iOS/Android。
 
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
