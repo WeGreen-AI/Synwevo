@@ -114,9 +114,12 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-61 | 门户页头加「退出登录」（桌面文字按钮 / 手机账户菜单项），走 CI-60 的平台级退出 | 已部署（e900774，run 36320325701，backup 20260927T131414Z）；`ui_e2e_shell.py` Chromium/WebKit 手机段通过 | 线上行为核对随账户持有人下次在门户退出 |
 | CI-62 | Docs「← Synwevo」与账户外壳品牌链接回到工作空间（门户 `/auth/start` 交接），不再回公开首页 | 已部署（41e6f4f，run 36323605133，backup 20260927T140828Z）；`ui_e2e_shell.py` Chromium/WebKit 桌面段通过 | 线上行为核对随账户持有人下次点击 |
 | CI-63 | 门户 `/workspace` 页头加「消息」入口（共享 `MessagesLink`，带未读徽标） | 已部署（0c43018，run 36328222361） | 消息独立成应用（message.* 域名）后入口目标改为注册表地址（第九轮） |
-| CI-64 | 消息未读徽标在门户/Docs 源真实生效（`unread-count` 移入共享会话路由） | 已实现，集成 +1，浏览器验证中/待部署 | — |
-| CI-65 | Accounts 导航：顶栏常驻「返回工作空间」与来源应用链接、子页面真实父级链接、组织页改用账户外壳 | 已实现，`ui_e2e_shell.py` 两引擎两宽度通过，待部署 | 域名切换后目标随 `PORTAL_URL` 变为 synwevo.com/workspace |
+| CI-64 | 消息未读徽标在门户/Docs 源真实生效（`unread-count` 移入共享会话路由） | 已部署（d2dde99，run 36330242865） | — |
+| CI-65 | Accounts 导航：顶栏常驻「返回工作空间」与来源应用链接、子页面真实父级链接、组织页改用账户外壳 | 已部署（d2dde99，run 36330242865） | 域名切换后目标随 `PORTAL_URL` 变为 synwevo.com/workspace |
 | CI-67 | 域名迁移准备：compose/nginx 参考、旧主机 308、`workplace.synwevo.com` 别名、CI 健康检查变量、运行手册 | 仓库侧完成（待推送）；线上切换待运维按 `docs/platform/domain-migration.md` §3 执行 | 切换后：设仓库变量 `SYNWEVO_PUBLIC_HOSTS`、受控账户核对登录/Docs/账户返回/Passkey 重登记 |
+| CI-68 | 私信邮件：缺省关、只能未读摘要、寄出前复核、限速、正文默认不带原文、v23 偏好重置 | 已实现，identity/integration 套件通过，待部署 | 消息独立应用上线后同一规则不变；Messages 页读会话时同步把收件箱条目标为已读（现在只靠寄出前复核） |
+| CI-69 | Docs 外壳文案精简与术语统一（`docs/platform/docs-copy.md`） | 已实现（worktree 三套浏览器证明通过），待部署 | 账户/门户/消息外壳按同一规则表继续 |
+| CI-70 | 域名切换后 Passkey 登录失败的解释与重新登记路径（`passkeys_elsewhere`） | 已实现，待部署 | 切换后受控账户实测：旧 Passkey 登录 → 解释文案 → 口令登录 → 重新登记 |
 | 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 已随 11202c3 发布 |
 | 回归 | 个人项目复制不携带私人协同房间/未批准历史（9.16）：目标无活动记录、无实时草稿与变更记录，副本只有来源 head 版本 | 已验证，tests/integration/test_project_copy.py（verification.md §16.54） | — |
 | CI-46 | Docs 项目页协同（在场与定位、按映射三方合并、他人变更即时提示、归属活动记录） | 已部署（e6197c1，run 36219721565）；生产 nginx 副本待运维加 Upgrade 头 | SheetEditor 协同与活动筛选未做 |

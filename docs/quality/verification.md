@@ -1661,6 +1661,30 @@ Passkey RP ID（`passkeys.py:43-50`，凭证按 RP ID 绑定，`usable_here` 提
 **未完成（线上）**：切换本身是运维在 VPS 的一次性步骤（安装两份配置、`client register` 新 URI、重建三角色与网关、设仓库变量）；
 `message.wegreen.ltd` 的隧道主机名待确认。
 
+### 16.70 私信邮件缺省关、只寄未读摘要（CI-68）
+
+**复现**（2026-09-28，代码）：`default_preferences()` 把 conversation 的邮件设为 `digest`，账户「通知」页允许选「立即」；`NotificationDispatcher.run_once` 把到期投递直接寄出，
+不看读者此刻是否已读、消息是否撤回、会话是否静音/退出；摘要条目正文是发消息时截的 120 字原文；`preview` 偏好只存不用。与第九轮 §8.3 的四条要求都不符。
+**修复**：见 issues.md CI-68。**验证**：`services/identity/tests/test_messaging.py::test_private_message_mail_is_off_by_default_and_an_opt_in_digest_of_what_is_still_unread`
+（默认 → 收件箱有条目、投递 `skipped/channel off`、outbox 空；`immediate` → 400「不逐条」；开启摘要 → 一条待寄，撤回其中一条后寄出的正文是「有 1 条未读消息」且不含两句原文；
+下一跨度读过 → skipped，再下一跨度在 30 分钟内 → hold 到上一封 +30 分钟；`preview=full` → 附「第四句」；静音 → 不产生条目）；
+`test_notifications.py::test_v23_resets_conversation_mail_saved_under_the_old_default_to_off`（v22 库带 digest 行 → 重开为 off，docs 类别/免打扰/预览不变；行里的 immediate 读作 digest）。
+套件：identity 全量 exit 0（`-q` 配置下无计数行，进度行 638 个通过点，无 F/E）、integration 全量 exit 0、Docs 全量（本节末尾）；`npm run typecheck`、account-web 19 项契约验证、三外壳 build、导出树复核（archive HEAD：typecheck/build/`npm test --workspaces` 19+39+49+19 通过）、infra 6 项 unittest 通过。
+**隔离实例实测**（2026-09-28，账户服务以新代码重启，v23 迁移在该库执行）：`GET /api/auth/notifications/preferences` → conversation `off`、preview `minimal`；`PUT` conversation=immediate → 400「消息不逐条发邮件：只能选 digest（未读摘要）或 off」；digest/off 往返正常；`ui_check_notifications.py`（Chromium，1280 与 390 宽）：「消息」行的邮件下拉只有「不发邮件 / 未读摘要」、默认「不发邮件」，其它类别仍三档，规则说明可见，「邮件与推送里的消息内容」默认「只显示会话与条数」（截图 `ci68-notifications-{desktop,phone}.png`）。
+**未验证**：真实 SMTP 收件（规则在 outbox 之前，与投递链路无关）；生产库里已有偏好行的数量（迁移在部署时执行，`_conversation_mail_becomes_opt_in` 幂等）。
+
+### 16.71 Docs 外壳文案精简（CI-69）
+
+worktree（`dfaf324`，基于 0c43018）内由子代理完成并验证：三外壳 typecheck/build、`npm test -w @synwevo/docs-web` 49/49、组件名/设计/品牌守卫、
+`apps/docs/scripts/ui_e2e.py`（桌面 Chrome）、`ui_e2e_mobile.py`（Chromium 390×844）、`E2E_ENGINE=webkit ui_e2e_mobile.py` 通过。
+主分支 cherry-pick 为 `a084f48`；合并后的复核结果记在本节末尾。保留未动的项与理由见 `docs/platform/docs-copy.md`。
+
+### 16.72 域名切换后的 Passkey 登录解释（CI-70）
+
+**复现**（2026-09-28，代码）：`auth_begin` 匿名、不列 `allowCredentials`（避免枚举账户），切换 RP ID 后浏览器对旧凭证报 `NotAllowedError`，`Login.tsx` 只显示
+「已取消，或没有可用于本站的安全密钥。」。**修复**：见 issues.md CI-70。**验证**：`services/identity/tests/test_passkeys.py::test_the_sign_in_screen_learns_that_passkeys_live_on_another_domain`；
+identity 套件全量 exit 0（本节末尾）；`npm run typecheck`、account-web 19 项契约验证通过。**未验证**：真实浏览器在两个主机间切换（需要切换后的生产或双主机隔离实例；切换当天由受控账户实测）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
