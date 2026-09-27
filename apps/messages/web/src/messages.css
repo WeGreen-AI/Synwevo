@@ -293,6 +293,7 @@ a.msg-card:hover, a.msg-card:focus-visible { border-color: var(--accent-line); t
 .msg-voice { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .msg-voice audio { height: 36px; max-width: 260px; }
 .msg-recording { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--err-line); border-radius: var(--radius-lg); background: var(--err-weak); font-size: var(--fs-3); animation: msg-in var(--dur-2) var(--ease); }
+.msg-mic-wait { border-color: var(--line); background: var(--panel-2); }
 .msg-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--err); animation: msg-blink 1s infinite var(--ease); }
 @keyframes msg-blink { 50% { opacity: .2; } }
 .msg-rec-time { font-variant-numeric: tabular-nums; color: var(--err); font-weight: 600; }

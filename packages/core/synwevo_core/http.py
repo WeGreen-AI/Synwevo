@@ -69,6 +69,10 @@ CLOUDFLARE_CSP = DEFAULT_CSP.replace("script-src 'self';", "script-src 'self' ht
                             .replace("connect-src 'self';", "connect-src 'self' https://cloudflareinsights.com;")
 HSTS = "max-age=31536000; includeSubDomains"          # one year, per host; no `preload` (not the apex)
 PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+#: The origins that serve Synwevo Message record voice messages, so the microphone is allowed for
+#: the page itself there (`self`, never a third-party frame); every other origin keeps it closed.
+#: Roles: the messages role and the single-process `all` (which serves the messages shell).
+PERMISSIONS_POLICY_MESSAGES = PERMISSIONS_POLICY.replace("microphone=()", "microphone=(self)", 1)
 
 
 def content_security_policy(request: Request | None = None) -> str | None:
@@ -116,7 +120,8 @@ def apply_security_headers(request: Request, resp) -> None:
     resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-    resp.headers.setdefault("Permissions-Policy", PERMISSIONS_POLICY)
+    role = getattr(getattr(request.app, "state", None), "role", "") if hasattr(request, "app") else ""
+    resp.headers.setdefault("Permissions-Policy", PERMISSIONS_POLICY_MESSAGES if role in ("messages", "all") else PERMISSIONS_POLICY)
     resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
     resp.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
     csp = content_security_policy(request)

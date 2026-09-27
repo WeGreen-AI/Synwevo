@@ -341,7 +341,7 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     # ---- a voice message (§7.8): recorded with the browser's recorder from a fake microphone
     #      (Chromium launch flags); a browser that cannot record says so honestly
     pa.get_by_role("button", name=re.compile("^语音消息$")).click()
-    recording = pa.locator(".msg-recording")
+    recording = pa.locator(".msg-recording:not(.msg-mic-wait)")
     try:
         recording.wait_for(state="visible", timeout=5000)
         pa.wait_for_timeout(1500)
@@ -353,12 +353,20 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
         expect(pb.locator(".msg-voice").last).to_be_visible(timeout=15000)
         notes.append(f"{engine}: a voice message recorded from the fake microphone was uploaded with its measured duration, sent by itself, and plays inline for both")
     except Exception:
-        # the platform's Permissions-Policy header currently says `microphone=()` on every origin,
-        # so the browser refuses the microphone; the shell says so instead of pretending
-        toast = pa.locator(".toast").last
-        expect(toast).to_contain_text(re.compile("不支持录音|无法使用麦克风"), timeout=5000)
-        why = toast.inner_text().split("\n")[0]
-        notes.append(f"{engine}: recording could not start ({why}); the shell reported the refusal honestly — allowing microphone=(self) on the messages origin is a server header change")
+        # A browser that cannot record, refuses the microphone, or whose permission prompt never
+        # answers (headless Chrome on this machine: getUserMedia never settles even with the fake
+        # device flags) — the shell shows the waiting state and then says so instead of pretending.
+        waiting = pa.locator(".msg-mic-wait")
+        if waiting.count():
+            expect(waiting).to_contain_text(re.compile("等待麦克风授权"))
+            waiting.get_by_role("button", name="取消").click()
+            expect(waiting).to_have_count(0)
+            notes.append(f"{engine}: the microphone prompt never answered; the shell showed 正在等待麦克风授权… and the wait was cancelled honestly (recording itself needs a browser whose prompt settles)")
+        else:
+            toast = pa.locator(".toast").last
+            expect(toast).to_contain_text(re.compile("不支持录音|无法使用麦克风|麦克风没有响应"), timeout=25000)
+            why = toast.inner_text().split("\n")[0]
+            notes.append(f"{engine}: recording could not start ({why}); the shell reported it honestly")
 
     # ---- attachment upload: real progress, cancel while in flight, retry after a refusal
     held: list = []

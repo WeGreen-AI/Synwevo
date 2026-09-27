@@ -13,7 +13,8 @@ from fastapi.testclient import TestClient
 
 from synwevo_server.app import create_app
 
-ORIGINS = {"accounts": "http://accounts.localhost:8770", "portal": "http://portal.localhost:8769", "app": "http://docweave.localhost:8765"}
+ORIGINS = {"accounts": "http://accounts.localhost:8770", "portal": "http://portal.localhost:8769", "app": "http://docweave.localhost:8765",
+           "messages": "http://message.localhost:8768", "all": "http://docweave.localhost:8765"}
 
 
 @pytest.fixture()
@@ -52,7 +53,16 @@ def _assert_standard(r):
     assert "x-request-id" in r.headers
 
 
-@pytest.mark.parametrize("role", ["accounts", "portal", "app"])
+def test_only_the_messages_origins_may_use_the_microphone(make):
+    """Voice messages are recorded on Synwevo Message (and the single-process deployment, which
+    serves its shell); the account service, the portal and Docs keep the microphone closed."""
+    for role, expect in (("accounts", "microphone=()"), ("portal", "microphone=()"), ("app", "microphone=()"),
+                         ("messages", "microphone=(self)"), ("all", "microphone=(self)")):
+        policy = make(role).get("/healthz").headers.get("permissions-policy", "")
+        assert expect in policy and "camera=()" in policy, (role, policy)
+
+
+@pytest.mark.parametrize("role", ["accounts", "portal", "app", "messages"])
 def test_every_kind_of_response_carries_the_headers(make, role):
     c = make(role)
     seen = []

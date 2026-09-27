@@ -133,7 +133,7 @@ curl -s -X POST "$ISSUER/oidc/token" \
 `Content-Security-Policy`（默认 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;
 font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self';
 form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Referrer-Policy: no-referrer`、
-`Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()`、
+`Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()`（提供 Synwevo Message 的源——`messages` 角色与单进程 `all`——为 `microphone=(self)`，语音消息在本页录制；其它源关闭）、
 `Cross-Origin-Opener-Policy: same-origin`、`Cross-Origin-Resource-Policy: same-site`，以及经 TLS 到达时的
 `Strict-Transport-Security: max-age=31536000; includeSubDomains`。机器客户端可以忽略它们；浏览器客户端不能依赖内联脚本或第三方资源。
 带 `CF-Ray`（经 Cloudflare）的请求在 `script-src`/`connect-src` 里多出 Cloudflare Web Analytics 的两个源，其余相同。

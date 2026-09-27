@@ -1766,6 +1766,18 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 **隔离实例**（worktree `.scratch/data`，`instance=test`，file 邮件，ports 32270/32269/32265/32268，`platform.py up --init` 四进程；scratchpad 脚本 `ui_e2e_bridge.py`，Chrome 153（channel）1280 群主 + 390 触摸成员，WebKit 26.6 经 `*.localhost` 代理同样两宽度）：两账户经邮件注册/邀请；群主在 Docs 源建项目、项目页「更多」→「在消息中讨论」→ 经消息源 `/auth/start` 落到 `message.localhost:32268/objects/docweave/project/<pid>`（截图 `bridge-{chrome,webkit}-docs-menu.png`、`-objects-landing.png`；外壳路由由外壳批次实现，本证明在该页面上以本源会话调用 `POST …/conversation`）→ 建群一次（群主+成员、`workspace_id`、`purpose=object`）→ `/c/<cid>` 实时；成员手机端经 SSO 进入；群主在 **Docs 源（`app` 进程）** 发评论 → **消息源（`messages` 进程）** 会话里出现卡片：POST 到 history 可见 0.23 s（两引擎），外发表 `delivered_at−created_at` 0.18 / 0.22 s、`attempts=1`、`last_error=NULL`，手机端经事件流显示「Synwevo Docs · 新评论」（现外壳按正文渲染，截图 `-card-{desktop,phone}.png`）；两账户都没有 `conversation.*` 收件箱条目；成员经账户服务 `members/{uid}/remove`（重认证 + 理由）移出工作空间后，同一张卡片对他变为中性（无标题、无链接），随后 worker 巡检把他移出会话（会话与 history 404）；两引擎 0 CSP 违规、0 页面错误。`platform.py down` 已停止实例。
 **未做 / 未验证**：消息外壳的 `/objects/…` 路由与卡片渲染（契约 §8.1/8.3，外壳批次）；分享/权限变更事件（Docs 今天没有）；卡片标题改名不回写；`SCHEMA_VERSION=24` 与并行批次可能撞号；群成员 200 上限下的大工作空间（`too_many_members`，不截断）；生产未部署。
 
+### 16.78 消息外壳重建与契约接入（CI-73）
+
+子代理在 worktree（`9732f57`、`dee2583`，基于 d4e222a）完成并验证：typecheck/build（四外壳）、`npm test --workspaces`（UI 19、auth-client 39、Docs 49、messages-web 17、account-web 19）、
+五守卫、`apps/messages/tests` 29；隔离四源实例（ports 32070/32069/32065/32068，schema v25）`ui_e2e_messaging.py` **27/27 里程碑** Chromium（Chrome）+ WebKit × 1280×800 / 390×844 触摸：
+历史锚定（Δ2 px）、新消息提示、重进未读分割线、引用跳转、触摸表情回应 ≥ 44 px、IME 不误发、上传进度/取消/重试、搜索定位与回到最新、手机列表↔会话↔详情、减少动态（`--dur-2`=0 ms）、
+键盘菜单、在线、回执、正在输入、撤回、仅自己删除/撤销、转发、标为未读（长按）、对象路由 404 页；0 控制台/页面错误；截图 26 张。
+**协调者发现**：平台 `Permissions-Policy: microphone=()` 使所有源无法录音——改为提供消息的源（`messages`、`all`）`microphone=(self)`，`test_security_headers.py` +1（五个角色逐一断言）；
+本机无头 Chrome（`channel=chrome` + fake-device 参数）`getUserMedia` 永不结算——外壳加「正在等待麦克风授权…」状态与 20 s 超时说明，`ui_e2e_messaging.py` 区分等待态与录音态。
+主分支 cherry-pick 为 `d30b55f`/`4b818e8`：typecheck/build、`npm test --workspaces`（+messages-web 17）、四守卫、`test_security_headers` + `apps/messages/tests` 通过；
+协调者隔离实例（消息/账户角色以合并代码重启）`ui_e2e_messaging.py` Chromium 27/27 通过（麦克风路径走等待/取消）；WebKit 结果记在本节末尾；四套件全量结果亦记在末尾。
+**未验证**：真实录音（需要权限提示能结算的浏览器/真机）、真机 iOS/Android。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

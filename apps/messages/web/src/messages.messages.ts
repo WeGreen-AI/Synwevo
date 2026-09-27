@@ -151,6 +151,8 @@ export const messages = {
   "按一下开始录音": { en: "Tap to start recording", "zh-Hant": "按一下開始錄音" },
   "此浏览器不支持录音。": { en: "This browser cannot record audio.", "zh-Hant": "此瀏覽器不支援錄音。" },
   "无法使用麦克风：{why}": { en: "The microphone is not available: {why}", "zh-Hant": "無法使用麥克風：{why}" },
+  "麦克风没有响应。请确认浏览器和系统允许本站使用麦克风，然后再试。": { en: "The microphone did not respond. Check that the browser and the system allow this site to use it, then try again.", "zh-Hant": "麥克風沒有回應。請確認瀏覽器與系統允許本站使用麥克風，然後再試。" },
+  "正在等待麦克风授权…": { en: "Waiting for microphone permission…", "zh-Hant": "正在等待麥克風授權…" },
   "没有录到声音。": { en: "Nothing was recorded.", "zh-Hant": "沒有錄到聲音。" },
   "正在录音 {len}": { en: "Recording {len}", "zh-Hant": "正在錄音 {len}" },
   "最长 {max}": { en: "Up to {max}", "zh-Hant": "最長 {max}" },

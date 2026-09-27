@@ -36,6 +36,7 @@ export interface ComposerProps {
 const TEXT_MAX_PX = 200;
 const TYPING_REPEAT_MS = 4000;
 const TYPING_IDLE_MS = 3000;
+const MIC_WAIT_MS = 20000;
 
 /** The recording format this browser can produce (the server sniffs the bytes, never the name). */
 function recordingMime(): { mime: string; ext: string } | null {
@@ -64,6 +65,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [rec, setRec] = useState<{ recorder: MediaRecorder; stream: MediaStream; started: number; mime: string; ext: string } | null>(null);
   const [recElapsed, setRecElapsed] = useState(0);
   const recStopReason = useRef<"send" | "cancel">("send");
+  // The microphone request is shown while the browser (or the operating system behind it) is
+  // asking; it is abandoned after MIC_WAIT_MS with a plain explanation — a prompt nobody answers
+  // must not leave a button that looks dead.
+  const [micWait, setMicWait] = useState(false);
+  const micAbandoned = useRef(false);
 
   useImperativeHandle(ref, () => ({ addFiles: (files) => void addFiles(files), focus: () => textRef.current?.focus() }));
 
@@ -130,8 +136,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const fmt = recordingMime();
     if (!fmt || !caps?.voice) { toast(t("此浏览器不支持录音。"), "err"); return; }
     let stream: MediaStream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    catch (e) { toast(t("无法使用麦克风：{why}", { why: e instanceof Error ? e.message : String(e) }), "err"); return; }
+    micAbandoned.current = false; setMicWait(true);
+    try {
+      stream = await Promise.race([
+        navigator.mediaDevices.getUserMedia({ audio: true }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new DOMException("timeout", "TimeoutError")), MIC_WAIT_MS)),
+      ]);
+    } catch (e) {
+      setMicWait(false); micAbandoned.current = true;
+      if (e instanceof DOMException && e.name === "TimeoutError") toast(t("麦克风没有响应。请确认浏览器和系统允许本站使用麦克风，然后再试。"), "err");
+      else toast(t("无法使用麦克风：{why}", { why: e instanceof Error ? e.message : String(e) }), "err");
+      return;
+    }
+    setMicWait(false);
+    if (micAbandoned.current) { stream.getTracks().forEach(tr => tr.stop()); return; }   // answered after we gave up
     const recorder = new MediaRecorder(stream, { mimeType: fmt.mime });
     const chunks: Blob[] = [];
     recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
@@ -244,6 +262,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <button type="button" className="btn ghost sm icon" onClick={() => removeUpload(u)} aria-label={t("移除附件：{name}", { name: u.file.name })}><IcClose size={14} /></button>
       </li>)}
     </ul>}
+    {micWait && !rec && <div className="msg-recording msg-mic-wait" role="status" aria-live="polite">
+      <span className="msg-rec-time">{t("正在等待麦克风授权…")}</span>
+      <span className="spacer" />
+      <button type="button" className="btn sm" onClick={() => { micAbandoned.current = true; setMicWait(false); }}>{t("取消")}</button>
+    </div>}
     {rec ? <div className="msg-recording" role="status" aria-live="polite">
       <span className="msg-rec-dot" aria-hidden="true" /><span className="msg-rec-time">{t("正在录音 {len}", { len: fmtDuration(recElapsed) })}</span>
       {caps?.voice && <span className="tiny muted">{t("最长 {max}", { max: fmtDuration(caps.voice.max_duration_ms) })}</span>}
