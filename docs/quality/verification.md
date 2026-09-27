@@ -1563,7 +1563,7 @@ Chromium 让后发的导航取代仍在挂起的第一个，于是落到 `/login
 **验收**：`session-generation.test.mjs` +2：退出后守卫渲染 `PageState`「正在退出…」且 `navigation` 只有一次 `replace('/logged-out')`；过期会话的守卫 `assign('/login?next=%2F%3Ftab%3Dsecurity&lang=en')`。
 `npm test --workspaces` 38/38（auth-client）；三语言新增「正在退出…」；`ui_e2e_onboarding.py` 第 6 步改为两引擎都必须到 `/logged-out`——隔离实例复跑：**Chromium 8/8 与 WebKit 8/8**（注册 → 验证 → 引导 → 交接门户 → 邀请 → 接受 → 退出），
 两引擎「signed out → /logged-out; /api/auth/me 401」，0 页面错误、0 CSP 违规；改前同一脚本的 Chromium 记录是 `/login`。导出树（index）typecheck/build/`npm test` 通过。
-**发布与恢复**：共享 auth-client，三个外壳同时受益；无 schema 变化，回滚即上一镜像。
+**发布与恢复**：共享 auth-client，三个外壳同时受益；无 schema 变化，回滚即上一镜像。**已部署**：`8184dc2`，run 36315903038（verify 与 deploy 成功，backup 20260927T115350Z）；线上只读核对：三源 readyz、账户外壳共享块携带「正在退出…」。
 
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
