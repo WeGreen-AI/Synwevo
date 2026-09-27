@@ -1647,6 +1647,20 @@ Docs 的平台栏则有 `MessagesLink`（`PlatformNav.tsx`）。**选择**：复
 `tsc`、`flow.validation` 19/19、四项守卫、`npm test --workspaces` 通过；`tests/integration` + `services/identity/tests` 1235 通过（与 CI-64 同批）。
 **发布与恢复**：账户外壳；无 schema 变化，回滚即上一镜像。
 
+### 16.69 域名迁移盘点与准备（CI-67）
+
+**盘点**（2026-09-27，全仓库）：产品地址无一写死在代码里——issuer（`oidc.py:90-96`）、RP 回调（`rp.py:60-66`）、门户交接（`session_routes.py:58`）、邮件链接
+（`mail.py`，取 `SYNWEVO_PUBLIC_URL`）、注册表 `launch_url`（Docs 进程每次启动按 `SYNWEVO_APP_URL` 改写）、通知目标（按源名在读取时解析）、
+Passkey RP ID（`passkeys.py:43-50`，凭证按 RP ID 绑定，`usable_here` 提示已存在）、Turnstile 主机名、Cookie 仅主机、CSP 无第一方主机名、机器凭据与 Webhook
+不绑定主机。绑定主机的是：`infra/production/compose.yaml`（env）、`nginx.conf`（server_name）、`.github/workflows/production.yml`（健康检查）、
+数据库里的 `oauth_clients` URI（CLI 幂等更新）、外部控制台（隧道/证书/Turnstile/IdP）与 16 份文档。
+**决定**：`SYNWEVO_RP_ID=accounts.synwevo.com`（与账户主机一致；旧 Passkey 需重新登记，账户页已有提示；不采用需长期保留旧主机的 Related Origin Requests）；
+旧主机 308 永久重定向（保留路径与查询串；308 保留方法）；`workplace.synwevo.com` 作为工作空间别名（根 → `/workspace`）；发件域不变。
+**产出**：compose/nginx 参考文件、CI 健康检查主机变量化（`SYNWEVO_PUBLIC_HOSTS`，未设即旧主机，切换不需推代码）、口令黑名单、`docs/platform/domain-migration.md`
+（映射、切换步骤、用户影响、回滚、待运维事项）。**验证**：`nginx -t`（`nginx:1.28-alpine`，`--add-host` 解析上游）通过；口令黑名单 Python/TS 双侧同步、`tsc` 通过。
+**未完成（线上）**：切换本身是运维在 VPS 的一次性步骤（安装两份配置、`client register` 新 URI、重建三角色与网关、设仓库变量）；
+`message.wegreen.ltd` 的隧道主机名待确认。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

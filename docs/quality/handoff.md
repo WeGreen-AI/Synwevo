@@ -116,6 +116,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-63 | 门户 `/workspace` 页头加「消息」入口（共享 `MessagesLink`，带未读徽标） | 已实现，`ui_e2e_shell.py` Chromium/WebKit 两宽度通过，待部署 | 消息独立成应用（message.* 域名）后入口目标改为注册表地址（第九轮） |
 | CI-64 | 消息未读徽标在门户/Docs 源真实生效（`unread-count` 移入共享会话路由） | 已实现，集成 +1，浏览器验证中/待部署 | — |
 | CI-65 | Accounts 导航：顶栏常驻「返回工作空间」与来源应用链接、子页面真实父级链接、组织页改用账户外壳 | 已实现，`ui_e2e_shell.py` 两引擎两宽度通过，待部署 | 域名切换后目标随 `PORTAL_URL` 变为 synwevo.com/workspace |
+| CI-67 | 域名迁移准备：compose/nginx 参考、旧主机 308、`workplace.synwevo.com` 别名、CI 健康检查变量、运行手册 | 仓库侧完成（待推送）；线上切换待运维按 `docs/platform/domain-migration.md` §3 执行 | 切换后：设仓库变量 `SYNWEVO_PUBLIC_HOSTS`、受控账户核对登录/Docs/账户返回/Passkey 重登记 |
 | 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 已随 11202c3 发布 |
 | 回归 | 个人项目复制不携带私人协同房间/未批准历史（9.16）：目标无活动记录、无实时草稿与变更记录，副本只有来源 head 版本 | 已验证，tests/integration/test_project_copy.py（verification.md §16.54） | — |
 | CI-46 | Docs 项目页协同（在场与定位、按映射三方合并、他人变更即时提示、归属活动记录） | 已部署（e6197c1，run 36219721565）；生产 nginx 副本待运维加 Upgrade 头 | SheetEditor 协同与活动筛选未做 |

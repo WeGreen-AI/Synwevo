@@ -81,7 +81,11 @@ jobs:
           git archive --format=tar HEAD | gzip -n > "$RUNNER_TEMP/source.tar.gz"
           ssh -i "$RUNNER_TEMP/synwevo-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/synwevo-ssh/known_hosts" -o ConnectTimeout=20 "synwevo-deploy@$DEPLOY_HOST" "deploy $GITHUB_SHA" < "$RUNNER_TEMP/source.tar.gz"
       - name: Verify public health
+        env:
+          # Space-separated public hosts. The operator sets the repository variable at the
+          # domain cutover (docs/platform/domain-migration.md); until then the current hosts.
+          PUBLIC_HOSTS: ${{ vars.SYNWEVO_PUBLIC_HOSTS }}
         run: |
-          for host in synwevo.wegreen.ltd accounts.wegreen.ltd docwave.wegreen.ltd; do
+          for host in ${PUBLIC_HOSTS:-synwevo.wegreen.ltd accounts.wegreen.ltd docwave.wegreen.ltd}; do
             curl --fail --silent --show-error --retry 3 --max-time 20 "https://$host/readyz"
           done

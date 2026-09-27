@@ -24,7 +24,7 @@ const COMMON = new Set([
   "p@ssword", "p@ssw0rd", "secret", "master", "hello", "freedom", "whatever", "qazwsx",
   "correcthorsebatterystaple",
 ]);
-const SERVICE_TERMS = ["synwevo", "synwevodocs", "docweave", "wegreen", "dw.wegreen.ltd", "文档", "模板"];
+const SERVICE_TERMS = ["synwevo", "synwevodocs", "docweave", "wegreen", "dw.wegreen.ltd", "synwevo.com", "synwevomessage", "文档", "模板"];
 
 const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, "");
 

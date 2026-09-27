@@ -31,12 +31,17 @@ x-env: &env
   SYNWEVO_UI_AUTH: session
   SYNWEVO_COOKIE_SECURE: '1'
   SYNWEVO_TRUST_PROXY: '1'
-  SYNWEVO_ISSUER: https://accounts.wegreen.ltd
-  SYNWEVO_PORTAL_URL: https://synwevo.wegreen.ltd
+  # Product hosts (2026-09-27 cutover, docs/platform/domain-migration.md): the platform lives on
+  # synwevo.com; the old *.wegreen.ltd hosts answer 308 to their new counterparts (nginx.conf).
+  SYNWEVO_ISSUER: https://accounts.synwevo.com
+  SYNWEVO_PORTAL_URL: https://synwevo.com
   # Public registration uses mailbox verification; never grants platform administration.
   # A subsequently persisted administrator policy takes precedence over this environment value.
   SYNWEVO_REGISTRATION: open
-  SYNWEVO_RP_ID: accounts.wegreen.ltd
+  # Passkeys are bound to this RP ID. Changing the host changes the RP ID: credentials registered
+  # under accounts.wegreen.ltd are shown as unusable on the account page and must be registered
+  # again (services/identity/synwevo_identity/passkeys.py). Chosen to mirror the account host.
+  SYNWEVO_RP_ID: accounts.synwevo.com
 services:
   accounts:
     <<: *app
@@ -49,7 +54,7 @@ services:
     environment:
       <<: *env
       SYNWEVO_ROLE: accounts
-      SYNWEVO_PUBLIC_URL: https://accounts.wegreen.ltd
+      SYNWEVO_PUBLIC_URL: https://accounts.synwevo.com
       # Member-import uploads are scanned with the same daemon as Docs uploads; `required`
       # means an import is refused (503) while the scanner is down, never waved through.
       SYNWEVO_CLAMD_ADDRESS: tcp://clamav:3310
@@ -63,8 +68,8 @@ services:
     environment:
       <<: *env
       SYNWEVO_ROLE: app
-      SYNWEVO_APP_URL: https://docwave.wegreen.ltd
-      SYNWEVO_PUBLIC_URL: https://docwave.wegreen.ltd
+      SYNWEVO_APP_URL: https://docwave.synwevo.com
+      SYNWEVO_PUBLIC_URL: https://docwave.synwevo.com
       SYNWEVO_OIDC_CLIENT_ID: docweave-web
       SYNWEVO_OIDC_APP_ID: docweave
       # Every uploaded file (sources, templates, resumable uploads, imports) is held in quarantine
@@ -114,8 +119,8 @@ services:
     environment:
       <<: *env
       SYNWEVO_ROLE: portal
-      SYNWEVO_APP_URL: https://synwevo.wegreen.ltd
-      SYNWEVO_PUBLIC_URL: https://synwevo.wegreen.ltd
+      SYNWEVO_APP_URL: https://synwevo.com
+      SYNWEVO_PUBLIC_URL: https://synwevo.com
       SYNWEVO_OIDC_CLIENT_ID: portal-web
       SYNWEVO_OIDC_APP_ID: platform
     depends_on:
@@ -135,7 +140,7 @@ services:
       - /var/run:rw,nosuid,nodev,size=1m,uid=101,gid=101,mode=700
       - /tmp:rw,nosuid,nodev,size=16m,uid=101,gid=101,mode=700
     healthcheck:
-      test: [CMD-SHELL, "wget -q -O /dev/null --header='Host: synwevo.wegreen.ltd' http://127.0.0.1:8080/readyz"]
+      test: [CMD-SHELL, "wget -q -O /dev/null --header='Host: synwevo.com' http://127.0.0.1:8080/readyz"]
       interval: 10s
       timeout: 5s
       retries: 3
