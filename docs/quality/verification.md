@@ -1626,6 +1626,27 @@ Docs 的平台栏则有 `MessagesLink`（`PlatformNav.tsx`）。**选择**：复
 **验收**：`ui_e2e_shell.py` 门户段：入口可见、href 以账户源开头并以 `/messages` 结尾、点击后到消息页——隔离实例复跑 **Chromium 与 WebKit、桌面与 375 px 四组全部通过**（CI-60…62 的断言不变，0 CSP 违规）；四项守卫与 `npm test --workspaces` 通过。
 **发布与恢复**：门户外壳；无 schema 变化，回滚即上一镜像。
 
+### 16.67 消息未读徽标在每个源真实生效（CI-64）
+
+**问题与基线**：第九轮盘点（新源可行性）发现：`MessagesLink` 从所在源轮询 `/api/auth/messaging/unread-count`；共享网关对 app/portal 角色放行该路径
+（`http.py` APP_ACCOUNT_PATHS），但处理函数只由账户服务的消息路由挂载，于是生产的 Docs 与门户源由外壳兜底答 404，`useMessagesUnread` 吞掉错误、徽标永远为 0。
+单进程/本机（角色 all）看不出来，所以此前的浏览器证明都没抓到。**修复**：路由移入共享 `synwevo_auth_client.session_routes`（每个角色各挂一份的既有模式），
+账户服务的消息路由删除重复项。**验收**：`tests/integration/test_sso_chain.py` +1（Docs 源登录后 200，含 `unread` 与 `conversations`；匿名 401）；
+`ui_e2e_shell.py` 门户段断言门户源 200。**发布与恢复**：无 schema 变化，回滚即上一镜像。
+
+### 16.68 Accounts 的返回导航（CI-65）
+
+**问题与基线**：用户反馈「Accounts 界面没有返回工作空间或上一级的按钮」。核实：`Topbar` 只在有来源提示时显示一个返回链接（从 Docs 进入时是「返回 Synwevo Docs」，
+没有「工作空间」）；`/organizations` 与 `/organizations/:oid` 借用登录页框架 `AuthFrame`，没有账户导航，只有页内文字链接；子页面没有确定的父级。
+**选择**（brief §6）：导航由产品路径决定，不用 `history.back()`——顶栏常驻「返回工作空间」（`platformHandoffUrl(portal_url, {next:"/workspace", workspaceId})`，
+门户在同一跳里拿到会话并恢复当前空间；手机也在栏内而非只在抽屉），来源应用链接保留（「返回 Synwevo Docs」），子页面按路径显示真实父级
+（`parentOf`：组织详情 → 组织、成员/恢复/审批 → 账户与安全、API 管理 → 平台管理、会话 → 消息）；组织列表与详情改用账户外壳（`Topbar` + `acct-page`），
+删除页内重复的「账户设置 / 工作空间 / 返回我的组织」链接（全站文案精简的一例）。
+**验收**：`ui_e2e_shell.py`（隔离实例，两引擎，1280 与 375 px）：工作空间链接指向门户 `/auth/start` 且带 `next=%2Fworkspace`；所有返回链接只指向服务端列出的源；
+新开页面（无历史）直接打开组织详情页 → 「组织」父级链接可见并回到列表；直接打开成员页 → 「账户与安全」父级链接可见并回到账户页；四组通过。
+`tsc`、`flow.validation` 19/19、四项守卫、`npm test --workspaces` 通过；`tests/integration` + `services/identity/tests` 1235 通过（与 CI-64 同批）。
+**发布与恢复**：账户外壳；无 schema 变化，回滚即上一镜像。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

@@ -4,6 +4,7 @@ registerMessages({
   "账户导航": { en: "Account navigation", "zh-Hant": "帳戶導覽" },
   "返回": { en: "Back", "zh-Hant": "返回" },
   "返回平台首页": { en: "Back to platform home", "zh-Hant": "返回平台首頁" },
+  "工作空间": { en: "Workspace", "zh-Hant": "工作空間" },
   "返回工作空间": { en: "Back to workspace", "zh-Hant": "返回工作空間" },
   "返回 {app}": { en: "Back to {app}", "zh-Hant": "返回 {app}" },
   "回到「{name}」继续之前的任务": { en: "Return to “{name}” and pick up where you left off", "zh-Hant": "回到「{name}」繼續之前的任務" },

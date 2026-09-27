@@ -1,6 +1,7 @@
 import { registerMessages } from "@synwevo/ui";
 
 export const messages = {
+  "组织成员身份与工作空间权限分别管理。": { en: "Organisation membership and workspace permissions are managed separately.", "zh-Hant": "組織成員身份與工作空間權限分別管理。" },
   "该组织尚未设置头像": { en: "This organization has no avatar yet.", "zh-Hant": "此組織尚未設定頭像" },
   "头像请求包含不支持的字段": { en: "The avatar request contains unsupported fields.", "zh-Hant": "頭像請求包含不支援的欄位" },
   "请上传不超过 256 KB、512 × 512 像素的普通 PNG 图片": { en: "Upload a standard PNG no larger than 256 KB and 512 × 512 pixels.", "zh-Hant": "請上傳不超過 256 KB、512 × 512 像素的普通 PNG 圖片" },

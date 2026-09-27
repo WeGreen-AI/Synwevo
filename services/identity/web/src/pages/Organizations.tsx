@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { get, patch, post, useSession } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
-import { AuthFrame, FlowError, Loading, needsVerification } from "./org/AuthFlow";
+import { FlowError, Loading, needsVerification } from "./org/AuthFlow";
+import { Topbar } from "../components/Topbar";
 import OrganizationCreate from "./org/OrganizationCreate";
 import OrganizationAction, { type OrganizationActionSpec } from "./org/OrganizationAction";
 import OrganizationAvatar from "./org/OrganizationAvatar";
@@ -19,6 +20,14 @@ export default function Organizations() {
   const { oid } = useParams<{ oid: string }>();
   return oid ? <OrganizationDetail key={oid} id={oid} /> : <OrganizationList />;
 }
+/** The organisation pages are account pages: they get the account bar (workspace, parent page,
+ *  account navigation) like every other page here, not the sign-in frame they used to borrow —
+ *  which had no way back except an in-page text link. */
+function OrgPage({ title, lede, children }: { title: string; lede?: string; children: ReactNode }) {
+  return <div className="app"><Topbar title={title} /><div style={{ overflow: "auto", flex: 1 }}>
+    <main className="acct-page flow-stack">{lede && <p className="muted" style={{ margin: 0 }}>{lede}</p>}{children}</main>
+  </div></div>;
+}
 function OrganizationList() {
   const { t } = useI18n(); const { me } = useSession();
   const [items, setItems] = useState<Organization[] | null>(null); const [error, setError] = useState<unknown>(null); const [retry, setRetry] = useState(0); const [create, setCreate] = useState(false);
@@ -28,14 +37,13 @@ function OrganizationList() {
     get<{ items: Organization[] }>("/api/auth/organizations", abort.signal).then(out => setItems(out.items)).catch(e => { if (!abort.signal.aborted) setError(e); });
     return () => abort.abort();
   }, [me?.id, retry, needsVerification(me)]);
-  return <AuthFrame wide title={t("我的组织")} description={t("管理团队归属与协作空间。组织成员身份与工作空间权限分别管理。")}>
-    <div className="org-actions"><a href="/account">{t("账户设置")}</a><a href="/onboarding">{t("工作空间")}</a></div>
+  return <OrgPage title={t("我的组织")} lede={t("组织成员身份与工作空间权限分别管理。")}>
     <FlowError error={error} />{needsVerification(me) ? <a href="/verify-email">{t("先验证邮箱")}</a> : !me ? <Loading /> : <>
       <button type="button" className="btn primary" onClick={() => setCreate(v => !v)} aria-expanded={create} aria-controls="organization-create">{t(create ? "收起创建表单" : "创建组织")}</button>
       {create && <section id="organization-create" className="org-section"><h2>{t("创建组织")}</h2><OrganizationCreate onCreated={org => { window.location.assign(`/organizations/${encodeURIComponent(org.id)}`); }} /></section>}
       {error ? <button type="button" className="btn" onClick={() => setRetry(v => v + 1)}>{t("重试")}</button> : !items ? <Loading /> : items.length ? <div className="org-grid">{items.map(org => <article className="org-card" key={org.id}><h2>{org.name}</h2><p>{t(roleSource(org.role))} · {t(statusSource(org.status))}</p><a className="btn" href={`/organizations/${encodeURIComponent(org.id)}`}>{t("查看组织")}</a></article>)}</div> : <p className="notice">{t("你还没有加入组织。可以创建一个，或使用团队发来的邀请邮件加入。")}</p>}
     </>}
-  </AuthFrame>;
+  </OrgPage>;
 }
 function OrganizationDetail({ id }: { id: string }) {
   const { t, locale } = useI18n(); const { me, refresh } = useSession();
@@ -67,8 +75,8 @@ function OrganizationDetail({ id }: { id: string }) {
   let spec: OrganizationActionSpec | null = null;
   if (modal === "settings" && org) spec = { title: t("编辑组织设置"), impact: t("更新组织名称或邀请策略。更严格的策略可能撤销不再符合条件的待处理邀请。"), run: reason => patch(orgPath(id), { name: name.trim(), ...(org.role === "owner" ? { invitation_policy: policy } : {}), version: org.version, reason }) };
   else if (modal && lifecycle[modal]) spec = { title: t(lifecycle[modal].title), impact: t(lifecycle[modal].impact), danger: lifecycle[modal].danger, run: reason => post(`${orgPath(id)}/${modal}`, { reason }) };
-  return <AuthFrame wide title={org?.name || t("组织详情")} description={t("成员、空间与组织设置，在这里保持清晰。")}>
-    <a className="action-link" href="/organizations">{t("返回我的组织")}</a><FlowError error={error} />
+  return <OrgPage title={org?.name || t("组织详情")}>
+    <FlowError error={error} />
     {needsVerification(me) ? <a href="/verify-email">{t("先验证邮箱")}</a> : error ? <button type="button" className="btn" onClick={() => setRevision(v => v + 1)}>{t("重试")}</button> : !org ? <Loading /> : <>
       <div className="org-actions"><span className="badge">{t(statusSource(org.status))}</span><span>{t("你的角色：{role}", { role: t(roleSource(org.role)) })}</span>{org.usage && <span className="org-count">{t("{workspaces} 个空间 · {members} 位成员", { workspaces: org.usage.workspaces, members: org.usage.members })}</span>}</div>
       {org.status !== "active" && <p className="notice warn">{t(org.status === "frozen" ? "组织已冻结，工作空间暂时无法访问。" : "组织已删除，工作空间暂时无法访问。")}{org.status === "deleted" && org.recover_until && ` ${t("可恢复至 {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(org.recover_until * 1000) })}`}</p>}
@@ -88,5 +96,5 @@ function OrganizationDetail({ id }: { id: string }) {
         {modal === "settings" && <><div className="field"><label htmlFor="edit-org-name">{t("组织名称")}</label><input id="edit-org-name" className="input" value={name} onChange={e => setName(e.target.value)} required maxLength={100} /></div>{org.role === "owner" && <div className="field"><label htmlFor="invitation-policy">{t("邀请策略")}</label><select id="invitation-policy" className="input" value={policy} onChange={e => setPolicy(e.target.value as "owners" | "admins")}><option value="admins">{t("所有者和管理员")}</option><option value="owners">{t("仅所有者")}</option></select></div>}</>}
       </OrganizationAction>}
     </>}
-  </AuthFrame>;
+  </OrgPage>;
 }

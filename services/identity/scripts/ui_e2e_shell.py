@@ -125,13 +125,41 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
         # The account page renders in the person's stored locale, so every lookup below accepts
         # all three languages.
         page.wait_for_selector("#devices, section.card", timeout=15000)
-        back = page.locator(".acct-back-link").first
-        expect(back).to_be_visible()
-        back_text = back.inner_text()
-        assert re.search("返回|Back to", back_text), back_text   # the account's own language
-        href = back.get_attribute("href") or ""
-        listed = {t["url"].split("/auth/start")[0].rstrip("/") for t in page.request.get(f"{accounts}/api/auth/me").json().get("return_targets", [])}
-        assert any(href.startswith(origin) for origin in listed), f"back link goes to {href!r}, not a server-listed origin {sorted(listed)}"
+        # ---- CI-65: the workspace is always one click away, in the bar on both widths ----------
+        ws_link = page.locator(".acct-back-workspace").first
+        expect(ws_link).to_be_visible()
+        ws_href = ws_link.get_attribute("href") or ""
+        assert ws_href.startswith(portal) and "/auth/start" in ws_href and "next=%2Fworkspace" in ws_href, ws_href
+        # the application the person came from is also offered (from=platform names the portal, so
+        # no second link here); the server-listed targets are the only origins allowed
+        from urllib.parse import urlsplit
+        listed = {f"{urlsplit(t['url']).scheme}://{urlsplit(t['url']).netloc}" for t in page.request.get(f"{accounts}/api/auth/me").json().get("return_targets", [])}
+        for a in page.locator(".acct-back-link").all():
+            h = a.get_attribute("href") or ""
+            assert h.startswith("/") or any(h.startswith(origin) for origin in listed), f"back link goes to {h!r}, not a server-listed origin {sorted(listed)}"
+        # sub-pages have a real parent link (product navigation, no history needed): open them directly
+        me_json = page.request.get(f"{accounts}/api/auth/me").json()
+        org_ids = [w.get("organization_id") for w in me_json.get("workspaces", []) if w.get("organization_id")]
+        if org_ids:
+            fresh = ctx.new_page()
+            fresh.goto(f"{accounts}/organizations/{org_ids[0]}")
+            parent = fresh.locator(".acct-back-parent").first
+            expect(parent).to_be_visible(timeout=15000)
+            assert re.search("组织|Organi", parent.inner_text()), parent.inner_text()
+            parent.click()
+            fresh.wait_for_url(re.compile(re.escape(accounts) + r"/organizations(\?|$)"), timeout=15000)
+            governed_ws = [w for w in me_json.get("workspaces", []) if w.get("role") in ("owner", "admin")]
+            if governed_ws:
+                fresh.goto(f"{accounts}/account/workspaces/{governed_ws[0]['id']}/members")
+                parent = fresh.locator(".acct-back-parent").first
+                expect(parent).to_be_visible(timeout=15000)
+                assert re.search("账户|帳戶|Account", parent.inner_text()), parent.inner_text()
+                parent.click()
+                fresh.wait_for_url(re.compile(re.escape(accounts) + r"/account(\?|$)"), timeout=15000)
+            fresh.close()
+            notes.append(f"{engine}/{tag}: account bar — 返回工作空间 → portal handoff; sub-pages opened directly show their parent link (组织 / 账户与安全) and it works")
+        else:
+            notes.append(f"{engine}/{tag}: account bar — 返回工作空间 → portal handoff (no organization for the parent-link check)")
         if width < 400:
             page.get_by_role("button", name=re.compile("菜单|選單|Menu")).click()
             drawer = page.get_by_role("dialog", name=re.compile("账户导航|帳戶導覽|Account navigation"))
@@ -151,7 +179,7 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
             assert page.evaluate("() => document.activeElement && document.activeElement.getAttribute('aria-haspopup') === 'dialog'"), "focus did not return to the menu button"
             notes.append(f"{engine}/{tag}: drawer — focus trapped over 12 Tabs, Escape closes and returns focus to the button")
         page.screenshot(path=SHOTS / f"shell-{engine}-{tag}-account.png")
-        notes.append(f"{engine}/{tag}: account back link → {href.split('?')[0]}")
+        notes.append(f"{engine}/{tag}: account bar workspace link → {ws_href.split('?')[0]}")
 
         # ---- account sub-pages: no repeated probes per in-app navigation --------------------
         probe.reset()
@@ -274,6 +302,8 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
         # ---- the workspace has a messages entry (CI-63) ----------------------------------------
         msgs = page.get_by_role("link", name=re.compile("^(消息|訊息|Messages)"))
         expect(msgs.first).to_be_visible()
+        badge = page.request.get(f"{portal}/api/auth/messaging/unread-count")
+        assert badge.status == 200 and "unread" in badge.json(), (badge.status, badge.text()[:120])   # CI-64: answered on this origin
         assert (msgs.first.get_attribute("href") or "").startswith(accounts) and (msgs.first.get_attribute("href") or "").endswith("/messages"), msgs.first.get_attribute("href")
         msgs.first.click()
         page.wait_for_url(re.compile(re.escape(accounts) + r"/messages"), timeout=20000)
