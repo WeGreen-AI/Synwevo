@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -818,7 +818,7 @@ class Store:
         c.executescript(MEMBER_IMPORT_SCHEMA)
         # v12: organization messaging (conversations, memberships with join sequence, messages,
         # reactions, attachments).
-        from .messaging import SCHEMA as MESSAGING_SCHEMA
+        from .messaging import SCHEMA as MESSAGING_SCHEMA, V24_COLUMNS as MESSAGING_V24_COLUMNS
         c.executescript(MESSAGING_SCHEMA)
         # v13: approved copies of personal Docs projects into organization workspaces.
         from .project_copies import SCHEMA as PROJECT_COPIES_SCHEMA
@@ -837,7 +837,7 @@ class Store:
         from .docs_collab import COLUMNS as DOCS_COLLAB_COLUMNS, SCHEMA as DOCS_COLLAB_SCHEMA
         c.executescript(DOCS_COLLAB_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
@@ -845,6 +845,12 @@ class Store:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if set(cols) <= have:
                     t.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({', '.join(cols)})")
+        # v24 (CI-74): the FTS5 index over message bodies (external content + triggers), created
+        # and backfilled once; a Python build without FTS5 gets no index and search stays LIKE.
+        # Rollback to v23 code: the virtual table and its triggers are ignored (the triggers keep
+        # the index current for a later upgrade); the new columns/tables are unused, not harmful.
+        from .messaging_search import ensure_index as ensure_message_index
+        ensure_message_index(c)
 
     @staticmethod
     def _seed_legacy_workspace(t: sqlite3.Connection) -> None:

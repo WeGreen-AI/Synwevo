@@ -566,17 +566,21 @@ class Notifier:
         that still exist, and the latest of them — or None when they are not (or no longer) a
         member. Read here rather than through the messaging service because the dispatcher has
         no request context; the tables are synwevo_core.messaging's."""
-        m = self.store.one("SELECT last_read_seq, joined_seq, muted, notify FROM conversation_members "
+        m = self.store.one("SELECT last_read_seq, joined_seq, muted, muted_until, notify FROM conversation_members "
                            "WHERE conversation_id=? AND user_id=? AND left_at IS NULL", (cid, user_id))
         if not m:
             return None
         floor = max(int(m["last_read_seq"] or 0), int(m["joined_seq"] or 0))
+        # `deleted_at` is set by every delete-for-everyone — the sender's recall, a group manager's
+        # removal, a report review (CI-74) — so a recalled message never counts as unread here.
         agg = self.store.one("SELECT COUNT(*) AS n, MAX(seq) AS last FROM messages WHERE conversation_id=? AND seq>? AND deleted_at IS NULL", (cid, floor))
         latest = None
         if agg and agg["n"]:
             latest = self.store.one("SELECT m.body, m.attachment_id, u.display_name, u.email FROM messages m JOIN users u ON u.id=m.sender_id "
                                     "WHERE m.conversation_id=? AND m.seq=?", (cid, agg["last"]))
-        return {"unread": int((agg or {}).get("n") or 0), "muted": bool(m["muted"]) or m["notify"] == "none", "latest": latest}
+        # silent: the standing mute, "no notifications", or a `muted_until` still ahead (CI-74)
+        muted = bool(m["muted"]) or m["notify"] == "none" or bool(m.get("muted_until") and float(m["muted_until"]) > now())
+        return {"unread": int((agg or {}).get("n") or 0), "muted": muted, "latest": latest}
 
     def conversation_digest_hold(self, user_id: str, at: float | None = None) -> float | None:
         """When the reader's next unread digest may go out, if not now: at least

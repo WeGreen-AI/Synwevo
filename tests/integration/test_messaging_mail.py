@@ -85,7 +85,7 @@ def test_private_message_mail_is_off_by_default_and_an_opt_in_digest_of_what_is_
     pend = c.ident.store.all("SELECT d.notification_id, d.status, d.not_before FROM notification_deliveries d JOIN notifications x ON x.id=d.notification_id "
                              "WHERE x.user_id=? AND x.kind='conversation.dm' AND d.status='pending'", (ben,))
     assert len(pend) == 1 and pend[0]["not_before"] > N.now() + 25 * 60, "one pending digest item per unread span, due after the window"
-    c.request("DELETE", f"{M}/messages/{first['id']}", headers=ha)                    # the message that created the item is recalled
+    assert c.post(f"{M}/messages/{first['id']}/recall", headers=ha).json()["recalled"] is True   # the message that created the item is recalled (CI-74: DELETE is delete-for-me)
     c.ident.store.execute("UPDATE notification_deliveries SET not_before=0 WHERE notification_id=?", (pend[0]["notification_id"],))
     out = disp.run_once()
     assert out["queued"] == 1 and len(outbox()) == 1

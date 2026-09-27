@@ -41,8 +41,18 @@ def install(api: FastAPI, plat: Platform, *, notifier: Notifier | None = None) -
     router = build_router(plat.store, plat.identity, plat.sessions, plat.audit, notifier=notifier)
     api.state.message_hub = router.hub
     api.state.messaging = router.messaging
+    api.state.messaging_presence = router.presence
+    api.state.messaging_metrics = router.metrics_snapshot
     api.include_router(router)
     return router
+
+
+def messaging_health(api: FastAPI) -> dict:
+    """`/readyz` `checks.messaging` (CI-74): this process's counters — stream connections, replays
+    and resyncs, refused streams, typing and presence events, search queries, failed sends, the
+    presence registry size. Numbers only; never a name, an id or a body."""
+    snap = getattr(api.state, "messaging_metrics", None)
+    return snap() if snap else {}
 
 
 def install_legacy(api: FastAPI, plat: Platform, *, notifier: Notifier | None = None) -> APIRouter:
@@ -92,8 +102,8 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     api.state.sessions = plat.sessions
     role = env.get("ROLE") or "messages"
     install_platform(api, plat, role=role)
-    install_probes(api, plat.store, degradable={"malware_scanner": scanner_health})
     install(api, plat)
+    install_probes(api, plat.store, degradable={"malware_scanner": scanner_health, "messaging": lambda: messaging_health(api)})
     bootstrap_messages_app(plat.store, plat.identity, role=role)
     api.include_router(build_session_router(plat.identity, plat.sessions, plat.audit))
     api.include_router(build_rp_router(plat.store, plat.identity, plat.sessions, plat.audit))

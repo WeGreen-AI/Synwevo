@@ -60,8 +60,14 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
         h = M.health(M.policy())                     # same shape as the Docs role: ok / off / down: <why>
         return h["status"] if h["status"] in ("ok", "off") else "down: " + (h.get("error") or "no PONG")[:120]
     scans = wants_app or wants_accounts or wants_messages
+    degradable = {"malware_scanner": scanner_health} if scans else {}
+    if wants_messages:
+        # The messages process's counters (stream connections, replays, typing…), numbers only
+        # (CI-74); read lazily because the messaging router is installed below.
+        from synwevo_messages.app import messaging_health
+        degradable["messaging"] = lambda: messaging_health(api)
     install_probes(api, plat.store, worker=worker_alive if (wants_app or wants_accounts) else None,
-                   degradable={"malware_scanner": scanner_health} if scans else None)
+                   degradable=degradable or None)
 
     # Who is signed in, which workspace, how to leave. The same four routes in every role, from
     # one implementation — the account service does not get its own copy and neither does an app.

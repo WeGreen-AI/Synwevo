@@ -97,8 +97,16 @@ def test_direct_messages_are_one_conversation_with_idempotent_sends_and_own_read
     assert c.patch(f"{M}/messages/{mid}", headers=hb, json={"body": "not mine"}).status_code == 403
     ha = sign_in(c, "ann")
     assert c.patch(f"{M}/messages/{mid}", headers=ha, json={"body": "hello ben!"}).json()["edited_at"]
+    # since CI-74 DELETE is "delete for me": ann stops seeing it, ben still does; recall (the
+    # sender, within the window) is what takes a message away for everyone
     out = c.request("DELETE", f"{M}/messages/{mid}", headers=ha).json()
-    assert out["deleted"] is True and out["body"] == "" and out["reactions"] == []
+    assert out == {"message_id": mid, "conversation_id": dm["id"], "seq": 1, "hidden": True}
+    assert [m["seq"] for m in c.get(f"{M}/conversations/{dm['id']}/messages").json()["items"]] == [2]
+    hb = sign_in(c, "ben")
+    assert [m["seq"] for m in c.get(f"{M}/conversations/{dm['id']}/messages").json()["items"]] == [1, 2]
+    ha = sign_in(c, "ann")
+    out = c.post(f"{M}/messages/{mid}/recall", headers=ha).json()
+    assert out["deleted"] is True and out["recalled"] is True and out["body"] == "" and out["reactions"] == [] and out["system"] == {"event": "recalled", "actor": c.users["ann"]["id"]}
     # a third person is not part of this DM and cannot see it, even by id
     hc = sign_in(c, "cid")
     assert c.get(f"{M}/conversations/{dm['id']}").status_code == 404
@@ -191,9 +199,9 @@ def test_attachments_go_through_the_acceptance_chain_and_are_served_only_to_read
     # not a member: 404, even with the id
     hc = sign_in(c, "cid")
     assert c.get(f"{M}/attachments/{att['id']}").status_code == 404
-    # deleting the message takes the attachment with it
+    # recalling the message takes the attachment with it (a delete-for-me only hides it from me)
     ha = sign_in(c, "ann")
-    c.request("DELETE", f"{M}/messages/{msg['id']}", headers=ha)
+    assert c.post(f"{M}/messages/{msg['id']}/recall", headers=ha).json()["recalled"] is True
     hb = sign_in(c, "ben")
     assert c.get(f"{M}/attachments/{att['id']}").status_code == 404
     # too large is refused before storage
