@@ -629,7 +629,7 @@ class BridgeWorker:
         for uid in self.messaging._active_user_ids(cid):
             if is_app_account(self.store, uid):
                 continue
-            self.publish([uid], {"type": "message", "conversation_id": cid, "message": self.messaging._message_out(dict(stored), reader=uid)})
+            self.publish([uid], {"type": "message", "conversation_id": cid, "message": self.messaging._message_out(dict(stored), viewer=uid)})
         try:
             self.objects.reconcile(cid)
         except Exception:  # noqa: BLE001 - the card is delivered; the sweep retries

@@ -332,7 +332,7 @@ Docs 对象（工作空间范围）在消息（组织范围）里有一个**对�
 
 ### 8.4 应用身份
 
-`app_accounts(user_id PK, app UNIQUE, created_at)`：每个应用一条 `users` 行（`status='active'`、`display_name` 取注册表显示名、邮箱 `docweave@apps.synwevo.invalid`——RFC 2606 保留域，永远没有邮箱），
+`app_accounts(user_id PK, app UNIQUE, created_at)`：每个应用一条 `users` 行（`status='active'`、`display_name` 取注册表显示名、邮箱 `<app_id>@apps.synwevo.invalid`——由 app_id 派生，RFC 2606 保留域，永远没有邮箱），
 无口令、无个人工作空间、不是任何组织或工作空间的成员（所以不在目录、不能被私聊：`directory` 与 `open_dm` 按组织成员资格答 404）。`Sessions.create` 在铸造任何会话前查 `app_accounts`，
 命中即 `403 app_account`——无论口令、Passkey、邮件验证码还是外部身份，都到不了这一步之后。由消息进程启动时 `ensure_app_account` 幂等创建；`_message_out` 用 `sender_kind='app'` 标出。
 平台管理员的用户列表里能看到这条账户（名为 Synwevo Docs），这是事实呈现，不是漏洞；不要停用它（它不参与任何授权）。

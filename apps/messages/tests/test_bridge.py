@@ -173,10 +173,12 @@ def test_cards_are_delivered_once_rendered_per_reader_and_never_notify(org):
     worker.run_once()
     last = c.get(f"{M}/conversations/{cid}/messages").json()["items"][-1]
     assert last["card"]["state"] == "completed_with_errors" and last["card"]["subtitle"] == "2 succeeded, 1 failed" and last["body"] == "Synwevo Docs · 生成任务部分失败"
-    # a member's reaction on a card works like on any message, and the event to everyone carries
-    # no card (each reader keeps the one rendered for them and re-reads history)
+    # a member's reaction on a card works like on any message; the answer is rendered for the
+    # reactor (their own card, since CI-74 every response has a viewer) while the event fanned out
+    # to everyone carries none (each reader keeps the one rendered for them and re-reads history)
     r = c.put(f"{M}/messages/{last['id']}/reactions", headers=hb, json={"emoji": "👍"})
-    assert r.status_code == 200 and "card" not in r.json() and r.json()["sender_kind"] == "app"
+    assert r.status_code == 200 and r.json()["sender_kind"] == "app"
+    assert r.json().get("card", {}).get("state") in (None, "completed_with_errors")
     # the card's plain text is searchable, the object's title is not in it
     assert [m["id"] for m in c.get(f"{M}/search?q=生成任务").json()["items"]] and not c.get(f"{M}/search?q=合同项目").json()["items"]
     # a deleted comment leaves nothing to say: skipped, not failed

@@ -135,7 +135,7 @@ def test_schema_v24_is_additive_indexed_and_idempotent(tmp_path, monkeypatch):
     from synwevo_core.store import SCHEMA_VERSION, Store
     monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
     st = Store(str(tmp_path / "d"))
-    assert SCHEMA_VERSION == 24 and st.schema_version() == 24
+    assert SCHEMA_VERSION >= 24 and st.schema_version() == SCHEMA_VERSION
     cols = lambda t: {r["name"] for r in st.all(f"PRAGMA table_info({t})")}  # noqa: E731
     assert {"marked_unread", "muted_until", "history_from", "last_read_at", "updated_at"} <= cols("conversation_members")
     assert {"recalled_at", "removed_by", "forwarded_from"} <= cols("messages") and "duration_ms" in cols("message_attachments")
@@ -153,5 +153,5 @@ def test_schema_v24_is_additive_indexed_and_idempotent(tmp_path, monkeypatch):
         assert triggers == set(), "no FTS5 in this build: nothing was created, search stays LIKE"
     # a second open changes nothing (no duplicate triggers, same version)
     again = Store(str(tmp_path / "d"))
-    assert again.schema_version() == 24
+    assert again.schema_version() == SCHEMA_VERSION
     assert {r["name"] for r in again.all("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'messages_fts_%'")} == triggers
