@@ -42,6 +42,7 @@ STABLE: list[tuple[str, str]] = [
     (r"[\"']x-docweave-[\"']",          "Webhook 旧 HTTP 头前缀：测试确认内部投递头不会泄漏到接收方"),
     (r"urn:docweave",                    "协议里的稳定 URN"),
     (r"urn:synwevo:app:docweave",        "令牌受众（RFC 8707 resource）：写在已签发令牌的 aud 里，由 app_id 派生"),
+    (r"/objects/docweave/",              "对象会话地址的应用段（/objects/{app}/{kind}/{id}）：与注册表行和令牌受众里的 app_id 一致，Docs 按它链接过来"),
     (r"docweave\.(template-fields|project)\b", "定义文件的 schema 标识：版本化契约，已导出的文件按它识别"),
     (r"DOCWEAVE_[A-Z0-9_]+",             "旧环境变量名：兼容读取（见 synwevo_core/env.py）"),
     (r"DOCWEAVE_(?![A-Z0-9])",           "旧环境变量前缀本身：按前缀识别旧名字（兼容读取、隔离测试环境剥离）"),

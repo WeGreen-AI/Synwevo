@@ -17,6 +17,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DialogProvider, I18nProvider, PageState, StatusPage, ToastProvider, initTheme, useI18n } from "@synwevo/ui";
 import { RequireSession, SessionProvider, SignedOut } from "@synwevo/auth-client";
 import Messages from "./Messages";
+import ObjectConversation from "./pages/ObjectConversation";
 import "@synwevo/ui/styles.css";
 import "./messages.css";
 import "./messages.messages";
@@ -53,6 +54,9 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/messages" element={<RequireSession><Messages /></RequireSession>} />
               <Route path="/c/:cid" element={<RequireSession><Messages /></RequireSession>} />
               <Route path="/messages/:cid" element={<RequireSession><Messages /></RequireSession>} />
+              {/* The conversation about an application object (Docs links here; CI-73). The page
+                  asks the server which conversation that is and moves to it. */}
+              <Route path="/objects/:app/:kind/:id" element={<RequireSession><ObjectConversation /></RequireSession>} />
               {/* Where the account service's logout returns to after "退出登录" here ended the
                   platform session (auth-client signOut → /api/auth/sign-out?everywhere=true). */}
               <Route path="/signed-out" element={<SignedOut product="Message" />} />
