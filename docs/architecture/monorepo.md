@@ -15,10 +15,11 @@
 |---|---|---|
 | `apps/docs/` | Synwevo Docs：文档引擎、业务接口、`/api/v1` 机器接口、工作台前端、应用专属测试与脚本 | `synwevo_docs` / `@synwevo/docs-web` |
 | `apps/portal/` | Synwevo Workspace：工作流程自动化平台的公开首页、登录后门户与应用入口 | `synwevo_portal` / `@synwevo/workspace-web` |
+| `apps/messages/` | Synwevo Message：组织内私聊与群聊的 HTTP 表面（`/api/messaging`）、事件流与消息外壳；业务层与表在 `synwevo_core.messaging`（CI-66） | `synwevo_messages` / `@synwevo/messages-web` |
 | `services/identity/` | Synwevo Account：登录仪式、MFA、Passkey、邀请与找回、平台管理后台、OIDC 授权服务器、**账户与安全界面** | `synwevo_identity` / `@synwevo/account-web` |
 | `packages/core/` | 共享：`Store`（唯一的持久化入口与迁移执行者）、租户上下文、身份/会话/口令、机器身份、OIDC 令牌存储、HTTP 骨架、错误契约 | `synwevo_core` |
 | `packages/auth-client/` | 应用接入统一身份：OIDC 依赖方（`python/`）、共用会话路由、浏览器端会话上下文与平台导航（`web/`） | `synwevo_auth_client` / `@synwevo/auth-client` |
-| `packages/ui/` | 三个外壳共用的设计变量、主题、Toast/对话框、尺寸适配 | — / `@synwevo/ui` |
+| `packages/ui/` | 四个外壳共用的设计变量、主题、Toast/对话框、尺寸适配 | — / `@synwevo/ui` |
 | `infra/server/` | 部署组装：按 `SYNWEVO_ROLE` 把上面的模块拼成一个进程 | `synwevo_server` |
 | `infra/` | 容器构建与 Compose |
 | `scripts/` | 根目录命令：安装、启动/停止/状态/日志、测试、备份、边界检查 |
@@ -35,15 +36,15 @@ SDK 运行时留在 `apps/docs/sdk/`，只通过 HTTP 访问服务；会启动�
 ## 2. 依赖方向
 
 ```
-                 synwevo_core
-                 synwevo_auth_client
-                        │
-        ┌───────────────┼───────────────┐
-        ▼               ▼               ▼
- synwevo_identity  synwevo_portal  synwevo_docs     ← 互相不可见
-        └───────────────┼───────────────┘
-                        ▼
-                 synwevo_server                   ← 唯一可以同时导入三者
+                       synwevo_core
+                       synwevo_auth_client
+                              │
+        ┌───────────────┬─────┴─────────┬────────────────┐
+        ▼               ▼               ▼                ▼
+ synwevo_identity  synwevo_portal  synwevo_docs  synwevo_messages   ← 互相不可见
+        └───────────────┴───────┬───────┴────────────────┘
+                                ▼
+                         synwevo_server                             ← 唯一可以同时导入四者
 ```
 
 规则与理由：
@@ -120,8 +121,9 @@ v6 的新增状态由 Store 统一建表/加列：`organizations`、`organizatio
 
 | 停掉谁 | 还能做什么 |
 |---|---|
-| 门户 | Synwevo Docs 的登录、工作台与自动化照常（`up accounts docs` 即可） |
-| Synwevo Docs | 门户与账户页照常；门户按注册表如实显示应用状态 |
+| 门户 | Synwevo Docs 的登录、工作台与自动化照常（`up accounts docs` 即可）；Synwevo Message 同理（`up accounts messages`） |
+| Synwevo Docs | 门户、账户页与消息照常；门户按注册表如实显示应用状态；消息里的 Docs 链接只是可点的链接（卡片要 Docs 回答） |
+| Synwevo Message | 门户、Docs 与账户页照常；平台栏的「消息」链接仍指向注册表地址（打不开就是打不开，不假装）；举报处理在账户源不受影响 |
 | 账户服务 | 依赖方无法建立新会话（既有策略），已签发的机器令牌按其自身有效期与撤销状态处理 |
 
 "独立运行"**不等于**"复制一个 `apps/docs` 文件夹就能脱离一切"：它需要的共享包与外部服务
@@ -134,10 +136,11 @@ v6 的新增状态由 Store 统一建表/加列：`organizations`、`organizatio
 
 | 角色 | 挂载 | 外壳 |
 |---|---|---|
-| `accounts` | 账户服务 + 共用会话路由 | 账户外壳（`account-assets/`） |
+| `accounts` | 账户服务 + 共用会话路由（+ 没有消息应用的部署里，旧 `/api/auth/messaging` 前缀兜底，注册后答 410） | 账户外壳（`account-assets/`）；`/messages[/{cid}]` 303 到消息源 |
 | `portal` | 门户 + 依赖方 + 共用会话路由 | 门户外壳（`portal-assets/`） |
 | `app` | Synwevo Docs + 依赖方 + 共用会话路由 | 工作台外壳（`assets/`） |
-| `all` | Synwevo Docs + 账户服务 + 依赖方 + 共用会话路由 | 工作台外壳 **和** 账户外壳（同一源站，容器镜像用这个） |
+| `messages` | Synwevo Message（`/api/messaging`）+ 依赖方 + 共用会话路由 | 消息外壳（`messages-assets/`） |
+| `all` | Synwevo Docs + 账户服务 + Synwevo Message + 依赖方 + 共用会话路由 | 工作台外壳 **和** 账户外壳 **和** 消息外壳（`/messages`、`/c`）（同一源站，容器镜像用这个） |
 
 角色**在构建应用时确定**，不在每次请求时读环境变量。理由是条件挂载：进程里存在哪些路由，必须和
 网关按角色拒绝哪些路径是同一个答案——两者可能不一致，比其中一个偶尔粗糙更糟。
@@ -159,10 +162,10 @@ lifespan：进程退出（uvicorn 优雅关闭，或测试客户端离开 `with`
 它的 `Store` 都活到进程结束，验证容器在三分之一处耗尽 3 GiB。停止不释放已持有的作业租约——
 正在执行的切片先完成，其余按租约过期由下一个进程接管，与崩溃恢复是同一条路径。
 
-## 7. 前端：三个外壳，两个共享包
+## 7. 前端：四个外壳，两个共享包
 
-三个独立的 Vite 构建，**静态资源目录各不相同**（`assets/`、`portal-assets/`、`account-assets/`）。
-单进程部署要同时提供工作台和账户两个外壳，同名的 `/assets` 会互相遮盖——那是"页面能打开但样式
+四个独立的 Vite 构建，**静态资源目录各不相同**（`assets/`、`portal-assets/`、`account-assets/`、`messages-assets/`）。
+单进程部署要同时提供工作台、账户和消息三个外壳，同名的 `/assets` 会互相遮盖——那是"页面能打开但样式
 没了"的来源。
 
 **账户与安全界面只有一份**，在 `services/identity/web/`。任何角色下，`/login`、`/account`、

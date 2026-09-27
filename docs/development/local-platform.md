@@ -52,20 +52,21 @@ python scripts/platform.py up
 | 账户服务 | `accounts` | http://accounts.localhost:8770 | `services/identity/web/dist`（登录、账户与安全、管理后台） |
 | Synwevo Workspace | `portal` | http://portal.localhost:8769 | `apps/portal/web/dist`（平台首页） |
 | Synwevo Docs | `app` | http://docweave.localhost:8765 | `apps/docs/web/dist`（文档工作台） |
+| Synwevo Message | `messages` | http://message.localhost:8768 | `apps/messages/web/dist`（会话列表 `/`、会话 `/c/{cid}`；CI-66） |
 
 只启动其中几个：`python scripts/platform.py up accounts docs`。
 
 端口可覆盖（开发机上 8765 经常已被占用）：
 
 ```bash
-SYNWEVO_DOCS_PORT=8775 python scripts/platform.py up
+SYNWEVO_DOCS_PORT=8775 SYNWEVO_MESSAGES_PORT=8778 python scripts/platform.py up
 ```
 
 其它命令：
 
 ```bash
 python scripts/platform.py status                 # 进程、端口、发行者、支持的 scope
-python scripts/platform.py logs accounts -n 200   # 也可以是 portal / docs
+python scripts/platform.py logs accounts -n 200   # 也可以是 portal / docs / messages
 python scripts/platform.py down
 ```
 
@@ -139,7 +140,7 @@ python -m synwevo_identity.cli --data data bootstrap token
 
 ## 4. 登记应用与客户端
 
-`platform.py up` 已经自动登记了门户和 Synwevo Docs 两个客户端。手动做的话：
+`platform.py up` 已经自动登记了门户、Synwevo Docs 和 Synwevo Message 三个客户端。手动做的话：
 
 ```bash
 python -m synwevo_identity.cli --data data client register \
@@ -147,7 +148,16 @@ python -m synwevo_identity.cli --data data client register \
     --redirect    http://docweave.localhost:8765/auth/callback \
     --post-logout http://docweave.localhost:8765/signed-out \
     --backchannel http://docweave.localhost:8765/auth/backchannel-logout
+python -m synwevo_identity.cli --data data client register \
+    --client-id messages-web --app messages --name "Synwevo Message" \
+    --redirect    http://message.localhost:8768/auth/callback \
+    --post-logout http://message.localhost:8768/signed-out \
+    --backchannel http://message.localhost:8768/auth/backchannel-logout
 ```
+
+应用本身由服务它的进程在启动时写进注册表（`bootstrap_docs_app` / `bootstrap_messages_app`，幂等）：
+门户卡片、账户页的「返回」目标、平台栏的「消息」链接和会话通知的链接都读注册表里的地址，
+所以消息进程要先启动过一次，其它源才知道它在哪。
 
 机器身份（服务账户）：
 
@@ -282,14 +292,15 @@ npm run typecheck && npm run build
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `SYNWEVO_ROLE` | `all` | `accounts` / `portal` / `app` / `all` |
+| `SYNWEVO_ROLE` | `all` | `accounts` / `portal` / `app` / `messages` / `all` |
 | `SYNWEVO_DATA_DIR` | `./data` | 数据库与 blob 目录 |
 | `SYNWEVO_UI_AUTH` | `none` | `none` / `basic` / `proxy` / `session` |
 | `SYNWEVO_ISSUER` | `http://accounts.localhost:8770` | 账户服务地址；**配置而来，绝不从请求推导** |
 | `SYNWEVO_APP_URL` | 按角色 | **本服务自己**的对外地址；必须与登记的回调完全一致 |
 | `SYNWEVO_PORTAL_URL` | 空 | 账户页"返回"的目标；空则不显示该链接 |
 | `SYNWEVO_OIDC_CLIENT_ID` | `docweave-web` | 本服务作为客户端的 id |
-| `SYNWEVO_OIDC_APP_ID` | `docweave` | 本服务是哪个应用（门户是 `platform`） |
+| `SYNWEVO_OIDC_APP_ID` | `docweave` | 本服务是哪个应用（门户是 `platform`，消息应用是 `messages`） |
+| `SYNWEVO_MESSAGES_UI_DIR` | `apps/messages/web/dist` | 消息外壳的构建产物目录（其余外壳同理：`*_UI_DIR`） |
 | `SYNWEVO_OIDC_PROXY` | 空 | 访问发行者需要经过的代理。**不继承 `HTTP_PROXY`**，见下 |
 | `SYNWEVO_PLATFORM_NAME` | `工作平台` | 平台显示名；**不要写死成 Synwevo Docs** |
 | `SYNWEVO_RP_ID` | 发行者域名 | Passkey 绑定的域名 |

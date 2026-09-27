@@ -1,7 +1,8 @@
-# 组织内消息：私聊与群聊（CI-26）
+# 组织内消息：私聊与群聊（CI-26；独立应用 Synwevo Message，CI-66）
 
 同一组织的成员之间的一对一私聊与命名群聊，带回复、表情回应、编辑/删除、附件、提及、置顶/静音/通知模式、搜索，以及跨设备同步的本人阅读位置。
-入口在账户源 `/messages`，平台栏（门户与 Docs）有「消息」链接与未读徽标。
+自 CI-66 起是平台上的独立应用 **Synwevo Message**，有自己的源站：生产 `https://message.wegreen.ltd`（明确例外，不改成 message.synwevo.com），
+本机 `http://message.localhost:8768`；会话列表在 `/`，会话在 `/c/{cid}`。平台栏（门户、Docs、账户页）的「消息」链接与未读徽标指向它（§6）。
 
 ## 1. 决策记录
 
@@ -29,21 +30,24 @@
 
 ## 3. 实时与可靠性
 
-- `GET /api/auth/messaging/stream`：`text/event-stream`，事件 `hello`（含心跳间隔）、`message`、`message_updated`、`conversation`（added/removed/updated/withdrawn）、`read`（本人其它设备的阅读位置）、`end`（会话失效）；每 25 s `: ping`，同时复查会话未撤销/未过期与账户状态。
+- `GET /api/messaging/stream`（CI-66 前为 `/api/auth/messaging/stream`）：`text/event-stream`，事件 `hello`（含心跳间隔）、`message`、`message_updated`、`conversation`（added/removed/updated/withdrawn）、`read`（本人其它设备的阅读位置）、`end`（会话失效）；每 25 s `: ping`，同时复查会话未撤销/未过期与账户状态。
 - 客户端：`EventSource` 自动重连；`hello` 后按最后序号 `?after=` 补取并刷新列表；连续 3 次错误或 `end` 后转为 5 s 轮询并显示「轮询中」。
 - 发送：本地先显示「发送中…」，带 `client_id`；失败可重试（同 id）；服务端确认后替换为存储的消息。
 - 阅读位置：在底部且标签页可见时上报最后序号；其它设备经 `read` 事件同步；未读 = `last_seq − max(last_read_seq, joined_seq)`（静音会话不计）。
+  读到会话末尾时，服务端把该读者关于这个会话的收件箱条目（`conversation.dm/mention/group`，`object_id` = 会话）标为已读——只是收件箱的已读，不批准、不完成任何事（CI-66 修复：此前铃铛在会话读完后仍显示「X 给你发了私信」，只靠寄出前复核避免寄邮件）。
 - 滚动：翻看旧消息时新消息不抢滚动，显示「N 条新消息 ↓」；加载更早保持锚点。
 - 草稿：按账号+会话存本地，切换账号时清除他人草稿；输入法组合期间 Enter 不发送；Enter/Shift+Enter 偏好可切换。
 
 ## 4. 接口
 
-`/api/auth/messaging/…`：`conversations`、`unread-count`（平台栏徽标；自 CI-64 起由共享会话路由在每个源回答，三个源均可读）、`directory`、`dm`、`groups`、`conversations/{id}`（GET/PATCH）、`…/members`（POST/DELETE）、`…/leave`、`…/transfer`、`…/members/{uid}/role`、`…/archive`、`…/preferences`、`…/messages`（GET before/after/limit，POST）、`messages/{id}`（PATCH/DELETE）、`messages/{id}/reactions`、`…/read`、`search`、`…/attachments`（POST multipart）、`attachments/{id}`（?inline=1 仅图片）、`stream`、`capabilities`。
+`/api/messaging/…`（消息应用源站；CI-66 前是账户源的 `/api/auth/messaging/…`）：`conversations`、`directory`、`dm`、`groups`、`conversations/{id}`（GET/PATCH）、`…/members`（POST/DELETE）、`…/leave`、`…/transfer`、`…/members/{uid}/role`、`…/archive`、`…/preferences`、`…/messages`（GET before/after/limit，POST）、`messages/{id}`（PATCH/DELETE）、`messages/{id}/reactions`、`…/read`、`search`、`…/attachments`（POST multipart）、`attachments/{id}`（?inline=1 仅图片）、`stream`、`capabilities`、`link-card`、`…/announcement`、`messages/{id}/report`。
+仍在账户源的：`/api/auth/messaging/unread-count`（平台栏徽标；自 CI-64 起由共享会话路由在**每个**源回答，消息源也挂）、`/api/auth/messaging/reports…`（举报处理，§4.2）。
+账户源对其它 `/api/auth/messaging/…` 路径：注册表里有 `messages` 应用时答 `410 moved`（`detail.messages_url` 指出新地址）；没有该应用的部署由组装层在 `accounts` 角色上挂旧路径兜底（§6）。
 
 ## 4.1 Docs 链接卡片（CI-31）
 
 消息正文里指向本部署 Docs 的项目或任务链接（`{Docs 地址}/p/{pid}`、`…/p/{pid}/jobs/{jid}`）在每个读者的屏幕上单独解析成卡片：
-`GET /api/auth/messaging/link-card?url=`（每读者每分钟 600 次）由 `synwevo_core.docs_links.DocsLinkCards` 回答——读者必须是该项目所在
+`GET /api/messaging/link-card?url=`（每读者每分钟 600 次）由 `synwevo_core.docs_links.DocsLinkCards` 回答——读者必须是该项目所在
 工作空间的活跃成员，否则 404 `no_card`；不存在的项目、别的主机上同样路径的链接、非 Docs 链接都答 404，同一个「无」。同一会话的成员身份
 不是打开对方项目的权限：别人分享的个人空间草稿在你的屏幕上只是一段可点的链接。卡片内容只有名称、工作空间名、任务状态与成功/失败份数，
 不含文件、映射或模板内容。Docs 地址取自应用注册表里 Docs 进程写入的启动地址，不取账户服务自己的 `SYNWEVO_APP_URL`（那是账户服务
@@ -67,11 +71,30 @@
 
 | 接口 | 权限 | 说明 |
 |---|---|---|
-| `PUT /api/auth/messaging/conversations/{cid}/announcement` | 群主/群管理员 | `{text: string \| null}`；返回会话（含 `announcement`、`announcement_at`）；写系统行；成员得到 `conversation.announcement` |
-| `POST /api/auth/messaging/messages/{mid}/report` | 会话成员，非本人消息 | `{reason: harassment\|spam\|privacy\|other, note?}`；201 举报；持 `org.messaging.manage` 者得到 `conversation.reported` |
-| `GET /api/auth/messaging/reports?organization_id=&status=open\|removed\|dismissed\|all` | `org.messaging.manage` | 举报列表（快照、发送者、举报人、原因、说明、处理结果）与可用原因 |
-| `POST /api/auth/messaging/reports/{rid}/review` | `org.messaging.manage` + 新鲜重认证 | `{decision: removed\|dismissed, note?}`；同一消息其它未处理举报随之处理；举报人得到结果 |
+| `PUT /api/messaging/conversations/{cid}/announcement`（消息源） | 群主/群管理员 | `{text: string \| null}`；返回会话（含 `announcement`、`announcement_at`）；写系统行；成员得到 `conversation.announcement` |
+| `POST /api/messaging/messages/{mid}/report`（消息源） | 会话成员，非本人消息 | `{reason: harassment\|spam\|privacy\|other, note?}`；201 举报；持 `org.messaging.manage` 者得到 `conversation.reported`（目标是账户源的组织页） |
+| `GET /api/auth/messaging/reports?organization_id=&status=open\|removed\|dismissed\|all`（账户源） | `org.messaging.manage` | 举报列表（快照、发送者、举报人、原因、说明、处理结果）与可用原因 |
+| `POST /api/auth/messaging/reports/{rid}/review`（账户源） | `org.messaging.manage` + 新鲜重认证 | `{decision: removed\|dismissed, note?}`；同一消息其它未处理举报随之处理；举报人得到结果 |
+
+举报的**处理**留在账户源（`synwevo_identity/messaging_reports_routes.py`）：它要求组织权限与账户会话上的严格重认证，由组织页完成；审核者不进入会话。
+代价是事件流按进程扇出：账户源上删除的消息，消息源上开着的标签页在下一次同步（重连或任一会话事件触发的补取）时才显示「消息已删除」。
 
 ## 5. 验收记录
 
-见 `docs/quality/verification.md` §16.26（消息）、§16.34（群公告与举报处理）。
+见 `docs/quality/verification.md` §16.26（消息）、§16.34（群公告与举报处理）、§16.74（独立源站）。
+
+## 6. 独立源站（CI-66）
+
+**决策记录。**
+
+| 项目 | 结论 |
+|---|---|
+| 问题与基线 | 消息页寄居在账户源 `/messages`：账户服务是「口令只在一个地方输入」的那个源，却承载了一个业务应用的实时流、附件与草稿；平台栏三处「消息」链接各自从 `account_url` 拼地址；域名迁移（CI-67）已把消息的对外地址定为独立主机 `message.wegreen.ltd`。 |
+| 选择 | 第四个应用 `apps/messages/`（`synwevo_messages`，外壳 `@synwevo/messages-web`，角色 `messages`），与门户同构：`build_platform → new_api → install(role="messages") → install_probes（附件扫描器可降级）→ 共享会话路由 → 依赖方路由 → 账户重定向 → 外壳`。业务层与六张表**原样**在 `synwevo_core.messaging`，无迁移、id 不变。HTTP 路由从账户服务搬来，只改前缀 `/api/messaging`；举报处理留在账户服务（§4.2）。 |
+| 注册表与资格 | `apps` 行 `messages`（名 Synwevo Message，`launch_url` 由消息进程按 `SYNWEVO_APP_URL` 写入：自己的源是 `/`，`all` 角色是 `<源>/messages`）。会话按组织归属而非工作空间，所以 `Apps.check_access` 对它与平台 id 同规则：任何有效账户可打开，会话内能看到什么由服务层决定（组织成员、会话成员、`joined_seq`）；运维仍可 `app disable messages`。门户卡片与账户页「返回」目标自动出现（`apps_for` 对无工作空间者不再拼 `workspace_id=None`）。 |
+| 三个源怎么知道地址 | `/api/auth/state.messages_url`：注册表行的 `launch_url`（无则 `null`）。共享 `messagesHref(state)`：跨源经该源 `/auth/start?next=…&lang=…` 一跳登录；同源（`all`）是纯路径；未注册回退账户源 `/messages`。通知目标新增源名 `messages`（路径 `/c/{cid}`），读取时经注册表解析（同 Docs 的 `docs_base`）；未注册仍写 `accounts` + `/messages/{cid}`。 |
+| 单一写入源 | 账户源对旧 `/api/auth/messaging/…`：注册表有该应用时**每次请求**答 `410 moved`（不缓存，注册即生效，两个进程不会各自扇出）；`GET /messages[/{cid}]` 答 `303 <消息源>/auth/start?next=/c/{cid}`（地址只来自注册表，`cid` 必须匹配 `cv_…`，否则落到列表）。没有该应用的部署：组装层（唯一可同时见到两个包的地方）在 `accounts` 角色上挂旧前缀兜底，账户外壳不再有消息页。 |
+| 网关规则 | `ROLES` 加 `messages`：放行 `/api/messaging/`、`/auth/`、`APP_ACCOUNT_PATHS`（含 `unread-count`），拒绝账户面、`/api/portal/`、Docs 业务 API 与旧 `/api/auth/messaging/*`；其它角色对 `/api/messaging/` 的拒绝点名消息源地址。`ACCOUNT_LEVEL_PREFIXES` 加 `/api/messaging/`：`all` 角色上不套 Docs 的工作空间/资格检查。 |
+| 浏览器状态 | 草稿（`synwevo.msg.draft.*`）、Enter 偏好、标签页空间上下文按源隔离，旧源上的不迁移；一次性代价。 |
+| 发布与回滚 | 无 schema 变化。运维：隧道公开主机名 `message.wegreen.ltd` → 网关；`compose.yaml` 加 `messages` 服务（角色 `messages`，`SYNWEVO_APP_URL/PUBLIC_URL=https://message.wegreen.ltd`，`messages-web`/`messages`，clamd 两项）；`nginx.conf` 加 server 块（`/api/messaging/stream` 长读超时）；`client register --client-id messages-web --app messages --redirect https://message.wegreen.ltd/auth/callback --post-logout …/signed-out --backchannel …/auth/backchannel-logout`；消息进程首次启动写入注册表行。回滚：`app disable messages`（账户源随即恢复旧前缀？——**不**：410 由行的 `status='active'` 决定，停用后旧前缀在 `accounts` 角色上恢复兜底，链接回退账户源 `/messages`，但账户外壳已无该页，需回退镜像才有页面）。 |
+| 验证 | `apps/messages/tests`（7 项：自描述与角色拒绝、私聊/阅读位置/收件箱已读、群历史与撤权、附件链、事件流、链接卡片、公告与举报提交）；`tests/integration/test_messages_origin.py`（5 项：旧路径 410/303 切换、四源 `messages_url`、SSO 落点与通知目标、平台级退出、注册表资格）；`test_messaging_mail.py`（私信邮件规则，随路由搬到组装层套件）；`ui_e2e_messaging.py` / `ui_e2e_shell.py` 改为驱动消息源（verification.md §16.74）。 |

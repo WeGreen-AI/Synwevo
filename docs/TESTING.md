@@ -12,9 +12,10 @@
 
 ```bash
 python scripts/platform.py setup                      # 或手动：.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest                          # 三个套件：Synwevo Docs、账户服务、跨模块集成
+.venv/bin/python -m pytest                          # 四个套件：Synwevo Docs、账户服务、Synwevo Message、跨模块集成
 .venv/bin/python -m pytest apps/docs/tests      # 只跑 Synwevo Docs
 .venv/bin/python -m pytest services/identity/tests  # 只跑账户服务
+.venv/bin/python -m pytest apps/messages/tests      # 只跑 Synwevo Message（会话由 Sessions 直接铸造：messages 角色没有 /api/auth/login）
 .venv/bin/python -m pytest tests/integration        # 只跑跨模块验证
 .venv/bin/python scripts/check_boundaries.py        # 模块依赖边界
 .venv/bin/python scripts/check_design.py            # 统一白蓝设计系统：颜色只来自共享令牌，无私有色板/深色残留

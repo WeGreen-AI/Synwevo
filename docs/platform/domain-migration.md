@@ -66,9 +66,15 @@ issuer 写进令牌并由三个依赖方校验，不能双跑；Cookie 只属于
 
 | 事项 | 状态 |
 |---|---|
-| `message.wegreen.ltd` 的隧道公开主机名 | 2026-09-27 切换后探测：无法建立连接（未加入隧道）；消息独立应用上线前须加 |
+| `message.wegreen.ltd` 的隧道公开主机名 → 同一网关目标 `http://127.0.0.1:18760` | 2026-09-27 切换后探测：无法建立连接（未加入隧道）；消息独立应用（CI-66）上线的前置 |
 | `dw.wegreen.ltd` 旧别名 | 不是隧道主机名（边缘 TLS 握手失败，切换前亦然）；网关里的 308 仅在有人把它加入隧道时生效 |
-| 主机 compose 采用 ClamAV 服务（`SYNWEVO_MALWARE_SCAN=required`） | 仓库参考文件含该服务，主机文件未采用；主机可用内存约 4.5 GiB，采用与否是持有人决定 |
+| 主机 compose 采用 ClamAV 服务（`SYNWEVO_MALWARE_SCAN=required`） | 仓库参考文件含该服务，主机文件未采用；主机可用内存约 4.5 GiB，采用与否是持有人决定（消息服务的附件扫描同样依赖它：未采用时把 `messages` 服务的两项扫描变量与 accounts/docs 保持一致） |
+| `compose.yaml` 加 `messages` 服务（角色 `messages`，`SYNWEVO_APP_URL/PUBLIC_URL=https://message.wegreen.ltd`，`SYNWEVO_OIDC_CLIENT_ID=messages-web`，`SYNWEVO_OIDC_APP_ID=messages`，clamd 两项；网关 `depends_on` 加它） | 仓库参考文件已含（CI-66）；安装到 `/opt/synwevo/config/` 是运维步骤 |
+| `nginx.conf` 加 `message.wegreen.ltd` 的 server 块（`/api/messaging/stream` 长读超时） | 同上；`nginx -t` 后 reload |
+| `docker compose exec accounts python -m synwevo_identity.cli client register --client-id messages-web --app messages --name "Synwevo Message" --redirect https://message.wegreen.ltd/auth/callback --post-logout https://message.wegreen.ltd/signed-out --backchannel https://message.wegreen.ltd/auth/backchannel-logout` | 首次上线前执行一次（幂等） |
+| 注册表行 `apps.id='messages'`（`launch_url=https://message.wegreen.ltd/`） | 由 `messages` 进程**首次启动**写入；在此之前账户源仍以旧前缀回答会话接口（`/messages` 页面已不在账户外壳里），三个源的「消息」链接回退到账户源 `/messages`；启动后自动切换为 303/410，无需重启其它角色 |
+| `receive.py` 的 `SERVICES` 含 `messages`（随本仓库安装到 VPS 的 receiver 才会滚动它） | 仓库已改；receiver 另行安装（README） |
+| 仓库变量 `SYNWEVO_PUBLIC_HOSTS` 加 `message.wegreen.ltd` | 主域切换时已设三主机；消息服务上线时补上第四个 |
 | Google / Microsoft 控制台的新回调 URI（`https://accounts.synwevo.com/auth/external/<id>/callback`） | 生产尚未配置外部登录，配置时用新地址 |
 | Turnstile 小部件主机名 | 生产尚未启用；启用时登记 `accounts.synwevo.com` |
 | 发件域是否改为 synwevo.com | 决定项；改则先做 SPF/DKIM/DMARC 与 SMTP2GO 域验证 |

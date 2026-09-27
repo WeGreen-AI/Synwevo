@@ -35,6 +35,7 @@ Synwevo 由三个分开构建、分开启动、分开测试的部分组成，共
 | **Synwevo Workspace** | 公开首页与登录后的工作空间门户：告诉你有哪些应用、切换工作空间、进入账户 | `apps/portal/` |
 | **Synwevo Account** | 统一账户：口令 / Passkey / TOTP / 邮箱验证码 / 外部身份提供商登录，邀请与找回，组织与工作空间治理，平台管理后台，OIDC 授权服务器 | `services/identity/` |
 | **Synwevo Docs** | 文档自动化应用：左侧选数据、右侧选模板、建立映射，按样本规则批量生成真实的 DOCX / XLSX / PDF / PPTX / CSV / 图片 | `apps/docs/` |
+| **Synwevo Message** | 组织内的私聊与群聊：回复、表情回应、附件、提及、群公告、举报提交；自己的源站（`message.wegreen.ltd`） | `apps/messages/` |
 
 平台的定位是**工作流程自动化**。今天它交付的是一条完整的文档自动化流程：数据源 → 模板 → 映射与样本规则 →
 预检 → 后台任务 → 可核对的产物，并把同一条流程通过 `/api/v1`、Python / Node SDK、Webhook 和 n8n 工作流开放给机器。
@@ -86,6 +87,7 @@ python scripts/platform.py up --init      # 首次：创建空数据库；之后
 | Synwevo Workspace | <http://portal.localhost:8769> |
 | Synwevo Account | <http://accounts.localhost:8770/login> |
 | Synwevo Docs | <http://docweave.localhost:8765> |
+| Synwevo Message | <http://message.localhost:8768> |
 
 没有默认管理员、没有默认口令。生成一次性引导令牌，在登录页粘贴：
 
@@ -147,7 +149,7 @@ flowchart TB
 ├─ packages/
 │   ├─ core/          共享：Store（唯一的迁移执行者）、租户、身份/会话/口令、机器身份、OIDC 令牌存储、HTTP 骨架
 │   ├─ auth-client/   应用接入统一身份：OIDC 依赖方（python/）、浏览器端会话上下文与平台导航（web/）
-│   └─ ui/            三个外壳共用的设计令牌、主题、三语言词库、基础组件
+│   └─ ui/            四个外壳共用的设计令牌、主题、三语言词库、基础组件
 ├─ infra/             容器构建、单进程部署组装（synwevo_server）、生产 Compose 与部署接收器
 ├─ scripts/           根目录命令：安装、启动、停止、状态、日志、测试、备份、三个守卫脚本
 ├─ tests/integration/ 跨模块验证：统一登录链路、机器身份、跨工作空间隔离、角色边界、外壳归属
@@ -232,7 +234,7 @@ with Client.from_env(timeout=30, max_retries=4) as client:
 ## 验证
 
 ```bash
-.venv/bin/python -m pytest                     # 三个套件：apps/docs/tests、services/identity/tests、tests/integration
+.venv/bin/python -m pytest                     # 四个套件：apps/docs/tests、services/identity/tests、apps/messages/tests、tests/integration
 .venv/bin/python scripts/check_boundaries.py   # 模块依赖边界
 .venv/bin/python scripts/check_brand.py        # 旧品牌残留：每一处要么改掉，要么写清为什么保留
 .venv/bin/python scripts/check_design.py       # 设计系统：字面颜色只允许出现在共享令牌里

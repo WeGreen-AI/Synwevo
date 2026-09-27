@@ -1697,6 +1697,28 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 隔离实例门户以新代码重启后 SSR 首页 `<h1>让工作，自然相连。</h1>`、`deployment.json` 返回扫描器 off/注册 open/发件人；`ui_e2e_shell.py`（Chromium 两宽度）通过。
 **未验证**：真实生产的 `deployment.json`（部署后复查）。
 
+### 16.74 Synwevo Message 独立源站（CI-66）
+
+**盘点与决定**（2026-09-27/28）：第九轮盘点（19 步清单）确认业务层与六张表已在 `synwevo_core.messaging`、HTTP 层只依赖共享层、门户是最小依赖方模板；不免费的五件事——
+没有 `messages` 角色、注册表资格模型按工作空间而消息按组织、通知目标写死 `accounts` 源、举报处理需要账户会话上的重认证、生产第四个源站由运维管理——分别按 messaging.md §6 的决定处理。
+**产出**：`apps/messages/`（`synwevo_messages`、`@synwevo/messages-web`、`tests/`、`AGENTS.md`）；核心与共享层的角色、注册表、通知源、`state.messages_url`、`messagesHref`；账户服务的举报路由拆分、
+`/messages` 交接与组装层挂的旧前缀兜底（注册后 410）；`all` 角色同时挂 API 与外壳；平台脚本、Dockerfile、compose、nginx、receiver、CI、守卫、npm workspace/lock、pytest testpaths 加第四个应用；
+现有消息页原样搬入新外壳（只改 API 前缀、路径与页头；UI 改版另批）；协调者在 CI-68 测试中发现的缺陷一并修：读到会话末尾把该读者关于该会话的收件箱条目标为已读（`Notifier.mark_object_read`，只是收件箱已读）。
+**验证**（worktree，基于 `569e1df` 全量运行；最终提交落在 `2a1043a` 之上，两者只差门户 `public.py` 的 UA 头与其测试，落上后复跑 `test_portal_public.py` + `test_messages_origin.py` + `test_role_boundaries.py` + `apps/messages/tests` 53 项通过、边界守卫通过；worktree 自建 `.venv`——共享 `.venv` 的可编辑安装指向主检出，用它跑测试会测到旧代码）：
+`pytest`（`-o addopts=--import-mode=importlib`）四套件 **2154 passed, 1 skipped**（LICENSE 既有跳过）exit 0，含 `apps/messages/tests` 7 项、`services/identity/tests/test_messaging_reports.py` 2 项、
+`tests/integration/test_messages_origin.py` 5 项、`test_messaging_mail.py` 1 项（CI-68 的私信邮件规则随路由搬来，末尾加读会话即标记已读）、角色/外壳/探针/工具/网关测试新增消息角色用例；
+`check_boundaries`（418 Python / 188 前端文件、10 个模块边界）、`check_brand`、`check_design`、`check_component_names`、`brand_assets --check` 通过；`npm run typecheck && npm run build` 四外壳通过；
+`npm test --workspaces --if-present` exit 0（UI 19、auth-client 39、Docs 49、account-web 19 项契约验证）；`python -m unittest discover -s infra/production/tests` 6 项通过。
+**隔离实例**（worktree `.scratch/data`，`instance=test`，file 邮件，ports 31970/31969/31965/31968，`platform.py up --init` 四源启动、三客户端登记）：
+`ui_e2e_messaging.py`（Chromium + WebKit 经本地代理）两引擎全部里程碑通过——两账户经邮件注册/邀请、经 `/auth/start` 一跳进入 `message.localhost`、私聊经事件流到达手机端并带徽标（`aria-current=page`）、
+回复引用与表情回应、附件经接纳链内联渲染（`/api/messaging/attachments/...`）、建群/移出后 404 与列表消失、账户源旧路由 410、搜索按可读范围；
+`ui_e2e_shell.py`（Chromium + WebKit × 1280/375）全部段落通过，门户「消息」入口 href 为 `message.localhost:31968/auth/start?next=%2F&lang=…`，点击后落在会话列表且该源 `/api/auth/me` 200、徽标由门户源回答
+（截图 `docs/screenshots/shell-*-messages.png`）；手工 Playwright 检查（Chrome）：直接打开 `message.localhost:31968/` → 账户服务登录页 → 回到会话列表（标题「Synwevo Message · 消息」）；
+深链 `/c/<cid>` 在只带账户源 Cookie 的新上下文中经 SSO 回到该会话；「← Synwevo」→ 门户 `/workspace` 仪表盘；「退出登录」→ 本源 `/signed-out`，消息源与账户源 `/api/auth/me` 均 401；0 CSP 违规、0 页面错误。
+`platform.py down` 已停止实例。
+**未验证 / 未做**：生产四源（运维项见 domain-migration.md §6：隧道主机名、compose 服务、nginx 块、`client register`、首次启动写注册表行）；`ui_e2e_moderation.py` 与 `ui_e2e_link_cards.py`
+已改为驱动消息源但本轮未运行；消息页 UI 改版（另批）；事件流仍按进程扇出（账户源上处理举报删除的消息，消息源上开着的标签页在下次同步才看到）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

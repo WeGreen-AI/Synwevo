@@ -30,6 +30,7 @@
 | CI-69 Docs 文案精简 | Docs 外壳 60 条改写、109 条死 key 删除、术语统一，规则与前后对比在 docs/platform/docs-copy.md（verification.md §16.71）。 |
 | CI-70 Passkey 域名切换解释 | 登录页在旧域名 Passkey 不可用时说明原因与重新登记路径，依据全部署布尔值 `passkeys_elsewhere`（verification.md §16.72）。 |
 | CI-71 公开页面 | 首页围绕品牌含义重写，两个真实应用、协作方式、数据与隐私摘要、下一步；新增数据与隐私、服务说明正式页面（事实有来源，运行时事实读自服务）；门户术语统一（verification.md §16.73）。 |
+| CI-66 Synwevo Message 独立源站 | 消息成为第四个应用 `apps/messages`（角色 `messages`，`/api/messaging`，本机 `message.localhost:8768`，生产 `message.wegreen.ltd`）；业务层与表原样在 core；注册表行驱动三个源的「消息」链接（`state.messages_url`）、门户卡片与会话通知目标；账户源旧路径 410 / `/messages` 303；举报处理留在账户服务；读到会话末尾时收件箱条目标为已读（verification.md §16.74）。已实现（本机四源隔离实例实测），待部署；运维项见 domain-migration.md §6。 |
 | 本轮暂停点 | 用户要求本轮完成后暂停（2026-09-26 05:30 UTC）。接续：运维在生产主机同步 nginx 的 Upgrade 配置并 reload（deployment.md）；`SheetEditor` 协同；真实邮箱客户端渲染（需授权收件箱）；本条记录提交在本地、未推送，下一批推送时一并带上。 |
 | CI-46 项目页协同 | 在场与定位、按映射三方合并（冲突才 409）、他人变更即时提示、归属活动记录；6 项 pytest、Chromium/WebKit 两账户各 7 里程碑（verification.md §16.47）。已部署（`e6197c1`，run 36219721565）。 |
 | CI-45 实时协同 | 文档型模板的多人共同编辑：服务端房间（pycrdt）、命名光标、在线名单、逐块归属、草稿持久化、只读与单人回退；12 项 pytest、Chromium/WebKit 两账户证明（verification.md §16.46）。已部署（`c2d78d0`，run 36218166471）；生产 nginx 副本需运维加 Upgrade 头后实时协同才在线上生效，此前编辑器自动退回单人模式。 |

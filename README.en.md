@@ -37,6 +37,7 @@ authority and one design system:
 | **Synwevo Workspace** | Public home page and the signed-in portal: which applications you have, workspace switching, account entry | `apps/portal/` |
 | **Synwevo Account** | Unified account: password / passkey / TOTP / e-mail code / external identity provider sign-in, invitations and recovery, organization and workspace governance, platform administration, OIDC authorization server | `services/identity/` |
 | **Synwevo Docs** | Document automation: pick data on the left, pick a template on the right, connect them, and batch-generate real DOCX / XLSX / PDF / PPTX / CSV / image files by sample rule | `apps/docs/` |
+| **Synwevo Message** | Direct messages and groups within an organization: replies, reactions, attachments, mentions, announcements, reports; its own origin (`message.wegreen.ltd`) | `apps/messages/` |
 
 The platform's positioning is **workflow automation**. What it ships today is one complete document
 automation flow: sources → template → mappings and sample rules → preflight → background job →
@@ -85,7 +86,7 @@ brew install --cask libreoffice && brew install tesseract
 
 ```bash
 git clone git@github.com:WeGreen-AI/Synwevo.git synwevo && cd synwevo
-python scripts/platform.py setup          # create .venv, install pinned deps, editable-install every module, build the three shells
+python scripts/platform.py setup          # create .venv, install pinned deps, editable-install every module, build the four shells
 python scripts/platform.py up --init      # first run: create an empty database; afterwards plain `up`
 ```
 
@@ -94,6 +95,7 @@ python scripts/platform.py up --init      # first run: create an empty database;
 | Synwevo Workspace | <http://portal.localhost:8769> |
 | Synwevo Account | <http://accounts.localhost:8770/login> |
 | Synwevo Docs | <http://docweave.localhost:8765> |
+| Synwevo Message | <http://message.localhost:8768> |
 
 There is no default administrator and no default password. Generate a one-time bootstrap token and
 paste it on the sign-in page:
@@ -159,7 +161,7 @@ repository root
 ├─ packages/
 │   ├─ core/          shared: Store (the only migration runner), tenants, identity/sessions/passwords, machine identity, OIDC token store, HTTP skeleton
 │   ├─ auth-client/   how an application joins the unified identity: OIDC relying party (python/), browser session context and platform navigation (web/)
-│   └─ ui/            design tokens, theme, three-language catalog and base components shared by the three shells
+│   └─ ui/            design tokens, theme, three-language catalog and base components shared by the four shells
 ├─ infra/             container build, single-process assembly (synwevo_server), production Compose and deployment receiver
 ├─ scripts/           root commands: setup, up, down, status, logs, test, backup, the three guard scripts
 ├─ tests/integration/ cross-module checks: unified sign-in chain, machine identity, cross-workspace isolation, role boundaries, shell ownership
@@ -251,7 +253,7 @@ Contracts and enforcement points: [docs/security/permissions.md](docs/security/p
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest                     # three suites: apps/docs/tests, services/identity/tests, tests/integration
+.venv/bin/python -m pytest                     # four suites: apps/docs/tests, services/identity/tests, apps/messages/tests, tests/integration
 .venv/bin/python scripts/check_boundaries.py   # module dependency boundaries
 .venv/bin/python scripts/check_brand.py        # legacy brand strings: each one is either removed or has a written reason to stay
 .venv/bin/python scripts/check_design.py       # design system: literal colors only in the shared tokens

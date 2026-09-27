@@ -363,6 +363,23 @@ apps/<your-app>/
 
 然后 `python scripts/check_boundaries.py` 必须通过——它会告诉你有没有不小心伸进别人的实现里。
 
+### 已经走过一遍的例子：Synwevo Message（CI-66）
+
+组织内消息原本是账户服务里的一组路由和账户外壳里的一页，CI-66 把它做成了第二个应用。按上面四步对照：
+
+| 步 | 做了什么 | 在哪 |
+|---|---|---|
+| 目录 | `apps/messages/`：`pyproject.toml`（依赖只有 `synwevo-core`、`synwevo-auth-client`、`fastapi`）、`requirements.txt`、`synwevo_messages/{app,routes}.py`、`web/`（`assetsDir: "messages-assets"`）、`tests/`、`AGENTS.md` | `apps/messages/` |
+| 依赖方路由 | `create_app()` 与门户同构：`install_platform(role="messages")` → 共享会话路由 → `build_rp_router` → `build_account_redirect_router` → 外壳。`messages` 角色不提供 `/api/auth/login`；测试用 `synwevo_core.sessions.Sessions.create` 直接铸造会话 | `apps/messages/synwevo_messages/app.py`、`apps/messages/tests/conftest.py` |
+| 登记 | `synwevo_core/apps.py`：`MESSAGES_APP_ID`、`bootstrap_messages_app()`（只有 `messages`/`all` 角色写自己的 `SYNWEVO_APP_URL`）、`messages_launch_url()`；客户端 `messages-web`（`platform.py up` 自动登记；生产见 `docs/platform/domain-migration.md` §6） | `packages/core/synwevo_core/apps.py` |
+| 资格 | 会话按组织归属，`check_access` 对它与平台 id 同规则（任何有效账户可打开；会话内的可见性在服务层）。一个新应用如果是工作空间范围的，就走默认的 `workspace_apps` + 资格模型，不要照抄这条 | 同上 |
+| 网关 | `ROLES` 加 `messages`，`_role_blocks` 加一支：放行自己的 `/api/messaging/`、`/auth/` 与 `APP_ACCOUNT_PATHS`，拒绝其余；其它角色拒绝 `/api/messaging/` 时点名它的地址；`ACCOUNT_LEVEL_PREFIXES` 加前缀，`all` 角色上不套 Docs 的工作空间检查 | `packages/core/synwevo_core/http.py` |
+| 前端 | `@synwevo/messages-web` 用 `SessionProvider`/`RequireSession`/`SignedOut`/`PlatformNav`；地址来自 `/api/auth/state`（`messages_url`、`account_url`、`portal_url`），页面不拼主机名 | `apps/messages/web/src/` |
+| 组装 | `synwevo_server.app`：`wants_messages`，`all` 同时挂 API 与外壳（`/messages`、`/c`）；`accounts` 角色挂旧前缀兜底（注册后答 410）与 `/messages` 重定向 | `infra/server/synwevo_server/app.py` |
+| 运行方式 | `scripts/platform.py`（第四个服务、`message.localhost`、客户端登记、`test messages`）、`infra/Dockerfile`、`infra/production/{compose.yaml,nginx.conf,receive.py}`、`.github/workflows/production.yml`、`scripts/check_*.py` 的目录表 | 各处 |
+
+搬家时**没有**动的：`synwevo_core.messaging` 的六张表、id、规则；举报处理（要账户会话上的重认证）留在账户服务。
+
 ### 自动化编排类产品怎么接
 
 不需要改 Synwevo Docs。它已经有完整的机器接口（`/api/v1`，见
