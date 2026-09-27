@@ -108,7 +108,7 @@ export default function PreviewPane({ projectId, rev, mappings, slots, onLocateM
           }} />
         <span className="spacer" />
         {pageable && (
-          <button type="button" className={`btn sm${real ? " active" : ""}`} aria-pressed={real} onClick={() => setReal(!real)} title={tr("用排版引擎排版后的真实页面（含分页）")}>
+          <button type="button" className={`btn sm${real ? " active" : ""}`} aria-pressed={real} onClick={() => setReal(!real)} title={tr("按真实排版显示页面与分页")}>
             {real ? tr("✓ 真实分页") : tr("真实分页")}
           </button>
         )}
@@ -124,8 +124,8 @@ export default function PreviewPane({ projectId, rev, mappings, slots, onLocateM
           <b>{data.record.label}</b> <span className="muted small">{tr("来源：")}{data.record.file_name} · {serverText(data.record.where)}</span>
           {data.record.merged_from && <span className="badge warn" style={{ marginLeft: 6 }}>{tr("跨文件合并：")}{data.record.merged_from.join("、")}</span>}
           {vb && <span className={`badge ${vb.tone}`} style={{ marginLeft: 6 }} title={vb.title}>{vb.tone === "ok" ? tr("✓ 已校验 {v1} 个值", { v1: data.verification.checks }) : vb.label}</span>}
-          <span className="tiny muted" style={{ marginLeft: 6 }}>{tr("预览与批量生成使用同一套解析、映射与格式规则")}</span>
-          {real && !lay && pageable && <span className="badge" style={{ marginLeft: 6 }}>{tr("正在用排版引擎排版…")}</span>}
+          <span className="tiny muted" style={{ marginLeft: 6 }}>{tr("预览结果与批量生成一致")}</span>
+          {real && !lay && pageable && <span className="badge" style={{ marginLeft: 6 }}>{tr("正在排版…")}</span>}
           {real && lay?.available && (
             <span className={`badge ${lay.pages > lay.template_pages ? "warn" : "ok"}`} style={{ marginLeft: 6 }}>{tr("模板 ")}{formatNumber(lay.template_pages)}{tr(" 页 → 本份 ")}{formatNumber(lay.pages)}{tr(" 页")}{lay.pages > lay.template_pages ? tr("（分页增加）") : ""}
             </span>

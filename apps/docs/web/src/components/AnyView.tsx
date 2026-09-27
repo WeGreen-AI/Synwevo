@@ -40,7 +40,7 @@ export default function AnyView(p: ViewProps) {
   if (v.view === "error") return (
     <div className="empty">
       <div className="big">{tr("无法读取此文件")}</div>
-      <div className="notice err" style={{ maxWidth: 480 }}>{diagnosticText(v.error) || tr("未知错误")}</div>
+      <div className="notice err" style={{ maxWidth: 480 }}>{diagnosticText(v.error)}</div>
     </div>
   );
   if (v.view === "grid") {

@@ -97,19 +97,19 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
             {busy ? tr("上传中 {v1}%…", { v1: Math.round(prog * 100) }) : <>{tr("拖入模板文件，或 ")}<b>{tr("点击选择")}</b><div className="small mt8">{tr("支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 图片（直接输出同尺寸图片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 会先经格式转换（会提示可能的版式变化），BMP/TIFF/WEBP 输出为 PNG")}</div></>}
           </button>
           <input ref={fileRef} type="file" hidden accept=".docx,.docm,.xlsx,.xlsm,.pdf,.pptx,.pptm,.doc,.xls,.ppt,.odt,.ods,.odp,.rtf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp" onChange={(e) => e.target.files?.[0] && doUpload(e.target.files[0])} />
-          <div className="notice small">{tr("上传后在右侧预览中选中文字、单元格、表格行，或在 PDF / 图片上框选区域，点击「设为待填区域」即可创建字段。原始模板保持不变，所有修改保存在工作副本中，可撤销/重做。")}</div>
+          <div className="notice small">{tr("原始文件保持不变。上传后在右侧预览中选中内容，用「设为待填区域」创建字段。")}</div>
         </div>
       )}
       {tab === "new" && (
         <div className="grid2 mt12">
           <div className="opt" style={{ flexDirection: "column" }}>
             <div className="t">{tr("📄 文档型模板（生成 DOCX）")}</div>
-            <div className="small muted">{tr("段落、标题、字体格式、表格（合并单元格、重复明细行）、图片、纸张与页边距、分页、页眉页脚；在任意位置插入填充字段。")}</div>
+            <div className="small muted">{tr("段落、表格、图片、页眉页脚与页面设置；在任意位置插入字段。")}</div>
             <button type="button" className="btn primary sm" style={{ alignSelf: "flex-start" }} onClick={() => nav(`/templates/new/doc?project=${projectId}`)}>{tr("新建文档模板")}</button>
           </div>
           <div className="opt" style={{ flexDirection: "column" }}>
             <div className="t">{tr("▦ 表格型模板（生成 XLSX / CSV）")}</div>
-            <div className="small muted">{tr("单元格、行列尺寸、合并单元格、字体/填充/边框/对齐/数字格式；定义待填单元格、固定区域和重复明细行。")}</div>
+            <div className="small muted">{tr("单元格样式、合并与数字格式；定义待填单元格、固定区域和重复明细行。")}</div>
             <button type="button" className="btn primary sm" style={{ alignSelf: "flex-start" }} onClick={() => nav(`/templates/new/sheet?project=${projectId}`)}>{tr("新建表格模板")}</button>
           </div>
         </div>
@@ -136,13 +136,13 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
               {!libErr && lib && !lib.length && <tr><td colSpan={5} className="muted" style={{ textAlign: "center" }}>{tr("模板库为空")}</td></tr>}
             </tbody>
           </table>
-          <div className="tiny muted mt8">{tr("模板可被多个项目使用；修改会产生新版本。若不希望影响其他项目，请选择「复制后使用」。")}</div>
+          <div className="tiny muted mt8">{tr("模板可被多个项目共用，修改对它们都生效；不想影响其他项目时选「复制后使用」。")}</div>
         </div>
       )}
       {tab === "shared" && (
         <div className="mt12" style={{ maxHeight: 420, overflow: "auto" }}>
           <table className="tbl">
-            <thead><tr><th>{tr("名称")}</th><th>{tr("格式")}</th><th>{tr("字段")}</th><th>{tr("发布")}</th><th>{tr("来源空间")}</th><th /></tr></thead>
+            <thead><tr><th>{tr("名称")}</th><th>{tr("格式")}</th><th>{tr("字段")}</th><th>{tr("发布")}</th><th>{tr("来源工作空间")}</th><th /></tr></thead>
             <tbody>
               {(shared?.items || []).map((x) => (
                 <tr key={x.id}>
@@ -151,14 +151,14 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
                   <td>{formatNumber(x.slot_count)}</td>
                   <td className="small muted">{tr("第 {v1} 次发布 · 模板第 {v2} 版", { v1: x.release_no, v2: x.version_no })}<div className="tiny">{fmtTime(x.updated_at)}</div></td>
                   <td className="small muted">{x.source_workspace?.name || "—"}</td>
-                  <td className="nowrap"><button type="button" className="btn sm" disabled={busy} onClick={() => useShared(x.id)} title={tr("复制到本空间并用于这个项目")}>{tr("使用")}</button></td>
+                  <td className="nowrap"><button type="button" className="btn sm" disabled={busy} onClick={() => useShared(x.id)} title={tr("复制到本工作空间并用于这个项目")}>{tr("使用")}</button></td>
                 </tr>
               ))}
               {sharedErr && <tr><td colSpan={6}><div className="notice err row"><span className="grow">{tr("组织共享模板加载失败：")}{serverText(sharedErr)}</span><button type="button" className="btn sm" onClick={loadShared}>{tr("重试")}</button></div></td></tr>}
-              {!sharedErr && shared && !shared.items.length && <tr><td colSpan={6} className="muted" style={{ textAlign: "center" }}>{tr("组织里还没有共享模板。在模板库里对模板选择「发布到组织…」即可共享。")}</td></tr>}
+              {!sharedErr && shared && !shared.items.length && <tr><td colSpan={6} className="muted" style={{ textAlign: "center" }}>{tr("组织里还没有共享模板。在模板库对模板选择「发布到组织…」。")}</td></tr>}
             </tbody>
           </table>
-          <div className="tiny muted mt8">{tr("使用组织共享模板会把当前发布复制成本空间自己的模板；之后组织更新或弃用它，不会改变这里的项目和任务。")}</div>
+          <div className="tiny muted mt8">{tr("会复制为本工作空间自己的模板；组织之后更新或弃用它，不影响这里的项目和任务。")}</div>
         </div>
       )}
     </Modal>

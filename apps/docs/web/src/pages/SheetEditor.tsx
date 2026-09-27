@@ -343,7 +343,7 @@ export default function SheetEditor() {
         <button className="btn sm primary" onClick={() => addField("cell")}>{tr("设为字段单元格")}</button>
         <button className="btn sm" onClick={() => addField("region")}>{tr("设为固定区域")}</button>
         <button className="btn sm" onClick={() => addField("repeat")}>{tr("设为重复明细行")}</button>
-        <span className="tiny muted">{tr("重复明细行：选中一行中的连续单元格；上一行作为表头名称。生成时有几条明细就插入几行，公式与合并随之平移。")}</span>
+        <span className="tiny muted">{tr("重复明细行：选一行中的连续单元格，上一行为表头；生成时按明细条数插入行。")}</span>
       </div>
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <div className="grid-scroll" ref={gridRef} tabIndex={0} onKeyDown={onKey}
@@ -405,7 +405,7 @@ export default function SheetEditor() {
                 <button type="button" className="btn xs ghost" aria-label={tr("删除字段「{v1}」", { v1: f.name })} title={tr("删除字段")} onClick={(e) => { e.stopPropagation(); mutate((s) => { s.fields.splice(i, 1); return s; }); }}>✕</button>
               </div>
             ))}
-            {!sh.fields.length && <div className="empty small">{tr("选中单元格后点击上方「设为字段单元格 / 固定区域 / 重复明细行」")}</div>}
+            {!sh.fields.length && <div className="empty small">{tr("还没有字段。选中单元格后用上方的「设为字段单元格 / 固定区域 / 重复明细行」。")}</div>}
           </div>
         </div>
       </div>

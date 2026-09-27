@@ -146,7 +146,7 @@ function Job() {
             <div className="row wrap">
               <div className="grow">
                 <div className="small muted">{tr("模板「")}{job.template.name}」v{job.template.version_no}{tr(" · 来源文件 ")}{formatNumber(job.source_count)}{tr(" 个 · 格式 ")}{fmts.map((f) => f.toUpperCase()).join(" + ")}{tr(" · 创建于 ")}{fmtTime(job.created_at)}</div>
-                <div className="small muted">{tr("输入在任务开始时已固定（文件、模板版本、映射与样本规则的快照），之后的修改不会影响本任务。")}</div>
+                <div className="small muted">{tr("任务使用开始时的文件、模板版本、映射与样本规则；之后的修改不影响本任务。")}</div>
               </div>
               {perm.canWrite && canCancel(job) && (
                 <button type="button" className="btn danger" disabled={!!busy} onClick={() => act("cancel")}>{busy === "cancel" ? tr("正在请求取消…") : tr("取消任务")}</button>
@@ -174,13 +174,13 @@ function Job() {
               <Stat k={tr("失败")} v={c.failed || 0} color={c.failed ? "var(--err)" : undefined} />
               <Stat k={tr("跳过（生成前错误）")} v={c.skipped || 0} color={c.skipped ? "var(--warn)" : undefined} />
               <Stat k={tr("取消 / 等待")} v={(c.cancelled || 0) + (c.pending || 0) + (c.running || 0) + (c.unplanned || 0)} />
-              <Stat k={tr("输出文件")} v={c.files || 0} />
+              <Stat k={tr("产物")} v={c.files || 0} />
             </div>
             <div className="row wrap">
               {perm.canExport ? (
                 <>
                   {c.files ? <DownloadLink className="btn primary" href={`/api/jobs/${jid}/zip`}>{tr("⬇ 下载全部（ZIP）")}</DownloadLink>
-                    : <button type="button" className="btn primary" disabled title={tr("还没有输出文件")}>{tr("⬇ 下载全部（ZIP）")}</button>}
+                    : <button type="button" className="btn primary" disabled title={tr("还没有产物")}>{tr("⬇ 下载全部（ZIP）")}</button>}
                   {fmts.length > 1 && c.files > 0 && fmts.map((f) => <DownloadLink key={f} className="btn" href={`/api/jobs/${jid}/zip?fmt=${f}`}>{tr("仅 ")}{f.toUpperCase()}</DownloadLink>)}
                   <DownloadLink className="btn" href={`/api/jobs/${jid}/report.csv`}>{tr("⬇ 结果清单与失败说明（CSV）")}</DownloadLink>
                 </>
@@ -196,8 +196,8 @@ function Job() {
           </div>
           <div className="card mt12" style={{ overflow: "auto" }}>
             {itemsErr && <div className="notice err" role="alert">{tr("样本列表加载失败：")}{serverText(itemsErr)}</div>}
-            <table className="tbl" aria-label={tr("样本与输出文件")}>
-              <thead><tr><th style={{ width: 50 }}>#</th><th>{tr("样本")}</th><th style={{ width: 90 }}>{tr("状态")}</th><th>{tr("输出文件")}</th><th>{tr("说明")}</th></tr></thead>
+            <table className="tbl" aria-label={tr("样本与产物")}>
+              <thead><tr><th style={{ width: 50 }}>#</th><th>{tr("样本")}</th><th style={{ width: 90 }}>{tr("状态")}</th><th>{tr("产物")}</th><th>{tr("说明")}</th></tr></thead>
               <tbody>
                 {items.map((it) => {
                   const [t, k] = itemStatus(it.status);

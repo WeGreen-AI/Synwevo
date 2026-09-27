@@ -64,7 +64,7 @@ export default function Transforms({ value, onChange }: { value: any[]; onChange
         <option value="">{tr("＋ 添加转换规则…")}</option>
         {Object.entries(OPS).map(([k, v]) => <option key={k} value={k}>{tr(v)}</option>)}
       </select>
-      <div className="tiny muted">{tr("转换只使用以上受控选项，按顺序执行；不会执行任何自定义代码。")}</div>
+      <div className="tiny muted">{tr("转换规则按从上到下的顺序执行。")}</div>
     </div>
   );
 }

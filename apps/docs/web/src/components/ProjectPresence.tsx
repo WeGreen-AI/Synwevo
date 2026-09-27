@@ -7,6 +7,7 @@ import { Drawer, t as tr, useI18n } from "@synwevo/ui";
 import { get } from "@synwevo/auth-client";
 import type { Focus, PeerInfo, RoomState } from "../lib/collab";
 import { errorText } from "../lib/perm";
+import { RULE_MODE } from "../lib/status";
 import type { Slot, SourceFile } from "../lib/types";
 
 export const peerClass = (slot: unknown) => `peer-c${Math.min(8, Math.max(1, Number(slot) || 1))}`;
@@ -138,7 +139,8 @@ function settingText(field: string, v: any): string {
   if (field === "template_id") return tr("另一个模板");
   if (field === "template_version") return tr("固定第 {v1} 版", { v1: v });
   if (field === "record_rule") {
-    const mode = ({ per_row: tr("每行一份"), per_file: tr("每个文件一份"), per_group: tr("按组一份"), per_block: tr("按标记块一份") } as Record<string, string>)[v.mode] || (v.mode ? String(v.mode) : tr("未设置"));
+    // the same mode names as the top bar and the sample panel (lib/status RULE_MODE)
+    const mode = v.mode ? tr(RULE_MODE[v.mode] || String(v.mode)) : tr("未设置");
     const where = v.table?.sheet ? tr("（工作表「{v1}」）", { v1: v.table.sheet }) : v.group?.key ? tr("（按「{v1}」）", { v1: v.group.key }) : v.block?.anchor ? tr("（标记「{v1}」）", { v1: v.block.anchor }) : "";
     return mode + where;
   }
@@ -195,7 +197,6 @@ export function ActivityDrawer({ pid, slots, seq, me, onLocate, onClose }: {
   return (
     <Drawer title={tr("活动记录")} onClose={onClose}>
       <div className="col gap8" data-testid="project-activity">
-        <div className="tiny muted">{tr("谁在什么时候改了什么：映射按条记录，文件、样本规则、模板版本和评论的变化也在这里。点一行可以跳到它改的对象。")}</div>
         <div className="row gap8 wrap collab-filters">
           <label className="row gap4 small">{tr("成员")}
             <select className="input sm" value={who} onChange={(e) => setWho(e.target.value)} aria-label={tr("按成员筛选")} data-testid="activity-who">

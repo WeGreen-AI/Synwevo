@@ -150,7 +150,7 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
           </label>
         ))}
       </div>
-      <div className="notice info mt12 small">{tr("样本划分只决定「哪些数据构成一份输出」，与映射数量无关；多个来源文件默认各自独立提取样本后按文件顺序追加，不会做组合。")}</div>
+      <div className="notice info mt12 small">{tr("样本只决定哪些数据构成一份输出；多个来源文件各自提取样本后按文件顺序追加。")}</div>
       {noTable && <div className="notice warn mt12">「{mode === "per_row" ? tr("每行一份") : tr("每组一份")}{tr("」需要表格类来源（XLSX/CSV/XLS/ODS 或含表格的 HTML）。当前没有可用的表格文件。")}</div>}
       {mode === "per_block" && (
         <div className="grid2 mt12" style={{ gridTemplateColumns: "1fr 1fr" }}>
@@ -180,7 +180,7 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
                 </select>
               </label>
             )}
-            <div className="notice small">{tr("每个标记出现的位置开始一个新块，直到下一个标记（或结束标记）为止。表格按行切分，Word 按段落/表格切分，PDF 按标记所在行切分（同一页可有多块，也可跨页），文本按行切分。 建立映射时，在左侧用块导航切换到某一块并选取数据；每一块都按相对于块开头的同一位置、并以旁边的标签校验来取值。")}</div>
+            <div className="notice small">{tr("从每个标记出现的位置开始一个块，到下一个标记（或结束标记）为止；同一页可有多块，块也可跨页。建立映射时，用左侧的块导航切换到某一块再选取数据。")}</div>
           </div>
           <div className="col">
             <h3>{tr("识别结果预览")}</h3>
@@ -221,7 +221,7 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
               <label className="field">{tr("数据结束行（留空 = 到最后一行）")}<input className="input" type="number" min={1} value={dataEnd} onChange={(e) => setDataEnd(e.target.value)} placeholder={tr("末尾")} /></label>
             </div>
             {!noHeader && headers.length > 0 && <div className="small muted">{tr("表头：")}{headers.slice(0, 12).map((h, i) => <span key={i} className="badge" style={{ margin: "2px 4px 0 0" }}>{h || tr("（空）")}</span>)}</div>}
-            <label className="check"><input type="checkbox" checked={skipBlank} onChange={(e) => setSkipBlank(e.target.checked)} />{tr(" 排除完全空白的行（排除数量会显示）")}</label>
+            <label className="check"><input type="checkbox" checked={skipBlank} onChange={(e) => setSkipBlank(e.target.checked)} />{tr(" 排除完全空白的行")}</label>
             <div className="col gap4">
               <div className="small">{tr("过滤条件（可选）")}</div>
               {filters.map((f, i) => (
@@ -270,7 +270,7 @@ export default function RuleDialog({ project, sources, initial, selectedText, on
                     <option value="cross_file">{tr("跨文件按编号合并分组（会展示合并结果与冲突）")}</option>
                   </select>
                 </label>
-                <div className="tiny muted">{tr("同一组内的单值字段若出现多个不同值，会报冲突，需在映射中明确选择取值规则。")}</div>
+                <div className="tiny muted">{tr("组内同一字段出现不同值时会报冲突；可在映射中选择取值规则。")}</div>
               </div>
             )}
           </div>

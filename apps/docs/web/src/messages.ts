@@ -122,22 +122,6 @@ export const messages = {
     "en": "Delete project",
     "zh-Hant": "刪除項目"
   },
-  "删除项目「": {
-    "en": "Delete project “",
-    "zh-Hant": "刪除項目「"
-  },
-  "如果只是想让它从列表里消失，用": {
-    "en": "To hide it from this list, use ",
-    "zh-Hant": "如果只是想讓它從列表裡消失，用"
-  },
-  "归档": {
-    "en": "Archive",
-    "zh-Hant": "歸檔"
-  },
-  "更合适——归档随时可以撤销。": {
-    "en": " — you can restore it at any time.",
-    "zh-Hant": "更合適——歸檔隨時可以撤銷。"
-  },
   "删除": {
     "en": "Delete",
     "zh-Hant": "刪除"
@@ -221,10 +205,6 @@ export const messages = {
   "还没有项目": {
     "en": "No projects yet",
     "zh-Hant": "還沒有項目"
-  },
-  "一个项目 = 一批来源文件 + 一个目标模板 + 样本规则与映射。规则可保存后用于下一批同结构文件。": {
-    "en": "A project combines source files, a target template, sample rules and mappings. Save the rules to reuse with files of the same structure.",
-    "zh-Hant": "一個項目 = 一批來源文件 + 一個目標模板 + 樣本規則與映射。規則可保存後用於下一批同結構文件。"
   },
   "新建第一个项目": {
     "en": "Create your first project",
@@ -386,17 +366,9 @@ export const messages = {
     "en": "Template deleted",
     "zh-Hant": "已刪除模板"
   },
-  "模板在项目中上传或新建后会出现在这里，可复制后用于其他项目": {
-    "en": "Templates uploaded or created in projects appear here. Duplicate one to reuse in another project.",
-    "zh-Hant": "模板在項目中上傳或新建後會出現在這裡，可複製後用於其他項目"
-  },
   "加载模板…": {
     "en": "Loading templates…",
     "zh-Hant": "加載模板…"
-  },
-  "所有文件只在本机/自有服务器处理，不会发送到外部服务。": {
-    "en": "All files are processed locally or on your own server; nothing is sent to external services.",
-    "zh-Hant": "所有文件只在本機/自有服務器處理，不會發送到外部服務。"
   },
   "单值": {
     "en": "Single value",
@@ -774,14 +746,6 @@ export const messages = {
     "en": "Right must exceed left, bottom must exceed top; values range from 0 to 100",
     "zh-Hant": "右須大於左、下須大於上，數值 0–100"
   },
-  "第 ": {
-    "en": "Slide ",
-    "zh-Hant": "第 "
-  },
-  " 张幻灯片": {
-    "en": " ",
-    "zh-Hant": " 張幻燈片"
-  },
   "选择整行": {
     "en": "Select entire row",
     "zh-Hant": "選擇整行"
@@ -797,10 +761,6 @@ export const messages = {
   "无法读取此文件": {
     "en": "Cannot read this file",
     "zh-Hant": "無法讀取此文件"
-  },
-  "未知错误": {
-    "en": "Unknown error",
-    "zh-Hant": "未知錯誤"
   },
   "无法预览": {
     "en": "Preview unavailable",
@@ -1158,30 +1118,6 @@ export const messages = {
     "en": "Warnings",
     "zh-Hant": "警告"
   },
-  "预计输出文件": {
-    "en": "Expected output files",
-    "zh-Hant": "預計輸出文件"
-  },
-  "选择了 ": {
-    "en": "Selected ",
-    "zh-Hant": "選擇了 "
-  },
-  " 种格式：": {
-    "en": " formats: ",
-    "zh-Hant": " 種格式："
-  },
-  " 个有效样本 × ": {
-    "en": " valid samples × ",
-    "zh-Hant": " 個有效樣本 × "
-  },
-  " 种格式 = ": {
-    "en": " formats = ",
-    "zh-Hant": " 種格式 = "
-  },
-  " 个文件（每个样本各生成一份）。": {
-    "en": " files (one per sample per format).",
-    "zh-Hant": " 個文件（每個樣本各生成一份）。"
-  },
   " 个样本存在错误": {
     "en": " samples have errors",
     "zh-Hant": " 個樣本存在錯誤"
@@ -1194,14 +1130,6 @@ export const messages = {
     "en": "Unavailable",
     "zh-Hant": "不可用"
   },
-  "公式由内置公式引擎计算并写入结果（": {
-    "en": "Formulas are calculated by the built-in engine and saved to the output (",
-    "zh-Hant": "公式由內置公式引擎計算並寫入結果（"
-  },
-  "90 个常用函数）；少数不支持的函数会自动改由排版引擎计算，结果清单中会注明。": {
-    "en": "90 common functions). Unsupported functions fall back to the layout engine; the results manifest identifies these cases.",
-    "zh-Hant": "90 個常用函數）；少數不支持的函數會自動改由排版引擎計算，結果清單中會注明。"
-  },
   "分页检查": {
     "en": "Pagination checks",
     "zh-Hant": "分頁檢查"
@@ -1210,10 +1138,6 @@ export const messages = {
     "en": "Skip checks (fastest)",
     "zh-Hant": "不檢查（最快）"
   },
-  "逐份用排版引擎排版，页数多于模板时提示": {
-    "en": "Lay out each output with the layout engine; flag extra pages",
-    "zh-Hant": "逐份用排版引擎排版，頁數多於模板時提示"
-  },
   "保持模板页数：先缩小允许缩小的字段，仍超出则该份失败": {
     "en": "Keep template page count: shrink eligible fields; fail if still too long",
     "zh-Hant": "保持模板頁數：先縮小允許縮小的字段，仍超出則該份失敗"
@@ -1221,14 +1145,6 @@ export const messages = {
   "新内容更长时分页可能变化；可在预览中打开「真实分页」查看。": {
     "en": "Longer content can change pagination. Use “Actual pagination” in the preview to check.",
     "zh-Hant": "新內容更長時分頁可能變化；可在預覽中打開「真實分頁」查看。"
-  },
-  "每份多一次排版引擎排版（约 1 秒）；超出的样本会在结果清单中标出。": {
-    "en": "Adds one layout-engine pass per output (about 1 second). Extra-page cases are listed in the manifest.",
-    "zh-Hant": "每份多一次排版引擎排版（約 1 秒）；超出的樣本會在結果清單中標出。"
-  },
-  "只缩小字段设置中勾选了「超长时允许缩小字号」的字段，每一步都重新排版确认，不会估算。": {
-    "en": "Only fields allowing font shrinking are adjusted. Each step is laid out again to verify the page count.",
-    "zh-Hant": "只縮小字段設置中勾選了「超長時允許縮小字號」的字段，每一步都重新排版確認，不會估算。"
   },
   "模板中还没有字段勾选「超长时允许缩小字号」：超出页数的样本会直接失败。": {
     "en": "No fields allow font shrinking. Samples exceeding the template page count will fail.",
@@ -1442,10 +1358,6 @@ export const messages = {
     "en": "＋ Add transformation…",
     "zh-Hant": "＋ 添加轉換規則…"
   },
-  "转换只使用以上受控选项，按顺序执行；不会执行任何自定义代码。": {
-    "en": "Only these controlled transformations run, in order. No custom code is executed.",
-    "zh-Hant": "轉換只使用以上受控選項，按順序執行；不會執行任何自定義代碼。"
-  },
   "每行一条：原值=新值\n例如 TRUE=是": {
     "en": "One per line: old=new\nExample: TRUE=Yes",
     "zh-Hant": "每行一條：原值=新值\n例如 TRUE=是"
@@ -1454,17 +1366,9 @@ export const messages = {
     "en": "Value map, one per line: old=new",
     "zh-Hant": "值對照表，每行一條：原值=新值"
   },
-  " 行还不是「原值=新值」，暂不生效": {
-    "en": " do not yet use old=new and are not applied",
-    "zh-Hant": " 行還不是「原值=新值」，暫不生效"
-  },
   "来源区域无效，请重新选择单元格区域": {
     "en": "Invalid source region. Select the cell range again.",
     "zh-Hant": "來源區域無效，請重新選擇單元格區域"
-  },
-  "来源区域为 {v1} 行 × {v2} 列，目标区域「{v3}」为 {v4} 行 × {v5} 列。尺寸不一致，不能保存：请重新选择来源区域，或修改目标区域大小（系统不会自动截断、补齐或转置）。": {
-    "en": "The source has {v1} rows × {v2} columns; target “{v3}” has {v4} rows × {v5} columns. Sizes must match to save. Reselect the source or resize the target; regions are not truncated, padded or transposed automatically.",
-    "zh-Hant": "來源區域為 {v1} 行 × {v2} 列，目標區域「{v3}」為 {v4} 行 × {v5} 列。尺寸不一致，不能保存：請重新選擇來源區域，或修改目標區域大小（系統不會自動截斷、補齊或轉置）。"
   },
   "重复明细字段需要在左侧选择「明细表」：包含表头的多行区域，或文档中的整张表格": {
     "en": "A repeating field needs a detail table selected on the left: multiple rows including headers, or an entire document table.",
@@ -1593,10 +1497,6 @@ export const messages = {
   "必填": {
     "en": "Required",
     "zh-Hant": "必填"
-  },
-  "列对应（按列名匹配，列顺序不同也不会错位；未匹配的列请手动选择）：": {
-    "en": "Match columns by name, independent of order. Select unmatched columns manually:",
-    "zh-Hant": "列對應（按列名匹配，列順序不同也不會錯位；未匹配的列請手動選擇）："
   },
   "目标列": {
     "en": "Target column",
@@ -1818,10 +1718,6 @@ export const messages = {
     "en": "Find by sample identifier",
     "zh-Hant": "按樣本標識查找"
   },
-  "用排版引擎排版后的真实页面（含分页）": {
-    "en": "Actual pages laid out by the layout engine (including pagination)",
-    "zh-Hant": "用排版引擎排版後的真實頁面（含分頁）"
-  },
   "✓ 真实分页": {
     "en": "✓ Actual pagination",
     "zh-Hant": "✓ 真實分頁"
@@ -1861,14 +1757,6 @@ export const messages = {
   "✓ 已校验 {v1} 个值": {
     "en": "✓ Verified {v1} values",
     "zh-Hant": "✓ 已校驗 {v1} 個值"
-  },
-  "预览与批量生成使用同一套解析、映射与格式规则": {
-    "en": "Preview and batch generation use the same parsing, mapping and formatting rules",
-    "zh-Hant": "預覽與批量生成使用同一套解析、映射與格式規則"
-  },
-  "；本地文字识别：": {
-    "en": "; Local text recognition: ",
-    "zh-Hant": "；本機文字辨識："
   },
   "已启用": {
     "en": "Enabled",
@@ -2050,10 +1938,6 @@ export const messages = {
     "en": "Resolved by {who}",
     "zh-Hant": "由 {who} 標記解決"
   },
-  "正在用排版引擎排版…": {
-    "en": "Laying out with the layout engine…",
-    "zh-Hant": "正在用排版引擎排版…"
-  },
   "模板 ": {
     "en": "Template ",
     "zh-Hant": "模板 "
@@ -2125,26 +2009,6 @@ export const messages = {
   " 个样本）。": {
     "en": " samples).",
     "zh-Hant": " 個樣本）。"
-  },
-  "用例 ": {
-    "en": "Case ",
-    "zh-Hant": "用例 "
-  },
-  " 已保存在服务器上，可以在「回归用例」页面运行和下载。其中包含本项目的文件：请只保存测试数据或已脱敏的文件，不要把它提交到代码仓库。": {
-    "en": " is stored on the server and can be run or downloaded on the Regression cases page. It contains this project's files: save only test or anonymized data and do not commit it to the repository.",
-    "zh-Hant": " 已保存在服務器上，可以在「回歸用例」頁面運行和下載。其中包含本項目的文件：請只保存測試數據或已脫敏的文件，不要把它提交到代碼倉庫。"
-  },
-  "保存当前项目的来源文件、模板、样本规则和映射，并记录前 ": {
-    "en": "Save the project's sources, template, sample rules and mappings, along with expected results for the first ",
-    "zh-Hant": "保存當前項目的來源文件、模板、樣本規則和映射，並記錄前 "
-  },
-  " 个样本（共 ": {
-    "en": " samples (of ",
-    "zh-Hant": " 個樣本（共 "
-  },
-  " 个）的期望结果：每个字段的值和输出文档的文字。 以后每次升级或修改代码，都可以重新运行并逐项比较差异。": {
-    "en": "): each field value and output document text. Rerun after upgrades or code changes to compare differences.",
-    "zh-Hant": " 個）的期望結果：每個字段的值和輸出文檔的文字。 以後每次升級或修改代碼，都可以重新運行並逐項比較差異。"
   },
   "请只保存测试数据或已脱敏的文件": {
     "en": "Save only test data or anonymized files",
@@ -2314,10 +2178,6 @@ export const messages = {
     "en": "For spreadsheet files (XLSX / CSV), set treatment per column. Other cells follow the rules on the left.",
     "zh-Hant": "選擇了表格文件（XLSX / CSV）時，可以逐列設置處理方式；其餘單元格按左側規則替換。"
   },
-  "所有处理都在本服务器完成，文件不会发送到外部服务。数值缩放与日期平移对整列使用同一比例/天数，便于保留合计、排序等关系。": {
-    "en": "Processing stays on this server. No files are sent externally. Scaling and date shifts use the same factor or day offset for an entire column, preserving totals and ordering.",
-    "zh-Hant": "所有處理都在本服務器完成，文件不會發送到外部服務。數值縮放與日期平移對整列使用同一比例/天數，便於保留合計、排序等關係。"
-  },
   "表格中每条有效数据行 = 一份输出": {
     "en": "Each valid spreadsheet row = one output",
     "zh-Hant": "表格中每條有效數據行 = 一份輸出"
@@ -2382,10 +2242,6 @@ export const messages = {
     "en": "Detecting samples with these rules…",
     "zh-Hant": "正在識別當前規則下的樣本…"
   },
-  "样本划分只决定「哪些数据构成一份输出」，与映射数量无关；多个来源文件默认各自独立提取样本后按文件顺序追加，不会做组合。": {
-    "en": "Sample rules define what data belongs to one output, independently of mapping count. By default, files are processed separately and appended in file order, without combinations.",
-    "zh-Hant": "樣本劃分只決定「哪些數據構成一份輸出」，與映射數量無關；多個來源文件默認各自獨立提取樣本後按文件順序追加，不會做組合。"
-  },
   "」需要表格类来源（XLSX/CSV/XLS/ODS 或含表格的 HTML）。当前没有可用的表格文件。": {
     "en": "” requires spreadsheet sources (XLSX/CSV/XLS/ODS or HTML tables). No suitable source is ready.",
     "zh-Hant": "」需要表格類來源（XLSX/CSV/XLS/ODS 或含表格的 HTML）。當前沒有可用的表格文件。"
@@ -2441,10 +2297,6 @@ export const messages = {
   "表格文件使用的工作表": {
     "en": "Worksheet for spreadsheet files",
     "zh-Hant": "表格文件使用的工作表"
-  },
-  "每个标记出现的位置开始一个新块，直到下一个标记（或结束标记）为止。表格按行切分，Word 按段落/表格切分，PDF 按标记所在行切分（同一页可有多块，也可跨页），文本按行切分。 建立映射时，在左侧用块导航切换到某一块并选取数据；每一块都按相对于块开头的同一位置、并以旁边的标签校验来取值。": {
-    "en": "Each occurrence starts a block ending at the next start marker or end marker. Spreadsheets and text split by line, Word by paragraph/table, PDF by marker line (within or across pages). Navigate to a block on the left when mapping. Values are read at the same relative location and verified against nearby labels.",
-    "zh-Hant": "每個標記出現的位置開始一個新塊，直到下一個標記（或結束標記）為止。表格按行切分，Word 按段落/表格切分，PDF 按標記所在行切分（同一頁可有多塊，也可跨頁），文本按行切分。 建立映射時，在左側用塊導航切換到某一塊並選取數據；每一塊都按相對於塊開頭的同一位置、並以旁邊的標籤校驗來取值。"
   },
   "识别结果预览": {
     "en": "Detection preview",
@@ -2517,10 +2369,6 @@ export const messages = {
   "表头：": {
     "en": "Headers: ",
     "zh-Hant": "表頭："
-  },
-  " 排除完全空白的行（排除数量会显示）": {
-    "en": " Exclude completely empty rows (count shown)",
-    "zh-Hant": " 排除完全空白的行（排除數量會顯示）"
   },
   "过滤条件（可选）": {
     "en": "Filters (optional)",
@@ -2606,10 +2454,6 @@ export const messages = {
     "en": "Merge groups across files by key (merged results and conflicts are shown)",
     "zh-Hant": "跨文件按編號合併分組（會展示合併結果與衝突）"
   },
-  "同一组内的单值字段若出现多个不同值，会报冲突，需在映射中明确选择取值规则。": {
-    "en": "If a group's single-value field contains different values, a conflict is reported. Choose an explicit aggregation rule in the mapping.",
-    "zh-Hant": "同一組內的單值字段若出現多個不同值，會報衝突，需在映射中明確選擇取值規則。"
-  },
   "排除空白行": {
     "en": "Empty rows excluded",
     "zh-Hant": "排除空白行"
@@ -2686,10 +2530,6 @@ export const messages = {
     "en": "Disable",
     "zh-Hant": "禁用"
   },
-  "{v1} {v2} 个映射（#{v3}）": {
-    "en": "{v1} {v2} mappings (#{v3})",
-    "zh-Hant": "{v1} {v2} 個映射（#{v3}）"
-  },
   "删除映射": {
     "en": "Delete mappings",
     "zh-Hant": "刪除映射"
@@ -2698,10 +2538,6 @@ export const messages = {
     "en": "Delete {v1} mappings (#{v2})? You can restore them with Undo.",
     "zh-Hant": "刪除 {v1} 個映射（#{v2}）？可以用「撤銷」恢復。"
   },
-  "删除 {v1} 个映射（#{v2}）": {
-    "en": "Delete {v1} mappings (#{v2})",
-    "zh-Hant": "刪除 {v1} 個映射（#{v2}）"
-  },
   "无法改绑": {
     "en": "Cannot reassign",
     "zh-Hant": "無法改綁"
@@ -2709,10 +2545,6 @@ export const messages = {
   "字段「{v1}」已被映射 #{v2} 使用。请先删除或合并该映射。": {
     "en": "Field “{v1}” is used by mapping #{v2}. Delete or merge that mapping first.",
     "zh-Hant": "字段「{v1}」已被映射 #{v2} 使用。請先刪除或合併該映射。"
-  },
-  "映射 #{v1} 改绑到「{v2}」": {
-    "en": "Reassign mapping #{v1} to “{v2}”",
-    "zh-Hant": "映射 #{v1} 改綁到「{v2}」"
   },
   "{v1}映射 #{v2}": {
     "en": "{v1} mapping #{v2}",
@@ -2757,18 +2589,6 @@ export const messages = {
   "还没有映射": {
     "en": "No mappings yet",
     "zh-Hant": "還沒有映射"
-  },
-  "1. 在左侧选中来源数据（单元格、文字、区域）": {
-    "en": "1. Select source data on the left (cell, text or region)",
-    "zh-Hant": "1. 在左側選中來源數據（單元格、文字、區域）"
-  },
-  "2. 在右侧点击字段（或选中内容后「设为待填区域」）": {
-    "en": "2. Click a field on the right (or select content and choose “Set as fillable region”)",
-    "zh-Hant": "2. 在右側點擊字段（或選中內容後「設為待填區域」）"
-  },
-  "3. 点击底部「建立映射」": {
-    "en": "3. Click “Create mapping” below",
-    "zh-Hant": "3. 點擊底部「建立映射」"
   },
   "目标已失效": {
     "en": "Target is invalid",
@@ -2913,10 +2733,6 @@ export const messages = {
   "日期": {
     "en": "Date",
     "zh-Hant": "日期"
-  },
-  "值为空时的默认值（可选，不会臆造内容）": {
-    "en": "Default for empty values (optional; no content is invented)",
-    "zh-Hant": "值為空時的默認值（可選，不會臆造內容）"
   },
   " 超长导致分页增加时允许缩小字号": {
     "en": " Allow font shrinking if extra pages are caused by long text",
@@ -3126,10 +2942,6 @@ export const messages = {
     "en": "Show more ({v1} / {v2} shown)",
     "zh-Hant": "顯示更多（已顯示 {v1} / {v2} 條）"
   },
-  "在代表文件上建立的规则会逐一应用到所有来源文件；无法定位的映射会被标出，不会静默选择附近内容。": {
-    "en": "Rules created on the representative file apply to all sources. Mappings that cannot be located are flagged; nearby content is never silently substituted.",
-    "zh-Hant": "在代表文件上建立的規則會逐一應用到所有來源文件；無法定位的映射會被標出，不會靜默選擇附近內容。"
-  },
   " 个问题": {
     "en": " issues",
     "zh-Hant": " 個問題"
@@ -3249,10 +3061,6 @@ export const messages = {
   " 正在识别表格的列和行…": {
     "en": " Detecting table columns and rows…",
     "zh-Hant": " 正在識別表格的列和行…"
-  },
-  "第{v1}列": {
-    "en": "Column {v1}",
-    "zh-Hant": "第{v1}列"
   },
   "可容纳 ": {
     "en": "Capacity: ",
@@ -3378,14 +3186,6 @@ export const messages = {
     "en": "Example: Customer name",
     "zh-Hant": "例如：客戶名稱"
   },
-  "已有同名字段「": {
-    "en": "A field named “",
-    "zh-Hant": "已有同名字段「"
-  },
-  "」：与它共享同一个数据绑定（两处各有独立 ID，但填入相同的值）": {
-    "en": "” already exists: share its data binding (independent IDs; identical values)",
-    "zh-Hant": "」：與它共享同一個數據綁定（兩處各有獨立 ID，但填入相同的值）"
-  },
   "替换选中内容（默认）": {
     "en": "Replace selected content (default)",
     "zh-Hant": "替換選中內容（默認）"
@@ -3442,10 +3242,6 @@ export const messages = {
     "en": "Keep one copy with “(none)” in the first column",
     "zh-Hant": "保留一份，第一列顯示「（無）」"
   },
-  "创建后，可以在内容块中继续划选文字，选择「作为内容块的一列」添加更多列；块内的其他字段（如客户名）会在每一份中填入相同的值。": {
-    "en": "After creating the block, select text within it and choose “Use as block column” to add more columns. Other fields, such as customer name, retain the same value in every copy.",
-    "zh-Hant": "創建後，可以在內容塊中繼續划選文字，選擇「作為內容塊的一列」添加更多列；塊內的其他字段（如客戶名）會在每一份中填入相同的值。"
-  },
   "明细超过 ": {
     "en": "When detail exceeds ",
     "zh-Hant": "明細超過 "
@@ -3470,21 +3266,9 @@ export const messages = {
     "en": "Font size (empty = retain original)",
     "zh-Hant": "字號（留空=沿用原文字號）"
   },
-  "区域内原有文字会被真正删除（表格线保留）；每个单元格放不下时逐步缩小字号，仍放不下则报错，不会截断。": {
-    "en": "Original text in the region is removed while table lines remain. Text that does not fit is progressively shrunk; if it still cannot fit, generation fails rather than truncating.",
-    "zh-Hant": "區域內原有文字會被真正刪除（表格線保留）；每個單元格放不下時逐步縮小字號，仍放不下則報錯，不會截斷。"
-  },
   "最小字号": {
     "en": "Minimum font size",
     "zh-Hant": "最小字號"
-  },
-  "框内原有文字会被真正删除（不是白色遮盖）。": {
-    "en": "Original text inside the box is removed, not covered with white.",
-    "zh-Hant": "框內原有文字會被真正刪除（不是白色遮蓋）。"
-  },
-  "框内原有像素按周围背景重建（跟随渐变和光照），文字颜色与字号沿用原内容。": {
-    "en": "Original pixels inside the box are rebuilt from surrounding gradients and lighting. Original text color and size are retained.",
-    "zh-Hant": "框內原有像素按周圍背景重建（跟隨漸變和光照），文字顏色與字號沿用原內容。"
   },
   "新内容放不下时逐步缩小到最小字号，仍放不下则报错，不会截断。": {
     "en": "Text that does not fit shrinks to the minimum size. If it still cannot fit, generation fails rather than truncating.",
@@ -3614,17 +3398,9 @@ export const messages = {
     "en": "Supports DOCX, XLSX, PDF, PPTX and PNG/JPEG images (same-size image output). DOC/XLS/PPT/ODT/ODS/ODP/RTF are converted first, with layout warnings. BMP/TIFF/WEBP output as PNG.",
     "zh-Hant": "支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 圖片（直接輸出同尺寸圖片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 會先經格式轉換（會提示可能的版式變化），BMP/TIFF/WEBP 輸出為 PNG"
   },
-  "上传后在右侧预览中选中文字、单元格、表格行，或在 PDF / 图片上框选区域，点击「设为待填区域」即可创建字段。原始模板保持不变，所有修改保存在工作副本中，可撤销/重做。": {
-    "en": "After uploading, select text, cells, rows or a PDF/image region in the preview and click “Set as fillable region”. The original stays unchanged; edits are saved to a working copy with undo/redo.",
-    "zh-Hant": "上傳後在右側預覽中選中文字、單元格、表格行，或在 PDF / 圖片上框選區域，點擊「設為待填區域」即可創建字段。原始模板保持不變，所有修改保存在工作副本中，可撤銷/重做。"
-  },
   "📄 文档型模板（生成 DOCX）": {
     "en": "📄 Document template (DOCX output)",
     "zh-Hant": "📄 文檔型模板（生成 DOCX）"
-  },
-  "段落、标题、字体格式、表格（合并单元格、重复明细行）、图片、纸张与页边距、分页、页眉页脚；在任意位置插入填充字段。": {
-    "en": "Paragraphs, headings, fonts, tables with merged cells and repeating detail rows, images, paper size, margins, page breaks, headers and footers. Insert fields anywhere.",
-    "zh-Hant": "段落、標題、字體格式、表格（合併單元格、重復明細行）、圖片、紙張與頁邊距、分頁、頁眉頁腳；在任意位置插入填充字段。"
   },
   "新建文档模板": {
     "en": "New document template",
@@ -3633,10 +3409,6 @@ export const messages = {
   "▦ 表格型模板（生成 XLSX / CSV）": {
     "en": "▦ Spreadsheet template (XLSX / CSV output)",
     "zh-Hant": "▦ 表格型模板（生成 XLSX / CSV）"
-  },
-  "单元格、行列尺寸、合并单元格、字体/填充/边框/对齐/数字格式；定义待填单元格、固定区域和重复明细行。": {
-    "en": "Cells, row/column dimensions, merging, fonts, fills, borders, alignment and number formats. Define fillable cells, fixed regions and repeating detail rows.",
-    "zh-Hant": "單元格、行列尺寸、合併單元格、字體/填充/邊框/對齊/數字格式；定義待填單元格、固定區域和重復明細行。"
   },
   "新建表格模板": {
     "en": "New spreadsheet template",
@@ -3674,10 +3446,6 @@ export const messages = {
     "en": "Template library is empty",
     "zh-Hant": "模板庫為空"
   },
-  "模板可被多个项目使用；修改会产生新版本。若不希望影响其他项目，请选择「复制后使用」。": {
-    "en": "Templates can be shared across projects; edits create new versions. Choose “Duplicate and use” to keep other projects unaffected.",
-    "zh-Hant": "模板可被多個項目使用；修改會產生新版本。若不希望影響其他項目，請選擇「複製後使用」。"
-  },
   "内容已在其他窗口或被其他人修改，这次操作没有执行。已刷新为最新内容，请在此基础上重新操作。": {
     "en": "Someone else or another window changed this content. Your action was not applied. The latest content is loaded; apply your change again.",
     "zh-Hant": "內容已在其他窗口或被其他人修改，這次操作沒有執行。已刷新為最新內容，請在此基礎上重新操作。"
@@ -3709,14 +3477,6 @@ export const messages = {
   "无法从当前选择生成定位": {
     "en": "Cannot create a locator from this selection",
     "zh-Hant": "無法從當前選擇生成定位"
-  },
-  "「{v1}」第 {v2} 块": {
-    "en": "“{v1}”, block {v2}",
-    "zh-Hant": "「{v1}」第 {v2} 塊"
-  },
-  "映射 #{v1} 在{v2}中重新定位": {
-    "en": "Relocate mapping #{v1} in {v2}",
-    "zh-Hant": "映射 #{v1} 在{v2}中重新定位"
   },
   "已为「{v1}」单独设置映射 #{v2} 的定位": {
     "en": "Set a location for mapping #{v2} in “{v1}”",
@@ -3938,10 +3698,6 @@ export const messages = {
     "en": "Read only",
     "zh-Hant": "只讀"
   },
-  "所有修改自动保存到服务器": {
-    "en": "All changes are saved automatically to the server",
-    "zh-Hant": "所有修改自動保存到服務器"
-  },
   "✓ 已自动保存": {
     "en": "✓ Saved automatically",
     "zh-Hant": "✓ 已自動保存"
@@ -3982,26 +3738,6 @@ export const messages = {
     "en": "Show connectors",
     "zh-Hant": "顯示連線"
   },
-  "操作指引": {
-    "en": "Workflow guide",
-    "zh-Hant": "操作指引"
-  },
-  "手机屏幕较小：建议在电脑浏览器中建立映射。手机上可以查看任务进度与下载结果（点击上方「最近任务」）。": {
-    "en": "Small screen: use a desktop browser to create mappings. On mobile, view progress and download results through “Latest job” above.",
-    "zh-Hant": "手機屏幕較小：建議在電腦瀏覽器中建立映射。手機上可以查看任務進度與下載結果（點擊上方「最近任務」）。"
-  },
-  "使用步骤：": {
-    "en": "Steps: ",
-    "zh-Hant": "使用步驟："
-  },
-  "① 左侧上传来源文件 → ② 设置右侧目标模板（上传或新建）→ ③ 定义样本（每行 / 每文件 / 每组一份）→ ④ 左侧选中数据、右侧点选字段，点底部「建立映射」→ ⑤ 预览并生成。 任何一步都可以返回修改；Ctrl/⌘+Z 撤销，Esc 清除选择。": {
-    "en": "① Upload sources on the left → ② Upload or create a target template on the right → ③ Define samples (per row/file/group) → ④ Select source data and a target field, then click “Create mapping” → ⑤ Preview and generate. You can revise any step; Ctrl/⌘+Z to undo, Esc to clear selection.",
-    "zh-Hant": "① 左側上傳來源文件 → ② 設置右側目標模板（上傳或新建）→ ③ 定義樣本（每行 / 每文件 / 每組一份）→ ④ 左側選中數據、右側點選字段，點底部「建立映射」→ ⑤ 預覽並生成。 任何一步都可以返回修改；Ctrl/⌘+Z 撤銷，Esc 清除選擇。"
-  },
-  "不再显示": {
-    "en": "Do not show again",
-    "zh-Hant": "不再顯示"
-  },
   "来源文件": {
     "en": "Source files",
     "zh-Hant": "來源文件"
@@ -4029,10 +3765,6 @@ export const messages = {
   "下一个查找结果": {
     "en": "Next match",
     "zh-Hant": "下一個查找結果"
-  },
-  "使用本地文字识别（中文+英文）识别扫描页，不上传文件": {
-    "en": "Recognize scanned pages with local text recognition (Chinese + English); files are not uploaded",
-    "zh-Hant": "使用本機文字辨識（中文+英文）辨識掃描頁，不上傳文件"
   },
   "识别中…": {
     "en": "Recognizing…",
@@ -4070,10 +3802,6 @@ export const messages = {
     "en": "Select form block",
     "zh-Hant": "選擇表單塊"
   },
-  " 块 · ": {
-    "en": " blocks · ",
-    "zh-Hant": " 塊 · "
-  },
   "下一块": {
     "en": "Next block",
     "zh-Hant": "下一塊"
@@ -4097,18 +3825,6 @@ export const messages = {
   "保存为此文件的定位": {
     "en": "Save location for this file",
     "zh-Hant": "保存為此文件的定位"
-  },
-  "第 1 步：上传来源文件": {
-    "en": "Step 1: Upload source files",
-    "zh-Hant": "第 1 步：上傳來源文件"
-  },
-  "这个项目还没有来源文件。": {
-    "en": "This project has no source files yet.",
-    "zh-Hant": "這個項目還沒有來源文件。"
-  },
-  "把 XLSX / CSV / DOCX / PDF / 图片 / PPTX 等文件拖入左侧列表，或点击左侧的上传按钮": {
-    "en": "Drop XLSX / CSV / DOCX / PDF / image / PPTX files into the left list, or use its upload button",
-    "zh-Hant": "把 XLSX / CSV / DOCX / PDF / 圖片 / PPTX 等文件拖入左側列表，或點擊左側的上傳按鈕"
   },
   "调整来源与模板两侧的宽度": {
     "en": "Resize source and template panes",
@@ -4162,10 +3878,6 @@ export const messages = {
     "en": "PDF form field: ",
     "zh-Hant": "PDF 表單字段："
   },
-  "第 2 步：设置目标模板": {
-    "en": "Step 2: Set a target template",
-    "zh-Hant": "第 2 步：設置目標模板"
-  },
   "这个项目原来使用的模板已被删除。": {
     "en": "This project's previous template was deleted.",
     "zh-Hant": "這個項目原來使用的模板已被刪除。"
@@ -4177,14 +3889,6 @@ export const messages = {
   "请重新选择或新建一个模板。": {
     "en": "Choose or create a template again.",
     "zh-Hant": "請重新選擇或新建一個模板。"
-  },
-  "这个项目还没有设置模板。": {
-    "en": "This project has no template yet.",
-    "zh-Hant": "這個項目還沒有設置模板。"
-  },
-  "上传已有的 DOCX / XLSX / PDF / PPTX，或在软件内新建文档型、表格型模板": {
-    "en": "Upload an existing DOCX / XLSX / PDF / PPTX, or create a document or spreadsheet template in the editor",
-    "zh-Hant": "上傳已有的 DOCX / XLSX / PDF / PPTX，或在軟件內新建文檔型、表格型模板"
   },
   "清除单独定位": {
     "en": "Clear file-specific location",
@@ -4258,18 +3962,6 @@ export const messages = {
     "en": "Reparse",
     "zh-Hant": "重新解析"
   },
-  "自动识别：编码 ": {
-    "en": "Detected encoding: ",
-    "zh-Hant": "自動識別：編碼 "
-  },
-  "，分隔符「": {
-    "en": ", delimiter “",
-    "zh-Hant": "，分隔符「"
-  },
-  "」。如出现乱码或分列错误，请手动指定。单元格内换行（带引号）按 RFC 4180 处理，不会错误分行。": {
-    "en": "”. Override if characters or columns appear incorrectly. Quoted multiline cells follow RFC 4180 and do not split into extra rows.",
-    "zh-Hant": "」。如出現亂碼或分列錯誤，請手動指定。單元格內換行（帶引號）按 RFC 4180 處理，不會錯誤分行。"
-  },
   "编码": {
     "en": "Encoding",
     "zh-Hant": "編碼"
@@ -4297,14 +3989,6 @@ export const messages = {
   "每行是一条样本 → 生成 ": {
     "en": "Each row is a sample → generate ",
     "zh-Hant": "每行是一條樣本 → 生成 "
-  },
-  " 行各生成一份（表头为第 ": {
-    "en": " rows each produce one output (header row ",
-    "zh-Hant": " 行各生成一份（表頭為第 "
-  },
-  " 行）；将打开样本规则确认。": {
-    "en": "); sample rule confirmation opens next.",
-    "zh-Hant": " 行）；將打開樣本規則確認。"
   },
   "整个区域是当前样本的明细表 → 每个文件生成 1 份（共 ": {
     "en": "The entire region is one sample's detail table → one output per file (total: ",
@@ -4386,10 +4070,6 @@ export const messages = {
     "en": " · Created ",
     "zh-Hant": " · 創建於 "
   },
-  "输入在任务开始时已固定（文件、模板版本、映射与样本规则的快照），之后的修改不会影响本任务。": {
-    "en": "Inputs were fixed when the job started: sources, template version, mappings and sample rules. Later edits do not affect this job.",
-    "zh-Hant": "輸入在任務開始時已固定（文件、模板版本、映射與樣本規則的快照），之後的修改不會影響本任務。"
-  },
   "正在请求取消…": {
     "en": "Requesting cancellation…",
     "zh-Hant": "正在請求取消…"
@@ -4454,17 +4134,9 @@ export const messages = {
     "en": "Cancelled / waiting",
     "zh-Hant": "取消 / 等待"
   },
-  "输出文件": {
-    "en": "Output files",
-    "zh-Hant": "輸出文件"
-  },
   "⬇ 下载全部（ZIP）": {
     "en": "⬇ Download all (ZIP)",
     "zh-Hant": "⬇ 下載全部（ZIP）"
-  },
-  "还没有输出文件": {
-    "en": "No output files yet",
-    "zh-Hant": "還沒有輸出文件"
   },
   "仅 ": {
     "en": "Only ",
@@ -4482,10 +4154,6 @@ export const messages = {
     "en": "Could not load samples: ",
     "zh-Hant": "樣本列表加載失敗："
   },
-  "样本与输出文件": {
-    "en": "Samples and outputs",
-    "zh-Hant": "樣本與輸出文件"
-  },
   "状态": {
     "en": "Status",
     "zh-Hant": "狀態"
@@ -4493,10 +4161,6 @@ export const messages = {
   "说明": {
     "en": "Details",
     "zh-Hant": "說明"
-  },
-  " 次": {
-    "en": " attempts",
-    "zh-Hant": " 次"
   },
   "还有 {v1} 条": {
     "en": "{v1} more",
@@ -4510,14 +4174,6 @@ export const messages = {
     "en": "No records",
     "zh-Hant": "沒有記錄"
   },
-  " 条，共 ": {
-    "en": " of ",
-    "zh-Hant": " 條，共 "
-  },
-  " 条": {
-    "en": " records",
-    "zh-Hant": " 條"
-  },
   "← 首页": {
     "en": "← Home",
     "zh-Hant": "← 首頁"
@@ -4525,10 +4181,6 @@ export const messages = {
   "第三方组件": {
     "en": "Third-party components",
     "zh-Hant": "第三方組件"
-  },
-  "版本与费用见 docs/DEPENDENCIES.md；均为免费开源组件，未使用付费组件或外部云服务": {
-    "en": "See docs/DEPENDENCIES.md for versions and costs. All components are free and open source; no paid components or external cloud services are used.",
-    "zh-Hant": "版本與費用見 docs/DEPENDENCIES.md；均為免費開源組件，未使用付費組件或外部雲服務"
   },
   "组件": {
     "en": "Component",
@@ -4542,10 +4194,6 @@ export const messages = {
     "en": "Purpose",
     "zh-Hant": "用途"
   },
-  "所有文件都在本服务所在的服务器上处理，不发送到外部服务；文字识别、格式转换与分页计算都由本机引擎完成。": {
-    "en": "All files are processed on this server without external transmission; text recognition, conversion and pagination run on local engines.",
-    "zh-Hant": "所有文件都在本服務所在的伺服器上處理，不發送到外部服務；文字辨識、格式轉換與分頁計算都由本機引擎完成。"
-  },
   "删除回归用例": {
     "en": "Delete regression case",
     "zh-Hant": "刪除回歸用例"
@@ -4558,10 +4206,6 @@ export const messages = {
     "en": "Run all",
     "zh-Hant": "全部運行"
   },
-  "回归用例保存了项目的原始文件（不做脱敏）、模板、样本规则、映射，以及每个样本的期望结果，只在本工作空间内可见。运行时用当前代码重新解析和生成，逐个字段、逐段文字比较； 也可以在仓库根目录运行 ": {
-    "en": "Regression cases store original project files (without anonymization), templates, sample rules, mappings and expected results, visible only within this workspace. Running a case reparses and regenerates with current code, comparing each field and text segment. You can also run from the repository root: ",
-    "zh-Hant": "回歸用例保存了項目的原始文件（不做脫敏）、模板、樣本規則、映射，以及每個樣本的期望結果，只在本工作空間內可見。運行時用當前代碼重新解析和生成，逐個字段、逐段文字比較； 也可以在倉庫根目錄運行 "
-  },
   "回归用例加载失败：": {
     "en": "Could not load regression cases: ",
     "zh-Hant": "回歸用例加載失敗："
@@ -4569,10 +4213,6 @@ export const messages = {
   "还没有回归用例": {
     "en": "No regression cases yet",
     "zh-Hant": "還沒有回歸用例"
-  },
-  "在项目中点击「更多 → 保存为回归用例」即可创建": {
-    "en": "Open “More → Save as regression case” in a project to create one",
-    "zh-Hant": "在項目中點擊「更多 → 保存為回歸用例」即可創建"
   },
   "✓ 全部一致（{v1}/{v2}）": {
     "en": "✓ All match ({v1}/{v2})",
@@ -4630,10 +4270,6 @@ export const messages = {
     "en": "PDF export",
     "zh-Hant": "PDF 導出"
   },
-  "本表由当前服务端实时生成：排版引擎：": {
-    "en": "Generated live by the current server. Layout engine: ",
-    "zh-Hant": "本表由當前服務端實時生成：排版引擎："
-  },
   "否": {
     "en": "No",
     "zh-Hant": "否"
@@ -4645,10 +4281,6 @@ export const messages = {
   "无": {
     "en": "None",
     "zh-Hant": "無"
-  },
-  "）。 未经验证的格式不会标为支持。": {
-    "en": "). Unverified formats are not marked as supported.",
-    "zh-Hant": "）。 未經驗證的格式不會標為支持。"
   },
   "格式保留 / 损失": {
     "en": "Format preservation / loss",
@@ -5142,10 +4774,6 @@ export const messages = {
     "en": "Set as fixed region",
     "zh-Hant": "設為固定區域"
   },
-  "重复明细行：选中一行中的连续单元格；上一行作为表头名称。生成时有几条明细就插入几行，公式与合并随之平移。": {
-    "en": "Repeating detail row: select consecutive cells within one row. The row above supplies column names. Generation inserts one row per detail, shifting formulas and merged cells.",
-    "zh-Hant": "重復明細行：選中一行中的連續單元格；上一行作為表頭名稱。生成時有幾條明細就插入幾行，公式與合併隨之平移。"
-  },
   "表格编辑区，当前 {v1}。方向键移动，Shift+方向键扩展选区，直接输入或 F2 编辑，Tab 离开表格": {
     "en": "Spreadsheet editor, current cell {v1}. Arrows move, Shift+arrows extend, typing or F2 edits, Tab exits the grid",
     "zh-Hant": "表格編輯區，當前 {v1}。方向鍵移動，Shift+方向鍵擴展選區，直接輸入或 F2 編輯，Tab 離開表格"
@@ -5165,10 +4793,6 @@ export const messages = {
   "删除字段「{v1}」": {
     "en": "Delete field “{v1}”",
     "zh-Hant": "刪除字段「{v1}」"
-  },
-  "选中单元格后点击上方「设为字段单元格 / 固定区域 / 重复明细行」": {
-    "en": "Select cells, then choose “Cell field / Fixed region / Repeating detail row” above",
-    "zh-Hant": "選中單元格後點擊上方「設為字段單元格 / 固定區域 / 重復明細行」"
   },
   "重命名工作表": {
     "en": "Rename worksheet",
@@ -5222,10 +4846,6 @@ export const messages = {
   "复制到组织工作空间": {
     "en": "Copy to an organization workspace",
     "zh-Hant": "複製到組織工作空間"
-  },
-  "副本由目标工作空间的管理员批准后创建，之后独立于原项目，受目标空间的成员与保留策略管理。原项目保持不变。": {
-    "en": "The copy is created after an administrator of the target workspace approves; it is then independent of the original and governed by the target workspace's members and retention. The original stays unchanged.",
-    "zh-Hant": "副本由目標工作空間的管理員批准後建立，之後獨立於原專案，受目標空間的成員與保留策略管理。原專案保持不變。"
   },
   "已有申请": {
     "en": "Existing requests",
@@ -5355,10 +4975,6 @@ export const messages = {
     "en": "Release",
     "zh-Hant": "發布"
   },
-  "来源空间": {
-    "en": "Source workspace",
-    "zh-Hant": "來源空間"
-  },
   "维护者": {
     "en": "Maintainer",
     "zh-Hant": "維護者"
@@ -5367,21 +4983,9 @@ export const messages = {
     "en": "Release {v1} · template version {v2}",
     "zh-Hant": "第 {v1} 次發布 · 範本第 {v2} 版"
   },
-  "复制到本空间并用于这个项目": {
-    "en": "Copy into this workspace and use it for this project",
-    "zh-Hant": "複製到本空間並用於這個專案"
-  },
   "组织共享模板加载失败：": {
     "en": "Shared templates failed to load: ",
     "zh-Hant": "組織共享範本載入失敗："
-  },
-  "组织里还没有共享模板。在模板库里对模板选择「发布到组织…」即可共享。": {
-    "en": "The organization has no shared templates yet. Choose “Publish to organization…” on a template in the library to share it.",
-    "zh-Hant": "組織裡還沒有共享範本。在範本庫裡對範本選擇「發布到組織…」即可共享。"
-  },
-  "使用组织共享模板会把当前发布复制成本空间自己的模板；之后组织更新或弃用它，不会改变这里的项目和任务。": {
-    "en": "Using a shared template copies the current release into this workspace as its own template; later releases or deprecation in the organization do not change the projects and jobs here.",
-    "zh-Hant": "使用組織共享範本會把目前發布複製成本空間自己的範本；之後組織更新或棄用它，不會改變這裡的專案和任務。"
   },
   "已从组织共享模板复制「{v1}」": {
     "en": "Copied “{v1}” from the organization's shared templates",
@@ -5423,10 +5027,6 @@ export const messages = {
     "en": "Deprecate shared template",
     "zh-Hant": "棄用共享範本"
   },
-  "弃用后组织成员不能再用它建立新项目；已复制到各空间的模板与任务不受影响。": {
-    "en": "Once deprecated, members can no longer use it for new projects; copies already made in workspaces and their jobs are unaffected.",
-    "zh-Hant": "棄用後組織成員不能再用它建立新專案；已複製到各空間的範本與任務不受影響。"
-  },
   "弃用": {
     "en": "Deprecate",
     "zh-Hant": "棄用"
@@ -5443,17 +5043,9 @@ export const messages = {
     "en": "Sharing restored",
     "zh-Hant": "已恢復共享"
   },
-  "复制到本空间": {
-    "en": "Copy into this workspace",
-    "zh-Hant": "複製到本空間"
-  },
   "源模板有新版本，可更新发布": {
     "en": "The source template has a newer version; release it to share",
     "zh-Hant": "來源範本有新版本，可更新發布"
-  },
-  "已用于 {v1} 个空间": {
-    "en": "Used {v1} times",
-    "zh-Hant": "已用於 {v1} 次"
   },
   "模板「{v1}」的共享操作": {
     "en": "Sharing actions for template “{v1}”",
@@ -5490,10 +5082,6 @@ export const messages = {
   "模板版本历史…": {
     "en": "Template version history…",
     "zh-Hant": "範本版本歷史…"
-  },
-  "每次修改字段或保存编辑器都会产生一个版本。恢复某个版本不会删除之后的版本：它的内容会成为一个新的当前版本，随时可以撤销。": {
-    "en": "Every field change or editor save makes a version. Restoring one deletes nothing after it: its content becomes a new current version, which you can undo at any time.",
-    "zh-Hant": "每次修改欄位或儲存編輯器都會產生一個版本。恢復某個版本不會刪除之後的版本：它的內容會成為新的目前版本，隨時可以復原。"
   },
   "使用此模板的项目：{v1} 个跟随当前版本，{v2} 个固定了版本（恢复后不受影响）": {
     "en": "Projects using this template: {v1} follow the current version, {v2} are pinned to a version (unaffected by a restore)",
@@ -5654,10 +5242,6 @@ export const messages = {
   "有未保存为版本的修改": {
     "en": "Changes not saved as a version",
     "zh-Hant": "有未儲存為版本的修改"
-  },
-  "有未保存为版本的修改。保存模板会把当前内容记为新版本；版本历史见项目页的「版本」。": {
-    "en": "There are changes not saved as a version. Saving the template records the current content as a new version; the history is under 版本 on the project page.",
-    "zh-Hant": "有未儲存為版本的修改。儲存範本會把目前內容記為新版本；版本歷史見專案頁的「版本」。"
   },
   "标题": {
     "en": "heading",
@@ -5839,10 +5423,6 @@ export const messages = {
     "en": "removed the file “{v1}”",
     "zh-Hant": "移除了檔案「{v1}」"
   },
-  "谁在什么时候改了什么：映射按条记录，文件、样本规则、模板版本的变化也在这里。": {
-    "en": "Who changed what and when: mappings one by one; files, sample rules and template versions too.",
-    "zh-Hant": "誰在什麼時候改了什麼：對應逐條記錄，檔案、樣本規則、範本版本的變化也在這裡。"
-  },
   "调整了文件顺序": {
     "en": "reordered the files",
     "zh-Hant": "調整了檔案順序"
@@ -5975,10 +5555,6 @@ export const messages = {
     "en": "Project settings",
     "zh-Hant": "專案設定"
   },
-  "谁在什么时候改了什么：映射按条记录，文件、样本规则、模板版本和评论的变化也在这里。点一行可以跳到它改的对象。": {
-    "en": "Who changed what, and when: mappings one by one; files, sample rules, template versions and comments too. Click a row to jump to what it changed.",
-    "zh-Hant": "誰在什麼時候改了什麼：對應逐條記錄，檔案、樣本規則、範本版本和留言的變化也在這裡。點一列可以跳到它改的物件。"
-  },
   "全部成员": {
     "en": "Everyone",
     "zh-Hant": "全部成員"
@@ -6051,18 +5627,6 @@ export const messages = {
     "en": "pinned to v{v1}",
     "zh-Hant": "固定第 {v1} 版"
   },
-  "每个文件一份": {
-    "en": "one per file",
-    "zh-Hant": "每個檔案一份"
-  },
-  "按组一份": {
-    "en": "one per group",
-    "zh-Hant": "按組一份"
-  },
-  "按标记块一份": {
-    "en": "one per marked block",
-    "zh-Hant": "按標記區塊一份"
-  },
   "（工作表「{v1}」）": {
     "en": "(sheet “{v1}”)",
     "zh-Hant": "（工作表「{v1}」）"
@@ -6102,5 +5666,245 @@ export const messages = {
   "此部署未启用账户，这个功能需要登录的成员。": {
     "en": "This deployment has no accounts; this feature needs a signed-in member.",
     "zh-Hant": "此部署未啟用帳戶，這個功能需要登入的成員。"
+  },
+  "删除项目「{v1}」？只想让它从列表里消失时，用「归档」更合适，随时可以撤销。": {
+    "en": "Delete project “{v1}”? If you only want it out of the list, archiving is the better choice and can be undone at any time.",
+    "zh-Hant": "刪除項目「{v1}」？只想讓它從列表裡消失時，用「歸檔」更合適，隨時可以撤銷。"
+  },
+  "一个项目把一批来源文件映射到一个模板并批量生成文档；同结构的新文件可以直接复用。": {
+    "en": "A project maps a batch of source files onto one template and generates documents in bulk; new files with the same structure reuse it as is.",
+    "zh-Hant": "一個項目把一批來源文件映射到一個模板並批量生成文檔；同結構的新文件可以直接複用。"
+  },
+  "还没有模板。在项目中上传或新建的模板会出现在这里。": {
+    "en": "No templates yet. Templates uploaded or created in a project appear here.",
+    "zh-Hant": "還沒有模板。在項目中上傳或新建的模板會出現在這裡。"
+  },
+  "来源工作空间": {
+    "en": "Source workspace",
+    "zh-Hant": "來源工作空間"
+  },
+  "已用于 {v1} 个工作空间": {
+    "en": "Used in {v1} workspaces",
+    "zh-Hant": "已用於 {v1} 個工作空間"
+  },
+  "复制到本工作空间": {
+    "en": "Copy into this workspace",
+    "zh-Hant": "複製到本工作空間"
+  },
+  "组织里还没有共享模板。在模板库对模板选择「发布到组织…」。": {
+    "en": "The organization has no shared templates yet. Choose “Publish to organization…” on a template in the library.",
+    "zh-Hant": "組織裡還沒有共享模板。在模板庫對模板選擇「發布到組織…」。"
+  },
+  "所有文件都在本服务的服务器上处理，不发送到外部服务。": {
+    "en": "All files are processed on this service's own server and never sent to external services.",
+    "zh-Hant": "所有文件都在本服務的伺服器上處理，不發送到外部服務。"
+  },
+  "弃用后组织成员不能再用它建立新项目；已复制到各工作空间的模板与任务不受影响。": {
+    "en": "Once deprecated, members can no longer use it for new projects; copies already made in workspaces and their jobs are unaffected.",
+    "zh-Hant": "棄用後組織成員不能再用它建立新項目；已複製到各工作空間的模板與任務不受影響。"
+  },
+  "识别扫描页上的文字（中英文），在本服务器完成": {
+    "en": "Recognize text on scanned pages (Chinese and English); runs on this server",
+    "zh-Hant": "辨識掃描頁上的文字（中英文），在本伺服器完成"
+  },
+  "先在来源文件列表中上传文件。": {
+    "en": "Upload files in the source file list first.",
+    "zh-Hant": "先在來源文件列表中上傳文件。"
+  },
+  "还没有设置模板": {
+    "en": "No template set yet",
+    "zh-Hant": "還沒有設置模板"
+  },
+  "自动识别：编码 {v1}，分隔符「{v2}」。出现乱码或分列错误时，请手动指定。": {
+    "en": "Detected: encoding {v1}, delimiter “{v2}”. If text is garbled or columns split wrongly, set them manually.",
+    "zh-Hant": "自動識別：編碼 {v1}，分隔符「{v2}」。出現亂碼或分列錯誤時，請手動指定。"
+  },
+  "选中左侧的数据和右侧的字段后，点「建立映射」。": {
+    "en": "Select data on the left and a field on the right, then choose “Create mapping”.",
+    "zh-Hant": "選中左側的數據和右側的字段後，點「建立映射」。"
+  },
+  "值为空时的默认值（可选）": {
+    "en": "Default when the value is empty (optional)",
+    "zh-Hant": "值為空時的預設值（可選）"
+  },
+  "每个来源文件都按代表文件上建立的映射逐一核对；无法定位的映射会标出。": {
+    "en": "Every source file is checked against the mappings made on the representative file; mappings that cannot be located are flagged.",
+    "zh-Hant": "每個來源文件都按代表文件上建立的映射逐一核對；無法定位的映射會標出。"
+  },
+  "原始文件保持不变。上传后在右侧预览中选中内容，用「设为待填区域」创建字段。": {
+    "en": "The original file is never changed. After uploading, select content in the preview on the right and use “Set as fillable region” to create fields.",
+    "zh-Hant": "原始文件保持不變。上傳後在右側預覽中選中內容，用「設為待填區域」創建字段。"
+  },
+  "段落、表格、图片、页眉页脚与页面设置；在任意位置插入字段。": {
+    "en": "Paragraphs, tables, images, headers and footers, page setup; insert fields anywhere.",
+    "zh-Hant": "段落、表格、圖片、頁眉頁腳與頁面設置；在任意位置插入字段。"
+  },
+  "单元格样式、合并与数字格式；定义待填单元格、固定区域和重复明细行。": {
+    "en": "Cell styles, merges and number formats; define fillable cells, fixed regions and repeating detail rows.",
+    "zh-Hant": "單元格樣式、合併與數字格式；定義待填單元格、固定區域和重複明細行。"
+  },
+  "模板可被多个项目共用，修改对它们都生效；不想影响其他项目时选「复制后使用」。": {
+    "en": "A template can be shared by several projects and changes affect all of them; choose “Duplicate and use” to leave other projects unaffected.",
+    "zh-Hant": "模板可被多個項目共用，修改對它們都生效；不想影響其他項目時選「複製後使用」。"
+  },
+  "复制到本工作空间并用于这个项目": {
+    "en": "Copy into this workspace and use it for this project",
+    "zh-Hant": "複製到本工作空間並用於這個項目"
+  },
+  "会复制为本工作空间自己的模板；组织之后更新或弃用它，不影响这里的项目和任务。": {
+    "en": "A copy becomes this workspace's own template; later updates or deprecation by the organization do not affect the projects and jobs here.",
+    "zh-Hant": "會複製為本工作空間自己的模板；組織之後更新或棄用它，不影響這裡的項目和任務。"
+  },
+  "预计产物": {
+    "en": "Expected artifacts",
+    "zh-Hant": "預計產物"
+  },
+  "公式会在生成时计算并写入结果；无法计算的公式会在结果清单中注明。": {
+    "en": "Formulas are calculated at generation and their results written in; any that cannot be calculated are noted in the result list.",
+    "zh-Hant": "公式會在生成時計算並寫入結果；無法計算的公式會在結果清單中註明。"
+  },
+  "逐份排版，页数多于模板时提示": {
+    "en": "Lay out each copy; warn when it has more pages than the template",
+    "zh-Hant": "逐份排版，頁數多於模板時提示"
+  },
+  "每份多花约 1 秒；页数超出的样本会在结果清单中标出。": {
+    "en": "About one extra second per copy; samples that run over are flagged in the result list.",
+    "zh-Hant": "每份多花約 1 秒；頁數超出的樣本會在結果清單中標出。"
+  },
+  "只缩小勾选了「超长时允许缩小字号」的字段。": {
+    "en": "Only fields with “Allow smaller text when too long” are shrunk.",
+    "zh-Hant": "只縮小勾選了「超長時允許縮小字號」的字段。"
+  },
+  "任务使用开始时的文件、模板版本、映射与样本规则；之后的修改不影响本任务。": {
+    "en": "The job uses the files, template version, mappings and sample rule as they were when it started; later changes do not affect it.",
+    "zh-Hant": "任務使用開始時的文件、模板版本、映射與樣本規則；之後的修改不影響本任務。"
+  },
+  "产物": {
+    "en": "Artifacts",
+    "zh-Hant": "產物"
+  },
+  "还没有产物": {
+    "en": "No artifacts yet",
+    "zh-Hant": "還沒有產物"
+  },
+  "样本与产物": {
+    "en": "Samples and artifacts",
+    "zh-Hant": "樣本與產物"
+  },
+  "样本只决定哪些数据构成一份输出；多个来源文件各自提取样本后按文件顺序追加。": {
+    "en": "Samples only decide which data makes up one output; each source file yields its own samples, appended in file order.",
+    "zh-Hant": "樣本只決定哪些數據構成一份輸出；多個來源文件各自提取樣本後按文件順序追加。"
+  },
+  "从每个标记出现的位置开始一个块，到下一个标记（或结束标记）为止；同一页可有多块，块也可跨页。建立映射时，用左侧的块导航切换到某一块再选取数据。": {
+    "en": "A block starts at each occurrence of the marker and ends at the next marker (or the end marker); a page can hold several blocks and a block can span pages. When mapping, switch to a block with the block navigation on the left, then select the data.",
+    "zh-Hant": "從每個標記出現的位置開始一個塊，到下一個標記（或結束標記）為止；同一頁可有多塊，塊也可跨頁。建立映射時，用左側的塊導航切換到某一塊再選取數據。"
+  },
+  " 排除完全空白的行": {
+    "en": " Skip completely blank rows",
+    "zh-Hant": " 排除完全空白的行"
+  },
+  "组内同一字段出现不同值时会报冲突；可在映射中选择取值规则。": {
+    "en": "Different values for one field within a group are reported as a conflict; choose how the value is picked in the mapping.",
+    "zh-Hant": "組內同一字段出現不同值時會報衝突；可在映射中選擇取值規則。"
+  },
+  "来源区域为 {v1} 行 × {v2} 列，目标区域「{v3}」为 {v4} 行 × {v5} 列。尺寸不一致，不能保存：请重新选择来源区域，或修改目标区域大小。": {
+    "en": "The source region is {v1} rows × {v2} columns; the target region “{v3}” is {v4} rows × {v5} columns. The sizes differ, so this cannot be saved: select another source region or resize the target region.",
+    "zh-Hant": "來源區域為 {v1} 行 × {v2} 列，目標區域「{v3}」為 {v4} 行 × {v5} 列。尺寸不一致，不能保存：請重新選擇來源區域，或修改目標區域大小。"
+  },
+  "列对应（按列名自动匹配；未匹配的列请手动选择）：": {
+    "en": "Column matching (matched by name automatically; choose unmatched columns manually):",
+    "zh-Hant": "列對應（按列名自動匹配；未匹配的列請手動選擇）："
+  },
+  "已有同名字段「{v1}」：与它填入相同的值": {
+    "en": "A field named “{v1}” already exists: fill in the same value as that field",
+    "zh-Hant": "已有同名字段「{v1}」：與它填入相同的值"
+  },
+  "创建后可在块内继续划选文字，选「作为内容块的一列」添加列；块内的其他字段每一份填入相同的值。": {
+    "en": "After creating it, select more text inside the block and choose “Use as a column of block” to add columns; other fields inside the block get the same value in every copy.",
+    "zh-Hant": "創建後可在塊內繼續劃選文字，選「作為內容塊的一列」添加列；塊內的其他字段每一份填入相同的值。"
+  },
+  "区域内原有文字会被删除，表格线保留；放不下时逐步缩小字号，仍放不下则该样本报错，不会截断。": {
+    "en": "Existing text in the area is removed and table lines are kept; text that does not fit is shrunk step by step, and the sample fails rather than being truncated.",
+    "zh-Hant": "區域內原有文字會被刪除，表格線保留；放不下時逐步縮小字號，仍放不下則該樣本報錯，不會截斷。"
+  },
+  "框内原有文字会被删除，不是遮盖。": {
+    "en": "Existing text in the box is removed, not covered up.",
+    "zh-Hant": "框內原有文字會被刪除，不是遮蓋。"
+  },
+  "框内原有内容按周围背景重建；文字颜色与字号沿用原内容。": {
+    "en": "The box is repainted from the surrounding background; text color and size follow the original.",
+    "zh-Hant": "框內原有內容按周圍背景重建；文字顏色與字號沿用原內容。"
+  },
+  "按真实排版显示页面与分页": {
+    "en": "Show pages with the real layout and page breaks",
+    "zh-Hant": "按真實排版顯示頁面與分頁"
+  },
+  "预览结果与批量生成一致": {
+    "en": "The preview matches what batch generation produces",
+    "zh-Hant": "預覽結果與批量生成一致"
+  },
+  "正在排版…": {
+    "en": "Laying out…",
+    "zh-Hant": "正在排版…"
+  },
+  "恢复某个版本会把它的内容存为新的当前版本；之后的版本都保留，随时可以撤销。": {
+    "en": "Restoring a version saves its content as a new current version; later versions are kept and the restore can be undone at any time.",
+    "zh-Hant": "恢復某個版本會把它的內容存為新的當前版本；之後的版本都保留，隨時可以撤銷。"
+  },
+  "有未保存为版本的修改；保存模板会把当前内容记为新版本。": {
+    "en": "There are changes not yet saved as a version; saving the template records the current content as a new version.",
+    "zh-Hant": "有未保存為版本的修改；保存模板會把當前內容記為新版本。"
+  },
+  "重复明细行：选一行中的连续单元格，上一行为表头；生成时按明细条数插入行。": {
+    "en": "Repeating detail row: select consecutive cells in one row, with the row above as the header; rows are inserted per detail item at generation.",
+    "zh-Hant": "重複明細行：選一行中的連續單元格，上一行為表頭；生成時按明細條數插入行。"
+  },
+  "还没有字段。选中单元格后用上方的「设为字段单元格 / 固定区域 / 重复明细行」。": {
+    "en": "No fields yet. Select cells, then use “Set as cell field / fixed region / repeating detail row” above.",
+    "zh-Hant": "還沒有字段。選中單元格後用上方的「設為字段單元格 / 固定區域 / 重複明細行」。"
+  },
+  "转换规则按从上到下的顺序执行。": {
+    "en": "Transforms run in order from top to bottom.",
+    "zh-Hant": "轉換規則按從上到下的順序執行。"
+  },
+  "回归用例保存项目的来源文件（不脱敏）、模板、样本规则、映射和每个样本的期望结果，只在本工作空间内可见。运行时重新解析和生成，逐个字段、逐段文字比较。": {
+    "en": "A regression case stores the project's source files (as they are, not anonymized), template, sample rule, mappings and each sample's expected result, and is visible only in this workspace. Running it parses and generates again and compares every field and every passage of text.",
+    "zh-Hant": "回歸用例保存項目的來源文件（不脫敏）、模板、樣本規則、映射和每個樣本的期望結果，只在本工作空間內可見。運行時重新解析和生成，逐個字段、逐段文字比較。"
+  },
+  "在项目的「更多」菜单中选择「保存为回归用例」。": {
+    "en": "In a project, choose “Save as regression case” from the More menu.",
+    "zh-Hant": "在項目的「更多」選單中選擇「保存為回歸用例」。"
+  },
+  "用例包含本项目的文件，可在「回归用例」页面运行和下载。请只保存测试数据或已脱敏的文件。": {
+    "en": "The case contains this project's files and can be run and downloaded on the Regression cases page. Keep only test data or anonymized files in it.",
+    "zh-Hant": "用例包含本項目的文件，可在「回歸用例」頁面運行和下載。請只保存測試數據或已脫敏的文件。"
+  },
+  "保存当前项目的来源文件、模板、样本规则和映射，并记录前 {v1} 个样本（共 {v2} 个）的期望结果，以后可以重新运行并逐项比较差异。": {
+    "en": "Saves this project's source files, template, sample rule and mappings, and records the expected result of the first {v1} samples (of {v2}) so the case can be run again later and compared item by item. ",
+    "zh-Hant": "保存當前項目的來源文件、模板、樣本規則和映射，並記錄前 {v1} 個樣本（共 {v2} 個）的期望結果，以後可以重新運行並逐項比較差異。"
+  },
+  "所有处理都在本服务器完成，文件不发送到外部服务。数值缩放与日期平移对整列使用同一比例或天数，保留合计与排序关系。": {
+    "en": "Everything runs on this server; files are never sent to external services. Scaling and date shifting use one factor or offset per column, so totals and ordering are preserved.",
+    "zh-Hant": "所有處理都在本伺服器完成，文件不發送到外部服務。數值縮放與日期平移對整列使用同一比例或天數，保留合計與排序關係。"
+  },
+  "均为开源组件；不使用付费组件或外部云服务": {
+    "en": "All open-source components; no paid components or external cloud services",
+    "zh-Hant": "均為開源組件；不使用付費組件或外部雲服務"
+  },
+  "当前部署：排版引擎 ": {
+    "en": "This deployment: layout engine ",
+    "zh-Hant": "當前部署：排版引擎 "
+  },
+  "；本地文字识别 ": {
+    "en": "; local text recognition ",
+    "zh-Hant": "；本機文字辨識 "
+  },
+  "）。未经验证的格式不标为支持。": {
+    "en": "). Formats that have not been verified are not marked as supported.",
+    "zh-Hant": "）。未經驗證的格式不標為支持。"
+  },
+  "副本在目标工作空间的管理员批准后创建，之后独立于原项目；原项目保持不变。": {
+    "en": "The copy is created once an administrator of the target workspace approves it and is then independent of the original; the original project stays unchanged.",
+    "zh-Hant": "副本在目標工作空間的管理員批准後創建，之後獨立於原項目；原項目保持不變。"
   },
 } satisfies Messages;

@@ -218,9 +218,7 @@ function MappingList(p: Props) {
         {!p.mappings.length && (
           <div className="empty small">
             <div className="big">{tr("还没有映射")}</div>
-            <div>{tr("1. 在左侧选中来源数据（单元格、文字、区域）")}</div>
-            <div>{tr("2. 在右侧点击字段（或选中内容后「设为待填区域」）")}</div>
-            <div>{tr("3. 点击底部「建立映射」")}</div>
+            <div>{tr("选中左侧的数据和右侧的字段后，点「建立映射」。")}</div>
           </div>
         )}
         {p.mappings.map((m, i) => {
@@ -338,7 +336,7 @@ function SlotEditor(p: Props & { slot: Slot }) {
               <option value="auto">{tr("自动（保持来源类型）")}</option><option value="text">{tr("文本")}</option><option value="number">{tr("数字")}</option><option value="date">{tr("日期")}</option>
             </select>
           </label>
-          <label className="field">{tr("值为空时的默认值（可选，不会臆造内容）")}<input className="input sm" value={def} onChange={(e) => setDef(e.target.value)} onBlur={() => def !== (s.default || "") && up({ default: def || null })} /></label>
+          <label className="field">{tr("值为空时的默认值（可选）")}<input className="input sm" value={def} onChange={(e) => setDef(e.target.value)} onBlur={() => def !== (s.default || "") && up({ default: def || null })} /></label>
           {p.project.template?.format === "docx" && s.kind === "text" && (
             <div className="row gap8 small wrap">
               <label className="check"><input type="checkbox" checked={!!(s as any).shrink} onChange={(e) => up({ shrink: e.target.checked })} />{tr(" 超长导致分页增加时允许缩小字号")}</label>
@@ -512,7 +510,7 @@ function Check(p: Props) {
   const byId: Record<string, Mapping> = Object.fromEntries(p.mappings.map((m) => [m.id, m]));
   return (
     <div className="maplist" style={{ padding: 8 }}>
-      <div className="small muted mb8">{tr("在代表文件上建立的规则会逐一应用到所有来源文件；无法定位的映射会被标出，不会静默选择附近内容。")}</div>
+      <div className="small muted mb8">{tr("每个来源文件都按代表文件上建立的映射逐一核对；无法定位的映射会标出。")}</div>
       {err && <div className="notice err">{serverText(err)}</div>}
       {data?.rule_error && <div className="notice err small">{diagnosticText(data.rule_error)}</div>}
       {data?.static?.map((e: any, i: number) => <div key={i} className="notice err small">{issueText(e)}</div>)}

@@ -65,7 +65,7 @@ export default function TemplateVersionsDialog({ tpl, canWrite, onChanged, onClo
   return (
     <Modal title={tr("模板版本")} onClose={onClose}>
       <div className="col gap8">
-        <p className="tiny muted">{tr("每次修改字段或保存编辑器都会产生一个版本。恢复某个版本不会删除之后的版本：它的内容会成为一个新的当前版本，随时可以撤销。")}</p>
+        <p className="tiny muted">{tr("恢复某个版本会把它的内容存为新的当前版本；之后的版本都保留，随时可以撤销。")}</p>
         {usageErr && <div className="notice err small">{usageErr}</div>}
         {usage && <div className="notice info small">
           {tr("使用此模板的项目：{v1} 个跟随当前版本，{v2} 个固定了版本（恢复后不受影响）", { v1: formatNumber(usage.following), v2: formatNumber(usage.pinned) })}

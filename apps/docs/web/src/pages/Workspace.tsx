@@ -119,7 +119,6 @@ function Workspace() {
   const [sideCollapsed, setSideCollapsed] = useState(() => recall("sideCollapsed", false));
   const [relocate, setRelocate] = useState<{ fileId: string; mappingId: string } | null>(null);
   const [tick, setTick] = useState(0);
-  const [guide, setGuide] = useState(() => recall("guide", true));
   const [singleKeys, setSingleKeys] = useState(() => recall("singleKeys", true));
   const [uploadReq, setUploadReq] = useState(0);
   const [ocrBusy, setOcrBusy] = useState(false);
@@ -139,7 +138,6 @@ function Workspace() {
   useEffect(() => { remember("filesCollapsed", filesCollapsed); }, [filesCollapsed]);
   useEffect(() => { remember("sideCollapsed", sideCollapsed); }, [sideCollapsed]);
   useEffect(() => { remember("sideW", sideW); }, [sideW]);
-  useEffect(() => { remember("guide", guide); }, [guide]);
   useEffect(() => { remember("singleKeys", singleKeys); }, [singleKeys]);
 
   const tpl: TemplateDetail | null = project?.template || null;
@@ -819,7 +817,7 @@ function Workspace() {
         <span className="small muted desktop-only">{tr("样本：")}</span>
         <button type="button" className="btn ghost sm desktop-only" disabled={ro} title={ro ? tr(READ_ONLY_TEXT) : undefined} onClick={() => setDialog({ kind: "rule" })}>{ruleMode(rule.mode)} ▾</button>
         {ro ? <span className="badge" title={tr(READ_ONLY_TEXT)}>{tr("只读")}</span> : (
-          <span className={`badge ${save === "saved" ? "ok" : save === "saving" ? "info" : "err"}`} title={tr("所有修改自动保存到服务器")} role="status">
+          <span className={`badge ${save === "saved" ? "ok" : save === "saving" ? "info" : "err"}`} role="status">
             {save === "saved" ? tr("✓ 已自动保存") : save === "saving" ? tr("保存中…") : tr("保存失败")}
           </span>
         )}
@@ -865,7 +863,6 @@ function Workspace() {
         ))}
         <span className="spacer" />
         <label className="check small"><input type="checkbox" checked={lines} onChange={(e) => setLines(e.target.checked)} />{tr("显示连线")}</label>
-        {!guide && <button className="btn ghost sm" onClick={() => setGuide(true)}>{tr("操作指引")}</button>}
       </div>
       {/* On a phone the two panes and the mapping list take turns. One is visible at a time; the
           selection bar underneath keeps both selections and the "建立映射" button in reach, so a
@@ -879,13 +876,6 @@ function Workspace() {
           </button>
         ))}
       </div>
-      {guide && (
-        <div className="notice info row" style={{ borderRadius: 0, borderLeft: 0, borderRight: 0 }}>
-          <span className="grow small">
-            <b>{tr("使用步骤：")}</b>{tr("① 左侧上传来源文件 → ② 设置右侧目标模板（上传或新建）→ ③ 定义样本（每行 / 每文件 / 每组一份）→ ④ 左侧选中数据、右侧点选字段，点底部「建立映射」→ ⑤ 预览并生成。 任何一步都可以返回修改；Ctrl/⌘+Z 撤销，Esc 清除选择。")}</span>
-          <button className="btn ghost sm" onClick={() => setGuide(false)}>{tr("不再显示")}</button>
-        </div>
-      )}
       {/* ---------------------------------------------------------------- work area */}
       <div className={`work m-${mobilePane}`} ref={workRef}>
         <FilePanel projectId={pid!} sources={sources} active={activeFile} onActive={(id) => setActiveFile(id)} onChanged={reload} collapsed={filesCollapsed && !narrow} onCollapse={setFilesCollapsed}
@@ -914,7 +904,7 @@ function Workspace() {
               </span>
             )}
             {file && (file.family === "image" || file.family === "pdf") && (
-              <button type="button" className="btn sm" disabled={ocrBusy || ro} onClick={runOcr} title={ro ? tr(READ_ONLY_TEXT) : tr("使用本地文字识别（中文+英文）识别扫描页，不上传文件")}>
+              <button type="button" className="btn sm" disabled={ocrBusy || ro} onClick={runOcr} title={ro ? tr(READ_ONLY_TEXT) : tr("识别扫描页上的文字（中英文），在本服务器完成")}>
                 {ocrBusy ? tr("识别中…") : file.ocr_pages.length ? tr("重新 OCR") : tr("OCR 识别")}
               </button>
             )}
@@ -949,7 +939,7 @@ function Workspace() {
           )}
           <div className="pane-b">
             {!file ? (
-              <div className="empty"><div className="big">{tr("第 1 步：上传来源文件")}</div><div>{ro ? tr("这个项目还没有来源文件。") : tr("把 XLSX / CSV / DOCX / PDF / 图片 / PPTX 等文件拖入左侧列表，或点击左侧的上传按钮")}</div></div>
+              <div className="empty"><div className="big">{tr("还没有来源文件")}</div>{!ro && <div>{tr("先在来源文件列表中上传文件。")}</div>}</div>
             ) : (
               <AnyView selectable={!ro} view={srcView} side="src" reloadKey={srcKey}
                 loadGrid={(s, off, lim) => get(`/api/sources/${file.id}/view${qs({ sheet: s, offset: off, limit: lim, ...bq })}`).then((r) => r.grid)}
@@ -998,11 +988,10 @@ function Workspace() {
               <div className="pane-b">
                 {!tpl ? (
                   <div className="empty">
-                    <div className="big">{tr("第 2 步：设置目标模板")}</div>
+                    <div className="big">{tr("还没有设置模板")}</div>
                     {project.template_missing && (
                       <div className="notice warn" role="alert">{tr("这个项目原来使用的模板已被删除。")}{ro ? tr("需要有编辑权限的成员重新选择模板。") : tr("请重新选择或新建一个模板。")}</div>
                     )}
-                    <div>{ro ? tr("这个项目还没有设置模板。") : tr("上传已有的 DOCX / XLSX / PDF / PPTX，或在软件内新建文档型、表格型模板")}</div>
                     {!ro && <button type="button" className="btn primary" onClick={() => setDialog({ kind: "template" })}>{tr("设置模板")}</button>}
                   </div>
                 ) : (
@@ -1140,7 +1129,7 @@ function CsvOptions({ file, onDone }: { file: SourceFile; onDone: () => void }) 
           footer={<><span className="spacer" /><button type="button" className="btn" onClick={() => setOpen(false)}>{tr("取消")}</button>
             <button type="button" className="btn primary" onClick={async () => { try { await put(`/api/sources/${file.id}/options`, { csv: { encoding: enc, delimiter: delim } }); toast(tr("已重新解析"), "ok"); setOpen(false); onDone(); } catch (e: any) { toast(errorText(e), "err"); } }}>{tr("重新解析")}</button></>}>
             <div className="col">
-              <div className="small muted">{tr("自动识别：编码 ")}{info.encoding}{tr("，分隔符「")}{info.delimiter === "\t" ? "Tab" : info.delimiter}{tr("」。如出现乱码或分列错误，请手动指定。单元格内换行（带引号）按 RFC 4180 处理，不会错误分行。")}</div>
+              <div className="small muted">{tr("自动识别：编码 {v1}，分隔符「{v2}」。出现乱码或分列错误时，请手动指定。", { v1: info.encoding || "?", v2: info.delimiter === "\t" ? "Tab" : info.delimiter || "?" })}</div>
               <label className="field">{tr("编码")}<select className="input" value={enc} onChange={(e) => setEnc(e.target.value)}>
                 {["auto", "utf-8", "utf-8-sig", "gb18030", "gbk", "big5", "utf-16", "shift_jis", "latin-1"].map((x) => <option key={x} value={x}>{x === "auto" ? tr("自动识别") : x}</option>)}
               </select></label>

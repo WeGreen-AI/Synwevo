@@ -159,9 +159,9 @@ def _flow(a, b, pa, pb, engine, accounts, docs, mail_dir, tag, owner, member, no
     pa.get_by_role("button", name="活动记录").click()
     act = pa.locator("[data-testid=project-activity]")
     row = act.locator(".collab-log li[data-kind='project.update']").first
-    expect(row).to_contain_text("样本规则：未设置 → 每个文件一份", timeout=10000)
+    expect(row).to_contain_text("样本规则：未设置 → 每文件一份", timeout=10000)
     pa.screenshot(path=str(SHOTS / f"{engine}-05-setting-before-after.png"))
-    note(notes, f"{engine}: the sample-rule change reads as 样本规则：未设置 → 每个文件一份 in the activity record")
+    note(notes, f"{engine}: the sample-rule change reads as 样本规则：未设置 → 每文件一份 in the activity record")
     pa.keyboard.press("Escape")
 
     # ---- the editor's phone: the activity record is usable at 390 px

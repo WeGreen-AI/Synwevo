@@ -51,10 +51,9 @@ export default function RegressionPage() {
         <button type="button" className="btn primary" disabled={!perm.canWrite || !cases?.length || !!running} onClick={runAll}
           title={perm.canWrite ? undefined : tr(READ_ONLY_TEXT)}>{tr("全部运行")}</button>
       </div>
-      <div className="notice small mb12">{tr("回归用例保存了项目的原始文件（不做脱敏）、模板、样本规则、映射，以及每个样本的期望结果，只在本工作空间内可见。运行时用当前代码重新解析和生成，逐个字段、逐段文字比较； 也可以在仓库根目录运行 ")}<code>python apps/docs/scripts/regression.py</code>。
-      </div>
+      <div className="notice small mb12">{tr("回归用例保存项目的来源文件（不脱敏）、模板、样本规则、映射和每个样本的期望结果，只在本工作空间内可见。运行时重新解析和生成，逐个字段、逐段文字比较。")}</div>
       {err && <div className="notice err mb12" role="alert">{tr("回归用例加载失败：")}{serverText(err)}</div>}
-      {cases && !cases.length && <div className="empty"><div className="big">{tr("还没有回归用例")}</div><div>{tr("在项目中点击「更多 → 保存为回归用例」即可创建")}</div></div>}
+      {cases && !cases.length && <div className="empty"><div className="big">{tr("还没有回归用例")}</div><div>{tr("在项目的「更多」菜单中选择「保存为回归用例」。")}</div></div>}
       <div className="col gap8">
         {cases?.map((c) => {
           const r = results[c.id];

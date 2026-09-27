@@ -62,7 +62,7 @@ export default function Home() {
     if (!pub.deprecated) {
       items.push({ label: tr("更新组织发布"), disabled: !pub.source_ahead, title: pub.source_ahead ? tr("源模板有新版本，可更新发布") : undefined,
         onClick: async () => { const r: any = await post(`/api/organization-templates/${pub.id}/update`, {}).catch((e) => { toast(errorText(e), "err"); return null; }); if (r) { toast(tr("已发布第 {v1} 次", { v1: r.release_no }), "ok"); loadTemplates(); loadShared(); } } });
-      items.push({ label: tr("弃用共享…"), onClick: async () => { if (await confirm(tr("弃用共享模板"), tr("弃用后组织成员不能再用它建立新项目；已复制到各空间的模板与任务不受影响。"), tr("弃用"), true) && await act(() => post(`/api/organization-templates/${pub.id}/deprecate`, {}), tr("已弃用"))) { loadTemplates(); loadShared(); } } });
+      items.push({ label: tr("弃用共享…"), onClick: async () => { if (await confirm(tr("弃用共享模板"), tr("弃用后组织成员不能再用它建立新项目；已复制到各工作空间的模板与任务不受影响。"), tr("弃用"), true) && await act(() => post(`/api/organization-templates/${pub.id}/deprecate`, {}), tr("已弃用"))) { loadTemplates(); loadShared(); } } });
     } else {
       items.push({ label: tr("恢复共享"), onClick: async () => { if (await act(() => post(`/api/organization-templates/${pub.id}/deprecate`, { deprecated: false }), tr("已恢复共享"))) { loadTemplates(); loadShared(); } } });
     }
@@ -136,7 +136,7 @@ export default function Home() {
 
   const remove = async (p: any) => {
     const ok = await confirm(tr("删除项目"),
-      <>{tr("删除项目「")}{p.name}」？<br />{tr("如果只是想让它从列表里消失，用")}<b>{tr("归档")}</b>{tr("更合适——归档随时可以撤销。")}</>, tr("删除"), true);
+      tr("删除项目「{v1}」？只想让它从列表里消失时，用「归档」更合适，随时可以撤销。", { v1: p.name }), tr("删除"), true);
     if (ok && await act(() => del(`/api/projects/${p.id}`), tr("已删除"))) load();
   };
 
@@ -209,7 +209,7 @@ export default function Home() {
           {!err && page && page.total === 0 && !searching && (
             <div className="card card-b empty" style={{ height: "auto" }}>
               <div className="big">{params.archived ? tr("没有项目") : tr("还没有项目")}</div>
-              <div>{tr("一个项目 = 一批来源文件 + 一个目标模板 + 样本规则与映射。规则可保存后用于下一批同结构文件。")}</div>
+              <div>{tr("一个项目把一批来源文件映射到一个模板并批量生成文档；同结构的新文件可以直接复用。")}</div>
               {!ro && <button type="button" className="btn primary" onClick={create}>{tr("新建第一个项目")}</button>}
             </div>
           )}
@@ -307,7 +307,7 @@ export default function Home() {
                     </td>
                   </tr>
                 ))}
-                {templates && !templates.length && !tplErr && <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("模板在项目中上传或新建后会出现在这里，可复制后用于其他项目")}</td></tr>}
+                {templates && !templates.length && !tplErr && <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("还没有模板。在项目中上传或新建的模板会出现在这里。")}</td></tr>}
                 {!templates && !tplErr && <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("加载模板…")}</td></tr>}
               </tbody>
             </table></div>
@@ -318,35 +318,35 @@ export default function Home() {
               {sharedErr && <div className="notice err row mb8" role="alert"><span className="grow">{tr("组织共享模板加载失败：")}{serverText(sharedErr)}</span><button type="button" className="btn sm" onClick={loadShared}>{tr("重试")}</button></div>}
               <div className="card" style={{ overflow: "auto" }}>
                 <div className="tbl-wrap"><table className="tbl" aria-label={tr("组织共享模板")}>
-                  <thead><tr><th>{tr("名称")}</th><th>{tr("格式")}</th><th>{tr("字段")}</th><th>{tr("发布")}</th><th>{tr("来源空间")}</th><th>{tr("维护者")}</th><th><span className="sr-only">{tr("操作")}</span></th></tr></thead>
+                  <thead><tr><th>{tr("名称")}</th><th>{tr("格式")}</th><th>{tr("字段")}</th><th>{tr("发布")}</th><th>{tr("来源工作空间")}</th><th>{tr("维护者")}</th><th><span className="sr-only">{tr("操作")}</span></th></tr></thead>
                   <tbody>
                     {(shared?.items || []).map((x) => (
                       <tr key={x.id}>
                         <td>{x.name}{x.deprecated && <span className="badge" style={{ marginLeft: 6 }}>{tr("已弃用")}</span>}{x.description && <div className="tiny muted">{x.description}</div>}</td>
                         <td>{String(x.format).toUpperCase()}</td><td>{formatNumber(x.slot_count)}</td>
-                        <td className="small muted">{tr("第 {v1} 次发布 · 模板第 {v2} 版", { v1: x.release_no, v2: x.version_no })}<div className="tiny">{fmtTime(x.updated_at)}{x.use_count ? ` · ${tr("已用于 {v1} 个空间", { v1: x.use_count })}` : ""}</div></td>
+                        <td className="small muted">{tr("第 {v1} 次发布 · 模板第 {v2} 版", { v1: x.release_no, v2: x.version_no })}<div className="tiny">{fmtTime(x.updated_at)}{x.use_count ? ` · ${tr("已用于 {v1} 个工作空间", { v1: x.use_count })}` : ""}</div></td>
                         <td className="small muted">{x.source_workspace?.name || "—"}</td>
                         <td className="small muted">{(x.updated_by || x.published_by)?.name}</td>
                         <td className="nowrap">
-                          {!ro && !x.deprecated && <><button type="button" className="btn xs" onClick={async () => { if (await act(() => post(`/api/organization-templates/${x.id}/use`, {}), tr("已从组织共享模板复制「{v1}」", { v1: x.name }))) { loadTemplates(); loadShared(); } }}>{tr("复制到本空间")}</button>{" "}</>}
+                          {!ro && !x.deprecated && <><button type="button" className="btn xs" onClick={async () => { if (await act(() => post(`/api/organization-templates/${x.id}/use`, {}), tr("已从组织共享模板复制「{v1}」", { v1: x.name }))) { loadTemplates(); loadShared(); } }}>{tr("复制到本工作空间")}</button>{" "}</>}
                           {x.can_manage && !ro && (
                             <MoreMenu label="⋯" ariaLabel={tr("模板「{v1}」的共享操作", { v1: x.name })} items={x.deprecated
                               ? [{ label: tr("恢复共享"), onClick: async () => { if (await act(() => post(`/api/organization-templates/${x.id}/deprecate`, { deprecated: false }), tr("已恢复共享"))) { loadTemplates(); loadShared(); } } }]
                               : [{ label: tr("更新组织发布"), disabled: !x.source_ahead, title: x.source_ahead ? tr("源模板有新版本，可更新发布") : undefined,
                                    onClick: async () => { const r: any = await post(`/api/organization-templates/${x.id}/update`, {}).catch((e) => { toast(errorText(e), "err"); return null; }); if (r) { toast(tr("已发布第 {v1} 次", { v1: r.release_no }), "ok"); loadTemplates(); loadShared(); } } },
-                                 { label: tr("弃用共享…"), onClick: async () => { if (await confirm(tr("弃用共享模板"), tr("弃用后组织成员不能再用它建立新项目；已复制到各空间的模板与任务不受影响。"), tr("弃用"), true) && await act(() => post(`/api/organization-templates/${x.id}/deprecate`, {}), tr("已弃用"))) { loadTemplates(); loadShared(); } } }]} />
+                                 { label: tr("弃用共享…"), onClick: async () => { if (await confirm(tr("弃用共享模板"), tr("弃用后组织成员不能再用它建立新项目；已复制到各工作空间的模板与任务不受影响。"), tr("弃用"), true) && await act(() => post(`/api/organization-templates/${x.id}/deprecate`, {}), tr("已弃用"))) { loadTemplates(); loadShared(); } } }]} />
                           )}
                         </td>
                       </tr>
                     ))}
-                    {shared && !shared.items.length && !sharedErr && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("组织里还没有共享模板。在模板库里对模板选择「发布到组织…」即可共享。")}</td></tr>}
+                    {shared && !shared.items.length && !sharedErr && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("组织里还没有共享模板。在模板库对模板选择「发布到组织…」。")}</td></tr>}
                     {!shared && !sharedErr && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 16 }}>{tr("加载模板…")}</td></tr>}
                   </tbody>
                 </table></div>
               </div>
             </>
           )}
-          <div className="tiny muted mt16">{tr("所有文件只在本机/自有服务器处理，不会发送到外部服务。")}</div>
+          <div className="tiny muted mt16">{tr("所有文件都在本服务的服务器上处理，不发送到外部服务。")}</div>
         </div>
       </div>
       {copyFor && <CopyRequestDialog project={copyFor} onClose={() => { setCopyFor(null); load(); }} />}

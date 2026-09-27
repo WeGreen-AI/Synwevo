@@ -51,7 +51,7 @@ export default function CopyRequestDialog({ project, onClose }: { project: { id:
   return <Modal title={tr("复制到组织工作空间")} onClose={onClose} size="wide">
     <div className="col gap8">
       {err && <p className="notice err" role="alert">{err}</p>}
-      <p className="tiny muted">{tr("副本由目标工作空间的管理员批准后创建，之后独立于原项目，受目标空间的成员与保留策略管理。原项目保持不变。")}</p>
+      <p className="tiny muted">{tr("副本在目标工作空间的管理员批准后创建，之后独立于原项目；原项目保持不变。")}</p>
       {requests && requests.length > 0 && <div className="col gap4"><h3 className="small">{tr("已有申请")}</h3>{requests.map(r => <div key={r.id} className="row wrap gap8 small" style={{ alignItems: "center" }}>
         <span className="badge">{tr(STATUS[r.status] || r.status)}</span><span>{r.name}</span><span className="muted">{new Date(r.created_at * 1000).toLocaleString(session.me?.locale || undefined)}</span>
         {r.decider && r.decision_reason && <span className="muted">{r.decider.name}：{r.decision_reason}</span>}{r.error && <span className="muted">{r.error}</span>}

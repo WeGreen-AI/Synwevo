@@ -39,11 +39,11 @@ export default function RegressionDialog({ project, onClose }: { project: Projec
           {/* It used to say the case sits in regression/ "and can be committed with the code":
               the case holds this project's own files, and user files do not belong in a
               repository. Where the server keeps cases is its configuration, not the UI's claim. */}
-          <div className="small muted">{tr("用例 ")}<code>{done.id}</code>{tr(" 已保存在服务器上，可以在「回归用例」页面运行和下载。其中包含本项目的文件：请只保存测试数据或已脱敏的文件，不要把它提交到代码仓库。")}</div>
+          <div className="small muted">{tr("用例包含本项目的文件，可在「回归用例」页面运行和下载。请只保存测试数据或已脱敏的文件。")}</div>
         </div>
       ) : (
         <div className="col gap12">
-          <div className="notice info small">{tr("保存当前项目的来源文件、模板、样本规则和映射，并记录前 ")}{formatNumber(Math.min(total, 50))}{tr(" 个样本（共 ")}{formatNumber(total)}{tr(" 个）的期望结果：每个字段的值和输出文档的文字。 以后每次升级或修改代码，都可以重新运行并逐项比较差异。")}<b>{tr("请只保存测试数据或已脱敏的文件")}</b>{tr("（可先用「生成脱敏副本」）。")}</div>
+          <div className="notice info small">{tr("保存当前项目的来源文件、模板、样本规则和映射，并记录前 {v1} 个样本（共 {v2} 个）的期望结果，以后可以重新运行并逐项比较差异。", { v1: Math.min(total, 50), v2: total })}<b>{tr("请只保存测试数据或已脱敏的文件")}</b>{tr("（可先用「生成脱敏副本」）。")}</div>
           <label className="field">{tr("用例名称")}<input className="input" value={name} onChange={(e) => setName(e.target.value)} /></label>
           <label className="field">{tr("说明（可选）")}<textarea className="input" rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder={tr("例如：2026 年第三季度真实订单（已脱敏），含 3 个跨页订单")} /></label>
         </div>

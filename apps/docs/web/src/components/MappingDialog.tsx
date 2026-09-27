@@ -80,7 +80,7 @@ export default function MappingDialog(p: Props) {
     if (!m1 || !m2) return tr("来源区域无效，请重新选择单元格区域");
     const rows = Number(m2[2]) - Number(m1[2]) + 1;
     const colsN = colN(m2[1]) - colN(m1[1]) + 1;
-    if (rows !== p.slot.rows || colsN !== p.slot.cols) return tr("来源区域为 {v1} 行 × {v2} 列，目标区域「{v3}」为 {v4} 行 × {v5} 列。尺寸不一致，不能保存：请重新选择来源区域，或修改目标区域大小（系统不会自动截断、补齐或转置）。", { v1: rows, v2: colsN, v3: p.slot.name, v4: p.slot.rows, v5: p.slot.cols });
+    if (rows !== p.slot.rows || colsN !== p.slot.cols) return tr("来源区域为 {v1} 行 × {v2} 列，目标区域「{v3}」为 {v4} 行 × {v5} 列。尺寸不一致，不能保存：请重新选择来源区域，或修改目标区域大小。", { v1: rows, v2: colsN, v3: p.slot.name, v4: p.slot.rows, v5: p.slot.cols });
     return null;
   }, [loc, slotType, locale]);
 
@@ -212,7 +212,7 @@ export default function MappingDialog(p: Props) {
           {regionMismatch && <div className="notice err">{regionMismatch}</div>}
           {slotType === "repeat" && (
             <div className="col gap4">
-              <div className="small muted">{tr("列对应（按列名匹配，列顺序不同也不会错位；未匹配的列请手动选择）：")}</div>
+              <div className="small muted">{tr("列对应（按列名自动匹配；未匹配的列请手动选择）：")}</div>
               <table className="tbl">
                 <thead><tr><th>{tr("目标列")}</th><th>{tr("来源列")}</th></tr></thead>
                 <tbody>

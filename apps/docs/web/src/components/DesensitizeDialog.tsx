@@ -108,7 +108,7 @@ export default function DesensitizeDialog({ projectId, sources, onDone, onClose 
                 </select>
               </div>
             ))}
-            <div className="notice small">{tr("所有处理都在本服务器完成，文件不会发送到外部服务。数值缩放与日期平移对整列使用同一比例/天数，便于保留合计、排序等关系。")}</div>
+            <div className="notice small">{tr("所有处理都在本服务器完成，文件不发送到外部服务。数值缩放与日期平移对整列使用同一比例或天数，保留合计与排序关系。")}</div>
           </div>
         </div>
       )}

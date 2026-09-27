@@ -632,13 +632,13 @@ export const serverMessages = {
     "en": "Set sample rules first.",
     "zh-Hant": "請先設置樣本規則。"
   },
-  "服务器正在进行其他模拟生成，请稍后重试。": {
-    "en": "Another simulation is running. Try again later.",
-    "zh-Hant": "服務器正在進行其他模擬生成，請稍後重試。"
+  "服务器正在生成其他预览，请稍后重试。": {
+    "en": "The server is generating another preview. Try again shortly.",
+    "zh-Hant": "伺服器正在生成其他預覽，請稍後重試。"
   },
-  "该请求标识已用于不同内容，请重新发起操作。": {
-    "en": "This request identifier was used for different content. Start the operation again.",
-    "zh-Hant": "該請求標識已用於不同內容，請重新發起操作。"
+  "这次请求与之前提交的内容不一致，请重新发起操作。": {
+    "en": "This request differs from the one submitted earlier. Start the action again.",
+    "zh-Hant": "這次請求與之前提交的內容不一致，請重新發起操作。"
   },
   "任务仍在进行中，请等待结束或先取消。": {
     "en": "The job is still active. Wait for it to finish or cancel it first.",

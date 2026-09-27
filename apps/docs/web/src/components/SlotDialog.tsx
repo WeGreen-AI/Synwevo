@@ -122,7 +122,7 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
         </label>
         {same && (kind === "text" || kind === "cell" || kind === "pdf_box" || kind === "pptx_text") && (
           <label className="check notice info">
-            <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} />{tr("已有同名字段「")}{same.name}{tr("」：与它共享同一个数据绑定（两处各有独立 ID，但填入相同的值）")}</label>
+            <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} />{tr("已有同名字段「{v1}」：与它填入相同的值", { v1: same.name })}</label>
         )}
         {(kind === "text" && (sel.kind === "docx_text" || sel.kind === "docx_cell" || sel.kind === "pptx_text")) && (
           <div className="seg">
@@ -167,7 +167,7 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
                 </select>
               </label>
             </div>
-            <div className="tiny muted">{tr("创建后，可以在内容块中继续划选文字，选择「作为内容块的一列」添加更多列；块内的其他字段（如客户名）会在每一份中填入相同的值。")}</div>
+            <div className="tiny muted">{tr("创建后可在块内继续划选文字，选「作为内容块的一列」添加列；块内的其他字段每一份填入相同的值。")}</div>
           </div>
         )}
         {kind === "pdf_repeat" && sel.kind === "pdf_region" && (
@@ -188,7 +188,7 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
               </label>
               <label className="field">{tr("字号（留空=沿用原文字号）")}<input className="input" type="number" value={fontSize} onChange={(e) => setFontSize(e.target.value ? Number(e.target.value) : "")} /></label>
             </div>
-            <div className="tiny muted">{tr("区域内原有文字会被真正删除（表格线保留）；每个单元格放不下时逐步缩小字号，仍放不下则报错，不会截断。")}</div>
+            <div className="tiny muted">{tr("区域内原有文字会被删除，表格线保留；放不下时逐步缩小字号，仍放不下则该样本报错，不会截断。")}</div>
           </>
         )}
         {kind === "pdf_box" && (
@@ -197,8 +197,8 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
             <label className="field">{tr("最小字号")}<input className="input" type="number" value={minFont} onChange={(e) => setMinFont(Number(e.target.value))} /></label>
             <label className="field">{tr("对齐")}<select className="input" value={align} onChange={(e) => setAlign(e.target.value)}><option value="left">{tr("左")}</option><option value="center">{tr("中")}</option><option value="right">{tr("右")}</option></select></label>
             <div className="tiny muted" style={{ gridColumn: "1 / -1" }}>{tpl.format === "pdf" && tpl.info?.pdf?.kind !== "scanned"
-              ? tr("框内原有文字会被真正删除（不是白色遮盖）。")
-              : tr("框内原有像素按周围背景重建（跟随渐变和光照），文字颜色与字号沿用原内容。")}{tr("新内容放不下时逐步缩小到最小字号，仍放不下则报错，不会截断。")}</div>
+              ? tr("框内原有文字会被删除，不是遮盖。")
+              : tr("框内原有内容按周围背景重建；文字颜色与字号沿用原内容。")}{tr("新内容放不下时逐步缩小到最小字号，仍放不下则报错，不会截断。")}</div>
           </div>
         )}
         {!["repeat", "repeat_block", "pdf_repeat", "block_column", "region"].includes(kind) && (

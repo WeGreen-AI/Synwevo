@@ -573,7 +573,7 @@ export default function DocEditor() {
       {logOpen && (
         <Drawer title={tr("变更记录")} onClose={() => setLogOpen(false)}>
           <div className="col gap8" data-testid="collab-log">
-            <div className="tiny muted">{live && !alone && room.dirty ? tr("有未保存为版本的修改。保存模板会把当前内容记为新版本；版本历史见项目页的「版本」。") : tr("按内容块记录谁改了什么；保存模板会把当前内容记为新版本。")}</div>
+            <div className="tiny muted">{live && !alone && room.dirty ? tr("有未保存为版本的修改；保存模板会把当前内容记为新版本。") : tr("按内容块记录谁改了什么；保存模板会把当前内容记为新版本。")}</div>
             {log === null ? <div className="tiny muted" role="status">{tr("加载中…")}</div>
               : log.items.length === 0 ? <div className="tiny muted">{tr("还没有协同修改记录。")}</div>
               : <ul className="collab-log">
