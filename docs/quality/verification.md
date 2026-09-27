@@ -1728,6 +1728,11 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 `ui_check_messages_fallback.py`（Chromium 1280/390）：登录 → `/messages` 会话列表 → 新私聊选 RMember → 线程落在 `/c/cv_…` → 发送一条消息即时显示，无控制台错误
 （截图 `ci66-fallback-{desktop,phone}.png`）。
 
+**主分支四源回归（2026-09-28，协调者的隔离实例 31770/31769/31765 + 新起消息角色 31768，`messages-web` 客户端以 CLI 登记，三角色以 main 代码重启）**：
+账户源 `messages_url` 变为消息源、`/messages` 303 交接；`ui_e2e_shell.py`（四源，Chromium 桌面/手机）通过，含「工作空间 消息 入口 → message.localhost:31768/ via /auth/start」；
+`ui_e2e_messaging.py`（Chromium，两名真实用户两个上下文：邀请加入、私聊经流即时到达、引用回复与表情回应、图片附件扫描/去重/内联、群移除后 404 与搜索为空、0 CSP 违规 0 页面错误）通过。
+四套件全量：2088 项中 1 项偶发失败（collab 变更记录计时，CI-77 已改为轮询），其余通过。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
