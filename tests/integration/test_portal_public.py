@@ -280,3 +280,38 @@ def test_portal_exposes_account_locale_and_only_platform_admin_api_permission(po
         response = client.patch("/api/auth/locale", json={"locale": "en"}, headers={CSRF_HEADER: "portal-fixture-csrf"})
         assert response.status_code == 200
         assert client.get("/api/auth/me").json()["locale"] == "en"
+
+
+def test_the_deployment_facts_reader_identifies_itself_and_reads_503_bodies():
+    """Production reaches the other services through the public edge, which refuses the default
+    library User-Agent; the reader must name itself, and a 503 `/readyz` body (a component down)
+    is still an answer."""
+    import http.server
+    import json
+    import threading
+    from synwevo_portal.public import FACTS_USER_AGENT, _read_json
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen.append(self.headers.get("User-Agent"))
+            if self.headers.get("User-Agent", "").startswith("Python-urllib"):
+                self.send_response(403); self.end_headers(); return
+            body = json.dumps({"status": "degraded" if self.path == "/down" else "ready", "checks": {"malware_scanner": "down"}}).encode()
+            self.send_response(503 if self.path == "/down" else 200)
+            self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):  # silence
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        assert _read_json(base + "/readyz") == {"status": "ready", "checks": {"malware_scanner": "down"}}
+        assert _read_json(base + "/down") == {"status": "degraded", "checks": {"malware_scanner": "down"}}, "a 503 body is read, not dropped"
+        assert seen and all(ua == FACTS_USER_AGENT for ua in seen) and FACTS_USER_AGENT.startswith("Synwevo")
+    finally:
+        server.shutdown(); server.server_close()
+

@@ -271,11 +271,17 @@ def _docs_origin(store, ident) -> str | None:
 #: No ambient proxy: these requests carry nothing secret, but a `HTTP_PROXY` nobody chose must
 #: not decide what "this deployment" answers (the relying party makes the same choice).
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+#: The reader says who it is. In production the account service and Docs are reached through the
+#: public edge, which answers 403 to the library's default `Python-urllib/x.y` agent (bot
+#: filtering) while letting a named client through — found on the first deployment, when every
+#: fact on the privacy page read "could not be read".
+FACTS_USER_AGENT = "Synwevo-portal/1 (+deployment facts)"
 
 
 def _read_json(url: str) -> dict | None:
     try:
-        with _opener.open(urllib.request.Request(url, headers={"Accept": "application/json"}), timeout=FACTS_TIMEOUT_S) as response:
+        request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": FACTS_USER_AGENT})
+        with _opener.open(request, timeout=FACTS_TIMEOUT_S) as response:
             raw = response.read(65536)
     except urllib.error.HTTPError as e:
         # /readyz answers 503 with the same body while a component is down; the body is the point.
