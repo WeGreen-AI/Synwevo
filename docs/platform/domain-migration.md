@@ -30,6 +30,8 @@ message.synwevo.com）。仓库里所有产品地址都来自配置（issuer、`
 
 ## 3. 切换（运维，一次完成；一个发布窗口）
 
+> **已于 2026-09-27 16:39 UTC 完成**（记录：`docs/quality/deployment.md`）。实际做法与下文一致，只有两点不同：compose 用的是主机上现有文件只改七个主机值（主机尚未采用 ClamAV 服务，那是另一个决定）；`client register` 会**整体替换** URI 列表，所以新旧回调都列出。切换脚本要以文件方式在主机上执行并把 `docker compose exec` 的 stdin 接到 `/dev/null`——用 `bash -s` 经 stdin 喂脚本会被第一条 `exec` 吃掉后半段。
+
 issuer 写进令牌并由三个依赖方校验，不能双跑；Cookie 只属于主机，旧主机上的登录态本来就不会带到新主机。因此切换是一个原子步骤：
 
 1. **前置核对**（已见隧道配置：`synwevo.com`、`accounts.synwevo.com`、`docwave.synwevo.com`、`workplace.synwevo.com` → `http://127.0.0.1:18760`）：
@@ -64,7 +66,9 @@ issuer 写进令牌并由三个依赖方校验，不能双跑；Cookie 只属于
 
 | 事项 | 状态 |
 |---|---|
-| `message.wegreen.ltd` 的隧道公开主机名 | 截图只见 4 条 synwevo.com 主机；请确认已加 |
+| `message.wegreen.ltd` 的隧道公开主机名 | 2026-09-27 切换后探测：无法建立连接（未加入隧道）；消息独立应用上线前须加 |
+| `dw.wegreen.ltd` 旧别名 | 不是隧道主机名（边缘 TLS 握手失败，切换前亦然）；网关里的 308 仅在有人把它加入隧道时生效 |
+| 主机 compose 采用 ClamAV 服务（`SYNWEVO_MALWARE_SCAN=required`） | 仓库参考文件含该服务，主机文件未采用；主机可用内存约 4.5 GiB，采用与否是持有人决定 |
 | Google / Microsoft 控制台的新回调 URI（`https://accounts.synwevo.com/auth/external/<id>/callback`） | 生产尚未配置外部登录，配置时用新地址 |
 | Turnstile 小部件主机名 | 生产尚未启用；启用时登记 `accounts.synwevo.com` |
 | 发件域是否改为 synwevo.com | 决定项；改则先做 SPF/DKIM/DMARC 与 SMTP2GO 域验证 |
