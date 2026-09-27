@@ -116,7 +116,7 @@ async function setup({ search = '', blockedStorage = false } = {}) {
     render(); await answer(next('/api/auth/state'), authState); await answer(next('/api/auth/me'), user); return render();
   };
   const beginRefresh = async () => { const promise = render().refresh(); await answer(next('/api/auth/state'), authState); return { promise, request: next('/api/auth/me') }; };
-  return { api, render, next, answer, bootstrap, beginRefresh, requests, navigation, xhrs, events, storage, window,
+  return { api, session, render, next, answer, bootstrap, beginRefresh, requests, navigation, xhrs, events, storage, window,
     children, currentChildren: () => provider.props.children };
 }
 
@@ -386,6 +386,27 @@ test('sign-out clears context, rejects old deliveries, and navigates away', asyn
   assert.equal(h.api.workspaceContext(), null); assert.equal(h.render().me, null);
   assert.deepEqual(h.navigation, [['replace', '/logged-out']]);
   await h.answer(request, ['old-data']); assert.equal((await pending).error.name, 'AbortError');
+});
+
+test('a sign-out in progress does not turn the emptied session into a sign-in redirect', async () => {
+  // The guarded page under the sign-out button re-renders with me === null as soon as
+  // invalidate() lands, while the /logged-out navigation is still pending. RequireSession used to
+  // answer that with assign('/login?next=…'), which Chromium let win over the earlier replace.
+  const h = await setup(); await h.bootstrap();
+  const leaving = h.render().signOut(); await h.answer(h.next('/api/auth/logout'), { ok: true }); await leaving;
+  assert.equal(h.render().me, null);
+  const guarded = h.session.RequireSession({ children: h.children });
+  assert.equal(guarded.type.name, 'PageState'); assert.equal(guarded.props.children, '正在退出…');
+  assert.deepEqual(h.navigation, [['replace', '/logged-out']]);
+});
+
+test('an expired session (not a sign-out) is still sent to sign in with its return address', async () => {
+  const h = await setup({ search: '?tab=security' }); await h.bootstrap();
+  h.window.dispatchEvent(new CustomEvent('synwevo:session-expired', { detail: {} })); h.render();
+  assert.equal(h.render().me, null);
+  const guarded = h.session.RequireSession({ children: h.children });
+  assert.equal(guarded.props.children, '正在前往登录…');
+  assert.deepEqual(h.navigation, [['assign', '/login?next=%2F%3Ftab%3Dsecurity&lang=en']]);
 });
 
 test('repeated auth-disabled refreshes do not cancel ordinary business requests', async () => {

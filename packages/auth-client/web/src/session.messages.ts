@@ -6,6 +6,7 @@ registerMessages({
  '重试': {en:'Retry','zh-Hant':'重試'},
  '加载中…': {en:'Loading…','zh-Hant':'載入中…'},
  '正在前往登录…': {en:'Redirecting to sign in…','zh-Hant':'正在前往登入…'},
+ '正在退出…': {en:'Signing out…','zh-Hant':'正在登出…'},
  '返回平台首页': {en:'Back to platform home','zh-Hant':'返回平台首頁'},
  '未加入任何工作空间': {en:'No workspace yet','zh-Hant':'尚未加入工作空間'},
  '当前工作空间': {en:'Current workspace','zh-Hant':'目前工作空間'},

@@ -206,7 +206,9 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, inviter: s
     if menu.count():
         menu.click()
     page.get_by_role("button", name=re.compile("退出登录|登出|Sign out")).first.click()
-    page.wait_for_url(lambda u: "/logged-out" in u or "/login" in u, timeout=15000)
+    # Both engines must end on /logged-out: Chromium used to land on /login?next=/account because the
+    # guarded page's sign-in redirect raced the sign-out navigation (CI-59).
+    page.wait_for_url(lambda u: "/logged-out" in u, timeout=15000)
     assert page.request.get(f"{accounts}/api/auth/me").status == 401
     notes.append(f"{engine}: signed out → {page.url.split(accounts)[-1].split('?')[0]}; /api/auth/me 401")
     assert not errors, ("page errors / CSP violations", errors[:5])

@@ -1548,6 +1548,23 @@ Docs 发起的登录经 `/login?next=/oidc/authorize…` 回到发起方，本�
 均通过；机器路径不受影响，同日 `python_full_flow.py`（sdk/cli/person，24 份文档、52 份内置输出）与 `ts_run.py --builtin-only`（12+12）在新鲜隔离服务上通过。
 **发布与恢复**：纯前端（账户外壳 + 共享 auth-client），无 schema 变化；回滚即重新部署上一镜像。**已部署**：`ad2eeeb`，run 36313988930（verify 与 deploy 成功，backup 20260927T111919Z）；线上只读核对见 deployment.md（新外壳块携带新文案与交接代码、三源 readyz、`portal_url` 已发布）；线上登录行为核对需要受控生产账户——本工作站没有，账户持有人下次直接登录即是核对。
 
+### 16.61 退出登录的落点：竞态，不是引擎差异（CI-59）
+
+**问题与基线**：候选队列自 CI-19 起记着「Chromium 登出后到 `/login`、WebKit 到 `/logged-out`（两者 `/api/auth/me` 都 401），核对是竞态还是引擎差异」。
+读代码即可定性：`signOut()` 在 `POST /api/auth/logout` 成功后先 `invalidate()`（清空会话、推进代际），再 `window.location.replace("/logged-out")`；
+`invalidate()` 触发的重渲染让 `/account` 下的 `RequireSession` 看到 `me === null`，随即 `window.location.assign(signInUrl(state, back))`——第二个导航。
+Chromium 让后发的导航取代仍在挂起的第一个，于是落到 `/login?next=%2Faccount…`；WebKit 先提交了 `/logged-out`。这是竞态。后果在 CI-58 之后更明显：
+「已退出」页上的「重新登录」「返回平台首页」Chromium 用户从未见到，再登录时显式 `next=/account` 又把人带回账户页。
+**成熟参考**：OIDC RP-Initiated Logout 1.0 的语义是退出后到达明确的登出后页面（`post_logout_redirect_uri`），账户服务自己的 `/oidc/logout` 也这样做；
+本地按钮的退出应与之一致。
+**对比与选择**：(a) 去掉 `invalidate()`——不行，代际推进是「旧响应不得写回」的保证（既有测试「sign-out clears context, rejects old deliveries」）；
+(b) 先导航再 `invalidate()`——顺序无关，第二个导航仍会发出；(c) 让 `RequireSession` 知道正在退出（选）：模块级 `signingOut`，`signOut()` 与跨标签页登出事件置位，
+守卫对退出中的空会话渲染「正在退出…」而不重定向；过期会话（`synwevo:session-expired`）不置位，照旧去登录页并带返回地址；`POST` 失败复位。
+**验收**：`session-generation.test.mjs` +2：退出后守卫渲染 `PageState`「正在退出…」且 `navigation` 只有一次 `replace('/logged-out')`；过期会话的守卫 `assign('/login?next=%2F%3Ftab%3Dsecurity&lang=en')`。
+`npm test --workspaces` 38/38（auth-client）；三语言新增「正在退出…」；`ui_e2e_onboarding.py` 第 6 步改为两引擎都必须到 `/logged-out`——隔离实例复跑：**Chromium 8/8 与 WebKit 8/8**（注册 → 验证 → 引导 → 交接门户 → 邀请 → 接受 → 退出），
+两引擎「signed out → /logged-out; /api/auth/me 401」，0 页面错误、0 CSP 违规；改前同一脚本的 Chromium 记录是 `/login`。导出树（index）typecheck/build/`npm test` 通过。
+**发布与恢复**：共享 auth-client，三个外壳同时受益；无 schema 变化，回滚即上一镜像。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

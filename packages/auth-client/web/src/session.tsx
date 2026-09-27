@@ -246,7 +246,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
     const otherTab = (e: StorageEvent) => {
       if (e.key === "synwevo.signed-out" && e.newValue) {
-        invalidate(); window.location.replace("/logged-out");
+        signingOut = true; invalidate(); window.location.replace("/logged-out");
       }
     };
     window.addEventListener("pageshow", check);
@@ -265,6 +265,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     const generation = getSessionGeneration();
+    // From here until the page unloads, an emptied session means "leaving", not "expired": the
+    // guarded page under us re-renders with me === null the moment invalidate() lands, and
+    // RequireSession must not answer that with a sign-in redirect (see there).
+    signingOut = true;
     try {
       await post("/api/auth/logout", {});
       invalidate();
@@ -272,7 +276,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // A full reload clears every cached query, preview and grid still holding the previous
       // account's data. Wiping React state alone would leave those in memory for the next login.
       window.location.replace("/logged-out");
-    } catch (e) { if (generation === getSessionGeneration()) setError(asApiError(e)); throw e; }
+    } catch (e) { signingOut = false; if (generation === getSessionGeneration()) setError(asApiError(e)); throw e; }
   }, [invalidate]);
 
   return <SessionCtx.Provider value={{ me, state, refresh, signOut, disabled, error }}>
@@ -304,6 +308,10 @@ export function SessionError({ error, onRetry }: { error: ApiError; onRetry: () 
 }
 
 /** Wrap routes that need an account. */
+/** True from the moment a sign-out starts on this page until the browser has left it. */
+let signingOut = false;
+export function isSigningOut(): boolean { return signingOut; }
+
 export function RequireSession({ children }: { children: React.ReactNode }) {
   const { me, state, disabled, error, refresh } = useSession();
   const { t } = useI18n();
@@ -311,6 +319,11 @@ export function RequireSession({ children }: { children: React.ReactNode }) {
   if (error) return <SessionError error={error} onRetry={refresh} />;
   if (me === undefined) return <PageState>{t("加载中…")}</PageState>;
   if (me === null) {
+    // Signing out: signOut() has already asked for /logged-out. The redirect below used to race
+    // it — Chromium let this later assign win and the person landed on /login?next=<the page
+    // they had just left>, WebKit committed /logged-out first — so a sign-out in progress shows
+    // a quiet state and lets the navigation that is already under way finish.
+    if (signingOut) return <PageState>{t("正在退出…")}</PageState>;
     const back = window.location.pathname + window.location.search;
     // Remember where they were going so signing in returns them to it rather than to the home
     // page — losing the document you were opening is a small thing that feels like a big one.
