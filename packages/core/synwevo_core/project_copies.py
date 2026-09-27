@@ -183,6 +183,10 @@ class ProjectCopies:
             t.execute("UPDATE project_copies SET status=?, decided_by=?, decided_at=?, decision_reason=?, self_approved=?, approval_expires_at=?, "
                       "updated_at=?, version=version+1 WHERE id=?",
                       (status, uid, ts, reason[:500], 1 if uid == r["requester_id"] else 0, ts + APPROVAL_TTL_S if action == "approve" else None, ts, cid))
+            # The decision's card for the request's conversation in Synwevo Message (CI-75), on the
+            # same transaction; keyed `copy:{id}:{status}` so a replay is one card.
+            from .messaging_bridge import emit_copy
+            emit_copy(t, copy_id=cid, status=status, organization_id=r["target_organization_id"], workspace_id=r["target_workspace_id"], actor_id=uid)
         return self.get(cid)
 
     def withdraw(self, cid: str, uid: str) -> dict:
@@ -210,8 +214,13 @@ class ProjectCopies:
     def finish(self, cid: str, status: str, *, result: dict | None = None, error: str | None = None) -> dict:
         if status not in ("done", "failed", "stale"):
             raise ValueError(status)
-        self.store.execute("UPDATE project_copies SET status=?, result=?, error=?, executed_at=?, updated_at=?, version=version+1 WHERE id=?",
-                           (status, json.dumps(result, ensure_ascii=False) if result is not None else None, (error or None), now() if status == "done" else None, now(), cid))
+        with self.store.tx() as t:
+            t.execute("UPDATE project_copies SET status=?, result=?, error=?, executed_at=?, updated_at=?, version=version+1 WHERE id=?",
+                      (status, json.dumps(result, ensure_ascii=False) if result is not None else None, (error or None), now() if status == "done" else None, now(), cid))
+            r = t.execute("SELECT target_organization_id, target_workspace_id FROM project_copies WHERE id=?", (cid,)).fetchone()
+            if r:
+                from .messaging_bridge import emit_copy      # the outcome's card (CI-75), same transaction
+                emit_copy(t, copy_id=cid, status=status, organization_id=r["target_organization_id"], workspace_id=r["target_workspace_id"])
         return self.get(cid)
 
     def reset_stale(self, cid: str, *, error: str) -> dict:

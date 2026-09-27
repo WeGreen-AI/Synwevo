@@ -89,7 +89,13 @@ class Comments:
                "anchor": json.dumps(anchor, ensure_ascii=False) if anchor else None,
                "mentions": json.dumps(mentioned) if mentioned else None, "parent_id": parent_id or None,
                "resolved_at": None, "resolved_by": None, "created_at": now(), "edited_at": None, "deleted_at": None}
-        self.store.insert("project_comments", row)
+        with self.store.tx() as t:
+            self.store.insert("project_comments", row)
+            # The card for the project's conversation (CI-75) rides on the same transaction as the
+            # comment: stored together or not at all, keyed by the comment so a retry is one card.
+            from synwevo_core.messaging_bridge import emit_comment
+            emit_comment(t, comment_id=row["id"], project_id=pid, workspace_id=p["tenant"], author_id=author_id,
+                         mentions=mentioned, parent_id=parent_id or None)
         self._tell(p, row, mentioned, author_id)
         # Whoever has the project open sees the comment arrive (the project room's change frame)
         # and the activity feed attributes it. The body itself is not copied into the feed: it is

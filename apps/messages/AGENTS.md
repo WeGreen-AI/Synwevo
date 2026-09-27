@@ -10,6 +10,7 @@
 |---|---|
 | `synwevo_messages/app.py` | 工厂：`create_app()`（角色 `messages`）、`install()`（组装层挂载）、`install_legacy()`（账户角色的旧路径兜底） |
 | `synwevo_messages/routes.py` | HTTP：`/api/messaging/…` 会话、消息、表情回应、阅读位置、搜索、附件、链接卡片、举报提交、事件流 |
+| `synwevo_messages/bridge_routes.py` | 应用联动（CI-75）：`/api/messaging/objects/{app}/{kind}/{id}/conversation`、`/conversations/{cid}/object`，以及把 Docs 外发表变成卡片的 worker 的启动（规则、表与渲染在 `synwevo_core.messaging_bridge`；见 messaging.md §8） |
 | `web/` | 消息外壳（独立 Vite 构建，静态资源目录 `messages-assets/`） |
 | `tests/` | 这个模块自己的测试（会话直接由 `synwevo_core.sessions.Sessions` 铸造：`messages` 角色不提供 `/api/auth/login`） |
 

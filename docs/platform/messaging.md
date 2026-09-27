@@ -240,3 +240,105 @@ SSE `receipt`：`{type:'receipt', conversation_id, user_id, last_read_seq, at}`�
 ### 7.14 未做（如实）
 
 跨进程事件外发表（多 worker、Docs 进程写卡片的前提）；组织级回执/在线/typing 开关（`organization_messaging_policies`）；阻止；@所有人；置顶消息；收藏；投票；导出；消失消息；群申请/邀请链接；FTS 回填进度显示（本批建表时同步回填，库大时首次启动会慢一次）；`sweep_unused_attachments` 仍无调度器（另批）。
+## 8. 应用联动：Synwevo Docs ↔ Synwevo Message（CI-75）
+
+Docs 对象（工作空间范围）在消息（组织范围）里有一个**对象会话**；Docs 的真实事件经**外发表**变成会话里由应用身份发出的**卡片**；
+卡片**逐读者渲染**，会话成员身份从不授予对象访问权。实现：`synwevo_core/messaging_bridge.py`（表、规则、渲染、worker）、
+`apps/messages/synwevo_messages/bridge_routes.py`（接口与 worker 的启动）、Docs 侧的三处写入点（下文 8.2）。
+
+**决策记录。**
+
+| 项目 | 结论 |
+|---|---|
+| 问题与基线 | 消息与 Docs 互不知晓：项目的讨论只能建普通群再手贴链接（CI-31 链接卡片只解析正文里的 URL）；评论、任务结束、复制审批只进通知中心，没有「人在说什么」的地方；Docs 进程写不了消息（事件扇出在消息进程内存里）。 |
+| 成熟参考 | 第九轮研究基线 3.2「卡片与动作」：卡片按读者渲染、动作幂等、幂等键（IETF Idempotency-Key 草稿；企业微信模板卡片 `task_id` 唯一）；Slack/Teams 的「应用作为发送者」不冒充人。跨进程用 SQLite 外发表（3.4-6），不引入中间件。 |
+| 对比与选择 | (a) Docs 进程直接写 `messages` 行——绕过消息进程的扇出，开着的标签页看不到；(b) Docs 调消息 API——多源无 CORS，Docs 服务端拿不到用户的消息源会话，且会出现第二个写入源；(c) **本方案**：Docs 在业务事务里写 `messaging_outbox` 一行（确定性 `event_id`），消息进程的 worker 读表、按对象**当时**的状态生成卡片、写 `messages` + `message_cards`、按**当前活跃成员逐人**扇出。对象会话由消息源的接口按对象自身的授权创建；Docs 只把人送过去（`messagesHref`），不调用消息 API。保留：`messages.kind` 取值、`seq`/`client_id` 幂等、`joined_seq` 楼层、组织成员资格每次重查。 |
+| 预期变化 | Docs 项目页「更多」菜单与任务页顶栏出现「在消息中讨论」（仅当部署有 Synwevo Message）；点击到消息源 `/objects/{app}/{kind}/{id}`，外壳调接口后落到 `/c/{cid}`。评论、任务结束、复制申请决定/结果在对应对象会话里出现卡片（发送者显示为 Synwevo Docs，`sender_kind=app`）。 |
+| 边界与风险 | 卡片不产生任何 `conversation.*` 收件箱条目（事件自己的 `docs.*`/`copy.*` 通知不变）；不含 `mentions`；正文不含对象标题；读者无权 → 中性标题、无链接；链接只由注册表（Docs 地址）与 `SYNWEVO_ISSUER`（审批页）拼出。不做：协同编辑/保存/按键事件、分享或权限变更（Docs 今天没有这类事件）、事件自动建群。群成员上限沿用 200（超过即 `too_many_members`，不静默截断）。 |
+| 验收 | `apps/messages/tests/test_bridge.py`（5）、`apps/docs/tests/test_messaging_outbox.py`（2）、`tests/integration/test_messaging_bridge.py`（2，`all` 角色、真实 runner 与复制执行）；隔离实例四进程证明见 verification.md §16.75。 |
+| 发布与恢复 | schema **v24**：新表 `object_conversations`、`messaging_outbox`、`message_cards`、`app_accounts`，`conversations` 加可空列 `purpose`；全部 `CREATE IF NOT EXISTS` / 守卫 `ADD COLUMN`。旧代码读新库：新表闲置、`purpose` 被忽略、应用账户是一条普通 `users` 行（无口令，不会被登录）。回滚 SQL：`DROP TABLE object_conversations; DROP TABLE messaging_outbox; DROP TABLE message_cards; DROP TABLE app_accounts;`（卡片消息行保留为普通文本行）。无新环境变量；`all` 的组装层把 `/objects` 交给消息外壳。 |
+
+### 8.1 对象会话
+
+| 表 / 列 | 含义 |
+|---|---|
+| `object_conversations(app, kind, object_id, conversation_id UNIQUE, workspace_id, organization_id, created_by, created_at)` | 对象 ↔ 会话的稳定映射，主键 `(app, kind, object_id)`；`kind` 只有 `project` 与 `copy_request`（任务解析到它的项目） |
+| `conversations.purpose` | `object` = 为对象而存在的群；NULL = 普通群。叠加在 `kind='group'` 之上，不改 CHECK |
+
+规则（每条都有测试）：
+
+* **谁可打开对象，谁在会话里。** 项目：所在工作空间的活跃成员，且仍是该工作空间所属组织的成员（与 `docs_links.py` 同一判定）；复制申请：申请人，或持 `org.approvals.decide` 且管理目标工作空间的人（`ProjectCopies.can_decide`）。
+* **首次 `POST` 创建**：调用者成为群主，其余可打开对象者成为成员（`notify='mentions'`），群名取对象标题、`workspace_id` = 项目工作空间、`purpose='object'`；检查与创建在一个写事务里，两个「第一个」调用者只会得到一个群。
+* **后来者加入**：可打开对象但不在会话里的人 `POST` 即加入（`joined_seq` 从现在起，系统行「Synwevo Docs 把 X 加入了群聊」）。工作空间的新成员**不会**被自动加入，直到他们自己点「在消息中讨论」。
+* **失去对象访问权就离开会话。** 被移出工作空间（仍在组织）、工作空间或组织不再活跃的成员，由 worker 在每次卡片投递后与每 60 s 的巡检里关闭其成员资格（`left_at`，系统行 `removed` 带 `reason=object_access_lost`，行为人是应用身份）；群主失去访问权时群交给最早加入的剩余成员（先看管理员），无人剩余则归档。在被移除之前，他读到的卡片已是中性形态（8.3）。群名是创建时取的对象标题，此后是普通群名（群主可改）。组织移除仍走 `withdraw_from_organization`，即刻生效。
+* 个人工作空间的项目没有组织 → `409 no_organization`；对象不存在或调用者不可打开 → **`404 no_object`**（不是 403，响应里没有标题）；未知应用/种类 → 同样 404。
+
+| 接口（消息源 `/api/messaging`） | 权限 | 说明 |
+|---|---|---|
+| `GET /objects/{app}/{kind}/{id}/conversation` | 可打开对象且是会话成员 | `{object, conversation, created:false, joined:false}`；无会话 → `404 no_conversation` |
+| `POST /objects/{app}/{kind}/{id}/conversation` | 可打开对象 | 创建 / 加入 / 返回；`created`、`joined` 说明发生了什么；每人每小时 60 次；审计 `messaging.object.open` |
+| `GET /conversations/{cid}/object` | 会话成员 | 这个会话关于什么：可打开 → `{app, app_name, kind, id, title, href, workspace_id}`；不可打开 → `{app, app_name, kind, title: <中性>, degraded: true}`；普通会话 → 404 |
+
+`app` 今天只有 `docweave`（Synwevo Docs 的注册表 id）；`kind` ∈ `project` / `job` / `copy_request`。`object.href` 与卡片动作一样只由注册表拼出（8.3）。
+
+**外壳路径契约（消息外壳实现）。** `/objects/{app}/{kind}/{id}`（自己的源上；`all` 角色下在共享源同一路径，组装层已把 `/objects` 交给消息外壳）：
+页面 `POST /api/messaging/objects/{app}/{kind}/{id}/conversation`，成功即 `navigate('/c/' + conversation.id)`；`404` 显示「找不到该对象，或你没有权限查看它」并给「返回会话列表」；
+`409 no_organization` / `organization_unavailable` 显示服务端文案；`429` 显示重试时间。Docs 的入口生成的是 `messagesHref(state, {path: "/objects/<state.app_id>/project/<pid>", lang})`
+（跨源 = `<消息源>/auth/start?next=/objects/…&lang=…`，同源 = 纯路径），任务页用 `/objects/<app_id>/job/<jid>`（解析到项目会话）。群信息抽屉可用 `GET /conversations/{cid}/object` 显示关联对象与「在 Synwevo Docs 中打开」（`degraded` 时只显示中性标题）。
+
+### 8.2 外发表与 worker
+
+`messaging_outbox(id, app, event_id UNIQUE, kind, object_kind, object_id, workspace_id, organization_id, actor_id, payload JSON, created_at, delivered_at, attempts, last_error)`。
+`object_kind/object_id` 是**接收卡片的对象**（评论与任务 → 项目；复制事件 → 申请本身）；卡片关于什么在 `payload` 里。`payload` 只有 id，**不复制正文与标题**（投递时再读）。
+写入用 `INSERT OR IGNORE`：同一 `event_id` 重试永远只有一行、一张卡。
+
+| 事件 `kind` | 写入点（与业务变更同一事务） | `event_id` | 卡片 `object` / `state` |
+|---|---|---|---|
+| `docs.comment` | `synwevo_docs/comments.py::create`（含回复） | `comment:{cm_id}` | `comment` / `open` \| `resolved`（投递时读） |
+| `docs.job_finished` | `synwevo_docs/jobs.py::_finalize_tx`（与 `docs.job_finished` 通知同处；机器发起的任务也写） | `job:{jid}:{run_no}` | `job` / `completed` \| `completed_with_errors` \| `failed` \| `cancelled` |
+| `copy.decided` | `synwevo_core/project_copies.py::decide`（账户服务的审批路由与 Docs 的自批都经它） | `copy:{pc_id}:approved\|rejected` | `copy_request` / 同 status |
+| `copy.finished` | `synwevo_core/project_copies.py::finish`（Docs 的复制执行器调用） | `copy:{pc_id}:done\|failed\|stale` | `copy_request` / 同 status |
+
+不写外发表的：协同编辑的每次变更/保存、评论编辑与删除、任务开始/取消请求、项目改名/归档（它们要么是噪音，要么今天没有事件）。
+
+**worker**（`BridgeWorker`，在 `messages` / `all` 进程里由 `bridge_routes.install` 启动，登记于 `synwevo_core.workers`，随 lifespan 停止）：每 250 ms 读一次 `delivered_at IS NULL AND attempts<10` 的前 50 行（`all` 上被写入唤醒）；
+每行：无映射 → `delivered_at` 置位、`last_error=skipped_no_conversation`（**事件不建会话**）；会话已归档 → `skipped_archived`；对象已删 → `skipped_object_gone`；否则按对象当前状态生成卡片，
+在一个事务里写 `messages`（`kind='text'`，`sender_id` = 应用账户，`client_id` = 外发行 id，所以「已写消息但没来得及标记」的重试命中 `UNIQUE(conversation_id, sender_id, client_id)` 不会出第二张卡）、
+`message_cards`、标记投递；然后对**当前活跃成员逐人** `publish`（每人的事件里是他自己那份渲染）；最后对该会话做一次成员资格巡检（8.1）。异常 → `attempts+1`、`last_error`，下一拍重试，10 次后停止重试（行保留可查）。没有消息应用的部署（账户源兜底旧前缀）没有这个 worker：Docs 照常写外发表，行保持未投递；应用注册并启动后，worker 把它们按当时是否有对象会话投递或标为 `skipped_no_conversation`。
+
+### 8.3 卡片契约（外壳按此渲染）
+
+`_message_out` 对每条消息多出 `sender_kind: "user" | "app"`；卡片消息另有 `card`，形状：
+
+```json
+{"app": "docweave", "app_name": "Synwevo Docs", "title": "合同项目", "subtitle": "Ben Member: 这个字段取哪一列？",
+ "state": "open", "object": {"kind": "comment", "id": "cm_…"},
+ "actions": [{"label": "查看评论", "href": "https://<Docs 地址>/p/p_…?comment=cm_…"}]}
+```
+
+* **逐读者渲染**（`history`、`search` 与 worker 逐人 `publish` 的事件里）：读者可打开对象 → 完整卡片，`subtitle` 与动作 `label` 用读者语言（`users.locale`）；读者不可打开 → `{"app", "app_name", "state", "title": <中性标题>, "object": {"kind"}, "degraded": true}`，**没有 id、没有 subtitle、没有 actions**。中性标题：你没有权限查看的文档 / 你沒有權限查看的文件 / A document you cannot open。
+* **没有 `card` 字段**的情形：消息已删除；事件面向所有人而非某个读者（表情回应、编辑、删除引起的 `message_updated`）——外壳保留手头已渲染的卡片、只更新其余字段，需要时按 `seq` 重读 history。
+* `body` 是纯文本回退（列表预览、搜索、不认识卡片的外壳）：zh-Hans 源文，只说事件种类与状态，**不含对象标题**，如「Synwevo Docs · 生成任务已完成」；有 `card` 时外壳渲染卡片而不是 `body`。
+* `title` 与 `state` 是投递时读到的对象状态；之后改名不回写（像一条引用了当时名字的消息）。`state` 是稳定键，标签由外壳翻译：
+
+| `object.kind` | `state` | zh-Hans | zh-Hant | en |
+|---|---|---|---|---|
+| `job` | `completed` / `completed_with_errors` / `failed` / `cancelled` | 已完成 / 部分失败 / 失败 / 已取消 | 已完成 / 部分失敗 / 失敗 / 已取消 | Completed / Completed with errors / Failed / Cancelled |
+| `comment` | `open` / `resolved` | 待处理 / 已解决 | 待處理 / 已解決 | Open / Resolved |
+| `copy_request` | `approved` / `rejected` / `done` / `failed` / `stale` | 已批准 / 被拒绝 / 已复制 / 失败 / 需重新申请 | 已批准 / 被拒絕 / 已複製 / 失敗 / 需重新申請 | Approved / Rejected / Copied / Failed / Needs a new request |
+
+* 动作 `href` 由服务端拼：Docs 路径（`/p/{pid}`、`/p/{pid}/jobs/{jid}`、`/p/{pid}?comment={cid}`）接注册表里 Docs 的启动地址（`docs_links.docs_origin`），审批页接 `SYNWEVO_ISSUER`；地址未知时该动作**不出现**，不猜主机。动作标签：在 Synwevo Docs 中打开 / 查看任务 / 查看评论 / 查看审批（三语言在 `messaging_bridge.ACTION_LABELS`）。任务卡的 `subtitle` 是模板 `{done} 份成功，{failed} 份失败`（三语言）。
+* 卡片消息**没有 `mentions`**，不产生任何 `conversation.dm/mention/group` 收件箱条目，也不走 `Messaging.send`（因此无需 `silent` 参数——它们根本不经过 `recipients_for`/`_notify`）；它们照常计入未读。事件自己的 `docs.comment`/`docs.mention`/`docs.job_finished`/`copy.*` 通知不变：一个事件 = 一条收件箱项 + 订阅会话里的一张卡片。
+
+### 8.4 应用身份
+
+`app_accounts(user_id PK, app UNIQUE, created_at)`：每个应用一条 `users` 行（`status='active'`、`display_name` 取注册表显示名、邮箱 `docweave@apps.synwevo.invalid`——RFC 2606 保留域，永远没有邮箱），
+无口令、无个人工作空间、不是任何组织或工作空间的成员（所以不在目录、不能被私聊：`directory` 与 `open_dm` 按组织成员资格答 404）。`Sessions.create` 在铸造任何会话前查 `app_accounts`，
+命中即 `403 app_account`——无论口令、Passkey、邮件验证码还是外部身份，都到不了这一步之后。由消息进程启动时 `ensure_app_account` 幂等创建；`_message_out` 用 `sender_kind='app'` 标出。
+平台管理员的用户列表里能看到这条账户（名为 Synwevo Docs），这是事实呈现，不是漏洞；不要停用它（它不参与任何授权）。
+
+### 8.5 安全要点（对照 §十）
+
+逐读者渲染在读侧（`decorate_message`），不在写侧；引用（`_access`）不随卡片输出；`payload` 不参与拼链接；非成员一律 404；组织成员资格由 `Messaging._member` 每次重查；
+工作空间成员资格丢失 → 卡片即刻中性、≤ 60 s 或下一张卡片时离开会话（`test_a_reader_who_lost_the_object_sees_a_neutral_card_and_then_loses_the_conversation`、集成用例 bob 段）；
+限额：对象会话打开 60/人/小时；日志不记录正文与标题。

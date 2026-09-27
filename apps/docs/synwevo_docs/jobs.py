@@ -1793,7 +1793,24 @@ class JobService:
         c.execute("UPDATE job_runs SET status=?, finished_at=? WHERE job_id=? AND run_no=?", (status, t, jid, j["run_no"]))
         self._emit(c, jid, j["tenant"], f"job.{status}", {"status": status, "run_no": j["run_no"], "counts": counts})
         self._notify_finished(c, jid, j, status, counts)
+        self._bridge_finished(c, jid, j, status)
         return status
+
+    def _bridge_finished(self, c: sqlite3.Connection, jid: str, j, status: str) -> None:
+        """The card for the project's conversation in Synwevo Message (CI-75), queued on the
+        finalising connection so it lands with the status or not at all; one per run (`job:{jid}:{run_no}`),
+        so a re-finalised run never produces a second card. Unlike the inbox item it is not about
+        who asked — a machine-started run is still news to the people discussing the project."""
+        try:
+            row = c.execute("SELECT project_id, principal FROM jobs WHERE id=?", (jid,)).fetchone()
+            if not row:
+                return
+            desc = authority.loads(row["principal"]) or {}
+            from synwevo_core.messaging_bridge import emit_job_finished
+            emit_job_finished(c, job_id=jid, project_id=row["project_id"], workspace_id=j["tenant"], run_no=int(j["run_no"] or 1), status=status,
+                              actor_id=desc.get("user_id") if desc.get("kind") == "user" else None)
+        except Exception:  # noqa: BLE001 - the job's outcome must stand even if the bridge write fails
+            logging.getLogger("synwevo_docs.jobs").exception("messaging bridge event for %s failed", jid)
 
     _OUTCOME = {"completed": {"zh-Hans": "已完成", "zh-Hant": "已完成", "en": "finished"},
                 "completed_with_errors": {"zh-Hans": "部分失败", "zh-Hant": "部分失敗", "en": "finished with errors"},

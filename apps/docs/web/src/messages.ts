@@ -5907,4 +5907,8 @@ export const messages = {
     "en": "The copy is created once an administrator of the target workspace approves it and is then independent of the original; the original project stays unchanged.",
     "zh-Hant": "副本在目標工作空間的管理員批准後創建，之後獨立於原項目；原項目保持不變。"
   },
+  "在消息中讨论": {
+    "en": "Discuss in Messages",
+    "zh-Hant": "在訊息中討論"
+  },
 } satisfies Messages;

@@ -1740,6 +1740,20 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 `ui_e2e_institutional_mail`（其信封层 Content-Transfer-Encoding 断言改读 text 部分——邮件自 CI-45 起为 multipart/alternative，属既有陈旧）通过，0 CSP 违规 0 页面错误；截图 10 张。
 未运行：`ui_e2e_challenge.py`（需 Turnstile 测试密钥）、`ui_e2e_moderation/messaging`（消息批次另行验证）。主分支 cherry-pick 为 `a3ec6fe`：typecheck/build、`npm test --workspaces`（19+39+49+19）、
 四守卫、`ui_e2e_shell.py`（四源，Chromium 两宽度）、`test_shells`/契约 i18n/`browser_onboarding_round` 通过。
+### 16.77 Docs ↔ Message 应用联动（CI-75）
+
+**范围**：`synwevo_core/messaging_bridge.py`（v24：`object_conversations`、`messaging_outbox`、`message_cards`、`app_accounts`、`conversations.purpose`；对象会话规则、卡片逐读者渲染、`BridgeWorker`）、
+`apps/messages/synwevo_messages/bridge_routes.py`（`/api/messaging/objects/{app}/{kind}/{id}/conversation` GET/POST、`/conversations/{cid}/object`，worker 启动）、Docs 写入点（`comments.py::create`、`jobs.py::_finalize_tx`）与核心 `project_copies.py::decide/finish`、
+`messaging.py::_message_out` 的 `reader` 参数与 `sender_kind`/`card`（history/search 传读者）、`sessions.py::Sessions.create` 拒绝应用账户、Docs 项目页「更多」菜单与任务页顶栏的「在消息中讨论」（三语言）、`all` 组装层与消息应用的 `/objects` 外壳路径；记录 messaging.md §8、docs-copy.md §6。
+**验证**（worktree 基于 `c48f625`，worktree 自建 `.venv` 按 production.yml 的安装步骤；测试 `-o addopts=--import-mode=importlib`）：
+新增 `apps/messages/tests/test_bridge.py` 5 项（对象会话按对象授权：创建/同一会话/任务解析到项目/非空间成员 404 不泄露标题/未知应用与种类 404/个人空间 409/普通群无对象；卡片一次投递、逐读者语言、逐人扇出、计未读、无 `conversation.*` 条目、幂等（重发事件、丢失标记的重试、第二次运行是第二张卡）、反应事件不带卡片、搜索命中正文不命中标题、已删评论跳过；失去工作空间的读者先见中性卡片再被巡检移除、重加入从现在起、群主失去访问权后交接；复制申请由申请人与审批人讨论、决定与结果两张卡、动作链接指向账户源审批页与副本；应用身份无口令/无成员/不可铸造会话/不在目录/不可私聊、非法 emit 参数即拒绝），
+`apps/docs/tests/test_messaging_outbox.py` 2 项（评论与回复各一行、载荷不含正文与标题、重发不重复、评论与行同事务；真实 runner 一次运行一行 `job:{jid}:1`、机器发起也写），
+`tests/integration/test_messaging_bridge.py` 2 项（`all` 角色真实 Docs 路由：会话建立前的评论被标 `skipped_no_conversation` 且不建会话；回复 → 卡片（标题、摘要、`open`、链接）；真实生成任务 → `completed` 卡片与「2 份成功，0 份失败」；无 `conversation.*` 条目；bob 移出工作空间后两张卡片皆中性且无链接，巡检后 404，dan 仍读全卡；复制申请：申请人开会话、viewer 404、经账户服务审批路由（重认证）批准 → `approved` 卡片、Docs 复制执行 → `done` 卡片且副本链接在前、外发表两行、申请人收件箱只有 `copy.*`）。
+邻近套件复跑通过：`test_messages_origin.py` 5、`test_messaging_mail.py` 1、`test_project_comments.py`、`test_project_copy.py` 3、`test_docs_notifications.py` 2、`apps/messages/tests` 12、`test_messaging_reports.py` 2（`test_messages_origin` 需先 `npm run build`：账户源的 303 交接路由挂在账户外壳 dist 存在时）。
+全量 `pytest`（三套件，`-p no:cacheprovider`）：**2163 passed, 1 failed, 1 skipped**（650 s）；唯一失败是 `test_auth_http.py::test_bootstrap_requires_a_valid_token_and_runs_once` 的 `COUNT(*) FROM users == 0`——组装服务器启动时即创建 Synwevo Docs 的应用账户（`app_accounts`），不是失败引导留下的账户；断言改为只数非应用账户后该文件 22 项通过（skipped 是既有的 LICENSE 跳过）。
+守卫：`check_boundaries`（412 Python / 188 前端文件）、`check_brand`、`check_design`、`check_component_names`、`brand_assets --check` 通过；`npm run typecheck && npm run build` 四外壳通过；`npm test --workspaces --if-present` exit 0（UI 19、auth-client 39、Docs 49 含目录三语言校验、account-web）。
+**隔离实例**（worktree `.scratch/data`，`instance=test`，file 邮件，ports 32270/32269/32265/32268，`platform.py up --init` 四进程；scratchpad 脚本 `ui_e2e_bridge.py`，Chrome 153（channel）1280 群主 + 390 触摸成员，WebKit 26.6 经 `*.localhost` 代理同样两宽度）：两账户经邮件注册/邀请；群主在 Docs 源建项目、项目页「更多」→「在消息中讨论」→ 经消息源 `/auth/start` 落到 `message.localhost:32268/objects/docweave/project/<pid>`（截图 `bridge-{chrome,webkit}-docs-menu.png`、`-objects-landing.png`；外壳路由由外壳批次实现，本证明在该页面上以本源会话调用 `POST …/conversation`）→ 建群一次（群主+成员、`workspace_id`、`purpose=object`）→ `/c/<cid>` 实时；成员手机端经 SSO 进入；群主在 **Docs 源（`app` 进程）** 发评论 → **消息源（`messages` 进程）** 会话里出现卡片：POST 到 history 可见 0.23 s（两引擎），外发表 `delivered_at−created_at` 0.18 / 0.22 s、`attempts=1`、`last_error=NULL`，手机端经事件流显示「Synwevo Docs · 新评论」（现外壳按正文渲染，截图 `-card-{desktop,phone}.png`）；两账户都没有 `conversation.*` 收件箱条目；成员经账户服务 `members/{uid}/remove`（重认证 + 理由）移出工作空间后，同一张卡片对他变为中性（无标题、无链接），随后 worker 巡检把他移出会话（会话与 history 404）；两引擎 0 CSP 违规、0 页面错误。`platform.py down` 已停止实例。
+**未做 / 未验证**：消息外壳的 `/objects/…` 路由与卡片渲染（契约 §8.1/8.3，外壳批次）；分享/权限变更事件（Docs 今天没有）；卡片标题改名不回写；`SCHEMA_VERSION=24` 与并行批次可能撞号；群成员 200 上限下的大工作空间（`too_many_members`，不截断）；生产未部署。
 
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 

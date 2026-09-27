@@ -198,7 +198,9 @@ def test_bootstrap_requires_a_valid_token_and_runs_once(env):
     bad = c.post("/api/auth/bootstrap", json={"token": "made-up", "email": "root@example.com",
                                               "password": PW})
     assert bad.status_code == 403
-    assert ident.store.one("SELECT COUNT(*) AS n FROM users")["n"] == 0, "失败的引导不能留下账户"
+    # Person accounts only: the composed server creates Synwevo Docs' application identity at
+    # start-up (CI-75, `app_accounts`), which is not something a bootstrap could have left behind.
+    assert ident.store.one("SELECT COUNT(*) AS n FROM users WHERE id NOT IN (SELECT user_id FROM app_accounts)")["n"] == 0, "失败的引导不能留下账户"
 
     raw = ident.create_bootstrap_token()
     ok = c.post("/api/auth/bootstrap", json={"token": raw, "email": "root@example.com",

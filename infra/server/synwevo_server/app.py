@@ -12,8 +12,9 @@ ACCOUNT_SHELL_PATHS = ("/login", "/register", "/verify-email", "/onboarding", "/
                        "/logged-out", "/admin")
 #: On `all` the messages shell shares the origin with the workbench and the account pages: it owns
 #: the conversation list (`/messages`, the address it had on the account origin) and the thread
-#: deep links (`/c/<cid>`, the address it has on its own origin).
-MESSAGES_SHELL_PATHS = ("/messages", "/c")
+#: deep links (`/c/<cid>`, the address it has on its own origin) and the object entry
+#: (`/objects/{app}/{kind}/{id}`, the address Docs' 「在消息中讨论」 sends people to; CI-75).
+MESSAGES_SHELL_PATHS = ("/messages", "/c", "/objects")
 
 TITLES = {"accounts": "Synwevo Account", "portal": "Synwevo Workspace", "messages": "Synwevo Message"}
 
@@ -113,7 +114,7 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
         # roles learn where conversations live (`messages_launch_url`).
         from synwevo_messages import app as messages_app
         from synwevo_core.apps import bootstrap_messages_app
-        messages_app.install(api, plat, notifier=getattr(api.state, "notifier", None))
+        messages_app.install(api, plat, notifier=getattr(api.state, "notifier", None), start_jobs=start_jobs)
         bootstrap_messages_app(plat.store, plat.identity, role=role)
     if role == "accounts":
         # A deployment without the messages application keeps the account origin's former

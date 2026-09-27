@@ -113,6 +113,14 @@ class Sessions:
         caller, a cookie with an expiry instead of a browser-session cookie. It is ignored for
         platform administrators, whose idle limit stays short by policy.
         """
+        from .errors import ServiceError
+        from .messaging_bridge import is_app_account
+        if is_app_account(self.store, user_id):
+            # An application identity (the sender of Synwevo Docs' cards, CI-75) is a `users` row
+            # so its name resolves like anyone's, but it is not a person: no password, no passkey,
+            # no mailbox, and — decided here, at the one place sessions are minted — no session,
+            # whatever route asked for one.
+            raise ServiceError(403, "app_account", "应用身份不能登录")
         raw = secrets.token_urlsafe(32)
         sid = _digest(raw)
         ts = now()

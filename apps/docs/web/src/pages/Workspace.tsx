@@ -4,7 +4,7 @@ import { serverText, issueText, diagnosticText } from "../lib/presentation";
 import { t as tr, useI18n } from "@synwevo/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ApiError, del, get, patch, post, put, qs, useSession, workspaceContext } from "@synwevo/auth-client";
+import { ApiError, del, get, messagesHref, patch, post, put, qs, useSession, workspaceContext } from "@synwevo/auth-client";
 import { initialState, openRoom, type Focus, type Room, type RoomState } from "../lib/collab";
 import ProjectPresence, { ActivityDrawer, changeText } from "../components/ProjectPresence";
 import { describeSelection, mappingSlots, slotPos } from "../lib/describe";
@@ -834,6 +834,15 @@ function Workspace() {
             { label: tr("生成脱敏副本…"), onClick: () => setDialog({ kind: "desensitize" }), disabled: !sources.length },
           ]),
           { label: tr("评论…"), onClick: () => setComments(null) },
+          // The project's discussion lives in Synwevo Message (CI-75): the messages origin resolves
+          // `/objects/{app}/{kind}/{id}` to the project's conversation, creating it on first use.
+          // Docs never calls the messages API itself (one write source, no CORS); it only sends the
+          // person there through that origin's sign-in start. Offered only when the deployment has
+          // the application — the fallback shell on the account origin has no such route.
+          ...(session.state?.messages_url && session.state?.app_id ? [{
+            label: tr("在消息中讨论"),
+            onClick: () => window.location.assign(messagesHref(session.state, { path: `/objects/${session.state!.app_id}/project/${pid}`, lang: locale })),
+          }] : []),
           { label: tr("活动记录…"), onClick: () => setActivityOpen(true) },
           { label: tr("回归用例"), onClick: () => nav("/regression") },
           { label: tr("格式能力矩阵"), onClick: () => window.open("/capabilities", "_blank") },

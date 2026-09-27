@@ -108,3 +108,11 @@
   `tr()` 字面量都有资源、守卫）、`scripts/check_component_names.py`、`check_design.py`、`check_brand.py`，
   以及 `apps/docs/scripts/ui_e2e.py`、`ui_e2e_mobile.py`（Chromium 与 WebKit）在本工作副本的构建上
   通过；结果记录在提交说明中。
+
+## 6. CI-75 新增（应用联动入口）
+
+| 页面 | 新表达（zh-Hans / zh-Hant / en） | 位置与条件 | 理由 |
+|---|---|---|---|
+| 项目页「更多」菜单、任务页顶栏 | 在消息中讨论 / 在訊息中討論 / Discuss in Messages | 只在 `state.messages_url` 存在（部署有 Synwevo Message）时出现；目标是消息源 `/objects/<app_id>/project/<pid>`（任务页 `/objects/<app_id>/job/<jid>`），经 `messagesHref` 一跳登录 | 规则 5：只在能真的到达一个地方时才给按钮；动词说去哪、做什么，不解释机制 |
+
+`messages.ts` 键总数 1480 → 1481（三语言同增）。卡片本身由消息外壳渲染，其状态键与标签表在 `docs/platform/messaging.md` §8.3。

@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -836,8 +836,13 @@ class Store:
         # the attributed project activity behind the project page's live updates.
         from .docs_collab import COLUMNS as DOCS_COLLAB_COLUMNS, SCHEMA as DOCS_COLLAB_SCHEMA
         c.executescript(DOCS_COLLAB_SCHEMA)
+        # v24: the Docs ↔ Message bridge — object conversations, the outbox Docs writes in its own
+        # transactions, per-message cards, application accounts (CI-75). Rollback: the tables sit
+        # idle under older code; `conversations.purpose` is ignored by it.
+        from .messaging_bridge import COLUMNS as MESSAGING_BRIDGE_COLUMNS, SCHEMA as MESSAGING_BRIDGE_SCHEMA
+        c.executescript(MESSAGING_BRIDGE_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

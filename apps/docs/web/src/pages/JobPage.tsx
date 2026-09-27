@@ -5,7 +5,7 @@ import { fixTargetOf } from "../components/GenerateDialog";
 import { t as tr, useI18n, LanguageMenu } from "@synwevo/ui";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, get, post, qs, useSession } from "@synwevo/auth-client";
+import { ApiError, get, messagesHref, post, qs, useSession } from "@synwevo/auth-client";
 import { fmtSize, fmtTime, useToast } from "@synwevo/ui";
 
 import { itemStatus, jobStatus } from "../lib/status";
@@ -23,7 +23,7 @@ export default function JobPage() {
 }
 
 function Job() {
-  useI18n();
+  const { locale } = useI18n();
   const { pid, jid } = useParams();
   const toast = useToast();
   const session = useSession();
@@ -139,6 +139,12 @@ function Job() {
         <Link to={`/p/${pid}`} className="btn ghost sm">{tr("← 返回项目")}</Link>
         <span className="grow ellipsis"><b>{tr("生成任务")}</b> <span className="muted small mono">{job.id}</span></span>
         <span className={`badge ${stKind}`} role="status">{planning ? tr("规划中") : stText}</span>
+        {/* The job is discussed in its project's conversation in Synwevo Message (CI-75); the
+            messages origin resolves `/objects/{app}/job/{id}` to that conversation. Only offered
+            when the deployment has the application. */}
+        {session.state?.messages_url && session.state?.app_id && (
+          <a className="btn ghost sm" href={messagesHref(session.state, { path: `/objects/${session.state.app_id}/job/${jid}`, lang: locale })}>{tr("在消息中讨论")}</a>
+        )}
       </div>
       <div style={{ overflow: "auto", flex: 1 }}>
         <div className="home" style={{ paddingTop: 16 }}>

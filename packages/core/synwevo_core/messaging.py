@@ -230,7 +230,6 @@ class Messaging:
         #: The process's in-memory presence registry; None when this process serves no heartbeat
         #: (the account service's moderation routes) — then nobody is shown any state.
         self.presence = presence
-        self._cards_table: bool | None = None
         self._search_info: dict | None = None
 
     # ------------------------------------------------------------------ guards
@@ -791,20 +790,12 @@ class Messaging:
                 total += n; conversations += 1
         return {"unread": total, "conversations": conversations}
 
-    def _card_for(self, mid: str):
-        """A card another process bound to this message (`message_cards`, written by the Docs
-        bridge). Tolerant of the table not existing: this build may predate it."""
-        if self._cards_table is False:
-            return None
-        if self._cards_table is None:
-            self._cards_table = bool(self.store.one("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='message_cards'"))
-            if not self._cards_table:
-                return None
-        row = self.store.one("SELECT card FROM message_cards WHERE message_id=?", (mid,))
-        return _load(row["card"]) if row else None
-
     def _message_out(self, m: dict, reactions: dict | None = None, names: dict | None = None, *, viewer: str | None = None,
                      source_visible: bool | None = None) -> dict:
+        """`viewer` is who this rendering is for: read receipts, recall/forward state and a card
+        sent by an application (CI-75) are rendered per viewer — the full card for someone who may
+        open the object, a neutral one otherwise — and the card is left out when there is no viewer
+        (an event fanned out to everyone)."""
         names = names if names is not None else {}
         if m["sender_id"] not in names:
             names[m["sender_id"]] = self._name(m["sender_id"])
@@ -842,9 +833,8 @@ class Messaging:
             if r:
                 out["reply"] = {"id": r["id"], "seq": r["seq"], "sender": self._name(r["sender_id"]), "body": "" if r["deleted_at"] else r["body"][:160],
                                 "deleted": bool(r["deleted_at"]), "recalled": bool(r.get("recalled_at"))}
-        card = self._card_for(m["id"]) if not gone else None
-        if card is not None:
-            out["card"] = card
+        from .messaging_bridge import decorate_message
+        decorate_message(self.store, self.ident, out, None if gone else viewer)   # sender_kind, and the viewer's card
         return out
 
     @staticmethod

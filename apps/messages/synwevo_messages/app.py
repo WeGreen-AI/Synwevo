@@ -18,8 +18,9 @@ from synwevo_core.notifications import Notifier
 
 ASSETS_DIR = "messages-assets"
 #: The paths the messages shell owns when it shares an origin with the other shells (role `all`):
-#: the conversation list and the thread deep links. On its own origin it serves everything.
-SHELL_PATHS = ("/messages", "/c")
+#: the conversation list, the thread deep links and the object entry (`/objects/{app}/{kind}/{id}`,
+#: CI-75). On its own origin it serves everything.
+SHELL_PATHS = ("/messages", "/c", "/objects")
 
 
 def web_dist() -> Path:
@@ -27,14 +28,16 @@ def web_dist() -> Path:
                 or Path(__file__).resolve().parents[1] / "web" / "dist")
 
 
-def install(api: FastAPI, plat: Platform, *, notifier: Notifier | None = None) -> APIRouter:
+def install(api: FastAPI, plat: Platform, *, notifier: Notifier | None = None, start_jobs: bool = True) -> APIRouter:
     """Mount the messaging API under `/api/messaging` on an application the caller scaffolded.
 
     Returns the router: its `hub` (the in-process event fan-out) and `messaging` (the service)
     are what the composer and the tests reach for. `api.state.notifier` is created here when the
     caller did not bring one (the account service brings its own, with the mail dispatcher).
+    `start_jobs=False` builds the bridge worker (CI-75) without its thread; tests drive it.
     """
     from .routes import build_router
+    from . import bridge_routes
     if notifier is None:
         notifier = getattr(api.state, "notifier", None) or Notifier(plat.store)
         api.state.notifier = notifier
@@ -44,6 +47,7 @@ def install(api: FastAPI, plat: Platform, *, notifier: Notifier | None = None) -
     api.state.messaging_presence = router.presence
     api.state.messaging_metrics = router.metrics_snapshot
     api.include_router(router)
+    bridge_routes.install(api, plat, router, start_jobs=start_jobs)
     return router
 
 
@@ -102,7 +106,7 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     api.state.sessions = plat.sessions
     role = env.get("ROLE") or "messages"
     install_platform(api, plat, role=role)
-    install(api, plat)
+    install(api, plat, start_jobs=start_jobs)
     install_probes(api, plat.store, degradable={"malware_scanner": scanner_health, "messaging": lambda: messaging_health(api)})
     bootstrap_messages_app(plat.store, plat.identity, role=role)
     api.include_router(build_session_router(plat.identity, plat.sessions, plat.audit))
