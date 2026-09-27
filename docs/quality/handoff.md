@@ -113,7 +113,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-60 | 依赖方的「退出登录」结束平台会话：Docs/门户退出走账户服务登出并回到本源 `/signed-out` 页，不再只撤本应用会话后落到一句不实的「统一登录已退出」 | 已部署（33c3e1f，run 36318459107，backup 20260927T123955Z）；单元 +1、集成 +1，`ui_e2e_shell.py` Chromium/WebKit 桌面段通过；线上只读核对两源 `/signed-out` 200、Docs 块携带新页 | 门户内退出按钮见 CI-61；部署后随线上退出核对 |
 | CI-61 | 门户页头加「退出登录」（桌面文字按钮 / 手机账户菜单项），走 CI-60 的平台级退出 | 已部署（e900774，run 36320325701，backup 20260927T131414Z）；`ui_e2e_shell.py` Chromium/WebKit 手机段通过 | 线上行为核对随账户持有人下次在门户退出 |
 | CI-62 | Docs「← Synwevo」与账户外壳品牌链接回到工作空间（门户 `/auth/start` 交接），不再回公开首页 | 已部署（41e6f4f，run 36323605133，backup 20260927T140828Z）；`ui_e2e_shell.py` Chromium/WebKit 桌面段通过 | 线上行为核对随账户持有人下次点击 |
-| CI-63 | 门户 `/workspace` 页头加「消息」入口（共享 `MessagesLink`，带未读徽标） | 已实现，`ui_e2e_shell.py` Chromium/WebKit 两宽度通过，待部署 | 消息独立成应用（message.* 域名）后入口目标改为注册表地址（第九轮） |
+| CI-63 | 门户 `/workspace` 页头加「消息」入口（共享 `MessagesLink`，带未读徽标） | 已部署（0c43018，run 36328222361） | 消息独立成应用（message.* 域名）后入口目标改为注册表地址（第九轮） |
 | CI-64 | 消息未读徽标在门户/Docs 源真实生效（`unread-count` 移入共享会话路由） | 已实现，集成 +1，浏览器验证中/待部署 | — |
 | CI-65 | Accounts 导航：顶栏常驻「返回工作空间」与来源应用链接、子页面真实父级链接、组织页改用账户外壳 | 已实现，`ui_e2e_shell.py` 两引擎两宽度通过，待部署 | 域名切换后目标随 `PORTAL_URL` 变为 synwevo.com/workspace |
 | CI-67 | 域名迁移准备：compose/nginx 参考、旧主机 308、`workplace.synwevo.com` 别名、CI 健康检查变量、运行手册 | 仓库侧完成（待推送）；线上切换待运维按 `docs/platform/domain-migration.md` §3 执行 | 切换后：设仓库变量 `SYNWEVO_PUBLIC_HOSTS`、受控账户核对登录/Docs/账户返回/Passkey 重登记 |
