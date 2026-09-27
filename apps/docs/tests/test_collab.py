@@ -333,6 +333,19 @@ def test_a_save_from_outside_the_room_replaces_the_live_document_while_people_ar
     a.close()
 
 
+def _changes_when(world, tid: str, ready, *, timeout_s: float = 5.0) -> list[dict]:
+    """The change log once `ready(rows)` holds (or after `timeout_s`, so a wrong expectation still
+    fails on the rows themselves rather than on a sleep that a loaded machine outgrows)."""
+    reader = world["client_for"](world["viewer"] if "viewer" in world else world["owner"])
+    deadline = time.time() + timeout_s
+    rows: list[dict] = []
+    while True:
+        rows = reader.get(f"/api/templates/{tid}/collab/changes").json()["items"]
+        if ready(rows) or time.time() > deadline:
+            return rows
+        time.sleep(0.05)
+
+
 # ------------------------------------------------------------------ attribution
 def test_changes_are_attributed_per_block_and_consecutive_typing_coalesces(world):
     tid = world["tid"]
@@ -345,8 +358,9 @@ def test_changes_are_attributed_per_block_and_consecutive_typing_coalesces(world
     b.recv(want="update")
     b.add_paragraph("备注")
     a.recv(want="update")
-    time.sleep(0.3)
-    items = world["client_for"](world["viewer"]).get(f"/api/templates/{tid}/collab/changes").json()["items"]
+    # Change rows are recorded after each update on a worker thread; under a loaded machine the
+    # second keystroke's row can land after a fixed 0.3 s, so wait for the state itself (CI-77).
+    items = _changes_when(world, tid, lambda rows: len(rows) == 2 and any(r["count"] == 2 for r in rows))
     kinds = [(i["user"]["name"], i["kind"], i["part"], i["block_no"], i["excerpt"], i["count"]) for i in items]
     assert kinds[0] == ("Editor", "insert", "body", 1, "备注", 1)
     assert kinds[1] == ("Owner", "edit", "body", 0, "客户：张三【客户】", 2), "two keystrokes in one block are one entry"
@@ -524,9 +538,7 @@ def test_the_change_log_keeps_what_a_block_said_before_an_edit(world):
     time.sleep(0.05)
     a.append_text("第二次")                                    # coalesced into the same row
     a.add_paragraph("新段落")
-    time.sleep(0.3)
-    c = world["client_for"](world["owner"])
-    items = c.get(f"/api/templates/{tid}/collab/changes").json()["items"]
+    items = _changes_when(world, tid, lambda rows: any(r["kind"] == "edit" and r["count"] == 2 for r in rows) and any(r["kind"] == "insert" for r in rows))
     edit = next(it for it in items if it["kind"] == "edit")
     ins = next(it for it in items if it["kind"] == "insert")
     assert edit["before"] == "客户：【客户】" and edit["excerpt"] == "客户：第一次第二次【客户】" and edit["count"] == 2   # the field atom reads as 【name】
