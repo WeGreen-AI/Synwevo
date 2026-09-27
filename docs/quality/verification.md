@@ -1585,7 +1585,7 @@ Chromium 让后发的导航取代仍在挂起的第一个，于是落到 `/login
 `test_sso_chain.py` +1（匿名 everywhere → 200 + 登出地址 → 最终 `/signed-out` 且中央会话结束；匿名普通变体 `{ok, scope: app}`），文件通过；
 `npm run typecheck && npm run build`、四项守卫、`npm test --workspaces` 通过；`ui_e2e_shell.py` 桌面段新增：Docs 点「退出登录」→ Docs `/signed-out` 页可见「已退出」、
 Docs 与账户服务的 `/api/auth/me` 都 401、「重新登录」到账户服务登录页并要求口令——隔离实例复跑 **Chromium 与 WebKit 都通过**（其余外壳断言与 CI-58 的落点断言不变，0 CSP 违规）。
-**发布与恢复**：共享 auth-client + 两个依赖方外壳 + core 匿名路径表；无 schema 变化，回滚即上一镜像。
+**发布与恢复**：共享 auth-client + 两个依赖方外壳 + core 匿名路径表；无 schema 变化，回滚即上一镜像。**已部署**：`33c3e1f`，run 36318459107（verify 与 deploy 成功，backup 20260927T123955Z）；线上只读核对见 deployment.md。
 
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
