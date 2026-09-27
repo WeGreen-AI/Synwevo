@@ -16,8 +16,12 @@ the phone's action menu (touch-sized), an Enter pressed while an input method is
 sending, attachment upload progress with cancel and retry, a search result opening its thread at
 that message with a way back to the latest, list ↔ thread ↔ info on the phone with real back
 controls, the reduced-motion mode, keyboard-only use of the message actions menu, and the
-`/objects/…` route's "not found" page. Zero console errors and page errors are asserted (a 401
-from an anonymous probe is the one exclusion).
+`/objects/…` route's "not found" page. CI-74 (the contract): the peer's presence from the
+phone's heartbeat, the two mutual settings and a read receipt on the owner's message, a typing
+hint that expires, a recall inside the window, delete-for-me with its undo, forwarding to another
+conversation, mark-as-unread from the list, and a voice message recorded with a fake microphone
+(Chromium). Zero console errors and page errors are asserted (a 401 from an anonymous probe is
+the one exclusion).
 
     .venv/bin/python services/identity/scripts/ui_e2e_messaging.py http://accounts.localhost:31770 \
         http://message.localhost:31768 <mail dir> [--webkit] [--shots DIR]
@@ -131,6 +135,12 @@ def watch(page: Page, violations: list[str], tag: str) -> None:
             if hit and hit.group(1) in EXPECTED_STATUSES:
                 resource_logs.append(f"{tag} {hit.group(1)}")
                 return
+            # the platform's Permissions-Policy header (`microphone=()`) makes the browser refuse the
+            # microphone and say so in the console; the shell reports the refusal to the person.
+            # Recorded as the environment fact it is, not counted as a shell defect.
+            if "Permissions policy violation: microphone" in m.text:
+                resource_logs.append(f"{tag} permissions-policy:microphone")
+                return
             violations.append(f"{tag} console: {m.text[:160]}")
         if "Content Security Policy" in m.text:
             violations.append(f"{tag} csp: {m.text[:160]}")
@@ -186,7 +196,7 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     tag = secrets.token_hex(3)
     owner, member = f"owner.{tag}@example.test", f"member.{tag}@example.test"
     extra = ctx_extra or {}
-    a = browser.new_context(viewport={"width": 1280, "height": 800}, locale="zh-CN", **extra)
+    a = browser.new_context(viewport={"width": 1280, "height": 800}, locale="zh-CN", **({"permissions": ["microphone"]} if engine == "chromium" else {}), **extra)
     b = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True, locale="zh-CN", **extra)
     pa, pb = a.new_page(), b.new_page()
     violations: list[str] = []
@@ -251,6 +261,39 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     no_overflow(pb, "phone thread")
     notes.append(f"{engine}: the DM reached the member's list (preview, time, badge 1) and the platform bar over the stream; the thread opened with the unread divider")
 
+    # ---- presence: the phone's visible page heartbeats, so the owner sees the member online (§7.3)
+    expect(pa.locator(".msg-thread-h .msg-presence-text")).to_have_text(re.compile("在线"), timeout=20000)
+    expect(pa.locator(".msg-thread-h .msg-presence.online")).to_be_visible()
+    notes.append(f"{engine}: the member's presence (from the phone's heartbeat) showed as 在线 in the owner's thread header")
+
+    # ---- read receipts are mutual and off by default: both turn them on, then the member's read
+    #      position becomes a 已读 mark on the owner's own message (§7.2, §7.4)
+    expect(pa.locator(".msg-receipt")).to_have_count(0)
+    pa.get_by_role("button", name=re.compile("^消息设置$")).click()
+    dlg = pa.get_by_role("dialog", name=re.compile("消息设置"))
+    dlg.get_by_role("switch", name=re.compile("已读回执")).check()
+    dlg.get_by_role("button", name=re.compile("^保存$")).click()
+    expect(dlg).to_have_count(0)
+    pb.get_by_role("button", name=re.compile("^返回会话列表$")).click()
+    pb.get_by_role("button", name=re.compile("^消息设置$")).click()
+    dlg = pb.get_by_role("dialog", name=re.compile("消息设置"))
+    dlg.get_by_role("switch", name=re.compile("已读回执")).check()
+    dlg.get_by_role("button", name=re.compile("^保存$")).click()
+    expect(dlg).to_have_count(0)
+    send_text(pa, f"read me {tag}")
+    pb.locator(".msg-conv").first.click()
+    expect(pb.locator(".msg-thread")).to_contain_text(f"read me {tag}")
+    expect(pa.locator(".msg-row.own").last.locator(".msg-receipt")).to_have_text(re.compile("已读"), timeout=15000)
+    assert "已送达" not in pa.locator(".msg-thread").inner_text(), "no 'delivered' anywhere"
+    notes.append(f"{engine}: with receipts on for both, the member reading the thread put a 已读 mark on the owner's latest message; nothing says 已送达")
+
+    # ---- typing: the phone's composer sends a hint; the owner sees it and it goes away (§7.3)
+    composer(pb).fill(f"typing {tag}")
+    expect(pa.locator(".msg-typing")).to_contain_text(re.compile(f"Member {tag}.*正在输入"), timeout=10000)
+    composer(pb).fill("")
+    expect(pa.locator(".msg-typing")).to_have_count(0, timeout=12000)
+    notes.append(f"{engine}: '{{who}} 正在输入…' appeared on the owner's side while the member typed and cleared after the idle stop")
+
     # ---- reply and react from the phone through the touch-sized actions menu (no hover)
     row0 = pb.locator(".msg-row").first
     assert row0.locator(".msg-act-more").evaluate("el => getComputedStyle(el).opacity") == "1", "the ⋯ control must be visible without hover on touch"
@@ -294,6 +337,28 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     pb.keyboard.press("Escape")
     expect(viewer).to_have_count(0)
     notes.append(f"{engine}: an image attachment was scanned, stored once by content hash, rendered inline for the member (image/png, hash header) and opened in the viewer; Escape closed it")
+
+    # ---- a voice message (§7.8): recorded with the browser's recorder from a fake microphone
+    #      (Chromium launch flags); a browser that cannot record says so honestly
+    pa.get_by_role("button", name=re.compile("^语音消息$")).click()
+    recording = pa.locator(".msg-recording")
+    try:
+        recording.wait_for(state="visible", timeout=5000)
+        pa.wait_for_timeout(1500)
+        recording.get_by_role("button", name=re.compile("停止并发送")).click()
+        voice = pa.locator(".msg-row.own .msg-voice").last
+        expect(voice).to_be_visible(timeout=20000)
+        expect(voice.locator("audio")).to_have_attribute("src", re.compile(r"/attachments/att_.*inline=1"))
+        expect(voice.locator(".tiny")).to_have_text(re.compile(r"^\d+:\d\d$"))
+        expect(pb.locator(".msg-voice").last).to_be_visible(timeout=15000)
+        notes.append(f"{engine}: a voice message recorded from the fake microphone was uploaded with its measured duration, sent by itself, and plays inline for both")
+    except Exception:
+        # the platform's Permissions-Policy header currently says `microphone=()` on every origin,
+        # so the browser refuses the microphone; the shell says so instead of pretending
+        toast = pa.locator(".toast").last
+        expect(toast).to_contain_text(re.compile("不支持录音|无法使用麦克风"), timeout=5000)
+        why = toast.inner_text().split("\n")[0]
+        notes.append(f"{engine}: recording could not start ({why}); the shell reported the refusal honestly — allowing microphone=(self) on the messages origin is a server header change")
 
     # ---- attachment upload: real progress, cancel while in flight, retry after a refusal
     held: list = []
@@ -341,6 +406,37 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     expect(pa.locator(".msg-row.own").last).to_contain_text(ime_text)
     expect(pa.locator(".msg-pending")).to_have_count(0, timeout=10000)
     notes.append(f"{engine}: Enter while composing kept the text in the field; Enter after the composition ended sent it")
+
+    # ---- recall (sender, inside the window) leaves a named marker for everyone (§7.6)
+    send_text(pa, f"recall me {tag}")
+    row = pa.locator(".msg-row.own").last
+    message_menu(pa, row, "^撤回$")
+    confirm = pa.get_by_role("alertdialog")
+    confirm.get_by_role("button", name=re.compile("^撤回$")).click()
+    expect(pa.locator(".msg-system.marker").last).to_have_text(re.compile("你撤回了一条消息"), timeout=15000)
+    expect(pb.locator(".msg-system.marker").last).to_have_text(re.compile(f"Owner {tag} 撤回了一条消息"), timeout=15000)
+    assert not pa.locator(".msg-row", has_text=f"recall me {tag}").count()
+    notes.append(f"{engine}: a recall inside the window replaced the message by '你撤回了一条消息' for the owner and 'Owner 撤回了一条消息' for the member")
+
+    # ---- delete for me: the row goes for this reader only, with a five-second undo (§7.6)
+    #      (rows are matched by their own body: the member's reply quotes the same text)
+    hello_b = pb.locator(".msg-row", has=pb.locator(".msg-body", has_text=f"hello from owner {tag}"))
+    hello_a = pa.locator(".msg-row", has=pa.locator(".msg-body", has_text=f"hello from owner {tag}"))
+    message_menu(pb, hello_b.first, "^删除（仅自己）$")
+    expect(hello_b).to_have_count(0)
+    undo = pb.locator(".msg-undo")
+    expect(undo).to_be_visible()
+    undo.get_by_role("button", name=re.compile("^撤销$")).click()
+    expect(hello_b).to_have_count(1, timeout=10000)
+    expect(undo).to_have_count(0)
+    message_menu(pb, hello_b.first, "^删除（仅自己）$")
+    expect(hello_b).to_have_count(0)
+    r = pb.request.get(f"{messages}/api/messaging/conversations/{dm_id}/messages?limit=200")
+    assert all(f"hello from owner {tag}" != m["body"] for m in r.json()["items"]), "hidden for the member"
+    r = pa.request.get(f"{messages}/api/messaging/conversations/{dm_id}/messages?limit=200")
+    assert any(f"hello from owner {tag}" == m["body"] for m in r.json()["items"]), "still there for the owner"
+    expect(hello_a).to_have_count(1)
+    notes.append(f"{engine}: delete-for-me removed the row on the phone, the undo put it back, a second delete stayed hidden for the member only (history 200 without it) while the owner still has it")
 
     # ---- the emoji picker inserts at the caret; the composer grows with the text
     h0 = composer(pa).evaluate("el => el.offsetHeight")
@@ -482,6 +578,53 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     pb.get_by_role("button", name=re.compile("^返回会话列表$")).click()
     pb.locator(".msg-conv", has_text=f"Launch {tag}").click()
     expect(pb.locator(".msg-thread")).to_contain_text(f"welcome to the group {tag}")
+    # ---- mark as unread from the list's row menu (§7.5): the row shows 1 until it is opened
+    pb.get_by_role("button", name=re.compile("^返回会话列表$")).click()
+    # the row named after the owner (the group's preview also mentions the owner, so match the name)
+    dm_row = pb.locator(".msg-conv-wrap", has=pb.locator(".msg-conv-name", has_text=f"Owner {tag}")).first
+    expect(dm_row.locator(".msg-unread")).to_have_count(0)
+    # everything has been read at this point (the group was read on leaving it): the badge settles to none
+    expect(pb.locator("a.bell", has_text=re.compile("消息"))).not_to_contain_text(re.compile(r"\d"), timeout=10000)
+    # a long press on the row (the phone gesture: pointer held ≥ 500 ms) opens its menu
+    dm_row.locator(".msg-conv").dispatch_event("pointerdown", {"pointerType": "touch", "isPrimary": True})
+    pb.wait_for_timeout(750)
+    dm_row.locator(".msg-conv").dispatch_event("pointerup", {"pointerType": "touch"})
+    item = pb.get_by_role("menuitem", name=re.compile("^标为未读$"))
+    try:
+        item.wait_for(state="visible", timeout=3000)
+        gesture = "long press"
+    except Exception:
+        diag = pb.evaluate("() => ({ menus: document.querySelectorAll('[role=menu]').length, active: document.querySelectorAll('.msg-conv-wrap.active').length, rows: [...document.querySelectorAll('.msg-conv-name')].map(e => e.textContent) })")
+        box = dm_row.bounding_box()
+        pb.mouse.click(box["x"] + 40, box["y"] + 20, button="right")
+        item.wait_for(state="visible", timeout=3000)
+        gesture = f"right click (long press left {diag})"
+    expect(item).to_be_enabled()
+    item.click()
+    expect(dm_row.locator(".msg-unread")).to_have_text("1", timeout=10000)
+    expect(pb.locator("a.bell", has_text=re.compile("消息"))).to_contain_text("1", timeout=10000)   # the marked conversation counts as one
+    dm_row.locator(".msg-conv").click()
+    expect(pb.locator(".msg-thread")).to_be_visible()
+    pb.get_by_role("button", name=re.compile("^返回会话列表$")).click()
+    expect(dm_row.locator(".msg-unread")).to_have_count(0, timeout=10000)
+    notes.append(f"{engine}: 标为未读 from the row menu ({gesture}) put a 1 on the conversation and the badge; opening it cleared both")
+    pb.locator(".msg-conv", has_text=f"Launch {tag}").click()
+    expect(pb.locator(".msg-thread")).to_contain_text(f"welcome to the group {tag}")
+
+    # ---- forward (§7.7): the owner forwards a DM message into the group; both see the source
+    pa.locator(".msg-conv", has_text=f"Member {tag}").first.click()
+    expect(pa.locator(".msg-thread-name")).to_contain_text(f"Member {tag}")
+    src_row = pa.locator(".msg-row", has=pa.locator(".msg-body", has_text=f"unread two {tag}")).first    # the owner's latest, in the loaded page
+    message_menu(pa, src_row, "^转发$")
+    fwd = pa.get_by_role("dialog", name=re.compile("转发消息"))
+    fwd.locator(".msg-pick", has_text=f"Launch {tag}").locator("input").check()
+    fwd.get_by_role("button", name=re.compile("^转发$")).click()
+    expect(fwd).to_have_count(0)
+    pa.locator(".msg-conv", has_text=f"Launch {tag}").first.click()
+    forwarded = pa.locator(".msg-row", has=pa.locator(".msg-body", has_text=f"unread two {tag}")).last
+    expect(forwarded.locator(".msg-forwarded")).to_contain_text(re.compile(f"转发自 Owner {tag}"), timeout=15000)
+    expect(pb.locator(".msg-row", has=pb.locator(".msg-body", has_text=f"unread two {tag}")).last.locator(".msg-forwarded")).to_be_visible(timeout=15000)
+    notes.append(f"{engine}: the owner forwarded a DM message into the group; it arrived for both with '转发自 Owner'")
     shot(pb, shots, f"{engine}-phone-thread")
     pb.get_by_role("button", name=re.compile("^群信息$")).click()
     info = pb.locator(".msg-info.page")
@@ -564,7 +707,7 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     shot(pa, shots, f"{engine}-desktop-thread")
     assert not violations, violations[:6]
     seen = sorted({x.split()[-1] for x in resource_logs})
-    notes.append(f"{engine}: 0 console errors, 0 CSP violations, 0 page errors (browser resource logs for the provoked HTTP answers {', '.join(seen)} recorded, not counted)")
+    notes.append(f"{engine}: 0 console errors, 0 CSP violations, 0 page errors (browser logs for the provoked HTTP answers and the microphone policy refusal — {', '.join(seen)} — recorded, not counted)")
     resource_logs.clear()
     a.close(); b.close()
     return notes
@@ -589,7 +732,7 @@ def main():
 
     with sync_playwright() as p:
         if not only_webkit:
-            chrome = p.chromium.launch(channel="chrome", headless=True)
+            chrome = p.chromium.launch(channel="chrome", headless=True, args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"])
             try:
                 show("chromium (Google Chrome)", run(chrome, "chromium", accounts, messages, mail_dir, shots))
             finally:

@@ -1,12 +1,13 @@
-/** The application's API on this origin, and the two helpers the page needs beyond the shared
- *  client: an upload that can be cancelled, and the one-per-link card lookup.
+/** The application's API on this origin, and the helpers the page needs beyond the shared
+ *  client: an upload that can be cancelled, the one-per-link card lookup, and the small
+ *  fire-and-forget calls (typing hints, presence heartbeats) that must never surface as errors.
  *
  *  The prefix. On its own origin (and on the single-process deployment) the application is at
  *  /api/messaging; served from the account origin as the fallback of a deployment that has not
  *  added the application yet, the same routes live under the account service's former prefix.
  *  Set once per page from the origin's role (a page never changes origin), before any request. */
-import { ApiError, authHeaders, get } from "@synwevo/auth-client";
-import type { Capabilities } from "./types";
+import { ApiError, authHeaders, get, post } from "@synwevo/auth-client";
+import type { Capabilities, ObjectInfo, SyncAnswer } from "./types";
 
 let prefix = "/api/messaging";
 const LEGACY = "/api/auth/messaging";
@@ -18,12 +19,34 @@ export const threadPath = (cid: string) => `/c/${cid}`;
 export const LIST = "/";
 export const attachmentUrl = (id: string, inline = false) => `${prefix}/attachments/${id}${inline ? "?inline=1" : ""}`;
 
-/** The server's real limits, fetched once per page; `null` until they arrive (the composer then
- *  shows no limit rather than a guessed one). */
+/** The server's real limits and this person's settings, fetched once per page; `null` until they
+ *  arrive (the composer then shows no limit rather than a guessed one). */
 let caps: Promise<Capabilities | null> | null = null;
 export function capabilities(): Promise<Capabilities | null> {
   if (!caps) caps = get<Capabilities>(`${prefix}/capabilities`).catch(() => null);
   return caps;
+}
+
+/** A typing hint (§7.3): nothing is stored; a refusal (rate limit, presence off) is not news. */
+export function sendTyping(cid: string, state: "start" | "stop"): void {
+  post(`${prefix}/conversations/${cid}/typing`, { state }).catch(() => undefined);
+}
+
+/** A presence heartbeat (§7.3), only ever sent from a visible page. */
+export function heartbeat(): Promise<{ shown: boolean; state: string | null } | null> {
+  return post<{ shown: boolean; state: string | null }>(`${prefix}/presence`, {}).catch(() => null);
+}
+
+export function sync(since: number): Promise<SyncAnswer> {
+  return get<SyncAnswer>(`${prefix}/sync?since=${encodeURIComponent(String(since))}`);
+}
+
+/** What an object conversation is about; `null` for an ordinary conversation (404). */
+export function objectOf(cid: string): Promise<ObjectInfo | null> {
+  return get<ObjectInfo>(`${prefix}/conversations/${cid}/object`).catch((e: unknown) => {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  });
 }
 
 export interface UploadHandle<T> { promise: Promise<T>; cancel: () => void }

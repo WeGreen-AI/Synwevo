@@ -30,10 +30,12 @@ test("every Chinese string literal in the shell, and every emoji group name, is 
   assert.deepEqual(missing, []);
 });
 
-test("vocabulary: the shell never claims a recall the server cannot report, nor states it has no fact for", () => {
+test("vocabulary: the shell never claims a state the server has no fact for (delivery, last seen)", () => {
+  // recall, read receipts, presence and typing are server facts since CI-74 (§7); "delivered" and
+  // "last seen" are not and must not appear in any language
   const all = Object.entries(messages).flatMap(([k, v]) => [k, v.en, v["zh-Hant"]]) as string[];
   for (const s of all) {
-    assert.ok(!/撤回|已送达|对方已读|正在输入|在线/.test(s), s);
-    assert.ok(!/delivered|seen by|typing|online/i.test(s), s);
+    assert.ok(!/已送达|最后在线|最後上線|已送達/.test(s), s);
+    assert.ok(!/delivered|last seen/i.test(s), s);
   }
 });

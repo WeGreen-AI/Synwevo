@@ -38,10 +38,11 @@ export function layout(items: Message[], uid: string, lastRead: number | null): 
     if (!dividerPlaced && m.seq > (lastRead as number) && m.sender_id !== uid && !m.pending) {
       rows.push({ type: "unread", key: "unread" }); dividerPlaced = true; prev = null;
     }
-    if (m.kind === "system") { rows.push({ type: "system", key: m.id, message: m }); prev = null; continue; }
+    // a system line, and the marker a recall or a manager's removal leaves in place (§7.6)
+    if (m.kind === "system" || isMarker(m)) { rows.push({ type: "system", key: m.id, message: m }); prev = null; continue; }
     const next = items[i + 1];
-    const sameAsPrev = !!prev && prev.kind === "text" && prev.sender_id === m.sender_id && m.created_at - prev.created_at <= GROUP_WINDOW_S;
-    const sameAsNext = !!next && next.kind === "text" && next.sender_id === m.sender_id && next.created_at - m.created_at <= GROUP_WINDOW_S
+    const sameAsPrev = !!prev && prev.kind === "text" && !isMarker(prev) && prev.sender_id === m.sender_id && m.created_at - prev.created_at <= GROUP_WINDOW_S;
+    const sameAsNext = !!next && next.kind === "text" && !isMarker(next) && next.sender_id === m.sender_id && next.created_at - m.created_at <= GROUP_WINDOW_S
       && dayOf(next.created_at) === day && !(!dividerPlaced && next.seq > (lastRead as number) && next.sender_id !== uid && !next.pending);
     rows.push({ type: "message", key: m.id, message: m, head: !sameAsPrev, tail: !sameAsNext, own: m.sender_id === uid });
     prev = m;
@@ -49,8 +50,56 @@ export function layout(items: Message[], uid: string, lastRead: number | null): 
   return rows;
 }
 
+/** A recalled or removed message: the row stays, as a marker naming who took it away. */
+export function isMarker(m: Message): boolean {
+  return m.kind === "text" && (!!m.recalled || !!m.removed_by) && !!m.system;
+}
+
+/** Whether a conversation is silenced right now: long-term mute, or a timer that has not run out. */
+export function mutedNow(me: { muted: boolean; muted_until?: number | null }, now = Date.now() / 1000): boolean {
+  return me.muted || (typeof me.muted_until === "number" && me.muted_until > now);
+}
+
+/** Is an action still inside its window (recall, edit)? `0` means no limit (§7.6). */
+export function withinWindow(createdAt: number, windowS: number | undefined, now = Date.now() / 1000): boolean {
+  if (windowS === undefined) return false;
+  return windowS === 0 || now - createdAt <= windowS;
+}
+
+/** Read receipts (§7.4): among the reader's own stored messages, the last one that some member
+ *  with receipts on has read, with how many read it and who. Only that message shows the mark. */
+export function receiptMark(items: Message[], uid: string, readBy: { user_id: string; last_read_seq: number }[] | null | undefined,
+                            names: (id: string) => string): { seq: number; count: number; who: string[] } | null {
+  if (!readBy || !readBy.length) return null;
+  const maxRead = Math.max(0, ...readBy.map(r => r.last_read_seq));
+  for (let i = items.length - 1; i >= 0; i--) {
+    const m = items[i];
+    if (m.sender_id !== uid || m.pending || m.failed || !m.seq || m.deleted || m.kind !== "text" || m.seq > maxRead) continue;
+    const readers = readBy.filter(r => r.last_read_seq >= m.seq);
+    return { seq: m.seq, count: readers.length, who: readers.map(r => names(r.user_id)) };
+  }
+  return null;
+}
+
+/** Split a snippet by code-point ranges (`[[start, end], …]` from the server, §7.9) into hit and
+ *  miss parts; the ranges are in code points, not UTF-16 units. */
+export function slicesByCodepoints(text: string, ranges: [number, number][]): { text: string; hit: boolean }[] {
+  const cps = Array.from(text);
+  const out: { text: string; hit: boolean }[] = [];
+  let pos = 0;
+  for (const [s, e] of [...ranges].sort((a, b) => a[0] - b[0])) {
+    const start = Math.max(pos, Math.min(s, cps.length)), end = Math.max(start, Math.min(e, cps.length));
+    if (start > pos) out.push({ text: cps.slice(pos, start).join(""), hit: false });
+    if (end > start) out.push({ text: cps.slice(start, end).join(""), hit: true });
+    pos = end;
+  }
+  if (pos < cps.length) out.push({ text: cps.slice(pos).join(""), hit: false });
+  return out.length ? out : [{ text, hit: false }];
+}
+
 /** Merge a batch of server messages into the current list: by id, newest fields win, a pending
- *  copy is replaced by the stored message that carries its client id, order by seq. */
+ *  copy is replaced by the stored message that carries its client id, order by seq. A message
+ *  event fanned out to everyone carries no `card`; the one already rendered is kept. */
 export function mergeMessages(current: Message[], incoming: Message[]): Message[] {
   const byId = new Map(current.map(m => [m.id, m]));
   for (const m of incoming) byId.set(m.id, { ...(byId.get(m.id) || {}), ...m, pending: false, failed: undefined });
@@ -96,13 +145,14 @@ export function newClientId(): string { return `c${Date.now().toString(36)}${Mat
 /** What the list shows under a conversation's name. Returns a source key and its parameters;
  *  the component translates. */
 export type Preview =
-  | { kind: "none" } | { kind: "archived" } | { kind: "system" } | { kind: "deleted"; sender: string | null }
+  | { kind: "none" } | { kind: "archived" } | { kind: "system" } | { kind: "hidden" } | { kind: "deleted"; sender: string | null }
   | { kind: "attachment"; sender: string | null } | { kind: "text"; sender: string | null; body: string };
 export function preview(c: Conversation, uid: string): Preview {
   if (c.archived) return { kind: "archived" };
   const m: LastMessage | null = c.last_message;
   if (!m) return { kind: "none" };
   if (m.kind === "system") return { kind: "system" };
+  if (m.hidden) return { kind: "hidden" };                 // deleted for this reader only (§7.6)
   // a group names the sender; a private conversation only marks the reader's own line
   const sender = c.kind === "group" ? (m.sender_id === uid ? "me" : m.sender) : (m.sender_id === uid ? "me" : null);
   if (m.deleted) return { kind: "deleted", sender };

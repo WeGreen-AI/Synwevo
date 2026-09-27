@@ -1,42 +1,66 @@
 /** The shapes Synwevo Message's API answers with (`synwevo_core.messaging._conv_out` /
- *  `_message_out`), plus the two client-only marks a message carries while it is in flight.
- *  Nothing here is inferred: a field is listed because the server sends it. Optional fields
- *  marked "contract" are rendered only when present, so the shell works the moment the backend
- *  ships them and shows nothing until then. */
+ *  `_message_out`, docs/platform/messaging.md §7–§8), plus the two client-only marks a message
+ *  carries while it is in flight. Nothing here is inferred: a field is listed because the server
+ *  sends it, and a `null` from the server means "not shown", never "no". */
 
-export interface Member { user_id: string; name: string; role: "owner" | "admin" | "member" }
+export type Presence = "online" | "away" | "offline" | null;
+
+export interface Member { user_id: string; name: string; role: "owner" | "admin" | "member"; presence?: Presence }
 
 export interface LastMessage {
   seq: number; sender_id: string; sender: string; kind: string; body: string; deleted: boolean; created_at: number; attachment: boolean;
+  /** deleted for this reader only (§7.6) */
+  hidden?: boolean;
+}
+
+/** Another member's read position, listed only when both sides turned receipts on (§7.4). */
+export interface ReadBy { user_id: string; last_read_seq: number; at: number | null }
+
+export interface Me {
+  role: string; joined_seq: number; last_read_seq: number; muted: boolean; pinned: boolean; notify: "all" | "mentions" | "none";
+  muted_until?: number | null; marked_unread?: boolean; history_from?: "join" | "all";
 }
 
 export interface Conversation {
   id: string; organization_id: string; kind: "dm" | "group"; name: string; description: string | null; archived: boolean; last_seq: number;
   announcement: string | null; announcement_at: number | null; last_message_at: number | null;
-  me: { role: string; joined_seq: number; last_read_seq: number; muted: boolean; pinned: boolean; notify: "all" | "mentions" | "none" };
-  unread: number; peer: { user_id: string; name: string } | null; members: Member[]; member_count: number;
+  me: Me; unread: number; peer: { user_id: string; name: string; presence?: Presence } | null; members: Member[]; member_count: number;
   last_message: LastMessage | null;
+  /** null = not shown (this reader's receipts are off); a list otherwise */
+  read_by?: ReadBy[] | null;
   /** contract: unread messages that mention this reader; absent until the backend sends it. */
   unread_mentions?: number;
 }
 
 export interface Reaction { emoji: string; users: string[]; count: number }
 
-export interface Attachment { id: string; filename: string; size: number; content_type: string; inline: boolean }
+export interface Attachment {
+  id: string; filename: string; size: number; content_type: string; inline: boolean;
+  /** a voice message (§7.8); `duration_ms` is null when the sender declared none — no invented length */
+  voice?: boolean; duration_ms?: number | null;
+}
 
-/** contract (backend agent, CI-73): a message about an application object, rendered as a card. */
+/** A card sent by an application (§8.3), rendered per reader: full, or `degraded` (neutral
+ *  title, no id, no subtitle, no actions) for a reader who may not open the object. */
 export interface AppCard {
   app: string; app_name: string; title: string; subtitle?: string; state?: string;
-  object?: { kind: string; id: string };
+  object?: { kind: string; id?: string };
   actions?: { label: string; href: string }[];
+  degraded?: boolean;
 }
 
 export interface Message {
   id: string; conversation_id: string; seq: number; sender_id: string; sender: string; kind: "text" | "system"; body: string; reply_to: string | null;
   mentions: string[]; edited_at: number | null; deleted: boolean; created_at: number; client_id: string | null; reactions: Reaction[];
   attachment: Attachment | null;
-  reply?: { id: string; seq: number; sender: string; body: string; deleted: boolean };
+  reply?: { id: string; seq: number; sender: string; body: string; deleted: boolean; recalled?: boolean };
+  /** a system line, or the marker left by a recall / a manager's removal (§7.6) */
   system?: Record<string, any>;
+  recalled?: boolean;
+  removed_by?: { user_id: string; name: string } | null;
+  /** the source conversation id only when this reader is a member there (§7.7) */
+  forwarded_from?: { sender: string; conversation_id: string | null } | null;
+  sender_kind?: "user" | "app";
   card?: AppCard | null;
   /** client-only: stored locally, not yet acknowledged by the server */
   pending?: boolean;
@@ -46,11 +70,36 @@ export interface Message {
 
 export interface Org { id: string; name: string; status: string }
 
+export interface Settings { show_presence: boolean; read_receipts: boolean }
+
 export interface Capabilities {
   max_body: number; max_attachment_bytes: number; reactions: string[]; heartbeat_s: number;
-  limits: { messages_per_minute: number; attachments_per_hour: number; groups_per_day: number };
+  limits: { messages_per_minute: number; attachments_per_hour: number; groups_per_day: number; forward_targets?: number; [k: string]: number | undefined };
+  recall_window_s?: number; edit_window_s?: number;
+  voice?: { types: string[]; max_bytes: number; max_duration_ms: number };
+  search?: { engine: string; tokenizer: string | null; min_chars?: number; filters: string[]; max_limit: number };
+  presence?: { online_s: number; away_s: number; interval_s: number; states: string[] };
+  typing_ttl_s?: number;
+  stream?: { event_ids: boolean; replay_ring: number; ephemeral: string[] };
+  history_from?: string[];
+  settings?: Settings;
 }
 
-export interface HistoryPage { items: Message[]; has_more: boolean; floor: number; last_seq: number; last_read_seq: number }
+export interface HistoryPage { items: Message[]; has_more: boolean; floor: number; last_seq: number; last_read_seq: number; read_by?: ReadBy[] | null }
+
+export type SearchItem = Message & { cid: string; snippet: string; ranges: [number, number][] };
+export interface SearchAnswer { items: SearchItem[]; engine: "fts5" | "like"; tokenizer: string | null; fallback: boolean }
+
+export interface SyncAnswer {
+  cursor: number; since: number;
+  conversations: { id: string; last_seq: number }[]; left: string[];
+  recalled: { id: string; conversation_id: string; seq: number; how: "recalled" | "removed" | "deleted" }[];
+  truncated: boolean;
+}
+
+/** What an object conversation is about (§8.1): full, or neutral when the reader may not open it. */
+export interface ObjectInfo { app: string; app_name: string; kind: string; id?: string; title: string; href?: string | null; workspace_id?: string; degraded?: boolean }
+
+export interface TypingState { user_id: string; name: string; until: number }
 
 export type Live = "connecting" | "live" | "polling";

@@ -1,0 +1,126 @@
+# Synwevo Message 外壳：聊天界面（CI-73）
+
+范围：`apps/messages/web/**`——会话列表、线程、信息面板、编辑器、弹层、对话框、样式、三语言目录、单元测试；
+`services/identity/scripts/ui_e2e_messaging.py`（两名真实用户、两种引擎、桌面与手机的浏览器证明）；
+`/objects/:app/:kind/:id` 路由（与 CI-75 的 Docs 联动契约）。服务端契约是 `docs/platform/messaging.md` §4、§7、§8——
+外壳只画服务端给出的事实，没有的事实不画。
+
+## 1. 决策记录
+
+| 项目 | 结论 |
+|---|---|
+| 问题与基线 | CI-66 把消息页原样搬进独立外壳：一个 438 行的组件，消息不分组、无日期分隔、无未读分割线、工具只在悬停时出现（触屏无法操作）、表情弹层用 `position:absolute` 在滚动容器里、附件只能单个且无进度/取消、搜索结果只能跳到会话不能跳到消息、手机上没有信息页、动效与可访问性缺位。 |
+| 成熟参考 | 微信 / QQ（桌面与网页版）、WhatsApp Web 与桌面版的公开行为：按发送者分组、日期分隔、「以下为未读」、回复引用可回跳、长按出菜单、表情回应条、图片查看器、语音条、撤回 2 分钟、转发 ≤ 5 会话；Slack 的搜索跳转与「回到最新」；WAI-ARIA 菜单按钮模式；WCAG 2.2 目标尺寸；Fluent 2 动效尺度（本仓库 `docs/design.md` §2.2）。 |
+| 对比与选择 | 见 §2 的逐项「采用 / 改造 / 不采用」表。原则：白蓝设计系统的令牌与共享组件（`Menu`、`Drawer`、`Modal`、`useAnchoredLayer`、`useModalFocus`、`isImeKey`）优先；弹层一律 portal 到 `document.body`、按视口定位（设计规则 §5）；每个状态来自服务端字段（§7 契约）或本标签页的事实（发送中 / 失败 / 实时 / 轮询）。 |
+| 预期变化 | 桌面：列表 + 线程，≥1200px 信息面板作为第三列；中屏抽屉；手机：列表 ↔ 线程 ↔ 信息各占整屏、带真实返回控件，页面高度跟随 `visualViewport`。线程：分组、日期、未读线、编辑/撤回/移除/删除标记、引用回跳、链接卡片、应用卡片、图片查看器、文件卡片、语音播放、已读回执、正在输入、在线状态。编辑器：自增高、Enter 偏好、输入法安全、表情选择器、多附件（进度 / 取消 / 重试）、拖放与粘贴、录音、@ 提及、字数与附件上限。操作菜单：⋯ / 右键 / 长按，键盘可达，永不裁切。列表：置顶、静音（长期 / 定时）、归档筛选、未读与标记未读、提及徽标（服务端给才显示）、在线点、右键 / 长按菜单。 |
+| 边界与风险 | 不显示「已送达」（服务端没有此事实）；「已读」只在双方开启回执时显示；在线与「正在输入」只在服务端推送且未过期时显示；`unread_mentions` 字段服务端尚未提供，列表的 @ 徽标因此不出现；录音依赖浏览器 `MediaRecorder` 与页面的麦克风权限——平台当前对每个源发送 `Permissions-Policy: microphone=()`，浏览器会拒绝，外壳如实提示「无法使用麦克风」（放开 `microphone=(self)` 是服务端响应头的改动，见 §6）。 |
+| 验收 | §5：`ui_e2e_messaging.py` 27 个里程碑 × Chromium（Chrome 通道）+ WebKit，桌面 1280×800 与手机 390×844（触屏）；`npm test -w @synwevo/messages-web` 17 项；守卫、typecheck、四外壳构建通过。 |
+
+## 2. 基准 → 采用 / 改造 / 不采用
+
+| 行为（基准） | 结论 | 说明 |
+|---|---|---|
+| 同一发送者 5 分钟内的消息合并显示头像与名字（微信 / WhatsApp） | 采用 | `lib/thread.ts::layout`：系统行、撤回 / 移除标记、跨日、未读线都打断分组；组首带头像 + 名字 + 时间，续条只带时间 |
+| 日期分隔「今天 / 昨天 / 星期 / 日期」 | 采用 | `lib/time.ts`；一周内显示星期，跨年带年份 |
+| 「以下为未读」分割线 | 采用 | 从 `me.last_read_seq` 一次性取值（打开线程时），读的过程中不动；再次进入按服务端位置重放；分割线在首屏之上时给「↑ N 条未读」胶囊 |
+| 回复引用块，点击回跳原消息并高亮（微信、WhatsApp） | 采用 | 已加载则平滑滚动 + 闪光；未加载则拉取包含该消息的窗口（`before=seq+1` + `after=seq`），进入「历史窗口」态并给「回到最新」 |
+| 长按 / 右键出操作菜单（微信、WhatsApp） | 采用 | `layers.tsx::ActionMenu`：⋯ 按钮、右键、长按同一菜单；`useAnchoredLayer` 视口定位，不被滚动容器裁切；方向键 / Home / End / Esc 归还焦点；触屏 44px |
+| 表情回应条（WhatsApp / QQ） | 改造 | 只有服务端 `capabilities.reactions` 的 8 个；触屏由菜单进入，44px |
+| 图片点开查看、文件卡片可下载 | 采用 | `Lightbox`（共享对话框焦点规则）；只有服务端标 `inline` 的类型内联；下载经授权地址 |
+| 多附件、每个文件的进度、取消、重试（微信 / WhatsApp 桌面） | 采用 | `api.ts::uploadWithCancel`（XHR，可中止）；共享 `upload` 没有取消，本外壳自带一份同形错误处理；服务端限制（大小、字数）在拒绝之前显示 |
+| 拖放、粘贴发图 | 采用 | 线程整体为投放区 |
+| Enter 发送 / Shift+Enter 换行，可切换（微信 / WhatsApp） | 采用 | 既有 `synwevo.msg.enter` 偏好；输入法组合期间（`isComposing` / keyCode 229）Enter 绝不发送 |
+| 表情选择器（分类） | 改造 | 纯 Unicode 目录，8 组 + 最近使用（仅本浏览器），无库、无图片；键盘方向键走网格 |
+| 语音消息（微信、WhatsApp） | 改造 | 浏览器 `MediaRecorder`（webm/opus、mp4、ogg 按支持），录完即发，携带测得的 `duration_ms`；播放用 `<audio>` 走 `?inline=1`；无时长时不显示时长。见 §6 的权限头限制 |
+| 撤回（微信 2 分钟） | 采用 | 只在 `capabilities.recall_window_s` 内出现在菜单；标记「你撤回了一条消息 / X 撤回了一条消息」原位显示 |
+| 「对我删除」+ 撤销（WhatsApp） | 采用 | `DELETE` 即本地移除，5 秒「撤销」调 `POST …/unhide` 放回 |
+| 群管理员移除 | 采用 | 标记写明由谁移除 |
+| 转发 ≤ 5 会话（WhatsApp） | 采用 | 上限取 `capabilities.limits.forward_targets`；结果带「转发自 X」 |
+| 已读回执（WhatsApp 双开关） | 改造 | 只在 `read_by` 非 `null` 时显示，且只标在最后一条被读到的本人消息上；群里写「已读 N（仅统计开启回执的成员）」；**不显示「已送达」** |
+| 在线状态（WhatsApp / QQ） | 改造 | 三态点（在线 / 离开 / 离线）只在服务端给出非 `null` 时显示；心跳只在页面可见时发；没有「最后在线时间」 |
+| 正在输入（WhatsApp） | 采用 | 首键 start、每 4 s 重发、3 s 空闲或发送即 stop；接收方按 `expires_in_s` 自动清除 |
+| 标记未读、定时静音（微信 / WhatsApp） | 采用 | 列表行菜单「标为未读」；信息面板「暂时静音」1 小时 / 8 小时 / 24 小时 / 7 天，与长期静音并列 |
+| 搜索结果跳到消息（Slack） | 采用 | 服务端 `snippet` + `ranges`（码点区间）高亮；筛选「仅当前会话 / 有附件」；LIKE 回退时标「逐字匹配」 |
+| 历史向上加载不跳动（所有基准） | 采用 | 请求返回后记录 `scrollHeight/scrollTop`，渲染后复位；`overflow-anchor: none` 避免浏览器二次锚定；证明：锚点偏差 ≤ 2px |
+| 新消息到达时不抢滚动，给「N 条新消息 ↓」（微信） | 采用 | 在底部时自动跟随；远离底部时给圆形「回到底部」 |
+| 返回线程时保持阅读位置（桌面客户端） | 采用 | 页面生命周期内按会话缓存已加载消息与滚动位置 |
+| 手机三层导航（微信） | 采用 | 列表 ↔ 线程 ↔ 信息，各有返回；`100dvh` + `visualViewport` 高度变量；安全区内边距 |
+| 三列布局（桌面客户端） | 采用 | ≥1200px 信息面板为常驻第三列，中屏为抽屉 |
+| 应用卡片（企业微信模板卡片、Slack 应用消息） | 采用 | §8.3 契约：`sender_kind=app` 的发送者以应用头像与「应用」徽标标出；`card` 有则渲染卡片（应用名、标题、副标题、状态芯片、同标签页动作链接），`degraded` 时只有中性标题；无 `card` 的更新事件保留已渲染的卡片 |
+| 已送达双勾（WhatsApp） | **不采用** | 服务端没有送达事实（§7.4 明确不做） |
+| 最后在线时间（WhatsApp） | **不采用** | 服务端不记录 |
+| 消息内富文本 / Markdown | 不采用 | 正文是纯文本，只做链接可点与 Docs 链接卡片；不改写用户输入 |
+| 表情动图、贴纸包 | 不采用 | 无服务端事实，也不引入第三方资源 |
+| 置顶消息、@所有人、收藏 | 不采用 | 服务端本批未做（§7.14） |
+
+## 3. 结构
+
+| 文件 | 内容 |
+|---|---|
+| `Messages.tsx` | 页面：列表 / 线程 / 信息三栏与断点；事件流（`id`、`resync` → `GET /sync`、`typing`、`presence`、`receipt`、`message_hidden`）；轮询降级走 `/sync`；在线心跳（仅可见页面）；搜索、转发与设置对话框；`/objects` 之外的路由 |
+| `components/Thread.tsx` | 线程：加载 / 补取 / 向上历史 / 跳转窗口 / 位置缓存；发送（pending → 服务端确认 / 失败重试同 `client_id`）；撤回、移除、对我删除 + 撤销、编辑、回应；已读标记、正在输入、拖放；读位置上报（离开线程时立即补报） |
+| `components/MessageItem.tsx` | 一条消息：气泡、引用、卡片、附件、回应、页脚事实、操作菜单（窗口内才有撤回 / 编辑）、回应条、长按 / 右键 |
+| `components/Composer.tsx` | 编辑器：自增高、Enter 偏好、输入法安全、表情、附件（进度 / 取消 / 重试）、录音、@ 提及、typing 提示、上限提示 |
+| `components/ConversationList.tsx` | 列表与搜索结果：预览、时间、未读 / 标记未读 / 静音点、在线点、行菜单；服务端区间高亮与筛选 |
+| `components/InfoPanel.tsx` | 信息面板（列 / 抽屉 / 整页三种容器同一内容）：置顶、长期 / 定时静音、通知、标为未读、关联对象、群名、描述、公告、成员（在线、角色、菜单）、添加（可选全部历史）、归档 / 退出 |
+| `components/dialogs.tsx` | 新私聊 / 新群聊、举报、消息设置（两个互惠开关）、转发选择器 |
+| `components/cards.tsx` | Docs 链接卡片、应用卡片（状态标签按 `object.kind` 翻译）、附件卡片（图片 / 语音 / 文件） |
+| `components/layers.tsx` | `Popover` 与 `ActionMenu`（共享 `useAnchoredLayer`，portal，键盘） |
+| `components/EmojiPicker.tsx`、`lib/emoji.ts` | 分类 Unicode 目录与选择器 |
+| `components/Lightbox.tsx` | 图片查看器（共享对话框焦点规则） |
+| `lib/thread.ts`、`lib/time.ts`、`lib/objects.ts` | 纯函数：分组 / 分隔 / 未读线、合并、预览、筛选、回执标记、窗口判断、码点区间切片；时间标签；对象会话解析。`node --test` 覆盖 |
+| `pages/ObjectConversation.tsx` | `/objects/:app/:kind/:id`：`POST …/objects/{app}/{kind}/{id}/conversation` → `/c/{cid}`；404 自有页面 + 返回工作空间；其它错误 `FlowError` + 重试 |
+| `messages.css` | 只写布局；颜色 / 圆角 / 间距 / 字号 / 动效全部是共享令牌；不含 `prefers-reduced-motion`（共享样式表统一处理） |
+| `messages.messages.ts` | 三语言目录，`tests/catalogue.test.ts` 保证每个中文字面量都有条目、参数一致、不出现「已送达 / 最后在线」 |
+
+## 4. 动效与可访问性
+
+* 动效只用 `--dur-1/2/3` 与 `--ease`：消息进入（`msg-in`）、弹层（`msg-pop`）、胶囊（`msg-rise`）、跳转闪光（`msg-flash`，同时用 2.2 s 的 `.target` 轮廓保证减少动效下也能看见目标）、正在输入的三点、录音红点。`prefers-reduced-motion` 由共享样式表把三个时长置 0，本外壳不再各写一份；程序滚动通过共享 `scrollBehavior()`。证明：减少动效上下文里 `--dur-2` 读为 `0ms`、进入动画 `0.001s`，发送照常。
+* 角色与名字：列表 `role=list/listitem`，线程 `role=log`（`aria-live=off`，另设 `sr-only` 的 `role=status` 播报他人的新消息：发送者与正文 / 附件 / 语音），日期与未读线 `role=separator`，编辑器 `<form aria-label>`，操作菜单 `role=menu/menuitem`，回应条 `role=group`，表情选择器 `role=dialog` + `tablist`，提及建议 `role=listbox/option`，开关 `role=switch`，正在输入与撤销条 `role=status`。
+* 焦点：对话框与抽屉用共享 `useModalFocus`；菜单与弹层 Esc 归还焦点到触发按钮（监听在 `document`，兼容 WebKit 点击不聚焦按钮）；破坏性确认（撤回、移除、移出、交接、退出）默认焦点在「取消」；跳转目标获得焦点。
+* 目标尺寸：`(pointer: coarse)` 下操作 / 工具 / 回应 / 表情按钮 44px、`.btn.sm` 40px、行 64px；⋯ 在触屏常显（无悬停）。
+* 对比：文字只用 `--text / --text-2 / --muted`（≥ 4.5:1），协作者头像用 `--peer-1..8`（白字均 ≥ 4.5:1）；状态点永远配文字（在线 / 离开 / 离线、已读、正在输入）。
+
+## 5. 证明（隔离实例，`instance=test`，四源 32070/32069/32065/32068，file 邮件；两名账户经邮件注册与邀请）
+
+`services/identity/scripts/ui_e2e_messaging.py`（Chromium = Chrome 通道，桌面 1280×800 + 手机 390×844 触屏；WebKit 经本地代理，同样两个上下文）——两引擎各 27 条里程碑全部通过：
+
+1. 注册 / 邀请 / 组织；私聊经事件流到达手机（预览、时间、徽标、`aria-current`），线程打开带「以下为未读」。
+2. 在线：手机的心跳让桌面线程头显示「在线」。
+3. 回执：双方在「消息设置」打开已读回执后，手机读到即在桌面本人最新消息下显示「已读」；页面里没有「已送达」。
+4. 正在输入：手机输入时桌面出现「Member 正在输入…」，空闲后消失。
+5. 手机的 ⋯ 菜单回复（引用）与表情回应（按钮 ≥ 44px）；引用块回跳并高亮原消息。
+6. 图片经接纳链内联（image/png、哈希头），查看器打开、Esc 关闭。
+7. 录音：两引擎都被页面的 `Permissions-Policy: microphone=()` 拒绝，外壳提示「无法使用麦克风：…」（见 §6）。
+8. 上传：持有请求时进度条可见并可取消；注入 503 后显示服务端拒绝（含请求编号）并重试成功。
+9. 输入法：组合期间 Enter 不发送，结束后发送。
+10. 撤回：窗口内撤回在双方都成为「撤回了一条消息」标记。
+11. 对我删除：行即时消失，撤销放回；再次删除后本人历史 200 条里没有它，对方仍有。
+12. 编辑器自增高；表情选择器插入并 Esc 关闭。
+13. 52 条更早消息在向上滚动时加载，读者正看的气泡位置偏差 2px（248→246）。
+14. 在历史上方时新消息不抢滚动，「1 条新消息」胶囊出现并可跳回。
+15. 再次进入线程时「以下为未读」置于两条新消息之前，读完徽标清零。
+16. 搜索命中（服务端区间高亮）打开线程并定位到旧消息，「回到最新」回到末尾。
+17. 操作菜单键盘：Enter 打开、焦点在首项、方向键循环、Home/End、菜单在视口内、Esc 归还焦点。
+18. 手机行菜单（长按）「标为未读」：行与徽标各 +1，打开即清。
+19. 转发：私聊消息转到群，双方看到「转发自 Owner」。
+20. 手机：列表 → 群线程 → 群信息整页 → 返回线程 → 返回列表。
+21. 1280px：群信息为第三列；成员菜单移出 + 确认默认焦点「取消」；被移出者历史 404、列表消失；账户源旧接口 410。
+22. 被移出者搜索不到群内容。
+23. `/objects/docweave/project/<不存在>`：服务端 `404 no_object` → 「找不到这个对象，或你没有权限查看。」+ 返回工作空间（`/auth/start?next=/workspace`）。
+24. 减少动效：令牌 0ms、动画 0.001s，发送照常到达对方。
+25. 0 控制台错误、0 CSP、0 页面错误；浏览器对被故意触发的 400（账户外壳验证探测）/ 401 / 404 / 503 与麦克风策略拒绝的自有日志行记录在案、不计数。
+
+截图（`.scratch/shots/`，两引擎各一套，`chromium-*` / `webkit-*`）：`desktop-thread`、`desktop-three-columns`、`desktop-emoji`、`desktop-actions-menu`、`desktop-new-pill`、`desktop-search-jump`、`desktop-upload-failed`、`phone-list-empty`、`phone-list`、`phone-thread`、`phone-reactions`、`phone-lightbox`、`phone-info`。
+
+单元测试 `apps/messages/web/tests/`（17 项）：分组与分隔、未读线、合并与 pending 替换、撤回 / 移除标记行、窗口与定时静音、回执标记、码点区间切片、预览与筛选、高亮与片段、时间标签、表情目录完整性与最近使用、目录三语言参数一致与字面量覆盖、对象会话解析（`{conversation:{id}}` 与 `{id}`、404 → missing、其它 → error）。
+
+## 6. 未做与限制（如实）
+
+* **录音在浏览器里被拒绝**：`synwevo_core/http.py` 对每个源发送 `Permissions-Policy: …, microphone=(), …`；浏览器因此拒绝 `getUserMedia`，外壳如实提示。消息源需要 `microphone=(self)` 才能真正录音——这是共享响应头的改动，不在本批范围，已报告协调者。外壳侧的录音、上传（`duration_ms`）、播放已实现，头放开即生效。
+* `unread_mentions`：服务端会话对象没有此字段，列表的 @ 徽标因此不显示（代码在字段出现时即显示）。
+* `capabilities.settings` 缺席（旧服务端）时不显示设置按钮、不发心跳、不显示在线 / 回执 / 正在输入——只画有事实的东西。
+* `/objects` 的 409 `no_organization` / 429 走通用错误页（`FlowError` 文案由 code 决定）+ 重试，没有专门页面。
+* 语音只在桌面测得「被策略拒绝」这一分支；真机 iOS Safari / Android Chrome 未测。
+* 共享 `upload` 没有取消参数，本外壳自带 `uploadWithCancel`（同 CSRF 头、同错误形状）；若共享包日后加 `signal` 参数可以合并。
+* 位置缓存只在页面生命周期内；刷新后回到末尾。

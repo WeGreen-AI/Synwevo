@@ -268,6 +268,45 @@ a.msg-card:hover, a.msg-card:focus-visible { border-color: var(--accent-line); t
 .msg-lightbox-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-3); }
 .msg-lightbox img { max-width: 96vw; max-height: calc(96dvh - 60px); object-fit: contain; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-lg); }
 
+/* ---------------------------------------------------------------- server facts: presence, typing, receipts, markers (CI-74) */
+.msg-avatar-wrap { position: relative; display: inline-block; flex: none; }
+.msg-avatar.app { background: var(--surface-active); color: var(--text-2); border-radius: 28%; }
+.msg-presence { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--panel); background: var(--line-strong); }
+.msg-presence.online { background: var(--ok); }
+.msg-presence.away { background: var(--warn); }
+.msg-presence.offline { background: var(--line-strong); }
+.msg-presence-text.online { color: var(--ok); }
+.msg-presence-text.away { color: var(--warn); }
+.msg-app-badge { height: 16px; font-size: 10px; padding: 0 5px; }
+.msg-row.from-app .msg-bubble { border-color: var(--accent-line); background: var(--surface); }
+.msg-forwarded { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-1); color: var(--muted); margin-bottom: 3px; }
+.msg-receipt { font-size: var(--fs-1); color: var(--muted); margin: 2px 2px 0; }
+.msg-row.own .msg-receipt { text-align: right; }
+.msg-system.marker { font-style: italic; }
+.msg-appcard.degraded { border-style: dashed; color: var(--text-2); }
+.msg-typing { display: flex; align-items: center; gap: 8px; padding: 2px 16px; font-size: var(--fs-2); color: var(--text-2); min-height: 22px; animation: msg-in var(--dur-2) var(--ease); }
+.msg-typing-dots { display: inline-flex; gap: 3px; }
+.msg-typing-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); animation: msg-dot 1.2s infinite var(--ease); }
+.msg-typing-dots i:nth-child(2) { animation-delay: .2s; } .msg-typing-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes msg-dot { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
+.msg-undo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 12px; padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); font-size: var(--fs-2); animation: msg-in var(--dur-2) var(--ease); }
+.msg-voice { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.msg-voice audio { height: 36px; max-width: 260px; }
+.msg-recording { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--err-line); border-radius: var(--radius-lg); background: var(--err-weak); font-size: var(--fs-3); animation: msg-in var(--dur-2) var(--ease); }
+.msg-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--err); animation: msg-blink 1s infinite var(--ease); }
+@keyframes msg-blink { 50% { opacity: .2; } }
+.msg-rec-time { font-variant-numeric: tabular-nums; color: var(--err); font-weight: 600; }
+.msg-object { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); align-items: flex-start; }
+.msg-info-desc { font-size: var(--fs-3); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 0; }
+.msg-conv-wrap { position: relative; }
+.msg-conv-wrap.active > .msg-conv { background: var(--surface-hover); }
+.msg-chip-check { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: var(--fs-2); color: var(--text-2); background: var(--surface); cursor: pointer; }
+.msg-chip-check:has(input:checked) { background: var(--accent-weak); border-color: var(--accent-line); color: var(--accent-strong); }
+.msg-chip-check input { margin: 0; accent-color: var(--accent); }
+.msg-pick { cursor: pointer; }
+.msg-pick input { margin: 0; accent-color: var(--accent); }
+.msg-pick.on { background: var(--accent-weak); border-radius: var(--radius); padding-left: 6px; padding-right: 6px; }
+
 /* ---------------------------------------------------------------- touch & narrow */
 @media (pointer: coarse) {
   .msg-actions { opacity: 1; }

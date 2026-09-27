@@ -1,11 +1,13 @@
-/** The two dialogs of the page: starting a conversation (a private one or a group, with the
- *  organization's directory) and reporting a message (what the organization's messaging
- *  managers will see is said before anything is sent). */
+/** The dialogs of the page: starting a conversation (a private one or a group, with the
+ *  organization's directory), reporting a message (what the organization's messaging managers
+ *  will see is said before anything is sent), the two mutual privacy switches (§7.2), and
+ *  forwarding a message to up to the server's number of conversations (§7.7). */
 import { useEffect, useId, useState } from "react";
-import { get, post } from "@synwevo/auth-client";
-import { Modal, useI18n } from "@synwevo/ui";
+import { ApiError, get, post, put } from "@synwevo/auth-client";
+import { Modal, useI18n, useToast } from "@synwevo/ui";
 import { M } from "../api";
-import type { Conversation, Message, Org } from "../types";
+import { newClientId } from "../lib/thread";
+import type { Conversation, Message, Org, Settings } from "../types";
 import { FlowError } from "../flow";
 import { Avatar } from "./MessageItem";
 import { IcClose } from "./icons";
@@ -69,5 +71,64 @@ export function ReportDialog({ message, onClose }: { message: Message; onClose: 
         <div className="msg-field"><label htmlFor={`${id}-note`}>{t("补充说明（可选）")}</label><textarea id={`${id}-note`} className="input" rows={3} maxLength={500} value={note} disabled={busy} onChange={e => setNote(e.target.value)} /></div>
         <div className="org-actions"><button type="submit" className="btn primary" disabled={busy}>{t("提交举报")}</button><button type="button" className="btn" disabled={busy} onClick={onClose}>{t("取消")}</button></div>
       </form>}
+  </Modal>;
+}
+
+function SwitchRow({ id, checked, disabled, onChange, label, hint }: { id: string; checked: boolean; disabled?: boolean; onChange: (v: boolean) => void; label: string; hint: string }) {
+  return <label className="msg-switch" htmlFor={id}>
+    <span className="msg-switch-text"><span>{label}</span><span className="tiny muted">{hint}</span></span>
+    <input id={id} type="checkbox" role="switch" checked={checked} disabled={disabled} onChange={e => onChange(e.target.checked)} />
+    <span className="msg-switch-track" aria-hidden="true"><span className="msg-switch-knob" /></span>
+  </label>;
+}
+
+/** The two privacy switches (§7.2). Both are mutual: what you hide, you also stop seeing. */
+export function SettingsDialog({ settings, onClose, onSaved }: { settings: Settings; onClose: () => void; onSaved: (s: Settings) => void }) {
+  const { t } = useI18n(); const id = useId();
+  const [draft, setDraft] = useState<Settings>(settings); const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>(null);
+  const save = async () => {
+    setBusy(true); setError(null);
+    try { onSaved(await put<Settings>(`${M()}/settings`, draft)); onClose(); } catch (e) { setError(e); setBusy(false); }
+  };
+  const changed = draft.show_presence !== settings.show_presence || draft.read_receipts !== settings.read_receipts;
+  return <Modal title={t("消息设置")} onClose={onClose} size="narrow" footer={<><span className="spacer" /><button type="button" className="btn" onClick={onClose} disabled={busy}>{t("取消")}</button><button type="button" className="btn primary" onClick={() => void save()} disabled={busy || !changed}>{t("保存")}</button></>}>
+    <div className="col gap8" aria-busy={busy}>
+      <FlowError error={error} />
+      <SwitchRow id={`${id}-presence`} checked={draft.show_presence} disabled={busy} onChange={v => setDraft({ ...draft, show_presence: v })} label={t("显示在线状态")}
+        hint={t("互相可见：关闭后别人看不到你在线或正在输入，你也看不到别人的。在线 = 最近 1 分钟内有打开的页面；不保存任何时间记录。")} />
+      <SwitchRow id={`${id}-receipts`} checked={draft.read_receipts} disabled={busy} onChange={v => setDraft({ ...draft, read_receipts: v })} label={t("已读回执")}
+        hint={t("互相可见：开启后，同样开启了回执的成员能看到你读到哪里，你也能看到他们的。默认关闭。")} />
+    </div>
+  </Modal>;
+}
+
+/** Forward one message to other conversations (§7.7): a picker of the person's conversations,
+ *  up to the server's limit, the archived ones and the source left out. */
+export function ForwardDialog({ message, convs, max, onClose, onDone }: { message: Message; convs: Conversation[]; max: number; onClose: () => void; onDone: (n: number) => void }) {
+  const { t } = useI18n(); const toast = useToast();
+  const [chosen, setChosen] = useState<string[]>([]); const [q, setQ] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>(null);
+  const targets = convs.filter(c => !c.archived && c.id !== message.conversation_id && (!q.trim() || c.name.toLowerCase().includes(q.trim().toLowerCase())));
+  const toggle = (id: string) => setChosen(cur => (cur.includes(id) ? cur.filter(x => x !== id) : cur.length < max ? [...cur, id] : cur));
+  const send = async () => {
+    setBusy(true); setError(null);
+    try {
+      const out = await post<{ items: { conversation_id: string; created: boolean }[] }>(`${M()}/messages/${message.id}/forward`, { conversation_ids: chosen, client_id: newClientId() });
+      toast(t("已转发到 {n} 个会话", { n: out.items.length }), "ok");
+      onDone(out.items.length);
+    } catch (e) { setError(e instanceof ApiError ? e : e); setBusy(false); }
+  };
+  return <Modal title={t("转发消息")} onClose={onClose} size="narrow" footer={<><span className="tiny muted">{t("已选 {n}/{max}", { n: chosen.length, max })}</span><span className="spacer" /><button type="button" className="btn" onClick={onClose} disabled={busy}>{t("取消")}</button><button type="button" className="btn primary" onClick={() => void send()} disabled={busy || !chosen.length}>{t("转发")}</button></>}>
+    <div className="col gap8" aria-busy={busy}>
+      <FlowError error={error} />
+      <blockquote className="msg-quote"><strong>{message.sender}</strong> {message.body ? message.body.slice(0, 200) : message.attachment ? message.attachment.filename : ""}</blockquote>
+      <input className="input" value={q} placeholder={t("筛选会话…")} aria-label={t("筛选会话…")} onChange={e => setQ(e.target.value)} data-autofocus />
+      <div className="msg-members msg-picklist" role="group" aria-label={t("转发到")}>
+        {targets.map(c => <label key={c.id} className={`msg-member msg-pick ${chosen.includes(c.id) ? "on" : ""}`}>
+          <input type="checkbox" checked={chosen.includes(c.id)} disabled={busy || (!chosen.includes(c.id) && chosen.length >= max)} onChange={() => toggle(c.id)} />
+          <Avatar id={c.kind === "dm" ? (c.peer?.user_id || c.id) : c.id} name={c.name} kind={c.kind} size={28} /><span className="msg-member-name">{c.name}</span>
+        </label>)}
+        {!targets.length && <p className="tiny muted">{t("没有可转发到的会话。")}</p>}
+      </div>
+    </div>
   </Modal>;
 }

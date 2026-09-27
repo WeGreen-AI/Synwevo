@@ -10,9 +10,11 @@ test("the object route asks the server for the conversation at the contract's ad
 
 test("a conversation id opens it; a 404 is 'missing'; anything else is an error, including an answer without an id", async () => {
   const calls: string[] = [];
-  const ok = await resolveObjectConversation(async (p) => { calls.push(p); return { id: "cv_9" }; }, "/api/messaging", "docweave", "project", "p1");
+  // §8.1: the answer is {object, conversation, created, joined}
+  const ok = await resolveObjectConversation(async (p) => { calls.push(p); return { object: { kind: "project", id: "p1" }, conversation: { id: "cv_9", kind: "group" }, created: true, joined: false }; }, "/api/messaging", "docweave", "project", "p1");
   assert.deepEqual(ok, { kind: "open", id: "cv_9" });
   assert.deepEqual(calls, ["/api/messaging/objects/docweave/project/p1/conversation"]);
+  assert.deepEqual(await resolveObjectConversation(async () => ({ id: "cv_8" }), "/api/messaging", "docweave", "project", "p1"), { kind: "open", id: "cv_8" });
   const missing = await resolveObjectConversation(async () => { throw new ApiError(404, "no_object", "找不到"); }, "/api/messaging", "docweave", "project", "p2");
   assert.deepEqual(missing, { kind: "missing" });
   const forbidden = await resolveObjectConversation(async () => { throw new ApiError(403, "forbidden", "no"); }, "/api/messaging", "docweave", "project", "p3");

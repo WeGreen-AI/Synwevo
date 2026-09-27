@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GROUP_WINDOW_S, colorSlot, filterConversations, highlightParts, layout, linksIn, maxSeq, mergeMessages, preview, snippet } from "../src/lib/thread.ts";
+import { GROUP_WINDOW_S, colorSlot, filterConversations, highlightParts, isMarker, layout, linksIn, maxSeq, mergeMessages, mutedNow, preview, receiptMark, slicesByCodepoints, snippet, withinWindow } from "../src/lib/thread.ts";
 import { dayLabel, listTime } from "../src/lib/time.ts";
 import type { Conversation, Message } from "../src/types.ts";
 
@@ -88,6 +88,40 @@ test("links: the first three distinct http(s) links; colour slots are stable and
     ["https://a.example/x", "http://b.example/", "https://c.example"]);
   assert.equal(colorSlot("usr_1"), colorSlot("usr_1"));
   for (const id of ["a", "usr_9f", "", "长名字"]) { const s = colorSlot(id); assert.ok(s >= 1 && s <= 8); }
+});
+
+test("a recalled or removed message stays as a marker row that breaks its neighbours' group", () => {
+  const recalled = msg(2, "a", T0 + 10, { deleted: true, body: "", recalled: true, system: { event: "recalled", actor: "a" } });
+  const removed = msg(4, "a", T0 + 30, { deleted: true, body: "", removed_by: { user_id: "b", name: "Bob" }, system: { event: "removed", actor: "b" } });
+  const rows = layout([msg(1, "a", T0), recalled, msg(3, "a", T0 + 20), removed, msg(5, "a", T0 + 40)], "me", null);
+  assert.deepEqual(rows.map(r => r.type), ["day", "message", "system", "message", "system", "message"]);
+  assert.deepEqual(rows.filter(r => r.type === "message").map(r => (r as any).head), [true, true, true], "each text message stands alone between markers");
+  assert.equal(isMarker(msg(6, "a", T0, { deleted: true })), false, "a plain deletion (report review) is not a marker");
+});
+
+test("windows, timed mutes and read receipts follow the server's numbers", () => {
+  assert.equal(withinWindow(1000, 120, 1100), true);
+  assert.equal(withinWindow(1000, 120, 1121), false);
+  assert.equal(withinWindow(1000, 0, 99999), true, "0 = no limit");
+  assert.equal(withinWindow(1000, undefined, 1001), false, "no capability yet → not offered");
+  assert.equal(mutedNow({ muted: false, muted_until: 2000 }, 1999), true);
+  assert.equal(mutedNow({ muted: false, muted_until: 2000 }, 2001), false);
+  assert.equal(mutedNow({ muted: true, muted_until: null }, 5), true);
+  const items = [msg(1, "me", T0), msg(2, "a", T0 + 1), msg(3, "me", T0 + 2), msg(4, "me", T0 + 3)];
+  const names = (id: string) => (id === "a" ? "Ann" : id === "b" ? "Bob" : id);
+  assert.equal(receiptMark(items, "me", null, names), null, "null = receipts off → nothing");
+  assert.equal(receiptMark(items, "me", [], names), null);
+  assert.deepEqual(receiptMark(items, "me", [{ user_id: "a", last_read_seq: 3 }, { user_id: "b", last_read_seq: 1 }], names), { seq: 3, count: 1, who: ["Ann"] });
+  assert.deepEqual(receiptMark(items, "me", [{ user_id: "a", last_read_seq: 2 }], names), { seq: 1, count: 1, who: ["Ann"] }, "the mark sits on the last own message that was read; newer ones carry none");
+  assert.equal(receiptMark([msg(9, "me", T0)], "me", [{ user_id: "a", last_read_seq: 2 }], names), null, "nothing read yet → no mark");
+  assert.deepEqual(receiptMark(items, "me", [{ user_id: "a", last_read_seq: 4 }, { user_id: "b", last_read_seq: 4 }], names), { seq: 4, count: 2, who: ["Ann", "Bob"] });
+});
+
+test("search ranges are code points, not UTF-16 units", () => {
+  assert.deepEqual(slicesByCodepoints("ab😀cd", [[2, 3]]), [{ text: "ab", hit: false }, { text: "😀", hit: true }, { text: "cd", hit: false }]);
+  assert.deepEqual(slicesByCodepoints("合同项目", [[0, 2], [3, 4]]), [{ text: "合同", hit: true }, { text: "项", hit: false }, { text: "目", hit: true }]);
+  assert.deepEqual(slicesByCodepoints("x", []), [{ text: "x", hit: false }]);
+  assert.deepEqual(slicesByCodepoints("abc", [[1, 99]]), [{ text: "a", hit: false }, { text: "bc", hit: true }]);
 });
 
 test("day labels: today, yesterday, the weekday within a week, else a date", () => {

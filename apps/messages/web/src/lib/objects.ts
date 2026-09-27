@@ -14,8 +14,10 @@ export async function resolveObjectConversation(
   postFn: (path: string, body: Record<string, never>) => Promise<unknown>, prefix: string, app: string, kind: string, id: string,
 ): Promise<Resolution> {
   try {
-    const out = await postFn(objectConversationPath(prefix, app, kind, id), {}) as { id?: unknown } | null;
-    if (out && typeof out.id === "string" && out.id) return { kind: "open", id: out.id };
+    // §8.1: `{object, conversation: {id, …}, created, joined}`; a bare `{id}` is accepted too
+    const out = await postFn(objectConversationPath(prefix, app, kind, id), {}) as { id?: unknown; conversation?: { id?: unknown } | null } | null;
+    const cid = out?.conversation && typeof out.conversation.id === "string" ? out.conversation.id : (out && typeof out.id === "string" ? out.id : "");
+    if (cid) return { kind: "open", id: cid };
     return { kind: "error", error: new ApiError(502, "invalid_response", "服务没有返回会话编号") };
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) return { kind: "missing" };
