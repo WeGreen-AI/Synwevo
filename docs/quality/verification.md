@@ -1685,6 +1685,18 @@ worktree（`dfaf324`，基于 0c43018）内由子代理完成并验证：三外�
 「已取消，或没有可用于本站的安全密钥。」。**修复**：见 issues.md CI-70。**验证**：`services/identity/tests/test_passkeys.py::test_the_sign_in_screen_learns_that_passkeys_live_on_another_domain`；
 identity 套件全量 exit 0（本节末尾）；`npm run typecheck`、account-web 19 项契约验证通过。**未验证**：真实浏览器在两个主机间切换（需要切换后的生产或双主机隔离实例；切换当天由受控账户实测）。
 
+### 16.73 公开页面重写（CI-71）
+
+子代理在 worktree（`c05ad93`，基于 0c43018）内完成并验证：`npm run typecheck && npm run build`、`npm test --workspaces --if-present`、五个守卫、`tests/integration` 593 通过
+（`test_portal_public.py` 两个写死旧文案/旧 sitemap 的用例按预期失败，未改测试）；隔离实例（`.scratch/data`，ports 31865/31869/31870）Playwright：
+Chrome + WebKit × 1280/375 × zh-Hans/zh-Hant/en × home/privacy/service = 36 组通过（0 控制台错误、0 CSP 违规、375 宽 0 px 横向溢出、无占位文字、
+title/lang/canonical 逐页逐语言正确、未登录页头「登录」→ `/auth/start?next=%2Fworkspace`、所有 CTA/页脚链接可达、扫描器状态文字按运行时渲染）；
+登录态：页头加载期间只见「进入工作空间」，CTA → `/workspace`。截图 45 张在该 worktree 的 `.scratch/shots/`。
+主分支 cherry-pick 为 `460eaee`；`test_portal_public.py` 改为从 `COPY` 读期望并加 privacy/service 六行参数化（含 `&` 转义）、robots 多出 8 条 Allow、
+sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：全部通过；typecheck/build、workspace-web 39 项、四个守卫与 Logo 校验通过；
+隔离实例门户以新代码重启后 SSR 首页 `<h1>让工作，自然相连。</h1>`、`deployment.json` 返回扫描器 off/注册 open/发件人；`ui_e2e_shell.py`（Chromium 两宽度）通过。
+**未验证**：真实生产的 `deployment.json`（部署后复查）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

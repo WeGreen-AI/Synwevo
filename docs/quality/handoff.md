@@ -120,6 +120,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-68 | 私信邮件：缺省关、只能未读摘要、寄出前复核、限速、正文默认不带原文、v23 偏好重置 | 已实现，identity/integration 套件通过，待部署 | 消息独立应用上线后同一规则不变；Messages 页读会话时同步把收件箱条目标为已读（现在只靠寄出前复核） |
 | CI-69 | Docs 外壳文案精简与术语统一（`docs/platform/docs-copy.md`） | 已实现（worktree 三套浏览器证明通过），待部署 | 账户/门户/消息外壳按同一规则表继续 |
 | CI-70 | 域名切换后 Passkey 登录失败的解释与重新登记路径（`passkeys_elsewhere`） | 已实现，待部署 | 切换后受控账户实测：旧 Passkey 登录 → 解释文案 → 口令登录 → 重新登记 |
+| CI-71 | 公开页面重写：首页品牌表达、`/privacy`、`/service`、门户文案与术语（`docs/platform/public-pages.md`） | 已实现，待部署 | 持有人决定项（法律主体、联系渠道、管辖、条款版本、费用/SLA、是否点名第三方处理方、分析脚本）见记录 §5；Message 独立应用上线后首页应用卡的入口与说明随之更新 |
 | 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 已随 11202c3 发布 |
 | 回归 | 个人项目复制不携带私人协同房间/未批准历史（9.16）：目标无活动记录、无实时草稿与变更记录，副本只有来源 head 版本 | 已验证，tests/integration/test_project_copy.py（verification.md §16.54） | — |
 | CI-46 | Docs 项目页协同（在场与定位、按映射三方合并、他人变更即时提示、归属活动记录） | 已部署（e6197c1，run 36219721565）；生产 nginx 副本待运维加 Upgrade 头 | SheetEditor 协同与活动筛选未做 |

@@ -66,18 +66,34 @@ def switch(client, wid, *, csrf=True):
 
 @pytest.mark.parametrize("path,language,title,description,heading", [
     ("/", "zh-Hans", "Synwevo · 工作流程自动化平台",
-     "连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。", "把重复的工作，交给流程。"),
+     "文档自动化、团队协作与消息沟通，汇聚于同一个工作空间。", "让工作，自然相连。"),
     ("/zh-Hans", "zh-Hans", "Synwevo · 工作流程自动化平台",
-     "连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。", "把重复的工作，交给流程。"),
+     "文档自动化、团队协作与消息沟通，汇聚于同一个工作空间。", "让工作，自然相连。"),
     ("/zh-Hant", "zh-Hant", "Synwevo · 工作流程自動化平台",
-     "連接團隊、應用與資料，讓重複工作成為清晰、可追蹤的自動化流程。", "把重複的工作，交給流程。"),
+     "文件自動化、團隊協作與訊息溝通，匯聚於同一個工作空間。", "讓工作，自然相連。"),
     ("/en", "en", "Synwevo · Workflow automation platform",
-     "Connect teams, applications and data in clear, traceable automated workflows.",
-     "Let workflows handle the repetitive work."),
-], ids=["root", "zh-Hans", "zh-Hant", "en"])
+     "Document automation, team collaboration and messaging, brought together in one workspace.",
+     "Work that comes together."),
+    ("/privacy", "zh-Hans", "数据与隐私 · Synwevo",
+     "Synwevo 如何处理你的账户、文档与消息数据：存储位置、Cookie、保留期限、导出与删除。", None),
+    ("/zh-Hant/privacy", "zh-Hant", "資料與私隱 · Synwevo",
+     "Synwevo 如何處理你的帳戶、文件與訊息資料：儲存位置、Cookie、保留期限、匯出與刪除。", None),
+    ("/en/privacy", "en", None, None, "Your data, plainly stated."),
+    ("/en/service", "en", None, None, "What this service is, and how it works."),
+    ("/service", "zh-Hans", None, None, None),
+    ("/zh-Hant/service", "zh-Hant", None, None, None),
+], ids=["root", "zh-Hans", "zh-Hant", "en", "privacy", "privacy-zh-Hant", "privacy-en", "service-en", "service", "service-zh-Hant"])
 def test_public_documents_have_localized_content_and_only_public_canonicals(
     portal, platform_root, path, language, title, description, heading,
 ):
+    from synwevo_portal.public import COPY, PUBLIC_PAGES
+    copy = COPY[language]["pages"][PUBLIC_PAGES[path]]
+    # A row may pin the wording (the brand lines are a product decision) or leave it to the
+    # catalogue; either way the served document must carry exactly the catalogue's text.
+    title, description, heading = title or copy["title"], description or copy["description"], heading or copy["heading"]
+    assert (copy["title"], copy["description"], copy["heading"]) == (title, description, heading)
+    import html as _html
+    title, description, heading = (_html.escape(x) for x in (title, description, heading))
     if path == "/":
         # SSR replaces these tags, so also guard the defaults it could otherwise conceal.
         source = (platform_root / "apps/portal/web/index.html").read_text(encoding="utf-8")
@@ -92,6 +108,8 @@ def test_public_documents_have_localized_content_and_only_public_canonicals(
     assert f'<meta name="description" content="{description}" />' in response.text
     assert f'<h1>{heading}</h1>' in response.text
     assert f'<p>{description}</p>' in response.text
+    for paragraph in copy["paragraphs"]:
+        assert f"<p>{_html.escape(paragraph)}</p>" in response.text, "the no-script fallback carries the page's own summary"
     assert response.text.count('<title>') == 1
     assert response.text.count('<meta name="description"') == 1
     assert response.text.count('<meta name="robots"') == 1
@@ -100,10 +118,13 @@ def test_public_documents_have_localized_content_and_only_public_canonicals(
     assert "noindex" not in response.text
     assert f'href="/register?lang={language}"' in response.text
     assert f'href="/auth/start?next=%2Fworkspace&amp;lang={language}"' in response.text
-    canonical_path = "/" if language == "zh-Hans" else path
+    from synwevo_portal.public import public_path
+    page = PUBLIC_PAGES[path]
+    canonical_path = public_path(page, language)
     assert f'<link rel="canonical" href="https://portal.example.test{canonical_path}" />' in response.text
     assert response.text.count('rel="canonical"') == 1
-    for alternate, suffix in (("zh-Hans", "/"), ("zh-Hant", "/zh-Hant"), ("en", "/en"), ("x-default", "/")):
+    for alternate in ("zh-Hans", "zh-Hant", "en", "x-default"):
+        suffix = public_path(page, "zh-Hans" if alternate == "x-default" else alternate)
         assert f'<link rel="alternate" hreflang="{alternate}" href="https://portal.example.test{suffix}" />' in response.text
     assert '/workspace"' not in response.text
     assert response.headers["Cache-Control"] == "no-store"
@@ -114,9 +135,14 @@ def test_robots_sitemap_and_private_shells(portal):
     robots = client.get("/robots.txt")
     assert robots.status_code == 200 and "Disallow: /\n" in robots.text
     assert "Allow: /$" in robots.text and "Allow: /en$" in robots.text
+    assert "Allow: /privacy$" in robots.text and "Allow: /en/service$" in robots.text and "Allow: /zh-Hant/privacy$" in robots.text
     xml = client.get("/sitemap.xml")
     locations = [node.text for node in ET.fromstring(xml.text).iter() if node.tag.endswith("loc")]
-    assert locations == ["https://portal.example.test/", "https://portal.example.test/zh-Hant", "https://portal.example.test/en"]
+    assert locations == ["https://portal.example.test" + p for p in
+                         ("/", "/zh-Hant", "/en", "/privacy", "/zh-Hant/privacy", "/en/privacy", "/service", "/zh-Hant/service", "/en/service")]
+    facts = client.get("/public/deployment.json")
+    assert facts.status_code == 200 and facts.headers["Cache-Control"] == "no-store"
+    assert set(facts.json()) == {"checked_at", "accounts", "docs"}, "runtime facts only: nothing about the request or a session"
     for path in ("/workspace", "/index.html", "/unknown", "/login", "/account", "/admin/api"):
         result = client.get(path, follow_redirects=False)
         assert result.headers["X-Robots-Tag"] == "noindex, nofollow"
