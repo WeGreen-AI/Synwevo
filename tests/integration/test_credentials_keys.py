@@ -489,7 +489,10 @@ def test_cli_create_rotate_revoke_round_trip_and_audit(env):
     r = cli(env, "rotate", kid, "--grace-minutes", "10")
     assert r.returncode == 0, r.stderr
     new_token = next(line.strip() for line in r.stdout.splitlines() if line.strip().startswith("dw_"))
-    assert r.stdout.count("dw_") == 1, "只打印一次新密钥，旧密钥从不打印"
+    # Count printed keys, not the substring: the random part of a secret can itself contain
+    # "dw_" (seen once in 2026-09-27's run), and that is not a second key being printed.
+    assert sum(1 for line in r.stdout.splitlines() if line.strip().startswith("dw_")) == 1, "只打印一次新密钥"
+    assert token not in r.stdout, "旧密钥从不打印"
     assert call(env, token).status_code == 200            # still inside the grace
     assert call(env, new_token).status_code == 200
     new = Auth(env["store"]).get_key(new_token.split("_", 2)[1])
