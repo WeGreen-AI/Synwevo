@@ -1733,6 +1733,14 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 `ui_e2e_messaging.py`（Chromium，两名真实用户两个上下文：邀请加入、私聊经流即时到达、引用回复与表情回应、图片附件扫描/去重/内联、群移除后 404 与搜索为空、0 CSP 违规 0 页面错误）通过。
 四套件全量：2088 项中 1 项偶发失败（collab 变更记录计时，CI-77 已改为轮询），其余通过。
 
+### 16.75 账户外壳文案精简（CI-76）
+
+子代理在 worktree（`4815a4c`，基于 c48f625）完成并验证：typecheck/build、`npm test -w @synwevo/account-web` 19 项、五个守卫、`test_shells` + `test_api_platform_contract_i18n`（14 项）；
+隔离四源实例（ports 32370/32369/32365/32368）Chromium 桌面+手机、WebKit：`ui_e2e_shell`、`ui_e2e_roles`、`ui_e2e_onboarding`、`ui_e2e_inbox`、`ui_e2e_push`、`ui_e2e_member_import`、
+`ui_e2e_institutional_mail`（其信封层 Content-Transfer-Encoding 断言改读 text 部分——邮件自 CI-45 起为 multipart/alternative，属既有陈旧）通过，0 CSP 违规 0 页面错误；截图 10 张。
+未运行：`ui_e2e_challenge.py`（需 Turnstile 测试密钥）、`ui_e2e_moderation/messaging`（消息批次另行验证）。主分支 cherry-pick 为 `a3ec6fe`：typecheck/build、`npm test --workspaces`（19+39+49+19）、
+四守卫、`ui_e2e_shell.py`（四源，Chromium 两宽度）、`test_shells`/契约 i18n/`browser_onboarding_round` 通过。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
