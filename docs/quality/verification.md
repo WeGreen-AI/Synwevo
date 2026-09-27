@@ -1616,7 +1616,7 @@ Docs 与账户服务的 `/api/auth/me` 都 401、「重新登录」到账户服�
 **参考与选择**：与 CI-58 同一个决定——平台的「家」是工作空间；沿用门户自己的 `/auth/start?next=/workspace` 交接（门户在同一跳里拿到会话，会话过期时也不会停在「欢迎回来」）。
 **预期变化**：Docs 顶栏「← Synwevo」与账户外壳品牌链接 → 门户 `/workspace`；标题/无障碍名改为「返回工作空间」（三语言）；没有门户配置的部署保持原回退。
 **验收**：`ui_e2e_shell.py` 桌面段：链接 href 含 `/auth/start` 与 `next=%2Fworkspace`，点击后到门户 `/workspace` 且仪表盘可见——隔离实例复跑 **Chromium 与 WebKit 都通过**（CI-60/61 的退出断言与其余外壳断言不变）；auth-client 单测 39/39、字串校验 19/19、四项守卫与 `npm test --workspaces` 通过。
-**发布与恢复**：前端两处；无 schema 变化，回滚即上一镜像。
+**发布与恢复**：前端两处；无 schema 变化，回滚即上一镜像。**已部署**：`41e6f4f`，run 36323605133（verify 与 deploy 成功，backup 20260927T140828Z）；线上只读核对见 deployment.md。
 
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
