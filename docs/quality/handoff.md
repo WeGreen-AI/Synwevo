@@ -108,7 +108,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-55 | 有界更新包（2 MiB，超限只关该连接）、损坏草稿恢复（改用 head 版本并提示）、远端可见延迟测量（回环 1–8 ms） | 已部署（1d15665，run 36255489490） | 公网延迟未测（需两台机器/受控网络） |
 | CI-56 | 项目设置变更显示前后值（样本规则/输出/名称/模板/固定版本） | 已部署（1d15665，run 36255489490） | 模板更换只显示「另一个模板」 |
 | CI-57 | 里程碑回归：Docs 主链路桌面/手机证明重新通过；修复无账户模式下模板选择器的 401→登录页跳转（403 `accounts_disabled` + 空列表） | 已部署（e51ceb0，run 36304552064） | 生产（session 模式）不受影响 |
-| CI-58 | 登录后的落点：无明确目标的登录与账户服务根路径经门户 `/auth/start` 落到平台工作空间，不再停在账户设置页（用户反馈 2026-09-27；platform.md §8） | 已实现，本地两引擎验证，待部署 | 部署后用受控账户在生产 `accounts.wegreen.ltd/login` 直接登录一次，核对落点为 `synwevo.wegreen.ltd/workspace`，`/login?next=/account` 仍到账户页 |
+| CI-58 | 登录后的落点：无明确目标的登录与账户服务根路径经门户 `/auth/start` 落到平台工作空间，不再停在账户设置页（用户反馈 2026-09-27；platform.md §8） | 已部署（ad2eeeb，run 36313988930，backup 20260927T111919Z）；线上只读核对：新外壳块已上线、`portal_url` 已发布 | 账户持有人下次在 `accounts.wegreen.ltd/login` 直接登录即是线上行为核对（应落到 `synwevo.wegreen.ltd/workspace`）；`/login?next=/account` 仍到账户页 |
 | 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 已随 11202c3 发布 |
 | 回归 | 个人项目复制不携带私人协同房间/未批准历史（9.16）：目标无活动记录、无实时草稿与变更记录，副本只有来源 head 版本 | 已验证，tests/integration/test_project_copy.py（verification.md §16.54） | — |
 | CI-46 | Docs 项目页协同（在场与定位、按映射三方合并、他人变更即时提示、归属活动记录） | 已部署（e6197c1，run 36219721565）；生产 nginx 副本待运维加 Upgrade 头 | SheetEditor 协同与活动筛选未做 |

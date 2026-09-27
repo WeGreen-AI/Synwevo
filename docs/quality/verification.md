@@ -1546,7 +1546,7 @@ Docs 发起的登录经 `/login?next=/oidc/authorize…` 回到发起方，本�
 八条在账户服务直接登录的证明（inbox / shell / roles / messaging / member_import / institutional_mail / onboarding / mobile_audit）的等待条件从「离开 `/login`」改为
 「交接完成」（不在 `/login`、`/auth/start`、`/auth/callback`、`/oidc/`），否则下一步 `goto` 会和交接中的导航竞争。改后复跑 `ui_e2e_roles.py` Chromium 5/5 与 `ui_e2e_inbox.py` Chromium 9/9（读者换成刚收到角色通知的受控成员——脚本前置条件），
 均通过；机器路径不受影响，同日 `python_full_flow.py`（sdk/cli/person，24 份文档、52 份内置输出）与 `ts_run.py --builtin-only`（12+12）在新鲜隔离服务上通过。
-**发布与恢复**：纯前端（账户外壳 + 共享 auth-client），无 schema 变化；回滚即重新部署上一镜像。部署后用受控账户在生产直接登录一次核对落点。
+**发布与恢复**：纯前端（账户外壳 + 共享 auth-client），无 schema 变化；回滚即重新部署上一镜像。**已部署**：`ad2eeeb`，run 36313988930（verify 与 deploy 成功，backup 20260927T111919Z）；线上只读核对见 deployment.md（新外壳块携带新文案与交接代码、三源 readyz、`portal_url` 已发布）；线上登录行为核对需要受控生产账户——本工作站没有，账户持有人下次直接登录即是核对。
 
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
