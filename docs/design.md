@@ -110,6 +110,8 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
   `alt=""`，避免重复朗读；`PageState` 里的图形是装饰（`alt=""`），状态文字负责说明。
 * **浏览器图标**：由图形版生成：16/32px PNG 与 180px `apple-touch-icon` 经 Vite 指纹化进各外壳的资源目录（缓存一年，
   换图即换名）；`favicon.ico`（16/32/48）放在各外壳根目录，供没有声明图标的响应（例如新标签页里的 JSON）。
+* **链接预览图**：`share-card.png`（1200×630，不透明白底，完整版居中占宽 52%）同样由 `scripts/brand_assets.py` 从确认原图生成，
+  放在各外壳根目录；公开页面的 `og:image` 指向它（CI-80）。不另画、不加标语、不叠加截图。
   标签页图标带白色圆角底板：浏览器标签栏可能是深色，而 Logo 墨色接近黑色。没有 PWA 与 manifest，因此不提供
   maskable 图标。
 * **白色版本**：`packages/ui/brand/derived/*-white.png` 只用于深色背景上的平台自有文档（GitHub 深色模式下的 README）；

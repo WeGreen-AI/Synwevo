@@ -17,6 +17,9 @@
 * 服务端渲染（`document()`）：`<html lang>`、`<title>`、`meta description`、`robots index,follow`、
   `canonical` 与三语言 + `x-default` 的 `hreflang`（只在配置了合法 `SYNWEVO_PORTAL_URL` 时），`#root` 里的无脚本回退
   = 标题 + 描述 + 摘要段落 + 注册 / 登录 / 其它两页的链接（回退里永远没有 `/workspace`）。
+* 分享摘要（CI-80）：公开页的服务端 `<head>` 带 `og:site_name/type/title/description/locale`（zh_CN / zh_HK / en_US 及另两种为 alternate）与
+  `twitter:card=summary_large_image`；`og:url`、`og:image`（`/share-card.png`，1200×630，由确认 Logo 生成）只在配置了合法公开源时出现，从不取自 Host；
+  私有页（工作空间、登录等）没有任何 `og:` 标签。
 * `robots.txt` 对全部 12 个公开路径 `Allow: <path>$`；`sitemap.xml` 列 9 个规范路径（3 页 × 3 语言，`/zh-Hans/...` 别名不列）。
 * 首页叙事顺序：它是什么（主视觉 + 品牌卡）→ 今天可用的应用（Synwevo Docs、Synwevo Message，没有第三张卡）→
   一起怎样完成工作（工作空间 / 组织 / 角色与授权 / 通知）→ 为什么可以信任（数据与隐私摘要，链接到全文）→ 下一步。

@@ -127,6 +127,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-74 | 消息服务端能力：在线/输入、可选已读回执、标为未读、转发、撤回/仅自己删除、语音、FTS5 搜索、SSE 补发与 `/sync`、指标（契约 messaging.md §7） | 已部署（63638c6，run 36344727517，schema v25） | 外壳（CI-73）按 §7 契约接入：设置面板、typing/presence 展示、回执、转发/撤回菜单、语音录制、搜索筛选、断线 resync |
 | CI-73 | 消息外壳重建为顶级聊天界面并接入 CI-74/75 契约（`docs/platform/messaging-ui.md`） | 已部署（2de395d，run 36348079448） | 真机（iOS/Android）验证；`unread_mentions` 待后端提供后列表显示 @ 徽标；`/objects` 的 409/429 用专门文案；录音在无头 Chrome 因权限提示不结算只能验证等待/取消路径 |
 | CI-79 | 账户表单未保存修改的离开保护（`useUnsavedChanges`） | 已实现，待部署 | 真机 Safari 上的询问由持有人下次使用时顺带确认 |
+| CI-80 | 公开页分享摘要（Open Graph + 由确认 Logo 生成的预览图） | 已实现，待部署 | 部署后用 `curl` 核对 synwevo.com 的 og 标签与 `/share-card.png` |
 | 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 已随 11202c3 发布 |
 | 回归 | 个人项目复制不携带私人协同房间/未批准历史（9.16）：目标无活动记录、无实时草稿与变更记录，副本只有来源 head 版本 | 已验证，tests/integration/test_project_copy.py（verification.md §16.54） | — |
 | CI-46 | Docs 项目页协同（在场与定位、按映射三方合并、他人变更即时提示、归属活动记录） | 已部署（e6197c1，run 36219721565）；生产 nginx 副本待运维加 Upgrade 头 | SheetEditor 协同与活动筛选未做 |

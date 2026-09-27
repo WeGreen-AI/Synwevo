@@ -151,6 +151,20 @@
       ]
     },
     {
+      "path": "packages/ui/public-brand/share-card.png",
+      "kind": "share-card",
+      "size": [
+        1200,
+        630
+      ],
+      "sha256": "7246917fd94d5acd7d7fd6b35458bb3518fd689f01d5159a7bd1ed40a67bc91f",
+      "derived_from": "packages/ui/brand/originals/synwevo-logo-full.png",
+      "steps": [
+        "crop [241, 238, 1701, 567] from the lockup",
+        "Lanczos to 52% of the card width, centred on an opaque white 1200x630 card"
+      ]
+    },
+    {
       "path": "packages/ui/src/brand/apple-touch-icon.png",
       "kind": "apple-touch-icon",
       "size": [

@@ -128,6 +128,14 @@ def test_public_documents_have_localized_content_and_only_public_canonicals(
         assert f'<link rel="alternate" hreflang="{alternate}" href="https://portal.example.test{suffix}" />' in response.text
     assert '/workspace"' not in response.text
     assert response.headers["Cache-Control"] == "no-store"
+    # the link preview: this page's own title and summary, its locale, and the card from the
+    # configured origin (never the Host header)
+    assert f'<meta property="og:title" content="{title}" />' in response.text
+    assert f'<meta property="og:description" content="{description}" />' in response.text
+    assert f'<meta property="og:url" content="https://portal.example.test{canonical_path}" />' in response.text
+    assert '<meta property="og:image" content="https://portal.example.test/share-card.png" />' in response.text
+    assert {"zh-Hans": "zh_CN", "zh-Hant": "zh_HK", "en": "en_US"}[language] in response.text.split('property="og:locale" content="')[1][:6]
+    assert response.text.count('property="og:title"') == 1 and 'name="twitter:card" content="summary_large_image"' in response.text
 
 
 def test_robots_sitemap_and_private_shells(portal):
@@ -148,6 +156,7 @@ def test_robots_sitemap_and_private_shells(portal):
         assert result.headers["X-Robots-Tag"] == "noindex, nofollow"
         if result.status_code == 200:
             assert 'name="robots" content="noindex, nofollow"' in result.text
+            assert 'property="og:' not in result.text, f"{path} is private and has no link preview"
             assert 'rel="canonical"' not in result.text
             assert 'hreflang=' not in result.text
     assert client.get("/api/portal/home").status_code == 401
@@ -161,6 +170,9 @@ def test_no_unconfigured_or_host_injected_canonical(portal, monkeypatch, configu
     page = client.get("/")
     assert 'rel="canonical"' not in page.text
     assert "untrusted.example.test" not in client.get("/sitemap.xml").text
+    home = client.get("/", headers={"Host": "untrusted.example.test"}).text
+    assert "untrusted.example.test" not in home and 'property="og:url"' not in home and 'property="og:image"' not in home
+    assert 'property="og:title"' in home, "title and summary need no origin and are still offered"
     assert "<url>" not in client.get("/sitemap.xml").text
 
 

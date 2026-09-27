@@ -206,10 +206,44 @@ def document(dist: Path, path: str, locale: str) -> HTMLResponse:
         for language in (*LOCALES, "x-default"):
             href = origin + public_path(page, "zh-Hans" if language == "x-default" else language)
             tags += f'<link rel="alternate" hreflang="{language}" href="{html.escape(href, quote=True)}" />'
+    if public:
+        tags += share_tags(page, locale, title, description, origin)
     source = source.replace("</head>", tags + "</head>")
     if public:
         source = source.replace('<div id="root"></div>', f'<div id="root">{_fallback(page, locale)}</div>')
     return HTMLResponse(source, headers={"Cache-Control": "no-store", "X-Robots-Tag": robots})
+
+
+#: Open Graph locale names for the three interface languages.
+OG_LOCALE = {"zh-Hans": "zh_CN", "zh-Hant": "zh_HK", "en": "en_US"}
+#: The link-preview card, generated from the confirmed logo by scripts/brand_assets.py and copied
+#: to each shell's root (packages/ui/public-brand/share-card.png).
+SHARE_CARD = ("/share-card.png", 1200, 630)
+
+
+def share_tags(page: str, locale: str, title: str, description: str, origin: str | None) -> str:
+    """What a chat app or social site shows when someone pastes a public page's address: the
+    page's own title and summary in its language, the site name, and — only when the deployment
+    has a configured public origin, never a Host header — the canonical address and the card
+    image. Private pages (the workspace, sign-in) get none of this: they are not shared."""
+    e = lambda v: html.escape(str(v), quote=True)  # noqa: E731
+    out = (f'<meta property="og:site_name" content="Synwevo" />'
+           f'<meta property="og:type" content="website" />'
+           f'<meta property="og:title" content="{e(title)}" />'
+           f'<meta property="og:description" content="{e(description)}" />'
+           f'<meta property="og:locale" content="{OG_LOCALE[locale]}" />')
+    for other in LOCALES:
+        if other != locale:
+            out += f'<meta property="og:locale:alternate" content="{OG_LOCALE[other]}" />'
+    out += '<meta name="twitter:card" content="summary_large_image" />'
+    if origin:
+        path, width, height = SHARE_CARD
+        out += (f'<meta property="og:url" content="{e(origin + public_path(page, locale))}" />'
+                f'<meta property="og:image" content="{e(origin + path)}" />'
+                f'<meta property="og:image:width" content="{width}" />'
+                f'<meta property="og:image:height" content="{height}" />'
+                f'<meta property="og:image:alt" content="Synwevo" />')
+    return out
 
 
 def _fallback(page: str, locale: str) -> str:
