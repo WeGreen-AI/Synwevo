@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { ApiError, platformHandoffUrl, useSession, MessagesLink, NotificationBell } from "@synwevo/auth-client";
+import { ApiError, platformHandoffUrl, useSession, MessagesLink, messagesHref, NotificationBell } from "@synwevo/auth-client";
 import { Brand, Drawer, LanguageMenu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { chooseReturnTarget, rememberOrigin } from "../lib/returnTarget";
 import "./Topbar.messages";
@@ -18,9 +18,8 @@ import "./Topbar.messages";
 export function parentOf(pathname: string): { href: string; label: string } | null {
   if (pathname === "/account" || pathname === "/") return null;
   if (/^\/organizations\/[^/]+/.test(pathname)) return { href: "/organizations", label: "组织" };
-  if (/^\/messages\/[^/]+/.test(pathname)) return { href: "/messages", label: "消息" };
   if (/^\/admin\/[^/]+/.test(pathname)) return { href: "/admin", label: "平台管理" };
-  if (pathname === "/admin" || pathname === "/organizations" || pathname === "/messages") return { href: "/account", label: "账户与安全" };
+  if (pathname === "/admin" || pathname === "/organizations") return { href: "/account", label: "账户与安全" };
   if (pathname.startsWith("/account/")) return { href: "/account", label: "账户与安全" };
   return { href: "/account", label: "账户与安全" };
 }
@@ -62,7 +61,9 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
     <>
       <a className="btn ghost sm" href={link("/account")} aria-current={pathname === "/account" ? "page" : undefined}>{t("账户与安全")}</a>
       <a className="btn ghost sm" href={link("/organizations")} aria-current={current("/organizations")}>{t("组织")}</a>
-      <MessagesLink href={link("/messages")} current={!!current("/messages")} />
+      {/* Conversations are Synwevo Message's (CI-66): the registry address through its sign-in
+          start; the account origin's own /messages (a server redirect) only while it is not registered. */}
+      <MessagesLink href={messagesHref(state, { lang: locale })} />
       {isAdmin && <a className="btn ghost sm" href={link("/admin")} aria-current={pathname === "/admin" ? "page" : undefined}>{t("平台管理")}</a>}
       {canApi && <a className="btn ghost sm" href={link("/admin/api-platform")} aria-current={current("/admin/api-platform")}>{t("API 管理")}</a>}
     </>

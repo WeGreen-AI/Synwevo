@@ -130,6 +130,21 @@ def _load(v):
         return None
 
 
+def conversation_target(store: Store, cid: str | None) -> dict:
+    """The inbox target for a conversation (or the list when `cid` is None), as the deployment is.
+
+    Since CI-66 conversations are served by Synwevo Message on its own origin: while that
+    application is registered, targets name origin ``messages`` with the path the messages shell
+    routes (`/c/<cid>`); on a deployment without it they name the account origin's `/messages`
+    paths as before. Decided when the item is written, resolved through the registry when it is
+    read (`notifications.resolve_target`), so neither side guesses a host.
+    """
+    from .apps import messages_launch_url
+    if messages_launch_url(store):
+        return {"origin": "messages", "path": f"/c/{cid}" if cid else "/"}
+    return {"origin": "accounts", "path": f"/messages/{cid}" if cid else "/messages"}
+
+
 class Messaging:
     def __init__(self, store: Store, ident: Identity, *, publish: Publish | None = None):
         self.store, self.ident = store, ident

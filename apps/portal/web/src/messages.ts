@@ -303,6 +303,7 @@ export const portalMessages = {
   "页面将重新载入以更新权限。": {"en": "The page will reload to apply the new permissions.", "zh-Hant": "頁面將重新載入以更新權限。"},
   "从来源数据到可交付的文档。": {"en": "From source data to documents ready to deliver.", "zh-Hant": "從來源資料到可交付的文件。"},
   "打开已授权的应用。": {"en": "Open an application you have access to.", "zh-Hant": "開啟已授權的應用。"},
+  "组织内的私聊与群聊。": {"en": "Direct messages and groups within your organization.", "zh-Hant": "組織內的私訊與群組。"},
   "当前工作空间暂无可用应用": {"en": "No applications available in this workspace", "zh-Hant": "目前工作空間暫無可用應用"},
   "先加入一个工作空间": {"en": "Join a workspace to get started", "zh-Hant": "先加入一個工作空間"},
   "请联系工作空间管理员确认应用是否启用，以及你的使用资格。": {"en": "Ask a workspace administrator whether the application is enabled and whether you have access.", "zh-Hant": "請聯絡工作空間管理員確認應用是否啟用，以及你的使用資格。"},

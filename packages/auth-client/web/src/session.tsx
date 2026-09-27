@@ -40,7 +40,7 @@ export interface AuthState {
   password_login: boolean;
   /** Configurable platform name. The sign-in screen is the platform's, not one application's. */
   platform_name?: string;
-  /** Which service this process is: "accounts", "portal", "app", or "all". */
+  /** Which service this process is: "accounts", "portal", "app", "messages", or "all". */
   role?: string;
   /** Human verification, when the deployment has it: the widget's public site key and which
    *  actions are challenged (`always`, or `risk` = only after the server asked). The secret
@@ -54,6 +54,10 @@ export interface AuthState {
   account_url?: string;
   /** This application's id (a relying party), sent as `from=` when linking to the account page. */
   app_id?: string | null;
+  /** Where conversations live: Synwevo Message's launch URL from the application registry (its
+   *  own origin, or `<origin>/messages` on a single-process install); null on a deployment without
+   *  the application, where the shells fall back to the account origin's /messages. */
+  messages_url?: string | null;
   /** External OpenID providers the account service offers — only the configured ones. */
   external_providers?: { id: string; label: string }[];
   /** True when passkeys registered under a previous domain exist in this deployment: a "no passkey
@@ -281,7 +285,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // platform session was still alive, and the next person at a shared computer was still
       // signed in on the portal. The account service itself, and the single-process deployment
       // ("all"), end the central session directly.
-      const relyingParty = state?.role === "app" || state?.role === "portal";
+      const relyingParty = state?.role === "app" || state?.role === "portal" || state?.role === "messages";
       let destination = "/logged-out";
       if (relyingParty) {
         const out = await post<{ ok: boolean; scope: string; redirect?: string }>("/api/auth/sign-out?everywhere=true", {});

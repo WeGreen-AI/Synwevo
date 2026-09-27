@@ -9,10 +9,10 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, announceMessagesUnread, api, get, post, put, upload, useSession } from "@synwevo/auth-client";
 import { Drawer, Modal, useI18n, useMediaQuery } from "@synwevo/ui";
-import { Topbar } from "../components/Topbar";
-import { FlowError, Loading } from "./org/AuthFlow";
-import "../messages.css";
-import "../messages.messages";
+import { Topbar } from "./Topbar";
+import { FlowError, Loading } from "./flow";
+import "./messages.css";
+import "./messages.messages";
 
 interface Member { user_id: string; name: string; role: "owner" | "admin" | "member" }
 interface Conversation { id: string; organization_id: string; kind: "dm" | "group"; name: string; description: string | null; archived: boolean; last_seq: number;
@@ -27,7 +27,11 @@ interface Message { id: string; conversation_id: string; seq: number; sender_id:
   system?: Record<string, any>; pending?: boolean; failed?: string }
 interface Org { id: string; name: string; status: string }
 
-const M = "/api/auth/messaging";
+// The application's own API on this origin (CI-66); the badge's unread-count stays a shared
+// session route. A thread's address is `/c/<cid>` here, whatever origin the shell is served on.
+const M = "/api/messaging";
+const threadPath = (cid: string) => `/c/${cid}`;
+const LIST = "/";
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👀", "✅", "❓", "🙏"];
 export const REPORT_REASONS: Record<string, string> = { harassment: "骚扰或辱骂", spam: "垃圾信息", privacy: "泄露隐私或索要凭据", other: "其他" };
 const urlRe = /(https?:\/\/[^\s<>"']+)/g;
@@ -90,7 +94,9 @@ export default function Messages() {
   const loadConvs = useCallback(() => get<{ items: Conversation[] }>(`${M}/conversations`).then(x => { setConvs(x.items); const unread = x.items.filter(c => !c.me.muted).reduce((a, c) => a + c.unread, 0); announceMessagesUnread(unread); return x.items; }), []);
   useEffect(() => {
     const abort = new AbortController();
-    Promise.all([get<{ items: Org[] }>("/api/auth/organizations", abort.signal), loadConvs()]).then(([o]) => setOrgs(o.items.filter(x => x.status === "active"))).catch(e => { if (!abort.signal.aborted) setError(e); });
+    // the organizations a conversation can be started in: this application's own answer (the
+    // account service's /api/auth/organizations is not served on this origin)
+    Promise.all([get<{ items: Org[] }>(`${M}/organizations`, abort.signal), loadConvs()]).then(([o]) => setOrgs(o.items.filter(x => x.status === "active"))).catch(e => { if (!abort.signal.aborted) setError(e); });
     // drafts of another account on this browser are never shown to this one
     try { Object.keys(localStorage).filter(k => k.startsWith("synwevo.msg.draft.") && !k.startsWith(`synwevo.msg.draft.${uid}.`)).forEach(k => localStorage.removeItem(k)); } catch { /* storage unavailable */ }
     return () => abort.abort();
@@ -122,11 +128,11 @@ export default function Messages() {
     return () => { closed = true; es?.close(); stopPolling(); };
   }, [uid, loadConvs]);
 
-  const open = (id: string) => { setSearch(null); navigate(`/messages/${id}`); };
+  const open = (id: string) => { setSearch(null); navigate(threadPath(id)); };
   const visible = (convs || []).filter(c => !filter.trim() || c.name.toLowerCase().includes(filter.trim().toLowerCase()));
   const doSearch = async (q: string) => { if (q.trim().length < 2) { setSearch(null); return; } try { const x = await get<{ items: Message[] }>(`${M}/search?q=${encodeURIComponent(q.trim())}`); setSearch({ q, items: x.items }); } catch (e) { setError(e); } };
 
-  return <div className="app"><Topbar title={t("消息")} /><div className={`msg-layout ${cid ? "thread" : "list"}`}>
+  return <div className="app"><Topbar /><div className={`msg-layout ${cid ? "thread" : "list"}`}>
     <aside className="msg-side" aria-label={t("会话列表")}>
       <div className="msg-side-h">
         <input className="input sm" type="search" placeholder={t("筛选或搜索消息…")} value={filter} onChange={e => { setFilter(e.target.value); if (!e.target.value) setSearch(null); }} onKeyDown={e => { if (e.key === "Enter") void doSearch(filter); }} aria-label={t("筛选或搜索消息…")} />
@@ -147,10 +153,10 @@ export default function Messages() {
     </aside>
     <section className="msg-thread" aria-label={t("会话")}>
       {!cid ? <div className="msg-empty">{t("选择一个会话，或开始新的对话。")}</div>
-        : !selected ? (convs ? <div className="msg-empty">{t("找不到这个会话，或你已不在其中。")} <button type="button" className="btn" onClick={() => navigate("/messages")}>{t("返回列表")}</button></div> : <Loading />)
-        : <Thread key={selected.id} conv={selected} uid={uid} live={live} narrow={narrow} onBack={() => navigate("/messages")} onOpenInfo={() => setDrawer(true)} onChanged={() => void loadConvs()} bind={fns => { threadRef.current = fns; }} />}
+        : !selected ? (convs ? <div className="msg-empty">{t("找不到这个会话，或你已不在其中。")} <button type="button" className="btn" onClick={() => navigate(LIST)}>{t("返回列表")}</button></div> : <Loading />)
+        : <Thread key={selected.id} conv={selected} uid={uid} live={live} narrow={narrow} onBack={() => navigate(LIST)} onOpenInfo={() => setDrawer(true)} onChanged={() => void loadConvs()} bind={fns => { threadRef.current = fns; }} />}
     </section>
-    {drawer && selected && <ConversationInfo conv={selected} uid={uid} onClose={() => setDrawer(false)} onChanged={() => { void loadConvs(); }} onLeft={() => { setDrawer(false); navigate("/messages"); void loadConvs(); }} />}
+    {drawer && selected && <ConversationInfo conv={selected} uid={uid} onClose={() => setDrawer(false)} onChanged={() => { void loadConvs(); }} onLeft={() => { setDrawer(false); navigate(LIST); void loadConvs(); }} />}
     {dialog && <NewConversation kind={dialog} orgs={orgs} onClose={() => setDialog(null)} onCreated={c => { setDialog(null); void loadConvs().then(() => open(c.id)); }} />}
   </div></div>;
 }

@@ -3,7 +3,11 @@ job on it and a personal draft in a direct message; the member (on a phone) sees
 team project and the job — title, workspace, outcome — and only a plain link for the draft
 they cannot open. The owner sees all three cards. Isolated instance, file mail.
 
-    .venv/bin/python services/identity/scripts/ui_e2e_link_cards.py http://accounts.localhost:31770 http://docweave.localhost:31765 <mail dir> [--webkit]
+Since CI-66 the conversations live on Synwevo Message's own origin (reached through its sign-in
+start from an account-origin session).
+
+    .venv/bin/python services/identity/scripts/ui_e2e_link_cards.py http://accounts.localhost:31770 \
+        http://docweave.localhost:31765 http://message.localhost:31768 <mail dir> [--webkit]
 """
 from __future__ import annotations
 
@@ -18,7 +22,7 @@ from pathlib import Path
 from playwright.sync_api import Browser, expect, sync_playwright
 
 from localhost_proxy import LocalhostProxy
-from ui_e2e_messaging import PW, csrf_of, link_in, mail_to, register_and_activate, require_test_instance, sign_in
+from ui_e2e_messaging import PW, csrf_of, enter_messages, link_in, mail_to, register_and_activate, require_test_instance, sign_in
 from ui_e2e_project_copy import build_personal_project, enter_docs
 
 expect.set_options(timeout=15000)
@@ -32,7 +36,7 @@ def send(page, text: str) -> None:
     expect(page.locator(".msg-pending")).to_have_count(0, timeout=10000)
 
 
-def run(browser: Browser, engine: str, accounts: str, docs: str, mail_dir: Path, ctx_extra: dict | None = None) -> list[str]:
+def run(browser: Browser, engine: str, accounts: str, docs: str, messages: str, mail_dir: Path, ctx_extra: dict | None = None) -> list[str]:
     notes: list[str] = []
     tag = secrets.token_hex(3)
     owner, member = f"owner.{tag}@example.test", f"member.{tag}@example.test"
@@ -83,14 +87,14 @@ def run(browser: Browser, engine: str, accounts: str, docs: str, mail_dir: Path,
         time.sleep(0.3)
     assert j["status"] == "completed", j
 
-    # ---- the owner shares the three links in a direct message
-    pa.goto(f"{accounts}/messages?lang=zh-Hans")
+    # ---- the owner shares the three links in a direct message (on the messages origin)
+    enter_messages(pa, messages)
     pa.get_by_role("button", name=re.compile("新私聊")).click()
     dialog = pa.locator(".modal").last
     dialog.locator("#msg-who").fill("Member")
     dialog.get_by_role("button", name=re.compile("^选择$")).first.click()
     dialog.get_by_role("button", name=re.compile("开始私聊")).click()
-    pa.wait_for_url(lambda u: "/messages/cv_" in u)
+    pa.wait_for_url(lambda u: "/c/cv_" in u)
     expect(pa.locator(".msg-status")).to_have_text(re.compile("实时"), timeout=15000)
     send(pa, f"团队项目在这里 {docs}/p/{team_pid}")
     send(pa, f"任务结果 {docs}/p/{team_pid}/jobs/{jid}")
@@ -106,7 +110,7 @@ def run(browser: Browser, engine: str, accounts: str, docs: str, mail_dir: Path,
     notes.append(f"{engine}: the owner's three links became cards — team project (with workspace), the finished job (outcome and counts), and their own personal draft")
 
     # ---- the member sees cards only for what they can open
-    pb.goto(f"{accounts}/messages?lang=zh-Hans")
+    enter_messages(pb, messages)
     pb.locator(".msg-conv").first.click()
     expect(pb.locator(".msg-thread")).to_be_visible()
     expect(pb.locator(".msg-body", has_text="我的草稿")).to_be_visible(timeout=15000)
@@ -121,8 +125,8 @@ def run(browser: Browser, engine: str, accounts: str, docs: str, mail_dir: Path,
     assert w[0] <= w[1] + 1, f"cards scroll sideways on a phone ({w})"
     pb.screenshot(path=str(SHOTS / f"{engine}-02-member-phone.png"))
     # the card's own request from the member's session answers 404 for the draft, 200 for the team project
-    assert pb.request.get(f"{accounts}/api/auth/messaging/link-card?url={docs}/p/{mine_pid}").status == 404
-    assert pb.request.get(f"{accounts}/api/auth/messaging/link-card?url={docs}/p/{team_pid}").status == 200
+    assert pb.request.get(f"{messages}/api/messaging/link-card?url={docs}/p/{mine_pid}").status == 404
+    assert pb.request.get(f"{messages}/api/messaging/link-card?url={docs}/p/{team_pid}").status == 200
     notes.append(f"{engine}: the member (phone) got cards for the team project and the job, and only the plain link for the owner's personal draft; nothing scrolls sideways")
     assert not violations, violations
     a.close(); b.close()
@@ -131,9 +135,9 @@ def run(browser: Browser, engine: str, accounts: str, docs: str, mail_dir: Path,
 
 def main():
     args = [x for x in sys.argv[1:] if not x.startswith("--")]
-    if len(args) != 3:
+    if len(args) != 4:
         raise SystemExit(__doc__)
-    accounts, docs, mail_dir = require_test_instance(args[0]), require_test_instance(args[1]), Path(args[2])
+    accounts, docs, messages, mail_dir = require_test_instance(args[0]), require_test_instance(args[1]), require_test_instance(args[2]), Path(args[3])
 
     def show(engine: str, notes: list[str]):
         print(f"\n== {engine}")
@@ -144,14 +148,14 @@ def main():
         if "--webkit-only" not in sys.argv:
             chrome = p.chromium.launch(channel="chrome", headless=True)
             try:
-                show("chromium (Google Chrome)", run(chrome, "chromium", accounts, docs, mail_dir))
+                show("chromium (Google Chrome)", run(chrome, "chromium", accounts, docs, messages, mail_dir))
             finally:
                 chrome.close()
         if "--webkit" in sys.argv or "--webkit-only" in sys.argv:
             with LocalhostProxy() as proxy:
                 wk = p.webkit.launch(headless=True)
                 try:
-                    show("webkit", run(wk, "webkit", accounts, docs, mail_dir, {"proxy": {"server": proxy.url}}))
+                    show("webkit", run(wk, "webkit", accounts, docs, messages, mail_dir, {"proxy": {"server": proxy.url}}))
                 finally:
                     wk.close()
 

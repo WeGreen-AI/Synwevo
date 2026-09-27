@@ -2,12 +2,13 @@
   "name": "synwevo",
   "private": true,
   "version": "1.0.0",
-  "description": "Synwevo 平台单仓库：Synwevo Workspace、Synwevo Account、Synwevo Docs 与共享前端包",
+  "description": "Synwevo 平台单仓库：Synwevo Workspace、Synwevo Account、Synwevo Docs、Synwevo Message 与共享前端包",
   "workspaces": [
     "packages/ui",
     "packages/auth-client/web",
     "apps/docs/web",
     "apps/portal/web",
+    "apps/messages/web",
     "services/identity/web"
   ],
   "scripts": {
@@ -15,7 +16,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build:docs": "npm run build -w @synwevo/docs-web",
     "build:workspace": "npm run build -w @synwevo/workspace-web",
-    "build:account": "npm run build -w @synwevo/account-web"
+    "build:account": "npm run build -w @synwevo/account-web",
+    "build:messages": "npm run build -w @synwevo/messages-web"
   },
   "repository": {
     "type": "git",

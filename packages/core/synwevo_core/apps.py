@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from . import env
 from .errors import ServiceError
-from .config import DOCS_NAME
+from .config import DOCS_NAME, MESSAGES_NAME
 from .identity import Identity
 from .store import Store, now
 
@@ -24,6 +24,15 @@ from .store import Store, now
 #: 里的主键，也写在已经签发出去的令牌里。改这个字符串等于把现有的使用资格和机器凭据一起作废，
 #: 换来的只是一次搜索结果清零。对外显示的名字是 DOCS_NAME。
 DOCS_APP_ID = "docweave"
+
+#: The messaging application (Synwevo Message), on its own origin since CI-66. A row in `apps`
+#: like Synwevo Docs — it has a launch URL that the portal card, the platform bar's 消息 link and
+#: every `conversation.*` inbox item resolve through — but its eligibility is **not** the workspace
+#: model this module describes: conversations belong to an organization, not to a workspace, and
+#: who may read one is decided by `synwevo_core.messaging` (organization membership, conversation
+#: membership, `joined_seq`). So `check_access` treats it like the platform id: any live account
+#: may open the application; what they see inside it is the service layer's answer.
+MESSAGES_APP_ID = "messages"
 
 # The portal itself. Deliberately *not* a row in `apps`: the registry lists business
 # applications someone can be granted or denied, and the portal is the place you go to find out
@@ -176,6 +185,13 @@ class Apps:
             return False, None, "该应用不存在"
         if app["status"] != "active":
             return False, None, "该应用已停用"
+        if app_id == MESSAGES_APP_ID:
+            # Organization-scoped, not workspace-scoped (see MESSAGES_APP_ID): the application is
+            # open to every live account, and someone with no workspace at all still has their
+            # organizations' conversations. Requiring `workspace_apps` or an entitlement here would
+            # lock people out of conversations they are members of for a reason that has nothing
+            # to do with messaging — while an operator's `app disable messages` still holds above.
+            return self._check_platform(user_id, workspace_id)
 
         spaces = self.ident.workspaces_for(user_id)
         if not spaces:
@@ -272,8 +288,11 @@ class Apps:
                 launch = urlsplit(app["launch_url"])
                 # The destination reauthorizes this untrusted hint during SSO and callback.
                 # Persist it in the sign-in request, never in an unscoped browser preference.
+                # An account with no workspace (opening the messages application) sends no hint
+                # at all rather than the string "None".
+                hint = {"workspace_id": wid} if wid else {}
                 launch_url = urlunsplit((launch.scheme, launch.netloc, "/auth/start",
-                                        urlencode({"workspace_id": wid, "next": launch.path or "/"}), ""))
+                                        urlencode({**hint, "next": launch.path or "/"}), ""))
                 out.append({"id": app["id"], "name": app["name"], "icon": app["icon"],
                             "launch_url": launch_url, "workspace_id": wid,
                             "workspace_name": (ws or {}).get("name")})
@@ -361,3 +380,57 @@ def bootstrap_docs_app(store: Store, ident: Identity, *, launch_url: str | None 
         app_id=DOCS_APP_ID, name=DOCS_NAME, icon="doc",
         launch_url=launch_url or (env.get("APP_URL") if mine else None),
         access_policy=None, keep_launch_url=not mine and not launch_url)
+
+
+def bootstrap_messages_app(store: Store, ident: Identity, *, launch_url: str | None = None,
+                           role: str | None = None) -> dict:
+    """Register Synwevo Message. Idempotent; safe to run on every start of the process that serves it.
+
+    The same rule as :func:`bootstrap_docs_app`: `SYNWEVO_APP_URL` is *this service's own
+    address*, so only the `messages` role (its own origin) and `all` (one origin for everything)
+    write it. On `all` the application lives under `/messages` of the shared origin, so the launch
+    URL carries that path; on its own origin it is served at `/`. Any other role writing it would
+    point the 消息 link and every conversation notification at the wrong service. `role` is the
+    role the caller was composed as (a composer may be told it outright, see `http.app_role`);
+    without it the environment's answer is used.
+
+    Nothing else registers it: the account service, the portal and Synwevo Docs learn about the
+    application from the row this writes (:func:`messages_launch_url`), never from their own
+    environment.
+    """
+    apps = Apps(store, ident)
+    role = (role or env.get("ROLE") or "all").strip().lower()
+    mine = role in ("messages", "all", "")
+    if launch_url is None and mine and env.get("APP_URL"):
+        base = env.get("APP_URL").rstrip("/")
+        launch_url = base + ("/messages" if role in ("all", "") else "/")
+    return apps.register(
+        app_id=MESSAGES_APP_ID, name=MESSAGES_NAME, icon="chat",
+        launch_url=launch_url, access_policy=None, keep_launch_url=not mine and not launch_url)
+
+
+def messages_launch_url(store: Store) -> str | None:
+    """The messages application's launch URL when it is registered and active, else None.
+
+    Read from the registry row the messages process writes at start-up (:func:`bootstrap_messages_app`),
+    so the account service, the portal and Docs point the 消息 link, the `/messages` redirects and
+    every `conversation.*` inbox item at the origin that actually serves conversations — and say
+    nothing (None) on a deployment that has not added the application. Never from the reader's own
+    `SYNWEVO_APP_URL`: that is the reader's address. The trailing slash is dropped so callers can
+    append a path.
+    """
+    row = store.one("SELECT launch_url, status FROM apps WHERE id=?", (MESSAGES_APP_ID,))
+    if not row or row["status"] != "active":
+        return None
+    url = (row["launch_url"] or "").strip()
+    return url.rstrip("/") if url.startswith(("http://", "https://")) else None
+
+
+def messages_origin(store: Store) -> str | None:
+    """``scheme://host[:port]`` of :func:`messages_launch_url`, for paths on that origin."""
+    url = messages_launch_url(store)
+    if not url:
+        return None
+    from urllib.parse import urlsplit
+    u = urlsplit(url)
+    return f"{u.scheme}://{u.netloc}" if u.scheme and u.netloc else None

@@ -1,60 +1,54 @@
-"""Organization messaging: explicit membership, history from the moment you join, revocation that
-closes every door, attachments through the acceptance chain, and a stream that is a hint."""
+"""Organization messaging on its own origin: explicit membership, history from the moment you join,
+revocation that closes every door, attachments through the acceptance chain, a stream that is a
+hint — and the role boundary of the application that serves it.
+
+These were the account service's tests until CI-66 moved the API to Synwevo Message; the
+ceremonies are unchanged, the prefix is `/api/messaging`, and the caller is signed in the way a
+relying party signs people in (a minted session, see conftest). The moderation half (listing and
+reviewing reports) stayed on the account service and is tested there."""
 from __future__ import annotations
 
-import json
 import threading
 import time
 
-import pytest
-from fastapi.testclient import TestClient
-
-PW = "harbor lights guide the evening ferry home"
-CSRF = "X-Synwevo-CSRF"
-
-
-@pytest.fixture()
-def org(tmp_path, monkeypatch):
-    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
-    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
-    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
-    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
-    monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "mail"))
-    monkeypatch.setenv("SYNWEVO_MAIL_FROM", "synwevo@example.test")
-    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "http://testserver")
-    monkeypatch.setenv("SYNWEVO_ISSUER", "http://testserver")          # inbox links to the account origin resolve against it
-    from synwevo_identity.app import create_app
-    api = create_app(str(tmp_path / "d"), start_jobs=False)
-    ident = api.state.identity
-    users = {}
-    for key, name in (("owner", "Ola Owner"), ("ann", "Ann Member"), ("ben", "Ben Member"), ("cid", "Cid Member"), ("outsider", "Oz Outsider")):
-        u = ident.create_user(f"{key}@example.test", PW, status="active", display_name=name)
-        ident.store.execute("UPDATE users SET email_verified_at=1 WHERE id=?", (u["id"],))
-        users[key] = u
-    from synwevo_core.organizations import Organizations
-    created = Organizations(ident.store, ident).create(users["owner"]["id"], "Chat Org", "Chat Team", "fixture-idem-chat-org-0001")
-    oid = created["organization"]["id"]
-    for key in ("ann", "ben", "cid"):
-        ident.store.execute("INSERT INTO organization_memberships (organization_id,user_id,role,created_at,updated_at,created_by) VALUES (?,?,'member',1,1,?)",
-                            (oid, users[key]["id"], users["owner"]["id"]))
-    with TestClient(api) as c:
-        c.api, c.ident, c.users, c.oid = api, ident, users, oid
-        yield c
+M = "/api/messaging"
+# The fixture's configured origins (conftest.org): this application's own and the account service's.
+MESSAGES = "http://message.testserver"
+ACCOUNTS = "http://accounts.testserver"
 
 
-def login(c: TestClient, key: str) -> dict:
-    c.cookies.clear()
-    r = c.post("/api/auth/login", json={"email": f"{key}@example.test", "password": PW})
-    assert r.status_code == 200, r.text
-    return {CSRF: c.cookies.get("dw_csrf")}
+def sign_in(c, key: str) -> dict:
+    """Become `key` on this origin (a minted session of this application, see conftest)."""
+    return c.sign_in(key)
 
 
-M = "/api/auth/messaging"
+def test_the_application_describes_itself_and_refuses_what_is_not_its_own(org):
+    """A relying party: no password box, its own id, its own address in `messages_url`; the
+    account origin's former routes are refused here except the shared badge count."""
+    c = org
+    st = c.get("/api/auth/state").json()
+    assert st["role"] == "messages" and st["password_login"] is False and st["app_id"] == "messages"
+    assert st["messages_url"] == MESSAGES and st["account_url"] == ACCOUNTS + "/account"
+    assert c.get(f"{M}/capabilities").status_code == 401                      # a session is required
+    h = sign_in(c, "ann")
+    caps = c.get(f"{M}/capabilities").json()
+    assert caps["reactions"] and caps["heartbeat_s"] == 25 and caps["limits"]["messages_per_minute"] == 60
+    assert c.get("/api/auth/messaging/unread-count").json() == {"unread": 0, "conversations": 0}
+    # the organizations a conversation can be started in come from this application (the account
+    # service's /api/auth/organizations is not served here)
+    orgs = c.get(f"{M}/organizations").json()
+    assert [o["id"] for o in orgs["items"]] == [c.oid] and orgs["items"][0]["status"] == "active" and orgs["total"] == 1
+    assert c.get("/api/auth/organizations", headers=h).status_code == 404
+    for path in ("/api/auth/messaging/conversations", "/api/auth/messaging/reports?organization_id=x",
+                 "/api/auth/passkeys", "/api/projects", "/api/portal/home"):
+        r = c.get(path, headers=h)
+        assert r.status_code == 404 and r.json()["error"] == "not_in_this_role", (path, r.text[:120])
+    assert c.post("/api/auth/login", json={"email": "ann@example.test", "password": "x"}).status_code == 404
 
 
 def test_direct_messages_are_one_conversation_with_idempotent_sends_and_own_read_positions(org):
     c = org
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     # outsiders are not in the directory and cannot be messaged; the answer never says they exist
     assert c.get(f"{M}/directory?organization_id={c.oid}&q=Oz").json()["items"] == []
     assert c.post(f"{M}/dm", headers=ha, json={"organization_id": c.oid, "user_id": c.users["outsider"]["id"]}).status_code == 404
@@ -65,9 +59,9 @@ def test_direct_messages_are_one_conversation_with_idempotent_sends_and_own_read
     dm = r.json()
     assert dm["kind"] == "dm" and dm["name"] == "Ben Member" and dm["member_count"] == 2
     # opening it again (from either side) is the same conversation
-    hb = login(c, "ben")
+    hb = sign_in(c, "ben")
     assert c.post(f"{M}/dm", headers=hb, json={"organization_id": c.oid, "user_id": c.users["ann"]["id"]}).json()["id"] == dm["id"]
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     r = c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "hello ben", "client_id": "c1"})
     assert r.status_code == 201 and r.json()["created"] is True and r.json()["message"]["seq"] == 1
     again = c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "hello ben", "client_id": "c1"}).json()
@@ -75,28 +69,38 @@ def test_direct_messages_are_one_conversation_with_idempotent_sends_and_own_read
     c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "second"})
     assert c.get(f"{M}/conversations/{dm['id']}").json()["last_seq"] == 2
     # ben has two unread; reading up to seq 1 leaves one; ann's own sends are read for her
-    hb = login(c, "ben")
-    assert c.get(f"{M}/unread-count").json() == {"unread": 2, "conversations": 1}
-    assert c.post(f"{M}/conversations/{dm['id']}/read", headers=hb, json={"seq": 1}).json()["unread"] == 1
-    assert c.post(f"{M}/conversations/{dm['id']}/read", headers=hb, json={"seq": 99}).json()["last_read_seq"] == 2
+    hb = sign_in(c, "ben")
+    assert c.get("/api/auth/messaging/unread-count").json() == {"unread": 2, "conversations": 1}
+    # ben's inbox item for the burst points at this origin's thread (`conversation.*` targets
+    # name origin `messages` while the application is registered) and is unread; ann (the
+    # sender) has none
+    items_b = c.api.state.notifier.list(c.users["ben"]["id"])["items"]
+    assert [x["kind"] for x in items_b].count("conversation.dm") == 1
+    assert items_b[0]["href"] == f"{MESSAGES}/c/{dm['id']}" and items_b[0]["read_at"] is None, items_b[0]
+    assert "conversation.dm" not in [x["kind"] for x in c.api.state.notifier.list(c.users["ann"]["id"])["items"]]
+    half = c.post(f"{M}/conversations/{dm['id']}/read", headers=hb, json={"seq": 1}).json()
+    assert half["unread"] == 1 and "notifications_read" not in half
+    assert c.api.state.notifier.list(c.users["ben"]["id"])["items"][0]["read_at"] is None, "a partly read conversation keeps its inbox item unread"
+    done = c.post(f"{M}/conversations/{dm['id']}/read", headers=hb, json={"seq": 99}).json()
+    assert done["last_read_seq"] == 2 and done["notifications_read"] == 1
+    # reading the conversation to its end read the inbox item about it: the bell stops saying
+    # "Ann sent you a message" once the chat has been read (an inbox read, nothing approved)
+    assert c.api.state.notifier.list(c.users["ben"]["id"])["items"][0]["read_at"], "the conversation's inbox item is read with the conversation"
+    assert c.api.state.notifier.unread_count(c.users["ben"]["id"]) == 0
     hist = c.get(f"{M}/conversations/{dm['id']}/messages").json()
     assert [m["body"] for m in hist["items"]] == ["hello ben", "second"] and hist["has_more"] is False
-    # ben gets exactly one inbox item for the burst; ann (the sender) none
-    kinds_b = [x["kind"] for x in c.api.state.notifier.list(c.users["ben"]["id"])["items"]]
-    assert kinds_b.count("conversation.dm") == 1
-    assert "conversation.dm" not in [x["kind"] for x in c.api.state.notifier.list(c.users["ann"]["id"])["items"]]
     # reactions, edit and delete: only own messages, reactions from a fixed set
     mid = hist["items"][0]["id"]
     r = c.put(f"{M}/messages/{mid}/reactions", headers=hb, json={"emoji": "👍"})
     assert r.status_code == 200 and r.json()["reactions"] == [{"emoji": "👍", "users": [c.users["ben"]["id"]], "count": 1}]
     assert c.put(f"{M}/messages/{mid}/reactions", headers=hb, json={"emoji": "🐍"}).status_code == 400
     assert c.patch(f"{M}/messages/{mid}", headers=hb, json={"body": "not mine"}).status_code == 403
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     assert c.patch(f"{M}/messages/{mid}", headers=ha, json={"body": "hello ben!"}).json()["edited_at"]
     out = c.request("DELETE", f"{M}/messages/{mid}", headers=ha).json()
     assert out["deleted"] is True and out["body"] == "" and out["reactions"] == []
     # a third person is not part of this DM and cannot see it, even by id
-    hc = login(c, "cid")
+    hc = sign_in(c, "cid")
     assert c.get(f"{M}/conversations/{dm['id']}").status_code == 404
     assert c.get(f"{M}/conversations/{dm['id']}/messages").status_code == 404
     assert c.post(f"{M}/conversations/{dm['id']}/messages", headers=hc, json={"body": "hi"}).status_code == 404
@@ -104,7 +108,7 @@ def test_direct_messages_are_one_conversation_with_idempotent_sends_and_own_read
 
 def test_groups_show_history_from_the_join_and_close_on_removal_or_organization_loss(org):
     c = org
-    ho = login(c, "owner")
+    ho = sign_in(c, "owner")
     r = c.post(f"{M}/groups", headers=ho, json={"organization_id": c.oid, "name": "Launch", "member_ids": [c.users["ann"]["id"]]})
     assert r.status_code == 201, r.text
     g = r.json()
@@ -116,7 +120,7 @@ def test_groups_show_history_from_the_join_and_close_on_removal_or_organization_
     r = c.post(f"{M}/conversations/{g['id']}/members", headers=ho, json={"user_ids": [c.users["ben"]["id"]]})
     assert r.status_code == 200 and r.json()["member_count"] == 3
     c.post(f"{M}/conversations/{g['id']}/messages", headers=ho, json={"body": "after ben joined", "mention_ids": [c.users["ben"]["id"]]})
-    hb = login(c, "ben")
+    hb = sign_in(c, "ben")
     hist = c.get(f"{M}/conversations/{g['id']}/messages").json()
     assert [m["body"] for m in hist["items"] if m["kind"] == "text"] == ["after ben joined"], hist
     assert hist["floor"] > 0 and hist["has_more"] is False
@@ -127,26 +131,29 @@ def test_groups_show_history_from_the_join_and_close_on_removal_or_organization_
     # ann (also 'mentions' by default) got no item for the two ordinary messages
     kinds_a = [x["kind"] for x in c.api.state.notifier.list(c.users["ann"]["id"])["items"]]
     assert kinds_a == ["conversation.added"]
-    # members cannot manage; the owner can; removal closes every door
+    # members cannot manage; the owner can; removal closes every door and the inbox item points
+    # at this origin's list (there is no thread to show a removed member)
     assert c.post(f"{M}/conversations/{g['id']}/members", headers=hb, json={"user_ids": [c.users["cid"]["id"]]}).status_code == 403
-    ho = login(c, "owner")
+    ho = sign_in(c, "owner")
     assert c.request("DELETE", f"{M}/conversations/{g['id']}/members/{c.users['ben']['id']}", headers=ho).status_code == 200
-    hb = login(c, "ben")
+    removed = [x for x in c.api.state.notifier.list(c.users["ben"]["id"])["items"] if x["kind"] == "conversation.removed"]
+    assert removed and removed[0]["href"] == MESSAGES + "/", removed
+    hb = sign_in(c, "ben")
     assert c.get(f"{M}/conversations/{g['id']}").status_code == 404
     assert [x["id"] for x in c.get(f"{M}/conversations").json()["items"]] == []
-    assert c.get(f"{M}/unread-count").json() == {"unread": 0, "conversations": 0}
+    assert c.get("/api/auth/messaging/unread-count").json() == {"unread": 0, "conversations": 0}
     # added again: a new join, history from now, nothing restored
-    ho = login(c, "owner")
+    ho = sign_in(c, "owner")
     c.post(f"{M}/conversations/{g['id']}/messages", headers=ho, json={"body": "while ben was out"})
     c.post(f"{M}/conversations/{g['id']}/members", headers=ho, json={"user_ids": [c.users["ben"]["id"]]})
-    hb = login(c, "ben")
+    hb = sign_in(c, "ben")
     texts = [m["body"] for m in c.get(f"{M}/conversations/{g['id']}/messages").json()["items"] if m["kind"] == "text"]
     assert texts == []
     # owner cannot leave without transferring; after the transfer the new owner can archive
-    ho = login(c, "owner")
+    ho = sign_in(c, "owner")
     assert c.post(f"{M}/conversations/{g['id']}/leave", headers=ho).json()["error"] == "owner_must_transfer"
     assert c.post(f"{M}/conversations/{g['id']}/transfer", headers=ho, json={"user_id": c.users["ann"]["id"]}).json()["me"]["role"] == "admin"
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     assert c.post(f"{M}/conversations/{g['id']}/archive", headers=ha, json={}).json()["archived"] is True
     assert c.post(f"{M}/conversations/{g['id']}/messages", headers=ha, json={"body": "x"}).json()["error"] == "archived"
     # losing organization membership closes every conversation of that organization at once
@@ -154,14 +161,14 @@ def test_groups_show_history_from_the_join_and_close_on_removal_or_organization_
     assert len(c.get(f"{M}/conversations").json()["items"]) == 2
     from synwevo_core.organizations import Organizations
     Organizations(c.ident.store, c.ident).remove_member(c.oid, c.users["owner"]["id"], c.users["ann"]["id"], reason="fixture removal of ann")
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     assert c.get(f"{M}/conversations").json()["items"] == []
     assert c.get(f"{M}/conversations/{dm['id']}/messages").status_code == 404
 
 
 def test_attachments_go_through_the_acceptance_chain_and_are_served_only_to_readers(org):
     c = org
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     dm = c.post(f"{M}/dm", headers=ha, json={"organization_id": c.oid, "user_id": c.users["ben"]["id"]}).json()
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
     r = c.post(f"{M}/conversations/{dm['id']}/attachments", files={"file": ("shot.png", png, "application/octet-stream")}, headers=ha)
@@ -169,35 +176,35 @@ def test_attachments_go_through_the_acceptance_chain_and_are_served_only_to_read
     att = r.json()
     assert att["content_type"] == "image/png" and att["inline"] is True and att["scan"]["status"] == "not_configured"
     # an unused attachment is only visible to its uploader; sent, it belongs to the message
-    hb = login(c, "ben")
+    hb = sign_in(c, "ben")
     assert c.get(f"{M}/attachments/{att['id']}").status_code == 404
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     msg = c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "", "attachment_id": att["id"]}).json()["message"]
     assert msg["attachment"]["id"] == att["id"] and msg["attachment"]["inline"] is True
     assert c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "", "attachment_id": att["id"]}).status_code == 404, "an attachment is used once"
-    hb = login(c, "ben")
+    hb = sign_in(c, "ben")
     r = c.get(f"{M}/attachments/{att['id']}?inline=1")
     assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.headers["x-content-sha256"] and r.headers["cache-control"] == "private, no-store"
     assert r.headers["content-disposition"].startswith("inline") and "sandbox" in r.headers["content-security-policy"]
     r = c.get(f"{M}/attachments/{att['id']}")
     assert r.headers["content-disposition"].startswith("attachment")
     # not a member: 404, even with the id
-    hc = login(c, "cid")
+    hc = sign_in(c, "cid")
     assert c.get(f"{M}/attachments/{att['id']}").status_code == 404
     # deleting the message takes the attachment with it
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     c.request("DELETE", f"{M}/messages/{msg['id']}", headers=ha)
-    hb = login(c, "ben")
+    hb = sign_in(c, "ben")
     assert c.get(f"{M}/attachments/{att['id']}").status_code == 404
     # too large is refused before storage
     big = b"\x89PNG\r\n\x1a\n" + b"\x00" * (20 * 1024 * 1024 + 1)
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     assert c.post(f"{M}/conversations/{dm['id']}/attachments", files={"file": ("big.png", big, "image/png")}, headers=ha).status_code == 413
 
 
 def test_the_stream_delivers_events_and_ends_when_the_session_is_revoked(org):
     c = org
-    ha = login(c, "ann")
+    sign_in(c, "ann")
     uid = c.users["ann"]["id"]
     hub = c.api.state.message_hub
     lines = []
@@ -212,7 +219,7 @@ def test_the_stream_delivers_events_and_ends_when_the_session_is_revoked(org):
         c.ident.store.execute("UPDATE sessions SET revoked_at=? WHERE user_id=?", (time.time(), uid))
         hub.publish([uid], {"type": "read", "conversation_id": "cv_test", "last_read_seq": 1})
     threading.Thread(target=later, daemon=True).start()
-    import synwevo_identity.messaging_routes as mr
+    import synwevo_messages.routes as mr
     original = mr.HEARTBEAT_S
     mr.HEARTBEAT_S = 1                          # the revocation is noticed at the next heartbeat
     try:
@@ -230,12 +237,12 @@ def test_the_stream_delivers_events_and_ends_when_the_session_is_revoked(org):
     assert hub.connections() == 0
 
 
-def test_docs_link_cards_follow_the_readers_own_access(org, monkeypatch):
+def test_docs_link_cards_follow_the_readers_own_access(org):
     """A link to a Docs project or job in a message gets a card only for readers who can open
     that project; the same conversation is not access. Cards come from the registered Docs
     address, and a link to anything else is just a link."""
     from synwevo_core.apps import bootstrap_docs_app
-    from synwevo_core.store import new_id, now
+    from synwevo_core.store import now
     st = org.ident.store
     bootstrap_docs_app(st, org.ident, launch_url="http://docs.testserver/")
     team = st.one("SELECT id FROM workspaces WHERE organization_id=? AND kind='org'", (org.oid,))["id"]
@@ -246,56 +253,57 @@ def test_docs_link_cards_follow_the_readers_own_access(org, monkeypatch):
     st.execute("INSERT INTO projects (id,name,created_at,updated_at,tenant,record_rule,output,mapping_rev,rev,step) VALUES (?,?,?,?,?,'{}','{}',0,1,'sources')", ("p_team1", "团队合同", t, t, team))
     st.execute("INSERT INTO projects (id,name,created_at,updated_at,tenant,record_rule,output,mapping_rev,rev,step) VALUES (?,?,?,?,?,'{}','{}',0,1,'sources')", ("p_mine1", "我的草稿", t, t, personal))
     st.execute("INSERT INTO jobs (id,project_id,status,created_at,counts,tenant,run_no) VALUES (?,?,?,?,?,?,1)", ("j_team1", "p_team1", "completed_with_errors", t, '{"success": 8, "failed": 2}', team))
-    login(org, "owner")
-    C = "/api/auth/messaging/link-card"
+    sign_in(org, "owner")
+    C = f"{M}/link-card"
     card = org.get(C, params={"url": "http://docs.testserver/p/p_team1"}).json()
     assert card["kind"] == "project" and card["title"] == "团队合同" and card["workspace"] == "Chat Team" and card["path"] == "/p/p_team1"
     job = org.get(C, params={"url": "http://docs.testserver/p/p_team1/jobs/j_team1"}).json()
     assert job["kind"] == "job" and job["status"] == "completed_with_errors" and job["done"] == 8 and job["failed"] == 2
     assert org.get(C, params={"url": "http://docs.testserver/p/p_mine1"}).json()["title"] == "我的草稿"
     # ann is in the team workspace: the team project yes, the owner's personal draft no
-    login(org, "ann")
+    sign_in(org, "ann")
     assert org.get(C, params={"url": "http://docs.testserver/p/p_team1"}).status_code == 200
     assert org.get(C, params={"url": "http://docs.testserver/p/p_mine1"}).status_code == 404
     # ben is in the organization but not in the team workspace; an outsider sees nothing at all
-    login(org, "ben")
+    sign_in(org, "ben")
     assert org.get(C, params={"url": "http://docs.testserver/p/p_team1"}).status_code == 404
-    login(org, "outsider")
+    sign_in(org, "outsider")
     assert org.get(C, params={"url": "http://docs.testserver/p/p_team1"}).status_code == 404
     # not a Docs link, a foreign host with the same path, an unknown project, a job of another project
-    login(org, "owner")
+    sign_in(org, "owner")
     for url in ("https://example.com/p/p_team1", "http://docs.testserver/about", "http://docs.testserver/p/p_nope", "http://docs.testserver/p/p_mine1/jobs/j_team1"):
         assert org.get(C, params={"url": url}).status_code == 404, url
 
 
-def test_announcements_and_reports_go_to_the_right_people_and_a_review_settles_the_message(org):
+def test_announcements_and_reports_are_accepted_here_and_reviewed_on_the_account_service(org):
     """A group's announcement is one pinned text set by its managers and told once as a digest;
-    a report of a message reaches the organization's messaging managers with a snapshot, not the
-    conversation; reviewing it needs the permission and a fresh reauth, settles every open report
-    of that message, deletes the message when the decision says so, and tells the reporter."""
+    a report of a message reaches the organization's messaging managers with an actionable item
+    pointing at the organization page on the account origin. Reviewing it is the account
+    service's (services/identity/tests/test_messaging_reports.py); asked here it is refused by role."""
     c = org
     U, n = c.users, c.api.state.notifier
-    ho = login(c, "owner")
+    ho = sign_in(c, "owner")
     g = c.post(f"{M}/groups", headers=ho, json={"organization_id": c.oid, "name": "公告群", "member_ids": [U["ann"]["id"], U["ben"]["id"]]}).json()
     # ---- announcement: managers only; members get a digest item once; clearing tells nobody
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     assert c.put(f"{M}/conversations/{g['id']}/announcement", headers=ha, json={"text": "我来定"}).status_code == 403
-    ho = login(c, "owner")
+    ho = sign_in(c, "owner")
     assert c.put(f"{M}/conversations/{g['id']}/announcement", headers=ho, json={"text": "  下周一交周报 ", "extra": 1}).status_code == 400
     out = c.put(f"{M}/conversations/{g['id']}/announcement", headers=ho, json={"text": "  下周一交周报 "}).json()
     assert out["announcement"] == "下周一交周报" and out["announcement_at"]
     assert [x["kind"] for x in n.list(U["ann"]["id"], locale="en")["items"]] == ["conversation.announcement", "conversation.added"]
     assert n.list(U["ann"]["id"], locale="en")["items"][0]["title"] == "Ola Owner updated the announcement in “公告群”"
+    assert n.list(U["ann"]["id"], locale="en")["items"][0]["href"] == f"{MESSAGES}/c/{g['id']}"
     assert n.list(U["owner"]["id"])["items"] == []
     hist = c.get(f"{M}/conversations/{g['id']}/messages").json()["items"]
     assert hist[-1]["kind"] == "system" and hist[-1]["system"]["event"] == "announcement" and hist[-1]["system"]["cleared"] is False
     assert c.put(f"{M}/conversations/{g['id']}/announcement", headers=ho, json={"text": None}).json()["announcement"] is None
     assert len(n.list(U["ann"]["id"])["items"]) == 2, "clearing an announcement tells nobody"
     # ---- a report: not your own message, one open report per message and reporter, unknown reason refused
-    ha = login(c, "ann")
+    ha = sign_in(c, "ann")
     mid = c.post(f"{M}/conversations/{g['id']}/messages", headers=ha, json={"body": "把你的账号密码发我"}).json()["message"]["id"]
     assert c.post(f"{M}/messages/{mid}/report", headers=ha, json={"reason": "spam"}).status_code == 400
-    hb = login(c, "ben")
+    hb = sign_in(c, "ben")
     assert c.post(f"{M}/messages/{mid}/report", headers=hb, json={"reason": "rude"}).status_code == 400
     r = c.post(f"{M}/messages/{mid}/report", headers=hb, json={"reason": "privacy", "note": "索要密码"})
     assert r.status_code == 201, r.text
@@ -303,116 +311,20 @@ def test_announcements_and_reports_go_to_the_right_people_and_a_review_settles_t
     assert rep["status"] == "open" and rep["body_snapshot"] == "把你的账号密码发我" and rep["sender"]["name"] == "Ann Member" and rep["reporter"]["name"] == "Ben Member"
     assert rep["conversation"] == {"kind": "group", "name": "公告群"}
     assert c.post(f"{M}/messages/{mid}/report", headers=hb, json={"reason": "spam"}).status_code == 409
-    # the owner (holds org.messaging.manage) is told with an actionable item pointing at the organization page; the sender is not
+    # the owner (holds org.messaging.manage) is told with an actionable item pointing at the
+    # organization page — on the account origin, where the review happens; the sender is not
     items = n.list(U["owner"]["id"], locale="en")["items"]
-    assert items[0]["kind"] == "conversation.reported" and items[0]["title"] == "Ben Member reported a message in “公告群”" and items[0]["href"].endswith(f"/organizations/{c.oid}?report={rep['id']}")
+    assert items[0]["kind"] == "conversation.reported" and items[0]["title"] == "Ben Member reported a message in “公告群”"
+    assert items[0]["href"] == f"{ACCOUNTS}/organizations/{c.oid}?report={rep['id']}", items[0]["href"]
     assert all(x["kind"] != "conversation.reported" for x in n.list(U["ann"]["id"])["items"])
-    # the sender edits the message afterwards: the snapshot still shows what was reported
-    ha = login(c, "ann")
-    c.patch(f"{M}/messages/{mid}", headers=ha, json={"body": "开玩笑的"})
-    # ---- who may read and review: a member cannot; the owner can, but only after a fresh reauth
-    assert c.get(f"{M}/reports?organization_id={c.oid}").status_code == 403
-    ho = login(c, "owner")
-    listed = c.get(f"{M}/reports?organization_id={c.oid}").json()
-    assert [x["id"] for x in listed["items"]] == [rep["id"]] and listed["items"][0]["body_snapshot"] == "把你的账号密码发我" and listed["reasons"] == ["harassment", "spam", "privacy", "other"]
-    assert c.post(f"{M}/reports/{rep['id']}/review", headers=ho, json={"decision": "removed"}).json()["error"] == "reauth_required"
-    assert c.post("/api/auth/reauth", headers=ho, json={"password": PW, "scope": "admin"}).status_code == 200
-    assert c.post(f"{M}/reports/{rep['id']}/review", headers=ho, json={"decision": "maybe"}).status_code == 400
-    # a second reporter of the same message, settled by the same decision
-    hc = login(c, "cid")
-    assert c.post(f"{M}/conversations/{g['id']}/members", headers=login(c, "owner"), json={"user_ids": [U["cid"]["id"]]}).status_code == 200
-    # cid joined after the message: he cannot see it, so he cannot report it
-    hc = login(c, "cid")
+    # someone who joined after the message cannot see it, so cannot report it
+    ho = sign_in(c, "owner")
+    assert c.post(f"{M}/conversations/{g['id']}/members", headers=ho, json={"user_ids": [U["cid"]["id"]]}).status_code == 200
+    hc = sign_in(c, "cid")
     assert c.post(f"{M}/messages/{mid}/report", headers=hc, json={"reason": "spam"}).status_code == 404
-    ho = login(c, "owner")
-    assert c.post("/api/auth/reauth", headers=ho, json={"password": PW, "scope": "admin"}).status_code == 200
-    done = c.post(f"{M}/reports/{rep['id']}/review", headers=ho, json={"decision": "removed", "note": "已删除，并提醒发送者"}).json()
-    assert done["status"] == "removed" and done["reviewed_by"]["name"] == "Ola Owner" and done["decision_note"] == "已删除，并提醒发送者"
-    assert c.post(f"{M}/reports/{rep['id']}/review", headers=ho, json={"decision": "dismissed"}).status_code == 409
-    assert c.get(f"{M}/reports?organization_id={c.oid}").json()["items"] == []
-    assert c.get(f"{M}/reports?organization_id={c.oid}&status=all").json()["items"][0]["status"] == "removed"
-    # the message is gone for everyone; the reporter was told the outcome
-    hb = login(c, "ben")
-    msg = [m for m in c.get(f"{M}/conversations/{g['id']}/messages").json()["items"] if m["id"] == mid][0]
-    assert msg["deleted"] is True and msg["body"] == ""
-    mine = n.list(U["ben"]["id"], locale="en")["items"]
-    assert mine[0]["kind"] == "conversation.report_removed" and mine[0]["title"] == "Your report was reviewed: the message was removed" and mine[0]["body"] == "已删除，并提醒发送者"
-
-
-def test_private_message_mail_is_off_by_default_and_an_opt_in_digest_of_what_is_still_unread(org):
-    """CI-68: a private message is never mailed one by one. Off by default; once the reader turns
-    the unread digest on, what still is unread at send time goes out as one mail without message
-    text, at most one per half hour; read, recalled or muted conversations are not mailed."""
-    c = org
-    from synwevo_core import notifications as N
-    n = c.api.state.notifier
-    disp = c.api.state.notify_dispatcher
-    ben = c.users["ben"]["id"]
-    ha = login(c, "ann")
-    dm = c.post(f"{M}/dm", headers=ha, json={"organization_id": c.oid, "user_id": c.users["ben"]["id"]}).json()
-    outbox = lambda: c.ident.store.all("SELECT subject, body FROM mail_outbox WHERE kind='notification' ORDER BY created_at")  # noqa: E731
-    # ---- default: inbox row yes, mail no (the delivery is skipped with the reason, not lost)
-    assert n.preferences(ben)["categories"]["conversation"]["email"] == "off"
-    assert n.preferences(ben)["preview"] == "minimal"
-    c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "秘密的第一句", "client_id": "s1"})
-    disp.run_once()
-    row = c.ident.store.one("SELECT d.status, d.last_error FROM notification_deliveries d JOIN notifications x ON x.id=d.notification_id WHERE x.user_id=? AND x.kind='conversation.dm'", (ben,))
-    assert row["status"] == "skipped" and row["last_error"] == "channel off" and outbox() == []
-    # per-message mail cannot even be chosen for conversations; other categories still can
-    with pytest.raises(Exception) as ex:
-        n.set_preferences(ben, {"categories": {"conversation": {"email": "immediate"}}})
-    assert "不逐条" in str(ex.value)
-    n.set_preferences(ben, {"categories": {"organization": {"email": "immediate"}}})
-    # ---- opt in: the digest, and what it says is decided when it is sent
-    n.set_preferences(ben, {"categories": {"conversation": {"email": "digest"}}})
-    hb = login(c, "ben")
-    c.post(f"{M}/conversations/{dm['id']}/read", headers=hb, json={"seq": 99})     # start clean: the first message is read
-    ha = login(c, "ann")
-    first = c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "会被撤回的话", "client_id": "s2"}).json()["message"]
-    c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "留下来的第二句 with the secret word", "client_id": "s3"})
-    pend = c.ident.store.all("SELECT d.notification_id, d.status, d.not_before FROM notification_deliveries d JOIN notifications x ON x.id=d.notification_id "
-                             "WHERE x.user_id=? AND x.kind='conversation.dm' AND d.status='pending'", (ben,))
-    assert len(pend) == 1 and pend[0]["not_before"] > N.now() + 25 * 60, "one pending digest item per unread span, due after the window"
-    c.request("DELETE", f"{M}/messages/{first['id']}", headers=ha)                    # the message that created the item is recalled
-    c.ident.store.execute("UPDATE notification_deliveries SET not_before=0 WHERE notification_id=?", (pend[0]["notification_id"],))
-    out = disp.run_once()
-    assert out["queued"] == 1 and len(outbox()) == 1
-    mail = outbox()[-1]
-    assert "1 条未读消息" in mail["body"] and "Ann Member" in mail["body"], mail["body"]
-    assert "会被撤回的话" not in mail["body"] and "secret word" not in mail["body"], "no message text unless the reader asked for it"
-    # ---- one item per unread span: a span read before it is mailed is dropped, the next span is
-    #      held until half an hour after the previous digest instead of mailed at once
-    hb = login(c, "ben")
-    c.post(f"{M}/conversations/{dm['id']}/read", headers=hb, json={"seq": 99})     # span closed → the next message opens a new item
-    ha = login(c, "ann")
-    c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "第三句", "client_id": "s4"})
-    hb = login(c, "ben")
-    c.post(f"{M}/conversations/{dm['id']}/read", headers=hb, json={"seq": 99})     # …and is read in the app before the digest is due
-    ha = login(c, "ann")
-    c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "第四句", "client_id": "s5"})
-    ids = [r["notification_id"] for r in c.ident.store.all("SELECT d.notification_id FROM notification_deliveries d JOIN notifications x ON x.id=d.notification_id "
-                                                             "WHERE x.user_id=? AND x.kind='conversation.dm' AND d.status='pending'", (ben,))]
-    assert len(ids) == 2
-    c.ident.store.execute(f"UPDATE notification_deliveries SET not_before=0 WHERE notification_id IN ({','.join('?' * len(ids))})", tuple(ids))
-    out = disp.run_once()
-    assert out["queued"] == 0 and out["skipped"] >= 1 and out["deferred"] == 1, out
-    states = {r["notification_id"]: (r["status"], r["last_error"], r["not_before"]) for r in
-              c.ident.store.all(f"SELECT notification_id, status, last_error, not_before FROM notification_deliveries WHERE notification_id IN ({','.join('?' * len(ids))})", tuple(ids))}
-    kinds = sorted(v[0] for v in states.values())
-    assert kinds == ["pending", "skipped"], states
-    held = next(v for v in states.values() if v[0] == "pending")
-    assert held[2] > N.now() + 25 * 60, "held until half an hour after the previous digest"
-    skipped = next(v for v in states.values() if v[0] == "skipped")
-    assert skipped[1] in ("read in app", "nothing unread", "superseded")
-    # ---- with `preview` = full the digest carries the latest unread line; a muted conversation is never mailed
-    n.set_preferences(ben, {"preview": "full"})
-    c.ident.store.execute("UPDATE notification_deliveries SET not_before=0, updated_at=0 WHERE status='queued'")   # forget the interval
-    c.ident.store.execute("UPDATE notification_deliveries SET not_before=0 WHERE status='pending'")
-    out = disp.run_once()
-    assert out["queued"] == 1 and "第四句" in outbox()[-1]["body"]
-    hb = login(c, "ben")
-    c.put(f"{M}/conversations/{dm['id']}/preferences", headers=hb, json={"muted": True})
-    assert c.get(f"{M}/conversations/{dm['id']}").json()["me"]["muted"] is True
-    ha = login(c, "ann")
-    c.post(f"{M}/conversations/{dm['id']}/messages", headers=ha, json={"body": "静音后的话", "client_id": "s6"})
-    assert disp.run_once()["queued"] == 0 and len(outbox()) == 2
+    # reviewing is not this application's: refused by role, whoever asks
+    ho = sign_in(c, "owner")
+    for method, path in (("GET", f"/api/auth/messaging/reports?organization_id={c.oid}"), ("POST", f"/api/auth/messaging/reports/{rep['id']}/review")):
+        r = c.request(method, path, headers=ho, json={"decision": "removed"} if method == "POST" else None)
+        assert r.status_code == 404 and r.json()["error"] == "not_in_this_role", (path, r.text[:120])
+    assert c.ident.store.one("SELECT status FROM message_reports WHERE id=?", (rep["id"],))["status"] == "open"

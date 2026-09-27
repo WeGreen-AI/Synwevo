@@ -35,7 +35,6 @@ const Onboarding = lazyRoute(() => import("./pages/Onboarding"));
 const Organizations = lazyRoute(() => import("./pages/Organizations"));
 const ApiPlatform = lazyRoute(() => import("./pages/ApiPlatform"));
 const OwnerApiApprovals = lazyRoute(pick(() => import("./pages/ApiPlatform"), "OwnerApiApprovals"));
-const Messages = lazyRoute(() => import("./pages/Messages"));
 import "./account.css";
 import "@synwevo/ui/styles.css";
 
@@ -106,8 +105,10 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/organizations" element={<RequireSession><Organizations /></RequireSession>} />
               <Route path="/organizations/:oid" element={<RequireSession><Organizations /></RequireSession>} />
-              <Route path="/messages" element={<RequireSession><Messages /></RequireSession>} />
-              <Route path="/messages/:cid" element={<RequireSession><Messages /></RequireSession>} />
+              {/* No /messages route: conversations are Synwevo Message's (apps/messages, its own
+                  origin since CI-66). The server answers the old paths with a redirect to that
+                  application's sign-in start while it is registered; without it they are not
+                  pages here either. */}
               <Route path="/invite" element={<Invite />} />
               {/* Both render signed out by necessity: someone who has forgotten their password
                   cannot sign in to ask for a way back. */}

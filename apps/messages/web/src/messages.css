@@ -1,5 +1,16 @@
 /* Messages: a two-pane layout on desktop, one pane at a time on phones. Colours come from the
    shared tokens only; own bubbles use the accent family, others the panel family. */
+/* The pieces this shell used to borrow from the account shell's stylesheets (a shell imports
+   nothing from another shell): field stacks, the focused error notice, the loading line, the
+   quoted message in the report dialog and the dialogs' action rows. */
+.msg-topbar .spacer { flex: 1; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field > label { font-size: 12px; color: var(--text-2); }
+.flow-error { line-height: 1.6; }
+.flow-error:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+.flow-status { color: var(--muted); line-height: 1.7; padding: 12px; margin: 0; }
+.msg-quote { margin: 0; padding: 6px 10px; border-left: 3px solid var(--line-strong); background: var(--panel-2); border-radius: 4px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.org-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .msg-layout { flex: 1; display: flex; min-height: 0; background: var(--bg); }
 .msg-side { width: 320px; flex: none; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .msg-side-h { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }

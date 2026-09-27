@@ -38,19 +38,21 @@ ALLOWED: dict[str, set[str]] = {
     "services/identity": {"synwevo_core", "synwevo_auth_client", "synwevo_identity"},
     "apps/portal": {"synwevo_core", "synwevo_auth_client", "synwevo_portal"},
     "apps/docs": {"synwevo_core", "synwevo_auth_client", "synwevo_docs"},
+    # 消息应用（Synwevo Message）：业务层在 synwevo_core.messaging，这里只有 HTTP 与外壳。
+    "apps/messages": {"synwevo_core", "synwevo_auth_client", "synwevo_messages"},
     # 外部客户端：一个本仓库的包都不许用（最长前缀优先，所以它不会继承 apps/docs 的许可）。
     "apps/docs/sdk": set(),
     # 部署组装：唯一可以看见全部的地方。
     "infra/server": {"synwevo_core", "synwevo_auth_client", "synwevo_identity",
-                     "synwevo_portal", "synwevo_docs", "synwevo_server"},
+                     "synwevo_portal", "synwevo_docs", "synwevo_messages", "synwevo_server"},
     # 跨模块验证本来就要跨模块。
     "tests": {"synwevo_core", "synwevo_auth_client", "synwevo_identity",
-              "synwevo_portal", "synwevo_docs", "synwevo_server"},
+              "synwevo_portal", "synwevo_docs", "synwevo_messages", "synwevo_server"},
     # 根目录命令：只读配置（synwevo_core.env），其余都经子进程调用各模块自己的入口。
     "scripts": {"synwevo_core"},
 }
 OWN = {"synwevo_core", "synwevo_auth_client", "synwevo_identity", "synwevo_portal",
-       "synwevo_docs", "synwevo_server"}
+       "synwevo_docs", "synwevo_messages", "synwevo_server"}
 # Pruned during the walk, not filtered afterwards: data/ holds every user blob and .git every
 # object, and statting them all made this check slower the more the instance was used.
 #
@@ -69,6 +71,7 @@ PACKAGES = {
     "services/identity/synwevo_identity": "services/identity",
     "apps/portal/synwevo_portal": "apps/portal",
     "apps/docs/synwevo_docs": "apps/docs",
+    "apps/messages/synwevo_messages": "apps/messages",
     "infra/server/synwevo_server": "infra/server",
 }
 # Import name → distribution name, where the two differ.
@@ -78,7 +81,7 @@ DIST_OF = {
     "fitz": "pymupdf", "charset_normalizer": "charset-normalizer",
     "synwevo_core": "synwevo-core", "synwevo_auth_client": "synwevo-auth-client",
     "synwevo_identity": "synwevo-identity", "synwevo_portal": "synwevo-portal",
-    "synwevo_docs": "synwevo-docs", "synwevo_server": "synwevo-server",
+    "synwevo_docs": "synwevo-docs", "synwevo_messages": "synwevo-messages", "synwevo_server": "synwevo-server",
 }
 STDLIB = set(sys.stdlib_module_names)
 
@@ -160,6 +163,7 @@ def check_dependencies(imports: dict[str, set[str]]) -> list[str]:
 WEB: dict[str, set[str]] = {
     "apps/docs/web": {"@synwevo/ui", "@synwevo/auth-client", "@synwevo/docs-web"},
     "apps/portal/web": {"@synwevo/ui", "@synwevo/auth-client", "@synwevo/workspace-web"},
+    "apps/messages/web": {"@synwevo/ui", "@synwevo/auth-client", "@synwevo/messages-web"},
     "services/identity/web": {"@synwevo/ui", "@synwevo/auth-client", "@synwevo/account-web"},
     "packages/auth-client/web": {"@synwevo/ui", "@synwevo/auth-client"},
     "packages/ui": {"@synwevo/ui"},

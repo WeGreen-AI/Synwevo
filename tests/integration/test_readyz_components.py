@@ -29,8 +29,16 @@ def test_app_role_reports_the_scanner_without_gating_on_it(tmp_path, monkeypatch
         r = c.get("/readyz")
         assert r.status_code == 200 and r.json()["status"] == "ready"
         assert r.json()["checks"]["malware_scanner"].startswith("down:")
+    # The messages role scans attachments through the same acceptance chain (CI-66): same
+    # component, same shape, same non-gating behaviour.
+    with TestClient(create_app(str(tmp_path / "d5"), role="messages", start_jobs=False)) as c:
+        r = c.get("/readyz")
+        assert r.status_code == 200 and r.json()["status"] == "ready"
+        assert r.json()["checks"]["malware_scanner"].startswith("down:")
     monkeypatch.delenv("SYNWEVO_CLAMD_ADDRESS", raising=False)
     with TestClient(create_app(str(tmp_path / "d4"), role="accounts", start_jobs=False)) as c:
+        assert c.get("/readyz").json()["checks"]["malware_scanner"] == "off"
+    with TestClient(create_app(str(tmp_path / "d6"), role="messages", start_jobs=False)) as c:
         assert c.get("/readyz").json()["checks"]["malware_scanner"] == "off"
 
 
@@ -40,7 +48,7 @@ def test_every_role_serves_the_inbox_routes_to_its_sessions(tmp_path, monkeypatc
     monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
     monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
     from synwevo_server.app import create_app
-    for role in ("app", "portal", "accounts"):
+    for role in ("app", "portal", "accounts", "messages"):
         with TestClient(create_app(str(tmp_path / role), role=role, start_jobs=False)) as c:
             for path in ("/api/auth/notifications", "/api/auth/notifications/unread-count", "/api/auth/notifications/preferences"):
                 r = c.get(path)

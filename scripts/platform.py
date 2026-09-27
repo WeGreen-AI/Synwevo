@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Synwevo 根目录的运行入口：安装、启动、停止、状态、日志、验证。
 
-    python scripts/platform.py setup                 # 建立 .venv、装依赖、构建三个前端
-    python scripts/platform.py up                    # 启动全部三个服务，登记客户端，打印地址
-    python scripts/platform.py up accounts           # 只启动其中一个（可多个：accounts portal docs）
+    python scripts/platform.py setup                 # 建立 .venv、装依赖、构建四个前端
+    python scripts/platform.py up                    # 启动全部四个服务，登记客户端，打印地址
+    python scripts/platform.py up accounts           # 只启动其中一个（可多个：accounts portal docs messages）
     python scripts/platform.py down [accounts …]
     python scripts/platform.py restart [accounts …]
     python scripts/platform.py status
-    python scripts/platform.py logs accounts|portal|docs [-n 200]
-    python scripts/platform.py test [docs|identity|integration|all]
+    python scripts/platform.py logs accounts|portal|docs|messages [-n 200]
+    python scripts/platform.py test [docs|identity|messages|integration|all]
     python scripts/platform.py backup [--out DIR]    # 一致性备份（SQLite 备份 API + blob 清单）
     python scripts/platform.py verify-restore FILE   # 在隔离副本上核验备份能恢复
     python scripts/platform.py restore FILE --into DIR [--force]
@@ -18,11 +18,11 @@
 because nothing from this repository is installed until it has run. Every other command needs
 the workspace virtualenv and re-executes itself inside it when started with another interpreter.
 
-Why three hostnames and not three ports: **different ports do not isolate cookies.** A cookie
+Why four hostnames and not four ports: **different ports do not isolate cookies.** A cookie
 set by `localhost:8770` is sent to `localhost:8765` as well, because the cookie protocol scopes
-by host and ignores the port entirely. Running all three on `localhost` would therefore produce
+by host and ignores the port entirely. Running all four on `localhost` would therefore produce
 a demonstration in which the account service's session cookie is handed to Synwevo Docs on every
-request — and a "cross-origin single sign-on" that is really one shared cookie wearing three
+request — and a "cross-origin single sign-on" that is really one shared cookie wearing four
 hats. `*.localhost` names all resolve to the loopback address without any hosts-file edit (RFC
 6761), so this gets genuinely separate cookie jars with no system configuration at all.
 
@@ -64,6 +64,10 @@ PORTAL = f"http://portal.localhost:{PORTAL_PORT}"
 # and a cookie scope — renaming it would invalidate every credential bound to it, in exchange
 # for a tidier URL bar on one developer machine.
 DOCS = f"http://docweave.localhost:{DOCS_PORT}"
+# Synwevo Message (CI-66): conversations on their own origin. Production is message.wegreen.ltd
+# by decision; locally `message.localhost`, singular like the product name.
+MESSAGES_PORT = int(os.environ.get("SYNWEVO_MESSAGES_PORT", "8768"))
+MESSAGES = f"http://message.localhost:{MESSAGES_PORT}"
 
 SERVICES = {
     # name: (role, port, public URL, OIDC client id, app id)
@@ -74,6 +78,7 @@ SERVICES = {
     "accounts": ("accounts", ACCOUNTS_PORT, ACCOUNTS, None, None),
     "portal": ("portal", PORTAL_PORT, PORTAL, "portal-web", "platform"),
     "docs": ("app", DOCS_PORT, DOCS, "docweave-web", "docweave"),
+    "messages": ("messages", MESSAGES_PORT, MESSAGES, "messages-web", "messages"),
 }
 
 
@@ -209,13 +214,13 @@ def _alive(name: str) -> int | None:
 
 
 def check_hostnames() -> bool:
-    """Confirm the three names resolve to loopback before claiming isolation.
+    """Confirm the four names resolve to loopback before claiming isolation.
 
     If a name resolved somewhere else, requests would leave this machine — so this is checked
     rather than assumed, and the answer is printed rather than swallowed.
     """
     ok = True
-    for host in ("accounts.localhost", "portal.localhost", "docweave.localhost"):
+    for host in ("accounts.localhost", "portal.localhost", "docweave.localhost", "message.localhost"):
         try:
             addrs = {a[4][0] for a in socket.getaddrinfo(host, None)}
         except socket.gaierror as e:
@@ -229,11 +234,12 @@ def check_hostnames() -> bool:
 
 
 def register_clients() -> bool:
-    """Register the two relying parties. Idempotent, and by CLI on purpose — there is no
+    """Register the three relying parties. Idempotent, and by CLI on purpose — there is no
     dynamic client registration endpoint and no UI for this."""
     for client_id, app_id, name, base in (
             ("portal-web", "platform", "平台门户", PORTAL),
-            ("docweave-web", "docweave", "Synwevo Docs", DOCS)):
+            ("docweave-web", "docweave", "Synwevo Docs", DOCS),
+            ("messages-web", "messages", "Synwevo Message", MESSAGES)):
         cmd = [str(PY), "-m", "synwevo_identity.cli", "--data", data_dir(),
                "client", "register", "--client-id", client_id, "--app", app_id, "--name", name,
                "--redirect", f"{base}/auth/callback",
@@ -290,7 +296,7 @@ def up(args) -> int:
             print(f"  ✗ {name}: 端口 {SERVICES[name][1]} 已被其他进程占用；未启动", file=sys.stderr)
         return 1
 
-    print(f"\n数据目录：{data_dir()}（三个服务共用一个账户权威）")
+    print(f"\n数据目录：{data_dir()}（四个服务共用一个账户权威）")
     print("登记 OIDC 客户端：")
     if not register_clients():
         return 1
@@ -330,6 +336,7 @@ def up(args) -> int:
     print("\n打开：")
     print(f"  Synwevo Workspace   {PORTAL}")
     print(f"  Synwevo Docs        {DOCS}")
+    print(f"  Synwevo Message     {MESSAGES}")
     print(f"  Synwevo Account     {ACCOUNTS}/login")
     print(f"\n日志：{RUN}/<服务>.log      停止：python scripts/platform.py down")
     return 1 if failed else 0
@@ -415,13 +422,13 @@ def _require_data_dir(args) -> None:
 
 
 MODULES = ["packages/core", "packages/auth-client/python", "services/identity",
-           "apps/portal", "apps/docs", "infra/server"]
+           "apps/portal", "apps/docs", "apps/messages", "infra/server"]
 IMPORTS = ["synwevo_core", "synwevo_auth_client", "synwevo_identity", "synwevo_portal",
-           "synwevo_docs", "synwevo_server"]
+           "synwevo_docs", "synwevo_messages", "synwevo_server"]
 
 
 def setup(args) -> int:
-    """Create the workspace virtualenv, install every module, build the three shells.
+    """Create the workspace virtualenv, install every module, build the four shells.
 
     Reproducible means: third-party versions come from the requirements files, the front end
     from package-lock.json (`npm ci`, never `npm install`, which may rewrite the lock), and the
@@ -455,10 +462,10 @@ def setup(args) -> int:
     if _run([str(PY), "-c", "import " + ", ".join(IMPORTS)]):
         return 1
     if shutil.which("npm") is None:
-        print("找不到 npm：构建三个前端外壳需要 Node.js（容器镜像用的是 Node 22）。",
+        print("找不到 npm：构建四个前端外壳需要 Node.js（容器镜像用的是 Node 22）。",
               file=sys.stderr)
         return 1
-    print("按锁文件安装前端依赖并构建三个外壳：")
+    print("按锁文件安装前端依赖并构建四个外壳：")
     if _run(["npm", "ci"]) or _run(["npm", "run", "build"]):
         return 1
     print("\n完成。启动：python scripts/platform.py up --init（新装）或 python scripts/platform.py up")
@@ -466,7 +473,7 @@ def setup(args) -> int:
 
 
 SUITES = {"docs": "apps/docs/tests", "identity": "services/identity/tests",
-          "integration": "tests/integration"}
+          "messages": "apps/messages/tests", "integration": "tests/integration"}
 
 
 def test(args) -> int:

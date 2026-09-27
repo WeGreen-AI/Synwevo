@@ -20,7 +20,7 @@ import time
 
 ROOT = Path('/opt/synwevo')
 COMPOSE = ['docker', 'compose', '-f', str(ROOT / 'config/compose.yaml')]
-SERVICES = ['accounts', 'docs', 'portal']
+SERVICES = ['accounts', 'docs', 'portal', 'messages']
 
 
 def run(args, *, image, **kwargs):

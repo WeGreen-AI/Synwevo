@@ -278,8 +278,9 @@ def test_a_member_removed_and_added_back_can_use_docs_again(env, row):
     assert r.status_code == 200, r.text[:300]
     assert c.get("/api/projects").status_code == 200
     assert apps.check_access(bob["id"], "docweave", ws) == (True, ws, "ok")
-    # ... and the portal agrees: the card is back.
-    assert [a["id"] for a in apps.apps_for(bob["id"], ws)] == ["docweave"]
+    # ... and the portal agrees: the card is back. (Synwevo Message is registered by this
+    # single-process composition too and is open to every live account, CI-66.)
+    assert [a["id"] for a in apps.apps_for(bob["id"], ws)] == ["docweave", "messages"]
 
 
 def test_a_revocation_left_by_an_earlier_membership_does_not_lock_the_member_out(env):

@@ -59,7 +59,7 @@ def test_correct_credentials_still_work(basic_client, path):
 
 # ---------------------------------------------------------------- health probes
 @pytest.mark.parametrize("mode", ["none", "basic", "proxy", "session"])
-@pytest.mark.parametrize("role", ["all", "accounts", "portal", "app"])
+@pytest.mark.parametrize("role", ["all", "accounts", "portal", "app", "messages"])
 def test_the_probes_are_anonymous_in_every_mode_and_role(tmp_path, monkeypatch, mode, role):
     """A container's restart policy must not depend on a shared password.
 

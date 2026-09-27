@@ -59,7 +59,7 @@ def test_local_launcher_keeps_mail_credentials_in_accounts_only(platform, monkey
     accounts = platform.env_for("accounts")
     assert accounts["SYNWEVO_SMTP_PASSWORD"] == "synthetic-smtp-password"
     assert accounts["SYNWEVO_PUBLIC_URL"] == platform.ACCOUNTS
-    for name in ("docs", "portal"):
+    for name in ("docs", "portal", "messages"):
         child = platform.env_for(name)
         assert "SYNWEVO_SMTP_PASSWORD" not in child
         assert "DOCWEAVE_SMTP_PASSWORD" not in child
@@ -69,8 +69,9 @@ def test_local_launcher_keeps_mail_credentials_in_accounts_only(platform, monkey
 @pytest.mark.parametrize("suite, dirs", [
     ("docs", ["apps/docs/tests"]),
     ("identity", ["services/identity/tests"]),
+    ("messages", ["apps/messages/tests"]),
     ("integration", ["tests/integration"]),
-    ("all", ["apps/docs/tests", "services/identity/tests", "tests/integration"]),
+    ("all", ["apps/docs/tests", "services/identity/tests", "apps/messages/tests", "tests/integration"]),
 ])
 def test_each_documented_test_command_runs_the_right_suite(platform, monkeypatch, suite, dirs):
     ran = []
@@ -292,7 +293,7 @@ def test_default_service_commands_accept_an_empty_list(platform, monkeypatch, co
     monkeypatch.setattr(platform, command, lambda args: selected.extend(platform._selected(args)) or 0)
     monkeypatch.setattr(sys, "argv", ["platform.py", command])
     assert platform.main() == 0
-    assert selected == ["accounts", "portal", "docs"]
+    assert selected == ["accounts", "portal", "docs", "messages"]
 
 
 @pytest.mark.parametrize("command", ["up", "down", "restart"])

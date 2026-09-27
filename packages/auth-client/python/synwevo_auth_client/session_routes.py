@@ -59,13 +59,26 @@ def public_state(ident: Identity, role: str) -> dict:
             # Which application this process is, for the account page's "back to <app>" link.
             # An id, matched server-side against the applications the person may open; the
             # account page never takes a URL from a query string.
-            "app_id": (env.get("OIDC_APP_ID") or "docweave") if r in ("app", "all") else ("platform" if r == "portal" else None),
+            "app_id": (env.get("OIDC_APP_ID") or "docweave") if r in ("app", "all", "messages") else ("platform" if r == "portal" else None),
             "account_url": account_url(r),
+            # Where conversations live (Synwevo Message, CI-66): the registry row the messages
+            # process writes, so the 消息 link of every shell points at the origin that serves
+            # them; null on a deployment without the application, and the shells fall back to
+            # the account origin's /messages.
+            "messages_url": _messages_url(ident),
             # After a domain change, passkeys registered under the previous host cannot be
             # offered on this one (a WebAuthn credential is bound to its RP ID). One deployment-
             # wide boolean — never per account — so the sign-in screen can explain a "no passkey
             # here" result instead of leaving the person to guess.
             "passkeys_elsewhere": passkeys_registered_elsewhere(ident.store)}
+
+
+def _messages_url(ident: Identity) -> str | None:
+    try:
+        from synwevo_core.apps import messages_launch_url
+        return messages_launch_url(ident.store)
+    except Exception:  # noqa: BLE001 - a broken registry must not take the sign-in state down
+        return None
 
 
 def passkeys_registered_elsewhere(store) -> bool:

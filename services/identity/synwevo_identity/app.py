@@ -141,10 +141,11 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
             if worker is not None:
                 worker.stop()
     api.state.shutdown_hooks.append(_shutdown)
-    from .messaging_routes import build_router as build_messaging_router
-    messaging = build_messaging_router(store, identity, sessions, audit, notifier=api.state.notifier)
-    api.state.message_hub = messaging.hub
-    api.include_router(messaging)
+    # Conversations themselves are Synwevo Message's (apps/messages, its own origin since CI-66).
+    # What stays here is the moderation half: listing and reviewing reports needs the
+    # organization permission and a strict re-authentication on the *account* session.
+    from .messaging_reports_routes import build_router as build_messaging_reports_router
+    api.include_router(build_messaging_reports_router(store, identity, sessions, audit, notifier=api.state.notifier))
     from .approval_routes import build_router as build_approval_router
     api.include_router(build_approval_router(store, identity, sessions, audit, notifier=api.state.notifier))
     from .push_routes import build_router as build_push_router, static_routes as push_static_routes
@@ -184,6 +185,11 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
 
     dist = web_dist()
     if mount_web(api, dist, assets_dir=ASSETS_DIR):
+        # The former /messages pages hand over to Synwevo Message (303 to its sign-in start) while
+        # it is registered; registered before the catch-all so they reach a real handler.
+        from .messages_redirects import build_router as build_messages_redirects
+        api.include_router(build_messages_redirects(plat.store, lambda full_path: shell_response(dist, full_path)))
+
         @api.get("/{full_path:path}")
         def shell(full_path: str):
             return shell_response(dist, full_path)

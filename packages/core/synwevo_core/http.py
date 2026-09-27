@@ -129,15 +129,22 @@ PUBLIC_V1 = ("/api/v1/download/",)          # signed links carry their own proof
 #: The roles a process can be composed as. Anything else is refused at startup: an unknown role
 #: used to fall through every branch and start a server whose API answered 404 everywhere while
 #: its health probes reported ready.
-ROLES = ("all", "accounts", "portal", "app")
+ROLES = ("all", "accounts", "portal", "app", "messages")
 
 #: Workspace roles that may change content (permissions.md §4.2). Viewers read.
 WRITE_ROLES = frozenset({"owner", "admin", "editor"})
 
-# Paths under /api/ that belong to the account system or the portal rather than to a business
-# application. They need a live account and nothing more; everything else under /api/ on a role
-# that serves Synwevo Docs is Docs' own and is checked against workspace and application access.
-ACCOUNT_LEVEL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/portal/")
+#: The messages application's API (Synwevo Message, its own origin since CI-66). Served by the
+#: `messages` role and by `all`; every other role refuses it by name, so a stale bookmark or a
+#: shell that still points at the account origin gets an answer that says where to go.
+MESSAGING_PREFIX = "/api/messaging/"
+
+# Paths under /api/ that belong to the account system, the portal or the messages application
+# rather than to Synwevo Docs. They need a live account and nothing more (conversations are
+# authorized by the messaging service layer, per organization, not per workspace); everything
+# else under /api/ on a role that serves Synwevo Docs is Docs' own and is checked against
+# workspace and application access.
+ACCOUNT_LEVEL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/portal/", MESSAGING_PREFIX)
 ACCOUNT_LEVEL_EXACT = frozenset({"/api/health"})
 
 
@@ -171,7 +178,7 @@ def validate_role(value: str | None) -> str:
     if r not in ROLES:
         raise RuntimeError(
             f"SYNWEVO_ROLE={value!r} 不是可用的角色。只能是 {' / '.join(ROLES)}"
-            "（accounts=账户服务，portal=门户，app=Synwevo Docs，all=单进程部署）。"
+            "（accounts=账户服务，portal=门户，app=Synwevo Docs，messages=Synwevo Message，all=单进程部署）。"
             "未知角色不会被猜成其中任何一个：那样会启动一个所有接口都返回 404、健康检查却报告就绪的进程。")
     return r
 
@@ -925,6 +932,26 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         if not api_path or any(path.startswith(p) for p in SHARED_PATHS):
             return None                                      # the SPA shell and probes are shared
         is_account = any(path.startswith(p) for p in ACCOUNT_PATHS)
+        if path.startswith(MESSAGING_PREFIX) and this_role != "messages":
+            # Conversations have one write source: the messages application. Named here so the
+            # refusal says where the interface lives rather than only that it is not here.
+            where = _messages_origin_cached()
+            return f"消息接口在 Synwevo Message 上（{where}），不在本服务上" if where else "消息接口在 Synwevo Message 应用上，不在本服务上"
+        if this_role == "messages":
+            # Its own API, the relying-party half, and the handful of session routes every
+            # application serves about its own session (the badge's unread-count among them).
+            # The rest of the account surface — including the account service's former
+            # /api/auth/messaging/* routes — is refused: the application must not become a second
+            # place to change a password or a second write path into conversations.
+            if path.startswith(MESSAGING_PREFIX) or path.startswith("/auth/") or path in APP_ACCOUNT_PATHS:
+                return None
+            if is_account:
+                if path.startswith(("/oidc/", "/.well-known/")):
+                    return "该接口在账户服务上，请访问账户服务地址"
+                return "账户、安全与平台管理在账户服务上统一管理，请访问账户服务地址"
+            if path.startswith("/api/portal/"):
+                return "门户接口在平台门户上，不在消息应用上"
+            return "该接口不在消息应用上"
         if this_role == "accounts" and not is_account:
             return "该接口不在账户服务上，请访问应用自身的地址"
         if this_role in ("app", "portal"):
@@ -943,6 +970,20 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 and not path.startswith("/api/portal/"):
             return "该接口不在平台门户上"
         return None
+
+    _messages_origin_memo: list = [0.0, None]
+
+    def _messages_origin_cached() -> str | None:
+        """The messages application's origin from the registry, for the refusal text above.
+        Cached for a minute: this runs inside the gate, for requests that are being refused."""
+        if time.monotonic() - _messages_origin_memo[0] > 60:
+            try:
+                from .apps import messages_origin
+                _messages_origin_memo[1] = messages_origin(store)
+            except Exception:  # noqa: BLE001 - the refusal must not depend on the registry read
+                _messages_origin_memo[1] = None
+            _messages_origin_memo[0] = time.monotonic()
+        return _messages_origin_memo[1]
 
     # A WebSocket handshake is not an HTTP request to the middleware below, but it is the same
     # session, workspace and role decision: the Docs live-editing route runs this on a request
@@ -965,7 +1006,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             apply_security_headers(request, resp)
             if path.startswith("/api/"):
                 resp.headers.setdefault("Cache-Control", "no-store")
-            if path.startswith(("/api/", "/auth/", "/oidc/", "/account", "/admin", "/organizations", "/messages")) or path in (
+            if path.startswith(("/api/", "/auth/", "/oidc/", "/account", "/admin", "/organizations", "/messages", "/c/")) or path in (
                     "/login", "/register", "/invite", "/verify-email", "/forgot-password", "/reset-password", "/onboarding", "/logged-out"):
                 resp.headers.setdefault("Cache-Control", "no-store")
                 resp.headers.setdefault("X-Robots-Tag", "noindex, nofollow")

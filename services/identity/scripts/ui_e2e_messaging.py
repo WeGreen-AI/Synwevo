@@ -4,7 +4,12 @@ through the stream without reloading, react and reply, share an image through th
 chain, meet in a group from which one is then removed (and loses every door), search, and do it
 all at phone width. Nothing is seeded: both accounts register through mailed links.
 
-    .venv/bin/python services/identity/scripts/ui_e2e_messaging.py http://accounts.localhost:31770 <mail dir> [--webkit]
+Since CI-66 the conversations live on Synwevo Message's own origin: both browsers sign in on the
+account origin and reach the messages origin through its `/auth/start` (the single sign-on hop
+the shell performs by itself when a page needs a session).
+
+    .venv/bin/python services/identity/scripts/ui_e2e_messaging.py http://accounts.localhost:31770 \
+        http://message.localhost:31768 <mail dir> [--webkit]
 
 Output never includes tokens, cookies or message bodies beyond the fixed test strings.
 """
@@ -16,6 +21,7 @@ import re
 import secrets
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -84,11 +90,22 @@ def sign_in(page, accounts, address):
     page.wait_for_url(lambda u: not re.search(r"/(login|auth/start|auth/callback|oidc/)", u))
 
 
-def csrf_of(ctx):
-    return next(c["value"] for c in ctx.cookies() if c["name"] == "dw_csrf")
+def csrf_of(ctx, origin: str | None = None):
+    """The CSRF cookie of one origin (every origin has its own session and its own cookie); the
+    first one found when no origin is named, as before the messages origin existed."""
+    host = urllib.parse.urlsplit(origin).hostname if origin else None
+    return next(c["value"] for c in ctx.cookies() if c["name"] == "dw_csrf" and (host is None or c["domain"].lstrip(".") == host))
 
 
-def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra: dict | None = None) -> list[str]:
+def enter_messages(page, messages: str, path: str = "/") -> None:
+    """Open a page of the messages origin; the shell's own sign-in start takes the browser through
+    the account service (where a session already exists) and back to the page asked for."""
+    page.goto(f"{messages}{path}{'&' if '?' in path else '?'}lang=zh-Hans")
+    page.wait_for_url(lambda u: u.startswith(messages) and not re.search(r"/(auth/start|auth/callback)", u), timeout=20000)
+    page.wait_for_load_state("networkidle")
+
+
+def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: Path, ctx_extra: dict | None = None) -> list[str]:
     notes: list[str] = []
     tag = secrets.token_hex(3)
     owner, member = f"owner.{tag}@example.test", f"member.{tag}@example.test"
@@ -126,27 +143,29 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
     pb.wait_for_load_state("networkidle")
     notes.append(f"{engine}: owner registered and created an organization; the member joined through the mailed invitation (phone-sized session)")
 
-    # ---- the member opens Messages first (empty), the owner starts a DM; it arrives over the stream
-    pb.goto(f"{accounts}/messages?lang=zh-Hans")
+    # ---- the member opens Synwevo Message first (empty, through the single sign-on hop), the
+    #      owner starts a DM; it arrives over the stream
+    enter_messages(pb, messages)
+    assert pb.url.startswith(messages) and "/auth/" not in pb.url, pb.url
     expect(pb.locator(".msg-side")).to_contain_text(re.compile("还没有会话"))
-    pa.goto(f"{accounts}/messages?lang=zh-Hans")
+    enter_messages(pa, messages)
     pa.get_by_role("button", name=re.compile("新私聊")).click()
     dialog = pa.locator(".modal").last
     dialog.locator("#msg-who").fill("Member")
     dialog.get_by_role("button", name=re.compile("^选择$")).first.click()
     dialog.get_by_role("button", name=re.compile("开始私聊")).click()
-    pa.wait_for_url(lambda u: "/messages/cv_" in u)
+    pa.wait_for_url(lambda u: "/c/cv_" in u)
     expect(pa.locator(".msg-status")).to_have_text(re.compile("实时"), timeout=15000)
     pa.locator(".msg-composer textarea").fill(f"hello from owner {tag}")
     pa.locator(".msg-composer textarea").press("Enter")
     expect(pa.locator(".msg-row.own")).to_contain_text(f"hello from owner {tag}")
     expect(pa.locator(".msg-pending")).to_have_count(0, timeout=10000)
-    # the member's list gained the conversation without a reload, with an unread badge
+    # the member's list gained the conversation without a reload, with an unread badge; the
+    # platform bar's 消息 entry (this page) carries the same count
     expect(pb.locator(".msg-conv")).to_have_count(1, timeout=15000)
     expect(pb.locator(".msg-unread")).to_have_text("1")
-    pb.get_by_role("button", name=re.compile("菜单")).click()              # phone width: the bar's links live in the drawer
     expect(pb.locator("a.bell", has_text=re.compile("消息"))).to_contain_text("1")
-    pb.keyboard.press("Escape")
+    assert pb.locator("a.bell", has_text=re.compile("消息")).get_attribute("aria-current") == "page"
     pb.locator(".msg-conv").first.click()
     expect(pb.locator(".msg-thread")).to_be_visible()
     expect(pb.locator(".msg-thread")).to_contain_text(f"hello from owner {tag}")
@@ -171,7 +190,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
     img = pb.locator(".msg-attach img").first
     expect(img).to_be_visible(timeout=15000)
     src = img.get_attribute("src")
-    r = pb.request.get(accounts + src)
+    r = pb.request.get(messages + src)
     assert r.ok and r.headers.get("content-type") == "image/png" and r.headers.get("x-content-sha256"), (r.status, dict(r.headers))
     notes.append(f"{engine}: an image attachment was scanned, stored once by content hash and rendered inline for the member (image/png, hash header, no-store)")
 
@@ -183,7 +202,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
     dialog.get_by_role("button", name=re.compile("^选择$")).first.click()
     dm_url = pa.url
     dialog.get_by_role("button", name=re.compile("创建群聊")).click()
-    pa.wait_for_url(lambda u: "/messages/cv_" in u and u != dm_url)
+    pa.wait_for_url(lambda u: "/c/cv_" in u and u != dm_url)
     expect(pa.locator(".msg-thread-h .title")).to_contain_text(f"Launch {tag}")
     gid = pa.url.rsplit("/", 1)[-1].split("?")[0]
     pa.locator(".msg-composer textarea").fill(f"welcome to the group {tag}")
@@ -199,17 +218,20 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
     expect(drawer).not_to_contain_text(f"Member {tag}", timeout=15000)
     expect(pb.locator(".msg-thread")).to_contain_text(re.compile("找不到这个会话"), timeout=15000)
     expect(pb.locator(".msg-side")).not_to_contain_text(f"Launch {tag}")
-    r = pb.request.get(f"{accounts}/api/auth/messaging/conversations/{gid}/messages")
+    r = pb.request.get(f"{messages}/api/messaging/conversations/{gid}/messages")
     assert r.status == 404, r.status
-    r = pb.request.get(f"{accounts}/api/auth/messaging/conversations")
+    r = pb.request.get(f"{messages}/api/messaging/conversations")
     assert all(c["id"] != gid for c in r.json()["items"])
-    notes.append(f"{engine}: group created, the member read it, was removed from the group info drawer, and from then on history is 404 and the group is gone from their list")
+    # the account origin no longer serves conversations: its former route says where they went
+    r = pb.request.get(f"{accounts}/api/auth/messaging/conversations")
+    assert r.status == 410 and r.json().get("error") == "moved", (r.status, r.text()[:160])
+    notes.append(f"{engine}: group created, the member read it, was removed from the group info drawer, and from then on history is 404 and the group is gone from their list; the account origin answers 410 for its former conversation route")
 
     # ---- search finds only what the caller may read
     pa.locator(".msg-side-h input").fill("got it")
     pa.locator(".msg-side-h input").press("Enter")
     expect(pa.locator(".msg-search-hit")).to_have_count(1)
-    pb.goto(f"{accounts}/api/auth/messaging/search?q=welcome")
+    pb.goto(f"{messages}/api/messaging/search?q=welcome")
     assert "welcome" not in pb.content(), "a removed member cannot search the group's history"
     notes.append(f"{engine}: search returned the owner's DM hit; the removed member's search of the group's text found nothing")
     assert not violations, violations[:4]
@@ -220,9 +242,9 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
 
 def main():
     args = [x for x in sys.argv[1:] if not x.startswith("--")]
-    if len(args) != 2:
+    if len(args) != 3:
         raise SystemExit(__doc__)
-    accounts, mail_dir = require_test_instance(args[0]), Path(args[1])
+    accounts, messages, mail_dir = require_test_instance(args[0]), require_test_instance(args[1]), Path(args[2])
     want_webkit = "--webkit" in sys.argv
 
     def show(engine: str, notes: list[str]):
@@ -233,7 +255,7 @@ def main():
     with sync_playwright() as p:
         chrome = p.chromium.launch(channel="chrome", headless=True)
         try:
-            show("chromium (Google Chrome)", run(chrome, "chromium", accounts, mail_dir))
+            show("chromium (Google Chrome)", run(chrome, "chromium", accounts, messages, mail_dir))
         finally:
             chrome.close()
         if want_webkit:
@@ -241,7 +263,7 @@ def main():
             try:
                 with LocalhostProxy() as proxy:
                     show(f"webkit (Playwright build; *.localhost through {proxy.url})",
-                         run(wk, "webkit", accounts, mail_dir, {"proxy": {"server": proxy.url}}))
+                         run(wk, "webkit", accounts, messages, mail_dir, {"proxy": {"server": proxy.url}}))
             finally:
                 wk.close()
 

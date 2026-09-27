@@ -125,6 +125,27 @@ services:
       SYNWEVO_OIDC_APP_ID: platform
     depends_on:
       accounts: {condition: service_healthy}
+  messages:
+    # Synwevo Message (CI-66): conversations on their own origin. The host stays message.wegreen.ltd
+    # by decision (docs/platform/domain-migration.md §1), not message.synwevo.com. The process
+    # registers itself in the application registry at start, which is how the account service,
+    # the portal and Docs learn where the 消息 link and every conversation notification go.
+    <<: *app
+    environment:
+      <<: *env
+      SYNWEVO_ROLE: messages
+      SYNWEVO_APP_URL: https://message.wegreen.ltd
+      SYNWEVO_PUBLIC_URL: https://message.wegreen.ltd
+      SYNWEVO_OIDC_CLIENT_ID: messages-web
+      SYNWEVO_OIDC_APP_ID: messages
+      # Attachments go through the same acceptance chain as Docs uploads and member imports:
+      # scanned before they are stored; while the scanner is down uploads are refused (503),
+      # never waved through, and everything already accepted keeps working.
+      SYNWEVO_CLAMD_ADDRESS: tcp://clamav:3310
+      SYNWEVO_MALWARE_SCAN: required
+    depends_on:
+      accounts: {condition: service_healthy}
+      clamav: {condition: service_started}
   gateway:
     image: nginx:1.28-alpine
     user: '101:101'
@@ -154,3 +175,4 @@ services:
       accounts: {condition: service_healthy}
       docs: {condition: service_healthy}
       portal: {condition: service_healthy}
+      messages: {condition: service_healthy}

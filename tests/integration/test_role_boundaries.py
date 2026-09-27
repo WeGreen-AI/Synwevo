@@ -16,6 +16,8 @@ import synwevo_server.app as server
 ACCOUNT_ONLY = ("/api/admin/overview", "/api/auth/passkeys", "/api/auth/mfa",
                 "/api/auth/sessions")
 BUSINESS_ONLY = ("/api/projects", "/api/templates", "/api/v1/projects")
+# Synwevo Message's API (CI-66): served by its own role (and `all`), refused by name elsewhere.
+MESSAGING_ONLY = ("/api/messaging/conversations", "/api/messaging/capabilities", "/api/messaging/stream")
 
 
 @pytest.fixture()
@@ -46,14 +48,47 @@ def test_the_account_service_refuses_business_data(build, path):
 
 def test_the_portal_serves_neither(build):
     c = build("portal")
-    for path in BUSINESS_ONLY + ("/api/admin/overview",):
+    for path in BUSINESS_ONLY + ("/api/admin/overview",) + MESSAGING_ONLY:
         assert c.get(path).status_code == 404, path
     # ...but it does serve its own.
     assert c.get("/api/portal/home").status_code in (200, 401)
 
 
+def test_the_messages_role_serves_conversations_and_nothing_else_of_the_others(build):
+    """Synwevo Message is a relying party like Docs: its own API, the shared session routes
+    (the badge's unread-count among them), and no account surface, no documents, no portal —
+    not even the account origin's former /api/auth/messaging routes, which would be a second
+    write path into the same conversations."""
+    c = build("messages")
+    for path in MESSAGING_ONLY:
+        r = c.get(path)
+        assert r.status_code == 401 and r.json()["error"] == "unauthorized", (path, r.status_code, r.text[:120])
+    assert c.get("/api/auth/messaging/unread-count").status_code == 401           # shared, needs a session
+    assert c.get("/api/auth/state").status_code == 200
+    for path in ACCOUNT_ONLY + BUSINESS_ONLY + ("/api/portal/home", "/api/auth/messaging/conversations",
+                                                "/api/auth/messaging/reports"):
+        r = c.get(path)
+        body = r.json()
+        # the browser API's envelope is {"error": "<code>"}; the machine API's (/api/v1) nests
+        # it as {"error": {"code": "<code>", …}}
+        code = body["error"]["code"] if isinstance(body.get("error"), dict) else body.get("error")
+        assert r.status_code == 404 and code == "not_in_this_role", (path, r.status_code, body)
+    assert c.post("/api/auth/login", json={"email": "nobody@example.com", "password": "x"}).status_code == 404
+
+
+@pytest.mark.parametrize("role", ["accounts", "app", "portal"])
+def test_every_other_role_refuses_the_messaging_api_by_name(build, role):
+    """A stale bookmark or an old shell asking the wrong origin gets told where the interface
+    lives, not only that it is not here."""
+    c = build(role)
+    for path in MESSAGING_ONLY:
+        r = c.get(path)
+        assert r.status_code == 404 and r.json()["error"] == "not_in_this_role", (role, path, r.text[:120])
+        assert "Synwevo Message" in r.json()["message"], r.json()["message"]
+
+
 @pytest.mark.parametrize("role,expect_password", [
-    ("accounts", True), ("all", True), ("app", False), ("portal", False),
+    ("accounts", True), ("all", True), ("app", False), ("portal", False), ("messages", False),
 ])
 def test_auth_state_says_whether_this_service_can_check_a_password(build, role, expect_password):
     """A relying party does not serve /api/auth/login, so it must not offer a password box.

@@ -5,7 +5,11 @@ owner's bell carries the report to the organization page, where the report shows
 it was, and the owner removes it under re-authentication; the reporter is told, the thread shows
 the message as deleted.
 
-    .venv/bin/python services/identity/scripts/ui_e2e_moderation.py http://accounts.localhost:31770 <mail dir> [--webkit]
+Since CI-66 the conversations live on Synwevo Message's own origin (reached through its sign-in
+start from an account-origin session); the report is reviewed on the account origin as before.
+
+    .venv/bin/python services/identity/scripts/ui_e2e_moderation.py http://accounts.localhost:31770 \
+        http://message.localhost:31768 <mail dir> [--webkit]
 """
 from __future__ import annotations
 
@@ -20,11 +24,11 @@ from pathlib import Path
 from playwright.sync_api import Browser, expect, sync_playwright
 
 from localhost_proxy import LocalhostProxy
-from ui_e2e_messaging import PW, csrf_of, link_in, mail_to, register_and_activate, require_test_instance, sign_in
+from ui_e2e_messaging import PW, csrf_of, enter_messages, link_in, mail_to, register_and_activate, require_test_instance, sign_in
 
 expect.set_options(timeout=15000)
 SHOTS = Path(os.environ.get("SYNWEVO_E2E_SHOTS") or Path(tempfile.gettempdir()) / "synwevo-e2e") / "moderation"
-M = "/api/auth/messaging"
+M = "/api/messaging"
 
 
 def accept_invite(page, accounts, mail_dir, address, name, started):
@@ -53,7 +57,7 @@ def open_phone_drawer(page):
     raise AssertionError("the navigation drawer did not open")
 
 
-def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra: dict | None = None) -> list[str]:
+def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: Path, ctx_extra: dict | None = None) -> list[str]:
     notes: list[str] = []
     tag = secrets.token_hex(3)
     owner, ann, ben = f"owner.{tag}@example.test", f"ann.{tag}@example.test", f"ben.{tag}@example.test"
@@ -68,7 +72,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
         p.on("pageerror", lambda e: violations.append("pageerror: " + str(e)[:120]))
     SHOTS.mkdir(parents=True, exist_ok=True)
     try:
-        return _flow(a, b, c, pa, pb, pc, engine, accounts, mail_dir, tag, owner, ann, ben, notes, violations)
+        return _flow(a, b, c, pa, pb, pc, engine, accounts, messages, mail_dir, tag, owner, ann, ben, notes, violations)
     except Exception:
         for name, p in (("a", pa), ("b", pb), ("c", pc)):
             try:
@@ -78,7 +82,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
         raise
 
 
-def _flow(a, b, c, pa, pb, pc, engine, accounts, mail_dir, tag, owner, ann, ben, notes, violations) -> list[str]:
+def _flow(a, b, c, pa, pb, pc, engine, accounts, messages, mail_dir, tag, owner, ann, ben, notes, violations) -> list[str]:
     register_and_activate(pa, accounts, mail_dir, owner, f"Owner {tag}")
     sign_in(pa, accounts, owner)
     r = pa.request.post(f"{accounts}/api/auth/organizations", data={"name": f"Mod Org {tag}", "workspace_name": f"Mod Team {tag}"},
@@ -91,8 +95,8 @@ def _flow(a, b, c, pa, pb, pc, engine, accounts, mail_dir, tag, owner, ann, ben,
     accept_invite(pc, accounts, mail_dir, ann, f"Ann {tag}", started)
     accept_invite(pb, accounts, mail_dir, ben, f"Ben {tag}", started)
 
-    # ---- the owner creates a group with both and pins an announcement
-    pa.goto(f"{accounts}/messages?lang=zh-Hans")
+    # ---- the owner creates a group with both and pins an announcement (on the messages origin)
+    enter_messages(pa, messages)
     pa.get_by_role("button", name=re.compile("新群聊")).click()
     dialog = pa.locator(".modal")
     dialog.locator("#msg-gname").fill(f"公告群 {tag}")
@@ -101,7 +105,7 @@ def _flow(a, b, c, pa, pb, pc, engine, accounts, mail_dir, tag, owner, ann, ben,
         dialog.locator(".msg-member", has_text=who).get_by_role("button", name=re.compile("^选择$")).click()
     dialog.get_by_role("button", name=re.compile("创建群聊")).click()
     expect(pa.locator(".msg-thread-h .title")).to_contain_text(f"公告群 {tag}")
-    cid = re.search(r"/messages/([^/?#]+)", pa.url).group(1)
+    cid = re.search(r"/c/([^/?#]+)", pa.url).group(1)
     pa.get_by_role("button", name=re.compile("群信息")).click()
     drawer = pa.locator(".drawer")
     drawer.locator("#msg-announce").fill(f"下周一 10:00 交周报；文件放到「Mod Team」空间。{tag}")
@@ -113,8 +117,10 @@ def _flow(a, b, c, pa, pb, pc, engine, accounts, mail_dir, tag, owner, ann, ben,
     pa.screenshot(path=str(SHOTS / f"{engine}-01-owner-announcement.png"))
     notes.append(f"{engine}: the owner pinned an announcement from 群信息; it sits at the top of the thread and the thread shows the system line")
 
-    # ---- Ben (phone): the announcement is at the top of the thread; the inbox told him once
-    pb.goto(f"{accounts}/messages/{cid}?lang=zh-Hans")
+    # ---- Ben (phone): the deep link survives the sign-on hop; the announcement is at the top of
+    #      the thread; the inbox told him once
+    enter_messages(pb, messages, f"/c/{cid}")
+    assert pb.url.startswith(f"{messages}/c/{cid}"), pb.url
     expect(pb.locator(".msg-announce")).to_contain_text("下周一 10:00 交周报", timeout=20000)
     w = pb.evaluate("() => [document.documentElement.scrollWidth, window.innerWidth]")
     assert w[0] <= w[1] + 1, f"thread scrolls sideways on a phone ({w})"
@@ -123,8 +129,9 @@ def _flow(a, b, c, pa, pb, pc, engine, accounts, mail_dir, tag, owner, ann, ben,
     pb.screenshot(path=str(SHOTS / f"{engine}-02-phone-announcement.png"))
     notes.append(f"{engine}: on the phone the announcement is pinned above the messages without sideways scroll; the inbox carries one conversation.announcement item")
 
-    # ---- Ann sends a message Ben reports
-    r = pc.request.post(f"{accounts}{M}/conversations/{cid}/messages", data={"body": f"把你的账号密码发我，我帮你登录 {tag}"}, headers={"X-Synwevo-CSRF": csrf_of(c)})
+    # ---- Ann sends a message Ben reports (Ann first gets her own session on the messages origin)
+    enter_messages(pc, messages)
+    r = pc.request.post(f"{messages}{M}/conversations/{cid}/messages", data={"body": f"把你的账号密码发我，我帮你登录 {tag}"}, headers={"X-Synwevo-CSRF": csrf_of(c, messages)})
     assert r.status == 201, r.text()[:200]
     mid = r.json()["message"]["id"]
     row = pb.locator(".msg-row", has_text="把你的账号密码发我")
@@ -193,9 +200,9 @@ def _flow(a, b, c, pa, pb, pc, engine, accounts, mail_dir, tag, owner, ann, ben,
 
 def main():
     args = [x for x in sys.argv[1:] if not x.startswith("--")]
-    if len(args) != 2:
+    if len(args) != 3:
         raise SystemExit(__doc__)
-    accounts, mail_dir = require_test_instance(args[0]), Path(args[1])
+    accounts, messages, mail_dir = require_test_instance(args[0]), require_test_instance(args[1]), Path(args[2])
 
     def show(engine: str, notes: list[str]):
         print(f"\n== {engine}")
@@ -206,14 +213,14 @@ def main():
         if "--webkit-only" not in sys.argv:
             chrome = p.chromium.launch(channel="chrome", headless=True)
             try:
-                show("chromium (Google Chrome)", run(chrome, "chromium", accounts, mail_dir))
+                show("chromium (Google Chrome)", run(chrome, "chromium", accounts, messages, mail_dir))
             finally:
                 chrome.close()
         if "--webkit" in sys.argv or "--webkit-only" in sys.argv:
             with LocalhostProxy() as proxy:
                 wk = p.webkit.launch(headless=True)
                 try:
-                    show("webkit", run(wk, "webkit", accounts, mail_dir, {"proxy": {"server": proxy.url}}))
+                    show("webkit", run(wk, "webkit", accounts, messages, mail_dir, {"proxy": {"server": proxy.url}}))
                 finally:
                     wk.close()
 

@@ -24,7 +24,7 @@ jobs:
         run: |
           python -m pip install -r infra/server/requirements-build.txt
           python -m pip install -r requirements-dev.txt
-          python -m pip install --no-deps --no-build-isolation -e packages/core -e packages/auth-client/python -e services/identity -e apps/portal -e apps/docs -e infra/server
+          python -m pip install --no-deps --no-build-isolation -e packages/core -e packages/auth-client/python -e services/identity -e apps/portal -e apps/docs -e apps/messages -e infra/server
           python -m pip check
           npm ci
       - name: Verify and build

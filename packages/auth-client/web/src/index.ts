@@ -10,4 +10,4 @@ export { platformHandoffUrl, isDefaultNext } from "./handoff";
 export { SignedOut } from "./SignedOut";
 export { PlatformNav } from "./PlatformNav";
 export { NotificationBell, NotificationDrawer, useUnreadCount } from "./NotificationBell";
-export { MessagesLink, useMessagesUnread, announceMessagesUnread } from "./MessagesLink";
+export { MessagesLink, useMessagesUnread, announceMessagesUnread, messagesHref } from "./MessagesLink";

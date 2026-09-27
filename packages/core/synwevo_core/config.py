@@ -18,6 +18,9 @@ WORKSPACE_NAME = "Synwevo Workspace"
 ACCOUNT_NAME = "Synwevo Account"
 #: 文档应用的对外名称。它是平台上的一个应用，不是平台本身。
 DOCS_NAME = "Synwevo Docs"
+#: 消息应用的对外名称：组织内的私聊与群聊，自 CI-66 起是平台上的第二个应用，有自己的源站
+#: （生产 https://message.wegreen.ltd）。名字里没有 s：产品名是 Message。
+MESSAGES_NAME = "Synwevo Message"
 
 
 def platform_name() -> str:

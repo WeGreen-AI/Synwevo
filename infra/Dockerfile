@@ -1,4 +1,4 @@
-# Synwevo 自托管镜像：单进程部署（SYNWEVO_ROLE=all）—— Synwevo Docs 工作台 + Synwevo Account，同一个源站。
+# Synwevo 自托管镜像：单进程部署（SYNWEVO_ROLE=all）—— Synwevo Docs 工作台 + Synwevo Account + Synwevo Message，同一个源站。
 # 构建上下文是**仓库根目录**：
 #     docker build -f infra/Dockerfile -t synwevo .
 FROM node:22-bookworm-slim AS ui
@@ -9,15 +9,17 @@ COPY packages/ui/package.json packages/ui/
 COPY packages/auth-client/web/package.json packages/auth-client/web/
 COPY apps/docs/web/package.json apps/docs/web/
 COPY apps/portal/web/package.json apps/portal/web/
+COPY apps/messages/web/package.json apps/messages/web/
 COPY services/identity/web/package.json services/identity/web/
 RUN npm ci
 COPY packages/ packages/
 COPY apps/docs/web/ apps/docs/web/
 COPY apps/portal/web/ apps/portal/web/
+COPY apps/messages/web/ apps/messages/web/
 COPY services/identity/web/ services/identity/web/
-# 单进程部署提供两个外壳：工作台与账户页。它们的静态资源目录不同名（assets / account-assets），
-# 否则同名的 /assets 会互相遮盖——这正是"页面能开但样式没了"的来源。
-RUN npm run build -w @synwevo/docs-web && npm run build -w @synwevo/account-web && npm run build -w @synwevo/workspace-web
+# 单进程部署提供三个外壳：工作台、账户页与消息。它们的静态资源目录不同名（assets / account-assets /
+# messages-assets），否则同名的 /assets 会互相遮盖——这正是"页面能开但样式没了"的来源。
+RUN npm run build -w @synwevo/docs-web && npm run build -w @synwevo/account-web && npm run build -w @synwevo/workspace-web && npm run build -w @synwevo/messages-web
 
 # Trixie's LibreOffice 25 supports the XLOOKUP formulas in the real engine/reference suite.
 # Bookworm's 7.4 returns #NAME? for those workbooks.
@@ -27,6 +29,7 @@ ENV PYTHONUNBUFFERED=1 SYNWEVO_IN_CONTAINER=1 SYNWEVO_HOST=0.0.0.0 SYNWEVO_PORT=
     SYNWEVO_DOCS_UI_DIR=/app/apps/docs/web/dist \
     SYNWEVO_ACCOUNTS_UI_DIR=/app/services/identity/web/dist \
     SYNWEVO_PORTAL_UI_DIR=/app/apps/portal/web/dist \
+    SYNWEVO_MESSAGES_UI_DIR=/app/apps/messages/web/dist \
     SYNWEVO_DOCS_TESSDATA=/usr/share/tesseract-ocr/5/tessdata
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libreoffice-writer libreoffice-calc libreoffice-impress \
@@ -40,9 +43,10 @@ COPY packages/auth-client/python/requirements.txt packages/auth-client/python/re
 COPY services/identity/requirements.txt services/identity/requirements.txt
 COPY apps/portal/requirements.txt apps/portal/requirements.txt
 COPY apps/docs/requirements.txt apps/docs/requirements.txt
+COPY apps/messages/requirements.txt apps/messages/requirements.txt
 COPY infra/server/requirements.txt infra/server/requirements.txt
 COPY infra/server/requirements.lock infra/server/requirements-build.txt infra/server/
-# 部署组装的 requirements 就是三个模块的并集，版本全部来自各模块固定的文件。
+# 部署组装的 requirements 就是四个模块的并集，版本全部来自各模块固定的文件。
 RUN pip install --no-cache-dir -r infra/server/requirements-build.txt \
     && pip install --no-cache-dir -r infra/server/requirements.txt
 # AGPL-3.0 §13：/api/source-code 提供的是**正在运行的程序**的对应源代码。重组之后"正在运行的
@@ -52,6 +56,7 @@ COPY packages/ packages/
 COPY services/identity/ services/identity/
 COPY apps/portal/ apps/portal/
 COPY apps/docs/ apps/docs/
+COPY apps/messages/ apps/messages/
 COPY infra/server/ infra/server/
 COPY scripts/ scripts/
 COPY tests/ tests/
@@ -61,11 +66,12 @@ COPY infra/Dockerfile infra/docker-compose.yml infra/
 COPY --from=ui /ui/apps/docs/web/dist apps/docs/web/dist
 COPY --from=ui /ui/services/identity/web/dist services/identity/web/dist
 COPY --from=ui /ui/apps/portal/web/dist apps/portal/web/dist
+COPY --from=ui /ui/apps/messages/web/dist apps/messages/web/dist
 # `pip check`: every module's declared dependencies must be satisfied by the pinned set, or the
 # image fails here instead of at the first request that reaches an undeclared import.
 RUN pip install --no-cache-dir --no-deps --no-build-isolation \
       -e packages/core -e packages/auth-client/python \
-      -e services/identity -e apps/portal -e apps/docs -e infra/server \
+      -e services/identity -e apps/portal -e apps/docs -e apps/messages -e infra/server \
     && pip check
 # LICENSE is deliberately absent: this project has not chosen one yet, and COPY of a missing
 # file fails the build. The source archive reports it as missing rather than pretending.

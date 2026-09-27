@@ -1,4 +1,8 @@
-"""Messaging HTTP ceremonies and the realtime stream.
+"""Messaging HTTP ceremonies and the realtime stream — Synwevo Message's API, `/api/messaging/…`.
+
+Moved here from the account service in CI-66 (it was `/api/auth/messaging/…` there). The routes
+import only the shared layer, so the move changed the prefix and nothing about the ceremonies;
+the tables, ids and rules are `synwevo_core.messaging`'s and stayed where they were.
 
 Transport (docs/platform/messaging.md §3): one server-sent-events stream per signed-in browser
 tab, served by an async generator so an open tab costs a queue and a coroutine — not a thread
@@ -8,6 +12,10 @@ scaling out). The stream is a hint, never the truth: every reconnect and every "
 goes back to the history API with the last sequence the client has, and the client falls back to
 polling that API when the stream cannot be held open. Authorization is re-checked on the stream
 at every heartbeat: a revoked session or a withdrawn membership ends it.
+
+Not here: the moderation half (listing and reviewing reports). It needs `org.messaging.manage`
+and a strict re-authentication on the *account* session, so it stays on the account service
+(`synwevo_identity.messaging_reports_routes`); this application only accepts a report.
 """
 from __future__ import annotations
 
@@ -17,27 +25,30 @@ import logging
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Body, File, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
 from synwevo_core.member_import import accept_upload
-from synwevo_core.messaging import INLINE_TYPES, MAX_ATTACHMENT_BYTES, MAX_BODY, REACTIONS, REPORT_REASONS, Messaging
+from synwevo_core.messaging import INLINE_TYPES, MAX_ATTACHMENT_BYTES, MAX_BODY, REACTIONS, Messaging, conversation_target
 from synwevo_core.notifications import Notifier
-from synwevo_core.organizations import Organizations
-from synwevo_core.sessions import Sessions
 from synwevo_core.store import now
 
 log = logging.getLogger("synwevo.messaging")
+#: Where the API lives on the messages origin (and on `all`, the single-process deployment).
+PREFIX = "/api/messaging"
+#: Where it lived on the account origin before CI-66; served there only by `install_legacy`.
+LEGACY_PREFIX = "/api/auth/messaging"
 HEARTBEAT_S = 25                # under Cloudflare's ~100 s idle cut and nginx's 300 s read timeout
 QUEUE_MAX = 200                 # a tab that cannot keep up resyncs from history; nothing waits on it
 MESSAGES_PER_MINUTE = 60
 ATTACHMENTS_PER_HOUR = 30
 GROUPS_PER_DAY = 20
 REPORTS_PER_DAY = 20
-REAUTH_SCOPE = "admin"          # reviewing a report is an organization write like deciding an approval
+#: The inbox items a message creates for a reader; reading the conversation reads them too.
+CONVERSATION_ITEM_KINDS = ("conversation.dm", "conversation.mention", "conversation.group")
 
 
 class MessageHub:
@@ -88,11 +99,23 @@ class MessageHub:
             pass
 
 
-def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier) -> APIRouter:
-    r = APIRouter(prefix="/api/auth/messaging", tags=["messaging"])
+def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
+                 prefix: str = PREFIX, legacy_guard: bool = False) -> APIRouter:
+    """The messaging API. `legacy_guard` is for the account origin's old prefix: every route then
+    answers 410 the moment the registry says Synwevo Message is active, naming its address, so
+    conversations have exactly one write source at any time."""
+    def moved(request: Request) -> None:
+        # One primary-key read per request, uncached: the switch has to take effect the moment
+        # the messages process registers itself, not a cache lifetime later.
+        from synwevo_core.apps import messages_launch_url
+        url = messages_launch_url(store)
+        if url:
+            raise ServiceError(410, "moved", f"消息已迁到 Synwevo Message（{url}），此地址不再提供会话接口",
+                               {"messages_url": url})
+
+    r = APIRouter(prefix=prefix, tags=["messaging"], dependencies=[Depends(moved)] if legacy_guard else None)
     hub = MessageHub()
     svc = Messaging(store, ident, publish=hub.publish)
-    orgs = Organizations(store, ident)
     r.hub, r.messaging = hub, svc
 
     def session(request: Request) -> dict:
@@ -120,6 +143,16 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
         return oid
 
     # ------------------------------------------------------------------ conversations
+    @r.get("/organizations")
+    def organizations(request: Request):
+        """The caller's organizations — the scope a conversation is started in. On the account
+        origin the page read `/api/auth/organizations`; that route is the account service's and
+        is refused here by role, so the application answers the same question from the shared
+        layer (id, name, status, the caller's role — nothing about members)."""
+        from synwevo_core.organizations import Organizations
+        items = Organizations(store, ident).list_for_user(uid_of(request))
+        return {"items": items, "total": len(items)}
+
     @r.get("/conversations")
     def list_conversations(request: Request, organization_id: str = Query("")):
         return {"items": svc.list_conversations(uid_of(request), organization_id=organization_id or None)}
@@ -214,7 +247,7 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
         uid = uid_of(request)
         out = svc.remove_member(cid, uid, member_id)
         audit(request, "messaging.group.remove", actor_id=uid, object_kind="conversation", object_id=cid, result="ok", meta={"removed": member_id})
-        _notify(member_id, "conversation.removed", {"actor": svc._name(uid), "conversation": out["name"]}, out, target_path="/messages")
+        _notify(member_id, "conversation.removed", {"actor": svc._name(uid), "conversation": out["name"]}, out, to_list=True)
         return out
 
     @r.post("/conversations/{cid}/leave")
@@ -258,10 +291,13 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
                 limit: int = Query(50, ge=1, le=200)):
         return svc.history(cid, uid_of(request), before_seq=before, after_seq=after, limit=limit)
 
-    def _notify(recipient: str, kind: str, params: dict, conv: dict, *, target_path: str | None = None, dedupe: str | None = None) -> None:
+    def _notify(recipient: str, kind: str, params: dict, conv: dict, *, to_list: bool = False, dedupe: str | None = None) -> None:
+        """An inbox item pointing at the conversation (or at the list, for someone who was
+        removed): on the messages origin while the application is registered, else the account
+        origin's old paths (`conversation_target`)."""
         try:
             notifier.emit(recipient, kind, params=params, organization_id=conv["organization_id"], object_kind="conversation", object_id=conv["id"],
-                          dedupe_key=dedupe, target={"origin": "accounts", "path": target_path or f"/messages/{conv['id']}"})
+                          dedupe_key=dedupe, target=conversation_target(store, None if to_list else conv["id"]))
         except Exception as e:  # noqa: BLE001 - an inbox item is a courtesy; the message is already stored
             log.warning("messaging inbox item skipped: %s", type(e).__name__)
 
@@ -301,7 +337,8 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
     @r.post("/messages/{mid}/report", status_code=201)
     def report(request: Request, mid: str, body: dict = Body(...)):
         """A member reports a message they can see. The organization's messaging managers get an
-        actionable inbox item; the reporter is told when it is reviewed. Rate-limited per reporter."""
+        actionable inbox item pointing at the organization page on the account origin, where the
+        report is reviewed; the reporter is told when it is. Rate-limited per reporter."""
         if set(body) - {"reason", "note"}:
             raise ServiceError(400, "invalid_field", "只能提交 reason 和 note")
         uid = uid_of(request)
@@ -319,34 +356,7 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
                     log.warning("report inbox item skipped: %s", type(e).__name__)
         return out
 
-    def _moderator(request: Request, oid: str, *, sensitive: bool = False) -> str:
-        s = session(request)
-        if sensitive and not Sessions.reauth_fresh(s, REAUTH_SCOPE, strict=True):
-            raise ServiceError(403, "reauth_required", "这一步需要重新验证身份", {"scope": REAUTH_SCOPE})
-        orgs.require(oid, s["user_id"], permission="org.messaging.manage", active=True)
-        return s["user_id"]
-
-    @r.get("/reports")
-    def list_reports(request: Request, organization_id: str = Query(...), status: str = Query("open", pattern="^(open|removed|dismissed|all)$")):
-        """Reports of an organization, for holders of org.messaging.manage: the reported message's
-        snapshot, sender, reporter and reason — never the rest of the conversation."""
-        _moderator(request, organization_id)
-        return {"items": svc.reports_for_organization(organization_id, status=None if status == "all" else status), "reasons": list(REPORT_REASONS)}
-
-    @r.post("/reports/{rid}/review")
-    def review_report(request: Request, rid: str, body: dict = Body(...)):
-        current = svc.report_get(rid)
-        uid = _moderator(request, current["organization_id"], sensitive=True)
-        out = svc.review_report(rid, uid, str(body.get("decision") or ""), body.get("note"))
-        audit(request, "messaging.report.review", actor_id=uid, object_kind="message_report", object_id=rid, result="ok",
-              meta={"decision": out["status"], "message_id": out["message_id"], "organization_id": out["organization_id"]})
-        try:
-            notifier.emit(out["reporter"]["user_id"], f"conversation.report_{out['status']}", params={"note": out["decision_note"] or ""},
-                          organization_id=out["organization_id"], object_kind="message_report", object_id=rid, dedupe_key=f"report:{rid}:reviewed",
-                          target={"origin": "accounts", "path": f"/messages/{out['conversation_id']}"})
-        except Exception as e:  # noqa: BLE001
-            log.warning("report outcome inbox item skipped: %s", type(e).__name__)
-        return out
+    # Listing and reviewing reports are not here: see the module docstring.
 
     @r.put("/messages/{mid}/reactions")
     def react(request: Request, mid: str, body: dict = Body(...)):
@@ -358,7 +368,15 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
             seq = int(body.get("seq"))
         except (TypeError, ValueError):
             raise ServiceError(400, "invalid_field", "seq 必须是整数", {"field": "seq"}) from None
-        return svc.mark_read(cid, uid_of(request), seq)
+        uid = uid_of(request)
+        out = svc.mark_read(cid, uid, seq)
+        if out["unread"] == 0:
+            # Reading the conversation to its end is reading the inbox items about it: the bell
+            # used to keep saying "X 给你发了私信" after the chat had been read, and only the
+            # dispatcher's send-time re-check kept that from being mailed. An inbox read and
+            # nothing more — no approval, no action is completed here.
+            out["notifications_read"] = notifier.mark_object_read(uid, "conversation", cid, kinds=CONVERSATION_ITEM_KINDS)
+        return out
 
     @r.get("/search")
     def search(request: Request, q: str = Query("", max_length=200), organization_id: str = Query("")):

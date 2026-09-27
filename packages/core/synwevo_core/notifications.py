@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   dedupe_key TEXT,
   -- plain strings rendered into the catalogue's wording; never markup, never translated
   params TEXT,
-  -- {"origin": "accounts"|"portal"|"docs", "path": "/..."}: the server picks both halves
+  -- {"origin": "accounts"|"portal"|"docs"|"messages", "path": "/..."}: the server picks both halves
   target TEXT,
   action_state TEXT CHECK (action_state IN ('pending','done','void')),
   created_at REAL NOT NULL, read_at REAL, archived_at REAL
@@ -249,6 +249,21 @@ class Notifier:
     def __init__(self, store: Store):
         self.store = store
         self._docs_base: tuple[float, str | None] | None = None
+        self._messages_base: tuple[float, str | None] | None = None
+
+    def messages_base(self) -> str | None:
+        """The Synwevo Message origin for links, from the app registry (written by the process
+        that serves it), like :meth:`docs_base`. None until the application is registered, in
+        which case a `messages` target has no link rather than a guessed one. Cached for a minute."""
+        if self._messages_base and time.time() - self._messages_base[0] < 60:
+            return self._messages_base[1]
+        try:
+            from .apps import messages_origin
+            base = messages_origin(self.store)
+        except Exception:  # noqa: BLE001 - a link is optional; the notification is not
+            base = None
+        self._messages_base = (time.time(), base)
+        return base
 
     def docs_base(self) -> str | None:
         """The Synwevo Docs origin for links, from the app registry (written by the process that
@@ -410,7 +425,7 @@ class Notifier:
         return {"id": row["id"], "seq": row["seq"], "kind": row["kind"], "category": row["category"], "severity": row["severity"],
                 "title": title, "body": body, "organization_id": row.get("organization_id"), "workspace_id": row.get("workspace_id"),
                 "object_kind": row.get("object_kind"), "object_id": row.get("object_id"),
-                "href": resolve_target(target, docs_base=self.docs_base()), "action_state": row.get("action_state"),
+                "href": resolve_target(target, docs_base=self.docs_base(), messages_base=self.messages_base()), "action_state": row.get("action_state"),
                 "created_at": row["created_at"], "read_at": row.get("read_at"), "archived_at": row.get("archived_at")}
 
     # ------------------------------------------------------------------ state changes
@@ -434,6 +449,19 @@ class Notifier:
         never the items that arrived after it."""
         return int(self.store.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL AND archived_at IS NULL AND seq<=?",
                                       (now(), user_id, int(up_to_seq))) or 0)
+
+    def mark_object_read(self, user_id: str, object_kind: str, object_id: str, *, kinds: tuple[str, ...] | None = None) -> int:
+        """The reader saw the object itself, so the inbox items about it are read too: a
+        conversation read to its end reads its "X 给你发了私信" items (the messages application
+        calls this when the read cursor reaches the last message). An inbox read and nothing more —
+        `action_state` is untouched, nothing is approved or completed — and only this reader's rows.
+        `kinds` narrows it to the item kinds the object produces for a reader."""
+        sql = "UPDATE notifications SET read_at=COALESCE(read_at, ?) WHERE user_id=? AND object_kind=? AND object_id=? AND read_at IS NULL"
+        args: list = [now(), user_id, object_kind, object_id]
+        if kinds:
+            sql += f" AND kind IN ({','.join('?' for _ in kinds)})"
+            args.extend(kinds)
+        return int(self.store.execute(sql, tuple(args)) or 0)
 
     def set_action_state(self, object_kind: str, object_id: str, state: str, *, user_id: str | None = None) -> int:
         """The business flow reports back (approved, declined, expired): the to-do leaves `pending`."""
@@ -696,12 +724,15 @@ def _valid_hhmm(v) -> bool:
     return 0 <= h <= 23 and 0 <= m <= 59
 
 
-def resolve_target(target: dict | None, *, docs_base: str | None = None) -> str | None:
+def resolve_target(target: dict | None, *, docs_base: str | None = None,
+                   messages_base: str | None = None) -> str | None:
     """The absolute link for a stored target, from this deployment's configured origins only.
     `docs` links resolve through the registered Docs origin (`docs_base`, from the app registry)
     and, failing that, through SYNWEVO_APP_URL only in a process that serves Docs itself — in the
     account service that variable is the account service's own address (mails once carried
-    `accounts…/p/<id>`). Otherwise the item has no link rather than a guessed one."""
+    `accounts…/p/<id>`). `messages` links (conversations, since CI-66) resolve the same way
+    through the registered Synwevo Message origin (`messages_base`), or SYNWEVO_APP_URL in the
+    process that serves messages. Otherwise the item has no link rather than a guessed one."""
     if not target or not isinstance(target, dict):
         return None
     path = target.get("path") or "/"
@@ -716,6 +747,9 @@ def resolve_target(target: dict | None, *, docs_base: str | None = None) -> str 
     elif origin == "docs":
         role = (env.get("ROLE") or "all").strip().lower()
         base = docs_base or (env.get("APP_URL") if role in ("app", "all", "") else None)
+    elif origin == "messages":
+        role = (env.get("ROLE") or "all").strip().lower()
+        base = messages_base or (env.get("APP_URL") if role in ("messages", "all", "") else None)
     if not base:
         return None
     return base.rstrip("/") + path

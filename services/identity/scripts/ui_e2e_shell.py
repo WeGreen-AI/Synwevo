@@ -17,10 +17,13 @@ What it pins, each at a desktop width and at 375px:
 * the portal dashboard does not fall back to its loading state when the window regains focus;
 * the public home never shows the sign-in link while the session is still unknown to a signed-in
   visitor;
-* the Docs workspace at 375px offers the 文件/来源/目标/映射 pane switch.
+* the Docs workspace at 375px offers the 文件/来源/目标/映射 pane switch;
+* the workspace's 消息 entry lands on Synwevo Message's own origin through its sign-in start
+  (CI-66), with the badge answered on the portal origin.
 
     .venv/bin/python services/identity/scripts/ui_e2e_shell.py http://accounts.localhost:31770 \
-        http://portal.localhost:31769 http://docweave.localhost:31765 <email> <password> [--webkit]
+        http://portal.localhost:31769 http://docweave.localhost:31765 http://message.localhost:31768 \
+        <email> <password> [--webkit]
 
 Screenshots go to docs/screenshots/shell-*.png. Output never includes cookies or tokens.
 """
@@ -87,11 +90,11 @@ def reachable(browser: Browser, base: str, ctx_extra: dict | None = None) -> boo
         ctx.close()
 
 
-def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, email: str, password: str,
+def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, messages: str, email: str, password: str,
         ctx_extra: dict | None = None) -> list[str]:
     notes: list[str] = []
     ctx_extra = ctx_extra or {}
-    cross_origin = reachable(browser, portal, ctx_extra) and reachable(browser, docs, ctx_extra)
+    cross_origin = reachable(browser, portal, ctx_extra) and reachable(browser, docs, ctx_extra) and reachable(browser, messages, ctx_extra)
     if not cross_origin:
         notes.append(f"{engine}: {portal} / {docs} not resolvable in this engine (system resolver has no *.localhost); portal and Docs checks not run here")
     for width, tag in ((1280, "desktop"), (375, "phone")):
@@ -299,16 +302,23 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
         assert page.locator(".pt-loader").count() == 0, "portal dropped into its loading state on refocus"
         expect(page.locator(".pt-dashboard")).to_be_visible()
         notes.append(f"{engine}/{tag}: portal refocus → dashboard stayed mounted, probes={len(probe.hits)}")
-        # ---- the workspace has a messages entry (CI-63) ----------------------------------------
+        # ---- the workspace has a messages entry (CI-63) that lands on Synwevo Message (CI-66) ----
         msgs = page.get_by_role("link", name=re.compile("^(消息|訊息|Messages)"))
         expect(msgs.first).to_be_visible()
         badge = page.request.get(f"{portal}/api/auth/messaging/unread-count")
         assert badge.status == 200 and "unread" in badge.json(), (badge.status, badge.text()[:120])   # CI-64: answered on this origin
-        assert (msgs.first.get_attribute("href") or "").startswith(accounts) and (msgs.first.get_attribute("href") or "").endswith("/messages"), msgs.first.get_attribute("href")
+        href = msgs.first.get_attribute("href") or ""
+        assert href.startswith(messages + "/auth/start?") and "next=%2F" in href, href      # the registry address, through its sign-in start
         msgs.first.click()
-        page.wait_for_url(re.compile(re.escape(accounts) + r"/messages"), timeout=20000)
-        page.wait_for_selector("input[placeholder], .msg-list, main", timeout=20000)
-        notes.append(f"{engine}/{tag}: workspace 消息 entry → {accounts.split('//')[-1]}/messages")
+        page.wait_for_url(re.compile(re.escape(messages) + r"/(\?|$)"), timeout=20000)     # SSO hop done: the conversation list
+        page.wait_for_selector(".msg-side", timeout=20000)
+        me_here = page.request.get(f"{messages}/api/auth/me")
+        assert me_here.status == 200 and me_here.json()["email"].lower() == email.lower(), me_here.status
+        current = page.locator("a.bell", has_text=re.compile("^(消息|訊息|Messages)"))
+        expect(current.first).to_be_visible()
+        assert current.first.get_attribute("aria-current") == "page"
+        page.screenshot(path=SHOTS / f"shell-{engine}-{tag}-messages.png")
+        notes.append(f"{engine}/{tag}: workspace 消息 entry → {messages.split('//')[-1]}/ via /auth/start (signed in there, badge answered on the portal origin)")
         page.goto(f"{portal}/workspace")
         page.wait_for_selector(".pt-dashboard", timeout=20000)
         page.screenshot(path=SHOTS / f"shell-{engine}-{tag}-portal.png")
@@ -410,10 +420,10 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if len(args) != 5:
+    if len(args) != 6:
         raise SystemExit(__doc__)
-    accounts, portal, docs = (require_test_instance(a) for a in args[:3])
-    email, password = args[3], args[4]
+    accounts, portal, docs, messages = (require_test_instance(a) for a in args[:4])
+    email, password = args[4], args[5]
     want_webkit = "--webkit" in sys.argv
     # WebKit resolves hostnames through the system, which has no *.localhost entries. A local
     # forward proxy (localhost_proxy.py) resolves them to the loopback address while the browser
@@ -428,7 +438,7 @@ def main():
     with sync_playwright() as p:
         chrome = p.chromium.launch(channel="chrome", headless=True)
         try:
-            show("chromium (Google Chrome)", run(chrome, "chromium", accounts, portal, docs, email, password))
+            show("chromium (Google Chrome)", run(chrome, "chromium", accounts, portal, docs, messages, email, password))
         finally:
             chrome.close()
         if want_webkit:
@@ -439,14 +449,14 @@ def main():
             else:
                 try:
                     if reachable(wk, portal):
-                        show("webkit (Playwright build)", run(wk, "webkit", accounts, portal, docs, email, password))
+                        show("webkit (Playwright build)", run(wk, "webkit", accounts, portal, docs, messages, email, password))
                     elif loop:
                         base = require_test_instance(loop)
-                        show(f"webkit (Playwright build; account origin {base}, no proxy)", run(wk, "webkit", base, portal, docs, email, password))
+                        show(f"webkit (Playwright build; account origin {base}, no proxy)", run(wk, "webkit", base, portal, docs, messages, email, password))
                     else:
                         with LocalhostProxy() as proxy:
                             show(f"webkit (Playwright build; *.localhost through {proxy.url})",
-                                 run(wk, "webkit", accounts, portal, docs, email, password, {"proxy": {"server": proxy.url}}))
+                                 run(wk, "webkit", accounts, portal, docs, messages, email, password, {"proxy": {"server": proxy.url}}))
                 finally:
                     wk.close()
 

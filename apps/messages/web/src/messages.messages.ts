@@ -1,6 +1,13 @@
 import { registerMessages } from "@synwevo/ui";
 
 export const messages = {
+  "Synwevo Message · 消息": { en: "Synwevo Message · Messages", "zh-Hant": "Synwevo Message · 訊息" },
+  "加载中…": { en: "Loading…", "zh-Hant": "載入中…" },
+  "页面不存在": { en: "Page not found", "zh-Hant": "找不到頁面" },
+  "这个地址在 Synwevo Message 里不存在。": { en: "This address does not exist in Synwevo Message.", "zh-Hant": "這個地址在 Synwevo Message 裡不存在。" },
+  "返回会话列表": { en: "Back to conversations", "zh-Hant": "返回會話清單" },
+  "请求失败，请稍后重试。": { en: "The request failed. Try again later.", "zh-Hant": "請求失敗，請稍後重試。" },
+  "请求编号：{id}": { en: "Request ID: {id}", "zh-Hant": "請求編號：{id}" },
   "消息": { en: "Messages", "zh-Hant": "訊息" },
   "生成任务": { en: "Generation job", "zh-Hant": "產生任務" },
   "项目": { en: "Project", "zh-Hant": "專案" },

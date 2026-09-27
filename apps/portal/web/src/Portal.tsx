@@ -5,7 +5,7 @@ import { PublicHome } from "./PublicHome";
 import { PublicPage } from "./PublicPages";
 import { PUBLIC_META, publicPath, publicRoute } from "./publicRoutes";
 import "./messages";
-import { MessagesLink, NotificationBell } from "@synwevo/auth-client";
+import { MessagesLink, messagesHref, NotificationBell } from "@synwevo/auth-client";
 
 export const signInUrl = "/auth/start?next=%2Fworkspace";
 type Workspace = { id: string; name: string; kind: string; role: string; status?: string; org_id?: string | null; org_name?: string | null; organization_id?: string | null; organization_name?: string | null };
@@ -182,7 +182,7 @@ export function Portal() {
           {current && ["owner", "admin"].includes(current.role) && <a className="pt-link" href={accountLink(account, `/account/workspaces/${encodeURIComponent(current.id)}/members`)}>{t("成员与邀请")} <span aria-hidden="true">↗</span></a>}</div>
           {switchError && <p className="pt-error" role="alert">{t("切换失败，已重新核对当前工作空间，请重试。")}</p>}
           {switching !== null ? <div className="pt-empty" role="status"><span className="pt-loader" aria-hidden="true" /><h3>{t("正在切换工作空间…")}</h3><p>{t("页面将重新载入以更新权限。")}</p></div> : home.apps.length ? <ul className="pt-apps">{home.apps.map(app => <li key={`${app.id}:${app.workspace_id}`}>
-            <a className="pt-app-card" href={safeLink(app.launch_url, "/workspace")}><span className="pt-doc-icon" aria-hidden="true"><DocumentIcon /></span><span className="pt-app-body"><strong>{app.name}</strong><span>{app.workspace_name}</span><span className="pt-app-description">{app.icon === "doc" ? t("从来源数据到可交付的文档。") : t("打开已授权的应用。")}</span></span><span className="pt-card-arrow" aria-hidden="true">↗</span></a>
+            <a className="pt-app-card" href={safeLink(app.launch_url, "/workspace")}><span className="pt-doc-icon" aria-hidden="true">{app.icon === "chat" ? <ChatIcon /> : <DocumentIcon />}</span><span className="pt-app-body"><strong>{app.name}</strong><span>{app.workspace_name}</span><span className="pt-app-description">{app.icon === "doc" ? t("从来源数据到可交付的文档。") : app.icon === "chat" ? t("组织内的私聊与群聊。") : t("打开已授权的应用。")}</span></span><span className="pt-card-arrow" aria-hidden="true">↗</span></a>
           </li>)}</ul> : <div className="pt-empty"><DocumentIcon /><h3>{t(home.workspaces.length ? "当前工作空间暂无可用应用" : "先加入一个工作空间")}</h3><p>{t(home.workspaces.length ? "请联系工作空间管理员确认应用是否启用，以及你的使用资格。" : "创建工作空间，或用发到当前邮箱的邀请加入团队。")}</p><a className="pt-link" href={accountLink(account, "/onboarding")}>{t("前往设置工作空间")} <span aria-hidden="true">→</span></a></div>}
           <p className="pt-context-note">{t("应用与文档权限按工作空间分别授予；切换不会合并内容。")}</p>
         </section>
@@ -198,15 +198,19 @@ export function Portal() {
 export function DocumentIcon() {
   return <svg viewBox="0 0 32 36" width="32" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M7 3h12l6 6v24H7z" strokeLinejoin="round"/><path d="M19 3v7h6M12 17h8M12 22h8M12 27h5" strokeLinecap="round"/></svg>;
 }
+/** The card icon of Synwevo Message: two speech bubbles, drawn like the document icon. */
+export function ChatIcon() {
+  return <svg viewBox="0 0 32 36" width="32" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5 8h16a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-8l-6 5v-5H5a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3z" strokeLinejoin="round"/><path d="M27 14h1a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3h-1v4l-5-4h-6" strokeLinejoin="round"/><path d="M8 13h10M8 17h7" strokeLinecap="round"/></svg>;
+}
 export function Shell({ right, children, publicHome = false }: { right?: ReactNode; children: ReactNode; publicHome?: boolean }) {
   const { t, locale } = useI18n();
   const { state, me } = useSession();      // the bell renders nothing without a session
   // The messages entry beside the bell (the same pair Docs shows in its platform bar): the
-  // workspace is where people start, and it had no way into their conversations.
-  const messagesHref = (state?.account_url || "/account").replace(/\/account$/, "") + "/messages";
+  // workspace is where people start, and it had no way into their conversations. Its target is
+  // Synwevo Message's registered address (CI-66), through that origin's sign-in start.
   return <div className={`pt${publicHome ? " pt-public" : ""}`}><a className="pt-skip" href="#pt-main">{t("跳到主要内容")}</a>
     <header className="pt-top"><Brand href="/" size="lg" product={publicHome ? undefined : "Workspace"} label={t("Synwevo 首页")} />
-      <nav className="pt-nav" aria-label={t("主导航")}>{right}{me && <MessagesLink href={messagesHref} />}<NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} /><LanguageMenu /></nav></header>
+      <nav className="pt-nav" aria-label={t("主导航")}>{right}{me && <MessagesLink href={messagesHref(state, { lang: locale })} />}<NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} /><LanguageMenu /></nav></header>
     <main className="pt-main" id="pt-main" tabIndex={-1}>{children}</main>
     <footer className="pt-footer"><Logo version="wordmark" height={14} /><a href={publicPath("privacy", locale)}>{t("数据与隐私")}</a><a href={publicPath("service", locale)}>{t("服务说明")}</a><span>{t("协同 · 编织 · 持续完善")}</span></footer>
   </div>;

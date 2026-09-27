@@ -22,7 +22,7 @@ import { useSession } from "./session";
 import { platformHandoffUrl } from "./handoff";
 import { LanguageMenu, useI18n, useToast } from "@synwevo/ui";
 import { NotificationBell } from "./NotificationBell";
-import { MessagesLink } from "./MessagesLink";
+import { MessagesLink, messagesHref } from "./MessagesLink";
 import "./session.messages";
 
 /** The account page with `from=<app id>`, so its "back" link returns here. The id is only a hint
@@ -44,7 +44,7 @@ export function PlatformNav() {
   const [switching, setSwitching] = useState(false);
 
   // A relying party is, by definition, part of a platform. The role comes from the server.
-  const onPlatform = state?.role === "app" || state?.role === "portal" || state?.role === "all";
+  const onPlatform = state?.role === "app" || state?.role === "portal" || state?.role === "messages" || state?.role === "all";
   if (!onPlatform || !me) return null;
 
   const platformName = state?.platform_name || "Synwevo Workspace";
@@ -93,7 +93,10 @@ export function PlatformNav() {
           {spaces.map((w) => <option key={w.id} value={w.id} disabled={w.status !== "active"}>{w.kind === "personal" ? t("个人") : w.organization_name || ""} · {w.name}</option>)}
         </select>
       )}
-      <MessagesLink href={(state?.account_url || "").replace(/\/account$/, "") + "/messages"} />
+      {/* Conversations live on Synwevo Message (CI-66): the registry's address through its
+          sign-in start, a plain path on the same origin, the account origin's /messages when the
+          application is not registered. On the messages origin itself this is the current page. */}
+      <MessagesLink href={messagesHref(state, { lang: locale })} current={state?.role === "messages"} />
       <NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} />
       <LanguageMenu />
       <a className="btn ghost sm" href={accountHref(state?.account_url, state?.app_id)} title={t("账户与安全")}>{t("账户")}</a>

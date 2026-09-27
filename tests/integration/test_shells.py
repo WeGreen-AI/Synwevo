@@ -15,8 +15,10 @@ from fastapi.testclient import TestClient
 WORKBENCH_DIST = Path(__file__).resolve().parents[2] / "apps" / "docs" / "web" / "dist"
 ACCOUNTS_DIST = Path(__file__).resolve().parents[2] / "services" / "identity" / "web" / "dist"
 PORTAL_DIST = Path(__file__).resolve().parents[2] / "apps" / "portal" / "web" / "dist"
+MESSAGES_DIST = Path(__file__).resolve().parents[2] / "apps" / "messages" / "web" / "dist"
 
-pytestmark = pytest.mark.skipif(not (WORKBENCH_DIST.exists() and ACCOUNTS_DIST.exists() and PORTAL_DIST.exists()),
+pytestmark = pytest.mark.skipif(not (WORKBENCH_DIST.exists() and ACCOUNTS_DIST.exists() and PORTAL_DIST.exists()
+                                     and MESSAGES_DIST.exists()),
                                 reason="前端未构建")
 
 
@@ -31,7 +33,8 @@ def _client(tmp_path, monkeypatch, *, role: str) -> TestClient:
 
 
 @pytest.mark.parametrize("role,marker", [("all", "Synwevo Docs"), ("app", "Synwevo Docs"),
-                                         ("portal", "/portal-assets/"), ("accounts", "Synwevo Account")])
+                                         ("portal", "/portal-assets/"), ("accounts", "Synwevo Account"),
+                                         ("messages", "/messages-assets/")])
 def test_a_role_serves_its_own_shell_even_when_another_is_named(tmp_path, monkeypatch, role, marker):
     """Each role serves its own build and no other.
 
@@ -64,6 +67,11 @@ def test_the_account_pages_exist_once_and_the_workbench_does_not_carry_a_copy(tm
     for path in ("/login", "/account", "/forgot-password"):
         assert "Synwevo Account" in c.get(path).text, f"{path} 没有返回账户外壳"
     assert "Synwevo Docs" in c.get("/").text
+    # The conversations are the messages shell's (CI-66): under /messages (its old address) and
+    # /c/<cid> (its own), on the same origin — not the account shell's, not the workbench's.
+    for path in ("/messages", "/messages/cv_abc", "/c/cv_abc"):
+        html = c.get(path).text
+        assert "/messages-assets/" in html and "/account-assets/" not in html, f"{path} 没有返回消息外壳"
 
     # On a relying party the same paths are redirects to the account service, because a
     # password box that cannot check a password is worse than no page at all.
@@ -75,8 +83,10 @@ def test_the_account_pages_exist_once_and_the_workbench_does_not_carry_a_copy(tm
 
 
 @pytest.mark.parametrize("role,path,assets", [("all", "/", "/assets/"), ("all", "/login", "/account-assets/"),
+                                              ("all", "/messages", "/messages-assets/"),
                                               ("app", "/", "/assets/"), ("portal", "/", "/portal-assets/"),
-                                              ("accounts", "/login", "/account-assets/")])
+                                              ("accounts", "/login", "/account-assets/"),
+                                              ("messages", "/", "/messages-assets/")])
 def test_every_shell_names_its_own_fingerprinted_logo_icons(tmp_path, monkeypatch, role, path, assets):
     """The tab and home-screen icons come from the confirmed logo, through each shell's own build.
 
