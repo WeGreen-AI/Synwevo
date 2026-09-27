@@ -1505,6 +1505,20 @@ owner 把段首「注段」换成「忘录」；owner 的变更记录里编辑�
 **pytest**：`test_project_collab.py` +1（改名 + 样本规则：`before.name`「协同项目」→`after.name`「改名后的项目」，`before.record_rule.mode` per_row → `after` `{mode: per_file}`，未改的 `output` 不在 `after` 里；活动记录同样）。
 **浏览器**：`ui_e2e_activity_live.py` 新增里程碑——owner 改样本规则后活动记录第一行读作「样本规则：未设置 → 每个文件一份」（截图 `chromium-05`）；**Chromium 6/6、WebKit 6/6**。typecheck、Docs 前端 49 项通过。
 
+### 16.59 里程碑回归：Docs 主链路（桌面/手机）与外壳；无账户部署的模板选择器被送去不存在的登录页（CI-57）
+
+协同 12 个批次（CI-45…56）发布后按 §四「重大里程碑才做必要的跨模块回归」跑既有回归证明。**发现**：`apps/docs/scripts/ui_e2e.py` 与 `ui_e2e_mobile.py`
+（各自起 `SYNWEVO_UI_AUTH=none` 的一次性实例，即无账户部署模式）都在「设置模板」后失败——浏览器控制台：`GET /api/organization-templates` 401，
+随后页面被送到 `/auth/start?next=/p/…`（auth-client 把服务端确认的 401 `unauthorized` 当作会话失效）。根因：模板选择器在 CI-3x 加入「组织共享模板」页签后，
+无账户模式下没有会话，`_uid()` 一律回答 401「请先登录」，而该模式没有登录页。生产用的是 session 模式，不受影响；无账户/basic 模式的自托管部署受影响。
+**修复**：`_uid()` 在非 session 模式改答 403 `accounts_disabled`（"此部署未启用账户，这个功能需要登录的成员"，三语言），`GET /api/organization-templates`
+在该模式返回空列表（选择器不显示该页签、无错误横幅）；auth-client 不会把 403 当作会话失效。**验收**：`test_api_builtin.py` +1（none 模式：共享模板列表为空 200、
+评论 403 `accounts_disabled`）；重跑两条主链路证明：桌面「UI E2E passed in 11.6s」（100 份文档生成并读回），手机「phone flow ok in 9.7s: 100 documents generated and read back at 390×844」。
+外壳回归（`ui_e2e_shell.py`，需要一个已完成引导且空间里有待接受邀请的受控账户——脚本前置条件，不是产品缺陷）：**Chromium 与 WebKit、桌面与 375 px 全部通过**——抽屉焦点圈闭、账户页返回链接、组织页刷新不重复探测会话（0 次）、成员最后一行菜单在视口内、门户重获焦点不回退到加载态、公开首页加载中不闪「登录」、Docs 手机面板切换、0 条 CSP 违规。
+**§9.10 矩阵的其余回归**（同一隔离实例、受控账户）：`ui_e2e_messaging.py` Chromium 6/6（私聊经流到达与徽章、手机端引用回复与表情实时到桌面、图片附件经安全检查按内容哈希存一份并内联、
+群创建/阅读/移出后历史 404 且搜索无结果、0 CSP/页面错误）；`ui_e2e_project_copy.py` Chromium 5/5（申请显示清单且无自批、owner 手机宽度带理由批准并被要求重新输入口令、
+副本在目标空间预览/生成 2 份并读回 ZIP、原项目不变且对审批者不可见、副本在个人空间不可达）。`ui_e2e_member_import.py` Chromium 5/5（自定义角色创建、工作簿解析与表头映射建议、角色列需显式映射、预览 邀请 1/跳过 2/阻断 1、带理由与重认证确认后执行、CSV 报告下载、新人接受邀请后恰好拥有导入角色的权限并收到收件箱通知、0 CSP/页面错误）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

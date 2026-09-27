@@ -25,7 +25,8 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
 
   // A library that failed to load is not an empty library: say which it is.
   const loadLib = () => { setLibErr(null); get("/api/templates").then(setLib).catch((e) => setLibErr(errorText(e))); };
-  const loadShared = () => { setSharedErr(null); get("/api/organization-templates").then(setShared).catch((e) => setSharedErr(errorText(e))); };
+  // Without accounts there is no organization to share from: the tab simply does not appear.
+  const loadShared = () => { setSharedErr(null); get("/api/organization-templates").then(setShared).catch((e) => { if (e?.code !== "accounts_disabled") setSharedErr(errorText(e)); }); };
   useEffect(() => { loadLib(); loadShared(); }, []);
 
   // a copy of the organization's release becomes this workspace's own template and the project's

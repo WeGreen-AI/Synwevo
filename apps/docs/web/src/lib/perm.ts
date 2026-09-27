@@ -32,10 +32,13 @@ export const READ_ONLY_TEXT = "你在当前工作空间是查看者，只能查�
 export const NO_EXPORT_TEXT = "你在当前工作空间没有下载和导出权限。需要时，请联系工作空间的所有者或管理员开启。";
 
 /** A clear sentence for the two permission refusals; null for anything else. */
+export const NO_ACCOUNTS_TEXT = "此部署未启用账户，这个功能需要登录的成员。";
+
 export function permissionText(e: unknown): string | null {
   const code = (e as { code?: string } | null)?.code;
   if (code === "read_only_role") return READ_ONLY_TEXT;
   if (code === "export_not_allowed") return NO_EXPORT_TEXT;
+  if (code === "accounts_disabled") return NO_ACCOUNTS_TEXT;      // a deployment without accounts: an answer, not a failure
   return null;
 }
 

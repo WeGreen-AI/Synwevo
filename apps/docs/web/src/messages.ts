@@ -6099,4 +6099,8 @@ export const messages = {
     "en": "default",
     "zh-Hant": "預設"
   },
+  "此部署未启用账户，这个功能需要登录的成员。": {
+    "en": "This deployment has no accounts; this feature needs a signed-in member.",
+    "zh-Hant": "此部署未啟用帳戶，這個功能需要登入的成員。"
+  },
 } satisfies Messages;

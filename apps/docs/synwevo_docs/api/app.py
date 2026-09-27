@@ -21,6 +21,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.http import (Platform, build_platform, install as install_platform,
                                 install_probes, mount_web, new_api, shell_response)
 from synwevo_core.store import Store
+from synwevo_core.auth import ui_auth_mode
 
 from ..engine.limits import LIMITS
 from ..jobs import JobService, naming_tokens
@@ -88,6 +89,11 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     def _uid(request: Request) -> str:
         s = getattr(request.state, "session", None)
         if not s:
+            # A deployment without accounts (SYNWEVO_UI_AUTH=none / basic) has no person to name:
+            # answering 401 there sent the browser to a sign-in that does not exist (the auth
+            # client reads a confirmed 401 as an expired session). Say what is true instead.
+            if ui_auth_mode() != "session":
+                raise ServiceError(403, "accounts_disabled", "此部署未启用账户，这个功能需要登录的成员")
             raise ServiceError(401, "unauthorized", "请先登录")
         return s["user_id"]
 
@@ -537,6 +543,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
 
     @api.get("/api/organization-templates")
     def list_shared_templates(request: Request, include_deprecated: bool = False):
+        if ui_auth_mode() != "session" and not getattr(request.state, "session", None):
+            return {"organization": None, "items": []}          # no organizations without accounts: nothing to list, no error
         return shared.list(_uid(request), include_deprecated=include_deprecated)
 
     @api.get("/api/organization-templates/{pid}")

@@ -152,3 +152,19 @@ def test_a_save_can_name_its_version_and_the_note_is_bounded_plain_text(client):
     assert r.status_code == 400 and r.json()["detail"]["field"] == "note", r.text
     r = client.put(f"/api/templates/{tid}/builtin", json={"editor": DOC, "base_version": 3, "note": ["not", "text"]})
     assert r.status_code == 400 and r.json()["detail"]["field"] == "note", r.text
+
+
+def test_without_accounts_person_only_routes_do_not_pretend_a_sign_in_exists(tmp_path, monkeypatch):
+    """SYNWEVO_UI_AUTH=none is a deployment without accounts. Its template chooser asked for the
+    organization's shared templates and got 401, which the auth client reads as an expired session
+    and answers by sending the browser to a sign-in page that does not exist there. Now the list is
+    empty and person-only actions say 403 accounts_disabled — no redirect, a true message."""
+    from fastapi.testclient import TestClient
+    from synwevo_docs.api.app import create_app
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "none")
+    with TestClient(create_app(str(tmp_path / "data"), start_jobs=False)) as c:
+        r = c.get("/api/organization-templates")
+        assert r.status_code == 200 and r.json() == {"organization": None, "items": []}, r.text
+        pid = c.post("/api/projects", json={"name": "无账户部署"}).json()["id"]
+        r = c.post(f"/api/projects/{pid}/comments", json={"body": "谁来评论？"})
+        assert r.status_code == 403 and r.json()["error"] == "accounts_disabled", r.text
