@@ -141,12 +141,16 @@ export function Portal() {
     { label: t("账户与安全"), onSelect: () => window.location.assign(accountLink(account, "/account")) },
     ...(isPlatformAdmin ? [{ label: t("平台管理"), onSelect: () => window.location.assign(accountLink(account, "/admin")) }] : []),
     ...(canManageApi ? [{ label: t("API 管理"), onSelect: () => window.location.assign(accountLink(account, "/admin/api-platform")) }] : []),
+    // Leaving from the platform home itself: the shared sign-out ends the platform session (the
+    // portal is a relying party) and returns to this origin's /signed-out page.
+    { label: t("退出登录"), onSelect: () => void session.signOut().catch(() => undefined) },
   ];
   return <Shell right={narrow ? <Menu ariaLabel={t("账户菜单")} buttonClass="btn ghost pt-account-btn" items={accountItems}
       trigger={<><span className="pt-avatar" aria-hidden="true">{(me.display_name || me.email).slice(0, 1).toUpperCase()}</span>{t("账户")}</>} /> : <div className="pt-account">
     <a className="pt-link" href={accountLink(account, "/account")}>{t("账户与安全")}</a>
     {isPlatformAdmin && <><a className="pt-link" href={accountLink(account, "/admin")}>{t("平台管理")}</a>{canManageApi && <a className="pt-link" href={accountLink(account, "/admin/api-platform")}>{t("API 管理")}</a>}</>}
     <span className="pt-avatar" title={me.email} aria-label={me.display_name || me.email}>{(me.display_name || me.email).slice(0, 1).toUpperCase()}</span>
+    <button type="button" className="pt-link" onClick={() => void session.signOut().catch(() => undefined)}>{t("退出登录")}</button>
   </div>}>
     <div className="pt-dashboard-head"><div><p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("你的工作，从这里继续。")}</h1><p className="pt-muted">{me.display_name || me.email}</p></div>
       <a className="btn" href={accountLink(account, "/onboarding")}>{t("创建或加入工作空间")}</a></div>

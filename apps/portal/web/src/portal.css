@@ -14,6 +14,8 @@
 .pt-nav, .pt-account { display: flex; align-items: center; justify-content: flex-end; gap: 4px 18px; flex-wrap: wrap; font-size: 13px; }
 .pt-nav a, .pt-link { color: var(--text-2); text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; min-height: 24px; }
 .pt-nav a:hover, .pt-link:hover, .pt-footer a:hover { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 4px; }
+/* a text action in the header (sign out) reads like the links beside it, on a real button */
+button.pt-link { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-weight: 500; }
 .pt-nav .btn, .pt-nav .language-menu select { font-size: 13px; }
 /* Holds the place of the sign-in / enter link while the session is still being confirmed. */
 .pt-nav-pending { display: inline-block; width: 64px; height: 18px; border-radius: 4px; background: var(--surface-hover); }

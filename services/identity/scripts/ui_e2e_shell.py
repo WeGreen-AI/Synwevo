@@ -338,6 +338,20 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
             page.wait_for_url(re.compile(re.escape(accounts) + r"/login"), timeout=20000)
             expect(page.locator("input[type=password]").first).to_be_visible()
             notes.append(f"{engine}/{tag}: Docs 退出登录 → {docs.split('//')[-1]}/signed-out; Docs and accounts /api/auth/me both 401; 重新登录 asks for the password")
+        else:
+            # ---- the portal's own sign-out, from the account menu on a phone (CI-61) ----------
+            page.goto(f"{portal}/workspace")
+            page.wait_for_selector(".pt-dashboard", timeout=20000)
+            page.get_by_role("button", name=re.compile("账户菜单|帳戶選單|Account menu")).click()
+            page.get_by_role("menuitem", name=re.compile("退出登录|登出|Sign out")).click()
+            page.wait_for_url(re.compile(re.escape(portal) + r"/signed-out(\?|$)"), timeout=20000)
+            expect(page.get_by_text(re.compile("^(已退出|已登出|Signed out)$"))).to_be_visible()
+            assert page.request.get(f"{portal}/api/auth/me").status == 401, "the portal still knows the person after signing out"
+            assert page.request.get(f"{accounts}/api/auth/me").status == 401, "the account service still knows the person after signing out of the portal"
+            page.get_by_role("link", name=re.compile("重新登录|重新登入|Sign in again")).click()
+            page.wait_for_url(re.compile(re.escape(accounts) + r"/login"), timeout=20000)
+            expect(page.locator("input[type=password]").first).to_be_visible()
+            notes.append(f"{engine}/{tag}: portal account menu 退出登录 → {portal.split('//')[-1]}/signed-out; portal and accounts /api/auth/me both 401; 重新登录 asks for the password")
         assert not csp, ("Content-Security-Policy violations", csp[:5])
         notes.append(f"{engine}/{tag}: 0 CSP violations across the pages above")
         ctx.close()

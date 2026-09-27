@@ -110,7 +110,8 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-57 | 里程碑回归：Docs 主链路桌面/手机证明重新通过；修复无账户模式下模板选择器的 401→登录页跳转（403 `accounts_disabled` + 空列表） | 已部署（e51ceb0，run 36304552064） | 生产（session 模式）不受影响 |
 | CI-58 | 登录后的落点：无明确目标的登录与账户服务根路径经门户 `/auth/start` 落到平台工作空间，不再停在账户设置页（用户反馈 2026-09-27；platform.md §8） | 已部署（ad2eeeb，run 36313988930，backup 20260927T111919Z）；线上只读核对：新外壳块已上线、`portal_url` 已发布 | 账户持有人下次在 `accounts.wegreen.ltd/login` 直接登录即是线上行为核对（应落到 `synwevo.wegreen.ltd/workspace`）；`/login?next=/account` 仍到账户页 |
 | CI-59 | 退出登录的落点竞态：`RequireSession` 不再把退出中的空会话重定向到登录页，两引擎都落在 `/logged-out`（候选队列里的「登出落点差异」由此关闭） | 已部署（8184dc2，run 36315903038，backup 20260927T115350Z）；单元测试 +2，`ui_e2e_onboarding.py` Chromium 8/8 与 WebKit 8/8 都落在 `/logged-out` | 部署后随 CI-58 的线上行为核对一起看：退出后应到「已退出」页 |
-| CI-60 | 依赖方的「退出登录」结束平台会话：Docs/门户退出走账户服务登出并回到本源 `/signed-out` 页，不再只撤本应用会话后落到一句不实的「统一登录已退出」 | 已部署（33c3e1f，run 36318459107，backup 20260927T123955Z）；单元 +1、集成 +1，`ui_e2e_shell.py` Chromium/WebKit 桌面段通过；线上只读核对两源 `/signed-out` 200、Docs 块携带新页 | 门户本身没有退出控件（经「账户」页退出），如需门户内退出按钮另立批次；部署后随线上退出核对 |
+| CI-60 | 依赖方的「退出登录」结束平台会话：Docs/门户退出走账户服务登出并回到本源 `/signed-out` 页，不再只撤本应用会话后落到一句不实的「统一登录已退出」 | 已部署（33c3e1f，run 36318459107，backup 20260927T123955Z）；单元 +1、集成 +1，`ui_e2e_shell.py` Chromium/WebKit 桌面段通过；线上只读核对两源 `/signed-out` 200、Docs 块携带新页 | 门户内退出按钮见 CI-61；部署后随线上退出核对 |
+| CI-61 | 门户页头加「退出登录」（桌面文字按钮 / 手机账户菜单项），走 CI-60 的平台级退出 | 已实现，`ui_e2e_shell.py` Chromium/WebKit 手机段通过，待部署 | — |
 | 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 已随 11202c3 发布 |
 | 回归 | 个人项目复制不携带私人协同房间/未批准历史（9.16）：目标无活动记录、无实时草稿与变更记录，副本只有来源 head 版本 | 已验证，tests/integration/test_project_copy.py（verification.md §16.54） | — |
 | CI-46 | Docs 项目页协同（在场与定位、按映射三方合并、他人变更即时提示、归属活动记录） | 已部署（e6197c1，run 36219721565）；生产 nginx 副本待运维加 Upgrade 头 | SheetEditor 协同与活动筛选未做 |
