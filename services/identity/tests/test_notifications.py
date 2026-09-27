@@ -187,3 +187,36 @@ def test_without_mail_the_inbox_still_works_and_deliveries_are_skipped_not_lost(
     d = ident.store.one("SELECT status, last_error FROM notification_deliveries WHERE notification_id=?", (row["id"],))
     assert d["status"] == "skipped" and "not configured" in d["last_error"]
     assert n.unread_count(u["id"]) == 1
+
+
+def test_v23_resets_conversation_mail_saved_under_the_old_default_to_off(tmp_path, monkeypatch):
+    """The conversation channel used to default to `digest`; rows saved then carried that default
+    along. Opening a v22 database resets those to off (the reader opts in again); an explicit
+    `immediate` — never allowed for conversations any more — becomes the digest on read."""
+    import json
+    from synwevo_core.store import Store
+    root = tmp_path / "d"
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(root))
+    st = Store(root)
+    keep = default_preferences()["categories"]
+    rows = {
+        "u_digest": {**keep, "conversation": {"in_app": True, "email": "digest", "push": True}, "docs": {"in_app": True, "email": "immediate", "push": False}},
+        "u_off": {**keep, "conversation": {"in_app": False, "email": "off", "push": True}},
+    }
+    for uid, cats in rows.items():
+        st.execute("INSERT INTO notification_preferences (user_id,categories,quiet_start,quiet_end,timezone,preview,updated_at) VALUES (?,?,?,?,?,?,?)",
+                   (uid, json.dumps(cats), "22:00", "07:00", "Asia/Shanghai", "full", 1.0))
+    st.execute("UPDATE meta SET value='22' WHERE key='schema_version'")
+    again = Store(root)
+    assert again.schema_version() >= 23
+    n = Notifier(again)
+    p = n.preferences("u_digest")
+    assert p["categories"]["conversation"]["email"] == "off", "the old default is not a choice"
+    assert p["categories"]["docs"] == {"in_app": True, "email": "immediate", "push": False}, "other categories untouched"
+    assert (p["quiet_start"], p["quiet_end"], p["timezone"], p["preview"]) == ("22:00", "07:00", "Asia/Shanghai", "full")
+    assert n.preferences("u_off")["categories"]["conversation"] == {"in_app": False, "email": "off", "push": True}
+    again.execute("UPDATE notification_preferences SET categories=? WHERE user_id='u_off'",
+                  (json.dumps({**keep, "conversation": {"in_app": True, "email": "immediate", "push": True}}),))
+    assert n.preferences("u_off")["categories"]["conversation"]["email"] == "digest"
+    with pytest.raises(Exception):
+        n.set_preferences("u_off", {"categories": {"conversation": {"email": "immediate"}}})

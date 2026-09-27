@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -788,6 +788,8 @@ class Store:
                     if col not in have:
                         t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
                 self._seed_legacy_workspace(t)
+                if ver < 23:
+                    self._conversation_mail_becomes_opt_in(t)
                 t.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
         c.executescript(SCHEMA_V2)                   # new tables of the current version (idempotent)
         c.executescript(SCHEMA_V4)
@@ -868,6 +870,24 @@ class Store:
         t.execute("INSERT INTO workspaces (id, name, kind, status, created_at, updated_at, created_by) "
                   "VALUES ('default', ?, 'legacy', 'pending_claim', ?, ?, NULL)",
                   ("历史数据（待认领）", ts, ts))
+
+    @staticmethod
+    def _conversation_mail_becomes_opt_in(t) -> None:
+        """v23: e-mail about private messages is opt-in (an unread digest) or off — never one mail
+        per message. Preference rows saved while `digest` was the default carried that default
+        along, so nobody chose it deliberately: reset the conversation channel to off and let the
+        reader turn the digest on. Other categories, quiet hours and the preview switch stay."""
+        if not t.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_preferences'").fetchone():
+            return
+        for r in t.execute("SELECT user_id, categories FROM notification_preferences").fetchall():
+            try:
+                cats = json.loads(r["categories"] or "{}")
+            except ValueError:
+                continue
+            conv = cats.get("conversation") if isinstance(cats, dict) else None
+            if isinstance(conv, dict) and conv.get("email") in ("digest", "immediate"):
+                conv["email"] = "off"
+                t.execute("UPDATE notification_preferences SET categories=? WHERE user_id=?", (json.dumps(cats), r["user_id"]))
 
     def schema_version(self) -> int:
         """0 means "nothing here yet" — only reachable via ``Store(..., migrate=False)``, which

@@ -59,7 +59,12 @@ registerMessages({
   '结束': { en: 'Until', 'zh-Hant': '結束' },
   '时区': { en: 'Time zone', 'zh-Hant': '時區' },
   '保存免打扰': { en: 'Save quiet hours', 'zh-Hant': '儲存免打擾' },
-  '邮件中显示的内容': { en: 'What the e-mail shows', 'zh-Hant': '郵件顯示的內容' },
-  '标题与摘要': { en: 'Title and summary', 'zh-Hant': '標題與摘要' },
-  '仅标题': { en: 'Title only', 'zh-Hant': '僅標題' },
+  '邮件与推送里的消息内容': { en: 'Message text in e-mail and push', 'zh-Hant': '郵件與推播裡的訊息內容' },
+  '只显示会话与条数': { en: 'Conversation and count only', 'zh-Hant': '只顯示對話與則數' },
+  '显示最新一条的内容': { en: 'Include the latest message', 'zh-Hant': '顯示最新一則的內容' },
+  '未读摘要': { en: 'Unread digest', 'zh-Hant': '未讀摘要' },
+  '消息不逐条发邮件。开启「未读摘要」后，仍未读的会话合成一封，至少间隔 30 分钟，每天最多 8 封；读过、静音或已撤回的内容不寄出。': {
+    en: 'Messages are never e-mailed one by one. With the unread digest on, conversations still unread are combined into one e-mail, at least 30 minutes apart and at most 8 a day; anything read, muted or recalled is not sent.',
+    'zh-Hant': '訊息不會逐則寄送郵件。開啟「未讀摘要」後，仍未讀的對話合成一封，至少間隔 30 分鐘，每天最多 8 封；已讀、靜音或已收回的內容不會寄出。',
+  },
 });

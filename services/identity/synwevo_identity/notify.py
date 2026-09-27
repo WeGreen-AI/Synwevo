@@ -12,6 +12,12 @@ Reader preferences are applied here, at send time, not at emit time: quiet hours
 to the end of the window, `digest` groups whatever is due for one reader into one message.
 Security notifications ignore both — an attacker who changed a password must not have set the
 quiet hours that hide the fact.
+
+Before anything non-critical leaves, the row is checked again (`Notifier.stale_reason`): read in
+the app since, channel turned off since, a conversation that was read, muted, left or whose
+unread messages were all recalled — those are skipped with the reason on the row, not mailed.
+Conversation digests are additionally held to one per reader per half hour and a daily cap, and
+render from the live unread state, without message text unless the reader asked for it.
 """
 from __future__ import annotations
 
@@ -82,13 +88,24 @@ class NotificationDispatcher:
             locale = user.get("locale") or "zh-Hans"
             quiet_until = self.notifier.quiet_until(prefs)
             send_now, deferred = [], []
+            hold = None
             for d in rows:
+                reason = self._stale(d, prefs)
+                if reason:
+                    self.notifier.finish_delivery(d["notification_id"], "skipped", error=reason)
+                    out["skipped"] += 1
+                    continue
                 if quiet_until and d["severity"] != "critical":
-                    deferred.append(d)
+                    deferred.append(d); self.notifier.defer_delivery(d["notification_id"], quiet_until)
+                elif d["category"] == "conversation" and d["severity"] != "critical":
+                    if hold is None:
+                        hold = self.notifier.conversation_digest_hold(uid) or 0.0
+                    if hold:
+                        deferred.append(d); self.notifier.defer_delivery(d["notification_id"], hold)
+                    else:
+                        send_now.append(d)
                 else:
                     send_now.append(d)
-            for d in deferred:
-                self.notifier.defer_delivery(d["notification_id"], quiet_until)
             out["deferred"] += len(deferred)
             if not send_now:
                 continue
@@ -105,13 +122,13 @@ class NotificationDispatcher:
             critical = [d for d in claimed if d["severity"] == "critical"]
             others = [d for d in claimed if d["severity"] != "critical"]
             for d in critical:
-                self._mail_one(user, d, locale)
+                self._mail_one(user, d, locale, prefs)
                 out["queued"] += 1
             if len(others) == 1:
-                self._mail_one(user, others[0], locale)
+                self._mail_one(user, others[0], locale, prefs)
                 out["queued"] += 1
             elif others:
-                self._mail_digest(user, others, locale)
+                self._mail_digest(user, others, locale, prefs)
                 out["queued"] += len(others)
                 out["digested"] += 1
         out.update(self._push_pass())
@@ -151,9 +168,14 @@ class NotificationDispatcher:
                     self.notifier.finish_push(d["notification_id"], "skipped", error="no device")
                     out["push_skipped"] += 1
                     continue
+                reason = self._stale(d, prefs)
+                if reason:
+                    self.notifier.finish_push(d["notification_id"], "skipped", error=reason)
+                    out["push_skipped"] += 1
+                    continue
                 if not self.notifier.claim_push(d["notification_id"]):
                     continue
-                item = self._render(d, locale)
+                item = self._render(d, locale, prefs)
                 data = payload_for({**item, "id": d["notification_id"], "kind": d["kind"], "severity": d["severity"], "created_at": d["notified_at"]})
                 urgency = "high" if d["severity"] in ("critical", "action") else "normal"
                 sent = retry_error = None
@@ -177,25 +199,38 @@ class NotificationDispatcher:
         return out
 
     # ------------------------------------------------------------------ rendering
-    def _render(self, d: dict, locale: str) -> dict:
-        row = self.store.one("SELECT * FROM notifications WHERE id=?", (d["notification_id"],))
-        return self.notifier.render(row, locale) if row else {"title": "", "body": "", "href": None}
+    def _stale(self, d: dict, prefs: dict) -> str | None:
+        """The send-time re-check, plus the channel switch as it is *now*: an e-mail mode turned
+        off after the row was queued means no mail (security always mails)."""
+        reason = self.notifier.stale_reason(d, prefs)
+        if reason or d["severity"] == "critical":
+            return reason
+        # Push-queue rows carry no `channel`; the e-mail switch is only for e-mail deliveries.
+        if d.get("channel") == "email" and prefs["categories"].get(d["category"], {}).get("email", "immediate") == "off":
+            return "channel off"
+        return None
 
-    def _mail_one(self, user: dict, d: dict, locale: str) -> None:
+    def _render(self, d: dict, locale: str, prefs: dict | None = None) -> dict:
+        row = self.store.one("SELECT * FROM notifications WHERE id=?", (d["notification_id"],))
+        if not row:
+            return {"title": "", "body": "", "href": None}
+        return self.notifier.render_external(row, locale, prefs) if prefs is not None else self.notifier.render(row, locale)
+
+    def _mail_one(self, user: dict, d: dict, locale: str, prefs: dict | None = None) -> None:
         from .mail_layout import Mail, render
-        item = self._render(d, locale)
+        item = self._render(d, locale, prefs)
         subject = SUBJECT.get(locale, SUBJECT["zh-Hans"]).format(title=item["title"])
         m = Mail(locale, item["title"], [item["body"]] if item.get("body") else [],
                  action=(OPEN.get(locale, OPEN["zh-Hans"]), item["href"]) if item.get("href") else None)
         text, html = render(m)
         self._enqueue(user, [d], subject, text, html)
 
-    def _mail_digest(self, user: dict, rows: list[dict], locale: str) -> None:
+    def _mail_digest(self, user: dict, rows: list[dict], locale: str, prefs: dict | None = None) -> None:
         from .mail_layout import Mail, render
         subject = DIGEST_SUBJECT.get(locale, DIGEST_SUBJECT["zh-Hans"]).format(n=len(rows))
         items = []
         for d in rows:
-            item = self._render(d, locale)
+            item = self._render(d, locale, prefs)
             items.append({"title": item["title"], "body": item.get("body") or "", "href": item.get("href") or ""})
         text, html = render(Mail(locale, subject, items=items))
         self._enqueue(user, rows, subject, text, html)

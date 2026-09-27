@@ -23,6 +23,9 @@ const CATEGORY_LABEL: Record<string, string> = {
   conversation: '消息', docs: '文档处理', automation: '自动化与接口', platform: '平台运行',
 };
 const EMAIL_LABEL: Record<EmailMode, string> = { immediate: '立即', digest: '汇总（约 30 分钟一封）', off: '不发邮件' };
+/** Private messages are never mailed one by one: the conversation category offers only the unread digest (opt-in) and off. */
+const CONVERSATION_EMAIL_LABEL: Partial<Record<EmailMode, string>> = { off: '不发邮件', digest: '未读摘要' };
+const CONVERSATION_EMAIL_MODES: EmailMode[] = ['off', 'digest'];
 const ZONES = ['Asia/Shanghai', 'Asia/Taipei', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'UTC'];
 
 export default function NotificationsSection({ timezone }: { timezone?: string }) {
@@ -66,13 +69,15 @@ export default function NotificationsSection({ timezone }: { timezone?: string }
               onChange={e => void save({ categories: { [cat]: { in_app: e.target.checked } } })} /><span>{t(c.in_app ? '显示' : '不显示')}</span></label></td>
             <td><select className="input sm" value={c.email} disabled={locked || busy} aria-label={t('{category}：邮件方式', { category: t(CATEGORY_LABEL[cat] || cat) })}
               onChange={e => void save({ categories: { [cat]: { email: e.target.value as EmailMode } } })}>
-              {(Object.keys(EMAIL_LABEL) as EmailMode[]).map(m => <option key={m} value={m}>{t(EMAIL_LABEL[m])}</option>)}
+              {(cat === 'conversation' ? CONVERSATION_EMAIL_MODES : (Object.keys(EMAIL_LABEL) as EmailMode[])).map(m =>
+                <option key={m} value={m}>{t((cat === 'conversation' && CONVERSATION_EMAIL_LABEL[m]) || EMAIL_LABEL[m])}</option>)}
             </select></td>
             <td><label className="check"><input type="checkbox" checked={c.push} disabled={locked || busy} aria-label={t('{category}：浏览器推送', { category: t(CATEGORY_LABEL[cat] || cat) })}
               onChange={e => void save({ categories: { [cat]: { push: e.target.checked } } })} /><span>{t(c.push ? '推送' : '不推送')}</span></label></td>
           </tr>;
         })}</tbody>
       </table></div>
+      <p className="tiny muted">{t('消息不逐条发邮件。开启「未读摘要」后，仍未读的会话合成一封，至少间隔 30 分钟，每天最多 8 封；读过、静音或已撤回的内容不寄出。')}</p>
       <PushSection />
       <div className="col gap8">
         <label className="check"><input type="checkbox" checked={quiet} disabled={busy} onChange={e => {
@@ -88,9 +93,9 @@ export default function NotificationsSection({ timezone }: { timezone?: string }
           <label className="field sm"><span>{t('时区')}</span><select className="input sm" name="tz" defaultValue={prefs.timezone || timezone || 'Asia/Shanghai'}>{zoneOptions.map(z => <option key={z} value={z}>{z}</option>)}</select></label>
           <button className="btn sm" disabled={busy}>{t('保存免打扰')}</button>
         </form>}
-        <label className="field sm"><span>{t('邮件中显示的内容')}</span>
+        <label className="field sm"><span>{t('邮件与推送里的消息内容')}</span>
           <select className="input sm" value={prefs.preview} disabled={busy} onChange={e => void save({ preview: e.target.value as 'full' | 'minimal' })}>
-            <option value="full">{t('标题与摘要')}</option><option value="minimal">{t('仅标题')}</option>
+            <option value="minimal">{t('只显示会话与条数')}</option><option value="full">{t('显示最新一条的内容')}</option>
           </select></label>
       </div>
     </>}

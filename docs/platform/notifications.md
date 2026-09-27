@@ -32,7 +32,7 @@
 |---|---|---|
 | `notifications` | `seq`（游标）、`id`、`user_id`、`kind`、`category`、`severity`（info/action/critical）、`organization_id`/`workspace_id`/`object_kind`/`object_id`、`dedupe_key`（同一读者唯一）、`params`（JSON 纯字符串）、`target`（`{origin, path}`）、`action_state`（pending/done/void）、`read_at`、`archived_at` | 每个接收者一行；标题正文在读取时按读者语言由目录渲染 |
 | `notification_deliveries` | `notification_id`、`channel=email`、`status`（pending/queued/skipped/failed）、`not_before`、`attempts`、`mail_id` | 邮件渠道的 outbox；`queued` 带 `mail_outbox` 的 id，可从管理端邮件页追踪 |
-| `notification_preferences` | `categories` JSON `{类别: {in_app, email}}`、`quiet_start/quiet_end/timezone`、`preview` | 缺省：全部站内开、邮件立即；docs 与 conversation 缺省汇总 |
+| `notification_preferences` | `categories` JSON `{类别: {in_app, email, push}}`、`quiet_start/quiet_end/timezone`、`preview` | 缺省：全部站内开、邮件立即；docs 缺省汇总；**conversation 缺省关**（只能选「未读摘要」或关，不能逐条）；`preview` 缺省 `minimal`——邮件/推送不带消息正文（CI-68） |
 
 链接（`target`）只有 `origin ∈ {accounts, portal, docs}` 与以 `/` 开头的路径，由服务端根据本部署的 `SYNWEVO_ISSUER`/`PORTAL_URL`/`APP_URL` 拼成绝对地址；客户端从不拼接。
 
@@ -52,8 +52,8 @@
 | `docs.mention` | docs / action | 评论里被 `@` 的成员（须是项目所在空间的活跃成员；作者不通知） | 项目评论提及（`dedupe=comment:{id}:mention:{uid}`；编辑评论只通知新增的提及）（CI-33） | 立即 | Docs → 项目页 `?comment=<id>`（打开抽屉并高亮） |
 | `docs.comment` | docs / info | 该项目此前评论过、仍在空间内的成员（作者与被提及者除外） | 项目新评论或回复（`dedupe=comment:{id}:participant:{uid}`）（CI-33） | 汇总 | Docs → 项目页 `?comment=<id>` |
 | `docs.job_finished` | docs / info | 任务发起人（登录用户） | 生成任务结束：完成 / 部分失败 / 失败 / 已取消，附成功与失败份数；每次运行一条（`dedupe=job:{jid}:{run_no}`），与终态在同一事务写入（CI-29） | 汇总 | Docs → 任务页 |
-| `conversation.dm` | conversation / info | 私聊对方 | 私聊里的新消息；同一会话在读者读到上次位置之前只产生一项（去重键含读者的 last_read_seq） | 汇总 | 消息 → 该会话 |
-| `conversation.mention` | conversation / action | 被提及的成员 | 群聊或私聊里被 @ 提及；静音或「不通知」的会话不产生 | 汇总 | 消息 → 该会话 |
+| `conversation.dm` | conversation / info | 私聊对方 | 私聊里的新消息；同一会话在读者读到上次位置之前只产生一项（去重键含读者的 last_read_seq） | 关；读者开启后为未读摘要 | 消息 → 该会话 |
+| `conversation.mention` | conversation / action | 被提及的成员 | 群聊或私聊里被 @ 提及；静音或「不通知」的会话不产生 | 关；读者开启后为未读摘要（提及不能绕过私信规则） | 消息 → 该会话 |
 | `conversation.group` | conversation / info | 把群设为「所有消息」的成员 | 群里的新消息（默认「仅提及」，因此默认不产生） | 关 | 消息 → 该会话 |
 | `conversation.added` / `conversation.removed` | conversation / info | 被加入或移出群的人 | 群成员变化 | 汇总 / 关 | 消息 → 该会话 / 消息列表 |
 | `conversation.announcement` | conversation / info | 群的其他成员 | 群主/群管理员写了群公告（清除不发；去重键含公告时间） | 汇总 | 消息 → 该会话 |
@@ -71,6 +71,10 @@
 ## 4. 邮件投递（`synwevo_identity/notify.py`）
 
 账户服务的 `NotificationDispatcher` 每 30 秒取 `pending` 且到期的投递：读者不存在/已禁用 → skipped；读者在免打扰时段（按其时区，安全通知除外）→ `not_before` 推到时段结束；否则**先在事务里把状态翻成 `queued`**（两个账户进程不会重复寄），再按读者语言渲染并 `Mailer.enqueue`（kind=`notification`，与邀请邮件同一个 outbox、同样的重试与管理页）。同一读者同一批里的多条普通通知合成一封汇总；`critical` 单独立即寄。邮件未配置 → skipped（原因可见）；入队失败 → 退避重试 5/15/60/240 分钟后 failed。`digest` 偏好只是把 `not_before` 推后 30 分钟，让同期事件落到同一批。
+
+**寄出前复核（CI-68）。** 非安全投递在真正寄出前再检查一次（`Notifier.stale_reason`）：读者已在站内读过/归档 → skipped `read in app`；该类别邮件此刻已关 → `channel off`；会话类条目再看读者在该会话的实时状态——已不是成员 → `no longer a member`、已静音或「不通知」→ `conversation muted`、读游标之后没有未撤回的消息（读完了，或唯一的未读被撤回）→ `nothing unread`。推送队列走同一复核。
+
+**私信邮件是选择加入的未读摘要，不逐条寄。** `conversation` 类别的邮件缺省关；读者在「账户 → 通知」开启后只能是「未读摘要」（`set_preferences` 拒绝 `immediate`；旧行里的 `immediate` 读作 `digest`）。摘要寄出前额外限速：同一读者两封会话摘要至少相隔 30 分钟，24 小时内最多 8 封（`conversation_digest_hold`，按邮件计，不按条目），超出的投递推到可寄时刻。摘要条目按寄出时的实时状态渲染（`render_external`）：标题是「『X』有 N 条未读消息」，正文默认为空；读者把 `preview` 改为 `full` 才附最新一条未读的发送者与前 120 字。v23 迁移把旧偏好行里 conversation 的 `digest/immediate` 重置为 `off`——那是缺省值被一起保存下来的，不是读者的选择。
 
 ## 5. 界面
 

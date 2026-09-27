@@ -19,9 +19,14 @@ Model (docs/platform/notifications.md):
   deployment has no mail or the reader turned the channel off, ``failed`` after the retries.
   Digest and quiet-hour preferences only move ``not_before``.
 * ``notification_preferences`` — per reader, per category: in-app on/off and e-mail
-  ``immediate`` / ``digest`` / ``off``; quiet hours in the reader's time zone; preview detail.
+  ``immediate`` / ``digest`` / ``off``; quiet hours in the reader's time zone; ``preview`` says
+  whether message text may leave the platform in mail and push (off by default).
   ``critical`` notifications (account security) ignore the off switches: the mail that tells
   someone an attacker changed their password must not be something the attacker can silence.
+  The ``conversation`` category is the exception the other way: a private message is never
+  mailed one by one. Its e-mail is off unless the reader turns the unread digest on, and the
+  dispatcher re-checks at send time (``stale_reason``) that the item is still unread, the
+  conversation not muted or left, and holds digests to one per half hour, a few per day.
 
 Reading a notification never changes business state: an approval is done in its own flow and
 reports back through ``action_state``.
@@ -77,7 +82,14 @@ CREATE TABLE IF NOT EXISTS notification_preferences (
 CATEGORIES = ("security", "organization", "members", "approval", "conversation", "docs", "automation", "platform")
 LOCALES = ("zh-Hans", "zh-Hant", "en")
 EMAIL_MODES = ("immediate", "digest", "off")
+#: A private message is never mailed one by one: the conversation category knows only the
+#: unread digest (opt-in) and off (the default).
+CONVERSATION_EMAIL_MODES = ("digest", "off")
 DIGEST_WINDOW_S = 30 * 60
+#: Unread digests about conversations: at most one per reader per half hour and per day cap,
+#: counted in mails (one digest carries many items), applied by the dispatcher at send time.
+CONVERSATION_DIGEST_INTERVAL_S = 30 * 60
+CONVERSATION_DIGEST_DAILY_CAP = 8
 RETRY_DELAYS_S = (300, 900, 3600, 4 * 3600)
 PAGE_MAX = 100
 
@@ -209,6 +221,10 @@ ROLE_WORDS = {
     "viewer": {"zh-Hans": "查看者", "zh-Hant": "檢視者", "en": "viewer"},
     "member": {"zh-Hans": "成员", "zh-Hant": "成員", "en": "member"},
 }
+UNREAD_TITLE = {
+    "zh-Hans": "「{conversation}」有 {n} 条未读消息", "zh-Hant": "「{conversation}」有 {n} 則未讀訊息", "en": "{n} unread in “{conversation}”",
+}
+ATTACHMENT_WORD = {"zh-Hans": "[附件]", "zh-Hant": "[附件]", "en": "[attachment]"}
 OUTCOME_WORDS = {
     "completed": {"zh-Hans": "已完成", "zh-Hant": "已完成", "en": "finished"},
     "completed_with_errors": {"zh-Hans": "已完成，部分失败", "zh-Hant": "已完成，部分失敗", "en": "finished with errors"},
@@ -220,8 +236,9 @@ OUTCOME_WORDS = {
 def default_preferences() -> dict:
     cats = {c: {"in_app": True, "email": "immediate", "push": True} for c in CATEGORIES}
     cats["docs"]["email"] = "digest"
-    cats["conversation"]["email"] = "digest"
-    return {"categories": cats, "quiet_start": None, "quiet_end": None, "timezone": None, "preview": "full"}
+    cats["conversation"]["email"] = "off"          # opt-in, and then only the unread digest
+    # `preview` decides whether message text leaves the platform in mail and push; off by default.
+    return {"categories": cats, "quiet_start": None, "quiet_end": None, "timezone": None, "preview": "minimal"}
 
 
 def _locale(value: str | None) -> str:
@@ -436,8 +453,10 @@ class Notifier:
             saved = _json(row["categories"]) or {}
             for c in CATEGORIES:
                 if c in saved and isinstance(saved[c], dict):
-                    out["categories"][c] = {"in_app": bool(saved[c].get("in_app", True)),
-                                            "email": saved[c].get("email") if saved[c].get("email") in EMAIL_MODES else "immediate",
+                    email = saved[c].get("email") if saved[c].get("email") in EMAIL_MODES else "immediate"
+                    if c == "conversation" and email not in CONVERSATION_EMAIL_MODES:
+                        email = "digest"                 # a row from before the rule: the closest allowed mode
+                    out["categories"][c] = {"in_app": bool(saved[c].get("in_app", True)), "email": email,
                                             "push": bool(saved[c].get("push", True))}
             out.update({"quiet_start": row["quiet_start"], "quiet_end": row["quiet_end"], "timezone": row["timezone"], "preview": row["preview"]})
         return out
@@ -455,6 +474,8 @@ class Notifier:
             if "email" in v:
                 if v["email"] not in EMAIL_MODES:
                     raise ServiceError(400, "invalid_field", "邮件方式必须是 immediate、digest 或 off", {"field": "categories"})
+                if c == "conversation" and v["email"] not in CONVERSATION_EMAIL_MODES:
+                    raise ServiceError(400, "invalid_field", "消息不逐条发邮件：只能选 digest（未读摘要）或 off", {"field": "categories"})
                 cats[c]["email"] = v["email"]
             if "push" in v:
                 cats[c]["push"] = bool(v["push"])
@@ -481,6 +502,95 @@ class Notifier:
                            "quiet_end=excluded.quiet_end, timezone=excluded.timezone, preview=excluded.preview, updated_at=excluded.updated_at",
                            (user_id, json.dumps(cats), qs, qe, tz, preview, now()))
         return self.preferences(user_id)
+
+    # ------------------------------------------------------------------ send-time re-check
+    def stale_reason(self, d: dict, prefs: dict) -> str | None:
+        """Why a mail or push should not leave any more, decided when it is about to be sent rather
+        than when the event happened: the reader read the item in the app, turned the channel
+        off since, or — for a conversation item — read the conversation, muted or left it, or
+        every unread message in it was recalled. Security items are never stale. `d` is a
+        delivery/queue row joined with its notification (`due_deliveries` / `due_push`)."""
+        if d.get("severity") == "critical":
+            return None
+        row = self.store.one("SELECT read_at, archived_at, object_kind, object_id FROM notifications WHERE id=?", (d["notification_id"],))
+        if not row:
+            return "notification gone"
+        if row["read_at"] or row["archived_at"]:
+            return "read in app"
+        if d.get("category") == "conversation" and row["object_kind"] == "conversation" and row["object_id"]:
+            state = self.conversation_unread(row["object_id"], d["user_id"])
+            if state is None:
+                return "no longer a member"
+            if state["muted"]:
+                return "conversation muted"
+            if state["unread"] == 0:
+                return "nothing unread"
+            # One item per unread span; when the reader read a span and a newer one opened before
+            # the digest went out, the newer item describes the conversation — the older is noise.
+            newer = self.store.one("SELECT 1 AS x FROM notifications WHERE user_id=? AND object_kind='conversation' AND object_id=? AND kind=? AND created_at>?",
+                                   (d["user_id"], row["object_id"], d["kind"], d.get("notified_at") or 0))
+            if newer:
+                return "superseded"
+        return None
+
+    def conversation_unread(self, cid: str, user_id: str) -> dict | None:
+        """The reader's live unread state in one conversation — messages after their read cursor
+        that still exist, and the latest of them — or None when they are not (or no longer) a
+        member. Read here rather than through the messaging service because the dispatcher has
+        no request context; the tables are synwevo_core.messaging's."""
+        m = self.store.one("SELECT last_read_seq, joined_seq, muted, notify FROM conversation_members "
+                           "WHERE conversation_id=? AND user_id=? AND left_at IS NULL", (cid, user_id))
+        if not m:
+            return None
+        floor = max(int(m["last_read_seq"] or 0), int(m["joined_seq"] or 0))
+        agg = self.store.one("SELECT COUNT(*) AS n, MAX(seq) AS last FROM messages WHERE conversation_id=? AND seq>? AND deleted_at IS NULL", (cid, floor))
+        latest = None
+        if agg and agg["n"]:
+            latest = self.store.one("SELECT m.body, m.attachment_id, u.display_name, u.email FROM messages m JOIN users u ON u.id=m.sender_id "
+                                    "WHERE m.conversation_id=? AND m.seq=?", (cid, agg["last"]))
+        return {"unread": int((agg or {}).get("n") or 0), "muted": bool(m["muted"]) or m["notify"] == "none", "latest": latest}
+
+    def conversation_digest_hold(self, user_id: str, at: float | None = None) -> float | None:
+        """When the reader's next unread digest may go out, if not now: at least
+        CONVERSATION_DIGEST_INTERVAL_S after the previous one and at most
+        CONVERSATION_DIGEST_DAILY_CAP in 24 hours. Counts mails, not items."""
+        ts = at if at is not None else now()
+        rows = self.store.all("SELECT d.mail_id, MIN(d.updated_at) AS sent_at FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id "
+                              "WHERE n.user_id=? AND n.category='conversation' AND d.channel='email' AND d.status='queued' AND d.mail_id IS NOT NULL "
+                              "AND d.updated_at>? GROUP BY d.mail_id ORDER BY sent_at", (user_id, ts - 86400))
+        if not rows:
+            return None
+        last = max(float(r["sent_at"]) for r in rows)
+        if ts - last < CONVERSATION_DIGEST_INTERVAL_S:
+            return last + CONVERSATION_DIGEST_INTERVAL_S
+        if len(rows) >= CONVERSATION_DIGEST_DAILY_CAP:
+            return float(rows[0]["sent_at"]) + 86400
+        return None
+
+    def render_external(self, row: dict, locale: str, prefs: dict) -> dict:
+        """What leaves the platform (mail, push) for one item. A conversation item is rebuilt from
+        the live unread state — how many messages are unread now, the latest one's text only when
+        the reader chose `preview` = full — so a recalled message is never mailed and, by default,
+        no message text is."""
+        item = self.render(row, locale)
+        if row.get("category") != "conversation" or row.get("object_kind") != "conversation" or not row.get("object_id"):
+            return item
+        loc = _locale(locale)
+        state = self.conversation_unread(row["object_id"], row["user_id"])
+        params = _json(row.get("params")) or {}
+        if row["kind"] in ("conversation.dm", "conversation.mention", "conversation.group") and state and state["unread"]:
+            label = params.get("conversation") or params.get("sender") or ""
+            item["title"] = _fmt(UNREAD_TITLE[loc], {"conversation": label, "n": state["unread"]})
+            latest = state.get("latest")
+            if prefs.get("preview") == "full" and latest:
+                who = latest["display_name"] or (latest["email"] or "").split("@")[0]
+                text = (latest["body"] or "")[:120] or (ATTACHMENT_WORD[loc] if latest["attachment_id"] else "")
+                item["body"] = f"{who}：{text}" if loc != "en" else f"{who}: {text}"
+            else:
+                item["body"] = ""
+        elif prefs.get("preview") != "full" and row["kind"] in ("conversation.dm", "conversation.mention", "conversation.group", "conversation.announcement"):
+            item["body"] = ""
+        return item
 
     # ------------------------------------------------------------------ the e-mail outbox side
     def due_deliveries(self, limit: int = 200) -> list[dict]:
