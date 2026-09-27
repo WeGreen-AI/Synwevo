@@ -169,7 +169,7 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
             <span>{t("你的口令")}</span>
             <input className="input" type="password" aria-label={t("你的口令")} value={password} autoComplete="current-password"
                    onChange={(e) => setPassword(e.target.value)} />
-            <span className="muted sm">{t("增加或删除登录方式需要重新确认身份——刚登录过也要，否则这个提示就等于没有。")}</span>
+            <span className="muted sm">{t("增加或删除登录方式前需要输入口令确认身份。")}</span>
           </label>
           <div className="row gap12">
             <button className="btn primary" disabled={busy || !password} onClick={() => void enrol()}>

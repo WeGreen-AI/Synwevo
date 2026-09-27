@@ -28,7 +28,7 @@ export function RegistrationTab({ onDenied }: Props) {
       <fieldset className="col gap12" disabled={!!load.err}><legend>{t("新的注册策略")}</legend>
         {(["open", "invite", "closed"] as const).map(value => <label key={value} className="check"><input type="radio" name="registration-mode" value={value} checked={mode === value} onChange={() => setMode(value)} />{names[value]}</label>)}
       </fieldset>
-      <p className="small muted">{t("开放注册允许访客建立账户并验证邮箱；其他策略关闭公开注册。已有邀请仍须通过邀请流程的独立校验。")}</p>
+      <p className="small muted">{t("开放注册允许任何人创建账户；其他两种策略只允许受邀者。")}</p>
       <button className="btn primary" disabled={!!load.err || mode === load.data.mode} onClick={() => setChange({ mode, before: load.data!.mode })}>{t("保存注册策略")}</button>
     </>}
     {change && <ActionDialog title={t("保存注册策略")} confirmLabel={t("保存策略")} reason="required"
@@ -53,7 +53,7 @@ export function MailTab({ onDenied }: Props) {
   return <section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{t("邮件投递")}</h2><button className="btn sm" disabled={load.loading} onClick={load.reload}>{t("刷新")}</button></div>
     {mode && <p className="notice" role="status">{mode === "file" ? t("当前为本地文件模式：邮件仅写入本地文件，没有真正寄出。") : mode === "disabled" ? t("邮件服务尚未配置。") : t("当前为 SMTP 模式；已寄出表示邮件服务器已接受，不代表已到达收件箱。")}</p>}
-    <p className="muted small">{t("这里只显示投递元数据。找回和验证邮件的安全重试会生成新链接，并使旧链接失效；邀请请由空间管理员在成员与邀请中重发。安全通知、投递结果不确定或无法识别的历史失败不能重放。")}</p>
+    <p className="muted small">{t("只显示投递记录，不显示邮件内容。重试找回和验证邮件会生成新链接并使旧链接失效；邀请由工作空间管理员在「成员与邀请」中重发。安全通知和投递结果不确定的邮件不能重发。")}</p>
     <div className="row gap12 wrap"><label className="field grow">{t("搜索收件人或邮件编号")}<input type="search" className="input" value={q} maxLength={100} onChange={e => setQ(e.target.value)} /></label>
       <label className="field">{t("邮件状态")}<select className="input" value={status} onChange={e => setStatus(e.target.value)}><option value="">{t("全部状态")}</option>{["queued", "sent", "failed"].map(value => <option key={value} value={value}>{MAIL_STATE[value]}</option>)}</select></label></div>
     {notice && <p className="notice ok" role="status">{t(notice)}</p>}
@@ -99,7 +99,7 @@ export function OrganizationsTab({ onDenied }: Props) {
       </tr>)}{!load.loading && !load.err && !load.data?.items.length && <tr><td colSpan={5}>{t("没有匹配的组织。")}</td></tr>}</tbody>
     </table></div><PageControls offset={load.offset} total={load.data?.total || 0} busy={load.loading || !!load.err} onPage={load.setOffset} />
     {action && <ActionDialog title={actions[action.kind]} confirmLabel={actions[action.kind]} danger reason="required"
-      impact={<><b>{action.org.name}</b><p>{action.kind === "delete" ? t("组织将停止使用，并保留七天恢复期限。关联空间的访问会被收回，内容不会通过此操作提供给管理员。") : action.kind === "freeze" ? t("组织及其关联空间将停止应用访问，已有会话和令牌会被撤销。") : t("组织将按原有成员关系恢复可用。已撤销的会话和令牌不会恢复；删除前已冻结的组织恢复后仍为冻结状态。")}</p></>}
+      impact={<><b>{action.org.name}</b><p>{action.kind === "delete" ? t("组织将停止使用，并保留七天恢复期限。所属工作空间的访问会被收回，内容不会因此提供给管理员。") : action.kind === "freeze" ? t("组织及其工作空间将停止应用访问，已有会话和令牌会被撤销。") : t("组织将按原有成员关系恢复可用。已撤销的会话和令牌不会恢复；删除前已冻结的组织恢复后仍为冻结状态。")}</p></>}
       run={reason => post(`/api/admin/organizations/${encodeURIComponent(action.org.id)}/${action.kind}`, { reason })}
       onClose={() => setAction(null)} onDone={() => { setAction(null); load.reload(); toast(t("组织状态已更新"), "ok"); }} />}
   </section>;

@@ -26,7 +26,7 @@ export default function EmailSection({ profile }: { profile: Profile }) {
       {token ? <div className="notice info">{t('请确认身份以完成邮箱更改。')}</div> : <label className="field"><span>{t('新邮箱')}</span>
         <input type="email" className="input" autoComplete="email" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)} /></label>}
       <PasswordProof value={password} onChange={setPassword} />
-      {queued && <p className="notice info" role="status">{t('验证邮件已进入队列，请在一小时内打开新邮箱中的链接。')}</p>}
+      {queued && <p className="notice info" role="status">{t('验证邮件已发出，请在一小时内打开新邮箱中的链接。')}</p>}
       <div><button className="btn" disabled={busy || !password}>{busy ? t('处理中…') : token ? t('确认更改邮箱') : t('验证新邮箱')}</button></div>
     </form>}
     <PasswordChange />
@@ -45,7 +45,7 @@ function PasswordChange() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<number | null>(null);
   return <div className="account-divider"><h3>{t('更新口令')}</h3>
-    <p className="tiny muted">{t('输入当前口令并设置新口令。其他设备将退出登录，此设备保持登录；两步验证仍然有效。')}</p>
+    <p className="tiny muted">{t('更改后其他设备将退出登录，此设备保持登录；两步验证不变。')}</p>
     <ErrorNotice error={error} />
     {done !== null && <p className="notice ok" role="status">{t('口令已更改，其他 {count} 个登录已结束。', { count: done })}</p>}
     <form className="col gap12" onSubmit={e => {

@@ -30,8 +30,8 @@ export default function OrganizationCreate({ onCreated }: { onCreated: (organiza
   }); }
   return <form className="org-create" onSubmit={submit} aria-busy={action.busy}><FlowError error={action.error} />
     <div className="field"><label htmlFor="org-name">{t("组织名称")}</label><input id="org-name" className="input" value={name} onChange={e => setName(e.target.value)} maxLength={100} autoComplete="organization" required disabled={action.busy} /></div>
-    <div className="field"><label htmlFor="org-workspace">{t("首个工作空间名称")}</label><input id="org-workspace" className="input" value={workspace} onChange={e => setWorkspace(e.target.value)} maxLength={100} required disabled={action.busy} aria-describedby="org-workspace-hint" /><span id="org-workspace-hint" className="tiny muted">{t("工作空间用于组织项目。创建后，你将成为组织和这个空间的所有者。")}</span></div>
+    <div className="field"><label htmlFor="org-workspace">{t("首个工作空间名称")}</label><input id="org-workspace" className="input" value={workspace} onChange={e => setWorkspace(e.target.value)} maxLength={100} required disabled={action.busy} aria-describedby="org-workspace-hint" /><span id="org-workspace-hint" className="tiny muted">{t("创建后，你是组织和这个工作空间的所有者。")}</span></div>
     <button className="btn primary" disabled={action.busy}>{t(action.busy ? "创建中…" : "创建组织和工作空间")}</button>
-    {action.error != null && <p className="tiny muted">{t("如果请求中断，保持名称不变并重试，可以取回同一次创建的结果。")}</p>}
+    {action.error != null && <p className="tiny muted">{t("请求中断时保持名称不变再重试，不会重复创建。")}</p>}
   </form>;
 }

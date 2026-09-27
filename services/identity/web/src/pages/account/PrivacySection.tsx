@@ -34,7 +34,7 @@ export default function PrivacySection({ profile, onDeleted }: { profile: Profil
       <div><button className="btn" disabled={busy || !password} onClick={() => void perform('export')}>{t('导出个人数据')}</button></div>
       <div className="account-danger col gap8"><h3>{t('申请注销账户')}</h3>
         <p className="muted">{t('账户将立即停用。七天内可通过邮件取消注销；此后删除个人资料，组织中的贡献将保留。')}</p>
-        <p className="tiny muted">{t('共享空间的最后一位所有者或管理员，以及最后一位平台管理员，需要先移交职责。')}</p>
+        <p className="tiny muted">{t('共享工作空间的最后一位所有者或管理员，以及最后一位平台管理员，需要先移交职责。')}</p>
         <div><button className="btn danger" disabled={busy || !password} onClick={() => void perform('deletion')}>{t('申请注销账户')}</button></div>
       </div>
     </>}

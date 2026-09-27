@@ -32,7 +32,7 @@ export function roleChangeEffects(from: string, to: string): string[] {
   const out: string[] = [];
   if (from === to) return out;
   if (to === "owner") {
-    out.push(tr("将成为所有者：可以管理这个空间里的所有成员（包括你）、邀请任意角色、移交所有权。所有者只能由其他所有者降级。"));
+    out.push(tr("将成为所有者：可以管理这个工作空间里的所有成员（包括你）、邀请任意角色、移交所有权。所有者只能由其他所有者降级。"));
     return out;
   }
   if (from === "owner") out.push(tr("将不再是所有者：失去管理其他所有者与管理员、移交所有权的权限。"));
@@ -53,7 +53,7 @@ function Names({ ms }: { ms: Member[] }) {
 export function removedSummary(r: Removed | undefined | null): string {
   if (!r) return tr("已移除");
   return tr("已撤销 {p0} 项应用使用资格、{p1} 个令牌；", {p0: r.entitlements_revoked, p1: r.tokens_revoked})
-    + tr("{p0} 个登录会话已移出该空间；取消了 {p1} 个 TA 发出的邀请", {p0: r.sessions_moved, p1: r.invitations_cancelled});
+    + tr("{p0} 个登录已移出该工作空间；取消了 {p1} 个由其发出的邀请", {p0: r.sessions_moved, p1: r.invitations_cancelled});
 }
 
 /* ------------------------------------------------------------------ role */
@@ -84,7 +84,7 @@ export function RoleDialog({ wid, m, callerRole, ws, onDone, onClose }: {
         <select id={id} className="input" value={role} onChange={(e) => setRole(e.target.value)}>
           {options.map((r) => <option key={r} value={r}>{roleLabel(r)}{r === m.role ? tr("（当前）") : ""}</option>)}
         </select>
-        {frozen && <span className="tiny muted">{tr("空间已冻结：只能降低角色，不能提升。")}</span>}
+        {frozen && <span className="tiny muted">{tr("工作空间已冻结：只能降低角色，不能提升。")}</span>}
         {callerRole === "admin" && <span className="tiny muted">{tr("管理员最多可以授予「管理员」；授予后你将不能再管理这位成员。")}</span>}
       </div>
     </ActionDialog>
@@ -110,9 +110,9 @@ export function BulkRoleDialog({ wid, ms, callerRole, ws, onDone, onClose }: {
         <>{tr("将把以下 {count} 位成员在「{space}」的角色改为「{role}」。", {count: changing.length, space: ws.name, role: roleLabel(role)})}
           {ms.length - changing.length > 0 && <>{tr("（另有{p0}位已经是该角色，不会变化）", {p0: ms.length - changing.length})}</>}：
           <Names ms={changing} />
-          {role === "viewer" && <div>{tr("降为只读的成员将不能再编辑，导出权限随之关闭。")}</div>}
+          {role === "viewer" && <div>{tr("降为查看者的成员将不能再编辑，导出权限随之关闭。")}</div>}
           {dangerous && <div>{tr("其中包含管理员或所有者的降级、或新的所有者：需要写明理由并重新验证身份。")}</div>}
-          {frozen && raising.length > 0 && <div className="err-text">{tr("空间已冻结，其中{p0}项提升会被拒绝。", {p0: raising.length})}</div>}
+          {frozen && raising.length > 0 && <div className="err-text">{tr("工作空间已冻结，其中 {p0} 项提升会被拒绝。", {p0: raising.length})}</div>}
           <div className="small muted">{tr("每一项单独执行、单独报告结果；被拒绝的项不会改变。")}</div>
         </>
       }
@@ -146,11 +146,11 @@ export function RemoveDialog({ wid, ms, ws, app, onDone, onClose }: {
           {single
             ? <>{tr("将把{p0}（{p1}，{p2}）从「{p3}」移除。", {p0: memberName(single), p1: single.email, p2: roleLabel(single.role), p3: ws.name})}</>
             : <>{tr("将把以下 {count} 位成员从「{space}」移除：", {count: ms.length, space: ws.name})}<Names ms={ms} /></>}{tr("立即生效：")}<ul>
-            <li>{tr("失去这个空间里全部项目、模板与文件的访问；")}</li>
-            <li>{tr("在这个空间使用{p0}的资格被撤销，已签发给应用的令牌全部失效；", {p0: appName})}</li>
-            <li>{tr("正停留在这个空间的登录会被移出该空间（账户本身不会被退出登录）；")}</li>
+            <li>{tr("失去这个工作空间里全部项目、模板与文件的访问；")}</li>
+            <li>{tr("在这个工作空间使用{p0}的资格被撤销，已签发给应用的令牌全部失效；", {p0: appName})}</li>
+            <li>{tr("正在这个工作空间里的登录会被移出（账户不会退出登录）；")}</li>
             <li>{tr("这些成员发出但尚未被接受的邀请会被取消。")}</li>
-          </ul>{tr("账户本身不受影响。以后需要时可以重新邀请，重新加入后从头开始，不会恢复原来的角色和资格。")}</>
+          </ul>{tr("账户本身不受影响。以后可以重新邀请，但不会恢复原来的角色和资格。")}</>
       }
       run={async (reason) => single
         ? { single: (await post<{ removed: Removed }>(`${base(wid)}/members/${encodeURIComponent(single.user_id)}/remove`, { reason })).removed }
@@ -203,7 +203,7 @@ export function TransferDialog({ wid, m, ws, onDone, onClose }: {
         <>
           {tr("{name}（{email}，当前为{role}）将成为「{space}」的所有者，拥有与你相同的全部管理权限，包括管理你自己。", {name: memberName(m), email: m.email, role: roleLabel(m.role), space: ws.name})}{self === "owner"
             ? <div>{tr("你仍保留所有者身份：接收方也将拥有所有者身份。")}</div>
-            : <>{tr("你的角色将变为「{role}」。", {role: roleLabel(self)})}<ul>{effects.map((t) => <li key={t}>{t}</li>)}</ul></>}{tr("两项变化在同一个事务里完成，空间在任何时刻都有所有者。")}</>
+            : <>{tr("你的角色将变为「{role}」。", {role: roleLabel(self)})}<ul>{effects.map((t) => <li key={t}>{t}</li>)}</ul></>}{tr("工作空间始终有所有者。")}</>
       }
       run={(reason) => post<{ self_role: string }>(`${base(wid)}/ownership/transfer`,
         { to_user_id: m.user_id, demote_self_to: self === "owner" ? null : self, reason })}
@@ -226,14 +226,14 @@ export function LeaveDialog({ wid, wsName, soleOwner, onDone, onClose }: {
   wid: string; wsName: string; soleOwner: boolean; onDone: () => void; onClose: () => void;
 }) {
   return (
-    <ActionDialog title={tr("退出空间")} confirmLabel={tr("退出空间")} danger reason="none" ready={!soleOwner}
+    <ActionDialog title={tr("退出工作空间")} confirmLabel={tr("退出工作空间")} danger reason="none" ready={!soleOwner}
       impact={
         <>{tr("你将离开「{space}」：", {space: wsName})}
           <ul>
-            <li>{tr("失去这个空间里全部内容的访问；")}</li>
-            <li>{tr("你在这个空间的应用使用资格与令牌会被撤销；")}</li>
+            <li>{tr("失去这个工作空间里全部内容的访问；")}</li>
+            <li>{tr("你在这个工作空间的应用使用资格与令牌会被撤销；")}</li>
             <li>{tr("你发出但尚未被接受的邀请会被取消。")}</li>
-          </ul>{tr("要回来，需要空间管理员重新邀请你。")}{soleOwner && <div className="notice warn mt8">{tr("你是这个空间唯一的所有者，不能直接退出。请先把所有权移交给另一位成员。")}</div>}
+          </ul>{tr("要回来，需要工作空间管理员重新邀请你。")}{soleOwner && <div className="notice warn mt8">{tr("你是这个工作空间唯一的所有者，不能直接退出。请先把所有权移交给另一位成员。")}</div>}
         </>
       }
       run={() => post(`${base(wid)}/leave`, {})}

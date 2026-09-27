@@ -37,7 +37,7 @@ function OrganizationList() {
     get<{ items: Organization[] }>("/api/auth/organizations", abort.signal).then(out => setItems(out.items)).catch(e => { if (!abort.signal.aborted) setError(e); });
     return () => abort.abort();
   }, [me?.id, retry, needsVerification(me)]);
-  return <OrgPage title={t("我的组织")} lede={t("组织成员身份与工作空间权限分别管理。")}>
+  return <OrgPage title={t("组织")} lede={t("组织成员身份与工作空间权限分别管理。")}>
     <FlowError error={error} />{needsVerification(me) ? <a href="/verify-email">{t("先验证邮箱")}</a> : !me ? <Loading /> : <>
       <button type="button" className="btn primary" onClick={() => setCreate(v => !v)} aria-expanded={create} aria-controls="organization-create">{t(create ? "收起创建表单" : "创建组织")}</button>
       {create && <section id="organization-create" className="org-section"><h2>{t("创建组织")}</h2><OrganizationCreate onCreated={org => { window.location.assign(`/organizations/${encodeURIComponent(org.id)}`); }} /></section>}
@@ -68,7 +68,7 @@ function OrganizationDetail({ id }: { id: string }) {
   const lifecycle: Record<string, { title: string; impact: string; danger?: boolean }> = {
     freeze: { title: "冻结组织", impact: "冻结后，所属工作空间将停止访问，相关会话、令牌与待处理邀请会被撤销。之后可以解冻，已撤销的凭据不会恢复。", danger: true },
     unfreeze: { title: "解冻组织", impact: "恢复组织访问。已撤销的会话、令牌和邀请不会恢复，成员需要重新登录。" },
-    delete: { title: "删除组织", impact: "组织和所属工作空间会停止访问，相关会话、令牌与待处理邀请会被撤销。七天内可恢复组织；此操作不会直接删除文档数据。", danger: true },
+    delete: { title: "删除组织", impact: "组织和所属工作空间会停止访问，相关会话、令牌与待处理邀请会被撤销。七天内可以恢复；文档数据不会因此删除。", danger: true },
     recover: { title: "恢复组织", impact: "恢复至删除前的正常或冻结状态。已撤销的会话、令牌和邀请不会恢复。" },
     leave: { title: "退出组织", impact: "你将失去此组织及所属工作空间的成员资格，相关登录与令牌会失效。若你是唯一所有者，需要先交接组织和工作空间。", danger: true },
   };
@@ -78,7 +78,7 @@ function OrganizationDetail({ id }: { id: string }) {
   return <OrgPage title={org?.name || t("组织详情")}>
     <FlowError error={error} />
     {needsVerification(me) ? <a href="/verify-email">{t("先验证邮箱")}</a> : error ? <button type="button" className="btn" onClick={() => setRevision(v => v + 1)}>{t("重试")}</button> : !org ? <Loading /> : <>
-      <div className="org-actions"><span className="badge">{t(statusSource(org.status))}</span><span>{t("你的角色：{role}", { role: t(roleSource(org.role)) })}</span>{org.usage && <span className="org-count">{t("{workspaces} 个空间 · {members} 位成员", { workspaces: org.usage.workspaces, members: org.usage.members })}</span>}</div>
+      <div className="org-actions"><span className="badge">{t(statusSource(org.status))}</span><span>{t("你的角色：{role}", { role: t(roleSource(org.role)) })}</span>{org.usage && <span className="org-count">{t("{workspaces} 个工作空间 · {members} 位成员", { workspaces: org.usage.workspaces, members: org.usage.members })}</span>}</div>
       {org.status !== "active" && <p className="notice warn">{t(org.status === "frozen" ? "组织已冻结，工作空间暂时无法访问。" : "组织已删除，工作空间暂时无法访问。")}{org.status === "deleted" && org.recover_until && ` ${t("可恢复至 {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(org.recover_until * 1000) })}`}</p>}
       <OrganizationAvatar organization={org} onChanged={changed} />
       <OrganizationWorkspaces organization={org} workspaces={workspaces} onChanged={changed} />

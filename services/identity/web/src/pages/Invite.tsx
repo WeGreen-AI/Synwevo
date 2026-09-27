@@ -39,7 +39,7 @@ function Invitation({ token }: { token: string }) {
     await post("/api/auth/invitations/decline", { token });
     clearInvitation(); setConfirmDecline(false); setPreview(p => p ? { ...p, state: "declined" } : p);
   }); }
-  return <AuthFrame title={t(error ? "邀请链接无法打开" : dead ? dead[0] : "一起开始工作")} description={t(dead ? dead[1] : "查看邀请信息，再决定是否加入。打开链接不会自动接受邀请。")}>
+  return <AuthFrame title={t(error ? "邀请链接无法打开" : dead ? dead[0] : "工作空间邀请")} description={t(dead ? dead[1] : "核对邀请信息后再决定是否加入；打开链接不会自动接受。")}>
     <FlowError error={error || (!confirmDecline && action.error)} />
     {error ? <><button type="button" className="btn" onClick={() => setRetry(v => v + 1)}>{t("重试")}</button><a className="action-link" href="/login" onClick={clearInvitation}>{t("前往登录")}</a></>
       : !preview ? <Loading /> : dead ? <a className="btn primary" href="/login" onClick={clearInvitation}>{t("前往登录")}</a> : <>
@@ -47,7 +47,7 @@ function Invitation({ token }: { token: string }) {
           <dt>{t("你的角色")}</dt><dd>{t(role)}</dd>{preview.inviter && <><dt>{t("邀请人")}</dt><dd>{preview.inviter}</dd></>}
           <dt>{t("有效期至")}</dt><dd>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(preview.expires_at * 1000)}</dd></dl>
         {wrong ? <><p className="notice warn">{t("你当前登录的是 {current}，这个邀请是发给 {email} 的。", { current: preview.signed_in_as!, email: preview.email })}</p><button type="button" className="btn" disabled={action.busy} onClick={() => void action.run(async () => { await post("/api/auth/logout", {}); window.location.reload(); })}>{t("退出当前账户")}</button></>
-          : preview.needs_account ? <><p className="tiny muted">{t("使用这封邀请创建账户，即可验证受邀邮箱并加入指定工作空间。")}</p><a className="btn primary" href={`/register#invite_token=${encodeURIComponent(token)}`}>{t("创建账户并继续")}</a><a className="authfoot" href="/login?next=%2Finvite">{t("已有账户？登录并继续")}</a></>
+          : preview.needs_account ? <><p className="tiny muted">{t("创建账户后直接加入；受邀邮箱无需再验证。")}</p><a className="btn primary" href={`/register#invite_token=${encodeURIComponent(token)}`}>{t("创建账户并继续")}</a><a className="authfoot" href="/login?next=%2Finvite">{t("已有账户？登录并继续")}</a></>
           : !preview.signed_in_as ? <><p className="tiny muted">{t("请使用受邀邮箱登录，然后回来确认加入。")}</p><a className="btn primary" href="/login?next=%2Finvite">{t("登录并继续")}</a></>
           : needsVerification(me) ? <a className="btn primary" href="/verify-email">{t("先验证邮箱")}</a>
           : <><button type="button" className="btn primary" disabled={action.busy} onClick={() => void accept()}>{t(action.busy ? "加入中…" : "接受邀请并加入")}</button><button type="button" className="btn ghost" disabled={action.busy} onClick={() => setConfirmDecline(true)}>{t("拒绝邀请")}</button></>}

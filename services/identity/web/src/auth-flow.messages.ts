@@ -5,8 +5,6 @@ export const messages = {
   "无法保存此验证链接。请先登录，再重新打开邮件链接。": { en: "This verification link could not be saved. Sign in first, then reopen the email link.", "zh-Hant": "無法儲存此驗證連結。請先登入，再重新開啟郵件連結。" },
   "请设置由你掌控的新口令以完成账户激活": { en: "Set a new password that you control to activate this account.", "zh-Hant": "請設定由你掌控的新密碼以完成帳戶啟用" },
   "已激活账户的邮箱验证不会修改口令": { en: "Verifying an active account’s email does not change its password.", "zh-Hant": "已啟用帳戶的電郵驗證不會修改密碼" },
-  "邮箱验证和新口令设置已完成。请使用新口令重新登录。": { en: "Your email is verified and your new password is set. Sign in with your new password.", "zh-Hant": "電郵驗證和新密碼設定已完成。請使用新密碼重新登入。" },
-  "为确保只有邮箱持有人能使用账户，请设置由你掌控的新口令。此前的口令和登录会话将失效。": { en: "To ensure only the mailbox owner can use this account, set a new password that you control. The previous password and sign-in sessions will no longer work.", "zh-Hant": "為確保只有電郵持有人能使用帳戶，請設定由你掌控的新密碼。先前的密碼和登入工作階段將失效。" },
   "设置新口令并验证邮箱": { en: "Set new password and verify email", "zh-Hant": "設定新密碼並驗證電郵" },
   "这个邀请已经被拒绝，请联系邀请人重新发送": { en: "This invitation was declined. Ask the sender for a new invitation.", "zh-Hant": "此邀請已被拒絕，請聯絡邀請人重新傳送" },
   "邀请已拒绝": {"en": "Invitation declined", "zh-Hant": "邀請已拒絕"},
@@ -15,29 +13,11 @@ export const messages = {
   "拒绝后，此邀请链接将失效，你不会加入「{workspace}」。": {"en": "Declining invalidates this invitation. You will not join “{workspace}”.", "zh-Hant": "拒絕後，此邀請連結將失效，你不會加入「{workspace}」。"},
   "保留邀请": {"en": "Keep invitation", "zh-Hant": "保留邀請"},
   "确认拒绝邀请": {"en": "Confirm decline", "zh-Hant": "確認拒絕邀請"},
-  "这个邀请已被拒绝": {"en": "This invitation has been declined.", "zh-Hant": "此邀請已被拒絕"},
-  "已有账户可直接登录。部署初始化需要服务器提供的一次性令牌。": { en: "Existing accounts can sign in directly. Deployment setup requires a one-time token from the server.", "zh-Hant": "已有帳戶可直接登入。部署初始化需要伺服器提供的一次性權杖。" },
   "返回普通登录": { en: "Back to ordinary sign-in", "zh-Hant": "返回一般登入" },
   "设置此部署的首位管理员": { en: "Set up this deployment’s first administrator", "zh-Hant": "設定此部署的首位管理員" },
   "验证码不正确，还可尝试 {count} 次。": { en: "Incorrect code. {count} attempts remaining.", "zh-Hant": "驗證碼不正確，還可嘗試 {count} 次。" },
   "验证码不正确，请重新登录。": { en: "Incorrect code. Please sign in again.", "zh-Hant": "驗證碼不正確，請重新登入。" },
   "此账户需要设备验证，请使用 PIN、指纹或面容，或改用口令和验证码登录。": { en: "This account requires device verification. Use a PIN, fingerprint or face, or sign in with a password and verification code.", "zh-Hant": "此帳戶需要裝置驗證，請使用 PIN、指紋或面容，或改用密碼和驗證碼登入。" },
-  "一个账户，连接你的工作。": {
-    "en": "One account. Your work, connected.",
-    "zh-Hant": "一個帳戶，連接你的工作。"
-  },
-  "从个人空间到团队协作，让每一次开始都井然有序。": {
-    "en": "From your own workspace to a shared team, give your work a place to begin.",
-    "zh-Hant": "從個人空間到團隊協作，讓每一次開始都井然有序。"
-  },
-  "你的账户。你的空间。你的团队。": {
-    "en": "Your account. Your space. Your team.",
-    "zh-Hant": "你的帳戶。你的空間。你的團隊。"
-  },
-  "为专注的工作留出空间": {
-    "en": "Make room for focused work",
-    "zh-Hant": "為專注的工作留出空間"
-  },
   "无法连接服务器，请检查网络后重试。": {
     "en": "Unable to connect. Check your connection and try again.",
     "zh-Hant": "無法連接伺服器，請檢查網絡後重試。"
@@ -49,10 +29,6 @@ export const messages = {
   "请先登录后继续。": {
     "en": "Sign in to continue.",
     "zh-Hant": "請先登入後繼續。"
-  },
-  "验证已超时，请返回并重新登录。": {
-    "en": "Verification expired. Go back and sign in again.",
-    "zh-Hant": "驗證已逾時，請返回並重新登入。"
   },
   "验证码不正确，请重试。": {
     "en": "The verification code is incorrect. Try again.",
@@ -182,10 +158,6 @@ export const messages = {
     "en": "Cancelled, or no security key is available for this site.",
     "zh-Hant": "已取消，或沒有可用於本站的安全金鑰。"
   },
-  "已取消，或此设备上没有可用于本站的安全密钥。平台域名已更换，在旧域名登记的安全密钥不能在这里使用：请先用口令或邮箱验证码登录，再在「账户 → 安全」重新登记。": {
-    "en": "Cancelled, or this device has no security key for this site. The platform moved to a new domain and keys registered on the old one cannot be used here: sign in with your password or an e-mail code, then register a new key under Account → Security.",
-    "zh-Hant": "已取消，或此裝置上沒有可用於本站的安全金鑰。平台網域已更換，在舊網域登記的安全金鑰不能在這裡使用：請先用密碼或電子郵件驗證碼登入，再到「帳戶 → 安全」重新登記。"
-  },
   "两步验证": {
     "en": "Two-step verification",
     "zh-Hant": "兩步驗證"
@@ -194,10 +166,6 @@ export const messages = {
     "en": "Set up the first administrator",
     "zh-Hant": "建立首位管理員"
   },
-  "欢迎回来": {
-    "en": "Welcome back",
-    "zh-Hant": "歡迎回來"
-  },
   "输入一个恢复码。每个恢复码只能用一次。": {
     "en": "Enter a recovery code. Each code can be used once.",
     "zh-Hant": "輸入一個復原碼。每個復原碼只能使用一次。"
@@ -205,14 +173,6 @@ export const messages = {
   "打开验证器应用，输入其中显示的 6 位数字。": {
     "en": "Open your authenticator app and enter its 6-digit code.",
     "zh-Hant": "開啟驗證器應用程式，輸入其中顯示的 6 位數字。"
-  },
-  "使用服务器生成的一次性引导令牌，建立这个部署的首位管理员。": {
-    "en": "Use the one-time bootstrap token generated on the server to set up this deployment's first administrator.",
-    "zh-Hant": "使用伺服器產生的一次性引導權杖，建立此部署的首位管理員。"
-  },
-  "登录你的 Synwevo 账户，继续手头的工作。": {
-    "en": "Sign in to your Synwevo account and pick up where you left off.",
-    "zh-Hant": "登入你的 Synwevo 帳戶，繼續手上的工作。"
   },
   "重试": {
     "en": "Try again",
@@ -278,10 +238,6 @@ export const messages = {
     "en": "Sign in",
     "zh-Hant": "登入"
   },
-  "或": {
-    "en": "or",
-    "zh-Hant": "或"
-  },
   "使用安全密钥登录": {
     "en": "Sign in with a security key",
     "zh-Hant": "使用安全金鑰登入"
@@ -297,14 +253,6 @@ export const messages = {
   "本服务目前为邀请制，请使用邀请邮件创建账户。": {
     "en": "This service is invitation-only. Use your invitation email to create an account.",
     "zh-Hant": "本服務目前採邀請制，請使用邀請郵件建立帳戶。"
-  },
-  "创建你的账户": {
-    "en": "Create your account",
-    "zh-Hant": "建立你的帳戶"
-  },
-  "先验证邮箱，再为个人工作或团队协作准备空间。": {
-    "en": "Verify your email, then set up a space for yourself or your team.",
-    "zh-Hant": "先驗證電郵，再為個人工作或團隊協作準備空間。"
   },
   "返回邀请": {
     "en": "Back to invitation",
@@ -338,10 +286,6 @@ export const messages = {
     "en": "For myself",
     "zh-Hant": "個人使用"
   },
-  "为自己的文档和项目建立空间。": {
-    "en": "Make a space for your documents and projects.",
-    "zh-Hant": "為自己的文件和專案建立空間。"
-  },
   "团队协作": {
     "en": "With a team",
     "zh-Hant": "團隊協作"
@@ -370,26 +314,9 @@ export const messages = {
     "en": "Verify your email",
     "zh-Hant": "驗證你的電郵"
   },
-  "邮箱验证已完成，可以继续设置你的空间。": {
-    "en": "Your email is verified. You can continue setting up your workspace.",
-    "zh-Hant": "電郵驗證已完成，可以繼續設定你的空間。"
-  },
-  "确认这是你的邮箱后，点击下方按钮完成验证。": {
-    "en": "Confirm this is your email, then select the button below to verify it.",
-    "zh-Hant": "確認這是你的電郵後，點擊下方按鈕完成驗證。"
-  },
   "邮件由 {sender} 发出，通常几分钟内送达；找不到时可按发件地址搜索。": { en: "The mail comes from {sender} and usually arrives within minutes; search for that sender if you cannot find it.", "zh-Hant": "郵件由 {sender} 發出，通常幾分鐘內送達；找不到時可按寄件地址搜尋。" },
-  "学校或公司邮箱通常经过安全网关：邮件可能延迟数分钟、被放入垃圾邮件或隔离区。请一并检查这些位置和隔离通知，必要时把发件地址加入允许名单。": { en: "University and company mailboxes usually sit behind a security gateway: the mail may be delayed by minutes, land in junk, or be held in quarantine. Check those places and any quarantine digest too, and allow-list the sender if needed.", "zh-Hant": "學校或公司信箱通常經過安全閘道：郵件可能延遲數分鐘、被放入垃圾郵件或隔離區。請一併檢查這些位置和隔離通知，必要時把寄件地址加入允許名單。" },
   "每小时最多发送 3 封验证邮件，只有最新一封有效；链接 24 小时内有效。": { en: "At most 3 verification mails are sent per hour and only the latest link works; each link is valid for 24 hours.", "zh-Hant": "每小時最多寄送 3 封驗證郵件，只有最新一封有效；連結 24 小時內有效。" },
   "收不到邮件？换一个邮箱注册": { en: "Not receiving mail? Register with another address", "zh-Hant": "收不到郵件？換一個信箱註冊" },
-  "我们已收到请求。请检查邮箱，使用最新邮件中的验证链接。": {
-    "en": "Your request has been received. Check your inbox and use the verification link in the latest email.",
-    "zh-Hant": "我們已收到請求。請檢查電郵，使用最新郵件中的驗證連結。"
-  },
-  "验证完成": {
-    "en": "Verification complete",
-    "zh-Hant": "驗證完成"
-  },
   "继续": {
     "en": "Continue",
     "zh-Hant": "繼續"
@@ -406,17 +333,9 @@ export const messages = {
     "en": "Email delivery is temporarily unavailable. Try resending later or contact the service administrator.",
     "zh-Hant": "郵件服務暫不可用。請稍後重新傳送驗證郵件，或聯絡服務管理員。"
   },
-  "如果此邮箱需要验证且可以接收邮件，验证请求会进入发送队列。请检查收件箱和垃圾邮件。": {
-    "en": "If this email needs verification and delivery is available, the request will be queued. Check your inbox and spam folder.",
-    "zh-Hant": "如果此電郵需要驗證且可以接收郵件，驗證請求會進入傳送佇列。請檢查收件匣和垃圾郵件。"
-  },
   "重新发送验证邮件": {
     "en": "Resend verification email",
     "zh-Hant": "重新傳送驗證郵件"
-  },
-  "验证完成前，账户无法进入工作空间。打开邮件链接不会自动验证邮箱。": {
-    "en": "Your account cannot enter workspaces until verified. Opening an email link does not verify it automatically.",
-    "zh-Hant": "驗證完成前，帳戶無法進入工作空間。開啟郵件連結不會自動驗證電郵。"
   },
   "这个邀请已经用过了": {
     "en": "This invitation has already been used",
@@ -470,14 +389,6 @@ export const messages = {
     "en": "Unable to open invitation",
     "zh-Hant": "邀請連結無法開啟"
   },
-  "一起开始工作": {
-    "en": "Start working together",
-    "zh-Hant": "一起開始工作"
-  },
-  "查看邀请信息，再决定是否加入。打开链接不会自动接受邀请。": {
-    "en": "Review the invitation before joining. Opening this link does not accept it automatically.",
-    "zh-Hant": "查看邀請資料，再決定是否加入。開啟連結不會自動接受邀請。"
-  },
   "前往登录": {
     "en": "Go to sign in",
     "zh-Hant": "前往登入"
@@ -505,10 +416,6 @@ export const messages = {
   "退出当前账户": {
     "en": "Sign out of this account",
     "zh-Hant": "登出目前帳戶"
-  },
-  "创建账户并验证受邀邮箱后，即可回来接受邀请。": {
-    "en": "Create an account and verify the invited email, then return to accept this invitation.",
-    "zh-Hant": "建立帳戶並驗證受邀電郵後，即可回來接受邀請。"
   },
   "创建账户并继续": {
     "en": "Create account and continue",
@@ -538,17 +445,9 @@ export const messages = {
     "en": "Check your inbox",
     "zh-Hant": "看看你的電郵"
   },
-  "找回你的账户": {
-    "en": "Recover your account",
-    "zh-Hant": "找回你的帳戶"
-  },
   "如果这个邮箱有可用账户且邮件服务正常，重置请求将进入发送队列。": {
     "en": "If this email has an available account and email delivery is working, a reset request will be queued.",
     "zh-Hant": "如果此電郵有可用帳戶且郵件服務正常，重設請求將進入傳送佇列。"
-  },
-  "输入注册时使用的邮箱，申请一个口令重置链接。": {
-    "en": "Enter the email you signed up with to request a password reset link.",
-    "zh-Hant": "輸入註冊時使用的電郵，申請一個密碼重設連結。"
   },
   "链接 2 小时内有效，只能用一次。没收到邮件？请检查垃圾邮件或确认邮箱地址。": {
     "en": "The link is valid for 2 hours and can be used once. No email? Check your spam folder and the email address.",
@@ -574,10 +473,6 @@ export const messages = {
     "en": "All device sessions have ended. Sign in again with your new password.",
     "zh-Hant": "所有裝置上的登入都已結束，請使用新密碼重新登入。"
   },
-  "选择一个长而独特的口令，保护你的账户。": {
-    "en": "Choose a long, unique password to protect your account.",
-    "zh-Hant": "選擇一個長而獨特的密碼，保護你的帳戶。"
-  },
   "两步验证保持启用，下次登录仍然需要它。": {
     "en": "Two-step verification is still enabled and will be required at your next sign-in.",
     "zh-Hant": "兩步驗證保持啟用，下次登入仍然需要它。"
@@ -602,10 +497,6 @@ export const messages = {
     "en": "Accept invitation, create account",
     "zh-Hant": "接受邀請，建立帳戶"
   },
-  "此邀请将验证受邀邮箱，并加入指定工作空间。请确认后提交。": {
-    "en": "This invitation verifies the invited email and joins the specified workspace. Review it before submitting.",
-    "zh-Hant": "此邀請將驗證受邀電郵，並加入指定工作空間。請確認後提交。"
-  },
   "已加入工作空间。": {
     "en": "You have joined the workspace.",
     "zh-Hant": "已加入工作空間。"
@@ -613,10 +504,6 @@ export const messages = {
   "创建账户并接受邀请": {
     "en": "Create account and accept invitation",
     "zh-Hant": "建立帳戶並接受邀請"
-  },
-  "使用这封邀请创建账户，即可验证受邀邮箱并加入指定工作空间。": {
-    "en": "Create your account with this invitation to verify the invited email and join this workspace.",
-    "zh-Hant": "使用這封邀請建立帳戶，即可驗證受邀電郵並加入指定工作空間。"
   },
   "不接受此邀请，返回注册": {
     "en": "Continue registration without this invitation",
@@ -662,14 +549,6 @@ export const messages = {
     "en": "Your session has expired. Sign in again.",
     "zh-Hant": "工作階段已失效，請重新登入"
   },
-  "安全密钥需要完成设备验证，请重试": {
-    "en": "Complete device verification with your security key, then try again.",
-    "zh-Hant": "安全金鑰需要完成裝置驗證，請重試"
-  },
-  "验证请求已收到。请检查收件箱和垃圾邮件；是否投递取决于账户状态和邮件服务。": {
-    "en": "Verification request received. Check your inbox and spam folder; delivery depends on account status and the email service.",
-    "zh-Hant": "驗證請求已收到。請檢查收件匣和垃圾郵件；是否投遞取決於帳戶狀態和郵件服務。"
-  },
   "已取消外部登录。": {
     "en": "External sign-in was cancelled.",
     "zh-Hant": "已取消外部登入。"
@@ -677,10 +556,6 @@ export const messages = {
   "外部身份提供商拒绝了这次登录，请重试。": {
     "en": "The external identity provider refused this sign-in. Please try again.",
     "zh-Hant": "外部身分提供者拒絕了這次登入，請重試。"
-  },
-  "登录状态校验失败，请重新开始。": {
-    "en": "The sign-in state could not be verified. Please start again.",
-    "zh-Hant": "登入狀態驗證失敗，請重新開始。"
   },
   "登录请求已过期或已使用，请重新开始。": {
     "en": "This sign-in request has expired or was already used. Please start again.",
@@ -742,10 +617,6 @@ export const messages = {
     "en": "Sign in with an email code",
     "zh-Hant": "以電子郵件驗證碼登入"
   },
-  "这个 {label} 账户的邮箱已有 Synwevo 账户。输入该账户的口令以关联并登录；以后可以直接用 {label} 登录。": {
-    "en": "The email address of this {label} account already has a Synwevo account. Enter that account's password to link and sign in; afterwards you can sign in with {label} directly.",
-    "zh-Hant": "此 {label} 帳戶的電子郵件地址已有 Synwevo 帳戶。請輸入該帳戶的密碼以關聯並登入；之後可直接以 {label} 登入。"
-  },
   "外部": {
     "en": "external",
     "zh-Hant": "外部"
@@ -753,10 +624,6 @@ export const messages = {
   "验证码已发送到你的邮箱（如果该邮箱有账户），请在 10 分钟内输入。": {
     "en": "If this address has an account, a code has been sent to it. Enter it within 10 minutes.",
     "zh-Hant": "若此電子郵件地址有帳戶，驗證碼已寄出，請在 10 分鐘內輸入。"
-  },
-  "我们会把一次性验证码发到你的账户邮箱。": {
-    "en": "We will send a one-time code to your account's email address.",
-    "zh-Hant": "我們會將一次性驗證碼寄到你的帳戶電子郵件地址。"
   },
   "在此设备上保持登录": {
     "en": "Keep me signed in on this device",
@@ -806,10 +673,6 @@ export const messages = {
     "en": "Sign in with {label}",
     "zh-Hant": "以 {label} 登入"
   },
-  "验证码已失效，请重新获取。": {
-    "en": "This code is no longer valid. Request a new one.",
-    "zh-Hant": "驗證碼已失效，請重新取得。"
-  },
   "人机验证": { en: "Human verification", "zh-Hant": "人機驗證" },
   "正在加载人机验证…": { en: "Loading human verification…", "zh-Hant": "正在載入人機驗證…" },
   "人机验证已过期，正在刷新。": { en: "The verification expired and is being refreshed.", "zh-Hant": "人機驗證已過期，正在重新整理。" },
@@ -820,7 +683,35 @@ export const messages = {
   "人机验证未通过，请重试": { en: "Human verification did not pass. Please try again", "zh-Hant": "人機驗證未通過，請重試" },
   "人机验证服务暂不可用，请稍后重试。": { en: "The human verification service is temporarily unavailable. Please try again later.", "zh-Hant": "人機驗證服務暫不可用，請稍後重試。" },
   "人机验证服务暂不可用，请稍后重试": { en: "The human verification service is temporarily unavailable. Please try again later", "zh-Hant": "人機驗證服務暫不可用，請稍後重試" },
-  "此地址已多次登录失败，请完成人机验证后再试。": { en: "There were several failed sign-ins from this address. Complete the human verification and try again.", "zh-Hant": "此位址已多次登入失敗，請完成人機驗證後再試。" },
+  "登录一次，回到你的工作空间。": { en: "Sign in once and return to your workspace.", "zh-Hant": "登入一次，回到你的工作空間。" },
+  "同一个账户进入你所属的组织与工作空间；登录方式、设备与通知都在这里管理。": { en: "One account for the organizations and workspaces you belong to; sign-in methods, devices and notifications are managed here.", "zh-Hant": "同一個帳戶進入你所屬的組織與工作空間；登入方式、裝置與通知都在這裡管理。" },
+  "账户 · 工作空间 · 组织": { en: "Account · Workspace · Organization", "zh-Hant": "帳戶 · 工作空間 · 組織" },
+  "验证已超时，请重新登录。": { en: "Verification timed out. Sign in again.", "zh-Hant": "驗證已逾時，請重新登入。" },
+  "这次登录无法验证，请重新开始。": { en: "This sign-in could not be verified. Please start again.", "zh-Hant": "這次登入無法驗證，請重新開始。" },
+  "已取消，或此设备上没有可用于本站的安全密钥。平台域名已更换，在旧域名登记的安全密钥不能在这里使用：请先用口令或邮箱验证码登录，再在「账户与安全」重新登记。": { en: "Cancelled, or this device has no security key for this site. The platform moved to a new domain and keys registered on the old one cannot be used here: sign in with your password or an e-mail code, then register a new key under Account & security.", "zh-Hant": "已取消，或此裝置上沒有可用於本站的安全金鑰。平台網域已更換，在舊網域登記的安全金鑰不能在這裡使用：請先用密碼或電子郵件驗證碼登入，再到「帳戶與安全」重新登記。" },
+  "这个 {label} 账户的邮箱已有 Synwevo 账户。输入该账户的口令即可关联并登录；之后可以直接用 {label} 登录。": { en: "The e-mail address of this {label} account already has a Synwevo account. Enter that account's password to link and sign in; afterwards you can sign in with {label} directly.", "zh-Hant": "此 {label} 帳戶的電子郵件地址已有 Synwevo 帳戶。輸入該帳戶的密碼即可關聯並登入；之後可直接以 {label} 登入。" },
+  "需要服务器生成的一次性引导令牌。": { en: "Requires the one-time bootstrap token generated on the server.", "zh-Hant": "需要伺服器產生的一次性引導權杖。" },
+  "验证码会发到你的账户邮箱，10 分钟内有效。": { en: "A code will be sent to your account's e-mail address; it is valid for 10 minutes.", "zh-Hant": "驗證碼會寄到你的帳戶電郵，10 分鐘內有效。" },
+  "初始化这个部署需要服务器生成的一次性令牌；已有账户照常登录。": { en: "Setting up this deployment needs a one-time token generated on the server; existing accounts sign in as usual.", "zh-Hant": "初始化此部署需要伺服器產生的一次性權杖；已有帳戶照常登入。" },
+  "受邀邮箱无需再验证；创建后直接加入工作空间。": { en: "The invited address needs no further verification; you join the workspace as soon as the account is created.", "zh-Hant": "受邀電郵無需再驗證；建立後直接加入工作空間。" },
+  "创建后需要先验证邮箱。": { en: "You will need to verify your e-mail address after creating the account.", "zh-Hant": "建立後需要先驗證電郵。" },
+  "建立自己的工作空间，整理文档与项目。": { en: "Set up your own workspace for documents and projects.", "zh-Hant": "建立自己的工作空間，整理文件與專案。" },
+  "验证完成前，账户无法进入工作空间。": { en: "Until verified, the account cannot enter a workspace.", "zh-Hant": "驗證完成前，帳戶無法進入工作空間。" },
+  "请打开邮箱，使用最新一封邮件里的验证链接。": { en: "Open your inbox and use the verification link in the latest e-mail.", "zh-Hant": "請開啟電郵，使用最新一封郵件裡的驗證連結。" },
+  "验证完成；新口令已设置，请用它重新登录。": { en: "Verified. Your new password is set; sign in again with it.", "zh-Hant": "驗證完成；新密碼已設定，請用它重新登入。" },
+  "验证完成，可以继续了。": { en: "Verified. You can continue.", "zh-Hant": "驗證完成，可以繼續了。" },
+  "验证完成，请登录后继续。": { en: "Verified. Sign in to continue.", "zh-Hant": "驗證完成，請登入後繼續。" },
+  "请设置一个由你掌控的新口令。此前的口令和所有登录将失效。": { en: "Set a new password that only you control. The previous password and every sign-in will stop working.", "zh-Hant": "請設定一個由你掌控的新密碼。先前的密碼和所有登入將失效。" },
+  "如果这个邮箱需要验证，新的验证邮件已发出；请检查收件箱和垃圾邮件。": { en: "If this address still needs verification, a new e-mail has been sent; check your inbox and spam folder.", "zh-Hant": "如果此電郵需要驗證，新的驗證郵件已寄出；請檢查收件匣和垃圾郵件。" },
+  "学校或公司邮箱通常经过安全网关，邮件可能延迟数分钟、进入垃圾邮件或隔离区；必要时把发件地址加入允许名单。": { en: "University and company mailboxes usually sit behind a security gateway: the mail may take minutes, land in junk or be quarantined; allow-list the sender if needed.", "zh-Hant": "學校或公司信箱通常經過安全閘道，郵件可能延遲數分鐘、進入垃圾郵件或隔離區；必要時把寄件地址加入允許名單。" },
+  "找回账户": { en: "Recover account", "zh-Hant": "找回帳戶" },
+  "如果这个邮箱有账户，口令重置链接已发出。": { en: "If this address has an account, a password reset link has been sent.", "zh-Hant": "如果此電郵有帳戶，密碼重設連結已寄出。" },
+  "输入账户邮箱，申请口令重置链接。": { en: "Enter your account e-mail to request a password reset link.", "zh-Hant": "輸入帳戶電郵，申請密碼重設連結。" },
+  "新口令生效后，所有设备都需要重新登录。": { en: "Once the new password is set, every device must sign in again.", "zh-Hant": "新密碼生效後，所有裝置都需要重新登入。" },
+  "工作空间邀请": { en: "Workspace invitation", "zh-Hant": "工作空間邀請" },
+  "核对邀请信息后再决定是否加入；打开链接不会自动接受。": { en: "Review the invitation before deciding to join; opening the link does not accept it.", "zh-Hant": "核對邀請資料後再決定是否加入；開啟連結不會自動接受。" },
+  "创建账户后直接加入；受邀邮箱无需再验证。": { en: "You join as soon as the account is created; the invited address needs no further verification.", "zh-Hant": "建立帳戶後直接加入；受邀電郵無需再驗證。" },
+
 };
 
 registerMessages(messages);

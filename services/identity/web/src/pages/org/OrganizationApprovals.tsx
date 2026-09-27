@@ -45,7 +45,7 @@ export default function OrganizationApprovals({ organization, mine }: { organiza
   if (!can) return null;
   const when = (ts: number | null) => ts ? new Date(ts * 1000).toLocaleString(locale) : "—";
   return <section className="org-section" id="org-approvals"><h2>{t("审批")}</h2>
-    <p className="tiny muted">{t("个人空间的项目要复制到本组织的工作空间，需要一位持有审批权限并管理目标空间的成员同意。你看到的是申请人确认过的清单，不是对方的个人空间。")}</p>
+    <p className="tiny muted">{t("个人工作空间的项目复制到组织工作空间前，需要管理目标工作空间的审批人同意。这里显示的是申请人确认过的清单，不是对方的个人工作空间。")}</p>
     <FlowError error={error} />
     <div className="row wrap gap4" role="tablist">
       <button type="button" role="tab" aria-selected={status === "pending"} className={`btn ${status === "pending" ? "primary" : ""}`} onClick={() => setStatus("pending")}>{t("待审批")}</button>
@@ -77,7 +77,7 @@ export default function OrganizationApprovals({ organization, mine }: { organiza
     {action && <OrganizationAction key={action.item.id + action.kind} spec={{
       title: t(action.kind === "approve" ? "批准复制" : "拒绝复制"),
       impact: t(action.kind === "approve"
-        ? "批准后副本将按清单在「{workspace}」创建，受该空间的成员与保留策略管理；源项目之后的改动不会带入。批准 7 天内有效。"
+        ? "批准后副本将按清单在「{workspace}」创建，受该工作空间的成员与保留策略管理；源项目之后的改动不会带入。批准 7 天内有效。"
         : "拒绝后申请人会收到你的理由，可以修改后重新申请。", { workspace: action.item.target_workspace_name || action.item.target_workspace_id }),
       danger: action.kind === "reject",
       run: reason => post(`${orgPath(organization.id)}/approvals/${action.item.id}/decide`, { action: action.kind, reason, version: action.item.version }),

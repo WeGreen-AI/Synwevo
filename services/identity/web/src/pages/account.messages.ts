@@ -13,10 +13,6 @@ registerMessages({
     "en": "Profile",
     "zh-Hant": "個人資料"
   },
-  "让账户更像你": {
-    "en": "Make your account yours",
-    "zh-Hant": "讓帳戶更像你"
-  },
   "上传头像": {
     "en": "Upload avatar",
     "zh-Hant": "上傳頭像"
@@ -60,10 +56,6 @@ registerMessages({
   "时区": {
     "en": "Time zone",
     "zh-Hant": "時區"
-  },
-  "语言用于账户界面，时区用于下方设备和安全活动时间。": {
-    "en": "Your language applies to the account interface. Your time zone applies to device and security activity below.",
-    "zh-Hant": "語言用於帳戶介面，時區用於下方裝置和安全活動時間。"
   },
   "保存中…": {
     "en": "Saving…",
@@ -185,10 +177,6 @@ registerMessages({
     "en": "Export personal data",
     "zh-Hant": "匯出個人資料"
   },
-  "共享空间的最后一位所有者或管理员，以及最后一位平台管理员，需要先移交职责。": {
-    "en": "The last owner or administrator of a shared space, and the last platform administrator, must transfer their responsibilities first.",
-    "zh-Hant": "共用空間的最後一位擁有者或管理員，以及最後一位平台管理員，需要先移交職責。"
-  },
   "邮箱与口令": {
     "en": "Email and password",
     "zh-Hant": "電子郵件與密碼"
@@ -209,10 +197,6 @@ registerMessages({
     "en": "New email address",
     "zh-Hant": "新電子郵件地址"
   },
-  "验证邮件已进入队列，请在一小时内打开新邮箱中的链接。": {
-    "en": "Verification email queued. Open the link in your new inbox within one hour.",
-    "zh-Hant": "驗證郵件已進入佇列，請在一小時內開啟新信箱中的連結。"
-  },
   "处理中…": {
     "en": "Processing…",
     "zh-Hant": "處理中…"
@@ -228,10 +212,6 @@ registerMessages({
   "更新口令": {
     "en": "Update password",
     "zh-Hant": "更新密碼"
-  },
-  "通过已验证邮箱重置口令。完成后所有设备需重新登录，两步验证仍然有效。": {
-    "en": "Reset your password through your verified email. All devices must sign in again; two-step verification remains enabled.",
-    "zh-Hant": "透過已驗證的電子郵件地址重設密碼。完成後所有裝置需重新登入，兩步驗證仍然有效。"
   },
   "重置口令": {
     "en": "Reset password",
@@ -365,14 +345,6 @@ registerMessages({
     "en": "Administrator",
     "zh-Hant": "管理員"
   },
-  "编辑": {
-    "en": "Editor",
-    "zh-Hant": "編輯者"
-  },
-  "只读": {
-    "en": "Viewer",
-    "zh-Hant": "檢視者"
-  },
   "口令": {
     "en": "Password",
     "zh-Hant": "密碼"
@@ -416,14 +388,6 @@ registerMessages({
   "账户与安全": {
     "en": "Account & security",
     "zh-Hant": "帳戶與安全"
-  },
-  "你的账户，由你掌控": {
-    "en": "Your account, in your hands",
-    "zh-Hant": "你的帳戶，由你掌控"
-  },
-  "管理个人资料、登录方式与隐私。": {
-    "en": "Manage your profile, sign-in methods and privacy.",
-    "zh-Hant": "管理個人資料、登入方式與隱私。"
   },
   "账户设置导航": {
     "en": "Account settings navigation",
@@ -509,10 +473,6 @@ registerMessages({
     "en": "Members and invitations",
     "zh-Hant": "成員與邀請"
   },
-  "退出空间": {
-    "en": "Leave workspace",
-    "zh-Hant": "退出空間"
-  },
   "你当前不属于任何工作空间。": {
     "en": "You do not belong to any workspaces.",
     "zh-Hant": "你目前不屬於任何工作空間。"
@@ -543,10 +503,6 @@ registerMessages({
   "关闭两步验证的当前验证码": {
     "en": "Current code to disable two-step verification",
     "zh-Hant": "關閉兩步驗證的目前驗證碼"
-  },
-  "关闭两步验证需要输入一个当前有效的验证码——只有口令还不够。": {
-    "en": "Disabling two-step verification also requires a current authenticator code.",
-    "zh-Hant": "關閉兩步驗證還需要輸入一個目前有效的驗證碼。"
   },
   "关闭动态验证码": {
     "en": "Disable authenticator",
@@ -579,10 +535,6 @@ registerMessages({
   "域名已变更，无法使用": {
     "en": "Domain changed; unavailable here",
     "zh-Hant": "網域已變更，無法使用"
-  },
-  "增加或删除登录方式需要重新确认身份——刚登录过也要，否则这个提示就等于没有。": {
-    "en": "Adding or removing a sign-in method requires you to enter your password again.",
-    "zh-Hant": "新增或刪除登入方式需要重新輸入密碼以確認身分。"
   },
   "复制全部": {
     "en": "Copy all",
@@ -755,14 +707,12 @@ registerMessages({
 registerMessages({
   '请先验证邮箱': { en: 'Verify your email first', 'zh-Hant': '請先驗證電子郵件地址' },
   '验证邮箱后即可管理个人资料和安全设置。': { en: 'Verify your email to manage your profile and security settings.', 'zh-Hant': '驗證電子郵件地址後即可管理個人資料和安全設定。' },
-  '验证邮件已进入队列': { en: 'Verification email queued', 'zh-Hant': '驗證郵件已進入佇列' },
   '重新发送验证邮件': { en: 'Resend verification email', 'zh-Hant': '重新傳送驗證郵件' },
 });
 
 // External sign-in methods, remembered sessions and e-mail code sign-in (account page).
 registerMessages({
   '外部登录方式': { en: 'External sign-in methods', 'zh-Hant': '外部登入方式' },
-  '用已关联的 Google 或 Microsoft 等账户登录。关联按提供商的稳定标识进行，不会仅凭邮箱合并账户；两步验证仍然适用。': { en: "Sign in with a linked Google, Microsoft or other account. Links use the provider's stable identifier, never just the email address, and two-step verification still applies.", 'zh-Hant': '以已關聯的 Google、Microsoft 等帳戶登入。關聯依提供者的穩定識別碼進行，不會僅憑電子郵件合併帳戶；兩步驟驗證仍然適用。' },
   '已关联 {label}。': { en: '{label} is now linked.', 'zh-Hant': '已關聯 {label}。' },
   '提供商': { en: 'Provider', 'zh-Hant': '提供者' },
   '提供商中的邮箱': { en: 'Email at provider', 'zh-Hant': '提供者中的電子郵件' },
@@ -789,7 +739,6 @@ registerMessages({
 
 // In-account password change.
 registerMessages({
-  '输入当前口令并设置新口令。其他设备将退出登录，此设备保持登录；两步验证仍然有效。': { en: 'Enter your current password and choose a new one. Other devices are signed out; this device stays signed in, and two-step verification still applies.', 'zh-Hant': '輸入目前密碼並設定新密碼。其他裝置將登出，此裝置保持登入；兩步驟驗證仍然有效。' },
   '口令已更改，其他 {count} 个登录已结束。': { en: 'Password changed. {count} other sign-ins were ended.', 'zh-Hant': '密碼已變更，其他 {count} 個登入已結束。' },
   '两次输入的新口令不一致': { en: 'The new passwords do not match.', 'zh-Hant': '兩次輸入的新密碼不一致' },
   '新口令': { en: 'New password', 'zh-Hant': '新密碼' },
@@ -803,4 +752,21 @@ registerMessages({
 registerMessages({
   '{platform} 上的 {browser}': { en: '{browser} on {platform}', 'zh-Hant': '{platform} 上的 {browser}' },
   '未知设备': { en: 'Unknown device', 'zh-Hant': '未知裝置' },
+});
+
+// CI-76 copy pass.
+registerMessages({
+  "验证邮件已发出": { en: "Verification e-mail sent", "zh-Hant": "驗證郵件已寄出" },
+  "退出工作空间": { en: "Leave workspace", "zh-Hant": "退出工作空間" },
+  "通知": { en: "Notifications", "zh-Hant": "通知" },
+  "编辑者": { en: "Editor", "zh-Hant": "編輯者" },
+  "查看者": { en: "Viewer", "zh-Hant": "檢視者" },
+  "这个口令不符合要求，请使用更长且不包含个人信息的口令": { en: "Choose a longer password that does not contain personal information.", "zh-Hant": "這個密碼不符合要求，請使用更長且不包含個人資料的密碼" },
+  "验证邮件已发出，请在一小时内打开新邮箱中的链接。": { en: "Verification e-mail sent. Open the link in your new inbox within one hour.", "zh-Hant": "驗證郵件已寄出，請在一小時內開啟新信箱中的連結。" },
+  "更改后其他设备将退出登录，此设备保持登录；两步验证不变。": { en: "Other devices are signed out afterwards; this device stays signed in and two-step verification is unchanged.", "zh-Hant": "變更後其他裝置將登出，此裝置保持登入；兩步驗證不變。" },
+  "共享工作空间的最后一位所有者或管理员，以及最后一位平台管理员，需要先移交职责。": { en: "The last owner or administrator of a shared workspace, and the last platform administrator, must hand over first.", "zh-Hant": "共用工作空間的最後一位擁有者或管理員，以及最後一位平台管理員，需要先移交職責。" },
+  "语言用于账户界面；时区用于显示登录设备与安全活动的时间。": { en: "The language applies to the account pages; the time zone is used for device and security activity times.", "zh-Hant": "語言用於帳戶介面；時區用於顯示登入裝置與安全活動的時間。" },
+  "用已关联的外部账户登录；两步验证仍然适用。": { en: "Sign in with a linked external account; two-step verification still applies.", "zh-Hant": "以已關聯的外部帳戶登入；兩步驗證仍然適用。" },
+  "增加或删除登录方式前需要输入口令确认身份。": { en: "Enter your password to confirm your identity before adding or removing a sign-in method.", "zh-Hant": "新增或刪除登入方式前需要輸入密碼確認身分。" },
+  "关闭两步验证需要一个当前有效的验证码。": { en: "Disabling two-step verification requires a current authenticator code.", "zh-Hant": "關閉兩步驗證需要一個目前有效的驗證碼。" },
 });

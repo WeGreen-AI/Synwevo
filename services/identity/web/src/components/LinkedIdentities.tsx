@@ -69,7 +69,7 @@ export default function LinkedIdentities({ timezone = "UTC" }: { timezone?: stri
   const linkable = data.providers.filter(p => !data.items.some(i => i.provider === p.id));
   return <section className="card card-b col gap12">
     <h2>{t("外部登录方式")}</h2>
-    <p className="muted">{t("用已关联的 Google 或 Microsoft 等账户登录。关联按提供商的稳定标识进行，不会仅凭邮箱合并账户；两步验证仍然适用。")}</p>
+    <p className="muted">{t("用已关联的外部账户登录；两步验证仍然适用。")}</p>
     {linkedNotice && <div className="notice ok" role="status">{t("已关联 {label}。", { label: data.items.find(i => i.provider === linkedNotice)?.label || linkedNotice })}</div>}
     {err && <div className="notice err" role="alert">{err}</div>}
     {data.items.length > 0 && <div className="account-table"><table className="tbl">
@@ -85,7 +85,7 @@ export default function LinkedIdentities({ timezone = "UTC" }: { timezone?: stri
     {!data.reauth_fresh && (linkable.length > 0 || data.items.length > 0) && <label className="col gap4">
       <span>{t("你的口令")}</span>
       <input className="input" type="password" aria-label={t("你的口令")} value={password} autoComplete="current-password" onChange={e => setPassword(e.target.value)} />
-      <span className="muted sm">{t("增加或删除登录方式需要重新确认身份——刚登录过也要，否则这个提示就等于没有。")}</span>
+      <span className="muted sm">{t("增加或删除登录方式前需要输入口令确认身份。")}</span>
     </label>}
     {linkable.length > 0 && <div className="row gap12 wrap">
       {linkable.map(p => <button key={p.id} type="button" className="btn flow-provider" disabled={busy || (!data.reauth_fresh && !password)} onClick={() => void link(p.id)}><ProviderMark id={p.id} />{t("关联 {label}", { label: p.label })}</button>)}

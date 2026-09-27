@@ -123,7 +123,7 @@ export default function PushSection() {
   const when = (ts?: number | null) => ts ? new Date(ts * 1000).toLocaleString(locale) : '—';
   return <div className="col gap8 push-section" data-testid="push-section">
     <h3 className="secttl sm">{t('浏览器推送')}</h3>
-    <p className="tiny muted">{t('开启后，这台设备的浏览器会在通知中心有新内容时收到系统通知（须由你在此设备上开启；关闭标签页也能收到）。每类通知是否推送在上表设置；账户安全通知始终推送。')}</p>
+    <p className="tiny muted">{t('开启后，这台设备会在通知中心有新内容时收到系统通知，关闭标签页也能收到；每台设备各自开启。推送哪些类别在上表设置。')}</p>
     {error && <div className="notice err" role="alert">{error}</div>}
     {config && !config.enabled && <p className="muted" role="status">{t('此部署未启用浏览器推送。')}</p>}
     {config?.enabled && <>

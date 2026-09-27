@@ -52,7 +52,7 @@ export default function OrganizationMembers({ organization, mine = [], catalogue
     </>}
     {selected && <OrganizationAction key={`${selected.member.user_id}-${selected.operation}`} spec={{
       title: t(selected.operation === "role" ? "修改成员角色" : selected.operation === "transfer" ? "交接组织所有权" : selected.operation === "assign" ? "分配自定义角色" : "移除组织成员"),
-      impact: selected.operation === "assign" ? t("为 {email} 设置自定义角色。成员立即获得所选角色的组织级权限；工作空间内的权限不变。", { email: selected.member.email }) : t(selected.operation === "role" ? "修改 {email} 的组织角色。工作空间内的权限仍由各空间独立管理。" : selected.operation === "transfer" ? "将组织所有权交给 {email}，你的组织角色将变为管理员。工作空间所有权不会自动转移。" : "移除 {email} 后，对方会失去此组织及所属工作空间的成员资格，相关会话、令牌和待处理邀请会被撤销。", { email: selected.member.email }),
+      impact: selected.operation === "assign" ? t("为 {email} 设置自定义角色。成员立即获得所选角色的组织级权限；工作空间内的权限不变。", { email: selected.member.email }) : t(selected.operation === "role" ? "修改 {email} 的组织角色。工作空间内的权限不变。" : selected.operation === "transfer" ? "将组织所有权交给 {email}，你的组织角色将变为管理员。工作空间所有权不会自动转移。" : "移除 {email} 后，对方会失去此组织及所属工作空间的成员资格，相关会话、令牌和待处理邀请会被撤销。", { email: selected.member.email }),
       danger: selected.operation !== "role",
       run: reason => selected.operation === "assign" ? put(`${orgPath(organization.id)}/members/${encodeURIComponent(selected.member.user_id)}/roles`, { role_ids: picked }).then(() => reason)
         : selected.operation === "role" ? patch(`${orgPath(organization.id)}/members/${encodeURIComponent(selected.member.user_id)}`, { role, reason })
@@ -68,10 +68,10 @@ export default function OrganizationMembers({ organization, mine = [], catalogue
       <FlowError error={effective.error} />
       {!effective.data && !effective.error ? <Loading /> : effective.data && <>
         <p className="tiny muted">{t("基础角色：{role}", { role: t(roleSource(effective.data.base_role || "member")) })}{effective.data.roles.length ? " · " + t("自定义角色：{names}", { names: effective.data.roles.map(r => r.name).join("、") }) : ""}</p>
-        {!effective.data.permissions.length ? <p className="muted">{t("该成员没有组织级权限；工作空间内的权限由各空间独立管理。")}</p>
+        {!effective.data.permissions.length ? <p className="muted">{t("该成员没有组织级权限；工作空间内的权限另行管理。")}</p>
           : <ul className="org-list perm-list">{effective.data.permissions.map(p => <li key={p}><div><strong>{labelOf(p)}</strong>
             <div className="tiny muted">{t("来自：{sources}", { sources: (effective.data!.sources[p] || []).map(src => src.startsWith("base:") ? t("基础角色 {role}", { role: t(roleSource(src.slice(5))) }) : t("角色「{name}」", { name: effective.data!.roles.find(r => `role:${r.id}` === src)?.name || src })).join("、") })}</div></div></li>)}</ul>}
-        <p className="tiny muted">{t("这里显示的是根据成员资格与角色计算出的结果，不是以该成员身份登录后的预览。")}</p>
+        <p className="tiny muted">{t("按成员资格与角色计算得出，不是该成员登录后看到的内容。")}</p>
       </>}
     </Modal>}
   </section>;

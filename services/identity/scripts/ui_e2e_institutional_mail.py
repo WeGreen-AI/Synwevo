@@ -84,9 +84,11 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
         expect(page.locator("main, body").first).to_contain_text("synwevo@example.test")
     notes.append(f"{engine}: registered {address[:4]}…@link.cuhk.edu.hk on a 390px viewport; the inbox screen names the sender and the gateway/quarantine guidance in zh-Hans, en and zh-Hant")
 
-    # ---- the mail: quoted-printable, with the link
+    # ---- the mail: quoted-printable, with the link. The message is multipart/alternative since
+    # CI-45, so the encoding is a property of its text part, not of the envelope.
     m = newest_mail_to(mail_dir, address, started, with_token=True)
-    assert m["Content-Transfer-Encoding"] == "quoted-printable", m["Content-Transfer-Encoding"]
+    text_part = next(p for p in m.walk() if p.get_content_type() == "text/plain")
+    assert text_part["Content-Transfer-Encoding"] == "quoted-printable", text_part["Content-Transfer-Encoding"]
     text = mail_text(m)
     link = re.search(r"https?://\S+/verify-email\?lang=zh-Hans#token=[A-Za-z0-9_-]+", text)[0]
     link = accounts + link[link.index("/verify-email"):]

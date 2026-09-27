@@ -43,7 +43,7 @@ function Registration({ inviteToken }: { inviteToken: string }) {
       window.location.assign(`/verify-email${result.delivery === "unavailable" ? "?delivery=unavailable" : ""}`);
     });
   }
-  return <AuthFrame title={t(preview ? "接受邀请，创建账户" : "创建你的账户")} description={t(preview ? "此邀请将验证受邀邮箱，并加入指定工作空间。请确认后提交。" : "先验证邮箱，再为个人工作或团队协作准备空间。")}>
+  return <AuthFrame title={t(preview ? "接受邀请，创建账户" : "创建账户")} description={t(preview ? "受邀邮箱无需再验证；创建后直接加入工作空间。" : "创建后需要先验证邮箱。")}>
     {joined ? <><FlowError error={action.error} /><p role="status">{t("已加入工作空间。")}</p><a className="btn primary" href="/onboarding">{t("继续")}</a></> : me ? <Loading /> : error ? <><FlowError error={error} /><button type="button" className="btn" onClick={() => void action.run(refresh)} disabled={action.busy}>{t("重试")}</button></> : !state ? <Loading />
       : loadError ? <><FlowError error={loadError} /><a href="/invite" className="btn">{t("返回邀请")}</a><a href="/register" onClick={clearInvitation}>{t("不接受此邀请，返回注册")}</a></>
       : inviteToken && !preview ? <Loading />
@@ -55,7 +55,7 @@ function Registration({ inviteToken }: { inviteToken: string }) {
         <div className="field"><label htmlFor="register-email">{t("邮箱")}</label><input id="register-email" className="input" value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="username" inputMode="email" autoCapitalize="off" spellCheck={false} readOnly={!!preview} required aria-describedby={preview ? "invite-email-note" : undefined} />{preview && <span id="invite-email-note" className="tiny muted">{t("邮箱由邀请决定，无法在这里修改。")}</span>}</div>
         <PasswordField value={password} onChange={setPassword} />
         {!preview && <fieldset className="flow-options"><legend>{t("你希望如何开始？")}</legend>
-          <label className="flow-option"><input type="radio" name="intent" value="personal" checked={intent === "personal"} onChange={() => setIntent("personal")} /><span>{t("个人使用")}<small>{t("为自己的文档和项目建立空间。")}</small></span></label>
+          <label className="flow-option"><input type="radio" name="intent" value="personal" checked={intent === "personal"} onChange={() => setIntent("personal")} /><span>{t("个人使用")}<small>{t("建立自己的工作空间，整理文档与项目。")}</small></span></label>
           <label className="flow-option"><input type="radio" name="intent" value="organization" checked={intent === "organization"} onChange={() => setIntent("organization")} /><span>{t("团队协作")}<small>{t("创建组织，再邀请团队成员。")}</small></span></label>
         </fieldset>}
         {!preview && challenge.element}

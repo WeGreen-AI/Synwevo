@@ -79,14 +79,6 @@ export const governanceMessages = {
     "en": "Unclaimed historical data",
     "zh-Hant": "待認領的歷史資料"
   },
-  "这些数据是账户体系建立之前产生的。它现在属于一个没有任何成员的工作空间，因此没有人能读取它——包括平台管理员。指派给一个已有账户之后，才会有人能打开。": {
-    "en": "These records predate the account system. They belong to a workspace with no members, so nobody—including platform administrators—can read them. Assign the workspace to an existing account to grant access.",
-    "zh-Hant": "這些資料是帳戶體系建立之前產生的。它現在屬於一個沒有任何成員的工作空間，因此沒有人能讀取它——包括平台管理員。指派給一個已有帳戶之後，才會有人能打開。"
-  },
-  "{p0}个项目，{p1}位成员。请选择接收此空间的已有账户。": {
-    "en": "{p0} projects, {p1} members. Choose an existing account to receive this workspace.",
-    "zh-Hant": "{p0}個專案，{p1}位成員。請選擇接收此空間的已有帳戶。"
-  },
   "搜索接收账户": {
     "en": "Search recipient accounts",
     "zh-Hant": "搜索接收帳戶"
@@ -110,10 +102,6 @@ export const governanceMessages = {
   "将把「{p0}」及其中{p1}个项目的访问权交给{p2}，角色为所有者。不会授予平台管理权限。": {
     "en": "Give {p2} ownership of “{p0}” and access to its {p1} projects. This does not grant platform administration rights.",
     "zh-Hant": "將把「{p0}」及其中{p1}個專案的訪問權交給{p2}，角色為所有者。不會授予平台管理權限。"
-  },
-  "已把包含 {p0} 个项目的空间指派给 {p1}。": {
-    "en": "Assigned the workspace with {p0} projects to {p1}.",
-    "zh-Hant": "已把包含 {p0} 個專案的空間指派給 {p1}。"
   },
   "发送找回邮件": {
     "en": "Send recovery email",
@@ -182,10 +170,6 @@ export const governanceMessages = {
   "状态": {
     "en": "Status",
     "zh-Hant": "狀態"
-  },
-  "空间": {
-    "en": "Workspaces",
-    "zh-Hant": "空間"
   },
   "在线会话": {
     "en": "Active sessions",
@@ -259,14 +243,6 @@ export const governanceMessages = {
     "en": "Search workspaces",
     "zh-Hant": "搜索工作空間"
   },
-  "刷新空间": {
-    "en": "Refresh workspaces",
-    "zh-Hant": "重新整理空間"
-  },
-  "显示数量，不显示内容。平台管理权限不等于读取文档或管理空间成员的权限。": {
-    "en": "Only counts are shown, never content. Platform administration does not grant document access or workspace member management rights.",
-    "zh-Hant": "顯示數量，不顯示內容。平台管理權限不等於讀取文檔或管理空間成員的權限。"
-  },
   "正在加载工作空间…": {
     "en": "Loading workspaces…",
     "zh-Hant": "正在加載工作空間…"
@@ -291,14 +267,6 @@ export const governanceMessages = {
     "en": "Projects",
     "zh-Hant": "專案"
   },
-  "冻结空间": {
-    "en": "Freeze workspace",
-    "zh-Hant": "凍結空間"
-  },
-  "解冻空间": {
-    "en": "Unfreeze workspace",
-    "zh-Hant": "解凍空間"
-  },
   "成员与邀请": {
     "en": "Members & invitations",
     "zh-Hant": "成員與邀請"
@@ -306,22 +274,6 @@ export const governanceMessages = {
   "没有匹配的工作空间。": {
     "en": "No matching workspaces.",
     "zh-Hant": "沒有匹配的工作空間。"
-  },
-  "成员将立即失去应用访问，当前会话将移出空间。已有成员关系和内容保留。": {
-    "en": "Members will immediately lose application access and current sessions will leave this workspace. Memberships and content are retained.",
-    "zh-Hant": "成員將立即失去應用訪問，當前工作階段將移出空間。已有成員關係和內容保留。"
-  },
-  "空间将恢复可用，成员仍按原有资格访问。此前结束的登录不会恢复。": {
-    "en": "The workspace will be available with its existing access rules. Previously ended sessions will not be restored.",
-    "zh-Hant": "空間將恢復可用，成員仍按原有資格訪問。此前結束的登入不會恢復。"
-  },
-  "空间已冻结。": {
-    "en": "Workspace frozen.",
-    "zh-Hant": "空間已凍結。"
-  },
-  "空间已解冻。若之后恢复更早的备份，冻结可能重新生效，需要再次解冻。": {
-    "en": "Workspace unfrozen. Restoring an earlier backup may freeze it again; it would then need to be unfrozen again.",
-    "zh-Hant": "空間已解凍。若之後恢復更早的備份，凍結可能重新生效，需要再次解凍。"
   },
   "审计记录": {
     "en": "Audit records",
@@ -355,10 +307,6 @@ export const governanceMessages = {
     "en": "Account administration",
     "zh-Hant": "帳戶管理"
   },
-  "空间管理": {
-    "en": "Workspace administration",
-    "zh-Hant": "空間管理"
-  },
   "登录与账户安全": {
     "en": "Sign-in and account security",
     "zh-Hant": "登入與帳戶安全"
@@ -374,10 +322,6 @@ export const governanceMessages = {
   "两步验证": {
     "en": "Two-step verification",
     "zh-Hant": "兩步驗證"
-  },
-  "只读。翻页时保留本次查询的记录范围；点击刷新查看新记录。": {
-    "en": "Read only. Pages retain the current query's insertion boundary. Refresh to include new records.",
-    "zh-Hant": "唯讀。翻頁時保留本次查詢的記錄範圍；點擊重新整理查看新記錄。"
   },
   "正在加载审计记录…": {
     "en": "Loading audit records…",
@@ -439,10 +383,6 @@ export const governanceMessages = {
     "en": "It does not exist, or you are not a member.",
     "zh-Hant": "它不存在，或者你不是它的成員。"
   },
-  "只有空间所有者和管理员可以查看与管理成员。{p0}": {
-    "en": "Only workspace owners and administrators can view and manage members. {p0}",
-    "zh-Hant": "只有空間所有者和管理員可以查看與管理成員。{p0}"
-  },
   "你在这里的角色是「{role}」。": {
     "en": "Your role here is “{role}”.",
     "zh-Hant": "你在這裡的角色是「{role}」。"
@@ -454,10 +394,6 @@ export const governanceMessages = {
   "成员列表加载失败": {
     "en": "Could not load members",
     "zh-Hant": "成員列表加載失敗"
-  },
-  "{kind}空间": {
-    "en": "{kind} workspace",
-    "zh-Hant": "{kind}空間"
   },
   "你的角色：{p0}": {
     "en": "Your role: {p0}",
@@ -471,18 +407,6 @@ export const governanceMessages = {
     "en": "Access must be granted individually",
     "zh-Hant": "需要逐人授予使用資格"
   },
-  "实际访问仍取决于账户、空间和应用是否可用；授予使用资格不会启用已停用的应用。": {
-    "en": "Access also depends on the account, workspace and application being available. Granting access does not enable a disabled application.",
-    "zh-Hant": "實際訪問仍取決於帳戶、空間和應用是否可用；授予使用資格不會啓用已停用的應用。"
-  },
-  "这个空间已被平台管理员冻结：成员暂时无法使用其中的应用。你仍然可以移除成员、撤销权限，但不能邀请新成员、提升角色或授予权限，直到空间解冻。": {
-    "en": "A platform administrator froze this workspace. Members cannot use its applications. You can still remove members and revoke access, but cannot invite members, promote roles or grant access until it is unfrozen.",
-    "zh-Hant": "這個空間已被平台管理員凍結：成員暫時無法使用其中的應用。你仍然可以移除成員、撤銷權限，但不能邀請新成員、提升角色或授予權限，直到空間解凍。"
-  },
-  "这个空间只有{p0}位状态正常的所有者。建议再指定一位所有者，以免唯一的所有者无法联系时没有人能管理这个空间。": {
-    "en": "This workspace has only {p0} active owner. Consider appointing another owner so the workspace can still be managed if its sole owner becomes unavailable.",
-    "zh-Hant": "這個空間只有{p0}位狀態正常的所有者。建議再指定一位所有者，以免唯一的所有者無法聯繫時沒有人能管理這個空間。"
-  },
   "{p0} 待接受": {
     "en": "{p0} pending",
     "zh-Hant": "{p0} 待接受"
@@ -495,25 +419,9 @@ export const governanceMessages = {
     "en": "Admin",
     "zh-Hant": "管理員"
   },
-  "编辑": {
-    "en": "Editor",
-    "zh-Hant": "編輯者"
-  },
-  "只读": {
-    "en": "Viewer",
-    "zh-Hant": "檢視者"
-  },
   "管理所有成员（包括其他所有者）、邀请任意角色、移交所有权": {
     "en": "Manage all members, including other owners; invite any role; transfer ownership",
     "zh-Hant": "管理所有成員（包括其他所有者）、邀請任意角色、移交所有權"
-  },
-  "邀请成员，管理编辑与只读成员，可授予最高到管理员的角色": {
-    "en": "Invite members, manage editors and viewers, and assign roles up to administrator",
-    "zh-Hant": "邀請成員，管理編輯與唯讀成員，可授予最高到管理員的角色"
-  },
-  "在空间内编辑，不能管理成员": {
-    "en": "Edit within the workspace; no member management",
-    "zh-Hant": "在空間內編輯，不能管理成員"
   },
   "只能查看，不能管理成员；导出需要单独开启": {
     "en": "View only; no member management; export must be enabled separately",
@@ -562,18 +470,6 @@ export const governanceMessages = {
   "口令": {
     "en": "Password",
     "zh-Hant": "密碼"
-  },
-  "口令 + 动态验证码": {
-    "en": "Password + authenticator code",
-    "zh-Hant": "密碼 + 動態驗證碼"
-  },
-  "口令 + 恢复码": {
-    "en": "Password + recovery code",
-    "zh-Hant": "密碼 + 恢復碼"
-  },
-  "安全密钥（含设备验证）": {
-    "en": "Security key with device verification",
-    "zh-Hant": "安全密鑰（含設備驗證）"
   },
   "安全密钥": {
     "en": "Passkey",
@@ -759,10 +655,6 @@ export const governanceMessages = {
     "en": "New registration policy",
     "zh-Hant": "新的註冊策略"
   },
-  "开放注册允许访客建立账户并验证邮箱；其他策略关闭公开注册。已有邀请仍须通过邀请流程的独立校验。": {
-    "en": "Open registration lets visitors create accounts and verify their email. Other policies disable public registration. Existing invitations are still subject to the invitation flow’s separate checks.",
-    "zh-Hant": "開放註冊允許訪客建立帳戶並驗證電子郵件地址；其他策略關閉公開註冊。已有邀請仍須通過邀請流程的獨立驗證。"
-  },
   "保存注册策略": {
     "en": "Save registration policy",
     "zh-Hant": "保存註冊策略"
@@ -818,10 +710,6 @@ export const governanceMessages = {
   "当前为 SMTP 模式；已寄出表示邮件服务器已接受，不代表已到达收件箱。": {
     "en": "SMTP mode: Sent means the mail server accepted the message, not that it reached the inbox.",
     "zh-Hant": "當前為 SMTP 模式；已寄出表示郵件服務器已接受，不代表已到達收件箱。"
-  },
-  "这里只显示投递元数据。找回和验证邮件的安全重试会生成新链接，并使旧链接失效；邀请请由空间管理员在成员与邀请中重发。安全通知、投递结果不确定或无法识别的历史失败不能重放。": {
-    "en": "Only delivery metadata is shown. Retrying recovery or verification mail creates a new link and invalidates the old link. Workspace administrators can resend invitations from Members and invitations. Security notifications, uncertain deliveries and unrecognized historical failures cannot be replayed.",
-    "zh-Hant": "這裡只顯示投遞中繼資料。找回和驗證郵件的安全重試會生成新連結，並使舊連結失效；邀請請由空間管理員在成員與邀請中重發。安全通知、投遞結果不確定或無法識別的歷史失敗不能重放。"
   },
   "搜索收件人或邮件编号": {
     "en": "Search recipient or message ID",
@@ -915,14 +803,6 @@ export const governanceMessages = {
     "en": "No matching organizations.",
     "zh-Hant": "沒有匹配的組織。"
   },
-  "组织将停止使用，并保留七天恢复期限。关联空间的访问会被收回，内容不会通过此操作提供给管理员。": {
-    "en": "The organization will become unavailable with a seven-day recovery period. Access to associated workspaces will be revoked. This action does not expose their content to administrators.",
-    "zh-Hant": "組織將停止使用，並保留七天恢復期限。關聯空間的訪問會被收回，內容不會通過此操作提供給管理員。"
-  },
-  "组织及其关联空间将停止应用访问，已有会话和令牌会被撤销。": {
-    "en": "The organization and its workspaces will lose application access. Existing sessions and tokens will be revoked.",
-    "zh-Hant": "組織及其關聯空間將停止應用訪問，已有工作階段和權杖會被撤銷。"
-  },
   "组织将按原有成员关系恢复可用。已撤销的会话和令牌不会恢复；删除前已冻结的组织恢复后仍为冻结状态。": {
     "en": "Availability will be restored using existing memberships. Revoked sessions and tokens will not return. Organizations frozen before deletion remain frozen after recovery.",
     "zh-Hant": "組織將按原有成員關係恢復可用。已撤銷的工作階段和權杖不會恢復；刪除前已凍結的組織恢復後仍為凍結狀態。"
@@ -951,17 +831,9 @@ export const governanceMessages = {
     "en": "Refresh invitations",
     "zh-Hant": "重新整理邀請"
   },
-  "空间冻结期间不能邀请": {
-    "en": "Cannot invite while the workspace is frozen",
-    "zh-Hant": "空間凍結期間不能邀請"
-  },
   "邀请成员": {
     "en": "Invite members",
     "zh-Hant": "邀請成員"
-  },
-  "邮件排队或寄出不代表对方已加入。只有接受邀请后才成为成员。重发会让旧链接失效。": {
-    "en": "Queued or sent mail does not mean someone has joined. They become a member only after accepting. Resending invalidates the old link.",
-    "zh-Hant": "郵件排隊或寄出不代表對方已加入。只有接受邀請後才成為成員。重發會讓舊連結失效。"
   },
   "重试邀请列表": {
     "en": "Retry invitation list",
@@ -990,10 +862,6 @@ export const governanceMessages = {
   "不能管理比自己角色更高的邀请": {
     "en": "Cannot manage an invitation with a higher role than yours",
     "zh-Hant": "不能管理比自己角色更高的邀請"
-  },
-  "邀请已接受、已撤销或已过期": {
-    "en": "Invitation accepted, revoked or expired",
-    "zh-Hant": "邀請已接受、已撤銷或已過期"
   },
   "选择邀请 {p0}": {
     "en": "Select invitation for {p0}",
@@ -1030,10 +898,6 @@ export const governanceMessages = {
   "重发邀请": {
     "en": "Resend invitation",
     "zh-Hant": "重發邀請"
-  },
-  "空间冻结期间不能重发": {
-    "en": "Cannot resend while the workspace is frozen",
-    "zh-Hant": "空間凍結期間不能重發"
   },
   "撤销邀请": {
     "en": "Revoke invitation",
@@ -1083,17 +947,9 @@ export const governanceMessages = {
     "en": "Email addresses (one per line or separated by commas)",
     "zh-Hant": "電子郵件地址（每行一個，也可用逗號分隔）"
   },
-  "{p0}个邮箱；一次最多 100 个。每个空间 24 小时最多创建 50 个邀请，超出部分会报告失败。": {
-    "en": "{p0} addresses; up to 100 per submission. Each workspace can create 50 invitations per 24 hours; additional invitations will be reported as failures.",
-    "zh-Hant": "{p0}個電子郵件地址；一次最多 100 個。每個空間 24 小時最多建立 50 個邀請，超出部分會報告失敗。"
-  },
   "邀请角色": {
     "en": "Invited role",
     "zh-Hant": "邀請角色"
-  },
-  "允许导出（编辑及以上角色自带）": {
-    "en": "Allow export (included with editor and higher roles)",
-    "zh-Hant": "允許匯出（編輯及以上角色自帶）"
   },
   "有效天数": {
     "en": "Valid for days",
@@ -1110,10 +966,6 @@ export const governanceMessages = {
   "将发送新的邀请，旧链接会失效。": {
     "en": "A new invitation will be sent and the old link will expire.",
     "zh-Hant": "將發送新的邀請，舊連結會失效。"
-  },
-  "这些链接将失效，收件人将不能通过它们加入空间。已加入的成员不受影响。": {
-    "en": "These links will expire and can no longer be used to join the workspace. Existing members are unaffected.",
-    "zh-Hant": "這些連結將失效，收件人將不能通過它們加入空間。已加入的成員不受影響。"
   },
   "每项单独执行并报告结果。": {
     "en": "Each item is processed and reported separately.",
@@ -1147,10 +999,6 @@ export const governanceMessages = {
     "en": "Select actionable items on this page",
     "zh-Hant": "選擇本頁可操作的項"
   },
-  "不能修改自己的权限，请使用退出空间或移交所有权": {
-    "en": "You cannot change your own permissions. Leave the workspace or transfer ownership instead.",
-    "zh-Hant": "不能修改自己的權限，請使用退出空間或移交所有權"
-  },
   "不能管理同级或更高角色的成员": {
     "en": "You cannot manage members with the same or a higher role",
     "zh-Hant": "不能管理同級或更高角色的成員"
@@ -1167,21 +1015,9 @@ export const governanceMessages = {
     "en": "Disable export",
     "zh-Hant": "關閉匯出"
   },
-  "编辑及以上角色自带导出权限；需先降低角色": {
-    "en": "Editor and higher roles include export; lower the role first",
-    "zh-Hant": "編輯及以上角色自帶匯出權限；需先降低角色"
-  },
-  "空间冻结期间不能增加权限": {
-    "en": "Cannot add permissions while the workspace is frozen",
-    "zh-Hant": "空間凍結期間不能增加權限"
-  },
   "授予应用使用资格": {
     "en": "Grant application access",
     "zh-Hant": "授予應用使用資格"
-  },
-  "空间冻结期间不能授予": {
-    "en": "Cannot grant access while the workspace is frozen",
-    "zh-Hant": "空間凍結期間不能授予"
   },
   "已经授予": {
     "en": "Already granted",
@@ -1202,10 +1038,6 @@ export const governanceMessages = {
   "移交所有权": {
     "en": "Transfer ownership",
     "zh-Hant": "移交所有權"
-  },
-  "空间冻结期间不能移交": {
-    "en": "Cannot transfer ownership while the workspace is frozen",
-    "zh-Hant": "空間凍結期間不能移交"
   },
   "接收方账户必须正常": {
     "en": "The recipient account must be active",
@@ -1239,10 +1071,6 @@ export const governanceMessages = {
     "en": "Not explicitly set",
     "zh-Hant": "未單獨設置"
   },
-  "退出空间": {
-    "en": "Leave workspace",
-    "zh-Hant": "退出空間"
-  },
   "正在更新成员列表…": {
     "en": "Updating members…",
     "zh-Hant": "正在更新成員列表…"
@@ -1270,10 +1098,6 @@ export const governanceMessages = {
   "随角色授予": {
     "en": "Included with role",
     "zh-Hant": "隨角色授予"
-  },
-  "账户、空间或应用当前不可用": {
-    "en": "Account, workspace or application currently unavailable",
-    "zh-Hant": "帳戶、空間或應用當前不可用"
   },
   "未配置应用": {
     "en": "No application configured",
@@ -1311,10 +1135,6 @@ export const governanceMessages = {
     "en": "Grant access",
     "zh-Hant": "授予使用資格"
   },
-  "{members} 将获得在「{space}」使用 {app} 的资格。账户、空间和应用仍须正常可用。": {
-    "en": "{members} will receive access to {app} in “{space}”. The account, workspace and application must still be available.",
-    "zh-Hant": "{members} 將獲得在「{space}」使用 {app} 的資格。帳戶、空間和應用仍須正常可用。"
-  },
   "更新导出权限": {
     "en": "Update export permission",
     "zh-Hant": "更新匯出權限"
@@ -1351,10 +1171,6 @@ export const governanceMessages = {
     "en": "Sign out",
     "zh-Hant": "退出登入"
   },
-  "将成为所有者：可以管理这个空间里的所有成员（包括你）、邀请任意角色、移交所有权。所有者只能由其他所有者降级。": {
-    "en": "Will become an owner, able to manage all members including you, invite any role and transfer ownership. Only other owners can demote an owner.",
-    "zh-Hant": "將成為所有者：可以管理這個空間里的所有成員（包括你）、邀請任意角色、移交所有權。所有者只能由其他所有者降級。"
-  },
   "将不再是所有者：失去管理其他所有者与管理员、移交所有权的权限。": {
     "en": "Will no longer be an owner, losing the ability to manage owners and administrators or transfer ownership.",
     "zh-Hant": "將不再是所有者：失去管理其他所有者與管理員、移交所有權的權限。"
@@ -1379,10 +1195,6 @@ export const governanceMessages = {
     "en": "Revoked {p0} application grants and {p1} tokens; ",
     "zh-Hant": "已撤銷 {p0} 項應用使用資格、{p1} 個權杖；"
   },
-  "{p0} 个登录会话已移出该空间；取消了 {p1} 个 TA 发出的邀请": {
-    "en": "moved {p0} sessions out of the workspace and cancelled {p1} invitations they issued",
-    "zh-Hant": "{p0} 個登入工作階段已移出該空間；取消了 {p1} 個 TA 發出的邀請"
-  },
   "修改 {p0} 的角色": {
     "en": "Change role for {p0}",
     "zh-Hant": "修改 {p0} 的角色"
@@ -1402,10 +1214,6 @@ export const governanceMessages = {
   "（当前）": {
     "en": "(current)",
     "zh-Hant": "（當前）"
-  },
-  "空间已冻结：只能降低角色，不能提升。": {
-    "en": "Workspace frozen: roles can only be lowered, not raised.",
-    "zh-Hant": "空間已凍結：只能降低角色，不能提升。"
   },
   "管理员最多可以授予「管理员」；授予后你将不能再管理这位成员。": {
     "en": "Administrators can grant up to the administrator role. You will no longer be able to manage that member afterward.",
@@ -1427,17 +1235,9 @@ export const governanceMessages = {
     "en": "({p0} others already have this role and will not change)",
     "zh-Hant": "（另有{p0}位已經是該角色，不會變化）"
   },
-  "降为只读的成员将不能再编辑，导出权限随之关闭。": {
-    "en": "Members changed to viewer will lose editing and export access.",
-    "zh-Hant": "降為唯讀的成員將不能再編輯，匯出權限隨之關閉。"
-  },
   "其中包含管理员或所有者的降级、或新的所有者：需要写明理由并重新验证身份。": {
     "en": "This includes demoting an administrator or owner, or appointing a new owner. A written reason and identity verification are required.",
     "zh-Hant": "其中包含管理員或所有者的降級、或新的所有者：需要寫明理由並重新驗證身份。"
-  },
-  "空间已冻结，其中{p0}项提升会被拒绝。": {
-    "en": "Workspace frozen: {p0} promotions will be refused.",
-    "zh-Hant": "空間已凍結，其中{p0}項提升會被拒絕。"
   },
   "每一项单独执行、单独报告结果；被拒绝的项不会改变。": {
     "en": "Each item is processed and reported separately. Refused items remain unchanged.",
@@ -1467,25 +1267,9 @@ export const governanceMessages = {
     "en": "Effective immediately:",
     "zh-Hant": "立即生效："
   },
-  "失去这个空间里全部项目、模板与文件的访问；": {
-    "en": "Access to all projects, templates and files in this workspace is removed;",
-    "zh-Hant": "失去這個空間里全部專案、範本與文件的訪問；"
-  },
-  "在这个空间使用{p0}的资格被撤销，已签发给应用的令牌全部失效；": {
-    "en": "Access to {p0} in this workspace is revoked, along with all tokens issued to the application;",
-    "zh-Hant": "在這個空間使用{p0}的資格被撤銷，已簽發給應用的權杖全部失效；"
-  },
-  "正停留在这个空间的登录会被移出该空间（账户本身不会被退出登录）；": {
-    "en": "Sessions currently in this workspace are moved out, without signing out of the account;",
-    "zh-Hant": "正停留在這個空間的登入會被移出該空間（帳戶本身不會被退出登入）；"
-  },
   "这些成员发出但尚未被接受的邀请会被取消。": {
     "en": "Pending invitations issued by these members are cancelled.",
     "zh-Hant": "這些成員發出但尚未被接受的邀請會被取消。"
-  },
-  "账户本身不受影响。以后需要时可以重新邀请，重新加入后从头开始，不会恢复原来的角色和资格。": {
-    "en": "The account itself is unaffected. You can invite them again later, but rejoining does not restore their previous role or access grants.",
-    "zh-Hant": "帳戶本身不受影響。以後需要時可以重新邀請，重新加入後從頭開始，不會恢復原來的角色和資格。"
   },
   "撤销 {p0} 使用资格": {
     "en": "Revoke {p0} access",
@@ -1523,10 +1307,6 @@ export const governanceMessages = {
     "en": "Your role will change to “{role}”.",
     "zh-Hant": "你的角色將變為「{role}」。"
   },
-  "两项变化在同一个事务里完成，空间在任何时刻都有所有者。": {
-    "en": "Both changes happen in one transaction, so the workspace always has an owner.",
-    "zh-Hant": "兩項變化在同一個事務里完成，空間在任何時刻都有所有者。"
-  },
   "移交之后，我的角色": {
     "en": "My role after the transfer",
     "zh-Hant": "移交之後，我的角色"
@@ -1539,25 +1319,9 @@ export const governanceMessages = {
     "en": "You will leave “{space}”:",
     "zh-Hant": "你將離開「{space}」："
   },
-  "失去这个空间里全部内容的访问；": {
-    "en": "Access to all content in this workspace is removed;",
-    "zh-Hant": "失去這個空間里全部內容的訪問；"
-  },
-  "你在这个空间的应用使用资格与令牌会被撤销；": {
-    "en": "Your application access and tokens in this workspace are revoked;",
-    "zh-Hant": "你在這個空間的應用使用資格與權杖會被撤銷；"
-  },
   "你发出但尚未被接受的邀请会被取消。": {
     "en": "Pending invitations you issued are cancelled.",
     "zh-Hant": "你發出但尚未被接受的邀請會被取消。"
-  },
-  "要回来，需要空间管理员重新邀请你。": {
-    "en": "A workspace administrator must invite you again to return.",
-    "zh-Hant": "要回來，需要空間管理員重新邀請你。"
-  },
-  "你是这个空间唯一的所有者，不能直接退出。请先把所有权移交给另一位成员。": {
-    "en": "You are the only owner and cannot leave directly. Transfer ownership to another member first.",
-    "zh-Hant": "你是這個空間唯一的所有者，不能直接退出。請先把所有權移交給另一位成員。"
   },
   "{n} 秒": {
     "en": "{n} seconds",
@@ -1607,10 +1371,6 @@ export const governanceMessages = {
     "en": "At least one active owner must remain.",
     "zh-Hant": "必須保留至少一位正常的所有者。"
   },
-  "请先移交所有权，再退出空间。": {
-    "en": "Transfer ownership before leaving the workspace.",
-    "zh-Hant": "請先移交所有權，再退出空間。"
-  },
   "注册策略已更改，请刷新后重试。": {
     "en": "Registration policy changed. Refresh and try again.",
     "zh-Hant": "註冊策略已更改，請重新整理後重試。"
@@ -1647,14 +1407,6 @@ export const governanceMessages = {
     "en": "The organization's seven-day recovery period has expired.",
     "zh-Hant": "組織的七天恢復期限已過。"
   },
-  "空间已冻结，不能增加权限。": {
-    "en": "Workspace frozen. Permissions cannot be increased.",
-    "zh-Hant": "空間已凍結，不能增加權限。"
-  },
-  "该账户已经是空间成员。": {
-    "en": "This account is already a workspace member.",
-    "zh-Hant": "該帳戶已經是空間成員。"
-  },
   "邀请过于频繁，请稍后重试。": {
     "en": "Too many invitations. Try again later.",
     "zh-Hant": "邀請過於頻繁，請稍後重試。"
@@ -1666,10 +1418,6 @@ export const governanceMessages = {
   "邀请已接受或已撤销，请刷新。": {
     "en": "Invitation accepted or revoked. Refresh the page.",
     "zh-Hant": "邀請已接受或已撤銷，請重新整理。"
-  },
-  "该空间已被认领或不能认领，请刷新。": {
-    "en": "Workspace already claimed or not claimable. Refresh the page.",
-    "zh-Hant": "該空間已被認領或不能認領，請重新整理。"
   },
   "操作未完成，请刷新后重试。": {
     "en": "Action not completed. Refresh and try again.",
@@ -1690,6 +1438,65 @@ export const governanceMessages = {
   "请求编号：{id}": {
     "en": "Request ID: {id}",
     "zh-Hant": "請求編號：{id}"
-  }
+  },
+  "账户体系建立之前的数据，属于一个没有成员的工作空间，目前没有人能读取（包括平台管理员）。指派给一个已有账户后才能打开。": { en: "Data from before the account system, held in a workspace with no members: nobody can read it right now, platform administrators included. Assign it to an existing account to make it accessible.", "zh-Hant": "帳戶體系建立之前的資料，屬於一個沒有成員的工作空間，目前沒有人能讀取（包括平台管理員）。指派給一個已有帳戶後才能開啟。" },
+  "{p0} 个项目，{p1} 位成员。请选择接收这个工作空间的已有账户。": { en: "{p0} projects, {p1} members. Choose an existing account to receive this workspace.", "zh-Hant": "{p0} 個專案，{p1} 位成員。請選擇接收這個工作空間的已有帳戶。" },
+  "已把包含 {p0} 个项目的工作空间指派给 {p1}。": { en: "Assigned the workspace with {p0} projects to {p1}.", "zh-Hant": "已把包含 {p0} 個專案的工作空間指派給 {p1}。" },
+  "刷新工作空间": { en: "Refresh workspaces", "zh-Hant": "重新整理工作空間" },
+  "只显示数量，不显示内容；平台管理权限不包含读取文档或管理工作空间成员。": { en: "Counts only, never content; platform administration does not include reading documents or managing workspace members.", "zh-Hant": "只顯示數量，不顯示內容；平台管理權限不包含讀取文件或管理工作空間成員。" },
+  "冻结工作空间": { en: "Freeze workspace", "zh-Hant": "凍結工作空間" },
+  "解冻工作空间": { en: "Unfreeze workspace", "zh-Hant": "解凍工作空間" },
+  "成员将立即失去应用访问，当前会话将移出这个工作空间。成员关系和内容保留。": { en: "Members immediately lose application access and current sessions leave this workspace. Memberships and content are kept.", "zh-Hant": "成員將立即失去應用存取，目前工作階段將移出這個工作空間。成員關係和內容保留。" },
+  "工作空间将恢复可用，成员仍按原有资格访问。此前结束的登录不会恢复。": { en: "The workspace becomes available again with its existing access; sessions ended earlier are not restored.", "zh-Hant": "工作空間將恢復可用，成員仍按原有資格存取。此前結束的登入不會恢復。" },
+  "工作空间已冻结。": { en: "Workspace frozen.", "zh-Hant": "工作空間已凍結。" },
+  "工作空间已解冻。若之后恢复更早的备份，冻结可能重新生效，需要再次解冻。": { en: "Workspace unfrozen. Restoring an earlier backup may freeze it again, in which case unfreeze it once more.", "zh-Hant": "工作空間已解凍。若之後恢復更早的備份，凍結可能重新生效，需要再次解凍。" },
+  "工作空间管理": { en: "Workspace administration", "zh-Hant": "工作空間管理" },
+  "翻页时保留本次查询的范围；刷新后包含新记录。": { en: "Paging keeps this query's range; refresh to include new records.", "zh-Hant": "翻頁時保留本次查詢的範圍；重新整理後包含新記錄。" },
+  "开放注册允许任何人创建账户；其他两种策略只允许受邀者。": { en: "Open registration lets anyone create an account; the other two policies admit invited people only.", "zh-Hant": "開放註冊允許任何人建立帳戶；其他兩種策略只允許受邀者。" },
+  "只显示投递记录，不显示邮件内容。重试找回和验证邮件会生成新链接并使旧链接失效；邀请由工作空间管理员在「成员与邀请」中重发。安全通知和投递结果不确定的邮件不能重发。": { en: "Delivery records only, never message contents. Retrying a recovery or verification mail creates a new link and invalidates the old one; invitations are resent by workspace administrators under “Members and invitations”. Security notices and deliveries with an uncertain outcome cannot be resent.", "zh-Hant": "只顯示投遞記錄，不顯示郵件內容。重試找回和驗證郵件會產生新連結並使舊連結失效；邀請由工作空間管理員在「成員與邀請」中重發。安全通知和投遞結果不確定的郵件不能重發。" },
+  "组织将停止使用，并保留七天恢复期限。所属工作空间的访问会被收回，内容不会因此提供给管理员。": { en: "The organization stops working, with a seven-day recovery period. Access to its workspaces is withdrawn; their content is not exposed to administrators.", "zh-Hant": "組織將停止使用，並保留七天恢復期限。所屬工作空間的存取會被收回，內容不會因此提供給管理員。" },
+  "组织及其工作空间将停止应用访问，已有会话和令牌会被撤销。": { en: "The organization and its workspaces lose application access; existing sessions and tokens are revoked.", "zh-Hant": "組織及其工作空間將停止應用存取，已有工作階段和權杖會被撤銷。" },
+  "工作空间冻结期间不能邀请": { en: "Cannot invite while the workspace is frozen", "zh-Hant": "工作空間凍結期間不能邀請" },
+  "对方接受邀请后才成为成员；重发会让旧链接失效。": { en: "Someone becomes a member only after accepting; resending invalidates the old link.", "zh-Hant": "對方接受邀請後才成為成員；重發會讓舊連結失效。" },
+  "工作空间冻结期间不能重发": { en: "Cannot resend while the workspace is frozen", "zh-Hant": "工作空間凍結期間不能重發" },
+  "{p0} 个邮箱；一次最多 100 个。每个工作空间 24 小时最多创建 50 个邀请，超出部分会报告失败。": { en: "{p0} addresses; up to 100 per submission. Each workspace can create 50 invitations per 24 hours; the rest are reported as failures.", "zh-Hant": "{p0} 個電子郵件地址；一次最多 100 個。每個工作空間 24 小時最多建立 50 個邀請，超出部分會報告失敗。" },
+  "允许导出（编辑者及以上角色自带）": { en: "Allow export (included with editor and higher roles)", "zh-Hant": "允許匯出（編輯者及以上角色自帶）" },
+  "这些链接将失效，收件人将不能通过它们加入工作空间。已加入的成员不受影响。": { en: "These links will expire and can no longer be used to join the workspace. Existing members are unaffected.", "zh-Hant": "這些連結將失效，收件人將不能透過它們加入工作空間。已加入的成員不受影響。" },
+  "不能修改自己的权限，请使用退出工作空间或移交所有权": { en: "You cannot change your own permissions. Leave the workspace or transfer ownership instead.", "zh-Hant": "不能修改自己的權限，請使用退出工作空間或移交所有權" },
+  "编辑者及以上角色自带导出权限；需先降低角色": { en: "Editor and higher roles include export; lower the role first", "zh-Hant": "編輯者及以上角色自帶匯出權限；需先降低角色" },
+  "工作空间冻结期间不能增加权限": { en: "Cannot add permissions while the workspace is frozen", "zh-Hant": "工作空間凍結期間不能增加權限" },
+  "工作空间冻结期间不能授予": { en: "Cannot grant access while the workspace is frozen", "zh-Hant": "工作空間凍結期間不能授予" },
+  "工作空间冻结期间不能移交": { en: "Cannot transfer ownership while the workspace is frozen", "zh-Hant": "工作空間凍結期間不能移交" },
+  "退出工作空间": { en: "Leave workspace", "zh-Hant": "退出工作空間" },
+  "账户、工作空间或应用当前不可用": { en: "Account, workspace or application currently unavailable", "zh-Hant": "帳戶、工作空間或應用目前不可用" },
+  "{members} 将获得在「{space}」使用 {app} 的资格。账户、工作空间和应用仍须正常可用。": { en: "{members} will receive access to {app} in “{space}”. The account, workspace and application must still be available.", "zh-Hant": "{members} 將獲得在「{space}」使用 {app} 的資格。帳戶、工作空間和應用仍須正常可用。" },
+  "将成为所有者：可以管理这个工作空间里的所有成员（包括你）、邀请任意角色、移交所有权。所有者只能由其他所有者降级。": { en: "Will become an owner: able to manage every member of this workspace including you, invite any role and transfer ownership. Only other owners can demote an owner.", "zh-Hant": "將成為所有者：可以管理這個工作空間裡的所有成員（包括你）、邀請任意角色、移交所有權。所有者只能由其他所有者降級。" },
+  "{p0} 个登录已移出该工作空间；取消了 {p1} 个由其发出的邀请": { en: "moved {p0} sign-ins out of the workspace and cancelled {p1} invitations they had issued", "zh-Hant": "{p0} 個登入已移出該工作空間；取消了 {p1} 個由其發出的邀請" },
+  "工作空间已冻结：只能降低角色，不能提升。": { en: "Workspace frozen: roles can only be lowered, not raised.", "zh-Hant": "工作空間已凍結：只能降低角色，不能提升。" },
+  "降为查看者的成员将不能再编辑，导出权限随之关闭。": { en: "Members changed to viewer can no longer edit, and export is switched off.", "zh-Hant": "降為檢視者的成員將不能再編輯，匯出權限隨之關閉。" },
+  "工作空间已冻结，其中 {p0} 项提升会被拒绝。": { en: "Workspace frozen: {p0} of these promotions will be refused.", "zh-Hant": "工作空間已凍結，其中 {p0} 項提升會被拒絕。" },
+  "失去这个工作空间里全部项目、模板与文件的访问；": { en: "Access to every project, template and file in this workspace is removed;", "zh-Hant": "失去這個工作空間裡全部專案、範本與檔案的存取；" },
+  "在这个工作空间使用{p0}的资格被撤销，已签发给应用的令牌全部失效；": { en: "Access to {p0} in this workspace is revoked and every token issued to the application expires;", "zh-Hant": "在這個工作空間使用{p0}的資格被撤銷，已簽發給應用的權杖全部失效；" },
+  "正在这个工作空间里的登录会被移出（账户不会退出登录）；": { en: "Sessions currently in this workspace are moved out (the account is not signed out);", "zh-Hant": "正在這個工作空間裡的登入會被移出（帳戶不會登出）；" },
+  "账户本身不受影响。以后可以重新邀请，但不会恢复原来的角色和资格。": { en: "The account itself is unaffected. They can be invited again later, without their previous role or access.", "zh-Hant": "帳戶本身不受影響。以後可以重新邀請，但不會恢復原來的角色和資格。" },
+  "工作空间始终有所有者。": { en: "The workspace always has an owner.", "zh-Hant": "工作空間始終有所有者。" },
+  "失去这个工作空间里全部内容的访问；": { en: "Access to everything in this workspace is removed;", "zh-Hant": "失去這個工作空間裡全部內容的存取；" },
+  "你在这个工作空间的应用使用资格与令牌会被撤销；": { en: "Your application access and tokens in this workspace are revoked;", "zh-Hant": "你在這個工作空間的應用使用資格與權杖會被撤銷；" },
+  "要回来，需要工作空间管理员重新邀请你。": { en: "A workspace administrator must invite you again to return.", "zh-Hant": "要回來，需要工作空間管理員重新邀請你。" },
+  "你是这个工作空间唯一的所有者，不能直接退出。请先把所有权移交给另一位成员。": { en: "You are the only owner of this workspace and cannot leave directly. Transfer ownership to another member first.", "zh-Hant": "你是這個工作空間唯一的所有者，不能直接退出。請先把所有權移交給另一位成員。" },
+  "请先移交所有权，再退出工作空间。": { en: "Transfer ownership before leaving the workspace.", "zh-Hant": "請先移交所有權，再退出工作空間。" },
+  "工作空间已冻结，不能增加权限。": { en: "Workspace frozen. Permissions cannot be increased.", "zh-Hant": "工作空間已凍結，不能增加權限。" },
+  "该账户已经是工作空间成员。": { en: "This account is already a member of the workspace.", "zh-Hant": "該帳戶已經是工作空間成員。" },
+  "该工作空间已被认领或不能认领，请刷新。": { en: "This workspace has already been claimed or cannot be claimed. Refresh the page.", "zh-Hant": "該工作空間已被認領或不能認領，請重新整理。" },
+  "邀请成员，管理编辑者与查看者，最高可授予管理员": { en: "Invite members, manage editors and viewers, assign roles up to administrator", "zh-Hant": "邀請成員，管理編輯者與檢視者，最高可授予管理員" },
+  "在工作空间内编辑，不能管理成员": { en: "Edit within the workspace; no member management", "zh-Hant": "在工作空間內編輯，不能管理成員" },
+  "编辑者": { en: "Editor", "zh-Hant": "編輯者" },
+  "查看者": { en: "Viewer", "zh-Hant": "檢視者" },
+  "只有工作空间所有者和管理员可以查看与管理成员。{p0}": { en: "Only workspace owners and administrators can view and manage members. {p0}", "zh-Hant": "只有工作空間所有者和管理員可以查看與管理成員。{p0}" },
+  "{kind}工作空间": { en: "{kind} workspace", "zh-Hant": "{kind}工作空間" },
+  "实际访问还取决于账户、工作空间和应用是否可用；授予使用资格不会启用已停用的应用。": { en: "Access also depends on the account, workspace and application being available; granting access does not enable a disabled application.", "zh-Hant": "實際存取還取決於帳戶、工作空間和應用是否可用；授予使用資格不會啟用已停用的應用。" },
+  "这个工作空间已被平台管理员冻结：成员暂时无法使用其中的应用。解冻前只能移除成员和撤销权限，不能邀请、提升角色或授予权限。": { en: "A platform administrator froze this workspace: members cannot use its applications for now. Until it is unfrozen you can only remove members and revoke access, not invite, promote or grant.", "zh-Hant": "這個工作空間已被平台管理員凍結：成員暫時無法使用其中的應用。解凍前只能移除成員和撤銷權限，不能邀請、提升角色或授予權限。" },
+  "这个工作空间只有 {p0} 位正常的所有者。建议再指定一位，以免无人能管理。": { en: "This workspace has only {p0} active owner. Appoint another so it can still be managed if that owner becomes unavailable.", "zh-Hant": "這個工作空間只有 {p0} 位正常的所有者。建議再指定一位，以免無人能管理。" },
+
 };
 registerMessages(governanceMessages);

@@ -46,16 +46,18 @@ function EmailVerification({ token }: { token: string }) {
     if (out.already_verified) { setVerified(true); await refresh(); }
   }); }
   const continueSignedIn = !!me && !signInRequired;
-  return <AuthFrame title={t(verified ? "邮箱已验证" : "验证你的邮箱")} description={t(verified ? signInRequired ? "邮箱验证和新口令设置已完成。请使用新口令重新登录。" : "邮箱验证已完成，可以继续设置你的空间。" : token ? "确认这是你的邮箱后，点击下方按钮完成验证。" : "我们已收到请求。请检查邮箱，使用最新邮件中的验证链接。")}>
+  // One statement per state: the heading says where the person is, the status line says what
+  // happened and what comes next; the verified state does not repeat itself in a lede.
+  return <AuthFrame title={t(verified ? "邮箱已验证" : "验证你的邮箱")} description={verified ? undefined : t(token ? "验证完成前，账户无法进入工作空间。" : "请打开邮箱，使用最新一封邮件里的验证链接。")}>
     <FlowError error={action.error} />
-    {verified ? <><p className="flow-success" role="status">{t("验证完成")}</p><a className="btn primary" href={continueSignedIn ? signedInDestination(me!, continuation(), platformHomeUrl(state?.portal_url, locale)) : `/login?next=${encodeURIComponent(readIntent().invite_token ? "/invite" : "/onboarding")}`}>{t(continueSignedIn ? "继续" : "登录并继续")}</a></>
+    {verified ? <><p className="flow-success" role="status">{t(signInRequired ? "验证完成；新口令已设置，请用它重新登录。" : continueSignedIn ? "验证完成，可以继续了。" : "验证完成，请登录后继续。")}</p><a className="btn primary" href={continueSignedIn ? signedInDestination(me!, continuation(), platformHomeUrl(state?.portal_url, locale)) : `/login?next=${encodeURIComponent(readIntent().invite_token ? "/invite" : "/onboarding")}`}>{t(continueSignedIn ? "继续" : "登录并继续")}</a></>
       : <>{token && (passwordRequired ? <form onSubmit={verify} aria-busy={action.busy}>
-          <p className="notice" role="status">{t("为确保只有邮箱持有人能使用账户，请设置由你掌控的新口令。此前的口令和登录会话将失效。")}</p>
+          <p className="notice" role="status">{t("请设置一个由你掌控的新口令。此前的口令和所有登录将失效。")}</p>
           <PasswordField value={password} onChange={setPassword} label={t("新口令")} autoFocus disabled={action.busy} />
           <button className="btn primary" disabled={action.busy}>{t(action.busy ? "验证中…" : "设置新口令并验证邮箱")}</button>
         </form> : <button type="button" className="btn primary" disabled={action.busy} onClick={() => verify()}>{t(action.busy ? "验证中…" : "验证此邮箱")}</button>)}
         {unavailable && <p className="notice warn" role="status">{t("邮件服务暂不可用。请稍后重新发送验证邮件，或联系服务管理员。")}</p>}
-        {resent && !unavailable && <p className="notice" role="status">{t("验证请求已收到。请检查收件箱和垃圾邮件；是否投递取决于账户状态和邮件服务。")}</p>}
+        {resent && !unavailable && <p className="notice" role="status">{t("如果这个邮箱需要验证，新的验证邮件已发出；请检查收件箱和垃圾邮件。")}</p>}
         <form onSubmit={resend} aria-busy={action.busy}>
           <div className="field"><label htmlFor="verify-email">{t("邮箱")}</label><input id="verify-email" className="input" type="email" autoComplete="email" inputMode="email" value={activeSession ? me.email : email} readOnly={activeSession} onChange={e => { setEmail(e.target.value); setResent(false); }} autoCapitalize="off" spellCheck={false} required /></div>
           {challenge.element}
@@ -63,11 +65,11 @@ function EmailVerification({ token }: { token: string }) {
         </form>
         {!token && <div className="notice" role="note"><ul className="col gap4 small">
           {sender && <li>{t("邮件由 {sender} 发出，通常几分钟内送达；找不到时可按发件地址搜索。", { sender })}</li>}
-          <li>{t("学校或公司邮箱通常经过安全网关：邮件可能延迟数分钟、被放入垃圾邮件或隔离区。请一并检查这些位置和隔离通知，必要时把发件地址加入允许名单。")}</li>
+          <li>{t("学校或公司邮箱通常经过安全网关，邮件可能延迟数分钟、进入垃圾邮件或隔离区；必要时把发件地址加入允许名单。")}</li>
           <li>{t("每小时最多发送 3 封验证邮件，只有最新一封有效；链接 24 小时内有效。")}</li>
           <li><a href={`/register?lang=${locale}`}>{t("收不到邮件？换一个邮箱注册")}</a></li>
         </ul></div>}
-        <p className="tiny muted">{t("验证完成前，账户无法进入工作空间。打开邮件链接不会自动验证邮箱。")}</p>
+        {!token && <p className="tiny muted">{t("验证完成前，账户无法进入工作空间。")}</p>}
         <a className="authfoot" href="/login">{t("返回登录")}</a>{me && <button type="button" className="btn ghost" disabled={action.busy} onClick={() => void action.run(async () => { await post("/api/auth/logout", {}); window.location.assign("/login"); })}>{t("退出当前账户")}</button>}
       </>}
   </AuthFrame>;

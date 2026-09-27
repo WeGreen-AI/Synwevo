@@ -40,7 +40,7 @@ export default function OrganizationReports({ organization, mine }: { organizati
   if (!can) return null;
   const when = (ts: number | null) => ts ? new Date(ts * 1000).toLocaleString(locale) : "—";
   return <section className="org-section" id="org-reports"><h2>{t("举报处理")}</h2>
-    <p className="tiny muted">{t("成员举报的消息。你看到的是举报时的消息内容、发送者、举报人和原因，不是整段会话。删除会让这条消息对所有人显示为「消息已删除」；无论删除还是驳回，举报人都会收到结果。")}</p>
+    <p className="tiny muted">{t("只显示被举报消息在举报时的内容、发送者、举报人和原因，不显示整段会话。")}</p>
     <FlowError error={error} />
     <div className="row wrap gap4" role="tablist">
       <button type="button" role="tab" aria-selected={status === "open"} className={`btn ${status === "open" ? "primary" : ""}`} onClick={() => setStatus("open")}>{t("待处理")}</button>

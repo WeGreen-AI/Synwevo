@@ -17,7 +17,7 @@ export default function ProfileSection({ profile, onChange }: { profile: Profile
     try { await fn(); } catch (e) { setError(errorText(e, t)); } finally { setBusy(false); }
   }
   return <section id="profile" className="card card-b col gap12 account-section">
-    <div><p className="account-eyebrow">{t('个人资料')}</p><h2 className="secttl">{t('让账户更像你')}</h2></div>
+    <h2 className="secttl">{t('个人资料')}</h2>
     <ErrorNotice error={error} />
     <div className="row gap12 wrap">
       <div className="account-avatar" aria-hidden="true">{profile.has_avatar
@@ -52,7 +52,7 @@ export default function ProfileSection({ profile, onChange }: { profile: Profile
         </select></label>
         <label className="field"><span>{t('时区')}</span><input className="input" list="account-timezones" value={timezone} required
           onChange={e => setTimezone(e.target.value)} /><datalist id="account-timezones">{zones.map(z => <option key={z} value={z} />)}</datalist></label></div>
-      <p className="tiny muted">{t('语言用于账户界面，时区用于下方设备和安全活动时间。')}</p>
+      <p className="tiny muted">{t('语言用于账户界面；时区用于显示登录设备与安全活动的时间。')}</p>
       <div><button className="btn primary" disabled={busy}>{busy ? t('保存中…') : t('保存更改')}</button></div>
     </form>
   </section>;

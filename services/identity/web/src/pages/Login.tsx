@@ -11,7 +11,7 @@ type Mode = "password" | "code";
 const EXTERNAL_ERRORS: Record<string, string> = {
   cancelled: "已取消外部登录。",
   provider_refused: "外部身份提供商拒绝了这次登录，请重试。",
-  bad_state: "登录状态校验失败，请重新开始。", bad_callback: "登录请求已过期或已使用，请重新开始。",
+  bad_state: "这次登录无法验证，请重新开始。", bad_callback: "登录请求已过期或已使用，请重新开始。",
   bad_id_token: "外部身份提供商返回的身份信息无法验证，请重试。", token_exchange_failed: "外部身份提供商未接受这次登录，请重试。",
   idp_unreachable: "暂时无法连接外部身份提供商，请稍后再试。",
   email_unverified: "该提供商没有验证你的邮箱，无法用它创建或匹配账户。请用口令登录后，在「账户与安全」里关联。",
@@ -154,7 +154,7 @@ export default function Login() {
           // A credential is bound to the domain it was registered on. After the platform moved
           // hosts, the honest answer is where the old key went and how to get a new one.
           throw new Error(state?.passkeys_elsewhere
-            ? "已取消，或此设备上没有可用于本站的安全密钥。平台域名已更换，在旧域名登记的安全密钥不能在这里使用：请先用口令或邮箱验证码登录，再在「账户 → 安全」重新登记。"
+            ? "已取消，或此设备上没有可用于本站的安全密钥。平台域名已更换，在旧域名登记的安全密钥不能在这里使用：请先用口令或邮箱验证码登录，再在「账户与安全」重新登记。"
             : "已取消，或没有可用于本站的安全密钥。");
         }
         throw e;
@@ -166,9 +166,14 @@ export default function Login() {
     if (remember) p.set("remember", "1");
     return `/auth/external/${encodeURIComponent(id)}/start?${p}`;
   }
-  const title = t(offer ? "关联外部登录" : ticket ? "两步验证" : bootstrap ? "建立首位管理员" : mode === "code" ? "用邮箱验证码登录" : "欢迎回来");
-  const description = offer ? t("这个 {label} 账户的邮箱已有 Synwevo 账户。输入该账户的口令以关联并登录；以后可以直接用 {label} 登录。", { label: offerInfo?.label || t("外部") })
-    : t(ticket ? useRecovery ? "输入一个恢复码。每个恢复码只能用一次。" : "打开验证器应用，输入其中显示的 6 位数字。" : bootstrap ? "使用服务器生成的一次性引导令牌，建立这个部署的首位管理员。" : mode === "code" ? (codeSent ? "验证码已发送到你的邮箱（如果该邮箱有账户），请在 10 分钟内输入。" : "我们会把一次性验证码发到你的账户邮箱。") : "登录你的 Synwevo 账户，继续手头的工作。");
+  // The password form carries no lede: the frame already says what one sign-in gives, and the
+  // fields speak for themselves. The other modes state what happens next or what is needed.
+  const title = t(offer ? "关联外部登录" : ticket ? "两步验证" : bootstrap ? "建立首位管理员" : mode === "code" ? "用邮箱验证码登录" : "登录");
+  const description = offer ? t("这个 {label} 账户的邮箱已有 Synwevo 账户。输入该账户的口令即可关联并登录；之后可以直接用 {label} 登录。", { label: offerInfo?.label || t("外部") })
+    : ticket ? t(useRecovery ? "输入一个恢复码。每个恢复码只能用一次。" : "打开验证器应用，输入其中显示的 6 位数字。")
+    : bootstrap ? t("需要服务器生成的一次性引导令牌。")
+    : mode === "code" ? t(codeSent ? "验证码已发送到你的邮箱（如果该邮箱有账户），请在 10 分钟内输入。" : "验证码会发到你的账户邮箱，10 分钟内有效。")
+    : undefined;
   const rememberBox = <label className="check flow-remember" htmlFor="login-remember"><input id="login-remember" type="checkbox" checked={remember} aria-describedby="login-remember-hint" onChange={e => chooseRemember(e.target.checked)} />
     <span>{t("在此设备上保持登录")}<small id="login-remember-hint" className="muted">{t("最长 14 天不活动仍保持登录；公共或共享设备请勿勾选。")}</small></span></label>;
   return <AuthFrame title={title} description={description}>
@@ -228,7 +233,7 @@ export default function Login() {
         {!bootstrap && state.registration === "invite" && <p className="authfoot muted">{t("本服务目前为邀请制，请使用邀请邮件创建账户。")}</p>}
         {!bootstrap && state.registration === "closed" && <p className="authfoot muted">{t("此服务暂未开放注册。")}</p>}
         {state.bootstrap_required && <>
-          {!bootstrap && <p className="tiny muted">{t("已有账户可直接登录。部署初始化需要服务器提供的一次性令牌。")}</p>}
+          {!bootstrap && <p className="tiny muted">{t("初始化这个部署需要服务器生成的一次性令牌；已有账户照常登录。")}</p>}
           <button type="button" className="btn ghost" disabled={action.busy}
             onClick={() => { setSetupRequested(value => !value); setPassword(""); setToken(""); action.setError(null); }}>
             {t(bootstrap ? "返回普通登录" : "设置此部署的首位管理员")}

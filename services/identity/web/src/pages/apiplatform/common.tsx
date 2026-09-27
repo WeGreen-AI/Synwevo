@@ -102,7 +102,7 @@ export function Secret({ result, close }: { result: Outcome; close: () => void }
   const [copyFailed, setCopyFailed] = useState(false);
   const value = String(result.key || result.client_secret || result.secret || '');
   return <Modal title={t('密钥仅显示一次')} onClose={close} size="wide" footer={<button className="btn primary" onClick={close}>{t('已安全保存，关闭')}</button>}>
-    <div className="col gap12"><p className="notice info">{t('请保存到你的密钥管理器。关闭后无法再次查看；页面不会将密钥写入浏览器存储。')}</p>
+    <div className="col gap12"><p className="notice info">{t('关闭后无法再次查看，请立即保存到你的密钥管理器。')}</p>
       {result.client_id != null && <code>{String(result.client_id)}</code>}
       <label className="field">{t('密钥')}<input className="input" readOnly autoComplete="off" spellCheck={false} type={show ? 'text' : 'password'} value={value} /></label>
       <div className="row gap8"><button className="btn" onClick={() => setShow(!show)}>{show ? t('隐藏') : t('显示')}</button>

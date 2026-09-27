@@ -11,13 +11,13 @@ import { orgPath, type CustomRole, type ImportAction, type ImportCapabilities, t
 
 const ACTION_LABEL: Record<ImportAction, string> = { invite: "邀请", update: "更新", unchanged: "不变", skip: "跳过", blocked: "阻断" };
 const REASON_LABEL: Record<string, string> = {
-  new_person: "新成员：发送邀请", existing_account: "已有账户：发送邀请", org_member_new_workspace: "组织成员：邀请加入此空间", already_member: "已是此空间成员，无变化",
-  duplicate_in_file: "文件内重复", self: "这是你自己", bad_email: "邮箱格式不正确", unknown_workspace_role: "空间角色未映射", unknown_org_role: "组织角色未映射",
+  new_person: "新成员：发送邀请", existing_account: "已有账户：发送邀请", org_member_new_workspace: "组织成员：邀请加入此工作空间", already_member: "已是此工作空间成员，无变化",
+  duplicate_in_file: "文件内重复", self: "这是你自己", bad_email: "邮箱格式不正确", unknown_workspace_role: "工作空间角色未映射", unknown_org_role: "组织角色未映射",
   role_not_importable: "所有者/管理员基础角色不能通过导入授予", role_not_delegable: "你没有分配这个角色所需的权限", account_unavailable: "账户不可用",
-  already_invited: "已有待接受的邀请", over_limit: "超出单次导入上限", forbidden: "你不能邀请到这个空间", role_too_high: "不能邀请比自己权限更高的角色",
+  already_invited: "已有待接受的邀请", over_limit: "超出单次导入上限", forbidden: "你不能邀请到这个工作空间", role_too_high: "不能邀请比自己权限更高的角色",
   workspace_frozen: "工作空间已冻结", cancelled: "已取消",
 };
-const WS_ROLE_LABEL: Record<string, string> = { viewer: "只读成员", editor: "编辑成员", admin: "空间管理员" };
+const WS_ROLE_LABEL: Record<string, string> = { viewer: "查看者", editor: "编辑者", admin: "工作空间管理员" };
 
 function sourceText(src: Record<string, unknown>): string {
   const parts: string[] = [];
@@ -95,8 +95,8 @@ export default function OrganizationImport({ organization, workspaces, mine, onC
   const fmtList = caps ? caps.ingest.formats.map(f => f.toUpperCase()).join(" / ") : "";
 
   return <section className="org-section" id="org-import"><h2>{t("批量导入成员")}</h2>
-    <p className="tiny muted">{t("用手头的成员名单文件批量邀请：文件里的一行不会直接成为成员，新人仍然通过邀请邮件自己接受；已有成员只会提升空间角色或增加组织角色，不会被降级或移除。")}</p>
-    {caps && <p className="tiny muted">{t("可读取：{formats}。", { formats: fmtList })} {caps.ingest.ocr ? t("扫描件与图片可用文字识别。") : t("此实例没有文字识别，扫描件与图片无法读取。")} {caps.ingest.engine === "basic" && t("文档引擎未接入：只能读取 CSV、TSV、JSON、TXT 与 Markdown。")} {t("单次最多 {n} 行。", { n: caps.limits.rows })}</p>}
+    <p className="tiny muted">{t("按名单文件批量邀请。新人仍需通过邀请邮件自己接受；已有成员只会提升工作空间角色或增加组织角色，不会被降级或移除。")}</p>
+    {caps && <p className="tiny muted">{t("可读取：{formats}。", { formats: fmtList })} {caps.ingest.ocr ? t("扫描件与图片通过文字识别读取。") : t("此部署没有文字识别，扫描件与图片无法读取。")} {t("单次最多 {n} 行。", { n: caps.limits.rows })}</p>}
     <FlowError error={error} />
     {/* ---- step 1: upload */}
     <div className="col gap8">
@@ -109,10 +109,10 @@ export default function OrganizationImport({ organization, workspaces, mine, onC
     </div>
     {/* ---- what was read */}
     {imp && ex && <div className="notice" role="status"><strong>{imp.filename}</strong> · {ex.format?.toUpperCase()} · {t(imp.status === "extracted" ? "已读取" : imp.status === "planned" ? "已生成预览" : imp.status === "running" ? "执行中" : imp.status === "finished" ? "已完成" : imp.status === "partial" ? "部分完成" : imp.status === "failed" ? "失败" : "已取消")}
-      {imp.scan && <span className="tiny muted"> · {t(imp.scan.status === "clean" ? "安全检查：未检出已知威胁" : imp.scan.status === "not_configured" ? "安全检查：此实例未配置扫描引擎" : "安全检查：{status}", { status: imp.scan.status })}</span>}
+      {imp.scan && <span className="tiny muted"> · {t(imp.scan.status === "clean" ? "安全检查：未检出已知威胁" : imp.scan.status === "not_configured" ? "安全检查：此部署未配置" : "安全检查：{status}", { status: imp.scan.status })}</span>}
       {ex.status === "error" && <p className="flow-error">{ex.error}</p>}
       {ex.status === "unsupported" && <p className="flow-error">{ex.error || t("暂不支持这种格式")}</p>}
-      {ex.status === "needs_ocr" && <p>{t("这个文件没有可读文字（扫描件或图片）。")} {caps?.ingest.ocr ? <button type="button" className="btn" disabled={busy} onClick={() => void doOcr()}>{t("识别文字（OCR）")}</button> : t("此实例没有文字识别。")}</p>}
+      {ex.status === "needs_ocr" && <p>{t("这个文件没有可读文字（扫描件或图片）。")} {caps?.ingest.ocr ? <button type="button" className="btn" disabled={busy} onClick={() => void doOcr()}>{t("识别文字（OCR）")}</button> : t("此部署没有文字识别。")}</p>}
       {tables.length > 0 && <ul className="small">{tables.map((tb, i) => <li key={i}>{tb.name}：{t("{n} 行", { n: tb.rows })}{tb.truncated && t("（已截断）")}</li>)}</ul>}
       {ex.lines > 0 && <p className="small">{t("文本行：{n}", { n: ex.lines })}{ex.line_preview.length > 0 && <span className="tiny muted"> · {ex.line_preview.slice(0, 2).join(" / ")}</span>}</p>}
       {ex.notes.length > 0 && <ul className="tiny muted">{ex.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
@@ -125,20 +125,20 @@ export default function OrganizationImport({ organization, workspaces, mine, onC
           {tables.map((tb, i) => <option key={i} value={String(i)}>{t("表格：{name}", { name: tb.name })}</option>)}{ex.lines > 0 && <option value="lines">{t("按行识别邮箱（{n} 行）", { n: ex.lines })}</option>}</select></div>}
       {table && <>
         <label className="check"><input type="checkbox" checked={!!mapping.header_row} onChange={e => setMapping(m => ({ ...m, header_row: e.target.checked }))} /><span>{t("第一行是标题")}</span></label>
-        {(["email", "name", "workspace_role", "org_roles"] as const).map(field => <div className="field" key={field}><label htmlFor={`import-col-${field}`}>{t(field === "email" ? "邮箱列（必填）" : field === "name" ? "姓名列" : field === "workspace_role" ? "空间角色列" : "组织角色列")}</label>
+        {(["email", "name", "workspace_role", "org_roles"] as const).map(field => <div className="field" key={field}><label htmlFor={`import-col-${field}`}>{t(field === "email" ? "邮箱列（必填）" : field === "name" ? "姓名列" : field === "workspace_role" ? "工作空间角色列" : "组织角色列")}</label>
           <select id={`import-col-${field}`} className="input" value={mapping.columns?.[field] == null ? "" : String(mapping.columns[field])} onChange={e => setCol(field, e.target.value)}>
             <option value="">{t("不使用")}</option>{colOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>)}
         <div className="table-wrap"><table className="small"><tbody>{table.preview.slice(0, 5).map((r, i) => <tr key={i}>{Array.from({ length: width }, (_, c) => <td key={c}>{r[c] || ""}</td>)}</tr>)}</tbody></table></div>
       </>}
-      <div className="field"><label htmlFor="import-default-role">{t("默认空间角色")}</label>
+      <div className="field"><label htmlFor="import-default-role">{t("默认工作空间角色")}</label>
         <select id="import-default-role" className="input" value={mapping.defaults?.workspace_role || "viewer"} onChange={e => setMapping(m => ({ ...m, defaults: { ...(m.defaults || {}), workspace_role: e.target.value } }))}>
           {(caps?.workspace_roles || ["viewer", "editor", "admin"]).map(r => <option key={r} value={r}>{t(WS_ROLE_LABEL[r] || r)}</option>)}</select></div>
       {roles.length > 0 && <fieldset className="flow-options"><legend>{t("默认组织角色（每个人都会获得）")}</legend>
         {roles.map(r => <label key={r.id} className="check"><input type="checkbox" checked={(mapping.defaults?.org_role_ids || []).includes(r.id)} onChange={e => setMapping(m => { const cur = new Set(m.defaults?.org_role_ids || []); e.target.checked ? cur.add(r.id) : cur.delete(r.id); return { ...m, defaults: { ...(m.defaults || {}), org_role_ids: Array.from(cur) } }; })} /><span>{r.name}</span></label>)}</fieldset>}
-      {imp.summary && imp.summary.unmapped_workspace_roles.length > 0 && <fieldset className="flow-options"><legend>{t("文件里的空间角色写法 → 实际角色")}</legend>
+      {imp.summary && imp.summary.unmapped_workspace_roles.length > 0 && <fieldset className="flow-options"><legend>{t("文件里的工作空间角色写法 → 实际角色")}</legend>
         {imp.summary.unmapped_workspace_roles.map(txt => <div className="field" key={txt}><label>{txt}</label><select className="input" value={mapping.workspace_role_names?.[txt] || ""} onChange={e => setName("workspace_role_names", txt, e.target.value)}><option value="">{t("请选择…")}</option>{(caps?.workspace_roles || []).map(r => <option key={r} value={r}>{t(WS_ROLE_LABEL[r] || r)}</option>)}</select></div>)}</fieldset>}
       {imp.summary && imp.summary.unmapped_org_roles.length > 0 && <fieldset className="flow-options"><legend>{t("文件里的组织角色写法 → 实际角色")}</legend>
-        <p className="tiny muted">{t("角色的权限不会从名字推断。没有合适的角色时，先在「自定义角色」里创建，再回到这里映射。")} <a href="#org-roles">{t("去创建角色")}</a></p>
+        <p className="tiny muted">{t("角色不会按名字自动匹配。没有合适的角色时，先在「自定义角色」里创建，再回来映射。")} <a href="#org-roles">{t("去创建角色")}</a></p>
         {imp.summary.unmapped_org_roles.map(txt => <div className="field" key={txt}><label>{txt}</label><select className="input" value={mapping.org_role_names?.[txt] || ""} onChange={e => setName("org_role_names", txt, e.target.value)}><option value="">{t("请选择…")}</option>{roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>)}</fieldset>}
       <div className="org-actions"><button type="button" className="btn primary" disabled={busy || !workspaceId || (mapping.mode !== "lines" && mapping.columns?.email == null)} onClick={() => void doPlan()}>{t("生成预览")}</button></div>
     </div>}
@@ -150,7 +150,7 @@ export default function OrganizationImport({ organization, workspaces, mine, onC
       <div className="row wrap gap4" role="tablist">{(["", "invite", "update", "unchanged", "skip", "blocked"] as const).map(a => <button key={a} type="button" role="tab" aria-selected={filter === a} className={`btn ${filter === a ? "primary" : ""}`} onClick={() => { setFilter(a); void loadRows(imp.id, a); }}>{a ? `${t(ACTION_LABEL[a])} ${counts[a] ?? 0}` : `${t("全部")} ${imp.summary?.rows ?? 0}`}</button>)}</div>
       {!rows ? <Loading /> : !rows.length ? <p className="muted">{t("没有这类行。")}</p> : <ul className="org-list">{rows.slice(0, 300).map(r => <li key={r.id}>
         <div><strong>{r.fields.email}</strong>{r.fields.name && <span className="muted"> · {r.fields.name}</span>}<div className="tiny muted">{sourceText(r.source)} · {t(WS_ROLE_LABEL[r.fields.workspace_role] || r.fields.workspace_role)}{r.fields.org_roles.length > 0 && <> · {r.fields.org_roles.join("、")}</>}</div>
-          {r.diff && <div className="tiny">{r.diff.workspace_role && <span>{t("空间角色 {from} → {to}", { from: t(WS_ROLE_LABEL[r.diff.workspace_role.from] || r.diff.workspace_role.from), to: t(WS_ROLE_LABEL[r.diff.workspace_role.to] || r.diff.workspace_role.to) })} </span>}{r.diff.org_roles && <span>{t("新增组织角色：{roles}", { roles: r.diff.org_roles.add.join("、") })}</span>}</div>}
+          {r.diff && <div className="tiny">{r.diff.workspace_role && <span>{t("工作空间角色 {from} → {to}", { from: t(WS_ROLE_LABEL[r.diff.workspace_role.from] || r.diff.workspace_role.from), to: t(WS_ROLE_LABEL[r.diff.workspace_role.to] || r.diff.workspace_role.to) })} </span>}{r.diff.org_roles && <span>{t("新增组织角色：{roles}", { roles: r.diff.org_roles.add.join("、") })}</span>}</div>}
           {r.result && (r.result.error || r.result.message) && <div className="tiny flow-error">{r.result.message || r.result.error}</div>}</div>
         <div className="org-actions"><span className={`badge ${r.action === "blocked" ? "danger" : ""}`}>{t(ACTION_LABEL[r.action])}{r.status !== "planned" && ` · ${t(r.status === "done" ? "完成" : r.status === "failed" ? "失败" : r.status === "skipped" ? "已跳过" : r.status === "running" ? "处理中" : "待处理")}`}</span>{r.reason && <span className="tiny muted">{t(REASON_LABEL[r.reason] || r.reason)}</span>}</div>
       </li>)}</ul>}
@@ -162,7 +162,7 @@ export default function OrganizationImport({ organization, workspaces, mine, onC
         {(imp.status === "partial" || imp.status === "failed") && <button type="button" className="btn" disabled={busy} onClick={() => void doRetry()}>{t("重试失败行")}</button>}
         {imp.status !== "extracted" && imp.status !== "planned" && <a className="btn" href={`${base}/${imp.id}/report.csv`}>{t("下载报告（CSV）")}</a>}
       </div>
-      <p className="tiny muted">{t("取消只作用于尚未处理的行；已发出的邀请要在成员列表里撤回。执行前会再次核对你的权限；新人接受邀请时才会加入组织并获得指定角色。")}</p>
+      <p className="tiny muted">{t("取消只影响尚未处理的行；已发出的邀请要在「成员与邀请」里撤回。新人接受邀请后才加入并获得角色。")}</p>
     </div>}
     {confirming && imp && counts && <OrganizationAction spec={{ title: t("确认导入"), impact: t("将发出 {i} 封邀请邮件并更新 {u} 位成员的角色。邀请只有接受后才生效；已有成员不会被降级或移除。", { i: counts.invite, u: counts.update }),
       run: reason => post(`${base}/${imp.id}/confirm`, { version: imp.version, only_valid: onlyValid, reason }) }}

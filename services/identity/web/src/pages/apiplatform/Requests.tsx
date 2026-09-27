@@ -15,7 +15,7 @@ export function Requests({ act, webhooks }: { act: (action: Action) => void; web
   const [selectedSid, setSelectedSid] = useState('');
   const [feed, setFeed] = useState('');
   const run = (title: string, method: string, target: string, query = {}, body?: unknown) => act({ title,
-    impact: <>{t('此请求使用你明确提供的服务凭据。管理会话不会赋予业务数据访问权限。')} <code>{method} {target}</code></>,
+    impact: <>{t('请求只使用你提供的服务凭据；管理员会话不带来任何业务数据权限。')} <code>{method} {target}</code></>,
     run: async reason => {
       const out = await requestMachine(credential, reason, method, target, query, body);
       if (!out.secret) setResult(out); else setResult(null);
@@ -28,7 +28,7 @@ export function Requests({ act, webhooks }: { act: (action: Action) => void; web
   };
   return <section className="card card-b col gap12">
     <h2>{webhooks ? t('Webhook 订阅与投递') : t('受限请求调试')}</h2>
-    <p className="notice info">{t('服务凭据仅保留在当前页面内存中，切换页面会清除。不要输入管理员口令或浏览器 Cookie。')}</p>
+    <p className="notice info">{t('凭据只保留在当前页面，离开即清除。不要输入管理员口令或浏览器 Cookie。')}</p>
     <label className="field">{t('服务访问令牌或访问密钥')}<input type="password" className="input" autoComplete="off" spellCheck={false} value={credential}
       onChange={e => { setCredential(e.target.value); setResult(null); setCursor(''); }} /></label>
     {webhooks ? <>

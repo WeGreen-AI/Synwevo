@@ -126,7 +126,7 @@ function OverviewTab({ onDenied }: { onDenied: () => void }) {
       {data.unclaimed?.status === "pending_claim" && (
         <section className="card card-b col gap12">
           <h2>{tr("待认领的历史数据")}</h2>
-          <p className="muted">{tr("这些数据是账户体系建立之前产生的。它现在属于一个没有任何成员的工作空间，因此没有人能读取它——包括平台管理员。指派给一个已有账户之后，才会有人能打开。")}</p>
+          <p className="muted">{tr("账户体系建立之前的数据，属于一个没有成员的工作空间，目前没有人能读取（包括平台管理员）。指派给一个已有账户后才能打开。")}</p>
           <ClaimCard ws={data.unclaimed} />
         </section>
       )}
@@ -153,7 +153,7 @@ function ClaimCard({ ws }: { ws: Workspace }) {
   const searching = query !== q.trim();
   if (done) return <div className="notice ok" role="status">{tr(done)}</div>;
   return <div className="col gap12">
-    <p>{tr("{p0}个项目，{p1}位成员。请选择接收此空间的已有账户。", {p0: ws.projects, p1: ws.members})}</p>
+    <p>{tr("{p0} 个项目，{p1} 位成员。请选择接收这个工作空间的已有账户。", {p0: ws.projects, p1: ws.members})}</p>
     <label className="field">{tr("搜索接收账户")}<input className="input" type="search" maxLength={100} value={q}
       onChange={(e) => { setQ(e.target.value); setChosen(null); }} /></label>
     {(users.loading || searching) && <p role="status">{tr("正在查找账户…")}</p>}
@@ -170,7 +170,7 @@ function ClaimCard({ ws }: { ws: Workspace }) {
     {confirming && chosen && <ActionDialog title={tr("指派历史数据")} confirmLabel={tr("指派历史数据")} reason="required" danger
       impact={<>{tr("将把「{p0}」及其中{p1}个项目的访问权交给{p2}，角色为所有者。不会授予平台管理权限。", {p0: ws.name, p1: ws.projects, p2: chosen.email})}</>}
       run={(reason) => post<{ projects: number }>(`/api/admin/workspaces/${encodeURIComponent(ws.id)}/claim`, { user_id: chosen.id, reason })}
-      onClose={() => setConfirming(false)} onDone={(r) => { setConfirming(false); setDone(tr("已把包含 {p0} 个项目的空间指派给 {p1}。", {p0: r.projects, p1: chosen.email})); }} />}
+      onClose={() => setConfirming(false)} onDone={(r) => { setConfirming(false); setDone(tr("已把包含 {p0} 个项目的工作空间指派给 {p1}。", {p0: r.projects, p1: chosen.email})); }} />}
   </div>;
 }
 
@@ -202,7 +202,7 @@ function UsersTab({ onDenied }: { onDenied: () => void }) {
     {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
     {loading && <p role="status">{tr("正在加载账户…")}</p>}
     <div className="list-wrap"><table className="gov" aria-label={tr("平台账户")} aria-busy={loading}>
-      <thead><tr><th scope="col">{tr("账户")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("平台角色")}</th><th scope="col">{tr("空间")}</th><th scope="col">{tr("在线会话")}</th><th scope="col">{tr("操作")}</th></tr></thead>
+      <thead><tr><th scope="col">{tr("账户")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("平台角色")}</th><th scope="col">{tr("工作空间")}</th><th scope="col">{tr("在线会话")}</th><th scope="col">{tr("操作")}</th></tr></thead>
       <tbody>{items.map((user) => <tr key={user.id}>
         <th scope="row">{user.display_name || "—"}<div className="who2">{user.email}</div></th>
         <td>{ACCOUNT_STATUS[user.status] || user.status}</td><td>{platformRole(user.platform_role)}</td><td>{user.workspaces}</td><td>{user.sessions}</td>
@@ -246,8 +246,8 @@ function WorkspacesTab({ onDenied }: { onDenied: () => void }) {
   const items = loading || err ? [] : data?.items || [];
   return <section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{tr("工作空间")}</h2><input className="input" type="search" aria-label={tr("搜索工作空间")} value={q} maxLength={100} onChange={(e) => setQ(e.target.value)} />
-      <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新空间")}</button></div>
-    <p className="muted small">{tr("显示数量，不显示内容。平台管理权限不等于读取文档或管理空间成员的权限。")}</p>
+      <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新工作空间")}</button></div>
+    <p className="muted small">{tr("只显示数量，不显示内容；平台管理权限不包含读取文档或管理工作空间成员。")}</p>
     {notice && <div className="notice" role="status">{tr(notice)}</div>}
     {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
     {loading && <p role="status">{tr("正在加载工作空间…")}</p>}
@@ -255,16 +255,16 @@ function WorkspacesTab({ onDenied }: { onDenied: () => void }) {
       <thead><tr><th scope="col">{tr("名称")}</th><th scope="col">{tr("类型")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("成员")}</th><th scope="col">{tr("项目")}</th><th scope="col">{tr("操作")}</th></tr></thead>
       <tbody>{items.map((w) => <tr key={w.id}>
         <th scope="row">{w.name}</th><td>{WORKSPACE_KIND[w.kind] || w.kind}</td><td>{WORKSPACE_STATUS[w.status] || w.status}</td><td>{w.members}</td><td>{w.projects}</td>
-        <td><div className="row gap4 wrap">{(w.status === "active" || w.status === "frozen") && <button className="btn sm" disabled={loading || !!err} onClick={() => setAction(w)}>{w.status === "active" ? tr("冻结空间") : tr("解冻空间")}</button>}
+        <td><div className="row gap4 wrap">{(w.status === "active" || w.status === "frozen") && <button className="btn sm" disabled={loading || !!err} onClick={() => setAction(w)}>{w.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")}</button>}
           {me?.workspaces.some((m) => m.id === w.id && (m.role === "owner" || m.role === "admin")) && <a className="btn sm" href={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>{tr("成员与邀请")}</a>}</div></td>
       </tr>)}
       {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的工作空间。")}</td></tr>}</tbody>
     </table></div>
     <PageControls offset={offset} total={data?.total || 0} busy={loading || !!err} onPage={setOffset} />
-    {action && <ActionDialog title={action.status === "active" ? tr("冻结空间") : tr("解冻空间")} confirmLabel={action.status === "active" ? tr("冻结空间") : tr("解冻空间")} danger reason="required"
-      impact={<>「{action.name}」：{action.status === "active" ? tr("成员将立即失去应用访问，当前会话将移出空间。已有成员关系和内容保留。") : tr("空间将恢复可用，成员仍按原有资格访问。此前结束的登录不会恢复。")}</>}
+    {action && <ActionDialog title={action.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")} confirmLabel={action.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")} danger reason="required"
+      impact={<>「{action.name}」：{action.status === "active" ? tr("成员将立即失去应用访问，当前会话将移出这个工作空间。成员关系和内容保留。") : tr("工作空间将恢复可用，成员仍按原有资格访问。此前结束的登录不会恢复。")}</>}
       run={(reason) => post<{ restore_note?: string; status: string }>(`/api/admin/workspaces/${encodeURIComponent(action.id)}/${action.status === "active" ? "freeze" : "unfreeze"}`, { reason })}
-      onClose={() => setAction(null)} onDone={(r) => { setAction(null); reload(); setNotice(r.status === "frozen" ? tr("空间已冻结。") : tr("空间已解冻。若之后恢复更早的备份，冻结可能重新生效，需要再次解冻。")); }} />}
+      onClose={() => setAction(null)} onDone={(r) => { setAction(null); reload(); setNotice(r.status === "frozen" ? tr("工作空间已冻结。") : tr("工作空间已解冻。若之后恢复更早的备份，冻结可能重新生效，需要再次解冻。")); }} />}
   </section>;
 }
 
@@ -278,10 +278,10 @@ function AuditTab({ onDenied }: { onDenied: () => void }) {
     <div className="row gap12 wrap"><h2 className="grow">{tr("审计记录")}</h2><input className="input" type="search" maxLength={100} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("操作者邮箱或对象")} aria-label={tr("搜索审计记录")} />
       <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新审计")}</button></div>
     <label className="field">{tr("操作范围")}<select className="input" aria-label={tr("筛选审计操作")} value={action} onChange={(e) => setAction(e.target.value)}>
-      <option value="">{tr("全部操作")}</option><option value="admin.user.">{tr("账户管理")}</option><option value="admin.workspace.">{tr("空间管理")}</option>
+      <option value="">{tr("全部操作")}</option><option value="admin.user.">{tr("账户管理")}</option><option value="admin.workspace.">{tr("工作空间管理")}</option>
       <option value="auth.">{tr("登录与账户安全")}</option><option value="member.">{tr("成员管理")}</option><option value="invite.">{tr("邀请")}</option><option value="mfa.">{tr("两步验证")}</option>
     </select></label>
-    <p className="muted small">{tr("只读。翻页时保留本次查询的记录范围；点击刷新查看新记录。")}</p>
+    <p className="muted small">{tr("翻页时保留本次查询的范围；刷新后包含新记录。")}</p>
     {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
     {loading && <p role="status">{tr("正在加载审计记录…")}</p>}
     <div className="list-wrap"><table className="gov" aria-label={tr("审计记录")} aria-busy={loading}>

@@ -9,7 +9,8 @@ import { FlowError, Loading } from "./AuthFlow";
 import OrganizationAction from "./OrganizationAction";
 import { orgPath, type CustomRole, type Organization, type PermissionInfo } from "./types";
 
-const GROUP_LABEL: Record<string, string> = { organization: "组织", members: "成员", roles: "角色", workspaces: "工作空间", governance: "治理", owner: "仅所有者" };
+// The `organization` group holds the organization-settings permission only, so its legend says so.
+const GROUP_LABEL: Record<string, string> = { organization: "组织设置", members: "成员", roles: "角色", workspaces: "工作空间", governance: "治理", owner: "仅所有者" };
 
 export function PermissionPicker({ catalogue, mine, value, onChange, idPrefix }: {
   catalogue: PermissionInfo[]; mine: string[]; value: string[]; onChange: (next: string[]) => void; idPrefix: string;
@@ -51,7 +52,7 @@ export default function OrganizationRoles({ organization, mine, catalogue, onCha
   };
   const labelOf = (id: string) => catalogue.find(p => p.id === id)?.label || id;
   return <section className="org-section" id="org-roles"><h2>{t("自定义角色")}</h2>
-    <p className="tiny muted">{t("角色是一组组织级权限，可分配给成员；不改变工作空间内的权限。所有者拥有全部权限；管理员持有默认的管理权限；普通成员默认没有组织级权限。")}</p>
+    <p className="tiny muted">{t("自定义角色把一组组织级权限分配给成员，不改变工作空间内的权限。")}</p>
     <FlowError error={error} />
     {canManage && organization.status === "active" && <div className="org-actions"><button type="button" className="btn primary" onClick={() => open({ kind: "create" })}>{t("创建角色")}</button></div>}
     {error ? <button type="button" className="btn" onClick={() => setRevision(v => v + 1)}>{t("重试")}</button> : !roles ? <Loading />

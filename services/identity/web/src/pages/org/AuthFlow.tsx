@@ -130,18 +130,20 @@ export function AuthFrame({ title, description, children, wide = false }: {
   return <main className={`flow-page${wide ? " flow-wide" : ""}`}>
     <header className="flow-top"><Brand href="/login" product="Account" size="lg" /><LanguageMenu /></header>
     <div className="flow-layout">
+      {/* The decorative panel speaks the platform's own terms (account, workspace, organization)
+          and says what one sign-in gives; the landing page's hero is not repeated here. */}
       <aside className="flow-intro"><span className="flow-eyebrow">{state?.platform_name || "Synwevo Workspace"}</span>
-        <h2>{t("一个账户，连接你的工作。")}</h2>
-        <p>{t("从个人空间到团队协作，让每一次开始都井然有序。")}</p>
+        <h2>{t("登录一次，回到你的工作空间。")}</h2>
+        <p>{t("同一个账户进入你所属的组织与工作空间；登录方式、设备与通知都在这里管理。")}</p>
         <div className="flow-art" aria-hidden="true"><span>01</span><div /><span>02</span><div /><span>03</span></div>
-        <p className="flow-caption">{t("你的账户。你的空间。你的团队。")}</p>
+        <p className="flow-caption">{t("账户 · 工作空间 · 组织")}</p>
       </aside>
       <section className="flow-card" aria-labelledby={headingId}>
         <header className="flow-heading"><h1 id={headingId}>{title}</h1>{description && <p>{description}</p>}</header>
         {children}
       </section>
     </div>
-    <footer className="flow-footer"><Logo version="wordmark" height={13} /><span aria-hidden="true">/</span> {t("为专注的工作留出空间")}</footer>
+    <footer className="flow-footer"><Logo version="wordmark" height={13} /></footer>
   </main>;
 }
 
@@ -149,7 +151,7 @@ const ERROR_SOURCES: Record<string, string> = {
   network: "无法连接服务器，请检查网络后重试。",
   bad_credentials: "邮箱或口令不正确。", login_failed: "邮箱或口令不正确。",
   unauthorized: "请先登录后继续。", sign_in_required: "请先登录后继续。",
-  ticket_invalid: "验证已超时，请返回并重新登录。", bad_code: "验证码不正确，请重试。",
+  ticket_invalid: "验证已超时，请重新登录。", bad_code: "验证码不正确，请重试。",
   weak_password: "这个口令不符合要求，请使用更长且不包含个人信息的口令。",
   bad_email: "请输入有效的邮箱地址。", registration_closed: "此服务暂未开放注册。",
   registration_disabled: "此服务暂未开放注册。", email_not_verified: "请先验证邮箱后继续。",

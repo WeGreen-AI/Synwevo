@@ -51,10 +51,10 @@ export function InvitesPanel({ wid, ws, callerRole, list, loading, error, reload
         <option value="">{tr("全部状态")}</option>{Object.entries(INVITE_STATE).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
         <option value="mail_failed">{tr("待接受且发送失败")}</option></select></label>
       <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新邀请")}</button>
-      <button className="btn primary" disabled={blocked || !list || frozen} title={frozen ? tr("空间冻结期间不能邀请") : undefined}
+      <button className="btn primary" disabled={blocked || !list || frozen} title={frozen ? tr("工作空间冻结期间不能邀请") : undefined}
         onClick={() => setAction({ kind: "create" })}>{tr("邀请成员")}</button>
     </div>
-    <p className="small muted">{tr("邮件排队或寄出不代表对方已加入。只有接受邀请后才成为成员。重发会让旧链接失效。")}</p>
+    <p className="small muted">{tr("对方接受邀请后才成为成员；重发会让旧链接失效。")}</p>
     {!!error && <div className="notice err" role="alert">{errText(error)} <button className="btn sm" onClick={reload}>{tr("重试邀请列表")}</button></div>}
     {loading && <p role="status">{tr("正在加载邀请…")}</p>}
     {list && <>
@@ -77,7 +77,7 @@ export function InvitesPanel({ wid, ws, callerRole, list, loading, error, reload
               <td>{fmtTime(i.expires_at)}</td>
               <td className="act"><RowMenu label={tr("{p0} 的邀请操作", {p0: i.email_key})} items={[
                 { label: tr("修改邀请"), disabled: blocked || !editable, hint, onSelect: () => setAction({ kind: "edit", invitation: i }) },
-                { label: tr("重发邀请"), disabled: blocked || !repeatable || frozen, hint: frozen ? tr("空间冻结期间不能重发") : hint,
+                { label: tr("重发邀请"), disabled: blocked || !repeatable || frozen, hint: frozen ? tr("工作空间冻结期间不能重发") : hint,
                   onSelect: () => setAction({ kind: "resend", invitations: [i] }) },
                 { label: tr("撤销邀请"), disabled: blocked || !repeatable, hint, danger: true,
                   onSelect: () => setAction({ kind: "revoke", invitations: [i] }) },
@@ -120,10 +120,10 @@ function CreateInvites({ wid, ws, callerRole, onDone, onClose }: {
       invitations: addresses.map((email) => ({ email, role, can_export: role !== "viewer" || canExport })), expires_in_days: days,
     })} onDone={onDone} onClose={onClose}>
     <label className="field">{tr("邮箱（每行一个，也可用逗号分隔）")}<textarea className="input" rows={5} value={emails} onChange={(e) => setEmails(e.target.value)} /></label>
-    <span className="small muted">{tr("{p0}个邮箱；一次最多 100 个。每个空间 24 小时最多创建 50 个邀请，超出部分会报告失败。", {p0: addresses.length})}</span>
+    <span className="small muted">{tr("{p0} 个邮箱；一次最多 100 个。每个工作空间 24 小时最多创建 50 个邀请，超出部分会报告失败。", {p0: addresses.length})}</span>
     <label className="field">{tr("邀请角色")}<select aria-label={tr("邀请角色")} className="input" value={role} onChange={(e) => { setRole(e.target.value as Role); setExport(e.target.value !== "viewer"); }}>
       {ROLES.filter((r) => ROLE_RANK[r] <= ROLE_RANK[callerRole as Role]).map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}</select></label>
-    <label className="check"><input type="checkbox" checked={role !== "viewer" || canExport} disabled={role !== "viewer"} onChange={(e) => setExport(e.target.checked)} />{tr("允许导出（编辑及以上角色自带）")}</label>
+    <label className="check"><input type="checkbox" checked={role !== "viewer" || canExport} disabled={role !== "viewer"} onChange={(e) => setExport(e.target.checked)} />{tr("允许导出（编辑者及以上角色自带）")}</label>
     <label className="field">{tr("有效天数")}<input className="input" type="number" min={1} max={30} value={days} onChange={(e) => setDays(Number(e.target.value))} /></label>
   </ActionDialog>;
 }
@@ -138,7 +138,7 @@ function EditInvite({ invitation: i, callerRole, frozen, onDone, onClose }: {
     run={() => patch(`/api/auth/invitations/${encodeURIComponent(i.id)}`, { role, can_export: canExport })} onDone={onDone} onClose={onClose}>
     <label className="field">{tr("邀请角色")}<select aria-label={tr("邀请角色")} className="input" value={role} onChange={(e) => { setRole(e.target.value); if (e.target.value === "viewer") setExport(false); }}>
       {assignable(callerRole, i.role, frozen).map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}</select></label>
-    <label className="check"><input type="checkbox" checked={role !== "viewer" || canExport} disabled={role !== "viewer" || (frozen && !i.can_export)} onChange={(e) => setExport(e.target.checked)} />{tr("允许导出（编辑及以上角色自带）")}</label>
+    <label className="check"><input type="checkbox" checked={role !== "viewer" || canExport} disabled={role !== "viewer" || (frozen && !i.can_export)} onChange={(e) => setExport(e.target.checked)} />{tr("允许导出（编辑者及以上角色自带）")}</label>
   </ActionDialog>;
 }
 
@@ -150,7 +150,7 @@ function InvitationAction({ wid, action, onDone, onClose }: {
   return <ActionDialog title={resend ? tr("重发邀请") : tr("撤销邀请")} confirmLabel={resend ? tr("重发邀请") : tr("撤销邀请")} danger={!resend}
     ready={!resend || (days >= 1 && days <= 30)} impact={<>
       <ul className="names">{action.invitations.map((i) => <li key={i.id}>{i.email_key}</li>)}</ul>
-      {resend ? tr("将发送新的邀请，旧链接会失效。") : tr("这些链接将失效，收件人将不能通过它们加入空间。已加入的成员不受影响。")}{tr("每项单独执行并报告结果。")}</>}
+      {resend ? tr("将发送新的邀请，旧链接会失效。") : tr("这些链接将失效，收件人将不能通过它们加入工作空间。已加入的成员不受影响。")}{tr("每项单独执行并报告结果。")}</>}
     run={() => post<BulkResponse>(`/api/auth/workspaces/${encodeURIComponent(wid)}/invitations/bulk`, {
       action: action.kind, ids: action.invitations.map((i) => i.id), expires_in_days: days,
     })} onDone={onDone} onClose={onClose}>

@@ -1,11 +1,9 @@
 import { registerMessages } from '@synwevo/ui';
 registerMessages({
-  '站内通知始终记录在通知中心；这里决定每类通知是否出现在通知中心、是否发邮件、是否推送到已开启的设备。账户安全通知始终发送。': { en: 'In-app notifications are always kept in the notification centre; here you decide, per category, whether it shows there, whether it is e-mailed, and whether it is pushed to the devices you enabled. Account security notifications are always sent.', 'zh-Hant': '站內通知始終記錄在通知中心；這裡決定每類通知是否出現在通知中心、是否寄郵件、是否推播到已開啟的裝置。帳戶安全通知始終傳送。' },
   '浏览器推送': { en: 'Browser push', 'zh-Hant': '瀏覽器推播' },
   '{category}：浏览器推送': { en: '{category}: browser push', 'zh-Hant': '{category}：瀏覽器推播' },
   '推送': { en: 'Push', 'zh-Hant': '推播' },
   '不推送': { en: 'No push', 'zh-Hant': '不推播' },
-  '开启后，这台设备的浏览器会在通知中心有新内容时收到系统通知（须由你在此设备上开启；关闭标签页也能收到）。每类通知是否推送在上表设置；账户安全通知始终推送。': { en: 'Once enabled, this device\'s browser receives a system notification when something new reaches your notification centre (you enable it on each device; it arrives even with the tab closed). Which categories are pushed is set in the table above; account security is always pushed.', 'zh-Hant': '開啟後，這台裝置的瀏覽器會在通知中心有新內容時收到系統通知（須由你在此裝置上開啟；關閉分頁也能收到）。每類通知是否推播在上表設定；帳戶安全通知始終推播。' },
   '此部署未启用浏览器推送。': { en: 'Browser push is not enabled on this deployment.', 'zh-Hant': '此部署未啟用瀏覽器推播。' },
   '推送只在 HTTPS 页面上可用。': { en: 'Push is only available on HTTPS pages.', 'zh-Hant': '推播只在 HTTPS 頁面上可用。' },
   '这个浏览器不支持网页推送；通知中心与邮件不受影响。': { en: 'This browser does not support web push; the notification centre and e-mail are unaffected.', 'zh-Hant': '這個瀏覽器不支援網頁推播；通知中心與郵件不受影響。' },
@@ -28,9 +26,6 @@ registerMessages({
   '已移除该设备的推送': { en: 'Push removed for that device', 'zh-Hant': '已移除該裝置的推播' },
   '推送服务已接受测试消息；请看该设备的通知': { en: 'The push service accepted the test; look for the notification on that device', 'zh-Hant': '推播服務已接受測試訊息；請看該裝置的通知' },
   '浏览器': { en: 'Browser', 'zh-Hant': '瀏覽器' },
-  '站内通知始终记录在通知中心；这里决定每类通知是否出现在通知中心、以及是否发邮件。账户安全通知始终发送。': {
-    en: 'Notifications are always recorded in the notification centre; here you decide, per category, whether they appear there and whether an e-mail is sent. Account security notices are always sent.',
-    'zh-Hant': '站內通知一律記錄在通知中心；這裡決定各類通知是否顯示在通知中心，以及是否寄送郵件。帳戶安全通知一律寄送。' },
   '通知偏好': { en: 'Notification preferences', 'zh-Hant': '通知偏好' },
   '通知偏好已保存': { en: 'Notification preferences saved', 'zh-Hant': '通知偏好已儲存' },
   '类别': { en: 'Category', 'zh-Hant': '類別' },
@@ -52,9 +47,6 @@ registerMessages({
   '立即': { en: 'Immediately', 'zh-Hant': '立即' },
   '汇总（约 30 分钟一封）': { en: 'Digest (about one mail per 30 minutes)', 'zh-Hant': '彙總（約 30 分鐘一封）' },
   '不发邮件': { en: 'No e-mail', 'zh-Hant': '不寄郵件' },
-  '免打扰时段：这段时间内不发普通通知的邮件，结束后再发；账户安全邮件不受影响': {
-    en: 'Quiet hours: ordinary notification e-mails are held until the window ends; account security e-mails are unaffected',
-    'zh-Hant': '免打擾時段：這段時間內不寄一般通知郵件，結束後再寄；帳戶安全郵件不受影響' },
   '开始': { en: 'From', 'zh-Hant': '開始' },
   '结束': { en: 'Until', 'zh-Hant': '結束' },
   '时区': { en: 'Time zone', 'zh-Hant': '時區' },
@@ -67,4 +59,11 @@ registerMessages({
     en: 'Messages are never e-mailed one by one. With the unread digest on, conversations still unread are combined into one e-mail, at least 30 minutes apart and at most 8 a day; anything read, muted or recalled is not sent.',
     'zh-Hant': '訊息不會逐則寄送郵件。開啟「未讀摘要」後，仍未讀的對話合成一封，至少間隔 30 分鐘，每天最多 8 封；已讀、靜音或已收回的內容不會寄出。',
   },
+});
+
+// CI-76 copy pass.
+registerMessages({
+  "按类别决定通知是否显示在通知中心、发邮件或推送到设备；账户安全通知始终发送。": { en: "Decide per category whether a notification appears in the notification centre, is e-mailed or pushed to your devices; account security notifications are always sent.", "zh-Hant": "按類別決定通知是否顯示在通知中心、寄郵件或推播到裝置；帳戶安全通知一律傳送。" },
+  "免打扰时段：期间不发普通通知邮件，结束后再发；账户安全邮件不受影响": { en: "Quiet hours: ordinary notification e-mails are held until the window ends; account security e-mails are unaffected", "zh-Hant": "免打擾時段：期間不寄一般通知郵件，結束後再寄；帳戶安全郵件不受影響" },
+  "开启后，这台设备会在通知中心有新内容时收到系统通知，关闭标签页也能收到；每台设备各自开启。推送哪些类别在上表设置。": { en: "Once enabled, this device receives a system notification when something new reaches your notification centre, even with the tab closed; each device is enabled separately. Which categories are pushed is set in the table above.", "zh-Hant": "開啟後，這台裝置會在通知中心有新內容時收到系統通知，關閉分頁也能收到；每台裝置各自開啟。推播哪些類別在上表設定。" },
 });

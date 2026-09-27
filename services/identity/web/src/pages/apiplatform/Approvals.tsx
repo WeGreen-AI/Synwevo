@@ -37,7 +37,7 @@ export function ApprovalsPanel({ act, scopes, resource, revision, owner = false 
       <div className="row gap12 wrap"><h2>{owner ? t('工作空间授权审批') : t('审批记录')}</h2><span className="spacer" />
         {!owner && <label className="field">{t('状态')}<select className="input" value={status} onChange={e => setStatus(e.target.value)}><option value="">{t('全部')}</option>{Object.entries(labels).map(([key, text]) => <option key={key} value={key}>{text}</option>)}</select></label>}
         <button className="btn" onClick={load.refresh}>{t('刷新')}</button></div>
-      {owner && <p className="notice info">{t('你只在此批准或撤回自己的工作空间授权。平台控制台仍仅向平台管理员开放。')}</p>}
+      {owner && <p className="notice info">{t('这里只批准或撤回你拥有的工作空间的授权。')}</p>}
       <DataState loading={load.loading} error={load.error} empty={!load.data?.items.length} retry={load.reload} />
       {!load.loading && !load.error && load.data?.items.map(row => <ApprovalRow key={row.id} row={row} owner={owner} act={act} locale={locale} labels={labels} />)}
       <Pager page={load.data} move={load.move} busy={load.loading} />

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { del, get, post, useSession } from '@synwevo/auth-client';
 import { useDialog, useI18n, useToast } from '@synwevo/ui';
 import { Topbar } from '../components/Topbar';
-import { LeaveDialog } from './members/dialogs';
+import { LeaveDialog } from '../governance/dialogs';
 import { canExport } from '../lib/labels';
 import MfaSection from '../components/MfaSection';
 import PasskeySection from '../components/PasskeySection';
@@ -25,7 +25,7 @@ function deviceLabel(row: SessionRow, t: (s: string, p?: Record<string, string>)
   if (parts.browser && parts.platform) return t('{platform} 上的 {browser}', { platform: parts.platform, browser: parts.browser });
   return parts.browser || parts.platform || t('未知设备');
 }
-const roles: Record<string, string> = { owner: '所有者', admin: '管理员', editor: '编辑', viewer: '只读' };
+const roles: Record<string, string> = { owner: '所有者', admin: '管理员', editor: '编辑者', viewer: '查看者' };
 const methods: Record<string, string> = { password: '口令', 'password+totp': '口令与动态验证码', 'password+recovery': '口令与恢复码', passkey_uv: '安全密钥（已验证身份）', passkey: '安全密钥',
   email: '邮箱验证码', 'email+totp': '邮箱验证码与动态验证码', 'email+recovery': '邮箱验证码与恢复码' };
 /** `idp:<provider>` and `idp:<provider>+totp`: the provider's configured label, then the second factor. */
@@ -73,15 +73,17 @@ export default function Account() {
       }
     } catch (e) { setError(errorText(e, t)); } finally { setBusy(false); }
   }
+  // The hero states whose account this is (name and address), not a welcome line: the bar's
+  // title already says where the person is.
   return <div className="app"><Topbar title={t('账户与安全')} /><div style={{ overflow: 'auto', flex: 1 }}>
-    <main className="account-center"><header className="account-hero"><div><p className="account-eyebrow">Synwevo Account</p>
-      <h1>{t('你的账户，由你掌控')}</h1><p className="muted">{t('管理个人资料、登录方式与隐私。')}</p></div></header>
+    <main className="account-center">{profile && <header className="account-hero"><div><p className="account-eyebrow">Synwevo Account</p>
+      <h1>{profile.display_name || profile.email}</h1>{profile.display_name && <p className="muted">{profile.email}</p>}</div></header>}
       <ErrorNotice error={profileError} retry={loadProfile} />
       {!profile && !profileError && <p role="status">{t('加载中…')}</p>}
       {profile?.status === 'pending' && <section className="card card-b col gap12"><h2>{t('请先验证邮箱')}</h2>
-        <p>{t('验证邮箱后即可管理个人资料和安全设置。')}</p><p className="muted">{profile.email}</p>
+        <p>{t('验证邮箱后即可管理个人资料和安全设置。')}</p>
         <ErrorNotice error={error} /><div><button className="btn primary" disabled={busy} onClick={() => {
-          setBusy(true); setError(null); post('/api/auth/verify-email/send').then(() => toast(t('验证邮件已进入队列'), 'ok'))
+          setBusy(true); setError(null); post('/api/auth/verify-email/send').then(() => toast(t('验证邮件已发出'), 'ok'))
             .catch(e => setError(errorText(e, t))).finally(() => setBusy(false));
         }}>{t('重新发送验证邮件')}</button></div></section>}
       <AdminStepUp />
@@ -105,11 +107,11 @@ export default function Account() {
         </section>
         <NotificationsSection timezone={profile.timezone} />
         <section id="workspaces" className="card card-b col gap12 account-section"><h2 className="secttl">{t('工作空间')}</h2>
-          <p className="tiny muted">{t('平台管理权限不会授予工作空间文档的读取权限。')}</p>
+          {me.platform_role === 'admin' && <p className="tiny muted">{t('平台管理权限不会授予工作空间文档的读取权限。')}</p>}
           <div className="account-table"><table className="tbl"><thead><tr><th>{t('名称')}</th><th>{t('我的角色')}</th><th>{t('可导出')}</th><th>{t('操作')}</th></tr></thead>
             <tbody>{me.workspaces.map(w => <tr key={w.id}><td>{w.name}</td><td>{t(roles[w.role] || w.role)}</td><td>{t(canExport(w.role, w.can_export) ? '是' : '否')}</td><td><div className="row gap4 wrap">
               {(w.role === 'owner' || w.role === 'admin') && <Link className="btn sm" to={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>{t('成员与邀请')}</Link>}
-              <button className="btn ghost sm" onClick={() => setLeaving(w)}>{t('退出空间')}</button></div></td></tr>)}</tbody></table></div>
+              <button className="btn ghost sm" onClick={() => setLeaving(w)}>{t('退出工作空间')}</button></div></td></tr>)}</tbody></table></div>
           {!me.workspaces.length && <p className="muted">{t('你当前不属于任何工作空间。')}</p>}
         </section>
         <ActivitySection timezone={profile.timezone} /><PrivacySection profile={profile} onDeleted={due => setProfile({ ...profile, status: 'pending_delete', deletion_due_at: due })} />

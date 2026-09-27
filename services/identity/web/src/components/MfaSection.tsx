@@ -191,7 +191,7 @@ export default function MfaSection() {
                 </div>
               )}
           </div>
-          <p className="tiny muted">{t("关闭两步验证需要输入一个当前有效的验证码——只有口令还不够。")}</p>
+          <p className="tiny muted">{t("关闭两步验证需要一个当前有效的验证码。")}</p>
         </>
       )}
 

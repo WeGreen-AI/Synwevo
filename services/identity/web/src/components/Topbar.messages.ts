@@ -8,7 +8,6 @@ registerMessages({
   "返回工作空间": { en: "Back to workspace", "zh-Hant": "返回工作空間" },
   "返回 {app}": { en: "Back to {app}", "zh-Hant": "返回 {app}" },
   "回到「{name}」继续之前的任务": { en: "Return to “{name}” and pick up where you left off", "zh-Hant": "回到「{name}」繼續之前的任務" },
-  "账户概览": { en: "Account overview", "zh-Hant": "帳戶總覽" },
   "菜单": { en: "Menu", "zh-Hant": "選單" },
   "账户与安全": { en: "Account & security", "zh-Hant": "帳戶與安全" },
   "组织": { en: "Organizations", "zh-Hant": "組織" },

@@ -19,7 +19,7 @@ export function Credentials({ act, revision }: { act: (a: Action) => void; revis
     run: reason => post(`${BASE}/credentials/${row.kind}/${row.id}/${operation}`, { reason, grace_seconds: 0 }) });
   return <section className="card card-b col gap12"><h2>{t('服务凭据')}</h2>
     <label className="field">{t('按工作空间 ID 筛选')}<input className="input" value={workspace} maxLength={100} onChange={e => setWorkspace(e.target.value)} /></label>
-    <p className="notice info">{t('历史凭据保留原授权模型。控制台不能轮换未绑定审批的历史凭据来取得数据权限。')}</p>
+    <p className="notice info">{t('历史凭据按原有授权继续使用；没有绑定审批的历史凭据不能在这里轮换。')}</p>
     <DataState loading={load.loading} error={load.error} empty={!load.data?.items.length} retry={load.reload} />
     {!load.loading && !load.error && load.data?.items.map(row => <article key={`${row.kind}:${row.id}`} className="api-platform-record col gap8">
       <div className="row gap8 wrap"><strong>{row.name}</strong><span className="chip">{row.kind === 'api_key' ? t('访问密钥') : t('服务客户端')}</span>

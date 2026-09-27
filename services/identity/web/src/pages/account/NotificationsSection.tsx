@@ -56,7 +56,7 @@ export default function NotificationsSection({ timezone }: { timezone?: string }
   const zoneOptions = Array.from(new Set([prefs?.timezone, timezone, ...ZONES].filter(Boolean) as string[]));
   return <section id="notifications" className="card card-b col gap12 account-section">
     <h2 className="secttl">{t('通知')}</h2>
-    <p className="tiny muted">{t('站内通知始终记录在通知中心；这里决定每类通知是否出现在通知中心、是否发邮件、是否推送到已开启的设备。账户安全通知始终发送。')}</p>
+    <p className="tiny muted">{t('按类别决定通知是否显示在通知中心、发邮件或推送到设备；账户安全通知始终发送。')}</p>
     <ErrorNotice error={error} retry={() => void load()} />
     {prefs && <>
       <div className="account-table"><table className="tbl" aria-label={t('通知偏好')}>
@@ -83,7 +83,7 @@ export default function NotificationsSection({ timezone }: { timezone?: string }
         <label className="check"><input type="checkbox" checked={quiet} disabled={busy} onChange={e => {
           if (!e.target.checked) { setQuiet(false); void save({ quiet_start: null, quiet_end: null, timezone: prefs.timezone }); }
           else { setQuiet(true); }
-        }} /><span>{t('免打扰时段：这段时间内不发普通通知的邮件，结束后再发；账户安全邮件不受影响')}</span></label>
+        }} /><span>{t('免打扰时段：期间不发普通通知邮件，结束后再发；账户安全邮件不受影响')}</span></label>
         {quiet && <form className="row wrap gap8" onSubmit={e => {
           e.preventDefault(); const f = new FormData(e.currentTarget);
           void save({ quiet_start: String(f.get('start')), quiet_end: String(f.get('end')), timezone: String(f.get('tz')) });

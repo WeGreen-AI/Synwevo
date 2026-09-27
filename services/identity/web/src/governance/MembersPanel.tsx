@@ -45,20 +45,20 @@ export function MembersPanel({ wid, page, loading, error, filters, setFilters, o
   };
   const begin = (kind: Exclude<Action["kind"], "leave">, ms: Member[]) => setAction({ kind, members: ms });
   const menu = (m: Member): RowMenuItem[] => {
-    const hint = m.is_self ? tr("不能修改自己的权限，请使用退出空间或移交所有权") : tr("不能管理同级或更高角色的成员");
+    const hint = m.is_self ? tr("不能修改自己的权限，请使用退出工作空间或移交所有权") : tr("不能管理同级或更高角色的成员");
     return [
       { label: tr("修改角色"), disabled: !m.manageable || blocked, hint, onSelect: () => begin("role", [m]) },
       { label: m.role !== "viewer" ? tr("导出随角色授予") : m.can_export ? tr("关闭导出") : tr("允许导出"), disabled: !m.manageable || blocked || m.role !== "viewer" || (frozen && !m.can_export),
-        hint: m.role !== "viewer" ? tr("编辑及以上角色自带导出权限；需先降低角色") : frozen && !m.can_export ? tr("空间冻结期间不能增加权限") : hint, onSelect: () => begin("export", [m]) },
+        hint: m.role !== "viewer" ? tr("编辑者及以上角色自带导出权限；需先降低角色") : frozen && !m.can_export ? tr("工作空间冻结期间不能增加权限") : hint, onSelect: () => begin("export", [m]) },
       ...(page.app ? [
         { label: tr("授予应用使用资格"), disabled: !m.manageable || blocked || frozen || m.entitlement === "active",
-          hint: frozen ? tr("空间冻结期间不能授予") : m.entitlement === "active" ? tr("已经授予") : hint, onSelect: () => begin("grant", [m]) },
+          hint: frozen ? tr("工作空间冻结期间不能授予") : m.entitlement === "active" ? tr("已经授予") : hint, onSelect: () => begin("grant", [m]) },
         { label: tr("撤销应用使用资格"), danger: true, disabled: !m.manageable || blocked || m.entitlement === "revoked",
           hint: m.entitlement === "revoked" ? tr("已经撤销") : hint, onSelect: () => begin("revoke", [m]) },
       ] : []),
       { label: tr("移除成员"), danger: true, disabled: !m.manageable || blocked, hint, onSelect: () => begin("remove", [m]) },
       ...(page.caller.role === "owner" && !m.is_self ? [{ label: tr("移交所有权"), disabled: blocked || frozen || m.account_status !== "active",
-        hint: frozen ? tr("空间冻结期间不能移交") : tr("接收方账户必须正常"), onSelect: () => begin("transfer", [m]) }] : []),
+        hint: frozen ? tr("工作空间冻结期间不能移交") : tr("接收方账户必须正常"), onSelect: () => begin("transfer", [m]) }] : []),
     ];
   };
   const ms = action && "members" in action ? action.members : [];
@@ -76,7 +76,7 @@ export function MembersPanel({ wid, page, loading, error, filters, setFilters, o
         <option value="">{tr("全部资格")}</option><option value="active">{tr("已授予")}</option><option value="revoked">{tr("已撤销")}</option><option value="none">{tr("未单独设置")}</option>
       </select></label>}
       <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新")}</button>
-      <button className="btn ghost sm" disabled={blocked} onClick={() => setAction({ kind: "leave" })}>{tr("退出空间")}</button>
+      <button className="btn ghost sm" disabled={blocked} onClick={() => setAction({ kind: "leave" })}>{tr("退出工作空间")}</button>
     </div>
     {!!error && <div className="notice err" role="alert">{errText(error)} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
     {loading && <p role="status">{tr("正在更新成员列表…")}</p>}
@@ -94,7 +94,7 @@ export function MembersPanel({ wid, page, loading, error, filters, setFilters, o
               {m.account_status !== "active" && <span className="badge warn">{ACCOUNT_STATUS[m.account_status] || m.account_status}</span>}</th>
             <td>{roleLabel(m.role)}</td><td>{canExport(m.role, m.can_export) ? tr("允许") : tr("关闭")}{m.role !== "viewer" && <span className="cell-note">{tr("随角色授予")}</span>}</td>
             <td>{page.app ? <><span className={`badge ${entitlement.tone}`}>{entitlement.text}</span>
-              {(frozen || m.account_status !== "active" || page.app.status !== "active") && <span className="cell-note">{tr("账户、空间或应用当前不可用")}</span>}</> : tr("未配置应用")}</td>
+              {(frozen || m.account_status !== "active" || page.app.status !== "active") && <span className="cell-note">{tr("账户、工作空间或应用当前不可用")}</span>}</> : tr("未配置应用")}</td>
             <td className="act"><RowMenu label={tr("{p0} 的操作", {p0: m.email})} items={menu(m)} /></td>
           </tr>;
         })}
@@ -118,7 +118,7 @@ export function MembersPanel({ wid, page, loading, error, filters, setFilters, o
     {action?.kind === "revoke" && page.app && <RevokeEntitlementDialog wid={wid} ms={ms} ws={page.workspace} app={page.app} onClose={close}
       onDone={(r) => r.bulk ? bulkDone(r.bulk, tr("撤销使用资格"), ms) : done(tr("已撤销应用使用资格"))} />}
     {action?.kind === "grant" && page.app && <ActionDialog title={tr("授予应用使用资格")} confirmLabel={tr("授予使用资格")} reason="optional"
-      impact={<>{tr("{members} 将获得在「{space}」使用 {app} 的资格。账户、空间和应用仍须正常可用。", {members: ms.map(memberName).join(", "), space: page.workspace.name, app: page.app.name})}</>}
+      impact={<>{tr("{members} 将获得在「{space}」使用 {app} 的资格。账户、工作空间和应用仍须正常可用。", {members: ms.map(memberName).join(", "), space: page.workspace.name, app: page.app.name})}</>}
       run={(reason) => post<BulkResponse>(`${base}/members/entitlements`, { app_id: page.app!.id, changes: ms.map((m) => ({ user_id: m.user_id, grant: true })), reason })}
       onClose={close} onDone={(r) => bulkDone(r, tr("授予使用资格"), ms)} />}
     {action?.kind === "export" && <ActionDialog title={ms[0].can_export ? tr("关闭导出") : tr("允许导出")} confirmLabel={tr("更新导出权限")} reason="optional"

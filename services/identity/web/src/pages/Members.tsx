@@ -99,7 +99,7 @@ function WorkspaceMembers({ wid }: { wid: string }) {
               <div>
                 {denied.status === 404
                   ? tr("它不存在，或者你不是它的成员。")
-                  : tr("只有空间所有者和管理员可以查看与管理成员。{p0}", {p0: (() => {
+                  : tr("只有工作空间所有者和管理员可以查看与管理成员。{p0}", {p0: (() => {
                     const mine = me?.workspaces.find((w) => w.id === wid);
                     return mine ? tr("你在这里的角色是「{role}」。", {role: roleLabel(mine.role)}) : "";
                   })()})}
@@ -120,7 +120,7 @@ function WorkspaceMembers({ wid }: { wid: string }) {
                 <div className="grow">
                   <h1>{page.workspace.name}</h1>
                   <div className="sub statline">
-                    <span>{tr("{kind}空间", {kind: WORKSPACE_KIND[page.workspace.kind] || page.workspace.kind})}</span>
+                    <span>{tr("{kind}工作空间", {kind: WORKSPACE_KIND[page.workspace.kind] || page.workspace.kind})}</span>
                     <span aria-hidden="true">·</span>
                     <span className={`badge ${page.workspace.status === "active" ? "ok" : "warn"}`}>
                       {WORKSPACE_STATUS[page.workspace.status] || page.workspace.status}
@@ -135,13 +135,13 @@ function WorkspaceMembers({ wid }: { wid: string }) {
                 </div>
               </div>
 
-              {page.app && <p className="small muted mt12">{tr("实际访问仍取决于账户、空间和应用是否可用；授予使用资格不会启用已停用的应用。")}</p>}
+              {page.app && <p className="small muted mt12">{tr("实际访问还取决于账户、工作空间和应用是否可用；授予使用资格不会启用已停用的应用。")}</p>}
 
               {page.workspace.status === "frozen" && (
-                <div className="notice warn mt12" role="note">{tr("这个空间已被平台管理员冻结：成员暂时无法使用其中的应用。你仍然可以移除成员、撤销权限，但不能邀请新成员、提升角色或授予权限，直到空间解冻。")}</div>
+                <div className="notice warn mt12" role="note">{tr("这个工作空间已被平台管理员冻结：成员暂时无法使用其中的应用。解冻前只能移除成员和撤销权限，不能邀请、提升角色或授予权限。")}</div>
               )}
               {page.single_owner && page.workspace.kind !== "personal" && (
-                <div className="notice mt12" role="note">{tr("这个空间只有{p0}位状态正常的所有者。建议再指定一位所有者，以免唯一的所有者无法联系时没有人能管理这个空间。", {p0: page.active_owner_count})}</div>
+                <div className="notice mt12" role="note">{tr("这个工作空间只有 {p0} 位正常的所有者。建议再指定一位，以免无人能管理。", {p0: page.active_owner_count})}</div>
               )}
 
               <div className="acct-tabs" role="tablist" aria-label={tr("成员与邀请")} onKeyDown={onTabKey}>

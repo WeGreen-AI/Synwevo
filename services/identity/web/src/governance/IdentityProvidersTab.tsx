@@ -6,9 +6,9 @@ import { useAdminData } from "./data";
 registerMessages({
   "登录方式": { en: "Sign-in methods", "zh-Hant": "登入方式" },
   "外部账户登录（OpenID Connect）": { en: "External account sign-in (OpenID Connect)", "zh-Hant": "外部帳戶登入（OpenID Connect）" },
-  "这里显示每个提供商在本部署的配置状态：回调地址、权限范围、发行者，以及客户端 ID 与密钥是否已填写。密钥本身永远不会显示，也不能在这里输入——它们放在账户服务的受保护环境文件里，改动后重启账户服务生效。": {
-    en: "The configuration state of each provider in this deployment: the callback URL, scopes, issuer, and whether the client ID and secret are present. The secret itself is never shown and cannot be entered here — it lives in the account service's protected environment file and takes effect after the account service restarts.",
-    "zh-Hant": "這裡顯示每個提供商在本部署的設定狀態：回呼位址、權限範圍、發行者，以及用戶端 ID 與密鑰是否已填寫。密鑰本身永遠不會顯示，也不能在這裡輸入——它們放在帳戶服務的受保護環境檔裡，改動後重新啟動帳戶服務生效。" },
+  "每个提供商在本部署的配置状态。密钥不会显示，也不能在这里填写：它在账户服务的环境配置里，改动后重启账户服务生效。": {
+    en: "Each provider's configuration state in this deployment. The secret is never shown and cannot be entered here: it lives in the account service's environment configuration and takes effect after the account service restarts.",
+    "zh-Hant": "每個提供者在本部署的設定狀態。密鑰不會顯示，也不能在這裡填寫：它在帳戶服務的環境設定裡，改動後重新啟動帳戶服務生效。" },
   "已启用": { en: "Enabled", "zh-Hant": "已啟用" },
   "未配置": { en: "Not configured", "zh-Hant": "未設定" },
   "回调地址（在提供商控制台登记这一条）": { en: "Callback URL (register exactly this at the provider)", "zh-Hant": "回呼位址（在提供商主控台登記這一條）" },
@@ -66,7 +66,7 @@ export function IdentityProvidersTab({ onDenied }: { onDenied: () => void }) {
       <button className="btn sm" disabled={load.loading} onClick={() => { setProbe(null); load.reload(); }}>{t("刷新")}</button>
       {data.enabled && data.items.some((i) => i.configured) && <button className="btn sm primary" disabled={probing} onClick={check}>{t(probing ? "正在检查…" : "立即检查连接")}</button>}
     </div>
-    <p className="muted">{t("这里显示每个提供商在本部署的配置状态：回调地址、权限范围、发行者，以及客户端 ID 与密钥是否已填写。密钥本身永远不会显示，也不能在这里输入——它们放在账户服务的受保护环境文件里，改动后重启账户服务生效。")}</p>
+    <p className="muted">{t("每个提供商在本部署的配置状态。密钥不会显示，也不能在这里填写：它在账户服务的环境配置里，改动后重启账户服务生效。")}</p>
     {probeError && <p className="notice err" role="alert">{probeError}</p>}
     {!data.enabled && <p className="notice warn">{t("本部署没有启用外部账户登录模块。")}</p>}
     <div className="idp-grid">
