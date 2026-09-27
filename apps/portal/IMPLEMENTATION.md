@@ -15,6 +15,8 @@ Added:
 
 - `synwevo_portal/public.py`
 - `web/src/PublicHome.tsx`, `web/src/messages.ts`
+- `web/src/PublicPages.tsx`, `web/src/publicRoutes.ts` (2026-09-28: 数据与隐私 / 服务说明 pages and the
+  shared public route table; record in `docs/platform/public-pages.md`)
 - `../../tests/integration/test_portal_public.py`
 - This delivery record.
 
@@ -25,14 +27,21 @@ shared account routing and workspace handoff; current cross-module evidence is i
 ## Behavior and route contract
 
 `portal_app.install(api, plat)` installs the public router itself, before the composer's catch-all
-shell. **No additional composer wiring is required for the Portal routes.** Public pages are
-`/`, `/zh-Hans`, `/zh-Hant`, `/en`; the authenticated entry is `/workspace`. `/robots.txt` allows
-only those exact pages and the public hashed assets. `/sitemap.xml` lists only canonical public
-pages. Canonical URLs/hreflang/sitemap use validated `SYNWEVO_PORTAL_URL`, never Host or request
-query parameters. With no valid configured origin, canonical tags and sitemap URLs are omitted.
-The neutral build is noindex by default; server-rendered public titles, descriptions, language,
-fallback introduction and registration/sign-in links precede React. All nonpublic Portal
-responses except hashed assets carry `X-Robots-Tag: noindex, nofollow`.
+shell. **No additional composer wiring is required for the Portal routes.** Public pages are the
+home (`/`, `/zh-Hant`, `/en`, alias `/zh-Hans`), 数据与隐私 (`/privacy`, `/zh-Hant/privacy`,
+`/en/privacy`) and 服务说明 (`/service`, `/zh-Hant/service`, `/en/service`) — see
+`docs/platform/public-pages.md` for their structure and the source of every statement; the
+authenticated entry is `/workspace`. `/robots.txt` allows only those exact pages and the public
+hashed assets. `/sitemap.xml` lists the nine canonical public pages. Canonical URLs/hreflang/sitemap
+use validated `SYNWEVO_PORTAL_URL`, never Host or request query parameters. With no valid
+configured origin, canonical tags and sitemap URLs are omitted. The neutral build is noindex by
+default; server-rendered public titles, descriptions, language, fallback summary and
+registration/sign-in links precede React. `/public/deployment.json` is an anonymous, non-indexed
+document the privacy and service pages read: the account service's and Synwevo Docs' own
+`/readyz` and `/api/auth/state` answers (malware scanning, human verification, external sign-in,
+registration policy, mail sender), fetched server-side from configured origins only, cached 60 s,
+`null` where unreadable. All nonpublic Portal responses except hashed assets carry
+`X-Robots-Tag: noindex, nofollow`.
 
 Existing `/auth/start?next=%2Fworkspace` remains the sign-in flow. No password form is added to
 Portal. Registration goes to the server-specified Account origin `/register`. The parent owns

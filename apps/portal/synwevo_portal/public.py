@@ -1,30 +1,173 @@
-"""Public portal documents; no identity or business data is rendered into these pages."""
+"""Public portal documents; no identity or business data is rendered into these pages.
+
+Three public pages, each in three languages: the home, 数据与隐私 (`/privacy`) and 服务说明
+(`/service`). They are server-rendered so that a crawler, a reader without JavaScript and the
+React shell all see the same summary; the shell then replaces the fallback with the full page.
+
+`/public/deployment.json` is the one document here that is not static copy. The privacy and
+service pages describe *this* deployment, and a few of their statements depend on how the
+account service and Synwevo Docs are configured (malware scanning, human verification, external
+sign-in, registration policy, the mail sender). Those are read from the running services and
+shown as they are, so the pages track the deployment instead of repeating a claim that was true
+when the copy was written. The record of every fact is docs/platform/public-pages.md.
+"""
 from __future__ import annotations
 
 import html
+import json
 import re
+import threading
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from synwevo_core import env
 
-PUBLIC_PATHS = {"/": "zh-Hans", "/zh-Hans": "zh-Hans", "/zh-Hant": "zh-Hant", "/en": "en"}
-COPY = {
-    "zh-Hans": (
-        "Synwevo · 工作流程自动化平台", "连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。",
-        "把重复的工作，交给流程。", "注册账户", "登录", "Synwevo Workspace · 你的工作空间",
-    ),
-    "zh-Hant": (
-        "Synwevo · 工作流程自動化平台", "連接團隊、應用與資料，讓重複工作成為清晰、可追蹤的自動化流程。",
-        "把重複的工作，交給流程。", "註冊帳戶", "登入", "Synwevo Workspace · 你的工作空間",
-    ),
-    "en": (
-        "Synwevo · Workflow automation platform", "Connect teams, applications and data in clear, traceable automated workflows.",
-        "Let workflows handle the repetitive work.", "Create an account", "Sign in", "Synwevo Workspace · Your workspace",
-    ),
+LOCALES = ("zh-Hans", "zh-Hant", "en")
+PAGES = ("home", "privacy", "service")
+
+
+def public_path(page: str, locale: str) -> str:
+    """The canonical path of a public page in a language: `/`, `/en`, `/zh-Hant/privacy`, …"""
+    prefix = "" if locale == "zh-Hans" else f"/{locale}"
+    if page == "home":
+        return prefix or "/"
+    return f"{prefix}/{page}"
+
+
+#: path → locale, for every path the portal answers with a public document. `/zh-Hans/...` is a
+#: non-canonical alias of the unprefixed path (the shell normalises it).
+PUBLIC_PATHS: dict[str, str] = {}
+#: path → page id.
+PUBLIC_PAGES: dict[str, str] = {}
+for _page in PAGES:
+    for _locale in LOCALES:
+        PUBLIC_PATHS[public_path(_page, _locale)] = _locale
+        PUBLIC_PAGES[public_path(_page, _locale)] = _page
+    _alias = "/zh-Hans" if _page == "home" else f"/zh-Hans/{_page}"
+    PUBLIC_PATHS[_alias] = "zh-Hans"
+    PUBLIC_PAGES[_alias] = _page
+
+# The server-rendered copy. Per language: the links every page carries, the private shell title,
+# then per page its <title>, meta description, <h1> and the summary paragraphs a reader without
+# JavaScript sees. The React shell renders the same words from apps/portal/web/src/messages.ts.
+COPY: dict[str, dict] = {
+    "zh-Hans": {
+        "register": "注册账户", "login": "登录", "home": "首页",
+        "private_title": "Synwevo Workspace · 你的工作空间",
+        "pages": {
+            "home": {
+                "title": "Synwevo · 工作流程自动化平台",
+                "description": "文档自动化、团队协作与消息沟通，汇聚于同一个工作空间。",
+                "heading": "让工作，自然相连。",
+                "paragraphs": [
+                    "Synwevo，取意于协同与编织。分散的文档、数据与沟通，在这里被织成有序的工作；想法在协作中成形，日常在持续完善中变得从容。",
+                    "今天可用的应用：Synwevo Docs（文档自动化）与 Synwevo Message（组织消息）。它们共用同一个账户、同一套工作空间与授权。",
+                ],
+                "label": "首页",
+            },
+            "privacy": {
+                "title": "数据与隐私 · Synwevo",
+                "description": "Synwevo 如何处理你的账户、文档与消息数据：存储位置、Cookie、保留期限、导出与删除。",
+                "heading": "你的数据，说清楚。",
+                "paragraphs": [
+                    "账户数据可以随时导出，也可以申请删除；删除有 7 天缓冲期，期间可以撤回。",
+                    "数据保存在位于日本东京的单台服务器上；传输经 HTTPS 加密，服务器端不做端到端加密。",
+                    "只用本站自己的 Cookie 维持登录；平台管理员读不到业务文档与对话；没有任何 AI 处理你的内容。",
+                ],
+                "label": "数据与隐私",
+            },
+            "service": {
+                "title": "服务说明 · Synwevo",
+                "description": "Synwevo 是什么、有哪些应用与角色、如何注册、有哪些限制、遇到问题找谁。",
+                "heading": "这项服务是什么，怎么用。",
+                "paragraphs": [
+                    "Synwevo 是一个工作流程自动化平台：统一账户、工作空间、组织与通知，加上两个应用——Synwevo Docs 与 Synwevo Message。",
+                    "注册后经邮箱验证即可使用；机构邮箱同样可用。限额、角色与删除规则都写在这一页。",
+                ],
+                "label": "服务说明",
+            },
+        },
+    },
+    "zh-Hant": {
+        "register": "註冊帳戶", "login": "登入", "home": "首頁",
+        "private_title": "Synwevo Workspace · 你的工作空間",
+        "pages": {
+            "home": {
+                "title": "Synwevo · 工作流程自動化平台",
+                "description": "文件自動化、團隊協作與訊息溝通，匯聚於同一個工作空間。",
+                "heading": "讓工作，自然相連。",
+                "paragraphs": [
+                    "Synwevo，取意於協同與編織。分散的文件、資料與溝通，在這裡被織成有序的工作；想法在協作中成形，日常在持續完善中變得從容。",
+                    "今天可用的應用：Synwevo Docs（文件自動化）與 Synwevo Message（組織訊息）。它們共用同一個帳戶、同一套工作空間與授權。",
+                ],
+                "label": "首頁",
+            },
+            "privacy": {
+                "title": "資料與私隱 · Synwevo",
+                "description": "Synwevo 如何處理你的帳戶、文件與訊息資料：儲存位置、Cookie、保留期限、匯出與刪除。",
+                "heading": "你的資料，說清楚。",
+                "paragraphs": [
+                    "帳戶資料可以隨時匯出，也可以申請刪除；刪除有 7 天緩衝期，期間可以撤回。",
+                    "資料保存在位於日本東京的單一伺服器上；傳輸經 HTTPS 加密，伺服器端不做端對端加密。",
+                    "只用本站自己的 Cookie 維持登入；平台管理員讀不到業務文件與對話；沒有任何 AI 處理你的內容。",
+                ],
+                "label": "資料與私隱",
+            },
+            "service": {
+                "title": "服務說明 · Synwevo",
+                "description": "Synwevo 是甚麼、有哪些應用與角色、如何註冊、有哪些限制、遇到問題找誰。",
+                "heading": "這項服務是甚麼，怎麼用。",
+                "paragraphs": [
+                    "Synwevo 是一個工作流程自動化平台：統一帳戶、工作空間、組織與通知，加上兩個應用——Synwevo Docs 與 Synwevo Message。",
+                    "註冊後經電郵驗證即可使用；機構電郵同樣可用。限額、角色與刪除規則都寫在這一頁。",
+                ],
+                "label": "服務說明",
+            },
+        },
+    },
+    "en": {
+        "register": "Create an account", "login": "Sign in", "home": "Home",
+        "private_title": "Synwevo Workspace · Your workspace",
+        "pages": {
+            "home": {
+                "title": "Synwevo · Workflow automation platform",
+                "description": "Document automation, team collaboration and messaging, brought together in one workspace.",
+                "heading": "Work that comes together.",
+                "paragraphs": [
+                    "Synwevo takes its name from synergy and weaving. Scattered documents, data and conversations are woven here into orderly work; ideas take shape in collaboration, and the everyday grows calmer as it keeps improving.",
+                    "Available today: Synwevo Docs (document automation) and Synwevo Message (organisation messaging). They share one account, one set of workspaces and one permission model.",
+                ],
+                "label": "Home",
+            },
+            "privacy": {
+                "title": "Data & privacy · Synwevo",
+                "description": "How Synwevo handles your account, document and message data: where it is stored, cookies, retention, export and deletion.",
+                "heading": "Your data, plainly stated.",
+                "paragraphs": [
+                    "You can export your account data at any time and request deletion; deletion has a 7-day grace period during which it can be cancelled.",
+                    "Data is stored on a single server in Tokyo, Japan; transport is encrypted with HTTPS, and there is no end-to-end encryption on the server.",
+                    "Only this site’s own cookies keep you signed in; platform administrators cannot read business documents or conversations; no AI processes your content.",
+                ],
+                "label": "Data & privacy",
+            },
+            "service": {
+                "title": "About this service · Synwevo",
+                "description": "What Synwevo is, its applications and roles, how registration works, which limits apply and where to turn when something goes wrong.",
+                "heading": "What this service is, and how it works.",
+                "paragraphs": [
+                    "Synwevo is a workflow automation platform: one account, workspaces, organisations and notifications, plus two applications — Synwevo Docs and Synwevo Message.",
+                    "Register, verify your mailbox and start; institutional mailboxes work too. Limits, roles and deletion rules are all on this page.",
+                ],
+                "label": "About this service",
+            },
+        },
+    },
 }
 
 
@@ -45,9 +188,12 @@ def public_origin() -> str | None:
 
 def document(dist: Path, path: str, locale: str) -> HTMLResponse:
     source = (dist / "index.html").read_text(encoding="utf-8")
-    title, description, heading, register, login, private_title = COPY[locale]
+    words = COPY[locale]
     public = path in PUBLIC_PATHS
-    title = title if public else private_title
+    page = PUBLIC_PAGES.get(path, "home")
+    copy = words["pages"][page]
+    title = copy["title"] if public else words["private_title"]
+    description = copy["description"]
     robots = "index, follow" if public else "noindex, nofollow"
     source = re.sub(r'<html\s+lang="[^"]*"', f'<html lang="{locale}"', source, count=1)
     source = re.sub(r"<title>.*?</title>", f"<title>{html.escape(title)}</title>", source, count=1)
@@ -56,20 +202,148 @@ def document(dist: Path, path: str, locale: str) -> HTMLResponse:
             f'<meta name="robots" content="{robots}" />')
     origin = public_origin()
     if public and origin:
-        canonical_path = "/" if locale == "zh-Hans" else f"/{locale}"
-        tags += f'<link rel="canonical" href="{html.escape(origin + canonical_path, quote=True)}" />'
-        for language, suffix in (("zh-Hans", "/"), ("zh-Hant", "/zh-Hant"), ("en", "/en"), ("x-default", "/")):
-            tags += f'<link rel="alternate" hreflang="{language}" href="{html.escape(origin + suffix, quote=True)}" />'
+        tags += f'<link rel="canonical" href="{html.escape(origin + public_path(page, locale), quote=True)}" />'
+        for language in (*LOCALES, "x-default"):
+            href = origin + public_path(page, "zh-Hans" if language == "x-default" else language)
+            tags += f'<link rel="alternate" hreflang="{language}" href="{html.escape(href, quote=True)}" />'
     source = source.replace("</head>", tags + "</head>")
     if public:
-        fallback = (f'<h1>{html.escape(heading)}</h1><p>{html.escape(description)}</p>'
-                    f'<a href="/register?lang={locale}">{html.escape(register)}</a> · '
-                    f'<a href="/auth/start?next=%2Fworkspace&amp;lang={locale}">{html.escape(login)}</a>')
-        source = source.replace('<div id="root"></div>', f'<div id="root">{fallback}</div>')
+        source = source.replace('<div id="root"></div>', f'<div id="root">{_fallback(page, locale)}</div>')
     return HTMLResponse(source, headers={"Cache-Control": "no-store", "X-Robots-Tag": robots})
 
 
-def install_public(api: FastAPI, dist: Path) -> None:
+def _fallback(page: str, locale: str) -> str:
+    """What a reader without JavaScript (or a crawler) gets: the heading, the summary and the
+    real links — never `/workspace`, which only means something with a session."""
+    words = COPY[locale]
+    copy = words["pages"][page]
+    body = f'<h1>{html.escape(copy["heading"])}</h1><p>{html.escape(copy["description"])}</p>'
+    body += "".join(f"<p>{html.escape(paragraph)}</p>" for paragraph in copy["paragraphs"])
+    links = [f'<a href="/register?lang={locale}">{html.escape(words["register"])}</a>',
+             f'<a href="/auth/start?next=%2Fworkspace&amp;lang={locale}">{html.escape(words["login"])}</a>']
+    for other in PAGES:
+        if other != page:
+            links.append(f'<a href="{public_path(other, locale)}">{html.escape(words["pages"][other]["label"])}</a>')
+    return body + "<p>" + " · ".join(links) + "</p>"
+
+
+# ------------------------------------------------------------------ deployment facts
+FACTS_TTL_S = 60
+FACTS_TIMEOUT_S = 3.0
+_facts_lock = threading.Lock()
+_facts_cache: tuple[float, dict] | None = None
+
+
+def _scanner_state(value) -> str | None:
+    """`/readyz` `checks.malware_scanner` → on | off | down, or None when unreadable."""
+    if not isinstance(value, str):
+        return None
+    if value == "ok":
+        return "on"
+    if value == "off":
+        return "off"
+    if value.startswith("down"):
+        return "down"
+    return None
+
+
+def _origin_of(url: str | None) -> str | None:
+    try:
+        parts = urlsplit((url or "").strip())
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return None
+    return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+
+
+def _docs_origin(store, ident) -> str | None:
+    if store is None or ident is None:
+        return None
+    try:
+        from synwevo_core.apps import Apps, DOCS_APP_ID
+        app = Apps(store, ident).get(DOCS_APP_ID)
+    except Exception:  # noqa: BLE001 - a missing registry row is "unknown", never an error page
+        return None
+    return _origin_of((app or {}).get("launch_url"))
+
+
+#: No ambient proxy: these requests carry nothing secret, but a `HTTP_PROXY` nobody chose must
+#: not decide what "this deployment" answers (the relying party makes the same choice).
+_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _read_json(url: str) -> dict | None:
+    try:
+        with _opener.open(urllib.request.Request(url, headers={"Accept": "application/json"}), timeout=FACTS_TIMEOUT_S) as response:
+            raw = response.read(65536)
+    except urllib.error.HTTPError as e:
+        # /readyz answers 503 with the same body while a component is down; the body is the point.
+        if e.code != 503:
+            return None
+        try:
+            raw = e.read(65536)
+        except Exception:  # noqa: BLE001
+            return None
+    except Exception:  # noqa: BLE001 - unreachable means "unknown"
+        return None
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def deployment_facts(store=None, ident=None, *, force: bool = False) -> dict:
+    """What the privacy and service pages read at runtime, from the services themselves.
+
+    Only configured origins are contacted (the account service's issuer and the registered
+    Synwevo Docs launch URL), never anything from the request; the result is cached for a minute
+    so an anonymous page cannot turn into a probe amplifier. Anything unreadable is `null`, and
+    the pages say "could not be read" rather than guessing.
+    """
+    global _facts_cache
+    with _facts_lock:
+        if not force and _facts_cache and _facts_cache[0] > time.monotonic():
+            return _facts_cache[1]
+        facts = {
+            "checked_at": time.time(),
+            "accounts": {"malware_scanner": None, "human_verification": None, "external_providers": None,
+                         "registration": None, "mail_sender": None},
+            "docs": {"malware_scanner": None},
+        }
+        try:
+            from synwevo_auth_client.rp import issuer
+            accounts = _origin_of(issuer())
+            docs = _docs_origin(store, ident)
+            if accounts:
+                ready = _read_json(accounts + "/readyz")
+                if ready is not None:
+                    facts["accounts"]["malware_scanner"] = _scanner_state((ready.get("checks") or {}).get("malware_scanner"))
+                state = _read_json(accounts + "/api/auth/state")
+                if state is not None:
+                    facts["accounts"]["human_verification"] = bool(state.get("challenge"))
+                    providers = state.get("external_providers")
+                    facts["accounts"]["external_providers"] = [
+                        str(p.get("label") or p.get("id"))[:40] for p in providers if isinstance(p, dict)
+                    ] if isinstance(providers, list) else None
+                    registration = state.get("registration")
+                    facts["accounts"]["registration"] = registration if registration in ("open", "invite", "closed") else None
+                    sender = state.get("mail_sender")
+                    facts["accounts"]["mail_sender"] = (
+                        {"name": str(sender.get("name") or "")[:80], "address": str(sender.get("address") or "")[:120]}
+                        if isinstance(sender, dict) else False)
+            if docs:
+                ready = _read_json(docs + "/readyz")
+                if ready is not None:
+                    facts["docs"]["malware_scanner"] = _scanner_state((ready.get("checks") or {}).get("malware_scanner"))
+        except Exception:  # noqa: BLE001 - the page renders "unknown"; it never fails because a probe did
+            pass
+        _facts_cache = (time.monotonic() + FACTS_TTL_S, facts)
+        return facts
+
+
+def install_public(api: FastAPI, dist: Path, store=None, ident=None) -> None:
     router = APIRouter(include_in_schema=False)
 
     @router.get("/robots.txt")
@@ -83,10 +357,16 @@ def install_public(api: FastAPI, dist: Path) -> None:
     def sitemap():
         origin = public_origin()
         urls = "" if not origin else "".join(
-            f"<url><loc>{html.escape(origin + p)}</loc></url>" for p in ("/", "/zh-Hant", "/en"))
+            f"<url><loc>{html.escape(origin + public_path(page, locale))}</loc></url>"
+            for page in PAGES for locale in LOCALES)
         return Response('<?xml version="1.0" encoding="UTF-8"?>'
                         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
                         + urls + "</urlset>", media_type="application/xml")
+
+    @router.get("/public/deployment.json")
+    def deployment():
+        # Anonymous by construction (not under /api/), read by the privacy and service pages.
+        return JSONResponse(deployment_facts(store, ident), headers={"Cache-Control": "no-store"})
 
     # Explicit routes precede the deployment composer's generic shell. Assets keep their
     # hashed-file caching, while account routes still belong to the SSO redirect router.

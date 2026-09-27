@@ -1,422 +1,321 @@
 import { registerMessages } from "@synwevo/ui";
 
+/** The portal's three-language catalogue: zh-Hans source → en / zh-Hant. Every string a portal
+ *  page shows is here (or in a shared package's catalogue: 退出登录, 语言 …). The public pages'
+ *  statements are recorded with their sources in docs/platform/public-pages.md — change the
+ *  fact there and in every language here together, never in one language alone. */
 export const portalMessages = {
+  // ------------------------------------------------------------------ titles and metadata
   "Synwevo · 工作流程自动化平台": {"en": "Synwevo · Workflow automation platform", "zh-Hant": "Synwevo · 工作流程自動化平台"},
+  "Synwevo Workspace · 你的工作空间": {"en": "Synwevo Workspace · Your workspace", "zh-Hant": "Synwevo Workspace · 你的工作空間"},
+  "数据与隐私 · Synwevo": {"en": "Data & privacy · Synwevo", "zh-Hant": "資料與私隱 · Synwevo"},
+  "服务说明 · Synwevo": {"en": "About this service · Synwevo", "zh-Hant": "服務說明 · Synwevo"},
+  "文档自动化、团队协作与消息沟通，汇聚于同一个工作空间。": {"en": "Document automation, team collaboration and messaging, brought together in one workspace.", "zh-Hant": "文件自動化、團隊協作與訊息溝通，匯聚於同一個工作空間。"},
+  "Synwevo 如何处理你的账户、文档与消息数据：存储位置、Cookie、保留期限、导出与删除。": {"en": "How Synwevo handles your account, document and message data: where it is stored, cookies, retention, export and deletion.", "zh-Hant": "Synwevo 如何處理你的帳戶、文件與訊息資料：儲存位置、Cookie、保留期限、匯出與刪除。"},
+  "Synwevo 是什么、有哪些应用与角色、如何注册、有哪些限制、遇到问题找谁。": {"en": "What Synwevo is, its applications and roles, how registration works, which limits apply and where to turn when something goes wrong.", "zh-Hant": "Synwevo 是甚麼、有哪些應用與角色、如何註冊、有哪些限制、遇到問題找誰。"},
+
+  // ------------------------------------------------------------------ shell
+  "跳到主要内容": {"en": "Skip to main content", "zh-Hant": "跳到主要內容"},
+  "Synwevo 首页": {"en": "Synwevo home", "zh-Hant": "Synwevo 首頁"},
+  "主导航": {"en": "Main navigation", "zh-Hant": "主導覽"},
+  "数据与隐私": {"en": "Data & privacy", "zh-Hant": "資料與私隱"},
+  "服务说明": {"en": "About this service", "zh-Hant": "服務說明"},
+  "协同 · 编织 · 持续完善": {"en": "Synergy · Weaving · Always improving", "zh-Hant": "協同 · 編織 · 持續完善"},
+  "应用": {"en": "Applications", "zh-Hant": "應用"},
+  "协作方式": {"en": "Working together", "zh-Hant": "協作方式"},
+  "登录": {"en": "Sign in", "zh-Hant": "登入"},
+  "注册账户": {"en": "Create an account", "zh-Hant": "註冊帳戶"},
+  "进入工作空间": {"en": "Open workspace", "zh-Hant": "進入工作空間"},
+  "返回首页": {"en": "Back to home", "zh-Hant": "返回首頁"},
+
+  // ------------------------------------------------------------------ home: hero
   "工作流程自动化平台": {"en": "Workflow automation platform", "zh-Hant": "工作流程自動化平台"},
-  "把重复的工作，": {"en": "Let workflows handle", "zh-Hant": "把重複的工作，"},
-  "交给流程。": {"en": "the repetitive work.", "zh-Hant": "交給流程。"},
-  "连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。": {"en": "Connect teams, applications and data in clear, traceable automated workflows.", "zh-Hant": "連接團隊、應用與資料，讓重複工作成為清晰、可追蹤的自動化流程。"},
-  "登录你的统一账户，继续你的任务与团队工作。": {"en": "Sign in to your account to continue your tasks and team work.", "zh-Hant": "登入你的統一帳戶，繼續你的任務與團隊工作。"},
-  "让工作流程，持续运转。": {"en": "Keep your work flowing.", "zh-Hant": "讓工作流程，持續運作。"},
-  "平台应用": {"en": "Applications", "zh-Hant": "平台應用"},
-  "输入与规则": {"en": "Inputs & rules", "zh-Hant": "輸入與規則"},
-  "数据 · 文件 · 处理条件": {"en": "Data · Files · Processing rules", "zh-Hant": "資料 · 檔案 · 處理條件"},
-  "应用处理": {"en": "Application processing", "zh-Hant": "應用處理"},
-  "在授权的工作空间中执行": {"en": "Run within an authorized workspace", "zh-Hant": "在授權的工作空間中執行"},
-  "任务与结果": {"en": "Tasks & results", "zh-Hant": "任務與結果"},
-  "跟踪状态 · 检查 · 交付": {"en": "Track · Check · Deliver", "zh-Hant": "追蹤狀態 · 檢查 · 交付"},
-  "统一身份 · 空间隔离 · 明确授权": {"en": "One identity · Separate spaces · Explicit access", "zh-Hant": "統一身分 · 空間隔離 · 明確授權"},
-  "平台能力": {"en": "Platform capabilities", "zh-Hant": "平台能力"},
-  "让每一步，都有清晰的归属": {"en": "A clear place for every step", "zh-Hant": "讓每一步，都有清晰的歸屬"},
+  "让工作，自然相连。": {"en": "Work that comes together.", "zh-Hant": "讓工作，自然相連。"},
+  "创建账户": {"en": "Create an account", "zh-Hant": "建立帳戶"},
+  "了解应用": {"en": "See the applications", "zh-Hant": "了解應用"},
+  "一个账户，进入你有权使用的工作空间与应用。": {"en": "One account for the workspaces and applications you have access to.", "zh-Hant": "一個帳戶，進入你有權使用的工作空間與應用。"},
+  "名字的由来": {"en": "About the name", "zh-Hant": "名字的由來"},
+  "Synwevo，取意于协同与编织。分散的文档、数据与沟通，在这里被织成有序的工作；想法在协作中成形，日常在持续完善中变得从容。": {
+    "en": "Synwevo takes its name from synergy and weaving. Scattered documents, data and conversations are woven here into orderly work; ideas take shape in collaboration, and the everyday grows calmer as it keeps improving.",
+    "zh-Hant": "Synwevo，取意於協同與編織。分散的文件、資料與溝通，在這裡被織成有序的工作；想法在協作中成形，日常在持續完善中變得從容。"},
+  "平台的基本概念": {"en": "The platform’s building blocks", "zh-Hant": "平台的基本概念"},
+  "同一个入口": {"en": "One entrance", "zh-Hant": "同一個入口"},
   "统一账户": {"en": "One account", "zh-Hant": "統一帳戶"},
-  "应用授权": {"en": "Application access", "zh-Hant": "應用授權"},
-  "可追踪任务": {"en": "Trackable tasks", "zh-Hant": "可追蹤任務"},
-  "受控集成": {"en": "Controlled integrations", "zh-Hant": "受控整合"},
-  "从协作到自动化": {"en": "From collaboration to automation", "zh-Hant": "從協作到自動化"},
-  "把人、应用和工作连接起来。": {"en": "Connect people, applications and work.", "zh-Hant": "把人、應用和工作連接起來。"},
-  "Synwevo 提供统一的工作入口与授权基础，应用承载具体业务流程，让日常工作可以重复执行、检查和交付。": {"en": "Synwevo brings your work and access controls together. Applications handle specific business processes, making everyday tasks repeatable, reviewable and ready to deliver.", "zh-Hant": "Synwevo 提供統一的工作入口與授權基礎，由應用處理具體業務流程，讓日常工作能夠重複執行、檢查和交付。"},
-  "从同一个空间开始": {"en": "Start in one workspace", "zh-Hant": "從同一個空間開始"},
-  "个人工作与团队协作各有归属。通过统一账户进入工作空间，找到你有权使用的应用。": {"en": "Keep personal work and team collaboration in their own spaces. Use one account to reach your workspaces and the applications available to you.", "zh-Hant": "個人工作與團隊協作各有歸屬。透過統一帳戶進入工作空間，找到你有權使用的應用。"},
-  "把重复步骤交给应用": {"en": "Let applications do the repeat work", "zh-Hant": "把重複步驟交給應用"},
-  "为具体任务选择应用，配置输入与处理规则，让可复用的流程减少重复操作。": {"en": "Choose an application for the task, configure inputs and processing rules, and reduce repetitive work with reusable processes.", "zh-Hant": "為具體任務選擇應用，設定輸入與處理規則，讓可重複使用的流程減少重複操作。"},
-  "让结果进入下一步": {"en": "Take results to the next step", "zh-Hant": "讓結果進入下一步"},
-  "查看真实任务状态，检查并交付结果。经授权的自动化集成可调用应用能力，衔接后续处理。": {"en": "Track actual task status, review results and deliver them. Authorized integrations can call application capabilities to continue the work.", "zh-Hant": "查看實際任務狀態，檢查並交付結果。經授權的自動化整合可呼叫應用功能，銜接後續處理。"},
-  "一个平台，应用各司其职。": {"en": "One platform. Purpose-built applications.", "zh-Hant": "一個平台，應用各司其職。"},
-  "在共同的账户与工作空间中，使用面向具体业务的独立应用。Synwevo Docs 是其中的文档自动化应用。": {"en": "Use independent applications for specific business needs, with shared accounts and workspaces. Synwevo Docs is the platform’s document automation application.", "zh-Hant": "在共用的帳戶與工作空間中，使用針對具體業務的獨立應用。Synwevo Docs 是其中的文件自動化應用。"},
+  "工作空间": {"en": "Workspaces", "zh-Hant": "工作空間"},
+  "组织与角色": {"en": "Organisations & roles", "zh-Hant": "組織與角色"},
+  "文档": {"en": "Documents", "zh-Hant": "文件"},
+  "消息": {"en": "Messages", "zh-Hant": "訊息"},
+  "通知": {"en": "Notifications", "zh-Hant": "通知"},
+
+  // ------------------------------------------------------------------ home: applications
+  "今天可用的应用": {"en": "Available today", "zh-Hant": "今天可用的應用"},
+  "两个应用，各司其职。": {"en": "Two applications, each with its own job.", "zh-Hant": "兩個應用，各司其職。"},
+  "Synwevo Docs 处理文档，Synwevo Message 负责组织内的沟通。它们共用同一个账户、同一套工作空间与授权；此外没有别的应用。": {
+    "en": "Synwevo Docs handles documents; Synwevo Message handles communication within an organisation. They share one account, one set of workspaces and one permission model — and there are no other applications.",
+    "zh-Hant": "Synwevo Docs 處理文件，Synwevo Message 負責組織內的溝通。它們共用同一個帳戶、同一套工作空間與授權；此外沒有別的應用。"},
   "文档自动化": {"en": "Document automation", "zh-Hant": "文件自動化"},
-  "选择来源数据，连接模板，完成检查与批量生成。把重复的文档制作交给可复用的规则。": {"en": "Select source data, connect templates, check and generate in batches. Use reusable rules for repetitive document production.", "zh-Hant": "選取來源資料、連接範本，完成檢查與批次產生。透過可重複使用的規則，處理重複的文件製作工作。"},
-  "不同格式支持的能力以应用内选项为准。可用应用由工作空间授权决定。": {"en": "Supported capabilities vary by format; check the options in the application. Workspace permissions determine application access.", "zh-Hant": "不同格式支援的功能以應用內選項為準。可用應用由工作空間授權決定。"},
-  "进入空间，打开应用": {"en": "Open applications in your workspace", "zh-Hant": "進入空間，開啟應用"},
-  "协作有边界，自动化有依据。": {"en": "Clear boundaries for teams and automation.", "zh-Hant": "協作有界線，自動化有依據。"},
-  "自动化遵循授权": {"en": "Automation follows your permissions", "zh-Hant": "自動化遵循授權"},
-  "自动化调用使用受限服务身份，按获准的工作空间和操作范围执行。每次访问仍须通过权限检查。": {"en": "Automation uses restricted service identities within approved workspaces and operations. Every request remains subject to access checks.", "zh-Hant": "自動化呼叫使用受限服務身分，在獲准的工作空間和操作範圍內執行。每次存取仍須通過權限檢查。"},
+  "选择来源数据，接入模板，检查后批量生成。重复的文档制作交给可复用的规则，交付前的检查留给人。": {
+    "en": "Select source data, connect a template, check, then generate in batches. Reusable rules take the repetitive production; the check before delivery stays with a person.",
+    "zh-Hant": "選取來源資料，接入範本，檢查後批次產生。重複的文件製作交給可重複使用的規則，交付前的檢查留給人。"},
+  "文档格式": {"en": "Document formats", "zh-Hant": "文件格式"},
+  "各格式支持的能力以应用内选项为准；可用应用由工作空间授权决定。": {"en": "Supported capabilities vary by format — the application shows the options. Workspace permissions decide which applications you can open.", "zh-Hant": "各格式支援的功能以應用內選項為準；可用應用由工作空間授權決定。"},
+  "登录后打开": {"en": "Sign in to open", "zh-Hant": "登入後開啟"},
+  "组织消息": {"en": "Organisation messaging", "zh-Hant": "組織訊息"},
+  "与同一组织的成员私聊或建群：引用回复、@提及、表情回应、附件与文档链接卡片。新成员只看到加入之后的消息，离开后即止。": {
+    "en": "Message members of your organisation directly or in groups: quoted replies, @mentions, reactions, attachments and document link cards. New members see only what was sent after they joined; leaving ends access.",
+    "zh-Hant": "與同一組織的成員私訊或建立群組：引用回覆、@提及、表情回應、附件與文件連結卡片。新成員只看到加入之後的訊息，離開後即止。"},
+  "消息能力": {"en": "Messaging capabilities", "zh-Hant": "訊息功能"},
+  "私聊": {"en": "Direct messages", "zh-Hant": "私訊"},
+  "群组": {"en": "Groups", "zh-Hant": "群組"},
+  "公告": {"en": "Announcements", "zh-Hant": "公告"},
+  "举报处理": {"en": "Report review", "zh-Hant": "檢舉處理"},
+  "目前从平台栏的「消息」进入，正在成为独立的应用。": {"en": "Reached today through “Messages” in the platform bar; it is becoming an application of its own.", "zh-Hant": "目前從平台欄的「訊息」進入，正在成為獨立的應用。"},
+  "打开消息": {"en": "Open messages", "zh-Hant": "開啟訊息"},
+
+  // ------------------------------------------------------------------ home: working together
+  "一起完成工作": {"en": "Working together", "zh-Hant": "一起完成工作"},
+  "各有归属，彼此看得见。": {"en": "Everything in its place, and in view.", "zh-Hant": "各有歸屬，彼此看得見。"},
+  "组织、工作空间与角色决定谁能进入哪里；通知把需要你处理的事送到面前。": {"en": "Organisations, workspaces and roles decide who can go where; notifications bring what needs your attention to you.", "zh-Hant": "組織、工作空間與角色決定誰能進入哪裡；通知把需要你處理的事送到面前。"},
+  "个人与团队的工作分开存放。应用与文档权限按工作空间分别授予，切换不会合并内容。": {"en": "Personal and team work live in separate workspaces. Application and document access is granted per workspace; switching never merges content.", "zh-Hant": "個人與團隊的工作分開存放。應用與文件權限按工作空間分別授予，切換不會合併內容。"},
+  "组织": {"en": "Organisations", "zh-Hant": "組織"},
+  "组织汇集成员与团队空间。组织成员身份不自动授予每个工作空间的访问权，管理权也不等于内容访问权。": {"en": "An organisation gathers members and team workspaces. Membership does not grant access to every workspace, and administration does not mean access to content.", "zh-Hant": "組織匯集成員與團隊空間。組織成員身份不自動授予每個工作空間的存取權，管理權也不等於內容存取權。"},
+  "角色与授权": {"en": "Roles & permissions", "zh-Hant": "角色與授權"},
+  "所有者、管理员、编辑者、查看者各有边界。自动化集成使用受限的服务凭据，只在获准的工作空间与范围内执行，每次访问都经过权限检查。": {
+    "en": "Owner, admin, editor and viewer each have their limits. Integrations use restricted service credentials, act only within approved workspaces and scopes, and every request is checked.",
+    "zh-Hant": "擁有者、管理員、編輯者、檢視者各有界線。自動化整合使用受限的服務憑證，只在獲准的工作空間與範圍內執行，每次存取都經過權限檢查。"},
+  "邀请、@提及、私信与安全事件汇入同一个收件箱；按类别选择即时、汇总或关闭，也可以开启浏览器推送。": {"en": "Invitations, @mentions, direct messages and security events arrive in one inbox. Choose immediate, digest or off per category, and turn on browser push if you like.", "zh-Hant": "邀請、@提及、私訊與安全事件匯入同一個收件箱；按類別選擇即時、彙總或關閉，也可以開啟瀏覽器推送。"},
+
+  // ------------------------------------------------------------------ home: trust and next steps
+  "说清楚做了什么，也说清楚没做什么。": {"en": "Clear about what we do — and what we don’t.", "zh-Hant": "說清楚做了甚麼，也說清楚沒做甚麼。"},
+  "账户数据可以随时导出，也可以申请删除；删除有 7 天缓冲期，期间可以撤回。": {"en": "You can export your account data at any time and request deletion; deletion has a 7-day grace period during which it can be cancelled.", "zh-Hant": "帳戶資料可以隨時匯出，也可以申請刪除；刪除有 7 天緩衝期，期間可以撤回。"},
+  "传输经 HTTPS 加密，服务器端不做端到端加密；平台管理员读不到业务文档与对话，组织的举报处理只看到被举报的那一条消息。": {"en": "Transport is encrypted with HTTPS; there is no end-to-end encryption on the server. Platform administrators cannot read business documents or conversations, and an organisation’s report review sees only the reported message.", "zh-Hant": "傳輸經 HTTPS 加密，伺服器端不做端對端加密；平台管理員讀不到業務文件與對話，組織的檢舉處理只看到被檢舉的那一則訊息。"},
+  "没有任何 AI 处理你的内容；没有在线状态、他人已读回执或正在输入提示。": {"en": "No AI processes your content. There is no online status, no read receipts of others and no typing indicator.", "zh-Hant": "沒有任何 AI 處理你的內容；沒有在線狀態、他人已讀回條或正在輸入提示。"},
+  "只用本站自己的 Cookie 维持登录；数据保存在位于日本东京的单台服务器上，每次发布前做备份。": {"en": "Only this site’s own cookies keep you signed in. Data is stored on a single server in Tokyo, Japan, backed up before every release.", "zh-Hant": "只用本站自己的 Cookie 維持登入；資料保存在位於日本東京的單一伺服器上，每次發佈前做備份。"},
+  "完整的数据与隐私说明": {"en": "The full data & privacy page", "zh-Hant": "完整的資料與私隱說明"},
+  "服务说明与限额": {"en": "Service description and limits", "zh-Hant": "服務說明與限額"},
+  "下一步": {"en": "Next steps", "zh-Hant": "下一步"},
   "从一个工作空间开始。": {"en": "Start with a workspace.", "zh-Hant": "從一個工作空間開始。"},
-  "创建账户，选择个人使用或加入团队，再打开适合当前任务的应用。你的账户、空间和应用权限在平台中统一管理。": {"en": "Create an account, work on your own or join a team, and open the application for your task. Manage accounts, spaces and application access together on the platform.", "zh-Hant": "建立帳戶，選擇個人使用或加入團隊，再開啟適合目前任務的應用。你的帳戶、空間和應用權限在平台中統一管理。"},
-  "业务数据保存在当前部署中。数据保留、备份与可用能力由实际部署配置决定。": {"en": "Business data is stored in this deployment. Retention, backups and available capabilities depend on its configuration.", "zh-Hant": "業務資料儲存在目前部署中。資料保留、備份與可用功能由實際部署設定決定。"},
-  "你的组织": {en: "Your organizations", "zh-Hant": "你的組織"},
-  "组织成员身份不会自动授予所有空间的访问权。": {en: "Organization membership does not automatically grant access to every workspace.", "zh-Hant": "組織成員身份不會自動授予所有空間的存取權。"},
-  "Synwevo · 让数据成为文档": {
-    "en": "Synwevo · Turn data into documents",
-    "zh-Hant": "Synwevo · 讓資料成為文件"
-  },
-  "Synwevo Workspace · 你的工作空间": {
-    "en": "Synwevo Workspace · Your workspace",
-    "zh-Hant": "Synwevo Workspace · 你的工作空間"
-  },
-  "在 Synwevo Docs 中选择数据、映射模板、检查并批量生成文档。通过统一账户进入你的工作空间。": {
-    "en": "Select data, map templates, check and generate documents in batches with Synwevo Docs. Access your workspaces with one account.",
-    "zh-Hant": "在 Synwevo Docs 中選取資料、對應範本、檢查並批次產生文件。透過統一帳戶進入你的工作空間。"
-  },
-  "返回首页": {
-    "en": "Back to home",
-    "zh-Hant": "返回首頁"
-  },
-  "正在载入工作空间…": {
-    "en": "Loading your workspace…",
-    "zh-Hant": "正在載入工作空間…"
-  },
-  "欢迎回来": {
-    "en": "Welcome back",
-    "zh-Hant": "歡迎回來"
-  },
-  "登录你的统一账户，继续处理文档和团队工作。": {
-    "en": "Sign in to your account to continue your documents and team work.",
-    "zh-Hant": "登入你的統一帳戶，繼續處理文件和團隊工作。"
-  },
-  "登录": {
-    "en": "Sign in",
-    "zh-Hant": "登入"
-  },
-  "注册账户": {
-    "en": "Create an account",
-    "zh-Hant": "註冊帳戶"
-  },
-  "暂时无法载入工作空间": {
-    "en": "We couldn’t load your workspace",
-    "zh-Hant": "暫時無法載入工作空間"
-  },
-  "请检查网络连接后重试。": {
-    "en": "Check your connection and try again.",
-    "zh-Hant": "請檢查網絡連線後重試。"
-  },
-  "重试": {
-    "en": "Try again",
-    "zh-Hant": "重試"
-  },
-  "所有者": {
-    "en": "Owner",
-    "zh-Hant": "擁有者"
-  },
-  "管理员": {
-    "en": "Admin",
-    "zh-Hant": "管理員"
-  },
-  "编辑者": {
-    "en": "Editor",
-    "zh-Hant": "編輯者"
-  },
-  "查看者": {
-    "en": "Viewer",
-    "zh-Hant": "檢視者"
-  },
-  "成员": {
-    "en": "Member",
-    "zh-Hant": "成員"
-  },
-  "个人空间": {
-    "en": "Personal spaces",
-    "zh-Hant": "個人空間"
-  },
-  "团队空间": {
-    "en": "Team spaces",
-    "zh-Hant": "團隊空間"
-  },
-  "账户与安全": {
-    "en": "Account & security",
-    "zh-Hant": "帳戶與安全"
-  },
-  "平台管理": {
-    "en": "Platform management",
-    "zh-Hant": "平台管理"
-  },
-  "API 管理": {
-    "en": "API management",
-    "zh-Hant": "API 管理"
-  },
-  "你的工作，从这里继续。": {
-    "en": "Pick up where you left off.",
-    "zh-Hant": "你的工作，從這裡繼續。"
-  },
-  "创建或加入工作空间": {
-    "en": "Create or join a workspace",
-    "zh-Hant": "建立或加入工作空間"
-  },
-  "工作空间": {
-    "en": "Workspaces",
-    "zh-Hant": "工作空間"
-  },
-  "只显示你已加入的空间。": {
-    "en": "Only spaces you belong to appear here.",
-    "zh-Hant": "只顯示你已加入的空間。"
-  },
-  "暂不可用": {
-    "en": "Unavailable",
-    "zh-Hant": "暫不可用"
-  },
-  "你还没有加入工作空间。": {
-    "en": "You haven’t joined a workspace yet.",
-    "zh-Hant": "你還沒有加入工作空間。"
-  },
-  "当前工作空间": {
-    "en": "Current workspace",
-    "zh-Hant": "目前工作空間"
-  },
-  "选择你的工作空间": {
-    "en": "Choose your workspace",
-    "zh-Hant": "選擇你的工作空間"
-  },
-  "成员与邀请": {
-    "en": "Members & invitations",
-    "zh-Hant": "成員與邀請"
-  },
-  "切换失败，已重新核对当前空间。请重试。": {
-    "en": "The switch failed. Your current workspace has been checked again. Please retry.",
-    "zh-Hant": "切換失敗，已重新核對目前空間。請重試。"
-  },
-  "正在切换工作空间…": {
-    "en": "Switching workspace…",
-    "zh-Hant": "正在切換工作空間…"
-  },
-  "页面将重新载入，以更新空间与应用权限。": {
-    "en": "The page will reload to update workspace and application access.",
-    "zh-Hant": "頁面將重新載入，以更新空間與應用權限。"
-  },
-  "从来源数据到可交付的文档。": {
-    "en": "From source data to documents ready to deliver.",
-    "zh-Hant": "從來源資料到可交付的文件。"
-  },
-  "打开已授权的应用。": {
-    "en": "Open an application you have access to.",
-    "zh-Hant": "開啟已授權的應用。"
-  },
-  "当前空间暂无可用应用": {
-    "en": "No applications available in this space",
-    "zh-Hant": "目前空間暫無可用應用"
-  },
-  "先加入一个工作空间": {
-    "en": "Join a workspace to get started",
-    "zh-Hant": "先加入一個工作空間"
-  },
-  "请联系空间管理员确认应用是否启用，以及你的使用资格。": {
-    "en": "Ask your workspace admin to check application availability and your access.",
-    "zh-Hant": "請聯絡空間管理員確認應用是否啟用，以及你的使用資格。"
-  },
-  "创建空间，或使用发给你当前邮箱的邀请加入团队。": {
-    "en": "Create a space, or join a team using an invitation sent to your current email.",
-    "zh-Hant": "建立空間，或使用寄給你目前電郵地址的邀請加入團隊。"
-  },
-  "前往设置工作空间": {
-    "en": "Set up your workspace",
-    "zh-Hant": "前往設定工作空間"
-  },
-  "应用与文档权限按工作空间分别管理。切换空间不会合并内容。": {
-    "en": "Application and document access is managed per workspace. Switching spaces does not combine their content.",
-    "zh-Hant": "應用與文件權限按工作空間分別管理。切換空間不會合併內容。"
-  },
-  "下一步": {
-    "en": "Next steps",
-    "zh-Hant": "下一步"
-  },
-  "查看邀请": {
-    "en": "View invitations",
-    "zh-Hant": "查看邀請"
-  },
-  "这些邀请尚未授予你空间访问权。请通过邀请邮件中的链接确认加入，账户页可核对邀请状态。": {
-    "en": "These invitations haven’t granted you access yet. Confirm through the link in the invitation email; check invitation status in your account.",
-    "zh-Hant": "這些邀請尚未授予你空間存取權。請透過邀請電郵中的連結確認加入，帳戶頁可核對邀請狀態。"
-  },
-  "有效期至 {date}": {
-    "en": "Expires {date}",
-    "zh-Hant": "有效期至 {date}"
-  },
-  "查看加入方式": {
-    "en": "How to join",
-    "zh-Hant": "查看加入方式"
-  },
-  "当前没有可显示的待接受邀请。你也可以到账户页核对邮箱和邀请状态。": {
-    "en": "There are no pending invitations to show. You can check your email and invitation status in your account.",
-    "zh-Hant": "目前沒有可顯示的待接受邀請。你也可以到帳戶頁核對電郵和邀請狀態。"
-  },
-  "到账户页查看发给你的邀请并完成空间设置。": {
-    "en": "Visit your account to review invitations and finish setting up your workspace.",
-    "zh-Hant": "到帳戶頁查看寄給你的邀請並完成空間設定。"
-  },
-  "平台管理权限不授予业务文档访问权。": {
-    "en": "Platform management does not grant access to business documents.",
-    "zh-Hant": "平台管理權限不授予業務文件存取權。"
-  },
-  "跳到主要内容": {
-    "en": "Skip to main content",
-    "zh-Hant": "跳到主要內容"
-  },
-  "Synwevo 首页": {
-    "en": "Synwevo home",
-    "zh-Hant": "Synwevo 首頁"
-  },
-  "主导航": {
-    "en": "Main navigation",
-    "zh-Hant": "主導覽"
-  },
-  "数据与隐私": {
-    "en": "Data & privacy",
-    "zh-Hant": "資料與私隱"
-  },
-  "服务说明": {
-    "en": "About this service",
-    "zh-Hant": "服務說明"
-  },
-  "让数据成为文档。": {
-    "en": "Turn data into documents.",
-    "zh-Hant": "讓資料成為文件。"
-  },
-  "选择来源数据": {
-    "en": "Select your source data",
-    "zh-Hant": "選取來源資料"
-  },
-  "上传来源文件，选择需要使用的文字、单元格或表格区域。": {
-    "en": "Upload source files and select the text, cells or table regions you need.",
-    "zh-Hant": "上傳來源檔案，選取需要使用的文字、儲存格或表格區域。"
-  },
-  "连接你的模板": {
-    "en": "Connect your template",
-    "zh-Hant": "連接你的範本"
-  },
-  "选择模板字段，建立来源与目标之间可复用的对应关系。": {
-    "en": "Select template fields and build reusable mappings between source and destination.",
-    "zh-Hant": "選擇範本欄位，建立來源與目標之間可重用的對應關係。"
-  },
-  "检查，再批量生成": {
-    "en": "Check, then generate in batches",
-    "zh-Hant": "檢查，再批次產生"
-  },
-  "明确每行、每文件或每组的样本规则，检查问题后生成并下载结果。": {
-    "en": "Define a sample per row, file or group. Check for issues, then generate and download your results.",
-    "zh-Hant": "確定每列、每檔案或每組的樣本規則，檢查問題後產生並下載結果。"
-  },
-  "工作流程": {
-    "en": "Workflow",
-    "zh-Hant": "工作流程"
-  },
-  "进入工作空间": {
-    "en": "Open workspace",
-    "zh-Hant": "進入工作空間"
-  },
-  "你的数据。你的模板。": {
-    "en": "Your data. Your templates.",
-    "zh-Hant": "你的資料。你的範本。"
-  },
-  "下一份文档，从这里开始。": {
-    "en": "Your next document starts here.",
-    "zh-Hant": "下一份文件，從這裡開始。"
-  },
-  "把重复的文档工作交给清晰的流程。从选择来源、连接模板，到检查和批量生成，专注于内容本身。": {
-    "en": "Give repetitive document work a clear process. Select sources, connect templates, check and generate in batches—so you can focus on the content.",
-    "zh-Hant": "把重複的文件工作交給清晰的流程。從選取來源、連接範本，到檢查和批次產生，專注於內容本身。"
-  },
-  "创建你的账户": {
-    "en": "Create your account",
-    "zh-Hant": "建立你的帳戶"
-  },
-  "了解工作流程": {
-    "en": "See how it works",
-    "zh-Hant": "了解工作流程"
-  },
-  "一个账户，连接你有权使用的工作空间和应用。": {
-    "en": "One account for the workspaces and applications you can access.",
-    "zh-Hant": "一個帳戶，連接你有權使用的工作空間和應用。"
-  },
-  "工作流程示意：来源数据经过模板映射与检查，生成可下载的文档。": {
-    "en": "Workflow illustration: source data is mapped to a template and checked to produce downloadable documents.",
-    "zh-Hant": "工作流程示意：來源資料經過範本對應與檢查，產生可下載的文件。"
-  },
-  "工作流程示意": {
-    "en": "Workflow illustration",
-    "zh-Hant": "工作流程示意"
-  },
-  "来源数据": {
-    "en": "Source data",
-    "zh-Hant": "來源資料"
-  },
-  "选择需要的内容": {
-    "en": "Select the content you need",
-    "zh-Hant": "選取需要的內容"
-  },
-  "你的模板": {
-    "en": "Your template",
-    "zh-Hant": "你的範本"
-  },
-  "映射 · 检查 · 生成": {
-    "en": "Map · Check · Generate",
-    "zh-Hant": "對應 · 檢查 · 產生"
-  },
-  "可下载的文档": {
-    "en": "Downloadable documents",
-    "zh-Hant": "可下載的文件"
-  },
-  "文档格式": {
-    "en": "Document formats",
-    "zh-Hant": "文件格式"
-  },
-  "围绕你已有的文件工作": {
-    "en": "Work with the files you already have",
-    "zh-Hant": "圍繞你已有的檔案工作"
-  },
-  "从来源到交付": {
-    "en": "From source to delivery",
-    "zh-Hant": "從來源到交付"
-  },
-  "三个步骤，让重复工作有章可循。": {
-    "en": "Three steps. A repeatable process.",
-    "zh-Hant": "三個步驟，讓重複工作有章可循。"
-  },
-  "使用 Synwevo Docs 的真实文档流程。不同格式支持的字段与导出方式，以应用内可用选项为准。": {
-    "en": "Follow the document workflow in Synwevo Docs. Supported fields and exports vary by format; the app shows the available options.",
-    "zh-Hant": "使用 Synwevo Docs 的實際文件流程。不同格式支援的欄位與匯出方式，以應用內可用選項為準。"
-  },
-  "清楚知道，你正在什么空间工作。": {
-    "en": "Always know which space you’re in.",
-    "zh-Hant": "清楚知道，你正在甚麼空間工作。"
-  },
-  "身份统一，空间独立": {
-    "en": "One identity, distinct spaces",
-    "zh-Hant": "身份統一，空間獨立"
-  },
-  "登录与账户安全由 Synwevo Account 统一处理。空间成员资格和应用授权决定你可以进入哪里。": {
-    "en": "Synwevo Account handles sign-in and account security. Workspace membership and application permissions determine what you can access.",
-    "zh-Hant": "登入與帳戶安全由 Synwevo Account 統一處理。空間成員資格和應用授權決定你可以進入哪裡。"
-  },
-  "门户只展示入口": {
-    "en": "A portal to your applications",
-    "zh-Hant": "入口網站只展示入口"
-  },
-  "这里不汇总业务文档、项目标题或文件内容。打开应用后，仍须通过该应用的访问权限检查。": {
-    "en": "The portal does not collect business documents, project titles or file contents. Each application checks your access when you open it.",
-    "zh-Hant": "這裡不彙總業務文件、專案標題或檔案內容。開啟應用後，仍須通過該應用的存取權限檢查。"
-  },
-  "管理不等于读取": {
-    "en": "Management doesn’t mean access",
-    "zh-Hant": "管理不等於讀取"
-  },
-  "从你已有的内容开始。": {
-    "en": "Start with the content you have.",
-    "zh-Hant": "從你已有的內容開始。"
-  },
-  "Synwevo Docs 支持来源选择、模板映射、生成前检查和批量文档输出。可用应用由空间授权决定；部分格式转换依赖部署环境中的转换组件。": {
-    "en": "Synwevo Docs supports source selection, template mapping, preflight checks and batch document output. Workspace permissions control application access. Some format conversions require conversion components in the deployment.",
-    "zh-Hant": "Synwevo Docs 支援來源選取、範本對應、產生前檢查和批次文件輸出。可用應用由空間授權決定；部分格式轉換依賴部署環境中的轉換元件。"
-  },
-  "文档保存在当前部署中。数据保留、备份和服务可用性由该部署的管理者配置；此页不作额外承诺。": {
-    "en": "Documents are stored in this deployment. Its operator configures data retention, backups and service availability; this page makes no additional commitments.",
-    "zh-Hant": "文件儲存在目前部署中。資料保留、備份和服務可用性由該部署的管理者設定；此頁不作額外承諾。"
-  },
-  "已有账户？登录": {
-    "en": "Already have an account? Sign in",
-    "zh-Hant": "已有帳戶？登入"
-  },
+  "创建账户，选择个人使用或加入团队。邀请通过邮件送达，用当前邮箱确认即可加入。": {"en": "Create an account, then work on your own or join a team. Invitations arrive by e-mail; confirm with the invited address to join.", "zh-Hant": "建立帳戶，選擇個人使用或加入團隊。邀請透過電郵送達，用目前電郵地址確認即可加入。"},
+  "已有账户？登录": {"en": "Already have an account? Sign in", "zh-Hant": "已有帳戶？登入"},
+
+  // ------------------------------------------------------------------ public pages: shared
+  "本页描述当前部署的实际做法，随代码与配置一起更新；它不是正式的法律条款。": {"en": "This page describes what this deployment actually does and changes with its code and configuration. It is not a formal legal document.", "zh-Hant": "本頁描述目前部署的實際做法，隨程式碼與設定一起更新；它不是正式的法律條款。"},
+  "摘要": {"en": "Summary", "zh-Hant": "摘要"},
+  "导出或删除我的账户数据": {"en": "Export or delete my account data", "zh-Hant": "匯出或刪除我的帳戶資料"},
+  "本页目录": {"en": "On this page", "zh-Hant": "本頁目錄"},
+  "账户与数据相关的请求在账户页发起；组织内的事务请联系组织管理员。": {"en": "Requests about your account and data start on the account page; for matters inside an organisation, contact its administrators.", "zh-Hant": "帳戶與資料相關的請求在帳戶頁發起；組織內的事務請聯絡組織管理員。"},
+  "本部署的当前状态": {"en": "Current state of this deployment", "zh-Hant": "本部署的目前狀態"},
+  "直接读取运行中的服务，每分钟刷新。": {"en": "Read directly from the running services; refreshed every minute.", "zh-Hant": "直接讀取運行中的服務，每分鐘更新。"},
+  "读取中…": {"en": "Reading…", "zh-Hant": "讀取中…"},
+  "暂时无法读取": {"en": "Could not be read", "zh-Hant": "暫時無法讀取"},
+  "已启用": {"en": "Enabled", "zh-Hant": "已啟用"},
+  "未启用": {"en": "Not enabled", "zh-Hant": "未啟用"},
+  "已配置，当前不可用": {"en": "Configured, currently unavailable", "zh-Hant": "已設定，目前不可用"},
+  "未配置": {"en": "Not configured", "zh-Hant": "未設定"},
+  "开放注册：邮箱验证后即可使用": {"en": "Open: verify your mailbox and start", "zh-Hant": "開放註冊：電郵驗證後即可使用"},
+  "仅凭邀请注册": {"en": "By invitation only", "zh-Hant": "僅憑邀請註冊"},
+  "已关闭": {"en": "Closed", "zh-Hant": "已關閉"},
+  "消息附件与成员导入文件的恶意软件扫描": {"en": "Malware scanning of message attachments and member-import files", "zh-Hant": "訊息附件與成員匯入檔案的惡意軟件掃描"},
+  "Synwevo Docs 上传文件的恶意软件扫描": {"en": "Malware scanning of files uploaded to Synwevo Docs", "zh-Hant": "Synwevo Docs 上傳檔案的惡意軟件掃描"},
+  "登录与注册的人机验证": {"en": "Human verification at sign-in and registration", "zh-Hant": "登入與註冊的人機驗證"},
+  "外部账户登录": {"en": "Sign-in with an external account", "zh-Hant": "外部帳戶登入"},
+  "注册策略": {"en": "Registration policy", "zh-Hant": "註冊策略"},
+  "系统邮件发件人": {"en": "System mail sender", "zh-Hant": "系統郵件寄件人"},
+  "当前无法读取部署状态；上面的项目以「暂时无法读取」显示，而不是默认值。": {"en": "The deployment state could not be read just now; the items above say so instead of showing a default.", "zh-Hant": "目前無法讀取部署狀態；上面的項目以「暫時無法讀取」顯示，而不是預設值。"},
+
+  // ------------------------------------------------------------------ 数据与隐私
+  "你的数据，说清楚。": {"en": "Your data, plainly stated.", "zh-Hant": "你的資料，說清楚。"},
+  "Synwevo 保存哪些数据、谁能看到、放在哪里、留多久，以及你如何导出或删除。": {"en": "What Synwevo stores, who can see it, where it lives, how long it stays, and how you export or delete it.", "zh-Hant": "Synwevo 保存哪些資料、誰能看到、放在哪裡、留多久，以及你如何匯出或刪除。"},
+  "数据保存在位于日本东京的单台服务器上；传输经 HTTPS 加密，服务器端不做端到端加密。": {"en": "Data is stored on a single server in Tokyo, Japan; transport is encrypted with HTTPS, and there is no end-to-end encryption on the server.", "zh-Hant": "資料保存在位於日本東京的單一伺服器上；傳輸經 HTTPS 加密，伺服器端不做端對端加密。"},
+  "只用本站自己的 Cookie 维持登录；界面偏好与消息草稿留在你的浏览器里。": {"en": "Only this site’s own cookies keep you signed in; interface preferences and message drafts stay in your browser.", "zh-Hant": "只用本站自己的 Cookie 維持登入；介面偏好與訊息草稿留在你的瀏覽器裡。"},
+  "平台管理员读不到业务文档与对话；组织的举报处理只看到被举报的那一条消息。": {"en": "Platform administrators cannot read business documents or conversations; an organisation’s report review sees only the reported message.", "zh-Hant": "平台管理員讀不到業務文件與對話；組織的檢舉處理只看到被檢舉的那一則訊息。"},
+  "生产环境的页面经由边缘网络服务商提供，其匿名访问统计脚本不使用 Cookie，也不识别个人。": {"en": "In production the pages are served through an edge-network provider whose anonymous analytics script sets no cookies and does not identify individuals.", "zh-Hant": "生產環境的頁面經由邊緣網絡服務商提供，其匿名訪問統計腳本不使用 Cookie，也不識別個人。"},
+  "我们保存什么": {"en": "What we store", "zh-Hant": "我們保存甚麼"},
+  "账户": {"en": "Account", "zh-Hant": "帳戶"},
+  "邮箱地址、显示名、头像、界面语言与时区；登录凭据的派生值（口令哈希、通行密钥公钥、两步验证种子与恢复码）；登录设备与会话；安全活动记录，含 IP 地址与时间。": {
+    "en": "E-mail address, display name, avatar, interface language and time zone; derived sign-in credentials (password hash, passkey public keys, two-step verification seed and recovery codes); signed-in devices and sessions; the security activity log, with IP address and time.",
+    "zh-Hant": "電郵地址、顯示名稱、頭像、介面語言與時區；登入憑證的衍生值（密碼雜湊、通行金鑰公鑰、兩步驗證種子與復原碼）；已登入的裝置與會話；安全活動記錄，含 IP 地址與時間。"},
+  "组织与工作空间": {"en": "Organisations & workspaces", "zh-Hant": "組織與工作空間"},
+  "成员关系与角色、邀请（收件邮箱）、成员导入的文件与解析结果、组织设置。": {"en": "Memberships and roles, invitations (the invited address), member-import files and their parsed results, organisation settings.", "zh-Hant": "成員關係與角色、邀請（收件電郵）、成員匯入的檔案與解析結果、組織設定。"},
+  "Synwevo Docs 里的项目、来源文件、模板、生成结果、任务记录、评论与协作历史。": {"en": "Projects in Synwevo Docs, their source files, templates, generated output, job records, comments and collaboration history.", "zh-Hant": "Synwevo Docs 裡的專案、來源檔案、範本、產生結果、任務記錄、評論與協作歷史。"},
+  "会话与成员、消息正文、附件、表情回应、你自己的阅读位置、举报时固定的消息快照。": {"en": "Conversations and their members, message text, attachments, reactions, your own read position, and the snapshot taken when a message is reported.", "zh-Hant": "會話與成員、訊息內容、附件、表情回應、你自己的閱讀位置、檢舉時固定的訊息快照。"},
+  "收件箱条目（消息类通知带简短预览）、通知偏好、浏览器推送订阅（推送地址与密钥，只对你自己的浏览器有效）。": {"en": "Inbox items (message notifications carry a short preview), notification preferences, browser push subscriptions (the push address and keys, valid only for your own browser).", "zh-Hant": "收件箱項目（訊息類通知帶簡短預覽）、通知偏好、瀏覽器推送訂閱（推送地址與金鑰，只對你自己的瀏覽器有效）。"},
+  "接口平台": {"en": "API platform", "zh-Hant": "介面平台"},
+  "服务凭据及其调用元数据（方法、路径、状态码、耗时），保留 30 天。": {"en": "Service credentials and their call metadata (method, path, status code, duration), kept for 30 days.", "zh-Hant": "服務憑證及其呼叫中繼資料（方法、路徑、狀態碼、耗時），保留 30 天。"},
+  "谁能看到": {"en": "Who can see it", "zh-Hant": "誰能看到"},
+  "你自己：账户页里的资料、登录的设备、安全活动与数据导出。": {"en": "You: your profile, signed-in devices, security activity and data export on the account page.", "zh-Hant": "你自己：帳戶頁裡的資料、已登入的裝置、安全活動與資料匯出。"},
+  "工作空间成员：按角色访问该空间的文档；切换工作空间不会合并内容。": {"en": "Workspace members: documents in that workspace, according to their role; switching workspaces never merges content.", "zh-Hant": "工作空間成員：按角色存取該空間的文件；切換工作空間不會合併內容。"},
+  "组织管理者：成员与角色、邀请、导入记录。举报处理只看到被举报消息的快照、举报人与原因，看不到会话的其它内容。": {"en": "Organisation administrators: members and roles, invitations, import records. Report review shows the reported message’s snapshot, the reporter and the reason — nothing else from the conversation.", "zh-Hant": "組織管理者：成員與角色、邀請、匯入記錄。檢舉處理只看到被檢舉訊息的快照、檢舉人與原因，看不到會話的其他內容。"},
+  "会话成员：消息只对会话成员可见。新成员只看到加入之后的消息；退出或被移除后不再可见，重新加入也不恢复。": {"en": "Conversation members: messages are visible only to members. New members see only what was sent after they joined; after leaving or removal nothing is visible, and rejoining does not restore it.", "zh-Hant": "會話成員：訊息只對會話成員可見。新成員只看到加入之後的訊息；退出或被移除後不再可見，重新加入也不恢復。"},
+  "平台管理员：治理账户与平台配置，读不到业务文档与对话。": {"en": "Platform administrators: they govern accounts and platform configuration and cannot read business documents or conversations.", "zh-Hant": "平台管理員：治理帳戶與平台設定，讀不到業務文件與對話。"},
+  "机器访问：服务凭据受当前有效的工作空间批准、资源范围与权限范围的交集限制。": {"en": "Machine access: service credentials are limited to the intersection of a current workspace approval, their resource scope and their permission scope.", "zh-Hant": "機器存取：服務憑證受目前有效的工作空間批准、資源範圍與權限範圍的交集限制。"},
+  "存储、传输与备份": {"en": "Storage, transport and backups", "zh-Hant": "儲存、傳輸與備份"},
+  "数据库与文件都保存在位于日本东京的单台服务器上。": {"en": "The database and all files live on a single server in Tokyo, Japan.", "zh-Hant": "資料庫與檔案都保存在位於日本東京的單一伺服器上。"},
+  "浏览器与服务器之间经 HTTPS 加密；公开域名由边缘网络服务商终止 TLS，再经隧道到达源站。服务器端以明文存储，没有端到端加密。": {"en": "Traffic between your browser and the server is encrypted with HTTPS; the public domains terminate TLS at an edge-network provider and reach the server through a tunnel. Data is stored in plain form on the server; there is no end-to-end encryption.", "zh-Hant": "瀏覽器與伺服器之間經 HTTPS 加密；公開域名由邊緣網絡服務商終止 TLS，再經隧道到達源站。伺服器端以明文儲存，沒有端對端加密。"},
+  "上传的文件先经过大小与格式检查；恶意软件扫描是部署选项，上方「当前状态」显示它是否启用。": {"en": "Uploaded files pass size and format checks first; malware scanning is a deployment option, and “Current state” above shows whether it is enabled.", "zh-Hant": "上傳的檔案先經過大小與格式檢查；惡意軟件掃描是部署選項，上方「目前狀態」顯示它是否啟用。"},
+  "每次发布前生成一份完整备份，保留在同一台服务器上，目前不自动清理；备份包含全部业务数据与密钥材料。": {"en": "A full backup is taken before every release and kept on the same server; backups are not pruned automatically at present and contain all business data and key material.", "zh-Hant": "每次發佈前產生一份完整備份，保留在同一台伺服器上，目前不自動清理；備份包含全部業務資料與金鑰材料。"},
+  "Cookie 与浏览器存储": {"en": "Cookies and browser storage", "zh-Hant": "Cookie 與瀏覽器儲存"},
+  "四个 Cookie 都只发给本站自己的域名，不跨站，也不用于统计。": {"en": "All four cookies are sent only to this site’s own host names — never across sites, never for analytics.", "zh-Hant": "四個 Cookie 都只傳給本站自己的域名，不跨站，也不用於統計。"},
+  "名称": {"en": "Name", "zh-Hant": "名稱"},
+  "用途与期限": {"en": "Purpose and lifetime", "zh-Hant": "用途與期限"},
+  "登录会话；HttpOnly。闲置 12 小时失效，选择「保持登录」后为 14 天，无论如何最长 30 天。": {"en": "Your sign-in session; HttpOnly. Expires after 12 idle hours, or 14 days with “keep me signed in”, and never lasts beyond 30 days.", "zh-Hant": "登入會話；HttpOnly。閒置 12 小時失效，選擇「保持登入」後為 14 天，無論如何最長 30 天。"},
+  "防跨站请求伪造：页面读取后随每个修改请求回传。": {"en": "Cross-site request forgery protection: the page reads it and echoes it with every modifying request.", "zh-Hant": "防跨站請求偽造：頁面讀取後隨每個修改請求回傳。"},
+  "登录往返的一次性标识，10 分钟内有效。": {"en": "A one-time identifier for the sign-in round trip, valid for 10 minutes.", "zh-Hant": "登入往返的一次性標識，10 分鐘內有效。"},
+  "外部账户登录往返的一次性标识。": {"en": "A one-time identifier for the external-account sign-in round trip.", "zh-Hant": "外部帳戶登入往返的一次性標識。"},
+  "本地存储（留在你的浏览器）": {"en": "Local storage (stays in your browser)", "zh-Hant": "本機儲存（留在你的瀏覽器）"},
+  "界面语言、界面布局偏好、消息草稿、Enter 键发送偏好、退出登录标记。": {"en": "Interface language, layout preferences, message drafts, the Enter-to-send preference, and a signed-out marker.", "zh-Hant": "介面語言、介面版面偏好、訊息草稿、Enter 鍵傳送偏好、登出標記。"},
+  "会话存储（关闭标签页即清除）": {"en": "Session storage (cleared when the tab closes)", "zh-Hant": "會話儲存（關閉分頁即清除）"},
+  "当前工作空间、登录后的返回目标、登录流程状态。": {"en": "The current workspace, where to return after sign-in, and sign-in flow state.", "zh-Hant": "目前工作空間、登入後的返回目標、登入流程狀態。"},
+  "第三方脚本": {"en": "Third-party scripts", "zh-Hant": "第三方腳本"},
+  "生产环境的页面由边缘网络服务商提供，其网站分析脚本收集页面浏览与加载性能数据。按该服务商的说明，它不使用 Cookie 或浏览器存储，在最近的节点丢弃 IP 地址，也不做指纹识别。本站没有其它第三方脚本。": {
+    "en": "In production the pages are served through an edge-network provider whose web analytics script collects page views and load-performance data. By the provider’s own description it uses no cookies or browser storage, discards the IP address at the nearest data centre, and does not fingerprint. There are no other third-party scripts on this site.",
+    "zh-Hant": "生產環境的頁面由邊緣網絡服務商提供，其網站分析腳本收集頁面瀏覽與載入效能資料。按該服務商的說明，它不使用 Cookie 或瀏覽器儲存，在最近的節點丟棄 IP 地址，也不做指紋識別。本站沒有其他第三方腳本。"},
+  "保留多久": {"en": "How long we keep it", "zh-Hant": "保留多久"},
+  "数据": {"en": "Data", "zh-Hant": "資料"},
+  "期限": {"en": "Retention", "zh-Hant": "期限"},
+  "账户删除": {"en": "Account deletion", "zh-Hant": "帳戶刪除"},
+  "申请后 7 天缓冲期，到期执行。": {"en": "A 7-day grace period after the request; then it is carried out.", "zh-Hant": "申請後 7 天緩衝期，到期執行。"},
+  "会话记录": {"en": "Session records", "zh-Hant": "會話記錄"},
+  "结束后 7 天内清理。": {"en": "Removed within 7 days after the session ends.", "zh-Hant": "結束後 7 天內清理。"},
+  "登录与注册的频率计数": {"en": "Sign-in and registration rate counters", "zh-Hant": "登入與註冊的頻率計數"},
+  "最后一次尝试后 24 小时。": {"en": "24 hours after the last attempt.", "zh-Hant": "最後一次嘗試後 24 小時。"},
+  "邀请": {"en": "Invitations", "zh-Hant": "邀請"},
+  "默认 7 天有效，可设 1–30 天；邮箱验证链接 24 小时。": {"en": "Valid for 7 days by default (1–30 days configurable); mailbox verification links for 24 hours.", "zh-Hant": "預設 7 天有效，可設 1–30 天；電郵驗證連結 24 小時。"},
+  "组织删除": {"en": "Organisation deletion", "zh-Hant": "組織刪除"},
+  "7 天内可恢复。": {"en": "Recoverable for 7 days.", "zh-Hant": "7 天內可恢復。"},
+  "接口调用元数据": {"en": "API call metadata", "zh-Hant": "介面呼叫中繼資料"},
+  "30 天。": {"en": "30 days.", "zh-Hant": "30 天。"},
+  "成员导入记录": {"en": "Member-import records", "zh-Hant": "成員匯入記錄"},
+  "标注 7 天有效期；到期清理目前没有自动任务。": {"en": "Marked with a 7-day validity; there is no automatic clean-up job yet.", "zh-Hant": "標註 7 天有效期；到期清理目前沒有自動任務。"},
+  "安全活动记录、系统邮件投递记录、通知": {"en": "Security activity, system-mail delivery records, notifications", "zh-Hant": "安全活動記錄、系統郵件投遞記錄、通知"},
+  "目前长期保留，没有自动清理。": {"en": "Kept indefinitely at present; no automatic clean-up.", "zh-Hant": "目前長期保留，沒有自動清理。"},
+  "消息与文档": {"en": "Messages and documents", "zh-Hant": "訊息與文件"},
+  "删除的消息对他人显示「消息已删除」，正文清空、序号保留。删除的文档项目在应用内标记为已删除，底层文件目前不做自动回收。": {"en": "A deleted message shows others “message deleted”; its text is cleared and its sequence number kept. A deleted document project is marked deleted in the application; underlying files are not reclaimed automatically at present.", "zh-Hant": "刪除的訊息對他人顯示「訊息已刪除」，內容清空、序號保留。刪除的文件專案在應用內標記為已刪除，底層檔案目前不做自動回收。"},
+  "导出与删除": {"en": "Export and deletion", "zh-Hant": "匯出與刪除"},
+  "导出": {"en": "Export", "zh-Hant": "匯出"},
+  "账户页「数据与账户」→ 导出，需要当前口令。得到一份 JSON：资料、工作空间与组织成员关系、通行密钥名称、安全活动、头像。不含消息与文档内容——文档在 Synwevo Docs 内按项目下载，消息目前没有导出。": {
+    "en": "Account page → “Data and account” → Export, with your current password. You receive a JSON file: profile, workspace and organisation memberships, passkey names, security activity, avatar. It does not include messages or documents — documents are downloaded per project in Synwevo Docs, and messages have no export yet.",
+    "zh-Hant": "帳戶頁「資料與帳戶」→ 匯出，需要目前密碼。得到一份 JSON：資料、工作空間與組織成員關係、通行金鑰名稱、安全活動、頭像。不含訊息與文件內容——文件在 Synwevo Docs 內按專案下載，訊息目前沒有匯出。"},
+  "删除": {"en": "Deletion", "zh-Hant": "刪除"},
+  "在同一处申请，需要当前口令。申请后立即退出所有登录、撤销待接受的邀请，并进入 7 天缓冲期，期间邮件里的链接可以撤回。到期后删除口令、通行密钥、两步验证与恢复码，清空资料与邮箱；账户标识与该邮箱的保留记录不再分配给他人，以免旧邀请被重新领取。你在组织里留下的消息、评论与文档保留，不再关联你的资料。": {
+    "en": "Requested in the same place, with your current password. All sessions end at once, pending invitations are revoked, and a 7-day grace period starts; the link in the e-mail cancels it. Afterwards the password, passkeys, two-step verification and recovery codes are deleted and the profile and e-mail cleared; the account identifier and a reserved record of the address are never reassigned, so old invitations cannot be claimed again. Messages, comments and documents you left in organisations remain, no longer linked to your profile.",
+    "zh-Hant": "在同一處申請，需要目前密碼。申請後立即登出所有裝置、撤銷待接受的邀請，並進入 7 天緩衝期，期間電郵裡的連結可以撤回。到期後刪除密碼、通行金鑰、兩步驗證與復原碼，清空資料與電郵；帳戶標識與該電郵的保留記錄不再分配給他人，以免舊邀請被重新領取。你在組織裡留下的訊息、評論與文件保留，不再關聯你的資料。"},
+  "前提": {"en": "Before you can", "zh-Hant": "前提"},
+  "若你是某个组织的唯一所有者，或最后一位平台管理员，需要先移交。": {"en": "If you are the only owner of an organisation, or the last platform administrator, hand over first.", "zh-Hant": "若你是某個組織的唯一擁有者，或最後一位平台管理員，需要先移交。"},
+  "第三方与外部服务": {"en": "Third parties and external services", "zh-Hant": "第三方與外部服務"},
+  "是否可用见上方「当前状态」。只在你选择时使用，用于确认你的邮箱地址与显示名。": {"en": "Availability is shown under “Current state” above. Used only when you choose it, to confirm your e-mail address and display name.", "zh-Hant": "是否可用見上方「目前狀態」。只在你選擇時使用，用於確認你的電郵地址與顯示名稱。"},
+  "人机验证": {"en": "Human verification", "zh-Hant": "人機驗證"},
+  "是否启用见上方「当前状态」。启用时，登录、注册等动作前由验证服务判断请求是否来自自动程序。": {"en": "Whether it is enabled is shown under “Current state” above. When enabled, a verification service judges before sign-in, registration and similar actions whether the request comes from an automated program.", "zh-Hant": "是否啟用見上方「目前狀態」。啟用時，登入、註冊等動作前由驗證服務判斷請求是否來自自動程式。"},
+  "系统邮件": {"en": "System mail", "zh-Hant": "系統郵件"},
+  "由自行运营的邮件服务器发出，经第三方投递服务中转到你的邮箱；「已发送」指邮件服务器已接收。": {"en": "Sent from our own mail server and relayed by a third-party delivery service to your mailbox; “sent” means our mail server accepted it.", "zh-Hant": "由自行營運的郵件伺服器發出，經第三方投遞服務中轉到你的郵箱；「已傳送」指郵件伺服器已接收。"},
+  "浏览器推送": {"en": "Browser push", "zh-Hant": "瀏覽器推送"},
+  "你开启后，通知经浏览器厂商的推送服务送达；内容加密，只含通知标题、正文与链接。退出登录即撤销该浏览器的订阅。": {"en": "Once you turn it on, notifications reach you through your browser vendor’s push service; the payload is encrypted and carries only the notification’s title, text and link. Signing out revokes that browser’s subscription.", "zh-Hant": "你開啟後，通知經瀏覽器廠商的推送服務送達；內容加密，只含通知標題、內容與連結。登出即撤銷該瀏覽器的訂閱。"},
+
+  // ------------------------------------------------------------------ 服务说明
+  "这项服务是什么，怎么用。": {"en": "What this service is, and how it works.", "zh-Hant": "這項服務是甚麼，怎麼用。"},
+  "Synwevo 目前提供什么、怎样注册、有哪些限额、出了问题找谁。": {"en": "What Synwevo offers today, how to register, which limits apply and where to turn when something goes wrong.", "zh-Hant": "Synwevo 目前提供甚麼、怎樣註冊、有哪些限額、出了問題找誰。"},
+  "Synwevo 是一个工作流程自动化平台：统一账户、工作空间、组织与通知，加上 Synwevo Docs 与 Synwevo Message 两个应用。": {"en": "Synwevo is a workflow automation platform: one account, workspaces, organisations and notifications, plus two applications — Synwevo Docs and Synwevo Message.", "zh-Hant": "Synwevo 是一個工作流程自動化平台：統一帳戶、工作空間、組織與通知，加上 Synwevo Docs 與 Synwevo Message 兩個應用。"},
+  "注册经邮箱验证后生效，机构邮箱同样可用；当前的注册策略以下方「当前状态」为准。": {"en": "Registration takes effect once you verify your mailbox; institutional mailboxes work too. The current registration policy is shown under “Current state” below.", "zh-Hant": "註冊經電郵驗證後生效，機構電郵同樣可用；目前的註冊策略以下方「目前狀態」為準。"},
+  "平台管理、组织、工作空间与服务凭据四层角色，各有边界；管理权不等于内容访问权。": {"en": "Four layers of roles — platform administration, organisation, workspace and service credentials — each with its own limits; administration never means access to content.", "zh-Hant": "平台管理、組織、工作空間與服務憑證四層角色，各有界線；管理權不等於內容存取權。"},
+  "限额写在代码里：消息 4000 字、附件 20 MB、每个工作空间每天 50 个邀请等，见下表。": {"en": "Limits are written in the code — 4000 characters per message, 20 MB per attachment, 50 invitations per workspace per day and more; see the table below.", "zh-Hant": "限額寫在程式碼裡：訊息 4000 字、附件 20 MB、每個工作空間每天 50 個邀請等，見下表。"},
+  "单台服务器部署，每次发布前备份。": {"en": "A single-server deployment, backed up before every release.", "zh-Hant": "單一伺服器部署，每次發佈前備份。"},
+  "账户可随时申请删除（7 天缓冲）；组织删除 7 天内可恢复。": {"en": "You can request account deletion at any time (7-day grace period); a deleted organisation can be recovered for 7 days.", "zh-Hant": "帳戶可隨時申請刪除（7 天緩衝）；組織刪除 7 天內可恢復。"},
+  "服务内容": {"en": "What the service is", "zh-Hant": "服務內容"},
+  "平台": {"en": "Platform", "zh-Hant": "平台"},
+  "统一账户与登录、工作空间、组织与角色、通知收件箱与浏览器推送，以及面向自动化集成的接口平台。": {"en": "One account and sign-in, workspaces, organisations and roles, the notification inbox with browser push, and an API platform for automation.", "zh-Hant": "統一帳戶與登入、工作空間、組織與角色、通知收件箱與瀏覽器推送，以及面向自動化整合的介面平台。"},
+  "文档自动化：选择来源数据、接入模板、检查后批量生成。支持 DOCX、XLSX、PDF、PPTX、CSV 等格式，各格式的能力以应用内选项为准。": {"en": "Document automation: select source data, connect a template, check, then generate in batches. Works with DOCX, XLSX, PDF, PPTX, CSV and more; each format’s capabilities are shown in the application.", "zh-Hant": "文件自動化：選取來源資料、接入範本、檢查後批次產生。支援 DOCX、XLSX、PDF、PPTX、CSV 等格式，各格式的功能以應用內選項為準。"},
+  "组织内消息：私聊与群组、引用回复、@提及、表情回应、附件、文档链接卡片、群公告、举报处理。目前从平台栏的「消息」进入。": {"en": "Messaging within an organisation: direct messages and groups, quoted replies, @mentions, reactions, attachments, document link cards, group announcements and report review. Reached today through “Messages” in the platform bar.", "zh-Hant": "組織內訊息：私訊與群組、引用回覆、@提及、表情回應、附件、文件連結卡片、群組公告、檢舉處理。目前從平台欄的「訊息」進入。"},
+  "没有的部分": {"en": "What there isn’t", "zh-Hant": "沒有的部分"},
+  "没有其它应用，也没有流程编排器；这里写的就是全部。": {"en": "There are no other applications and no workflow orchestrator; what is written here is all of it.", "zh-Hant": "沒有其他應用，也沒有流程編排器；這裡寫的就是全部。"},
+  "角色": {"en": "Roles", "zh-Hant": "角色"},
+  "平台管理员": {"en": "Platform administrators", "zh-Hant": "平台管理員"},
+  "治理账户、注册策略与平台配置；读不到业务文档与对话。接口平台的管理控制台只对获授权的平台管理员开放，组织或工作空间的管理员不因此获得。": {"en": "Govern accounts, the registration policy and platform configuration; they cannot read business documents or conversations. The API platform’s management console is open only to authorised platform administrators — organisation and workspace administrators do not get it.", "zh-Hant": "治理帳戶、註冊策略與平台設定；讀不到業務文件與對話。介面平台的管理主控台只對獲授權的平台管理員開放，組織或工作空間的管理員不因此獲得。"},
+  "所有者、管理员、成员，并可按能力委派自定义角色。组织成员身份不自动授予每个工作空间的访问权。": {"en": "Owner, admin and member, plus custom roles that delegate specific capabilities. Membership does not grant access to every workspace.", "zh-Hant": "擁有者、管理員、成員，並可按能力委派自訂角色。組織成員身份不自動授予每個工作空間的存取權。"},
+  "所有者、管理员、编辑者、查看者。文档权限按工作空间授予，切换不会合并内容。": {"en": "Owner, admin, editor and viewer. Document access is granted per workspace; switching never merges content.", "zh-Hant": "擁有者、管理員、編輯者、檢視者。文件權限按工作空間授予，切換不會合併內容。"},
+  "服务凭据": {"en": "Service credentials", "zh-Hant": "服務憑證"},
+  "属于某个工作空间，须经该空间批准，只能在获准的资源与权限范围内调用；管理权不授予内容访问权。": {"en": "Belong to one workspace, need that workspace’s approval, and may call only the approved resources and scopes; administration grants no access to content.", "zh-Hant": "屬於某個工作空間，須經該空間批准，只能在獲准的資源與權限範圍內呼叫；管理權不授予內容存取權。"},
+  "注册与登录": {"en": "Registration and sign-in", "zh-Hant": "註冊與登入"},
+  "注册策略见上方「当前状态」。开放时，任何邮箱验证后即可使用，学校与公司等机构邮箱同样可用；验证链接 24 小时内有效。": {"en": "The registration policy is shown under “Current state” above. When open, any mailbox can be used once verified — school and company mailboxes included; verification links are valid for 24 hours.", "zh-Hant": "註冊策略見上方「目前狀態」。開放時，任何電郵驗證後即可使用，學校與公司等機構電郵同樣可用；驗證連結 24 小時內有效。"},
+  "登录方式：口令、通行密钥、邮箱验证码；外部账户登录是否可用见「当前状态」。可以开启两步验证并保存恢复码。": {"en": "Sign in with a password, a passkey or an e-mail code; whether external-account sign-in is available is shown under “Current state”. You can turn on two-step verification and keep recovery codes.", "zh-Hant": "登入方式：密碼、通行金鑰、電郵驗證碼；外部帳戶登入是否可用見「目前狀態」。可以開啟兩步驗證並保存復原碼。"},
+  "会话闲置 12 小时失效；选择「保持登录」后为 14 天；无论如何最长 30 天。敏感操作需要重新输入口令。": {"en": "A session expires after 12 idle hours, or 14 days with “keep me signed in”, and never lasts beyond 30 days. Sensitive actions ask for your password again.", "zh-Hant": "會話閒置 12 小時失效；選擇「保持登入」後為 14 天；無論如何最長 30 天。敏感操作需要重新輸入密碼。"},
+  "验证、邀请与安全通知由「当前状态」中的发件人发出。「已发送」指邮件服务器已接收；能否进入收件箱取决于对方的邮件系统。": {"en": "Verification, invitation and security mail comes from the sender shown under “Current state”. “Sent” means our mail server accepted it; whether it reaches the inbox depends on the receiving mail system.", "zh-Hant": "驗證、邀請與安全通知由「目前狀態」中的寄件人發出。「已傳送」指郵件伺服器已接收；能否進入收件箱取決於對方的郵件系統。"},
+  "限额": {"en": "Limits", "zh-Hant": "限額"},
+  "这些数字来自代码本身，超过时会得到明确的提示与可重试的时间。": {"en": "These numbers come from the code itself; when you reach one, you are told so and when to try again.", "zh-Hant": "這些數字來自程式碼本身，超過時會得到明確的提示與可重試的時間。"},
+  "项目": {"en": "Item", "zh-Hant": "項目"},
+  "每条最多 4000 字；每人每分钟 60 条。": {"en": "Up to 4000 characters each; 60 per person per minute.", "zh-Hant": "每則最多 4000 字；每人每分鐘 60 則。"},
+  "附件": {"en": "Attachments", "zh-Hant": "附件"},
+  "每条消息 1 个，最大 20 MB；每人每小时 30 个。": {"en": "One per message, up to 20 MB; 30 per person per hour.", "zh-Hant": "每則訊息 1 個，最大 20 MB；每人每小時 30 個。"},
+  "每群最多 200 人；每人每天最多创建 20 个群；群公告最多 1000 字。": {"en": "Up to 200 members per group; 20 groups created per person per day; announcements up to 1000 characters.", "zh-Hant": "每群最多 200 人；每人每天最多建立 20 個群組；群組公告最多 1000 字。"},
+  "举报": {"en": "Reports", "zh-Hant": "檢舉"},
+  "每人每天 20 条。": {"en": "20 per person per day.", "zh-Hant": "每人每天 20 則。"},
+  "每个工作空间 24 小时内最多 50 个；同一邮箱 60 秒内不重复发送；默认 7 天有效，可设 1–30 天。": {"en": "Up to 50 per workspace in 24 hours; the same address is not invited again within 60 seconds; valid for 7 days by default (1–30 days configurable).", "zh-Hant": "每個工作空間 24 小時內最多 50 個；同一電郵 60 秒內不重複傳送；預設 7 天有效，可設 1–30 天。"},
+  "注册": {"en": "Registration", "zh-Hant": "註冊"},
+  "同一来源 15 分钟内 10 次；同一邮箱每小时 3 次。": {"en": "10 attempts per source in 15 minutes; 3 per e-mail address per hour.", "zh-Hant": "同一來源 15 分鐘內 10 次；同一電郵每小時 3 次。"},
+  "成员导入": {"en": "Member import", "zh-Hant": "成員匯入"},
+  "单个文件最大 20 MB。": {"en": "One file of up to 20 MB.", "zh-Hant": "單一檔案最大 20 MB。"},
+  "各格式支持的字段、导出与转换以应用内选项为准。": {"en": "Supported fields, exports and conversions vary by format; the application shows the options.", "zh-Hant": "各格式支援的欄位、匯出與轉換以應用內選項為準。"},
+  "遇到问题": {"en": "When something goes wrong", "zh-Hant": "遇到問題"},
+  "登录与账户": {"en": "Sign-in and account", "zh-Hant": "登入與帳戶"},
+  "账户页的「登录的设备」与「安全活动」可以自查；忘记口令用登录页的找回。": {"en": "“Signed-in devices” and “Security activity” on the account page let you check for yourself; a forgotten password is reset from the sign-in page.", "zh-Hant": "帳戶頁的「已登入的裝置」與「安全活動」可以自查；忘記密碼用登入頁的重設。"},
+  "邀请、角色、应用启用由组织管理员或工作空间管理员处理，请直接联系他们。": {"en": "Invitations, roles and enabling applications are handled by your organisation or workspace administrators — contact them directly.", "zh-Hant": "邀請、角色、應用啟用由組織管理員或工作空間管理員處理，請直接聯絡他們。"},
+  "应用内的问题": {"en": "Inside the applications", "zh-Hant": "應用內的問題"},
+  "任务页显示真实的状态与错误原因；不当的消息用消息里的「举报」交给组织处理。": {"en": "The job page shows the real status and the reason for any error; an inappropriate message is handed to the organisation with “Report” inside Messages.", "zh-Hant": "任務頁顯示真實的狀態與錯誤原因；不當的訊息用訊息裡的「檢舉」交給組織處理。"},
+  "运行与维护": {"en": "Operation and maintenance", "zh-Hant": "運行與維護"},
+  "服务运行在位于日本东京的单台服务器上；发布新版本时可能有短暂中断。": {"en": "The service runs on a single server in Tokyo, Japan; a release may cause a brief interruption.", "zh-Hant": "服務運行在位於日本東京的單一伺服器上；發佈新版本時可能有短暫中斷。"},
+  "每次发布前生成完整备份并保留在服务器上；发布出现问题时以该备份回滚。": {"en": "A full backup is taken before every release and kept on the server; a failed release is rolled back to it.", "zh-Hant": "每次發佈前產生完整備份並保留在伺服器上；發佈出現問題時以該備份回滾。"},
+  "终止与删除": {"en": "Ending and deletion", "zh-Hant": "終止與刪除"},
+  "你可以随时在账户页申请删除账户：7 天缓冲期内可撤回；到期后凭据与资料删除，你在组织里的贡献保留。若你是组织的唯一所有者或最后一位平台管理员，需要先移交。": {"en": "You can request account deletion on the account page at any time: it can be cancelled within the 7-day grace period; afterwards credentials and profile are deleted and what you contributed in organisations remains. If you are an organisation’s only owner or the last platform administrator, hand over first.", "zh-Hant": "你可以隨時在帳戶頁申請刪除帳戶：7 天緩衝期內可撤回；到期後憑證與資料刪除，你在組織裡的貢獻保留。若你是組織的唯一擁有者或最後一位平台管理員，需要先移交。"},
+  "组织所有者可以冻结、删除组织，删除后 7 天内可恢复；被冻结的组织及其工作空间暂不可用。被移出组织即刻失去该组织的会话与工作空间访问。": {"en": "An organisation’s owner can freeze or delete it; a deleted organisation can be recovered for 7 days, and a frozen one and its workspaces are unavailable. Being removed from an organisation ends access to its conversations and workspaces at once.", "zh-Hant": "組織擁有者可以凍結、刪除組織，刪除後 7 天內可恢復；被凍結的組織及其工作空間暫不可用。被移出組織即刻失去該組織的會話與工作空間存取。"},
+  "平台管理员可以停用账户；停用即刻结束该账户的全部登录。": {"en": "Platform administrators can suspend an account; suspension ends all of its sessions at once.", "zh-Hant": "平台管理員可以停用帳戶；停用即刻結束該帳戶的全部登入。"},
+
+  // ------------------------------------------------------------------ signed-in shell and dashboard
+  "登录统一账户，继续你的工作。": {"en": "Sign in to your account to continue your work.", "zh-Hant": "登入統一帳戶，繼續你的工作。"},
+  "正在载入工作空间…": {"en": "Loading your workspace…", "zh-Hant": "正在載入工作空間…"},
+  "欢迎回来": {"en": "Welcome back", "zh-Hant": "歡迎回來"},
+  "暂时无法载入工作空间": {"en": "We couldn’t load your workspace", "zh-Hant": "暫時無法載入工作空間"},
+  "请检查网络连接后重试。": {"en": "Check your connection and try again.", "zh-Hant": "請檢查網絡連線後重試。"},
+  "重试": {"en": "Try again", "zh-Hant": "重試"},
   "页面不存在": {"en": "Page not found", "zh-Hant": "找不到頁面"},
   "这个地址在 Synwevo Workspace 里不存在。": {"en": "This address does not exist in Synwevo Workspace.", "zh-Hant": "這個地址在 Synwevo Workspace 裡不存在。"},
+  "所有者": {"en": "Owner", "zh-Hant": "擁有者"},
+  "管理员": {"en": "Admin", "zh-Hant": "管理員"},
+  "编辑者": {"en": "Editor", "zh-Hant": "編輯者"},
+  "查看者": {"en": "Viewer", "zh-Hant": "檢視者"},
+  "成员": {"en": "Member", "zh-Hant": "成員"},
+  "个人工作空间": {"en": "Personal workspaces", "zh-Hant": "個人工作空間"},
+  "团队工作空间": {"en": "Team workspaces", "zh-Hant": "團隊工作空間"},
+  "账户与安全": {"en": "Account & security", "zh-Hant": "帳戶與安全"},
+  "平台管理": {"en": "Platform management", "zh-Hant": "平台管理"},
+  "API 管理": {"en": "API management", "zh-Hant": "API 管理"},
   "账户菜单": {"en": "Account menu", "zh-Hant": "帳戶選單"},
-  "账户": {"en": "Account", "zh-Hant": "帳戶"},
+  "你的工作，从这里继续。": {"en": "Pick up where you left off.", "zh-Hant": "你的工作，從這裡繼續。"},
+  "创建或加入工作空间": {"en": "Create or join a workspace", "zh-Hant": "建立或加入工作空間"},
+  "只显示你已加入的工作空间。": {"en": "Only workspaces you belong to appear here.", "zh-Hant": "只顯示你已加入的工作空間。"},
+  "暂不可用": {"en": "Unavailable", "zh-Hant": "暫不可用"},
+  "你的组织": {"en": "Your organisations", "zh-Hant": "你的組織"},
+  "组织成员身份不自动授予每个工作空间的访问权。": {"en": "Organisation membership does not grant access to every workspace.", "zh-Hant": "組織成員身份不自動授予每個工作空間的存取權。"},
+  "你还没有加入工作空间。": {"en": "You haven’t joined a workspace yet.", "zh-Hant": "你還沒有加入工作空間。"},
+  "当前工作空间": {"en": "Current workspace", "zh-Hant": "目前工作空間"},
+  "选择你的工作空间": {"en": "Choose your workspace", "zh-Hant": "選擇你的工作空間"},
+  "成员与邀请": {"en": "Members & invitations", "zh-Hant": "成員與邀請"},
+  "切换失败，已重新核对当前工作空间，请重试。": {"en": "The switch failed; your current workspace has been checked again. Please retry.", "zh-Hant": "切換失敗，已重新核對目前工作空間，請重試。"},
+  "正在切换工作空间…": {"en": "Switching workspace…", "zh-Hant": "正在切換工作空間…"},
+  "页面将重新载入以更新权限。": {"en": "The page will reload to apply the new permissions.", "zh-Hant": "頁面將重新載入以更新權限。"},
+  "从来源数据到可交付的文档。": {"en": "From source data to documents ready to deliver.", "zh-Hant": "從來源資料到可交付的文件。"},
+  "打开已授权的应用。": {"en": "Open an application you have access to.", "zh-Hant": "開啟已授權的應用。"},
+  "当前工作空间暂无可用应用": {"en": "No applications available in this workspace", "zh-Hant": "目前工作空間暫無可用應用"},
+  "先加入一个工作空间": {"en": "Join a workspace to get started", "zh-Hant": "先加入一個工作空間"},
+  "请联系工作空间管理员确认应用是否启用，以及你的使用资格。": {"en": "Ask a workspace administrator whether the application is enabled and whether you have access.", "zh-Hant": "請聯絡工作空間管理員確認應用是否啟用，以及你的使用資格。"},
+  "创建工作空间，或用发到当前邮箱的邀请加入团队。": {"en": "Create a workspace, or join a team with an invitation sent to your current e-mail address.", "zh-Hant": "建立工作空間，或用寄到目前電郵地址的邀請加入團隊。"},
+  "前往设置工作空间": {"en": "Set up your workspace", "zh-Hant": "前往設定工作空間"},
+  "应用与文档权限按工作空间分别授予；切换不会合并内容。": {"en": "Application and document access is granted per workspace; switching never merges content.", "zh-Hant": "應用與文件權限按工作空間分別授予；切換不會合併內容。"},
+  "查看邀请": {"en": "View invitations", "zh-Hant": "查看邀請"},
+  "邀请通过邮件中的链接确认后才生效；账户页可核对状态。": {"en": "An invitation takes effect once you confirm through the link in its e-mail; the account page shows its status.", "zh-Hant": "邀請透過電郵中的連結確認後才生效；帳戶頁可核對狀態。"},
+  "有效期至 {date}": {"en": "Expires {date}", "zh-Hant": "有效期至 {date}"},
+  "查看加入方式": {"en": "How to join", "zh-Hant": "查看加入方式"},
+  "当前没有待接受的邀请。": {"en": "No pending invitations.", "zh-Hant": "目前沒有待接受的邀請。"},
+  "到账户页查看邀请并完成工作空间设置。": {"en": "Review invitations and finish setting up your workspace on the account page.", "zh-Hant": "到帳戶頁查看邀請並完成工作空間設定。"},
+  "平台管理权限不授予业务文档访问权。": {"en": "Platform management does not grant access to business documents.", "zh-Hant": "平台管理權限不授予業務文件存取權。"},
 };
 
 registerMessages(portalMessages);

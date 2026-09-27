@@ -1,7 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Brand, LanguageMenu, Logo, Menu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { ApiError, get, post, setWorkspaceContext, SignedOut, type Me, useSession } from "@synwevo/auth-client";
 import { PublicHome } from "./PublicHome";
+import { PublicPage } from "./PublicPages";
+import { PUBLIC_META, publicPath, publicRoute } from "./publicRoutes";
 import "./messages";
 import { MessagesLink, NotificationBell } from "@synwevo/auth-client";
 
@@ -15,7 +17,6 @@ type Home = {
   organizations?: {id: string; name: string; status: string; role: string}[];
 };
 type State = { phase: "loading" } | { phase: "signed-out" } | { phase: "error"; status?: number } | { phase: "ready"; home: Home; me: Me };
-const publicPaths = ["/", "/zh-Hans", "/zh-Hant", "/en"];
 
 export function safeLink(value: string, fallback = "/account"): string {
   try {
@@ -23,15 +24,17 @@ export function safeLink(value: string, fallback = "/account"): string {
     return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : fallback;
   } catch { return fallback; }
 }
-function accountLink(base: string, path: string): string {
-  // `from=platform` lets the account page's "back" link return to the portal.
+/** A link into the account service. `from=platform` lets the account page's "back" link return
+ *  to the portal; the registration page takes no such hint. */
+export function accountLink(base: string, path: string): string {
   const joiner = path.includes("?") ? "&" : "?";
   return safeLink(`${base.replace(/\/$/, "")}${path}${path.startsWith("/register") ? "" : `${joiner}from=platform`}`, path);
 }
 export function Portal() {
   const { t, locale } = useI18n();
   const session = useSession();
-  const publicPage = publicPaths.includes(window.location.pathname);
+  const route = useMemo(() => publicRoute(window.location.pathname), []);
+  const publicPage = route !== null;
   const [state, setState] = useState<State>({ phase: "loading" });
   const [revision, setRevision] = useState(0);
   const [switching, setSwitching] = useState<string | null>(null);
@@ -79,17 +82,18 @@ export function Portal() {
   }, []);
 
   useEffect(() => {
-    document.title = publicPage ? t("Synwevo · 工作流程自动化平台") : t("Synwevo Workspace · 你的工作空间");
-    document.querySelector('meta[name="description"]')?.setAttribute("content", t("连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。"));
+    const meta = route ? PUBLIC_META[route.page] : null;
+    document.title = meta ? t(meta.title) : t("Synwevo Workspace · 你的工作空间");
+    document.querySelector('meta[name="description"]')?.setAttribute("content", t(meta ? meta.description : PUBLIC_META.home.description));
     document.querySelector('meta[name="robots"]')?.setAttribute("content", publicPage ? "index, follow" : "noindex, nofollow");
     // Keep the shareable public URL and canonical metadata aligned with the language menu.
-    if (publicPage) {
-      const path = locale === "zh-Hans" ? "/" : `/${locale}`;
+    if (route) {
+      const path = publicPath(route.page, locale);
       window.history.replaceState(null, "", path + window.location.hash);
       const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
       if (canonical) canonical.href = new URL(path, canonical.href).href;
     }
-  }, [locale, publicPage, t]);
+  }, [locale, publicPage, route, t]);
 
   async function switchWorkspace(id: string) {
     if (switching !== null) return;
@@ -103,7 +107,13 @@ export function Portal() {
   }
 
   const account = state.phase === "ready" ? state.home.account_url : accountBase;
-  if (publicPage) return <PublicHome signedIn={session.error ? false : session.me === undefined ? undefined : session.me !== null} registerUrl={accountLink(account, "/register")} />;
+  if (route) {
+    // Three-valued: undefined while the session is still being confirmed, so a signed-in person
+    // never sees a sign-in link flash before the page knows who they are.
+    const signedIn = session.error ? false : session.me === undefined ? undefined : session.me !== null;
+    if (route.page === "home") return <PublicHome signedIn={signedIn} registerUrl={accountLink(account, "/register")} accountBase={account} />;
+    return <PublicPage page={route.page} signedIn={signedIn} registerUrl={accountLink(account, "/register")} accountBase={account} />;
+  }
   // Where the account service's logout returns to after "退出登录" ended the platform session.
   if (window.location.pathname === "/signed-out") return <SignedOut product="Workspace" />;
   if (window.location.pathname !== "/workspace") return <Shell right={<a className="pt-link" href="/">{t("返回首页")}</a>}>
@@ -116,7 +126,7 @@ export function Portal() {
     <section className="pt-status">
       {state.phase === "loading" ? <><span className="pt-loader" aria-hidden="true" /><h1 role="status">{t("正在载入工作空间…")}</h1></> : state.phase === "signed-out" ? <>
         <p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("欢迎回来")}</h1>
-        <p>{t("登录你的统一账户，继续你的任务与团队工作。")}</p>
+        <p>{t("登录统一账户，继续你的工作。")}</p>
         <div className="pt-actions"><a className="btn primary lg" href={signInUrl}>{t("登录")}</a><a className="btn lg" href={accountLink(account, "/register")}>{t("注册账户")}</a></div>
       </> : <><h1>{t("暂时无法载入工作空间")}</h1><p role="alert">{t("请检查网络连接后重试。")}{state.status ? ` (HTTP ${state.status})` : null}</p>
         <button className="btn lg" onClick={() => { void session.refresh(); setRevision(n => n + 1); }}>{t("重试")}</button></>}
@@ -134,7 +144,7 @@ export function Portal() {
   const groups = new Map<string, { name: string; workspaces: Workspace[] }>();
   for (const workspace of home.workspaces) {
     const key = workspace.organization_id || workspace.org_id || (workspace.kind === "personal" ? "__personal" : "__other");
-    const group = groups.get(key) || { name: workspace.organization_name || workspace.org_name || t(workspace.kind === "personal" ? "个人空间" : "团队空间"), workspaces: [] };
+    const group = groups.get(key) || { name: workspace.organization_name || workspace.org_name || t(workspace.kind === "personal" ? "个人工作空间" : "团队工作空间"), workspaces: [] };
     group.workspaces.push(workspace); groups.set(key, group);
   }
   const accountItems = [
@@ -156,7 +166,7 @@ export function Portal() {
       <a className="btn" href={accountLink(account, "/onboarding")}>{t("创建或加入工作空间")}</a></div>
     <div className="pt-dashboard">
       <aside className="pt-spaces" aria-label={t("工作空间")}>
-        <h2>{t("工作空间")}</h2><p className="pt-hint">{t("只显示你已加入的空间。")}</p>
+        <h2>{t("工作空间")}</h2><p className="pt-hint">{t("只显示你已加入的工作空间。")}</p>
         {[...groups].map(([key, group]) => <div className="pt-space-group" key={key}><h3>{group.name}</h3>{group.workspaces.map(workspace => <button key={workspace.id}
           className={`pt-space${workspace.id === current?.id ? " is-current" : ""}`} aria-pressed={workspace.id === current?.id}
           disabled={switching !== null || unavailable(workspace)}
@@ -164,20 +174,20 @@ export function Portal() {
           <span className="pt-space-icon" aria-hidden="true">{workspace.kind === "personal" ? "○" : "◇"}</span><span><strong>{workspace.name}</strong><small>{role(workspace.role)}{unavailable(workspace) ? ` · ${t("暂不可用")}` : ""}</small></span>
           {workspace.id === current?.id && <span className="pt-current-dot" aria-hidden="true" />}
         </button>)}</div>)}
-        {!!home.organizations?.length && <div className="pt-orgs"><h3>{t("你的组织")}</h3>{home.organizations.map(org => <div key={org.id} className="pt-org"><a className="pt-link" href={accountLink(account, `/organizations/${encodeURIComponent(org.id)}`)}>{org.name}</a><small>{role(org.role)}{org.status !== "active" ? ` · ${t("暂不可用")}` : ""}</small></div>)}<p className="pt-hint">{t("组织成员身份不会自动授予所有空间的访问权。")}</p></div>}
+        {!!home.organizations?.length && <div className="pt-orgs"><h3>{t("你的组织")}</h3>{home.organizations.map(org => <div key={org.id} className="pt-org"><a className="pt-link" href={accountLink(account, `/organizations/${encodeURIComponent(org.id)}`)}>{org.name}</a><small>{role(org.role)}{org.status !== "active" ? ` · ${t("暂不可用")}` : ""}</small></div>)}<p className="pt-hint">{t("组织成员身份不自动授予每个工作空间的访问权。")}</p></div>}
         {!home.workspaces.length && <p className="pt-small-empty">{t("你还没有加入工作空间。")}</p>}
       </aside>
       <div className="pt-content">
         <section aria-labelledby="pt-apps-title"><div className="pt-section-head"><div><p className="pt-eyebrow">{current?.organization_name || current?.org_name || t("当前工作空间")}</p><h2 id="pt-apps-title">{current?.name || t("选择你的工作空间")}</h2></div>
           {current && ["owner", "admin"].includes(current.role) && <a className="pt-link" href={accountLink(account, `/account/workspaces/${encodeURIComponent(current.id)}/members`)}>{t("成员与邀请")} <span aria-hidden="true">↗</span></a>}</div>
-          {switchError && <p className="pt-error" role="alert">{t("切换失败，已重新核对当前空间。请重试。")}</p>}
-          {switching !== null ? <div className="pt-empty" role="status"><span className="pt-loader" aria-hidden="true" /><h3>{t("正在切换工作空间…")}</h3><p>{t("页面将重新载入，以更新空间与应用权限。")}</p></div> : home.apps.length ? <ul className="pt-apps">{home.apps.map(app => <li key={`${app.id}:${app.workspace_id}`}>
+          {switchError && <p className="pt-error" role="alert">{t("切换失败，已重新核对当前工作空间，请重试。")}</p>}
+          {switching !== null ? <div className="pt-empty" role="status"><span className="pt-loader" aria-hidden="true" /><h3>{t("正在切换工作空间…")}</h3><p>{t("页面将重新载入以更新权限。")}</p></div> : home.apps.length ? <ul className="pt-apps">{home.apps.map(app => <li key={`${app.id}:${app.workspace_id}`}>
             <a className="pt-app-card" href={safeLink(app.launch_url, "/workspace")}><span className="pt-doc-icon" aria-hidden="true"><DocumentIcon /></span><span className="pt-app-body"><strong>{app.name}</strong><span>{app.workspace_name}</span><span className="pt-app-description">{app.icon === "doc" ? t("从来源数据到可交付的文档。") : t("打开已授权的应用。")}</span></span><span className="pt-card-arrow" aria-hidden="true">↗</span></a>
-          </li>)}</ul> : <div className="pt-empty"><DocumentIcon /><h3>{t(home.workspaces.length ? "当前空间暂无可用应用" : "先加入一个工作空间")}</h3><p>{t(home.workspaces.length ? "请联系空间管理员确认应用是否启用，以及你的使用资格。" : "创建空间，或使用发给你当前邮箱的邀请加入团队。")}</p><a className="pt-link" href={accountLink(account, "/onboarding")}>{t("前往设置工作空间")} <span aria-hidden="true">→</span></a></div>}
-          <p className="pt-context-note">{t("应用与文档权限按工作空间分别管理。切换空间不会合并内容。")}</p>
+          </li>)}</ul> : <div className="pt-empty"><DocumentIcon /><h3>{t(home.workspaces.length ? "当前工作空间暂无可用应用" : "先加入一个工作空间")}</h3><p>{t(home.workspaces.length ? "请联系工作空间管理员确认应用是否启用，以及你的使用资格。" : "创建工作空间，或用发到当前邮箱的邀请加入团队。")}</p><a className="pt-link" href={accountLink(account, "/onboarding")}>{t("前往设置工作空间")} <span aria-hidden="true">→</span></a></div>}
+          <p className="pt-context-note">{t("应用与文档权限按工作空间分别授予；切换不会合并内容。")}</p>
         </section>
         <section className="pt-invites" aria-labelledby="pt-invites-title"><div className="pt-section-head"><h2 id="pt-invites-title">{t("下一步")}</h2><a className="pt-link" href={accountLink(account, "/onboarding")}>{t("查看邀请")}</a></div>
-          {invitations?.length ? <><p className="pt-muted">{t("这些邀请尚未授予你空间访问权。请通过邀请邮件中的链接确认加入，账户页可核对邀请状态。")}</p><ul className="pt-invite-list">{invitations.map(invite => <li key={invite.id}><div><strong>{invite.workspace_name}</strong><p>{role(invite.role)} · {t("有效期至 {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: me.timezone || "UTC" }).format(invite.expires_at * 1000) })}</p></div><a className="btn sm" href={accountLink(account, "/onboarding")}>{t("查看加入方式")}</a></li>)}</ul></> : <p className="pt-muted">{t(invitations ? "当前没有可显示的待接受邀请。你也可以到账户页核对邮箱和邀请状态。" : "到账户页查看发给你的邀请并完成空间设置。")}</p>}
+          {invitations?.length ? <><p className="pt-muted">{t("邀请通过邮件中的链接确认后才生效；账户页可核对状态。")}</p><ul className="pt-invite-list">{invitations.map(invite => <li key={invite.id}><div><strong>{invite.workspace_name}</strong><p>{role(invite.role)} · {t("有效期至 {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: me.timezone || "UTC" }).format(invite.expires_at * 1000) })}</p></div><a className="btn sm" href={accountLink(account, "/onboarding")}>{t("查看加入方式")}</a></li>)}</ul></> : <p className="pt-muted">{t(invitations ? "当前没有待接受的邀请。" : "到账户页查看邀请并完成工作空间设置。")}</p>}
         </section>
         {isPlatformAdmin && <p className="pt-admin-note">{t("平台管理权限不授予业务文档访问权。")}</p>}
       </div>
@@ -189,7 +199,7 @@ export function DocumentIcon() {
   return <svg viewBox="0 0 32 36" width="32" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M7 3h12l6 6v24H7z" strokeLinejoin="round"/><path d="M19 3v7h6M12 17h8M12 22h8M12 27h5" strokeLinecap="round"/></svg>;
 }
 export function Shell({ right, children, publicHome = false }: { right?: ReactNode; children: ReactNode; publicHome?: boolean }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { state, me } = useSession();      // the bell renders nothing without a session
   // The messages entry beside the bell (the same pair Docs shows in its platform bar): the
   // workspace is where people start, and it had no way into their conversations.
@@ -198,6 +208,6 @@ export function Shell({ right, children, publicHome = false }: { right?: ReactNo
     <header className="pt-top"><Brand href="/" size="lg" product={publicHome ? undefined : "Workspace"} label={t("Synwevo 首页")} />
       <nav className="pt-nav" aria-label={t("主导航")}>{right}{me && <MessagesLink href={messagesHref} />}<NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} /><LanguageMenu /></nav></header>
     <main className="pt-main" id="pt-main" tabIndex={-1}>{children}</main>
-    <footer className="pt-footer"><Logo version="wordmark" height={14} /><a href="/#privacy">{t("数据与隐私")}</a><a href="/#service">{t("服务说明")}</a><span>{t("让工作流程，持续运转。")}</span></footer>
+    <footer className="pt-footer"><Logo version="wordmark" height={14} /><a href={publicPath("privacy", locale)}>{t("数据与隐私")}</a><a href={publicPath("service", locale)}>{t("服务说明")}</a><span>{t("协同 · 编织 · 持续完善")}</span></footer>
   </div>;
 }

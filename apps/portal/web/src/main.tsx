@@ -6,7 +6,8 @@ import { SessionProvider } from "@synwevo/auth-client";
 import { I18nProvider, setLocale } from "@synwevo/ui";
 import { Portal } from "./Portal";
 
-const pathLocale = window.location.pathname.slice(1);
+// A public address names its language first: /en, /zh-Hant/privacy, /en/service …
+const pathLocale = window.location.pathname.split("/")[1];
 if (pathLocale === "en" || pathLocale === "zh-Hans" || pathLocale === "zh-Hant") setLocale(pathLocale);
 
 createRoot(document.getElementById("root")!).render(

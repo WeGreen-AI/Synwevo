@@ -1,78 +1,111 @@
 import { Logo, useI18n } from "@synwevo/ui";
 import { DocumentIcon, Shell, signInUrl as signInBase } from "./Portal";
+import { publicPath } from "./publicRoutes";
 
-/** `signedIn` is three-valued: undefined while the session is still being confirmed. The header
- *  then shows neither "登录" nor "进入工作空间" — a signed-in person must never see a sign-in
- *  link flash before the page knows who they are. */
-export function PublicHome({ signedIn, registerUrl: registerBase }: { signedIn: boolean | undefined; registerUrl: string }) {
+/** The header of every public page. `signedIn` is three-valued: undefined while the session is
+ *  still being confirmed. The header then shows neither "登录" nor "进入工作空间" — a signed-in
+ *  person must never see a sign-in link flash before the page knows who they are. The anchor
+ *  keeps the `pt-link` class: services/identity/scripts/ui_e2e_shell.py samples it. */
+export function PublicNav({ signedIn, registerUrl, home }: { signedIn: boolean | undefined; registerUrl: string; home: boolean }) {
+  const { t, locale } = useI18n();
+  const signInUrl = `${signInBase}&lang=${locale}`;
+  const base = home ? "" : publicPath("home", locale);
+  return <>
+    <a className="pt-nav-detail" href={`${base}#applications`}>{t("应用")}</a>
+    <a className="pt-nav-detail" href={`${base}#together`}>{t("协作方式")}</a>
+    {signedIn === undefined ? <span className="pt-nav-pending" aria-hidden="true" /> : <a className="pt-link" href={signedIn ? "/workspace" : signInUrl}>{t(signedIn ? "进入工作空间" : "登录")}</a>}
+    {signedIn === false && <a className="btn primary pt-nav-register" href={registerUrl}>{t("注册账户")}</a>}
+  </>;
+}
+
+/** Abstract decoration: strands converging into one woven band. Static on purpose — the words
+ *  never wait for it, and there is nothing for prefers-reduced-motion to stop. */
+export function WeaveMotif({ className = "" }: { className?: string }) {
+  return <svg className={`pt-weave ${className}`} viewBox="0 0 320 160" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round">
+    <path d="M0 18 C 110 18, 150 80, 320 80" />
+    <path d="M0 49 C 110 49, 150 80, 320 80" opacity=".75" />
+    <path d="M0 80 H 320" opacity=".5" />
+    <path d="M0 111 C 110 111, 150 80, 320 80" opacity=".75" />
+    <path d="M0 142 C 110 142, 150 80, 320 80" />
+    <path d="M196 72 q 16 12 32 0 t 32 0 t 32 0 t 32 0" opacity=".9" />
+    <path d="M196 88 q 16 -12 32 0 t 32 0 t 32 0 t 32 0" opacity=".9" />
+  </svg>;
+}
+
+export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }: { signedIn: boolean | undefined; registerUrl: string; accountBase: string }) {
   const { t, locale } = useI18n();
   const registerUrl = `${registerBase}${registerBase.includes("?") ? "&" : "?"}lang=${locale}`;
   const signInUrl = `${signInBase}&lang=${locale}`;
-  const steps = [
-    ["从同一个空间开始", "个人工作与团队协作各有归属。通过统一账户进入工作空间，找到你有权使用的应用。"],
-    ["把重复步骤交给应用", "为具体任务选择应用，配置输入与处理规则，让可复用的流程减少重复操作。"],
-    ["让结果进入下一步", "查看真实任务状态，检查并交付结果。经授权的自动化集成可调用应用能力，衔接后续处理。"],
+  const messagesUrl = `${accountBase.replace(/\/$/, "")}/messages`;
+  const primary = signedIn ? "/workspace" : registerUrl;
+  const openApp = (href: string) => (signedIn ? href : signInUrl);
+  const together = [
+    ["工作空间", "个人与团队的工作分开存放。应用与文档权限按工作空间分别授予，切换不会合并内容。"],
+    ["组织", "组织汇集成员与团队空间。组织成员身份不自动授予每个工作空间的访问权，管理权也不等于内容访问权。"],
+    ["角色与授权", "所有者、管理员、编辑者、查看者各有边界。自动化集成使用受限的服务凭据，只在获准的工作空间与范围内执行，每次访问都经过权限检查。"],
+    ["通知", "邀请、@提及、私信与安全事件汇入同一个收件箱；按类别选择即时、汇总或关闭，也可以开启浏览器推送。"],
   ];
-  const stages = [
-    ["输入与规则", "数据 · 文件 · 处理条件", "01"],
-    ["应用处理", "在授权的工作空间中执行", "02"],
-    ["任务与结果", "跟踪状态 · 检查 · 交付", "03"],
+  const trust = [
+    "账户数据可以随时导出，也可以申请删除；删除有 7 天缓冲期，期间可以撤回。",
+    "传输经 HTTPS 加密，服务器端不做端到端加密；平台管理员读不到业务文档与对话，组织的举报处理只看到被举报的那一条消息。",
+    "没有任何 AI 处理你的内容；没有在线状态、他人已读回执或正在输入提示。",
+    "只用本站自己的 Cookie 维持登录；数据保存在位于日本东京的单台服务器上，每次发布前做备份。",
   ];
-  return <Shell publicHome right={<>
-    <a className="pt-nav-detail" href="#workflow">{t("工作流程")}</a>
-    <a className="pt-nav-detail" href="#applications">{t("平台应用")}</a>
-    {signedIn === undefined ? <span className="pt-nav-pending" aria-hidden="true" /> : <a className="pt-link" href={signedIn ? "/workspace" : signInUrl}>{t(signedIn ? "进入工作空间" : "登录")}</a>}
-    {signedIn === false && <a className="btn primary pt-nav-register" href={registerUrl}>{t("注册账户")}</a>}
-  </>}>
+  return <Shell publicHome right={<PublicNav signedIn={signedIn} registerUrl={registerUrl} home />}>
     <section className="pt-hero" aria-labelledby="pt-hero-title">
       <div className="pt-hero-copy">
         <p className="pt-eyebrow"><span className="pt-live-dot" aria-hidden="true"/>{t("工作流程自动化平台")}</p>
-        <h1 id="pt-hero-title">{t("把重复的工作，")}<span>{t("交给流程。")}</span></h1>
-        <p className="pt-hero-lead">{t("连接团队、应用与数据，让重复工作成为清晰、可追踪的自动化流程。")}</p>
+        <h1 id="pt-hero-title">{t("让工作，自然相连。")}</h1>
+        <p className="pt-hero-lead">{t("文档自动化、团队协作与消息沟通，汇聚于同一个工作空间。")}</p>
         <div className="pt-actions">
-          <a className="btn primary lg" href={signedIn ? "/workspace" : registerUrl}>{t(signedIn ? "进入工作空间" : "创建你的账户")} <span aria-hidden="true">↗</span></a>
-          <a className="pt-text-action" href="#workflow">{t("了解工作流程")} <span aria-hidden="true">↓</span></a>
+          <a className="btn primary lg" href={primary}>{t(signedIn ? "进入工作空间" : "创建账户")} <span aria-hidden="true">↗</span></a>
+          <a className="pt-text-action" href="#applications">{t("了解应用")} <span aria-hidden="true">↓</span></a>
         </div>
-        <p className="pt-hero-note">{t("一个账户，连接你有权使用的工作空间和应用。")}</p>
+        <p className="pt-hero-note">{t("一个账户，进入你有权使用的工作空间与应用。")}</p>
       </div>
-      <div className="pt-automation-visual" aria-label={t("工作流程示意")}>
-        <div className="pt-automation-header"><Logo version="wordmark" height={18} /><span>{t("工作流程示意")}</span></div>
-        <ol className="pt-automation-stages">{stages.map(([title, detail, number]) => <li key={number}>
-          <span className="pt-automation-number" aria-hidden="true">{number}</span>
-          <div><h3>{t(title)}</h3><p>{t(detail)}</p></div>
-          <span className="pt-automation-node" aria-hidden="true"/>
-        </li>)}</ol>
-        <p className="pt-automation-caption">{t("统一身份 · 空间隔离 · 明确授权")}</p>
-      </div>
+      <aside className="pt-brand-card" aria-labelledby="pt-brand-title">
+        <WeaveMotif className="pt-brand-motif" />
+        <div className="pt-brand-head"><Logo version="wordmark" height={18} /><span id="pt-brand-title">{t("名字的由来")}</span></div>
+        <p className="pt-brand-text">{t("Synwevo，取意于协同与编织。分散的文档、数据与沟通，在这里被织成有序的工作；想法在协作中成形，日常在持续完善中变得从容。")}</p>
+      </aside>
     </section>
-    <section className="pt-format-strip" aria-label={t("平台能力")}>
-      <span>{t("让每一步，都有清晰的归属")}</span>
-      {["统一账户", "团队空间", "应用授权", "可追踪任务", "受控集成"].map(label => <span key={label}>{t(label)}</span>)}
+    <section className="pt-format-strip" aria-label={t("平台的基本概念")}>
+      <span>{t("同一个入口")}</span>
+      {["统一账户", "工作空间", "组织与角色", "文档", "消息", "通知"].map(label => <span key={label}>{t(label)}</span>)}
     </section>
-    <section id="workflow" className="pt-public-section">
-      <div className="pt-section-intro"><p className="pt-eyebrow">{t("从协作到自动化")}</p><h2>{t("把人、应用和工作连接起来。")}</h2><p>{t("Synwevo 提供统一的工作入口与授权基础，应用承载具体业务流程，让日常工作可以重复执行、检查和交付。")}</p></div>
-      <ol className="pt-workflow">{steps.map(([title, detail], index) => <li key={title}><span className="pt-step-number">0{index + 1}</span><h3>{t(title)}</h3><p>{t(detail)}</p></li>)}</ol>
-    </section>
-    <section id="applications" className="pt-public-section pt-public-apps">
-      <div className="pt-section-intro"><p className="pt-eyebrow">{t("平台应用")}</p><h2>{t("一个平台，应用各司其职。")}</h2><p>{t("在共同的账户与工作空间中，使用面向具体业务的独立应用。Synwevo Docs 是其中的文档自动化应用。")}</p></div>
-      <article className="pt-featured-app">
-        <div className="pt-featured-heading"><span className="pt-doc-icon"><DocumentIcon/></span><div><p className="pt-eyebrow">{t("文档自动化")}</p><h3>Synwevo Docs</h3></div></div>
-        <p>{t("选择来源数据，连接模板，完成检查与批量生成。把重复的文档制作交给可复用的规则。")}</p>
-        <div className="pt-app-formats" aria-label={t("文档格式")}>{["DOCX", "XLSX", "PDF", "PPTX", "CSV"].map(format => <span key={format}>{format}</span>)}</div>
-        <div className="pt-featured-bottom"><p className="pt-hint">{t("不同格式支持的能力以应用内选项为准。可用应用由工作空间授权决定。")}</p><a className="btn" href={signedIn ? "/workspace" : signInUrl}>{t("进入空间，打开应用")} <span aria-hidden="true">↗</span></a></div>
-      </article>
-    </section>
-    <section className="pt-principles pt-public-section" id="privacy">
-      <div className="pt-section-intro"><p className="pt-eyebrow">{t("数据与隐私")}</p><h2>{t("协作有边界，自动化有依据。")}</h2></div>
-      <div className="pt-principle-grid">
-        <article><span aria-hidden="true">01 /</span><h3>{t("身份统一，空间独立")}</h3><p>{t("登录与账户安全由 Synwevo Account 统一处理。空间成员资格和应用授权决定你可以进入哪里。")}</p></article>
-        <article><span aria-hidden="true">02 /</span><h3>{t("自动化遵循授权")}</h3><p>{t("自动化调用使用受限服务身份，按获准的工作空间和操作范围执行。每次访问仍须通过权限检查。")}</p></article>
-        <article><span aria-hidden="true">03 /</span><h3>{t("管理不等于读取")}</h3><p>{t("平台管理权限不授予业务文档访问权。")}</p></article>
+    <section id="applications" className="pt-public-section">
+      <div className="pt-section-intro"><p className="pt-eyebrow">{t("今天可用的应用")}</p><h2>{t("两个应用，各司其职。")}</h2><p>{t("Synwevo Docs 处理文档，Synwevo Message 负责组织内的沟通。它们共用同一个账户、同一套工作空间与授权；此外没有别的应用。")}</p></div>
+      <div className="pt-app-grid">
+        <article className="pt-featured-app">
+          <div className="pt-featured-heading"><span className="pt-doc-icon"><DocumentIcon/></span><div><p className="pt-eyebrow">{t("文档自动化")}</p><h3>Synwevo Docs</h3></div></div>
+          <p>{t("选择来源数据，接入模板，检查后批量生成。重复的文档制作交给可复用的规则，交付前的检查留给人。")}</p>
+          <div className="pt-app-formats" aria-label={t("文档格式")}>{["DOCX", "XLSX", "PDF", "PPTX", "CSV"].map(format => <span key={format}>{format}</span>)}</div>
+          <div className="pt-featured-bottom"><p className="pt-hint">{t("各格式支持的能力以应用内选项为准；可用应用由工作空间授权决定。")}</p><a className="btn" href={openApp("/workspace")}>{t(signedIn ? "进入工作空间" : "登录后打开")} <span aria-hidden="true">↗</span></a></div>
+        </article>
+        <article className="pt-featured-app">
+          <div className="pt-featured-heading"><span className="pt-doc-icon"><MessageIcon/></span><div><p className="pt-eyebrow">{t("组织消息")}</p><h3>Synwevo Message</h3></div></div>
+          <p>{t("与同一组织的成员私聊或建群：引用回复、@提及、表情回应、附件与文档链接卡片。新成员只看到加入之后的消息，离开后即止。")}</p>
+          <div className="pt-app-formats" aria-label={t("消息能力")}>{["私聊", "群组", "公告", "举报处理"].map(label => <span key={label}>{t(label)}</span>)}</div>
+          <div className="pt-featured-bottom"><p className="pt-hint">{t("目前从平台栏的「消息」进入，正在成为独立的应用。")}</p><a className="btn" href={openApp(messagesUrl)}>{t(signedIn ? "打开消息" : "登录后打开")} <span aria-hidden="true">↗</span></a></div>
+        </article>
       </div>
     </section>
-    <section className="pt-service pt-public-section" id="service">
-      <div><p className="pt-eyebrow">{t("服务说明")}</p><h2>{t("从一个工作空间开始。")}</h2><p>{t("创建账户，选择个人使用或加入团队，再打开适合当前任务的应用。你的账户、空间和应用权限在平台中统一管理。")}</p><p className="pt-hint">{t("业务数据保存在当前部署中。数据保留、备份与可用能力由实际部署配置决定。")}</p></div>
-      <div className="pt-service-cta"><a className="btn primary lg" href={signedIn ? "/workspace" : registerUrl}>{t(signedIn ? "进入工作空间" : "注册账户")} <span aria-hidden="true">↗</span></a>{!signedIn && <a className="pt-link" href={signInUrl}>{t("已有账户？登录")}</a>}</div>
+    <section id="together" className="pt-public-section">
+      <div className="pt-section-intro"><p className="pt-eyebrow">{t("一起完成工作")}</p><h2>{t("各有归属，彼此看得见。")}</h2><p>{t("组织、工作空间与角色决定谁能进入哪里；通知把需要你处理的事送到面前。")}</p></div>
+      <ol className="pt-workflow pt-together">{together.map(([title, detail]) => <li key={title}><h3>{t(title)}</h3><p>{t(detail)}</p></li>)}</ol>
+    </section>
+    <section className="pt-principles pt-public-section" id="trust">
+      <div className="pt-section-intro"><p className="pt-eyebrow">{t("数据与隐私")}</p><h2>{t("说清楚做了什么，也说清楚没做什么。")}</h2></div>
+      <ul className="pt-trust-list">{trust.map(line => <li key={line}>{t(line)}</li>)}</ul>
+      <div className="pt-actions"><a className="pt-text-action" href={publicPath("privacy", locale)}>{t("完整的数据与隐私说明")} <span aria-hidden="true">→</span></a><a className="pt-text-action" href={publicPath("service", locale)}>{t("服务说明与限额")} <span aria-hidden="true">→</span></a></div>
+    </section>
+    <section className="pt-next pt-public-section" id="next">
+      <div><p className="pt-eyebrow">{t("下一步")}</p><h2>{t("从一个工作空间开始。")}</h2><p>{t("创建账户，选择个人使用或加入团队。邀请通过邮件送达，用当前邮箱确认即可加入。")}</p></div>
+      <div className="pt-next-cta"><a className="btn primary lg" href={primary}>{t(signedIn ? "进入工作空间" : "注册账户")} <span aria-hidden="true">↗</span></a>{!signedIn && <a className="pt-link" href={signInUrl}>{t("已有账户？登录")}</a>}</div>
     </section>
   </Shell>;
+}
+
+function MessageIcon() {
+  return <svg viewBox="0 0 32 36" width="32" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5 8h22v16H14l-6 5v-5H5z" strokeLinejoin="round"/><path d="M11 14h10M11 18h6" strokeLinecap="round"/></svg>;
 }
