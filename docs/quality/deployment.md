@@ -106,6 +106,8 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (records + CI-77 test-only change, run 36339110754, 2026-09-27 18:21 UTC):** `{"deployed": "synwevo:5f5d608adc920bed17aa3a12ad866ed282828f04", "backup": "/opt/synwevo/backups/20260927T182115Z"}`; verify and deploy succeeded; no product change (documentation and the collab change-log tests). `readyz` 200 on the three hosts.
 
+**Deployed (CI-76 account shell copy, run 36343083810, 2026-09-27 19:29 UTC):** `{"deployed": "synwevo:9789b61ff9145ac75f2cb919a0514ea4d5d7583e", "backup": "/opt/synwevo/backups/20260927T192939Z"}`; verify and deploy succeeded; account shell only, no schema change. Read-only production check: `readyz` 200 on the three hosts; `accounts.synwevo.com/login` serves the new account bundle (`index-C2tPlFM8.js`).
+
 **Deployed (CI-55 bounded frames and draft recovery + CI-56 setting before/after, run 36255489490, 2026-09-26 16:51 UTC):** `{"deployed": "synwevo:1d15665ee420939f562aad54eb4c3f023a569d3a", "backup": "/opt/synwevo/backups/20260926T165059Z"}`; verify and deploy succeeded; no schema change. This is the last release of the round-8 collaboration batches (CI-45…56); the handoff lists the conditions that reopen the queue.
 
 **Deployed (CI-53 change-log diffs with schema v22 + the 9.16 matrix + CI-54 version dialog, run 36253921338, 2026-09-26 16:25 UTC):** `{"deployed": "synwevo:11202c33be2a53ca202eefb04bd8fb2ceea29073", "backup": "/opt/synwevo/backups/20260926T162519Z"}`; verify and deploy succeeded; the v22 migration (one additive column, `collab_changes.before`) runs at start and the deploy job's readiness checks passed. Rollback to a v21 release leaves the column unused.
