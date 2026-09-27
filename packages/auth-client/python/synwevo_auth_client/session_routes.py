@@ -217,6 +217,21 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         return notifier.list(s["user_id"], filter=filter, category=category, before_seq=before_seq, limit=limit,
                              locale=_reader_locale(request, s))
 
+    @r.get("/messaging/unread-count")
+    def messaging_unread(request: Request):
+        """The messages badge, on every origin.
+
+        The platform bar of the portal and of each application polls this from its own origin,
+        and the count comes from the shared conversation tables; the conversations themselves are
+        served elsewhere (the account service today, the messages application later). It used to
+        be answered only by the account service's messaging router: on the portal and Docs
+        origins the gate let the request through, the shell fallback answered 404 and the badge
+        silently showed nothing.
+        """
+        from synwevo_core.messaging import Messaging
+        s = _require_session(request)
+        return Messaging(ident.store, ident).unread_total(s["user_id"])
+
     @r.get("/notifications/unread-count")
     def notifications_unread(request: Request):
         s = _require_session(request)

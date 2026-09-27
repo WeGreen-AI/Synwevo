@@ -396,6 +396,19 @@ def test_leaving_docweave_does_not_by_itself_end_the_platform_session(world):
     assert whoami(world["accounts"], b.jar.apply(ACCOUNTS)) == "alice@example.com"
 
 
+def test_the_messages_badge_answers_on_a_relying_party_origin(world):
+    """The platform bar polls /api/auth/messaging/unread-count from whatever origin renders it.
+    It used to be served only by the account service: on Docs the gate let it through and the
+    shell answered 404, so the badge showed nothing there."""
+    b = world["b"]
+    _sign_in_centrally(world)
+    b.go(DOCS + "/auth/start?next=/")
+    r = world["docweave"].get("/api/auth/messaging/unread-count", cookies=b.jar.apply(DOCS))
+    assert r.status_code == 200, r.text
+    assert r.json()["unread"] == 0 and "conversations" in r.json()
+    assert world["docweave"].get("/api/auth/messaging/unread-count").status_code == 401
+
+
 def test_signing_out_everywhere_hands_back_the_platform_logout_url(world):
     b = world["b"]
     _sign_in_centrally(world)

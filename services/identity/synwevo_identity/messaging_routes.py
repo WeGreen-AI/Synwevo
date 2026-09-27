@@ -124,9 +124,8 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
     def list_conversations(request: Request, organization_id: str = Query("")):
         return {"items": svc.list_conversations(uid_of(request), organization_id=organization_id or None)}
 
-    @r.get("/unread-count")
-    def unread(request: Request):
-        return svc.unread_total(uid_of(request))
+    # /unread-count is answered by the shared session router (synwevo_auth_client.session_routes)
+    # on every origin, so the platform bar's badge works on the portal and in Docs as well.
 
     @r.get("/link-card")
     def link_card(request: Request, url: str = Query(..., max_length=2048)):
