@@ -139,7 +139,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 恶意上传防护的后续——`rescan` CLI 与管理端补扫入口、加密压缩包/Office 文件的用户流程（file-acceptance §9）、生产 `clamav`
 服务上线后的真实引擎复核；登出落点差异——CI-19 中 Chromium 登出后到 `/login`、WebKit 到 `/logged-out`（两者 `/api/auth/me`
 都 401），核对是登出重定向的竞态还是引擎差异并统一；第七节其余专项——分层限流的多实例契约（API 网关按密钥的 300/分钟仍是单进程内存）、WAF/源站清单与规则观察；
-Docs 项目列表页仍加载的共享块 `perm`（274 KB，列表页与工作台共用的视图层可再拆）；SDK/CLI 与 Node/n8n 验收脚本
+Docs 项目列表页仍加载的共享块 `perm`——2026-09-27 用 source map 归因（verification.md §16.64）：324 KB 中 46.5% 是 `messages.ts`、10.8% 是 `messages.server.ts`（三语言字串目录）、15.5% react-router，其余是共享会话/UI 层，没有误入的视图层代码；再拆只能按语言懒加载目录（每页约省 30 KB gzip），收益不抵风险，暂不做；SDK/CLI 与 Node/n8n 验收脚本
 （`apps/docs/sdk/acceptance/python_full_flow.py`、`tests/integration/sdk_acceptance/ts_run.py`）纳入每个里程碑的回归——本轮已在
 网关/安全头改动后复跑（结果见 verification.md §16.14）。已完成并移出队列：成员列表 50 行审计（CI-04 补审）、键盘模式（CI-05）。
 

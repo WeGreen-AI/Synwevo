@@ -1599,6 +1599,16 @@ Docs 与账户服务的 `/api/auth/me` 都 401、「重新登录」到账户服�
 **验收**：`ui_e2e_shell.py` 手机段新增：打开「账户菜单」→「退出登录」→ 门户 `/signed-out` 页「已退出」可见、门户与账户服务 `/api/auth/me` 都 401、「重新登录」到账户服务登录页并要口令；桌面段保留 Docs 退出检查——隔离实例复跑 **Chromium 与 WebKit 四组全部通过**（桌面 Docs 退出、手机门户退出、CI-58 落点断言、其余外壳断言，0 CSP 违规）；四项守卫与 `npm test --workspaces` 通过。
 **发布与恢复**：门户外壳；无 schema 变化，回滚即上一镜像。**已部署**：`e900774`，run 36320325701（verify 与 deploy 成功，backup 20260927T131414Z）；线上只读核对见 deployment.md。
 
+### 16.64 测量记录：Docs 列表页的共享块 `perm` 里是什么（候选项关闭）
+
+候选队列自 CI-11 起记着「列表页与工作台共用的视图层可再拆（274 KB）」。2026-09-27 生产只读测量：Docs `/` 下载 `index-CmVnbLA2.js`
+238 KB（gzip 74 KB）+ `perm-Bl4dqY9f.js` 324 KB（gzip 109 KB）+ 运行时 0.6 KB。用带 source map 的临时构建（`vite build --sourcemap --outDir <scratch>`）
+按 VLQ 归因 `perm` 的 247 KB 可映射字节：`apps/docs/web/src/messages.ts` 114.8 KB（46.5%）、react-router 38.2 KB（15.5%）、`messages.server.ts` 26.7 KB（10.8%）、
+`packages/ui/src/ui.tsx` 11.2 KB、react 8.2 KB，其余为 auth-client 会话/铃铛/API 层与 UI 基础件，均为列表页真实使用；`Workspace`（222 KB）、`DocEditor`（521 KB）、
+`collab`（98 KB）已各自成块。结论：该块没有可拆出的视图层；唯一的进一步瓶颈是三语言字串目录随每页下载，拆法是按当前语言懒加载译文表
+（zh-Hans 用户约省 70 KB 原始 / 30 KB gzip，切换语言时多一次请求），改动触及 `registerMessages` 的同步语义，收益不抵风险，**不实施**；候选项关闭，
+如未来列表页首屏预算收紧再评估。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
