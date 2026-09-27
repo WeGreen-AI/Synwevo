@@ -108,7 +108,9 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, email: str, p
     sel.select_option(before)
     page.wait_for_function(f"() => fetch('/api/auth/notifications/preferences').then(r => r.json()).then(p => p.categories.organization.email === '{before}')", timeout=10000)
     security_row = sect.locator("tbody tr").first
-    assert security_row.locator("select").is_disabled() and security_row.locator("input[type=checkbox]").is_disabled(), "security stays locked on"
+    # every channel box of the security row (in-app, push — the row gained a push column with Web Push) stays locked on
+    boxes = security_row.locator("input[type=checkbox]").all()
+    assert boxes and security_row.locator("select").is_disabled() and all(b.is_disabled() for b in boxes), "security stays locked on"
     notes.append(f"{engine}: preferences section saves (organization e-mail {before}→{target}→{before}); the security row is locked on")
 
     # the portal shows the same count from the same table (through single sign-on: the account

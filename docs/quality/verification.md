@@ -1518,6 +1518,11 @@ owner 把段首「注段」换成「忘录」；owner 的变更记录里编辑�
 **§9.10 矩阵的其余回归**（同一隔离实例、受控账户）：`ui_e2e_messaging.py` Chromium 6/6（私聊经流到达与徽章、手机端引用回复与表情实时到桌面、图片附件经安全检查按内容哈希存一份并内联、
 群创建/阅读/移出后历史 404 且搜索无结果、0 CSP/页面错误）；`ui_e2e_project_copy.py` Chromium 5/5（申请显示清单且无自批、owner 手机宽度带理由批准并被要求重新输入口令、
 副本在目标空间预览/生成 2 份并读回 ZIP、原项目不变且对审批者不可见、副本在个人空间不可达）。`ui_e2e_member_import.py` Chromium 5/5（自定义角色创建、工作簿解析与表头映射建议、角色列需显式映射、预览 邀请 1/跳过 2/阻断 1、带理由与重认证确认后执行、CSV 报告下载、新人接受邀请后恰好拥有导入角色的权限并收到收件箱通知、0 CSP/页面错误）。
+其余 14 条 round-8 证明按顺序重跑（Chromium）：**通过** `ui_e2e_org_templates`、`ui_e2e_push`（`/sw.js`、manifest、推送订阅）、`ui_e2e_preflight_fix`、`ui_e2e_link_cards`、
+`ui_e2e_moderation`、`ui_e2e_docs_upgrades`、`ui_e2e_template_versions`（含 CI-49 后的恢复路径）、`ui_e2e_phone_copy`、`ui_e2e_comments`、`ui_e2e_component_names`（简繁英无底层组件名）。
+`ui_e2e_challenge` 未跑：本隔离实例启动时未配置 Turnstile 测试密钥（脚本首行断言 `challenge not configured`），上次验证见 §16.2x；不改运行中的隔离实例来凑数。
+`ui_e2e_roles` / `ui_e2e_onboarding` / `ui_e2e_inbox` 需要预置账户与组织（批量跑时参数错误），单独补跑——期间隔离实例的注册限流按设计生效（同一地址短时多次注册 → 429 `too_many_attempts`，`retry_after` 788 秒），
+等窗口过后再跑：`ui_e2e_roles` Chromium 5/5（自定义角色只含持有者可授的权限、分配与有效权限来源、成员恰好拥有两项权限并在收件箱看到英文通知、删除已分配角色提示影响 1 人）；`ui_e2e_onboarding` Chromium 8/8（注册→验证邮件→引导→个人空间→邀请→接受→登出）。`ui_e2e_inbox` 首跑在偏好表「安全」行的断言处 strict-mode 失败：该行自 Web Push 起有两个渠道复选框（站内、推送），脚本只预期一个——脚本过时，不是产品缺陷；改为断言该行全部复选框均锁定后 Chromium 9/9（未读计数 2→1→2→0、抽屉与 API 首项一致、偏好保存、门户与 Docs 从各自源站显示同一未读数与首项）。
 
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
