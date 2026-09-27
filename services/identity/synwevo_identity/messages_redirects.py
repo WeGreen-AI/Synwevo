@@ -8,8 +8,10 @@ the destination is the registry's launch URL (written by the messages process), 
 from the query string: the one origin that must never have an open redirect does not get one.
 
 On a deployment that has not added the application the registry has no row and these paths fall
-through to whatever the caller passes as the fallback (the account shell, whose router answers
-"page not found" — an honest answer, not a page that pretends to be the conversations).
+through to whatever the caller passes as the fallback: the composer passes the messages shell
+itself (served from this origin, talking to the legacy API prefix) so conversations stay usable
+until the application exists; the account service alone passes its own shell, whose router
+answers "page not found" — an honest answer, not a page that pretends to be the conversations.
 """
 from __future__ import annotations
 
@@ -55,6 +57,13 @@ def build_router(store: Store, fallback: Callable[[str], Response]) -> APIRouter
 
     @r.get("/messages/{cid}")
     def messages_thread(request: Request, cid: str):
+        return go(request, cid)
+
+    # The messages shell addresses a thread as `/c/<cid>` on every origin, so a deployment that
+    # serves that shell from the account origin while the application is absent (the composer's
+    # fallback) needs the same hand-over here once the application registers.
+    @r.get("/c/{cid}")
+    def conversation_thread(request: Request, cid: str):
         return go(request, cid)
 
     return r

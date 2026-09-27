@@ -1719,6 +1719,15 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 **未验证 / 未做**：生产四源（运维项见 domain-migration.md §6：隧道主机名、compose 服务、nginx 块、`client register`、首次启动写注册表行）；`ui_e2e_moderation.py` 与 `ui_e2e_link_cards.py`
 已改为驱动消息源但本轮未运行；消息页 UI 改版（另批）；事件流仍按进程扇出（账户源上处理举报删除的消息，消息源上开着的标签页在下次同步才看到）。
 
+**协调者复核与补充（2026-09-28，main 上）**：合并为 `2f6f359`/`079c7ea` 后，共享 `.venv` 安装 `apps/messages`、`npm install`；五守卫、typecheck、四外壳 build、
+`npm test --workspaces`（19+39+49+19）、infra 6 项 unittest 通过；四套件全量结果记在下方。**发现**：注册表没有消息应用时（生产在 `message.wegreen.ltd` 加入隧道之前正是如此，
+且隧道由 Cloudflare 控制台管理，只能由持有人添加），账户源 `/messages` 兜底到账户外壳的「页面不存在」，而账户外壳已没有消息页——这次发布会让生产用户在过渡期读不到消息。
+**补**：组装层的 `accounts` 角色在应用未注册时直接提供消息外壳（`messages-assets/` 一并挂载），外壳按本源角色把接口前缀改为 `/api/auth/messaging`，
+`/c/{cid}` 与 `/messages/{cid}` 同样交接（注册后 303），开着的标签页收到 `410 moved` 时自动跳到新源；`test_messages_origin.py` 加断言（未注册：三条路径 200 且为消息外壳、账户页仍是账户外壳；注册后 `/c/{cid}` 也 303）。
+**隔离实例实测**（账户服务以新代码重启、未注册消息应用）：`/messages`、`/c/cv_x` 为消息外壳、`/account` 为账户外壳、旧接口 200、`messages_url` 为 null；
+`ui_check_messages_fallback.py`（Chromium 1280/390）：登录 → `/messages` 会话列表 → 新私聊选 RMember → 线程落在 `/c/cv_…` → 发送一条消息即时显示，无控制台错误
+（截图 `ci66-fallback-{desktop,phone}.png`）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

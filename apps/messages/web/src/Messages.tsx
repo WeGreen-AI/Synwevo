@@ -7,7 +7,7 @@
  *  last sequence this tab knows. When the stream cannot be held open the page polls and says so. */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ApiError, announceMessagesUnread, api, get, post, put, upload, useSession } from "@synwevo/auth-client";
+import { ApiError, announceMessagesUnread, api, get, messagesHref, post, put, upload, useSession } from "@synwevo/auth-client";
 import { Drawer, Modal, useI18n, useMediaQuery } from "@synwevo/ui";
 import { Topbar } from "./Topbar";
 import { FlowError, Loading } from "./flow";
@@ -29,7 +29,13 @@ interface Org { id: string; name: string; status: string }
 
 // The application's own API on this origin (CI-66); the badge's unread-count stays a shared
 // session route. A thread's address is `/c/<cid>` here, whatever origin the shell is served on.
-const M = "/api/messaging";
+// The API prefix. On its own origin (and on the single-process deployment) the application is at
+// /api/messaging; served from the account origin as the fallback of a deployment that has not
+// added the application yet, the same routes live under the account service's former prefix.
+// Set once per page from the origin's role (a page never changes origin), before any request.
+let M = "/api/messaging";
+const LEGACY_M = "/api/auth/messaging";
+const prefixFor = (role: string | undefined) => (role === "accounts" ? LEGACY_M : "/api/messaging");
 const threadPath = (cid: string) => `/c/${cid}`;
 const LIST = "/";
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👀", "✅", "❓", "🙏"];
@@ -78,7 +84,8 @@ function LinkCard({ url }: { url: string }) {
 }
 
 export default function Messages() {
-  const { t, locale } = useI18n(); const { me } = useSession(); const navigate = useNavigate(); const { cid } = useParams();
+  const { t, locale } = useI18n(); const { me, state } = useSession(); const navigate = useNavigate(); const { cid } = useParams();
+  M = prefixFor(state?.role);
   const narrow = useMediaQuery("(max-width: 720px)");
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [convs, setConvs] = useState<Conversation[] | null>(null);
@@ -96,7 +103,13 @@ export default function Messages() {
     const abort = new AbortController();
     // the organizations a conversation can be started in: this application's own answer (the
     // account service's /api/auth/organizations is not served on this origin)
-    Promise.all([get<{ items: Org[] }>(`${M}/organizations`, abort.signal), loadConvs()]).then(([o]) => setOrgs(o.items.filter(x => x.status === "active"))).catch(e => { if (!abort.signal.aborted) setError(e); });
+    Promise.all([get<{ items: Org[] }>(`${M}/organizations`, abort.signal), loadConvs()]).then(([o]) => setOrgs(o.items.filter(x => x.status === "active"))).catch(e => {
+      if (abort.signal.aborted) return;
+      // The application registered itself on its own origin while this tab was open on the
+      // account origin's fallback: the legacy routes answer 410, and the conversations are there.
+      if (e instanceof ApiError && e.code === "moved") { window.location.replace(messagesHref(state, { lang: locale, path: cid ? threadPath(cid) : "/" })); return; }
+      setError(e);
+    });
     // drafts of another account on this browser are never shown to this one
     try { Object.keys(localStorage).filter(k => k.startsWith("synwevo.msg.draft.") && !k.startsWith(`synwevo.msg.draft.${uid}.`)).forEach(k => localStorage.removeItem(k)); } catch { /* storage unavailable */ }
     return () => abort.abort();

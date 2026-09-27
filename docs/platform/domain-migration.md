@@ -66,7 +66,7 @@ issuer 写进令牌并由三个依赖方校验，不能双跑；Cookie 只属于
 
 | 事项 | 状态 |
 |---|---|
-| `message.wegreen.ltd` 的隧道公开主机名 → 同一网关目标 `http://127.0.0.1:18760` | 2026-09-27 切换后探测：无法建立连接（未加入隧道）；消息独立应用（CI-66）上线的前置 |
+| `message.wegreen.ltd` 的隧道公开主机名 → 同一网关目标 `http://127.0.0.1:18760` | 2026-09-27 切换后探测：无法建立连接（未加入隧道）。隧道由 Cloudflare 控制台管理（主机上 `cloudflared tunnel run --token`，无本地 ingress 文件），只能由持有人在 Zero Trust 控制台添加；消息独立应用（CI-66）上线的前置。在此之前**不要**在主机 compose 启动 `messages` 服务：它一注册，三处「消息」链接与通知目标就指向该主机；未添加时账户源继续在 `/messages` 提供消息外壳（CI-66 的过渡兜底），功能不缺 |
 | `dw.wegreen.ltd` 旧别名 | 不是隧道主机名（边缘 TLS 握手失败，切换前亦然）；网关里的 308 仅在有人把它加入隧道时生效 |
 | 主机 compose 采用 ClamAV 服务（`SYNWEVO_MALWARE_SCAN=required`） | 仓库参考文件含该服务，主机文件未采用；主机可用内存约 4.5 GiB，采用与否是持有人决定（消息服务的附件扫描同样依赖它：未采用时把 `messages` 服务的两项扫描变量与 accounts/docs 保持一致） |
 | `compose.yaml` 加 `messages` 服务（角色 `messages`，`SYNWEVO_APP_URL/PUBLIC_URL=https://message.wegreen.ltd`，`SYNWEVO_OIDC_CLIENT_ID=messages-web`，`SYNWEVO_OIDC_APP_ID=messages`，clamd 两项；网关 `depends_on` 加它） | 仓库参考文件已含（CI-66）；安装到 `/opt/synwevo/config/` 是运维步骤 |

@@ -173,8 +173,17 @@ def _mount_shells(api: FastAPI, plat, role: str) -> None:
         dist = accounts_dist()
         if mount_web(api, dist, assets_dir=ACCOUNT_ASSETS):
             # The former /messages pages hand over to Synwevo Message while it is registered.
+            # Until then — a deployment that has not added the application, or the window between
+            # this release and the day its host exists — this origin serves the messages shell
+            # under those paths itself (talking to the legacy `/api/auth/messaging` routes mounted
+            # above), so nobody loses their conversations to a "page not found" in between.
             from synwevo_identity.messages_redirects import build_router as build_messages_redirects
-            api.include_router(build_messages_redirects(plat.store, lambda full_path: shell_response(dist, full_path)))
+            msgs = messages_dist()
+            msgs_ok = mount_web(api, msgs, assets_dir=MESSAGES_ASSETS)
+
+            def until_registered(full_path: str):
+                return shell_response(msgs if msgs_ok else dist, full_path)
+            api.include_router(build_messages_redirects(plat.store, until_registered))
 
             @api.get("/{full_path:path}")
             def account_shell(full_path: str):

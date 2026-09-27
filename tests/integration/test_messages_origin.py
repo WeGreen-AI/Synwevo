@@ -173,6 +173,15 @@ def test_the_account_origin_serves_the_legacy_api_only_until_the_application_reg
     page = world["accounts"].get("/messages/cv_abc", cookies=ck)
     assert page.status_code != 303, "without the application there is nothing to hand over to"
     assert world["accounts"].get("/api/auth/state").json()["messages_url"] is None
+    # …and the account origin serves the messages shell itself under its former paths (and the
+    # thread address the shell uses), so a deployment without the application — or the window
+    # before its host exists — keeps its conversations rather than a "page not found".
+    from synwevo_messages.app import web_dist as messages_dist
+    if messages_dist().joinpath("index.html").is_file():
+        for path in ("/messages", "/messages/cv_abc", "/c/cv_abc"):
+            page = world["accounts"].get(path, cookies=ck)
+            assert page.status_code == 200 and "messages-assets/" in page.text and "Synwevo Message" in page.text, (path, page.status_code)
+        assert "messages-assets/" not in world["accounts"].get("/account", cookies=ck).text, "the account pages are still the account shell"
 
     _register(world)
     r = world["accounts"].get("/api/auth/messaging/conversations", cookies=ck)
@@ -182,7 +191,7 @@ def test_the_account_origin_serves_the_legacy_api_only_until_the_application_reg
     assert world["accounts"].get("/api/auth/messaging/unread-count", cookies=ck).status_code == 200
     # the moderation half stays: a member gets 403 (permission), not 410
     assert world["accounts"].get(f"/api/auth/messaging/reports?organization_id={world['org']}", cookies=ck).status_code in (200, 403)
-    for path, nxt in (("/messages/cv_abc?lang=en", "/c/cv_abc"), ("/messages", "/")):
+    for path, nxt in (("/messages/cv_abc?lang=en", "/c/cv_abc"), ("/messages", "/"), ("/c/cv_abc", "/c/cv_abc")):
         page = world["accounts"].get(path, cookies=ck)
         assert page.status_code == 303, (path, page.status_code)
         target = urllib.parse.urlsplit(page.headers["location"])
