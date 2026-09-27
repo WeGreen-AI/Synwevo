@@ -3,7 +3,7 @@ import { Brand, LanguageMenu, Logo, Menu, useI18n, useMediaQuery } from "@synwev
 import { ApiError, get, post, setWorkspaceContext, SignedOut, type Me, useSession } from "@synwevo/auth-client";
 import { PublicHome } from "./PublicHome";
 import "./messages";
-import { NotificationBell } from "@synwevo/auth-client";
+import { MessagesLink, NotificationBell } from "@synwevo/auth-client";
 
 export const signInUrl = "/auth/start?next=%2Fworkspace";
 type Workspace = { id: string; name: string; kind: string; role: string; status?: string; org_id?: string | null; org_name?: string | null; organization_id?: string | null; organization_name?: string | null };
@@ -190,10 +190,13 @@ export function DocumentIcon() {
 }
 export function Shell({ right, children, publicHome = false }: { right?: ReactNode; children: ReactNode; publicHome?: boolean }) {
   const { t } = useI18n();
-  const { state } = useSession();      // the bell renders nothing without a session
+  const { state, me } = useSession();      // the bell renders nothing without a session
+  // The messages entry beside the bell (the same pair Docs shows in its platform bar): the
+  // workspace is where people start, and it had no way into their conversations.
+  const messagesHref = (state?.account_url || "/account").replace(/\/account$/, "") + "/messages";
   return <div className={`pt${publicHome ? " pt-public" : ""}`}><a className="pt-skip" href="#pt-main">{t("跳到主要内容")}</a>
     <header className="pt-top"><Brand href="/" size="lg" product={publicHome ? undefined : "Workspace"} label={t("Synwevo 首页")} />
-      <nav className="pt-nav" aria-label={t("主导航")}>{right}<NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} /><LanguageMenu /></nav></header>
+      <nav className="pt-nav" aria-label={t("主导航")}>{right}{me && <MessagesLink href={messagesHref} />}<NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} /><LanguageMenu /></nav></header>
     <main className="pt-main" id="pt-main" tabIndex={-1}>{children}</main>
     <footer className="pt-footer"><Logo version="wordmark" height={14} /><a href="/#privacy">{t("数据与隐私")}</a><a href="/#service">{t("服务说明")}</a><span>{t("让工作流程，持续运转。")}</span></footer>
   </div>;

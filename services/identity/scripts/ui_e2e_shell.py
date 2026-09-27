@@ -271,6 +271,16 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
         assert page.locator(".pt-loader").count() == 0, "portal dropped into its loading state on refocus"
         expect(page.locator(".pt-dashboard")).to_be_visible()
         notes.append(f"{engine}/{tag}: portal refocus → dashboard stayed mounted, probes={len(probe.hits)}")
+        # ---- the workspace has a messages entry (CI-63) ----------------------------------------
+        msgs = page.get_by_role("link", name=re.compile("^(消息|訊息|Messages)"))
+        expect(msgs.first).to_be_visible()
+        assert (msgs.first.get_attribute("href") or "").startswith(accounts) and (msgs.first.get_attribute("href") or "").endswith("/messages"), msgs.first.get_attribute("href")
+        msgs.first.click()
+        page.wait_for_url(re.compile(re.escape(accounts) + r"/messages"), timeout=20000)
+        page.wait_for_selector("input[placeholder], .msg-list, main", timeout=20000)
+        notes.append(f"{engine}/{tag}: workspace 消息 entry → {accounts.split('//')[-1]}/messages")
+        page.goto(f"{portal}/workspace")
+        page.wait_for_selector(".pt-dashboard", timeout=20000)
         page.screenshot(path=SHOTS / f"shell-{engine}-{tag}-portal.png")
         # the public home, signed in: sample the header every 50 ms during load; "登录" must never appear
         seen: set[str] = set()

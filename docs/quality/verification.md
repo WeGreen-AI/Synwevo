@@ -1618,6 +1618,14 @@ Docs 与账户服务的 `/api/auth/me` 都 401、「重新登录」到账户服�
 **验收**：`ui_e2e_shell.py` 桌面段：链接 href 含 `/auth/start` 与 `next=%2Fworkspace`，点击后到门户 `/workspace` 且仪表盘可见——隔离实例复跑 **Chromium 与 WebKit 都通过**（CI-60/61 的退出断言与其余外壳断言不变）；auth-client 单测 39/39、字串校验 19/19、四项守卫与 `npm test --workspaces` 通过。
 **发布与恢复**：前端两处；无 schema 变化，回滚即上一镜像。**已部署**：`41e6f4f`，run 36323605133（verify 与 deploy 成功，backup 20260927T140828Z）；线上只读核对见 deployment.md。
 
+### 16.66 门户工作空间的「消息」入口（CI-63）
+
+**问题与基线**：用户反馈（2026-09-27）：`synwevo.wegreen.ltd/workspace` 没有消息入口。代码：门户 `Shell` 页头只有账户链接、铃铛与语言菜单（`Portal.tsx`），
+Docs 的平台栏则有 `MessagesLink`（`PlatformNav.tsx`）。**选择**：复用共享 `MessagesLink`（读共享表 `/api/auth/messaging/unread-count`，60 s 轮询 + 事件即时更新），
+放在铃铛旁，只在已登录时渲染；目标取自 `state.account_url`（消息独立成应用后改为注册表地址，见第九轮）。
+**验收**：`ui_e2e_shell.py` 门户段：入口可见、href 以账户源开头并以 `/messages` 结尾、点击后到消息页——隔离实例复跑 **Chromium 与 WebKit、桌面与 375 px 四组全部通过**（CI-60…62 的断言不变，0 CSP 违规）；四项守卫与 `npm test --workspaces` 通过。
+**发布与恢复**：门户外壳；无 schema 变化，回滚即上一镜像。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
