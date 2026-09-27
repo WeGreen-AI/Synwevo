@@ -1740,6 +1740,17 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 `ui_e2e_institutional_mail`（其信封层 Content-Transfer-Encoding 断言改读 text 部分——邮件自 CI-45 起为 multipart/alternative，属既有陈旧）通过，0 CSP 违规 0 页面错误；截图 10 张。
 未运行：`ui_e2e_challenge.py`（需 Turnstile 测试密钥）、`ui_e2e_moderation/messaging`（消息批次另行验证）。主分支 cherry-pick 为 `a3ec6fe`：typecheck/build、`npm test --workspaces`（19+39+49+19）、
 四守卫、`ui_e2e_shell.py`（四源，Chromium 两宽度）、`test_shells`/契约 i18n/`browser_onboarding_round` 通过。
+### 16.76 消息服务端能力（CI-74）
+
+子代理在 worktree（`e546756`，基于 c48f625）完成：`apps/messages/tests/test_messaging_r9.py` 17 项、`tests/integration/test_messaging_r9_composed.py` 3 项，四套件全量在其 worktree venv 运行（其最终报告待到）。
+主分支 cherry-pick 为 `2fe0312`，与 CI-75 合并时手工解决 `messaging.py`（`viewer` 签名 + 逐读者卡片装饰取代原始卡片附加）、`store.py`（两批列表合并、版本 v25）、`app.py`（`start_jobs` + messaging 探针）冲突，
+修正 `messaging_bridge.py` 的关键字、`test_bridge.py` 的反应响应期望（响应按反应者渲染、扇出事件不带卡片）与版本断言；合并后目标套件（`apps/messages/tests`、
+`test_messaging_bridge/r9_composed/origin/mail`、`test_messaging_outbox`、`test_auth_http`、`test_messaging_reports`）全部通过；typecheck/build、`npm test --workspaces`、五守卫通过。
+**隔离实例实测**（2026-09-28，三角色以合并代码重启，`api_check_r9.py`：两名真实账户经账户源登录、经 `/auth/start` 在消息源建立会话，再用该会话调 API）：
+`capabilities`（recall 120 s、edit 900 s、search fts5/trigram、presence 60/300 s、voice 四类型 10 MiB）；settings 缺省 `show_presence=true, read_receipts=false`；typing 200 `expires_in_s=6`；
+心跳后对方看到 `presence=online`；回执缺省 `read_by=null`，双方开启后为对方的读位置；`/unread` → `marked_unread=true, unread=1`；转发到群 201；撤回 200 且历史带 `recalled=true` 标记、他人撤回 403；
+搜索 fts5/trigram 命中两会话并带 seq 与片段；`/sync` 返回 cursor/conversations/left/recalled；未知对象的对象会话 404。`/readyz` `checks.messaging` 为计数。
+
 ### 16.77 Docs ↔ Message 应用联动（CI-75）
 
 **范围**：`synwevo_core/messaging_bridge.py`（v24：`object_conversations`、`messaging_outbox`、`message_cards`、`app_accounts`、`conversations.purpose`；对象会话规则、卡片逐读者渲染、`BridgeWorker`）、

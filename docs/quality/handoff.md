@@ -124,6 +124,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-71 | 公开页面重写：首页品牌表达、`/privacy`、`/service`、门户文案与术语（`docs/platform/public-pages.md`） | 已实现，待部署 | 持有人决定项（法律主体、联系渠道、管辖、条款版本、费用/SLA、是否点名第三方处理方、分析脚本）见记录 §5；Message 独立应用上线后首页应用卡的入口与说明随之更新 |
 | CI-76 | 账户外壳文案精简与术语统一（`docs/platform/account-copy.md`） | 已实现，待部署 | 消息外壳（CI-73）与门户 Shell 沿用同一规则表 |
 | CI-75 | Docs ↔ Message 真实联动：对象会话（`/api/messaging/objects/{app}/{kind}/{id}/conversation`，按对象自身授权建群/加入/移除）、Docs 在业务事务里写的外发表（评论、任务结束、复制申请决定/结果）、消息进程 worker 逐读者投递的卡片（应用身份 Synwevo Docs 发送、无收件箱条目、无权读者只见中性标题）、Docs 项目页/任务页「在消息中讨论」；schema v24（`docs/platform/messaging.md` §8） | 已实现（worktree，四套 pytest、五个守卫、typecheck/build、`npm test`；隔离实例四进程 Chrome + WebKit 证明见 verification.md §16.77），待合并/部署 | 消息外壳的 `/objects/{app}/{kind}/{id}` 路由与卡片渲染（契约 §8.1/8.3）由外壳批次实现；`SCHEMA_VERSION` 若与并行批次同为 24 需在合并时顺延；卡片标题是投递时读到的（改名不回写）；分享/权限变更事件今天在 Docs 里不存在，未写 |
+| CI-74 | 消息服务端能力：在线/输入、可选已读回执、标为未读、转发、撤回/仅自己删除、语音、FTS5 搜索、SSE 补发与 `/sync`、指标（契约 messaging.md §7） | 已实现，合并到 main（schema v25），待部署 | 外壳（CI-73）按 §7 契约接入：设置面板、typing/presence 展示、回执、转发/撤回菜单、语音录制、搜索筛选、断线 resync |
 | 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 已随 11202c3 发布 |
 | 回归 | 个人项目复制不携带私人协同房间/未批准历史（9.16）：目标无活动记录、无实时草稿与变更记录，副本只有来源 head 版本 | 已验证，tests/integration/test_project_copy.py（verification.md §16.54） | — |
 | CI-46 | Docs 项目页协同（在场与定位、按映射三方合并、他人变更即时提示、归属活动记录） | 已部署（e6197c1，run 36219721565）；生产 nginx 副本待运维加 Upgrade 头 | SheetEditor 协同与活动筛选未做 |
