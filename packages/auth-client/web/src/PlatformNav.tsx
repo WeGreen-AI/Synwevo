@@ -19,6 +19,7 @@
 import { useState } from "react";
 import { ApiError, post, setWorkspaceContext } from "./api";
 import { useSession } from "./session";
+import { platformHandoffUrl } from "./handoff";
 import { LanguageMenu, useI18n, useToast } from "@synwevo/ui";
 import { NotificationBell } from "./NotificationBell";
 import { MessagesLink } from "./MessagesLink";
@@ -38,7 +39,7 @@ export function accountHref(accountUrl: string | undefined, appId: string | null
 
 export function PlatformNav() {
   const { me, state, signOut } = useSession();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const toast = useToast();
   const [switching, setSwitching] = useState(false);
 
@@ -73,7 +74,10 @@ export function PlatformNav() {
   return (
     <>
       {state?.portal_url && (
-        <a className="btn ghost sm" href={state.portal_url} title={t("返回平台首页")}>
+        // Back to the platform means back to the work: the workspace, reached through the portal's
+        // own sign-in start so the portal has its session in the same hop (user feedback
+        // 2026-09-27: this link used to land on the public home page).
+        <a className="btn ghost sm" href={platformHandoffUrl(state.portal_url, { next: "/workspace", lang: locale }) ?? state.portal_url} title={t("返回工作空间")}>
           ← {platformName}
         </a>
       )}

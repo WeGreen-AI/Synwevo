@@ -194,6 +194,7 @@ app / workspace / 操作。机器配置只经 CLI 与配置文件管理，**产�
 | 明确要去账户页（`/login?next=/account`、门户账户入口的 `?from=platform`） | 账户页 | 不变 |
 | 邮箱未验证 / 有进行中的邀请 / 未完成引导 | `/verify-email` / `/invite` / `/onboarding`（先于一切） | 不变 |
 | 部署没有门户（`SYNWEVO_PORTAL_URL` 未设，Docs 单独自托管） | `/account`（唯一的落点） | `platformHandoffUrl` 返回 `null` 时回退 |
+| Docs 的「← Synwevo」、账户外壳的品牌链接 | 工作空间：`<portal_url>/auth/start?next=/workspace&lang=…`（用户反馈 2026-09-27：曾回到公开首页） | `PlatformNav` / `Topbar` 用 `platformHandoffUrl`（CI-62） |
 | 在账户服务点「退出登录」 | 中央会话结束，后通道通知各应用，落到账户服务 `/logged-out`（已退出 / 重新登录 / 返回平台首页） | `signOut()` → `/api/auth/logout` |
 | 在依赖方（Docs、门户）点「退出登录」 | 同样结束平台会话：依赖方撤本地会话并交出账户服务登出地址 → `/oidc/logout` → 回到本源 `/signed-out`（同一页面语义）；一个账户在哪里退出都是退出 Synwevo。门户的退出入口在页头 / 手机账户菜单（CI-61） | `signOut()` → `/api/auth/sign-out?everywhere=true`（CI-60） |
 

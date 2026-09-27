@@ -327,6 +327,16 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
         # this origin's /signed-out; afterwards neither Docs nor the account service knows the
         # person, and "重新登录" needs the password again.
         if width >= 400:
+            # "← Synwevo" in Docs returns to the workspace, not to the public home (CI-62)
+            page.goto(f"{docs}/")
+            page.wait_for_load_state("networkidle")
+            back = page.get_by_role("link", name=re.compile(r"^← "))
+            expect(back).to_be_visible()
+            assert "/auth/start" in (back.get_attribute("href") or "") and "next=%2Fworkspace" in (back.get_attribute("href") or ""), back.get_attribute("href")
+            back.click()
+            page.wait_for_url(re.compile(re.escape(portal) + r"/workspace(\?|$)"), timeout=20000)
+            expect(page.locator(".pt-dashboard")).to_be_visible(timeout=20000)
+            notes.append(f"{engine}/{tag}: Docs ← Synwevo → {portal.split('//')[-1]}/workspace (dashboard)")
             page.goto(f"{docs}/")
             page.wait_for_load_state("networkidle")
             page.get_by_role("button", name=re.compile("退出登录|登出|Sign out")).first.click()

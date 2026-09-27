@@ -11,6 +11,7 @@ registerMessages({
  '当前设备的统一登录与关联应用会话已退出。其他设备不受影响。': {en:'You have signed out of Synwevo and linked app sessions on this device. Other devices are unchanged.','zh-Hant':'目前裝置的統一登入與關聯應用程式工作階段已登出。其他裝置不受影響。'},
  '重新登录': {en:'Sign in again','zh-Hant':'重新登入'},
  '返回平台首页': {en:'Back to platform home','zh-Hant':'返回平台首頁'},
+ '返回工作空间': {en:'Back to the workspace','zh-Hant':'返回工作空間'},
  '未加入任何工作空间': {en:'No workspace yet','zh-Hant':'尚未加入工作空間'},
  '当前工作空间': {en:'Current workspace','zh-Hant':'目前工作空間'},
  '切换工作空间': {en:'Switch workspace','zh-Hant':'切換工作空間'},
