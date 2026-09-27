@@ -45,3 +45,23 @@ export function useLoad<T>(key: string | null, fetcher: (signal: AbortSignal) =>
   const reload = useCallback(() => setTick((t) => t + 1), []);
   return { data, error, loading: loading || key !== loadedKey, reload, setData };
 }
+
+/** While `dirty` (a form has edits that are not saved yet), leaving the page asks the browser's own
+ *  "leave this page?" question: a link in the account bar (they are full-page navigations — 返回工作空间,
+ *  the parent page, the application), a reload, closing the tab. Saved or untouched forms add no
+ *  confirmation. Returns `release()`: call it right before a successful submit navigates away, so the
+ *  person is not asked about edits that were just saved. */
+export function useUnsavedChanges(dirty: boolean): () => void {
+  const released = useRef(false);
+  useEffect(() => {
+    if (!dirty) { released.current = false; return; }
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (released.current) return;
+      e.preventDefault();
+      e.returnValue = "";          // older engines need a value to show the prompt
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
+  return useCallback(() => { released.current = true; }, []);
+}

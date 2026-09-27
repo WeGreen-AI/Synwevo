@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, useSession } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { FlowError, useAction } from "./AuthFlow";
+import { useUnsavedChanges } from "../../lib/hooks";
 import type { Organization, OrganizationWorkspace } from "./types";
 import "../../organization.messages";
 
@@ -19,6 +20,7 @@ export default function OrganizationCreate({ onCreated }: { onCreated: (organiza
   const { t } = useI18n(); const { me } = useSession(); const action = useAction(); const key = `synwevo.organization.create.${me?.id || "session"}`;
   const [draft, setDraft] = useState<Draft | null>(() => { try { const value = JSON.parse(sessionStorage.getItem(key) || "null"); return value && typeof value.name === "string" && typeof value.workspace_name === "string" && typeof value.key === "string" ? value : null; } catch { return null; } });
   const [name, setName] = useState(draft?.name || ""); const [workspace, setWorkspace] = useState(draft?.workspace_name || "");
+  const release = useUnsavedChanges(!!(name.trim() || workspace.trim()));
   function submit(e: React.FormEvent) { e.preventDefault(); void action.run(async () => {
     if (!name.trim() || !workspace.trim()) throw new Error("请填写组织名称和工作空间名称。");
     const attempt = creationAttempt(draft, name.trim(), workspace.trim()); setDraft(attempt);
@@ -26,6 +28,7 @@ export default function OrganizationCreate({ onCreated }: { onCreated: (organiza
     try { sessionStorage.setItem(key, JSON.stringify(attempt)); } catch { /* In-memory key still protects retries on this page. */ }
     const result = await createOrganization(attempt);
     try { sessionStorage.removeItem(key); } catch { /* optional persistence */ }
+    release();                                   // created: leaving for the new organization is not "losing edits"
     await onCreated(result.organization, result.workspace);
   }); }
   return <form className="org-create" onSubmit={submit} aria-busy={action.busy}><FlowError error={action.error} />

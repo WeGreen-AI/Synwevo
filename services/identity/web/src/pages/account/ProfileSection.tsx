@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { del, patch, put } from '@synwevo/auth-client';
 import { useI18n, useToast, type Locale } from '@synwevo/ui';
 import { ErrorNotice, errorText, type Profile } from './common';
+import { useUnsavedChanges } from '../../lib/hooks';
 
 const zones = ['UTC', 'Asia/Hong_Kong', 'Asia/Shanghai', 'Asia/Taipei', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney'];
 export default function ProfileSection({ profile, onChange }: { profile: Profile; onChange: (p: Profile) => void }) {
@@ -12,6 +13,7 @@ export default function ProfileSection({ profile, onChange }: { profile: Profile
   const [timezone, setTimezone] = useState(profile.timezone);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useUnsavedChanges(name !== (profile.display_name || '') || language !== profile.locale || timezone !== profile.timezone);
   async function run(fn: () => Promise<void>) {
     setBusy(true); setError(null);
     try { await fn(); } catch (e) { setError(errorText(e, t)); } finally { setBusy(false); }

@@ -2,6 +2,7 @@ import { useId, useState, type ReactNode } from "react";
 import { ApiError, post, useSession } from "@synwevo/auth-client";
 import { Modal, useI18n } from "@synwevo/ui";
 import { FlowError, PasswordField, useAction } from "./AuthFlow";
+import { useUnsavedChanges } from "../../lib/hooks";
 export interface OrganizationActionSpec { title: string; impact: string; danger?: boolean; run: (reason: string) => Promise<unknown> }
 export default function OrganizationAction({ spec, children, ready = true, onDone, onClose }: {
   spec: OrganizationActionSpec; children?: ReactNode; ready?: boolean; onDone: () => void; onClose: () => void;
@@ -9,12 +10,13 @@ export default function OrganizationAction({ spec, children, ready = true, onDon
   const { t } = useI18n(); const { me } = useSession(); const action = useAction(); const id = useId();
   const [reason, setReason] = useState(""); const [password, setPassword] = useState(""); const [reauth, setReauth] = useState(false);
   const [ended, setEnded] = useState(false);
+  const release = useUnsavedChanges(!!reason.trim() && !ended);
   function submit(e: React.FormEvent) { e.preventDefault(); void action.run(async () => {
     if (!ready) return;
     if (Array.from(reason.trim()).length < 8) throw new Error("请填写至少 8 个字符的操作原因。");
     try {
       if (reauth) { await post("/api/auth/reauth", { password, scope: "admin" }); setPassword(""); setReauth(false); }
-      await spec.run(reason.trim()); onDone();
+      await spec.run(reason.trim()); release(); onDone();
     } catch (e) {
       if (e instanceof ApiError && e.code === "reauth_required") { setReauth(true); return; }
       if (e instanceof ApiError && e.status === 401 && e.code !== "bad_credentials") setEnded(true);

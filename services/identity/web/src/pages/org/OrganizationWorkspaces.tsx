@@ -3,10 +3,12 @@ import { post, setWorkspaceContext, useSession } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { FlowError, portalWorkspaceUrl, useAction } from "./AuthFlow";
 import OrganizationAction from "./OrganizationAction";
+import { useUnsavedChanges } from "../../lib/hooks";
 import { orgPath, roleSource, statusSource, type Organization, type OrganizationWorkspace } from "./types";
 export default function OrganizationWorkspaces({ organization, workspaces, onChanged }: { organization: Organization; workspaces: OrganizationWorkspace[]; onChanged: () => void }) {
   const { t, locale } = useI18n(); const { me, state, refresh } = useSession(); const action = useAction(); const [name, setName] = useState("");
   const [adopt, setAdopt] = useState(""); const [confirmAdopt, setConfirmAdopt] = useState(false);
+  useUnsavedChanges(!!name.trim());
   const manage = organization.role === "owner" || organization.role === "admin";
   const candidates = (me?.workspaces || []).filter(w => w.kind === "org" && w.id !== "default" && w.role === "owner" && !(w as typeof w & { organization_id?: string }).organization_id && !workspaces.some(ow => ow.id === w.id));
   function create(e: React.FormEvent) { e.preventDefault(); void action.run(async () => {

@@ -3,6 +3,7 @@ import { post } from '@synwevo/auth-client';
 import { useI18n } from '@synwevo/ui';
 import { ErrorNotice, errorText, PasswordProof, type Profile } from './common';
 import { useAccountToken } from './linkToken';
+import { useUnsavedChanges } from '../../lib/hooks';
 export default function EmailSection({ profile }: { profile: Profile }) {
   const { t } = useI18n();
   const [email, setEmail] = useState('');
@@ -11,6 +12,7 @@ export default function EmailSection({ profile }: { profile: Profile }) {
   const [error, setError] = useState<string | null>(null);
   const [queued, setQueued] = useState(false);
   const [done, setDone] = useState(false);
+  useUnsavedChanges(!!email.trim() && !queued && !done);
   const token = useAccountToken('email-change');
   useEffect(() => { if (token) { setQueued(false); setDone(false); setError(null); } }, [token]);
   return <section id="email" className="card card-b col gap12 account-section">

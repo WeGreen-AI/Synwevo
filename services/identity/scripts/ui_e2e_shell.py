@@ -184,6 +184,37 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, me
         page.screenshot(path=SHOTS / f"shell-{engine}-{tag}-account.png")
         notes.append(f"{engine}/{tag}: account bar workspace link → {ws_href.split('?')[0]}")
 
+        # ---- unsaved edits: leaving asks once, a reverted form leaves freely (round 9 §6) ------
+        if width >= 400:
+            guard = ctx.new_page()
+            guard.goto(f"{accounts}/account")
+            name_box = guard.locator("#profile input[autocomplete=name]")
+            expect(name_box).to_be_visible(timeout=15000)
+            original = name_box.input_value()
+            # Real clicks and keystrokes: engines only ask on leave after a genuine user gesture
+            # (WebKit ignores a scripted fill), which is what a person editing the form produces.
+            name_box.click(); guard.keyboard.press("End"); guard.keyboard.type(" x")   # a real edit, not saved
+            # would leaving be questioned right now? (the page's own handler, engine-independent)
+            questioned = lambda: guard.evaluate("() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }")
+            assert questioned(), "an unsaved edit did not arm the leave question"
+            if engine == "chromium":
+                # Chromium surfaces the browser's own prompt to automation: leaving is asked, staying keeps the edit
+                asked: list[str] = []
+                guard.on("dialog", lambda d: (asked.append(d.type), d.dismiss()))   # dismiss = stay on the page
+                guard.locator(".acct-back-workspace").first.click()
+                guard.wait_for_timeout(800)
+                assert asked == ["beforeunload"], f"leaving with an unsaved edit was not questioned: {asked}"
+                assert guard.url.startswith(accounts + "/account"), guard.url
+                assert name_box.input_value() == original + " x", "the edit was lost after staying"
+            name_box.click(); guard.keyboard.press("End"); guard.keyboard.press("Backspace"); guard.keyboard.press("Backspace")   # back to the saved value
+            assert not questioned(), "a form back at its saved value still questions leaving"
+            guard.locator(".acct-back-workspace").first.click()
+            guard.wait_for_url(lambda u: not u.startswith(accounts + "/account"), timeout=15000)
+            if engine == "chromium":
+                assert asked == ["beforeunload"], f"an untouched form still asked: {asked}"
+            guard.close()
+            notes.append(f"{engine}/{tag}: unsaved profile edit arms the leave question; " + ("返回工作空间 asks (the browser's prompt) and staying keeps the edit; " if engine == "chromium" else "(this engine does not show the prompt to automation, the handler was checked directly); ") + "reverted → leaves without a question")
+
         # ---- account sub-pages: no repeated probes per in-app navigation --------------------
         probe.reset()
         page.goto(f"{accounts}/organizations")

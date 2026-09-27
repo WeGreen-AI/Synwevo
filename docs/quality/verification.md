@@ -1778,6 +1778,13 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 协调者隔离实例（消息/账户角色以合并代码重启）`ui_e2e_messaging.py` Chromium 27/27 通过（麦克风路径走等待/取消）；`--webkit` 运行两引擎共 54 条里程碑全部通过（WebKit 的麦克风被用户代理拒绝并如实报告）；四套件全量 **2186 passed, 1 skipped**，exit 0；导出树复核（typecheck/build/`npm test --workspaces` 19+39+49+17+19）与五守卫通过。
 **未验证**：真实录音（需要权限提示能结算的浏览器/真机）、真机 iOS/Android。
 
+### 16.79 账户表单的未保存保护（CI-79）
+
+**复现**（2026-09-28，代码）：账户外壳没有任何 `beforeunload`/未保存检查；账户栏的「返回工作空间」、上一级与应用链接都是整页导航，个人资料等表单的输入在离开时直接丢失。
+**修复**：见 issues.md CI-79。**验证**：account-web typecheck、19 项契约验证、build；`ui_e2e_shell.py`（四源，Chromium + WebKit，桌面）新段通过：真实点击与键入（WebKit 只在真实手势后询问）后处理器就绪；
+Chromium 点「返回工作空间」→ 浏览器询问（`beforeunload`）→ 留下，输入仍在；改回原值 → 处理器解除 → 直接离开且没有第二次询问。WebKit 的 Playwright 自动化不向脚本展示该询问（连 `page.close(run_before_unload=True)` 也不结算），
+改为派发 `beforeunload` 事件核对 `defaultPrevented`（编辑时 true，改回 false）。**未验证**：真机 Safari/手机浏览器上的询问外观。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

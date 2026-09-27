@@ -34,6 +34,7 @@
 | CI-75 Docs ↔ Message 联动 | 项目（与其任务）、复制申请各有一个按对象授权维护成员的对象会话；Docs 的评论、任务结束、复制申请决定与结果在同一事务写外发表，消息进程的 worker 幂等地投递成由应用身份 Synwevo Docs 发出的卡片，每个读者只看到自己有权看的内容，卡片不产生收件箱条目；Docs 项目页与任务页新增「在消息中讨论」；记录在 messaging.md §8，验证在 verification.md §16.77。已实现（worktree），待合并、外壳路由与卡片渲染由外壳批次实现。 |
 | CI-74 消息服务端能力 | 在线/输入、可选回执、标为未读、转发、撤回与仅自己删除、语音、FTS5 搜索、事件 id/补发/`sync`、指标；契约 docs/platform/messaging.md §7（verification.md §16.76）。 |
 | CI-73 消息外壳 | 聊天界面重建（布局、气泡、引用、回应、菜单、历史锚定、新消息提示、编辑器、附件、搜索定位、手机三段式、动效与无障碍）并接入设置/在线/输入/回执/撤回/转发/语音/搜索/resync/卡片；消息源允许麦克风（verification.md §16.78）。 |
+| CI-79 未保存保护 | 账户外壳五个表单有未保存修改时离开会由浏览器询问，改回或保存后不再询问（verification.md §16.79）。 |
 | CI-66 Synwevo Message 独立源站 | 消息成为第四个应用 `apps/messages`（角色 `messages`，`/api/messaging`，本机 `message.localhost:8768`，生产 `message.wegreen.ltd`）；业务层与表原样在 core；注册表行驱动三个源的「消息」链接（`state.messages_url`）、门户卡片与会话通知目标；账户源旧路径 410 / `/messages` 303；举报处理留在账户服务；读到会话末尾时收件箱条目标为已读（verification.md §16.74）。已实现（本机四源隔离实例实测），待部署；运维项见 domain-migration.md §6。 |
 | 本轮暂停点 | 用户要求本轮完成后暂停（2026-09-26 05:30 UTC）。接续：运维在生产主机同步 nginx 的 Upgrade 配置并 reload（deployment.md）；`SheetEditor` 协同；真实邮箱客户端渲染（需授权收件箱）；本条记录提交在本地、未推送，下一批推送时一并带上。 |
 | CI-46 项目页协同 | 在场与定位、按映射三方合并（冲突才 409）、他人变更即时提示、归属活动记录；6 项 pytest、Chromium/WebKit 两账户各 7 里程碑（verification.md §16.47）。已部署（`e6197c1`，run 36219721565）。 |
