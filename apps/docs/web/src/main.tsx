@@ -6,7 +6,7 @@ import { StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DialogProvider, ToastProvider, initTheme } from "@synwevo/ui";
-import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
+import { RequireSession, SessionProvider, SignedOut, useSession } from "@synwevo/auth-client";
 import Home from "./pages/Home";
 import "@synwevo/ui/styles.css";
 import "./styles.css";
@@ -52,6 +52,9 @@ function DocsRoot() {
               <Route path="/templates/new/doc" element={<RequireSession><RequireEditor><DocEditor /></RequireEditor></RequireSession>} />
               <Route path="/templates/new/sheet" element={<RequireSession><RequireEditor><SheetEditor /></RequireEditor></RequireSession>} />
               <Route path="/templates/:tid/edit" element={<RequireSession><RequireEditor><EditorSwitch /></RequireEditor></RequireSession>} />
+              {/* Where the account service's logout returns to after "退出登录" here ended the
+                  platform session (auth-client signOut → /api/auth/sign-out?everywhere=true). */}
+              <Route path="/signed-out" element={<SignedOut product="Docs" />} />
               <Route path="*" element={<StatusPage product="Docs" title={tr("页面不存在")}><p>{tr("这个地址在 Synwevo Docs 里不存在，或你没有访问权限。")}</p><a className="btn" href="/">{tr("返回首页")}</a></StatusPage>} />
             </Routes>
           </Suspense>

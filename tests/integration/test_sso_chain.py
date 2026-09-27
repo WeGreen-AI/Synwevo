@@ -411,6 +411,23 @@ def test_signing_out_everywhere_hands_back_the_platform_logout_url(world):
     assert whoami(world["accounts"], b.jar.apply(ACCOUNTS)) is None
 
 
+def test_signing_out_everywhere_works_without_an_application_session(world):
+    """A page whose Docs session expired can still end the platform session: without a local
+    session the route revokes nothing and only hands back the account service's logout URL."""
+    b = world["b"]
+    _sign_in_centrally(world)
+    out = world["docweave"].post("/api/auth/sign-out?everywhere=true")
+    assert out.status_code == 200, out.text
+    assert out.json()["scope"] == "platform" and out.json()["redirect"].startswith(ACCOUNTS + "/oidc/logout?")
+    # the plain variant stays a no-op for an anonymous caller: nothing to revoke, nothing to hand back
+    plain = world["docweave"].post("/api/auth/sign-out")
+    assert plain.status_code == 200 and plain.json() == {"ok": True, "scope": "app"}
+    b.trail.clear()
+    b.go(out.json()["redirect"])
+    assert b.trail[-1] == DOCS + "/signed-out"
+    assert whoami(world["accounts"], b.jar.apply(ACCOUNTS)) is None
+
+
 # ---------------------------------------------------------------- auth_time honesty
 def test_the_local_session_reports_the_real_central_authentication_time(world):
     """把“平台登录过”当作刚刚重认证，会让危险操作绕过 reauth。"""

@@ -706,6 +706,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     # to an exact set rather than a prefix: "/api/auth" as a prefix would also open anything
     # added under it later, and this list is the whole anonymous surface of the account system.
     ANON_AUTH_PATHS = {"/api/auth/state", "/api/auth/login", "/api/auth/bootstrap", "/api/auth/logout",
+                       # A relying party's sign-out: without a local session it revokes nothing and only
+                       # hands back the account service's logout URL (public identifiers), so a page
+                       # whose application session expired can still end the platform session.
+                       "/api/auth/sign-out",
                        # An invitation is for someone who has no account yet, so reading the
                        # landing page and accepting it cannot require being signed in. Preview
                        # is read-only and accept consumes a token that is itself the authority.
@@ -821,7 +825,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             # Double-submit CSRF on every state-changing request. Login is exempt because it has
             # no session yet; it is protected by being useless without valid credentials.
             sent = request.headers.get(CSRF_HEADER) or request.headers.get(LEGACY_CSRF_HEADER)
-            session_mutations = {"/api/auth/logout", "/api/auth/invitations/accept", "/api/auth/email/verify", "/api/auth/verify-email"}
+            session_mutations = {"/api/auth/logout", "/api/auth/sign-out", "/api/auth/invitations/accept", "/api/auth/email/verify", "/api/auth/verify-email"}
             if (path not in ANON_AUTH_PATHS or path in session_mutations) and not csrf_ok(request.cookies.get(CSRF_COOKIE), sent):
                 return _error_response(request, 403, "csrf_failed", "请求校验失败，请刷新页面后重试", None)
 

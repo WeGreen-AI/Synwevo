@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Brand, LanguageMenu, Logo, Menu, useI18n, useMediaQuery } from "@synwevo/ui";
-import { ApiError, get, post, setWorkspaceContext, useSession, type Me } from "@synwevo/auth-client";
+import { ApiError, get, post, setWorkspaceContext, SignedOut, type Me, useSession } from "@synwevo/auth-client";
 import { PublicHome } from "./PublicHome";
 import "./messages";
 import { NotificationBell } from "@synwevo/auth-client";
@@ -104,6 +104,8 @@ export function Portal() {
 
   const account = state.phase === "ready" ? state.home.account_url : accountBase;
   if (publicPage) return <PublicHome signedIn={session.error ? false : session.me === undefined ? undefined : session.me !== null} registerUrl={accountLink(account, "/register")} />;
+  // Where the account service's logout returns to after "退出登录" ended the platform session.
+  if (window.location.pathname === "/signed-out") return <SignedOut product="Workspace" />;
   if (window.location.pathname !== "/workspace") return <Shell right={<a className="pt-link" href="/">{t("返回首页")}</a>}>
     <section className="pt-status" role="status"><p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("页面不存在")}</h1>
       <p>{t("这个地址在 Synwevo Workspace 里不存在。")}</p>

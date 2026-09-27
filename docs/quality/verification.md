@@ -1565,6 +1565,28 @@ Chromium 让后发的导航取代仍在挂起的第一个，于是落到 `/login
 两引擎「signed out → /logged-out; /api/auth/me 401」，0 页面错误、0 CSP 违规；改前同一脚本的 Chromium 记录是 `/login`。导出树（index）typecheck/build/`npm test` 通过。
 **发布与恢复**：共享 auth-client，三个外壳同时受益；无 schema 变化，回滚即上一镜像。**已部署**：`8184dc2`，run 36315903038（verify 与 deploy 成功，backup 20260927T115350Z）；线上只读核对：三源 readyz、账户外壳共享块携带「正在退出…」。
 
+### 16.62 依赖方的「退出登录」结束平台会话（CI-60）
+
+**问题与基线**：核对 CI-59 时读到依赖方的退出链路：共享 `signOut()` 在 Docs/门户上调 `POST /api/auth/logout`——依赖方的这条路由只撤销本应用会话
+（`session_routes.py::logout`：`revoke_device` + 删本源 Cookie），然后 `location.replace("/logged-out")`；依赖方的 `/logged-out` 由 `build_account_redirect_router`
+303 到账户服务的 `/logged-out`，那一页写着「当前设备的统一登录与关联应用会话已退出」。此时账户服务的会话仍然有效：点「重新登录」→ `/login` 已登录 →（CI-58）
+交接回工作空间，不需要口令；共享电脑上下一个人打开门户仍是登录态。CI-59 之前 Chromium 更糟——守卫的 `/auth/start` 竞态直接把人静默重新登进 Docs，看起来像「退出没反应」。
+依赖方早有 `POST /api/auth/sign-out?everywhere=true`（返回账户服务 `/oidc/logout` 地址，`test_sso_chain.py` 覆盖），但没有任何界面调用它。
+**成熟参考**：统一账户在任一产品退出即退出该账户（OIDC RP-Initiated Logout 1.0：RP 把浏览器送到 OP 的登出端点并以 `post_logout_redirect_uri` 回到自己）；
+账户服务自己的「退出登录」已经是平台级（中央会话 + 后通道登出各应用），依赖方与之不一致才是缺陷。
+**对比与选择**：(a) 保留「只退本应用」但改文案——共享电脑的安全预期仍落空；(b) 依赖方退出改为平台级（选）：`signOut()` 按 `state.role` 分流，app/portal 走
+`sign-out?everywhere=true` 并跟随返回的登出地址，accounts/all 不变；(c) 在依赖方加「仅退出本应用 / 退出全部」两个按钮——增加决策负担，且「仅退本应用」的价值在单账户平台上不成立。
+**预期变化**：Docs 点「退出登录」→ Docs 会话撤销 → 账户服务 `/oidc/logout`（中央会话结束、后通道通知门户等）→ 回到 `docweave…/signed-out`（新页：已退出 / 重新登录=本源
+`/auth/start` / 返回平台首页）；门户同样有 `/signed-out` 页（门户本身没有退出控件，经「账户」页退出，那条路一直是平台级）。`/api/auth/sign-out` 允许匿名调用：无本地会话时
+不撤销任何东西、只返回登出地址（issuer 与 client_id 都是公开标识），使本应用会话已过期的页面也能结束平台会话；有会话时仍查 CSRF（`session_mutations`）。
+**边界与风险**：不改 Cookie 作用域与 RP ID；登出地址由依赖方服务端按登记的 `post_logout_redirect_uri` 生成，账户服务精确匹配登记表，未登记的 400 不跳转（既有契约）；
+三语言新增三条共享文案（与账户服务同词）；单进程 `all` 角色与账户服务的退出路径不变。
+**验收**：auth-client 单测 +1（role=app：退出发出 `sign-out?everywhere=true`、导航到返回地址、不再调 `/api/auth/logout`），39/39；
+`test_sso_chain.py` +1（匿名 everywhere → 200 + 登出地址 → 最终 `/signed-out` 且中央会话结束；匿名普通变体 `{ok, scope: app}`），文件通过；
+`npm run typecheck && npm run build`、四项守卫、`npm test --workspaces` 通过；`ui_e2e_shell.py` 桌面段新增：Docs 点「退出登录」→ Docs `/signed-out` 页可见「已退出」、
+Docs 与账户服务的 `/api/auth/me` 都 401、「重新登录」到账户服务登录页并要求口令——隔离实例复跑 **Chromium 与 WebKit 都通过**（其余外壳断言与 CI-58 的落点断言不变，0 CSP 违规）。
+**发布与恢复**：共享 auth-client + 两个依赖方外壳 + core 匿名路径表；无 schema 变化，回滚即上一镜像。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

@@ -321,6 +321,23 @@ def run(browser: Browser, engine: str, accounts: str, portal: str, docs: str, em
             page.screenshot(path=SHOTS / f"shell-{engine}-{tag}-docs.png")
         else:
             notes.append(f"{engine}/{tag}: no Docs project visible for {email} at {page.url.split('?')[0]}; workspace check skipped")
+
+        # ---- signing out of Docs ends the platform session (CI-60) ---------------------------
+        # "退出登录" on a relying party goes through the account service's logout and returns to
+        # this origin's /signed-out; afterwards neither Docs nor the account service knows the
+        # person, and "重新登录" needs the password again.
+        if width >= 400:
+            page.goto(f"{docs}/")
+            page.wait_for_load_state("networkidle")
+            page.get_by_role("button", name=re.compile("退出登录|登出|Sign out")).first.click()
+            page.wait_for_url(re.compile(re.escape(docs) + r"/signed-out(\?|$)"), timeout=20000)
+            expect(page.get_by_text(re.compile("^(已退出|已登出|Signed out)$"))).to_be_visible()
+            assert page.request.get(f"{docs}/api/auth/me").status == 401, "Docs still knows the person after signing out"
+            assert page.request.get(f"{accounts}/api/auth/me").status == 401, "the account service still knows the person after signing out of Docs"
+            page.get_by_role("link", name=re.compile("重新登录|重新登入|Sign in again")).click()
+            page.wait_for_url(re.compile(re.escape(accounts) + r"/login"), timeout=20000)
+            expect(page.locator("input[type=password]").first).to_be_visible()
+            notes.append(f"{engine}/{tag}: Docs 退出登录 → {docs.split('//')[-1]}/signed-out; Docs and accounts /api/auth/me both 401; 重新登录 asks for the password")
         assert not csp, ("Content-Security-Policy violations", csp[:5])
         notes.append(f"{engine}/{tag}: 0 CSP violations across the pages above")
         ctx.close()

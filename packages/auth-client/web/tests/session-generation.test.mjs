@@ -400,6 +400,20 @@ test('a sign-out in progress does not turn the emptied session into a sign-in re
   assert.deepEqual(h.navigation, [['replace', '/logged-out']]);
 });
 
+test('on a relying party, sign-out ends the platform session and follows the account service\'s logout URL', async () => {
+  const h = await setup(); h.render();
+  await h.answer(h.next('/api/auth/state'), { ...authState, role: 'app', portal_url: 'http://portal.test' });
+  await h.answer(h.next('/api/auth/me'), me()); h.render();
+  const leaving = h.render().signOut();
+  const request = h.next('/api/auth/sign-out?everywhere=true');
+  assert.equal(request.opts.method, 'POST');
+  const logout = 'http://accounts.test/oidc/logout?client_id=docweave-web&post_logout_redirect_uri=http%3A%2F%2Fdocs.test%2Fsigned-out';
+  await h.answer(request, { ok: true, scope: 'platform', redirect: logout }); await leaving;
+  assert.equal(h.render().me, null);
+  assert.deepEqual(h.navigation, [['replace', logout]]);
+  assert.equal(h.requests.filter(r => r.path === '/api/auth/logout').length, 0);
+});
+
 test('an expired session (not a sign-out) is still sent to sign in with its return address', async () => {
   const h = await setup({ search: '?tab=security' }); await h.bootstrap();
   h.window.dispatchEvent(new CustomEvent('synwevo:session-expired', { detail: {} })); h.render();

@@ -270,14 +270,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // RequireSession must not answer that with a sign-in redirect (see there).
     signingOut = true;
     try {
-      await post("/api/auth/logout", {});
+      // On a relying party (Docs, the portal) "退出登录" means leaving Synwevo, not just this one
+      // application: the relying party ends its own session and hands back the account
+      // service's logout URL, which ends the central session — and, through the back channel,
+      // every other application's — before returning to this origin's /signed-out. Ending only
+      // the local session used to land on a page saying the unified sign-in had ended while the
+      // platform session was still alive, and the next person at a shared computer was still
+      // signed in on the portal. The account service itself, and the single-process deployment
+      // ("all"), end the central session directly.
+      const relyingParty = state?.role === "app" || state?.role === "portal";
+      let destination = "/logged-out";
+      if (relyingParty) {
+        const out = await post<{ ok: boolean; scope: string; redirect?: string }>("/api/auth/sign-out?everywhere=true", {});
+        if (out.redirect) destination = out.redirect;
+      } else {
+        await post("/api/auth/logout", {});
+      }
       invalidate();
       try { localStorage.setItem("synwevo.signed-out", String(Date.now())); } catch { /* server revocation remains authoritative */ }
       // A full reload clears every cached query, preview and grid still holding the previous
       // account's data. Wiping React state alone would leave those in memory for the next login.
-      window.location.replace("/logged-out");
+      window.location.replace(destination);
     } catch (e) { signingOut = false; if (generation === getSessionGeneration()) setError(asApiError(e)); throw e; }
-  }, [invalidate]);
+  }, [invalidate, state?.role]);
 
   return <SessionCtx.Provider value={{ me, state, refresh, signOut, disabled, error }}>
     {resetting ? <PageState>{t("加载中…")}</PageState> : children}
