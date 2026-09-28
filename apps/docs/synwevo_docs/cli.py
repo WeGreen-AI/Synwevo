@@ -431,7 +431,8 @@ def cmd_projects(args) -> int:
             print("\n这是 dry-run，什么都没有改动。确认无误后加 --apply。")
             return 0
         if args.delete and not args.i_understand_delete_is_permanent:
-            print("\n删除是不可逆的。归档（默认）可以随时撤销。"
+            print("\n删除在界面里是不可逆的（项目不再出现，也无法从界面恢复；数据与文件仍留在库中，"
+                  "直到按保留策略回收）。归档（默认）可以随时撤销。"
                   "确实要删除请同时加 --i-understand-delete-is-permanent。")
             return 2
         for e in targets:
@@ -512,7 +513,8 @@ def main() -> int:
     pr.add_argument("action", choices=["list", "prune"])
     pr.add_argument("--id", action="append", help="明确指定项目 ID（可重复）；指定后不再依据判定自动选择")
     pr.add_argument("--apply", action="store_true", help="真正执行；不加就是 dry-run")
-    pr.add_argument("--delete", action="store_true", help="硬删除而不是归档（不可逆）")
+    pr.add_argument("--delete", action="store_true",
+                    help="标记为已删除而不是归档：界面与接口不再提供，界面里无法恢复；数据与文件仍在库中（不是硬删除，回收另行决定）")
     pr.add_argument("--i-understand-delete-is-permanent", action="store_true", help=argparse.SUPPRESS)
     pr.add_argument("--json", action="store_true", help="list 输出 JSON")
     pr.set_defaults(func=cmd_projects)

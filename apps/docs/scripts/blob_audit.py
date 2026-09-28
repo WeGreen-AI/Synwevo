@@ -52,6 +52,14 @@ DIRECT = [
     ("artifacts", "blob"),
     # Previews and layout PDFs. No row owns them; the grant *is* the reference.
     ("blob_grants", "blob"),
+    # The same store serves Synwevo Message and resumable uploads and organization publications,
+    # each behind its own read gate that `authz._REACHABLE` does not describe. Missing them made
+    # every message attachment whose bytes are its own look like an orphan (docs/platform/
+    # blob-reclamation.md §1.2).
+    ("message_attachments", "blob"),
+    ("uploads", "blob"),                       # a completed upload not used yet: its only reference
+    ("organization_templates", "working_blob"),  # outlives the source template by design
+    ("organization_template_releases", "working_blob"),
 ]
 
 # References that live *inside* JSON and are invisible to a per-column scan. Each entry is a
@@ -64,6 +72,18 @@ JSON_PATHS = [
     ("jobs", "snapshot", "$.sources[*].parsed_blob"),
     ("jobs", "snapshot", "$.sources[*].working_blob"),
     ("templates", "info", "$.image.original_blob"),
+    ("organization_templates", "info", "$.image.original_blob"),
+    ("organization_template_releases", "info", "$.image.original_blob"),
+]
+
+# Files on disk (outside the database) that name blobs: a captured regression case keeps its
+# template's fill options, image original included (regression.py). Walked like a JSON column.
+FILE_ROOTS = [("regression", "*/*/case.json", "回归用例的 case.json（模板图片原图）")]
+
+# Columns that hold the bytes themselves (SQLite BLOBs), not a digest: guessing "a column named
+# *blob* holds an id" would hand these to `blob_path()`.
+INLINE_BYTES = [
+    ("users", "avatar_blob"), ("organization_avatars", "image"), ("conversation_avatars", "image"), ("collab_docs", "state"),
 ]
 
 # Columns that look like a blob id (64 hex characters) but are not one. Listed so a future
@@ -78,9 +98,24 @@ LOOKALIKES = [
     ("recovery_codes", "code_hash", "恢复码哈希，不是 blob"),
     ("email_tokens", "token_hash", "邮件令牌哈希，不是 blob"),
     ("passkeys", "credential_id", "WebAuthn 凭据 id，不是 blob"),
+    ("uploads", "sha256", "客户端声明的摘要；完成后才等于 uploads.blob"),
+    ("member_imports", "sha256", "导入原文件在 member_imports/，不在 blob 存储里"),
+    ("project_copies", "digest", "复制申请的清单指纹；执行时重读活行，不钉住字节"),
 ]
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _cross_check_against_quarantine() -> list | None:
+    """The second read gate that names referencing tables: the quarantine's own list (it tells an
+    operator which application still points at withdrawn bytes). Tables it names and this file
+    does not cover are an under-report, like `_cross_check_against_authz`."""
+    try:
+        from synwevo_core.quarantine import REFERENCING_TABLES
+    except ImportError:
+        return None
+    covered = {t for t, _ in DIRECT} | {t for t, _, _ in JSON_PATHS}
+    return sorted({t for tables in REFERENCING_TABLES.values() for t in tables} - covered)
 
 
 def _cross_check_against_authz() -> list | None:
@@ -107,6 +142,16 @@ def _cross_check_against_authz() -> list | None:
                 # verdict a row is checked against); json_each is SQLite's JSON table function.
                 missing.append(t)
     return sorted(set(missing))
+
+
+def _file_root(data_dir: Path, root: str) -> Path | None:
+    if root == "regression":
+        try:
+            from synwevo_docs.regression import cases_root
+            return cases_root(data_dir)       # SYNWEVO_DOCS_REGRESSION_DIR may move it out of the data directory
+        except ImportError:
+            return data_dir / "regression"
+    return data_dir / root
 
 
 def _tables(c) -> set:
@@ -164,6 +209,18 @@ def audit(data_dir: Path) -> dict:
         embedded[f"{table}.{col}"] = set(found)
         embedded_refs += len(found)
 
+    for root, pattern, _why in FILE_ROOTS:
+        base = _file_root(data_dir, root)
+        found = []
+        if base is not None and base.is_dir():
+            for f in base.glob(pattern):
+                try:
+                    _walk(json.loads(f.read_text(encoding="utf-8")), found)
+                except (OSError, ValueError):
+                    continue
+        embedded[f"file:{root}"] = set(found)
+        embedded_refs += len(found)
+
     referenced = set().union(*direct.values()) if direct else set()
     embedded_all = set().union(*embedded.values()) if embedded else set()
     only_json = embedded_all - referenced
@@ -172,11 +229,19 @@ def audit(data_dir: Path) -> dict:
     on_disk = set()
     blobs = data_dir / "blobs"
     total_bytes = 0
+    partial: list[str] = []                   # put_blob's temporary files left by a crash
+    misplaced: list[str] = []                 # a digest outside its <h[:2]>/ directory
     if blobs.is_dir():
         for p in blobs.rglob("*"):
-            if p.is_file() and HEX64.match(p.name):
+            if not p.is_file():
+                continue
+            if HEX64.match(p.name):
                 on_disk.add(p.name)
                 total_bytes += p.stat().st_size
+                if p.parent.name != p.name[:2]:
+                    misplaced.append(p.name)
+            else:
+                partial.append(str(p.relative_to(blobs)))
 
     # Bytes withdrawn on purpose (CI-90). Their rows still name the digest — that is the record of
     # the verdict — so "referenced and absent" is expected for them and must not read as data loss,
@@ -212,8 +277,22 @@ def audit(data_dir: Path) -> dict:
                 infected.add(tid)
         for tid, working in c.execute("SELECT template_id, working_blob FROM template_versions WHERE working_blob IS NOT NULL"):
             (rejected_refs if tid in infected else live_refs).add(working)
+    if "message_attachments" in have and "status" in _columns(c, "message_attachments"):
+        for blob, status in c.execute("SELECT blob, status FROM message_attachments WHERE blob IS NOT NULL"):
+            (rejected_refs if status == "rejected" else live_refs).add(blob)
+    for table in ("organization_templates", "organization_template_releases"):
+        if table in have and {"working_blob", "info"} <= _columns(c, table):
+            for working, info in c.execute(f"SELECT working_blob, info FROM {table}"):
+                try:
+                    doc = json.loads(info) if info else {}
+                except ValueError:
+                    doc = {}
+                infected = ((doc.get("scan") or {}).get("status") == "infected") if isinstance(doc, dict) else False
+                img = ((doc.get("image") or {}).get("original_blob")) if isinstance(doc, dict) else None
+                (rejected_refs if infected else live_refs).update(b for b in (working, img) if b)
     for table, col in DIRECT:
-        if table in ("source_files", "templates", "template_versions") or table not in have or col not in _columns(c, table):
+        if table in ("source_files", "templates", "template_versions", "message_attachments",
+                     "organization_templates", "organization_template_releases") or table not in have or col not in _columns(c, table):
             continue
         live_refs |= direct.get(f"{table}.{col}", set())
     index: dict[str, str] = {}
@@ -248,10 +327,15 @@ def audit(data_dir: Path) -> dict:
         ).fetchone()[0]
         if n:
             lookalike_hits.append({"column": f"{table}.{col}", "rows": n, "why": why})
+    inline = [f"{t}.{col}" for t, col in INLINE_BYTES if t in have and col in _columns(c, t)]
     c.close()
 
     return {
         "authz_tables_not_covered": _cross_check_against_authz(),
+        "quarantine_tables_not_covered": _cross_check_against_quarantine(),
+        "partial_writes": sorted(partial),
+        "misplaced": sorted(misplaced),
+        "inline_byte_columns": inline,
         "blobs_on_disk": len(on_disk),
         "bytes_on_disk": total_bytes,
         "direct": {k: len(v) for k, v in direct.items()},
@@ -287,7 +371,8 @@ def main() -> int:
     # Exit status carries the two findings that make this inventory unsafe to act on: bytes that
     # are referenced but gone, and an inventory narrower than what the server serves (or one that
     # could not be compared at all). Automation reads the status, not the prose.
-    failed = bool(r["referenced_but_missing"]) or bool(r["quarantine_copy_missing"]) or r["authz_tables_not_covered"] != []
+    failed = (bool(r["referenced_but_missing"]) or bool(r["quarantine_copy_missing"]) or r["authz_tables_not_covered"] != []
+              or r["quarantine_tables_not_covered"] != [])
 
     if args.json:
         out = {k: v for k, v in r.items() if k != "referenced_all"}
@@ -324,9 +409,12 @@ def main() -> int:
     orphans = r["unreferenced_on_disk"]
     print(f"磁盘上但无人引用：{len(orphans)} 个")
     if orphans:
-        print("     注意：这些**不能直接当作可删除**。脱敏产物（services.py:271）写完之后 id 只出现在")
-        print("     HTTP 响应里，不进任何可查询的列——它们在这里看起来就是孤儿。（这一类同时也不可读：")
-        print("     没有 grant，`/api/desensitized/{blob}` 会 404，所以它们确实是死字节。）")
+        print("     注意：这些**不能直接当作可删除**。写入与插行之间、内容去重命中时，引用只在进程内存里")
+        print("     （见 docs/platform/blob-reclamation.md §1.5）；回收需要宽限期、写入方锁与两阶段移除。")
+    if r["partial_writes"]:
+        print(f"blobs/ 里的非 blob 文件（写入中断留下的临时文件等）：{len(r['partial_writes'])} 个")
+    if r["misplaced"]:
+        print(f"不在自己目录（<前两位>/）里的 blob：{len(r['misplaced'])} 个")
     print()
 
     gaps = r["authz_tables_not_covered"]
@@ -338,6 +426,18 @@ def main() -> int:
         print("!! 授权层会认为可读、但本清点没有覆盖的表：" + "、".join(gaps))
         print("   这意味着这份清点比服务器实际会提供的内容更窄——基于它做回收会删掉正在被服务的字节。")
         print("   请把这些表加进 DIRECT 或 JSON_PATHS 之后再使用本工具。")
+        print()
+
+    qgaps = r["quarantine_tables_not_covered"]
+    if qgaps is None:
+        print("!! 无法导入 synwevo_core.quarantine，没有核对清点是否覆盖隔离模块列出的引用表。")
+        print()
+    elif qgaps:
+        print("!! 隔离模块列出、但本清点没有覆盖的引用表：" + "、".join(qgaps))
+        print()
+
+    if r["inline_byte_columns"]:
+        print("存字节本身（不是摘要）的列，不属于 blob 存储：" + "、".join(r["inline_byte_columns"]))
         print()
 
     if r["lookalike_columns"]:

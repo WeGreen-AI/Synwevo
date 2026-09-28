@@ -467,10 +467,18 @@ def purge(store: Store, sha: str, *, by: str) -> dict:
     return entry
 
 
+#: Every table whose rows point at stored bytes, per application — data, so the reference
+#: inventory (apps/docs/scripts/blob_audit.py) can be checked against it rather than drift.
+REFERENCING_TABLES = {
+    "docs": ("source_files", "templates", "template_versions", "organization_templates", "organization_template_releases"),
+    "messages": ("message_attachments",),
+}
+
+
 def unmarked_references(store: Store, sha: str) -> dict[str, int]:
     """Rows of each application that still point at these bytes without being marked rejected —
     read-only, for the operator summary ("run the other application's rescan too"). The tables
-    are the ones `Store` creates; nothing here imports an application."""
+    are the ones `Store` creates (`REFERENCING_TABLES`); nothing here imports an application."""
     q = {
         "docs": [
             ("SELECT COUNT(*) AS n FROM source_files WHERE blob=? AND COALESCE(status,'')<>'rejected'", (sha,)),

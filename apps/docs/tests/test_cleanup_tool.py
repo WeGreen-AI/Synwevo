@@ -189,3 +189,69 @@ def test_the_inventory_refuses_to_be_narrower_than_the_authorization_check(monke
         authz._REACHABLE + ("SELECT 1 FROM some_future_table WHERE blob=:b AND tenant=:t",))
     assert "some_future_table" in blob_audit._cross_check_against_authz(), \
         "新增一条可达性规则必须让清点报警，而不是悄悄少算"
+
+
+def test_the_blob_audit_counts_every_store_the_blob_store_serves(tmp_path, monkeypatch):
+    """docs/platform/blob-reclamation.md §1.2: Synwevo Message attachments, resumable uploads and
+    organization publications keep bytes in the same store, each behind its own read gate that
+    `authz._REACHABLE` does not describe. The inventory missed all of them, so a collector built
+    on it would have deleted every message attachment whose bytes are its own on its first run.
+    TEST FIXTURE rows, one per kind of reference."""
+    audit = _blob_audit().audit
+    from synwevo_core.store import Store, now
+
+    store = Store(tmp_path)
+    blobs = tmp_path / "blobs"
+    d = {k: ch * 64 for k, ch in (("attachment", "1"), ("upload", "2"), ("publication", "3"), ("release", "4"),
+                                    ("pub_image", "5"), ("case_image", "6"), ("orphan", "7"))}
+    for digest in d.values():
+        (blobs / digest[:2]).mkdir(parents=True, exist_ok=True)
+        (blobs / digest[:2] / digest).write_bytes(b"x")
+    (blobs / "11" / (d["attachment"] + ".tmpab12cd")).write_bytes(b"half")      # a crashed put_blob
+    t = now()
+    store.execute("INSERT INTO message_attachments (id,conversation_id,uploader_id,filename,size,blob,content_type,status,created_at) "
+                  "VALUES ('a1','c1','u1','f.pdf',1,?,'application/pdf','accepted',?)", (d["attachment"], t))
+    store.execute("INSERT INTO uploads (id,tenant,filename,size,status,blob,created_at,updated_at,expires_at) "
+                  "VALUES ('up1','default','f.xlsx',1,'complete',?,?,?,?)", (d["upload"], t, t, t + 86400))
+    store.execute("INSERT INTO organization_templates (id,organization_id,source_tenant,template_id,name,format,version_no,working_blob,slots,info,"
+                  "published_by,published_at,updated_at) VALUES ('ot1','o1','w1','t_gone','n','docx',1,?,'[]',?,'u1',?,?)",
+                  (d["publication"], json.dumps({"image": {"original_blob": d["pub_image"]}}), t, t))
+    store.execute("INSERT INTO organization_template_releases (publication_id,release_no,version_no,working_blob,slots,released_by,released_at) "
+                  "VALUES ('ot1',1,1,?,'[]','u1',?)", (d["release"], t))
+    case = tmp_path / "regression" / "w1" / "case1"
+    case.mkdir(parents=True)
+    (case / "case.json").write_text(json.dumps({"template": {"fill_options": {"image": {"original_blob": d["case_image"]}}}}))
+    monkeypatch.delenv("SYNWEVO_DOCS_REGRESSION_DIR", raising=False)
+
+    r = audit(tmp_path)
+    assert r["unreferenced_on_disk"] == [d["orphan"]], r["unreferenced_on_disk"]
+    assert r["referenced_but_missing"] == []
+    assert r["partial_writes"] == ["11/" + d["attachment"] + ".tmpab12cd"]
+    assert r["quarantine_tables_not_covered"] == [] and r["authz_tables_not_covered"] == []
+    assert {"users.avatar_blob", "collab_docs.state"} <= set(r["inline_byte_columns"])
+
+
+def test_a_rejected_attachment_withdrawn_from_the_store_is_not_a_loss(tmp_path):
+    audit = _blob_audit().audit
+    from synwevo_core.store import Store, now
+
+    store = Store(tmp_path)
+    (tmp_path / "blobs").mkdir(exist_ok=True)
+    gone = "8" * 64
+    store.execute("INSERT INTO message_attachments (id,conversation_id,uploader_id,filename,size,blob,content_type,status,created_at) "
+                  "VALUES ('a1','c1','u1','f.pdf',1,?,'application/pdf','rejected',?)", (gone, now()))
+    (tmp_path / "quarantine").mkdir()
+    (tmp_path / "quarantine" / f"{gone}.json").write_text(json.dumps({"state": "purged"}))
+    r = audit(tmp_path)
+    assert r["referenced_but_missing"] == [] and r["withdrawn_absent"] == [gone]
+    # the same digest named by a clean attachment is a loss
+    store.execute("INSERT INTO message_attachments (id,conversation_id,uploader_id,filename,size,blob,content_type,status,created_at) "
+                  "VALUES ('a2','c1','u1','g.pdf',1,?,'application/pdf','accepted',?)", (gone, now()))
+    assert audit(tmp_path)["referenced_but_missing"] == [gone]
+
+
+def test_the_inventory_refuses_to_be_narrower_than_the_quarantine_list(monkeypatch):
+    mod = _blob_audit()
+    from synwevo_core import quarantine
+    monkeypatch.setitem(quarantine.REFERENCING_TABLES, "future_app", ("future_files",))
+    assert mod._cross_check_against_quarantine() == ["future_files"]

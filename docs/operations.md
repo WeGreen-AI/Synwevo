@@ -166,8 +166,10 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 * **日志**：进程 stdout/stderr。未预期错误会打印 `request_id` 与堆栈，与响应体中的 `request_id` 一致。
 * **容量**：单任务样本上限 `SYNWEVO_DOCS_MAX_RECORDS_PER_JOB`（默认 20 000）；文件大小上限 `SYNWEVO_DOCS_MAX_FILE_MB`。
   PDF 导出依赖 LibreOffice 串行转换（实测约 0.5–1 秒/份，取决于机器）。基准数据见 [ACCEPTANCE.md](ACCEPTANCE.md)。
-* **清理**：产物默认长期保留。需要清理时，按任务删除产物记录并移除未被引用的 blob；删除后接口返回
-  `410 artifact_deleted`，界面显示对应提示（不会给出损坏文件）。
+* **清理**：产物默认长期保留。**目前没有**按任务删除产物或回收未引用 blob 的工具（`artifacts.deleted_at`
+  会被读取、从未被写入；读到它时接口返回 `410 artifact_deleted`）。回收的设计、前置条件与需要持有人决定的事项见
+  [platform/blob-reclamation.md](platform/blob-reclamation.md)；在那之前不要手工删除 `blobs/` 下的任何文件——
+  一个 blob 可能同时被 Docs 来源、消息附件、组织发布和任务快照引用。只读清点：`apps/docs/scripts/blob_audit.py`。
 
 ## 5. 故障处理
 
