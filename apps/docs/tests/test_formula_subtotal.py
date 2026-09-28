@@ -83,8 +83,9 @@ def test_subtotal_skips_nested_subtotals_and_101_to_111_skip_hidden_rows():
 def test_subtotal_refusals_and_errors():
     cells = {"S": {(0, 0): ("v", 1.0), (1, 0): ("v", 2.0)}}
     b = Book({"S": {**cells["S"], (5, 5): ("f", "SUBTOTAL(12,A1:A2)"), (5, 6): ("f", "SUBTOTAL(9)"),
-                    (5, 7): ("f", "SUBTOTAL(9,1+1)")}})
+                    (5, 7): ("f", "SUBTOTAL(9,1+1)"), (5, 8): ("f", "SUBTOTAL(9,#REF!)")}})
     assert b.value("S", 5, 5) == XLError("#VALUE!") and b.value("S", 5, 6) == XLError("#VALUE!")
+    assert b.value("S", 5, 8) == XLError("#REF!")        # a section whose lines were removed, as Excel shows it
     with pytest.raises(Unsupported):
         b.value("S", 5, 7)                     # not a reference: left to the fallback, not guessed
 

@@ -693,6 +693,8 @@ def _subtotal(e: "_Eval", args):
     b = e.b
     ranges = []
     for node in args[1:]:
+        if node[0] == "err":                   # a reference that went away (#REF!): Excel's result too
+            raise _Raise(node[1])
         if node[0] != "ref":
             raise Unsupported("SUBTOTAL 的参数不是单元格引用")
         sheet, r1, c1, r2, c2 = b.area(e.sheet, node[1])
