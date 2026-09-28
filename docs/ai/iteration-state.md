@@ -51,7 +51,7 @@
 | D3 | 部分完成 | test_formula（86 个）；CI-37；CI-95（已部署）TODAY/NOW 按提交人时区与提交时刻 | 来源里无缓存的 TODAY 仍按服务器时钟（边界已写明） |
 | D4 | 已完成（已部署） | CI-37；PDF 坐标/旋转/DPI | Docs 无智能映射建议（仅成员导入有） |
 | D5 | 已完成（已部署） | 预览与生成共用计划；DW-057 | Office 实机只核对过一次 |
-| D6 | 已完成（已部署） | off/warn/fit/shrink；DW-049/057 | PPTX 超出只警告 |
+| D6 | 已完成（已部署；CI-119 待部署） | off/warn/fit/shrink；DW-049/057；CI-119 | PPTX 表格超出：warn/off 警告，fit 该份失败；PPTX 不自动分页；文本框文字溢出不检测 |
 | D7 | 已完成（已部署） | test_s11b；DW-001…008 | 多进程长时并发未验证 |
 | D8 | 已完成（已部署） | permissions.md §6；test_jobs_authority | — |
 | D9 | 部分完成 | DW-002/004/007；blob_grants | 无 blob 回收（Q4） |
