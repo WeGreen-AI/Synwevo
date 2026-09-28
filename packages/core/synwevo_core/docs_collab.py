@@ -44,5 +44,8 @@ CREATE INDEX IF NOT EXISTS ix_project_activity_project ON project_activity (proj
 # v22: the text of the block as it was before an edit (bounded), beside the excerpt of what it became,
 # so the change log can show the insertions and deletions rather than only naming the block.
 # Added with ALTER TABLE by the store (guarded by PRAGMA table_info like every other column).
-COLUMNS = [("collab_changes", "before", "TEXT")]
+COLUMNS = [("collab_changes", "before", "TEXT"),
+           # CI-115: which seeding of the live document this draft continues (a restore or a reseed
+           # starts a new one; a tab holding the previous one must not merge it back)
+           ("collab_docs", "epoch", "TEXT")]
 

@@ -76,8 +76,13 @@ def world(tmp_path, monkeypatch):
 class Peer:
     """A browser's share of the protocol: a local document kept in sync through the socket."""
 
-    def __init__(self, client, tid, *, origin="http://testserver", workspace=None, path="templates", doc: Doc | None = None):
-        url = f"/api/collab/{path}/{tid}" + (f"?workspace={workspace}" if workspace else "")
+    def __init__(self, client, tid, *, origin="http://testserver", workspace=None, path="templates", doc: Doc | None = None,
+                 epoch: str | None = None):
+        # `epoch`: what a browser tab sends when it reconnects with the document it already holds (CI-115)
+        q = [f"workspace={workspace}"] if workspace else []
+        if epoch:
+            q.append(f"epoch={epoch}")
+        url = f"/api/collab/{path}/{tid}" + (f"?{'&'.join(q)}" if q else "")
         self.cm = client.websocket_connect(url, headers={"origin": origin})
         self.ws = self.cm.__enter__()
         self.doc = doc if doc is not None else Doc()          # a browser reconnecting brings its own document along
@@ -652,4 +657,46 @@ def test_a_save_from_the_room_leaves_newer_typing_unsaved(world):
     r = ce.put(f"/api/templates/{tid}/builtin", json={"editor": body("客户：甲乙"), "base_version": 2})
     assert r.status_code == 200 and a.recv_meta("head")["dirty"] is False
     a.close()
+    b.close()
+
+
+def test_a_tab_holding_a_replaced_document_is_not_merged_back(world):
+    """CI-115: an editor typed, left, and the owner restored an older version (discarding that edit
+    explicitly). The editor's tab still held its document; reconnecting, it synced it into the
+    freshly seeded room and put the discarded text back next to the restored one. The room now
+    starts a new epoch whenever it seeds from a version, and a tab from a previous one is refused."""
+    tid = world["tid"]
+    c = world["client_for"](world["owner"])
+    v2 = {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "第二版"}]}]}}
+    assert c.put(f"/api/templates/{tid}/builtin", json={"editor": v2, "base_version": 1}).status_code == 200
+    a = _connect(world, "editor")
+    first = a.hello["epoch"]
+    assert first and a.texts() == ["第二版"]
+    a.append_text("（被丢弃的修改）")
+    time.sleep(0.2)
+    a.close()
+    r = c.post(f"/api/templates/{tid}/restore", json={"version": 1, "base_head": 2, "discard_live": True})
+    assert r.status_code == 200 and r.json()["head"] == 3
+    with pytest.raises(WebSocketDisconnect) as e:
+        Peer(world["client_for"](world["editor"]), tid, doc=a.doc, epoch=first).connect()
+    assert e.value.code == 4409 and e.value.reason == "stale_document"
+    fresh = _connect(world, "owner")
+    assert fresh.texts() == ["客户："] and fresh.hello["epoch"] != first, "nothing of the replaced document came back"
+    fresh.close()
+
+
+def test_a_tab_reconnecting_to_the_same_document_keeps_its_offline_edits(world):
+    """The epoch only changes when the room seeds from a version: a reconnect to the same live
+    document (a network drop, a restart from the persisted draft) still merges what was typed offline."""
+    tid = world["tid"]
+    a = _connect(world, "editor")
+    epoch = a.hello["epoch"]
+    b = _connect(world, "owner")                             # keeps the room open while the editor is away
+    a.close()
+    a.append_text_offline("（离线）")
+    a2 = Peer(world["client_for"](world["editor"]), tid, doc=a.doc, epoch=epoch)
+    a2.hello = a2.connect()
+    assert a2.hello["epoch"] == epoch
+    assert b.recv(want="update") == "update" and b.texts() == ["客户：（离线）"]
+    a2.close()
     b.close()

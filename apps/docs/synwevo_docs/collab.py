@@ -61,6 +61,9 @@ log = logging.getLogger("synwevo.docs.collab")
 MESSAGE_META = 100                 # this server's own frames beside sync (0), awareness (1), query awareness (3)
 MESSAGE_QUERY_AWARENESS = 3
 CLOSE_BAD_REQUEST, CLOSE_UNAUTHORIZED, CLOSE_FORBIDDEN, CLOSE_NOT_FOUND, CLOSE_GONE, CLOSE_ERROR = 4400, 4401, 4403, 4404, 4410, 1011
+#: A tab reconnecting with a document from a previous seeding of the room (CI-115): merging it would
+#: put back what a restore replaced, next to the restored text.
+CLOSE_STALE = 4409
 PERSIST_DELAY_S = 1.0
 # The largest frame a client may send. A keystroke is bytes, a paste a few KB, a whole document's
 # sync step well under a megabyte for the templates this editor holds; uvicorn's own ceiling is
@@ -140,6 +143,9 @@ class Room:
         self.doc = Doc()
         self.awareness = Awareness(self.doc)
         self.recovered = False                     # the persisted draft was unreadable and the head version was used instead
+        #: which seeding this live document continues: new whenever the room starts from a version
+        #: instead of its own persisted state (CI-115)
+        self.epoch: str | None = None
         self.clients: set[Conn] = set()
         self.head: int | None = None
         self.dirty = False
@@ -158,6 +164,7 @@ class Room:
             try:
                 self.doc.apply_update(bytes(row["state"]))
                 self.dirty = bool(row.get("dirty"))
+                self.epoch = row.get("epoch") or new_id("ep")      # a draft from before epochs: this seeding from now on
             except Exception:                                # noqa: BLE001 — a corrupt draft must not keep the room from opening
                 log.exception("collab %s: the persisted live state could not be read; reseeding from v%s (the draft is lost)", self.key, template["head"])
                 self.doc = Doc()
@@ -165,11 +172,13 @@ class Room:
                 seed(self.doc, editor_of_head())
                 self.dirty = False
                 self.recovered = True
+                self.epoch = new_id("ep")
         else:
             if row:
                 log.info("collab %s: persisted live state was for v%s, head is v%s — reseeding", self.key, row.get("head"), template["head"])
             seed(self.doc, editor_of_head())
             self.dirty = False
+            self.epoch = new_id("ep")
         self.head = template["head"]
         self.pending.clear()                       # seeding/loading is not a change anyone made
         self.blocks = block_texts(self.doc)
@@ -461,9 +470,9 @@ class CollabHub:
     # ---- persistence (worker threads) -----------------------------------------------------------
     def write_state(self, room: Room, state: bytes) -> None:
         self.store.execute(
-            "INSERT INTO collab_docs (room, tenant, template_id, state, head, dirty, updated_at) VALUES (?,?,?,?,?,?,?) "
-            "ON CONFLICT(room) DO UPDATE SET state=excluded.state, head=excluded.head, dirty=excluded.dirty, updated_at=excluded.updated_at",
-            (room.key, room.tenant, room.tid, state, room.head, 1 if room.dirty else 0, now()))
+            "INSERT INTO collab_docs (room, tenant, template_id, state, head, dirty, epoch, updated_at) VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(room) DO UPDATE SET state=excluded.state, head=excluded.head, dirty=excluded.dirty, epoch=excluded.epoch, updated_at=excluded.updated_at",
+            (room.key, room.tenant, room.tid, state, room.head, 1 if room.dirty else 0, room.epoch, now()))
 
     def record_changes(self, room: Room, user_id: str | None, rows: list[tuple], *, coalesce: bool = True) -> None:
         t = now()
@@ -613,13 +622,19 @@ class CollabHub:
         if room is None:
             await ws.close(code=CLOSE_BAD_REQUEST, reason="not_builtin_doc")
             return
+        held = ws.query_params.get("epoch")
+        if held and room.epoch and held != room.epoch:
+            # the tab's document belongs to a previous seeding (the room was restored or reseeded while
+            # it was away): its sync would merge the replaced text back next to the new one (CI-115)
+            await ws.close(code=CLOSE_STALE, reason="stale_document")
+            return
         user = info["user"]
         conn = Conn(ws=ws, user_id=user["id"], name=display_name(user), color=peer_color(user["id"]),
                     readonly=info["role"] not in WRITE_ROLES, workspace_id=info["wid"], request=req, path=path)
         await ws.accept()
         room.clients.add(conn)
         await conn.meta({"type": "hello", "kind": room.kind, "writable": room.writable, "recovered": room.recovered, "user": {"id": conn.user_id, "name": conn.name, "color": conn.color}, "readonly": conn.readonly,
-                         "head": room.head, "dirty": room.dirty, "changes_rev": room.changes_rev, "peers": room.peers(exclude=conn),
+                         "head": room.head, "dirty": room.dirty, "changes_rev": room.changes_rev, "peers": room.peers(exclude=conn), "epoch": room.epoch,
                          "recheck_s": recheck_seconds()})
         await conn.send(create_sync_message(room.doc))
         others = [cid for cid in room.awareness.states if cid != room.awareness.client_id]

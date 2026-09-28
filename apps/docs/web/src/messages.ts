@@ -1282,6 +1282,10 @@ export const messages = {
     "en": "This template's fields are added and removed in “Edit template”",
     "zh-Hant": "這個模板的欄位在「編輯模板」裡新增或刪除"
   },
+  "你离开期间，模板被恢复或替换了；你在旧内容上的修改无法合并，这里显示的是已保存的版本。刷新页面即可继续实时协同。": {
+    "en": "While you were away the template was restored or replaced; your changes to the old content could not be merged, so this shows the saved version. Refresh the page to continue editing live.",
+    "zh-Hant": "你離開期間，模板被恢復或替換了；你在舊內容上的修改無法合併，這裡顯示的是已儲存的版本。重新整理頁面即可繼續即時協同。"
+  },
   "组内取值冲突": {
     "en": "Conflicting values within group",
     "zh-Hant": "組內取值衝突"

@@ -21,7 +21,7 @@ export interface PeerInfo { id: string; name: string; color: number; readonly?: 
 export interface Focus { kind: "slot" | "mapping" | "source" | "cell" | "sheet"; id: string }
 export interface ChangeFrame { kind: string; detail: Record<string, any>; by: PeerInfo | null; at: number; seq: number }
 export type MetaFrame =
-  | { type: "hello"; kind?: "template" | "project"; writable?: boolean; recovered?: boolean; user: PeerInfo; readonly: boolean; head: number | null; dirty: boolean; changes_rev: number; peers: PeerInfo[]; recheck_s: number }
+  | { type: "hello"; kind?: "template" | "project"; writable?: boolean; recovered?: boolean; user: PeerInfo; readonly: boolean; head: number | null; dirty: boolean; changes_rev: number; peers: PeerInfo[]; recheck_s: number; epoch?: string | null }
   | { type: "change"; kind: string; detail: Record<string, any>; by: PeerInfo | null; at: number }
   | { type: "state"; head: number | null; dirty: boolean; changes_rev: number; online: number }
   | { type: "head"; head: number | null; dirty: boolean; changes_rev: number; online: number; reason: "save" | "restore" | "undo" | "redo" | string; by: string | null; by_id?: string | null }
@@ -117,6 +117,9 @@ export function openRoom(id: string, opts: { origin: string; workspaceId: string
     try { frame = JSON.parse(decoding.readVarString(decoder)); } catch { return; }
     switch (frame.type) {
       case "hello":
+        // Which seeding of the live document this tab now holds: sent again on every reconnect, so a
+        // room that was restored or reseeded meanwhile refuses to merge it back (4409, CI-115).
+        if (frame.epoch) provider.params = { ...provider.params, epoch: frame.epoch };
         // My other devices and tabs are not "others": the same person never shows up as a peer of themselves.
         set({ me: frame.user, readonly: frame.readonly, head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev,
               peers: (frame.peers || []).filter((p: PeerInfo) => p.id !== frame.user.id), recovered: frame.recovered === true, refused: false });
