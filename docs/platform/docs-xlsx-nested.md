@@ -118,7 +118,7 @@ DOCX 已有（CI-104，`docs-nested-details.md`）；XLSX 目前只有单行的�
 | band_formula | 块内公式无法解析 |
 | band_column_outside / duplicate_column | 块的列不在块的行内；同一单元格重复设为列（沿用 `merged_inner`、`overlap`） |
 
-生成时：`band_row_limit`（1,048,576 行）、`band_cell_limit`（`SYNWEVO_DOCS_MAX_CELLS`）、`band_formula_limit`（展开后超过
+生成时：`band_row_limit`（1,048,576 行）、`band_cell_limit`（`SYNWEVO_DOCS_MAX_BLOCK_CELLS`，默认 250 000：实测约 1.5 KB 常驻内存 / 单元格，一次填充约 420 MB）、`band_formula_limit`（展开后超过
 255 个参数或 8,192 个字符）为错误；`ref_removed` 三种警告（块没有数据被删除；某段没有明细行；每段都没有明细行）。
 改句：`group_by_unsupported` →「映射 #{no}：分段目前只支持 Word 和 Excel 模板的重复内容块；PPT / PDF 模板和表格行暂不支持嵌套明细」。
 原样复用：`nested_unconfigured`、`nested_needs_group_by`、`nested_source_mismatch`、`no_detail`、`subgroup_key_empty`、`group_conflict`。
@@ -150,7 +150,7 @@ DOCX 已有（CI-104，`docs-nested-details.md`）；XLSX 目前只有单行的�
 
 0. 既有缺陷（透视表位置、线程批注、最后一行）。1. 引擎。2. 字段与接口。3. 界面、三语言、浏览器证明、记录。
 
-**本轮不做**：块套块（多层嵌套）；每组一张工作表（跨工作表的块）；横向（按列）重复；块内图片/图形/图表/批注/超链接的复制（拒绝）；
+**本轮不做**：块套块（多层嵌套）；每组一张工作表（跨工作表的块）；横向（按列）重复；块内图片/图形/图表/批注/超链接的复制（拒绝；块是整行，「块旁边」的图表也锚定在块的行上——复制后它要么只留在第一份旁边，要么被拉长覆盖所有份，都与模板不符，所以按列判断也不能放行，复审第 8c 项维持拒绝）；
 与块相交的 Excel 表格（拒绝）；块内列的自动识别（DOCX 的「标签：值」）；内置表格编辑器里的块；图表系列指向块的一部分（拒绝）；
 子组单独排序；
 打印时每页重复块内表头（Excel 只能重复固定行）。

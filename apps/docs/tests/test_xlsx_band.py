@@ -462,14 +462,14 @@ def test_limits_on_rows_cells_and_expanded_formulas(monkeypatch):
     assert out == b"" and [e["code"] for e in errors] == ["band_formula_limit"]
     assert errors[0]["message"] == ("公式 对账单!D1204 展开到每一份后超过 Excel 的限制（每个函数最多 255 个参数、每个公式最多 8,192 个字符）："
                                     "请把段小计写成 SUBTOTAL(9, …)，合计写成覆盖整个内容块的 SUBTOTAL(9, …)——SUBTOTAL 会跳过其中的小计，不会重复计算")
-    monkeypatch.setattr(L.LIMITS, "max_cells", 20)
+    monkeypatch.setattr(L.LIMITS, "max_block_cells", 20)
     work, slots, band, rep, values = _standard()
     out, issues, errors = _fill(work, slots, values)
     assert [e["code"] for e in errors] == ["band_cell_limit"]
     def far(wb):
         wb["对账单"].cell(1_048_574, 1, "表尾")
     work, slots, band, rep, values = _standard(far)
-    monkeypatch.setattr(L.LIMITS, "max_cells", 2_000_000)
+    monkeypatch.setattr(L.LIMITS, "max_block_cells", 250_000)
     out, issues, errors = _fill(work, slots, values)
     assert [e["message"] for e in errors] == ["重复内容块「订单段」展开后工作表「对账单」共 1048579 行，超过 Excel 工作表的上限 1,048,576 行"]
 
@@ -642,6 +642,27 @@ def test_an_ordinary_rule_from_the_blocks_first_row_down_the_sheet_is_accepted()
         out, issues, errors = _fill(work, slots, values)
         assert not errors, (sqref, errors)
         assert [(sq, f) for sq, f, _ in _rules_of(out)] == [(want, [formula])]
+
+
+def test_the_default_cell_limit_stops_a_block_before_it_is_built():
+    """Review item 8b: about 1.5 KB of memory per written cell; the default (250,000 cells, about
+    420 MB) is checked before any copy exists, so a too-large fill costs nothing."""
+    from synwevo_docs.engine.limits import LIMITS
+    assert LIMITS.max_block_cells == 250_000
+    many = [(f"O-{i}", "2024-01-01", [("件", 1, "1.00")]) for i in range(8000)]    # 8,000 × 4 rows × ≤ 9 cells
+    def extra(wb):
+        for c in range(1, 10):
+            for r in range(3, 7):
+                wb["对账单"].cell(r, c).value = wb["对账单"].cell(r, c).value or "·"
+        for r in (8, 9, 10, 11):
+            wb["对账单"][f"D{r}"] = None
+        wb["汇总"]["B1"] = wb["汇总"]["B2"] = None
+    work, slots, band, rep, values = _standard(extra, orders=many)
+    t = time.perf_counter()
+    out, issues, errors = _fill(work, slots, values)
+    assert out == b"" and [e["code"] for e in errors] == ["band_cell_limit"]
+    assert errors[0]["message"].endswith("个单元格，超过上限 250000（SYNWEVO_DOCS_MAX_BLOCK_CELLS）")
+    assert time.perf_counter() - t < 10
 
 
 def test_page_break_counts_are_rewritten_when_the_block_goes():

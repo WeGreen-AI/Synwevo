@@ -164,7 +164,9 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 * **健康检查**：`/healthz`（存活）、`/readyz`（数据库可写、存储可写、任务线程存活）。建议把 `/readyz` 作为
   负载均衡的就绪探针，`/healthz` 作为存活探针。
 * **日志**：进程 stdout/stderr。未预期错误会打印 `request_id` 与堆栈，与响应体中的 `request_id` 一致。
-* **容量**：单任务样本上限 `SYNWEVO_DOCS_MAX_RECORDS_PER_JOB`（默认 20 000）；文件大小上限 `SYNWEVO_DOCS_MAX_FILE_MB`。
+* **容量**：单任务样本上限 `SYNWEVO_DOCS_MAX_RECORDS_PER_JOB`（默认 20 000）；文件大小上限 `SYNWEVO_DOCS_MAX_FILE_MB`；
+  XLSX 重复内容块一份文档最多写入的单元格数 `SYNWEVO_DOCS_MAX_BLOCK_CELLS`（默认 250 000）——实测每写入一个单元格约占 1.5 KB 常驻内存
+  （40 万个峰值 649 MB），默认值让一次填充约 420 MB；调高前先看工作进程的内存上限（验证容器与生产工作进程约 3 GB）。
   PDF 导出依赖 LibreOffice 串行转换（实测约 0.5–1 秒/份，取决于机器）。基准数据见 [ACCEPTANCE.md](ACCEPTANCE.md)。
 * **清理**：产物默认长期保留。**目前没有**按任务删除产物或回收未引用 blob 的工具（`artifacts.deleted_at`
   会被读取、从未被写入；读到它时接口返回 `410 artifact_deleted`）。回收的设计、前置条件与需要持有人决定的事项见

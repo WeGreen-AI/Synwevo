@@ -978,8 +978,8 @@ def fill_band(x: XlsxDoc, band: dict, kids: list[tuple[dict, dict]], values: dic
             proto[r] = row
     count = sum(len(proto[r].findall(s("c"))) * (sum(m[k][lay.idx[r]] for k in range(K)) if r in lay.idx else K)
                 for r in proto)
-    if count > LIMITS.max_cells:
-        raise XlsxError("band_cell_limit", f"重复内容块「{name}」展开后要写入 {count} 个单元格，超过上限 {LIMITS.max_cells}（SYNWEVO_DOCS_MAX_CELLS）")
+    if count > LIMITS.max_block_cells:
+        raise XlsxError("band_cell_limit", f"重复内容块「{name}」展开后要写入 {count} 个单元格，超过上限 {LIMITS.max_block_cells}（SYNWEVO_DOCS_MAX_BLOCK_CELLS）")
 
     # 0. references from outside that expand to every copy: parked as names the row shift leaves alone
     entries: list[Ref] = []
