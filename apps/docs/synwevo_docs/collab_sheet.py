@@ -564,6 +564,13 @@ def sheet_invariants(editor) -> list[dict]:
     return issues
 
 
+def holdable(editor) -> list[dict]:
+    """Why the live state could not hold ``editor`` (what ``seed_state`` and ``reconcile`` raise
+    ``SeedError`` for), without allocating anything; ``[]`` when it can."""
+    issues = sheet_invariants(editor)
+    return issues or _size_issues(normalize(editor))
+
+
 def normalize(editor) -> dict:
     """What the live state renders a model as: ``validate_editor``'s result with positions written
     the one way the editor writes them (``B2``, ``A1:C3``). For the models the editor and the API
@@ -845,9 +852,10 @@ class _Tx:
     """One accepted-or-refused unit: every write goes through here so it can be undone as a whole,
     turned into the patch and its inverse, and tracked against the basis."""
 
-    def __init__(self, state: dict, by: str, expect: int | None):
+    def __init__(self, state: dict, by: str, expect: int | None, cap: int | None = None):
         self.st, self.by, self.expect = state, by, expect
         self.c = state["content"]
+        self.cap = _cell_cap() if cap is None else min(_cell_cap(), cap)   # cells the state may hold after this group
         self.seq = state["seq"] + 1
         self.undo: list = []
         self.first: dict = {}
@@ -1118,8 +1126,8 @@ def _write_cell(tx: _Tx, sid: str, ck: str, cell: dict):
     if not cell:
         tx.delete(path)
         return
-    if ck not in tx.c["sheets"][sid]["cells"] and _cells(tx.c) + 1 > _cell_cap():
-        raise _Refused("too_large", what="cells", max=_cell_cap())
+    if ck not in tx.c["sheets"][sid]["cells"] and _cells(tx.c) + 1 > tx.cap:
+        raise _Refused("too_large", what="cells", max=tx.cap)
     tx.put(path, cell)
 
 
@@ -1577,8 +1585,8 @@ def _op_sheet_restore(tx: _Tx, op: dict):
         _name_free(tx, _title(name), skip=sid)            # someone took its name meanwhile: restore under a new one
     if _live_sheets(tx) >= MAX_SHEETS:
         raise _Refused("too_large", what="sheets", max=MAX_SHEETS)
-    if _cells(tx.c, live_only=True) + len(sh["cells"]) > _cell_cap():
-        raise _Refused("too_large", what="cells", max=_cell_cap())
+    if _cells(tx.c, live_only=True) + len(sh["cells"]) > tx.cap:
+        raise _Refused("too_large", what="cells", max=tx.cap)
     tx.put(("sheets", sid, "gone"), False)
     tx.kset(f"x/{sid}", sid)
     if name != sh["name"]:
@@ -1670,7 +1678,8 @@ def next_number(state: dict, client: str) -> int:
     return rec["hi"] + 1 if rec else state["nfloor"] + 1
 
 
-def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | None, trusted: bool = False) -> dict:
+def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | None, trusted: bool = False,
+          max_cells: int | None = None) -> dict:
     """Apply one operation (or one ``tx`` group) from ``client``'s ``n``-th message, sent by ``by``
     (stamped by the server) after seeing everything up to sequence number ``expect``.
 
@@ -1679,7 +1688,9 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
     returns the remembered result with ``"duplicate": True``; a number too old to know, or below
     ``next_number`` for a client the room does not know, is answered ``resync``. ``expect`` is
     required: ``None`` (no first-writer-wins check) only for the server's own writes, which say so
-    with ``trusted=True``."""
+    with ``trusted=True``. ``max_cells``: the room's own bound on cells (below ``MAX_LIVE_CELLS``); a
+    write that would pass it is refused ``too_large``. A fault inside an operation (a bug, not a
+    refusal) undoes the group before it propagates: the state is never left half-written."""
     if not isinstance(by, str) or not by:
         raise ValueError("by must name the person the server authenticated")
     if not isinstance(client, str) or not client or len(client) > 128:
@@ -1700,12 +1711,15 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
             return {"ok": False, "code": "resync", "detail": {"reason": "old_message", "next": rec["hi"] + 1}}
     if expect is not None and (type(expect) is not int or expect < 0 or expect > state["seq"]):
         return {"ok": False, "code": "resync", "detail": {"reason": "unknown_expect", "expect": _echo(expect), "seq": state["seq"]}}
-    tx = _Tx(state, by, expect)
+    tx = _Tx(state, by, expect, max_cells)
     try:
         _dispatch(tx, op, top=True)
     except _Refused as r:
         tx.rollback()
         result = {"ok": False, "code": r.code, "detail": r.detail}
+    except BaseException:
+        tx.rollback()
+        raise
     else:
         patch, before = tx.commit()
         if patch:
@@ -1716,6 +1730,15 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
         result = {"ok": True, "seq": state["seq"], "patch": patch, "before": before}
     _record(state, client, n, result)
     return result
+
+
+def forget_client(state: dict, client: str) -> None:
+    """Forget one client's remembered messages, as ``_record`` does for the least recent client when
+    the room remembers too many: ``nfloor`` rises past its numbers, so none of them can apply again
+    (a later one is told to resync). The room uses it to bound how many clients one person keeps."""
+    rec = state["clients"].pop(client, None)
+    if rec is not None:
+        state["nfloor"] = max(state["nfloor"], rec["hi"])
 
 
 def compact(state: dict, *, upto: int):

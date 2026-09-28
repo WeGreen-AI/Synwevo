@@ -212,9 +212,11 @@ def save_builtin(app: App, tid: str, body: dict, *, merge: bool = False) -> dict
         raise ServiceError(400, "invalid", "discard_live 必须是布尔值", {"field": "discard_live"})
     # A save made outside the editing room replaces the live document: not while it holds edits
     # nobody saved as a version, unless asked explicitly (CI-113). A save from inside the room
-    # saves that live document and goes through.
+    # saves that live document and goes through — in a live table room, only when the room can fold
+    # this table in (docs-sheet-live.md §9).
     from synwevo_core.context import actor as current_actor
-    app._guard_live_edits(tid, discard, "save", saver=current_actor())
+    app._guard_live_edits(tid, discard, "save", saver=current_actor(),
+                          editor=body.get("editor") if r["kind"] == "builtin_sheet" else None)
     base = body.get("base_version")
     editor = body.get("editor", {})
     merged_with = None

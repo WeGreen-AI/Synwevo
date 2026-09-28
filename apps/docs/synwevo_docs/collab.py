@@ -144,12 +144,37 @@ class Conn:
     client_key: str | None = None
     seen: int = 0
     loop: Any = None
+    rate_until: float = 0.0                # told to wait until then (monotonic): frames before it are refused unread
 
     async def send(self, data: bytes) -> None:
         try:
             await self.ws.send_bytes(data)
         except Exception:                                   # the receive loop notices the close
             pass
+
+    def post(self, data: bytes) -> None:
+        """Send without waiting, from any thread: on the connection's own event loop, in the order
+        posted (a frame posted from another thread no longer lands on a loop that may be gone)."""
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        loop = self.loop or running
+        if loop is None:
+            return
+        if loop is running:
+            asyncio.ensure_future(self.send(data))
+        elif loop.is_running():
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self.send(data)))
+
+    def close_later(self, code: int, reason: str) -> None:
+        """Close the socket from any thread; its receive loop then leaves the room."""
+        async def close():
+            with contextlib.suppress(Exception):
+                await self.ws.close(code=code, reason=reason)
+        loop = self.loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(close()))
 
     async def meta(self, payload: dict) -> None:
         await self.send(meta_frame(payload))
@@ -184,6 +209,50 @@ class Room:
         self.changes_rev = 0
         self.blocks = block_texts(self.doc)
         self.doc.observe(lambda event: self.pending.append(event.update))
+        #: registered in the hub while its state is still being read (``CollabHub._room``): version
+        #: changes that land meanwhile wait in the queue instead of missing the room
+        self.loading = False
+        #: the template was deleted: nobody joins it any more
+        self.gone = False
+        # the room's work queue (``enqueue``/``pump``): changes from other threads, run on the room's
+        # loop in arrival order, never while the room is held (opening, or folding a version in)
+        self._qlock = threading.Lock()
+        self._queued: list[Callable[[], None]] = []
+        self._holds = 0
+
+    # ---- the work queue ----------------------------------------------------------------------
+    def hold(self) -> None:
+        with self._qlock:
+            self._holds += 1
+
+    def holding(self) -> bool:
+        return self._holds > 0
+
+    def release(self) -> None:
+        """End one hold (on the room's loop) and run what waited for it."""
+        with self._qlock:
+            self._holds = max(0, self._holds - 1)
+        self.pump()
+
+    def enqueue(self, fn: Callable[[], None]) -> None:
+        """From any thread: run ``fn`` on the room's event loop after everything queued before it,
+        and not while the room is held."""
+        with self._qlock:
+            self._queued.append(fn)
+        loop = self.work_loop()
+        if loop is not None:
+            loop.call_soon_threadsafe(self.pump)
+
+    def pump(self) -> None:
+        while True:
+            with self._qlock:
+                if self._holds or not self._queued:
+                    return
+                fn = self._queued.pop(0)
+            try:
+                fn()
+            except Exception:                                # noqa: BLE001 — one change must not stop the ones after it
+                log.exception("collab %s: a queued change failed", self.key)
 
     # ---- state -------------------------------------------------------------------------------
     def load(self, template: dict, row: dict | None, editor_of_head: Callable[[], dict | None]) -> None:
@@ -258,7 +327,7 @@ class Room:
     def broadcast(self, data: bytes, exclude: Conn | None = None) -> None:
         for c in list(self.clients):
             if c is not exclude:
-                asyncio.ensure_future(c.send(data))
+                c.post(data)
 
     def broadcast_meta(self, payload: dict, exclude: Conn | None = None) -> None:
         self.broadcast(meta_frame(payload), exclude)
@@ -392,6 +461,9 @@ class CollabHub:
         self._acting: dict[str, tuple[str | None, float]] = {}
         self._lock = threading.Lock()
         self._room_locks: dict[str, asyncio.Lock] = {}
+        #: registering a room, joining it and leaving it happen under this lock, so a join never lands
+        #: in a room its last person has just closed (it opens the room again instead)
+        self._rooms_mu = threading.RLock()
         from synwevo_core.http import RateBuckets
         from .collab_sheet_room import ops_per_minute
         #: live table operations per person per room (docs-sheet-live.md §4)
@@ -473,23 +545,29 @@ class CollabHub:
             for prow in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
                 self.on_project_change(prow["id"], f"template.{reason}", {"template_id": tid, "head": head})
         if reason == "delete":
-            if room is not None and room.sheet:
-                room.forget_draft()                      # the last one out must not write it back
+            if room is not None:
+                room.gone = True                         # nobody joins it any more (serve opens it again: 404)
+                if room.sheet:
+                    room.forget_draft()                  # the last one out must not write it back
             self.store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
             self.store.execute("DELETE FROM collab_changes WHERE room=?", (key,))
-            if room is not None and self.loop is not None:
-                self.loop.call_soon_threadsafe(lambda: [asyncio.ensure_future(c.ws.close(code=CLOSE_GONE, reason="template_deleted")) for c in list(room.clients)])
+            if room is not None:
+                for c in list(room.clients):
+                    c.close_later(CLOSE_GONE, "template_deleted")
             return
         if room is None or self.loop is None:
             # Nobody is in the room: the head is the truth now; the next opener seeds from it.
             self.store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
             return
+        # A room still being opened (``_room``) read the template after it was registered: a change it
+        # already read is not applied twice (versions only ever get new numbers, so an equal head is it)
+        loading = room.loading
+        actor_name = display_name(self.identity.get_user(actor)) if actor else None
         if room.sheet:
             if reason == "save" and getattr(OWN_LIVE_SAVE, "room", None) is room:
                 return                                   # the room's own save: it marks itself saved (SheetRoom.save)
-            actor_name = display_name(self.identity.get_user(actor)) if actor else None
-            loop = room.work_loop() or self.loop
-            loop.call_soon_threadsafe(room.outside_change, head, editor, reason, actor, actor_name, discard_live)
+            room.enqueue(lambda: None if (loading and room.head == head) else
+                         room.outside_change(head, editor, reason, actor, actor_name, discard_live))
             return
         snapshot = reason == "save" and actor is not None and any(c.user_id == actor for c in room.clients)
         if room.writable and (reason != "save" or not snapshot):
@@ -497,8 +575,8 @@ class CollabHub:
             self.record_changes(room, actor, [("body", "restore" if reason in ("restore", "undo", "redo") else "replace", 0, "", became,
                                                f"v{previous}" if previous else None)], coalesce=False)
             room.changes_rev += 1
-        actor_name = display_name(self.identity.get_user(actor)) if actor else None
-        self.loop.call_soon_threadsafe(room.apply_head_change, head, editor, reason, actor_name, snapshot, actor)
+        room.enqueue(lambda: None if (loading and room.head == head) else
+                     room.apply_head_change(head, editor, reason, actor_name, snapshot, actor))
 
     def live_state(self, tid: str) -> dict:
         """What a restore, undo or redo would throw away: whether the live document carries edits
@@ -506,28 +584,35 @@ class CollabHub:
         recorded change. Read from the room when it is open, from the persisted draft otherwise."""
         key = f"template:{tid}"
         room = self.rooms.get(key)
-        sheet = False
-        if room is not None:
-            dirty, online = bool(room.dirty and room.persists()), [p["name"] for p in room.peers() if not p.get("readonly")]
-            online_ids = sorted({c.user_id for c in room.clients if not c.readonly})
-            sheet = room.sheet
-        else:
-            live = self.store.one("SELECT dirty, model FROM collab_docs WHERE room=?", (key,))
-            sheet = bool(live and live.get("model") == "sheet")
-            # a live table draft counts while the switch is on; with it off the room cannot be opened
-            # to save it, and the next version change drops it (docs-sheet-live.md §9, rollback)
-            dirty, online, online_ids = bool(live and live["dirty"] and (not sheet or sheet_live_enabled())), [], []
+        opened = room is not None and not room.loading
+        dirty, sheet = self._dirty(key, room)
+        online = [p["name"] for p in room.peers() if not p.get("readonly")] if opened else []
+        online_ids = sorted({c.user_id for c in room.clients if not c.readonly}) if opened else []
         last_by = None
         if dirty:
             uid = None
             if sheet:
-                uid = room.last_writer() if room is not None else self._draft_last_writer(key)
+                uid = room.last_writer() if opened else self._draft_last_writer(key)
             else:
                 last = self.store.one("SELECT user_id FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT 1", (key,))
                 uid = (last or {}).get("user_id")
             if uid:
                 last_by = display_name(self.identity.get_user(uid))
-        return {"dirty": dirty, "online": online, "online_ids": online_ids, "last_by": last_by}
+        # live_table: an open live table room folds an outside version in rather than replacing its
+        # edits — which it can only do for a table it can hold (services._guard_live_edits)
+        return {"dirty": dirty, "online": online, "online_ids": online_ids, "last_by": last_by,
+                "live_table": bool(opened and room.sheet and room.live())}
+
+    def _dirty(self, key: str, room: Room | None) -> tuple[bool, bool]:
+        """(unsaved live edits?, is it a live table?) — from the open room, else from the persisted
+        draft (also while a room is still being opened: its state is not read yet)."""
+        if room is not None and not room.loading:
+            return bool(room.dirty and room.persists()), room.sheet
+        row = self.store.one("SELECT dirty, model FROM collab_docs WHERE room=?", (key,))
+        sheet = bool(row and row.get("model") == "sheet")
+        # a live table draft counts while the switch is on; with it off the room cannot be opened to
+        # save it, and the next version change drops it (docs-sheet-live.md §9, rollback)
+        return bool(row and row["dirty"] and (not sheet or sheet_live_enabled())), sheet
 
     def _draft_last_writer(self, key: str) -> str | None:
         """Who last changed a persisted live table draft (nobody is in its room)."""
@@ -573,8 +658,7 @@ class CollabHub:
                           "block_no": r.get("block_no"), "node_type": r.get("node_type"), "excerpt": r.get("excerpt") or "", "before": r.get("before"),
                           "count": r.get("count") or 1, "started_at": r["started_at"], "updated_at": r["updated_at"]})
         room = self.rooms.get(key)
-        live = self.store.one("SELECT head, dirty, updated_at FROM collab_docs WHERE room=?", (key,))
-        return {"items": items, "dirty": bool(room.dirty if room else (live or {}).get("dirty")),
+        return {"items": items, "dirty": self._dirty(key, room)[0],
                 "online": room.peers() if room else [], "changes_rev": room.changes_rev if room else 0}
 
     # ---- persistence (worker threads) -----------------------------------------------------------
@@ -673,7 +757,8 @@ class CollabHub:
             await run_in_threadpool(read)                    # raises the service's 404 for a project not in this workspace
             room = Room(self, pid, tenant, kind="project")
             room.pending.clear()
-            self.rooms[key] = room
+            with self._rooms_mu:
+                self.rooms[key] = room
             return room
 
     async def _room(self, tid: str, tenant: str) -> Room | None:
@@ -681,7 +766,7 @@ class CollabHub:
         lock = self._room_locks.setdefault(key, asyncio.Lock())
         async with lock:
             room = self.rooms.get(key)
-            if room is not None:
+            if room is not None and not room.gone:
                 # The room was opened by someone in the template's workspace; a person signed into
                 # another workspace used to be let in while it was open — reading and writing the live
                 # document of a template their own workspace cannot see (CI-118). Same answer as closed.
@@ -689,53 +774,78 @@ class CollabHub:
                     not_found("模板")
                 return room
 
-            def read_all():
+            def kind_of():
                 with as_tenant(tenant):
-                    t = self.app.get_template(tid)
-                    if t.get("kind") == "builtin_sheet":
-                        if not sheet_live_enabled():
-                            return t, None, "presence"
-                        return t, self.store.one("SELECT * FROM collab_docs WHERE room=?", (key,)), "sheet"
-                    if t.get("kind") != "builtin_doc":
-                        return None, None, None
-                    row = self.store.one("SELECT * FROM collab_docs WHERE room=?", (key,))
-                    editor = None if (row and row.get("head") == t["head"] and row.get("state")) else (self.app.editor_of(tid, self.app.get_version(tid, t["head"]), t.get("kind")) or {})
-                    return t, row, editor
-            t, row, editor = await run_in_threadpool(read_all)
-            if t is None:
-                return None
-            if editor == "sheet":
+                    return self.app.get_template(tid).get("kind")
+            kind = await run_in_threadpool(kind_of)          # the service's 404 for a template not in this workspace
+            if kind == "builtin_sheet" and sheet_live_enabled():
                 # SYNWEVO_SHEET_LIVE: the live table (collab_sheet_room), or presence when it cannot be held
                 from .collab_sheet_room import SheetRoom
-
-                def sheet_head_editor() -> dict | None:
-                    with as_tenant(tenant):
-                        return self.app.editor_of(tid, self.app.get_version(tid, t["head"]), t.get("kind"))
                 room = SheetRoom(self, tid, tenant)
-                await run_in_threadpool(room.load_sheet, t, row, sheet_head_editor)
-                room.pending.clear()
-                self.rooms[key] = room
-                return room
-            if editor == "presence":
+            elif kind == "builtin_sheet":
                 # A table template: who is here and what they are on, plus version frames; the
                 # cells themselves are merged on save (builtin_service.merge_sheets).
                 room = Room(self, tid, tenant, kind="template", writable=False)
-                room.head = t["head"]
-                room.pending.clear()
+            elif kind == "builtin_doc":
+                room = Room(self, tid, tenant)
+            else:
+                return None
+            # Registered *before* its state is read: a version written meanwhile either happened before
+            # the read (the read sees it) or finds the room and waits in its queue until it is loaded.
+            # Registered after, such a version found no room, the room opened at the old head and could
+            # never save again — and a reopen reseeded it, losing what was typed (review item 3).
+            room.loading = True
+            room.hold()
+            with self._rooms_mu:
                 self.rooms[key] = room
-                return room
-            room = Room(self, tid, tenant)
-
-            def head_editor() -> dict | None:
-                # Read lazily: when a matching draft exists the head version is normally not needed,
-                # but a draft that turns out to be unreadable falls back to it (Room.load).
-                if editor is not None:
-                    return editor
-                with as_tenant(tenant):
-                    return self.app.editor_of(tid, self.app.get_version(tid, t["head"]), t.get("kind")) or {}
-            room.load(t, row, head_editor)
-            self.rooms[key] = room
+            try:
+                await self._load(room, tid, tenant, kind)
+            except BaseException:
+                with self._rooms_mu:
+                    if self.rooms.get(key) is room:
+                        del self.rooms[key]
+                raise
+            room.loading = False
+            room.pending.clear()                             # loading is not a change anyone made
+            catch_up = getattr(room, "catch_up", None)
+            if catch_up is not None:
+                room.catch_up = None
+                room.enqueue(lambda: room.outside_change(catch_up[0], catch_up[1], "save", None, None, False))
+            room.release()
             return room
+
+    async def _load(self, room: Room, tid: str, tenant: str, kind: str) -> None:
+        """Read a room's state: the head version and its persisted draft."""
+        key = room.key
+
+        def head_editor(t: dict) -> dict | None:
+            with as_tenant(tenant):
+                return self.app.editor_of(tid, self.app.get_version(tid, t["head"]), t.get("kind"))
+
+        def read():
+            with as_tenant(tenant):
+                t = self.app.get_template(tid)
+                return t, (self.store.one("SELECT * FROM collab_docs WHERE room=?", (key,)) if room.sheet or room.writable else None)
+        if room.sheet:
+            def load():
+                t, row = read()
+                room.load_sheet(t, row, lambda: head_editor(t))
+            await run_in_threadpool(load)
+            return
+        t, row = await run_in_threadpool(read)
+        if not room.writable:
+            room.head = t["head"]
+            return
+        # Read lazily: when a matching draft exists the head version is normally not needed, but a
+        # draft that turns out to be unreadable falls back to it (Room.load).
+        editor = None if (row and row.get("head") == t["head"] and row.get("state")) else (await run_in_threadpool(head_editor, t) or {})
+
+        def lazy() -> dict | None:
+            if editor is not None:
+                return editor
+            with as_tenant(tenant):
+                return self.app.editor_of(tid, self.app.get_version(tid, t["head"]), t.get("kind")) or {}
+        room.load(t, row, lazy)
 
     async def serve(self, ws: WebSocket, tid: str, *, kind: str = "template") -> None:
         self.loop = asyncio.get_running_loop()
@@ -748,28 +858,48 @@ class CollabHub:
             await ws.close(code=code, reason=info)
             return
         assert isinstance(info, dict)
-        try:
-            room = await (self._project_room(tid, info["tenant"]) if kind == "project" else self._room(tid, info["tenant"]))
-        except Exception as e:                                # noqa: BLE001 — a 404 from get_template, or worse
-            status = getattr(e, "status", 500)
-            await ws.close(code=CLOSE_NOT_FOUND if status == 404 else CLOSE_ERROR, reason=getattr(e, "code", "error"))
-            return
-        if room is None:
-            await ws.close(code=CLOSE_BAD_REQUEST, reason="not_builtin_doc")
-            return
         held = ws.query_params.get("epoch")
-        if held and room.epoch and held != room.epoch:
-            # the tab's document belongs to a previous seeding (the room was restored or reseeded while
-            # it was away): its sync would merge the replaced text back next to the new one (CI-115)
-            await ws.close(code=CLOSE_STALE, reason="stale_document")
+
+        async def open_room() -> tuple[Room | None, tuple[int, str] | None]:
+            """(the room, None) or (None, (close code, reason))."""
+            try:
+                room = await (self._project_room(tid, info["tenant"]) if kind == "project" else self._room(tid, info["tenant"]))
+            except Exception as e:                            # noqa: BLE001 — a 404 from get_template, or worse
+                status = getattr(e, "status", 500)
+                return None, (CLOSE_NOT_FOUND if status == 404 else CLOSE_ERROR, getattr(e, "code", "error"))
+            if room is None:
+                return None, (CLOSE_BAD_REQUEST, "not_builtin_doc")
+            if held and room.epoch and held != room.epoch:
+                # the tab's document belongs to a previous seeding (the room was restored or reseeded while
+                # it was away): its sync would merge the replaced text back next to the new one (CI-115)
+                return None, (CLOSE_STALE, "stale_document")
+            return room, None
+        room, refusal = await open_room()
+        if refusal is not None:
+            await ws.close(code=refusal[0], reason=refusal[1])
             return
         user = info["user"]
         conn = Conn(ws=ws, user_id=user["id"], name=display_name(user), color=peer_color(user["id"]),
                     readonly=info["role"] not in WRITE_ROLES, workspace_id=info["wid"], request=req, path=path,
                     loop=asyncio.get_running_loop())
         await ws.accept()
-        # `client`: the id a live table tab numbers its messages under, brought back to resume them
-        await conn.send(room.admit(conn, ws.query_params.get("client")))
+        hello = None
+        for _ in range(5):
+            with self._rooms_mu:
+                if self.rooms.get(room.key) is room and not room.gone:
+                    # `client`: the id a live table tab numbers its messages under, brought back to resume them
+                    hello = room.admit(conn, ws.query_params.get("client"))
+                    break
+            # its last person left (or its template went) while this handshake ran: that room is closed
+            # and written; joining it would leave this tab alone in a room nobody else can reach
+            room, refusal = await open_room()
+            if refusal is not None:
+                await ws.close(code=refusal[0], reason=refusal[1])
+                return
+        if hello is None:
+            await ws.close(code=CLOSE_ERROR, reason="room_unavailable")
+            return
+        await conn.send(hello)
         await conn.send(create_sync_message(room.doc))
         others = [cid for cid in room.awareness.states if cid != room.awareness.client_id]
         if others:
@@ -902,20 +1032,23 @@ class CollabHub:
         return None, member["role"]
 
     async def _leave(self, room: Room, conn: Conn) -> None:
-        room.clients.discard(conn)
+        with self._rooms_mu:
+            # the last one out writes the room and closes it in one step: a tab joining at the same
+            # moment either got in before (and keeps the room open) or opens it again from what was written
+            room.clients.discard(conn)
+            if not room.clients:
+                if room.persist_handle is not None:
+                    room.persist_handle.cancel()
+                    room.persist_handle = None
+                if room.activity_handle is not None:
+                    room.activity_handle.cancel()
+                    room.activity_handle = None
+                if room.persists():
+                    room.persist_now()
+                if self.rooms.get(room.key) is room:
+                    del self.rooms[room.key]
         ids = [cid for cid in conn.client_ids if cid in room.awareness.states]
         if ids:
             room.awareness.remove_awareness_states(ids, "server")
             room.broadcast(create_awareness_message(room.awareness.encode_awareness_update(ids)))
         room.broadcast_meta({"type": "left", "user": {"id": conn.user_id, "name": conn.name}, "online": len(room.peers())})
-        if not room.clients:
-            if room.persist_handle is not None:
-                room.persist_handle.cancel()
-                room.persist_handle = None
-            if room.activity_handle is not None:
-                room.activity_handle.cancel()
-                room.activity_handle = None
-            if room.persists():
-                room.persist_now()
-            if self.rooms.get(room.key) is room:
-                del self.rooms[room.key]

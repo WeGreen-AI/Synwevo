@@ -18,7 +18,7 @@ import pytest
 
 from synwevo_docs import collab_sheet as cs
 from synwevo_docs.builtin_service import _build
-from synwevo_docs.collab_sheet import (SeedError, apply, apply_patch, dirty, mark_saved, normalize, project, reconcile,
+from synwevo_docs.collab_sheet import (SeedError, apply, apply_patch, dirty, holdable, mark_saved, normalize, project, reconcile,
                                        seed_state, sheet_invariants, snapshot)
 from synwevo_docs.editor_contract import validate_editor
 from synwevo_core.errors import ServiceError
@@ -1136,3 +1136,53 @@ def test_low_field_ids_are_never_javascript_prototype_names():
     st = seed_state(model)
     assert "constructor" not in st["content"]["fields"] and all(k.startswith("~") for k in st["content"]["fields"])
     assert project(st) == normalize(model)
+
+
+# ------------------------------------------------------------------ for the room (sheet-live step ②, after its review)
+def test_a_fault_inside_a_group_undoes_the_group(monkeypatch):
+    room = Room()
+    before = dumps({k: room.st[k] for k in ("content", "seq", "kseq", "base", "ctr", "clients")})
+    real = cs._write_cell
+
+    def faulty(tx, sid, ck, cell):                              # fixture: a bug after a write
+        real(tx, sid, ck, cell)
+        if (cell or {}).get("v") == "故障":
+            raise RuntimeError("fixture fault")
+    monkeypatch.setattr(cs, "_write_cell", faulty)
+    with pytest.raises(RuntimeError):
+        apply(room.st, {"op": "tx", "ops": [{"op": "set", **room.at("C4"), "v": "先写"}, {"op": "set", **room.at("D4"), "v": "故障"}]},
+              by="ann", client="t", n=1, expect=0)
+    assert dumps({k: room.st[k] for k in ("content", "seq", "kseq", "base", "ctr", "clients")}) == before
+
+
+def test_the_room_can_bound_cells_below_the_state_s_own_limit():
+    room = Room()
+    cells = len(room.sheet()["cells"])
+    op = {"op": "set", **room.at("C4"), "v": "多一格"}
+    r = apply(room.st, op, by="ann", client="t", n=1, expect=0, max_cells=cells)
+    assert r["ok"] is False and r["code"] == "too_large" and r["detail"] == {"what": "cells", "max": cells}
+    assert apply(room.st, op, by="ann", client="t", n=2, expect=0, max_cells=cells + 1)["ok"]
+    assert apply(room.st, {"op": "set", **room.at("A3"), "v": "已有的格子"}, by="ann", client="t", n=3, expect=room.st["seq"], max_cells=1)["ok"]
+
+
+def test_holdable_says_what_seeding_would_refuse_without_seeding():
+    assert holdable(FORMATS_SHEET) == []
+    far = {"sheets": [{"name": "S", "cells": {"A250000": {"v": "远处"}}}]}
+    issues = holdable(far)
+    assert issues and issues[0]["code"] == "too_large" and issues[0]["what"] == "grid"
+    with pytest.raises(SeedError) as e:
+        seed_state(far)
+    assert e.value.issues == issues
+    assert holdable(INVALID["ci116_both"][0])[0]["code"] == "merged"
+
+
+def test_forgetting_a_client_never_lets_its_messages_apply_again():
+    room = Room()
+    op = {"op": "set", **room.at("C4"), "v": "一次"}
+    assert apply(room.st, op, by="ann", client="ann/t", n=3, expect=0)["ok"]
+    cs.forget_client(room.st, "ann/t")
+    assert "ann/t" not in room.st["clients"] and cs.next_number(room.st, "ann/t") == 4
+    again = apply(room.st, op, by="ann", client="ann/t", n=3, expect=room.st["seq"])
+    assert again["ok"] is False and again["code"] == "resync"
+    cs.forget_client(room.st, "nobody")                         # forgetting an unknown client changes nothing
+    assert room.st["nfloor"] == 3

@@ -1056,12 +1056,15 @@ class App:
             self.store.bump_project(p["id"])
 
     def _guard_live_edits(self, tid: str, discard_live: bool, action: str, *, saver: str | None = None,
-                          field_change: bool = False) -> None:
+                          field_change: bool = False, editor: dict | None = None) -> None:
         """A version operation replaces the live document for everyone in the editing room. When
         that document carries edits nobody has saved as a version yet, refuse with 409
         ``live_edits`` naming who is there, unless the caller said ``discard_live`` explicitly.
         ``saver``: a person saving *from inside the room* saves the live document itself — that is
-        not a replacement (CI-113: saves from outside it used to drop a persisted live draft)."""
+        not a replacement (CI-113: saves from outside it used to drop a persisted live draft). In a
+        live table room (docs-sheet-live.md §9) such a save is folded into the other people's edits
+        instead — which works only for a table the room can hold; for one it cannot (``editor``), the
+        other people's unsaved edits would go, so the exemption does not apply."""
         hook = self.live_template_state
         if hook is None or discard_live:
             return
@@ -1071,9 +1074,18 @@ class App:
             logging.getLogger("synwevo.docs").exception("live state of %s unavailable before %s", tid, action)
             return
         if live.get("dirty"):
-            if saver is not None and saver in (live.get("online_ids") or []):
+            cannot_fold = False
+            if live.get("live_table") and isinstance(editor, dict):
+                from .collab_sheet import holdable
+                try:
+                    cannot_fold = bool(holdable(editor))
+                except ServiceError:
+                    cannot_fold = True                   # not even a valid model: the save refuses it on its own
+            if saver is not None and saver in (live.get("online_ids") or []) and not cannot_fold:
                 return
             detail = {"action": action, "online": live.get("online") or [], "last_by": live.get("last_by")}
+            if cannot_fold:
+                detail["reason"] = "cannot_fold"
             if field_change:          # the field panel has no "discard" path: say what to do instead
                 raise ServiceError(409, "live_edits", "模板编辑器里有尚未保存为版本的实时修改：请先在编辑器里保存，再修改字段", detail)
             raise ServiceError(409, "live_edits", "编辑器里有尚未保存为版本的实时修改；这一步会丢弃它们，请确认后再试", detail)

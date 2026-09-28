@@ -723,3 +723,33 @@ def test_an_open_room_is_no_way_into_another_workspace(world):
         stranger.websocket_connect(f"/api/collab/projects/{pid}", headers={"origin": "http://testserver"}).__enter__()
     assert x.value.code == 4404
     p.close()
+
+
+def test_a_version_written_while_the_room_opens_is_not_missed(world, monkeypatch):
+    """Review of sheet-live step ②, item 3 (the same race in document rooms): a save landing while
+    the room was being opened found no room and removed the draft; the room then opened with the
+    version it had read before — the older one — and every save from it was refused as stale."""
+    import threading
+
+    from synwevo_docs import collab as C
+    tid = world["tid"]
+    started, release = threading.Event(), threading.Event()
+    real = C.Room.load
+
+    def slow_load(self, template, row, editor_of_head):         # fixture: opening the room takes a while
+        started.set()
+        assert release.wait(10)
+        return real(self, template, row, editor_of_head)
+    monkeypatch.setattr(C.Room, "load", slow_load)
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("a", _connect(world, "editor")))
+    t.start()
+    assert started.wait(10)
+    newer = {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "开房间时保存"}]}]}}
+    r = world["client_for"](world["owner"]).put(f"/api/templates/{tid}/builtin", json={"editor": newer, "base_version": 1})
+    assert r.status_code == 200 and r.json()["head"] == 2, r.text
+    release.set()
+    t.join(10)
+    a = box["a"]
+    assert a.hello["head"] == 2 and a.texts() == ["开房间时保存"]
+    a.close()

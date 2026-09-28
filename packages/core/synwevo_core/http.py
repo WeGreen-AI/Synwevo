@@ -331,8 +331,12 @@ class RateBuckets:
         self._lock = threading.Lock()
         self._takes = 0
 
-    def take(self, key: str) -> tuple[bool, float, float]:
-        """(allowed, tokens left after this request, seconds until a request would be allowed)."""
+    def take(self, key: str, cost: float = 1) -> tuple[bool, float, float]:
+        """(allowed, tokens left after this request, seconds until a request would be allowed).
+
+        ``cost``: what this request weighs (at most the bucket's capacity, or it could never pass).
+        A refused request takes nothing, so waiting the seconds it was told is always enough."""
+        cost = min(float(cost), float(self.cap))
         with self._lock:
             t = time.monotonic()
             self._takes += 1
@@ -342,11 +346,11 @@ class RateBuckets:
                     del self._state[k]
             b = self._state.setdefault(key, [float(self.cap), t])
             tokens = min(float(self.cap), b[0] + (t - b[1]) * self.cap / self.WINDOW_S)
-            if tokens < 1:
+            if tokens < cost:
                 b[0], b[1] = tokens, t
-                return False, tokens, (1 - tokens) * self.WINDOW_S / self.cap
-            b[0], b[1] = tokens - 1, t
-            return True, tokens - 1, 0.0
+                return False, tokens, (cost - tokens) * self.WINDOW_S / self.cap
+            b[0], b[1] = tokens - cost, t
+            return True, tokens - cost, 0.0
 
     def headers(self, tokens_left: float) -> dict[str, str]:
         """`RateLimit-Policy` and `RateLimit` (draft-ietf-httpapi-ratelimit-headers).

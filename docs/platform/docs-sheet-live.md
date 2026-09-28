@@ -130,55 +130,76 @@ CI-47），合并后超出则整份采用外部版本；对账后至少保留一
 **开关**：`SYNWEVO_SHEET_LIVE`（缺省关闭），房间打开时读取。关闭时表格房间与今天完全相同（只有在场与版本帧，`hello` 不带
 `live`，101 帧被忽略，保存路由答 409 `not_live`）。打开后表格模板的房间是 `SheetRoom`：
 
-* **打开**：`collab_docs` 中 `model='sheet'`（新增列；NULL 为文档房间，两者互不读取）且 `head` 等于当前版本的草稿（zlib 压缩
-  的 JSON 状态），否则以新纪元播种 `editor_of(head)`。`SeedError`，或单元格超过 `SYNWEVO_SHEET_LIVE_MAX_CELLS`（缺省 5 万），
-  房间保持 CI-47 的在场模式，`hello` 带 `live: false, live_reason: {code, …}`；草稿无法读取时记日志、改用 head 版本并标
-  `recovered`。
-* **`hello`**：`live, epoch, seq, client, next, resumed, persisted, content, limits{max_tx, max_frame_bytes, ops_per_min}`。
-  `content` 是客户端镜像的整份状态（5 万格约 2 MB）。`client`：标签页用 `?client=` 带回自己的 id 以续传；服务端按
-  「人/客户端」作键，别人不能冒用或耗掉某人的序号；同一人另一个仍在线的标签页要同一个 id 时分配新 id。`next` 是该键下一条
-  消息应带的号（模型的 `next_number`）。带旧纪元重连仍是 4409（CI-115）。
-* **101 帧**（JSON，前缀变长长度，与 100 相同）：客户端发 `{type:"op", n, expect, op}`（`tx: [...]` 是 `op: {op:"tx", ops}` 的
-  简写；帧里的 `client` 若有必须等于连接的）和 `{type:"sync"}`。服务端以连接的用户盖章 `by` 调用 `collab_sheet.apply`，给
-  发送者 `ack{n, ok, seq, patch, before}` 或 `ack{n, ok:false, code, detail, people}`（`people` 为 detail 中各 `by` 的姓名与
-  配色），给其他人 `patch{seq, patch, by}`；重复投递答原结果并标 `duplicate`。房间自己的拒绝码：`read_only`、
-  `rate_limited{retry_after}`、`not_live`、`invalid{reason}`、`error`（模型内部故障，连接保留）。`resync` 之后客户端发
-  `sync`，得到 `full`；房间从版本重新开始时发 `reset{epoch, previous_epoch, seq, next, content}`。
+* **打开**：房间**先登记、再读取**状态（登记期间到达的版本变化进房间队列，读完再按顺序处理；已读到的同一版本不重复处理）。
+  `collab_docs` 中 `model='sheet'`（新增列；NULL 为文档房间，两者互不读取）且 `head` 等于当前版本的草稿（zlib 压缩的 JSON
+  状态）直接载入；带未保存修改、停在旧版本的草稿也载入，打开后把当前版本对账进去（不丢修改）；否则以新纪元播种
+  `editor_of(head)`。`SeedError`、单元格超过 `SYNWEVO_SHEET_LIVE_MAX_CELLS`（缺省 5 万）或状态超过
+  `SYNWEVO_SHEET_LIVE_MAX_BYTES`（缺省 16 MiB）时房间保持 CI-47 的在场模式，`hello` 带 `live: false, live_reason`；
+  草稿无法读取时记日志、改用 head 版本并标 `recovered`。文档房间的打开用同一顺序（同样的竞争在那里也存在，一并修复）。
+* **`hello`**：`live, epoch, seq, client, next, resumed, persisted, content, stale_head, limits{max_tx, max_frame_bytes,
+  ops_per_min, max_cells, max_bytes}`。`client`：标签页用 `?client=` 带回自己的 id；服务端按「人/客户端」作键，别人不能
+  冒用或耗掉某人的序号。**同一人带回的 id 仍被一条旧连接占着时，新连接接管它**，旧连接以 4409 `superseded` 关闭——
+  服务端还没发现断线时重连的标签页，重发的消息按原号去重，不会再应用一次。带旧纪元重连仍是 4409 `stale_document`（CI-115）。
+* **101 帧**（JSON，前缀变长长度，与 100 相同）：客户端发 `{type:"op", epoch, n, expect, op}`（`tx: [...]` 是
+  `op: {op:"tx", ops}` 的简写；`epoch` 必填；帧里的 `client` 若有必须等于连接的）和 `{type:"sync"}`。服务端以连接的用户
+  盖章 `by` 调用 `collab_sheet.apply`，给发送者 `ack{n, ok, seq, patch, before}` 或 `ack{n, ok:false, code, detail, people}`
+  （`people` 为 detail 中各 `by` 的姓名与配色），给其他人 `patch{seq, patch, by}`；重复投递答原结果并标 `duplicate`。
+  房间自己的拒绝码：`stale_epoch{epoch, seq}`（消息属于房间已离开的纪元：不应用、不占新纪元的序号）、`read_only`、
+  `rate_limited{retry_after}` 与 `busy{retry_after}`（都不记入去重，到时按原号重发；提前重发的帧不读直接拒绝）、
+  `too_large{what:"table"}`、`superseded`、`not_live`、`invalid{reason}`、`error`（模型内部故障：该组整体撤销，连接保留）。
+  `resync` 之后客户端发 `sync`，得到 `full`；房间从版本重新开始时发 `reset{epoch, previous_epoch, seq, next, content}`。
 * **持久化**：最后一次修改 1 秒后在工作线程压缩写出，最后一人离开与关机时同步写出；写出后发 meta `persisted{seq, epoch}`。
-  序列化时编号，较旧的一次晚到时不会覆盖较新的一次。`dirty` 在每条操作后取状态记录的已改路径（O(1)），写出时在工作线程
-  按投影算精确值并纠正（加了又删的工作表）。
-* **保存**：`POST /api/templates/{tid}/collab/save {note?}`（`ROUTE_POLICY` 为 write）。在锁内取快照与序号 N，工作线程里
-  投影、生成、`new_version(base_head=房间的版本)`（`builtin_service.save_live_sheet`，版本说明规则与编辑器保存相同），再回到
-  房间的事件循环 `mark_saved` 并广播 `head{reason:"save", saved_seq}`；构建期间别人的修改仍算未保存。投影等于 head 版本时
-  不写版本，返回 `unchanged`。同一房间的保存依次进行。房间自己的保存由线程局部标记识别，不当作外部版本对账。
-  保存后按在线连接已声明看到的最小序号 `compact`。
-* **房间外的版本**（机器 API 的 PUT、单人回退 PUT、项目页字段修改、恢复/撤销/重做）：`on_template_change` 在房间的事件
-  循环上 `collab_sheet.reconcile`，补丁以保存者名义广播（`by`，没有人的机器凭据为 `system`，附 `outside{reason, head}`），
-  有人的值被外部版本覆盖时广播 meta `overwritten{people, conflicts, by}`；外部版本无法实时持有时房间退回在场模式、删除草稿
-  并广播 meta `live{live:false, reason}`。
+  序列化时编号，较旧的一次晚到时不覆盖较新的一次。`dirty` 在每条操作后取状态记录的已改路径（O(1)），写出时在工作线程按
+  投影算精确值纠正——只纠正同一基线（保存、对账、重新开始都会换基线）的状态，保存之后晚到的旧结果不会把房间重新标脏。
+* **保存**：`POST /api/templates/{tid}/collab/save {note?}`（`ROUTE_POLICY` 为 write）。锁内取快照与序号 N，工作线程里投影、
+  生成、`new_version(base_head=房间的版本)`（`builtin_service.save_live_sheet`，版本说明规则与编辑器保存相同），再经房间队列
+  回到房间的事件循环 `mark_saved` 并广播 `head{reason:"save", saved_seq}`；构建期间别人的修改仍算未保存。投影等于 head
+  版本时不写版本，返回 `unchanged`。同一房间的保存依次进行；房间自己的保存由线程局部标记识别，不当作外部版本对账；保存后
+  按在线连接已声明看到的最小序号 `compact`。事件循环 30 秒内没轮到时，版本照常写好，答复带 `live.pending`，标记在循环
+  轮到时完成（不再在工作线程里代做，那会因无法发帧而 500）。
+* **房间外的版本**（机器 API 的 PUT、单人回退 PUT、项目页字段修改、恢复/撤销/重做）：进房间队列，`collab_sheet.reconcile`
+  在**工作线程**里对状态副本完成（5 万格约 0.6–1 秒；期间房间答 `busy`，状态不变，所以副本无需加锁），回到事件循环换上新状态，
+  补丁以保存者名义广播（`by`，没有人的机器凭据为 `system`，附 `outside{reason, head}`），有人的值被覆盖时广播 meta
+  `overwritten{people, conflicts, by}`。
 * **守卫与对账的关系（决定）**：CI-113/CI-49 的 `live_edits` 守卫照旧——房间有未保存修改时，房间外的保存、恢复、撤销、
-  重做与项目页字段修改一律 409，除非 `discard_live`；守卫已放行的外部版本在房间干净时对账（id 保持，选区不跳）。
-  带 `discard_live` 且房间确有未保存修改时，房间以该版本、新纪元重新开始（`reset`，旧纪元标签页重连得 4409），
-  未保存修改按调用方的确认丢弃。房间在守卫之后、版本写入之前又变脏（有人在构建期间输入）且没有 `discard_live` 时走对账，
-  输入不丢。`discard_live` 经 `new_version`/`_template_changed` 传到钩子。
+  重做与项目页字段修改一律 409，除非 `discard_live`；守卫放行的外部版本对账进房间（id 保持）。房间里的人做单人回退保存时
+  守卫按 CI-113 放行并对账——**但只在房间能持有这张表时**（`collab_sheet.holdable`）；持有不了（例如远处一格超过 20 万行列
+  id）时同样 409 `live_edits`，`detail.reason: "cannot_fold"`。带 `discard_live` 且房间确有未保存修改时，房间以该版本、
+  新纪元重新开始（`reset`；持有不了则退回在场模式并删除草稿，这是调用方确认过的丢弃）。**没有 `discard_live` 就不丢未保存
+  的修改**：守卫之后才出现的修改（构建期间有人输入）遇到无法对账的版本（或对账出错）时，房间保留修改与原版本，广播 meta
+  `live{live:true, stale:true, head}`，此后外部保存继续被守卫拦下，直到有人确认丢弃；房间干净时退回在场模式或从该版本
+  重新开始，都不丢东西。
 * **旧的整份 PUT**：实时房间打开时浏览器 `PUT /api/templates/{tid}/builtin` 答 409 `live_room`（`detail.online`、
-  `detail.epoch`），带 `solo: true` 的单人回退保存按外部版本对账（保存者在房间里时守卫按 CI-113 放行，其他人的修改保留，
-  同一对象以保存的为准并通知被覆盖的人）。机器 API 的整份 PUT 契约不变；其请求体白名单漏了 schema、SDK 与 api.md 都已有的
-  `discard_live`（带上即 400「不认识的字段」），一并补上。
-* **鉴权与界限**：握手、每 30 秒复核、降级只读与移除关闭沿用文档房间；查看者的操作答 `read_only`。帧 2 MiB（超限 4400
-  关闭该连接），`tx` ≤ 5000（模型答 `too_large`），每人每房间 `SYNWEVO_SHEET_LIVE_OPS_PER_MIN`（缺省 600）条/分钟：
-  `tx` 每满 100 条操作多计 1 条、`sync` 计 10 条；被限流的消息不记入去重，按原号重发即可。
+  `detail.epoch`），带 `solo: true` 的单人回退保存按上面的规则处理。机器 API 的整份 PUT 契约不变；其请求体白名单漏了
+  schema、SDK 与 api.md 都已有的 `discard_live`（带上即 400「不认识的字段」），一并补上。
+* **鉴权与界限**：握手、每 30 秒复核、降级只读与移除关闭沿用文档房间；已打开的房间同样只对本空间开放（CI-118，4404）；
+  查看者的操作答 `read_only`。帧 2 MiB（超限 4400 关闭该连接），`tx` ≤ 5000（模型答 `too_large`）。实时表格不超过
+  `SYNWEVO_SHEET_LIVE_MAX_CELLS` 个单元格（`too_large{what:"cells"}`）与 `SYNWEVO_SHEET_LIVE_MAX_BYTES` 的状态：每个
+  被接受的补丁按其帧长的 3 倍累加估计，每次写出草稿时换成精确值；超过时只接受清空、取消合并、删字段、删表。实测：一人以
+  每条 60 × 32 000 字符连续写入，状态最多到界限加一条消息（16.6 MiB），此时每次写草稿在事件循环上序列化约 28 ms，`hello`
+  约 29 ms；5 万格的表写草稿序列化约 9 ms。频率：每人每房间 `SYNWEVO_SHEET_LIVE_OPS_PER_MIN`（缺省 600）条/分钟，一条
+  消息按 `max(1 + 帧长 / 64 KiB, 1 + 操作数 / 100)` 计，`sync` 按状态大小（至少 10）；**整条一次扣、被拒不扣**
+  （`RateBuckets.take(key, cost)`），`retry_after` 等够即可通过；无法解析的帧同样计费；一人最多在房间里留
+  8 个客户端的去重记录（再开新标签页时忘掉他自己最旧的），不会挤掉别人的。
+* **加入与离开**：房间的登记、加入与最后一人离开在同一把锁下；握手期间房间被关闭（最后一人刚离开）时，新连接重新打开房间
+  （从刚写出的草稿），不会落进一个没人能到达的旧房间。发往一个连接的帧都在该连接自己的事件循环上按顺序发出。
 * **删除模板**：房间的草稿不再被最后离开的人写回（文档房间有同样的写回，另立项）。
-* **回滚**：关闭开关后，未保存的表格草稿不再计入守卫，下一次版本变化时被删除；关闭前先保存或确认丢弃
-  （`SELECT room FROM collab_docs WHERE model='sheet' AND dirty=1`）。
+* **回滚**：关闭开关后，未保存的表格草稿不再计入守卫与变更列表的 `dirty`，下一次版本变化时被删除。**代码回滚**到没有
+  `model` 列语义的版本时，旧代码会把 `dirty=1` 的表格草稿当作文档草稿拦住外部保存（409 `live_edits`，且没有房间能保存它）；
+  回滚前先让各表格保存或确认丢弃，再清掉表格草稿（先按运维流程备份）：
+  `SELECT room, dirty FROM collab_docs WHERE model='sheet';` 然后 `DELETE FROM collab_docs WHERE model='sheet';`。
 
 **给第③步（浏览器客户端）的已知限制**：
 
 * 今天的 `SheetEditor` 不懂 101 帧：开关打开后它的整份 PUT 会得到 `live_room`。开关必须等③上线后才打开。
-* 帧的先后顺序依赖单事件循环（生产部署如此）；测试客户端每个连接一个事件循环，测试按顺序操作。
+* 每条操作帧必须带 `epoch`；收到 `reset` 时丢弃旧纪元的待确认操作（它们会得到 `stale_epoch`）并告诉人。
+* 客户端 id 放在内存里（不放 `sessionStorage`，否则「复制标签页」会让两个标签页争同一个 id：后来的接管、先来的被
+  `superseded` 关闭）；断线重连带上它，待确认队列里的操作按原号重发（已处理的答 `duplicate`）。
+* `busy` / `rate_limited` 按 `retry_after` 等待后原号重发；提前重发会被直接拒绝。
 * 非正常退出会丢掉最后约 1 秒：客户端应把操作留在待确认队列里直到 `persisted.seq` 覆盖它；重连后服务端 `seq` 小于本地时，
   以 `hello.content` 重建，未确认的操作以新的 `expect` 重发（会得到 `conflict` 或 `resync`，由人处理）。
-* 客户端 id 放在 `sessionStorage` 时，浏览器「复制标签页」会复制它：服务端给第二个标签页换新 id（`hello.client` 与请求的
-  不同，`resumed: false`），客户端必须采用 `hello.client` 与 `hello.next`。
+* `hello` 带整份 `content` 且不计入频率（重连风暴时每次都发整份）；帧的先后顺序依赖单事件循环（生产部署如此）。
 * 变更记录（`collab_changes`）尚未记录表格操作（B2）；`live_edits` 的 `last_by` 取自状态里最后一次由人写入的对象。
   写前复核（B2）未做：撤权后最多一个复核周期（30 秒）内仍可写入。
+* `stale` 状态（版本无法对账而保留未保存修改）下房间的保存会得到 409 `stale_template`；界面应提示复制自己的内容，并由有权限
+  的人确认丢弃（`discard_live`）后从当前版本重新开始。

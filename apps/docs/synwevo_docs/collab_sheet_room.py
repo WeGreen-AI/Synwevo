@@ -1,4 +1,4 @@
-"""The live table room (docs/platform/docs-sheet-live.md §3–§4, batch B1 step ②).
+"""The live table room (docs/platform/docs-sheet-live.md §3–§4 and §9, batch B1 step ②).
 
 Behind the switch ``SYNWEVO_SHEET_LIVE`` (off by default) the room of a table template holds the
 shared live state of :mod:`collab_sheet` instead of presence only. Everything else about the room —
@@ -6,44 +6,52 @@ the handshake, the 30-second authorization re-check, awareness bound to the prov
 2 MiB frame bound, version frames — is the document room's (``collab.py``); this module adds:
 
 * **opening**: the persisted draft (``collab_docs``, ``model='sheet'``) when it belongs to the head
-  version, else a fresh seeding of the head version's model under a new epoch. A model the live state
-  cannot hold (``SeedError``, or more than ``SYNWEVO_SHEET_LIVE_MAX_CELLS`` cells) keeps the room in
-  CI-47's presence-only mode and ``hello`` says so (``live: false``, ``live_reason``); an unreadable
-  draft is logged and replaced by the head version (``recovered``).
-* **hello** carries ``live``, ``epoch``, ``seq``, ``client`` (the tab's client id — the one it asked
-  for with ``?client=`` when it is valid and not in use by another open tab of the same person),
-  ``next`` (the number its next message must carry: after the last one the room remembers for that
-  client), ``resumed``, ``persisted`` and the whole ``content`` a browser mirrors.
+  version; a draft with unsaved edits left at an older version is loaded and the head version folded
+  into it; otherwise the head version seeded under a new epoch. A model the live state cannot hold
+  (``SeedError``, more than ``SYNWEVO_SHEET_LIVE_MAX_CELLS`` cells or ``SYNWEVO_SHEET_LIVE_MAX_BYTES``
+  of state) keeps the room in CI-47's presence-only mode and ``hello`` says so (``live: false``,
+  ``live_reason``); an unreadable draft is logged and replaced by the head version (``recovered``).
+* **hello** carries ``live``, ``epoch``, ``seq``, ``client``, ``next``, ``resumed``, ``persisted``,
+  ``limits`` and the whole ``content`` a browser mirrors. ``client`` is the tab's client id: the one
+  it asked for with ``?client=`` when valid — a reconnecting tab takes its id over from its own
+  previous connection, which is closed (4409 ``superseded``) — else a new one.
 * **frames** of type ``MESSAGE_SHEET`` (101), JSON after the varuint length like the meta frames:
 
-  - client → server ``{"type": "op", "n", "expect", "op": {...}}`` (``"tx": [...]`` is shorthand for
-    ``"op": {"op": "tx", "ops": [...]}``; a ``"client"`` in the frame must be the connection's) and
-    ``{"type": "sync"}`` (send me the whole state again, after a ``resync``);
-  - server → sender ``{"type": "ack", "n", "ok", "seq", "patch", "before"}`` or ``{"type": "ack", "n",
-    "ok": false, "code", "detail", "people"}`` (``conflict`` names whose value it was; ``resync``
-    asks for ``sync``; ``read_only``, ``rate_limited`` with ``retry_after`` seconds, ``not_live``,
-    ``invalid`` are the room's own); a message delivered twice answers what it answered the first
-    time with ``duplicate: true``;
+  - client → server ``{"type": "op", "epoch", "n", "expect", "op": {...}}`` (``"tx": [...]`` is
+    shorthand for ``"op": {"op": "tx", "ops": [...]}``; a ``"client"`` in the frame must be the
+    connection's) and ``{"type": "sync"}`` (send me the whole state again);
+  - server → sender ``{"type": "ack", "n", "ok", "seq", "patch", "before"}`` or ``{"type": "ack",
+    "n", "ok": false, "code", "detail", "people"}``. The model's codes (``conflict`` names whose value
+    it was; ``resync`` asks for ``sync``) and the room's own: ``stale_epoch`` (the message belongs
+    to an epoch the room has left: never applied, numbers untouched), ``read_only``,
+    ``rate_limited`` / ``busy`` with ``retry_after`` seconds (not recorded: resend the same
+    message), ``too_large`` (``what: "table"``), ``superseded``, ``not_live``, ``invalid``,
+    ``error``. A message delivered twice answers what it answered the first time (``duplicate``);
   - server → everyone else ``{"type": "patch", "seq", "patch", "by"}`` — ``by`` is stamped by the
     server from the connection, never read from the frame; a patch from outside the room carries
     ``outside: {reason, head}``;
   - ``{"type": "full", ...}`` (the answer to ``sync``) and ``{"type": "reset", "epoch", ...}`` (the
     room started afresh from a version: everything a tab holds from the previous epoch is void).
 
-  Meta frames (100) add ``persisted {seq}`` (the draft up to ``seq`` is on disk), ``overwritten``
-  (an outside version replaced these people's values: ``people``, ``conflicts``) and ``live`` (the
-  room left live mode).
-* **persistence**: the state as zlib-compressed JSON in ``collab_docs``, a second after the last
-  change, synchronously when the last person leaves and at shutdown.
+  Meta frames (100) add ``persisted {seq}``, ``overwritten`` (an outside version replaced these
+  people's values) and ``live`` (the room left live mode, or ``stale``: a version could not be folded
+  in and the unsaved edits are kept instead of dropped).
+* **persistence**: zlib-compressed JSON, a second after the last change, synchronously when the last
+  person leaves and at shutdown.
 * **saving** (``save``): the state at a sequence number is rendered and written as a version in a
   worker thread; edits made meanwhile stay unsaved (``collab_sheet.mark_saved``).
-* **outside versions** (``outside_change``): folded in with ``collab_sheet.reconcile`` and attributed
-  to whoever saved them; with ``discard_live`` confirmed while the room held unsaved edits the room
-  starts afresh from the version under a new epoch instead (see docs-sheet-live.md §9).
+* **outside versions** (``outside_change``): folded in with ``collab_sheet.reconcile`` in a worker
+  thread (the room answers ``busy`` meanwhile) and attributed to whoever saved them; with
+  ``discard_live`` confirmed while the room held unsaved edits the room starts afresh from the
+  version under a new epoch. Unsaved edits are never dropped without that confirmation.
 
-Concurrency: the state is only touched under ``self.mu``. In production every connection runs on
-one event loop and the lock is uncontended; the test client runs each socket on its own loop, and
-the lock keeps a persist on one thread from serialising the state while another applies an edit.
+Ordering: work arriving from other threads (outside versions, the end of a save) goes through the
+room's queue (``Room.enqueue``), which runs on the room's event loop in arrival order and waits
+while the room is held — being opened, or folding a version in a worker thread. While held nothing
+changes the state, so the worker can read it without the lock.
+
+Concurrency: the state is only changed under ``self.mu``. In production every connection runs on
+one event loop and the lock is uncontended; the test client runs each socket on its own loop.
 """
 from __future__ import annotations
 
@@ -53,6 +61,7 @@ import json
 import logging
 import re
 import threading
+import time
 import zlib
 from typing import Any, Callable
 
@@ -63,40 +72,60 @@ from synwevo_core.context import as_tenant, reset_actor, set_actor
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id
 
-from . import collab_sheet as CS
 from . import collab as _collab
-from .collab import MESSAGE_SHEET, OWN_LIVE_SAVE, Conn, Room, display_name, meta_frame, sheet_live_enabled
+from . import collab_sheet as CS
+from .collab import CLOSE_STALE, MESSAGE_SHEET, OWN_LIVE_SAVE, Conn, Room, display_name, meta_frame, sheet_live_enabled
 
 log = logging.getLogger("synwevo.docs.collab")
 
 __all__ = ["SheetRoom", "last_writer", "sheet_live_enabled"]
 
-MAX_CELLS_DEFAULT = 50_000        # docs-sheet-live.md §3: larger templates stay in CI-47's mode
+MAX_CELLS_DEFAULT = 50_000        # docs-sheet-live.md §3: larger templates stay in CI-47's mode; the live table stays below it
+MAX_BYTES_DEFAULT = 16 * 1024 * 1024   # the live state's JSON; bounds memory, every draft write and every hello
 OPS_PER_MIN_DEFAULT = 600         # §4: per person per room
-TX_COST_UNIT = 100                # a group costs one message per started hundred operations beyond the first
+TX_COST_UNIT = 100                # a group costs one message more per full hundred operations
+PARSE_UNIT = 64 * 1024            # ... and at least one message per started 64 KiB of frame
 SYNC_COST = 10                    # a whole state sent again costs like ten messages
+BUSY_RETRY_S = 0.25               # while a version is folded in: try again after this
+GROWTH = 3                        # a patch grows the state by its content, its basis copy and the bookkeeping
+PER_PERSON_CLIENTS = 8            # client ids one person keeps remembered in a room (the model keeps 64 in all)
+SAVE_WAIT_S = 30.0                # a save waits this long for the room's loop to mark it saved
 SYSTEM = "system"                 # `by` of changes no person made (an outside save without a person, the server's bookkeeping)
+SHRINKING = frozenset({"clear", "unmerge", "field_del", "sheet_delete"})
 _CLIENT = re.compile(r"[A-Za-z0-9_-]{8,64}")
 
 
-def max_cells() -> int:
-    raw = env.get("SHEET_LIVE_MAX_CELLS")
+def _env_int(name: str, default: int, least: int) -> int:
+    raw = env.get(name)
     try:
-        return max(0, int(raw)) if raw else MAX_CELLS_DEFAULT
+        return max(least, int(raw)) if raw else default
     except ValueError:
-        return MAX_CELLS_DEFAULT
+        return default
+
+
+def max_cells() -> int:
+    return _env_int("SHEET_LIVE_MAX_CELLS", MAX_CELLS_DEFAULT, 0)
+
+
+def max_bytes() -> int:
+    return _env_int("SHEET_LIVE_MAX_BYTES", MAX_BYTES_DEFAULT, 1024)
 
 
 def ops_per_minute() -> int:
-    raw = env.get("SHEET_LIVE_OPS_PER_MIN")
-    try:
-        return max(1, int(raw)) if raw else OPS_PER_MIN_DEFAULT
-    except ValueError:
-        return OPS_PER_MIN_DEFAULT
+    return _env_int("SHEET_LIVE_OPS_PER_MIN", OPS_PER_MIN_DEFAULT, 1)
+
+
+def _dumps(x) -> str:
+    return json.dumps(x, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def _size(x) -> int:
+    """The state's size as it is written and sent: UTF-8 bytes of its JSON."""
+    return len(_dumps(x).encode())
 
 
 def sheet_frame(payload: dict) -> bytes:
-    return bytes([MESSAGE_SHEET]) + write_message(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode())
+    return bytes([MESSAGE_SHEET]) + write_message(_dumps(payload).encode())
 
 
 def last_writer(state: dict) -> str | None:
@@ -136,6 +165,33 @@ def _cost(op) -> int:
     return 1
 
 
+def _shrinks(op) -> bool:
+    """Operations that can only make the table smaller: allowed when it is at its size bound."""
+    if isinstance(op, dict) and op.get("op") == "tx" and isinstance(op.get("ops"), list):
+        return bool(op["ops"]) and all(isinstance(o, dict) and o.get("op") in SHRINKING for o in op["ops"])
+    return isinstance(op, dict) and op.get("op") in SHRINKING
+
+
+def _seeded(editor) -> tuple[dict | None, dict | None]:
+    """(a new live state of ``editor`` under a new epoch, None) or (None, why it cannot be live).
+    Pure: runs in a worker thread."""
+    if not isinstance(editor, dict):
+        return None, {"code": "no_model"}
+    cells, cap = _cells_in(editor), max_cells()
+    if cells > cap:
+        return None, {"code": "too_large", "what": "cells", "max": cap, "size": cells}
+    try:
+        st = CS.seed_state(editor, epoch=new_id("ep"))
+    except CS.SeedError as e:
+        return None, {"code": (e.issues[0].get("code") if e.issues else None) or "invalid", "issues": e.issues[:10]}
+    except ServiceError as e:
+        return None, {"code": e.code}
+    size, cap = _size(st), max_bytes()
+    if size > cap:
+        return None, {"code": "too_large", "what": "bytes", "max": cap, "size": size}
+    return st, None
+
+
 class SheetRoom(Room):
     """A table template's room with the switch on: live when its model can be held, presence-only
     otherwise (``state is None``)."""
@@ -150,9 +206,13 @@ class SheetRoom(Room):
         self.state: dict | None = None
         self.live_reason: dict | None = None
         self.persisted_seq = 0
+        self.approx_bytes = 0                           # the state's JSON size: exact at each write, grown per patch between
+        self.basis_gen = 0                              # changes whenever the basis does (a save, a folded version, a restart)
+        self.stale_head: int | None = None              # a version that could not be folded in while edits were unsaved
+        self.catch_up: tuple[int, dict | None] | None = None
         self._gen = 0                                   # serialisations handed out ...
         self._written = 0                               # ... and the newest one on disk
-        self._dropped = False                           # left live mode: nothing of this room is written again
+        self._dropped = False                           # left live mode, or the template is gone: nothing is written again
         self._names: dict[str, dict] = {}
 
     # ---- mode --------------------------------------------------------------------------------------
@@ -166,29 +226,25 @@ class SheetRoom(Room):
         self.state, self.live_reason, self.epoch, self.dirty = None, reason, None, False
         return reason
 
-    def _seed(self, editor) -> dict | None:
-        """Start from a version's model under a new epoch; the reason the room cannot be live, or None."""
-        if not isinstance(editor, dict):
-            return self._not_live({"code": "no_model"})
-        cells, cap = _cells_in(editor), max_cells()
-        if cells > cap:
-            return self._not_live({"code": "too_large", "what": "cells", "max": cap, "size": cells})
-        try:
-            st = CS.seed_state(editor, epoch=new_id("ep"))
-        except CS.SeedError as e:
-            return self._not_live({"code": (e.issues[0].get("code") if e.issues else None) or "invalid", "issues": e.issues[:10]})
-        except ServiceError as e:
-            return self._not_live({"code": e.code})
+    def _take(self, st: dict | None, why: dict | None) -> None:
+        """Hold a freshly seeded state (or say why the room is presence-only)."""
+        if st is None:
+            self._not_live(why or {"code": "invalid"})
+            return
         self.state, self.live_reason, self.epoch, self.dirty, self.persisted_seq = st, None, st["epoch"], False, 0
-        return None
+        self.approx_bytes = _size(st)
+        self.stale_head = None
+        self.basis_gen += 1
 
     def load_sheet(self, template: dict, row: dict | None, editor_of_head: Callable[[], dict | None]) -> None:
-        """Worker thread, before anyone can reach the room: the persisted draft when it belongs to the
-        head version, else the head version seeded afresh."""
+        """Worker thread, while the room is held (nobody can reach its state): the persisted draft
+        when it belongs to the head version; a draft with unsaved edits at an older version, with the
+        head version to fold in once the room opens (``catch_up``); else the head version afresh."""
         self.head = template["head"]
-        if row and row.get("model") == "sheet" and row.get("head") == template["head"] and row.get("state"):
+        if row and row.get("model") == "sheet" and row.get("state"):
             try:
-                st = json.loads(zlib.decompress(bytes(row["state"])))
+                raw = zlib.decompress(bytes(row["state"]))
+                st = json.loads(raw)
                 if not (isinstance(st, dict) and st.get("format") == CS.FORMAT and isinstance(st.get("content"), dict)
                         and isinstance(st.get("epoch"), str) and type(st.get("seq")) is int):
                     raise ValueError("not a live table state")
@@ -197,29 +253,47 @@ class SheetRoom(Room):
                 log.exception("collab %s: the persisted live table could not be read; reseeding from v%s (the draft is lost)", self.key, template["head"])
                 self.recovered = True
             else:
-                self.state, self.epoch, self.dirty, self.persisted_seq = st, st["epoch"], dirty, st["seq"]
-                return
-        elif row:
-            log.info("collab %s: persisted live state was for v%s, head is v%s — reseeding", self.key, row.get("head"), template["head"])
-        self._seed(editor_of_head())
+                if row.get("head") == template["head"] or dirty:
+                    self.state, self.epoch, self.dirty, self.persisted_seq, self.approx_bytes = st, st["epoch"], dirty, st["seq"], len(raw)
+                    if row.get("head") != template["head"]:
+                        # unsaved edits left at an older version (a version that could not be folded
+                        # in while they were there): keep them, fold the head version in on opening
+                        log.info("collab %s: draft with unsaved edits at v%s, head is v%s — folding the head in", self.key, row.get("head"), template["head"])
+                        self.head = row.get("head")
+                        self.catch_up = (template["head"], editor_of_head())
+                    return
+                log.info("collab %s: persisted live state was for v%s, head is v%s — reseeding", self.key, row.get("head"), template["head"])
+        self._take(*_seeded(editor_of_head()))
 
     # ---- joining -----------------------------------------------------------------------------------
-    def _client_for(self, conn: Conn, requested) -> str:
-        """The tab's client id: the one it brings back (to resume) when valid and not held by another
-        open tab of this person, else a new one. Keys are per person, so nobody can answer for, or
-        spend the numbers of, someone else's tab."""
-        taken = {c.client for c in self.clients if c.user_id == conn.user_id and c.client}
-        if isinstance(requested, str) and _CLIENT.fullmatch(requested) and requested not in taken:
-            return requested
-        return new_id("sc")
+    def _claim(self, conn: Conn, requested) -> None:
+        """The tab's client id. A tab bringing back the id it had resumes it — also when its previous
+        connection is still open here (the server has not noticed yet that it is gone): the new
+        connection takes the id over, the old one is closed, so a message resent after the drop is
+        recognised as the one already applied. Ids are per person: nobody can answer for, or spend
+        the numbers of, someone else's tab."""
+        if isinstance(requested, str) and _CLIENT.fullmatch(requested):
+            for old in [c for c in self.clients if c.user_id == conn.user_id and c.client == requested]:
+                old.client = old.client_key = None
+                old.close_later(CLOSE_STALE, "superseded")
+            conn.client = requested
+        else:
+            conn.client = new_id("sc")
+        conn.client_key = f"{conn.user_id}/{conn.client}"
 
     def admit(self, conn: Conn, requested_client: str | None = None) -> bytes:
         with self.mu:
             st = self.state
             if st is not None:
-                conn.client = self._client_for(conn, requested_client)
-                conn.client_key = f"{conn.user_id}/{conn.client}"
+                self._claim(conn, requested_client)
                 conn.seen = st["seq"]
+                if conn.client_key not in st["clients"] and not self.holding():
+                    # one person's tabs cannot push everyone else's remembered messages out: a new tab
+                    # of someone who has PER_PERSON_CLIENTS already makes the room forget their oldest
+                    # (before `next` is handed out, so the new tab's numbers stay good)
+                    mine = sorted((rec["at"], k) for k, rec in st["clients"].items() if k.startswith(f"{conn.user_id}/"))
+                    for _at, k in mine[:max(0, len(mine) - PER_PERSON_CLIENTS + 1)]:
+                        CS.forget_client(st, k)
             self.clients.add(conn)
             hello = self.hello(conn)
             if st is None:
@@ -227,7 +301,9 @@ class SheetRoom(Room):
             else:
                 hello.update({"live": True, "seq": st["seq"], "client": conn.client, "next": CS.next_number(st, conn.client_key),
                               "resumed": conn.client_key in st["clients"], "persisted": self.persisted_seq, "content": st["content"],
-                              "limits": {"max_tx": CS.MAX_TX, "max_frame_bytes": _collab.MAX_FRAME_BYTES, "ops_per_min": self.hub.sheet_rate.cap}})
+                              "stale_head": self.stale_head,
+                              "limits": {"max_tx": CS.MAX_TX, "max_frame_bytes": _collab.MAX_FRAME_BYTES, "ops_per_min": self.hub.sheet_rate.cap,
+                                         "max_cells": max_cells(), "max_bytes": max_bytes()}})
             return meta_frame(hello)
 
     def state_payload(self) -> dict:
@@ -253,27 +329,34 @@ class SheetRoom(Room):
 
     # ---- frames from a connection ------------------------------------------------------------------
     def _send(self, conn: Conn, payload: dict) -> None:
-        asyncio.ensure_future(conn.send(sheet_frame(payload)))
+        conn.post(sheet_frame(payload))
 
     def _refuse(self, conn: Conn, n, code: str, **detail) -> None:
         self._send(conn, {"type": "ack", "n": n if type(n) is int else None, "ok": False, "code": code, "detail": detail})
 
-    def _rate(self, conn: Conn, cost: int) -> float | None:
-        """Seconds to wait when this person is over their share of the room, else None."""
-        bucket = self.hub.sheet_rate
-        key = f"{self.key}|{conn.user_id}"
-        for i in range(cost):
-            ok, _left, wait = bucket.take(key)
-            if not ok:
-                return round(wait + (cost - i - 1) * bucket.WINDOW_S / bucket.cap, 2)
-        return None
+    def _wait_refusal(self, conn: Conn, n, code: str, wait: float) -> None:
+        """Refused for now (``rate_limited`` / ``busy``); frames sooner than that are refused unread."""
+        wait = round(max(wait, 0.01), 2)
+        conn.rate_until = time.monotonic() + wait
+        self._refuse(conn, n, code, retry_after=wait)
 
     def on_sheet_frame(self, conn: Conn, data: bytes) -> None:
+        now = time.monotonic()
+        if now < conn.rate_until:
+            # told to wait and did not: refused without reading it (parsing is work too)
+            self._refuse(conn, None, "rate_limited", retry_after=round(conn.rate_until - now, 2))
+            return
+        bucket, key = self.hub.sheet_rate, f"{self.key}|{conn.user_id}"
+        fee = 1 + len(data) // PARSE_UNIT
         try:
             msg = json.loads(read_message(data[1:]))
         except Exception:                                # noqa: BLE001 — not the protocol: said, not applied
             msg = None
         if not isinstance(msg, dict):
+            ok, _left, wait = bucket.take(key, fee)       # reading it was work: it costs like any message
+            if not ok:
+                self._wait_refusal(conn, None, "rate_limited", wait)
+                return
             self._refuse(conn, None, "invalid", reason="frame")
             return
         kind = msg.get("type", "op")
@@ -281,9 +364,16 @@ class SheetRoom(Room):
         op = msg.get("op")
         if kind == "op" and msg.get("tx") is not None:
             op = {"op": "tx", "ops": msg["tx"]} if op is None else None
-        wait = self._rate(conn, SYNC_COST if kind == "sync" else _cost(op))
-        if wait is not None:
-            self._refuse(conn, n, "rate_limited", retry_after=wait)
+        if self.holding():
+            self._wait_refusal(conn, n, "busy", BUSY_RETRY_S)
+            return
+        # the whole message is paid for at once, and a refused one pays nothing: waiting the time it
+        # is told is always enough (RateBuckets.take with a cost)
+        # a whole state sent again costs by its size (a viewer asking for it over and over is metered too)
+        cost = max(SYNC_COST, 1 + self.approx_bytes // PARSE_UNIT) if kind == "sync" else _cost(op)
+        ok, _left, wait = bucket.take(key, max(fee, cost))
+        if not ok:
+            self._wait_refusal(conn, n, "rate_limited", wait)
             return
         if kind == "sync":
             self._send_full(conn)
@@ -298,20 +388,32 @@ class SheetRoom(Room):
         if type(n) is not int or n < 1 or type(expect) is not int or op is None:
             self._refuse(conn, n, "invalid", reason="n" if type(n) is not int or n < 1 else "expect" if type(expect) is not int else "op")
             return
-        if conn.readonly:
-            self._refuse(conn, n, "read_only")
-            return
         with self.mu:
             st = self.state
-            if st is None or conn.client_key is None:
+            if st is None:
                 self._refuse(conn, n, "not_live", reason=self.live_reason)
                 return
+            if msg.get("epoch") != st["epoch"]:
+                # typed against an epoch the room has left (a restart crossed it on the wire): never
+                # applied, and no number of the new epoch is spent
+                self._refuse(conn, n, "stale_epoch", epoch=st["epoch"], seq=st["seq"])
+                return
+            if conn.readonly:
+                self._refuse(conn, n, "read_only")
+                return
+            if conn.client_key is None:
+                self._refuse(conn, n, "superseded")
+                return
+            cap = max_bytes()
+            if self.approx_bytes > cap and not _shrinks(op):
+                self._refuse(conn, n, "too_large", what="table", max=cap, size=self.approx_bytes)
+                return
             try:
-                res = CS.apply(st, op, by=conn.user_id, client=conn.client_key, n=n, expect=expect)
+                res = CS.apply(st, op, by=conn.user_id, client=conn.client_key, n=n, expect=expect, max_cells=max_cells())
             except ValueError:
                 self._refuse(conn, n, "invalid", reason="n")
                 return
-            except Exception:                            # noqa: BLE001 — a fault in the model: said, and the socket stays
+            except Exception:                            # noqa: BLE001 — a fault in the model: undone by apply, said, and the socket stays
                 log.exception("collab %s: applying %s's message %s failed", self.key, conn.user_id, n)
                 self._refuse(conn, n, "error")
                 return
@@ -322,7 +424,9 @@ class SheetRoom(Room):
                 if people:
                     ack["people"] = {uid: self._who(uid) for uid in sorted(people)}
             if res["ok"] and not res.get("duplicate") and res["patch"]:
-                self.broadcast(sheet_frame({"type": "patch", "seq": res["seq"], "patch": res["patch"], "by": self._who(conn.user_id)}), exclude=conn)
+                frame = sheet_frame({"type": "patch", "seq": res["seq"], "patch": res["patch"], "by": self._who(conn.user_id)})
+                self.approx_bytes += GROWTH * len(frame)
+                self.broadcast(frame, exclude=conn)
                 self._send(conn, ack)
                 self._changed()
             else:
@@ -356,14 +460,16 @@ class SheetRoom(Room):
             if st is None or self._dropped:
                 return None
             self._gen += 1
-            return {"gen": self._gen, "text": json.dumps(st, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
-                    "seq": st["seq"], "fast": self.dirty, "head": self.head, "epoch": self.epoch}
+            raw = _dumps(st).encode()
+            self.approx_bytes = len(raw)
+            return {"gen": self._gen, "raw": raw, "seq": st["seq"], "fast": self.dirty, "head": self.head, "epoch": self.epoch,
+                    "basis_gen": self.basis_gen}
 
     def _write(self, snap: dict) -> bool:
         """Compress and write one serialisation (a worker thread, or the last one out); a newer one
         already written wins. Returns whether that state is really unsaved."""
-        exact = bool(snap["fast"]) and CS.dirty(json.loads(snap["text"]))
-        blob = zlib.compress(snap["text"].encode(), 6)
+        exact = bool(snap["fast"]) and CS.dirty(json.loads(snap["raw"]))
+        blob = zlib.compress(snap["raw"], 6)
         with self.write_mu:
             if self._dropped or snap["gen"] < self._written:
                 return exact
@@ -384,7 +490,9 @@ class SheetRoom(Room):
             return
         with self.mu:
             same = self.state is not None and self.epoch == snap["epoch"]
-            fix = same and self.state["seq"] == snap["seq"] and self.dirty != exact
+            # the exact answer corrects the quick one only for the state it was computed from: not
+            # after a save or a folded version moved the basis meanwhile (it would mark a saved room dirty)
+            fix = same and self.state["seq"] == snap["seq"] and self.basis_gen == snap["basis_gen"] and self.dirty != exact
             if fix:
                 self.dirty = exact
             if same:
@@ -414,7 +522,7 @@ class SheetRoom(Room):
             except Exception:                            # noqa: BLE001
                 log.exception("collab %s: removing the live table draft failed", self.key)
 
-    # ---- versions ----------------------------------------------------------------------------------
+    # ---- saving ------------------------------------------------------------------------------------
     def save(self, user_id: str | None, note) -> dict:
         """Worker thread (the save route): render the state at this moment, write it as a version,
         then mark the room saved on its event loop. Saves of one room run one after the other."""
@@ -435,29 +543,30 @@ class SheetRoom(Room):
                 reset_actor(token)
                 OWN_LIVE_SAVE.room = None
             unchanged = bool(detail.get("unchanged"))
-            detail["live"] = self._on_loop(lambda inline: self._saved(snap, base_head, detail["head"], user_id, unchanged, inline))
+            detail["live"] = self._on_loop(snap, lambda inline: self._saved(snap, base_head, detail["head"], user_id, unchanged, inline))
             return detail
 
-    def _on_loop(self, fn: Callable[[bool], Any]) -> Any:
-        """Run ``fn`` on the room's event loop (patches must be numbered and sent in one order) and
-        wait for it. When nobody is connected any more, run it here: there is nobody to tell."""
-        loop = self.work_loop()
-        if loop is not None and self.hub.rooms.get(self.key) is self:
+    def _on_loop(self, snap: dict, fn: Callable[[bool], Any]) -> Any:
+        """Run ``fn`` on the room's event loop, in order with the versions folded in (the room's
+        queue), and wait for it. A loop that does not answer in time does it later (the answer says
+        ``pending``); with nobody connected any more it runs here, telling nobody."""
+        if self.work_loop() is not None and self.hub.rooms.get(self.key) is self:
             fut: concurrent.futures.Future = concurrent.futures.Future()
 
             def run():
-                if fut.set_running_or_notify_cancel():
-                    try:
-                        fut.set_result(fn(False))
-                    except BaseException as e:            # noqa: BLE001 — handed to the waiting thread
-                        fut.set_exception(e)
-            loop.call_soon_threadsafe(run)
+                if not fut.set_running_or_notify_cancel():
+                    return
+                try:
+                    fut.set_result(fn(False))
+                except BaseException as e:            # noqa: BLE001 — handed to the waiting thread
+                    log.exception("collab %s: marking a save failed", self.key)
+                    fut.set_exception(e)
+            self.enqueue(run)
             try:
-                return fut.result(timeout=30)
+                return fut.result(timeout=SAVE_WAIT_S)
             except concurrent.futures.TimeoutError:
-                if not fut.cancel():
-                    return fut.result()
-                log.warning("collab %s: the room's event loop did not answer; marking the save here", self.key)
+                log.warning("collab %s: the room's loop did not mark the save within %ss; it will when it runs", self.key, SAVE_WAIT_S)
+                return {"seq": snap["seq"], "pending": True}
         return fn(True)
 
     def _saved(self, snap: dict, base_head: int, saved_head: int, user_id: str | None, unchanged: bool, inline: bool) -> dict:
@@ -472,68 +581,108 @@ class SheetRoom(Room):
             if self.head == base_head:
                 self.head = saved_head
             self.dirty = res["dirty"]
+            self.basis_gen += 1
             # everyone connected has seen up to here: who wrote what before it (and before this basis)
             # is no longer needed to decide conflicts
             CS.compact(st, upto=min([c.seen for c in list(self.clients) if c.client_key] or [st["seq"]]))
-            if res["patch"]:
-                self.broadcast(sheet_frame({"type": "patch", "seq": res["seq"], "patch": res["patch"], "by": self._who(SYSTEM)}))
-            if unchanged:
-                self.broadcast_meta(self.state_payload())
-            else:
-                name = display_name(self.hub.identity.get_user(user_id)) if user_id else None
-                self.broadcast_meta({**self.state_payload(), "type": "head", "reason": "save", "by": name, "by_id": user_id, "saved_seq": snap["seq"]})
             out = {"seq": snap["seq"], "dirty": self.dirty}
+            if not inline:
+                if res["patch"]:
+                    self.broadcast(sheet_frame({"type": "patch", "seq": res["seq"], "patch": res["patch"], "by": self._who(SYSTEM)}))
+                if unchanged:
+                    self.broadcast_meta(self.state_payload())
+                else:
+                    name = display_name(self.hub.identity.get_user(user_id)) if user_id else None
+                    self.broadcast_meta({**self.state_payload(), "type": "head", "reason": "save", "by": name, "by_id": user_id, "saved_seq": snap["seq"]})
         if not inline:
             self.schedule_persist()
         elif self.hub.rooms.get(self.key) in (None, self):
             self.persist_now()                           # everyone left during the build: keep the draft current
         return out
 
+    # ---- versions from outside the room -------------------------------------------------------------
     def outside_change(self, head: int | None, editor: dict | None, reason: str, actor_id: str | None, actor_name: str | None,
                        discard_live: bool) -> None:
-        """Event loop: a version was written outside the room (the machine API, a single-person save,
-        a field changed on the project page, restore / undo / redo)."""
-        with self.mu:
-            if self.state is None:
-                super().apply_head_change(head, editor, reason, actor_name, False, actor_id)
-                return
-            by = actor_id or SYSTEM
-            if discard_live and self.dirty:
-                # the caller confirmed throwing the unsaved edits away (CI-113's discard_live): the room
-                # starts afresh from the version; tabs holding the previous epoch are told to reload
-                self._restart(head, editor, reason, actor_id, actor_name)
-                return
-            try:
-                if not isinstance(editor, dict):
-                    raise CS.SeedError([{"code": "no_model"}])
-                res = CS.reconcile(self.state, editor, by=by)
-            except CS.SeedError as e:
-                self._leave_live(head, reason, actor_id, actor_name, {"code": (e.issues[0].get("code") if e.issues else None) or "invalid",
-                                                                      "issues": e.issues[:10]})
-                return
-            except Exception:                            # noqa: BLE001 — a bug must not wedge the room on an old version
-                log.exception("collab %s: folding v%s into the live table failed; starting afresh from it", self.key, head)
-                self._restart(head, editor, reason, actor_id, actor_name)
-                return
-            self.head = head
-            if res["patch"]:
-                self.broadcast(sheet_frame({"type": "patch", "seq": res["seq"], "patch": res["patch"], "by": self._who(by),
-                                            "outside": {"reason": reason, "head": head}}))
-            if res["overwritten"]:
-                self.broadcast_meta({"type": "overwritten", "people": [self._who(p) for p in res["overwritten"]], "conflicts": res["conflicts"],
-                                     "by": self._who(by), "head": head, "seq": res["seq"], "reset": res["reset"]})
-            self.dirty = CS.dirty(self.state)
-            self.schedule_persist()
-            self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor_name, "by_id": actor_id})
-
-    def _restart(self, head, editor, reason, actor_id, actor_name) -> None:
-        previous = self.epoch
-        why = self._seed(editor)
-        self.head, self.recovered = head, False
-        if why is not None:
-            self._leave_live(head, reason, actor_id, actor_name, why)
+        """Event loop, from the room's queue: a version was written outside the room (the machine API,
+        a single-person save, a field changed on the project page, restore / undo / redo). The work
+        happens in a worker thread; the room is held (and answers ``busy``) until it is folded in."""
+        if self.state is None:
+            super().apply_head_change(head, editor, reason, actor_name, False, actor_id)
             return
-        st = self.state
+        kind = "restart" if (discard_live and self.dirty) else "reconcile"
+        self._fold(kind, head, editor, reason, actor_id, actor_name)
+
+    def _fold(self, kind: str, head, editor, reason, actor_id, actor_name) -> None:
+        from starlette.concurrency import run_in_threadpool
+        self.hold()
+        by = actor_id or SYSTEM
+        dirty = self.dirty
+
+        def work():
+            # the room is held: nothing changes its state, so it is read here without the lock
+            if kind == "restart":
+                return ("seeded",) + _seeded(editor)
+            if not isinstance(editor, dict):
+                return ("seed_error", {"code": "no_model"})
+            mine = json.loads(_dumps(self.state))
+            try:
+                res = CS.reconcile(mine, editor, by=by)
+            except CS.SeedError as e:
+                return ("seed_error", {"code": (e.issues[0].get("code") if e.issues else None) or "invalid", "issues": e.issues[:10]})
+            return ("reconciled", mine, res, CS.dirty(mine), _size(mine))
+
+        async def run():
+            try:
+                try:
+                    out = await run_in_threadpool(work)
+                except Exception:                        # noqa: BLE001 — a bug must neither wedge the room nor drop edits
+                    log.exception("collab %s: folding v%s into the live table failed", self.key, head)
+                    out = ("error", {"code": "error"})
+                self._folded(kind, out, dirty, head, editor, reason, actor_id, actor_name)
+            finally:
+                self.release()
+        asyncio.ensure_future(run())
+
+    def _folded(self, kind, out, dirty, head, editor, reason, actor_id, actor_name) -> None:
+        by = actor_id or SYSTEM
+        with self.mu:
+            if out[0] == "reconciled":
+                _tag, mine, res, now_dirty, size = out
+                self.state, self.head, self.dirty, self.approx_bytes, self.stale_head = mine, head, now_dirty, size, None
+                self.basis_gen += 1
+                if res["patch"]:
+                    self.broadcast(sheet_frame({"type": "patch", "seq": res["seq"], "patch": res["patch"], "by": self._who(by),
+                                                "outside": {"reason": reason, "head": head}}))
+                if res["overwritten"]:
+                    self.broadcast_meta({"type": "overwritten", "people": [self._who(p) for p in res["overwritten"]], "conflicts": res["conflicts"],
+                                         "by": self._who(by), "head": head, "seq": res["seq"], "reset": res["reset"]})
+                self.schedule_persist()
+                self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor_name, "by_id": actor_id})
+                return
+            if out[0] == "seeded":
+                _tag, st, why = out
+                if st is None:
+                    self._leave_live(head, reason, actor_id, actor_name, why)       # the caller confirmed the discard
+                else:
+                    self._restarted(st, head, reason, actor_id, actor_name)
+                return
+            why = out[1]
+            if dirty or self.dirty:
+                # never drop unsaved edits unasked: the room keeps them at its version and says so; an
+                # outside save now needs discard_live (the guard), which starts afresh from a version
+                log.warning("collab %s: v%s could not be folded into the live table (%s); its unsaved edits are kept", self.key, head, why.get("code"))
+                self.stale_head = head
+                self.broadcast_meta({"type": "live", "live": True, "stale": True, "head": head, "reason": why})
+                return
+            if out[0] == "seed_error":
+                self._leave_live(head, reason, actor_id, actor_name, why)           # nothing unsaved: presence mode loses nothing
+                return
+        self._fold("restart", head, editor, reason, actor_id, actor_name)          # a fault, nothing unsaved: start afresh from it
+
+    def _restarted(self, st: dict, head, reason, actor_id, actor_name) -> None:
+        previous = self.epoch
+        self._take(st, None)
+        self.head, self.recovered = head, False
         for c in list(self.clients):
             c.seen = 0
             self._send(c, {"type": "reset", "epoch": st["epoch"], "previous_epoch": previous, "seq": st["seq"],
@@ -543,8 +692,9 @@ class SheetRoom(Room):
         self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor_name, "by_id": actor_id})
 
     def _leave_live(self, head, reason, actor_id, actor_name, why: dict) -> None:
-        """The version cannot be held live: the room carries presence only from now on (CI-47) and
-        its draft — which the version replaced — is removed."""
+        """The version cannot be held live and nothing unsaved is lost by that (the room was clean, or
+        the discard was confirmed): the room carries presence only from now on (CI-47) and its draft —
+        which the version replaced — is removed."""
         log.info("collab %s: v%s cannot be held live (%s); the room carries presence only", self.key, head, why.get("code"))
         self._not_live(why)
         self.head = head
