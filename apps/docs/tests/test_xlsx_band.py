@@ -160,25 +160,33 @@ def test_libreoffice_recalculates_the_same_subtotals_and_total():
         assert abs(float(ours[ref].value) - float(lo[ref].value)) < 1e-9, ref
 
 
-def test_subtotal_arguments_expand_and_are_left_to_the_fallback_like_any_unsupported_function():
+def test_subtotal_sections_and_a_whole_block_grand_total_are_computed_on_the_server():
+    """The pattern the refusals recommend (review item 8a): section subtotals as SUBTOTAL(9, lines),
+    the grand total as SUBTOTAL(9, the whole block) — which skips the section subtotals inside it.
+    Computed by the built-in engine now, no fallback."""
     def extra(wb):
         ws = wb["对账单"]
         ws["D6"] = "=SUBTOTAL(9,D5:D5)"
-        ws["E8"] = "=SUBTOTAL(9,D6)"            # grand total over the subtotals
-        ws["E9"] = "=SUBTOTAL(9,D3:D6)"         # over the whole block: SUBTOTAL skips the subtotals
+        ws["E8"] = "=SUBTOTAL(9,D6)"            # as an aggregate argument: expands like SUM's
+        ws["E9"] = "=SUBTOTAL(9,D3:D6)"         # over the whole block: grows over every copy
     work, slots, band, rep, values = _standard(extra)
     out, issues, errors = _fill(work, slots, values)
     assert not errors, errors
     ws = _book(out)["对账单"]
     assert ws["D7"].value == "=SUBTOTAL(9,D5:D6)" and ws["D11"].value == "=SUBTOTAL(9,D10:D10)"
     assert ws["E13"].value == "=SUBTOTAL(9,D7,D11)" and ws["E14"].value == "=SUBTOTAL(9,D3:D11)"
-    # not computed on the server: reported the way every unsupported function is
-    unsupported = [i for i in issues if i["code"] in ("formula_fallback", "formula_unsupported")]
-    assert len(unsupported) == 1 and "SUBTOTAL" in unsupported[0]["message"]
+    assert not [i for i in issues if i["code"] in ("formula_fallback", "formula_unsupported")], issues
+    calc = _book(out, data_only=True)["对账单"]
+    _, subs = _expected()
+    cent = lambda ref: Decimal(str(calc[ref].value)).quantize(Decimal("0.01"))  # noqa: E731
+    assert (cent("D7"), cent("D11"), cent("E14")) == (subs[0], subs[1], sum(subs))
+    # a SUBTOTAL whose arguments are themselves SUBTOTAL cells adds nothing (Excel's rule, and the
+    # template's own SUBTOTAL(9,D6) meant the same): the whole-block form is the one to use
+    assert calc["E13"].value == 0
 
 
 @soffice
-def test_libreoffice_computes_the_subtotal_grand_total_without_double_counting():
+def test_libreoffice_agrees_with_the_whole_block_subtotal():
     from synwevo_docs.engine.converters import recalc_xlsx
     def extra(wb):
         wb["对账单"]["D6"] = "=SUBTOTAL(9,D5:D5)"
@@ -186,8 +194,10 @@ def test_libreoffice_computes_the_subtotal_grand_total_without_double_counting()
     work, slots, band, rep, values = _standard(extra)
     out, _, _ = _fill(work, slots, values)
     lo = openpyxl.load_workbook(io.BytesIO(recalc_xlsx(out)), data_only=True)["对账单"]
+    ours = _book(out, data_only=True)["对账单"]
     _, subs = _expected()
-    assert Decimal(str(lo["E13"].value)).quantize(Decimal("0.01")) == sum(subs)
+    for ref, want in (("D7", subs[0]), ("D11", subs[1]), ("E13", sum(subs))):
+        assert Decimal(str(lo[ref].value)).quantize(Decimal("0.01")) == Decimal(str(ours[ref].value)).quantize(Decimal("0.01")) == want
 
 
 def test_structures_inside_the_block_are_copied_and_the_ones_below_move():
@@ -346,7 +356,8 @@ def _refused(extra, code, message=None):
 def test_a_reference_to_part_of_the_block_from_outside_is_refused_unless_it_is_an_aggregate_argument():
     _refused(lambda wb: wb["对账单"].__setitem__("E8", "=D6*1.1"), "band_reference",
              "单元格 对账单!E8 的公式引用了重复内容块内的 D6：内容块会按段复制，这个引用只能指向其中一份。"
-             "请改为引用整个内容块（如 3:6），或把它写成 SUM、COUNT、COUNTA、AVERAGE、MIN、MAX、PRODUCT、SUBTOTAL 的一个参数（生成时展开到每一份）")
+             "请把它写成 SUM、COUNT、COUNTA、AVERAGE、MIN、MAX、PRODUCT、SUBTOTAL 的一个参数（生成时展开到每一份）；"
+             "要对所有段合计，可把段小计写成 SUBTOTAL(9, …)，合计写成 SUBTOTAL(9, D3:D6)——SUBTOTAL 会跳过其中的小计，不会重复计算")
     _refused(lambda wb: wb["对账单"].__setitem__("E8", "=SUM(D6)+VLOOKUP(1,A5:D5,4,0)"), "band_reference")
     _refused(lambda wb: wb["对账单"].__setitem__("E8", "=SUBTOTAL(D6,1)"), "band_reference")   # the function number
 
@@ -450,7 +461,7 @@ def test_limits_on_rows_cells_and_expanded_formulas(monkeypatch):
     out, issues, errors = _fill(work, slots, values)
     assert out == b"" and [e["code"] for e in errors] == ["band_formula_limit"]
     assert errors[0]["message"] == ("公式 对账单!D1204 展开到每一份后超过 Excel 的限制（每个函数最多 255 个参数、每个公式最多 8,192 个字符）："
-                                    "请改为引用整个内容块")
+                                    "请把段小计写成 SUBTOTAL(9, …)，合计写成覆盖整个内容块的 SUBTOTAL(9, …)——SUBTOTAL 会跳过其中的小计，不会重复计算")
     monkeypatch.setattr(L.LIMITS, "max_cells", 20)
     work, slots, band, rep, values = _standard()
     out, issues, errors = _fill(work, slots, values)

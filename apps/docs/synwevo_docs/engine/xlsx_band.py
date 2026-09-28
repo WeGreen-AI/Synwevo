@@ -397,7 +397,6 @@ def scan(x: XlsxDoc, sheet: str, b1: int, b2: int) -> list[tuple]:
 
     Shared formulas must already be expanded (``XlsxDoc.expand_shared_formulas``)."""
     root = x.sheet_root(sheet)
-    whole = f"{b1}:{b2}"
     # merged cells: inside the block (copied) or outside it
     for (r1, c1, r2, c2) in x.merges(sheet):
         if where(r1 + 1, r2 + 1, b1, b2, True) not in ("outside", "inside"):
@@ -500,8 +499,10 @@ def scan(x: XlsxDoc, sheet: str, b1: int, b2: int) -> list[tuple]:
                     if agg is None:
                         agg = aggregate_args(items)
                     if i not in agg:
+                        whole = _whole(got[1], b1, b2)
                         raise XlsxError("band_reference", f"单元格 {cell} 的公式引用了重复内容块内的 {t.value}：内容块会按段复制，这个引用只能指向其中一份。"
-                                                          f"请改为引用整个内容块（如 {whole}），或把它写成 SUM、COUNT、COUNTA、AVERAGE、MIN、MAX、PRODUCT、SUBTOTAL 的一个参数（生成时展开到每一份）")
+                                                          f"请把它写成 SUM、COUNT、COUNTA、AVERAGE、MIN、MAX、PRODUCT、SUBTOTAL 的一个参数（生成时展开到每一份）；"
+                                                          f"要对所有段合计，可把段小计写成 SUBTOTAL(9, …)，合计写成 SUBTOTAL(9, {whole})——SUBTOTAL 会跳过其中的小计，不会重复计算")
                     idxs.append(i)
             if idxs:
                 cand.append((f, name, c.get("r"), idxs))
@@ -529,6 +530,14 @@ def scan(x: XlsxDoc, sheet: str, b1: int, b2: int) -> list[tuple]:
                     if where(got[0], got[1], b1, b2) in ("inside", "crossing"):
                         raise XlsxError("band_pivot_source", f"数据透视表的数据源 {ws.get('ref')} 只包含重复内容块（第 {b1}–{b2} 行）的一部分：请让数据源包含整个内容块，或移到块外")
     return cand
+
+
+def _whole(ref: Ref, b1: int, b2: int) -> str:
+    """The reference's columns over the whole block (the grand total's range): D6 → D3:D6."""
+    if ref.rows_only:
+        return f"{b1}:{b2}"
+    c1, c2 = ref.a[1].upper(), (ref.b or ref.a)[1].upper()
+    return f"{c1}{b1}:{c2}{b2}"
 
 
 def _refs_to(text: str, sheet: str) -> list[Ref]:
@@ -1123,7 +1132,8 @@ def fill_band(x: XlsxDoc, band: dict, kids: list[tuple[dict, dict]], values: dic
         text = re.sub(rf"{PLACEHOLDER}(\d+)", expand, f.text)
         if len(text) > MAX_FORMULA or most_args(text) > MAX_ARGS:
             cell = f"{host_sheet}!{host_cell}"
-            raise XlsxError("band_formula_limit", f"公式 {cell} 展开到每一份后超过 Excel 的限制（每个函数最多 255 个参数、每个公式最多 8,192 个字符）：请改为引用整个内容块")
+            raise XlsxError("band_formula_limit", f"公式 {cell} 展开到每一份后超过 Excel 的限制（每个函数最多 255 个参数、每个公式最多 8,192 个字符）："
+                                                  "请把段小计写成 SUBTOTAL(9, …)，合计写成覆盖整个内容块的 SUBTOTAL(9, …)——SUBTOTAL 会跳过其中的小计，不会重复计算")
         f.text = text
     if removed:
         uniq = "、".join(list(dict.fromkeys(removed))[:5])
