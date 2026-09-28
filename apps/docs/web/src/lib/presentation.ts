@@ -156,3 +156,10 @@ export function issueText(issue: IssueLike | string | null | undefined): string 
   if (id) result = joinMessages([result, t('请求编号：{id}', { id })]);
   return result;
 }
+
+/** The browser's IANA time zone: what "today" means to the person looking at the screen. Sent with
+ *  a generation job and a preview so TODAY()/NOW() in a template are their date, not the server's
+ *  (CI-95). Undefined when the browser does not say; the server then uses the profile, else UTC. */
+export function browserTimeZone(): string | undefined {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined; } catch { return undefined; }
+}

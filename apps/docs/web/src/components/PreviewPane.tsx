@@ -10,6 +10,7 @@ import { useLatest } from "../lib/latest";
 import { verificationBadge } from "../lib/jobview";
 import { errorText, NO_EXPORT_TEXT, permissions } from "../lib/perm";
 import AnyView from "./AnyView";
+import { browserTimeZone } from "../lib/presentation";
 
 interface Props {
   projectId: string;
@@ -47,7 +48,7 @@ export default function PreviewPane({ projectId, rev, mappings, slots, onLocateM
     setLay(null);
     setLayView(null);
     latest(
-      (signal) => get(`/api/projects/${projectId}/preview${qs(params)}`, signal),
+      (signal) => get(`/api/projects/${projectId}/preview${qs({ ...params, tz: browserTimeZone() })}`, signal),
       (d: any) => { setData(d); setSheet(null); setPage(0); setIndex(d.record.index); setIndexText(String(d.record.index + 1)); setLoading(false); },
       (e) => { setErr(errorText(e)); setLoading(false); },
     );

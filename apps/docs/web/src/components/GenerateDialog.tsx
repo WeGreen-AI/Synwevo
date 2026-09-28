@@ -7,6 +7,7 @@ import { useLatest } from "../lib/latest";
 import type { Project, TemplateDetail } from "../lib/types";
 import { errorText } from "../lib/perm";
 import { Modal } from "@synwevo/ui";
+import { browserTimeZone } from "../lib/presentation";
 
 /** The request id of a batch the user is starting, kept per project and per settings for the
  *  browser tab. Closing the dialog while the server was still creating a large job and opening it
@@ -91,7 +92,7 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose, onLoc
     setBusy(true);
     setErr(null);
     try {
-      const body = { formats, naming, error_policy: policy, layout: pageable ? layout : "off" };
+      const body = { formats, naming, error_policy: policy, layout: pageable ? layout : "off", timezone: browserTimeZone() };
       const rid = requestId(project.id, JSON.stringify(body));
       await patch(`/api/projects/${project.id}`, { output: { naming, formats, error_policy: policy, layout }, base_settings_rev: project.settings_rev });
       const j = await post(`/api/projects/${project.id}/jobs`, { ...body, request_id: rid });

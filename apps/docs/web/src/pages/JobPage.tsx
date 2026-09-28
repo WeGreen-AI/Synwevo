@@ -154,6 +154,11 @@ function Job() {
               <div className="grow">
                 <div className="small muted">{tr("模板「")}{job.template.name}」v{job.template.version_no}{tr(" · 来源文件 ")}{formatNumber(job.source_count)}{tr(" 个 · 格式 ")}{fmts.map((f) => f.toUpperCase()).join(" + ")}{tr(" · 创建于 ")}{fmtTime(job.created_at)}</div>
                 <div className="small muted">{tr("任务使用开始时的文件、模板版本、映射与样本规则；之后的修改不影响本任务。")}</div>
+                {/* whose "today" a spreadsheet template's TODAY()/NOW() meant for this job (CI-95) */}
+                {job.as_of && ["xlsx", "xlsm"].includes(job.template.format) && <div className="small muted">{tr("模板中的 TODAY() / NOW() 按 {v1} 时间 {v2} 计算。", {
+                  v1: job.as_of.timezone,
+                  v2: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short", timeZone: job.as_of.timezone }).format(job.as_of.at * 1000),
+                })}</div>}
               </div>
               {perm.canWrite && canCancel(job) && (
                 <button type="button" className="btn danger" disabled={!!busy} onClick={() => act("cancel")}>{busy === "cancel" ? tr("正在请求取消…") : tr("取消任务")}</button>

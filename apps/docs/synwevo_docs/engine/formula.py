@@ -12,6 +12,8 @@ tells the user which function was not computed.  Nothing is guessed.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import datetime as _dt
 import math
 import re
@@ -1212,12 +1214,38 @@ def f_weekday(b, a):
     raise _Raise(NUM)
 
 
+#: The instant TODAY() and NOW() mean: an aware datetime in the time zone of the person the
+#: document is calculated for (synwevo_docs/clock.py). Unset, they read the process clock, as a
+#: spreadsheet on this machine would.
+_AS_OF: contextvars.ContextVar = contextvars.ContextVar("synwevo_formula_as_of", default=None)
+
+
+@contextlib.contextmanager
+def as_of(moment):
+    """Evaluate TODAY() and NOW() at `moment` (an aware datetime, or None for the process clock)."""
+    token = _AS_OF.set(moment)
+    try:
+        yield
+    finally:
+        _AS_OF.reset(token)
+
+
+def current_moment():
+    """The instant set by `as_of` for this context, or None (the process clock)."""
+    return _AS_OF.get()
+
+
+def _wall_clock() -> _dt.datetime:
+    m = _AS_OF.get()
+    return m.replace(tzinfo=None) if m is not None else _dt.datetime.now()
+
+
 def f_today(b, a):
-    return datetime_to_serial(_dt.date.today(), b.date1904)
+    return datetime_to_serial(_wall_clock().date(), b.date1904)
 
 
 def f_now(b, a):
-    return datetime_to_serial(_dt.datetime.now(), b.date1904)
+    return datetime_to_serial(_wall_clock(), b.date1904)
 
 
 def f_edate(b, a):

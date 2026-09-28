@@ -9,6 +9,7 @@ Synwevo Docs 自己的业务路由。
 from __future__ import annotations
 
 import json
+import time
 import os
 import urllib.parse
 from pathlib import Path
@@ -702,8 +703,14 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
 
     # ------------------------------------------------------------ preview
     @api.get("/api/projects/{pid}/preview")
-    def preview(pid: str, index: int | None = None, key: str | None = None, search: str | None = None):
-        return views.preview(pid, index, key, search)
+    def preview(request: Request, pid: str, index: int | None = None, key: str | None = None, search: str | None = None,
+                tz: str | None = None):
+        # TODAY()/NOW() in the viewer's time zone and at the viewer's moment (CI-95)
+        from ..clock import current_instant, moment, resolve_timezone
+        from ..engine.formula import as_of
+        zone = resolve_timezone(tz, _actor_id(request), app_.store)
+        with as_of(moment(current_instant(), zone)):
+            return views.preview(pid, index, key, search)
 
     @api.get("/api/preview-files/{blob}")
     def preview_file(blob: str, fmt: str = "docx", name: str = "预览"):

@@ -36,6 +36,7 @@
   * 支持 97 个常用函数：数学（SUM/SUMIF(S)/SUMPRODUCT/ROUND 系列/INT/MOD/ABS/POWER/SQRT/PRODUCT/CEILING/FLOOR…）、统计（AVERAGE(IF/IFS)/COUNT(A/BLANK/IF/IFS)/MAX/MIN/MEDIAN/LARGE/SMALL）、逻辑（IF/IFS/IFERROR/IFNA/AND/OR/NOT/XOR/SWITCH/CHOOSE）、查找（VLOOKUP/HLOOKUP/XLOOKUP/INDEX/MATCH/ROWS/COLUMNS）、文本（TEXT/CONCAT(ENATE)/TEXTJOIN/LEFT/RIGHT/MID/LEN/FIND/SEARCH/SUBSTITUTE/REPLACE/TRIM/UPPER/LOWER/PROPER/REPT/EXACT/VALUE/T/N）、日期（DATE/YEAR/MONTH/DAY/EDATE/EOMONTH/DATEDIF/DAYS/WEEKDAY/HOUR/MINUTE/SECOND/TODAY/NOW）、信息（IS* 系列、NA）；运算符含 `& = <> < <= > >= + - * / ^ %`、跨工作表引用、整列引用、定义名称；错误值（`#DIV/0!`、`#N/A`、`#VALUE!`、`#REF!`、`#NUM!`、`#NAME?`）按 Excel 规则传播。
   * **不支持时不猜测**：遇到不支持的函数、数组公式、循环引用、外部工作簿引用、INDIRECT/OFFSET 等易失函数时，该公式不写入结果；已安装 LibreOffice 时自动改用 LibreOffice 计算并**只把结果写回**我们的输出文件，未安装时由 Excel 打开时计算。任务结果清单会写明计算了多少公式、哪些改用 LibreOffice、哪些未计算、哪些结果是错误值。
   * 与 LibreOffice 的交叉核对：`apps/docs/tests/test_formula.py` 用同一批公式分别由内置引擎和 LibreOffice 计算并逐一比较。
+  * **TODAY() / NOW() 是谁的「今天」（CI-95）**：生成任务在提交时固定一个时刻——提交时间、提交人的时区（浏览器的时区，其次个人资料的时区，都没有时为 UTC）——每次运行（含重试、重启后继续）都按这个时刻计算，任务详情写明所用时区与时刻；预览按查看者的时区和当前时刻计算，预览缓存按时刻区分。此前两者都读服务器的 UTC 时钟：东八区的人在早上 8 点前生成会得到前一天的日期，跨零点重跑结果也不同。Excel 打开输出文件时仍按自己的时钟重算（`fullCalcOnLoad`）。来源文件中没有保存结果、需要内置引擎补算的 TODAY()（多见于脚本生成的文件）在读取来源时按服务器时钟计算，这是已知边界。
 * **插入明细行**（有 n 条明细时在模板行下方插入 n−1 行）：
   * 本表及其他表中指向下方行的引用、合并单元格、条件格式、数据验证、超链接、自动筛选、表格（ListObject）范围、打印区域等定义名称、图表数据引用、批注与图形锚点全部平移；
   * **末行等于模板行的区域会扩展到全部明细行**（如 `SUM(E5:E5)` → `SUM(E5:E14)`）；条件格式、数据验证和**图表数据系列**中指向模板行的单个单元格也视为明细区域一起扩展；普通公式中的单个单元格引用（如 `=E5`）不扩展；模板行内的公式按相对引用复制到每一行；模板行内的横向合并会复制到每一行；

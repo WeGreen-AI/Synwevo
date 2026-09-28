@@ -28,6 +28,9 @@ from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import new_id, now
 from synwevo_core import workers
 
+from . import clock as _clock
+from .clock import moment_of, resolve_timezone
+from .engine.formula import as_of as formula_as_of
 from .engine import generate as G
 from .engine import records as R
 from .engine.limits import LIMITS
@@ -1053,6 +1056,8 @@ class JobService:
         tenant = tenant or current_tenant()
         idem_key = idem_key or options.get("request_id")
         desc = authority.loads(principal)
+        # whose "today" TODAY()/NOW() mean for this job (synwevo_docs/clock.py, CI-95)
+        timezone = resolve_timezone(options.get("timezone"), (desc or {}).get("user_id"), self.store)
         ctx = ProjectContext(self.app, pid)
         if not ctx.template:
             raise self._no_template(ctx)
@@ -1148,6 +1153,9 @@ class JobService:
         phase = "generating" if sync else "planning"
         summary = {"records": n, "planned": n if sync else 0, "invalid": invalid_n if sync else None}
         t = now()
+        # Fixed with the rest of the snapshot: every run of this job computes TODAY()/NOW() at
+        # the submission instant, in the submitter's time zone.
+        snapshot["as_of"] = {"at": _clock.current_instant(), "timezone": timezone}
         replay = None
         try:
             with self.store.tx() as c:
@@ -1192,7 +1200,7 @@ class JobService:
             "cancel_requested_at, request_id, tenant, run_no, origin, phase, halt_reason, principal, summary, "
             "json_extract(snapshot, '$.template.id') AS tpl_id, json_extract(snapshot, '$.template.name') AS tpl_name, "
             "json_extract(snapshot, '$.template.format') AS tpl_format, json_extract(snapshot, '$.template.version_no') AS tpl_version, "
-            "json_array_length(snapshot, '$.sources') AS source_count FROM jobs WHERE id=?", (jid,))
+            "json_array_length(snapshot, '$.sources') AS source_count, json_extract(snapshot, '$.as_of') AS as_of FROM jobs WHERE id=?", (jid,))
         tenant = tenant or current_tenant()
         if not j or (j["tenant"] or "default") != tenant:
             not_found("任务")
@@ -1204,6 +1212,9 @@ class JobService:
         desc = authority.loads(j.pop("principal", None))
         j["submitted_by"] = authority.label(desc) if desc else None
         j["halt_message"] = halt_message(j.get("halt_reason"))
+        # the instant and time zone TODAY()/NOW() were computed with (CI-95); null before CI-95
+        raw = j.pop("as_of", None)
+        j["as_of"] = json.loads(raw) if isinstance(raw, str) else raw
         return j
 
     @staticmethod
@@ -1580,10 +1591,11 @@ class JobService:
                 self._finalize_tx(c, lease.jid, self.worker_id)
             return True
         self._load(lease)
-        if (ctl["phase"] or "generating") == "planning":
-            done = self._plan_slice(lease)
-        else:
-            done = self._generate_slice(lease)
+        with formula_as_of(moment_of(lease.snap)):
+            if (ctl["phase"] or "generating") == "planning":
+                done = self._plan_slice(lease)
+            else:
+                done = self._generate_slice(lease)
         if not done:
             self.store.execute("UPDATE jobs SET last_slice_at=? WHERE id=? AND lease_owner=?", (now(), lease.jid, self.worker_id))
         return done

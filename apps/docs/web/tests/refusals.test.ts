@@ -170,6 +170,7 @@ const API_ONLY_FILES: [RegExp, string][] = [
  *  an f-string is written as its skeleton (every value `{}`). */
 const API_ONLY: [string, string[]][] = [
   ["a request field the workbench fills from its own controls, only ever with valid values", [
+    "timezone 必须是 IANA 时区名（如 Asia/Shanghai）",
     "复制申请包含不支持的字段", "scope 必须是对象", "version 必须是正整数", "force_ids 必须是映射 id 列表",
     "请求内容必须是 JSON（Content-Type: application/json）", "请求内容不是有效的 JSON", "请求内容必须是 JSON 对象", "{} 必须是整数",
     "未知的内置模板类型", "force_ids 必须是字符串列表", "base_version 必须是正整数版本号", "note 必须是字符串",

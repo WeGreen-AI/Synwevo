@@ -5779,6 +5779,10 @@ export const messages = {
     "en": "The job uses the files, template version, mappings and sample rule as they were when it started; later changes do not affect it.",
     "zh-Hant": "任務使用開始時的文件、模板版本、映射與樣本規則；之後的修改不影響本任務。"
   },
+  "模板中的 TODAY() / NOW() 按 {v1} 时间 {v2} 计算。": {
+    "en": "TODAY() and NOW() in the template were computed at {v2}, {v1} time.",
+    "zh-Hant": "範本中的 TODAY() / NOW() 按 {v1} 時間 {v2} 計算。"
+  },
   "产物": {
     "en": "Artifacts",
     "zh-Hant": "產物"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import hashlib
+import time
 import json
 
 from synwevo_core.context import tenant as current_tenant
@@ -307,7 +308,12 @@ class Views:
         # The workspace belongs in the key. The signature covers project, template and mapping
         # versions, so a collision across workspaces needs identical inputs — which is exactly
         # what two people working from the same sample file would have.
-        cache_key = hashlib.sha1(f"{current_tenant()}|{sig}|{rec['key']}|{layout_mode}|{keep}".encode()).hexdigest()
+        # TODAY()/NOW() in a template make the output depend on the viewer's clock (CI-95): a
+        # preview cached yesterday, or for someone in another time zone, would show the wrong date.
+        from .engine.formula import current_moment
+        m = current_moment()
+        clock = m.strftime("%Y-%m-%dT%H:%M") + "|" + str(m.tzinfo) if m is not None else time.strftime("%Y-%m-%dT%H:%M")
+        cache_key = hashlib.sha1(f"{current_tenant()}|{sig}|{rec['key']}|{layout_mode}|{keep}|{clock}".encode()).hexdigest()
         if cache_key in self._preview_cache:
             return self._preview_cache[cache_key]
         plan = ctx.plan(rec)
