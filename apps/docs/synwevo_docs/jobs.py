@@ -195,12 +195,12 @@ class ProjectContext:
         self.version = (app.get_version(tid, self.pinned_version or self.template["head"])
                         if self.template else None)
         self.slots = (self.version or {}).get("slots") or []
-        if (self.template or {}).get("format") == "docx":
+        if (self.template or {}).get("format") in ("docx", "xlsx"):
             from .engine.templates import assign_parents, may_nest
             if may_nest(self.slots):
-                # which detail tables sit inside a repeat content block, read from the file: a
+                # which detail tables sit inside a repeat content block, worked out again: a
                 # version stored (or restored, or copied) before nested details has no `parent`
-                self.slots = assign_parents(self.working(), self.slots)
+                self.slots = assign_parents(self.working(), self.slots, self.template["format"])
         self.mappings = app.get_mappings(pid)["mappings"]
         self.source_rows = app.project_sources(pid)
         self.all_source_rows = app.project_sources(pid, ready_only=False)

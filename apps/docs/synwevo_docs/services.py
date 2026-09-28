@@ -838,11 +838,11 @@ class App:
         if r["format"] in PDF_LIKE and v["slots"]:
             v = dict(v)
             v["slots"] = pdf_slots_with_nrect(self.store.get_blob(v["working_blob"]), v["slots"])
-        if r["format"] == "docx" and v["slots"]:
+        if r["format"] in ("docx", "xlsx") and v["slots"]:
             from .engine.templates import assign_parents, may_nest
             if may_nest(v["slots"]):     # nested details, also for a version stored before them
                 v = dict(v)
-                v["slots"] = assign_parents(self.store.get_blob(v["working_blob"]), v["slots"])
+                v["slots"] = assign_parents(self.store.get_blob(v["working_blob"]), v["slots"], r["format"])
         versions = self.store.all("SELECT version_no, parent_no, note, created_at FROM template_versions WHERE template_id=? ORDER BY version_no", (tid,))
         redo = [x for x in versions if x["parent_no"] == r["head"]]
         parent = v.get("parent_no")
@@ -1000,10 +1000,11 @@ class App:
         primary key with a 500, or the later one was built from the old slot list and silently
         dropped the other's field."""
         tpl = self.get_template(tid)
-        if tpl.get("format") == "docx":
-            # which repeat rows sit inside a repeat content block, from the file itself (nested details)
+        if tpl.get("format") in ("docx", "xlsx"):
+            # which repeat rows sit inside a repeat content block (nested details): from the Word
+            # file itself, or from the rows a spreadsheet's fields sit on
             from .engine.templates import assign_parents
-            slots = assign_parents(working, slots)
+            slots = assign_parents(working, slots, tpl["format"])
         blob = self.store.put_blob(working)
         t = now()
         with self.store.tx() as c:
@@ -1192,9 +1193,10 @@ class App:
         work = self.store.get_blob(v["working_blob"])
         name = (req.get("name") or "").strip() or "字段"
         fmt = r["format"]
-        if fmt == "docx" and req.get("kind") == "block_column":
+        if fmt in ("docx", "xlsx") and req.get("kind") == "block_column":
             try:
-                work2, blk = T.docx_add_block_column(work, req, slots)
+                add_column = T.docx_add_block_column if fmt == "docx" else T.xlsx_add_block_column
+                work2, blk = add_column(work, req, slots)
             except T.TemplateError as e:
                 raise ServiceError(400, e.code, str(e)) from e
             slots = [blk if s["id"] == blk["id"] else s for s in slots]
@@ -1330,7 +1332,8 @@ class App:
         note = f"修改字段「{sl['name']}」"
         if sl.get("_remove_column"):
             key = sl.pop("_remove_column")
-            work = T.docx_remove_block_column(work, sl, key)
+            if r["format"] == "docx":        # a spreadsheet block's columns live in the field only
+                work = T.docx_remove_block_column(work, sl, key)
             note = f"从重复内容块「{sl['name']}」移除一列"
         editor = None
         if r.get("kind") in ("builtin_doc", "builtin_sheet"):
