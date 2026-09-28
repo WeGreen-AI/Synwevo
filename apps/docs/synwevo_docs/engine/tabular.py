@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from . import values as V
 from .limits import LIMITS, LimitError
-from .numfmt import format_value
+from .numfmt import format_value, is_date_format
 
 
 @dataclass
@@ -52,13 +52,29 @@ class Sheet:
             "notes": self.notes, "formula_cells": self.formula_cells,
             "formula_without_cache": self.formula_without_cache[:50],
             "rows": [[[c.t, c.v, c.text] + ([c.fmt] if c.fmt else []) for c in row] for row in self.rows],
+            "text": TEXT_RULES,
         }
 
     @staticmethod
     def from_json(d: dict) -> "Sheet":
         rows = [[V.Value(c[0], c[1], c[2], c[3] if len(c) > 3 else None) for c in row] for row in d["rows"]]
+        if d.get("text", 1) < TEXT_RULES:
+            # parsed before numbers were shown as Excel shows them (Q14): a double's text was its
+            # full binary expansion (3.5999999999999996). Rebuilt from the kept value, so a source
+            # uploaded earlier reads like one uploaded now.
+            for row in rows:
+                for i, c in enumerate(row):
+                    if c.t == V.FLOAT:
+                        try:
+                            row[i] = V.Value(c.t, c.v, format_value(float(c.v), c.fmt)[0], c.fmt, c.src, c.style)
+                        except (TypeError, ValueError):
+                            pass
         return Sheet(d["name"], d["index"], rows, d.get("merged", []), d.get("hidden", False), d.get("notes", []),
                      d.get("formula_cells", 0), d.get("formula_without_cache", []))
+
+
+#: how cell text was made when a sheet was stored: 2 = doubles shown as Excel shows them (Q14)
+TEXT_RULES = 2
 
 
 @dataclass
@@ -248,6 +264,8 @@ def read_xlsx(data: bytes) -> Workbook:
         sheet_parts[sh.get("name")] = pkg.rel_target("xl/workbook.xml", rid)
     sheets: list[Sheet] = []
     total = 0
+    styles = _style_formats(pkg)
+    formula_fmt: dict[tuple[str, str], str] = {}
     for idx, ws in enumerate(wb.worksheets):
         rows: list[list[V.Value]] = []
         try:
@@ -277,17 +295,37 @@ def read_xlsx(data: bytes) -> Workbook:
         sh = Sheet(ws.title, idx, rows, hidden=(ws.sheet_state != "visible"))
         part = sheet_parts.get(ws.title)
         if part and pkg.has(part):
-            _scan_sheet_xml(pkg.read(part), sh)
+            _scan_sheet_xml(pkg.read(part), sh, styles, formula_fmt)
         sheets.append(sh)
     wb.close()
     missing = [(sh.name, ref) for sh in sheets for ref in sh.formula_without_cache]
     if missing:
-        _compute_missing(data, sheets, missing)
+        _compute_missing(data, sheets, missing, formula_fmt)
     info = {"date1904": bool(getattr(wb, "epoch", None) and wb.epoch.year == 1904), "inventory": pkg.inventory()}
     return Workbook(sheets, info)
 
 
-def _scan_sheet_xml(xml: bytes, sh: Sheet) -> None:
+def _style_formats(pkg) -> list[str | None]:
+    """The number format of each cell style (`s` index) in xl/styles.xml; None for General."""
+    from openpyxl.styles.numbers import BUILTIN_FORMATS
+    if not pkg.has("xl/styles.xml"):
+        return []
+    S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    x = pkg.xml("xl/styles.xml")
+    custom = {int(n.get("numFmtId")): n.get("formatCode") for n in x.iter(S + "numFmt") if (n.get("numFmtId") or "").isdigit()}
+    xfs = x.find(S + "cellXfs")
+    out: list[str | None] = []
+    for xf in (xfs if xfs is not None else []):
+        if xf.tag != S + "xf":
+            continue
+        i = int(xf.get("numFmtId") or 0) if (xf.get("numFmtId") or "0").isdigit() else 0
+        f = custom.get(i) or BUILTIN_FORMATS.get(i)
+        out.append(None if not f or f == "General" else f)
+    return out
+
+
+def _scan_sheet_xml(xml: bytes, sh: Sheet, styles: list[str | None] | None = None,
+                    formula_fmt: dict[tuple[str, str], str] | None = None) -> None:
     from lxml import etree
     S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
     for ev, el in etree.iterparse(io.BytesIO(xml), events=("end",), huge_tree=True):
@@ -300,6 +338,10 @@ def _scan_sheet_xml(xml: bytes, sh: Sheet) -> None:
                 if v is None or (v.text or "") == "":
                     if len(sh.formula_without_cache) < 200000:
                         sh.formula_without_cache.append(el.get("r"))
+                        si = el.get("s") or ""
+                        # its number format: the engine's result is shown the way the cell shows it
+                        if formula_fmt is not None and styles and si.isdigit() and int(si) < len(styles) and styles[int(si)]:
+                            formula_fmt[(sh.name, el.get("r"))] = styles[int(si)]
             el.clear()
         elif tag == S + "mergeCell":
             r1, c1, r2, c2 = parse_range(el.get("ref"))
@@ -311,7 +353,8 @@ def _scan_sheet_xml(xml: bytes, sh: Sheet) -> None:
 
 
 
-def _compute_missing(data: bytes, sheets: list[Sheet], missing: list[tuple[str, str]]) -> None:
+def _compute_missing(data: bytes, sheets: list[Sheet], missing: list[tuple[str, str]],
+                     formula_fmt: dict[tuple[str, str], str] | None = None) -> None:
     """Formulas saved without a cached result (e.g. files written by scripts): compute them
     with the built-in engine so the source value is real, and say so."""
     from .formula import XLError, evaluate_cells
@@ -341,7 +384,12 @@ def _compute_missing(data: bytes, sheets: list[Sheet], missing: list[tuple[str, 
         elif isinstance(v, bool):
             row[c] = V.from_python(v)
         elif isinstance(v, float):
-            row[c] = V.from_python(v, display=format_value(v, row[c].fmt)[0] if row[c].fmt else None)
+            f = (formula_fmt or {}).get((sname, ref)) or row[c].fmt
+            if f and is_date_format(f):
+                from .numfmt import serial_to_datetime
+                row[c] = V.from_python(serial_to_datetime(v), fmt=f, display=format_value(v, f)[0])
+            else:
+                row[c] = V.from_python(v, fmt=f, display=format_value(v, f)[0] if f else None)
         elif v is None:
             row[c] = V.empty()
         else:

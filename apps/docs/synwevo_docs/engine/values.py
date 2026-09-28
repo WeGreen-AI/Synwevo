@@ -54,6 +54,14 @@ class Value:
         return Value(d.get("t", STR), d.get("v"), d.get("text", ""), d.get("fmt"), d.get("src"))
 
     def as_decimal(self) -> Decimal | None:
+        if self.t == FLOAT:
+            # the number as Excel sees it (15 significant digits), as the formula engine does:
+            # 3*1.2 is 3.6 to a rounding or a comparison, not 3.5999999999999996
+            try:
+                f = float(self.v)
+                return _finite(Decimal(str(self.v)) if f.is_integer() else Decimal(format(f, ".15g")))
+            except (InvalidOperation, ValueError, TypeError):
+                return None
         if self.t in NUMERIC_TYPES:
             try:
                 return _finite(Decimal(str(self.v)))
@@ -86,6 +94,32 @@ def text(s: str, src: dict | None = None) -> Value:
     return Value(STR, s, s, src=src)
 
 
+def exact_decimal(v: "Value") -> Decimal | None:
+    """The whole double of a FLOAT value (for adding several up before one final rounding)."""
+    try:
+        return _finite(Decimal(str(v.v)))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def excel_decimal(x: float) -> Decimal:
+    """A double as Excel sees it: integral values whole, others at 15 significant digits."""
+    return Decimal(float_repr(x)) if x.is_integer() else Decimal(format(x, ".15g"))
+
+
+def general_text(x: float) -> str:
+    """A number as Excel's General format shows it: at most 15 significant digits. 3*1.2 is the
+    double 3.5999999999999996, which Excel shows as 3.6 — and so must a document filled from it.
+    Integral values keep every digit; other values are rounded like Excel's display, so
+    999999999999999.9 shows as 1000000000000000."""
+    if x != x or x in (float("inf"), float("-inf")) or x.is_integer():
+        return float_repr(x)
+    r = format(Decimal(format(x, ".15g")), "f")
+    if "." in r:
+        r = r.rstrip("0").rstrip(".")
+    return r
+
+
 def float_repr(x: float) -> str:
     """Shortest round-trip representation, without scientific notation for
     ordinary magnitudes and without a trailing '.0' for integral values."""
@@ -111,9 +145,11 @@ def from_python(obj: Any, *, fmt: str | None = None, display: str | None = None,
     if isinstance(obj, int):
         return Value(INT, str(obj), display if display is not None else str(obj), fmt, src)
     if isinstance(obj, float):
+        # the canonical value keeps the whole double (it is written back to spreadsheets as it is);
+        # what a person sees is what Excel shows
         canon = float_repr(obj)
         t = INT if obj.is_integer() and abs(obj) < 1e16 else FLOAT
-        return Value(t, canon, display if display is not None else canon, fmt, src)
+        return Value(t, canon, display if display is not None else general_text(obj), fmt, src)
     if isinstance(obj, Decimal):
         return Value(DEC, str(obj), display if display is not None else str(obj), fmt, src)
     if isinstance(obj, _dt.datetime):

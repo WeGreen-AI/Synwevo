@@ -278,11 +278,18 @@ def aggregate(vals: list[V.Value], how: str = "unique", sep: str = "、") -> V.V
 
 def _sum(vals: list[V.Value]) -> V.Value:
     total = Decimal(0)
+    doubles = False
     for v in vals:
-        d = v.as_decimal()
+        # a double is added whole and only the total is shown as Excel shows it (15 significant
+        # digits): 100/3 three times is 100, not 99.9999999999999 (rounding each first) nor
+        # 100.000000000000008 (showing the binary sum)
+        d = V.exact_decimal(v) if v.t == V.FLOAT else v.as_decimal()
         if d is None:
             raise TransformError(f"「{v.text}」不是数字，无法求和")
+        doubles = doubles or v.t == V.FLOAT
         total += d
+    if doubles:
+        total = Context(prec=15, rounding=ROUND_HALF_UP).plus(total)
     s = format(total.normalize(), "f") if total == total.to_integral() else format(total, "f")
     if "." in s:
         s = s.rstrip("0").rstrip(".") if "E" not in s else s

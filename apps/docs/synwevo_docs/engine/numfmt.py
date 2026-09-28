@@ -144,9 +144,9 @@ def datetime_to_serial(value, date1904: bool = False) -> float:
 
 
 def _general(value) -> str:
-    from .values import float_repr
+    from .values import general_text
     if isinstance(value, float):
-        return float_repr(value)
+        return general_text(value)       # 15 significant digits, as Excel shows it
     return str(value)
 
 
@@ -154,7 +154,13 @@ def _format_number(value, fmt: str) -> tuple[str, bool]:
     if fmt.lower() in ("general", "@", ""):
         return _general(value), True
     secs = _sections(fmt)
-    num = Decimal(str(value)) if not isinstance(value, Decimal) else value
+    if isinstance(value, Decimal):
+        num = value
+    elif isinstance(value, float) and value == value and value not in (float("inf"), float("-inf")):
+        from .values import excel_decimal
+        num = excel_decimal(value)       # 0.1*1.15 is 0.115 to Excel, and "0.00" shows 0.12
+    else:
+        num = Decimal(str(value))
     sec = secs[0]
     negative_explicit = False
     if num < 0 and len(secs) >= 2 and secs[1].strip():
