@@ -606,7 +606,9 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
     async def builtin_body(request, *, saving=False):
         from .app import _editor_body
         body = await _editor_body(request)  # bounded streaming JSON, including chunked bodies
-        allowed = {"editor", "name", "base_version", "note"} if saving else {"editor", "name", "kind"}
+        # discard_live is in the schema, the SDK sends it and api.md documents it (CI-113); it was
+        # missing here, so a confirmed discard was refused as an unknown field
+        allowed = {"editor", "name", "base_version", "note", "discard_live"} if saving else {"editor", "name", "kind"}
         unknown = set(body) - allowed
         if unknown:
             raise ServiceError(400, "invalid", "不认识的字段", {"field": sorted(unknown)[0]})

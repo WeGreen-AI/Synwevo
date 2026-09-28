@@ -244,15 +244,7 @@ def save_builtin(app: App, tid: str, body: dict, *, merge: bool = False) -> dict
                 detail["unchanged"] = True
                 return detail
             merged_with = r["head"]
-    # The version's note: a name the person gives this checkpoint (9.13 D 「命名检查点」), or the
-    # default wording. Bounded and plain text; never trusted as markup.
-    raw_note = body.get("note")
-    if raw_note is not None and not isinstance(raw_note, str):
-        raise ServiceError(400, "invalid_field", "note 必须是字符串", {"field": "note"})
-    note = " ".join((raw_note or "").split())
-    if len(note) > 200:
-        raise ServiceError(400, "invalid_field", "版本说明最多 200 个字符", {"field": "note", "max": 200})
-    note = note or "在编辑器中保存"
+    note = _version_note(body.get("note"))
     try:
         data, slots, _ = _build(r["kind"], editor)
     except ServiceError as e:
@@ -263,8 +255,33 @@ def save_builtin(app: App, tid: str, body: dict, *, merge: bool = False) -> dict
         # conflict it is — keep theirs, or save yours over it — not as a raw build error (CI-116).
         raise ServiceError(409, "stale_template", f"你的修改与其他人之后保存的修改合在一起无法生成模板：{e.message}",
                            {"head": merged_with, "base_version": base, "merge_error": e.message}) from e
-    # keep extra slot settings (required, formats, defaults) for fields that still exist
-    old = {s["id"]: s for s in app.get_version(tid, r["head"])["slots"]}
+    _keep_slot_settings(app.get_version(tid, r["head"])["slots"], slots)
+    with app.store.tx():
+        detail = app.new_version(tid, data, slots, note + (f"（已与第 {merged_with} 版合并）" if merged_with else ""), editor, base_head=r["head"],
+                                 discard_live=discard)
+        app.store.update("templates", {"id": tid}, {"original_blob": app.store.put_blob(data)})
+        if body.get("name"):
+            app.store.update("templates", {"id": tid}, {"name": body["name"][:100]})
+            detail = app.template_detail(tid)
+    if merged_with:
+        detail["merged_with"] = merged_with
+    return detail
+
+
+def _version_note(raw_note) -> str:
+    """The version's note: a name the person gives this checkpoint (9.13 D 「命名检查点」), or the
+    default wording. Bounded and plain text; never trusted as markup."""
+    if raw_note is not None and not isinstance(raw_note, str):
+        raise ServiceError(400, "invalid_field", "note 必须是字符串", {"field": "note"})
+    note = " ".join((raw_note or "").split())
+    if len(note) > 200:
+        raise ServiceError(400, "invalid_field", "版本说明最多 200 个字符", {"field": "note", "max": 200})
+    return note or "在编辑器中保存"
+
+
+def _keep_slot_settings(old_slots: list[dict], slots: list[dict]) -> None:
+    """Keep extra slot settings (required, formats, defaults) for fields that still exist."""
+    old = {s["id"]: s for s in old_slots or []}
     for s in slots:
         prev = old.get(s["id"])
         if prev:
@@ -272,12 +289,34 @@ def save_builtin(app: App, tid: str, body: dict, *, merge: bool = False) -> dict
             for k in ("required", "data_type", "format", "default", "placeholder", "repeat_header"):
                 if k in prev and k not in ("required",) or (k == "required" and prev.get("required") and not s.get("required")):
                     s[k] = prev[k]
-    with app.store.tx():
-        detail = app.new_version(tid, data, slots, note + (f"（已与第 {merged_with} 版合并）" if merged_with else ""), editor, base_head=r["head"])
-        app.store.update("templates", {"id": tid}, {"original_blob": app.store.put_blob(data)})
-        if body.get("name"):
-            app.store.update("templates", {"id": tid}, {"name": body["name"][:100]})
+
+
+def save_live_sheet(app: App, tid: str, editor: dict, *, base_head: int, note=None) -> dict:
+    """Save a live table room (docs-sheet-live.md §3, B1 step ②): ``editor`` is the room's state
+    rendered at a snapshot (``collab_sheet.project``), ``base_head`` the version that state was
+    seeded from, saved to or reconciled with. The version is built and written like any editor save;
+    a head that moved since is refused by ``new_version`` (409 ``stale_template``; the room folds the
+    newer version in and the save can be pressed again). A projection equal to the head version adds
+    no version and says ``unchanged``. No ``_guard_live_edits`` here: this *is* the live table."""
+    from .collab_sheet import normalize
+
+    r = app.get_template(tid)
+    if r["kind"] != "builtin_sheet":
+        raise ServiceError(400, "not_builtin", "只有内置编辑器创建的模板可以在编辑器中修改")
+    note = _version_note(note)
+    if r["head"] == base_head:
+        head_editor = app.editor_of(tid, app.get_version(tid, r["head"]), r["kind"]) or {}
+        try:
+            same = _same(normalize(head_editor), editor)
+        except (ServiceError, ValueError):
+            same = False                                  # a head the room could not have rendered: not provably equal
+        if same:
             detail = app.template_detail(tid)
-    if merged_with:
-        detail["merged_with"] = merged_with
+            detail["unchanged"] = True
+            return detail
+    data, slots, _ = _build(r["kind"], editor)
+    _keep_slot_settings(app.get_version(tid, r["head"])["slots"], slots)
+    with app.store.tx():
+        detail = app.new_version(tid, data, slots, note, editor, base_head=base_head)
+        app.store.update("templates", {"id": tid}, {"original_blob": app.store.put_blob(data)})
     return detail

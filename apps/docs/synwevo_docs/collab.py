@@ -23,6 +23,11 @@ Versions stay explicit: 保存模板 turns the live document into a new template
 told and marks itself clean); restoring, undoing or redoing a version replaces the live document
 for everyone in the room; a save from outside the room (the machine API) does the same.
 
+A table template's room carries presence and version frames only — unless the switch
+``SYNWEVO_SHEET_LIVE`` is on, when it holds the live table state instead (``collab_sheet_room``,
+docs-sheet-live.md B1 step ②): frames of type ``MESSAGE_SHEET`` carry operations the server checks,
+orders and attributes.
+
 The room state lives in this process. The single-process deployment is the one this repository
 ships; a multi-worker deployment needs sticky routing of ``/api/collab/`` to one process, which the
 platform record spells out rather than hides.
@@ -51,6 +56,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from synwevo_core import env
 from synwevo_core.context import actor as current_actor, as_tenant
+from synwevo_core.errors import ServiceError
 from synwevo_core.http import WRITE_ROLES
 from synwevo_core.errors import not_found
 from synwevo_core.store import Store, new_id, now
@@ -60,6 +66,7 @@ from .collab_pm import PARTS, block_texts, read, seed, strip_nulls
 log = logging.getLogger("synwevo.docs.collab")
 
 MESSAGE_META = 100                 # this server's own frames beside sync (0), awareness (1), query awareness (3)
+MESSAGE_SHEET = 101                # a live table room's operations and patches (collab_sheet_room)
 MESSAGE_QUERY_AWARENESS = 3
 CLOSE_BAD_REQUEST, CLOSE_UNAUTHORIZED, CLOSE_FORBIDDEN, CLOSE_NOT_FOUND, CLOSE_GONE, CLOSE_ERROR = 4400, 4401, 4403, 4404, 4410, 1011
 #: A tab reconnecting with a document from a previous seeding of the room (CI-115): merging it would
@@ -78,6 +85,17 @@ EXCERPT = 80
 
 def recheck_seconds() -> float:
     return float(env.get("COLLAB_RECHECK_S") or 30)
+
+
+def sheet_live_enabled() -> bool:
+    """``SYNWEVO_SHEET_LIVE``: a table template's room holds the live table state (docs-sheet-live.md
+    B1, rolled out step by step; off by default). Read when a room opens."""
+    return env.flag("SHEET_LIVE")
+
+
+#: The live table room whose save is being written on this thread (collab_sheet_room.SheetRoom.save):
+#: the version it writes is the room's own, not a change from outside to fold in.
+OWN_LIVE_SAVE = threading.local()
 
 
 def peer_color(user_id: str) -> int:
@@ -120,6 +138,12 @@ class Conn:
     client_ids: set[int] = field(default_factory=set)
     refused_told: bool = False
     dropped: int = 0
+    # a live table room: the tab's client id, the per-person key its messages are numbered under, the
+    # newest sequence number it has said it has seen; the event loop serving the socket
+    client: str | None = None
+    client_key: str | None = None
+    seen: int = 0
+    loop: Any = None
 
     async def send(self, data: bytes) -> None:
         try:
@@ -132,6 +156,9 @@ class Conn:
 
 
 class Room:
+    #: a table template's room with the live-table switch on (collab_sheet_room.SheetRoom)
+    sheet = False
+
     def __init__(self, hub: "CollabHub", tid: str, tenant: str, *, kind: str = "template", writable: bool | None = None):
         self.hub = hub
         self.tid = tid
@@ -193,6 +220,39 @@ class Room:
 
     def state_payload(self) -> dict:
         return {"type": "state", "head": self.head, "dirty": self.dirty, "changes_rev": self.changes_rev, "online": len(self.peers())}
+
+    def hello(self, conn: Conn) -> dict:
+        return {"type": "hello", "kind": self.kind, "writable": self.writable, "recovered": self.recovered,
+                "user": {"id": conn.user_id, "name": conn.name, "color": conn.color}, "readonly": conn.readonly,
+                "head": self.head, "dirty": self.dirty, "changes_rev": self.changes_rev, "peers": self.peers(exclude=conn),
+                "epoch": self.epoch, "recheck_s": recheck_seconds()}
+
+    def admit(self, conn: Conn, requested_client: str | None = None) -> bytes:
+        """Add the connection and say hello (a live table room does both at one sequence number)."""
+        self.clients.add(conn)
+        return meta_frame(self.hello(conn))
+
+    def persists(self) -> bool:
+        """Whether the room holds a live state that is written to ``collab_docs``."""
+        return self.writable
+
+    def live(self) -> bool:
+        return False
+
+    def last_writer(self) -> str | None:
+        return None
+
+    def on_sheet_frame(self, conn: Conn, data: bytes) -> None:
+        """A live table frame in a room that holds no live table: ignored like any unknown kind."""
+
+    def work_loop(self) -> asyncio.AbstractEventLoop | None:
+        """An event loop serving this room (in production the only one), for work that arrives on
+        another thread and must be ordered with the room's frames."""
+        for c in list(self.clients):
+            if c.loop is not None and c.loop.is_running():
+                return c.loop
+        loop = self.hub.loop
+        return loop if loop is not None and loop.is_running() else None
 
     # ---- sending -------------------------------------------------------------------------------
     def broadcast(self, data: bytes, exclude: Conn | None = None) -> None:
@@ -317,6 +377,9 @@ def same_document(ydoc, editor: dict | None) -> bool:
     return True
 
 
+_ROOM = object()          # write_state: "the room's own value"
+
+
 class CollabHub:
     def __init__(self, store: Store, app_, identity, sessions, gate: Callable[[Request, str], Any]):
         self.store = store
@@ -329,6 +392,10 @@ class CollabHub:
         self._acting: dict[str, tuple[str | None, float]] = {}
         self._lock = threading.Lock()
         self._room_locks: dict[str, asyncio.Lock] = {}
+        from synwevo_core.http import RateBuckets
+        from .collab_sheet_room import ops_per_minute
+        #: live table operations per person per room (docs-sheet-live.md §4)
+        self.sheet_rate = RateBuckets(ops_per_minute(), name="sheet-live")
 
     # ---- routes call these ----------------------------------------------------------------------
     @contextlib.contextmanager
@@ -393,11 +460,12 @@ class CollabHub:
         return {"items": items, "online": room.peers() if room else []}
 
     def on_template_change(self, tid: str, head: int | None, editor: dict | None, reason: str, *,
-                           previous: int | None = None, source: int | None = None) -> None:
+                           previous: int | None = None, source: int | None = None, discard_live: bool = False) -> None:
         """Called by the template service after a version operation, from any thread. The history
         row says what the document became and what it was before: a restore names the version it
         copied (`source`) and the one it replaced (`previous`); undo/redo name where the head moved
-        from; a save made outside the editor names the version it followed."""
+        from; a save made outside the editor names the version it followed. `discard_live`: the
+        caller confirmed that unsaved live edits may go (a live table room then starts afresh)."""
         key = f"template:{tid}"
         actor = self.actor(tid)
         room = self.rooms.get(key)
@@ -405,6 +473,8 @@ class CollabHub:
             for prow in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
                 self.on_project_change(prow["id"], f"template.{reason}", {"template_id": tid, "head": head})
         if reason == "delete":
+            if room is not None and room.sheet:
+                room.forget_draft()                      # the last one out must not write it back
             self.store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
             self.store.execute("DELETE FROM collab_changes WHERE room=?", (key,))
             if room is not None and self.loop is not None:
@@ -413,6 +483,13 @@ class CollabHub:
         if room is None or self.loop is None:
             # Nobody is in the room: the head is the truth now; the next opener seeds from it.
             self.store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
+            return
+        if room.sheet:
+            if reason == "save" and getattr(OWN_LIVE_SAVE, "room", None) is room:
+                return                                   # the room's own save: it marks itself saved (SheetRoom.save)
+            actor_name = display_name(self.identity.get_user(actor)) if actor else None
+            loop = room.work_loop() or self.loop
+            loop.call_soon_threadsafe(room.outside_change, head, editor, reason, actor, actor_name, discard_live)
             return
         snapshot = reason == "save" and actor is not None and any(c.user_id == actor for c in room.clients)
         if room.writable and (reason != "save" or not snapshot):
@@ -429,18 +506,50 @@ class CollabHub:
         recorded change. Read from the room when it is open, from the persisted draft otherwise."""
         key = f"template:{tid}"
         room = self.rooms.get(key)
+        sheet = False
         if room is not None:
-            dirty, online = bool(room.dirty and room.writable), [p["name"] for p in room.peers() if not p.get("readonly")]
+            dirty, online = bool(room.dirty and room.persists()), [p["name"] for p in room.peers() if not p.get("readonly")]
             online_ids = sorted({c.user_id for c in room.clients if not c.readonly})
+            sheet = room.sheet
         else:
-            live = self.store.one("SELECT dirty FROM collab_docs WHERE room=?", (key,))
-            dirty, online, online_ids = bool(live and live["dirty"]), [], []
+            live = self.store.one("SELECT dirty, model FROM collab_docs WHERE room=?", (key,))
+            sheet = bool(live and live.get("model") == "sheet")
+            # a live table draft counts while the switch is on; with it off the room cannot be opened
+            # to save it, and the next version change drops it (docs-sheet-live.md §9, rollback)
+            dirty, online, online_ids = bool(live and live["dirty"] and (not sheet or sheet_live_enabled())), [], []
         last_by = None
         if dirty:
-            last = self.store.one("SELECT user_id FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT 1", (key,))
-            if last and last.get("user_id"):
-                last_by = display_name(self.identity.get_user(last["user_id"]))
+            uid = None
+            if sheet:
+                uid = room.last_writer() if room is not None else self._draft_last_writer(key)
+            else:
+                last = self.store.one("SELECT user_id FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT 1", (key,))
+                uid = (last or {}).get("user_id")
+            if uid:
+                last_by = display_name(self.identity.get_user(uid))
         return {"dirty": dirty, "online": online, "online_ids": online_ids, "last_by": last_by}
+
+    def _draft_last_writer(self, key: str) -> str | None:
+        """Who last changed a persisted live table draft (nobody is in its room)."""
+        import zlib
+        from .collab_sheet_room import last_writer
+        row = self.store.one("SELECT state FROM collab_docs WHERE room=?", (key,))
+        try:
+            return last_writer(json.loads(zlib.decompress(bytes(row["state"])))) if row and row.get("state") else None
+        except Exception:                                    # noqa: BLE001 — an unreadable draft names nobody
+            return None
+
+    def live_sheet_room(self, tid: str) -> Room | None:
+        """The open live table room of ``tid`` in this process, if any."""
+        room = self.rooms.get(f"template:{tid}")
+        return room if room is not None and room.sheet and room.live() else None
+
+    async def save_live(self, tid: str, user_id: str | None, note) -> dict:
+        """POST /api/templates/{tid}/collab/save: the live table as a new version (SheetRoom.save)."""
+        room = self.live_sheet_room(tid)
+        if room is None:
+            raise ServiceError(409, "not_live", "这张表格没有正在进行的实时协同", {"template_id": tid})
+        return await run_in_threadpool(room.save, user_id, note)
 
     def shutdown(self) -> None:
         """Process shutdown: write every live document now. The delayed persist runs on the event
@@ -448,7 +557,7 @@ class CollabHub:
         with self._lock:
             rooms = list(self.rooms.values())
         for room in rooms:
-            if room.writable and room.clients:
+            if room.persists() and room.clients:
                 room.persist_now()
 
     def changes(self, tid: str, limit: int = 100) -> dict:
@@ -469,11 +578,15 @@ class CollabHub:
                 "online": room.peers() if room else [], "changes_rev": room.changes_rev if room else 0}
 
     # ---- persistence (worker threads) -----------------------------------------------------------
-    def write_state(self, room: Room, state: bytes) -> None:
+    def write_state(self, room: Room, state: bytes, *, model: str | None = None, head: Any = _ROOM, dirty: Any = _ROOM, epoch: Any = _ROOM) -> None:
+        """``head``/``dirty``/``epoch`` default to the room's; a live table room passes the values of
+        the serialisation it writes. ``model``: 'sheet' for a live table (NULL: a document)."""
         self.store.execute(
-            "INSERT INTO collab_docs (room, tenant, template_id, state, head, dirty, epoch, updated_at) VALUES (?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(room) DO UPDATE SET state=excluded.state, head=excluded.head, dirty=excluded.dirty, epoch=excluded.epoch, updated_at=excluded.updated_at",
-            (room.key, room.tenant, room.tid, state, room.head, 1 if room.dirty else 0, room.epoch, now()))
+            "INSERT INTO collab_docs (room, tenant, template_id, state, head, dirty, epoch, model, updated_at) VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(room) DO UPDATE SET state=excluded.state, head=excluded.head, dirty=excluded.dirty, epoch=excluded.epoch, "
+            "model=excluded.model, updated_at=excluded.updated_at",
+            (room.key, room.tenant, room.tid, state, room.head if head is _ROOM else head, 1 if (room.dirty if dirty is _ROOM else dirty) else 0,
+             room.epoch if epoch is _ROOM else epoch, model, now()))
 
     def record_changes(self, room: Room, user_id: str | None, rows: list[tuple], *, coalesce: bool = True) -> None:
         t = now()
@@ -580,7 +693,9 @@ class CollabHub:
                 with as_tenant(tenant):
                     t = self.app.get_template(tid)
                     if t.get("kind") == "builtin_sheet":
-                        return t, None, "presence"
+                        if not sheet_live_enabled():
+                            return t, None, "presence"
+                        return t, self.store.one("SELECT * FROM collab_docs WHERE room=?", (key,)), "sheet"
                     if t.get("kind") != "builtin_doc":
                         return None, None, None
                     row = self.store.one("SELECT * FROM collab_docs WHERE room=?", (key,))
@@ -589,6 +704,18 @@ class CollabHub:
             t, row, editor = await run_in_threadpool(read_all)
             if t is None:
                 return None
+            if editor == "sheet":
+                # SYNWEVO_SHEET_LIVE: the live table (collab_sheet_room), or presence when it cannot be held
+                from .collab_sheet_room import SheetRoom
+
+                def sheet_head_editor() -> dict | None:
+                    with as_tenant(tenant):
+                        return self.app.editor_of(tid, self.app.get_version(tid, t["head"]), t.get("kind"))
+                room = SheetRoom(self, tid, tenant)
+                await run_in_threadpool(room.load_sheet, t, row, sheet_head_editor)
+                room.pending.clear()
+                self.rooms[key] = room
+                return room
             if editor == "presence":
                 # A table template: who is here and what they are on, plus version frames; the
                 # cells themselves are merged on save (builtin_service.merge_sheets).
@@ -638,12 +765,11 @@ class CollabHub:
             return
         user = info["user"]
         conn = Conn(ws=ws, user_id=user["id"], name=display_name(user), color=peer_color(user["id"]),
-                    readonly=info["role"] not in WRITE_ROLES, workspace_id=info["wid"], request=req, path=path)
+                    readonly=info["role"] not in WRITE_ROLES, workspace_id=info["wid"], request=req, path=path,
+                    loop=asyncio.get_running_loop())
         await ws.accept()
-        room.clients.add(conn)
-        await conn.meta({"type": "hello", "kind": room.kind, "writable": room.writable, "recovered": room.recovered, "user": {"id": conn.user_id, "name": conn.name, "color": conn.color}, "readonly": conn.readonly,
-                         "head": room.head, "dirty": room.dirty, "changes_rev": room.changes_rev, "peers": room.peers(exclude=conn), "epoch": room.epoch,
-                         "recheck_s": recheck_seconds()})
+        # `client`: the id a live table tab numbers its messages under, brought back to resume them
+        await conn.send(room.admit(conn, ws.query_params.get("client")))
         await conn.send(create_sync_message(room.doc))
         others = [cid for cid in room.awareness.states if cid != room.awareness.client_id]
         if others:
@@ -726,6 +852,9 @@ class CollabHub:
             if ids:
                 await conn.send(create_awareness_message(room.awareness.encode_awareness_update(ids)))
             return
+        if kind == MESSAGE_SHEET:
+            room.on_sheet_frame(conn, data)
+            return
         # MESSAGE_META from a client and unknown kinds are ignored: the server decides state.
 
     async def _recheck(self, conn: Conn, room: Room) -> None:
@@ -786,7 +915,7 @@ class CollabHub:
             if room.activity_handle is not None:
                 room.activity_handle.cancel()
                 room.activity_handle = None
-            if room.writable:
+            if room.persists():
                 room.persist_now()
             if self.rooms.get(room.key) is room:
                 del self.rooms[room.key]

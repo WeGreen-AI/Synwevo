@@ -124,3 +124,61 @@ CI-47），合并后超出则整份采用外部版本；对账后至少保留一
   同一 `tx` 只建一次。普通表为毫秒级；有两万个合并区域的表，单次写值约 16 ms，5000 条合并的 `tx` 约 0.16 s。
 * 生成器能生成、实时状态不接纳的模型在播种时拒绝，保持 CI-47：重复行字段只有 `c1` 没有 `c2`（生成器按 `c2 = 0` 读）、
   行号写成 `2.0`、超过 20 万行列 id 或 20 万单元格。
+
+## 9. B1 第②步实现记录（房间、持久化、保存路由；`collab_sheet_room.py`）
+
+**开关**：`SYNWEVO_SHEET_LIVE`（缺省关闭），房间打开时读取。关闭时表格房间与今天完全相同（只有在场与版本帧，`hello` 不带
+`live`，101 帧被忽略，保存路由答 409 `not_live`）。打开后表格模板的房间是 `SheetRoom`：
+
+* **打开**：`collab_docs` 中 `model='sheet'`（新增列；NULL 为文档房间，两者互不读取）且 `head` 等于当前版本的草稿（zlib 压缩
+  的 JSON 状态），否则以新纪元播种 `editor_of(head)`。`SeedError`，或单元格超过 `SYNWEVO_SHEET_LIVE_MAX_CELLS`（缺省 5 万），
+  房间保持 CI-47 的在场模式，`hello` 带 `live: false, live_reason: {code, …}`；草稿无法读取时记日志、改用 head 版本并标
+  `recovered`。
+* **`hello`**：`live, epoch, seq, client, next, resumed, persisted, content, limits{max_tx, max_frame_bytes, ops_per_min}`。
+  `content` 是客户端镜像的整份状态（5 万格约 2 MB）。`client`：标签页用 `?client=` 带回自己的 id 以续传；服务端按
+  「人/客户端」作键，别人不能冒用或耗掉某人的序号；同一人另一个仍在线的标签页要同一个 id 时分配新 id。`next` 是该键下一条
+  消息应带的号（模型的 `next_number`）。带旧纪元重连仍是 4409（CI-115）。
+* **101 帧**（JSON，前缀变长长度，与 100 相同）：客户端发 `{type:"op", n, expect, op}`（`tx: [...]` 是 `op: {op:"tx", ops}` 的
+  简写；帧里的 `client` 若有必须等于连接的）和 `{type:"sync"}`。服务端以连接的用户盖章 `by` 调用 `collab_sheet.apply`，给
+  发送者 `ack{n, ok, seq, patch, before}` 或 `ack{n, ok:false, code, detail, people}`（`people` 为 detail 中各 `by` 的姓名与
+  配色），给其他人 `patch{seq, patch, by}`；重复投递答原结果并标 `duplicate`。房间自己的拒绝码：`read_only`、
+  `rate_limited{retry_after}`、`not_live`、`invalid{reason}`、`error`（模型内部故障，连接保留）。`resync` 之后客户端发
+  `sync`，得到 `full`；房间从版本重新开始时发 `reset{epoch, previous_epoch, seq, next, content}`。
+* **持久化**：最后一次修改 1 秒后在工作线程压缩写出，最后一人离开与关机时同步写出；写出后发 meta `persisted{seq, epoch}`。
+  序列化时编号，较旧的一次晚到时不会覆盖较新的一次。`dirty` 在每条操作后取状态记录的已改路径（O(1)），写出时在工作线程
+  按投影算精确值并纠正（加了又删的工作表）。
+* **保存**：`POST /api/templates/{tid}/collab/save {note?}`（`ROUTE_POLICY` 为 write）。在锁内取快照与序号 N，工作线程里
+  投影、生成、`new_version(base_head=房间的版本)`（`builtin_service.save_live_sheet`，版本说明规则与编辑器保存相同），再回到
+  房间的事件循环 `mark_saved` 并广播 `head{reason:"save", saved_seq}`；构建期间别人的修改仍算未保存。投影等于 head 版本时
+  不写版本，返回 `unchanged`。同一房间的保存依次进行。房间自己的保存由线程局部标记识别，不当作外部版本对账。
+  保存后按在线连接已声明看到的最小序号 `compact`。
+* **房间外的版本**（机器 API 的 PUT、单人回退 PUT、项目页字段修改、恢复/撤销/重做）：`on_template_change` 在房间的事件
+  循环上 `collab_sheet.reconcile`，补丁以保存者名义广播（`by`，没有人的机器凭据为 `system`，附 `outside{reason, head}`），
+  有人的值被外部版本覆盖时广播 meta `overwritten{people, conflicts, by}`；外部版本无法实时持有时房间退回在场模式、删除草稿
+  并广播 meta `live{live:false, reason}`。
+* **守卫与对账的关系（决定）**：CI-113/CI-49 的 `live_edits` 守卫照旧——房间有未保存修改时，房间外的保存、恢复、撤销、
+  重做与项目页字段修改一律 409，除非 `discard_live`；守卫已放行的外部版本在房间干净时对账（id 保持，选区不跳）。
+  带 `discard_live` 且房间确有未保存修改时，房间以该版本、新纪元重新开始（`reset`，旧纪元标签页重连得 4409），
+  未保存修改按调用方的确认丢弃。房间在守卫之后、版本写入之前又变脏（有人在构建期间输入）且没有 `discard_live` 时走对账，
+  输入不丢。`discard_live` 经 `new_version`/`_template_changed` 传到钩子。
+* **旧的整份 PUT**：实时房间打开时浏览器 `PUT /api/templates/{tid}/builtin` 答 409 `live_room`（`detail.online`、
+  `detail.epoch`），带 `solo: true` 的单人回退保存按外部版本对账（保存者在房间里时守卫按 CI-113 放行，其他人的修改保留，
+  同一对象以保存的为准并通知被覆盖的人）。机器 API 的整份 PUT 契约不变；其请求体白名单漏了 schema、SDK 与 api.md 都已有的
+  `discard_live`（带上即 400「不认识的字段」），一并补上。
+* **鉴权与界限**：握手、每 30 秒复核、降级只读与移除关闭沿用文档房间；查看者的操作答 `read_only`。帧 2 MiB（超限 4400
+  关闭该连接），`tx` ≤ 5000（模型答 `too_large`），每人每房间 `SYNWEVO_SHEET_LIVE_OPS_PER_MIN`（缺省 600）条/分钟：
+  `tx` 每满 100 条操作多计 1 条、`sync` 计 10 条；被限流的消息不记入去重，按原号重发即可。
+* **删除模板**：房间的草稿不再被最后离开的人写回（文档房间有同样的写回，另立项）。
+* **回滚**：关闭开关后，未保存的表格草稿不再计入守卫，下一次版本变化时被删除；关闭前先保存或确认丢弃
+  （`SELECT room FROM collab_docs WHERE model='sheet' AND dirty=1`）。
+
+**给第③步（浏览器客户端）的已知限制**：
+
+* 今天的 `SheetEditor` 不懂 101 帧：开关打开后它的整份 PUT 会得到 `live_room`。开关必须等③上线后才打开。
+* 帧的先后顺序依赖单事件循环（生产部署如此）；测试客户端每个连接一个事件循环，测试按顺序操作。
+* 非正常退出会丢掉最后约 1 秒：客户端应把操作留在待确认队列里直到 `persisted.seq` 覆盖它；重连后服务端 `seq` 小于本地时，
+  以 `hello.content` 重建，未确认的操作以新的 `expect` 重发（会得到 `conflict` 或 `resync`，由人处理）。
+* 客户端 id 放在 `sessionStorage` 时，浏览器「复制标签页」会复制它：服务端给第二个标签页换新 id（`hello.client` 与请求的
+  不同，`resumed: false`），客户端必须采用 `hello.client` 与 `hello.next`。
+* 变更记录（`collab_changes`）尚未记录表格操作（B2）；`live_edits` 的 `last_by` 取自状态里最后一次由人写入的对象。
+  写前复核（B2）未做：撤权后最多一个复核周期（30 秒）内仍可写入。

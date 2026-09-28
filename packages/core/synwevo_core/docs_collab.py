@@ -47,5 +47,9 @@ CREATE INDEX IF NOT EXISTS ix_project_activity_project ON project_activity (proj
 COLUMNS = [("collab_changes", "before", "TEXT"),
            # CI-115: which seeding of the live document this draft continues (a restore or a reseed
            # starts a new one; a tab holding the previous one must not merge it back)
-           ("collab_docs", "epoch", "TEXT")]
+           ("collab_docs", "epoch", "TEXT"),
+           # docs-sheet-live.md B1 step ②: what `state` holds. NULL for a document room (one CRDT
+           # update, as before); 'sheet' for a live table room (its zlib-compressed JSON state,
+           # synwevo_docs.collab_sheet). A row of one kind is never read as the other.
+           ("collab_docs", "model", "TEXT")]
 

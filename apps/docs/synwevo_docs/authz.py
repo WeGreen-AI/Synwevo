@@ -219,6 +219,8 @@ ROUTE_POLICY: dict[tuple[str, str], str | None] = {
     # whether a connection may change the document is decided per message from the live role.
     ("GET", "/api/collab/templates/{tid}"): None,
     ("GET", "/api/templates/{tid}/collab/changes"): None,
+    # a live table room's state becomes a version (docs-sheet-live.md §3): a write like any save
+    ("POST", "/api/templates/{tid}/collab/save"): "write",
     ("GET", "/api/collab/projects/{pid}"): None,
     ("GET", "/api/projects/{pid}/activity"): None,
     ("POST", "/api/templates/{tid}/restore"): "write",

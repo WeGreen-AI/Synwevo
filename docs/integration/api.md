@@ -221,7 +221,7 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 | POST | `/templates` | write | 上传模板（DOCX/XLSX/PDF/PPTX/PNG/JPEG，旧格式自动转换并提示） |
 | POST | `/templates/builtin` | write | 程序化创建 DOCX/XLSX 模型与真实模板文件，支持幂等 |
 | GET | `/templates/{tid}/builtin` | read | 导出可移植 editor 模型，可带 version |
-| PUT | `/templates/{tid}/builtin` | write | base_version 并发检查；保存新版本，支持幂等；`note`（≤200 字）为这个版本的说明（命名检查点），留空即「在编辑器中保存」；编辑器里有尚未保存为版本的实时修改时 409 `live_edits`（与恢复相同的 `detail`），`discard_live: true` 表示确认替换并丢弃它们（CI-113） |
+| PUT | `/templates/{tid}/builtin` | write | base_version 并发检查；保存新版本，支持幂等；`note`（≤200 字）为这个版本的说明（命名检查点），留空即「在编辑器中保存」；编辑器里有尚未保存为版本的实时修改时 409 `live_edits`（与恢复相同的 `detail`），`discard_live: true` 表示确认替换并丢弃它们（CI-113）。部署打开 `SYNWEVO_SHEET_LIVE` 时，表格模板正在进行的实时协同会把这个版本对账进去（同一对象以保存的版本为准，并通知被覆盖的人），而不是整份替换；契约不变（[docs-sheet-live.md](../platform/docs-sheet-live.md) §9） |
 | GET | `/templates` | read | 模板列表 |
 | GET | `/templates/{tid}` | read | 详情：字段、版本历史、可用导出格式 |
 | GET | `/templates/{tid}/fields` | read | 导出字段定义（`docweave.template-fields` v1） |
