@@ -56,7 +56,10 @@ test('successful formula diagnostics and unknown informational notices are not p
   const issue = { level: 'info', code: 'formula_computed', message: '内置公式引擎已计算 1 个公式并写入结果' };
   for (const locale of ['zh-Hans', 'zh-Hant', 'en'] as const) {
     setLocale(locale);
-    assert.equal(issueText(issue), translate(locale, '内置公式引擎已计算公式并写入结果。'));
+    // the engine's whole sentence, its count included (Q13); the code's label is what is left
+    // when the words are not the engine's
+    assert.equal(issueText(issue), translate(locale, '内置公式引擎已计算 {count} 个公式并写入结果', { count: '1' }));
+    assert.equal(issueText({ ...issue, message: 'Unregistered engine prose' }), translate(locale, '内置公式引擎已计算公式并写入结果。'));
     assert.equal(issueText({ level: 'info', code: 'future_info', message: 'Unregistered engine prose' }), translate(locale, '处理提示（{code}）。', { code: 'future_info' }));
   }
   assert.equal(issue.message, '内置公式引擎已计算 1 个公式并写入结果');

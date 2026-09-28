@@ -11,7 +11,10 @@
  *    - a pattern: an engine sentence with values in it, read back out by its shape;
  *    - code-mapped: its code's sentence in `ERROR_SOURCE` carries the same meaning;
  *    - API-only, with the reason no person using the workbench can meet it.
- *  Adding a server refusal therefore means deciding which of these it is. */
+ *  Adding a server refusal therefore means deciding which of these it is.
+ *
+ *  Q13 holds a sample's own problems — the issues and warnings of its plan, its fill and its job
+ *  item — to the same rule: see "per-sample diagnostics" at the end. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -36,8 +39,9 @@ const SHARED_FILES = ["packages/core/synwevo_core/project_copies.py"];
 type Kind = "service" | "not_found" | "editor" | "coded" | "plain";
 /** Every way the Docs server words a refusal. `code` is what an uncoded engine error reaches
  *  the browser with (the route that passes it on names it); null when it reaches it as the
- *  ValueError handler's generic `invalid`. `only` limits a common name to the files where it is
- *  a refusal rather than an internal error or a per-sample diagnostic. */
+ *  ValueError handler's generic `invalid` (for a per-sample exception: the code of the issue it
+ *  becomes). `only` limits a common name to the files where it is a refusal rather than an
+ *  internal error. */
 const CONSTRUCTORS: Record<string, { kind: Kind; code?: string | null; only?: RegExp }> = {
   ServiceError: { kind: "service" },
   not_found: { kind: "not_found" },                                  // synwevo_core.errors.not_found(what)
@@ -45,9 +49,15 @@ const CONSTRUCTORS: Record<string, { kind: Kind; code?: string | null; only?: Re
   TemplateError: { kind: "coded" }, BlockError: { kind: "coded" }, DocxError: { kind: "coded" },
   PptxError: { kind: "coded" }, XlsxError: { kind: "coded" }, ImageTemplateError: { kind: "coded" },
   PdfError: { kind: "coded" }, RegressionError: { kind: "coded" }, DesensitizeError: { kind: "coded" },
-  // form-block splitting and locator building answer requests; elsewhere a ResolveError is a
-  // per-sample diagnostic, presented by its code's label beside the located value
-  ResolveError: { kind: "coded", only: /^(engine\/blocks\.py|locators\.py)$/ },
+  // form-block splitting and locator building answer requests with a ResolveError; everywhere
+  // else it is a per-sample diagnostic, which reaches the reader inside the sample's issue — as
+  // it is, or behind 「映射 #n：」 (Q13: see "per-sample diagnostics" below). Both are sentences.
+  ResolveError: { kind: "coded" },
+  ColumnError: { kind: "coded" },                                    // tabular.resolve_column, passed on as a ResolveError
+  // per-sample value and page problems: the plan and the fill put them into the sample's issues
+  TransformError: { kind: "plain", code: "value_error" },
+  ConflictError: { kind: "plain", code: "group_conflict" },
+  LayoutUnavailable: { kind: "plain", code: "layout_unavailable" },
   BuiltinError: { kind: "plain", code: "bad_editor" },
   ConversionError: { kind: "plain", code: "convert_failed" },
   OcrError: { kind: "plain", code: "ocr_failed" },
@@ -127,8 +137,9 @@ const keySkeleton = (key: string) => key.replace(/\{[a-zA-Z]\w*\}/g, "{}");
 function refusals(): Refusal[] {
   const out: Refusal[] = [];
   const files = [...pyFiles(DOCS).map(f => [f, relative(DOCS, f)]), ...SHARED_FILES.map(f => [join(ROOT, f), f])];
-  // a bare name or a module-qualified one (`T.TemplateError(`), never a method (`self.x(`)
-  const re = new RegExp(`(?<![\\w.])(?:[A-Z]\\w*\\.)?(${Object.keys(CONSTRUCTORS).join("|")})\\(`, "g");
+  // a bare name or a module-qualified one (`T.TemplateError(`, `transforms.ConflictError(`),
+  // never a method (`self.x(`)
+  const re = new RegExp(`(?<![\\w.])(?:(?!self\\.)[A-Za-z_]\\w*\\.)?(${Object.keys(CONSTRUCTORS).join("|")})\\(`, "g");
   for (const [path, file] of files) {
     const src = readFileSync(path, "utf8");
     const lines = src.split("\n");
@@ -279,6 +290,7 @@ const FORWARDED: Record<string, string> = {
   "engine/ocr.py: \"文字识别无法加载语言数据：\" + err.strip()[-300:]": "the recognizer's own output; code-mapped as ocr_failed",
   "editor_contract.py: message": "the editor contract's own _bad(where, message), whose sentences are read above",
   "editor_contract.py: \"取值只能是 \" + \" / \".join(choices)": "an enumerated editor option: the editors offer only valid ones",
+  "engine/transforms.py: \"；\".join(errs)": "the value transforms' own checks, joined, before an unchecked transform could run: a field's format is checked when it is saved (bad_format) and the Transforms editor writes only valid mapping transforms",
 };
 
 // ------------------------------------------------------------------ checks
@@ -353,6 +365,10 @@ test("a code-mapped refusal has a specific sentence of its own, in every languag
 test("the refusal catalogues have both languages and every parameter", () => {
   assert.deepEqual(validateMessages(refusalMessages), []);
   assert.deepEqual(validateMessages(refusalPatterns), []);
+  // lib/refusals.ts registers them before the other Docs catalogues, and the first wording
+  // registered wins: a key those already have would silently change its translation there
+  const elsewhere = new Set([...Object.keys(messages), ...Object.keys(serverMessages)]);
+  assert.deepEqual([...Object.keys(refusalMessages), ...Object.keys(refusalPatterns)].filter(k => elsewhere.has(k)), []);
   for (const [source, entry] of Object.entries({ ...refusalMessages, ...refusalPatterns })) {
     for (const form of typeof entry.en === "string" ? [entry.en] : Object.values(entry.en)) {
       assert.ok(!/[\u3400-\u9fff]/.test(form), `English for ${source} contains Chinese`);
@@ -514,5 +530,316 @@ test("the comment drawer, the co-editing notice and copy requests present refusa
     assert.equal(copyErrorText("KeyError"), "Copying failed and nothing was created. Request the copy again later.");
     setLocale("zh-Hant");
     assert.equal(copyErrorText("source:not_found"), "來源項目已不可用。");
+  } finally { setLocale("zh-Hans"); }
+});
+
+// ------------------------------------------------------------------ per-sample diagnostics (Q13)
+/* A sample's problems — the `issues` of its plan and of its fill, the warnings of the sample
+ * rules — reach the preview pane, the generate dialog, the job's items and the validation panel
+ * through `issueText` / `diagnosticText`, which present them only when the catalogue has the
+ * sentence. An uncatalogued one used to become its code's label for every reader, zh-Hans
+ * included: 「组内取值冲突」 instead of which field, which values and what to do.
+ *
+ * So every sentence the engine, the job runner and the project views put into a sample's issue
+ * (a dict literal's "message"), a warning list, or an exception that becomes one (ResolveError,
+ * ColumnError, TransformError, ConflictError and LayoutUnavailable, scanned with the refusals
+ * above) is catalogued — the whole sentence as the browser receives it, wrappers included — or
+ * listed below with the reason no person reads it. */
+
+/** Where a sample's problems are worded. */
+const DIAG_FILE = /^(engine\/\w+\.py|jobs\.py|views\.py)$/;
+
+type Diagnostic = { file: string; line: number; via: string; msgs: Message[] | null; msgExpr: string | null };
+
+/** The expression after `"message":` in a dict literal, up to its own comma or closing brace. */
+function dictValue(src: string, start: number): string {
+  let depth = 0;
+  for (let i = start; i < src.length; i++) {
+    const c = src[i];
+    if (c === "#") { while (i < src.length && src[i] !== "\n") i++; continue; }
+    if (c === '"' || c === "'") { i = skipString(src, i); continue; }
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) { if (depth-- === 0) return src.slice(start, i).trim(); }
+    else if (c === "," && depth === 0) return src.slice(start, i).trim();
+  }
+  return src.slice(start).trim();
+}
+
+function diagnostics(): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  for (const path of pyFiles(DOCS)) {
+    const file = relative(DOCS, path);
+    if (!DIAG_FILE.test(file)) continue;
+    const src = readFileSync(path, "utf8");
+    const lines = src.split("\n");
+    const add = (at: number, via: string, arg: string | undefined) => {
+      const line = src.slice(0, at).split("\n").length;
+      if (/^\s*(class|def) /.test(lines[line - 1])) return;
+      const msgs = arg ? sentences(arg) : null;
+      out.push({ file, line, via, msgs, msgExpr: msgs ? null : (arg || "").replace(/\s+/g, " ") });
+    };
+    for (const m of src.matchAll(/["']message["']\s*:\s*/g)) add(m.index!, "message", dictValue(src, m.index! + m[0].length));
+    for (const m of src.matchAll(/(?:(?<![\w.])(?:warns|warnings)|\[["']warnings["']\])\.append\(/g)) add(m.index!, "warning", callArgs(src, m.index! + m[0].length - 1)[0]);
+    // the PPTX fill's `err(slot, code, message)` helper
+    if (file === "engine/pptx_engine.py") for (const m of src.matchAll(/(?<![\w.])err\(/g)) add(m.index!, "err()", callArgs(src, m.index! + m[0].length - 1)[2]);
+    // why the page check did not run: `_layout_unavailable(mode, reason)` puts it into a wrapper
+    if (file === "engine/generate.py") for (const m of src.matchAll(/(?<![\w.])_layout_unavailable\(/g)) add(m.index!, "layout reason", callArgs(src, m.index! + m[0].length - 1)[1]);
+  }
+  return out;
+}
+
+/** Messages that are expressions, keyed by file and expression: what flows through. `keys` are
+ *  the catalogue entries it produces when the sentences are not written where it is scanned. */
+const DIAG_FORWARDED: Record<string, { why: string; keys?: string[] }> = {
+  "engine/plan.py: str(e)": { why: "a ResolveError from the sample's context (records.record_context), read with the refusals above" },
+  "engine/plan.py: _needs_split(nested, block)": { why: "plan._needs_split's sentence", keys: ["明细表「{name}」在重复内容块「{block}」里：请在这个内容块的映射中设置分段字段，每一段才会只写入自己的明细行"] },
+  "engine/plan.py: _needs_split(sl, block)": { why: "plan._needs_split's sentence", keys: ["明细表「{name}」在重复内容块「{block}」里：请在这个内容块的映射中设置分段字段，每一段才会只写入自己的明细行"] },
+  "engine/records.py: str(e)": { why: "a ResolveError of the sample rules (form blocks, the table's sheet, a key column), read with the refusals above" },
+  "engine/templates.py: str(e)": { why: "an XlsxError, read with the refusals above" },
+  "engine/templates.py: w": { why: "the XLSX writer's warnings (engine/xlsx_doc.py), read here as warnings" },
+  "engine/generate.py: str(e)": { why: "LayoutUnavailable, read with the refusals above" },
+  "engine/pptx_engine.py: str(e)": { why: "a PptxError, read with the refusals above" },
+  "engine/pptx_engine.py: message": { why: "the PPTX fill's err(slot, code, message) helper: its sentences are read at its calls" },
+  "engine/pdf_engine.py: pl[\"message\"]": { why: "pdf_repeat.plan_pages' sentences, read here as its dicts' \"message\"" },
+  "jobs.py: i.get(\"message\")": { why: "a plan issue passed on to the job's summary, read here" },
+  "views.py: errs[0][\"message\"]": { why: "a plan issue passed on to the validation panel, read here" },
+  "jobs.py: sum(1 for i in issues if i.get(\"level\") == \"warning\")": { why: "a count of the sample's warnings, not a sentence" },
+  "jobs.py: halt_message(why)": { why: "jobs.HALT_MESSAGES, each checked in \"why a job stopped\" below" },
+  "jobs.py: ver.get(\"error\") or \"输出校验失败\"": { why: "verify_output's reopening failure 「输出文件无法重新打开：{e}」 (the library's words stay as evidence), or the fixed sentence",
+    keys: ["输出文件无法重新打开：{error}", "输出校验失败"] },
+  "jobs.py: \"输出文件中找不到已填写的值：\" + \"、\".join(f\"{m['slot']}={m['value']}\" for m in ver[\"missing\"][:3])": { why: "the values the reopened output lacks (field = value, the person's data)", keys: ["输出文件中找不到已填写的值：{values}"] },
+  "jobs.py: f\"版式：模板 {lay.get('template_pages')} 页，本次排版 {lay.get('pages')} 页；\" f\"实际缩放 {lay.get('effective_factor', 1.0):.0%}\" + (f\"，最小 {lay['min_pt']:.1f} 磅\" if lay.get(\"min_pt\") else \"\") + (f\"；已到最小字号的字段：{'、'.join(lay['clamped'])}\" if lay.get(\"clamped\") else \"\") + f\"；共排版 {lay.get('renders')} 次\"": {
+    why: "a failed sample's layout report, with two optional clauses: its four forms", keys: [
+      "版式：模板 {templatePages} 页，本次排版 {pages} 页；实际缩放 {percent}；共排版 {renders} 次",
+      "版式：模板 {templatePages} 页，本次排版 {pages} 页；实际缩放 {percent}，最小 {pt} 磅；共排版 {renders} 次",
+      "版式：模板 {templatePages} 页，本次排版 {pages} 页；实际缩放 {percent}；已到最小字号的字段：{fields}；共排版 {renders} 次",
+      "版式：模板 {templatePages} 页，本次排版 {pages} 页；实际缩放 {percent}，最小 {pt} 磅；已到最小字号的字段：{fields}；共排版 {renders} 次"] },
+};
+
+/** Sentences assembled from fixed fragments the engine chooses (a label for a kind of field, an
+ *  optional clause, an output format): a value of that kind would be Chinese inside another
+ *  language, so each form it can take is catalogued. Keyed by the f-string's skeleton. */
+const EXPANDED: Record<string, string[]> = {
+  // plan.static_check: {"single": "单值", "region": "固定区域", "repeat": "重复明细"}, joined in sorted key order
+  "映射 #{} 的目标同时绑定了{}字段；请取消这些字段之间的共享绑定": ["固定区域、重复明细", "固定区域、单值", "重复明细、单值", "固定区域、重复明细、单值"]
+    .map(kinds => `映射 #{no} 的目标同时绑定了${kinds}字段；请取消这些字段之间的共享绑定`),
+  "映射 #{} 是{}映射，但目标是{}字段": [["单值", "固定区域"], ["单值", "重复明细"], ["固定区域", "单值"], ["固定区域", "重复明细"], ["重复明细", "单值"], ["重复明细", "固定区域"]]
+    .map(([mapping, field]) => `映射 #{no} 是${mapping}映射，但目标是${field}字段`),
+  // generate.fill_checked: 「，最小 … 磅」 and 「；字段 … 已到各自的最小字号」 are each optional
+  "为保持 {} 页，允许缩小的字段字号已缩小到原来的 {}{}{}": ["", "，最小 {pt} 磅", "；字段 {fields} 已到各自的最小字号", "，最小 {pt} 磅；字段 {fields} 已到各自的最小字号"]
+    .map(tail => `为保持 {count} 页，允许缩小的字段字号已缩小到原来的 {percent}${tail}`),
+  // layout.page_issue: one of two hints
+  "输出有 {} 页，模板为 {} 页：新内容更长导致分页增加{}": ["；已尝试缩小允许缩小的字段仍放不下", "；可在字段设置中勾选「超长时允许缩小字号」，或精简内容"]
+    .map(hint => `输出有 {pages} 页，模板为 {templatePages} 页：新内容更长导致分页增加${hint}`),
+  // jobs: 「{f.upper()}：{e}」 / 「{f.upper()}：{problem}」 for the formats a job can produce
+  "{}：{}": ["DOCX", "XLSX", "PPTX", "PDF", "CSV", "PNG", "JPG"].map(format => `${format}：{reason}`),
+};
+
+/** Per-sample sentences that are not worded for a person, with the reason. Skeletons. */
+const NOT_FOR_PEOPLE: [string, string[]][] = [
+  ["jobs.render_name's warnings: every caller discards them (`nm, _ = render_name(…)`, `render_name(…)[0]`)", [
+    "文件名字段「{}」为空", "文件名中的「{{}}」不是可用字段",
+  ]],
+  ["an unexpected exception while one sample was filled: its class and words stay on the item as evidence for whoever debugs it (the server log has the trace), and the reader gets the code's sentence (ERROR_SOURCE.exception)", [
+    "{}: {}",
+  ]],
+];
+const NOT_FOR_PEOPLE_SENTENCES = new Map(NOT_FOR_PEOPLE.flatMap(([reason, list]) => list.map(s => [s, reason] as const)));
+
+function unclassifiedDiagnostic(d: Diagnostic): string[] {
+  const where = `${d.file}:${d.line} ${d.via}`;
+  if (!d.msgs) return Object.hasOwn(DIAG_FORWARDED, `${d.file}: ${d.msgExpr}`) ? [] : [`${where}: forwarded expression not listed: ${d.msgExpr}`];
+  const out: string[] = [];
+  for (const m of d.msgs) {
+    const shape = m.f ? skeleton(m.text) : m.text;
+    if (NOT_FOR_PEOPLE_SENTENCES.has(shape) || Object.hasOwn(EXPANDED, shape)) continue;
+    if (!shape.includes("{}") ? CATALOGUED.has(shape) : PATTERN_SKELETONS.has(shape)) continue;
+    out.push(`${where}: ${m.f ? "f-string " : ""}${shape}`);
+  }
+  return out;
+}
+
+test("the scan finds the per-sample diagnostics (guards the scanner itself)", () => {
+  const all = diagnostics();
+  assert.ok(all.length > 100, `only ${all.length} diagnostics found`);
+  const shapes = new Set(all.flatMap(d => (d.msgs || []).map(m => (m.f ? skeleton(m.text) : m.text))));
+  assert.ok(shapes.has("映射 #{}：{}：{}。请在映射中明确选择取值规则（取第一条、拼接、求和等）"));   // group_conflict
+  assert.ok(shapes.has("必填字段「{}」的值为空"));                                              // required_empty
+  assert.ok(shapes.has("「{}」不是数字，未应用数字格式"));                                       // a transform warning
+  assert.ok(shapes.has("{} 个分组编号在多个文件中出现（如 {}），默认按文件分别成组、不会合并；如需跨文件合并请开启「跨文件按编号分组」"));  // result["warnings"]
+  assert.ok(shapes.has("字段「{}」与重复明细「{}」位于同一表格行，明细行按记录复制后无法确定写入位置；请把该字段移到明细行以外"));  // pptx err()
+  // a conditional message gives both sentences
+  assert.ok(shapes.has("{}，其余样本不再生成") && shapes.has("项目已被删除，其余样本不再生成"));
+  // the exceptions that become a sample's issue, a module-qualified one (`transforms.ConflictError(`) included
+  const raised = refusals();
+  assert.ok(raised.some(r => r.ctor === "ConflictError" && r.file === "engine/plan.py"));
+  assert.ok(raised.some(r => r.ctor === "ResolveError" && r.file === "engine/resolve.py" && r.code === "needs_ocr"));
+  assert.ok(raised.some(r => r.ctor === "ColumnError" && r.code === "ambiguous_column"));
+  assert.ok(raised.some(r => r.ctor === "LayoutUnavailable") && raised.some(r => r.ctor === "TransformError"));
+});
+
+test("every per-sample diagnostic is catalogued as the browser receives it, or listed with the reason no person reads it", () => {
+  assert.deepEqual(diagnostics().flatMap(unclassifiedDiagnostic), []);
+});
+
+test("the per-sample decisions name nothing the server no longer says, and every form they name is catalogued", () => {
+  const all = diagnostics();
+  const shapes = new Set(all.flatMap(d => (d.msgs || []).map(m => (m.f ? skeleton(m.text) : m.text))));
+  const exprs = new Set(all.filter(d => !d.msgs).map(d => `${d.file}: ${d.msgExpr}`));
+  assert.deepEqual(Object.keys(DIAG_FORWARDED).filter(k => !exprs.has(k)), [], "DIAG_FORWARDED");
+  assert.deepEqual(Object.keys(EXPANDED).filter(k => !shapes.has(k)), [], "EXPANDED");
+  assert.deepEqual([...NOT_FOR_PEOPLE_SENTENCES.keys()].filter(k => !shapes.has(k)), [], "NOT_FOR_PEOPLE");
+  const forms = [...Object.values(DIAG_FORWARDED).flatMap(d => d.keys || []), ...Object.values(EXPANDED).flat()];
+  assert.deepEqual(forms.filter(k => !CATALOGUED.has(k) && !Object.hasOwn(refusalPatterns, k)), [], "forms that are not catalogued");
+  // each expanded form really is one of the sentence's forms
+  for (const [shape, list] of Object.entries(EXPANDED)) {
+    const re = new RegExp(`^${shape.split("{}").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s\\S]*?")}$`);
+    for (const form of list) assert.match(sample(form), re, `${form} is not a form of ${shape}`);
+  }
+  // what the reader of an exception gets instead of its words
+  assert.ok(ERROR_SOURCE.exception && ERROR_SOURCE.export_failed);
+});
+
+/** The wrappers that carry an engine sentence to the browser, as catalogued. */
+const MAP = "映射 #{no}：{reason}";
+const CONFLICT = "映射 #{no}：{reason}：{values}。请在映射中明确选择取值规则（取第一条、拼接、求和等）";
+const FIELD = "字段「{name}」：{reason}";
+const FORMAT = "字段「{name}」的格式设置无法应用：{reason}";
+const IN_FILE = "「{file}」：{reason}";
+const UNCHECKED = "{reason}，本份未做分页检查";
+const NOT_FITTED = "{reason}，无法保证页数不增加（layout=fit），因此不产出这一份；可请管理员启用排版引擎，或改用 layout=warn / off";
+const HALTED = "{reason}，其余样本不再生成";
+
+/** How an engine sentence reaches the browser: each chain lists the wrappers around it,
+ *  innermost first. */
+function chains(via: string, file: string): string[][] {
+  switch (via) {
+    case "ResolveError": return [[], [MAP]];                  // the sample's context as it is (plan, records), a mapping's value behind 「映射 #n：」
+    case "ColumnError": return [[IN_FILE], [IN_FILE, MAP]];   // resolve.column_index names the file
+    case "TransformError": return [[MAP], [FORMAT]];          // a mapping's value, a field's format
+    case "ConflictError": return [[CONFLICT]];
+    case "LayoutUnavailable": return [[], [UNCHECKED], [NOT_FITTED]];   // as it is: views.preview_layout's reason
+    case "layout reason": return [[UNCHECKED], [NOT_FITTED]];
+    case "PptxError": return [[], [FIELD]];
+    case "warning": return file === "engine/transforms.py" ? [[MAP], [FIELD]] : file === "engine/plan.py" ? [[MAP]] : [[]];
+    default: return [];
+  }
+}
+const WRAPPED = new Set(["ResolveError", "ColumnError", "TransformError", "ConflictError", "LayoutUnavailable", "PptxError"]);
+
+/** Every catalogued engine sentence that becomes part of a sample's issue, with its catalogue key. */
+function innerSentences(): { via: string; file: string; key: string }[] {
+  const keysOf = (m: Message): string[] => {
+    const shape = m.f ? skeleton(m.text) : m.text;
+    if (!shape.includes("{}")) return CATALOGUED.has(shape) ? [shape] : [];
+    return Object.keys(refusalPatterns).filter(k => keySkeleton(k) === shape);
+  };
+  const out: { via: string; file: string; key: string }[] = [];
+  for (const r of refusals()) {
+    if (!DIAG_FILE.test(r.file) || !WRAPPED.has(r.ctor)) continue;
+    for (const m of r.msgs || []) for (const key of keysOf(m)) out.push({ via: r.ctor, file: r.file, key });
+  }
+  for (const d of diagnostics()) {
+    if (d.via !== "warning" && d.via !== "layout reason") continue;
+    for (const m of d.msgs || []) for (const key of keysOf(m)) out.push({ via: d.via, file: d.file, key });
+  }
+  return out;
+}
+
+test("every per-sample sentence reads in every language as the browser receives it, wrappers included", () => {
+  // the wrappers are the server's own
+  const said = new Set([...refusals().flatMap(r => r.msgs || []), ...diagnostics().flatMap(d => d.msgs || [])].map(m => (m.f ? skeleton(m.text) : m.text)));
+  for (const w of [MAP, CONFLICT, FIELD, FORMAT, IN_FILE, UNCHECKED, NOT_FITTED, HALTED]) {
+    assert.ok(Object.hasOwn(refusalPatterns, w), `${w} is not catalogued`);
+    assert.ok(said.has(keySkeleton(w)), `the server no longer says ${w}`);
+  }
+  const items = innerSentences();
+  assert.ok(items.length > 80, `only ${items.length} engine sentences inside a sample's issues`);
+  const wrap = (inner: string, wrapper: string) => { let i = 0; return wrapper.replace(/\{([a-zA-Z]\w*)\}/g, (_, n: string) => (n === "reason" ? inner : `w${++i}x`)); };
+  const failures: string[] = [];
+  try {
+    for (const { via, file, key } of items) {
+      for (const chain of chains(via, file)) {
+        const message = chain.reduce(wrap, sample(key));
+        for (const locale of ["en", "zh-Hant", "zh-Hans"] as const) {
+          setLocale(locale);
+          const text = refusalText(message);
+          if (text === null) failures.push(`${locale} (${via}): ${message} is not presented`);
+          else if (locale === "en" && /[㐀-鿿]/.test(text)) failures.push(`en (${via}): ${message} → ${text}`);
+          else if (locale === "zh-Hans" && text !== message) failures.push(`zh-Hans (${via}): ${message} → ${text}`);
+        }
+      }
+    }
+  } finally { setLocale("zh-Hans"); }
+  assert.deepEqual(failures, []);
+});
+
+test("why a job stopped reads in every language, on the job's items too", () => {
+  const src = readFileSync(join(DOCS, "jobs.py"), "utf8");
+  const block = /^HALT_MESSAGES = \{([\s\S]*?)^\}/m.exec(src);
+  assert.ok(block, "jobs.HALT_MESSAGES not found");
+  const halts = [...block![1].matchAll(/:\s*"([^"]+)"/g)].map(m => m[1]);
+  assert.ok(halts.length >= 15, `only ${halts.length} halt messages`);
+  try {
+    for (const locale of ["en", "zh-Hant"] as const) {
+      setLocale(locale);
+      for (const h of halts) for (const message of [h, HALTED.replace("{reason}", h)]) {
+        const text = refusalText(message);
+        assert.ok(text !== null && !(locale === "en" && /[㐀-鿿]/.test(text)), `${locale}: ${message} → ${text}`);
+      }
+    }
+  } finally { setLocale("zh-Hans"); }
+});
+
+test("a sample's problems read as whole sentences in every language, the person's data verbatim (Q13)", () => {
+  // Each of these used to reach every reader, zh-Hans included, as its code's label only
+  // (「组内取值冲突」, 「缺少列」, 「必填为空」…): which field, which values and what to do were lost.
+  type Case = [issue: { level: string; code: string; message: string }, data: string[], expected: { en: string; "zh-Hant": string }];
+  const cases: Case[] = [
+    [{ level: "error", code: "group_conflict", message: "映射 #2：同一组内该字段有多个不同值：华东 / 华南。请在映射中明确选择取值规则（取第一条、拼接、求和等）" }, ["华东", "华南"], {
+      en: "Mapping #2: This field has different values within one group: 华东 / 华南. Choose in the mapping which value to use (the first, joined, summed, …).",
+      "zh-Hant": "映射 #2：同一組內該欄位有多個不同值：华东 / 华南。請在映射中明確選擇取值規則（取第一筆、串接、加總等）" }],
+    [{ level: "error", code: "group_conflict", message: "映射 #7：「A-001」这一段里「数量」有多个不同值：1 / 2。请在映射中明确选择取值规则（取第一条、拼接、求和等）" }, ["A-001", "数量"], {
+      en: "Mapping #7: “数量” has more than one value in “A-001”: 1 / 2. Choose in the mapping which value to use (the first, joined, summed, …).",
+      "zh-Hant": "映射 #7：「A-001」這一段裡「数量」有多個不同值：1 / 2。請在映射中明確選擇取值規則（取第一筆、串接、加總等）" }],
+    // a column the source lacks: the plan's 「映射 #n：」 around resolve's 「「file」：」 around the column's own sentence
+    [{ level: "error", code: "missing_column", message: "映射 #3：「客户.xlsx」：找不到列「客户名称」" }, ["客户.xlsx", "客户名称"], {
+      en: "Mapping #3: “客户.xlsx”: The column “客户名称” cannot be found.", "zh-Hant": "映射 #3：「客户.xlsx」：找不到列「客户名称」" }],
+    [{ level: "error", code: "missing_column", message: "映射 #8：明细表中找不到列：单价、金额" }, ["单价、金额"], {
+      en: "Mapping #8: Columns not found in the detail table: 单价、金额", "zh-Hant": "映射 #8：明細表中找不到列：单价、金额" }],
+    [{ level: "error", code: "required_empty", message: "必填字段「合同编号」的值为空" }, ["合同编号"], {
+      en: "The required field “合同编号” is empty.", "zh-Hant": "必填欄位「合同编号」的值為空" }],
+    [{ level: "error", code: "no_detail", message: "重复明细「订单明细」没有数据行" }, ["订单明细"], {
+      en: "The repeating detail “订单明细” has no data rows.", "zh-Hant": "重複明細「订单明细」沒有資料行" }],
+    [{ level: "error", code: "no_detail", message: "明细表「订单明细」在「A-001」这一段没有明细行" }, ["订单明细", "A-001"], {
+      en: "The detail table “订单明细” has no detail rows for “A-001”.", "zh-Hant": "明細表「订单明细」在「A-001」這一段沒有明細行" }],
+    // a TransformError inside a mapping's value
+    [{ level: "error", code: "value_error", message: "映射 #4：「十二」不是数字，无法求和" }, ["十二"], {
+      en: "Mapping #4: “十二” is not a number, so it cannot be summed.", "zh-Hant": "映射 #4：「十二」不是數字，無法加總" }],
+    // transform warnings: a mapping's, and a field's format
+    [{ level: "warning", code: "transform", message: "映射 #5：「约 3 件」不是数字，未应用数字格式" }, ["约 3 件"], {
+      en: "Mapping #5: “约 3 件” is not a number, so the number format was not applied.", "zh-Hant": "映射 #5：「约 3 件」不是數字，未套用數字格式" }],
+    [{ level: "warning", code: "transform", message: "字段「签约日期」：「下周一」不是可识别的日期，未改变格式" }, ["签约日期", "下周一"], {
+      en: "Field “签约日期”: “下周一” is not a date that can be recognized, so its format was not changed.", "zh-Hant": "欄位「签约日期」：「下周一」不是可辨識的日期，未改變格式" }],
+  ];
+  try {
+    for (const [issue, data, expected] of cases) {
+      setLocale("zh-Hans");
+      assert.equal(issueText(issue), issue.message, `zh-Hans readers see the server's whole sentence: ${issue.message}`);
+      for (const [locale, text] of Object.entries(expected)) {
+        setLocale(locale as "en");
+        assert.equal(issueText(issue), text, `${issue.code} (${locale})`);
+      }
+      assert.doesNotMatch(data.reduce((rest, d) => rest.split(d).join(""), expected.en), /[㐀-鿿]/, `${expected.en}: Chinese besides the person's data`);
+    }
+    // an engine sentence the catalogue lacks (here Python's own words) inside a wrapper: a zh-Hans
+    // reader still gets the whole sentence, others the code's sentence rather than Chinese prose
+    const odd = { level: "error", code: "value_error", message: "映射 #6：[<class 'decimal.InvalidOperation'>]" };
+    setLocale("zh-Hans");
+    assert.equal(issueText(odd), odd.message);
+    setLocale("en");
+    assert.equal(issueText(odd), translate("en", ERROR_SOURCE.value_error));
+    // an unexpected exception keeps its words on the item, but the reader is told what happened
+    assert.equal(issueText({ level: "error", code: "exception", message: "KeyError: 'rows'" }), translate("en", ERROR_SOURCE.exception));
   } finally { setLocale("zh-Hans"); }
 });

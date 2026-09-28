@@ -60,6 +60,9 @@ export const ERROR_SOURCE: Record<string, string> = {
   nested_needs_group_by: '内容块未设置分段', nested_unconfigured: '内容块未设置分段', nested_source_mismatch: '明细来源不一致',
   group_by_unsupported: '不支持分段', subgroup_key_empty: '分段字段为空', bad_group_by: '未选择分段字段', nested_repeat: '不支持的嵌套', nested_shared_binding: '不能共用绑定',
   content_lost: '输出内容验证未通过。', content_truncated: '字段内容无法完整放入目标区域。',
+  // a sample's fill or export that failed with words the catalogue cannot present (an exception's
+  // own text, a converter's exit code): what happened, without them
+  exception: '生成这一份时出现意外错误；请重试，如果持续出现，请联系管理员。', export_failed: '输出文件未能生成或未通过校验。',
   text_overflow: '字段内容无法完整放入目标区域。', page_overflow: '内容超过允许的模板页数。',
   shrunk_to_fit: '为保持页数，已缩小允许缩小的字段。', layout_unavailable: '无法完成真实分页检查。',
   stale: '内容已在其他窗口或被其他人修改，这次操作没有执行。已刷新为最新内容，请在此基础上重新操作。',
