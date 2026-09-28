@@ -582,8 +582,10 @@ function diagnostics(): Diagnostic[] {
     for (const m of src.matchAll(/(?:(?<![\w.])(?:warns|warnings)|\[["']warnings["']\])\.append\(/g)) add(m.index!, "warning", callArgs(src, m.index! + m[0].length - 1)[0]);
     // the PPTX fill's `err(slot, code, message)` helper
     if (file === "engine/pptx_engine.py") for (const m of src.matchAll(/(?<![\w.])err\(/g)) add(m.index!, "err()", callArgs(src, m.index! + m[0].length - 1)[2]);
-    // why the page check did not run: `_layout_unavailable(mode, reason)` puts it into a wrapper
+    // why the page check did not run: `_layout_unavailable(mode, reason)` puts it into a wrapper,
+    // and the preview's real pagination (views.preview_layout) answers with a "reason"
     if (file === "engine/generate.py") for (const m of src.matchAll(/(?<![\w.])_layout_unavailable\(/g)) add(m.index!, "layout reason", callArgs(src, m.index! + m[0].length - 1)[1]);
+    if (file === "views.py") for (const m of src.matchAll(/["']reason["']\s*:\s*/g)) add(m.index!, "layout reason", dictValue(src, m.index! + m[0].length));
   }
   return out;
 }
@@ -598,6 +600,7 @@ const DIAG_FORWARDED: Record<string, { why: string; keys?: string[] }> = {
   "engine/templates.py: str(e)": { why: "an XlsxError, read with the refusals above" },
   "engine/templates.py: w": { why: "the XLSX writer's warnings (engine/xlsx_doc.py), read here as warnings" },
   "engine/generate.py: str(e)": { why: "LayoutUnavailable, read with the refusals above" },
+  "views.py: str(e)": { why: "LayoutUnavailable (the preview's real pagination), read with the refusals above" },
   "engine/pptx_engine.py: str(e)": { why: "a PptxError, read with the refusals above" },
   "engine/pptx_engine.py: message": { why: "the PPTX fill's err(slot, code, message) helper: its sentences are read at its calls" },
   "engine/pdf_engine.py: pl[\"message\"]": { why: "pdf_repeat.plan_pages' sentences, read here as its dicts' \"message\"" },
@@ -719,7 +722,7 @@ function chains(via: string, file: string): string[][] {
     case "TransformError": return [[MAP], [FORMAT]];          // a mapping's value, a field's format
     case "ConflictError": return [[CONFLICT]];
     case "LayoutUnavailable": return [[], [UNCHECKED], [NOT_FITTED]];   // as it is: views.preview_layout's reason
-    case "layout reason": return [[UNCHECKED], [NOT_FITTED]];
+    case "layout reason": return file === "views.py" ? [[]] : [[UNCHECKED], [NOT_FITTED]];
     case "PptxError": return [[], [FIELD]];
     case "warning": return file === "engine/transforms.py" ? [[MAP], [FIELD]] : file === "engine/plan.py" ? [[MAP]] : [[]];
     default: return [];

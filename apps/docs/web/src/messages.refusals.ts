@@ -243,6 +243,7 @@ export const refusalMessages = {
   "输出校验失败": { en: "The output file could not be verified.", "zh-Hant": "輸出校驗失敗" },
   "生成的预览未通过文档内容校验，请检查模板与映射": { en: "The generated preview did not pass the document content check. Check the template and the mappings.", "zh-Hant": "產生的預覽未通過文檔內容校驗，請檢查模板與映射" },
   "排版引擎未启用，无法计算真实分页": { en: "The layout engine is not enabled, so the real page breaks cannot be calculated.", "zh-Hant": "排版引擎未啟用，無法計算真實分頁" },
+  "该格式的页面由模板本身固定，不会因内容而重新分页": { en: "In this format the pages are fixed by the template itself; content does not change the page breaks.", "zh-Hant": "該格式的頁面由模板本身固定，不會因內容而重新分頁" },
   "无法计算模板本身的页数（排版引擎未启用，或模板排版失败）": { en: "The template's own page count cannot be calculated (the layout engine is not enabled, or laying out the template failed).", "zh-Hant": "無法計算模板本身的頁數（排版引擎未啟用，或模板排版失敗）" },
   // a PDF box's warning when it is drawn
   "框内的文字是扫描图像上的隐藏文字层：只移除文字层时，图像上原有的文字仍会显示；建议把清除方式改为「清除像素」": { en: "The text in the box is a hidden text layer over a scanned image: removing only the text layer leaves the original text visible in the image. Set the clearing method to “Clear pixels”.", "zh-Hant": "框內的文字是掃描圖像上的隱藏文字層：只移除文字層時，圖像上原有的文字仍會顯示；建議把清除方式改為「清除像素」" },
