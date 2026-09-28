@@ -1076,9 +1076,9 @@ class App:
         if live.get("dirty"):
             cannot_fold = False
             if live.get("live_table") and isinstance(editor, dict):
-                from .collab_sheet import holdable
+                from .collab_sheet_room import fits      # the model's limits and the room's own caps
                 try:
-                    cannot_fold = bool(holdable(editor))
+                    cannot_fold = bool(fits(editor))
                 except ServiceError:
                     cannot_fold = True                   # not even a valid model: the save refuses it on its own
             if saver is not None and saver in (live.get("online_ids") or []) and not cannot_fold:

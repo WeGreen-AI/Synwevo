@@ -753,3 +753,64 @@ def test_a_version_written_while_the_room_opens_is_not_missed(world, monkeypatch
     a = box["a"]
     assert a.hello["head"] == 2 and a.texts() == ["开房间时保存"]
     a.close()
+
+
+def test_a_deleted_template_s_draft_is_not_written_back(world):
+    """Q19: the last one out of a document room still wrote the live draft after the template was
+    deleted — an orphan row nothing reads or removes."""
+    store, tid, key = world["store"], world["tid"], f"template:{world['tid']}"
+    a = _connect(world, "editor")
+    a.append_text("删除前")
+    time.sleep(0.2)
+    assert world["co"].delete(f"/api/templates/{tid}").status_code == 200
+    with pytest.raises(WebSocketDisconnect) as x:
+        for _ in range(40):
+            a.recv()
+    assert x.value.code == 4410
+    a.close()
+    time.sleep(0.3)
+    assert store.one("SELECT 1 AS x FROM collab_docs WHERE room=?", (key,)) is None
+    assert store.one("SELECT 1 AS x FROM collab_changes WHERE room=?", (key,)) is None
+
+
+def test_a_draft_write_racing_the_delete_cannot_bring_it_back(world):
+    """Q19: the write itself refuses a deleted template — also one that passed every check in memory
+    just before the delete (a persist already on its way)."""
+    store, tid, key = world["store"], world["tid"], f"template:{world['tid']}"
+    hub = world["app"].state.collab
+    a = _connect(world, "editor")
+    a.append_text("竞争")
+    room = hub.rooms[key]
+    time.sleep(0.2)
+    store.execute("UPDATE templates SET deleted=1 WHERE id=?", (tid,))       # the delete has marked it, its hook has not run yet
+    store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
+    store.execute("DELETE FROM collab_changes WHERE room=?", (key,))
+    assert hub.write_state(room, room.doc.get_update()) is False
+    hub.record_changes(room, world["editor"]["id"], [("body", "insert", 9, "paragraph", "竞争", None)])
+    assert store.one("SELECT 1 AS x FROM collab_docs WHERE room=?", (key,)) is None
+    assert store.one("SELECT 1 AS x FROM collab_changes WHERE room=?", (key,)) is None
+    store.execute("UPDATE templates SET deleted=0 WHERE id=?", (tid,))
+    a.close()
+
+
+def test_a_closed_document_room_never_writes_over_the_next_one(world):
+    """Second review of sheet-live step ②, item 1 (document rooms): a room whose last person had left
+    could still write (a persist or a version change landing late) over the draft of the room opened
+    after it."""
+    store, key = world["store"], f"template:{world['tid']}"
+    hub = world["app"].state.collab
+    a = _connect(world, "editor")
+    a.append_text("旧房间")
+    old = hub.rooms[key]
+    a.close()
+    b = _connect(world, "owner")
+    b.append_text("（新房间）")
+    time.sleep(0.2)
+    b.close()
+    written = store.one("SELECT state FROM collab_docs WHERE room=?", (key,))["state"]
+    assert hub.write_state(old, old.doc.get_update()) is False     # what a late persist of the old room would do
+    old.persist_now()
+    assert store.one("SELECT state FROM collab_docs WHERE room=?", (key,))["state"] == written
+    c = _connect(world, "editor")
+    assert c.texts() == ["客户：旧房间（新房间）"]
+    c.close()

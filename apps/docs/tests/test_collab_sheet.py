@@ -1176,13 +1176,31 @@ def test_holdable_says_what_seeding_would_refuse_without_seeding():
     assert holdable(INVALID["ci116_both"][0])[0]["code"] == "merged"
 
 
-def test_forgetting_a_client_never_lets_its_messages_apply_again():
+def test_one_scope_keeps_at_most_its_share_of_remembered_clients_and_moves_only_its_own_floor():
+    """Review 2 of step ②, item 4: checked where a record is created, not when a tab joins."""
     room = Room()
-    op = {"op": "set", **room.at("C4"), "v": "一次"}
-    assert apply(room.st, op, by="ann", client="ann/t", n=3, expect=0)["ok"]
-    cs.forget_client(room.st, "ann/t")
-    assert "ann/t" not in room.st["clients"] and cs.next_number(room.st, "ann/t") == 4
-    again = apply(room.st, op, by="ann", client="ann/t", n=3, expect=room.st["seq"])
-    assert again["ok"] is False and again["code"] == "resync"
-    cs.forget_client(room.st, "nobody")                         # forgetting an unknown client changes nothing
-    assert room.st["nfloor"] == 3
+    op = {"op": "set", **room.at("C4"), "v": "bob"}
+    assert apply(room.st, op, by="bob", client="bob/t", n=5, expect=0)["ok"]
+    for i in range(cs.MAX_CLIENTS_PER_SCOPE + 3):
+        n = cs.next_number(room.st, f"ann/t{i}")
+        r = apply(room.st, {"op": "set", **room.at("C5"), "v": i}, by="ann", client=f"ann/t{i}", n=n, expect=room.st["seq"])
+        assert r["ok"], r
+    anns = [c for c in room.st["clients"] if c.startswith("ann/")]
+    assert len(anns) == cs.MAX_CLIENTS_PER_SCOPE and "ann/t0" not in anns
+    assert "bob/t" in room.st["clients"] and room.st["nfloor"] == 0 and cs.next_number(room.st, "bob/new") == 1
+    # a forgotten client of that scope can never have an old message applied again
+    again = apply(room.st, {"op": "set", **room.at("C5"), "v": 0}, by="ann", client="ann/t0", n=1, expect=room.st["seq"])
+    assert again["ok"] is False and again["code"] == "resync" and again["detail"]["next"] == cs.next_number(room.st, "ann/t0") > 1
+
+
+def test_a_message_number_far_ahead_is_refused_before_it_can_move_anyone_s_numbers():
+    """Review 2 of step ②, item 3: an unbounded number became the floor of everyone's new tabs, past
+    what a browser can count."""
+    room = Room()
+    op = {"op": "set", **room.at("C4"), "v": "x"}
+    for n in (2 ** 60, cs.MAX_AHEAD + 1):
+        r = apply(room.st, op, by="ann", client="ann/t", n=n, expect=0)
+        assert r["ok"] is False and r["code"] == "resync" and r["detail"] == {"reason": "number_ahead", "next": 1}
+    assert room.st["clients"] == {} and room.st["seq"] == 0, "nothing applied, nothing remembered"
+    assert apply(room.st, op, by="ann", client="ann/t", n=cs.MAX_AHEAD, expect=0)["ok"]
+    assert apply(room.st, {"op": "set", **room.at("C5"), "v": 1}, by="ann", client="ann/t", n=cs.MAX_AHEAD + 1 + cs.MAX_AHEAD, expect=1)["code"] == "resync"

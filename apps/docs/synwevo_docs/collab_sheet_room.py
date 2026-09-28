@@ -88,7 +88,6 @@ PARSE_UNIT = 64 * 1024            # ... and at least one message per started 64 
 SYNC_COST = 10                    # a whole state sent again costs like ten messages
 BUSY_RETRY_S = 0.25               # while a version is folded in: try again after this
 GROWTH = 3                        # a patch grows the state by its content, its basis copy and the bookkeeping
-PER_PERSON_CLIENTS = 8            # client ids one person keeps remembered in a room (the model keeps 64 in all)
 SAVE_WAIT_S = 30.0                # a save waits this long for the room's loop to mark it saved
 SYSTEM = "system"                 # `by` of changes no person made (an outside save without a person, the server's bookkeeping)
 SHRINKING = frozenset({"clear", "unmerge", "field_del", "sheet_delete"})
@@ -172,24 +171,45 @@ def _shrinks(op) -> bool:
     return isinstance(op, dict) and op.get("op") in SHRINKING
 
 
-def _seeded(editor) -> tuple[dict | None, dict | None]:
-    """(a new live state of ``editor`` under a new epoch, None) or (None, why it cannot be live).
-    Pure: runs in a worker thread."""
+def _over_caps(st: dict, size: int) -> dict | None:
+    """Why a live state is beyond the room's own caps (cells on live sheets, bytes of its JSON)."""
+    cells = sum(len(sh["cells"]) for sh in st["content"]["sheets"].values() if not sh["gone"])
+    if cells > max_cells():
+        return {"code": "too_large", "what": "cells", "max": max_cells(), "size": cells}
+    if size > max_bytes():
+        return {"code": "too_large", "what": "bytes", "max": max_bytes(), "size": size}
+    return None
+
+
+def fits(editor) -> list[dict]:
+    """Why an open live table room could not hold ``editor`` — the model's own limits and the room's
+    caps (the bytes estimated from the model: the state, with its ids and bookkeeping, is larger, and
+    folding it in checks that exactly). ``[]`` when it can."""
+    issues = CS.holdable(editor, max_cells=max_cells())
+    if issues:
+        return issues
+    size, cap = len(_dumps(CS.normalize(editor)).encode()), max_bytes()
+    return [{"code": "too_large", "what": "bytes", "max": cap, "size": size}] if size > cap else []
+
+
+def _seeded(editor) -> tuple[dict | None, dict | None, int]:
+    """(a new live state of ``editor`` under a new epoch, None, its size) or (None, why it cannot be
+    live, 0). Pure: runs in a worker thread."""
     if not isinstance(editor, dict):
-        return None, {"code": "no_model"}
+        return None, {"code": "no_model"}, 0
     cells, cap = _cells_in(editor), max_cells()
     if cells > cap:
-        return None, {"code": "too_large", "what": "cells", "max": cap, "size": cells}
+        return None, {"code": "too_large", "what": "cells", "max": cap, "size": cells}, 0
     try:
         st = CS.seed_state(editor, epoch=new_id("ep"))
     except CS.SeedError as e:
-        return None, {"code": (e.issues[0].get("code") if e.issues else None) or "invalid", "issues": e.issues[:10]}
+        return None, {"code": (e.issues[0].get("code") if e.issues else None) or "invalid", "issues": e.issues[:10]}, 0
     except ServiceError as e:
-        return None, {"code": e.code}
+        return None, {"code": e.code}, 0
     size, cap = _size(st), max_bytes()
     if size > cap:
-        return None, {"code": "too_large", "what": "bytes", "max": cap, "size": size}
-    return st, None
+        return None, {"code": "too_large", "what": "bytes", "max": cap, "size": size}, 0
+    return st, None, size
 
 
 class SheetRoom(Room):
@@ -202,7 +222,6 @@ class SheetRoom(Room):
         super().__init__(hub, tid, tenant, kind="template", writable=False)
         self.mu = threading.RLock()
         self.save_mu = threading.Lock()                 # one save at a time: the second snapshots after the first
-        self.write_mu = threading.Lock()
         self.state: dict | None = None
         self.live_reason: dict | None = None
         self.persisted_seq = 0
@@ -211,8 +230,7 @@ class SheetRoom(Room):
         self.stale_head: int | None = None              # a version that could not be folded in while edits were unsaved
         self.catch_up: tuple[int, dict | None] | None = None
         self._gen = 0                                   # serialisations handed out ...
-        self._written = 0                               # ... and the newest one on disk
-        self._dropped = False                           # left live mode, or the template is gone: nothing is written again
+        self._written = 0                               # ... and the newest one on disk (under the hub's room lock)
         self._names: dict[str, dict] = {}
 
     # ---- mode --------------------------------------------------------------------------------------
@@ -226,13 +244,13 @@ class SheetRoom(Room):
         self.state, self.live_reason, self.epoch, self.dirty = None, reason, None, False
         return reason
 
-    def _take(self, st: dict | None, why: dict | None) -> None:
-        """Hold a freshly seeded state (or say why the room is presence-only)."""
+    def _take(self, st: dict | None, why: dict | None, size: int) -> None:
+        """Hold a freshly seeded state and its size (or say why the room is presence-only)."""
         if st is None:
             self._not_live(why or {"code": "invalid"})
             return
         self.state, self.live_reason, self.epoch, self.dirty, self.persisted_seq = st, None, st["epoch"], False, 0
-        self.approx_bytes = _size(st)
+        self.approx_bytes = size
         self.stale_head = None
         self.basis_gen += 1
 
@@ -253,7 +271,16 @@ class SheetRoom(Room):
                 log.exception("collab %s: the persisted live table could not be read; reseeding from v%s (the draft is lost)", self.key, template["head"])
                 self.recovered = True
             else:
-                if row.get("head") == template["head"] or dirty:
+                over = _over_caps(st, len(raw))
+                if over is not None and not dirty:
+                    # beyond the room's caps (lowered since, or folded in before they were checked) and
+                    # nothing unsaved: the head version decides, which the caps then keep out of live mode
+                    log.info("collab %s: the persisted live table is beyond the room's caps (%s); reseeding", self.key, over)
+                    row = None
+                elif row.get("head") == template["head"] or dirty:
+                    if over is not None:
+                        # unsaved edits are never dropped: kept live, where only shrinking edits pass
+                        log.warning("collab %s: the persisted live table with unsaved edits is beyond the room's caps (%s)", self.key, over)
                     self.state, self.epoch, self.dirty, self.persisted_seq, self.approx_bytes = st, st["epoch"], dirty, st["seq"], len(raw)
                     if row.get("head") != template["head"]:
                         # unsaved edits left at an older version (a version that could not be folded
@@ -262,7 +289,8 @@ class SheetRoom(Room):
                         self.head = row.get("head")
                         self.catch_up = (template["head"], editor_of_head())
                     return
-                log.info("collab %s: persisted live state was for v%s, head is v%s — reseeding", self.key, row.get("head"), template["head"])
+                if row is not None:
+                    log.info("collab %s: persisted live state was for v%s, head is v%s — reseeding", self.key, row.get("head"), template["head"])
         self._take(*_seeded(editor_of_head()))
 
     # ---- joining -----------------------------------------------------------------------------------
@@ -287,13 +315,6 @@ class SheetRoom(Room):
             if st is not None:
                 self._claim(conn, requested_client)
                 conn.seen = st["seq"]
-                if conn.client_key not in st["clients"] and not self.holding():
-                    # one person's tabs cannot push everyone else's remembered messages out: a new tab
-                    # of someone who has PER_PERSON_CLIENTS already makes the room forget their oldest
-                    # (before `next` is handed out, so the new tab's numbers stay good)
-                    mine = sorted((rec["at"], k) for k, rec in st["clients"].items() if k.startswith(f"{conn.user_id}/"))
-                    for _at, k in mine[:max(0, len(mine) - PER_PERSON_CLIENTS + 1)]:
-                        CS.forget_client(st, k)
             self.clients.add(conn)
             hello = self.hello(conn)
             if st is None:
@@ -457,7 +478,7 @@ class SheetRoom(Room):
     def _serialize(self) -> dict | None:
         with self.mu:
             st = self.state
-            if st is None or self._dropped:
+            if st is None or self.dropped:
                 return None
             self._gen += 1
             raw = _dumps(st).encode()
@@ -465,17 +486,32 @@ class SheetRoom(Room):
             return {"gen": self._gen, "raw": raw, "seq": st["seq"], "fast": self.dirty, "head": self.head, "epoch": self.epoch,
                     "basis_gen": self.basis_gen}
 
-    def _write(self, snap: dict) -> bool:
-        """Compress and write one serialisation (a worker thread, or the last one out); a newer one
-        already written wins. Returns whether that state is really unsaved."""
+    def _write(self, snap: dict, *, final: bool = False) -> bool:
+        """Compress and write one serialisation (a worker thread; the closing write; shutdown). The
+        heavy part runs before any lock; the write itself is checked and done under the hub's room lock
+        (``write_state``): a room that is no longer the registered one, or is gone, never writes, and a
+        newer serialisation already written wins. Returns whether that state is really unsaved."""
         exact = bool(snap["fast"]) and CS.dirty(json.loads(snap["raw"]))
         blob = zlib.compress(snap["raw"], 6)
-        with self.write_mu:
-            if self._dropped or snap["gen"] < self._written:
+        with self.hub._rooms_mu:
+            if snap["gen"] < self._written:
                 return exact
-            self.hub.write_state(self, blob, model="sheet", head=snap["head"], dirty=exact, epoch=snap["epoch"])
-            self._written = snap["gen"]
+            if self.hub.write_state(self, blob, model="sheet", head=snap["head"], dirty=exact, epoch=snap["epoch"], final=final):
+                self._written = snap["gen"]
         return exact
+
+    def close_final(self) -> None:
+        """The last one out: write the draft once more (a thread of its own, off the event loop and
+        outside the room lock; the next opener of this template waits for it) — then never again."""
+        try:
+            snap = self._serialize()
+            if snap is not None:
+                self._write(snap, final=True)
+        except Exception:                                # noqa: BLE001
+            log.exception("collab %s: writing the live table on close failed", self.key)
+        finally:
+            with self.hub._rooms_mu:
+                self.dropped = True
 
     async def persist(self) -> None:
         from starlette.concurrency import run_in_threadpool
@@ -515,8 +551,8 @@ class SheetRoom(Room):
         self._drop_draft()
 
     def _drop_draft(self) -> None:
-        with self.write_mu:
-            self._dropped = True
+        with self.hub._rooms_mu:
+            self.dropped = True
             try:
                 self.hub.store.execute("DELETE FROM collab_docs WHERE room=?", (self.key,))
             except Exception:                            # noqa: BLE001
@@ -596,8 +632,8 @@ class SheetRoom(Room):
                     self.broadcast_meta({**self.state_payload(), "type": "head", "reason": "save", "by": name, "by_id": user_id, "saved_seq": snap["seq"]})
         if not inline:
             self.schedule_persist()
-        elif self.hub.rooms.get(self.key) in (None, self):
-            self.persist_now()                           # everyone left during the build: keep the draft current
+        elif self.hub.rooms.get(self.key) is self:
+            self.persist_now()                           # no loop to schedule on: write now (a closed room never writes)
         return out
 
     # ---- versions from outside the room -------------------------------------------------------------
@@ -629,7 +665,11 @@ class SheetRoom(Room):
                 res = CS.reconcile(mine, editor, by=by)
             except CS.SeedError as e:
                 return ("seed_error", {"code": (e.issues[0].get("code") if e.issues else None) or "invalid", "issues": e.issues[:10]})
-            return ("reconciled", mine, res, CS.dirty(mine), _size(mine))
+            size = _size(mine)
+            over = _over_caps(mine, size)
+            if over is not None:
+                return ("seed_error", over)              # beyond the room's caps: as if it could not be held at all
+            return ("reconciled", mine, res, CS.dirty(mine), size)
 
         async def run():
             try:
@@ -660,11 +700,11 @@ class SheetRoom(Room):
                 self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor_name, "by_id": actor_id})
                 return
             if out[0] == "seeded":
-                _tag, st, why = out
+                _tag, st, why, size = out
                 if st is None:
                     self._leave_live(head, reason, actor_id, actor_name, why)       # the caller confirmed the discard
                 else:
-                    self._restarted(st, head, reason, actor_id, actor_name)
+                    self._restarted(st, size, head, reason, actor_id, actor_name)
                 return
             why = out[1]
             if dirty or self.dirty:
@@ -679,15 +719,21 @@ class SheetRoom(Room):
                 return
         self._fold("restart", head, editor, reason, actor_id, actor_name)          # a fault, nothing unsaved: start afresh from it
 
-    def _restarted(self, st: dict, head, reason, actor_id, actor_name) -> None:
+    def _restarted(self, st: dict, size: int, head, reason, actor_id, actor_name) -> None:
         previous = self.epoch
-        self._take(st, None)
+        self._take(st, None, size)
         self.head, self.recovered = head, False
+        # the whole content once, spliced into each frame (every connection's frame differs only in `next`)
+        content = _dumps(st["content"])
+        frames: dict[int, bytes] = {}
         for c in list(self.clients):
             c.seen = 0
-            self._send(c, {"type": "reset", "epoch": st["epoch"], "previous_epoch": previous, "seq": st["seq"],
-                           "next": CS.next_number(st, c.client_key or ""), "head": head, "dirty": False, "reason": reason,
-                           "by": self._who(actor_id), "persisted": 0, "content": st["content"]})
+            nxt = CS.next_number(st, c.client_key or "")
+            if nxt not in frames:
+                head_json = _dumps({"type": "reset", "epoch": st["epoch"], "previous_epoch": previous, "seq": st["seq"], "next": nxt,
+                                    "head": head, "dirty": False, "reason": reason, "by": self._who(actor_id), "persisted": 0})
+                frames[nxt] = bytes([MESSAGE_SHEET]) + write_message((head_json[:-1] + ',"content":' + content + "}").encode())
+            c.post(frames[nxt])
         self.schedule_persist()
         self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor_name, "by_id": actor_id})
 

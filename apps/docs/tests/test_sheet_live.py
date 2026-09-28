@@ -215,6 +215,9 @@ def head_model(world) -> dict:
 
 
 def row(world) -> dict | None:
+    """The persisted draft, once the closing write of a room its last person just left has landed
+    (it runs in a thread of its own)."""
+    world["app"].state.collab.settled(f"template:{world['tid']}")
     return world["store"].one("SELECT * FROM collab_docs WHERE room=?", (f"template:{world['tid']}",))
 
 
@@ -1023,3 +1026,340 @@ def test_one_persons_many_tabs_cannot_push_out_anothers_resume(world, monkeypatc
     r = e.do(op, n=n, expect=0)                                  # its answer was lost: still recognised
     assert r["ok"] is True and r["duplicate"] is True
     e.close()
+
+
+# ------------------------------------------------------------------ the second review of step ② (each failed before its fix)
+def _work_loop(monkeypatch):
+    """Fixture: one event loop of its own for the room's queued work (production has one loop for
+    everything; here the test decides when that work runs)."""
+    import asyncio
+
+    from synwevo_docs import collab_sheet_room as R
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    monkeypatch.setattr(R.SheetRoom, "work_loop", lambda self: loop)
+    return loop
+
+
+def test_a_fold_finishing_after_its_room_closed_does_not_write_over_the_next_room(world, monkeypatch):
+    """Second review, 1: a version folded in on a worker thread finished after the room's last person
+    left and a newer room had opened, taken edits and closed; the old room then wrote its state over
+    the newer draft a second later — the newer room's unsaved edit was gone."""
+    loop = _work_loop(monkeypatch)
+    started, release = threading.Event(), threading.Event()
+    real = cs.reconcile
+    calls: list = []
+
+    def slow(state, editor, *, by):                             # fixture: the first fold is slow
+        calls.append(1)
+        if len(calls) == 1:
+            started.set()
+            assert release.wait(20)
+        return real(state, editor, by=by)
+    monkeypatch.setattr(cs, "reconcile", slow)
+    e = join(world, "editor")
+    assert machine_put(world, edited({"C3": {"v": "外部"}}), 1).status_code == 200
+    assert started.wait(10)
+    e.close()                                                    # the last one out, while the fold runs
+    e2 = join(world, "editor")                                   # a newer room, from version 2
+    assert e2.hello["head"] == 2
+    assert e2.do(put(e2, "A2", "新房间里的修改"))["ok"]
+    e2.close()
+    d = row(world)
+    assert d["dirty"] == 1 and d["epoch"] == e2.hello["epoch"]
+    release.set()
+    time.sleep(2.0)                                              # the closed room's fold ends; it may not write
+    d = row(world)
+    assert d["epoch"] == e2.hello["epoch"] and d["dirty"] == 1
+    e3 = join(world, "editor")
+    assert e3.cells()["A2"] == {"v": "新房间里的修改"}
+    e3.close()
+    loop.call_soon_threadsafe(loop.stop)
+
+
+def test_a_save_marked_after_its_room_closed_does_not_write_over_the_next_room(world, monkeypatch):
+    """Second review, 1: a save whose room loop answered late (``live.pending``) was marked after the
+    room had closed and a newer one had taken edits; its write replaced the newer draft."""
+    from synwevo_docs import collab_sheet_room as R
+    loop = _work_loop(monkeypatch)
+    monkeypatch.setattr(R, "SAVE_WAIT_S", 0.3)
+    e = join(world, "editor")
+    assert e.do(put(e, "A2", "保存前"))["ok"]
+    gate = threading.Event()
+    loop.call_soon_threadsafe(gate.wait, 20)                    # fixture: the room's loop is busy
+    r = world["co"].post(f"/api/templates/{world['tid']}/collab/save", json={})
+    assert r.status_code == 200 and r.json()["live"]["pending"] is True, r.text
+    e.close()
+    e2 = join(world, "editor")
+    assert e2.do(put(e2, "A3", "新房间里的修改"))["ok"]
+    e2.close()
+    assert "A3" in cs.project(json.loads(zlib.decompress(bytes(row(world)["state"]))))["sheets"][0]["cells"]
+    gate.set()                                                   # the old room marks its save now
+    time.sleep(2.0)
+    kept = cs.project(json.loads(zlib.decompress(bytes(row(world)["state"]))))["sheets"][0]["cells"]
+    assert kept["A3"] == {"v": "新房间里的修改"} and row(world)["dirty"] == 1
+    loop.call_soon_threadsafe(loop.stop)
+
+
+def test_the_closing_write_runs_in_a_thread_outside_the_room_lock(world, monkeypatch):
+    """Second review, 7: the last one out serialised, rendered and compressed the whole table on the
+    event loop while holding the lock every join and leave needs (≈0.5 s at 17 MiB)."""
+    from synwevo_docs import collab_sheet_room as R
+    hub = world["app"].state.collab
+    seen: list = []
+    real = R.SheetRoom._write
+
+    def spy(self, snap, **kw):
+        seen.append((threading.current_thread().name, hub._rooms_mu._is_owned()))
+        return real(self, snap, **kw)
+    monkeypatch.setattr(R.SheetRoom, "_write", spy)
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "最后离开"))["ok"]
+    a.close()
+    assert row(world)["dirty"] == 1
+    name, locked = seen[-1]
+    assert name.startswith("collab-close-") and locked is False, seen
+
+
+def test_a_restart_serialises_the_table_once_for_everyone(world, monkeypatch):
+    """Second review, 7: a restart serialised the whole content once per connected tab."""
+    from synwevo_docs import collab_sheet_room as R
+    count = {"in": False, "n": 0}
+    real_dumps, real_restarted = R._dumps, R.SheetRoom._restarted
+
+    def dumps(x):
+        if count["in"] and isinstance(x, dict) and ("content" in x or {"order", "sheets"} <= set(x)):
+            count["n"] += 1
+        return real_dumps(x)
+
+    def restarted(self, *a, **kw):
+        count["in"] = True
+        try:
+            return real_restarted(self, *a, **kw)
+        finally:
+            count["in"] = False
+    monkeypatch.setattr(R, "_dumps", dumps)
+    monkeypatch.setattr(R.SheetRoom, "_restarted", restarted)
+    peers = [join(world, who) for who in ("owner", "editor", "viewer")]
+    assert peers[1].do(put(peers[1], "A2", "未保存"))["ok"]
+    assert machine_put(world, edited({"A3": {"v": "新"}}), 1, discard_live=True).status_code == 200
+    resets = [p.of("reset") for p in peers]
+    assert len({r["epoch"] for r in resets}) == 1 and all(p.cells()["A3"] == {"v": "新"} for p in peers)
+    assert count["n"] == 1, count
+    for p in peers:
+        p.close()
+
+
+def test_an_outside_version_over_the_room_s_cell_cap_takes_a_clean_room_out_of_live_mode(world, monkeypatch):
+    """Second review, 2: a version folded in, and a draft loaded, were held live beyond the room's own
+    cell cap (SYNWEVO_SHEET_LIVE_MAX_CELLS) — also after reopening."""
+    monkeypatch.setenv("SYNWEVO_SHEET_LIVE_MAX_CELLS", "3")
+    a = join(world, "editor")
+    assert a.hello["live"] is True
+    big = edited({f"C{i}": {"v": f"x{i}"} for i in range(1, 4)} | {"A2": {"v": "a"}, "A3": {"v": "b"}, "B2": {"v": "c"}})
+    assert machine_put(world, big, 1).status_code == 200
+    left = a.meta_of("live")
+    assert left["live"] is False and left["reason"]["what"] == "cells" and left["reason"]["max"] == 3
+    assert not _room(world).live() and row(world) is None
+    a.close()
+    b = join(world, "editor")
+    assert b.hello["live"] is False and b.hello["live_reason"]["what"] == "cells"
+    b.close()
+
+
+def test_an_outside_version_over_the_room_s_byte_cap_takes_a_clean_room_out_of_live_mode(world, monkeypatch):
+    monkeypatch.setenv("SYNWEVO_SHEET_LIVE_MAX_BYTES", str(8 * 1024))
+    a = join(world, "editor")
+    assert a.hello["live"] is True
+    assert machine_put(world, edited({"A2": {"v": "x" * 20000}}), 1).status_code == 200
+    left = a.meta_of("live")
+    assert left["live"] is False and left["reason"]["what"] == "bytes"
+    r = a.do(put(a, "A1", "改一个已有的格子"), n=a.next, expect=0)
+    assert r["ok"] is False and r["code"] == "not_live"
+    a.close()
+
+
+def test_a_version_over_the_caps_keeps_unsaved_edits_and_the_guard_says_why(world, monkeypatch):
+    """Second review, 2: over the caps behaves like a table the room cannot hold — kept (`stale`) when
+    edits are unsaved, and refused up front for a saver inside the room."""
+    from synwevo_docs import builtin_service
+    monkeypatch.setenv("SYNWEVO_SHEET_LIVE_MAX_CELLS", "4")
+    tid = world["tid"]
+    o = join(world, "owner")
+    e = join(world, "editor")
+    o.meta_of("joined")
+    assert e.do(put(e, "C3", "未保存"))["ok"]
+    o.patch()
+    five = edited({"A2": {"v": 1}, "A3": {"v": 2}, "B2": {"v": 3}})
+    r = world["client_for"](world["owner"]).put(f"/api/templates/{tid}/builtin", json={"editor": five, "base_version": 1, "solo": True})
+    assert r.status_code == 409 and r.json()["detail"]["reason"] == "cannot_fold", r.text
+    o.close()
+    # the race: clean when the guard looked, typed during the build
+    assert world["co"].post(f"/api/templates/{tid}/collab/save", json={}).json()["head"] == 2
+    started, release = threading.Event(), threading.Event()
+    real = builtin_service._build
+
+    def slow(kind, editor):                                      # fixture: the outside version is being built
+        started.set()
+        assert release.wait(10)
+        return real(kind, editor)
+    monkeypatch.setattr(builtin_service, "_build", slow)
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("r", machine_put(world, five, 2)))
+    t.start()
+    assert started.wait(10)
+    assert e.do(put(e, "A1", "构建期间"))["ok"]
+    release.set()
+    t.join(20)
+    assert box["r"].status_code == 200
+    kept = e.meta_of("live")
+    assert kept["stale"] is True and kept["reason"]["what"] == "cells"
+    assert _room(world).live() and e.cells()["A1"] == {"v": "构建期间"}
+    e.close()
+
+
+def test_a_draft_over_the_caps_is_kept_while_it_holds_edits_and_not_held_live_after(world, monkeypatch):
+    """Second review, 2: a loaded draft beyond the caps stayed live (lowered caps, or folded in before
+    they were checked)."""
+    a = join(world, "editor")
+    for ref in ("A2", "A3", "B2"):
+        assert a.do(put(a, ref, ref))["ok"]
+    a.close()
+    monkeypatch.setenv("SYNWEVO_SHEET_LIVE_MAX_CELLS", "3")
+    b = join(world, "editor")
+    assert b.hello["live"] is True and b.hello["dirty"] is True and b.cells()["B2"] == {"v": "B2"}, "unsaved edits are kept"
+    r = b.do(put(b, "C3", "再多一格"))
+    assert r["ok"] is False and r["code"] == "too_large"
+    assert world["co"].post(f"/api/templates/{world['tid']}/collab/save", json={}).status_code == 200
+    b.close()
+    c = join(world, "editor")
+    assert c.hello["live"] is False and c.hello["live_reason"]["what"] == "cells"
+    c.close()
+
+
+def test_one_persons_tabs_opened_first_and_written_later_keep_their_share(world, monkeypatch):
+    """Second review, 4: the per-person bound was checked only when a tab joined — tabs that all joined
+    first and wrote afterwards pushed everyone else's remembered messages out."""
+    monkeypatch.setattr(cs, "MAX_CLIENTS", 10)                  # fixture: a small room memory
+    e = join(world, "editor", client_id="editor-tab-1")
+    op = put(e, "A2", "编辑者")
+    n = e.send(op)
+    assert e.ack(n)["ok"]
+    tabs = [join(world, "owner", client_id=f"owner-tab-{i:02d}") for i in range(11)]
+    for i, o in enumerate(tabs):
+        r = o.do(put(o, "C3", str(i)), expect=_room(world).state["seq"])
+        if not r["ok"] and r["code"] == "resync":                # the person's own oldest tab was forgotten: renumber
+            r = o.do(put(o, "C3", str(i)), n=r["detail"]["next"], expect=_room(world).state["seq"])
+        assert r["ok"], r
+    owners = [k for k in _room(world).state["clients"] if k.startswith(world["owner"]["id"] + "/")]
+    assert len(owners) == cs.MAX_CLIENTS_PER_SCOPE
+    r = e.do(op, n=n, expect=0)
+    assert r["ok"] is True and r["duplicate"] is True, "the editor's lost answer is still recognised"
+    assert join(world, "viewer").hello["next"] == 1, "nobody else's numbers moved"
+    for o in tabs:
+        o.close()
+    e.close()
+
+
+def test_a_message_number_far_ahead_cannot_push_everyone_s_numbers_past_a_browser(world):
+    """Second review, 3: n = 2**60 was accepted; once that tab was forgotten, every new tab was told a
+    `next` JavaScript cannot represent, in a loop of resyncs, persisted in the draft."""
+    o = join(world, "owner", client_id="owner-tab-big")
+    r = o.do(put(o, "A2", "大号"), n=2 ** 60)
+    assert r["ok"] is False and r["code"] == "resync" and r["detail"] == {"reason": "number_ahead", "next": 1}
+    for i in range(cs.MAX_CLIENTS_PER_SCOPE + 1):
+        t = join(world, "owner", client_id=f"owner-tab-x{i}")
+        assert t.do(put(t, "C3", str(i)), expect=_room(world).state["seq"])["ok"]
+        t.close()
+    fresh = join(world, "editor")
+    assert fresh.hello["next"] == 1
+    assert max(rec["hi"] for rec in _room(world).state["clients"].values()) < 2 ** 53
+    o.close()
+    fresh.close()
+
+
+def test_the_catch_up_of_an_old_draft_runs_before_newer_versions(world, monkeypatch):
+    """Second review, 5: a dirty draft left at an older version folded that version in after the
+    newer ones that arrived while the room opened — the room ended at the older version."""
+    from synwevo_docs import builtin_service
+    from synwevo_docs import collab_sheet_room as R
+    tid = world["tid"]
+    e = join(world, "editor")
+    started, release = threading.Event(), threading.Event()
+    real_build = builtin_service._build
+
+    def slow(kind, editor):                                      # fixture: v2 is built while someone types
+        started.set()
+        assert release.wait(10)
+        return real_build(kind, editor)
+    monkeypatch.setattr(builtin_service, "_build", slow)
+    far = edited({"A250000": {"v": "远处"}})
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("r", world["co"].put(f"/api/templates/{tid}/builtin",
+                                                                            json={"editor": far, "base_version": 1, "solo": True})))
+    t.start()
+    assert started.wait(10)
+    assert e.do(put(e, "C3", "构建期间输入"))["ok"]
+    release.set()
+    t.join(20)
+    assert box["r"].status_code == 200 and e.meta_of("live")["stale"] is True
+    e.close()
+    monkeypatch.setattr(builtin_service, "_build", real_build)
+    assert row(world)["head"] == 1 and row(world)["dirty"] == 1
+    s2, r2 = threading.Event(), threading.Event()
+    real_ls = R.SheetRoom.load_sheet
+
+    def slow_ls(self, tmpl, row_, eoh):                          # fixture: the room is being opened
+        s2.set()
+        assert r2.wait(10)
+        return real_ls(self, tmpl, row_, eoh)
+    monkeypatch.setattr(R.SheetRoom, "load_sheet", slow_ls)
+    box2: dict = {}
+    th = threading.Thread(target=lambda: box2.setdefault("a", join(world, "editor")))
+    th.start()
+    assert s2.wait(10)
+    r = machine_put(world, edited({"C2": {"v": "第三版"}}), 2, discard_live=True)
+    assert r.status_code == 200 and r.json()["head"] == 3, r.text
+    r2.set()
+    th.join(10)
+    a = box2["a"]
+    for _ in range(50):
+        if _room(world).head == 3 and not _room(world).holding():
+            break
+        time.sleep(0.1)
+    room = _room(world)
+    assert room.head == 3 and room.live() and cs.project(room.state)["sheets"][0]["cells"]["C2"] == {"v": "第三版"}
+    a.close()
+
+
+def test_a_template_deleted_while_its_room_opens_leaves_no_room_behind(world, monkeypatch):
+    """Second review, 6: a template deleted after its room read it but before anyone joined left a
+    `gone` room with nobody in it registered for ever (holding its whole table)."""
+    from synwevo_docs import collab_sheet_room as R
+    hub, key = world["app"].state.collab, f"template:{world['tid']}"
+    started, release = threading.Event(), threading.Event()
+    real = R.SheetRoom.load_sheet
+
+    def slow(self, tmpl, row_, eoh):                             # fixture: opening the room takes a while
+        real(self, tmpl, row_, eoh)
+        started.set()
+        assert release.wait(10)
+    monkeypatch.setattr(R.SheetRoom, "load_sheet", slow)
+    box: dict = {}
+
+    def opener():
+        try:
+            join(world, "editor")
+        except WebSocketDisconnect as x:
+            box["code"] = x.code
+    t = threading.Thread(target=opener)
+    t.start()
+    assert started.wait(10)
+    assert world["co"].delete(f"/api/templates/{world['tid']}").status_code == 200
+    release.set()
+    t.join(10)
+    assert box.get("code") == 4404
+    assert key not in hub.rooms
+    with pytest.raises(WebSocketDisconnect) as x:
+        join(world, "owner")
+    assert x.value.code == 4404 and key not in hub.rooms
