@@ -11,6 +11,38 @@ from .engine import builtin as B
 from .services import App
 
 
+def sync_editor_fields(kind: str, editor: dict, slots: list[dict]) -> dict:
+    """The editor model with each field's name and required flag taken from the template's slots
+    — what a field changed on the project page must carry, or the next editor save reverts it."""
+    by_id = {s["id"]: s for s in slots or []}
+    out = json.loads(json.dumps(editor))
+
+    def apply(attrs: dict) -> None:
+        sl = by_id.get(attrs.get("id"))
+        if sl is None:
+            return
+        if sl.get("name"):
+            attrs["name"] = sl["name"]
+        attrs["required"] = bool(sl.get("required"))
+
+    if kind == "builtin_sheet":
+        for sh in out.get("sheets") or []:
+            for f in sh.get("fields") or []:
+                apply(f)
+    else:
+        def walk(node):
+            if isinstance(node, dict):
+                if node.get("type") in ("field", "repeatBlock") and isinstance(node.get("attrs"), dict):
+                    apply(node["attrs"])
+                for v in node.values():
+                    walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v)
+        walk(out)
+    return out
+
+
 def _build(kind: str, editor: dict) -> tuple[bytes, list[dict], str]:
     editor = validate_editor(kind, editor)
     try:
@@ -192,9 +224,7 @@ def save_builtin(app: App, tid: str, body: dict, *, merge: bool = False) -> dict
                 raise ServiceError(409, "stale_template", "模板已在其他窗口或被其他人修改，请刷新后再保存（你的编辑内容仍在编辑器中）",
                                    {"head": r["head"], "base_version": base})
             base_editor = base_row["editor"] if isinstance(base_row["editor"], dict) else json.loads(base_row["editor"] or "{}")
-            head_editor = app.get_version(tid, r["head"]).get("editor") or {}
-            if isinstance(head_editor, str):
-                head_editor = json.loads(head_editor)
+            head_editor = app.editor_of(tid, app.get_version(tid, r["head"]), r["kind"]) or {}
             validate_editor(r["kind"], editor)
             editor, conflicts = merge_sheets(base_editor, head_editor, editor, set(force or []))
             if conflicts:

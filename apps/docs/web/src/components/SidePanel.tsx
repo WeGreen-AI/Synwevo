@@ -31,6 +31,8 @@ interface Props {
   onSaveMappings: (ms: Mapping[], note: string) => Promise<void>;
   onUpdateSlot: (id: string, patch: any) => Promise<void>;
   onDeleteSlot: (s: Slot) => Promise<void>;
+  /** the template is kept by a built-in editor: its fields are added and removed there (CI-112) */
+  builtinTemplate?: boolean;
   onRelocate: (fileId: string, mappingId: string) => void;
   /** `key` is the override's own key: the file id, or `<file id>~<block>` in 「每块一份」. */
   onClearOverride: (key: string, mappingId: string) => void;
@@ -429,7 +431,9 @@ function SlotEditor(p: Props & { slot: Slot }) {
       )}
       <div className="row mt8">
         <span className="spacer" />
-        <button type="button" className="btn sm danger" onClick={() => p.onDeleteSlot(s)}>{tr("删除字段")}</button>
+        {p.builtinTemplate
+          ? <span className="tiny muted">{tr("这个模板的字段在「编辑模板」里添加或删除")}</span>
+          : <button type="button" className="btn sm danger" onClick={() => p.onDeleteSlot(s)}>{tr("删除字段")}</button>}
       </div>
     </fieldset>
   );

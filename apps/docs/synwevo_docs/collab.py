@@ -545,7 +545,7 @@ class CollabHub:
                     if t.get("kind") != "builtin_doc":
                         return None, None, None
                     row = self.store.one("SELECT * FROM collab_docs WHERE room=?", (key,))
-                    editor = None if (row and row.get("head") == t["head"] and row.get("state")) else (self.app.get_version(tid, t["head"]).get("editor") or {})
+                    editor = None if (row and row.get("head") == t["head"] and row.get("state")) else (self.app.editor_of(tid, self.app.get_version(tid, t["head"]), t.get("kind")) or {})
                     return t, row, editor
             t, row, editor = await run_in_threadpool(read_all)
             if t is None:
@@ -566,7 +566,7 @@ class CollabHub:
                 if editor is not None:
                     return editor
                 with as_tenant(tenant):
-                    return self.app.get_version(tid, t["head"]).get("editor") or {}
+                    return self.app.editor_of(tid, self.app.get_version(tid, t["head"]), t.get("kind")) or {}
             room.load(t, row, head_editor)
             self.rooms[key] = room
             return room

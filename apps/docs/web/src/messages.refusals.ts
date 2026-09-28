@@ -9,6 +9,7 @@ import type { Messages } from "@synwevo/ui/i18n-core";
  *  presented the same way; every other parameter is data and stays verbatim.
  *  `tests/refusals.test.ts` reads the server's refusals and holds this file to them. */
 export const refusalMessages = {
+  "这个模板由内置编辑器维护：请在编辑器里添加或删除字段（在这里改动，下次在编辑器保存时会丢失）": { en: "This template is maintained in the built-in editor: add or remove its fields there (a change made here would be lost the next time the editor saves).", "zh-Hant": "這個模板由內建編輯器維護：請在編輯器裡新增或刪除欄位（在這裡改動，下次在編輯器儲存時會遺失）" },
   // ------------------------------------------------------------------ gate: workspace and application access
   "你当前没有可用的工作空间，不能进行这个操作。请先选择或加入一个工作空间。": { en: "You have no workspace available, so this action cannot be done. Choose or join a workspace first.", "zh-Hant": "你目前沒有可用的工作空間，不能進行這個操作。請先選擇或加入一個工作空間。" },
   "该工作空间已被冻结，暂时不能使用。请联系工作空间所有者或平台管理员。": { en: "This workspace is frozen and cannot be used for now. Contact the workspace owner or a platform administrator.", "zh-Hant": "該工作空間已被凍結，暫時不能使用。請聯絡工作空間擁有者或平台管理員。" },

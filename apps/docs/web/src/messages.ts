@@ -1278,6 +1278,10 @@ export const messages = {
     "en": "Count (rows where this column has a value)",
     "zh-Hant": "計數（該欄有值的行數）"
   },
+  "这个模板的字段在「编辑模板」里添加或删除": {
+    "en": "This template's fields are added and removed in “Edit template”",
+    "zh-Hant": "這個模板的欄位在「編輯模板」裡新增或刪除"
+  },
   "组内取值冲突": {
     "en": "Conflicting values within group",
     "zh-Hant": "組內取值衝突"

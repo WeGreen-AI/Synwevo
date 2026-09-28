@@ -638,7 +638,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
             raise ServiceError(400, "not_builtin", "该模板没有内置编辑器模型")
         v = app_.get_version(tid, version or t["head"])
         return {"id": tid, "name": t["name"], "kind": t["kind"], "head": t["head"],
-                "version": v["version_no"], "editor": v.get("editor"), "fields": v["slots"]}
+                "version": v["version_no"], "editor": app_.editor_of(tid, v, t["kind"]), "fields": v["slots"]}
 
     @r.put("/templates/{tid}/builtin", operation_id="save_builtin_template",
            summary="保存编辑器模型为新版本；base_version 防止覆盖并发修改",

@@ -159,7 +159,7 @@ class CopyExecutor:
                                            "original_blob": tpl.get("original_blob"), "original_name": tpl.get("original_name"), "head": 1,
                                            "created_at": ts, "updated_at": ts, "info": tpl.get("info"), "scan": tpl.get("scan")})
                 store.insert("template_versions", {"template_id": new_tid, "version_no": 1, "parent_no": None, "working_blob": ver.get("working_blob"),
-                                                   "slots": ver.get("slots"), "editor": ver.get("editor"),
+                                                   "slots": ver.get("slots"), "editor": self.app.editor_of(tpl["id"], ver, tpl.get("kind")),
                                                    "note": f"复制自个人项目模板「{tpl['name']}」v{ver['version_no']}（申请 {r['id']}）", "created_at": ts})
             store.insert("projects", {"id": new_pid, "name": r["name"][:100], "created_at": ts, "updated_at": ts, "tenant": dst_ws,
                                       "origin": f"copy:{r['id']}"[:80], "record_rule": p.get("record_rule") or {}, "output": p.get("output") or {},

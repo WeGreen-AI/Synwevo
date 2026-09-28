@@ -847,7 +847,7 @@ class App:
         redo = [x for x in versions if x["parent_no"] == r["head"]]
         parent = v.get("parent_no")
         return {**self._template_out(r), "version": {"no": v["version_no"], "slots": v["slots"], "note": v["note"],
-                                                      "editor": v.get("editor"), "created_at": v["created_at"]},
+                                                      "editor": self.editor_of(tid, v, r.get("kind")), "created_at": v["created_at"]},
                 "can_undo": parent is not None, "can_redo": bool(redo), "versions": versions[-50:],
                 "exports": self._exports_for(r["format"])}
 
@@ -883,6 +883,31 @@ class App:
         if not v:
             not_found("模板版本")
         return v
+
+    def editor_of(self, tid: str, version: dict, kind: str | None) -> dict | None:
+        """A version's editor model. A field changed on the project page used to save a built-in
+        template's new version without one (CI-112): the spreadsheet editor then refused the template
+        and the document editor opened — or reset a live room to — an empty document. Such a version
+        takes the nearest earlier version's model, with the fields' current names and flags."""
+        ed = version.get("editor")
+        if isinstance(ed, str):
+            ed = json.loads(ed) if ed else None
+        if ed or kind not in ("builtin_doc", "builtin_sheet"):
+            return ed
+        cur, seen = version, set()
+        while cur.get("parent_no") and cur["parent_no"] not in seen:
+            seen.add(cur["parent_no"])
+            try:
+                cur = self.get_version(tid, cur["parent_no"])
+            except ServiceError:
+                return None
+            prev = cur.get("editor")
+            if isinstance(prev, str):
+                prev = json.loads(prev) if prev else None
+            if prev:
+                from .builtin_service import sync_editor_fields
+                return sync_editor_fields(kind, prev, version.get("slots") or [])
+        return None
 
     def upload_template(self, filename: str, data: bytes, name: str | None = None) -> dict:
         from .engine.detect import detect
@@ -1069,7 +1094,8 @@ class App:
                 target = v["parent_no"]
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (target, now(), tid))
         self._bump_projects_using(tid)
-        self._template_changed(tid, target, self.get_version(tid, target).get("editor"), "redo" if redo else "undo", previous=head)
+        self._template_changed(tid, target, self.editor_of(tid, self.get_version(tid, target), self.get_template(tid).get("kind")),
+                               "redo" if redo else "undo", previous=head)
 
     def template_usage(self, tid: str) -> dict:
         """Who follows this template: the projects bound to it, split into those that follow the
@@ -1086,8 +1112,9 @@ class App:
         the undo/redo chain stays linear — the way Google Docs and OneDrive restore. Refused
         with 409 stale_template when the head moved since the client decided, and with 409
         live_edits when the editing room holds unsaved edits and ``discard_live`` was not given."""
-        self.get_template(tid)
-        target = self.get_version(tid, version_no)
+        tpl = self.get_template(tid)
+        target = dict(self.get_version(tid, version_no))
+        target["editor"] = self.editor_of(tid, target, tpl.get("kind"))   # a version saved without one gets it back
         self._guard_live_edits(tid, discard_live, "restore")
         t = now()
         with self.store.tx() as c:
@@ -1122,7 +1149,7 @@ class App:
                                         "original_blob": r["original_blob"], "original_name": r["original_name"], "head": 1,
                                         "created_at": t, "updated_at": t, "info": r.get("info"), "scan": r.get("scan")})
         self.store.insert("template_versions", {"template_id": nid, "version_no": 1, "parent_no": None, "working_blob": v["working_blob"],
-                                                "slots": v["slots"], "editor": v.get("editor"), "note": f"复制自「{r['name']}」v{v['version_no']}",
+                                                "slots": v["slots"], "editor": self.editor_of(tid, v, r.get("kind")), "note": f"复制自「{r['name']}」v{v['version_no']}",
                                                 "created_at": t})
         return self.template_detail(nid)
 
@@ -1152,6 +1179,7 @@ class App:
 
     def add_slot(self, tid: str, req: dict) -> dict:
         r = self.get_template(tid)
+        self._refuse_builtin_field_change(r)
         v = self.get_version(tid, r["head"])
         slots = list(v["slots"] or [])
         work = self.store.get_blob(v["working_blob"])
@@ -1217,6 +1245,13 @@ class App:
             return T.pdf_detect_repeat(self.store.get_blob(r["original_blob"]), page, [float(x) for x in nrect])
         except T.TemplateError as e:
             raise ServiceError(400, e.code, str(e)) from e
+
+    @staticmethod
+    def _refuse_builtin_field_change(r: dict) -> None:
+        """A built-in template's fields live in its editor model; adding or removing one on the
+        project page changed only the file, and the next editor save undid it (CI-112)."""
+        if r.get("kind") in ("builtin_doc", "builtin_sheet"):
+            raise ServiceError(409, "builtin_fields", "这个模板由内置编辑器维护：请在编辑器里添加或删除字段（在这里改动，下次在编辑器保存时会丢失）")
 
     def update_slot(self, tid: str, slot_id: str, values: dict) -> dict:
         r = self.get_template(tid)
@@ -1288,10 +1323,18 @@ class App:
             key = sl.pop("_remove_column")
             work = T.docx_remove_block_column(work, sl, key)
             note = f"从重复内容块「{sl['name']}」移除一列"
-        return self.new_version(tid, work, slots, note, base_head=r["head"])
+        editor = None
+        if r.get("kind") in ("builtin_doc", "builtin_sheet"):
+            # the editor model travels with the version, with this field's name and flag in it:
+            # without it the editors could no longer open the template (CI-112)
+            from .builtin_service import sync_editor_fields
+            base = self.editor_of(tid, v, r["kind"])
+            editor = sync_editor_fields(r["kind"], base, slots) if base else None
+        return self.new_version(tid, work, slots, note, editor=editor, base_head=r["head"])
 
     def remove_slot(self, tid: str, slot_id: str, project_id: str | None = None, cascade: bool = True) -> dict:
         r = self.get_template(tid)
+        self._refuse_builtin_field_change(r)
         v = self.get_version(tid, r["head"])
         slots = list(v["slots"])
         sl = next((s for s in slots if s["id"] == slot_id), None)

@@ -1022,6 +1022,7 @@ function Workspace() {
           activeSlot={selectedSlot?.id || null} locate={locate} activeFile={activeFile} onPickMapping={pickMapping} onPickSlot={pickSlot}
           onEditMapping={editMapping}
           onSaveMappings={saveMappings} onUpdateSlot={updateSlot} onDeleteSlot={deleteSlot}
+          builtinTemplate={tpl?.kind === "builtin_doc" || tpl?.kind === "builtin_sheet"}
           onRelocate={(fid, mid) => { setActiveFile(fid); setRelocate({ fileId: fid, mappingId: mid }); setActiveMap(mid); }}
           onClearOverride={(key, mid) => { saveMappings(mappings.map((x) => { if (x.id !== mid) return x; const o = { ...(x.overrides || {}) }; delete o[key]; return { ...x, overrides: o }; }), "清除单独定位").catch(() => {}); }}
           onOpenRule={() => { if (!ro) setDialog({ kind: "rule" }); }}
