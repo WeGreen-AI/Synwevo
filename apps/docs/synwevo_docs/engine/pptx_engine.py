@@ -22,6 +22,19 @@ def _tpl_enum(req: dict) -> str:
     from .templates import EMPTY_POLICIES, _enum
     return _enum(req, "empty_policy", EMPTY_POLICIES["table"], "remove_row")
 
+
+#: what a detail table that runs past the slide bottom does: produce it with a warning (the
+#: default), fail that copy, or continue on copies of the slide (header rows repeated, the rows
+#: below the detail only on the last copy, every other field on the slide filled the same)
+OVERFLOWS = ("warn", "error", "continue")
+SLIDE_CT = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
+REL_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
+#: what a copied slide may point at: the layout and pictures are shared, links are external; the
+#: notes and comments belong to the original. Anything else (charts, SmartArt, embedded objects,
+#: media) is one part per slide, so such a slide is not copied.
+_COPYABLE_RELS = ("slideLayout", "image", "hyperlink")
+_DROPPED_RELS = ("notesSlide", "comments")
+
 from .ooxml import NS, Package
 
 A = NS["a"]
@@ -368,6 +381,10 @@ def pptx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
                      "original_text": cell_text(tc)} for ci, tc in enumerate(rows[ri].findall(a("tc")))]
             slot = _base_slot(name, "repeat", locator={**loc, "row": ri}, columns=cols,
                               empty_policy=_tpl_enum(req), placeholder=req.get("placeholder", "（无）"))
+            if req.get("overflow") is not None:
+                if req["overflow"] not in OVERFLOWS:
+                    raise TemplateError("bad_value", "超出处理方式无效：演示文稿的明细只能是提示、视为错误或复制本张幻灯片续写")
+                slot["overflow"] = req["overflow"]
         else:
             r1, c1, r2, c2 = int(req["r1"]), int(req["c1"]), int(req["r2"]), int(req["c2"])
             slot = _base_slot(name, "region", locator={**loc, "r1": r1, "c1": c1, "r2": r2, "c2": c2}, rows=r2 - r1 + 1, cols=c2 - c1 + 1)
@@ -553,6 +570,7 @@ def pptx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
 
     # 3) detail rows: copies of the template row, inserted after it; the template row goes
     removed_frames: set[int] = set()
+    conts: list[dict] = []                                        # detail tables continued on copies of their slide
     for sl, el, tbl, tr in repeats:
         if id(el) in removed_frames:
             continue
@@ -572,6 +590,10 @@ def pptx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
                     if col["col"] < len(tcs):
                         _set_cell_text(tcs[col["col"]], sl.get("placeholder", "（无）") if (policy == "placeholder" and col["col"] == 0) else "")
             continue
+        rows_before = tbl.findall(a("tr"))
+        t = rows_before.index(tr)
+        above, below = rows_before[:t], rows_before[t + 1:]
+        top = (_xfrm(el) or (0, 0, 0, 0))[1]
         anchor = tr
         for rv in data:
             new = copy.deepcopy(tr)
@@ -585,12 +607,31 @@ def pptx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
         tbl.remove(tr)
         _grow_frame(el, h_tpl * (len(data) - 1))
         box = _xfrm(el)
-        if box and box[1] + box[3] > cy and keep_layout:
-            err(sl, "slide_overflow", f"重复明细「{sl['name']}」共 {len(data)} 行，表格超出幻灯片底部；已选择保持模板页数，"
-                                      f"因此不产出这一份。请减少行数或调整模板")
+        overflow = sl.get("overflow") or "warn"
+        if box and box[1] + box[3] > cy and overflow == "continue":
+            try:
+                chunks = _continuation_chunks(sl["name"], len(data), cy - top - _rows_h(above), _rows_h(below), h_tpl)
+                if any(o_el is el and o_tr is not tr for _, o_el, _, o_tr in repeats):
+                    raise PptxError("continue_shared", f"重复明细「{sl['name']}」所在的表格里还有其他重复明细，不能复制本张幻灯片续写")
+                part = slide_parts(pkg)[int(sl["locator"]["slide"])]
+                if any(c["part"] == part for c in conts):
+                    raise PptxError("continue_twice", f"重复明细「{sl['name']}」所在的幻灯片上已有一个复制续写的明细，一张幻灯片只能有一个")
+                _copyable(pkg, part, sl["name"])
+            except PptxError as e:
+                err(sl, e.code, str(e))
+                continue
+            conts.append({"part": part, "frame": el, "shape": shape_id(el), "slot": sl, "above": len(above), "rows": len(data), "chunks": chunks})
+        elif box and box[1] + box[3] > cy and (keep_layout or overflow == "error"):
+            if overflow == "error":
+                err(sl, "slide_overflow", f"重复明细「{sl['name']}」共 {len(data)} 行，表格超出幻灯片底部；该明细设置为超出时视为错误，"
+                                          f"因此不产出这一份。请减少行数、调整模板，或改为「复制本张幻灯片续写」")
+            else:
+                err(sl, "slide_overflow", f"重复明细「{sl['name']}」共 {len(data)} 行，表格超出幻灯片底部；已选择保持模板页数，"
+                                          f"因此不产出这一份。请减少行数或调整模板")
         elif box and box[1] + box[3] > cy:
             issues.append({"level": "warning", "slot": sl["id"], "code": "slide_overflow",
-                           "message": f"重复明细「{sl['name']}」共 {len(data)} 行，表格超出幻灯片底部；演示文稿不会自动分页，请减少行数或调整模板"})
+                           "message": f"重复明细「{sl['name']}」共 {len(data)} 行，表格超出幻灯片底部；可在字段设置中把「表格超出幻灯片时」"
+                                      f"改为「复制本张幻灯片续写」，或减少行数、调整模板"})
 
     # 4) in-paragraph text, right-to-left per paragraph so earlier offsets stay valid
     by_para: dict[tuple, list[dict]] = {}
@@ -618,7 +659,88 @@ def pptx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
                 continue
             fv = values.get(sl["id"])
             _set_para_range(p, loc["start"], loc["end"], fv["value"].text if fv and fv.get("kind") == "scalar" else "")
+
+    # 5) continuation: the finished slide is copied once per further chunk (so every other field on
+    #    it reads the same), then each copy keeps its own detail rows
+    for c in conts:
+        copies = [c["part"]] + _duplicate_slide(pkg, c["part"], len(c["chunks"]) - 1)
+        start = 0
+        for k, (part, n) in enumerate(zip(copies, c["chunks"])):
+            frame = next((s for s in _shapes(pkg.xml(part).find(f"{p_('cSld')}/{p_('spTree')}")) if shape_id(s) == c["shape"]), None)
+            tbl = _table(frame) if frame is not None else None
+            if tbl is None:                                          # the copy is the same slide: it is there
+                raise RuntimeError(f"continued slide {part} lost its detail table")
+            rows = tbl.findall(a("tr"))
+            detail = rows[c["above"]:c["above"] + c["rows"]]
+            drop = detail[:start] + detail[start + n:] + (rows[c["above"] + c["rows"]:] if k < len(copies) - 1 else [])
+            for r in drop:
+                tbl.remove(r)
+            _grow_frame(frame, -_rows_h(drop))
+            start += n
     return pkg.save(), issues
+
+
+def _rows_h(rows) -> int:
+    return sum(int(r.get("h", "0")) for r in rows)
+
+
+def _continuation_chunks(name: str, n: int, room: int, below_h: int, row_h: int) -> list[int]:
+    """How many detail rows each copy of the slide holds. ``room``: the height from the table's top
+    edge past its header rows to the slide bottom; the rows below the detail (totals, signatures)
+    only go on the last copy, so it holds fewer. Filled front to back."""
+    if row_h <= 0:
+        raise PptxError("continue_unmeasured", f"重复明细「{name}」的明细行没有行高，无法计算每张幻灯片能容纳的行数")
+    mid, last = room // row_h, max(0, (room - below_h) // row_h)
+    if mid < 1:
+        raise PptxError("continue_no_room", f"重复明细「{name}」的表头已到幻灯片底部，复制本张幻灯片也放不下一行明细；请调整模板")
+    chunks, rem = [], n
+    while rem > last:
+        take = min(mid, rem)
+        if take == rem:                  # this copy would be the last, but it cannot hold the rows below
+            take = rem - last
+        chunks.append(take)
+        rem -= take
+    return chunks + [rem]
+
+
+def _copyable(pkg: Package, part: str, name: str) -> None:
+    for r in pkg.rels(part):
+        kind = r.type.rsplit("/", 1)[-1]
+        if kind not in _COPYABLE_RELS and kind not in _DROPPED_RELS:
+            raise PptxError("continue_uncopyable", f"重复明细「{name}」所在的幻灯片含有图表、SmartArt、音视频或嵌入对象，不能复制本张幻灯片续写；"
+                                                   f"请把明细表格放在单独的幻灯片上")
+
+
+def _duplicate_slide(pkg: Package, part: str, count: int) -> list[str]:
+    """``count`` copies of the slide ``part``, placed right after it; returns their part names."""
+    main = pkg.main_part()
+    lst = pkg.xml(main).find(p_("sldIdLst"))
+    rid_attr = "{%s}id" % NS["r"]
+    after = next(s for s in lst.findall(p_("sldId")) if pkg.rel_target(main, s.get(rid_attr)) == part)
+    names = set(pkg.names)
+    out = []
+    for _ in range(count):
+        i = 1
+        while f"ppt/slides/slide{i}.xml" in names:
+            i += 1
+        new = f"ppt/slides/slide{i}.xml"
+        names.add(new)
+        rid = pkg.add_part(new, copy.deepcopy(pkg.xml(part)), SLIDE_CT, main, REL_SLIDE)
+        rels = pkg.rels_name(part)
+        if pkg.has(rels):
+            root = copy.deepcopy(pkg.xml(rels))
+            for el in list(root):
+                if (el.get("Type") or "").rsplit("/", 1)[-1] in _DROPPED_RELS:
+                    root.remove(el)
+            pkg.set_xml(pkg.rels_name(new), root)
+        ids = [int(s.get("id")) for s in lst.findall(p_("sldId"))]
+        sld = etree.Element(p_("sldId"))
+        sld.set("id", str(max(ids + [255]) + 1))
+        sld.set(rid_attr, rid)
+        after.addnext(sld)
+        after = sld
+        out.append(new)
+    return out
 
 
 def _grow_frame(el, delta_emu: int) -> None:

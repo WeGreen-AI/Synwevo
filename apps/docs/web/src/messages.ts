@@ -2850,6 +2850,22 @@ export const messages = {
     "en": " rows",
     "zh-Hant": " 行"
   },
+  "表格超出幻灯片时": {
+    "en": "When the table runs past the slide",
+    "zh-Hant": "表格超出投影片時"
+  },
+  "照常生成并提示": {
+    "en": "Generate it and show a warning",
+    "zh-Hant": "照常產生並提示"
+  },
+  "复制本张幻灯片续写": {
+    "en": "Continue on copies of this slide",
+    "zh-Hant": "複製本張投影片續寫"
+  },
+  "表头行在每张幻灯片上重复，表格下方的行只放在最后一张，幻灯片上的其他字段同样填写。按模板中的行高计算：文字换行使行变高时仍可能超出。": {
+    "en": "The header rows repeat on every slide, the rows below the table go only on the last one, and the slide's other fields are filled the same on each. Rows are counted at their height in the template, so text that wraps onto more lines can still run past the slide.",
+    "zh-Hant": "表頭行在每張投影片上重複，表格下方的行只放在最後一張，投影片上的其他欄位同樣填寫。按模板中的行高計算：文字換行使行變高時仍可能超出。"
+  },
   "超过可容纳行数时": {
     "en": "When rows exceed capacity",
     "zh-Hant": "超過可容納行數時"

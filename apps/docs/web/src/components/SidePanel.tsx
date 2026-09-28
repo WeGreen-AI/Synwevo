@@ -407,6 +407,16 @@ function SlotEditor(p: Props & { slot: Slot }) {
             </select>
           </label>
           {s.empty_policy === "placeholder" && <label className="field">{tr("占位文字")}<input className="input sm" defaultValue={s.placeholder || tr("（无）")} onBlur={(e) => up({ placeholder: e.target.value })} /></label>}
+          {p.project.template?.format === "pptx" && (
+            <>
+              <label className="field">{tr("表格超出幻灯片时")}<select className="input sm" value={s.overflow || "warn"} onChange={(e) => up({ overflow: e.target.value })}>
+                  <option value="warn">{tr("照常生成并提示")}</option><option value="error">{tr("视为错误（该样本不生成）")}</option>
+                  <option value="continue">{tr("复制本张幻灯片续写")}</option>
+                </select>
+              </label>
+              {s.overflow === "continue" && <div className="tiny muted">{tr("表头行在每张幻灯片上重复，表格下方的行只放在最后一张，幻灯片上的其他字段同样填写。按模板中的行高计算：文字换行使行变高时仍可能超出。")}</div>}
+            </>
+          )}
           {s.header_rows !== undefined && <label className="check small"><input type="checkbox" checked={s.repeat_header !== false} onChange={(e) => up({ repeat_header: e.target.checked })} />{tr(" 跨页时重复表头（")}{formatNumber(s.header_rows)}{tr(" 行）")}</label>}
           <div className="small">{tr("明细列：")}</div>
           {(s.columns || []).map((c) => (

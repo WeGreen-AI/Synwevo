@@ -76,3 +76,33 @@ def test_patch_refuses_other_unknown_enums(api, fixtures, field, bad):
     pid, tid, slot = _repeat_slot(api, fixtures)
     r = api.c.patch(f"/api/templates/{tid}/slots/{slot['id']}", json={field: bad})
     assert r.status_code == 400, (field, bad, r.status_code, r.text[:200])
+
+
+def test_pptx_detail_overflow_choices(api, fixtures, tmp_path):
+    """A presentation's detail table has its own overflow choices: warn (the default), error, or
+    continue on copies of the slide; PDF's "shrink" is not one of them, and the other formats keep
+    theirs."""
+    import io
+    from pptx import Presentation
+    from pptx.util import Inches
+    prs = Presentation()                                   # TEST fixture: one slide, one 2-row table
+    gf = prs.slides.add_slide(prs.slide_layouts[6]).shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(1))
+    gf.table.cell(0, 0).text, gf.table.cell(1, 0).text = "名称", "a"
+    buf = io.BytesIO()
+    prs.save(buf)
+    (tmp_path / "测试_明细.pptx").write_bytes(buf.getvalue())
+    pid = api.project("演示文稿明细超出")
+    t = api.template(pid, tmp_path / "测试_明细.pptx")
+    base = {"kind": "repeat", "slide": 0, "shape": str(gf.shape_id), "row": 1, "name": "明细"}
+    r = api.c.post(f"/api/templates/{t['id']}/slots", json={**base, "overflow": "shrink"})
+    assert r.status_code == 400 and "复制本张幻灯片续写" in r.json()["message"], r.text[:200]
+    slot = api.ok(api.c.post(f"/api/templates/{t['id']}/slots", json={**base, "overflow": "continue"}))["created_slot"]
+    assert slot["overflow"] == "continue"
+    for good in ("warn", "error", "continue"):
+        r = api.c.patch(f"/api/templates/{t['id']}/slots/{slot['id']}", json={"overflow": good})
+        assert r.status_code < 400, (good, r.text[:200])
+    r = api.c.patch(f"/api/templates/{t['id']}/slots/{slot['id']}", json={"overflow": "shrink"})
+    assert r.status_code == 400 and r.json()["error"] == "bad_value"
+    # a document's detail keeps its own set: "warn" is not one of them
+    _, tid, docx_slot = _repeat_slot(api, fixtures)
+    assert api.c.patch(f"/api/templates/{tid}/slots/{docx_slot['id']}", json={"overflow": "warn"}).status_code == 400

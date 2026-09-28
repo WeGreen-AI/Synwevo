@@ -299,6 +299,114 @@ def test_pptx_table_past_the_slide_bottom_fails_the_copy_only_when_keeping_the_l
     assert issues == []
 
 
+def _long_deck(chart: bool = False, notes: bool = False) -> tuple[bytes, str, str]:
+    """TEST fixture: slide 1 has a title 「客户：甲」 and a table (header, detail, total rows of 0.5 in)
+    whose top edge is 1.5 in down a 7.5 in slide; slide 2 says 「结束」. Returns (bytes, title id, table id)."""
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    prs = Presentation()
+    s = prs.slides.add_slide(prs.slide_layouts[6])
+    title = s.shapes.add_textbox(Inches(1), Inches(0.5), Inches(6), Inches(0.6))
+    title.text_frame.text = "客户：甲"
+    gf = s.shapes.add_table(3, 2, Inches(1), Inches(1.5), Inches(6), Inches(1.5))
+    for r, row in enumerate([["名称", "数量"], ["a", "0"], ["合计", "0"]]):
+        for c, v in enumerate(row):
+            gf.table.cell(r, c).text = v
+    if chart:
+        data = CategoryChartData()
+        data.categories = ["x"]
+        data.add_series("s", (1,))
+        s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(7), Inches(0.5), Inches(2), Inches(1), data)
+    if notes:
+        s.notes_slide.notes_text_frame.text = "演讲者备注"
+    end = prs.slides.add_slide(prs.slide_layouts[6])
+    end.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1)).text_frame.text = "结束"
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue(), str(title.shape_id), str(gf.shape_id)
+
+
+def _continuing(chart=False, notes=False, overflow="continue"):
+    work, title_id, sid = _long_deck(chart, notes)
+    work, name = P.pptx_add_slot(work, {"slide": 0, "shape": title_id, "kind": "text", "para": 0, "start": 3, "end": 4, "name": "客户"}, [])
+    work, rep = P.pptx_add_slot(work, {"slide": 0, "shape": sid, "kind": "repeat", "row": 1, "name": "明细", "overflow": overflow}, [name])
+    return work, [name, rep]
+
+
+def test_pptx_detail_past_the_slide_continues_on_copies_of_the_slide():
+    """overflow=continue: the table carries on over copies of its slide placed right after it; the
+    header row is on every copy, the rows below the detail only on the last, and every other field
+    of the slide reads the same on each copy. Rows are counted at their template height (0.5 in):
+    11 fit under the header, 10 when the total row must fit too."""
+    work, slots = _continuing(notes=True)
+    name, rep = slots
+    vals = {name["id"]: {"kind": "scalar", "value": V.text("乙公司")},
+            rep["id"]: _rows(*[(f"第{i}项", str(i)) for i in range(40)])}
+    out, issues = P.pptx_fill(work, slots, vals)
+    assert issues == []
+    prs = Presentation(io.BytesIO(out))
+    assert len(prs.slides) == 5
+    tables, titles = [], []
+    for slide in list(prs.slides)[:4]:
+        tables.append([[c.text for c in row.cells] for row in next(sh for sh in slide.shapes if sh.has_table).table.rows])
+        titles.append(next(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame))
+    assert titles == ["客户：乙公司"] * 4
+    assert [len(t) - 1 for t in tables] == [11, 11, 11, 8]                    # header + detail rows (+ the total on the last)
+    assert all(t[0] == ["名称", "数量"] for t in tables)
+    detail = [row for t in tables for row in t[1:] if row[0] != "合计"]
+    assert detail == [[f"第{i}项", str(i)] for i in range(40)]              # every row once, in order
+    assert [row for t in tables for row in t if row[0] == "合计"] == [["合计", "0"]] and tables[-1][-1] == ["合计", "0"]
+    assert [sh.text_frame.text for sh in list(prs.slides)[4].shapes if sh.has_text_frame] == ["结束"]
+    # the copies fit the slide; the notes stay with the original only
+    for slide in list(prs.slides)[:4]:
+        frame = next(sh for sh in slide.shapes if sh.has_table)
+        assert frame.top + frame.height <= prs.slide_height
+    assert [sl.has_notes_slide for sl in list(prs.slides)[:4]] == [True, False, False, False]
+    assert len({sl.slide_id for sl in prs.slides}) == 5
+    # the renderer the job verifies with reads every copy
+    rend = P.render_pptx(out)
+    assert len(rend["slides"]) == 5
+
+
+def test_pptx_continuation_that_fits_adds_no_slide_and_the_other_choices():
+    work, slots = _continuing()
+    name, rep = slots
+    few = {name["id"]: {"kind": "scalar", "value": V.text("乙")}, rep["id"]: _rows(("a", "1"), ("b", "2"))}
+    out, issues = P.pptx_fill(work, slots, few)
+    assert issues == [] and len(Presentation(io.BytesIO(out)).slides) == 2
+    def many(slots):
+        return {slots[0]["id"]: {"kind": "scalar", "value": V.text("乙")}, slots[1]["id"]: _rows(*[(f"第{i}项", str(i)) for i in range(40)])}
+    work_e, slots_e = _continuing(overflow="error")
+    _, issues = P.pptx_fill(work_e, slots_e, many(slots_e))
+    assert [(i["level"], i["code"]) for i in issues] == [("error", "slide_overflow")]
+    assert "设置为超出时视为错误" in issues[0]["message"]
+    work_w, slots_w = _continuing(overflow="warn")
+    out, issues = P.pptx_fill(work_w, slots_w, many(slots_w))
+    assert [(i["level"], i["code"]) for i in issues] == [("warning", "slide_overflow")]
+    assert "复制本张幻灯片续写" in issues[0]["message"] and len(Presentation(io.BytesIO(out)).slides) == 2
+
+
+def test_pptx_slide_with_a_chart_is_not_copied():
+    work, slots = _continuing(chart=True)
+    name, rep = slots
+    _, issues = P.pptx_fill(work, slots, {name["id"]: {"kind": "scalar", "value": V.text("乙")},
+                                          rep["id"]: _rows(*[(f"第{i}项", str(i)) for i in range(40)])})
+    assert [(i["level"], i["code"]) for i in issues] == [("error", "continue_uncopyable")]
+
+
+def test_pptx_continuation_chunks():
+    h = 100
+    assert P._continuation_chunks("x", 40, 11 * h, 0, h) == [11, 11, 11, 7]
+    assert P._continuation_chunks("x", 40, 11 * h + 50, h, h) == [11, 11, 11, 7]     # the last holds 10
+    assert P._continuation_chunks("x", 12, 11 * h, h, h) == [11, 1]
+    assert P._continuation_chunks("x", 10, 8 * h, 7 * h, h) == [8, 1, 1]              # the last holds 1
+    assert P._continuation_chunks("x", 9, 8 * h, 8 * h, h) == [8, 1, 0]               # only the totals on the last
+    with pytest.raises(P.PptxError):
+        P._continuation_chunks("x", 3, h - 1, 0, h)
+    with pytest.raises(P.PptxError):
+        P._continuation_chunks("x", 3, 5 * h, 0, 0)
+
+
 def test_pptx_source_with_fewer_paragraphs_names_the_slide_shape_and_paragraph():
     """A source deck whose text box has fewer paragraphs than the representative file says which
     slide, which shape and which paragraph the value was read from — not just "differs"."""

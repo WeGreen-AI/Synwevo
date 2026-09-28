@@ -39,7 +39,7 @@ KIND_KEYS = {
     "cell": {"sheet", "cell", "mode", "table", "row", "col", "part", "slide", "shape"},
     "region": {"sheet", "range", "table", "r1", "c1", "r2", "c2", "part"},
     "repeat": {"sheet", "row", "c1", "c2", "table", "header_rows", "header_row", "empty_policy", "placeholder",
-               "repeat_header", "slide", "shape"},
+               "repeat_header", "slide", "shape", "overflow"},
     "repeat_block": {"first_find", "last_find", "first", "last", "part", "auto_columns", "separator", "empty_policy", "placeholder"},
     "block_column": {"block", "find", "occurrence", "part", "path", "start", "end"},
     "pdf_box": {"page", "rect", "nrect", "find", "occurrence", "font_size", "min_font_size", "align", "valign", "clear", "color"},
@@ -272,6 +272,9 @@ def resolve_field(app: App, tid: str, spec: dict) -> dict:
                     req[k] = spec[k]
         elif fmt == "pptx":
             req.update({"slide": _int(spec, "slide"), "shape": _need(spec, "shape"), "row": _int(spec, "row")})
+            for k in ("empty_policy", "placeholder", "overflow"):
+                if k in spec:
+                    req[k] = spec[k]
         else:
             _bad(f"{fmt.upper()} 模板的重复明细请用 pdf_repeat", "kind")
     elif kind == "repeat_block":

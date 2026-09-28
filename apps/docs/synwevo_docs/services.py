@@ -1294,7 +1294,9 @@ class App:
                 sl["columns"] = [c for c in sl["columns"] if c["key"] != val]
                 sl["_remove_column"] = val
                 continue
-            if k == "overflow" and val not in ("error", "shrink", "continue"):
+            if k == "overflow" and r["format"] == "pptx" and val not in ("warn", "error", "continue"):
+                raise ServiceError(400, "bad_value", "超出处理方式无效：演示文稿的明细只能是提示、视为错误或复制本张幻灯片续写")
+            if k == "overflow" and r["format"] != "pptx" and val not in ("error", "shrink", "continue"):
                 raise ServiceError(400, "bad_value", "超出处理方式无效")
             if k == "empty_policy":
                 # the valid set depends on what kind of repeat this slot is

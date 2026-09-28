@@ -48,7 +48,7 @@ export interface Slot {
   nrect?: number[];
   ngrid?: { kind: "col" | "row"; r: number[] }[];
   layout?: { trot: number; trect: number[]; row_height: number; cols: { key: string; name: string; x0: number; x1: number; align: string }[] };
-  overflow?: "error" | "continue" | "shrink";
+  overflow?: "error" | "continue" | "shrink" | "warn";   // "warn": PPTX tables only (the default there)
   color?: string;
   clear?: string;
   capacity?: number;

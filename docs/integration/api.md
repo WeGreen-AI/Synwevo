@@ -258,7 +258,7 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 | `text` | DOCX / PPTX | `find`(+`occurrence`,`part`) 或 `path`+`start`+`end`（PPTX 用 `slide`/`shape`/`para`/`start`/`end`）；`mode`: `replace`/`insert` |
 | `cell` | XLSX / DOCX 表格 / PPTX 表格 | XLSX：`sheet`+`cell`；DOCX：`table`(第几个表格)+`row`+`col`；PPTX：`slide`+`shape`+`row`+`col` |
 | `region` | XLSX / DOCX 表格 | XLSX：`sheet`+`range`；DOCX：`table`+`r1`,`c1`,`r2`,`c2` |
-| `repeat` | XLSX / DOCX / PPTX | 明细模板行：XLSX `sheet`+`row`+`c1`+`c2`；DOCX `table`+`row`(+`header_rows`)；PPTX `slide`+`shape`+`row`；可带 `empty_policy`、`placeholder` |
+| `repeat` | XLSX / DOCX / PPTX | 明细模板行：XLSX `sheet`+`row`+`c1`+`c2`；DOCX `table`+`row`(+`header_rows`)；PPTX `slide`+`shape`+`row`；可带 `empty_policy`、`placeholder`；PPTX 另可带 `overflow`：表格超出幻灯片底部时 `warn`（缺省，照常生成并警告）/ `error`（该份失败）/ `continue`（复制本张幻灯片续写：表头行每张重复，明细下方的行只在最后一张，幻灯片上其他字段同样填写；按模板行高计算；含图表、SmartArt、音视频或嵌入对象的幻灯片不复制） |
 | `repeat_block` | DOCX | 连续段落块：`first_find`/`last_find` 或 `first`/`last` 路径；`auto_columns`、`separator`(`none`/`blank`/`page_break`)、`empty_policy` |
 | `block_column` | DOCX | 给已存在的内容块加一列：`block`(名称或 id) + `find` 或 `path`+`start`+`end` |
 | `pdf_box` | PDF / 图片 | `page`+`rect`（页面坐标，单位点）、`nrect`（0–1 比例）或 `find`；`font_size`、`min_font_size`、`align`、`valign`、`color`、`clear` |
@@ -317,7 +317,7 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 |---|---|
 | `off`（默认） | 不检查。新内容更长时输出页数可能与模板不同 |
 | `warn` | 每份输出实际排版一次并数页数；超出模板页数的样本仍生成，但在结果清单里带 `page_overflow` **警告**（含实际页数与模板页数） |
-| `fit` | 同上，但超出的样本判为**失败**不产出；若字段勾选了「超长时允许缩小字号」，先按 92%/84%/76%/68%/60% 逐级缩小并每级重新排版，放得下则成功并带 `shrunk_to_fit` 警告 |
+| `fit` | 同上，但超出的样本判为**失败**不产出；若字段勾选了「超长时允许缩小字号」，先按 92%/84%/76%/68%/60% 逐级缩小并每级重新排版，放得下则成功并带 `shrunk_to_fit` 警告。PPTX 的明细表格超出幻灯片底部（幻灯片数不变）同样判为失败；续写增加的幻灯片按页数超出处理 |
 
 省略 `layout` 时沿用项目设置；传入未列出的值返回 400 `bad_layout`。LibreOffice 不可用时返回 `layout_unavailable` 警告而不是假装检查过。
 
