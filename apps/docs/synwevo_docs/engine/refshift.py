@@ -7,7 +7,10 @@ Rules (documented in docs/FORMATS.md):
   row is <= it grows to cover the inserted rows – so ``SUM(D5:D5)`` over a
   one-row detail template becomes ``SUM(D5:D9)``;
 * removing rows turns references to removed cells into ``#REF!`` and shrinks
-  ranges that partially cover them.
+  ranges that partially cover them;
+* a sheet has ``MAX_ROW`` rows: inserting pushes nothing past it. A range whose end would go
+  past the last row stops at the last row (``SUM(C2:C1048576)`` or a validation over
+  ``B2:B1048576`` stays as it is, as in Excel); a single cell pushed off becomes ``#REF!``.
 """
 from __future__ import annotations
 
@@ -23,6 +26,8 @@ _ROWS_RE = re.compile(rf"^(?P<a>{_ROW}):(?P<b>{_ROW})$")
 _COLS_RE = re.compile(rf"^{_COL}:{_COL}$")
 _PART_RE = re.compile(r"^(\$?)([A-Za-z]{1,3})(\$?)(\d+)$")
 
+MAX_ROW = 1_048_576         # rows in an Excel worksheet
+
 
 class Shift:
     def __init__(self, start: int, delta: int, expand_row: int | None = None, expand_single: bool = False):
@@ -32,9 +37,11 @@ class Shift:
         self.expand_single = expand_single  # sqref lists: a single cell on the template row grows too
 
     def row(self, r: int) -> int | None:
-        """Map a single row; None means the row was deleted."""
+        """Map a single row; None means the row was deleted (or pushed past the last row)."""
         if self.delta >= 0:
-            return r + self.delta if r >= self.start else r
+            if r < self.start:
+                return r
+            return r + self.delta if r + self.delta <= MAX_ROW else None
         lo, hi = self.start, self.start - self.delta - 1
         if lo <= r <= hi:
             return None
@@ -49,7 +56,9 @@ class Shift:
                 nb = b + self.delta
             else:
                 nb = b
-            return na, nb
+            if na > MAX_ROW:
+                return None             # the whole range was pushed off the sheet
+            return na, min(nb, MAX_ROW)
         lo, hi = self.start, self.start - self.delta - 1
         if a >= lo and b <= hi:
             return None
@@ -75,7 +84,7 @@ def shift_area(ref: str, sh: Shift) -> str:
         if b is None:
             ra = _row_of(a)
             if sh.expand_single and sh.delta > 0 and sh.expand_row is not None and ra == sh.expand_row:
-                return f"{a}:{_shift_cell_ref(a, ra + sh.delta)}"
+                return f"{a}:{_shift_cell_ref(a, min(ra + sh.delta, MAX_ROW))}"
             nr = sh.row(ra)
             return "#REF!" if nr is None else _shift_cell_ref(a, nr)
         ra, rb = _row_of(a), _row_of(b)

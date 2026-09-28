@@ -18,7 +18,7 @@ from openpyxl.formula.translate import Translator
 from . import values as V
 from .numfmt import datetime_to_serial, is_date_format
 from .ooxml import NS, Package, q
-from .refshift import Shift, shift_area, shift_formula, shift_sqref, split_sheet
+from .refshift import MAX_ROW, Shift, shift_area, shift_formula, shift_sqref, split_sheet
 from .tabular import cell_ref, col_index, col_letter, parse_cell, parse_range
 
 S = NS["s"]
@@ -30,6 +30,9 @@ _XML_BAD = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
 _CELLREF = re.compile(r"^([A-Z]{1,3})(\d+)$")
 _STRING_LIT = re.compile(r'"(?:[^"]|"")*"')
 # network functions, DDE (app|topic!item) and external workbook references ([1]Sheet!A1)
+# threaded comments (Excel 365) sit next to the legacy notes and carry their own cell references
+REL_THREADED = "http://schemas.microsoft.com/office/2017/10/relationships/threadedComment"
+NS_THREADED = "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments"
 _OUTSIDE = re.compile(r"(?i)\b(?:_xlfn\.)?(?:WEBSERVICE|RTD|FILTERXML|IMAGE)\s*\(|\||\[\d+\]|\[[^\]]*\.xl")
 
 
@@ -413,9 +416,54 @@ class XlsxDoc:
                         del f.attrib[a]
                 f.text = new_text
 
+    # ------------------------------------------------------------ pivot tables, content extent
+    def pivot_tables(self, sheet: str) -> list[dict]:
+        """The pivot tables placed on ``sheet``: {name, ref, part, rows: (first, last)} (1-based rows)."""
+        out = []
+        part = self.sheet_info(sheet)["part"]
+        for rel in self.pkg.rels(part):
+            if rel.external or not rel.type.endswith("/pivotTable"):
+                continue
+            target = self.pkg.resolve(part, rel.target)
+            if not self.pkg.has(target):
+                continue
+            loc = self.pkg.xml(target).find(s("location"))
+            if loc is None or not loc.get("ref"):
+                continue
+            r1, _, r2, _ = parse_range(loc.get("ref"))
+            out.append({"name": self.pkg.xml(target).get("name") or "", "ref": loc.get("ref"), "part": target,
+                        "rows": (r1 + 1, r2 + 1)})
+        return out
+
+    def last_content_row(self, sheet: str) -> int:
+        """The last row (1-based) holding a value or a formula; 0 for an empty sheet. Rows that
+        only carry formatting may be pushed off the sheet by an insertion, as in Excel."""
+        sd = self._sheet_data(self.sheet_root(sheet))
+        last = 0
+        for row in sd.findall(s("row")):
+            r = int(row.get("r"))
+            if r > last and any(c.find(s("v")) is not None or c.find(s("f")) is not None or c.find(s("is")) is not None
+                                for c in row.findall(s("c"))):
+                last = r
+        return last
+
+    def _check_pivots(self, sheet: str, shift: Shift) -> None:
+        """A pivot table moves whole or not at all: rows inserted into it or deleted from it would
+        split it, and its definition cannot follow. Refused before anything is changed."""
+        for pv in self.pivot_tables(sheet):
+            a, b = pv["rows"]
+            if shift.delta > 0:
+                inside = a < shift.start <= b
+            else:
+                lo, hi = shift.start, shift.start - shift.delta - 1
+                inside = not (hi < a or lo > b)
+            if inside:
+                raise XlsxError("pivot_overlap", f"数据透视表「{pv['name']}」（{pv['ref']}）与插入或删除的行相交，无法随之移动：请把重复明细行移到透视表之外")
+
     # ------------------------------------------------------------ row shifting
     def shift_rows(self, sheet: str, shift: Shift) -> None:
         """Apply a row insertion/deletion to cells and every dependent structure."""
+        self._check_pivots(sheet, shift)
         self.expand_shared_formulas()
         info = self.sheet_info(sheet)
         root = self.sheet_root(sheet)
@@ -530,7 +578,7 @@ class XlsxDoc:
                         row_el = a.find("{%s}row" % XDR)
                         if row_el is not None and row_el.text is not None:
                             nr = plain.row(int(row_el.text) + 1)
-                            row_el.text = str((nr if nr is not None else shift.start) - 1)
+                            row_el.text = str((nr if nr is not None else (MAX_ROW if shift.delta > 0 else shift.start)) - 1)
             elif rel.type.endswith("/comments"):
                 croot = self.pkg.xml(target)
                 for cm in croot.iter(s("comment")):
@@ -541,6 +589,22 @@ class XlsxDoc:
                         cm.set("ref", nr)
             elif rel.type.endswith("/vmlDrawing"):
                 self._shift_vml(target, shift)
+            elif rel.type == REL_THREADED:
+                # the threaded comment and its replies share the cell's ref; a comment that stays
+                # behind points at another cell than its legacy note (Excel then repairs the file)
+                troot = self.pkg.xml(target)
+                for tc in list(troot.iter("{%s}threadedComment" % NS_THREADED)):
+                    nr = shift_area(tc.get("ref") or "", plain)
+                    if nr == "#REF!":
+                        tc.getparent().remove(tc)
+                    elif nr:
+                        tc.set("ref", nr)
+            elif rel.type.endswith("/pivotTable"):
+                # the pivot's cells move with the rows; its definition must say where they are now,
+                # or Excel and LibreOffice lay it out again over the old rows (_check_pivots refused a split)
+                loc = self.pkg.xml(target).find(s("location"))
+                if loc is not None and loc.get("ref"):
+                    loc.set("ref", shift_area(loc.get("ref"), plain))
         # chart series pointing at the template row (even a single cell) describe the detail data → grow with it
         chart_shift = Shift(shift.start, shift.delta, shift.expand_row, expand_single=True)
         for name in self.pkg.names:
@@ -567,7 +631,7 @@ class XlsxDoc:
             row_el = cd.find("{%s}Row" % X)
             if row_el is not None and row_el.text:
                 nr = shift.row(int(row_el.text) + 1)
-                row_el.text = str((nr if nr is not None else shift.start) - 1)
+                row_el.text = str((nr if nr is not None else (MAX_ROW if shift.delta > 0 else shift.start)) - 1)
                 changed = True
             anc = cd.find("{%s}Anchor" % X)
             if anc is not None and anc.text:
@@ -575,7 +639,7 @@ class XlsxDoc:
                 if len(parts) == 8:
                     for i in (2, 6):
                         nr = shift.row(int(parts[i]) + 1)
-                        parts[i] = str((nr if nr is not None else shift.start) - 1)
+                        parts[i] = str((nr if nr is not None else (MAX_ROW if shift.delta > 0 else shift.start)) - 1)
                     anc.text = ", ".join(parts)
                     changed = True
         if changed:
@@ -586,6 +650,9 @@ class XlsxDoc:
         Formulas in the copies are translated; horizontal merges are replicated."""
         if count <= 0:
             return
+        last = max(self.last_content_row(sheet), template_row)
+        if last + count > MAX_ROW:
+            raise XlsxError("row_limit", f"插入 {count} 行后工作表「{sheet}」共 {last + count} 行，超过 Excel 工作表的上限 1,048,576 行")
         root = self.sheet_root(sheet)
         merges = self.merges(sheet)
         for (r1, c1, r2, c2) in merges:

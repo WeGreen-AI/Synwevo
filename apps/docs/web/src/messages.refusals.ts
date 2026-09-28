@@ -360,6 +360,10 @@ export const refusalPatterns = {
   "{cell}：文本长度 {length} 超过 Excel 单元格上限 32767": { en: "{cell}: the text is {length} characters long, over Excel's cell limit of 32767.", "zh-Hant": "{cell}：文字長度 {length} 超過 Excel 單元格上限 32767" },
   "模板明细行 {row} 与纵向合并单元格 {from}:{to} 相交，无法重复该行": { en: "Template detail row {row} intersects the vertically merged cells {from}:{to}, so it cannot be repeated.", "zh-Hant": "模板明細行 {row} 與縱向合併單元格 {from}:{to} 相交，無法重複該行" },
   "模板明细行 {row} 中的数组公式跨越多行（{ref}），无法随明细行复制": { en: "An array formula in template detail row {row} spans several rows ({ref}) and cannot be copied with the detail rows.", "zh-Hant": "模板明細行 {row} 中的陣列公式跨越多行（{ref}），無法隨明細行複製" },
+  "第 {row} 行与数据透视表「{name}」（{range}）相交，不能作为重复行": { en: "Row {row} intersects the pivot table “{name}” ({range}) and cannot be a repeating row.", "zh-Hant": "第 {row} 行與樞紐分析表「{name}」（{range}）相交，不能作為重複行" },
+  "数据透视表「{name}」（{range}）与插入或删除的行相交，无法随之移动：请把重复明细行移到透视表之外": { en: "The pivot table “{name}” ({range}) intersects the rows being inserted or deleted and cannot move with them. Move the repeating detail row outside the pivot table.", "zh-Hant": "樞紐分析表「{name}」（{range}）與插入或刪除的行相交，無法隨之移動：請把重複明細行移到樞紐分析表之外" },
+  "插入 {count} 行后工作表「{sheet}」共 {total} 行，超过 Excel 工作表的上限 1,048,576 行": { en: "Inserting {count} rows would give the sheet “{sheet}” {total} rows, more than an Excel worksheet's limit of 1,048,576.", "zh-Hant": "插入 {count} 行後工作表「{sheet}」共 {total} 行，超過 Excel 工作表的上限 1,048,576 行" },
+  "重复明细「{name}」有 {count} 行，插入后工作表「{sheet}」共 {total} 行，超过 Excel 工作表的上限 1,048,576 行": { en: "The repeating detail “{name}” has {count} rows; inserting them would give the sheet “{sheet}” {total} rows, more than an Excel worksheet's limit of 1,048,576.", "zh-Hant": "重複明細「{name}」有 {count} 行，插入後工作表「{sheet}」共 {total} 行，超過 Excel 工作表的上限 1,048,576 行" },
   "第 {row} 行与纵向合并单元格相交，无法删除": { en: "Row {row} intersects vertically merged cells and cannot be deleted.", "zh-Hant": "第 {row} 行與縱向合併單元格相交，無法刪除" },
 
   // ------------------------------------------------------------------ built-in editors

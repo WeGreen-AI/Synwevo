@@ -16,7 +16,7 @@ from . import docx_core as dc
 from . import tabular
 from . import values as V
 from .ooxml import Package
-from .refshift import Shift
+from .refshift import MAX_ROW, Shift
 
 
 class TemplateError(ValueError):
@@ -493,8 +493,12 @@ def xlsx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
             if a <= row <= cc and a != cc:
                 raise TemplateError("vertical_merge", f"第 {row + 1} 行与纵向合并单元格 {tabular.range_ref(a, b, cc, d)} 相交，不能作为重复行")
         for other in slots:
-            if other["kind"] == "repeat" and other["locator"]["sheet"] == sheet and other["locator"]["row"] == row:
+            if other["kind"] == "repeat" and other["locator"]["sheet"] == sheet and other["locator"].get("row") == row:
                 raise TemplateError("duplicate_repeat", "该行已是重复明细行")
+        for pv in x.pivot_tables(sheet):
+            # rows inserted into a pivot table would split it (xlsx_doc._check_pivots)
+            if pv["rows"][0] <= row + 1 <= pv["rows"][1]:
+                raise TemplateError("pivot_overlap", f"第 {row + 1} 行与数据透视表「{pv['name']}」（{pv['ref']}）相交，不能作为重复行")
         _check_overlap(slots, sheet, row, c1, row, c2)
         header_row = req.get("header_row", row - 1 if row > 0 else None)
         cols = []
@@ -583,6 +587,11 @@ def xlsx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
                             x.clear_cell(sheet, row, col["col"])
                 continue
             if n > 1:
+                total = max(x.last_content_row(sheet), row + 1) + n - 1
+                if total > MAX_ROW:
+                    issues.append({"level": "error", "slot": sl["id"], "code": "row_limit",
+                                   "message": f"重复明细「{sl['name']}」有 {n} 行，插入后工作表「{sheet}」共 {total} 行，超过 Excel 工作表的上限 1,048,576 行"})
+                    return b"", issues
                 x.insert_copies_of_row(sheet, row + 1, n - 1)
                 shifts.setdefault(sheet, []).append(Shift(row + 2, n - 1, expand_row=row + 1))
             for i, rv in enumerate(rows):
