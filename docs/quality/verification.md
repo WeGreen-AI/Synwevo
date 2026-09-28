@@ -1883,6 +1883,29 @@ typecheck、build、`npm test --workspaces --if-present`（ui 19、auth-client 3
 `infra/production/tests` 6 项、`check_boundaries`/`check_brand`/`check_design`/`check_component_names`/`brand_assets --check` 通过。
 最终修复提交（c98fe03，压成一个提交前）上 Docs、消息与集成三个套件 1634 通过、1 跳过、0 失败（账户服务套件在 4a7531c 上通过，其后的改动不涉及它）。
 
+### 16.89 演示文稿明细的超出处理：保持版面时该份失败、复制本张幻灯片续写（CI-119、CI-120）
+
+基线（读代码）：`pptx_fill` 在明细表格超出幻灯片底部时只给 `slide_overflow` 警告；`fill_checked` 的页数守卫对 PPTX
+数的是幻灯片数，表格变长不增加幻灯片，所以 layout=fit（「保持模板页数：仍超出则该份失败」）对 PPTX 从不失败。
+PDF 明细区域早有「超出时：视为错误 / 复制本页续写 / 压缩行高」，PPTX 没有任何选择。
+
+修复后：`test_engine_documents.py` +5（fit 下为错误、off/warn 为警告；续写 40 行 → 5 张幻灯片 11/11/11/7 行明细、表头每张、
+合计只在最后一张、标题字段每张都是「客户：乙公司」、备注只留在原幻灯片、续写的表格都在幻灯片内、渲染器读到 5 张；
+能放下时不加幻灯片；error/warn 两种设置；含图表的幻灯片不复制；分块算法 7 例）；`test_slot_options.py` +1（PPTX
+只接受 warn/error/continue，拒绝 shrink；DOCX 仍拒绝 warn）；含 PPTX/字段的 Docs 测试全部通过；`refusals.test.ts` 16 项
+（新句子与模板在三语言逐样本链路里）；docs-web 66 项；typecheck 通过。LibreOffice 把续写结果渲染为 5 页，第 1 页 11 行
+明细到底边、第 4 页 7 行 + 合计（`scratchpad/pptxcont/slide1.png`、`slide4.png`）。
+
+浏览器（隔离实例 31765/31770，Chrome 1400，`scratchpad/pptx_cont_proof.py`，新注册测试账户与测试夹具）：缺省设置下预览给出
+「……可在字段设置中把「表格超出幻灯片时」改为「复制本张幻灯片续写」……」警告；字段面板里该选择框三项（照常生成并提示 /
+视为错误（该样本不生成）/ 复制本张幻灯片续写）并显示说明，选择后服务器存为 `continue`，预览不再警告；生成任务完成、产物
+「已校验」，下载的演示文稿 5 张幻灯片（表格行数 12/12/12/9，第 5 张「结束」）；英文界面同一选择框与说明为英文；0 页面错误
+（`scratchpad/pptxcont/shots/1-setting-zh.png`、`2-job-zh.png`、`3-setting-en.png`）。首版选项文字在窄选择框里被截断，
+已把「幻灯片上其他字段同样填写」移入说明。
+
+未验证：PowerPoint 实机打开续写结果（只用 LibreOffice 与 python-pptx 读回）；按模板行高计算，文字换行使行变高时仍可能超出；
+文本框文字溢出不检测。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
