@@ -181,6 +181,24 @@ def invisible_text_over_image(page, rect) -> bool:
         return False
 
 
+def machine_read_rects(page, rects: list) -> list[bool]:
+    """For each rectangle (a line of text on this page): is what the text layer says there a
+    machine's reading — an invisible layer over an image, as scanners and OCR tools make scans
+    searchable — rather than text someone typed? The page's text trace and image boxes are read
+    once for all lines (member import, CI-100: a searchable scan is still OCR and is checked)."""
+    try:
+        spans = [(pymupdf.Rect(t["bbox"]), t.get("type") == 3 or t.get("opacity", 1) == 0) for t in page.get_texttrace()]
+        images = [pymupdf.Rect(info["bbox"]) for info in page.get_image_info()]
+    except Exception:  # noqa: BLE001 - engines without text tracing: no evidence either way
+        return [False] * len(rects)
+    out = []
+    for rect in rects:
+        r = pymupdf.Rect(rect)
+        hit = [invisible for box, invisible in spans if box.intersects(r)]
+        out.append(bool(hit) and all(hit) and any(img.intersects(r) for img in images))
+    return out
+
+
 def inspect(data: bytes) -> dict:
     doc = open_pdf(data)
     try:

@@ -135,3 +135,30 @@ def test_a_scanned_image_needs_ocr_and_ocr_is_on_request(platform):
     assert "ivy.import@example.test" in emails and "jon.jones@example.test" in emails, emails
     rows = c.get(f"/api/auth/organizations/{c.oid}/imports/{imp['id']}/rows").json()["items"]
     assert all(x["source"].get("ocr") is True and "conf" in x["source"] for x in rows)
+
+
+def test_a_searchable_scan_is_still_a_machine_reading_and_waits_for_a_check(platform):
+    """CI-100 review: office scanners and OCR tools lay an invisible text layer over the page
+    image. Those lines were read as typed text and invited without anyone looking; they are OCR
+    (no confidence given) and wait for a person's check like any OCR row. Visible text on another
+    page of the same file is still text."""
+    import pymupdf
+    c = platform
+    doc = pymupdf.open()
+    scan = doc.new_page(width=595, height=842)
+    # TEST FIXTURE: a plain image standing in for the scanned page, with the scanner's invisible reading on top
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 60, 84), 0)
+    pix.set_rect(pix.irect, (250, 250, 250))
+    scan.insert_image(scan.rect, pixmap=pix)
+    scan.insert_text((72, 120), "Ivy Import ivy.scan@example.test and more words on this line", fontsize=12, render_mode=3)
+    typed = doc.new_page(width=595, height=842)
+    typed.insert_text((72, 120), "Tia Typed tia.typed@example.test", fontsize=12)
+    imp = _upload(c, "scanned.pdf", doc.tobytes(), "application/pdf")
+    assert imp["extraction"]["status"] == "ready", imp["extraction"]
+    plan = _plan(c, imp, {"mode": "lines"})
+    rows = {r["fields"]["email"]: r for r in c.get(f"/api/auth/organizations/{c.oid}/imports/{imp['id']}/rows").json()["items"]}
+    scanned = rows["ivy.scan@example.test"]
+    assert scanned["source"]["ocr"] is True and scanned["source"]["layer"] == "scan" and scanned["source"]["conf"] is None
+    assert scanned["action"] == "blocked" and scanned["reason"] == "ocr_unchecked"
+    assert not rows["tia.typed@example.test"]["source"].get("ocr") and rows["tia.typed@example.test"]["action"] == "invite"
+    assert plan["summary"]["reasons"] == {"ocr_unchecked": 1, "new_person": 1}

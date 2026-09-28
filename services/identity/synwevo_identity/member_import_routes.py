@@ -372,7 +372,8 @@ def build_router(store, ident, sessions, audit, invites, mailer, *, ingest, star
             raise ServiceError(400, "bad_workspace", "请选择目标工作空间", {"field": "workspace_id"})
         out = imports.plan(iid, body.get("mapping") or {}, actor_id=uid, workspace_id=wid, invite_check=invite_check_for(uid, wid))
         audit(request, "organization.member_import.plan", actor_id=uid, object_kind="member_import", object_id=iid, result="ok",
-              meta={"organization_id": oid, "workspace_id": wid, **((out["summary"] or {}).get("counts") or {})})
+              meta={"organization_id": oid, "workspace_id": wid, **((out["summary"] or {}).get("counts") or {}),
+                    "reviewed": sum(1 for v in ((out.get("mapping") or {}).get("reviews") or {}).values() if v.get("checked"))})
         return imports.public(out)
 
     @r.get("/{oid}/imports/{iid}/rows")

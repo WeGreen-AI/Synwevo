@@ -32,6 +32,7 @@
 | `already_member` | unchanged | 已是此空间成员且角色不变 |
 | `duplicate_in_file` / `self` / `already_invited` | skip | 文件内重复、导入者本人、已有待接受邀请 |
 | `bad_email` / `unknown_workspace_role` / `unknown_org_role` | blocked | 语法不合法；角色文字未在映射步骤明确映射（角色权限永远不从名字推断） |
+| `ocr_unchecked` | blocked | 文字识别（图片、扫描页或扫描 PDF 的识别文字层）读出、会邀请或更新某人的行，还没有人核对（CI-100，见 §3.1） |
 | `role_not_importable` | blocked | 空间 owner、组织 owner/admin 基础角色不能通过文件授予 |
 | `role_not_delegable` / `forbidden` / `role_too_high` | blocked | 导入者没有分配该组织角色所需权限 / 不能邀请到此空间 / 不能邀请高于自己的角色 |
 | `account_unavailable` / `over_limit` | blocked | 账户被停用或删除 / 超过单次 500 行 |
@@ -49,6 +50,22 @@
 | PDF（有文字层） | 文档引擎（PyMuPDF/pdfium） | 行（页码+行号） | 前 200 页；无表格结构，按行找邮箱 |
 | 扫描 PDF / PNG / JPEG / TIFF / WebP / BMP / GIF | 文档引擎 + Tesseract（chi_sim+eng） | 行（页码、行号、置信度） | `needs_ocr` 后由操作者点击「识别文字」；每次最多 20 页；来源标 `ocr` 便于复核 |
 | 其它 | — | `unsupported` + 原因 | 换扩展名不会变成支持 |
+
+### 3.1 文字识别的行由人核对（CI-100）
+
+扫描件、图片以及**扫描 PDF 上的隐形识别文字层**（扫描仪与 OCR 工具让扫描件"可搜索"的那层文字，`pdf_engine.machine_read_rects`
+按「整行都是隐形文字且压在图片上」判断）读出的每一行，都记着来源（页码、行号、识别原文）与置信度（文字层没有置信度）。
+这样的行只要会**邀请或更新**某个人，计划里就是 `blocked`（`ocr_unchecked`，`fields.would` 记着核对后会做什么），
+直到操作者在预览里核对：界面显示识别原文、置信度（低于 85 标「机器不确定」）、可编辑的邮箱与姓名和「核对无误」；
+核对后可以再「修改」。提交把 `{email?, name?, checked: true}` 写进映射的 `reviews`（键 `p{页}:l{行}`），服务器记下
+**谁、何时**核对（`by`/`at`，内容不变时保留），重新计划时不带 `reviews` 也会沿用；改过的地址替代机器读出的，原读法留在
+行来源里（`read_email` / `read_name`，报告里也有）。有「@」却读不出完整地址的识别行也会列出（`bad_email`）供改正，
+而不是悄悄丢掉。计划审计记下已核对的行数。只会「跳过/不变」的行（文件内重复、本人、已是成员）不需要核对。
+「以上 N 行都已对照识别原文核对无误」一次确认列表里显示的待核对行——它仍是操作者的明确确认。
+
+取舍：一开始只卡「整行最低置信度 < 85」的行；独立审查用 Tesseract 5.5 实测，这个信号两头都错——正确读出的地址因为
+名字里某个词置信度低而被卡住，而 m/rn、l/1、u/ll 之类的误读地址有的在 86–88 分直接放行。所以现在**每一行机器读出的都要人看**，
+置信度只作提示。
 
 ## 4. 权限与再核对
 

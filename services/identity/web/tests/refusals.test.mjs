@@ -152,6 +152,8 @@ const API_ONLY = {
   // organizations
   "角色请求包含不支持的字段": "the role dialogs send only their own fields", "包含未知的权限": "permissions are chosen from the page's list",
   "role_ids 必须是角色 ID 列表": "roles are chosen from the page's list", "mapping 必须是对象": "the mapping form sends an object",
+  "reviews 必须是按行的对象，最多 500 行": "reviews are written by the row review control, one per OCR row",
+  "reviews 的某一项无效": "the row review control sends a known key, text fields and checked=true",
   "默认空间角色只能是 viewer、editor 或 admin": FIXED, "action 只能是 approve 或 reject": FIXED, "处理结果只能是 removed 或 dismissed": FIXED,
   "不能执行 {row['action']} 行": "only invite and update rows are executed; the plan decides which rows those are",
   // API console

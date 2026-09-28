@@ -141,16 +141,33 @@ class DocumentIngest:
             out["notes"].append(f"只读取前 {MAX_TEXT_PAGES} 页")
         scanned = [p["index"] for p in pages[:MAX_TEXT_PAGES] if p["kind"] in ("scanned", "mixed")]
         lines: list[tuple[str, dict]] = []
-        for p in pages[:MAX_TEXT_PAGES]:
-            if p["kind"] == "scanned":
-                continue
-            words = pe.page_words(data, p["index"])["words"]
-            groups: dict[tuple, list[dict]] = {}
-            for wd in words:
-                groups.setdefault((wd["b"], wd["l"]), []).append(wd)
-            for n, key in enumerate(sorted(groups), start=1):
-                ws = sorted(groups[key], key=lambda x: x["n"])
-                lines.append((_join([x["t"] for x in ws]), {"page": p["index"] + 1, "line": n}))
+        doc = pe.open_pdf(data)
+        machine_pages = 0
+        try:
+            for p in pages[:MAX_TEXT_PAGES]:
+                if p["kind"] == "scanned":
+                    continue
+                words = pe.page_words(data, p["index"])["words"]
+                groups: dict[tuple, list[dict]] = {}
+                for wd in words:
+                    groups.setdefault((wd["b"], wd["l"]), []).append(wd)
+                keys = sorted(groups)
+                boxes = [(min(w["u"][0] for w in groups[k]), min(w["u"][1] for w in groups[k]),
+                          max(w["u"][2] for w in groups[k]), max(w["u"][3] for w in groups[k])) for k in keys]
+                # A scan made searchable carries an invisible machine reading over the page image:
+                # its lines are OCR (no confidence given), checked by a person like any OCR line.
+                machine = pe.machine_read_rects(doc[p["index"]], boxes)
+                machine_pages += any(machine)
+                for n, key in enumerate(keys, start=1):
+                    ws = sorted(groups[key], key=lambda x: x["n"])
+                    src = {"page": p["index"] + 1, "line": n}
+                    if machine[n - 1]:
+                        src.update({"ocr": True, "conf": None, "layer": "scan"})
+                    lines.append((_join([x["t"] for x in ws]), src))
+        finally:
+            doc.close()
+        if machine_pages:
+            out["notes"].append(f"{machine_pages} 页的文字是扫描件上的识别文字层（机器读出），按识别结果处理")
         if scanned:
             out["notes"].append(f"{len(scanned)} 页没有文字层（扫描页）")
             if ocr:

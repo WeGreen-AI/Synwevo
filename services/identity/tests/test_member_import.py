@@ -252,3 +252,81 @@ def test_expired_imports_and_their_files_are_swept_hourly(org, monkeypatch):
     assert (d / recent).is_file() and c.ident.store.one("SELECT 1 FROM member_imports WHERE id=?", (recent,))
     assert not stale.exists() and fresh.exists()
     assert c.api.state.auth_sweeper.run_once()["member_imports"] == {"enabled": True, "expired": 0, "orphan_files": 0}
+
+
+def _ocr_import(c, lines: list[tuple[str, float]]):
+    """TEST FIXTURE: an import whose lines came from OCR (the document engine's shape: page, line,
+    `ocr`, the line's lowest word confidence) — the account service alone has no OCR engine."""
+    extraction = {"engine": "docs", "format": "png", "family": "image", "status": "ready", "tables": [],
+                  "lines": [{"text": text, "source": {"page": 1, "line": n, "ocr": True, "conf": conf}}
+                            for n, (text, conf) in enumerate(lines, start=1)],
+                  "ocr": {"available": True, "applied": True, "engine": "tesseract fixture"}, "notes": []}
+    imp = MemberImports(c.ident.store, c.ident).create(c.oid, c.users["owner"]["id"], filename="roster.png", sha256="0" * 64,
+                                                      size=1, extraction=extraction, scan={"status": "clean"}, workspace_id=c.wid)
+    return imp["id"]
+
+
+def test_ocr_rows_are_checked_by_a_person_before_anyone_is_invited(org):
+    """CI-100 (§8.5 低置信度人工校对): every OCR row that would invite someone waits for a
+    person's check — confidence is shown, not trusted (Tesseract passes some misreads at 86–88
+    and blocks some correct lines). The check survives re-planning, records who and when, and
+    unchecked rows are what 'only valid rows' skips. A line with an "@" but no whole address is
+    shown for correction instead of vanishing."""
+    c = org
+    h = login(c, "owner")
+    iid = _ocr_import(c, [("Ivy Import ivy.import@example.test", 96), ("Jon Jones jon.jonse@exarnple.test", 61),
+                          ("Kay Kim kay.kim@example.test", 72), ("Lee Lau lee.lau@exa mple.test", 40), ("Team roster 2026", 90)])
+    url = f"{base(c)}/{iid}"
+    plan = c.put(f"{url}/mapping", headers=h, json={"workspace_id": c.wid, "mapping": {"mode": "lines"}}).json()
+    assert plan["summary"]["counts"] == {"invite": 0, "update": 0, "unchanged": 0, "skip": 0, "blocked": 4}
+    assert plan["summary"]["reasons"] == {"ocr_unchecked": 3, "bad_email": 1}
+    rows = {r["source"]["line"]: r for r in c.get(f"{url}/rows").json()["items"]}
+    assert set(rows) == {1, 2, 3, 4}, "the heading without an address is not a row"
+    assert rows[1]["fields"]["would"] == {"action": "invite", "reason": "new_person"}
+    assert rows[2]["source"]["review_key"] == "p1:l2" and rows[2]["source"]["conf"] == 61 and rows[2]["source"]["text"].startswith("Jon Jones")
+    assert rows[4]["reason"] == "bad_email" and rows[4]["fields"]["email"] == "lee.lau@exa"
+    r = c.post(f"{url}/confirm", headers=h, json={"version": plan["version"]})
+    assert r.status_code == 409 and r.json()["error"] == "rows_blocked"
+    # the operator confirms 1 and 3, corrects 2 and 4
+    mapping = {"mode": "lines", "reviews": {"p1:l1": {"checked": True}, "p1:l2": {"email": "jon.jones@example.test", "checked": True},
+                                            "p1:l3": {"checked": True}, "p1:l4": {"email": "lee.lau@example.test", "checked": True}}}
+    plan = c.put(f"{url}/mapping", headers=h, json={"workspace_id": c.wid, "mapping": mapping}).json()
+    assert plan["summary"]["counts"]["invite"] == 4 and plan["summary"]["counts"]["blocked"] == 0
+    rows = {r["source"]["line"]: r for r in c.get(f"{url}/rows").json()["items"]}
+    assert rows[2]["fields"]["email"] == "jon.jones@example.test" and rows[2]["source"]["read_email"] == "jon.jonse@exarnple.test"
+    stored = c.get(url).json()["mapping"]["reviews"]
+    assert stored["p1:l2"]["by"] == c.users["owner"]["id"] and stored["p1:l2"]["at"] > 0
+    # planning again without sending reviews keeps them (and who checked them)
+    again = c.put(f"{url}/mapping", headers=h, json={"workspace_id": c.wid, "mapping": {"mode": "lines", "defaults": {"workspace_role": "editor"}}}).json()
+    assert again["summary"]["counts"]["invite"] == 4
+    assert c.get(url).json()["mapping"]["reviews"]["p1:l2"]["at"] == stored["p1:l2"]["at"]
+    audit = c.ident.store.one("SELECT meta FROM audit_events WHERE action='organization.member_import.plan' ORDER BY seq DESC LIMIT 1")["meta"]
+    assert (json.loads(audit) if isinstance(audit, str) else audit)["reviewed"] == 4
+    assert c.post(f"{url}/confirm", headers=h, json={"version": again["version"]}).status_code == 200
+    assert c.api.state.member_import_runner.run_once() == 4
+    invited = {r["email_key"] for r in c.ident.store.all("SELECT email_key FROM invitations WHERE workspace_id=?", (c.wid,))}
+    assert {"ivy.import@example.test", "jon.jones@example.test", "kay.kim@example.test", "lee.lau@example.test"} <= invited
+    assert "jon.jonse@exarnple.test" not in invited
+
+
+def test_an_ocr_row_that_would_change_nothing_is_not_held_for_a_check(org):
+    """Only rows that would invite or update someone wait for a check: a duplicate, the importer
+    and an existing member say what they are."""
+    c = org
+    h = login(c, "owner")
+    iid = _ocr_import(c, [("Mia member@example.test", 50), ("Dup member@example.test", 50), ("Me owner@example.test", 50)])
+    plan = c.put(f"{base(c)}/{iid}/mapping", headers=h, json={"workspace_id": c.wid, "mapping": {"mode": "lines"}}).json()
+    assert plan["summary"]["reasons"] == {"already_member": 1, "duplicate_in_file": 1, "self": 1}
+
+
+def test_review_entries_are_bounded_and_typed(org):
+    c = org
+    h = login(c, "owner")
+    iid = _ocr_import(c, [("Ann ann@example.test", 40)])
+    for bad in ({"not-a-key": {"checked": True}}, {"p1:l1": {"checked": True, "role": "admin"}}, {"p1:l1": {"email": 5}}, ["p1:l1"]):
+        r = c.put(f"{base(c)}/{iid}/mapping", headers=h, json={"workspace_id": c.wid, "mapping": {"mode": "lines", "reviews": bad}})
+        assert r.status_code == 400 and r.json()["detail"]["field"] == "reviews", (bad, r.text)
+    # a correction to something that is not an address is still a bad address, not an invitation
+    r = c.put(f"{base(c)}/{iid}/mapping", headers=h, json={"workspace_id": c.wid,
+                                                          "mapping": {"mode": "lines", "reviews": {"p1:l1": {"email": "nope", "checked": True}}}})
+    assert r.status_code == 200 and r.json()["summary"]["reasons"] == {"bad_email": 1}

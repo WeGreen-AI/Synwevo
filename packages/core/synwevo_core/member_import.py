@@ -15,6 +15,14 @@ Why it is shaped like this (decision record in docs/platform/member-import.md):
   workspace roles by the invitation service's own rule, both re-checked when a row executes and
   again when the invitation is accepted — the permissions held while the file was uploaded do
   not carry forward.
+* **What a machine read, a person checks (CI-100).** A row read by OCR — an image, a scanned
+  page, or a scan's invisible text layer — that would invite or update someone is blocked
+  (`ocr_unchecked`) until the operator has looked at it: confirmed it, or corrected the address or
+  name, in the mapping step (`mapping["reviews"]`, keyed by page and line so a correction survives
+  every re-plan, with who checked it and when). Confidence is shown, and low values are flagged,
+  but it is not the gate: measured on Tesseract, a line's confidence both blocks correct addresses
+  and passes misread ones. The "only valid rows" choice skips unchecked rows; nobody is invited
+  from an address no person looked at.
 * **Additive on existing members, visible in a diff.** An existing member's workspace role is
   raised, never lowered; organization roles are added, never removed; nobody is removed because
   they are missing from the file. The preview shows before/after per row and the operator
@@ -65,6 +73,9 @@ CREATE INDEX IF NOT EXISTS ix_member_import_rows_invitation ON member_import_row
 
 #: rows an import may plan (each invitation is a mail; the bulk invitation route has the same order of magnitude)
 MAX_ROWS = 500
+#: Under this lowest word confidence (Tesseract, 0–100) an OCR line is flagged as one the machine
+#: was unsure of — a hint for the person checking it, not the gate: every OCR row is checked.
+LOW_CONFIDENCE = 85
 MAX_TABLE_ROWS = 2000
 MAX_LINES = 5000
 MAX_TABLES = 50
@@ -345,15 +356,75 @@ def candidates(extraction: dict, mapping: dict) -> list[dict]:
                         "workspace_role_text": cell("workspace_role").strip(), "org_roles_text": cell("org_roles").strip(),
                         "source": {**t["source"], "table": t["name"], "row": t["row_numbers"][r] if r < len(t["row_numbers"]) else r + 1}})
         return out
+    reviews = mapping.get("reviews") or {}
     for ln in extraction.get("lines") or []:
         m = EMAIL_RE.search(ln["text"])
-        if not m:
+        src = dict(ln["source"])
+        key = review_key(src)
+        rev = reviews.get(key) if key else None
+        # An OCR line with an "@" but no whole address is a misread address: shown, so a person can
+        # correct it, rather than dropped without a trace.
+        if not m and not (rev and rev.get("email")) and not (key and "@" in ln["text"]):
             continue
-        rest = (ln["text"][:m.start()] + " " + ln["text"][m.end():])
+        if key:
+            src["text"] = ln["text"][:200]
+        rest = (ln["text"][:m.start()] + " " + ln["text"][m.end():]) if m else ln["text"]
         rest = re.sub(r"[<>()\[\]\"'，,;；|\t]+", " ", rest).strip()
         rest = re.sub(r"^(mailto:|邮箱|郵箱|email)[:：]?\s*", "", rest, flags=re.I).strip()
-        out.append({"email": m.group(0), "name": rest[:100], "workspace_role_text": "", "org_roles_text": "",
-                    "source": ln["source"]})
+        raw = m.group(0) if m else (re.search(r"\S*@\S*", ln["text"]).group(0) if "@" in ln["text"] else "")
+        if not m and raw:
+            rest = ln["text"].replace(raw, " ").strip()
+        cand = {"email": raw, "name": rest[:100], "workspace_role_text": "", "org_roles_text": "", "source": src}
+        if key:
+            src["review_key"] = key
+            if rev:
+                # The operator's reading replaces the machine's; the machine's stays in the source.
+                if rev.get("email") and rev["email"] != cand["email"]:
+                    src["read_email"] = cand["email"]
+                    cand["email"] = rev["email"]
+                if rev.get("name") is not None and rev["name"] != cand["name"]:
+                    src["read_name"] = cand["name"]
+                    cand["name"] = rev["name"]
+                src["checked"] = bool(rev.get("checked"))
+                if rev.get("by"):
+                    src["checked_by"], src["checked_at"] = rev.get("by"), rev.get("at")
+        out.append(cand)
+    return out
+
+
+def review_key(source: dict) -> str | None:
+    """Where an OCR line came from, stable across re-reads and re-plans: page and line."""
+    if not source.get("ocr"):
+        return None
+    return f"p{source.get('page') or 0}:l{source.get('line') or 0}"
+
+
+def needs_review(source: dict) -> bool:
+    """Every OCR row until a person has checked it (confidence is a hint, not the gate)."""
+    return bool(source.get("ocr")) and not source.get("checked")
+
+
+def clean_reviews(raw) -> dict:
+    """`mapping["reviews"]` as the operator sent it, bounded and typed: `{key: {email?, name?, checked}}`."""
+    if raw in (None, {}):
+        return {}
+    if not isinstance(raw, dict) or len(raw) > MAX_ROWS:
+        raise ServiceError(400, "bad_mapping", "reviews 必须是按行的对象，最多 500 行", {"field": "reviews"})
+    out = {}
+    for k, v in raw.items():
+        # `by`/`at` come back from the stored mapping; the server sets them, never the client.
+        if not isinstance(k, str) or not re.fullmatch(r"p\d{1,5}:l\d{1,6}", k) or not isinstance(v, dict) or set(v) - {"email", "name", "checked", "by", "at"}:
+            raise ServiceError(400, "bad_mapping", "reviews 的某一项无效", {"field": "reviews"})
+        item = {"checked": v.get("checked") is True}
+        if v.get("email") is not None:
+            if not isinstance(v["email"], str) or len(v["email"].strip()) > 254:
+                raise ServiceError(400, "bad_mapping", "reviews 的某一项无效", {"field": "reviews"})
+            item["email"] = v["email"].strip()
+        if v.get("name") is not None:
+            if not isinstance(v["name"], str):
+                raise ServiceError(400, "bad_mapping", "reviews 的某一项无效", {"field": "reviews"})
+            item["name"] = v["name"].strip()[:100]
+        out[k] = item
     return out
 
 
@@ -438,6 +509,15 @@ class MemberImports:
             raise ServiceError(409, "import_not_editable", "这个导入已经开始执行，不能再改映射")
         if not isinstance(mapping, dict):
             raise ServiceError(400, "bad_mapping", "mapping 必须是对象")
+        # Reviews are kept unless the caller sends its own set; each entry records who checked it
+        # and when — kept while the entry is unchanged, set to this actor when it changes.
+        before = ((imp.get("mapping") or {}).get("reviews") or {}) if isinstance(imp.get("mapping"), dict) else {}
+        reviews = clean_reviews(mapping["reviews"]) if "reviews" in mapping else {k: {x: y for x, y in v.items() if x not in ("by", "at")} for k, v in before.items()}
+        for k, v in reviews.items():
+            old = before.get(k) or {}
+            same = all(old.get(f) == v.get(f) for f in ("email", "name", "checked"))
+            v["by"], v["at"] = (old.get("by"), old.get("at")) if same and old.get("by") else (actor_id, now())
+        mapping = {**mapping, "reviews": reviews}
         ws = self.ident.get_workspace(workspace_id)
         oid = imp["organization_id"]
         if not ws or ws.get("organization_id") != oid or ws.get("status") != "active":
@@ -548,6 +628,10 @@ class MemberImports:
 
         for i, c in enumerate(cands, start=1):
             row = decide(c, i)
+            if row["action"] in ("invite", "update") and needs_review(c["source"]):
+                # What it would do stays visible (reason, diff); it waits for a person's check.
+                row["fields"]["would"] = {"action": row["action"], "reason": row["reason"]}
+                row["action"], row["reason"] = "blocked", "ocr_unchecked"
             planned.append(row)
             counts[row["action"]] += 1
             if row["reason"]:

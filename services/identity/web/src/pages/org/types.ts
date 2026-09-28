@@ -18,7 +18,10 @@ export const orgPath = (id: string) => `/api/auth/organizations/${encodeURICompo
 export type ImportAction = "invite" | "update" | "unchanged" | "skip" | "blocked";
 export interface ImportTable { name: string; source: Record<string, unknown>; truncated: boolean; rows: number; preview: string[][] }
 export interface ImportMapping { mode?: "table" | "lines"; table?: number | null; header_row?: boolean; columns?: Partial<Record<"email" | "name" | "workspace_role" | "org_roles", number>>;
-  defaults?: { workspace_role?: string; org_role_ids?: string[] }; workspace_role_names?: Record<string, string>; org_role_names?: Record<string, string> }
+  defaults?: { workspace_role?: string; org_role_ids?: string[] }; workspace_role_names?: Record<string, string>; org_role_names?: Record<string, string>;
+  /** what the operator checked or corrected on OCR lines, keyed `p{page}:l{line}` (CI-100) */
+  reviews?: Record<string, ImportReview> }
+export interface ImportReview { email?: string; name?: string; checked: boolean; by?: string; at?: number }
 export interface MemberImport { id: string; organization_id: string; workspace_id: string | null; filename: string; size: number; format: string | null; family: string | null;
   status: "extracted" | "planned" | "running" | "finished" | "partial" | "failed" | "cancelled"; mapping: ImportMapping | null; error: string | null; version: number;
   cancel_requested: boolean; created_at: number; finished_at: number | null; scan: { status: string } | null;
@@ -26,7 +29,9 @@ export interface MemberImport { id: string; organization_id: string; workspace_i
     workspace?: { id: string; name: string }; over_limit?: number; outcome?: { done: number; failed: number; skipped: number; pending: number; invited: number; updated: number } } | null;
   extraction: { engine: string; format: string; family: string; status: string; error: string | null; notes: string[]; pages: number | null; needs_engine?: boolean;
     ocr: { available: boolean; applied: boolean; engine: string | null }; tables: ImportTable[]; lines: number; line_preview: string[] } }
-export interface MemberImportRow { id: string; seq: number; source: Record<string, unknown>; fields: { email: string; name: string; workspace_role: string; org_roles: string[]; existing?: Record<string, unknown> };
+export interface MemberImportRow { id: string; seq: number; source: Record<string, unknown>; fields: { email: string; name: string; workspace_role: string; org_roles: string[]; existing?: Record<string, unknown>;
+  /** what an OCR row will do once a person has checked it (CI-100) */
+  would?: { action: string; reason: string | null } };
   action: ImportAction; reason: string | null; diff: { workspace_role?: { from: string; to: string }; org_roles?: { add: string[] } } | null;
   status: "planned" | "pending" | "running" | "done" | "failed" | "skipped"; result: Record<string, any> | null; invitation_id: string | null }
 export interface ImportCapabilities { ingest: { engine: string; formats: string[]; ocr: boolean; converter?: boolean; scanner?: { status: string } }; limits: { rows: number; file_bytes: number }; workspace_roles: string[] }

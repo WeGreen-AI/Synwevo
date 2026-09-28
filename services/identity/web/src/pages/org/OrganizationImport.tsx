@@ -7,7 +7,7 @@ import { get, post, put, upload } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { FlowError, Loading, resultText } from "./AuthFlow";
 import OrganizationAction from "./OrganizationAction";
-import { orgPath, type CustomRole, type ImportAction, type ImportCapabilities, type ImportMapping, type MemberImport, type MemberImportRow, type Organization, type OrganizationWorkspace } from "./types";
+import { orgPath, type CustomRole, type ImportAction, type ImportCapabilities, type ImportMapping, type ImportReview, type MemberImport, type MemberImportRow, type Organization, type OrganizationWorkspace } from "./types";
 
 const ACTION_LABEL: Record<ImportAction, string> = { invite: "邀请", update: "更新", unchanged: "不变", skip: "跳过", blocked: "阻断" };
 const REASON_LABEL: Record<string, string> = {
@@ -15,8 +15,39 @@ const REASON_LABEL: Record<string, string> = {
   duplicate_in_file: "文件内重复", self: "这是你自己", bad_email: "邮箱格式不正确", unknown_workspace_role: "工作空间角色未映射", unknown_org_role: "组织角色未映射",
   role_not_importable: "所有者/管理员基础角色不能通过导入授予", role_not_delegable: "你没有分配这个角色所需的权限", account_unavailable: "账户不可用",
   already_invited: "已有待接受的邀请", over_limit: "超出单次导入上限", forbidden: "你不能邀请到这个工作空间", role_too_high: "不能邀请比自己权限更高的角色",
-  workspace_frozen: "工作空间已冻结", cancelled: "已取消",
+  workspace_frozen: "工作空间已冻结", cancelled: "已取消", ocr_unchecked: "文字识别读出，核对后才会导入",
 };
+/** Below this lowest word confidence the machine was unsure (a hint for the person checking; every OCR row is checked). */
+const LOW_CONFIDENCE = 85;
+
+/** One OCR row the operator checks: the line as the machine read it, how sure it was, the
+ *  address and name (editable) and 「核对无误」. Saving re-plans with the review kept in the
+ *  mapping (CI-100). A checked row can be opened again to change it. */
+function RowReview({ row, busy, onSave, where }: { row: MemberImportRow; busy: boolean; where: string; onSave: (key: string, review: ImportReview) => void }) {
+  const { t } = useI18n();
+  const key = String(row.source.review_key);
+  const [email, setEmail] = useState(row.fields.email);
+  const [name, setName] = useState(row.fields.name);
+  const [open, setOpen] = useState(row.source.checked !== true);
+  const conf = typeof row.source.conf === "number" ? Math.round(row.source.conf as number) : null;
+  const read = row.source.read_email ? String(row.source.read_email) : null;
+  return <div className="col gap4 import-review">
+    <span className="tiny muted">
+      {row.source.text ? <>{t("识别原文：{v}", { v: String(row.source.text) })} · </> : null}
+      {conf !== null ? t("识别置信度 {n}/100", { n: conf }) : row.source.layer === "scan" ? t("扫描件的识别文字层") : null}
+      {conf !== null && conf < LOW_CONFIDENCE && <> · <strong className="import-unsure">{t("机器不确定")}</strong></>}
+      {read ? <> · {t("识别结果：{v}", { v: read })}</> : null}
+    </span>
+    {row.source.checked === true && !open ? <div className="row wrap gap4"><span className="tiny">{t("已核对")}</span>
+      <button type="button" className="btn small" disabled={busy} onClick={() => setOpen(true)} aria-label={`${t("修改")} · ${where}`}>{t("修改")}</button></div>
+      : <div className="row wrap gap4">
+        <input className="input import-review-email" aria-label={`${t("邮箱")} · ${where}`} value={email} onChange={e => setEmail(e.target.value)} autoComplete="off" spellCheck={false} inputMode="email" />
+        <input className="input import-review-name" aria-label={`${t("姓名")} · ${where}`} value={name} onChange={e => setName(e.target.value)} autoComplete="off" />
+        <button type="button" className="btn" disabled={busy || !email.trim()} aria-label={`${t("核对无误")} · ${where}`}
+          onClick={() => { onSave(key, { email: email.trim(), name: name.trim(), checked: true }); setOpen(false); }}>{t("核对无误")}</button>
+      </div>}
+  </div>;
+}
 const WS_ROLE_LABEL: Record<string, string> = { viewer: "查看者", editor: "编辑者", admin: "工作空间管理员" };
 
 function sourceText(src: Record<string, unknown>): string {
@@ -84,6 +115,14 @@ export default function OrganizationImport({ organization, workspaces, mine, onC
   const doRetry = () => run(async () => { if (!imp) return; setImp(await post<MemberImport>(`${base}/${imp.id}/retry`, {})); });
   const setCol = (field: string, value: string) => setMapping(m => ({ ...m, columns: { ...(m.columns || {}), [field]: value === "" ? undefined : Number(value) } }));
   const setName = (kind: "workspace_role_names" | "org_role_names", text: string, value: string) => setMapping(m => ({ ...m, [kind]: { ...(m[kind] || {}), [text]: value } }));
+  const saveReviews = (items: Record<string, ImportReview>) => run(async () => {
+    if (!imp) return;
+    const next = { ...mapping, reviews: { ...(mapping.reviews || {}), ...items } };
+    setMapping(next);
+    const x = await put<MemberImport>(`${base}/${imp.id}/mapping`, { workspace_id: workspaceId, mapping: next });
+    setImp(x); setMapping(x.mapping || next); await loadRows(x.id, filter);
+  });
+  const saveReview = (key: string, review: ImportReview) => saveReviews({ [key]: review });
 
   const ex = imp?.extraction; const tables = ex?.tables || [];
   const table = mapping.mode === "lines" || mapping.table == null ? null : tables[mapping.table] || null;
@@ -147,14 +186,24 @@ export default function OrganizationImport({ organization, workspaces, mine, onC
       <h3 className="small">{t(imp.status === "planned" ? "预览" : "结果")}</h3>
       {outcome && <p className="notice" role="status">{t("已发出邀请 {invited}，更新成员 {updated}，跳过 {skipped}，失败 {failed}，待处理 {pending}。", outcome)}</p>}
       {imp.summary?.over_limit ? <p className="notice warn">{t("文件超过单次上限，后 {n} 行未处理；请分批导入。", { n: imp.summary.over_limit })}</p> : null}
+      {imp.status === "planned" && imp.summary?.reasons?.ocr_unchecked ? <p className="notice warn">{t("{n} 行是文字识别读出的：请逐行对照识别原文核对邮箱（可以直接改），点「核对无误」后才会导入；不核对的行可以跳过。", { n: imp.summary.reasons.ocr_unchecked })}</p> : null}
       <div className="row wrap gap4" role="tablist">{(["", "invite", "update", "unchanged", "skip", "blocked"] as const).map(a => <button key={a} type="button" role="tab" aria-selected={filter === a} className={`btn ${filter === a ? "primary" : ""}`} onClick={() => { setFilter(a); void loadRows(imp.id, a); }}>{a ? `${t(ACTION_LABEL[a])} ${counts[a] ?? 0}` : `${t("全部")} ${imp.summary?.rows ?? 0}`}</button>)}</div>
       {!rows ? <Loading /> : !rows.length ? <p className="muted">{t("没有这类行。")}</p> : <ul className="org-list">{rows.slice(0, 300).map(r => <li key={r.id}>
         <div><strong>{r.fields.email}</strong>{r.fields.name && <span className="muted"> · {r.fields.name}</span>}<div className="tiny muted">{sourceText(r.source)} · {t(WS_ROLE_LABEL[r.fields.workspace_role] || r.fields.workspace_role)}{r.fields.org_roles.length > 0 && <> · {r.fields.org_roles.join("、")}</>}</div>
           {r.diff && <div className="tiny">{r.diff.workspace_role && <span>{t("工作空间角色 {from} → {to}", { from: t(WS_ROLE_LABEL[r.diff.workspace_role.from] || r.diff.workspace_role.from), to: t(WS_ROLE_LABEL[r.diff.workspace_role.to] || r.diff.workspace_role.to) })} </span>}{r.diff.org_roles && <span>{t("新增组织角色：{roles}", { roles: r.diff.org_roles.add.join("、") })}</span>}</div>}
-          {r.result && (r.result.error || r.result.message) && <div className="tiny flow-error">{resultText(r.result)}</div>}</div>
+          {r.result && (r.result.error || r.result.message) && <div className="tiny flow-error">{resultText(r.result)}</div>}
+          {r.fields.would && <div className="tiny muted">{t("核对后：{v}", { v: t(ACTION_LABEL[r.fields.would.action as ImportAction] || r.fields.would.action) })}</div>}
+          {r.source.review_key && (imp.status === "planned" ? <RowReview key={`review-${String(r.source.review_key)}`} row={r} busy={busy} onSave={saveReview} where={sourceText(r.source)} />
+            : r.source.checked === true && <div className="tiny muted">{t("已核对")}{r.source.read_email ? <> · {t("识别结果：{v}", { v: String(r.source.read_email) })}</> : null}</div>)}</div>
         <div className="org-actions"><span className={`badge ${r.action === "blocked" ? "danger" : ""}`}>{t(ACTION_LABEL[r.action])}{r.status !== "planned" && ` · ${t(r.status === "done" ? "完成" : r.status === "failed" ? "失败" : r.status === "skipped" ? "已跳过" : r.status === "running" ? "处理中" : "待处理")}`}</span>{r.reason && <span className="tiny muted">{t(REASON_LABEL[r.reason] || r.reason)}</span>}</div>
       </li>)}</ul>}
       {rows && rows.length > 300 && <p className="tiny muted">{t("只显示前 300 行；完整结果见报告。")}</p>}
+      {imp.status === "planned" && rows && (() => {
+        const pending = rows.slice(0, 300).filter(r => r.reason === "ocr_unchecked" && r.source.review_key);
+        return pending.length > 1 ? <div className="org-actions"><button type="button" className="btn" disabled={busy}
+          onClick={() => saveReviews(Object.fromEntries(pending.map(r => [String(r.source.review_key), { email: r.fields.email, name: r.fields.name, checked: true }])))}>
+          {t("以上 {n} 行都已对照识别原文核对无误", { n: pending.length })}</button></div> : null;
+      })()}
       <div className="org-actions">
         {imp.status === "planned" && <>{counts.blocked > 0 && <label className="check"><input type="checkbox" checked={onlyValid} onChange={e => setOnlyValid(e.target.checked)} /><span>{t("跳过 {n} 行阻断项，只导入有效行", { n: counts.blocked })}</span></label>}
           <button type="button" className="btn primary" disabled={busy || (counts.blocked > 0 && !onlyValid) || !(counts.invite + counts.update)} onClick={() => setConfirming(true)}>{t("确认导入（邀请 {i} 人，更新 {u} 人）", { i: counts.invite, u: counts.update })}</button></>}

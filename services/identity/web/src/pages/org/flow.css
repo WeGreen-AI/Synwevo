@@ -38,3 +38,8 @@
 /* a reported message, quoted for the reviewer and in the report dialog (both shells load this file through AuthFlow) */
 .msg-quote { margin: 0; padding: 6px 10px; border-left: 3px solid var(--line-strong); background: var(--panel-2); border-radius: 4px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .org-list li.org-focus { border-color: var(--accent); box-shadow: var(--shadow); }
+/* CI-100: checking an OCR row — the address gets the room it needs, the name the rest */
+.import-review .row { align-items: center; }
+.import-review-email { flex: 2 1 280px; min-width: 0; }
+.import-review-name { flex: 1 1 160px; min-width: 0; }
+.import-unsure { color: var(--warn); font-weight: 600; }
