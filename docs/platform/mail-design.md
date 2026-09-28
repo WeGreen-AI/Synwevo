@@ -34,4 +34,5 @@ Docs 与门户不自行发信：它们的事件走收件箱 → 通知邮件。�
 
 * 真实邮箱客户端渲染（Gmail、Outlook/机构 Microsoft 365、Apple Mail，桌面/手机、深色、图片屏蔽）：需要一个明确授权的测试收件箱；预览与 `.eml` 已备好。
 * 生产 `SYNWEVO_PUBLIC_URL` 指向账户服务，`/brand/email-logo.png` 随本批部署后可被外部抓取（待线上复查）。
-* 邮件 Logo 文件当前由 PIL 从确认原图直接裁出并放在 `synwevo_identity/static/`；纳入 `scripts/brand_assets.py` 的清单与 `--check` 是下一步。
+* ~~邮件 Logo 在流水线外~~ CI-92（2026-09-28）：`scripts/brand_assets.py` 从确认原图的完整版生成 `static/email-logo.png`（84 px 高，即绘制高度 28 px 的 3 倍），`--check` 覆盖它；此前手工文件是 4.34:1、邮件按 4.29:1 的 120×28 绘制，Logo 被横向压扁约 3%，现按文件自身比例绘制为 124×28（`mail_layout.EMAIL_LOGO_SIZE`，测试把两者绑定）。地址不变，历史邮件随之显示正确比例。
+* 预览文字（CI-92）：每封邮件在正文开头放一段隐藏的预览行，取邮件自己的第一句（或 `Mail.preheader`），不取验证码、事实卡或汇总条目（汇总里可能引用私信），最长 110 字；没有段落的邮件（如私信汇总）不放预览块。

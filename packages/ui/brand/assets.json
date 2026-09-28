@@ -331,6 +331,20 @@
         "crop [629, 295, 1701, 543] from the lockup (ink alpha > 8, 4px original margin)",
         "Lanczos to 96px tall (premultiplied alpha)"
       ]
+    },
+    {
+      "path": "services/identity/synwevo_identity/static/email-logo.png",
+      "kind": "email-logo",
+      "size": [
+        373,
+        84
+      ],
+      "sha256": "df3b06a6bc4dda719a5523119b95e752f51a39a8dbd5b1ccc5df5c13ac641f7d",
+      "derived_from": "packages/ui/brand/originals/synwevo-logo-full.png",
+      "steps": [
+        "crop [241, 238, 1701, 567] from the lockup",
+        "Lanczos to 84px tall (3x the 28px the mail draws it)"
+      ]
     }
   ]
 }

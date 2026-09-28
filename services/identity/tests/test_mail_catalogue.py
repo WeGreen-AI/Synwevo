@@ -70,3 +70,47 @@ def test_digest_items_and_facts_render_in_both_parts():
     text, html = render(m)
     assert "• A 提到了你" in text and "開啟: https://accounts.example.test/x" in text and "工作空間：Team A" in text
     assert 'href="https://accounts.example.test/x"' in html and "任務完成" in html and "Team A" in html
+
+
+def test_mail_logo_is_drawn_at_the_generated_files_own_proportions():
+    """The mail used to draw a hand-made 4.34:1 file in a 4.29:1 box; the file now comes from
+    the confirmed lockup (scripts/brand_assets.py) and the <img> takes its proportions (Q5)."""
+    from pathlib import Path
+    from PIL import Image
+    from synwevo_identity import mail_layout
+    png = Path(mail_layout.__file__).parent / "static" / "email-logo.png"
+    w, h = Image.open(png).size
+    css_w, css_h = mail_layout.EMAIL_LOGO_SIZE
+    assert h == css_h * 3, "stored at 3x the drawn height"
+    assert abs(w / h - css_w / css_h) / (w / h) < 0.01, (w, h, css_w, css_h)
+    _, _, html = catalogue("en")["verify"]
+    assert f'width="{css_w}" height="{css_h}"' in html
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+def test_every_mail_has_an_inbox_preview_line_from_its_own_first_sentence(locale):
+    for name, (subject, text, html) in catalogue(locale).items():
+        start = html.index("<body")
+        pre = html[start:html.index("</div>", start)]
+        assert "display:none" in pre and "mso-hide:all" in pre, name
+        # the preview repeats a sentence the reader sees anyway; it is in the text part too
+        visible = _html.unescape(pre.split(">", 2)[-1]).split(" ")[0].strip()
+        assert visible and visible.rstrip("…") in _html.unescape(text), (name, visible)
+        assert "123456" not in pre, "a one-time code never goes into the preview"
+
+
+def test_the_preview_never_carries_codes_facts_or_digest_items():
+    m = Mail(locale="en", title="3 unread messages", paragraphs=["You have unread messages in Synwevo Message."],
+             code="987654", facts=[("Conversation", "Private project")], items=[{"title": "Ann", "body": "the secret plan"}])
+    _, html = render(m)
+    start = html.index("<body"); pre = html[start:html.index("</div>", start)]
+    assert "You have unread messages" in pre
+    for leaked in ("987654", "Private project", "the secret plan", "Ann"):
+        assert leaked not in pre, leaked
+    long = Mail(locale="en", title="t", paragraphs=["x" * 300])
+    _, html = render(long)
+    start = html.index("<body"); pre = html[start:html.index("</div>", start)]
+    assert "x" * 109 + "…" in pre and "x" * 111 not in pre
+    none = Mail(locale="en", title="t")
+    _, html = render(none)
+    assert "mso-hide:all" not in html, "no paragraph, no preview block"

@@ -64,6 +64,23 @@ class Mail:
     items: list[dict] = field(default_factory=list)               # digest rows: {title, body?, href?}
     after: list[str] = field(default_factory=list)                # sentences after the action (expiry, "if this was not you")
     security: bool = False                                        # security notices carry the "cannot be disabled" line
+    preheader: str | None = None                                  # inbox preview line; defaults to the first paragraph
+
+
+#: The mail logo's CSS size, from the proportions of the generated file (scripts/brand_assets.py
+#: writes static/email-logo.png from the confirmed lockup at 3x this height); a test holds the two
+#: together, so the lockup is never squeezed.
+EMAIL_LOGO_SIZE = (124, 28)
+#: How much of the first paragraph the inbox preview line may carry.
+PREHEADER_MAX = 110
+
+
+def preheader_of(m: "Mail") -> str:
+    """The inbox preview line: the mail's own first sentence, never the code, the facts or the
+    items (a digest's rows may quote private messages). Without it clients preview the logo's alt
+    text and the title again."""
+    text = (m.preheader if m.preheader is not None else (m.paragraphs[0] if m.paragraphs else "")).strip()
+    return text if len(text) <= PREHEADER_MAX else text[:PREHEADER_MAX - 1].rstrip() + "…"
 
 
 def e(s: object) -> str:
@@ -100,11 +117,18 @@ def render(m: Mail) -> tuple[str, str]:
     h.append('<!DOCTYPE html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
              '<meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>%s</title></head>' % (e(loc(m.locale)), e(m.title)))
     h.append(f'<body style="margin:0;padding:0;background:{PAGE};color:{TEXT};font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,\'PingFang SC\',\'Microsoft YaHei\',\'Noto Sans CJK SC\',sans-serif;font-size:15px;line-height:1.6;" bgcolor="{PAGE}">')
+    pre = preheader_of(m)
+    if pre:
+        # Hidden in the body, shown by clients as the preview; the trailing spacers keep the
+        # client from pulling the logo's alt text and the title in after it.
+        h.append(f'<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:{PAGE};opacity:0;">'
+                 f'{e(pre)}{"&#8199;&#65279;&#847; " * 30}</div>')
     h.append(f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{PAGE};" bgcolor="{PAGE}"><tr><td align="center" style="padding:24px 12px;">')
     h.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">')
     logo = logo_url()
     if logo:
-        h.append(f'<tr><td style="padding:0 4px 14px;"><img src="{e(logo)}" width="120" height="28" alt="Synwevo" style="display:block;width:120px;height:28px;border:0;"></td></tr>')
+        w, hgt = EMAIL_LOGO_SIZE
+        h.append(f'<tr><td style="padding:0 4px 14px;"><img src="{e(logo)}" width="{w}" height="{hgt}" alt="Synwevo" style="display:block;width:{w}px;height:{hgt}px;border:0;"></td></tr>')
     else:
         h.append(f'<tr><td style="padding:0 4px 14px;font-weight:700;font-size:18px;color:{TEXT};">Synwevo</td></tr>')
     h.append(f'<tr><td style="background:#ffffff;border:1px solid {LINE};border-radius:12px;padding:28px 28px 22px;" bgcolor="#ffffff">')

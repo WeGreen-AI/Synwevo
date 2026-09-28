@@ -94,6 +94,12 @@ WHITE = (255, 255, 255)
 #: Link-preview image (Open Graph / social cards): the platform's white page with the full lockup
 #: centred, at the 1.91:1 size the preview services recommend. Opaque: some previewers paint
 #: transparency black.
+#: The logo at the top of every system mail (services/identity/synwevo_identity/mail_layout.py):
+#: the full lockup, transparent with dark ink, drawn EMAIL_LOGO_HEIGHT CSS px tall and stored at
+#: three times that so high-density screens stay sharp. The mail sizes the <img> from this file's
+#: own proportions (EMAIL_LOGO_SIZE there), so the lockup is never squeezed into a fixed box.
+EMAIL_LOGO = ROOT / "services/identity/synwevo_identity/static/email-logo.png"
+EMAIL_LOGO_HEIGHT = 28
 SHARE_SIZE = (1200, 630)
 SHARE_LOGO = 0.52            # share of the card width the lockup may occupy
 
@@ -290,6 +296,11 @@ def build() -> tuple[dict[Path, bytes], dict]:
          [f"crop {list(boxes['full'])} from the lockup",
           f"Lanczos to {int(SHARE_LOGO * 100)}% of the card width, centred on an opaque white {SHARE_SIZE[0]}x{SHARE_SIZE[1]} card"],
          SHARE_SIZE)
+
+    mail_logo = to_height(full, EMAIL_LOGO_HEIGHT * 3)
+    emit(EMAIL_LOGO, png_bytes(mail_logo), "email-logo", ref,
+         [f"crop {list(boxes['full'])} from the lockup", f"Lanczos to {EMAIL_LOGO_HEIGHT * 3}px tall (3x the {EMAIL_LOGO_HEIGHT}px the mail draws it)"],
+         mail_logo.size)
 
     files[WEB / "assets.ts"] = typescript_module(renditions, {n: c.size for n, c in crops.items()})
 
