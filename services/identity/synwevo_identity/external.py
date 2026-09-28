@@ -484,7 +484,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, external: Ex
         except ServiceError as e:
             # A browser navigation: an unknown or unreachable provider lands on the sign-in page
             # with its code, like every callback failure, instead of a JSON body in the tab.
-            audit(request, "auth.external.start", result="denied", meta={"provider": pid, "reason": e.code})
+            audit(request, "auth.external.start", result="denied", meta={"provider": pid[:64], "reason": e.code})
             return _failed(e.code, q.get("lang") if q.get("lang") in ("zh-Hans", "zh-Hant", "en") else None)
         resp = RedirectResponse(url, status_code=303)
         resp.set_cookie(REQ_COOKIE, rid, max_age=REQUEST_TTL_S, **cookie_kwargs(_secure()))
