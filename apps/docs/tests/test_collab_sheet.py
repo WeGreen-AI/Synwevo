@@ -74,6 +74,11 @@ CORPUS = {
     "no_sheets": doc(),
     "empty_model": {},
     "repeat_and_merges": REPEAT_SHEET,
+    # the contract lets rows / columns / merges be null (review L2: they came back as [])
+    "null_parts": {"sheets": [{"name": "S", "rows": None, "cols": None, "merges": None, "cells": {"A1": {"v": 1}}}]},
+    "null_entries": {"sheets": [{"name": "S", "rows": [None, {"h": 30}, {}], "cols": [None, {"w": 50}]}]},
+    "id_null_and_reserved_ids": {"sheets": [{"name": "S", "fields": [{"id": None, "name": "空 id", "kind": "cell", "ref": "G9"},
+                                                                     {"id": "constructor", "name": "保留字", "kind": "cell", "ref": "H9"}]}]},
 }
 
 INVALID = {
@@ -160,6 +165,11 @@ INVARIANT_CASES = [
     ("too_large", one(cells={"A1": {"v": "=" + "1+" * 4100 + "1"}}), False),
     ("too_large", one(merges=["A1:Z5000"]), True),
     ("sheet_name_taken", {"sheets": [{"name": "A"}, {"name": "A "}]}, True),
+    ("sheet_name_taken", {"sheets": [{"name": "Data"}, {"name": "data"}]}, True),          # CI-117: Excel ignores case
+    ("invalid", one(cells={"A1": {"v": "a\x00b"}}), True),                                  # review H1: what the writer refuses
+    ("invalid", one(cells={"A1": {"v": 10 ** 309}}), True),
+    ("invalid", one(cells={"A1": {"v": 1, "s": {"nf": "0\x01"}}}), True),
+    ("invalid", {"sheets": [{"name": "a\ud800"}]}, True),
     ("merge_overlap", one(merges=["A1:B2", "B2:C3"]), False),
     ("field_overlap", one(fields=[{"id": "a", "kind": "region", "ref": "A1:B2"}, {"id": "b", "kind": "cell", "ref": "B2"}]), True),
     ("merged_inner", one(merges=["A1:B1"], fields=[{"id": "a", "kind": "cell", "ref": "B1"}]), True),
@@ -197,7 +207,7 @@ class Room:
         client = client or f"{by}-1"
         self.n[client] = self.n.get(client, 0) + 1
         seen = self.st["seq"] if expect == "now" else expect
-        r = apply(self.st, op, by=by, client=client, n=self.n[client], expect=seen)
+        r = apply(self.st, op, by=by, client=client, n=self.n[client], expect=seen, **({"trusted": True} if seen is None else {}))
         if r["ok"] and not r.get("duplicate"):
             apply_patch(self.mirror, r["patch"])
             assert self.mirror == self.st["content"], "a client applying the patch sees the server's state"
@@ -503,7 +513,7 @@ def test_a_group_applies_whole_or_not_at_all():
     assert len(r["patch"]) == 1, "many writes to one cell in a group are one change"
 
 
-def test_a_message_delivered_twice_applies_once(monkeypatch):
+def test_a_message_delivered_twice_applies_once():
     room = Room()
     op = {"op": "append_rows", "sheet": room.sid, "count": 1}
     first = apply(room.st, op, by="ann", client="tab", n=1, expect=0)
@@ -524,16 +534,15 @@ def test_a_message_delivered_twice_applies_once(monkeypatch):
     assert apply(room.st, {"op": "set", **room.at("A5"), "v": 1}, by="ann", client="tab", n=5, expect=3)["code"] == "resync"
     assert set(room.st["clients"]["tab"]["r"]) == {str(far)}, "only the window is remembered"
     # a big group's remembered copy drops its patch; the answer keeps its sequence number
-    monkeypatch.setattr(cs, "RECORD_ENTRIES", 4)
-    rows = [{"op": "set", **room.at(f"D{i}"), "v": i} for i in range(1, 13)]
-    big = apply(room.st, {"op": "tx", "ops": rows}, by="ann", client="tab2", n=1, expect=room.st["seq"])
-    replay = apply(room.st, {"op": "tx", "ops": rows}, by="ann", client="tab2", n=1, expect=0)
-    assert big["ok"] and len(big["patch"]) == 12
+    cells = [{"op": "set", **room.at(f"{col}{row}"), "v": row} for col in "CDEF" for row in range(2, 13)]
+    big = apply(room.st, {"op": "tx", "ops": cells}, by="ann", client="tab2", n=1, expect=room.st["seq"])
+    replay = apply(room.st, {"op": "tx", "ops": cells}, by="ann", client="tab2", n=1, expect=0)
+    assert big["ok"] and len(big["patch"]) == 44
     assert replay == {"ok": True, "seq": big["seq"], "patch": None, "before": None, "trimmed": True, "duplicate": True}
     with pytest.raises(ValueError):
-        apply(room.st, op, by="", client="tab", n=9)
+        apply(room.st, op, by="", client="tab", n=9, expect=0)
     with pytest.raises(ValueError):
-        apply(room.st, op, by="ann", client="tab", n=0)
+        apply(room.st, op, by="ann", client="tab", n=0, expect=0)
 
 
 # ------------------------------------------------------------------ versions: save and outside saves
@@ -772,7 +781,7 @@ def test_random_interleaved_edits_from_three_people_always_leave_a_buildable_tab
             # someone saves outside the room: a version made from the last saved one with a few edits
             fork = seed_state(cs._project(cs._revert(st)), epoch=f"outside-{rnd}")
             for i in range(rng.randint(1, 6)):
-                apply(fork, _random_op(rng, fork), by="api", client="api", n=i + 1)
+                apply(fork, _random_op(rng, fork), by="api", client="api", n=i + 1, expect=fork["seq"])
             outside = project(fork)
             res = reconcile(st, outside, by="api")
             outsides += 1
@@ -808,3 +817,322 @@ def test_random_interleaved_edits_from_three_people_always_leave_a_buildable_tab
     assert not dirty(st) and project(st) == saved
     res = reconcile(st, saved, by="api")
     assert res["patch"] == [] and project(st) == saved and not dirty(st)
+
+
+# ------------------------------------------------------------------ review fixes (2026-09-29): each fails on 3e95e1c
+def grid(name="S", nr=10, nc=6, **kw):
+    return {"name": name, "cols": [{"w": 100}] * nc, "rows": [{"h": 24}] * nr, "cells": {}, "merges": [], "fields": [], **kw}
+
+
+UNWRITABLE_VALUES = {"NUL": "a\x00b", "control 01": "a\x01b", "vertical tab": "a\x0bb", "lone surrogate": "a\ud800b",
+                     "U+FFFE": "a￾b", "formula with NUL": '="a\x00"'}
+
+
+@pytest.mark.parametrize("label", sorted(UNWRITABLE_VALUES))
+def test_h1_a_value_the_workbook_writer_refuses_never_enters_the_state(label):
+    """H1: one person's value with a control character or a lone surrogate made the room unsaveable
+    (the build failed); it is refused like any other invalid value, the same way the generator is."""
+    room = Room({"sheets": [grid()]})
+    d = room.no({"op": "set", **room.at("A1"), "v": UNWRITABLE_VALUES[label]}, "invalid")
+    assert d["reason"] == "unwritable" and d["what"] == "characters"
+    with pytest.raises(ServiceError):
+        _build("builtin_sheet", one(cells={"A1": {"v": UNWRITABLE_VALUES[label]}}))
+    assert [i["reason"] for i in sheet_invariants(one(cells={"A1": {"v": UNWRITABLE_VALUES[label]}}))] == ["unwritable"]
+
+
+def test_h1_numbers_formats_and_names_the_writer_refuses_are_refused_and_what_it_takes_goes_through():
+    room = Room({"sheets": [grid()]})
+    assert room.no({"op": "set", **room.at("A1"), "v": 10 ** 309}, "invalid")["what"] == "number"
+    assert room.no({"op": "set", **room.at("A1"), "v": "0" * 5000 + "1", "t": "number"}, "invalid")["what"] == "number"
+    assert room.no({"op": "style", **room.at("A1"), "s": {"nf": "0\x01"}}, "invalid")["what"] == "characters"
+    assert room.no({"op": "style", **room.at("A1"), "s": {"nf": "\ud800"}}, "invalid")["what"] == "characters"
+    for name in ("a\x01b", "a\udc00", "History", "history"):
+        assert room.no({"op": "sheet_rename", "sheet": room.sid, "name": name}, "invalid")["reason"] == "sheet_name"
+        assert room.no({"op": "sheet_add", "name": name}, "invalid")["reason"] == "sheet_name"
+    for name in ("a\x01", "a\ud800"):
+        assert room.no({"op": "field_add", **room.at("B2"), "field": {"id": "fx", "name": name, "kind": "cell"}}, "invalid")["reason"] == "field_name"
+    # tab, line feed, carriage return, emoji and the largest double are what the writer does take
+    room.ok({"op": "set", **room.at("A1"), "v": "一\t二\n三\r四 😀"})
+    room.ok({"op": "set", **room.at("A2"), "v": 10 ** 308})
+    room.ok({"op": "style", **room.at("A2"), "s": {"nf": "#,##0.00"}})
+    room.ok({"op": "sheet_rename", "sheet": room.sid, "name": "📊 报表"})
+    _build("builtin_sheet", project(room.st))
+
+
+def test_h2_fields_without_an_id_survive_an_outside_save():
+    """H2: merge_sheets knows fields by id, so an id-less field (machine API models) vanished from a
+    room the moment an outside save came in while the room had changes."""
+    model = {"sheets": [grid(fields=[{"name": "无 id", "ref": "A6"}, {"id": "k", "name": "有 id", "kind": "cell", "ref": "B2"},
+                                     {"id": None, "name": "空 id", "kind": "cell", "ref": "C8"}])]}
+    room = Room(model)
+    room.ok({"op": "set", **room.at("C3"), "v": "room edit"}, "bob")
+    outside = json.loads(json.dumps(model))
+    outside["sheets"][0]["cells"]["D4"] = {"v": "api edit"}
+    res = reconcile(room.st, outside, by="api")
+    apply_patch(room.mirror, res["patch"])
+    assert room.mirror == room.st["content"]
+    out = project(room.st)["sheets"][0]
+    assert out["fields"] == model["sheets"][0]["fields"]
+    assert out["cells"] == {"C3": {"v": "room edit"}, "D4": {"v": "api edit"}}
+    assert res["conflicts"] == [] and res["overwritten"] == []
+    # an outside version identical to the basis changes nothing at all
+    room2 = Room(model)
+    room2.ok({"op": "set", **room2.at("C3"), "v": "room edit"}, "bob")
+    before = dumps(room2.st["content"])
+    res = reconcile(room2.st, model, by="api")
+    assert res["patch"] == [] and dumps(room2.st["content"]) == before and project(room2.st)["sheets"][0]["fields"] == model["sheets"][0]["fields"]
+    # the outside renames an id-less field the room left alone: renamed, same key; both rename it: theirs, and bob is told
+    room3 = Room(model)
+    key = room3.st["content"]["sheets"][room3.sid]["fields"][0]
+    room3.ok({"op": "set", **room3.at("C3"), "v": "x"}, "bob")
+    renamed = json.loads(json.dumps(model))
+    renamed["sheets"][0]["fields"][0]["name"] = "外部改名"
+    apply_patch(room3.mirror, reconcile(room3.st, renamed, by="api")["patch"])
+    assert room3.st["content"]["sheets"][room3.sid]["fields"][0] == key and project(room3.st)["sheets"][0]["fields"][0] == {"name": "外部改名", "ref": "A6"}
+    room3.ok({"op": "field_set", "field": key, "set": {"name": "房间改名"}}, "bob")
+    renamed["sheets"][0]["fields"][0]["name"] = "外部再改"
+    res = reconcile(room3.st, renamed, by="api")
+    assert project(room3.st)["sheets"][0]["fields"][0]["name"] == "外部再改" and res["overwritten"] == ["bob"]
+    assert [(c["kind"], c["id"], c["name"]) for c in res["conflicts"]] == [("field", None, "外部再改")]
+
+
+def test_h3_an_outside_version_too_large_for_the_live_state_is_refused_before_allocating():
+    """H3: reconcile had no size bound; an outside version with a cell at A400000 allocated
+    hundreds of thousands of ids. Refused like seeding (the room leaves live mode), state untouched."""
+    import time
+    room = Room({"sheets": [grid()]})
+    before = dumps(room.st)
+    for outside in ({"sheets": [{"name": "S", "cells": {"A1": {"v": 1}, "A300000": {"v": 2}}}]},
+                    {"sheets": [{"name": f"S{i}", "cells": {"XFD1048576": {"v": 1}}} for i in range(3)]}):
+        started = time.monotonic()
+        with pytest.raises(SeedError) as e:
+            reconcile(room.st, outside, by="api")
+        assert time.monotonic() - started < 2 and e.value.issues[0]["what"] == "grid"
+        assert dumps(room.st) == before
+
+
+def test_h3_the_room_on_top_of_the_outside_version_is_bounded_too(monkeypatch):
+    monkeypatch.setattr(cs, "MAX_GRID_IDS", 100)
+    room = Room({"sheets": [grid("A", nr=60, nc=5)]})                       # 65 row + column ids
+    room.ok({"op": "set", **room.at("B2"), "v": "room"}, "bob")
+    # outside: A deleted (the room changed it: it would stay restorable), B added with 65 ids of its own
+    res = reconcile(room.st, {"sheets": [grid("B", nr=60, nc=5)]}, by="api")
+    assert res["reset"] and res["overwritten"] == ["bob"]
+    assert cs._grid_ids(room.st["content"]) <= 100 and [s["name"] for s in project(room.st)["sheets"]] == ["B"]
+    apply_patch(room.mirror, res["patch"])
+    assert room.mirror == room.st["content"]
+
+
+def test_m1_an_outside_save_never_leaves_the_room_without_a_sheet():
+    """M1: the room deleted A, the outside version deleted B (kept A): no live sheet was left, and
+    the next save purged everything. The outside version's sheets stay; the deleter is told."""
+    room = Room({"sheets": [grid("A"), grid("B")]})
+    a = room.sid
+    room.ok({"op": "sheet_delete", "sheet": a}, "ann")
+    res = reconcile(room.st, {"sheets": [grid("A")]}, by="api")
+    apply_patch(room.mirror, res["patch"])
+    assert [s["name"] for s in project(room.st)["sheets"]] == ["A"] and res["overwritten"] == ["ann"]
+    mark_saved(room.st, snapshot(room.st))
+    assert [s["name"] for s in project(room.st)["sheets"]] == ["A"]
+    # the outside version has no sheet at all while the room had changed one it deleted: the room's stays
+    room2 = Room({"sheets": [grid("A")]})
+    room2.ok({"op": "set", **room2.at("A1"), "v": "keep me"}, "bob")
+    reconcile(room2.st, {"sheets": []}, by="api")
+    assert project(room2.st)["sheets"][0]["cells"] == {"A1": {"v": "keep me"}}
+
+
+def test_m2_remembered_answers_are_small_strict_json_and_never_echo_bulk_input():
+    """M2: refusals echoed whatever the client sent (a megabyte-long id, NaN) into the remembered
+    results, which grew without bound and made the state non-strict JSON."""
+    room = Room({"sheets": [grid(cells={"A1": {"v": "y" * 30000}})]})
+    for k in range(cs.MAX_CLIENTS + 10):
+        for i in range(40):
+            bad = [{"op": "set", "sheet": room.sid, "row": "r" * 1_000_000, "col": room.c(0), "v": 1},
+                   {"op": "set", "sheet": room.sid, "row": float("nan"), "col": room.c(0), "v": 1},
+                   {"op": "set", **room.at("A1"), "v": "mine", "k" * 100_000: 1},
+                   {"op": "set", **room.at("A1"), "v": ("z" if k % 2 else "w") * 30000}][i % 4]
+            # each client numbers above every earlier one, so none is below a forgotten client's numbers
+            apply(room.st, bad, by=f"p{k}", client=f"c{k}", n=1000 * k + i + 1, expect=0 if i % 4 == 3 else room.st["seq"])
+    last = cs.MAX_CLIENTS + 9
+    r = apply(room.st, {"op": "set", **room.at("B1"), "v": 1}, by="x", client=f"c{last}", n=1000 * last + 41, expect=float("nan"))
+    assert r["code"] == "resync" and r["detail"]["expect"] is None
+    json.dumps(room.st, allow_nan=False)
+    assert len(json.dumps(room.st["clients"])) < 3 * 1024 * 1024
+    assert len(room.st["clients"]) == cs.MAX_CLIENTS
+
+
+def test_m3_large_groups_on_sheets_with_many_merges_stay_fast():
+    """M3: every merge / field check rescanned the whole sheet, so one group of 5000 merges on a
+    sheet holding 20 000 took minutes. Now a tile index: a generous bound, well above what it takes."""
+    import time
+    nr, nc = 1000, 100
+    merges = [cs.tabular.range_ref(r, 2 * k, r, 2 * k + 1) for r in range(400) for k in range(50)]
+    st = seed_state({"sheets": [{"name": "M", "cols": [{"w": 100}] * nc, "rows": [{"h": 24}] * nr, "merges": merges}]}, epoch="perf")
+    sid = st["content"]["order"][0]
+    sh = st["content"]["sheets"][sid]
+    ops = [{"op": "merge", "sheet": sid, "range": [sh["rows"][400 + i % 600], sh["cols"][2 * (i // 600)], sh["rows"][400 + i % 600], sh["cols"][1 + 2 * (i // 600)]]}
+           for i in range(5000)]
+    started = time.monotonic()
+    r = apply(st, {"op": "tx", "ops": ops}, by="a", client="c", n=1, expect=st["seq"])
+    took = time.monotonic() - started
+    assert r["ok"] and len(st["content"]["sheets"][sid]["merges"]) == 25000 and took < 5, took
+    ops = [{"op": "field_add", "sheet": sid, "row": sh["rows"][i % 1000], "col": sh["cols"][90 + 2 * (i // 1000)],
+            "field": {"id": f"g{i}", "name": "n", "kind": "cell"}} for i in range(5000)]
+    started = time.monotonic()
+    r = apply(st, {"op": "tx", "ops": ops}, by="a", client="c", n=2, expect=st["seq"])
+    took = time.monotonic() - started
+    assert r["ok"] and took < 5, took
+    started = time.monotonic()
+    assert sheet_invariants(project(st)) == [] and time.monotonic() - started < 10
+
+
+def test_m4_a_forgotten_client_can_never_have_an_old_message_applied_again():
+    """M4: after MAX_CLIENTS other tabs, a client was forgotten and its resent message applied a
+    second time. Forgetting raises a floor; below it an unknown client is told to resync."""
+    room = Room({"sheets": [grid()]})
+    op = {"op": "append_rows", "sheet": room.sid, "count": 1}
+    assert apply(room.st, op, by="ann", client="ann-tab", n=1, expect=0)["ok"]
+    for i in range(cs.MAX_CLIENTS):
+        apply(room.st, {"op": "style", **room.at("A1"), "s": {"b": i % 2 == 0}}, by="bob", client=f"bob-{i}", n=1, expect=room.st["seq"])
+    assert "ann-tab" not in room.st["clients"]
+    r = apply(room.st, op, by="ann", client="ann-tab", n=1, expect=0)
+    assert r["code"] == "resync" and len(project(room.st)["sheets"][0]["rows"]) == 11
+    # a new tab (or a rotated client id) starts where the room says
+    assert apply(room.st, op, by="cyd", client="fresh", n=1, expect=room.st["seq"])["code"] == "resync"
+    start = cs.next_number(room.st, "fresh")
+    assert start > 1 and apply(room.st, op, by="cyd", client="fresh", n=start, expect=room.st["seq"])["ok"]
+    assert cs.next_number(room.st, "fresh") == start + 1
+
+
+def test_m5_a_stale_sheet_delete_cannot_hide_newer_work_on_it():
+    room = Room({"sheets": [grid("A"), grid("B")]})
+    b = room.st["content"]["order"][1]
+    room.ok({"op": "set", **room.at("C3", b), "v": "bob's newer work"}, "bob")
+    d = room.no({"op": "sheet_delete", "sheet": b}, "conflict", "ann", expect=0)
+    assert d["by"] == "bob" and d["at"] == 1 and d["theirs"] == {"sheet": b, "name": "B"}
+    room.ok({"op": "sheet_delete", "sheet": b}, "ann")                     # having seen it: her choice
+    # a restore raced by a stale delete
+    room = Room({"sheets": [grid("A"), grid("B")]})
+    b = room.st["content"]["order"][1]
+    room.ok({"op": "sheet_delete", "sheet": b}, "ann")
+    room.ok({"op": "sheet_restore", "sheet": b}, "bob")
+    assert room.no({"op": "sheet_delete", "sheet": b}, "conflict", "ann", client="ann-2", expect=0)["by"] == "bob"
+    # the same person's other tab is not in conflict with herself
+    room2 = Room({"sheets": [grid("A"), grid("B")]})
+    b2 = room2.st["content"]["order"][1]
+    room2.ok({"op": "set", **room2.at("A1", b2), "v": "mine"}, "ann")
+    room2.ok({"op": "sheet_delete", "sheet": b2}, "ann", client="ann-2", expect=0)
+
+
+def test_m5_merging_never_hides_values_and_a_value_never_goes_under_a_merge():
+    room = Room({"sheets": [grid(cells={"A1": {"v": "左上"}, "B1": {"v": "鲍勃的"}, "C2": {"v": "旧"}})]})
+    room.ok({"op": "set", **room.at("B1"), "v": "鲍勃新写的"}, "bob")
+    d = room.no({"op": "merge", "sheet": room.sid, "range": room.rng("A1", "C2")}, "covers_values", "ann")
+    assert d["cells"] == ["B1", "C2"] and d["count"] == 2 and d["by"] == ["bob"] and d["want"] == "A1:C2"
+    # clearing them first in the same group is the explicit choice — and a stale clear of bob's value is a conflict
+    clear_and_merge = {"op": "tx", "ops": [{"op": "clear", **room.at("B1")}, {"op": "clear", **room.at("C2")},
+                                            {"op": "merge", "sheet": room.sid, "range": room.rng("A1", "C2")}]}
+    assert room.no(clear_and_merge, "conflict", "ann", expect=0)["by"] == "bob"
+    room.ok(clear_and_merge, "ann")
+    assert room.sheet()["merges"] == ["A1:C2"] and room.sheet()["cells"] == {"A1": {"v": "左上"}}
+    # and a value typed into a covered cell (someone merged over it meanwhile) is refused, naming whose merge
+    d = room.no({"op": "set", **room.at("B2"), "v": "看不见"}, "covered", "bob", expect=1)
+    assert d["range"] == "A1:C2" and d["by"] == "ann" and d["ref"] == "B2"
+    room.ok({"op": "set", **room.at("A1"), "v": "改左上"}, "bob")
+
+
+def test_m5_a_stale_field_add_cannot_bring_back_an_id_someone_deleted():
+    room = Room({"sheets": [grid()]})
+    room.ok({"op": "field_add", **room.at("B2"), "field": {"id": "amount", "name": "金额", "kind": "cell"}}, "ann")
+    seen = room.st["seq"]
+    room.ok({"op": "field_del", "field": "amount"}, "bob")
+    d = room.no({"op": "field_add", **room.at("B2"), "field": {"id": "amount", "name": "金额", "kind": "cell"}}, "conflict", "ann",
+                client="ann-2", expect=seen)
+    assert d["by"] == "bob" and d["theirs"] is None
+    room.ok({"op": "field_add", **room.at("B2"), "field": {"id": "amount", "name": "金额", "kind": "cell"}}, "ann")   # seen: allowed
+    # undoing one's own delete is not a conflict with oneself
+    room.ok({"op": "field_del", "field": "amount"}, "ann")
+    room.ok({"op": "field_add", **room.at("B2"), "field": {"id": "amount", "name": "金额", "kind": "cell"}}, "ann", client="ann-3", expect=seen)
+
+
+def test_m6_compaction_keeps_who_wrote_since_the_basis_and_is_clamped():
+    room = Room({"sheets": [grid(cells={"A1": {"v": "x"}})]})
+    room.ok({"op": "set", **room.at("A1"), "v": "ann's"}, "ann")
+    cs.compact(room.st, upto=room.st["seq"] + 100)
+    assert room.st["kfloor"] == room.st["seq"], "clamped to the current sequence number"
+    room.ok({"op": "set", **room.at("B1"), "v": 1}, "bob")                  # expect == seq still accepted
+    outside = {"sheets": [grid(cells={"A1": {"v": "api's"}})]}
+    res = reconcile(room.st, outside, by="api")
+    assert res["overwritten"] == ["ann"] and res["conflicts"][0]["by"] == ["ann"]
+    # after a save, older attribution may go
+    mark_saved(room.st, snapshot(room.st))
+    cs.compact(room.st, upto=room.st["seq"])
+    assert room.st["kseq"] == {} and room.st["sheetw"] == {}
+
+
+def test_m7_restoring_a_sheet_respects_the_cell_limit(monkeypatch):
+    room = Room({"sheets": [grid("A", cells={"A1": {"v": 1}, "A2": {"v": 2}, "A3": {"v": 3}}),
+                            grid("B", cells={"B1": {"v": 1}, "B2": {"v": 2}, "B3": {"v": 3}})]})
+    b = room.st["content"]["order"][1]
+    room.ok({"op": "sheet_delete", "sheet": b})
+    from synwevo_docs.engine.limits import LIMITS
+    monkeypatch.setattr(LIMITS, "max_cells", 5)                              # e.g. the limit was lowered since
+    assert room.no({"op": "sheet_restore", "sheet": b}, "too_large")["what"] == "cells"
+    monkeypatch.setattr(LIMITS, "max_cells", 6)
+    room.ok({"op": "sheet_restore", "sheet": b})
+
+
+def test_low_a_style_only_outside_change_is_not_a_value_conflict():
+    m = {"sheets": [grid(cells={"A1": {"v": "x"}})]}
+    room = Room(m)
+    seen = room.st["seq"]
+    outside = json.loads(json.dumps(m))
+    outside["sheets"][0]["cells"]["A1"] = {"v": "x", "s": {"b": True}}
+    res = reconcile(room.st, outside, by="api")
+    apply_patch(room.mirror, res["patch"])
+    room.ok({"op": "set", **room.at("A1"), "v": "ann"}, "ann", expect=seen)
+    assert room.sheet()["cells"]["A1"] == {"v": "ann", "s": {"b": True}}
+    ck = f"{room.r(0)}:{room.c(0)}"
+    assert room.st["kseq"][f"s/{room.sid}/{ck}/b"][1] == "api"
+
+
+def test_low_a_sheet_added_and_deleted_again_is_not_an_unsaved_change():
+    room = Room({"sheets": [grid()]})
+    room.ok({"op": "sheet_add", "name": "临时"})
+    assert dirty(room.st)
+    room.ok({"op": "sheet_delete", "sheet": room.st["content"]["order"][1]})
+    assert not dirty(room.st)
+
+
+def test_low_expect_is_required_and_skipping_the_check_must_say_so():
+    room = Room({"sheets": [grid()]})
+    op = {"op": "set", **room.at("A1"), "v": 1}
+    with pytest.raises(TypeError):
+        apply(room.st, op, by="ann", client="t", n=1)                        # noqa: the point is the missing expect
+    with pytest.raises(ValueError):
+        apply(room.st, op, by="ann", client="t", n=1, expect=None)
+    assert apply(room.st, op, by="system", client="server", n=1, expect=None, trusted=True)["ok"]
+
+
+def test_low_a_snapshot_older_than_the_basis_is_not_saved_over_it():
+    room = Room({"sheets": [grid(cells={"A1": {"v": "x"}})]})
+    room.ok({"op": "set", **room.at("B1"), "v": "room"}, "bob")
+    old = snapshot(room.st)
+    reconcile(room.st, {"sheets": [grid(cells={"A1": {"v": "outside"}})]}, by="api")
+    basis = json.loads(json.dumps(room.st["basis"]))
+    out = mark_saved(room.st, old)
+    assert out["stale"] and room.st["basis"] == basis and dirty(room.st)
+    assert cs._project(cs._revert(room.st))["sheets"][0]["cells"] == {"A1": {"v": "outside"}}
+    other = seed_state({"sheets": [grid()]}, epoch="another room")
+    assert mark_saved(room.st, snapshot(other))["stale"]
+
+
+def test_low_field_ids_are_never_javascript_prototype_names():
+    room = Room({"sheets": [grid()]})
+    for fid in ("__proto__", "constructor", "prototype", "toString"):
+        assert room.no({"op": "field_add", **room.at("B2"), "field": {"id": fid, "name": "x", "kind": "cell"}}, "invalid")["reason"] == "field_id"
+    # a saved model that has one keeps it, under a key of the room's own
+    model = CORPUS["id_null_and_reserved_ids"]
+    st = seed_state(model)
+    assert "constructor" not in st["content"]["fields"] and all(k.startswith("~") for k in st["content"]["fields"])
+    assert project(st) == normalize(model)
