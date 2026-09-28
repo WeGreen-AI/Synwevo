@@ -67,7 +67,10 @@ class Session:
         self.map: dict[tuple[str, str], str] = {}
         self._per_kind: dict[str, int] = {}
         self.counts: dict[str, int] = {}
-        self.factor = round(self.rng.uniform(0.6, 1.4), 3)
+        # A factor within 5 % of 1 — exactly 1.000 once in about 800 sessions before CI-84 — copied
+        # the real amounts into the desensitized file. Draw the distance from 1, then the side.
+        step = self.rng.uniform(0.05, 0.4)
+        self.factor = round(1 + step if self.rng.random() < 0.5 else 1 - step, 3)
         self.days = self.rng.randint(-200, 200) or 17
 
     def _count(self, rule: str):
@@ -162,8 +165,14 @@ class Session:
             return self._digits(str(v))
         if strategy == "scale" and isinstance(v, (int, float)) and not isinstance(v, bool):
             self._count(f"列「{header}」")
-            nv = v * self.factor
-            return round(nv) if isinstance(v, int) else round(nv, max(2, len(str(v).split(".")[-1]) if "." in str(v) else 2))
+            places = 0 if isinstance(v, int) else max(2, len(str(v).split(".")[-1]) if "." in str(v) else 2)
+            out = round(v * self.factor, places) if places else round(v * self.factor)
+            if out == v and v != 0:
+                # a small value rounds back to itself: move it one unit in the factor's direction,
+                # so no non-zero amount survives a "scaled" copy unchanged (CI-84)
+                away = (1 if self.factor > 1 else -1) * (1 if v > 0 else -1)      # grow or shrink the magnitude
+                out = v + away if not places else round(v + away * 10 ** -places, places)
+            return out
         if strategy == "date_shift" and isinstance(v, (dt.date, dt.datetime)):
             self._count(f"列「{header}」")
             return v + dt.timedelta(days=self.days)

@@ -210,3 +210,20 @@ def test_pseudonyms_stay_consistent_and_numbered_per_kind():
 def test_word_list_prefers_the_longest_word_at_a_position():
     sess = D.Session(words=["测试", "测试赵一"])
     assert sess.replace_text("测试赵一和测试") == "脱敏词0001和脱敏词0002"
+
+
+def test_scaling_never_copies_a_non_zero_amount_unchanged():
+    """CI-84: the factor used to be any of 0.6…1.4 rounded to 0.001, so about one session in 800
+    drew exactly 1.000 and every "scaled" amount came out as the real one."""
+    factors = [D.Session(seed=f"scale-{i}").factor for i in range(3000)]
+    assert all(abs(f - 1) >= 0.05 and 0.6 <= f <= 1.4 for f in factors)
+    assert any(f > 1 for f in factors) and any(f < 1 for f in factors)
+    sess = D.Session(seed="fixture")
+    for factor in (1.0, 1.06, 0.94):
+        sess.factor = factor                     # the old failure (1.000) and values that round back
+        for v in (1123.45, 7, -3, 0.01, 1, 9, -2.5):
+            out = sess.column_value("scale", "金额", v)
+            assert out != v and type(out) is type(v), (factor, v, out)
+            if factor != 1.0:
+                assert (abs(out) > abs(v)) == (factor > 1), (factor, v, out)   # the direction follows the factor
+    assert sess.column_value("scale", "金额", 0) == 0 and sess.column_value("scale", "金额", 0.0) == 0.0

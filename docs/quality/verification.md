@@ -1803,6 +1803,19 @@ Chromium 点「返回工作空间」→ 浏览器询问（`beforeunload`）→ �
 **CI-81**（协调者，main 上）：`services/identity/tests/test_messaging_departure.py` 4 项通过（导出 `synwevo-account-2` 只含本人消息与设置、他人正文不出现、私聊不带对方名字；到期删除时群交给最早管理员并写交接/离开系统行、空群归档、私聊对方保留历史、二次清扫不变；
 既往已删除账户被清扫；离开组织交接给最早加入的成员）；隐私页与账户页三语言改写，`npm test --workspaces` 与 typecheck 通过。四套件全量结果记在本节末尾。
 
+### 16.82 消息应用的拒绝文案（CI-83）
+
+复现（隔离四源实例，夹具账户）：个人工作空间里的项目在 Docs 菜单里有「在消息中讨论」，点开后消息源对象页只显示「请求未完成（no_organization）」和「重试」；扫描消息服务 80 句 `ServiceError` 原句，外壳目录一句都没有（CI-78 的 6 句除外）。
+修复后：消息外壳 `npm test` 25 项通过（新增 `refusals.test.ts` 5 项：服务端每句拒绝在目录/模板/「仅 API」三类之一；删掉「群主退出前…」一条译文后测试失败且英文呈现为 “The request could not be completed (owner_must_transfer).”，恢复后通过；
+模板三语言断言；`mayRetry`）。`apps/messages/tests/test_refusal_details.py` 2 项通过。typecheck、build 通过。浏览器（Chrome，1280×860 与 390×860）：同一夹具账户经账户服务自己的 `POST /api/auth/onboarding/personal` 得到个人空间，
+个人空间项目菜单 9 项、无「在消息中讨论」，组织空间项目有；对象页中文显示「个人工作空间的项目没有组织会话；复制到组织工作空间后才能讨论」、「返回工作空间」、无「重试」，切到 English 后显示对应英文句子与 “Back to the workspace”，
+0 页面错误；截图 `ci83-docs-personal-*`、`ci83-object-personal-{zh,en}-*`（scratchpad，未入库）。
+
+### 16.83 脱敏缩放不再原样复制金额（CI-84）
+
+CI-83 的全量回归（2214 通过、1 失败、5 跳过）里 `apps/docs/tests/test_regression_cases.py::test_desensitize_copies` 失败：脱敏后 D2 金额仍是 1123.45。单独重跑 8 次均通过——偶发；
+读 `engine/desensitize.py`：比例 `round(uniform(0.6, 1.4), 3)` 取到 1.000 的概率约 1/800。修复后 `test_engine_desensitize.py`（含新增项）与 `test_regression_cases.py` 通过。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
