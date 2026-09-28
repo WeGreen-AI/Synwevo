@@ -367,10 +367,11 @@ def test_names_charts_formats_and_objects_touching_part_of_the_block_are_refused
     def titles(wb):
         wb["对账单"].print_title_rows = "4:4"
     assert "名称「Print_Titles」" in _refused(titles, "band_name")
-    def cf_abs(wb):
-        wb["对账单"].conditional_formatting.add("D5", FormulaRule(formula=["D5>$D$6"]))
-    _refused(cf_abs, "band_cf_absolute",
-             "条件格式 D5 的公式用绝对行号引用了重复内容块内的 $D$6：每一份都会指向第一份。请改为相对行引用（去掉行号前的 $）")
+    def cf_split(wb):                  # inside and outside the block, looking at another row
+        wb["对账单"].conditional_formatting.add("A3:A20", FormulaRule(formula=["A4>0"]))
+    _refused(cf_split, "band_cf_split",
+             "条件格式 A3:A20 既在重复内容块（第 3–6 行）内又在块外，而它的公式引用 A4 在每一份里指向的行不同："
+             "请把块内和块外分成两条规则，或只引用本行")
     def cf_out(wb):
         wb["对账单"].conditional_formatting.add("D8", FormulaRule(formula=["D6>0"]))
     _refused(cf_out, "band_cf")
@@ -545,6 +546,91 @@ def test_formulas_inside_the_block_pointing_to_the_last_row_stay_on_the_sheet():
     assert [ws["H7"].value, ws["H11"].value] == ["=#REF!"] * 2              # pushed off the sheet, as a row shift does
     # not reported as a section without lines: every order here has lines
     assert not [i for i in issues if i["code"] == "ref_removed"]
+
+
+def test_a_running_balance_on_a_detail_line_is_filled_down_within_its_copy():
+    """Review item 2: `C5 = N(C4)+B5` gave 1, 2, 3 inside a block (every line looked at the header
+    row) and 1, 3, 6 on a single detail row. A detail line's relative reference to a row above it
+    in the block is filled down: line i looks at line i-1, the first line at the row above."""
+    def extra(wb):
+        ws = wb["对账单"]
+        ws["G4"], ws["G5"] = "余额", "=N(G4)+B5"
+        ws["H5"] = "=SUM(B4:B5)"                  # a two-row window, filled down
+        ws["I5"] = "=N($G$4)+B5"                   # an absolute row stays where it is
+    work, slots, band, rep, values = _standard(extra)
+    out, issues, errors = _fill(work, slots, values)
+    assert not errors, errors
+    ws = _book(out)["对账单"]
+    assert [ws["G5"].value, ws["G6"].value, ws["G10"].value] == ["=N(G4)+B5", "=N(G5)+B6", "=N(G9)+B10"]
+    assert [ws["H5"].value, ws["H6"].value, ws["H10"].value] == ["=SUM(B4:B5)", "=SUM(B5:B6)", "=SUM(B9:B10)"]
+    assert [ws["I5"].value, ws["I6"].value, ws["I10"].value] == ["=N($G$4)+B5", "=N($G$4)+B6", "=N($G$9)+B10"]
+    calc = _book(out, data_only=True)["对账单"]
+    assert [calc["G5"].value, calc["G6"].value, calc["G10"].value] == [5, 8, 10]     # 5, 5+3; the next order starts again
+
+
+@soffice
+def test_libreoffice_agrees_with_the_filled_down_running_balance():
+    from synwevo_docs.engine.converters import recalc_xlsx
+    work, slots, band, rep, values = _standard(lambda wb: wb["对账单"].__setitem__("G5", "=N(G4)+B5"))
+    out, _, _ = _fill(work, slots, values)
+    lo = openpyxl.load_workbook(io.BytesIO(recalc_xlsx(out)), data_only=True)["对账单"]
+    ours = _book(out, data_only=True)["对账单"]
+    assert [lo[r].value for r in ("G5", "G6", "G10")] == [ours[r].value for r in ("G5", "G6", "G10")] == [5, 8, 10]
+
+
+def _rules_of(out) -> list[tuple[str, list[str], str]]:
+    """(sqref, formulas, priority) of each conditional format rule, in the file's order."""
+    root = etree.fromstring(zipfile.ZipFile(io.BytesIO(out)).read("xl/worksheets/sheet1.xml"))
+    return [(cf.get("sqref"), [f.text for f in rule.iter(f"{{{MAIN}}}formula")], rule.get("priority"))
+            for cf in root.iter(f"{{{MAIN}}}conditionalFormatting") for rule in cf.iter(f"{{{MAIN}}}cfRule")]
+
+
+def test_conditional_formats_follow_the_copies_like_cell_formulas():
+    """Review item 5: a header-row rule looking at the order's subtotal (`$D6`, relative row) kept a
+    fixed offset in every copy — pointing at a line whenever the order had other than one line; a
+    threshold without `$` (`D5>H1`) drifted with each copy. Each copy now gets the reference a cell
+    formula there would get; rules that read the same from their own first cell stay one rule."""
+    def extra(wb):
+        ws = wb["对账单"]
+        ws.conditional_formatting.add("A3:D3", FormulaRule(formula=["$D6>100"]))      # header → subtotal
+        ws.conditional_formatting.add("D5", FormulaRule(formula=["D5>H1"]))           # line → fixed threshold
+        ws.conditional_formatting.add("D6", FormulaRule(formula=["D6>100"]))          # the subtotal row itself
+    work, slots, band, rep, values = _standard(extra)
+    out, issues, errors = _fill(work, slots, values)
+    assert not errors, errors
+    rules = _rules_of(out)
+    assert [(sq, f) for sq, f, _ in rules] == [
+        ("A3:D3", ["$D$7>100"]), ("A8:D8", ["$D$11>100"]),       # each header looks at its own subtotal
+        ("D5:D6 D10", ["D5>H$1"]),                                # every line, the same threshold: one rule
+        ("D7 D11", ["D7>100"]),                                   # re-anchored where its first area now is
+    ]
+    assert sorted(int(p) for _, _, p in rules) == [1, 2, 3, 4]    # every rule its own priority, in order
+
+
+def test_data_validations_follow_the_copies_like_cell_formulas():
+    def extra(wb):
+        dv = DataValidation(type="custom", formula1="B5<=B6")     # a line's quantity against the subtotal row
+        dv.add("B5")
+        wb["对账单"].add_data_validation(dv)
+    work, slots, band, rep, values = _standard(extra)
+    out, issues, errors = _fill(work, slots, values)
+    assert not errors, errors
+    ws = _book(out)["对账单"]
+    assert [(str(d.sqref), d.formula1) for d in ws.data_validations.dataValidation] == [("B5:B6", "B5<=B$7"), ("B10", "B10<=B$11")]
+    root = etree.fromstring(zipfile.ZipFile(io.BytesIO(out)).read("xl/worksheets/sheet1.xml"))
+    assert root.find(f"{{{MAIN}}}dataValidations").get("count") == "2"
+
+
+def test_an_ordinary_rule_from_the_blocks_first_row_down_the_sheet_is_accepted():
+    """Review item 6: `A3:H200 =$D3>100` (each row looks at its own row) was refused because the
+    block starts at row 3; the same rule from row 1 was accepted."""
+    for sqref, formula, want in (("A3:H200", "$D3>100", "A3:H7 A8:H11 A12:H205"),
+                                 ("A1:H200", "$D1>100", "A1:H2 A3:H7 A8:H11 A12:H205"),
+                                 ("A5:H5", "$D5>100", "A5:H6 A10:H10")):
+        work, slots, band, rep, values = _standard(lambda wb: wb["对账单"].conditional_formatting.add(sqref, FormulaRule(formula=[formula])))
+        out, issues, errors = _fill(work, slots, values)
+        assert not errors, (sqref, errors)
+        assert [(sq, f) for sq, f, _ in _rules_of(out)] == [(want, [formula])]
 
 
 def test_page_break_counts_are_rewritten_when_the_block_goes():

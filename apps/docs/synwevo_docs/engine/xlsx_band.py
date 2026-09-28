@@ -10,7 +10,9 @@ How references follow the copies (block = rows b1..b2, 1-based):
 * a formula inside the block that points inside it follows its own copy — a range ending on a
   detail row ends on that copy's last detail row, so a block subtotal covers only its own lines;
   on a detail row, a relative reference to its own row stays on the same line, an absolute one
-  (``$5``) points at the copy's first line;
+  (``$5``) points at the copy's first line, and a relative reference to a row above it in the
+  block is filled down like Excel does (line i looks at line i-1; the first line at the row above
+  the detail row) — running balances such as ``N(C4)+B5`` work as in a single detail row;
 * a formula inside the block that points outside it stays where it points, with or without
   ``$`` (rows below the block move by the rows inserted) — unlike a single detail row, which
   keeps Excel's fill-down behaviour;
@@ -18,7 +20,11 @@ How references follow the copies (block = rows b1..b2, 1-based):
 * a reference from outside to part of the block that is a whole argument of SUM, COUNT,
   COUNTA, AVERAGE, MIN, MAX, PRODUCT or SUBTOTAL (after its first argument) becomes one argument
   per copy: ``SUM(D6)`` → ``SUM(D7,D11)``;
-* anything else that points at part of the block, or across its edge, is refused (``scan``).
+* anything else that points at part of the block, or across its edge, is refused (``scan``);
+* conditional formats and data validations inside the block follow the same rules: a rule whose
+  formulas only look at each cell's own row (or at fixed rows outside the block) is one rule over
+  every copy; any other rule inside the block is written for each copy (and each of its template
+  rows), its references mapped as a cell formula there would be (``_RuleSet``).
 
 The rest of the workbook moves by one row shift (``XlsxDoc.shift_rows``); the block's own rows
 are taken out first and generated copy by copy from formulas tokenised once.
@@ -30,6 +36,7 @@ import re
 
 from lxml import etree
 from openpyxl.formula.tokenizer import Token, Tokenizer
+from openpyxl.formula.translate import Translator
 
 from . import values as V
 from .limits import LIMITS
@@ -139,6 +146,16 @@ class Ref:
 
     def text(self) -> str:
         return self.render(self.lo, self.hi)
+
+    def render_rows(self, lo: int, hi: int, pin_lo: bool, pin_hi: bool) -> str:
+        """Like ``render``, with each end's row marked absolute (`$`) or relative as given."""
+        a, b = self.a, self.b
+        da, db = "$" if pin_lo else "", "$" if pin_hi else ""
+        if self.rows_only:
+            return f"{self.prefix}{da}{lo}:{db}{hi}"
+        if b is None:
+            return f"{self.prefix}{a[0]}{a[1]}{da}{lo}"
+        return f"{self.prefix}{a[0]}{a[1]}{da}{lo}:{b[0]}{b[1]}{db}{hi}"
 
 
 def parse_ref(value: str, host_sheet: str) -> tuple[str, Ref] | None:
@@ -280,18 +297,47 @@ def _span(ref: str | None) -> tuple[int, int] | None:
     return None
 
 
-def _rule_check(kind: str, sqref: str, formulas: list[str], sheet: str, b1: int, b2: int) -> None:
-    """A conditional format / data validation whose formulas point into the block: its area must
-    lie inside the block and the references be relative rows (each copy evaluates them cell by
-    cell); covering or outside references are fine."""
+def _rule_error(kind: str, code: str, sqref: str, ref: str, b1: int, b2: int) -> XlsxError:
+    """The refusals for a conditional format (kind "cf") or a data validation ("dv")."""
+    if code == "cross":
+        if kind == "cf":
+            return XlsxError("band_cf", f"条件格式 {sqref} 的公式引用的 {ref} 与重复内容块（第 {b1}–{b2} 行）相交：请让条件格式的区域和公式引用都在块内，或都在块外")
+        return XlsxError("band_dv", f"数据验证 {sqref} 的公式引用的 {ref} 与重复内容块（第 {b1}–{b2} 行）相交：请让数据验证的区域和公式引用都在块内，或都在块外")
+    if code == "split":
+        if kind == "cf":
+            return XlsxError("band_cf_split", f"条件格式 {sqref} 既在重复内容块（第 {b1}–{b2} 行）内又在块外，而它的公式引用 {ref} 在每一份里指向的行不同：请把块内和块外分成两条规则，或只引用本行")
+        return XlsxError("band_dv_split", f"数据验证 {sqref} 既在重复内容块（第 {b1}–{b2} 行）内又在块外，而它的公式引用 {ref} 在每一份里指向的行不同：请把块内和块外分成两条规则，或只引用本行")
+    if kind == "cf":
+        return XlsxError("band_cf_map", f"条件格式 {sqref} 使用了 Excel 2010 扩展设置（如数据条、图标集），它的公式引用 {ref} 无法为每一份分别改写：请只引用本行，或把规则移到块外")
+    return XlsxError("band_dv_map", f"数据验证 {sqref} 是 Excel 2010 扩展格式，它的公式引用 {ref} 无法为每一份分别改写：请只引用本行，或把规则移到块外")
+
+
+def classify_rule(kind: str, sqref: str, formulas: list[str], sheet: str, b1: int, b2: int,
+                  extended: bool = False) -> str:
+    """How a conditional format / data validation follows the copies of the block b1..b2:
+    "untouched" (none of its areas meets the block: the row shift moves it), "copy" (its formulas
+    only look at each cell's own row, at fixed rows outside the block or at other sheets: one rule
+    over every copy), or "map" (all its areas are inside the block and a formula points elsewhere:
+    written per copy, each reference mapped as in a cell formula). Refused with a sentence: a
+    reference across the block's edge, a rule outside the block pointing into part of it, a rule
+    both inside and outside the block that needs mapping, and an Excel 2010 rule that would.
+
+    The formulas are relative to the top-left cell of the rule's first area."""
     areas = _sqref_areas(sqref)
-    inside_all = bool(areas) and all(where(r1 + 1, r2 + 1, b1, b2, True) == "inside" for r1, _, r2, _ in areas)
+    if not areas:
+        return "untouched"
+    r0 = areas[0][0] + 1
+    places = [where(r1 + 1, r2 + 1, b1, b2, True) for r1, _, r2, _ in areas]
+    touches = any(p != "outside" for p in places)
+    positional = None
     for text in formulas:
         if not text:
             continue
         try:
             items = _items(text)
         except Exception:  # noqa: BLE001 - not a formula the row shift can read either
+            if touches:
+                raise _rule_error(kind, "split" if not all(p == "inside" for p in places) else "map", sqref, text[:40], b1, b2) from None
             continue
         for t in items:
             if t.type != Token.OPERAND or t.subtype != Token.RANGE:
@@ -301,16 +347,47 @@ def _rule_check(kind: str, sqref: str, formulas: list[str], sheet: str, b1: int,
                 continue
             ref = got[1]
             w = where(ref.lo, ref.hi, b1, b2)
-            if w in ("outside", "covering"):
+            if w == "crossing":
+                raise _rule_error(kind, "cross", sqref, t.value, b1, b2)
+            own = not ref.abs_lo and not ref.abs_hi and ref.lo == ref.hi == r0
+            fixed_outside = ref.abs_lo and ref.abs_hi and w in ("outside", "covering")
+            if own or fixed_outside:
                 continue
-            if w == "crossing" or not inside_all:
-                if kind == "cf":
-                    raise XlsxError("band_cf", f"条件格式 {sqref} 的公式引用的 {t.value} 与重复内容块（第 {b1}–{b2} 行）相交：请让条件格式的区域和公式引用都在块内，或都在块外")
-                raise XlsxError("band_dv", f"数据验证 {sqref} 的公式引用的 {t.value} 与重复内容块（第 {b1}–{b2} 行）相交：请让数据验证的区域和公式引用都在块内，或都在块外")
-            if ref.abs_lo or ref.abs_hi:
-                if kind == "cf":
-                    raise XlsxError("band_cf_absolute", f"条件格式 {sqref} 的公式用绝对行号引用了重复内容块内的 {t.value}：每一份都会指向第一份。请改为相对行引用（去掉行号前的 $）")
-                raise XlsxError("band_dv_absolute", f"数据验证 {sqref} 的公式用绝对行号引用了重复内容块内的 {t.value}：每一份都会指向第一份。请改为相对行引用（去掉行号前的 $）")
+            if not touches:
+                if w == "inside":            # a rule outside the block looking at part of it
+                    raise _rule_error(kind, "cross", sqref, t.value, b1, b2)
+                continue
+            positional = positional or t.value
+    if not touches:
+        return "untouched"
+    if positional is None:
+        return "copy"
+    if not all(p == "inside" for p in places):
+        raise _rule_error(kind, "split", sqref, positional, b1, b2)
+    if extended:
+        raise _rule_error(kind, "map", sqref, positional, b1, b2)
+    return "map"
+
+
+def _rules(root) -> list[dict]:
+    """Every conditional format and data validation of a sheet: its element, where its areas are
+    written, its formula nodes, and whether it is an Excel 2010 (x14) rule or linked to one."""
+    out = []
+    for cf in root.findall(s("conditionalFormatting")):
+        out.append({"kind": "cf", "el": cf, "attr": "sqref", "sq_el": cf, "formulas": list(cf.iter(s("formula"))),
+                    "extended": any(True for _ in cf.iter("{%s}id" % X14))})
+    for dv in root.iter(s("dataValidation")):
+        out.append({"kind": "dv", "el": dv, "attr": "sqref", "sq_el": dv,
+                    "formulas": [f for f in dv if f.tag in (s("formula1"), s("formula2"))], "extended": False})
+    for tag, kind in (("conditionalFormatting", "cf"), ("dataValidation", "dv")):
+        for el in root.iter("{%s}%s" % (X14, tag)):
+            sq = el.find("{%s}sqref" % XM)
+            if sq is not None:
+                out.append({"kind": kind, "el": el, "attr": None, "sq_el": sq, "formulas": list(el.iter("{%s}f" % XM)),
+                            "extended": True})
+    for r in out:
+        r["sqref"] = (r["sq_el"].get(r["attr"]) if r["attr"] else r["sq_el"].text) or ""
+    return out
 
 
 def scan(x: XlsxDoc, sheet: str, b1: int, b2: int) -> list[tuple]:
@@ -374,14 +451,8 @@ def scan(x: XlsxDoc, sheet: str, b1: int, b2: int) -> list[tuple]:
         if where(got[0], got[1], b1, b2) in ("inside", "crossing"):
             raise XlsxError("band_filter", f"筛选范围 {af.get('ref')} 只包含重复内容块（第 {b1}–{b2} 行）的一部分：请让筛选范围包含整个内容块，或移到块外")
     # conditional formats, validations (x14 too), sparklines
-    for cf in root.findall(s("conditionalFormatting")):
-        _rule_check("cf", cf.get("sqref") or "", [f.text for f in cf.iter(s("formula"))], sheet, b1, b2)
-    for dv in root.iter(s("dataValidation")):
-        _rule_check("dv", dv.get("sqref") or "", [f.text for f in dv.iter(s("formula1"), s("formula2"))], sheet, b1, b2)
-    for cf in root.iter("{%s}conditionalFormatting" % X14):
-        _rule_check("cf", cf.findtext("{%s}sqref" % XM) or "", [f.text for f in cf.iter("{%s}f" % XM)], sheet, b1, b2)
-    for dv in root.iter("{%s}dataValidation" % X14):
-        _rule_check("dv", dv.findtext("{%s}sqref" % XM) or "", [f.text for f in dv.iter("{%s}f" % XM)], sheet, b1, b2)
+    for rule in _rules(root):
+        classify_rule(rule["kind"], rule["sqref"], [f.text for f in rule["formulas"]], sheet, b1, b2, rule["extended"])
     for sp in root.iter("{%s}sparkline" % X14):
         sq = sp.findtext("{%s}sqref" % XM) or ""
         hit = any(not (r2 + 1 < b1 or r1 + 1 > b2) for r1, _, r2, _ in _sqref_areas(sq))
@@ -509,9 +580,13 @@ class Layout:
 
     def map(self, k: int, r: int, which: str, host: tuple[int, int] | None = None, absolute: bool = False) -> int | None:
         """Row ``r`` of the template block in copy k, as the ``which`` end of a reference
-        ("start", "end" or "single"); ``host``: (detail index, line) of the cell writing it."""
+        ("start", "end" or "single"); ``host``: (detail index, line) of the cell writing it.
+        From a detail line, a relative reference to a row above the detail row is filled down:
+        line j looks j rows further (the previous line, or the row above for the first line)."""
         i = self.idx.get(r)
         if i is None:
+            if host is not None and not absolute and r < self.details[host[0]]:
+                return self.row(k, r) + host[1]
             return self.row(k, r)
         if host is not None and host[0] == i:
             return self.first(k, i) + (0 if absolute else host[1])
@@ -520,6 +595,14 @@ class Layout:
                 return None
             return self.first(k, i) if which == "start" else self.first(k, i) - 1
         return self.last(k, i) if which == "end" else self.first(k, i)
+
+    def follows_line(self, r: int, host, absolute: bool) -> bool:
+        """Whether a reference end at template row ``r``, written on detail line ``host``, moves
+        with the line (its own row, or a row above it — filled down) rather than staying put."""
+        if host is None or absolute:
+            return False
+        d = self.details[host[0]]
+        return r == d or (r < d and r not in self.idx)
 
     def span(self, k: int, ref: Ref, host=None) -> tuple[int, int] | None:
         if ref.b is None:
@@ -577,9 +660,255 @@ class _Formula:
         return "".join(vals), broken
 
 
+# ------------------------------------------------------------------ conditional formats and validations
+CANON = "HHH500000"          # a cell far from any edge: formulas are compared as seen from here
+
+
+def _translate(text: str, frm: str, to: str) -> str | None:
+    """A formula written at cell ``frm`` as it reads at cell ``to`` (relative references move)."""
+    try:
+        return Translator("=" + text, origin=frm).translate_formula(to)[1:]
+    except Exception:  # noqa: BLE001 - a formula the translator cannot read
+        return None
+
+
+def _outside(ref: Ref, b1: int, b2: int, delta: int) -> tuple[int, int] | None:
+    """Rows of a reference outside the block (or containing it) after the rows below moved by delta."""
+    lo, hi = ref.lo, ref.hi
+    if hi < b1:
+        return lo, hi
+    if lo > b2:
+        if lo + delta > MAX_ROW:
+            return None
+        return lo + delta, min(hi + delta, MAX_ROW)
+    got = (lo, min(hi + delta, MAX_ROW))                 # contains the block: grows or shrinks with it
+    return None if got[1] < got[0] else got
+
+
+class _RuleSet:
+    """The conditional formats and validations of the block's sheet that meet the block.
+
+    Taken off before the row shift (so it cannot rewrite them against the block's old rows) and put
+    back after the copies exist: a "copy" rule as one rule over every copy (its own-row references
+    re-anchored to where its first area now starts), a "map" rule as one rule per copy and template
+    row, its references mapped like a cell formula's — outside rows and rows the copy does not move
+    with pinned (`$`), a detail line's own row and the rows above it relative (filled down).
+    Rules whose mapped formulas read the same from their own top-left cell are merged back into one."""
+
+    def __init__(self, root, sheet: str, b1: int, b2: int):
+        self.root, self.sheet, self.b1, self.b2 = root, sheet, b1, b2
+        self.copy: list[dict] = []
+        self.mapped: list[dict] = []
+        self.plain: list[tuple] = []          # ignoredError / protectedRange: areas only
+        for rule in _rules(root):
+            texts = [f.text for f in rule["formulas"]]
+            mode = classify_rule(rule["kind"], rule["sqref"], texts, sheet, b1, b2, rule["extended"])
+            if mode == "untouched":
+                continue
+            areas = _sqref_areas(rule["sqref"])
+            rule["r0"], rule["c0"] = areas[0][0] + 1, areas[0][1]
+            rule["texts"] = texts
+            if mode == "map":
+                el = rule["el"]
+                rule["proto"] = copy.deepcopy(el)
+                rule["mark"] = etree.Comment("synwevo-block-rule")
+                el.addprevious(rule["mark"])
+                el.getparent().remove(el)
+                rule["areas"] = [(r1 + 1, c1, r2 + 1, c2) for r1, c1, r2, c2 in areas]
+                self.mapped.append(rule)
+            else:
+                for f in rule["formulas"]:
+                    f.text = None             # kept out of the row shift; written again after the copies
+                rule["pieces"] = self._park(rule["sq_el"], rule["attr"], rule["sqref"])
+                self.copy.append(rule)
+        for tag in ("ignoredError", "protectedRange"):
+            for el in root.iter(s(tag)):
+                sq = el.get("sqref") or ""
+                if _sqref_areas(sq) and any(where(r1 + 1, r2 + 1, b1, b2) != "outside" for r1, _, r2, _ in _sqref_areas(sq)):
+                    self.plain.append((el, "sqref", self._park(el, "sqref", sq)))
+
+    def _park(self, el, attr, sq: str) -> list:
+        """Split the areas at the block's edges: the outside parts stay (the row shift moves them),
+        the inside parts are kept aside as template rows for the copies."""
+        pieces, outside = [], []
+        b1, b2 = self.b1, self.b2
+        for r1, c1, r2, c2 in _sqref_areas(sq):
+            lo, hi = r1 + 1, r2 + 1
+            if hi < b1 or lo > b2:
+                pieces.append(("out", None))
+                outside.append(_area(lo, c1, hi, c2))
+                continue
+            if lo < b1:
+                pieces.append(("out", None))
+                outside.append(_area(lo, c1, b1 - 1, c2))
+            pieces.append(("in", (max(lo, b1), c1, min(hi, b2), c2)))
+            if hi > b2:
+                pieces.append(("out", None))
+                outside.append(_area(b2 + 1, c1, hi, c2))
+        if attr:
+            el.set(attr, " ".join(outside))
+        else:
+            el.text = " ".join(outside)
+        return pieces
+
+    @staticmethod
+    def _areas_back(el, attr, pieces, copies_of) -> list[str]:
+        now = ((el.get(attr) if attr else el.text) or "").split()
+        out = []
+        if len(now) == sum(1 for p in pieces if p[0] == "out"):
+            it = iter(now)
+            for kind, area in pieces:
+                out.extend([next(it)] if kind == "out" else copies_of(*area))
+        else:                                # the shift dropped an outside part: keep what is left
+            out = now + [a for kind, area in pieces if kind == "in" for a in copies_of(*area)]
+        return out
+
+    def restore(self, lay: Layout, K: int, delta: int, copies_of) -> None:
+        cloned = False
+        for el, attr, pieces in self.plain:
+            out = self._areas_back(el, attr, pieces, copies_of)
+            if out:
+                el.set(attr, " ".join(out))
+            else:
+                _drop(el, attr)
+        for rule in self.copy:
+            out = self._areas_back(rule["sq_el"], rule["attr"], rule["pieces"], copies_of)
+            if not out:
+                for f, text in zip(rule["formulas"], rule["texts"]):
+                    f.text = text
+                _drop(rule["sq_el"], rule["attr"])
+                continue
+            if rule["attr"]:
+                rule["sq_el"].set(rule["attr"], " ".join(out))
+            else:
+                rule["sq_el"].text = " ".join(out)
+            new_r0 = _sqref_areas(out[0])[0][0] + 1
+            for f, text in zip(rule["formulas"], rule["texts"]):
+                f.text = self._copy_text(text, rule["r0"], new_r0, delta) if text else text
+        for rule in self.mapped:
+            cloned = self._emit(rule, lay, K, delta) or cloned
+        if cloned:
+            _renumber_priorities(self.root)
+        for cont in list(self.root.iter(s("dataValidations"), "{%s}dataValidations" % X14)):
+            if len(cont):
+                cont.set("count", str(len(cont)))
+            else:
+                cont.getparent().remove(cont)
+
+    def _copy_text(self, text: str, r0: int, new_r0: int, delta: int) -> str:
+        """A "copy" rule's formula for its new first area: own-row references re-anchored, fixed
+        rows outside the block moved with the rows (as the row shift would have)."""
+        try:
+            items = _items(text)
+        except Exception:  # noqa: BLE001
+            return text
+        for t in items:
+            if t.type != Token.OPERAND or t.subtype != Token.RANGE:
+                continue
+            got = parse_ref(t.value, self.sheet)
+            if got is None:
+                continue
+            target, ref = got
+            if target != self.sheet:           # another sheet: relative rows keep their offset from the cell
+                lo = ref.lo if ref.abs_lo else ref.lo + new_r0 - r0
+                hi = ref.hi if ref.abs_hi else ref.hi + new_r0 - r0
+                t.value = ref.render(lo, hi) if 1 <= lo <= hi <= MAX_ROW else "#REF!"
+            elif not ref.abs_lo and not ref.abs_hi:
+                t.value = ref.render(new_r0, new_r0)
+            else:
+                span = _outside(ref, self.b1, self.b2, delta)
+                t.value = "#REF!" if span is None else ref.render(*span)
+        return "".join(t.value for t in items)
+
+    def _map_text(self, text: str, lay: Layout, k: int, host, delta: int) -> str:
+        """A "map" rule's formula, already translated to its template row, for copy k."""
+        items = _items(text)
+        b1, b2 = self.b1, self.b2
+        for t in items:
+            if t.type != Token.OPERAND or t.subtype != Token.RANGE:
+                continue
+            got = parse_ref(t.value, self.sheet)
+            if got is None:
+                continue
+            target, ref = got
+            if target != self.sheet:
+                t.value = ref.render_rows(ref.lo, ref.hi, True, True)      # other sheets stay put
+                continue
+            w = where(ref.lo, ref.hi, b1, b2, True)
+            if w == "inside":
+                span = lay.span(k, ref, host)
+                pin_lo = not lay.follows_line(ref.lo, host, ref.abs_lo)
+                pin_hi = not lay.follows_line(ref.hi, host, ref.abs_hi)
+            else:
+                span = _outside(ref, b1, b2, delta)
+                pin_lo = pin_hi = True
+            t.value = "#REF!" if span is None else ref.render_rows(span[0], span[1], pin_lo, pin_hi)
+        return "".join(t.value for t in items)
+
+    def _emit(self, rule: dict, lay: Layout, K: int, delta: int) -> bool:
+        frm = f"{col_letter(rule['c0'])}{rule['r0']}"
+        groups: dict[tuple, dict] = {}
+        for r1, c1, r2, c2 in rule["areas"]:
+            for r in range(r1, r2 + 1):
+                at = f"{col_letter(c1)}{r}"
+                texts = [None if t is None else _translate(t, frm, at) if t else t for t in rule["texts"]]
+                i = lay.idx.get(r)
+                for k in range(K):
+                    if i is None:
+                        h, h2, host = lay.row(k, r), lay.row(k, r), None
+                    else:
+                        if not lay.m[k][i]:
+                            continue
+                        h, h2, host = lay.first(k, i), lay.last(k, i), (i, 0)
+                    mapped = [t if not t else self._map_text(t, lay, k, host, delta) for t in texts]
+                    here = f"{col_letter(c1)}{h}"
+                    key = (c1, tuple(t if not t else (_translate(t, here, CANON) or f"{here}:{t}") for t in mapped))
+                    g = groups.setdefault(key, {"areas": [], "texts": mapped, "at": (h, c1)})
+                    if (h, c1) < g["at"]:
+                        g["at"], g["texts"] = (h, c1), mapped
+                    g["areas"].append((h, c1, h2, c2))
+        mark = rule["mark"]
+        for g in sorted(groups.values(), key=lambda g: g["at"]):
+            areas = sorted(g["areas"])
+            first = [a for a in areas if (a[0], a[1]) == g["at"]] + [a for a in areas if (a[0], a[1]) != g["at"]]
+            el = copy.deepcopy(rule["proto"])
+            for node in el.iter():               # identifiers Excel 365 expects to be unique
+                for key in [k_ for k_ in node.attrib if k_.rsplit("}", 1)[-1] == "uid"]:
+                    del node.attrib[key]
+            sq = " ".join(_area(*a) for a in first)
+            if rule["attr"]:
+                el.set(rule["attr"], sq)
+            else:
+                el.find("{%s}sqref" % XM).text = sq
+            nodes = list(el.iter(s("formula"))) if rule["kind"] == "cf" else [f for f in el if f.tag in (s("formula1"), s("formula2"))]
+            for node, text in zip(nodes, g["texts"]):
+                node.text = text
+            mark.addprevious(el)
+        mark.getparent().remove(mark)
+        return rule["kind"] == "cf" and bool(groups)
+
+
+def _renumber_priorities(root) -> None:
+    """Rules written per copy share their template rule's priority; give every rule of the sheet its
+    own number again, in the same order (an Excel 2010 rule linked to a rule keeps its twin's)."""
+    normal = list(root.iter(s("cfRule")))
+    ext = list(root.iter("{%s}cfRule" % X14))
+    twins = {}
+    for i, rule in enumerate(normal):
+        for link in rule.iter("{%s}id" % X14):
+            if link.text:
+                twins[link.text.strip()] = rule
+    own = [(int(r.get("priority") or 0), 0, i, r) for i, r in enumerate(normal)] + \
+          [(int(r.get("priority") or 0), 1, i, r) for i, r in enumerate(ext) if (r.get("id") or "").strip() not in twins]
+    for n, (_, _, _, rule) in enumerate(sorted(own, key=lambda x: x[:3]), start=1):
+        rule.set("priority", str(n))
+    for rule in ext:
+        twin = twins.get((rule.get("id") or "").strip())
+        if twin is not None:
+            rule.set("priority", twin.get("priority"))
+
+
 # ------------------------------------------------------------------ filling
-_SQREF_TAGS = (("conditionalFormatting", "sqref"), ("dataValidation", "sqref"), ("ignoredError", "sqref"),
-               ("protectedRange", "sqref"))
 _WS_AFTER_ROWBREAKS = ("sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData", "sheetCalcPr",
                        "sheetProtection", "protectedRanges", "scenarios", "autoFilter", "sortState", "dataConsolidate",
                        "customSheetViews", "mergeCells", "phoneticPr", "conditionalFormatting", "dataValidations",
@@ -665,36 +994,7 @@ def fill_band(x: XlsxDoc, band: dict, kids: list[tuple[dict, dict]], values: dic
             if b1 <= r1 + 1 and r2 + 1 <= b2:
                 inner_merges.append((r1 + 1, c1, r2 + 1, c2))
                 mc.remove(el)
-    parked = []                              # (element, attribute or None for xm:sqref text, [piece])
-    holders = [(el, attr) for tag, attr in _SQREF_TAGS for el in root.iter(s(tag))]
-    holders += [(el.find("{%s}sqref" % XM), None) for tag in ("conditionalFormatting", "dataValidation")
-                for el in root.iter("{%s}%s" % (X14, tag)) if el.find("{%s}sqref" % XM) is not None]
-    for el, attr in holders:
-        sq = el.get(attr) if attr else el.text
-        if not sq:
-            continue
-        pieces, outside = [], []
-        touched = False
-        for r1, c1, r2, c2 in _sqref_areas(sq):
-            lo, hi = r1 + 1, r2 + 1
-            if hi < b1 or lo > b2:
-                pieces.append(("out", None))
-                outside.append(_area(lo, c1, hi, c2))
-                continue
-            touched = True
-            if lo < b1:
-                pieces.append(("out", None))
-                outside.append(_area(lo, c1, b1 - 1, c2))
-            pieces.append(("in", (max(lo, b1), c1, min(hi, b2), c2)))
-            if hi > b2:
-                pieces.append(("out", None))
-                outside.append(_area(b2 + 1, c1, hi, c2))
-        if touched:
-            if attr:
-                el.set(attr, " ".join(outside))
-            else:
-                el.text = " ".join(outside)
-            parked.append((el, attr, pieces))
+    rules = _RuleSet(root, sheet, b1, b2)
     rb = root.find(s("rowBreaks"))
     inner_breaks, after_band = [], None
     if rb is not None:
@@ -801,22 +1101,7 @@ def fill_band(x: XlsxDoc, band: dict, kids: list[tuple[dict, dict]], values: dic
             mc.set("count", str(len(mc.findall(s("mergeCell")))))
         else:
             root.remove(mc)
-    for el, attr, pieces in parked:
-        now = ((el.get(attr) if attr else el.text) or "").split()
-        out = []
-        if len(now) == sum(1 for p in pieces if p[0] == "out"):
-            it = iter(now)
-            for kind, area in pieces:
-                out.extend([next(it)] if kind == "out" else copies_of(*area))
-        else:                                # the shift dropped an outside part: keep what is left
-            out = now + [a for kind, area in pieces if kind == "in" for a in copies_of(*area)]
-        if out:
-            if attr:
-                el.set(attr, " ".join(out))
-            else:
-                el.text = " ".join(out)
-        else:
-            _drop(el, attr)
+    rules.restore(lay, K, delta, copies_of)
     _page_breaks(root, lay, K, inner_breaks, after_band, band.get("separator") == "page_break")
 
     # 3. aggregate arguments from outside: one per copy
