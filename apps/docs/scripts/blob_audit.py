@@ -34,74 +34,19 @@ from synwevo_core.http import repo_root
 # `--data data` 指的还得是同一个 data/，否则备份的是一个空实例。
 ROOT = repo_root() or Path(__file__).resolve().parents[3]
 
-# Columns that hold a blob id directly.
+# Where references can hide — direct columns, JSON documents, files on disk, look-alike and
+# inline-byte columns — is one list for everything that reasons about blobs:
+# `synwevo_core.blob_refs` (tests/integration/test_blob_references.py keeps it complete: every
+# candidate column of a fresh database classified, every blob writer registered).
 #
-# This list must cover every clause of `authz._REACHABLE`, which is the authorization layer's
-# own answer to "can these bytes be read". `_cross_check_against_authz()` below enforces that,
-# because the first version of this file did not and got it wrong: it copied four of the five
-# clauses and dropped `blob_grants` — the one table whose blobs have no other reference. Preview
-# outputs and layout PDFs live only there, so the audit reported bytes the server was actively
-# serving as unreferenced. `_REACHABLE`'s own comment asks for exactly this ("kept as data so
-# the read check and any future sweeper cannot drift apart") and this file drifted anyway.
-DIRECT = [
-    ("source_files", "blob"),
-    ("source_files", "parsed_blob"),
-    ("source_files", "working_blob"),
-    ("templates", "original_blob"),
-    ("template_versions", "working_blob"),
-    ("artifacts", "blob"),
-    # Previews and layout PDFs. No row owns them; the grant *is* the reference.
-    ("blob_grants", "blob"),
-    # The same store serves Synwevo Message and resumable uploads and organization publications,
-    # each behind its own read gate that `authz._REACHABLE` does not describe. Missing them made
-    # every message attachment whose bytes are its own look like an orphan (docs/platform/
-    # blob-reclamation.md §1.2).
-    ("message_attachments", "blob"),
-    ("uploads", "blob"),                       # a completed upload not used yet: its only reference
-    ("organization_templates", "working_blob"),  # outlives the source template by design
-    ("organization_template_releases", "working_blob"),
-]
-
-# References that live *inside* JSON and are invisible to a per-column scan. Each entry is a
-# table, a JSON column, and a description of where in that document the id sits. These are the
-# ones a naive sweeper misses.
-JSON_PATHS = [
-    ("jobs", "snapshot", "$.template.working_blob"),
-    ("jobs", "snapshot", "$.template.fill_options.image.original_blob"),
-    ("jobs", "snapshot", "$.sources[*].blob"),
-    ("jobs", "snapshot", "$.sources[*].parsed_blob"),
-    ("jobs", "snapshot", "$.sources[*].working_blob"),
-    ("templates", "info", "$.image.original_blob"),
-    ("organization_templates", "info", "$.image.original_blob"),
-    ("organization_template_releases", "info", "$.image.original_blob"),
-]
-
-# Files on disk (outside the database) that name blobs: a captured regression case keeps its
-# template's fill options, image original included (regression.py). Walked like a JSON column.
-FILE_ROOTS = [("regression", "*/*/case.json", "回归用例的 case.json（模板图片原图）")]
-
-# Columns that hold the bytes themselves (SQLite BLOBs), not a digest: guessing "a column named
-# *blob* holds an id" would hand these to `blob_path()`.
-INLINE_BYTES = [
-    ("users", "avatar_blob"), ("organization_avatars", "image"), ("conversation_avatars", "image"), ("collab_docs", "state"),
-]
-
-# Columns that look like a blob id (64 hex characters) but are not one. Listed so a future
-# "just scan everything that looks like a digest" approach has a written reason not to.
-LOOKALIKES = [
-    ("idempotency", "request_hash", "请求指纹，不是 blob"),
-    ("api_keys", "secret_hash", "密钥哈希，不是 blob"),
-    ("sessions", "id", "Cookie 值的 SHA-256，不是 blob"),
-    ("oauth_tokens", "access_hash", "令牌哈希，不是 blob"),
-    ("oauth_tokens", "refresh_hash", "令牌哈希，不是 blob"),
-    ("oauth_codes", "code_hash", "授权码哈希，不是 blob"),
-    ("recovery_codes", "code_hash", "恢复码哈希，不是 blob"),
-    ("email_tokens", "token_hash", "邮件令牌哈希，不是 blob"),
-    ("passkeys", "credential_id", "WebAuthn 凭据 id，不是 blob"),
-    ("uploads", "sha256", "客户端声明的摘要；完成后才等于 uploads.blob"),
-    ("member_imports", "sha256", "导入原文件在 member_imports/，不在 blob 存储里"),
-    ("project_copies", "digest", "复制申请的清单指纹；执行时重读活行，不钉住字节"),
-]
+# It must cover every clause of `authz._REACHABLE`, the authorization layer's own answer to "can
+# these bytes be read" — `_cross_check_against_authz()` below enforces that, because the first
+# version of this file copied four of the five clauses and dropped `blob_grants` (the one table
+# whose blobs have no other reference: previews and layout PDFs). It must also cover the stores
+# `_REACHABLE` does not describe — Synwevo Message attachments, resumable uploads, organization
+# publications — each behind its own read gate (docs/platform/blob-reclamation.md §1.2);
+# `_cross_check_against_quarantine()` compares it with the quarantine's list of those.
+from synwevo_core.blob_refs import DIRECT, FILE_ROOTS, INLINE_BYTES, JSON_PATHS, LOOKALIKES  # noqa: E402
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
