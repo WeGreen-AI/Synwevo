@@ -562,9 +562,42 @@ def xlsx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
         if not len(dn):
             x.wb.remove(dn)
     shifts: dict[str, list[Shift]] = {}
-    repeats = sorted([s for s in slots if s["kind"] == "repeat"], key=lambda s: (s["locator"]["sheet"], -s["locator"]["row"]))
+    from . import xlsx_band as XB
+    # A detail row inside a repeat content block is filled per block copy from its sub-groups
+    # (`groups`, made by the plan when the block's mapping sets 分段字段), as in Word.
+    nest = XB.nesting(slots)
+    names = {s_["id"]: s_["name"] for s_ in slots}
+    for child, blk in nest.items():
+        cv = values.get(child) or {}
+        if "groups" not in cv and cv.get("rows"):
+            issues.append({"level": "error", "slot": child, "code": "nested_unconfigured",
+                           "message": f"明细表「{names.get(child, child)}」在重复内容块「{names.get(blk, blk)}」里：请在这个内容块的映射中设置分段字段，"
+                                      "每一段才会只写入自己的明细行"})
+    if issues:
+        return b"", issues
+    # repeat units bottom-up per sheet (a block and a single detail row alike), so each insertion
+    # only moves what later units no longer read
+    units = [(s_["locator"]["sheet"], XB.rows_of(s_)[0] - 1 if XB.is_block(s_) else s_["locator"]["row"], s_)
+             for s_ in slots if s_["kind"] == "repeat" and s_["id"] not in nest]
+    repeats = [u[2] for u in sorted(units, key=lambda u: (u[0], -u[1]))]
+    in_block: set[str] = set()
+
+    def warn(w: list[str], slot: dict) -> None:
+        issues.extend(_w(w, slot))
     try:
+        XB.check_slots(slots)
         for sl in repeats:
+            if XB.is_block(sl):
+                sheet = sl["locator"]["sheet"]
+                b1, b2 = XB.rows_of(sl)
+                kids = [(s_, values.get(s_["id"])) for s_ in slots if nest.get(s_["id"]) == sl["id"]]
+                cells = [s_ for s_ in slots if s_["kind"] == "cell" and s_["locator"]["sheet"] == sheet
+                         and b1 <= tabular.parse_cell(s_["locator"]["cell"])[0] + 1 <= b2]
+                in_block.update(c["id"] for c in cells)
+                moved = XB.fill_band(x, sl, kids, values, cells, issues, warn)
+                if moved is not None:
+                    shifts.setdefault(sheet, []).append(moved)
+                continue
             sheet, row = sl["locator"]["sheet"], sl["locator"]["row"]
             rows = (values.get(sl["id"]) or {"rows": []})["rows"]
             n = len(rows)
@@ -614,6 +647,8 @@ def xlsx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
 
         for sl in slots:
             fv = values.get(sl["id"])
+            if sl["id"] in in_block:
+                continue                     # written into every copy of its block
             if sl["kind"] == "cell":
                 sheet = sl["locator"]["sheet"]
                 r, c = tabular.parse_cell(sl["locator"]["cell"])

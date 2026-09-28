@@ -507,7 +507,7 @@ class XlsxDoc:
                                  ("ignoredError", "sqref", False), ("protectedRange", "sqref", False)):
             sh_ = plain
             if grows:
-                sh_ = Shift(shift.start, shift.delta, shift.expand_row, expand_single=(attr == "sqref"))
+                sh_ = shift.variant(expand_single=(attr == "sqref"))
             for el in list(root.iter(s(tag))):
                 val = el.get(attr)
                 if not val:
@@ -532,7 +532,7 @@ class XlsxDoc:
             if el.text:
                 el.text = shift_formula(el.text, shift, sheet, sheet)
         # x14 extensions (conditional formatting / data validation stored in extLst)
-        grow_sq = Shift(shift.start, shift.delta, shift.expand_row, expand_single=True)
+        grow_sq = shift.variant(expand_single=True)
         for el in root.iter("{%s}sqref" % NS["xm"]):
             if el.text:
                 el.text = shift_sqref(el.text, grow_sq) or el.text
@@ -606,7 +606,7 @@ class XlsxDoc:
                 if loc is not None and loc.get("ref"):
                     loc.set("ref", shift_area(loc.get("ref"), plain))
         # chart series pointing at the template row (even a single cell) describe the detail data → grow with it
-        chart_shift = Shift(shift.start, shift.delta, shift.expand_row, expand_single=True)
+        chart_shift = shift.variant(expand_single=True)
         for name in self.pkg.names:
             if name.startswith("xl/charts/chart") and name.endswith(".xml"):
                 croot = self.pkg.xml(name)

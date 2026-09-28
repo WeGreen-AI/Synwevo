@@ -5,7 +5,9 @@ Rules (documented in docs/FORMATS.md):
   ``start`` down by ``delta`` (relative and absolute alike, as Excel does);
 * a *range* whose last row is the template row (``expand_row``) and whose first
   row is <= it grows to cover the inserted rows – so ``SUM(D5:D5)`` over a
-  one-row detail template becomes ``SUM(D5:D9)``;
+  one-row detail template becomes ``SUM(D5:D9)``; for a repeat content block
+  (``expand_from`` = its first row, ``expand_row`` = its last) only a range that
+  contains the whole block grows, never one inside it;
 * removing rows turns references to removed cells into ``#REF!`` and shrinks
   ranges that partially cover them;
 * a sheet has ``MAX_ROW`` rows: inserting pushes nothing past it. A range whose end would go
@@ -30,11 +32,22 @@ MAX_ROW = 1_048_576         # rows in an Excel worksheet
 
 
 class Shift:
-    def __init__(self, start: int, delta: int, expand_row: int | None = None, expand_single: bool = False):
+    def __init__(self, start: int, delta: int, expand_row: int | None = None, expand_single: bool = False,
+                 expand_from: int | None = None):
         self.start = start          # first affected row (1-based)
         self.delta = delta          # >0 insert, <0 delete
         self.expand_row = expand_row
         self.expand_single = expand_single  # sqref lists: a single cell on the template row grows too
+        self.expand_from = expand_from      # a block's first row: a growing range must start at or above it
+
+    def variant(self, *, expand_single: bool) -> "Shift":
+        return Shift(self.start, self.delta, self.expand_row, expand_single, self.expand_from)
+
+    def grows(self, a: int, b: int) -> bool:
+        """Whether the range a..b (ending on the template row / the block's last row) grows."""
+        if self.expand_row is None or b != self.expand_row:
+            return False
+        return a <= (self.expand_row if self.expand_from is None else self.expand_from)
 
     def row(self, r: int) -> int | None:
         """Map a single row; None means the row was deleted (or pushed past the last row)."""
@@ -52,7 +65,7 @@ class Shift:
             na = a + self.delta if a >= self.start else a
             if b >= self.start:
                 nb = b + self.delta
-            elif self.expand_row is not None and b == self.expand_row and a <= self.expand_row:
+            elif self.grows(a, b):
                 nb = b + self.delta
             else:
                 nb = b
@@ -83,7 +96,7 @@ def shift_area(ref: str, sh: Shift) -> str:
         a, b = m.group("a"), m.group("b")
         if b is None:
             ra = _row_of(a)
-            if sh.expand_single and sh.delta > 0 and sh.expand_row is not None and ra == sh.expand_row:
+            if sh.expand_single and sh.delta > 0 and sh.grows(ra, ra):
                 return f"{a}:{_shift_cell_ref(a, min(ra + sh.delta, MAX_ROW))}"
             nr = sh.row(ra)
             return "#REF!" if nr is None else _shift_cell_ref(a, nr)
