@@ -168,3 +168,12 @@ def test_without_accounts_person_only_routes_do_not_pretend_a_sign_in_exists(tmp
         pid = c.post("/api/projects", json={"name": "无账户部署"}).json()["id"]
         r = c.post(f"/api/projects/{pid}/comments", json={"body": "谁来评论？"})
         assert r.status_code == 403 and r.json()["error"] == "accounts_disabled", r.text
+
+
+def test_sheet_names_differing_only_in_case_are_one_name(api):
+    """Excel compares sheet names without case: a table template with sheets 「A」 and 「a」 was built
+    with the second silently renamed to 「a1」, so fields and mappings naming 「a」 pointed nowhere."""
+    two = {"sheets": [{"name": n, "cols": [{"w": 100}], "rows": [{"h": 24}], "cells": {"A1": {"v": n}}, "merges": [], "fields": []}
+                      for n in ("A", "a")]}
+    r = api.c.post("/api/templates/builtin", json={"kind": "builtin_sheet", "editor": two, "name": "大小写"})
+    assert r.status_code == 400 and r.json()["error"] == "bad_editor" and "工作表名称重复" in r.json()["message"], r.text

@@ -397,9 +397,11 @@ def build_xlsx(editor: dict) -> tuple[bytes, list[dict]]:
     names = set()
     for sh in sheets:
         name = re.sub(r"[\\/*?:\[\]]", "_", (sh.get("name") or "Sheet").strip())[:31] or "Sheet"
-        if name in names:
+        # Excel treats sheet names case-insensitively: "A" and "a" are one name, and openpyxl
+        # quietly renamed the second to "a1" — fields and mappings naming "a" then pointed nowhere
+        if name.casefold() in names:
             raise BuiltinError(f"工作表名称重复：{name}")
-        names.add(name)
+        names.add(name.casefold())
         ws = wb.create_sheet(name)
         for ci, col in enumerate(sh.get("cols") or []):
             if col and col.get("w"):
