@@ -6075,4 +6075,48 @@ export const messages = {
     "en": "Copying failed and nothing was created. Request the copy again later.",
     "zh-Hant": "複製過程出錯，沒有建立任何內容；請稍後重新申請。"
   },
+  "第 {v1} 行（整行）": {
+    "en": "Row {v1} (whole row)",
+    "zh-Hant": "第 {v1} 行（整行）"
+  },
+  "第 {v1}–{v2} 行（整行）": {
+    "en": "Rows {v1}–{v2} (whole rows)",
+    "zh-Hant": "第 {v1}–{v2} 行（整行）"
+  },
+  "重复内容块（整行）": {
+    "en": "Repeating block (whole rows)",
+    "zh-Hant": "重復內容塊（整行）"
+  },
+  "第 {v1}–{v2} 行作为一个整体：每条明细（或每个分段）复制一份，公式、合并单元格和条件格式随之复制": {
+    "en": "Rows {v1}–{v2} as one unit: copied once per detail row (or per section), with their formulas, merged cells and conditional formats",
+    "zh-Hant": "第 {v1}–{v2} 行作為一個整體：每條明細（或每個分段）複製一份，公式、合併單元格和條件格式隨之複製"
+  },
+  "第 {v1} 行在内容块「{v2}」里：每一份内容块只写入它那一段的明细行（有几条就插入几行）": {
+    "en": "Row {v1} is inside the block “{v2}”: each copy of the block receives only its own section's detail rows (one row per detail)",
+    "zh-Hant": "第 {v1} 行在內容塊「{v2}」裡：每一份內容塊只寫入它那一段的明細行（有幾條就插入幾行）"
+  },
+  "创建后在块内选中单元格，选「作为内容块的一列」添加列；块内可再设一行重复明细，每一份只写入该段的行；块内的其他字段每一份填入相同的值。块内公式引用块外的单元格时，每一份都指向同一个单元格（不论有没有 $）。": {
+    "en": "After creating it, select a cell inside the block and choose “Use as block column” to add a column; a row inside the block can be made a repeating detail row, and each copy then receives only its section's rows; other fields inside the block get the same value in every copy. A formula inside the block that refers to a cell outside it points at that same cell in every copy, with or without $.",
+    "zh-Hant": "建立後在塊內選中單元格，選「作為內容塊的一列」添加列；塊內可再設一行重複明細，每一份只寫入該段的行；塊內的其他欄位每一份填入相同的值。塊內公式引用塊外的單元格時，每一份都指向同一個單元格（不論有沒有 $）。"
+  },
+  "重复内容块：第 {v1}–{v2} 行，每条明细（或每段）复制一份": {
+    "en": "Repeating block: rows {v1}–{v2}, copied once per detail row (or per section)",
+    "zh-Hant": "重復內容塊：第 {v1}–{v2} 行，每條明細（或每段）複製一份"
+  },
+  "块内公式引用块外的单元格时，每一份都指向同一个单元格（不论有没有 $）；单独的重复明细行则像 Excel 向下填充一样移动相对引用。": {
+    "en": "A formula inside the block that refers to a cell outside it points at that same cell in every copy, with or without $. A repeating detail row on its own moves relative references the way Excel's fill down does.",
+    "zh-Hant": "塊內公式引用塊外的單元格時，每一份都指向同一個單元格（不論有沒有 $）；單獨的重複明細行則像 Excel 向下填滿一樣移動相對引用。"
+  },
+  "块的列（在块内选中单元格可添加列）：": {
+    "en": "Block columns (select a cell inside the block to add one):",
+    "zh-Hant": "塊的列（在塊內選中單元格可添加列）："
+  },
+  "还没有列。请在右侧内容块中选中要随明细变化的单元格，选择「作为内容块的一列」。": {
+    "en": "No columns yet. In the block on the right, select a cell that should change with the details and choose “Use as block column”.",
+    "zh-Hant": "還沒有列。請在右側內容塊中選中要隨明細變化的單元格，選擇「作為內容塊的一列」。"
+  },
+  "内容块「{v1}」的列「{v2}」": {
+    "en": "Column “{v2}” of the block “{v1}”",
+    "zh-Hant": "內容塊「{v1}」的列「{v2}」"
+  },
 } satisfies Messages;

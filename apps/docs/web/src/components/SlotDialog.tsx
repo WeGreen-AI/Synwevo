@@ -55,7 +55,7 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
     if (req.kind === "repeat_block") {
       req.separator = separator;
       req.empty_policy = blockEmpty;
-      req.auto_columns = autoCols;
+      if (tpl.format === "docx") req.auto_columns = autoCols;
     }
     if (req.kind === "pdf_repeat") {
       req.layout = layout;
@@ -156,7 +156,7 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
         )}
         {kind === "repeat_block" && (
           <div className="col gap8">
-            <label className="check"><input type="checkbox" checked={autoCols} onChange={(e) => setAutoCols(e.target.checked)} />{tr(" 自动把「标签：值」中的值设为明细列（如「品名：示例商品」→ 列「品名」）")}</label>
+            {tpl.format === "docx" && <label className="check"><input type="checkbox" checked={autoCols} onChange={(e) => setAutoCols(e.target.checked)} />{tr(" 自动把「标签：值」中的值设为明细列（如「品名：示例商品」→ 列「品名」）")}</label>}
             <div className="grid2">
               <label className="field">{tr("相邻两份之间")}<select className="input" value={separator} onChange={(e) => setSeparator(e.target.value)}>
                   <option value="none">{tr("直接相连")}</option><option value="blank">{tr("空一行")}</option><option value="page_break">{tr("分页（每条明细一页）")}</option>
@@ -167,7 +167,9 @@ export default function SlotDialog({ tpl, sel, suggestedName, onCreate, onClose 
                 </select>
               </label>
             </div>
-            <div className="tiny muted">{tr("创建后可在块内继续划选文字，选「作为内容块的一列」添加列；块内的其他字段每一份填入相同的值。")}</div>
+            <div className="tiny muted">{tpl.format === "xlsx"
+              ? tr("创建后在块内选中单元格，选「作为内容块的一列」添加列；块内可再设一行重复明细，每一份只写入该段的行；块内的其他字段每一份填入相同的值。块内公式引用块外的单元格时，每一份都指向同一个单元格（不论有没有 $）。")
+              : tr("创建后可在块内继续划选文字，选「作为内容块的一列」添加列；块内的其他字段每一份填入相同的值。")}</div>
           </div>
         )}
         {kind === "pdf_repeat" && sel.kind === "pdf_region" && (
@@ -227,9 +229,25 @@ function kindOptions(format: string, sel: Selection, slots: Slot[]): { kind: str
   }
   if (format === "xlsx" && sel.kind === "cells") {
     const single = sel.r1 === sel.r2 && sel.c1 === sel.c2;
-    if (single) return [{ kind: "cell", label: tr("单元格字段"), hint: cellRef(sel.r1, sel.c1), req: { kind: "cell", sheet: sel.sheet, cell: cellRef(sel.r1, sel.c1) } }];
-    const out = [{ kind: "region", label: tr("固定区域"), hint: tr("{v1}：{v2} 行 × {v3} 列，按行列一一对应", { v1: rangeRef(sel.r1, sel.c1, sel.r2, sel.c2), v2: sel.r2 - sel.r1 + 1, v3: sel.c2 - sel.c1 + 1 }), req: { kind: "region", sheet: sel.sheet, range: rangeRef(sel.r1, sel.c1, sel.r2, sel.c2) } }];
-    if (sel.r1 === sel.r2) out.unshift({ kind: "repeat", label: tr("重复明细行"), hint: tr("第 {v1} 行的 {v2} 为明细模板行：有几条明细就插入几行（公式、合并单元格和条件格式随之平移）", { v1: sel.r1 + 1, v2: rangeRef(sel.r1, sel.c1, sel.r2, sel.c2) }), req: { kind: "repeat", sheet: sel.sheet, row: sel.r1, c1: sel.c1, c2: sel.c2 } as any });
+    // a repeat content block covers whole rows (docs-xlsx-nested.md)
+    const blk = slots.find((s) => s.block && s.locator?.sheet === sel.sheet && s.locator.first <= sel.r1 && sel.r2 <= s.locator.last);
+    if (single) {
+      const cell = { kind: "cell", label: tr("单元格字段"), hint: cellRef(sel.r1, sel.c1), req: { kind: "cell", sheet: sel.sheet, cell: cellRef(sel.r1, sel.c1) } };
+      if (blk) return [
+        { kind: "block_column", label: tr("作为内容块「{v1}」的一列", { v1: blk.name }), hint: tr("每一份中这里填入该条明细对应列的值"), req: { kind: "block_column", block_id: blk.id, sheet: sel.sheet, cell: cellRef(sel.r1, sel.c1) } },
+        { ...cell, hint: tr("每一份中这里都填入同一个值（不随明细变化）") },
+      ];
+      return [cell];
+    }
+    const out: { kind: string; label: string; hint: string; req: any }[] = [{ kind: "region", label: tr("固定区域"), hint: tr("{v1}：{v2} 行 × {v3} 列，按行列一一对应", { v1: rangeRef(sel.r1, sel.c1, sel.r2, sel.c2), v2: sel.r2 - sel.r1 + 1, v3: sel.c2 - sel.c1 + 1 }), req: { kind: "region", sheet: sel.sheet, range: rangeRef(sel.r1, sel.c1, sel.r2, sel.c2) } }];
+    if (sel.r1 === sel.r2) out.unshift({ kind: "repeat", label: tr("重复明细行"), hint: blk
+      ? tr("第 {v1} 行在内容块「{v2}」里：每一份内容块只写入它那一段的明细行（有几条就插入几行）", { v1: sel.r1 + 1, v2: blk.name })
+      : tr("第 {v1} 行的 {v2} 为明细模板行：有几条明细就插入几行（公式、合并单元格和条件格式随之平移）", { v1: sel.r1 + 1, v2: rangeRef(sel.r1, sel.c1, sel.r2, sel.c2) }), req: { kind: "repeat", sheet: sel.sheet, row: sel.r1, c1: sel.c1, c2: sel.c2 } });
+    if (sel.r1 < sel.r2) {
+      const band = { kind: "repeat_block", label: tr("重复内容块（整行）"), hint: tr("第 {v1}–{v2} 行作为一个整体：每条明细（或每个分段）复制一份，公式、合并单元格和条件格式随之复制", { v1: sel.r1 + 1, v2: sel.r2 + 1 }), req: { kind: "repeat_block", sheet: sel.sheet, first: sel.r1, last: sel.r2 } };
+      if (sel.rows) out.unshift(band);   // whole rows picked from the row numbers: most likely a block
+      else out.push(band);
+    }
     return out;
   }
   if (pdfLike(format)) {

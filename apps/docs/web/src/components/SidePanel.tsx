@@ -378,7 +378,12 @@ function SlotEditor(p: Props & { slot: Slot }) {
       )}
       {s.kind === "repeat" && s.block && (
         <>
-          <div className="small muted">{tr("重复内容块：")}{s.paragraphs ?? "?"}{tr(" 个段落，每条明细复制一份")}</div>
+          {p.project.template?.format === "xlsx" ? (
+            <>
+              <div className="small muted">{tr("重复内容块：第 {v1}–{v2} 行，每条明细（或每段）复制一份", { v1: (s.locator?.first ?? 0) + 1, v2: (s.locator?.last ?? 0) + 1 })}</div>
+              <div className="tiny muted">{tr("块内公式引用块外的单元格时，每一份都指向同一个单元格（不论有没有 $）；单独的重复明细行则像 Excel 向下填充一样移动相对引用。")}</div>
+            </>
+          ) : <div className="small muted">{tr("重复内容块：")}{s.paragraphs ?? "?"}{tr(" 个段落，每条明细复制一份")}</div>}
           <label className="field">{tr("相邻两份之间")}<select className="input sm" value={s.separator || "none"} onChange={(e) => up({ separator: e.target.value })}>
               <option value="none">{tr("直接相连")}</option><option value="blank">{tr("空一行")}</option><option value="page_break">{tr("分页（每条明细一页）")}</option>
             </select>
@@ -388,11 +393,13 @@ function SlotEditor(p: Props & { slot: Slot }) {
             </select>
           </label>
           {s.empty_policy === "placeholder" && <label className="field">{tr("占位文字")}<input className="input sm" defaultValue={s.placeholder || tr("（无）")} onBlur={(e) => up({ placeholder: e.target.value })} /></label>}
-          <div className="small">{tr("明细列（在块内划选文字可添加列）：")}</div>
-          {(s.columns || []).length === 0 && <div className="tiny muted">{tr("还没有列。请在右侧内容块中划选要随明细变化的文字，选择「作为内容块的一列」。")}</div>}
+          <div className="small">{p.project.template?.format === "xlsx" ? tr("块的列（在块内选中单元格可添加列）：") : tr("明细列（在块内划选文字可添加列）：")}</div>
+          {(s.columns || []).length === 0 && <div className="tiny muted">{p.project.template?.format === "xlsx"
+            ? tr("还没有列。请在右侧内容块中选中要随明细变化的单元格，选择「作为内容块的一列」。")
+            : tr("还没有列。请在右侧内容块中划选要随明细变化的文字，选择「作为内容块的一列」。")}</div>}
           {(s.columns || []).map((c) => (
             <div key={c.key} className="row small gap4">
-              <span className="badge">{c.key}</span>
+              <span className="badge">{c.cell || c.key}</span>
               <input className="input sm grow" defaultValue={c.name} onBlur={(e) => e.target.value && e.target.value !== c.name && up({ columns: [{ key: c.key, name: e.target.value }] })} />
               <button className="btn xs" title={tr("取消该列（恢复为原文字，不随明细变化）")} onClick={() => up({ remove_column: c.key })}>{tr("移除")}</button>
             </div>

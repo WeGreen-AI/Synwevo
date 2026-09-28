@@ -23,7 +23,8 @@ export interface GridWindow {
   notes?: string[];
 }
 
-export interface CellSel { sheet: string; r1: number; c1: number; r2: number; c2: number }
+/** `rows`: whole rows picked from the row numbers (Shift+click extends them) */
+export interface CellSel { sheet: string; r1: number; c1: number; r2: number; c2: number; rows?: boolean }
 
 const ROW_H = 22;
 const HEAD_H = 22;
@@ -374,7 +375,13 @@ export default function GridView({ load, reloadKey, marks, selection, onSelect, 
     const on = sel && r >= sel.r1 && r <= sel.r2;
     heads.push(
       <div key={`r${r}`} className={`ghead${on ? " on" : ""}`} style={{ left: leftFix, top: HEAD_H + rowTop(r), width: NUM_W, height: h, lineHeight: `${h}px`, cursor: "e-resize" }}
-        onMouseDown={(e) => { e.stopPropagation(); if (!selectable) return; scrollRef.current?.focus({ preventScroll: true }); onSelect({ sheet: meta.sheet, r1: r, c1: 0, r2: r, c2: Math.max(0, colW.length - 1) }); }}>
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          if (!selectable) return;
+          scrollRef.current?.focus({ preventScroll: true });
+          const from = e.shiftKey && selection && selection.sheet === meta.sheet ? selection.r1 : r;
+          onSelect({ sheet: meta.sheet, r1: Math.min(from, r), c1: 0, r2: Math.max(from, r), c2: Math.max(0, colW.length - 1), rows: true });
+        }}>
         {formatNumber(r + 1)}
       </div>,
     );
