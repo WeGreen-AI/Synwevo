@@ -114,6 +114,8 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (records only, run 36349741798, 2026-09-27 21:17 UTC):** `{"deployed": "synwevo:ea57a1d3a67a5bc4f728c53a48fbc40e8e29342e", "backup": "/opt/synwevo/backups/20260927T211755Z"}`; verify and deploy succeeded; documentation only.
 
+**Deployed (CI-79 unsaved-changes guard, run 36359665130, 2026-09-28 00:09 UTC):** `{"deployed": "synwevo:8ba4e29e0f705e5c0951a568799659433bcc03f2", "backup": "/opt/synwevo/backups/20260928T000944Z"}`; verify and deploy succeeded; account shell only, no schema change. Read-only production check: `readyz` 200 on the three hosts; walking the account bundle's imports (20 chunks) finds the leave handler in `account-assets/hooks-BetueTC8.js`.
+
 **Deployed (CI-55 bounded frames and draft recovery + CI-56 setting before/after, run 36255489490, 2026-09-26 16:51 UTC):** `{"deployed": "synwevo:1d15665ee420939f562aad54eb4c3f023a569d3a", "backup": "/opt/synwevo/backups/20260926T165059Z"}`; verify and deploy succeeded; no schema change. This is the last release of the round-8 collaboration batches (CI-45…56); the handoff lists the conditions that reopen the queue.
 
 **Deployed (CI-53 change-log diffs with schema v22 + the 9.16 matrix + CI-54 version dialog, run 36253921338, 2026-09-26 16:25 UTC):** `{"deployed": "synwevo:11202c33be2a53ca202eefb04bd8fb2ceea29073", "backup": "/opt/synwevo/backups/20260926T162519Z"}`; verify and deploy succeeded; the v22 migration (one additive column, `collab_changes.before`) runs at start and the deploy job's readiness checks passed. Rollback to a v21 release leaves the column unused.
