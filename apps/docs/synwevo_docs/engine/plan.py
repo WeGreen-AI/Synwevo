@@ -308,7 +308,11 @@ def _resolve_mapping(m: dict, ctx: dict, srcs, slots, binding):
         if len(srcs_) > 1:
             mats = [extract_matrix(s, _loc_for(m, loc0, s), ctx) for s in srcs_]
             if any([[c.text for c in r] for r in x] != [[c.text for c in r] for r in mats[0]] for x in mats[1:]):
-                raise transforms.ConflictError("同一组来自多个文件的区域数据不一致", [s.filename for s in srcs_])
+                # not a value to choose between: a region is never merged across files, so the
+                # advice for a field (「选择取值规则」) does not apply
+                names = "、".join(s.filename for s in srcs_[:5]) + (" 等" if len(srcs_) > 5 else "")
+                raise ResolveError("group_conflict", f"同一组的 {len(srcs_)} 个文件在这个区域里的内容不一致（{names}）。"
+                                                     "区域不会跨文件合并：请让这些文件的该区域一致，或把分组范围改为按文件分组")
             mat = mats[0]
         else:
             s = srcs_[0]

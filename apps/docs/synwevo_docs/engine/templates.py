@@ -623,7 +623,10 @@ def xlsx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
                 if mat is None:
                     continue
                 if len(mat) != r2 - r1 + 1 or any(len(rw) != c2 - c1 + 1 for rw in mat):
-                    issues.append({"level": "error", "slot": sl["id"], "code": "region_size", "message": f"区域「{sl['name']}」尺寸不一致"})
+                    got_c = max((len(rw) for rw in mat), default=0)
+                    issues.append({"level": "error", "slot": sl["id"], "code": "region_size",
+                                   "message": f"区域字段「{sl['name']}」大小为 {r2 - r1 + 1} 行 × {c2 - c1 + 1} 列，来源数据为 {len(mat)} 行 × {got_c} 列，"
+                                              "尺寸不一致。请调整来源区域或目标区域（不会自动截断、补齐或转置）"})
                     continue
                 for i, rw in enumerate(mat):
                     nr = mapped_row(sheet, r1 + i)

@@ -273,7 +273,7 @@ def aggregate(vals: list[V.Value], how: str = "unique", sep: str = "、") -> V.V
         return V.Value(V.STR, t, t)
     if how == "sum":
         return _sum(non_empty)
-    raise TransformError(f"不支持的聚合方式：{how}")
+    raise TransformError(f"不支持的组内取值方式：{how}；只能是必须一致、取第一条、取最后一条、全部拼接、去重后拼接、求和或计数")
 
 
 def _sum(vals: list[V.Value]) -> V.Value:
@@ -303,7 +303,7 @@ def combine(vals: list[V.Value], op: str, sep: str = " ") -> V.Value:
     # An unknown op must not fall through to concatenation: "sum" mistyped would turn
     # 100 + 200 into "100 200" in the delivered document, with nothing reported.
     if op not in COMBINE_OPS:
-        raise TransformError(f"不支持的合并方式：{op}；只能是 {' / '.join(COMBINE_OPS)}")
+        raise TransformError(f"不支持的合并方式：{op}；只能是拼接、换行拼接或求和")
     if op == "sum":
         non_empty = [v for v in vals if not v.is_empty]
         return _sum(non_empty) if non_empty else V.empty()

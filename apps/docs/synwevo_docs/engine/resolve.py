@@ -127,7 +127,8 @@ def extract_scalar(src: SourceDoc, loc: dict, ctx: dict) -> V.Value:
         return _record_meta(src, loc, ctx)
     if kind == "column":
         if ctx.get("mode") != "per_row":
-            raise ResolveError("mode_mismatch", "列来源只能在「每行一份」中作为单值使用；分组模式由系统按组汇总")
+            raise ResolveError("mode_mismatch", "列来源按行取值，只能用于「每行一份」和「每组一份」；"
+                                                "「每文件一份」「每块一份」里请改选单元格或区域")
         tv = ctx["table_view"]
         c = column_index(tv, loc, src)
         r = ctx["row"]

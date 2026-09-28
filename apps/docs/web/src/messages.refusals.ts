@@ -230,12 +230,11 @@ export const refusalMessages = {
   "映射没有来源": { en: "The mapping has no source.", "zh-Hant": "映射沒有來源" },
   "重复明细映射还没有设置列对应关系": { en: "The columns of this repeating-detail mapping have not been matched yet.", "zh-Hant": "重複明細映射還沒有設定列對應關係" },
   "请为这个重复内容块选择分段字段": { en: "Choose a split-by field for this repeating block.", "zh-Hant": "請為這個重複內容塊選擇分段欄位" },
-  "列来源只能在「每行一份」中作为单值使用；分组模式由系统按组汇总": { en: "A column can be a single-value source only in “one per row” mode; in group mode each group's values are combined for you.", "zh-Hant": "列來源只能在「每行一份」中作為單值使用；分組模式由系統按組彙總" },
+  "列来源按行取值，只能用于「每行一份」和「每组一份」；「每文件一份」「每块一份」里请改选单元格或区域": { en: "A column is read row by row, so it can be used only in “one per row” and “one per group”. In “one per file” and “one per block”, choose a cell or a range instead.", "zh-Hant": "列來源按行取值，只能用於「每行一份」和「每組一份」；「每文件一份」「每塊一份」裡請改選單元格或區域" },
   "「每行一份」模式下每条样本只有一行，不能作为重复明细来源；请改用「每文件一份」或「每组一份」": { en: "In “one per row” mode each sample has only one row, so it cannot be the source of a repeating detail. Use “one per file” or “one per group”.", "zh-Hant": "「每行一份」模式下每條樣本只有一行，不能作為重複明細來源；請改用「每文件一份」或「每組一份」" },
   "形状中的段落数量与代表文件不同": { en: "The shape has a different number of paragraphs than in the representative file.", "zh-Hant": "形狀中的段落數量與代表文件不同" },
   // a group's conflicting values: shown as 「映射 #n：<this>：values。请在映射中…」, so no full stop
   "同一组内该字段有多个不同值": { en: "This field has different values within one group", "zh-Hant": "同一組內該欄位有多個不同值" },
-  "同一组来自多个文件的区域数据不一致": { en: "The region data of this group differs between its files", "zh-Hant": "同一組來自多個文件的區域資料不一致" },
   // the fill and its checks
   "模板段落已变化": { en: "A paragraph of the template has changed.", "zh-Hant": "模板段落已變化" },
   "图片模板只能输出一页；明细超出时请改为「压缩行高」或「视为错误」": { en: "An image template can output only one page. When the details overflow, choose “Compress row height” or “Fail this sample”.", "zh-Hant": "圖片模板只能輸出一頁；明細超出時請改為「壓縮行高」或「視為錯誤」" },
@@ -273,6 +272,7 @@ export const refusalMessages = {
 } satisfies Messages;
 
 export const refusalPatterns = {
+  "同一组的 {count} 个文件在这个区域里的内容不一致（{files}）。区域不会跨文件合并：请让这些文件的该区域一致，或把分组范围改为按文件分组": { en: "The {count} files of this group have different contents in this region ({files}). A region is not merged across files: make the region the same in these files, or group within each file instead.", "zh-Hant": "同一組的 {count} 個文件在這個區域裡的內容不一致（{files}）。區域不會跨文件合併：請讓這些文件的該區域一致，或把分組範圍改為按文件分組" },
   // ------------------------------------------------------------------ gate
   "你在该工作空间使用「{app}」的资格已被撤销，请联系工作空间管理员": { en: "Your access to “{app}” in this workspace has been revoked. Contact the workspace administrator.", "zh-Hant": "你在該工作空間使用「{app}」的資格已被撤銷，請聯絡工作空間管理員" },
   "你所在的工作空间尚未启用「{app}」，或你没有使用它的资格": { en: "Your workspace has not enabled “{app}”, or you are not entitled to use it.", "zh-Hant": "你所在的工作空間尚未啟用「{app}」，或你沒有使用它的資格" },
@@ -465,9 +465,9 @@ export const refusalPatterns = {
   "形状文字中找不到标签「{label}」": { en: "The label “{label}” cannot be found in the shape's text.", "zh-Hant": "形狀文字中找不到標籤「{label}」" },
   // value transforms and group values (engine/transforms.py)
   "不支持的转换：{name}": { en: "Unsupported transform: {name}", "zh-Hant": "不支援的轉換：{name}" },
-  "不支持的聚合方式：{how}": { en: "Unsupported way of combining a group's values: {how}", "zh-Hant": "不支援的聚合方式：{how}" },
+  "不支持的组内取值方式：{how}；只能是必须一致、取第一条、取最后一条、全部拼接、去重后拼接、求和或计数": { en: "Unsupported way of taking a value within a group: {how}. It can only be must match, first, last, join all, join distinct, sum or count.", "zh-Hant": "不支援的組內取值方式：{how}；只能是必須一致、取第一筆、取最後一筆、全部串接、去重後串接、加總或計數" },
   "「{value}」不是数字，无法求和": { en: "“{value}” is not a number, so it cannot be summed.", "zh-Hant": "「{value}」不是數字，無法加總" },
-  "不支持的合并方式：{op}；只能是 {ops}": { en: "Unsupported way of combining sources: {op}. It can only be {ops}.", "zh-Hant": "不支援的合併方式：{op}；只能是 {ops}" },
+  "不支持的合并方式：{op}；只能是拼接、换行拼接或求和": { en: "Unsupported way of combining sources: {op}. It can only be concatenate, concatenate on new lines or sum.", "zh-Hant": "不支援的合併方式：{op}；只能是串接、換行串接或加總" },
   "「{value}」不是可识别的日期，未改变格式": { en: "“{value}” is not a date that can be recognized, so its format was not changed.", "zh-Hant": "「{value}」不是可辨識的日期，未改變格式" },
   "「{value}」不是数字，未应用数字格式": { en: "“{value}” is not a number, so the number format was not applied.", "zh-Hant": "「{value}」不是數字，未套用數字格式" },
   // the sample rules' warnings (engine/records.py)
@@ -482,7 +482,6 @@ export const refusalPatterns = {
   "重复明细「{name}」的模板行已丢失": { en: "The template row of the repeating detail “{name}” is missing.", "zh-Hant": "重複明細「{name}」的模板行已遺失" },
   "重复明细「{name}」没有数据，模板行已删除；引用该行的公式 {cells} 变为 #REF!。如需保留公式，请把零条明细处理方式改为「保留一行空白」": { en: "The repeating detail “{name}” has no data, so its template row was deleted and the formulas that refer to it ({cells}) became #REF!. To keep the formulas, set “When there are no detail rows” to “Keep one blank row”.", "zh-Hant": "重複明細「{name}」沒有資料，模板行已刪除；引用該行的公式 {cells} 變為 #REF!。如需保留公式，請把零筆明細處理方式改為「保留一行空白」" },
   "字段「{name}」所在行已被删除": { en: "The row that held the field “{name}” was deleted.", "zh-Hant": "欄位「{name}」所在行已被刪除" },
-  "区域「{name}」尺寸不一致": { en: "The size of the region “{name}” does not match.", "zh-Hant": "區域「{name}」尺寸不一致" },
   "区域「{name}」的第 {row} 行所在行已被删除（零条明细时删除了该行）": { en: "Row {row} of the region “{name}” was deleted (it was removed because a detail had no rows).", "zh-Hant": "區域「{name}」的第 {row} 行所在行已被刪除（零筆明細時刪除了該行）" },
   "字段「{name}」的值「{value}」未能写入图片": { en: "The value “{value}” of the field “{name}” could not be written into the image.", "zh-Hant": "欄位「{name}」的值「{value}」未能寫入圖片" },
   "字段「{name}」是重复明细区域：当前部署的 PDF 引擎处于基础模式，暂不支持图片模板的重复明细，请改用单值字段，或请管理员按部署文档启用 PDF 引擎完整模式": { en: "The field “{name}” is a repeating detail region. The PDF engine on this server runs in basic mode, which does not support repeating details in image templates yet. Use single-value fields, or ask an administrator to enable the PDF engine's full mode (see the deployment guide).", "zh-Hant": "欄位「{name}」是重複明細區域：目前部署的 PDF 引擎處於基礎模式，暫不支援圖片模板的重複明細，請改用單值欄位，或請管理員按部署文件啟用 PDF 引擎完整模式" },

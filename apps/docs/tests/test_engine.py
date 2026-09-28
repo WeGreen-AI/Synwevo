@@ -228,9 +228,41 @@ def test_combine_rejects_unknown_op():
     for bad in ("sumn", "SUM", "add", "", "join"):
         with pytest.raises(T.TransformError) as e:
             T.combine([a, b], bad)
-        assert "不支持的合并方式" in str(e.value) and "concat / newline / sum" in str(e.value)
+        assert "不支持的合并方式" in str(e.value) and "拼接、换行拼接或求和" in str(e.value)
 
     for bad in ("sumn", "SUM", "concat"):        # the aggregate side must stay consistent
         with pytest.raises(T.TransformError):
             T.aggregate([a, b], bad)
     assert T.aggregate([a, b], "join", "、").text == "100、200"      # join is an aggregate op, not a combine one
+
+
+def test_a_region_that_differs_between_files_of_a_group_says_so_without_a_rule_to_pick():
+    """Q15: a fixed region read from every file of a cross-file group, with different contents,
+    was reported as 「同一组来自多个文件的区域数据不一致」 plus the advice for a field — choose a value
+    rule in the mapping — which a region mapping does not have; the "values" were file names.
+    TEST FIXTURE workbooks."""
+    import io as _io
+    import openpyxl as _openpyxl
+    from synwevo_docs.engine import tabular
+    from synwevo_docs.engine.plan import build_plan
+    from synwevo_docs.engine.records import build_records
+    from synwevo_docs.engine.resolve import SourceDoc
+
+    def book(v):
+        wb = _openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "明细"
+        ws.append(["客户", "备注"])
+        ws.append(["A", v])
+        b = _io.BytesIO()
+        wb.save(b)
+        return tabular.read_xlsx(b.getvalue()).to_json()
+    srcs = {f"F{i}": SourceDoc(f"F{i}", f"分店{i}.xlsx", "xlsx", "table", workbook_json=book(v)) for i, v in enumerate(("甲", "乙"))}
+    rule = {"mode": "per_group", "table": {"sheet": "明细", "header_row": 0}, "group": {"keys": [{"header": "客户"}], "scope": "cross_file"}}
+    rec = build_records(list(srcs.values()), rule)["records"][0]
+    slots = [{"id": "r1", "binding": "r1", "name": "备注区", "kind": "region", "rows": 1, "cols": 1}]
+    maps = [{"id": "m1", "no": 1, "type": "region", "sources": [{"kind": "range", "sheet": "明细", "range": "B2:B2"}], "target": {"binding": "r1"}}]
+    issues = [i for i in build_plan(rec, rule, srcs, maps, slots).issues if i["level"] == "error"]
+    assert [i["code"] for i in issues] == ["group_conflict"]
+    msg = issues[0]["message"]
+    assert "2 个文件" in msg and "分店0.xlsx、分店1.xlsx" in msg and "按文件分组" in msg and "取值规则" not in msg, msg
