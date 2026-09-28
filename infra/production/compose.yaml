@@ -92,10 +92,15 @@ services:
     # Memory: with the 3.6 M signatures of 2026-09 the daemon sits at ~1 GiB resident (measured
     # 950 MiB on ClamAV 1.5.4) and briefly doubles while reloading a fresh database; the limit
     # below covers that — check the host's free memory before adding the service.
+    # The entrypoint starts as root, hands /var/lib/clamav to the clamav user and opens its log
+    # files before freshclam and clamd drop privileges, so it needs exactly CHOWN, SETUID, SETGID
+    # and DAC_OVERRIDE (tried on the production host 2026-09-28: with every capability dropped it
+    # exits at the chown; without DAC_OVERRIDE freshclam cannot open its log and clamd never
+    # starts). The image's own tini is PID 1, so no `init: true`.
     image: clamav/clamav:1.4
     restart: unless-stopped
-    init: true
     cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]
     security_opt: [no-new-privileges:true]
     environment:
       CLAMAV_NO_MILTERD: 'true'

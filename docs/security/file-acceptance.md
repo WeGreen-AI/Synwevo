@@ -121,7 +121,7 @@ ZIP 内的 EICAR 命中 `Eicar-Test-Signature`，三种仓库夹具 `OK`，守�
   只说明守护进程可达，不说明库新旧——库日期看 `scan.engine` 或容器日志。
 * **资源**：`clamav` 服务 `mem_limit 2048m`（守护进程 + 一次重载）；隔离中的文件占用与普通 blob 相同，
   `scan_failed` 的重试上限是最后一档 10 分钟的无限循环——引擎长期离线时磁盘按上传上限增长，与没有扫描时相同。
-* **部署**：`infra/production/compose.yaml` 是参考；接收端不同步 compose，运维需把 `clamav` 服务与 docs 的两个
+* **部署**（2026-09-28 生产已按此完成，见 deployment.md CI-87；官方镜像的入口脚本需要 CHOWN、SETUID、SETGID、DAC_OVERRIDE 四项能力，参考 compose 已改）：`infra/production/compose.yaml` 是参考；接收端不同步 compose，运维需把 `clamav` 服务与 docs 的两个
   环境变量合并进 `/opt/synwevo/config/compose.yaml`，先确认 VPS 有 ≥2 GiB 余量，再 `docker compose up -d clamav`
   等其 healthy，最后重建 docs。回滚只需去掉两个环境变量。
 
@@ -132,7 +132,7 @@ ZIP 内的 EICAR 命中 `Eicar-Test-Signature`，三种仓库夹具 `OK`，守�
   当前靠解析失败（`error`）兜底，没有"要求用户提供密码"的流程。
 * 产物（生成的 DOCX/PDF/XLSX）不扫描：它们由模板与数据生成，不包含上传的原始字节；若将来允许把上传文件原样
   打包进产物，需要在打包前复用 `scan_template_bytes`。
-* 生产尚未部署扫描器（需运维确认内存并合并 compose）。
+* ~~生产尚未部署扫描器~~ 2026-09-28 已上线（CI-87，`docs/quality/deployment.md`）：accounts、docs、messages 以 `required` 扫描新上传；此前入库的文件仍是 `not_configured`，补扫见 §8。
 
 
 ## 附：成员导入上传（账户服务，CI-25）
