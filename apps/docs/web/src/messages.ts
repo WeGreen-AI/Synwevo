@@ -1286,6 +1286,10 @@ export const messages = {
     "en": "While you were away the template was restored or replaced; your changes to the old content could not be merged, so this shows the saved version. Refresh the page to continue editing live.",
     "zh-Hant": "你離開期間，模板被恢復或替換了；你在舊內容上的修改無法合併，這裡顯示的是已儲存的版本。重新整理頁面即可繼續即時協同。"
   },
+  "两边的修改合在一起无法生成模板：{v1}": {
+    "en": " Together, both sets of changes cannot make a template: {v1}",
+    "zh-Hant": "兩邊的修改合在一起無法生成模板：{v1}"
+  },
   "组内取值冲突": {
     "en": "Conflicting values within group",
     "zh-Hant": "組內取值衝突"

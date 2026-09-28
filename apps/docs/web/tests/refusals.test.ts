@@ -232,6 +232,7 @@ const CODE_MAPPED: [code: string, reason: string, shapes: string[]][] = [
   ["encrypted", "the code's sentence is the server's sentence", ["模板文件已加密，请移除密码后再上传"]],
   ["bad_template", "「模板无法解析：…」 quotes the parser: the pattern presents it when its words are known, the code's sentence when not", ["模板无法解析：{}"]],
   ["bad_editor", "「模板生成失败：…」 quotes an unexpected builder error", ["模板生成失败：{}"]],
+  ["stale_template", "both people's table edits merged into a template that cannot be built (CI-116): the editors word it as the stale-version choice, with detail.merge_error translated beside it", ["你的修改与其他人之后保存的修改合在一起无法生成模板：{}"]],
   ["convert_failed", "the converter's own failures (profile directory, exit code) are for an operator; the code's sentence says where to look", [
     "排版引擎未生成 {} 文件（退出码 {}）：{}", "无法创建排版引擎配置目录：{}",
     "排版引擎配置目录 {} 不属于当前用户（或是符号链接），拒绝使用；请删除它，或用 SYNWEVO_DOCS_LO_PROFILE 指定一个私有目录"]],

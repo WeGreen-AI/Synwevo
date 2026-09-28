@@ -242,7 +242,7 @@ export default function SheetEditor() {
         }
       };
       const t = tid
-        ? await saveOverStale(send, baseVersion.current, (theirs, mine) => confirm(tr(STALE_TITLE), staleText(theirs, mine), tr("仍然保存"), true))
+        ? await saveOverStale(send, baseVersion.current, (theirs, mine, why) => confirm(tr(STALE_TITLE), staleText(theirs, mine) + (why ? tr("两边的修改合在一起无法生成模板：{v1}", { v1: issueText({ code: "bad_editor", message: why }) }) : ""), tr("仍然保存"), true))
         : await post("/api/templates/builtin", { kind: "builtin_sheet", name, editor, project_id: projectId });
       if (!t) { toast(tr("没有保存：已改为对方的版本，你的修改仍在编辑器中"), "info"); await loadTemplate(true); return; }
       baseVersion.current = loadedVersion(t);

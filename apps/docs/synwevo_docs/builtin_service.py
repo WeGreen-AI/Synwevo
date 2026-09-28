@@ -253,7 +253,16 @@ def save_builtin(app: App, tid: str, body: dict, *, merge: bool = False) -> dict
     if len(note) > 200:
         raise ServiceError(400, "invalid_field", "版本说明最多 200 个字符", {"field": "note", "max": 200})
     note = note or "在编辑器中保存"
-    data, slots, _ = _build(r["kind"], editor)
+    try:
+        data, slots, _ = _build(r["kind"], editor)
+    except ServiceError as e:
+        if not merged_with or e.code != "bad_editor":
+            raise
+        # Each side's edits were fine on their own; together they make a table the template cannot
+        # hold (e.g. a region field over cells the other person merged). Said as the stale-version
+        # conflict it is — keep theirs, or save yours over it — not as a raw build error (CI-116).
+        raise ServiceError(409, "stale_template", f"你的修改与其他人之后保存的修改合在一起无法生成模板：{e.message}",
+                           {"head": merged_with, "base_version": base, "merge_error": e.message}) from e
     # keep extra slot settings (required, formats, defaults) for fields that still exist
     old = {s["id"]: s for s in app.get_version(tid, r["head"])["slots"]}
     for s in slots:

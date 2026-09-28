@@ -11,7 +11,7 @@ import { t as tr } from "@synwevo/ui/i18n-core";
  *
  *  No imports: tested with `node --test`.
  */
-export interface StaleRefusal { code?: string; detail?: { head?: unknown } }
+export interface StaleRefusal { code?: string; detail?: { head?: unknown; merge_error?: unknown } }
 
 export function staleHead(e: unknown): number | null | undefined {
   const r = e as StaleRefusal | null;
@@ -20,20 +20,22 @@ export function staleHead(e: unknown): number | null | undefined {
   return Number.isInteger(h) && h > 0 ? h : null;
 }
 
-/** `send(base)` performs the save against `base`; `ask(theirs, mine)` asks whether to save over
- *  the newer version. Resolves to the saved template, or null when the person kept the other
- *  version. Any other failure is thrown to the caller unchanged. */
+/** `send(base)` performs the save against `base`; `ask(theirs, mine, why)` asks whether to save over
+ *  the newer version — `why` is the server's reason when both sides' edits merged into a template
+ *  that cannot be built (CI-116), else null. Resolves to the saved template, or null when the person
+ *  kept the other version. Any other failure is thrown to the caller unchanged. */
 export async function saveOverStale<T>(
   send: (base: number | null) => Promise<T>,
   mine: number | null,
-  ask: (theirs: number | null, mine: number | null) => Promise<boolean>,
+  ask: (theirs: number | null, mine: number | null, why: string | null) => Promise<boolean>,
 ): Promise<T | null> {
   try {
     return await send(mine);
   } catch (e) {
     const theirs = staleHead(e);
     if (theirs === undefined) throw e;
-    if (!(await ask(theirs, mine))) return null;
+    const why = (e as StaleRefusal).detail?.merge_error;
+    if (!(await ask(theirs, mine, typeof why === "string" && why ? why : null))) return null;
     return await send(theirs);
   }
 }

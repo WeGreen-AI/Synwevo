@@ -181,3 +181,23 @@ def test_the_table_room_carries_presence_and_version_frames_but_no_document(worl
     assert world["store"].one("SELECT 1 AS x FROM collab_docs WHERE room=?", (f"template:{tid}",)) is None, "nothing is persisted for a presence-only room"
     a.close(); v.close()
     assert world["store"].one("SELECT 1 AS x FROM collab_docs WHERE room=?", (f"template:{tid}",)) is None
+
+
+def test_edits_that_merge_into_a_table_the_template_cannot_hold_are_a_choice_not_an_error(world):
+    """CI-116: one person added a region field B2:C3, another merged B2:C2 from the same version.
+    Each was fine alone and the cell-by-cell merge accepted both, but together they are a region
+    over merged cells, which the template cannot hold: the second save got a raw 400 the conflict
+    dialog could not resolve. It is the stale-version choice now, with the reason."""
+    co, ce, tid = world["co"], world["client_for"](world["editor"]), world["tid"]
+    base = SHEET["sheets"][0]
+    region = {**base, "fields": base["fields"] + [{"id": "area", "kind": "region", "name": "区域", "ref": "B2:C3"}]}
+    assert co.put(f"/api/templates/{tid}/builtin", json={"editor": {"sheets": [region]}, "base_version": 1}).status_code == 200
+    merged = {**base, "merges": ["B2:C2"]}
+    r = ce.put(f"/api/templates/{tid}/builtin", json={"editor": {"sheets": [merged]}, "base_version": 1})
+    assert r.status_code == 409 and r.json()["error"] == "stale_template", r.text
+    d = r.json()["detail"]
+    assert d["head"] == 2 and "合并单元格" in d["merge_error"] and "合并单元格" in r.json()["message"]
+    # saving over it (against the head the refusal named) keeps this person's table
+    r = ce.put(f"/api/templates/{tid}/builtin", json={"editor": {"sheets": [merged]}, "base_version": 2})
+    assert r.status_code == 200 and r.json()["version"]["no"] == 3
+    assert r.json()["version"]["editor"]["sheets"][0]["merges"] == ["B2:C2"]
