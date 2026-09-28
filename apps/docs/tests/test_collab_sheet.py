@@ -1004,6 +1004,25 @@ def test_m4_a_forgotten_client_can_never_have_an_old_message_applied_again():
     assert cs.next_number(room.st, "fresh") == start + 1
 
 
+def test_a_forgotten_client_is_told_its_message_may_already_be_applied():
+    """Review 3 of sheet-live step ②, item 5: a forgotten client resending a message it had already
+    had applied was answered like a message that is merely too old (`old_message`, "renumber from
+    next") — renumbering applied it a second time. The answer now says the outcome is unknown, unlike
+    a number that was certainly not applied."""
+    room = Room({"sheets": [grid()]})
+    op = {"op": "append_rows", "sheet": room.sid, "count": 1}
+    assert apply(room.st, op, by="ann", client="ann/tab", n=1, expect=0)["ok"]          # applied; its answer is lost
+    for i in range(cs.MAX_CLIENTS_PER_SCOPE):                                           # the person's other tabs push it out
+        n = cs.next_number(room.st, f"ann/t{i}")
+        assert apply(room.st, {"op": "style", **room.at("A1"), "s": {"b": i % 2 == 0}}, by="ann", client=f"ann/t{i}", n=n, expect=room.st["seq"])["ok"]
+    assert "ann/tab" not in room.st["clients"]
+    r = apply(room.st, op, by="ann", client="ann/tab", n=1, expect=0)
+    assert r["ok"] is False and r["code"] == "resync" and r["detail"]["reason"] == "forgotten" and r["detail"]["applied"] == "unknown"
+    assert len(project(room.st)["sheets"][0]["rows"]) == 11, "not applied again"
+    ahead = apply(room.st, op, by="ann", client="ann/tab", n=cs.next_number(room.st, "ann/tab") + cs.MAX_AHEAD, expect=room.st["seq"])
+    assert ahead["detail"]["reason"] == "number_ahead" and ahead["detail"]["applied"] is False
+
+
 def test_m5_a_stale_sheet_delete_cannot_hide_newer_work_on_it():
     room = Room({"sheets": [grid("A"), grid("B")]})
     b = room.st["content"]["order"][1]
@@ -1200,7 +1219,7 @@ def test_a_message_number_far_ahead_is_refused_before_it_can_move_anyone_s_numbe
     op = {"op": "set", **room.at("C4"), "v": "x"}
     for n in (2 ** 60, cs.MAX_AHEAD + 1):
         r = apply(room.st, op, by="ann", client="ann/t", n=n, expect=0)
-        assert r["ok"] is False and r["code"] == "resync" and r["detail"] == {"reason": "number_ahead", "next": 1}
+        assert r["ok"] is False and r["code"] == "resync" and r["detail"] == {"reason": "number_ahead", "applied": False, "next": 1}
     assert room.st["clients"] == {} and room.st["seq"] == 0, "nothing applied, nothing remembered"
     assert apply(room.st, op, by="ann", client="ann/t", n=cs.MAX_AHEAD, expect=0)["ok"]
     assert apply(room.st, {"op": "set", **room.at("C5"), "v": 1}, by="ann", client="ann/t", n=cs.MAX_AHEAD + 1 + cs.MAX_AHEAD, expect=1)["code"] == "resync"

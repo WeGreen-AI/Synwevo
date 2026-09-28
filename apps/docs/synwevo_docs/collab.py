@@ -28,6 +28,13 @@ A table template's room carries presence and version frames only — unless the 
 docs-sheet-live.md B1 step ②): frames of type ``MESSAGE_SHEET`` carry operations the server checks,
 orders and attributes.
 
+Locks, in the one order they are ever nested (review 3 of sheet-live step ②): the store's write
+lock (a transaction) → ``CollabHub._rooms_mu`` → a room's ``mu`` → a room's queue lock. Under
+``_rooms_mu`` nothing waits: no SQL, no other thread, no heavy work — it is taken by the event loop on
+every join and leave. A draft write takes the write lock first and checks the room's registration
+under ``_rooms_mu`` inside its transaction. The template service calls ``on_template_change`` after
+its transaction has committed (``Store.after_commit``), and the hook never waits for anything.
+
 The room state lives in this process. The single-process deployment is the one this repository
 ships; a multi-worker deployment needs sticky routing of ``/api/collab/`` to one process, which the
 platform record spells out rather than hides.
@@ -214,8 +221,12 @@ class Room:
         self.loading = False
         #: the template was deleted: nobody joins it any more
         self.gone = False
-        #: its last write is done (closed, left live mode, or deleted): nothing of this room is written again
+        #: left live mode, or its template is gone: nothing of this room is written again
         self.dropped = False
+        #: which registration of its template this room is (CollabHub._room): a room's write after it
+        #: closed is allowed only while no newer room has been registered for the template
+        self.gen = 0
+        self._final_state: bytes | None = None
         # the room's work queue (``enqueue``/``pump``): changes from other threads, run on the room's
         # loop in arrival order, never while the room is held (opening, or folding a version in)
         self._qlock = threading.Lock()
@@ -309,6 +320,15 @@ class Room:
     def persists(self) -> bool:
         """Whether the room holds a live state that is written to ``collab_docs``."""
         return self.writable
+
+    def closing_snapshot(self) -> None:
+        """On the event loop, right after the room is unregistered: what its closing write writes."""
+        self._final_state = self.doc.get_update()
+
+    def close_final(self) -> None:
+        """The closing write (a thread of its own, see CollabHub._leave)."""
+        if self._final_state is not None:
+            self.hub.write_state(self, self._final_state, final=True)
 
     def live(self) -> bool:
         return False
@@ -470,9 +490,11 @@ class CollabHub:
         #: in a room its last person has just closed (it opens the room again instead); every write of a
         #: live draft is checked and made under it too (``write_state``)
         self._rooms_mu = threading.RLock()
-        #: rooms closed by their last person whose final write is still running: the next opener of the
-        #: same template waits for it before reading the draft
-        self._closing: dict[str, threading.Event] = {}
+        #: rooms closed by their last person whose closing write is still running (done, room): the next
+        #: opener of the same template waits for it before reading the draft; the guard reads the room
+        self._closing: dict[str, tuple[threading.Event, Room]] = {}
+        #: how many rooms each template has had registered (Room.gen)
+        self._key_gen: dict[str, int] = {}
         from synwevo_core.http import RateBuckets
         from .collab_sheet_room import ops_per_minute
         #: live table operations per person per room (docs-sheet-live.md §4)
@@ -549,7 +571,9 @@ class CollabHub:
         caller confirmed that unsaved live edits may go (a live table room then starts afresh)."""
         key = f"template:{tid}"
         actor = self.actor(tid)
-        room = self.rooms.get(key)
+        with self._rooms_mu:
+            room = self.rooms.get(key)
+            closing = self._closing.get(key)
         if reason != "delete":
             for prow in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
                 self.on_project_change(prow["id"], f"template.{reason}", {"template_id": tid, "head": head})
@@ -568,10 +592,22 @@ class CollabHub:
                     c.close_later(CLOSE_GONE, "template_deleted")
             return
         if room is None or self.loop is None:
-            # Nobody is in the room: the head is the truth now; the next opener seeds from it (after the
-            # closing write of a room its last person just left, which would otherwise land after this)
-            self.settled(key)
-            self.store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
+            # Nobody is in the room: the head is the truth now; the next opener seeds from it.
+            if closing is None:
+                self.store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
+                return
+            # A room whose last person just left is still writing its draft — never waited for here.
+            # Its unsaved table edits are kept (the next opener folds this version into them) unless
+            # the caller discarded them; otherwise a tombstone at this head makes the draft write,
+            # based on an older version, refuse itself when it lands (write_state), whichever of the
+            # two commits first.
+            closed = closing[1]
+            if closed.sheet and closed.dirty and closed.persists() and not discard_live:
+                return
+            self.store.execute(
+                "INSERT INTO collab_docs (room, tenant, template_id, state, head, dirty, epoch, model, updated_at) VALUES (?,?,?,?,?,0,NULL,'void',?) "
+                "ON CONFLICT(room) DO UPDATE SET state=excluded.state, head=excluded.head, dirty=0, epoch=NULL, model='void', updated_at=excluded.updated_at",
+                (key, closed.tenant, tid, b"", head, now()))
             return
         # A room still being opened (``_room``) read the template after it was registered: a change it
         # already read is not applied twice (versions only ever get new numbers, so an equal head is it)
@@ -597,7 +633,9 @@ class CollabHub:
         not yet saved as a version, who is in the room with write access, and who made the last
         recorded change. Read from the room when it is open, from the persisted draft otherwise."""
         key = f"template:{tid}"
-        room = self.rooms.get(key)
+        with self._rooms_mu:
+            room = self.rooms.get(key)
+            closing = self._closing.get(key)
         opened = room is not None and not room.loading
         dirty, sheet = self._dirty(key, room)
         online = [p["name"] for p in room.peers() if not p.get("readonly")] if opened else []
@@ -606,7 +644,8 @@ class CollabHub:
         if dirty:
             uid = None
             if sheet:
-                uid = room.last_writer() if opened else self._draft_last_writer(key)
+                source = room if opened else (closing[1] if closing is not None and room is None else None)
+                uid = source.last_writer() if source is not None else self._draft_last_writer(key)
             else:
                 last = self.store.one("SELECT user_id FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT 1", (key,))
                 uid = (last or {}).get("user_id")
@@ -618,20 +657,26 @@ class CollabHub:
                 "live_table": bool(opened and room.sheet and room.live())}
 
     def settled(self, key: str, timeout: float = 30) -> None:
-        """Wait for the closing write of the room of ``key`` its last person just left, if any."""
+        """Wait for the closing write of the room of ``key`` its last person just left, if any. Never
+        from inside a transaction or on the event loop (``_room`` waits in a worker thread)."""
         with self._rooms_mu:
-            done = self._closing.get(key)
-        if done is not None:
-            done.wait(timeout)
+            closing = self._closing.get(key)
+        if closing is not None:
+            closing[0].wait(timeout)
 
     def _dirty(self, key: str, room: Room | None) -> tuple[bool, bool]:
-        """(unsaved live edits?, is it a live table?) — from the open room, else from the persisted
-        draft (also while a room is still being opened: its state is not read yet; and after the
-        closing write of a room just left)."""
+        """(unsaved live edits?, is it a live table?) — from the open room; from a room just closed
+        whose closing write is still running (what it is writing, without waiting for it); else from
+        the persisted draft (also while a room is still being opened: its state is not read yet)."""
         if room is not None and not room.loading:
             return bool(room.dirty and room.persists()), room.sheet
         if room is None:
-            self.settled(key)
+            with self._rooms_mu:
+                closing = self._closing.get(key)
+            if closing is not None:
+                closed = closing[1]
+                dirty = bool(closed.dirty and closed.persists()) and (not closed.sheet or sheet_live_enabled())
+                return dirty, closed.sheet
         row = self.store.one("SELECT dirty, model FROM collab_docs WHERE room=?", (key,))
         sheet = bool(row and row.get("model") == "sheet")
         # a live table draft counts while the switch is on; with it off the room cannot be opened to
@@ -670,7 +715,7 @@ class CollabHub:
         for room in rooms:
             if room.persists() and room.clients:
                 room.persist_now()
-        for done in closing:
+        for done, _room in closing:
             done.wait(30)
 
     def changes(self, tid: str, limit: int = 100) -> dict:
@@ -704,20 +749,38 @@ class CollabHub:
         unregistered (``_leave``), allowed once while no other room has been opened for the template.
         And the statement itself refuses a template marked deleted (Q19): a write racing the delete
         cannot bring the draft back."""
-        with self._rooms_mu:
-            if room.gone or room.dropped:
+        with self.store.tx() as c:                       # the write lock first (the process's lock order) ...
+            with self._rooms_mu:                         # ... then a brief check: no SQL, no waiting under it
+                allowed = self._may_write(room, final)
+            if not allowed:
                 return False
-            current = self.rooms.get(room.key)
-            if not (current is room or (final and current is None)):
-                return False
-            cur = self.store.execute(
-                "INSERT INTO collab_docs (room, tenant, template_id, state, head, dirty, epoch, model, updated_at) "
-                "SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM templates WHERE id=? AND COALESCE(deleted,0)=0) "
-                "ON CONFLICT(room) DO UPDATE SET state=excluded.state, head=excluded.head, dirty=excluded.dirty, epoch=excluded.epoch, "
-                "model=excluded.model, updated_at=excluded.updated_at",
-                (room.key, room.tenant, room.tid, state, room.head if head is _ROOM else head, 1 if (room.dirty if dirty is _ROOM else dirty) else 0,
-                 room.epoch if epoch is _ROOM else epoch, model, now(), room.tid))
-            return bool(cur)
+            return self._upsert_draft(c, room, state, model, room.head if head is _ROOM else head,
+                                      1 if (room.dirty if dirty is _ROOM else dirty) else 0, room.epoch if epoch is _ROOM else epoch)
+
+    def _may_write(self, room: Room, final: bool) -> bool:
+        """Under ``_rooms_mu``: may ``room`` write its draft now? The registered room may; a room after
+        it closed (its closing write, a save marked afterwards) only while no newer room has been
+        registered for the template; a gone or dropped room never."""
+        if room.gone or room.dropped:
+            return False
+        current = self.rooms.get(room.key)
+        if current is room:
+            return True
+        return final and current is None and self._key_gen.get(room.key, 0) == room.gen
+
+    @staticmethod
+    def _upsert_draft(c, room: Room, state: bytes, model, head, dirty: int, epoch) -> bool:
+        """The draft row itself, in the caller's transaction. Refused for a template marked deleted
+        (Q19) and, over a tombstone (``model='void'``, see on_template_change), for a draft based on
+        an older version than the tombstone's."""
+        cur = c.execute(
+            "INSERT INTO collab_docs (room, tenant, template_id, state, head, dirty, epoch, model, updated_at) "
+            "SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM templates WHERE id=? AND COALESCE(deleted,0)=0) "
+            "ON CONFLICT(room) DO UPDATE SET state=excluded.state, head=excluded.head, dirty=excluded.dirty, epoch=excluded.epoch, "
+            "model=excluded.model, updated_at=excluded.updated_at "
+            "WHERE NOT (collab_docs.model = 'void' AND COALESCE(collab_docs.head, 0) > COALESCE(excluded.head, 0))",
+            (room.key, room.tenant, room.tid, state, head, dirty, epoch, model, now(), room.tid))
+        return bool(cur.rowcount)
 
     def record_changes(self, room: Room, user_id: str | None, rows: list[tuple], *, coalesce: bool = True) -> None:
         t = now()
@@ -819,7 +882,7 @@ class CollabHub:
                 closing = self._closing.get(key)
             if room is None and closing is not None:
                 # the previous room's last write is still running: read the draft after it
-                await run_in_threadpool(closing.wait, 60)
+                await run_in_threadpool(closing[0].wait, 60)
             if room is not None and not room.gone:
                 # The room was opened by someone in the template's workspace; a person signed into
                 # another workspace used to be let in while it was open — reading and writing the live
@@ -851,6 +914,7 @@ class CollabHub:
             room.loading = True
             room.hold()
             with self._rooms_mu:
+                self._key_gen[key] = room.gen = self._key_gen.get(key, 0) + 1
                 self.rooms[key] = room
             try:
                 await self._load(room, tid, tenant, kind)
@@ -988,6 +1052,39 @@ class CollabHub:
             checker.cancel()
             await self._leave(room, conn)
 
+    def _close_in_background(self, room: Room, done: threading.Event, *, threaded: bool = True) -> None:
+        """The closing write in a thread of its own — off the event loop and outside every room lock;
+        a plain thread, since the handler may be cancelled (shutdown, the test client) and the write
+        may not. When no thread can be started, it is written here (review 3, item 6): the next opener
+        must not wait for a write that will never come."""
+        def final(key=room.key):
+            try:
+                room.close_final()
+            except Exception:                                # noqa: BLE001
+                log.exception("collab %s: the closing write failed", key)
+            finally:
+                with self._rooms_mu:
+                    if self._closing.get(key, (None,))[0] is done:
+                        del self._closing[key]
+                done.set()
+        if not threaded:
+            final()
+            return
+        try:
+            threading.Thread(target=final, name=f"collab-close-{room.tid}", daemon=True).start()
+        except Exception:                                    # noqa: BLE001 — no thread to be had: write now
+            log.exception("collab %s: could not start the closing write; writing it here", room.key)
+            final()
+
+    def background(self, fn: Callable[[], None], name: str) -> None:
+        """Run ``fn`` (a database write) off the event loop, in a thread of its own; here when no
+        thread can be started."""
+        try:
+            threading.Thread(target=fn, name=name, daemon=True).start()
+        except Exception:                                    # noqa: BLE001
+            log.exception("collab: could not start %s; running it here", name)
+            fn()
+
     async def _handle(self, room: Room, conn: Conn, data: bytes) -> None:
         kind = data[0]
         if kind == YMessageType.SYNC:
@@ -1095,8 +1192,8 @@ class CollabHub:
     async def _leave(self, room: Room, conn: Conn) -> None:
         closing = None
         with self._rooms_mu:
-            # the last one out writes the room and closes it in one step: a tab joining at the same
-            # moment either got in before (and keeps the room open) or opens it again from what was written
+            # the last one out closes the room: unregistered here, in one step with the check a joining
+            # tab makes (it either got in before, or opens the room again after the closing write)
             room.clients.discard(conn)
             if not room.clients:
                 if room.persist_handle is not None:
@@ -1105,29 +1202,20 @@ class CollabHub:
                 if room.activity_handle is not None:
                     room.activity_handle.cancel()
                     room.activity_handle = None
-                registered = self.rooms.get(room.key) is room
-                if room.sheet and room.persists() and registered:
-                    # a live table can be large: its last write (serialise, compress, write) runs in a
-                    # thread of its own, off the loop and outside this lock; the room is unregistered
-                    # now and the next opener waits for that write (review of step ②, item 7)
-                    closing = threading.Event()
-                    self._closing[room.key] = closing
-                elif room.persists():
-                    room.persist_now()
-                    room.dropped = True
-                if registered:
+                if self.rooms.get(room.key) is room:
                     del self.rooms[room.key]
+                    if room.persists():
+                        closing = threading.Event()
+                        self._closing[room.key] = (closing, room)
         if closing is not None:
-            def final(key=room.key, done=closing):
-                try:
-                    room.close_final()
-                finally:
-                    with self._rooms_mu:
-                        if self._closing.get(key) is done:
-                            del self._closing[key]
-                    done.set()
-            # a plain thread: the handler may be cancelled (shutdown, the test client), the write may not
-            threading.Thread(target=final, name=f"collab-close-{room.tid}", daemon=True).start()
+            # the closing write, after the lock. A live table (up to 16 MiB) is serialised, compressed
+            # and written in a thread of its own; a document's state is small and is taken and written
+            # here, as before (it waits for the database like any write on the loop, never under a lock)
+            if room.sheet:
+                self._close_in_background(room, closing)
+            else:
+                room.closing_snapshot()
+                self._close_in_background(room, closing, threaded=False)
         ids = [cid for cid in conn.client_ids if cid in room.awareness.states]
         if ids:
             room.awareness.remove_awareness_states(ids, "server")

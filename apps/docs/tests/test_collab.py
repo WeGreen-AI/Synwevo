@@ -814,3 +814,59 @@ def test_a_closed_document_room_never_writes_over_the_next_one(world):
     c = _connect(world, "editor")
     assert c.texts() == ["客户：旧房间（新房间）"]
     c.close()
+
+
+def test_an_editor_save_and_another_room_s_draft_write_do_not_deadlock(tmp_path):
+    """Review 3 of sheet-live step ②, item 1 (the production document rooms): the editor's save runs
+    its version inside a transaction and called the rooms' hook there, which took the room
+    registration lock; another room's draft write held that lock and waited for the transaction's
+    write lock. The save's thread and the draft write hung — and with them the event loop's next join
+    and every writer. The hook runs after the commit now, and a draft write takes the write lock
+    first. (The reviewer's reproducer; bounded by timeouts.)"""
+    import threading
+
+    from synwevo_core.context import as_tenant
+    from synwevo_docs.api.app import create_app
+    from synwevo_docs.builtin_service import create_builtin, save_builtin
+    from synwevo_docs.collab import Room
+
+    app = create_app(str(tmp_path / "data"), start_jobs=False)
+    svc, hub = app.state.app, app.state.collab
+    with as_tenant("default"):
+        t1 = create_builtin(svc, {"kind": "builtin_doc", "editor": DOC, "name": "A"})["id"]
+        t2 = create_builtin(svc, {"kind": "builtin_doc", "editor": DOC, "name": "B"})["id"]
+    room2 = Room(hub, t2, "default")                              # fixture: an open document room of t2
+    room2.head = 1
+    hub.rooms[room2.key] = room2
+    in_tx, go_on = threading.Event(), threading.Event()
+    real_bump = svc._bump_projects_using
+
+    def paused(tid):                                             # fixture: the save is inside its transaction
+        real_bump(tid)
+        in_tx.set()
+        go_on.wait(5)
+    svc._bump_projects_using = paused
+    errors: list = []
+
+    def save():
+        try:
+            with as_tenant("default"):
+                save_builtin(svc, t1, {"editor": DOC, "discard_live": True})
+        except Exception as e:                                   # noqa: BLE001
+            errors.append(e)
+    a = threading.Thread(target=save, daemon=True)
+    a.start()
+    assert in_tx.wait(5)
+    b = threading.Thread(target=lambda: hub.write_state(room2, room2.doc.get_update()), daemon=True)
+    b.start()
+    time.sleep(0.3)                                              # the draft write waits for the write lock
+    go_on.set()
+    a.join(5)
+    b.join(5)
+    assert not a.is_alive() and not b.is_alive(), "deadlock between the save's transaction and a room's draft write"
+    assert errors == []
+    assert hub._rooms_mu.acquire(timeout=1)
+    hub._rooms_mu.release()
+    del hub.rooms[room2.key]
+    for hook in list(app.state.shutdown_hooks):
+        hook()

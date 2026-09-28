@@ -1029,6 +1029,48 @@ def test_one_persons_many_tabs_cannot_push_out_anothers_resume(world, monkeypatc
 
 
 # ------------------------------------------------------------------ the second review of step ② (each failed before its fix)
+def _late_writes(world, monkeypatch, room):
+    """Fixture: an event set once the table room ``room`` has tried to write its draft and that write
+    is over (committed or refused); ``results``: whether each one was written — a condition to wait
+    for instead of a wall-clock sleep."""
+    from synwevo_docs import collab_sheet_room as R
+    done = threading.Event()
+    done.results = []
+    real = R.SheetRoom._write
+
+    def spy(self, snap, **kw):
+        out = real(self, snap, **kw)
+        if self is room:
+            done.results.append(self._written == snap["gen"])
+            done.set()
+        return out
+    monkeypatch.setattr(R.SheetRoom, "_write", spy)
+    return done
+
+
+def _sql_spy(world, monkeypatch, prefix: str) -> list:
+    """Fixture: (thread name, does it hold the room registration lock) for every statement starting
+    with ``prefix`` — whatever path runs it."""
+    from synwevo_core.store import Store
+    hub = world["app"].state.collab
+    seen: list = []
+    real = Store._c
+
+    class Spy:
+        def __init__(self, c):
+            self._c = c
+
+        def execute(self, sql, *a):
+            if sql.lstrip().startswith(prefix):
+                seen.append((threading.current_thread().name, hub._rooms_mu._is_owned()))
+            return self._c.execute(sql, *a)
+
+        def __getattr__(self, name):
+            return getattr(self._c, name)
+    monkeypatch.setattr(Store, "_c", lambda self: Spy(real(self)))
+    return seen
+
+
 def _work_loop(monkeypatch):
     """Fixture: one event loop of its own for the room's queued work (production has one loop for
     everything; here the test decides when that work runs)."""
@@ -1058,6 +1100,7 @@ def test_a_fold_finishing_after_its_room_closed_does_not_write_over_the_next_roo
         return real(state, editor, by=by)
     monkeypatch.setattr(cs, "reconcile", slow)
     e = join(world, "editor")
+    old = _room(world)
     assert machine_put(world, edited({"C3": {"v": "外部"}}), 1).status_code == 200
     assert started.wait(10)
     e.close()                                                    # the last one out, while the fold runs
@@ -1067,8 +1110,10 @@ def test_a_fold_finishing_after_its_room_closed_does_not_write_over_the_next_roo
     e2.close()
     d = row(world)
     assert d["dirty"] == 1 and d["epoch"] == e2.hello["epoch"]
+    tried = _late_writes(world, monkeypatch, old)
     release.set()
-    time.sleep(2.0)                                              # the closed room's fold ends; it may not write
+    assert tried.wait(10), "the closed room's fold ended and tried to write its draft"   # (review 3, item 7: an event, not a sleep)
+    assert tried.results and not any(tried.results)
     d = row(world)
     assert d["epoch"] == e2.hello["epoch"] and d["dirty"] == 1
     e3 = join(world, "editor")
@@ -1084,6 +1129,7 @@ def test_a_save_marked_after_its_room_closed_does_not_write_over_the_next_room(w
     loop = _work_loop(monkeypatch)
     monkeypatch.setattr(R, "SAVE_WAIT_S", 0.3)
     e = join(world, "editor")
+    old = _room(world)
     assert e.do(put(e, "A2", "保存前"))["ok"]
     gate = threading.Event()
     loop.call_soon_threadsafe(gate.wait, 20)                    # fixture: the room's loop is busy
@@ -1094,31 +1140,26 @@ def test_a_save_marked_after_its_room_closed_does_not_write_over_the_next_room(w
     assert e2.do(put(e2, "A3", "新房间里的修改"))["ok"]
     e2.close()
     assert "A3" in cs.project(json.loads(zlib.decompress(bytes(row(world)["state"]))))["sheets"][0]["cells"]
+    tried = _late_writes(world, monkeypatch, old)
     gate.set()                                                   # the old room marks its save now
-    time.sleep(2.0)
+    assert tried.wait(10), "the old room marked its save and tried to write"   # (review 3, item 7: an event, not a sleep)
+    assert tried.results and not any(tried.results), "refused: a newer room has been opened since"
     kept = cs.project(json.loads(zlib.decompress(bytes(row(world)["state"]))))["sheets"][0]["cells"]
     assert kept["A3"] == {"v": "新房间里的修改"} and row(world)["dirty"] == 1
     loop.call_soon_threadsafe(loop.stop)
 
 
 def test_the_closing_write_runs_in_a_thread_outside_the_room_lock(world, monkeypatch):
-    """Second review, 7: the last one out serialised, rendered and compressed the whole table on the
-    event loop while holding the lock every join and leave needs (≈0.5 s at 17 MiB)."""
-    from synwevo_docs import collab_sheet_room as R
-    hub = world["app"].state.collab
-    seen: list = []
-    real = R.SheetRoom._write
-
-    def spy(self, snap, **kw):
-        seen.append((threading.current_thread().name, hub._rooms_mu._is_owned()))
-        return real(self, snap, **kw)
-    monkeypatch.setattr(R.SheetRoom, "_write", spy)
+    """Second review, 7, and third review, 2: the last one out serialised, rendered and compressed the
+    whole table on the event loop while holding the lock every join and leave needs (≈0.5 s at
+    17 MiB) — and then its INSERT (up to 16 MiB) still ran under that lock. Checked at the SQL itself."""
+    seen = _sql_spy(world, monkeypatch, "INSERT INTO collab_docs")
     a = join(world, "editor")
     assert a.do(put(a, "A2", "最后离开"))["ok"]
+    seen.clear()
     a.close()
     assert row(world)["dirty"] == 1
-    name, locked = seen[-1]
-    assert name.startswith("collab-close-") and locked is False, seen
+    assert seen and all(name.startswith("collab-close-") and not locked for name, locked in seen), seen
 
 
 def test_a_restart_serialises_the_table_once_for_everyone(world, monkeypatch):
@@ -1266,7 +1307,7 @@ def test_a_message_number_far_ahead_cannot_push_everyone_s_numbers_past_a_browse
     `next` JavaScript cannot represent, in a loop of resyncs, persisted in the draft."""
     o = join(world, "owner", client_id="owner-tab-big")
     r = o.do(put(o, "A2", "大号"), n=2 ** 60)
-    assert r["ok"] is False and r["code"] == "resync" and r["detail"] == {"reason": "number_ahead", "next": 1}
+    assert r["ok"] is False and r["code"] == "resync" and r["detail"] == {"reason": "number_ahead", "applied": False, "next": 1}
     for i in range(cs.MAX_CLIENTS_PER_SCOPE + 1):
         t = join(world, "owner", client_id=f"owner-tab-x{i}")
         assert t.do(put(t, "C3", str(i)), expect=_room(world).state["seq"])["ok"]
@@ -1363,3 +1404,155 @@ def test_a_template_deleted_while_its_room_opens_leaves_no_room_behind(world, mo
     with pytest.raises(WebSocketDisconnect) as x:
         join(world, "owner")
     assert x.value.code == 4404 and key not in hub.rooms
+
+
+# ------------------------------------------------------------------ the third review of step ② (each failed or hung on 82b7607)
+def test_a_live_save_racing_the_last_leave_does_not_deadlock(world, monkeypatch):
+    """Third review, 1: the live table's save writes its version inside a transaction; its hook then
+    took the room registration lock — while the closing write of the room its last person had just
+    left held that lock and waited for the transaction's write lock. Every writer hung."""
+    from synwevo_docs import collab_sheet_room as R
+    svc = world["app"].state.app
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "保存"))["ok"]
+    in_tx, go_on = threading.Event(), threading.Event()
+    real_bump = svc._bump_projects_using
+
+    def paused(tid):                                             # fixture: the save is inside its transaction
+        real_bump(tid)
+        in_tx.set()
+        assert go_on.wait(10)
+    monkeypatch.setattr(svc, "_bump_projects_using", paused)
+    writing = threading.Event()
+    real_write = R.SheetRoom._write
+
+    def closing_write(self, snap, **kw):                         # fixture: the closing write has begun
+        writing.set()
+        return real_write(self, snap, **kw)
+    monkeypatch.setattr(R.SheetRoom, "_write", closing_write)
+    box: dict = {}
+    saver = threading.Thread(target=lambda: box.setdefault("r", world["co"].post(f"/api/templates/{world['tid']}/collab/save", json={})),
+                             daemon=True)
+    saver.start()
+    assert in_tx.wait(10)
+    a.close()                                                    # the last one out, while the save is in its transaction
+    assert writing.wait(10)
+    time.sleep(0.3)                                              # (the closing write now waits for the write lock)
+    go_on.set()
+    saver.join(10)
+    assert not saver.is_alive(), "the save never finished: deadlock"
+    assert box["r"].status_code == 200 and box["r"].json()["head"] == 2
+    world["app"].state.collab.settled(f"template:{world['tid']}", timeout=10)
+    assert world["app"].state.collab._rooms_mu.acquire(timeout=1)
+    world["app"].state.collab._rooms_mu.release()
+
+
+def test_a_long_transaction_elsewhere_does_not_hold_up_joins_and_leaves(world, monkeypatch):
+    """Third review, 2: a draft write held the room registration lock while it waited for the
+    database, so every join and leave on the event loop waited for any unrelated transaction."""
+    hub, store = world["app"].state.collab, world["store"]
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "等待"))["ok"]
+    room = _room(world)
+    held, done = threading.Event(), threading.Event()
+
+    def long_tx():                                               # fixture: any 2-second write transaction
+        with store.tx():
+            held.set()
+            time.sleep(2.0)
+        done.set()
+    threading.Thread(target=long_tx, daemon=True).start()
+    assert held.wait(5)
+    threading.Thread(target=room.persist_now, daemon=True).start()   # a draft write, waiting for the database
+    time.sleep(0.2)
+    t0 = time.monotonic()
+    with hub._rooms_mu:                                          # what every join, leave and opening takes on the loop
+        pass
+    assert time.monotonic() - t0 < 0.5
+    t0 = time.monotonic()
+    a.close()                                                    # the last one out: its closing write waits in its own thread
+    assert time.monotonic() - t0 < 1.0 and not done.is_set()
+    assert done.wait(5)
+    assert row(world)["dirty"] == 1
+
+
+def test_a_save_marked_after_its_room_closed_corrects_the_draft_it_left(world, monkeypatch):
+    """Third review, 3: the closing write had written the room's unsaved state; the save, marked
+    afterwards, could no longer write — the draft said "unsaved" (a spurious 409 live_edits on the
+    next restore) though the version was saved."""
+    from synwevo_docs import collab_sheet_room as R
+    loop = _work_loop(monkeypatch)
+    monkeypatch.setattr(R, "SAVE_WAIT_S", 0.3)
+    e = join(world, "editor")
+    old = _room(world)
+    assert e.do(put(e, "A2", "保存前"))["ok"]
+    gate = threading.Event()
+    loop.call_soon_threadsafe(gate.wait, 20)                    # fixture: the room's loop is busy
+    r = world["co"].post(f"/api/templates/{world['tid']}/collab/save", json={})
+    assert r.status_code == 200 and r.json()["head"] == 2 and r.json()["live"]["pending"] is True, r.text
+    e.close()
+    d = row(world)
+    assert d["dirty"] == 1 and d["head"] == 1                    # what the closing write wrote
+    tried = _late_writes(world, monkeypatch, old)
+    gate.set()                                                   # the save is marked now
+    assert tried.wait(10) and tried.results[-1] is True
+    d = row(world)
+    assert d["dirty"] == 0 and d["head"] == 2
+    assert world["app"].state.collab.live_state(world["tid"])["dirty"] is False
+    r = world["co"].post(f"/api/templates/{world['tid']}/restore", json={"version": 1, "base_head": 2})
+    assert r.status_code == 200, r.text
+    loop.call_soon_threadsafe(loop.stop)
+
+
+def test_a_fold_leaving_live_mode_never_waits_for_the_registration_lock(world, monkeypatch):
+    """Third review, 4: a fold that took a room out of live mode held the room's lock and then waited
+    for the registration lock, while a join held the registration lock and waited for the room's."""
+    hub = world["app"].state.collab
+    started, release = threading.Event(), threading.Event()
+    real = cs.reconcile
+
+    def slow(state, editor, *, by):                             # fixture: the fold is under way
+        started.set()
+        assert release.wait(10)
+        return real(state, editor, by=by)
+    monkeypatch.setattr(cs, "reconcile", slow)
+    a = join(world, "editor")
+    room = _room(world)
+    assert machine_put(world, edited({"A250000": {"v": "远处"}}), 1).status_code == 200   # clean room, a table it cannot hold
+    assert started.wait(10)
+    with hub._rooms_mu:                                          # a join on another loop, between its two locks
+        release.set()
+        for _ in range(50):
+            if room.live_reason is not None:
+                break
+            time.sleep(0.05)
+        got = room.mu.acquire(timeout=2)
+        if got:
+            room.mu.release()
+    assert got, "the fold held the room's lock waiting for the registration lock"
+    assert a.meta_of("live")["live"] is False
+    a.close()
+
+
+def test_when_no_thread_can_be_started_the_closing_write_is_made_anyway(world, monkeypatch):
+    """Third review, 6: the closing write's thread failing to start left the room "closing" for ever —
+    every later open waited 60 s, and the last edits were never written."""
+    real_start = threading.Thread.start
+
+    def start(self):                                             # fixture: no thread for the closing write
+        if self.name.startswith("collab-close-"):
+            raise RuntimeError("can't start new thread")
+        return real_start(self)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "最后的修改"))["ok"]
+    a.close()
+    assert not world["app"].state.collab._closing
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("b", join(world, "owner")), daemon=True)
+    t0 = time.monotonic()
+    t.start()
+    t.join(10)
+    assert not t.is_alive() and time.monotonic() - t0 < 5, "the next open waited for a write that never came"
+    assert box["b"].cells()["A2"] == {"v": "最后的修改"}
+    box["b"].close()

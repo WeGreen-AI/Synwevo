@@ -493,7 +493,7 @@ class SheetRoom(Room):
         newer serialisation already written wins. Returns whether that state is really unsaved."""
         exact = bool(snap["fast"]) and CS.dirty(json.loads(snap["raw"]))
         blob = zlib.compress(snap["raw"], 6)
-        with self.hub._rooms_mu:
+        with self.hub.store.tx():                        # the write lock first: this room's writes, one at a time
             if snap["gen"] < self._written:
                 return exact
             if self.hub.write_state(self, blob, model="sheet", head=snap["head"], dirty=exact, epoch=snap["epoch"], final=final):
@@ -502,16 +502,18 @@ class SheetRoom(Room):
 
     def close_final(self) -> None:
         """The last one out: write the draft once more (a thread of its own, off the event loop and
-        outside the room lock; the next opener of this template waits for it) — then never again."""
+        outside every room lock; the next opener of this template waits for it). Afterwards the room
+        writes only to correct that draft (a save marked later), and only while no newer room has
+        been registered for the template (CollabHub._may_write)."""
+        self._write_now(final=True)
+
+    def _write_now(self, *, final: bool = False) -> None:
         try:
             snap = self._serialize()
             if snap is not None:
-                self._write(snap, final=True)
+                self._write(snap, final=final)
         except Exception:                                # noqa: BLE001
-            log.exception("collab %s: writing the live table on close failed", self.key)
-        finally:
-            with self.hub._rooms_mu:
-                self.dropped = True
+            log.exception("collab %s: writing the live table failed", self.key)
 
     async def persist(self) -> None:
         from starlette.concurrency import run_in_threadpool
@@ -547,16 +549,21 @@ class SheetRoom(Room):
             log.exception("collab %s: persisting the live table on close failed", self.key)
 
     def forget_draft(self) -> None:
-        """The template is deleted: its draft is removed and nothing of this room is written again."""
-        self._drop_draft()
+        """The template is deleted: nothing of this room is written again (the hook removes the row)."""
+        self.dropped = True
 
     def _drop_draft(self) -> None:
-        with self.hub._rooms_mu:
-            self.dropped = True
+        """Left live mode: nothing of this room is written again, and its draft is removed — in a
+        thread of its own (this runs on the loop, under the room's lock, which never waits for the
+        database). A write already past its check commits first; the DELETE follows it."""
+        self.dropped = True
+
+        def delete():
             try:
                 self.hub.store.execute("DELETE FROM collab_docs WHERE room=?", (self.key,))
             except Exception:                            # noqa: BLE001
                 log.exception("collab %s: removing the live table draft failed", self.key)
+        self.hub.background(delete, f"collab-drop-{self.tid}")
 
     # ---- saving ------------------------------------------------------------------------------------
     def save(self, user_id: str | None, note) -> dict:
@@ -630,10 +637,15 @@ class SheetRoom(Room):
                 else:
                     name = display_name(self.hub.identity.get_user(user_id)) if user_id else None
                     self.broadcast_meta({**self.state_payload(), "type": "head", "reason": "save", "by": name, "by_id": user_id, "saved_seq": snap["seq"]})
-        if not inline:
-            self.schedule_persist()
-        elif self.hub.rooms.get(self.key) is self:
-            self.persist_now()                           # no loop to schedule on: write now (a closed room never writes)
+        if self.hub.rooms.get(self.key) is self:
+            if inline:
+                self.persist_now()                       # no loop to schedule on: write now
+            else:
+                self.schedule_persist()
+        else:
+            # marked after the room closed: its closing write may have written the unsaved state —
+            # correct it (off the loop), unless a newer room has been opened since (review 3, item 3)
+            self.hub.background(lambda: self._write_now(final=True), f"collab-saved-{self.tid}")
         return out
 
     # ---- versions from outside the room -------------------------------------------------------------

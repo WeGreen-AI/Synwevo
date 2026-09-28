@@ -1030,10 +1030,18 @@ class App:
         hook = self.on_template_change
         if hook is None:
             return
-        try:
-            hook(tid, head, editor, reason, previous=previous, source=source, discard_live=discard_live)
-        except Exception:                                    # noqa: BLE001 — the version is saved; the room catches up on reopen
-            logging.getLogger("synwevo.docs").exception("template change hook failed for %s (%s)", tid, reason)
+
+        def run():
+            try:
+                hook(tid, head, editor, reason, previous=previous, source=source, discard_live=discard_live)
+            except Exception:                                # noqa: BLE001 — the version is saved; the room catches up on reopen
+                logging.getLogger("synwevo.docs").exception("template change hook failed for %s (%s)", tid, reason)
+        # after the outermost transaction commits (save_builtin and the live table's save write the
+        # version inside one): the rooms take their own locks, and the store's write lock comes first
+        # in the process's lock order — a hook inside the transaction deadlocked against a room's draft
+        # write (review 3 of sheet-live step ②, item 1). A room registered after the commit reads the
+        # new head; one registered before gets the change in its queue.
+        self.store.after_commit(run)
 
     def close(self) -> None:
         """Release the parse pool at the end of the process. A parse that had not started stays

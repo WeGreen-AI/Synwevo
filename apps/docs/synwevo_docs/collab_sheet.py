@@ -1739,17 +1739,22 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
     rec = state["clients"].get(client)
     if n > MAX_NUMBER or n >= next_number(state, client) + MAX_AHEAD:
         # a number far past the client's own (a forgotten client's numbers become the floor of new
-        # ones: an unbounded one would push everyone's past what a browser can count)
-        return {"ok": False, "code": "resync", "detail": {"reason": "number_ahead", "next": next_number(state, client)}}
+        # ones: an unbounded one would push everyone's past what a browser can count); certainly not
+        # applied: the client renumbers from `next`
+        return {"ok": False, "code": "resync", "detail": {"reason": "number_ahead", "applied": False, "next": next_number(state, client)}}
+    # A number the room no longer remembers (its client was forgotten, or it is older than the
+    # window): the message may have been applied before — or not. Never applied now; the client must
+    # not simply renumber it (that could apply it twice) but compare with the state it syncs to
+    # (`forgotten`, unlike `number_ahead`, which was certainly not applied).
     if rec is None:
         if n <= _floor(state, client):
-            return {"ok": False, "code": "resync", "detail": {"reason": "old_message", "next": _floor(state, client) + 1}}
+            return {"ok": False, "code": "resync", "detail": {"reason": "forgotten", "applied": "unknown", "next": _floor(state, client) + 1}}
     else:
         prior = rec["r"].get(str(n))
         if prior is not None:
             return {**prior, "duplicate": True}
         if n <= rec["hi"] - CLIENT_WINDOW:
-            return {"ok": False, "code": "resync", "detail": {"reason": "old_message", "next": rec["hi"] + 1}}
+            return {"ok": False, "code": "resync", "detail": {"reason": "forgotten", "applied": "unknown", "next": rec["hi"] + 1}}
     if expect is not None and (type(expect) is not int or expect < 0 or expect > state["seq"]):
         return {"ok": False, "code": "resync", "detail": {"reason": "unknown_expect", "expect": _echo(expect), "seq": state["seq"]}}
     tx = _Tx(state, by, expect, max_cells)
