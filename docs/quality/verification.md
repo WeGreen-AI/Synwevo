@@ -1821,6 +1821,11 @@ CI-83 的全量回归（2214 通过、1 失败、5 跳过）里 `apps/docs/tests
 复现：`apps/portal/web/src/PublicHome.tsx` 与 `PublicPages.tsx` 三处写「没有在线状态、他人已读回执或正在输入提示」，与 `messaging_settings` 缺省（`show_presence=1`、`read_receipts=0`，互惠）及 CI-73/74 的界面不符；首页消息卡链到账户源站 `/messages` 并说「正在成为独立的应用」。
 修复后：portal typecheck、build 通过；隔离实例 Chrome 1280×900 / 390×900 × 简体 / 繁體 / English：首页与 `/privacy` 各出现新句，页面中不再有旧句；已登录夹具账户在首页点消息卡，链接为 `http://message.localhost:31768/auth/start?next=%2F&lang=zh-Hans`，落在消息应用；0 页面错误（`scratchpad/ci88_proof.py`，截图 `ci88-home-anon-*`）。
 
+### 16.87 网关按请求解析上游（CI-89）
+
+本机（Docker 28.3，`nginx:1.28-alpine`，一次性网络 `ci89net`，`scratchpad/ci89_gateway_proof.sh`）：四个替身上游按角色名注册；新 `nginx.conf` 的网关对 docwave 答 `docs`；删除并按「先 messages 后 docs」重建，两者地址互换（docs 172.18.0.2→.3），重建后立即一次请求仍落到旧地址（缓存窗口），11 s 后答 `docs`、message 主机答 `messages`，网关未重启；删除 docs 后 docwave 答 502、accounts 照常；`nginx -t` 通过。
+生产（隧道）：五主机 `/api/auth/state` 的 `role` 各自正确；旧主机 308 不变；`/api/messaging/stream` 匿名 401 JSON（messages）；`/api/collab/…` 普通 GET 401 JSON（docs）、握手 403（应用在 accept 前拒绝匿名）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
