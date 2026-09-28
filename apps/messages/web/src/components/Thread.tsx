@@ -17,6 +17,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ApiError, api, get, post, put } from "@synwevo/auth-client";
 import { scrollBehavior, useDialog, useI18n } from "@synwevo/ui";
 import { M, attachmentUrl, groupAvatarUrl, sendTyping } from "../api";
+import { MENTION_ALL } from "../types";
 import type { Attachment, Capabilities, Conversation, Live, Message, Presence, ReadBy, Settings, TypingState } from "../types";
 import { draftKey, fmtSize, layout, maxSeq, mergeMessages, newClientId, receiptMark } from "../lib/thread";
 import { dayLabel, formatDayLabel } from "../lib/time";
@@ -280,7 +281,7 @@ export function Thread({ conv, uid, live, narrow, coarse, caps, settings, presen
       const out = await post<{ message: Message }>(`${M()}/conversations/${conv.id}/messages`, {
         body: pending.body, client_id: pending.client_id,
         ...(pending.reply_to ? { reply_to: pending.reply_to } : {}), ...(pending.attachment ? { attachment_id: pending.attachment.id } : {}),
-        ...(pending.mentions.length ? { mention_ids: pending.mentions } : {}),
+        ...(pending.mentions.length ? { mention_ids: pending.mentions } : {}), ...(pending.mention_all ? { mention_all: true } : {}),
       });
       merge([out.message]); setRefused(false); onChanged();
     } catch (e) {
@@ -291,7 +292,8 @@ export function Thread({ conv, uid, live, narrow, coarse, caps, settings, presen
   }, [conv.id, merge, onChanged]);
   const queue = useCallback((body: string, att: Attachment | null, mention_ids: string[], reply: Message | null) => {
     const client_id = newClientId();
-    const pending: Message = { id: `pending-${client_id}`, conversation_id: conv.id, seq: 0, sender_id: uid, sender: t("我"), kind: "text", body, reply_to: reply?.id || null, mentions: mention_ids,
+    const pending: Message = { id: `pending-${client_id}`, conversation_id: conv.id, seq: 0, sender_id: uid, sender: t("我"), kind: "text", body, reply_to: reply?.id || null,
+      mentions: mention_ids.filter(x => x !== MENTION_ALL), mention_all: mention_ids.includes(MENTION_ALL),
       edited_at: null, deleted: false, created_at: Date.now() / 1000, client_id, reactions: [], attachment: att, pending: true,
       reply: reply ? { id: reply.id, seq: reply.seq, sender: reply.sender, body: reply.body, deleted: reply.deleted, recalled: reply.recalled } : undefined };
     setItems(cur => [...(cur || []), pending]);

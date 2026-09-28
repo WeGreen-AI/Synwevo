@@ -598,14 +598,17 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
     def send(request: Request, cid: str, body: dict = Body(...)):
         uid = uid_of(request)
         try:
-            if set(body) - {"body", "client_id", "reply_to", "attachment_id", "mention_ids"}:
+            if set(body) - {"body", "client_id", "reply_to", "attachment_id", "mention_ids", "mention_all"}:
                 raise ServiceError(400, "invalid_field", "消息包含不支持的字段")
             limited(uid, "msg", MESSAGES_PER_MINUTE, 60)
             mention_ids = body.get("mention_ids") or []
             if not isinstance(mention_ids, list) or len(mention_ids) > 50:
                 raise ServiceError(400, "invalid_field", "mention_ids 无效", {"field": "mention_ids"})
+            mention_all = body.get("mention_all", False)
+            if not isinstance(mention_all, bool):
+                raise ServiceError(400, "invalid_field", "mention_all 只能是 true 或 false", {"field": "mention_all"})
             msg, created = svc.send(cid, uid, body=str(body.get("body") or ""), client_id=body.get("client_id"), reply_to=body.get("reply_to"),
-                                    attachment_id=body.get("attachment_id"), mention_ids=[str(x) for x in mention_ids])
+                                    attachment_id=body.get("attachment_id"), mention_ids=[str(x) for x in mention_ids], mention_all=mention_all)
         except ServiceError:
             metrics.inc("send_failed")
             raise

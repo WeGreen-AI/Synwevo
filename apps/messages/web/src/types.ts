@@ -32,6 +32,8 @@ export interface Conversation {
   last_message: LastMessage | null;
   /** null = not shown (this reader's receipts are off); a list otherwise */
   read_by?: ReadBy[] | null;
+  /** whether this reader may use @所有人 here (§7.22): a group's owner or admin, not an object discussion */
+  can_mention_all?: boolean;
   /** unread messages that mention this reader (§7.15): after the read floor, not recalled/removed,
    *  not deleted for this reader, not from someone this reader blocked. */
   unread_mentions?: number;
@@ -61,9 +63,18 @@ export interface AppCard {
   degraded?: boolean;
 }
 
+/** What the composer passes for @所有人 among the mentioned ids; sent as `mention_all: true` (§7.22). */
+export const MENTION_ALL = "@all";
+/** The @所有人 label in every language the shell speaks: the flag follows the text, so a draft
+ *  restored after switching conversations (or written in another language) still carries it. */
+export const MENTION_ALL_LABELS = ["所有人", "Everyone"];
+
 export interface Message {
   id: string; conversation_id: string; seq: number; sender_id: string; sender: string; kind: "text" | "system"; body: string; reply_to: string | null;
-  mentions: string[]; edited_at: number | null; deleted: boolean; created_at: number; client_id: string | null; reactions: Reaction[];
+  mentions: string[];
+  /** @所有人 by a group's owner or an admin: counts as a mention of every member (§7.22) */
+  mention_all?: boolean;
+  edited_at: number | null; deleted: boolean; created_at: number; client_id: string | null; reactions: Reaction[];
   attachment: Attachment | null;
   reply?: { id: string; seq: number; sender: string; body: string; deleted: boolean; recalled?: boolean };
   /** a system line, or the marker left by a recall / a manager's removal (§7.6) */

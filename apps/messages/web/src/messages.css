@@ -192,6 +192,8 @@ a.msg-card:hover, a.msg-card:focus-visible { border-color: var(--accent-line); t
 .msg-mentions { display: flex; flex-direction: column; padding: 4px; min-width: 200px; max-height: 260px; overflow: auto; }
 .msg-mentions button { border: 0; background: transparent; text-align: left; padding: 8px 10px; border-radius: 6px; font: inherit; cursor: pointer; min-height: 32px; }
 .msg-mentions button:hover, .msg-mentions button.on, .msg-mentions button:focus-visible { background: var(--accent-weak); outline: none; }
+.msg-mentions button.all { font-weight: 600; border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0; }
+.msg-mentions button.all .tiny { margin-left: 6px; font-weight: 400; }
 
 /* pills over the thread */
 .msg-pill { position: absolute; left: 50%; transform: translateX(-50%); bottom: 12px; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font: inherit; font-size: var(--fs-2); font-weight: 600; cursor: pointer; box-shadow: var(--shadow-lg); animation: msg-rise var(--dur-2) var(--ease); z-index: 2; }

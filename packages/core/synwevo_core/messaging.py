@@ -34,6 +34,11 @@ The rules the schema encodes (decision record in docs/platform/messaging.md):
   visible page sends and is one of three states by heartbeat age (`messaging_presence`), never
   stored; a person who hides theirs sees nobody's. Read positions of others are shown only to and
   for members who turned `read_receipts` on. There is no "delivered": the server cannot know it.
+* **@所有人 is a group manager's (CI-99).** In a group, the owner and admins may mention everyone
+  (`mention_all`): the message counts toward every member's unread mentions and reaches them as a
+  mention, under each member's own notify mode and mute — the same way a personal @ does. Members
+  cannot, and a direct message has no "everyone". Stored as the token `@all` in `mentions`; the API
+  shows it as `mention_all: true` and keeps `mentions` to user ids.
 * **Blocking protects the blocker, quietly (CI-78).** A person may block someone they share an
   organization with. Between the two there is then no new direct message and no sending in the
   existing one (either way), and neither sees the other's presence, typing or read position.
@@ -169,6 +174,8 @@ def _window(name: str, default: int) -> int:
     return max(0, v)
 
 
+#: The token that stands for every member in a message's stored `mentions` (never a user id).
+MENTION_ALL = "@all"
 #: Recall (for everyone) is the sender's within this many seconds of sending — 120 s like WeChat
 #: and QQ (brief §五); `SYNWEVO_MESSAGING_RECALL_WINDOW_S` changes it per deployment.
 RECALL_WINDOW_S = _window("SYNWEVO_MESSAGING_RECALL_WINDOW_S", 120)
@@ -925,16 +932,16 @@ class Messaging:
         return self._conv_out(conv, me, uid)
 
     def unread_mentions(self, uid: str, cids: list[str] | None = None) -> dict[str, int]:
-        """Per conversation: unread messages that mention `uid` — after the reader's floor
+        """Per conversation: unread messages that mention `uid` (by name, or @所有人) — after the reader's floor
         (max(last_read_seq, joined_seq), the same floor as `unread`), still there (not recalled,
         removed or deleted), not deleted by this reader, and not from someone this reader blocked
         (their messages stay visible in a group, but raise no @ mark). One grouped query."""
         sql = ("SELECT x.conversation_id AS cid, COUNT(*) AS n FROM conversation_members m JOIN messages x ON x.conversation_id=m.conversation_id "
                "WHERE m.user_id=? AND m.left_at IS NULL AND x.seq>MAX(m.last_read_seq, m.joined_seq) AND x.kind='text' AND x.deleted_at IS NULL "
-               "AND x.mentions IS NOT NULL AND instr(x.mentions, ?)>0 AND x.sender_id<>m.user_id "
+               "AND x.mentions IS NOT NULL AND (instr(x.mentions, ?)>0 OR instr(x.mentions, ?)>0) AND x.sender_id<>m.user_id "
                "AND NOT EXISTS (SELECT 1 FROM message_hides h WHERE h.message_id=x.id AND h.user_id=m.user_id) "
                "AND NOT EXISTS (SELECT 1 FROM message_blocks b WHERE b.user_id=m.user_id AND b.blocked_id=x.sender_id)")
-        args: list = [uid, json.dumps(uid)]
+        args: list = [uid, json.dumps(uid), json.dumps(MENTION_ALL)]
         if cids is not None:
             if not cids:
                 return {}
@@ -984,6 +991,7 @@ class Messaging:
                 "announcement": conv.get("announcement") or None, "announcement_at": conv.get("announcement_at"),
                 "last_seq": conv["last_seq"], "last_message_at": conv["last_message_at"], "updated_at": conv["updated_at"],
                 "me": self._me_out(me),
+                "can_mention_all": self.can_mention_all(conv, me) if conv["kind"] == "group" and me.get("role") in ("owner", "admin") else False,
                 "unread": unread, "unread_mentions": mentions,
                 "peer": ({"user_id": peer["user_id"], "name": peer["display_name"] or peer["email"].split("@")[0], "presence": pres.get(peer["user_id"]),
                           "blocked_by_me": blocked_by_me} if peer else None),
@@ -1058,7 +1066,9 @@ class Messaging:
             names[m["sender_id"]] = self._name(m["sender_id"])
         gone = bool(m["deleted_at"])
         out = {"id": m["id"], "conversation_id": m["conversation_id"], "seq": m["seq"], "sender_id": m["sender_id"], "sender": names[m["sender_id"]],
-               "kind": m["kind"], "body": "" if gone else m["body"], "reply_to": m["reply_to"], "mentions": _load(m["mentions"]) or [],
+               "kind": m["kind"], "body": "" if gone else m["body"], "reply_to": m["reply_to"],
+               "mentions": [x for x in (_load(m["mentions"]) or []) if x != MENTION_ALL],
+               "mention_all": MENTION_ALL in (_load(m["mentions"]) or []),
                "edited_at": m["edited_at"], "deleted": gone, "recalled": bool(m.get("recalled_at")), "created_at": m["created_at"], "client_id": m["client_id"],
                "reactions": (reactions or {}).get(m["id"], []), "attachment": None, "forwarded_from": None, "removed_by": None}
         if m["kind"] == "system":
@@ -1219,10 +1229,11 @@ class Messaging:
 
     # ------------------------------------------------------------------ writing
     def send(self, cid: str, uid: str, *, body: str, client_id: str | None = None, reply_to: str | None = None,
-             attachment_id: str | None = None, mention_ids: list[str] | None = None) -> tuple[dict, bool]:
+             attachment_id: str | None = None, mention_ids: list[str] | None = None, mention_all: bool = False) -> tuple[dict, bool]:
         """Store one message; returns (message, created). A repeated `client_id` from the same
         sender returns the stored message with created=False — the retry after a lost
-        acknowledgement that must not become a duplicate."""
+        acknowledgement that must not become a duplicate. `mention_all` (@所有人) is for a
+        group's owner and admins only."""
         conv, me = self._member(cid, uid)
         if conv["archived_at"]:
             raise ServiceError(409, "archived", "会话已归档，不能再发消息")
@@ -1234,7 +1245,7 @@ class Messaging:
             raise ServiceError(400, "empty_message", "消息不能为空", {"field": "body"})
         if client_id is not None and (not isinstance(client_id, str) or not 1 <= len(client_id) <= 64 or not re.fullmatch(r"[A-Za-z0-9_-]+", client_id)):
             raise ServiceError(400, "invalid_field", "client_id 无效", {"field": "client_id"})
-        mentions = []
+        mentions = [MENTION_ALL] if mention_all else []
         active = set(self._active_user_ids(cid))
         for mid in dict.fromkeys(mention_ids or []):
             if mid in active and mid != uid:
@@ -1245,6 +1256,10 @@ class Messaging:
                 dup = t.execute("SELECT * FROM messages WHERE conversation_id=? AND sender_id=? AND client_id=?", (cid, uid, client_id)).fetchone()
                 if dup:
                     return self._message_out(dict(dup), self._reactions_for([dup["id"]]), viewer=uid), False
+            if mention_all:
+                # After the duplicate check: a retry of a message stored before a demotion gets the
+                # stored message back, not a refusal it can never get past.
+                self._require_mention_all(conv, me)
             if reply_to:
                 r = t.execute("SELECT seq FROM messages WHERE id=? AND conversation_id=?", (reply_to, cid)).fetchone()
                 if not r or r["seq"] < me["joined_seq"]:
@@ -1267,6 +1282,28 @@ class Messaging:
         self.publish(sorted(active), {"type": "message", "conversation_id": cid, "message": out})
         return out, True
 
+    def _object_bound(self, cid: str) -> bool:
+        """A group that is an application object's discussion (CI-75): its members are everyone
+        who may open the object, enrolled automatically, and its owner is whoever opened it first."""
+        try:
+            return bool(self.store.one("SELECT 1 AS x FROM object_conversations WHERE conversation_id=?", (cid,)))
+        except Exception:  # noqa: BLE001 - a deployment without the bridge table has no object discussions
+            return False
+
+    def can_mention_all(self, conv: dict, me: dict) -> bool:
+        """@所有人 (CI-99): a group's owner and admins, in a group people joined on purpose — not an
+        object discussion, whose "everyone" is everyone with access to the object and whose owner is
+        simply whoever opened it first."""
+        return conv["kind"] == "group" and me.get("role") in ("owner", "admin") and not self._object_bound(conv["id"])
+
+    def _require_mention_all(self, conv: dict, me: dict) -> None:
+        if conv["kind"] != "group":
+            raise ServiceError(400, "invalid_field", "只有群聊可以 @所有人", {"field": "mention_all"})
+        if me.get("role") not in ("owner", "admin"):
+            raise ServiceError(403, "mention_all_forbidden", "只有群主和管理员可以 @所有人", {"role": me.get("role")})
+        if self._object_bound(conv["id"]):
+            raise ServiceError(403, "mention_all_forbidden", "对象讨论里不能 @所有人：成员是所有能打开这个对象的人", {"object": True})
+
     def _system(self, t, cid: str, actor: str, event: dict) -> None:
         row = t.execute("SELECT last_seq FROM conversations WHERE id=?", (cid,)).fetchone()
         seq = row["last_seq"] + 1
@@ -1274,6 +1311,11 @@ class Messaging:
         t.execute("INSERT INTO messages (id,conversation_id,seq,sender_id,kind,body,created_at) VALUES (?,?,?,?,'system',?,?)",
                   (new_id("msg"), cid, seq, actor, json.dumps({**event, "actor": actor}, ensure_ascii=False), ts))
         t.execute("UPDATE conversations SET last_seq=?, last_message_at=?, updated_at=? WHERE id=?", (seq, ts, ts, cid))
+        # The line records the actor's own action (creating the group, renaming it, adding someone):
+        # it is not news to them. If they had read everything before it, they have read it too — the
+        # same as a message they send (CI-99: a new group's creator saw 1 unread for 「创建了群聊」).
+        t.execute("UPDATE conversation_members SET last_read_seq=?, last_read_at=?, marked_unread=0, updated_at=? "
+                  "WHERE conversation_id=? AND user_id=? AND left_at IS NULL AND MAX(last_read_seq, joined_seq)>=?", (seq, ts, ts, cid, actor, seq - 1))
 
     def edit(self, mid: str, uid: str, body: str) -> dict:
         """Edit one's own message within `EDIT_WINDOW_S`; `edited_at` marks it, nobody is
@@ -1600,7 +1642,7 @@ class Messaging:
     # ------------------------------------------------------------------ who to tell
     def recipients_for(self, cid: str, message: dict) -> dict[str, str]:
         """Who should get an inbox item for this message and why: `dm` for the other side of a
-        direct message, `mention` for people the message mentions — honouring per-conversation
+        direct message, `mention` for people the message mentions (everyone, for @所有人) — honouring per-conversation
         notify modes, the standing mute and a running `muted_until`. The sender is never told
         about their own message, and nobody who blocked the sender is told about it (CI-78: the
         message stays visible in a shared group, but it does not reach the blocker's inbox)."""
@@ -1612,7 +1654,7 @@ class Messaging:
         for m in rows:
             if is_muted(m, ts) or m["notify"] == "none" or m["user_id"] in blockers:
                 continue
-            if m["user_id"] in (message.get("mentions") or []):
+            if message.get("mention_all") or m["user_id"] in (message.get("mentions") or []):
                 out[m["user_id"]] = "mention"
             elif conv["kind"] == "dm" and m["notify"] == "all":
                 out[m["user_id"]] = "dm"

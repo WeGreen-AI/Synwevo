@@ -239,7 +239,7 @@ SSE `receipt`：`{type:'receipt', conversation_id, user_id, last_read_seq, at}`�
 
 ### 7.14 未做（如实）
 
-跨进程事件外发表（多 worker、Docs 进程写卡片的前提）；组织级回执/在线/typing 开关（`organization_messaging_policies`）；阻止（CI-78 已做，见 7.18）；@所有人；置顶消息；收藏；投票；导出；消失消息；群申请/邀请链接；FTS 回填进度显示（本批建表时同步回填，库大时首次启动会慢一次）；`sweep_unused_attachments` 仍无调度器（另批）。
+跨进程事件外发表（多 worker、Docs 进程写卡片的前提）；组织级回执/在线/typing 开关（`organization_messaging_policies`）；阻止（CI-78 已做，见 7.18）；@所有人（CI-99 已做，见 7.22）；置顶消息；收藏；投票；导出；消失消息；群申请/邀请链接；FTS 回填进度显示（本批建表时同步回填，库大时首次启动会慢一次）；`sweep_unused_attachments` 仍无调度器（另批）。
 
 ### 7.15 未读提及：`unread_mentions`（CI-78）
 
@@ -305,6 +305,23 @@ schema **v26**：只加表 `conversation_avatars`、`message_blocks`（`CREATE T
 
 `refusals.test.ts` 读消息服务的全部 `ServiceError(...)`，三类之外的新拒绝会让测试失败。对象页（`/objects/{app}/{kind}/{id}`）只在重试能改变结果时（网络、5xx、408、429、前置网关）给「重试」；`no_organization`、`organization_unavailable`、`archived` 给「返回工作空间」。
 Docs 只在当前工作空间属于组织时提供「在消息中讨论」——个人工作空间的项目没有组织会话（§8）。
+
+### 7.22 @所有人（CI-99）
+
+`POST /conversations/{cid}/messages` 多一个布尔字段 `mention_all`。
+
+| 规则 | 行为 |
+|---|---|
+| 谁能用 | 只有**群**的群主与管理员，且不是应用对象的讨论（§8.1：那里的成员是所有能打开对象的人，群主只是第一个打开讨论的人）；普通成员 403 `mention_all_forbidden`（`detail.role`），对象讨论 403（`detail.object`），私聊 400 `invalid_field`（`field=mention_all`），非布尔值 400。会话输出里的 `can_mention_all` 按读者给出这个判断，外壳只在它为真时提供 |
+| 重试 | 权限检查在 `client_id` 去重之后：确认丢失后被降级的人重试，拿回已存的那条消息，而不是一个永远过不去的 403 |
+| 存储 | `messages.mentions` 里多一个记号 `@all`（永远不是用户 id）；接口里是 `mention_all: true`，`mentions` 仍只列用户 id |
+| 未读提及 | 计入除发送者外每位成员的 `unread_mentions`，规则与点名提及相同：读位之后、未撤回/移除/删除、未被本人「对我删除」、发送者不是读者屏蔽的人 |
+| 收件箱 | 每位成员按**自己的**设置收到 `conversation.mention`：`notify=none`、静音中（含定时静音）、屏蔽了发送者的人不收；邮件与点名提及同为摘要（默认关闭） |
+| 外壳 | 可用时，只输入 `@` 或点 @ 按钮，列表第一项是「所有人（N 人）」，但默认高亮第一个人；输入名字后「所有人」排在人之后（只在「所有人 / all / everyone」的开头匹配时出现）——回车不会误发给全员。选中后正文插入 `@所有人`；发送时是否带 `mention_all` 只看正文里是否还有 `@所有人`（或英文界面的 `@Everyone`），所以切换会话后恢复的草稿照样有效，删掉这段文字就不再带。编辑消息时不弹出提及列表 |
+| 系统行 | 创建群、改名、加人等系统行记录的是操作者本人的动作：操作者读到上一条（按 `max(last_read_seq, joined_seq)`）时，这一行也记为已读，并清掉「标记未读」，与本人发消息相同 |
+
+取舍：团队协作产品通常把「@所有人」限定给群主/管理员（或由管理员授权），以免一人刷屏全员；这里不另设开关，也不绕过个人的静音——
+一个人静音了群，就是不想被群里的消息打扰，@所有人仍会在会话列表里留下 @ 标记。
 
 ## 8. 应用联动：Synwevo Docs ↔ Synwevo Message（CI-75）
 

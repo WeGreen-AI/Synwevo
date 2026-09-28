@@ -31,7 +31,7 @@ const API_ONLY = new Set([
   "只有语音附件可以声明时长", "只能修改 name 和 description", "只能提交 conversation_ids 和 client_id", "只能提交 image_base64",
   "只能提交 reason 和 note", "只能提交 user_ids 和 history_from", "只能设置 muted、pinned、notify、muted_until",
   "只能设置 show_presence 和 read_receipts", "只能设置 text", "处理结果只能是 removed 或 dismissed", "消息包含不支持的字段",
-  "角色只能是 admin 或 member", "举报原因无效",
+  "角色只能是 admin 或 member", "举报原因无效", "mention_all 只能是 true 或 false", "只有群聊可以 @所有人", "对象讨论里不能 @所有人：成员是所有能打开这个对象的人",
 ]);
 /** Codes the shared presentation already words for every shell (`API_ERROR_SOURCE`). */
 const SHARED_CODES = new Set(["unauthorized", "too_many_attempts"]);

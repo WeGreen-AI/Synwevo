@@ -10,6 +10,7 @@ import { ApiError } from "@synwevo/auth-client";
 import { Menu, isImeKey, useI18n, useToast } from "@synwevo/ui";
 import { M, uploadWithCancel } from "../api";
 import { ENTER_KEY, fmtSize } from "../lib/thread";
+import { MENTION_ALL, MENTION_ALL_LABELS } from "../types";
 import type { Attachment, Capabilities, Conversation, Member, Message } from "../types";
 import { EmojiPicker } from "./EmojiPicker";
 import { Popover } from "./layers";
@@ -27,6 +28,7 @@ export interface ComposerProps {
   draft: string; setDraft: (v: string) => void;
   replyTo: Message | null; onCancelReply: () => void;
   editing: Message | null; onCancelEdit: () => void; onSaveEdit: (body: string) => Promise<void>;
+  /** `mentionIds` carries `MENTION_ALL` for @所有人 */
   onSend: (body: string, attachments: Attachment[], mentionIds: string[]) => void;
   /** typing hints: the composer decides when (first key, every 4 s, 3 s idle or send) */
   onTyping: (state: "start" | "stop") => void;
@@ -179,30 +181,44 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const stopRecording = (reason: "send" | "cancel") => { if (!rec) return; recStopReason.current = reason; rec.recorder.stop(); };
   useEffect(() => () => { rec?.recorder.state !== "inactive" && rec?.recorder.stop(); rec?.stream.getTracks().forEach(tr => tr.stop()); }, [rec]);
 
-  // ---- mentions: `@` at the caret opens the member list filtered by what follows it
+  // ---- mentions: `@` at the caret opens the member list filtered by what follows it. Where the
+  // server allows @所有人 (§7.22: a group's owner and admins, not an object discussion) 「所有人」
+  // is offered too — first on a bare `@`, after the people once a name is being typed, and never the
+  // highlighted choice while a person is listed: Enter must not notify everyone by accident.
   const members = useMemo(() => conv.members.filter(m => m.user_id !== uid), [conv.members, uid]);
-  const suggestions = useMemo(() => {
+  const canMentionAll = !!conv.can_mention_all;
+  const allLabel = t("所有人");
+  type MentionPick = Member | "all";
+  const suggestions = useMemo<MentionPick[]>(() => {
     if (!mentionQuery || conv.kind !== "group") return [];
     const q = mentionQuery.text.toLowerCase();
-    return members.filter(m => !q || m.name.toLowerCase().includes(q)).slice(0, 8);
-  }, [mentionQuery, members, conv.kind]);
+    const allHit = canMentionAll && (!q || allLabel.toLowerCase().startsWith(q) || "all".startsWith(q) || "everyone".startsWith(q));
+    const people: MentionPick[] = members.filter(m => !q || m.name.toLowerCase().includes(q)).slice(0, allHit ? 7 : 8);
+    return allHit ? (q ? [...people, "all"] : ["all", ...people]) : people;
+  }, [mentionQuery, members, conv.kind, canMentionAll, allLabel]);
+  const firstPerson = (list: MentionPick[]) => Math.max(0, list.findIndex(m => m !== "all"));
   const [suggestIdx, setSuggestIdx] = useState(0);
-  useEffect(() => { setSuggestIdx(0); }, [mentionQuery?.text]);
+  useEffect(() => { setSuggestIdx(firstPerson(suggestions)); }, [mentionQuery?.text]);   // eslint-disable-line react-hooks/exhaustive-deps
   const detectMention = (value: string, caret: number) => {
-    if (conv.kind !== "group") { setMentionQuery(null); return; }
+    if (conv.kind !== "group" || editing) { setMentionQuery(null); return; }
     const before = value.slice(0, caret);
     const at = before.lastIndexOf("@");
     if (at < 0 || (at > 0 && !/\s/.test(before[at - 1])) || /\s/.test(before.slice(at + 1))) { setMentionQuery(null); return; }
     setMentionQuery({ start: at, text: before.slice(at + 1) });
   };
-  const insertMention = (m: Member, from: { start: number; end: number }) => {
-    const value = draft.slice(0, from.start) + `@${m.name} ` + draft.slice(from.end);
+  const insertMention = (m: MentionPick, from: { start: number; end: number }) => {
+    const name = m === "all" ? allLabel : m.name;
+    const value = draft.slice(0, from.start) + `@${name} ` + draft.slice(from.end);
     setDraft(value);
-    if (!mentions.some(x => x.user_id === m.user_id)) setMentions([...mentions, m]);
+    if (m !== "all" && !mentions.some(x => x.user_id === m.user_id)) setMentions([...mentions, m]);
     setMentionQuery(null); setAtMenu(false);
-    requestAnimationFrame(() => { const el = textRef.current; if (el) { el.focus(); const pos = from.start + m.name.length + 2; el.setSelectionRange(pos, pos); } });
+    requestAnimationFrame(() => { const el = textRef.current; if (el) { el.focus(); const pos = from.start + name.length + 2; el.setSelectionRange(pos, pos); } });
   };
-  const mentionIdsFor = (body: string) => mentions.filter(m => body.includes(`@${m.name}`)).map(m => m.user_id);
+  // A mention counts only while its @name is still in the text (deleting it takes it back). @所有人
+  // follows the text alone, in any of the shell's languages, so a restored draft keeps it.
+  const mentionIdsFor = (body: string) => [
+    ...(canMentionAll && MENTION_ALL_LABELS.some(l => body.includes(`@${l}`)) ? [MENTION_ALL] : []),
+    ...mentions.filter(m => body.includes(`@${m.name}`)).map(m => m.user_id)];
 
   // ---- sending
   const bodyMax = caps?.max_body ?? null;
@@ -304,11 +320,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     <EmojiPicker open={emojiOpen} anchor={emojiBtn} onClose={refocus => { setEmojiOpen(false); if (refocus) emojiBtn.current?.focus(); }} onPick={e => { insertAtCaret(e); }} />
     <Popover open={atMenu && conv.kind === "group"} anchor={atBtn} onClose={refocus => { setAtMenu(false); if (refocus) atBtn.current?.focus(); }} label={t("提及成员")} className="msg-mentions" role="listbox">
       {members.length === 0 ? <div className="tiny muted" style={{ padding: 8 }}>{t("群里没有其他成员。")}</div>
-        : members.map((m, i) => <button key={m.user_id} type="button" role="option" aria-selected={false} data-autofocus={i === 0 ? true : undefined} onClick={() => { const el = textRef.current; const pos = el?.selectionStart ?? draft.length; insertMention(m, { start: pos, end: pos }); }}>{m.name}</button>)}
+        : ([...(canMentionAll ? ["all" as const] : []), ...members] as MentionPick[]).map((m, i) => <button key={m === "all" ? "all" : m.user_id} type="button" role="option" aria-selected={false} data-autofocus={i === (canMentionAll ? 1 : 0) ? true : undefined}
+            className={m === "all" ? "all" : undefined} onClick={() => { const el = textRef.current; const pos = el?.selectionStart ?? draft.length; insertMention(m, { start: pos, end: pos }); }}>
+            {m === "all" ? <>{allLabel}<span className="tiny muted">{t("（{n} 人）", { n: members.length })}</span></> : m.name}</button>)}
     </Popover>
     <Popover open={!!mentionQuery && suggestions.length > 0} anchor={textRef} onClose={() => setMentionQuery(null)} label={t("提及成员")} className="msg-mentions" role="listbox" autoFocus={false}>
-      {suggestions.map((m, i) => <button key={m.user_id} type="button" role="option" aria-selected={i === suggestIdx} className={i === suggestIdx ? "on" : ""} tabIndex={-1}
-        onMouseDown={e => e.preventDefault()} onClick={() => insertMention(m, { start: mentionQuery!.start, end: mentionQuery!.start + 1 + mentionQuery!.text.length })}>{m.name}</button>)}
+      {suggestions.map((m, i) => <button key={m === "all" ? "all" : m.user_id} type="button" role="option" aria-selected={i === suggestIdx} className={[i === suggestIdx ? "on" : "", m === "all" ? "all" : ""].filter(Boolean).join(" ") || undefined} tabIndex={-1}
+        onMouseDown={e => e.preventDefault()} onClick={() => insertMention(m, { start: mentionQuery!.start, end: mentionQuery!.start + 1 + mentionQuery!.text.length })}>
+        {m === "all" ? <>{allLabel}<span className="tiny muted">{t("（{n} 人）", { n: members.length })}</span></> : m.name}</button>)}
     </Popover>
   </form>;
 });
