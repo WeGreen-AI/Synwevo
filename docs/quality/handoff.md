@@ -59,26 +59,26 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | ID | 批次 | 状态 | 下一步 |
 |---|---|---|---|
 | CI-01 | 手机回流与触控目标（WCAG 2.2 1.4.10 / 2.5.8 / 2.5.5，Fluent 2 断点） | 已实现、三宽度审计 0 发现；`9b10602` 已推送，部署见 deployment.md | 把 `ui_mobile_audit.py` 纳入每次外壳改动后的回归 |
-| CI-02 | HTTP 安全头（ASVS V14.4：nosniff、强制 CSP、HSTS、COOP/CORP、Permissions-Policy） | 已实现、6 项契约测试 + 五套浏览器脚本 0 CSP 违规，待部署 | 部署后 `curl -I` 线上三源核对；若线上控制台出现 CSP 拦截，用 `SYNWEVO_CSP` 临时放宽并修正策略 |
-| CI-03 | 明细表映射对话框语义（每组一份显示错误的「随文件变化」） | 已修复，`ui_e2e_more.py` 恢复运行并通过，待部署 | 五套 Docs/外壳浏览器脚本都进入每次发布前的回归 |
-| CI-04 | 内容态手机补审（组织页链接、Docs 首页表格、选择栏提示） | 已修复，两组账户 × 三宽度 0 发现，待部署 | 隔离实例已有组织/邀请夹具，后续审计直接复用 |
-| CI-05 | 共享菜单/抽屉键盘模式回归；WebKit 焦点陷阱与开启者回焦两处修复 | 已修复，双引擎通过，待部署 | 后续所有对话框都经 `useModalFocus`，无需逐个处理 |
+| CI-02 | HTTP 安全头（ASVS V14.4：nosniff、强制 CSP、HSTS、COOP/CORP、Permissions-Policy） | 已部署（首个提交 ccdd950，含于 2026-09-28 生产 4bf699a） | 部署后 `curl -I` 线上三源核对；若线上控制台出现 CSP 拦截，用 `SYNWEVO_CSP` 临时放宽并修正策略 |
+| CI-03 | 明细表映射对话框语义（每组一份显示错误的「随文件变化」） | 已部署（首个提交 ccdd950，含于 2026-09-28 生产 4bf699a） | 五套 Docs/外壳浏览器脚本都进入每次发布前的回归 |
+| CI-04 | 内容态手机补审（组织页链接、Docs 首页表格、选择栏提示） | 已部署（首个提交 409152f，含于 2026-09-28 生产 4bf699a） | 隔离实例已有组织/邀请夹具，后续审计直接复用 |
+| CI-05 | 共享菜单/抽屉键盘模式回归；WebKit 焦点陷阱与开启者回焦两处修复 | 已部署（首个提交 1282e6c，含于 2026-09-28 生产 4bf699a） | 后续所有对话框都经 `useModalFocus`，无需逐个处理 |
 | CI-06 | Cloudflare 信标与 CSP：仅 `CF-Ray` 请求放行 Web Analytics 两个源 | 已实现，7 项契约测试通过，`59aa880` 已推送 | 部署后用匿名 Chromium 复查线上 CSP 违规应为 0 |
 | CI-07 | 对比度采样加入 `ui_mobile_audit.py`（SC 1.4.3） | 采样器已验证；两组账户 0 发现，无需改动 | 每次改令牌或新增文本样式后重跑 |
 | CI-08 | WebKit 经本地代理覆盖三个源；五套 Docs/外壳脚本都支持 `E2E_ENGINE=webkit` | 已实现，WebKit 与 Chromium 同等覆盖（Safari Tab 策略差异已在断言中注明） | 每次发布前两引擎都跑 |
-| CI-09 | 手机提示条遮挡对话框主按钮（WebKit 发现） | 已修复，待部署 | — |
-| CI-10 | 账户外壳按路由拆分（登录页 JS −46%） | 已实现，待部署 | 部署后用匿名 Chromium 核对 `/login` 只加载入口块与共享块 |
-| CI-11 | Docs 外壳按路由拆分（项目列表 JS −32%），`lazyRoute` 共享化 | 已实现，待部署 | 共享块 `perm` 274 KB 可再拆（列表页与工作台共用的视图层） |
-| CI-12 | 英文残留：设备句子与个人空间默认名改为按语言 | 已修复，待部署 | 审计 `--locale=en` 纳入回归 |
-| CI-13 | 顶栏溢出与空间切换器塌缩（共享 `.topbar` 换行） | 已修复，待部署 | — |
+| CI-09 | 手机提示条遮挡对话框主按钮（WebKit 发现） | 已部署（首个提交 cee2da3，含于 2026-09-28 生产 4bf699a） | — |
+| CI-10 | 账户外壳按路由拆分（登录页 JS −46%） | 已部署（首个提交 32726cd，含于 2026-09-28 生产 4bf699a） | 部署后用匿名 Chromium 核对 `/login` 只加载入口块与共享块 |
+| CI-11 | Docs 外壳按路由拆分（项目列表 JS −32%），`lazyRoute` 共享化 | 已部署（首个提交 4147d3b，含于 2026-09-28 生产 4bf699a） | 共享块 `perm` 274 KB 可再拆（列表页与工作台共用的视图层） |
+| CI-12 | 英文残留：设备句子与个人空间默认名改为按语言 | 已部署（首个提交 6fe46b0，含于 2026-09-28 生产 4bf699a） | 审计 `--locale=en` 纳入回归 |
+| CI-13 | 顶栏溢出与空间切换器塌缩（共享 `.topbar` 换行） | 已部署（首个提交 6fe46b0，含于 2026-09-28 生产 4bf699a） | — |
 | CI-14 | SDK 对网关 `rate_limited` 的有界重试；SDK/CLI 与 Node 验收复跑 | 已修复并复跑通过 | SDK 源码改动后 `pip install apps/docs/sdk/python` 重装再跑验收 |
 | CI-15 | API 台浏览器验收在强制 CSP 下复跑（脚本改用 instance=test 规则与函数形式页面脚本） | 通过 | 每个里程碑复跑；夹具在 scratchpad（0600，合成账户） |
-| CI-16 | 主按钮悬停对比度（全站 `<button class="btn primary">`）；API 台六页签内容态审计 0 发现 | 已修复，待部署 | 审计已覆盖 API 台页签，移出候选队列 |
-| CI-17 | 有映射的工作台与英文长标签的三处手机问题 | 已修复，待部署 | — |
-| CI-18 | 繁體残留检测（0 处）；整页目标测量；折叠头与页脚链接目标尺寸 | 已修复，待部署 | 审计三种语言（默认 / `--locale=en` / `--locale=zh-Hant`）都纳入回归 |
+| CI-16 | 主按钮悬停对比度（全站 `<button class="btn primary">`）；API 台六页签内容态审计 0 发现 | 已部署（首个提交 9578158，含于 2026-09-28 生产 4bf699a） | 审计已覆盖 API 台页签，移出候选队列 |
+| CI-17 | 有映射的工作台与英文长标签的三处手机问题 | 已部署（首个提交 0727348，含于 2026-09-28 生产 4bf699a） | — |
+| CI-18 | 繁體残留检测（0 处）；整页目标测量；折叠头与页脚链接目标尺寸 | 已部署（首个提交 88dd279，含于 2026-09-28 生产 4bf699a） | 审计三种语言（默认 / `--locale=en` / `--locale=zh-Hant`）都纳入回归 |
 | CI-19 | 平台闭环浏览器回归 `services/identity/scripts/ui_e2e_onboarding.py`（注册→验证→登录→引导→邀请→接受→退出，Chromium + WebKit，手机视口） | 通过 | 每个里程碑复跑；需要一个 24 小时内邀请数未达 50 的团队空间（脚本参数），注册限 10 次 / IP / 15 分钟 |
-| CI-20 | 恶意上传防护：隔离优先的接纳链（clamd 扫描、`rejected`/`scan_failed` 状态、下载门、模板同步扫描、schema v8、readyz 组件、SDK 等待、三语言标签、compose 参考服务） | 已实现（本机），待部署 | 生产：运维确认 VPS 内存余量 ≥2 GiB，合并 `clamav` 服务与两个环境变量到 `/opt/synwevo/config/compose.yaml`；`rescan` CLI 与加密文件流程未做（file-acceptance §9） |
-| CI-21 | 风险触发的人机验证（Turnstile 服务端校验：四个匿名邮件入口每次、口令登录同地址 3 次失败后；`challenge_required/failed/unavailable`；故障不放行；账户外壳组件三语言） | 已实现（本机），待推送 | 生产：账户持有人在 Cloudflare 创建 Widget（`accounts.wegreen.ltd`）并把两把密钥写入 `runtime.env`；测试密钥的令牌不带 action，浏览器完整通路要等真实 Widget |
+| CI-20 | 恶意上传防护：隔离优先的接纳链（clamd 扫描、`rejected`/`scan_failed` 状态、下载门、模板同步扫描、schema v8、readyz 组件、SDK 等待、三语言标签、compose 参考服务） | 已部署（首个提交 4061731，含于生产 4bf699a）；生产扫描自 2026-09-28 CI-87 起启用 | 生产：运维确认 VPS 内存余量 ≥2 GiB，合并 `clamav` 服务与两个环境变量到 `/opt/synwevo/config/compose.yaml`；`rescan` CLI 与加密文件流程未做（file-acceptance §9） |
+| CI-21 | 风险触发的人机验证（Turnstile 服务端校验：四个匿名邮件入口每次、口令登录同地址 3 次失败后；`challenge_required/failed/unavailable`；故障不放行；账户外壳组件三语言） | 代码已部署（首个提交 7727d87，含于生产 4bf699a）；生产人机验证仍待持有人创建 Turnstile Widget 与密钥 | 生产：账户持有人在 Cloudflare 创建 Widget（`accounts.wegreen.ltd`）并把两把密钥写入 `runtime.env`；测试密钥的令牌不带 action，浏览器完整通路要等真实 Widget |
 | CI-22 | 平台通知中心（核心表 + 每角色接口 + 邮件 outbox 调度器 + 铃铛与偏好页；安全/邀请/角色/移出/退出事件接入） | 已部署（a02baf0） | Docs 侧发射点（文件被拒、任务完成）随下一批；Web Push 未做；`docs/platform/notifications.md` 是权威记录 |
 | CI-23 | 组织自定义角色（权限目录 + 角色表 + 委派不越权 + 有效权限视图 + 组织页 UI） | 已部署（07af1f0） | `org.members.import`/`org.approvals.decide`/`org.messaging.manage` 由 CI-24/26/25 消费；组织审计页未做；`docs/platform/organization-roles.md` 是权威记录 |
 | CI-24 | 机构邮箱注册（CUHK）：根因定位到收件网关（Trend Micro）之后；校验器不再 500、正文 QP、收件页发件人与网关提示、活跃账户再注册寄提示 | 已部署（544f607） | 真实 CUHK 收件、SMTP2GO Activity 记录、SPF/发件域验证/跟踪关闭/From 改域均为账户持有人或运营步骤（operations.md §6.1）；验证脚本 `ui_e2e_institutional_mail.py` |
@@ -136,7 +136,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-85 | 账户外壳的拒绝以本语言句子呈现：四套错误呈现统一为「模板 → 目录原句 → 代码表」（`lib/refusals.ts`），目录补约 130 句服务端原句，12 个带数字/名称的代码按 `detail` 生成；导入逐行、批量逐项、身份提供商探测同样呈现；外部登录起点的拒绝回到登录页 | 已实现，待部署 | 新增账户服务拒绝时：在该页的目录补三语言，或写模板/代码表，或在 `services/identity/web/tests/refusals.test.mjs` 的「仅 API」清单写明理由；新模块要在 `SERVER` 表里标明哪些页面能遇到 |
 | CI-86 | Docs 工作台的拒绝以本语言句子呈现（目录 + 按 `detail` 的模板 + 引擎句形）；评论抽屉、实时协同关闭原因与复制申请失败原因不再显示代码，`copy.failed` 通知按收件人语言 | 已实现，待部署 | 新增服务端拒绝时在 `apps/docs/web/src/messages.refusals.ts` 补三语言、在 `lib/refusals.ts` 加模板，或在 `tests/refusals.test.ts` 的「仅 API」清单写明理由；来源解析诊断（`diagnosticText`）里仍有未编目的引擎原句 |
 | CI-87 | 生产恶意软件扫描上线（clamav 服务 + 三个收文件的角色 `required`）；参考 compose 的能力设置修正 | 已部署（主机侧，2026-09-28 05:11 UTC） | 历史文件补扫（`not_configured` 行）：补扫命令与已感染历史文件的处理规则 |
-| CI-88 | 公开页关于消息的失实陈述改正（在线/输入/回执的真实规则、消息卡直达 Synwevo Message） | 已实现，待部署 | — |
+| CI-88 | 公开页关于消息的失实陈述改正（在线/输入/回执的真实规则、消息卡直达 Synwevo Message） | 已部署（88fb1d8，run 36381481013，生产 4bf699a） | — |
 | CI-89 | 网关按请求解析上游（事故修复：05:12–05:22 docwave 落到消息进程） | 已部署（主机侧 05:25）；仓库文件待推送 | 主机上手动重建角色后不再需要重建网关；更换 `nginx.conf` 文件本身仍要 `--force-recreate gateway` |
 | CI-91 | 首页常见问题（8 问，三语言） | 已实现，待部署 | 费用问题待持有人决定收费方式后再加 |
 | CI-92 | 邮件预览文字；邮件 Logo 进品牌资产流水线并按真实比例绘制 | 已实现，待部署 | 真实邮箱客户端（Gmail/Outlook/Apple Mail）渲染仍未实测 |
