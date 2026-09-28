@@ -118,7 +118,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-65 | Accounts 导航：顶栏常驻「返回工作空间」与来源应用链接、子页面真实父级链接、组织页改用账户外壳 | 已部署（d2dde99，run 36330242865） | 域名切换后目标随 `PORTAL_URL` 变为 synwevo.com/workspace |
 | CI-67 | 域名迁移准备：compose/nginx 参考、旧主机 308、`workplace.synwevo.com` 别名、CI 健康检查变量、运行手册 | 线上已切换（2026-09-27 16:39 UTC；三新主机 readyz、旧主机 308、issuer/state/registry 均为新主机；`SYNWEVO_PUBLIC_HOSTS` 已设） | 受控账户核对登录/Docs/账户返回/Passkey 重登记；`message.wegreen.ltd` 加入隧道；旧主机 308 保留 ≥ 90 天 |
 | CI-68 | 私信邮件：缺省关、只能未读摘要、寄出前复核、限速、正文默认不带原文、v23 偏好重置 | 已部署（f5fb5b1，run 36332638476；生产 v23 迁移 0 偏好行） | 消息独立应用上线后同一规则不变（测试随路由搬到 `tests/integration/test_messaging_mail.py`）；读会话到末尾即把收件箱条目标为已读已随 CI-66 落地 |
-| CI-66 | 消息独立成应用 Synwevo Message：`apps/messages`（角色 `messages`，`/api/messaging`，外壳 `messages-assets/`，本机 `message.localhost:8768`，生产 `message.wegreen.ltd`）；注册表行 + `state.messages_url` 驱动三个源的「消息」链接与会话通知目标；账户源旧路径 410/303；举报处理留在账户服务；`all` 同时挂 API 与外壳；读到会话末尾标记收件箱条目已读 | 已部署（c48f625）；生产上应用未注册，账户源兜底外壳在用 | 生产：隧道主机名 `message.wegreen.ltd` 由持有人在 Cloudflare 控制台添加后，再按 domain-migration.md §6 加 `messages` 服务；在此之前账户源继续在 `/messages` 提供消息外壳（过渡兜底，本批补上） |
+| CI-66 | 消息独立成应用 Synwevo Message：`apps/messages`（角色 `messages`，`/api/messaging`，外壳 `messages-assets/`，本机 `message.localhost:8768`，生产 `message.wegreen.ltd`）；注册表行 + `state.messages_url` 驱动三个源的「消息」链接与会话通知目标；账户源旧路径 410/303；举报处理留在账户服务；`all` 同时挂 API 与外壳；读到会话末尾标记收件箱条目已读 | 已部署；2026-09-28 在 message.synwevo.com 上线（应用已注册） | 生产：隧道主机名 `message.wegreen.ltd` 由持有人在 Cloudflare 控制台添加后，再按 domain-migration.md §6 加 `messages` 服务；在此之前账户源继续在 `/messages` 提供消息外壳（过渡兜底，本批补上） |
 | CI-69 | Docs 外壳文案精简与术语统一（`docs/platform/docs-copy.md`） | 已部署（f5fb5b1，run 36332638476） | 账户/门户/消息外壳按同一规则表继续 |
 | CI-70 | 域名切换后 Passkey 登录失败的解释与重新登记路径（`passkeys_elsewhere`） | 已部署（f5fb5b1，run 36332638476；切换后线上 `passkeys_elsewhere=true`） | 切换后受控账户实测：旧 Passkey 登录 → 解释文案 → 口令登录 → 重新登记 |
 | CI-71 | 公开页面重写：首页品牌表达、`/privacy`、`/service`、门户文案与术语（`docs/platform/public-pages.md`） | 已部署（569e1df，run 36334221149；CI-72 补 UA 后 `deployment.json` 有值） | 持有人决定项（法律主体、联系渠道、管辖、条款版本、费用/SLA、是否点名第三方处理方、分析脚本）见记录 §5；Message 独立应用上线后首页应用卡的入口与说明随之更新 |
@@ -128,7 +128,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-73 | 消息外壳重建为顶级聊天界面并接入 CI-74/75 契约（`docs/platform/messaging-ui.md`） | 已部署（2de395d，run 36348079448） | 真机（iOS/Android）验证；`unread_mentions` 待后端提供后列表显示 @ 徽标；`/objects` 的 409/429 用专门文案；录音在无头 Chrome 因权限提示不结算只能验证等待/取消路径 |
 | CI-79 | 账户表单未保存修改的离开保护（`useUnsavedChanges`） | 已部署（8ba4e29，run 36359665130） | 真机 Safari 上的询问由持有人下次使用时顺带确认 |
 | CI-80 | 公开页分享摘要（Open Graph + 由确认 Logo 生成的预览图） | 已部署（4fc58e5，run 36372245098） | 部署后用 `curl` 核对 synwevo.com 的 og 标签与 `/share-card.png` |
-| CI-82 | 第十轮五主机：`SYNWEVO_SITE_URL` 与门户按 Host 分两面；消息主机 `message.synwevo.com` | 已实现，待部署 | 部署后主机侧：compose 改 PORTAL_URL/SITE_URL/门户地址、加 messages 服务、网关、客户端登记（portal-web 加工作空间回调，messages-web）、receive.py、`SYNWEVO_PUBLIC_HOSTS` 五主机 |
+| CI-82 | 第十轮五主机：`SYNWEVO_SITE_URL` 与门户按 Host 分两面；消息主机 `message.synwevo.com` | 已部署并完成主机切换（1919248；2026-09-28 04:00 UTC） | 受控账户登录后核对：站点登录落到工作空间主机、消息入口进 message.synwevo.com、Docs「在消息中讨论」、语音录制（消息源允许麦克风） |
 | CI-78 | 消息完整性：未读提及计数、组织筛选、群头像、屏蔽、私聊转群（`docs/platform/messaging.md` §7.15–§7.20） | 已合并到 main（schema v26），待部署 | 屏蔽者仍可被对方拉进群（群是共享空间，已记录）；头像只居中裁剪 |
 | CI-81 | 账户导出含本人消息数据；到期删除与离开组织时群主职责自动交接 | 已实现，待部署 | — |
 | 矩阵 | 9.16 验收/迁移/上线矩阵：每行的已验证行为、证据与未覆盖条件（真机、真实邮箱客户端、生产 nginx Upgrade、多实例） | 已写入 docs/platform/docs-collaboration.md §9 | 已随 11202c3 发布 |

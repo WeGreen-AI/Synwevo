@@ -34,6 +34,9 @@
 
 ## 3. 切换（运维，一次完成；一个发布窗口）
 
+> **第十轮主机切换已于 2026-09-28 04:00 UTC 完成**（记录：`docs/quality/deployment.md`）：门户移到 `workplace.synwevo.com`、站点留在 `synwevo.com`、消息服务在 `message.synwevo.com` 上线、五主机进入 `SYNWEVO_PUBLIC_HOSTS`。
+> 网关把 `nginx.conf` 作为**单个文件**挂载：换文件（新 inode）后运行中的容器看不到，而配置未变的服务 `up -d` 不会重建——换网关配置后必须 `docker compose up -d --force-recreate gateway`。
+
 > **已于 2026-09-27 16:39 UTC 完成**（记录：`docs/quality/deployment.md`）。实际做法与下文一致，只有两点不同：compose 用的是主机上现有文件只改七个主机值（主机尚未采用 ClamAV 服务，那是另一个决定）；`client register` 会**整体替换** URI 列表，所以新旧回调都列出。切换脚本要以文件方式在主机上执行并把 `docker compose exec` 的 stdin 接到 `/dev/null`——用 `bash -s` 经 stdin 喂脚本会被第一条 `exec` 吃掉后半段。
 
 issuer 写进令牌并由三个依赖方校验，不能双跑；Cookie 只属于主机，旧主机上的登录态本来就不会带到新主机。因此切换是一个原子步骤：
