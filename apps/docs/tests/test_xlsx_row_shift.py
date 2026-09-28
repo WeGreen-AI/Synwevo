@@ -225,3 +225,26 @@ def test_the_shift_never_goes_past_the_last_row():
     assert sh.span(MAX_ROW - 1, MAX_ROW) is None        # a range pushed off entirely is gone
     assert sh.row(MAX_ROW - 5) == MAX_ROW and sh.row(MAX_ROW - 4) is None
     assert sh.span(2, 2) == (2, 7)                      # the template row still grows as before
+
+
+def test_formulas_on_the_detail_row_are_filled_down_not_grown():
+    """A running total on the detail row: line i sums up to its own line, as Excel's fill-down does.
+    The template row's own `SUM($B$5:B5)` used to grow like a subtotal — `SUM($B$5:B7)` on the first
+    line, `SUM($B$5:B9)` on the third, taking in the rows after it and the subtotal row."""
+    def build(ws):
+        ws["A4"], ws["B4"], ws["C4"], ws["D4"] = "品名", "金额", "余额", "累计"
+        ws["A5"], ws["B5"], ws["C5"], ws["D5"] = "示例", 1, "=N(C4)+B5", "=SUM($B$5:B5)"
+        ws["E5"] = "=B5/$B$6"                           # a line's share of the subtotal below
+        ws["A6"], ws["B6"] = "小计", "=SUM(B5:B5)"
+    work, rep = _detail(_xlsx(build), row=4)
+    rows = {"kind": "rows", "rows": [{"c0": V.text(n), "c1": V.Value(V.INT, v, str(v))} for n, v in (("甲", 1), ("乙", 2), ("丙", 3))]}
+    out, issues = T.xlsx_fill(work, [rep], {rep["id"]: rows})
+    assert not [i for i in issues if i["level"] == "error"], issues
+    ws = openpyxl.load_workbook(io.BytesIO(out))["报表"]
+    assert [ws[f"D{r}"].value for r in (5, 6, 7)] == ["=SUM($B$5:B5)", "=SUM($B$5:B6)", "=SUM($B$5:B7)"]
+    assert [ws[f"C{r}"].value for r in (5, 6, 7)] == ["=N(C4)+B5", "=N(C5)+B6", "=N(C6)+B7"]
+    assert [ws[f"E{r}"].value for r in (5, 6, 7)] == ["=B5/$B$8", "=B6/$B$8", "=B7/$B$8"]   # the subtotal moved below
+    assert ws["A8"].value == "小计" and ws["B8"].value == "=SUM(B5:B7)"
+    calc = openpyxl.load_workbook(io.BytesIO(out), data_only=True)["报表"]
+    assert [calc[f"D{r}"].value for r in (5, 6, 7)] == [1, 3, 6]
+    assert [calc[f"C{r}"].value for r in (5, 6, 7)] == [1, 3, 6] and calc["B8"].value == 6

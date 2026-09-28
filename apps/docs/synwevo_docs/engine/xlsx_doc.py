@@ -669,7 +669,16 @@ class XlsxDoc:
                         # a multi-row array formula has one master cell; copying the row cannot
                         # make a consistent block of it
                         raise XlsxError("array_formula", f"模板明细行 {template_row} 中的数组公式跨越多行（{f.get('ref')}），无法随明细行复制")
+        # The template row's own formulas are per-line formulas, copied down like Excel's fill-down:
+        # a range ending on the template row must not grow there (`SUM($B$5:B5)` would become
+        # `SUM($B$5:B7)` on the first line and include the rows after it). Only formulas elsewhere —
+        # a subtotal below, a total on another sheet — grow over the inserted lines.
+        self.expand_shared_formulas()
+        own = [(f, f.text) for f in tpl0.iter(s("f")) if f.text] if tpl0 is not None else []
         self.shift_rows(sheet, Shift(template_row + 1, count, expand_row=template_row))
+        line = Shift(template_row + 1, count)
+        for f, text in own:
+            f.text = shift_formula(text, line, sheet, sheet)
         tpl = self._find_row(sd, template_row, True)
         anchor = tpl
         row_merges = [(c1, c2) for (r1, c1, r2, c2) in merges if r1 == r2 == template_row - 1]
