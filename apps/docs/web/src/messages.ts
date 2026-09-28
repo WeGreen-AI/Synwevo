@@ -1714,10 +1714,6 @@ export const messages = {
     "en": "The workspace is frozen",
     "zh-Hant": "工作空間已被凍結"
   },
-  "工作空间已被暂停": {
-    "en": "The workspace is suspended",
-    "zh-Hant": "工作空間已被暫停"
-  },
   "Synwevo Docs 已被平台停用": {
     "en": "Synwevo Docs is disabled on this platform",
     "zh-Hant": "Synwevo Docs 已被平台停用"

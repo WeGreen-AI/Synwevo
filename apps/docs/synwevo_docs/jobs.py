@@ -420,23 +420,23 @@ SIMULATE_RETRY_AFTER_S = 5
 
 # Why a job stopped because the party that asked for it lost the right to. Shown on the items
 # that were not generated, so the person reading the report knows it was not a failure of theirs.
-HALT_MESSAGES = {
-    "credential_revoked": "提交任务所用的密钥或客户端已被吊销或停用",
-    "scope_withdrawn": "提交任务所用凭据的写权限已被收回",
+HALT_MESSAGES = {  # the same wording as the job page (web/src/lib/jobview.ts HALT): one sentence per reason
+    "credential_revoked": "提交任务所用的凭据已被吊销或已过期",
+    "scope_withdrawn": "提交者已不再拥有写入权限",
     "workspace_frozen": "工作空间已被冻结",
     "workspace_deleted": "工作空间已被删除",
     "workspace_unavailable": "工作空间当前不可用",
-    "workspace_mismatch": "提交者已不属于这个工作空间",
-    "not_a_member": "提交者已不是这个工作空间的成员",
-    "role_insufficient": "提交者的角色已没有写权限",
-    "account_unavailable": "提交者的账户已停用或删除",
-    "entitlement_revoked": "提交者的应用使用资格已被撤销",
-    "no_entitlement": "提交者没有这个应用的使用资格",
-    "app_disabled": "应用已被停用",
-    "app_not_enabled_for_workspace": "这个工作空间已不再启用该应用",
-    "grant_revoked": "提交者对该客户端的授权已被撤销",
-    "wrong_audience": "提交所用的授权属于另一个应用",
-    "unknown_principal": "无法识别提交者的身份",
+    "workspace_mismatch": "提交者的凭据不属于该工作空间",
+    "not_a_member": "提交者已不是该工作空间的成员",
+    "role_insufficient": "提交者在该工作空间的角色已不允许生成",
+    "account_unavailable": "提交者的账户已被停用或删除",
+    "entitlement_revoked": "提交者对 Synwevo Docs 的使用资格已被收回",
+    "no_entitlement": "提交者没有 Synwevo Docs 的使用资格",
+    "app_disabled": "Synwevo Docs 已被平台停用",
+    "app_not_enabled_for_workspace": "该工作空间已不再启用 Synwevo Docs",
+    "grant_revoked": "提交任务所用的授权已被撤销",
+    "wrong_audience": "提交任务所用的授权不是为 Synwevo Docs 签发的",
+    "unknown_principal": "无法确认提交者的身份",
     "project_deleted": "项目已被删除",
     "restored_from_backup": "服务已从备份恢复，恢复前未完成的任务不会自动续跑；需要时请重试",
 }

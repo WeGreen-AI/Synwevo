@@ -72,10 +72,11 @@ const HALT: Record<string, string> = {
   workspace_mismatch: "提交者的凭据不属于该工作空间",
   workspace_unavailable: "工作空间当前不可用",
   workspace_frozen: "工作空间已被冻结",
-  workspace_suspended: "工作空间已被暂停",
   app_disabled: "Synwevo Docs 已被平台停用",
   app_not_enabled_for_workspace: "该工作空间已不再启用 Synwevo Docs",
   unknown_principal: "无法确认提交者的身份",
+  workspace_deleted: "工作空间已被删除",
+  project_deleted: "项目已被删除",
 };
 
 /** Why a job stopped without finishing: its submitter lost access, or the data was restored

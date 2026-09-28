@@ -249,21 +249,8 @@ export const refusalMessages = {
   // the job runner: samples that were not generated, and why a job stopped (jobs.HALT_MESSAGES)
   "其他样本存在错误，按「有错误则不开始」未生成本样本": { en: "Other samples have errors, so this sample was not generated (“stop if any errors”).", "zh-Hant": "其他樣本存在錯誤，按「有錯誤則不開始」未產生本樣本" },
   "项目已被删除，其余样本不再生成": { en: "The project has been deleted; the remaining samples will not be generated.", "zh-Hant": "項目已被刪除，其餘樣本不再產生" },
-  "提交任务所用的密钥或客户端已被吊销或停用": { en: "The key or client used to submit the job has been revoked or disabled.", "zh-Hant": "提交任務所用的金鑰或用戶端已被吊銷或停用" },
-  "提交任务所用凭据的写权限已被收回": { en: "The write permission of the credential used to submit the job has been withdrawn.", "zh-Hant": "提交任務所用憑據的寫入權限已被收回" },
   // 「工作空间已被冻结」 and 「工作空间当前不可用」 are the job page's own (messages.ts)
   "工作空间已被删除": { en: "The workspace has been deleted.", "zh-Hant": "工作空間已被刪除" },
-  "提交者已不属于这个工作空间": { en: "The submitter no longer belongs to this workspace.", "zh-Hant": "提交者已不屬於這個工作空間" },
-  "提交者已不是这个工作空间的成员": { en: "The submitter is no longer a member of this workspace.", "zh-Hant": "提交者已不是這個工作空間的成員" },
-  "提交者的角色已没有写权限": { en: "The submitter's role no longer has write permission.", "zh-Hant": "提交者的角色已沒有寫入權限" },
-  "提交者的账户已停用或删除": { en: "The submitter's account has been disabled or deleted.", "zh-Hant": "提交者的帳戶已停用或刪除" },
-  "提交者的应用使用资格已被撤销": { en: "The submitter's access to the application has been revoked.", "zh-Hant": "提交者的應用使用資格已被撤銷" },
-  "提交者没有这个应用的使用资格": { en: "The submitter is not entitled to use this application.", "zh-Hant": "提交者沒有這個應用的使用資格" },
-  "应用已被停用": { en: "The application has been disabled.", "zh-Hant": "應用已被停用" },
-  "这个工作空间已不再启用该应用": { en: "This workspace no longer has the application enabled.", "zh-Hant": "這個工作空間已不再啟用該應用" },
-  "提交者对该客户端的授权已被撤销": { en: "The submitter's authorization of this client has been revoked.", "zh-Hant": "提交者對該用戶端的授權已被撤銷" },
-  "提交所用的授权属于另一个应用": { en: "The authorization used to submit the job belongs to another application.", "zh-Hant": "提交所用的授權屬於另一個應用" },
-  "无法识别提交者的身份": { en: "The submitter's identity cannot be recognized.", "zh-Hant": "無法識別提交者的身分" },
   "项目已被删除": { en: "The project has been deleted.", "zh-Hant": "項目已被刪除" },
   "服务已从备份恢复，恢复前未完成的任务不会自动续跑；需要时请重试": { en: "The service was restored from a backup, and jobs that had not finished before the restore do not resume on their own. Retry them if needed.", "zh-Hant": "服務已從備份恢復，恢復前未完成的任務不會自動續跑；需要時請重試" },
   // what a sample's issue says when its words cannot be presented (ERROR_SOURCE)
