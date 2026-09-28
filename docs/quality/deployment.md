@@ -138,6 +138,10 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
 
 **Deployed (CI-95 TODAY()/NOW() in the submitter's time zone, records; run 36386879486, 2026-09-28):** `{"deployed": "synwevo:9704e10130014c15dfb72ff8fe678b4dd6db59e2", "backup": "/opt/synwevo/backups/20260928T070813Z"}`; five hosts answer with their own role; the preview route takes `tz` (401 anonymously). No schema change: jobs submitted before this keep the process clock (`as_of` absent).
 
+**Deployed (CI-96 member-import clean-up, off by default; mail logo address versioned; run 36389628592):** `{"deployed": "synwevo:170dac42719de0aaf0d45f91391abbf438b5f3a6", "backup": "/opt/synwevo/backups/20260928T073459Z"}`; `/api/auth/state` on accounts reports `member_import_cleanup: false`; five hosts answer with their own role.
+
+**Deployed (CI-97 application switcher, CI-95 record, checkpoint; run 36391285672):** `{"deployed": "synwevo:dc884f6fbc1a92672ca29e7fec1cb770deec3493", "backup": "/opt/synwevo/backups/20260928T080142Z"}`; five hosts answer with their own role and `/api/auth/apps` answers 401 anonymously on each. Last deployment of the 2026-09-28 continuous-iteration session (stopped at the user's request); CI-90 rescan not merged, no rescan run in production.
+
 **Deployed (CI-55 bounded frames and draft recovery + CI-56 setting before/after, run 36255489490, 2026-09-26 16:51 UTC):** `{"deployed": "synwevo:1d15665ee420939f562aad54eb4c3f023a569d3a", "backup": "/opt/synwevo/backups/20260926T165059Z"}`; verify and deploy succeeded; no schema change. This is the last release of the round-8 collaboration batches (CI-45…56); the handoff lists the conditions that reopen the queue.
 
 **Deployed (CI-53 change-log diffs with schema v22 + the 9.16 matrix + CI-54 version dialog, run 36253921338, 2026-09-26 16:25 UTC):** `{"deployed": "synwevo:11202c33be2a53ca202eefb04bd8fb2ceea29073", "backup": "/opt/synwevo/backups/20260926T162519Z"}`; verify and deploy succeeded; the v22 migration (one additive column, `collab_changes.before`) runs at start and the deploy job's readiness checks passed. Rollback to a v21 release leaves the column unused.
