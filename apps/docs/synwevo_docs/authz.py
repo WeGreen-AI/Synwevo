@@ -50,8 +50,8 @@ _REACHABLE = (
     f"AND NOT EXISTS (SELECT 1 FROM template_versions v9 WHERE v9.template_id=t2.id AND v9.working_blob IN {_HELD})",
     # generated artifacts, via their job; a deleted artifact is no longer served, nor one made
     # from a template or source that was rejected later (the same rule as jobs.withdrawn_input)
-    "SELECT 1 FROM artifacts a JOIN jobs j ON j.id=a.job_id "
-    "WHERE a.blob=:b AND a.deleted_at IS NULL AND COALESCE(j.tenant,'default')=:t "
+    "SELECT 1 FROM artifacts a JOIN jobs j ON j.id=a.job_id JOIN projects pa ON pa.id=j.project_id "
+    "WHERE a.blob=:b AND a.deleted_at IS NULL AND COALESCE(j.tenant,'default')=:t AND COALESCE(pa.deleted,0)=0 "
     "AND NOT EXISTS (SELECT 1 FROM templates t3 WHERE t3.id=json_extract(j.snapshot,'$.template.id') "
     "AND COALESCE(json_extract(t3.scan,'$.status'),'')='infected') "
     "AND NOT EXISTS (SELECT 1 FROM json_each(j.snapshot,'$.sources') js JOIN source_files s3 "

@@ -117,8 +117,10 @@ def test_deleting_the_project_stops_its_queued_job(api, fixtures):
     j = svc.create(pid, {"formats": ["docx"]})
     api.ok(api.c.delete(f"/api/projects/{pid}"))
     assert svc._claim(j["id"]) is None
-    done = svc.get(j["id"])
+    done = store.one("SELECT status, halt_reason FROM jobs WHERE id=?", (j["id"],))
     assert done["status"] == "cancelled" and done["halt_reason"] == "project_deleted" and _artifacts(store, j["id"]) == 0
+    # and the job itself goes with its project (Q16): not found, like its sources
+    assert api.c.get(f"/api/jobs/{j['id']}").status_code == 404
 
 
 def test_operator_jobs_and_jobs_from_before_descriptors_keep_running(api, fixtures):

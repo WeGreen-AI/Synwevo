@@ -1272,9 +1272,13 @@ class JobService:
             "cancel_requested_at, request_id, tenant, run_no, origin, phase, halt_reason, principal, summary, "
             "json_extract(snapshot, '$.template.id') AS tpl_id, json_extract(snapshot, '$.template.name') AS tpl_name, "
             "json_extract(snapshot, '$.template.format') AS tpl_format, json_extract(snapshot, '$.template.version_no') AS tpl_version, "
-            "json_array_length(snapshot, '$.sources') AS source_count, json_extract(snapshot, '$.as_of') AS as_of FROM jobs WHERE id=?", (jid,))
+            "json_array_length(snapshot, '$.sources') AS source_count, json_extract(snapshot, '$.as_of') AS as_of, "
+            "(SELECT COALESCE(p.deleted, 0) FROM projects p WHERE p.id=jobs.project_id) AS project_deleted FROM jobs WHERE id=?", (jid,))
         tenant = tenant or current_tenant()
-        if not j or (j["tenant"] or "default") != tenant:
+        # A deleted project's jobs go with it, as its sources do: an old notification, a message
+        # card or a job id kept elsewhere used to open the job, list its items, download its
+        # outputs and ZIP, and ask for a re-run (which then halted) after the project was deleted.
+        if not j or (j["tenant"] or "default") != tenant or j.pop("project_deleted") != 0:
             not_found("任务")
         j["template"] = {"id": j.pop("tpl_id"), "name": j.pop("tpl_name"), "format": j.pop("tpl_format"), "version_no": j.pop("tpl_version")}
         j["cancel_requested"] = bool(j["cancel_requested"])
@@ -2019,10 +2023,11 @@ class JobService:
 
     # -------------------------------------------------------------- downloads
     def artifact(self, aid: str, tenant: str | None = None) -> tuple[dict, bytes]:
-        a = self.store.one("SELECT a.*, j.tenant FROM artifacts a JOIN jobs j ON j.id=a.job_id WHERE a.id=?", (aid,))
+        a = self.store.one("SELECT a.*, j.tenant, (SELECT COALESCE(p.deleted, 0) FROM projects p WHERE p.id=j.project_id) AS project_deleted "
+                           "FROM artifacts a JOIN jobs j ON j.id=a.job_id WHERE a.id=?", (aid,))
         tenant = tenant or current_tenant()
-        if not a or (a["tenant"] or "default") != tenant:
-            not_found("输出文件")
+        if not a or (a["tenant"] or "default") != tenant or a.pop("project_deleted") != 0:
+            not_found("输出文件")          # a deleted project's outputs go with it (see get)
         if a.get("deleted_at"):
             raise ServiceError(410, "artifact_deleted", "该输出文件已被删除，无法下载；可对原任务重新生成")
         withdrawn = self.withdrawn_job(a["job_id"])
