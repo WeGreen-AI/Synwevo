@@ -3,7 +3,7 @@ import { serverText, issueText, diagnosticText } from "../lib/presentation";
 import { t as tr, useI18n } from "@synwevo/ui";
 import { useEffect, useMemo, useState } from "react";
 import { describeLocator, MAP_TYPE } from "../lib/describe";
-import { mergeSource, repeatColumns, withSettings, type MappingSettings } from "../lib/mapping";
+import { mergeSource, repeatColumns, sectionColumns, withSettings, type MappingSettings } from "../lib/mapping";
 import { errorText } from "../lib/perm";
 import type { Mapping, Project, Slot } from "../lib/types";
 import { Modal } from "@synwevo/ui";
@@ -47,6 +47,15 @@ export default function MappingDialog(p: Props) {
   const [combineSep, setCombineSep] = useState(p.existing?.combine?.sep ?? " ");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // A Word repeat content block may be split by 分段字段: one copy per sub-group, and a detail
+  // table inside it gets only that sub-group's rows in each copy (docs-nested-details.md).
+  const isBlock = slotType === "repeat" && !!p.slot.block;
+  const children = useMemo(() => p.slots.filter((s) => s.parent === p.slot.id), [p.slots, p.slot.id]);
+  const parentBlock = p.slot.parent ? p.slots.find((s) => s.id === p.slot.parent) || null : null;
+  const [split, setSplit] = useState<string>(p.editing?.group_by?.keys?.[0]?.header || "");
+  const [emptyKey, setEmptyKey] = useState<"error" | "skip">(p.editing?.group_by?.empty_key || "error");
+  const [aggs, setAggs] = useState<Record<string, string>>(() =>
+    Object.fromEntries((p.editing?.columns || []).filter((c) => c.agg).map((c) => [c.slot_col, c.agg as string])));
 
   const usable = useMemo(() => p.proposals.filter((x) => (slotType === "repeat" ? x.detail : slotType === "region" ? x.locator.kind === "range" || x.locator.kind === "docx_table_block" : !x.detail && x.locator.kind !== "range")), [p.proposals, slotType]);
   const chosen = p.editing ? null : usable[Math.min(pick, usable.length - 1)];
@@ -58,10 +67,9 @@ export default function MappingDialog(p: Props) {
     const h = chosen?.locator?.headers ?? (chosen?.detail ? chosen?.sample : null);
     return Array.isArray(h) ? (h as string[]) : [];
   }, [chosen, p.editing]);
-  const [cols, setCols] = useState<Record<string, string>>({});
-  useEffect(() => {
-    if (slotType !== "repeat") return;
+  const initialCols = () => {
     const init: Record<string, string> = {};
+    if (slotType !== "repeat") return init;
     for (const c of p.slot.columns || []) {
       const prev = p.editing?.columns?.find((x) => x.slot_col === c.key);
       if (prev) init[c.key] = prev.source?.kind === "constant" ? "" : prev.source?.header || "";
@@ -70,8 +78,19 @@ export default function MappingDialog(p: Props) {
         init[c.key] = hit || "";
       }
     }
-    setCols(init);
-  }, [srcHeaders.join("|"), p.slot.id]);
+    return init;
+  };
+  // filled on the first render (an edit used to show every column as 「留空」 for a moment), and
+  // again when another source is picked
+  const [cols, setCols] = useState<Record<string, string>>(initialCols);
+  useEffect(() => { if (slotType === "repeat") setCols(initialCols()); }, [srcHeaders.join("|"), p.slot.id]);
+  // A mapping made through the API or a definition file may carry no header list: what it has
+  // saved stays a visible choice instead of the select showing 「留空」/「不分段」 over it.
+  const headerOptions = useMemo(() => {
+    const out = [...srcHeaders];
+    for (const h of [...Object.values(cols), split]) if (h && !out.includes(h)) out.push(h);
+    return out;
+  }, [srcHeaders, cols, split]);
 
   const regionMismatch = useMemo(() => {
     if (slotType !== "region" || !loc || loc.kind !== "range") return null;
@@ -115,6 +134,14 @@ export default function MappingDialog(p: Props) {
         setErr(tr("至少需要为一列设置来源列"));
         return;
       }
+      if (isBlock && children.length && !split) {
+        setErr(tr("内容块里有明细表：请先选择分段字段，每一份才会只写入自己那一段的明细行"));
+        return;
+      }
+      if (isBlock) {
+        base.columns = sectionColumns(base.columns, aggs, !!split);
+        base.group_by = split ? { keys: [{ header: split }], empty_key: emptyKey } : null;
+      }
     }
     // What the dialog shows, applied the same way to an edit and to a merge (lib/mapping.ts):
     // a merge used to drop these, and an edit re-enabled a disabled mapping.
@@ -123,6 +150,7 @@ export default function MappingDialog(p: Props) {
       columns: base.columns,
       agg: base.agg, agg_sep: base.agg_sep, value_mode: base.value_mode,
       style: slotType === "single" ? (style === "source" ? "source" : "target") : undefined,
+      group_by: isBlock ? base.group_by : undefined,
     };
     setSaving(true);
     try {
@@ -132,6 +160,7 @@ export default function MappingDialog(p: Props) {
         await p.onSave(mergeSource(p.existing, loc, { op: combineOp, sep: combineSep }, settings), null, `映射 #${p.existing.no} 增加来源`);
       } else {
         const m: any = { ...base, sources: [loc], source_file: p.fileId, label: chosen?.label, varies: chosen?.varies };
+        if (!m.group_by) delete m.group_by;
         await p.onSave(m, p.existing ? p.existing.id : null, `新建映射 → ${p.slot.name}`);
       }
       p.onClose();
@@ -210,11 +239,36 @@ export default function MappingDialog(p: Props) {
             {p.slot.required && <span className="badge err" style={{ marginLeft: 4 }}>{tr("必填")}</span>}
           </div>
           {regionMismatch && <div className="notice err">{regionMismatch}</div>}
+          {slotType === "repeat" && parentBlock && (
+            <div className="notice info">{tr("此表在内容块「{v1}」内：每一份内容块只写入它那一段的明细行（由内容块的分段字段决定）。", { v1: parentBlock.name })}</div>
+          )}
+          {isBlock && (
+            <div className="col gap4">
+              <label className="field">{tr("分段字段")}
+                <select className="input" value={split} onChange={(e) => setSplit(e.target.value)}>
+                  <option value="">{tr("不分段：每一行明细一份内容块")}</option>
+                  {headerOptions.map((h, i) => <option key={i} value={h}>{h}</option>)}
+                </select>
+              </label>
+              <div className="tiny muted">{tr("分段后，分段字段相同的明细行合成一份内容块（按每段第一次出现的顺序）；内容块里的明细表每份只写入该段的行。")}</div>
+              {children.length > 0 && !split && (
+                <div className="notice warn">{tr("内容块里有明细表「{v1}」：需要选择分段字段，每一份才会只写入自己那一段的明细行。", { v1: new Intl.ListFormat(locale, { type: "conjunction" }).format(children.map((c) => c.name)) })}</div>
+              )}
+              {split && (
+                <label className="field">{tr("分段字段为空的明细行")}
+                  <select className="input" value={emptyKey} onChange={(e) => setEmptyKey(e.target.value as "error" | "skip")}>
+                    <option value="error">{tr("报错，不生成这一份（默认）")}</option>
+                    <option value="skip">{tr("跳过这些行并提示")}</option>
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
           {slotType === "repeat" && (
             <div className="col gap4">
               <div className="small muted">{tr("列对应（按列名自动匹配；未匹配的列请手动选择）：")}</div>
               <table className="tbl">
-                <thead><tr><th>{tr("目标列")}</th><th>{tr("来源列")}</th></tr></thead>
+                <thead><tr><th>{tr("目标列")}</th><th>{tr("来源列")}</th>{isBlock && split && <th>{tr("段内取值")}</th>}</tr></thead>
                 <tbody>
                   {(p.slot.columns || []).map((c) => (
                     <tr key={c.key}>
@@ -222,9 +276,23 @@ export default function MappingDialog(p: Props) {
                       <td>
                         <select className="input sm" value={cols[c.key] || ""} onChange={(e) => setCols({ ...cols, [c.key]: e.target.value })}>
                           <option value="">{p.editing?.columns?.find((x) => x.slot_col === c.key)?.source?.kind === "constant" ? tr("（保留原常量）") : tr("（留空）")}</option>
-                          {srcHeaders.map((h, i) => <option key={i} value={h}>{h}{srcHeaders.filter((x) => norm(x) === norm(h)).length > 1 ? tr("（重名）") : ""}</option>)}
+                          {headerOptions.map((h, i) => <option key={i} value={h}>{h}{srcHeaders.filter((x) => norm(x) === norm(h)).length > 1 ? tr("（重名）") : ""}</option>)}
                         </select>
                       </td>
+                      {isBlock && split && (
+                        <td>
+                          <select className="input sm" aria-label={tr("「{v1}」的段内取值", { v1: c.name })} value={aggs[c.key] || "unique"}
+                            disabled={!cols[c.key]} onChange={(e) => setAggs({ ...aggs, [c.key]: e.target.value })}>
+                            <option value="unique">{tr("必须一致（默认）")}</option>
+                            <option value="first">{tr("取段内第一条")}</option>
+                            <option value="last">{tr("取段内最后一条")}</option>
+                            <option value="join">{tr("全部拼接")}</option>
+                            <option value="join_distinct">{tr("去重后拼接")}</option>
+                            <option value="sum">{tr("求和")}</option>
+                            <option value="count">{tr("计数（该列有值的行数）")}</option>
+                          </select>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

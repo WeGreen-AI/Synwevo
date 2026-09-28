@@ -8,7 +8,7 @@ import { errorText, isPermissionError, NO_EXPORT_TEXT, permissions, READ_ONLY_TE
 import { clampCursor, listQuery, toPage } from "../src/lib/projects.ts";
 import { moveCursor } from "../src/lib/gridsel.ts";
 import { formatValueMap, parseValueMap } from "../src/lib/valuemap.ts";
-import { mergeSource, repeatColumns, withSettings } from "../src/lib/mapping.ts";
+import { mergeSource, repeatColumns, sectionColumns, withSettings } from "../src/lib/mapping.ts";
 
 /* ---------------------------------------------------------------- F249 / F215: CSS from files */
 test("colours from uploaded files cannot carry url() into a style attribute", () => {
@@ -88,6 +88,22 @@ test("editing detail columns preserves constants, occurrence and transforms", ()
   assert.deepEqual(changed[0].transforms, old[0].transforms);
   assert.deepEqual(changed[1].source, { header: "单位" });
   assert.deepEqual(old[0].source, { header: "金额", occurrence: 2 });
+});
+
+test("a split block keeps one rule per column; removing the split removes them and the group_by", () => {
+  const cols = [
+    { slot_col: "no", source: { header: "订单号" } },
+    { slot_col: "total", source: { header: "金额" }, agg: "sum" },
+    { slot_col: "note", source: { kind: "constant", value: "" } },
+  ];
+  const split = sectionColumns(cols, { total: "sum" }, true);
+  assert.deepEqual(split.map((c) => c.agg), ["unique", "sum", undefined]);   // constants need no rule
+  assert.deepEqual(sectionColumns(split, { total: "sum" }, false).map((c) => "agg" in c), [false, false, false]);
+  const m: any = { id: "m1", no: 1, type: "repeat", sources: [], target: { binding: "b" }, group_by: { keys: [{ header: "订单号" }] } };
+  assert.equal("group_by" in withSettings(m, { group_by: null }), false);
+  assert.deepEqual(withSettings(m, {}).group_by, m.group_by);                // not touched unless the dialog says so
+  assert.deepEqual(withSettings({ ...m, group_by: undefined }, { group_by: { keys: [{ header: "客户" }], empty_key: "skip" } }).group_by,
+    { keys: [{ header: "客户" }], empty_key: "skip" });
 });
 
 test("an output is called 已校验 only when values were compared", () => {

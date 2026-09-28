@@ -127,12 +127,9 @@ def docx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
                 if other["kind"] == "repeat" and other["locator"].get("part") == part and other["locator"].get("table_path") == req["table_path"]:
                     raise TemplateError("duplicate_repeat", f"该表格已有重复明细行「{other['name']}」")
             tr = rows[ri]
-            from .docx_blocks import enclosing_block
-            if enclosing_block(tr) is not None:
-                # A repeat row inside a repeat content block is not filled per block copy yet: the
-                # first copy took every row and the others kept the template row (CI-103).
-                raise TemplateError("nested_block", "这张表格在一个重复内容块里：块内的表格暂不能按行重复。"
-                                                    "可以把表格移到内容块之外，或把整张表格（含所需的行）作为内容块的一部分")
+            # A repeat row inside a repeat content block is a nested detail: each copy of the block
+            # gets the rows of its own sub-group (docs-nested-details.md); the slot's `parent` is
+            # derived from the template's structure on every save (assign_parents).
             for tc in dc.iter_cells(tr):
                 if dc.tc_props(tc)["vmerge"] is not None:
                     raise TemplateError("vertical_merge", "该行包含纵向合并单元格，不能作为重复行")
@@ -265,17 +262,27 @@ def docx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
         if any(dc.has_unwritable_chars(t) for t in _value_texts(values.get(sl["id"]))):
             issues.append({"level": "warning", "slot": sl["id"], "code": "control_chars",
                            "message": f"字段「{sl['name']}」的值含有文档中无法保存的控制字符，已去除（换行类字符按换行写入）"})
-    # Repeats nested in one another (a repeat row inside a repeat content block, or the other way
-    # round) are refused before anything is written: they used to fill the first copy with every
-    # row and leave the template row, still wrapped, in the others — with no issue (CI-103).
-    from .docx_blocks import nested_repeats         # lazily, as elsewhere here (docx_blocks imports this module's helpers)
+    # A repeat content block inside a repeating table row is refused before anything is written
+    # (CI-103); the other way round is a nested detail, filled per block copy below.
+    from .docx_blocks import nested_repeats, nesting  # lazily, as elsewhere here (docx_blocks imports this module's helpers)
     names = {s_["id"]: s_["name"] for s_ in slots}
+    nest: dict[str, str] = {}
     for info in dc.list_parts(pkg):
-        for outer, inner in nested_repeats(pkg.xml(info["part"])):
-            issues.append({"level": "error", "slot": inner, "code": "nested_repeat",
-                           "message": f"重复明细「{names.get(inner, inner)}」在重复内容块「{names.get(outer, outer)}」里（或反过来），"
-                                      "这种嵌套暂不支持：请把表格移到内容块之外，或删除其中一个重复设置"})
-    if any(i.get("code") == "nested_repeat" for i in issues):
+        root_ = pkg.xml(info["part"])
+        for row_id, block_id in nested_repeats(root_):
+            issues.append({"level": "error", "slot": block_id, "code": "nested_repeat",
+                           "message": f"重复内容块「{names.get(block_id, block_id)}」在按行重复的表格行「{names.get(row_id, row_id)}」里，"
+                                      "这种嵌套暂不支持：请把内容块移到表格之外，或取消表格行的重复设置"})
+        nest.update(nesting(root_))
+    # A repeat row inside a block is filled per block copy from its sub-groups (`groups`, made by
+    # the plan when the block's mapping sets 分段字段). Rows without them cannot be placed correctly.
+    for child, blk in nest.items():
+        cv = values.get(child) or {}
+        if child in slot_by_id and "groups" not in cv and cv.get("rows"):   # no rows: every copy's table stays empty
+            issues.append({"level": "error", "slot": child, "code": "nested_unconfigured",
+                           "message": f"明细表「{names.get(child, child)}」在重复内容块「{names.get(blk, blk)}」里：请在这个内容块的映射中设置分段字段，"
+                                      "每一段才会只写入自己的明细行"})
+    if any(i.get("code") in ("nested_repeat", "nested_unconfigured") for i in issues):
         return work, issues
     for info in dc.list_parts(pkg):
         root = pkg.xml(info["part"])
@@ -283,10 +290,16 @@ def docx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
         #    a header or a footer); every other part simply does not contain it, so "missing"
         #    can only be decided after all parts were visited.
         for sl in repeats:
+            if sl["id"] in nest:
+                continue                     # a nested detail: filled inside its block's copies
             fv = values.get(sl["id"]) or {"kind": "rows", "rows": []}
             if sl.get("block"):
                 from .docx_blocks import fill_block
-                hit = fill_block(root, sl, fv["rows"], keep, issues, report_missing=False)
+                kids = {c: (slot_by_id[c], (values.get(c) or {}).get("groups") or []) for c, b in nest.items()
+                        if b == sl["id"] and c in slot_by_id}
+                hit = fill_block(root, sl, fv["rows"], keep, issues, report_missing=False, children=kids)
+                if hit:
+                    found.update(kids)
             else:
                 hit = _docx_fill_repeat(root, sl, fv["rows"], keep, issues)
             if hit:
@@ -319,6 +332,30 @@ def docx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
         else:
             issues.append({"level": "error", "slot": sl["id"], "code": "repeat_lost", "message": f"重复明细「{sl['name']}」的模板行已丢失"})
     return pkg.save(), issues
+
+
+def may_nest(slots: list[dict]) -> bool:
+    """Whether a DOCX template's slots can hold a nested detail at all (a block and a repeating row);
+    only then is the file read to find out (`assign_parents`)."""
+    return any(s.get("block") for s in slots) and any(s.get("kind") == "repeat" and not s.get("block") for s in slots)
+
+
+def assign_parents(work: bytes, slots: list[dict]) -> list[dict]:
+    """Each repeat row inside a repeat content block gets `parent: <block id>`; every other slot
+    none. Derived from the template itself on every save, so either order of creating the two
+    works and removing the block clears it (docs-nested-details.md §2)."""
+    from .docx_blocks import nesting
+    pkg = Package(work)
+    nest: dict[str, str] = {}
+    for info in dc.list_parts(pkg):
+        nest.update(nesting(pkg.xml(info["part"])))
+    out = []
+    for sl in slots:
+        sl = {k: v for k, v in sl.items() if k != "parent"}
+        if sl.get("kind") == "repeat" and not sl.get("block") and sl["id"] in nest:
+            sl["parent"] = nest[sl["id"]]
+        out.append(sl)
+    return out
 
 
 def _value_texts(fv: dict | None) -> list[str]:
@@ -359,6 +396,7 @@ def _fill_repeat_row(tr, sl: dict, rows: list[dict], keep: bool) -> None:
         for h in header_rows:
             dc.set_row_header(h, True)
     cols = {c["key"]: c for c in sl.get("columns", [])}
+    own = sl["id"] + "#"
     if not rows:
         policy = sl.get("empty_policy", "remove_row")
         if policy == "remove_table":
@@ -377,6 +415,8 @@ def _fill_repeat_row(tr, sl: dict, rows: list[dict], keep: bool) -> None:
         new = copy.deepcopy(tr)
         first = True
         for t, sdt in list(dc.iter_field_sdts(new)):
+            if not t.startswith(own):
+                continue                # another slot's field in this row (a block column): filled by its own slot
             text = sl.get("placeholder", "（无）") if (policy == "placeholder" and first) else ""
             first = False
             dc.fill_sdt(sdt, text, keep)
@@ -389,7 +429,9 @@ def _fill_repeat_row(tr, sl: dict, rows: list[dict], keep: bool) -> None:
         # taller than a page unbreakable, and Word then clips it at the page bottom
         new = copy.deepcopy(tr)
         for t, sdt in list(dc.iter_field_sdts(new)):
-            key = t.split("#", 1)[1] if "#" in t else ""
+            if not t.startswith(own):
+                continue
+            key = t.split("#", 1)[1]
             v = row.get(key)
             dc.fill_sdt(sdt, v.text if v is not None else "", keep)
         anchor.addnext(new)

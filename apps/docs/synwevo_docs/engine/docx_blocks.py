@@ -58,11 +58,8 @@ def wrap_blocks(container, first: str, last: str, tag: str, alias: str):
             t = dc.sdt_tag(sdt) or ""
             if t.startswith(dc.TAG_PREFIX) and dc._is_block_sdt(sdt):
                 raise BlockError("nested_block", "所选内容中已包含另一个重复内容块，不能嵌套")
-        if el.tag == dc.w("tbl"):
-            for sdt in el.iter(dc.w("sdt")):
-                t = dc.sdt_tag(sdt) or ""
-                if t.startswith(dc.TAG_PREFIX) and "#" in t:
-                    raise BlockError("contains_repeat_row", "所选内容中的表格已有重复明细行，不能再放进重复内容块")
+        # A table whose row repeats may be part of a block: each copy of the block then gets the
+        # rows of its own sub-group (nested details, docs-nested-details.md). One level only.
     anc = parent
     while anc is not None:
         if anc.tag == dc.w("sdt") and (dc.sdt_tag(anc) or "").startswith(dc.TAG_PREFIX):
@@ -93,23 +90,33 @@ def enclosing_block(el):
     return None
 
 
+def nesting(root) -> dict[str, str]:
+    """Repeat rows inside a repeat content block in this part: {row slot id: block slot id}.
+    A block's own columns may sit in a table inside it; only another slot's row counts."""
+    out: dict[str, str] = {}
+    for tag, sdt in dc.iter_field_sdts(root):
+        if "#" not in tag:
+            continue
+        base = tag.split("#")[0]
+        tr = sdt.getparent()
+        while tr is not None and tr.tag != dc.w("tr"):
+            tr = tr.getparent()
+        blk = enclosing_block(tr) if tr is not None else None
+        if blk is not None:
+            outer = (dc.sdt_tag(blk) or "")[len(dc.TAG_PREFIX):]
+            if outer != base:
+                out[base] = outer
+    return out
+
+
 def nested_repeats(root) -> list[tuple[str, str]]:
-    """Repeats nested inside one another in this part: (outer slot id, inner slot id) for a
-    repeat row inside a repeat content block, and for a block inside a repeat row. Neither is
-    filled correctly yet — the caller refuses the template instead of writing a wrong document."""
+    """Nesting that is not supported: (outer slot id, inner slot id) for a block inside a repeat
+    row. The caller refuses the template instead of writing a wrong document (CI-103). A repeat row
+    inside a block is supported (`nesting`)."""
     out = []
     for tag, sdt in dc.iter_field_sdts(root):
         base = tag.split("#")[0].split("@")[0]
-        if "#" in tag:                                         # a repeat-row column
-            tr = sdt.getparent()
-            while tr is not None and tr.tag != dc.w("tr"):
-                tr = tr.getparent()
-            blk = enclosing_block(tr) if tr is not None else None
-            if blk is not None:
-                pair = ((dc.sdt_tag(blk) or "")[len(dc.TAG_PREFIX):], base)
-                if pair[0] != base and pair not in out:
-                    out.append(pair)
-        elif dc._is_block_sdt(sdt):                            # a block: inside a repeat row?
+        if "#" not in tag and dc._is_block_sdt(sdt):           # a block: inside a repeat row?
             anc = sdt.getparent()
             while anc is not None:
                 if anc.tag == dc.w("tr") and _row_repeats(anc):
@@ -215,8 +222,12 @@ def _max_docpr_id(root) -> int:
     return max(ids)
 
 
-def fill_block(root, sl: dict, rows: list[dict], keep: bool, issues: list[dict], report_missing: bool = True) -> bool:
+def fill_block(root, sl: dict, rows: list[dict], keep: bool, issues: list[dict], report_missing: bool = True,
+               children: dict[str, tuple[dict, list[list[dict]]]] | None = None) -> bool:
     """Replace the block with one filled copy per row (``rows``: column key → Value).
+
+    ``children``: repeat rows inside the block, {slot id: (slot, groups)} — copy ``i`` gets the
+    rows ``groups[i]`` (the rows of its sub-group); a copy with no group gets none.
 
     Returns False when ``root`` does not contain the block.  A caller that visits every
     part of a document (body, headers, footers) passes ``report_missing=False`` and
@@ -249,11 +260,35 @@ def fill_block(root, sl: dict, rows: list[dict], keep: bool, issues: list[dict],
         elif i > 0 and sep == "blank":
             out.append(etree.Element(dc.w("p")))
         clones = [copy.deepcopy(el) for el in proto]
+        if children:
+            # nested detail rows first (their copies may carry pictures), then unique ids. The
+            # copy sits in a scratch parent meanwhile: a table left empty may remove itself.
+            holder = etree.Element(dc.w("body"))
+            holder.extend(clones)
+            for cid, (child, groups) in children.items():
+                prefix = cid + "#"
+                hit = next((f for t, f in dc.iter_field_sdts(holder) if t.startswith(prefix)), None)
+                if hit is None:
+                    continue
+                tr = hit.getparent()
+                while tr is not None and tr.tag != dc.w("tr"):
+                    tr = tr.getparent()
+                if tr is not None:
+                    from .templates import _fill_repeat_row      # lazily: templates imports this module
+                    _fill_repeat_row(tr, child, groups[i] if i < len(groups) else [], keep)
+                    if keep:
+                        for j, (t, f) in enumerate(list(dc.iter_field_sdts(holder))):
+                            if t.startswith(prefix):
+                                idel = f.find(f"{dc.w('sdtPr')}/{dc.w('id')}")
+                                if idel is not None:
+                                    idel.set(dc.w("val"), dc._sdt_id(f"{t}/{i}/{j}"))
+            clones = list(holder)
         for el in clones:
             if i > 0:
                 # bookmarks must stay unique: only the first copy keeps them
                 for bm in list(el.iter(dc.w("bookmarkStart"))) + list(el.iter(dc.w("bookmarkEnd"))):
                     bm.getparent().remove(bm)
+            if i > 0 or children:
                 for dp in el.iter("{%s}docPr" % _WP_NS):
                     dp.set("id", str(next_docpr))
                     next_docpr += 1

@@ -1214,9 +1214,97 @@ export const messages = {
     "en": "Required field is unmapped",
     "zh-Hant": "必填未映射"
   },
+  "分段字段": {
+    "en": "Split by",
+    "zh-Hant": "分段欄位"
+  },
+  "不分段：每一行明细一份内容块": {
+    "en": "No split: one copy of the block per detail row",
+    "zh-Hant": "不分段：每一行明細一份內容塊"
+  },
+  "分段后，分段字段相同的明细行合成一份内容块（按每段第一次出现的顺序）；内容块里的明细表每份只写入该段的行。": {
+    "en": "Detail rows with the same split-by value become one copy of the block (in the order each first appears); a detail table inside the block gets only that copy’s rows.",
+    "zh-Hant": "分段後，分段欄位相同的明細行合成一份內容塊（按每段第一次出現的順序）；內容塊裡的明細表每份只寫入該段的行。"
+  },
+  "内容块里有明细表「{v1}」：需要选择分段字段，每一份才会只写入自己那一段的明细行。": {
+    "en": "The block contains the detail table “{v1}”: choose a split-by field so each copy gets only its own detail rows.",
+    "zh-Hant": "內容塊裡有明細表「{v1}」：需要選擇分段欄位，每一份才會只寫入自己那一段的明細行。"
+  },
+  "内容块里有明细表：请先选择分段字段，每一份才会只写入自己那一段的明细行": {
+    "en": "The block contains a detail table: choose a split-by field first so each copy gets only its own detail rows.",
+    "zh-Hant": "內容塊裡有明細表：請先選擇分段欄位，每一份才會只寫入自己那一段的明細行"
+  },
+  "分段字段为空的明细行": {
+    "en": "Detail rows with an empty split-by field",
+    "zh-Hant": "分段欄位為空的明細行"
+  },
+  "报错，不生成这一份（默认）": {
+    "en": "Report an error and do not generate this document (default)",
+    "zh-Hant": "報錯，不生成這一份（預設）"
+  },
+  "跳过这些行并提示": {
+    "en": "Skip these rows and say so",
+    "zh-Hant": "略過這些行並提示"
+  },
+  "段内取值": {
+    "en": "Value per copy",
+    "zh-Hant": "段內取值"
+  },
+  "「{v1}」的段内取值": {
+    "en": "Value per copy for “{v1}”",
+    "zh-Hant": "「{v1}」的段內取值"
+  },
+  "必须一致（默认）": {
+    "en": "Must be the same (default)",
+    "zh-Hant": "必須一致（預設）"
+  },
+  "取段内第一条": {
+    "en": "First in the copy",
+    "zh-Hant": "取段內第一筆"
+  },
+  "取段内最后一条": {
+    "en": "Last in the copy",
+    "zh-Hant": "取段內最後一筆"
+  },
+  "此表在内容块「{v1}」内：每一份内容块只写入它那一段的明细行（由内容块的分段字段决定）。": {
+    "en": "This table is inside the block “{v1}”: each copy of the block gets only its own detail rows (set by the block’s split-by field).",
+    "zh-Hant": "此表在內容塊「{v1}」內：每一份內容塊只寫入它那一段的明細行（由內容塊的分段欄位決定）。"
+  },
+  "不能共用绑定": {
+    "en": "Binding cannot be shared",
+    "zh-Hant": "不能共用綁定"
+  },
+  "计数（该列有值的行数）": {
+    "en": "Count (rows where this column has a value)",
+    "zh-Hant": "計數（該欄有值的行數）"
+  },
   "组内取值冲突": {
     "en": "Conflicting values within group",
     "zh-Hant": "組內取值衝突"
+  },
+  "内容块未设置分段": {
+    "en": "Repeating block not split",
+    "zh-Hant": "內容塊未設定分段"
+  },
+  "明细来源不一致": {
+    "en": "Detail sources differ",
+    "zh-Hant": "明細來源不一致"
+  },
+  "不支持分段": {
+    "en": "Splitting not supported",
+    "zh-Hant": "不支援分段"
+  },
+  "分段字段为空": {
+    "en": "Split-by field empty",
+    "zh-Hant": "分段欄位為空"
+  },
+  "未选择分段字段": {
+    "en": "No split-by field chosen",
+    "zh-Hant": "未選擇分段欄位"
+  },
+  "不支持的嵌套": {
+    "en": "Unsupported nesting",
+    "zh-Hant": "不支援的巢狀"
   },
   "区域尺寸不符": {
     "en": "Region size mismatch",

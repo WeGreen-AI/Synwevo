@@ -1,8 +1,9 @@
 """CI-103: a repeat row inside a repeat content block (or a block inside a repeat row) was
 accepted and filled wrongly without a word — the first block copy took every detail row, the
 other copies kept the template row still wrapped in field controls, and the fill reported no
-issue. Until nested details are supported, the shape is refused where it is made and, for a
-template stored before this, where it is filled."""
+issue. A block inside a repeat row is still refused. A repeat row inside a block is now a nested
+detail (docs-nested-details.md, test_docx_nested.py): allowed, and filled per block copy only from
+the sub-groups the plan makes — rows without them are refused at fill time, never guessed."""
 from __future__ import annotations
 
 import io
@@ -34,11 +35,11 @@ def _block_over_everything(work: bytes) -> tuple[bytes, list[dict]]:
     return work, [blk]
 
 
-def test_a_repeat_row_cannot_be_made_inside_a_repeat_block():
+def test_a_repeat_row_may_be_made_inside_a_repeat_block():
     work, slots = _block_over_everything(_template())
-    with pytest.raises(T.TemplateError) as e:
-        T.docx_add_slot(work, {"kind": "repeat", "table_path": "1", "row": 1, "name": "明细"}, slots)
-    assert e.value.code == "nested_block"
+    work, rep = T.docx_add_slot(work, {"kind": "repeat", "table_path": "1", "row": 1, "name": "明细"}, slots)
+    slots = T.assign_parents(work, slots + [rep])
+    assert slots[1]["parent"] == slots[0]["id"] and "parent" not in slots[0]
 
 
 def test_a_block_cannot_be_made_inside_a_repeat_row():
@@ -71,9 +72,10 @@ def _paths(container) -> list[str]:
     return out
 
 
-def test_a_stored_template_with_the_nested_shape_is_refused_not_filled_wrongly():
+def test_nested_rows_without_sub_groups_are_refused_not_filled_wrongly():
     """TEST FIXTURE: the shape an earlier version stored (block made first, then the repeat row
-    inside it, which nothing refused) — built here with the same wrapping calls."""
+    inside it, which nothing refused) — built here with the same wrapping calls — filled with
+    detail rows that were not split per block copy (no `groups`)."""
     work, slots = _block_over_everything(_template())
     pkg = Package(work)
     body = dc.part_container(pkg, pkg.main_part())
@@ -91,6 +93,6 @@ def test_a_stored_template_with_the_nested_shape_is_refused_not_filled_wrongly()
     values = {slots[0]["id"]: {"kind": "rows", "rows": [{}, {}]},
               rep["id"]: {"kind": "rows", "rows": [row("螺丝", 2), row("螺母", 3)]}}
     out, issues = T.docx_fill(work, slots, values)
-    assert [i["code"] for i in issues] == ["nested_repeat"] and issues[0]["level"] == "error"
+    assert [i["code"] for i in issues] == ["nested_unconfigured"] and issues[0]["level"] == "error"
     assert "明细" in issues[0]["message"] and "订单段" in issues[0]["message"]
     assert out == work, "nothing is written"

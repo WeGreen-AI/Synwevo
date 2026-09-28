@@ -195,6 +195,12 @@ class ProjectContext:
         self.version = (app.get_version(tid, self.pinned_version or self.template["head"])
                         if self.template else None)
         self.slots = (self.version or {}).get("slots") or []
+        if (self.template or {}).get("format") == "docx":
+            from .engine.templates import assign_parents, may_nest
+            if may_nest(self.slots):
+                # which detail tables sit inside a repeat content block, read from the file: a
+                # version stored (or restored, or copied) before nested details has no `parent`
+                self.slots = assign_parents(self.working(), self.slots)
         self.mappings = app.get_mappings(pid)["mappings"]
         self.source_rows = app.project_sources(pid)
         self.all_source_rows = app.project_sources(pid, ready_only=False)
@@ -342,7 +348,9 @@ def verify_output(fmt: str, data: bytes, slots: list[dict], plan) -> dict:
         if fv["kind"] == "scalar":
             vals = [fv["value"]]
         elif fv["kind"] == "rows":
-            vals = [v for row in fv["rows"][:50] for v in row.values()]
+            # a detail table inside a repeat content block holds, per copy, only its sub-group's rows
+            placed = [r for g in fv["groups"] for r in g] if "groups" in fv else fv["rows"]
+            vals = [v for row in placed[:50] for v in row.values()]
         elif fv["kind"] == "matrix":
             vals = [c for row in fv["rows"] for c in row]
         for val in vals:

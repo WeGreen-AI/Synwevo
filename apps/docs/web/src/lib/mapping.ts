@@ -8,7 +8,7 @@
  *
  *  No imports except types (erased): tested with `node --test`.
  */
-import type { Mapping } from "./types";
+import type { GroupBy, Mapping } from "./types";
 
 export interface MappingSettings {
   transforms?: any[];
@@ -17,6 +17,8 @@ export interface MappingSettings {
   value_mode?: string;
   style?: "target" | "source";
   columns?: Mapping["columns"];
+  /** a repeat content block's 分段字段; null removes it, undefined leaves it as it is */
+  group_by?: GroupBy | null;
 }
 
 export function withSettings(m: Mapping, s: MappingSettings): Mapping {
@@ -28,7 +30,20 @@ export function withSettings(m: Mapping, s: MappingSettings): Mapping {
   }
   if (s.style === "source") out.style = "source";
   else if (s.style === "target") delete out.style;
+  if (s.group_by) out.group_by = s.group_by;
+  else if (s.group_by === null) delete out.group_by;
   return out as Mapping;
+}
+
+/** A block split by 分段字段 takes one value per sub-group for each of its columns (`agg`, default
+ *  「必须一致」); without a split the columns carry none. Constants need no rule. */
+export function sectionColumns(columns: NonNullable<Mapping["columns"]>, aggs: Record<string, string>, split: boolean) {
+  return columns.map((c) => {
+    const out: any = { ...c };
+    if (split && c.source?.kind !== "constant") out.agg = aggs[c.slot_col] || "unique";
+    else delete out.agg;
+    return out;
+  });
 }
 
 /** Add one more source to an existing single-value mapping, with the dialog's settings. */

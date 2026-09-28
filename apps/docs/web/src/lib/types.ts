@@ -56,6 +56,8 @@ export interface Slot {
   block?: boolean;
   separator?: "none" | "blank" | "page_break";
   paragraphs?: number;
+  /** a detail table inside a repeat content block: that block's id (derived from the template on every save) */
+  parent?: string;
 }
 
 export interface TemplateDetail {
@@ -89,12 +91,16 @@ export interface Mapping {
   agg_sep?: string;
   value_mode?: string;
   style?: string;
-  columns?: { slot_col: string; source: any; transforms?: any[] }[];
+  columns?: { slot_col: string; source: any; transforms?: any[]; agg?: string }[];
+  /** a repeat content block split by 分段字段: one copy per sub-group (docs-nested-details.md) */
+  group_by?: GroupBy;
   overrides?: Record<string, any>;
   label?: string;
   varies?: string;
   source_file?: string;
 }
+
+export interface GroupBy { keys: { header: string }[]; empty_key?: "error" | "skip" }
 
 export interface RecordRule {
   mode?: "per_row" | "per_file" | "per_group" | "per_block";

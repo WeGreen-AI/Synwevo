@@ -100,10 +100,8 @@ export const refusalMessages = {
   "所选内容跨越了已有的内容控件边界，请调整选择范围": { en: "The selection crosses the boundary of an existing content control. Adjust the selection.", "zh-Hant": "所選內容跨越了已有的內容控制項邊界，請調整選擇範圍" },
   "所选内容包含分节符，分节符不能随内容块重复；请不要选中节的最后一段": { en: "The selection contains a section break, which cannot repeat with a block. Do not select the last paragraph of the section.", "zh-Hant": "所選內容包含分節符，分節符不能隨內容塊重複；請不要選中節的最後一段" },
   "所选内容中已包含另一个重复内容块，不能嵌套": { en: "The selection already contains another repeating block; blocks cannot be nested.", "zh-Hant": "所選內容中已包含另一個重複內容塊，不能巢狀" },
-  "所选内容中的表格已有重复明细行，不能再放进重复内容块": { en: "A table in the selection already has a repeating detail row, so it cannot go into a repeating block.", "zh-Hant": "所選內容中的表格已有重複明細行，不能再放進重複內容塊" },
   "所选内容已在另一个重复内容块中，不能嵌套": { en: "The selection is already inside another repeating block; blocks cannot be nested.", "zh-Hant": "所選內容已在另一個重複內容塊中，不能巢狀" },
   "所选内容在一个按行重复的表格行里，不能再作为重复内容块": { en: "The selection is inside a table row that repeats, so it cannot also be a repeating block.", "zh-Hant": "所選內容在一個按行重複的表格行裡，不能再作為重複內容塊" },
-  "这张表格在一个重复内容块里：块内的表格暂不能按行重复。可以把表格移到内容块之外，或把整张表格（含所需的行）作为内容块的一部分": { en: "This table is inside a repeating block, and a table inside a block cannot repeat by row yet. Move the table outside the block, or keep the whole table (with the rows it needs) as part of the block.", "zh-Hant": "這張表格在一個重複內容塊裡：塊內的表格暫不能按行重複。可以把表格移到內容塊之外，或把整張表格（含所需的行）作為內容塊的一部分" },
   "所选文字不在该重复内容块内": { en: "The selected text is not inside this repeating block.", "zh-Hant": "所選文字不在該重複內容塊內" },
   "文档结构已变化：期望表格": { en: "The document structure has changed: a table was expected here.", "zh-Hant": "文檔結構已變化：此處應為表格" },
   "单元格内容块不存在": { en: "The cell content no longer exists.", "zh-Hant": "單元格內容塊不存在" },
@@ -231,7 +229,22 @@ export const refusalPatterns = {
   "你在该工作空间使用「{app}」的资格已被撤销，请联系工作空间管理员": { en: "Your access to “{app}” in this workspace has been revoked. Contact the workspace administrator.", "zh-Hant": "你在該工作空間使用「{app}」的資格已被撤銷，請聯絡工作空間管理員" },
   "你所在的工作空间尚未启用「{app}」，或你没有使用它的资格": { en: "Your workspace has not enabled “{app}”, or you are not entitled to use it.", "zh-Hant": "你所在的工作空間尚未啟用「{app}」，或你沒有使用它的資格" },
   "该工作空间尚未启用「{app}」": { en: "This workspace has not enabled “{app}”.", "zh-Hant": "該工作空間尚未啟用「{app}」" },
+  // nested details (docs-nested-details.md): per-sample diagnostics and fill-time refusals
+  "重复内容块「{block}」在按行重复的表格行「{name}」里，这种嵌套暂不支持：请把内容块移到表格之外，或取消表格行的重复设置": { en: "The repeating block “{block}” is inside the repeating table row “{name}”. This nesting is not supported: move the block outside the table, or stop the row from repeating.", "zh-Hant": "重複內容塊「{block}」在按行重複的表格行「{name}」裡，這種巢狀暫不支援：請把內容塊移到表格之外，或取消表格行的重複設定" },
+  "明细表「{name}」在重复内容块「{block}」里：请在这个内容块的映射中设置分段字段，每一段才会只写入自己的明细行": { en: "The detail table “{name}” is inside the repeating block “{block}”. Set a split-by field in the block’s mapping so each copy gets only its own detail rows.", "zh-Hant": "明細表「{name}」在重複內容塊「{block}」裡：請在這個內容塊的映射中設定分段欄位，每一段才會只寫入自己的明細行" },
+  "明细表「{name}」与重复内容块「{block}」读取的明细行不一致：请让两者使用同一张来源表格的同一范围": { en: "The detail table “{name}” and the repeating block “{block}” read different detail rows. Make both use the same range of the same source table.", "zh-Hant": "明細表「{name}」與重複內容塊「{block}」讀取的明細行不一致：請讓兩者使用同一張來源表格的同一範圍" },
+  "明细表「{name}」在重复内容块「{block}」里，不能与其他字段共用同一个绑定：请先取消共用绑定": { en: "The detail table “{name}” is inside the repeating block “{block}” and cannot share its binding with another field. Stop sharing the binding first.", "zh-Hant": "明細表「{name}」在重複內容塊「{block}」裡，不能與其他欄位共用同一個綁定：請先取消共用綁定" },
+  // stored in job results by the CI-103 builds (a block inside a repeating row, or the other way round)
   "重复明细「{name}」在重复内容块「{block}」里（或反过来），这种嵌套暂不支持：请把表格移到内容块之外，或删除其中一个重复设置": { en: "The repeating detail “{name}” is inside the repeating block “{block}” (or the other way round). This nesting is not supported yet: move the table outside the block, or remove one of the two repeats.", "zh-Hant": "重複明細「{name}」在重複內容塊「{block}」裡（或反過來），這種巢狀暫不支援：請把表格移到內容塊之外，或刪除其中一個重複設定" },
+  "重复明细「{name}」没有数据行": { en: "The repeating detail “{name}” has no data rows.", "zh-Hant": "重複明細「{name}」沒有資料行" },
+  "明细表「{name}」在「{section}」这一段没有明细行": { en: "The detail table “{name}” has no detail rows for “{section}”.", "zh-Hant": "明細表「{name}」在「{section}」這一段沒有明細行" },
+  "映射 #{no}：分段目前只支持 Word 模板的重复内容块；Excel / PPT / PDF 模板和 Word 表格行暂不支持嵌套明细": { en: "Mapping #{no}: splitting is only supported for repeating blocks in Word templates; nested details are not supported yet for Excel, PowerPoint or PDF templates or for Word table rows.", "zh-Hant": "映射 #{no}：分段目前只支援 Word 範本的重複內容塊；Excel / PPT / PDF 範本和 Word 表格行暫不支援巢狀明細" },
+  "映射 #{no}：请为这个重复内容块选择分段字段": { en: "Mapping #{no}: choose a split-by field for this repeating block.", "zh-Hant": "映射 #{no}：請為這個重複內容塊選擇分段欄位" },
+  "映射 #{no}：明细表中找不到分段字段：{names}": { en: "Mapping #{no}: the split-by field is not in the detail table: {names}", "zh-Hant": "映射 #{no}：明細表中找不到分段欄位：{names}" },
+  "映射 #{no}：明细表中有多个同名列「{name}」，请改名后再用作分段字段": { en: "Mapping #{no}: the detail table has more than one column named “{name}”. Rename them before splitting by it.", "zh-Hant": "映射 #{no}：明細表中有多個同名欄「{name}」，請改名後再用作分段欄位" },
+  "映射 #{no}：{n} 行明细的分段字段为空：{cells}。请补全，或在映射中选择跳过这些行": { en: "Mapping #{no}: the split-by field is empty in {n} detail row(s): {cells}. Fill it in, or choose in the mapping to skip these rows.", "zh-Hant": "映射 #{no}：{n} 行明細的分段欄位為空：{cells}。請補全，或在映射中選擇略過這些行" },
+  "映射 #{no}：{n} 行明细的分段字段为空，已跳过": { en: "Mapping #{no}: skipped {n} detail row(s) with an empty split-by field.", "zh-Hant": "映射 #{no}：{n} 行明細的分段欄位為空，已略過" },
+  "映射 #{no}：「{section}」这一段里「{column}」有多个不同值：{values}。请在映射中明确选择取值规则（取第一条、拼接、求和等）": { en: "Mapping #{no}: “{column}” has more than one value in “{section}”: {values}. Choose in the mapping which value to use (the first, joined, summed, …).", "zh-Hant": "映射 #{no}：「{section}」這一段裡「{column}」有多個不同值：{values}。請在映射中明確選擇取值規則（取第一筆、串接、加總等）" },
 
   // ------------------------------------------------------------------ sources, limits and file formats
   "压缩包中的「{name}」声明大小 {size} 字节，超过正常文件的上限，已拒绝": { en: "“{name}” in the archive declares {size} bytes, more than a normal file may have, and was rejected.", "zh-Hant": "壓縮包中的「{name}」宣告大小 {size} 位元組，超過正常文件的上限，已拒絕" },

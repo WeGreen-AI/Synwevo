@@ -838,6 +838,11 @@ class App:
         if r["format"] in PDF_LIKE and v["slots"]:
             v = dict(v)
             v["slots"] = pdf_slots_with_nrect(self.store.get_blob(v["working_blob"]), v["slots"])
+        if r["format"] == "docx" and v["slots"]:
+            from .engine.templates import assign_parents, may_nest
+            if may_nest(v["slots"]):     # nested details, also for a version stored before them
+                v = dict(v)
+                v["slots"] = assign_parents(self.store.get_blob(v["working_blob"]), v["slots"])
         versions = self.store.all("SELECT version_no, parent_no, note, created_at FROM template_versions WHERE template_id=? ORDER BY version_no", (tid,))
         redo = [x for x in versions if x["parent_no"] == r["head"]]
         parent = v.get("parent_no")
@@ -969,7 +974,11 @@ class App:
         edits (two tabs, or the UI and POST /templates/{tid}/fields) either collided on the
         primary key with a 500, or the later one was built from the old slot list and silently
         dropped the other's field."""
-        self.get_template(tid)
+        tpl = self.get_template(tid)
+        if tpl.get("format") == "docx":
+            # which repeat rows sit inside a repeat content block, from the file itself (nested details)
+            from .engine.templates import assign_parents
+            slots = assign_parents(working, slots)
         blob = self.store.put_blob(working)
         t = now()
         with self.store.tx() as c:

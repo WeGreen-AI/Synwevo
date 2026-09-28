@@ -207,4 +207,6 @@ export const CODE: Record<string, string> = {
   anchor_ambiguous: "定位标签不唯一", layout_mismatch: "版式不符", required_empty: "必填为空", unmapped_required: "必填未映射", group_conflict: "组内取值冲突",
   region_size: "区域尺寸不符", target_missing: "目标字段失效", target_conflict: "多个映射写同一字段", needs_ocr: "需要 OCR", ocr_low_confidence: "OCR 待确认",
   path_missing: "结构不存在", mode_mismatch: "与样本模式不符", value_error: "值错误", no_detail: "无明细", type_mismatch: "类型不匹配", combine_missing: "缺少组合规则",
+  nested_needs_group_by: "内容块未设置分段", nested_unconfigured: "内容块未设置分段", nested_source_mismatch: "明细来源不一致", group_by_unsupported: "不支持分段",
+  subgroup_key_empty: "分段字段为空", bad_group_by: "未选择分段字段", nested_repeat: "不支持的嵌套", nested_shared_binding: "不能共用绑定",
 };
