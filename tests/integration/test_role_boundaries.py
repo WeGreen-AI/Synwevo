@@ -127,3 +127,45 @@ def test_the_pre_rebrand_csrf_header_is_still_accepted(build):
         r = c.post("/api/auth/workspace", json={"workspace_id": "w_nope"},
                    headers={header: "x"}, cookies={CSRF_COOKIE: "x"})
         assert r.status_code == 401, f"{header} -> {r.status_code}"
+
+
+@pytest.mark.parametrize("role", ["app", "messages", "portal", "accounts"])
+def test_the_application_switcher_list_is_a_shared_session_route(build, role):
+    """The platform bar's switcher reads /api/auth/apps on every origin (Q11): it answers there
+    and needs a session, like the badge counts beside it."""
+    r = build(role).get("/api/auth/apps")
+    assert r.status_code == 401 and r.json()["error"] == "unauthorized", (role, r.status_code, r.text[:120])
+
+
+def test_the_application_switcher_lists_what_this_person_can_open(tmp_path, monkeypatch):
+    """Same query as the workspace's cards: an application appears with its own sign-in start
+    only for someone entitled to it, and nothing about what is inside a workspace."""
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(tmp_path / "d"))
+    api = server.create_app(str(tmp_path / "d"), role="all", start_jobs=False)
+    with TestClient(api) as c:
+        ident = api.state.identity
+        u = ident.create_user("switcher@example.test", "harbor lights guide the evening ferry home", status="active", display_name="Sam")
+        ident.store.execute("UPDATE users SET email_verified_at=1 WHERE id=?", (u["id"],))
+        stranger = ident.create_user("stranger@example.test", "harbor lights guide the evening ferry home", status="active", display_name="Stan")
+        from synwevo_core.apps import Apps
+        from synwevo_core.sessions import COOKIE_NAME, Sessions
+        wid = ident.ensure_personal_workspace(u["id"])["id"]
+        Apps(ident.store, ident).adopt_existing_members()
+        raw, _ = Sessions(ident.store).create(u["id"], workspace_id=wid, amr="password")
+        c.cookies.set(COOKIE_NAME, raw)
+        items = c.get("/api/auth/apps").json()["items"]
+        assert items and all(set(a) == {"id", "name", "icon", "launch_url"} for a in items)
+        assert all("/auth/start" in a["launch_url"] for a in items)
+        project = lambda rows: [{k: r.get(k) for k in ("id", "name", "icon", "launch_url")} for r in rows]
+        assert items == project(Apps(ident.store, ident).apps_for(u["id"], wid)), "the workspace cards' own query"
+        # an entitlement taken away disappears from the switcher as from the cards
+        had_docs = any(a["id"] == "docweave" for a in items)
+        Apps(ident.store, ident).revoke(wid, "docweave", u["id"])
+        after = c.get("/api/auth/apps").json()["items"]
+        assert after == project(Apps(ident.store, ident).apps_for(u["id"], wid))
+        assert not had_docs or not any(a["id"] == "docweave" for a in after), "a revoked entitlement leaves the switcher"
+        raw2, _ = Sessions(ident.store).create(stranger["id"], workspace_id=None, amr="password")
+        c.cookies.set(COOKIE_NAME, raw2)
+        assert c.get("/api/auth/apps").json()["items"] == project(Apps(ident.store, ident).apps_for(stranger["id"], None))

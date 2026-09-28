@@ -258,6 +258,16 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         return notifier.list(s["user_id"], filter=filter, category=category, before_seq=before_seq, limit=limit,
                              locale=_reader_locale(request, s))
 
+    @r.get("/apps")
+    def my_apps(request: Request):
+        """The applications this person can open from here, for the platform bar's switcher: the
+        same query as the workspace's cards (`Apps.apps_for`), in the session's workspace, each
+        with its own sign-in start. Nothing about what is inside any workspace."""
+        s = _require_session(request)
+        from synwevo_core.apps import Apps
+        items = Apps(ident.store, ident).apps_for(s["user_id"], s.get("workspace_id"))
+        return {"items": [{k: a.get(k) for k in ("id", "name", "icon", "launch_url")} for a in items]}
+
     @r.get("/messaging/unread-count")
     def messaging_unread(request: Request):
         """The messages badge, on every origin.

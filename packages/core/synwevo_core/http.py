@@ -919,7 +919,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                          "/api/auth/notifications/preferences",
                          # The messages badge in the platform bar; the conversations themselves
                          # live on the account origin.
-                         "/api/auth/messaging/unread-count")
+                         "/api/auth/messaging/unread-count",
+                         # The platform bar's application switcher: which applications this
+                         # person can open (the same query as the workspace's cards).
+                         "/api/auth/apps")
 
     def _role_blocks(path: str) -> str | None:
         """Why this role refuses this path, or None.

@@ -20,4 +20,8 @@ registerMessages({
  '账户': {en:'Account','zh-Hant':'帳戶'},
  '个人': {en:'Personal','zh-Hant':'個人'},
  '退出登录': {en:'Sign out','zh-Hant':'登出'},
+ '应用': {en:'Apps','zh-Hant':'應用'},
+ '切换应用': {en:'Switch application','zh-Hant':'切換應用'},
+ '工作空间': {en:'Workspace','zh-Hant':'工作空間'},
+ '当前应用': {en:'You are here','zh-Hant':'目前所在的應用'},
 });

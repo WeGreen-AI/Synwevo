@@ -16,11 +16,11 @@
  * the running job all belong to the workspace they started in, and a switcher sitting beside
  * them invites exactly the "this tab is quietly a different tenant now" problem.
  */
-import { useState } from "react";
-import { ApiError, post, setWorkspaceContext } from "./api";
+import { useEffect, useState } from "react";
+import { ApiError, get, post, setWorkspaceContext } from "./api";
 import { useSession } from "./session";
 import { platformHandoffUrl } from "./handoff";
-import { LanguageMenu, useI18n, useToast } from "@synwevo/ui";
+import { LanguageMenu, Menu, useI18n, useToast } from "@synwevo/ui";
 import { NotificationBell } from "./NotificationBell";
 import { MessagesLink, messagesHref } from "./MessagesLink";
 import "./session.messages";
@@ -37,11 +37,32 @@ export function accountHref(accountUrl: string | undefined, appId: string | null
   } catch { return base; }
 }
 
+interface PlatformApp { id: string; name: string; icon: string | null; launch_url: string }
+
+/** A launch address from the registry, used only when it is an http(s) address without
+ *  credentials in it — the same rule the workspace's cards apply. */
+function safeLaunch(url: string): string | null {
+  try {
+    const u = new URL(url, window.location.origin);
+    return (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password ? u.href : null;
+  } catch { return null; }
+}
+
 export function PlatformNav() {
   const { me, state, signOut } = useSession();
   const { t, locale } = useI18n();
   const toast = useToast();
   const [switching, setSwitching] = useState(false);
+  const [apps, setApps] = useState<PlatformApp[]>([]);
+  const signedIn = !!me;
+  useEffect(() => {
+    // The application switcher (Q11): the applications this person can open, so Synwevo Docs and
+    // Synwevo Message reach each other in one step instead of through the workspace.
+    if (!signedIn) return;
+    const abort = new AbortController();
+    get<{ items: PlatformApp[] }>("/api/auth/apps", abort.signal).then(out => setApps(out.items || [])).catch(() => setApps([]));
+    return () => abort.abort();
+  }, [signedIn, me?.workspace_id]);
 
   // A relying party is, by definition, part of a platform. The role comes from the server.
   const onPlatform = state?.role === "app" || state?.role === "portal" || state?.role === "messages" || state?.role === "all";
@@ -96,6 +117,15 @@ export function PlatformNav() {
       {/* Conversations live on Synwevo Message (CI-66): the registry's address through its
           sign-in start, a plain path on the same origin, the account origin's /messages when the
           application is not registered. On the messages origin itself this is the current page. */}
+      {apps.length > 0 && <Menu label={t("应用")} ariaLabel={t("切换应用")} items={[
+        ...(state?.portal_url ? [{ label: t("工作空间"), onSelect: () => window.location.assign(platformHandoffUrl(state.portal_url!, { next: "/workspace", lang: locale }) ?? state.portal_url!) }] : []),
+        ...apps.map(app => {
+          const here = app.id === state?.app_id || (app.id === "messages" && state?.role === "messages");
+          const href = safeLaunch(app.launch_url);
+          return { label: app.name, disabled: here || !href, hint: here ? t("当前应用") : undefined,
+                   onSelect: () => { if (href) window.location.assign(href); } };
+        }),
+      ]} />}
       <MessagesLink href={messagesHref(state, { lang: locale })} current={state?.role === "messages"} />
       <NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} />
       <LanguageMenu />
