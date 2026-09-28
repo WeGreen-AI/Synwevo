@@ -400,15 +400,16 @@ class CollabHub:
         room = self.rooms.get(key)
         if room is not None:
             dirty, online = bool(room.dirty and room.writable), [p["name"] for p in room.peers() if not p.get("readonly")]
+            online_ids = sorted({c.user_id for c in room.clients if not c.readonly})
         else:
             live = self.store.one("SELECT dirty FROM collab_docs WHERE room=?", (key,))
-            dirty, online = bool(live and live["dirty"]), []
+            dirty, online, online_ids = bool(live and live["dirty"]), [], []
         last_by = None
         if dirty:
             last = self.store.one("SELECT user_id FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT 1", (key,))
             if last and last.get("user_id"):
                 last_by = display_name(self.identity.get_user(last["user_id"]))
-        return {"dirty": dirty, "online": online, "last_by": last_by}
+        return {"dirty": dirty, "online": online, "online_ids": online_ids, "last_by": last_by}
 
     def shutdown(self) -> None:
         """Process shutdown: write every live document now. The delayed persist runs on the event

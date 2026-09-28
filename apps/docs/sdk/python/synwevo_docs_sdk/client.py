@@ -534,12 +534,16 @@ class Client:
                           idempotency_key=self._key(idempotency_key))
 
     def save_builtin_template(self, template_id: str, editor: dict, *, base_version: int,
-                              name: str | None = None, note: str | None = None, idempotency_key: str | None = None) -> dict:
+                              name: str | None = None, note: str | None = None, idempotency_key: str | None = None,
+                              discard_live: bool = False) -> dict:
         """Append a model revision only if base_version is still the template head.
 
         A stale revision raises ConflictError. Keyed retries replay the original result
         without creating another version, including after the head has advanced. ``note`` names
         the version (a checkpoint people can find in the history); at most 200 characters.
+        While the template's editor holds live edits nobody saved as a version, the save would
+        replace them and raises ConflictError ``live_edits`` (detail.online / detail.last_by)
+        unless ``discard_live`` says to throw them away.
         """
         if self.validate and (type(base_version) is not int or base_version < 1):
             raise ValidationError("base_version must be a positive integer", "base_version")
@@ -548,6 +552,8 @@ class Client:
         body = {"base_version": base_version, **self._builtin_body(editor, name)}
         if note:
             body["note"] = note
+        if discard_live:
+            body["discard_live"] = True
         return self._json("PUT", f"{API}/templates/{_q(template_id)}/builtin", json=body,
                           idempotency_key=self._key(idempotency_key))
 

@@ -8,7 +8,7 @@
 |---|---|---|
 | POST `/templates/builtin` | `create_builtin_template` | write；创建模板及版本 1，可带 Idempotency-Key |
 | GET `/templates/{tid}/builtin?version=1` | `get_builtin_template` | read；读取指定版本的 editor、fields；省略 version 取当前 head |
-| PUT `/templates/{tid}/builtin` | `save_builtin_template` | write；创建新版本；必须带 base_version；可带 Idempotency-Key |
+| PUT `/templates/{tid}/builtin` | `save_builtin_template` | write；创建新版本；必须带 base_version；可带 Idempotency-Key；编辑器里有未保存的实时修改时 409 `live_edits`，除非 `discard_live: true` |
 
 创建体包含 `kind`、`editor` 和可选 `name`。保存体包含 `editor`、`base_version`、可选 `name` 与可选 `note`（≤200 字，这个版本的说明；留空即「在编辑器中保存」）。
 旧版本不会被覆盖；版本已前进时返回 409 `stale_template`，同键同请求的成功重放仍返回原版本。

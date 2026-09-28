@@ -4,6 +4,11 @@ import { registerMessages, type Translator } from '@synwevo/ui';
 // Keep this literal catalog testable against the real Docs OpenAPI surface.
 export const contractEntries: [string, string, string][] = [
   [
+    "编辑器里有尚未保存为版本的实时修改时，保存会替换并丢弃它们：未带 true 即 409 live_edits",
+    "While the editor holds live edits not yet saved as a version, a save replaces and discards them: without true it is 409 live_edits",
+    "編輯器裡有尚未儲存為版本的即時修改時，儲存會替換並丟棄它們：未帶 true 即 409 live_edits"
+  ],
+  [
     "Webhook 订阅详情（不含密钥）",
     "Webhook subscription details (without secrets)",
     "Webhook 訂閱詳情（不含金鑰）"

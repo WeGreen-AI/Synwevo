@@ -321,9 +321,12 @@ def test_a_save_from_outside_the_room_replaces_the_live_document_while_people_ar
     a = _connect(world, "editor")
     a.append_text("正在输入")
     a.recv(want="meta")                                            # dirty
-    # the owner is not connected: their save (e.g. through a script) is the document now
-    r = world["client_for"](world["owner"]).put(f"/api/templates/{tid}/builtin",
-                                                 json={"editor": {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "外部版本"}]}]}}, "base_version": 1})
+    # the owner is not connected: their save (e.g. through a script) would replace what the editor
+    # is typing — refused while it is unsaved (CI-113, the rule CI-49 set for restore), unless told
+    outside = {"editor": {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "外部版本"}]}]}}, "base_version": 1}
+    r = world["client_for"](world["owner"]).put(f"/api/templates/{tid}/builtin", json=outside)
+    assert r.status_code == 409 and r.json()["error"] == "live_edits" and r.json()["detail"]["online"] == ["Editor"], r.text
+    r = world["client_for"](world["owner"]).put(f"/api/templates/{tid}/builtin", json={**outside, "discard_live": True})
     assert r.status_code == 200, r.text
     assert a.recv(want="update") == "update" and a.texts() == ["外部版本"]
     head = a.recv_meta("head")
@@ -585,3 +588,39 @@ def test_a_corrupt_persisted_draft_does_not_keep_the_room_from_opening(world):
     fixed = Doc()
     fixed.apply_update(bytes(row["state"]))
     assert "修好了" in json.dumps(read_doc(fixed), ensure_ascii=False)
+
+
+def test_a_save_from_outside_the_room_does_not_drop_a_persisted_live_draft(world):
+    """CI-113: with nobody in the room, a save made elsewhere (another page, the machine API, a
+    field change on the project page) deleted the persisted draft — edits someone typed and left
+    unsaved were gone without a word. It is refused like a restore now, unless told."""
+    tid = world["tid"]
+    c = world["client_for"](world["owner"])
+    a = _connect(world, "editor")
+    a.append_text("离开前")
+    time.sleep(0.2)
+    a.close()                                                # persists the dirty draft
+    other = {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "外部保存"}]}]}}
+    r = c.put(f"/api/templates/{tid}/builtin", json={"editor": other, "base_version": 1})
+    assert r.status_code == 409 and r.json()["error"] == "live_edits" and r.json()["detail"]["last_by"] == "Editor", r.text
+    slot = c.get(f"/api/templates/{tid}").json()["version"]["slots"][0]
+    r = c.patch(f"/api/templates/{tid}/slots/{slot['id']}", json={"required": False})
+    assert r.status_code == 409 and r.json()["error"] == "live_edits" and "先在编辑器里保存" in r.json()["message"]
+    d = _connect(world, "owner")
+    assert d.texts() == ["客户：离开前"] and d.hello["dirty"] is True, "the draft is still there"
+    d.close()
+    time.sleep(0.2)
+    r = c.put(f"/api/templates/{tid}/builtin", json={"editor": other, "base_version": 1, "discard_live": True})
+    assert r.status_code == 200 and r.json()["head"] == 2, r.text
+
+
+def test_a_save_from_inside_the_room_saves_the_live_document(world):
+    tid = world["tid"]
+    c = world["client_for"](world["editor"])
+    a = _connect(world, "editor")
+    a.append_text("在房间里")
+    time.sleep(0.2)
+    live = {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "客户：在房间里"}]}]}}
+    r = c.put(f"/api/templates/{tid}/builtin", json={"editor": live, "base_version": 1})
+    assert r.status_code == 200 and r.json()["head"] == 2, r.text
+    a.close()

@@ -93,6 +93,19 @@ class HTTPTests(unittest.TestCase):
                                        {"editor": editor, "base_version": 1, "name": "Synthetic"}))
         self.assertEqual(requests[4], ("GET", "/api/v1/templates/t/builtin?version=1", None, None))
 
+    def test_saving_a_builtin_template_can_say_to_discard_live_edits(self):
+        """CI-113: a save that would replace live edits nobody saved is refused unless told."""
+        requests = []
+        def respond(h):
+            requests.append(json.loads(h.body))
+            h.answer(200, {"id": "t", "head": 2})
+        editor = {"body": {"type": "doc", "content": []}}
+        with fixture(respond) as base, Client(base, ApiKey("fixture"), sleep=lambda _: None) as c:
+            c.save_builtin_template("t", editor, base_version=1)
+            c.save_builtin_template("t", editor, base_version=1, discard_live=True)
+        self.assertNotIn("discard_live", requests[0])
+        self.assertIs(requests[1]["discard_live"], True)
+
     def test_retry_reuses_key_and_rewinds_multipart(self):
         requests, delays = [], []
         def respond(h):

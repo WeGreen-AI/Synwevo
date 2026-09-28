@@ -188,7 +188,7 @@ const API_ONLY: [string, string[]][] = [
     "评论内容无效", "只能回复本项目的一级评论", "请在一级评论上标记解决", "锚点类型无效",
     "simulate 只能是 true/false 或正整数（模拟的样本数）", "level 只能是 error 或 warning", "offset / limit 必须是整数", "offset 不能为负数",
     "limit 取值范围是 1–1000", "formats 必须是格式名称的数组", "error_policy 只能是 block 或 skip", "layout 只能是 off / warn / fit", "naming 必须是文本",
-    "failed_only 不能与 include_skipped 同时启用", "{} 必须是布尔值",
+    "failed_only 不能与 include_skipped 同时启用", "{} 必须是布尔值", "discard_live 必须是布尔值",
     "sort 只能是 updated / created / name", "order 只能是 asc / desc", "limit 取值范围是 1–200", "base_settings_rev 必须是整数", "模板版本必须是正整数",
     "output 必须是对象", "样本规则格式错误", "未知的样本模式", "标记匹配方式无效", "分隔方式无效", "超出处理方式无效",
     "data_type 只能是 auto / text / number / date", "颜色格式应为 #RRGGBB", "映射缺少来源", "{} 取值无效", "empty_policy 只能是 {}；收到「{}」",

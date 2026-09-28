@@ -599,7 +599,9 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                                "name": builtin_schema["properties"]["name"],
                                "editor": builtin_schema["properties"]["editor"],
                                "base_version": {"type": "integer", "minimum": 1},
-                               "note": {"type": "string", "maxLength": 200, "description": "这个版本的说明（命名检查点）；留空时为「在编辑器中保存」"}}}
+                               "note": {"type": "string", "maxLength": 200, "description": "这个版本的说明（命名检查点）；留空时为「在编辑器中保存」"},
+                               "discard_live": {"type": "boolean", "default": False,
+                                                "description": "编辑器里有尚未保存为版本的实时修改时，保存会替换并丢弃它们：未带 true 即 409 live_edits"}}}
 
     async def builtin_body(request, *, saving=False):
         from .app import _editor_body

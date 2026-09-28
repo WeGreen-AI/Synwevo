@@ -1052,10 +1052,13 @@ class App:
         for p in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
             self.store.bump_project(p["id"])
 
-    def _guard_live_edits(self, tid: str, discard_live: bool, action: str) -> None:
+    def _guard_live_edits(self, tid: str, discard_live: bool, action: str, *, saver: str | None = None,
+                          field_change: bool = False) -> None:
         """A version operation replaces the live document for everyone in the editing room. When
         that document carries edits nobody has saved as a version yet, refuse with 409
-        ``live_edits`` naming who is there, unless the caller said ``discard_live`` explicitly."""
+        ``live_edits`` naming who is there, unless the caller said ``discard_live`` explicitly.
+        ``saver``: a person saving *from inside the room* saves the live document itself — that is
+        not a replacement (CI-113: saves from outside it used to drop a persisted live draft)."""
         hook = self.live_template_state
         if hook is None or discard_live:
             return
@@ -1065,8 +1068,12 @@ class App:
             logging.getLogger("synwevo.docs").exception("live state of %s unavailable before %s", tid, action)
             return
         if live.get("dirty"):
-            raise ServiceError(409, "live_edits", "编辑器里有尚未保存为版本的实时修改；这一步会丢弃它们，请确认后再试",
-                               {"action": action, "online": live.get("online") or [], "last_by": live.get("last_by")})
+            if saver is not None and saver in (live.get("online_ids") or []):
+                return
+            detail = {"action": action, "online": live.get("online") or [], "last_by": live.get("last_by")}
+            if field_change:          # the field panel has no "discard" path: say what to do instead
+                raise ServiceError(409, "live_edits", "模板编辑器里有尚未保存为版本的实时修改：请先在编辑器里保存，再修改字段", detail)
+            raise ServiceError(409, "live_edits", "编辑器里有尚未保存为版本的实时修改；这一步会丢弃它们，请确认后再试", detail)
 
     def _move_template_head(self, tid: str, base_head: int | None, redo: bool, *, discard_live: bool = False) -> None:
         """Undo (to the parent) or redo (to the newest child), decided and applied in one
@@ -1325,6 +1332,8 @@ class App:
             note = f"从重复内容块「{sl['name']}」移除一列"
         editor = None
         if r.get("kind") in ("builtin_doc", "builtin_sheet"):
+            # a new version replaces the live document: not while it holds edits nobody saved (CI-113)
+            self._guard_live_edits(tid, False, "field", field_change=True)
             # the editor model travels with the version, with this field's name and flag in it:
             # without it the editors could no longer open the template (CI-112)
             from .builtin_service import sync_editor_fields

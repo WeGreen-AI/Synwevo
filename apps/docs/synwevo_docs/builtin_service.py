@@ -207,6 +207,14 @@ def save_builtin(app: App, tid: str, body: dict, *, merge: bool = False) -> dict
     r = app.get_template(tid)
     if r["kind"] not in ("builtin_doc", "builtin_sheet"):
         raise ServiceError(400, "not_builtin", "只有内置编辑器创建的模板可以在编辑器中修改")
+    discard = body.get("discard_live", False)
+    if not isinstance(discard, bool):
+        raise ServiceError(400, "invalid", "discard_live 必须是布尔值", {"field": "discard_live"})
+    # A save made outside the editing room replaces the live document: not while it holds edits
+    # nobody saved as a version, unless asked explicitly (CI-113). A save from inside the room
+    # saves that live document and goes through.
+    from synwevo_core.context import actor as current_actor
+    app._guard_live_edits(tid, discard, "save", saver=current_actor())
     base = body.get("base_version")
     editor = body.get("editor", {})
     merged_with = None
