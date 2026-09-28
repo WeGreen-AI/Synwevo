@@ -44,11 +44,27 @@ def public_base() -> str:
     return (env.get("PUBLIC_URL") or "").strip().rstrip("/")
 
 
+_LOGO_VERSION: str | None = None
+
+
+def logo_version() -> str:
+    """A short digest of the logo file. Edge caches and mail clients' image proxies keep an image
+    for a day or more; when the file changes (CI-92 re-cut it at its true proportions) a new mail
+    asks for the new bytes by this query, while a mail sent earlier keeps its own address."""
+    global _LOGO_VERSION
+    if _LOGO_VERSION is None:
+        import hashlib
+        from pathlib import Path
+        _LOGO_VERSION = hashlib.sha256((Path(__file__).parent / "static" / "email-logo.png").read_bytes()).hexdigest()[:10]
+    return _LOGO_VERSION
+
+
 def logo_url() -> str:
-    """The brand image for mail: a stable public path on the account service (no cookies, no
-    fingerprint, HTTPS in production), so mail clients' image proxies can fetch it."""
+    """The brand image for mail: a public path on the account service (no cookies, no
+    fingerprint, HTTPS in production), so mail clients' image proxies can fetch it; versioned by
+    the file's digest so a changed logo is not hidden behind a cached copy."""
     base = public_base()
-    return f"{base}/brand/email-logo.png" if base else ""
+    return f"{base}/brand/email-logo.png?v={logo_version()}" if base else ""
 
 
 @dataclass

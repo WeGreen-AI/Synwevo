@@ -39,7 +39,7 @@ def test_every_mail_renders_text_and_html_consistently(locale):
         assert text.startswith(subject), (name, text[:60])
         assert "None" not in text and "{" not in text and "undefined" not in text, (name, text)
         assert "<html" in html and 'lang="%s"' % locale in html and "<script" not in html, name
-        assert 'src="https://accounts.example.test/brand/email-logo.png"' in html and 'alt="Synwevo"' in html, name
+        assert 'src="https://accounts.example.test/brand/email-logo.png?v=' in html and 'alt="Synwevo"' in html, name
         # every https link in the text part is in the HTML part too, and nothing points elsewhere
         links = [w for w in text.split() if w.startswith("http")]
         assert links or name == "login_code", name                 # a code mail deliberately carries no link
@@ -114,3 +114,12 @@ def test_the_preview_never_carries_codes_facts_or_digest_items():
     none = Mail(locale="en", title="t")
     _, html = render(none)
     assert "mso-hide:all" not in html, "no paragraph, no preview block"
+
+
+def test_the_logo_address_changes_with_the_file_so_caches_do_not_hide_a_new_logo():
+    """An edge cache kept the pre-CI-92 logo for a day; the address carries the file's digest."""
+    import hashlib
+    from pathlib import Path
+    from synwevo_identity import mail_layout
+    digest = hashlib.sha256((Path(mail_layout.__file__).parent / "static" / "email-logo.png").read_bytes()).hexdigest()[:10]
+    assert mail_layout.logo_url() == f"https://accounts.example.test/brand/email-logo.png?v={digest}"
