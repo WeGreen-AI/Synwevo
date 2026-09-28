@@ -18,6 +18,10 @@ export const M = () => prefix;
 export const threadPath = (cid: string) => `/c/${cid}`;
 export const LIST = "/";
 export const attachmentUrl = (id: string, inline = false) => `${prefix}/attachments/${id}${inline ? "?inline=1" : ""}`;
+/** A group's avatar (§7.17), versioned by the server's `avatar.updated_at` so a change shows at
+ *  once while an unchanged image revalidates (`private, no-cache` + ETag); null without one. */
+export const groupAvatarUrl = (c: { id: string; kind: string; avatar?: { updated_at: number } | null }) =>
+  c.kind === "group" && c.avatar ? `${prefix}/conversations/${c.id}/avatar?v=${encodeURIComponent(String(c.avatar.updated_at))}` : null;
 
 /** The server's real limits and this person's settings, fetched once per page; `null` until they
  *  arrive (the composer then shows no limit rather than a guessed one). */

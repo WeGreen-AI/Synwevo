@@ -536,7 +536,8 @@ class Notifier:
         """Why a mail or push should not leave any more, decided when it is about to be sent rather
         than when the event happened: the reader read the item in the app, turned the channel
         off since, or — for a conversation item — read the conversation, muted or left it, or
-        every unread message in it was recalled. Security items are never stale. `d` is a
+        every unread message in it was recalled or comes from someone the reader blocked (CI-78:
+        "nothing unread"). Security items are never stale. `d` is a
         delivery/queue row joined with its notification (`due_deliveries` / `due_push`)."""
         if d.get("severity") == "critical":
             return None
@@ -573,7 +574,10 @@ class Notifier:
         floor = max(int(m["last_read_seq"] or 0), int(m["joined_seq"] or 0))
         # `deleted_at` is set by every delete-for-everyone — the sender's recall, a group manager's
         # removal, a report review (CI-74) — so a recalled message never counts as unread here.
-        agg = self.store.one("SELECT COUNT(*) AS n, MAX(seq) AS last FROM messages WHERE conversation_id=? AND seq>? AND deleted_at IS NULL", (cid, floor))
+        # Messages from someone the reader blocked (CI-78) stay visible in a shared group but never
+        # make a digest: they are not counted, and never become the "latest" line.
+        agg = self.store.one("SELECT COUNT(*) AS n, MAX(seq) AS last FROM messages WHERE conversation_id=? AND seq>? AND deleted_at IS NULL "
+                             "AND sender_id NOT IN (SELECT blocked_id FROM message_blocks WHERE user_id=?)", (cid, floor, user_id))
         latest = None
         if agg and agg["n"]:
             latest = self.store.one("SELECT m.body, m.attachment_id, u.display_name, u.email FROM messages m JOIN users u ON u.id=m.sender_id "

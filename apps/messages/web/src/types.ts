@@ -24,13 +24,23 @@ export interface Me {
 export interface Conversation {
   id: string; organization_id: string; kind: "dm" | "group"; name: string; description: string | null; archived: boolean; last_seq: number;
   announcement: string | null; announcement_at: number | null; last_message_at: number | null;
-  me: Me; unread: number; peer: { user_id: string; name: string; presence?: Presence } | null; members: Member[]; member_count: number;
+  me: Me; unread: number;
+  /** `blocked_by_me`: this reader blocked the other side (§7.18). Whether the other side blocked
+   *  this reader is never sent — the blocked person is not told. */
+  peer: { user_id: string; name: string; presence?: Presence; blocked_by_me?: boolean } | null;
+  members: Member[]; member_count: number;
   last_message: LastMessage | null;
   /** null = not shown (this reader's receipts are off); a list otherwise */
   read_by?: ReadBy[] | null;
-  /** contract: unread messages that mention this reader; absent until the backend sends it. */
+  /** unread messages that mention this reader (§7.15): after the read floor, not recalled/removed,
+   *  not deleted for this reader, not from someone this reader blocked. */
   unread_mentions?: number;
+  /** a group's avatar (§7.17); `updated_at` versions the image address. null = no avatar. */
+  avatar?: { updated_at: number } | null;
 }
+
+/** Someone this person blocked (§7.18, `GET /blocks`). */
+export interface BlockEntry { user_id: string; name: string; created_at: number }
 
 export interface Reaction { emoji: string; users: string[]; count: number }
 
@@ -83,6 +93,10 @@ export interface Capabilities {
   stream?: { event_ids: boolean; replay_ring: number; ephemeral: string[] };
   history_from?: string[];
   settings?: Settings;
+  /** group avatars (§7.17): the platform's avatar rules */
+  group_avatar?: { types: string[]; max_bytes: number; max_side: number };
+  /** blocking (§7.18) is offered by this server */
+  blocks?: boolean;
 }
 
 export interface HistoryPage { items: Message[]; has_more: boolean; floor: number; last_seq: number; last_read_seq: number; read_by?: ReadBy[] | null }

@@ -8,6 +8,11 @@
  *  held open the page polls `/sync` and says so. Presence heartbeats go out only from a visible
  *  page; typing hints and presence are shown only while the server says so.
  *
+ *  Scope (§7.16): a person in more than one organization can scope the list to one of them — the
+ *  server filters, the choice is remembered per account on this browser, and a new conversation
+ *  starts in it. A conversation opened from outside the scope (a link, a notification) is still
+ *  shown, read on its own.
+ *
  *  Layout: the conversation list and the thread side by side; the info panel is a third column
  *  from 1200px, a drawer on medium screens, and a full page on phones, where the list, the
  *  thread and the info are one pane at a time with a real back control. The page height follows
@@ -19,11 +24,13 @@ import { Menu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { Topbar } from "./Topbar";
 import { FlowError, Loading } from "./flow";
 import { LIST, M, capabilities, heartbeat, setPrefix, sync as syncSince, threadPath } from "./api";
+import { conversationsPath, localStore, readScope, writeScope } from "./lib/scope";
+import { mutedNow } from "./lib/thread";
 import type { Capabilities, Conversation, Live, Message, Org, Presence, SearchAnswer, Settings, TypingState } from "./types";
 import { ConversationList, SearchResults, type ListFilter, type RowAction, type SearchOptions } from "./components/ConversationList";
 import { Thread, type Jump } from "./components/Thread";
 import { InfoPanel } from "./components/InfoPanel";
-import { ForwardDialog, NewConversation, SettingsDialog } from "./components/dialogs";
+import { ForwardDialog, NewConversation, SettingsDialog, type Person } from "./components/dialogs";
 import { IcPlus, IcSettings } from "./components/icons";
 import "./messages.css";
 import "./messages.messages";
@@ -56,6 +63,8 @@ export default function Messages() {
   const [error, setError] = useState<unknown>(null);
   const [live, setLive] = useState<Live>("connecting");
   const [dialog, setDialog] = useState<"dm" | "group" | "settings" | null>(null);
+  // a group made from a direct message: its organization and the other person, chosen in advance
+  const [groupFrom, setGroupFrom] = useState<{ oid: string; person: Person } | null>(null);
   const [forwarding, setForwarding] = useState<Message | null>(null);
   const [info, setInfo] = useState(false);
   const [filter, setFilter] = useState<ListFilter>("all");
@@ -67,31 +76,73 @@ export default function Messages() {
   const jumpN = useRef(0);
   const cursor = useRef(0);
   const uid = me?.id || "";
-  const selected = useMemo(() => convs?.find(c => c.id === cid) || null, [convs, cid]);
+  // the organization the list is scoped to ("" = every organization), remembered per account
+  const [scope, setScopeState] = useState(() => readScope(localStore(), uid, null));
+  const scopeRef = useRef(scope); scopeRef.current = scope;
+  const setScope = useCallback((oid: string) => { writeScope(localStore(), uid, oid); setScopeState(oid); }, [uid]);
+  useEffect(() => { setScopeState(readScope(localStore(), uid, null)); }, [uid]);
+  const [orgsKnown, setOrgsKnown] = useState(false);
+  // a scope the person can no longer use (they left that organization, or have only one left) is
+  // dropped once the organizations are known — never applied to an empty list
+  useEffect(() => { if (orgsKnown && scope && !(orgs.length > 1 && orgs.some(o => o.id === scope))) setScope(""); }, [orgsKnown, orgs, scope, setScope]);
+  // the open conversation when it is outside the current scope: read on its own, kept fresh with
+  // the list; `conv` null = the server does not show it to this reader
+  const [outside, setOutside] = useState<{ id: string; conv: Conversation | null } | null>(null);
+  const cidRef = useRef(cid); cidRef.current = cid;
+  const selected = useMemo(() => convs?.find(c => c.id === cid) || (outside && outside.id === cid ? outside.conv : null), [convs, cid, outside]);
+  const resolving = !!cid && !!convs && !convs.some(c => c.id === cid) && outside?.id !== cid;
+  const [stickyUnread, setStickyUnread] = useState<string | undefined>(undefined);
 
-  const loadConvs = useCallback(() => get<{ items: Conversation[] }>(`${M()}/conversations`).then(x => {
+  const loadConvs = useCallback(() => get<{ items: Conversation[] }>(conversationsPath(M(), scope)).then(async x => {
+    const open = cidRef.current;
+    const alone = open && !x.items.some(c => c.id === open) ? await get<Conversation>(`${M()}/conversations/${open}`).catch(() => null) : null;
     setConvs(x.items);
-    const now = Date.now() / 1000;
-    announceMessagesUnread(x.items.filter(c => !c.me.muted && !(typeof c.me.muted_until === "number" && c.me.muted_until > now)).reduce((a, c) => a + Math.max(c.unread, c.me.marked_unread ? 1 : 0), 0));
+    setOutside(open && !x.items.some(c => c.id === open) ? { id: open, conv: alone } : null);
+    if (!scope) {
+      const now = Date.now() / 1000;
+      announceMessagesUnread(x.items.filter(c => !mutedNow(c.me, now)).reduce((a, c) => a + Math.max(c.unread, c.me.marked_unread ? 1 : 0), 0));
+    } else {
+      // a scoped list is not the whole picture: the platform badge asks the server for the total
+      void get<{ unread: number }>("/api/auth/messaging/unread-count").then(u => announceMessagesUnread(u.unread)).catch(() => undefined);
+    }
     return x.items;
-  }), []);
+  }), [scope]);
+  // a conversation opened from outside the scope (a link, a notification): read it on its own
+  useEffect(() => {
+    if (!resolving || !cid) return;
+    let live = true;
+    get<Conversation>(`${M()}/conversations/${cid}`).then(c => { if (live) setOutside({ id: cid, conv: c }); }, () => { if (live) setOutside({ id: cid, conv: null }); });
+    return () => { live = false; };
+  }, [resolving, cid]);
+  // The application registered itself on its own origin while this tab was open on the account
+  // origin's fallback: the legacy routes answer 410, and the conversations are there.
+  const failed = useCallback((e: unknown) => {
+    if (e instanceof ApiError && e.code === "moved") { window.location.replace(messagesHref(state, { lang: locale, path: cidRef.current ? threadPath(cidRef.current) : "/" })); return; }
+    setError(e);
+  }, [state, locale]);
+  // the list, again whenever the scope changes
+  useEffect(() => {
+    let live = true;
+    loadConvs().catch(e => { if (live) failed(e); });
+    return () => { live = false; };
+  }, [loadConvs, failed]);
   useEffect(() => {
     const abort = new AbortController();
     // the organizations a conversation can be started in: this application's own answer (the
     // account service's /api/auth/organizations is not served on this origin)
-    Promise.all([get<{ items: Org[] }>(`${M()}/organizations`, abort.signal), loadConvs()]).then(([o]) => setOrgs(o.items.filter(x => x.status === "active"))).catch(e => {
+    get<{ items: Org[] }>(`${M()}/organizations`, abort.signal).then(o => { setOrgs(o.items.filter(x => x.status === "active")); setOrgsKnown(true); }).catch(e => {
       if (abort.signal.aborted) return;
-      // The application registered itself on its own origin while this tab was open on the
-      // account origin's fallback: the legacy routes answer 410, and the conversations are there.
-      if (e instanceof ApiError && e.code === "moved") { window.location.replace(messagesHref(state, { lang: locale, path: cid ? threadPath(cid) : "/" })); return; }
-      setError(e);
+      failed(e);
     });
     void capabilities().then(c => { if (abort.signal.aborted) return; setCaps(c); if (c?.settings) setSettings(c.settings); });
     // drafts of another account on this browser are never shown to this one
     try { Object.keys(localStorage).filter(k => k.startsWith("synwevo.msg.draft.") && !k.startsWith(`synwevo.msg.draft.${uid}.`)).forEach(k => localStorage.removeItem(k)); } catch { /* storage unavailable */ }
     return () => abort.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadConvs, uid]);
+  }, [uid]);
+  // the stream and the resync keep one reference to "reload the list", whatever the scope
+  const loadRef = useRef(loadConvs); loadRef.current = loadConvs;
+  const reload = useCallback(() => loadRef.current(), []);
 
   // ---- presence heartbeats (§7.3): only from a visible page, only while the person shows presence
   useEffect(() => {
@@ -129,8 +180,8 @@ export default function Messages() {
       if (s.recalled.length) for (const cidX of new Set(s.recalled.map(r => r.conversation_id))) threadRef.current?.onEvent({ type: "sync_recalled", conversation_id: cidX, items: s.recalled.filter(r => r.conversation_id === cidX) });
     } catch { /* the list reload below still tells the truth */ }
     threadRef.current?.resync();
-    await loadConvs().catch(() => undefined);
-  }, [loadConvs]);
+    await reload().catch(() => undefined);
+  }, [reload]);
   useEffect(() => {
     if (!uid) return;
     let es: EventSource | null = null; let failures = 0; let poll: number | null = null; let closed = false;
@@ -142,18 +193,18 @@ export default function Messages() {
       es.addEventListener("hello", ((e: MessageEvent) => {
         failures = 0; stopPolling(); setLive("live");
         try { const h = JSON.parse(e.data); if (typeof h.last_event_id === "number" && !cursor.current) cursor.current = h.last_event_id; } catch { /* ignore */ }
-        threadRef.current?.resync(); void loadConvs().catch(() => undefined);
+        threadRef.current?.resync(); void reload().catch(() => undefined);
       }) as EventListener);
       const forward = (e: MessageEvent) => { try { threadRef.current?.onEvent(JSON.parse(e.data)); } catch { /* ignore */ } };
       // a new message changes the list too (preview, order, unread); one reload per burst
       let listTimer: number | null = null;
-      const reloadSoon = () => { if (listTimer != null) return; listTimer = window.setTimeout(() => { listTimer = null; void loadConvs().catch(() => undefined); }, 300); };
+      const reloadSoon = () => { if (listTimer != null) return; listTimer = window.setTimeout(() => { listTimer = null; void reload().catch(() => undefined); }, 300); };
       es.addEventListener("message", ((e: MessageEvent) => { forward(e); reloadSoon(); }) as EventListener);
       es.addEventListener("message_updated", ((e: MessageEvent) => { forward(e); reloadSoon(); }) as EventListener);
       es.addEventListener("message_hidden", ((e: MessageEvent) => { forward(e); reloadSoon(); }) as EventListener);
       es.addEventListener("read", ((e: MessageEvent) => { forward(e); reloadSoon(); }) as EventListener);
       es.addEventListener("receipt", forward as EventListener);
-      es.addEventListener("conversation", (e: MessageEvent) => { forward(e); void loadConvs().catch(() => undefined); });
+      es.addEventListener("conversation", (e: MessageEvent) => { forward(e); void reload().catch(() => undefined); });
       es.addEventListener("typing", ((e: MessageEvent) => {
         try {
           const ev = JSON.parse(e.data);
@@ -171,9 +222,10 @@ export default function Messages() {
     };
     connect();
     return () => { closed = true; es?.close(); stopPolling(); };
-  }, [uid, loadConvs, resyncAll]);
+  }, [uid, reload, resyncAll]);
 
-  const open = (id: string) => { setInfo(false); navigate(threadPath(id)); };
+  const open = (id: string) => { setInfo(false); setStickyUnread(filter === "unread" ? id : undefined); navigate(threadPath(id)); };
+  const chooseFilter = (f: ListFilter) => { setStickyUnread(undefined); setFilter(f); };
   // a search hit: the thread named opens at that message; the request is consumed once, by that thread
   const openAt = (id: string, seq: number) => { setInfo(false); jumpN.current += 1; setJump({ cid: id, seq, n: jumpN.current }); if (id !== cid) navigate(threadPath(id)); };
   const doSearch = async (q: string, opts: SearchOptions) => {
@@ -215,21 +267,27 @@ export default function Messages() {
           : <>
             {error && <div style={{ padding: "0 8px" }}><FlowError error={error} /></div>}
             {!convs ? <>{header}<Loading /></>
-              : <ConversationList convs={convs} cid={cid} uid={uid} presence={presence} filter={filter} setFilter={setFilter} query={query} setQuery={setQuery} onOpen={open}
-                onSearch={(q, o) => void doSearch(q, { ...o, cid: o.cid ?? undefined })} onRowAction={(c, a) => void rowAction(c, a)} header={header} />}
+              : <ConversationList convs={convs} cid={cid} uid={uid} presence={presence} filter={filter} setFilter={chooseFilter} query={query} setQuery={setQuery} onOpen={open}
+                onSearch={(q, o) => void doSearch(q, { ...o, cid: o.cid ?? undefined })} onRowAction={(c, a) => void rowAction(c, a)} header={header}
+                orgs={orgs} scope={orgs.length > 1 ? scope : ""} setScope={setScope} keepId={stickyUnread && stickyUnread === cid ? stickyUnread : undefined} />}
           </>}
       </aside>
       <section className="msg-thread" aria-label={t("会话")}>
         {!cid ? <div className="msg-empty msg-empty-thread"><p className="big">{t("选择一个会话，或开始新的对话。")}</p></div>
-          : !selected ? (convs ? <div className="msg-empty"><p>{t("找不到这个会话，或你已不在其中。")}</p><button type="button" className="btn" onClick={() => navigate(LIST)}>{t("返回会话列表")}</button></div> : <Loading />)
+          : !selected ? (convs && !resolving ? <div className="msg-empty"><p>{t("找不到这个会话，或你已不在其中。")}</p><button type="button" className="btn" onClick={() => navigate(LIST)}>{t("返回会话列表")}</button></div> : <Loading />)
           : <Thread key={selected.id} conv={selected} uid={uid} live={live} narrow={narrow} coarse={coarse} caps={caps} settings={settings} presence={presence} typing={typing[selected.id] || []}
             infoOpen={showInfo} onBack={() => navigate(LIST)} onOpenInfo={() => setInfo(o => !o)} onChanged={() => void loadConvs()} onForward={setForwarding}
             bind={bind} jump={jump && jump.cid === selected.id ? jump : null} onJumped={() => setJump(null)} />}
       </section>
-      {showInfo && selected && <InfoPanel conv={selected} uid={uid} mode={infoMode} presence={presence} onClose={() => setInfo(false)} onChanged={() => { void loadConvs(); }} onLeft={() => { setInfo(false); navigate(LIST); void loadConvs(); }} />}
+      {showInfo && selected && <InfoPanel conv={selected} uid={uid} mode={infoMode} presence={presence} onClose={() => setInfo(false)} onChanged={() => { void loadConvs(); }} onLeft={() => { setInfo(false); navigate(LIST); void loadConvs(); }}
+        canBlock={!!caps?.blocks} onGroupFrom={c => { if (c.peer) { setGroupFrom({ oid: c.organization_id, person: { user_id: c.peer.user_id, name: c.peer.name } }); setDialog("group"); } }} />}
     </div>
-    {(dialog === "dm" || dialog === "group") && <NewConversation kind={dialog} orgs={orgs} onClose={() => setDialog(null)} onCreated={c => { setDialog(null); void loadConvs().then(() => open(c.id)); }} />}
-    {dialog === "settings" && settings && <SettingsDialog settings={settings} onClose={() => setDialog(null)} onSaved={s => { setSettings(s); if (!s.show_presence) setPresence({}); void loadConvs(); }} />}
+    {(dialog === "dm" || dialog === "group") && <NewConversation kind={dialog} orgs={orgs} onClose={() => { setDialog(null); setGroupFrom(null); }}
+      initialOrg={groupFrom && dialog === "group" ? groupFrom.oid : (orgs.length > 1 ? scope : "") || undefined}
+      initialChosen={groupFrom && dialog === "group" ? [groupFrom.person] : undefined}
+      note={groupFrom && dialog === "group" ? t("之前的私聊记录不会带入新群") : undefined}
+      onCreated={c => { setDialog(null); setGroupFrom(null); void loadConvs().then(() => open(c.id)); }} />}
+    {dialog === "settings" && settings && <SettingsDialog settings={settings} blocks={!!caps?.blocks} onBlocksChanged={() => { void loadConvs(); }} onClose={() => setDialog(null)} onSaved={s => { setSettings(s); if (!s.show_presence) setPresence({}); void loadConvs(); }} />}
     {forwarding && <ForwardDialog message={forwarding} convs={convs || []} max={caps?.limits?.forward_targets || 5} onClose={() => setForwarding(null)} onDone={() => { setForwarding(null); void loadConvs(); }} />}
   </div>;
 }

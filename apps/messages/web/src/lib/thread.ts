@@ -160,12 +160,21 @@ export function preview(c: Conversation, uid: string): Preview {
   return { kind: "text", sender, body: m.body };
 }
 
-/** Which conversations a list filter shows. Archived ones are only under their own filter. */
-export function filterConversations(items: Conversation[], filter: "all" | "unread" | "archived", query: string): Conversation[] {
+/** Whether a conversation counts as unread — the one rule the row's number, the platform badge and
+ *  the 未读 filter share: not silenced now (standing mute or a running timer), and unread messages
+ *  or a "marked unread" flag (which counts as one). Unread mentions are a subset of unread. */
+export function countsAsUnread(c: Conversation, now = Date.now() / 1000): boolean {
+  return !mutedNow(c.me, now) && (c.unread > 0 || !!c.me.marked_unread);
+}
+
+/** Which conversations a list filter shows. Archived ones are only under their own filter. Under
+ *  未读, the conversation the reader has open (`keepId`) stays in place after it is read, so the row
+ *  does not vanish under them; it leaves the filter when they move on. */
+export function filterConversations(items: Conversation[], filter: "all" | "unread" | "archived", query: string, keepId?: string, now = Date.now() / 1000): Conversation[] {
   const q = query.trim().toLowerCase();
   return items.filter(c => {
     if (filter === "archived" ? !c.archived : c.archived) return false;
-    if (filter === "unread" && !(c.unread > 0 && !c.me.muted)) return false;
+    if (filter === "unread" && !countsAsUnread(c, now) && c.id !== keepId) return false;
     return !q || c.name.toLowerCase().includes(q);
   });
 }

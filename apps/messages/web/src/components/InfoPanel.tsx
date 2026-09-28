@@ -1,15 +1,19 @@
 /** Conversation info and group settings: the per-person preferences (pin, mute for good or on a
  *  timer, notifications, mark as unread), the object this conversation is about when it is one
- *  (§8.1), and for a group the name, description, announcement, the members with their roles and
- *  presence, and the management actions. Destructive actions (remove, hand over ownership, leave)
+ *  (§8.1), and for a group the picture (managers change or remove it, §7.17), name, description,
+ *  announcement, the members with their roles and presence, and the management actions. For a
+ *  direct message: 用这个人建群 (a new group with the other person chosen — the private history
+ *  stays here) and 屏蔽 / 解除屏蔽 (§7.18), whose confirmation says what a block does and that the
+ *  other person is not told. Destructive actions (remove, hand over ownership, leave, block)
  *  confirm through the shared alert dialog with focus on 取消; archiving is reversible and does not.
  *
  *  Rendered three ways by the page: a third column on wide screens, the shared Drawer on medium
  *  ones, a full-width panel with a back control on phones. The body is the same. */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, get, post, put } from "@synwevo/auth-client";
-import { Drawer, Menu, useDialog, useI18n } from "@synwevo/ui";
-import { M, objectOf } from "../api";
+import { Drawer, Menu, useDialog, useI18n, useToast } from "@synwevo/ui";
+import { M, groupAvatarUrl, objectOf } from "../api";
+import { AvatarPictureError, avatarPng } from "../lib/avatar";
 import type { Conversation, Member, ObjectInfo, Presence } from "../types";
 import { fullDate } from "../lib/time";
 import { FlowError } from "../flow";
@@ -18,10 +22,14 @@ import { IcBack, IcClose, IcLink, IcPlus } from "./icons";
 
 export type InfoMode = "column" | "drawer" | "page";
 
-export function InfoPanel({ conv, uid, mode, presence, onClose, onChanged, onLeft }: { conv: Conversation; uid: string; mode: InfoMode; presence: Record<string, Presence>; onClose: () => void; onChanged: () => void; onLeft: () => void }) {
+export function InfoPanel({ conv, uid, mode, presence, onClose, onChanged, onLeft, onGroupFrom, canBlock }: { conv: Conversation; uid: string; mode: InfoMode; presence: Record<string, Presence>; onClose: () => void; onChanged: () => void; onLeft: () => void;
+  /** a direct message: open the new-group dialog with the other person chosen */
+  onGroupFrom?: (c: Conversation) => void;
+  /** the server offers blocking (`capabilities.blocks`) */
+  canBlock?: boolean }) {
   const { t } = useI18n();
   const title = conv.kind === "group" ? t("群信息") : t("会话设置");
-  const body = <InfoBody conv={conv} uid={uid} presence={presence} onChanged={onChanged} onLeft={onLeft} />;
+  const body = <InfoBody conv={conv} uid={uid} presence={presence} onChanged={onChanged} onLeft={onLeft} onGroupFrom={onGroupFrom} canBlock={canBlock} />;
   if (mode === "drawer") return <Drawer title={title} onClose={onClose} side="end">{body}</Drawer>;
   return <aside className={`msg-info ${mode}`} aria-label={title}>
     <div className="msg-info-h">
@@ -47,9 +55,12 @@ function Section({ title, children }: { title: ReactNode; children: ReactNode })
 
 const MUTE_CHOICES: { key: string; hours: number }[] = [{ key: "1 小时", hours: 1 }, { key: "8 小时", hours: 8 }, { key: "24 小时", hours: 24 }, { key: "7 天", hours: 24 * 7 }];
 
-export function InfoBody({ conv, uid, presence, onChanged, onLeft }: { conv: Conversation; uid: string; presence: Record<string, Presence>; onChanged: () => void; onLeft: () => void }) {
+export function InfoBody({ conv, uid, presence, onChanged, onLeft, onGroupFrom, canBlock }: { conv: Conversation; uid: string; presence: Record<string, Presence>; onChanged: () => void; onLeft: () => void;
+  onGroupFrom?: (c: Conversation) => void; canBlock?: boolean }) {
   const { t, locale } = useI18n();
   const { confirm } = useDialog();
+  const toast = useToast();
+  const avatarInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<unknown>(null); const [busy, setBusy] = useState(false);
   const [name, setName] = useState(conv.name); const [announcement, setAnnouncement] = useState(conv.announcement || ""); const [description, setDescription] = useState(conv.description || "");
   const [q, setQ] = useState(""); const [people, setPeople] = useState<{ user_id: string; name: string }[]>([]); const [adding, setAdding] = useState(false); const [allHistory, setAllHistory] = useState(false);
@@ -77,11 +88,31 @@ export function InfoBody({ conv, uid, presence, onChanged, onLeft }: { conv: Con
     ...((owner || m.role === "member") ? [{ label: t("移出群聊"), danger: true, onSelect: async () => { if (await confirm(t("移出群聊"), t("把 {who} 移出群聊？对方将立刻看不到这个群和它的消息。", { who: m.name }), t("移出"), true)) await run(() => api(`${M()}/conversations/${conv.id}/members/${m.user_id}`, { method: "DELETE" })); } }] : []),
   ];
   const timerOn = typeof conv.me.muted_until === "number" && conv.me.muted_until > Date.now() / 1000;
+  const peer = conv.kind === "dm" ? conv.peer : null;
+  const blocked = !!peer?.blocked_by_me;
+  /** A picture the person chose, as the platform's avatar PNG (the server re-checks and rebuilds it). */
+  const uploadAvatar = (file: File) => void run(async () => {
+    let image: string;
+    try { image = await avatarPng(file); } catch (e) {
+      throw new Error(e instanceof AvatarPictureError && e.message === "too large" ? t("这张图片压缩后仍超过 256 KB，请换一张。") : t("无法读取这张图片，请选择 PNG 或 JPEG 图片。"));
+    }
+    await put(`${M()}/conversations/${conv.id}/avatar`, { image_base64: image });
+  }, () => toast(t("群头像已更新"), "ok"));
+  const removeAvatar = async () => {
+    if (await confirm(t("移除群头像"), t("移除后群显示默认图标，成员会在会话里看到「移除了群头像」。"), t("移除"), true)) await run(() => api(`${M()}/conversations/${conv.id}/avatar`, { method: "DELETE" }));
+  };
+  const block = async () => {
+    if (!peer) return;
+    if (await confirm(t("屏蔽 {who}", { who: peer.name }), t("屏蔽后，你们不能互相发起私聊，也不能在这个私聊里发消息；双方互相看不到在线状态、正在输入和已读。共同所在的群里对方的消息仍然可见，但不会再通知你。对方不会收到通知；你可以随时解除。"), t("屏蔽"), true)) {
+      await run(() => put(`${M()}/blocks/${encodeURIComponent(peer.user_id)}`, {}), () => toast(t("已屏蔽 {who}", { who: peer.name }), "ok"));
+    }
+  };
+  const unblock = () => { if (peer) void run(() => api(`${M()}/blocks/${encodeURIComponent(peer.user_id)}`, { method: "DELETE" }), () => toast(t("已解除对 {who} 的屏蔽", { who: peer.name }), "ok")); };
   const presenceOf = (id: string, fallback?: Presence): Presence => (presence[id] !== undefined ? presence[id] : (fallback ?? null));
 
   return <div className="msg-info-body">
     <div className="msg-info-id">
-      <Avatar id={conv.kind === "dm" ? (conv.peer?.user_id || conv.id) : conv.id} name={conv.name} kind={conv.kind} size={56} presence={conv.kind === "dm" && conv.peer ? presenceOf(conv.peer.user_id, conv.peer.presence) : null} />
+      <Avatar id={conv.kind === "dm" ? (conv.peer?.user_id || conv.id) : conv.id} name={conv.name} kind={conv.kind} size={56} presence={conv.kind === "dm" && conv.peer ? presenceOf(conv.peer.user_id, conv.peer.presence) : null} src={groupAvatarUrl(conv)} />
       <div className="msg-info-name">{conv.name}</div>
       <div className="tiny muted">{conv.kind === "group" ? t("群聊 · {n} 人", { n: conv.member_count }) : t("私聊")}{conv.archived && <> · {t("已归档")}</>}</div>
       {conv.kind === "group" && conv.description && !(manage && !conv.archived) && <p className="msg-info-desc">{conv.description}</p>}
@@ -112,7 +143,31 @@ export function InfoBody({ conv, uid, presence, onChanged, onLeft }: { conv: Con
         </select></div>
       <button type="button" className="btn sm" disabled={busy || conv.unread > 0 || !!conv.me.marked_unread} onClick={() => void run(() => post(`${M()}/conversations/${conv.id}/unread`, {}))}>{conv.me.marked_unread ? t("已标为未读") : t("标为未读")}</button>
     </Section>
+    {peer && <Section title={t("对方")}>
+      {onGroupFrom && !conv.archived && <div className="msg-field">
+        <button type="button" className="btn sm" disabled={busy} onClick={() => onGroupFrom(conv)}>{t("用这个人建群")}</button>
+        <span className="tiny muted">{t("之前的私聊记录不会带入新群")}</span>
+      </div>}
+      {canBlock && <div className="msg-field">
+        {blocked ? <><button type="button" className="btn sm" disabled={busy} onClick={unblock}>{t("解除屏蔽")}</button>
+          <span className="tiny muted">{t("你已屏蔽对方，解除后才能发送")}</span></>
+          : <><button type="button" className="btn sm danger" disabled={busy} onClick={() => void block()}>{t("屏蔽")}</button>
+            <span className="tiny muted">{t("对方不会收到通知。")}</span></>}
+      </div>}
+    </Section>}
     {conv.kind === "group" && <>
+      {manage && !conv.archived ? <Section title={t("群头像")}>
+        <div className="msg-avatar-edit">
+          <Avatar id={conv.id} name={conv.name} kind="group" size={48} src={groupAvatarUrl(conv)} />
+          <div className="row gap4 wrap">
+            <button type="button" className="btn sm" disabled={busy} onClick={() => avatarInput.current?.click()}>{t(conv.avatar ? "更换群头像" : "上传群头像")}</button>
+            {conv.avatar && <button type="button" className="btn ghost sm" disabled={busy} onClick={() => void removeAvatar()}>{t("移除群头像")}</button>}
+          </div>
+          <input ref={avatarInput} type="file" accept="image/png,image/jpeg,image/webp" hidden aria-label={t("选择群头像图片")}
+            onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadAvatar(f); }} />
+        </div>
+        <p className="tiny muted">{t("PNG 或 JPEG；取图片中间的正方形，所有成员都能看到。")}</p>
+      </Section> : null}
       {manage && !conv.archived ? <Section title={t("群名称")}>
         <form className="msg-inline-form" onSubmit={e => { e.preventDefault(); void run(() => api(`${M()}/conversations/${conv.id}`, { method: "PATCH", body: { name: name.trim() } })); }}>
           <input id="msg-name" className="input" value={name} maxLength={80} aria-label={t("群名称")} onChange={e => setName(e.target.value)} />

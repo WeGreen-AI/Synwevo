@@ -20,8 +20,15 @@ controls, the reduced-motion mode, keyboard-only use of the message actions menu
 phone's heartbeat, the two mutual settings and a read receipt on the owner's message, a typing
 hint that expires, a recall inside the window, delete-for-me with its undo, forwarding to another
 conversation, mark-as-unread from the list, and a voice message recorded with a fake microphone
-(Chromium). Zero console errors and page errors are asserted (a 401 from an anonymous probe is
-the one exclusion).
+(Chromium). CI-78: an @ mark on the group row while a mention of the member is unread (the 未读
+filter shows it; reading clears it), a group picture uploaded by the owner that the member sees in
+the thread header and the list, blocking from the direct message's info panel (the owner's
+composer is replaced by the plain state, the member's send is refused with the neutral sentence
+and nothing names the block; unblocking from 消息设置 → 已屏蔽的人 lets both send again), a group
+started from the direct message with the other person chosen and the note that the private history
+stays behind, and the organization scope of a person in two organizations (server filter,
+remembered across a reload, the new-conversation dialog starting in it). Zero console errors and
+page errors are asserted (the browser's own log lines for the provoked answers are recorded).
 
     .venv/bin/python services/identity/scripts/ui_e2e_messaging.py http://accounts.localhost:31770 \
         http://message.localhost:31768 <mail dir> [--webkit] [--shots DIR]
@@ -35,9 +42,11 @@ import json
 import re
 import secrets
 import sys
+import struct
 import time
 import urllib.parse
 import urllib.request
+import zlib
 from pathlib import Path
 
 from playwright.sync_api import Browser, Page, expect, sync_playwright
@@ -48,6 +57,16 @@ expect.set_options(timeout=15000)
 PW = "harbor lights guide the evening ferry home"
 PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x01\x01\x01\x00\x18\xdd\x8d\xb1\x00\x00\x00\x00IEND\xaeB`\x82"
 HISTORY = 52          # more than one page (50), fewer than the per-minute send limit
+
+
+def picture_png(width: int = 96, height: int = 64) -> bytes:
+    """A real, wider-than-tall RGB picture (a fixture gradient): the shell must crop its centre
+    square and re-encode it as the platform's avatar PNG before the server accepts it."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    rows = b"".join(b"\x00" + b"".join(bytes(((x * 255) // width, (y * 255) // height, 180)) for x in range(width)) for y in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
 def require_test_instance(base: str) -> str:
@@ -119,10 +138,11 @@ def enter_messages(page, messages: str, path: str = "/") -> None:
 
 
 #: HTTP answers this run provokes on purpose; the browser logs each as "Failed to load resource":
-#: 400 the account shell's first verify-email probe, 401 anonymous probes, 404 the removed member's
-#: history probe, 405 the objects contract endpoint on a server that does not serve it yet, 503 the
-#: injected upload refusal. Anything else in the console is a defect.
-EXPECTED_STATUSES = ("400", "401", "404", "405", "503")
+#: 400 the account shell's first verify-email probe, 401 anonymous probes, 403 the blocked member's
+#: send (CI-78: the neutral refusal is the behaviour under test), 404 the removed member's history
+#: probe, 405 the objects contract endpoint on a server that does not serve it yet, 503 the injected
+#: upload refusal. Anything else in the console is a defect.
+EXPECTED_STATUSES = ("400", "401", "403", "404", "405", "503")
 resource_logs: list[str] = []
 
 
@@ -586,6 +606,33 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     pb.get_by_role("button", name=re.compile("^返回会话列表$")).click()
     pb.locator(".msg-conv", has_text=f"Launch {tag}").click()
     expect(pb.locator(".msg-thread")).to_contain_text(f"welcome to the group {tag}")
+    # ---- CI-78 mentions (§7.15): the owner mentions the member; the group row carries an @ while it
+    #      is unread, the 未读 filter shows the row, and reading the thread clears the mark
+    pb.get_by_role("button", name=re.compile("^返回会话列表$")).click()
+    csrf_a = csrf_of(a, messages)
+    member_uid = next(m["user_id"] for m in pa.request.get(f"{messages}/api/messaging/conversations/{gid}").json()["members"] if m["name"] == f"Member {tag}")
+    r = pa.request.post(f"{messages}/api/messaging/conversations/{gid}/messages", data={"body": f"@Member 请看一下 {tag}", "mention_ids": [member_uid], "client_id": f"mention-{tag}"},
+                        headers={"X-Synwevo-CSRF": csrf_a})
+    assert r.status == 201, (r.status, r.text()[:160])
+    group_row = pb.locator(".msg-conv-wrap", has=pb.locator(".msg-conv-name", has_text=f"Launch {tag}")).first
+    at = group_row.locator(".msg-unread.mention")
+    expect(at).to_have_text("@", timeout=15000)
+    assert at.get_attribute("data-mentions") == "1", at.get_attribute("data-mentions")
+    expect(group_row.locator(".msg-conv")).to_have_attribute("aria-label", re.compile("1 条提及你"))
+    pb.get_by_role("tab", name=re.compile("^未读$")).click()
+    expect(pb.locator(".msg-conv")).to_have_count(1)
+    expect(pb.locator(".msg-conv").first).to_contain_text(f"Launch {tag}")
+    shot(pb, shots, f"{engine}-phone-mention-badge")
+    no_overflow(pb, "phone list with the unread filter")
+    pb.locator(".msg-conv").first.click()
+    expect(pb.locator(".msg-thread")).to_contain_text("请看一下")
+    pb.get_by_role("button", name=re.compile("^返回会话列表$")).click()
+    expect(pb.locator(".msg-side .msg-empty")).to_contain_text(re.compile("没有未读的会话"), timeout=10000)
+    pb.get_by_role("tab", name=re.compile("^全部$")).click()
+    expect(group_row.locator(".msg-unread.mention")).to_have_count(0)
+    pb.locator(".msg-conv", has_text=f"Launch {tag}").click()
+    expect(pb.locator(".msg-thread")).to_contain_text(f"welcome to the group {tag}")
+    notes.append(f"{engine}: a mention of the member put an @ (data-mentions=1, '1 条提及你' in the row's name) on the group row; 未读 showed exactly that row; reading the thread cleared the @ and emptied 未读")
     # ---- mark as unread from the list's row menu (§7.5): the row shows 1 until it is opened
     pb.get_by_role("button", name=re.compile("^返回会话列表$")).click()
     # the row named after the owner (the group's preview also mentions the owner, so match the name)
@@ -654,6 +701,29 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     expect(column).to_be_visible()                                          # 1280px → a third column, not an overlay
     assert pa.locator(".msg-layout.three").count() == 1
     shot(pa, shots, f"{engine}-desktop-three-columns")
+    # ---- CI-78 group picture (§7.17): the owner picks a wide picture; the shell crops its centre
+    #      square into the platform's avatar PNG; the member sees it in the thread header and the list
+    expect(column.get_by_role("button", name=re.compile("^上传群头像$"))).to_be_visible()
+    column.locator("input[type=file]").set_input_files({"name": "team.png", "mimeType": "image/png", "buffer": picture_png()})
+    own_pic = column.locator(".msg-avatar-edit .msg-avatar.pic img")
+    expect(own_pic).to_be_visible(timeout=15000)
+    expect(column.get_by_role("button", name=re.compile("^更换群头像$"))).to_be_visible()
+    expect(pa.locator(".msg-system").last).to_have_text(re.compile("更换了群头像"), timeout=10000)
+    head_pic = pb.locator(".msg-thread-h .msg-avatar.pic img")
+    expect(head_pic).to_be_visible(timeout=15000)
+    pb.wait_for_function("img => img.complete && img.naturalWidth > 0", arg=head_pic.element_handle(), timeout=10000)
+    natural = head_pic.evaluate("img => [img.naturalWidth, img.naturalHeight]")
+    assert natural[0] == natural[1] and natural[0] <= 512, ("a square the platform accepts", natural)
+    expect(pb.locator(".msg-system").last).to_have_text(re.compile(f"Owner {tag} 更换了群头像"))
+    pic_src = head_pic.get_attribute("src")
+    r = pb.request.get(messages + pic_src)
+    assert r.ok and r.headers.get("content-type") == "image/png" and r.headers.get("cache-control") == "private, no-cache" and r.headers.get("x-content-type-options") == "nosniff", (r.status, dict(r.headers))
+    pb.get_by_role("button", name=re.compile("^返回会话列表$")).click()
+    expect(pb.locator(".msg-conv-wrap", has=pb.locator(".msg-conv-name", has_text=f"Launch {tag}")).locator(".msg-avatar.pic img")).to_be_visible(timeout=10000)
+    shot(pb, shots, f"{engine}-phone-group-avatar")
+    pb.locator(".msg-conv", has_text=f"Launch {tag}").click()
+    expect(pb.locator(".msg-thread")).to_contain_text(f"welcome to the group {tag}")
+    notes.append(f"{engine}: the owner uploaded a 96×64 picture from the group info; it became a {natural[0]}×{natural[1]} PNG shown to the member in the thread header and the list (image/png, private no-cache, nosniff) with '更换了群头像' in both threads")
     column.get_by_role("button", name=re.compile(f"成员操作：Member {tag}")).click()
     pa.get_by_role("menuitem", name=re.compile("^移出群聊$")).click()
     confirm = pa.get_by_role("alertdialog")
@@ -669,6 +739,8 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
     assert all(c["id"] != gid for c in r.json()["items"])
     r = pb.request.get(f"{accounts}/api/auth/messaging/conversations")
     assert r.status == 410 and r.json().get("error") == "moved", (r.status, r.text()[:160])
+    r = pb.request.get(messages + pic_src)
+    assert r.status == 404, ("a removed member no longer gets the group picture", r.status)
     pa.get_by_role("button", name=re.compile("^关闭$")).click()
     expect(column).to_have_count(0)
     notes.append(f"{engine}: the group info opened as a third column at 1280px; the member was removed through the member menu and a confirm focused on 取消; from then on history is 404 and the group is gone from their list; the account origin answers 410")
@@ -693,6 +765,110 @@ def run(browser: Browser, engine: str, accounts: str, messages: str, mail_dir: P
         expect(pa.get_by_role("link", name=re.compile("返回会话列表"))).to_have_attribute("href", "/")
         assert not re.search(r"Traceback|at \w+\.|\{\"", pa.locator("main, body").first.inner_text()), "no error dump"
         notes.append(f"{engine}: /objects/docweave/project/<unknown> on a server without the endpoint showed the error page with 重试 and a way back (the 404 page is pinned by the unit test)")
+
+    # ---- CI-78 blocking (§7.18): the owner blocks the member from the direct message's info panel
+    enter_messages(pb, messages, f"/c/{dm_id}")
+    enter_messages(pa, messages, f"/c/{dm_id}")
+    expect(pa.locator(".msg-status")).to_have_text(re.compile("实时"), timeout=15000)
+    expect(pb.locator(".msg-status")).to_have_text(re.compile("实时"), timeout=15000)
+    expect(pa.locator(".msg-thread-h .msg-presence-text")).to_have_text(re.compile("在线"), timeout=20000)
+    pa.get_by_role("button", name=re.compile("^会话设置$")).click()
+    info = pa.locator(".msg-info.column")
+    expect(info.get_by_role("heading", name="对方")).to_be_visible()
+    info.get_by_role("button", name=re.compile("^屏蔽$")).click()
+    confirm = pa.get_by_role("alertdialog")
+    expect(confirm).to_contain_text(re.compile("不能互相发起私聊"))
+    expect(confirm).to_contain_text(re.compile("互相看不到在线状态、正在输入和已读"))
+    expect(confirm).to_contain_text(re.compile("对方不会收到通知"))
+    assert pa.evaluate("() => document.activeElement && document.activeElement.textContent.trim() === '取消'"), "a block confirm focuses 取消"
+    shot(pa, shots, f"{engine}-desktop-block-confirm")
+    confirm.get_by_role("button", name=re.compile("^屏蔽$")).click()
+    expect(info.get_by_role("button", name=re.compile("^解除屏蔽$"))).to_be_visible(timeout=10000)
+    expect(pa.locator(".msg-blocked-note")).to_contain_text("你已屏蔽对方，解除后才能发送")
+    expect(pa.locator(".msg-composer textarea")).to_have_count(0)
+    expect(pa.locator(".msg-thread-h .msg-presence-text")).to_have_count(0, timeout=15000)
+    r = pa.request.post(f"{messages}/api/messaging/conversations/{dm_id}/messages", data={"body": f"owner blocked try {tag}"}, headers={"X-Synwevo-CSRF": csrf_of(a, messages)})
+    assert r.status == 403 and r.json()["error"] == "blocked" and r.json()["message"] == "你已屏蔽对方，解除后才能发送", (r.status, r.text()[:200])
+    shot(pa, shots, f"{engine}-desktop-blocked")
+    # the member is not told: nothing changes on their screen until a send is refused, neutrally
+    expect(pb.locator(".msg-thread-h .msg-presence-text")).to_have_count(0, timeout=15000)
+    composer(pb).fill(f"neutral try {tag}")
+    composer(pb).press("Enter")
+    expect(pb.locator(".msg-failed").last).to_contain_text("暂时无法向对方发送消息", timeout=10000)
+    expect(pb.locator(".msg-blocked-note")).to_contain_text("暂时无法向对方发送消息")
+    # everything the member's thread says, apart from what the two people wrote themselves
+    shell_text = pb.locator(".msg-thread").evaluate("el => { const c = el.cloneNode(true); c.querySelectorAll('.msg-body, .msg-quote-block, .msg-conv-preview').forEach(n => n.remove()); return c.innerText; }")
+    assert "暂时无法向对方发送消息" in shell_text and not re.search("屏蔽|封鎖|block", shell_text, re.I), "the blocked person is never told"
+    assert pb.request.get(f"{messages}/api/messaging/blocks").json()["items"] == []
+    shot(pb, shots, f"{engine}-phone-blocked-neutral")
+    no_overflow(pb, "phone refused send")
+    notes.append(f"{engine}: the owner blocked the member from the DM info (the confirm states the effects and that the other side is not told; focus on 取消); the owner's composer became '你已屏蔽对方，解除后才能发送' and their send is 403 blocked with that sentence; presence vanished both ways; the member's send failed with '暂时无法向对方发送消息' and nothing on their screen names a block")
+    # unblock from 消息设置 → 已屏蔽的人; both sides send again (the member retries the refused message)
+    pa.get_by_role("button", name=re.compile("^消息设置$")).click()
+    dlg = pa.get_by_role("dialog", name=re.compile("消息设置"))
+    blocked_row = dlg.locator(".msg-blocked .msg-member", has_text=f"Member {tag}")
+    expect(blocked_row).to_be_visible()
+    shot(pa, shots, f"{engine}-desktop-blocked-list")
+    blocked_row.get_by_role("button", name=re.compile("^解除屏蔽$")).click()
+    expect(dlg.locator(".msg-blocked")).to_contain_text("你没有屏蔽任何人", timeout=10000)
+    dlg.get_by_role("button", name=re.compile("^取消$")).click()
+    expect(dlg).to_have_count(0)
+    expect(pa.locator(".msg-composer textarea")).to_be_visible(timeout=10000)
+    send_text(pa, f"after unblock {tag}")
+    expect(pb.locator(".msg-thread")).to_contain_text(f"after unblock {tag}", timeout=15000)
+    pb.locator(".msg-failed").last.get_by_role("button", name=re.compile("^重试$")).click()
+    expect(pa.locator(".msg-thread")).to_contain_text(f"neutral try {tag}", timeout=15000)
+    expect(pb.locator(".msg-failed")).to_have_count(0)
+    expect(pb.locator(".msg-composer textarea")).to_be_visible()
+    notes.append(f"{engine}: 解除屏蔽 in 消息设置 → 已屏蔽的人 restored the owner's composer; the owner's next message reached the member, and the member's retried message (same client id) reached the owner")
+
+    # ---- CI-78 a group from the direct message: the other person chosen, the history left behind
+    info.get_by_role("button", name=re.compile("^用这个人建群$")).click()
+    dlg = pa.get_by_role("dialog", name=re.compile("新群聊"))
+    expect(dlg.locator(".msg-note")).to_have_text("之前的私聊记录不会带入新群")
+    expect(dlg.locator(".msg-chip-person")).to_have_count(1)
+    expect(dlg.locator(".msg-chip-person")).to_contain_text(f"Member {tag}")
+    shot(pa, shots, f"{engine}-desktop-dm-to-group")
+    dlg.locator("#msg-gname").fill(f"From DM {tag}")
+    dlg.get_by_role("button", name=re.compile("^创建群聊$")).click()
+    pa.wait_for_url(lambda u: "/c/cv_" in u and dm_id not in u)
+    expect(pa.locator(".msg-thread-name")).to_contain_text(f"From DM {tag}")
+    expect(pa.locator(".msg-system").first).to_contain_text("创建了群聊")
+    assert pa.locator(".msg-row").count() == 0 and f"after unblock {tag}" not in pa.locator(".msg-thread").inner_text(), "no private history in the new group"
+    notes.append(f"{engine}: 用这个人建群 opened 新群聊 with the member already chosen and '之前的私聊记录不会带入新群'; the created group starts with its creation line only")
+
+    # ---- CI-78 organization scope (§7.16): the owner joins a second organization with its own conversation
+    r = pa.request.post(f"{accounts}/api/auth/organizations", data={"name": f"Second Org {tag}", "workspace_name": f"Second Space {tag}"},
+                        headers={"X-Synwevo-CSRF": csrf_of(a, accounts), "Idempotency-Key": f"e2e-second-{tag}"})
+    assert r.status == 201, (r.status, r.text()[:200])
+    oid2 = r.json()["organization"]["id"]
+    r = pa.request.post(f"{messages}/api/messaging/groups", data={"organization_id": oid2, "name": f"Second {tag}", "member_ids": []}, headers={"X-Synwevo-CSRF": csrf_of(a, messages)})
+    assert r.status == 201, (r.status, r.text()[:200])
+    enter_messages(pa, messages)
+    scope_sel = pa.get_by_role("combobox", name=re.compile("按组织筛选会话"))
+    expect(scope_sel).to_be_visible()
+    all_rows = pa.locator(".msg-conv").count()
+    with pa.expect_response(lambda resp: "/api/messaging/conversations?organization_id=" in resp.url) as scoped:
+        scope_sel.select_option(oid2)
+    assert scoped.value.ok and oid2 in scoped.value.url, scoped.value.url
+    expect(pa.locator(".msg-conv")).to_have_count(1)
+    expect(pa.locator(".msg-conv").first).to_contain_text(f"Second {tag}")
+    shot(pa, shots, f"{engine}-desktop-org-filter")
+    pa.reload()
+    pa.wait_for_load_state("networkidle")
+    expect(scope_sel).to_have_value(oid2)
+    expect(pa.locator(".msg-conv")).to_have_count(1)
+    new_conversation(pa, "新群聊")
+    dlg = pa.locator(".modal").last
+    expect(dlg.locator("#msg-org")).to_have_value(oid2)
+    dlg.get_by_role("button", name=re.compile("^取消$")).click()
+    scope_sel.select_option("")
+    expect(pa.locator(".msg-conv")).to_have_count(all_rows, timeout=10000)
+    assert pa.evaluate("() => Object.keys(localStorage).filter(k => k.startsWith('synwevo.msg.org.')).length") == 0, "every organization = nothing remembered"
+    enter_messages(pb, messages)
+    expect(pb.locator(".msg-conv").first).to_be_visible()
+    expect(pb.get_by_role("combobox", name=re.compile("按组织筛选会话"))).to_have_count(0)
+    notes.append(f"{engine}: with a second organization the owner's list offered the scope selector; choosing it asked the server with organization_id and showed only that organization's conversation, survived a reload (remembered per account), and preselected it in 新群聊; the member (one organization) has no selector")
 
     # ---- reduced motion: the same page with the OS preference set — durations are zero, everything still works
     rm = browser.new_context(viewport={"width": 1280, "height": 800}, locale="zh-CN", reduced_motion="reduce", storage_state=a.storage_state(), **extra)

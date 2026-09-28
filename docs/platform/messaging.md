@@ -239,7 +239,59 @@ SSE `receipt`：`{type:'receipt', conversation_id, user_id, last_read_seq, at}`�
 
 ### 7.14 未做（如实）
 
-跨进程事件外发表（多 worker、Docs 进程写卡片的前提）；组织级回执/在线/typing 开关（`organization_messaging_policies`）；阻止；@所有人；置顶消息；收藏；投票；导出；消失消息；群申请/邀请链接；FTS 回填进度显示（本批建表时同步回填，库大时首次启动会慢一次）；`sweep_unused_attachments` 仍无调度器（另批）。
+跨进程事件外发表（多 worker、Docs 进程写卡片的前提）；组织级回执/在线/typing 开关（`organization_messaging_policies`）；阻止（CI-78 已做，见 7.18）；@所有人；置顶消息；收藏；投票；导出；消失消息；群申请/邀请链接；FTS 回填进度显示（本批建表时同步回填，库大时首次启动会慢一次）；`sweep_unused_attachments` 仍无调度器（另批）。
+
+### 7.15 未读提及：`unread_mentions`（CI-78）
+
+`GET /conversations`、`GET /conversations/{cid}`（以及 `GET /sync` 的 `conversations[]`）每个会话多一个整数 `unread_mentions`：
+读者楼层 `max(last_read_seq, joined_seq)` 之后、`kind='text'`、未撤回/移除/删除（`deleted_at IS NULL`）、未被本人「对我删除」、`mentions` 含读者、**发送者不是读者屏蔽的人**（§7.18）的消息数。
+与 `unread` 同一楼层：读到末尾即归零；新成员（含 `history_from=all`）加入前的提及永远不计。列表一次分组查询算出（`Messaging.unread_mentions`），不逐会话查。
+静音不影响这个事实（外壳决定怎么画）。**徽标 `/api/auth/messaging/unread-count` 不加 `mentions`**：平台栏只画总数，唯一的消费者（会话列表）已有逐会话字段；给共享徽标加字段要改 `synwevo_auth_client` 的共享会话路由和九处按形状断言的既有测试，不划算，形状保持 `{unread, conversations}`。
+
+### 7.16 组织范围：`GET /conversations?organization_id=`（CI-78 起有测试与外壳）
+
+会话按组织归属。`organization_id` 非空时服务端只返回该组织的会话；调用者不是（或不再是）该组织成员、组织不存在，一律 **200 空列表**——不是 403，不泄露组织是否存在；空串 = 全部组织（原行为）。成员资格每次读取重查（离开组织即刻为空）。
+外壳：只有 `GET /organizations` 返回**多于一个**活跃组织时，在「全部 / 未读 / 已归档」旁出现组织选择；选择按账户存本机（`synwevo.msg.org.<uid>`，读写都 try/catch，存储不可用 = 全部组织），记住的组织已不可用时丢弃；新会话对话框预选当前范围；范围外打开的会话（链接、通知）仍单独读出显示。选了范围时平台栏徽标改由 `unread-count` 给总数（列表不再是全部）。
+
+### 7.17 群头像：`PUT / DELETE / GET /conversations/{cid}/avatar`（CI-78）
+
+| 接口 | 权限 | 说明 |
+|---|---|---|
+| `PUT /conversations/{cid}/avatar` | 群主/群管理员；私聊 409 `not_a_group`；已归档 409 `archived`；非成员 404（先于看图片内容） | `{image_base64}`（其它键或非字符串 400 `invalid_field`）。规则与个人、组织头像**同一个函数** `synwevo_core.avatar_image.canonical_avatar`（自 `synwevo_identity.profile` 移入共享层，账户服务照旧导入）：按字节嗅探 PNG、≤ 256 KB、≤ 512 × 512、8 位非隔行、逐块 CRC、限制解压后大小、只保留 IHDR/IDAT/IEND 重建（元数据、APNG、未知关键块、尾随字节、SVG、JPEG 等一律 400 `bad_avatar`）；不引入图像库。写 `conversation_avatars` 与系统行 `{event:'avatar', cleared:false}`（「X 更换了群头像」），成员收到 `conversation updated`。每人每小时 30 次。审计 `messaging.group.avatar`。 |
+| `DELETE /conversations/{cid}/avatar` | 同上 | 没有头像 404 `no_avatar`；系统行 `{event:'avatar', cleared:true}`（「X 移除了群头像」）。审计 `messaging.group.avatar.remove`。 |
+| `GET /conversations/{cid}/avatar` | **当前**成员（被移出、退出、组织撤权后 404，与不存在的会话同一答复） | `image/png`，`Cache-Control: private, no-cache`（浏览器可存但每次重新验证，所以离开的人拿不到）、`ETag`（`If-None-Match` 命中答 304，仍先查成员资格）、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'none'; sandbox`。 |
+
+会话对象多 `avatar: {updated_at} | null`（仅群；外壳用 `?v=updated_at` 作图片地址版本）。`capabilities.group_avatar = {types: ['image/png'], max_bytes: 262144, max_side: 512}`，`limits.avatars_per_hour`。
+外壳接受 PNG/JPEG/WebP：在画布里取中间正方形、按 256→192→128→96 边长编码成 PNG，直到 ≤ 256 KB 再上传——服务端照样重新校验与重建，外壳的转换不被信任。
+
+### 7.18 屏蔽：`GET /blocks`、`PUT / DELETE /blocks/{user_id}`（CI-78）
+
+表 `message_blocks(user_id, blocked_id, created_at, PRIMARY KEY(user_id, blocked_id))`（+ `blocked_id` 索引）。
+
+| 接口 | 说明 |
+|---|---|
+| `GET /blocks` | `{items: [{user_id, name, created_at}]}`：**本人屏蔽的人**，从不包含谁屏蔽了本人。 |
+| `PUT /blocks/{user_id}` | 只能屏蔽与本人**共享至少一个活跃组织**的活跃成员；本人或应用账户（`app_accounts`）400 `invalid_field`；其他任何 id（不存在、无共同组织）404 `no_user`。幂等，答 `{user_id, name, blocked: true, created_at}`。每人每小时 60 次（与解除共用）。审计 `messaging.block`。 |
+| `DELETE /blocks/{user_id}` | 幂等，答 `{user_id, blocked: false}`。审计 `messaging.unblock`。 |
+
+效果（双方之间，保护屏蔽者）：
+
+* **私聊**：任一方屏蔽了另一方时，不能新开私聊（`POST /dm` 在两人之间尚无私聊时 403 `blocked`），已有私聊里不能发送、转发进去、上传附件、编辑本人消息或加表情回应（撤回、对我删除、取消回应、标记已读照常）。已有私聊仍可打开与阅读历史。文案：屏蔽者 `你已屏蔽对方，解除后才能发送`（`detail.by_me: true`）；被屏蔽者只得到中性的 `暂时无法向对方发送消息`、无 `detail`。
+* **在线、正在输入、已读回执**：两人互相为 `null` / 不发送 / 不列入 `read_by`、不推 `receipt`；与第三人照常。屏蔽与解除时服务端向双方开着的标签页各推一条 ephemeral `presence`（屏蔽后 `null`，解除后真实状态）——与对方关闭在线开关时的事件相同，不透露屏蔽。
+* **共同群**：被屏蔽者的消息与提及照常可见（群是共享空间），但**不**产生屏蔽者的收件箱条目（`recipients_for` 跳过；`conversation.added` / `conversation.announcement` 在行为人被屏蔽时也不写）、不计入 `unread_mentions`（不出 @），摘要邮件寄出前复核（`Notifier.conversation_unread`）不计被屏蔽者的消息，因此只有他的未读时为 `nothing unread`，全文预览也不会取他的那条。平台徽标的 `unread` 仍计入这些可见消息。
+* **不告知被屏蔽者**：会话对象只有 `peer.blocked_by_me`（本人是否屏蔽了对方），从不暴露对方是否屏蔽了本人；屏蔽只向屏蔽者自己的设备推 `conversation updated`。
+* **举报不受影响**：屏蔽者仍可举报被屏蔽者的消息，组织审核流程不变。
+* **账户**：`POST /api/auth/export` 的结果多 `message_blocks: [{user_id, created_at}]`（仅本人的列表）；账户删除到期（`finalize_deletions`）删除本人的列表**以及**指向本人的行（被删除的账户再也不能发送，留下的无名行只会挂在别人的列表里）。
+
+`capabilities.blocks = true`、`limits.blocks_per_hour`。
+
+### 7.19 私聊 → 新群（CI-78，外壳）
+
+私聊不能加人（`POST /conversations/{cid}/members` 仍是 409 `not_a_group`）。私聊信息面板的「用这个人建群」打开新群对话框：组织 = 私聊所在组织，对方已选，并明示「之前的私聊记录不会带入新群」；创建走普通 `POST /groups`（`history_from` 不适用、新群只有创建行）。无接口改动。
+
+### 7.20 发布与回滚（CI-78）
+
+schema **v26**：只加表 `conversation_avatars`、`message_blocks`（`CREATE TABLE IF NOT EXISTS`，随 `messaging.SCHEMA`），既有表、列、CHECK 不动。回滚到 v25 代码：两表闲置——屏蔽不再生效、群头像不再显示，其它行为不变。彻底清除：`DROP TABLE message_blocks; DROP TABLE conversation_avatars;`。无回填、无新环境变量。验收：`apps/messages/tests/test_messaging_ci78.py`（8 项）、`tests/integration/test_messaging_ci78_composed.py`（4 项：屏蔽让到期摘要以 `nothing unread` 跳过且群提及不成邮件、导出只含本人列表与删除清两方向、组合源新路由、头像规则同一函数）、外壳 `tests/ci78.test.ts`（3 项）；浏览器证明见 `messaging-ui.md` §7。
 ## 8. 应用联动：Synwevo Docs ↔ Synwevo Message（CI-75）
 
 Docs 对象（工作空间范围）在消息（组织范围）里有一个**对象会话**；Docs 的真实事件经**外发表**变成会话里由应用身份发出的**卡片**；

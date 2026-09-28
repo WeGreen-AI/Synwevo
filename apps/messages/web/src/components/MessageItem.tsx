@@ -16,12 +16,17 @@ import { IcCheck, IcClock, IcCopy, IcEdit, IcEmoji, IcFlag, IcMore, IcReply, IcT
 
 const LONG_PRESS_MS = 500;
 
-export function Avatar({ id, name, kind = "dm", size = 32, presence, app }: { id: string; name: string; kind?: "dm" | "group"; size?: number; presence?: Presence; app?: boolean }) {
+/** A person's initial, a group's icon or — when the server has one for the group (§7.17) — the
+ *  group's picture; a picture that fails to load falls back to the icon, never to a broken image. */
+export function Avatar({ id, name, kind = "dm", size = 32, presence, app, src }: { id: string; name: string; kind?: "dm" | "group"; size?: number; presence?: Presence; app?: boolean; src?: string | null }) {
   const { t } = useI18n();
+  const [failed, setFailed] = useState<string | null>(null);
   const label = presence === "online" ? t("在线") : presence === "away" ? t("离开") : presence === "offline" ? t("离线") : null;
+  const picture = src && failed !== src ? src : null;
   return <span className={`msg-avatar-wrap ${presence ? "has-presence" : ""}`} style={{ width: size, height: size }}>
-    <span className={`msg-avatar ${kind} ${app ? "app" : ""} slot-${colorSlot(id)}`} aria-hidden="true" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>
-      {kind === "group" ? <svg width={Math.round(size * 0.55)} height={Math.round(size * 0.55)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.2" /><circle cx="17" cy="9" r="2.6" /><path d="M3 19a6 6 0 0112 0" /><path d="M15 19a4.5 4.5 0 016-4" /></svg>
+    <span className={`msg-avatar ${kind} ${app ? "app" : ""} ${picture ? "pic" : ""} slot-${colorSlot(id)}`} aria-hidden="true" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>
+      {picture ? <img src={picture} alt="" width={size} height={size} loading="lazy" decoding="async" onError={() => setFailed(picture)} />
+        : kind === "group" ? <svg width={Math.round(size * 0.55)} height={Math.round(size * 0.55)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.2" /><circle cx="17" cy="9" r="2.6" /><path d="M3 19a6 6 0 0112 0" /><path d="M15 19a4.5 4.5 0 016-4" /></svg>
         : app ? <svg width={Math.round(size * 0.55)} height={Math.round(size * 0.55)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12h8M12 8v8" /></svg>
         : initials(name)}
     </span>

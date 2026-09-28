@@ -24,6 +24,7 @@ and a strict re-authentication on the *account* session, so it stays on the acco
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import threading
@@ -35,6 +36,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, Query, Request, Upload
 from fastapi.responses import Response, StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 
+from synwevo_core.avatar_image import MAX_AVATAR_BYTES, MAX_AVATAR_SIDE
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
 from synwevo_core.member_import import accept_upload
@@ -57,6 +59,9 @@ MESSAGES_PER_MINUTE = 60
 ATTACHMENTS_PER_HOUR = 30
 GROUPS_PER_DAY = 20
 REPORTS_PER_DAY = 20
+#: Group avatar changes and block/unblock toggles (CI-78): ordinary use never comes near these.
+AVATARS_PER_HOUR = 30
+BLOCKS_PER_HOUR = 60
 #: Typing hints: their own bucket, never counted against messages; a hint is stale after this.
 TYPING_PER_10S = 20
 TYPING_TTL_S = 6
@@ -302,7 +307,7 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
               meta={"organization_id": out["organization_id"], "members": out["member_count"]})
         for mid in ids:
             if mid != uid:
-                _notify(mid, "conversation.added", {"actor": svc._name(uid), "conversation": out["name"]}, out)
+                _notify(mid, "conversation.added", {"actor": svc._name(uid), "conversation": out["name"]}, out, actor=uid)
         return out
 
     @r.get("/conversations/{cid}")
@@ -332,8 +337,42 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
             for m in out["members"]:
                 if m["user_id"] != uid:
                     _notify(m["user_id"], "conversation.announcement", {"actor": svc._name(uid), "conversation": out["name"], "excerpt": out["announcement"][:120]}, out,
-                            dedupe=f"announcement:{cid}:{stamp}:{m['user_id']}")
+                            dedupe=f"announcement:{cid}:{stamp}:{m['user_id']}", actor=uid)
         return out
+
+    # ------------------------------------------------------------------ group avatar (CI-78)
+    @r.put("/conversations/{cid}/avatar")
+    def put_avatar(request: Request, cid: str, body: dict = Body(...)):
+        """A group's avatar (owner/admin): `{image_base64}` — a PNG held to the platform's avatar
+        rules (≤ 256 KB, ≤ 512 × 512, rebuilt without metadata; anything else 400 `bad_avatar`).
+        Leaves the system row 「X 更换了群头像」; members' lists update through the stream."""
+        if set(body) != {"image_base64"} or not isinstance(body.get("image_base64"), str):
+            raise ServiceError(400, "invalid_field", "只能提交 image_base64", {"field": "image_base64"})
+        uid = uid_of(request)
+        limited(uid, "msg-avatar", AVATARS_PER_HOUR, 3600)
+        out = svc.set_avatar(cid, uid, body["image_base64"])
+        audit(request, "messaging.group.avatar", actor_id=uid, object_kind="conversation", object_id=cid, result="ok")
+        return out
+
+    @r.delete("/conversations/{cid}/avatar")
+    def delete_avatar(request: Request, cid: str):
+        uid = uid_of(request)
+        limited(uid, "msg-avatar", AVATARS_PER_HOUR, 3600)
+        out = svc.set_avatar(cid, uid, None)
+        audit(request, "messaging.group.avatar.remove", actor_id=uid, object_kind="conversation", object_id=cid, result="ok")
+        return out
+
+    @r.get("/conversations/{cid}/avatar")
+    def get_avatar(request: Request, cid: str):
+        """The avatar, to current members only (404 otherwise). `private, no-cache` with an ETag:
+        a browser may keep it but asks again every time, so a member who left stops getting it."""
+        a = svc.avatar_image(cid, uid_of(request))
+        etag = '"' + hashlib.sha256(a["image"]).hexdigest()[:32] + '"'
+        headers = {"Cache-Control": "private, no-cache", "X-Content-Type-Options": "nosniff", "ETag": etag,
+                   "Content-Security-Policy": "default-src 'none'; sandbox"}
+        if etag in [x.strip() for x in (request.headers.get("if-none-match") or "").split(",")]:
+            return Response(status_code=304, headers=headers)
+        return Response(a["image"], media_type="image/png", headers=headers)
 
     @r.post("/conversations/{cid}/members")
     def add_members(request: Request, cid: str, body: dict = Body(...)):
@@ -353,7 +392,7 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
         added = [m["user_id"] for m in out["members"] if m["user_id"] not in before]
         audit(request, "messaging.group.add", actor_id=uid, object_kind="conversation", object_id=cid, result="ok", meta={"added": added, "history_from": history_from})
         for mid in added:
-            _notify(mid, "conversation.added", {"actor": svc._name(uid), "conversation": out["name"]}, out)
+            _notify(mid, "conversation.added", {"actor": svc._name(uid), "conversation": out["name"]}, out, actor=uid)
         return out
 
     @r.delete("/conversations/{cid}/members/{member_id}")
@@ -430,6 +469,45 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
         audit(request, "messaging.settings", actor_id=uid, object_kind="user", object_id=uid, result="ok", meta={"fields": sorted(body)})
         return out
 
+    # ------------------------------------------------------------------ blocking (CI-78)
+    @r.get("/blocks")
+    def list_blocks(request: Request):
+        """The people the caller blocked (never who blocked the caller)."""
+        return {"items": svc.blocks(uid_of(request))}
+
+    def _presence_between(a: str, b: str) -> None:
+        """After a block or an unblock, each side's open tabs learn what they may now see of the
+        other: `null` while blocked, the real state after (only if they share a conversation). The
+        event is the same one a hidden presence produces, so it tells the blocked person nothing."""
+        if b not in set(svc.co_members(a)):
+            return
+        for viewer, other in ((a, b), (b, a)):
+            state = svc.presence_of(viewer, [other])[other]
+            hub.publish([viewer], {"type": "presence", "user_id": other, "state": state}, ephemeral=True)
+            metrics.inc("presence_events")
+
+    @r.put("/blocks/{user_id}")
+    def block(request: Request, user_id: str):
+        """Block someone who shares an organization with the caller (yourself or an application
+        account: 400; anyone else: 404). Idempotent. The blocked person is not told."""
+        uid = uid_of(request)
+        limited(uid, "msg-block", BLOCKS_PER_HOUR, 3600)
+        out, created = svc.block(uid, user_id)
+        if created:
+            _presence_between(uid, user_id)
+            audit(request, "messaging.block", actor_id=uid, object_kind="user", object_id=user_id, result="ok")
+        return out
+
+    @r.delete("/blocks/{user_id}")
+    def unblock(request: Request, user_id: str):
+        uid = uid_of(request)
+        limited(uid, "msg-block", BLOCKS_PER_HOUR, 3600)
+        out, removed = svc.unblock(uid, user_id)
+        if removed:
+            _presence_between(uid, user_id)
+            audit(request, "messaging.unblock", actor_id=uid, object_kind="user", object_id=user_id, result="ok")
+        return out
+
     # ------------------------------------------------------------------ typing & presence (CI-74; nothing stored)
     @r.post("/conversations/{cid}/typing")
     def typing(request: Request, cid: str, body: dict = Body(default={})):
@@ -491,10 +569,14 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
                 limit: int = Query(50, ge=1, le=200)):
         return svc.history(cid, uid_of(request), before_seq=before, after_seq=after, limit=limit)
 
-    def _notify(recipient: str, kind: str, params: dict, conv: dict, *, to_list: bool = False, dedupe: str | None = None) -> None:
+    def _notify(recipient: str, kind: str, params: dict, conv: dict, *, to_list: bool = False, dedupe: str | None = None,
+                actor: str | None = None) -> None:
         """An inbox item pointing at the conversation (or at the list, for someone who was
         removed): on the messages origin while the application is registered, else the account
-        origin's old paths (`conversation_target`)."""
+        origin's old paths (`conversation_target`). An item whose `actor` the recipient blocked is
+        not written (CI-78) — the group still shows what happened; the inbox does not."""
+        if actor and svc.has_blocked(recipient, actor):
+            return
         try:
             notifier.emit(recipient, kind, params=params, organization_id=conv["organization_id"], object_kind="conversation", object_id=conv["id"],
                           dedupe_key=dedupe, target=conversation_target(store, None if to_list else conv["id"]))
@@ -798,12 +880,15 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
                 "heartbeat_s": HEARTBEAT_S,
                 "limits": {"messages_per_minute": MESSAGES_PER_MINUTE, "attachments_per_hour": ATTACHMENTS_PER_HOUR, "groups_per_day": GROUPS_PER_DAY,
                            "reports_per_day": REPORTS_PER_DAY, "typing_per_10s": TYPING_PER_10S, "presence_per_minute": PRESENCE_PER_MINUTE,
-                           "forward_targets": MAX_FORWARD_TARGETS, "streams_per_user": MAX_STREAMS_PER_USER},
+                           "forward_targets": MAX_FORWARD_TARGETS, "streams_per_user": MAX_STREAMS_PER_USER,
+                           "avatars_per_hour": AVATARS_PER_HOUR, "blocks_per_hour": BLOCKS_PER_HOUR},
                 "recall_window_s": RECALL_WINDOW_S, "edit_window_s": EDIT_WINDOW_S,
                 "voice": {"types": list(VOICE_TYPES), "max_bytes": MAX_VOICE_BYTES, "max_duration_ms": MAX_VOICE_MS},
                 "search": {**svc.search_info(), "filters": ["cid", "from", "has_attachment", "since", "until"], "max_limit": 100},
                 "presence": _presence_definition(), "typing_ttl_s": TYPING_TTL_S,
                 "stream": {"event_ids": True, "replay_ring": RING_MAX, "ephemeral": ["typing", "presence"]},
-                "history_from": list(HISTORY_FROM), "settings": svc.settings(uid)}
+                "history_from": list(HISTORY_FROM), "settings": svc.settings(uid),
+                "group_avatar": {"types": ["image/png"], "max_bytes": MAX_AVATAR_BYTES, "max_side": MAX_AVATAR_SIDE},
+                "blocks": True}
 
     return r

@@ -34,6 +34,12 @@ The rules the schema encodes (decision record in docs/platform/messaging.md):
   visible page sends and is one of three states by heartbeat age (`messaging_presence`), never
   stored; a person who hides theirs sees nobody's. Read positions of others are shown only to and
   for members who turned `read_receipts` on. There is no "delivered": the server cannot know it.
+* **Blocking protects the blocker, quietly (CI-78).** A person may block someone they share an
+  organization with. Between the two there is then no new direct message and no sending in the
+  existing one (either way), and neither sees the other's presence, typing or read position.
+  Groups stay shared spaces: the blocked person's messages there remain visible, but they create
+  no inbox item, no @ mark and no digest mail for the blocker. The blocked person is not told;
+  a refused send says only 「暂时无法向对方发送消息」. Moderation (reports) is untouched.
 """
 from __future__ import annotations
 
@@ -101,6 +107,19 @@ CREATE TABLE IF NOT EXISTS message_hides (
   PRIMARY KEY (message_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS ix_message_hides_user ON message_hides(user_id);
+-- v26 (CI-78): a group's avatar — the platform's avatar rules (`avatar_image.canonical_avatar`:
+-- a rebuilt PNG ≤ 256 KB, ≤ 512 × 512), served only to the group's current members.
+CREATE TABLE IF NOT EXISTS conversation_avatars (
+  conversation_id TEXT PRIMARY KEY, image BLOB NOT NULL, updated_by TEXT NOT NULL, updated_at REAL NOT NULL
+);
+-- v26 (CI-78): the people a person blocked. Only between people who share an organization; the
+-- effects (no direct messages either way, no presence/typing/receipts between the two, no inbox
+-- items or digest mail from the blocked person) are read from here, never copied elsewhere.
+CREATE TABLE IF NOT EXISTS message_blocks (
+  user_id TEXT NOT NULL, blocked_id TEXT NOT NULL, created_at REAL NOT NULL,
+  PRIMARY KEY (user_id, blocked_id)
+);
+CREATE INDEX IF NOT EXISTS ix_message_blocks_blocked ON message_blocks(blocked_id);
 """
 
 #: v24 (CI-74), all additive; existing CHECK sets untouched (AGENTS.md / brief 4.2-12).
@@ -223,6 +242,24 @@ def is_muted(m: dict, ts: float | None = None) -> bool:
     return bool(m.get("muted")) or bool(until and float(until) > ts)
 
 
+#: What a refused direct message says (CI-78): plainly to the person who blocked, neutrally to the
+#: person who was blocked — who is never told. Both are the same code, `blocked`.
+BLOCKED_BY_ME = "你已屏蔽对方，解除后才能发送"
+BLOCKED_NEUTRAL = "暂时无法向对方发送消息"
+
+
+def blocks_for_export(store: Store, uid: str) -> list[dict]:
+    """The person's own block list for their account export: whom they blocked and when — never
+    who blocked them."""
+    return store.all("SELECT blocked_id AS user_id, created_at FROM message_blocks WHERE user_id=? ORDER BY created_at", (uid,))
+
+
+def forget_blocks(store: Store, uid: str) -> int:
+    """Account deletion: the person's block list goes, and so do blocks naming them — a deleted
+    account can never send again, and a nameless row would only linger in someone's list."""
+    return store.execute("DELETE FROM message_blocks WHERE user_id=? OR blocked_id=?", (uid, uid))
+
+
 class Messaging:
     def __init__(self, store: Store, ident: Identity, *, publish: Publish | None = None, presence: Presence | None = None):
         self.store, self.ident = store, ident
@@ -302,6 +339,86 @@ class Messaging:
                 self.presence.forget(uid)
         return new
 
+    # ------------------------------------------------------------------ blocking (CI-78)
+    def _blocked(self, a: str, b: str) -> tuple[bool, bool]:
+        """(`a` blocked `b`, `b` blocked `a`)."""
+        rows = self.store.all("SELECT user_id FROM message_blocks WHERE (user_id=? AND blocked_id=?) OR (user_id=? AND blocked_id=?)", (a, b, b, a))
+        who = {r["user_id"] for r in rows}
+        return a in who, b in who
+
+    def has_blocked(self, uid: str, other: str | None) -> bool:
+        """Did `uid` block `other`? (One direction: what decides the blocker's inbox and marks.)"""
+        return bool(other) and self.store.one("SELECT 1 AS x FROM message_blocks WHERE user_id=? AND blocked_id=?", (uid, other)) is not None
+
+    def blocked_ids(self, uid: str) -> set[str]:
+        """The people `uid` blocked."""
+        return {r["blocked_id"] for r in self.store.all("SELECT blocked_id FROM message_blocks WHERE user_id=?", (uid,))}
+
+    def block_partners(self, uid: str) -> set[str]:
+        """Everyone in a block with `uid`, either direction: presence, typing and read positions are
+        not shown between them — both ways, so neither can watch the other."""
+        rows = self.store.all("SELECT blocked_id AS u FROM message_blocks WHERE user_id=? UNION SELECT user_id AS u FROM message_blocks WHERE blocked_id=?", (uid, uid))
+        return {r["u"] for r in rows}
+
+    def _share_organization(self, a: str, b: str) -> bool:
+        return self.store.one("SELECT 1 AS x FROM organization_memberships m1 JOIN organization_memberships m2 ON m2.organization_id=m1.organization_id "
+                              "JOIN organizations o ON o.id=m1.organization_id JOIN users u ON u.id=m2.user_id JOIN users me ON me.id=m1.user_id "
+                              "WHERE m1.user_id=? AND m2.user_id=? AND o.status='active' AND u.status='active' AND u.deleted_at IS NULL "
+                              "AND me.status='active' AND me.deleted_at IS NULL LIMIT 1", (a, b)) is not None
+
+    def _dm_ids_between(self, a: str, b: str) -> list[str]:
+        lo, hi = min(a, b), max(a, b)
+        return [r["id"] for r in self.store.all("SELECT id FROM conversations WHERE kind='dm' AND dm_key LIKE ? ESCAPE '\\'",
+                                                 (f"%:{lo}:{hi}".replace("_", "\\_"),))]
+
+    def _dm_peer(self, conv: dict, uid: str) -> str | None:
+        if conv.get("kind") != "dm" or not conv.get("dm_key"):
+            return None
+        a, b = conv["dm_key"].rsplit(":", 2)[1:]
+        return b if a == uid else a
+
+    def _guard_dm(self, conv: dict, uid: str) -> None:
+        """No sending in a direct message while either side has blocked the other. The blocker is
+        told plainly; the blocked person gets the neutral sentence and nothing else."""
+        peer = self._dm_peer(conv, uid)
+        if not peer:
+            return
+        mine, theirs = self._blocked(uid, peer)
+        if mine:
+            raise ServiceError(403, "blocked", BLOCKED_BY_ME, {"by_me": True})
+        if theirs:
+            raise ServiceError(403, "blocked", BLOCKED_NEUTRAL)
+
+    def blocks(self, uid: str) -> list[dict]:
+        rows = self.store.all("SELECT blocked_id, created_at FROM message_blocks WHERE user_id=? ORDER BY created_at DESC", (uid,))
+        return [{"user_id": r["blocked_id"], "name": self._name(r["blocked_id"]), "created_at": r["created_at"]} for r in rows]
+
+    def block(self, uid: str, other: str) -> tuple[dict, bool]:
+        """Block `other` (someone who shares an active organization with `uid`). Idempotent;
+        returns (entry, created). The blocker's own devices hear about their direct messages
+        with that person; the blocked person hears nothing."""
+        from .messaging_bridge import is_app_account
+        other = str(other or "")
+        if other == uid:
+            raise ServiceError(400, "invalid_field", "不能屏蔽自己", {"field": "user_id"})
+        if is_app_account(self.store, other):
+            raise ServiceError(400, "invalid_field", "应用发出的消息不能屏蔽；可以静音它所在的会话", {"field": "user_id"})
+        if not other or not self._share_organization(uid, other):
+            raise ServiceError(404, "no_user", "找不到这个成员；只能屏蔽同一组织的成员")
+        created = bool(self.store.execute("INSERT OR IGNORE INTO message_blocks (user_id, blocked_id, created_at) VALUES (?,?,?)", (uid, other, now())))
+        row = self.store.one("SELECT created_at FROM message_blocks WHERE user_id=? AND blocked_id=?", (uid, other))
+        if created:
+            for cid in self._dm_ids_between(uid, other):
+                self.publish([uid], {"type": "conversation", "conversation_id": cid, "change": "updated"})
+        return {"user_id": other, "name": self._name(other), "blocked": True, "created_at": row["created_at"]}, created
+
+    def unblock(self, uid: str, other: str) -> tuple[dict, bool]:
+        removed = bool(self.store.execute("DELETE FROM message_blocks WHERE user_id=? AND blocked_id=?", (uid, str(other or ""))))
+        if removed:
+            for cid in self._dm_ids_between(uid, other):
+                self.publish([uid], {"type": "conversation", "conversation_id": cid, "change": "updated"})
+        return {"user_id": other, "blocked": False}, removed
+
     def visible_conversation_ids(self, uid: str) -> list[str]:
         """The conversations `uid` may see right now: active memberships in organizations they
         are still a member of. The stream compares this at every heartbeat with what the tab
@@ -336,29 +453,35 @@ class Messaging:
         who show their own (mutual)."""
         if self.presence is None or not self.settings(uid)["show_presence"]:
             return []
-        peers = self.co_members(uid)
+        partners = self.block_partners(uid)
+        peers = [p for p in self.co_members(uid) if p not in partners]
         st = self._settings_for(peers)
         return [p for p in peers if st[p]["show_presence"]]
 
-    def presence_of(self, viewer: str, ids: list[str], settings: dict[str, dict] | None = None) -> dict[str, str | None]:
+    def presence_of(self, viewer: str, ids: list[str], settings: dict[str, dict] | None = None,
+                    partners: set[str] | None = None) -> dict[str, str | None]:
         """Presence as `viewer` may see it: `online|away|offline`, or None when it is not shown
-        (this process has no registry, the viewer hides theirs, or that person hides theirs)."""
+        (this process has no registry, the viewer hides theirs, that person hides theirs, or one
+        of the two blocked the other)."""
         ids = list(dict.fromkeys(ids))
         if self.presence is None:
             return {u: None for u in ids}
         st = settings if settings is not None else self._settings_for([viewer, *ids])
         if not st[viewer]["show_presence"]:
             return {u: None for u in ids}
+        partners = partners if partners is not None else self.block_partners(viewer)
         states = self.presence.states(ids)
-        return {u: (states[u] if st[u]["show_presence"] else None) for u in ids}
+        return {u: (states[u] if st[u]["show_presence"] and u not in partners else None) for u in ids}
 
     def typing_targets(self, cid: str, uid: str) -> list[str]:
         """Who a typing hint from `uid` in `cid` goes to: the other active members who show
-        presence — and nobody when `uid` hides theirs (typing is a presence signal)."""
+        presence and are not in a block with `uid` — and nobody when `uid` hides theirs (typing
+        is a presence signal)."""
         self._member(cid, uid)
         if not self.settings(uid)["show_presence"]:
             return []
-        others = [u for u in self._active_user_ids(cid) if u != uid]
+        partners = self.block_partners(uid)
+        others = [u for u in self._active_user_ids(cid) if u != uid and u not in partners]
         st = self._settings_for(others)
         return [u for u in others if st[u]["show_presence"]]
 
@@ -380,6 +503,10 @@ class Messaging:
         self._org_member(oid, uid)
         self._org_member(oid, other)
         key = f"{oid}:{min(uid, other)}:{max(uid, other)}"
+        if not self.store.one("SELECT 1 AS x FROM conversations WHERE dm_key=?", (key,)):
+            # no new direct message while either side has blocked the other (CI-78); an existing
+            # one still opens — its history is the reader's — but nothing more can be sent in it
+            self._guard_dm({"kind": "dm", "dm_key": key}, uid)
         ts = now()
         with self.store.tx() as t:
             conv = t.execute("SELECT * FROM conversations WHERE dm_key=?", (key,)).fetchone()
@@ -468,6 +595,40 @@ class Messaging:
             self._system(t, cid, uid, {"event": "announcement", "cleared": text is None})
         self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
         return self.get(cid, uid)
+
+    def set_avatar(self, cid: str, uid: str, image_base64: str | None) -> dict:
+        """A group's avatar, set (`image_base64`) or removed (None) by its owner/admins. The image
+        is held to the platform's avatar rules (`avatar_image.canonical_avatar`: the PNG is sniffed,
+        bounded and rebuilt; anything else is 400 `bad_avatar`) and the change leaves a system row
+        「X 更换了群头像 / 移除了群头像」. Checked in this order: membership (404), role (403),
+        archive (409), then the bytes — a stranger learns nothing from a bad image."""
+        conv, _ = self._manager(cid, uid)
+        if conv["archived_at"]:
+            raise ServiceError(409, "archived", "已归档的群不能修改头像")
+        image = None
+        if image_base64 is not None:
+            from .avatar_image import canonical_avatar
+            image = canonical_avatar(image_base64)
+        ts = now()
+        with self.store.tx() as t:
+            if image is None:
+                if not t.execute("DELETE FROM conversation_avatars WHERE conversation_id=?", (cid,)).rowcount:
+                    raise ServiceError(404, "no_avatar", "这个群还没有头像")
+            else:
+                t.execute("INSERT INTO conversation_avatars (conversation_id, image, updated_by, updated_at) VALUES (?,?,?,?) "
+                          "ON CONFLICT(conversation_id) DO UPDATE SET image=excluded.image, updated_by=excluded.updated_by, updated_at=excluded.updated_at",
+                          (cid, image, uid, ts))
+            self._system(t, cid, uid, {"event": "avatar", "cleared": image is None})
+        self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
+        return self.get(cid, uid)
+
+    def avatar_image(self, cid: str, uid: str) -> dict:
+        """The group's avatar bytes for a current member (404 for anyone else, and when there is none)."""
+        conv, _ = self._member(cid, uid)
+        row = self.store.one("SELECT image, updated_at FROM conversation_avatars WHERE conversation_id=?", (cid,)) if conv["kind"] == "group" else None
+        if not row:
+            raise ServiceError(404, "no_avatar", "这个群还没有头像")
+        return {"image": bytes(row["image"]), "updated_at": row["updated_at"]}
 
     # ------------------------------------------------------------------ reports (abuse, harassment, spam)
     def report(self, mid: str, uid: str, reason: str, note: str | None = None) -> dict:
@@ -705,21 +866,43 @@ class Messaging:
         conv, me = self._member(cid, uid)
         return self._conv_out(conv, me, uid)
 
+    def unread_mentions(self, uid: str, cids: list[str] | None = None) -> dict[str, int]:
+        """Per conversation: unread messages that mention `uid` — after the reader's floor
+        (max(last_read_seq, joined_seq), the same floor as `unread`), still there (not recalled,
+        removed or deleted), not deleted by this reader, and not from someone this reader blocked
+        (their messages stay visible in a group, but raise no @ mark). One grouped query."""
+        sql = ("SELECT x.conversation_id AS cid, COUNT(*) AS n FROM conversation_members m JOIN messages x ON x.conversation_id=m.conversation_id "
+               "WHERE m.user_id=? AND m.left_at IS NULL AND x.seq>MAX(m.last_read_seq, m.joined_seq) AND x.kind='text' AND x.deleted_at IS NULL "
+               "AND x.mentions IS NOT NULL AND instr(x.mentions, ?)>0 AND x.sender_id<>m.user_id "
+               "AND NOT EXISTS (SELECT 1 FROM message_hides h WHERE h.message_id=x.id AND h.user_id=m.user_id) "
+               "AND NOT EXISTS (SELECT 1 FROM message_blocks b WHERE b.user_id=m.user_id AND b.blocked_id=x.sender_id)")
+        args: list = [uid, json.dumps(uid)]
+        if cids is not None:
+            if not cids:
+                return {}
+            sql += f" AND m.conversation_id IN ({','.join('?' for _ in cids)})"
+            args += list(cids)
+        return {r["cid"]: r["n"] for r in self.store.all(sql + " GROUP BY x.conversation_id", tuple(args))}
+
     def _me_out(self, me: dict) -> dict:
         return {"role": me["role"], "joined_seq": me["joined_seq"], "last_read_seq": me["last_read_seq"], "muted": bool(me["muted"]),
                 "muted_until": me.get("muted_until"), "marked_unread": bool(me.get("marked_unread")), "pinned": bool(me["pinned"]),
                 "notify": me["notify"], "history_from": me.get("history_from") or "join"}
 
-    def _read_by(self, conv: dict, uid: str, members: list[dict], settings: dict[str, dict]) -> list[dict] | None:
+    def _read_by(self, conv: dict, uid: str, members: list[dict], settings: dict[str, dict], partners: set[str] | None = None) -> list[dict] | None:
         """Other members' read positions, for a viewer who turned read receipts on, listing only
-        members who turned theirs on. None means "not shown" (the viewer's switch is off), so the
-        shell never confuses "nobody read it" with "you cannot see who did"."""
+        members who turned theirs on and are not in a block with the viewer. None means "not
+        shown" (the viewer's switch is off), so the shell never confuses "nobody read it" with
+        "you cannot see who did"."""
         if not settings.get(uid, {}).get("read_receipts"):
             return None
+        partners = partners if partners is not None else self.block_partners(uid)
         return [{"user_id": m["user_id"], "last_read_seq": m["last_read_seq"], "at": m.get("last_read_at")}
-                for m in members if m["user_id"] != uid and settings.get(m["user_id"], {}).get("read_receipts")]
+                for m in members if m["user_id"] != uid and m["user_id"] not in partners and settings.get(m["user_id"], {}).get("read_receipts")]
 
-    def _conv_out(self, conv: dict, me: dict, uid: str) -> dict:
+    def _conv_out(self, conv: dict, me: dict, uid: str, ctx: dict | None = None) -> dict:
+        """One conversation as `uid` sees it. `ctx` carries what a list computes once for all rows
+        (`partners`, `mine`: the reader's blocks; `mentions`: unread mentions per conversation)."""
         members = self.store.all("SELECT m.user_id, m.role, m.joined_at, m.last_read_seq, m.last_read_at, u.display_name, u.email FROM conversation_members m JOIN users u ON u.id=m.user_id "
                                  "WHERE m.conversation_id=? AND m.left_at IS NULL ORDER BY m.joined_at", (conv["id"],))
         peer = next((m for m in members if m["user_id"] != uid), None) if conv["kind"] == "dm" else None
@@ -727,17 +910,29 @@ class Messaging:
         last = self.store.one("SELECT * FROM messages WHERE conversation_id=? AND seq=?", (conv["id"], conv["last_seq"])) if conv["last_seq"] else None
         ids = [m["user_id"] for m in members]
         settings = self._settings_for([uid, *ids])
-        pres = self.presence_of(uid, ids, settings)
+        partners = ctx["partners"] if ctx and "partners" in ctx else self.block_partners(uid)
+        pres = self.presence_of(uid, ids, settings, partners)
+        if ctx and "mentions" in ctx:
+            mentions = ctx["mentions"].get(conv["id"], 0)
+        else:
+            mentions = self.unread_mentions(uid, [conv["id"]]).get(conv["id"], 0) if unread else 0
+        blocked_by_me = False
+        if peer:
+            blocked_by_me = peer["user_id"] in ctx["mine"] if ctx and "mine" in ctx else self.has_blocked(uid, peer["user_id"])
+        avatar = self.store.one("SELECT updated_at FROM conversation_avatars WHERE conversation_id=?", (conv["id"],)) if conv["kind"] == "group" else None
         return {"id": conv["id"], "organization_id": conv["organization_id"], "kind": conv["kind"], "workspace_id": conv["workspace_id"],
                 "name": conv["name"] if conv["kind"] == "group" else (peer["display_name"] or peer["email"].split("@")[0] if peer else "—"),
                 "description": conv["description"], "archived": bool(conv["archived_at"]), "created_by": conv["created_by"],
                 "announcement": conv.get("announcement") or None, "announcement_at": conv.get("announcement_at"),
                 "last_seq": conv["last_seq"], "last_message_at": conv["last_message_at"], "updated_at": conv["updated_at"],
                 "me": self._me_out(me),
-                "unread": unread, "peer": ({"user_id": peer["user_id"], "name": peer["display_name"] or peer["email"].split("@")[0], "presence": pres.get(peer["user_id"])} if peer else None),
+                "unread": unread, "unread_mentions": mentions,
+                "peer": ({"user_id": peer["user_id"], "name": peer["display_name"] or peer["email"].split("@")[0], "presence": pres.get(peer["user_id"]),
+                          "blocked_by_me": blocked_by_me} if peer else None),
                 "members": [{"user_id": m["user_id"], "name": m["display_name"] or m["email"].split("@")[0], "role": m["role"], "presence": pres.get(m["user_id"])} for m in members],
                 "member_count": len(members),
-                "read_by": self._read_by(conv, uid, members, settings),
+                "avatar": {"updated_at": avatar["updated_at"]} if avatar else None,
+                "read_by": self._read_by(conv, uid, members, settings, partners),
                 "last_message": self._preview(last, me, uid) if last else None}
 
     def _preview(self, msg: dict, me: dict, uid: str) -> dict | None:
@@ -758,13 +953,17 @@ class Messaging:
                               f"m.history_from AS m_history_from, m.last_read_at AS m_last_read_at FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id "
                               f"WHERE {where} ORDER BY m.pinned DESC, COALESCE(c.last_message_at, c.created_at) DESC LIMIT 500", tuple(args))
         out = []
+        ctx = {"partners": self.block_partners(uid), "mine": self.blocked_ids(uid), "mentions": self.unread_mentions(uid)}
+        seen: dict[str, bool] = {}
         for r in rows:
             oid = r["organization_id"]
-            if not current_membership(self.store, oid, uid):
+            if oid not in seen:
+                seen[oid] = bool(current_membership(self.store, oid, uid))
+            if not seen[oid]:
                 continue                                           # organization access gone: not listed
             me = {k[2:]: r[k] for k in r.keys() if k.startswith("m_")}
             conv = {k: r[k] for k in r.keys() if not k.startswith("m_")}
-            out.append(self._conv_out(conv, me, uid))
+            out.append(self._conv_out(conv, me, uid, ctx))
         return out
 
     def unread_total(self, uid: str) -> dict:
@@ -964,6 +1163,7 @@ class Messaging:
         conv, me = self._member(cid, uid)
         if conv["archived_at"]:
             raise ServiceError(409, "archived", "会话已归档，不能再发消息")
+        self._guard_dm(conv, uid)
         body = (body or "").replace("\r\n", "\n").strip()
         if len(body) > MAX_BODY:
             raise ServiceError(400, "message_too_long", f"消息最多 {MAX_BODY} 个字符", {"field": "body", "limit": MAX_BODY})
@@ -1021,6 +1221,7 @@ class Messaging:
         conv, me = self._member(m["conversation_id"], uid)
         if m["sender_id"] != uid or m["kind"] != "text" or m["deleted_at"] or m["seq"] < me["joined_seq"]:
             raise ServiceError(403, "forbidden", "只能编辑自己的消息")
+        self._guard_dm(conv, uid)            # an edit puts new words in front of the other side
         if EDIT_WINDOW_S and now() - float(m["created_at"]) > EDIT_WINDOW_S:
             raise ServiceError(403, "edit_window_closed", f"发出超过 {EDIT_WINDOW_S // 60} 分钟的消息不能再编辑", {"edit_window_s": EDIT_WINDOW_S})
         body = (body or "").replace("\r\n", "\n").strip()
@@ -1148,6 +1349,7 @@ class Messaging:
             conv, _ = self._member(cid, uid)
             if conv["archived_at"]:
                 raise ServiceError(409, "archived", "目标会话已归档，不能再发消息", {"conversation_id": cid})
+            self._guard_dm(conv, uid)
             convs.append(conv)
         origin = json.dumps({"message_id": src["id"], "conversation_id": src["conversation_id"], "sender_id": src["sender_id"]})
         results = []
@@ -1190,6 +1392,7 @@ class Messaging:
         if m["seq"] < me["joined_seq"] or m["deleted_at"]:
             raise ServiceError(404, "no_message", "找不到该消息")
         if on:
+            self._guard_dm(conv, uid)        # adding a reaction reaches the other side; taking one back does not
             self.store.execute("INSERT OR IGNORE INTO message_reactions (message_id,user_id,emoji,created_at) VALUES (?,?,?,?)", (mid, uid, emoji, now()))
         else:
             self.store.execute("DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?", (mid, uid, emoji))
@@ -1211,7 +1414,8 @@ class Messaging:
         if moved:
             settings = self._settings_for(self._active_user_ids(cid))
             if settings.get(uid, {}).get("read_receipts"):
-                audience = [u for u, s in settings.items() if u != uid and s["read_receipts"]]
+                partners = self.block_partners(uid)
+                audience = [u for u, s in settings.items() if u != uid and s["read_receipts"] and u not in partners]
                 if audience:
                     self.publish(audience, {"type": "receipt", "conversation_id": cid, "user_id": uid, "last_read_seq": target, "at": ts})
         return {"conversation_id": cid, "last_read_seq": target, "marked_unread": False, "unread": max(0, conv["last_seq"] - max(target, me["joined_seq"]))}
@@ -1252,6 +1456,9 @@ class Messaging:
             convs.append({"id": r["id"], "kind": r["kind"], "last_seq": r["last_seq"], "last_message_at": r["last_message_at"], "updated_at": r["updated_at"],
                           "archived": bool(r["archived_at"]), "me": self._me_out(me),
                           "unread": max(0, r["last_seq"] - max(me["last_read_seq"], me["joined_seq"]))})
+        mentions = self.unread_mentions(uid, [x["id"] for x in convs if x["unread"]])
+        for x in convs:
+            x["unread_mentions"] = mentions.get(x["id"], 0)
         left = [r["conversation_id"] for r in self.store.all("SELECT conversation_id FROM conversation_members WHERE user_id=? AND left_at>? ORDER BY left_at LIMIT ?", (uid, since, limit))]
         gone = self.store.all(f"SELECT x.id, x.conversation_id, x.seq, x.recalled_at, x.removed_by FROM messages x JOIN conversation_members m ON m.conversation_id=x.conversation_id "
                               f"WHERE m.user_id=? AND m.left_at IS NULL AND x.deleted_at>? AND x.seq>=m.joined_seq ORDER BY x.deleted_at LIMIT ?", (uid, since, limit))
@@ -1268,6 +1475,7 @@ class Messaging:
         conv, _ = self._member(cid, uid)
         if conv["archived_at"]:
             raise ServiceError(409, "archived", "会话已归档")
+        self._guard_dm(conv, uid)            # an upload only exists to be sent
         if not data:
             raise ServiceError(400, "empty_file", "文件是空的")
         if len(data) > MAX_ATTACHMENT_BYTES:
@@ -1318,13 +1526,15 @@ class Messaging:
         """Who should get an inbox item for this message and why: `dm` for the other side of a
         direct message, `mention` for people the message mentions — honouring per-conversation
         notify modes, the standing mute and a running `muted_until`. The sender is never told
-        about their own message."""
+        about their own message, and nobody who blocked the sender is told about it (CI-78: the
+        message stays visible in a shared group, but it does not reach the blocker's inbox)."""
         conv = self.store.one("SELECT * FROM conversations WHERE id=?", (cid,))
         rows = self.store.all("SELECT * FROM conversation_members WHERE conversation_id=? AND left_at IS NULL AND user_id<>?", (cid, message["sender_id"]))
+        blockers = {r["user_id"] for r in self.store.all("SELECT user_id FROM message_blocks WHERE blocked_id=?", (message["sender_id"],))}
         out: dict[str, str] = {}
         ts = now()
         for m in rows:
-            if is_muted(m, ts) or m["notify"] == "none":
+            if is_muted(m, ts) or m["notify"] == "none" or m["user_id"] in blockers:
                 continue
             if m["user_id"] in (message.get("mentions") or []):
                 out[m["user_id"]] = "mention"

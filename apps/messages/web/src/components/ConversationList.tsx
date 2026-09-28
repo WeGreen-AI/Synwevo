@@ -1,13 +1,16 @@
 /** The left pane: the person's conversations (pinned first, as the server orders them; muted
  *  ones — long-term or on a timer — dimmed; archived ones under their own filter), each with the
- *  last message and its sender, the unread count (a marked-unread conversation counts as one),
- *  the peer's presence when the server shows one, and the time of the last message; a filter
- *  box that also searches message text on Enter, with the server's filters; and the search
+ *  group's picture when it has one, the last message and its sender, the unread count (a
+ *  marked-unread conversation counts as one), an @ when unread messages mention the reader, the
+ *  peer's presence when the server shows one, and the time of the last message; a filter box that
+ *  also searches message text on Enter, with the server's filters; for a person in more than one
+ *  organization, the organization the list is scoped to (the server filters); and the search
  *  results, highlighted from the server's ranges, each of which opens its thread at that message.
  *  A right-click or a long press on a row offers mark-unread, pin and mute. */
 import { useCallback, useRef, useState } from "react";
 import { useI18n } from "@synwevo/ui";
-import type { Conversation, Presence, SearchAnswer } from "../types";
+import type { Conversation, Org, Presence, SearchAnswer } from "../types";
+import { groupAvatarUrl } from "../api";
 import { filterConversations, mutedNow, preview, slicesByCodepoints } from "../lib/thread";
 import { formatDayLabel, listTime } from "../lib/time";
 import { Avatar } from "./MessageItem";
@@ -36,6 +39,7 @@ function Row({ c, cid, uid, presence, onOpen, onRowAction, t, locale }: {
   const who = "sender" in p && p.sender ? (p.sender === "me" ? t("我") : p.sender) + ": " : "";
   const text = p.kind === "none" ? t("尚无消息") : p.kind === "archived" ? t("已归档") : p.kind === "system" ? t("（系统消息）") : p.kind === "hidden" ? t("你删除了这条消息")
     : p.kind === "deleted" ? who + t("消息已删除") : p.kind === "attachment" ? who + t("[附件]") : who + p.body;
+  const mentions = typeof c.unread_mentions === "number" ? c.unread_mentions : 0;
   const items: ActionItem[] = [
     { key: "unread", label: t("标为未读"), onSelect: () => onRowAction(c, "unread"), disabled: c.unread > 0 || !!c.me.marked_unread, hint: c.unread > 0 || c.me.marked_unread ? t("已经是未读") : undefined },
     { key: "pin", label: c.me.pinned ? t("取消置顶") : t("置顶"), onSelect: () => onRowAction(c, c.me.pinned ? "unpin" : "pin") },
@@ -48,8 +52,8 @@ function Row({ c, cid, uid, presence, onOpen, onRowAction, t, locale }: {
     onPointerUp={cancelPress} onPointerCancel={cancelPress} onPointerMove={cancelPress}>
     <button type="button" className={`msg-conv ${c.id === cid ? "on" : ""} ${muted ? "muted-conv" : ""} ${unread ? "has-unread" : ""}`}
       onClick={() => { if (press.current == null && !menu) onOpen(c.id); }} aria-current={c.id === cid ? "true" : undefined}
-      aria-label={`${c.name}${unread ? "，" + t("{n} 条未读", { n: count }) : ""}${c.me.pinned ? "，" + t("已置顶") : ""}${muted ? "，" + t("已静音") : ""}${peerPresence === "online" ? "，" + t("在线") : ""}`}>
-      <Avatar id={c.kind === "dm" ? (c.peer?.user_id || c.id) : c.id} name={c.name} kind={c.kind} size={40} presence={peerPresence} />
+      aria-label={`${c.name}${unread ? "，" + t("{n} 条未读", { n: count }) : ""}${mentions > 0 ? "，" + t("{n} 条提及你", { n: mentions }) : ""}${c.me.pinned ? "，" + t("已置顶") : ""}${muted ? "，" + t("已静音") : ""}${peerPresence === "online" ? "，" + t("在线") : ""}`}>
+      <Avatar id={c.kind === "dm" ? (c.peer?.user_id || c.id) : c.id} name={c.name} kind={c.kind} size={40} presence={peerPresence} src={groupAvatarUrl(c)} />
       <span className="msg-conv-main">
         <span className="msg-conv-top">
           <span className="msg-conv-name">{c.name}</span>
@@ -60,7 +64,7 @@ function Row({ c, cid, uid, presence, onOpen, onRowAction, t, locale }: {
           <span className="msg-conv-marks">
             {c.me.pinned && <span className="msg-mark" title={t("已置顶")}><IcPin /></span>}
             {muted && <span className="msg-mark" title={t("已静音")}><IcMute /></span>}
-            {typeof c.unread_mentions === "number" && c.unread_mentions > 0 && <span className="msg-unread mention" title={t("有人提及你")}>@</span>}
+            {mentions > 0 && <span className="msg-unread mention" title={t("{n} 条提及你", { n: mentions })} data-mentions={mentions}>@</span>}
             {unread && <span className="msg-unread">{count > 99 ? "99+" : count}</span>}
             {dot && <span className="msg-unread-dot" title={t("{n} 条未读（已静音）", { n: count })} />}
           </span>
@@ -71,13 +75,18 @@ function Row({ c, cid, uid, presence, onOpen, onRowAction, t, locale }: {
   </div>;
 }
 
-export function ConversationList({ convs, cid, uid, presence, filter, setFilter, query, setQuery, onOpen, onSearch, onRowAction, header }: {
+export function ConversationList({ convs, cid, uid, presence, filter, setFilter, query, setQuery, onOpen, onSearch, onRowAction, header, orgs, scope, setScope, keepId }: {
   convs: Conversation[]; cid: string | undefined; uid: string; presence: Record<string, Presence>; filter: ListFilter; setFilter: (f: ListFilter) => void;
   query: string; setQuery: (q: string) => void; onOpen: (id: string) => void; onSearch: (q: string, opts: SearchOptions) => void;
   onRowAction: (c: Conversation, a: RowAction) => void; header: React.ReactNode;
+  /** the person's active organizations; the scope selector appears only with more than one */
+  orgs: Org[]; scope: string; setScope: (oid: string) => void;
+  /** the conversation opened from the 未读 filter, kept in view after it is read */
+  keepId?: string;
 }) {
   const { t, locale } = useI18n();
-  const visible = filterConversations(convs, filter, query);
+  const visible = filterConversations(convs, filter, query, keepId);
+  const scopeName = orgs.find(o => o.id === scope)?.name;
   const search = useCallback(() => onSearch(query, {}), [onSearch, query]);
   return <>
     {header}
@@ -86,11 +95,18 @@ export function ConversationList({ convs, cid, uid, presence, filter, setFilter,
       <input className="msg-side-input" type="search" placeholder={t("筛选会话，按 Enter 搜索消息")} value={query} onChange={e => setQuery(e.target.value)}
         onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) search(); }} aria-label={t("筛选会话，按 Enter 搜索消息")} enterKeyHint="search" />
     </div>
-    <div className="msg-side-filters" role="tablist" aria-label={t("会话筛选")}>
-      {(["all", "unread", "archived"] as ListFilter[]).map(f => <button key={f} type="button" role="tab" aria-selected={filter === f} className={`msg-chip ${filter === f ? "on" : ""}`} onClick={() => setFilter(f)}>
-        {t(f === "all" ? "全部" : f === "unread" ? "未读" : "已归档")}</button>)}
+    <div className="msg-side-filters">
+      <div className="msg-side-tabs" role="tablist" aria-label={t("会话筛选")}>
+        {(["all", "unread", "archived"] as ListFilter[]).map(f => <button key={f} type="button" role="tab" aria-selected={filter === f} className={`msg-chip ${filter === f ? "on" : ""}`} onClick={() => setFilter(f)}>
+          {t(f === "all" ? "全部" : f === "unread" ? "未读" : "已归档")}</button>)}
+      </div>
+      {orgs.length > 1 && <select className={`msg-org-select ${scope ? "on" : ""}`} value={scope} onChange={e => setScope(e.target.value)} aria-label={t("按组织筛选会话")} title={t("按组织筛选会话")}>
+        <option value="">{t("全部组织")}</option>
+        {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>}
     </div>
-    {!convs.length ? <div className="msg-empty"><p>{t("还没有会话。")}</p><p className="tiny muted">{t("和同组织的成员开始私聊，或建一个群。")}</p></div>
+    {!convs.length ? (scopeName ? <div className="msg-empty"><p>{t("「{org}」里还没有你的会话。", { org: scopeName })}</p><button type="button" className="btn sm" onClick={() => setScope("")}>{t("查看全部组织")}</button></div>
+      : <div className="msg-empty"><p>{t("还没有会话。")}</p><p className="tiny muted">{t("和同组织的成员开始私聊，或建一个群。")}</p></div>)
       : !visible.length ? <div className="msg-empty"><p className="muted">{filter === "unread" ? t("没有未读的会话。") : filter === "archived" ? t("没有已归档的会话。") : t("没有匹配的会话。")}</p>
         {query.trim().length >= 2 && <button type="button" className="btn sm" onClick={search}>{t("搜索消息「{q}」", { q: query.trim() })}</button>}</div>
       : <div className="msg-convs" role="list" aria-label={t("会话列表")}>

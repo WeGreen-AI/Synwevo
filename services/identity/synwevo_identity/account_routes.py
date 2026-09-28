@@ -241,6 +241,9 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
         if store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='organization_memberships'"):
             result["organization_memberships"] = store.all(
                 "SELECT organization_id,role,created_at FROM organization_memberships WHERE user_id=?", (uid,))
+        # Synwevo Message blocks (CI-78): the person's own list only — never who blocked them.
+        from synwevo_core.messaging import blocks_for_export
+        result["message_blocks"] = blocks_for_export(store, uid)
         audit(request, "auth.data.export", actor_id=uid, result="ok")
         return JSONResponse(result, headers={"Cache-Control": "no-store",
                             "Content-Disposition": 'attachment; filename="synwevo-account.json"'})

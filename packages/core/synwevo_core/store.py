@@ -18,7 +18,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -817,7 +817,10 @@ class Store:
         from .member_import import SCHEMA as MEMBER_IMPORT_SCHEMA
         c.executescript(MEMBER_IMPORT_SCHEMA)
         # v12: organization messaging (conversations, memberships with join sequence, messages,
-        # reactions, attachments).
+        # reactions, attachments). v26 (CI-78) adds two tables to the same script, both
+        # CREATE IF NOT EXISTS: `conversation_avatars` (a group's canonical PNG) and `message_blocks`
+        # (who blocked whom). Rollback to v25 code: both sit idle — blocks stop applying, avatars
+        # stop showing; nothing else reads them.
         from .messaging import SCHEMA as MESSAGING_SCHEMA, V24_COLUMNS as MESSAGING_V24_COLUMNS
         c.executescript(MESSAGING_SCHEMA)
         # v13: approved copies of personal Docs projects into organization workspaces.

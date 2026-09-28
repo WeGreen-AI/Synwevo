@@ -7,11 +7,16 @@
  *  Server facts shown as such: who is typing (only while the hint is unexpired), read receipts
  *  (only when both sides turned them on; never "delivered"), recall markers, a manager's
  *  removal, delete-for-me with a five-second undo. The stream is a hint: every (re)connect and
- *  every `resync` goes back to the history API with the last sequence this tab knows. */
+ *  every `resync` goes back to the history API with the last sequence this tab knows.
+ *
+ *  A direct message this reader blocked shows 「你已屏蔽对方，解除后才能发送」 with 解除屏蔽 in place of
+ *  the composer (§7.18). A reader who was blocked is not told in advance: their first send is
+ *  refused with the neutral 「暂时无法向对方发送消息」, shown on the failed message and in place of the
+ *  composer, with a way to try again. */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, get, post, put } from "@synwevo/auth-client";
 import { scrollBehavior, useDialog, useI18n } from "@synwevo/ui";
-import { M, attachmentUrl, sendTyping } from "../api";
+import { M, attachmentUrl, groupAvatarUrl, sendTyping } from "../api";
 import type { Attachment, Capabilities, Conversation, Live, Message, Presence, ReadBy, Settings, TypingState } from "../types";
 import { draftKey, fmtSize, layout, maxSeq, mergeMessages, newClientId, receiptMark } from "../lib/thread";
 import { dayLabel, formatDayLabel } from "../lib/time";
@@ -63,6 +68,9 @@ export function Thread({ conv, uid, live, narrow, coarse, caps, settings, presen
   const [liveText, setLiveText] = useState("");
   const [readBy, setReadBy] = useState<ReadBy[] | null>(conv.read_by ?? null);
   const [undo, setUndo] = useState<{ message: Message } | null>(null);
+  // the server refused a send in this direct message with the neutral `blocked` answer (§7.18)
+  const [refused, setRefused] = useState(false);
+  const [unblocking, setUnblocking] = useState(false);
   // the reader's position when the thread was opened: captured once, so the unread divider stays
   // where it was for as long as they read; opening the thread again places it afresh from the
   // server's read position (or not at all, when nothing is unread)
@@ -274,9 +282,10 @@ export function Thread({ conv, uid, live, narrow, coarse, caps, settings, presen
         ...(pending.reply_to ? { reply_to: pending.reply_to } : {}), ...(pending.attachment ? { attachment_id: pending.attachment.id } : {}),
         ...(pending.mentions.length ? { mention_ids: pending.mentions } : {}),
       });
-      merge([out.message]); onChanged();
+      merge([out.message]); setRefused(false); onChanged();
     } catch (e) {
       const why = e instanceof ApiError ? e.message : String(e);
+      if (e instanceof ApiError && e.code === "blocked") { if (e.detail?.by_me) onChanged(); else setRefused(true); }
       setItems(cur => (cur || []).map(m => (m.id === pending.id ? { ...m, pending: false, failed: why } : m)));
     }
   }, [conv.id, merge, onChanged]);
@@ -355,6 +364,7 @@ export function Thread({ conv, uid, live, narrow, coarse, caps, settings, presen
       case "description": return s.cleared ? t("{actor} 清除了群描述", { actor: who(s.actor) }) : t("{actor} 更新了群描述", { actor: who(s.actor) });
       case "archived": return t("{actor} 归档了群聊", { actor: who(s.actor) }); case "unarchived": return t("{actor} 恢复了群聊", { actor: who(s.actor) });
       case "announcement": return s.cleared ? t("{actor} 清除了群公告", { actor: who(s.actor) }) : t("{actor} 更新了群公告", { actor: who(s.actor) });
+      case "avatar": return s.cleared ? t("{actor} 移除了群头像", { actor: who(s.actor) }) : t("{actor} 更换了群头像", { actor: who(s.actor) });
       default: return "";
     }
   };
@@ -372,11 +382,17 @@ export function Thread({ conv, uid, live, narrow, coarse, caps, settings, presen
   }), [jumpTo, draft, conv.members, uid, items, onForward]);
   const peerPresence: Presence = conv.kind === "dm" && conv.peer ? (presence[conv.peer.user_id] !== undefined ? presence[conv.peer.user_id] : (conv.peer.presence ?? null)) : null;
   const typingNames = typing.map(x => x.name);
+  const blockedByMe = conv.kind === "dm" && !!conv.peer?.blocked_by_me;
+  const unblockPeer = async () => {
+    if (!conv.peer) return;
+    setUnblocking(true);
+    try { await api(`${M()}/blocks/${encodeURIComponent(conv.peer.user_id)}`, { method: "DELETE" }); onChanged(); } catch (e) { setError(e); } finally { setUnblocking(false); }
+  };
 
   return <div className={`msg-thread-inner ${dragging ? "dragging" : ""}`} onDragOver={onDragOver} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
     <header className="msg-thread-h">
       {narrow && <button type="button" className="btn ghost sm icon msg-back" onClick={onBack} aria-label={t("返回会话列表")}><IcBack /></button>}
-      <Avatar id={conv.kind === "dm" ? (conv.peer?.user_id || conv.id) : conv.id} name={conv.name} kind={conv.kind} size={32} presence={peerPresence} />
+      <Avatar id={conv.kind === "dm" ? (conv.peer?.user_id || conv.id) : conv.id} name={conv.name} kind={conv.kind} size={32} presence={peerPresence} src={groupAvatarUrl(conv)} />
       <div className="msg-thread-title">
         <h1 className="msg-thread-name">{conv.name}</h1>
         <div className="msg-thread-meta">
@@ -424,8 +440,16 @@ export function Thread({ conv, uid, live, narrow, coarse, caps, settings, presen
       <span className="msg-typing-dots" aria-hidden="true"><i /><i /><i /></span>
       {typingNames.length <= 2 ? t("{who} 正在输入…", { who: typingNames.join("、") }) : t("{who} 等 {n} 人正在输入…", { who: typingNames.slice(0, 2).join("、"), n: typingNames.length })}
     </div>}
-    <Composer ref={composerRef} conv={conv} uid={uid} caps={caps} draft={draft} setDraft={setDraft} replyTo={replyTo} onCancelReply={() => setReplyTo(null)}
-      editing={editing} onCancelEdit={cancelEdit} onSaveEdit={saveEdit} onSend={send} onTyping={onTyping} busy={busy} />
+    {blockedByMe && !conv.archived ? <div className="msg-composer msg-composer-off msg-blocked-note" role="note">
+        <span>{t("你已屏蔽对方，解除后才能发送")}</span>
+        <button type="button" className="btn sm" disabled={unblocking} onClick={() => void unblockPeer()}>{t("解除屏蔽")}</button>
+      </div>
+      : refused && !conv.archived ? <div className="msg-composer msg-composer-off msg-blocked-note" role="note">
+        <span>{t("暂时无法向对方发送消息")}</span>
+        <button type="button" className="btn ghost sm" onClick={() => setRefused(false)}>{t("重试")}</button>
+      </div>
+      : <Composer ref={composerRef} conv={conv} uid={uid} caps={caps} draft={draft} setDraft={setDraft} replyTo={replyTo} onCancelReply={() => setReplyTo(null)}
+        editing={editing} onCancelEdit={cancelEdit} onSaveEdit={saveEdit} onSend={send} onTyping={onTyping} busy={busy} />}
     {lightbox && <Lightbox src={attachmentUrl(lightbox.id, true)} downloadHref={attachmentUrl(lightbox.id)} name={lightbox.filename} size={fmtSize(lightbox.size)} onClose={() => setLightbox(null)} />}
     {reporting && <ReportDialog message={reporting} onClose={() => setReporting(null)} />}
   </div>;
