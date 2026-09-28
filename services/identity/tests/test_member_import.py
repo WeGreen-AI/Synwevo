@@ -214,3 +214,41 @@ def test_lines_mode_cancel_and_unsupported_format_are_honest(org):
     assert x["extraction"]["status"] == "unsupported" and x["extraction"]["needs_engine"] is True
     r = c.put(f"{base(c)}/{x['id']}/mapping", headers=h, json={"workspace_id": c.wid, "mapping": {"mode": "table", "table": 0, "columns": {"email": 0}}})
     assert r.status_code == 400 and r.json()["error"] == "bad_mapping"
+
+
+def test_expired_imports_and_their_files_are_swept_hourly(org, monkeypatch):
+    """Q4: the 7-day expiry on import records was never enforced and an unrun import's uploaded
+    file stayed on disk for good. The account sweeper now removes expired records with their files,
+    never a running import, and files no record names once they are older than 7 days."""
+    import os
+    import time
+    from pathlib import Path
+    c = org
+    h = login(c, "owner")
+    ids = []
+    for i in range(3):
+        r = upload(c, h, CSV, name=f"members-{i}.csv")
+        assert r.status_code in (200, 201), r.text
+        ids.append(r.json()["import"]["id"] if "import" in r.json() else r.json()["id"])
+    d = Path(c.ident.store.root) / "member_imports"
+    assert all((d / iid).is_file() for iid in ids)
+    old, running, recent = ids
+    c.ident.store.execute("UPDATE member_imports SET expires_at=? WHERE id IN (?,?)", (time.time() - 60, old, running))
+    c.ident.store.execute("UPDATE member_imports SET status='running' WHERE id=?", (running,))
+    stale, fresh = d / "imp_orphan_old", d / "imp_orphan_new"
+    stale.write_bytes(b"left by an earlier version"); fresh.write_bytes(b"just written")
+    week_ago = time.time() - 8 * 24 * 3600
+    os.utime(stale, (week_ago, week_ago))
+    # off unless the deployment turns it on: the first sweep deletes real data (CI-96)
+    assert c.api.state.auth_sweeper.run_once()["member_imports"] == {"enabled": False}
+    assert (d / old).is_file() and stale.exists()
+    assert c.get("/api/auth/state").json()["member_import_cleanup"] is False
+    monkeypatch.setenv("SYNWEVO_MEMBER_IMPORT_CLEANUP", "on")
+    out = c.api.state.auth_sweeper.run_once()["member_imports"]
+    assert out == {"enabled": True, "expired": 1, "orphan_files": 1}
+    assert not (d / old).exists() and c.ident.store.one("SELECT 1 FROM member_imports WHERE id=?", (old,)) is None
+    assert c.ident.store.one("SELECT 1 FROM member_import_rows WHERE import_id=?", (old,)) is None
+    assert (d / running).is_file(), "a running import keeps its file"
+    assert (d / recent).is_file() and c.ident.store.one("SELECT 1 FROM member_imports WHERE id=?", (recent,))
+    assert not stale.exists() and fresh.exists()
+    assert c.api.state.auth_sweeper.run_once()["member_imports"] == {"enabled": True, "expired": 0, "orphan_files": 0}

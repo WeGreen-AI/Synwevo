@@ -194,6 +194,9 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         # The account service's configured sender (name + address, no credentials) so the
         # "check your inbox" screen can say where the mail comes from. `null` when mail is off.
         out["mail_sender"] = getattr(request.app.state, "mail_sender", None)
+        # Whether expired member imports and their files are deleted (account service only; null
+        # elsewhere) — a deployment setting the privacy page reports as it is (CI-96).
+        out["member_import_cleanup"] = getattr(request.app.state, "member_import_cleanup", None)
         return out
 
     @r.post("/logout")

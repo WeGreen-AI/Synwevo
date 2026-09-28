@@ -51,7 +51,15 @@ class Sweeper:
                 "mfa_tickets": self.tickets.sweep(),
                 "webauthn_challenges": self.passkeys.sweep(),
                 "rp_auth_requests": Rp(self.store).sweep(),
-                "account_deletions": finalize_deletions(self.store)}
+                "account_deletions": finalize_deletions(self.store),
+                "member_imports": self._member_imports()}
+
+    def _member_imports(self) -> dict:
+        from synwevo_core.identity import Identity
+        from .member_import_routes import cleanup_enabled, sweep_member_imports
+        if not cleanup_enabled():
+            return {"enabled": False}
+        return {"enabled": True, **sweep_member_imports(self.store, Identity(self.store))}
 
     def _run(self) -> None:
         while not self._stop.wait(SWEEP_INTERVAL_S):
@@ -107,6 +115,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.state.notifier = Notifier(store)
     api.state.notify_dispatcher = NotificationDispatcher(store, plat.identity, mailer, start=start_jobs)
     api.state.auth_sweeper = Sweeper(store, sessions, tickets, passkeys, start=start_jobs)
+    from .member_import_routes import cleanup_enabled as _import_cleanup
+    api.state.member_import_cleanup = _import_cleanup()        # shown on the privacy page (public state)
     api.state.mfa = mfa
     api.state.passkeys = passkeys
 

@@ -235,6 +235,38 @@ def _delete_upload(store, iid: str) -> None:
         pass
 
 
+def cleanup_enabled() -> bool:
+    """Whether expired member imports are deleted (`SYNWEVO_MEMBER_IMPORT_CLEANUP=on`). Off unless
+    the deployment says so: the first sweep permanently removes every import past its 7 days,
+    so turning it on for existing data is the operator's decision, and the privacy page shows
+    which way this deployment is set rather than promising either."""
+    from synwevo_core import env
+    return (env.get("MEMBER_IMPORT_CLEANUP") or "off").strip().lower() in ("on", "1", "true", "yes")
+
+
+def sweep_member_imports(store, ident) -> dict:
+    """Member-import records and the files they read end 7 days after upload (Q4). The records
+    carried `expires_at` from the start, but nothing ever swept them and the uploaded file of an
+    import that was never run stayed on disk for good. Hourly, from the account sweeper: expired
+    records (never a running import) go with their files, and a file no record names any more is
+    removed once it is older than the same 7 days (uploads from before this sweep existed)."""
+    import time as _time
+    from synwevo_core.member_import import RETENTION_S, MemberImports
+    expired = MemberImports(store, ident).sweep_expired()
+    for iid in expired:
+        _delete_upload(store, iid)
+    orphans = 0
+    d = Path(store.root) / "member_imports"
+    if d.is_dir():
+        known = {r["id"] for r in store.all("SELECT id FROM member_imports")}
+        cutoff = _time.time() - RETENTION_S
+        for p in d.iterdir():
+            if p.is_file() and p.name not in known and p.stat().st_mtime < cutoff:
+                p.unlink(missing_ok=True)
+                orphans += 1
+    return {"expired": len(expired), "orphan_files": orphans}
+
+
 def build_router(store, ident, sessions, audit, invites, mailer, *, ingest, start_jobs: bool = True) -> APIRouter:
     r = APIRouter(prefix="/api/auth/organizations", tags=["organization-governance"])
     orgs = Organizations(store, ident)

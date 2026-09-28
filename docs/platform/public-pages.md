@@ -112,7 +112,7 @@
 | 邀请默认 7 天，可设 1–30 天 | P S | `invites.py:25-27` |
 | 组织删除 7 天可恢复 | P S | `packages/core/synwevo_core/organizations.py:20, 484-500` |
 | 接口调用元数据 30 天 | P | `packages/core/synwevo_core/api_platform.py:253-254` |
-| 成员导入记录标注 7 天有效期；**到期清理没有自动任务** | P | `member_import.py:72, 389, 680-685`（`sweep_expired` 无调用方：`grep -rn sweep_expired` 只命中定义） |
+| 成员导入记录与上传文件在上传 7 天后自动删除（正在执行的导入除外） | P | `member_import.py` `RETENTION_S`、`sweep_expired`；`member_import_routes.sweep_member_imports`（每小时由账户清扫器调用，连同上传文件与无主旧文件）；Q4（2026-09-28）前没有调用方 |
 | 安全活动记录（含 IP）、邮件投递记录、通知：长期保留，无自动清理 | P | `grep -rn "DELETE FROM audit_events"` 无结果；`store.py:417-424` `mail_outbox`；`notifications.py` 无清理 |
 | 删除的消息对他人显示「消息已删除」，正文清空、序号保留 | P | `docs/platform/messaging.md:14, 28` |
 | 删除的文档项目标记为已删除；底层文件不自动回收 | P | 研究清单「Docs artifacts/blobs (soft delete only, blobs never garbage-collected)」；`packages/core/synwevo_core/journal.py:108-110` |

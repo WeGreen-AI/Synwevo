@@ -679,13 +679,15 @@ class MemberImports:
                         r.get("status") or "", (res.get("error") or res.get("reason") or ("invitation " + (r.get("invitation_id") or "")) if r.get("invitation_id") else res.get("note", ""))])
         return [[csv_safe(c) for c in row] for row in out]
 
-    def sweep_expired(self) -> int:
+    def sweep_expired(self) -> list[str]:
+        """Delete the records of imports past their 7 days (never a running one) and return their
+        ids, so the caller can remove the uploaded files too (the account service holds them)."""
         with self.store.tx() as t:
             ids = [r["id"] for r in t.execute("SELECT id FROM member_imports WHERE expires_at<? AND status NOT IN ('running')", (now(),)).fetchall()]
             for iid in ids:
                 t.execute("DELETE FROM member_import_rows WHERE import_id=?", (iid,))
                 t.execute("DELETE FROM member_imports WHERE id=?", (iid,))
-        return len(ids)
+        return ids
 
 
 def csv_safe(value: str) -> str:

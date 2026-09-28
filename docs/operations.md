@@ -372,3 +372,10 @@ VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose re
 | 故障 | siteverify 不可达时注册/找回/验证码登录返回 503 `challenge_unavailable`（`Retry-After: 30`），不放行；已登录业务、未触发风险的口令登录、机器接口不受影响。审计 `auth.challenge result=error` 记录原因 |
 | 回滚 | 删除两个变量并重启；页面不再加载 Cloudflare 脚本，CSP 回到默认 |
 | 不做 | 不在生产使用测试密钥（测试密钥对任何令牌都通过，且令牌不带 action）；不给机器接口、Webhook、探针返回挑战 |
+
+## 成员导入到期清理（CI-96）
+
+成员导入的记录与上传的名单文件标有 7 天有效期。账户服务每小时的清扫可以删除到期的记录（从不删除正在执行的导入）与其上传文件，以及没有记录、超过 7 天的旧上传文件。
+这会永久删除数据，所以**缺省关闭**，由持有人决定：在主机的 `/opt/synwevo/config/compose.yaml` 给 `accounts` 服务加 `SYNWEVO_MEMBER_IMPORT_CLEANUP: 'on'`，再 `docker compose -f /opt/synwevo/config/compose.yaml up -d accounts`。
+隐私页「本部署的当前状态」读取 `/api/auth/state` 的 `member_import_cleanup` 显示开关，不需要改文案。开启前可先在账户容器里数一数将被删除的导入：
+`docker compose -f /opt/synwevo/config/compose.yaml exec -T accounts python -c "import time,sqlite3,glob,os; p=glob.glob(os.environ['SYNWEVO_DATA_DIR']+'/*.sqlite3')[0]; c=sqlite3.connect('file:'+p+'?mode=ro',uri=True); print(c.execute(\"SELECT COUNT(*) FROM member_imports WHERE expires_at<? AND status<>'running'\",(time.time(),)).fetchone())" < /dev/null`

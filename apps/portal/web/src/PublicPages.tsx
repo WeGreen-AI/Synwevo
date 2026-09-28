@@ -11,6 +11,7 @@ type Facts = {
   accounts: {
     malware_scanner: "on" | "off" | "down" | null; human_verification: boolean | null; external_providers: string[] | null;
     registration: "open" | "invite" | "closed" | null; mail_sender: { name: string; address: string } | false | null;
+    member_import_cleanup?: boolean | null;
   };
   docs: { malware_scanner: "on" | "off" | "down" | null };
 };
@@ -108,6 +109,7 @@ function LiveStatus({ facts, page }: { facts: Facts | null | undefined; page: Pa
     [t("Synwevo Docs 上传文件的恶意软件扫描"), scanner(facts?.docs.malware_scanner)],
     [t("登录与注册的人机验证"), yesNo(facts?.accounts.human_verification)],
     [t("外部账户登录"), providers],
+    [t("成员导入到期删除（上传 7 天后，含上传文件）"), yesNo(facts?.accounts.member_import_cleanup)],
     ...(page === "service" ? [[t("注册策略"), registration], [t("系统邮件发件人"), sender]] as [string, string][] : []),
   ];
   const at = facts?.checked_at ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(facts.checked_at * 1000) : null;
@@ -176,7 +178,7 @@ function privacyContent(): { eyebrow: string; heading: string; lead: string; sum
         ["邀请", "默认 7 天有效，可设 1–30 天；邮箱验证链接 24 小时。"],
         ["组织删除", "7 天内可恢复。"],
         ["接口调用元数据", "30 天。"],
-        ["成员导入记录", "标注 7 天有效期；到期清理目前没有自动任务。"],
+        ["成员导入记录", "上传 7 天后到期；到期的导入记录与上传文件是否自动删除，见上方「当前状态」。"],
         ["安全活动记录、系统邮件投递记录、通知", "目前长期保留，没有自动清理。"],
         ["消息与文档", "删除的消息对他人显示「消息已删除」，正文清空、序号保留。删除的文档项目在应用内标记为已删除，底层文件目前不做自动回收。"],
       ] }] },

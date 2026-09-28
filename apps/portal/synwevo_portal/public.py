@@ -386,7 +386,7 @@ def deployment_facts(store=None, ident=None, *, force: bool = False) -> dict:
         facts = {
             "checked_at": time.time(),
             "accounts": {"malware_scanner": None, "human_verification": None, "external_providers": None,
-                         "registration": None, "mail_sender": None},
+                         "registration": None, "mail_sender": None, "member_import_cleanup": None},
             "docs": {"malware_scanner": None},
         }
         try:
@@ -406,6 +406,8 @@ def deployment_facts(store=None, ident=None, *, force: bool = False) -> dict:
                     ] if isinstance(providers, list) else None
                     registration = state.get("registration")
                     facts["accounts"]["registration"] = registration if registration in ("open", "invite", "closed") else None
+                    cleanup = state.get("member_import_cleanup")
+                    facts["accounts"]["member_import_cleanup"] = cleanup if isinstance(cleanup, bool) else None
                     sender = state.get("mail_sender")
                     facts["accounts"]["mail_sender"] = (
                         {"name": str(sender.get("name") or "")[:80], "address": str(sender.get("address") or "")[:120]}
