@@ -127,6 +127,12 @@ def docx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
                 if other["kind"] == "repeat" and other["locator"].get("part") == part and other["locator"].get("table_path") == req["table_path"]:
                     raise TemplateError("duplicate_repeat", f"该表格已有重复明细行「{other['name']}」")
             tr = rows[ri]
+            from .docx_blocks import enclosing_block
+            if enclosing_block(tr) is not None:
+                # A repeat row inside a repeat content block is not filled per block copy yet: the
+                # first copy took every row and the others kept the template row (CI-103).
+                raise TemplateError("nested_block", "这张表格在一个重复内容块里：块内的表格暂不能按行重复。"
+                                                    "可以把表格移到内容块之外，或把整张表格（含所需的行）作为内容块的一部分")
             for tc in dc.iter_cells(tr):
                 if dc.tc_props(tc)["vmerge"] is not None:
                     raise TemplateError("vertical_merge", "该行包含纵向合并单元格，不能作为重复行")
@@ -259,6 +265,18 @@ def docx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
         if any(dc.has_unwritable_chars(t) for t in _value_texts(values.get(sl["id"]))):
             issues.append({"level": "warning", "slot": sl["id"], "code": "control_chars",
                            "message": f"字段「{sl['name']}」的值含有文档中无法保存的控制字符，已去除（换行类字符按换行写入）"})
+    # Repeats nested in one another (a repeat row inside a repeat content block, or the other way
+    # round) are refused before anything is written: they used to fill the first copy with every
+    # row and leave the template row, still wrapped, in the others — with no issue (CI-103).
+    from .docx_blocks import nested_repeats         # lazily, as elsewhere here (docx_blocks imports this module's helpers)
+    names = {s_["id"]: s_["name"] for s_ in slots}
+    for info in dc.list_parts(pkg):
+        for outer, inner in nested_repeats(pkg.xml(info["part"])):
+            issues.append({"level": "error", "slot": inner, "code": "nested_repeat",
+                           "message": f"重复明细「{names.get(inner, inner)}」在重复内容块「{names.get(outer, outer)}」里（或反过来），"
+                                      "这种嵌套暂不支持：请把表格移到内容块之外，或删除其中一个重复设置"})
+    if any(i.get("code") == "nested_repeat" for i in issues):
+        return work, issues
     for info in dc.list_parts(pkg):
         root = pkg.xml(info["part"])
         # 1) repeat rows and repeat content blocks.  A repeat lives in exactly one part (body,

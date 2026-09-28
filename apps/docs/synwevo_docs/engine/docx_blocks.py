@@ -67,6 +67,8 @@ def wrap_blocks(container, first: str, last: str, tag: str, alias: str):
     while anc is not None:
         if anc.tag == dc.w("sdt") and (dc.sdt_tag(anc) or "").startswith(dc.TAG_PREFIX):
             raise BlockError("nested_block", "所选内容已在另一个重复内容块中，不能嵌套")
+        if anc.tag == dc.w("tr") and _row_repeats(anc):
+            raise BlockError("inside_repeat_row", "所选内容在一个按行重复的表格行里，不能再作为重复内容块")
         anc = anc.getparent()
     sdt = dc.make_sdt(tag, alias)
     a.addprevious(sdt)
@@ -74,6 +76,51 @@ def wrap_blocks(container, first: str, last: str, tag: str, alias: str):
     for el in members:
         content.append(el)
     return sdt
+
+
+def _row_repeats(tr) -> bool:
+    """A table row that is some slot's repeat row: its cells carry `dw:<slot>#<col>` controls."""
+    return any("#" in (dc.sdt_tag(sdt) or "") and (dc.sdt_tag(sdt) or "").startswith(dc.TAG_PREFIX) for sdt in tr.iter(dc.w("sdt")))
+
+
+def enclosing_block(el):
+    """The repeat content block (`dw:<slot>` block-level control) that contains ``el``, or None."""
+    anc = el.getparent()
+    while anc is not None:
+        if anc.tag == dc.w("sdt") and (dc.sdt_tag(anc) or "").startswith(dc.TAG_PREFIX) and dc._is_block_sdt(anc):
+            return anc
+        anc = anc.getparent()
+    return None
+
+
+def nested_repeats(root) -> list[tuple[str, str]]:
+    """Repeats nested inside one another in this part: (outer slot id, inner slot id) for a
+    repeat row inside a repeat content block, and for a block inside a repeat row. Neither is
+    filled correctly yet — the caller refuses the template instead of writing a wrong document."""
+    out = []
+    for tag, sdt in dc.iter_field_sdts(root):
+        base = tag.split("#")[0].split("@")[0]
+        if "#" in tag:                                         # a repeat-row column
+            tr = sdt.getparent()
+            while tr is not None and tr.tag != dc.w("tr"):
+                tr = tr.getparent()
+            blk = enclosing_block(tr) if tr is not None else None
+            if blk is not None:
+                pair = ((dc.sdt_tag(blk) or "")[len(dc.TAG_PREFIX):], base)
+                if pair[0] != base and pair not in out:
+                    out.append(pair)
+        elif dc._is_block_sdt(sdt):                            # a block: inside a repeat row?
+            anc = sdt.getparent()
+            while anc is not None:
+                if anc.tag == dc.w("tr") and _row_repeats(anc):
+                    inner = next(((dc.sdt_tag(x) or "")[len(dc.TAG_PREFIX):].split("#")[0] for x in anc.iter(dc.w("sdt"))
+                                  if "#" in (dc.sdt_tag(x) or "")), "")
+                    pair = (inner, base)
+                    if pair not in out:
+                        out.append(pair)
+                    break
+                anc = anc.getparent()
+    return out
 
 
 def find_block(root, slot_id: str):
