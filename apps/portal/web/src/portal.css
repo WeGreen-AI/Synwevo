@@ -77,6 +77,14 @@ button.pt-link { background: none; border: 0; padding: 0; cursor: pointer; font:
 .pt-trust-list li { position: relative; padding-left: 22px; color: var(--text-2); font-size: 14px; line-height: 1.8; }
 .pt-trust-list li::before { content: ""; position: absolute; left: 0; top: .8em; width: 10px; height: 2px; background: var(--accent); }
 .pt-principles .pt-actions { margin-top: 26px; gap: 12px 32px; }
+.pt-faq { margin-top: 26px; border-top: 1px solid var(--line); }
+.pt-faq details { border-bottom: 1px solid var(--line); }
+.pt-faq summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 16px; padding: 18px 0; font-size: 16px; font-weight: 600; color: var(--text); }
+.pt-faq summary::-webkit-details-marker { display: none; }
+.pt-faq summary::after { content: "+"; flex: none; color: var(--accent); font-weight: 400; }
+.pt-faq details[open] summary::after { content: "−"; }
+.pt-faq summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.pt-faq p { margin: 0 0 18px; max-width: 760px; color: var(--text-2); font-size: 14px; line-height: 1.8; }
 .pt-next { display: grid; grid-template-columns: 1fr auto; gap: 64px; }
 .pt-next h2 { font-size: 28px; font-weight: 600; margin: 12px 0 16px; }
 .pt-next p:not(.pt-eyebrow) { max-width: 680px; color: var(--text-2); font-size: 14px; line-height: 1.8; }

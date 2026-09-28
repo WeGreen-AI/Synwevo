@@ -14,6 +14,7 @@ export function PublicNav({ signedIn, registerUrl, home }: { signedIn: boolean |
   return <>
     <a className="pt-nav-detail" href={`${base}#applications`}>{t("应用")}</a>
     <a className="pt-nav-detail" href={`${base}#together`}>{t("协作方式")}</a>
+    <a className="pt-nav-detail" href={`${base}#faq`}>{t("常见问题")}</a>
     {signedIn === undefined ? <span className="pt-nav-pending" aria-hidden="true" /> : <a className="pt-link" href={signedIn ? "/workspace" : signInUrl}>{t(signedIn ? "进入工作空间" : "登录")}</a>}
     {signedIn === false && <a className="btn primary pt-nav-register" href={registerUrl}>{t("注册账户")}</a>}
   </>;
@@ -52,6 +53,16 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
     "传输经 HTTPS 加密，服务器端不做端到端加密；平台管理员读不到业务文档与对话，组织的举报处理只看到被举报的那一条消息。",
     "没有任何 AI 处理你的内容。在线状态只给同一会话的成员看，可以关闭；已读回执默认关闭，双方都开启才显示。",
     "只用本站自己的 Cookie 维持登录；数据保存在位于日本东京的单台服务器上，每次发布前做备份。",
+  ];
+  const faq: [string, string][] = [
+    ["Synwevo 适合做什么？", "把文档制作和团队沟通放进同一个工作空间：用 Synwevo Docs 从来源数据批量生成文档，用 Synwevo Message 与组织成员私聊或建群。账户、组织和权限在各应用之间通用。"],
+    ["个人可以用吗，还是必须建组织？", "都可以。注册时选择「个人使用」，会建立你自己的工作空间；选择「团队协作」，可以创建组织，再邀请成员。"],
+    ["成员怎样加入团队？", "由组织或工作空间的管理者发出邀请，邀请通过邮件送达，用收到邀请的邮箱确认后加入。成员名单也可以批量导入，导入的人同样以邀请方式加入。"],
+    ["谁能看到我的文档和消息？", "文档按工作空间和角色授权；消息只对会话成员可见，新成员只看到加入之后的消息。平台管理员治理账户与平台配置，读不到业务文档与对话。"],
+    ["私信会给我发邮件吗？", "不会逐条发送。私信邮件默认关闭；需要时可以在账户的通知设置里开启未读摘要，按时间窗口合并发送。"],
+    ["支持哪些文件格式？", "Synwevo Docs 的模板可用 DOCX、XLSX、PDF、PPTX 以及 PNG / JPEG 图片，来源数据可以是表格、文档或扫描件。各格式支持的能力以应用内说明为准。"],
+    ["可以导出或删除我的数据吗？", "可以。账户页可以随时导出你的账户数据，包括你发出的消息；也可以申请删除账户，删除有 7 天缓冲期，期间可以撤回。"],
+    ["数据保存在哪里？有 AI 处理我的内容吗？", "数据库与文件保存在位于日本东京的单台服务器上，每次发布前做备份，传输经 HTTPS 加密。没有任何 AI 处理你的内容。"],
   ];
   return <Shell publicHome right={<PublicNav signedIn={signedIn} registerUrl={registerUrl} home />}>
     <section className="pt-hero" aria-labelledby="pt-hero-title">
@@ -100,6 +111,10 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
       <div className="pt-section-intro"><p className="pt-eyebrow">{t("数据与隐私")}</p><h2>{t("说清楚做了什么，也说清楚没做什么。")}</h2></div>
       <ul className="pt-trust-list">{trust.map(line => <li key={line}>{t(line)}</li>)}</ul>
       <div className="pt-actions"><a className="pt-text-action" href={publicPath("privacy", locale)}>{t("完整的数据与隐私说明")} <span aria-hidden="true">→</span></a><a className="pt-text-action" href={publicPath("service", locale)}>{t("服务说明与限额")} <span aria-hidden="true">→</span></a></div>
+    </section>
+    <section className="pt-public-section" id="faq" aria-labelledby="pt-faq-title">
+      <div className="pt-section-intro"><p className="pt-eyebrow">{t("常见问题")}</p><h2 id="pt-faq-title">{t("开始之前，你可能想知道。")}</h2></div>
+      <div className="pt-faq">{faq.map(([q, answer]) => <details key={q}><summary>{t(q)}</summary><p>{t(answer)}</p></details>)}</div>
     </section>
     <section className="pt-next pt-public-section" id="next">
       <div><p className="pt-eyebrow">{t("下一步")}</p><h2>{t("从一个工作空间开始。")}</h2><p>{t("创建账户，选择个人使用或加入团队。邀请通过邮件送达，用当前邮箱确认即可加入。")}</p></div>

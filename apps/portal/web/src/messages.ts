@@ -318,6 +318,25 @@ export const portalMessages = {
   "你不是该工作空间的成员": {"en": "You are not a member of this workspace", "zh-Hant": "你不是該工作空間的成員"},
   "该工作空间当前不可用": {"en": "This workspace is currently unavailable", "zh-Hant": "該工作空間目前無法使用"},
   "该组织或工作空间当前不可用": {"en": "This organization or workspace is currently unavailable", "zh-Hant": "該組織或工作空間目前無法使用"},
+  // home page FAQ (answers only restate facts the site states elsewhere; no pricing — not decided)
+  "常见问题": {"en": "FAQ", "zh-Hant": "常見問題"},
+  "开始之前，你可能想知道。": {"en": "Before you start", "zh-Hant": "開始之前，你可能想知道。"},
+  "Synwevo 适合做什么？": {"en": "What is Synwevo for?", "zh-Hant": "Synwevo 適合做什麼？"},
+  "把文档制作和团队沟通放进同一个工作空间：用 Synwevo Docs 从来源数据批量生成文档，用 Synwevo Message 与组织成员私聊或建群。账户、组织和权限在各应用之间通用。": {"en": "Bringing document work and team conversation into one workspace: Synwevo Docs generates documents in batches from your source data, and Synwevo Message lets you talk to the members of your organization directly or in groups. Accounts, organizations and permissions carry across the applications.", "zh-Hant": "把文件製作和團隊溝通放進同一個工作空間：用 Synwevo Docs 從來源資料批次產生文件，用 Synwevo Message 與組織成員私訊或建立群組。帳戶、組織和權限在各應用之間通用。"},
+  "个人可以用吗，还是必须建组织？": {"en": "Can I use it on my own, or do I need an organization?", "zh-Hant": "個人可以用嗎，還是必須建立組織？"},
+  "都可以。注册时选择「个人使用」，会建立你自己的工作空间；选择「团队协作」，可以创建组织，再邀请成员。": {"en": "Either. Choose “Personal use” when you register to get a workspace of your own, or “Team collaboration” to create an organization and invite members.", "zh-Hant": "都可以。註冊時選擇「個人使用」，會建立你自己的工作空間；選擇「團隊協作」，可以建立組織，再邀請成員。"},
+  "成员怎样加入团队？": {"en": "How do people join a team?", "zh-Hant": "成員怎樣加入團隊？"},
+  "由组织或工作空间的管理者发出邀请，邀请通过邮件送达，用收到邀请的邮箱确认后加入。成员名单也可以批量导入，导入的人同样以邀请方式加入。": {"en": "An administrator of the organization or workspace invites them by email, and they join by confirming with the address the invitation went to. A member list can also be imported in bulk; the people in it join by invitation too.", "zh-Hant": "由組織或工作空間的管理者發出邀請，邀請透過電子郵件送達，用收到邀請的信箱確認後加入。成員名單也可以批次匯入，匯入的人同樣以邀請方式加入。"},
+  "谁能看到我的文档和消息？": {"en": "Who can see my documents and messages?", "zh-Hant": "誰能看到我的文件和訊息？"},
+  "文档按工作空间和角色授权；消息只对会话成员可见，新成员只看到加入之后的消息。平台管理员治理账户与平台配置，读不到业务文档与对话。": {"en": "Documents follow the workspace and your role in it; messages are visible only to the members of a conversation, and new members see only what was sent after they joined. Platform administrators govern accounts and platform settings and cannot read business documents or conversations.", "zh-Hant": "文件按工作空間和角色授權；訊息只對會話成員可見，新成員只看到加入之後的訊息。平台管理員治理帳戶與平台設定，讀不到業務文件與對話。"},
+  "私信会给我发邮件吗？": {"en": "Will private messages send me e-mail?", "zh-Hant": "私訊會寄電子郵件給我嗎？"},
+  "不会逐条发送。私信邮件默认关闭；需要时可以在账户的通知设置里开启未读摘要，按时间窗口合并发送。": {"en": "Not one by one. E-mail for private messages is off by default; if you want it, turn on the unread digest in your account's notification settings, which gathers messages into one e-mail per window.", "zh-Hant": "不會逐則寄送。私訊郵件預設關閉；需要時可以在帳戶的通知設定裡開啟未讀摘要，按時間區間合併寄送。"},
+  "支持哪些文件格式？": {"en": "Which file formats are supported?", "zh-Hant": "支援哪些檔案格式？"},
+  "Synwevo Docs 的模板可用 DOCX、XLSX、PDF、PPTX 以及 PNG / JPEG 图片，来源数据可以是表格、文档或扫描件。各格式支持的能力以应用内说明为准。": {"en": "Synwevo Docs templates can be DOCX, XLSX, PDF, PPTX or PNG / JPEG images, and source data can be spreadsheets, documents or scans. What each format supports is described in the application.", "zh-Hant": "Synwevo Docs 的範本可用 DOCX、XLSX、PDF、PPTX 以及 PNG / JPEG 圖片，來源資料可以是表格、文件或掃描檔。各格式支援的能力以應用內說明為準。"},
+  "可以导出或删除我的数据吗？": {"en": "Can I export or delete my data?", "zh-Hant": "可以匯出或刪除我的資料嗎？"},
+  "可以。账户页可以随时导出你的账户数据，包括你发出的消息；也可以申请删除账户，删除有 7 天缓冲期，期间可以撤回。": {"en": "Yes. You can export your account data, including the messages you sent, from the account page at any time, and you can ask for your account to be deleted; deletion waits 7 days, during which you can withdraw it.", "zh-Hant": "可以。帳戶頁可以隨時匯出你的帳戶資料，包括你傳送的訊息；也可以申請刪除帳戶，刪除有 7 天緩衝期，期間可以撤回。"},
+  "数据保存在哪里？有 AI 处理我的内容吗？": {"en": "Where is my data kept, and does AI process it?", "zh-Hant": "資料保存在哪裡？有 AI 處理我的內容嗎？"},
+  "数据库与文件保存在位于日本东京的单台服务器上，每次发布前做备份，传输经 HTTPS 加密。没有任何 AI 处理你的内容。": {"en": "The database and files are kept on a single server in Tokyo, Japan, backed up before every release, and travel over HTTPS. No AI processes your content.", "zh-Hant": "資料庫與檔案保存在位於日本東京的單台伺服器上，每次發布前做備份，傳輸經 HTTPS 加密。沒有任何 AI 處理你的內容。"},
 };
 
 registerMessages(portalMessages);
