@@ -36,7 +36,7 @@ export default function OrganizationRoles({ organization, mine, catalogue, onCha
 }) {
   const { t } = useI18n();
   const [roles, setRoles] = useState<CustomRole[] | null>(null); const [error, setError] = useState<unknown>(null); const [revision, setRevision] = useState(0);
-  const [action, setAction] = useState<{ kind: "create" } | { kind: "edit"; role: CustomRole } | { kind: "delete"; role: CustomRole } | null>(null);
+  const [action, setAction] = useState<{ kind: "create" } | { kind: "edit"; role: CustomRole } | { kind: "copy"; role: CustomRole } | { kind: "delete"; role: CustomRole } | null>(null);
   const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [perms, setPerms] = useState<string[]>([]);
   const canManage = mine.includes("org.roles.manage");
   useEffect(() => {
@@ -48,6 +48,7 @@ export default function OrganizationRoles({ organization, mine, catalogue, onCha
   const open = (next: NonNullable<typeof action>) => {
     if (next.kind === "edit") { setName(next.role.name); setDescription(next.role.description || ""); setPerms(next.role.permissions); }
     else if (next.kind === "create") { setName(""); setDescription(""); setPerms([]); }
+    else if (next.kind === "copy") setName(t("{name}（副本）", { name: next.role.name }).slice(0, 60));
     setAction(next);
   };
   const labelOf = (id: string) => catalogue.find(p => p.id === id)?.label || id;
@@ -63,20 +64,27 @@ export default function OrganizationRoles({ organization, mine, catalogue, onCha
           <div className="tiny muted">{t("已分配给 {count} 位成员", { count: role.assigned_count ?? 0 })}</div></div>
         {canManage && <div className="org-actions">
           <button type="button" className="btn" onClick={() => open({ kind: "edit", role })}>{t("编辑")}</button>
+          {/* copying is creating: only a role whose every permission this manager holds (CI-94) */}
+          <button type="button" className="btn" disabled={!role.permissions.every(p => mine.includes(p)) || roles.length >= 50}
+            title={!role.permissions.every(p => mine.includes(p)) ? t("这个角色包含你没有的权限，不能复制") : roles.length >= 50 ? t("已达到 50 个自定义角色的上限") : undefined}
+            onClick={() => open({ kind: "copy", role })}>{t("复制")}</button>
           <button type="button" className="btn danger" onClick={() => open({ kind: "delete", role })}>{t("删除")}</button>
         </div>}
       </li>)}</ul>}
     {action && <OrganizationAction key={action.kind + ((action as { role?: CustomRole }).role?.id || "")} spec={{
-      title: t(action.kind === "create" ? "创建角色" : action.kind === "edit" ? "编辑角色" : "删除角色"),
+      title: t(action.kind === "create" ? "创建角色" : action.kind === "edit" ? "编辑角色" : action.kind === "copy" ? "复制角色" : "删除角色"),
       impact: action.kind === "delete"
         ? t(action.role.assigned_count ? "删除后，{count} 位成员将失去这个角色带来的权限。" : "这个角色没有分配给任何成员。", { count: action.role.assigned_count ?? 0 })
+        : action.kind === "copy" ? t("副本与「{name}」有相同的说明和权限，不分配给任何成员；之后可以单独编辑。", { name: action.role.name })
         : t("角色只能包含你自己已持有的权限。分配给成员后，成员立即获得这些权限。"),
       danger: action.kind === "delete",
       run: reason => action.kind === "create" ? post(`${orgPath(organization.id)}/roles`, { name: name.trim(), description: description.trim() || undefined, permissions: perms })
+        : action.kind === "copy" ? post(`${orgPath(organization.id)}/roles/${encodeURIComponent(action.role.id)}/copy`, { name: name.trim() })
         : action.kind === "edit" ? patch(`${orgPath(organization.id)}/roles/${encodeURIComponent(action.role.id)}`, { name: name.trim(), description: description.trim() || null, permissions: perms, version: action.role.version })
         : api(`${orgPath(organization.id)}/roles/${encodeURIComponent(action.role.id)}`, { method: "DELETE", body: { unassign: !!action.role.assigned_count } }).then(() => reason),
-    }} ready={action.kind === "delete" || (!!name.trim() && perms.length > 0)} onClose={() => setAction(null)} onDone={reload}>
-      {action.kind !== "delete" && <>
+    }} ready={action.kind === "delete" || (action.kind === "copy" ? !!name.trim() : (!!name.trim() && perms.length > 0))} onClose={() => setAction(null)} onDone={reload}>
+      {action.kind === "copy" && <div className="field"><label htmlFor="role-name">{t("角色名称")}</label><input id="role-name" className="input" value={name} maxLength={60} required onChange={e => setName(e.target.value)} /></div>}
+      {(action.kind === "create" || action.kind === "edit") && <>
         <div className="field"><label htmlFor="role-name">{t("角色名称")}</label><input id="role-name" className="input" value={name} maxLength={60} required onChange={e => setName(e.target.value)} /></div>
         <div className="field"><label htmlFor="role-desc">{t("说明（可选）")}</label><input id="role-desc" className="input" value={description} maxLength={500} onChange={e => setDescription(e.target.value)} /></div>
         <PermissionPicker catalogue={catalogue} mine={mine} value={perms} onChange={setPerms} idPrefix="role-perm" />

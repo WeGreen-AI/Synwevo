@@ -236,6 +236,35 @@ class OrgRoles:
                       (new_name, new_desc, json.dumps(sorted(perms)), now(), rid))
         return self.get(oid, rid)
 
+    def copy(self, oid: str, actor_id: str, rid: str, *, name=None) -> dict:
+        """A new role with the source role's description and permissions (CI-94). Copying is
+        creating: the actor must hold every permission in it (holding a permission is what lets a
+        manager grant it), the organization's cap and name uniqueness apply, and nobody is
+        assigned the copy. Without a name the copy takes the source's name with a number — a
+        language-neutral suffix, since the name is data every member reads."""
+        src = self.get(oid, rid)
+        if name is not None:
+            name, _, _ = self._validate(name, src["description"], src["permissions"])
+        with self.store.tx() as t:
+            self._manager(oid, actor_id, needs=frozenset(src["permissions"]))
+            if t.execute("SELECT COUNT(*) AS n FROM organization_roles WHERE organization_id=?", (oid,)).fetchone()[0] >= MAX_ROLES:
+                raise ServiceError(409, "too_many_roles", f"一个组织最多 {MAX_ROLES} 个自定义角色", {"limit": MAX_ROLES})
+            taken = {r[0] for r in t.execute("SELECT name FROM organization_roles WHERE organization_id=?", (oid,)).fetchall()}
+            if name is None:
+                for n in range(2, MAX_ROLES + 2):
+                    suffix = f" ({n})"
+                    candidate = src["name"][:60 - len(suffix)].rstrip() + suffix
+                    if candidate not in taken:
+                        name = candidate
+                        break
+            if name is None or name in taken:
+                raise ServiceError(409, "role_name_taken", "已有同名角色", {"field": "name"})
+            new_rid = new_id("orole")
+            ts = now()
+            t.execute("INSERT INTO organization_roles (id,organization_id,name,description,permissions,created_by,created_at,updated_at,version) "
+                      "VALUES (?,?,?,?,?,?,?,?,1)", (new_rid, oid, name, src["description"], json.dumps(src["permissions"]), actor_id, ts, ts))
+        return self.get(oid, new_rid)
+
     def delete(self, oid: str, actor_id: str, rid: str, *, unassign: bool = False) -> dict:
         current = self.get(oid, rid)
         with self.store.tx() as t:

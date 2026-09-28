@@ -201,6 +201,19 @@ def build_router(store, ident, sessions, audit, invites, mailer) -> APIRouter:
             return {"role": role}
         return write(request, op, sensitive=True)
 
+    @r.post("/{oid}/roles/{rid}/copy", status_code=201)
+    def copy_role(request: Request, oid: str, rid: str, body: dict = Body(default={})):
+        """A copy of a role, to adjust from (CI-94): the same rules as creating one."""
+        if set(body) - {"name"}:
+            raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
+        def op(orgs, uid):
+            orgs.require(oid, uid, active=True)
+            role = OrgRoles(store).copy(oid, uid, rid, name=body.get("name"))
+            audit(request, "organization.role.create", actor_id=uid, object_kind="organization_role", object_id=role["id"], result="ok",
+                  meta={"organization_id": oid, "permissions": role["permissions"], "copied_from": rid})
+            return {"role": role}
+        return write(request, op, sensitive=True)
+
     @r.delete("/{oid}/roles/{rid}")
     def delete_role(request: Request, oid: str, rid: str, body: dict = Body(default={})):
         if set(body) - {"unassign"}:

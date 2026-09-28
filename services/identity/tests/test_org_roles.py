@@ -173,3 +173,40 @@ def test_the_admin_base_role_still_works_as_before(org):
     assert c.post(f"{base(c, c.oid)}/workspaces", headers=hd, json={"name": "Admin made"}).status_code == 201
     assert c.post(f"{base(c, c.oid)}/roles", headers=hd, json={"name": "x", "permissions": ["org.members.view"]}).status_code == 403, \
         "an admin does not manage roles until an owner delegates it"
+
+
+def test_copying_a_role_follows_the_rules_for_creating_one(org):
+    """CI-94: a copy has the source's description and permissions, is assigned to nobody, takes a
+    numbered name when none is given, and needs every permission in it — a delegated manager
+    cannot copy a role above their reach, and the copy counts toward the cap and name uniqueness."""
+    c = org
+    h = login(c, "owner")
+    src = c.post(f"{base(c, c.oid)}/roles", headers=h, json={"name": "Reviewer", "description": "Reads members",
+                                                                "permissions": ["org.members.view", "org.members.invite"]}).json()["role"]
+    c.put(f"{base(c, c.oid)}/members/{c.users['member']['id']}/roles", headers=h, json={"role_ids": [src["id"]]})
+    r = c.post(f"{base(c, c.oid)}/roles/{src['id']}/copy", headers=h, json={})
+    assert r.status_code == 201, r.text
+    copy = r.json()["role"]
+    assert copy["id"] != src["id"] and copy["name"] == "Reviewer (2)" and copy["description"] == "Reads members"
+    assert copy["permissions"] == src["permissions"] and copy["assigned_count"] == 0 and copy["version"] == 1
+    assert c.post(f"{base(c, c.oid)}/roles/{src['id']}/copy", headers=h, json={}).json()["role"]["name"] == "Reviewer (3)"
+    named = c.post(f"{base(c, c.oid)}/roles/{src['id']}/copy", headers=h, json={"name": "Reviewer for Finance"}).json()["role"]
+    assert named["name"] == "Reviewer for Finance"
+    assert c.post(f"{base(c, c.oid)}/roles/{src['id']}/copy", headers=h, json={"name": "Reviewer"}).json()["error"] == "role_name_taken"
+    assert c.post(f"{base(c, c.oid)}/roles/{src['id']}/copy", headers=h, json={"name": "x", "permissions": ["org.settings.manage"]}).status_code == 400
+    assert c.post(f"{base(c, c.oid)}/roles/nope/copy", headers=h, json={}).status_code == 404
+    # the source's members are untouched; the copies are assigned to nobody
+    eff = c.get(f"{base(c, c.oid)}/members/{c.users['member']['id']}/permissions", headers=h).json()
+    assert [r["id"] for r in eff["roles"]] == [src["id"]]
+    # a delegated roles manager who lacks one of the source's permissions cannot copy it
+    settings = c.post(f"{base(c, c.oid)}/roles", headers=h, json={"name": "Settings", "permissions": ["org.settings.manage"]}).json()["role"]
+    mgr = c.post(f"{base(c, c.oid)}/roles", headers=h, json={"name": "Roles manager", "permissions": ["org.roles.manage", "org.members.view"]}).json()["role"]
+    c.put(f"{base(c, c.oid)}/members/{c.users['delegate']['id']}/roles", headers=h, json={"role_ids": [mgr["id"]]})
+    hd = login(c, "delegate")
+    r = c.post(f"{base(c, c.oid)}/roles/{settings['id']}/copy", headers=hd, json={})
+    assert r.status_code == 403 and r.json()["error"] == "permission_not_held"
+    assert c.post(f"{base(c, c.oid)}/roles/{src['id']}/copy", headers=hd, json={}).json()["error"] == "permission_not_held", "invite is not held"
+    ok = c.post(f"{base(c, c.oid)}/roles/{mgr['id']}/copy", headers=hd, json={"name": "Roles manager B"})
+    assert ok.status_code == 201
+    # an ordinary member cannot copy at all
+    assert c.post(f"{base(c, c.oid)}/roles/{src['id']}/copy", headers=login(c, "member"), json={}).status_code == 403

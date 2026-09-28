@@ -718,6 +718,13 @@ export const messages = {
   "请选择要接收所有权的组织成员": { en: "Choose the organization member who will receive ownership.", "zh-Hant": "請選擇要接收擁有權的組織成員" },
   "只显示被举报消息在举报时的内容、发送者、举报人和原因，不显示整段会话。": { en: "Only the reported message as it was when reported, its sender, the reporter and the reason are shown, never the whole conversation.", "zh-Hant": "只顯示被檢舉訊息在檢舉時的內容、傳送者、檢舉人和原因，不顯示整段對話。" },
 
+  // CI-94: copying a role
+  "复制": { en: "Copy", "zh-Hant": "複製" },
+  "复制角色": { en: "Copy role", "zh-Hant": "複製角色" },
+  "{name}（副本）": { en: "{name} (copy)", "zh-Hant": "{name}（副本）" },
+  "这个角色包含你没有的权限，不能复制": { en: "This role includes permissions you do not hold, so you cannot copy it", "zh-Hant": "這個角色包含你沒有的權限，不能複製" },
+  "已达到 50 个自定义角色的上限": { en: "The limit of 50 custom roles has been reached", "zh-Hant": "已達到 50 個自訂角色的上限" },
+  "副本与「{name}」有相同的说明和权限，不分配给任何成员；之后可以单独编辑。": { en: "The copy has the same description and permissions as “{name}” and is not assigned to anyone; you can edit it on its own afterwards.", "zh-Hant": "副本與「{name}」有相同的說明和權限，不分配給任何成員；之後可以單獨編輯。" },
 };
 
 registerMessages(messages);
