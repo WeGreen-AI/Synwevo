@@ -1,7 +1,7 @@
 /**
  * Synwevo Message's own shell.
  *
- * A separate build on its own origin (message.wegreen.ltd in production, message.localhost here),
+ * A separate build on its own origin (message.synwevo.com in production, message.localhost here),
  * not a route in the account shell it moved out of in CI-66. The account service refuses the
  * conversation API by role, so a shared shell would render a page whose every call is a correct
  * refusal presented as a broken page — the same reason the workbench and the portal are their

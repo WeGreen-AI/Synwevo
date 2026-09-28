@@ -14,6 +14,6 @@ export function SignedOut({ product }: { product: string }) {
   return <StatusPage product={product} brandHref="/" title={t("已退出")}>
     <p>{t("当前设备的统一登录与关联应用会话已退出。其他设备不受影响。")}</p>
     <a className="btn primary" href={signInUrl(state, "/")}>{t("重新登录")}</a>
-    {state?.portal_url && <a className="btn" href={state.portal_url}>{t("返回平台首页")}</a>}
+    {(state?.site_url || state?.portal_url) && <a className="btn" href={state?.site_url || state?.portal_url}>{t("返回平台首页")}</a>}
   </StatusPage>;
 }

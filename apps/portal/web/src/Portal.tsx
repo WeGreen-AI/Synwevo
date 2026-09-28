@@ -3,7 +3,7 @@ import { Brand, LanguageMenu, Logo, Menu, useI18n, useMediaQuery } from "@synwev
 import { ApiError, get, post, setWorkspaceContext, SignedOut, type Me, useSession } from "@synwevo/auth-client";
 import { PublicHome } from "./PublicHome";
 import { PublicPage } from "./PublicPages";
-import { PUBLIC_META, publicPath, publicRoute } from "./publicRoutes";
+import { PUBLIC_META, isWorkspacePath, publicPath, publicRoute, siteHref, workspaceSurface } from "./publicRoutes";
 import "./messages";
 import { MessagesLink, messagesHref, NotificationBell } from "@synwevo/auth-client";
 
@@ -33,7 +33,7 @@ export function accountLink(base: string, path: string): string {
 export function Portal() {
   const { t, locale } = useI18n();
   const session = useSession();
-  const route = useMemo(() => publicRoute(window.location.pathname), []);
+  const route = useMemo(() => (workspaceSurface() ? null : publicRoute(window.location.pathname)), []);
   const publicPage = route !== null;
   const [state, setState] = useState<State>({ phase: "loading" });
   const [revision, setRevision] = useState(0);
@@ -116,13 +116,14 @@ export function Portal() {
   }
   // Where the account service's logout returns to after "退出登录" ended the platform session.
   if (window.location.pathname === "/signed-out") return <SignedOut product="Workspace" />;
-  if (window.location.pathname !== "/workspace") return <Shell right={<a className="pt-link" href="/">{t("返回首页")}</a>}>
+  const siteHome = siteHref(session.state?.site_url, "/");
+  if (!isWorkspacePath(window.location.pathname)) return <Shell right={<a className="pt-link" href={siteHome}>{t("返回首页")}</a>}>
     <section className="pt-status" role="status"><p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("页面不存在")}</h1>
       <p>{t("这个地址在 Synwevo Workspace 里不存在。")}</p>
-      <div className="pt-actions"><a className="btn primary" href="/workspace">{t("进入工作空间")}</a><a className="btn" href="/">{t("返回首页")}</a></div>
+      <div className="pt-actions"><a className="btn primary" href="/workspace">{t("进入工作空间")}</a><a className="btn" href={siteHome}>{t("返回首页")}</a></div>
     </section>
   </Shell>;
-  if (state.phase !== "ready") return <Shell right={<a className="pt-link" href="/">{t("返回首页")}</a>}>
+  if (state.phase !== "ready") return <Shell right={<a className="pt-link" href={siteHome}>{t("返回首页")}</a>}>
     <section className="pt-status">
       {state.phase === "loading" ? <><span className="pt-loader" aria-hidden="true" /><h1 role="status">{t("正在载入工作空间…")}</h1></> : state.phase === "signed-out" ? <>
         <p className="pt-eyebrow">Synwevo Workspace</p><h1>{t("欢迎回来")}</h1>
@@ -209,9 +210,9 @@ export function Shell({ right, children, publicHome = false }: { right?: ReactNo
   // workspace is where people start, and it had no way into their conversations. Its target is
   // Synwevo Message's registered address (CI-66), through that origin's sign-in start.
   return <div className={`pt${publicHome ? " pt-public" : ""}`}><a className="pt-skip" href="#pt-main">{t("跳到主要内容")}</a>
-    <header className="pt-top"><Brand href="/" size="lg" product={publicHome ? undefined : "Workspace"} label={t("Synwevo 首页")} />
+    <header className="pt-top"><Brand href={siteHref(state?.site_url, "/")} size="lg" product={publicHome ? undefined : "Workspace"} label={t("Synwevo 首页")} />
       <nav className="pt-nav" aria-label={t("主导航")}>{right}{me && <MessagesLink href={messagesHref(state, { lang: locale })} />}<NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} /><LanguageMenu /></nav></header>
     <main className="pt-main" id="pt-main" tabIndex={-1}>{children}</main>
-    <footer className="pt-footer"><Logo version="wordmark" height={14} /><a href={publicPath("privacy", locale)}>{t("数据与隐私")}</a><a href={publicPath("service", locale)}>{t("服务说明")}</a><span>{t("协同 · 编织 · 持续完善")}</span></footer>
+    <footer className="pt-footer"><Logo version="wordmark" height={14} /><a href={siteHref(state?.site_url, publicPath("privacy", locale))}>{t("数据与隐私")}</a><a href={siteHref(state?.site_url, publicPath("service", locale))}>{t("服务说明")}</a><span>{t("协同 · 编织 · 持续完善")}</span></footer>
   </div>;
 }

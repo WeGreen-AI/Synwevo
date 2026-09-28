@@ -64,7 +64,7 @@ PORTAL = f"http://portal.localhost:{PORTAL_PORT}"
 # and a cookie scope — renaming it would invalidate every credential bound to it, in exchange
 # for a tidier URL bar on one developer machine.
 DOCS = f"http://docweave.localhost:{DOCS_PORT}"
-# Synwevo Message (CI-66): conversations on their own origin. Production is message.wegreen.ltd
+# Synwevo Message (CI-66): conversations on their own origin. Production is message.synwevo.com
 # by decision; locally `message.localhost`, singular like the product name.
 MESSAGES_PORT = int(os.environ.get("SYNWEVO_MESSAGES_PORT", "8768"))
 MESSAGES = f"http://message.localhost:{MESSAGES_PORT}"

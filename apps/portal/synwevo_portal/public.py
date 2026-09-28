@@ -172,8 +172,41 @@ COPY: dict[str, dict] = {
 
 
 def public_origin() -> str | None:
-    """Canonical URLs come only from configuration, never an untrusted Host header."""
-    value = (env.get("PORTAL_URL") or "").strip().rstrip("/")
+    """Canonical URLs come only from configuration, never an untrusted Host header: the public
+    site's address (`SYNWEVO_SITE_URL`), else the portal's own (`SYNWEVO_PORTAL_URL`)."""
+    return _valid_origin(env.get("SITE_URL") or env.get("PORTAL_URL"))
+
+
+def workspace_origin() -> str | None:
+    """The portal process's own address, where the workspace lives (`SYNWEVO_PORTAL_URL`)."""
+    return _valid_origin(env.get("PORTAL_URL"))
+
+
+def split_hosts() -> tuple[str, str] | None:
+    """(site origin, workspace origin) when the public site and the workspace are on different
+    hosts (production: synwevo.com and workplace.synwevo.com), else None — one host serves both,
+    as on a single-host install and in local development."""
+    site, work = public_origin(), workspace_origin()
+    if site and work and urlsplit(site).hostname != urlsplit(work).hostname:
+        return site, work
+    return None
+
+
+def request_host(request: Request) -> str:
+    """The host this request was addressed to, only for *choosing between the configured
+    surfaces*. Every absolute URL a response contains still comes from configuration."""
+    return (request.headers.get("host") or "").split(":")[0].strip().lower()
+
+
+#: Paths of the workspace surface that the public site hands to the workspace host (GET only):
+#: the workspace itself, the sign-in start and the signed-out page. The sign-in *callback* and
+#: back-channel logout are not moved: an authorization code is only ever redeemed where it was
+#: issued for, never replayed to another address.
+WORKSPACE_PATHS = ("/workspace", "/auth/start", "/signed-out")
+
+
+def _valid_origin(raw: str | None) -> str | None:
+    value = (raw or "").strip().rstrip("/")
     try:
         parts = urlsplit(value)
         if (parts.scheme not in ("http", "https") or not parts.hostname or parts.username
@@ -186,8 +219,12 @@ def public_origin() -> str | None:
     return value
 
 
-def document(dist: Path, path: str, locale: str) -> HTMLResponse:
+def document(dist: Path, path: str, locale: str, *, surface: str | None = None) -> HTMLResponse:
     source = (dist / "index.html").read_text(encoding="utf-8")
+    if surface:
+        # The shell decides its page from the path before the session loads; on the workspace
+        # host "/" is the workspace, not the public home, and the server says so up front.
+        source = source.replace("</head>", f'<meta name="synwevo-surface" content="{html.escape(surface, quote=True)}" /></head>', 1)
     words = COPY[locale]
     public = path in PUBLIC_PATHS
     page = PUBLIC_PAGES.get(path, "home")
@@ -387,7 +424,10 @@ def install_public(api: FastAPI, dist: Path, store=None, ident=None) -> None:
     router = APIRouter(include_in_schema=False)
 
     @router.get("/robots.txt")
-    def robots():
+    def robots(request: Request):
+        split = split_hosts()
+        if split and request_host(request) == urlsplit(split[1]).hostname:
+            return PlainTextResponse("User-agent: *\nDisallow: /\n")      # the workspace host is not for search
         lines = ["User-agent: *", "Disallow: /", "Allow: /portal-assets/", *[f"Allow: {p}$" for p in PUBLIC_PATHS]]
         if origin := public_origin():
             lines.append(f"Sitemap: {origin}/sitemap.xml")
@@ -414,6 +454,12 @@ def install_public(api: FastAPI, dist: Path, store=None, ident=None) -> None:
         def page(request: Request):
             path = request.url.path
             locale = PUBLIC_PATHS.get(path, "zh-Hans")
+            split = split_hosts()
+            if split and request_host(request) == urlsplit(split[1]).hostname:
+                # The workspace host: its root is the workspace; the public pages live on the site.
+                if path in PUBLIC_PATHS and path != "/":
+                    return _moved(split[0], request)
+                return document(dist, "/workspace", locale, surface="workspace")
             return document(dist, path, locale)
 
         for path in (*PUBLIC_PATHS, "/workspace"):
@@ -423,7 +469,22 @@ def install_public(api: FastAPI, dist: Path, store=None, ident=None) -> None:
 
     @api.middleware("http")
     async def private_indexing(request: Request, call_next):
+        split = split_hosts()
+        host = request_host(request)
+        path = request.url.path
+        if (split and host == urlsplit(split[0]).hostname and request.method in ("GET", "HEAD")
+                and any(path == p or path.startswith(p + "/") for p in WORKSPACE_PATHS)):
+            # The public site hands workspace addresses (old links, bookmarks, a sign-in started
+            # from the home page) to the workspace host, path and query kept.
+            return _moved(split[1], request)
         response = await call_next(request)
-        if request.url.path not in PUBLIC_PATHS and not request.url.path.startswith("/portal-assets/"):
+        on_workspace_host = bool(split) and host == urlsplit(split[1]).hostname
+        if on_workspace_host or (path not in PUBLIC_PATHS and not path.startswith("/portal-assets/")):
             response.headers["X-Robots-Tag"] = "noindex, nofollow"
         return response
+
+
+def _moved(origin: str, request: Request) -> Response:
+    """A permanent, method-keeping redirect to the same path on a configured origin."""
+    target = origin + request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    return Response(status_code=308, headers={"Location": target, "Cache-Control": "no-store"})

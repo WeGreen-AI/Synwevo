@@ -327,3 +327,77 @@ def test_the_deployment_facts_reader_identifies_itself_and_reads_503_bodies():
     finally:
         server.shutdown(); server.server_close()
 
+
+
+# ---------------------------------------------------------------- the site and the workspace on two hosts
+SITE = "https://site.example.test"
+WORK = "https://work.example.test"
+
+
+@pytest.fixture()
+def split_portal(tmp_path, monkeypatch):
+    """Production shape since round 10: one portal process, the public site on synwevo.com and the
+    workspace on workplace.synwevo.com (here: site/work.example.test)."""
+    monkeypatch.setenv("SYNWEVO_SITE_URL", SITE)
+    data = tmp_path / "fixture-data"
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(data))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_ROLE", "portal")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_ISSUER", "http://accounts.localhost:8770")
+    monkeypatch.setenv("SYNWEVO_PORTAL_URL", WORK)
+    dist = tmp_path / "fixture-build"
+    dist.mkdir()
+    source = Path(__file__).resolve().parents[2] / "apps/portal/web/index.html"
+    dist.joinpath("index.html").write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setenv("SYNWEVO_PORTAL_UI_DIR", str(dist))
+    api = create_app(str(data), role="portal", start_jobs=False)
+    return TestClient(api, base_url=SITE), TestClient(api, base_url=WORK)
+
+
+def test_the_site_host_serves_the_public_pages_and_hands_workspace_addresses_to_the_workspace_host(split_portal):
+    site, _ = split_portal
+    home = site.get("/")
+    assert home.status_code == 200 and "<h1>" in home.text and 'name="synwevo-surface"' not in home.text
+    assert f'<link rel="canonical" href="{SITE}/" />' in home.text and f'property="og:url" content="{SITE}/"' in home.text
+    assert home.headers["X-Robots-Tag"] == "index, follow"
+    for path, want in (("/workspace", f"{WORK}/workspace"), ("/workspace?ws=w_1", f"{WORK}/workspace?ws=w_1"),
+                       ("/auth/start?next=%2Fworkspace&lang=en", f"{WORK}/auth/start?next=%2Fworkspace&lang=en"),
+                       ("/signed-out", f"{WORK}/signed-out")):
+        r = site.get(path, follow_redirects=False)
+        assert r.status_code == 308 and r.headers["location"] == want, (path, r.status_code, r.headers.get("location"))
+    # a code is only redeemed where it was issued for: the callback is not moved
+    assert site.get("/auth/callback?code=x&state=y", follow_redirects=False).status_code != 308
+    # an injected Host cannot choose the target: the address comes from configuration
+    r = site.get("/workspace", headers={"Host": "site.example.test", "X-Forwarded-Host": "evil.example.test"}, follow_redirects=False)
+    assert r.headers["location"].startswith(WORK)
+    sitemap = [n.text for n in ET.fromstring(site.get("/sitemap.xml").text).iter() if n.tag.endswith("loc")]
+    assert sitemap and all(u.startswith(SITE) for u in sitemap)
+    assert site.get("/public/deployment.json").status_code == 200, "the public pages' own data stays on the site"
+
+
+def test_the_workspace_host_serves_the_workspace_at_its_root_and_sends_public_pages_to_the_site(split_portal):
+    _, work = split_portal
+    root = work.get("/")
+    assert root.status_code == 200
+    assert '<meta name="synwevo-surface" content="workspace" />' in root.text, "the shell must know / is the workspace"
+    assert "<h1>" not in root.text and 'rel="canonical"' not in root.text and 'property="og:' not in root.text
+    assert root.headers["X-Robots-Tag"] == "noindex, nofollow"
+    assert 'name="synwevo-surface" content="workspace"' in work.get("/workspace").text
+    for path in ("/privacy", "/en", "/zh-Hant/service"):
+        r = work.get(path, follow_redirects=False)
+        assert r.status_code == 308 and r.headers["location"] == SITE + path, (path, r.headers.get("location"))
+    assert work.get("/robots.txt").text == "User-agent: *\nDisallow: /\n"
+    # both hosts answer the same public state; the shells use it for "back to the site/workspace"
+    for client in split_portal:
+        st = client.get("/api/auth/state").json()
+        assert st["portal_url"] == WORK and st["site_url"] == SITE
+
+
+def test_a_single_host_deployment_keeps_both_surfaces_on_one_host(portal):
+    """No SYNWEVO_SITE_URL: nothing moves, the site address falls back to the portal's own."""
+    c = TestClient(portal[0], base_url="https://portal.example.test")
+    assert c.get("/workspace", follow_redirects=False).status_code == 200
+    assert 'name="synwevo-surface"' not in c.get("/").text
+    assert c.get("/api/auth/state").json()["site_url"] == "https://portal.example.test"

@@ -30,3 +30,25 @@ export const PUBLIC_META: Record<PublicPage, { title: string; description: strin
   privacy: { title: "数据与隐私 · Synwevo", description: "Synwevo 如何处理你的账户、文档与消息数据：存储位置、Cookie、保留期限、导出与删除。" },
   service: { title: "服务说明 · Synwevo", description: "Synwevo 是什么、有哪些应用与角色、如何注册、有哪些限制、遇到问题找谁。" },
 };
+
+/** True on the workspace host (production: workplace.synwevo.com), where the server marks the
+ *  shell with `<meta name="synwevo-surface" content="workspace">`: there "/" is the workspace,
+ *  and the public pages live on the site host. Absent on a single-host deployment. */
+export function workspaceSurface(): boolean {
+  return typeof document !== "undefined" && document.querySelector('meta[name="synwevo-surface"]')?.getAttribute("content") === "workspace";
+}
+
+/** Whether this page is the workspace: `/workspace` anywhere, or `/` on the workspace host. */
+export function isWorkspacePath(pathname: string): boolean {
+  return pathname === "/workspace" || (workspaceSurface() && pathname === "/");
+}
+
+/** A public-site address from the workspace surface: absolute on the site's configured origin
+ *  (server-controlled `site_url`), a plain path everywhere else. */
+export function siteHref(siteUrl: string | undefined, path: string): string {
+  if (!workspaceSurface() || !siteUrl) return path;
+  try {
+    const u = new URL(siteUrl);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.origin + path : path;
+  } catch { return path; }
+}

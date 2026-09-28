@@ -1785,6 +1785,16 @@ sitemap 9 条、`/public/deployment.json` 只含 `checked_at/accounts/docs`：�
 Chromium 点「返回工作空间」→ 浏览器询问（`beforeunload`）→ 留下，输入仍在；改回原值 → 处理器解除 → 直接离开且没有第二次询问。WebKit 的 Playwright 自动化不向脚本展示该询问（连 `page.close(run_before_unload=True)` 也不结算），
 改为派发 `beforeunload` 事件核对 `defaultPrevented`（编辑时 true，改回 false）。**未验证**：真机 Safari/手机浏览器上的询问外观。
 
+### 16.80 第十轮五主机：站点与工作空间分主机（CI-82）
+
+**复现**（2026-09-28，线上只读）：`https://workplace.synwevo.com/` → 308 `https://synwevo.com/workspace`（第九轮的别名规则，与第十轮映射相反）；
+`https://message.synwevo.com/` → 502（请求已到网关，网关对未配置主机答 444）；`https://message.wegreen.ltd` 无法连接。
+**实现**：见 issues.md CI-82。**验证**：`tests/integration/test_portal_public.py` 新增三项（站点主机：公开页 SSR、canonical/og 用站点、`/workspace`、带查询的 `/workspace?ws=`、`/auth/start`、`/signed-out` 308 到工作空间主机、`/auth/callback` 不移、伪造 `X-Forwarded-Host` 不影响目标、sitemap 全是站点地址、`deployment.json` 留在站点；
+工作空间主机：根即工作空间外壳（`synwevo-surface`，无 h1/canonical/og，noindex）、`/privacy` `/en` `/zh-Hant/service` 308 回站点、robots 全禁、两主机公开状态 `portal_url`/`site_url` 一致；单主机：不设站点地址时什么都不移）与既有用例全部通过；
+`test_shells`、`test_sso_chain`、`test_messages_origin`、`test_security_headers`、`test_oidc_flow`、四守卫、typecheck/build、`npm test --workspaces`、infra 6 项通过；`nginx -t` 通过。
+隔离实例门户以 `SYNWEVO_SITE_URL=http://site.localhost:31769` 重启（同一进程两主机），`ui_check_split.py`（Chromium 1280/390）：站点首页「登录」→ 账户登录页 → 落在工作空间主机 `/workspace`；工作空间主机根即工作空间并有「消息」入口；
+品牌链接与页脚「数据与隐私」指向站点；账户页「返回工作空间」→ 工作空间主机；0 页面错误。之后门户恢复单主机，供其它证明使用。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

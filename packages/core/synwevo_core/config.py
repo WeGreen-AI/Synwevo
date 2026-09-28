@@ -19,7 +19,7 @@ ACCOUNT_NAME = "Synwevo Account"
 #: 文档应用的对外名称。它是平台上的一个应用，不是平台本身。
 DOCS_NAME = "Synwevo Docs"
 #: 消息应用的对外名称：组织内的私聊与群聊，自 CI-66 起是平台上的第二个应用，有自己的源站
-#: （生产 https://message.wegreen.ltd）。名字里没有 s：产品名是 Message。
+#: （生产 https://message.synwevo.com）。名字里没有 s：产品名是 Message。
 MESSAGES_NAME = "Synwevo Message"
 
 
@@ -35,3 +35,13 @@ def platform_name() -> str:
 def portal_url() -> str:
     """Where the account pages' "back" link goes. Server-controlled, never a query parameter."""
     return (env.get("PORTAL_URL") or "").rstrip("/")
+
+
+def site_url() -> str:
+    """The public site: the home page, 数据与隐私 and 服务说明 (production: https://synwevo.com).
+
+    `SYNWEVO_PORTAL_URL` is the portal process's own address — where the workspace lives and where
+    its sign-in round trip returns (production: https://workplace.synwevo.com). The two are the same
+    process on two hosts; a deployment that sets no site address keeps both on one host, which is
+    what local development and a single-host install do."""
+    return (env.get("SITE_URL") or env.get("PORTAL_URL") or "").rstrip("/")

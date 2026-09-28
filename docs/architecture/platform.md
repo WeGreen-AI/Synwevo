@@ -68,7 +68,7 @@ Cookie 按**主机**划分，不按端口。`localhost:8765` 与 `localhost:8766
 | 平台账户服务（OIDC Provider） | `http://accounts.localhost:8770` | `dw_session`（host-only，账户服务域） |
 | Synwevo Workspace（OIDC Client） | `http://portal.localhost:8769` | `dw_session`（host-only，门户域） |
 | Synwevo Docs（OIDC Client） | `http://docweave.localhost:8765` | `dw_session`（host-only，Synwevo Docs 域） |
-| Synwevo Message（OIDC Client，CI-66） | `http://message.localhost:8768` | `dw_session`（host-only，消息应用域；生产 `message.wegreen.ltd`） |
+| Synwevo Message（OIDC Client，CI-66） | `http://message.localhost:8768` | `dw_session`（host-only，消息应用域；生产 `message.synwevo.com`） |
 
 同名 Cookie，四个不同的主机，因此是四个互不相通的值——这正是要验证的性质。
 所有 Cookie **不设 `Domain` 属性**（host-only），按 RFC 6265 不会发往兄弟主机。

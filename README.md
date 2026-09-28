@@ -35,7 +35,7 @@ Synwevo 由三个分开构建、分开启动、分开测试的部分组成，共
 | **Synwevo Workspace** | 公开首页与登录后的工作空间门户：告诉你有哪些应用、切换工作空间、进入账户 | `apps/portal/` |
 | **Synwevo Account** | 统一账户：口令 / Passkey / TOTP / 邮箱验证码 / 外部身份提供商登录，邀请与找回，组织与工作空间治理，平台管理后台，OIDC 授权服务器 | `services/identity/` |
 | **Synwevo Docs** | 文档自动化应用：左侧选数据、右侧选模板、建立映射，按样本规则批量生成真实的 DOCX / XLSX / PDF / PPTX / CSV / 图片 | `apps/docs/` |
-| **Synwevo Message** | 组织内的私聊与群聊：回复、表情回应、附件、提及、群公告、举报提交；自己的源站（`message.wegreen.ltd`） | `apps/messages/` |
+| **Synwevo Message** | 组织内的私聊与群聊：回复、表情回应、附件、提及、群公告、举报提交；自己的源站（`message.synwevo.com`） | `apps/messages/` |
 
 平台的定位是**工作流程自动化**。今天它交付的是一条完整的文档自动化流程：数据源 → 模板 → 映射与样本规则 →
 预检 → 后台任务 → 可核对的产物，并把同一条流程通过 `/api/v1`、Python / Node SDK、Webhook 和 n8n 工作流开放给机器。

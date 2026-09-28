@@ -35,6 +35,11 @@ def account_url(role: str) -> str:
     return issuer().rstrip("/") + "/account"
 
 
+def _site_url() -> str:
+    from synwevo_core.config import site_url
+    return site_url()
+
+
 def public_state(ident: Identity, role: str) -> dict:
     """What a sign-in screen needs before anyone has identified themselves."""
     r = role
@@ -56,6 +61,9 @@ def public_state(ident: Identity, role: str) -> dict:
             # page took from a query string would be an open redirect on the one origin that
             # must never have one.
             "portal_url": env.get("PORTAL_URL") or "",
+            # The public site (home, 数据与隐私, 服务说明), for "返回平台首页" and the footer; the
+            # same as portal_url on a single-host deployment (synwevo_core.config.site_url).
+            "site_url": _site_url(),
             # Which application this process is, for the account page's "back to <app>" link.
             # An id, matched server-side against the applications the person may open; the
             # account page never takes a URL from a query string.

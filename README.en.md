@@ -37,7 +37,7 @@ authority and one design system:
 | **Synwevo Workspace** | Public home page and the signed-in portal: which applications you have, workspace switching, account entry | `apps/portal/` |
 | **Synwevo Account** | Unified account: password / passkey / TOTP / e-mail code / external identity provider sign-in, invitations and recovery, organization and workspace governance, platform administration, OIDC authorization server | `services/identity/` |
 | **Synwevo Docs** | Document automation: pick data on the left, pick a template on the right, connect them, and batch-generate real DOCX / XLSX / PDF / PPTX / CSV / image files by sample rule | `apps/docs/` |
-| **Synwevo Message** | Direct messages and groups within an organization: replies, reactions, attachments, mentions, announcements, reports; its own origin (`message.wegreen.ltd`) | `apps/messages/` |
+| **Synwevo Message** | Direct messages and groups within an organization: replies, reactions, attachments, mentions, announcements, reports; its own origin (`message.synwevo.com`) | `apps/messages/` |
 
 The platform's positioning is **workflow automation**. What it ships today is one complete document
 automation flow: sources → template → mappings and sample rules → preflight → background job →

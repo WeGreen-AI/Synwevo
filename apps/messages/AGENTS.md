@@ -1,6 +1,6 @@
 # Synwevo Message（`apps/messages/`）
 
-平台上的第二个应用：组织内的私聊与群聊，有自己的源站（生产 `https://message.wegreen.ltd`，
+平台上的第二个应用：组织内的私聊与群聊，有自己的源站（生产 `https://message.synwevo.com`，
 本机 `http://message.localhost:8768`）。**先读仓库根目录的 `AGENTS.md`**——这里只写这个模块自己的事。
 设计记录在 `docs/platform/messaging.md`。
 

@@ -34,7 +34,10 @@ x-env: &env
   # Product hosts (2026-09-27 cutover, docs/platform/domain-migration.md): the platform lives on
   # synwevo.com; the old *.wegreen.ltd hosts answer 308 to their new counterparts (nginx.conf).
   SYNWEVO_ISSUER: https://accounts.synwevo.com
-  SYNWEVO_PORTAL_URL: https://synwevo.com
+  # The portal process serves two hosts (round 10): the workspace, which is its own address
+  # (sign-in returns there, every "返回工作空间" goes there), and the public site.
+  SYNWEVO_PORTAL_URL: https://workplace.synwevo.com
+  SYNWEVO_SITE_URL: https://synwevo.com
   # Public registration uses mailbox verification; never grants platform administration.
   # A subsequently persisted administrator policy takes precedence over this environment value.
   SYNWEVO_REGISTRATION: open
@@ -119,23 +122,23 @@ services:
     environment:
       <<: *env
       SYNWEVO_ROLE: portal
-      SYNWEVO_APP_URL: https://synwevo.com
-      SYNWEVO_PUBLIC_URL: https://synwevo.com
+      SYNWEVO_APP_URL: https://workplace.synwevo.com
+      SYNWEVO_PUBLIC_URL: https://workplace.synwevo.com
       SYNWEVO_OIDC_CLIENT_ID: portal-web
       SYNWEVO_OIDC_APP_ID: platform
     depends_on:
       accounts: {condition: service_healthy}
   messages:
-    # Synwevo Message (CI-66): conversations on their own origin. The host stays message.wegreen.ltd
-    # by decision (docs/platform/domain-migration.md §1), not message.synwevo.com. The process
+    # Synwevo Message (CI-66): conversations on their own origin, message.synwevo.com (round 10;
+    # docs/platform/domain-migration.md §1). The process
     # registers itself in the application registry at start, which is how the account service,
     # the portal and Docs learn where the 消息 link and every conversation notification go.
     <<: *app
     environment:
       <<: *env
       SYNWEVO_ROLE: messages
-      SYNWEVO_APP_URL: https://message.wegreen.ltd
-      SYNWEVO_PUBLIC_URL: https://message.wegreen.ltd
+      SYNWEVO_APP_URL: https://message.synwevo.com
+      SYNWEVO_PUBLIC_URL: https://message.synwevo.com
       SYNWEVO_OIDC_CLIENT_ID: messages-web
       SYNWEVO_OIDC_APP_ID: messages
       # Attachments go through the same acceptance chain as Docs uploads and member imports:
