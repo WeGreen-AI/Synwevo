@@ -234,7 +234,6 @@ export const refusalMessages = {
   "请为这个重复内容块选择分段字段": { en: "Choose a split-by field for this repeating block.", "zh-Hant": "請為這個重複內容塊選擇分段欄位" },
   "列来源按行取值，只能用于「每行一份」和「每组一份」；「每文件一份」「每块一份」里请改选单元格或区域": { en: "A column is read row by row, so it can be used only in “one per row” and “one per group”. In “one per file” and “one per block”, choose a cell or a range instead.", "zh-Hant": "列來源按行取值，只能用於「每行一份」和「每組一份」；「每文件一份」「每塊一份」裡請改選單元格或區域" },
   "「每行一份」模式下每条样本只有一行，不能作为重复明细来源；请改用「每文件一份」或「每组一份」": { en: "In “one per row” mode each sample has only one row, so it cannot be the source of a repeating detail. Use “one per file” or “one per group”.", "zh-Hant": "「每行一份」模式下每條樣本只有一行，不能作為重複明細來源；請改用「每文件一份」或「每組一份」" },
-  "形状中的段落数量与代表文件不同": { en: "The shape has a different number of paragraphs than in the representative file.", "zh-Hant": "形狀中的段落數量與代表文件不同" },
   // a group's conflicting values: shown as 「映射 #n：<this>：values。请在映射中…」, so no full stop
   "同一组内该字段有多个不同值": { en: "This field has different values within one group", "zh-Hant": "同一組內該欄位有多個不同值" },
   // the fill and its checks
@@ -451,6 +450,7 @@ export const refusalPatterns = {
   "同名列「{name}」没有第 {n} 个": { en: "Of the columns named “{name}”, there is no number {n}.", "zh-Hant": "同名列「{name}」沒有第 {n} 個" },
   "同名列「{name}」只有 1 个，找不到第 {n} 个": { en: "There is only one column named “{name}”, so number {n} cannot be found.", "zh-Hant": "同名列「{name}」只有 1 個，找不到第 {n} 個" },
   "找不到第 {slide} 张幻灯片的形状「{shape}」": { en: "The shape “{shape}” on slide {slide} cannot be found.", "zh-Hant": "找不到第 {slide} 張投影片的形狀「{shape}」" },
+  "第 {slide} 张幻灯片的形状「{shape}」有 {count} 段，代表文件中取值的是第 {para} 段": { en: { one: "The shape “{shape}” on slide {slide} has {count} paragraph, but the value is read from paragraph {para} in the representative file.", other: "The shape “{shape}” on slide {slide} has {count} paragraphs, but the value is read from paragraph {para} in the representative file." }, "zh-Hant": "第 {slide} 張投影片的形狀「{shape}」有 {count} 段，代表文件中取值的是第 {para} 段" },
   "形状文字中找不到标签「{label}」": { en: "The label “{label}” cannot be found in the shape's text.", "zh-Hant": "形狀文字中找不到標籤「{label}」" },
   // value transforms and group values (engine/transforms.py)
   "不支持的转换：{name}": { en: "Unsupported transform: {name}", "zh-Hant": "不支援的轉換：{name}" },

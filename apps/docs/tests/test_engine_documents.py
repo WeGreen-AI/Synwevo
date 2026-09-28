@@ -275,6 +275,26 @@ def test_pptx_multiline_value_in_empty_cell_is_schema_valid():
     assert _table_texts(out) == [["名称", "一\x0b二"]]                             # python-pptx reads a:br as \v
 
 
+def test_pptx_source_with_fewer_paragraphs_names_the_slide_shape_and_paragraph():
+    """A source deck whose text box has fewer paragraphs than the representative file says which
+    slide, which shape and which paragraph the value was read from — not just "differs"."""
+    from synwevo_docs.engine.ooxml import Package
+    prs = Presentation()                          # TEST fixture: one text box with one paragraph
+    s = prs.slides.add_slide(prs.slide_layouts[6])
+    box = s.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+    box.name = "客户信息"
+    box.text_frame.text = "客户：甲"
+    buf = io.BytesIO()
+    prs.save(buf)
+    pkg = Package(buf.getvalue())
+    loc = {"slide": 0, "shape": str(box.shape_id), "shape_name": "客户信息", "para": 2}
+    with pytest.raises(R.ResolveError) as e:
+        P.extract_text(pkg, loc)
+    assert e.value.code == "path_missing"
+    assert str(e.value) == "第 1 张幻灯片的形状「客户信息」有 1 段，代表文件中取值的是第 3 段"
+    assert P.extract_text(pkg, {**loc, "para": 0}) == "客户：甲"
+
+
 # ====================================================================== R02: optional fields left empty
 def test_optional_empty_single_field_is_a_warning():
     src = SourceDoc("T", "t.csv", "csv", "table", workbook_json=None)

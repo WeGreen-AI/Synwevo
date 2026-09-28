@@ -279,7 +279,8 @@ def extract_text(pkg: Package, loc: dict) -> str:
     pi = int(loc.get("para", 0))
     if pi >= len(paras):
         from .resolve import ResolveError
-        raise ResolveError("path_missing", "形状中的段落数量与代表文件不同")
+        raise ResolveError("path_missing", f"第 {int(loc['slide']) + 1} 张幻灯片的形状「{loc.get('shape_name') or loc['shape']}」有 {len(paras)} 段，"
+                                           f"代表文件中取值的是第 {pi + 1} 段")
     text = para_text(paras[pi])
     pre, suf = loc.get("prefix", ""), loc.get("suffix", "")
     s = len(pre) if pre and text.startswith(pre) else int(loc.get("start", 0))
