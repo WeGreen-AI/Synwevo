@@ -14,7 +14,7 @@
 | 生产主机侧 | ClamAV（CI-87）；网关按请求解析（CI-89）；`bin/receive.py` 含 messages（CI-98）；成员导入到期清理**未开启**（待持有人决定） |
 | 本任务启动的进程 | 隔离验证实例：portal 31769 原进程；messages 31768、accounts 31770、docs 31765 在主检出的新代码上重启（docs 含 CI-105）；环境文件 `scratchpad/live/*.env` |
 | 进行中的设计 | 无（嵌套明细 DOCX 已交付；XLSX/PPTX/PDF 嵌套、多层嵌套属设计 §7 第 4 批，未排期） |
-| 下一步 | ① **持有人尽快处理 GitHub 账单**并重跑最新 main 运行（36487070888 起；CI-118 安全修复待上线），复查五主机并记录；② Q7 ②：三轮审查——第一轮 10 项（4002c66）、第二轮 7 项与 Q19（82b7607）已修；第三轮发现 82b7607 引入的**锁顺序反转会让整个进程卡死**（生产在用的文档房间也会触发：`on_template_change`→`settled()` 在存储写事务内取 `_rooms_mu`，`write_state` 反向），另有 1 中 5 低，已交回实现者（分支 `worktree-agent-aa8bd6a4481b2e62d`，复现脚本 `scratchpad/b2review3/`）；**修完并复核前不合并**；③ XLSX 嵌套明细：设计代理起草 `docs/platform/docs-xlsx-nested.md`（独立 worktree），审阅后实现；④ Q17 待决定 |
+| 下一步 | ① **持有人尽快处理 GitHub 账单**并重跑最新 main 运行（36487070888 起；CI-118 安全修复待上线），复查五主机并记录；② Q7 ②：三轮审查——第一轮 10 项（4002c66）、第二轮 7 项与 Q19（82b7607）已修；第三轮发现 82b7607 引入的**锁顺序反转会让整个进程卡死**（生产在用的文档房间也会触发：`on_template_change`→`settled()` 在存储写事务内取 `_rooms_mu`，`write_state` 反向），另有 1 中 5 低，37c45e0 修复（统一锁顺序、`Store.after_commit`），第四轮确认死锁已除，但新加的 `void` 墓碑按 head 比较、撤销使 head 回退→**生产文档房间会静默丢编辑**（高）、丢弃的编辑复活（中），已交回并要求去掉墓碑、改用「登记锁下标记后删除」（复现 `scratchpad/b2review4/repro/`）；**修完并复核前不合并**；③ XLSX 嵌套明细：设计代理起草 `docs/platform/docs-xlsx-nested.md`（独立 worktree），审阅后实现；④ Q17 待决定 |
 
 ## 优先队列
 
