@@ -35,6 +35,7 @@
 ## 3. 切换（运维，一次完成；一个发布窗口）
 
 > **第十轮主机切换已于 2026-09-28 04:00 UTC 完成**（记录：`docs/quality/deployment.md`）：门户移到 `workplace.synwevo.com`、站点留在 `synwevo.com`、消息服务在 `message.synwevo.com` 上线、五主机进入 `SYNWEVO_PUBLIC_HOSTS`。
+> 部署密钥执行的是 `/opt/synwevo/bin/receive.py`（不是 `/opt/synwevo/receive.py`）；给部署增加服务时改前者（CI-98，2026-09-28 发现消息服务因此从未随部署更新）。
 > 自 CI-89 起网关经 Docker DNS 按请求解析上游（5 s 缓存）：在部署之外重建某个角色后不再需要重建网关（此前会把该主机的请求送到旧地址，2026-09-28 05:12–05:22 发生过）。
 > 网关把 `nginx.conf` 作为**单个文件**挂载：换文件（新 inode）后运行中的容器看不到，而配置未变的服务 `up -d` 不会重建——换网关配置后必须 `docker compose up -d --force-recreate gateway`。
 
