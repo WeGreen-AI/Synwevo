@@ -98,6 +98,12 @@ def check_slots(slots: list[dict]) -> None:
                 r, _ = parse_cell(loc["cell"])
                 if r + 1 in details:
                     raise XlsxError("band_detail_cell", f"单元格 {loc['cell']} 在重复内容块「{b['name']}」的明细行上：明细行上的单元格只能是明细列")
+        # the block's own columns, whichever was made first: a column on a row that later became a
+        # detail row would be written once per copy onto whatever row that turned into
+        for col in b.get("columns") or []:
+            r, _ = parse_cell(col["cell"])
+            if r + 1 in details:
+                raise XlsxError("band_detail_cell", f"单元格 {col['cell']} 在重复内容块「{b['name']}」的明细行上：明细行上的单元格只能是明细列")
 
 
 # ------------------------------------------------------------------ references
@@ -249,8 +255,29 @@ def _sqref_areas(sqref: str) -> list[tuple[int, int, int, int]]:
 
 
 def _first_cell(ref: str) -> str:
-    r1, c1, _, _ = parse_range(ref.replace("$", ""))
+    try:
+        r1, c1, _, _ = parse_range(ref.replace("$", ""))
+    except ValueError:
+        return ref
     return f"{col_letter(c1)}{r1 + 1}"
+
+
+def _span(ref: str | None) -> tuple[int, int] | None:
+    """The rows (1-based) an area in the file covers: a cell or range, whole rows (`3:5`) or whole
+    columns (`A:B`, every row — how Excel stores a pivot source picked by column headers). None when
+    it is not an area at all; the caller then has nothing to check."""
+    area = (ref or "").replace("$", "").strip()
+    try:
+        r1, _, r2, _ = parse_range(area)
+        return r1 + 1, r2 + 1
+    except ValueError:
+        pass
+    a, sep, b = area.partition(":")
+    if sep and a.isdigit() and b.isdigit():
+        return min(int(a), int(b)), max(int(a), int(b))
+    if sep and a.isalpha() and b.isalpha():
+        return 1, MAX_ROW
+    return None
 
 
 def _rule_check(kind: str, sqref: str, formulas: list[str], sheet: str, b1: int, b2: int) -> None:
@@ -318,20 +345,18 @@ def scan(x: XlsxDoc, sheet: str, b1: int, b2: int) -> list[tuple]:
                 if not (r2 < b1 or r1 > b2):
                     cell = f"{col_letter(int(frm.findtext('{%s}col' % XDR) or 0))}{r1}"
                     raise XlsxError("band_objects", f"第 {r1} 行有图片、图形或图表（{cell}）：复制内容块时不会复制它，请移到块外或删除")
-        elif rel.type.endswith("/comments"):
-            for cm in x.pkg.xml(target).iter(s("comment")):
-                r, _ = parse_cell(cm.get("ref"))
-                if b1 <= r + 1 <= b2:
+        elif rel.type.endswith("/comments") or rel.type.endswith("/threadedComment"):
+            croot = x.pkg.xml(target)
+            notes = croot.iter(s("comment")) if rel.type.endswith("/comments") else \
+                croot.iter("{http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments}threadedComment")
+            for cm in notes:
+                got = _span(cm.get("ref"))
+                if got and not (got[1] < b1 or got[0] > b2):
                     raise XlsxError("band_comment", f"单元格 {cm.get('ref')} 有批注：复制内容块时不会复制批注，请移到块外或删除")
-        elif rel.type.endswith("/threadedComment"):
-            for tc in x.pkg.xml(target).iter("{http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments}threadedComment"):
-                r, _ = parse_cell(tc.get("ref"))
-                if b1 <= r + 1 <= b2:
-                    raise XlsxError("band_comment", f"单元格 {tc.get('ref')} 有批注：复制内容块时不会复制批注，请移到块外或删除")
         elif rel.type.endswith("/table"):
             troot = x.pkg.xml(target)
-            r1, _, r2, _ = parse_range(troot.get("ref"))
-            if not (r2 + 1 < b1 or r1 + 1 > b2):
+            got = _span(troot.get("ref"))
+            if got and not (got[1] < b1 or got[0] > b2):
                 name = troot.get("displayName") or troot.get("name") or ""
                 raise XlsxError("band_table", f"表格「{name}」（{troot.get('ref')}）与重复内容块相交：Excel 表格不能随内容块复制，请转换为普通区域或移到块外")
     for pv in x.pivot_tables(sheet):
@@ -339,14 +364,14 @@ def scan(x: XlsxDoc, sheet: str, b1: int, b2: int) -> list[tuple]:
             raise XlsxError("band_pivot", f"数据透视表「{pv['name']}」（{pv['ref']}）与重复内容块相交：请把透视表移到块外")
     for hl in root.iter(s("hyperlink")):
         ref = hl.get("ref") or ""
-        if ref:
-            r1, _, r2, _ = parse_range(ref)
-            if not (r2 + 1 < b1 or r1 + 1 > b2):
+        got = _span(ref)
+        if got:
+            if not (got[1] < b1 or got[0] > b2):
                 raise XlsxError("band_hyperlink", f"单元格 {_first_cell(ref)} 有超链接：复制内容块时不会复制超链接，请移到块外或删除")
     af = root.find(s("autoFilter"))
-    if af is not None and af.get("ref"):
-        r1, _, r2, _ = parse_range(af.get("ref"))
-        if where(r1 + 1, r2 + 1, b1, b2) in ("inside", "crossing"):
+    got = _span(af.get("ref")) if af is not None else None
+    if got:
+        if where(got[0], got[1], b1, b2) in ("inside", "crossing"):
             raise XlsxError("band_filter", f"筛选范围 {af.get('ref')} 只包含重复内容块（第 {b1}–{b2} 行）的一部分：请让筛选范围包含整个内容块，或移到块外")
     # conditional formats, validations (x14 too), sparklines
     for cf in root.findall(s("conditionalFormatting")):
@@ -377,9 +402,9 @@ def scan(x: XlsxDoc, sheet: str, b1: int, b2: int) -> list[tuple]:
             host_row = int(m.group(2)) if m else 0
             host_in = name == sheet and b1 <= host_row <= b2
             cell = f"{name}!{c.get('r')}"
-            if name == sheet and f.get("t") == "array" and f.get("ref"):
-                r1, _, r2, _ = parse_range(f.get("ref"))
-                if r1 != r2 and not (r2 + 1 < b1 or r1 + 1 > b2):
+            got = _span(f.get("ref")) if name == sheet and f.get("t") == "array" else None
+            if got:
+                if got[0] != got[1] and not (got[1] < b1 or got[0] > b2):
                     raise XlsxError("band_array", f"数组公式 {f.get('ref')} 跨越多行且与重复内容块相交，无法随内容块复制")
             if not f.text:
                 continue
@@ -428,9 +453,9 @@ def scan(x: XlsxDoc, sheet: str, b1: int, b2: int) -> list[tuple]:
                         raise XlsxError("band_chart", f"图表「{chart}」的数据系列引用的 {ref.text()} 只包含重复内容块（第 {b1}–{b2} 行）的一部分：图表不会随内容块复制。请让数据系列包含整个内容块，或移到块外")
         elif pname.startswith("xl/pivotCache/pivotCacheDefinition") and pname.endswith(".xml"):
             for ws in x.pkg.xml(pname).iter(s("worksheetSource")):
-                if ws.get("sheet") == sheet and ws.get("ref"):
-                    r1, _, r2, _ = parse_range(ws.get("ref"))
-                    if where(r1 + 1, r2 + 1, b1, b2) in ("inside", "crossing"):
+                got = _span(ws.get("ref")) if ws.get("sheet") == sheet else None
+                if got:
+                    if where(got[0], got[1], b1, b2) in ("inside", "crossing"):
                         raise XlsxError("band_pivot_source", f"数据透视表的数据源 {ws.get('ref')} 只包含重复内容块（第 {b1}–{b2} 行）的一部分：请让数据源包含整个内容块，或移到块外")
     return cand
 
@@ -540,11 +565,13 @@ class _Formula:
                 got = lay.span(k, ref, host)
             elif w == "covering":
                 got = (ref.lo, min(ref.hi + delta, MAX_ROW))
-            else:                            # below the block
-                got = (ref.lo + delta, ref.hi + delta)
+            elif ref.lo + delta > MAX_ROW:        # below the block, pushed off the sheet
+                got = None
+            else:                            # below the block; a range to the last row stays there
+                got = (ref.lo + delta, min(ref.hi + delta, MAX_ROW))
             if got is None:
                 vals[i] = "#REF!"
-                broken = True
+                broken = broken or w == "inside"      # a detail row this copy does not have
             else:
                 vals[i] = ref.render(*got)
         return "".join(vals), broken
@@ -911,9 +938,11 @@ def _page_breaks(root, lay: Layout, K: int, inner: list, after_band: dict | None
             brks[lay.end(k)] = {"max": "16383", "man": "1"}
     if after_band is not None and K:
         brks[lay.end(K - 1)] = after_band
-    if not brks:
-        return
     rb = root.find(s("rowBreaks"))
+    if not brks:
+        if rb is not None:                 # breaks inside the block went with it: recount, or drop the list
+            _count_breaks(root, rb)
+        return
     if rb is None:
         rb = etree.Element(s("rowBreaks"))
         wanted = {s(t) for t in _WS_AFTER_ROWBREAKS}
@@ -935,6 +964,14 @@ def _page_breaks(root, lay: Layout, K: int, inner: list, after_band: dict | None
         rb.remove(b)
     for at in sorted(have):
         rb.append(have[at])
-    rb.set("count", str(len(have)))
-    rb.set("manualBreakCount", str(sum(1 for b in have.values() if b.get("man") in ("1", "true"))))
+    _count_breaks(root, rb)
+
+
+def _count_breaks(root, rb) -> None:
+    brks = rb.findall(s("brk"))
+    if not brks:
+        root.remove(rb)
+        return
+    rb.set("count", str(len(brks)))
+    rb.set("manualBreakCount", str(sum(1 for b in brks if b.get("man") in ("1", "true"))))
 

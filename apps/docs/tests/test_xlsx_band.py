@@ -489,3 +489,79 @@ def test_the_scan_refuses_nothing_in_a_workbook_without_references_into_the_bloc
     with pytest.raises(XlsxError) as e:
         scan(x, "对账单", 5, 8)          # as if the block were rows 5–8: ROWS(A3:A6) crosses its edge
     assert e.value.code == "band_cross" and "对账单!D12" in str(e.value)
+
+
+# ------------------------------------------------------------------ independent review (2026-09-29)
+def test_a_block_column_on_a_row_that_becomes_a_detail_row_is_refused_in_either_order():
+    """Review item 1: column first, detail row second used to be accepted; the column's value was
+    then written onto whatever row the detail row turned into (the subtotal row, or the first line)."""
+    work = _template()
+    work, band = T.xlsx_add_slot(work, {"kind": "repeat_block", "sheet": "对账单", "first": 2, "last": 5, "name": "订单段"}, [])
+    work, band = T.xlsx_add_block_column(work, {"block_id": band["id"], "cell": "G5", "name": "备注"}, [band])
+    with pytest.raises(T.TemplateError) as e:
+        T.xlsx_add_slot(work, {"kind": "repeat", "sheet": "对账单", "row": 4, "c1": 0, "c2": 2, "name": "明细"}, [band])
+    assert (e.value.code, str(e.value)) == ("band_detail_cell", "单元格 G5 在重复内容块「订单段」的明细行上：明细行上的单元格只能是明细列")
+    # a version stored with both is stopped when it is filled, not written wrong
+    work, rep = _detail(work)
+    out, issues = T.xlsx_fill(work, [band, rep], _values(band, rep))
+    assert out == b"" and [i["code"] for i in issues if i["level"] == "error"] == ["band_detail_cell"]
+
+
+def test_a_pivot_source_given_as_whole_columns_is_fine_beside_a_block():
+    """Review item 3: `worksheetSource ref="A:B"` (how Excel stores a source picked by column
+    headers) made block creation fail with 「无效的单元格地址：A」 — a raw ValueError."""
+    from .test_xlsx_row_shift import _with_pivot_and_thread
+    zin = zipfile.ZipFile(io.BytesIO(_with_pivot_and_thread(pivot_at=10, thread_at="H30")))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n in zin.namelist():
+            d = zin.read(n)
+            if n == "xl/pivotCache/pivotCacheDefinition1.xml":
+                d = d.replace('ref="A1:B3" sheet="数据"'.encode(), 'ref="A:B" sheet="报表"'.encode())
+            z.writestr(n, d)
+    work, band = T.xlsx_add_slot(buf.getvalue(), {"kind": "repeat_block", "sheet": "报表", "first": 1, "last": 4, "name": "段"}, [])
+    band = {**band, "columns": [{"key": "c0", "name": "品名", "cell": "A2"}]}
+    got, issues = T.xlsx_fill(work, [band], {band["id"]: {"kind": "rows", "rows": [{"c0": V.text("甲")}, {"c0": V.text("乙")}]}})
+    assert got and not [i for i in issues if i["level"] == "error"], issues
+    wb = openpyxl.load_workbook(io.BytesIO(got))
+    assert [wb["报表"].cell(r, 1).value for r in (2, 6)] == ["甲", "乙"]
+    assert [p.location.ref for p in wb["报表"]._pivots] == ["A14:B17"]     # moved down with its cells
+    from synwevo_docs.engine.xlsx_band import _span
+    assert [_span(r) for r in ("A:B", "$A:$B", "3:5", "B2:C9", "名称", "")] == \
+        [(1, 1_048_576), (1, 1_048_576), (3, 5), (2, 9), None, None]
+
+
+def test_formulas_inside_the_block_pointing_to_the_last_row_stay_on_the_sheet():
+    """Review item 4: a range from inside the block down to the last row was pushed past it."""
+    def extra(wb):
+        ws = wb["对账单"]
+        ws["G6"] = "=COUNTA(A10:A1048576)"
+        ws["H6"] = "=B1048576"
+    work, slots, band, rep, values = _standard(extra)
+    out, issues, errors = _fill(work, slots, values)
+    assert not errors, errors
+    ws = _book(out)["对账单"]
+    assert [ws["G7"].value, ws["G11"].value] == ["=COUNTA(A15:A1048576)"] * 2
+    assert [ws["H7"].value, ws["H11"].value] == ["=#REF!"] * 2              # pushed off the sheet, as a row shift does
+    # not reported as a section without lines: every order here has lines
+    assert not [i for i in issues if i["code"] == "ref_removed"]
+
+
+def test_page_break_counts_are_rewritten_when_the_block_goes():
+    """Review item 7: breaks inside a block with no data were removed but the counts kept."""
+    from openpyxl.worksheet.pagebreak import Break
+
+    def extra(wb):
+        wb["对账单"].row_breaks.append(Break(id=4))           # inside the block
+        wb["对账单"].row_breaks.append(Break(id=12))          # below it
+    work, slots, band, rep, values = _standard(extra, orders=[])
+    out, _, errors = _fill(work, slots, values)
+    assert not errors
+    root = etree.fromstring(zipfile.ZipFile(io.BytesIO(out)).read("xl/worksheets/sheet1.xml"))
+    rb = root.find(f"{{{MAIN}}}rowBreaks")
+    assert [b.get("id") for b in rb] == ["8"] and (rb.get("count"), rb.get("manualBreakCount")) == ("1", "1")
+    # only a break inside the block: the empty list goes (a count over no break is what Excel repairs)
+    work, slots, band, rep, values = _standard(lambda wb: wb["对账单"].row_breaks.append(Break(id=4)), orders=[])
+    out, _, _ = _fill(work, slots, values)
+    root = etree.fromstring(zipfile.ZipFile(io.BytesIO(out)).read("xl/worksheets/sheet1.xml"))
+    assert root.find(f"{{{MAIN}}}rowBreaks") is None

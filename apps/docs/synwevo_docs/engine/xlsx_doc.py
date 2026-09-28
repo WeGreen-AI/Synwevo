@@ -430,7 +430,10 @@ class XlsxDoc:
             loc = self.pkg.xml(target).find(s("location"))
             if loc is None or not loc.get("ref"):
                 continue
-            r1, _, r2, _ = parse_range(loc.get("ref"))
+            try:
+                r1, _, r2, _ = parse_range(loc.get("ref"))
+            except ValueError:
+                continue                     # not a location this code can read: left as it is
             out.append({"name": self.pkg.xml(target).get("name") or "", "ref": loc.get("ref"), "part": target,
                         "rows": (r1 + 1, r2 + 1)})
         return out
