@@ -562,7 +562,7 @@ class Messaging:
         self._org_member(oid, uid)
         name = (name or "").strip()
         if not 1 <= len(name) <= MAX_NAME:
-            raise ServiceError(400, "invalid_field", f"群名称需要 1–{MAX_NAME} 个字符", {"field": "name"})
+            raise ServiceError(400, "invalid_field", f"群名称需要 1–{MAX_NAME} 个字符", {"field": "name", "limit": MAX_NAME})
         description = (description or "").strip()[:MAX_DESCRIPTION] or None
         others = []
         for mid in dict.fromkeys(member_ids or []):
@@ -570,7 +570,7 @@ class Messaging:
                 self._org_member(oid, mid)
                 others.append(mid)
         if len(others) + 1 > MAX_GROUP_MEMBERS:
-            raise ServiceError(400, "too_many_members", f"群成员最多 {MAX_GROUP_MEMBERS} 人")
+            raise ServiceError(400, "too_many_members", f"群成员最多 {MAX_GROUP_MEMBERS} 人", {"limit": MAX_GROUP_MEMBERS})
         if workspace_id:
             ws = self.ident.get_workspace(workspace_id)
             if not ws or ws.get("organization_id") != oid:
@@ -593,7 +593,7 @@ class Messaging:
         if name is not None:
             name = str(name).strip()
             if not 1 <= len(name) <= MAX_NAME:
-                raise ServiceError(400, "invalid_field", f"群名称需要 1–{MAX_NAME} 个字符", {"field": "name"})
+                raise ServiceError(400, "invalid_field", f"群名称需要 1–{MAX_NAME} 个字符", {"field": "name", "limit": MAX_NAME})
             fields.append("name=?"); args.append(name)
         if description is not None:
             if len(str(description).strip()) > MAX_DESCRIPTION:
@@ -754,7 +754,7 @@ class Messaging:
                 if m and m["left_at"] is None:
                     continue
                 if count >= MAX_GROUP_MEMBERS:
-                    raise ServiceError(400, "too_many_members", f"群成员最多 {MAX_GROUP_MEMBERS} 人")
+                    raise ServiceError(400, "too_many_members", f"群成员最多 {MAX_GROUP_MEMBERS} 人", {"limit": MAX_GROUP_MEMBERS})
                 last = t.execute("SELECT last_seq FROM conversations WHERE id=?", (cid,)).fetchone()["last_seq"]
                 # history starts with the first message *after* the join (the system notice of
                 # the join itself); everything up to `last` stays invisible to this member —
@@ -799,7 +799,7 @@ class Messaging:
     def leave(self, cid: str, uid: str) -> None:
         conv, me = self._member(cid, uid)
         if conv["kind"] == "dm":
-            raise ServiceError(409, "not_a_group", "私聊不能退出；可以静音或隐藏")
+            raise ServiceError(409, "not_a_group", "私聊不能退出；可以设为静音，或屏蔽对方")
         with self.store.tx() as t:
             others = t.execute("SELECT COUNT(*) AS n FROM conversation_members WHERE conversation_id=? AND left_at IS NULL AND user_id<>?", (cid, uid)).fetchone()["n"]
             if me["role"] == "owner" and others:
@@ -1283,7 +1283,7 @@ class Messaging:
             raise ServiceError(403, "edit_window_closed", f"发出超过 {EDIT_WINDOW_S // 60} 分钟的消息不能再编辑", {"edit_window_s": EDIT_WINDOW_S})
         body = (body or "").replace("\r\n", "\n").strip()
         if not body or len(body) > MAX_BODY:
-            raise ServiceError(400, "invalid_field", f"消息需要 1–{MAX_BODY} 个字符", {"field": "body"})
+            raise ServiceError(400, "invalid_field", f"消息需要 1–{MAX_BODY} 个字符", {"field": "body", "limit": MAX_BODY})
         self.store.execute("UPDATE messages SET body=?, edited_at=? WHERE id=?", (body, now(), mid))
         stored = dict(self.store.one("SELECT * FROM messages WHERE id=?", (mid,)))
         self._publish_updated(stored, self._reactions_for([mid]))
@@ -1304,7 +1304,7 @@ class Messaging:
         if m["deleted_at"]:
             raise ServiceError(409, "already_gone", "这条消息已经撤回或删除")
         if RECALL_WINDOW_S and now() - float(m["created_at"]) > RECALL_WINDOW_S:
-            raise ServiceError(403, "recall_window_closed", f"发出超过 {RECALL_WINDOW_S} 秒的消息不能再撤回，可以「对我删除」", {"recall_window_s": RECALL_WINDOW_S})
+            raise ServiceError(403, "recall_window_closed", f"发出超过 {RECALL_WINDOW_S} 秒的消息不能再撤回，仍可以「删除（仅自己）」", {"recall_window_s": RECALL_WINDOW_S})
         ts = now()
         with self.store.tx() as t:
             t.execute("UPDATE messages SET recalled_at=?, deleted_at=?, body='', attachment_id=NULL WHERE id=?", (ts, ts, mid))
@@ -1536,11 +1536,11 @@ class Messaging:
         if not data:
             raise ServiceError(400, "empty_file", "文件是空的")
         if len(data) > MAX_ATTACHMENT_BYTES:
-            raise ServiceError(413, "file_too_large", f"附件超过 {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB 上限")
+            raise ServiceError(413, "file_too_large", f"附件超过 {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB 上限", {"limit": MAX_ATTACHMENT_BYTES})
         ctype = sniff_content_type(data, filename)
         voice = ctype in VOICE_TYPES
         if voice and len(data) > MAX_VOICE_BYTES:
-            raise ServiceError(413, "file_too_large", f"语音超过 {MAX_VOICE_BYTES // (1024 * 1024)} MB 上限", {"limit": MAX_VOICE_BYTES})
+            raise ServiceError(413, "file_too_large", f"语音超过 {MAX_VOICE_BYTES // (1024 * 1024)} MB 上限", {"limit": MAX_VOICE_BYTES, "kind": "voice"})
         if duration_ms is not None:
             try:
                 duration_ms = int(duration_ms)

@@ -13,7 +13,7 @@ import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, T
 import { anyModalOpen, isImeKey, Modal, useDialog, useToast } from "@synwevo/ui";
 import { recall, remember } from "@synwevo/ui";
 import { jobStatus, ruleMode } from "../lib/status";
-import { errorText, isPermissionError, NO_EXPORT_TEXT, permissions, READ_ONLY_TEXT } from "../lib/perm";
+import { errorText, inOrganizationWorkspace, isPermissionError, NO_EXPORT_TEXT, permissions, READ_ONLY_TEXT } from "../lib/perm";
 import { markColor, FIND_MARK } from "../lib/css";
 import AnyView from "../components/AnyView";
 import CommandPalette, { Command } from "../components/CommandPalette";
@@ -838,8 +838,9 @@ function Workspace() {
           // `/objects/{app}/{kind}/{id}` to the project's conversation, creating it on first use.
           // Docs never calls the messages API itself (one write source, no CORS); it only sends the
           // person there through that origin's sign-in start. Offered only when the deployment has
-          // the application — the fallback shell on the account origin has no such route.
-          ...(session.state?.messages_url && session.state?.app_id ? [{
+          // the application — the fallback shell on the account origin has no such route — and
+          // the project is in an organization workspace (a personal one has no organization group).
+          ...(session.state?.messages_url && session.state?.app_id && inOrganizationWorkspace(session.me) ? [{
             label: tr("在消息中讨论"),
             onClick: () => window.location.assign(messagesHref(session.state, { path: `/objects/${session.state!.app_id}/project/${pid}`, lang: locale })),
           }] : []),

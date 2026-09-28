@@ -10,7 +10,7 @@ import { fmtSize, fmtTime, useToast } from "@synwevo/ui";
 
 import { itemStatus, jobStatus } from "../lib/status";
 import { canCancel, canRetry, haltText, planning as planningOf, progress, shouldPoll, verificationBadge } from "../lib/jobview";
-import { errorText, isPermissionError, NO_EXPORT_TEXT, permissions, READ_ONLY_TEXT } from "../lib/perm";
+import { errorText, inOrganizationWorkspace, isPermissionError, NO_EXPORT_TEXT, permissions, READ_ONLY_TEXT } from "../lib/perm";
 
 const PAGE = 100;
 const FILTERS: [string, string][] = [["", "全部"], ["success", "成功"], ["failed", "失败"], ["skipped", "跳过"], ["cancelled", "取消"]];
@@ -141,8 +141,9 @@ function Job() {
         <span className={`badge ${stKind}`} role="status">{planning ? tr("规划中") : stText}</span>
         {/* The job is discussed in its project's conversation in Synwevo Message (CI-75); the
             messages origin resolves `/objects/{app}/job/{id}` to that conversation. Only offered
-            when the deployment has the application. */}
-        {session.state?.messages_url && session.state?.app_id && (
+            when the deployment has the application and the project is in an organization
+            workspace (a personal one has no organization group). */}
+        {session.state?.messages_url && session.state?.app_id && inOrganizationWorkspace(session.me) && (
           <a className="btn ghost sm" href={messagesHref(session.state, { path: `/objects/${session.state.app_id}/job/${jid}`, lang: locale })}>{tr("在消息中讨论")}</a>
         )}
       </div>

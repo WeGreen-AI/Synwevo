@@ -739,7 +739,7 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
         limited(uid, "msg-att", ATTACHMENTS_PER_HOUR, 3600)
         data = await file.read(MAX_ATTACHMENT_BYTES + 1)
         if len(data) > MAX_ATTACHMENT_BYTES:
-            raise ServiceError(413, "file_too_large", f"附件超过 {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB 上限")
+            raise ServiceError(413, "file_too_large", f"附件超过 {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB 上限", {"limit": MAX_ATTACHMENT_BYTES})
         filename = Path(file.filename or "file").name[:200] or "file"
         dur = None
         if duration_ms not in (None, ""):

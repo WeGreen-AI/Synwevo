@@ -7,7 +7,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { del, get, patch, post, qs } from "@synwevo/auth-client";
 import { fmtTime, isImeKey, useDialog, useToast } from "@synwevo/ui";
 import { jobStatus, ruleMode } from "../lib/status";
-import { errorText, isPermissionError, permissions, READ_ONLY_TEXT } from "../lib/perm";
+import { errorText, inOrganizationWorkspace, isPermissionError, permissions, READ_ONLY_TEXT } from "../lib/perm";
 import { clampCursor, defaultOrder, listQuery, PAGE_SIZE, toPage, type ListParams, type Page, type ProjectSort } from "../lib/projects";
 import { useLatest } from "../lib/latest";
 import MoreMenu from "../components/MoreMenu";
@@ -42,7 +42,7 @@ export default function Home() {
   // project has nothing to ask approval for, and the server refuses such a request anyway.
   const personal = session.me?.workspaces?.find((w) => w.id === session.me?.workspace_id)?.kind === "personal";
   // an organization workspace can publish templates to its organization and use what others published
-  const inOrg = !!session.me?.workspaces?.find((w) => w.id === session.me?.workspace_id)?.organization_id;
+  const inOrg = inOrganizationWorkspace(session.me);
   const [shared, setShared] = useState<{ organization: { id: string; name: string } | null; items: any[] } | null>(null);
   const [sharedErr, setSharedErr] = useState<string | null>(null);
   const loadShared = useCallback(() => {

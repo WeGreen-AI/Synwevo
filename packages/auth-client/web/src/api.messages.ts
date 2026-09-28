@@ -48,12 +48,24 @@ codes('invite_declined', '此邀请已被拒绝，请联系邀请人重新邀请
 codes('bad_avatar', '头像文件无效，请选择受支持的图片。');
 
 export interface ApiFailure { code: string; status: number; originalMessage: string; requestId?: string; detail?: any }
+
+/** A refusal whose sentence carries a number from `detail` (a time window, a size or count limit)
+ *  cannot be matched by the server's sentence once that number is configurable, so a shell may
+ *  register a template per code: it returns the catalogue source and its parameters, or null to
+ *  fall through to the server's sentence. Registered by the shell that owns those codes; the
+ *  other shells never see them. */
+export type ErrorTemplate = (detail: any) => readonly [source: string, params?: Record<string, string | number>] | null;
+const ERROR_TEMPLATES: Record<string, ErrorTemplate> = {};
+export function registerErrorTemplates(map: Record<string, ErrorTemplate>): void { Object.assign(ERROR_TEMPLATES, map); }
 export function apiFailureText(error: ApiFailure): string {
   let text: string;
+  const template = templated(error);
   if (error.code === 'gateway_blocked' || error.code === 'upstream_unavailable') {
     text = t(error.code === 'gateway_blocked' ? '请求被 {gateway} 拦截（HTTP {status}），未到达 Synwevo。' : '{gateway} 无法连接 Synwevo（HTTP {status}）。请稍后重试。', {
       gateway: error.detail?.gateway === '前置网关' ? t('前置网关') : error.detail?.gateway || t('前置网关'), status: String(error.status),
     });
+  } else if (template) {
+    text = t(template[0], template[1]);
   } else if (hasMessage(error.originalMessage)) {
     // Domain catalogs may provide a more useful known sentence than the general code label.
     text = t(error.originalMessage);
@@ -62,4 +74,10 @@ export function apiFailureText(error: ApiFailure): string {
   else text = t('请求未完成（{code}）。', { code: error.code || String(error.status) });
   if (error.requestId) text = joinMessages([text, t('请求编号：{id}', { id: error.requestId })]);
   return text;
+}
+
+function templated(error: ApiFailure): readonly [string, Record<string, string | number>?] | null {
+  const tpl = Object.hasOwn(ERROR_TEMPLATES, error.code) ? ERROR_TEMPLATES[error.code] : undefined;
+  if (!tpl) return null;
+  try { return tpl(error.detail ?? {}); } catch { return null; }
 }

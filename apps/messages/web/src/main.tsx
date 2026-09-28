@@ -21,6 +21,7 @@ import ObjectConversation from "./pages/ObjectConversation";
 import "@synwevo/ui/styles.css";
 import "./messages.css";
 import "./messages.messages";
+import "./lib/refusals";
 
 initTheme();
 

@@ -6,13 +6,15 @@
  *  conversation`) and moves to the thread it names, replacing this address in history. A 404 is
  *  the one answer with its own page — the object does not exist or this person may not see it —
  *  with the same way back to the workspace the top bar offers. Anything else is the usual error
- *  notice with a retry. Nothing here invents a conversation when the server has none. */
+ *  notice; a retry is offered only when trying again can change the answer (the network, the
+ *  server, a rate limit) — a personal workspace or an archived discussion stays what it is (CI-83).
+ *  Nothing here invents a conversation when the server has none. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { platformHandoffUrl, post, useSession } from "@synwevo/auth-client";
 import { PageState, StatusPage, useI18n } from "@synwevo/ui";
 import { M, setPrefix, threadPath } from "../api";
-import { resolveObjectConversation } from "../lib/objects";
+import { mayRetry, resolveObjectConversation } from "../lib/objects";
 import { FlowError } from "../flow";
 import "../messages.messages";
 
@@ -45,8 +47,13 @@ export default function ObjectConversation() {
       {workspace ? <a className="btn" href={workspace}>{t("返回工作空间")}</a> : <a className="btn" href="/">{t("返回会话列表")}</a>}
     </StatusPage>;
   }
+  const retryable = mayRetry(error);
   return <StatusPage product="Message" brandHref="/" title={t("无法打开会话")} role="alert">
     <FlowError error={error} />
-    <div className="row gap8"><button type="button" className="btn primary" onClick={() => void attempt()}>{t("重试")}</button><a className="btn" href="/">{t("返回会话列表")}</a></div>
+    <div className="row gap8">
+      {retryable && <button type="button" className="btn primary" onClick={() => void attempt()}>{t("重试")}</button>}
+      {!retryable && workspace && <a className="btn primary" href={workspace}>{t("返回工作空间")}</a>}
+      <a className="btn" href="/">{t("返回会话列表")}</a>
+    </div>
   </StatusPage>;
 }

@@ -292,6 +292,20 @@ SSE `receipt`：`{type:'receipt', conversation_id, user_id, last_read_seq, at}`�
 ### 7.20 发布与回滚（CI-78）
 
 schema **v26**：只加表 `conversation_avatars`、`message_blocks`（`CREATE TABLE IF NOT EXISTS`，随 `messaging.SCHEMA`），既有表、列、CHECK 不动。回滚到 v25 代码：两表闲置——屏蔽不再生效、群头像不再显示，其它行为不变。彻底清除：`DROP TABLE message_blocks; DROP TABLE conversation_avatars;`。无回填、无新环境变量。验收：`apps/messages/tests/test_messaging_ci78.py`（8 项）、`tests/integration/test_messaging_ci78_composed.py`（4 项：屏蔽让到期摘要以 `nothing unread` 跳过且群提及不成邮件、导出只含本人列表与删除清两方向、组合源新路由、头像规则同一函数）、外壳 `tests/ci78.test.ts`（3 项）；浏览器证明见 `messaging-ui.md` §7。
+### 7.21 拒绝怎样呈现给人（CI-83）
+
+共享错误呈现（`@synwevo/auth-client/api-messages` 的 `apiFailureText`）只在外壳目录里**有**服务端原句时显示它，否则退回按代码的通用句，最后是「请求未完成（code）」。所以：
+
+| 拒绝 | 呈现 | 要求 |
+|---|---|---|
+| 固定原句（群主退出前须交接、会话已归档、只能撤回自己的消息……） | `apps/messages/web/src/messages.messages.ts` 里的三语言条目 | 新增用户能碰到的拒绝，同一提交里补译文 |
+| 带数字的原句（撤回/编辑时限、正文/群名/群描述长度、成员上限、转发目标数、附件/语音大小） | 外壳 `lib/refusals.ts` 按代码从 `detail` 取数字（`recall_window_s`、`edit_window_s`、`limit`，语音另带 `kind: "voice"`） | 服务端在 `detail` 里带上这个数字；撤回与编辑时限是部署配置，按原句匹配会在改配置后退回代码 |
+| 只有 API 客户端能造成的字段形状错误（`client_id 无效`、`只能设置 text`……） | 原句与代码给 API 调用方；外壳不会发这些字段 | 列在 `apps/messages/web/tests/refusals.test.ts` 的「仅 API」清单并写明理由 |
+| 共享代码（`unauthorized`、`too_many_attempts`） | 共享呈现的通用句 | — |
+
+`refusals.test.ts` 读消息服务的全部 `ServiceError(...)`，三类之外的新拒绝会让测试失败。对象页（`/objects/{app}/{kind}/{id}`）只在重试能改变结果时（网络、5xx、408、429、前置网关）给「重试」；`no_organization`、`organization_unavailable`、`archived` 给「返回工作空间」。
+Docs 只在当前工作空间属于组织时提供「在消息中讨论」——个人工作空间的项目没有组织会话（§8）。
+
 ## 8. 应用联动：Synwevo Docs ↔ Synwevo Message（CI-75）
 
 Docs 对象（工作空间范围）在消息（组织范围）里有一个**对象会话**；Docs 的真实事件经**外发表**变成会话里由应用身份发出的**卡片**；

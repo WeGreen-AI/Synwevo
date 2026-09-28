@@ -312,7 +312,11 @@ export const portalMessages = {
   "查看加入方式": {"en": "How to join", "zh-Hant": "查看加入方式"},
   "当前没有待接受的邀请。": {"en": "No pending invitations.", "zh-Hant": "目前沒有待接受的邀請。"},
   "到账户页查看邀请并完成工作空间设置。": {"en": "Review invitations and finish setting up your workspace on the account page.", "zh-Hant": "到帳戶頁查看邀請並完成工作空間設定。"},
-  "平台管理权限不授予业务文档访问权。": {"en": "Platform management does not grant access to business documents.", "zh-Hant": "平台管理權限不授予業務文件存取權。"},
+  "平台管理权限不授予业务文档访问权。": {"en": "Platform management does not grant access to business documents.", "zh-Hant": "平台管理權限不授予業務文件存取權。"},  // CI-83: the workspace switch's refusals (a workspace removed or frozen while this page was open)
+  "请选择有效的工作空间": {"en": "Choose a valid workspace", "zh-Hant": "請選擇有效的工作空間"},
+  "你不是该工作空间的成员": {"en": "You are not a member of this workspace", "zh-Hant": "你不是該工作空間的成員"},
+  "该工作空间当前不可用": {"en": "This workspace is currently unavailable", "zh-Hant": "該工作空間目前無法使用"},
+  "该组织或工作空间当前不可用": {"en": "This organization or workspace is currently unavailable", "zh-Hant": "該組織或工作空間目前無法使用"},
 };
 
 registerMessages(portalMessages);

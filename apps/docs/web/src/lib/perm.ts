@@ -12,7 +12,7 @@ export const WRITE_ROLES = ["owner", "admin", "editor"];
 
 export interface MemberLike {
   workspace_id?: string | null;
-  workspaces?: { id: string; role: string; can_export?: boolean }[];
+  workspaces?: { id: string; role: string; can_export?: boolean; organization_id?: string | null }[];
 }
 
 export interface Perms { canWrite: boolean; canExport: boolean; role: string | null }
@@ -26,6 +26,13 @@ export function permissions(me: MemberLike | null | undefined, disabled: boolean
   if (!ws) return { canWrite: true, canExport: true, role: null };
   const canWrite = WRITE_ROLES.includes(ws.role);
   return { canWrite, canExport: canWrite || !!ws.can_export, role: ws.role };
+}
+
+/** Whether the current workspace belongs to an organization. An object's discussion in Synwevo
+ *  Message is a group in the object's organization, so a project in a personal workspace has none
+ *  and its "discuss" entry is not offered — the click could only end in a refusal (CI-83). */
+export function inOrganizationWorkspace(me: MemberLike | null | undefined): boolean {
+  return !!me?.workspaces?.find((w) => w.id === me.workspace_id)?.organization_id;
 }
 
 export const READ_ONLY_TEXT = "你在当前工作空间是查看者，只能查看，不能修改。需要编辑时，请联系工作空间的所有者或管理员调整角色。";

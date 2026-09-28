@@ -24,3 +24,11 @@ export async function resolveObjectConversation(
     return { kind: "error", error: e };
   }
 }
+
+/** Whether trying again can change the answer: the network, the server, something in front of it,
+ *  or a rate limit. A refusal about the object itself (a personal workspace, an archived
+ *  discussion, an unavailable organization) stays what it is, so no retry is offered for it. */
+export function mayRetry(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  return error.upstream || error.status >= 500 || error.status === 408 || error.status === 429;
+}
