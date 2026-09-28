@@ -44,6 +44,7 @@ The rules the schema encodes (decision record in docs/platform/messaging.md):
 from __future__ import annotations
 
 import json
+import sqlite3
 import os
 import re
 from typing import Callable
@@ -252,6 +253,32 @@ def blocks_for_export(store: Store, uid: str) -> list[dict]:
     """The person's own block list for their account export: whom they blocked and when — never
     who blocked them."""
     return store.all("SELECT blocked_id AS user_id, created_at FROM message_blocks WHERE user_id=? ORDER BY created_at", (uid,))
+
+
+def messaging_export(store: Store, uid: str) -> dict:
+    """The person's own messaging data for their account export (format synwevo-account-2): the
+    messages they sent that still exist (text, times, the conversation and position, an attached
+    file's name — never another person's words and never file bytes), the conversations they are or
+    were in (a group's name; a direct message only as its kind, since the other side's name is the
+    other side's data), and their messaging settings. Tolerant of tables a build may not have."""
+    out: dict = {"messages_sent": [], "conversations": [], "settings": None}
+    try:
+        out["messages_sent"] = store.all(
+            "SELECT m.conversation_id, m.seq, m.body, m.created_at, m.edited_at, a.filename AS attachment_name "
+            "FROM messages m LEFT JOIN message_attachments a ON a.id=m.attachment_id "
+            "WHERE m.sender_id=? AND m.kind='text' AND m.deleted_at IS NULL ORDER BY m.created_at", (uid,))
+        out["conversations"] = [
+            {"conversation_id": r["id"], "kind": r["kind"], "name": r["name"] if r["kind"] == "group" else None,
+             "organization_id": r["organization_id"], "role": r["role"], "joined_at": r["joined_at"], "left_at": r["left_at"]}
+            for r in store.all("SELECT c.id, c.kind, c.name, c.organization_id, m.role, m.joined_at, m.left_at "
+                               "FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id WHERE m.user_id=? "
+                               "ORDER BY m.joined_at", (uid,))]
+        row = store.one("SELECT show_presence, read_receipts FROM messaging_settings WHERE user_id=?", (uid,))
+        out["settings"] = ({"show_presence": bool(row["show_presence"]), "read_receipts": bool(row["read_receipts"])}
+                           if row else {"show_presence": True, "read_receipts": False, "default": True})
+    except sqlite3.OperationalError:
+        pass
+    return out
 
 
 def forget_blocks(store: Store, uid: str) -> int:
@@ -849,17 +876,47 @@ class Messaging:
 
     def withdraw_from_organization(self, oid: str, uid: str) -> int:
         """Called when someone leaves or is removed from an organization: every conversation of
-        that organization closes for them at once — lists, history, streams and attachments."""
-        ts = now()
-        with self.store.tx() as t:
-            rows = t.execute("SELECT m.conversation_id FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "
-                             "WHERE c.organization_id=? AND m.user_id=? AND m.left_at IS NULL", (oid, uid)).fetchall()
-            for r in rows:
-                t.execute("UPDATE conversation_members SET left_at=?, left_seq=(SELECT last_seq FROM conversations WHERE id=?), updated_at=? "
-                          "WHERE conversation_id=? AND user_id=?", (ts, r["conversation_id"], ts, r["conversation_id"], uid))
-        if rows:
+        that organization closes for them at once — lists, history, streams and attachments — and
+        a group they owned passes to the next person (see `depart`)."""
+        n = self.depart(uid, organization_id=oid, reason="left_organization")
+        if n:
             self.publish([uid], {"type": "conversation", "change": "withdrawn", "organization_id": oid})
-        return len(rows)
+        return n
+
+    def depart(self, uid: str, *, organization_id: str | None = None, reason: str = "account_deleted") -> int:
+        """`uid` leaves every conversation (of one organization, or all of them) without anyone
+        acting: an account that was deleted, a person who left the organization. A group they
+        owned is handed to the earliest-joined remaining admin, else the earliest-joined remaining
+        member — a group is never left without an owner nobody can replace — with the hand-over and
+        the departure written as system lines everyone can read; a group left with nobody is
+        archived. A direct message closes quietly: the other side keeps the history. Idempotent:
+        only active memberships are touched."""
+        sql = ("SELECT m.conversation_id, m.role, c.kind FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "
+               "WHERE m.user_id=? AND m.left_at IS NULL")
+        args: list = [uid]
+        if organization_id is not None:
+            sql += " AND c.organization_id=?"; args.append(organization_id)
+        changed: list[str] = []
+        with self.store.tx() as t:
+            for r in t.execute(sql, tuple(args)).fetchall():
+                cid = r["conversation_id"]
+                if r["kind"] == "group":
+                    others = t.execute("SELECT user_id, role FROM conversation_members WHERE conversation_id=? AND left_at IS NULL AND user_id<>? "
+                                       "ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, joined_at, user_id", (cid, uid)).fetchall()
+                    if r["role"] == "owner" and others:
+                        heir = others[0]["user_id"]
+                        t.execute("UPDATE conversation_members SET role='owner', updated_at=? WHERE conversation_id=? AND user_id=?", (now(), cid, heir))
+                        self._system(t, cid, uid, {"event": "transferred", "to": heir, "reason": reason})
+                    self._close(t, cid, uid)
+                    self._system(t, cid, uid, {"event": "left", "reason": reason})
+                    if not others:
+                        t.execute("UPDATE conversations SET archived_at=COALESCE(archived_at,?), updated_at=? WHERE id=?", (now(), now(), cid))
+                else:
+                    self._close(t, cid, uid)
+                changed.append(cid)
+        for cid in changed:
+            self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
+        return len(changed)
 
     # ------------------------------------------------------------------ reading
     def get(self, cid: str, uid: str) -> dict:

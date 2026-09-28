@@ -122,9 +122,10 @@
 
 | 陈述 | 页面 | 出处 |
 |---|---|---|
-| 导出在账户页「数据与账户」，需当前口令；JSON 含资料、工作空间与组织成员关系、通行密钥名称、安全活动、头像；不含消息与文档 | P | `services/identity/synwevo_identity/account_routes.py:229-247`；`profile.py:34-38` `public_profile`；`services/identity/web/src/pages/account/PrivacySection.tsx:27`（`#privacy`） |
+| 导出在账户页「数据与账户」，需当前口令；JSON（`synwevo-account-2`）含资料、工作空间与组织成员关系、通行密钥名称、安全活动、头像，以及本人发出的消息（正文、时间、所在会话、附件文件名）、所在会话、消息设置、屏蔽列表、通知偏好；不含他人消息、附件文件与文档内容（CI-81） | P | `synwevo_core/messaging.py` `messaging_export`、`blocks_for_export`； `services/identity/synwevo_identity/account_routes.py:229-247`；`profile.py:34-38` `public_profile`；`services/identity/web/src/pages/account/PrivacySection.tsx:27`（`#privacy`） |
 | 删除：需当前口令；立即退出全部登录、撤销待接受邀请、进入 7 天缓冲；邮件链接可撤回 | P S | `account_routes.py:249-275`（`invalidate_access`、撤销 invitations、`account_recoveries`） |
 | 到期后删除口令、通行密钥、两步验证、恢复码；清空资料与邮箱；账户标识与邮箱占位保留；组织内贡献保留 | P S | `profile.py:176-197` `finalize_deletions`（`email_key remains reserved`；`preserve immutable user IDs and organization contributions`） |
+| 到期后退出全部会话：本人是群主的群交给最早加入的管理员（无则最早加入的成员），只剩本人的群归档；私聊安静关闭、对方保留记录（CI-81；离开组织同理） | P | `synwevo_core/messaging.py` `Messaging.depart`；`profile.py` `depart_deleted_accounts`（到期清扫与既往已删除账户） |
 | 前提：唯一组织所有者或最后一位平台管理员须先移交 | P S | `profile.py:142-156` `check_deletion_constraints` |
 | 组织所有者可冻结 / 删除 / 7 天内恢复组织 | S | `organizations.py:484-500` `transition`（`require(owner=True)`） |
 | 平台管理员可停用账户，停用即刻结束全部登录 | S | `services/identity/synwevo_identity/admin_routes.py:424-445` |

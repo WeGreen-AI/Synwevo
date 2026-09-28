@@ -232,7 +232,7 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
         _, user = proof(request, body, "account_export")
         limit(request, user["id"], "export")
         uid = user["id"]
-        result = {"format": "synwevo-account-1", "exported_at": now(), "profile": public_profile(user),
+        result = {"format": "synwevo-account-2", "exported_at": now(), "profile": public_profile(user),
                   "memberships": store.all("SELECT workspace_id,role,can_export,created_at FROM memberships WHERE user_id=?", (uid,)),
                   "passkeys": store.all("SELECT name,rp_id,created_at,last_used_at FROM passkeys WHERE user_id=? AND deleted_at IS NULL", (uid,)),
                   "security_activity": store.all("SELECT at,action,result,ip FROM audit_events WHERE actor_kind='user' "
@@ -242,8 +242,16 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             result["organization_memberships"] = store.all(
                 "SELECT organization_id,role,created_at FROM organization_memberships WHERE user_id=?", (uid,))
         # Synwevo Message blocks (CI-78): the person's own list only — never who blocked them.
-        from synwevo_core.messaging import blocks_for_export
+        from synwevo_core.messaging import blocks_for_export, messaging_export
         result["message_blocks"] = blocks_for_export(store, uid)
+        # Synwevo Message (CI-81): what this person wrote and where — never another person's words
+        # or file bytes — plus their messaging settings and notification preferences.
+        result["messaging"] = messaging_export(store, uid)
+        try:
+            from synwevo_core.notifications import Notifier
+            result["notification_preferences"] = Notifier(store).preferences(uid)
+        except Exception:  # noqa: BLE001 - a deployment without the inbox tables exports without it
+            pass
         audit(request, "auth.data.export", actor_id=uid, result="ok")
         return JSONResponse(result, headers={"Cache-Control": "no-store",
                             "Content-Disposition": 'attachment; filename="synwevo-account.json"'})

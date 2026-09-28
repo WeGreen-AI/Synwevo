@@ -141,10 +141,7 @@ registerMessages({
     "en": "Request account deletion",
     "zh-Hant": "申請註銷帳戶"
   },
-  "账户将立即停用。七天内可通过邮件取消注销；此后删除个人资料，组织中的贡献将保留。": {
-    "en": "Your account will be disabled immediately. You can cancel by email within seven days. After that, your profile is deleted and your contributions to organizations are retained.",
-    "zh-Hant": "帳戶將立即停用。七天內可透過郵件取消註銷；此後刪除個人資料，組織中的貢獻將保留。"
-  },
+  "账户将立即停用。七天内可通过邮件取消注销；此后删除个人资料，组织中的贡献将保留，你是群主的群交给下一位管理员或成员。": { "en": "The account is disabled at once. You can cancel from the e-mail within seven days; after that your profile is deleted, your contributions to organisations remain, and groups you own pass to the next admin or member.", "zh-Hant": "帳戶將立即停用。七天內可透過電郵取消註銷；此後刪除個人資料，組織中的貢獻將保留，你是群主的群交給下一位管理員或成員。" },
   "确认申请注销": {
     "en": "Request deletion",
     "zh-Hant": "確認申請註銷"
@@ -169,10 +166,7 @@ registerMessages({
     "en": "Back to sign in",
     "zh-Hant": "返回登入"
   },
-  "导出你的个人资料、成员关系和安全活动。导出不包含组织文档、他人的信息或登录密钥。": {
-    "en": "Export your profile, memberships and security activity. The export excludes organization documents, other people's information and sign-in secrets.",
-    "zh-Hant": "匯出你的個人資料、成員關係和安全活動。匯出不包含組織文件、他人的資訊或登入金鑰。"
-  },
+  "导出你的资料、成员关系、安全活动，以及你发出的消息、所在会话与消息设置。不含组织文档、他人的消息或登录密钥。": { "en": "Export your profile, memberships, security activity, and the messages you sent, the conversations you are in and your messaging settings. Organisation documents, other people’s messages and sign-in keys are not included.", "zh-Hant": "匯出你的資料、成員關係、安全活動，以及你發出的訊息、所在對話與訊息設定。不含組織文件、他人的訊息或登入金鑰。" },
   "导出个人数据": {
     "en": "Export personal data",
     "zh-Hant": "匯出個人資料"

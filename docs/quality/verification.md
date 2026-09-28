@@ -1795,6 +1795,14 @@ Chromium 点「返回工作空间」→ 浏览器询问（`beforeunload`）→ �
 隔离实例门户以 `SYNWEVO_SITE_URL=http://site.localhost:31769` 重启（同一进程两主机），`ui_check_split.py`（Chromium 1280/390）：站点首页「登录」→ 账户登录页 → 落在工作空间主机 `/workspace`；工作空间主机根即工作空间并有「消息」入口；
 品牌链接与页脚「数据与隐私」指向站点；账户页「返回工作空间」→ 工作空间主机；0 页面错误。之后门户恢复单主机，供其它证明使用。
 
+### 16.81 消息完整性（CI-78）与导出/交接（CI-81）
+
+**CI-78**（子代理 worktree `8244d27`，基于 4fc58e5；主分支 cherry-pick `290449c` 无冲突）：`apps/messages/tests` 37、`tests/integration` 636、`services/identity/tests` 634、`apps/docs/tests` 891 通过 1 跳过；
+五守卫、typecheck/build、`npm test --workspaces`（19+39+49+20）通过；隔离四源实例 `ui_e2e_messaging.py` 33/33 里程碑 Chromium（Chrome）+ WebKit × 1280×800 / 390×844（新增：提及 @ 出现与清除、第二个组织的筛选、群头像对另一成员可见、
+屏蔽双向拒绝且措辞正确 → 解除后可发、私聊转群预选与「之前的私聊记录不会带入新群」），0 控制台/CSP/页面错误；截图 42 张。已知：CI-73 的语音步骤在 Chromium 四次中失败一次（录音上传后未在等待内发出，后三次通过，原因未查明）。
+**CI-81**（协调者，main 上）：`services/identity/tests/test_messaging_departure.py` 4 项通过（导出 `synwevo-account-2` 只含本人消息与设置、他人正文不出现、私聊不带对方名字；到期删除时群交给最早管理员并写交接/离开系统行、空群归档、私聊对方保留历史、二次清扫不变；
+既往已删除账户被清扫；离开组织交接给最早加入的成员）；隐私页与账户页三语言改写，`npm test --workspaces` 与 typecheck 通过。四套件全量结果记在本节末尾。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

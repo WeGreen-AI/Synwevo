@@ -37,6 +37,8 @@
 | CI-79 未保存保护 | 账户外壳五个表单有未保存修改时离开会由浏览器询问，改回或保存后不再询问（verification.md §16.79）。 |
 | CI-80 分享摘要 | 公开页有本语言的标题、摘要与由确认 Logo 生成的预览图（issues.md CI-80）。 |
 | CI-82 五主机 | 公开站点与工作空间分到 synwevo.com / workplace.synwevo.com（同一门户进程按 Host 区分），消息主机改为 message.synwevo.com（verification.md §16.80）。 |
+| CI-78 消息完整性 | 提及计数、组织筛选、群头像、屏蔽与解除、私聊转群；两引擎两宽度 33 个里程碑（verification.md §16.81）。 |
+| CI-81 导出与交接 | 账户导出含本人发出的消息与消息设置；账户删除或离开组织时群主交接、空群归档（issues.md CI-81）。 |
 | CI-66 Synwevo Message 独立源站 | 消息成为第四个应用 `apps/messages`（角色 `messages`，`/api/messaging`，本机 `message.localhost:8768`，生产 `message.wegreen.ltd`）；业务层与表原样在 core；注册表行驱动三个源的「消息」链接（`state.messages_url`）、门户卡片与会话通知目标；账户源旧路径 410 / `/messages` 303；举报处理留在账户服务；读到会话末尾时收件箱条目标为已读（verification.md §16.74）。已实现（本机四源隔离实例实测），待部署；运维项见 domain-migration.md §6。 |
 | 本轮暂停点 | 用户要求本轮完成后暂停（2026-09-26 05:30 UTC）。接续：运维在生产主机同步 nginx 的 Upgrade 配置并 reload（deployment.md）；`SheetEditor` 协同；真实邮箱客户端渲染（需授权收件箱）；本条记录提交在本地、未推送，下一批推送时一并带上。 |
 | CI-46 项目页协同 | 在场与定位、按映射三方合并（冲突才 409）、他人变更即时提示、归属活动记录；6 项 pytest、Chromium/WebKit 两账户各 7 里程碑（verification.md §16.47）。已部署（`e6197c1`，run 36219721565）。 |

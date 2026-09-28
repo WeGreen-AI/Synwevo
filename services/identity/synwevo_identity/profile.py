@@ -103,6 +103,25 @@ def check_deletion_constraints(store, user: dict) -> None:
             raise ServiceError(409, "ownership_required", "请先移交共享工作空间的所有权和管理权限")
 
 
+def depart_deleted_accounts(store) -> int:
+    """Every deleted account still listed in a conversation leaves it (CI-81): a group it owned
+    passes to the earliest-joined admin, else member, with the hand-over written in the group;
+    a group left empty is archived. Covers this sweep's deletions and any made before the rule
+    existed. Outside the deletion transaction on purpose — messaging keeps its own — and
+    idempotent, so a failure here is simply retried on the next sweep."""
+    try:
+        rows = store.all("SELECT DISTINCT m.user_id FROM conversation_members m JOIN users u ON u.id=m.user_id "
+                         "WHERE m.left_at IS NULL AND u.status='deleted'")
+    except Exception:  # noqa: BLE001 - a deployment without messaging tables has nothing to do
+        return 0
+    if not rows:
+        return 0
+    from synwevo_core.identity import Identity
+    from synwevo_core.messaging import Messaging
+    messaging = Messaging(store, Identity(store))
+    return sum(messaging.depart(r["user_id"], reason="account_deleted") for r in rows)
+
+
 def finalize_deletions(store) -> int:
     """Idempotent expiry: preserve immutable user IDs and organization contributions."""
     removed = []
@@ -124,6 +143,7 @@ def finalize_deletions(store) -> int:
             store.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",
                           (f"account-deletion-journal:{uid}", uid))
             removed.append(uid)
+    depart_deleted_accounts(store)
     from .withdrawals import record
     for pending in store.all("SELECT key,value FROM meta WHERE key GLOB 'account-deletion-journal:*'"):
         if record(store, "user_deleted", user_id=pending["value"]):
