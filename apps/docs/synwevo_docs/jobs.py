@@ -1098,20 +1098,22 @@ class JobService:
         for f in formats:
             if f not in exports or not exports[f].get("available"):
                 reason = (exports.get(f) or {}).get("reason") or f"不支持导出 {f.upper()}"
-                raise ServiceError(400, "format_unavailable", f"无法导出 {f.upper()}：{reason}", {"field": "formats"})
+                raise ServiceError(400, "format_unavailable", f"无法导出 {f.upper()}：{reason}",
+                                   {"field": "formats", "format": f.upper(), "reason": reason})
         parsing = [r["filename"] for r in ctx.all_source_rows if r["status"] == "parsing"]
         if parsing:
             # A job over the files that happen to be ready would complete "successfully" with
             # the others' documents missing and nothing saying so.
             raise ServiceError(409, "sources_not_ready", f"还有 {len(parsing)} 个来源文件正在解析（如「{parsing[0]}」）；请等解析完成后再提交",
-                               {"files": parsing[:20], "retry_after": 2})
+                               {"files": parsing[:20], "parsing_total": len(parsing), "retry_after": 2})
         recs = ctx.records
         records = recs["records"]
         n = len(records)
         if not n:
             raise ServiceError(400, "no_records", "没有识别到任何样本，无法生成")
         if n > LIMITS.max_records_per_job:
-            raise ServiceError(400, "too_many", f"样本数 {n} 超过单次任务上限 {LIMITS.max_records_per_job}")
+            raise ServiceError(400, "too_many", f"样本数 {n} 超过单次任务上限 {LIMITS.max_records_per_job}",
+                               {"records": n, "limit": LIMITS.max_records_per_job})
         width = max(3, len(str(n)))
         sync = n <= sync_plan_max()
         rows: list[tuple] = []

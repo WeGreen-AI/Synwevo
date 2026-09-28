@@ -897,7 +897,8 @@ def _editor_too_large(size: int | None) -> ServiceError:
     return ServiceError(413, "editor_body_too_large",
                         f"{what}超过 {mb} MB 上限。"
                         "通常是插入的图片太大——图片是连同文档一起提交的。"
-                        "请换用更小的图片，或把它裁剪、压缩之后再插入。你的其它修改还在编辑器里，没有丢失。")
+                        "请换用更小的图片，或把它裁剪、压缩之后再插入。你的其它修改还在编辑器里，没有丢失。",
+                        {"limit_mb": mb, "size_mb": round(size / (1024 * 1024), 1) if size else None})
 
 
 async def _editor_body(request: Request) -> dict:
@@ -963,6 +964,7 @@ async def _read_limited(f: UploadFile) -> bytes:
             break
         total += len(chunk)
         if total > LIMITS.max_file_bytes:
-            raise ServiceError(413, "too_large", f"文件「{f.filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限")
+            raise ServiceError(413, "too_large", f"文件「{f.filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限",
+                               {"filename": f.filename, "limit_mb": LIMITS.max_file_bytes // (1024 * 1024)})
         chunks.append(chunk)
     return b"".join(chunks)

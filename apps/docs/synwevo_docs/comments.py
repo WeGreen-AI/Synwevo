@@ -35,7 +35,7 @@ def clean_body(text) -> str:
     if not text:
         raise ServiceError(400, "invalid_field", "评论不能为空", {"field": "body"})
     if len(text) > MAX_BODY:
-        raise ServiceError(400, "invalid_field", f"评论最多 {MAX_BODY} 个字符", {"field": "body"})
+        raise ServiceError(400, "invalid_field", f"评论最多 {MAX_BODY} 个字符", {"field": "body", "limit": MAX_BODY})
     return text
 
 
@@ -229,7 +229,7 @@ class Comments:
         if not mentions:
             return []
         if not isinstance(mentions, list) or len(mentions) > MAX_MENTIONS:
-            raise ServiceError(400, "invalid_field", "提及的人过多", {"field": "mentions"})
+            raise ServiceError(400, "invalid_field", "提及的人过多", {"field": "mentions", "limit": MAX_MENTIONS})
         out: list[str] = []
         for uid in mentions:
             if not isinstance(uid, str) or uid == author_id or uid in out:

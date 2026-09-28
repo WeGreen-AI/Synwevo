@@ -1,10 +1,12 @@
 import { getLocale, hasMessage, joinMessages, registerMessages, t } from '@synwevo/ui/i18n-core';
 import { messages } from "../messages.ts";
 import { serverMessages } from '../messages.server.ts';
+import { refusalMessages, refusalPatterns } from '../messages.refusals.ts';
+import { refusalText, templatedText } from './refusals.ts';
 registerMessages(messages);
 registerMessages(serverMessages);
 const sourceOf = new Map<string, string>();
-for (const [source, entry] of Object.entries({ ...messages, ...serverMessages })) {
+for (const [source, entry] of Object.entries({ ...messages, ...serverMessages, ...refusalMessages, ...refusalPatterns })) {
   for (const value of Object.values(entry)) {
     for (const form of typeof value === "string" ? [value] : Object.values(value)) {
       if (typeof form === "string" && !form.includes("{")) sourceOf.set(form, source);
@@ -77,9 +79,21 @@ export const ERROR_SOURCE: Record<string, string> = {
   formula_error: '部分公式的计算结果是错误值。',
   recalc_failed: '公式未能重新计算，Excel 打开时会再次计算。',
   xlsx: '表格处理存在限制，请检查模板与输出。',
+  // CI-86: refusals whose several server sentences share one meaning. A catalogued sentence or a
+  // template (lib/refusals.ts) is still preferred; these are what is left when neither applies.
+  bad_template: '模板文件无法解析，请确认文件完整、未加密且是受支持的格式。',
+  bad_editor: '文档内容无法保存为模板，请检查后重试。',
+  bad_rule: '样本规则无效，请检查后重试。',
+  // the field's value transforms (SlotDialog), not a file format
+  bad_format: '字段的格式转换设置无效，请检查后重试。',
+  corrupt: '文件已损坏或格式不受支持，无法打开。',
+  ocr_failed: '文字识别失败，请稍后重试；如果持续出现，请联系管理员。',
+  source_failed: '来源文件现在无法解析，无法运行回归用例。',
+  workspace_unavailable: '工作空间当前不可用。',
+  app_access_revoked: '你在当前工作空间暂时不能使用 Synwevo Docs，请联系工作空间管理员。',
 };
-for (const code of ['bad_value', 'bad_output', 'bad_layout', 'bad_error_policy', 'bad_naming', 'bad_formats', 'bad_rule', 'bad_rect', 'bad_mapping', 'bad_json', 'invalid']) ERROR_SOURCE[code] = '请求参数无效，请检查设置。';
-for (const code of ['unsupported', 'unsupported_template', 'bad_format', 'not_pdf', 'unsupported_media_type', 'unsupported_export']) ERROR_SOURCE[code] = '该格式不支持此操作。';
+for (const code of ['bad_value', 'bad_output', 'bad_layout', 'bad_error_policy', 'bad_naming', 'bad_formats', 'bad_rect', 'bad_mapping', 'bad_json', 'invalid']) ERROR_SOURCE[code] = '请求参数无效，请检查设置。';
+for (const code of ['unsupported', 'unsupported_template', 'not_pdf', 'unsupported_media_type', 'unsupported_export']) ERROR_SOURCE[code] = '该格式不支持此操作。';
 for (const code of ['too_large', 'too_many', 'editor_body_too_large']) ERROR_SOURCE[code] = '文件或请求超过大小上限。';
 
 /** Only call for known service UI text: never file contents, user names or arbitrary DOM. */
@@ -108,6 +122,9 @@ export function serverText(value: unknown): string {
       if (!suffix || !/[\u3400-\u9fff]/.test(suffix) || Object.hasOwn(serverMessages, suffix)) return t(source) + t(suffix);
     }
   }
+  // A refusal or diagnostic sentence with a value in it (a page, a limit, a field name).
+  const refusal = refusalText(text);
+  if (refusal !== null) return refusal;
   // Unknown diagnostics remain verbatim: do not invent detail or erase troubleshooting evidence.
   return text;
 }
@@ -117,21 +134,24 @@ export function diagnosticText(value: unknown): string {
   const text = typeof value === 'string' ? value : '';
   const source = sourceOf.get(text) || text;
   const localized = serverText(source);
-  return hasMessage(source) || localized !== source ? localized : t('操作失败，请检查设置后重试。');
+  return hasMessage(source) || localized !== source ? localized : refusalText(text) ?? t('操作失败，请检查设置后重试。');
 }
 export interface IssueLike { code?: string; error?: string; level?: string; message?: string; originalMessage?: string; requestId?: string; request_id?: string; detail?: { field?: string } }
 export function issueText(issue: IssueLike | string | null | undefined): string {
   if (!issue) return t('操作失败，请检查设置后重试。');
   if (typeof issue === 'string') return diagnosticText(issue);
   const code = issue.code || issue.error;
-  // ApiError owns localized transport diagnostics (gateway/status/request id included).
-  if (issue.originalMessage !== undefined && (!code || !ERROR_SOURCE[code])) return issue.message || t('操作失败，请检查设置后重试。');
   const message = issue.originalMessage ?? issue.message ?? '';
-  const source = sourceOf.get(message) || message;
-  let result = hasMessage(source) ? t(source) : code && ERROR_SOURCE[code] ? t(ERROR_SOURCE[code])
-    : code ? t(issue.level === 'info' || issue.level === 'warning' ? '处理提示（{code}）。' : '请求未完成（{code}）。', { code }) : t('操作失败，请检查设置后重试。');
-  // Structured field identifiers are data and remain verbatim.
-  if (issue.detail?.field) result += ` (${issue.detail.field})`;
+  // What the server said, in the reader's language: worded from its detail, its own sentence, or
+  // a sentence of a known shape (lib/refusals.ts). Such a sentence names what it is about.
+  const said = templatedText(code, issue.detail) ?? refusalText(sourceOf.get(message) || message);
+  // ApiError owns localized transport diagnostics (gateway/status/request id included).
+  if (said === null && issue.originalMessage !== undefined && (!code || !ERROR_SOURCE[code])) return issue.message || t('操作失败，请检查设置后重试。');
+  let result = said ?? (code && ERROR_SOURCE[code] ? t(ERROR_SOURCE[code])
+    : code ? t(issue.level === 'info' || issue.level === 'warning' ? '处理提示（{code}）。' : '请求未完成（{code}）。', { code }) : t('操作失败，请检查设置后重试。'));
+  // A code's label does not say what it is about: structured field identifiers are data and
+  // remain verbatim beside it.
+  if (said === null && issue.detail?.field) result += ` (${issue.detail.field})`;
   const id = issue.requestId || issue.request_id;
   if (id) result = joinMessages([result, t('请求编号：{id}', { id })]);
   return result;

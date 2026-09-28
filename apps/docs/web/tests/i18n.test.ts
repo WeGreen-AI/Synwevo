@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { messages } from '../src/messages.ts';
 import { serverMessages } from '../src/messages.server.ts';
+import { refusalMessages, refusalPatterns } from '../src/messages.refusals.ts';
 import { ERROR_SOURCE, issueText, serverText } from '../src/lib/presentation.ts';
 import { jobStatus, itemStatus, ruleMode } from '../src/lib/status.ts';
 import { errorText, READ_ONLY_TEXT } from '../src/lib/perm.ts';
@@ -11,8 +12,10 @@ test('Docs resources cover both target locales and preserve every parameter', ()
   assert.ok(Object.keys(messages).length > 1200);
   assert.deepEqual(validateMessages(messages), []);
   assert.deepEqual(validateMessages(serverMessages), []);
+  assert.deepEqual(validateMessages(refusalMessages), []);
+  assert.deepEqual(validateMessages(refusalPatterns), []);
   for (const source of Object.values(ERROR_SOURCE)) {
-    assert.ok(source in messages || source in serverMessages, `missing error resource: ${source}`);
+    assert.ok(source in messages || source in serverMessages || source in refusalMessages, `missing error resource: ${source}`);
   }
 });
 

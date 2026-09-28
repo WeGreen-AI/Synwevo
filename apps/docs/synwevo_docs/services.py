@@ -256,7 +256,7 @@ class App:
             raise ServiceError(400, "bad_error_policy", "error_policy 只能是 block 或 skip", {"field": "output.error_policy"})
         naming = out.get("naming")
         if naming is not None and (not isinstance(naming, str) or len(naming) > 300):
-            raise ServiceError(400, "bad_naming", "naming 必须是不超过 300 个字符的文本", {"field": "output.naming"})
+            raise ServiceError(400, "bad_naming", "naming 必须是不超过 300 个字符的文本", {"field": "output.naming", "limit": 300})
         fmts = out.get("formats")
         if fmts is not None and (not isinstance(fmts, list) or not all(isinstance(f, str) for f in fmts)):
             raise ServiceError(400, "bad_formats", "formats 必须是格式名称的数组", {"field": "output.formats"})
@@ -282,7 +282,8 @@ class App:
                 try:
                     _re.compile(spec.get("anchor") or "")
                 except _re.error as e:
-                    raise ServiceError(400, "bad_rule", f"标记的正则表达式无效：{e}") from e
+                    raise ServiceError(400, "bad_rule", f"标记的正则表达式无效：{e}",
+                                       {"field": "block.anchor", "regex_error": str(e)}) from e
 
     # ================================================================ sources
     def add_source(self, pid: str, filename: str, data: bytes, actor: str | None = None) -> dict:
@@ -290,12 +291,14 @@ class App:
         one told if the file is later rejected by the security check."""
         self.get_project(pid)
         if len(data) > LIMITS.max_file_bytes:
-            raise ServiceError(413, "too_large", f"文件「{filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限")
+            raise ServiceError(413, "too_large", f"文件「{filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限",
+                               {"filename": filename, "limit_mb": LIMITS.max_file_bytes // (1024 * 1024)})
         filename = safe_display_name(filename)
         blob = self.store.put_blob(data)
         if self.scanner is not None and self.store.one("SELECT 1 AS x FROM source_files WHERE blob=? AND status='rejected'", (blob,)):
             # The same bytes were already judged malicious: no second look, no new row.
-            raise ServiceError(400, "malware_detected", f"文件「{filename}」的内容此前已被判定为恶意内容，已拒绝")
+            raise ServiceError(400, "malware_detected", f"文件「{filename}」的内容此前已被判定为恶意内容，已拒绝",
+                               {"filename": filename, "earlier": True})
         sid = new_id("s")
         mx = self.store.one("SELECT MAX(ord) AS m FROM source_files WHERE project_id=?", (pid,))["m"] or 0
         t = now()
@@ -455,10 +458,12 @@ class App:
             raise ServiceError(503, "scan_unavailable", "安全检查服务暂不可用，请稍后重试", {"retry_after": 30, "reason": str(e)[:120]}) from e
         if res.status == "infected":
             acceptance_log.warning("scan.rejected template sha256=%s signature=%s engine=%s", sha, res.signature, res.engine)
-            raise ServiceError(400, "malware_detected", f"文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝", {"signature": res.signature})
+            raise ServiceError(400, "malware_detected", f"文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝",
+                               {"signature": res.signature, "filename": filename})
         if res.status == "too_large":
             acceptance_log.warning("scan.too_large template sha256=%s size=%s limit=%s", sha, len(data), self.scan_policy.max_bytes)
-            raise ServiceError(413, "scan_limit", f"文件超过安全检查的大小上限（{self.scan_policy.max_bytes // (1024 * 1024)} MB），无法接纳")
+            raise ServiceError(413, "scan_limit", f"文件超过安全检查的大小上限（{self.scan_policy.max_bytes // (1024 * 1024)} MB），无法接纳",
+                               {"limit_mb": self.scan_policy.max_bytes // (1024 * 1024)})
         return res.as_record()
 
     def resume_parsing(self) -> int:
@@ -595,7 +600,8 @@ class App:
         except ResolveError as e:
             raise ServiceError(400, e.code, str(e)) from e
         if not 0 <= int(block) < len(bl):
-            raise ServiceError(404, "block_missing", f"「{r['filename']}」只有 {len(bl)} 个表单块")
+            raise ServiceError(404, "block_missing", f"「{r['filename']}」只有 {len(bl)} 个表单块",
+                               {"filename": r["filename"], "blocks": len(bl)})
         return bl[int(block)].doc
 
     def desensitize_sources(self, pid: str, body: dict) -> dict:
@@ -820,7 +826,8 @@ class App:
             image_meta["original_blob"] = self.store.put_blob(data)    # the upload itself, unchanged
             fmt = image_meta["native"]
         if fmt not in ("docx", "xlsx", "pdf", "pptx", "png", "jpeg"):
-            raise ServiceError(400, "unsupported_template", f"{fmt.upper()} 不能作为模板。可作为模板的格式：DOCX、XLSX、PDF、PPTX、PNG、JPEG（以及可转换的 DOC/XLS/PPT/ODT/ODS/ODP/RTF、BMP/TIFF/WEBP）")
+            raise ServiceError(400, "unsupported_template", f"{fmt.upper()} 不能作为模板。可作为模板的格式：DOCX、XLSX、PDF、PPTX、PNG、JPEG（以及可转换的 DOC/XLS/PPT/ODT/ODS/ODP/RTF、BMP/TIFF/WEBP）",
+                               {"format": fmt.upper()})
         try:
             check = template_inventory(fmt, working)
         except Exception as e:  # noqa: BLE001
@@ -1012,7 +1019,8 @@ class App:
             raise ServiceError(409, "template_in_use",
                                f"模板「{t['name']}」正被 {len(users)} 个项目使用（如「{users[0]['name']}」）。"
                                "请先在这些项目中更换模板或删除这些项目，再删除模板",
-                               {"projects": [{"id": u["id"], "name": u["name"]} for u in users[:20]], "total": len(users)})
+                               {"projects": [{"id": u["id"], "name": u["name"]} for u in users[:20]], "total": len(users),
+                                "template": t["name"]})
         self.store.update("templates", {"id": tid}, {"deleted": 1, "updated_at": now()})
         self._template_changed(tid, None, None, "delete")
 

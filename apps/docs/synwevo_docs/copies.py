@@ -65,6 +65,36 @@ def build_manifest(app, pid: str, scope: dict) -> tuple[dict, str]:
     return manifest, digest
 
 
+_COPY_REASONS = {
+    "source_changed": {"zh-Hans": "源项目在批准后有改动，批准范围不再有效。", "zh-Hant": "來源項目在批准後有改動，批准範圍不再有效。",
+                       "en": "The source project changed after approval, so the approved scope no longer applies."},
+    "approval_expired": {"zh-Hans": "批准已过期。", "zh-Hant": "批准已過期。", "en": "The approval has expired."},
+    "source_authority_lost": {"zh-Hans": "申请人不再拥有源项目。", "zh-Hant": "申請人不再擁有來源項目。",
+                              "en": "The requester no longer owns the source project."},
+    "decider_authority_lost": {"zh-Hans": "审批者不再具有审批权限。", "zh-Hant": "審批者不再具有審批權限。",
+                               "en": "The approver no longer has approval rights."},
+    "organization_unavailable": {"zh-Hans": "目标组织当前不可用。", "zh-Hant": "目標組織目前不可用。",
+                                 "en": "The target organization is currently unavailable."},
+    "target": {"zh-Hans": "申请人已不能把项目复制到目标工作空间。", "zh-Hant": "申請人已不能把項目複製到目標工作空間。",
+               "en": "The requester can no longer copy the project into the target workspace."},
+    "source": {"zh-Hans": "源项目已不可用。", "zh-Hant": "來源項目已不可用。", "en": "The source project is no longer available."},
+    "failed": {"zh-Hans": "复制过程出错，没有创建任何内容。", "zh-Hant": "複製過程出錯，沒有建立任何內容。",
+               "en": "Copying failed and nothing was created."},
+}
+
+
+def copy_failure_reason(reason: str | None, locale: str) -> str:
+    """The sentence for why a copy did not run, in the recipient's language. The reason stored on
+    the request is a code (a precondition, `target:<code>`, `source:<code>`, or the failing
+    exception's class name); the notification used to carry it — or a Chinese sentence in every
+    language — as its body (CI-86)."""
+    key = reason or ""
+    if key not in _COPY_REASONS:
+        key = key.split(":", 1)[0] if key.split(":", 1)[0] in ("target", "source") else "failed"
+    text = _COPY_REASONS[key]
+    return text.get(locale, text["en"])
+
+
 class CopyExecutor:
     """Runs one approved copy. All authority and the digest are re-checked here, not trusted
     from the approval; the copy is one transaction and the original is never written to."""
@@ -188,8 +218,7 @@ class CopyExecutor:
                 outcome = {"stale": {"zh-Hans": "需要重新申请", "zh-Hant": "需要重新申請", "en": "needs a new request"},
                            "failed": {"zh-Hans": "失败", "zh-Hant": "失敗", "en": "failed"}}[outcome_key or "failed"]
                 params["outcome"] = outcome.get(loc, outcome["en"])
-                params["reason"] = {"source_changed": "源项目在批准后有改动，批准范围不再有效。", "approval_expired": "批准已过期。",
-                                    "source_authority_lost": "申请人不再拥有源项目。", "decider_authority_lost": "审批者不再具有审批权限。"}.get(reason or "", reason or "")
+                params["reason"] = copy_failure_reason(reason, loc)
             path = f"/p/{(r.get('result') or {}).get('project_id')}" if kind == "copy.done" and who == r["requester_id"] else None
             try:
                 self.notifier.emit(who, kind, params=params, organization_id=r["target_organization_id"], workspace_id=r["target_workspace_id"],

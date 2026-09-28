@@ -98,8 +98,8 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose, onLoc
       forgetRequest(project.id);
       onStarted(j.id);
     } catch (e: any) {
-      // 429 queue_full: the workspace already has as many active jobs as it may; say when to retry.
-      const wait = e?.code === "queue_full" ? tr("（当前进行中的任务已达上限{v1}）", { v1: e.detail?.retry_after ? tr("，约 {v1} 秒后再试", { v1: e.detail.retry_after }) : tr("，请等已有任务结束后再试") }) : "";
+      // 429 queue_full: the refusal already names the count and the limit (lib/refusals.ts); add when to retry.
+      const wait = e?.code === "queue_full" && e.detail?.retry_after ? tr("（约 {v1} 秒后再试）", { v1: e.detail.retry_after }) : "";
       setErr(errorText(e) + wait + (e.detail?.invalid ? tr("（例：{v1}：{v2}）", { v1: e.detail.invalid[0]?.record, v2: issueText(e.detail.invalid[0]?.issues?.[0]) }) : ""));
     } finally {
       setBusy(false);
@@ -186,7 +186,7 @@ export default function GenerateDialog({ project, tpl, onStarted, onClose, onLoc
             </div>
             <div className="col">
               <h3>{tr("文件命名")}</h3>
-              <input ref={inputRef} className="input mono" value={naming} onChange={(e) => setNaming(e.target.value)} aria-label={tr("文件命名规则")} />
+              <input ref={inputRef} className="input mono" value={naming} maxLength={300} onChange={(e) => setNaming(e.target.value)} aria-label={tr("文件命名规则")} />
               <div className="row wrap gap4">{sum.tokens.map((t: string) => <button type="button" key={t} className="btn xs" onClick={() => insertToken(t)} aria-label={tr("插入 {{v1}}", { v1: t })}>{`{${t}}`}</button>)}</div>
               <div className="small muted">{tr("示例：")}{ready && sum.naming_examples.length ? sum.naming_examples.map((n: string, i: number) => <code key={i} style={{ marginRight: 8 }}>{n}.{formats[0] || native}</code>) : "—"}</div>
               <div className="tiny muted">{tr("非法字符会被替换，过长会截断；重名自动加序号「(2)」，不会覆盖。")}</div>

@@ -1058,18 +1058,6 @@ export const messages = {
     "en": "{序号}",
     "zh-Hant": "{序號}"
   },
-  "，约 {v1} 秒后再试": {
-    "en": "; try again in about {v1} seconds",
-    "zh-Hant": "，約 {v1} 秒後再試"
-  },
-  "，请等已有任务结束后再试": {
-    "en": "; wait for active jobs to finish",
-    "zh-Hant": "，請等已有任務結束後再試"
-  },
-  "（当前进行中的任务已达上限{v1}）": {
-    "en": " (active job limit reached{v1})",
-    "zh-Hant": "（當前進行中的任務已達上限{v1}）"
-  },
   "（例：{v1}：{v2}）": {
     "en": " (example: {v1}: {v2})",
     "zh-Hant": "（例：{v1}：{v2}）"
@@ -5615,6 +5603,18 @@ export const messages = {
     "en": "The template was deleted ({v1})",
     "zh-Hant": "範本已被刪除（{v1}）"
   },
+  "这个模板不是内置文档模板，不能实时协同（{v1}）": {
+    "en": "This template is not a built-in document template, so it cannot be co-edited live ({v1})",
+    "zh-Hant": "這個範本不是內建文件範本，不能即時協同（{v1}）"
+  },
+  "服务内部出错（{v1}）": {
+    "en": "An internal server error occurred ({v1})",
+    "zh-Hant": "服務內部出錯（{v1}）"
+  },
+  "{v1}（{v2}）": {
+    "en": "{v1} ({v2})",
+    "zh-Hant": "{v1}（{v2}）"
+  },
   "这个模板之前未保存的实时修改无法读取，已改用第 {v1} 版的内容；请检查后再继续。": {
     "en": "This template's earlier unsaved live edits could not be read; version {v1} is in use instead. Check the content before continuing.",
     "zh-Hant": "這個範本之前未儲存的即時修改無法讀取，已改用第 {v1} 版的內容；請檢查後再繼續。"
@@ -5910,5 +5910,41 @@ export const messages = {
   "在消息中讨论": {
     "en": "Discuss in Messages",
     "zh-Hant": "在訊息中討論"
+  },
+  "源项目在批准后有改动，批准范围不再有效；请重新申请。": {
+    "en": "The source project changed after approval, so the approved scope no longer applies. Request the copy again.",
+    "zh-Hant": "來源項目在批准後有改動，批准範圍不再有效；請重新申請。"
+  },
+  "批准已过期；请重新申请。": {
+    "en": "The approval has expired. Request the copy again.",
+    "zh-Hant": "批准已過期；請重新申請。"
+  },
+  "申请人不再拥有源项目。": {
+    "en": "The requester no longer owns the source project.",
+    "zh-Hant": "申請人不再擁有來源項目。"
+  },
+  "审批者不再具有审批权限；请重新申请。": {
+    "en": "The approver no longer has approval rights. Request the copy again.",
+    "zh-Hant": "審批者不再具有審批權限；請重新申請。"
+  },
+  "目标组织当前不可用。": {
+    "en": "The target organization is currently unavailable.",
+    "zh-Hant": "目標組織目前不可用。"
+  },
+  "你已不能把项目复制到目标工作空间；请确认你仍是它的编辑成员。": {
+    "en": "You can no longer copy the project into the target workspace. Check that you are still an editor there.",
+    "zh-Hant": "你已不能把項目複製到目標工作空間；請確認你仍是它的編輯成員。"
+  },
+  "源项目已不可用。": {
+    "en": "The source project is no longer available.",
+    "zh-Hant": "來源項目已不可用。"
+  },
+  "申请的状态已改变。": {
+    "en": "The request's status has changed.",
+    "zh-Hant": "申請的狀態已改變。"
+  },
+  "复制过程出错，没有创建任何内容；请稍后重新申请。": {
+    "en": "Copying failed and nothing was created. Request the copy again later.",
+    "zh-Hant": "複製過程出錯，沒有建立任何內容；請稍後重新申請。"
   },
 } satisfies Messages;

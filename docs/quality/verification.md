@@ -1825,6 +1825,17 @@ CI-83 的全量回归（2214 通过、1 失败、5 跳过）里 `apps/docs/tests
 `services/identity/tests` + `tests/integration`：1268 通过、13 跳过（工作树里没有被忽略的 `testdata/`，`test_org_templates.py` 1 项先因缺夹具文件失败，接上主检出的 `testdata` 后该文件 2 项通过）。
 `check_boundaries`、`check_brand`、`check_design`、`check_component_names` 通过；`npm run typecheck`、`npm run build` 通过；`npm test --workspaces --if-present`：ui 19、auth-client 39、docs-web 49、messages-web 25、account-web 19 + 7，全部通过。
 构建后账户入口 chunk 313.16 kB（gzip 97.11 kB），入口共享 chunk 112.86 kB（gzip 40.83 kB）。浏览器未复核（本轮只在代码与测试层面验证）。
+### 16.85 Docs 工作台的拒绝文案（CI-86）
+
+基线（读代码，逐个呈现路径核对）：`issueText` 对不在 `ERROR_SOURCE` 的代码直接用共享 `apiFailureText`，它只认目录里已有的原句，于是 `overlap`、`invalid_field`、`bad_selection`、`already_published`、`copy_already_requested`、`workspace_unavailable` 等在三种语言里都是「请求未完成（code）」；
+`ERROR_SOURCE` 里的代码（`bad_value`、`bad_rule`、`bad_naming`…）先于原句，「该列不存在」也变成「请求参数无效，请检查设置。」；`bad_format` 被说成文件格式不支持；评论抽屉直接显示 `ApiError.message`；文档编辑器的实时协同关闭原因、复制申请失败原因直接显示代码；
+`copy.failed` 通知正文在英文与繁体里也是中文句子。按构造器扫描 `apps/docs/synwevo_docs` 与 `synwevo_core/project_copies.py`：587 处拒绝（`ServiceError` 364、`not_found` 18、编辑器契约 `_bad` 23、路由转交的格式引擎错误其余）。
+修复后（工作树 PYTHONPATH 指向本工作树的包；共享 venv 的可编辑安装指向主检出，不这样做测到的是旧代码）：
+Docs 外壳 `npm test` 59 项通过，其中新增 `tests/refusals.test.ts` 10 项：服务端每句拒绝须在目录（189 条）、有模板（18 个代码）、有句形（78 条）、在逐句登记的代码映射或带理由的「仅 API」清单（87 句 + 6 个仅机器接口的模块）；删掉「该列不存在」一条译文后该项与「具体原因」一项失败、恢复后通过（变异验证）；
+句形在三种语言里都能读回自身、英文不含中文、zh-Hans 等于原句；模板三语言逐句断言（经 `errorText` 与 `ApiError.message` 两条路径）；网关的工作空间/应用拒绝与 PDF 引擎常量可呈现。`apps/docs/tests/test_refusal_details.py` 9 项通过（上传上限、模板占用、模板格式、导出格式/样本上限/解析中、OCR 未指定页码的建议、正则错误、评论与编辑器上限、复制失败原因三语言、行数上限整句）。
+`pytest apps/docs/tests -q -p no:warnings` 全量 901 通过、1 跳过（LICENSE 未选定）、0 失败（前端已构建，缓存头 8 项随之运行，未构建时它们跳过）；`tests/integration/test_project_copy.py`、`test_gate_api_errors.py`、`test_api_platform_contract_i18n.py` 17 项通过；typecheck、build、`npm test --workspaces --if-present`（ui 19、auth-client 39、docs-web 59、messages-web 25、account-web 19 项校验）、四个检查脚本与 `brand_assets.py --check` 通过。
+未做：浏览器实测（本轮未起隔离实例）；来源文件解析状态里的引擎原句（`diagnosticText`，非拒绝）仍有未编目的，按句形与目录逐步补。
+
 ### 16.86 公开页的消息事实（CI-88）
 
 复现：`apps/portal/web/src/PublicHome.tsx` 与 `PublicPages.tsx` 三处写「没有在线状态、他人已读回执或正在输入提示」，与 `messaging_settings` 缺省（`show_presence=1`、`read_receipts=0`，互惠）及 CI-73/74 的界面不符；首页消息卡链到账户源站 `/messages` 并说「正在成为独立的应用」。
@@ -1834,7 +1845,6 @@ CI-83 的全量回归（2214 通过、1 失败、5 跳过）里 `apps/docs/tests
 
 本机（Docker 28.3，`nginx:1.28-alpine`，一次性网络 `ci89net`，`scratchpad/ci89_gateway_proof.sh`）：四个替身上游按角色名注册；新 `nginx.conf` 的网关对 docwave 答 `docs`；删除并按「先 messages 后 docs」重建，两者地址互换（docs 172.18.0.2→.3），重建后立即一次请求仍落到旧地址（缓存窗口），11 s 后答 `docs`、message 主机答 `messages`，网关未重启；删除 docs 后 docwave 答 502、accounts 照常；`nginx -t` 通过。
 生产（隧道）：五主机 `/api/auth/state` 的 `role` 各自正确；旧主机 308 不变；`/api/messaging/stream` 匿名 401 JSON（messages）；`/api/collab/…` 普通 GET 401 JSON（docs）、握手 403（应用在 accept 前拒绝匿名）。
-
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

@@ -195,8 +195,13 @@ class Views:
                         raise ServiceError(400, "bad_pages", f"页码超出范围：{bad[:5]}（该文件共 {n_pages} 页，页码从 0 开始）", {"field": "pages"})
                     targets = sorted(set(pages))
                 if len(targets) > self.MAX_OCR_PAGES:
-                    raise ServiceError(400, "too_many_pages", f"一次最多识别 {self.MAX_OCR_PAGES} 页，本次 {len(targets)} 页；请分批指定页码",
-                                       {"field": "pages", "limit": self.MAX_OCR_PAGES})
+                    # Without a page list the caller asked for every scanned page and has no list
+                    # to split: "specify the pages in batches" was advice it could not follow
+                    # (the workbench's OCR button sends none).
+                    advice = "请分批指定页码" if pages is not None else "请用 pages 分批指定页码，或把文件拆分后分别上传"
+                    raise ServiceError(400, "too_many_pages", f"一次最多识别 {self.MAX_OCR_PAGES} 页，本次 {len(targets)} 页；{advice}",
+                                       {"field": "pages", "limit": self.MAX_OCR_PAGES, "requested": len(targets),
+                                        "pages_given": pages is not None})
                 for pno in targets:
                     png = pe.render_page_png(doc.data, pno, 300 / 72)
                     done[str(pno)] = ocr_png(png)
@@ -290,7 +295,7 @@ class Views:
             s = search.strip().lower()
             rec = next((r for r in recs if s in (r.get("ident") or "").lower() or s in r["label"].lower()), None)
             if rec is None:
-                raise ServiceError(404, "not_found", f"没有找到包含「{search}」的样本")
+                raise ServiceError(404, "not_found", f"没有找到包含「{search}」的样本", {"search": search})
         if rec is None:
             if strict and not 0 <= (index or 0) < len(recs):
                 raise ServiceError(400, "invalid", "index 超出样本范围", {"field": "index", "total": len(recs)})

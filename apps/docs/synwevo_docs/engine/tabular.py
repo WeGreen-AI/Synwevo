@@ -142,11 +142,15 @@ def _check_cells(n: int):
         raise LimitError(f"单元格数量超过上限 {LIMITS.max_cells:,}（可通过 SYNWEVO_DOCS_MAX_CELLS 调整）")
 
 
-def _check_rows(n: int, where: str):
+def _check_rows(n: int, sheet: str | None):
     # Blank rows hold no cells but still cost a list each; a single cell addressed at row
     # 2,000,000,000 (a few bytes in the file) would otherwise expand into that many rows.
+    # Two whole sentences rather than one with a Chinese fragment spliced in: the workbench
+    # words each in the reader's language (web/src/messages.refusals.ts).
     if n > LIMITS.max_rows:
-        raise LimitError(f"{where}的行数超过上限 {LIMITS.max_rows:,}（可通过 SYNWEVO_DOCS_MAX_ROWS 调整）")
+        if sheet is None:
+            raise LimitError(f"CSV 的行数超过上限 {LIMITS.max_rows:,}（可通过 SYNWEVO_DOCS_MAX_ROWS 调整）")
+        raise LimitError(f"工作表「{sheet}」的行数超过上限 {LIMITS.max_rows:,}（可通过 SYNWEVO_DOCS_MAX_ROWS 调整）")
 
 
 # ---------------------------------------------------------------- CSV
@@ -213,7 +217,7 @@ def read_csv(data: bytes, options: dict | None = None) -> Workbook:
         total += max(1, len(rec))            # a blank line is still a row: never free
         _check_cells(total)
         rows.append([V.Value(V.STR, s, s) if s != "" else V.empty() for s in rec])
-        _check_rows(len(rows), "CSV ")
+        _check_rows(len(rows), None)
     replaced = text_.count("�")
     info = {"encoding": enc, "had_bom": had_bom, "delimiter": delim, "quotechar": quote,
             "replacement_chars": replaced}
@@ -267,7 +271,7 @@ def read_xlsx(data: bytes) -> Workbook:
             # next stored one, so rows (not only cells) are what a crafted gap inflates
             total += max(1, len(out))
             _check_cells(total)
-            _check_rows(len(rows), f"工作表「{ws.title}」")
+            _check_rows(len(rows), ws.title)
         while rows and not rows[-1]:
             rows.pop()
         sh = Sheet(ws.title, idx, rows, hidden=(ws.sheet_state != "visible"))

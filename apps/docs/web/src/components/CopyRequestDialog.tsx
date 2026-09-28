@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { get, post, useSession, setWorkspaceContext } from "@synwevo/auth-client";
 import { Modal, t as tr, useI18n } from "@synwevo/ui";
 import { errorText } from "../lib/perm";
+import { copyErrorText } from "../lib/refusals";
 
 interface Target { id: string; name: string; role: string; organization_id: string; organization_name: string; can_self_approve: boolean }
 interface Manifest { project: { name: string }; template: { name: string; version_no: number; pinned: boolean; slots: number } | null; mappings: { rev: number; count: number; enabled: number };
@@ -54,7 +55,7 @@ export default function CopyRequestDialog({ project, onClose }: { project: { id:
       <p className="tiny muted">{tr("副本在目标工作空间的管理员批准后创建，之后独立于原项目；原项目保持不变。")}</p>
       {requests && requests.length > 0 && <div className="col gap4"><h3 className="small">{tr("已有申请")}</h3>{requests.map(r => <div key={r.id} className="row wrap gap8 small" style={{ alignItems: "center" }}>
         <span className="badge">{tr(STATUS[r.status] || r.status)}</span><span>{r.name}</span><span className="muted">{new Date(r.created_at * 1000).toLocaleString(session.me?.locale || undefined)}</span>
-        {r.decider && r.decision_reason && <span className="muted">{r.decider.name}：{r.decision_reason}</span>}{r.error && <span className="muted">{r.error}</span>}
+        {r.decider && r.decision_reason && <span className="muted">{r.decider.name}：{r.decision_reason}</span>}{r.error && <span className="muted">{copyErrorText(r.error)}</span>}
         {(r.status === "pending" || r.status === "approved") && <button type="button" className="btn sm" disabled={busy} onClick={() => void withdraw(r)}>{tr("撤回")}</button>}
         {r.status === "done" && r.result?.project_id && <button type="button" className="btn sm primary" onClick={() => void openCopy(r)}>{tr("切换到目标空间并打开副本")}</button>}
       </div>)}</div>}

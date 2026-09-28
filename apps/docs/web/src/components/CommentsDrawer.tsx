@@ -4,7 +4,7 @@
  *  judged by the server at read time — a field that was deleted or a template that was replaced
  *  shows as stale and cannot be jumped to, instead of landing on whatever now sits there. */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, del, get, patch, post } from "@synwevo/auth-client";
+import { del, get, patch, post } from "@synwevo/auth-client";
 import { Drawer, isImeKey, t as tr, useDialog, useI18n, useToast } from "@synwevo/ui";
 import { errorText } from "../lib/perm";
 
@@ -111,12 +111,12 @@ export default function CommentsDrawer({ pid, me, canWrite, options, highlight, 
       }
       setBody(""); setMentions([]); setReplyTo(null); setEditing(null);
       await load();
-    } catch (e) { toast(e instanceof ApiError ? e.message : errorText(e), "err"); } finally { setBusy(false); }
+    } catch (e) { toast(errorText(e), "err"); } finally { setBusy(false); }
   }
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true);
-    try { await fn(); await load(); } catch (e) { toast(e instanceof ApiError ? e.message : errorText(e), "err"); } finally { setBusy(false); }
+    try { await fn(); await load(); } catch (e) { toast(errorText(e), "err"); } finally { setBusy(false); }
   }
 
   const anchorChip = (a: CommentAnchor | null) => {

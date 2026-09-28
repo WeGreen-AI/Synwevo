@@ -28,8 +28,8 @@ CHILDREN = {
 MARKS = {"bold", "italic", "underline", "strike", "textStyle", "highlight"}
 
 
-def _bad(where, message):
-    raise ServiceError(400, "bad_editor", message, {"field": f"editor.{where}".rstrip(".")})
+def _bad(where, message, **extra):
+    raise ServiceError(400, "bad_editor", message, {"field": f"editor.{where}".rstrip("."), **extra})
 
 
 def _object(value, where, keys=None):
@@ -47,7 +47,7 @@ def _enum(obj, key, choices, where):
 
 def _number(value, where, low, high):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
-        _bad(where, f"必须是 {low}–{high} 范围内的有限数字")
+        _bad(where, f"必须是 {low}–{high} 范围内的有限数字", min=low, max=high)
 
 
 def _list(value, where):
