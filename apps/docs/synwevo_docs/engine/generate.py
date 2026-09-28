@@ -42,6 +42,8 @@ def fill_checked(template_format: str, work: bytes, slots: list[dict], plan: Pla
     Returns (bytes, issues, layout report or None)."""
     options = dict(options or {})
     fmt = native_format(template_format)
+    if fmt == "pptx":
+        options["layout_mode"] = layout_mode          # the slide-bottom check is the engine's own (no render needed)
     if layout_mode not in ("warn", "fit") or fmt not in LAYOUT_FORMATS:
         out, issues = fill_native(template_format, work, slots, plan, options)
         return out, issues, None

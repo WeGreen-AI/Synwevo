@@ -275,6 +275,30 @@ def test_pptx_multiline_value_in_empty_cell_is_schema_valid():
     assert _table_texts(out) == [["名称", "一\x0b二"]]                             # python-pptx reads a:br as \v
 
 
+def test_pptx_table_past_the_slide_bottom_fails_the_copy_only_when_keeping_the_layout():
+    """layout=fit promises "keep the template's pages, or that copy fails". A presentation keeps
+    its slide count however long a table grows, so the table running off the slide is the copy not
+    fitting: under fit it is an error (the copy is not produced); otherwise a warning, as before."""
+    from synwevo_docs.engine import generate as G
+    from synwevo_docs.engine.plan import Plan
+    work, sid = _deck([["名称", "数量"], ["a", "0"]])
+    work, rep = P.pptx_add_slot(work, {"slide": 0, "shape": sid, "kind": "repeat", "row": 1, "name": "明细"}, [])
+    vals = {rep["id"]: _rows(*[(f"第{i}项", str(i)) for i in range(40)])}
+    _, issues = P.pptx_fill(work, [rep], vals)
+    assert [(i["level"], i["code"]) for i in issues] == [("warning", "slide_overflow")]
+    _, issues = P.pptx_fill(work, [rep], vals, {"layout_mode": "fit"})
+    assert [(i["level"], i["code"]) for i in issues] == [("error", "slide_overflow")]
+    assert issues[0]["message"] == "重复明细「明细」共 40 行，表格超出幻灯片底部；已选择保持模板页数，因此不产出这一份。请减少行数或调整模板"
+    # the guard hands the choice to the engine; a short table fits and is no issue in any mode
+    plan = Plan(record={}, values=vals)
+    _, issues, _ = G.fill_checked("pptx", work, [rep], plan, None, "fit", 1)
+    assert [(i["level"], i["code"]) for i in issues] == [("error", "slide_overflow")]
+    _, issues, _ = G.fill_checked("pptx", work, [rep], plan, None, "off", None)
+    assert [(i["level"], i["code"]) for i in issues] == [("warning", "slide_overflow")]
+    _, issues = P.pptx_fill(work, [rep], {rep["id"]: _rows(("a", "1"))}, {"layout_mode": "fit"})
+    assert issues == []
+
+
 def test_pptx_source_with_fewer_paragraphs_names_the_slide_shape_and_paragraph():
     """A source deck whose text box has fewer paragraphs than the representative file says which
     slide, which shape and which paragraph the value was read from — not just "differs"."""

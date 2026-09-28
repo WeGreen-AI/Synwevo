@@ -485,6 +485,9 @@ def pptx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
     pkg = Package(work)
     issues: list[dict] = []
     cx, cy = slide_size(pkg)
+    # layout=fit ("keep the template's pages, or that copy fails"): a table running off the slide is
+    # that copy not fitting, even though the slide count stays the same
+    keep_layout = bool(options and options.get("layout_mode") == "fit")
 
     def err(sl, code, message):
         issues.append({"level": "error", "slot": sl["id"], "code": code, "message": message})
@@ -582,7 +585,10 @@ def pptx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
         tbl.remove(tr)
         _grow_frame(el, h_tpl * (len(data) - 1))
         box = _xfrm(el)
-        if box and box[1] + box[3] > cy:
+        if box and box[1] + box[3] > cy and keep_layout:
+            err(sl, "slide_overflow", f"重复明细「{sl['name']}」共 {len(data)} 行，表格超出幻灯片底部；已选择保持模板页数，"
+                                      f"因此不产出这一份。请减少行数或调整模板")
+        elif box and box[1] + box[3] > cy:
             issues.append({"level": "warning", "slot": sl["id"], "code": "slide_overflow",
                            "message": f"重复明细「{sl['name']}」共 {len(data)} 行，表格超出幻灯片底部；演示文稿不会自动分页，请减少行数或调整模板"})
 
