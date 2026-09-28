@@ -25,6 +25,9 @@ one set of rules, not two:
 * **Previewing the product:** `.claude/launch.json` names the three origins (`docweave`, `accounts`,
   `portal`). Start them with `python scripts/platform.py up` (it refuses to create an empty database
   in `data/` unless given `--init`), then open them in the preview browser.
+* **Continuous iteration:** the working protocol is archived in `docs/ai/continuous-iteration.md`; the
+  checkpoint, priority queue and requirement coverage index are in `docs/ai/iteration-state.md` (read it
+  first, then verify Git, code, environment and the deployed version before continuing).
 * **Where the current state is recorded:** `docs/quality/progress.md` (what is done and verified),
   `docs/quality/issues.md` (defects with evidence), `docs/engineering/codebase-review.md` (code map
   and review coverage). Resume interrupted work from `docs/quality/handoff.md`; the per-file
