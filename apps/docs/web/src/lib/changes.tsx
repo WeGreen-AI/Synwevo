@@ -36,8 +36,10 @@ export function changeText(item: any): string {
     case "edit": return tr("修改了{v1}第 {v2} 个{v3}", { v1: part, v2: n, v3: node });
     case "insert": return tr("在{v1}第 {v2} 处新增了{v3}", { v1: part, v2: n, v3: node });
     case "delete": return tr("删除了{v1}第 {v2} 个{v3}", { v1: part, v2: n, v3: node });
-    case "restore": return tr("把模板恢复为 {v1}（编辑内容随之更新）", { v1: item.excerpt });
-    case "replace": return tr("在编辑器之外保存了 {v1}（编辑内容随之更新）", { v1: item.excerpt });
+    case "restore": return item.before ? tr("把模板从 {v2} 恢复为 {v1} 的内容（编辑内容随之更新）", { v1: item.excerpt, v2: item.before })
+      : tr("把模板恢复为 {v1}（编辑内容随之更新）", { v1: item.excerpt });
+    case "replace": return item.before ? tr("在编辑器之外保存了 {v1}（替换了 {v2}，编辑内容随之更新）", { v1: item.excerpt, v2: item.before })
+      : tr("在编辑器之外保存了 {v1}（编辑内容随之更新）", { v1: item.excerpt });
     default: return item.kind;
   }
 }

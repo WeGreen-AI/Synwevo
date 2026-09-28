@@ -458,6 +458,10 @@ def test_restore_undo_and_redo_refuse_to_throw_away_unsaved_live_edits_unless_to
     r = c.post(f"/api/templates/{tid}/undo", json={"head": 3})
     assert r.status_code == 200 and r.json()["head"] == 2, r.text
     assert a.recv(want="update") == "update" and a.texts() == ["第二版"]
+    # the history says what became what (review item C4): the restore copied v1 over v2; the
+    # undo moved the head from v3 back to v2 — not only the new version number
+    rows = [x for x in c.get(f"/api/templates/{tid}/collab/changes?limit=20").json()["items"] if x["kind"] == "restore"]
+    assert [(x["excerpt"], x["before"]) for x in rows][:2] == [("v2", "v3"), ("v1", "v2")], rows
     a.close()
     b.close()
 

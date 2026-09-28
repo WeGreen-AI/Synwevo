@@ -361,8 +361,12 @@ class CollabHub:
         room = self.rooms.get(f"project:{pid}")
         return {"items": items, "online": room.peers() if room else []}
 
-    def on_template_change(self, tid: str, head: int | None, editor: dict | None, reason: str) -> None:
-        """Called by the template service after a version operation, from any thread."""
+    def on_template_change(self, tid: str, head: int | None, editor: dict | None, reason: str, *,
+                           previous: int | None = None, source: int | None = None) -> None:
+        """Called by the template service after a version operation, from any thread. The history
+        row says what the document became and what it was before: a restore names the version it
+        copied (`source`) and the one it replaced (`previous`); undo/redo name where the head moved
+        from; a save made outside the editor names the version it followed."""
         key = f"template:{tid}"
         actor = self.actor(tid)
         room = self.rooms.get(key)
@@ -381,7 +385,9 @@ class CollabHub:
             return
         snapshot = reason == "save" and actor is not None and any(c.user_id == actor for c in room.clients)
         if room.writable and (reason != "save" or not snapshot):
-            self.record_changes(room, actor, [("body", "restore" if reason in ("restore", "undo", "redo") else "replace", 0, "", f"v{head}")], coalesce=False)
+            became = f"v{source}" if reason == "restore" and source else f"v{head}"
+            self.record_changes(room, actor, [("body", "restore" if reason in ("restore", "undo", "redo") else "replace", 0, "", became,
+                                               f"v{previous}" if previous else None)], coalesce=False)
             room.changes_rev += 1
         actor_name = display_name(self.identity.get_user(actor)) if actor else None
         self.loop.call_soon_threadsafe(room.apply_head_change, head, editor, reason, actor_name, snapshot, actor)

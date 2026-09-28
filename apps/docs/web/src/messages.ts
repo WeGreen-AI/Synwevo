@@ -5179,6 +5179,14 @@ export const messages = {
     "en": "saved {v1} outside the editor (the editor content followed)",
     "zh-Hant": "在編輯器之外儲存了 {v1}（編輯內容隨之更新）"
   },
+  "在编辑器之外保存了 {v1}（替换了 {v2}，编辑内容随之更新）": {
+    "en": "saved {v1} outside the editor, replacing {v2} (the editor content followed)",
+    "zh-Hant": "在編輯器之外儲存了 {v1}（替換了 {v2}，編輯內容隨之更新）"
+  },
+  "把模板从 {v2} 恢复为 {v1} 的内容（编辑内容随之更新）": {
+    "en": "restored the template from {v2} to the content of {v1} (the editor content followed)",
+    "zh-Hant": "把範本從 {v2} 復原為 {v1} 的內容（編輯內容隨之更新）"
+  },
   "实时协同不可用（{v1}）。": {
     "en": "Live collaboration is unavailable ({v1}).",
     "zh-Hant": "即時協同不可用（{v1}）。"

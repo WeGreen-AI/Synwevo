@@ -983,15 +983,18 @@ class App:
                                                    json.dumps(editor, ensure_ascii=False) if editor is not None else None, t))
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
         self._bump_projects_using(tid)
-        self._template_changed(tid, no, editor, "save")
+        self._template_changed(tid, no, editor, "save", previous=head)
         return self.template_detail(tid)
 
-    def _template_changed(self, tid: str, head: int | None, editor: dict | None, reason: str) -> None:
+    def _template_changed(self, tid: str, head: int | None, editor: dict | None, reason: str, *,
+                          previous: int | None = None, source: int | None = None) -> None:
+        """`previous`: the head this change replaced; `source`: the version a restore copied — so
+        the change history can say what became what, not only the new number."""
         hook = self.on_template_change
         if hook is None:
             return
         try:
-            hook(tid, head, editor, reason)
+            hook(tid, head, editor, reason, previous=previous, source=source)
         except Exception:                                    # noqa: BLE001 — the version is saved; the room catches up on reopen
             logging.getLogger("synwevo.docs").exception("template change hook failed for %s (%s)", tid, reason)
 
@@ -1057,7 +1060,7 @@ class App:
                 target = v["parent_no"]
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (target, now(), tid))
         self._bump_projects_using(tid)
-        self._template_changed(tid, target, self.get_version(tid, target).get("editor"), "redo" if redo else "undo")
+        self._template_changed(tid, target, self.get_version(tid, target).get("editor"), "redo" if redo else "undo", previous=head)
 
     def template_usage(self, tid: str) -> dict:
         """Who follows this template: the projects bound to it, split into those that follow the
@@ -1090,7 +1093,7 @@ class App:
                        json.dumps(target.get("editor"), ensure_ascii=False) if target.get("editor") is not None else None, t))
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
         self._bump_projects_using(tid)
-        self._template_changed(tid, no, target.get("editor"), "restore")
+        self._template_changed(tid, no, target.get("editor"), "restore", previous=head, source=version_no)
         return self.template_detail(tid)
 
     def template_undo(self, tid: str, base_head: int | None = None, *, discard_live: bool = False) -> dict:
