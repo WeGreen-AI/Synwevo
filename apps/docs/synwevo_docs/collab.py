@@ -54,7 +54,7 @@ from synwevo_core.context import actor as current_actor, as_tenant
 from synwevo_core.http import WRITE_ROLES
 from synwevo_core.store import Store, new_id, now
 
-from .collab_pm import PARTS, block_texts, seed
+from .collab_pm import PARTS, block_texts, read, seed, strip_nulls
 
 log = logging.getLogger("synwevo.docs.collab")
 
@@ -280,10 +280,31 @@ class Room:
             for u in updates:
                 self.broadcast(create_update_message(u))
         self.head = head
-        self.dirty = False
+        # A collaborator's save is what their page held when they pressed it; someone else may have
+        # typed since. Only a live document equal to the saved one is clean (CI-114: it used to be
+        # marked saved regardless, so a later restore dropped the newer text without asking).
+        self.dirty = bool(snapshot and self.writable and not same_document(self.doc, editor))
         if self.writable:
             self.schedule_persist()
         self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor, "by_id": actor_id})
+
+
+def same_document(ydoc, editor: dict | None) -> bool:
+    """Does the live document hold exactly the saved editor model (its three parts, compared in
+    the form a round trip through the shared types preserves)?"""
+    try:
+        live = strip_nulls(read(ydoc))
+    except Exception:  # noqa: BLE001 — unreadable: not provably equal, so not clean
+        return False
+    empty = {"type": "doc", "content": []}
+    for part in PARTS:
+        saved = strip_nulls((editor or {}).get(part) or empty)
+        have = live.get(part) or empty
+        if not have.get("content") and not saved.get("content"):
+            continue
+        if have != saved:
+            return False
+    return True
 
 
 class CollabHub:

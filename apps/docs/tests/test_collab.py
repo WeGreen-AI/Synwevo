@@ -624,3 +624,32 @@ def test_a_save_from_inside_the_room_saves_the_live_document(world):
     r = c.put(f"/api/templates/{tid}/builtin", json={"editor": live, "base_version": 1})
     assert r.status_code == 200 and r.json()["head"] == 2, r.text
     a.close()
+
+
+def test_a_save_from_the_room_leaves_newer_typing_unsaved(world):
+    """CI-114: a collaborator's save is what their page held when they pressed it. Someone who
+    typed after that had their text marked as saved though it was not in the version, so a later
+    restore replaced it without asking. The room is clean only when it equals the saved version."""
+    tid = world["tid"]
+    ce = world["client_for"](world["editor"])
+    a = _connect(world, "editor")
+    b = _connect(world, "owner")
+    a.append_text("甲")
+    assert b.recv(want="update") == "update"
+    b.append_text("乙")                                     # typed after the editor's page serialized its save
+    assert a.recv(want="update") == "update"
+    time.sleep(0.2)
+    field = DOC["body"]["content"][0]["content"][1]
+    body = lambda text: {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}, field]}]}}  # noqa: E731
+    pressed = body("客户：甲")
+    r = ce.put(f"/api/templates/{tid}/builtin", json={"editor": pressed, "base_version": 1})
+    assert r.status_code == 200 and r.json()["head"] == 2
+    head = a.recv_meta("head")
+    assert head["head"] == 2 and head["dirty"] is True, "「乙」is not in version 2"
+    r = world["client_for"](world["owner"]).post(f"/api/templates/{tid}/restore", json={"version": 1, "base_head": 2})
+    assert r.status_code == 409 and r.json()["error"] == "live_edits"
+    # saving what the room holds makes it clean
+    r = ce.put(f"/api/templates/{tid}/builtin", json={"editor": body("客户：甲乙"), "base_version": 2})
+    assert r.status_code == 200 and a.recv_meta("head")["dirty"] is False
+    a.close()
+    b.close()
