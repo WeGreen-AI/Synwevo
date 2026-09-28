@@ -52,6 +52,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from synwevo_core import env
 from synwevo_core.context import actor as current_actor, as_tenant
 from synwevo_core.http import WRITE_ROLES
+from synwevo_core.errors import not_found
 from synwevo_core.store import Store, new_id, now
 
 from .collab_pm import PARTS, block_texts, read, seed, strip_nulls
@@ -549,6 +550,8 @@ class CollabHub:
         async with lock:
             room = self.rooms.get(key)
             if room is not None:
+                if (room.tenant or "default") != (tenant or "default"):
+                    not_found("项目")                        # an open room is no way into another workspace (CI-118)
                 return room
 
             def read():
@@ -566,6 +569,11 @@ class CollabHub:
         async with lock:
             room = self.rooms.get(key)
             if room is not None:
+                # The room was opened by someone in the template's workspace; a person signed into
+                # another workspace used to be let in while it was open — reading and writing the live
+                # document of a template their own workspace cannot see (CI-118). Same answer as closed.
+                if (room.tenant or "default") != (tenant or "default"):
+                    not_found("模板")
                 return room
 
             def read_all():

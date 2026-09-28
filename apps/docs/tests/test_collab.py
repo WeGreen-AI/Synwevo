@@ -700,3 +700,26 @@ def test_a_tab_reconnecting_to_the_same_document_keeps_its_offline_edits(world):
     assert b.recv(want="update") == "update" and b.texts() == ["客户：（离线）"]
     a2.close()
     b.close()
+
+
+def test_an_open_room_is_no_way_into_another_workspace(world):
+    """CI-118: once someone in the template's workspace had its room open, a person signed into
+    another workspace could join by the template id — receive the live document and write to it —
+    because an open room was handed out without comparing its workspace. Closed rooms already
+    answered 404; open ones do now too, for template and project rooms."""
+    tid = world["tid"]
+    a = _connect(world, "owner")                             # the room is open
+    stranger = world["client_for"](world["stranger"], world["other_wid"])
+    with pytest.raises(WebSocketDisconnect) as x:
+        stranger.websocket_connect(f"/api/collab/templates/{tid}", headers={"origin": "http://testserver"}).__enter__()
+    assert x.value.code == 4404
+    assert a.texts() == ["客户："], "nothing reached the room"
+    a.close()
+    # a project room of this workspace, open, is refused the same way
+    pid = world["co"].post("/api/projects", json={"name": "同空间项目"}).json()["id"]
+    p = Peer(world["client_for"](world["owner"]), pid, path="projects")
+    p.hello = p.connect()
+    with pytest.raises(WebSocketDisconnect) as x:
+        stranger.websocket_connect(f"/api/collab/projects/{pid}", headers={"origin": "http://testserver"}).__enter__()
+    assert x.value.code == 4404
+    p.close()
