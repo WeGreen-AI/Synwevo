@@ -8,13 +8,13 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | CI-90…CI-103 已部署；CI-104（Word 嵌套明细）已推送（run 36429047601 验证中）；CI-105（数字按 Excel 显示）已合并到 main（ed8b192），待 CI-104 部署后推送 |
+| 状态 | CI-90…CI-103 已部署（aadcb9e）；CI-104（Word 嵌套明细）验证通过但**部署未启动**：GitHub Actions 以账户付款失败/支出上限为由拒绝启动作业（受阻，待持有人处理账单）；CI-105（数字按 Excel 显示）已合并到 main，本地检查中 |
 | 分支 / HEAD | `main`；ecdbf87 已推送；ed8b192（CI-105）与本检查点本地；worktree `number-display` 已并入，可删除 |
-| 线上 | aadcb9e（CI-102/103）；此后以 deployment.md 为准 |
+| 线上 | aadcb9e（CI-102/103）；CI-104 起因 GitHub 账单受阻未上线；以 deployment.md 为准 |
 | 生产主机侧 | ClamAV（CI-87）；网关按请求解析（CI-89）；`bin/receive.py` 含 messages（CI-98）；成员导入到期清理**未开启**（待持有人决定） |
 | 本任务启动的进程 | 隔离验证实例：portal 31769 原进程；messages 31768、accounts 31770、docs 31765 在主检出的新代码上重启（docs 含 CI-105）；环境文件 `scratchpad/live/*.env` |
 | 进行中的设计 | 无（嵌套明细 DOCX 已交付；XLSX/PPTX/PDF 嵌套、多层嵌套属设计 §7 第 4 批，未排期） |
-| 下一步 | ① CI-104 部署后复查、记录，推送 CI-105 并复查；② Q13：工作台逐样本问题只显示短标签（约 100 句引擎说明未进目录）；③ 其余：Q4 数据生命周期、W5 负载测量、持有人决定的事项 |
+| 下一步 | ① 持有人处理 GitHub 账单后，重跑最新的 main 运行并复查五主机、记录（CI-104、CI-105 一并上线）；② Q13 逐样本问题的三语言说明（并行代理进行中）；③ 其余：Q4 数据生命周期、W5 负载测量、持有人决定的事项 |
 
 ## 优先队列
 
@@ -35,7 +35,7 @@
 | Q13 逐样本问题的说明 | 预览与生成对话框里的逐样本问题（组内冲突、缺列、必填为空…）只显示代码标签，连中文都看不到是哪个字段、哪些值、怎么改；约 100 句引擎说明不在三语言目录里 | P2 | 可执行 | — | 引擎句子全部进目录（或由 detail 组句），refusals.test 覆盖逐样本说明；三语言浏览器证明 | 盘点 plan/resolve/templates/generate/jobs 的 message |
 | Q14 数值显示精度 | 3*1.2 显示为 3.5999999999999996（Excel 显示 3.6） | P1 | 已完成（CI-105，待部署） | — | test_number_display.py 17 项 + 浏览器证明 | 部署后复查 |
 
-受阻（外部条件）：A3 真实 CUHK 收件与 SMTP2GO/SPF/发件域；A4 Google/Microsoft 生产凭据；S2 Turnstile 站点与密钥；管理员 TOTP 绑定；生产登录态核对；法律主体、联系方式、条款版本、费用与 SLA；iOS/Android 真机与实体 Passkey。解除条件：持有人提供对应凭据或亲自操作。
+受阻（外部条件）：**GitHub Actions 账单（2026-09-28 13:53 UTC 起部署作业不启动；持有人在 Billing & plans 处理）**；A3 真实 CUHK 收件与 SMTP2GO/SPF/发件域；A4 Google/Microsoft 生产凭据；S2 Turnstile 站点与密钥；管理员 TOTP 绑定；生产登录态核对；法律主体、联系方式、条款版本、费用与 SLA；iOS/Android 真机与实体 Passkey。解除条件：持有人提供对应凭据或亲自操作。
 
 ## §8 覆盖索引（2026-09-28，来源：记录 + 代码抽查；“待核实”不等于未做）
 
