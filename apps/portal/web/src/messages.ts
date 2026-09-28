@@ -69,7 +69,7 @@ export const portalMessages = {
   "群组": {"en": "Groups", "zh-Hant": "群組"},
   "公告": {"en": "Announcements", "zh-Hant": "公告"},
   "举报处理": {"en": "Report review", "zh-Hant": "檢舉處理"},
-  "目前从平台栏的「消息」进入，正在成为独立的应用。": {"en": "Reached today through “Messages” in the platform bar; it is becoming an application of its own.", "zh-Hant": "目前從平台欄的「訊息」進入，正在成為獨立的應用。"},
+  "独立打开，也可以从工作空间顶栏的「消息」进入。": {"en": "Opens on its own; “Messages” in the workspace bar leads there too.", "zh-Hant": "獨立開啟，也可以從工作空間頂欄的「訊息」進入。"},
   "打开消息": {"en": "Open messages", "zh-Hant": "開啟訊息"},
 
   // ------------------------------------------------------------------ home: working together
@@ -89,7 +89,8 @@ export const portalMessages = {
   "说清楚做了什么，也说清楚没做什么。": {"en": "Clear about what we do — and what we don’t.", "zh-Hant": "說清楚做了甚麼，也說清楚沒做甚麼。"},
   "账户数据可以随时导出，也可以申请删除；删除有 7 天缓冲期，期间可以撤回。": {"en": "You can export your account data at any time and request deletion; deletion has a 7-day grace period during which it can be cancelled.", "zh-Hant": "帳戶資料可以隨時匯出，也可以申請刪除；刪除有 7 天緩衝期，期間可以撤回。"},
   "传输经 HTTPS 加密，服务器端不做端到端加密；平台管理员读不到业务文档与对话，组织的举报处理只看到被举报的那一条消息。": {"en": "Transport is encrypted with HTTPS; there is no end-to-end encryption on the server. Platform administrators cannot read business documents or conversations, and an organisation’s report review sees only the reported message.", "zh-Hant": "傳輸經 HTTPS 加密，伺服器端不做端對端加密；平台管理員讀不到業務文件與對話，組織的檢舉處理只看到被檢舉的那一則訊息。"},
-  "没有任何 AI 处理你的内容；没有在线状态、他人已读回执或正在输入提示。": {"en": "No AI processes your content. There is no online status, no read receipts of others and no typing indicator.", "zh-Hant": "沒有任何 AI 處理你的內容；沒有在線狀態、他人已讀回條或正在輸入提示。"},
+  "没有任何 AI 处理你的内容。在线状态只给同一会话的成员看，可以关闭；已读回执默认关闭，双方都开启才显示。": {"en": "No AI processes your content. Online status is shown only to people in a conversation with you and can be turned off; read receipts are off by default and appear only when both sides turn them on.", "zh-Hant": "沒有任何 AI 處理你的內容。線上狀態只給同一會話的成員看，可以關閉；已讀回執預設關閉，雙方都開啟才顯示。"},
+  "在线状态与正在输入只给同一会话的成员看，不保存，可以在消息设置里关闭；已读回执默认关闭，双方都开启才显示。": {"en": "Online status and typing are shown only to people in a conversation with you, are not stored, and can be turned off in message settings; read receipts are off by default and appear only when both sides turn them on.", "zh-Hant": "線上狀態與正在輸入只給同一會話的成員看，不保存，可以在訊息設定裡關閉；已讀回執預設關閉，雙方都開啟才顯示。"},
   "只用本站自己的 Cookie 维持登录；数据保存在位于日本东京的单台服务器上，每次发布前做备份。": {"en": "Only this site’s own cookies keep you signed in. Data is stored on a single server in Tokyo, Japan, backed up before every release.", "zh-Hant": "只用本站自己的 Cookie 維持登入；資料保存在位於日本東京的單一伺服器上，每次發佈前做備份。"},
   "完整的数据与隐私说明": {"en": "The full data & privacy page", "zh-Hant": "完整的資料與私隱說明"},
   "服务说明与限额": {"en": "Service description and limits", "zh-Hant": "服務說明與限額"},
@@ -220,7 +221,7 @@ export const portalMessages = {
   "平台": {"en": "Platform", "zh-Hant": "平台"},
   "统一账户与登录、工作空间、组织与角色、通知收件箱与浏览器推送，以及面向自动化集成的接口平台。": {"en": "One account and sign-in, workspaces, organisations and roles, the notification inbox with browser push, and an API platform for automation.", "zh-Hant": "統一帳戶與登入、工作空間、組織與角色、通知收件箱與瀏覽器推送，以及面向自動化整合的介面平台。"},
   "文档自动化：选择来源数据、接入模板、检查后批量生成。支持 DOCX、XLSX、PDF、PPTX、CSV 等格式，各格式的能力以应用内选项为准。": {"en": "Document automation: select source data, connect a template, check, then generate in batches. Works with DOCX, XLSX, PDF, PPTX, CSV and more; each format’s capabilities are shown in the application.", "zh-Hant": "文件自動化：選取來源資料、接入範本、檢查後批次產生。支援 DOCX、XLSX、PDF、PPTX、CSV 等格式，各格式的功能以應用內選項為準。"},
-  "组织内消息：私聊与群组、引用回复、@提及、表情回应、附件、文档链接卡片、群公告、举报处理。目前从平台栏的「消息」进入。": {"en": "Messaging within an organisation: direct messages and groups, quoted replies, @mentions, reactions, attachments, document link cards, group announcements and report review. Reached today through “Messages” in the platform bar.", "zh-Hant": "組織內訊息：私訊與群組、引用回覆、@提及、表情回應、附件、文件連結卡片、群組公告、檢舉處理。目前從平台欄的「訊息」進入。"},
+  "组织内消息：私聊与群组、引用回复、@提及、表情回应、附件与语音、文档链接卡片、群公告、举报处理。独立打开，也可以从工作空间顶栏的「消息」进入。": {"en": "Messaging within an organisation: direct messages and groups, quoted replies, @mentions, reactions, attachments and voice messages, document link cards, group announcements and report review. Opens on its own; “Messages” in the workspace bar leads there too.", "zh-Hant": "組織內訊息：私訊與群組、引用回覆、@提及、表情回應、附件與語音、文件連結卡片、群組公告、檢舉處理。獨立開啟，也可以從工作空間頂欄的「訊息」進入。"},
   "没有的部分": {"en": "What there isn’t", "zh-Hant": "沒有的部分"},
   "没有其它应用，也没有流程编排器；这里写的就是全部。": {"en": "There are no other applications and no workflow orchestrator; what is written here is all of it.", "zh-Hant": "沒有其他應用，也沒有流程編排器；這裡寫的就是全部。"},
   "角色": {"en": "Roles", "zh-Hant": "角色"},

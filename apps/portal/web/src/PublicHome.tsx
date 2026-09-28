@@ -1,3 +1,4 @@
+import { messagesHref, useSession } from "@synwevo/auth-client";
 import { Logo, useI18n } from "@synwevo/ui";
 import { DocumentIcon, Shell, signInUrl as signInBase } from "./Portal";
 import { publicPath } from "./publicRoutes";
@@ -36,7 +37,8 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
   const { t, locale } = useI18n();
   const registerUrl = `${registerBase}${registerBase.includes("?") ? "&" : "?"}lang=${locale}`;
   const signInUrl = `${signInBase}&lang=${locale}`;
-  const messagesUrl = `${accountBase.replace(/\/$/, "")}/messages`;
+  // Synwevo Message has its own origin (CI-66/CI-82): the registry's address through its sign-in start
+  const messagesUrl = messagesHref(useSession().state ?? { account_url: `${accountBase.replace(/\/$/, "")}/account` }, { lang: locale });
   const primary = signedIn ? "/workspace" : registerUrl;
   const openApp = (href: string) => (signedIn ? href : signInUrl);
   const together = [
@@ -48,7 +50,7 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
   const trust = [
     "账户数据可以随时导出，也可以申请删除；删除有 7 天缓冲期，期间可以撤回。",
     "传输经 HTTPS 加密，服务器端不做端到端加密；平台管理员读不到业务文档与对话，组织的举报处理只看到被举报的那一条消息。",
-    "没有任何 AI 处理你的内容；没有在线状态、他人已读回执或正在输入提示。",
+    "没有任何 AI 处理你的内容。在线状态只给同一会话的成员看，可以关闭；已读回执默认关闭，双方都开启才显示。",
     "只用本站自己的 Cookie 维持登录；数据保存在位于日本东京的单台服务器上，每次发布前做备份。",
   ];
   return <Shell publicHome right={<PublicNav signedIn={signedIn} registerUrl={registerUrl} home />}>
@@ -86,7 +88,7 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
           <div className="pt-featured-heading"><span className="pt-doc-icon"><MessageIcon/></span><div><p className="pt-eyebrow">{t("组织消息")}</p><h3>Synwevo Message</h3></div></div>
           <p>{t("与同一组织的成员私聊或建群：引用回复、@提及、表情回应、附件与文档链接卡片。新成员只看到加入之后的消息，离开后即止。")}</p>
           <div className="pt-app-formats" aria-label={t("消息能力")}>{["私聊", "群组", "公告", "举报处理"].map(label => <span key={label}>{t(label)}</span>)}</div>
-          <div className="pt-featured-bottom"><p className="pt-hint">{t("目前从平台栏的「消息」进入，正在成为独立的应用。")}</p><a className="btn" href={openApp(messagesUrl)}>{t(signedIn ? "打开消息" : "登录后打开")} <span aria-hidden="true">↗</span></a></div>
+          <div className="pt-featured-bottom"><p className="pt-hint">{t("独立打开，也可以从工作空间顶栏的「消息」进入。")}</p><a className="btn" href={openApp(messagesUrl)}>{t(signedIn ? "打开消息" : "登录后打开")} <span aria-hidden="true">↗</span></a></div>
         </article>
       </div>
     </section>

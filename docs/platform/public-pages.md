@@ -26,7 +26,7 @@
 * 数据与隐私 / 服务说明的分层：页首（眉标、标题、导语、「不是正式法律条款」提示）→ 摘要卡 → 「本部署的当前状态」
   （§3）→ 编号目录 → 编号章节 → 页脚（去处：账户页 / 组织管理员；返回首页 / 另一页）。
 * CTA 三态沿用 `PublicHome` 的 `signedIn`（`undefined` 时不显示登录 / 进入；`false` → 真实注册 `accountLink(account, "/register")`
-  与 `/auth/start?next=%2Fworkspace`；`true` → `/workspace`、消息卡 → 账户源站 `/messages`）。所有跨源地址来自
+  与 `/auth/start?next=%2Fworkspace`；`true` → `/workspace`、消息卡 → `messagesHref(state)`，即注册表里 Synwevo Message 的地址经其登录入口；CI-88 前是账户源站 `/messages`）。所有跨源地址来自
   `useSession().state.account_url` 或服务端 `public_origin()`，页面里没有任何写死的域名。
 * 品牌：三种官方 Logo 只经 `@synwevo/ui` 的 `Brand` / `Logo` 使用；品牌卡用字标版，页脚用字标版，顶栏用完整版。
   `WeaveMotif` 是抽象的「汇聚织线」装饰（内联 SVG、`currentColor`），静态，不是产品截图，也不是动画。
@@ -42,9 +42,9 @@
 |---|---|---|
 | 平台 = 统一账户、工作空间、组织、通知 + 面向自动化集成的接口平台；应用只有 Synwevo Docs 与 Synwevo Message；没有其它应用或编排器 | H S | `AGENTS.md`（产品定位）；`packages/core/synwevo_core/apps.py:341` `bootstrap_docs_app`（注册表里唯一的应用）；`docs/platform/messaging.md` |
 | Synwevo Docs：选择来源数据、接入模板、检查后批量生成；DOCX / XLSX / PDF / PPTX / CSV；各格式能力以应用内为准 | H S | 沿用原首页文案（`apps/portal/web/src/messages.ts` 旧键，见 §6）；`apps/docs/` |
-| Synwevo Message：私聊与群组、引用回复、@提及、表情回应、附件、文档链接卡片、群公告、举报处理；目前从平台栏「消息」进入 | H S | `docs/platform/messaging.md:12-14, 41, 60-62`；`services/identity/web/src/main.tsx:109-110`（`/messages` 路由）；`packages/auth-client/web/src/MessagesLink.tsx`；「正在成为独立应用」= round-9 brief 的规划陈述，页面只说「目前从…进入」 |
+| Synwevo Message：私聊与群组、引用回复、@提及、表情回应、附件与语音、文档链接卡片、群公告、举报处理；独立打开，也可以从工作空间顶栏「消息」进入 | H S | `docs/platform/messaging.md` §7；`apps/messages`（CI-66，2026-09-28 起在 message.synwevo.com）；`packages/auth-client/web/src/MessagesLink.tsx`（CI-88 改写；此前写「目前从平台栏进入、正在成为独立应用」，CI-66/CI-82 上线后失实） |
 | 新成员只看到加入之后的消息；退出或被移除后不再可见；重新加入不恢复 | H P | `docs/platform/messaging.md:28`；`packages/core/synwevo_core/messaging.py`（`joined_seq`、`left_seq`） |
-| 没有在线状态、他人已读回执、正在输入提示 | H P | 研究清单 `inventory:messaging` GAPS；`docs/platform/messaging.md:14`「不做：在线状态、他人已读、端到端加密」 |
+| 在线状态与正在输入只给同一会话的成员看、不保存、可关闭；已读回执默认关闭，双方都开启才显示 | H P | `docs/platform/messaging.md` §7.2–7.4；`packages/core/synwevo_core/messaging.py`（`messaging_settings` 缺省 `show_presence=1`、`read_receipts=0`，互惠）、`messaging_presence.py`（只在内存）。CI-88 前页面写「没有在线状态、他人已读回执或正在输入提示」——CI-74/CI-73 上线后失实 |
 | 没有任何 AI 处理用户内容 | H P | 仓库内无任何模型调用（`grep -ri "openai\|anthropic\|llm" packages apps services` 只命中文档 / 组件名守卫的说明） |
 
 ### 2.2 角色与授权

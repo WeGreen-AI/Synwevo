@@ -1816,6 +1816,11 @@ Chromium 点「返回工作空间」→ 浏览器询问（`beforeunload`）→ �
 CI-83 的全量回归（2214 通过、1 失败、5 跳过）里 `apps/docs/tests/test_regression_cases.py::test_desensitize_copies` 失败：脱敏后 D2 金额仍是 1123.45。单独重跑 8 次均通过——偶发；
 读 `engine/desensitize.py`：比例 `round(uniform(0.6, 1.4), 3)` 取到 1.000 的概率约 1/800。修复后 `test_engine_desensitize.py`（含新增项）与 `test_regression_cases.py` 通过。
 
+### 16.86 公开页的消息事实（CI-88）
+
+复现：`apps/portal/web/src/PublicHome.tsx` 与 `PublicPages.tsx` 三处写「没有在线状态、他人已读回执或正在输入提示」，与 `messaging_settings` 缺省（`show_presence=1`、`read_receipts=0`，互惠）及 CI-73/74 的界面不符；首页消息卡链到账户源站 `/messages` 并说「正在成为独立的应用」。
+修复后：portal typecheck、build 通过；隔离实例 Chrome 1280×900 / 390×900 × 简体 / 繁體 / English：首页与 `/privacy` 各出现新句，页面中不再有旧句；已登录夹具账户在首页点消息卡，链接为 `http://message.localhost:31768/auth/start?next=%2F&lang=zh-Hans`，落在消息应用；0 页面错误（`scratchpad/ci88_proof.py`，截图 `ci88-home-anon-*`）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

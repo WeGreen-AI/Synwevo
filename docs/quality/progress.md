@@ -41,6 +41,8 @@
 | CI-81 导出与交接 | 账户导出含本人发出的消息与消息设置；账户删除或离开组织时群主交接、空群归档（issues.md CI-81）。 |
 | CI-83 拒绝文案 | Synwevo Message 里用户能碰到的服务端拒绝都以本语言句子说明原因（不再是「请求未完成（code）」）；Docs 个人空间项目不再提供必然失败的「在消息中讨论」（issues.md CI-83）。 |
 | CI-84 脱敏缩放 | 脱敏副本里「按比例缩放」的金额一定与原值不同（此前约每 800 次原样复制一次）（issues.md CI-84）。 |
+| CI-87 生产扫描 | 生产上传文件经 ClamAV 扫描（accounts、docs、messages 以 required 模式）；参考 compose 的能力设置已修正（issues.md CI-87）。历史文件补扫待做。 |
+| CI-88 公开页消息事实 | 首页与隐私页如实说明在线、正在输入与已读回执的规则；首页消息卡直达 Synwevo Message（issues.md CI-88）。 |
 | CI-66 Synwevo Message 独立源站 | 消息成为第四个应用 `apps/messages`（角色 `messages`，`/api/messaging`，本机 `message.localhost:8768`，生产 `message.wegreen.ltd`）；业务层与表原样在 core；注册表行驱动三个源的「消息」链接（`state.messages_url`）、门户卡片与会话通知目标；账户源旧路径 410 / `/messages` 303；举报处理留在账户服务；读到会话末尾时收件箱条目标为已读（verification.md §16.74）。已实现（本机四源隔离实例实测），待部署；运维项见 domain-migration.md §6。 |
 | 本轮暂停点 | 用户要求本轮完成后暂停（2026-09-26 05:30 UTC）。接续：运维在生产主机同步 nginx 的 Upgrade 配置并 reload（deployment.md）；`SheetEditor` 协同；真实邮箱客户端渲染（需授权收件箱）；本条记录提交在本地、未推送，下一批推送时一并带上。 |
 | CI-46 项目页协同 | 在场与定位、按映射三方合并（冲突才 409）、他人变更即时提示、归属活动记录；6 项 pytest、Chromium/WebKit 两账户各 7 里程碑（verification.md §16.47）。已部署（`e6197c1`，run 36219721565）。 |
