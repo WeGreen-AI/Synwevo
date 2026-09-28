@@ -570,7 +570,9 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
             from .withdrawals import record as journal
             journaled = journal(ident.store, "invitation_revoked", invitation_id=iid)
             _inbox_invitation_closed(request, iid, before, "invitation.revoked")
-        audit(request, "invite.revoke", actor_id=s["user_id"], object_kind="invitation",
+        # The invitation's own workspace — never the caller's current one (CI-101: the header could
+        # file the revoke under another organization's log).
+        audit(request, "invite.revoke", actor_id=s["user_id"], workspace_id=(before or {}).get("workspace_id"), object_kind="invitation",
               object_id=iid, result="ok", meta={"journaled": journaled})
         return {"ok": True, "journaled": journaled}
 

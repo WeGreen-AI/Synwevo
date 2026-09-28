@@ -246,6 +246,9 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS ix_audit_at ON audit_events(at);
 CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_events(actor_id, at);
 CREATE INDEX IF NOT EXISTS ix_audit_ws ON audit_events(workspace_id, at);
+-- an organization's governance log (CI-101): its own events, and `organization.*` events by prefix
+CREATE INDEX IF NOT EXISTS ix_audit_object ON audit_events(object_kind, object_id, seq);
+CREATE INDEX IF NOT EXISTS ix_audit_action ON audit_events(action, seq);
 
 CREATE TABLE IF NOT EXISTS apps (
   -- A business application on the platform. Right now there is exactly one real one

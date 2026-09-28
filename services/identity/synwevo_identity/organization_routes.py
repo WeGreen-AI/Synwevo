@@ -116,6 +116,16 @@ def build_router(store, ident, sessions, audit, invites, mailer) -> APIRouter:
         return write(request, lambda orgs, uid: {"workspace": orgs.adopt_workspace(oid, uid, wid,
                      reason=body.get("reason"))}, sensitive=True)
 
+    @r.get("/{oid}/audit")
+    def organization_audit(request: Request, oid: str, before: int | None = Query(None, ge=1, le=2**63 - 1), limit: int = Query(50, ge=1, le=100),
+                           category: str = Query("", pattern="^(|organization|members|invitations|roles|imports|approvals)$")):
+        """The organization's governance log (CI-101): `org.audit.read`, readable while the organization
+        is frozen too. Governance metadata only — synwevo_core.organization_audit says what is in it."""
+        uid = session(request)["user_id"]
+        service(request).require(oid, uid, permission="org.audit.read")
+        from synwevo_core.organization_audit import read as read_audit
+        return read_audit(store, oid, before=before, limit=limit, category=category or None)
+
     @r.get("/{oid}/members")
     def list_members(request: Request, oid: str, q: str = Query("", max_length=100),
                      role: str = Query("", max_length=20), offset: int = Query(0, ge=0),
