@@ -158,7 +158,9 @@ def _flow(a, b, pa, pb, engine, accounts, docs, mail_dir, tag, owner, member, no
     pr.add_init_script(WS_REFUSED)
     pr.goto(f"{docs}/templates/{tid}/edit?lang=zh-Hans")
     expect(pr.locator("[data-testid=collab-bar] .collab-status")).to_have_text("单人编辑", timeout=20000)
-    expect(pr.locator(".collab-notice")).to_contain_text(re.compile("实时协同不可用（proof）"))
+    # the fake socket closes with a refusal code nobody catalogued ("proof"): worded like any refusal,
+    # with the close code as a code (CI-86; 4400, never 4,400)
+    expect(pr.locator(".collab-notice")).to_contain_text(re.compile(r"实时协同不可用（.*proof.*4400）"))
     expect(body_editor(pr).locator(".field-node")).to_have_count(2)
     pr.get_by_role("button", name="保存模板").click()
     expect(pr.get_by_text(re.compile("已保存（2 个字段，v2）"))).to_be_visible(timeout=15000)

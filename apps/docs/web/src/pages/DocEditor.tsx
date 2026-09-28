@@ -149,16 +149,17 @@ const EMPTY = { type: "doc", content: [{ type: "paragraph" }] };
 /** How long the room may take to deliver the document before the editor works alone on the saved version. */
 const ROOM_TIMEOUT_MS = 10000;
 
-/** A 44xx close reason in the person's words; the code stays in the message for support. */
+/** A 44xx close reason in the person's words; the code stays in the message for support —
+ *  as a code (4400), not a number formatted for reading (4,400). */
 function closeReasonText(reason: string | undefined, code: number): string {
   switch (reason) {
-    case "frame_too_large": return tr("这次发送的内容超过实时协同允许的大小，连接已关闭（{v1}）", { v1: code });
-    case "template_deleted": return tr("模板已被删除（{v1}）", { v1: code });
-    case "not_builtin_doc": return tr("这个模板不是内置文档模板，不能实时协同（{v1}）", { v1: code });
-    case "error": return tr("服务内部出错（{v1}）", { v1: code });
+    case "frame_too_large": return tr("这次发送的内容超过实时协同允许的大小，连接已关闭（{v1}）", { v1: String(code) });
+    case "template_deleted": return tr("模板已被删除（{v1}）", { v1: String(code) });
+    case "not_builtin_doc": return tr("这个模板不是内置文档模板，不能实时协同（{v1}）", { v1: String(code) });
+    case "error": return tr("服务内部出错（{v1}）", { v1: String(code) });
     // Otherwise the room closed with a refusal's code, never a sentence: word it like any
     // refusal instead of showing the code itself (CI-86).
-    default: return reason ? tr("{v1}（{v2}）", { v1: issueText({ code: reason }), v2: code }) : String(code);
+    default: return reason ? tr("{v1}（{v2}）", { v1: issueText({ code: reason }), v2: String(code) }) : String(code);
   }
 }
 
