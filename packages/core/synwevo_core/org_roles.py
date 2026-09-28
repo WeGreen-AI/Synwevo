@@ -209,7 +209,7 @@ class OrgRoles:
         with self.store.tx() as t:
             self._manager(oid, actor_id, needs=perms)
             if t.execute("SELECT COUNT(*) AS n FROM organization_roles WHERE organization_id=?", (oid,)).fetchone()[0] >= MAX_ROLES:
-                raise ServiceError(409, "too_many_roles", f"一个组织最多 {MAX_ROLES} 个自定义角色")
+                raise ServiceError(409, "too_many_roles", f"一个组织最多 {MAX_ROLES} 个自定义角色", {"limit": MAX_ROLES})
             if t.execute("SELECT 1 FROM organization_roles WHERE organization_id=? AND name=?", (oid, name)).fetchone():
                 raise ServiceError(409, "role_name_taken", "已有同名角色", {"field": "name"})
             rid = new_id("orole")

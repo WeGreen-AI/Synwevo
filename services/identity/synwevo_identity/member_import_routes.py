@@ -100,7 +100,11 @@ class MemberImportRunner:
                 result, inv_id = self._execute(imp, row)
                 self.imports.finish_row(row["id"], "done", result, invitation_id=inv_id)
             except ServiceError as e:
-                self.imports.finish_row(row["id"], "failed", {"error": e.code, "message": e.message[:200]})
+                # The numbers a refusal is worded from (a limit, a wait) travel with it, so the row
+                # reads in the operator's language like any other refusal (CI-85).
+                numbers = {k: v for k, v in (e.detail or {}).items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+                self.imports.finish_row(row["id"], "failed", {"error": e.code, "message": e.message[:200],
+                                                              **({"detail": numbers} if numbers else {})})
             except Exception as e:  # noqa: BLE001
                 log.warning("member import row failed: %s", type(e).__name__)
                 self.imports.finish_row(row["id"], "failed", {"error": "internal_error", "message": type(e).__name__})
@@ -288,7 +292,7 @@ def build_router(store, ident, sessions, audit, invites, mailer, *, ingest, star
         uid = actor(request, oid)
         data = await file.read(MAX_FILE_BYTES + 1)
         if len(data) > MAX_FILE_BYTES:
-            raise ServiceError(413, "file_too_large", f"成员文件超过 {MAX_FILE_BYTES // (1024 * 1024)} MB 上限")
+            raise ServiceError(413, "file_too_large", f"成员文件超过 {MAX_FILE_BYTES // (1024 * 1024)} MB 上限", {"limit": MAX_FILE_BYTES})
         if not data:
             raise ServiceError(400, "empty_file", "文件是空的")
         filename = Path(file.filename or "members").name[:200] or "members"

@@ -1,4 +1,4 @@
-import { errorCode } from "./labels";
+import { resultText } from "./labels";
 import { t as tr } from "@synwevo/ui";
 import "./messages";
 /**
@@ -71,7 +71,7 @@ export function BulkResultDialog({ title, response, labelOf, detailOf, onClose, 
                 <span className="who">{labelOf(r.id)}</span>
                 <span className="what">
                   <span className="sr-only">{r.ok ? tr("成功") : tr("失败")}：</span>
-                  {r.ok ? (detailOf?.(r) || tr("完成")) : errorCode(r.code)}
+                  {r.ok ? (detailOf?.(r) || tr("完成")) : resultText(r.code, r.message, r.detail)}
                   {!r.ok && r.code && <span className="mono tiny muted"> {r.code}</span>}
                 </span>
               </span>

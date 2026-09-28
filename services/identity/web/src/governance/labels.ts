@@ -1,6 +1,7 @@
 import { ApiError } from "@synwevo/auth-client";
 import { t, joinMessages } from "@synwevo/ui";
 import * as base from "../lib/labels";
+import { refusalText } from "../lib/refusals";
 import "./messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
@@ -50,10 +51,12 @@ const errors: Record<string, string> = {
   self_change: "不能修改自己的权限，请使用退出工作空间或移交所有权",
   cannot_manage: "不能管理同级或更高角色的成员", not_claimable: "该工作空间已被认领或不能认领，请刷新。",
 };
-export const errorCode = (code: string) => t(errors[code] || "操作未完成，请刷新后重试。") + (errors[code] ? "" : ` (${code})`);
+/** One item of a batch the server refused: its sentence when catalogued, else this page's wording
+ *  for its code (lib/refusals.ts) — a mixed batch answers 200, so the item carries no status. */
+export const resultText = (code: string, message: string, detail?: unknown) => refusalText({ code, originalMessage: message, detail }, errors);
 export function errText(error: unknown): string {
   if (!(error instanceof ApiError)) return t("无法连接服务，请检查连接后重试。");
-  const parts = [error.upstream ? t("网关未能完成请求，请稍后重试。") : errorCode(error.code)];
+  const parts = [error.upstream ? t("网关未能完成请求，请稍后重试。") : refusalText(error, errors)];
   if (error.retryAfter) parts.push(t("请在 {duration} 后重试。", { duration: fmtDuration(error.retryAfter) }));
   if (error.requestId) parts.push(t("请求编号：{id}", { id: error.requestId }));
   return joinMessages(parts, " ");

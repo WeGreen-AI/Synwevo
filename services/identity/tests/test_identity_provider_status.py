@@ -77,6 +77,16 @@ def test_a_probe_reports_an_unreachable_provider_without_failing_the_page(env):
     google = next(i for i in r.json()["items"] if i["id"] == "google")
     assert google["discovery"]["checked"] is True and google["discovery"]["ok"] is False
     assert google["discovery"]["error"] == "idp_unreachable"
+    # the fault and the provider travel as data, so the page words them in the reader's language (CI-85)
+    assert google["discovery"]["detail"] == {"provider": "Google", "reason": "network"}
+
+    class Refusing:
+        def get(self, url, **kw):
+            return type("R", (), {"status_code": 502})()
+    env["api"].state.external._http = Refusing()
+    google = next(i for i in c.get("/api/admin/identity-providers", params={"probe": 1}).json()["items"] if i["id"] == "google")
+    assert google["discovery"]["message"] == "无法连接 Google，请稍后再试"
+    assert google["discovery"]["detail"] == {"provider": "Google", "reason": "http_status"}
 
 
 def test_ordinary_accounts_get_the_administrator_routes_404_and_anonymous_401(env):

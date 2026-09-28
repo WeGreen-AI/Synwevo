@@ -2,6 +2,7 @@ import { useState } from "react";
 import { get } from "@synwevo/auth-client";
 import { fmtTime, registerMessages, useI18n } from "@synwevo/ui";
 import { useAdminData } from "./data";
+import { resultText } from "./labels";
 
 registerMessages({
   "登录方式": { en: "Sign-in methods", "zh-Hant": "登入方式" },
@@ -34,7 +35,7 @@ registerMessages({
   "刷新": { en: "Refresh", "zh-Hant": "重新整理" },
 });
 
-type Discovery = { checked: false } | { checked: true; ok: true; issuer?: string; at: number } | { checked: true; ok: false; error: string; message?: string; at: number };
+type Discovery = { checked: false } | { checked: true; ok: true; issuer?: string; at: number } | { checked: true; ok: false; error: string; message?: string; detail?: Record<string, unknown>; at: number };
 type Item = {
   id: string; label: string; configured: boolean; redirect_uri: string; env: Record<string, string>;
   missing?: string[]; issuer?: string; issuer_template?: boolean; scopes?: string; client_id_hint?: string;
@@ -83,7 +84,7 @@ export function IdentityProvidersTab({ onDenied }: { onDenied: () => void }) {
             <dt>{t("已关联账户")}</dt><dd>{item.linked_accounts}</dd>
             <dt>{t("发现文档")}</dt><dd>{!item.discovery || !item.discovery.checked ? t("尚未检查")
               : item.discovery.ok ? t("可达（{at}）", { at: fmtTime(item.discovery.at) })
-              : <span className="cell-note err">{t("不可达：{error}（{at}）", { error: item.discovery.message || item.discovery.error, at: fmtTime(item.discovery.at) })}</span>}</dd>
+              : <span className="cell-note err">{t("不可达：{error}（{at}）", { error: resultText(item.discovery.error, item.discovery.message || "", item.discovery.detail), at: fmtTime(item.discovery.at) })}</span>}</dd>
           </> : <>
             <dt>{t("缺少的配置项")}</dt><dd><ul className="idp-missing">{item.missing?.map((name) => <li key={name}><code>{name}</code></li>)}</ul></dd>
             <dt>{t("配置项名称")}</dt><dd className="muted small">{Object.values(item.env).filter((n) => !item.missing?.includes(n)).map((n) => <code key={n} style={{ marginRight: 6 }}>{n}</code>)}</dd>

@@ -145,7 +145,8 @@ class PushSubscriptions:
             return self.store.one("SELECT * FROM push_subscriptions WHERE id=?", (existing["id"],))
         n = self.store.one("SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id=? AND revoked_at IS NULL", (user_id,))["n"]
         if n >= MAX_SUBSCRIPTIONS_PER_USER:
-            raise ServiceError(409, "too_many_devices", f"最多 {MAX_SUBSCRIPTIONS_PER_USER} 个设备，请先移除不用的设备")
+            raise ServiceError(409, "too_many_devices", f"最多 {MAX_SUBSCRIPTIONS_PER_USER} 个设备，请先移除不用的设备",
+                               {"limit": MAX_SUBSCRIPTIONS_PER_USER})
         row = {"id": new_id("ps"), "user_id": user_id, "session_id": session_id, "endpoint": endpoint, "endpoint_hash": endpoint_hash(endpoint),
                "p256dh": _b64url(p256dh), "auth": _b64url(auth), "user_agent": ua, "created_at": ts, "updated_at": ts,
                "last_sent_at": None, "last_error": None, "fail_count": 0, "revoked_at": None, "revoked_reason": None}

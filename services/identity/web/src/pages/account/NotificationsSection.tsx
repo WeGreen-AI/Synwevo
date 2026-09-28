@@ -3,7 +3,7 @@
  *  is shown but locked on — the mail that says an attacker changed a password must not be something
  *  the attacker can turn off from the same session. */
 import { useEffect, useState } from 'react';
-import { ApiError, get, put } from '@synwevo/auth-client';
+import { get, put } from '@synwevo/auth-client';
 import { useI18n, useToast } from '@synwevo/ui';
 import { ErrorNotice, errorText } from './common';
 import PushSection from './PushSection';
@@ -49,7 +49,7 @@ export default function NotificationsSection({ timezone }: { timezone?: string }
       setPrefs(out); setQuiet(!!out.quiet_start);
       toast(t('通知偏好已保存'), 'ok');
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : String(e), 'err');
+      toast(errorText(e, t), 'err');
     } finally { setBusy(false); }
   }
 

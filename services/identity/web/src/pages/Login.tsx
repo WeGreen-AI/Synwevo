@@ -8,11 +8,12 @@ import { isChallengeError, useChallenge } from "./org/Challenge";
 type Methods = { totp: boolean; recovery: boolean };
 type Mode = "password" | "code";
 /** Messages for the `ext_error` code an external-provider sign-in lands here with. */
-const EXTERNAL_ERRORS: Record<string, string> = {
+export const EXTERNAL_ERRORS: Record<string, string> = {
   cancelled: "已取消外部登录。",
   provider_refused: "外部身份提供商拒绝了这次登录，请重试。",
   bad_state: "这次登录无法验证，请重新开始。", bad_callback: "登录请求已过期或已使用，请重新开始。",
   bad_id_token: "外部身份提供商返回的身份信息无法验证，请重试。", token_exchange_failed: "外部身份提供商未接受这次登录，请重试。",
+  no_id_token: "外部身份提供商没有返回身份信息，请重试。",
   idp_unreachable: "暂时无法连接外部身份提供商，请稍后再试。",
   email_unverified: "该提供商没有验证你的邮箱，无法用它创建或匹配账户。请用口令登录后，在「账户与安全」里关联。",
   registration_closed: "此服务暂未开放注册。", email_taken: "这个邮箱已有账户，请先用口令登录，再在「账户与安全」里关联。",

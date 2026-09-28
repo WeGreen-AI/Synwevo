@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { get, post, put, upload } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
-import { FlowError, Loading } from "./AuthFlow";
+import { FlowError, Loading, resultText } from "./AuthFlow";
 import OrganizationAction from "./OrganizationAction";
 import { orgPath, type CustomRole, type ImportAction, type ImportCapabilities, type ImportMapping, type MemberImport, type MemberImportRow, type Organization, type OrganizationWorkspace } from "./types";
 
@@ -151,7 +151,7 @@ export default function OrganizationImport({ organization, workspaces, mine, onC
       {!rows ? <Loading /> : !rows.length ? <p className="muted">{t("没有这类行。")}</p> : <ul className="org-list">{rows.slice(0, 300).map(r => <li key={r.id}>
         <div><strong>{r.fields.email}</strong>{r.fields.name && <span className="muted"> · {r.fields.name}</span>}<div className="tiny muted">{sourceText(r.source)} · {t(WS_ROLE_LABEL[r.fields.workspace_role] || r.fields.workspace_role)}{r.fields.org_roles.length > 0 && <> · {r.fields.org_roles.join("、")}</>}</div>
           {r.diff && <div className="tiny">{r.diff.workspace_role && <span>{t("工作空间角色 {from} → {to}", { from: t(WS_ROLE_LABEL[r.diff.workspace_role.from] || r.diff.workspace_role.from), to: t(WS_ROLE_LABEL[r.diff.workspace_role.to] || r.diff.workspace_role.to) })} </span>}{r.diff.org_roles && <span>{t("新增组织角色：{roles}", { roles: r.diff.org_roles.add.join("、") })}</span>}</div>}
-          {r.result && (r.result.error || r.result.message) && <div className="tiny flow-error">{r.result.message || r.result.error}</div>}</div>
+          {r.result && (r.result.error || r.result.message) && <div className="tiny flow-error">{resultText(r.result)}</div>}</div>
         <div className="org-actions"><span className={`badge ${r.action === "blocked" ? "danger" : ""}`}>{t(ACTION_LABEL[r.action])}{r.status !== "planned" && ` · ${t(r.status === "done" ? "完成" : r.status === "failed" ? "失败" : r.status === "skipped" ? "已跳过" : r.status === "running" ? "处理中" : "待处理")}`}</span>{r.reason && <span className="tiny muted">{t(REASON_LABEL[r.reason] || r.reason)}</span>}</div>
       </li>)}</ul>}
       {rows && rows.length > 300 && <p className="tiny muted">{t("只显示前 300 行；完整结果见报告。")}</p>}

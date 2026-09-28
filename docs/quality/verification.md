@@ -1816,6 +1816,15 @@ Chromium 点「返回工作空间」→ 浏览器询问（`beforeunload`）→ �
 CI-83 的全量回归（2214 通过、1 失败、5 跳过）里 `apps/docs/tests/test_regression_cases.py::test_desensitize_copies` 失败：脱敏后 D2 金额仍是 1123.45。单独重跑 8 次均通过——偶发；
 读 `engine/desensitize.py`：比例 `round(uniform(0.6, 1.4), 3)` 取到 1.000 的概率约 1/800。修复后 `test_engine_desensitize.py`（含新增项）与 `test_regression_cases.py` 通过。
 
+### 16.84 账户外壳的拒绝文案（CI-85）
+
+复现（代码审读）：账户页 `errorText` 对 29 个代码以外的拒绝一律显示「操作失败，请重试。」；管理/成员页 `errText` 与批量逐项只按代码，其余「操作未完成，请刷新后重试。（code）」；API 控制台总是「操作失败，请检查输入或重试。」加代码；导入逐行失败与身份提供商探测结果把中文原句原样给所有语言；平台管理员重新验证时任何 401 都是「口令不正确」。
+修复后：`services/identity/web` 的 `npm test` = `flow.validation.mjs` 19 项 + `tests/refusals.test.mjs` 7 项，全部通过。守卫逐页（登录、账户、组织、平台管理、成员、API 控制台，各自一套 vite 模块图：入口 chunk + 该页 chunk）用该页的呈现函数把每句可达拒绝译成英文，
+要求是译文、非通用兜底、非仅共享代码标签；删掉 `account.messages.ts` 里「找不到该会话」一条后第三项失败，报 “account ← auth_routes.py build_router.revoke_session no_session: 找不到该会话 — generic: The request could not be completed (no_session).”，恢复后通过。
+服务端：`services/identity/tests/test_refusal_details.py` 4 项（口令规则与数字、MFA 剩余次数、安全密钥/设备/导入文件/自定义角色上限的 `detail`、外部登录起点回到登录页），`test_members.py`（邀请日上限 `detail.limit`、批量逐项只带数字、「退出工作空间」原句）、`test_identity_provider_status.py`（探测结果带提供商与故障）、`test_external_identity.py`（未启用提供商的起点 303 到 `/login?ext_error=unknown_provider`）。
+`services/identity/tests` + `tests/integration`：1268 通过、13 跳过（工作树里没有被忽略的 `testdata/`，`test_org_templates.py` 1 项先因缺夹具文件失败，接上主检出的 `testdata` 后该文件 2 项通过）。
+`check_boundaries`、`check_brand`、`check_design`、`check_component_names` 通过；`npm run typecheck`、`npm run build` 通过；`npm test --workspaces --if-present`：ui 19、auth-client 39、docs-web 49、messages-web 25、account-web 19 + 7，全部通过。
+构建后账户入口 chunk 313.16 kB（gzip 97.11 kB），入口共享 chunk 112.86 kB（gzip 40.83 kB）。浏览器未复核（本轮只在代码与测试层面验证）。
 ### 16.86 公开页的消息事实（CI-88）
 
 复现：`apps/portal/web/src/PublicHome.tsx` 与 `PublicPages.tsx` 三处写「没有在线状态、他人已读回执或正在输入提示」，与 `messaging_settings` 缺省（`show_presence=1`、`read_receipts=0`，互惠）及 CI-73/74 的界面不符；首页消息卡链到账户源站 `/messages` 并说「正在成为独立的应用」。

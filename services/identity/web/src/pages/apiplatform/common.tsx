@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { ApiError, get, post, useSession } from '@synwevo/auth-client';
 import { Modal, useI18n } from '@synwevo/ui';
 import { useLoad } from '../../lib/hooks';
+import { refusalText } from '../../lib/refusals';
 import '../api-platform.messages';
 
 export const BASE = '/api/admin/api-platform';
@@ -22,12 +23,29 @@ export function usePage<T>(path: string) {
     refresh: () => { setPosition({ path, offset: 0 }); load.reload(); } };
 }
 
+/** A refusal as a sentence in the reader's language (lib/refusals.ts). A console call's answer
+ *  from Synwevo Docs is the thing being debugged, so its own message is kept beside it verbatim. */
+export function failureText(error: unknown, t: (source: string) => string): string {
+  return error instanceof ApiError ? refusalText(error, CONSOLE_CODES) : t('操作失败，请检查输入或重试。');
+}
+/** A rotation refusal names the client id in its sentence; the console shows the credential it
+ *  acted on beside the notice, so the code says the rest. */
+const CONSOLE_CODES: Record<string, string> = {
+  no_client: '找不到该服务客户端。',
+  client_disabled: '该服务客户端已停用，没有可轮换的密钥。',
+  public_client: '这是公共客户端，没有密钥可以轮换。',
+  // the sentence names the key that replaced it
+  already_rotated: '该密钥已经轮换过；请改用新密钥，或对新密钥再次轮换。',
+};
+
 export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
   const { t } = useI18n();
   if (!error) return null;
   const code = error instanceof ApiError ? error.code : 'request_failed';
+  const answered = error instanceof ApiError && error.detail?.console_request === true;
   return <div className="notice err" role="alert">
-    {t('操作失败，请检查输入或重试。')} <code>{code}</code>
+    {failureText(error, t)} <code>{code}</code>
+    {answered && <code> · {(error as ApiError).originalMessage}</code>}
     {error instanceof ApiError && error.requestId && <code> · {error.requestId}</code>}
     {retry && <button className="btn" onClick={retry}>{t('重试')}</button>}
   </div>;
@@ -116,7 +134,7 @@ export async function requestMachine(credential: string, reason: string, method:
   const out = await post<{ status: number; data: Outcome; request_id?: string }>(BASE + '/request', { credential, reason, method, path, query, body });
   if (out.status >= 400) {
     const detail = out.data.error as { code?: string; message?: string } | undefined;
-    const e = new ApiError(out.status, detail?.code || 'machine_request_failed', detail?.message || 'machine_request_failed');
+    const e = new ApiError(out.status, detail?.code || 'machine_request_failed', detail?.message || 'machine_request_failed', { console_request: true });
     e.requestId = out.request_id; throw e;
   }
   return out.data;

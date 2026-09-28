@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { ApiError, post, useSession } from "@synwevo/auth-client";
 import { registerMessages, useI18n } from "@synwevo/ui";
+import { refusalText } from "../lib/refusals";
 
 registerMessages({
   "当前登录只验证了一个因素": { en: "This sign-in proved one factor only", "zh-Hant": "目前登入只驗證了一個因素" },
@@ -53,8 +54,9 @@ export default function AdminStepUp({ compact = false }: { compact?: boolean }) 
       await session.refresh();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "";
+      // Not every 401 here is a wrong password: after too many the sign-in itself has ended.
       setError(code === "no_password" ? t("这个账户没有设置口令。请用已绑定的安全密钥或动态验证码重新登录。")
-        : err instanceof ApiError && err.status === 401 ? t("口令不正确。") : err instanceof ApiError ? err.message : String(err));
+        : err instanceof ApiError ? refusalText(err, { bad_credentials: "口令不正确。" }) : String(err));
       requestAnimationFrame(() => input.current?.focus());
     } finally { setBusy(false); }
   };

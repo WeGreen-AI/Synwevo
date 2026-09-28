@@ -57,23 +57,29 @@ export interface ApiFailure { code: string; status: number; originalMessage: str
 export type ErrorTemplate = (detail: any) => readonly [source: string, params?: Record<string, string | number>] | null;
 const ERROR_TEMPLATES: Record<string, ErrorTemplate> = {};
 export function registerErrorTemplates(map: Record<string, ErrorTemplate>): void { Object.assign(ERROR_TEMPLATES, map); }
-export function apiFailureText(error: ApiFailure): string {
-  let text: string;
+/** The refusal as one sentence, without the request id. `codes` is a shell's own code → source
+ *  map, for a code whose several server sentences share one meaning (or a sentence the catalogue
+ *  cannot hold, such as one naming a provider): it is consulted after the server's catalogued
+ *  sentence, which is always the more specific of the two, and before the shared codes. A shell
+ *  that places the request id itself uses this; everything else uses `apiFailureText`. */
+export function apiFailureSentence(error: ApiFailure, codes: Record<string, string> = {}): string {
   const template = templated(error);
   if (error.code === 'gateway_blocked' || error.code === 'upstream_unavailable') {
-    text = t(error.code === 'gateway_blocked' ? '请求被 {gateway} 拦截（HTTP {status}），未到达 Synwevo。' : '{gateway} 无法连接 Synwevo（HTTP {status}）。请稍后重试。', {
+    return t(error.code === 'gateway_blocked' ? '请求被 {gateway} 拦截（HTTP {status}），未到达 Synwevo。' : '{gateway} 无法连接 Synwevo（HTTP {status}）。请稍后重试。', {
       gateway: error.detail?.gateway === '前置网关' ? t('前置网关') : error.detail?.gateway || t('前置网关'), status: String(error.status),
     });
-  } else if (template) {
-    text = t(template[0], template[1]);
-  } else if (hasMessage(error.originalMessage)) {
-    // Domain catalogs may provide a more useful known sentence than the general code label.
-    text = t(error.originalMessage);
-  } else if (API_ERROR_SOURCE[error.code]) text = t(API_ERROR_SOURCE[error.code]);
-  else if (error.status >= 500) text = t('服务内部出错，请稍后重试。');
-  else text = t('请求未完成（{code}）。', { code: error.code || String(error.status) });
-  if (error.requestId) text = joinMessages([text, t('请求编号：{id}', { id: error.requestId })]);
-  return text;
+  }
+  if (template) return t(template[0], template[1]);
+  // Domain catalogs may provide a more useful known sentence than the general code label.
+  if (hasMessage(error.originalMessage)) return t(error.originalMessage);
+  if (Object.hasOwn(codes, error.code)) return t(codes[error.code]);
+  if (API_ERROR_SOURCE[error.code]) return t(API_ERROR_SOURCE[error.code]);
+  if (error.status >= 500) return t('服务内部出错，请稍后重试。');
+  return t('请求未完成（{code}）。', { code: error.code || String(error.status) });
+}
+export function apiFailureText(error: ApiFailure): string {
+  const text = apiFailureSentence(error);
+  return error.requestId ? joinMessages([text, t('请求编号：{id}', { id: error.requestId })]) : text;
 }
 
 function templated(error: ApiFailure): readonly [string, Record<string, string | number>?] | null {

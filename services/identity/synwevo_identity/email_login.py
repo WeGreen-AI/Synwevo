@@ -196,7 +196,8 @@ def build_router(ident: Identity, sessions: Sessions, mailer, mfa, tickets, audi
               object_id=user["id"], result="denied", meta={"reason": reason})
         if code_name.startswith("bad_code:"):
             left = int(code_name.split(":")[1])
-            raise ServiceError(401, "bad_code", "验证码不正确" + (f"，还可尝试 {left} 次" if left > 0 else "，请重新获取"))
+            raise ServiceError(401, "bad_code", "验证码不正确" + (f"，还可尝试 {left} 次" if left > 0 else "，请重新获取"),
+                               {"remaining": left, "exhausted": "resend"})
         if code_name == "code_expired":
             raise ServiceError(401, "code_expired", "验证码已失效，请重新获取")
         raise ServiceError(401, "bad_code", "验证码不正确")

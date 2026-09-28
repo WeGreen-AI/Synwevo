@@ -141,7 +141,10 @@ def test_configured_providers_are_listed_and_the_button_is_never_shown_otherwise
     import synwevo_identity.app as app_mod
     bare = TestClient(app_mod.create_app(str(tmp_path / "bare"), start_jobs=False))
     assert bare.get("/api/auth/state").json()["external_providers"] == []
-    assert bare.get("/auth/external/testidp/start", follow_redirects=False).status_code == 404
+    # A navigation, so the refusal lands on the sign-in page, which words its code (CI-85) —
+    # not a JSON body in the tab.
+    started = bare.get("/auth/external/testidp/start", params={"lang": "en"}, follow_redirects=False)
+    assert started.status_code == 303 and started.headers["location"] == "/login?ext_error=unknown_provider&lang=en"
 
 
 def test_a_half_configured_provider_refuses_to_start(tmp_path, monkeypatch):

@@ -75,7 +75,13 @@ MAX_LENGTH = 1024
 
 
 class PasswordError(ValueError):
-    """Rejected by policy. The message is shown to the person and says what to change."""
+    """Rejected by policy. The message is shown to the person and says what to change; `detail`
+    names the rule and its numbers (`reason`, and `min`/`length` or `max`), which a refusal passes
+    on so a page can say the same in the reader's language when the floor differs."""
+
+    def __init__(self, message: str, detail: dict | None = None):
+        super().__init__(message)
+        self.detail = detail or {}
 
 
 def normalise(password: str) -> str:
@@ -121,26 +127,26 @@ def check_policy(password: str, *, email: str | None = None, display_name: str |
     floor = MIN_LENGTH_SINGLE_FACTOR if single_factor else MIN_LENGTH_WITH_MFA
     if len(p) < floor:
         raise PasswordError(f"口令至少需要 {floor} 个字符（当前 {len(p)} 个）。"
-                            f"长句子比复杂符号更好记也更安全。")
+                            f"长句子比复杂符号更好记也更安全。", {"reason": "too_short", "min": floor, "length": len(p)})
     if len(p) > MAX_LENGTH:
-        raise PasswordError(f"口令过长（上限 {MAX_LENGTH} 个字符）。")
+        raise PasswordError(f"口令过长（上限 {MAX_LENGTH} 个字符）。", {"reason": "too_long", "max": MAX_LENGTH})
 
     squashed = _squash(p)
     # Appending digits to a wordlist entry is the single most common way to "meet" a length
     # requirement, so password123456789 has to fail for the same reason password does.
     stem = re.sub(r"\d+$", "", squashed)
     if squashed in _COMMON or p.lower() in _COMMON or (len(stem) >= 4 and stem in _COMMON):
-        raise PasswordError("这个口令在常见泄露口令名单里，请换一个。")
+        raise PasswordError("这个口令在常见泄露口令名单里，请换一个。", {"reason": "common"})
     # a long password built only by repeating one short chunk is as weak as the chunk
     if len(set(p)) <= 4 and len(p) >= floor:
-        raise PasswordError("这个口令重复度太高，请换一个。")
+        raise PasswordError("这个口令重复度太高，请换一个。", {"reason": "repetitive"})
     for term in _SERVICE_TERMS:
         if term and _squash(term) and _squash(term) in squashed:
-            raise PasswordError("口令不能包含本服务的名称，请换一个。")
+            raise PasswordError("口令不能包含本服务的名称，请换一个。", {"reason": "service_name"})
     for value in (email or "", display_name or ""):
         local = _squash(value.split("@")[0] if "@" in value else value)
         if len(local) >= 4 and local in squashed:
-            raise PasswordError("口令不能包含你的邮箱或姓名，请换一个。")
+            raise PasswordError("口令不能包含你的邮箱或姓名，请换一个。", {"reason": "personal"})
 
 
 def hash_password(password: str) -> str:

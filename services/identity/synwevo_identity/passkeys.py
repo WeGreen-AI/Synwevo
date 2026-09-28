@@ -113,7 +113,7 @@ class Passkeys:
                                               PublicKeyCredentialDescriptor,
                                               ResidentKeyRequirement, UserVerificationRequirement)
         if self.count(user["id"]) >= MAX_PASSKEYS:
-            raise ServiceError(409, "too_many", f"最多只能登记 {MAX_PASSKEYS} 个安全密钥")
+            raise ServiceError(409, "too_many", f"最多只能登记 {MAX_PASSKEYS} 个安全密钥", {"limit": MAX_PASSKEYS, "kind": "passkey"})
 
         existing = [PublicKeyCredentialDescriptor(id=_b64d(r["credential_id"]))
                     for r in self.store.all(

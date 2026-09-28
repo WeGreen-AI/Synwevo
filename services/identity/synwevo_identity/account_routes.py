@@ -146,7 +146,7 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             try:
                 ident.set_password(user["id"], replacement)
             except passwords.PasswordError as e:
-                raise ServiceError(400, "weak_password", str(e), {"field": "new_password"}) from None
+                raise ServiceError(400, "weak_password", str(e), {"field": "new_password", **e.detail}) from None
             ended = sessions.revoke_all_for_user(user["id"], "password_changed", except_session=session["id"])
             tokens = Grants(store).revoke_for_user(user["id"], "password_changed")
             store.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=? AND kind='reset'", (ts, user["id"]))

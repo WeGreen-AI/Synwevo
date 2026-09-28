@@ -104,7 +104,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         reason = str(body.get("reason") or "").strip()
         if len(reason) < REASON_MIN:
             raise ServiceError(400, "missing_reason", f"请写明理由（至少 {REASON_MIN} 个字），它会写入审计记录",
-                               {"field": "reason"})
+                               {"field": "reason", "min": REASON_MIN})
         return reason[:500]
 
     def _dangerous_ok(s: dict, body: dict) -> str | None:
@@ -152,7 +152,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         if not isinstance(raw, list) or not raw:
             raise ServiceError(400, "missing_ids", f"请提供 {key}（非空列表）", {"field": key})
         if len(raw) > BULK_MAX:
-            raise ServiceError(400, "too_many", f"一次最多处理 {BULK_MAX} 项", {"field": key})
+            raise ServiceError(400, "too_many", f"一次最多处理 {BULK_MAX} 项", {"field": key, "limit": BULK_MAX})
         out, seen = [], set()
         for v in raw:
             v = str(v or "").strip()
@@ -171,6 +171,12 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
             return {"id": obj_id, "ok": True, "code": "ok", "message": "完成", **(data or {})}
         except ServiceError as e:
             result = {"id": obj_id, "ok": False, "code": e.code, "message": e.message}
+            # The numbers the item's sentence is worded from (a limit), so the page can say it in
+            # the reader's language (CI-85); nothing else of the detail leaves the service here.
+            numbers = {k: v for k, v in (e.detail or {}).items()
+                       if k in ("limit", "min") and isinstance(v, int) and not isinstance(v, bool)}
+            if numbers:
+                result["detail"] = numbers
             # A mixed batch stays HTTP 200, so its 429 items must carry their own cooldown.
             # Preserve the service's value without exposing unrelated error details.
             if e.status == 429 and isinstance(e.detail, dict) and "retry_after" in e.detail:
@@ -303,7 +309,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         if not isinstance(changes, list) or not changes:
             raise ServiceError(400, "missing_changes", "请提供 changes（非空列表）", {"field": "changes"})
         if len(changes) > BULK_MAX:
-            raise ServiceError(400, "too_many", f"一次最多处理 {BULK_MAX} 项", {"field": "changes"})
+            raise ServiceError(400, "too_many", f"一次最多处理 {BULK_MAX} 项", {"field": "changes", "limit": BULK_MAX})
         reason = str(body.get("reason") or "").strip()[:500] or None
         dangerous = False
         for ch in changes:
@@ -339,7 +345,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
 
     def _remove_one(request: Request, s: dict, m: dict, wid: str, uid: str, reason: str) -> dict:
         if uid == s["user_id"]:
-            raise ServiceError(400, "use_leave", "要退出这个空间，请使用「退出空间」")
+            raise ServiceError(400, "use_leave", "要退出这个工作空间，请使用「退出工作空间」")
         if not ident.membership(wid, uid):
             raise ServiceError(404, "no_member", "该用户不是这个空间的成员")
         out = ident.remove_member(wid, uid, actor_id=s["user_id"], authorize=_authority(wid))
@@ -417,7 +423,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         if not isinstance(changes, list) or not changes:
             raise ServiceError(400, "missing_changes", "请提供 changes（非空列表）", {"field": "changes"})
         if len(changes) > BULK_MAX:
-            raise ServiceError(400, "too_many", f"一次最多处理 {BULK_MAX} 项", {"field": "changes"})
+            raise ServiceError(400, "too_many", f"一次最多处理 {BULK_MAX} 项", {"field": "changes", "limit": BULK_MAX})
         results = []
         for ch in changes:
             ch = ch if isinstance(ch, dict) else {}
@@ -542,7 +548,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         if not isinstance(items, list) or not items:
             raise ServiceError(400, "missing_invitations", "请提供 invitations（非空列表）", {"field": "invitations"})
         if len(items) > BULK_MAX:
-            raise ServiceError(400, "too_many", f"一次最多处理 {BULK_MAX} 项", {"field": "invitations"})
+            raise ServiceError(400, "too_many", f"一次最多处理 {BULK_MAX} 项", {"field": "invitations", "limit": BULK_MAX})
         ttl = _ttl(body)
         results = []
         for it in items:

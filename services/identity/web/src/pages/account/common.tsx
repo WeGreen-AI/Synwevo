@@ -1,5 +1,6 @@
 import { ApiError } from '@synwevo/auth-client';
 import { useI18n, type Locale, type Translator } from '@synwevo/ui';
+import { refusalText } from '../../lib/refusals';
 import '../account.messages';
 
 export interface Profile {
@@ -28,7 +29,8 @@ const errors: Record<string, string> = {
   weak_password: '这个口令不符合要求，请使用更长且不包含个人信息的口令',
 };
 export function errorText(error: unknown, t: Translator) {
-  if (error instanceof ApiError) return t(errors[error.code] || '操作失败，请重试。') + (error.requestId ? ` (${error.requestId})` : '');
+  // The server's catalogued sentence first, then this page's wording for its code (lib/refusals.ts).
+  if (error instanceof ApiError) return refusalText(error, errors) + (error.requestId ? ` (${error.requestId})` : '');
   return t('操作失败，请重试。');
 }
 export function ErrorNotice({ error, retry }: { error: string | null; retry?: () => void }) {

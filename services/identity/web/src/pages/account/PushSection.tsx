@@ -97,7 +97,7 @@ export default function PushSection() {
     } catch (e) {
       // The browser could not complete the subscription (no push service reachable, a policy,
       // a private window): say so, leave the person on in-app notifications.
-      toast(e instanceof ApiError ? e.message : t('此浏览器无法完成推送订阅：{reason}', { reason: e instanceof Error ? e.message : String(e) }), 'err');
+      toast(e instanceof ApiError ? errorText(e, t) : t('此浏览器无法完成推送订阅：{reason}', { reason: e instanceof Error ? e.message : String(e) }), 'err');
     } finally { setBusy(false); }
   }
 
@@ -108,7 +108,7 @@ export default function PushSection() {
       await del(`/api/auth/push/subscriptions/${d.id}`);
       toast(t('已移除该设备的推送'), 'ok');
       await load();
-    } catch (e) { toast(e instanceof ApiError ? e.message : String(e), 'err'); } finally { setBusy(false); }
+    } catch (e) { toast(e instanceof ApiError ? errorText(e, t) : String(e), 'err'); } finally { setBusy(false); }
   }
 
   async function test(d: Device) {
@@ -117,7 +117,7 @@ export default function PushSection() {
       await post(`/api/auth/push/subscriptions/${d.id}/test`, {});
       toast(t('推送服务已接受测试消息；请看该设备的通知'), 'ok');
       await load();
-    } catch (e) { toast(e instanceof ApiError ? e.message : String(e), 'err'); await load(); } finally { setBusy(false); }
+    } catch (e) { toast(e instanceof ApiError ? errorText(e, t) : String(e), 'err'); await load(); } finally { setBusy(false); }
   }
 
   const when = (ts?: number | null) => ts ? new Date(ts * 1000).toLocaleString(locale) : '—';

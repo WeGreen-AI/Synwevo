@@ -203,9 +203,13 @@ class ExternalIdentities:
                     doc = self.discovery(p, force=True)
                     discovery = {"checked": True, "ok": True, "issuer": doc.get("issuer"), "at": int(time.time())}
                 except ServiceError as e:
-                    discovery = {"checked": True, "ok": False, "error": e.code, "message": e.message, "at": int(time.time())}
+                    # `detail` names the fault and the provider, so the page can say it in the
+                    # administrator's language; `message` stays as the server wrote it.
+                    discovery = {"checked": True, "ok": False, "error": e.code, "message": e.message, "detail": e.detail,
+                                 "at": int(time.time())}
                 except Exception as e:  # network layer
-                    discovery = {"checked": True, "ok": False, "error": "idp_unreachable", "message": type(e).__name__, "at": int(time.time())}
+                    discovery = {"checked": True, "ok": False, "error": "idp_unreachable", "message": type(e).__name__,
+                                 "detail": {"provider": p.label, "reason": "network"}, "at": int(time.time())}
             elif p._discovery:
                 discovery = {"checked": True, "ok": True, "issuer": p._discovery[1].get("issuer"), "at": int(p._discovery[0] - DISCOVERY_TTL_S)}
             out.append({"id": p.id, "label": p.label, "configured": True, "issuer": p.issuer,
@@ -228,18 +232,22 @@ class ExternalIdentities:
             return p._discovery[1]
         r = self.http.get(p.discovery_url)
         if r.status_code != 200:
-            raise ServiceError(503, "idp_unreachable", f"无法连接 {p.label}，请稍后再试")
+            raise ServiceError(503, "idp_unreachable", f"无法连接 {p.label}，请稍后再试",
+                               {"provider": p.label, "reason": "http_status"})
         doc = r.json()
         for key in ("authorization_endpoint", "token_endpoint", "jwks_uri", "issuer"):
             if not isinstance(doc.get(key), str) or not doc[key]:
-                raise ServiceError(503, "idp_unreachable", f"{p.label} 的发现文档不完整")
+                raise ServiceError(503, "idp_unreachable", f"{p.label} 的发现文档不完整",
+                                   {"provider": p.label, "reason": "incomplete"})
         declared = doc["issuer"].rstrip("/")
         expected = p.issuer.replace("{tenantid}", "{tenantid}")
         if declared != expected and not (p.issuer_template and declared.replace("{tenantid}", "") == expected.replace("{tenantid}", "")):
-            raise ServiceError(503, "idp_unreachable", f"{p.label} 的发现文档 issuer 与配置不一致")
+            raise ServiceError(503, "idp_unreachable", f"{p.label} 的发现文档 issuer 与配置不一致",
+                               {"provider": p.label, "reason": "issuer_mismatch"})
         for key in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
             if not doc[key].startswith("https://") and not doc[key].startswith(p.issuer.split("/", 3)[0] + "//" + urllib.parse.urlsplit(p.issuer).netloc):
-                raise ServiceError(503, "idp_unreachable", f"{p.label} 的端点不是 https")
+                raise ServiceError(503, "idp_unreachable", f"{p.label} 的端点不是 https",
+                                   {"provider": p.label, "reason": "not_https"})
         p._discovery = (time.time() + DISCOVERY_TTL_S, doc)
         return doc
 
@@ -248,7 +256,8 @@ class ExternalIdentities:
             return p._jwks[1]
         r = self.http.get(self.discovery(p)["jwks_uri"])
         if r.status_code != 200:
-            raise ServiceError(503, "idp_unreachable", f"无法取得 {p.label} 的签名密钥")
+            raise ServiceError(503, "idp_unreachable", f"无法取得 {p.label} 的签名密钥",
+                               {"provider": p.label, "reason": "no_keys"})
         p._jwks = (time.time() + JWKS_TTL_S, r.json())
         return p._jwks[1]
 
@@ -379,7 +388,8 @@ class ExternalIdentities:
             existing = t.execute("SELECT user_id FROM external_identities WHERE provider=? AND subject=?",
                                  (p.id, out["subject"])).fetchone()
             if existing and existing["user_id"] != user_id:
-                raise ServiceError(409, "identity_linked_elsewhere", f"这个 {p.label} 账户已关联到另一个 Synwevo 账户")
+                raise ServiceError(409, "identity_linked_elsewhere", f"这个 {p.label} 账户已关联到另一个 Synwevo 账户",
+                                   {"provider": p.label})
             if existing:
                 t.execute("UPDATE external_identities SET email=?,email_verified=?,display_name=?,last_used_at=? "
                           "WHERE provider=? AND subject=?",
@@ -468,8 +478,14 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, external: Ex
         q = request.query_params
         if len(q.getlist("next")) > 1 or len(q.getlist("lang")) > 1:
             raise ServiceError(400, "invalid_field", "参数重复")
-        url, rid = external.begin(pid, purpose="login", next_path=q.get("next"), locale=q.get("lang"),
-                                  remember=q.get("remember") == "1")
+        try:
+            url, rid = external.begin(pid, purpose="login", next_path=q.get("next"), locale=q.get("lang"),
+                                      remember=q.get("remember") == "1")
+        except ServiceError as e:
+            # A browser navigation: an unknown or unreachable provider lands on the sign-in page
+            # with its code, like every callback failure, instead of a JSON body in the tab.
+            audit(request, "auth.external.start", result="denied", meta={"provider": pid, "reason": e.code})
+            return _failed(e.code, q.get("lang") if q.get("lang") in ("zh-Hans", "zh-Hant", "en") else None)
         resp = RedirectResponse(url, status_code=303)
         resp.set_cookie(REQ_COOKIE, rid, max_age=REQUEST_TTL_S, **cookie_kwargs(_secure()))
         audit(request, "auth.external.start", result="ok", meta={"provider": pid, "purpose": "login"})

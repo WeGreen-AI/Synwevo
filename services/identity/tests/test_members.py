@@ -194,6 +194,8 @@ def test_bulk_removal_reports_every_object(env):
     codes = {x["id"]: x["code"] for x in body["results"]}
     assert codes == {uid(env, "carol"): "ok", uid(env, "alice"): "role_too_high",
                      "u_nobody": "no_member", uid(env, "bob"): "use_leave"}
+    # it names the control that exists on the page (CI-85)
+    assert {x["id"]: x["message"] for x in body["results"]}[uid(env, "bob")] == "要退出这个工作空间，请使用「退出工作空间」"
     assert env["ident"].membership(ws, uid(env, "alice"))
 
 
@@ -399,6 +401,7 @@ def test_invitation_rate_limit_answers_429_with_retry_after(env):
     r = post(env["c"]["alice"], f"/api/auth/workspaces/{ws}/invitations", {"email": "late@example.com"})
     assert r.status_code == 429 and r.json()["error"] == "invite_rate_limited"
     assert int(r.headers["Retry-After"]) > 0
+    assert r.json()["detail"]["limit"] == 50, "the sentence's number, for wording it in the reader's language (CI-85)"
 
 
 @pytest.mark.parametrize("action", ["create", "resend"])
@@ -435,6 +438,7 @@ def test_bulk_invitation_rate_limit_preserves_per_item_retry_after(env, action):
     # The value comes from the real 24-hour quota window, not a UI default or a test double.
     assert int(oldest + 86400 - after) + 1 <= limited["retry_after"] <= int(oldest + 86400 - before) + 1
     assert "retry_after" not in success and "retry_after" not in invalid
+    assert limited["detail"] == {"limit": 50} and "detail" not in invalid, "only the number a sentence quotes (CI-85)"
     assert "Retry-After" not in response.headers, "A per-item limit is not a blanket batch refusal"
     assert success["invitation"]["mail"] == "queued"
     assert store.one("SELECT COUNT(*) AS n FROM invitations WHERE workspace_id=?", (ws,))["n"] == 50

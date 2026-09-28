@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { ApiError, isDefaultNext, platformHandoffUrl, safeNext, useSession } from "@synwevo/auth-client";
-import { Brand, LanguageMenu, Logo, hasMessage, useI18n, type Locale, type Translator } from "@synwevo/ui";
+import { Brand, LanguageMenu, Logo, useI18n, type Locale, type Translator } from "@synwevo/ui";
 import { passwordProblem } from "../../lib/password";
+import { refusalText } from "../../lib/refusals";
 import "../../auth-flow.messages";
 import "./flow.css";
 
@@ -166,18 +167,24 @@ const ERROR_SOURCES: Record<string, string> = {
 };
 export function errorText(error: unknown, t: Translator): string {
   if (error instanceof ApiError) {
-    if (error.code === "bad_code") {
+    // A server that predates `detail.remaining` (CI-85) said the count only in its sentence.
+    if (error.code === "bad_code" && typeof error.detail?.remaining !== "number") {
       const left = /还可尝试 (\d+) 次/.exec(error.originalMessage);
       if (left) return t("验证码不正确，还可尝试 {count} 次。", { count: Number(left[1]) });
       if (error.originalMessage.includes("请重新登录")) return t("验证码不正确，请重新登录。");
     }
     if (error.code === "uv_required") return t("此账户需要设备验证，请使用 PIN、指纹或面容，或改用口令和验证码登录。");
-    const source = error.status === 429 ? "尝试过于频繁，请稍后再试。" : ERROR_SOURCES[error.code];
-    let message = hasMessage(error.originalMessage) ? t(error.originalMessage) : source ? t(source) : error.message;
+    // A limit reads as a limit whichever code carries it; everything else in lib/refusals.ts's order.
+    let message = refusalText(error, error.status === 429 ? { ...ERROR_SOURCES, [error.code]: "尝试过于频繁，请稍后再试。" } : ERROR_SOURCES);
     if (error.retryAfter) message += ` ${t("请在 {seconds} 秒后重试。", { seconds: error.retryAfter })}`;
     return message;
   }
   return error instanceof Error ? t(error.message) : t("操作失败，请重试。");
+}
+/** One row or item the server refused inside a request that succeeded (an import row): its code,
+ *  sentence and numbers, worded as `errorText` would word the same refusal. */
+export function resultText(result: { error?: string; message?: string; detail?: unknown }): string {
+  return refusalText({ code: result.error || "", originalMessage: result.message || "", detail: result.detail }, ERROR_SOURCES);
 }
 export function FlowError({ error }: { error: unknown }) {
   const { t } = useI18n(); const ref = useRef<HTMLDivElement>(null);

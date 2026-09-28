@@ -9,7 +9,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit -p .",
     "preview": "vite preview",
-    "test": "node src/pages/org/flow.validation.mjs"
+    "test": "node src/pages/org/flow.validation.mjs && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@synwevo/auth-client": "1.0.0",

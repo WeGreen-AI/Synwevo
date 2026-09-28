@@ -263,7 +263,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
             user = ident.create_user(email, password, display_name=body.get("display_name"),
                                      status="active", platform_role="admin")
         except PasswordError as e:
-            raise ServiceError(400, "weak_password", str(e), {"field": "password"}) from None
+            raise ServiceError(400, "weak_password", str(e), {"field": "password", **e.detail}) from None
         # Consumed after the account exists so a failed creation does not burn the token; a
         # concurrent bootstrap that spent it first leaves nothing of this attempt behind.
         if not ident.consume_bootstrap_token(token, user_id=user["id"]):
@@ -397,7 +397,8 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
             audit(request, "auth.login.mfa", actor_id=user["id"], object_kind="user",
                   object_id=user["id"], result="denied",
                   meta={"remaining": max(0, left), "account_failures": ident.attempt_count(bucket)})
-            raise ServiceError(401, "bad_code", "验证码不正确" + (f"，还可尝试 {left} 次" if left > 0 else "，请重新登录"))
+            raise ServiceError(401, "bad_code", "验证码不正确" + (f"，还可尝试 {left} 次" if left > 0 else "，请重新登录"),
+                               {"remaining": max(0, left), "exhausted": "sign_in"})
         ident.backoff_clear(bucket)
 
         if not tickets.redeem(raw):
@@ -783,7 +784,8 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
             # The token is already spent — it had to be, to make it single use under
             # concurrency. Say so plainly rather than let someone retype into a dead link.
             raise ServiceError(400, "weak_password",
-                               f"{e}（这个链接已失效，请重新申请一封邮件）", {"field": "password"}) from None
+                               f"{e}（这个链接已失效，请重新申请一封邮件）",
+                               {"field": "password", "link_spent": True, **e.detail}) from None
 
         # A credential change ends everything that was authorised by the old one.
         n = sessions.revoke_all_for_user(user["id"], "password_reset")
@@ -862,7 +864,7 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
                                            display_name=user.get("display_name"), single_factor=True)
                     phc = passwords.hash_password(replacement)
                 except PasswordError as exc:
-                    raise ServiceError(400, "weak_password", str(exc), {"field": "new_password"}) from None
+                    raise ServiceError(400, "weak_password", str(exc), {"field": "new_password", **exc.detail}) from None
             elif "new_password" in body:
                 raise ServiceError(400, "invalid_field", "已激活账户的邮箱验证不会修改口令",
                                    {"field": "new_password"})

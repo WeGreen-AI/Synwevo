@@ -98,7 +98,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
                 user = ident.get_user(user["id"])
                 audit(request, "auth.registration", actor_id=user["id"], result="ok")
         except PasswordError as exc:
-            raise ServiceError(400, "weak_password", str(exc), {"field": "password"}) from None
+            raise ServiceError(400, "weak_password", str(exc), {"field": "password", **exc.detail}) from None
         except ServiceError as exc:
             if exc.code != "email_taken":
                 raise

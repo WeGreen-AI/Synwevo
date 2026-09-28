@@ -115,7 +115,7 @@ class Invites:
                 retry = int((window["oldest"] or now()) + 24 * 3600 - now()) + 1
                 raise ServiceError(429, "invite_rate_limited",
                                    f"这个空间 24 小时内最多发出 {INVITES_PER_DAY} 个邀请，请稍后再试",
-                                   {"retry_after": max(1, retry)})
+                                   {"retry_after": max(1, retry), "limit": INVITES_PER_DAY})
             # One live invitation per (workspace, email). Re-inviting supersedes rather than
             # accumulating, so revoking "the" invitation cannot leave an older one usable.
             superseded = [r["id"] for r in t.execute(
@@ -187,7 +187,7 @@ class Invites:
             raise ServiceError(404, "no_invite", "找不到该邀请")
         state = self._state(r)
         if state not in ("pending", "expired"):
-            raise ServiceError(409, f"invite_{state}", "已接受或已撤销的邀请不能重发")
+            raise ServiceError(409, f"invite_{state}", "已接受、已拒绝或已撤销的邀请不能重发")
         return self.create(workspace_id=r["workspace_id"], email=r["email_key"], role=r["role"],
                            actor_id=actor_id, can_export=bool(r["can_export"]), ttl_s=ttl_s)
 

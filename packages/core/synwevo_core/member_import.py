@@ -107,7 +107,7 @@ def accept_upload(filename: str, data: bytes) -> dict:
     Same verdict semantics as the Docs template scan: infected → 400, scanner down → 503 (never
     a pass), over the scan limit → 413. `not_configured` is reported, not hidden."""
     if len(data) > MAX_FILE_BYTES:
-        raise ServiceError(413, "file_too_large", f"成员文件超过 {MAX_FILE_BYTES // (1024 * 1024)} MB 上限")
+        raise ServiceError(413, "file_too_large", f"成员文件超过 {MAX_FILE_BYTES // (1024 * 1024)} MB 上限", {"limit": MAX_FILE_BYTES})
     pol = M.policy()
     sha = hashlib.sha256(data).hexdigest()
     scanner = M.scanner_for(pol)
@@ -120,9 +120,11 @@ def accept_upload(filename: str, data: bytes) -> dict:
         raise ServiceError(503, "scan_unavailable", "安全检查服务暂不可用，请稍后重试", {"retry_after": 30}) from e
     if res.status == "infected":
         log.warning("member_import scan.rejected sha256=%s signature=%s", sha, res.signature)
-        raise ServiceError(400, "malware_detected", f"文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝", {"signature": res.signature})
+        raise ServiceError(400, "malware_detected", f"文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝",
+                           {"signature": res.signature, "filename": filename})
     if res.status == "too_large":
-        raise ServiceError(413, "scan_limit", f"文件超过安全检查的大小上限（{pol.max_bytes // (1024 * 1024)} MB），无法接纳")
+        raise ServiceError(413, "scan_limit", f"文件超过安全检查的大小上限（{pol.max_bytes // (1024 * 1024)} MB），无法接纳",
+                           {"limit": pol.max_bytes})
     return res.as_record()
 
 
