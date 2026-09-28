@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { get } from "./api";
 import { platformHandoffUrl } from "./handoff";
+import { broadcastCount, MESSAGES_UNREAD, onBroadcastCount } from "./tabSync";
 import type { AuthState } from "./session";
 import { useI18n } from "@synwevo/ui";
 
@@ -11,6 +12,7 @@ const POLL_MS = 60_000;
 
 export function announceMessagesUnread(unread: number) {
   window.dispatchEvent(new CustomEvent("synwevo:messages-unread", { detail: unread }));
+  broadcastCount(MESSAGES_UNREAD, unread);              // the other tabs of this origin
 }
 
 /**
@@ -45,7 +47,7 @@ export function useMessagesUnread(enabled = true): number {
     let stop = false;
     const tick = () => {
       if (stop || document.visibilityState !== "visible") return;
-      get<{ unread: number }>("/api/auth/messaging/unread-count").then(x => { if (!stop) setUnread(x.unread); }).catch(() => undefined);
+      get<{ unread: number }>("/api/auth/messaging/unread-count").then(x => { if (!stop) { setUnread(x.unread); broadcastCount(MESSAGES_UNREAD, x.unread); } }).catch(() => undefined);
     };
     tick();
     const timer = window.setInterval(tick, POLL_MS);
@@ -53,7 +55,8 @@ export function useMessagesUnread(enabled = true): number {
     const onAnnounce = (e: Event) => setUnread((e as CustomEvent<number>).detail);
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("synwevo:messages-unread", onAnnounce);
-    return () => { stop = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("synwevo:messages-unread", onAnnounce); };
+    const offTabs = onBroadcastCount(MESSAGES_UNREAD, n => { if (!stop) setUnread(n); });
+    return () => { stop = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("synwevo:messages-unread", onAnnounce); offTabs(); };
   }, [enabled]);
   return unread;
 }

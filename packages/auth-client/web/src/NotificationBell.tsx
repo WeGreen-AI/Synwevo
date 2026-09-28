@@ -17,6 +17,7 @@ import { useSession } from "./session";
 import { Drawer, useI18n, useToast } from "@synwevo/ui";
 import "./notifications.messages";
 import "./notifications.css";
+import { broadcastCount, NOTIFICATIONS_UNREAD, onBroadcastCount } from "./tabSync";
 
 export interface NotificationItem {
   id: string; seq: number; kind: string; category: string; severity: "info" | "action" | "critical";
@@ -35,7 +36,7 @@ export function useUnreadCount(enabled: boolean): number {
     let stop = false;
     const tick = async () => {
       if (document.visibilityState !== "visible") return;
-      try { const r = await get<{ unread_count: number }>("/api/auth/notifications/unread-count"); if (!stop) setCount(r.unread_count); }
+      try { const r = await get<{ unread_count: number }>("/api/auth/notifications/unread-count"); if (!stop) { setCount(r.unread_count); broadcastCount(NOTIFICATIONS_UNREAD, r.unread_count); } }
       catch { /* a failed poll keeps the last count; the drawer shows the error when opened */ }
     };
     void tick();
@@ -44,16 +45,17 @@ export function useUnreadCount(enabled: boolean): number {
     document.addEventListener("visibilitychange", onVisible);
     const onChanged = (e: Event) => { const n = (e as CustomEvent<number>).detail; if (typeof n === "number") setCount(n); };
     window.addEventListener("synwevo:unread", onChanged);
+    const offTabs = onBroadcastCount(NOTIFICATIONS_UNREAD, n => { if (!stop) setCount(n); });
     // a push delivered to this browser (the service worker relays it) refreshes the count now, not at the next poll
     const sw = typeof navigator !== "undefined" ? navigator.serviceWorker : undefined;
     const onPush = (e: MessageEvent) => { if (e.data && e.data.type === "synwevo:push") void tick(); };
     sw?.addEventListener("message", onPush);
-    return () => { stop = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("synwevo:unread", onChanged); sw?.removeEventListener("message", onPush); };
+    return () => { stop = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("synwevo:unread", onChanged); sw?.removeEventListener("message", onPush); offTabs(); };
   }, [enabled]);
   return count;
 }
 
-function announceUnread(n: number) { window.dispatchEvent(new CustomEvent("synwevo:unread", { detail: n })); }
+function announceUnread(n: number) { window.dispatchEvent(new CustomEvent("synwevo:unread", { detail: n })); broadcastCount(NOTIFICATIONS_UNREAD, n); }
 
 export function NotificationBell({ preferencesHref }: { preferencesHref?: string }) {
   const { me } = useSession();
