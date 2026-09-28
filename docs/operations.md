@@ -360,6 +360,37 @@ VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose re
 与 `depends_on: clamav`；接收器不同步 compose，运维把这两项与依赖合并进 `/opt/synwevo/config` 的 compose 后 `up -d accounts` 即生效。
 未配置时导入页面显示「安全检查：此实例未配置扫描引擎」，`/readyz` 的 `malware_scanner` 组件在账户角色同样报告状态。
 
+### 8.1 补扫扫描上线前存入的文件（CI-90）
+
+策略、结论与复核流程在 `docs/security/file-acceptance.md` §8.1。生产上在各自的容器里运行（用容器自己的扫描配置），
+stdin 接 `/dev/null`（`exec -T` 没有终端；不接的话命令可能等输入）：
+
+```bash
+cd /opt/synwevo/config
+# 1. 先预览（不加 --apply 就只预览）：各状态的行数、不同内容份数、超过扫描上限的份数，以及扫描器是否可用
+docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli rescan </dev/null
+docker compose -f /opt/synwevo/config/compose.yaml exec -T messages python -m synwevo_messages.cli rescan </dev/null
+# 2. 分批补扫（可重复运行：已干净或已拒绝的行不再被选中，出错的下次重试；感染会拒绝行、移走字节、通知上传者）
+docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli rescan --apply --limit 500 </dev/null
+docker compose -f /opt/synwevo/config/compose.yaml exec -T messages python -m synwevo_messages.cli rescan --apply --limit 500 </dev/null
+# 3. 有感染时：看隔离区，复核后恢复（误报且签名已撤回）或永久清除（messages 容器里是同样的三条，改用 synwevo_messages.cli）
+docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli quarantine list </dev/null
+docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli quarantine release <sha256> </dev/null
+docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli quarantine purge <sha256> --yes </dev/null
+```
+
+| 项 | 说明 |
+|---|---|
+| 退出码 | 0 全部干净或无事可做；1 有感染、扫描出错、摘要不符或内容缺失（看摘要），或恢复时一行都没恢复；2 用法/配置错误，或另一个补扫、恢复、清除正在运行（两个容器共用一把锁：先等 docs 的补扫结束再运行 messages 的）；3 扫描器未开启或不可达（开始时：什么都没读、没改；运行中：停在那里，已完成的保留） |
+| `--limit N` | 数的是扫描次数：已有结论、缺失、超限的不计入；达到后摘要写"还有 M 份留待下次运行" |
+| 输出 | 进度行与摘要只含 id、摘要（SHA-256）、大小、签名与计数，不含文件名与内容，可以贴进工单 |
+| 两个应用 | 同一份字节可能既是 Docs 来源又是消息附件。摘要里出现"另一个应用仍有 N 行引用这些字节"时，在另一个容器运行它的 `rescan`；恢复也各自 `quarantine release` |
+| 隔离区 | `/opt/synwevo/data/quarantine/`（容器内 `/data/quarantine/`）：`<sha256>` 是字节、`<sha256>.json` 是索引、`<sha256>.d/` 是移在一旁的回归用例。不被任何路由提供；**随 `snapshot.py` 备份进归档**，恢复时合并；不要手工移动，恢复只用 `quarantine release`（它先用当前引擎重扫，仍判感染就拒绝），清除只删隔离副本、不删回归用例 |
+| 恢复备份之后 | 再运行一次两个 `rescan --apply`：比结论更早的数据库里，行还不知道结论（读取已由索引把关；补扫标记行、把存储副本移走） |
+| 误报 | 提交到 `https://www.clamav.net/reports/fp`，等 freshclam 取到撤回签名的库（`scan.engine` 与容器日志里有库版本）后再 `release` |
+| 资源 | 每份内容一次 `INSTREAM`；超过 `SYNWEVO_CLAMD_MAX_BYTES` 的不发送，只记 `too_large`。补扫与在线上传共用同一个 clamd，`--limit` 分批即可 |
+| 未覆盖 | 成员导入的原文件（账户服务；到期清理开启后连文件删除，见 file-acceptance §8.1）。已生成的产物不扫描，但输入被拒后一律 410（摘要列出用过被拒字节的任务 id） |
+
 ## 9. 人机验证（Cloudflare Turnstile）
 
 策略、校验与验收在 `docs/security/human-verification.md`。运维要点：

@@ -1002,6 +1002,9 @@ function Workspace() {
                     {project.template_missing && (
                       <div className="notice warn" role="alert">{tr("这个项目原来使用的模板已被删除。")}{ro ? tr("需要有编辑权限的成员重新选择模板。") : tr("请重新选择或新建一个模板。")}</div>
                     )}
+                    {project.template_rejected && (
+                      <div className="notice warn" role="alert">{tr("这个项目使用的模板未通过安全检查，已被拒绝并隔离。")}{ro ? tr("需要有编辑权限的成员重新选择模板。") : tr("请重新选择或新建一个模板。")}</div>
+                    )}
                     {!ro && <button type="button" className="btn primary" onClick={() => setDialog({ kind: "template" })}>{tr("设置模板")}</button>}
                   </div>
                 ) : (

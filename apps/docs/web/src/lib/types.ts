@@ -134,6 +134,9 @@ export interface Project {
   template: TemplateDetail | null;
   /** The template this project pointed at was deleted: template is null, a new one must be chosen. */
   template_missing?: boolean;
+  /** A rescan found the template's bytes infected (CI-90): template is null and the template is
+   *  refused wherever its bytes would be used; a new one must be chosen. */
+  template_rejected?: boolean;
   mappings: { rev: number; mappings: Mapping[]; can_undo: boolean; can_redo: boolean };
   jobs?: any[];
 }

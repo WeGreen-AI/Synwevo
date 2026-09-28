@@ -138,6 +138,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-87 | 生产恶意软件扫描上线（clamav 服务 + 三个收文件的角色 `required`）；参考 compose 的能力设置修正 | 已部署（主机侧 05:11；参考 compose 4bf699a）；历史文件补扫见 CI-90 | 历史文件补扫（`not_configured` 行）：补扫命令与已感染历史文件的处理规则 |
 | CI-88 | 公开页关于消息的失实陈述改正（在线/输入/回执的真实规则、消息卡直达 Synwevo Message） | 已部署（4bf699a，run 36381481013；线上匿名复查通过） | — |
 | CI-89 | 网关按请求解析上游（事故修复：05:12–05:22 docwave 落到消息进程） | 已部署（主机侧 05:25；仓库文件 4e752b4，run 36383152410） | 主机上手动重建角色后不再需要重建网关；更换 `nginx.conf` 文件本身仍要 `--force-recreate gateway` |
+| CI-90 | 历史文件补扫：`python -m synwevo_docs.cli rescan` / `python -m synwevo_messages.cli rescan`（默认预览，`--apply` 才写入；`--limit` 数扫描次数；Docs `--workspace`/`--only sources|templates|cases`），感染的历史文件移入隔离区（`<数据目录>/quarantine/`，不删除，随备份），`quarantine list/release/purge` 复核；来源、模板、组织共享模板发布、产物与附件在所有读取路径按结论拒绝；三轮独立审查的全部发现已修复 | 已实现并验证，待部署 | 部署后在 docs 与 messages 容器依次先 `rescan`（预览）再 `rescan --apply`（operations.md §8.1；两个容器共用一把锁，不要同时运行）；有感染时按 file-acceptance §8.1 复核 |
 | CI-91 | 首页常见问题（8 问，三语言） | 已部署（4e752b4，run 36383152410；线上匿名复查通过） | 费用问题待持有人决定收费方式后再加 |
 | CI-92 | 邮件预览文字；邮件 Logo 进品牌资产流水线并按真实比例绘制 | 已部署（4597ae6，run 36384935792）；边缘缓存旧 Logo 由后续版本化地址解决 | 真实邮箱客户端（Gmail/Outlook/Apple Mail）渲染仍未实测 |
 | CI-93 | 同源标签页之间即时同步消息与通知未读数 | 已部署（4597ae6，run 36384935792） | 跨主机仍靠轮询与可见即刷新（浏览器限制） |

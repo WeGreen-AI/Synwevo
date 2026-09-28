@@ -177,6 +177,10 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 `scan_unavailable`（`detail.retry_after` 秒后重试），超过扫描上限返回 413 `scan_limit`。`/capabilities` 的
 `environment.malware_scan` 说明本部署是否扫描；`/readyz` 的 `checks.malware_scanner` 报告引擎是否可达（`ok`/`off`/
 `down: …`），引擎不可达不会让整个服务变为未就绪——已接纳的文件照常工作，新文件留在隔离态。
+扫描上线前存入的文件由运维补扫（`docs/security/file-acceptance.md` §8.1）：`scan` 多出 `rescan: true`；判定感染的
+历史来源同样变为 `rejected`（`scan.status=infected`），模板的 `scan.status` 为 `infected` 时，凡要用到其内容的接口
+（详情、下载、字段与版本操作、预览、生成）回 410 `rejected_malware`，列表仍列出它、仍可删除；项目详情里的 `template`
+此时是 `{"id", "name", "format", "rejected": true, "scan": {…}}`，需要换模板。
 
 来源选择接口与界面调用同一服务，所有位置从 0 开始。以下列表接口采用 `offset`/`limit`，
 默认 50（视图和词列表为 200），最大 200；返回 `total`、`next_offset` 和相对 `Link`。

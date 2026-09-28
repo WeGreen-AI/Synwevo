@@ -3870,6 +3870,10 @@ export const messages = {
     "en": "This project's previous template was deleted.",
     "zh-Hant": "這個項目原來使用的模板已被刪除。"
   },
+  "这个项目使用的模板未通过安全检查，已被拒绝并隔离。": {
+    "en": "This project's template failed the security check and has been rejected and quarantined.",
+    "zh-Hant": "這個項目使用的模板未通過安全檢查，已被拒絕並隔離。"
+  },
   "需要有编辑权限的成员重新选择模板。": {
     "en": "A member with edit access must select a replacement.",
     "zh-Hant": "需要有編輯權限的成員重新選擇模板。"

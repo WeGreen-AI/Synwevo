@@ -6,6 +6,8 @@ instance is exactly such a database, so this would have broken it on upgrade.
 """
 from __future__ import annotations
 
+import json
+
 import sqlite3
 
 import pytest
@@ -207,9 +209,11 @@ def test_blob_reachability_and_revocation_lookups_use_an_index(tmp_path):
     def plan(sql, args):
         return " | ".join(r["detail"] for r in s.all("EXPLAIN QUERY PLAN " + sql, args))
 
-    args = {"b": "0" * 64, "t": "w1"}
+    # `q` carries the digests under a standing quarantine verdict (CI-90). Walking that small JSON
+    # parameter — or a job's snapshot — with json_each is a virtual-table scan, not a table scan.
+    args = {"b": "0" * 64, "t": "w1", "q": json.dumps(["1" * 64])}
     for clause in authz._REACHABLE:
-        detail = plan(clause, args)
+        detail = " | ".join(d for d in plan(clause, args).split(" | ") if "VIRTUAL TABLE" not in d)
         assert "SCAN" not in detail.replace("SCAN CONSTANT ROW", ""), f"全表扫描：{clause}\n{detail}"
     for sql, arg in (("SELECT id FROM oauth_tokens WHERE family_id=?", ("f",)),
                      ("SELECT id FROM oauth_tokens WHERE client_id=? AND revoked_at IS NULL", ("c",)),

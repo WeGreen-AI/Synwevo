@@ -60,6 +60,7 @@ from fastapi import APIRouter, Body, Request
 from starlette.concurrency import run_in_threadpool
 
 from synwevo_core import authority, env
+from synwevo_core import quarantine
 from synwevo_core.context import tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import Store, new_id, now
@@ -286,6 +287,10 @@ def use_upload(store: Store, upload_id, make, kind: str) -> dict:
         raise ServiceError(409, "upload_wrong_purpose",
                            f"该上传创建时声明用于{use.get(row['purpose'], row['purpose'])}，不能用作{use.get(kind, kind)}",
                            {"field": "upload_id", "purpose": row["purpose"]})
+    if quarantine.verdict(store, row.get("blob")):
+        # Completed before the verdict: the bytes are not read, and not used for anything (CI-90).
+        from ..services import earlier_malicious
+        raise earlier_malicious(row.get("filename") or "upload")
     claimed = store.execute("UPDATE uploads SET status='consumed', consumed_by=?, updated_at=? "
                             "WHERE id=? AND tenant=? AND status='complete'",
                             (f"{kind}:pending", now(), upload_id, current_tenant()))
@@ -527,6 +532,13 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
                 store.execute("UPDATE uploads SET received=0, updated_at=? WHERE id=? AND status='open'", (now(), uid))
                 raise ServiceError(400, "checksum_mismatch", "收到的内容与声明的 SHA-256 不一致；上传已重置，请重新发送全部字节",
                                    {"field": "sha256", "expected": expected, "actual": actual})
+            if quarantine.verdict(store, actual):
+                # Bytes a quarantine verdict took out of the store are not written back by a
+                # completed upload (CI-90): the upload ends here, its staging bytes deleted.
+                store.execute("UPDATE uploads SET status='aborted', received=0, updated_at=? WHERE id=? AND status='open'", (now(), uid))
+                _unlink_part(store, uid)
+                from ..services import earlier_malicious
+                raise earlier_malicious(row.get("filename") or "upload")
             _copy_completed_blob(store, uid, fd, actual)
             done = store.execute("UPDATE uploads SET status='complete', blob=?, sha256=?, updated_at=? "
                                  "WHERE id=? AND status='open'", (actual, actual, now(), uid))

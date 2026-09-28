@@ -60,6 +60,14 @@ export function fmtDuration(ms: number): string {
 
 export function AttachmentCard({ attachment, pending, onOpenImage }: { attachment: Attachment; pending?: boolean; onOpenImage: (a: Attachment) => void }) {
   const { t } = useI18n();
+  if (attachment.rejected) {
+    // A rescan found these bytes infected (CI-90): the name stays so the conversation reads the same;
+    // nothing is linked, played or shown inline, and the server refuses the download with 410.
+    return <div className="msg-attach-file" aria-disabled="true">
+      <span className="msg-attach-ic" aria-hidden="true"><IcFile size={20} /></span>
+      <span className="msg-attach-main"><span className="msg-attach-name">{attachment.filename}</span><span className="msg-attach-meta">{t("该附件未通过安全检查，已被拒绝并隔离")}</span></span>
+    </div>;
+  }
   if (attachment.voice && !pending) {
     return <div className="msg-voice" data-duration-ms={attachment.duration_ms ?? undefined}>
       <audio controls preload="none" src={attachmentUrl(attachment.id, true)} aria-label={t("语音消息")} />

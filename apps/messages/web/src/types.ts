@@ -48,6 +48,8 @@ export interface Attachment {
   id: string; filename: string; size: number; content_type: string; inline: boolean;
   /** a voice message (§7.8); `duration_ms` is null when the sender declared none — no invented length */
   voice?: boolean; duration_ms?: number | null;
+  /** a rescan found the bytes infected (CI-90): shown by name only, the download answers 410 */
+  rejected?: boolean;
 }
 
 /** A card sent by an application (§8.3), rendered per reader: full, or `degraded` (neutral

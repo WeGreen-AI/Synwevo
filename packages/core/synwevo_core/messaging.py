@@ -49,6 +49,7 @@ import os
 import re
 from typing import Callable
 
+from . import quarantine
 from .errors import ServiceError
 from .identity import Identity
 from .organizations import current_membership
@@ -1096,6 +1097,11 @@ class Messaging:
     @staticmethod
     def _attachment_out(a: dict) -> dict:
         out = {"id": a["id"], "filename": a["filename"], "size": a["size"], "content_type": a["content_type"], "inline": a["content_type"] in INLINE_TYPES}
+        if a.get("status") == "rejected":
+            # A rescan found these bytes infected (CI-90): the row stays so the conversation reads
+            # the same, but nothing is served or shown inline; the download answers 410.
+            out["inline"] = False
+            out["rejected"] = True
         if a["content_type"] in VOICE_TYPES:
             out["voice"] = True
             out["duration_ms"] = a.get("duration_ms")
@@ -1550,6 +1556,11 @@ class Messaging:
                 raise ServiceError(400, "invalid_field", "只有语音附件可以声明时长", {"field": "duration_ms"})
             if not 0 < duration_ms <= MAX_VOICE_MS:
                 raise ServiceError(400, "invalid_field", f"语音时长需要在 1 毫秒到 {MAX_VOICE_MS // 60000} 分钟之间", {"field": "duration_ms", "limit": MAX_VOICE_MS})
+        import hashlib
+        if quarantine.verdict(self.store, hashlib.sha256(data).hexdigest()):
+            # Bytes under a standing quarantine verdict (CI-90) are not stored again, whether or
+            # not this deployment scans uploads.
+            raise ServiceError(400, "malware_detected", "该文件此前已被判定为恶意内容，已拒绝")
         blob = self.store.put_blob(data)
         aid = new_id("att")
         self.store.insert("message_attachments", {"id": aid, "conversation_id": cid, "message_id": None, "uploader_id": uid, "filename": filename[:200] or "file",
@@ -1560,8 +1571,14 @@ class Messaging:
         return out
 
     def attachment_for_download(self, aid: str, uid: str) -> dict:
+        """The attachment row, for a member who may read the message it hangs on — and only while
+        its bytes are accepted. Rejected by a rescan (or on bytes whose quarantine verdict stands although
+        this row is not marked yet — another application's rescan found them first, or a restored
+        backup predates the verdict), it answers 410 to that member and 404 to everyone else, so
+        the refusal says nothing to someone who could not have read it (CI-90). Download, inline
+        display and forwarding all come through here."""
         a = self.store.one("SELECT * FROM message_attachments WHERE id=?", (aid,))
-        if not a or a["status"] != "accepted":
+        if not a or a["status"] not in ("accepted", "rejected"):
             raise ServiceError(404, "no_attachment", "找不到该附件")
         conv, me = self._member(a["conversation_id"], uid)
         if a["message_id"]:
@@ -1570,6 +1587,8 @@ class Messaging:
                 raise ServiceError(404, "no_attachment", "找不到该附件")
         elif a["uploader_id"] != uid:
             raise ServiceError(404, "no_attachment", "找不到该附件")
+        if a["status"] == "rejected" or quarantine.verdict(self.store, a["blob"]):
+            raise ServiceError(410, "rejected_malware", "该附件未通过安全检查，已被拒绝并隔离")
         return dict(a)
 
     def sweep_unused_attachments(self) -> int:

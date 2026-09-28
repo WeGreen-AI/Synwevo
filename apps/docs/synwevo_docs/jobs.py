@@ -110,6 +110,57 @@ def dedupe(names: list[str]) -> list[str]:
     return out
 
 
+# ------------------------------------------------------------------ inputs a verdict withdrew (CI-90)
+def withdrawn_input(store, snap: dict | None) -> ServiceError | None:
+    """Why a job's snapshot may no longer be used, or None.
+
+    A job runs from its snapshot, which names the template version and the source bytes it was
+    created with, and its outputs are copies of that template filled with those sources. When a
+    rescan later rejects one of them — the template marked infected, a source rejected, or any of
+    the snapshot's bytes under a standing quarantine verdict — the job stops at its next slice and
+    its artifacts, ZIP and download links are refused, instead of serving what the check withdrew."""
+    snap = snap or {}
+    tpl = snap.get("template") or {}
+    refusal = ServiceError(410, "rejected_malware", "该文件未通过安全检查，已被拒绝并隔离")
+    if tpl.get("id"):
+        row = store.one("SELECT id, scan FROM templates WHERE id=?", (tpl["id"],))
+        if row and App.template_rejected(row):
+            refusal.detail = {"template_id": tpl["id"]}
+            return refusal
+    sources = [x for x in snap.get("sources") or [] if isinstance(x, dict)]
+    ids = [x["id"] for x in sources if x.get("id")]
+    if ids:
+        marks = ",".join("?" * len(ids))
+        hit = store.one(f"SELECT id FROM source_files WHERE id IN ({marks}) AND status='rejected' LIMIT 1", tuple(ids))
+        if hit:
+            refusal.detail = {"source_id": hit["id"]}
+            return refusal
+    from synwevo_core import quarantine as Q
+    held = Q.standing(store)
+    if held:
+        img = ((tpl.get("fill_options") or {}).get("image") or {}) if isinstance(tpl.get("fill_options"), dict) else {}
+        used = {tpl.get("working_blob"), img.get("original_blob")} | {x.get("blob") for x in sources} | {x.get("working_blob") for x in sources}
+        if held.intersection(b for b in used if b):
+            return refusal
+    return None
+
+
+def snapshot_inputs(store, jid: str) -> dict | None:
+    """The part of a job's snapshot `withdrawn_input` reads — the template id and bytes, and each
+    source's id and bytes — extracted in SQL. Every artifact download asks this, and the full
+    snapshot (mappings, rules, OCR words of every source) is far too large to decode per file."""
+    j = store.one("SELECT json_extract(snapshot,'$.template.id') AS tid, "
+                  "json_extract(snapshot,'$.template.working_blob') AS twb, "
+                  "json_extract(snapshot,'$.template.fill_options.image.original_blob') AS timg FROM jobs WHERE id=?", (jid,))
+    if not j:
+        return None
+    sources = store.all("SELECT json_extract(js.value,'$.id') AS id, json_extract(js.value,'$.blob') AS blob, "
+                        "json_extract(js.value,'$.working_blob') AS working_blob "
+                        "FROM jobs, json_each(jobs.snapshot,'$.sources') js WHERE jobs.id=?", (jid,))
+    return {"template": {"id": j["tid"], "working_blob": j["twb"], "fill_options": {"image": {"original_blob": j["timg"]}}},
+            "sources": [dict(r) for r in sources]}
+
+
 # ------------------------------------------------------------------ project context
 class ProjectContext:
     """Everything needed to build plans for a project at a given moment."""
@@ -121,16 +172,22 @@ class ProjectContext:
         tid = self.project.get("template_id")
         self.template = None
         self.template_missing = False
+        #: The refusal of a template a rescan found infected (CI-90): the project still opens,
+        #: records and validation still work, and everything that would fill the template says why not.
+        self.template_rejected: ServiceError | None = None
         if tid:
             try:
                 self.template = app.get_template(tid)
             except ServiceError as e:
-                if e.status != 404:
+                if e.code == "rejected_malware":
+                    self.template_rejected = e
+                elif e.status != 404:
                     raise
-                # A template deleted while this project still pointed at it (possible before
-                # deletion refused templates in use). The project must still open; it behaves
-                # as a project with no template chosen, and says so.
-                self.template_missing = True
+                else:
+                    # A template deleted while this project still pointed at it (possible before
+                    # deletion refused templates in use). The project must still open; it behaves
+                    # as a project with no template chosen, and says so.
+                    self.template_missing = True
         # A pinned version (PUT /projects/{pid}/template with "version", or an imported
         # definition) is what the caller asked to generate from. Using head instead meant any
         # later edit of the template silently changed every subsequent job.
@@ -143,6 +200,15 @@ class ProjectContext:
         self.all_source_rows = app.project_sources(pid, ready_only=False)
         self.srcs: dict[str, SourceDoc] = {r["id"]: app._doc_from_row(r) for r in self.source_rows}
         self._records = None
+
+    def no_template_error(self) -> ServiceError:
+        """Why there is nothing to fill: the template's bytes were rejected, it was deleted, or
+        none was chosen."""
+        if self.template_rejected is not None:
+            return self.template_rejected
+        if self.template_missing:
+            return ServiceError(400, "no_template", "项目使用的模板已被删除，请重新选择或创建模板")
+        return ServiceError(400, "no_template", "请先选择或创建模板")
 
     def signature(self) -> str:
         parts = [self.project["rev"], self.project["mapping_rev"], (self.template or {}).get("id"), (self.version or {}).get("version_no"),
@@ -727,9 +793,7 @@ class JobService:
     # -------------------------------------------------------------- summary before generation
     @staticmethod
     def _no_template(ctx: ProjectContext) -> ServiceError:
-        if ctx.template_missing:
-            return ServiceError(400, "no_template", "项目使用的模板已被删除，请重新选择或创建模板")
-        return ServiceError(400, "no_template", "请先选择或创建模板")
+        return ctx.no_template_error()
 
     def _cache_get(self, key):
         with self._analysis_lock:
@@ -1591,6 +1655,9 @@ class JobService:
                 self._finalize_tx(c, lease.jid, self.worker_id)
             return True
         self._load(lease)
+        withdrawn = self._withdrawn_input(lease.snap)
+        if withdrawn is not None:
+            raise withdrawn
         with formula_as_of(moment_of(lease.snap)):
             if (ctl["phase"] or "generating") == "planning":
                 done = self._plan_slice(lease)
@@ -1600,12 +1667,18 @@ class JobService:
             self.store.execute("UPDATE jobs SET last_slice_at=? WHERE id=? AND lease_owner=?", (now(), lease.jid, self.worker_id))
         return done
 
+    def _withdrawn_input(self, snap: dict | None) -> ServiceError | None:
+        return withdrawn_input(self.store, snap)
+
     def _load(self, L: _Lease) -> None:
         L.run_no = (self.store.one("SELECT run_no FROM jobs WHERE id=?", (L.jid,)) or {}).get("run_no") or 1
         if L.loaded:
             return                                        # the snapshot is decoded once per lease, not per slice
         j = self.store.one("SELECT snapshot, options FROM jobs WHERE id=?", (L.jid,))
         snap, opts = j["snapshot"], j["options"]
+        withdrawn = self._withdrawn_input(snap)          # before any of its bytes are read
+        if withdrawn is not None:
+            raise withdrawn
         srcs = {s["id"]: self.app._doc_from_row({**s, "family": s["family"]}) for s in snap["sources"]}
         L.snap, L.opts, L.srcs = snap, opts, srcs
         L.tpl = snap["template"]
@@ -1944,14 +2017,24 @@ class JobService:
             not_found("输出文件")
         if a.get("deleted_at"):
             raise ServiceError(410, "artifact_deleted", "该输出文件已被删除，无法下载；可对原任务重新生成")
+        withdrawn = self.withdrawn_job(a["job_id"])
+        if withdrawn is not None:
+            raise withdrawn             # made from a template or source a rescan later rejected (CI-90)
         if not self.store.has_blob(a["blob"]):
             raise ServiceError(410, "artifact_missing", "该输出文件的内容已不在存储中（可能已按保留期清理）")
         return a, self.store.get_blob(a["blob"])
+
+    def withdrawn_job(self, jid: str) -> ServiceError | None:
+        """The refusal for every output of a job whose inputs a verdict withdrew, or None."""
+        return withdrawn_input(self.store, snapshot_inputs(self.store, jid))
 
     def zip_file(self, jid: str, fmt: str | None = None) -> Path:
         """Write the job's published outputs (+ manifest) to a temporary ZIP file and return its path;
         streaming from disk keeps memory flat for large jobs and supports range requests."""
         j = self.get(jid)
+        withdrawn = self.withdrawn_job(jid)
+        if withdrawn is not None:
+            raise withdrawn
         arts = self.store.all("SELECT a.*, i.seq FROM artifacts a JOIN job_items i ON a.item_id=i.id "
                               "WHERE a.job_id=? AND a.deleted_at IS NULL AND i.status='success' ORDER BY i.seq, a.format", (jid,))
         fd, path = tempfile.mkstemp(prefix=f"{jid}-", suffix=".zip", dir=self.tmp_dir)

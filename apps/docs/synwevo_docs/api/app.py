@@ -383,12 +383,17 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
             try:
                 p["template"] = app_.template_detail(p["template_id"])
             except ServiceError as e:
-                if e.status != 404:
+                if e.code == "rejected_malware":
+                    # A rescan found the template's bytes infected (CI-90): the project opens so
+                    # someone can choose another template; the template itself is not served.
+                    p["template_rejected"] = True
+                elif e.status != 404:
                     raise
-                # The template was deleted while this project still used it (possible before
-                # deletion refused templates in use). The project must still open so the person
-                # can choose another template; it used to 404 as a whole.
-                p["template_missing"] = True
+                else:
+                    # The template was deleted while this project still used it (possible before
+                    # deletion refused templates in use). The project must still open so the person
+                    # can choose another template; it used to 404 as a whole.
+                    p["template_missing"] = True
         p["mappings"] = app_.get_mappings(pid)
         if jobs:
             p["jobs"] = jobs.list_for_project(pid)

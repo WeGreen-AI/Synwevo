@@ -33,9 +33,12 @@ class Views:
         fam, fmt = r["family"], r["format"]
         base = {"id": sid, "filename": r["filename"], "format": fmt, "family": fam, "status": r["status"], "error": r["error"],
                 "notes": r["notes"], "version": r["version"]}
-        if r["status"] in ("parsing",):
+        # Nothing is rendered from a file the security check has not accepted: one being checked
+        # is pending, a rejected one shows its error — including a rescan rejection of a file that
+        # was parsed long before (CI-90), whose converted copy and parsed workbook still exist.
+        if r["status"] in ("parsing", "scanning", "scan_failed"):
             return {**base, "view": "pending"}
-        if r["status"] in ("error", "unsupported"):
+        if r["status"] in ("error", "unsupported", "rejected"):
             return {**base, "view": "error"}
         doc = self.app.doc_for(r, block)
         if block is not None:
@@ -282,8 +285,7 @@ class Views:
         if expected_signature is not None and expected_signature != sig:
             raise ServiceError(409, "stale", "项目输入或模板已改变，请重新预检", {"field": "signature", "signature": sig})
         if not ctx.template:
-            raise ServiceError(400, "no_template", "项目使用的模板已被删除，请重新选择或创建模板" if ctx.template_missing
-                               else "请先选择或创建模板")
+            raise ctx.no_template_error()
         recs = ctx.records["records"]
         if not recs:
             raise ServiceError(400, "no_records", "没有识别到样本")
@@ -342,7 +344,9 @@ class Views:
                                      "message": "生成的预览未通过文档内容校验，请检查模板与映射"})
             return result
         blob = self.store.put_blob(out)
-        authz.grant_blob(self.store, blob, "preview")     # nothing else can vouch for this blob
+        # Nothing else can vouch for this blob. The grant names the template it filled, so the
+        # preview stops being served if a rescan rejects that template (CI-90).
+        authz.grant_blob(self.store, blob, f"preview:{ctx.template['id']}")
         result["output"] = {"format": native, "blob": blob, "size": len(out)}
         result["render"] = render_output(native, out, None, 0, 300, ctx.slots, highlight=True)
         if lay:
@@ -357,7 +361,7 @@ class Views:
         from .engine import layout as L
         ctx = ProjectContext(self.app, pid)
         if not ctx.template:
-            raise ServiceError(400, "no_template", "请先选择或创建模板")
+            raise ctx.no_template_error()
         fmt = G.native_format(ctx.template["format"])
         if fmt not in G.LAYOUT_FORMATS:
             return {"available": False, "reason": "该格式的页面由模板本身固定，不会因内容而重新分页"}
@@ -368,7 +372,7 @@ class Views:
             return {"available": False, "reason": str(e)}
         pages = pe.page_count(pdf)
         pdf_blob = self.store.put_blob(pdf)
-        authz.grant_blob(self.store, pdf_blob, "layout")
+        authz.grant_blob(self.store, pdf_blob, f"layout:{ctx.template['id']}")
         return {"available": True, "pages": pages, "template_pages": tpl_pages, "pdf_blob": pdf_blob}
 
     def preview_file(self, blob: str) -> bytes:

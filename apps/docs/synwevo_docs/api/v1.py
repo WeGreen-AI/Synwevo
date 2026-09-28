@@ -39,6 +39,7 @@ from .. import definitions as D
 from ..capabilities import capability_report
 from ..engine.limits import LIMITS
 from ..jobs import ProjectContext
+from ..services import scan_out
 from . import idempotency as I
 from .v1_uploads import build_router as build_uploads_router
 from .v1_uploads import upload_body_schema, use_upload
@@ -301,15 +302,24 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         tpl = None
         if p.get("template_id"):
             pinned = p.get("template_version")
+            rejected = None
             try:
                 d = app_.template_detail(p["template_id"])
             except ServiceError as e:
-                if e.status != 404:
+                if e.code == "rejected_malware":
+                    # A rescan found the template's bytes infected (CI-90): say so with its scan
+                    # record; the template itself is refused (410) wherever its bytes would be used.
+                    rejected = app_.get_template(p["template_id"], accepted=False)
+                elif e.status != 404:
                     raise
                 # The bound template was deleted. The project itself still exists and must not
                 # answer 404 because of it; say what is missing instead.
                 d = None
-            if d is None:
+            if rejected is not None:
+                tpl = {"id": rejected["id"], "name": rejected["name"], "format": rejected["format"], "version": pinned,
+                       "head": rejected["head"], "pinned": bool(pinned), "fields": 0, "rejected": True,
+                       "scan": scan_out(rejected.get("scan"))}
+            elif d is None:
                 tpl = {"id": p["template_id"], "name": None, "format": None, "version": pinned, "head": None,
                        "pinned": bool(pinned), "fields": 0, "missing": True}
             else:
@@ -1128,12 +1138,16 @@ def _attach_artifacts(store, jid: str, rows: list[dict]) -> None:
 
 def _artifact_meta(store, aid: str) -> dict:
     """Tenant-checked artifact row without reading its bytes (minting a link needs no content)."""
-    a = store.one("SELECT a.id, a.filename, a.blob, a.size, a.deleted_at, j.tenant FROM artifacts a "
+    a = store.one("SELECT a.id, a.job_id, a.filename, a.blob, a.size, a.deleted_at, j.tenant FROM artifacts a "
                   "JOIN jobs j ON j.id=a.job_id WHERE a.id=?", (aid,))
     if not a or (a["tenant"] or "default") != current_tenant():
         not_found("输出文件")
     if a.get("deleted_at"):
         raise ServiceError(410, "artifact_deleted", "该输出文件已被删除，无法下载；可对原任务重新生成")
+    from ..jobs import snapshot_inputs, withdrawn_input
+    withdrawn = withdrawn_input(store, snapshot_inputs(store, a.pop("job_id")))
+    if withdrawn is not None:
+        raise withdrawn                 # no link to an output of a template or source a rescan rejected (CI-90)
     if not store.has_blob(a["blob"]):
         raise ServiceError(410, "artifact_missing", "该输出文件的内容已不在存储中（可能已按保留期清理）")
     return a

@@ -16,27 +16,58 @@ bypassable by construction, so `blob_readable` is the gate for all of them.
 """
 from __future__ import annotations
 
+import json
+
 from synwevo_core.context import tenant as current_tenant
 from synwevo_core.store import Store, now
 
 # Every column that holds a blob id together with the join that gives it a workspace. Kept as
 # data so the read check and any future sweeper cannot drift apart.
+# `:q` is the JSON array of digests whose quarantine verdict stands (synwevo_core.quarantine) —
+# usually empty. A verdict counts before the rows are marked: another application's rescan may
+# have found the bytes first, or a restored backup may predate the verdict (CI-90).
+_HELD = "(SELECT value FROM json_each(:q))"
 _REACHABLE = (
     # source files, via their project. Only live ones: removing a file uploaded by mistake has
     # to stop its bytes being served, and every source row hands its blob id to the browser.
+    # Only accepted ones too: a file still being checked, or rejected — including one a rescan
+    # rejected after it had been parsed, whose converted copy and parsed workbook remain (CI-90).
     "SELECT 1 FROM source_files s JOIN projects p ON p.id=s.project_id "
     "WHERE (s.blob=:b OR s.parsed_blob=:b OR s.working_blob=:b) AND s.removed=0 "
+    "AND COALESCE(s.status,'') NOT IN ('rejected','scanning','scan_failed') "
+    f"AND s.blob NOT IN {_HELD} AND COALESCE(s.working_blob,'') NOT IN {_HELD} "
     "AND COALESCE(p.deleted,0)=0 AND COALESCE(p.tenant,'default')=:t",
-    # uploaded template originals
-    "SELECT 1 FROM templates WHERE original_blob=:b AND COALESCE(tenant,'default')=:t AND deleted=0",
-    # template working copies, via their (live) template
+    # uploaded template originals, unless a rescan found the template infected or any of its
+    # contents is under a verdict
+    "SELECT 1 FROM templates WHERE original_blob=:b AND COALESCE(tenant,'default')=:t AND deleted=0 "
+    "AND COALESCE(json_extract(scan,'$.status'),'')<>'infected' "
+    f"AND NOT EXISTS (SELECT 1 FROM template_versions v9 WHERE v9.template_id=templates.id AND v9.working_blob IN {_HELD})",
+    # template working copies, via their (live, not rejected) template
     "SELECT 1 FROM template_versions v JOIN templates t2 ON t2.id=v.template_id "
-    "WHERE v.working_blob=:b AND COALESCE(t2.deleted,0)=0 AND COALESCE(t2.tenant,'default')=:t",
-    # generated artifacts, via their job; a deleted artifact is no longer served
+    "WHERE v.working_blob=:b AND COALESCE(t2.deleted,0)=0 AND COALESCE(t2.tenant,'default')=:t "
+    "AND COALESCE(json_extract(t2.scan,'$.status'),'')<>'infected' "
+    f"AND COALESCE(t2.original_blob,'') NOT IN {_HELD} "
+    f"AND NOT EXISTS (SELECT 1 FROM template_versions v9 WHERE v9.template_id=t2.id AND v9.working_blob IN {_HELD})",
+    # generated artifacts, via their job; a deleted artifact is no longer served, nor one made
+    # from a template or source that was rejected later (the same rule as jobs.withdrawn_input)
     "SELECT 1 FROM artifacts a JOIN jobs j ON j.id=a.job_id "
-    "WHERE a.blob=:b AND a.deleted_at IS NULL AND COALESCE(j.tenant,'default')=:t",
-    # previews and layout PDFs, which no row owns
-    "SELECT 1 FROM blob_grants WHERE blob=:b AND tenant=:t",
+    "WHERE a.blob=:b AND a.deleted_at IS NULL AND COALESCE(j.tenant,'default')=:t "
+    "AND NOT EXISTS (SELECT 1 FROM templates t3 WHERE t3.id=json_extract(j.snapshot,'$.template.id') "
+    "AND COALESCE(json_extract(t3.scan,'$.status'),'')='infected') "
+    "AND NOT EXISTS (SELECT 1 FROM json_each(j.snapshot,'$.sources') js JOIN source_files s3 "
+    "ON s3.id=json_extract(js.value,'$.id') WHERE s3.status='rejected') "
+    "AND NOT EXISTS (SELECT 1 FROM json_each(:q) hq WHERE instr(j.snapshot, hq.value) > 0)",
+    # previews, layout PDFs and desensitized copies, which no row owns. A grant made since CI-90
+    # names what it was made from (`preview:<template>`, `layout:<template>`,
+    # `desensitized:<source>`): one made from a rejected template or source is no longer served.
+    "SELECT 1 FROM blob_grants WHERE blob=:b AND tenant=:t "
+    "AND NOT EXISTS (SELECT 1 FROM templates t4 WHERE instr(blob_grants.kind, ':')>0 "
+    "AND t4.id=substr(blob_grants.kind, instr(blob_grants.kind, ':')+1) "
+    f"AND (COALESCE(json_extract(t4.scan,'$.status'),'')='infected' OR COALESCE(t4.original_blob,'') IN {_HELD} "
+    f"OR EXISTS (SELECT 1 FROM template_versions v8 WHERE v8.template_id=t4.id AND v8.working_blob IN {_HELD}))) "
+    "AND NOT EXISTS (SELECT 1 FROM source_files s4 WHERE instr(blob_grants.kind, ':')>0 "
+    "AND s4.id=substr(blob_grants.kind, instr(blob_grants.kind, ':')+1) "
+    f"AND (COALESCE(s4.status,'')='rejected' OR s4.blob IN {_HELD}))",
 )
 
 
@@ -54,8 +85,12 @@ def blob_readable(store: Store, blob: str, tenant: str | None = None) -> bool:
     """
     if not blob:
         return False
+    from synwevo_core import quarantine
+    held = quarantine.standing(store)
+    if blob in held:
+        return False
     t = tenant or current_tenant()
-    args = {"b": blob, "t": t}
+    args = {"b": blob, "t": t, "q": json.dumps(sorted(held))}
     for sql in _REACHABLE:
         if store.one(sql + " LIMIT 1", args):
             return True

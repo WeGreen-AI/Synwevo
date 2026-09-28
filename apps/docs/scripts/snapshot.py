@@ -49,6 +49,13 @@ because the database holds the signing keys. Only files that are exactly what a 
 their SHA-256, at `blobs/<h[:2]>/<h>`, content matching the name) are merged into the blob store:
 the store never overwrites a blob it already has, so one wrong file would be served for that
 content from then on.
+
+The quarantine (`<data>/quarantine/`, CI-90: bytes a rescan judged malicious, their index, and
+regression cases moved aside) travels with the database: the rows marked rejected and the index
+that can release them are one state, and a backup holding only half of it could neither restore
+a reviewed false positive nor tell a withdrawn blob from a lost one. A restore merges it — an
+entry already present in the target is kept — and **a rescan is run again after any restore**
+(docs/operations.md §2): a database older than a verdict has rows that do not know it yet.
 """
 from __future__ import annotations
 
@@ -179,6 +186,33 @@ def _secrets_present(db: Path) -> list:
 
 
 # ---------------------------------------------------------------- create
+def _quarantine_files(data: Path) -> list[Path]:
+    """What of `<data>/quarantine/` a backup carries: the held bytes (`<digest>`), their index
+    (`<digest>.json`) and copies moved aside (`<digest>.d/...`) — not locks or half-written files."""
+    q = data / "quarantine"
+    if not q.is_dir():
+        return []
+    out = []
+    for f in sorted(q.rglob("*")):
+        if not f.is_file() or f.is_symlink():
+            continue
+        rel = f.relative_to(q).parts
+        if len(rel) == 1 and (_BLOB_NAME.fullmatch(rel[0]) or (rel[0].endswith(".json") and _BLOB_NAME.fullmatch(rel[0][:-5]))):
+            out.append(f)
+        elif len(rel) > 1 and rel[0].endswith(".d") and _BLOB_NAME.fullmatch(rel[0][:-2]):
+            out.append(f)                   # regression cases moved aside, whatever their file names
+    return out
+
+
+def _quarantine_member_ok(parts: tuple) -> bool:
+    if len(parts) == 1:
+        return True                                     # the directory itself
+    head = parts[1]
+    if len(parts) == 2 and (_BLOB_NAME.fullmatch(head) or (head.endswith(".json") and _BLOB_NAME.fullmatch(head[:-5]))):
+        return True
+    return head.endswith(".d") and bool(_BLOB_NAME.fullmatch(head[:-2]))
+
+
 def _is_blob_file(p: Path) -> bool:
     # Content-addressed files only: put_blob writes `<digest>.tmp<hex>` and renames it, so a
     # partial write in progress is not a blob and does not belong in a backup.
@@ -230,6 +264,10 @@ def create(args) -> int:
         if live_journal.is_file():
             shutil.copyfile(live_journal, work / "journal.jsonl")
 
+        qfiles = _quarantine_files(data)
+        if qfiles:
+            print(f"  隔离区 {len(qfiles)} 个文件，{sum(p.stat().st_size for p in qfiles) / 1e6:.1f} MB（字节、索引与移在一旁的回归用例）")
+
         secrets = _secrets_present(work / DB_NAME)
         manifest = {
             "created_at": time.time(),
@@ -237,6 +275,7 @@ def create(args) -> int:
             "source": str(data),
             "census": census,
             "blobs": {"files": len(blobs), "bytes": total},
+            "quarantine": {"files": len(qfiles), "bytes": sum(p.stat().st_size for p in qfiles)},
             "journal_entries": sum(1 for line in (work / "journal.jsonl").read_text("utf-8").splitlines()
                                    if line.strip()) if (work / "journal.jsonl").exists() else 0,
             "secret_bearing_tables": [{"table": t, "what": w, "rows": n} for t, w, n in secrets],
@@ -257,6 +296,8 @@ def create(args) -> int:
                     tar.add(work / "journal.jsonl", arcname=ARCHIVED_JOURNAL)
                 for p in blobs:
                     tar.add(p, arcname="blobs/" + p.relative_to(data / "blobs").as_posix())
+                for p in qfiles:
+                    tar.add(p, arcname="quarantine/" + p.relative_to(data / "quarantine").as_posix())
             os.replace(partial, archive)
         except BaseException:
             partial.unlink(missing_ok=True)
@@ -307,6 +348,8 @@ def _member_ok(m: tarfile.TarInfo) -> str | None:
     if name in (DB_NAME, "manifest.json", ARCHIVED_JOURNAL) or top == "blobs" \
             or (top == "journal" and m.isdir() and len(parts) == 1):
         return None
+    if top == "quarantine" and _quarantine_member_ok(parts):
+        return None
     return "不属于备份的条目"
 
 
@@ -338,7 +381,9 @@ def _check_blobs(data_dir: Path) -> dict:
     """
     from synwevo_core.store import Store
     audit = _blob_audit().audit(data_dir)
-    referenced = sorted(set(audit["referenced_all"]))
+    # Bytes a security verdict withdrew (rejected / quarantined, CI-90) are absent by design.
+    withdrawn = set(audit.get("withdrawn_absent") or [])
+    referenced = sorted(set(audit["referenced_all"]) - withdrawn)
     ro = Store(data_dir, migrate=False)
     missing, misplaced, corrupt, verified = [], [], [], []
     on_disk = {p.name: p for p in (data_dir / "blobs").rglob("*") if p.is_file()} \
@@ -356,7 +401,8 @@ def _check_blobs(data_dir: Path) -> dict:
         else:
             verified.append(h)
     return {"referenced": len(referenced), "missing": missing, "misplaced": misplaced,
-            "corrupt": corrupt, "verified": verified,
+            "corrupt": corrupt, "verified": verified, "withdrawn": sorted(withdrawn),
+            "quarantine_copy_missing": audit.get("quarantine_copy_missing") or [],
             "authz_tables_not_covered": audit["authz_tables_not_covered"]}
 
 
@@ -719,7 +765,7 @@ def restore(args) -> int:
         print(f"已解开到临时目录 {staging}")
 
         blobs = _check_blobs(staging)
-        bad = blobs["missing"] + blobs["misplaced"] + blobs["corrupt"]
+        bad = blobs["missing"] + blobs["misplaced"] + blobs["corrupt"] + blobs["quarantine_copy_missing"]
         if bad:
             print(f"{FAIL} 归档里的 blob 不完整：缺失 {len(blobs['missing'])}、位置不对 {len(blobs['misplaced'])}、"
                   f"内容不符 {len(blobs['corrupt'])}。没有改动 {into}。先运行 verify-restore 查看。",
@@ -775,12 +821,51 @@ def restore(args) -> int:
         for src, dst in moves:
             dst.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.replace(src, dst)
-        print(f"\n已恢复到 {into}：数据库 1 个，blob 新增 {len(moves)} 个"
+        qmoved = _merge_quarantine(staging / "quarantine", into / "quarantine")
+        print(f"\n已恢复到 {into}：数据库 1 个，blob 新增 {len(moves)} 个，隔离区文件新增 {qmoved} 个"
               + (f"（{len(rejected)} 个不合格文件未放入）" if rejected else "")
               + f"，安全日志补入 {len(journal_lines)} 条。")
         return 0
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def _merge_quarantine(src: Path, dst: Path) -> int:
+    """Put the archive's quarantine next to the restored database. An entry the target already
+    has is kept (it may be newer than the backup); held bytes that do not match their name are
+    left out, as blobs are."""
+    if not src.is_dir():
+        return 0
+    dst.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    def purged(digest: str) -> bool:
+        """The target's own entry decides when it has one (it may be newer than the archive)."""
+        for d in (dst, src):
+            try:
+                return json.loads((d / f"{digest}.json").read_text(encoding="utf-8")).get("state") == "purged"
+            except (OSError, ValueError):
+                continue
+        return False
+
+    n = 0
+    for f in sorted(src.rglob("*")):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(src)
+        if len(rel.parts) == 1 and _BLOB_NAME.fullmatch(rel.name):
+            if _sha256(f) != rel.name:
+                print(f"{WARN} 归档里隔离区的 {rel.name} 与摘要不符，没有放回")
+                continue
+            if purged(rel.name):            # deleted for good after review: never brought back
+                continue
+        target = dst / rel
+        if target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(f, 0o600)
+        os.replace(f, target)
+        n += 1
+    return n
 
 
 # ---------------------------------------------------------------- verify
@@ -831,6 +916,9 @@ def verify(args) -> int:
               "" if not r["misplaced"] else f"{len(r['misplaced'])} 个文件在别处，应用读不到")
         check(not r["corrupt"], "内容的 SHA-256 与名字一致",
               "" if not r["corrupt"] else f"{len(r['corrupt'])} 个内容已损坏")
+        check(not r["quarantine_copy_missing"], "隔离索引记为在隔离区的内容都在"
+              + (f"（按设计不在存储中的被拒绝内容 {len(r['withdrawn'])} 个）" if r["withdrawn"] else ""),
+              "" if not r["quarantine_copy_missing"] else f"缺 {len(r['quarantine_copy_missing'])} 个隔离副本")
         _, rejected = _blob_moves(work / "blobs", work / ".nowhere", verified=r["verified"])
         if rejected:
             # Not referenced by anything, so the restore is still complete; but these are the

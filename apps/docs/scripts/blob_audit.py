@@ -102,8 +102,9 @@ def _cross_check_against_authz() -> list | None:
         tables = set(re.findall(r"\bFROM\s+([a-z_]+)", clause))
         tables |= set(re.findall(r"\bJOIN\s+([a-z_]+)", clause))
         for t in tables:
-            if t not in covered and t not in ("projects", "jobs", "templates"):
-                # projects/jobs/templates appear only as the join that supplies a workspace.
+            if t not in covered and t not in ("projects", "jobs", "templates", "json_each"):
+                # projects/jobs/templates appear only as the join that supplies a workspace (or the
+                # verdict a row is checked against); json_each is SQLite's JSON table function.
                 missing.append(t)
     return sorted(set(missing))
 
@@ -177,6 +178,67 @@ def audit(data_dir: Path) -> dict:
                 on_disk.add(p.name)
                 total_bytes += p.stat().st_size
 
+    # Bytes withdrawn on purpose (CI-90). Their rows still name the digest — that is the record of
+    # the verdict — so "referenced and absent" is expected for them and must not read as data loss,
+    # or make a backup that contains the verdict unrestorable. Excused only reference by reference:
+    # a missing digest is withdrawn when every row naming it is itself rejected (a source's upload)
+    # or infected (a template, any of its contents), and — when the quarantine index says the
+    # bytes are held — the held copy actually exists. A clean row naming it makes it missing.
+    rejected_refs: set[str] = set()
+    rejected_uploads: set[str] = set()           # a rejected source's own bytes (the upload gate unlinks them)
+    live_refs: set[str] = set()
+    if "source_files" in have and "status" in _columns(c, "source_files"):
+        for blob, status, parsed, working in c.execute("SELECT blob, status, parsed_blob, working_blob FROM source_files"):
+            if status == "rejected":
+                if blob:
+                    rejected_refs.add(blob)
+                    rejected_uploads.add(blob)
+            else:
+                live_refs.update(b for b in (blob, parsed, working) if b)
+    if "templates" in have and "scan" in _columns(c, "templates"):
+        infected = set()
+        for tid, orig, info, scan in c.execute("SELECT id, original_blob, info, scan FROM templates"):
+            try:
+                is_infected = (json.loads(scan) if scan else {}).get("status") == "infected"
+            except (ValueError, AttributeError):
+                is_infected = False
+            try:
+                img = ((json.loads(info) if info else {}) or {}).get("image") or {}
+            except (ValueError, AttributeError):
+                img = {}
+            refs = {b for b in (orig, img.get("original_blob")) if b}
+            (rejected_refs if is_infected else live_refs).update(refs)
+            if is_infected:
+                infected.add(tid)
+        for tid, working in c.execute("SELECT template_id, working_blob FROM template_versions WHERE working_blob IS NOT NULL"):
+            (rejected_refs if tid in infected else live_refs).add(working)
+    for table, col in DIRECT:
+        if table in ("source_files", "templates", "template_versions") or table not in have or col not in _columns(c, table):
+            continue
+        live_refs |= direct.get(f"{table}.{col}", set())
+    index: dict[str, str] = {}
+    qdir = data_dir / "quarantine"
+    if qdir.is_dir():
+        for q in qdir.glob("*.json"):
+            if HEX64.match(q.stem):
+                try:
+                    index[q.stem] = json.loads(q.read_text(encoding="utf-8")).get("state") or ""
+                except (OSError, ValueError):
+                    index[q.stem] = ""
+    quarantine_copy_missing = sorted(d for d, st in index.items() if st == "quarantined" and not (qdir / d).is_file())
+
+    def excused(d: str) -> bool:
+        if d not in rejected_refs or d in live_refs:
+            return False
+        st = index.get(d)
+        if st == "quarantined":
+            return (qdir / d).is_file()
+        if st == "purged":
+            return True
+        # No index: only the upload gate's own rejection (a rejected source, bytes unlinked).
+        return st is None and d in rejected_uploads
+    withdrawn = {d for d in (set().union(*direct.values()) if direct else set()) if excused(d)}
+
     lookalike_hits = []
     for table, col, why in LOOKALIKES:
         if table not in have or col not in _columns(c, table):
@@ -199,7 +261,11 @@ def audit(data_dir: Path) -> dict:
         "referenced_total": len(all_refs),
         "reachable_only_from_json": sorted(only_json),
         "unreferenced_on_disk": sorted(on_disk - all_refs),
-        "referenced_but_missing": sorted(all_refs - on_disk),
+        "referenced_but_missing": sorted(all_refs - on_disk - withdrawn),
+        # Referenced, absent, and withdrawn on purpose (rejected / quarantined): not a loss.
+        "withdrawn_absent": sorted((all_refs - on_disk) & withdrawn),
+        # The index says the bytes are held, and the held copy is gone: that is a loss.
+        "quarantine_copy_missing": quarantine_copy_missing,
         # The full reference set, so a caller can check each blob where the application reads it
         # (snapshot.py verify) instead of trusting a file-name match anywhere under blobs/.
         "referenced_all": sorted(all_refs),
@@ -221,7 +287,7 @@ def main() -> int:
     # Exit status carries the two findings that make this inventory unsafe to act on: bytes that
     # are referenced but gone, and an inventory narrower than what the server serves (or one that
     # could not be compared at all). Automation reads the status, not the prose.
-    failed = bool(r["referenced_but_missing"]) or r["authz_tables_not_covered"] != []
+    failed = bool(r["referenced_but_missing"]) or bool(r["quarantine_copy_missing"]) or r["authz_tables_not_covered"] != []
 
     if args.json:
         out = {k: v for k, v in r.items() if k != "referenced_all"}
@@ -251,6 +317,10 @@ def main() -> int:
 
     missing = r["referenced_but_missing"]
     print(f"引用了但磁盘上没有：{len(missing)} 个" + (f"  ← 数据已缺失" if missing else "（好）"))
+    if r["withdrawn_absent"]:
+        print(f"安全检查拒绝或隔离、按设计不在存储中：{len(r['withdrawn_absent'])} 个（不是缺失）")
+    if r["quarantine_copy_missing"]:
+        print(f"隔离索引说在隔离区、副本却不见了：{len(r['quarantine_copy_missing'])} 个  ← 数据已缺失")
     orphans = r["unreferenced_on_disk"]
     print(f"磁盘上但无人引用：{len(orphans)} 个")
     if orphans:

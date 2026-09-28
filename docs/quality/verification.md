@@ -1845,6 +1845,44 @@ Docs 外壳 `npm test` 59 项通过，其中新增 `tests/refusals.test.ts` 10 �
 
 本机（Docker 28.3，`nginx:1.28-alpine`，一次性网络 `ci89net`，`scratchpad/ci89_gateway_proof.sh`）：四个替身上游按角色名注册；新 `nginx.conf` 的网关对 docwave 答 `docs`；删除并按「先 messages 后 docs」重建，两者地址互换（docs 172.18.0.2→.3），重建后立即一次请求仍落到旧地址（缓存窗口），11 s 后答 `docs`、message 主机答 `messages`，网关未重启；删除 docs 后 docwave 答 502、accounts 照常；`nginx -t` 通过。
 生产（隧道）：五主机 `/api/auth/state` 的 `role` 各自正确；旧主机 308 不变；`/api/messaging/stream` 匿名 401 JSON（messages）；`/api/collab/…` 普通 GET 401 JSON（docs）、握手 403（应用在 accept 前拒绝匿名）。
+### 16.88 历史文件补扫与隔离区（CI-90）
+
+基线（读代码）：扫描上线前的行 `scan.status=not_configured`/无记录，照常可读；file-acceptance §8 的补扫只有 SQL 路径。补扫若只移走原字节，
+已解析来源的 `working_blob`/`parsed_blob` 仍经视图、搜索与 `/api/preview-files/{blob}` 可读；模板没有被拒绝的状态；`blob_audit` 把被拒绝行引用的
+摘要算作缺失，`snapshot.py restore` 因此拒绝整份备份；`member_import_routes._save_upload` 的原文件在导入未执行时一直保留（`sweep_expired` 无调用方）。
+修复后（工作树 PYTHONPATH 指向本工作树的包；共享 venv 的可编辑安装指向主检出，不这样做测到的是旧代码）：
+新增 `apps/docs/tests/test_rescan.py` 13 项、`apps/messages/tests/test_attachment_rescan.py` 5 项、`tests/integration/test_rescan_shared_bytes.py` 1 项，全部通过
+（clamd 协议替身：EICAR、按摘要标记、ERROR、离线、流上限、签名撤回；断言见 file-acceptance §7.3）。
+`pytest apps/docs/tests apps/messages/tests tests/integration -q -p no:warnings`：1598 通过、1 跳过、0 失败（Docs 914 通过、1 跳过——LICENSE 未选定；消息 44；集成 640；前端已构建，缓存头与外壳测试随之运行。账户服务套件因共享的 messaging 改动另跑：642 通过）。
+typecheck、build、`npm test --workspaces --if-present`（ui 19、auth-client 39、docs-web 59、messages-web 25、account-web 19 项校验与 7 项测试）、`check_boundaries`/`check_brand`/`check_design`/`check_component_names` 通过。
+真实入口演示（`scratchpad/ci90_demo.py`，一次性数据目录 + 协议替身）：`rescan --dry-run` 退出 0（「来源：2 份内容（2 行）…扫描器：可用」）；`rescan` 退出 1，
+逐行只有 id、摘要前缀与签名，摘要给出完整摘要、行 id 与「1 行没有上传者记录」；再次运行「没有需要补扫的内容」退出 0；`quarantine list` 列出摘要、状态、签名、
+仍拒绝的行数；替身离线时退出 3 且什么都没改。
+未做（初版时）：真实 ClamAV 引擎上的补扫；生产运行；浏览器里查看被拒绝模板/附件的提示。
+
+**三轮独立审查与修复（2026-09-28，同一工作树分支，合并前）。**
+第一轮（只读审查初版）：1 高——用后来被拒的模板/来源生成的产物、打包下载、机器接口链接与预览授权仍可读；9 中、6 低（`purge` 整个删掉
+回归用例、隔离区不进备份、Docs 不认另一应用的结论、守卫以"字节不在存储"为准而字节可能回来、恢复只重扫一份内容就记模板干净、
+组织共享模板发布从未补扫、崩溃后不自愈、恢复标记未恢复的行且不取锁、`blob_audit` 的豁免过宽、在途扫描覆盖补扫结论、超限文件卡住
+`--limit`、默认就有副作用、隔离副本不核对摘要、退出码）。第二轮（复审修复）：2 高——一个应用的补扫与另一个应用的恢复并行时刚恢复的
+文件被删；另一应用的结论下已记干净的行永不被标记、整个项目 410——以及 4 中（脱敏授权撤得过宽、`--limit` 被缺失文件卡住、结论集合
+缓存在粗粒度时钟上会过期、产物下载每次解码整份快照）。第三轮：1 高——同一文件在扫描上线后再次上传被判恶意时，之前那条来源的字节
+随之删除；1 中（`--limit` 不数失败的扫描）；若干低。每条发现都有回归测试（`test_rescan.py` 35 项、`test_attachment_rescan.py`
+8 项、`test_rescan_shared_bytes.py` 3 项，全部通过；审查者的探针脚本在 `scratchpad/review/`）。第四轮确认四处修复成立、无新的产品缺陷，
+指出一项测试的等待条件（等状态而非等隔离）会偶发失败——已改为等隔离记录，连续三次通过。
+
+**真实引擎（本机 Homebrew ClamAV 1.5.4，库 28137，`scratchpad/ci90_real_engine2.py`，一次性数据目录）。** 扫描关闭时存入：工作簿、
+标准 EICAR 测试文件（整份 69 字节）与模板，并用这个项目生成一个任务（快照含两份来源）。开扫描后 `python -m synwevo_docs.cli rescan`
+（预览，退出 0：来源 2 份 3 行、模板 1 个 2 份内容、扫描器可用）→ `rescan --apply`（退出 1：工作簿与模板干净，EICAR 感染、移入隔离区、
+摘要列出用过它的任务 id）；之后 EICAR 来源下载 410、任务产物 410 `rejected_malware`、模板 200；`quarantine release` 退出 1（当前引擎仍判
+`Eicar-Signature`，拒绝恢复）；`purge` 不加 `--yes` 退出 2、加了退出 0；`quarantine list` 显示 `purged`；再运行两个应用的 `rescan --apply`
+都是"没有需要补扫的内容"、退出 0。另见：EICAR 后面跟着其他数据的文件真实引擎不报（EICAR 签名要求整份文件），测试样本因此用整份 EICAR。
+
+**全量（工作树包路径）。** 在 4a7531c 上四个套件合计 2281 通过、1 跳过（LICENSE 未选定）、0 失败；typecheck、build、
+`npm test --workspaces --if-present`（ui 19、auth-client 40、docs-web 59、messages-web 25、account-web 7）、
+`infra/production/tests` 6 项、`check_boundaries`/`check_brand`/`check_design`/`check_component_names`/`brand_assets --check` 通过。
+最终修复提交（c98fe03，压成一个提交前）上 Docs、消息与集成三个套件 1634 通过、1 跳过、0 失败（账户服务套件在 4a7531c 上通过，其后的改动不涉及它）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

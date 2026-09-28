@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 
+from synwevo_core import quarantine
 from synwevo_core.context import tenant as current_tenant
 from synwevo_core.errors import ServiceError
 from synwevo_core.organizations import current_membership
@@ -124,7 +125,9 @@ class OrgTemplates:
         if self.store.one("SELECT 1 AS x FROM organization_templates WHERE organization_id=? AND template_id=?", (org["id"], tid)):
             raise ServiceError(409, "already_published", "这个模板已经发布到组织；要发布新版本请用「更新发布」")
         pid, ts = new_id("ot"), now()
-        info = t.get("info") or {}
+        # The release carries the source template's scan record: a copy made from it later starts
+        # from that verdict, and a rescan knows what it still has to look at (CI-90).
+        info = {**(t.get("info") or {}), "scan": t.get("scan")}
         row = {"id": pid, "organization_id": org["id"], "source_tenant": current_tenant(), "template_id": tid, "name": t["name"],
                "description": (str(description).strip()[:MAX_DESCRIPTION] or None) if description else None, "format": t["format"], "kind": t["kind"],
                "release_no": 1, "version_no": v["version_no"], "working_blob": v["working_blob"], "slots": v["slots"] or [], "info": info,
@@ -142,6 +145,8 @@ class OrgTemplates:
         if not self._can_manage(pub, uid, member):
             raise ServiceError(403, "forbidden", "只有源工作空间的编辑者或组织管理员可以维护这个共享模板")
         source = self.store.one("SELECT * FROM templates WHERE id=? AND deleted=0", (pub["template_id"],))
+        if source and source["head"] != pub["version_no"]:
+            self.app.require_template_accepted(source)   # no new release from bytes a rescan rejected (CI-90)
         changes: dict = {"updated_by": uid, "updated_at": now()}
         if set_description:
             changes["description"] = (str(description).strip()[:MAX_DESCRIPTION] or None) if description else None
@@ -149,10 +154,11 @@ class OrgTemplates:
         if source and source["head"] != pub["version_no"]:
             v = self.app.get_version(source["id"], source["head"])
             no = pub["release_no"] + 1
-            changes.update({"release_no": no, "version_no": v["version_no"], "working_blob": v["working_blob"], "slots": v["slots"] or [], "info": source.get("info") or {},
+            info = {**(source.get("info") or {}), "scan": source.get("scan")}
+            changes.update({"release_no": no, "version_no": v["version_no"], "working_blob": v["working_blob"], "slots": v["slots"] or [], "info": info,
                             "name": source["name"], "format": source["format"], "kind": source["kind"]})
             self.store.insert("organization_template_releases", {"publication_id": pid, "release_no": no, "version_no": v["version_no"], "working_blob": v["working_blob"],
-                                                                 "slots": v["slots"] or [], "info": source.get("info") or {}, "note": v.get("note"), "released_by": uid,
+                                                                 "slots": v["slots"] or [], "info": info, "note": v.get("note"), "released_by": uid,
                                                                  "released_at": changes["updated_at"]})
             released = True
         elif not source and not set_description:
@@ -180,13 +186,37 @@ class OrgTemplates:
         pub, _ = self._get(pid, uid)
         if pub["deprecated_at"]:
             raise ServiceError(409, "deprecated", "这个共享模板已弃用，不能再用于新项目")
+        # A release is a frozen copy of bytes. No workspace gets a new template on bytes a rescan
+        # found infected (the release's own record, or a standing quarantine verdict on them), and
+        # where this deployment scans, the copy starts from a clean verdict: the one the release
+        # carries, or a scan made now — the same gate as an upload (CI-90).
+        info = dict(pub.get("info") or {}) if isinstance(pub.get("info"), dict) else {}
+        carried = info.pop("scan", None)
+        img = info.get("image") or {}
+        blobs = [b for b in (pub["working_blob"], img.get("original_blob")) if b]
+        # Only what the copy is made from decides: the current release. A publication marked
+        # infected because an earlier release was is still usable from a clean current one.
+        carried_here = isinstance(carried, dict) and carried.get("status") == "infected" and (
+            not carried.get("sha256") or carried.get("sha256") in blobs)
+        if carried_here or any(quarantine.verdict(self.store, b) for b in blobs):
+            raise ServiceError(410, "rejected_malware", "该文件未通过安全检查，已被拒绝并隔离", {"publication_id": pid})
+        if isinstance(carried, dict) and carried.get("status") == "clean":
+            scan_record = carried
+        elif self.app.scanner is not None:
+            scan_record = None
+            for b in blobs:
+                scan_record = self.app.scan_template_bytes(pub["name"], self.store.get_blob(b))   # 400 / 503 / 413
+        elif isinstance(carried, dict) and carried.get("status") != "infected":
+            scan_record = carried
+        else:
+            scan_record = {"status": "not_configured"}
         tid, ts = new_id("t"), now()
         slots = pub["slots"] if isinstance(pub["slots"], list) else json.loads(pub["slots"] or "[]")
-        info = dict(pub.get("info") or {})
         info["origin"] = {"publication_id": pub["id"], "organization_id": pub["organization_id"], "release_no": pub["release_no"], "version_no": pub["version_no"],
                           "name": pub["name"], "used_at": ts}
         self.store.insert("templates", {"id": tid, "tenant": current_tenant(), "name": (name or pub["name"])[:100], "kind": pub["kind"] or "uploaded", "format": pub["format"],
-                                        "original_blob": pub["working_blob"], "original_name": pub["name"], "head": 1, "created_at": ts, "updated_at": ts, "info": info})
+                                        "original_blob": pub["working_blob"], "original_name": pub["name"], "head": 1, "created_at": ts, "updated_at": ts, "info": info,
+                                        "scan": scan_record})
         self.store.insert("template_versions", {"template_id": tid, "version_no": 1, "parent_no": None, "working_blob": pub["working_blob"], "slots": slots,
                                                 "note": f"来自组织共享模板「{pub['name']}」第 {pub['release_no']} 次发布", "created_at": ts})
         self.store.execute("UPDATE organization_templates SET use_count=use_count+1 WHERE id=?", (pid,))

@@ -9,6 +9,7 @@ import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
+from synwevo_core import quarantine as Q
 from synwevo_core.context import tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import Store, new_id, now
@@ -34,6 +35,25 @@ def scan_out(rec: dict | None) -> dict:
         return {"status": "unscanned"}
     keys = ("status", "signature", "engine", "reason", "sha256", "checked_at", "attempts", "retry_at")
     return {k: rec[k] for k in keys if k in rec}
+
+def template_blobs(store: Store, t: dict) -> list[str]:
+    """Every stored content of a template: its working file, an image template's upload and the
+    working file of every version. Ordered, without repeats (CI-90: what a verdict can apply to)."""
+    out: list[str] = []
+    info = t.get("info") if isinstance(t.get("info"), dict) else {}
+    img = (info or {}).get("image") or {}
+    for b in [t.get("original_blob"), img.get("original_blob")] + [
+            v["working_blob"] for v in store.all("SELECT working_blob FROM template_versions WHERE template_id=? ORDER BY version_no", (t["id"],))]:
+        if b and b not in out:
+            out.append(b)
+    return out
+
+
+def earlier_malicious(filename: str) -> ServiceError:
+    """These bytes carry a standing verdict (quarantined or purged): refused, never stored again."""
+    return ServiceError(400, "malware_detected", f"文件「{filename}」的内容此前已被判定为恶意内容，已拒绝",
+                        {"filename": filename, "earlier": True})
+
 
 PALETTE = ["#2563eb", "#db2777", "#059669", "#d97706", "#7c3aed", "#0891b2", "#dc2626", "#65a30d", "#c026d3",
            "#0d9488", "#ea580c", "#4f46e5", "#be123c", "#15803d", "#a16207", "#0369a1"]
@@ -294,11 +314,14 @@ class App:
             raise ServiceError(413, "too_large", f"文件「{filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限",
                                {"filename": filename, "limit_mb": LIMITS.max_file_bytes // (1024 * 1024)})
         filename = safe_display_name(filename)
+        blob = hashlib.sha256(data).hexdigest()
+        if Q.verdict(self.store, blob) or (
+                self.scanner is not None and self.store.one("SELECT 1 AS x FROM source_files WHERE blob=? AND status='rejected'", (blob,))):
+            # The same bytes were already judged malicious: no second look, no new row — and they
+            # are not written back into the store the verdict took them out of (CI-90). A standing
+            # quarantine verdict holds even where no scanner is configured.
+            raise earlier_malicious(filename)
         blob = self.store.put_blob(data)
-        if self.scanner is not None and self.store.one("SELECT 1 AS x FROM source_files WHERE blob=? AND status='rejected'", (blob,)):
-            # The same bytes were already judged malicious: no second look, no new row.
-            raise ServiceError(400, "malware_detected", f"文件「{filename}」的内容此前已被判定为恶意内容，已拒绝",
-                               {"filename": filename, "earlier": True})
         sid = new_id("s")
         mx = self.store.one("SELECT MAX(ord) AS m FROM source_files WHERE project_id=?", (pid,))["m"] or 0
         t = now()
@@ -392,9 +415,11 @@ class App:
         if error != "":
             values["error"] = error
         with self.store.tx():
-            current = self.store.one("SELECT version, blob FROM source_files WHERE id=? AND removed=0", (row["id"],))
+            current = self.store.one("SELECT version, blob, status FROM source_files WHERE id=? AND removed=0", (row["id"],))
             if not current or current["version"] != row["version"] or current["blob"] != row["blob"]:
                 return
+            if current.get("status") == "rejected" and status != "rejected":
+                return          # a rescan rejected these bytes while this scan ran (CI-90): it stands
             self.store.update("source_files", {"id": row["id"]}, values)
 
     def _schedule_scan_retry(self, sid: str, delay: float) -> None:
@@ -414,12 +439,45 @@ class App:
     def _quarantine_blob(self, blob: str, res: M.ScanResult) -> None:
         """Malicious bytes leave the store. Every source row that shares the hash is rejected
         with the same verdict (same bytes, same judgement), then the file is unlinked so no
-        download, preview or parser path can read it back."""
+        download, preview or parser path can read it back.
+
+        Unless the same bytes are also something stored before scanning (CI-90) — an earlier
+        source (the same file uploaded again), a template, a publication or a message attachment:
+        that copy may be the only one and a false positive has to come back, so the bytes are held
+        in the quarantine with a standing verdict instead, every row recorded with the state it
+        had. Every read path of both applications honours the verdict at once, and their rescans
+        apply it to their own rows."""
+        # Rows that were in use before this upload's verdict: historical copies of the same bytes.
+        prior = {r["id"]: r for r in self.store.all(
+            "SELECT id, status, scan, created_by, project_id, filename, removed FROM source_files WHERE blob=? "
+            "AND COALESCE(status,'') NOT IN ('rejected','scanning','scan_failed')", (blob,))}
         with self.store.tx():
             for r in self.store.all("SELECT id FROM source_files WHERE blob=? AND status!='rejected'", (blob,)):
                 self.store.update("source_files", {"id": r["id"]}, {
                     "status": "rejected", "scan": res.as_record(),
                     "error": f"安全检查未通过：文件被判定为恶意内容（{res.signature}），已拒绝并隔离", "updated_at": now()})
+        # The uploader of an earlier copy hears that it was withdrawn too, as after a rescan.
+        for r in prior.values():
+            if not r.get("removed"):
+                self._notify_rejected(r)
+        others = Q.unmarked_references(self.store, blob)
+        if prior or any(others.values()):
+            try:
+                data = self.store.blob_path(blob).read_bytes()
+                if hashlib.sha256(data).hexdigest() == blob:
+                    # A row that was being checked goes back to a parse on release; a historical
+                    # row goes back to the state it had.
+                    rows = [{"kind": "source_files", "id": r["id"], "workspace": None,
+                             "previous": ({"status": prior[r["id"]].get("status"), "scan": prior[r["id"]].get("scan")}
+                                          if r["id"] in prior else {"status": "scanning", "scan": None})}
+                            for r in self.store.all("SELECT id FROM source_files WHERE blob=? AND status='rejected'", (blob,))]
+                    Q.hold(self.store, blob, data, signature=res.signature, engine=res.engine, by="upload-gate", rows=rows)
+                    Q.remove_from_store(self.store, blob)
+            except (OSError, Q.QuarantineError) as e:
+                # The rows are rejected either way; the bytes stay in the store for the rescan
+                # (never deleted when another row may need them).
+                acceptance_log.warning("scan.hold_failed sha256=%s error=%s", blob, type(e).__name__)
+            return
         try:
             path = self.store.blob_path(blob)
             if path.exists():
@@ -427,14 +485,45 @@ class App:
         except OSError:
             pass
 
-    @staticmethod
-    def require_accepted(row: dict) -> None:
-        """The original bytes of a source may leave the server only once the scan said OK."""
+    def require_accepted(self, row: dict) -> None:
+        """The original bytes of a source may leave the server only once the scan said OK — and
+        not while a quarantine verdict on them stands, although this row is not marked yet
+        (another application's rescan found the bytes first, or a restored backup predates the
+        verdict; CI-90). Whatever this process cached of such a row is dropped."""
         st = row.get("status")
         if st == "rejected":
             raise ServiceError(410, "rejected_malware", "该文件未通过安全检查，已被拒绝并隔离", {"scan": scan_out(row.get("scan"))})
         if st in ("scanning", "scan_failed"):
             raise ServiceError(409, "not_yet_accepted", "该文件尚未通过安全检查，暂不能下载", {"status": st, "scan": scan_out(row.get("scan"))})
+        held = Q.standing(self.store)
+        if held and held.intersection(b for b in (row.get("blob"), row.get("working_blob")) if b):
+            with self._cache_lock:
+                for k in [k for k in self._src_cache if k[0] == row.get("id")]:
+                    del self._src_cache[k]
+            raise ServiceError(410, "rejected_malware", "该文件未通过安全检查，已被拒绝并隔离", {"scan": scan_out(row.get("scan"))})
+
+    @staticmethod
+    def template_rejected(row: dict) -> bool:
+        """A template whose stored contents a rescan found infected (CI-90). Templates have no
+        status column: the verdict is the scan record, and every read path asks this."""
+        scan = row.get("scan")
+        return isinstance(scan, dict) and scan.get("status") == "infected"
+
+    def template_under_verdict(self, row: dict) -> bool:
+        """Marked infected, or holding a content whose quarantine verdict stands although this
+        row was not marked yet (another application's rescan found the bytes first, or a restored
+        backup predates the verdict)."""
+        if self.template_rejected(row):
+            return True
+        held = Q.standing(self.store)
+        return bool(held) and bool(held.intersection(template_blobs(self.store, row)))
+
+    def require_template_accepted(self, row: dict) -> None:
+        """Preview, download, editing, publishing, copying and generation with a template all
+        stop here once its bytes were judged malicious; only listing and deleting it remain."""
+        if self.template_under_verdict(row):
+            raise ServiceError(410, "rejected_malware", "该文件未通过安全检查，已被拒绝并隔离",
+                               {"scan": scan_out(row.get("scan")), "template_id": row.get("id")})
 
     def scanner_health(self) -> str:
         """For /readyz: `ok`, `off` (no scanner configured — visible, not silent) or `down: <why>`."""
@@ -499,10 +588,12 @@ class App:
         # Parsing can outlive removal, project deletion or a newer options request. Publish
         # only the version we read, atomically with its derived references and revision.
         with self.store.tx():
-            current = self.store.one("SELECT s.version,s.blob FROM source_files s JOIN projects p ON p.id=s.project_id "
+            current = self.store.one("SELECT s.version,s.blob,s.status FROM source_files s JOIN projects p ON p.id=s.project_id "
                                      "WHERE s.id=? AND s.removed=0 AND COALESCE(p.deleted,0)=0", (sid,))
             if not current or current["version"] != row["version"] or current["blob"] != row["blob"]:
                 return
+            if current.get("status") in ("rejected", "scanning", "scan_failed"):
+                return          # rejected (e.g. by a rescan) while this parse ran: the verdict stands
             if ps is not None:
                 try:
                     if ps.workbook is not None:
@@ -608,13 +699,15 @@ class App:
         """Desensitized copies of source files (local, consistent pseudonyms across the files)."""
         from .engine import desensitize as D
         self.get_project(pid)
-        ids = body.get("file_ids") or [r["id"] for r in self.project_sources(pid, ready_only=False)]
+        ids = body.get("file_ids") or [r["id"] for r in self.project_sources(pid, ready_only=False)
+                                       if (r.get("status") or "") not in ("rejected", "scanning", "scan_failed")]
         sess = D.Session(seed=body.get("seed"), words=body.get("words") or [], patterns=body.get("patterns"))
         out, skipped = [], []
         for sid in ids:
             r = self.get_source(sid, raw=True)
             if r["project_id"] != pid:
                 continue
+            self.require_accepted(r)      # rejected (410) or still being checked (409): its bytes are not read
             try:
                 data, ext = D.desensitize(self.store.get_blob(r["blob"]), r["filename"], sess, body.get("columns") or {})
             except (D.DesensitizeError, ValueError) as e:
@@ -625,7 +718,7 @@ class App:
             blob = self.store.put_blob(data)
             # The copy is offered for download whether or not it is added to the project; without a
             # grant nothing vouched for it and every download link answered 404.
-            authz.grant_blob(self.store, blob, "desensitized")
+            authz.grant_blob(self.store, blob, f"desensitized:{r['id']}")   # names its source (CI-90)
             item = {"source": r["filename"], "filename": name, "blob": blob, "size": len(data)}
             if body.get("add_to_project"):
                 item["source_id"] = self.add_source(pid, name, data)["id"]
@@ -647,6 +740,11 @@ class App:
         return {"blocks": [{"index": b.index, "label": b.label, "where": b.where} for b in bl], "mode": "per_block"}
 
     def _doc_from_row(self, r: dict) -> SourceDoc:
+        # Every viewer, search, page image, word layer, OCR run, locator and mapping of a source
+        # comes through here. A row that is not accepted may still have a converted working copy
+        # and a parsed workbook from before a rescan rejected it (CI-90); neither is read.
+        # A standing quarantine verdict on the bytes refuses the row the same way (require_accepted).
+        self.require_accepted(r)
         key = (r["id"], r["version"], r.get("parsed_blob"), r.get("working_blob"), json.dumps(r.get("ocr") or {}, sort_keys=True)[:64],
                json.dumps(r.get("corrections") or {}, sort_keys=True))
         with self._cache_lock:
@@ -673,7 +771,12 @@ class App:
     def project_sources(self, pid: str, ready_only: bool = True) -> list[dict]:
         rows = self.store.all("SELECT * FROM source_files WHERE project_id=? AND removed=0 ORDER BY ord", (pid,))
         if ready_only:
-            rows = [r for r in rows if r["status"] in ("ready", "needs_ocr")]
+            # A row on bytes whose quarantine verdict stands is left out like a rejected one, not
+            # read (which would refuse the whole project's records, previews and jobs) — until
+            # this application's rescan marks it (CI-90).
+            held = Q.standing(self.store)
+            rows = [r for r in rows if r["status"] in ("ready", "needs_ocr")
+                    and not (held and held.intersection(b for b in (r.get("blob"), r.get("working_blob")) if b))]
         return rows
 
     # ================================================================ templates
@@ -718,10 +821,15 @@ class App:
         except Exception:  # noqa: BLE001 - a missing blob is reported by the fill itself
             return opts
 
-    def get_template(self, tid: str) -> dict:
+    def get_template(self, tid: str, *, accepted: bool = True) -> dict:
+        """The template of the current workspace. ``accepted`` (the default) also refuses one whose
+        contents were judged malicious (410 ``rejected_malware``): almost every caller goes on to
+        read, render, copy or fill its bytes. Listing, usage and deletion pass ``accepted=False``."""
         r = self.store.one("SELECT * FROM templates WHERE id=? AND deleted=0", (tid,))
         if not r or (r.get("tenant") or "default") != current_tenant():
             not_found("模板")
+        if accepted:
+            self.require_template_accepted(r)
         return r
 
     def template_detail(self, tid: str) -> dict:
@@ -774,6 +882,8 @@ class App:
     def upload_template(self, filename: str, data: bytes, name: str | None = None) -> dict:
         from .engine.detect import detect
         filename = safe_display_name(filename)
+        if Q.verdict(self.store, hashlib.sha256(data).hexdigest()):
+            raise earlier_malicious(filename)
         scan_record = self.scan_template_bytes(filename, data)
         try:
             info = detect(data, filename)
@@ -835,6 +945,10 @@ class App:
         notes.extend(check.get("notes", []))
         if info["macros"]:
             notes.append("模板包含宏：宏不会被执行，并已从模板中移除。输出文件为不含宏的标准格式（.docx/.xlsx/.pptx）")
+        # What is stored is the converted/stripped working copy (and an image template's upload):
+        # neither may be bytes a quarantine verdict took out of the store.
+        if any(Q.verdict(self.store, hashlib.sha256(b).hexdigest()) for b in (working,)):
+            raise earlier_malicious(filename)
         tid = new_id("t")
         t = now()
         orig = self.store.put_blob(working)
@@ -948,7 +1062,7 @@ class App:
     def template_usage(self, tid: str) -> dict:
         """Who follows this template: the projects bound to it, split into those that follow the
         head and those pinned to a version — what a restore will and will not change."""
-        self.get_template(tid)
+        self.get_template(tid, accepted=False)          # metadata only: who to re-point before deleting
         rows = self.store.all("SELECT id, name, template_version FROM projects WHERE template_id=? AND deleted=0 AND tenant=? ORDER BY updated_at DESC",
                               (tid, current_tenant()))
         items = [{"id": r["id"], "name": r["name"], "pinned_version": r.get("template_version")} for r in rows]
@@ -994,7 +1108,7 @@ class App:
         t = now()
         self.store.insert("templates", {"id": nid, "tenant": current_tenant(), "name": (name or r["name"] + " 副本")[:100], "kind": r["kind"], "format": r["format"],
                                         "original_blob": r["original_blob"], "original_name": r["original_name"], "head": 1,
-                                        "created_at": t, "updated_at": t, "info": r.get("info")})
+                                        "created_at": t, "updated_at": t, "info": r.get("info"), "scan": r.get("scan")})
         self.store.insert("template_versions", {"template_id": nid, "version_no": 1, "parent_no": None, "working_blob": v["working_blob"],
                                                 "slots": v["slots"], "editor": v.get("editor"), "note": f"复制自「{r['name']}」v{v['version_no']}",
                                                 "created_at": t})
@@ -1011,8 +1125,8 @@ class App:
         Deleting one that projects still pointed at left those projects unopenable (their detail
         request 404ed on the template) and every job on them failed. Refused instead, with the
         projects named, so the person can re-point or delete them first. Archived projects count:
-        they are still usable."""
-        t = self.get_template(tid)
+        they are still usable. A template a rescan rejected can be deleted like any other."""
+        t = self.get_template(tid, accepted=False)
         users = self.store.all("SELECT id, name FROM projects WHERE template_id=? AND deleted=0 AND COALESCE(tenant,'default')=? "
                                "ORDER BY updated_at DESC", (tid, current_tenant()))
         if users:

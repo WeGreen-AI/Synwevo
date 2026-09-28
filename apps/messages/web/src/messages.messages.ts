@@ -381,6 +381,8 @@ export const messages = {
   "找不到该消息": { en: "This message was not found", "zh-Hant": "找不到這則訊息" },
   "找不到要回复的消息": { en: "The message you are replying to was not found", "zh-Hant": "找不到要回覆的訊息" },
   "找不到该附件": { en: "This attachment was not found", "zh-Hant": "找不到這個附件" },
+  "该文件此前已被判定为恶意内容，已拒绝": { en: "This file was already identified as malicious and has been rejected", "zh-Hant": "這個檔案先前已被判定為惡意內容，已拒絕" },
+  "该附件未通过安全检查，已被拒绝并隔离": { en: "This attachment failed the security check and has been rejected and quarantined", "zh-Hant": "這個附件未通過安全檢查，已被拒絕並隔離" },
   "附件不存在或已使用": { en: "This attachment does not exist or has already been sent", "zh-Hant": "附件不存在或已使用" },
   "不支持的表情": { en: "This emoji is not supported", "zh-Hant": "不支援的表情" },
   "请选择要转发到的会话": { en: "Choose the conversations to forward to", "zh-Hant": "請選擇要轉發到的會話" },

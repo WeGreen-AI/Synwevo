@@ -9,6 +9,10 @@
     python -m synwevo_docs.cli jobs recover                  # resume jobs left by a stopped worker
     python -m synwevo_docs.cli projects                      # 清单与清理（按来源证据，默认 dry-run）
     python -m synwevo_docs.cli info                          # 数据目录、schema 版本、运行配置
+    python -m synwevo_docs.cli rescan [--apply] [--limit N] [--workspace ID] [--only sources|templates|cases]
+                                                             # 补扫扫描上线前存入的来源文件与模板（不加 --apply 只预览）
+    python -m synwevo_docs.cli quarantine list | release <sha256> | purge <sha256> --yes
+                                                             # 隔离区：复核后恢复误报或永久清除
 
 账户、应用注册与 OIDC 客户端不在这里：它们属于账户服务，见 `python -m synwevo_identity.cli`。
 一个能同时改业务数据和账户权限的命令行，是"业务管理员顺手成了平台管理员"的最短路径。
@@ -466,6 +470,17 @@ def cmd_info(args) -> int:
 
 
 
+def cmd_rescan(args) -> int:
+    """补扫与隔离区（docs/security/file-acceptance.md §8）；逻辑在 `synwevo_docs.rescan`。"""
+    from .rescan import main_rescan
+    return main_rescan(args, data_dir(args))
+
+
+def cmd_quarantine(args) -> int:
+    from .rescan import main_quarantine
+    return main_quarantine(args, data_dir(args))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", help="数据目录（默认 $SYNWEVO_DATA_DIR 或仓库根目录 data/）")
@@ -508,6 +523,12 @@ def main() -> int:
     # Webhook subscriptions of a workspace: CLI-only administration (there is no product UI).
     from .cli_webhooks import register as register_webhooks
     register_webhooks(sub)
+
+    # Rescanning files stored before malware scanning was switched on, and the quarantine (CI-90).
+    from synwevo_core.rescan import add_arguments as add_rescan
+    add_rescan(sub, workspace=True, kinds=("sources", "templates", "cases"))
+    sub.choices["rescan"].set_defaults(func=cmd_rescan)
+    sub.choices["quarantine"].set_defaults(func=cmd_quarantine)
 
 
     args = ap.parse_args()
