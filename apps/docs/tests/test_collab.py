@@ -870,3 +870,138 @@ def test_an_editor_save_and_another_room_s_draft_write_do_not_deadlock(tmp_path)
     del hub.rooms[room2.key]
     for hook in list(app.state.shutdown_hooks):
         hook()
+
+
+# ------------------------------------------------------------------ a version change while a closed room is still writing its draft
+def _text(text):
+    return {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}]}}
+
+
+def _closing(world, monkeypatch, peer):
+    """Fixture: ``peer`` leaves last; its room's closing write waits until the returned event is set
+    (as it would wait for the database). Returns (go, closer thread)."""
+    import threading
+
+    from synwevo_docs.collab import Room
+    hub, key = world["app"].state.collab, f"template:{world['tid']}"
+    real = Room.close_final
+    entered, go = threading.Event(), threading.Event()
+
+    def slow(self):
+        entered.set()
+        assert go.wait(10)
+        return real(self)
+    monkeypatch.setattr(Room, "close_final", slow)
+    closer = threading.Thread(target=peer.close, daemon=True)
+    closer.start()
+    assert entered.wait(10) and key in hub._closing
+    return go, closer
+
+
+def _draft(world):
+    world["app"].state.collab.settled(f"template:{world['tid']}")
+    return world["store"].one("SELECT head, dirty, model FROM collab_docs WHERE room=?", (f"template:{world['tid']}",))
+
+
+def test_a_version_during_a_closing_write_then_an_undo_does_not_silence_later_drafts(world, monkeypatch):
+    """Review 4, item 1 (document rooms, the reviewer's reproducer): the tombstone a version change left
+    while a closing write was on its way refused every later draft of a lower head — after an undo, a
+    whole session's typing never reached the database and the next opener reseeded without it."""
+    tid, c = world["tid"], world["client_for"](world["owner"])
+    assert c.put(f"/api/templates/{tid}/builtin", json={"editor": _text("第二版"), "base_version": 1}).status_code == 200
+    a = _connect(world, "editor")
+    go, closer = _closing(world, monkeypatch, a)
+    r = c.put(f"/api/templates/{tid}/builtin", json={"editor": _text("第三版"), "base_version": 2})
+    assert r.status_code == 200 and r.json()["version"]["no"] == 3, r.text
+    go.set()
+    closer.join(10)
+    assert _draft(world) is None, "the closed room's draft was replaced by the version, not kept"
+    b = _connect(world, "editor")
+    assert b.texts() == ["第三版"]
+    r = c.post(f"/api/templates/{tid}/undo", json={"head": 3})
+    assert r.status_code == 200 and r.json()["head"] == 2, r.text
+    assert b.recv(want="update") == "update" and b.texts() == ["第二版"]
+    b.recv_meta("head")
+    b.append_text("（未保存的修改）")
+    b.close()
+    d = _draft(world)
+    assert d["head"] == 2 and d["dirty"] == 1
+    e = _connect(world, "owner")
+    assert e.texts() == ["第二版（未保存的修改）"] and e.hello["dirty"] is True
+    e.close()
+
+
+def test_an_undo_discarding_edits_during_a_closing_write_leaves_no_phantom_draft(world, monkeypatch):
+    """Review 4, item 2 (document rooms, the reviewer's reproducer): an undo (a lower head) with
+    discard_live while the closing write was on its way let that write through; the discarded draft
+    then counted as unsaved edits, refusing the next restore with nobody online."""
+    tid, c = world["tid"], world["client_for"](world["owner"])
+    assert c.put(f"/api/templates/{tid}/builtin", json={"editor": _text("第二版"), "base_version": 1}).status_code == 200
+    a = _connect(world, "editor")
+    a.append_text("（要丢弃的修改）")
+    a.recv_meta("state")
+    go, closer = _closing(world, monkeypatch, a)
+    r = c.post(f"/api/templates/{tid}/undo", json={"head": 2})
+    assert r.status_code == 409 and r.json()["error"] == "live_edits", "the closing room's unsaved edits guard it"
+    r = c.post(f"/api/templates/{tid}/undo", json={"head": 2, "discard_live": True})
+    assert r.status_code == 200 and r.json()["head"] == 1, r.text
+    go.set()
+    closer.join(10)
+    assert _draft(world) is None
+    assert world["app"].state.collab.live_state(tid)["dirty"] is False
+    r = c.post(f"/api/templates/{tid}/restore", json={"version": 2, "base_head": 1})
+    assert r.status_code == 200, r.text
+
+
+def test_a_reopen_during_the_closing_write_reads_the_draft_it_writes(world, monkeypatch):
+    tid = world["tid"]
+    a = _connect(world, "editor")
+    a.append_text("关闭时写下")
+    go, closer = _closing(world, monkeypatch, a)
+    import threading
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("b", _connect(world, "owner")), daemon=True)
+    t.start()
+    time.sleep(0.3)
+    assert "b" not in box, "the opener waits for the closing write"
+    go.set()
+    closer.join(10)
+    t.join(10)
+    assert box["b"].texts() == ["客户：关闭时写下"] and box["b"].hello["dirty"] is True
+    box["b"].close()
+
+
+def test_a_room_closing_before_its_own_save_is_applied_leaves_no_phantom_draft(world, monkeypatch):
+    """Review 4, item 5 (document rooms, pre-existing): the save's head change was still queued when
+    the room's last person left; the closing write kept "unsaved, old version" although the saved
+    version held it — the next restore was refused with nobody online."""
+    import asyncio
+    import threading
+
+    from synwevo_docs.collab import Room
+    tid = world["tid"]
+    loop = asyncio.new_event_loop()                              # fixture: the room's queued work runs on a loop the test holds
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    monkeypatch.setattr(Room, "work_loop", lambda self: loop)
+    gate = threading.Event()
+    loop.call_soon_threadsafe(gate.wait, 20)
+    a = _connect(world, "editor")
+    a.append_text("甲")
+    time.sleep(0.2)
+    saved = {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "客户：甲"},
+                                                                                             DOC["body"]["content"][0]["content"][1]]}]}}
+    r = world["client_for"](world["editor"]).put(f"/api/templates/{tid}/builtin", json={"editor": saved, "base_version": 1})
+    assert r.status_code == 200 and r.json()["head"] == 2
+    a.close()                                                    # the head change is still queued
+    d = _draft(world)
+    assert d["head"] == 1 and d["dirty"] == 1
+    gate.set()
+    for _ in range(100):
+        d = _draft(world)
+        if d and d["head"] == 2:
+            break
+        time.sleep(0.05)
+    assert d["head"] == 2 and d["dirty"] == 0
+    r = world["client_for"](world["owner"]).post(f"/api/templates/{tid}/restore", json={"version": 1, "base_head": 2})
+    assert r.status_code == 200, r.text
+    loop.call_soon_threadsafe(loop.stop)

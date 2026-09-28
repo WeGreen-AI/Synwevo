@@ -1286,11 +1286,13 @@ def test_one_persons_tabs_opened_first_and_written_later_keep_their_share(world,
     op = put(e, "A2", "编辑者")
     n = e.send(op)
     assert e.ack(n)["ok"]
-    tabs = [join(world, "owner", client_id=f"owner-tab-{i:02d}") for i in range(11)]
+    tabs = [join(world, "owner", client_id=f"owner-tab-{i:02d}") for i in range(cs.MAX_CLIENTS_PER_SCOPE)]
+    # a ninth open tab is refused: the room never forgets the record of an open tab (review 4, item 4)
+    with pytest.raises(WebSocketDisconnect) as x:
+        join(world, "owner", client_id="owner-tab-99")
+    assert x.value.code == 4429 and x.value.reason == "too_many_tabs"
     for i, o in enumerate(tabs):
         r = o.do(put(o, "C3", str(i)), expect=_room(world).state["seq"])
-        if not r["ok"] and r["code"] == "resync":                # the person's own oldest tab was forgotten: renumber
-            r = o.do(put(o, "C3", str(i)), n=r["detail"]["next"], expect=_room(world).state["seq"])
         assert r["ok"], r
     owners = [k for k in _room(world).state["clients"] if k.startswith(world["owner"]["id"] + "/")]
     assert len(owners) == cs.MAX_CLIENTS_PER_SCOPE
@@ -1556,3 +1558,234 @@ def test_when_no_thread_can_be_started_the_closing_write_is_made_anyway(world, m
     assert not t.is_alive() and time.monotonic() - t0 < 5, "the next open waited for a write that never came"
     assert box["b"].cells()["A2"] == {"v": "最后的修改"}
     box["b"].close()
+
+
+# ------------------------------------------------------------------ the fourth review of step ② (each failed on 37c45e0)
+def _closing_table(world, monkeypatch, peer):
+    """Fixture: ``peer`` leaves last; its table's closing write waits until the returned event is set
+    (as it would wait for the database)."""
+    from synwevo_docs import collab_sheet_room as R
+    hub, key = world["app"].state.collab, f"template:{world['tid']}"
+    real = R.SheetRoom.close_final
+    entered, go = threading.Event(), threading.Event()
+
+    def slow(self):
+        entered.set()
+        assert go.wait(10)
+        return real(self)
+    monkeypatch.setattr(R.SheetRoom, "close_final", slow)
+    peer.close()
+    assert entered.wait(10) and key in hub._closing
+    return go
+
+
+def test_a_version_during_a_table_s_closing_write_replaces_a_clean_draft(world, monkeypatch):
+    a = join(world, "editor")
+    a.close()                                                    # clean
+    go = _closing_table(world, monkeypatch, join(world, "editor"))
+    assert machine_put(world, edited({"C3": {"v": "新版本"}}), 1).status_code == 200
+    go.set()
+    assert row(world) is None
+    b = join(world, "owner")
+    assert b.cells()["C3"] == {"v": "新版本"} and b.hello["dirty"] is False
+    b.close()
+
+
+def test_an_undo_discarding_table_edits_during_the_closing_write_does_not_bring_them_back(world, monkeypatch):
+    """Review 4, item 2 (the reviewer's reproducer): the tombstone went to the lower head, the closing
+    write (higher head, unsaved) passed it, and the next opener folded the discarded edits back in."""
+    hub, tid, co = world["app"].state.collab, world["tid"], world["co"]
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "第二版"))["ok"]
+    assert co.post(f"/api/templates/{tid}/collab/save", json={}).json()["head"] == 2
+    a.head(2)
+    assert a.do(put(a, "A3", "要丢弃"), expect=_room(world).state["seq"])["ok"]
+    go = _closing_table(world, monkeypatch, a)
+    r = co.post(f"/api/templates/{tid}/undo", json={"head": 2})
+    assert r.status_code == 409 and r.json()["error"] == "live_edits", "the closing room's unsaved edits guard it"
+    r = co.post(f"/api/templates/{tid}/undo", json={"head": 2, "discard_live": True})
+    assert r.status_code == 200 and r.json()["head"] == 1, r.text
+    go.set()
+    assert row(world) is None and hub.live_state(tid)["dirty"] is False
+    b = join(world, "owner")
+    assert "A3" not in b.cells() and "A2" not in b.cells() and b.hello["dirty"] is False
+    b.close()
+
+
+def test_unsaved_table_edits_meeting_a_version_during_the_closing_write_are_kept_and_folded(world, monkeypatch):
+    """The one kept case, decided from the closing room itself: it had unsaved edits (typed after the
+    guard let the version through) and nobody said discard_live."""
+    from synwevo_docs import builtin_service
+    a = join(world, "editor")
+    started, release = threading.Event(), threading.Event()
+    real = builtin_service._build
+
+    def slow(kind, editor):                                      # fixture: the version is being built
+        started.set()
+        assert release.wait(10)
+        return real(kind, editor)
+    monkeypatch.setattr(builtin_service, "_build", slow)
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("r", machine_put(world, edited({"C3": {"v": "新版本"}}), 1)), daemon=True)
+    t.start()
+    assert started.wait(10)
+    assert a.do(put(a, "A2", "构建期间输入"))["ok"]
+    go = _closing_table(world, monkeypatch, a)
+    release.set()
+    t.join(10)
+    assert box["r"].status_code == 200
+    go.set()
+    d = row(world)
+    assert d["dirty"] == 1 and d["head"] == 1
+    b = join(world, "owner")
+    for _ in range(50):
+        if _room(world).head == 2 and not _room(world).holding():
+            break
+        time.sleep(0.1)
+    cells = cs.project(_room(world).state)["sheets"][0]["cells"]
+    assert cells["A2"] == {"v": "构建期间输入"} and cells["C3"] == {"v": "新版本"}
+    b.close()
+
+
+def test_a_reopen_during_the_table_s_closing_write_reads_the_draft_it_writes(world, monkeypatch):
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "关闭时写下"))["ok"]
+    go = _closing_table(world, monkeypatch, a)
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("b", join(world, "owner")), daemon=True)
+    t.start()
+    time.sleep(0.3)
+    assert "b" not in box, "the opener waits for the closing write"
+    go.set()
+    t.join(10)
+    assert box["b"].cells()["A2"] == {"v": "关闭时写下"} and box["b"].hello["dirty"] is True
+    box["b"].close()
+
+
+def test_an_opener_never_reads_a_draft_a_version_change_is_removing(world, monkeypatch):
+    """Review 4, item 3: between the hook deciding a draft goes and its DELETE, a tab opening the
+    table read the draft and folded the discarded edits back in."""
+    hub, tid, co, store = world["app"].state.collab, world["tid"], world["co"], world["store"]
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "要丢弃"))["ok"]
+    a.close()
+    assert row(world)["dirty"] == 1
+    deleting, release = threading.Event(), threading.Event()
+    real = store.execute
+
+    def spy(sql, args=()):                                       # fixture: the draft's DELETE is slow
+        if sql.startswith("DELETE FROM collab_docs"):
+            deleting.set()
+            assert release.wait(10)
+        return real(sql, args)
+    monkeypatch.setattr(store, "execute", spy)
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("r", machine_put(world, edited({"C3": {"v": "新版本"}}), 1, discard_live=True)),
+                         daemon=True)
+    t.start()
+    assert deleting.wait(10)
+    opener: dict = {}
+    t2 = threading.Thread(target=lambda: opener.setdefault("b", join(world, "owner")), daemon=True)
+    t2.start()
+    time.sleep(0.3)
+    assert "b" not in opener, "the opener waits for the DELETE"
+    release.set()
+    t.join(10)
+    t2.join(10)
+    b = opener["b"]
+    assert "A2" not in b.cells() and b.cells()["C3"] == {"v": "新版本"} and b.hello["dirty"] is False
+    b.close()
+
+
+def test_a_refused_draft_write_is_never_reported_as_persisted(world, monkeypatch):
+    """Review 4, item 1: a draft write the store refused still produced `persisted{seq}` — a durability
+    promise the browser is told to rely on — and could clear the room's dirty flag."""
+    from synwevo_docs.collab import CollabHub
+    monkeypatch.setattr(CollabHub, "_upsert_draft", staticmethod(lambda *a: False))   # fixture: every draft write is refused
+    a = join(world, "editor")
+    tried = _late_writes(world, monkeypatch, _room(world))
+    assert a.do(put(a, "A2", "未落盘"))["ok"]
+    assert tried.wait(10) and tried.results == [False]
+    time.sleep(0.2)
+    assert a.do(put(a, "A3", "之后"))["ok"]
+    assert not [m for m in a.meta if m["type"] == "persisted"]
+    assert _room(world).dirty is True
+    a.close()
+
+
+def test_the_room_never_forgets_an_open_tab_and_says_what_it_applied(world):
+    """Review 4, item 4: the per-person bound evicted the oldest record — possibly a tab still open,
+    whose resend after a lost answer could then not be told apart from a new message (an inserted row
+    applied twice). Open tabs are never forgotten, and `full` / `hello` carry each client's outcomes."""
+    tabs = [join(world, "owner", client_id=f"owner-tab-{i:02d}") for i in range(cs.MAX_CLIENTS_PER_SCOPE)]
+    ops = []
+    for i, o in enumerate(tabs):
+        sid = o.content["order"][0]
+        op = {"op": "append_rows", "sheet": sid, "count": 1}
+        n = o.send(op, expect=_room(world).state["seq"])
+        assert o.ack(n)["ok"]
+        ops.append((o, op, n))
+    tabs[-1].close()                                             # one tab goes: its record may be forgotten now
+    fresh = join(world, "owner", client_id="owner-tab-new")
+    assert fresh.do(put(fresh, "C3", "新"), expect=_room(world).state["seq"])["ok"]
+    for o, op, n in ops[:-1]:                                    # every open tab's lost answer is still known
+        r = o.do(op, n=n, expect=0)
+        assert r["ok"] is True and r["duplicate"] is True
+    rows = len(cs.project(_room(world).state)["sheets"][0]["rows"])
+    assert rows == 3 + cs.MAX_CLIENTS_PER_SCOPE, "no row inserted twice"
+    o = tabs[0]
+    refused = o.do({"op": "set", "sheet": "nope", "row": "x", "col": "y", "v": 1}, expect=_room(world).state["seq"])
+    o.frame({"type": "sync"})
+    full = o.of("full")
+    assert full["outcomes"][str(ops[0][2])] is True and full["outcomes"][str(refused["n"])] == "not_found"
+    for p in tabs[:-1] + [fresh]:
+        p.close()
+
+
+def test_the_hello_is_built_outside_the_registration_lock(world, monkeypatch):
+    """Review 4, item 5: a table's hello (its whole content) was built while holding the registration
+    lock, which every draft write takes inside its transaction: all writers stalled behind a join."""
+    from synwevo_docs import collab_sheet_room as R
+    hub = world["app"].state.collab
+    seen: list = []
+    real = R.meta_frame
+
+    def spy(payload):
+        if payload.get("type") == "hello":
+            seen.append(hub._rooms_mu._is_owned())
+        return real(payload)
+    monkeypatch.setattr(R, "meta_frame", spy)
+    a = join(world, "editor")
+    assert seen == [False]
+    a.close()
+
+
+def test_leaving_live_mode_deletes_the_draft_outside_the_room_lock_even_without_a_thread(world, monkeypatch):
+    """Review 4, item 5: when no thread could be started, the DELETE ran inline — under the room's
+    lock, against the lock order."""
+    store = world["store"]
+    real_start = threading.Thread.start
+
+    def start(self):                                             # fixture: no thread for the draft's DELETE
+        if self.name.startswith("collab-drop-"):
+            raise RuntimeError("can't start new thread")
+        return real_start(self)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    a = join(world, "editor")
+    room = _room(world)
+    seen: list = []
+    real_exec = store.execute
+
+    def spy(sql, args=()):
+        if sql.startswith("DELETE FROM collab_docs"):
+            seen.append(room.mu._is_owned())
+        return real_exec(sql, args)
+    monkeypatch.setattr(store, "execute", spy)
+    assert machine_put(world, edited({"A250000": {"v": "远处"}}), 1).status_code == 200    # clean room, a table it cannot hold
+    assert a.meta_of("live")["live"] is False
+    for _ in range(50):
+        if seen:
+            break
+        time.sleep(0.05)
+    assert seen == [False], seen
+    a.close()

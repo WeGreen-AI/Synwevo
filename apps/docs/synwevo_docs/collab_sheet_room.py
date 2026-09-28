@@ -74,7 +74,7 @@ from synwevo_core.store import new_id
 
 from . import collab as _collab
 from . import collab_sheet as CS
-from .collab import CLOSE_STALE, MESSAGE_SHEET, OWN_LIVE_SAVE, Conn, Room, display_name, meta_frame, sheet_live_enabled
+from .collab import CLOSE_STALE, MESSAGE_SHEET, OWN_LIVE_SAVE, Conn, Room, RoomFull, display_name, meta_frame, sheet_live_enabled
 
 log = logging.getLogger("synwevo.docs.collab")
 
@@ -313,6 +313,16 @@ class SheetRoom(Room):
         with self.mu:
             st = self.state
             if st is not None:
+                # the room never forgets the record of a client with an open connection (it may still
+                # resend): so it admits no more open tabs than it keeps records for (review 4, item 4)
+                taking_over = isinstance(requested_client, str) and _CLIENT.fullmatch(requested_client) is not None and any(
+                    c.user_id == conn.user_id and c.client == requested_client for c in self.clients)
+                if not taking_over:
+                    live = [c for c in self.clients if c.client_key]
+                    if sum(1 for c in live if c.user_id == conn.user_id) >= CS.MAX_CLIENTS_PER_SCOPE:
+                        raise RoomFull("too_many_tabs")
+                    if len(live) >= CS.MAX_CLIENTS:
+                        raise RoomFull("room_full")
                 self._claim(conn, requested_client)
                 conn.seen = st["seq"]
             self.clients.add(conn)
@@ -321,7 +331,8 @@ class SheetRoom(Room):
                 hello.update({"live": False, "live_reason": self.live_reason})
             else:
                 hello.update({"live": True, "seq": st["seq"], "client": conn.client, "next": CS.next_number(st, conn.client_key),
-                              "resumed": conn.client_key in st["clients"], "persisted": self.persisted_seq, "content": st["content"],
+                              "resumed": conn.client_key in st["clients"], "outcomes": CS.outcomes(st, conn.client_key),
+                              "persisted": self.persisted_seq, "content": st["content"],
                               "stale_head": self.stale_head,
                               "limits": {"max_tx": CS.MAX_TX, "max_frame_bytes": _collab.MAX_FRAME_BYTES, "ops_per_min": self.hub.sheet_rate.cap,
                                          "max_cells": max_cells(), "max_bytes": max_bytes()}})
@@ -430,7 +441,8 @@ class SheetRoom(Room):
                 self._refuse(conn, n, "too_large", what="table", max=cap, size=self.approx_bytes)
                 return
             try:
-                res = CS.apply(st, op, by=conn.user_id, client=conn.client_key, n=n, expect=expect, max_cells=max_cells())
+                res = CS.apply(st, op, by=conn.user_id, client=conn.client_key, n=n, expect=expect, max_cells=max_cells(),
+                               keep=frozenset(c.client_key for c in list(self.clients) if c.client_key))
             except ValueError:
                 self._refuse(conn, n, "invalid", reason="n")
                 return
@@ -461,7 +473,8 @@ class SheetRoom(Room):
             else:
                 conn.seen = st["seq"]
                 payload = {"type": "full", "live": True, "epoch": st["epoch"], "seq": st["seq"], "next": CS.next_number(st, conn.client_key),
-                           "head": self.head, "dirty": self.dirty, "persisted": self.persisted_seq, "content": st["content"]}
+                           "outcomes": CS.outcomes(st, conn.client_key), "head": self.head, "dirty": self.dirty,
+                           "persisted": self.persisted_seq, "content": st["content"]}
             self._send(conn, payload)
 
     def _changed(self) -> None:
@@ -486,19 +499,21 @@ class SheetRoom(Room):
             return {"gen": self._gen, "raw": raw, "seq": st["seq"], "fast": self.dirty, "head": self.head, "epoch": self.epoch,
                     "basis_gen": self.basis_gen}
 
-    def _write(self, snap: dict, *, final: bool = False) -> bool:
+    def _write(self, snap: dict, *, final: bool = False) -> tuple[bool, bool]:
         """Compress and write one serialisation (a worker thread; the closing write; shutdown). The
         heavy part runs before any lock; the write itself is checked and done under the hub's room lock
         (``write_state``): a room that is no longer the registered one, or is gone, never writes, and a
-        newer serialisation already written wins. Returns whether that state is really unsaved."""
+        newer serialisation already written wins. Returns (was it written, is that state really
+        unsaved); a write that was refused is never reported as persisted."""
         exact = bool(snap["fast"]) and CS.dirty(json.loads(snap["raw"]))
         blob = zlib.compress(snap["raw"], 6)
         with self.hub.store.tx():                        # the write lock first: this room's writes, one at a time
             if snap["gen"] < self._written:
-                return exact
-            if self.hub.write_state(self, blob, model="sheet", head=snap["head"], dirty=exact, epoch=snap["epoch"], final=final):
+                return False, exact
+            written = self.hub.write_state(self, blob, model="sheet", head=snap["head"], dirty=exact, epoch=snap["epoch"], final=final)
+            if written:
                 self._written = snap["gen"]
-        return exact
+        return written, exact
 
     def close_final(self) -> None:
         """The last one out: write the draft once more (a thread of its own, off the event loop and
@@ -522,9 +537,13 @@ class SheetRoom(Room):
         if snap is None:
             return
         try:
-            exact = await run_in_threadpool(self._write, snap)
+            written, exact = await run_in_threadpool(self._write, snap)
         except Exception:                                # noqa: BLE001 — the next change retries
             log.exception("collab %s: persisting the live table failed", self.key)
+            return
+        if not written:
+            # refused (the room closed, left live mode, its template went) or overtaken by a newer write:
+            # nothing is reported as persisted and the dirty flag is not touched
             return
         with self.mu:
             same = self.state is not None and self.epoch == snap["epoch"]
@@ -759,6 +778,10 @@ class SheetRoom(Room):
         if self.persist_handle is not None:
             self.persist_handle.cancel()
             self.persist_handle = None
-        self._drop_draft()
+        # nothing of this room is written from now on; the draft's DELETE runs after the room's lock is
+        # released (the lock order never nests the database inside a room's lock — even when no thread
+        # can be started for it and it runs on the loop)
+        self.dropped = True
+        asyncio.get_running_loop().call_soon(self._drop_draft)
         self.broadcast_meta({"type": "live", "live": False, "reason": why, "head": head})
         self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor_name, "by_id": actor_id})

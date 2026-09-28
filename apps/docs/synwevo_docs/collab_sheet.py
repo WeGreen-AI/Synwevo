@@ -1661,26 +1661,30 @@ def _keep(result: dict) -> dict:
     return dict(result) if small else _trimmed(result)
 
 
-def _record(state: dict, client: str, n: int, result: dict):
+def _record(state: dict, client: str, n: int, result: dict, keep=frozenset()):
     """Remember ``(client, n)``'s answer. Per client: the last ``CLIENT_WINDOW`` numbers, the newest
     ``RECORD_FULL`` of them whole (each at most ``RECORD_BYTES``), older ones as their outcome only.
     At most ``MAX_CLIENTS`` clients; forgetting one raises ``nfloor`` past its numbers, so a client
     the room no longer knows can never have an old message applied again (it is told to resync).
     At most ``MAX_CLIENTS_PER_SCOPE`` of one scope, checked where a record is created: a scope's
     oldest is forgotten first, raising only that scope's floor (``pfloor``), so one person's many
-    tabs neither push the others' records out nor move the numbers the others are told."""
+    tabs neither push the others' records out nor move the numbers the others are told. Clients in
+    ``keep`` (the room's open connections) are never forgotten: a client that may still resend keeps
+    its answers (the room admits no more open tabs than it can keep)."""
     clients = state["clients"]
     rec = clients.get(client)
     if rec is None:
         scope = _scope(client)
         if scope is not None:
             mine = [c for c in clients if _scope(c) == scope]
-            while len(mine) >= MAX_CLIENTS_PER_SCOPE:
-                oldest = min(mine, key=lambda c: (clients[c]["at"], c))
+            spare = [c for c in mine if c not in keep]
+            while len(mine) >= MAX_CLIENTS_PER_SCOPE and spare:
+                oldest = min(spare, key=lambda c: (clients[c]["at"], c))
                 floors = state.setdefault("pfloor", {})
                 floors[scope] = max(floors.get(scope, 0), clients[oldest]["hi"])
                 del clients[oldest]
                 mine.remove(oldest)
+                spare.remove(oldest)
         rec = clients[client] = {"hi": 0, "at": 0, "r": {}}
     rec["r"][str(n)] = _keep(result)
     rec["hi"] = max(rec["hi"], n)
@@ -1692,7 +1696,10 @@ def _record(state: dict, client: str, n: int, result: dict):
         elif i <= rec["hi"] - RECORD_FULL and not rec["r"][k].get("trimmed"):
             rec["r"][k] = _trimmed(rec["r"][k])
     while len(clients) > MAX_CLIENTS:
-        oldest = min((c for c in clients if c != client), key=lambda c: (clients[c]["at"], c))
+        spare = [c for c in clients if c != client and c not in keep]
+        if not spare:
+            break
+        oldest = min(spare, key=lambda c: (clients[c]["at"], c))
         state["nfloor"] = max(state["nfloor"], clients[oldest]["hi"])
         del clients[oldest]
 
@@ -1716,7 +1723,7 @@ def next_number(state: dict, client: str) -> int:
 
 
 def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | None, trusted: bool = False,
-          max_cells: int | None = None) -> dict:
+          max_cells: int | None = None, keep=frozenset()) -> dict:
     """Apply one operation (or one ``tx`` group) from ``client``'s ``n``-th message, sent by ``by``
     (stamped by the server) after seeing everything up to sequence number ``expect``.
 
@@ -1774,8 +1781,18 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
             # nothing changed (it already was so): no sequence number, and no ownership either
             tx.rollback()
         result = {"ok": True, "seq": state["seq"], "patch": patch, "before": before}
-    _record(state, client, n, result)
+    _record(state, client, n, result, keep)
     return result
+
+
+def outcomes(state: dict, client: str) -> dict:
+    """What the room remembers of ``client``'s recent messages: ``{n: true | refusal code}`` (the last
+    ``CLIENT_WINDOW`` numbers). A client resyncing tells from it exactly which of its unanswered
+    messages were applied — never guessing for operations that must not apply twice."""
+    rec = state["clients"].get(client)
+    if rec is None:
+        return {}
+    return {k: (True if r.get("ok") else r.get("code")) for k, r in sorted(rec["r"].items(), key=lambda kv: int(kv[0]))}
 
 
 def compact(state: dict, *, upto: int):
