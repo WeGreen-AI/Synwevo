@@ -1963,3 +1963,77 @@ def test_a_save_finishing_after_its_room_s_closing_write_corrects_the_draft(worl
     assert b.cells()["A2"] == {"v": "保存前"} and b.cells()["A3"] == {"v": "保存之后"}
     b.close()
     loop.call_soon_threadsafe(loop.stop)
+
+
+# ------------------------------------------------------------------ the review of steps ③–⑤ (each failed on 0a6c0cd)
+def test_a_message_refused_for_now_is_not_overtaken_by_the_tabs_next_one(world, clock):
+    """H1: a message refused `busy` was not read, and the tab's next one — sent before that answer
+    reached it, arriving once the wait had passed — was applied first; the earlier value, sent again
+    after it, then overwrote the later one. The room now holds the refused number for the connection:
+    the tab's later messages are refused the same way until it comes back, so they apply in order."""
+    a = join(world, "editor")
+    room = _room(world)
+    room.hold()                                                   # a version is being folded in
+    n1 = a.send(put(a, "A3", "先输入"))
+    r1 = a.ack(n1)
+    assert r1["ok"] is False and r1["code"] == "busy"
+    n2 = a.send(put(a, "A3", "后改正"))                            # on its way before the refusal arrived
+    room.release()
+    clock[0] += 0.3                                               # after the wait it was told
+    r2 = a.ack(n2)
+    assert r2["ok"] is False and r2["code"] == "busy" and r2["detail"]["held"] == n1, r2
+    clock[0] += 1
+    assert a.do(put(a, "A3", "先输入"), n=n1)["ok"] is True       # the tab sends them again, in order
+    assert a.do(put(a, "A3", "后改正"), n=n2)["ok"] is True
+    assert a.cells()["A3"] == {"v": "后改正"}, "the value typed last is the one the table keeps"
+    a.close()
+
+
+def test_a_rate_limited_message_is_not_overtaken_either(world, clock):
+    """H1b: the same with the per-person rate limit — an edit in rows the tab had just added (a group
+    refused `rate_limited`) arrived after the wait and was read before the group: `not_found`."""
+    from synwevo_core.http import RateBuckets
+    world["app"].state.collab.sheet_rate = RateBuckets(60)       # fixture: one message a second, on the fake clock
+    a = join(world, "editor")
+    for i in range(60):                                          # a burst of work empties the bucket
+        assert a.do(put(a, "B3", f"x{i}"))["ok"]
+    sid, col = a.content["order"][0], a.at("B3")["col"]
+    new = ["zzzzzz01", "zzzzzz02"]
+    grow = [{"op": "append_rows", "sheet": sid, "count": 2, "ids": new, "h": 24}, put(a, "B3", "grow")]
+    typed = {"op": "set", "sheet": sid, "row": new[0], "col": col, "v": "新行里输入"}
+    n1 = a.send(tx=grow)
+    r1 = a.ack(n1)
+    assert r1["ok"] is False and r1["code"] == "rate_limited"
+    n2 = a.send(typed)
+    clock[0] += r1["detail"]["retry_after"] + 0.1
+    r2 = a.ack(n2)
+    assert r2["ok"] is False and r2["code"] == "rate_limited" and r2["detail"]["held"] == n1, r2
+    clock[0] += 5
+    assert a.do(tx=grow, n=n1)["ok"] is True
+    assert a.do(typed, n=n2)["ok"] is True
+    a.close()
+
+
+def test_a_hold_does_not_outlive_the_epoch_it_was_made_in(world, clock):
+    """A message of an epoch the room has left is never sent again (the tab voids it on the reset): a
+    hold made before a restart is dropped, and the tab's messages in the new epoch are read."""
+    a = join(world, "editor")
+    room = _room(world)
+    assert a.do(put(a, "A2", "未保存"))["ok"]                     # unsaved: discarding them restarts the room
+    room.hold()
+    n1 = a.send(put(a, "A3", "旧纪元"))
+    assert a.ack(n1)["code"] == "busy"
+    room.release()
+    assert machine_put(world, edited({"C3": {"v": "外部"}}), 1, discard_live=True).status_code == 200   # a new epoch
+    reset = a.of("reset")
+    # typed before the tab read the reset, and refused for now: of an epoch the room has left, not held
+    clock[0] += 1
+    room.hold()
+    n2 = a.send(put(a, "A3", "旧纪元，重置之后"))
+    assert a.ack(n2)["code"] == "busy"
+    room.release()
+    a.content, a.seq, a.epoch, a.next = reset["content"], reset["seq"], reset["epoch"], reset["next"]
+    clock[0] += 1
+    r = a.do(put(a, "A3", "新纪元"))
+    assert r["ok"] is True, r
+    a.close()

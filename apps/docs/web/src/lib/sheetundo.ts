@@ -9,8 +9,9 @@
 import { cellRef, eq, has, isDict, own, type Content, type FieldC, type PatchEntry } from "./sheetmodel.ts";
 
 export interface Skipped {
-  /** why: someone changed it since, or it cannot be undone in B1 */
-  reason: "changed" | "append" | "idless";
+  /** why: someone changed it since, it cannot be undone in B1, or undoing it would delete a sheet
+   *  others worked on since (undo never removes other people's work) */
+  reason: "changed" | "append" | "idless" | "sheet_changed";
   sheet: string | null;
   /** the cell (A1) or object it is about, when it has one */
   ref: string | null;
@@ -66,9 +67,33 @@ function fieldPlacement(f: FieldC): Record<string, any> {
   return { row: f.at[0], c1: f.at[1], c2: f.at[2] };
 }
 
+export interface UndoOptions {
+  /** the sequence number the change was accepted at */
+  since?: number;
+  /** whether another tab changed anything on a sheet after a sequence number */
+  touchedSince?: (sid: string, seq: number) => boolean;
+}
+
 /** The operations that undo an accepted patch in `content` (the tab's current view), and what is
- *  skipped. `newId` makes an id for a merged range put back (a used one is not taken again). */
-export function planUndo(content: Content, patch: PatchEntry[], before: PatchEntry[], newId: () => string): UndoPlan {
+ *  skipped. `newId` makes an id for a merged range put back (a used one is not taken again). The
+ *  operations come in the reverse order of what they undo (a merge that cleared a value: unmerged
+ *  first, then the value put back — the other way round the room refuses it). */
+export function planUndo(content: Content, patch: PatchEntry[], before: PatchEntry[], newId: () => string, opts: UndoOptions = {}): UndoPlan {
+  const plan = planForward(content, patch, before, newId, opts);
+  return { ops: plan.ops.reverse(), skipped: plan.skipped };
+}
+
+/** Deleting a sheet by undo (my new sheet, or my restore of one) only while nobody else worked on it
+ *  since and it holds nothing but what it was made with. */
+function sheetUntouched(content: Content, sid: string, opts: UndoOptions, created: any | null): boolean {
+  if (opts.touchedSince && opts.since !== undefined && opts.touchedSince(sid, opts.since)) return false;
+  const now = own(content.sheets, sid);
+  if (!now) return false;
+  if (created) return eq({ ...now, gone: false }, { ...created, gone: false });
+  return true;
+}
+
+function planForward(content: Content, patch: PatchEntry[], before: PatchEntry[], newId: () => string, opts: UndoOptions): UndoPlan {
   const ops: any[] = [];
   const skipped: Skipped[] = [];
   const all = pairs(patch, before);
@@ -158,6 +183,8 @@ export function planUndo(content: Content, patch: PatchEntry[], before: PatchEnt
       const sid = path[1];
       if (wrote.length && !was.length) {
         if (!cur.length || cur[0].gone) continue;
+        // my new sheet: deleted only while it is still just what I made (H9: never with someone's work on it)
+        if (!sheetUntouched(content, sid, opts, wrote[0])) { skipped.push({ reason: "sheet_changed", sheet: nameOf(content, sid), ref: null }); continue; }
         ops.push({ op: "sheet_delete", sheet: sid });
       }
       continue;
@@ -171,6 +198,7 @@ export function planUndo(content: Content, patch: PatchEntry[], before: PatchEnt
     if (path[0] === "sheets" && path.length === 3 && path[2] === "gone") {
       const sid = path[1];
       if (!eq(cur, wrote)) skipped.push({ reason: "changed", sheet: nameOf(content, sid), ref: null });
+      else if (was[0] && !sheetUntouched(content, sid, opts, null)) skipped.push({ reason: "sheet_changed", sheet: nameOf(content, sid), ref: null });
       else ops.push(was[0] ? { op: "sheet_delete", sheet: sid } : { op: "sheet_restore", sheet: sid });
       continue;
     }

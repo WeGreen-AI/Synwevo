@@ -21,6 +21,24 @@ export interface SheetRoom {
   destroy(): void;
 }
 
+/** Where everyone else is, from the room's awareness states: their own tabs left out, and each named
+ *  and coloured as the server knows them (hello, joined, patches) — not as their page claims: the
+ *  server checks only the id a selection is sent under. */
+export function othersFrom(states: Iterable<[number, any]>, ownClient: number, me: string | null,
+                           whoIs: (id: string) => { name: string | null; color: number | null } | null): OtherSelection[] {
+  const out: OtherSelection[] = [];
+  for (const [clientId, st] of states) {
+    if (clientId === ownClient) continue;
+    const u = st?.user, s = st?.sel;
+    if (!u || typeof u.id !== "string" || u.id === me || !s || typeof s.sheet !== "string") continue;
+    if (![s.r1, s.c1, s.r2, s.c2].every((x) => typeof x === "string")) continue;
+    const known = whoIs(u.id);
+    out.push({ user: { id: u.id, name: known?.name || "—", color: Number(known?.color) || 1 },
+      sel: { sheet: s.sheet, r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2, typing: !!s.typing } });
+  }
+  return out;
+}
+
 export function openSheetRoom(tid: string, opts: { origin: string; workspaceId: string | null }): SheetRoom {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let retry: number | null = null;
@@ -56,17 +74,7 @@ export function openSheetRoom(tid: string, opts: { origin: string; workspaceId: 
     retrying: () => retry,
     select(sel) { room.setField("sel", sel); },
     others() {
-      const out: OtherSelection[] = [];
-      const me = sync.me;
-      room.provider.awareness.getStates().forEach((st: any, clientId: number) => {
-        if (clientId === room.doc.clientID) return;
-        const u = st?.user, s = st?.sel;
-        if (!u || typeof u.id !== "string" || u.id === me || !s || typeof s.sheet !== "string") return;
-        if (![s.r1, s.c1, s.r2, s.c2].every((x) => typeof x === "string")) return;
-        out.push({ user: { id: u.id, name: String(u.name || "—"), color: Number(u.color) || 1 },
-          sel: { sheet: s.sheet, r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2, typing: !!s.typing } });
-      });
-      return out;
+      return othersFrom(room.provider.awareness.getStates(), room.doc.clientID, sync.me, (id) => sync.whoIs(id));
     },
     destroy() {
       if (timer) clearTimeout(timer);

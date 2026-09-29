@@ -15,6 +15,7 @@ import { openSheetRoom, type SheetRoom } from "../lib/sheetroom";
 import { COL_WIDTH, MAX_TX, ROW_HEIGHT, filled, liveSheetIds, projectSheet, type Content } from "../lib/sheetmodel";
 import { randomId, type Attention, type SyncSnapshot, type UndoResult } from "../lib/sheetsync";
 import { announcementText, attentionText, closeText, liveReasonText, retryText, saveRefusalText, saveText, skippedText, statusText } from "../lib/sheettext";
+import { aloneSaveBody, deletedSheets, editorMode, restoreName, sheetStillThere, statusKind, type StatusKind } from "../lib/sheetmode";
 
 interface Cell { v?: string | number | boolean | null; t?: string | null; s?: any }
 interface Field { id: string; name: string; kind: "cell" | "region" | "repeat"; ref?: string; row?: number; c1?: number; c2?: number; required?: boolean; empty_policy?: string }
@@ -86,7 +87,8 @@ export default function SheetEditor() {
   const [sheets, setSheets] = useState<SheetData[]>([newSheet("Sheet1")]);
   const [si, setSi] = useState(0);
   const [sel, setSel] = useState({ r1: 0, c1: 0, r2: 0, c2: 0 });
-  const [editing, setEditing] = useState<{ r: number; c: number; v: string } | null>(null);
+  // live, the cell editor belongs to the sheet it was opened on: deleted meanwhile, nothing is written elsewhere
+  const [editing, setEditing] = useState<{ r: number; c: number; v: string; sid?: string | null } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");                     // names the version this save creates (a checkpoint in the history)
@@ -119,21 +121,24 @@ export default function SheetEditor() {
 
   // ---- which mode: live once the room has said so; alone (CI-47) when it says not, or never answers
   const live = !!snap && snap.live && snap.status !== "single";
-  const liveMode = live && !forcedAlone;
+  const mode = editorMode({ live, forcedAlone, dirty, closedCode: snap?.closed?.code ?? null, wasLive: wasLive.current });
+  const liveMode = mode.liveMode;
+  // signed out while live: the table stays on the page as it was, read-only, with what did not reach the server
+  const showLive = liveMode || mode.signedOut;
   const decided = !tid || roomTimedOut || (!!snap && snap.status !== "connecting");
   const ready = loaded && decided;
-  const ro = liveMode && !!snap?.readonly;
-  const content: Content | null = liveMode && sroom ? sroom.sync.content : null;
+  const ro = (liveMode && !!snap?.readonly) || mode.signedOut;
+  const content: Content | null = showLive && sroom ? sroom.sync.content : null;
   const sids = content ? liveSheetIds(content) : [];
   const activeSid = content ? (liveSid && sids.includes(liveSid) ? liveSid : sids[0] ?? null) : null;
   const liveSheets = useMemo(
     () => (content ? sids.map((sid) => (sid === activeSid ? sheetOf(content, sid) : { ...NO_SHEET, name: content.sheets[sid].name ?? "" })) : []),
     // the content changes in place: its version says when
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [snap?.version, activeSid, liveMode],
+    [snap?.version, activeSid, showLive],
   );
-  const viewSheets = liveMode ? liveSheets : sheets;
-  const viewSi = liveMode ? Math.max(0, activeSid ? sids.indexOf(activeSid) : 0) : si;
+  const viewSheets = showLive ? liveSheets : sheets;
+  const viewSi = showLive ? Math.max(0, activeSid ? sids.indexOf(activeSid) : 0) : si;
   const sh = viewSheets[viewSi] || NO_SHEET;
   const liveSheet = content && activeSid ? content.sheets[activeSid] : null;
 
@@ -186,13 +191,15 @@ export default function SheetEditor() {
 
   // ---- live mode: coming in, leaving, and what the others do
   useEffect(() => {
-    // the room answered after the page gave up waiting and the person already typed alone: stay alone
-    if (live && roomTimedOut && dirty && !wasLive.current && !forcedAlone) {
-      setForcedAlone(true);
-      toast(tr("实时协同已连上，但你已经开始单人编辑：继续单人编辑，保存时按单元格合并。"), "info");
-    }
+    // live became possible while edits made alone are unsaved — the room answered after the page gave up
+    // waiting, or came back after single-person mode: stay alone until they are saved (going live
+    // would show the room's table instead and drop them)
+    if (!mode.holdAlone) return;
+    setForcedAlone(true);
+    toast(wasLive.current ? tr("实时协同已恢复，但你在单人编辑中有未保存的修改：继续单人编辑，保存后回到实时协同。")
+      : tr("实时协同已连上，但你已经开始单人编辑：继续单人编辑，保存时按单元格合并。"), "info");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live]);
+  }, [mode.holdAlone]);
   const prevLive = useRef(false);
   useEffect(() => {
     if (liveMode) {
@@ -207,11 +214,34 @@ export default function SheetEditor() {
       // from here the saved version, edited alone and merged on save
       prevLive.current = false;
       cancelEdit();
-      void loadTemplate(true);
+      // signed out (4401): loading would answer 401 and replace the page — and its list of unsent
+      // edits — with the sign-in page; the table stays as it was, read-only
+      if (!mode.signedOut) void loadTemplate(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveMode]);
   useEffect(() => { if (liveMode && sroom) sroom.sync.view(activeSid); }, [liveMode, activeSid, sroom]);
+  // the sheet on screen was deleted (by someone, or undone): say so, and what was being typed there is
+  // not written anywhere else
+  const shownSid = useRef<string | null>(null);
+  const myDelete = useRef<string | null>(null);
+  useEffect(() => {
+    if (!liveMode || !content) { shownSid.current = null; return; }
+    const was = shownSid.current;
+    shownSid.current = activeSid;
+    if (!was || was === activeSid || !content.sheets[was]?.gone) return;
+    const name = content.sheets[was].name ?? "";
+    setLiveSid(activeSid);                         // stays on the sheet shown now, even if that one comes back
+    select({ r1: 0, c1: 0, r2: 0, c2: 0 });
+    const ed = editingRef.current;
+    if (ed && ed.sid === was) {
+      cancelEdit();
+      if (ed.v) toast(tr("工作表「{v1}」已被删除，你在 {v2} 输入的「{v3}」没有写入。", { v1: name, v2: cellRef(ed.r, ed.c), v3: ed.v }), "err");
+    } else if (myDelete.current !== was) {
+      toast(tr("工作表「{v1}」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。", { v1: name }), "info");
+    }
+    myDelete.current = null;
+  });
   // tell the others where this tab is (row and column ids: stable while rows are added)
   const lastSel = useRef("");
   useEffect(() => {
@@ -233,9 +263,13 @@ export default function SheetEditor() {
   useEffect(() => {
     if (!liveMode || !sroom) return;
     let quiet = 0;
+    let kind: StatusKind | null = statusKind(sroom.sync.status());
     const timer = window.setInterval(() => {
+      const now = statusKind(sroom.sync.status());
+      const lead = now && kind && now !== kind ? [statusText(sroom.sync.status(), sroom.sync.pendingCount)] : [];
+      if (now) kind = now;
       const items = sroom.sync.takeAnnouncements();
-      if (items.length) { setSaid(items.slice(-3).map(announcementText).join("；")); quiet = 0; }
+      if (items.length || lead.length) { setSaid([...lead, ...items.slice(-3).map(announcementText)].join("；")); quiet = 0; }
       else if (++quiet === 3) setSaid("");                // said: an announcement is not left behind for later
     }, 2000);
     return () => window.clearInterval(timer);
@@ -278,17 +312,19 @@ export default function SheetEditor() {
   // Closing the tab or reloading with unsaved edits asks first (this editor had no guard at all);
   // live, only what has not reached the server yet is at risk (the room keeps the rest)
   const unsynced = liveMode ? snap?.pending ?? 0 : 0;
+  // signed out while live: what did not reach the server exists only in the list on this page
+  const stranded = mode.signedOut ? snap?.attention.length ?? 0 : 0;
   useEffect(() => {
-    const warn = (e: BeforeUnloadEvent) => { if (liveMode ? unsynced > 0 : dirty) e.preventDefault(); };
+    const warn = (e: BeforeUnloadEvent) => { if (liveMode ? unsynced > 0 : dirty || stranded > 0) e.preventDefault(); };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, liveMode, unsynced]);
+  }, [dirty, liveMode, unsynced, stranded]);
 
   // In-app navigation does not fire beforeunload, so 返回 asks itself.
   const back = async () => {
     if (liveMode) {
       if (unsynced > 0 && !(await confirm(tr("还有修改没有同步？"), tr("有 {count} 处修改还没有送到服务器，离开后会丢失。", { count: unsynced }), tr("仍然离开"), true))) return;
-    } else if (dirty && !(await confirm(tr("放弃未保存的修改？"), tr("模板有尚未保存的修改，离开后这些修改会丢失。"), tr("放弃修改并离开"), true))) return;
+    } else if ((dirty || stranded > 0) && !(await confirm(tr("放弃未保存的修改？"), tr("模板有尚未保存的修改，离开后这些修改会丢失。"), tr("放弃修改并离开"), true))) return;
     nav(projectId ? `/p/${projectId}` : "/");
   };
 
@@ -363,6 +399,13 @@ export default function SheetEditor() {
     editingRef.current = null;
     const { r, c, v } = cur0;
     if (liveMode) {
+      if (cur0.sid && (cur0.sid !== activeSid || !sheetStillThere(content, cur0.sid))) {
+        // opened on a sheet that is gone (or no longer shown): never written into another one
+        setEditing(null);
+        const name = cur0.sid && content?.sheets[cur0.sid] ? content.sheets[cur0.sid].name ?? "" : "";
+        if (v) toast(tr("工作表「{v1}」已被删除，你在 {v2} 输入的「{v3}」没有写入。", { v1: name, v2: cellRef(r, c), v3: v }), "err");
+        return;
+      }
       if (liveSheet && r < liveSheet.rows.length && c < liveSheet.cols.length) {
         const old = sh.cells[cellRef(r, c)];
         const same = (old?.v ?? "") === v && (old?.t ?? null) === (v && numeric(v) ? "number" : null);
@@ -488,12 +531,22 @@ export default function SheetEditor() {
   };
   const deleteSheet = async () => {
     if (liveMode) {
-      if (!(await confirm(tr("删除工作表「{v1}」？", { v1: sh.name }), tr("正在这张表上编辑的成员会一起看到它被删除；保存为版本之前，可以用撤销恢复。"), tr("删除工作表"), true))) return;
+      if (!(await confirm(tr("删除工作表「{v1}」？", { v1: sh.name }), tr("正在这张表上编辑的成员会一起看到它被删除；保存为版本之前，可以从「已删除的工作表」恢复。"), tr("删除工作表"), true))) return;
+      myDelete.current = activeSid;
       if (send([{ op: "sheet_delete", sheet: activeSid }])) chooseSheet(0);
       return;
     }
     setHist([...hist.slice(-50), sheets]); setSheets(sheets.filter((_, k) => k !== si)); chooseSheet(0); setDirty(true);
   };
+
+  const restoreSheet = (sid: string) => {
+    if (!liveMode || !content || !sid || !content.sheets[sid]?.gone) return;
+    const name = restoreName(content, sid);
+    if (send([{ op: "sheet_restore", sheet: sid, ...(name !== content.sheets[sid].name ? { name } : {}) }])) {
+      cancelEdit(); select({ r1: 0, c1: 0, r2: 0, c2: 0 }); setLiveSid(sid);
+    }
+  };
+  const gone = liveMode ? deletedSheets(content) : [];
 
   // The template's name is not part of the live table: live, it is renamed on its own.
   const renameTemplate = async () => {
@@ -520,7 +573,7 @@ export default function SheetEditor() {
       toast(msg, tone);
       setNote("");
     } catch (e: any) {
-      toast(saveRefusalText(e) || errorText(e), "err");
+      toast(saveRefusalText(e, !!snap?.stale) || errorText(e), "err");
     } finally {
       setBusy(false);
     }
@@ -532,13 +585,12 @@ export default function SheetEditor() {
     setBusy(true);
     try {
       const editor = { sheets };
-      // a tab that was live and now edits alone says so: the room may still be live for others (docs-sheet-live.md §3)
-      const solo = wasLive.current || forcedAlone ? { solo: true } : {};
       // Someone else's save since this template was loaded is merged cell by cell on the server;
       // only a cell, a field or a sheet's layout both sides changed comes back as a conflict.
       const send1 = async (base: number | null) => {
         try {
-          return await put(`/api/templates/${tid}/builtin`, { editor, name, ...solo, ...(note.trim() ? { note: note.trim() } : {}), ...(base ? { base_version: base } : {}) });
+          // saved alone: `solo` always — the room may be live for others (docs-sheet-live.md §3)
+          return await put(`/api/templates/${tid}/builtin`, aloneSaveBody(editor, name, note, base));
         } catch (e: any) {
           const conflicts: any[] | undefined = e?.code === "stale_template" ? e.detail?.conflicts : undefined;
           if (!conflicts?.length) throw e;
@@ -547,7 +599,7 @@ export default function SheetEditor() {
           const mine = await confirm(tr("表格有冲突"), tr("其他成员在你之后也保存了这个模板。没有冲突的单元格已可合并；下面这些双方都动过，请选择保留哪一方：{v1}", { v1: list }), tr("以我的为准"), true);
           if (!mine) return null;
           const forceIds = conflicts.map((c) => (c.kind === "cell" ? `cell:${c.sheet}!${c.ref}` : c.kind === "field" ? `field:${c.id}` : c.kind === "layout" ? `layout:${c.sheet}` : `sheet:${c.sheet}`));
-          return await put(`/api/templates/${tid}/builtin`, { editor, name, ...solo, ...(note.trim() ? { note: note.trim() } : {}), ...(base ? { base_version: base } : {}), force_ids: forceIds });
+          return await put(`/api/templates/${tid}/builtin`, aloneSaveBody(editor, name, note, base, forceIds));
         }
       };
       const t = tid
@@ -557,6 +609,7 @@ export default function SheetEditor() {
       baseVersion.current = loadedVersion(t);
       savedName.current = t.name ?? name;
       setDirty(false);
+      setForcedAlone(false);                       // saved: nothing of this tab's own is left to keep it alone
       setNote("");
       if (t.unchanged) toast(tr("内容与已保存的第 {v1} 版相同，无需新版本", { v1: t.version.no }), "info");
       else toast(t.merged_with ? tr("已保存并与第 {v1} 版合并（{v2} 个字段，v{v3}）", { v1: t.merged_with, v2: t.version.slots.length, v3: t.version.no }) : tr("已保存（{v1} 个字段，v{v2}）", { v1: t.version.slots.length, v2: t.version.no }), "ok");
@@ -576,8 +629,8 @@ export default function SheetEditor() {
   for (const m of sh.merges) { const x = parseRef(m); for (let r = x.r1; r <= x.r2; r++) for (let c = x.c1; c <= x.c2; c++) covered.set(cellRef(r, c), m); }
   const fieldAt = (r: number, c: number) => sh.fields.find((f) => { const x = fieldRect(f); return r >= x.r1 && r <= x.r2 && c >= x.c1 && c <= x.c2; });
   // live: where the others are on this sheet, and which cells they just changed
-  const rowIndex = useMemo(() => new Map((liveSheet?.rows ?? []).map((x, i) => [x, i])), [snap?.version, activeSid, liveMode]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const colIndex = useMemo(() => new Map((liveSheet?.cols ?? []).map((x, i) => [x, i])), [snap?.version, activeSid, liveMode]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const rowIndex = useMemo(() => new Map((liveSheet?.rows ?? []).map((x, i) => [x, i])), [snap?.version, activeSid, showLive]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const colIndex = useMemo(() => new Map((liveSheet?.cols ?? []).map((x, i) => [x, i])), [snap?.version, activeSid, showLive]);   // eslint-disable-line react-hooks/exhaustive-deps
   const others = liveMode && sroom && activeSid ? sroom.others().filter((o) => o.sel.sheet === activeSid) : [];
   const dots = liveMode && sroom ? sroom.sync.changedSheets() : new Map<string, Set<string>>();
 
@@ -598,7 +651,7 @@ export default function SheetEditor() {
     if (isImeKey(e)) {
       // An input method starting on the grid: open the cell editor and let the composition
       // continue there, rather than turning the keystroke into a character of its own.
-      setEditing({ r: sel.r1, c: sel.c1, v: "" });
+      setEditing({ r: sel.r1, c: sel.c1, v: "", sid: activeSid });
       return;
     }
     if (e.key === "Delete" || e.key === "Backspace") {
@@ -609,10 +662,10 @@ export default function SheetEditor() {
         send(ops);
       } else mutate((s) => { for (const ref of cellsInSel()) if (s.cells[ref]) delete s.cells[ref].v; return s; });
     } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
-      setEditing({ r: sel.r1, c: sel.c1, v: e.key });
+      setEditing({ r: sel.r1, c: sel.c1, v: e.key, sid: activeSid });
       e.preventDefault();
     } else if (e.key === "F2") {
-      setEditing({ r: sel.r1, c: sel.c1, v: cur.v == null ? "" : String(cur.v) });
+      setEditing({ r: sel.r1, c: sel.c1, v: cur.v == null ? "" : String(cur.v), sid: activeSid });
     }
   };
 
@@ -626,7 +679,8 @@ export default function SheetEditor() {
 
   const showSync = liveMode || wasLive.current;
   const retry = sroom?.retrying() ?? null;
-  const notice = snap?.closed && wasLive.current ? { tone: "err", text: closeText(snap.closed.code, snap.closed.reason) }
+  const notice = mode.signedOut && stranded > 0 ? { tone: "err", text: tr("登录已失效：实时协同已停止。下面没有同步的修改只在这个页面里：先复制需要的值，再重新登录并刷新。") }
+    : snap?.closed && wasLive.current ? { tone: "err", text: closeText(snap.closed.code, snap.closed.reason) }
     : wasLive.current && !liveMode && snap && !snap.live && snap.liveReason ? { tone: "info", text: liveReasonText(snap.liveReason) }
     : !wasLive.current && snap && snap.status === "single" && !snap.live && snap.liveReason ? { tone: "info", text: liveReasonText(snap.liveReason) }
     : null;
@@ -644,7 +698,7 @@ export default function SheetEditor() {
         {!ready ? <span className="badge info" role="status">{tr("加载中…")}</span>
           : (liveMode ? room.dirty : dirty) ? <span className="badge warn" role="status">{tr("未保存")}</span> : <span className="badge ok" role="status">{tr("已保存")}</span>}
         {showSync && snap && (
-          <span className={`badge ${snap.status === "live" ? "ok" : snap.status === "offline" || snap.status === "single" ? "warn" : "info"}`} role="status" data-testid="sheet-sync"
+          <span className={`badge ${snap.status === "live" ? "ok" : snap.status === "offline" || snap.status === "single" ? "warn" : "info"}`} data-testid="sheet-sync"
             title={snap.status === "offline" ? retryText(retry ?? 1006) : snap.status === "live" && snap.persisted < snap.seq ? tr("服务器正在保存草稿") : undefined}>
             {statusText(snap.status, snap.pending)}
           </span>
@@ -742,7 +796,7 @@ export default function SheetEditor() {
                     boxShadow: f ? `inset 0 0 0 2px ${COLORS[fi % COLORS.length]}` : undefined }}
                   onMouseDown={(e) => { if (e.button !== 0) return; e.preventDefault(); if (editing) commit(); gridRef.current?.focus({ preventScroll: true }); const p = { r: ri, c: ci }; const anchor = e.shiftKey ? cursor.current.anchor : p; drag.current = anchor; cursor.current = { anchor, active: p }; setSel(rectOf(anchor, p)); }}
                   onMouseEnter={() => { if (drag.current) { const d = drag.current; cursor.current = { anchor: d, active: { r: ri, c: ci } }; setSel(rectOf(d, cursor.current.active)); } }}
-                  onDoubleClick={() => { if (!ro) setEditing({ r: ri, c: ci, v: cell.v == null ? "" : String(cell.v) }); }}
+                  onDoubleClick={() => { if (!ro) setEditing({ r: ri, c: ci, v: cell.v == null ? "" : String(cell.v), sid: activeSid }); }}
                   title={f ? tr("字段：{v1}", { v1: f.name }) : recent?.by.name ? tr("{v1} 刚修改", { v1: recent.by.name }) : undefined}>
                   {f && ((f.kind === "repeat" && ci === f.c1) || (f.kind !== "repeat" && ref === (f.ref || "").split(":")[0])) && <span className="fldchip" style={{ background: COLORS[fi % COLORS.length], position: "absolute", left: 1, top: 1 }}>{f.name}</span>}
                   <span style={{ paddingLeft: f ? 4 : 0 }}>{shown(cell.v)}</span>
@@ -808,6 +862,12 @@ export default function SheetEditor() {
         })}
         {!ro && <button type="button" className="sheettab" onClick={addSheet} aria-label={tr("添加工作表")}>＋</button>}
         {!ro && viewSheets.length > 1 && <button type="button" className="sheettab" onClick={deleteSheet}>{tr("删除当前表")}</button>}
+        {!ro && gone.length > 0 && (
+          <select className="input sm" value="" onChange={(e) => restoreSheet(e.target.value)} aria-label={tr("恢复已删除的工作表")} data-testid="sheet-restore" style={{ alignSelf: "center", width: "auto" }}>
+            <option value="">{tr("已删除的工作表（{count}）", { count: gone.length })}</option>
+            {gone.map((g) => <option key={g.sid} value={g.sid}>{tr("恢复「{v1}」", { v1: g.name })}</option>)}
+          </select>
+        )}
         <span className="tiny muted" style={{ alignSelf: "center", marginLeft: 8 }}>{tr("双击单元格或直接输入以编辑；双击工作表标签可重命名")}</span>
       </div>
     </div>

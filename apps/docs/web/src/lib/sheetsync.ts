@@ -17,23 +17,30 @@
  *    still knows) not received. For a client the server has forgotten (`resumed: false`) the outcome
  *    is unknown: an operation that can be repeated safely (writing a value, a style, a size — the
  *    server answers "already so" or a conflict) is sent again; one that cannot (adding rows or
- *    columns) is handed to the person, never resent automatically;
+ *    columns) is handed to the person, never resent automatically. A message first sent on the
+ *    connection it is answered `forgotten` on was certainly never applied: it is renumbered and sent;
  *  - every frame the tab sends is answered exactly once, in order (an `ack`, or `full` for `sync`), so
  *    an answer belongs to the oldest frame on the wire — also the `n: null` answers to frames the
  *    server refused unread, and the late `stale_epoch` of a frame sent before a restart;
  *  - `busy` / `rate_limited`: the same message again after `retry_after` (the server did not record
- *    it); `resync`: `number_ahead` renumbers from `next`, `forgotten` as for a forgotten client,
- *    `unknown_expect` sends it again against what the tab has seen, `expect_too_old` goes to the person.
+ *    it, nor anything this connection sent after it); `resync`: `number_ahead` renumbers from `next`,
+ *    `unknown_expect` sends it again against what the tab has seen, `expect_too_old` goes to the person;
+ *  - an acknowledged change stays with the tab until `persisted` covers it: a server that comes back
+ *    from an older draft (same epoch, a lower `seq` than the tab had seen) lost it — it is sent again,
+ *    and everything queued is sent against what that server has (`expect` lowered to its `seq`), so a
+ *    newer value written after the restart is a conflict, never silently overwritten.
  *
  *  Refusals and conflicts go to "needs you" (`attention`) with what the server said and whose value
- *  it was, and — for a conflict — the choice "use my value" (sent again against what is there now)
- *  or "keep theirs". Undo is per person, from the server's own inverse, skipping what others changed
- *  since (`sheetundo.planUndo`).
+ *  it was — for a conflict, every cell of the operation someone else changed since the person acted,
+ *  not only the first the server met — and the choice "use my value" (sent again against what is
+ *  there now) or "keep theirs". Undo is per person, from the server's own inverse, skipping what
+ *  others changed since (`sheetundo.planUndo`); pressed while the change on top is still on its way,
+ *  it undoes that change — taken off the queue when not sent yet, undone once answered otherwise.
  *
  *  Pure: no socket and no clock of its own. The page wires it to the room (`sheetroom.ts`), which
  *  passes frames in and sends what it hands out. */
-import { applyOp, applyPatch, cellRef, copy, isDict, own, Unpredictable, type Content, type PatchEntry } from "./sheetmodel.ts";
-import { planUndo, type Skipped } from "./sheetundo.ts";
+import { applyOp, applyPatch, cellRef, copy, eq, isDict, own, Unpredictable, type Content, type PatchEntry } from "./sheetmodel.ts";
+import { at, planUndo, type Skipped } from "./sheetundo.ts";
 
 export type SyncStatus = "connecting" | "live" | "syncing" | "offline" | "single";
 
@@ -51,33 +58,54 @@ interface Pending {
   epoch: string;
   n: number | null;
   inFlight: boolean;
+  /** the connection it was first sent on (a `forgotten` answer on that same one: never applied) */
+  connNo: number | null;
+  /** renumbered although it may have been applied (a forgotten client resending it) */
+  uncertain: boolean;
   /** its effect in what the tab shows; null while not shown (predicted refusal, or not predictable) */
   local: { patch: PatchEntry[]; before: PatchEntry[] } | null;
+  /** what the person saw of the objects it writes when they did it (the prediction's inverse then) */
+  saw: PatchEntry[] | null;
   predicted: string | null;
   label: OpLabel;
   undoable: boolean;
+  /** undo was pressed while it was on its way: undone once answered */
+  undoRequested: boolean;
+  /** an undo: the entry it undoes (back on the stack when it is refused) */
+  undoOf: UndoEntry | null;
 }
 
 /** A frame on the wire, waiting for its answer. `p` is null once its operation was voided (restart). */
 type Wire = { kind: "op"; p: Pending | null; n: number } | { kind: "sync" };
 
 export type AttentionKind = "conflict" | "refused" | "unknown" | "dropped" | "overwritten";
+/** A cell of an operation someone else changed after the person acted (reported with a conflict). */
+export interface ChangedCell { sheet: string | null; ref: string | null; theirs: any }
 export interface Attention {
   id: number;
   kind: AttentionKind;
   code: string;
+  /** the server's detail; `also`: the other cells of the operation changed since (ChangedCell[]) */
   detail: Record<string, any>;
   people: Record<string, Person>;
   label: OpLabel;
-  /** "use my value": what is sent again (against what the tab shows by then), when it makes sense */
+  /** "use my value": what is sent again, when it makes sense */
   retry: any | null;
+  /** what the tab had seen when the person was told (epoch and sequence number): "use my value" is
+   *  sent against that — a cell someone changes after the person read this is a new conflict, never
+   *  silently replaced (H2) */
+  seen?: { epoch: string | null; seq: number };
 }
 
-export interface UndoEntry { patch: PatchEntry[]; before: PatchEntry[]; label: OpLabel; epoch: string }
-/** What an undo did: whether operations were sent, and what was left alone (and why). */
-export interface UndoResult { sent: boolean; skipped: Skipped[]; label: OpLabel }
+export interface UndoEntry { patch: PatchEntry[]; before: PatchEntry[]; label: OpLabel; epoch: string; seq: number }
+/** What an undo did: whether operations were sent, and what was left alone (and why). `cancelled`:
+ *  the change never reached the room (taken off the queue, or refused) — nothing to say. */
+export interface UndoResult { sent: boolean; skipped: Skipped[]; label: OpLabel; cancelled?: boolean }
 export interface Recent { by: Person; until: number }
 export interface Announcement { by: string | null; where: string; count: number }
+
+/** A change of mine the server acknowledged but has not yet written to its draft. */
+interface Acked { seq: number; op: any; label: OpLabel; undoable: boolean }
 
 export interface SyncSnapshot {
   status: SyncStatus;
@@ -122,13 +150,18 @@ export function randomId(): string {
   return Array.from(bytes, (b) => B36[b % 36]).join("");
 }
 
-/** The sheet name, A1 reference and value an operation is about, in `content` as it is now. */
+const CELL_OPS = new Set(["set", "clear", "style"]);
+
+/** The sheet name, A1 reference and value an operation is about, in `content` as it is now. A group
+ *  is named by the cell it writes (typing at the edge is [add rows, write the cell]). */
 export function labelOf(content: Content | null, op: any): OpLabel {
   const kind = isDict(op) ? String(op.op) : "invalid";
   if (!content || !isDict(op)) return { kind, sheet: null, ref: null };
   if (kind === "tx" && Array.isArray(op.ops) && op.ops.length) {
-    const first = labelOf(content, op.ops[0]);
-    return { ...first, kind: op.ops.length > 1 ? "tx" : first.kind };
+    const cells = op.ops.filter((o: any) => isDict(o) && CELL_OPS.has(o.op));
+    const main = cells.length === 1 ? cells[0] : cells.length ? cells[0] : op.ops[0];
+    const first = labelOf(content, main);
+    return { ...first, kind: op.ops.length > 1 ? "tx" : first.kind, value: cells.length === 1 ? first.value : cells.length ? null : first.value };
   }
   let sid: string | null = typeof op.sheet === "string" ? op.sheet : null;
   if (!sid && typeof op.field === "string") sid = own(content.fields, op.field)?.sheet ?? null;
@@ -152,6 +185,22 @@ export function labelOf(content: Content | null, op: any): OpLabel {
   return { kind, sheet: sh ? sh.name : null, ref, value, name };
 }
 
+/** A cell by ids as the person reads it: sheet name and A1. */
+function cellLabel(content: Content | null, sid: string, ck: string): { sheet: string | null; ref: string | null } {
+  const sh = content ? own(content.sheets, sid) : null;
+  if (!sh) return { sheet: null, ref: null };
+  const i = ck.indexOf(":");
+  const r = sh.rows.indexOf(ck.slice(0, i)), c = sh.cols.indexOf(ck.slice(i + 1));
+  return { sheet: sh.name, ref: r >= 0 && c >= 0 ? cellRef(r, c) : null };
+}
+
+const valuePart = (cell: any): Record<string, any> | null => {
+  if (!isDict(cell)) return null;
+  const v: Record<string, any> = {};
+  for (const k of ["v", "t"]) if (Object.hasOwn(cell, k)) v[k] = cell[k];
+  return Object.keys(v).length ? v : null;
+};
+
 export class SheetSync {
   private send: (frame: Record<string, any>) => void;
   private now: () => number;
@@ -164,14 +213,17 @@ export class SheetSync {
   private attnNo = 0;
   private nextN = 1;
   private waitUntil = 0;
+  private needFull = false;
+  private connNo = 0;
   private listeners = new Set<(s: SyncSnapshot) => void>();
   private recent = new Map<string, Recent>();
   private dots = new Map<string, Set<string>>();
+  /** the last sequence number at which another tab changed each sheet (undo never deletes that work) */
+  private touched = new Map<string, number>();
   private prevOutside = new Map<string, any>();
   private undoStack: UndoEntry[] = [];
-  private undoWanted = 0;
-  /** The result of an undo asked for while my change was on its way (null: that change did not
-   *  happen after all, so there was nothing to undo). */
+  private acked: Acked[] = [];
+  /** The result of an undo pressed while my change was on its way, once it is known. */
   onUndone: ((r: UndoResult | null) => void) | null = null;
   private announceQueue: Announcement[] = [];
   private viewing: string | null = null;
@@ -182,6 +234,9 @@ export class SheetSync {
   stale = false;
   readonly = false;
   epoch: string | null = null;
+  /** the load of the room this tab last joined (the room's `loaded.id`): a different one in the same
+   *  epoch means the room was opened again from storage */
+  boot: string | null = null;
   seq = 0;
   persisted = 0;
   connected = false;
@@ -192,7 +247,7 @@ export class SheetSync {
   limits: Limits | null = null;
   attention: Attention[] = [];
   version = 0;
-  /** people by id (from hello, patches and refusals): names in sentences */
+  /** people by id (from hello, patches and refusals — the server's names): names in sentences */
   people = new Map<string, Person>();
 
   constructor(opts: SyncOptions) {
@@ -217,7 +272,8 @@ export class SheetSync {
     return {
       status: this.status(), pending: this.pending.length, live: this.live, liveReason: this.liveReason, stale: this.stale,
       readonly: this.readonly, epoch: this.epoch, seq: this.seq, persisted: this.persisted, version: this.version,
-      attention: [...this.attention], canUndo: this.undoStack.some((u) => u.epoch === this.epoch) || this.pending.some((p) => p.undoable),
+      attention: [...this.attention],
+      canUndo: this.undoStack.some((u) => u.epoch === this.epoch) || this.pending.some((p) => p.undoable && !p.undoRequested),
       closed: this.closed, limits: this.limits,
     };
   }
@@ -249,7 +305,9 @@ export class SheetSync {
   /** Others' changes since the last call, for screen readers (the page throttles them). */
   takeAnnouncements(): Announcement[] { const out = this.announceQueue; this.announceQueue = []; return out; }
   /** When `flush()` should run again (the wait the server asked for), or null. */
-  wakeAt(): number | null { return this.waitUntil > this.now() && this.pending.some((p) => !p.inFlight) ? this.waitUntil : null; }
+  wakeAt(): number | null {
+    return this.waitUntil > this.now() && (this.needFull || this.pending.some((p) => !p.inFlight)) ? this.waitUntil : null;
+  }
   whoIs(id: string | null | undefined): Person | null { return id ? this.people.get(id) ?? null : null; }
 
   // ------------------------------------------------------------------ connection
@@ -279,15 +337,21 @@ export class SheetSync {
   canWrite(): boolean { return this.live && !this.readonly && !this.closed && !!this.base; }
 
   /** Show `op` now and send it (when connected). Returns false when it cannot be written here. */
-  submit(op: any, opts: { undoable?: boolean; label?: OpLabel } = {}): boolean {
+  submit(op: any, opts: { undoable?: boolean; label?: OpLabel; expect?: number; undoOf?: UndoEntry } = {}): boolean {
     if (!this.canWrite() || !this.epoch) return false;
-    const p: Pending = { id: ++this.seqNo, op, expect: this.seq, epoch: this.epoch, n: null, inFlight: false, local: null, predicted: null,
-      label: opts.label ?? labelOf(this.base, op), undoable: opts.undoable ?? true };
-    this.show(p);
+    const p = this.queue(op, opts);
     this.pending.push(p);
+    this.show(p);
+    p.saw = p.local ? p.local.before : null;
     this.changed(true);
     this.flush();
     return true;
+  }
+
+  private queue(op: any, opts: { undoable?: boolean; label?: OpLabel; expect?: number; undoOf?: UndoEntry }): Pending {
+    return { id: ++this.seqNo, op, expect: opts.expect ?? this.seq, epoch: this.epoch!, n: null, inFlight: false, connNo: null, uncertain: false,
+      local: null, saw: null, predicted: null, label: opts.label ?? labelOf(this.base, op), undoable: opts.undoable ?? true,
+      undoRequested: false, undoOf: opts.undoOf ?? null };
   }
 
   /** The tab's prediction of an operation, applied to what it shows. */
@@ -317,19 +381,29 @@ export class SheetSync {
   flush() {
     if (!this.connected || !this.greeted || !this.live || this.closed || !this.epoch) return;
     if (this.waitUntil > this.now()) return;
-    for (const p of this.pending) {
+    if (this.needFull) this.requestFull();
+    let lastInFlight = -1;
+    this.pending.forEach((p, i) => { if (p.inFlight) lastInFlight = i; });
+    for (let i = 0; i < this.pending.length; i++) {
+      const p = this.pending[i];
       if (p.inFlight) continue;
+      // a change refused for now (busy, rate limited) goes again only once nothing sent after it is
+      // still on its way: the room refuses those too (it holds the tab's later messages until the
+      // refused one is back), and they go again after it, in the order they were made (H1)
+      if (i < lastInFlight) break;
       if (this.wire.length >= this.window) break;
       if (p.n === null) p.n = this.nextN++;
+      if (p.connNo === null) p.connNo = this.connNo;
       p.inFlight = true;
       this.wire.push({ kind: "op", p, n: p.n });
       this.send({ type: "op", epoch: p.epoch, n: p.n, expect: p.expect, op: p.op });
     }
   }
 
-  /** Ask for the whole state again (answered with `full`). */
+  /** Ask for the whole state again (answered with `full`); later when the tab cannot ask now. */
   requestFull() {
-    if (!this.connected || !this.greeted) return;
+    if (!this.connected || !this.greeted || this.waitUntil > this.now()) { this.needFull = true; return; }
+    this.needFull = false;
     this.wire.push({ kind: "sync" });
     this.send({ type: "sync" });
   }
@@ -339,7 +413,13 @@ export class SheetSync {
     if (!isDict(frame)) return;
     switch (frame.type) {
       case "hello": this.onHello(frame); break;
-      case "persisted": if (frame.epoch === this.epoch && typeof frame.seq === "number") { this.persisted = Math.max(this.persisted, frame.seq); this.changed(); } break;
+      case "persisted":
+        if (frame.epoch === this.epoch && typeof frame.seq === "number") {
+          this.persisted = Math.max(this.persisted, frame.seq);
+          this.acked = this.acked.filter((a) => a.seq > this.persisted);
+          this.changed();
+        }
+        break;
       case "live": this.onLive(frame); break;
       case "overwritten": this.onOverwritten(frame); break;
       case "role": if (typeof frame.readonly === "boolean") { this.readonly = frame.readonly; this.changed(); } break;
@@ -374,6 +454,7 @@ export class SheetSync {
     this.helloSeen = true;
     this.connected = true;
     this.greeted = true;
+    this.connNo++;
     this.wire = [];
     if (isDict(h.user) && h.user.id) { this.me = h.user.id; this.people.set(h.user.id, { id: h.user.id, name: h.user.name ?? null, color: h.user.color ?? null }); }
     for (const p of Array.isArray(h.peers) ? h.peers : []) if (isDict(p) && p.id) this.people.set(p.id, { id: p.id, name: p.name ?? null, color: p.color ?? null });
@@ -389,12 +470,37 @@ export class SheetSync {
     this.take(h, h.resumed === true);
   }
 
-  /** A whole state from the server (hello or full): resolve what was sent and not answered from `outcomes`. */
+  /** The room's whole state on (re)connecting: resolve what was sent and not answered from
+   *  `outcomes`; after a server that came back from an older draft, send again what it lost. */
   private take(f: any, resumed: boolean) {
     const epoch: string = f.epoch;
+    const seq: number = typeof f.seq === "number" ? f.seq : 0;
+    // the room's load (a fresh id each time it is opened from storage) and the seq it was loaded at
+    const loaded = isDict(f.loaded) && typeof f.loaded.id === "string" && typeof f.loaded.seq === "number" ? f.loaded as { id: string; seq: number } : null;
+    const reloaded = !!loaded && this.boot !== null && loaded.id !== this.boot && epoch === this.epoch;
+    if (loaded) this.boot = loaded.id;
+    let lost: Acked[] = [];
     if (this.epoch !== null && epoch !== this.epoch) {
-      this.drop("dropped", "reset", this.pending);          // restarted while away: nothing of it applies
+      // restarted while away (a version put in, or a draft that could not be read): nothing of the
+      // previous epoch applies — the queue and what was acknowledged but not yet kept go to the person
+      const gone = this.acked.filter((a) => a.seq > this.persisted);
+      for (const a of gone) this.attention.push({ id: ++this.attnNo, kind: "dropped", code: "lost", detail: {}, people: {}, label: a.label, retry: null });
+      this.drop("dropped", "reset", this.pending);
       this.undoStack = [];
+      this.acked = [];
+      this.touched.clear();
+    } else if (this.epoch !== null && (reloaded || seq < this.seq)) {
+      // the same epoch, loaded again from storage: the server came back from its last draft (a
+      // process that died without its closing write). What it had acknowledged after the seq it was
+      // loaded at is gone — also when others have filled those numbers again since — and is sent again
+      // below; what is queued is sent against the history as it is now: a value written after the
+      // restart is a conflict, not silently replaced (H4, H10)
+      const from = reloaded ? Math.min(loaded!.seq, seq) : seq;
+      lost = this.acked.filter((a) => a.seq > from);
+      this.acked = this.acked.filter((a) => a.seq <= from);
+      this.undoStack = this.undoStack.filter((u) => u.seq <= from);
+      for (const p of this.pending) p.expect = Math.min(p.expect, from);
+      for (const a of this.attention) if (a.seen) a.seen.seq = Math.min(a.seen.seq, from);
     }
     this.epoch = epoch;
     const outcomes: Record<string, any> = isDict(f.outcomes) ? f.outcomes : {};
@@ -407,25 +513,31 @@ export class SheetSync {
       if (o === true) applied.push(p);
       else if (typeof o === "string" && o !== "busy" && o !== "rate_limited") refused.push([p, o]);
       else if (!resumed) {
-        if (repeatable(p.op)) p.n = null;          // safe to send again: "already so" or a conflict
+        if (repeatable(p.op)) { p.n = null; p.uncertain = true; }  // safe to send again: "already so" or a conflict
         else unknown.push(p);
-      } else p.n = null;                            // never received: renumbered from `next`
+      } else p.n = null;                                            // never received: renumbered from `next`
     }
-    for (const p of applied) if (p.undoable && p.local && p.local.patch.length) this.pushUndo(p.local.patch, p.local.before, p.label);
     const gone = new Set<Pending>([...applied, ...refused.map(([p]) => p), ...unknown]);
-    if (this.undoWanted && [...refused.map(([p]) => p), ...unknown].some((p) => p.undoable)) {
-      this.undoWanted = 0;                                           // the change an undo waited for did not happen (or may not have)
-      this.onUndone?.(null);
+    for (const [p, code] of refused) {
+      if (p.undoRequested) this.onUndone?.({ sent: false, skipped: [], label: p.label, cancelled: true });
+      else this.addAttention(code === "conflict" ? "conflict" : "refused", code, {}, {}, p);
     }
-    for (const [p, code] of refused) this.addAttention(code === "conflict" ? "conflict" : "refused", code, {}, {}, p);
-    for (const p of unknown) this.addAttention("unknown", "unknown", {}, {}, p);
+    for (const p of unknown) this.addAttention("unknown", "unknown", {}, {}, p, p.undoRequested ? null : undefined);
     this.pending = this.pending.filter((p) => !gone.has(p));
     this.base = copy(f.content);
-    this.seq = typeof f.seq === "number" ? f.seq : 0;
+    this.seq = seq;
     this.nextN = Math.max(next, 1);
     this.waitUntil = 0;
+    // what the server had acknowledged and lost goes first: it came before everything queued
+    const again = lost.map((a) => this.queue(a.op, { label: a.label, undoable: a.undoable, expect: reloaded ? Math.min(loaded!.seq, seq) : seq }));
+    this.pending = [...again, ...this.pending];
     for (const p of this.pending) this.show(p);
-    this.runDeferredUndo();
+    for (const p of again) p.saw = p.local ? p.local.before : null;
+    for (const p of applied) {
+      if (!p.local || !p.local.patch.length) continue;
+      if (p.undoRequested) this.undoFrom({ patch: p.local.patch, before: p.local.before, label: p.label, epoch, seq });
+      else if (p.undoable) this.pushUndo(p.local.patch, p.local.before, p.label, seq);
+    }
     this.changed(true);
     this.flush();
   }
@@ -436,6 +548,7 @@ export class SheetSync {
     if (this.pending.length) this.drop("dropped", "not_live", this.pending);
     this.base = null;
     this.undoStack = [];
+    this.acked = [];
     this.changed(true);
   }
 
@@ -465,6 +578,8 @@ export class SheetSync {
     for (const w of this.wire) if (w.kind === "op") w.p = null;
     this.drop("dropped", "reset", this.pending);
     this.undoStack = [];
+    this.acked = [];
+    this.touched.clear();
     this.epoch = f.epoch;
     this.base = copy(f.content);
     this.seq = typeof f.seq === "number" ? f.seq : 0;
@@ -480,7 +595,15 @@ export class SheetSync {
     const by: Person = isDict(f.by) ? { id: f.by.id ?? null, name: f.by.name ?? null, color: f.by.color ?? null, system: !!f.by.system } : { id: null, name: null, color: null };
     if (by.id) this.people.set(by.id, by);
     const outside = isDict(f.outside);
+    const seq = typeof f.seq === "number" ? f.seq : this.seq;
     this.rebase(() => {
+      // which sheets another tab (another person, an outside version, or my other tab) just worked on
+      for (const e of f.patch as PatchEntry[]) {
+        let sid: string | null = null;
+        if (e.p[0] === "sheets" && e.p.length >= 2) sid = e.p[1];
+        else if ((e.p[0] === "merges" || e.p[0] === "fields") && e.p.length === 2) sid = (isDict(e.v) ? e.v.sheet : null) ?? own(own(this.base![e.p[0] as "merges" | "fields"], e.p[1]), "sheet") ?? null;
+        if (sid) this.touched.set(sid, Math.max(this.touched.get(sid) ?? 0, seq));
+      }
       if (outside) {
         // an outside version may replace someone's values: keep what they were ("use my value")
         this.prevOutside.clear();
@@ -492,9 +615,9 @@ export class SheetSync {
         }
       }
       applyPatch(this.base!, f.patch);
-      if (typeof f.seq === "number") this.seq = f.seq;
+      this.seq = seq;
     });
-    this.markRecent(f.patch, by);
+    if (!by.id || by.id !== this.me) this.markRecent(f.patch, by);       // my own other tab is not "someone else"
     this.changed(true);
   }
 
@@ -510,12 +633,8 @@ export class SheetSync {
         this.recent.set(`${e.p[1]}|${e.p[3]}`, { by, until });
         cells++;
         if (!first) {
-          const sh = own(this.base!.sheets, e.p[1]);
-          const i = e.p[3].indexOf(":");
-          if (sh) {
-            const r = sh.rows.indexOf(e.p[3].slice(0, i)), c = sh.cols.indexOf(e.p[3].slice(i + 1));
-            if (r >= 0 && c >= 0) first = sh.name && Object.keys(this.base!.sheets).length > 1 ? `${sh.name}!${cellRef(r, c)}` : cellRef(r, c);
-          }
+          const l = cellLabel(this.base, e.p[1], e.p[3]);
+          if (l.ref) first = l.sheet && Object.keys(this.base!.sheets).length > 1 ? `${l.sheet}!${l.ref}` : l.ref;
         }
       }
     }
@@ -555,9 +674,11 @@ export class SheetSync {
     const w = this.wire.shift();
     if (!w) return;
     if (w.kind === "sync") {
-      // a `sync` refused for now (rate limited): ask again after the wait
+      // a `sync` refused for now (rate limited): asked again after the wait
       const wait = isDict(a.detail) && typeof a.detail.retry_after === "number" ? a.detail.retry_after : 1;
       this.waitUntil = Math.max(this.waitUntil, this.now() + Math.ceil(wait * 1000));
+      this.needFull = true;
+      this.changed();
       return;
     }
     const p = w.p;
@@ -569,6 +690,7 @@ export class SheetSync {
         // applied before, its answer remembered only in short: keep what the tab shows and take the whole
         this.pending = this.pending.filter((x) => x !== p);
         this.requestFull();
+        if (p.undoRequested) this.onUndone?.(null);
       } else {
         const patch: PatchEntry[] = Array.isArray(a.patch) ? a.patch : [];
         this.rebase(() => {
@@ -576,9 +698,16 @@ export class SheetSync {
           applyPatch(this.base!, patch);
           if (typeof a.seq === "number") this.seq = a.seq;
         });
-        if (p.undoable && patch.length && Array.isArray(a.before)) this.pushUndo(patch, a.before, p.label);
+        if (patch.length) this.acked.push({ seq: this.seq, op: p.op, label: p.label, undoable: p.undoable });
+        const entry = patch.length && Array.isArray(a.before) ? { patch, before: a.before, label: p.label, epoch: this.epoch!, seq: this.seq } : null;
+        if (p.undoRequested) {
+          if (entry) this.undoFrom(entry);
+          else this.onUndone?.(null);
+        } else if (p.undoable && entry) {
+          this.undoStack.push(entry);
+          this.trimUndo();
+        }
       }
-      this.runDeferredUndo();
       this.changed(true);
       this.flush();
       return;
@@ -586,7 +715,8 @@ export class SheetSync {
     const code: string = typeof a.code === "string" ? a.code : "error";
     const detail: Record<string, any> = isDict(a.detail) ? a.detail : {};
     if (code === "busy" || code === "rate_limited") {
-      // not recorded: the same message again, after the wait the server asked for
+      // not recorded (and neither is anything this connection sent after it): the same message
+      // again, after the wait the server asked for
       const wait = typeof detail.retry_after === "number" ? detail.retry_after : 0.25;
       this.waitUntil = Math.max(this.waitUntil, this.now() + Math.ceil(wait * 1000));
       this.changed();
@@ -607,9 +737,12 @@ export class SheetSync {
       }
       if (reason === "forgotten") {
         if (typeof detail.next === "number") this.nextN = Math.max(this.nextN, detail.next);
-        if (repeatable(p.op)) { p.n = null; this.flush(); return; }
+        // first sent on this very connection: the room kept no record of this tab since it joined,
+        // so nothing it sent here was applied — certainly not this (H8)
+        if (p.connNo === this.connNo && !p.uncertain) { p.n = null; this.flush(); return; }
+        if (repeatable(p.op)) { p.n = null; p.uncertain = true; this.flush(); return; }
         this.removePending(p);
-        this.addAttention("unknown", "unknown", detail, people, p);
+        this.addAttention("unknown", "unknown", detail, people, p, p.undoRequested ? null : undefined);
         this.changed(true);
         return;
       }
@@ -617,7 +750,11 @@ export class SheetSync {
     if (code === "superseded") { this.onClose(4409, "superseded"); return; }
     this.removePending(p);
     if (code === "read_only") this.readonly = true;
-    if (code === "not_live") this.addAttention("dropped", code, detail, people, p);
+    if (p.undoOf && p.undoOf.epoch === this.epoch) { this.undoStack.push(p.undoOf); this.trimUndo(); }   // not undone: still there to undo
+    if (p.undoRequested) {
+      // refused: it never happened, which is what the person asked for
+      this.onUndone?.({ sent: false, skipped: [], label: p.label, cancelled: true });
+    } else if (code === "not_live") this.addAttention("dropped", code, detail, people, p);
     else if (code === "stale_epoch") this.addAttention("dropped", "reset", detail, people, p);
     else this.addAttention(code === "conflict" ? "conflict" : "refused", code, detail, people, p);
     this.changed(true);
@@ -627,39 +764,67 @@ export class SheetSync {
   private removePending(p: Pending) {
     if (!this.pending.includes(p)) return;
     this.rebase(() => { this.pending = this.pending.filter((x) => x !== p); });
-    this.cancelDeferredUndo(p);
   }
 
-  /** My change an undo was waiting for was refused or dropped: that undo has nothing to take back. */
-  private cancelDeferredUndo(p: Pending) {
-    if (!p.undoable || !this.undoWanted || this.pending.some((x) => x.undoable)) return;
-    this.undoWanted--;
-    this.onUndone?.(null);
+  /** The other cells of `p` someone else changed after the person acted (not by my own later edits). */
+  private changedSince(p: Pending, except: string | null): ChangedCell[] {
+    if (!p.saw || !this.base) return [];
+    const mine = new Set<string>();
+    for (const x of this.pending) if (x !== p && x.local) for (const e of x.local.patch) mine.add(e.p.join("\u0001"));
+    const out: ChangedCell[] = [];
+    for (const e of p.saw) {
+      if (e.p[0] !== "sheets" || e.p[2] !== "cells" || e.p.length !== 4) continue;
+      const key = e.p.join("\u0001");
+      if (key === except || mine.has(key)) continue;
+      const saw = Object.hasOwn(e, "v") ? e.v : null;
+      const now = at(this.base, e.p)[0] ?? null;
+      if (!eq(valuePart(saw), valuePart(now))) out.push({ ...cellLabel(this.base, e.p[1], e.p[3]), theirs: valuePart(now) });
+    }
+    return out;
   }
 
-  private addAttention(kind: AttentionKind, code: string, detail: Record<string, any>, people: Record<string, Person>, p: Pending) {
-    // a conflict can be decided: "use my value" sends the operation again against what the tab shows then;
-    // an operation whose outcome is unknown can be done again once the person has looked
-    const retry = kind === "conflict" || kind === "unknown" || (kind === "refused" && code === "resync") ? p.op : null;
-    this.attention.push({ id: ++this.attnNo, kind, code, detail, people, label: p.label, retry });
+  /** "Needs you": what happened, whose value it was, every other cell changed since, and — where it
+   *  makes sense — what "use my value" / "do it again" sends. `retry` null: nothing to offer. */
+  private addAttention(kind: AttentionKind, code: string, detail: Record<string, any>, people: Record<string, Person>, p: Pending, retry?: any) {
+    let label = p.label;
+    let except: string | null = null;
+    const key = typeof detail.key === "string" ? detail.key : null;
+    const m = key ? /^[vs]\/([^/]+)\/([^/]+?)(?:\/[^/]+)?$/.exec(key) : null;
+    if (m) {
+      // the conflict is about this cell: name it, and the value I gave it (H6)
+      const [, sid, ck] = m;
+      except = ["sheets", sid, "cells", ck].join("\u0001");
+      const ops: any[] = isDict(p.op) && p.op.op === "tx" && Array.isArray(p.op.ops) ? p.op.ops : [p.op];
+      const mine = ops.find((o) => isDict(o) && o.sheet === sid && `${o.row}:${o.col}` === ck);
+      label = { ...label, ...cellLabel(this.base, sid, ck), value: mine && mine.op === "set" && mine.v != null ? String(mine.v) : null };
+    }
+    const also = kind === "conflict" || kind === "unknown" ? this.changedSince(p, except) : [];
+    const offer = retry !== undefined ? retry : kind === "conflict" || kind === "unknown" || (kind === "refused" && code === "resync") ? p.op : null;
+    this.attention.push({ id: ++this.attnNo, kind, code, detail: also.length ? { ...detail, also } : detail, people, label, retry: offer,
+      seen: { epoch: this.epoch, seq: this.seq } });
   }
 
   /** Queued operations that can no longer be sent go to the person (a restart, leaving live mode). */
   private drop(kind: AttentionKind, code: string, list: Pending[]) {
     const gone = [...list];
-    for (const p of gone) this.attention.push({ id: ++this.attnNo, kind, code, detail: {}, people: {}, label: p.label, retry: null });
+    for (const p of gone) {
+      if (p.undoRequested) { this.onUndone?.({ sent: false, skipped: [], label: p.label, cancelled: true }); continue; }
+      this.attention.push({ id: ++this.attnNo, kind, code, detail: {}, people: {}, label: p.label, retry: null });
+    }
     this.pending = this.pending.filter((p) => !gone.includes(p));
     for (const w of this.wire) if (w.kind === "op" && w.p && gone.includes(w.p)) w.p = null;
-    if (gone.some((p) => p.undoable)) this.undoWanted = 0;          // what they were waiting for is gone
   }
 
   // ------------------------------------------------------------------ what the person decides
-  /** "Use my value": send it again against what the tab shows now (the person has seen theirs). */
+  /** "Use my value" / "do it again": send it again against what the tab had seen when the person was
+   *  told — they were shown theirs and every other cell of it someone had changed; a cell changed
+   *  after that comes back as a new conflict. */
   useMine(id: number): boolean {
     const a = this.attention.find((x) => x.id === id);
     if (!a || !a.retry) return false;
     this.attention = this.attention.filter((x) => x !== a);
-    const ok = this.submit(a.retry, { label: a.label });
+    const expect = a.seen && a.seen.epoch === this.epoch ? Math.min(a.seen.seq, this.seq) : this.seq;
+    const ok = this.submit(a.retry, { label: a.label, expect });
     if (!ok) this.attention.push(a);
     this.changed();
     return ok;
@@ -671,50 +836,57 @@ export class SheetSync {
   }
 
   // ------------------------------------------------------------------ undo
-  private pushUndo(patch: PatchEntry[], before: PatchEntry[], label: OpLabel) {
+  private pushUndo(patch: PatchEntry[], before: PatchEntry[], label: OpLabel, seq: number) {
     if (!this.epoch) return;
-    this.undoStack.push({ patch, before, label, epoch: this.epoch });
-    if (this.undoStack.length > 100) this.undoStack.shift();
+    this.undoStack.push({ patch, before, label, epoch: this.epoch, seq });
+    this.trimUndo();
   }
+  private trimUndo() { if (this.undoStack.length > 100) this.undoStack.shift(); }
 
-  /** Undo my last operation, from the server's own inverse, where nothing changed since. null when
-   *  there is nothing to undo; "deferred" when my last change is still on its way — it is undone once
-   *  the server has answered (the result then goes to `onUndone`), never the one before it; else whether
-   *  something was sent and what was skipped (why). */
+  /** Undo my last change, from the server's own inverse, where nothing changed since. The change on
+   *  top when it is pressed is the one undone: taken off the queue when it has not been sent yet;
+   *  "deferred" when it is on its way — undone once answered (the result then goes to `onUndone`).
+   *  null when there is nothing to undo; else whether something was sent and what was skipped (why). */
   undo(): UndoResult | "deferred" | null {
-    if (this.pending.some((p) => p.undoable)) {
-      this.undoWanted++;
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const p = this.pending[i];
+      if (!p.undoable || p.undoRequested) continue;
+      if (p.n === null && !p.inFlight && !p.uncertain) {
+        this.removePending(p);                         // never reached the room: gone from the queue, that is all
+        this.changed(true);
+        return { sent: false, skipped: [], label: p.label, cancelled: true };
+      }
+      p.undoRequested = true;
       this.changed();
       return "deferred";
     }
-    return this.undoNow();
-  }
-
-  /** Undos asked for while my change was on its way, now that it has been answered. */
-  private runDeferredUndo() {
-    while (this.undoWanted > 0 && !this.pending.some((p) => p.undoable)) {
-      this.undoWanted--;
-      this.onUndone?.(this.undoNow());
-    }
-  }
-
-  private undoNow(): UndoResult | null {
     while (this.undoStack.length && this.undoStack[this.undoStack.length - 1].epoch !== this.epoch) this.undoStack.pop();
     const u = this.undoStack.pop();
     if (!u || !this.base) return null;
-    const plan = planUndo(this.base, u.patch, u.before, this.newId);
+    return this.undoNow(u);
+  }
+
+  /** A change answered after undo was pressed on it: undone now, and the page told. */
+  private undoFrom(u: UndoEntry) {
+    const r = this.undoNow(u);
+    this.onUndone?.(r);
+  }
+
+  private undoNow(u: UndoEntry): UndoResult {
+    const plan = planUndo(this.base!, u.patch, u.before, this.newId,
+      { since: u.seq, touchedSince: (sid, seq) => (this.touched.get(sid) ?? 0) > seq });
     let sent = false;
     if (plan.ops.length) {
       const op = plan.ops.length === 1 ? plan.ops[0] : { op: "tx", ops: plan.ops };
-      sent = this.submit(op, { undoable: false, label: { ...u.label, kind: "undo" } });
+      sent = this.submit(op, { undoable: false, label: { ...u.label, kind: "undo" }, undoOf: u });
     }
     this.changed();
     return { sent, skipped: plan.skipped, label: u.label };
   }
 
   /** Tests and diagnostics: the queued operations as the tab holds them. */
-  debugPending(): { n: number | null; inFlight: boolean; op: any; expect: number; shown: boolean; predicted: string | null }[] {
-    return this.pending.map((p) => ({ n: p.n, inFlight: p.inFlight, op: p.op, expect: p.expect, shown: !!p.local, predicted: p.predicted }));
+  debugPending(): { id: number; n: number | null; inFlight: boolean; op: any; expect: number; shown: boolean; predicted: string | null; undoRequested: boolean }[] {
+    return this.pending.map((p) => ({ id: p.id, n: p.n, inFlight: p.inFlight, op: p.op, expect: p.expect, shown: !!p.local, predicted: p.predicted, undoRequested: p.undoRequested }));
   }
   debugWire(): number { return this.wire.length; }
 }
