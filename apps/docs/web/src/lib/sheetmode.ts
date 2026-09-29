@@ -30,8 +30,30 @@ export interface Mode {
 }
 
 export function editorMode(m: ModeInput): Mode {
+  // Alone only while there is something of this tab's own to keep: once nothing is unsaved (saved,
+  // or the person chose the other version in a merge dialog and the saved one was loaded) the table
+  // is live again (P7: `forcedAlone` with nothing unsaved used to keep the tab alone until a reload)
   const holdAlone = m.live && !m.forcedAlone && m.dirty;
-  return { liveMode: m.live && !m.forcedAlone && !m.dirty, holdAlone, signedOut: m.wasLive && m.closedCode === 4401 };
+  return { liveMode: m.live && !m.dirty, holdAlone, signedOut: m.wasLive && m.closedCode === 4401 };
+}
+
+export interface LeaveInput {
+  liveMode: boolean;
+  /** live: my changes not answered yet */
+  unsynced: number;
+  /** live: my changes answered but not yet written by the room (lost with this page if its process dies now) */
+  unpersisted: number;
+  /** alone: edits not saved */
+  dirty: boolean;
+  /** signed out while live: edits only in the "needs you" list */
+  stranded: number;
+}
+
+/** Closing or reloading the page asks first: something of this person's exists only here. Live, that
+ *  is also what the room acknowledged but has not written yet (P6: the page is the only one that can
+ *  send it again after a crash — for the few seconds until the room's next draft write). */
+export function leaveAtRisk(x: LeaveInput): boolean {
+  return x.liveMode ? x.unsynced > 0 || x.unpersisted > 0 : x.dirty || x.stranded > 0;
 }
 
 /** The body of a whole-table save made alone. Every such save of an existing template says `solo`:

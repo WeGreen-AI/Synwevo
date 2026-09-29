@@ -15,7 +15,7 @@ import { openSheetRoom, type SheetRoom } from "../lib/sheetroom";
 import { COL_WIDTH, MAX_TX, ROW_HEIGHT, filled, liveSheetIds, projectSheet, type Content } from "../lib/sheetmodel";
 import { randomId, type Attention, type SyncSnapshot, type UndoResult } from "../lib/sheetsync";
 import { announcementText, attentionText, closeText, liveReasonText, retryText, saveRefusalText, saveText, skippedText, statusText } from "../lib/sheettext";
-import { aloneSaveBody, deletedSheets, editorMode, restoreName, sheetStillThere, statusKind, type StatusKind } from "../lib/sheetmode";
+import { aloneSaveBody, deletedSheets, editorMode, leaveAtRisk, restoreName, sheetStillThere, statusKind, type StatusKind } from "../lib/sheetmode";
 
 interface Cell { v?: string | number | boolean | null; t?: string | null; s?: any }
 interface Field { id: string; name: string; kind: "cell" | "region" | "repeat"; ref?: string; row?: number; c1?: number; c2?: number; required?: boolean; empty_policy?: string }
@@ -314,16 +314,31 @@ export default function SheetEditor() {
   const unsynced = liveMode ? snap?.pending ?? 0 : 0;
   // signed out while live: what did not reach the server exists only in the list on this page
   const stranded = mode.signedOut ? snap?.attention.length ?? 0 : 0;
+  const unpersisted = liveMode ? snap?.unpersisted ?? 0 : 0;
   useEffect(() => {
-    const warn = (e: BeforeUnloadEvent) => { if (liveMode ? unsynced > 0 : dirty || stranded > 0) e.preventDefault(); };
+    const warn = (e: BeforeUnloadEvent) => { if (leaveAtRisk({ liveMode, unsynced, unpersisted, dirty, stranded })) e.preventDefault(); };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, liveMode, unsynced, stranded]);
+  }, [dirty, liveMode, unsynced, unpersisted, stranded]);
 
   // In-app navigation does not fire beforeunload, so 返回 asks itself.
   const back = async () => {
     if (liveMode) {
       if (unsynced > 0 && !(await confirm(tr("还有修改没有同步？"), tr("有 {count} 处修改还没有送到服务器，离开后会丢失。", { count: unsynced }), tr("仍然离开"), true))) return;
+      if (unsynced === 0 && unpersisted > 0 && sroom) {
+        // answered, not yet in the room's draft: the room writes it within seconds — wait for that
+        // (this page is what could send it again if the server died meanwhile)
+        setBusy(true);
+        await new Promise<void>((resolve) => {
+          let off: (() => void) | null = null;
+          let settled = false;
+          const end = () => { if (settled) return; settled = true; off?.(); resolve(); };
+          off = sroom.sync.subscribe((s) => { if (!s.unpersisted) end(); });   // (called at once with the current state)
+          if (settled) off();
+          window.setTimeout(end, 7000);
+        });
+        setBusy(false);
+      }
     } else if ((dirty || stranded > 0) && !(await confirm(tr("放弃未保存的修改？"), tr("模板有尚未保存的修改，离开后这些修改会丢失。"), tr("放弃修改并离开"), true))) return;
     nav(projectId ? `/p/${projectId}` : "/");
   };

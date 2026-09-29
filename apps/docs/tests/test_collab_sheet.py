@@ -1036,11 +1036,20 @@ def test_m5_a_stale_sheet_delete_cannot_hide_newer_work_on_it():
     room.ok({"op": "sheet_delete", "sheet": b}, "ann")
     room.ok({"op": "sheet_restore", "sheet": b}, "bob")
     assert room.no({"op": "sheet_delete", "sheet": b}, "conflict", "ann", client="ann-2", expect=0)["by"] == "bob"
-    # the same person's other tab is not in conflict with herself
+    # the same person's other tab: a stale delete from one tab does not hide what the other wrote
+    # after it (review of steps 3-5, item 10: an undo of a new sheet pressed before the other tab's
+    # edit arrived deleted it — the check was by person); she sees who (herself) and chooses
     room2 = Room({"sheets": [grid("A"), grid("B")]})
     b2 = room2.st["content"]["order"][1]
     room2.ok({"op": "set", **room2.at("A1", b2), "v": "mine"}, "ann")
-    room2.ok({"op": "sheet_delete", "sheet": b2}, "ann", client="ann-2", expect=0)
+    d2 = room2.no({"op": "sheet_delete", "sheet": b2}, "conflict", "ann", client="ann-2", expect=0)
+    assert d2["by"] == "ann" and d2["key"] == f"x/{b2}"
+    room2.ok({"op": "sheet_delete", "sheet": b2}, "ann", client="ann-2")                  # having seen it
+    # ... while the tab that wrote there deletes it without a conflict with itself
+    room3 = Room({"sheets": [grid("A"), grid("B")]})
+    b3 = room3.st["content"]["order"][1]
+    room3.ok({"op": "set", **room3.at("A1", b3), "v": "mine"}, "ann")
+    room3.ok({"op": "sheet_delete", "sheet": b3}, "ann", expect=0)
 
 
 def test_m5_merging_never_hides_values_and_a_value_never_goes_under_a_merge():
@@ -1223,3 +1232,35 @@ def test_a_message_number_far_ahead_is_refused_before_it_can_move_anyone_s_numbe
     assert room.st["clients"] == {} and room.st["seq"] == 0, "nothing applied, nothing remembered"
     assert apply(room.st, op, by="ann", client="ann/t", n=cs.MAX_AHEAD, expect=0)["ok"]
     assert apply(room.st, {"op": "set", **room.at("C5"), "v": 1}, by="ann", client="ann/t", n=cs.MAX_AHEAD + 1 + cs.MAX_AHEAD, expect=1)["code"] == "resync"
+
+
+# ------------------------------------------------------------------ the second review of steps 3-5 (each failed on 324adc8)
+def test_a_refusal_names_who_changed_each_cell_it_writes_also_after_the_room_forgot_what_was_seen():
+    """P2: a group refused because the room no longer knew what its sender had seen (`resync /
+    expect_too_old`, after a save and compaction) said nothing about the cells; the sender's page, sent
+    again, replaced values it had never been shown. The refusal names who last changed each cell value
+    the operation writes (`writers`), kept after the first-writer records are compacted."""
+    room = Room({"sheets": [grid(cells={"B2": {"v": "a2"}, "B3": {"v": "a3"}})]})
+    seen = room.st["seq"]
+    room.ok({"op": "set", **room.at("B2"), "v": "bob's B2"}, "bob")
+    room.ok({"op": "set", **room.at("B3"), "v": "bob's B3"}, "bob")
+    group = {"op": "tx", "ops": [{"op": "clear", **room.at("B2")}, {"op": "clear", **room.at("B3")}, {"op": "clear", **room.at("A1")}]}
+    d = room.no(group, "conflict", "ann", expect=seen)
+    assert d["key"] == f"v/{room.sid}/{room.at('B2')['row']}:{room.at('B2')['col']}" and d["by"] == "bob"
+    assert [(w["key"].split(":")[0][-8:], w["by"]) for w in d["writers"]] == [(room.at("B2")["row"], "bob"), (room.at("B3")["row"], "bob")]
+    mark_saved(room.st, snapshot(room.st))
+    cs.compact(room.st, upto=room.st["seq"])
+    assert room.st["kseq"] == {}
+    d = room.no(group, "resync", "ann", client="ann-2", expect=seen)
+    assert d["reason"] == "expect_too_old" and [w["by"] for w in d["writers"]] == ["bob", "bob"]
+
+
+def test_an_applied_message_s_outcome_is_the_seq_it_was_answered_with():
+    """P1: a tab resolving an unanswered message from `outcomes` (its answer lost with the socket) had
+    no seq for it, so it could not keep it until a draft write covered it."""
+    room = Room({"sheets": [grid()]})
+    r = room.ok({"op": "set", **room.at("A1"), "v": 1}, "ann")
+    room.no({"op": "set", "sheet": "nope", "row": "x", "col": "y", "v": 1}, "not_found", "ann")
+    out = cs.outcomes(room.st, "ann-1")
+    assert out == {"1": r["seq"], "2": "not_found"} and type(out["1"]) is int, out      # a number, not `true`
+

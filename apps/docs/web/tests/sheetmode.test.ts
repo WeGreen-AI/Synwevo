@@ -31,7 +31,19 @@ test("live → single → live keeps edits made alone: the tab stays alone until
   assert.equal(back.holdAlone, true);
   const saved = editorMode({ live: true, forcedAlone: false, dirty: false, closedCode: null, wasLive: true });
   assert.equal(saved.liveMode, true, "once saved, the tab goes live");
-  assert.equal(editorMode({ live: true, forcedAlone: true, dirty: false, closedCode: null, wasLive: false }).liveMode, false);
+  // P7: alone with nothing unsaved (the person chose the other version in a merge dialog) is live again
+  assert.equal(editorMode({ live: true, forcedAlone: true, dirty: false, closedCode: null, wasLive: false }).liveMode, true);
+  assert.equal(editorMode({ live: true, forcedAlone: true, dirty: true, closedCode: null, wasLive: true }).liveMode, false);
+});
+
+test("P6: closing the page asks while the room has answered changes it has not written yet", async () => {
+  const { leaveAtRisk } = await import("../src/lib/sheetmode.ts");
+  const live = { liveMode: true, unsynced: 0, unpersisted: 0, dirty: false, stranded: 0 };
+  assert.equal(leaveAtRisk(live), false);
+  assert.equal(leaveAtRisk({ ...live, unsynced: 1 }), true);
+  assert.equal(leaveAtRisk({ ...live, unpersisted: 1 }), true, "answered, but only this page could send it again after a crash");
+  assert.equal(leaveAtRisk({ ...live, liveMode: false, dirty: true }), true);
+  assert.equal(leaveAtRisk({ ...live, liveMode: false, stranded: 2 }), true);
 });
 
 test("signed out while live (4401): the page keeps the table read-only instead of loading into the sign-in page", () => {

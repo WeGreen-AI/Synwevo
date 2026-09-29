@@ -88,6 +88,7 @@ PARSE_UNIT = 64 * 1024            # ... and at least one message per started 64 
 SYNC_COST = 10                    # a whole state sent again costs like ten messages
 BUSY_RETRY_S = 0.25               # while a version is folded in: try again after this
 HELD_RETRY_S = 0.05               # a message sent after one of the same tab refused for now: try again after this
+MAX_LOADS = 32                    # the loads of an epoch a state remembers (a tab that missed more is conservative)
 GROWTH = 3                        # a patch grows the state by its content, its basis copy and the bookkeeping
 SAVE_WAIT_S = 30.0                # a save waits this long for the room's loop to mark it saved
 SYSTEM = "system"                 # `by` of changes no person made (an outside save without a person, the server's bookkeeping)
@@ -257,6 +258,7 @@ class SheetRoom(Room):
             self._not_live(why or {"code": "invalid"})
             return
         self.state, self.live_reason, self.epoch, self.dirty, self.persisted_seq = st, None, st["epoch"], False, 0
+        self.boot, self.loaded_seq = new_id("rb"), 0                  # a fresh epoch: its first load
         self.approx_bytes = size
         self.stale_head = None
         self.basis_gen += 1
@@ -289,7 +291,7 @@ class SheetRoom(Room):
                         # unsaved edits are never dropped: kept live, where only shrinking edits pass
                         log.warning("collab %s: the persisted live table with unsaved edits is beyond the room's caps (%s)", self.key, over)
                     self.state, self.epoch, self.dirty, self.persisted_seq, self.approx_bytes = st, st["epoch"], dirty, st["seq"], len(raw)
-                    self.loaded_seq = st["seq"]
+                    self.boot, self.loaded_seq = new_id("rb"), st["seq"]    # opened from storage: a new load
                     if row.get("head") != template["head"]:
                         # unsaved edits left at an older version (a version that could not be folded
                         # in while they were there): keep them, fold the head version in on opening
@@ -332,6 +334,7 @@ class SheetRoom(Room):
                         raise RoomFull(refusal)
                 self._claim(conn, requested_client)
                 conn.seen = st["seq"]
+                self._stamp_load(st)
             self.clients.add(conn)
             hello = self.hello(conn)
             if st is None:
@@ -340,11 +343,21 @@ class SheetRoom(Room):
                 hello.update({"live": True, "seq": st["seq"], "client": conn.client, "next": CS.next_number(st, conn.client_key),
                               "resumed": conn.client_key in st["clients"], "outcomes": CS.outcomes(st, conn.client_key),
                               "persisted": self.persisted_seq, "content": st["content"],
-                              "loaded": {"id": self.boot, "seq": self.loaded_seq},
+                              "loaded": {"id": self.boot, "seq": self.loaded_seq}, "loads": list(st["loads"]),
                               "stale_head": self.stale_head,
                               "limits": {"max_tx": CS.MAX_TX, "max_frame_bytes": _collab.MAX_FRAME_BYTES, "ops_per_min": self.hub.sheet_rate.cap,
                                          "max_cells": max_cells(), "max_bytes": max_bytes()}})
             return meta_frame(hello)
+
+    def _stamp_load(self, st: dict) -> None:
+        """Under ``mu``: the state records this load of the room (once) — in the drafts it writes and the
+        hellos it sends — so a tab that was away while the room was loaded more than once can tell
+        from the load it last saw what a later one dropped (every load's seq; the lowest after its own
+        is where its history may have ended)."""
+        loads = st.setdefault("loads", [])
+        if not loads or loads[-1].get("id") != self.boot:
+            loads.append({"id": self.boot, "seq": self.loaded_seq})
+            del loads[:-MAX_LOADS]
 
     def _over_tab_caps(self, conn: Conn) -> str | None:
         """Under ``mu``: would one more writing tab of this person pass what the room keeps records for?"""
@@ -551,6 +564,7 @@ class SheetRoom(Room):
             st = self.state
             if st is None or self.dropped:
                 return None
+            self._stamp_load(st)
             self._gen += 1
             raw = _dumps(st).encode()
             self.approx_bytes = len(raw)
@@ -590,7 +604,7 @@ class SheetRoom(Room):
 
     async def persist(self) -> None:
         from starlette.concurrency import run_in_threadpool
-        self.persist_handle = None
+        self.persist_starting()
         snap = self._serialize()
         if snap is None:
             return
@@ -840,7 +854,8 @@ class SheetRoom(Room):
             nxt = CS.next_number(st, c.client_key or "")
             if nxt not in frames:
                 head_json = _dumps({"type": "reset", "epoch": st["epoch"], "previous_epoch": previous, "seq": st["seq"], "next": nxt,
-                                    "head": head, "dirty": False, "reason": reason, "by": self._who(actor_id), "persisted": 0})
+                                    "head": head, "dirty": False, "reason": reason, "by": self._who(actor_id), "persisted": 0,
+                                    "loaded": {"id": self.boot, "seq": self.loaded_seq}})
                 frames[nxt] = bytes([MESSAGE_SHEET]) + write_message((head_json[:-1] + ',"content":' + content + "}").encode())
             c.post(frames[nxt])
         self._persist_soon()
@@ -853,9 +868,7 @@ class SheetRoom(Room):
         log.info("collab %s: v%s cannot be held live (%s); the room carries presence only", self.key, head, why.get("code"))
         self._not_live(why)
         self.head = head
-        if self.persist_handle is not None:
-            self.persist_handle.cancel()
-            self.persist_handle = None
+        self.cancel_persist()
         # nothing of this room is written from now on; the draft's DELETE runs after the room's lock is
         # released (the lock order never nests the database inside a room's lock — even when no thread
         # can be started for it and it runs on the loop)
