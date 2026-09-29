@@ -713,6 +713,11 @@ V2_COLUMNS = [
 JSON_COLS = {"record_rule", "output", "notes", "structure", "options", "ocr", "corrections", "slots", "editor", "data",
              "snapshot", "counts", "record", "issues", "trace", "verification", "info", "summary", "scan"}
 
+#: The generated name of the pre-identity workspace while it waits for an administrator to assign
+#: it. Assigning it replaces the label (it stops being true); undoing the assignment puts it back
+#: — both in `synwevo_identity.admin_routes`.
+LEGACY_WORKSPACE_NAME = "历史数据（待认领）"
+
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_hex(6)}"
@@ -887,7 +892,7 @@ class Store:
         ts = now()
         t.execute("INSERT INTO workspaces (id, name, kind, status, created_at, updated_at, created_by) "
                   "VALUES ('default', ?, 'legacy', 'pending_claim', ?, ?, NULL)",
-                  ("历史数据（待认领）", ts, ts))
+                  (LEGACY_WORKSPACE_NAME, ts, ts))
 
     @staticmethod
     def _conversation_mail_becomes_opt_in(t) -> None:

@@ -143,6 +143,7 @@ const API_ONLY = {
   "未知的平台角色 {role!r}": FIXED, "移交后自己的角色只能是 admin、editor 或 viewer": FIXED,
   "entitlement 只能是 active、revoked 或 none": FIXED, "未知的邀请状态 {state!r}": FIXED, "action 只能是 revoke 或 resend": FIXED,
   "请选择要认领这些数据的账户": "the claim button stays disabled until an account is chosen",
+  "expected_members 必须是账户 ID 列表": "the undo dialog sends the member ids of the preview it shows",
   "请提供 {key}（非空列表）": "bulk actions are offered only with a selection", "请提供 changes（非空列表）": "bulk actions are offered only with a selection",
   "请提供 invitations（非空列表）": "bulk actions are offered only with a selection", "缺少 user_id": "each change names the member it was chosen for",
   "can_export 必须是 true 或 false": "the page sends a checkbox value", "grant 必须是 true 或 false": "the page sends a checkbox value",

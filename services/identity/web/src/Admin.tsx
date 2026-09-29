@@ -21,8 +21,8 @@ import { Topbar } from "./governance/Topbar";
 import { RowMenu } from "./governance/RowMenu";
 import { PageControls } from "./governance/ListControls";
 import { useDebounced } from "./lib/hooks";
-import { ACCOUNT_STATUS, WORKSPACE_KIND, WORKSPACE_STATUS } from "./governance/labels";
-import { post, qs } from "@synwevo/auth-client";
+import { ACCOUNT_STATUS, WORKSPACE_KIND, WORKSPACE_STATUS, roleLabel } from "./governance/labels";
+import { ApiError, post, qs } from "@synwevo/auth-client";
 import { useSession } from "@synwevo/auth-client";
 import { fmtTime, useToast } from "@synwevo/ui";
 import AdminStepUp from "./components/AdminStepUp";
@@ -42,6 +42,17 @@ type User = {
   id: string; email: string; display_name: string | null; status: string;
   platform_role: string; created_at: number; workspaces: number; sessions: number;
 };
+/** GET /api/admin/workspaces/{id}/unclaim-preview: what undoing the assignment would change.
+ *  Counts, never contents — the people are named because they are the ones who lose access. */
+type UnclaimPlan = {
+  workspace: { id: string; name: string; status: string };
+  name_after: string; name_restored: boolean;
+  members: { user_id: string; email: string | null; display_name: string | null; role: string }[];
+  invitations: number; tokens: number; service_accounts: number; approvals: number;
+  projects: number; templates: number;
+  assigned: { at: number; by_email: string | null; by_name: string | null; to_email: string | null } | null;
+};
+type UnclaimResult = { removed_members: { user_id: string; email: string | null }[] };
 type AuditRow = {
   id: string; at: number; action: string; actor_email: string | null;
   object_kind: string | null; object_id: string | null; result: string;
@@ -107,9 +118,14 @@ export default function Admin() {
 
 function OverviewTab({ onDenied }: { onDenied: () => void }) {
   const { data, err, loading, reload } = useAdminData<Overview>("/api/admin/overview", onDenied);
+  // What the last assignment or undo did. Kept here, above the cards, because the card that
+  // performed it is replaced by the other one when the overview reloads.
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const changed = (message: string) => { setOutcome(message); reload(); };
   if (loading) return <div className="empty">{tr("加载中…")}</div>;
   if (err) return <div className="notice err" role="alert">{err} <button className="btn" onClick={reload}>{tr("重试")}</button></div>;
   if (!data) return null;
+  const legacy = data.unclaimed;
 
   return (
     <>
@@ -123,11 +139,23 @@ function OverviewTab({ onDenied }: { onDenied: () => void }) {
         </div>
       </section>
 
-      {data.unclaimed?.status === "pending_claim" && (
-        <section className="card card-b col gap12">
-          <h2>{tr("待认领的历史数据")}</h2>
+      {outcome && <div className="notice ok" role="status">{tr(outcome)}</div>}
+
+      {legacy?.status === "pending_claim" && (
+        <section className="card card-b col gap12" aria-labelledby="legacy-unclaimed">
+          <h2 id="legacy-unclaimed">{tr("待认领的历史数据")}</h2>
           <p className="muted">{tr("账户体系建立之前的数据，属于一个没有成员的工作空间，目前没有人能读取（包括平台管理员）。指派给一个已有账户后才能打开。")}</p>
-          <ClaimCard ws={data.unclaimed} />
+          <ClaimCard ws={legacy} onClaimed={changed} />
+        </section>
+      )}
+
+      {(legacy?.status === "active" || legacy?.status === "frozen") && (
+        <section className="card card-b col gap12" aria-labelledby="legacy-assigned">
+          <h2 id="legacy-assigned">{tr("历史数据已指派")}</h2>
+          <p className="muted">{tr("账户体系建立之前的数据已经指派给下列账户。如果指派错了，可以撤销：数据回到无人可读的待认领状态，不删除任何内容，之后可以重新指派。")}</p>
+          {legacy.status === "frozen"
+            ? <div className="notice" role="status">{tr("这个空间已被冻结。要撤销指派，请先在「工作空间」中解冻它。")}</div>
+            : <AssignedCard ws={legacy} onDenied={onDenied} onRefresh={reload} onUndone={changed} />}
         </section>
       )}
     </>
@@ -143,15 +171,13 @@ function Stat({ label, value }: { label: string; value: number }) {
   );
 }
 
-function ClaimCard({ ws }: { ws: Workspace }) {
+function ClaimCard({ ws, onClaimed }: { ws: Workspace; onClaimed: (message: string) => void }) {
   const [q, setQ] = useState("");
   const [chosen, setChosen] = useState<User | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [done, setDone] = useState<string | null>(null);
   const query = useDebounced(q.trim());
   const users = useAdminPage<User>(`/api/admin/users${qs({ q: query, status: "active" })}`);
   const searching = query !== q.trim();
-  if (done) return <div className="notice ok" role="status">{tr(done)}</div>;
   return <div className="col gap12">
     <p>{tr("{p0} 个项目，{p1} 位成员。请选择接收这个工作空间的已有账户。", {p0: ws.projects, p1: ws.members})}</p>
     <label className="field">{tr("搜索接收账户")}<input className="input" type="search" maxLength={100} value={q}
@@ -170,8 +196,77 @@ function ClaimCard({ ws }: { ws: Workspace }) {
     {confirming && chosen && <ActionDialog title={tr("指派历史数据")} confirmLabel={tr("指派历史数据")} reason="required" danger
       impact={<>{tr("将把「{p0}」及其中{p1}个项目的访问权交给{p2}，角色为所有者。不会授予平台管理权限。", {p0: ws.name, p1: ws.projects, p2: chosen.email})}</>}
       run={(reason) => post<{ projects: number }>(`/api/admin/workspaces/${encodeURIComponent(ws.id)}/claim`, { user_id: chosen.id, reason })}
-      onClose={() => setConfirming(false)} onDone={(r) => { setConfirming(false); setDone(tr("已把包含 {p0} 个项目的工作空间指派给 {p1}。", {p0: r.projects, p1: chosen.email})); }} />}
+      onClose={() => setConfirming(false)} onDone={(r) => { setConfirming(false); onClaimed(tr("已把包含 {p0} 个项目的工作空间指派给 {p1}。", {p0: r.projects, p1: chosen.email})); }} />}
   </div>;
+}
+
+function memberLabel(m: UnclaimPlan["members"][number]) {
+  return m.display_name || m.email || m.user_id;
+}
+
+/** The assigned historical data, and the way back: who has it, since when and from whom, and an
+ *  undo whose confirmation names every person who loses access (the server refuses if that list
+ *  changed after it was shown — `expected_members`). */
+function AssignedCard({ ws, onDenied, onRefresh, onUndone }: {
+  ws: Workspace; onDenied: () => void; onRefresh: () => void; onUndone: (message: string) => void;
+}) {
+  const path = `/api/admin/workspaces/${encodeURIComponent(ws.id)}/unclaim-preview`;
+  const { data: plan, err, loading, reload } = useAdminData<UnclaimPlan>(path, onDenied);
+  const [confirming, setConfirming] = useState(false);
+  // A re-read keeps the plan on screen (and the confirmation open) until the new one arrives.
+  if (loading && !plan) return <p role="status">{tr("正在读取指派情况…")}</p>;
+  if (err || !plan) return <div className="notice err" role="alert">{err} <button className="btn sm" onClick={onRefresh}>{tr("刷新概览")}</button></div>;
+  const owners = plan.members.filter((m) => m.role === "owner");
+  return <div className="col gap12">
+    <dl className="facts">
+      <dt>{tr("名称")}</dt><dd>{plan.workspace.name}</dd>
+      <dt>{tr("所有者账户")}</dt>
+      <dd>{owners.length ? owners.map((m) => <div key={m.user_id}>{m.email || memberLabel(m)}</div>) : tr("没有所有者")}</dd>
+      <dt>{tr("成员人数")}</dt><dd>{tr("共 {count} 位", { count: plan.members.length })}</dd>
+      <dt>{tr("指派时间")}</dt><dd>{plan.assigned ? fmtTime(plan.assigned.at) : tr("没有找到指派记录")}</dd>
+      <dt>{tr("指派人")}</dt><dd>{plan.assigned?.by_email || "—"}</dd>
+      <dt>{tr("项目")}</dt><dd>{tr("{count} 个项目", { count: plan.projects })}</dd>
+    </dl>
+    <div><button className="btn danger" onClick={() => setConfirming(true)}>{tr("撤销指派")}</button></div>
+    {/* The members changed after the plan was read: the server refuses (`expected_members`), and
+        the list in the open confirmation is re-read in place, so the next confirm is of what is
+        there now. Closing re-reads it too — any refusal may have left it stale. */}
+    {confirming && <ActionDialog title={tr("撤销指派")} confirmLabel={tr("撤销指派")} reason="required" danger
+      reasonPlaceholder={tr("例如：指派给了错误的账户")}
+      impact={<UnclaimImpact plan={plan} />}
+      run={async (reason) => {
+        try {
+          return await post<UnclaimResult>(`/api/admin/workspaces/${encodeURIComponent(ws.id)}/unclaim`,
+            { reason, expected_members: plan.members.map((m) => m.user_id) });
+        } catch (e) {
+          if (e instanceof ApiError && e.code === "assignment_changed") reload();
+          throw e;
+        }
+      }}
+      onClose={() => { setConfirming(false); reload(); }}
+      onDone={(r) => { setConfirming(false); onUndone(tr("已撤销指派：{count} 位成员失去访问，数据全部保留。", { count: r.removed_members.length })); }} />}
+  </div>;
+}
+
+function UnclaimImpact({ plan }: { plan: UnclaimPlan }) {
+  return <>
+    <p>{tr("「{name}」将回到待认领状态。", { name: plan.workspace.name })}</p>
+    {plan.members.length ? <>
+      <p>{tr("以下 {count} 位成员将失去访问：", { count: plan.members.length })}</p>
+      <ul className="names" tabIndex={0} aria-label={tr("将失去访问的成员")}>
+        {plan.members.map((m) => <li key={m.user_id}><b>{memberLabel(m)}</b>{m.display_name && m.email && <span className="muted"> {m.email}</span>} · {roleLabel(m.role)}</li>)}
+      </ul>
+    </> : <p>{tr("这个空间目前没有成员。")}</p>}
+    <ul>
+      <li>{tr("{count} 个尚未接受的邀请将被撤回。", { count: plan.invitations })}</li>
+      <li>{tr("{count} 个仍可使用的应用登录凭据将被撤销。", { count: plan.tokens })}</li>
+      {(plan.service_accounts > 0 || plan.approvals > 0) &&
+        <li>{tr("这个空间的服务账户（{p0} 个）和经批准的 API 凭据（{p1} 项）将停止工作，但不会被删除。", { p0: plan.service_accounts, p1: plan.approvals })}</li>}
+      <li>{plan.name_restored ? tr("名称改回「{name}」。", { name: plan.name_after }) : tr("名称「{name}」保持不变。", { name: plan.name_after })}</li>
+    </ul>
+    <p><b>{tr("不会删除任何数据：{p0} 个项目和 {p1} 个模板原样保留。", { p0: plan.projects, p1: plan.templates })}</b></p>
+    <p>{tr("在再次指派之前，没有人能打开它，包括平台管理员。")}</p>
+  </>;
 }
 
 function UsersTab({ onDenied }: { onDenied: () => void }) {

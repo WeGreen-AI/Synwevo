@@ -137,8 +137,10 @@ table.gov tr.sel th { background: var(--accent-weak); }
 .idp-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; }
 .idp-card.on { border-color: var(--accent-line); }
 .idp-card h3 { font-size: 15px; margin: 0; }
-.idp-facts { display: grid; grid-template-columns: 1fr; gap: 2px 12px; margin: 0; font-size: 13px; }
-.idp-facts dt { color: var(--text-2); font-size: 12px; margin-top: 6px; }
-.idp-facts dd { margin: 0; overflow-wrap: anywhere; }
+/* A short list of facts (label above value): an identity provider's settings, the assigned
+   historical data in the administration overview. One column, so it reads the same at 390 px. */
+.idp-facts, .facts { display: grid; grid-template-columns: 1fr; gap: 2px 12px; margin: 0; font-size: 13px; }
+.idp-facts dt, .facts dt { color: var(--text-2); font-size: 12px; margin-top: 6px; }
+.idp-facts dd, .facts dd { margin: 0; overflow-wrap: anywhere; }
 .idp-facts code { font-size: 12px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
 .idp-missing { margin: 0; padding-left: 18px; }
