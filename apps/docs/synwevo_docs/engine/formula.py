@@ -818,7 +818,9 @@ def f_count(b, a):
 
 
 def f_counta(b, a):
-    return float(sum(1 for x in a for v in _rng_list(x) if v is not None and v != ""))
+    # a formula that returns "" is not an empty cell: Excel's COUNTA counts it (COUNTBLANK counts it
+    # as blank too); only a cell with nothing in it is left out
+    return float(sum(1 for x in a for v in _rng_list(x) if v is not None))
 
 
 def f_countblank(b, a):

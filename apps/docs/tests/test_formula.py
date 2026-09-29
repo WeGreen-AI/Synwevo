@@ -147,3 +147,38 @@ def test_cross_check_against_libreoffice():
         if not same:
             diffs.append((f, a, e))
     assert not diffs, diffs
+
+
+def _counta_book() -> bytes:
+    """TEST FIXTURE: A2 is a formula returning "" — not an empty cell for COUNTA."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "S"
+    ws["A1"], ws["A2"], ws["A3"] = 1, '=""', "x"
+    for ref, f in (("C1", "=COUNTA(A1:A4)"), ("C2", "=COUNTBLANK(A1:A4)"), ("C3", '=COUNTA("")')):
+        ws[ref] = f
+    b = io.BytesIO()
+    wb.save(b)
+    return b.getvalue()
+
+
+def test_counta_counts_a_formula_that_returns_empty_text():
+    """COUNTA skipped cells whose formula returns "" (engine 2, Excel and LibreOffice 3); COUNTBLANK
+    counts them as blank, which it already did."""
+    from synwevo_docs.engine.formula import compute_workbook
+    x = XlsxDoc(_counta_book())
+    compute_workbook(x)
+    ws = openpyxl.load_workbook(io.BytesIO(x.pkg.save()), data_only=True)["S"]
+    assert (ws["C1"].value, ws["C2"].value, ws["C3"].value) == (3, 2, 1)
+
+
+@pytest.mark.skipif(not __import__("synwevo_docs.engine.converters", fromlist=["soffice_path"]).soffice_path(), reason="LibreOffice 未安装")
+def test_counta_of_empty_text_agrees_with_libreoffice():
+    from synwevo_docs.engine.converters import recalc_xlsx
+    from synwevo_docs.engine.formula import compute_workbook
+    data = _counta_book()
+    x = XlsxDoc(data)
+    compute_workbook(x)
+    ours = openpyxl.load_workbook(io.BytesIO(x.pkg.save()), data_only=True)["S"]
+    lo = openpyxl.load_workbook(io.BytesIO(recalc_xlsx(data)), data_only=True)["S"]
+    assert [ours[r].value for r in ("C1", "C2", "C3")] == [lo[r].value for r in ("C1", "C2", "C3")]
