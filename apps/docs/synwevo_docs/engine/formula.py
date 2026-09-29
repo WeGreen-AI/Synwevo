@@ -188,8 +188,10 @@ class Book:
     ('v', value) or ('f', formula_text); r/c are 0-based."""
 
     def __init__(self, cells: dict[str, dict[tuple[int, int], tuple]], names: dict[str, str] | None = None,
-                 date1904: bool = False):
+                 date1904: bool = False, hidden: dict[str, set[int]] | None = None, filtered: set[str] | None = None):
         self.cells = cells
+        self.hidden = hidden or {}          # sheet -> 0-based rows that are hidden
+        self.filtered = filtered or set()   # sheets with a filter: a hidden row there may be filtered out
         self.lower = {k.lower(): k for k in cells}
         self.names = {k.upper(): v for k, v in (names or {}).items()}
         self.date1904 = date1904
@@ -248,6 +250,47 @@ class Book:
             return NUM
 
     # ---------------------------------------------------------------- references
+    def area(self, host: str, text: str) -> tuple[str, int, int, int, int]:
+        """(sheet, r1, c1, r2, c2), 0-based, of a reference (a defined name included) — for the
+        functions that look at the cells themselves rather than their values (SUBTOTAL)."""
+        sheet, area = host, text
+        if "!" in text:
+            idx = text.rfind("!")
+            sname, area = text[:idx], text[idx + 1:]
+            if sname.startswith("'") and sname.endswith("'"):
+                sname = sname[1:-1].replace("''", "'")
+            if sname.startswith("[") or ":" in sname:
+                raise Unsupported("外部工作簿或三维引用")
+            sheet = self.sheet(sname)
+        area = area.replace("$", "")
+        if area.upper() in self.names or (":" not in area and not _CELL.match(area)):
+            name = self.names.get(area.upper())
+            if name is None:
+                if "[" in area:
+                    raise Unsupported("结构化引用（表格列）")
+                raise _Raise(NAME)
+            return self.area(host, name.lstrip("="))
+        if area.upper() == "#REF!":
+            raise _Raise(REF)
+        m = _CELL.match(area)
+        if m:
+            r, c = int(m.group(2)) - 1, col_index(m.group(1))
+            return sheet, r, c, r, c
+        a, _, b = area.partition(":")
+        ma, mb = _CELL.match(a), _CELL.match(b)
+        if ma and mb:
+            r1, c1, r2, c2 = int(ma.group(2)) - 1, col_index(ma.group(1)), int(mb.group(2)) - 1, col_index(mb.group(1))
+        else:
+            mc, mr = _COLS.match(area), _ROWS.match(area)
+            maxr, maxc = self.dims.get(sheet, (-1, -1))
+            if mc:
+                c1, c2, r1, r2 = col_index(mc.group(1)), col_index(mc.group(2)), 0, max(maxr, 0)
+            elif mr:
+                r1, r2, c1, c2 = int(mr.group(1)) - 1, int(mr.group(2)) - 1, 0, max(maxc, 0)
+            else:
+                raise Unsupported(f"不支持的引用 {area}")
+        return sheet, min(r1, r2), min(c1, c2), max(r1, r2), max(c1, c2)
+
     def resolve_ref(self, host: str, text: str):
         """Return a scalar (single cell) or Range."""
         sheet = host
@@ -608,7 +651,75 @@ def _is_lazy(kind):
     return f
 
 
+_SUBTOTAL_CALL = re.compile(r"(?i)(?<![\w.])(?:_xlfn\.)?SUBTOTAL\s*\(")
+_AGGREGATE_CALL = re.compile(r"(?i)(?<![\w.])(?:_xlfn\.)?AGGREGATE\s*\(")
+_STRING_LIT = re.compile(r'"(?:[^"]|"")*"')
+
+
+def _calls(cell, pattern) -> bool:
+    return bool(cell) and cell[0] in ("f", "f!") and bool(pattern.search(_STRING_LIT.sub('""', cell[1] or "")))
+
+
+def _is_subtotal_cell(cell) -> bool:
+    """A cell whose formula calls SUBTOTAL: another SUBTOTAL skips it, so a grand total over a range
+    holding section subtotals does not count them twice (as Excel does). Whether SUBTOTAL also skips
+    AGGREGATE results is documented for AGGREGATE only: such a range is left to the fallback."""
+    if _calls(cell, _AGGREGATE_CALL):
+        raise Unsupported("SUBTOTAL 的区域里有 AGGREGATE 的结果")
+    return _calls(cell, _SUBTOTAL_CALL)
+
+
+def _variance(xs: list[float], sample: bool) -> float:
+    n = len(xs)
+    if n - (1 if sample else 0) <= 0:
+        raise _Raise(DIV0)
+    mean = math.fsum(xs) / n
+    return math.fsum((x - mean) ** 2 for x in xs) / (n - 1 if sample else n)
+
+
+_SUBTOTAL_FUNCS = {
+    1: lambda b, a: f_average(b, a), 2: lambda b, a: f_count(b, a), 3: lambda b, a: f_counta(b, a),
+    4: lambda b, a: f_minmax(max)(b, a), 5: lambda b, a: f_minmax(min)(b, a), 6: lambda b, a: f_product(b, a),
+    7: lambda b, a: math.sqrt(_variance(_nums_for_agg(a), True)), 8: lambda b, a: math.sqrt(_variance(_nums_for_agg(a), False)),
+    9: lambda b, a: f_sum(b, a), 10: lambda b, a: _variance(_nums_for_agg(a), True), 11: lambda b, a: _variance(_nums_for_agg(a), False),
+}
+
+
+def _subtotal(e: "_Eval", args):
+    """SUBTOTAL(function_num, ref1, …): 1–11 AVERAGE, COUNT, COUNTA, MAX, MIN, PRODUCT, STDEV,
+    STDEVP, SUM, VAR, VARP over the referenced cells, skipping cells that are themselves SUBTOTAL
+    results; 101–111 also skip hidden rows. Rows hidden by a filter are skipped by both in Excel and
+    cannot be told apart from rows hidden by hand in the file: then the formula is left to the
+    fallback instead of guessed."""
+    if len(args) < 2:
+        raise _Raise(VALUE)
+    fn = _num(_scalar(e.ev(args[0])))
+    num = int(fn)
+    base = num - 100 if num > 100 else num
+    if base not in _SUBTOTAL_FUNCS or not (1 <= num <= 11 or 101 <= num <= 111):
+        raise _Raise(VALUE)
+    b = e.b
+    ranges = []
+    for node in args[1:]:
+        if node[0] == "err":                   # a reference that went away (#REF!): Excel's result too
+            raise _Raise(node[1])
+        if node[0] != "ref":
+            raise Unsupported("SUBTOTAL 的参数不是单元格引用")
+        sheet, r1, c1, r2, c2 = b.area(e.sheet, node[1])
+        if (r2 - r1 + 1) * (c2 - c1 + 1) > 2_000_000:
+            raise Unsupported("引用区域过大")
+        hidden = b.hidden.get(sheet, set())
+        if sheet in b.filtered and any(r1 <= r <= r2 for r in hidden):
+            raise Unsupported("SUBTOTAL 遇到可能被筛选隐藏的行")
+        cells = b.cells.get(sheet, {})
+        vals = [b.value(sheet, r, c) for r in range(r1, r2 + 1) if not (num > 100 and r in hidden)
+                for c in range(c1, c2 + 1) if not _is_subtotal_cell(cells.get((r, c)))]
+        ranges.append(Range([vals]))
+    return _SUBTOTAL_FUNCS[base](b, ranges)
+
+
 _LAZY = {"IF": _if, "IFERROR": _iferror, "IFNA": _ifna, "IFS": _ifs, "CHOOSE": _choose, "SWITCH": _switch,
+         "SUBTOTAL": _subtotal,
          "AND": _and_or("and"), "OR": _and_or("or"), "XOR": _and_or("xor"),
          "ISBLANK": _is_lazy("blank"), "ISNUMBER": _is_lazy("number"), "ISTEXT": _is_lazy("text"), "ISERROR": _is_lazy("error"),
          "ISERR": _is_lazy("err"), "ISNA": _is_lazy("na"), "ISLOGICAL": _is_lazy("logical")}
@@ -715,7 +826,9 @@ def f_count(b, a):
 
 
 def f_counta(b, a):
-    return float(sum(1 for x in a for v in _rng_list(x) if v is not None and v != ""))
+    # a formula that returns "" is not an empty cell: Excel's COUNTA counts it (COUNTBLANK counts it
+    # as blank too); only a cell with nothing in it is left out
+    return float(sum(1 for x in a for v in _rng_list(x) if v is not None))
 
 
 def f_countblank(b, a):
@@ -1374,9 +1487,17 @@ def book_from_xlsx(x) -> Book:
     from .xlsx_doc import _CELLREF, s as S
     x.expand_shared_formulas()
     cells: dict[str, dict[tuple[int, int], tuple]] = {}
+    hidden: dict[str, set[int]] = {}
+    filtered: set[str] = set()
     sst = x.shared_strings()
     for sh in x.sheets:
         root = x.sheet_root(sh["name"])
+        hidden[sh["name"]] = {int(row.get("r")) - 1 for row in root.iter(S("row"))
+                              if row.get("hidden") in ("1", "true") and row.get("r")}
+        pr = root.find(S("sheetPr"))
+        if root.find(S("autoFilter")) is not None or any(rel.type.endswith("/table") for rel in x.pkg.rels(sh["part"])) \
+                or (pr is not None and pr.get("filterMode") in ("1", "true")):
+            filtered.add(sh["name"])            # an AutoFilter, a table's filter, or an Advanced Filter in place
         d: dict[tuple[int, int], tuple] = {}
         for c in root.iter(S("c")):
             m = _CELLREF.match(c.get("r") or "")
@@ -1413,11 +1534,19 @@ def book_from_xlsx(x) -> Book:
     dn = x.wb.find(S("definedNames"))
     if dn is not None:
         for el in dn.findall(S("definedName")):
+            if el.get("name") == "_xlnm._FilterDatabase":
+                # the range an Advanced Filter (or an AutoFilter) filters: its sheet may hide filtered rows
+                idx = el.get("localSheetId")
+                if idx is not None and idx.isdigit() and int(idx) < len(x.sheets):
+                    filtered.add(x.sheets[int(idx)]["name"])
+                else:
+                    text = el.text or ""
+                    filtered.update(sh["name"] for sh in x.sheets if text.lstrip("=").startswith((sh["name"] + "!", "'" + sh["name"].replace("'", "''") + "'!")))
             nm = el.get("name") or ""
             if nm.startswith("_xlnm.") or nm.startswith("_dw_") or el.get("localSheetId") is not None:
                 continue
             names[nm] = el.text or ""
-    return Book(cells, names, x.date1904)
+    return Book(cells, names, x.date1904, hidden, filtered)
 
 
 def compute_workbook(x) -> dict:

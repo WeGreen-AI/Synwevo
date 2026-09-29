@@ -40,8 +40,9 @@ KIND_KEYS = {
     "region": {"sheet", "range", "table", "r1", "c1", "r2", "c2", "part"},
     "repeat": {"sheet", "row", "c1", "c2", "table", "header_rows", "header_row", "empty_policy", "placeholder",
                "repeat_header", "slide", "shape", "overflow"},
-    "repeat_block": {"first_find", "last_find", "first", "last", "part", "auto_columns", "separator", "empty_policy", "placeholder"},
-    "block_column": {"block", "find", "occurrence", "part", "path", "start", "end"},
+    "repeat_block": {"first_find", "last_find", "first", "last", "part", "auto_columns", "separator", "empty_policy", "placeholder",
+                     "sheet", "rows"},
+    "block_column": {"block", "find", "occurrence", "part", "path", "start", "end", "sheet", "cell"},
     "pdf_box": {"page", "rect", "nrect", "find", "occurrence", "font_size", "min_font_size", "align", "valign", "clear", "color"},
     "pdf_field": {"field", "font_size", "min_font_size", "align"},
     "pdf_repeat": {"page", "rect", "nrect", "find", "occurrence", "layout", "overflow", "empty_policy", "placeholder",
@@ -277,9 +278,18 @@ def resolve_field(app: App, tid: str, spec: dict) -> dict:
                     req[k] = spec[k]
         else:
             _bad(f"{fmt.upper()} 模板的重复明细请用 pdf_repeat", "kind")
+    elif kind == "repeat_block" and fmt == "xlsx":
+        # whole rows, written as Excel writes them: "3:6"
+        m = re.fullmatch(r"\s*(\d+)\s*:\s*(\d+)\s*", str(spec.get("rows") or ""))
+        if not m:
+            _bad("XLSX 重复内容块需要 rows，写成 Excel 的行号区间，如「3:6」", "rows")
+        req.update({"sheet": spec.get("sheet"), "first": int(m.group(1)) - 1, "last": int(m.group(2)) - 1})
+        for k in ("separator", "empty_policy", "placeholder"):
+            if k in spec:
+                req[k] = spec[k]
     elif kind == "repeat_block":
         if fmt != "docx":
-            _bad("重复内容块只用于 DOCX 模板", "kind")
+            _bad("重复内容块只用于 DOCX 与 XLSX 模板", "kind")
         first = spec.get("first") or (_docx_find(app, tid, str(spec["first_find"]), occ, spec.get("part")) if "first_find" in spec else None)
         last = spec.get("last") or (_docx_find(app, tid, str(spec["last_find"]), 1, spec.get("part")) if "last_find" in spec else None)
         if not first or not last:
@@ -296,6 +306,9 @@ def resolve_field(app: App, tid: str, spec: dict) -> dict:
         blk = next((s for s in slots if s.get("block") and (s["id"] == block or s["name"] == block)), None)
         if not blk:
             _bad(f"找不到重复内容块「{block}」", "block")
+        if fmt == "xlsx":
+            req.update({"block_id": blk["id"], "sheet": spec.get("sheet") or blk["locator"]["sheet"], "cell": _need(spec, "cell")})
+            return req
         loc = _docx_find(app, tid, str(spec["find"]), occ, spec.get("part")) if "find" in spec else \
             {"part": spec.get("part"), "path": _need(spec, "path"), "start": _int(spec, "start"), "end": _int(spec, "end")}
         req.update({"block_id": blk["id"], **loc})

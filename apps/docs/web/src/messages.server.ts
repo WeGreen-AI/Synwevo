@@ -180,13 +180,13 @@ export const serverMessages = {
     "en": "Full grid with all rows loaded in pages, worksheet switching and cell/range selection",
     "zh-Hant": "完整表格網格（分頁加載全部行），工作表切換，單元格/區域框選"
   },
-  "单元格、固定区域、重复明细行；工作副本以隐藏定义名称标记字段": {
-    "en": "Cells, fixed regions and repeating detail rows; hidden defined names mark fields in working copies",
-    "zh-Hant": "單元格、固定區域、重復明細行；工作副本以隱藏定義名稱標記字段"
+  "单元格、固定区域、重复明细行、重复内容块（整行，块内可有明细行）；工作副本以隐藏定义名称标记字段": {
+    "en": "Cells, fixed regions, repeating detail rows and repeating blocks (whole rows, optionally with detail rows inside); hidden defined names mark fields in working copies",
+    "zh-Hant": "單元格、固定區域、重復明細行、重復內容塊（整行，塊內可有明細行）；工作副本以隱藏定義名稱標記字段"
   },
-  "单值、固定区域、重复明细行（插入行时平移公式、合并、条件格式、数据验证、图表范围）": {
-    "en": "Single values, fixed regions and repeating detail rows; inserted rows shift formulas, merges, conditional formatting, validation and chart ranges",
-    "zh-Hant": "單值、固定區域、重復明細行（插入行時平移公式、合併、條件格式、數據驗證、圖表範圍）"
+  "单值、固定区域、重复明细行（插入行时平移公式、合并、条件格式、数据验证、图表范围）、重复内容块（每组或每段一份，块内明细行只写入该段的行）": {
+    "en": "Single values, fixed regions and repeating detail rows (inserted rows shift formulas, merges, conditional formatting, validation and chart ranges); repeating blocks, one copy per group or section, whose detail rows receive only their section's rows",
+    "zh-Hant": "單值、固定區域、重復明細行（插入行時平移公式、合併、條件格式、數據驗證、圖表範圍）、重復內容塊（每組或每段一份，塊內明細行只寫入該段的行）"
   },
   "直接改写 XML，未修改部分原样保留（图表、图片、透视表等部件不被重写）": {
     "en": "Edits XML directly; untouched parts, including charts, images and pivot tables, are retained",

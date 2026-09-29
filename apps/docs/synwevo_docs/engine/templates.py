@@ -16,7 +16,7 @@ from . import docx_core as dc
 from . import tabular
 from . import values as V
 from .ooxml import Package
-from .refshift import Shift
+from .refshift import MAX_ROW, Shift
 
 
 class TemplateError(ValueError):
@@ -335,20 +335,25 @@ def docx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
 
 
 def may_nest(slots: list[dict]) -> bool:
-    """Whether a DOCX template's slots can hold a nested detail at all (a block and a repeating row);
-    only then is the file read to find out (`assign_parents`)."""
+    """Whether a template's slots can hold a nested detail at all (a block and a repeating row);
+    only then is it worked out (`assign_parents`)."""
     return any(s.get("block") for s in slots) and any(s.get("kind") == "repeat" and not s.get("block") for s in slots)
 
 
-def assign_parents(work: bytes, slots: list[dict]) -> list[dict]:
+def assign_parents(work: bytes, slots: list[dict], fmt: str = "docx") -> list[dict]:
     """Each repeat row inside a repeat content block gets `parent: <block id>`; every other slot
-    none. Derived from the template itself on every save, so either order of creating the two
-    works and removing the block clears it (docs-nested-details.md §2)."""
-    from .docx_blocks import nesting
-    pkg = Package(work)
+    none. Derived from the template on every save, so either order of creating the two works and
+    removing the block clears it (docs-nested-details.md §2): from the Word file's controls, or
+    for a spreadsheet from the rows the fields sit on (docs-xlsx-nested.md §2)."""
     nest: dict[str, str] = {}
-    for info in dc.list_parts(pkg):
-        nest.update(nesting(pkg.xml(info["part"])))
+    if fmt == "xlsx":
+        from .xlsx_band import nesting as xlsx_nesting
+        nest = xlsx_nesting(slots)
+    else:
+        from .docx_blocks import nesting
+        pkg = Package(work)
+        for info in dc.list_parts(pkg):
+            nest.update(nesting(pkg.xml(info["part"])))
     out = []
     for sl in slots:
         sl = {k: v for k, v in sl.items() if k != "parent"}
@@ -464,6 +469,8 @@ def xlsx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
     kind = req.get("kind", "cell")
     name = req.get("name") or "字段"
     merges = x.merges(sheet)
+    if kind == "repeat_block":
+        return _xlsx_block(x, sheet, req, slots)
     if kind == "cell":
         r, c = tabular.parse_cell(req["cell"])
         for (r1, c1, r2, c2) in merges:
@@ -493,8 +500,12 @@ def xlsx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
             if a <= row <= cc and a != cc:
                 raise TemplateError("vertical_merge", f"第 {row + 1} 行与纵向合并单元格 {tabular.range_ref(a, b, cc, d)} 相交，不能作为重复行")
         for other in slots:
-            if other["kind"] == "repeat" and other["locator"]["sheet"] == sheet and other["locator"]["row"] == row:
+            if other["kind"] == "repeat" and other["locator"]["sheet"] == sheet and other["locator"].get("row") == row:
                 raise TemplateError("duplicate_repeat", "该行已是重复明细行")
+        for pv in x.pivot_tables(sheet):
+            # rows inserted into a pivot table would split it (xlsx_doc._check_pivots)
+            if pv["rows"][0] <= row + 1 <= pv["rows"][1]:
+                raise TemplateError("pivot_overlap", f"第 {row + 1} 行与数据透视表「{pv['name']}」（{pv['ref']}）相交，不能作为重复行")
         _check_overlap(slots, sheet, row, c1, row, c2)
         header_row = req.get("header_row", row - 1 if row > 0 else None)
         cols = []
@@ -510,14 +521,100 @@ def xlsx_add_slot(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dic
         x.set_defined_name("_dw_" + slot["id"], sheet, tabular.range_ref(row, c1, row, c2))
     else:
         raise TemplateError("bad_kind", f"XLSX 模板不支持的字段类型：{kind}")
+    _check_blocks(slots + [slot])
     x.touched = False  # adding defined names does not invalidate formula caches
     return x.pkg.save(), slot
+
+
+def _check_blocks(slots: list[dict]) -> None:
+    """The field shapes around repeat content blocks (xlsx_band.check_slots), as a refusal."""
+    from .xlsx_band import check_slots
+    from .xlsx_doc import XlsxError
+    try:
+        check_slots(slots)
+    except XlsxError as e:
+        raise TemplateError(e.code, str(e)) from e
+
+
+def _xlsx_block(x, sheet: str, req: dict, slots: list[dict]) -> tuple[bytes, dict]:
+    """A repeat content block over whole rows ``first``..``last`` (0-based): copied once per row of
+    its mapping, or per sub-group with 分段字段; detail rows inside it expand within each copy
+    (docs-xlsx-nested.md). The workbook is checked for what could not follow the copies."""
+    from .xlsx_band import scan
+    from .xlsx_doc import XlsxDoc, XlsxError
+    try:
+        first, last = int(req["first"]), int(req["last"])
+    except (KeyError, TypeError, ValueError):
+        raise TemplateError("bad_value", "请选择重复内容块的首行和末行") from None
+    if first < 0 or last >= MAX_ROW:
+        raise TemplateError("bad_value", "请选择重复内容块的首行和末行")
+    if last <= first:
+        raise TemplateError("band_rows", "重复内容块至少要有两行；只重复一行请用「重复明细行」")
+    slot = _base_slot(req.get("name") or "字段", "repeat", block=True, locator={"sheet": sheet, "first": first, "last": last},
+                      columns=[], rows=last - first + 1,
+                      empty_policy=_enum(req, "empty_policy", EMPTY_POLICIES["block"], "remove"),
+                      placeholder=req.get("placeholder", "（无）"), separator=_enum(req, "separator", SEPARATORS, "none"))
+    _check_blocks(slots + [slot])
+    probe = XlsxDoc(x.pkg.save())             # scanned on a copy: expanding shared formulas is not a template change
+    probe.expand_shared_formulas()
+    try:
+        scan(probe, sheet, first + 1, last + 1)
+    except XlsxError as e:
+        raise TemplateError(e.code, str(e)) from e
+    x.set_defined_name("_dw_" + slot["id"], sheet, tabular.range_ref(first, 0, last, 16383))
+    x.touched = False
+    return x.pkg.save(), slot
+
+
+def xlsx_add_block_column(work: bytes, req: dict, slots: list[dict]) -> tuple[bytes, dict]:
+    """Make a cell inside an XLSX repeat content block one of its columns: every copy writes the
+    value of its own row (or sub-group) there."""
+    from .xlsx_band import nesting, rows_of
+    from .xlsx_doc import XlsxDoc
+    blk = next((s for s in slots if s["id"] == req.get("block_id") and s.get("block")), None)
+    if blk is None or "first" not in (blk.get("locator") or {}):
+        raise TemplateError("no_block", "找不到该重复内容块")
+    sheet = blk["locator"]["sheet"]
+    try:
+        r, c = tabular.parse_cell(str(req.get("cell") or ""))
+    except ValueError as e:
+        raise TemplateError("bad_value", str(e)) from None
+    b1, b2 = rows_of(blk)
+    ref = tabular.cell_ref(r, c)
+    if (req.get("sheet") or sheet) != sheet or not b1 <= r + 1 <= b2:
+        raise TemplateError("band_column_outside", f"请在重复内容块「{blk['name']}」的行内（第 {b1}–{b2} 行）选择单元格")
+    nest = nesting(slots)
+    if any(nest.get(s["id"]) == blk["id"] and int(s["locator"]["row"]) == r for s in slots):
+        raise TemplateError("band_detail_cell", f"单元格 {ref} 在重复内容块「{blk['name']}」的明细行上：明细行上的单元格只能是明细列")
+    x = XlsxDoc(work)
+    for (r1, c1, r2, c2) in x.merges(sheet):
+        if r1 <= r <= r2 and c1 <= c <= c2 and (r, c) != (r1, c1):
+            raise TemplateError("merged_inner", f"{ref} 位于合并单元格内部，请选择合并区域左上角 {tabular.cell_ref(r1, c1)}")
+    for col in blk.get("columns") or []:
+        if col.get("cell") == ref:
+            raise TemplateError("duplicate_column", f"{ref} 已是重复内容块「{blk['name']}」的列「{col['name']}」")
+    _check_overlap([s for s in slots if s["id"] != blk["id"]], sheet, r, c, r, c)
+    keys = {col["key"] for col in blk.get("columns") or []}
+    n = 0
+    while f"c{n}" in keys:
+        n += 1
+    info = x.get_cell(sheet, r, c)
+    name = (req.get("name") or "").strip() or f"第{len(keys) + 1}列"
+    col = {"key": f"c{n}", "name": name[:60], "cell": ref, "original_text": info["text"], "had_formula": bool(info["formula"])}
+    return work, {**blk, "columns": [*(blk.get("columns") or []), col]}
 
 
 def _check_overlap(slots, sheet, r1, c1, r2, c2):
     for s in slots:
         loc = s.get("locator", {})
         if loc.get("sheet") != sheet:
+            continue
+        if s.get("block"):
+            # a block's rows hold other fields; only its own columns are taken
+            for col in s.get("columns") or []:
+                a, b = tabular.parse_cell(col["cell"])
+                if r1 <= a <= r2 and c1 <= b <= c2:
+                    raise TemplateError("overlap", f"与已有字段「{s['name']}」重叠")
             continue
         if s["kind"] == "cell":
             a, b, c, d = tabular.parse_range(loc["cell"])
@@ -558,9 +655,42 @@ def xlsx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
         if not len(dn):
             x.wb.remove(dn)
     shifts: dict[str, list[Shift]] = {}
-    repeats = sorted([s for s in slots if s["kind"] == "repeat"], key=lambda s: (s["locator"]["sheet"], -s["locator"]["row"]))
+    from . import xlsx_band as XB
+    # A detail row inside a repeat content block is filled per block copy from its sub-groups
+    # (`groups`, made by the plan when the block's mapping sets 分段字段), as in Word.
+    nest = XB.nesting(slots)
+    names = {s_["id"]: s_["name"] for s_ in slots}
+    for child, blk in nest.items():
+        cv = values.get(child) or {}
+        if "groups" not in cv and cv.get("rows"):
+            issues.append({"level": "error", "slot": child, "code": "nested_unconfigured",
+                           "message": f"明细表「{names.get(child, child)}」在重复内容块「{names.get(blk, blk)}」里：请在这个内容块的映射中设置分段字段，"
+                                      "每一段才会只写入自己的明细行"})
+    if issues:
+        return b"", issues
+    # repeat units bottom-up per sheet (a block and a single detail row alike), so each insertion
+    # only moves what later units no longer read
+    units = [(s_["locator"]["sheet"], XB.rows_of(s_)[0] - 1 if XB.is_block(s_) else s_["locator"]["row"], s_)
+             for s_ in slots if s_["kind"] == "repeat" and s_["id"] not in nest]
+    repeats = [u[2] for u in sorted(units, key=lambda u: (u[0], -u[1]))]
+    in_block: set[str] = set()
+
+    def warn(w: list[str], slot: dict) -> None:
+        issues.extend(_w(w, slot))
     try:
+        XB.check_slots(slots)
         for sl in repeats:
+            if XB.is_block(sl):
+                sheet = sl["locator"]["sheet"]
+                b1, b2 = XB.rows_of(sl)
+                kids = [(s_, values.get(s_["id"])) for s_ in slots if nest.get(s_["id"]) == sl["id"]]
+                cells = [s_ for s_ in slots if s_["kind"] == "cell" and s_["locator"]["sheet"] == sheet
+                         and b1 <= tabular.parse_cell(s_["locator"]["cell"])[0] + 1 <= b2]
+                in_block.update(c["id"] for c in cells)
+                moved = XB.fill_band(x, sl, kids, values, cells, issues, warn)
+                if moved is not None:
+                    shifts.setdefault(sheet, []).append(moved)
+                continue
             sheet, row = sl["locator"]["sheet"], sl["locator"]["row"]
             rows = (values.get(sl["id"]) or {"rows": []})["rows"]
             n = len(rows)
@@ -583,6 +713,11 @@ def xlsx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
                             x.clear_cell(sheet, row, col["col"])
                 continue
             if n > 1:
+                total = max(x.last_content_row(sheet), row + 1) + n - 1
+                if total > MAX_ROW:
+                    issues.append({"level": "error", "slot": sl["id"], "code": "row_limit",
+                                   "message": f"重复明细「{sl['name']}」有 {n} 行，插入后工作表「{sheet}」共 {total} 行，超过 Excel 工作表的上限 1,048,576 行"})
+                    return b"", issues
                 x.insert_copies_of_row(sheet, row + 1, n - 1)
                 shifts.setdefault(sheet, []).append(Shift(row + 2, n - 1, expand_row=row + 1))
             for i, rv in enumerate(rows):
@@ -605,6 +740,8 @@ def xlsx_fill(work: bytes, slots: list[dict], values: dict[str, dict], options: 
 
         for sl in slots:
             fv = values.get(sl["id"])
+            if sl["id"] in in_block:
+                continue                     # written into every copy of its block
             if sl["kind"] == "cell":
                 sheet = sl["locator"]["sheet"]
                 r, c = tabular.parse_cell(sl["locator"]["cell"])

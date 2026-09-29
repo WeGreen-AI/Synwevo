@@ -54,6 +54,12 @@ class Limits:
     # A user-written block-marker regular expression runs over every line of a source.
     max_regex_chars: int = _env_int("MAX_REGEX_CHARS", 200)
     max_records_per_job: int = _env_int("MAX_RECORDS_PER_JOB", 20000)
+    # Cells one XLSX repeat content block may write into a document (its rows × copies). Measured
+    # (2026-09-29, a 20-column block, 2 lines per copy): about 1.5 KB of resident memory per written
+    # cell for the whole fill — the XML, the formula engine's model and its cached values —
+    # 400,000 cells peaked at 649 MB. 250,000 keeps one fill near 420 MB, well under the ~3 GB the
+    # verify container and a production worker have, with room for the rest of the workbook.
+    max_block_cells: int = _env_int("MAX_BLOCK_CELLS", 250_000)
     converter_timeout_s: int = _env_int("CONVERTER_TIMEOUT", 180)
     # Address-space cap for the LibreOffice child process (0 = no cap).
     converter_memory_bytes: int = _env_int("CONVERTER_MEMORY_MB", 8192) * 1024 * 1024

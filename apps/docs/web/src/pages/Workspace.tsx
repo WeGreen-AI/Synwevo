@@ -7,7 +7,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, del, get, messagesHref, patch, post, put, qs, useSession, workspaceContext } from "@synwevo/auth-client";
 import { initialState, openRoom, type Focus, type Room, type RoomState } from "../lib/collab";
 import ProjectPresence, { ActivityDrawer, changeText } from "../components/ProjectPresence";
-import { describeSelection, mappingSlots, slotPos } from "../lib/describe";
+import { colIdx, describeSelection, mappingSlots, slotPos } from "../lib/describe";
 import CommentsDrawer, { type AnchorOption, type CommentAnchor } from "../components/CommentsDrawer";
 import type { Mapping, Mark, Project, RecordRule, Selection, Slot, SourceFile, TemplateDetail } from "../lib/types";
 import { anyModalOpen, isImeKey, Modal, useDialog, useToast } from "@synwevo/ui";
@@ -490,7 +490,18 @@ function Workspace() {
       const pos = slotPos(s, tpl.format);
       if (!pos) continue;
       const m = slotMapping(s);
-      out.push({ id: m ? m.id : s.id, no: m?.no, color: markColor(m?.color), role: m ? "tgt" : "slot", pos, active: (m && m.id === activeMap) || (rightSel?.kind === "slot" && rightSel.slotId === s.id), label: tr("字段「{v1}」", { v1: s.name }) + (m ? tr("（映射 #{v1}）", { v1: m.no }) : tr("（未映射）")) });
+      const active = (m && m.id === activeMap) || (rightSel?.kind === "slot" && rightSel.slotId === s.id);
+      out.push({ id: m ? m.id : s.id, no: m?.no, color: markColor(m?.color), role: m ? "tgt" : "slot", pos, active, label: tr("字段「{v1}」", { v1: s.name }) + (m ? tr("（映射 #{v1}）", { v1: m.no }) : tr("（未映射）")) });
+      if (tpl.format === "xlsx" && s.block && pos.kind === "cells") {
+        // a spreadsheet block's columns are cells of its rows: marked too, and they select the block
+        for (const c of s.columns || []) {
+          const at = /^([A-Z]+)(\d+)$/.exec(c.cell || "");
+          if (!at) continue;
+          const col = colIdx(at[1]), row = Number(at[2]) - 1;
+          out.push({ id: `${s.id}#${c.key}`, color: markColor(m?.color), role: "slot", pos: { kind: "cells", sheet: pos.sheet, r1: row, c1: col, r2: row, c2: col }, active,
+            label: tr("内容块「{v1}」的列「{v2}」", { v1: s.name, v2: c.name }) });
+        }
+      }
     }
     return out;
   }, [slots, mappings, activeMap, rightSel, tpl, locale]);
@@ -575,7 +586,7 @@ function Workspace() {
   const onMarkClickRight = (id: string) => {
     const m = mappings.find((x) => x.id === id);
     if (m) pickMapping(id);
-    else pickSlot(id);
+    else pickSlot(id.split("#")[0]);     // a block column's mark ("<block>#<key>") selects its block
   };
 
   const selectedSlot = rightSel?.kind === "slot" ? slots.find((s) => s.id === rightSel.slotId) || null : null;

@@ -86,7 +86,7 @@ def static_check(mappings: list[dict], slots: list[dict], rule: dict | None) -> 
                            "message": f"映射 #{m.get('no')} 有多个来源，需要设置组合方式（拼接 / 换行 / 求和）"})
         if m.get("group_by") and not any(s.get("block") for s in tslots):
             issues.append({"level": "error", "code": "group_by_unsupported", "mapping": m["id"],
-                           "message": f"映射 #{m.get('no')}：分段目前只支持 Word 模板的重复内容块；Excel / PPT / PDF 模板和 Word 表格行暂不支持嵌套明细"})
+                           "message": f"映射 #{m.get('no')}：分段目前只支持 Word 和 Excel 模板的重复内容块；PPT / PDF 模板和表格行暂不支持嵌套明细"})
         nested = next((s for s in tslots if s.get("parent")), None)
         if mtype == "repeat" and nested is not None:
             block = slot_by_id.get(nested["parent"]) or {}

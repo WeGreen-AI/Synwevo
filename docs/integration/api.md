@@ -259,8 +259,8 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 | `cell` | XLSX / DOCX 表格 / PPTX 表格 | XLSX：`sheet`+`cell`；DOCX：`table`(第几个表格)+`row`+`col`；PPTX：`slide`+`shape`+`row`+`col` |
 | `region` | XLSX / DOCX 表格 | XLSX：`sheet`+`range`；DOCX：`table`+`r1`,`c1`,`r2`,`c2` |
 | `repeat` | XLSX / DOCX / PPTX | 明细模板行：XLSX `sheet`+`row`+`c1`+`c2`；DOCX `table`+`row`(+`header_rows`)；PPTX `slide`+`shape`+`row`；可带 `empty_policy`、`placeholder`；PPTX 另可带 `overflow`：表格超出幻灯片底部时 `warn`（缺省，照常生成并警告）/ `error`（该份失败）/ `continue`（复制本张幻灯片续写：表头行每张重复，明细下方的行只在最后一张，幻灯片上其他字段同样填写；按模板行高计算；含图表、SmartArt、音视频或嵌入对象的幻灯片不复制） |
-| `repeat_block` | DOCX | 连续段落块：`first_find`/`last_find` 或 `first`/`last` 路径；`auto_columns`、`separator`(`none`/`blank`/`page_break`)、`empty_policy` |
-| `block_column` | DOCX | 给已存在的内容块加一列：`block`(名称或 id) + `find` 或 `path`+`start`+`end` |
+| `repeat_block` | DOCX / XLSX | DOCX：连续段落块，`first_find`/`last_find` 或 `first`/`last` 路径，另可带 `auto_columns`；XLSX：整行区段，`sheet`+`rows`（Excel 行号，如 `"3:6"`，至少两行），块内的 `repeat` 行成为它的明细（每份只写入该段的行）；都可带 `separator`(`none`/`blank`/`page_break`)、`empty_policy`(`remove`/`placeholder`/`error`)、`placeholder` |
+| `block_column` | DOCX / XLSX | 给已存在的内容块加一列：`block`(名称或 id) + DOCX 的 `find` 或 `path`+`start`+`end`；XLSX 的 `cell`（块内、不在明细行上的单元格） |
 | `pdf_box` | PDF / 图片 | `page`+`rect`（页面坐标，单位点）、`nrect`（0–1 比例）或 `find`；`font_size`、`min_font_size`、`align`、`valign`、`color`、`clear` |
 | `pdf_repeat` | PDF / 图片 | 同上定位 + `layout`（列与行高，可省略由服务识别）、`overflow`(`error`/`continue`/`shrink`)、`empty_policy` |
 | `pdf_field` | PDF 表单 | `field`（AcroForm 字段名） |

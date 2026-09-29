@@ -66,6 +66,8 @@ export function slotPos(s: Slot, format: string): Pos | null {
       const p1 = /([A-Z]+)(\d+)/.exec(a)!, p2 = /([A-Z]+)(\d+)/.exec(b || a)!;
       return { kind: "cells", sheet: loc.sheet, r1: Number(p1[2]) - 1, c1: colIdx(p1[1]), r2: Number(p2[2]) - 1, c2: colIdx(p2[1]) };
     }
+    // a repeat content block covers whole rows; the grid clips the last column to the sheet
+    if (s.kind === "repeat" && s.block) return { kind: "cells", sheet: loc.sheet, r1: loc.first, c1: 0, r2: loc.last, c2: 16383 };
     if (s.kind === "repeat") return { kind: "cells", sheet: loc.sheet, r1: loc.row, c1: loc.c1 ?? 0, r2: loc.row, c2: loc.c2 ?? 0 };
   }
   if (format === "docx") return { kind: "field", field: s.id };
@@ -89,6 +91,7 @@ export function describeSelection(s: Selection | null): string {
   if (!s) return "";
   switch (s.kind) {
     case "cells":
+      if (s.rows) return `${s.sheet}!` + (s.r1 === s.r2 ? tr("第 {v1} 行（整行）", { v1: s.r1 + 1 }) : tr("第 {v1}–{v2} 行（整行）", { v1: s.r1 + 1, v2: s.r2 + 1 }));
       return `${s.sheet}!${rangeRef(s.r1, s.c1, s.r2, s.c2)}` + (s.r1 !== s.r2 || s.c1 !== s.c2 ? tr("（{v1} 行 × {v2} 列）", { v1: s.r2 - s.r1 + 1, v2: s.c2 - s.c1 + 1 }) : "");
     case "docx_text":
       return s.start === s.end ? tr("插入位置（光标）") : tr("文字「{v1}」", { v1: s.text.length > 24 ? s.text.slice(0, 24) + "…" : s.text });

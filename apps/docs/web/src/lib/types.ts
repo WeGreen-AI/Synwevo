@@ -35,7 +35,8 @@ export interface Slot {
   mode?: string;
   original_text?: string;
   locator: any;
-  columns?: { key: string; name: string; col: number; original_text?: string }[];
+  /** a detail row's columns carry `col`; an XLSX repeat content block's columns carry `cell` */
+  columns?: { key: string; name: string; col?: number; cell?: string; original_text?: string }[];
   rows?: number;
   cols?: number;
   empty_policy?: string;
@@ -171,7 +172,7 @@ export interface Mark {
 }
 
 export type Selection =
-  | { kind: "cells"; sheet: string; r1: number; c1: number; r2: number; c2: number }
+  | { kind: "cells"; sheet: string; r1: number; c1: number; r2: number; c2: number; rows?: boolean }
   | { kind: "docx_text"; part: string; path: string; start: number; end: number; text: string; blk?: string }
   | { kind: "docx_blocks"; part: string; first: string; last: string; count: number; text: string }
   | { kind: "docx_cell"; part: string; table_path: string; row: number; col: number; text?: string }
