@@ -5645,7 +5645,7 @@ components:
       required:
         - status
       title: ScanVerdict
-      description: "What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows\nwritten before scanning existed and `not_configured` deployments without a scanner — neither is\nclean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`.\n`encrypted` (password-protected: nobody can check what is inside, `reason` archive / office /\npdf) is never clean: an upload is refused (400 `encrypted_file`), or — when only the engine\nrecognises it — the file ends in `error` and is never served (410 `encrypted_file`); a file\nstored before scanning that a rescan finds encrypted keeps its state (the owner decides)."
+      description: "What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows\nwritten before scanning existed and `not_configured` deployments without a scanner — neither is\nclean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`.\n`encrypted` (password-protected, or its structure could not be checked: nobody can check what\nis inside; `reason` archive / office / pdf) is never clean: the file ends in `error` and is\nnever served (410 `encrypted_file`); a template upload is refused (400 `encrypted_file`); a\nfile stored before scanning that a rescan finds encrypted keeps its state (the owner decides)."
     SourceBlock:
       properties:
         index:

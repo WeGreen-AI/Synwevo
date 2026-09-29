@@ -332,13 +332,6 @@ class App:
             # are not written back into the store the verdict took them out of (CI-90). A standing
             # quarantine verdict holds even where no scanner is configured.
             raise earlier_malicious(filename)
-        if self.scanner is not None:
-            # Password-protected bytes are refused before anything is stored: nobody can check what
-            # is inside (§8.7). The scan below reports the same for what only the engine recognises.
-            kind = M.encrypted_kind(data)
-            if kind:
-                acceptance_log.info("scan.encrypted source tenant=%s sha256=%s kind=%s", current_tenant() or "-", blob, kind)
-                raise encrypted_file(filename, kind)
         blob = self.store.put_blob(data)
         sid = new_id("s")
         mx = self.store.one("SELECT MAX(ord) AS m FROM source_files WHERE project_id=?", (pid,))["m"] or 0
@@ -410,9 +403,11 @@ class App:
             self._quarantine_blob(row["blob"], res)
             self._notify_rejected(row)
         elif res.status == "encrypted":
-            # Terminal: the uploader has to remove the password and upload again. The bytes stay
-            # where the row points (unreadable through every path, like a file over the scan
-            # limit); reclaiming unreferenced bytes is the blob reclamation's job, not this gate's.
+            # Password-protected, or could not be checked (§8.7) — decided after the engine, so a
+            # signature on the same bytes wins and is quarantined above. Terminal: the uploader has
+            # to remove the password and upload again. The bytes stay where the row points
+            # (unreadable through every path, like a file over the scan limit); reclaiming
+            # unreferenced bytes is the blob reclamation's job, not this gate's.
             self._publish_scan(row, rec, "error", error=ENCRYPTED_ERROR)
             acceptance_log.warning("scan.encrypted source=%s tenant=%s sha256=%s kind=%s signature=%s engine=%s",
                                    sid, row.get("tenant") or "-", row["blob"], res.reason, res.signature, res.engine)

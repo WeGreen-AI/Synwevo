@@ -79,3 +79,36 @@ def test_a_password_protected_member_file_is_refused_before_it_is_read(platform)
     readable.new_page().insert_text((72, 72), "Nina New nina.new@example.test")
     r = c.post(url, files={"file": ("成员.pdf", readable.tobytes(encryption=pymupdf.PDF_ENCRYPT_AES_256, owner_pw="o"), "application/pdf")}, headers=c.h)
     assert r.status_code == 201 and r.json()["scan"]["status"] == "clean", r.text
+    # a workbook protected only in its structure opens without a password: not refused as encrypted
+    r = c.post(url, files={"file": ("结构保护.xls", F.lo_xls("structure"), "application/vnd.ms-excel")}, headers=c.h)
+    assert r.status_code == 201 and r.json()["scan"]["status"] == "clean", r.text
+
+
+def test_the_security_check_does_not_hold_the_event_loop(platform, monkeypatch):
+    """The review measured one upload stalling every other request of the (single-worker) service
+    while its check ran. A slow scan now holds only its own request."""
+    import threading
+    import time
+
+    import synwevo_core.member_import as MI
+    real = MI.M.scanner_for
+
+    class Slow:                                   # TEST DOUBLE: the real adapter, one second slower
+        def __init__(self, inner):
+            self.inner, self.max_bytes = inner, inner.max_bytes
+
+        def scan(self, data, sha256=None):
+            time.sleep(1.0)
+            return self.inner.scan(data, sha256=sha256)
+
+    monkeypatch.setattr(MI.M, "scanner_for", lambda pol: Slow(real(pol)))
+    c = platform
+    url = f"/api/auth/organizations/{c.oid}/imports"
+    th = threading.Thread(target=lambda: c.post(url, files={"file": ("成员.xlsx", F.encrypted_ooxml(), "application/octet-stream")}, headers=c.h))
+    th.start()
+    time.sleep(0.2)
+    t = time.perf_counter()
+    assert c.get(url).status_code == 200                # the import list: no scanner involved
+    waited = time.perf_counter() - t
+    th.join(timeout=30)
+    assert waited < 0.6, f"a concurrent request waited {waited:.2f}s"

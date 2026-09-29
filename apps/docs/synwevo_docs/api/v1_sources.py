@@ -198,10 +198,10 @@ class ScanVerdict(BaseModel):
     """What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows
     written before scanning existed and `not_configured` deployments without a scanner — neither is
     clean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`.
-    `encrypted` (password-protected: nobody can check what is inside, `reason` archive / office /
-    pdf) is never clean: an upload is refused (400 `encrypted_file`), or — when only the engine
-    recognises it — the file ends in `error` and is never served (410 `encrypted_file`); a file
-    stored before scanning that a rescan finds encrypted keeps its state (the owner decides)."""
+    `encrypted` (password-protected, or its structure could not be checked: nobody can check what
+    is inside; `reason` archive / office / pdf) is never clean: the file ends in `error` and is
+    never served (410 `encrypted_file`); a template upload is refused (400 `encrypted_file`); a
+    file stored before scanning that a rescan finds encrypted keeps its state (the owner decides)."""
     status: Literal["pending", "clean", "infected", "encrypted", "error", "too_large", "not_configured", "unscanned"]
     signature: str | None = None
     engine: str | None = None

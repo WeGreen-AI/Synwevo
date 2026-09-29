@@ -184,11 +184,12 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 
 **设有密码的文件不被接纳（需求 §8.7）。** 开启扫描的部署不接纳加密的压缩包（ZIP/7z/RAR）、设有打开密码的 Office 文档
 （含 OpenDocument）和需要密码才能打开的 PDF——安全检查看不到里面的内容，这既不是"干净"也不是恶意软件。只设了权限
-（所有者）密码、不输入密码就能打开的 PDF 照常接纳。来源文件、模板、可续传上传的使用与服务器路径导入都直接返回
-400 `encrypted_file`（`detail.kind` 为 `archive`/`office`/`pdf`，`detail.filename`），不建文件、不存字节；去掉密码
-（或另存一份不加密的副本）后重新上传即可。只有扫描引擎认得出的情况（例如文档里嵌着加密压缩包，引擎开启了
-`AlertEncryptedArchive`）先进入 `scanning`，随后变为 `error`、`scan.status=encrypted`，`/files/{fid}/content` 回 410
-`encrypted_file`，不解析、不预览、不能改解析选项。补扫发现的扫描上线前存入的加密文件只记下 `scan.status=encrypted`，
+（所有者）密码、不输入密码就能打开的 PDF 照常接纳。模板（含可续传上传的使用）直接返回
+400 `encrypted_file`（`detail.kind` 为 `archive`/`office`/`pdf`，`detail.filename`），不建模板；去掉密码
+（或另存一份不加密的副本）后重新上传即可。**来源文件**与恶意软件扫描走同一条异步路径：上传返回 201、`scanning`，引擎先看（签名优先，
+按恶意软件拒绝），随后变为 `error`、`scan.status=encrypted`，`/files/{fid}/content` 回 410 `encrypted_file`，不解析、不预览、不能改解析选项；
+结构读不完（截断、超出识别器的上限）同样按这一句拒绝——读不完就不能说它干净。可续传上传在 `/complete` 时字节已经入库，
+被拒后没有任何接口能读到它们。补扫发现的扫描上线前存入的加密文件只记下 `scan.status=encrypted`，
 状态与可读性都不变——撤回已经在用的文件由所有者决定（`docs/security/file-acceptance.md` §8.1）。
 
 来源选择接口与界面调用同一服务，所有位置从 0 开始。以下列表接口采用 `offset`/`limit`，

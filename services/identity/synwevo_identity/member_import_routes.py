@@ -19,6 +19,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
+from fastapi.concurrency import run_in_threadpool
 
 from synwevo_core.errors import ServiceError
 from synwevo_core.member_import import (IMPORTABLE_WORKSPACE_ROLES, MAX_FILE_BYTES, MAX_ROWS, MemberImports,
@@ -328,8 +329,10 @@ def build_router(store, ident, sessions, audit, invites, mailer, *, ingest, star
         if not data:
             raise ServiceError(400, "empty_file", "文件是空的")
         filename = Path(file.filename or "members").name[:200] or "members"
-        scan = ingest.accept(filename, data)                       # 400 / 503 / 413 on refusal
-        extraction = ingest.extract(data, filename, ocr=ocr in ("1", "true", "on"))
+        # The security check (a clamd round trip and the container check) and the reading run off
+        # the event loop: one member file must not stall every other request of the service.
+        scan = await run_in_threadpool(ingest.accept, filename, data)       # 400 / 503 / 413 on refusal
+        extraction = await run_in_threadpool(lambda: ingest.extract(data, filename, ocr=ocr in ("1", "true", "on")))
         imp = imports.create(oid, uid, filename=filename, sha256=hashlib.sha256(data).hexdigest(), size=len(data),
                              extraction=extraction, scan=scan, workspace_id=workspace_id.strip() or None)
         if extraction.get("status") in ("ready", "needs_ocr"):

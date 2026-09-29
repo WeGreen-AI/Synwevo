@@ -413,10 +413,12 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     async def upload_sources(request: Request, pid: str, files: list[UploadFile] = File(...)):
         desc = authority.describe_request(request)
         actor = desc.get("user_id") if desc.get("kind") == "user" else None
+        from starlette.concurrency import run_in_threadpool
         out = []
         for f in files:
             data = await _read_limited(f)
-            out.append(app_.add_source(pid, f.filename or "file", data, actor=actor))
+            # hashing and storing up to the upload limit is not event-loop work
+            out.append(await run_in_threadpool(app_.add_source, pid, f.filename or "file", data, actor=actor))
         return out
 
     @api.get("/api/projects/{pid}/sources")
@@ -517,8 +519,11 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
 
     @api.post("/api/templates/upload")
     async def upload_template(file: UploadFile = File(...), name: str | None = Form(None), project_id: str | None = Form(None)):
+        from starlette.concurrency import run_in_threadpool
         data = await _read_limited(file)
-        t = app_.upload_template(file.filename or "template", data, name)
+        # the security check (clamd round trip, container check) and the template analysis run
+        # off the event loop: one upload must not stall every other request
+        t = await run_in_threadpool(app_.upload_template, file.filename or "template", data, name)
         if project_id:
             app_.update_project(project_id, {"template_id": t["id"]})
         return t

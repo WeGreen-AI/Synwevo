@@ -74,8 +74,8 @@ def test_a_password_protected_attachment_is_refused_and_nothing_is_stored(org, d
         assert body["detail"] == {"filename": name, "kind": kind}, body
         sha = hashlib.sha256(data).hexdigest()
         assert not c.ident.store.has_blob(sha) and Q.verdict(c.ident.store, sha) is None
-    # the engine's own alert on something nested is refused the same way
-    nested = F.zip_bytes({"inner.zip": F.flag_encrypted(F.zip_bytes({"a.txt": b"TEST"}))})
+    # the engine's own alert on something the detector does not see is refused the same way
+    nested = F.zip_bytes({"inner.bin": b"TEST FIXTURE standing in for a compressed encrypted archive"})
     double.infected[hashlib.sha256(nested).hexdigest()] = "Heuristics.Encrypted.Zip"
     r = _attach(c, dm["id"], "打包.zip", nested, ha)
     assert r.status_code == 400 and r.json()["error"] == "encrypted_file" and r.json()["detail"]["kind"] == "archive"
@@ -83,6 +83,45 @@ def test_a_password_protected_attachment_is_refused_and_nothing_is_stored(org, d
     # a readable archive goes through
     ok = _attach(c, dm["id"], "资料.zip", F.zip_bytes({"a.txt": b"TEST FIXTURE"}), ha)
     assert ok.status_code == 201 and ok.json()["scan"]["status"] == "clean", ok.text
+
+
+def _pdf(user: bool) -> bytes:
+    pymupdf = pytest.importorskip("pymupdf")
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "TEST FIXTURE")
+    out = doc.tobytes(encryption=pymupdf.PDF_ENCRYPT_AES_256, owner_pw="o", user_pw="u" if user else "")
+    doc.close()
+    return out
+
+
+def test_crafted_layouts_are_refused_and_files_that_open_freely_are_not(org, double, monkeypatch):
+    """The 2026-09-29 security review sent eight crafted password-protected files through this gate
+    and downloaded them byte for byte as another member. Each layout is here, refused; next to them
+    files that open without a password, accepted."""
+    c = org
+    _on(monkeypatch, double)
+    ha = c.sign_in("ann")
+    dm = _dm(c, ha)
+    enc_zip = F.flag_encrypted(F.zip_bytes({"报价.xlsx": b"TEST FIXTURE " * 30}))
+    user = _pdf(True)
+    i = user.index(b"<<", user.rfind(b"trailer")) + 2
+    crafted = {
+        "前缀.zip": b"X" + enc_zip,                                           # junk before the archive
+        "伪装.pdf": F.pdf() + enc_zip,                                         # a PDF with the archive appended
+        "长尾.pdf": user[:i] + b" " * (300 * 1024) + user[i:],                 # trailer past the old 256 KiB window
+        "无头.pdf": b"\n" * 2048 + user,                                       # header late, offsets off
+        "清单.odt": F.odf(True, pad=1_100_000),                                # manifest past the old 1 MiB cap
+        "直存.7z": F.sevenzip(encrypted=True, header_coder="copy"),            # header packed with Copy
+        "大写.xls": F.cfb({"WORKBOOK": F.xls_workbook(filepass=True)}),        # stream names in another case
+        "小写.doc": F.cfb({"worddocument": F.word_document(encrypted=True)}),
+    }
+    for name, data in crafted.items():
+        r = _attach(c, dm["id"], name, data, ha)
+        assert r.status_code == 400 and r.json()["error"] == "encrypted_file", (name, r.status_code, r.text[:200])
+    assert c.ident.store.one("SELECT COUNT(*) AS n FROM message_attachments")["n"] == 0
+    for name, data in {"结构保护.xls": F.lo_xls("structure"), "只读.pdf": _pdf(False), "资料.odt": F.odf(False, pad=1_100_000)}.items():
+        r = _attach(c, dm["id"], name, data, ha)
+        assert r.status_code == 201 and r.json()["scan"]["status"] == "clean", (name, r.text[:200])
 
 
 def test_a_rescan_reports_an_encrypted_historical_attachment_and_leaves_it_readable(org, double, monkeypatch, capsys):

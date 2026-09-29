@@ -47,17 +47,17 @@
 `add_source` 在写入任何行与字节之前先查（CI-90 起先算摘要、再落 blob：被判定的字节不会被重新写回存储）：
 这些字节的摘要是否已有一条 `rejected` 记录——有就 400
 `malware_detected`，不再落库、不再扫描。写入时行状态为 `scanning`，`scan={"status":"pending"}`，
-再把 `_scan_then_parse` 交给解析线程池。开启扫描时，设有密码的文件在落库之前就被拒绝（400 `encrypted_file`，§3.1）。
+再把 `_scan_then_parse` 交给解析线程池。设有密码的文件同样在这里判定：先问引擎，再看容器（§3.1）。
 没有配置扫描器时状态直接是 `parsing`，
 `scan={"status":"not_configured"}`——**缺失是可见的，不是静默的**。
 
 ## 3. 状态机
 
 ```
-upload ─▶（设有密码？400 encrypted_file，不建行、不存字节）
+upload
    │                 ┌──────────── clean ────────────┐
    └─▶ scanning ─────┼─ infected ─▶ rejected（字节已删除）  ▼
-                     ├─ encrypted ─▶ error（scan.status=encrypted；终态，不解析、不提供）
+                     ├─ encrypted ─▶ error（scan.status=encrypted；终态，不解析、不提供；签名优先，见上一行）
                      └─ error / too_large ─▶ scan_failed ─┐   parsing ─▶ ready | needs_ocr | error | unsupported
                               ▲   自动重试 30s→60s→2m→5m→10m │
                               └────────────────────────────┘（too_large 不重试：换更大的上限或拆分文件）
@@ -89,10 +89,10 @@ ClamAV 看不到它解不开的内容；不开 `AlertEncrypted*` 时它对加密
 
 | 环节 | 行为 |
 |---|---|
-| 识别 | `synwevo_core.encrypted.encrypted_kind(bytes)` → `archive` / `office` / `pdf` / `None`。ZIP（含 OOXML、OpenDocument）：任一条目的通用标志位 0（中央目录或本地头；ZipCrypto 与 WinZip AES 都设）；OpenDocument 另看 `META-INF/manifest.xml` 的 `encryption-data`（它加密部件时不设 ZIP 标志）。OLE2 复合文档：按 MS-CFB 解析头、经 DIFAT 的 FAT 与目录链（不做全文字节搜索——旧版 `.doc` 以 UTF-16 存正文，正文里出现这些词不算），只看根存储的子项：`EncryptedPackage`（加密或权限管理的 OOXML）、Excel `Workbook`/`Book` 流首个 `BOF` 之后（可隔一个 `WriteProtect`）的 `FilePass`、Word FIB 的 `fEncrypted` 位、PowerPoint 的 `EncryptedSummary` 流或 `Current User` 头标记 `0xF3D1C4DF`。PDF：`/Encrypt` 在尾部字典（经典 `trailer` 或交叉引用流，沿 `/Prev`；交叉引用损坏时像阅读器一样按 `trailer` 关键字修复），且标准安全处理器**用空的用户口令打不开**：修订 2–4 按 ISO 32000-1 算法 2/4/5（MD5 + 自带 RC4），修订 5/6 按 SHA-256 与 ISO 32000-2 算法 2.B（`cryptography` 的 AES-128-CBC）；只设权限（所有者）口令的 PDF 不输入口令就能打开，**照常接纳**；公钥等其他处理器、无法求值的加密字典 → `pdf`。7z：（LZMA 解包后的）头里任一 folder 的编码器含 AES（`06 F1 07 01`）。RAR 4/5：主头口令位、文件头口令位 / 归档加密头、文件或服务头的加密记录。全部有界：声明的大小先与文件比对，链上每个扇区最多走一次，只解包 7z 的头（上限 16 MiB）与 OpenDocument 清单（上限 1 MiB），从不解包内容；畸形输入回 `None`，交给既有的结构检查，从不抛异常。 |
-| 结论 | `ClamdScanner.scan`：先问引擎（引擎认得的真实签名优先——clamd 默认 `HeuristicScanPrecedence no` 时签名先于启发式报出），回答 `OK` 后若 `encrypted_kind` 非空 → `ScanResult("encrypted", reason=种类)`；引擎回答 `Heuristics.Encrypted.*`（`AlertEncryptedArchive`/`AlertEncryptedDoc`）→ 同样是 `encrypted`（带 `signature`），**永远不是 `infected`**。只有开启扫描（策略 `required`）才有这一步；未配置扫描器时一切照旧（`not_configured` 照样可见）。 |
-| Docs 来源 | `add_source` 在建行、落字节之前就识别（400 `encrypted_file`，`detail.kind`、`detail.filename`）——网页多文件上传逐个提示，机器接口、可续传上传的使用、服务器路径导入同一条路。只有引擎认得出的（例如文档里嵌着加密压缩包）在 `_scan_then_parse` 里得到 `encrypted`：行变为 `error`（终态，同一句错误），`scan.status=encrypted`；`_parse_source` 不解析，`require_accepted`（下载、视图、搜索、页面图、定位、脱敏……）回 410 `encrypted_file`，`authz.blob_readable` 不放行它的 blob id，改解析选项 410。字节留在行指向的位置、任何路径都读不到（与超限文件相同）；回收无人引用的字节是 blob 回收的职责，不由闸门临时决定（`docs/platform/blob-reclamation.md`）。 |
-| 其他入口 | 模板上传与组织共享模板的"使用"（`scan_template_bytes`）、消息附件与成员导入（`accept_upload`）：400 `encrypted_file`，什么都不存。 |
+| 识别 | `synwevo_core.encrypted.encrypted_kind(bytes)` → `archive` / `office` / `pdf` / `None`（`inspect` 另外说明是"确认加密"还是"无法检查"）。**两条规则**（2026-09-29 安全审查后）：① **失败即拒绝**——某格式的结构已经在（ZIP 头、复合文档头、7z/RAR 签名、PDF 里的 `/Encrypt` 名字），却因解析失败、不支持的编码器或任何内部上限而得不出结论，就按"无法检查"报出该种类，与加密一样不接纳；`None` 只表示"看过了，不用口令就能打开"或"这些格式都不在"。② **每种格式都在阅读器会找的地方找**——ZIP 前面有垃圾或存根（自解压、多格式拼接）、7z/RAR 在可执行存根后面、PDF 没有文件头或偏移错位，阅读器照样打开，所以每种格式在整个文件里找，所有检查都跑。ZIP（含 OOXML、OpenDocument、以不压缩方式存在别的文件里的压缩包）：文件里每个本地头与中央目录头（按签名找、查合理性，不用 `zipfile`——它把整个中央目录读成对象，精心构造的文件能让它耗掉几 GB）的通用标志位 0（ZipCrypto 与 WinZip AES 都设）；OpenDocument 另看 `META-INF/manifest.xml` 的 `encryption-data`（它加密部件时不设 ZIP 标志），清单按流解压、有字节预算。OLE2 复合文档：按 MS-CFB 解析头、经 DIFAT 的 FAT（按需读取，不整表展开）与目录链（不做全文字节搜索——旧版 `.doc` 以 UTF-16 存正文，正文里出现这些词不算），名字**不分大小写**比较（MS-CFB 的规定，阅读器也找得到 `encryptedpackage`），只看根存储的子项：`EncryptedPackage`/`EncryptionInfo`（加密或权限管理的 OOXML）、Excel `Workbook`/`Book` 流首个 `BOF` 之后（可隔一个 `WriteProtect`）的 `FilePass`——**用 Excel 的默认口令 "VelvetSweatshop" 能打开的除外**（只保护工作簿结构的 XLS 就是这样写的，不输入口令就能打开；XOR 混淆、RC4、RC4 CryptoAPI 三种都按 MS-OFFCRYPTO 验证）、Word FIB 的 `fEncrypted` 位、PowerPoint 的 `EncryptedSummary` 流或 `Current User` 头标记 `0xF3D1C4DF`。PDF（在文件的任何位置——阅读器会修复缺失的文件头与错位的偏移）：只看含 `/Encrypt` 名字（含 `#xx` 转义写法）的文件；由阅读器会用的尾部字典决定——`startxref` 链（沿 `/Prev`），链损坏时是末尾附近的 `trailer` 字典、交叉引用流字典与包住每个 `/Encrypt` 的字典；词法分析只受记号预算约束（不再有 256 KiB 的窗口），名字在、却没有一个读得出的尾部字典带着它 → `pdf`（无法检查）。标准安全处理器**用空的用户口令打不开**时是 `pdf`：修订 2–4 按 ISO 32000-1 算法 2/4/5（MD5 + 自带 RC4），修订 5/6 按 SHA-256 与 ISO 32000-2 算法 2.B（`cryptography` 的 AES-128-CBC）；只设权限（所有者）口令的 PDF 不输入口令就能打开，**照常接纳**；公钥等其他处理器、无法求值的加密字典 → `pdf`。7z（文件里每个签名，例如自解压存根之后）：头里任一 folder 的编码器含 AES（`06 F1 07 01`）；压缩过的头用一个 Copy、Deflate、LZMA 或 LZMA2 编码器时解包（字典大小按输出长度截断，文件要 4 GiB 也不给），其他编码器或多编码器链 → 无法检查。RAR 4/5（每个签名）：主头口令位、文件头口令位 / 归档加密头、文件或服务头的加密记录。**时间与内存都有界**（与输入成线性、各有固定上限）：每种格式的头数、7z 的编码器与 folder 总数（所有签名共用一个预算）、RAR 块数、复合文档目录项、PDF 的解析记号数与对象查找次数、候选尾部字典数、清单与 7z 头的解压字节；超出上限 = 无法检查。只在扫描上限以内运行（`ClamdScanner.scan` 先把更大的文件判为 `too_large`），从不抛异常。 |
+| 结论 | `ClamdScanner.scan`（调用方都在线程池里跑它，不占事件循环）：先问引擎（引擎认得的真实签名优先——clamd 默认 `HeuristicScanPrecedence no` 时签名先于启发式报出），回答 `OK` 后若 `encrypted_kind` 非空 → `ScanResult("encrypted", reason=种类)`；引擎回答 `Heuristics.Encrypted.*`（`AlertEncryptedArchive`/`AlertEncryptedDoc`）→ 同样是 `encrypted`（带 `signature`），**永远不是 `infected`**。只有开启扫描（策略 `required`）才有这一步；未配置扫描器时一切照旧（`not_configured` 照样可见）。 |
+| Docs 来源 | 与恶意软件扫描同一条异步路径（网页多文件上传、机器接口、可续传上传的使用、服务器路径导入都一样）：`_scan_then_parse` 先问引擎、再看容器——同一份字节上的签名优先，按恶意软件拒绝并隔离（与历史行共用的字节按 CI-90 移入隔离区）；得到 `encrypted` 时行变为 `error`（终态，同一句错误），`scan.status=encrypted`；`_parse_source` 不解析，`require_accepted`（下载、视图、搜索、页面图、定位、脱敏……）回 410 `encrypted_file`，`authz.blob_readable` 不放行它的 blob id，改解析选项 410。字节留在行指向的位置、任何路径都读不到（与超限文件相同）；回收无人引用的字节是 blob 回收的职责，不由闸门临时决定（`docs/platform/blob-reclamation.md`）。第一版曾在落库前同步识别，审查指出它排在引擎之前（签名命中的加密文件只被当作"加密"、不隔离），并且在事件循环里运行，已改回这条路。 |
+| 其他入口 | 模板上传与组织共享模板的"使用"（`scan_template_bytes`）、消息附件与成员导入（`accept_upload`）：400 `encrypted_file`，不建模板/附件/导入。多数情况什么字节都不存；**可续传上传例外**：`/complete` 校验通过时字节已经进了 blob 存储，拒绝发生在"使用"这一步——那份字节只被未消费的上传行引用，没有任何读取路径能取到它，随上传过期由 blob 回收处理。网页模板上传、机器接口的来源与模板上传、成员导入都在线程池里运行检查（此前在事件循环里，一个慢请求会卡住整个单进程服务）。 |
 | 不是恶意软件 | 不进隔离区、不留"已拒绝的摘要"、不发 `docs.file_rejected`：同样的字节再上传会再次按加密拒绝，去掉密码后的文件照常接纳。 |
 | 提示 | 一句话说清发生了什么、该怎么做：「文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传」。三个外壳的拒绝目录都有三语言译文（`refusals.test.ts`/`.mjs` 校验），来源行的错误句由 `diagnosticText` 翻译；组织审批页的复制清单把 `encrypted` 显示为「设有密码，无法检查」。 |
 | 补扫 | 见 §8.1：扫描上线前存入的加密文件只报告、不改访问（由所有者决定）；`quarantine release` 遇到加密内容不恢复。 |
@@ -176,18 +176,31 @@ ZIP 内的 EICAR 命中 `Eicar-Test-Signature`，三种仓库夹具 `OK`，守�
 
 ### 7.4 加密文件（需求 §8.7，2026-09-29）
 
-测试：`apps/docs/tests/test_encrypted_files.py`（19 项：识别器 9 项——6 个测试，PDF 按 4 种加密方法参数化；扫描器 2 项，其一是
-真实引擎，设置 `CLAMD_TEST_ADDRESS` 时运行、否则跳过；Docs 上传路径 6 项；补扫与恢复 2 项）、`apps/messages/tests/test_encrypted_attachments.py`（2 项）、
-`tests/integration/test_encrypted_member_import.py`（1 项）；夹具由 `apps/docs/tests/encrypted_fixtures.py` 按格式说明用纯 Python
+**安全审查（2026-09-29，c2242fc）与修复。** 独立审查确认了路由（每个入口都经过闸门、被拒的行在每条读取路径上都被拒、补扫与恢复、三语言句子），并用构造的文件找到两个必须修的问题与四个应修的问题，逐项修复，审查的生成器都变成了回归测试（修复前在 c2242fc 上全部失败）：
+
+| 发现 | 修复 |
+|---|---|
+| 高：识别器把"解析失败/超出内部上限"当作"干净"，并且只按开头的魔数选格式——前缀垃圾的 ZIP、附加在 PDF 后的 ZIP、两个拼接的压缩包、trailer 超过 256 KiB 的 PDF、文件头推后或缺失的 PDF、超过 1 MiB 的 OpenDocument 清单、用 Copy/Deflate/Delta 打包头的 7z、改了大小写的复合文档流名：8 个样本经消息附件闸门被接纳并被另一成员原样下载，Docs 里 6 个可下载 | 失败即拒绝（`inspect` 报"无法检查"）、每种格式在整个文件里找、PDF 词法不再有窗口、清单按流解压、7z 头支持 Copy/Deflate/LZMA/LZMA2 其余拒绝、复合文档名不分大小写 |
+| 高：一个 2.6 KB 的 7z（头解压后是 16 MiB 的编码器记录）让识别器耗时 2.1 s、约 350 MB，一次上传 10 个把事件循环占住 38 s；100 MiB 的 FAT 重复/巨型中央目录/满是 trailer 的输入各 1–4 s、约 1 GB | 所有计数与字节都有总上限（超出 = 无法检查）、FAT 按需读、不用 `zipfile`、PDF 只保留最后几个候选且对象查找有次数与字节预算；只在扫描上限内运行；所有调用方把检查放进线程池。每类对抗输入都有时间与内存预算的测试 |
+| 中：只保护工作簿结构的 XLS 以默认口令写成 FilePass，却被当作加密拒绝 | 默认口令 "VelvetSweatshop" 能打开就不算加密（三种方案） |
+| 低：Docs 来源在引擎之前识别，签名命中的加密文件只按"加密"拒绝、不隔离 | 来源回到异步路径：先引擎、后识别 |
+| 低：7z 头的 LZMA 字典大小取自文件（最大 4 GiB） | 截断到输出长度 |
+| 文档：可续传上传在拒绝前字节已入库，原文写"不存字节" | 如实写明（§3.1） |
+
+修复后的时间与内存（本机，每类一个进程测 `ru_maxrss` 增量）：7z 头炸弹 0.03 s / 48 MiB（16 MiB 头上限）、4 GiB 字典 0.01 s、25 MiB FAT 重复 0.02 s / 1 MiB、25 MiB 巨型中央目录 0.13 s（上限处拒绝）、25 MiB 的 trailer 关键字 0.02 s（带 `/Encrypt` 时 0.25 s）、缺失引用 0.44 s、RAR 块 0.03 s、清单炸弹 0.01 s；应用与系统自带的 13 766 个真实文件（PDF、ZIP、JAR、Office、字体、镜像等）没有一个被误判，最慢 37 ms。审查的阴性样本（只有所有者口令的 PDF、受保护的 XLSX/ODS、只保护结构的 XLS、EPUB、JAR、不压缩的 ZIP、正文提到这些标记的文档）全部接纳。
+
+测试：`apps/docs/tests/test_encrypted_files.py`（39 项：识别器 27 项——含 12 类对抗输入的时间与内存预算、PDF 按 4 种加密方法参数化；扫描器 2 项，其一是
+真实引擎，设置 `CLAMD_TEST_ADDRESS` 时运行、否则跳过；Docs 上传路径 8 项，含事件循环测试；补扫与恢复 2 项）、`apps/messages/tests/test_encrypted_attachments.py`（3 项）、
+`tests/integration/test_encrypted_member_import.py`（2 项）；夹具由 `apps/docs/tests/encrypted_fixtures.py` 按格式说明用纯 Python
 构造（CFB 经 `olefile` 读回，7z/RAR 经 libarchive 3.7.4 `bsdtar -tvf` 列出并报告加密）。
 
 | 项 | 断言 |
 |---|---|
-| 识别器 | ZIP 标志位（中央目录或本地头、仅一个条目、中央目录损坏）、OOXML/OpenDocument；复合文档的 `EncryptedPackage`、XLS `FilePass`（含 `WriteProtect`、迷你流与常规扇区两条路径）、DOC `fEncrypted`、PPT 头标记与 `EncryptedSummary`；正文里写着这些名字的 DOC、嵌入对象里的加密包、普通 XLS/PPT 为 `None`；MuPDF 的修订 2/3/4/6 PDF：有用户口令为 `pdf`、只有所有者口令为 `None`，对象流/交叉引用流、公钥处理器、无法求值的字典、`startxref` 损坏；7z（LZMA 头、明文头、加密头）与 RAR 4/5（文件与头加密）；截断与随机改写 500 余种输入不抛异常 |
+| 识别器 | ZIP 标志位（中央目录或本地头、仅一个条目、中央目录损坏）、OOXML/OpenDocument；复合文档的 `EncryptedPackage`、XLS `FilePass`（含 `WriteProtect`、迷你流与常规扇区两条路径）、DOC `fEncrypted`、PPT 头标记与 `EncryptedSummary`；正文里写着这些名字的 DOC、嵌入对象里的加密包、普通 XLS/PPT 为 `None`；MuPDF 的修订 2/3/4/6 PDF：有用户口令为 `pdf`、只有所有者口令为 `None`，对象流/交叉引用流、公钥处理器、无法求值的字典、`startxref` 损坏；7z（LZMA/Copy/Deflate 头、明文头、加密头）与 RAR 4/5（文件与头加密）；审查的构造样本：前缀与附加的 ZIP、拼接的压缩包、存根后的 7z/RAR、推后或缺失文件头的 PDF、超长 trailer（空白与注释，经典与交叉引用流）、转义写法的 `/Encrypt`、超过 1 MiB 的清单、大小写不同的流名、LibreOffice 真实的只保护结构 XLS（默认口令）与 XOR/RC4/CryptoAPI 三种 FilePass；读不完的结构 → 无法检查；阴性集（EPUB、JAR、只有所有者口令的 PDF…）；12 类对抗输入各在 3 s、96 MiB 之内（本机实测都在 0.5 s、48 MiB 以内）；截断与随机改写 500 余种输入不抛异常 |
 | 扫描器 | 引擎先被询问；`OK` + 加密 → `encrypted`；`Heuristics.Encrypted.*` → `encrypted`（带签名、种类）；加密字节上的真实签名 → `infected`；只有所有者口令的 PDF → `clean` |
-| Docs | 来源（网页、机器接口、可续传上传、服务器路径导入）与模板：400 `encrypted_file`、三语言句子、`detail.kind`/`filename`，不建行、不存字节、不进隔离区，也不送去引擎；只有所有者口令的 PDF 照常接纳；引擎独有的结论：`error` + `scan.status=encrypted`，下载/搜索/选项 410、视图 `error`、blob id 不可读、未解析、无隔离结论，同字节再上传再判一次，脱敏跳过它；改解析选项不能绕过闸门（`scan_failed` 的行 409）；未配置扫描器时一切照旧 |
+| Docs | 来源（网页、机器接口、可续传上传、服务器路径导入）：引擎先看（每个文件都送到了替身），随后 `error` + `scan.status=encrypted`、下载 410、无隔离结论；ZIP 里同时有 EICAR 与加密条目时按恶意软件拒绝（`rejected`、字节移走、再上传 400 `malware_detected`）；模板：400 `encrypted_file`、三语言句子、`detail.kind`/`filename`，不建模板；只有所有者口令的 PDF、只保护结构的 XLS 照常接纳；检查慢一秒时，并发的其他请求不被卡住（网页与机器接口的模板上传）；引擎独有的结论：`error` + `scan.status=encrypted`，下载/搜索/选项 410、视图 `error`、blob id 不可读、未解析、无隔离结论，同字节再上传再判一次，脱敏跳过它；改解析选项不能绕过闸门（`scan_failed` 的行 409）；未配置扫描器时一切照旧 |
 | 补扫 | 历史加密来源（XLS、PDF）：退出码 1、摘要列 id 不列文件名，状态与错误句不变，记录 `encrypted`/`rescan`/`access: unchanged`，下载仍 200，第二次运行无事可做；签名命中的加密字节照常隔离，签名撤回后 `release` 仍拒绝（退出码 1） |
-| 消息与成员导入 | 加密 ZIP/7z/RAR/DOCX/XLS 附件与引擎报出的嵌套加密：400、什么都不存；补扫发现的历史加密附件只记录、成员仍可下载；成员导入（文档引擎）的加密 XLSX/XLS/PDF：400、不建导入、不留文件，只有所有者口令的 PDF 照常导入 |
+| 消息与成员导入 | 加密 ZIP/7z/RAR/DOCX/XLS 附件与引擎报出的嵌套加密：400、什么都不存；审查的 8 类构造附件（前缀 ZIP、附加在 PDF 后的 ZIP、超长 trailer、文件头推后的 PDF、超大清单、Copy 头的 7z、大小写不同的 XLS/DOC 流名）全部 400，只保护结构的 XLS、只有所有者口令的 PDF、带超大清单的普通 ODT 照常接纳；补扫发现的历史加密附件只记录、成员仍可下载；成员导入（文档引擎）的加密 XLSX/XLS/PDF：400、不建导入、不留文件，只有所有者口令的 PDF、只保护结构的 XLS 照常导入；检查慢一秒时并发请求不被卡住 |
 | 前端 | 三个外壳的拒绝目录测试读取服务端句子（消息外壳自此也读附件闸门 `accept_upload` 的拒绝，补上了此前只显示代码的恶意内容、超限与引擎不可用三句） |
 
 浏览器（2026-09-29，隔离的临时 Docs 实例接真实 clamd，系统 Chrome 无头，只用测试夹具）：在工作台的来源文件面板上传加密的
@@ -356,14 +369,16 @@ blob id、产物、附件下载、新上传、完成的断点上传、组织共�
 * 成员导入原文件的过期清理：`sweep_expired` 没有调用方且不删文件（§8.1），未确认的导入文件会一直留在数据目录。
 * ~~密码保护的压缩包/Office 文件是盲区~~ 2026-09-29 已补（§3.1）：开启扫描时加密的 ZIP/7z/RAR、Office（含 OpenDocument）与
   需要打开密码的 PDF 一律不接纳。仍然存在的：
-  * **引擎与识别器都看不到的嵌套**：识别器只看文件本身这一层；嵌在文档或压缩包里的加密压缩包靠 clamd 的
-    `AlertEncryptedArchive`（参考 compose 已配置，生产在下一次部署时按 operations.md §8 加上；在那之前只有顶层被识别）。
+  * **压缩在别的文件里的加密压缩包**：识别器在整个文件里找压缩包的头，所以不压缩地存在别处（ZIP 里存放、附加在 PDF 或可执行存根后面）的会被找到；
+    被**压缩**在文档或压缩包里的，要解压才看得见，靠 clamd 的 `AlertEncryptedArchive`（参考 compose 已配置，生产在下一次部署时按 operations.md §8 加上）。
     嵌在文档里的加密**文档**或 PDF（例如 DOCX 里的加密 XLSX 对象、PDF 附件里的加密 PDF）没有人报——引擎的
     `AlertEncryptedDoc` 同时会拒绝只设所有者口令的 PDF，所以不开。
-  * 其他格式的加密：ARJ/ACE/CAB 等冷门压缩格式、S/MIME 或 PGP 加密的内容、自解压可执行文件（压缩包不在文件开头）只靠引擎；
-    RAR 与 7z 的识别按格式说明实现、用合成样本与 libarchive 核对，没有用 RAR/7-Zip 本身写的样本验证（本机没有这两个工具）；
+  * 其他格式的加密：ARJ/ACE/CAB 等冷门压缩格式、S/MIME 或 PGP 加密的内容只靠引擎（第一版在这里写"自解压可执行文件只靠引擎"是错的——
+    审查实测引擎也没有报出；现在识别器在整个文件里找 ZIP/7z/RAR）；RAR 与 7z 的识别按格式说明实现、用合成样本与 libarchive 核对，没有用
+    RAR/7-Zip 本身写的样本验证（本机没有这两个工具）；7z 头用 Copy/Deflate/LZMA/LZMA2 以外的编码器打包时按"无法检查"拒绝；
     加密的 `.ppt` 只用合成样本验证（LibreOffice 不写加密 PPT）。
   * 没有"要求用户提供密码"的流程：用户去掉密码后重新上传。
+  * 失败即拒绝的代价：截断、损坏到识别器读不完的压缩包、复合文档或带 `/Encrypt` 的 PDF 会以同一句话被拒绝（"无法检查"与"加密"共用一句），中央目录超过 40 万个头的 ZIP、编码器总数超过 10 万的 7z 同样；这是有意的——读不完就不能说它干净。
   * 扫描上线前存入、补扫报告为 `encrypted` 的历史文件照常可读，等所有者决定（§8.1）；项目复制会把这样的文件带到别的空间，
     审批页显示「设有密码，无法检查」，由审批人决定。
 * 产物（生成的 DOCX/PDF/XLSX）不扫描：它们由模板与数据生成，不包含上传的原始字节；若将来允许把上传文件原样

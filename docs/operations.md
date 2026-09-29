@@ -185,7 +185,7 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 | 接口返回 429 | 调整 `SYNWEVO_API_RATE_PER_MIN` 或在客户端退避重试（响应带 `Retry-After`） |
 | 来源文件停在「安全检查暂不可用」（`scan_failed`）、`/readyz` 的 `malware_scanner` 为 `down: …` | clamd 不可达：`docker compose logs clamav`（首次启动要先下载病毒库，`start_period` 15 分钟）；恢复后文件按 30 s→10 min 的间隔自动重试，不需要重新上传。文件超过扫描上限（`scan.status=too_large`）则调大 `SYNWEVO_CLAMD_MAX_BYTES` 与 clamd 的 `StreamMaxLength` 后让用户重新上传 |
 | 上传返回 400 `malware_detected`、文件显示「安全检查未通过」 | 引擎命中签名（`scan.signature`、`scan.engine` 记录了判定时的引擎与病毒库）。字节已从 blob 存储删除；没有"仍然处理"的入口。怀疑误报按 docs/security/file-acceptance.md §8 处理 |
-| 上传返回 400 `encrypted_file`（「文件设有密码或含有加密内容…」），或来源显示「错误」且 `scan.status=encrypted` | 文件有打开密码（`detail.kind`/`scan.reason`：`archive`/`office`/`pdf`），安全检查看不到里面：不是恶意软件，也不会被接纳。请用户去掉密码或另存不加密的副本后重新上传；没有"跳过检查"的入口。补扫对历史文件报告的 `encrypted` 不改访问，处理方式由所有者决定（file-acceptance §8.1） |
+| 上传返回 400 `encrypted_file`（「文件设有密码或含有加密内容…」），或来源显示「错误」且 `scan.status=encrypted` | 文件有打开密码，或结构读不完（截断、超出识别器上限——同样不能当作干净；`detail.kind`/`scan.reason`：`archive`/`office`/`pdf`），安全检查看不到里面：不是恶意软件，也不会被接纳。请用户去掉密码或另存不加密的副本后重新上传；没有"跳过检查"的入口。补扫对历史文件报告的 `encrypted` 不改访问，处理方式由所有者决定（file-acceptance §8.1） |
 | 模板上传返回 503 `scan_unavailable` | 模板是同步扫描：clamd 不可达时拒绝并给 `Retry-After`，clamd 恢复后重试即可 |
 
 ## 6. 账户邮件（仅发信）
