@@ -46,7 +46,7 @@ from .limits import LIMITS
 from .ooxml import NS
 from .refshift import _PART_RE, _REF_RE, _ROWS_RE, MAX_ROW, Shift, split_sheet
 from .tabular import col_index, col_letter, parse_cell, parse_range
-from .xlsx_doc import XDR, XlsxDoc, XlsxError, _CELLREF, s
+from .xlsx_doc import XDR, XlsxDoc, XlsxError, _CELLREF, count_breaks, s
 
 AGGREGATES = {"SUM", "COUNT", "COUNTA", "AVERAGE", "MIN", "MAX", "PRODUCT", "SUBTOTAL"}
 MAX_ARGS = 255              # arguments of one Excel function
@@ -1276,7 +1276,7 @@ def _page_breaks(root, lay: Layout, K: int, inner: list, after_band: dict | None
     rb = root.find(s("rowBreaks"))
     if not brks:
         if rb is not None:                 # breaks inside the block went with it: recount, or drop the list
-            _count_breaks(root, rb)
+            count_breaks(root, rb)
         return
     if rb is None:
         rb = etree.Element(s("rowBreaks"))
@@ -1299,14 +1299,7 @@ def _page_breaks(root, lay: Layout, K: int, inner: list, after_band: dict | None
         rb.remove(b)
     for at in sorted(have):
         rb.append(have[at])
-    _count_breaks(root, rb)
+    count_breaks(root, rb)
 
 
-def _count_breaks(root, rb) -> None:
-    brks = rb.findall(s("brk"))
-    if not brks:
-        root.remove(rb)
-        return
-    rb.set("count", str(len(brks)))
-    rb.set("manualBreakCount", str(sum(1 for b in brks if b.get("man") in ("1", "true"))))
 
