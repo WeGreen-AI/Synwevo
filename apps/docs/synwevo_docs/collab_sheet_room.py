@@ -1,7 +1,9 @@
 """The live table room (docs/platform/docs-sheet-live.md §3–§4 and §9, batch B1 step ②).
 
-Behind the switch ``SYNWEVO_SHEET_LIVE`` (off by default) the room of a table template holds the
-shared live state of :mod:`collab_sheet` instead of presence only. Everything else about the room —
+Behind the switch ``SYNWEVO_SHEET_LIVE`` (off by default; ``on``, or a comma-separated list of the
+workspace ids a trial covers: ``collab.sheet_live_scope``) the room of a table template in a workspace
+it covers holds the shared live state of :mod:`collab_sheet` instead of presence only; everywhere else
+the room is CI-47's presence room. Everything else about the room —
 the handshake, the 30-second authorization re-check, awareness bound to the proven identity, the
 2 MiB frame bound, version frames — is the document room's (``collab.py``); this module adds:
 
@@ -74,11 +76,11 @@ from synwevo_core.store import new_id
 
 from . import collab as _collab
 from . import collab_sheet as CS
-from .collab import CLOSE_STALE, MESSAGE_SHEET, OWN_LIVE_SAVE, Conn, Room, RoomFull, display_name, meta_frame, sheet_live_enabled
+from .collab import CLOSE_STALE, MESSAGE_SHEET, OWN_LIVE_SAVE, Conn, Room, RoomFull, display_name, meta_frame, sheet_live_enabled, sheet_live_scope
 
 log = logging.getLogger("synwevo.docs.collab")
 
-__all__ = ["SheetRoom", "last_writer", "sheet_live_enabled"]
+__all__ = ["SheetRoom", "last_writer", "sheet_live_enabled", "sheet_live_scope"]
 
 MAX_CELLS_DEFAULT = 50_000        # docs-sheet-live.md §3: larger templates stay in CI-47's mode; the live table stays below it
 MAX_BYTES_DEFAULT = 16 * 1024 * 1024   # the live state's JSON; bounds memory, every draft write and every hello
@@ -215,8 +217,8 @@ def _seeded(editor) -> tuple[dict | None, dict | None, int]:
 
 
 class SheetRoom(Room):
-    """A table template's room with the switch on: live when its model can be held, presence-only
-    otherwise (``state is None``)."""
+    """A table template's room with the switch on for its workspace (opened only then: ``CollabHub.
+    _open_room``): live when its model can be held, presence-only otherwise (``state is None``)."""
 
     sheet = True
 
@@ -639,6 +641,27 @@ class SheetRoom(Room):
         except Exception:                                # noqa: BLE001
             log.exception("collab %s: persisting the live table on close failed", self.key)
 
+    def _write_and_tell(self, snap: dict) -> bool:
+        """A worker thread (a save): write one serialisation now and, written, say so like ``persist``
+        (the tabs keep what they typed until `persisted` covers it). Whether the draft now holds it —
+        written, or a newer serialisation of this room was written already; False when it could not be
+        written (a database error, or the room may not write any more): the save then writes no version
+        (``save``). Never raises."""
+        try:
+            written, _exact = self._write(snap)
+        except Exception:                                # noqa: BLE001 — the save is refused instead (``save``)
+            log.exception("collab %s: writing the live table before a save failed; the save writes no version", self.key)
+            return False
+        if not written:
+            return snap["gen"] < self._written           # overtaken by a newer write: that one holds it
+        with self.mu:
+            same = self.state is not None and self.epoch == snap["epoch"]
+            if same:
+                self.persisted_seq = max(self.persisted_seq, snap["seq"])
+        if same:
+            self.broadcast_meta({"type": "persisted", "seq": snap["seq"], "epoch": snap["epoch"]})
+        return True
+
     def forget_draft(self) -> None:
         """The template is deleted: nothing of this room is written again (the hook removes the row)."""
         self.dropped = True
@@ -664,6 +687,18 @@ class SheetRoom(Room):
                     raise ServiceError(409, "not_live", "这张表格没有正在进行的实时协同", {"reason": self.live_reason})
                 snap = CS.snapshot(self.state)
                 base_head = self.head
+                draft = self._serialize()                  # this very state, as its draft
+            # The draft of the snapshot goes first: a process that dies after the version is written and
+            # before the next draft write comes back from a draft that holds all the version holds, so
+            # folding the version in on opening changes nothing and no tab has anything below it to send
+            # again. With an older draft the tabs sent again what the version already carried — rows
+            # added twice (the crash model of review round 3). A draft that could not be written (a
+            # database error) refuses the save: written anyway, the version reopened that window (the
+            # third review's follow-up). Nothing is lost — the room still holds the edits, unsaved, and
+            # its own draft writes carry on; saving again writes both.
+            if draft is not None and not self._write_and_tell(draft):
+                raise ServiceError(503, "live_unwritten", "表格的实时修改暂时无法写入，这次没有保存为版本；请稍后再保存",
+                                   {"retry_after": 2})
             editor = CS.project(snap)
             OWN_LIVE_SAVE.room = self
             token = set_actor(user_id)
