@@ -9,6 +9,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { ApiError } from "@synwevo/auth-client";
 import { Menu, isImeKey, useI18n, useToast } from "@synwevo/ui";
 import { M, uploadWithCancel } from "../api";
+import { mayRetry } from "../lib/objects";
 import { ENTER_KEY, fmtSize } from "../lib/thread";
 import { MENTION_ALL, MENTION_ALL_LABELS } from "../types";
 import type { Attachment, Capabilities, Conversation, Member, Message } from "../types";
@@ -19,6 +20,9 @@ import { IcAt, IcAttach, IcClose, IcEmoji, IcImage, IcMic, IcSend, IcSettings, I
 
 export interface PendingUpload {
   key: string; file: File; progress: number; status: "uploading" | "done" | "failed"; result?: Attachment; error?: string; cancel?: () => void; durationMs?: number;
+  /** whether sending the same file again can change the answer (network, server, rate limit) — a refusal
+   *  of the file itself (too large, malware, password-protected, not checkable) offers removal only */
+  retryable?: boolean;
 }
 
 export interface ComposerHandle { addFiles: (files: File[]) => void; focus: () => void }
@@ -100,7 +104,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const voice = durationMs !== undefined;
     const max = voice ? caps?.voice?.max_bytes : caps?.max_attachment_bytes;
     if (max && file.size > max) {
-      setUploads(us => us.map(u => (u.key === key ? { ...u, status: "failed", progress: 0, error: t("超过单个附件 {max} 的上限，请压缩或分开发送。", { max: fmtSize(max) }) } : u)));
+      setUploads(us => us.map(u => (u.key === key ? { ...u, status: "failed", progress: 0, retryable: false, error: t("超过单个附件 {max} 的上限，请压缩或分开发送。", { max: fmtSize(max) }) } : u)));
       return;
     }
     const form = new FormData(); form.append("file", file);
@@ -111,7 +115,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       (e: unknown) => {
         if (e instanceof DOMException && e.name === "AbortError") { setUploads(us => us.filter(u => u.key !== key)); return; }
         const why = e instanceof ApiError ? e.message : String(e);
-        setUploads(us => us.map(u => (u.key === key ? { ...u, status: "failed", error: why, cancel: undefined } : u)));
+        setUploads(us => us.map(u => (u.key === key ? { ...u, status: "failed", error: why, retryable: mayRetry(e), cancel: undefined } : u)));
       });
   }, [caps, conv.id, t]);
   const addFiles = useCallback((files: File[], durationMs?: number) => {
@@ -274,7 +278,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           {u.status === "failed" && <span className="tiny msg-upload-err" role="alert">{u.error}</span>}
         </span>
         {u.status === "uploading" && <button type="button" className="btn ghost sm" onClick={() => removeUpload(u)}>{t("取消")}</button>}
-        {u.status === "failed" && <button type="button" className="btn ghost sm" onClick={() => startUpload(u.key, u.file, u.durationMs)}>{t("重试")}</button>}
+        {u.status === "failed" && u.retryable && <button type="button" className="btn ghost sm" onClick={() => startUpload(u.key, u.file, u.durationMs)}>{t("重试")}</button>}
         <button type="button" className="btn ghost sm icon" onClick={() => removeUpload(u)} aria-label={t("移除附件：{name}", { name: u.file.name })}><IcClose size={14} /></button>
       </li>)}
     </ul>}
