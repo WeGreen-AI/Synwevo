@@ -369,9 +369,12 @@ def test_changes_are_attributed_per_block_and_consecutive_typing_coalesces(world
     # Change rows are recorded after each update on a worker thread; under a loaded machine the
     # second keystroke's row can land after a fixed 0.3 s, so wait for the state itself (CI-77).
     items = _changes_when(world, tid, lambda rows: len(rows) == 2 and any(r["count"] == 2 for r in rows))
-    kinds = [(i["user"]["name"], i["kind"], i["part"], i["block_no"], i["excerpt"], i["count"]) for i in items]
-    assert kinds[0] == ("Editor", "insert", "body", 1, "备注", 1)
-    assert kinds[1] == ("Owner", "edit", "body", 0, "客户：张三【客户】", 2), "two keystrokes in one block are one entry"
+    # The list is newest first by when a row was recorded, and recording runs on a worker thread:
+    # under load the owner's second keystroke can be recorded after the editor's paragraph, so
+    # the two rows are compared as a set, not by position.
+    kinds = {(i["user"]["name"], i["kind"], i["part"], i["block_no"], i["excerpt"], i["count"]) for i in items}
+    assert kinds == {("Editor", "insert", "body", 1, "备注", 1),
+                     ("Owner", "edit", "body", 0, "客户：张三【客户】", 2)}, "two keystrokes in one block are one entry"
     assert len(items) == 2
     a.close(); b.close()
 
