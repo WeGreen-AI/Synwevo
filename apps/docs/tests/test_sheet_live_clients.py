@@ -1085,16 +1085,106 @@ def test_R3h_a_lost_delete_sent_again_after_a_crash_is_checked_against_rows_adde
     assert [(x["kind"], x["detail"].get("by")) for x in a.state()["attention"]] == [("conflict", h.world["editor"]["id"])]
 
 
+# ------------------------------------------------------------------ the third review's follow-up (each failed on f2332c4)
+def _conflicts(t: Tab) -> list[dict]:
+    return [x for x in t.state()["attention"] if x["kind"] == "conflict"]
+
+
+@pytest.mark.parametrize("later", ["refused", "undone after it applied"])
+def test_X1_X2_a_group_told_again_still_meets_a_newer_value_of_its_own_cell_as_a_new_conflict(env, later):
+    """A's group (clear B2:B3) conflicts on B2 ("B changed B2 to b1"); B3 is left to A's later edit. B
+    changes B2 again; then the later edit stops standing (refused, or undone after it applied) and the
+    group is told again. Telling it again moved what "use my value" is sent against to now, though the
+    sentence still named b1: B's newer B2 was cleared untold (H2). Now it is a new conflict naming it."""
+    h, a, b, sid, rows, cols, B3 = _group_then_later(env, [("B2", "b1")])
+    B2 = {"sheet": sid, "row": rows[1], "col": cols[1]}
+    a.submit({"op": "set", **B3, "v": "bad\x01char" if later == "refused" else "later"})
+    a.connect()
+    a.to_client()                                               # the hello: both go out
+    a.to_server()                                               # the group: a conflict on B2
+    a.to_client()
+    [g] = _conflicts(a)
+    assert g["detail"]["theirs"]["v"] == "b1" and not g["detail"].get("also")
+    b.submit({"op": "set", **B2, "v": "b2, never shown to A"})
+    b.pump()
+    a.pump()                                                    # B's patch, then the later edit's answer
+    if later != "refused":
+        assert a.undo()["sent"] is True
+        a.pump()
+        b.pump()
+    [g] = _conflicts(a)
+    assert g["detail"]["theirs"]["v"] == "b1", "the sentence still names what A was shown"
+    a.use_mine(g["id"])
+    a.pump()
+    b.pump()
+    assert _cell(h.room.state["content"], sid, rows[1], cols[1]) == "b2, never shown to A", "not replaced untold (H2)"
+    [again] = _conflicts(a)
+    assert again["detail"]["theirs"]["v"] == "b2, never shown to A", "a new conflict names the newer value"
+    a.use_mine(again["id"])
+    a.pump()
+    b.pump()
+    assert _cell(h.room.state["content"], sid, rows[1], cols[1]) is None, "told, A's choice is done"
+
+
+@pytest.mark.parametrize("later", ["applied", "conflict"])
+def test_X3_X4_answers_resolved_in_one_hello_never_list_a_cell_a_later_edit_decides(env, later):
+    """The group (clear B2:B3) and a later edit of B3 both reach the room; their answers are lost with the
+    connection and come back in one hello's outcomes. The group's sentence was made before the later
+    edit counted: it listed B3 as "would be overwritten", and "use my value" then left B3 alone."""
+    h, a, b = _two(env)
+    sid, rows, cols = _grid(h.room)
+    B2 = {"sheet": sid, "row": rows[1], "col": cols[1]}
+    B3 = {"sheet": sid, "row": rows[2], "col": cols[1]}
+    a.submit({"op": "set", **B2, "v": "a2"})
+    a.submit({"op": "set", **B3, "v": "a3"})
+    a.pump()
+    b.pump()
+    b.submit({"op": "set", **B2, "v": "b1"})
+    if later == "conflict":
+        b.submit({"op": "set", **B3, "v": "b3"})
+    while b.out:
+        b.to_server()                                           # in the room; A's tab has not read the patches
+    a.submit({"op": "tx", "ops": [{"op": "clear", **B2}, {"op": "clear", **B3}]})
+    a.submit({"op": "set", **B3, "v": "my later B3"})
+    a.disconnect(server_notices=True, deliver_prefix=2)         # both reach the room; the answers are lost
+    b.pump()
+    a.connect()
+    a.pump()
+    a.pump()
+    b.pump()
+    att = a.state()["attention"]
+    g = [x for x in att if x["label"]["ref"] == "B2"][0]
+    assert "B3" not in [c["ref"] for c in g["detail"].get("also", [])], g["detail"]
+    if later == "conflict":
+        assert any(x["label"]["ref"] == "B3" and x["kind"] == "conflict" for x in att), "B3 has its own answer"
+    b3 = _cell(h.room.state["content"], sid, rows[2], cols[1])
+    a.use_mine(g["id"])
+    a.pump()
+    b.pump()
+    assert _cell(h.room.state["content"], sid, rows[1], cols[1]) is None
+    assert _cell(h.room.state["content"], sid, rows[2], cols[1]) == b3, "left to the later edit, as the sentence said"
+
+
 def test_E_a_crash_between_a_save_and_the_next_draft_write_adds_nothing_twice(env):
     """The crash model's new case: the process dies after a save wrote its version and before the next
     draft write. The next one opened the older draft and folded the version in; the tabs sent again
     everything they had acknowledged after that draft — rows added twice, values written twice. A save
-    now writes the draft of its snapshot first: nothing below the version is sent again."""
+    now writes the draft of its snapshot first: nothing below the version is sent again.
+
+    The older draft holds an unsaved edit: only such a draft is kept and has the version folded in on
+    opening (a clean draft at the old head is replaced by the version, a new epoch — that is not this
+    case, and on bddbfa6 this test then failed on the old sheet id instead of on the row added twice;
+    the third review's follow-up)."""
     h, a, b = _two(env)
     sid, rows, cols = _grid(h.room)
+    a.submit({"op": "set", "sheet": sid, "row": rows[0], "col": cols[3], "v": "unsaved when the draft was written"})
+    a.pump()
+    b.pump()
     write_draft(h.room)
     a.pump()
     b.pump()
+    assert h.world["store"].one("SELECT dirty FROM collab_docs WHERE room=?", (h.room.key,))["dirty"] == 1
+    epoch = h.room.state["epoch"]
     nr = h.room.state["content"]["sheets"][sid]["nr"]
     a.submit({"op": "tx", "ops": [{"op": "append_rows", "sheet": sid, "count": 1, "ids": ["edgerow1"], "h": 24},
                                   {"op": "set", "sheet": sid, "row": "edgerow1", "col": cols[0], "v": "typed at the edge"}]})
@@ -1112,6 +1202,7 @@ def test_E_a_crash_between_a_save_and_the_next_draft_write_adds_nothing_twice(en
     a.disconnect(server_notices=True)
     b.disconnect(server_notices=True)
     restart_from_storage(h.room)                                  # no draft write after the save
+    assert h.room.state["epoch"] == epoch, "the draft (with its unsaved edit) was kept and the version folded in"
     for t in (a, b):
         t.connect()
         t.pump()

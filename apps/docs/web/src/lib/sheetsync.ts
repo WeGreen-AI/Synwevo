@@ -598,21 +598,29 @@ export class SheetSync {
     this.pending = [...again, ...this.pending];
     for (const p of this.pending) this.show(p);
     for (const p of again) p.saw = p.local ? p.local.before : null;
+    const told = refused.filter(([p]) => !p.undoRequested)
+      .map(([p, code]) => ({ p, code, kind: (code === "conflict" ? "conflict" : "refused") as AttentionKind }));
+    // Every answer this hello resolved decides its cells before any of them is told (P4): a later change
+    // of mine the room applied meanwhile, or refused with a choice of its own, is that change's to decide
+    // also for an earlier answer resolved in this same hello, and an undo resolved here takes the change it
+    // undid back. Told first, a sentence listed such a cell as "would be overwritten" and "use my value"
+    // then left it alone (third review's follow-up, X3/X4).
+    for (const [p] of applied) if (p.undoOf) this.forgetApplied(p.undoOf.seq);
+    for (const [p, at] of applied) this.stands(p, at);
+    for (const { p, kind, code } of told) this.offers(p, this.offerOf(kind, code, p));
+    for (const p of unknown) this.offers(p, this.offerOf("unknown", "unknown", p, p.undoRequested ? null : undefined));
     // refused and unknown ones are told against the room as it is now (who changed what since)
-    for (const [p, code] of refused) {
-      if (p.undoRequested) this.onUndone?.({ sent: false, skipped: [], label: p.label, cancelled: true });
-      else this.addAttention(code === "conflict" ? "conflict" : "refused", code, p.undoOf ? { undo: true } : {}, {}, p);
-    }
+    for (const [p] of refused) if (p.undoRequested) this.onUndone?.({ sent: false, skipped: [], label: p.label, cancelled: true });
+    for (const { p, kind, code } of told) this.addAttention(kind, code, p.undoOf ? { undo: true } : {}, {}, p);
     for (const p of unknown) this.addAttention("unknown", "unknown", {}, {}, p, p.undoRequested ? null : undefined);
     for (const [p, at] of applied) {
-      if (p.undoOf) this.forgetApplied(p.undoOf.seq);
-      this.noteApplied(p, at);
       if (!p.local || !p.local.patch.length) continue;
       // resolved from `outcomes`: acknowledged like an answer — kept until a draft write covers it (P1)
       if (at > this.persisted) this.acked.push({ seq: at, op: p.op, label: p.label, undoable: p.undoable, ord: p.ord, id: p.id });
       if (p.undoRequested) this.undoFrom({ patch: p.local.patch, before: p.local.before, label: p.label, epoch, seq: at });
       else if (p.undoable) this.pushUndo(p.local.patch, p.local.before, p.label, at);
     }
+    this.pruneApplied();
     this.refreshDeferred();
     this.changed(true);
     this.flush();
@@ -897,10 +905,29 @@ export class SheetSync {
    *  every earlier change of mine (P4). Undo operations are not decisions of their own, and a change
    *  undo was pressed on is being taken back. */
   private noteApplied(p: Pending, seq: number | null) {
+    this.stands(p, seq);
+    this.pruneApplied();
+  }
+
+  /** `noteApplied` without pruning (a hello resolves several answers before any is told). */
+  private stands(p: Pending, seq: number | null) {
     if (p.undoOf || p.undoRequested) return;
     const cells = cellsOf(p.op);
     if (cells.length) this.standing.set(p.ord, { cells, seq });
-    this.pruneApplied();
+  }
+
+  /** What "use my value" / "do it again" offers for a change answered `kind` / `code` (`retry` given:
+   *  that); null when there is nothing to offer. */
+  private offerOf(kind: AttentionKind, code: string, p: Pending, retry?: any): any {
+    return retry !== undefined ? retry : kind === "conflict" || kind === "unknown" || (kind === "refused" && code === "resync") ? p.op : null;
+  }
+
+  /** A change answered with a choice of its own about its cells ("use my value / keep theirs", "do it
+   *  again"): whatever the person chooses there, earlier changes of mine leave those cells to it (P4). */
+  private offers(p: Pending, offer: any) {
+    if (!offer || p.undoOf) return;
+    const cells = cellsOf(offer);
+    if (cells.length) this.standing.set(p.ord, { cells, seq: null });
   }
 
   /** The change of mine applied at `seq` was undone: it decides nothing any more. */
@@ -934,8 +961,12 @@ export class SheetSync {
   }
 
   /** Answers that left a cell to a later change of mine that no longer stands: told again, with every
-   *  cell changed since as it is now (and "use my value" sent against now: what the person is shown).
-   *  Whether anything was told again. */
+   *  cell changed since as it is now. "Use my value" is still sent against what the tab had seen when the
+   *  person was first told (`seen` stays): the sentence is not made again for the cell the answer is about
+   *  (the room named it), nor for a cell whose write was "already so" when the person acted — a newer
+   *  value of either comes back as a new conflict naming it, never replaced untold (H2; moving `seen` to
+   *  now here replaced another person's newer value of the conflict's own cell — third review's
+   *  follow-up, X1/X2). Whether anything was told again. */
   private refreshDeferred(only?: Attention): boolean {
     let told = false;
     this.attention = this.attention.map((a) => {
@@ -959,7 +990,7 @@ export class SheetSync {
     else delete detail.also;
     let people = a.people;
     for (const c of also) if (c.by && !people[c.by]) { const who = this.people.get(c.by); if (who) people = { ...people, [c.by]: who }; }
-    return { ...a, detail, people, seen: { epoch: this.epoch, seq: this.seq } };
+    return { ...a, detail, people };
   }
 
   /** The other cells of a change someone else changed after the person acted (`src.saw`: what the
@@ -1024,7 +1055,7 @@ export class SheetSync {
       const mine = ops.find((o) => isDict(o) && o.sheet === sid && `${o.row}:${o.col}` === ck);
       label = { ...label, ...cellLabel(this.base, sid, ck), value: mine && mine.op === "set" && mine.v != null ? String(mine.v) : null };
     }
-    const offer = retry !== undefined ? retry : kind === "conflict" || kind === "unknown" || (kind === "refused" && code === "resync") ? p.op : null;
+    const offer = this.offerOf(kind, code, p, retry);
     // every cell someone changed since, with its value and who: for anything that can be sent again
     // (a conflict, a message whose fate is unknown, one refused because the room forgot what it saw — P2)
     let src: AlsoSource | null = null;
@@ -1044,12 +1075,7 @@ export class SheetSync {
     if (typeof told.by === "string" && told.by === this.me) told.self = true;       // my own other tab (item 10)
     const id = ++this.attnNo;
     if (src && src.deferred.length) this.alsoSrc.set(id, src);
-    // a choice of its own about its cells ("use my value / keep theirs", "do it again"): whatever the person
-    // chooses there, earlier changes of mine leave those cells to it (P4)
-    if (offer && !p.undoOf) {
-      const cells = cellsOf(offer);
-      if (cells.length) this.standing.set(p.ord, { cells, seq: null });
-    }
+    this.offers(p, offer);
     this.attention.push({ id, kind, code, detail: told, people, label, retry: offer,
       seen: { epoch: this.epoch, seq: this.seq }, ord: p.ord });
   }

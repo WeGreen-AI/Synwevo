@@ -66,16 +66,8 @@ class FixtureRoom {
     this.clients.set(key, rec);
     const prior = rec.r.get(f.n);
     if (prior) { ack({ ...prior, duplicate: true }); return; }
-    let res: any;
-    // like collab_sheet._op_set: a value the workbook cannot hold is refused before first-writer-wins
-    let invalid = false;
-    try {
-      const probe = applyOp(copy(this.content), f.op, { by: tab.user, who: new Map(this.who), maxCells: 50000 });
-      invalid = !probe.ok && probe.code === "invalid";
-    } catch { /* not predictable here: the room decides below */ }
-    const conflict = invalid ? null : this.conflict(f, tab.user);
-    if (conflict) res = { ok: false, code: "conflict", detail: conflict };
-    else {
+    let res: any = this.decide(f, tab.user);
+    if (!res) {
       const got = applyOp(this.content, f.op, { by: tab.user, who: this.who, maxCells: 50000 });
       if (got.ok && got.patch.length) {
         this.seq++;
@@ -90,16 +82,38 @@ class FixtureRoom {
     if (res.ok && res.patch.length) for (const other of this.tabs) if (other !== tab && other.online) other.inbox.push(["sheet", { type: "patch", seq: res.seq, patch: res.patch, by: PEOPLE[tab.user] }]);
   }
 
-  /** first writer wins on a cell value (the server does it for every object) */
-  conflict(f: any, by: string): any {
-    const ops = f.op?.op === "tx" ? f.op.ops : [f.op];
+  /** The refusal of an operation, or null when it applies. Like collab_sheet (`_dispatch`, `_op_set`): a
+   *  group is decided op by op, in order, the first refusal answering for all of it; for a cell value,
+   *  "already so" first (agreeing is not a conflict), then whether the workbook can hold the value, then
+   *  first-writer-wins, then a merged range covering it or the table's cell cap. */
+  decide(f: any, by: string): any {
+    const ops: any[] = f.op?.op === "tx" && Array.isArray(f.op.ops) ? f.op.ops : [f.op];
+    const work = copy(this.content);
+    const who = new Map(this.who);
     for (const op of ops) {
-      if (op?.op !== "set" && op?.op !== "clear") continue;
-      const k = this.cellSeq.get(`${op.sheet}/${op.row}:${op.col}`);
-      if (k && k[0] > f.expect && k[1] !== by) {
-        const cell = this.content.sheets[op.sheet].cells[`${op.row}:${op.col}`];
-        return { key: `v/${op.sheet}/${op.row}:${op.col}`, theirs: cell ? { v: cell.v } : null, by: k[1], at: k[0] };
+      let probe: any;
+      try {
+        probe = applyOp(copy(work), op, { by, who: new Map(who), maxCells: 50000 });
+      } catch { return null; }                      // not predictable here: applying it decides
+      const late = !probe.ok && (probe.code === "covered" || (probe.code === "too_large" && probe.detail?.what === "cells"));
+      if (!probe.ok && !late) return { ok: false, code: probe.code, detail: probe.detail };
+      if (late || probe.patch.length) {
+        const conflict = this.conflict(op, f.expect, by, work);
+        if (conflict) return { ok: false, code: "conflict", detail: conflict };
       }
+      if (late) return { ok: false, code: probe.code, detail: probe.detail };
+      applyOp(work, op, { by, who, maxCells: 50000 });
+    }
+    return null;
+  }
+
+  /** first writer wins on a cell value (the server does it for every object) */
+  conflict(op: any, expect: number, by: string, content: Content): any {
+    if (op?.op !== "set" && op?.op !== "clear") return null;
+    const k = this.cellSeq.get(`${op.sheet}/${op.row}:${op.col}`);
+    if (k && k[0] > expect && k[1] !== by) {
+      const cell = content.sheets[op.sheet].cells[`${op.row}:${op.col}`];
+      return { key: `v/${op.sheet}/${op.row}:${op.col}`, theirs: cell ? { v: cell.v } : null, by: k[1], at: k[0] };
     }
     return null;
   }
@@ -160,6 +174,21 @@ const twoTabs = () => {
   a.connect(); b.connect(); pump(room);
   return { room, a, b };
 };
+
+test("TEST FIXTURE: the fixture room answers a group op by op, like collab_sheet — a conflict on its first cell before an invalid value in a later one", () => {
+  // before: it probed the whole group for an invalid value first and answered `invalid` where the room
+  // answers `conflict` (third review's follow-up); a group test could pass here and not against the room
+  const { room, a, b } = twoTabs();
+  b.sync.submit(set(4, 1, "B's B5")); pump(room);                 // seq 1, by u2
+  const frame = (n: number, ops: any[]) => room.receive(a, { type: "op", epoch: room.epoch, n, expect: 0, op: { op: "tx", ops } });
+  frame(1, [set(4, 1, "mine"), set(5, 1, "bad\u0001char")]);
+  frame(2, [set(5, 1, "bad\u0001char"), set(4, 1, "mine")]);
+  frame(3, [set(4, 1, "B's B5"), set(6, 1, "fine")]);              // agreeing is not a conflict
+  const answers = a.inbox.splice(0).map(([, x]) => x);            // (a's engine never sent these: not handed to it)
+  assert.deepEqual(answers.map((x) => (x.ok ? "ok" : x.code)), ["conflict", "invalid", "ok"]);
+  assert.equal(answers[0].detail.key, `v/${SID}/${R(4)}:${C(1)}`);
+  assert.equal(cellOf(room.content, "B7"), "fine");
+});
 
 // ------------------------------------------------------------------ the status line and optimistic edits
 test("a tab shows its own edit at once, says 'syncing (1)', and 'live' once the server has answered", () => {
@@ -729,6 +758,64 @@ test("P4: a later edit of mine undone after it applied leaves its cell to the ea
   assert.ok(a.sync.useMine(g.id));
   pump(room);
   assert.equal(cellOf(room.content, "B3"), undefined, "the group's delete of B3 is done: the undone edit decides nothing");
+});
+
+// ------------------------------------------------------------------ the third review's follow-up (each failed on f2332c4)
+for (const how of ["X1: later edit refused", "X2: later edit undone after it applied"]) test(`${how}: told again, the group's 'use my value' still meets a newer value of the conflict's own cell as a new conflict`, () => {
+  const { room, a, b } = groupThenLater([[1, "B's B2"]], () => {});
+  a.sync.submit(set(2, 1, how.startsWith("X1") ? "bad\u0001char" : "later"));
+  a.connect();
+  a.sync.onMeta(a.inbox.shift()![1]);                      // the hello
+  room.receive(a, a.outbox.shift());                      // the group; the later edit is still on its way
+  a.sync.onSheet(a.inbox.shift()![1]);                    // the group's answer: a conflict on B2
+  const g0 = a.sync.snapshot().attention.find((x) => x.kind === "conflict")!;
+  assert.equal(g0.detail.theirs?.v, "B's B2", how);
+  assert.equal(g0.detail.also, undefined, `${how}: B3 is left to the later edit while it may still apply`);
+  b.sync.submit(set(1, 1, "B's newer B2"));               // after A was told ...
+  room.receive(b, b.outbox.shift());                      // ... in the room before the later edit's answer
+  pump(room);                                             // (refused: the group is told again now)
+  if (how.startsWith("X2")) {
+    const u = a.sync.undo();                              // "later" applied: undone — the group is told again
+    assert.ok(u && u !== "deferred" && u.sent, how);
+    pump(room);
+  }
+  const g = a.sync.snapshot().attention.find((x) => x.id === g0.id)!;
+  assert.equal(g.detail.theirs?.v, "B's B2", `${how}: the sentence still names the value A was shown`);
+  assert.ok(a.sync.useMine(g.id), how);
+  pump(room);
+  assert.equal(cellOf(room.content, "B2"), "B's newer B2", `${how}: B's newer B2 is not replaced untold (H2)`);
+  const again = a.sync.snapshot().attention.find((x) => x.kind === "conflict")!;
+  assert.equal(again.label.ref, "B2", how);
+  assert.equal(again.detail.theirs?.v, "B's newer B2", `${how}: a new conflict names the newer value`);
+  assert.ok(a.sync.useMine(again.id), how);
+  pump(room);
+  assert.equal(cellOf(room.content, "B2"), undefined, `${how}: told, the person's choice is done`);
+  assert.equal(cellOf(room.content, "B3"), undefined, `${how}: B3 is the group's (the later edit does not stand)`);
+});
+
+for (const later of ["applied", "conflict"]) test(`X${later === "applied" ? 3 : 4}: a group and a later edit (${later}) resolved in one hello — the cell the later edit decides is not listed as 'would be overwritten'`, () => {
+  const { room, a, b } = twoTabs();
+  a.sync.submit(set(1, 1, "a2")); a.sync.submit(set(2, 1, "a3")); pump(room);
+  b.sync.submit(set(1, 1, "B's B2"));
+  if (later === "conflict") b.sync.submit(set(2, 1, "B's B3"));
+  while (b.outbox.length) room.receive(b, b.outbox.shift());      // in the room; A has not read the patches
+  a.sync.submit({ op: "tx", ops: [clear(1, 1), clear(2, 1)] });
+  a.sync.submit(set(2, 1, "A's later B3"));
+  while (a.outbox.length) room.receive(a, a.outbox.shift());      // both reach the room ...
+  a.disconnect();                                                  // ... and their answers are lost
+  a.connect(); pump(room);
+  const att = a.sync.snapshot().attention;
+  const g = att.find((x) => x.label.ref === "B2")!;
+  assert.equal(g.kind, "conflict", later);
+  // (resolved from `outcomes`, the answer carries no detail: every changed cell of the group is listed — B2 —
+  // but not B3)
+  assert.deepEqual((g.detail.also ?? []).map((c: any) => c.ref), ["B2"], `${later}: B3 is the later edit's to decide — not listed`);
+  if (later === "conflict") assert.ok(att.some((x) => x.label.ref === "B3" && x.kind === "conflict"), "B3 has its own answer");
+  const before = cellOf(room.content, "B3");
+  assert.ok(a.sync.useMine(g.id));
+  pump(room);
+  assert.equal(cellOf(room.content, "B2"), undefined, later);
+  assert.equal(cellOf(room.content, "B3"), before, `${later}: left alone, as the sentence said`);
 });
 
 test("H9: undo never deletes a sheet someone else worked on since — it says so", () => {
