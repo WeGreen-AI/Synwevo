@@ -74,12 +74,21 @@ export function deletedSheets(content: Content | null): { sid: string; name: str
   return content.order.filter((sid) => content.sheets[sid]?.gone).map((sid) => ({ sid, name: content.sheets[sid].name ?? "" }));
 }
 
-/** Sheets deleted since `before` (the ids that were deleted then): what screen readers are told as it
- *  happens — by whoever deleted them, this tab included. `before` null: the page's first look, when
- *  what was deleted before it came is the visible list's to say, not news. */
-export function newlyDeleted(before: ReadonlySet<string> | null, content: Content | null): { sid: string; name: string }[] {
-  if (!before) return [];
-  return deletedSheets(content).filter((g) => !before.has(g.sid));
+/** What screen readers are told about sheets at an announcement tick (every 2 s): the sheets deleted and
+ *  the ones back since the last tick — by whoever did it, this tab included. `told`: the ids the last tick
+ *  left deleted; null on the page's first look, when what is deleted already is the visible list's to
+ *  say, not news. Compared tick to tick, not render to render: a sheet deleted and back within one tick
+ *  (my own delete the room refused) is neither — the refusal says what happened. `toasted`: deletions a
+ *  toast (a polite live region too) has just said. `now`: what the next tick compares with. */
+export function sheetNews(told: ReadonlySet<string> | null, content: Content | null, toasted: ReadonlySet<string> = new Set()):
+  { deleted: { sid: string; name: string }[]; restored: { sid: string; name: string }[]; now: Set<string> } {
+  const gone = deletedSheets(content);
+  const now = new Set(gone.map((g) => g.sid));
+  if (!told || !content) return { deleted: [], restored: [], now };
+  const deleted = gone.filter((g) => !told.has(g.sid) && !toasted.has(g.sid));
+  const restored = [...told].filter((sid) => !now.has(sid) && content.sheets[sid])
+    .map((sid) => ({ sid, name: content.sheets[sid].name ?? "" }));
+  return { deleted, restored, now };
 }
 
 /** The name a restored sheet takes: its own, or — when a live sheet took it meanwhile (names ignore

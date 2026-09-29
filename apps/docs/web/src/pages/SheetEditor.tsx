@@ -14,8 +14,8 @@ import { loadedVersion, saveOverStale, STALE_TITLE, staleText } from "../lib/tem
 import { openSheetRoom, type SheetRoom } from "../lib/sheetroom";
 import { COL_WIDTH, MAX_TX, ROW_HEIGHT, filled, liveSheetIds, projectSheet, type Content } from "../lib/sheetmodel";
 import { randomId, type Attention, type SyncSnapshot, type UndoResult } from "../lib/sheetsync";
-import { announcementText, attentionText, closeText, deletedListText, deletedText, liveReasonText, retryText, saveRefusalText, saveText, skippedText, statusText } from "../lib/sheettext";
-import { aloneSaveBody, deletedSheets, editorMode, leaveAtRisk, newlyDeleted, restoreName, sheetStillThere, statusKind, type StatusKind } from "../lib/sheetmode";
+import { announcementText, attentionText, closeText, deletedListText, deletedText, liveReasonText, restoredText, retryText, saidText, saveRefusalText, saveText, skippedText, statusText } from "../lib/sheettext";
+import { aloneSaveBody, deletedSheets, editorMode, leaveAtRisk, restoreName, sheetNews, sheetStillThere, statusKind, type StatusKind } from "../lib/sheetmode";
 
 interface Cell { v?: string | number | boolean | null; t?: string | null; s?: any }
 interface Field { id: string; name: string; kind: "cell" | "region" | "repeat"; ref?: string; row?: number; c1?: number; c2?: number; required?: boolean; empty_policy?: string }
@@ -225,9 +225,7 @@ export default function SheetEditor() {
   // not written anywhere else
   const shownSid = useRef<string | null>(null);
   const myDelete = useRef<string | null>(null);
-  const toldGone = useRef<string | null>(null);              // a deleted sheet a toast has just told about
-  const goneSeen = useRef<Set<string> | null>(null);         // the deleted sheets this page last saw
-  const sayNext = useRef<string[]>([]);                      // the page's own sentences for the next announcement
+  const toastGone = useRef<Set<string>>(new Set());          // deleted sheets a toast has just told about
   useEffect(() => {
     if (!liveMode || !content) { shownSid.current = null; return; }
     const was = shownSid.current;
@@ -239,21 +237,13 @@ export default function SheetEditor() {
     const ed = editingRef.current;
     if (ed && ed.sid === was) {
       cancelEdit();
-      if (ed.v) { toast(tr("工作表「{v1}」已被删除，你在 {v2} 输入的「{v3}」没有写入。", { v1: name, v2: cellRef(ed.r, ed.c), v3: ed.v }), "err"); toldGone.current = was; }
+      if (ed.v) { toast(tr("工作表「{v1}」已被删除，你在 {v2} 输入的「{v3}」没有写入；保存为版本之前，可以从「已删除的工作表」恢复这张表。", { v1: name, v2: cellRef(ed.r, ed.c), v3: ed.v }), "err"); toastGone.current.add(was); }
     } else if (myDelete.current !== was) {
-      toast(tr("工作表「{v1}」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。", { v1: name }), "info");
-      toldGone.current = was;                      // the toast (a polite live region) said it already
+      // a viewer has no list to restore from: told only that it was deleted
+      toast(ro ? tr("工作表「{v1}」已被删除。", { v1: name }) : tr("工作表「{v1}」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。", { v1: name }), "info");
+      toastGone.current.add(was);                  // the toast (a polite live region) said it already
     }
     myDelete.current = null;
-  });
-  // screen readers hear every sheet deleted in the live table — by anyone, this tab included — and where
-  // it can be restored (the list above the grid), with the other announcements (at most every 2 s)
-  useEffect(() => {
-    if (!liveMode || !content) { goneSeen.current = null; return; }
-    const fresh = newlyDeleted(goneSeen.current, content).filter((g) => g.sid !== toldGone.current);
-    goneSeen.current = new Set(deletedSheets(content).map((g) => g.sid));
-    toldGone.current = null;
-    if (fresh.length) sayNext.current.push(deletedText(fresh.map((g) => g.name)));
   });
   // tell the others where this tab is (row and column ids: stable while rows are added)
   const lastSel = useRef("");
@@ -272,18 +262,35 @@ export default function SheetEditor() {
     const timer = window.setTimeout(force, 3200);
     return () => window.clearTimeout(timer);
   }, [snap?.version, liveMode]);
-  // screen readers hear what others changed, at most every 2 s
+  // screen readers hear, at most every 2 s: reaching, losing or leaving the live table; every sheet deleted
+  // (and where it can be restored, for someone who can) or restored — by anyone, this tab included; what
+  // now needs the person (a refusal, a conflict: the list above the grid has no live region of its own);
+  // and what others changed. Deletions are compared tick to tick: my own delete the room refused within a
+  // tick is not said as done — its refusal is said instead.
   useEffect(() => {
     if (!liveMode || !sroom) return;
+    const sync = sroom.sync;
     let quiet = 0;
-    let kind: StatusKind | null = statusKind(sroom.sync.status());
+    let kind: StatusKind | null = statusKind(sync.status());
+    let gone: Set<string> | null = sync.content ? sheetNews(null, sync.content).now : null;   // the first look is not news
+    let seenAttn = new Set(sync.attention.map((a) => a.id));
     const timer = window.setInterval(() => {
-      const now = statusKind(sroom.sync.status());
-      const lead = now && kind && now !== kind ? [statusText(sroom.sync.status(), sroom.sync.pendingCount)] : [];
+      const now = statusKind(sync.status());
+      const lead = now && kind && now !== kind ? [statusText(sync.status(), sync.pendingCount)] : [];
       if (now) kind = now;
-      const items = sroom.sync.takeAnnouncements();
-      const pageSaid = sayNext.current.splice(0);
-      if (items.length || lead.length || pageSaid.length) { setSaid([...lead, ...pageSaid, ...items.slice(-3).map(announcementText)].join("；")); quiet = 0; }
+      const items = sync.takeAnnouncements();
+      const news = sheetNews(gone, sync.content, toastGone.current);
+      gone = news.now;
+      toastGone.current = new Set();
+      const needs = sync.attention.filter((a) => !seenAttn.has(a.id));
+      seenAttn = new Set(sync.attention.map((a) => a.id));
+      const sheets = sync.content ? liveSheetIds(sync.content).length : 1;
+      const parts = [...lead,
+        ...(news.deleted.length ? [deletedText(news.deleted.map((g) => g.name), sync.canWrite())] : []),
+        ...(news.restored.length ? [restoredText(news.restored.map((g) => g.name))] : []),
+        ...needs.slice(-2).map((a) => attentionText(a, sheets)),
+        ...items.slice(-3).map(announcementText)];
+      if (parts.length) { setSaid(saidText(parts)); quiet = 0; }
       else if (++quiet === 3) setSaid("");                // said: an announcement is not left behind for later
     }, 2000);
     return () => window.clearInterval(timer);
@@ -432,7 +439,7 @@ export default function SheetEditor() {
         // opened on a sheet that is gone (or no longer shown): never written into another one
         setEditing(null);
         const name = cur0.sid && content?.sheets[cur0.sid] ? content.sheets[cur0.sid].name ?? "" : "";
-        if (v) toast(tr("工作表「{v1}」已被删除，你在 {v2} 输入的「{v3}」没有写入。", { v1: name, v2: cellRef(r, c), v3: v }), "err");
+        if (v) toast(tr("工作表「{v1}」已被删除，你在 {v2} 输入的「{v3}」没有写入；保存为版本之前，可以从「已删除的工作表」恢复这张表。", { v1: name, v2: cellRef(r, c), v3: v }), "err");
         return;
       }
       if (liveSheet && r < liveSheet.rows.length && c < liveSheet.cols.length) {
@@ -573,9 +580,16 @@ export default function SheetEditor() {
     const name = restoreName(content, sid);
     if (send([{ op: "sheet_restore", sheet: sid, ...(name !== content.sheets[sid].name ? { name } : {}) }])) {
       cancelEdit(); select({ r1: 0, c1: 0, r2: 0, c2: 0 }); setLiveSid(sid);
+      // the restored sheet is shown: the focus goes to its grid (the list, and the button in it, may be
+      // gone with the last deleted sheet — focus fell to the page); screen readers hear it back (the tick)
+      window.requestAnimationFrame(() => gridRef.current?.focus({ preventScroll: true }));
     }
   };
   const gone = liveMode ? deletedSheets(content) : [];
+  // the deleted sheet chosen in the list: restored only by its button (a select acting on every change
+  // restored a sheet at each arrow key — Chrome on Windows/Linux and Firefox fire `change` on a closed one)
+  const [restorePick, setRestorePick] = useState("");
+  const pick = gone.some((g) => g.sid === restorePick) ? restorePick : gone[0]?.sid ?? "";
 
   // The template's name is not part of the live table: live, it is renamed on its own.
   const renameTemplate = async () => {
@@ -806,10 +820,10 @@ export default function SheetEditor() {
         // there): restorable by anyone who can edit until the table is saved as a version
         <section className="collab-notice info sheet-gone" aria-label={tr("已删除的工作表（{count}）", { count: gone.length })} data-testid="sheet-gone">
           <span>{deletedListText(gone.length)}</span>
-          <select className="input sm" value="" onChange={(e) => restoreSheet(e.target.value)} aria-label={tr("恢复已删除的工作表")} data-testid="sheet-restore">
-            <option value="">{tr("选择要恢复的工作表…")}</option>
-            {gone.map((g) => <option key={g.sid} value={g.sid}>{tr("恢复「{v1}」", { v1: g.name })}</option>)}
+          <select className="input sm" value={pick} onChange={(e) => setRestorePick(e.target.value)} aria-label={tr("要恢复的工作表")} data-testid="sheet-restore">
+            {gone.map((g) => <option key={g.sid} value={g.sid}>{g.name}</option>)}
           </select>
+          <button type="button" className="btn sm" onClick={() => restoreSheet(pick)} disabled={!pick} data-testid="sheet-restore-go">{tr("恢复工作表")}</button>
         </section>
       )}
       <div className="sr-only" aria-live="polite" role="status" data-testid="sheet-announce">{said}</div>

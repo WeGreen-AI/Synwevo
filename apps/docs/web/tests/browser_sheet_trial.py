@@ -127,7 +127,7 @@ def exercise(base: str, ids: dict, evidence: Path) -> list[str]:
             within_width(pb, gone_b, 390)
             within_width(pb, pb.locator("[data-testid=sheet-restore]"), 390)
             assert no_sideways_scroll(pb), "the phone page scrolls sideways"
-            expect(pb.locator("[data-testid=sheet-announce]")).to_contain_text("工作表「明细」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。", timeout=6000)
+            expect(pb.locator("[data-testid=sheet-announce]")).to_contain_text("工作表「明细」已被删除；保存为版本之前，可以从「已删除的工作表」恢复", timeout=6000)
             pb.screenshot(path=str(evidence / "phone-deleted-sheets-zh-Hans.png"))
             done("phone (390 px): someone else's delete shows the deleted-sheets list above the grid, inside the screen, no sideways scroll; screen readers hear which sheet and where to restore it")
             gone_a = pa.locator("[data-testid=sheet-gone]")
@@ -146,7 +146,9 @@ def exercise(base: str, ids: dict, evidence: Path) -> list[str]:
             assert not re.search(r"[一-鿿]", txt.replace("明细", "")), txt
             assert no_sideways_scroll(pb)
             opts = pb.locator("[data-testid=sheet-restore] option").all_inner_texts()
-            assert opts == ["Choose a sheet to restore…", "Restore “明细”"], opts
+            assert opts == ["明细"], opts
+            assert pb.locator("[data-testid=sheet-restore]").get_attribute("aria-label") == "Sheet to restore"
+            expect(pb.locator("[data-testid=sheet-restore-go]")).to_have_text("Restore sheet")
             assert pb.locator("[data-testid=sheet-gone]").get_attribute("aria-label") == "Deleted sheet (1)"
             pb.screenshot(path=str(evidence / "phone-deleted-sheets-en.png"))
             language.select_option("zh-Hant")
@@ -156,14 +158,33 @@ def exercise(base: str, ids: dict, evidence: Path) -> list[str]:
             pb.screenshot(path=str(evidence / "phone-deleted-sheets-zh-Hant.png"))
             done("the list reads in English (no Chinese besides the sheet's own name) and Traditional Chinese on the phone")
 
-            # ---- restored from the phone: back for both, the list gone
+            # ---- the keyboard: moving through the list restores nothing (third review's follow-up — the
+            # select acted on every change: each arrow key restored a sheet for everyone)
             language.select_option("zh-Hans")
             expect(status(pb)).to_have_text("实时协同中", timeout=20000)
-            pb.locator("[data-testid=sheet-restore]").select_option(label="恢复「明细」")
+            picker = pa.locator("[data-testid=sheet-restore]")
+            picker.focus()
+            for key in ("ArrowDown", "ArrowUp", "End", "Home", "ArrowDown"):
+                pa.keyboard.press(key)
+            # what an arrow key on a closed select does in Chrome on Windows and Linux and in Firefox: the
+            # choice changes and `change` fires (Chrome on macOS opens the list instead)
+            picker.select_option(label="明细")
+            pa.wait_for_timeout(1500)
+            expect(pa.locator("[data-testid=sheet-gone]")).to_be_visible()
+            expect(pa.locator(".sheettab").filter(has_text=re.compile("^明细$"))).to_have_count(0)
+            expect(pb.locator("[data-testid=sheet-gone]")).to_be_visible()
+            done("keyboard: arrow keys, Home, End and a changed choice in the deleted-sheets list choose, never restore")
+
+            # ---- restored from the phone with its button: back for both, the list gone, the focus in the
+            # restored sheet's grid, and both screen-reader regions say it is back
+            pb.locator("[data-testid=sheet-restore-go]").click()
             expect(pa.locator(".sheettab").filter(has_text=re.compile("^明细$"))).to_have_count(1, timeout=10000)
             expect(pb.locator("[data-testid=sheet-gone]")).to_have_count(0, timeout=10000)
             expect(pa.locator("[data-testid=sheet-gone]")).to_have_count(0, timeout=10000)
-            done("restored from the phone: the sheet is back on both pages and the list is gone")
+            pb.wait_for_function("() => document.activeElement && document.activeElement.classList.contains('grid-scroll')", timeout=5000)
+            expect(pa.locator("[data-testid=sheet-announce]")).to_contain_text("工作表「明细」已恢复", timeout=6000)
+            expect(pb.locator("[data-testid=sheet-announce]")).to_contain_text("工作表「明细」已恢复", timeout=6000)
+            done("restored from the phone with its button: back on both pages, the list gone, the focus in the restored sheet's grid (not the page), and screen readers on both hear it is back")
             assert not errors, errors
             done("no page errors and no CSP violations")
         finally:

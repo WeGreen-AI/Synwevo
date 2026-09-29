@@ -120,18 +120,20 @@ test("a save refused while an outside version cannot be folded in does not say '
 
 test("a sheet deleted while the page is open is announced once, with where to restore it, in three languages", async () => {
   await import("../src/lib/presentation.ts");
-  const { newlyDeleted } = await import("../src/lib/sheetmode.ts");
+  const { sheetNews } = await import("../src/lib/sheetmode.ts");
   const { deletedText, deletedListText } = await import("../src/lib/sheettext.ts");
   const { setLocale } = await import("@synwevo/ui/i18n-core");
   const c = withSheets();                                       // 明细 deleted before the page looked
-  assert.deepEqual(newlyDeleted(null, c), [], "the first look: what was deleted before is the visible list's, not news");
-  const seen = new Set(deletedSheets(c).map((g) => g.sid));
-  assert.deepEqual(newlyDeleted(seen, c), []);
+  const first = sheetNews(null, c);
+  assert.deepEqual([first.deleted, first.restored], [[], []], "the first look: what was deleted before is the visible list's, not news");
+  const seen = first.now;
+  assert.deepEqual(sheetNews(seen, c).deleted, []);
   assert.ok(applyOp(c, { op: "sheet_delete", sheet: "s0000002" }, { by: "u2" }).ok);   // someone deletes 汇总
-  assert.deepEqual(newlyDeleted(seen, c), [{ sid: "s0000002", name: "汇总" }]);
-  const after = new Set(deletedSheets(c).map((g) => g.sid));
+  assert.deepEqual(sheetNews(seen, c).deleted, [{ sid: "s0000002", name: "汇总" }]);
+  assert.deepEqual(sheetNews(seen, c, new Set(["s0000002"])).deleted, [], "a toast said it already");
+  const after = sheetNews(seen, c).now;
   assert.ok(applyOp(c, { op: "sheet_restore", sheet: "s0000001" }, { by: "u1" }).ok);    // a restore is not a deletion
-  assert.deepEqual(newlyDeleted(after, c), []);
+  assert.deepEqual(sheetNews(after, c).deleted, []);
   const said: Record<string, [string, string]> = {};
   for (const lang of ["zh-Hans", "en", "zh-Hant"]) {
     setLocale(lang as any);
@@ -146,3 +148,40 @@ test("a sheet deleted while the page is open is announced once, with where to re
   assert.equal(said["zh-Hant"][1], "已刪除的工作表（2）：儲存為版本之前，可以在這裡恢復。");
   assert.ok(said["zh-Hant"][0].includes("儲存為版本之前"));
 });
+
+
+test("third review's follow-up: restores are said, a delete refused within a tick is not said as done, a viewer is not sent to a list it cannot see, English has no full-width semicolon", async () => {
+  await import("../src/lib/presentation.ts");
+  const { sheetNews } = await import("../src/lib/sheetmode.ts");
+  const { deletedText, restoredText, saidText, announcementText } = await import("../src/lib/sheettext.ts");
+  const { setLocale } = await import("@synwevo/ui/i18n-core");
+  const c = withSheets();
+  let told = sheetNews(null, c).now;                            // 明细 deleted before the page looked
+  // restored (by anyone, this tab included): said, as deletions are
+  assert.ok(applyOp(c, { op: "sheet_restore", sheet: "s0000001" }, { by: "u2" }).ok);
+  let news = sheetNews(told, c);
+  assert.deepEqual([news.deleted, news.restored], [[], [{ sid: "s0000001", name: "明细" }]]);
+  told = news.now;
+  // my delete, refused by the room before the next tick: deleted and back within the tick — neither
+  const shown = copy(c);
+  assert.ok(applyOp(shown, { op: "sheet_delete", sheet: "s0000002" }, { by: "u1" }).ok);   // shown at once (the queue)
+  news = sheetNews(told, c);                                    // the refusal took it off again before the tick
+  assert.deepEqual([news.deleted, news.restored], [[], []], "not said as deleted: the refusal is what is said");
+  news = sheetNews(told, shown);                                // still deleted at the tick: said once
+  assert.deepEqual(news.deleted.map((g) => g.name), ["汇总"]);
+  const said: Record<string, string[]> = {};
+  for (const lang of ["zh-Hans", "en", "zh-Hant"]) {
+    setLocale(lang as any);
+    said[lang] = [deletedText(["汇总"], false), restoredText(["明细"]),
+      saidText([deletedText(["Detail"]), announcementText({ by: "Alice", where: "B2", count: 1 })])];
+  }
+  setLocale("zh-Hans" as any);
+  assert.deepEqual(said["zh-Hans"], ["工作表「汇总」已被删除。", "工作表「明细」已恢复。",
+    "工作表「Detail」已被删除；保存为版本之前，可以从「已删除的工作表」恢复；Alice 修改了 B2"]);
+  assert.deepEqual(said.en, ["Sheet “汇总” was deleted.", "Sheet “明细” was restored.",
+    "Sheet “Detail” was deleted. Until the table is saved as a version, it can be restored from “Deleted sheets”; Alice changed B2"]);
+  for (const s of said.en) assert.doesNotMatch(s.replace(/汇总|明细/g, ""), /[一-鿿\u3000-\u303f\uff01-\uff5e]/, "no Chinese characters or full-width punctuation in English");
+  assert.doesNotMatch(said.en[0], /Deleted sheets/, "a viewer has no list to restore from");
+  assert.deepEqual(said["zh-Hant"].slice(0, 2), ["工作表「汇总」已被刪除。", "工作表「明细」已恢復。"]);
+});
+

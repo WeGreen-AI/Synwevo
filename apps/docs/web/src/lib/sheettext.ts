@@ -41,9 +41,22 @@ export function retryText(code: number): string {
 }
 
 /** Screen readers, when sheets are deleted in the live table (by anyone, this tab included): which, and
- *  where to restore them (the "Deleted sheets" list above the grid). */
-export function deletedText(names: string[]): string {
-  return names.map((name) => t("工作表「{v1}」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。", { v1: name })).join(" ");
+ *  — for someone who can restore them (`canRestore`; a viewer has no list) — where (the "Deleted sheets"
+ *  list above the grid). */
+export function deletedText(names: string[], canRestore = true): string {
+  return names.map((name) => canRestore ? t("工作表「{v1}」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。", { v1: name })
+    : t("工作表「{v1}」已被删除。", { v1: name })).join(" ");
+}
+
+/** Screen readers, when deleted sheets come back (restored by anyone, this tab included). */
+export function restoredText(names: string[]): string {
+  return names.map((name) => t("工作表「{v1}」已恢复。", { v1: name })).join(" ");
+}
+
+/** The parts of one screen-reader announcement as one text: sentences joined in the reader's language
+ *  (a full-width "；" inside English is spoken or paused on by some screen readers). */
+export function saidText(parts: string[]): string {
+  return parts.map((p) => p.trim().replace(/[。.]$/u, "")).filter(Boolean).join(t("；"));
 }
 
 /** The visible list of deleted sheets: how many, and that they can be restored until a save. */
