@@ -23,7 +23,10 @@ interface Approval {
 
 // What the requester's files went through before they were accepted — the same vocabulary the
 // Docs file list uses; `clean` is not shown, anything else is spelled out for the approver.
-const SCAN: Record<string, string> = { pending: "等待检查", not_configured: "未配置扫描", error: "检查失败", too_large: "超出扫描大小", infected: "检出威胁" };
+// `encrypted`: a file stored before scanning that a rescan found password-protected — it stays
+// usable (its owner decides, file-acceptance.md §8.1), and the approver sees it could not be checked.
+const SCAN: Record<string, string> = { pending: "等待检查", not_configured: "未配置扫描", error: "检查失败", too_large: "超出扫描大小", infected: "检出威胁",
+  encrypted: "设有密码，无法检查" };
 const STATUS: Record<string, string> = { pending: "待审批", approved: "已批准，等待复制", rejected: "已拒绝", withdrawn: "已撤回", expired: "已过期", running: "复制中", done: "已完成", failed: "失败", stale: "需重新申请" };
 function fmtSize(n: number) { return n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`; }
 

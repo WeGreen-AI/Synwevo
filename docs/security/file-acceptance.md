@@ -2,6 +2,7 @@
 
 > 状态：2026-09-25 实现（CI-20）。覆盖 Synwevo Docs 的全部文件入口；账户服务的头像走另一条已存在的
 > 净化路径（重编码为 PNG，见 §6）。2026-09-28 补上扫描上线前存入文件的补扫命令与隔离区（CI-90，§8.1）。
+> 2026-09-29 补上加密文件（需求 §8.7「加密文件……不能当作通过」）：设有密码的压缩包、Office 文档与 PDF 不再被当作干净（§3.1）。
 > 本文写的是**当前代码的行为**，"未做"的部分明确列在 §9。
 
 ## 0. 出发点：现状有什么、没有什么（实现前）
@@ -39,20 +40,27 @@
 | 模板上传 | `POST /api/templates/upload`、`POST /api/v1/templates` | `App.upload_template` → `scan_template_bytes` |
 | 头像 | 账户服务 `PUT /api/auth/avatar` | `canonical_avatar` 重编码（§6） |
 
+同一条闸门也用在 Docs 之外：Synwevo Message 的附件与账户服务的成员导入都经过 `synwevo_core.member_import.accept_upload`
+（同步扫描：感染 400、加密 400 `encrypted_file`、引擎不可用 503、超限 413），组织共享模板的"使用"在没有干净记录时经过
+`scan_template_bytes`。
+
 `add_source` 在写入任何行与字节之前先查（CI-90 起先算摘要、再落 blob：被判定的字节不会被重新写回存储）：
 这些字节的摘要是否已有一条 `rejected` 记录——有就 400
 `malware_detected`，不再落库、不再扫描。写入时行状态为 `scanning`，`scan={"status":"pending"}`，
-再把 `_scan_then_parse` 交给解析线程池。没有配置扫描器时状态直接是 `parsing`，
+再把 `_scan_then_parse` 交给解析线程池。开启扫描时，设有密码的文件在落库之前就被拒绝（400 `encrypted_file`，§3.1）。
+没有配置扫描器时状态直接是 `parsing`，
 `scan={"status":"not_configured"}`——**缺失是可见的，不是静默的**。
 
 ## 3. 状态机
 
 ```
-                 ┌──────────── clean ────────────┐
-upload ─▶ scanning ─┼─ infected ─▶ rejected（字节已删除）  ▼
-                 └─ error / too_large ─▶ scan_failed ─┐   parsing ─▶ ready | needs_ocr | error | unsupported
-                          ▲   自动重试 30s→60s→2m→5m→10m │
-                          └────────────────────────────┘（too_large 不重试：换更大的上限或拆分文件）
+upload ─▶（设有密码？400 encrypted_file，不建行、不存字节）
+   │                 ┌──────────── clean ────────────┐
+   └─▶ scanning ─────┼─ infected ─▶ rejected（字节已删除）  ▼
+                     ├─ encrypted ─▶ error（scan.status=encrypted；终态，不解析、不提供）
+                     └─ error / too_large ─▶ scan_failed ─┐   parsing ─▶ ready | needs_ocr | error | unsupported
+                              ▲   自动重试 30s→60s→2m→5m→10m │
+                              └────────────────────────────┘（too_large 不重试：换更大的上限或拆分文件）
 ```
 
 * `scanning`、`scan_failed`、`rejected` 的行不解析、不预览、不映射、不下载：`_parse_source` 对这三个状态直接返回；
@@ -67,8 +75,32 @@ upload ─▶ scanning ─┼─ infected ─▶ rejected（字节已删除）  
   脱敏跳过它们；`authz.blob_readable` 不再放行这些行的 `blob`/`parsed_blob`/`working_blob`——补扫拒绝的历史文件
   往往早已解析，转换副本与解析结果仍在存储里，只凭"原字节已移走"不够。
 * 模板是同步的：`scan_template_bytes` 在 `upload_template` 的第一行运行，命中 400 `malware_detected`
-  （`detail.signature`），引擎不可用 503 `scan_unavailable`（`detail.retry_after=30`），超限 413 `scan_limit`。
+  （`detail.signature`），加密 400 `encrypted_file`，引擎不可用 503 `scan_unavailable`（`detail.retry_after=30`），超限 413 `scan_limit`。
   模板不能"隔离后异步接纳"，因为上传模板的下一步就是打开它做槽位分析。
+* 改解析选项（`set_source_options`，重新解析）先过 `require_accepted`：此前对 `scanning`/`scan_failed` 的行改选项会把它
+  直接变成 `parsing`——解析器打开了未扫描的字节、文件变得可下载，扫描结论又因版本变化被丢弃（2026-09-29 修复，
+  `test_encrypted_files.py::test_options_cannot_reparse_a_file_the_scan_has_not_accepted`）。
+
+### 3.1 加密文件：不是干净，也不是恶意软件（需求 §8.7）
+
+ClamAV 看不到它解不开的内容；不开 `AlertEncrypted*` 时它对加密的压缩包、Office 文档与 PDF 回答 `OK`，而结构检查也会放行
+加密的 XLSX（它是完好的复合文档）。于是这些文件曾被当作"干净"接纳——最坏的是 Synwevo Message 的附件：原样分享给会话里的
+其他成员。现在：
+
+| 环节 | 行为 |
+|---|---|
+| 识别 | `synwevo_core.encrypted.encrypted_kind(bytes)` → `archive` / `office` / `pdf` / `None`。ZIP（含 OOXML、OpenDocument）：任一条目的通用标志位 0（中央目录或本地头；ZipCrypto 与 WinZip AES 都设）；OpenDocument 另看 `META-INF/manifest.xml` 的 `encryption-data`（它加密部件时不设 ZIP 标志）。OLE2 复合文档：按 MS-CFB 解析头、经 DIFAT 的 FAT 与目录链（不做全文字节搜索——旧版 `.doc` 以 UTF-16 存正文，正文里出现这些词不算），只看根存储的子项：`EncryptedPackage`（加密或权限管理的 OOXML）、Excel `Workbook`/`Book` 流首个 `BOF` 之后（可隔一个 `WriteProtect`）的 `FilePass`、Word FIB 的 `fEncrypted` 位、PowerPoint 的 `EncryptedSummary` 流或 `Current User` 头标记 `0xF3D1C4DF`。PDF：`/Encrypt` 在尾部字典（经典 `trailer` 或交叉引用流，沿 `/Prev`；交叉引用损坏时像阅读器一样按 `trailer` 关键字修复），且标准安全处理器**用空的用户口令打不开**：修订 2–4 按 ISO 32000-1 算法 2/4/5（MD5 + 自带 RC4），修订 5/6 按 SHA-256 与 ISO 32000-2 算法 2.B（`cryptography` 的 AES-128-CBC）；只设权限（所有者）口令的 PDF 不输入口令就能打开，**照常接纳**；公钥等其他处理器、无法求值的加密字典 → `pdf`。7z：（LZMA 解包后的）头里任一 folder 的编码器含 AES（`06 F1 07 01`）。RAR 4/5：主头口令位、文件头口令位 / 归档加密头、文件或服务头的加密记录。全部有界：声明的大小先与文件比对，链上每个扇区最多走一次，只解包 7z 的头（上限 16 MiB）与 OpenDocument 清单（上限 1 MiB），从不解包内容；畸形输入回 `None`，交给既有的结构检查，从不抛异常。 |
+| 结论 | `ClamdScanner.scan`：先问引擎（引擎认得的真实签名优先——clamd 默认 `HeuristicScanPrecedence no` 时签名先于启发式报出），回答 `OK` 后若 `encrypted_kind` 非空 → `ScanResult("encrypted", reason=种类)`；引擎回答 `Heuristics.Encrypted.*`（`AlertEncryptedArchive`/`AlertEncryptedDoc`）→ 同样是 `encrypted`（带 `signature`），**永远不是 `infected`**。只有开启扫描（策略 `required`）才有这一步；未配置扫描器时一切照旧（`not_configured` 照样可见）。 |
+| Docs 来源 | `add_source` 在建行、落字节之前就识别（400 `encrypted_file`，`detail.kind`、`detail.filename`）——网页多文件上传逐个提示，机器接口、可续传上传的使用、服务器路径导入同一条路。只有引擎认得出的（例如文档里嵌着加密压缩包）在 `_scan_then_parse` 里得到 `encrypted`：行变为 `error`（终态，同一句错误），`scan.status=encrypted`；`_parse_source` 不解析，`require_accepted`（下载、视图、搜索、页面图、定位、脱敏……）回 410 `encrypted_file`，`authz.blob_readable` 不放行它的 blob id，改解析选项 410。字节留在行指向的位置、任何路径都读不到（与超限文件相同）；回收无人引用的字节是 blob 回收的职责，不由闸门临时决定（`docs/platform/blob-reclamation.md`）。 |
+| 其他入口 | 模板上传与组织共享模板的"使用"（`scan_template_bytes`）、消息附件与成员导入（`accept_upload`）：400 `encrypted_file`，什么都不存。 |
+| 不是恶意软件 | 不进隔离区、不留"已拒绝的摘要"、不发 `docs.file_rejected`：同样的字节再上传会再次按加密拒绝，去掉密码后的文件照常接纳。 |
+| 提示 | 一句话说清发生了什么、该怎么做：「文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传」。三个外壳的拒绝目录都有三语言译文（`refusals.test.ts`/`.mjs` 校验），来源行的错误句由 `diagnosticText` 翻译；组织审批页的复制清单把 `encrypted` 显示为「设有密码，无法检查」。 |
+| 补扫 | 见 §8.1：扫描上线前存入的加密文件只报告、不改访问（由所有者决定）；`quarantine release` 遇到加密内容不恢复。 |
+
+判定依据（2026-09-29 本机实测，§7.4）：ClamAV 1.5.4 开 `AlertEncrypted yes` 时，**只设所有者口令、不需要口令就能打开的 PDF
+（MuPDF 写的修订 6）也被报为 `Heuristics.Encrypted.PDF`**，而设了打开密码的 ODT 仍回 `OK`——所以不依赖引擎的文档启发式：
+生产只开 `AlertEncryptedArchive`（§8.2），文档与 PDF 由应用自己判断。误开 `AlertEncrypted`/`AlertEncryptedDoc` 时，引擎报出的
+`Heuristics.Encrypted.*` 一律按"加密、不接纳"处理（宁可拒绝，不猜），这样的 PDF 会被拒绝——所以不要开。
 
 ## 4. 引擎适配：`apps/docs/synwevo_docs/malware.py`
 
@@ -76,6 +108,7 @@ upload ─▶ scanning ─┼─ infected ─▶ rejected（字节已删除）  
   `stream: <签名> FOUND` / `... ERROR`。`INSTREAM size limit exceeded` 映射为 `too_large`，其它 ERROR 与
   连接失败/超时抛 `ScanUnavailable`——**没有"默认干净"的分支**。
 * 超过 `SYNWEVO_CLAMD_MAX_BYTES` 的数据根本不发送（守护进程会在中途拒绝，白白传一遍）。
+* `OK` 之后看容器是否加密（§3.1）：加密的是 `encrypted`，不是 `clean`；`Heuristics.Encrypted.*` 是 `encrypted`，不是 `infected`。
 * `policy()` 拒绝矛盾配置：`SYNWEVO_MALWARE_SCAN=required` 却没有地址 → 启动失败，而不是静默变成不扫描。
 * `health()` 供 `/readyz`：`ok` / `off` / `down: <原因>`。扫描器不可达**不会**让 Docs 变为未就绪（compose 的
   healthcheck 会因此重启容器，而重启对已接纳的文件毫无帮助）；它是"可降级组件"，在 `checks` 里可见。
@@ -141,6 +174,40 @@ ZIP 内的 EICAR 命中 `Eicar-Test-Signature`，三种仓库夹具 `OK`，守�
 | 第二次独立审查后的补充 | 两个应用的补扫、恢复、清除互斥（一把锁）；已记为干净的行在另一应用的结论下被选中并标记，项目的其他文件照常工作；脱敏副本只随自己的来源撤回；`--limit` 数扫描次数，缺失文件不再卡住分批；回归用例文件的结论按摘要记下、不重扫；结论集合的缓存跟随索引计数器（同一时间戳下的写入也能看到）；产物拒绝只读快照里的 id 与摘要；上传闸门遇到与历史附件共用的字节时移入隔离区而不删除 |
 | 第三次独立审查后的补充 | 扫描上线后重新上传同一文件被判恶意时，之前那条来源的字节移入隔离区（按原状态记录，恢复后回到 `ready`）而不是随新上传一起删除，它的上传者收到 `docs.file_rejected`；`--limit` 把出错与超时的扫描也算进去；模板被两个应用先后判定时，恢复第一份会把它登记到第二份结论下，第二份恢复后模板回来 |
 
+### 7.4 加密文件（需求 §8.7，2026-09-29）
+
+测试：`apps/docs/tests/test_encrypted_files.py`（19 项：识别器 9 项——6 个测试，PDF 按 4 种加密方法参数化；扫描器 2 项，其一是
+真实引擎，设置 `CLAMD_TEST_ADDRESS` 时运行、否则跳过；Docs 上传路径 6 项；补扫与恢复 2 项）、`apps/messages/tests/test_encrypted_attachments.py`（2 项）、
+`tests/integration/test_encrypted_member_import.py`（1 项）；夹具由 `apps/docs/tests/encrypted_fixtures.py` 按格式说明用纯 Python
+构造（CFB 经 `olefile` 读回，7z/RAR 经 libarchive 3.7.4 `bsdtar -tvf` 列出并报告加密）。
+
+| 项 | 断言 |
+|---|---|
+| 识别器 | ZIP 标志位（中央目录或本地头、仅一个条目、中央目录损坏）、OOXML/OpenDocument；复合文档的 `EncryptedPackage`、XLS `FilePass`（含 `WriteProtect`、迷你流与常规扇区两条路径）、DOC `fEncrypted`、PPT 头标记与 `EncryptedSummary`；正文里写着这些名字的 DOC、嵌入对象里的加密包、普通 XLS/PPT 为 `None`；MuPDF 的修订 2/3/4/6 PDF：有用户口令为 `pdf`、只有所有者口令为 `None`，对象流/交叉引用流、公钥处理器、无法求值的字典、`startxref` 损坏；7z（LZMA 头、明文头、加密头）与 RAR 4/5（文件与头加密）；截断与随机改写 500 余种输入不抛异常 |
+| 扫描器 | 引擎先被询问；`OK` + 加密 → `encrypted`；`Heuristics.Encrypted.*` → `encrypted`（带签名、种类）；加密字节上的真实签名 → `infected`；只有所有者口令的 PDF → `clean` |
+| Docs | 来源（网页、机器接口、可续传上传、服务器路径导入）与模板：400 `encrypted_file`、三语言句子、`detail.kind`/`filename`，不建行、不存字节、不进隔离区，也不送去引擎；只有所有者口令的 PDF 照常接纳；引擎独有的结论：`error` + `scan.status=encrypted`，下载/搜索/选项 410、视图 `error`、blob id 不可读、未解析、无隔离结论，同字节再上传再判一次，脱敏跳过它；改解析选项不能绕过闸门（`scan_failed` 的行 409）；未配置扫描器时一切照旧 |
+| 补扫 | 历史加密来源（XLS、PDF）：退出码 1、摘要列 id 不列文件名，状态与错误句不变，记录 `encrypted`/`rescan`/`access: unchanged`，下载仍 200，第二次运行无事可做；签名命中的加密字节照常隔离，签名撤回后 `release` 仍拒绝（退出码 1） |
+| 消息与成员导入 | 加密 ZIP/7z/RAR/DOCX/XLS 附件与引擎报出的嵌套加密：400、什么都不存；补扫发现的历史加密附件只记录、成员仍可下载；成员导入（文档引擎）的加密 XLSX/XLS/PDF：400、不建导入、不留文件，只有所有者口令的 PDF 照常导入 |
+| 前端 | 三个外壳的拒绝目录测试读取服务端句子（消息外壳自此也读附件闸门 `accept_upload` 的拒绝，补上了此前只显示代码的恶意内容、超限与引擎不可用三句） |
+
+浏览器（2026-09-29，隔离的临时 Docs 实例接真实 clamd，系统 Chrome 无头，只用测试夹具）：在工作台的来源文件面板上传加密的
+XLSX，简体中文、English、繁體中文三种界面都在文件名下方与提示条里显示整句（不出现 `encrypted_file` 代码），文件列表仍为空。
+
+真实引擎（本机 Homebrew ClamAV 1.5.4，病毒库 28137；`scratchpad` 下两个守护进程，只用测试夹具）：
+
+| 样本 | `AlertEncrypted yes` 的 clamd | `AlertEncryptedArchive yes` 的 clamd | 结论（两者相同） |
+|---|---|---|---|
+| `zip -P`、WinZip AES、只设标志位的 ZIP | `Heuristics.Encrypted.Zip` | 同左 | `encrypted`/`archive` |
+| 普通 ZIP 里套一个加密 ZIP | `Heuristics.Encrypted.Zip` | 同左 | `encrypted`/`archive`（识别器本身不看嵌套，靠引擎） |
+| 同一 ZIP 里一个 EICAR 条目 + 一个加密条目 | `Eicar-Test-Signature` | 同左 | `infected`（签名优先于启发式） |
+| RAR5（合成） | `Heuristics.Encrypted.RAR` | 同左 | `encrypted`/`archive` |
+| 7z（合成，LZMA 头） | `OK` | `OK` | `encrypted`/`archive`（识别器） |
+| LibreOffice 加密 DOCX、XLS | `Heuristics.Encrypted.OLE2` | `OK` | `encrypted`/`office` |
+| LibreOffice 加密 ODT | `OK` | `OK` | `encrypted`/`office`（识别器） |
+| 只有所有者口令的 PDF：MuPDF 修订 6 / LibreOffice 修订 3 | `Heuristics.Encrypted.PDF` / `OK` | `OK` / `OK` | 前者 `encrypted`、后者 `clean` / 两者 `clean` |
+| 有打开口令的 PDF（MuPDF 修订 4） | `Heuristics.Encrypted.PDF` | `OK` | `encrypted`/`pdf` |
+| 普通 ZIP、普通 XLSX | `OK` | `OK` | `clean` |
+
 ## 8. 历史文件与运维
 
 ### 8.1 补扫扫描上线前存入的文件（CI-90）
@@ -181,6 +248,7 @@ python -m synwevo_messages.cli quarantine list | release <sha256> | purge <sha25
 | infected | 同一字节的**所有**行：来源 `rejected`（与上传闸门同一句错误，`scan.status=infected`）；模板 `scan.status=infected`；附件 `rejected`。一切读取路径拒绝（下文） | **移入隔离区，不删除** | 来源的上传者收到 `docs.file_rejected`（站内 + 按目录发邮件）；模板没有记录上传者；附件没有合适的通知类别（`docs.file_rejected` 写的是 Docs 项目），**不另造**，摘要里写明 |
 | error | 不变；记录 `status: error`、原因、时间、`attempts`，下一次运行重试 | 不动 | — |
 | too_large | 不变；记录 `status: too_large` 与当时的上限；上限不变时再次运行只报告不重写，调大 `SYNWEVO_CLAMD_MAX_BYTES` 后重新检查 | 不动 | — |
+| encrypted | **不变**：设有密码或含有加密内容，无法检查，但不是恶意软件。只记 `{status: encrypted, reason, rescan: true, access: unchanged, previous}`（上传闸门的拒绝只认没有 `rescan` 的记录，所以这些行照常可读）；摘要列出 id，退出码 1；之后的运行不再选中 | 不动 | 无；**撤回已在使用的文件是所有者的决定**——是否撤回、通知上传者或要求去掉密码后重新上传，由所有者看过摘要后决定，本命令不替他做。同样的字节再上传会被上传闸门拒绝；组织共享模板的发布被记为 `encrypted` 后，"使用"会当场扫描并拒绝 |
 
 模板与发布都是一个整体：所有内容都干净才记 `clean`；任一份感染就拒绝（发布的结论记在 `info.scan`）。写入前在事务里重读（`_publish_scan` 的规则）：
 字节、接纳状态、扫描记录或模板的内容集合在扫描期间变了，就不写入（报告"期间被改动"，下次再看）。
@@ -216,7 +284,7 @@ blob id、产物、附件下载、新上传、完成的断点上传、组织共�
 
 1. `quarantine list` 看隔离了什么（摘要、签名、引擎、每类仍被拒绝的行数）。
 2. 误报：按 ClamAV 官方流程提交（`https://www.clamav.net/reports/fp`），等签名库更新到撤回该签名的版本。
-3. `quarantine release <sha256>`：用**当前**引擎重扫隔离区里的字节——仍判感染或扫描器不可用就拒绝恢复
+3. `quarantine release <sha256>`：用**当前**引擎重扫隔离区里的字节——仍判感染、判为加密（不能判定为干净）或扫描器不可用就拒绝恢复
    （退出码 1/3，什么都不改）；判定干净则把字节放回 blob 存储，把本应用的行恢复到索引记录的状态
    （可用的来源回到原来的 `ready`/`needs_ocr`，解析结果、OCR 与更正都还在；其余来源重新解析——解析只取决于字节与选项，状态与解析器的原句按原样回来；模板与附件恢复可用），
    扫描记录写 `clean` + `released: true`。两个应用各恢复各自的行；最后一个恢复后隔离副本删除、索引记为 `released`。
@@ -270,6 +338,9 @@ blob id、产物、附件下载、新上传、完成的断点上传、组织共�
 * **部署**（2026-09-28 生产已按此完成，见 deployment.md CI-87；官方镜像的入口脚本需要 CHOWN、SETUID、SETGID、DAC_OVERRIDE 四项能力，参考 compose 已改）：`infra/production/compose.yaml` 是参考；接收端不同步 compose，运维需把 `clamav` 服务与 docs 的两个
   环境变量合并进 `/opt/synwevo/config/compose.yaml`，先确认 VPS 有 ≥2 GiB 余量，再 `docker compose up -d clamav`
   等其 healthy，最后重建 docs。回滚只需去掉两个环境变量。
+* **clamd 选项 `AlertEncryptedArchive yes`**（§3.1，2026-09-29 加入参考 compose）：官方镜像只接受挂载的配置文件，所以挂的是同一标签
+  镜像自带的 `clamd.conf` 加这一行（只读，`/opt/synwevo/config/clamd.conf`）。主机步骤、检查与回滚见 `docs/operations.md` §8；
+  **不开** `AlertEncrypted`/`AlertEncryptedDoc`（它们会拒绝只设所有者口令的 PDF）。
 
 ## 9. 明确未做
 
@@ -283,8 +354,18 @@ blob id、产物、附件下载、新上传、完成的断点上传、组织共�
 * 部署前生成、不记来源的脱敏副本授权：某个来源被补扫拒绝时，同一工作空间里这些旧授权一并撤回（分不出是不是那份文件的副本），
   重新生成即可；部署后生成的副本只随自己的来源撤回。
 * 成员导入原文件的过期清理：`sweep_expired` 没有调用方且不删文件（§8.1），未确认的导入文件会一直留在数据目录。
-* 密码保护的压缩包/Office 文件：ClamAV 报 `OK`（无法解密），结构检查也会放行加密的 XLSX——**这是盲区**，
-  当前靠解析失败（`error`）兜底，没有"要求用户提供密码"的流程。
+* ~~密码保护的压缩包/Office 文件是盲区~~ 2026-09-29 已补（§3.1）：开启扫描时加密的 ZIP/7z/RAR、Office（含 OpenDocument）与
+  需要打开密码的 PDF 一律不接纳。仍然存在的：
+  * **引擎与识别器都看不到的嵌套**：识别器只看文件本身这一层；嵌在文档或压缩包里的加密压缩包靠 clamd 的
+    `AlertEncryptedArchive`（参考 compose 已配置，生产在下一次部署时按 operations.md §8 加上；在那之前只有顶层被识别）。
+    嵌在文档里的加密**文档**或 PDF（例如 DOCX 里的加密 XLSX 对象、PDF 附件里的加密 PDF）没有人报——引擎的
+    `AlertEncryptedDoc` 同时会拒绝只设所有者口令的 PDF，所以不开。
+  * 其他格式的加密：ARJ/ACE/CAB 等冷门压缩格式、S/MIME 或 PGP 加密的内容、自解压可执行文件（压缩包不在文件开头）只靠引擎；
+    RAR 与 7z 的识别按格式说明实现、用合成样本与 libarchive 核对，没有用 RAR/7-Zip 本身写的样本验证（本机没有这两个工具）；
+    加密的 `.ppt` 只用合成样本验证（LibreOffice 不写加密 PPT）。
+  * 没有"要求用户提供密码"的流程：用户去掉密码后重新上传。
+  * 扫描上线前存入、补扫报告为 `encrypted` 的历史文件照常可读，等所有者决定（§8.1）；项目复制会把这样的文件带到别的空间，
+    审批页显示「设有密码，无法检查」，由审批人决定。
 * 产物（生成的 DOCX/PDF/XLSX）不扫描：它们由模板与数据生成，不包含上传的原始字节；若将来允许把上传文件原样
   打包进产物，需要在打包前复用 `scan_template_bytes`。
 * ~~生产尚未部署扫描器~~ 2026-09-28 已上线（CI-87，`docs/quality/deployment.md`）：accounts、docs、messages 以 `required` 扫描新上传；此前入库的文件仍是 `not_configured`，补扫见 §8.1（CI-90）。
@@ -296,7 +377,7 @@ blob id、产物、附件下载、新上传、完成的断点上传、组织共�
 
 | 环节 | 实现 | 说明 |
 |---|---|---|
-| 接收 | `POST /api/auth/organizations/{oid}/imports`（multipart，≤ 20 MB，`org.members.import`） | 同一 clamd 策略（`synwevo_core.malware`，已从 Docs 搬入共享包）：感染 400、扫描器不可用 503（不放行）、超限 413；未配置扫描器时 `scan.status=not_configured` 如实返回并显示在页面上 |
+| 接收 | `POST /api/auth/organizations/{oid}/imports`（multipart，≤ 20 MB，`org.members.import`） | 同一 clamd 策略（`synwevo_core.malware`，已从 Docs 搬入共享包）：感染 400、加密 400 `encrypted_file`（§3.1）、扫描器不可用 503（不放行）、超限 413；未配置扫描器时 `scan.status=not_configured` 如实返回并显示在页面上 |
 | 读取 | `synwevo_docs.ingest.DocumentIngest`（由 `synwevo_server` 注入）或 `synwevo_core.member_import.BasicIngest` | 引擎的全部结构与资源上限照用；导入另加：每表 2000 行、5000 行文本、200 页文字、20 页 OCR、单次 500 行计划 |
 | 保留 | 原文件仅在 `extracted/planned` 阶段保存在 `<data>/member_imports/<id>`（0600），供按需 OCR；执行结束即删除。7 天的 `expires_at` 只写在库里：过期清理没有调用方、也不删文件（CI-90 核对，见 §8.1、§9） | 库里只留提取出的行（有界）与逐行结果 |
 | 输出 | 报告 CSV 对 `= + - @` 开头的单元格加前缀，`no-store` | 不下载原文件 |

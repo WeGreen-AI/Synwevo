@@ -175,8 +175,8 @@ class DocsRescan:
         for g in groups.values():
             if g["sha256"] in held:
                 g["key"] = RS.UNDER_VERDICT
-            elif self._vouched(g["sha256"]) or RS.scan_status(self._case_record(g["sha256"])) == "clean":
-                continue
+            elif self._vouched(g["sha256"]) or RS.scan_status(self._case_record(g["sha256"])) in ("clean", "encrypted"):
+                continue                     # answered for these bytes (encrypted: recorded, the owner decides)
             else:
                 rec = self._case_record(g["sha256"])
                 g["key"] = RS.order_key(rec, 0)
@@ -277,6 +277,12 @@ class DocsRescan:
             made = [self._publish_source(r, RS.clean_record(v.result, sha, r.get("scan"))) for r in rows]
             self.report.unit(KIND_SOURCE, ident, sha, "clean" if any(made) else "changed", len(rows))
             return
+        if v.outcome == "encrypted":
+            # Password-protected: cannot be checked, is not malware. Recorded (`rescan: true`, so the
+            # upload gate's refusal does not apply), the row keeps its state — the owner decides.
+            made = [self._publish_source(r, RS.encrypted_record(v, sha, r.get("scan"))) for r in rows]
+            self.report.unit(KIND_SOURCE, ident, sha, "encrypted" if any(made) else "changed", len(rows), v.reason or "")
+            return
         # error / too_large: the attempt is recorded, the row stays as it was
         limit = ex.scanner.max_bytes
         for r in rows:
@@ -317,6 +323,8 @@ class DocsRescan:
         prev = self._case_record(sha)
         if v.outcome == "clean":
             self._record_case(sha, RS.clean_record(v.result, sha, prev))
+        elif v.outcome == "encrypted":
+            self._record_case(sha, RS.encrypted_record(v, sha, prev))    # the case stays where it is
         elif v.outcome in ("error", "too_large"):
             limit = ex.scanner.max_bytes
             if not (v.outcome == "too_large" and RS.scan_status(prev) == "too_large" and (prev or {}).get("limit") == limit):
@@ -387,6 +395,7 @@ class DocsRescan:
                 return
         errors = [v for v in verdicts if v.outcome == "error"]
         big = [v for v in verdicts if v.outcome == "too_large"]
+        enc = [v for v in verdicts if v.outcome == "encrypted"]
         prev = prev_rec or {}
         if errors:
             publish(row, RS.attempt_record("error", errors[0].reason or "", errors[0].sha256, prev, blobs=len(blobs)))
@@ -397,6 +406,12 @@ class DocsRescan:
             if not (RS.scan_status(prev) == "too_large" and prev.get("limit") == limit):
                 publish(row, RS.attempt_record("too_large", big[0].reason or "", big[0].sha256, prev, blobs=len(blobs), limit=limit))
             self.report.unit(label, row["id"], big[0].sha256, "too_large", detail=f"limit={limit}")
+            return
+        if enc:
+            # Any content that cannot be checked: recorded, the template stays usable as it was.
+            made = publish(row, RS.encrypted_record(enc[0], enc[0].sha256, prev, blobs=len(blobs)))
+            self.report.unit(label, row["id"], enc[0].sha256, "encrypted" if made else "changed",
+                             detail=f"{enc[0].reason or '-'}，{len(enc)}/{len(blobs)} 份内容")
             return
         first = next(v for v in verdicts if v.result is not None)
         made = publish(row, RS.clean_record(first.result, blobs[0], prev, blobs=len(blobs)))
@@ -616,8 +631,10 @@ def _rescan_all(runner: DocsRescan, ex: RS.Examiner, blobs: list[str], released:
         if v.outcome == "infected":
             runner._reject(b, v.signature, v.engine, v.data)
             return RS.infected_record(v.signature, v.engine, b), b
-        if v.outcome != "clean" and worst is None:
+        if v.outcome != "clean" and (worst is None or worst.outcome == "encrypted"):
             worst = v
+    if worst is not None and worst.outcome == "encrypted":
+        return RS.encrypted_record(worst, worst.sha256, prev_rec, blobs=len(blobs), released=True), None
     if worst is not None:
         status = "too_large" if worst.outcome == "too_large" else "error"
         reason = worst.reason or {"missing": "content missing", "mismatch": "content does not match its digest"}.get(worst.outcome, "")
@@ -672,8 +689,7 @@ def _release(app, sha: str, by: str, out) -> int:
         print(f"扫描器不可达：{str(e)[:200]}", file=sys.stderr)
         return RS.EXIT_SCANNER
     if res.status != "clean":
-        print(f"当前引擎（{res.engine}）对 sha256={sha} 的结论仍是 {res.status}"
-              + (f"（{res.signature}）" if res.signature else "") + "：签名撤回之前不能恢复。", file=out)
+        print(RS.release_refused(res, sha), file=out)
         return RS.EXIT_FINDINGS
     Q.put_back(store, sha, data)                 # a damaged store copy is replaced, never kept
     runner = DocsRescan(app, RS.Report("Synwevo Docs"), by)

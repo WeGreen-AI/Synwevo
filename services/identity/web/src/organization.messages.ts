@@ -682,6 +682,7 @@ export const messages = {
   "检查失败": { en: "Check failed", "zh-Hant": "檢查失敗" },
   "超出扫描大小": { en: "Over the scan size limit", "zh-Hant": "超出掃描大小" },
   "检出威胁": { en: "Threat detected", "zh-Hant": "檢出威脅" },
+  "设有密码，无法检查": { en: "Password-protected, could not be checked", "zh-Hant": "設有密碼，無法檢查" },
   "还没有申请。": { en: "No requests yet.", "zh-Hant": "還沒有申請。" },
   "需重新申请": { en: "Needs a new request", "zh-Hant": "需重新申請" },
   "项目 {id}，{s} 个来源，{m} 条映射": { en: "Project {id}, {s} sources, {m} mappings", "zh-Hant": "專案 {id}，{s} 個來源，{m} 條對應" },

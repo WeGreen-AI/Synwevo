@@ -31,6 +31,16 @@ export const REFUSAL_TEMPLATES: Record<string, ErrorTemplate> = {
     if (n == null) return null;
     return [d.kind === "voice" ? "语音超过 {n} MB 上限" : "附件超过 {n} MB 上限", { n: Math.floor(n / MB) }] as const;
   },
+  // An attachment passes the shared acceptance gate (`member_import.accept_upload`): the engine's
+  // verdict names the file and the signature, and the scan limit is a deployment setting.
+  malware_detected: (d) => {
+    const filename = typeof d.filename === "string" && d.filename ? d.filename : null;
+    if (!filename) return null;
+    const signature = typeof d.signature === "string" && d.signature ? d.signature : null;
+    return signature ? ["文件「{filename}」被判定为恶意内容（{signature}），已拒绝", { filename, signature }] as const
+      : ["文件「{filename}」被判定为恶意内容，已拒绝", { filename }] as const;
+  },
+  scan_limit: (d) => { const n = positive(d.limit); return n == null ? null : ["文件超过安全检查的大小上限（{n} MB），无法接纳", { n: Math.floor(n / MB) }] as const; },
   // `invalid_field` is shared by every field; only the three that quote a length are worded here
   invalid_field: (d) => {
     const n = positive(d.limit);

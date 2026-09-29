@@ -33,6 +33,7 @@ export const messages = {
   "成员文件超过 {n} MB 上限": { en: "The member file is over the {n} MB limit.", "zh-Hant": "成員檔案超過 {n} MB 上限" },
   "文件超过安全检查的大小上限（{n} MB），无法接纳": { en: "The file is over the security check's size limit ({n} MB) and cannot be accepted.", "zh-Hant": "檔案超過安全檢查的大小上限（{n} MB），無法接收" },
   "文件「{filename}」被判定为恶意内容（{signature}），已拒绝": { en: "“{filename}” was identified as malicious ({signature}) and was refused.", "zh-Hant": "檔案「{filename}」被判定為惡意內容（{signature}），已拒絕" },
+  "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传": { en: "The file is password-protected or contains encrypted content, so the security check cannot look inside it and it was not accepted. Remove the password (or save an unencrypted copy) and upload it again.", "zh-Hant": "檔案設有密碼或含有加密內容，安全檢查無法查看其中的內容，因此未被接收；請移除密碼（或另存一份不加密的副本）後重新上傳" },
   "文件「{filename}」被判定为恶意内容，已拒绝": { en: "“{filename}” was identified as malicious and was refused.", "zh-Hant": "檔案「{filename}」被判定為惡意內容，已拒絕" },
   "最多只能登记 {n} 个安全密钥": { en: "You can register at most {n} security keys.", "zh-Hant": "最多只能登記 {n} 個安全金鑰" },
   "一次最多处理 {n} 项": { en: "At most {n} items can be processed at once.", "zh-Hant": "一次最多處理 {n} 項" },

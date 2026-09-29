@@ -115,8 +115,10 @@ def _dump(v) -> str | None:
 def accept_upload(filename: str, data: bytes) -> dict:
     """Scan the bytes with the platform's clamd policy before any reader opens them.
 
-    Same verdict semantics as the Docs template scan: infected → 400, scanner down → 503 (never
-    a pass), over the scan limit → 413. `not_configured` is reported, not hidden."""
+    Same verdict semantics as the Docs template scan: infected → 400, password-protected → 400
+    ``encrypted_file`` (nobody can check what is inside: not accepted, not malware; §8.7),
+    scanner down → 503 (never a pass), over the scan limit → 413. `not_configured` is reported,
+    not hidden. Synwevo Message attachments come through here too."""
     if len(data) > MAX_FILE_BYTES:
         raise ServiceError(413, "file_too_large", f"成员文件超过 {MAX_FILE_BYTES // (1024 * 1024)} MB 上限", {"limit": MAX_FILE_BYTES})
     pol = M.policy()
@@ -133,6 +135,10 @@ def accept_upload(filename: str, data: bytes) -> dict:
         log.warning("member_import scan.rejected sha256=%s signature=%s", sha, res.signature)
         raise ServiceError(400, "malware_detected", f"文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝",
                            {"signature": res.signature, "filename": filename})
+    if res.status == "encrypted":
+        log.info("member_import scan.encrypted sha256=%s kind=%s signature=%s", sha, res.reason, res.signature)
+        raise ServiceError(400, "encrypted_file", "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传",
+                           {"filename": filename, "kind": res.reason})
     if res.status == "too_large":
         raise ServiceError(413, "scan_limit", f"文件超过安全检查的大小上限（{pol.max_bytes // (1024 * 1024)} MB），无法接纳",
                            {"limit": pol.max_bytes})
