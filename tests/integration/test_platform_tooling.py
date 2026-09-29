@@ -434,6 +434,35 @@ def test_down_does_not_signal_the_same_module_in_another_checkout(platform, tmp_
         victim.wait(timeout=10)
 
 
+# ---------------------------------------------------------------- the CI controls of the real-room client tests
+def _collect_client_tests(env_extra: dict, path: str) -> subprocess.CompletedProcess:
+    import os
+    env = {**os.environ, **env_extra, "PATH": path}
+    return subprocess.run([sys.executable, "-m", "pytest", "apps/docs/tests/test_sheet_live_clients.py", "--collect-only", "-rs",
+                           "-p", "no:cacheprovider"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=180)
+
+
+def test_the_real_room_client_tests_cannot_be_skipped_where_ci_requires_them(tmp_path):
+    """Review of steps 3-5, round 2: the root conftest scrubbed every SYNWEVO_* variable before test
+    modules loaded, so `SYNWEVO_SHEET_CLIENTS=required` without Node skipped the module quietly."""
+    no_node = str(tmp_path)                                      # a PATH on which there is no node
+    r = _collect_client_tests({"SYNWEVO_SHEET_CLIENTS": "required"}, no_node)
+    assert r.returncode != 0 and "must run here" in (r.stdout + r.stderr), (r.returncode, r.stdout[-800:], r.stderr[-800:])
+    r = _collect_client_tests({}, no_node)
+    assert r.returncode in (0, 5) and "skipped" in (r.stdout + r.stderr).lower(), (r.returncode, r.stdout[-800:])
+
+
+def test_the_seed_count_of_the_random_client_runs_reaches_the_tests():
+    import os
+    node = shutil.which("node")
+    if node is None or not (ROOT / "node_modules" / "@synwevo" / "ui").exists():
+        pytest.skip("needs Node and the workspace's node_modules (the verify job has both)")
+    r = _collect_client_tests({"SYNWEVO_SHEET_FUZZ_SEEDS": "3"}, str(Path(node).parent) + os.pathsep + os.environ.get("PATH", ""))
+    assert r.returncode == 0, r.stdout[-800:] + r.stderr[-800:]
+    ids = [line for line in r.stdout.splitlines() if "test_random_interleavings_with_busy_windows" in line]
+    assert len(ids) == 3, ids
+
+
 def test_the_source_offer_contains_the_locked_installation_inputs():
     from synwevo_docs.licensing import _archive_files
     offered = {name for _, name in _archive_files()}

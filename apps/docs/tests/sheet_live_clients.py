@@ -11,6 +11,7 @@ live-table review of steps ③–⑤, kept in CI (``test_sheet_live_clients.py``
 Needs ``node`` (22+) and the workspace's ``node_modules`` (``npm ci``)."""
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import subprocess
@@ -166,6 +167,10 @@ class Tab:
     def undos(self):
         return self._take(self.h.node(cmd="undos", tab=self.name))
 
+    def applied_numbers(self):
+        """{queued id: {n, client, epoch}} of this tab's changes the room answered as applied."""
+        return self._take(self.h.node(cmd="appliedN", tab=self.name))
+
     def texts(self):
         return self._take(self.h.node(cmd="texts", tab=self.name))
 
@@ -228,6 +233,28 @@ class Harness:
             if not any(t.out for t in self.tabs):
                 return st
         return [t.state() for t in self.tabs]
+
+
+def write_draft(room) -> int:
+    """The room writes its draft as it does on its own (``SheetRoom.persist``: serialise, write to the
+    database, tell every tab `persisted`); the seq written."""
+    seq = room.state["seq"]
+    asyncio.run(room.persist())
+    return seq
+
+
+def restart_from_storage(room) -> int:
+    """The process died without its closing write; the next one opens the room from storage exactly as
+    ``CollabHub._load`` does (the draft row, the head version) — a new load of the same epoch. Every tab
+    must have dropped before. Returns the seq it was loaded at."""
+    from synwevo_core.context import as_tenant
+    hub, tid = room.hub, room.tid
+    with as_tenant(room.tenant):
+        t = hub.app.get_template(tid)
+        row = hub.store.one("SELECT * FROM collab_docs WHERE room=?", (room.key,))
+        room.load_sheet(t, row, lambda: hub.app.editor_of(tid, hub.app.get_version(tid, t["head"]), t.get("kind")))
+    assert room.catch_up is None, "the fixture writes the draft after every version (no catch-up to fold in)"
+    return room.state["seq"]
 
 
 def diff(a, b, path="", out=None, limit=8):
