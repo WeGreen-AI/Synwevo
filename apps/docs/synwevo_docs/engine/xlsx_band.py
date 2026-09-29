@@ -45,7 +45,7 @@ from . import values as V
 from .limits import LIMITS
 from .ooxml import NS
 from .refshift import _PART_RE, _REF_RE, _ROWS_RE, MAX_ROW, Shift, split_sheet
-from .tabular import col_letter, parse_cell, parse_range
+from .tabular import col_index, col_letter, parse_cell, parse_range
 from .xlsx_doc import XDR, XlsxDoc, XlsxError, _CELLREF, s
 
 AGGREGATES = {"SUM", "COUNT", "COUNTA", "AVERAGE", "MIN", "MAX", "PRODUCT", "SUBTOTAL"}
@@ -984,10 +984,23 @@ def fill_band(x: XlsxDoc, band: dict, kids: list[tuple[dict, dict]], values: dic
         r = int(row.get("r"))
         if b1 <= r <= b2:
             proto[r] = row
-    count = sum(len(proto[r].findall(s("c"))) * (sum(m[k][lay.idx[r]] for k in range(K)) if r in lay.idx else K)
-                for r in proto)
-    if count > LIMITS.max_block_cells:
-        raise XlsxError("band_cell_limit", f"重复内容块「{name}」展开后要写入 {count} 个单元格，超过上限 {LIMITS.max_block_cells}（SYNWEVO_DOCS_MAX_BLOCK_CELLS）")
+    # what will be written: every template row's cells and the columns the block's fields write on
+    # it, per copy (a detail row per line). Counted for the whole document, all its blocks together.
+    written: dict[int, set[int]] = {r: {col_index(_CELLREF.match(c.get("r")).group(1)) for c in row.findall(s("c"))}
+                                    for r, row in proto.items()}
+    for col in band.get("columns") or []:
+        r, c = parse_cell(col["cell"])
+        written.setdefault(r + 1, set()).add(c)
+    for cs in cells:
+        r, c = parse_cell(cs["locator"]["cell"])
+        written.setdefault(r + 1, set()).add(c)
+    for d, ks, _ in details:
+        written.setdefault(d, set()).update(int(col["col"]) for col in ks.get("columns") or [])
+    count = sum(len(cols) * (sum(m[k][lay.idx[r]] for k in range(K)) if r in lay.idx else K) for r, cols in written.items())
+    total = getattr(x, "block_cells", 0) + count
+    if total > LIMITS.max_block_cells:
+        raise XlsxError("band_cell_limit", f"重复内容块「{name}」展开后，这份文档共要写入 {total} 个单元格，超过上限 {LIMITS.max_block_cells}（SYNWEVO_DOCS_MAX_BLOCK_CELLS）")
+    x.block_cells = total
 
     # 0. references from outside that expand to every copy: parked as names the row shift leaves alone
     entries: list[Ref] = []

@@ -740,6 +740,49 @@ def test_the_default_cell_limit_stops_a_block_before_it_is_built():
     assert time.perf_counter() - t < 10
 
 
+def _bare_blocks(blocks: int = 1):
+    """Blocks of 3 rows (header, an EMPTY detail row with 20 written columns, footer), stacked."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "对账单"
+    for n in range(blocks):
+        top = 1 + n * 4
+        ws.cell(top, 1, "订单号：")
+        ws.cell(top + 2, 1, "小计")
+    b = io.BytesIO()
+    wb.save(b)
+    work, slots, values = b.getvalue(), [], {}
+    for n in range(blocks):
+        top = n * 4
+        work, rep = T.xlsx_add_slot(work, {"kind": "repeat", "sheet": "对账单", "row": top + 1, "c1": 0, "c2": 19, "name": f"明细{n}"}, slots)
+        band = {**_band(first=top, last=top + 2), "id": f"b{n}", "binding": f"b{n}", "name": f"段{n}", "columns": []}
+        groups = [[{c["key"]: V.text("x") for c in rep["columns"]} for _ in range(3)] for _ in range(10)]
+        values[band["id"]] = {"kind": "rows", "rows": [{} for _ in range(10)], "sections": [str(k) for k in range(10)]}
+        values[rep["id"]] = {"kind": "rows", "rows": [r for g in groups for r in g], "groups": groups}
+        slots += [band, rep]
+    return work, slots, values
+
+
+def test_the_cell_limit_counts_what_is_written_for_the_whole_document(monkeypatch):
+    """Round 2, item 3: only cells present in the template rows were counted — a detail row with no
+    template cells and 20 written columns wrote ~507k cells counted as ~57k (751 MB) — and each
+    block was measured on its own. Written columns count now, all blocks of the document together."""
+    from synwevo_docs.engine import limits as L
+    monkeypatch.setattr(L.LIMITS, "max_block_cells", 700)
+    work, slots, values = _bare_blocks(1)          # 10 copies × (3 lines × 20 columns + 2 header/footer cells)
+    out, issues = T.xlsx_fill(work, slots, values)
+    assert out and not [i for i in issues if i["level"] == "error"], issues
+    monkeypatch.setattr(L.LIMITS, "max_block_cells", 500)
+    out, issues = T.xlsx_fill(work, slots, values)
+    assert out == b"" and [i["message"] for i in issues if i["level"] == "error"] == [
+        "重复内容块「段0」展开后，这份文档共要写入 620 个单元格，超过上限 500（SYNWEVO_DOCS_MAX_BLOCK_CELLS）"]
+    monkeypatch.setattr(L.LIMITS, "max_block_cells", 1000)
+    work, slots, values = _bare_blocks(2)          # each block alone is under 1000, together they are not
+    out, issues = T.xlsx_fill(work, slots, values)
+    assert out == b"" and [i["message"] for i in issues if i["level"] == "error"] == [
+        "重复内容块「段0」展开后，这份文档共要写入 1240 个单元格，超过上限 1000（SYNWEVO_DOCS_MAX_BLOCK_CELLS）"]
+
+
 def test_page_break_counts_are_rewritten_when_the_block_goes():
     """Review item 7: breaks inside a block with no data were removed but the counts kept."""
     from openpyxl.worksheet.pagebreak import Break
