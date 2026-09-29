@@ -94,6 +94,9 @@
 .collab-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; font-size: 13px; border-bottom: 1px solid var(--line); background: var(--warn-weak); color: var(--warn); }
 .collab-notice.err { background: var(--err-weak); color: var(--err); }
 .collab-notice.info { background: var(--accent-weak); color: var(--accent-strong); }
+/* the live table's deleted sheets: a line of its own above the grid, wrapping on a phone */
+.sheet-gone { flex: none; }
+.sheet-gone select { width: auto; max-width: 100%; min-width: 0; }
 /* Activity drawer (CI-50): filters, the "since you last looked" line, rows that jump to their object. */
 .collab-filters { align-items: center; }
 .collab-filters .input.sm { min-height: 32px; padding: 2px 8px; }

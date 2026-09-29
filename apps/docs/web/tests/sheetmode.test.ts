@@ -117,3 +117,32 @@ test("a save refused while an outside version cannot be folded in does not say '
   assert.doesNotMatch(saveRefusalText(e, true)!, /[一-鿿]/);
   setLocale("zh-Hans" as any);
 });
+
+test("a sheet deleted while the page is open is announced once, with where to restore it, in three languages", async () => {
+  await import("../src/lib/presentation.ts");
+  const { newlyDeleted } = await import("../src/lib/sheetmode.ts");
+  const { deletedText, deletedListText } = await import("../src/lib/sheettext.ts");
+  const { setLocale } = await import("@synwevo/ui/i18n-core");
+  const c = withSheets();                                       // 明细 deleted before the page looked
+  assert.deepEqual(newlyDeleted(null, c), [], "the first look: what was deleted before is the visible list's, not news");
+  const seen = new Set(deletedSheets(c).map((g) => g.sid));
+  assert.deepEqual(newlyDeleted(seen, c), []);
+  assert.ok(applyOp(c, { op: "sheet_delete", sheet: "s0000002" }, { by: "u2" }).ok);   // someone deletes 汇总
+  assert.deepEqual(newlyDeleted(seen, c), [{ sid: "s0000002", name: "汇总" }]);
+  const after = new Set(deletedSheets(c).map((g) => g.sid));
+  assert.ok(applyOp(c, { op: "sheet_restore", sheet: "s0000001" }, { by: "u1" }).ok);    // a restore is not a deletion
+  assert.deepEqual(newlyDeleted(after, c), []);
+  const said: Record<string, [string, string]> = {};
+  for (const lang of ["zh-Hans", "en", "zh-Hant"]) {
+    setLocale(lang as any);
+    said[lang] = [deletedText(["汇总"]), deletedListText(2)];
+  }
+  setLocale("zh-Hans" as any);
+  assert.equal(said["zh-Hans"][0], "工作表「汇总」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。");
+  assert.equal(said["zh-Hans"][1], "已删除的工作表（2）：保存为版本之前，可以在这里恢复。");
+  assert.equal(said.en[0], "Sheet “汇总” was deleted. Until the table is saved as a version, it can be restored from “Deleted sheets”.");
+  assert.equal(said.en[1], "Deleted sheets (2): until the table is saved as a version, they can be restored here.");
+  for (const s of said.en) assert.doesNotMatch(s.replace("汇总", ""), /[一-鿿]/, "no Chinese left in the English sentences");
+  assert.equal(said["zh-Hant"][1], "已刪除的工作表（2）：儲存為版本之前，可以在這裡恢復。");
+  assert.ok(said["zh-Hant"][0].includes("儲存為版本之前"));
+});

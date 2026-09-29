@@ -1038,18 +1038,66 @@ def test_m5_a_stale_sheet_delete_cannot_hide_newer_work_on_it():
     assert room.no({"op": "sheet_delete", "sheet": b}, "conflict", "ann", client="ann-2", expect=0)["by"] == "bob"
     # the same person's other tab: a stale delete from one tab does not hide what the other wrote
     # after it (review of steps 3-5, item 10: an undo of a new sheet pressed before the other tab's
-    # edit arrived deleted it — the check was by person); she sees who (herself) and chooses
+    # edit arrived deleted it — the check was by person); she sees who (herself) and chooses. Tabs are
+    # named "person/tab" as the room names them: that is how the model knows they are hers
     room2 = Room({"sheets": [grid("A"), grid("B")]})
     b2 = room2.st["content"]["order"][1]
-    room2.ok({"op": "set", **room2.at("A1", b2), "v": "mine"}, "ann")
-    d2 = room2.no({"op": "sheet_delete", "sheet": b2}, "conflict", "ann", client="ann-2", expect=0)
+    room2.ok({"op": "set", **room2.at("A1", b2), "v": "mine"}, "ann", client="ann/1")
+    d2 = room2.no({"op": "sheet_delete", "sheet": b2}, "conflict", "ann", client="ann/2", expect=0)
     assert d2["by"] == "ann" and d2["key"] == f"x/{b2}"
-    room2.ok({"op": "sheet_delete", "sheet": b2}, "ann", client="ann-2")                  # having seen it
+    room2.ok({"op": "sheet_delete", "sheet": b2}, "ann", client="ann/2")                  # having seen it
     # ... while the tab that wrote there deletes it without a conflict with itself
     room3 = Room({"sheets": [grid("A"), grid("B")]})
     b3 = room3.st["content"]["order"][1]
     room3.ok({"op": "set", **room3.at("A1", b3), "v": "mine"}, "ann")
     room3.ok({"op": "sheet_delete", "sheet": b3}, "ann", expect=0)
+
+
+@pytest.mark.parametrize("writer, deleter", [("aaa", "zzz"), ("zzz", "aaa")])
+def test_r3c2_a_stale_delete_names_whoever_wrote_never_the_sender_s_other_tab(writer, deleter):
+    """Review round 3, R3c2: the per-tab check read every other tab's write on the sheet — other
+    people's tabs too — as the sender's own, so when the sender's id sorted after the writer's the
+    refusal said "you changed it first in another tab" about someone else's work (inviting them to
+    confirm deleting it). Now: the person who wrote, whichever way the ids sort."""
+    room = Room({"sheets": [grid("A"), grid("B")]})
+    b = room.st["content"]["order"][1]
+    room.ok({"op": "set", **room.at("C3", b), "v": "their work"}, writer, client=f"{writer}/tab")
+    d = room.no({"op": "sheet_delete", "sheet": b}, "conflict", deleter, client=f"{deleter}/tab", expect=0)
+    assert d["by"] == writer and d["at"] == 1 and d["key"] == f"x/{b}"
+    # both: the other person wrote, and so did the sender's own other tab, later — the latest is named
+    room.ok({"op": "set", **room.at("D4", b), "v": "my other tab"}, deleter, client=f"{deleter}/other")
+    d = room.no({"op": "sheet_delete", "sheet": b}, "conflict", deleter, client=f"{deleter}/tab", expect=0)
+    assert d["by"] == deleter and d["at"] == 2
+    d = room.no({"op": "sheet_delete", "sheet": b}, "conflict", deleter, client=f"{deleter}/tab", expect=2 - 1)
+    assert d["by"] == deleter, "having seen the other person's write, the sender's own other tab's is what is left"
+
+
+@pytest.mark.parametrize("part", ["rows", "cols"])
+def test_r3h_a_stale_delete_cannot_hide_rows_or_columns_someone_just_added(part):
+    """Review round 3, R3h: adding rows or columns recorded no write on the sheet, so a delete typed
+    before they existed (or a lost one sent again after a crash) removed them with no conflict."""
+    room = Room({"sheets": [grid("A"), grid("B")]})
+    b = room.st["content"]["order"][1]
+    room.ok({"op": f"append_{part}", "sheet": b, "count": 5}, "bob", client="bob/tab")
+    d = room.no({"op": "sheet_delete", "sheet": b}, "conflict", "ann", client="ann/tab", expect=0)
+    assert d["by"] == "bob" and d["at"] == 1 and d["theirs"] == {"sheet": b, "name": "B"}
+    # typing at the edge (rows added and a value, one group) is the same
+    room.ok({"op": "tx", "ops": [{"op": "append_rows", "sheet": b, "count": 1}, {"op": "set", **room.at("A1", b), "v": "x"}]}, "bob", client="bob/tab")
+    assert room.no({"op": "sheet_delete", "sheet": b}, "conflict", "ann", client="ann/tab", expect=1)["by"] == "bob"
+    # a refused group that added rows leaves no write behind
+    room = Room({"sheets": [grid("A"), grid("B")]})
+    b = room.st["content"]["order"][1]
+    room.no({"op": "tx", "ops": [{"op": "append_rows", "sheet": b, "count": 2}, {"op": "set", "sheet": b, "row": "nosuch00", "col": "nosuch00", "v": 1}]},
+            "not_found", "bob", client="bob/tab")
+    assert b not in room.st["sheetw"] and b not in room.st.get("sheetc", {})
+    room.ok({"op": "sheet_delete", "sheet": b}, "ann", client="ann/tab", expect=0)
+    # rows an outside version added are a write on the sheet by whoever saved it
+    room = Room({"sheets": [grid("A"), grid("B", nr=3)]})
+    b = room.st["content"]["order"][1]
+    outside = project(room.st)
+    outside["sheets"][1]["rows"] = outside["sheets"][1]["rows"] + [None, None]
+    assert reconcile(room.st, outside, by="api")["patch"]
+    assert room.no({"op": "sheet_delete", "sheet": b}, "conflict", "ann", client="ann/tab", expect=0)["by"] == "api"
 
 
 def test_m5_merging_never_hides_values_and_a_value_never_goes_under_a_merge():

@@ -67,7 +67,13 @@ class FixtureRoom {
     const prior = rec.r.get(f.n);
     if (prior) { ack({ ...prior, duplicate: true }); return; }
     let res: any;
-    const conflict = this.conflict(f, tab.user);
+    // like collab_sheet._op_set: a value the workbook cannot hold is refused before first-writer-wins
+    let invalid = false;
+    try {
+      const probe = applyOp(copy(this.content), f.op, { by: tab.user, who: new Map(this.who), maxCells: 50000 });
+      invalid = !probe.ok && probe.code === "invalid";
+    } catch { /* not predictable here: the room decides below */ }
+    const conflict = invalid ? null : this.conflict(f, tab.user);
     if (conflict) res = { ok: false, code: "conflict", detail: conflict };
     else {
       const got = applyOp(this.content, f.op, { by: tab.user, who: this.who, maxCells: 50000 });
@@ -603,6 +609,126 @@ test("H2: 'use my value' is sent against what the person was shown — a cell ch
   const [again] = a.sync.snapshot().attention;
   assert.equal(again.kind, "conflict");
   assert.equal(again.label.ref, "B10");
+});
+
+// ------------------------------------------------------------------ review round 3: P4 and later changes that did not happen
+const clear = (r: number, c: number) => ({ op: "clear", sheet: SID, row: R(r), col: C(c) });
+
+/** A wrote B2 and B3; offline, B changes `bChanges` of them and A clears B2:B3 as one group, then `later`. */
+function groupThenLater(bChanges: [number, string][], later: () => void) {
+  const { room, a, b } = twoTabs();
+  a.sync.submit(set(1, 1, "a2")); a.sync.submit(set(2, 1, "a3")); pump(room);
+  a.disconnect();
+  for (const [r, v] of bChanges) b.sync.submit(set(r, 1, v));
+  pump(room);
+  a.sync.submit({ op: "tx", ops: [clear(1, 1), clear(2, 1)] });
+  later();
+  return { room, a, b };
+}
+
+test("R3a: a later edit of mine taken off the queue by undo before it was sent leaves the cell to the group — told, and done", () => {
+  let undone: any = null;
+  const { room, a } = groupThenLater([[1, "B's B2"], [2, "B's B3"]], () => {});
+  a.sync.submit(set(2, 1, "typo"));
+  undone = a.sync.undo();                                   // never sent: taken off the queue
+  assert.ok(undone && undone !== "deferred" && undone.cancelled);
+  a.connect(); pump(room);
+  const [g] = a.sync.snapshot().attention.filter((x) => x.kind === "conflict");
+  assert.equal(g.label.ref, "B2");
+  assert.deepEqual((g.detail.also ?? []).map((c: any) => [c.ref, c.theirs?.v]), [["B3", "B's B3"]], "B3 is the group's again: told with B's value");
+  for (const lang of ["zh-Hans", "en", "zh-Hant"]) { setLocale(lang as any); assert.ok(attentionText(g, 1).includes("B's B3"), attentionText(g, 1)); }
+  setLocale("zh-Hans");
+  assert.ok(a.sync.useMine(g.id));
+  pump(room);
+  assert.equal(cellOf(room.content, "B2"), undefined);
+  assert.equal(cellOf(room.content, "B3"), undefined, "the person's delete of B3 is done, as the sentence said");
+});
+
+test("R3b: a later edit of mine refused for another reason leaves the cell to the group", () => {
+  // B changed only B2: the group's "use my value" clears B3 as well (the refused edit decides nothing)
+  const { room, a } = groupThenLater([[1, "B's B2"]], () => {});
+  a.sync.submit(set(2, 1, "bad\u0001char"));                // a character Excel cannot hold: refused
+  a.connect(); pump(room);
+  const att = a.sync.snapshot().attention;
+  assert.deepEqual(att.map((x) => [x.kind, x.code]), [["conflict", "conflict"], ["refused", "invalid"]]);
+  assert.ok(a.sync.useMine(att[0].id));
+  pump(room);
+  assert.equal(cellOf(room.content, "B2"), undefined);
+  assert.equal(cellOf(room.content, "B3"), undefined, "A's delete of B3 (the group) is done");
+});
+
+test("R3b: refused after the group's sentence was made, the cell it had left out is told then — never replaced untold", () => {
+  const { room, a } = groupThenLater([[1, "B's B2"], [2, "B's B3"]], () => {});
+  a.sync.submit(set(2, 1, "bad\u0001char"));
+  a.connect();
+  // deliver the hello, the frames, and the group's answer — the later edit is still on its way
+  a.sync.onMeta(a.inbox.shift()![1]);
+  while (a.outbox.length) room.receive(a, a.outbox.shift());
+  const [kind, groupAck] = a.inbox.shift()!;
+  assert.equal(kind, "sheet");
+  a.sync.onSheet(groupAck);
+  let [g] = a.sync.snapshot().attention;
+  assert.equal(g.detail.also, undefined, "B3 is left to the later edit while it may still apply (P4)");
+  pump(room);                                               // the later edit is refused
+  [g] = a.sync.snapshot().attention.filter((x) => x.kind === "conflict");
+  assert.deepEqual((g.detail.also ?? []).map((c: any) => [c.ref, c.theirs?.v]), [["B3", "B's B3"]], "now told");
+  assert.ok(a.sync.useMine(g.id));
+  pump(room);
+  assert.equal(cellOf(room.content, "B3"), undefined, "what the person chose, having been told");
+});
+
+test("P4 still: a later edit refused as a conflict has its own answer for its cell — whichever is answered first", () => {
+  for (const order of ["keep theirs first", "group first"]) {
+    const { room, a } = groupThenLater([[1, "B's B2"], [2, "B's B3"]], () => {});
+    a.sync.submit(set(2, 1, "A's later B3"));
+    a.connect(); pump(room);
+    const later = a.sync.snapshot().attention.find((x) => x.label.ref === "B3")!;
+    let g = a.sync.snapshot().attention.find((x) => x.label.ref === "B2")!;
+    assert.equal(g.detail.also, undefined, "B3 is the later edit's to answer, not the group's");
+    if (order === "keep theirs first") {
+      a.sync.dismiss(later.id);                              // keep B's B3: that is B3's answer
+      g = a.sync.snapshot().attention.find((x) => x.id === g.id)!;
+      assert.equal(g.detail.also, undefined, "choosing on the later edit is not a later edit that went away");
+      assert.ok(a.sync.useMine(g.id));
+    } else {
+      assert.ok(a.sync.useMine(g.id));
+      pump(room);
+      a.sync.dismiss(later.id);
+    }
+    pump(room);
+    assert.equal(cellOf(room.content, "B2"), undefined, order);
+    assert.equal(cellOf(room.content, "B3"), "B's B3", `${order}: B3 is what the person chose on its own item`);
+  }
+});
+
+test("P4 still: a later edit of mine that applied decides its cell — the group's retry leaves it alone", () => {
+  const { room, a } = groupThenLater([[1, "B's B2"], [2, "B's B3"]], () => {});
+  a.connect(); pump(room);
+  a.sync.submit(set(2, 1, "A's newest B3"));
+  pump(room);
+  assert.equal(cellOf(room.content, "B3"), "A's newest B3");
+  const g = a.sync.snapshot().attention.find((x) => x.label.ref === "B2")!;
+  assert.ok(a.sync.useMine(g.id));
+  pump(room);
+  assert.equal(cellOf(room.content, "B2"), undefined);
+  assert.equal(cellOf(room.content, "B3"), "A's newest B3", "my own newer value is not overwritten by the older group (P4)");
+});
+
+test("P4: a later edit of mine undone after it applied leaves its cell to the earlier group again", () => {
+  const { room, a } = groupThenLater([[1, "B's B2"], [2, "B's B3"]], () => {});
+  a.connect(); pump(room);                                   // the group conflicts; nothing later yet
+  a.sync.submit(set(2, 1, "typed after"));
+  pump(room);
+  let g = a.sync.snapshot().attention.find((x) => x.kind === "conflict")!;
+  assert.equal(cellOf(room.content, "B3"), "typed after");
+  const u = a.sync.undo();                                   // takes "typed after" back: B3 is B's again
+  assert.ok(u && u !== "deferred" && u.sent);
+  pump(room);
+  assert.equal(cellOf(room.content, "B3"), "B's B3");
+  g = a.sync.snapshot().attention.find((x) => x.id === g.id)!;
+  assert.ok(a.sync.useMine(g.id));
+  pump(room);
+  assert.equal(cellOf(room.content, "B3"), undefined, "the group's delete of B3 is done: the undone edit decides nothing");
 });
 
 test("H9: undo never deletes a sheet someone else worked on since — it says so", () => {

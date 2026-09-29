@@ -40,6 +40,17 @@ export function retryText(code: number): string {
   return t("连接中断，正在自动重新连接。");
 }
 
+/** Screen readers, when sheets are deleted in the live table (by anyone, this tab included): which, and
+ *  where to restore them (the "Deleted sheets" list above the grid). */
+export function deletedText(names: string[]): string {
+  return names.map((name) => t("工作表「{v1}」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。", { v1: name })).join(" ");
+}
+
+/** The visible list of deleted sheets: how many, and that they can be restored until a save. */
+export function deletedListText(count: number): string {
+  return t("已删除的工作表（{count}）：保存为版本之前，可以在这里恢复。", { count });
+}
+
 /** Why the room is not live (hello.live_reason / the live frame). */
 export function liveReasonText(reason: any): string {
   if (reason && reason.code === "too_large" && reason.what === "cells") return t("这张表格有 {size} 个单元格，超过实时协同的上限（{max}）：改为保存时合并。", { size: reason.size ?? "?", max: reason.max ?? "?" });

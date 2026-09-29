@@ -168,10 +168,11 @@ def _wait_idle(room, s=10.0):
         time.sleep(0.01)
 
 
-def crash(h: Harness, env, rnd, ts, events, step) -> None:
+def crash(h: Harness, env, rnd, ts, events, step, *, saved: int | None = None) -> None:
     """The process dies without its closing write — some frames still reached it — and the next one
     opens the room from storage (a new load of the same epoch). What it had applied after its last
-    draft write is lost (marked so in the log)."""
+    draft write is lost (marked so in the log). ``saved``: it died right after a save wrote a version
+    of the room at that seq and before the next draft write — what the version holds is not lost."""
     for u in ts:
         if u.online:
             for _ in range(rnd.randint(0, 3)):
@@ -185,10 +186,11 @@ def crash(h: Harness, env, rnd, ts, events, step) -> None:
     h.lingering.clear()
     epoch = h.room.state["epoch"]
     loaded = restart_from_storage(h.room)
+    kept = max(loaded if h.room.state["epoch"] == epoch else 0, saved or 0)
     for a in env["applied"]:
-        if a["changed"] and not a.get("lost") and a["epoch"] == epoch and a["seq"] > loaded:
+        if a["changed"] and not a.get("lost") and a["epoch"] == epoch and a["seq"] > kept:
             a["lost"] = True
-    events.append((step, "crash", loaded))
+    events.append((step, "crash", loaded) if saved is None else (step, "crash after save", loaded, saved))
 
 
 def run(env, clock, seed, steps=300, *, crashes=0.0, outside=False, saves=True, churn=True, busy=True, rate=None,  # noqa: F811
@@ -246,8 +248,13 @@ def run(env, clock, seed, steps=300, *, crashes=0.0, outside=False, saves=True, 
         elif x < 0.92 and saves:
             r = h.world["co"].post(f"/api/templates/{h.world['tid']}/collab/save", json={})
             _wait_idle(h.room)
-            write_draft(h.room)
             events.append((step, "save", r.status_code))
+            if crashes and rnd.random() < 0.25 and r.status_code == 200 and not r.json().get("unchanged"):
+                # the process dies after the save wrote its version and before the next draft write:
+                # the next one opens the draft and folds that version in (catch-up)
+                crash(h, env, rnd, ts, events, step, saved=r.json()["live"]["seq"])
+            else:
+                write_draft(h.room)
         elif x < 0.945 and churn:
             # the owner's other tabs come and go (the room's memory of the owner's older tabs moves on)
             ghosts += 1
@@ -932,4 +939,224 @@ def test_item10_undo_does_not_delete_what_my_other_tab_typed_on_a_new_sheet(env)
     assert h.room.state["content"]["sheets"]["nsheet01"]["gone"] is False
     [att] = a1.state()["attention"]
     assert att["code"] == "conflict" and "another tab" in a1.texts()["en"][0]
+
+
+# ------------------------------------------------------------------ the third review (each failed on bddbfa6)
+def _group_then_later(env, b_writes):
+    """A wrote B2 and B3; offline, B writes ``b_writes`` of them and A clears B2:B3 as one group."""
+    h, a, b = _two(env)
+    sid, rows, cols = _grid(h.room)
+    B2 = {"sheet": sid, "row": rows[1], "col": cols[1]}
+    B3 = {"sheet": sid, "row": rows[2], "col": cols[1]}
+    a.submit({"op": "set", **B2, "v": "a2"})
+    a.submit({"op": "set", **B3, "v": "a3"})
+    a.pump()
+    b.pump()
+    a.disconnect(server_notices=True)
+    for cell, v in b_writes:
+        b.submit({"op": "set", **(B2 if cell == "B2" else B3), "v": v})
+        b.pump()
+    a.submit({"op": "tx", "ops": [{"op": "clear", **B2}, {"op": "clear", **B3}]})
+    return h, a, b, sid, rows, cols, B3
+
+
+def test_R3a_a_later_edit_taken_back_before_it_was_sent_leaves_its_cell_to_the_group(env):
+    """Offline: Delete over B2:B3, type B3, undo (the typing never leaves the tab); B had changed both.
+    The group's conflict named only B2 and "use my value" left B3 — the delete of B3 silently not done.
+    Now B3 is the group's: told with B's value, and cleared on "use my value"."""
+    h, a, b, sid, rows, cols, B3 = _group_then_later(env, [("B2", "B's B2"), ("B3", "B's B3")])
+    a.submit({"op": "set", **B3, "v": "typo"})
+    assert a.undo()["cancelled"] is True
+    a.connect()
+    a.pump()
+    a.pump()
+    b.pump()
+    [g] = [x for x in a.state()["attention"] if x["kind"] == "conflict"]
+    assert [(c["ref"], c["theirs"]["v"]) for c in g["detail"].get("also", [])] == [("B3", "B's B3")], g["detail"]
+    assert "B's B3" in a.texts()["en"][0]
+    a.use_mine(g["id"])
+    a.pump()
+    b.pump()
+    assert _cell(h.room.state["content"], sid, rows[2], cols[1]) is None, "A's delete of B3, as the sentence said"
+    assert _cell(h.room.state["content"], sid, rows[1], cols[1]) is None
+
+
+def test_R3b_a_later_edit_refused_for_another_reason_leaves_its_cell_to_the_group(env):
+    h, a, b, sid, rows, cols, B3 = _group_then_later(env, [("B2", "B's B2")])
+    a.submit({"op": "set", **B3, "v": "bad\x01char"})          # a character Excel cannot hold: refused
+    a.connect()
+    a.pump()
+    a.pump()
+    b.pump()
+    att = a.state()["attention"]
+    assert [(x["kind"], x["code"]) for x in att] == [("conflict", "conflict"), ("refused", "invalid")]
+    a.use_mine(att[0]["id"])
+    a.pump()
+    b.pump()
+    assert _cell(h.room.state["content"], sid, rows[2], cols[1]) is None, "A's delete of B3 (the group) is done"
+
+
+def test_R3b_refused_after_the_group_was_told_the_cell_it_left_out_is_told_before_anything_is_replaced(env):
+    h, a, b, sid, rows, cols, B3 = _group_then_later(env, [("B2", "B's B2"), ("B3", "B's B3")])
+    a.submit({"op": "set", **B3, "v": "bad\x01char"})
+    a.connect()
+    a.to_client()                                               # the hello
+    a.to_server()                                               # the group
+    a.to_client()                                               # its answer: a conflict — the later edit may still apply
+    [g] = a.state()["attention"]
+    assert not g["detail"].get("also"), "B3 is left to the later edit while it may still apply (P4)"
+    a.pump()                                                    # the later edit is refused
+    [g] = [x for x in a.state()["attention"] if x["kind"] == "conflict"]
+    assert [(c["ref"], c["theirs"]["v"], c["by"]) for c in g["detail"]["also"]] == [("B3", "B's B3", h.world["editor"]["id"])]
+    a.use_mine(g["id"])
+    a.pump()
+    b.pump()
+    assert _cell(h.room.state["content"], sid, rows[2], cols[1]) is None
+
+
+@pytest.mark.parametrize("deleter_sorts_higher", [True, False])
+def test_R3c2_a_stale_delete_names_the_person_who_wrote_whichever_way_the_ids_sort(env, deleter_sorts_higher):
+    """The per-tab check added every other tab's write on the sheet as the sender's own: when the
+    deleter's id sorted higher, the sentence said "you changed it first in another tab" about someone
+    else's work."""
+    h, a, b = _two(env)
+    owner_higher = h.world["owner"]["id"] > h.world["editor"]["id"]
+    deleter, writer = (a, b) if owner_higher == deleter_sorts_higher else (b, a)
+    writer_id = h.world["editor" if writer is b else "owner"]["id"]
+    deleter.submit({"op": "sheet_add", "id": "delhi001", "name": "表X", "rows": 2, "cols": 2, "row_ids": ["rhi00001", "rhi00002"],
+                    "col_ids": ["chi00001", "chi00002"], "h": 24, "w": 100})
+    deleter.pump()
+    writer.pump()
+    deleter.disconnect(server_notices=True)
+    deleter.submit({"op": "sheet_delete", "sheet": "delhi001"})
+    writer.submit({"op": "set", "sheet": "delhi001", "row": "rhi00001", "col": "chi00001", "v": "their work"})
+    writer.pump()
+    deleter.connect()
+    deleter.pump()
+    deleter.pump()
+    writer.pump()
+    [att] = [x for x in deleter.state()["attention"] if x["kind"] == "conflict"]
+    assert att["detail"]["by"] == writer_id and not att["detail"].get("self"), att["detail"]
+    assert "another tab" not in deleter.texts()["en"][0]
+    assert h.room.state["content"]["sheets"]["delhi001"]["gone"] is False
+
+
+@pytest.mark.parametrize("part", ["rows", "cols"])
+def test_R3h_a_stale_delete_does_not_hide_rows_or_columns_someone_just_added(env, part):
+    h, a, b = _two(env)
+    sid2 = h.room.state["content"]["order"][1]
+    a.disconnect(server_notices=True)
+    a.submit({"op": "sheet_delete", "sheet": sid2})             # typed before B's change arrived
+    size = {"h": 24} if part == "rows" else {"w": 100}
+    b.submit({"op": f"append_{part}", "sheet": sid2, "count": 5, "ids": [f"bbnew{part[0]}0{i}" for i in range(5)], **size})
+    b.pump()
+    a.connect()
+    a.pump()
+    a.pump()
+    b.pump()
+    assert h.room.state["content"]["sheets"][sid2]["gone"] is False, "B's new rows did not go with a delete typed before they existed"
+    [att] = a.state()["attention"]
+    assert att["kind"] == "conflict" and att["detail"]["by"] == h.world["editor"]["id"]
+
+
+def test_R3h_a_lost_delete_sent_again_after_a_crash_is_checked_against_rows_added_since(env):
+    """A's acknowledged delete is lost with a crash; B, back first, adds rows to the sheet; A sends the
+    delete again (against the history as it is now) — a conflict, not a silent removal."""
+    h, a, b = _two(env)
+    sid2 = h.room.state["content"]["order"][1]
+    write_draft(h.room)
+    a.pump()
+    b.pump()
+    a.submit({"op": "sheet_delete", "sheet": sid2})
+    a.pump()
+    b.pump()
+    a.disconnect(server_notices=True)
+    b.disconnect(server_notices=True)
+    restart_from_storage(h.room)                                  # the delete was not in the draft
+    b.connect()
+    b.pump()
+    b.submit({"op": "append_rows", "sheet": sid2, "count": 3, "ids": ["bbrow101", "bbrow102", "bbrow103"], "h": 24})
+    b.pump()
+    a.connect()
+    a.pump()
+    a.pump()
+    b.pump()
+    assert h.room.state["content"]["sheets"][sid2]["gone"] is False
+    assert [(x["kind"], x["detail"].get("by")) for x in a.state()["attention"]] == [("conflict", h.world["editor"]["id"])]
+
+
+def test_E_a_crash_between_a_save_and_the_next_draft_write_adds_nothing_twice(env):
+    """The crash model's new case: the process dies after a save wrote its version and before the next
+    draft write. The next one opened the older draft and folded the version in; the tabs sent again
+    everything they had acknowledged after that draft — rows added twice, values written twice. A save
+    now writes the draft of its snapshot first: nothing below the version is sent again."""
+    h, a, b = _two(env)
+    sid, rows, cols = _grid(h.room)
+    write_draft(h.room)
+    a.pump()
+    b.pump()
+    nr = h.room.state["content"]["sheets"][sid]["nr"]
+    a.submit({"op": "tx", "ops": [{"op": "append_rows", "sheet": sid, "count": 1, "ids": ["edgerow1"], "h": 24},
+                                  {"op": "set", "sheet": sid, "row": "edgerow1", "col": cols[0], "v": "typed at the edge"}]})
+    a.pump()
+    b.pump()
+    b.submit({"op": "set", "sheet": sid, "row": rows[1], "col": cols[3], "v": "B's saved value"})
+    b.pump()
+    a.pump()
+    r = h.world["co"].post(f"/api/templates/{h.world['tid']}/collab/save", json={})
+    assert r.status_code == 200 and not r.json().get("unchanged"), r.text
+    _wait_idle(h.room)
+    a.pump()
+    b.pump()
+    saved = CS.project(h.room.state)
+    a.disconnect(server_notices=True)
+    b.disconnect(server_notices=True)
+    restart_from_storage(h.room)                                  # no draft write after the save
+    for t in (a, b):
+        t.connect()
+        t.pump()
+        t.pump()
+    a.pump()
+    b.pump()
+    sh = h.room.state["content"]["sheets"][sid]
+    assert sh["nr"] == nr + 1, f"the row was added once, not {sh['nr'] - nr} times"
+    values = [c.get("v") for c in sh["cells"].values()]
+    assert values.count("typed at the edge") == 1 and values.count("B's saved value") == 1
+    assert CS.project(h.room.state) == saved
+    assert not a.state()["attention"] and not b.state()["attention"], "nothing to tell: nothing was lost"
+    assert a.state()["content"] == b.state()["content"] == h.room.state["content"]
+
+
+def test_E_a_lost_notice_is_recorded_for_its_operation_even_when_the_person_dismisses_it(env):
+    """The sidecar recorded what became of each queued operation, but not the "not kept" notice a tab
+    gives when the room restarted in a new epoch after a crash lost its acknowledged edit: a later
+    random "answer" dismissed the notice and the check saw a silent loss that had been told."""
+    h, a, b = _two(env)
+    sid, rows, cols = _grid(h.room)
+    a.submit({"op": "set", "sheet": sid, "row": rows[1], "col": cols[3], "v": "unsaved, written"})
+    a.pump()
+    b.pump()
+    write_draft(h.room)
+    a.pump()
+    b.pump()
+    a.submit({"op": "set", "sheet": sid, "row": rows[2], "col": cols[3], "v": "acknowledged, then lost"})
+    a.pump()
+    b.pump()
+    a.disconnect(server_notices=True)
+    b.disconnect(server_notices=True)
+    crash(h, env, random.Random(0), [], [], 0)                   # A's second edit is lost with the process
+    b.connect()
+    b.pump()
+    r = machine_put(h.world, CS.project(h.room.state), h.room.head, discard_live=True)    # a new epoch before A is back
+    assert r.status_code == 200, r.text
+    _wait_idle(h.room)
+    b.pump()
+    a.connect()
+    a.pump()
+    [lost] = [x for x in a.state()["attention"] if x["code"] == "lost"]
+    assert lost["label"]["ref"] == "D3"
+    env["node"](cmd="dismiss", tab="a", id=lost["id"])          # the person read it and dismissed it
+    assert "dropped:lost" in {f["fate"] for f in a.fates()}
+    problems, _st = check(h, env["applied"])
+    assert not problems, problems
 

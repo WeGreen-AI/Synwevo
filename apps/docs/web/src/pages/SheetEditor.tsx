@@ -14,8 +14,8 @@ import { loadedVersion, saveOverStale, STALE_TITLE, staleText } from "../lib/tem
 import { openSheetRoom, type SheetRoom } from "../lib/sheetroom";
 import { COL_WIDTH, MAX_TX, ROW_HEIGHT, filled, liveSheetIds, projectSheet, type Content } from "../lib/sheetmodel";
 import { randomId, type Attention, type SyncSnapshot, type UndoResult } from "../lib/sheetsync";
-import { announcementText, attentionText, closeText, liveReasonText, retryText, saveRefusalText, saveText, skippedText, statusText } from "../lib/sheettext";
-import { aloneSaveBody, deletedSheets, editorMode, leaveAtRisk, restoreName, sheetStillThere, statusKind, type StatusKind } from "../lib/sheetmode";
+import { announcementText, attentionText, closeText, deletedListText, deletedText, liveReasonText, retryText, saveRefusalText, saveText, skippedText, statusText } from "../lib/sheettext";
+import { aloneSaveBody, deletedSheets, editorMode, leaveAtRisk, newlyDeleted, restoreName, sheetStillThere, statusKind, type StatusKind } from "../lib/sheetmode";
 
 interface Cell { v?: string | number | boolean | null; t?: string | null; s?: any }
 interface Field { id: string; name: string; kind: "cell" | "region" | "repeat"; ref?: string; row?: number; c1?: number; c2?: number; required?: boolean; empty_policy?: string }
@@ -225,6 +225,9 @@ export default function SheetEditor() {
   // not written anywhere else
   const shownSid = useRef<string | null>(null);
   const myDelete = useRef<string | null>(null);
+  const toldGone = useRef<string | null>(null);              // a deleted sheet a toast has just told about
+  const goneSeen = useRef<Set<string> | null>(null);         // the deleted sheets this page last saw
+  const sayNext = useRef<string[]>([]);                      // the page's own sentences for the next announcement
   useEffect(() => {
     if (!liveMode || !content) { shownSid.current = null; return; }
     const was = shownSid.current;
@@ -236,11 +239,21 @@ export default function SheetEditor() {
     const ed = editingRef.current;
     if (ed && ed.sid === was) {
       cancelEdit();
-      if (ed.v) toast(tr("工作表「{v1}」已被删除，你在 {v2} 输入的「{v3}」没有写入。", { v1: name, v2: cellRef(ed.r, ed.c), v3: ed.v }), "err");
+      if (ed.v) { toast(tr("工作表「{v1}」已被删除，你在 {v2} 输入的「{v3}」没有写入。", { v1: name, v2: cellRef(ed.r, ed.c), v3: ed.v }), "err"); toldGone.current = was; }
     } else if (myDelete.current !== was) {
       toast(tr("工作表「{v1}」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。", { v1: name }), "info");
+      toldGone.current = was;                      // the toast (a polite live region) said it already
     }
     myDelete.current = null;
+  });
+  // screen readers hear every sheet deleted in the live table — by anyone, this tab included — and where
+  // it can be restored (the list above the grid), with the other announcements (at most every 2 s)
+  useEffect(() => {
+    if (!liveMode || !content) { goneSeen.current = null; return; }
+    const fresh = newlyDeleted(goneSeen.current, content).filter((g) => g.sid !== toldGone.current);
+    goneSeen.current = new Set(deletedSheets(content).map((g) => g.sid));
+    toldGone.current = null;
+    if (fresh.length) sayNext.current.push(deletedText(fresh.map((g) => g.name)));
   });
   // tell the others where this tab is (row and column ids: stable while rows are added)
   const lastSel = useRef("");
@@ -269,7 +282,8 @@ export default function SheetEditor() {
       const lead = now && kind && now !== kind ? [statusText(sroom.sync.status(), sroom.sync.pendingCount)] : [];
       if (now) kind = now;
       const items = sroom.sync.takeAnnouncements();
-      if (items.length || lead.length) { setSaid([...lead, ...items.slice(-3).map(announcementText)].join("；")); quiet = 0; }
+      const pageSaid = sayNext.current.splice(0);
+      if (items.length || lead.length || pageSaid.length) { setSaid([...lead, ...pageSaid, ...items.slice(-3).map(announcementText)].join("；")); quiet = 0; }
       else if (++quiet === 3) setSaid("");                // said: an announcement is not left behind for later
     }, 2000);
     return () => window.clearInterval(timer);
@@ -787,6 +801,17 @@ export default function SheetEditor() {
           </ul>
         </section>
       )}
+      {!ro && gone.length > 0 && (
+        // the deleted sheets, above the grid where a phone shows it too (the sheet tabs scroll sideways
+        // there): restorable by anyone who can edit until the table is saved as a version
+        <section className="collab-notice info sheet-gone" aria-label={tr("已删除的工作表（{count}）", { count: gone.length })} data-testid="sheet-gone">
+          <span>{deletedListText(gone.length)}</span>
+          <select className="input sm" value="" onChange={(e) => restoreSheet(e.target.value)} aria-label={tr("恢复已删除的工作表")} data-testid="sheet-restore">
+            <option value="">{tr("选择要恢复的工作表…")}</option>
+            {gone.map((g) => <option key={g.sid} value={g.sid}>{tr("恢复「{v1}」", { v1: g.name })}</option>)}
+          </select>
+        </section>
+      )}
       <div className="sr-only" aria-live="polite" role="status" data-testid="sheet-announce">{said}</div>
       <div className="sheet-body" style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <div className="grid-scroll" ref={gridRef} tabIndex={0} onKeyDown={onKey}
@@ -877,12 +902,6 @@ export default function SheetEditor() {
         })}
         {!ro && <button type="button" className="sheettab" onClick={addSheet} aria-label={tr("添加工作表")}>＋</button>}
         {!ro && viewSheets.length > 1 && <button type="button" className="sheettab" onClick={deleteSheet}>{tr("删除当前表")}</button>}
-        {!ro && gone.length > 0 && (
-          <select className="input sm" value="" onChange={(e) => restoreSheet(e.target.value)} aria-label={tr("恢复已删除的工作表")} data-testid="sheet-restore" style={{ alignSelf: "center", width: "auto" }}>
-            <option value="">{tr("已删除的工作表（{count}）", { count: gone.length })}</option>
-            {gone.map((g) => <option key={g.sid} value={g.sid}>{tr("恢复「{v1}」", { v1: g.name })}</option>)}
-          </select>
-        )}
         <span className="tiny muted" style={{ alignSelf: "center", marginLeft: 8 }}>{tr("双击单元格或直接输入以编辑；双击工作表标签可重命名")}</span>
       </div>
     </div>

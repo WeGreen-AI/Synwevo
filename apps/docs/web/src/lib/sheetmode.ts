@@ -74,6 +74,14 @@ export function deletedSheets(content: Content | null): { sid: string; name: str
   return content.order.filter((sid) => content.sheets[sid]?.gone).map((sid) => ({ sid, name: content.sheets[sid].name ?? "" }));
 }
 
+/** Sheets deleted since `before` (the ids that were deleted then): what screen readers are told as it
+ *  happens — by whoever deleted them, this tab included. `before` null: the page's first look, when
+ *  what was deleted before it came is the visible list's to say, not news. */
+export function newlyDeleted(before: ReadonlySet<string> | null, content: Content | null): { sid: string; name: string }[] {
+  if (!before) return [];
+  return deletedSheets(content).filter((g) => !before.has(g.sid));
+}
+
 /** The name a restored sheet takes: its own, or — when a live sheet took it meanwhile (names ignore
  *  case) — the first free "name (n)". */
 export function restoreName(content: Content, sid: string): string {

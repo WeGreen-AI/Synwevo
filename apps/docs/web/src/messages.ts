@@ -6230,6 +6230,8 @@ export const messages = {
   "实时协同已恢复，但你在单人编辑中有未保存的修改：继续单人编辑，保存后回到实时协同。": { "en": "Live editing is back, but you have unsaved changes made alone: you keep editing alone until you save, then return to live editing.", "zh-Hant": "即時協作已恢復，但你在單人編輯中有未儲存的修改：繼續單人編輯，儲存後回到即時協作。" },
   "已删除的工作表（{count}）": { "en": { "one": "Deleted sheet ({count})", "other": "Deleted sheets ({count})" }, "zh-Hant": "已刪除的工作表（{count}）" },
   "恢复已删除的工作表": { "en": "Restore a deleted sheet", "zh-Hant": "恢復已刪除的工作表" },
+  "已删除的工作表（{count}）：保存为版本之前，可以在这里恢复。": { "en": { "one": "Deleted sheet ({count}): until the table is saved as a version, it can be restored here.", "other": "Deleted sheets ({count}): until the table is saved as a version, they can be restored here." }, "zh-Hant": "已刪除的工作表（{count}）：儲存為版本之前，可以在這裡恢復。" },
+  "选择要恢复的工作表…": { "en": "Choose a sheet to restore…", "zh-Hant": "選擇要恢復的工作表…" },
   "恢复「{v1}」": { "en": "Restore “{v1}”", "zh-Hant": "恢復「{v1}」" },
   "正在这张表上编辑的成员会一起看到它被删除；保存为版本之前，可以从「已删除的工作表」恢复。": { "en": "Members editing this table will see it deleted too. Until the table is saved as a version, it can be restored from “Deleted sheets”.", "zh-Hant": "正在這張表上編輯的成員會一起看到它被刪除；儲存為版本之前，可以從「已刪除的工作表」恢復。" },
   "工作表「{v1}」已被删除；保存为版本之前，可以从「已删除的工作表」恢复。": { "en": "Sheet “{v1}” was deleted. Until the table is saved as a version, it can be restored from “Deleted sheets”.", "zh-Hant": "工作表「{v1}」已被刪除；儲存為版本之前，可以從「已刪除的工作表」恢復。" },
