@@ -1972,6 +1972,20 @@ PDF 明细区域早有「超出时：视为错误 / 复制本页续写 / 压缩�
 
 未验证：复审结论（进行中，决定是否试开开关）；生产。
 
+### 16.94 有密码保护的上传（CI-125）
+
+本机真实 ClamAV 1.5.4（`AlertEncrypted yes`，127.0.0.1:33101）对夹具：加密 ZIP → `Heuristics.Encrypted.Zip`；需要口令与仅所有者口令的 PDF 都 →
+`Heuristics.Encrypted.PDF`（后者可无口令打开，若采用会被当成恶意）；普通文件 OK——因此生产只开 `AlertEncryptedArchive`，其余由核心检测器判定。
+实现与三轮独立安全审查见 issues.md CI-125（样本与脚本在 scratchpad `encsamples/`、`encreview/`；第三轮的绕过样本已删除，不入库）。
+
+浏览器（隔离实例，消息服务在合并后的 main 上以 `SYNWEVO_CLAMD_ADDRESS=tcp://127.0.0.1:33101`、`SYNWEVO_MALWARE_SCAN=required` 重启，
+`scratchpad/encrypted_attach_proof.py`，新注册测试账户、只含自己的群）：`zip -P` 的 locked.zip 在编辑框里被拒，简体「文件设有密码或含有加密内容……请移除密码
+（或另存一份不加密的副本）后重新上传」、英文「The file is password-protected or contains encrypted content……」、繁体同义，均无代码、无「重试」；
+不加密的 open.zip 正常上传待发送；0 页面错误。`ui_e2e_messaging.py` 全程通过（503 的暂时拒绝仍提供重试并在重试后成功）。
+合并后预推送 2747 通过、2 跳过（其一为需要 `CLAMD_TEST_ADDRESS` 的真实引擎测试）。
+
+未验证：生产主机上的 clamd 配置挂载（随下次部署执行）；Docs 来源/成员导入的浏览器核对（节点测试与接口测试覆盖）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
