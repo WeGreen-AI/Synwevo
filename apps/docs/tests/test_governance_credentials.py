@@ -215,9 +215,18 @@ def test_usage_needs_a_credential(client):
 
 
 def test_usage_reports_the_rate_the_gate_enforces(client, keys):
-    """The gate reads SYNWEVO_API_RATE_PER_MIN when the app is built; the module constant was
-    fixed at import. /usage reported the constant (300) while the gate enforced another number."""
-    buckets = client.app_state.rate_buckets
-    buckets.cap = 7
+    """/usage once reported a module constant (300) while the gate enforced another number. Since
+    API-1 both read the layered policy: a credential override of 7 is what /usage reports *and*
+    what the gate refuses at, and the source says which layer decided it."""
+    from synwevo_core.api_quotas import Policies
+    lineage = keys["ro_row"].get("lineage") or keys["ro_row"]["id"]
+    Policies(keys["store"]).change("credential", f"api_key:{lineage}", {"credential_rpm": 7, "base_version": 0},
+                                   actor_id="u_fixture", reason="fixture: a small budget")
     body = client.get("/api/v1/usage", headers=h(keys["ro"])).json()
     assert body["limits"]["requests_per_minute"] == 7
+    assert body["limits"]["policy_sources"]["requests_per_minute"] == "credential"
+    # One /usage call is spent; six more pass, the eighth in the minute is refused.
+    codes = [client.get("/api/v1/whoami", headers=h(keys["ro"])).status_code for _ in range(7)]
+    assert codes == [200] * 6 + [429], codes
+    # Another key in the same workspace keeps its own (default) credential budget.
+    assert client.get("/api/v1/whoami", headers=h(keys["admin"])).status_code == 200

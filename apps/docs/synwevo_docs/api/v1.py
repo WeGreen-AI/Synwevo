@@ -806,6 +806,57 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                         lambda: D.import_template_fields(app_, tid, body),
                         replay_check=lambda out: app_.get_template(tid), status=200)
 
+    # Editing and removing one field (API-2). Both name the template head they read: a newer head is
+    # 409 stale_template with the current head, so a retry after a lost response cannot change a
+    # version twice and two editors cannot overwrite each other.
+    FIELD_EDITABLE = {"name", "required", "data_type", "format", "default", "font_size", "min_font_size", "align",
+                      "valign", "empty_policy", "placeholder", "repeat_header", "keep_header_when_empty", "binding",
+                      "mode", "columns", "overflow", "min_row_scale", "color", "separator", "remove_column", "shrink",
+                      "shrink_min"}
+
+    def _base_head(value) -> int:
+        if type(value) is not int or value < 1:
+            raise ServiceError(400, "invalid", "base_head 必须是读取模板时的 head（正整数）", {"field": "base_head"})
+        return value
+
+    def _field_result(tid: str, d: dict) -> dict:
+        d = app_.template_detail(tid)
+        return {"id": d["id"], "name": d["name"], "format": d["format"], "kind": d["kind"], "head": d["head"],
+                "version": d["version"]["no"], "fields": d["version"]["slots"]}
+
+    @r.patch("/templates/{tid}/fields/{field_id}",
+             summary="修改一个字段的属性（产生一个新模板版本；base_head 必填，不符则 409 stale_template）",
+             openapi_extra=_ox("write", requestBody={"content": {"application/json": {"schema": {
+                 "type": "object", "required": ["base_head"], "additionalProperties": True,
+                 "properties": {"base_head": {"type": "integer", "minimum": 1},
+                                **{k: {} for k in sorted(FIELD_EDITABLE)}}}}}}))
+    def patch_field(request: Request, tid: str, field_id: str, body: dict = Body(...)):
+        p = scope(request, "write")
+        base = _base_head(body.get("base_head"))
+        values = {k: v for k, v in body.items() if k != "base_head"}
+        unknown = sorted(set(values) - FIELD_EDITABLE)
+        if unknown:
+            raise ServiceError(400, "invalid", f"不可修改的字段属性：{unknown[0]}", {"field": unknown[0]})
+        if not values:
+            raise ServiceError(400, "invalid", "没有要修改的属性", {"field": "body"})
+        with request.app.state.collab.acting(tid, (p or {}).get("user_id")):
+            d = app_.update_slot(tid, field_id, values, expect_head=base)
+        return _field_result(tid, d)
+
+    @r.delete("/templates/{tid}/fields/{field_id}",
+              summary="删除一个字段（产生一个新模板版本；base_head 必填；可同时移除某项目里绑定它的映射）",
+              openapi_extra=_ox("write"))
+    def delete_field(request: Request, tid: str, field_id: str,
+                     base_head: int = Query(..., ge=1, description="读取模板时的 head；不符则 409 stale_template"),
+                     project_id: str | None = Query(None, max_length=128, description="同时移除该项目中只绑定这个字段的映射"),
+                     cascade: bool = Query(True, description="project_id 给出时是否移除映射")):
+        p = scope(request, "write")
+        if project_id:
+            app_.get_project(project_id)                     # the project is the caller's, or 404
+        with request.app.state.collab.acting(tid, (p or {}).get("user_id")):
+            d = app_.remove_slot(tid, field_id, project_id, cascade, expect_head=base_head)
+        return {**_field_result(tid, d), "removed_mappings": d.get("removed_mappings", [])}
+
     @r.get("/templates/{tid}/content", summary="下载模板文件（原始或工作副本）",
            openapi_extra=_ox("export", binary=("application/octet-stream",)))
     def template_content(request: Request, tid: str,

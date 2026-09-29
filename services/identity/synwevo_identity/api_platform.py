@@ -15,6 +15,8 @@ from fastapi import APIRouter, Body, Query, Request, Response
 from synwevo_core import journal
 from synwevo_core.api_platform import (Approvals, ControlPlaneAdapter, MANAGE_PERMISSION, SCOPES,
                                       require_manage)
+from synwevo_core.api_quotas import (CREDENTIAL_KINDS, FIELDS as QUOTA_FIELDS, LAYER_FIELDS, RANGES,
+                                    WINDOW_S, Policies, RateGate, deployment_defaults)
 from synwevo_core.apps import DOCS_APP_ID
 from synwevo_core.auth import Auth, JournalWriteFailed, MAX_ROTATION_GRACE_S
 from synwevo_core.errors import ServiceError
@@ -212,10 +214,13 @@ def build_router(store: Store, ident, sessions, audit,
     def credentials(request: Request, workspace_id: str = Query("", max_length=100),
                     limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=2**31)):
         actor(request)
+        # last_used_at: a key's own (written at most once a minute); a service account's last recorded
+        # call (30-day call window). Enough to see whether an old credential is still being called.
         source = """(SELECT 'api_key' AS kind,id,name,tenant AS workspace_id,scopes,created_at,
-          expires_at,revoked_at AS disabled_at,COALESCE(lineage,id) AS binding_id FROM api_keys
+          expires_at,revoked_at AS disabled_at,COALESCE(lineage,id) AS binding_id,last_used_at FROM api_keys
           UNION ALL SELECT 'service_account',client_id,name,workspace_id,api_scopes,created_at,
-          NULL,disabled_at,client_id FROM oauth_clients WHERE kind='service' AND app_id=?) c
+          NULL,disabled_at,client_id,(SELECT MAX(at) FROM api_platform_calls k WHERE k.client_id=o.client_id)
+          FROM oauth_clients o WHERE kind='service' AND app_id=?) c
           LEFT JOIN api_platform_bindings b ON b.kind=c.kind AND b.credential_id=c.binding_id
           WHERE (?='' OR c.workspace_id=?)"""
         result = page(source, "c.*,b.approval_id", (DOCS_APP_ID, workspace_id, workspace_id),
@@ -290,12 +295,114 @@ def build_router(store: Store, ident, sessions, audit,
 
     @r.get(PREFIX + "/calls")
     def calls(request: Request, workspace_id: str = Query("", max_length=100),
-              errors_only: bool = False, limit: int = Query(25, ge=1, le=100),
-              offset: int = Query(0, ge=0, le=2**31)):
+              errors_only: bool = False, request_id: str = Query("", max_length=128),
+              credential_id: str = Query("", max_length=200), route: str = Query("", max_length=200),
+              status: str = Query("", pattern="^(|2xx|3xx|4xx|5xx|429)$"),
+              error_code: str = Query("", max_length=64),
+              limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=2**31)):
+        # Diagnosis by request ID, caller, route, status class or refusal code. Every filter is an
+        # exact match on stored metadata (never a LIKE over user input), and the record holds no
+        # token, body, query or document content to find.
         actor(request)
-        return page("api_platform_calls WHERE at>=? AND (?='' OR workspace_id=?) AND (?=0 OR status>=400)",
-                    "*", (now() - 30 * 86400, workspace_id, workspace_id, int(errors_only)),
+        lo, hi = {"2xx": (200, 299), "3xx": (300, 399), "4xx": (400, 499), "5xx": (500, 599),
+                  "429": (429, 429)}.get(status, (0, 999))
+        return page("api_platform_calls WHERE at>=? AND (?='' OR workspace_id=?) AND (?=0 OR status>=400) "
+                    "AND (?='' OR request_id=?) AND (?='' OR credential_id=? OR client_id=?) AND (?='' OR route=?) "
+                    "AND status BETWEEN ? AND ? AND (?='' OR error_code=?)",
+                    "*", (now() - 30 * 86400, workspace_id, workspace_id, int(errors_only),
+                          request_id, request_id, credential_id, credential_id, credential_id, route, route,
+                          lo, hi, error_code, error_code),
                     limit=limit, offset=offset, order="at DESC,id DESC")
+
+    # ------------------------------------------------------------------ traffic and capacity
+    policies, rate_gate = Policies(store), RateGate(store)
+
+    def quota_target(scope_kind: str, scope_id: str) -> dict:
+        Policies.validate_target(scope_kind, scope_id)
+        target = policies.target_exists(scope_kind, scope_id)
+        if target is None:
+            raise ServiceError(404, "not_found", "策略目标不存在")
+        return target
+
+    @r.get(PREFIX + "/quotas")
+    def quotas(request: Request, limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=2**31)):
+        actor(request)
+        return {"window_s": WINDOW_S, "fields": list(QUOTA_FIELDS),
+                "layer_fields": {k: list(v) for k, v in LAYER_FIELDS.items()},
+                "ranges": {k: {"min": lo, "max": hi} for k, (lo, hi) in RANGES.items()},
+                "deployment_defaults": deployment_defaults(),
+                "platform": {"policy": policies.get("platform", ""), "effective": policies.effective(None)},
+                "overrides": policies.overrides(limit=limit, offset=offset),
+                "enforcement": {"shared": True, "applies": "next_request"}}
+
+    @r.get(PREFIX + "/quotas/effective")
+    def quota_effective(request: Request, workspace_id: str = Query("", max_length=100),
+                        credential: str = Query("", max_length=200)):
+        # What a given workspace (and optionally one of its credentials) is held to right now, which
+        # layer decided each value, and how much of each budget is in use at this moment.
+        actor(request)
+        if not workspace_id and not credential:
+            raise ServiceError(400, "target_required", "请指定工作空间或凭据")
+        if credential:
+            target = quota_target("credential", credential)
+            if workspace_id and target["workspace_id"] != workspace_id:
+                raise ServiceError(400, "credential_not_in_workspace", "该凭据不属于所选工作空间")
+            workspace_id = target["workspace_id"]
+        else:
+            quota_target("workspace", workspace_id)
+        active = store.one("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','running','cancelling') "
+                           "AND tenant=?", (workspace_id,))["n"]
+        layers = policies.layers(workspace_id, credential or None)
+        return {"workspace_id": workspace_id, "credential": credential or None,
+                "policies": {k: v for k, v in layers.items()},
+                "effective": policies.effective(workspace_id, credential or None),
+                "usage": {**rate_gate.usage(workspace_id, credential or None),
+                          "active_jobs": {"now": active, "measured_at": now()}}}
+
+    def _quota_scope(scope: str) -> tuple[str, str]:
+        if scope == "platform":
+            return "platform", ""
+        kind, _, rest = scope.partition("/")
+        if kind == "workspace" and rest:
+            return "workspace", rest
+        if kind == "credential" and rest:
+            return "credential", rest
+        raise ServiceError(400, "invalid_scope", "不支持的策略范围")
+
+    @r.post(PREFIX + "/quotas/preview/{scope:path}")
+    def quota_preview(request: Request, scope: str, body: dict = Body(...)):
+        # A dry run: the effective values before and after and what happens to work in flight.
+        # Nothing is written, so no reason or re-authentication is asked for.
+        actor(request)
+        kind, sid = _quota_scope(scope)
+        quota_target(kind, sid)
+        return policies.change(kind, sid, {k: v for k, v in body.items() if k != "reason"},
+                               actor_id="", reason="", dry_run=True)
+
+    @r.put(PREFIX + "/quotas/{scope:path}")
+    def quota_change(request: Request, scope: str, body: dict = Body(...)):
+        # The workspace is looked up only to attribute the audit row; every refusal (unknown target,
+        # stale version, out-of-range value) happens inside `mutation` and is audited as denied.
+        kind, sid = _quota_scope(scope)
+        try:
+            found = policies.target_exists(kind, sid) if kind == "platform" or sid else None
+        except (ServiceError, ValueError):
+            found = None
+        ws = sid if kind == "workspace" else (found or {}).get("workspace_id")
+        with mutation(request, body, "quota.change", f"{kind}:{sid}" if sid else kind, workspace=ws) as (user, reason):
+            with store.tx():
+                mutation_actor(request)
+                quota_target(kind, sid)
+                return policies.change(kind, sid, {k: v for k, v in body.items() if k != "reason"},
+                                       actor_id=user["id"], reason=reason)
+
+    @r.get(PREFIX + "/quotas/history/{scope:path}")
+    def quota_history(request: Request, scope: str, limit: int = Query(25, ge=1, le=100),
+                      offset: int = Query(0, ge=0, le=2**31)):
+        actor(request)
+        kind, sid = _quota_scope(scope)
+        Policies.validate_target(kind, sid)
+        return policies.history(kind, sid, limit=limit, offset=offset)
 
     @r.get(PREFIX + "/openapi")
     def openapi(request: Request):

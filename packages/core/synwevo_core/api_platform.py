@@ -47,7 +47,12 @@ CREATE TABLE IF NOT EXISTS api_platform_calls (
 );
 CREATE INDEX IF NOT EXISTS api_platform_calls_at ON api_platform_calls(at);
 CREATE INDEX IF NOT EXISTS api_platform_calls_workspace ON api_platform_calls(workspace_id,at);
+CREATE INDEX IF NOT EXISTS api_platform_calls_request ON api_platform_calls(request_id);
 """
+# Added to api_platform_calls after it first shipped (API-1): the refusal's error code, so a diagnosis
+# by request ID says *why* ("rate_limited", "queue_full"), and the OAuth client behind a delegated
+# call, which has no credential binding of its own. Rollback: older code ignores both columns.
+CALL_COLUMNS = [("api_platform_calls", "error_code", "TEXT"), ("api_platform_calls", "client_id", "TEXT")]
 
 
 class ControlPlaneAdapter(Protocol):
@@ -235,7 +240,7 @@ def approval_failure(store: Store, desc: dict, *, need: str = "write") -> str | 
 
 
 def record_call(store: Store, principal: dict | None, method: str, route: str, status: int,
-                duration_ms: float, request_id: str | None) -> None:
+                duration_ms: float, request_id: str | None, error_code: str | None = None) -> None:
     """Persist metadata only. Caller passes the matched template, NEVER the request URL.
 
     Unmatched paths are collapsed, so user-controlled paths cannot store document names,
@@ -247,8 +252,11 @@ def record_call(store: Store, principal: dict | None, method: str, route: str, s
     with store.tx():
         store.insert("api_platform_calls", {"id": new_id("call"), "at": now(),
             "workspace_id": p.get("tenant"), "credential_kind": p.get("kind"),
-            "credential_id": _binding_id(p), "method": method[:10], "route": route,
+            "credential_id": _binding_id(p), "client_id": p.get("client_id"),
+            "method": method[:10], "route": route,
             "status": status, "duration_ms": max(0, round(duration_ms, 3)),
-            "request_id": request_id[:128] if request_id else None})
+            "request_id": request_id[:128] if request_id else None,
+            # A stable machine code from the error contract, never a message or a payload.
+            "error_code": error_code[:64] if isinstance(error_code, str) and status >= 400 else None})
         # Bounded retention; aggregate statistics explicitly describe this retained window.
         store.execute("DELETE FROM api_platform_calls WHERE at<?", (now() - 30 * 86400,))

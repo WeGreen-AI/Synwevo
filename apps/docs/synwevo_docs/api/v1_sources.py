@@ -62,6 +62,12 @@ class SourceCorrection(StrictInput):
     confirmed: bool = True
 
 
+class SourceOcr(StrictInput):
+    # Zero-based pages of a PDF; omitted = every page the file's structure marks as scanned or mixed.
+    # The service refuses repeats beyond the file, and more than 50 pages per call.
+    pages: Annotated[list[Annotated[int, Field(ge=0, le=1000000)]], Field(max_length=1000)] | None = None
+
+
 class SourceOrder(StrictInput):
     ids: Annotated[list[ID], Field(max_length=10000)]
 
@@ -218,6 +224,15 @@ class ScanVerdict(BaseModel):
         # The verdict carries the keys it knows, exactly as the workbench API returns it;
         # a `signature: null` on a clean file would be noise in every listing.
         return {k: v for k, v in handler(self).items() if v is not None}
+
+
+class SourceOcrResult(BaseModel):
+    recognized: list[int]
+    pages: list[int]
+    words: int
+    low_conf: int
+    status: str
+    version: int
 
 
 class SourceFile(BaseModel):
@@ -586,6 +601,25 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
                 return views.set_correction(fid, mid, body.value, body.confirmed)
 
         return await run_in_threadpool(update)
+
+    @r.post("/files/{fid}/ocr", operation_id="run_source_ocr", response_model=SourceOcrResult,
+            openapi_extra=_contract("write", SourceOcr),
+            description="Recognise text on an accepted scanned PDF (by default every scanned or mixed page; at most 50 pages "
+                        "per call) or image, with the workbench's engine, synchronously. Results merge into the stored OCR "
+                        "(pages recognised again are replaced); a needs_ocr source becomes ready and its version advances. "
+                        "Repeating a call recognises the same pages again and stores the same words. A source still "
+                        "scanning, rejected or failed is refused (409 source_not_ready). 429 ocr_busy when the server's "
+                        "recognition slots stay full: wait retry_after seconds. After a client timeout, list_source_page_words "
+                        "reports source=ocr for pages already recognised.")
+    async def ocr(request: Request, fid: FileID):
+        gate(request, "write")
+        body = await _body(request, SourceOcr)
+
+        def run():
+            source(fid, ready=True)
+            return views.run_ocr(fid, body.pages)
+
+        return await run_in_threadpool(run)
 
     @r.post("/files/{fid}/representative", operation_id="select_representative_source", response_model=SourceFile,
             openapi_extra=_contract("write"), description="Select an existing live source as the project's representative; creates no object.")

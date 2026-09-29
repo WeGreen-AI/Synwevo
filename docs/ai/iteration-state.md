@@ -15,6 +15,7 @@
 | 本任务启动的进程 | 隔离验证实例：portal 31769 原进程；messages 31768、accounts 31770、docs 31765 在主检出的新代码上重启（docs 含 CI-105）；环境文件 `scratchpad/live/*.env` |
 | 进行中的设计 | 无（嵌套明细 DOCX 已交付；XLSX/PPTX/PDF 嵌套、多层嵌套属设计 §7 第 4 批，未排期） |
 | 管理员平台（当前主线） | 专项约定逐字归档 [`admin-platform.md`](admin-platform.md)（2026-09-29）；覆盖表 [`../platform/admin-coverage.md`](../platform/admin-coverage.md)（392 条能力 → 约 150 行、缺陷 D1–D20、已定事项 §4.1、待所有者 §4.2）；调研 [`../platform/admin-references.md`](../platform/admin-references.md)。生产只读核查：6 个账户，唯一有效平台管理员为所有者（口令 + 3 个 Passkey，无 TOTP）。**批次 1**：B1-2 委派平台权限（目录、授予表、`require_platform`、最后最高管理员并发保护，schema 27）工作流进行中；之后 B1-3 类型化管理操作与审计（关闭 D8）、B1-4 账户停用/恢复真实链路（关闭 D1）、B1-1 外壳与导航 |
+| API 平台（并行专项） | 专项约定与检查点 [`api-platform.md`](api-platform.md)（2026-09-29 `/loop`）；能力地图 [`../platform/api-coverage.md`](../platform/api-coverage.md)。**API-1 流量与容量策略**（凭据/工作空间/平台分层、跨进程共享计数、管理台「流量与配额」、调用诊断按请求编号查）本地验证完成；下一批 API-2（OCR 触发、模板字段替换、文件与产物事件）。控制台权限随管理员平台 B1-2 的 `require_platform` 一并切换 |
 | 下一步 | ① 部署受阻的真实原因：组织的 GitHub Actions 包含额度（每月 2 000 分钟，支出上限 $0）已于 2026-09-28 用尽（用户 2026-09-29 确认「用量 100%」），10 月 1 日重置或由持有人提高支出上限；之后重跑最新 main 运行即部署 CI-104…125（部署准备见 deployment.md「Deploy readiness」）；推送改为按批：每次推送约 28 分钟，只推经本地全量预推送的代码批次（bc9efab 起只改 docs/ 的推送不再触发运行）；② **管理员平台批次 1**（主线，见上行）；③ Q21 撤销指派工作流审查中（合并后并入 `platform.workspaces.manage`）；④ 表格实时协同 A–F 工作流进行中；⑤ Q17 待决定 |
 
 ## 优先队列

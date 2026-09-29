@@ -53,6 +53,7 @@ GET /api/v1/files/{fid}/content | download_source_content |
 GET /api/v1/files/{fid}/page/{page}.png | |
 PUT /api/v1/files/{fid}/options | update_source_options |
 PUT /api/v1/files/{fid}/corrections/{mid} | update_source_correction |
+POST /api/v1/files/{fid}/ocr | run_source_ocr |
 POST /api/v1/files/{fid}/representative | select_representative_source |
 POST /api/v1/files/{fid}/locator | |
 PUT /api/v1/projects/{pid}/files/order | reorder_project_sources |
@@ -66,6 +67,8 @@ POST /api/v1/organization-templates/{pid}/deprecate | deprecate_organization_tem
 POST /api/v1/organization-templates/{pid}/use | use_organization_template | org-templates use
 GET /api/v1/templates/{tid}/fields | get_template_fields | templates fields get
 POST /api/v1/templates/{tid}/fields | create_template_fields | templates fields put
+PATCH /api/v1/templates/{tid}/fields/{field_id} | update_template_field |
+DELETE /api/v1/templates/{tid}/fields/{field_id} | delete_template_field |
 GET /api/v1/templates/{tid}/content | download_template |
 POST /api/v1/projects/{pid}/jobs | create_job | jobs submit
 GET /api/v1/projects/{pid}/jobs | list_jobs,iter_jobs | jobs list

@@ -102,6 +102,7 @@ const SERVER = [
   { file: CORE + "sessions.py", surfaces: [], why: "an application identity has no password or passkey to sign in with" },
   { file: CORE + "api_platform.py", fns: ["enforce_principal"], surfaces: [], why: "checked on Synwevo Docs' business API, not in this shell" },
   { file: CORE + "api_platform.py", surfaces: ["api"] },
+  { file: CORE + "api_quotas.py", surfaces: ["api"] },
   { file: CORE + "auth.py", fns: ["rotate_key"], surfaces: ["api"] },
   { file: CORE + "auth.py", surfaces: [], why: "API keys presented to Synwevo Docs; the console only rotates and revokes them" },
   { file: CORE + "oidc.py", fns: ["rotate_secret"], surfaces: ["api"] },
@@ -225,6 +226,7 @@ const SAMPLE_DETAIL = {
   "最多 {MAX_SUBSCRIPTIONS_PER_USER} 个设备，请先移除不用的设备": { limit: 10 },
   "一个组织最多 {MAX_ROLES} 个自定义角色": { limit: 50 },
   "请写明理由（至少 {REASON_MIN} 个字），它会写入审计记录": { field: "reason", min: 8 },
+  "限制值必须是 {lo} 至 {hi} 之间的整数，留空表示继承": { field: "active_jobs", min: 1, max: 1000 },
 };
 
 // ------------------------------------------------------------------------------------ scanning

@@ -140,16 +140,19 @@ def test_every_response_says_how_much_budget_is_left(v1):
     for _ in range(3):
         r = c.get("/api/v1/projects", headers=h)
         assert r.status_code == 200
-        assert r.headers["RateLimit-Policy"] == '"key";q=3;w=60'
+        # Two policies since API-1: the credential's ("key", first, as before) and the workspace's.
+        assert r.headers["RateLimit-Policy"] == '"key";q=3;w=60, "workspace";q=1200;w=60'
         seen.append(r.headers["RateLimit"])
     assert [s.split(";")[1] for s in seen] == ["r=2", "r=1", "r=0"], seen
-    assert all(int(s.split("t=")[1]) >= 1 for s in seen)
+    assert all(int(s.split(",")[0].split("t=")[1]) >= 1 for s in seen)
+    # The workspace item: three requests spent from its (default) budget of 1200.
+    assert seen[-1].split(", ")[1].startswith('"workspace";r=1197;')
 
     r = c.get("/api/v1/projects", headers=h)
     assert r.status_code == 429 and r.json()["error"]["code"] == "rate_limited"
     assert int(r.headers["Retry-After"]) >= 1
     assert r.headers["RateLimit"].split(";")[1] == "r=0"
-    assert r.headers["RateLimit-Policy"] == '"key";q=3;w=60'
+    assert r.headers["RateLimit-Policy"] == '"key";q=3;w=60, "workspace";q=1200;w=60'
 
 
 def test_the_budget_is_per_credential(v1):

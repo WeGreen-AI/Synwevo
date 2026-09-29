@@ -8,6 +8,7 @@ import { ApprovalsPanel } from './apiplatform/Approvals';
 import { Credentials } from './apiplatform/Credentials';
 import { Requests } from './apiplatform/Requests';
 import { Calls, Operations } from './apiplatform/Observability';
+import { Quotas } from './apiplatform/Quotas';
 import { BASE, Confirm, DataState, Secret, type Action, type Outcome } from './apiplatform/common';
 import './api-platform.messages';
 import './apiplatform/api-platform.css';
@@ -37,7 +38,7 @@ export default function ApiPlatform() {
   };
   const act = (action: Action) => setAction(action);
   const tabs: [string, string][] = [['approvals', t('授权审批')], ['credentials', t('服务凭据')],
-    ['webhooks', t('Webhook')], ['operations', t('接口契约')], ['calls', t('调用记录')], ['debug', t('请求调试')]];
+    ['quotas', t('流量与配额')], ['webhooks', t('Webhook')], ['operations', t('接口契约')], ['calls', t('调用记录')], ['debug', t('请求调试')]];
   return <div className="app">
     <Topbar title={t('API 管理平台')} />
     <main className="api-platform-main"><div className="acct-page col gap16">
@@ -55,6 +56,7 @@ export default function ApiPlatform() {
           onClick={() => setTab(id)}>{label}</button>)}</nav>
         {tab === 'approvals' && <ApprovalsPanel act={act} scopes={load.data.scopes} resource={load.data.resource} revision={revision} />}
         {tab === 'credentials' && <Credentials act={act} revision={revision} />}
+        {tab === 'quotas' && <Quotas act={act} revision={revision} />}
         {tab === 'webhooks' && <Requests key="webhooks" act={act} webhooks />}
         {tab === 'operations' && <Operations />}
         {tab === 'calls' && <Calls />}

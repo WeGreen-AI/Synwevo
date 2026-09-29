@@ -9,3 +9,13 @@
 .api-platform-main fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
 .api-platform-main input[type=checkbox] { accent-color: var(--accent); }
 @media (max-width: 640px) { .api-platform-main .acct-page { padding: 12px; } .api-platform-main nav .btn { flex: 1 0 30%; } }
+/* Phones: a table marked .api-platform-cards reads as one labelled card per row instead of a strip
+   to scroll sideways (each cell carries its column name in data-label). */
+@media (max-width: 640px) {
+  .api-platform-cards table, .api-platform-cards tbody, .api-platform-cards tr, .api-platform-cards td { display: block; width: 100%; }
+  .api-platform-cards thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .api-platform-cards tr { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .api-platform-cards td { border: 0; padding: 4px 0; display: grid; grid-template-columns: minmax(96px, 36%) 1fr; gap: 8px; overflow-wrap: anywhere; }
+  .api-platform-cards td::before { content: attr(data-label); color: var(--muted); }
+  .api-platform-cards caption { display: block; width: 100%; text-align: start; padding-bottom: 8px; }
+}

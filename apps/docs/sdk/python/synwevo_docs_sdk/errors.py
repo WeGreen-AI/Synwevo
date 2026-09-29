@@ -153,11 +153,14 @@ def parse_retry_after(headers: Mapping[str, str], now: float | None = None) -> f
                 return max(0.0, when.timestamp() - (time.time() if now is None else now))
         except (TypeError, ValueError, IndexError):
             pass
-    rl = get("ratelimit") or ""
-    m_r, m_t = re.search(r"\br=(\d+)", rl), re.search(r"\bt=(\d+)", rl)
-    if m_r and m_t and int(m_r.group(1)) == 0:
-        return float(m_t.group(1))
-    return None
+    # One item per policy ("key" for the credential, "workspace" for the workspace's total): the
+    # wait is the longest reset among the policies with nothing left.
+    waits = []
+    for item in (get("ratelimit") or "").split(","):
+        m_r, m_t = re.search(r"(?:^|;)\s*r=(\d+)", item), re.search(r"(?:^|;)\s*t=(\d+)", item)
+        if m_r and m_t and int(m_r.group(1)) == 0:
+            waits.append(float(m_t.group(1)))
+    return max(waits) if waits else None
 
 
 def _getter(headers: Mapping[str, str]):

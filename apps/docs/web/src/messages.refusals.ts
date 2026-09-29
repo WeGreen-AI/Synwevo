@@ -179,6 +179,7 @@ export const refusalMessages = {
 
   // ------------------------------------------------------------------ generation jobs and downloads
   "这个项目正在进行另一次模拟生成；请稍后再试": { en: "This project is already running another simulated generation. Try again later.", "zh-Hant": "這個項目正在進行另一次模擬生成；請稍後再試" },
+  "服务器正在识别其他文件；请稍后再试": { en: "The server is recognising text in other files. Try again later.", "zh-Hant": "伺服器正在辨識其他檔案；請稍後再試" },
   "服务器正在进行其他模拟生成；请稍后再试": { en: "The server is running other simulated generations. Try again later.", "zh-Hant": "伺服器正在進行其他模擬生成；請稍後再試" },
   "没有识别到任何样本，无法生成": { en: "No samples were found, so nothing can be generated.", "zh-Hant": "沒有識別到任何樣本，無法生成" },
   "这个任务因样本错误没有开始生成（有错误则不开始）；请修正数据后重新提交，或以「跳过错误样本」提交新任务": { en: "This job did not start because of sample errors (“stop if any errors”). Fix the data and submit again, or submit a new job with “Skip samples with errors”.", "zh-Hant": "這個任務因樣本錯誤沒有開始生成（有錯誤則不開始）；請修正資料後重新提交，或以「跳過錯誤樣本」提交新任務" },

@@ -182,7 +182,7 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 | 生成 PDF 报「未检测到 LibreOffice」 | 安装 LibreOffice 或设置 `SYNWEVO_DOCS_SOFFICE`；`/api/v1/capabilities` 会如实显示该能力不可用 |
 | 导出 PDF 中文不显示 | 安装中文字体（容器镜像已含 Noto CJK），或用 `SYNWEVO_DOCS_CJK_FONTS` 指定字体文件 |
 | Webhook 未送达 | 查看 `webhook_deliveries` 表的 `status`/`last_error`；内网地址需加入 `SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE`；回调失败不影响产物下载 |
-| 接口返回 429 | 调整 `SYNWEVO_API_RATE_PER_MIN` 或在客户端退避重试（响应带 `Retry-After`） |
+| 接口返回 429 | 看 `details.limit_scope`/`policy_source`（或管理台「调用记录」按请求编号查）：在「流量与配额」调整对应层的设置，或在客户端按 `Retry-After` 退避；部署默认值为 `SYNWEVO_API_RATE_PER_MIN`（每凭据）与 `SYNWEVO_API_WORKSPACE_RATE_PER_MIN`（每工作空间合计） |
 | 来源文件停在「安全检查暂不可用」（`scan_failed`）、`/readyz` 的 `malware_scanner` 为 `down: …` | clamd 不可达：`docker compose logs clamav`（首次启动要先下载病毒库，`start_period` 15 分钟）；恢复后文件按 30 s→10 min 的间隔自动重试，不需要重新上传。文件超过扫描上限（`scan.status=too_large`）则调大 `SYNWEVO_CLAMD_MAX_BYTES` 与 clamd 的 `StreamMaxLength` 后让用户重新上传 |
 | 上传返回 400 `malware_detected`、文件显示「安全检查未通过」 | 引擎命中签名（`scan.signature`、`scan.engine` 记录了判定时的引擎与病毒库）。字节已从 blob 存储删除；没有"仍然处理"的入口。怀疑误报按 docs/security/file-acceptance.md §8 处理 |
 | 上传返回 400 `encrypted_file`（「文件设有密码或含有加密内容…」）或 `unchecked_file`（「文件的结构无法安全地完成检查…」），或来源显示「错误」且 `scan.status=encrypted` | 文件有打开密码，或（`scan.checked=false`、`unchecked_file`）结构读不完——截断、超出识别器上限，同样不能当作干净；接纳日志的 `scan.encrypted … checked=False detail=…` 写着是什么让检查停下（`detail.kind`/`scan.reason`：`archive`/`office`/`pdf`）。安全检查看不到里面：不是恶意软件，也不会被接纳。请用户去掉密码或另存不加密的副本后重新上传；没有"跳过检查"的入口。补扫对历史文件报告的 `encrypted` 不改访问，处理方式由所有者决定（file-acceptance §8.1） |

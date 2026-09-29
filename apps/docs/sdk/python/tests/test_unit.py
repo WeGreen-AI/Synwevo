@@ -35,6 +35,10 @@ class UnitTests(unittest.TestCase):
         self.assertEqual(parse_retry_after({"Retry-After": "Thu, 01 Jan 1970 00:00:10 GMT"}, now=5), 5)
         self.assertEqual(parse_retry_after({"RateLimit": '"api";r=0;t=9'}), 9)
         self.assertIsNone(parse_retry_after({"RateLimit": '"api";r=2;t=9'}))
+        # Several policies: the credential has budget left, the workspace total does not.
+        self.assertEqual(parse_retry_after({"RateLimit": '"key";r=298;t=1, "workspace";r=0;t=20'}), 20)
+        self.assertEqual(parse_retry_after({"RateLimit": '"key";r=0;t=3, "workspace";r=0;t=20'}), 20)
+        self.assertIsNone(parse_retry_after({"RateLimit": '"key";r=5;t=1, "workspace";r=7;t=2'}))
         t = Transport("http://127.0.0.1", ApiKey("fixture"), user_agent="fixture", rand=lambda: .5)
         try:
             self.assertEqual(t.backoff(0), .25)
