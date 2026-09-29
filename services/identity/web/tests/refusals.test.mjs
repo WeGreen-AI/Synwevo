@@ -79,6 +79,7 @@ const SERVER = [
   { file: ID + "provider_routes.py", fns: ["build_router._consent_actor", "build_router.consent_request", "build_router.consent_decide",
       "build_router.connected_apps", "build_router.connected_app_revoke"], surfaces: ["account"] },
   { file: ID + "provider_routes.py", surfaces: [], why: "OIDC protocol endpoints: a client's redirect or back channel, never a page of this shell" },
+  { file: ID + "workspace_api.py", surfaces: [], why: "the workspace directory API answers machine clients only; no page of this shell calls it" },
   { file: ID + "push_routes.py", surfaces: ["account"] },
   { file: ID + "registration.py", surfaces: ["signin"] },
   { file: CLIENT + "session_routes.py", fns: ["switch_workspace"], surfaces: ["signin", "org"] },
