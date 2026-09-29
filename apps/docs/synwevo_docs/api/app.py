@@ -105,6 +105,19 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     app_.on_template_change = collab.on_template_change
     app_.on_project_change = collab.on_project_change
     app_.live_template_state = collab.live_state
+    # the live-table switch as this process reads it (docs-sheet-live.md §9): a trial's workspace id
+    # mistyped would keep it off without a word — said once at start-up
+    from ..collab import sheet_live_report as _sheet_live_report
+    _sl = _sheet_live_report(store)
+    if _sl["mode"] != "off":
+        import logging as _logging
+        _lg = _logging.getLogger("synwevo.docs.collab")
+        if _sl["mode"] == "on":
+            _lg.info("live tables (SYNWEVO_SHEET_LIVE): on for every workspace")
+        else:
+            _lg.info("live tables (SYNWEVO_SHEET_LIVE): on for %d listed workspace(s): %s", len(_sl["workspaces"]), ", ".join(_sl["workspaces"]) or "(none)")
+            if _sl["unknown"]:
+                _lg.warning("live tables (SYNWEVO_SHEET_LIVE): listed ids that name no workspace here (nothing is live for them): %s", ", ".join(_sl["unknown"]))
 
     def _shutdown() -> None:
         """The end of this process (uvicorn's graceful shutdown, a test client leaving its

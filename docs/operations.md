@@ -433,6 +433,40 @@ docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwev
 | 回滚 | 删除两个变量并重启；页面不再加载 Cloudflare 脚本，CSP 回到默认 |
 | 不做 | 不在生产使用测试密钥（测试密钥对任何令牌都通过，且令牌不带 action）；不给机器接口、Webhook、探针返回挑战 |
 
+## 10. 实时表格（`SYNWEVO_SHEET_LIVE`）：开始与结束试用
+
+表格模板的实时逐项协同（[platform/docs-sheet-live.md](platform/docs-sheet-live.md) §9、§15）缺省关闭。开关只有 Docs 读，取值
+`off` / `on` / 逗号分隔的**工作空间 id 名单**（限定试用：只有这些工作空间的表格实时协同，其余照旧「保存时合并」）。开关在房间
+打开时读取，**改了要优雅重启 Docs**（`docker compose up -d docs` 会按 90 秒宽限期停止；不得 `kill`、`-t 0`，见
+infra/production/README.md）。下面的命令都是只读的：
+
+```bash
+docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli sheet-live </dev/null
+docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli sheet-live --workspace <工作空间ID> </dev/null
+```
+
+它显示开关读成什么（试用名单里各工作空间的名字；名单里不存在的 ID 单独列出——打错的 ID 会让试用悄悄不生效）和有未保存实时修改的
+表格（工作空间、模板、从哪个版本起、最后修改时间与修改者）。Docs 启动日志也有一行，不存在的 ID 记警告。
+
+**开始试用**
+
+1. 找到要试用的内部工作空间的 ID。
+2. 在主机的 `/opt/synwevo/config/compose.yaml` 给 `docs` 服务的 `environment` 加 `SYNWEVO_SHEET_LIVE: '<工作空间ID>'`（多个用逗号
+   分隔），然后 `docker compose -f /opt/synwevo/config/compose.yaml up -d docs`。
+3. 运行上面的 `sheet-live`：应读成「试用：<ID>（工作空间名）」，且没有「不存在的 ID」。
+4. 在该工作空间打开一张表格模板：顶栏显示「实时协同中」；其他工作空间的表格没有实时状态行（保存时合并）。
+
+**结束试用 / 回滚**（顺序不能反：先改名单，未保存的实时修改就再也没有房间能保存，下一次版本变化会删掉它们的草稿）
+
+1. `sheet-live --workspace <ID>` 列出有未保存实时修改的表格。
+2. 逐个处理：请有编辑权限的成员在实时编辑器里「保存模板」；确实不要的，由有权限的成员在版本历史里恢复或撤销时选择放弃实时修改，
+   或用机器接口带 `discard_live: true` 保存。处理完再运行一次，应显示「未保存的表格  : 0」。
+3. 按 §2 备份。
+4. 从 `SYNWEVO_SHEET_LIVE` 里去掉该 ID（全部结束就设 `off` 或删掉这一行），`docker compose -f /opt/synwevo/config/compose.yaml up -d docs`。
+5. 再运行 `sheet-live` 确认。此后仍开着的实时页面会被告知退出实时协同，转为单人编辑、保存时合并。
+
+**回滚代码**到不认识表格草稿的版本之前，另按 docs-sheet-live.md §9 末尾清掉表格草稿。
+
 ## 成员导入到期清理（CI-96）
 
 成员导入的记录与上传的名单文件标有 7 天有效期。账户服务每小时的清扫可以删除到期的记录（从不删除正在执行的导入）与其上传文件，以及没有记录、超过 7 天的旧上传文件。

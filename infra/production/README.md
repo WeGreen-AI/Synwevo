@@ -123,6 +123,26 @@ and waits for those closing writes. Never deploy or restart Docs with `kill`, `-
 grace period: a live table keeps edits since its last draft write (at most a few seconds) only in
 memory and in the open pages (`infra/production/tests` checks the grace period and the stop order).
 
+### Live tables: starting and ending a trial (`SYNWEVO_SHEET_LIVE`)
+
+Live table editing (docs/platform/docs-sheet-live.md §9, §15) is off unless the Docs service's
+environment says otherwise: `off`, `on`, or a comma-separated list of workspace ids — the trial: only
+those workspaces' table templates are edited live, every other workspace keeps save-and-merge. Docs
+reads it when a room opens, so a change takes a graceful restart of Docs (`docker compose up -d docs`
+with the 90 s grace period above; never `kill` or `-t 0`). A release does not change it: the host's
+Compose file is the operator's.
+
+* **Start**: add `SYNWEVO_SHEET_LIVE: '<workspace id>'` to the `docs` service's `environment` in
+  `/opt/synwevo/config/compose.yaml`, `docker compose -f /opt/synwevo/config/compose.yaml up -d docs`,
+  then check `docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli sheet-live </dev/null`
+  reads "试用：<id>（workspace name）" with no unknown id (a mistyped id keeps the trial off; the start-up
+  log warns about it too), and open one table in that workspace: its top bar says 实时协同中 / Live.
+* **End (and roll back)** — in this order, or unsaved live edits are lost: `sheet-live --workspace <id>`
+  lists the tables with unsaved live edits; have each saved as a version in the live editor, or
+  discarded by someone with the right (restore/undo with discard, or the machine API with
+  `discard_live: true`); run it again until none is left; take a backup as above; remove the id from
+  the list (or set `off`) and `up -d docs` again; check `sheet-live`. Full steps: docs/operations.md §10.
+
 A queued webhook waiting for retry can block deployment. Resolve it through authorized operations;
 the deployment script must not discard deliveries merely to pass. Backups are not pruned automatically.
 Monitor disk use and apply an explicit retention policy after restore verification.

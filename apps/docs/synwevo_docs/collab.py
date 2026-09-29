@@ -24,9 +24,9 @@ told and marks itself clean); restoring, undoing or redoing a version replaces t
 for everyone in the room; a save from outside the room (the machine API) does the same.
 
 A table template's room carries presence and version frames only — unless the switch
-``SYNWEVO_SHEET_LIVE`` is on, when it holds the live table state instead (``collab_sheet_room``,
-docs-sheet-live.md B1 step ②): frames of type ``MESSAGE_SHEET`` carry operations the server checks,
-orders and attributes.
+``SYNWEVO_SHEET_LIVE`` is on for the template's workspace (``on``, or a list of workspace ids: the
+trial), when it holds the live table state instead (``collab_sheet_room``, docs-sheet-live.md B1 step
+②): frames of type ``MESSAGE_SHEET`` carry operations the server checks, orders and attributes.
 
 Locks, in the one order they are ever nested (review 3 of sheet-live step ②): the store's write
 lock (a transaction) → ``CollabHub._rooms_mu`` → a room's ``mu`` → a room's queue lock. Under
@@ -129,10 +129,51 @@ def recheck_seconds() -> float:
     return float(env.get("COLLAB_RECHECK_S") or 30)
 
 
-def sheet_live_enabled() -> bool:
-    """``SYNWEVO_SHEET_LIVE``: a table template's room holds the live table state (docs-sheet-live.md
-    B1, rolled out step by step; off by default). Read when a room opens."""
-    return env.flag("SHEET_LIVE")
+_SHEET_LIVE_OFF = frozenset({"", "0", "false", "no", "off"})
+_SHEET_LIVE_ON = frozenset({"1", "true", "yes", "on"})
+
+
+def sheet_live_scope() -> bool | frozenset[str]:
+    """``SYNWEVO_SHEET_LIVE``: whose table templates' rooms hold the live table state (docs-sheet-live.md
+    B1, rolled out step by step; off by default). ``False`` — unset, empty or ``off`` (``0``, ``false``,
+    ``no``); ``True`` — ``on`` (``1``, ``true``, ``yes``): every workspace; otherwise a comma-separated
+    list of workspace ids (a room's tenant) — the trial: only those. Whitespace around the value and
+    each id, and empty entries, are ignored; a list with no id left is off; an id that names no
+    workspace enables nothing (``sheet_live_report`` says so at start-up)."""
+    raw = (env.get("SHEET_LIVE") or "").strip()
+    if raw.lower() in _SHEET_LIVE_OFF:
+        return False
+    if raw.lower() in _SHEET_LIVE_ON:
+        return True
+    ids = frozenset(x.strip() for x in raw.split(",") if x.strip())
+    return ids or False
+
+
+def sheet_live_enabled(tenant: str | None) -> bool:
+    """Does a table room of workspace ``tenant`` hold the live table (``sheet_live_scope``)? Read when
+    a room opens — and by every server path that would otherwise treat a room or its draft as live
+    (the draft's unsaved edits in the guard and the change list): a workspace not listed is in CI-47's
+    presence-and-merge mode everywhere. Changing the switch needs a restart of Docs (§9)."""
+    scope = sheet_live_scope()
+    if isinstance(scope, bool):
+        return scope
+    return bool(tenant) and tenant in scope
+
+
+def sheet_live_report(store: Store) -> dict:
+    """What the switch says, for the start-up log and the operators' command (``synwevo_docs.cli
+    sheet-live``): ``{"mode": "off" | "on" | "workspaces", "workspaces": [listed ids that exist],
+    "unknown": [listed ids that name no workspace here]}``."""
+    scope = sheet_live_scope()
+    if isinstance(scope, bool):
+        return {"mode": "on" if scope else "off", "workspaces": [], "unknown": []}
+    ids = sorted(scope)
+    marks = ",".join("?" * len(ids))
+    try:
+        known = {r["id"] for r in store.all(f"SELECT id FROM workspaces WHERE id IN ({marks})", tuple(ids))}
+    except Exception:                                    # noqa: BLE001 — a store without the table (not initialised yet): nothing is known
+        known = set()
+    return {"mode": "workspaces", "workspaces": [i for i in ids if i in known], "unknown": [i for i in ids if i not in known]}
 
 
 #: The live table room whose save is being written on this thread (collab_sheet_room.SheetRoom.save):
@@ -829,15 +870,16 @@ class CollabHub:
                 pending = bool(self._closing.get(key))
                 closed = self._pending_room(key)
             if closed is not None:
-                dirty = bool(closed.dirty and closed.persists()) and (not closed.sheet or sheet_live_enabled())
+                dirty = bool(closed.dirty and closed.persists()) and (not closed.sheet or sheet_live_enabled(closed.tenant))
                 return dirty, closed.sheet
             if pending:
                 return False, False                      # its draft is being removed
-        row = self.store.one("SELECT dirty, model FROM collab_docs WHERE room=?", (key,))
+        row = self.store.one("SELECT dirty, model, tenant FROM collab_docs WHERE room=?", (key,))
         sheet = bool(row and row.get("model") == "sheet")
-        # a live table draft counts while the switch is on; with it off the room cannot be opened to
-        # save it, and the next version change drops it (docs-sheet-live.md §9, rollback)
-        return bool(row and row["dirty"] and (not sheet or sheet_live_enabled())), sheet
+        # a live table draft counts while the switch is on for its workspace; with it off there the
+        # room cannot be opened to save it, and the next version change drops it (docs-sheet-live.md
+        # §9, rollback: save or discard every such draft before taking the workspace off the list)
+        return bool(row and row["dirty"] and (not sheet or sheet_live_enabled(row.get("tenant")))), sheet
 
     def _draft_last_writer(self, key: str) -> str | None:
         """Who last changed a persisted live table draft (nobody is in its room)."""
@@ -1075,8 +1117,11 @@ class CollabHub:
             with as_tenant(tenant):
                 return self.app.get_template(tid).get("kind")
         kind = await run_in_threadpool(kind_of)          # the service's 404 for a template not in this workspace
-        if kind == "builtin_sheet" and sheet_live_enabled():
-            # SYNWEVO_SHEET_LIVE: the live table (collab_sheet_room), or presence when it cannot be held
+        if kind == "builtin_sheet" and sheet_live_enabled(tenant):
+            # SYNWEVO_SHEET_LIVE on for this workspace: the live table (collab_sheet_room), or presence
+            # when it cannot be held. Every other path that treats a room as live (saves, the guard, the
+            # builtin PUT's live_room, the draft) follows from the room being a SheetRoom — or, with no
+            # room open, reads the switch for the draft's workspace (_dirty)
             from .collab_sheet_room import SheetRoom
             room = SheetRoom(self, tid, tenant)
         elif kind == "builtin_sheet":
