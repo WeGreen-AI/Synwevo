@@ -129,13 +129,29 @@ def test_an_id_that_names_no_workspace_makes_nothing_live(world, monkeypatch):
     a.close()
 
 
-def test_a_workspace_taken_off_the_list_has_no_live_draft_anywhere(world, monkeypatch):
+@pytest.mark.parametrize("slow_close", [False, True])
+def test_a_workspace_taken_off_the_list_has_no_live_draft_anywhere(world, monkeypatch, slow_close):
     """Both workspaces in the trial leave unsaved live edits; then only the first stays listed (a
     restart of Docs with the shorter list). The second's draft is not read on joining, does not stop
     a save in the guard and is not reported as unsaved — it is CI-47's table again, as §9's rollback
-    says (which is why its drafts are saved or discarded first) — while the first's still is."""
+    says (which is why its drafts are saved or discarded first) — while the first's still is.
+
+    ``slow_close``: the first room's closing write (a thread of its own) takes a while, as on a loaded
+    CI runner — the test waited only for the second room's and read both drafts (a flake the third
+    review's follow-up measured at about one run in four)."""
     wid, owid = world["wid"], world["other_wid"]
     monkeypatch.setenv("SYNWEVO_SHEET_LIVE", f"{wid},{owid}")
+    if slow_close:
+        import time
+
+        from synwevo_docs import collab_sheet_room as SR
+        real_close = SR.SheetRoom.close_final
+
+        def close_final(self):
+            if self.tid == world["tid"]:
+                time.sleep(0.5)
+            return real_close(self)
+        monkeypatch.setattr(SR.SheetRoom, "close_final", close_final)
     other_tid, cs_ = _stranger_template(world)
     a = join(world, "editor")
     b = _join_as(world, "stranger", other_tid, owid)
@@ -144,6 +160,7 @@ def test_a_workspace_taken_off_the_list_has_no_live_draft_anywhere(world, monkey
     a.close()
     b.close()
     hub = world["app"].state.collab
+    hub.settled(f"template:{world['tid']}")                        # both closing writes, each in a thread of its own
     hub.settled(f"template:{other_tid}")
     drafts = {r["template_id"]: r["dirty"] for r in world["store"].all("SELECT template_id, dirty FROM collab_docs WHERE model='sheet'")}
     assert drafts == {world["tid"]: 1, other_tid: 1}
@@ -164,6 +181,61 @@ def test_a_workspace_taken_off_the_list_has_no_live_draft_anywhere(world, monkey
     assert r.status_code == 200, r.text
     hub.settled(f"template:{other_tid}")
     assert world["store"].one("SELECT 1 AS x FROM collab_docs WHERE room=?", (f"template:{other_tid}",)) is None
+    assert row(world)["dirty"] == 1, "the listed workspace's draft is untouched"
+
+
+def test_a_leftover_draft_is_dropped_by_a_version_saved_with_the_table_open_and_never_comes_back(world, monkeypatch):
+    """The third review's follow-up: after the workspace left the list, "the next version change drops"
+    its table draft held only with nobody in the room. In CI-47 mode the page that saves is in the
+    (presence) room, so the version change took the room's path and the draft stayed; listed again (a
+    second trial, or `on`), the room loaded that dirty draft and folded the newer versions in — an edit
+    abandoned at the rollback came back as someone's unsaved live edit."""
+    import time
+
+    from synwevo_docs import collab_sheet as CS
+    wid, tid, hub = world["wid"], world["tid"], world["app"].state.collab
+    monkeypatch.setenv("SYNWEVO_SHEET_LIVE", wid)
+    a = join(world, "editor")
+    assert a.hello["live"] is True
+    assert a.do(put(a, "C3", "abandoned at rollback"))["ok"]
+    a.close()
+    assert row(world)["dirty"] == 1
+    monkeypatch.setenv("SYNWEVO_SHEET_LIVE", "ws_someone_else")      # the workspace leaves the trial
+    page = _join_as(world, "owner", tid)                              # the CI-47 editor page: a presence room
+    assert "live" not in page.hello
+    r = world["co"].put(f"/api/templates/{tid}/builtin", json={"editor": edited({"A2": {"v": "saved in CI-47"}}), "base_version": 1})
+    assert r.status_code == 200 and r.json()["head"] == 2, r.text
+    assert page.meta_of("head")["head"] == 2
+    assert row(world) is None, "the version change dropped the draft left from the trial"
+    page.close()
+    monkeypatch.setenv("SYNWEVO_SHEET_LIVE", wid)                    # listed again
+    b = join(world, "owner")
+    assert b.hello["live"] is True and b.hello["dirty"] is False and b.hello["head"] == 2
+    room = hub.rooms[f"template:{tid}"]
+    end = time.time() + 5
+    while room.has_work() and time.time() < end:
+        time.sleep(0.02)
+    cells = CS.project(room.state)["sheets"][0].get("cells") or {}
+    assert "C3" not in cells and cells["A2"] == {"v": "saved in CI-47"}
+    assert hub.live_state(tid)["dirty"] is False
+    b.close()
+
+
+def test_a_presence_room_keeps_a_listed_workspace_s_draft(world, monkeypatch):
+    """The drop above is only for a workspace that is not listed: another workspace's table, open in
+    its presence room while a listed workspace's table holds unsaved live edits, drops nothing of it."""
+    wid, owid = world["wid"], world["other_wid"]
+    monkeypatch.setenv("SYNWEVO_SHEET_LIVE", wid)
+    other_tid, cs_ = _stranger_template(world)
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "unsaved, listed"))["ok"]
+    a.close()
+    b = _join_as(world, "stranger", other_tid, owid)
+    assert "live" not in b.hello
+    r = cs_.put(f"/api/templates/{other_tid}/builtin", json={"editor": edited({"A2": {"v": "照旧"}}), "base_version": 1})
+    assert r.status_code == 200, r.text
+    world["app"].state.collab.settled(f"template:{other_tid}")
+    b.close()
     assert row(world)["dirty"] == 1, "the listed workspace's draft is untouched"
 
 
@@ -200,3 +272,29 @@ def test_the_operators_command_lists_unsaved_live_tables_by_workspace(world, mon
     b.close()
     world["app"].state.collab.settled(f"template:{world['tid']}")
     assert json.loads(run("--json"))["unsaved_drafts"] == []
+
+
+def test_the_operators_command_refuses_a_workspace_id_that_names_no_workspace(world, monkeypatch, capsys):
+    """The end-of-trial check with a mistyped id printed "未保存的表格  : 0" — exactly what the runbook asks
+    for — while the real workspace still had an unsaved live table (the third review's follow-up)."""
+    from synwevo_docs import cli
+    wid = world["wid"]
+    monkeypatch.setenv("SYNWEVO_SHEET_LIVE", wid)
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "未保存"))["ok"]
+    a.close()
+    assert row(world)["dirty"] == 1
+    typo = wid[:-1] + ("x" if wid[-1] != "x" else "y")
+    data = str(world["tmp_path"] / "data")
+    for extra in ([], ["--json"]):
+        monkeypatch.setattr(sys, "argv", ["synwevo_docs.cli", "--data", data, "sheet-live", "--workspace", typo, *extra])
+        assert cli.main() == 2
+        out, err = capsys.readouterr()
+        assert "未保存的表格" not in out, "no count that reads as the check passing"
+        if extra:
+            assert json.loads(out) == {"error": "unknown_workspace", "workspace": typo}
+        else:
+            assert typo in err and "--workspace" in err
+    monkeypatch.setattr(sys, "argv", ["synwevo_docs.cli", "--data", data, "sheet-live", "--workspace", wid])
+    assert cli.main() == 0 and "未保存的表格  : 1" in capsys.readouterr().out
+

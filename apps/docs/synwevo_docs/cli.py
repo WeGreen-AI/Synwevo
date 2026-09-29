@@ -485,6 +485,19 @@ def cmd_sheet_live(args) -> int:
     store = Store(data_dir(args), migrate=False)          # inspect only
     rep = sheet_live_report(store)
     raw = env.get("SHEET_LIVE")
+    if args.workspace and store.schema_version():
+        try:
+            known = store.one("SELECT 1 AS x FROM workspaces WHERE id=?", (args.workspace,)) is not None
+        except Exception:                                  # noqa: BLE001 — a store without the table: nothing is known
+            known = False
+        if not known:
+            # a mistyped id would list nothing and read as "0 unsaved" — the end-of-trial check passed
+            # while the real workspace still had unsaved live tables (the third review's follow-up)
+            if args.json:
+                print(json.dumps({"error": "unknown_workspace", "workspace": args.workspace}, ensure_ascii=False))
+            else:
+                print(f"没有 ID 为 {args.workspace} 的工作空间：请核对 ID。不带 --workspace 运行会列出所有工作空间的未保存表格。", file=sys.stderr)
+            return 2
     where, params = "d.model='sheet' AND d.dirty=1", []
     if args.workspace:
         where += " AND d.tenant=?"

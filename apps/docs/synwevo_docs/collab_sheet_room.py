@@ -641,22 +641,26 @@ class SheetRoom(Room):
         except Exception:                                # noqa: BLE001
             log.exception("collab %s: persisting the live table on close failed", self.key)
 
-    def _write_and_tell(self, snap: dict) -> None:
+    def _write_and_tell(self, snap: dict) -> bool:
         """A worker thread (a save): write one serialisation now and, written, say so like ``persist``
-        (the tabs keep what they typed until `persisted` covers it). Never raises: the save goes on."""
+        (the tabs keep what they typed until `persisted` covers it). Whether the draft now holds it —
+        written, or a newer serialisation of this room was written already; False when it could not be
+        written (a database error, or the room may not write any more): the save then writes no version
+        (``save``). Never raises."""
         try:
             written, _exact = self._write(snap)
-        except Exception:                                # noqa: BLE001 — the save still writes its version
-            log.exception("collab %s: writing the live table before a save failed", self.key)
-            return
+        except Exception:                                # noqa: BLE001 — the save is refused instead (``save``)
+            log.exception("collab %s: writing the live table before a save failed; the save writes no version", self.key)
+            return False
         if not written:
-            return
+            return snap["gen"] < self._written           # overtaken by a newer write: that one holds it
         with self.mu:
             same = self.state is not None and self.epoch == snap["epoch"]
             if same:
                 self.persisted_seq = max(self.persisted_seq, snap["seq"])
         if same:
             self.broadcast_meta({"type": "persisted", "seq": snap["seq"], "epoch": snap["epoch"]})
+        return True
 
     def forget_draft(self) -> None:
         """The template is deleted: nothing of this room is written again (the hook removes the row)."""
@@ -688,9 +692,13 @@ class SheetRoom(Room):
             # before the next draft write comes back from a draft that holds all the version holds, so
             # folding the version in on opening changes nothing and no tab has anything below it to send
             # again. With an older draft the tabs sent again what the version already carried — rows
-            # added twice (the crash model of review round 3).
-            if draft is not None:
-                self._write_and_tell(draft)
+            # added twice (the crash model of review round 3). A draft that could not be written (a
+            # database error) refuses the save: written anyway, the version reopened that window (the
+            # third review's follow-up). Nothing is lost — the room still holds the edits, unsaved, and
+            # its own draft writes carry on; saving again writes both.
+            if draft is not None and not self._write_and_tell(draft):
+                raise ServiceError(503, "live_unwritten", "表格的实时修改暂时无法写入，这次没有保存为版本；请稍后再保存",
+                                   {"retry_after": 2})
             editor = CS.project(snap)
             OWN_LIVE_SAVE.room = self
             token = set_actor(user_id)

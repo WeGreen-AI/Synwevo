@@ -769,6 +769,13 @@ class CollabHub:
             room.enqueue(lambda: None if (loading and room.head == head) else
                          room.outside_change(head, editor, reason, actor, actor_name, discard_live))
             return
+        if room.kind == "template" and not room.writable and not sheet_live_enabled(room.tenant):
+            # A table template's presence room: its workspace is not on the live-table list. A live table
+            # draft left from when it was (a trial that ended, docs-sheet-live.md §9) can never be saved
+            # from here; this version change drops it, as it does with nobody in the room. Kept while the
+            # table was open (in CI-47 mode the page that saves is in this room), listing the workspace
+            # again brought the abandoned edits back as unsaved live edits (the third review's follow-up).
+            self._drop_table_draft(key, room)
         snapshot = reason == "save" and actor is not None and any(c.user_id == actor for c in room.clients)
         if room.writable and (reason != "save" or not snapshot):
             became = f"v{source}" if reason == "restore" and source else f"v{head}"
@@ -777,6 +784,22 @@ class CollabHub:
             room.changes_rev += 1
         room.enqueue(lambda: None if (loading and room.head == head) else
                      room.apply_head_change(head, editor, reason, actor_name, snapshot, actor))
+
+    def _drop_table_draft(self, key: str, room: Room) -> None:
+        """Remove the live table draft of a template whose registered room is a presence room (the
+        switch is off for its workspace): nothing writes it while that room is registered, so a DELETE
+        decided now removes only the draft left from before — checked under the registration lock in
+        the DELETE's transaction (a newer room registered meanwhile keeps its row). Registered draft
+        work: an opener of the template waits for it."""
+        gen = room.gen
+
+        def drop() -> None:
+            with self.store.tx() as c:                   # the write lock first (the process's lock order) ...
+                with self._rooms_mu:                     # ... then a brief check: no SQL under it
+                    current = self._key_gen.get(key, 0) == gen
+                if current:
+                    c.execute("DELETE FROM collab_docs WHERE room=? AND model='sheet'", (key,))
+        self.draft_work(key, drop, room=None, name=f"collab-void-{room.tid}")
 
     def live_state(self, tid: str) -> dict:
         """What a restore, undo or redo would throw away: whether the live document carries edits
@@ -877,8 +900,9 @@ class CollabHub:
         row = self.store.one("SELECT dirty, model, tenant FROM collab_docs WHERE room=?", (key,))
         sheet = bool(row and row.get("model") == "sheet")
         # a live table draft counts while the switch is on for its workspace; with it off there the
-        # room cannot be opened to save it, and the next version change drops it (docs-sheet-live.md
-        # §9, rollback: save or discard every such draft before taking the workspace off the list)
+        # room cannot be opened to save it, and the next version change drops it — with nobody in the
+        # room or with the table open in its presence room (_drop_table_draft) (docs-sheet-live.md §9,
+        # rollback: save or discard every such draft before taking the workspace off the list)
         return bool(row and row["dirty"] and (not sheet or sheet_live_enabled(row.get("tenant")))), sheet
 
     def _draft_last_writer(self, key: str) -> str | None:
