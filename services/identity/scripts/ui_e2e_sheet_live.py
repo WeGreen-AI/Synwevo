@@ -8,16 +8,24 @@ on a 390 px phone:
   and chooses "use my value";
 - a change the table cannot hold (a range field over a merged range) is refused in a sentence;
 - edits made offline are sent on reconnect exactly once (ten rows added offline are ten rows);
-- the Docs service restarts while the phone keeps typing: both come back, nothing is lost or doubled;
+- the Docs service is stopped, the phone types into the outage (it says so: offline, one change
+  waiting), the service starts again: both come back, nothing is lost or doubled;
+- the Docs process is killed (SIGKILL: no closing write) right after an acknowledged edit, the phone
+  types meanwhile: after the start both edits are there on both pages;
+- whenever both pages are at rest, every cell on both reads exactly as in the room's own state (the
+  hello a fresh connection gets), docs-sheet-live.md §6;
 - undo takes back the owner's own change and skips the cell the editor changed since, saying so;
 - a save turns the room into a version holding all of it;
-- the phone in English and in Traditional Chinese: no stray Simplified Chinese in the interface, no
-  sideways scrolling.
+- the phone in English and in Traditional Chinese: no Chinese left in English, no Simplified-only
+  character left in Traditional Chinese (derived from the catalogues), no sideways scrolling.
 
     .venv/bin/python services/identity/scripts/ui_e2e_sheet_live.py http://accounts.localhost:31770 http://docweave.localhost:31765 <mail dir> [--webkit]
 
-Only ever pointed at the isolated instance: it restarts the Docs service it is given
-(`platform.py restart docs`), which must come back with SYNWEVO_SHEET_LIVE=1.
+Only ever pointed at the isolated instance: it stops, kills and starts the Docs service — through
+`SYNWEVO_E2E_DOCS_CTL` (the instance's own control command; `stop`, `kill` or `start` is appended)
+when set, else through this checkout's `platform.py` (`down docs`, `down docs --kill`, `up docs`), and
+then only when `SYNWEVO_DATA_DIR` points outside the repository — it refuses before anything else
+otherwise. The service must come back with SYNWEVO_SHEET_LIVE=1.
 
 Going offline is the phone's room socket closed and held down through Playwright's WebSocket
 routing (`Link`): the page and the server both see the connection drop, and the page cannot
@@ -30,7 +38,6 @@ import re
 import secrets
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -39,7 +46,7 @@ from playwright.sync_api import Browser, expect, sync_playwright
 from localhost_proxy import LocalhostProxy
 from ui_e2e_messaging import PW, csrf_of, link_in, mail_to, register_and_activate, require_test_instance, sign_in
 from ui_e2e_project_copy import csrf_for, enter_docs
-from ui_e2e_restart_live import restart_docs
+from ui_e2e_restart_live import docs_ctl, restart_refusal
 
 expect.set_options(timeout=15000)
 SHOTS = Path(os.environ.get("SYNWEVO_E2E_SHOTS") or Path(tempfile.gettempdir()) / "synwevo-e2e") / "sheet-live"
@@ -48,6 +55,95 @@ SHEET = {"sheets": [{"name": "结果", "cols": [{"w": 100}] * 5, "rows": [{"h": 
                      "cells": {"A1": {"v": "客户"}, "B1": {"v": "待填"}, "A2": {"v": "金额"}},
                      "fields": [{"id": "customer", "kind": "cell", "name": "客户", "ref": "B1", "required": True}]}]}
 CJK = re.compile(r"[㐀-鿿]+")
+ROOT = Path(__file__).resolve().parents[3]
+CATALOGUES = ["apps/docs/web/src/messages.ts", "apps/docs/web/src/messages.server.ts", "apps/docs/web/src/messages.refusals.ts",
+              "packages/ui/src/messages.ts", "packages/auth-client/web/src/api.messages.ts",
+              "packages/auth-client/web/src/notifications.messages.ts", "packages/auth-client/web/src/session.messages.ts"]
+
+
+def simplified_only() -> set[str]:
+    """Characters the Simplified sources use that no Traditional translation ever does (实, 时, 协, 这 …):
+    one of them on a Traditional Chinese page is an untranslated string."""
+    key = re.compile(r"""(["'])((?:\\.|(?!\1).)*?)\1\s*:\s*\{""")
+    hant = re.compile(r"""["']zh-Hant["']\s*:\s*(?:(["'])((?:\\.|(?!\1).)*?)\1|\{([^}]*)\})""")
+    simp, trad = set(), set()
+    for rel in CATALOGUES:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for m in key.finditer(text):
+            simp.update("".join(CJK.findall(m.group(2))))
+        for m in hant.finditer(text):
+            trad.update("".join(CJK.findall(m.group(2) or m.group(3) or "")))
+    return simp - trad
+
+
+ROOM_STATE = """async ([tid, wid]) => {
+  const u = new URL(`/api/collab/templates/${tid}?workspace=${encodeURIComponent(wid)}`, location.href);
+  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(u);
+  ws.binaryType = "arraybuffer";
+  try {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no hello from the room")), 15000);
+      ws.onerror = () => { clearTimeout(timer); reject(new Error("the room socket failed")); };
+      ws.onmessage = (e) => {
+        const b = new Uint8Array(e.data);
+        if (b[0] !== 100) return;                                   // the room's own frames (MESSAGE_META)
+        let i = 1, len = 0, mul = 1;
+        for (;;) { const x = b[i++]; len += (x & 0x7f) * mul; if (x < 0x80) break; mul *= 128; }
+        const f = JSON.parse(new TextDecoder().decode(b.subarray(i, i + len)));
+        if (f.type === "hello") { clearTimeout(timer); resolve({ live: f.live, seq: f.seq, content: f.content }); }
+      };
+    });
+  } finally { ws.close(); }
+}"""
+PAGE_CELLS = """() => Object.fromEntries([...document.querySelectorAll('.grid-canvas .gcell[data-ref]')]
+  .map((el) => [el.dataset.ref, (el.lastElementChild ? el.lastElementChild.textContent : el.textContent) || ''])
+  .filter(([, t]) => t !== ''))"""
+
+
+def col_letter(i: int) -> str:
+    s = ""
+    i += 1
+    while i:
+        i, r = divmod(i - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def room_cells(page, tid: str, wid: str) -> dict[str, str]:
+    """The first sheet's cells as the room holds them now — from the hello a fresh connection is
+    given (the room's own state, not either page's) — written the way the grid shows them."""
+    r = page.evaluate(ROOM_STATE, [tid, wid])
+    assert r["live"], r
+    c = r["content"]
+    sid = [x for x in c["order"] if not c["sheets"][x]["gone"]][0]
+    sh = c["sheets"][sid]
+    rows, cols = {x: i for i, x in enumerate(sh["rows"])}, {x: i for i, x in enumerate(sh["cols"])}
+    out = {}
+    for k, v in sh["cells"].items():
+        rid, cid = k.split(":")
+        val = v.get("v")
+        if val is None or val == "":
+            continue
+        shown = "TRUE" if val is True else "FALSE" if val is False else str(int(val)) if isinstance(val, float) and val.is_integer() else str(val)
+        out[f"{col_letter(cols[cid])}{rows[rid] + 1}"] = shown
+    return out
+
+
+def at_rest(pa, pb, tid: str, wid: str, label: str) -> int:
+    """§6: once both pages have nothing unanswered, every cell on both reads as in the room."""
+    for p in (pa, pb):
+        expect(status(p)).to_have_text("实时协同中", timeout=30000)
+    deadline = time.time() + 15
+    while True:
+        room = room_cells(pa, tid, wid)
+        got = {"owner": pa.evaluate(PAGE_CELLS), "phone": pb.evaluate(PAGE_CELLS)}
+        if all(g == room for g in got.values()):
+            return len(room)
+        if time.time() > deadline:
+            bad = {who: {k: (g.get(k), room.get(k)) for k in set(g) | set(room) if g.get(k) != room.get(k)} for who, g in got.items()}
+            raise AssertionError(f"{label}: at rest, a page differs from the room (page, room): {bad}")
+        pa.wait_for_timeout(300)
 
 
 def note(notes: list[str], text: str) -> None:
@@ -171,9 +267,10 @@ def _flow(a, b, pa, pb, engine, accounts, docs, mail_dir, tag, owner, member, no
 
 
 def live_flow(a, b, engine: str, docs: str, tid: str, ha: dict, *, owner_name: str, editor_name: str, template_name: str,
-              notes: list[str], violations: list[str], restart=restart_docs) -> list[str]:
+              notes: list[str], violations: list[str], ctl=docs_ctl) -> list[str]:
     """The table part: the owner's context `a` (desktop) and the editor's `b` (phone), both signed in
-    to Docs in the template's workspace; `restart()` restarts the Docs service and says for how long."""
+    to Docs in the template's workspace; `ctl("stop" | "kill" | "start")` controls the Docs service."""
+    wid = ha["X-Synwevo-Workspace"]
     pa, pb = a.new_page(), b.new_page()
     for p in (pa, pb):
         p.on("pageerror", lambda e: violations.append("pageerror: " + str(e)[:160]))
@@ -204,7 +301,8 @@ def live_flow(a, b, engine: str, docs: str, tid: str, ha: dict, *, owner_name: s
     expect(cell(pa, "C4")).to_contain_text("100", timeout=10000)
     pa.screenshot(path=str(SHOTS / f"{engine}-01-owner.png"))
     pb.screenshot(path=str(SHOTS / f"{engine}-01-phone.png"))
-    note(notes, f"{engine}: the owner's B3 reached the phone at once (tinted), the phone's C4 reached the owner")
+    n = at_rest(pa, pb, tid, wid, "after typing")
+    note(notes, f"{engine}: the owner's B3 reached the phone at once (tinted), the phone's C4 reached the owner; at rest both pages read the room's {n} cells")
 
     # ---- the same cell from both while the phone is offline: the phone is told, and chooses its own value
     expect(status(pb)).to_have_text("实时协同中", timeout=15000)     # nothing of the phone's left unanswered
@@ -221,7 +319,8 @@ def live_flow(a, b, engine: str, docs: str, tid: str, ha: dict, *, owner_name: s
     att.get_by_role("button", name="用我的值").click()
     expect(cell(pa, "A2")).to_contain_text("手机离线写的", timeout=10000)
     expect(att).to_have_count(0)
-    note(notes, f"{engine}: A2 written offline on the phone and online by the owner: the phone named the owner and their value; 'use my value' won on both pages")
+    at_rest(pa, pb, tid, wid, "after the conflict")
+    note(notes, f"{engine}: A2 written offline on the phone and online by the owner: the phone named the owner and their value; 'use my value' won on both pages (at rest, as in the room)")
 
     # ---- edits made offline are sent once: ten rows added offline are ten rows, not twenty
     row_heads = pa.locator(".ghead").filter(has_text=re.compile(r"^\d+$"))
@@ -239,32 +338,51 @@ def live_flow(a, b, engine: str, docs: str, tid: str, ha: dict, *, owner_name: s
     pa.wait_for_timeout(1500)                                       # a second copy would have arrived by now
     expect(row_heads).to_have_count(rows_before + 10)
     rows_after = rows_before + 10
+    at_rest(pa, pb, tid, wid, "after the offline rows")
     note(notes, f"{engine}: ten rows and a value added offline reached the owner once the phone was back — {rows_before} rows became {rows_after}, not {rows_before + 20}")
 
-    # ---- the Docs service restarts while the phone keeps typing
+    # ---- the Docs service is stopped; the phone types into the outage; the service starts again
     type_cell(pa, "D2", "重启前")
     expect(cell(pb, "D2")).to_contain_text("重启前", timeout=10000)
     expect(status(pb)).to_have_text("实时协同中", timeout=15000)
-    took: dict = {}
-    restarting = threading.Thread(target=lambda: took.setdefault("s", restart()), daemon=True)   # the page is driven from here meanwhile
-    restarting.start()
-    try:
-        expect(status(pb)).to_contain_text("离线", timeout=30000)           # the service is down: type into the outage
-        typed_during = True
-    except AssertionError:
-        typed_during = False                                                 # it came back before the phone noticed
+    t0 = time.time()
+    ctl("stop")                                                      # graceful: the room writes itself out
+    expect(status(pb)).to_contain_text("离线", timeout=30000)        # down for as long as this script says
     type_cell(pb, "D3", "重启中输入")
-    restarting.join(180)
-    assert "s" in took, "the restart did not finish"
-    gone = took["s"]
+    expect(status(pb)).to_have_text("离线：1 处修改待同步")
+    pb.screenshot(path=str(SHOTS / f"{engine}-03-phone-during-outage.png"))
+    ctl("start")
+    gone = time.time() - t0
     expect(status(pa)).to_have_text("实时协同中", timeout=45000)
     expect(status(pb)).to_have_text("实时协同中", timeout=45000)
     expect(cell(pa, "D3")).to_contain_text("重启中输入", timeout=15000)
     expect(cell(pb, "D2")).to_contain_text("重启前")
     expect(pa.locator(".topbar .badge.warn").filter(has_text=re.compile("^未保存$"))).to_have_count(1)
+    at_rest(pa, pb, tid, wid, "after the restart")
     pa.screenshot(path=str(SHOTS / f"{engine}-03-owner-after-restart.png"))
     pb.screenshot(path=str(SHOTS / f"{engine}-03-phone-after-restart.png"))
-    note(notes, f"{engine}: the Docs service restarted ({gone:.1f} s); the phone typed D3 {'while it was down' if typed_during else 'as it came back'}; both came back live, D3 reached the owner, D2 was kept, the table is still unsaved (the same room)")
+    note(notes, f"{engine}: the Docs service was stopped for {gone:.1f} s; the phone said offline with one change waiting and typed D3 into the outage; both came back live, D3 reached the owner, D2 was kept, the table is still unsaved (the same room), both pages read as the room")
+
+    # ---- the Docs process is killed (no closing write) just after an acknowledged edit
+    type_cell(pa, "E2", "崩溃前")
+    expect(status(pa)).to_have_text("实时协同中", timeout=10000)     # acknowledged (the draft is written ~1 s later)
+    t0 = time.time()
+    ctl("kill")
+    expect(status(pb)).to_contain_text("离线", timeout=30000)
+    type_cell(pb, "E3", "崩溃中输入")
+    expect(status(pb)).to_have_text("离线：1 处修改待同步")
+    ctl("start")
+    killed = time.time() - t0
+    expect(status(pa)).to_have_text("实时协同中", timeout=45000)
+    expect(status(pb)).to_have_text("实时协同中", timeout=45000)
+    for p in (pa, pb):
+        expect(cell(p, "E2")).to_contain_text("崩溃前", timeout=15000)
+        expect(cell(p, "E3")).to_contain_text("崩溃中输入", timeout=15000)
+        expect(cell(p, "D3")).to_contain_text("重启中输入")        # acknowledged before, perhaps not yet in the draft
+        expect(cell(p, "D2")).to_contain_text("重启前")
+    expect(pa.locator("[data-testid=sheet-attention]")).to_have_count(0)
+    at_rest(pa, pb, tid, wid, "after the kill")
+    note(notes, f"{engine}: the Docs process was killed right after the owner's E2 was acknowledged (down {killed:.1f} s, no closing write); the phone typed E3 meanwhile; after the start both pages hold D2, D3, E2 and E3, nobody was asked anything, and both read as the room")
 
     # ---- a change the table cannot hold is refused in a sentence
     cell(pa, "D6").click()
@@ -292,7 +410,28 @@ def live_flow(a, b, engine: str, docs: str, tid: str, ha: dict, *, owner_name: s
     pa.locator(".grid-scroll").press("Control+z")
     expect(pa.get_by_text("未撤销 B5：其他成员之后改过它。")).to_be_visible(timeout=10000)
     expect(cell(pb, "B5")).to_contain_text("乙")
+    at_rest(pa, pb, tid, wid, "after undo")
     note(notes, f"{engine}: the owner's undo took back C6 on both pages, then skipped B5 (the editor changed it since) and said so")
+
+    # ---- a sheet deleted while someone types on it: nothing is written anywhere else, and it can be restored
+    pb.get_by_role("button", name="添加工作表").click()
+    expect(pb.locator(".sheettab[aria-current=true]")).to_have_text("Sheet2")
+    expect(pa.locator(".sheettab").filter(has_text=re.compile("^Sheet2$"))).to_have_count(1, timeout=10000)
+    cell(pb, "A1").click()
+    cell(pb, "A1").dblclick()
+    pb.get_by_label(re.compile("^编辑单元格 A1$")).fill("写在新表上")        # typing, not committed yet
+    pa.locator(".sheettab").filter(has_text=re.compile("^Sheet2$")).click()
+    pa.get_by_role("button", name="删除当前表").click()
+    pa.locator(".modal").get_by_role("button", name="删除工作表").click()
+    expect(pb.get_by_text("工作表「Sheet2」已被删除，你在 A1 输入的「写在新表上」没有写入。")).to_be_visible(timeout=10000)
+    expect(pb.locator(".sheettab[aria-current=true]")).to_have_text("结果")
+    expect(cell(pb, "A1")).to_have_text("客户")                             # not written into the sheet shown now
+    pb.locator("[data-testid=sheet-restore]").select_option(label="恢复「Sheet2」")
+    expect(pa.locator(".sheettab").filter(has_text=re.compile("^Sheet2$"))).to_have_count(1, timeout=10000)
+    expect(pb.locator(".sheettab[aria-current=true]")).to_have_text("Sheet2")
+    pb.locator(".sheettab").filter(has_text=re.compile("^结果$")).click()
+    at_rest(pa, pb, tid, wid, "after the restore")
+    note(notes, f"{engine}: the owner deleted the sheet the phone was typing on: the phone said what it had typed was not written, showed 结果 unchanged, and restored the sheet from 「已删除的工作表」 — back on both pages")
 
     # ---- save: the room becomes a version holding all of it
     pa.get_by_role("button", name="保存模板").click()
@@ -301,31 +440,36 @@ def live_flow(a, b, engine: str, docs: str, tid: str, ha: dict, *, owner_name: s
     v = pa.request.get(f"{docs}/api/templates/{tid}", headers=ha).json()
     sh = v["version"]["editor"]["sheets"][0]
     cells = {k: c.get("v") for k, c in sh["cells"].items()}
-    want = {"B3": "张三", "C4": 100, "A2": "手机离线写的", "B8": "离线追加", "D2": "重启前", "D3": "重启中输入", "B5": "乙"}
+    want = {"B3": "张三", "C4": 100, "A2": "手机离线写的", "B8": "离线追加", "D2": "重启前", "D3": "重启中输入", "E2": "崩溃前", "E3": "崩溃中输入", "B5": "乙"}
     assert v["head"] == 2 and all(str(cells.get(k)) == str(x) for k, x in want.items()), cells
     assert "C6" not in cells and len(sh["rows"]) == rows_after and "D6:E6" in (sh.get("merges") or []), (len(sh["rows"]), sh.get("merges"))
     expect(pa.locator(".topbar .badge.ok").filter(has_text=re.compile("^已保存$"))).to_have_count(1)
     note(notes, f"{engine}: the save became v2 with every cell above, {rows_after} rows, the merged D6:E6 and not the undone C6; the phone was told")
 
     # ---- the phone in English and Traditional Chinese: the interface is translated, nothing scrolls sideways
-    # data stays as typed: cell values, names, the number format 「yyyy年m月d日」, the language names
-    data = set(CJK.findall(str(SHEET) + str(want) + template_name + owner_name + editor_name + " " + owner_name[:1] + " " + editor_name[:1] + " yyyy年m月d日 区域 甲 桌面写的 要撤销 简体中文 繁體中文"))
-    ui_text = """() => { const skip = new Set([...document.querySelectorAll('.toasts, [aria-live]')]);
+    # data is left out of the walk (the grid, sheet names, field names, and toasts or announcements
+    # still in the language they were said in); what is left is interface text, apart from the language
+    # names, people's and sheets' names (a presence label says where someone is) and the number format 「yyyy年m月d日」
+    sheet_names = " ".join(x["name"] for x in SHEET["sheets"])
+    data = set("".join(CJK.findall(f"简体中文 繁體中文 yyyy年m月d日 {owner_name} {editor_name} {sheet_names}")))
+    simplified = simplified_only()
+    assert {"实", "时", "协", "这", "删", "设"} <= simplified, "the catalogues were not read"
+    ui_text = """() => { const skip = new Set([...document.querySelectorAll('.toasts, [aria-live], .grid-canvas, .sheettabs .sheettab, .maplist .grow, .fldchip')]);
       const walk = (n) => skip.has(n) ? '' : n.nodeType === 3 ? n.textContent : [...n.childNodes].map(walk).join(' ');
       return walk(document.body); }"""
     for lang, live_word in (("en", "Live"), ("zh-Hant", "即時協同中")):
         pb.get_by_label(re.compile("^(语言|語言|Language)$")).select_option(lang)
         expect(status(pb)).to_have_text(live_word)
-        stray = sorted(set(CJK.findall(pb.evaluate(ui_text))) - data)
-        if lang == "en":
-            assert not stray, f"Chinese left in the English page: {stray}"
+        seen = set("".join(CJK.findall(pb.evaluate(ui_text)))) - data
+        stray = sorted(seen if lang == "en" else seen & simplified)
+        assert not stray, f"{'Chinese left in the English page' if lang == 'en' else 'Simplified-only characters in the Traditional Chinese page'}: {stray}"
         pb.screenshot(path=str(SHOTS / f"{engine}-04-phone-{lang}.png"), full_page=True)
     pb.get_by_label(re.compile("^(语言|語言|Language)$")).select_option("zh-Hans")
     w = pb.evaluate("() => [document.documentElement.scrollWidth, window.innerWidth]")
     assert w[0] <= w[1] + 1, w
     bar = pb.locator("[data-testid=sheet-presence]").bounding_box()
     assert bar and bar["x"] + bar["width"] <= 390 + 1, bar
-    note(notes, f"{engine}: the phone reads 'Live' / '即時協同中' with no Chinese interface text left in English; no sideways scrolling at 390 px")
+    note(notes, f"{engine}: the phone reads 'Live' / '即時協同中' with no Chinese interface text left in English and no Simplified-only character ({len(simplified)} known from the catalogues) in Traditional Chinese; no sideways scrolling at 390 px")
     assert not violations, violations
     return notes
 
@@ -335,6 +479,8 @@ def main():
     if len(args) != 3:
         raise SystemExit(__doc__)
     accounts, docs, mail_dir = require_test_instance(args[0]), require_test_instance(args[1]), Path(args[2])
+    if restart_refusal():
+        raise SystemExit(restart_refusal())
 
     def show(engine: str, notes: list[str]):
         print(f"\n== {engine}")

@@ -8,13 +8,17 @@ during the outage; a save afterwards produces a version holding everything.
 
     .venv/bin/python services/identity/scripts/ui_e2e_restart_live.py http://accounts.localhost:31770 http://docweave.localhost:31765 <mail dir> [--webkit]
 
-Only ever pointed at the isolated instance: it restarts the service it is given.
+Only ever pointed at the isolated instance: it restarts the service it is given — through
+`SYNWEVO_E2E_DOCS_CTL` when set (the instance's own control command), else this checkout's
+`platform.py`, and then only when `SYNWEVO_DATA_DIR` points outside the repository (`platform.py`
+would otherwise start the service on the repository's own data/).
 """
 from __future__ import annotations
 
 import os
 import re
 import secrets
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -33,11 +37,49 @@ SHOTS = Path(os.environ.get("SYNWEVO_E2E_SHOTS") or Path(tempfile.gettempdir()) 
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def restart_refusal() -> str | None:
+    """Why this script must not stop or start a Docs service from here, or None.
+
+    `SYNWEVO_E2E_DOCS_CTL` names the isolated instance's own control command (the action — stop,
+    start or kill — is appended): nothing is guessed. Without it, this checkout's `platform.py` does
+    the work, and `platform.py` falls back to the repository's data/ when SYNWEVO_DATA_DIR is not set
+    in its environment — so it is used only when SYNWEVO_DATA_DIR points outside the repository."""
+    if os.environ.get("SYNWEVO_E2E_DOCS_CTL", "").strip():
+        return None
+    raw = os.environ.get("SYNWEVO_DATA_DIR") or os.environ.get("DOCWEAVE_DATA_DIR")
+    if not raw:
+        return ("set SYNWEVO_E2E_DOCS_CTL to the isolated instance's control command, or SYNWEVO_DATA_DIR to its data "
+                "directory: without it platform.py would restart Docs on the repository's data/")
+    d = Path(raw).expanduser()
+    d = (d if d.is_absolute() else ROOT / d).resolve()
+    root = ROOT.resolve()
+    if d == root or root in d.parents:
+        return f"SYNWEVO_DATA_DIR ({d}) is inside the repository: this script only restarts an isolated instance"
+    return None
+
+
+def docs_ctl(action: str) -> None:
+    """Stop (graceful: SIGTERM), kill (SIGKILL: no closing write) or start the isolated instance's
+    Docs service."""
+    assert action in ("stop", "kill", "start"), action
+    why = restart_refusal()
+    if why:
+        raise SystemExit(why)
+    ctl = os.environ.get("SYNWEVO_E2E_DOCS_CTL", "").strip()
+    if ctl:
+        cmd = shlex.split(ctl) + [action]
+    else:
+        cmd = [sys.executable, str(ROOT / "scripts" / "platform.py")] + {"stop": ["down", "docs"], "kill": ["down", "docs", "--kill"],
+                                                                          "start": ["up", "docs"]}[action]
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stdout[-400:] + p.stderr[-400:]
+
+
 def restart_docs() -> float:
     """The real restart path of this instance; returns how long the service was gone."""
     t0 = time.time()
-    p = subprocess.run([sys.executable, str(ROOT / "scripts" / "platform.py"), "restart", "docs"], capture_output=True, text=True, timeout=120)
-    assert p.returncode == 0, p.stdout[-400:] + p.stderr[-400:]
+    docs_ctl("stop")
+    docs_ctl("start")
     return time.time() - t0
 
 
@@ -149,6 +191,8 @@ def main():
     if len(args) != 3:
         raise SystemExit(__doc__)
     accounts, docs, mail_dir = require_test_instance(args[0]), require_test_instance(args[1]), Path(args[2])
+    if restart_refusal():
+        raise SystemExit(restart_refusal())
 
     def show(engine: str, notes: list[str]):
         print(f"\n== {engine}")

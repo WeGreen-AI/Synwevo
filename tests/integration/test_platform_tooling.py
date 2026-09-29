@@ -97,6 +97,27 @@ def test_down_does_not_signal_a_process_that_merely_inherited_the_pid(platform, 
         victim.wait(timeout=10)
 
 
+def test_down_kill_ends_the_service_at_once_without_a_graceful_shutdown(platform, tmp_path, monkeypatch):
+    """`down --kill` is the crash rehearsal of ui_e2e_sheet_live.py: no SIGTERM (a graceful shutdown
+    writes the live rooms out), the process is gone at once."""
+    # TEST DOUBLE: a process standing in for the service that ignores SIGTERM, taken as ours.
+    victim = subprocess.Popen([sys.executable, "-c", "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"])
+    try:
+        time.sleep(0.3)
+        monkeypatch.setattr(platform, "RUN", tmp_path)
+        (tmp_path / "docs.pid").write_text(str(victim.pid))
+        monkeypatch.setattr(platform, "_alive", lambda name: victim.pid if victim.poll() is None else None)
+        t0 = time.monotonic()
+        platform.down(type("A", (), {"services": ["docs"], "kill": True})())
+        assert victim.wait(timeout=5) == -signal.SIGKILL
+        assert time.monotonic() - t0 < 2, "no graceful wait first"
+        assert not (tmp_path / "docs.pid").exists()
+    finally:
+        if victim.poll() is None:
+            victim.send_signal(signal.SIGKILL)
+            victim.wait(timeout=10)
+
+
 def test_a_relative_data_dir_means_the_same_directory_from_anywhere(platform, monkeypatch, tmp_path):
     monkeypatch.setenv("SYNWEVO_DATA_DIR", "some/relative/data")
     monkeypatch.chdir(tmp_path)
