@@ -74,6 +74,8 @@ export interface Attention {
 }
 
 export interface UndoEntry { patch: PatchEntry[]; before: PatchEntry[]; label: OpLabel; epoch: string }
+/** What an undo did: whether operations were sent, and what was left alone (and why). */
+export interface UndoResult { sent: boolean; skipped: Skipped[]; label: OpLabel }
 export interface Recent { by: Person; until: number }
 export interface Announcement { by: string | null; where: string; count: number }
 
@@ -167,6 +169,10 @@ export class SheetSync {
   private dots = new Map<string, Set<string>>();
   private prevOutside = new Map<string, any>();
   private undoStack: UndoEntry[] = [];
+  private undoWanted = 0;
+  /** The result of an undo asked for while my change was on its way (null: that change did not
+   *  happen after all, so there was nothing to undo). */
+  onUndone: ((r: UndoResult | null) => void) | null = null;
   private announceQueue: Announcement[] = [];
   private viewing: string | null = null;
   me: string | null = null;
@@ -211,7 +217,8 @@ export class SheetSync {
     return {
       status: this.status(), pending: this.pending.length, live: this.live, liveReason: this.liveReason, stale: this.stale,
       readonly: this.readonly, epoch: this.epoch, seq: this.seq, persisted: this.persisted, version: this.version,
-      attention: [...this.attention], canUndo: this.undoStack.some((u) => u.epoch === this.epoch), closed: this.closed, limits: this.limits,
+      attention: [...this.attention], canUndo: this.undoStack.some((u) => u.epoch === this.epoch) || this.pending.some((p) => p.undoable),
+      closed: this.closed, limits: this.limits,
     };
   }
 
@@ -406,6 +413,10 @@ export class SheetSync {
     }
     for (const p of applied) if (p.undoable && p.local && p.local.patch.length) this.pushUndo(p.local.patch, p.local.before, p.label);
     const gone = new Set<Pending>([...applied, ...refused.map(([p]) => p), ...unknown]);
+    if (this.undoWanted && [...refused.map(([p]) => p), ...unknown].some((p) => p.undoable)) {
+      this.undoWanted = 0;                                           // the change an undo waited for did not happen (or may not have)
+      this.onUndone?.(null);
+    }
     for (const [p, code] of refused) this.addAttention(code === "conflict" ? "conflict" : "refused", code, {}, {}, p);
     for (const p of unknown) this.addAttention("unknown", "unknown", {}, {}, p);
     this.pending = this.pending.filter((p) => !gone.has(p));
@@ -414,6 +425,7 @@ export class SheetSync {
     this.nextN = Math.max(next, 1);
     this.waitUntil = 0;
     for (const p of this.pending) this.show(p);
+    this.runDeferredUndo();
     this.changed(true);
     this.flush();
   }
@@ -566,6 +578,7 @@ export class SheetSync {
         });
         if (p.undoable && patch.length && Array.isArray(a.before)) this.pushUndo(patch, a.before, p.label);
       }
+      this.runDeferredUndo();
       this.changed(true);
       this.flush();
       return;
@@ -614,6 +627,14 @@ export class SheetSync {
   private removePending(p: Pending) {
     if (!this.pending.includes(p)) return;
     this.rebase(() => { this.pending = this.pending.filter((x) => x !== p); });
+    this.cancelDeferredUndo(p);
+  }
+
+  /** My change an undo was waiting for was refused or dropped: that undo has nothing to take back. */
+  private cancelDeferredUndo(p: Pending) {
+    if (!p.undoable || !this.undoWanted || this.pending.some((x) => x.undoable)) return;
+    this.undoWanted--;
+    this.onUndone?.(null);
   }
 
   private addAttention(kind: AttentionKind, code: string, detail: Record<string, any>, people: Record<string, Person>, p: Pending) {
@@ -629,6 +650,7 @@ export class SheetSync {
     for (const p of gone) this.attention.push({ id: ++this.attnNo, kind, code, detail: {}, people: {}, label: p.label, retry: null });
     this.pending = this.pending.filter((p) => !gone.includes(p));
     for (const w of this.wire) if (w.kind === "op" && w.p && gone.includes(w.p)) w.p = null;
+    if (gone.some((p) => p.undoable)) this.undoWanted = 0;          // what they were waiting for is gone
   }
 
   // ------------------------------------------------------------------ what the person decides
@@ -655,9 +677,28 @@ export class SheetSync {
     if (this.undoStack.length > 100) this.undoStack.shift();
   }
 
-  /** Undo my last accepted operation, from the server's own inverse, where nothing changed since.
-   *  null when there is nothing to undo; else whether something was sent and what was skipped (why). */
-  undo(): { sent: boolean; skipped: Skipped[]; label: OpLabel } | null {
+  /** Undo my last operation, from the server's own inverse, where nothing changed since. null when
+   *  there is nothing to undo; "deferred" when my last change is still on its way — it is undone once
+   *  the server has answered (the result then goes to `onUndone`), never the one before it; else whether
+   *  something was sent and what was skipped (why). */
+  undo(): UndoResult | "deferred" | null {
+    if (this.pending.some((p) => p.undoable)) {
+      this.undoWanted++;
+      this.changed();
+      return "deferred";
+    }
+    return this.undoNow();
+  }
+
+  /** Undos asked for while my change was on its way, now that it has been answered. */
+  private runDeferredUndo() {
+    while (this.undoWanted > 0 && !this.pending.some((p) => p.undoable)) {
+      this.undoWanted--;
+      this.onUndone?.(this.undoNow());
+    }
+  }
+
+  private undoNow(): UndoResult | null {
     while (this.undoStack.length && this.undoStack[this.undoStack.length - 1].epoch !== this.epoch) this.undoStack.pop();
     const u = this.undoStack.pop();
     if (!u || !this.base) return null;

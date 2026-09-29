@@ -418,7 +418,7 @@ test("undo puts back my own value, and skips a cell someone else changed since",
   pump(room);
   b.sync.submit(set(1, 1, "李四改过"));
   pump(room);
-  const undone = a.sync.undo()!;
+  const undone = a.sync.undo() as any;
   assert.ok(undone.sent);
   assert.equal(undone.skipped.length, 1);
   setLocale("zh-Hans");
@@ -430,6 +430,28 @@ test("undo puts back my own value, and skips a cell someone else changed since",
   pump(room);
   assert.equal(cellOf(room.content, "A1"), undefined);
   assert.equal(a.sync.undo(), null, "nothing left to undo (an undo is not itself undone)");
+});
+
+test("undo pressed while my last change is on its way undoes that change once answered, not the one before", () => {
+  const { room, a } = twoTabs();
+  a.sync.submit(set(0, 5, "前一次"));
+  pump(room);
+  const results: any[] = [];
+  a.sync.onUndone = (r) => results.push(r);
+  a.sync.submit(set(0, 6, "刚输入"));                  // on its way
+  assert.equal(a.sync.undo(), "deferred");
+  assert.ok(a.sync.snapshot().canUndo);
+  pump(room);                                         // answered, then undone
+  assert.equal(results.length, 1);
+  assert.ok(results[0].sent);
+  assert.equal(cellOf(room.content, "G1"), undefined, "the change that was on its way is undone");
+  assert.equal(cellOf(room.content, "F1"), "前一次", "the one before it is not");
+  // the change an undo waits for is refused: there is nothing to undo, and nothing older is undone
+  a.sync.submit({ op: "set", sheet: SID, row: "zzzzzzzz", col: C(0), v: "没有这一行" });
+  assert.equal(a.sync.undo(), "deferred");
+  pump(room);
+  assert.deepEqual(results.slice(1), [null]);
+  assert.equal(cellOf(room.content, "F1"), "前一次");
 });
 
 test("undo of styles, sizes, merges, fields and sheets; added rows cannot be taken away", () => {
@@ -444,12 +466,12 @@ test("undo of styles, sizes, merges, fields and sheets; added rows cannot be tak
   ];
   const start = copy(room.content);
   for (const op of ops) { a.sync.submit(op); pump(room); }
-  for (let i = 0; i < ops.length; i++) { assert.ok(a.sync.undo()!.sent); pump(room); }
+  for (let i = 0; i < ops.length; i++) { assert.ok((a.sync.undo() as any).sent); pump(room); }
   assert.deepEqual(projectSheet(room.content, SID), projectSheet(start, SID));
   assert.ok(room.content.sheets.shtundo1.gone, "the new sheet is deleted (restorable until a save)");
   a.sync.submit({ op: "append_rows", sheet: SID, count: 1, ids: ["apprw009"] });
   pump(room);
-  const u = a.sync.undo()!;
+  const u = a.sync.undo() as any;
   assert.equal(u.sent, false);
   assert.equal(u.skipped[0].reason, "append");
   setLocale("en");

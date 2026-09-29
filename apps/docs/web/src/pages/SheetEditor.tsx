@@ -13,7 +13,7 @@ import { errorText } from "../lib/perm";
 import { loadedVersion, saveOverStale, STALE_TITLE, staleText } from "../lib/templatesave";
 import { openSheetRoom, type SheetRoom } from "../lib/sheetroom";
 import { COL_WIDTH, MAX_TX, ROW_HEIGHT, filled, liveSheetIds, projectSheet, type Content } from "../lib/sheetmodel";
-import { randomId, type Attention, type SyncSnapshot } from "../lib/sheetsync";
+import { randomId, type Attention, type SyncSnapshot, type UndoResult } from "../lib/sheetsync";
 import { announcementText, attentionText, closeText, liveReasonText, retryText, saveRefusalText, saveText, skippedText, statusText } from "../lib/sheettext";
 
 interface Cell { v?: string | number | boolean | null; t?: string | null; s?: any }
@@ -232,9 +232,11 @@ export default function SheetEditor() {
   // screen readers hear what others changed, at most every 2 s
   useEffect(() => {
     if (!liveMode || !sroom) return;
+    let quiet = 0;
     const timer = window.setInterval(() => {
       const items = sroom.sync.takeAnnouncements();
-      if (items.length) setSaid(items.slice(-3).map(announcementText).join("；"));
+      if (items.length) { setSaid(items.slice(-3).map(announcementText).join("；")); quiet = 0; }
+      else if (++quiet === 3) setSaid("");                // said: an announcement is not left behind for later
     }, 2000);
     return () => window.clearInterval(timer);
   }, [liveMode, sroom]);
@@ -319,11 +321,20 @@ export default function SheetEditor() {
     return ops;
   };
 
+  const undone = (r: UndoResult | null) => {
+    if (!r) toast(tr("没有可撤销的修改。"), "info");
+    else if (r.skipped.length) toast(r.skipped.map((s) => skippedText(s, sids.length)).join(" "), "info");
+  };
+  // an undo pressed while my change was still on its way happens once the server has answered it
+  useEffect(() => {
+    if (!sroom) return;
+    sroom.sync.onUndone = undone;
+    return () => { sroom.sync.onUndone = null; };
+  });
   const undo = () => {
     if (liveMode && sroom) {
       const r = sroom.sync.undo();
-      if (!r) toast(tr("没有可撤销的修改。"), "info");
-      else if (r.skipped.length) toast(r.skipped.map((s) => skippedText(s, sids.length)).join(" "), "info");
+      if (r !== "deferred") undone(r);
       return;
     }
     const h = hist[hist.length - 1]; if (h) { setSheets(h); setHist(hist.slice(0, -1)); chooseSheet(Math.min(si, h.length - 1)); setDirty(true); }
