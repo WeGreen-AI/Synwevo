@@ -80,6 +80,9 @@ services:
       # nothing already accepted stops working (docs/security/file-acceptance.md).
       SYNWEVO_CLAMD_ADDRESS: tcp://clamav:3310
       SYNWEVO_MALWARE_SCAN: required
+      # SYNWEVO_SHEET_LIVE (live tables: a trial's workspace ids) is set in runtime.env, never here:
+      # installing this file must not end a trial, and a value here would override runtime.env
+      # (docs/operations.md §10).
     depends_on:
       accounts: {condition: service_healthy}
       # Not `service_healthy`: Synwevo Docs must start (and serve already-accepted files) even
