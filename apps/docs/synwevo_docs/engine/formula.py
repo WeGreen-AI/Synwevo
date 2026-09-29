@@ -651,14 +651,22 @@ def _is_lazy(kind):
     return f
 
 
-_SUBTOTAL_CALL = re.compile(r"(?i)(?<![\w.])(?:_xlfn\.)?(?:SUBTOTAL|AGGREGATE)\s*\(")
+_SUBTOTAL_CALL = re.compile(r"(?i)(?<![\w.])(?:_xlfn\.)?SUBTOTAL\s*\(")
+_AGGREGATE_CALL = re.compile(r"(?i)(?<![\w.])(?:_xlfn\.)?AGGREGATE\s*\(")
 _STRING_LIT = re.compile(r'"(?:[^"]|"")*"')
 
 
+def _calls(cell, pattern) -> bool:
+    return bool(cell) and cell[0] in ("f", "f!") and bool(pattern.search(_STRING_LIT.sub('""', cell[1] or "")))
+
+
 def _is_subtotal_cell(cell) -> bool:
-    """A cell whose formula calls SUBTOTAL (or AGGREGATE): another SUBTOTAL skips it, so a grand
-    total over a range holding section subtotals does not count them twice (as Excel does)."""
-    return bool(cell) and cell[0] in ("f", "f!") and bool(_SUBTOTAL_CALL.search(_STRING_LIT.sub('""', cell[1] or "")))
+    """A cell whose formula calls SUBTOTAL: another SUBTOTAL skips it, so a grand total over a range
+    holding section subtotals does not count them twice (as Excel does). Whether SUBTOTAL also skips
+    AGGREGATE results is documented for AGGREGATE only: such a range is left to the fallback."""
+    if _calls(cell, _AGGREGATE_CALL):
+        raise Unsupported("SUBTOTAL 的区域里有 AGGREGATE 的结果")
+    return _calls(cell, _SUBTOTAL_CALL)
 
 
 def _variance(xs: list[float], sample: bool) -> float:
@@ -1486,8 +1494,10 @@ def book_from_xlsx(x) -> Book:
         root = x.sheet_root(sh["name"])
         hidden[sh["name"]] = {int(row.get("r")) - 1 for row in root.iter(S("row"))
                               if row.get("hidden") in ("1", "true") and row.get("r")}
-        if root.find(S("autoFilter")) is not None or any(rel.type.endswith("/table") for rel in x.pkg.rels(sh["part"])):
-            filtered.add(sh["name"])
+        pr = root.find(S("sheetPr"))
+        if root.find(S("autoFilter")) is not None or any(rel.type.endswith("/table") for rel in x.pkg.rels(sh["part"])) \
+                or (pr is not None and pr.get("filterMode") in ("1", "true")):
+            filtered.add(sh["name"])            # an AutoFilter, a table's filter, or an Advanced Filter in place
         d: dict[tuple[int, int], tuple] = {}
         for c in root.iter(S("c")):
             m = _CELLREF.match(c.get("r") or "")
@@ -1524,6 +1534,14 @@ def book_from_xlsx(x) -> Book:
     dn = x.wb.find(S("definedNames"))
     if dn is not None:
         for el in dn.findall(S("definedName")):
+            if el.get("name") == "_xlnm._FilterDatabase":
+                # the range an Advanced Filter (or an AutoFilter) filters: its sheet may hide filtered rows
+                idx = el.get("localSheetId")
+                if idx is not None and idx.isdigit() and int(idx) < len(x.sheets):
+                    filtered.add(x.sheets[int(idx)]["name"])
+                else:
+                    text = el.text or ""
+                    filtered.update(sh["name"] for sh in x.sheets if text.lstrip("=").startswith((sh["name"] + "!", "'" + sh["name"].replace("'", "''") + "'!")))
             nm = el.get("name") or ""
             if nm.startswith("_xlnm.") or nm.startswith("_dw_") or el.get("localSheetId") is not None:
                 continue

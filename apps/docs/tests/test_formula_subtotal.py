@@ -103,6 +103,56 @@ def test_rows_hidden_under_a_filter_are_left_to_the_fallback():
                                                                          ("D10", "SUBTOTAL 遇到可能被筛选隐藏的行")]
 
 
+def _advanced_filter(filter_mode: bool, database: bool) -> bytes:
+    """TEST FIXTURE: rows 3–4 hidden by an Advanced Filter applied in place — `sheetPr filterMode`
+    and/or the `_xlnm._FilterDatabase` name, no <autoFilter> element."""
+    import zipfile
+    from openpyxl.workbook.defined_name import DefinedName
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "S"
+    ws["A1"] = "值"
+    for i, v in enumerate([1, 2, 3, 4], start=2):
+        ws.cell(i, 1, v)
+    ws.row_dimensions[3].hidden = ws.row_dimensions[4].hidden = True
+    ws["C1"] = "=SUBTOTAL(9,A2:A5)"
+    if database:
+        wb.defined_names["_xlnm._FilterDatabase"] = DefinedName("_xlnm._FilterDatabase", localSheetId=0, hidden=True, attr_text="S!$A$1:$A$5")
+    b = io.BytesIO()
+    wb.save(b)
+    if not filter_mode:
+        return b.getvalue()
+    zin = zipfile.ZipFile(b)
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        for n in zin.namelist():
+            d = zin.read(n)
+            if n == "xl/worksheets/sheet1.xml":
+                d = d.replace(b"<sheetPr>", b'<sheetPr filterMode="1">') if b"<sheetPr>" in d else \
+                    d.replace(b"<sheetPr", b'<sheetPr filterMode="1"', 1) if b"<sheetPr" in d else \
+                    d.replace(b"<dimension", b'<sheetPr filterMode="1"/><dimension', 1)
+            z.writestr(n, d)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("filter_mode,database", [(True, True), (True, False), (False, True)])
+def test_rows_hidden_by_an_advanced_filter_are_left_to_the_fallback(filter_mode, database):
+    """Round 2, item 5: an Advanced Filter in place has no <autoFilter> element; the engine took its
+    hidden rows for rows hidden by hand and gave 10 where Excel (skipping filtered rows) gives 5."""
+    rep = compute_workbook(XlsxDoc(_advanced_filter(filter_mode, database)))
+    assert [(ref, why) for _, ref, why in rep["unsupported"]] == [("C1", "SUBTOTAL 遇到可能被筛选隐藏的行")]
+
+
+def test_a_range_holding_aggregate_results_is_left_to_the_fallback():
+    """Round 2, item 6: that SUBTOTAL skips AGGREGATE results is documented for AGGREGATE, not for
+    SUBTOTAL — not guessed."""
+    b = Book({"S": {(0, 0): ("v", 1.0), (1, 0): ("f", "AGGREGATE(9,6,A1:A1)"), (2, 0): ("f", "SUBTOTAL(9,A1:A2)"),
+                    (3, 0): ("f", "SUBTOTAL(9,A1)")}})
+    with pytest.raises(Unsupported, match="AGGREGATE"):
+        b.value("S", 2, 0)
+    assert b.value("S", 3, 0) == 1.0
+
+
 # LibreOffice differs from Excel in two places, so they are not compared: it has no logical type
 # (TRUE in a range is the number 1, which COUNT then counts), and a SUBTOTAL over a single cell that
 # is itself a SUBTOTAL result is not skipped there. The engine follows Excel's rules for both.
