@@ -142,7 +142,9 @@ _ZIP_SIGS = re.compile(rb"PK(\x03\x04|\x01\x02)")
 #: MiB scan limit holds at most ~335 000 entries (~670 000 headers). Above this: cannot be checked.
 _ZIP_MAX_HEADERS = 700_000
 #: Compression methods of real ZIP entries (APPNOTE 4.4.5), 99 being WinZip AES.
-_ZIP_METHODS = frozenset({0, 1, 6, 8, 9, 12, 14, 19, 93, 95, 96, 97, 98, 99})
+# Every compression method number APPNOTE.TXT (4.4.5) defines: a flagged header with any of them is
+# a header some reader may accept, so it is never discarded as junk (only unassigned numbers are).
+_ZIP_METHODS = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 19, 93, 94, 95, 96, 97, 98, 99})
 _MANIFEST = b"META-INF/manifest.xml"
 _MANIFEST_BUDGET = 16 * 1024 * 1024
 _ODF_ENCRYPTED = re.compile(rb"<(?:[\w.-]+:)?encryption-data\b")
