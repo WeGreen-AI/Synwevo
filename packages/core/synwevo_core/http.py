@@ -149,7 +149,16 @@ MESSAGING_PREFIX = "/api/messaging/"
 # authorized by the messaging service layer, per organization, not per workspace); everything
 # else under /api/ on a role that serves Synwevo Docs is Docs' own and is checked against
 # workspace and application access.
-ACCOUNT_LEVEL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/portal/", MESSAGING_PREFIX)
+#: The business applications on the workplace origin (Forms, Tables, DataPrep, Approvals, Extract,
+#: the personal Agent; docs/agent-work/DECISIONS.md D1). Served by the `portal` role and by `all`.
+#: They authorize every call themselves, per application and per explicitly named workspace
+#: (the capability layer, capabilities.py), so on `all` they are not Synwevo Docs routes: the Docs gate would
+#: check the wrong application and read the workspace from the tab binding.
+SUITE_PREFIX = "/api/suite/"
+#: The part of it a person without an account reaches: a published form's public link and a
+#: personal fill-in request link. The link's own token is the authority; the handlers check it.
+SUITE_PUBLIC_PREFIX = "/api/suite/public/"
+ACCOUNT_LEVEL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/portal/", MESSAGING_PREFIX, SUITE_PREFIX)
 ACCOUNT_LEVEL_EXACT = frozenset({"/api/health"})
 
 
@@ -878,6 +887,13 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             if (path not in ANON_AUTH_PATHS or path in session_mutations) and not csrf_ok(request.cookies.get(CSRF_COOKIE), sent):
                 return _error_response(request, 403, "csrf_failed", "请求校验失败，请刷新页面后重试", None)
 
+        if path.startswith(SUITE_PUBLIC_PREFIX):
+            # A public form or a fill-in link: no session needed, but someone who is signed in is
+            # known to the handler (a personal request can require its addressee to sign in).
+            user = identity.get_user(session["user_id"]) if session else None
+            request.state.user = user if user and user["status"] == "active" else None
+            return "__anonymous__"
+
         if path in ANON_AUTH_PATHS or not path.startswith("/api/"):
             # The SPA shell renders for anyone; it fetches nothing until a session exists. The
             # fallback is deliberately an id no row carries rather than UI_TENANT — see below.
@@ -1011,8 +1027,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 return "账户、安全与平台管理在账户服务上统一管理，请访问账户服务地址"
         if this_role == "app" and path.startswith("/api/portal/"):
             return "门户接口在平台门户上，不在业务应用上"
+        if path.startswith(SUITE_PREFIX) and this_role != "portal":
+            return "表单、数据表、数据整理、审批、信息提取与个人 Agent 在工作空间源站上，不在本服务上"
         if this_role == "portal" and not is_account and not path.startswith("/auth/") \
-                and not path.startswith("/api/portal/"):
+                and not path.startswith(("/api/portal/", SUITE_PREFIX)):
             return "该接口不在平台门户上"
         return None
 

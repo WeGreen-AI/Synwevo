@@ -9,6 +9,7 @@
     "apps/docs/web",
     "apps/portal/web",
     "apps/messages/web",
+    "apps/suite/web",
     "services/identity/web"
   ],
   "scripts": {
@@ -17,7 +18,8 @@
     "build:docs": "npm run build -w @synwevo/docs-web",
     "build:workspace": "npm run build -w @synwevo/workspace-web",
     "build:account": "npm run build -w @synwevo/account-web",
-    "build:messages": "npm run build -w @synwevo/messages-web"
+    "build:messages": "npm run build -w @synwevo/messages-web",
+    "build:suite": "npm run build -w @synwevo/suite-web"
   },
   "repository": {
     "type": "git",

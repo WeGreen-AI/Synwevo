@@ -5,4 +5,5 @@
 -r ../../apps/docs/requirements.txt
 -r ../../apps/portal/requirements.txt
 -r ../../apps/messages/requirements.txt
+-r ../../apps/suite/requirements.txt
 -r ../../services/identity/requirements.txt

@@ -866,6 +866,11 @@ class Store:
         # idle under older code; `conversations.purpose` is ignored by it.
         from .messaging_bridge import COLUMNS as MESSAGING_BRIDGE_COLUMNS, SCHEMA as MESSAGING_BRIDGE_SCHEMA
         c.executescript(MESSAGING_BRIDGE_SCHEMA)
+        # Business applications on the workplace origin (docs/agent-work/DECISIONS.md D1, D2): the
+        # capability layer's run records and event outbox, then each application's own tables.
+        # Additive only; rollback: older code never reads them.
+        from .suite_schema import apply as apply_suite_schema
+        apply_suite_schema(c)
         with self.tx() as t:
             for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}

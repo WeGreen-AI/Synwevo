@@ -70,8 +70,9 @@ def test_local_launcher_keeps_mail_credentials_in_accounts_only(platform, monkey
     ("docs", ["apps/docs/tests"]),
     ("identity", ["services/identity/tests"]),
     ("messages", ["apps/messages/tests"]),
+    ("suite", ["apps/suite/tests"]),
     ("integration", ["tests/integration"]),
-    ("all", ["apps/docs/tests", "services/identity/tests", "apps/messages/tests", "tests/integration"]),
+    ("all", ["apps/docs/tests", "services/identity/tests", "apps/messages/tests", "apps/suite/tests", "tests/integration"]),
 ])
 def test_each_documented_test_command_runs_the_right_suite(platform, monkeypatch, suite, dirs):
     ran = []

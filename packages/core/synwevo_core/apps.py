@@ -41,6 +41,16 @@ MESSAGES_APP_ID = "messages"
 # a person cannot reach their own account settings.
 PLATFORM_APP_ID = "platform"
 
+#: The business applications served on the workplace origin by `synwevo_suite`
+#: (docs/agent-work/DECISIONS.md D1). Workspace-scoped like Synwevo Docs, except the personal Agent.
+from .identity import SUITE_WORKSPACE_APPS  # noqa: E402
+SUITE_APP_IDS = SUITE_WORKSPACE_APPS + ("agent",)
+
+#: Applications that belong to a person rather than to a workspace. Like the portal, any live
+#: account may open them; what they can reach inside is authorized per call, in the workspace
+#: each call names (the capability layer, capabilities.py). Being able to open the Agent grants nothing.
+PERSONAL_APP_IDS = frozenset({"agent"})
+
 
 def entitlement_state(store: Store, workspace_id: str, app_id: str, user_id: str) -> str:
     """``granted``, ``revoked`` or ``none``: this person's entitlement row, as it applies to
@@ -185,6 +195,8 @@ class Apps:
             return False, None, "该应用不存在"
         if app["status"] != "active":
             return False, None, "该应用已停用"
+        if app_id in PERSONAL_APP_IDS:
+            return self._check_platform(user_id, None)
         if app_id == MESSAGES_APP_ID:
             # Organization-scoped, not workspace-scoped (see MESSAGES_APP_ID): the application is
             # open to every live account, and someone with no workspace at all still has their
@@ -434,3 +446,36 @@ def messages_origin(store: Store) -> str | None:
     from urllib.parse import urlsplit
     u = urlsplit(url)
     return f"{u.scheme}://{u.netloc}" if u.scheme and u.netloc else None
+
+
+def bootstrap_suite_app(store: Store, ident: Identity, *, app_id: str, name: str, icon: str,
+                        launch_url: str | None, released: bool) -> dict | None:
+    """Register one business application of the workplace origin. Run by the process that serves
+    them (portal or all), on every start; idempotent.
+
+    ``released`` is the deployment's decision (``SYNWEVO_SUITE_APPS``, DECISIONS.md D4). A released
+    application is registered, and adopted once into the workspaces that existed before it — the
+    same one-time adoption Synwevo Docs had, so members can use it without an administrator
+    switching it on. An application that is *not* released is marked disabled if a row exists,
+    with a marker so that releasing it again re-activates it; an application an operator disabled
+    by hand (no marker) stays disabled, because registration never touches ``status``.
+    """
+    if app_id not in SUITE_APP_IDS:
+        raise ValueError(f"unknown suite application {app_id}")
+    marker = f"suite_unreleased:{app_id}"
+    apps = Apps(store, ident)
+    if not released:
+        with store.tx() as t:
+            changed = t.execute("UPDATE apps SET status='disabled', updated_at=? WHERE id=? AND status='active'",
+                                (now(), app_id)).rowcount
+            if changed:
+                t.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (marker, str(now())))
+        return None
+    row = apps.register(app_id=app_id, name=name, icon=icon, launch_url=launch_url, access_policy=None)
+    if store.one("SELECT 1 FROM meta WHERE key=?", (marker,)):
+        with store.tx() as t:
+            t.execute("UPDATE apps SET status='active', updated_at=? WHERE id=?", (now(), app_id))
+            t.execute("DELETE FROM meta WHERE key=?", (marker,))
+    if app_id not in PERSONAL_APP_IDS:
+        apps.adopt_once(app_id)
+    return apps.get(app_id)

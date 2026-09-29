@@ -1,0 +1,61 @@
+/* The business applications' shell. Colours, spacing, radii and motion come only from the shared
+   tokens in @synwevo/ui/styles.css (scripts/check_design.py). */
+
+.suite-app { min-height: 100vh; min-height: 100dvh; background: var(--bg); }
+.suite-topbar { position: sticky; top: 0; z-index: 30; }
+
+/* The secondary bar: which workspace this page works in, then the application's sections. */
+.suite-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4);
+  padding: var(--sp-2) var(--sp-4); background: var(--surface); border-bottom: 1px solid var(--line); }
+.suite-ws { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.suite-ws select { max-width: 240px; }
+.suite-sections { display: flex; gap: var(--sp-1); overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 1; }
+.suite-sections::-webkit-scrollbar { display: none; }
+.suite-section { display: inline-flex; align-items: center; height: 32px; padding: 0 var(--sp-3); border-radius: var(--radius-sm);
+  color: var(--text-2); text-decoration: none; white-space: nowrap; font-size: var(--fs-4);
+  transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+.suite-section:hover { background: var(--surface-hover); color: var(--text); text-decoration: none; }
+.suite-section.on { background: var(--accent-weak); color: var(--accent-strong); font-weight: 600; }
+.suite-section:focus-visible { outline: none; box-shadow: var(--focus); }
+
+.suite-main { flex: 1; width: 100%; max-width: var(--content-w); margin: 0 auto; padding: var(--sp-5) var(--sp-4) var(--sp-6); }
+.suite-main.wide { max-width: none; }
+.suite-readonly { margin-bottom: var(--sp-4); }
+
+/* Page header inside an application. */
+.suite-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.suite-head h1 { margin: 0; font-size: var(--fs-7); line-height: 1.25; }
+.suite-head .lede { margin: var(--sp-1) 0 0; color: var(--text-2); }
+.suite-head .actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+/* Whole-area states. */
+.suite-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-3);
+  min-height: 160px; padding: var(--sp-5); color: var(--text-2); text-align: center; }
+.suite-state.err p:first-child { color: var(--err); }
+.suite-spinner { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: suite-spin 800ms linear infinite; }
+@keyframes suite-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .suite-spinner { animation: none; } }
+.suite-empty { padding: var(--sp-6) var(--sp-5); text-align: center; background: var(--panel); border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg); }
+.suite-empty-title { margin: 0 0 var(--sp-2); font-size: var(--fs-5); font-weight: 600; color: var(--text); }
+.suite-empty-action { margin-top: var(--sp-4); }
+.suite-ws-list { list-style: none; padding: 0; margin: var(--sp-3) 0 0; display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-2); }
+
+/* Lists of records. */
+.suite-list { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
+.suite-row { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line);
+  color: var(--text); text-decoration: none; min-width: 0; }
+.suite-row:first-child { border-top: 0; }
+a.suite-row:hover { background: var(--surface-hover); text-decoration: none; }
+a.suite-row:focus-visible { outline: none; box-shadow: inset var(--focus); }
+.suite-row .grow { min-width: 0; }
+.suite-row .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suite-row .sub { color: var(--muted); font-size: var(--fs-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .suite-main { padding: var(--sp-4) var(--sp-3) var(--sp-6); }
+  .suite-head h1 { font-size: var(--fs-6); }
+  .suite-head .actions { margin-left: 0; width: 100%; }
+  .suite-ws select { max-width: 60vw; }
+}

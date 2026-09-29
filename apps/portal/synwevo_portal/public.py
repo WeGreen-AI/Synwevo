@@ -202,7 +202,11 @@ def request_host(request: Request) -> str:
 #: the workspace itself, the sign-in start and the signed-out page. The sign-in *callback* and
 #: back-channel logout are not moved: an authorization code is only ever redeemed where it was
 #: issued for, never replayed to another address.
-WORKSPACE_PATHS = ("/workspace", "/auth/start", "/signed-out")
+WORKSPACE_PATHS = ("/workspace", "/auth/start", "/signed-out",
+                   # The business applications served on the workplace origin (synwevo_suite;
+                   # docs/agent-work/DECISIONS.md D1). Listed by path, not imported: the portal
+                   # does not depend on that module.
+                   "/forms", "/tables", "/dataprep", "/approvals", "/extract", "/agent")
 
 
 def _valid_origin(raw: str | None) -> str | None:

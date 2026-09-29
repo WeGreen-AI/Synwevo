@@ -14,7 +14,9 @@ requires-python = ">=3.12"
 #   authlib      — OIDC token signing and verification (synwevo_core.oidc)
 #   httpx        — back-channel logout delivery (synwevo_core.oidc)
 #   cryptography — AES-GCM for sealed secrets: TOTP seeds, webhook signing secrets (synwevo_core.sealed)
-dependencies = ["fastapi", "starlette", "argon2-cffi", "authlib", "httpx", "cryptography", "py-vapid", "http-ece"]
+#   pydantic     — operation input/output contracts (synwevo_core.capabilities)
+dependencies = ["fastapi", "starlette", "argon2-cffi", "authlib", "httpx", "cryptography", "py-vapid", "http-ece",
+                "pydantic"]
 
 [tool.setuptools.packages.find]
 include = ["synwevo_core*"]

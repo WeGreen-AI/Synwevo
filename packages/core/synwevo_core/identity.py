@@ -369,7 +369,10 @@ class Identity:
         if owner_id:
             t.execute("INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) "
                       "VALUES (?,?, 'owner', 1, ?,?,?)", (wid, owner_id, ts, ts, created_by))
-        for app_id in DEFAULT_WORKSPACE_APPS:
+        released = tuple(r["id"] for r in t.execute(
+            f"SELECT id FROM apps WHERE status='active' AND id IN ({','.join('?' for _ in SUITE_WORKSPACE_APPS)})",
+            SUITE_WORKSPACE_APPS).fetchall())
+        for app_id in DEFAULT_WORKSPACE_APPS + released:
             t.execute("INSERT INTO workspace_apps (workspace_id,app_id,enabled_at,enabled_by) "
                       "VALUES (?,?,?,?) ON CONFLICT(workspace_id,app_id) DO NOTHING",
                       (wid, app_id, ts, created_by))
@@ -830,6 +833,13 @@ class Identity:
 # The entitlement *model* lives in platform/apps.py; this is only the starting state, and the
 # legacy workspace does not go through here, so it keeps its zero members and zero applications.
 DEFAULT_WORKSPACE_APPS = ("docweave",)
+
+#: The business applications on the workplace origin (Forms, Tables, DataPrep, Approvals, Extract;
+#: docs/agent-work/DECISIONS.md D1). A new workspace starts with each of them that the deployment
+#: has released — the registry row is active — so a person can use them without an administrator
+#: first switching anything on. The personal Agent is not here: it belongs to the person, not to a
+#: workspace (`synwevo_core.apps.PERSONAL_APP_IDS`).
+SUITE_WORKSPACE_APPS = ("forms", "tables", "dataprep", "approvals", "extract")
 
 
 #: The default personal workspace name, in the account's interface language. It is data once

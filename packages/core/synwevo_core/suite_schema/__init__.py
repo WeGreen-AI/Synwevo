@@ -1,0 +1,48 @@
+"""Tables of the business applications on the workplace origin (``synwevo_suite``).
+
+`synwevo_core.store.Store` is the only place that runs schema migrations (docs/architecture/
+monorepo.md §3), so the applications' tables are declared here, one module per application, and
+applied by the store on every start. Everything is additive (`CREATE … IF NOT EXISTS`, guarded
+`ADD COLUMN`): older code ignores these tables, so a rollback needs no data restore.
+
+Each module may define ``SCHEMA`` (SQL script), ``COLUMNS`` (``(table, column, declaration)``
+added when missing) and ``INDEXES`` (``(name, table, columns)``).
+"""
+from __future__ import annotations
+
+import importlib
+
+#: One module per application, applied in this order; ``runs`` (the capability layer's run records
+#: and event outbox) first.
+MODULES = ("runs", "forms", "tables", "dataprep", "approvals", "extract", "agent", "flows")
+
+
+def apply(c) -> None:
+    for name in MODULES:
+        try:
+            mod = importlib.import_module(f"{__name__}.{name}")
+        except ModuleNotFoundError as exc:
+            if exc.name == f"{__name__}.{name}":
+                continue                     # that application has no tables yet
+            raise
+        schema = getattr(mod, "SCHEMA", None)
+        if schema:
+            c.executescript(schema)
+        columns = getattr(mod, "COLUMNS", ())
+        indexes = getattr(mod, "INDEXES", ())
+        if not columns and not indexes:
+            continue
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            for table, col, decl in columns:
+                have = {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+                if col not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+            for iname, table, cols in indexes:
+                have = {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+                if set(cols) <= have:
+                    c.execute(f"CREATE INDEX IF NOT EXISTS {iname} ON {table}({', '.join(cols)})")
+            c.execute("COMMIT")
+        except BaseException:
+            c.execute("ROLLBACK")
+            raise

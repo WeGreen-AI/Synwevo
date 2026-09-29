@@ -1,0 +1,4 @@
+# 版本固定在这里；各模块的 pyproject.toml 只声明抽象依赖（名字），装什么版本以本文件为准。
+# 业务应用：平台基础与依赖方适配；openpyxl 与 Synwevo Docs 固定为同一版本（经 docs 的 requirements）。
+-r ../../packages/auth-client/python/requirements.txt
+openpyxl==3.1.5

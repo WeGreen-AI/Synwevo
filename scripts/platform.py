@@ -126,6 +126,10 @@ def env_for(name: str) -> dict:
         # Where the account pages' "back" link goes. Server-controlled, never a query parameter.
         "SYNWEVO_PORTAL_URL": PORTAL,
     })
+    if name == "portal":
+        # The business applications on the workplace origin (synwevo_suite). A local instance
+        # releases all of them unless the shell says otherwise (docs/agent-work/DECISIONS.md D4).
+        child_env.setdefault("SYNWEVO_SUITE_APPS", "all")
     if client:
         child_env["SYNWEVO_OIDC_CLIENT_ID"] = client
     if app:
@@ -432,9 +436,9 @@ def _require_data_dir(args) -> None:
 
 
 MODULES = ["packages/core", "packages/auth-client/python", "services/identity",
-           "apps/portal", "apps/docs", "apps/messages", "infra/server"]
+           "apps/portal", "apps/docs", "apps/messages", "apps/suite", "infra/server"]
 IMPORTS = ["synwevo_core", "synwevo_auth_client", "synwevo_identity", "synwevo_portal",
-           "synwevo_docs", "synwevo_messages", "synwevo_server"]
+           "synwevo_docs", "synwevo_messages", "synwevo_suite", "synwevo_server"]
 
 
 def setup(args) -> int:
@@ -483,7 +487,8 @@ def setup(args) -> int:
 
 
 SUITES = {"docs": "apps/docs/tests", "identity": "services/identity/tests",
-          "messages": "apps/messages/tests", "integration": "tests/integration"}
+          "messages": "apps/messages/tests", "suite": "apps/suite/tests",
+          "integration": "tests/integration"}
 
 
 def test(args) -> int:

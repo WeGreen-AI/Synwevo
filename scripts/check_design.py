@@ -26,7 +26,8 @@ TOKEN_SOURCE = "packages/ui/src/styles.css"
 #: 前端源码目录（相对仓库根）。
 FRONTEND_ROOTS = (
     "packages/ui/src", "packages/auth-client/web/src",
-    "apps/docs/web/src", "apps/portal/web/src", "apps/messages/web/src", "services/identity/web/src",
+    "apps/docs/web/src", "apps/portal/web/src", "apps/messages/web/src", "apps/suite/web/src",
+    "services/identity/web/src",
 )
 SOURCE_SUFFIXES = (".css", ".tsx", ".ts", ".html")
 
@@ -62,6 +63,7 @@ ALLOWED: list[tuple[str, str, str]] = [
     ("apps/docs/web/index.html", r"theme-color", "浏览器标签栏颜色：白（favicon 是由确认的 Logo 生成的 PNG，不含字面颜色）"),
     ("apps/portal/web/index.html", r"theme-color", "浏览器标签栏颜色：白（favicon 是由确认的 Logo 生成的 PNG，不含字面颜色）"),
     ("apps/messages/web/index.html", r"theme-color", "浏览器标签栏颜色：白（favicon 是由确认的 Logo 生成的 PNG，不含字面颜色）"),
+    ("apps/suite/web/index.html", r"theme-color", "浏览器标签栏颜色：白（favicon 是由确认的 Logo 生成的 PNG，不含字面颜色）"),
     ("services/identity/web/index.html", r"theme-color", "浏览器标签栏颜色：白（favicon 是由确认的 Logo 生成的 PNG，不含字面颜色）"),
 ]
 
@@ -112,7 +114,7 @@ def main() -> int:
     buckets: dict[str, list[str]] = defaultdict(list)
     problems: list[str] = []
     shells = {"apps/docs/web/src/main.tsx", "apps/portal/web/src/main.tsx", "apps/messages/web/src/main.tsx",
-              "services/identity/web/src/main.tsx"}
+              "apps/suite/web/src/main.tsx", "services/identity/web/src/main.tsx"}
     for f in files:
         text = (ROOT / f).read_text(encoding="utf-8")
         if f in shells and '@synwevo/ui/styles.css' not in text:

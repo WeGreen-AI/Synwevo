@@ -1,0 +1,93 @@
+{
+  "description": "Shared cases for the form rules: synwevo_suite/forms/definition.py (server) and web/src/apps/forms/logic.ts (browser) must both produce these errors. Each case lists [field, code] pairs; order does not matter.",
+  "cases": [
+    {
+      "name": "hidden required field is not required and not an error",
+      "definition": {"fields": [
+        {"id": "f_kind0001", "type": "select", "label": "Kind", "required": true, "options": [{"value": "a", "label": "A"}, {"value": "b", "label": "B"}]},
+        {"id": "f_why00001", "type": "text", "label": "Why", "required": true, "visible_if": {"field": "f_kind0001", "op": "eq", "value": "b"}}
+      ]},
+      "answers": {"f_kind0001": "a", "f_why00001": ""},
+      "errors": []
+    },
+    {
+      "name": "shown required field must be answered",
+      "definition": {"fields": [
+        {"id": "f_kind0001", "type": "select", "label": "Kind", "required": true, "options": [{"value": "a", "label": "A"}, {"value": "b", "label": "B"}]},
+        {"id": "f_why00001", "type": "text", "label": "Why", "required": true, "visible_if": {"field": "f_kind0001", "op": "eq", "value": "b"}}
+      ]},
+      "answers": {"f_kind0001": "b", "f_why00001": "   "},
+      "errors": [["f_why00001", "required"]]
+    },
+    {
+      "name": "money decimals and bounds",
+      "definition": {"fields": [
+        {"id": "f_amt00001", "type": "money", "label": "A", "currency": "CNY", "min": "0", "max": "100"},
+        {"id": "f_amt00002", "type": "money", "label": "B", "currency": "CNY", "min": "0", "max": "100"},
+        {"id": "f_amt00003", "type": "money", "label": "C", "currency": "CNY", "min": "0", "max": "100"}
+      ]},
+      "answers": {"f_amt00001": "1.234", "f_amt00002": "-0.01", "f_amt00003": "100.00"},
+      "errors": [["f_amt00001", "too_many_decimals"], ["f_amt00002", "below_min"]]
+    },
+    {
+      "name": "number with trailing zeros is within its decimals",
+      "definition": {"fields": [{"id": "f_num00001", "type": "number", "label": "N", "decimals": 0}]},
+      "answers": {"f_num00001": "3.000"},
+      "errors": []
+    },
+    {
+      "name": "required_if and a numeric comparison",
+      "definition": {"fields": [
+        {"id": "f_amt00001", "type": "number", "label": "Amount"},
+        {"id": "f_rcpt0001", "type": "text", "label": "Receipt no.", "required_if": {"field": "f_amt00001", "op": "gt", "value": "500"}}
+      ]},
+      "answers": {"f_amt00001": "500.01"},
+      "errors": [["f_rcpt0001", "required"]]
+    },
+    {
+      "name": "formats",
+      "definition": {"fields": [
+        {"id": "f_mail0001", "type": "text", "label": "E", "format": "email"},
+        {"id": "f_url00001", "type": "text", "label": "U", "format": "url"},
+        {"id": "f_pat00001", "type": "text", "label": "P", "format": "pattern", "pattern": "[0-9]{6}"}
+      ]},
+      "answers": {"f_mail0001": "not-an-email", "f_url00001": "ftp://x", "f_pat00001": "12345"},
+      "errors": [["f_mail0001", "bad_email"], ["f_url00001", "bad_url"], ["f_pat00001", "pattern_mismatch"]]
+    },
+    {
+      "name": "dates, date-times and a rule between them",
+      "definition": {"fields": [
+        {"id": "f_from0001", "type": "date", "label": "From"},
+        {"id": "f_to000001", "type": "date", "label": "To"},
+        {"id": "f_when0001", "type": "datetime", "label": "When"},
+        {"id": "f_bad00001", "type": "date", "label": "Bad"}
+      ], "rules": [{"id": "r_order", "field": "f_to000001", "op": "gte", "other": "f_from0001", "message": "End before start"}]},
+      "answers": {"f_from0001": "2026-09-30", "f_to000001": "2026-09-01", "f_when0001": "2026-09-29T10:00", "f_bad00001": "2026-02-30"},
+      "errors": [["f_to000001", "rule_failed"], ["f_when0001", "datetime_without_offset"], ["f_bad00001", "bad_date"]]
+    },
+    {
+      "name": "options and multiselect limits",
+      "definition": {"fields": [
+        {"id": "f_one00001", "type": "select", "label": "One", "options": [{"value": "x", "label": "X"}]},
+        {"id": "f_many0001", "type": "multiselect", "label": "Many", "max_items": 1, "options": [{"value": "x", "label": "X"}, {"value": "y", "label": "Y"}]}
+      ]},
+      "answers": {"f_one00001": "z", "f_many0001": ["x", "y"]},
+      "errors": [["f_one00001", "not_an_option"], ["f_many0001", "too_many"]]
+    },
+    {
+      "name": "required checkbox must be ticked",
+      "definition": {"fields": [{"id": "f_ok000001", "type": "boolean", "label": "Agree", "required": true}]},
+      "answers": {"f_ok000001": false},
+      "errors": [["f_ok000001", "required"]]
+    },
+    {
+      "name": "repeat rows: min rows and a required cell",
+      "definition": {"fields": [{"id": "f_rows0001", "type": "repeat", "label": "Items", "min_items": 2, "fields": [
+        {"id": "f_desc0001", "type": "text", "label": "Description", "required": true},
+        {"id": "f_qty00001", "type": "number", "label": "Qty", "decimals": 0}
+      ]}]},
+      "answers": {"f_rows0001": [{"f_desc0001": "", "f_qty00001": "1.5"}]},
+      "errors": [["f_qty00001", "too_many_decimals"], ["f_desc0001", "required"], ["f_rows0001", "too_few"]]
+    }
+  ]
+}

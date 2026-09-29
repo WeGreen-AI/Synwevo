@@ -23,6 +23,7 @@ DIRECT: tuple[tuple[str, str], ...] = (
     ("artifacts", "blob"),
     ("blob_grants", "blob"),                      # previews, layout PDFs, desensitized outputs: the grant is the reference
     ("message_attachments", "blob"),              # Synwevo Message
+    ("form_files", "blob"),                       # Synwevo Forms attachments (staged, attached or discarded)
     ("uploads", "blob"),                          # a completed upload not used yet: its only reference
     ("organization_templates", "working_blob"),   # outlives the source template by design
     ("organization_template_releases", "working_blob"),
@@ -64,6 +65,11 @@ LOOKALIKES: tuple[tuple[str, str, str], ...] = (
     ("account_recoveries", "token_hash", "找回令牌哈希，不是 blob"),
     ("bootstrap_tokens", "token_hash", "初始化令牌哈希，不是 blob"),
     ("invitations", "token_hash", "邀请令牌哈希，不是 blob"),
+    ("op_runs", "input_hash", "操作输入的指纹（幂等比对），不是 blob"),
+    ("forms", "public_token_hash", "公开填写链接令牌的哈希，不是 blob"),
+    ("form_versions", "definition_hash", "表单版本定义的指纹，不是 blob"),
+    ("form_requests", "token_hash", "填写链接令牌的哈希，不是 blob"),
+    ("form_submissions", "answers_hash", "提交内容的指纹，不是 blob"),
     ("external_auth_requests", "state_hash", "外部登录 state 的哈希，不是 blob"),
     ("external_link_offers", "token_hash", "外部账户关联令牌哈希，不是 blob"),
     ("push_subscriptions", "endpoint_hash", "推送端点的哈希，不是 blob"),

@@ -131,6 +131,21 @@ CATALOGUE: dict[str, dict] = {
     "organization.roles_assigned": {"category": "organization", "severity": "info", "email": "immediate", "title": {
         "zh-Hans": "你在组织「{organization}」的角色已更新", "zh-Hant": "你在組織「{organization}」的角色已更新", "en": "Your roles in the organization “{organization}” changed"}, "body": {
         "zh-Hans": "当前自定义角色：{roles}。由 {actor} 更改。", "zh-Hant": "目前自訂角色：{roles}。由 {actor} 變更。", "en": "Current custom roles: {roles}. Changed by {actor}."}},
+    # ---- Synwevo Forms (workplace origin): fill-in requests and what happens to submissions
+    "forms.request.assigned": {"category": "automation", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "{requester} 请你填写「{form}」", "zh-Hant": "{requester} 請你填寫「{form}」", "en": "{requester} asks you to fill in “{form}”"}, "body": {
+        "zh-Hans": "打开填写页面完成填写；可以先保存草稿，稍后继续。", "zh-Hant": "開啟填寫頁面完成填寫；可以先儲存草稿，稍後繼續。",
+        "en": "Open the form to fill it in. You can save a draft and come back later."}},
+    "forms.submission.received": {"category": "automation", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "「{form}」收到新的提交", "zh-Hant": "「{form}」收到新的提交", "en": "New submission for “{form}”"}, "body": {
+        "zh-Hans": "提交人：{who}。", "zh-Hant": "提交人：{who}。", "en": "Submitted by {who}."}},
+    "forms.submission.changes_requested": {"category": "automation", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "「{form}」需要补充或修改", "zh-Hant": "「{form}」需要補充或修改", "en": "“{form}” needs changes"}, "body": {
+        "zh-Hans": "{reviewer} 请你补充或修改后重新提交。", "zh-Hant": "{reviewer} 請你補充或修改後重新提交。",
+        "en": "{reviewer} asked you to add or correct something and submit again."}},
+    "forms.submission.accepted": {"category": "automation", "severity": "info", "email": "digest", "title": {
+        "zh-Hans": "你提交的「{form}」已确认", "zh-Hant": "你提交的「{form}」已確認", "en": "Your submission for “{form}” was accepted"}, "body": {
+        "zh-Hans": "由 {reviewer} 确认。", "zh-Hant": "由 {reviewer} 確認。", "en": "Accepted by {reviewer}."}},
     # ---- approvals: copying a personal Docs project into an organization workspace
     "copy.requested": {"category": "approval", "severity": "action", "email": "immediate", "title": {
         "zh-Hans": "{requester} 申请把项目「{project}」复制到「{workspace}」", "zh-Hant": "{requester} 申請把專案「{project}」複製到「{workspace}」", "en": "{requester} asks to copy “{project}” into “{workspace}”"}, "body": {

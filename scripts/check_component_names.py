@@ -46,9 +46,11 @@ NAMES = [
 NAME_RE = re.compile(r"(?<![A-Za-z0-9_])(" + "|".join(re.escape(n) for n in NAMES) + r")(?![A-Za-z0-9_])", re.I)
 CJK = re.compile(r"[㐀-鿿]")
 
-FRONTEND_ROOTS = ["apps/docs/web/src", "apps/portal/web/src", "apps/messages/web/src", "services/identity/web/src",
+FRONTEND_ROOTS = ["apps/docs/web/src", "apps/portal/web/src", "apps/messages/web/src", "apps/suite/web/src",
+                  "services/identity/web/src",
                   "packages/auth-client/web/src", "packages/ui/src"]
 PYTHON_ROOTS = ["apps/docs/synwevo_docs", "apps/portal/synwevo_portal", "apps/messages/synwevo_messages",
+                "apps/suite/synwevo_suite",
                 "services/identity/synwevo_identity",
                 "packages/core/synwevo_core", "packages/auth-client/python/synwevo_auth_client", "infra/server/synwevo_server"]
 

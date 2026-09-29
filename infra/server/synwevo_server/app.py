@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from synwevo_core.errors import ServiceError
+
 from synwevo_core.http import (build_platform, install as install_platform, install_probes,
                                 mount_web, new_api, role as current_role, shell_response,
                                 validate_role)
@@ -127,6 +129,11 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
     if wants_portal:
         from synwevo_portal import app as portal_app
         portal_app.install(api, plat)
+    if role in ("portal", "all"):
+        # The business applications live on the workplace origin (docs/agent-work/DECISIONS.md D1):
+        # the host every deployment already routes to this role, with its single sign-on.
+        from synwevo_suite import app as suite_app
+        suite_app.install(api, plat, start_jobs=start_jobs)
 
     # The relying-party half is mounted everywhere the account service is not the whole story.
     # It stays on `all` too: a single-process install can be configured against an external
@@ -159,12 +166,17 @@ def _mount_shells(api: FastAPI, plat, role: str) -> None:
     from synwevo_identity.app import ASSETS_DIR as ACCOUNT_ASSETS, web_dist as accounts_dist
     from synwevo_messages.app import ASSETS_DIR as MESSAGES_ASSETS, web_dist as messages_dist
     from synwevo_portal.app import ASSETS_DIR as PORTAL_ASSETS, web_dist as portal_dist
+    from synwevo_suite.app import ASSETS_DIR as SUITE_ASSETS, owns_path as suite_owns, web_dist as suite_dist
 
     if role == "portal":
         dist = portal_dist()
-        if mount_web(api, dist, assets_dir=PORTAL_ASSETS):
+        suite = suite_dist()
+        suite_ok = mount_web(api, suite, assets_dir=SUITE_ASSETS)
+        if mount_web(api, dist, assets_dir=PORTAL_ASSETS) or suite_ok:
             @api.get("/{full_path:path}")
             def portal_shell(full_path: str):
+                if suite_ok and suite_owns("/" + full_path):
+                    return shell_response(suite, full_path)
                 return shell_response(dist, full_path)
         return
 
@@ -204,18 +216,25 @@ def _mount_shells(api: FastAPI, plat, role: str) -> None:
     acct_ok = role == "all" and mount_web(api, acct, assets_dir=ACCOUNT_ASSETS)
     msgs = messages_dist()
     msgs_ok = role == "all" and mount_web(api, msgs, assets_dir=MESSAGES_ASSETS)
+    suite = suite_dist()
+    suite_ok = role == "all" and mount_web(api, suite, assets_dir=SUITE_ASSETS)
 
     def owns(paths, path: str) -> bool:
         return any(path == p or path.startswith(p + "/") for p in paths)
 
-    if work_ok or acct_ok or msgs_ok:
+    if work_ok or acct_ok or msgs_ok or suite_ok:
         @api.get("/{full_path:path}")
         def shell(full_path: str):
             path = "/" + full_path
+            if suite_ok and suite_owns(path):
+                return shell_response(suite, full_path)
             if msgs_ok and owns(MESSAGES_SHELL_PATHS, path):
                 return shell_response(msgs, full_path)
             if acct_ok and owns(ACCOUNT_SHELL_PATHS, path):
                 return shell_response(acct, full_path)
-            if not work_ok:
+            if work_ok:
+                return shell_response(work, full_path)
+            if acct_ok or msgs_ok:
                 return shell_response(acct if acct_ok else msgs, full_path)
-            return shell_response(work, full_path)
+            # Only the business applications' shell is built: other paths have no page here.
+            raise ServiceError(404, "not_found", "页面不存在")

@@ -35,6 +35,9 @@ from .store import Store
 PURPOSES = {
     "mfa-seed": (b"docweave/mfa-seed/v1", b"totp-seed"),
     "webhook-secret": (b"synwevo/webhook-signing-secret/v1", b"webhook-secret"),
+    # Synwevo Forms fill-in links: kept so an editor can copy a link again (the hash is what
+    # opening a link is checked against).
+    "forms-fill-link": (b"synwevo/forms-fill-link/v1", b"forms-fill-link"),
 }
 
 # Every sealed column in the schema: (table, primary key, column, purpose). `rekey` walks exactly
@@ -44,6 +47,8 @@ SEALED_COLUMNS = (
     ("totp_secrets", "user_id", "secret_enc", "mfa-seed"),
     ("webhook_subscriptions", "id", "secret_enc", "webhook-secret"),
     ("webhook_subscriptions", "id", "secret_prev_enc", "webhook-secret"),
+    ("forms", "id", "public_token_sealed", "forms-fill-link"),
+    ("form_requests", "id", "token_sealed", "forms-fill-link"),
 )
 
 
