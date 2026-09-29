@@ -977,7 +977,7 @@ export class Client {
     const tpl = await this.uploadTemplate(template, { name: templateName, idempotencyKey: key('template') });
     onProgress({ step: 'template', id: tpl.id, name: tpl.name });
     const fieldsOut = await this.createFields(tpl.id, fieldsDef, { idempotencyKey: key('fields') });
-    onProgress({ step: 'fields', count: (fieldsDef.fields || []).length, version: fieldsOut?.version ?? fieldsOut?.template?.version });
+    onProgress({ step: 'fields', count: (fieldsDef.fields || []).length, version: typeof fieldsOut?.template === 'number' ? fieldsOut.template : undefined });
     await this.bindTemplate(project.id, tpl.id);
     await this.putDefinition(project.id, projectDef);
     onProgress({ step: 'definition' });

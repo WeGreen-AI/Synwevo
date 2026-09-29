@@ -49,7 +49,12 @@ IDENTITY_SCOPES = ("openid", "profile", "email", "offline_access")
 # quietly become the same thing. `docweave.manage` is governance (webhook subscriptions, the
 # caller's own credentials) and corresponds to the legacy key scope `admin`.
 API_SCOPES = ("docweave.read", "docweave.write", "docweave.manage")
-SUPPORTED_SCOPES = IDENTITY_SCOPES + API_SCOPES
+# The workspace directory API (API-5, accounts origin, /api/workspace/v1): a workspace's members,
+# roles and invitations, for service accounts its owner approved. Its own resource and audience, so
+# a Docs credential cannot reach it and a directory credential cannot reach Docs.
+WORKSPACE_API_SCOPES = ("workspace.read",)
+ALL_API_SCOPES = API_SCOPES + WORKSPACE_API_SCOPES
+SUPPORTED_SCOPES = IDENTITY_SCOPES + ALL_API_SCOPES
 
 # Only these algorithms are ever accepted on a token this platform verifies. Authlib's module
 # level `jwt` accepts every registered JWS algorithm — including `none`, which is an unsigned
@@ -78,8 +83,19 @@ def docs_resource() -> str:
 
 
 def api_scope_app(scope: str) -> str | None:
-    """The application an API scope belongs to (`docweave.read` -> `docweave`), or None."""
-    return scope.split(".", 1)[0] if scope in API_SCOPES else None
+    """The application an API scope belongs to (`docweave.read` -> `docweave`,
+    `workspace.read` -> the platform), or None."""
+    if scope in API_SCOPES:
+        return scope.split(".", 1)[0]
+    if scope in WORKSPACE_API_SCOPES:
+        from .apps import PLATFORM_APP_ID
+        return PLATFORM_APP_ID
+    return None
+
+
+def workspace_resource() -> str:
+    """The resource indicator (RFC 8707) of the workspace directory API."""
+    return (env.get("WORKSPACE_RESOURCE") or "urn:synwevo:platform:workspace").strip()
 
 
 def _docs_app_id() -> str:
@@ -212,7 +228,7 @@ class Clients:
             if not confidential:
                 # Its credential is all it has; a public service account is a published one.
                 raise ServiceError(400, "must_be_confidential", "服务账户必须是机密客户端")
-        bad = [s for s in api_scopes.split() if s not in API_SCOPES]
+        bad = [s for s in api_scopes.split() if s not in ALL_API_SCOPES]
         if bad:
             raise ServiceError(400, "bad_scope", f"未知的接口权限：{' '.join(bad)}")
         unknown = [s for s in (scopes or "").split() if s not in SUPPORTED_SCOPES]
@@ -248,6 +264,8 @@ class Clients:
             # audience a token for this client would be accepted by any resource server that
             # trusts this issuer, so a Docs API client defaults to the Docs resource.
             auds = [docs_resource()]
+        elif not auds and has_api and any(s in WORKSPACE_API_SCOPES for s in api_scopes.split()):
+            auds = [workspace_resource()]
         ts = now()
         self.store.execute(
             "INSERT INTO oauth_clients (client_id,app_id,name,secret_hash,redirect_uris,"
@@ -552,10 +570,15 @@ class Grants:
             audience = audience or self.default_audience(current)
             if not audience or audience not in (current.get("audiences") or []):
                 raise ServiceError(403, "invalid_target", "请求的接口受众已不在服务身份授权范围内")
-            from .apps import Apps
+            from .apps import Apps, PLATFORM_APP_ID
             from .identity import Identity
-            entitled, _, _ = Apps(self.store, Identity(self.store)).check_access_for_workspace(
-                current.get("workspace_id"), current["app_id"])
+            if current["app_id"] == PLATFORM_APP_ID:
+                # The workspace directory (API-5) is the platform's own: a live workspace is the question.
+                from .machine import directory_workspace_live
+                entitled, _ = directory_workspace_live(self.store, Identity(self.store), current.get("workspace_id"))
+            else:
+                entitled, _, _ = Apps(self.store, Identity(self.store)).check_access_for_workspace(
+                    current.get("workspace_id"), current["app_id"])
             if not entitled:
                 raise ServiceError(403, "invalid_client", "服务身份的工作空间或应用授权当前不可用")
             access = secrets.token_urlsafe(40)

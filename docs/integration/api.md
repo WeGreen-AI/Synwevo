@@ -124,6 +124,23 @@ curl -s -X POST "$ISSUER/oidc/token" \
 `tests/integration/automation_example.py` 两种都支持：给 `--key` 用旧密钥，给
 `--issuer --client-id --client-secret` 用服务账户。
 
+### 1.2 工作空间目录接口（API-5）
+
+账户服务上的 `/api/workspace/v1` 是另一个机器接口：一个工作空间的成员、角色与邀请，给该空间所有者批准的**服务账户**。
+它有自己的资源 `urn:synwevo:platform:workspace`（`SYNWEVO_WORKSPACE_RESOURCE` 可改）与权限 `workspace.read`；
+申请令牌时带 `resource=urn:synwevo:platform:workspace`。Docs 的密钥与令牌不能调用它（受众不符 401 `invalid_audience`；
+`dw_` 密钥 403 `wrong_credential`），它的令牌也不能调用 `/api/v1`。凭据经管理台「授权审批」选择「工作空间目录接口」申请，
+所有者批准后签发（只签发服务客户端）；每次调用复核审批、所有者资格与工作空间状态，冻结或撤回即停止。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/whoami` | workspace.read | 凭据所属工作空间与权限 |
+| GET | `/members?role=&q=&offset=&limit=` | workspace.read | 成员：`user_id`、`email`、`display_name`、`role`、`account_status`、`joined_at`；`owner_count` |
+| GET | `/invitations?state=&offset=&limit=` | workspace.read | 邀请：`id`、`email`、`role`、`state`（pending/accepted/declined/revoked/expired）、时间 |
+
+只返回目录元数据，不含任何成员创作的内容。同一套限流、调用记录与错误信封（含 RFC 9457）适用。邀请、改角色与移除成员
+暂时只在账户页面完成（机器写入需要明确的应用操作者，邀请邮件要写明是谁邀请的，属于下一步 API-5b）。
+
 ## 2. 错误与追踪
 
 所有 `/api/v1` 错误的响应体结构一致，HTTP 状态码表达类别：
