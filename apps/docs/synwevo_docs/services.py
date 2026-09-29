@@ -33,7 +33,7 @@ def scan_out(rec: dict | None) -> dict:
     Rows written before scanning existed are `unscanned` — honest, and distinct from clean."""
     if not rec:
         return {"status": "unscanned"}
-    keys = ("status", "signature", "engine", "reason", "sha256", "checked_at", "attempts", "retry_at")
+    keys = ("status", "signature", "engine", "reason", "checked", "sha256", "checked_at", "attempts", "retry_at")
     return {k: rec[k] for k in keys if k in rec}
 
 def template_blobs(store: Store, t: dict) -> list[str]:
@@ -49,15 +49,21 @@ def template_blobs(store: Store, t: dict) -> list[str]:
     return out
 
 
-def encrypted_file(filename: str, kind: str | None) -> ServiceError:
-    """Password-protected bytes: the security check cannot look inside them, so they are not
-    accepted — and they are not malware either (no quarantine, no rejected digest). Requirement §8.7."""
+def encrypted_file(filename: str, kind: str | None, checked: bool = True) -> ServiceError:
+    """Password-protected bytes — or a structure the check could not finish (`checked` False): the
+    security check cannot look inside them, so they are not accepted; they are not malware either
+    (no quarantine, no rejected digest). Requirement §8.7. The second case has its own sentence: its
+    reader has no password to remove."""
+    if not checked:
+        return ServiceError(400, "unchecked_file", "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传",
+                            {"filename": filename, "kind": kind, "checked": False})
     return ServiceError(400, "encrypted_file", "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传",
                         {"filename": filename, "kind": kind})
 
 
-#: The same sentence on the row of a source the gate refused after the upload (a clamd heuristic).
+#: The same sentences on the row of a source the gate refused.
 ENCRYPTED_ERROR = "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传"
+UNCHECKED_ERROR = "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传"
 
 
 def earlier_malicious(filename: str) -> ServiceError:
@@ -408,9 +414,9 @@ class App:
             # to remove the password and upload again. The bytes stay where the row points
             # (unreadable through every path, like a file over the scan limit); reclaiming
             # unreferenced bytes is the blob reclamation's job, not this gate's.
-            self._publish_scan(row, rec, "error", error=ENCRYPTED_ERROR)
-            acceptance_log.warning("scan.encrypted source=%s tenant=%s sha256=%s kind=%s signature=%s engine=%s",
-                                   sid, row.get("tenant") or "-", row["blob"], res.reason, res.signature, res.engine)
+            self._publish_scan(row, rec, "error", error=UNCHECKED_ERROR if M.unchecked(res) else ENCRYPTED_ERROR)
+            acceptance_log.warning("scan.encrypted source=%s tenant=%s sha256=%s kind=%s checked=%s detail=%s signature=%s engine=%s",
+                                   sid, row.get("tenant") or "-", row["blob"], res.reason, res.checked, res.detail, res.signature, res.engine)
         else:   # too_large: not scanned is never clean
             self._publish_scan(row, rec, "scan_failed", error=f"文件超过安全检查的大小上限（{self.scan_policy.max_bytes // (1024 * 1024)} MB），无法接纳；请拆分或压缩后重新上传")
             acceptance_log.warning("scan.too_large source=%s tenant=%s sha256=%s size=%s limit=%s",
@@ -517,6 +523,9 @@ class App:
         if st == "rejected":
             raise ServiceError(410, "rejected_malware", "该文件未通过安全检查，已被拒绝并隔离", {"scan": scan_out(row.get("scan"))})
         if M.encrypted_refusal(row.get("scan")):
+            if M.unchecked(row.get("scan")):
+                raise ServiceError(410, "unchecked_file", "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传",
+                                   {"scan": scan_out(row.get("scan"))})
             raise ServiceError(410, "encrypted_file", "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传",
                                {"scan": scan_out(row.get("scan"))})
         if st in ("scanning", "scan_failed"):
@@ -576,8 +585,9 @@ class App:
             raise ServiceError(400, "malware_detected", f"文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝",
                                {"signature": res.signature, "filename": filename})
         if res.status == "encrypted":
-            acceptance_log.info("scan.encrypted template sha256=%s kind=%s signature=%s engine=%s", sha, res.reason, res.signature, res.engine)
-            raise encrypted_file(filename, res.reason)
+            acceptance_log.info("scan.encrypted template sha256=%s kind=%s checked=%s detail=%s signature=%s engine=%s",
+                                sha, res.reason, res.checked, res.detail, res.signature, res.engine)
+            raise encrypted_file(filename, res.reason, checked=not M.unchecked(res))
         if res.status == "too_large":
             acceptance_log.warning("scan.too_large template sha256=%s size=%s limit=%s", sha, len(data), self.scan_policy.max_bytes)
             raise ServiceError(413, "scan_limit", f"文件超过安全检查的大小上限（{self.scan_policy.max_bytes // (1024 * 1024)} MB），无法接纳",

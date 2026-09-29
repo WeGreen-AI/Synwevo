@@ -116,7 +116,8 @@ def accept_upload(filename: str, data: bytes) -> dict:
     """Scan the bytes with the platform's clamd policy before any reader opens them.
 
     Same verdict semantics as the Docs template scan: infected → 400, password-protected → 400
-    ``encrypted_file`` (nobody can check what is inside: not accepted, not malware; §8.7),
+    ``encrypted_file`` (nobody can check what is inside: not accepted, not malware; §8.7), a
+    structure the check could not finish → 400 ``unchecked_file`` (own sentence, same refusal),
     scanner down → 503 (never a pass), over the scan limit → 413. `not_configured` is reported,
     not hidden. Synwevo Message attachments come through here too."""
     if len(data) > MAX_FILE_BYTES:
@@ -136,7 +137,11 @@ def accept_upload(filename: str, data: bytes) -> dict:
         raise ServiceError(400, "malware_detected", f"文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝",
                            {"signature": res.signature, "filename": filename})
     if res.status == "encrypted":
-        log.info("member_import scan.encrypted sha256=%s kind=%s signature=%s", sha, res.reason, res.signature)
+        log.info("member_import scan.encrypted sha256=%s kind=%s checked=%s detail=%s signature=%s",
+                 sha, res.reason, res.checked, res.detail, res.signature)
+        if M.unchecked(res):
+            raise ServiceError(400, "unchecked_file", "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传",
+                               {"filename": filename, "kind": res.reason, "checked": False})
         raise ServiceError(400, "encrypted_file", "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传",
                            {"filename": filename, "kind": res.reason})
     if res.status == "too_large":

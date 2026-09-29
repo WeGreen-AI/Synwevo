@@ -188,7 +188,7 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 400 `encrypted_file`（`detail.kind` 为 `archive`/`office`/`pdf`，`detail.filename`），不建模板；去掉密码
 （或另存一份不加密的副本）后重新上传即可。**来源文件**与恶意软件扫描走同一条异步路径：上传返回 201、`scanning`，引擎先看（签名优先，
 按恶意软件拒绝），随后变为 `error`、`scan.status=encrypted`，`/files/{fid}/content` 回 410 `encrypted_file`，不解析、不预览、不能改解析选项；
-结构读不完（截断、超出识别器的上限）同样按这一句拒绝——读不完就不能说它干净。可续传上传在 `/complete` 时字节已经入库，
+结构读不完（截断、超出识别器的上限）同样不接纳——读不完就不能说它干净——但用自己的一句话和代码：`scan.checked=false`，下载 410、模板 400 `unchecked_file`（`detail.checked=false`），因为读者多半没有密码可去。可续传上传在 `/complete` 时字节已经入库，
 被拒后没有任何接口能读到它们。补扫发现的扫描上线前存入的加密文件只记下 `scan.status=encrypted`，
 状态与可读性都不变——撤回已经在用的文件由所有者决定（`docs/security/file-acceptance.md` §8.1）。
 

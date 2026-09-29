@@ -26,7 +26,8 @@ The formats:
 * **ZIP** (any ZIP, including OOXML and OpenDocument packages, and archives stored uncompressed
   inside another file): every local and central-directory header in the file, found by signature
   and checked for plausibility; general-purpose flag bit 0 (ZipCrypto, WinZip AES) → ``archive``
-  (``office`` for an OOXML or OpenDocument package). OpenDocument encrypts its parts without that
+  (``office`` for an OOXML or OpenDocument package) — when the other record names the same entry,
+  or the header is coherent on its own (the signature turns up in machine code by chance). OpenDocument encrypts its parts without that
   flag and says so in ``META-INF/manifest.xml`` (``encryption-data``): the manifest is inflated as a
   stream with a size budget. `zipfile` is not used — it reads a whole central directory into
   objects, which a crafted file makes cost gigabytes.
@@ -40,7 +41,10 @@ The formats:
   RC4 CryptoAPI are verified with "VelvetSweatshop"), Word's FIB ``fEncrypted`` bit, PowerPoint's
   ``EncryptedSummary`` stream or ``Current User`` header token ``0xF3D1C4DF`` → ``office``.
 * **PDF** (wherever it is — readers repair a missing header or broken offsets): only a file that
-  carries the ``/Encrypt`` name (``#xx`` escapes included) is looked at. The trailer readers use —
+  carries the ``/Encrypt`` name (``#xx`` escapes included) and PDF structure — the header in the
+  first KiB, or indirect objects and a cross-reference keyword — is looked at; notes, CSV cells and
+  source code that mention the name are not PDFs. Without a header, a file whose trailers name no
+  encryption dictionary (or a dictionary nobody can evaluate) opens nowhere as an encrypted PDF. The trailer readers use —
   the ``startxref`` chain through ``/Prev``, or, when that is damaged, every ``trailer`` and
   cross-reference-stream dictionary near the end and the dictionaries around each ``/Encrypt`` —
   decides; the standard security handler is checked against the empty user password (revisions
@@ -83,22 +87,29 @@ class _Unchecked(Exception):
 def encrypted_kind(data: bytes) -> str | None:
     """``"archive"`` | ``"office"`` | ``"pdf"`` when the file cannot be read without a password or
     could not be checked; ``None`` when it opens without one. Never raises."""
-    return inspect(data)[0]
+    return examine(data)[0]
 
 
 def inspect(data: bytes) -> tuple[str | None, bool]:
     """(kind, checked): ``checked`` is False when the kind stands for "could not be checked"."""
+    kind, checked, _why = examine(data)
+    return kind, checked
+
+
+def examine(data: bytes) -> tuple[str | None, bool, str]:
+    """(kind, checked, why): `why` names what stopped the check when ``checked`` is False — for
+    the scan record and the operator's log, never shown to users."""
     data = data if isinstance(data, bytes) else bytes(data)
     for check in (_cfb, _zip, _pdf, _sevenzip, _rar):
         try:
             kind = check(data)
         except _Unchecked as e:
-            return e.kind, False
-        except Exception:  # noqa: BLE001 - a checker that got this far found its format's structure
-            return _KIND_OF[check], False
+            return e.kind, False, str(e) or "not evaluated"
+        except Exception as e:  # noqa: BLE001 - a checker that got this far found its format's structure
+            return _KIND_OF[check], False, type(e).__name__
         if kind:
-            return kind, True
-    return None, True
+            return kind, True, ""
+    return None, True, ""
 
 
 def kind_of_signature(signature: str | None) -> str:
@@ -127,7 +138,9 @@ def _guard(kind: str):
 
 # =================================================================================== ZIP
 _ZIP_SIGS = re.compile(rb"PK(\x03\x04|\x01\x02)")
-_ZIP_MAX_HEADERS = 400_000
+#: Local plus central headers: a local header is at least 31 bytes and a central one 47, so the 25
+#: MiB scan limit holds at most ~335 000 entries (~670 000 headers). Above this: cannot be checked.
+_ZIP_MAX_HEADERS = 700_000
 #: Compression methods of real ZIP entries (APPNOTE 4.4.5), 99 being WinZip AES.
 _ZIP_METHODS = frozenset({0, 1, 6, 8, 9, 12, 14, 19, 93, 95, 96, 97, 98, 99})
 _MANIFEST = b"META-INF/manifest.xml"
@@ -136,42 +149,88 @@ _ODF_ENCRYPTED = re.compile(rb"<(?:[\w.-]+:)?encryption-data\b")
 
 
 def _zip(data: bytes) -> str | None:
-    """Every local and central header in the file, wherever it is."""
+    """Every local and central header in the file, wherever it is. A header that says "encrypted"
+    counts when the other record names the same entry (a real archive has both), or when it passes
+    the strict checks on its own (an archive without a central directory): four signature bytes
+    turn up in machine code by chance, a coherent header with a sane name does not."""
     seen = 0
     manifests: list[tuple[int, int, int, int]] = []       # (data offset, method, csize, flags) of local manifest entries
     sizes: dict[bytes, int] = {}                          # central-directory sizes, for local headers with a descriptor
+    flagged: set[bytes] = set()                           # names of encrypted-looking local headers awaiting a central record
     for m in _ZIP_SIGS.finditer(data):
         seen += 1
         if seen > _ZIP_MAX_HEADERS:
-            raise _Unchecked(ARCHIVE, "too many ZIP headers")
+            raise _Unchecked(ARCHIVE, "more ZIP headers than the scan limit can hold")
         p = m.start()
         if m.group(1) == b"\x03\x04":
             if p + 30 > len(data):
                 continue
-            ver, flags, method, _t, _d, _crc, csize, _usize, nlen, xlen = struct.unpack_from("<HHHHHIIIHH", data, p + 4)
+            ver, flags, method, _t, _d, _crc, csize, usize, nlen, xlen = struct.unpack_from("<HHHHHIIIHH", data, p + 4)
             if (ver & 0xFF) > 63 or method not in _ZIP_METHODS or not 0 < nlen <= 4096 or p + 30 + nlen > len(data):
                 continue                          # not a header a reader would accept
+            name = data[p + 30:p + 30 + nlen]
             if flags & 0x1:
-                return _zip_kind(data)
-            if data[p + 30:p + 30 + nlen] == _MANIFEST:
+                if _strict_local(data, p, ver, flags, method, csize, usize, name, xlen):
+                    return _zip_kind(data)
+                if len(flagged) < 256:
+                    flagged.add(name)
+                continue
+            if name == _MANIFEST:
                 manifests.append((p + 30 + nlen + xlen, method, csize, flags))
         else:
             if p + 46 > len(data):
                 continue
             _made, ver, flags, method = struct.unpack_from("<HHHH", data, p + 4)
-            csize = struct.unpack_from("<I", data, p + 20)[0]
-            nlen = struct.unpack_from("<H", data, p + 28)[0]
+            csize, usize, nlen, xlen, clen = struct.unpack_from("<IIHHH", data, p + 20)
+            offset = struct.unpack_from("<I", data, p + 42)[0]
             if (ver & 0xFF) > 63 or method not in _ZIP_METHODS or not 0 < nlen <= 4096 or p + 46 + nlen > len(data):
                 continue
-            if flags & 0x1:
-                return _zip_kind(data)
             name = data[p + 46:p + 46 + nlen]
+            if name in flagged:
+                return _zip_kind(data)            # the local header's flag, corroborated by the directory
+            if flags & 0x1 and _strict_central(data, p, ver, flags, csize, usize, name, xlen, clen, offset):
+                return _zip_kind(data)
             if name == _MANIFEST:
                 sizes.setdefault(name, csize)
     for start, method, csize, flags in manifests[:64]:
         if _manifest_encrypted(data, start, method, csize if csize or not flags & 0x8 else sizes.get(_MANIFEST)):
             return OFFICE
     return None
+
+
+def _name_ok(name: bytes, flags: int) -> bool:
+    """A file name a writer produces: no control characters, valid UTF-8 when bit 11 says so."""
+    if not name or min(name) < 0x20 or b"\x7f" in name:
+        return False
+    if flags & 0x800:
+        try:
+            name.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+    return True
+
+
+def _strict_local(data: bytes, p: int, ver: int, flags: int, method: int, csize: int, usize: int, name: bytes, xlen: int) -> bool:
+    if ver >> 8 or not _name_ok(name, flags):
+        return False
+    body = p + 30 + len(name) + xlen
+    if body > len(data):
+        return False
+    if not flags & 0x8 and csize != 0xFFFFFFFF:
+        if body + csize > len(data):
+            return False
+        if method == 0 and csize not in (usize, usize + 12):   # stored: ZipCrypto adds a 12-byte header
+            return False
+    if method == 99 and b"\x01\x99" not in data[p + 30 + len(name):body]:   # WinZip AES carries its extra field
+        return False
+    return True
+
+
+def _strict_central(data: bytes, p: int, ver: int, flags: int, csize: int, usize: int, name: bytes, xlen: int, clen: int,
+                    offset: int) -> bool:
+    if ver >> 8 or not _name_ok(name, flags) or p + 46 + len(name) + xlen + clen > len(data):
+        return False
+    return all(v == 0xFFFFFFFF or v <= len(data) for v in (csize, offset)) and (usize == 0xFFFFFFFF or usize < (1 << 40))
 
 
 def _zip_kind(data: bytes) -> str:
@@ -657,30 +716,62 @@ def _last_matches(rx: re.Pattern, data: bytes, k: int, before: int | None = None
     return out[:k]
 
 
+_PDF_HEADER = re.compile(rb"%PDF-\d")
+_INDIRECT_OBJECT = re.compile(rb"(?<![0-9])\d{1,10}[ \t\r\n\x0c\x00]+\d{1,5}[ \t\r\n\x0c\x00]+obj\b")
+
+
 def _pdf(data: bytes) -> str | None:
+    """Only a file with PDF structure is a PDF: the header where readers look for it (the first
+    KiB), or — for the readers that repair a file without one — indirect objects and a
+    cross-reference keyword. Text, source code or a program that merely mentions `/Encrypt` is not."""
     if not _ENCRYPT_NAME.search(data):
         return None                                   # no encryption dictionary can be named
-    return _pdf_checked(data)
+    headed = _PDF_HEADER.search(data, 0, 1024 + 8) is not None
+    if not headed and not (b"endobj" in data and (b"trailer" in data or b"startxref" in data or b"xref" in data)
+                           and _INDIRECT_OBJECT.search(data)):
+        return None
+    return _pdf_checked(data, headed)
 
 
 @_guard(PDF)
-def _pdf_checked(data: bytes) -> str | None:
+def _pdf_checked(data: bytes, headed: bool) -> str | None:
     budget = _Budget(_TOKENS_PER_PDF)
     chain = _startxref_chain(data, budget)
     if chain:
         carrying = [t for t in chain if t.get("Encrypt") is not None]
         if not carrying:
             return None                               # the trailer readers use names no encryption
-        return _judge(data, carrying[0], budget)
+        return _settle(_judge(data, carrying[0], budget), headed)
     # Damaged or missing cross-reference: readers rebuild it from what they find.
     carrying: dict[str, dict] = {}
     for t in _repair_candidates(data, budget):
         if t.get("Encrypt") is not None:
             carrying.setdefault(repr((t.get("Encrypt"), t.get("ID"))), t)   # one verdict per distinct pair
     if not carrying:
+        if not headed:
+            # Without a header only a repairing reader opens it, from the same trailers: none of
+            # them names an encryption dictionary, so nothing asks for a password (a program or
+            # archive that embeds PDF fragments and mentions /Encrypt lands here).
+            return None
         raise _Unchecked(PDF, "the /Encrypt name is there but no readable trailer carries it")
     verdicts = [_judge(data, t, budget) for t in carrying.values()]
-    return PDF if PDF in verdicts else None
+    if PDF in verdicts:
+        return PDF
+    return _settle(_UNKNOWN, headed) if _UNKNOWN in verdicts else None
+
+
+#: `_judge`'s third answer: an encryption dictionary that cannot be evaluated (missing or short
+#: /O and /U, an unknown revision, a reference to nothing).
+_UNKNOWN = "unknown"
+
+
+def _settle(verdict: str | None, headed: bool) -> str | None:
+    """A PDF (header where readers look) with an encryption dictionary nobody can evaluate does not
+    open without a key: refused. Without a header only repairing readers open the file, and they
+    cannot decrypt with a dictionary that malformed either — text quoting PDF syntax lands here."""
+    if verdict == _UNKNOWN:
+        return PDF if headed else None
+    return verdict
 
 
 def _startxref_chain(data: bytes, budget: _Budget) -> list[dict]:
@@ -791,13 +882,15 @@ def _find_object(data: bytes, num: int, gen: int, budget: _Budget) -> int | None
 
 
 def _judge(data: bytes, trailer: dict, budget: _Budget) -> str | None:
+    """PDF (needs a password or a key), None (opens with the empty user password) or _UNKNOWN."""
     enc = _resolve(data, trailer["Encrypt"], budget)
     if not isinstance(enc, dict):
-        return PDF
+        return _UNKNOWN
     ids = _resolve(data, trailer.get("ID"), budget)
     id0 = _resolve(data, ids[0], budget) if isinstance(ids, list) and ids else b""
     id0 = id0 if isinstance(id0, bytes) else b""
-    return None if _opens_without_password(data, enc, id0, budget) else PDF
+    opens = _opens_without_password(data, enc, id0, budget)
+    return _UNKNOWN if opens is None else (None if opens else PDF)
 
 
 def _num(data: bytes, value, default: int, budget: _Budget) -> int:
@@ -805,23 +898,25 @@ def _num(data: bytes, value, default: int, budget: _Budget) -> int:
     return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else default
 
 
-def _opens_without_password(data: bytes, enc: dict, id0: bytes, budget: _Budget) -> bool:
-    """ISO 32000 standard security handler: does the empty user password open the document?"""
-    if _resolve(data, enc.get("Filter"), budget) != "Standard":
-        return False                          # public-key and other handlers need a key
+def _opens_without_password(data: bytes, enc: dict, id0: bytes, budget: _Budget) -> bool | None:
+    """ISO 32000 standard security handler: does the empty user password open the document?
+    True / False, or None when the dictionary cannot be evaluated."""
+    handler = _resolve(data, enc.get("Filter"), budget)
+    if handler != "Standard":
+        return False if handler else None     # public-key and other handlers need a key
     r = _num(data, enc.get("R"), 0, budget)
     v = _num(data, enc.get("V"), 0, budget)
     o = _resolve(data, enc.get("O"), budget)
     u = _resolve(data, enc.get("U"), budget)
     if not isinstance(o, bytes) or not isinstance(u, bytes):
-        return False
+        return None
     if r in (5, 6):
         if len(u) < 48:
-            return False
+            return None
         check = hashlib.sha256(u[32:40]).digest() if r == 5 else _hash_2b(b"", u[32:40], b"")
         return check == u[:32]
     if r not in (2, 3, 4) or len(o) < 32 or len(u) < 16:
-        return False
+        return None
     p = _num(data, enc.get("P"), 0, budget) & 0xFFFFFFFF
     if r == 2:
         n = 5

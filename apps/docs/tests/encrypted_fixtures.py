@@ -519,6 +519,12 @@ def zip_many(size: int) -> bytes:
     return lh + cd + z64 + loc + b"PK\x05\x06" + struct.pack("<HHHHIIH", 0, 0, 0xFFFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0)
 
 
+def zip_local_flood(size: int) -> bytes:
+    """Minimal local headers back to back: more headers than any real archive of this size has."""
+    lh = b"PK\x03\x04" + struct.pack("<HHHHHIIIHH", 20, 0, 0, 0, 0, 0, 0, 0, 1, 0) + b"a"
+    return lh * (size // len(lh))
+
+
 def pdf_trailers(size: int, encrypt: bool) -> bytes:
     """A PDF that is nothing but trailer keywords (each naming /Encrypt when `encrypt`)."""
     unit = b"trailer<< /Encrypt 1 0 R /ID [<00><00>] >>\n" if encrypt else b"trailer<<>>\n"
@@ -563,3 +569,49 @@ def odf_manifest_bomb() -> bytes:
 def many_7z_signatures() -> bytes:
     """Seventy plain 7z archives back to back: more signatures than the check follows."""
     return b"".join(sevenzip(encrypted=False, encode_header=False) for _ in range(70))
+
+
+# ============================================================================ look-alikes (round-2 review)
+def zip_entries(n: int) -> bytes:
+    """An ordinary stored ZIP with `n` tiny entries, written header by header (zipfile is slow at this)."""
+    local, central, off = [], [], 0
+    for i in range(n):
+        name, body = b"f%06d.txt" % i, b"x"
+        crc = zlib.crc32(body)
+        lh = b"PK\x03\x04" + struct.pack("<HHHHHIIIHH", 20, 0, 0, 0, 0, crc, 1, 1, len(name), 0) + name + body
+        central.append(b"PK\x01\x02" + struct.pack("<HHHHHHIIIHHHHHII", 20, 20, 0, 0, 0, 0, crc, 1, 1, len(name), 0, 0, 0, 0, 0, off) + name)
+        local.append(lh)
+        off += len(lh)
+    cd = b"".join(central)
+    return (b"".join(local) + cd + b"PK\x06\x06" + struct.pack("<QHHIIQQQQ", 44, 45, 45, 0, 0, n, n, len(cd), off)
+            + b"PK\x06\x07" + struct.pack("<IQI", 0, off + len(cd), 1)
+            + b"PK\x05\x06" + struct.pack("<HHHHIIH", 0, 0, 0xFFFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0))
+
+
+def machine_code_with_zip_signature() -> bytes:
+    """What the review found in a real DLL: the local-header signature inside machine code, with a
+    version of 0x850F, method 0, the encrypted bit set by chance and a binary name."""
+    junk = bytes(range(256)) * 64
+    fake = (b"PK\x03\x04" + struct.pack("<HHHHHIIIHH", 0x850F, 0x0001, 0, 0x8B48, 0x0845, 0x0FC08548, 0x8B480000, 0x74, 12, 0)
+            + b"\x8b\x45\x08\x0f\x85\x01\x00\x00\x48\x8b\x4d\x10")
+    return b"MZ" + bytes(62) + junk + fake + junk
+
+
+def text_about_pdf_internals() -> dict[str, bytes]:
+    """Notes, a CSV and source code that talk about encrypted PDFs (TEST FIXTURES)."""
+    return {
+        "note.md": b"# PDF security notes\n\nAn encrypted PDF names its handler in the trailer: `/Encrypt 5 0 R`.\n",
+        "log.csv": b"file,note\nreport.pdf,has /Encrypt entry\n",
+        "check.py": b"def is_encrypted(trailer):\n    return '/Encrypt' in trailer  # checks the /Encrypt key\n",
+        "dict.txt": b"the trailer looks like << /Size 9 /Root 1 0 R /Encrypt 5 0 R /ID [<ab><cd>] >>\n",
+        "tutorial.txt": (b"A trailer: trailer << /Size 9 /Root 1 0 R /Encrypt 5 0 R >> and startxref\n"
+                         b"then the objects: 5 0 obj << /Filter /Standard >> endobj\n"),
+    }
+
+
+def program_with_pdf_fragments() -> bytes:
+    """A program (like a PDF library) whose data holds PDF fragments and the /Encrypt name, with no
+    PDF header at the start: repairing readers find no trailer that names an encryption dictionary."""
+    strings = (b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\nxref\ntrailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%ld\n%%EOF\n"
+               b"\0/Encrypt\0/EncryptMetadata\0Standard\0" + b"2 0 obj\n<< /Length %d >>\nendobj\n")
+    return b"\xcf\xfa\xed\xfe" + bytes(4096) + os.urandom(8192) + strings + os.urandom(8192)

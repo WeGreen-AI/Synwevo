@@ -82,6 +82,13 @@ def test_a_password_protected_member_file_is_refused_before_it_is_read(platform)
     # a workbook protected only in its structure opens without a password: not refused as encrypted
     r = c.post(url, files={"file": ("结构保护.xls", F.lo_xls("structure"), "application/vnd.ms-excel")}, headers=c.h)
     assert r.status_code == 201 and r.json()["scan"]["status"] == "clean", r.text
+    # a structure the check could not finish is refused with its own sentence (round-2 review)
+    r = c.post(url, files={"file": ("成员.7z", F.sevenzip(encrypted=False, header_coder="delta+lzma"), "application/octet-stream")}, headers=c.h)
+    assert r.status_code == 400 and r.json()["error"] == "unchecked_file", r.text
+    assert r.json()["message"].startswith("文件的结构无法安全地完成检查") and r.json()["detail"]["checked"] is False
+    # a member list that happens to mention PDF internals is a member list
+    r = c.post(url, files={"file": ("成员.csv", "姓名,邮箱,备注\nNina New,nina.new@example.test,sent /Encrypt 5 0 R notes\n".encode(), "text/csv")}, headers=c.h)
+    assert r.status_code == 201 and r.json()["scan"]["status"] == "clean", r.text
 
 
 def test_the_security_check_does_not_hold_the_event_loop(platform, monkeypatch):

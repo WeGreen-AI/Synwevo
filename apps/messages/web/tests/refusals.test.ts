@@ -126,6 +126,13 @@ test("numbered refusals read in every language, from the detail the server sends
     assert.equal(apiFailureText(encrypted), "The file is password-protected or contains encrypted content, so the security check cannot look inside it and it was not accepted. Remove the password (or save an unencrypted copy) and upload it again.");
     setLocale("zh-Hant");
     assert.equal(apiFailureText(encrypted), "檔案設有密碼或含有加密內容，安全檢查無法查看其中的內容，因此未被接收；請移除密碼（或另存一份不加密的副本）後重新上傳");
+    // a structure the check could not finish has its own sentence: there may be no password to remove
+    const unchecked = { code: "unchecked_file", status: 400, detail: { filename: "a.zip", kind: "archive", checked: false },
+      originalMessage: "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传" };
+    assert.equal(apiFailureText(unchecked), "檔案的結構無法安全地完成檢查（可能已損壞、被截斷或結構異常），因此未被接收；如果它沒有設密碼，請用產生它的程式重新儲存（或拆分成較小的檔案）後重新上傳");
+    setLocale("en");
+    assert.equal(apiFailureText(unchecked), "The file's structure could not be checked safely (it may be damaged, cut short or built in an unusual way), so it was not accepted. If it is not password-protected, save it again from the program that made it (or split it into smaller files) and upload it again.");
+    setLocale("zh-Hant");
     // an earlier verdict on the same bytes names no file: the server's own sentence
     setLocale("en");
     assert.equal(apiFailureText({ code: "malware_detected", status: 400, originalMessage: "该文件此前已被判定为恶意内容，已拒绝" }),

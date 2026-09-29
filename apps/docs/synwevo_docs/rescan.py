@@ -281,7 +281,7 @@ class DocsRescan:
             # Password-protected: cannot be checked, is not malware. Recorded (`rescan: true`, so the
             # upload gate's refusal does not apply), the row keeps its state — the owner decides.
             made = [self._publish_source(r, RS.encrypted_record(v, sha, r.get("scan"))) for r in rows]
-            self.report.unit(KIND_SOURCE, ident, sha, "encrypted" if any(made) else "changed", len(rows), v.reason or "")
+            self.report.unit(KIND_SOURCE, ident, sha, "encrypted" if any(made) else "changed", len(rows), RS.encrypted_detail(v))
             return
         # error / too_large: the attempt is recorded, the row stays as it was
         limit = ex.scanner.max_bytes
@@ -330,7 +330,8 @@ class DocsRescan:
             if not (v.outcome == "too_large" and RS.scan_status(prev) == "too_large" and (prev or {}).get("limit") == limit):
                 self._record_case(sha, RS.attempt_record(v.outcome, v.reason or "", sha, prev,
                                                          **({"limit": limit} if v.outcome == "too_large" else {})))
-        detail = f"size={g['size']} limit={ex.scanner.max_bytes}" if v.outcome == "too_large" else (v.reason or "")
+        detail = (f"size={g['size']} limit={ex.scanner.max_bytes}" if v.outcome == "too_large"
+                  else RS.encrypted_detail(v) if v.outcome == "encrypted" else (v.reason or ""))
         self.report.unit(KIND_CASE, ident, sha, v.outcome, len(g["cases"]), detail)
 
     def _publish_source(self, row: dict, rec: dict) -> bool:
@@ -411,7 +412,7 @@ class DocsRescan:
             # Any content that cannot be checked: recorded, the template stays usable as it was.
             made = publish(row, RS.encrypted_record(enc[0], enc[0].sha256, prev, blobs=len(blobs)))
             self.report.unit(label, row["id"], enc[0].sha256, "encrypted" if made else "changed",
-                             detail=f"{enc[0].reason or '-'}，{len(enc)}/{len(blobs)} 份内容")
+                             detail=f"{RS.encrypted_detail(enc[0]) or '-'}，{len(enc)}/{len(blobs)} 份内容")
             return
         first = next(v for v in verdicts if v.result is not None)
         made = publish(row, RS.clean_record(first.result, blobs[0], prev, blobs=len(blobs)))

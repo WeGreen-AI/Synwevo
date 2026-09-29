@@ -386,6 +386,7 @@ export const messages = {
   "找不到该附件": { en: "This attachment was not found", "zh-Hant": "找不到這個附件" },
   "该文件此前已被判定为恶意内容，已拒绝": { en: "This file was already identified as malicious and has been rejected", "zh-Hant": "這個檔案先前已被判定為惡意內容，已拒絕" },
   "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传": { en: "The file is password-protected or contains encrypted content, so the security check cannot look inside it and it was not accepted. Remove the password (or save an unencrypted copy) and upload it again.", "zh-Hant": "檔案設有密碼或含有加密內容，安全檢查無法查看其中的內容，因此未被接收；請移除密碼（或另存一份不加密的副本）後重新上傳" },
+  "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传": { en: "The file's structure could not be checked safely (it may be damaged, cut short or built in an unusual way), so it was not accepted. If it is not password-protected, save it again from the program that made it (or split it into smaller files) and upload it again.", "zh-Hant": "檔案的結構無法安全地完成檢查（可能已損壞、被截斷或結構異常），因此未被接收；如果它沒有設密碼，請用產生它的程式重新儲存（或拆分成較小的檔案）後重新上傳" },
   "安全检查服务暂不可用，请稍后重试": { en: "The security check service is unavailable right now. Try again later", "zh-Hant": "安全檢查服務暫時無法使用，請稍後再試" },
   "文件超过安全检查的大小上限（{n} MB），无法接纳": { en: "The file is over the security check's size limit ({n} MB) and cannot be accepted", "zh-Hant": "檔案超過安全檢查的大小上限（{n} MB），無法接收" },
   "文件「{filename}」被判定为恶意内容（{signature}），已拒绝": { en: "“{filename}” was identified as malicious ({signature}) and was refused", "zh-Hant": "檔案「{filename}」被判定為惡意內容（{signature}），已拒絕" },

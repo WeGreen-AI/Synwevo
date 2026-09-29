@@ -118,10 +118,22 @@ def infected_record(signature: str | None, engine: str | None, sha: str) -> dict
 
 
 def encrypted_record(v: "Verdict", sha: str, prev, **extra) -> dict:
-    """A rescan's finding that stored bytes are password-protected: recorded, access unchanged."""
+    """A rescan's finding that stored bytes are password-protected (or could not be checked):
+    recorded, access unchanged."""
+    res = v.result
     rec = {"status": "encrypted", "reason": v.reason, "signature": v.signature, "sha256": sha, "engine": v.engine,
+           "checked": getattr(res, "checked", None), "detail": getattr(res, "detail", None),
            "checked_at": time.time(), "rescan": True, "access": "unchanged", "previous": previous_status(prev), **extra}
     return {k: val for k, val in rec.items() if val is not None}
+
+
+def encrypted_detail(v: "Verdict") -> str:
+    """The summary's words for an encrypted finding: the kind, and whether it was a password or a
+    structure the check could not finish (with what stopped it)."""
+    res = v.result
+    if getattr(res, "checked", None) is False:
+        return f"{v.reason or '-'}，结构无法检查（{getattr(res, 'detail', None) or '-'}）"
+    return v.reason or ""
 
 
 def attempt_record(status: str, reason: str, sha: str, prev, **extra) -> dict:

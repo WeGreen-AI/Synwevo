@@ -179,6 +179,58 @@ def test_what_cannot_be_evaluated_fails_closed():
     assert inspect(F.encrypted_ooxml()[:1536]) == ("office", False)
 
 
+def test_text_and_programs_that_mention_pdf_internals_are_not_pdfs():
+    """Round-2 review: notes, CSV cells, source code, a PDF library's jar and Ghostscript's dylibs
+    mention `/Encrypt`; the first fix read every such file as a PDF and refused it. A PDF needs PDF
+    structure: its header where readers look, or indirect objects and a cross-reference keyword."""
+    notes = F.text_about_pdf_internals()
+    for name, data in notes.items():
+        assert inspect(data) == (None, True), name
+    assert inspect(F.zip_bytes(notes)) == (None, True)                    # the same notes stored in a ZIP
+    assert inspect(F.program_with_pdf_fragments()) == (None, True)
+    # real encrypted PDFs are still told apart, with or without their header
+    user = _mupdf_pdf("PDF_ENCRYPT_AES_256", user="u")
+    assert encrypted_kind(user) == "pdf" and encrypted_kind(b"%XYZ-1.7" + user[8:]) == "pdf"
+    assert encrypted_kind(F.program_with_pdf_fragments() + user) == "pdf"   # a PDF appended to a program
+
+
+def test_a_zip_signature_in_machine_code_is_not_an_archive():
+    """Round-2 review: four signature bytes inside a real DLL, with the encrypted bit set by chance,
+    were refused as an encrypted archive. A header counts when the other record names the same
+    entry, or when it is coherent on its own (full version field, a real name, consistent sizes)."""
+    assert inspect(F.machine_code_with_zip_signature()) == (None, True)
+    # a genuine archive without its central directory still reads from its local headers
+    assert inspect(F.flag_encrypted(F.zip_bytes({"a.txt": b"TEST FIXTURE"}))[:-22]) == ("archive", True)
+    # and one whose local header is odd but whose directory names it is still encrypted
+    plain = F.zip_bytes({"a.txt": b"TEST"})
+    odd = bytearray(F.flag_encrypted(plain, central=False))
+    odd[4:6] = b"\x14\x85"                                                  # high version byte a writer would not set
+    assert encrypted_kind(bytes(odd)) == "archive"
+
+
+def test_an_ordinary_zip_with_many_entries_is_read_not_refused():
+    """Round-2 review: the header cap counted local and central headers, so ~200 000 entries — an
+    ordinary 18 MiB ZIP — was refused. The cap now follows what the 25 MiB scan limit can hold."""
+    data = F.zip_entries(210_000)
+    assert len(data) < 25 * MiB
+    t = time.perf_counter()
+    assert inspect(data) == (None, True)
+    assert time.perf_counter() - t < 3.0
+    import io
+    import zipfile
+    assert len(zipfile.ZipFile(io.BytesIO(F.zip_entries(50))).infolist()) == 50     # the builder writes real ZIPs
+
+
+def test_could_not_be_checked_is_reported_as_such(double):
+    """Round-2 review: "could not be checked" used the password sentence and was not recorded."""
+    sc = M.ClamdScanner(double.address, timeout_s=5)
+    res = sc.scan(F.sevenzip(encrypted=False, header_coder="delta+lzma"))
+    assert (res.status, res.reason, res.checked) == ("encrypted", "archive", False) and res.detail
+    assert res.as_record()["checked"] is False and M.unchecked(res) and M.unchecked(res.as_record())
+    enc = sc.scan(F.flag_encrypted(F.zip_bytes({"a.txt": b"TEST"})))
+    assert (enc.status, enc.checked) == ("encrypted", True) and not M.unchecked(enc)
+
+
 @pytest.mark.parametrize("method", ["PDF_ENCRYPT_RC4_40", "PDF_ENCRYPT_RC4_128", "PDF_ENCRYPT_AES_128", "PDF_ENCRYPT_AES_256"])
 def test_a_pdf_that_needs_a_password_is_encrypted_one_with_only_an_owner_password_is_not(method):
     # revisions 2, 3, 4 (MD5/RC4 key and check) and 6 (ISO 32000-2 algorithm 2.B), as MuPDF writes them
@@ -273,7 +325,8 @@ ADVERSARIAL = {
     "7z header of millions of coders": (F.sevenzip_header_bomb, ("archive", False)),
     "7z asking for a 4 GiB dictionary": (F.sevenzip_bigdict, (None, True)),
     "CFB whose FAT repeats one sector": (lambda: F.cfb_fat_bomb(25 * MiB), (None, True)),
-    "ZIP with a huge central directory": (lambda: F.zip_many(25 * MiB), ("archive", False)),
+    "ZIP with a huge central directory": (lambda: F.zip_many(25 * MiB), (None, True)),
+    "ZIP of more headers than 25 MiB of entries hold": (lambda: F.zip_local_flood(25 * MiB), ("archive", False)),
     "PDF of trailer keywords naming /Encrypt": (lambda: F.pdf_trailers(25 * MiB, True), ("pdf", True)),
     "PDF of trailer keywords": (lambda: F.pdf_trailers(25 * MiB, False), (None, True)),
     "PDF with millions of '1 0 obj'": (lambda: F.pdf_object_bomb(25 * MiB), ("pdf", True)),
@@ -500,6 +553,31 @@ def test_an_encrypted_template_is_refused_with_the_acceptance_code(api):
     assert c.store.one("SELECT COUNT(*) AS n FROM templates")["n"] == 0
 
 
+UNCHECKED = "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传"
+
+
+def test_a_file_that_could_not_be_checked_says_so_and_text_about_pdfs_is_accepted(api):
+    """Round-2 review: a CSV whose cell mentions /Encrypt ended in error as "encrypted"; and a file
+    the check could not finish told its reader to remove a password it does not have."""
+    c = api
+    pid = c.api.project("无法检查")
+    out = c.post(f"/api/projects/{pid}/sources", files=[("files", ("打包.7z", F.sevenzip(encrypted=False, header_coder="delta+lzma")))]).json()[0]
+    f = _wait(c, pid, out["id"], ("error", "ready", "unsupported"))
+    assert f["status"] == "error" and f["error"] == UNCHECKED, f
+    assert (f["scan"]["status"], f["scan"]["reason"], f["scan"]["checked"]) == ("encrypted", "archive", False), f["scan"]
+    row = c.store.one("SELECT scan FROM source_files WHERE id=?", (out["id"],))
+    assert row["scan"]["detail"], "what stopped the check is recorded for the operator"
+    r = c.get(f"/api/sources/{out['id']}/download")
+    assert r.status_code == 410 and r.json()["error"] == "unchecked_file" and r.json()["message"] == UNCHECKED
+    t = c.post("/api/templates/upload", files={"file": ("打包.7z", F.sevenzip(encrypted=False, header_coder="delta+lzma"))})
+    assert t.status_code == 400 and t.json()["error"] == "unchecked_file" and t.json()["message"] == UNCHECKED
+    assert t.json()["detail"] == {"filename": "打包.7z", "kind": "archive", "checked": False}
+    # text that talks about PDF internals is read as the CSV it is
+    csv = c.post(f"/api/projects/{pid}/sources", files=[("files", ("笔记.csv", F.text_about_pdf_internals()["log.csv"]))]).json()[0]
+    g = _wait(c, pid, csv["id"], ("ready", "error"))
+    assert g["status"] == "ready" and g["scan"]["status"] == "clean", g
+
+
 class _SlowScanner:
     """TEST DOUBLE wrapper: the real adapter against the protocol double, one second slower — as a
     busy clamd (or a large file) is. Whatever runs it on the event loop holds every other request."""
@@ -662,6 +740,19 @@ def test_a_rescan_reports_encrypted_historical_files_and_leaves_their_access(his
     # answered: a second run has nothing to look at
     code, out = _rescan(c, capsys)
     assert code == 0 and "没有需要补扫的内容" in out, out
+
+
+def test_a_rescan_says_which_findings_could_not_be_checked(hist, double, monkeypatch, capsys):
+    c = hist
+    pid = c.api.project("历史")
+    src = c.api.upload_bytes(pid, "打包.7z", F.sevenzip(encrypted=False, header_coder="delta+lzma"))[0]
+    monkeypatch.setenv("SYNWEVO_CLAMD_ADDRESS", double.address)
+    monkeypatch.setenv("SYNWEVO_CLAMD_TIMEOUT_S", "5")
+    code, out = _rescan(c, capsys)
+    assert code == 1 and src["id"] in out and "结构无法检查" in out, out
+    rec = c.store.one("SELECT scan FROM source_files WHERE id=?", (src["id"],))["scan"]
+    assert (rec["status"], rec["checked"], rec["access"]) == ("encrypted", False, "unchanged") and rec["detail"]
+    assert c.get(f"/api/sources/{src['id']}/download").status_code == 200
 
 
 def test_a_release_does_not_put_back_encrypted_bytes(hist, double, monkeypatch, capsys):

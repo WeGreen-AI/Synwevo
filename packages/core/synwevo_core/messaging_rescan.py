@@ -100,7 +100,7 @@ class AttachmentRescan:
         if v.outcome == "encrypted":
             # Not malware, and not something this command withdraws: recorded, access unchanged.
             made = [self._publish(r, RS.encrypted_record(v, sha, r.get("scan"))) for r in rows]
-            self.report.unit(KIND, ident, sha, "encrypted" if any(made) else "changed", len(rows), v.reason or "")
+            self.report.unit(KIND, ident, sha, "encrypted" if any(made) else "changed", len(rows), RS.encrypted_detail(v))
             return
         limit = ex.scanner.max_bytes
         for r in rows:

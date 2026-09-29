@@ -5621,6 +5621,11 @@ components:
             - type: string
             - type: "null"
           title: Reason
+        checked:
+          anyOf:
+            - type: boolean
+            - type: "null"
+          title: Checked
         sha256:
           anyOf:
             - type: string
@@ -5645,7 +5650,7 @@ components:
       required:
         - status
       title: ScanVerdict
-      description: "What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows\nwritten before scanning existed and `not_configured` deployments without a scanner — neither is\nclean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`.\n`encrypted` (password-protected, or its structure could not be checked: nobody can check what\nis inside; `reason` archive / office / pdf) is never clean: the file ends in `error` and is\nnever served (410 `encrypted_file`); a template upload is refused (400 `encrypted_file`); a\nfile stored before scanning that a rescan finds encrypted keeps its state (the owner decides)."
+      description: "What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows\nwritten before scanning existed and `not_configured` deployments without a scanner — neither is\nclean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`.\n`encrypted` (password-protected — or, with `checked: false`, a structure the check could not\nfinish; `reason` archive / office / pdf) is never clean: the file ends in `error` and is never\nserved (410 `encrypted_file` / `unchecked_file`); a template upload is refused with 400 and the\nsame codes; a file stored before scanning that a rescan finds encrypted keeps its state (the\nowner decides)."
     SourceBlock:
       properties:
         index:
