@@ -61,7 +61,7 @@
 | 事务 outbox（任务事件与状态同事务） | 已验证 | `jobs.py`、`webhooks.py` 调度游标 | 事件与投递表无保留期 |
 | Standard Webhooks 签名、轮换重叠、SSRF（每次解析、连接已验证 IP、拒绝跳转） | 已验证 | `webhooks.py`；`test_webhook_*` | 只用第一个解析地址 |
 | 重试、死信、人工重投、暂停/恢复 | 已验证 | `webhooks.py` | 暂停期间事件丢弃；无批量重放 |
-| 事件目录 | 部分 | 只有 `job.*` 与 `webhook.ping` | 文件接纳/拒绝、模板、复制、成员事件；完成事件带产物清单（批次 API-2/5） |
+| 事件目录 | 部分 | `job.*`、`webhook.ping`；**API-2** `file.ready/needs_ocr/rejected/failed`（触发器与状态同事务写入；`test_file_events.py` 8 项） | 模板、复制、成员事件（批次 API-5）。任务完成事件不带产物清单是有意的：负载只给计数，产物用凭据读取，撤权即时生效 |
 | 控制台跨工作空间 Webhook 视图 | 需实现 | 现在要在管理员浏览器里粘贴机器凭据 | 批次 API-6 |
 
 ## 6. 其他模块的机器 API

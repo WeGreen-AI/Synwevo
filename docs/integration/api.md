@@ -413,6 +413,20 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 类型：`job.created`、`job.started`、`job.planned`、`job.cancel_requested`、`job.retry_requested`、`job.recovered`、
 `job.completed`、`job.completed_with_errors`、`job.failed`、`job.cancelled`。`seq` 在同一任务内单调递增（轮询用 `after`）。
 
+**来源文件事件（API-2）**：上传的来源文件得出接纳结论时各发一次，与状态变化在同一事务里写入（数据库触发器，覆盖上传、
+共享字节隔离、运维补扫、OCR 与重新解析各条路径），不会出现状态已变而事件丢失：
+
+| 类型 | 何时 | `data.reason` |
+|---|---|---|
+| `file.ready` | 解析完成可用；`needs_ocr` 经 OCR 后也会再发一次 | 安全检查结论（如 `clean`、`not_configured`） |
+| `file.needs_ocr` | 可读但页面没有文字层，映射前需先 OCR（`POST /files/{fid}/ocr`） | 同上 |
+| `file.rejected` | 被安全检查拒绝：恶意软件（`status=rejected`）、设有密码或读不完（`status=error`） | `infected` / `encrypted` 等 |
+| `file.failed` | 已接纳但无法解析 | 同上 |
+
+负载只有 `data: {file_id, project_id, status, reason, version}`、`job: null`，不含文件名与内容；需要更多信息请用凭据读取
+`/files/{fid}`。扫描暂不可用（`scan_failed`，自动重试）期间不发事件。订阅可用 `file.*` 或具体类型过滤；
+`GET /events?types=file.ready,…` 同样可查，条目带 `file_id`、`project_id`，`job_id` 为 null。
+
 Webhook 默认关闭，按部署配置开启：
 
 ```bash

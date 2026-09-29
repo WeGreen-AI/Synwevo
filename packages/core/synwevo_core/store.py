@@ -806,6 +806,11 @@ class Store:
         # falls back to its per-process limiter at SYNWEVO_API_RATE_PER_MIN.
         from .api_quotas import SCHEMA_SQL as API_QUOTA_SCHEMA
         c.executescript(API_QUOTA_SCHEMA)
+        # API-2 (additive): a trigger turns every Docs source-file verdict into an event row in the
+        # same transaction (file.ready / needs_ocr / rejected / failed). Rollback: older code ignores
+        # the types it does not know; the trigger keeps writing rows its feed lists with job_id ''.
+        from .docs_file_events import SCHEMA_SQL as DOCS_FILE_EVENTS_SCHEMA
+        c.executescript(DOCS_FILE_EVENTS_SCHEMA)
         c.executescript("""
             CREATE TABLE IF NOT EXISTS account_recoveries (
                 id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),

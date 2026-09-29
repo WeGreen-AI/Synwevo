@@ -1373,9 +1373,10 @@ def _components() -> dict:
         "version": {"type": "integer", "example": 1},
         "occurred_at": {"type": "number", "description": "Unix 秒"},
         "tenant": {"type": "string", "description": "工作空间 id"},
-        "job": {**job_ref, "type": ["object", "null"], "description": "任务摘要；测试事件为 null"},
+        "job": {**job_ref, "type": ["object", "null"], "description": "任务摘要；测试事件与文件事件为 null"},
         "data": {"type": "object", "additionalProperties": True,
-                 "description": "status、run_no、counts；被平台停止的任务带 halt_reason"}},
+                 "description": "任务事件：status、run_no、counts；被平台停止的任务带 halt_reason。"
+                                "文件事件：file_id、project_id、status、reason（安全检查结论）、version"}},
         "additionalProperties": True}
     s = {"type": "string"}
     headers = {
@@ -1451,7 +1452,9 @@ def _webhooks() -> dict:
         out[etype] = {"post": {
             "summary": f"{etype} 事件回调",
             "description": ("测试事件：订阅的 ping 或 CLI 的测试发送，job 为 null。" if etype == W.PING_EVENT else
-                            ("默认投递的事件。" if etype in W.DEFAULT_EVENTS else "订阅时在 events 中列出才会投递。"))
+                            ("默认投递的事件。" if etype in W.DEFAULT_EVENTS else "订阅时在 events 中列出才会投递。")
+                            + ("来源文件的接纳结论，与状态变化同一事务写入；job 为 null，data 只有 file_id、project_id、"
+                               "status、reason、version，文件名与内容请用凭据另行读取。" if etype.startswith("file.") else ""))
                            + "接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。",
             "operationId": "webhook_" + etype.replace(".", "_"),
             "parameters": params,
