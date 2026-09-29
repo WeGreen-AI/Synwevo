@@ -175,6 +175,9 @@ def test_what_cannot_be_evaluated_fails_closed():
     # the /Encrypt name with no trailer a reader could use: cannot be checked
     no_trailer = b"%PDF-1.7\n1 0 obj << /Encrypt 2 0 R /Size (" + b"x" * 100 + b"\n"
     assert inspect(no_trailer) == ("pdf", False)
+    # a headerless PDF whose encryption dictionary cannot be evaluated (no /O) is refused, not
+    # accepted: no reader opens it without a key, so fail closed with or without the header
+    assert inspect(F.pdf_headerless_missing_o()) == ("pdf", False)
     # a truncated compound file whose directory cannot be followed
     assert inspect(F.encrypted_ooxml()[:1536]) == ("office", False)
 
@@ -187,25 +190,36 @@ def test_text_and_programs_that_mention_pdf_internals_are_not_pdfs():
     for name, data in notes.items():
         assert inspect(data) == (None, True), name
     assert inspect(F.zip_bytes(notes)) == (None, True)                    # the same notes stored in a ZIP
-    assert inspect(F.program_with_pdf_fragments()) == (None, True)
+    assert inspect(F.program_with_pdf_fragments()) == (None, True)        # no trailer names an encryption dictionary
+    # round-3 trade-off: prose that embeds a whole PDF fragment DOES pass the structure gate, and the
+    # encryption dictionary it names cannot be evaluated, so it fails closed (refused, not accepted)
+    assert inspect(F.pdf_fragment_in_text()) == ("pdf", False)
     # real encrypted PDFs are still told apart, with or without their header
     user = _mupdf_pdf("PDF_ENCRYPT_AES_256", user="u")
     assert encrypted_kind(user) == "pdf" and encrypted_kind(b"%XYZ-1.7" + user[8:]) == "pdf"
     assert encrypted_kind(F.program_with_pdf_fragments() + user) == "pdf"   # a PDF appended to a program
 
 
-def test_a_zip_signature_in_machine_code_is_not_an_archive():
-    """Round-2 review: four signature bytes inside a real DLL, with the encrypted bit set by chance,
-    were refused as an encrypted archive. A header counts when the other record names the same
-    entry, or when it is coherent on its own (full version field, a real name, consistent sizes)."""
-    assert inspect(F.machine_code_with_zip_signature()) == (None, True)
-    # a genuine archive without its central directory still reads from its local headers
+def test_any_zip_header_with_the_encryption_flag_is_refused():
+    """Round-3 review: round-2 accepted a flagged local header that no central directory confirmed,
+    but a reader that walks local headers (libarchive) still opens it with a password. Fail closed —
+    any header carrying the encryption flag is refused. The trade-off: four signature bytes in
+    machine code, with the encrypted bit set by chance, are refused too, as "could not be checked".
+    A cheap field test still drops bytes that are not a header at all (unknown method, impossible
+    name), so it never leans on how leniently one reader treats a header to *accept* it."""
+    # a genuine archive whose central directory is gone still reads as encrypted from its local header
+    assert inspect(F.zip_local_only_encrypted()) == ("archive", False)
+    # the same entry with its directory present is settled as encrypted, not merely "unchecked"
     assert inspect(F.flag_encrypted(F.zip_bytes({"a.txt": b"TEST FIXTURE"}))[:-22]) == ("archive", True)
-    # and one whose local header is odd but whose directory names it is still encrypted
+    # a ZIP signature inside a real DLL, plausible fields, encrypted bit set by chance: now refused
+    assert inspect(F.machine_code_with_zip_signature()) == ("archive", False)
+    # a flag a reader would honour but no writer would produce (a high version byte) is refused too
     plain = F.zip_bytes({"a.txt": b"TEST"})
     odd = bytearray(F.flag_encrypted(plain, central=False))
     odd[4:6] = b"\x14\x85"                                                  # high version byte a writer would not set
     assert encrypted_kind(bytes(odd)) == "archive"
+    # bytes that are not a ZIP header at all (no known method, a name that cannot fit) are ignored
+    assert inspect(b"MZ" + bytes(200) + b"PK\x03\x04" + b"\xff" * 26) == (None, True)
 
 
 def test_an_ordinary_zip_with_many_entries_is_read_not_refused():
@@ -327,10 +341,12 @@ ADVERSARIAL = {
     "CFB whose FAT repeats one sector": (lambda: F.cfb_fat_bomb(25 * MiB), (None, True)),
     "ZIP with a huge central directory": (lambda: F.zip_many(25 * MiB), (None, True)),
     "ZIP of more headers than 25 MiB of entries hold": (lambda: F.zip_local_flood(25 * MiB), ("archive", False)),
-    "PDF of trailer keywords naming /Encrypt": (lambda: F.pdf_trailers(25 * MiB, True), ("pdf", True)),
+    # /Encrypt 1 0 R names an object that is not there: an encryption dictionary that cannot be
+    # evaluated, so "could not be checked" (fail closed) — refused, within the same budget
+    "PDF of trailer keywords naming /Encrypt": (lambda: F.pdf_trailers(25 * MiB, True), ("pdf", False)),
     "PDF of trailer keywords": (lambda: F.pdf_trailers(25 * MiB, False), (None, True)),
     "PDF with millions of '1 0 obj'": (lambda: F.pdf_object_bomb(25 * MiB), ("pdf", True)),
-    "PDF of missing references": (lambda: F.pdf_missing_references(25 * MiB), ("pdf", True)),
+    "PDF of missing references": (lambda: F.pdf_missing_references(25 * MiB), ("pdf", False)),
     "PDF of near-miss key names": (lambda: F.pdf_name_noise(25 * MiB), (None, True)),
     "RAR signatures with endless blocks": (lambda: F.rar_blocks(25 * MiB), ("archive", False)),
     "ODF manifest inflating to 64 MiB": (F.odf_manifest_bomb, ("office", False)),

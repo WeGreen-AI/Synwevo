@@ -598,15 +598,24 @@ def machine_code_with_zip_signature() -> bytes:
 
 
 def text_about_pdf_internals() -> dict[str, bytes]:
-    """Notes, a CSV and source code that talk about encrypted PDFs (TEST FIXTURES)."""
+    """Notes, a CSV and source code that talk about encrypted PDFs (TEST FIXTURES). None of these
+    has PDF structure — no indirect object and cross-reference keyword — so none is read as a PDF."""
     return {
         "note.md": b"# PDF security notes\n\nAn encrypted PDF names its handler in the trailer: `/Encrypt 5 0 R`.\n",
         "log.csv": b"file,note\nreport.pdf,has /Encrypt entry\n",
         "check.py": b"def is_encrypted(trailer):\n    return '/Encrypt' in trailer  # checks the /Encrypt key\n",
         "dict.txt": b"the trailer looks like << /Size 9 /Root 1 0 R /Encrypt 5 0 R /ID [<ab><cd>] >>\n",
-        "tutorial.txt": (b"A trailer: trailer << /Size 9 /Root 1 0 R /Encrypt 5 0 R >> and startxref\n"
-                         b"then the objects: 5 0 obj << /Filter /Standard >> endobj\n"),
     }
+
+
+def pdf_fragment_in_text() -> bytes:
+    """Prose that embeds a whole PDF fragment: an indirect object, `endobj`, a `trailer` that names
+    `/Encrypt 5 0 R` and `startxref`. Unlike a casual `/Encrypt` mention this passes the "has PDF
+    structure" gate, and the encryption dictionary it names (`/Filter /Standard` with no /O, /U or
+    /R) cannot be evaluated — so, fail closed, it is refused ("could not be checked"). Round-2
+    accepted this shape while it had no `%PDF-` header; round-3 does not."""
+    return (b"A trailer: trailer << /Size 9 /Root 1 0 R /Encrypt 5 0 R >> and startxref\n"
+            b"then the objects: 5 0 obj << /Filter /Standard >> endobj\n")
 
 
 def program_with_pdf_fragments() -> bytes:
@@ -615,3 +624,23 @@ def program_with_pdf_fragments() -> bytes:
     strings = (b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\nxref\ntrailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%ld\n%%EOF\n"
                b"\0/Encrypt\0/EncryptMetadata\0Standard\0" + b"2 0 obj\n<< /Length %d >>\nendobj\n")
     return b"\xcf\xfa\xed\xfe" + bytes(4096) + os.urandom(8192) + strings + os.urandom(8192)
+
+
+# ============================================================================ fail-closed (round-3 review)
+def zip_local_only_encrypted() -> bytes:
+    """A single ZIP local header with the encryption flag set (general-purpose bit 0) and no central
+    directory. A writer always appends a central directory, so nothing here confirms it as a real
+    archive — but a reader that walks local headers (libarchive) still opens it with a password, so
+    it is refused ("could not be checked"). Plausible fields: stored, a short printable name."""
+    name, body = b"secret.txt", os.urandom(24)
+    return b"PK\x03\x04" + struct.pack("<HHHHHIIIHH", 20, 0x0001, 0, 0, 0, 0, len(body), len(body), len(name), 0) + name + body
+
+
+def pdf_headerless_missing_o() -> bytes:
+    """A real one-page PDF (indirect objects, xref, a trailer that names /Encrypt) whose encryption
+    dictionary has no /O entry, and whose `%PDF-` header is overwritten so the file is headerless.
+    Repairing readers accept a headerless PDF, but none can evaluate a standard-handler dictionary
+    with no /O, so it is refused ("could not be checked"). Round-3 replaces the round-2 acceptance
+    of a headerless PDF whose encryption dictionary cannot be evaluated."""
+    enc = b"<< /Filter /Standard /V 2 /R 3 /U <" + b"00" * 16 + b"> /P -4 >>"          # no /O
+    return pdf(encrypt=enc).replace(b"%PDF-1.7", b"%XXX-1.7", 1)

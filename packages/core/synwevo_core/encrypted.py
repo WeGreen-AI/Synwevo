@@ -149,14 +149,17 @@ _ODF_ENCRYPTED = re.compile(rb"<(?:[\w.-]+:)?encryption-data\b")
 
 
 def _zip(data: bytes) -> str | None:
-    """Every local and central header in the file, wherever it is. A header that says "encrypted"
-    counts when the other record names the same entry (a real archive has both), or when it passes
-    the strict checks on its own (an archive without a central directory): four signature bytes
-    turn up in machine code by chance, a coherent header with a sane name does not."""
+    """Every local and central header in the file, wherever it is. A header carrying the encryption
+    flag (general-purpose bit 0, the way ZipCrypto and WinZip AES set it) refuses the file: the
+    central directory settles it as an encrypted archive; a local header with no central directory
+    to confirm it — which a reader that walks local headers would still try to decrypt — as "could
+    not be checked". A cheap field test drops four signature bytes that land in machine code by
+    chance, and nothing more: it never decides that a flagged header is safe to accept, so it does
+    not lean on how leniently one reader or another treats the bytes."""
     seen = 0
     manifests: list[tuple[int, int, int, int]] = []       # (data offset, method, csize, flags) of local manifest entries
     sizes: dict[bytes, int] = {}                          # central-directory sizes, for local headers with a descriptor
-    flagged: set[bytes] = set()                           # names of encrypted-looking local headers awaiting a central record
+    flagged_local = False                                 # a local header carried the flag, awaiting a central record
     for m in _ZIP_SIGS.finditer(data):
         seen += 1
         if seen > _ZIP_MAX_HEADERS:
@@ -166,71 +169,42 @@ def _zip(data: bytes) -> str | None:
             if p + 30 > len(data):
                 continue
             ver, flags, method, _t, _d, _crc, csize, usize, nlen, xlen = struct.unpack_from("<HHHHHIIIHH", data, p + 4)
-            if (ver & 0xFF) > 63 or method not in _ZIP_METHODS or not 0 < nlen <= 4096 or p + 30 + nlen > len(data):
-                continue                          # not a header a reader would accept
+            if not _plausible_header(ver, method, nlen, p + 30 + nlen, len(data)):
+                continue                          # four bytes of machine code, not a header
             name = data[p + 30:p + 30 + nlen]
             if flags & 0x1:
-                if _strict_local(data, p, ver, flags, method, csize, usize, name, xlen):
-                    return _zip_kind(data)
-                if len(flagged) < 256:
-                    flagged.add(name)
-                continue
-            if name == _MANIFEST:
+                flagged_local = True              # a central record may still settle it as encrypted
+            elif name == _MANIFEST:
                 manifests.append((p + 30 + nlen + xlen, method, csize, flags))
         else:
             if p + 46 > len(data):
                 continue
             _made, ver, flags, method = struct.unpack_from("<HHHH", data, p + 4)
             csize, usize, nlen, xlen, clen = struct.unpack_from("<IIHHH", data, p + 20)
-            offset = struct.unpack_from("<I", data, p + 42)[0]
-            if (ver & 0xFF) > 63 or method not in _ZIP_METHODS or not 0 < nlen <= 4096 or p + 46 + nlen > len(data):
+            if not _plausible_header(ver, method, nlen, p + 46 + nlen, len(data)):
                 continue
             name = data[p + 46:p + 46 + nlen]
-            if name in flagged:
-                return _zip_kind(data)            # the local header's flag, corroborated by the directory
-            if flags & 0x1 and _strict_central(data, p, ver, flags, csize, usize, name, xlen, clen, offset):
-                return _zip_kind(data)
+            if flags & 0x1:
+                return _zip_kind(data)            # the directory says encrypted: a real archive
             if name == _MANIFEST:
                 sizes.setdefault(name, csize)
     for start, method, csize, flags in manifests[:64]:
         if _manifest_encrypted(data, start, method, csize if csize or not flags & 0x8 else sizes.get(_MANIFEST)):
             return OFFICE
+    if flagged_local:
+        raise _Unchecked(ARCHIVE, "a ZIP local header is flagged encrypted with no central directory to confirm it")
     return None
 
 
-def _name_ok(name: bytes, flags: int) -> bool:
-    """A file name a writer produces: no control characters, valid UTF-8 when bit 11 says so."""
-    if not name or min(name) < 0x20 or b"\x7f" in name:
-        return False
-    if flags & 0x800:
-        try:
-            name.decode("utf-8")
-        except UnicodeDecodeError:
-            return False
-    return True
-
-
-def _strict_local(data: bytes, p: int, ver: int, flags: int, method: int, csize: int, usize: int, name: bytes, xlen: int) -> bool:
-    if ver >> 8 or not _name_ok(name, flags):
-        return False
-    body = p + 30 + len(name) + xlen
-    if body > len(data):
-        return False
-    if not flags & 0x8 and csize != 0xFFFFFFFF:
-        if body + csize > len(data):
-            return False
-        if method == 0 and csize not in (usize, usize + 12):   # stored: ZipCrypto adds a 12-byte header
-            return False
-    if method == 99 and b"\x01\x99" not in data[p + 30 + len(name):body]:   # WinZip AES carries its extra field
-        return False
-    return True
-
-
-def _strict_central(data: bytes, p: int, ver: int, flags: int, csize: int, usize: int, name: bytes, xlen: int, clen: int,
-                    offset: int) -> bool:
-    if ver >> 8 or not _name_ok(name, flags) or p + 46 + len(name) + xlen + clen > len(data):
-        return False
-    return all(v == 0xFFFFFFFF or v <= len(data) for v in (csize, offset)) and (usize == 0xFFFFFFFF or usize < (1 << 40))
+def _plausible_header(ver: int, method: int, nlen: int, body_at: int, total: int) -> bool:
+    """A cheap, conservative test that a ``PK`` signature is a real ZIP header and not four bytes
+    that happen to occur in machine code: a version a PKZIP writer would set (low byte ≤ 6.3), a
+    known compression method, and a name of a sane length that fits in the file. This only drops
+    obvious junk. It deliberately does not test structural coherence (sizes, extra fields, a high
+    version byte), because a reader may accept a header that fails those, so leaning on them to
+    *accept* a flagged header would let a genuinely encrypted entry through. When it passes and the
+    flag is set, the file is refused."""
+    return (ver & 0xFF) <= 63 and method in _ZIP_METHODS and 0 < nlen <= 4096 and body_at <= total
 
 
 def _zip_kind(data: bytes) -> str:
@@ -741,7 +715,7 @@ def _pdf_checked(data: bytes, headed: bool) -> str | None:
         carrying = [t for t in chain if t.get("Encrypt") is not None]
         if not carrying:
             return None                               # the trailer readers use names no encryption
-        return _settle(_judge(data, carrying[0], budget), headed)
+        return _decide(_judge(data, carrying[0], budget))
     # Damaged or missing cross-reference: readers rebuild it from what they find.
     carrying: dict[str, dict] = {}
     for t in _repair_candidates(data, budget):
@@ -749,15 +723,15 @@ def _pdf_checked(data: bytes, headed: bool) -> str | None:
             carrying.setdefault(repr((t.get("Encrypt"), t.get("ID"))), t)   # one verdict per distinct pair
     if not carrying:
         if not headed:
-            # Without a header only a repairing reader opens it, from the same trailers: none of
-            # them names an encryption dictionary, so nothing asks for a password (a program or
-            # archive that embeds PDF fragments and mentions /Encrypt lands here).
+            # No trailer names an encryption dictionary: a repairing reader opens the file without a
+            # password (a program or archive that embeds PDF fragments and mentions /Encrypt lands
+            # here, so does text that quotes a trailer). Nothing to decrypt: it is read as it is.
             return None
         raise _Unchecked(PDF, "the /Encrypt name is there but no readable trailer carries it")
     verdicts = [_judge(data, t, budget) for t in carrying.values()]
     if PDF in verdicts:
         return PDF
-    return _settle(_UNKNOWN, headed) if _UNKNOWN in verdicts else None
+    return _decide(_UNKNOWN if _UNKNOWN in verdicts else None)
 
 
 #: `_judge`'s third answer: an encryption dictionary that cannot be evaluated (missing or short
@@ -765,12 +739,15 @@ def _pdf_checked(data: bytes, headed: bool) -> str | None:
 _UNKNOWN = "unknown"
 
 
-def _settle(verdict: str | None, headed: bool) -> str | None:
-    """A PDF (header where readers look) with an encryption dictionary nobody can evaluate does not
-    open without a key: refused. Without a header only repairing readers open the file, and they
-    cannot decrypt with a dictionary that malformed either — text quoting PDF syntax lands here."""
+def _decide(verdict: str | None) -> str | None:
+    """A verdict from `_judge`: PDF (encrypted, refused), None (opens with the empty user password,
+    accepted), or an encryption dictionary nobody can evaluate — refused as "could not be checked",
+    with or without a header. A file that names an encryption dictionary a reader would honour but
+    that we cannot evaluate is not read without a key by any reader, so it fails closed either way;
+    the round-2 header gate already keeps text and code that merely mention /Encrypt out of here."""
     if verdict == _UNKNOWN:
-        return PDF if headed else None
+        raise _Unchecked(PDF, "an encryption dictionary that cannot be evaluated (missing /O or /U, "
+                              "an unknown revision, or a reference to nothing)")
     return verdict
 
 

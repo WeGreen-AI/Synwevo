@@ -128,21 +128,24 @@ UNCHECKED = "文件的结构无法安全地完成检查（可能已损坏、被�
 
 
 def test_look_alikes_are_accepted_and_an_unfinished_check_has_its_own_sentence(org, double, monkeypatch):
-    """Round-2 review: notes and code that mention /Encrypt, a DLL with a ZIP signature in its
-    machine code and an ordinary ZIP of 210 000 entries were refused; a file the check could not
-    finish was told to remove a password."""
+    """Notes and code that mention /Encrypt and an ordinary ZIP of 210 000 entries are accepted.
+    Round-3 trade-off: a DLL whose machine code holds a ZIP signature with the encryption bit set
+    by chance can no longer be told apart from a real encrypted entry, so it is refused ("could not
+    be checked") — as is a file whose structure the check cannot finish. Both get that sentence."""
     c = org
     _on(monkeypatch, double)
     ha = c.sign_in("ann")
     dm = _dm(c, ha)
-    looks = {**F.text_about_pdf_internals(), "profiler.dll": F.machine_code_with_zip_signature(), "许多文件.zip": F.zip_entries(210_000)}
+    looks = {**F.text_about_pdf_internals(), "许多文件.zip": F.zip_entries(210_000)}
     for name, data in looks.items():
         r = _attach(c, dm["id"], name, data, ha)
         assert r.status_code == 201 and r.json()["scan"]["status"] == "clean", (name, r.status_code, r.text[:200])
-    r = _attach(c, dm["id"], "打包.7z", F.sevenzip(encrypted=False, header_coder="delta+lzma"), ha)
-    assert r.status_code == 400, r.text
-    assert r.json()["error"] == "unchecked_file" and r.json()["message"] == UNCHECKED
-    assert r.json()["detail"] == {"filename": "打包.7z", "kind": "archive", "checked": False}
+    for name, data in {"打包.7z": F.sevenzip(encrypted=False, header_coder="delta+lzma"),
+                       "profiler.dll": F.machine_code_with_zip_signature()}.items():
+        r = _attach(c, dm["id"], name, data, ha)
+        assert r.status_code == 400, (name, r.text)
+        assert r.json()["error"] == "unchecked_file" and r.json()["message"] == UNCHECKED, name
+        assert r.json()["detail"] == {"filename": name, "kind": "archive", "checked": False}, name
 
 
 def test_a_rescan_reports_an_encrypted_historical_attachment_and_leaves_it_readable(org, double, monkeypatch, capsys):
