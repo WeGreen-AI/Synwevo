@@ -28,6 +28,7 @@ from synwevo_core.store import Store, new_id, now
 from synwevo_core import oidc
 from synwevo_core.apps import Apps
 from synwevo_core.oauth_consent import Consents, needed as consent_needed
+from synwevo_core.machine import directory_workspace_live
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliver=None) -> APIRouter:
@@ -365,7 +366,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
             return JSONResponse({"error": "invalid_client"}, status_code=401)
         allowed = set((client.get("api_scopes") or "").split())
         asked = set(requested.split()) if requested.strip() else set(allowed)
-        unknown = asked - set(oidc.API_SCOPES)
+        unknown = asked - set(oidc.ALL_API_SCOPES)
         if unknown:
             return JSONResponse({"error": "invalid_scope",
                                  "error_description": f"unsupported scope: {' '.join(sorted(unknown))}"},
@@ -379,7 +380,13 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         if not ws or not ident.get_workspace(ws):
             return JSONResponse({"error": "invalid_client",
                                  "error_description": "服务账户绑定的工作空间不存在"}, status_code=400)
-        entitled, _, reason = apps.check_access_for_workspace(ws, client["app_id"])
+        from synwevo_core.apps import PLATFORM_APP_ID
+        if client["app_id"] == PLATFORM_APP_ID:
+            # The workspace directory is the platform's own, not a registered application: a live
+            # workspace (not frozen, deleted or in an unavailable organization) is the whole question.
+            entitled, reason = directory_workspace_live(store, ident, ws)
+        else:
+            entitled, _, reason = apps.check_access_for_workspace(ws, client["app_id"])
         if not entitled:
             return JSONResponse({"error": "invalid_client", "error_description": reason},
                                 status_code=400)

@@ -1,0 +1,125 @@
+// Compile-only check of synwevo-docs.d.ts (never executed): the main flow must type-check and the
+// `@ts-expect-error` lines must stay errors. From the repository root:
+//   node_modules/.bin/tsc --noEmit --strict --module nodenext --moduleResolution nodenext \
+//     --target es2022 apps/docs/sdk/typescript/test/types-check.ts
+import type { IncomingHttpHeaders } from 'node:http';
+
+import {
+  ApiKey, Client, ConflictError, credentialsFromEnv, isTerminal, SUCCESS_STATUSES, verifyWebhook,
+  WaitTimeoutError, WebhookVerificationError,
+  type Artifact, type Job, type JobStatus, type SourceFile, type WebhookEvent,
+} from '@synwevo/docs-sdk';
+// The vendored-copy import from the README resolves to the same declarations.
+import * as vendored from '../synwevo-docs.mjs';
+
+const sameClient: typeof Client = vendored.Client;
+
+export async function mainFlow(): Promise<string[]> {
+  const client = new Client('http://127.0.0.1:8765', new ApiKey('dw_example_key'), {
+    maxRetries: 2,
+    onRetry: (r) => console.error(`retry ${r.attempt} after ${r.delayMs} ms (${r.status} ${r.code ?? ''})`),
+  });
+
+  const project = await client.createProject({ name: 'Types check' }, { idempotencyKey: 'types-check:project' });
+  const replayed: boolean = project.$meta.replayed;
+
+  const uploaded: SourceFile = await client.uploadSource(project.id, './customers.xlsx');
+  const file = await client.waitForFile(uploaded.id, { timeoutMs: 60_000 });
+  if (file.status === 'needs_ocr') {
+    const ocr = await client.runSourceOcr(file.id, { pages: [0, 1] });
+    const nowReady: boolean = ocr.status === 'ready';
+    console.log(ocr.recognized.length, ocr.words, nowReady);
+  }
+
+  const template = await client.uploadTemplate('./template.docx', { name: 'Letter' });
+  const created = await client.createFields(template.id, {
+    schema: 'docweave.template-fields',
+    version: 1,
+    fields: [{ kind: 'text', name: 'Customer', find: 'Example Customer', occurrence: 1 }],
+  });
+  const fieldId = created.created[0]?.id;
+  if (fieldId) {
+    const head = (await client.getTemplate(template.id)).head;
+    const edited = await client.updateField(template.id, fieldId, { baseHead: head, required: true, align: 'center' });
+    const newHead: number = edited.head;
+    console.log(newHead);
+  }
+
+  const current = await client.getProject(project.id);
+  await client.updateProject(project.id, { baseSettingsRev: current.settings_rev, output: { formats: ['docx'], layout: 'warn' } });
+  await client.bindTemplate(project.id, template.id);
+
+  const submitted: Job = await client.createJob(project.id, { formats: ['docx', 'pdf'], errorPolicy: 'skip', layout: 'warn' });
+  let job: Job;
+  try {
+    job = await client.waitForJob(submitted.id, {
+      timeoutMs: 120_000,
+      onEvent: (event) => console.log(event.seq, event.type, event.data.status),
+    });
+  } catch (e) {
+    if (e instanceof WaitTimeoutError) await client.cancelJob(submitted.id);
+    throw e;
+  }
+  const done: boolean = isTerminal(job);
+  const succeeded = (SUCCESS_STATUSES as readonly JobStatus[]).includes(job.status);
+  console.log(done, succeeded, job.counts.documents, job.counts.files);
+
+  const paths: string[] = [];
+  for await (const artifact of client.artifacts(job.id)) {
+    const a: Artifact = artifact;
+    const saved = await client.downloadArtifact(a, { outDir: './out' });
+    paths.push(saved.reused ? saved.path : `${saved.path} (${saved.verified ? 'verified' : 'unverified'})`);
+  }
+  return paths;
+}
+
+export function handleDelivery(headers: IncomingHttpHeaders, rawBody: Buffer, secrets: string[]): string {
+  try {
+    const { id, event } = verifyWebhook(headers, rawBody, secrets);
+    if (!event) return id;
+    return describe(event);
+  } catch (e) {
+    if (e instanceof WebhookVerificationError) return `rejected: ${e.code}`;
+    throw e;
+  }
+}
+
+function describe(event: WebhookEvent): string {
+  switch (event.type) {
+    case 'file.ready':
+    case 'file.needs_ocr':
+    case 'file.rejected':
+    case 'file.failed':
+      return `${event.type} ${event.data.file_id} in ${event.data.project_id}`;
+    case 'webhook.ping':
+      return `ping ${event.data.subscription_id ?? ''}`;
+    default:
+      return `${event.type} ${event.job.id} ${event.job.status}`;
+  }
+}
+
+export async function fromEnvironment(): Promise<void> {
+  const client = new Client(process.env.SYNWEVO_BASE_URL ?? '', await credentialsFromEnv());
+  try {
+    await client.deleteField('tpl', 'field', { baseHead: 3, projectId: 'p', cascade: false });
+  } catch (e) {
+    if (e instanceof ConflictError && e.code === 'stale_template') console.log(e.details?.head);
+  }
+}
+
+// ---------------------------------------------------------------- misuse the declarations must catch
+export function misuse(client: Client): void {
+  // @ts-expect-error baseHead (the template head you read) is required
+  void client.updateField('tpl', 'field', { required: true });
+  // @ts-expect-error `colour` is not a property the server lets a field change
+  void client.updateField('tpl', 'field', { baseHead: 1, colour: '#000000' });
+  // @ts-expect-error 'done' is not a job status
+  const status: JobStatus = 'done';
+  // @ts-expect-error error_policy is block or skip
+  void client.createJob('p', { errorPolicy: 'ignore' });
+  // @ts-expect-error baseSettingsRev is required
+  void client.updateProject('p', { name: 'Renamed' });
+  // @ts-expect-error a preview names one sample by index or by key, not both
+  void client.downloadPreview('p', './preview.docx', { index: 0, key: 'k' });
+  console.log(status, sameClient);
+}

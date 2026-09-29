@@ -15,7 +15,7 @@ import { BASE, Confirm, DataState, Secret, type Action, type Outcome } from './a
 import './api-platform.messages';
 import './apiplatform/api-platform.css';
 
-type Overview = { permission: string; adapter_available: boolean; resource: string; scopes: string[];
+type Overview = { permission: string; adapter_available: boolean; resource: string; scopes: string[]; resources?: Record<string, string[]>;
   pending_approvals: number; calls: { calls: number; errors: number; mean_duration_ms: number | null };
   webhooks: { pending: number; failing: number } | null;
   sdk_links: { name: string; url: string }[] };
@@ -60,7 +60,7 @@ export default function ApiPlatform() {
         {!load.data.adapter_available && <p className="notice warn">{t('此部署未连接 Synwevo Docs，接口契约、Webhook 和请求调试暂不可用。')}</p>}
         <nav className="row gap8 wrap" aria-label={t('API 管理导航')}>{tabs.map(([id, label]) => <button key={id} className={`btn ${tab === id ? 'primary' : ''}`} aria-current={tab === id ? 'page' : undefined}
           onClick={() => setTab(id)}>{label}</button>)}</nav>
-        {tab === 'approvals' && <ApprovalsPanel act={act} scopes={load.data.scopes} resource={load.data.resource} revision={revision} />}
+        {tab === 'approvals' && <ApprovalsPanel act={act} scopes={load.data.scopes} resource={load.data.resource} resources={load.data.resources} revision={revision} />}
         {tab === 'credentials' && <Credentials act={act} revision={revision} />}
         {tab === 'quotas' && <Quotas act={act} revision={revision} />}
         {tab === 'webhooks' && <><WebhookOps act={act} revision={revision} /><Requests key="webhooks" act={act} webhooks /></>}

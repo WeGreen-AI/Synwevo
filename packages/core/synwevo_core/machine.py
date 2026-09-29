@@ -111,6 +111,18 @@ def _warn_null_audience(store: Store, client_id: str) -> None:
           file=sys.stderr, flush=True)
 
 
+def directory_workspace_live(store: Store, ident: Identity, workspace_id: str | None) -> tuple[bool, str]:
+    """May a directory service account act in this workspace right now? Live workspace, live
+    organization — the platform directory has no application switch to check."""
+    ws = ident.get_workspace(workspace_id or "")
+    if not ws or ws.get("deleted_at") or ws["status"] != "active":
+        return False, "该工作空间不可用"
+    from .organizations import workspace_access_failure
+    if workspace_access_failure(store, workspace_id):
+        return False, "该组织当前不可用"
+    return True, "ok"
+
+
 class MachineAuth:
     def __init__(self, store: Store, ident: Identity, legacy):
         self.store = store
@@ -138,6 +150,50 @@ class MachineAuth:
             principal = self._legacy_key(header)
         else:
             principal = self._platform_token(token)
+        return enforce_principal(self.store, principal)
+
+    # ------------------------------------------------------------------ workspace directory (API-5)
+    def verify_workspace(self, header: str | None) -> dict:
+        """The workspace directory API's caller: a platform service account whose token names the
+        directory resource. Legacy dw_ keys and delegations are refused — the first predate this
+        API and belong to Docs, the second would let an integration read a directory as a person
+        (not offered yet). Everything re-derived per call, like the Docs gate."""
+        from .api_platform import enforce_principal
+        from .apps import PLATFORM_APP_ID
+        from .oidc import Clients, Grants, WORKSPACE_API_SCOPES, workspace_resource
+        token = _bearer(header)
+        if not token:
+            raise ServiceError(401, "unauthorized", "缺少凭据（Authorization: Bearer <平台访问令牌>）")
+        if token.startswith("dw_"):
+            raise ServiceError(403, "wrong_credential", "访问密钥只能调用 Synwevo Docs 接口；工作空间目录接口需要服务账户令牌")
+        row = Grants(self.store).load_access(token)
+        if not row:
+            raise ServiceError(401, "unauthorized", "凭据无效、已过期或已撤销")
+        if row.get("audience") != workspace_resource():
+            raise ServiceError(401, "invalid_audience",
+                               f"该访问令牌不是签发给工作空间目录接口的；请申请令牌时带 resource={workspace_resource()}",
+                               {"audience": row.get("audience"), "expected": workspace_resource()})
+        client = Clients(self.store).get(row["client_id"])
+        if not client:
+            raise ServiceError(401, "client_unavailable", "签发该凭据的客户端已停用")
+        if client.get("app_id") != PLATFORM_APP_ID or row["user_id"]:
+            raise ServiceError(403, "wrong_credential", "工作空间目录接口只接受该空间的服务账户")
+        if client.get("kind") != "service":
+            raise ServiceError(403, "forbidden", "该凭据不属于服务账户")
+        registered = set((client.get("api_scopes") or "").split())
+        scopes = tuple(s for s in (row["scope"] or "").split() if s in WORKSPACE_API_SCOPES and s in registered)
+        if not scopes:
+            raise ServiceError(403, "forbidden", "该凭据没有工作空间目录权限", {"reason": "scope_withdrawn"})
+        ws = client.get("workspace_id")
+        if row.get("workspace_id") and row["workspace_id"] != ws:
+            raise ServiceError(401, "unauthorized", "服务账户的工作空间已变更，请重新获取访问令牌")
+        live, reason = directory_workspace_live(self.store, self.ident, ws)
+        if not live:
+            raise ServiceError(403, "forbidden", reason)
+        principal = {"kind": "service_account", "key_id": client["client_id"], "tenant": ws, "scopes": scopes,
+                     "user_id": None, "client_id": client["client_id"], "name": client["name"], "lineage": None,
+                     "grant_family": None, "role": None, "can_export": None,
+                     "expires_at": row.get("access_expires_at")}
         return enforce_principal(self.store, principal)
 
     # ------------------------------------------------------------------ legacy dw_ keys

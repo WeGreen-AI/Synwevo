@@ -20,7 +20,7 @@
 | OAuth 授权码 + PKCE（S256 强制）、刷新轮换与重放检测、RFC 7009 撤销、精确回调 | 已验证 | `provider_routes.py`、`oidc.py` | — |
 | 第三方客户端同意页、已连接应用管理 | 已验证 | **API-4** 同意暂存与决定、「已授权的应用」撤回即撤令牌、撤回写安全日志、旧委托记为旧授权；`test_oauth_consent.py`（10）；隔离实例浏览器实跑（同意页 → 批准 → 令牌 200 → 撤回 → 401） | 组织层面的管理员代同意不做（同意属于本人） |
 | 令牌自省（RFC 7662）、`client_secret_basic` | 已验证 | **API-4** `/oidc/introspect`（只答自己的令牌）、令牌/撤销端点接受 Basic；发现文档已登记 | `private_key_jwt`、mTLS、DPoP 未做 |
-| **平台管理机器身份**（管理 scope、管理 API 可程序化调用） | 需实现 | `/api/admin/*` 只认会话 Cookie；机器凭据只限 Docs 资源 | 批次 API-3，依赖管理员平台 B1-2 委派权限 |
+| **平台管理机器身份**（管理 scope、管理 API 可程序化调用） | 需实现 | `/api/admin/*` 只认会话 Cookie；机器凭据现有两个资源（Docs、工作空间目录，API-5 已把审批与验证泛化） | 批次 API-3，依赖管理员平台 B1-2 委派权限 |
 
 ## 2. 契约、错误与追踪
 
@@ -68,7 +68,7 @@
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| 工作空间成员、邀请、应用资格 | 需实现 | 逻辑在 core（含最后所有者保护）；需要非 Docs 的资源与 scope（批次 API-5） |
+| 工作空间成员、邀请（只读） | 已验证 | **API-5** `/api/workspace/v1`（独立资源与受众、所有者批准的服务账户、同一限流与调用记录）；`test_workspace_directory_api.py`（4） | 邀请/改角色/移除的机器写入需要应用操作者（API-5b）；应用资格未开放 |
 | 成员导入 | 需实现 | 已是异步任务 + 预检 + 确认；需组织级机器主体 |
 | 通知发出、对象卡片 | 需实现 | 现只能由 Docs 内部 outbox 产生；外部集成无入口 |
 | Message（会话、消息、机器人） | 需实现 | 全部会话专有；机器人身份需清楚标识 |
@@ -79,7 +79,7 @@
 | 能力 | 状态 | 证据 | 缺口 |
 |---|---|---|---|
 | Python SDK 0.1.0（重试、幂等键、流式下载、续传、Webhook 验签） | 已验证 | `apps/docs/sdk/python/tests`（21）；真实服务验收 | 覆盖清单过期；验收不在 CI |
-| TypeScript SDK 0.1.0（单文件 `.mjs`） | 部分 | `test/client.test.mjs`（7） | 无类型声明、无 npm 包；缺源文件检视、恢复、凭据、签名链接 |
+| TypeScript SDK 0.1.0（单文件 `.mjs`） | 部分 | `test/client.test.mjs`（7）；**API-7** 类型声明 `synwevo-docs.d.ts`（43 个导出与全部方法，按实际路由代码核对）、私有 `package.json`（`npm pack` 可本地打包，未发布）、`test/types-check.ts` 严格模式通过（含 6 处 `@ts-expect-error`）；修正 `generate` 进度里字段版本始终为空 | 缺源文件检视、恢复、凭据、签名链接；同步抛出的 ValidationError 类型无法表达（已在声明头部说明） |
 | 多策略 `RateLimit` 头解析 | 已验证 | **API-1** 两个 SDK 取 `r=0` 各项最长 `t` | — |
 
 ## 8. 管理控制台（Synwevo Admin「API 管理」）

@@ -162,6 +162,9 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.include_router(build_push_router(store, identity, sessions, audit, notifier=api.state.notifier))
     api.include_router(push_static_routes())
     api.include_router(build_api_platform_router(store, identity, sessions, audit, adapter=control_plane))
+    # The workspace directory API (API-5): machine-only, verified at the gate.
+    from .workspace_api import build_router as build_workspace_api_router
+    api.include_router(build_workspace_api_router(store, identity))
     api.include_router(build_passkey_router(identity, sessions, passkeys, audit))
     # External OpenID providers: configured ones are validated here, at start-up, so a half
     # configured provider is a refusal to start rather than a button that fails at sign-in.

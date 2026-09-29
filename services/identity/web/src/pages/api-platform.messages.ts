@@ -242,5 +242,12 @@ const entries: [string, string, string][] = [
   ['理由与详情', 'Reason and detail', '理由與詳情'],
   ['只能查看 API 平台相关的操作', 'Only API platform actions can be viewed here.', '只能查看 API 平台相關的操作'],
   ['任务不存在', 'The job does not exist.', '任務不存在'],
+  // API-5 workspace directory approvals
+  ['一次审批只能针对一个接口', 'One approval covers one API.', '一次審批只能針對一個介面'],
+  ['工作空间目录接口只签发服务账户', 'The workspace directory API issues service accounts only.', '工作空間目錄介面只簽發服務帳戶'],
+  ['接口', 'API', '介面'],
+  ['Synwevo Docs 接口', 'Synwevo Docs API', 'Synwevo Docs 介面'],
+  ['工作空间目录接口', 'Workspace directory API', '工作空間目錄介面'],
+  ['工作空间目录接口只签发服务客户端，只读成员、角色与邀请，不能读取任何文档。', 'The workspace directory API issues service clients only; they read members, roles and invitations, never documents.', '工作空間目錄介面只簽發服務用戶端，只讀成員、角色與邀請，不能讀取任何文件。'],
 ];
 registerMessages(Object.fromEntries(entries.map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }])));

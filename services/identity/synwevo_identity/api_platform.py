@@ -14,10 +14,10 @@ from fastapi import APIRouter, Body, Query, Request, Response
 
 from synwevo_core import journal
 from synwevo_core.api_platform import (Approvals, ControlPlaneAdapter, MANAGE_PERMISSION, SCOPES,
-                                      require_manage)
+                                      require_manage, resource_scopes)
 from synwevo_core.api_quotas import (CREDENTIAL_KINDS, FIELDS as QUOTA_FIELDS, LAYER_FIELDS, RANGES,
                                     WINDOW_S, Policies, RateGate, deployment_defaults)
-from synwevo_core.apps import DOCS_APP_ID
+from synwevo_core.apps import DOCS_APP_ID, PLATFORM_APP_ID
 from synwevo_core.auth import Auth, JournalWriteFailed, MAX_ROTATION_GRACE_S
 from synwevo_core.errors import ServiceError
 from synwevo_core.sessions import admin_capable
@@ -124,6 +124,8 @@ def build_router(store: Store, ident, sessions, audit,
                 webhooks = None
         return {"permission": MANAGE_PERMISSION, "adapter_available": adapter is not None, "webhooks": webhooks,
                 "resource": docs_resource(), "scopes": sorted(SCOPES), "retention_days": 30,
+                # Every API an owner can approve credentials for, with its scopes (API-5).
+                "resources": {res: sorted(sc) for res, sc in resource_scopes().items()},
                 "calls": {**counts, "errors": counts["errors"] or 0},
                 "pending_approvals": store.one("SELECT COUNT(*) AS n FROM api_platform_approvals "
                                                "WHERE status='pending' AND expires_at>?", (now(),))["n"],
@@ -180,7 +182,7 @@ def build_router(store: Store, ident, sessions, audit,
             with store.tx():
                 user = mutation_actor(request, admin=False)
                 row = approvals.get(aid)
-                approvals.require_owner(row["workspace_id"], user["id"])
+                approvals.require_owner(row["workspace_id"], user["id"], (row["requested_resources"] or [None])[0])
                 if action == "revoke":
                     return revoke_approval(aid, reason)
                 return approvals.decide(aid, user["id"], action, body, reason)
@@ -231,7 +233,9 @@ def build_router(store: Store, ident, sessions, audit,
                     out = {"key": token, "credential": key}
                 else:
                     cid = new_id("svc")
-                    client, secret = clients.register(client_id=cid, app_id=DOCS_APP_ID,
+                    # The directory's service accounts belong to the platform; Docs' to Docs (API-5).
+                    client, secret = clients.register(client_id=cid,
+                        app_id=DOCS_APP_ID if row.get("resource") in (None, docs_resource()) else PLATFORM_APP_ID,
                         name=row["name"], redirect_uris=[], confidential=True, kind="service", scopes="",
                         workspace_id=row["workspace_id"], api_scopes=" ".join(scopes),
                         audiences=row["approved_resources"])
@@ -250,10 +254,10 @@ def build_router(store: Store, ident, sessions, audit,
           expires_at,revoked_at AS disabled_at,COALESCE(lineage,id) AS binding_id,last_used_at FROM api_keys
           UNION ALL SELECT 'service_account',client_id,name,workspace_id,api_scopes,created_at,
           NULL,disabled_at,client_id,(SELECT MAX(at) FROM api_platform_calls k WHERE k.client_id=o.client_id)
-          FROM oauth_clients o WHERE kind='service' AND app_id=?) c
+          FROM oauth_clients o WHERE kind='service' AND app_id IN (?, ?)) c
           LEFT JOIN api_platform_bindings b ON b.kind=c.kind AND b.credential_id=c.binding_id
           WHERE (?='' OR c.workspace_id=?)"""
-        result = page(source, "c.*,b.approval_id", (DOCS_APP_ID, workspace_id, workspace_id),
+        result = page(source, "c.*,b.approval_id", (DOCS_APP_ID, PLATFORM_APP_ID, workspace_id, workspace_id),
                       limit=limit, offset=offset, order="c.created_at DESC,c.id DESC")
         for row in result["items"]:
             row["status"] = (keys.get_key(row["id"]) or {}).get("status") if row["kind"] == "api_key" else (
@@ -283,7 +287,7 @@ def build_router(store: Store, ident, sessions, audit,
                 if kind not in ("api_key", "service_account") or action not in ("rotate", "disable", "enable", "revoke-tokens"):
                     raise ServiceError(400, "invalid_action", "不支持的凭据操作")
                 row = keys.get_key(cid) if kind == "api_key" else clients.get_any(cid)
-                if not row or (kind == "service_account" and (row["kind"] != "service" or row["app_id"] != DOCS_APP_ID)):
+                if not row or (kind == "service_account" and (row["kind"] != "service" or row["app_id"] not in (DOCS_APP_ID, PLATFORM_APP_ID))):
                     raise ServiceError(404, "not_found", "凭据不存在")
                 binding = approvals.binding(kind, (row.get("lineage") or cid) if kind == "api_key" else cid)
                 if action in ("rotate", "enable"):
