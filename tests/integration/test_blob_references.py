@@ -32,6 +32,7 @@ WRITERS = {
     ("apps/docs/synwevo_docs/services.py", "new_version"): "template_versions.working_blob",
     ("apps/docs/synwevo_docs/builtin_service.py", "create_builtin"): "templates.original_blob",
     ("apps/docs/synwevo_docs/builtin_service.py", "save_builtin"): "templates.original_blob / template_versions.working_blob",
+    ("apps/docs/synwevo_docs/builtin_service.py", "save_live_sheet"): "templates.original_blob / template_versions.working_blob (a live table room's save)",
     ("apps/docs/synwevo_docs/jobs.py", "_process_item"): "artifacts.blob",
     ("apps/docs/synwevo_docs/views.py", "preview"): "blob_grants (preview)",
     ("apps/docs/synwevo_docs/views.py", "preview_layout"): "blob_grants (layout)",

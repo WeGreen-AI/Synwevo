@@ -536,8 +536,24 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     async def save_builtin(request: Request, tid: str):
         body = await _editor_body(request)
         from ..builtin_service import save_builtin as sb
+        app_.get_template(tid)                             # another workspace's template: 404 before anything about its room
+        live = collab.live_sheet_room(tid)
+        if live is not None and body.get("solo") is not True:
+            # docs-sheet-live.md §3: while the table is edited live, a page saving its own whole copy
+            # would bypass everyone's operations; it reloads into the live room. `solo`: the
+            # single-person fallback, folded into the live table like any outside version.
+            raise ServiceError(409, "live_room", "这张表格正在实时协同：请刷新页面进入实时协同后再编辑",
+                               {"online": [p["name"] for p in live.peers() if not p.get("readonly")], "epoch": live.epoch})
         with collab.acting(tid, _actor_id(request)):
             return sb(app_, tid, body, merge=True)
+
+    @api.post("/api/templates/{tid}/collab/save")
+    async def collab_save(request: Request, tid: str, body: dict = Body(default={})):
+        """Save a live table room (docs-sheet-live.md §3): the room's state at this moment becomes a
+        new version with the saver's note; edits made while it is being built stay unsaved. 409
+        ``not_live`` when the template has no live table room open."""
+        app_.get_template(tid)
+        return await collab.save_live(tid, _actor_id(request), body.get("note"))
 
     @api.get("/api/templates/{tid}")
     def template_detail(tid: str):

@@ -726,3 +726,466 @@ def test_an_open_room_is_no_way_into_another_workspace(world):
         stranger.websocket_connect(f"/api/collab/projects/{pid}", headers={"origin": "http://testserver"}).__enter__()
     assert x.value.code == 4404
     p.close()
+
+
+def test_a_version_written_while_the_room_opens_is_not_missed(world, monkeypatch):
+    """Review of sheet-live step ②, item 3 (the same race in document rooms): a save landing while
+    the room was being opened found no room and removed the draft; the room then opened with the
+    version it had read before — the older one — and every save from it was refused as stale."""
+    import threading
+
+    from synwevo_docs import collab as C
+    tid = world["tid"]
+    started, release = threading.Event(), threading.Event()
+    real = C.Room.load
+
+    def slow_load(self, template, row, editor_of_head):         # fixture: opening the room takes a while
+        started.set()
+        assert release.wait(10)
+        return real(self, template, row, editor_of_head)
+    monkeypatch.setattr(C.Room, "load", slow_load)
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("a", _connect(world, "editor")))
+    t.start()
+    assert started.wait(10)
+    newer = {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "开房间时保存"}]}]}}
+    r = world["client_for"](world["owner"]).put(f"/api/templates/{tid}/builtin", json={"editor": newer, "base_version": 1})
+    assert r.status_code == 200 and r.json()["head"] == 2, r.text
+    release.set()
+    t.join(10)
+    a = box["a"]
+    assert a.hello["head"] == 2 and a.texts() == ["开房间时保存"]
+    a.close()
+
+
+def test_a_deleted_template_s_draft_is_not_written_back(world):
+    """Q19: the last one out of a document room still wrote the live draft after the template was
+    deleted — an orphan row nothing reads or removes."""
+    store, tid, key = world["store"], world["tid"], f"template:{world['tid']}"
+    a = _connect(world, "editor")
+    a.append_text("删除前")
+    time.sleep(0.2)
+    assert world["co"].delete(f"/api/templates/{tid}").status_code == 200
+    with pytest.raises(WebSocketDisconnect) as x:
+        for _ in range(40):
+            a.recv()
+    assert x.value.code == 4410
+    a.close()
+    time.sleep(0.3)
+    assert store.one("SELECT 1 AS x FROM collab_docs WHERE room=?", (key,)) is None
+    assert store.one("SELECT 1 AS x FROM collab_changes WHERE room=?", (key,)) is None
+
+
+def test_a_draft_write_racing_the_delete_cannot_bring_it_back(world):
+    """Q19: the write itself refuses a deleted template — also one that passed every check in memory
+    just before the delete (a persist already on its way)."""
+    store, tid, key = world["store"], world["tid"], f"template:{world['tid']}"
+    hub = world["app"].state.collab
+    a = _connect(world, "editor")
+    a.append_text("竞争")
+    room = hub.rooms[key]
+    time.sleep(0.2)
+    store.execute("UPDATE templates SET deleted=1 WHERE id=?", (tid,))       # the delete has marked it, its hook has not run yet
+    store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
+    store.execute("DELETE FROM collab_changes WHERE room=?", (key,))
+    assert hub.write_state(room, room.doc.get_update()) is False
+    hub.record_changes(room, world["editor"]["id"], [("body", "insert", 9, "paragraph", "竞争", None)])
+    assert store.one("SELECT 1 AS x FROM collab_docs WHERE room=?", (key,)) is None
+    assert store.one("SELECT 1 AS x FROM collab_changes WHERE room=?", (key,)) is None
+    store.execute("UPDATE templates SET deleted=0 WHERE id=?", (tid,))
+    a.close()
+
+
+def test_a_closed_document_room_never_writes_over_the_next_one(world):
+    """Second review of sheet-live step ②, item 1 (document rooms): a room whose last person had left
+    could still write (a persist or a version change landing late) over the draft of the room opened
+    after it."""
+    store, key = world["store"], f"template:{world['tid']}"
+    hub = world["app"].state.collab
+    a = _connect(world, "editor")
+    a.append_text("旧房间")
+    old = hub.rooms[key]
+    a.close()
+    b = _connect(world, "owner")
+    b.append_text("（新房间）")
+    time.sleep(0.2)
+    b.close()
+    written = store.one("SELECT state FROM collab_docs WHERE room=?", (key,))["state"]
+    assert hub.write_state(old, old.doc.get_update()) is False     # what a late persist of the old room would do
+    old.persist_now()
+    assert store.one("SELECT state FROM collab_docs WHERE room=?", (key,))["state"] == written
+    c = _connect(world, "editor")
+    assert c.texts() == ["客户：旧房间（新房间）"]
+    c.close()
+
+
+def test_an_editor_save_and_another_room_s_draft_write_do_not_deadlock(tmp_path):
+    """Review 3 of sheet-live step ②, item 1 (the production document rooms): the editor's save runs
+    its version inside a transaction and called the rooms' hook there, which took the room
+    registration lock; another room's draft write held that lock and waited for the transaction's
+    write lock. The save's thread and the draft write hung — and with them the event loop's next join
+    and every writer. The hook runs after the commit now, and a draft write takes the write lock
+    first. (The reviewer's reproducer; bounded by timeouts.)"""
+    import threading
+
+    from synwevo_core.context import as_tenant
+    from synwevo_docs.api.app import create_app
+    from synwevo_docs.builtin_service import create_builtin, save_builtin
+    from synwevo_docs.collab import Room
+
+    app = create_app(str(tmp_path / "data"), start_jobs=False)
+    svc, hub = app.state.app, app.state.collab
+    with as_tenant("default"):
+        t1 = create_builtin(svc, {"kind": "builtin_doc", "editor": DOC, "name": "A"})["id"]
+        t2 = create_builtin(svc, {"kind": "builtin_doc", "editor": DOC, "name": "B"})["id"]
+    room2 = Room(hub, t2, "default")                              # fixture: an open document room of t2
+    room2.head = 1
+    hub.rooms[room2.key] = room2
+    in_tx, go_on = threading.Event(), threading.Event()
+    real_bump = svc._bump_projects_using
+
+    def paused(tid):                                             # fixture: the save is inside its transaction
+        real_bump(tid)
+        in_tx.set()
+        go_on.wait(5)
+    svc._bump_projects_using = paused
+    errors: list = []
+
+    def save():
+        try:
+            with as_tenant("default"):
+                save_builtin(svc, t1, {"editor": DOC, "discard_live": True})
+        except Exception as e:                                   # noqa: BLE001
+            errors.append(e)
+    a = threading.Thread(target=save, daemon=True)
+    a.start()
+    assert in_tx.wait(5)
+    b = threading.Thread(target=lambda: hub.write_state(room2, room2.doc.get_update()), daemon=True)
+    b.start()
+    time.sleep(0.3)                                              # the draft write waits for the write lock
+    go_on.set()
+    a.join(5)
+    b.join(5)
+    assert not a.is_alive() and not b.is_alive(), "deadlock between the save's transaction and a room's draft write"
+    assert errors == []
+    assert hub._rooms_mu.acquire(timeout=1)
+    hub._rooms_mu.release()
+    del hub.rooms[room2.key]
+    for hook in list(app.state.shutdown_hooks):
+        hook()
+
+
+# ------------------------------------------------------------------ a version change while a closed room is still writing its draft
+def _text(text):
+    return {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}]}}
+
+
+def _closing(world, monkeypatch, peer):
+    """Fixture: ``peer`` leaves last; its room's closing write waits until the returned event is set
+    (as it would wait for the database). Returns (go, closer thread)."""
+    import threading
+
+    from synwevo_docs.collab import Room
+    hub, key = world["app"].state.collab, f"template:{world['tid']}"
+    real = Room.close_final
+    entered, go = threading.Event(), threading.Event()
+
+    def slow(self):
+        entered.set()
+        assert go.wait(10)
+        return real(self)
+    monkeypatch.setattr(Room, "close_final", slow)
+    closer = threading.Thread(target=peer.close, daemon=True)
+    closer.start()
+    assert entered.wait(10) and key in hub._closing
+    return go, closer
+
+
+def _draft(world):
+    world["app"].state.collab.settled(f"template:{world['tid']}")
+    return world["store"].one("SELECT head, dirty, model FROM collab_docs WHERE room=?", (f"template:{world['tid']}",))
+
+
+def test_a_version_during_a_closing_write_then_an_undo_does_not_silence_later_drafts(world, monkeypatch):
+    """Review 4, item 1 (document rooms, the reviewer's reproducer): the tombstone a version change left
+    while a closing write was on its way refused every later draft of a lower head — after an undo, a
+    whole session's typing never reached the database and the next opener reseeded without it."""
+    tid, c = world["tid"], world["client_for"](world["owner"])
+    assert c.put(f"/api/templates/{tid}/builtin", json={"editor": _text("第二版"), "base_version": 1}).status_code == 200
+    a = _connect(world, "editor")
+    go, closer = _closing(world, monkeypatch, a)
+    r = c.put(f"/api/templates/{tid}/builtin", json={"editor": _text("第三版"), "base_version": 2})
+    assert r.status_code == 200 and r.json()["version"]["no"] == 3, r.text
+    go.set()
+    closer.join(10)
+    assert _draft(world) is None, "the closed room's draft was replaced by the version, not kept"
+    b = _connect(world, "editor")
+    assert b.texts() == ["第三版"]
+    r = c.post(f"/api/templates/{tid}/undo", json={"head": 3})
+    assert r.status_code == 200 and r.json()["head"] == 2, r.text
+    assert b.recv(want="update") == "update" and b.texts() == ["第二版"]
+    b.recv_meta("head")
+    b.append_text("（未保存的修改）")
+    b.close()
+    d = _draft(world)
+    assert d["head"] == 2 and d["dirty"] == 1
+    e = _connect(world, "owner")
+    assert e.texts() == ["第二版（未保存的修改）"] and e.hello["dirty"] is True
+    e.close()
+
+
+def test_an_undo_discarding_edits_during_a_closing_write_leaves_no_phantom_draft(world, monkeypatch):
+    """Review 4, item 2 (document rooms, the reviewer's reproducer): an undo (a lower head) with
+    discard_live while the closing write was on its way let that write through; the discarded draft
+    then counted as unsaved edits, refusing the next restore with nobody online."""
+    tid, c = world["tid"], world["client_for"](world["owner"])
+    assert c.put(f"/api/templates/{tid}/builtin", json={"editor": _text("第二版"), "base_version": 1}).status_code == 200
+    a = _connect(world, "editor")
+    a.append_text("（要丢弃的修改）")
+    a.recv_meta("state")
+    go, closer = _closing(world, monkeypatch, a)
+    r = c.post(f"/api/templates/{tid}/undo", json={"head": 2})
+    assert r.status_code == 409 and r.json()["error"] == "live_edits", "the closing room's unsaved edits guard it"
+    r = c.post(f"/api/templates/{tid}/undo", json={"head": 2, "discard_live": True})
+    assert r.status_code == 200 and r.json()["head"] == 1, r.text
+    go.set()
+    closer.join(10)
+    assert _draft(world) is None
+    assert world["app"].state.collab.live_state(tid)["dirty"] is False
+    r = c.post(f"/api/templates/{tid}/restore", json={"version": 2, "base_head": 1})
+    assert r.status_code == 200, r.text
+
+
+def test_a_reopen_during_the_closing_write_reads_the_draft_it_writes(world, monkeypatch):
+    tid = world["tid"]
+    a = _connect(world, "editor")
+    a.append_text("关闭时写下")
+    go, closer = _closing(world, monkeypatch, a)
+    import threading
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("b", _connect(world, "owner")), daemon=True)
+    t.start()
+    time.sleep(0.3)
+    assert "b" not in box, "the opener waits for the closing write"
+    go.set()
+    closer.join(10)
+    t.join(10)
+    assert box["b"].texts() == ["客户：关闭时写下"] and box["b"].hello["dirty"] is True
+    box["b"].close()
+
+
+def test_a_room_closing_before_its_own_save_is_applied_leaves_no_phantom_draft(world, monkeypatch):
+    """Review 4, item 5 (document rooms, pre-existing): the save's head change was still queued when
+    the room's last person left; the closing write kept "unsaved, old version" although the saved
+    version held it — the next restore was refused with nobody online."""
+    import asyncio
+    import threading
+
+    from synwevo_docs.collab import Room
+    tid = world["tid"]
+    loop = asyncio.new_event_loop()                              # fixture: the room's queued work runs on a loop the test holds
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    monkeypatch.setattr(Room, "work_loop", lambda self: loop)
+    gate = threading.Event()
+    loop.call_soon_threadsafe(gate.wait, 20)
+    a = _connect(world, "editor")
+    a.append_text("甲")
+    time.sleep(0.2)
+    saved = {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "客户：甲"},
+                                                                                             DOC["body"]["content"][0]["content"][1]]}]}}
+    r = world["client_for"](world["editor"]).put(f"/api/templates/{tid}/builtin", json={"editor": saved, "base_version": 1})
+    assert r.status_code == 200 and r.json()["head"] == 2
+    a.close()                                                    # the head change is still queued (on a busy loop):
+    d = _draft(world)                                            # the last one out runs it before the closing write (review 5)
+    gate.set()
+    assert d["head"] == 2 and d["dirty"] == 0
+    r = world["client_for"](world["owner"]).post(f"/api/templates/{tid}/restore", json={"version": 1, "base_head": 2})
+    assert r.status_code == 200, r.text
+    loop.call_soon_threadsafe(loop.stop)
+
+
+def test_a_join_reserved_before_a_delete_is_closed_as_gone(world, monkeypatch):
+    """Review 5, item 2 (the reviewer's reproducer): a tab past its registration check but still
+    building its hello was not among the connections a template delete closed; admitted afterwards
+    into the gone room, its typing went nowhere and nobody told it."""
+    import threading
+
+    from synwevo_docs.collab import Room
+    hub, tid = world["app"].state.collab, world["tid"]
+    key = f"template:{tid}"
+    a = _connect(world, "editor")
+    room = hub.rooms[key]
+    real = Room.admit
+    entered, go = threading.Event(), threading.Event()
+
+    def slow(self, conn, requested=None):                        # fixture: the owner's handshake is between reserve and admit
+        if conn.user_id == world["owner"]["id"]:
+            entered.set()
+            assert go.wait(10)
+        return real(self, conn, requested)
+    monkeypatch.setattr(Room, "admit", slow)
+    box: dict = {}
+
+    def joiner():
+        try:
+            _connect(world, "owner")
+        except WebSocketDisconnect as x:
+            box["code"] = x.code
+    t = threading.Thread(target=joiner, daemon=True)
+    t.start()
+    assert entered.wait(10) and room.joining == 1
+    assert world["co"].delete(f"/api/templates/{tid}").status_code == 200
+    with pytest.raises(WebSocketDisconnect) as x:
+        for _ in range(40):
+            a.recv()
+    assert x.value.code == 4410
+    a.close()
+    go.set()
+    t.join(10)
+    assert box.get("code") == 4410, "the tab that joined during the delete is closed as gone"
+    assert key not in hub.rooms
+
+
+def test_an_opener_during_a_closing_write_that_waits_for_a_queued_change_sees_what_was_typed(world, monkeypatch):
+    """Review 5, item 3 (the reviewer's reproducer, document rooms): a head change still queued when
+    the room closed was followed by an unregistered correction; an opener arriving between read the
+    uncorrected draft, reseeded from the saved version, and the correction was then refused — the text
+    typed after pressing save was lost. The closing write now comes after the queued change (run by
+    the last one out, not by the loop it was sent to), and openers wait for the closing write."""
+    import asyncio
+    import threading
+
+    from synwevo_docs.collab import Room
+    tid, hub, key = world["tid"], world["app"].state.collab, f"template:{world['tid']}"
+    loop = asyncio.new_event_loop()                              # fixture: the room's queued work runs on a loop the test holds
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    monkeypatch.setattr(Room, "work_loop", lambda self: loop)
+    gate = threading.Event()
+    loop.call_soon_threadsafe(gate.wait, 20)
+    a = _connect(world, "editor")
+    a.append_text("甲")
+    time.sleep(0.2)
+    saved = {**DOC, "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "客户：甲"},
+                                                                                             DOC["body"]["content"][0]["content"][1]]}]}}
+    r = world["client_for"](world["editor"]).put(f"/api/templates/{tid}/builtin", json={"editor": saved, "base_version": 1})
+    assert r.status_code == 200 and r.json()["head"] == 2
+    a.append_text("乙")                                           # typed while the save was on its way: not in v2
+    time.sleep(0.2)
+    a.close()                                                    # the loop the change was sent to is still blocked
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("b", _connect(world, "owner")), daemon=True)
+    t.start()
+    t.join(10)
+    b = box["b"]
+    assert b.texts() == ["客户：甲乙"] and b.hello["dirty"] is True and b.hello["head"] == 2
+    assert not hub._closing
+    gate.set()
+    b.close()
+    d = _draft(world)
+    assert d["head"] == 2 and d["dirty"] == 1
+    loop.call_soon_threadsafe(loop.stop)
+
+
+def test_a_late_correction_of_a_closed_room_cannot_bring_back_a_draft_a_version_removed(world):
+    """Review 5, item 3: the version-change hook's drop path did not move the template's registration
+    generation, so a correction write of a room closed earlier, landing after a later version's
+    DELETE, brought a stale draft back."""
+    tid, hub, key, store = world["tid"], world["app"].state.collab, f"template:{world['tid']}", world["store"]
+    a = _connect(world, "editor")
+    a.append_text("旧草稿")
+    old = hub.rooms[key]
+    a.close()
+    assert _draft(world)["dirty"] == 1
+    r = world["client_for"](world["owner"]).put(f"/api/templates/{tid}/builtin", json={"editor": _text("新版本"), "base_version": 1, "discard_live": True})
+    assert r.status_code == 200 and _draft(world) is None
+    assert hub.write_state(old, old.doc.get_update(), head=1, dirty=1, final=True) is False, "the late correction refuses itself"
+    assert store.one("SELECT 1 AS x FROM collab_docs WHERE room=?", (key,)) is None
+
+
+def test_a_failing_closing_snapshot_never_leaves_openers_waiting(world, monkeypatch):
+    """Review 5, item 5: a document room's closing snapshot was taken outside the code that unregisters
+    the closing write; when it raised, the template's entry stayed and every opener waited for a write
+    that would never come (until a restart)."""
+    from synwevo_docs.collab import Room
+    hub, key = world["app"].state.collab, f"template:{world['tid']}"
+
+    def broken(self):                                            # fixture: taking the closing snapshot fails
+        raise RuntimeError("fixture: closing snapshot fails")
+    monkeypatch.setattr(Room, "closing_snapshot", broken)
+    a = _connect(world, "editor")
+    a.append_text("甲")
+    time.sleep(0.2)
+    try:
+        a.close()
+    except RuntimeError:
+        pass
+    hub.settled(key, timeout=5)
+    assert not hub._closing, "the closing write's entry is gone although it failed"
+    monkeypatch.undo()
+    t0 = time.monotonic()
+    b = _connect(world, "owner")
+    assert time.monotonic() - t0 < 5
+    b.close()
+
+
+def test_an_opener_waits_for_every_pending_draft_delete(world, monkeypatch):
+    """Review 5, item 5: a version change's pending entry replaced the one before it; when the second
+    DELETE finished first, an opener got in and wrote its first draft, which the first, slower DELETE
+    then removed. Every piece of draft work is its own entry now, and a DELETE decided before a newer
+    room was registered does not touch that room's draft."""
+    import sys
+    import threading
+
+    from synwevo_docs import collab as C
+    monkeypatch.setattr(C, "PERSIST_DELAY_S", 0.05)             # fixture: the draft is written soon after typing
+    tid, hub, key, store = world["tid"], world["app"].state.collab, f"template:{world['tid']}", world["store"]
+    a = _connect(world, "editor")
+    a.append_text("旧")
+    time.sleep(0.2)
+    a.close()
+    assert _draft(world)["dirty"] == 1
+    first, release = threading.Event(), threading.Event()
+    real_tx = store.tx
+
+    def deleting_draft() -> bool:
+        f = sys._getframe(2)
+        while f is not None:
+            if f.f_code.co_name == "delete_draft" or (
+                    f.f_code.co_name == "execute" and str(f.f_locals.get("sql", "")).startswith("DELETE FROM collab_docs")):
+                return True
+            f = f.f_back
+        return False
+
+    def tx():                                                    # fixture: the first draft DELETE is slow
+        if not first.is_set() and deleting_draft():
+            first.set()
+            assert release.wait(10)
+        return real_tx()
+    monkeypatch.setattr(store, "tx", tx)
+    co = world["client_for"](world["owner"])
+    box: dict = {}
+    t1 = threading.Thread(target=lambda: box.setdefault("v2", co.put(f"/api/templates/{tid}/builtin",
+                                                                     json={"editor": _text("二"), "base_version": 1, "discard_live": True})),
+                          daemon=True)
+    t1.start()
+    assert first.wait(10)                                        # v2's DELETE is on its way
+    r = co.put(f"/api/templates/{tid}/builtin", json={"editor": _text("三"), "base_version": 2, "discard_live": True})
+    assert r.status_code == 200 and r.json()["head"] == 3        # v3's DELETE is done
+    t2 = threading.Thread(target=lambda: box.setdefault("b", _connect(world, "editor")), daemon=True)
+    t2.start()
+    time.sleep(0.3)
+    assert "b" not in box, "the opener waits for v2's DELETE too"
+    release.set()
+    t1.join(10)
+    t2.join(10)
+    assert box["v2"].status_code == 200
+    b = box["b"]
+    assert b.texts() == ["三"] and b.hello["head"] == 3
+    b.append_text("新")
+    time.sleep(0.4)
+    d = store.one("SELECT head, dirty FROM collab_docs WHERE room=?", (key,))
+    assert d == {"head": 3, "dirty": 1}, "the new room's draft is there"
+    room = hub.rooms[key]
+    assert hub.delete_draft(key, room.gen - 1) is False, "a DELETE decided before this room was registered leaves its draft"
+    assert store.one("SELECT 1 AS x FROM collab_docs WHERE room=?", (key,)) is not None
+    b.close()

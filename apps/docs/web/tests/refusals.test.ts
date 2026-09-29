@@ -216,6 +216,9 @@ const API_ONLY: [string, string[]][] = [
   ["a template's format is checked when it is uploaded, so a stored template always has a supported one", [
     "不支持的模板格式：{}",
   ]],
+  ["not yet reachable from the workbench: the live table room (docs-sheet-live.md B1 step ②) opens only with SYNWEVO_SHEET_LIVE, which stays off until the SheetEditor speaks it (step ③); that client words live_room and not_live itself from the code and detail, and moves these sentences into a decision of their own", [
+    "这张表格正在实时协同：请刷新页面进入实时协同后再编辑", "这张表格没有正在进行的实时协同",
+  ]],
 ];
 
 /** Sentences whose meaning is what their code's `ERROR_SOURCE` sentence says, so the code map

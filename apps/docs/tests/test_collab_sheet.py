@@ -18,7 +18,7 @@ import pytest
 
 from synwevo_docs import collab_sheet as cs
 from synwevo_docs.builtin_service import _build
-from synwevo_docs.collab_sheet import (SeedError, apply, apply_patch, dirty, mark_saved, normalize, project, reconcile,
+from synwevo_docs.collab_sheet import (SeedError, apply, apply_patch, dirty, holdable, mark_saved, normalize, project, reconcile,
                                        seed_state, sheet_invariants, snapshot)
 from synwevo_docs.editor_contract import validate_editor
 from synwevo_core.errors import ServiceError
@@ -1004,6 +1004,25 @@ def test_m4_a_forgotten_client_can_never_have_an_old_message_applied_again():
     assert cs.next_number(room.st, "fresh") == start + 1
 
 
+def test_a_forgotten_client_is_told_its_message_may_already_be_applied():
+    """Review 3 of sheet-live step ②, item 5: a forgotten client resending a message it had already
+    had applied was answered like a message that is merely too old (`old_message`, "renumber from
+    next") — renumbering applied it a second time. The answer now says the outcome is unknown, unlike
+    a number that was certainly not applied."""
+    room = Room({"sheets": [grid()]})
+    op = {"op": "append_rows", "sheet": room.sid, "count": 1}
+    assert apply(room.st, op, by="ann", client="ann/tab", n=1, expect=0)["ok"]          # applied; its answer is lost
+    for i in range(cs.MAX_CLIENTS_PER_SCOPE):                                           # the person's other tabs push it out
+        n = cs.next_number(room.st, f"ann/t{i}")
+        assert apply(room.st, {"op": "style", **room.at("A1"), "s": {"b": i % 2 == 0}}, by="ann", client=f"ann/t{i}", n=n, expect=room.st["seq"])["ok"]
+    assert "ann/tab" not in room.st["clients"]
+    r = apply(room.st, op, by="ann", client="ann/tab", n=1, expect=0)
+    assert r["ok"] is False and r["code"] == "resync" and r["detail"]["reason"] == "forgotten" and r["detail"]["applied"] == "unknown"
+    assert len(project(room.st)["sheets"][0]["rows"]) == 11, "not applied again"
+    ahead = apply(room.st, op, by="ann", client="ann/tab", n=cs.next_number(room.st, "ann/tab") + cs.MAX_AHEAD, expect=room.st["seq"])
+    assert ahead["detail"]["reason"] == "number_ahead" and ahead["detail"]["applied"] is False
+
+
 def test_m5_a_stale_sheet_delete_cannot_hide_newer_work_on_it():
     room = Room({"sheets": [grid("A"), grid("B")]})
     b = room.st["content"]["order"][1]
@@ -1136,3 +1155,71 @@ def test_low_field_ids_are_never_javascript_prototype_names():
     st = seed_state(model)
     assert "constructor" not in st["content"]["fields"] and all(k.startswith("~") for k in st["content"]["fields"])
     assert project(st) == normalize(model)
+
+
+# ------------------------------------------------------------------ for the room (sheet-live step ②, after its review)
+def test_a_fault_inside_a_group_undoes_the_group(monkeypatch):
+    room = Room()
+    before = dumps({k: room.st[k] for k in ("content", "seq", "kseq", "base", "ctr", "clients")})
+    real = cs._write_cell
+
+    def faulty(tx, sid, ck, cell):                              # fixture: a bug after a write
+        real(tx, sid, ck, cell)
+        if (cell or {}).get("v") == "故障":
+            raise RuntimeError("fixture fault")
+    monkeypatch.setattr(cs, "_write_cell", faulty)
+    with pytest.raises(RuntimeError):
+        apply(room.st, {"op": "tx", "ops": [{"op": "set", **room.at("C4"), "v": "先写"}, {"op": "set", **room.at("D4"), "v": "故障"}]},
+              by="ann", client="t", n=1, expect=0)
+    assert dumps({k: room.st[k] for k in ("content", "seq", "kseq", "base", "ctr", "clients")}) == before
+
+
+def test_the_room_can_bound_cells_below_the_state_s_own_limit():
+    room = Room()
+    cells = len(room.sheet()["cells"])
+    op = {"op": "set", **room.at("C4"), "v": "多一格"}
+    r = apply(room.st, op, by="ann", client="t", n=1, expect=0, max_cells=cells)
+    assert r["ok"] is False and r["code"] == "too_large" and r["detail"] == {"what": "cells", "max": cells}
+    assert apply(room.st, op, by="ann", client="t", n=2, expect=0, max_cells=cells + 1)["ok"]
+    assert apply(room.st, {"op": "set", **room.at("A3"), "v": "已有的格子"}, by="ann", client="t", n=3, expect=room.st["seq"], max_cells=1)["ok"]
+
+
+def test_holdable_says_what_seeding_would_refuse_without_seeding():
+    assert holdable(FORMATS_SHEET) == []
+    far = {"sheets": [{"name": "S", "cells": {"A250000": {"v": "远处"}}}]}
+    issues = holdable(far)
+    assert issues and issues[0]["code"] == "too_large" and issues[0]["what"] == "grid"
+    with pytest.raises(SeedError) as e:
+        seed_state(far)
+    assert e.value.issues == issues
+    assert holdable(INVALID["ci116_both"][0])[0]["code"] == "merged"
+
+
+def test_one_scope_keeps_at_most_its_share_of_remembered_clients_and_moves_only_its_own_floor():
+    """Review 2 of step ②, item 4: checked where a record is created, not when a tab joins."""
+    room = Room()
+    op = {"op": "set", **room.at("C4"), "v": "bob"}
+    assert apply(room.st, op, by="bob", client="bob/t", n=5, expect=0)["ok"]
+    for i in range(cs.MAX_CLIENTS_PER_SCOPE + 3):
+        n = cs.next_number(room.st, f"ann/t{i}")
+        r = apply(room.st, {"op": "set", **room.at("C5"), "v": i}, by="ann", client=f"ann/t{i}", n=n, expect=room.st["seq"])
+        assert r["ok"], r
+    anns = [c for c in room.st["clients"] if c.startswith("ann/")]
+    assert len(anns) == cs.MAX_CLIENTS_PER_SCOPE and "ann/t0" not in anns
+    assert "bob/t" in room.st["clients"] and room.st["nfloor"] == 0 and cs.next_number(room.st, "bob/new") == 1
+    # a forgotten client of that scope can never have an old message applied again
+    again = apply(room.st, {"op": "set", **room.at("C5"), "v": 0}, by="ann", client="ann/t0", n=1, expect=room.st["seq"])
+    assert again["ok"] is False and again["code"] == "resync" and again["detail"]["next"] == cs.next_number(room.st, "ann/t0") > 1
+
+
+def test_a_message_number_far_ahead_is_refused_before_it_can_move_anyone_s_numbers():
+    """Review 2 of step ②, item 3: an unbounded number became the floor of everyone's new tabs, past
+    what a browser can count."""
+    room = Room()
+    op = {"op": "set", **room.at("C4"), "v": "x"}
+    for n in (2 ** 60, cs.MAX_AHEAD + 1):
+        r = apply(room.st, op, by="ann", client="ann/t", n=n, expect=0)
+        assert r["ok"] is False and r["code"] == "resync" and r["detail"] == {"reason": "number_ahead", "applied": False, "next": 1}
+    assert room.st["clients"] == {} and room.st["seq"] == 0, "nothing applied, nothing remembered"
+    assert apply(room.st, op, by="ann", client="ann/t", n=cs.MAX_AHEAD, expect=0)["ok"]
+    assert apply(room.st, {"op": "set", **room.at("C5"), "v": 1}, by="ann", client="ann/t", n=cs.MAX_AHEAD + 1 + cs.MAX_AHEAD, expect=1)["code"] == "resync"

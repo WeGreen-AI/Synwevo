@@ -991,9 +991,11 @@ class App:
         return self.template_detail(tid)
 
     def new_version(self, tid: str, working: bytes, slots: list[dict], note: str, editor: dict | None = None,
-                    base_head: int | None = None) -> dict:
+                    base_head: int | None = None, *, discard_live: bool = False) -> dict:
         """Add a version and make it head — only if head is still ``base_head`` (the version the
-        edit was computed from).
+        edit was computed from). ``discard_live``: the caller confirmed that unsaved live edits may be
+        thrown away (``_guard_live_edits``); an open live table room then starts afresh from this
+        version instead of folding it into its edits (docs-sheet-live.md §3).
 
         Read-head, insert and move-head used to be three separate statements: two concurrent
         edits (two tabs, or the UI and POST /templates/{tid}/fields) either collided on the
@@ -1017,20 +1019,29 @@ class App:
                                                    json.dumps(editor, ensure_ascii=False) if editor is not None else None, t))
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
         self._bump_projects_using(tid)
-        self._template_changed(tid, no, editor, "save", previous=head)
+        self._template_changed(tid, no, editor, "save", previous=head, discard_live=discard_live)
         return self.template_detail(tid)
 
     def _template_changed(self, tid: str, head: int | None, editor: dict | None, reason: str, *,
-                          previous: int | None = None, source: int | None = None) -> None:
+                          previous: int | None = None, source: int | None = None, discard_live: bool = False) -> None:
         """`previous`: the head this change replaced; `source`: the version a restore copied — so
-        the change history can say what became what, not only the new number."""
+        the change history can say what became what, not only the new number. `discard_live`: the
+        caller confirmed discarding unsaved live edits (see ``new_version``)."""
         hook = self.on_template_change
         if hook is None:
             return
-        try:
-            hook(tid, head, editor, reason, previous=previous, source=source)
-        except Exception:                                    # noqa: BLE001 — the version is saved; the room catches up on reopen
-            logging.getLogger("synwevo.docs").exception("template change hook failed for %s (%s)", tid, reason)
+
+        def run():
+            try:
+                hook(tid, head, editor, reason, previous=previous, source=source, discard_live=discard_live)
+            except Exception:                                # noqa: BLE001 — the version is saved; the room catches up on reopen
+                logging.getLogger("synwevo.docs").exception("template change hook failed for %s (%s)", tid, reason)
+        # after the outermost transaction commits (save_builtin and the live table's save write the
+        # version inside one): the rooms take their own locks, and the store's write lock comes first
+        # in the process's lock order — a hook inside the transaction deadlocked against a room's draft
+        # write (review 3 of sheet-live step ②, item 1). A room registered after the commit reads the
+        # new head; one registered before gets the change in its queue.
+        self.store.after_commit(run)
 
     def close(self) -> None:
         """Release the parse pool at the end of the process. A parse that had not started stays
@@ -1053,12 +1064,15 @@ class App:
             self.store.bump_project(p["id"])
 
     def _guard_live_edits(self, tid: str, discard_live: bool, action: str, *, saver: str | None = None,
-                          field_change: bool = False) -> None:
+                          field_change: bool = False, editor: dict | None = None) -> None:
         """A version operation replaces the live document for everyone in the editing room. When
         that document carries edits nobody has saved as a version yet, refuse with 409
         ``live_edits`` naming who is there, unless the caller said ``discard_live`` explicitly.
         ``saver``: a person saving *from inside the room* saves the live document itself — that is
-        not a replacement (CI-113: saves from outside it used to drop a persisted live draft)."""
+        not a replacement (CI-113: saves from outside it used to drop a persisted live draft). In a
+        live table room (docs-sheet-live.md §9) such a save is folded into the other people's edits
+        instead — which works only for a table the room can hold; for one it cannot (``editor``), the
+        other people's unsaved edits would go, so the exemption does not apply."""
         hook = self.live_template_state
         if hook is None or discard_live:
             return
@@ -1068,9 +1082,18 @@ class App:
             logging.getLogger("synwevo.docs").exception("live state of %s unavailable before %s", tid, action)
             return
         if live.get("dirty"):
-            if saver is not None and saver in (live.get("online_ids") or []):
+            cannot_fold = False
+            if live.get("live_table") and isinstance(editor, dict):
+                from .collab_sheet_room import fits      # the model's limits and the room's own caps
+                try:
+                    cannot_fold = bool(fits(editor))
+                except ServiceError:
+                    cannot_fold = True                   # not even a valid model: the save refuses it on its own
+            if saver is not None and saver in (live.get("online_ids") or []) and not cannot_fold:
                 return
             detail = {"action": action, "online": live.get("online") or [], "last_by": live.get("last_by")}
+            if cannot_fold:
+                detail["reason"] = "cannot_fold"
             if field_change:          # the field panel has no "discard" path: say what to do instead
                 raise ServiceError(409, "live_edits", "模板编辑器里有尚未保存为版本的实时修改：请先在编辑器里保存，再修改字段", detail)
             raise ServiceError(409, "live_edits", "编辑器里有尚未保存为版本的实时修改；这一步会丢弃它们，请确认后再试", detail)
@@ -1102,7 +1125,7 @@ class App:
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (target, now(), tid))
         self._bump_projects_using(tid)
         self._template_changed(tid, target, self.editor_of(tid, self.get_version(tid, target), self.get_template(tid).get("kind")),
-                               "redo" if redo else "undo", previous=head)
+                               "redo" if redo else "undo", previous=head, discard_live=discard_live)
 
     def template_usage(self, tid: str) -> dict:
         """Who follows this template: the projects bound to it, split into those that follow the
@@ -1136,7 +1159,7 @@ class App:
                        json.dumps(target.get("editor"), ensure_ascii=False) if target.get("editor") is not None else None, t))
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
         self._bump_projects_using(tid)
-        self._template_changed(tid, no, target.get("editor"), "restore", previous=head, source=version_no)
+        self._template_changed(tid, no, target.get("editor"), "restore", previous=head, source=version_no, discard_live=discard_live)
         return self.template_detail(tid)
 
     def template_undo(self, tid: str, base_head: int | None = None, *, discard_live: bool = False) -> dict:

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 
 from . import env
@@ -958,7 +959,8 @@ class Store:
     @contextmanager
     def tx(self):
         """A write transaction (``BEGIN IMMEDIATE``): all statements inside commit together or
-        not at all.  Re-entrant within a thread; the outermost block commits."""
+        not at all.  Re-entrant within a thread; the outermost block commits, then runs what
+        ``after_commit`` queued — outside the write lock."""
         c = self._c()
         if self._local.depth:
             self._local.depth += 1
@@ -967,6 +969,7 @@ class Store:
             finally:
                 self._local.depth -= 1
             return
+        self._local.after = []
         with self._write_lock:
             c.execute("BEGIN IMMEDIATE")
             self._local.depth = 1
@@ -975,9 +978,27 @@ class Store:
                 c.execute("COMMIT")
             except BaseException:
                 c.execute("ROLLBACK")
+                self._local.after = []
                 raise
             finally:
                 self._local.depth = 0
+        after, self._local.after = self._local.after, []
+        for fn in after:
+            try:
+                fn()
+            except Exception:                            # noqa: BLE001 — the transaction is committed; a listener's failure is its own
+                logging.getLogger("synwevo.store").exception("an after-commit callback failed")
+
+    def after_commit(self, fn) -> None:
+        """Run ``fn`` once the current transaction has committed (outside the write lock), or now
+        when there is none. Listeners that take other locks or wait on other threads (the live
+        editing rooms) must never run inside a transaction: the write lock comes first in the
+        process's lock order, and waiting while holding it stalls every writer. Nothing runs when
+        the transaction rolls back."""
+        if getattr(self._local, "depth", 0):
+            self._local.after.append(fn)
+        else:
+            fn()
 
     @contextmanager
     def conn(self):

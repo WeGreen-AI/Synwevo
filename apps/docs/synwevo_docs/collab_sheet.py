@@ -37,7 +37,9 @@ State layout (``state["content"]`` is what clients mirror; the rest is the serve
     base     {content path: [value at the basis] or []} for every path changed since the basis
     basis    {seq, sheets: [[sid, name]], rows: {sid: [ids]}, cols: {sid: [ids]}} — position → id at
              the last seed / save / outside reconciliation
-    clients  {client: {hi, at, r: {n: remembered result}}}; nfloor — per-client de-duplication
+    clients  {client: {hi, at, r: {n: remembered result}}}; nfloor, pfloor {scope: n} — per-client de-duplication
+             (a client named "scope/id" belongs to that scope — the room uses the person — whose
+             forgotten clients raise only that scope's floor)
 
 A patch is a list of ``{"p": path, "v": value}`` / ``{"p": path, "d": 1}`` / ``{"p": path,
 "push": [...]}`` entries over ``content`` applied in order (``apply_patch``); ``before`` is its
@@ -94,6 +96,9 @@ CLIENT_WINDOW = 256           # sequence numbers remembered per client (older on
 RECORD_FULL = 16              # the newest results per client are remembered whole ...
 RECORD_BYTES = 2048           # ... when their JSON is this small; otherwise as {ok, seq | code}
 MAX_CLIENTS = 64              # clients remembered per room; together ≈ 3 MiB at most
+MAX_CLIENTS_PER_SCOPE = 8     # ... and per scope ("scope/client": the room's person), so one cannot push the others out
+MAX_AHEAD = 1 << 20           # a message's number is at most this far past the client's next one ...
+MAX_NUMBER = (1 << 53) - 1    # ... and a number a browser can hold exactly
 ECHO_MAX = 64                 # client input repeated in a refusal: short strings only
 
 STYLE_KEYS = ("b", "i", "u", "sz", "color", "bg", "ha", "va", "wrap", "bd", "nf")
@@ -564,6 +569,22 @@ def sheet_invariants(editor) -> list[dict]:
     return issues
 
 
+def holdable(editor, *, max_cells: int | None = None) -> list[dict]:
+    """Why the live state could not hold ``editor`` (what ``seed_state`` and ``reconcile`` raise
+    ``SeedError`` for), without allocating anything; ``[]`` when it can. ``max_cells``: a room's
+    own, lower bound on cells (live sheets)."""
+    issues = sheet_invariants(editor)
+    if issues:
+        return issues
+    model = normalize(editor)
+    issues = _size_issues(model)
+    if not issues and max_cells is not None:
+        cells = sum(len(sh.get("cells") or {}) for sh in model.get("sheets") or [])
+        if cells > max_cells:
+            issues = [{"code": "too_large", "what": "cells", "max": max_cells, "size": cells}]
+    return issues
+
+
 def normalize(editor) -> dict:
     """What the live state renders a model as: ``validate_editor``'s result with positions written
     the one way the editor writes them (``B2``, ``A1:C3``). For the models the editor and the API
@@ -737,7 +758,7 @@ def seed_state(editor, *, epoch: str = "0") -> dict:
     if issues:
         raise SeedError(issues)
     state = {"format": FORMAT, "epoch": str(epoch), "seq": 0, "ctr": 0, "content": None,
-             "kseq": {}, "kfloor": 0, "sheetw": {}, "base": {}, "basis": None, "clients": {}, "nfloor": 0}
+             "kseq": {}, "kfloor": 0, "sheetw": {}, "base": {}, "basis": None, "clients": {}, "nfloor": 0, "pfloor": {}}
     state["content"] = _content(model, _SeedAlloc(state))
     state["basis"] = _basis(state["content"], 0)
     return state
@@ -845,9 +866,10 @@ class _Tx:
     """One accepted-or-refused unit: every write goes through here so it can be undone as a whole,
     turned into the patch and its inverse, and tracked against the basis."""
 
-    def __init__(self, state: dict, by: str, expect: int | None):
+    def __init__(self, state: dict, by: str, expect: int | None, cap: int | None = None):
         self.st, self.by, self.expect = state, by, expect
         self.c = state["content"]
+        self.cap = _cell_cap() if cap is None else min(_cell_cap(), cap)   # cells the state may hold after this group
         self.seq = state["seq"] + 1
         self.undo: list = []
         self.first: dict = {}
@@ -1118,8 +1140,8 @@ def _write_cell(tx: _Tx, sid: str, ck: str, cell: dict):
     if not cell:
         tx.delete(path)
         return
-    if ck not in tx.c["sheets"][sid]["cells"] and _cells(tx.c) + 1 > _cell_cap():
-        raise _Refused("too_large", what="cells", max=_cell_cap())
+    if ck not in tx.c["sheets"][sid]["cells"] and _cells(tx.c) + 1 > tx.cap:
+        raise _Refused("too_large", what="cells", max=tx.cap)
     tx.put(path, cell)
 
 
@@ -1577,8 +1599,8 @@ def _op_sheet_restore(tx: _Tx, op: dict):
         _name_free(tx, _title(name), skip=sid)            # someone took its name meanwhile: restore under a new one
     if _live_sheets(tx) >= MAX_SHEETS:
         raise _Refused("too_large", what="sheets", max=MAX_SHEETS)
-    if _cells(tx.c, live_only=True) + len(sh["cells"]) > _cell_cap():
-        raise _Refused("too_large", what="cells", max=_cell_cap())
+    if _cells(tx.c, live_only=True) + len(sh["cells"]) > tx.cap:
+        raise _Refused("too_large", what="cells", max=tx.cap)
     tx.put(("sheets", sid, "gone"), False)
     tx.kset(f"x/{sid}", sid)
     if name != sh["name"]:
@@ -1639,14 +1661,30 @@ def _keep(result: dict) -> dict:
     return dict(result) if small else _trimmed(result)
 
 
-def _record(state: dict, client: str, n: int, result: dict):
+def _record(state: dict, client: str, n: int, result: dict, keep=frozenset()):
     """Remember ``(client, n)``'s answer. Per client: the last ``CLIENT_WINDOW`` numbers, the newest
     ``RECORD_FULL`` of them whole (each at most ``RECORD_BYTES``), older ones as their outcome only.
     At most ``MAX_CLIENTS`` clients; forgetting one raises ``nfloor`` past its numbers, so a client
-    the room no longer knows can never have an old message applied again (it is told to resync)."""
+    the room no longer knows can never have an old message applied again (it is told to resync).
+    At most ``MAX_CLIENTS_PER_SCOPE`` of one scope, checked where a record is created: a scope's
+    oldest is forgotten first, raising only that scope's floor (``pfloor``), so one person's many
+    tabs neither push the others' records out nor move the numbers the others are told. Clients in
+    ``keep`` (the room's open connections) are never forgotten: a client that may still resend keeps
+    its answers (the room admits no more open tabs than it can keep)."""
     clients = state["clients"]
     rec = clients.get(client)
     if rec is None:
+        scope = _scope(client)
+        if scope is not None:
+            mine = [c for c in clients if _scope(c) == scope]
+            spare = [c for c in mine if c not in keep]
+            while len(mine) >= MAX_CLIENTS_PER_SCOPE and spare:
+                oldest = min(spare, key=lambda c: (clients[c]["at"], c))
+                floors = state.setdefault("pfloor", {})
+                floors[scope] = max(floors.get(scope, 0), clients[oldest]["hi"])
+                del clients[oldest]
+                mine.remove(oldest)
+                spare.remove(oldest)
         rec = clients[client] = {"hi": 0, "at": 0, "r": {}}
     rec["r"][str(n)] = _keep(result)
     rec["hi"] = max(rec["hi"], n)
@@ -1658,19 +1696,34 @@ def _record(state: dict, client: str, n: int, result: dict):
         elif i <= rec["hi"] - RECORD_FULL and not rec["r"][k].get("trimmed"):
             rec["r"][k] = _trimmed(rec["r"][k])
     while len(clients) > MAX_CLIENTS:
-        oldest = min((c for c in clients if c != client), key=lambda c: (clients[c]["at"], c))
+        spare = [c for c in clients if c != client and c not in keep]
+        if not spare:
+            break
+        oldest = min(spare, key=lambda c: (clients[c]["at"], c))
         state["nfloor"] = max(state["nfloor"], clients[oldest]["hi"])
         del clients[oldest]
+
+
+def _scope(client: str) -> str | None:
+    return client.rsplit("/", 1)[0] if "/" in client else None
+
+
+def _floor(state: dict, client: str) -> int:
+    """The highest number a client the room does not know may have used: the room's own floor, or
+    its scope's when higher."""
+    scope = _scope(client)
+    return max(state["nfloor"], (state.get("pfloor") or {}).get(scope, 0) if scope is not None else 0)
 
 
 def next_number(state: dict, client: str) -> int:
     """The number ``client``'s next message should carry: after its last one, or — for a client the
     room does not know (new, or forgotten) — above every number a forgotten client used."""
     rec = state["clients"].get(client)
-    return rec["hi"] + 1 if rec else state["nfloor"] + 1
+    return rec["hi"] + 1 if rec else _floor(state, client) + 1
 
 
-def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | None, trusted: bool = False) -> dict:
+def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | None, trusted: bool = False,
+          max_cells: int | None = None, keep=frozenset()) -> dict:
     """Apply one operation (or one ``tx`` group) from ``client``'s ``n``-th message, sent by ``by``
     (stamped by the server) after seeing everything up to sequence number ``expect``.
 
@@ -1679,7 +1732,9 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
     returns the remembered result with ``"duplicate": True``; a number too old to know, or below
     ``next_number`` for a client the room does not know, is answered ``resync``. ``expect`` is
     required: ``None`` (no first-writer-wins check) only for the server's own writes, which say so
-    with ``trusted=True``."""
+    with ``trusted=True``. ``max_cells``: the room's own bound on cells (below ``MAX_LIVE_CELLS``); a
+    write that would pass it is refused ``too_large``. A fault inside an operation (a bug, not a
+    refusal) undoes the group before it propagates: the state is never left half-written."""
     if not isinstance(by, str) or not by:
         raise ValueError("by must name the person the server authenticated")
     if not isinstance(client, str) or not client or len(client) > 128:
@@ -1689,23 +1744,35 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
     if expect is None and not trusted:
         raise ValueError("expect=None skips the first-writer-wins check: only for the server's own writes (trusted=True)")
     rec = state["clients"].get(client)
+    if n > MAX_NUMBER or n >= next_number(state, client) + MAX_AHEAD:
+        # a number far past the client's own (a forgotten client's numbers become the floor of new
+        # ones: an unbounded one would push everyone's past what a browser can count); certainly not
+        # applied: the client renumbers from `next`
+        return {"ok": False, "code": "resync", "detail": {"reason": "number_ahead", "applied": False, "next": next_number(state, client)}}
+    # A number the room no longer remembers (its client was forgotten, or it is older than the
+    # window): the message may have been applied before — or not. Never applied now; the client must
+    # not simply renumber it (that could apply it twice) but compare with the state it syncs to
+    # (`forgotten`, unlike `number_ahead`, which was certainly not applied).
     if rec is None:
-        if n <= state["nfloor"]:
-            return {"ok": False, "code": "resync", "detail": {"reason": "old_message", "next": state["nfloor"] + 1}}
+        if n <= _floor(state, client):
+            return {"ok": False, "code": "resync", "detail": {"reason": "forgotten", "applied": "unknown", "next": _floor(state, client) + 1}}
     else:
         prior = rec["r"].get(str(n))
         if prior is not None:
             return {**prior, "duplicate": True}
         if n <= rec["hi"] - CLIENT_WINDOW:
-            return {"ok": False, "code": "resync", "detail": {"reason": "old_message", "next": rec["hi"] + 1}}
+            return {"ok": False, "code": "resync", "detail": {"reason": "forgotten", "applied": "unknown", "next": rec["hi"] + 1}}
     if expect is not None and (type(expect) is not int or expect < 0 or expect > state["seq"]):
         return {"ok": False, "code": "resync", "detail": {"reason": "unknown_expect", "expect": _echo(expect), "seq": state["seq"]}}
-    tx = _Tx(state, by, expect)
+    tx = _Tx(state, by, expect, max_cells)
     try:
         _dispatch(tx, op, top=True)
     except _Refused as r:
         tx.rollback()
         result = {"ok": False, "code": r.code, "detail": r.detail}
+    except BaseException:
+        tx.rollback()
+        raise
     else:
         patch, before = tx.commit()
         if patch:
@@ -1714,8 +1781,18 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
             # nothing changed (it already was so): no sequence number, and no ownership either
             tx.rollback()
         result = {"ok": True, "seq": state["seq"], "patch": patch, "before": before}
-    _record(state, client, n, result)
+    _record(state, client, n, result, keep)
     return result
+
+
+def outcomes(state: dict, client: str) -> dict:
+    """What the room remembers of ``client``'s recent messages: ``{n: true | refusal code}`` (the last
+    ``CLIENT_WINDOW`` numbers). A client resyncing tells from it exactly which of its unanswered
+    messages were applied — never guessing for operations that must not apply twice."""
+    rec = state["clients"].get(client)
+    if rec is None:
+        return {}
+    return {k: (True if r.get("ok") else r.get("code")) for k, r in sorted(rec["r"].items(), key=lambda kv: int(kv[0]))}
 
 
 def compact(state: dict, *, upto: int):
