@@ -245,16 +245,26 @@ def write_draft(room) -> int:
 
 def restart_from_storage(room) -> int:
     """The process died without its closing write; the next one opens the room from storage exactly as
-    ``CollabHub._load`` does (the draft row, the head version) — a new load of the same epoch. Every tab
-    must have dropped before. Returns the seq it was loaded at."""
+    ``CollabHub._load`` / ``_open_room`` do: the draft row and the head version — a new load of the same
+    epoch — and, when a version was written after the draft (the process died between a save and the
+    next draft write), that version folded in before anything else. Every tab must have dropped before.
+    Returns the seq the draft was loaded at."""
+    import time
     from synwevo_core.context import as_tenant
     hub, tid = room.hub, room.tid
     with as_tenant(room.tenant):
         t = hub.app.get_template(tid)
         row = hub.store.one("SELECT * FROM collab_docs WHERE room=?", (room.key,))
         room.load_sheet(t, row, lambda: hub.app.editor_of(tid, hub.app.get_version(tid, t["head"]), t.get("kind")))
-    assert room.catch_up is None, "the fixture writes the draft after every version (no catch-up to fold in)"
-    return room.state["seq"]
+    loaded = room.loaded_seq
+    catch_up = room.catch_up
+    if catch_up is not None:
+        room.catch_up = None
+        room.enqueue(lambda: room.outside_change(catch_up[0], catch_up[1], "save", None, None, False), first=True)
+        end = time.time() + 10
+        while room.has_work() and time.time() < end:
+            time.sleep(0.01)
+    return loaded
 
 
 def diff(a, b, path="", out=None, limit=8):

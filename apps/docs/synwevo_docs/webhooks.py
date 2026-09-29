@@ -55,6 +55,7 @@ from synwevo_core import authority, env, journal, sealed
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id
 from synwevo_core import workers
+from synwevo_core.docs_file_events import FILE_EVENT_TYPES
 
 # Standard Webhooks' example schedule: after the first attempt, 9 more over ~3.1 days.
 BACKOFF_S = (5, 300, 1800, 7200, 18000, 36000, 50400, 72000, 86400)
@@ -68,8 +69,12 @@ BATCH = 500
 DEFAULT_EVENTS = ("job.completed", "job.completed_with_errors", "job.failed", "job.cancelled")
 # Every type `jobs.py` emits. A subscription filter naming anything else is refused rather than
 # stored, because a typo ("job.complete") would otherwise produce a subscription that never fires.
-EVENT_TYPES = ("job.created", "job.started", "job.planned", "job.cancel_requested", "job.retry_requested", "job.recovered",
-               "job.completed", "job.completed_with_errors", "job.failed", "job.cancelled")
+JOB_EVENT_TYPES = ("job.created", "job.started", "job.planned", "job.cancel_requested", "job.retry_requested", "job.recovered",
+                   "job.completed", "job.completed_with_errors", "job.failed", "job.cancelled")
+# Source-file verdicts, written by a trigger in the transaction that changes the file's status
+# (synwevo_core.docs_file_events): job_id is '' and data carries file_id / project_id / status.
+EVENT_TYPES = JOB_EVENT_TYPES + FILE_EVENT_TYPES
+EVENT_PREFIXES = ("job.*", "file.*")
 PING_EVENT = "webhook.ping"
 DELIVERY_STATUSES = ("pending", "delivered", "failed", "dropped")
 
@@ -344,11 +349,11 @@ def normalize_events(value) -> list[str]:
     out: list[str] = []
     for v in value:
         v = v.strip() if isinstance(v, str) else v
-        if v in ("*", "job.*") or v in EVENT_TYPES:
+        if v == "*" or v in EVENT_PREFIXES or v in EVENT_TYPES:
             if v not in out:
                 out.append(v)
             continue
-        raise ServiceError(400, "invalid_events", f"未知的事件类型：{v!r}", {"field": "events", "allowed": ["*", "job.*", *EVENT_TYPES]})
+        raise ServiceError(400, "invalid_events", f"未知的事件类型：{v!r}", {"field": "events", "allowed": ["*", *EVENT_PREFIXES, *EVENT_TYPES]})
     return out
 
 
@@ -1420,8 +1425,8 @@ class Subscriptions:
 
 # ----------------------------------------------------------------------------- event feed
 def events_feed(store: Store, tenant: str, cursor: str | None = None, types: str | None = None, limit=None) -> dict:
-    """A workspace's job events in log order, for consumers that missed webhooks or prefer to
-    poll. The item ``id`` is the same value a webhook carries as ``webhook-id``, so one dedupe
+    """A workspace's job and source-file events in log order, for consumers that missed webhooks or
+    prefer to poll. The item ``id`` is the same value a webhook carries as ``webhook-id``, so one dedupe
     table covers both channels."""
     if not tenant:
         raise ServiceError(403, "forbidden", "该凭据没有绑定工作空间")
@@ -1447,7 +1452,15 @@ def events_feed(store: Store, tenant: str, cursor: str | None = None, types: str
     rows = store.all(sql + " ORDER BY e.seq LIMIT ?", tuple(args) + (lim + 1,))
     more = len(rows) > lim
     rows = rows[:lim]
-    items = [{"id": r["id"], "type": r["type"], "version": r["version"], "occurred_at": r["occurred_at"],
-              "job_id": r["job_id"], "project_id": r["project_id"], "data": _clean_data(r["data"])} for r in rows]
+    items = []
+    for r in rows:
+        data = _clean_data(r["data"])
+        item = {"id": r["id"], "type": r["type"], "version": r["version"], "occurred_at": r["occurred_at"],
+                "job_id": r["job_id"] or None, "project_id": r["project_id"], "data": data}
+        if r["type"].startswith("file.") and isinstance(data, dict):
+            # A file verdict belongs to no job: its file and project come from the event itself.
+            item["file_id"] = data.get("file_id")
+            item["project_id"] = data.get("project_id")
+        items.append(item)
     nxt = rows[-1]["seq"] if rows else (after or 0)
     return {"items": items, "next_cursor": _enc_cursor("e1", nxt), "has_more": more}

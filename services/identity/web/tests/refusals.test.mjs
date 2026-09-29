@@ -76,7 +76,10 @@ const SERVER = [
   { file: ID + "passkeys.py", fns: ["_spend_challenge_for"], surfaces: ["signin", "account"] },
   { file: ID + "passkeys.py", surfaces: ["account"] },
   { file: ID + "profile.py", surfaces: ["account"] },
+  { file: ID + "provider_routes.py", fns: ["build_router._consent_actor", "build_router.consent_request", "build_router.consent_decide",
+      "build_router.connected_apps", "build_router.connected_app_revoke"], surfaces: ["account"] },
   { file: ID + "provider_routes.py", surfaces: [], why: "OIDC protocol endpoints: a client's redirect or back channel, never a page of this shell" },
+  { file: ID + "workspace_api.py", surfaces: [], why: "the workspace directory API answers machine clients only; no page of this shell calls it" },
   { file: ID + "push_routes.py", surfaces: ["account"] },
   { file: ID + "registration.py", surfaces: ["signin"] },
   { file: CLIENT + "session_routes.py", fns: ["switch_workspace"], surfaces: ["signin", "org"] },
@@ -104,6 +107,8 @@ const SERVER = [
   { file: CORE + "api_platform.py", surfaces: ["api"] },
   // delegated platform roles: the one request check, grants and revocations (platform administration)
   { file: CORE + "platform_access.py", surfaces: ["admin"] },
+  { file: CORE + "api_quotas.py", surfaces: ["api"] },
+  { file: CORE + "oauth_consent.py", surfaces: ["account"] },
   { file: CORE + "auth.py", fns: ["rotate_key"], surfaces: ["api"] },
   { file: CORE + "auth.py", surfaces: [], why: "API keys presented to Synwevo Docs; the console only rotates and revokes them" },
   { file: CORE + "oidc.py", fns: ["rotate_secret"], surfaces: ["api"] },
@@ -144,6 +149,7 @@ const API_ONLY = {
   "未知的账户状态 {status!r}": FIXED, "移交后自己的角色只能是 admin、editor 或 viewer": FIXED,
   "entitlement 只能是 active、revoked 或 none": FIXED, "未知的邀请状态 {state!r}": FIXED, "action 只能是 revoke 或 resend": FIXED,
   "请选择要认领这些数据的账户": "the claim button stays disabled until an account is chosen",
+  "expected_members 必须是账户 ID 列表": "the undo dialog sends the member ids of the preview it shows",
   "请提供 {key}（非空列表）": "bulk actions are offered only with a selection", "请提供 changes（非空列表）": "bulk actions are offered only with a selection",
   "请提供 invitations（非空列表）": "bulk actions are offered only with a selection", "缺少 user_id": "each change names the member it was chosen for",
   "can_export 必须是 true 或 false": "the page sends a checkbox value", "grant 必须是 true 或 false": "the page sends a checkbox value",
@@ -226,6 +232,7 @@ const SAMPLE_DETAIL = {
   "最多 {MAX_SUBSCRIPTIONS_PER_USER} 个设备，请先移除不用的设备": { limit: 10 },
   "一个组织最多 {MAX_ROLES} 个自定义角色": { limit: 50 },
   "请写明理由（至少 {REASON_MIN} 个字），它会写入审计记录": { field: "reason", min: 8 },
+  "限制值必须是 {lo} 至 {hi} 之间的整数，留空表示继承": { field: "active_jobs", min: 1, max: 1000 },
 };
 
 // ------------------------------------------------------------------------------------ scanning

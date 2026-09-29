@@ -218,6 +218,18 @@ class Client:
     def get_project(self, project_id: str) -> dict:
         return self._get(f"{API}/projects/{_q(project_id)}")
 
+    def update_project(self, project_id: str, *, base_settings_rev: int, name: str | None = None,
+                       archived: bool | None = None, output: dict | None = None) -> dict:
+        """Rename, archive/unarchive or change output defaults. ``base_settings_rev`` is the project's
+        ``settings_rev`` you read; someone else's edit since is 409 stale_project. Not retried."""
+        body: dict = {"base_settings_rev": base_settings_rev}
+        for key, value in (("name", name), ("archived", archived), ("output", output)):
+            if value is not None:
+                body[key] = value
+        if self.validate and len(body) == 1:
+            raise ValidationError("give name, archived or output to change", "body")
+        return self._json("PATCH", f"{API}/projects/{_q(project_id)}", json=body, retry_safe=False)
+
     def delete_project(self, project_id: str) -> dict:
         return self._json("DELETE", f"{API}/projects/{_q(project_id)}", retry_safe=True)
 
@@ -481,6 +493,22 @@ class Client:
         return cast(dict[str, CorrectionValue], self._json("PUT", f"{API}/files/{_q(file_id)}/corrections/{_q(mapping_id)}",
                     json={"value": value, "confirmed": confirmed}, retry_safe=False))
 
+    def run_source_ocr(self, file_id: str, pages: list[int] | None = None, *, timeout: float | None = None) -> dict:
+        """Recognise text on a scanned PDF (default: every scanned/mixed page) or image; at most 50 pages.
+
+        Synchronous on the server, so the call waits longer than the client default: 30 s plus 6 s per
+        page unless ``timeout`` says otherwise. Not retried automatically — recognition is expensive.
+        After a timeout, ``list_source_page_words`` reports ``source == "ocr"`` for pages already done.
+        """
+        if self.validate and pages is not None:
+            if not isinstance(pages, list) or len(pages) > 50 or any(
+                    not isinstance(n, int) or isinstance(n, bool) or n < 0 for n in pages):
+                raise ValidationError("pages must be a list of at most 50 zero-based page numbers", "pages")
+        wait = timeout if timeout is not None else max(float(self._t.timeout or 30), 30.0 + 6.0 * (len(pages) if pages else 50))
+        resp = self._t.send("POST", f"{API}/files/{_q(file_id)}/ocr", json={} if pages is None else {"pages": pages},
+                            retry_safe=False, timeout=wait)
+        return cast(dict, wrap(resp.json(), resp))
+
     def select_representative_source(self, file_id: str) -> SourceFile:
         return cast(SourceFile, self._json("POST", f"{API}/files/{_q(file_id)}/representative", retry_safe=False))
 
@@ -605,6 +633,29 @@ class Client:
     def get_template_usage(self, template_id: str) -> dict:
         """Projects bound to this template: those following its head and those pinned to a version."""
         return self._get(f"{API}/templates/{_q(template_id)}/usage")
+
+    def update_template_field(self, template_id: str, field_id: str, *, base_head: int, **values: Any) -> dict:
+        """Change one field's properties (name, required, data_type, format, default, font sizes,
+        alignment, empty_policy, placeholder, binding, columns, overflow, …) as one new version.
+        ``base_head`` is the template head you read; a moved head is 409 stale_template (also what a
+        repeat of a call that already succeeded answers), so this is not retried automatically."""
+        if self.validate and (not isinstance(base_head, int) or isinstance(base_head, bool) or base_head < 1):
+            raise ValidationError("base_head must be the template head you read (a positive integer)", "base_head")
+        if self.validate and not values:
+            raise ValidationError("give at least one property to change", "values")
+        return self._json("PATCH", f"{API}/templates/{_q(template_id)}/fields/{_q(field_id)}",
+                          json={"base_head": base_head, **values}, retry_safe=False)
+
+    def delete_template_field(self, template_id: str, field_id: str, *, base_head: int, project_id: str | None = None,
+                              cascade: bool = True) -> dict:
+        """Remove one field as one new version; with ``project_id`` also remove that project's mappings
+        bound only to it (``removed_mappings``). Built-in templates keep fields in their editor (409)."""
+        params: dict = {"base_head": base_head}
+        if project_id:
+            params["project_id"] = project_id
+            params["cascade"] = "true" if cascade else "false"
+        return self._json("DELETE", f"{API}/templates/{_q(template_id)}/fields/{_q(field_id)}", params=params,
+                          retry_safe=False)
 
     def restore_template_version(self, template_id: str, version: int, *, base_head: int | None = None, discard_live: bool = False) -> dict:
         """Make an earlier version current as a new version (history kept). `base_head` names the

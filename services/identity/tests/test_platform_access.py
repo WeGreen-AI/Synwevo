@@ -45,6 +45,8 @@ ROUTES = [
     ("GET", "/api/admin/workspaces", "platform.workspaces.view", False),
     ("GET", "/api/admin/workspaces/{wid}/members", "platform.workspaces.view", False),
     ("POST", "/api/admin/workspaces/{wid}/claim", "platform.workspaces.claim", True),
+    ("GET", "/api/admin/workspaces/{wid}/unclaim-preview", "platform.workspaces.claim", False),
+    ("POST", "/api/admin/workspaces/{wid}/unclaim", "platform.workspaces.claim", True),
     ("POST", "/api/admin/workspaces/{wid}/freeze", "platform.workspaces.manage", True),
     ("POST", "/api/admin/workspaces/{wid}/unfreeze", "platform.workspaces.manage", True),
     ("GET", "/api/admin/organizations", "platform.orgs.view", False),
@@ -124,8 +126,15 @@ def grant_of(w, user, role):
     return next(g for g in PlatformAccess(w["store"]).live_grants(user["id"]) if g["role"] == role)
 
 
-def _path(template, w):
-    return template.format(uid=w["plain"]["id"], wid=w["wid"], mid="mail_fixture_missing",
+#: The historical-data routes (claim, and its undo) act on the legacy workspace. Pointed at an
+#: ordinary one they answer a state refusal (409 `not_legacy`) once past the permission check.
+HISTORICAL = ("/claim", "/unclaim-preview", "/unclaim")
+LEGACY_WID = "default"
+
+
+def _path(template, w, *, legacy: str | None = None):
+    wid = legacy if legacy and template.endswith(HISTORICAL) else w["wid"]
+    return template.format(uid=w["plain"]["id"], wid=wid, mid="mail_fixture_missing",
                            oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing")
 
 
@@ -158,9 +167,13 @@ def test_every_admin_route_is_in_the_matrix(world):
 
 @pytest.mark.parametrize("role", ROLE_ORDER)
 def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
+    # The historical data is assigned (to an ordinary account, through the real claim) before the
+    # matrix runs, so the undo routes have something to act on: a permitted caller reaches the
+    # preview (200) and the strict re-authentication (reauth_required), not a state refusal.
+    legacy_owner = _assigned_legacy_workspace(world)
     c = world["login"](holder(world, role))
     for method, template, permission, dangerous in ROUTES:
-        path = _path(template, world)
+        path = _path(template, world, legacy=LEGACY_WID)
         r = _call(c, method, path)
         if permission is not None and permission not in ROLES[role]:
             assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied", (role, method, path, r.text)
@@ -183,6 +196,9 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
     # nothing was written by any of the refused or unconfirmed calls
     assert world["ident"].get_user(world["plain"]["id"])["status"] == "active"
     assert world["ident"].get_workspace(world["wid"])["status"] == "active"
+    assert world["ident"].get_workspace(LEGACY_WID)["status"] == "active"
+    assert {r["user_id"] for r in world["store"].all("SELECT user_id FROM memberships WHERE workspace_id=?",
+                                                     (LEGACY_WID,))} == {legacy_owner["id"]}
 
 
 def test_no_platform_permission_sees_404_everywhere_including_owners_and_workspace_admins(world):
@@ -346,6 +362,20 @@ def _legacy_workspace(store) -> None:
     ts = now()
     store.execute("INSERT INTO workspaces (id,name,kind,status,created_at,updated_at) "
                   "VALUES ('default','历史数据（待认领）','legacy','pending_claim',?,?)", (ts, ts))
+
+
+def _assigned_legacy_workspace(w) -> dict:
+    """Fixture set-up: the pre-identity data assigned by the super administrator, through the real
+    claim route, to an ordinary account (the only kind that may receive it); returns that account."""
+    from synwevo_core.apps import bootstrap_docs_app
+    bootstrap_docs_app(w["store"], w["ident"])
+    _legacy_workspace(w["store"])
+    owner = verified(w["store"], w["ident"], "legacy-owner@example.test")
+    root = w["login"](w["root"])
+    reauth(root)
+    r = post(root, f"/api/admin/workspaces/{LEGACY_WID}/claim", {"user_id": owner["id"], "reason": REASON})
+    assert r.status_code == 200, r.text
+    return owner
 
 
 def test_the_historical_data_goes_only_from_a_super_administrator_to_an_ordinary_account(world):

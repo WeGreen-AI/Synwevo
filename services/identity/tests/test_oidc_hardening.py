@@ -24,6 +24,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
 from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
 from synwevo_core.store import Store, now
+from services.identity.tests.oauth_consent_helper import through_consent
 
 PW = "a-sufficiently-long-passphrase"
 REDIRECT = "http://docweave.localhost:8765/auth/callback"
@@ -91,7 +92,7 @@ def _grant(c, scope="openid offline_access"):
     ch = base64.urlsafe_b64encode(hashlib.sha256(v.encode()).digest()).rstrip(b"=").decode()
     q = {"client_id": "docweave-web", "redirect_uri": REDIRECT, "response_type": "code",
          "scope": scope, "state": "s", "nonce": "n", "code_challenge": ch, "code_challenge_method": "S256"}
-    resp = c.get("/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False)
+    resp = through_consent(c, c.get("/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False))
     code = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(resp.headers["location"]).query))["code"]
     out = c.post("/oidc/token", data={"grant_type": "authorization_code", "code": code,
                                       "redirect_uri": REDIRECT, "client_id": "docweave-web",
@@ -213,8 +214,8 @@ def test_a_refresh_keeps_the_audience_it_was_granted_with(env):
     ch = base64.urlsafe_b64encode(hashlib.sha256(v.encode()).digest()).rstrip(b"=").decode()
     q = {"client_id": "docweave-web", "redirect_uri": REDIRECT, "response_type": "code",
          "scope": "openid offline_access", "state": "s", "code_challenge": ch, "code_challenge_method": "S256"}
-    code = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(env["c"].get(
-        "/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False).headers["location"]).query))["code"]
+    code = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(through_consent(env["c"], env["c"].get(
+        "/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False)).headers["location"]).query))["code"]
     tok = env["c"].post("/oidc/token", data={"grant_type": "authorization_code", "code": code,
                                              "redirect_uri": REDIRECT, "client_id": "docweave-web",
                                              "code_verifier": v, "resource": "urn:second"}).json()

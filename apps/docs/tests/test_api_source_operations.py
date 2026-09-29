@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import time
+from pathlib import Path
 
 import docx
 import openpyxl
@@ -317,6 +318,7 @@ def source_calls(env):
         ("POST", base + "/locator", {"selection": {"kind": "pdf_region", "page": 0, "nrect": [0, 0, 1, 1]}}),
         ("PUT", base + "/options", {"csv": {}}),
         ("PUT", base + f"/corrections/{mid}", {"value": "x"}),
+        ("POST", base + "/ocr", {}),
         ("POST", base + "/representative", None)]
 
 
@@ -481,6 +483,7 @@ def test_openapi_explicit_operations_scopes_and_truthful_schemas(env):
         ("/files/{fid}/options", "put"): ("update_source_options", "write"),
         ("/files/{fid}/corrections/{mid}", "put"): ("update_source_correction", "write"),
         ("/files/{fid}/representative", "post"): ("select_representative_source", "write"),
+        ("/files/{fid}/ocr", "post"): ("run_source_ocr", "write"),
         ("/projects/{pid}/files/order", "put"): ("reorder_project_sources", "write"),
         ("/files/{fid}/content", "get"): ("download_source_content", "read"),
         ("/projects/{pid}/locate", "get"): ("locate_source_mappings", "read"),
@@ -519,3 +522,55 @@ def test_openapi_explicit_operations_scopes_and_truthful_schemas(env):
                 check_refs(value)
     check_refs(spec)
     assert len(set(opid for opid, _ in operations.values())) == len(operations)
+
+
+# ------------------------------------------------------------------ OCR (API-2)
+SCANNED_PDF = Path(__file__).resolve().parents[3] / "testdata" / "测试_扫描单据.pdf"
+
+
+def test_machine_ocr_makes_a_scanned_pdf_usable_like_the_workbench(env):
+    """A script can do what the workbench's OCR button does: a needs_ocr scan becomes ready, its page
+    words come from recognition, and repeating the call stores the same words (API-2)."""
+    c, h = env["client"], env["h"]["rw"]
+    src = ok(c.post(f"/api/v1/projects/{env['pid']}/files", files={"file": ("scan.pdf", SCANNED_PDF.read_bytes())}, headers=h))
+    for _ in range(250):
+        src = ok(c.get(f"/api/v1/files/{src['id']}", headers=h))
+        if src["status"] != "parsing":
+            break
+        time.sleep(.02)
+    assert src["status"] == "needs_ocr", src
+    url = f"/api/v1/files/{src['id']}/ocr"
+    error(c.post(url, json={}, headers=env["h"]["ro"]), 403)
+    error(c.post(url, json={}, headers=env["h"]["other"]), 404)
+    error(c.post(url, json={"pages": [99]}, headers=h), 400, "bad_pages")
+    for bad in ({"pages": [True]}, {"pages": ["0"]}, {"pages": [-1]}, {"pages": 0}, {"lang": "eng"}):
+        error(c.post(url, json=bad, headers=h), 400, "invalid")
+    assert ok(c.get(f"/api/v1/files/{src['id']}", headers=h))["status"] == "needs_ocr", "refusals change nothing"
+
+    out = ok(c.post(url, json={}, headers=h))
+    assert out["status"] == "ready" and out["recognized"] == out["pages"] and out["recognized"]
+    assert out["words"] > 5 and out["version"] > src["version"]
+    page = out["recognized"][0]
+    words = ok(c.get(f"/api/v1/files/{src['id']}/words/{page}", headers=h))
+    assert words["source"] == "ocr" and words["total"] > 5
+    again = ok(c.post(url, json={"pages": [page]}, headers=h))
+    assert again["recognized"] == [page] and again["words"] == out["words"] and again["version"] == out["version"] + 1
+
+
+def test_machine_ocr_waits_for_a_slot_then_says_when_to_return(env, monkeypatch):
+    import threading
+    from synwevo_docs.views import Views
+    c, h = env["client"], env["h"]["rw"]
+    src = ok(c.post(f"/api/v1/projects/{env['pid']}/files", files={"file": ("scan.pdf", SCANNED_PDF.read_bytes())}, headers=h))
+    for _ in range(250):
+        if ok(c.get(f"/api/v1/files/{src['id']}", headers=h))["status"] != "parsing":
+            break
+        time.sleep(.02)
+    full = threading.BoundedSemaphore(1)
+    full.acquire()                                          # fixture: every recognition slot is taken
+    monkeypatch.setattr(Views, "_ocr_slots", full)
+    monkeypatch.setattr(Views, "OCR_WAIT_S", 0.05)
+    r = c.post(f"/api/v1/files/{src['id']}/ocr", json={}, headers=h)
+    error(r, 429, "ocr_busy")
+    assert int(r.headers["Retry-After"]) == Views.OCR_RETRY_AFTER_S
+    assert ok(c.get(f"/api/v1/files/{src['id']}", headers=h))["status"] == "needs_ocr"

@@ -12,7 +12,7 @@
 在凭据签发和每次机器调用时再次检查。撤销批准不能通过重新启用客户端绕过。
 
 控制台包括真实调用元数据/状态汇总、一次性秘密展示、服务身份和旧式密钥生命周期、实际 OpenAPI 文档，
-以及受限凭据调试与 Webhook 管理。请求记录只保存路由模板、关联 ID、状态与耗时，不存令牌、请求正文或文档。
+以及受限凭据调试与 Webhook 管理。「Webhook」页签顶部的投递运行概况（API-6，`GET /api/admin/api-platform/webhooks`）跨工作空间列出订阅健康：接收方只显示来源（scheme://host:port，路径与查询可能含对方令牌，不显示）、状态、连续失败、排队数、近 7 天成功/失败、最近错误；总览显示事件积压与持续失败的订阅数。平台可对失败或异常的接收方做保护性暂停（`POST …/webhooks/{sid}/pause`，近期重新验证 + 理由 + 审计，排队投递随之丢弃）；恢复、重投与修改仍由工作空间用自己的凭据完成。不显示事件内容或签名密钥。「生成任务」页签（`GET …/jobs`、`POST …/jobs/{jid}/cancel`）跨工作空间列出任务元数据（状态、阶段、计数、来源、提交请求编号，不含项目/模板名称与样本内容），可对失控任务做保护性停止（规则与工作空间自己取消相同，重新验证 + 理由 + 审计）。「审计」页签（`GET …/audit`）只读列出 API 平台相关动作（`api_platform.*`、`oidc.*`、`api.credential.*`、`cli.client.*`），含被拒绝与出错的尝试，可按动作、结果、工作空间、请求编号筛选；控制台审计行记录目标工作空间与所建对象的 id。请求记录只保存路由模板、关联 ID、状态与耗时，不存令牌、请求正文或文档。
 机器契约里的路径、字段、错误码和枚举不随界面语言变化。界面说明使用独立三语言资源。
 
 Docs 的实现通过组装层注入 `DocsControlPlane`，账户服务没有导入 Docs 的实现。调试必须提供显式受限
@@ -49,7 +49,11 @@ python -m synwevo_docs.cli apikey revoke <key_id>
 * `--scopes`：`read`（业务读取）、`write`（创建 / 修改 / 提交任务）、`admin`（受控治理）。各路由还检查当前对象/空间权限；文件下载额外检查导出资格。权限不足返回 `403 forbidden` 或对应授权错误。
 * `--tenant`：凭据绑定的稳定 workspace ID，不能由请求体覆盖。`default` 是兼容空间，平台模式下保留当前认领状态；浏览器使用当前已验证会话选择的 workspace。跨空间对象返回 `404`，不泄露是否存在。
 * `--expires-days`：可选有效期；过期返回 `401 key_expired`，撤销返回 `401 key_revoked`。
-* 限流：默认每个密钥 300 次/分钟（`SYNWEVO_API_RATE_PER_MIN`，按进程计），超出返回 `429 rate_limited` 并带 `Retry-After`。
+* 限流（API-1 起，所有服务进程共用同一份计数）：每个凭据默认 300 次/分钟（`SYNWEVO_API_RATE_PER_MIN`），
+  同一工作空间全部机器凭据合计默认 1 200 次/分钟（`SYNWEVO_API_WORKSPACE_RATE_PER_MIN`）；平台管理员可在
+  API 管理台「流量与配额」按平台、工作空间或单个凭据覆盖（见 §5.1）。轮换后的新密钥与旧密钥共用同一额度
+  （按密钥谱系计），换密钥或加一个服务账户都不能绕开工作空间合计。超出返回 `429 rate_limited`，带 `Retry-After`，
+  `details` 说明是哪一层（`limit_scope`: `credential`/`workspace`）、上限（`limit`）与决定它的设置层（`policy_source`）。
   官方 Python 与 Node SDK/CLI 对 `429 rate_limited`（网关在路由执行前的拒绝，未产生副作用）按 `Retry-After` 有界重试——包括没有幂等键的写操作；
   其他来源的 429 或没有该错误码的 429 仍只对幂等/带键的调用重试。自写客户端请照此处理，并加抖动退避。
 
@@ -102,6 +106,18 @@ curl -s -X POST "$ISSUER/oidc/token" \
 3. **当前角色会收窄委托**：签发时是 editor、现在被改成 viewer，那么读仍然可以，写会被拒，
    令牌本身不需要撤销。
 
+**用户委托需要本人同意（API-4）。** 授权请求只含 `openid profile email` 时就是登录，不需要同意；请求 `docweave.*` 或
+`offline_access` 时，平台先看此人是否已就「这个客户端 + 这个工作空间 + 这些权限」同意过：没有则把请求暂存在账户服务
+（10 分钟、只属于发起它的登录会话），把浏览器带到 `/oauth/consent?request=…`，页面显示客户端名称、每项权限的说明、
+工作空间与回调主机；批准才签发授权码（此时再核对一次应用资格），拒绝则回到客户端 `error=access_denied`。管理员登记
+客户端不能代替本人同意。已同意的范围只会因再次同意而扩大；本人在「账户与安全 → 已授权的应用」撤回后，这个客户端在
+该工作空间的全部令牌立即失效（每次调用都查库），下次需要重新同意；撤回写入安全日志，恢复备份后同样生效。升级前已存在的
+委托记为「旧授权」，同样可见、可撤回。
+
+令牌端点与撤销端点接受 `client_secret_basic`（RFC 6749 §2.3.1）与 `client_secret_post`，一次请求只能用一种。
+机密客户端可用 RFC 7662 自省：`POST /oidc/introspect`（`token`，可选 `token_type_hint`），只回答签发给调用方自己的令牌，
+其他令牌与未知令牌一样回 `{"active": false}`；`active` 按此刻判断（撤销、过期、客户端停用、本人账户状态）。
+
 **旧的 `dw_` 密钥继续有效**，不设废止期限。它们早于平台存在，一次性全部作废会打断正在运行的
 自动化。两种凭据走共享包的 `packages/core/synwevo_core/machine.py`，产出包含主体种类的 principal。
 
@@ -128,7 +144,7 @@ curl -s -X POST "$ISSUER/oidc/token" \
 | 429 | 限流 |
 | 500 | 未预期错误（响应含 `request_id`，服务端日志打印同一个 id） |
 
-每个响应都带 `X-Request-ID`；客户端也可自带该头以串联日志。业务校验失败一律用上述状态码，不会伪装成 200。
+每个响应都带 `X-Request-ID`；客户端也可自带该头以串联日志。提交任务的那次请求的编号记在任务的 `request_id` 与 `job.created` 事件的 `data.request_id` 里（网页提交同样记录），因此从调用记录、任务到 Webhook 可以沿同一个编号追查。业务校验失败一律用上述状态码，不会伪装成 200。
 每个响应还带同一组安全头（`synwevo_core.http.apply_security_headers`，OWASP ASVS 4.0.3 V14.4）：`X-Content-Type-Options: nosniff`、
 `Content-Security-Policy`（默认 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;
 font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self';
@@ -139,7 +155,11 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 带 `CF-Ray`（经 Cloudflare）的请求在 `script-src`/`connect-src` 里多出 Cloudflare Web Analytics 的两个源，其余相同。
 `SYNWEVO_CSP` 可替换策略（`off` 关闭），见 operations.md §4。契约测试：`tests/integration/test_security_headers.py`。
 `Accept: application/problem+json` 可选择 RFC 9457 结构，默认保留原错误 envelope。
-限流响应包含 `RateLimit`、`RateLimit-Policy`，429 带 `Retry-After`；当前请求速率桶按进程计算，不宣称跨进程全局限速。
+每个已认证的 `/api/v1` 响应带 `RateLimit-Policy` 与 `RateLimit`（draft-ietf-httpapi-ratelimit-headers），每层一项：
+`"key"`（本凭据，仍排第一，旧解析器照常读取）与 `"workspace"`（工作空间合计），例如
+`RateLimit: "key";r=298;t=1, "workspace";r=0;t=20`。`t` 是再多一次请求可用前的秒数。自己解析时请看全部项：
+任一项 `r=0` 都表示下一次会被拒绝；两个官方 SDK 取 `r=0` 各项中最长的 `t`。计数存在数据库里（GCRA，整数纳秒），
+多个进程合计执行，不是「进程数 × 上限」；数据库暂时不可写时退回本进程计数（仍限流，不放行）。
 
 ## 3. 资源与路由
 
@@ -158,7 +178,8 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 |---|---|---|---|
 | POST | `/projects` | write | 创建项目 |
 | GET | `/projects` | read | 列表（分页：`offset`、`limit`） |
-| GET | `/projects/{pid}` | read | 详情：模板绑定、规则、来源文件、映射数 |
+| GET | `/projects/{pid}` | read | 详情：模板绑定、规则、来源文件、映射数、`settings_rev`、`archived_at` |
+| PATCH | `/projects/{pid}` | write | `{base_settings_rev, name?, archived?, output?}`：改名、归档/恢复（只从默认列表隐藏，照常可用）、输出默认值；`base_settings_rev` 必填，与当前不符 409 `stale_project`（`details.settings_rev`）；修改检查与写入同一事务，同一版本上的并发修改只有一个成功；其他属性 400 |
 | DELETE | `/projects/{pid}` | admin | 删除项目（软删除，产物保留） |
 | POST | `/projects/{pid}/files` | write | 上传来源文件：`multipart/form-data` 的 `file` 字段；或 JSON `{"path": "..."}`（仅限 `SYNWEVO_DOCS_IMPORT_ROOTS` 下） |
 | GET | `/projects/{pid}/files` | read | 来源文件与解析状态 |
@@ -203,6 +224,7 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 | list_source_blocks | GET `/files/{fid}/blocks` | read | 当前块拆分规则的样本位置，分页 |
 | search_source | GET `/files/{fid}/search` | read | q、block、offset、limit；文字与真实选区，窗口结束时明确 truncated |
 | list_source_page_words | GET `/files/{fid}/words/{page}` | read | 已有文字层或已保存 OCR 的词与归一化坐标；不触发 OCR |
+| run_source_ocr | POST `/files/{fid}/ocr` | write | `{"pages": [0, 2]}`（可省略：PDF 的全部扫描/混合页；图片即整张），每次最多 50 页，与工作台同一识别引擎、同步完成；结果并入已存 OCR，`needs_ocr` 变为 `ready`、版本前进；返回 `recognized`、`pages`、`words`、`low_conf`、`status`、`version`。未接纳（扫描中、被拒、失败）的来源 409 `source_not_ready`；识别槽位持续占满时 429 `ocr_busy`（带 `Retry-After`）。重复调用对同样页面重新识别、存入同样的词；客户端超时后可用 `words/{page}` 的 `source: "ocr"` 确认哪些页已完成，SDK 不自动重试 |
 | update_source_options | PUT `/files/{fid}/options` | write | `{"csv":{"delimiter":";","encoding":"utf-8"}}`；替换 CSV 选项组并重新解析 |
 | update_source_correction | PUT `/files/{fid}/corrections/{mid}` | write | 当前映射的 value、严格布尔 confirmed；null 清除修正 |
 | select_representative_source | POST `/files/{fid}/representative` | write | 无请求体，选择当前代表来源 |
@@ -231,11 +253,13 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 | POST | `/templates` | write | 上传模板（DOCX/XLSX/PDF/PPTX/PNG/JPEG，旧格式自动转换并提示） |
 | POST | `/templates/builtin` | write | 程序化创建 DOCX/XLSX 模型与真实模板文件，支持幂等 |
 | GET | `/templates/{tid}/builtin` | read | 导出可移植 editor 模型，可带 version |
-| PUT | `/templates/{tid}/builtin` | write | base_version 并发检查；保存新版本，支持幂等；`note`（≤200 字）为这个版本的说明（命名检查点），留空即「在编辑器中保存」；编辑器里有尚未保存为版本的实时修改时 409 `live_edits`（与恢复相同的 `detail`），`discard_live: true` 表示确认替换并丢弃它们（CI-113）。部署打开 `SYNWEVO_SHEET_LIVE` 时，表格模板正在进行的实时协同会把这个版本对账进去（同一对象以保存的版本为准，并通知被覆盖的人），而不是整份替换；契约不变（[docs-sheet-live.md](../platform/docs-sheet-live.md) §9） |
+| PUT | `/templates/{tid}/builtin` | write | base_version 并发检查；保存新版本，支持幂等；`note`（≤200 字）为这个版本的说明（命名检查点），留空即「在编辑器中保存」；编辑器里有尚未保存为版本的实时修改时 409 `live_edits`（与恢复相同的 `detail`），`discard_live: true` 表示确认替换并丢弃它们（CI-113）。部署对模板所在的工作空间打开 `SYNWEVO_SHEET_LIVE`（`on` 或试用名单里有它）时，表格模板正在进行的实时协同会把这个版本对账进去（同一对象以保存的版本为准，并通知被覆盖的人），而不是整份替换；契约不变（[docs-sheet-live.md](../platform/docs-sheet-live.md) §9） |
 | GET | `/templates` | read | 模板列表 |
 | GET | `/templates/{tid}` | read | 详情：字段、版本历史、可用导出格式 |
 | GET | `/templates/{tid}/fields` | read | 导出字段定义（`docweave.template-fields` v1） |
 | POST | `/templates/{tid}/fields` | write | 按定义创建字段（每次调用产生一个新模板版本） |
+| PATCH | `/templates/{tid}/fields/{field_id}` | write | `{base_head, name?, required?, data_type?, format?, default?, font_size?, min_font_size?, align?, valign?, empty_policy?, placeholder?, binding?, columns?, overflow?, …}`：修改一个字段（与工作台同一服务，产生一个新版本）；`base_head` 必填，与当前 head 不符 409 `stale_template`（`details.head` 为当前值）——对已成功的请求重发也得到它，不会改两次；其他属性 400 `invalid` |
+| DELETE | `/templates/{tid}/fields/{field_id}?base_head=&project_id=&cascade=` | write | 删除一个字段（新版本）；给出 `project_id` 时同时移除该项目中只绑定这个字段的映射（`removed_mappings`）；内置编辑器模板 409 `builtin_fields`（字段在编辑器里维护） |
 | GET | `/templates/{tid}/content?which=original\|working` | read | 下载原始模板或含字段的工作副本 |
 | DELETE | `/templates/{tid}` | admin | 删除模板 |
 | GET | `/templates/{tid}/usage` | read | 使用此模板的项目：跟随当前版本的与固定了版本的（恢复前的影响说明） |
@@ -402,6 +426,20 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 类型：`job.created`、`job.started`、`job.planned`、`job.cancel_requested`、`job.retry_requested`、`job.recovered`、
 `job.completed`、`job.completed_with_errors`、`job.failed`、`job.cancelled`。`seq` 在同一任务内单调递增（轮询用 `after`）。
 
+**来源文件事件（API-2）**：上传的来源文件得出接纳结论时各发一次，与状态变化在同一事务里写入（数据库触发器，覆盖上传、
+共享字节隔离、运维补扫、OCR 与重新解析各条路径），不会出现状态已变而事件丢失：
+
+| 类型 | 何时 | `data.reason` |
+|---|---|---|
+| `file.ready` | 解析完成可用；`needs_ocr` 经 OCR 后也会再发一次 | 安全检查结论（如 `clean`、`not_configured`） |
+| `file.needs_ocr` | 可读但页面没有文字层，映射前需先 OCR（`POST /files/{fid}/ocr`） | 同上 |
+| `file.rejected` | 被安全检查拒绝：恶意软件（`status=rejected`）、设有密码或读不完（`status=error`） | `infected` / `encrypted` 等 |
+| `file.failed` | 已接纳但无法解析 | 同上 |
+
+负载只有 `data: {file_id, project_id, status, reason, version}`、`job: null`，不含文件名与内容；需要更多信息请用凭据读取
+`/files/{fid}`。扫描暂不可用（`scan_failed`，自动重试）期间不发事件。订阅可用 `file.*` 或具体类型过滤；
+`GET /events?types=file.ready,…` 同样可查，条目带 `file_id`、`project_id`，`job_id` 为 null。
+
 Webhook 默认关闭，按部署配置开启：
 
 ```bash
@@ -421,6 +459,31 @@ SYNWEVO_DOCS_WEBHOOK_EVENTS=job.completed,job.completed_with_errors,job.failed,j
 * 回调失败不影响产物查询与下载。
 
 ## 5. 限制与约定
+
+### 5.1 流量与容量策略（平台管理员）
+
+三类限制含义不同，分开设置、分开报告：
+
+| 限制 | 含义 | 超出时 | 可设置于 |
+|---|---|---|---|
+| `credential_rpm` | 单个凭据每分钟请求数（按密钥谱系/服务账户计） | 429 `rate_limited`，`limit_scope=credential`，带 `Retry-After` | 平台、工作空间（作为其凭据的默认）、单个凭据 |
+| `workspace_rpm` | 工作空间全部机器凭据合计每分钟请求数 | 429 `rate_limited`，`limit_scope=workspace`，带 `Retry-After` | 平台、工作空间 |
+| `active_jobs` | 工作空间同时排队或进行的生成任务数（网页与 API 同一上限） | 429 `queue_full`，`details.limit`、`details.policy_source`；任务结束后才有空位 | 平台、工作空间 |
+
+取值顺序：凭据 → 工作空间 → 平台 → 部署默认值（环境变量）；留空即继承。管理台接口（仅平台管理员的
+`api_platform.manage`，写操作需近期重新验证与 8–500 字理由，全部写入审计）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/api-platform/quotas` | 部署默认值、平台设置与生效值、已单独设置的策略（分页）、各字段范围 |
+| GET | `/api/admin/api-platform/quotas/effective?workspace_id=&credential=` | 某工作空间（及其凭据，如 `api_key:<谱系>`、`service_account:<client_id>`）每项的生效值、来源层与此刻用量 |
+| POST | `/api/admin/api-platform/quotas/preview/{platform\|workspace/<id>\|credential/<kind>:<id>}` | 预演：修改前后生效值与对进行中工作的影响；不写入 |
+| PUT | `/api/admin/api-platform/quotas/{同上}` | `{base_version, credential_rpm?, workspace_rpm?, active_jobs?, reason}`；`base_version` 与当前不符 409 `stale_policy`（附当前值）；下一次请求即生效 |
+| GET | `/api/admin/api-platform/quotas/history/{同上}` | 每次修改的前后值、版本、操作者与理由 |
+
+降低上限不会停止进行中的任务；清除覆盖保留版本号（旧页面不能静默撤销较新的修改）。调用记录
+（`/api/admin/api-platform/calls`）可按请求编号、凭据或客户端、接口、状态类别与错误代码查询，被网关拒绝的
+请求同样记在其接口模板下（从不记录原始路径、令牌、查询或正文）。
 
 * 分页：`offset` + `limit`，响应含 `total`、`next_offset`（`null` 表示到底）。
 * 文件大小上限 `SYNWEVO_DOCS_MAX_FILE_MB`（默认 100 MB）；单任务样本上限 `SYNWEVO_DOCS_MAX_RECORDS_PER_JOB`（默认 20 000）。

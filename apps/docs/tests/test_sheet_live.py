@@ -14,6 +14,7 @@ make "a save is being built" observable."""
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 import zlib
@@ -2055,4 +2056,37 @@ def test_steady_typing_still_writes_the_table_draft_within_the_bound(world, monk
     key = f"template:{world['tid']}"
     assert world["store"].one("SELECT 1 AS x FROM collab_docs WHERE room=?", (key,)) is not None, "written while the editing went on"
     assert any(m["type"] == "persisted" for m in a.meta), "and the tabs were told"
+    a.close()
+
+
+def test_a_save_whose_draft_cannot_be_written_first_writes_no_version(world, monkeypatch):
+    """The third review's follow-up (item E): a live save writes the draft of its snapshot before the
+    version, so a process that dies between the two never comes back from an older draft with the
+    version folded in (the tabs then sent again what the version held: rows added twice). When that
+    draft write failed (a database error) the save wrote the version anyway, and the window was back.
+    Now the save is refused and nothing is written; the edits stay in the room, unsaved, and saving
+    again writes the draft and then the version."""
+    import sys
+
+    from synwevo_docs import collab_sheet_room as SR
+    tid, co = world["tid"], world["co"]
+    a = join(world, "editor")
+    assert a.do(put(a, "A2", "保存前"))["ok"]
+    real = SR.SheetRoom._write
+    failed = []
+
+    def write(self, snap, **kw):
+        if not failed and sys._getframe(1).f_code.co_name == "_write_and_tell":
+            failed.append(snap["seq"])                        # the save's own draft write: the database says no
+            raise sqlite3.OperationalError("database is locked")
+        return real(self, snap, **kw)
+    monkeypatch.setattr(SR.SheetRoom, "_write", write)
+    r = co.post(f"/api/templates/{tid}/collab/save", json={})
+    assert failed, "the save wrote its draft first"
+    assert r.status_code == 503 and r.json()["error"] == "live_unwritten", r.text
+    assert head_model(world)["head"] == 1, "no version without the draft that holds it"
+    assert _room(world).dirty is True and _room(world).state["seq"] == 1, "the edits are still there, unsaved"
+    r = co.post(f"/api/templates/{tid}/collab/save", json={})
+    assert r.status_code == 200 and r.json()["head"] == 2, r.text
+    assert head_model(world)["editor"]["sheets"][0]["cells"]["A2"] == {"v": "保存前"}
     a.close()

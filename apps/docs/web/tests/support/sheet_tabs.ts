@@ -42,7 +42,7 @@ let valNo = 0;
 // What became of each queued operation: the engine's private steps are wrapped (TypeScript's
 // `private` is compile-time only). A queued operation's id is its place in the tab's sequence.
 const P: any = SheetSync.prototype;
-const origQueue = P.queue, origAdd = P.addAttention, origDrop = P.drop, origUndo = P.undo, origSubmit = P.submit;
+const origQueue = P.queue, origAdd = P.addAttention, origDrop = P.drop, origUndo = P.undo, origSubmit = P.submit, origLost = P.lostNotice;
 P.queue = function (op: any, opts: any) {
   const p = origQueue.call(this, op, opts);
   this.__rec?.ops.set(p.id, op);
@@ -60,6 +60,13 @@ P.addAttention = function (kind: string, code: string, detail: any, people: any,
 P.drop = function (kind: string, code: string, list: any[]) {
   for (const p of list) this.__rec?.fates.set(p.id, `${kind}:${code}`);
   return origDrop.call(this, kind, code, list);
+};
+// an acknowledged change the room lost with an epoch it left: the person is told ("not kept") — recorded
+// per operation like every other notice, so a later "answer" step that dismisses the notice does not
+// turn a change the person was told about into a silent loss in the check (review round 3)
+P.lostNotice = function (a: any) {
+  this.__rec?.fates.set(a.id, "dropped:lost");
+  return origLost.call(this, a);
 };
 P.undo = function () {
   // undo of a change never sent takes it off the queue: it never reaches the room, as asked

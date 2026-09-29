@@ -31,6 +31,10 @@ from synwevo_core.store import Store
     '{"at": 1, "kind": "sessions_revoked"}',
     '{"at": 1, "kind": "tokens_revoked"}',
     '{"at": 1, "kind": "role_changed", "workspace_id": "w", "user_id": "u", "role": "unknown"}',
+    '{"at": 1, "kind": "workspace_unclaimed"}',
+    '{"at": 1, "kind": "workspace_unclaimed", "workspace_id": "w", "label_restored": "yes"}',
+    '{"at": 1, "kind": "organization_deleted", "event_id": "e", "organization_id": "o", "workspace_ids": [], '
+    '"deleted_at": 1, "recover_until": 2, "previous_status": "active"}',
 ])
 @pytest.mark.parametrize("suffix", ["", '\n{"at": 3, "kind": "sessions_revoked", "user_id": "after"}\n'])
 def test_bad_entries_are_fatal_even_before_the_snapshot(tmp_path, bad, suffix):

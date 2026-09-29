@@ -395,6 +395,48 @@ def test_a_role_change_and_a_removal_take_effect_on_the_open_connection(world):
     e.close()
 
 
+def test_a_removal_is_enforced_on_the_next_frame_not_the_next_recheck(world, monkeypatch):
+    """Every HTTP request re-checks membership; a socket used to wait for its periodic re-check
+    (30 s by default), in which a removed member — or every former member of historical data whose
+    assignment was just undone — could still pull the whole live document and push edits into the
+    draft the next assignee inherits (review finding, Q21). Frames that read or write are now
+    re-checked before they are handled."""
+    # The periodic re-check is far enough away that it never decides anything here — and near enough
+    # that, without the frame check, this test fails on what the room let through instead of hanging.
+    monkeypatch.setenv("SYNWEVO_COLLAB_RECHECK_S", "5")
+    ident, wid = world["ident"], world["wid"]
+    e = _connect(world, "editor")
+    v = _connect(world, "viewer")
+    ident.remove_member(wid, world["editor"]["id"])
+    ident.remove_member(wid, world["viewer"]["id"])
+
+    # a write: refused and the connection closed, before anything is applied
+    e.append_text("（移除之后写入）")
+    assert e.recv_meta("closed", tries=20) == {"type": "closed", "reason": "membership_ended"}
+    with pytest.raises(WebSocketDisconnect) as x:
+        e.ws.receive_bytes()
+    assert x.value.code == 4403
+    e.close()
+    # a read (a sync step 1 asks for the whole document): refused, and no answer came before it
+    v.synced = False
+    v.ws.send_bytes(create_sync_message(Doc()))
+    assert v.recv_meta("closed", tries=20) == {"type": "closed", "reason": "membership_ended"}
+    assert v.synced is False
+    with pytest.raises(WebSocketDisconnect) as x:
+        v.ws.receive_bytes()
+    assert x.value.code == 4403
+    v.close()
+
+    # the room never took the edit; a member still in the workspace works as before
+    o = _connect(world, "owner")
+    assert o.texts() == ["客户："]
+    o.append_text("（所有者）")
+    o2 = _connect(world, "owner")
+    assert o2.texts() == ["客户：（所有者）"]
+    o2.close()
+    o.close()
+
+
 def test_a_revoked_session_closes_the_connection_without_extending_it(world):
     sessions, store = world["sessions"], world["store"]
     e = _connect(world, "editor")

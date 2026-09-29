@@ -1986,6 +1986,37 @@ PDF 明细区域早有「超出时：视为错误 / 复制本页续写 / 压缩�
 
 未验证：生产主机上的 clamd 配置挂载（随下次部署执行）；Docs 来源/成员导入的浏览器核对（节点测试与接口测试覆盖）。
 
+### 16.95 表格实时协同试开准备（A–F 与第三轮审查）
+
+实现与审查：`docs/platform/docs-sheet-live.md` §15（按工作空间试开）与 §16（第三轮审查逐项记录）。开关 `SYNWEVO_SHEET_LIVE` 现接受
+off / on / 逗号分隔的工作空间 id；只读命令 `python -m synwevo_docs.cli sheet-live` 显示开关读法与未保存的实时草稿。三路审查（同步客户端、
+服务端与试开、页面与运行手册）17 条发现（1 中 H2 回归 X1/X2、1 中 退出名单后的草稿），全部复现并修复，每条回归测试在修复前失败。
+
+分支全量（worktree，自己的包路径）：pytest 2814 通过、2 跳过（需 `CLAMD_TEST_ADDRESS`、LICENSE 未定）；五个守卫、typecheck、build、
+`npm test --workspaces` 236 个全部通过；审查者冻结的第二轮随机测试 1600 次、第三轮 9 个复现、客户端「所说即所做」模糊测试 480 次均通过；
+P6（关闭的页面在进程崩溃前几秒的修改）仍是 §14 记录的已知限制。
+
+浏览器（隔离实例，Docs 由 `scratchpad/docsctl.py` 在分支代码上重启）：`SYNWEVO_SHEET_LIVE=1` 两个真实账户 Chrome 与 WebKit 全部步骤通过
+（在场与选区、即时单元格、离线同格冲突「用我的值」、离线追加十行只加一次、服务停止与 SIGKILL 后无丢失无重复、合并区域上的范围字段被拒、
+撤销跳过他人改过的格、删除正在输入的工作表后的句子含恢复位置且选择不等于恢复、按钮恢复、保存为 v2、英文与繁体无残留、390 px 无横向滚动）；
+脚本随页面更新（a21fafb）。开关关闭：`ui_e2e_sheet_collab`、`ui_e2e_collab`、`ui_e2e_restart_live` 通过。名单模式由分支内
+`browser_sheet_trial.py`（一次性测试服务器）证明：名单内实时、名单外保存合并，8/8。合并为 e0977c1。
+
+未验证：生产（开关保持关闭；试开需持有人指定工作空间并按运行手册操作）。
+
+### 16.96 撤销「指派历史数据」（Q21，CI-126）
+
+测试：`services/identity/tests/test_admin_unclaim.py`（权限：非管理员、指派得到的所有者、组织所有者均 404，未重认证 403；各拒绝；效果与不删数据的 15 张表前后快照；
+并发：两次撤销、撤销对指派 3 轮、撤销对接受邀请；指派→撤销重复三次；冻结时撤销；日志在提交前写入且不可写时不执行、503）、
+`tests/integration/test_legacy_unclaim.py`（组合服务器：前所有者的现有会话、标签页上下文、委托令牌、打开的实时编辑连接不能读写、机器凭据按现有规则、再指派后恢复）、
+`apps/docs/tests/test_collab.py::test_a_removal_is_enforced_on_the_next_frame_not_the_next_recheck`、日志重放三项。三路审查 15 条发现均在修复前复现失败。
+
+合并最新 main 后（76c8c52）预推送：五个守卫、typecheck、build、`npm test --workspaces`、infra unittest 全部 0；pytest 2911 通过、2 跳过（需 `CLAMD_TEST_ADDRESS`、LICENSE 未定）。
+浏览器：一次性测试服务器（127.0.0.1:38991，scratch 数据）桌面与 390 px，简/英/繁：指派 → 已指派卡片 → 撤销对话框（列出失去访问的人、邀请与令牌数、冻结随撤销结束、不删除数据）→ 待认领卡片回来 → 再指派；
+对话框打开后新增成员被拒并原地刷新；无横向溢出（截图 `scratchpad/unclaim/fix/live/`）。
+
+未验证：生产（待部署；生产的历史数据当前为待认领，已于 2026-09-29 手工撤销）。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |

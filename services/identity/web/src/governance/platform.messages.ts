@@ -100,6 +100,7 @@ export const platformMessages = {
   "只列出没有平台权限的账户：平台管理与业务数据须由不同账户持有，也不能指派给你自己。": {
     en: "Only accounts without platform access are listed: platform administration and business data are held by different accounts, and it cannot be assigned to yourself.",
     "zh-Hant": "只列出沒有平台權限的帳戶：平台管理與業務資料須由不同帳戶持有，也不能指派給你自己。" },
+  "只有最高管理员可以查看指派详情或撤销指派。": { en: "Only a super administrator can see the assignment details or undo the assignment.", "zh-Hant": "只有最高管理員可以檢視指派詳情或撤銷指派。" },
   "被拒绝的管理请求": { en: "Refused administration requests", "zh-Hant": "被拒絕的管理請求" },
   "新角色": { en: "New role", "zh-Hant": "新角色" },
   "期限": { en: "Duration", "zh-Hant": "期限" },

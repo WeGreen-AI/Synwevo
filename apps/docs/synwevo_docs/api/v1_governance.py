@@ -35,6 +35,7 @@ import math
 from fastapi import APIRouter, Body, Request
 
 from synwevo_core import authority
+from synwevo_core.api_quotas import Policies, credential_scope
 from synwevo_core.auth import MAX_ROTATION_GRACE_S, JournalWriteFailed, audit_event
 from synwevo_core.errors import ServiceError
 
@@ -75,12 +76,15 @@ def build_router(app_, views, jobs, auth) -> APIRouter:
             raise ServiceError(503, "jobs_unavailable", "本进程没有运行任务服务，暂时无法统计用量")
         u = jobs.usage(p["tenant"])
         limits = dict(u.get("limits") or {})
+        # The numbers the gate and the queue actually enforce for this caller: the layered policy
+        # (credential → workspace → platform → deployment default), shared by every process.
+        eff = Policies(store).effective(p["tenant"], credential_scope(p))
         limits.update({
-            # Per credential and per process: with several worker processes the effective rate
-            # is that many times this number (docs/integration/api.md). The number the gate
-            # actually enforces, read from the bucket it built — not the module constant, which
-            # is fixed at import time while the gate reads the environment when the app is built.
-            "requests_per_minute": _enforced_rate(request),
+            "requests_per_minute": eff["credential_rpm"]["value"],
+            "workspace_requests_per_minute": eff["workspace_rpm"]["value"],
+            "policy_sources": {"requests_per_minute": eff["credential_rpm"]["source"],
+                               "workspace_requests_per_minute": eff["workspace_rpm"]["source"],
+                               "max_active_jobs": eff["active_jobs"]["source"]},
             "max_file_mb": LIMITS.max_file_bytes // (1024 * 1024),
             "max_records_per_job": LIMITS.max_records_per_job,
             "max_pages": LIMITS.max_pages,
@@ -216,12 +220,6 @@ def build_router(app_, views, jobs, auth) -> APIRouter:
             return False
 
     return r
-
-
-def _enforced_rate(request: Request) -> int:
-    from synwevo_core.http import API_RATE_PER_MIN
-    buckets = getattr(request.app.state, "rate_buckets", None)
-    return int(getattr(buckets, "cap", API_RATE_PER_MIN))
 
 
 def _grace_minutes(body: dict) -> float:

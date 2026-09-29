@@ -1328,8 +1328,17 @@ class App:
         if r.get("kind") in ("builtin_doc", "builtin_sheet"):
             raise ServiceError(409, "builtin_fields", "这个模板由内置编辑器维护：请在编辑器里添加或删除字段（在这里改动，下次在编辑器保存时会丢失）")
 
-    def update_slot(self, tid: str, slot_id: str, values: dict) -> dict:
+    @staticmethod
+    def _expect_head(r: dict, expect_head: int | None) -> None:
+        """A caller that read the template at ``expect_head`` changes that version or nothing: a newer
+        head means someone changed it since, and editing the newer one silently is not what was asked."""
+        if expect_head is not None and r["head"] != expect_head:
+            raise ServiceError(409, "stale_template", "模板已在其他窗口或被其他人修改，请刷新后再操作",
+                               {"head": r["head"], "base_version": expect_head})
+
+    def update_slot(self, tid: str, slot_id: str, values: dict, *, expect_head: int | None = None) -> dict:
         r = self.get_template(tid)
+        self._expect_head(r, expect_head)
         v = self.get_version(tid, r["head"])
         slots = [dict(s) for s in v["slots"]]
         sl = next((s for s in slots if s["id"] == slot_id), None)
@@ -1412,9 +1421,11 @@ class App:
             editor = sync_editor_fields(r["kind"], base, slots) if base else None
         return self.new_version(tid, work, slots, note, editor=editor, base_head=r["head"])
 
-    def remove_slot(self, tid: str, slot_id: str, project_id: str | None = None, cascade: bool = True) -> dict:
+    def remove_slot(self, tid: str, slot_id: str, project_id: str | None = None, cascade: bool = True, *,
+                    expect_head: int | None = None) -> dict:
         r = self.get_template(tid)
         self._refuse_builtin_field_change(r)
+        self._expect_head(r, expect_head)
         v = self.get_version(tid, r["head"])
         slots = list(v["slots"])
         sl = next((s for s in slots if s["id"] == slot_id), None)

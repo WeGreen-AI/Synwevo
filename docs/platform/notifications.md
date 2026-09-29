@@ -45,7 +45,7 @@
 | `invitation.accepted` / `invitation.declined` | organization / info | 邀请人 | 受邀者接受 / 拒绝；同时把受邀者的待办置为 done / void | 汇总 | 空间成员页 |
 | `invitation.revoked` | organization / info | 受邀者（已有账户） | 邀请被撤回；待办置为 void | 不发 | 引导页 |
 | `member.role_changed` | organization / info | 当事成员 | 空间角色变化（升降都通知） | 立即 | 账户页 → 工作空间 |
-| `member.removed` | organization / info | 当事成员 | 被移出空间 / 被移出组织 | 立即 | 账户页 |
+| `member.removed` | organization / info | 当事成员 | 被移出空间 / 被移出组织 / 平台管理员撤销历史数据的指派（执行者写作「平台管理员」——`actor_kind`，不写管理员的邮箱或姓名；执行者本人不通知） | 立即 | 账户页 |
 | `member.left` | organization / info | 空间的 owner/admin | 成员自行退出 | 汇总 | 空间成员页 |
 | `organization.role_changed` | organization / info | 当事成员 | 组织角色变化 | 立即 | 组织页 |
 | `docs.file_rejected` | docs / action | 上传者（登录用户；机器上传无人可通知） | 来源文件被安全检查判定为恶意并拒绝（`dedupe=source:{sid}:rejected`；同内容再传即拒，不重复通知）（CI-29） | 立即 | Docs → 项目页 |

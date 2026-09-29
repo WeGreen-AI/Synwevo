@@ -657,6 +657,61 @@ export const contractEntries: [string, string, string][] = [
     "恢复某个版本：以它的内容新建当前版本（历史保留；base_head 不符则 409 stale_template；编辑器里有未保存为版本的实时修改则 409 live_edits，除非 discard_live=true）",
     "Restore a version: its content becomes a new current version (history kept; a mismatched base_head is 409 stale_template; live edits in the editing room not yet saved as a version are 409 live_edits unless discard_live=true)",
     "恢復某個版本：以它的內容新建目前版本（歷史保留；base_head 不符則 409 stale_template；編輯器裡有未儲存為版本的即時修改則 409 live_edits，除非 discard_live=true）"
+  ],
+  [
+    "文字识别",
+    "Ocr",
+    "文字辨識"
+  ],
+  [
+    "识别已接纳的扫描 PDF（默认全部扫描或混合页；每次最多 50 页）或图片中的文字，使用工作台同一引擎，同步完成。结果并入已存的识别内容（重新识别的页被替换）；needs_ocr 来源变为 ready，版本前进。重复调用会对同样的页重新识别并存入同样的词。仍在扫描、被拒或失败的来源会被拒绝（409 source_not_ready）。服务器识别槽位持续占满时返回 429 ocr_busy：请等待 retry_after 秒。客户端超时后，list_source_page_words 对已识别的页报告 source=ocr。",
+    "Recognise text on an accepted scanned PDF (by default every scanned or mixed page; at most 50 pages per call) or image, with the workbench's engine, synchronously. Results merge into the stored OCR (pages recognised again are replaced); a needs_ocr source becomes ready and its version advances. Repeating a call recognises the same pages again and stores the same words. A source still scanning, rejected or failed is refused (409 source_not_ready). 429 ocr_busy when the server's recognition slots stay full: wait retry_after seconds. After a client timeout, list_source_page_words reports source=ocr for pages already recognised.",
+    "辨識已接納的掃描 PDF（預設全部掃描或混合頁；每次最多 50 頁）或圖片中的文字，使用工作台同一引擎，同步完成。結果併入已存的辨識內容（重新辨識的頁被取代）；needs_ocr 來源變為 ready，版本前進。重複呼叫會對同樣的頁重新辨識並存入同樣的詞。仍在掃描、被拒或失敗的來源會被拒絕（409 source_not_ready）。伺服器辨識槽位持續占滿時傳回 429 ocr_busy：請等待 retry_after 秒。用戶端逾時後，list_source_page_words 對已辨識的頁回報 source=ocr。"
+  ],
+  [
+    "修改一个字段的属性（产生一个新模板版本；base_head 必填，不符则 409 stale_template）",
+    "Change one field's properties (creates a new template version; base_head is required and a mismatch is 409 stale_template)",
+    "修改一個欄位的屬性（產生一個新範本版本；base_head 必填，不符則 409 stale_template）"
+  ],
+  [
+    "删除一个字段（产生一个新模板版本；base_head 必填；可同时移除某项目里绑定它的映射）",
+    "Remove one field (creates a new template version; base_head is required; can also remove the mappings bound to it in one project)",
+    "刪除一個欄位（產生一個新範本版本；base_head 必填；可同時移除某專案中綁定它的映射）"
+  ],
+  [
+    "读取模板时的 head；不符则 409 stale_template",
+    "The template head you read; a mismatch is 409 stale_template",
+    "讀取範本時的 head；不符則 409 stale_template"
+  ],
+  [
+    "同时移除该项目中只绑定这个字段的映射",
+    "Also remove the mappings in this project that are bound only to this field",
+    "同時移除該專案中只綁定這個欄位的映射"
+  ],
+  [
+    "project_id 给出时是否移除映射",
+    "Whether to remove the mappings when project_id is given",
+    "給出 project_id 時是否移除映射"
+  ],
+  [
+    "修改项目名称、归档状态或输出默认值（base_settings_rev 必填，不符则 409 stale_project）",
+    "Rename a project, archive or restore it, or change its output defaults (base_settings_rev is required; a mismatch is 409 stale_project)",
+    "修改專案名稱、封存狀態或輸出預設值（base_settings_rev 必填，不符則 409 stale_project）"
+  ],
+  [
+    "读取项目时的 settings_rev",
+    "The settings_rev you read from the project",
+    "讀取專案時的 settings_rev"
+  ],
+  [
+    "归档只从默认列表隐藏，项目照常可用、可恢复",
+    "Archiving only hides the project from the default list; it stays usable and can be restored",
+    "封存只從預設清單隱藏，專案照常可用、可恢復"
+  ],
+  [
+    "输出默认值：formats、naming、error_policy、layout",
+    "Output defaults: formats, naming, error_policy, layout",
+    "輸出預設值：formats、naming、error_policy、layout"
   ]
 ];
 registerMessages(Object.fromEntries(contractEntries.map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }])));

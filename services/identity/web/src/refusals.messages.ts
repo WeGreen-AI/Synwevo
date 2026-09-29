@@ -52,6 +52,7 @@ export const messages = {
   "安全密钥验证失败，请重试。": { en: "The security key could not be verified. Try again.", "zh-Hant": "安全金鑰驗證失敗，請重試。" },
   "安全密钥验证已过期，请重新开始。": { en: "The security key check has expired. Start again.", "zh-Hant": "安全金鑰驗證已過期，請重新開始。" },
   "所选的组织角色已不存在，请刷新后重新选择。": { en: "A chosen organization role no longer exists. Refresh and choose again.", "zh-Hant": "所選的組織角色已不存在，請重新整理後重新選擇。" },
+  "限制值必须是 {min} 至 {max} 之间的整数，留空表示继承": { en: "A limit must be a whole number from {min} to {max}; leave it empty to inherit.", "zh-Hant": "限制值必須是 {min} 至 {max} 之間的整數，留空表示繼承" },
   "只能冻结状态正常的工作空间，请刷新后再试。": { en: "Only an active workspace can be frozen. Refresh and try again.", "zh-Hant": "只能凍結狀態正常的工作空間，請重新整理後再試。" },
 };
 

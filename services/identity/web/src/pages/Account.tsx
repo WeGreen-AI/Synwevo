@@ -13,6 +13,7 @@ import ProfileSection from './account/ProfileSection';
 import EmailSection from './account/EmailSection';
 import PrivacySection from './account/PrivacySection';
 import ActivitySection from './account/ActivitySection';
+import ConnectedAppsSection from './account/ConnectedAppsSection';
 import NotificationsSection from './account/NotificationsSection';
 import { ErrorNotice, errorText, timeText, type Profile } from './account/common';
 import './account/account.css';
@@ -91,7 +92,7 @@ export default function Account() {
         <p>{t('账户已停用。请在 {date} 前使用邮箱中的恢复链接取消注销。', { date: timeText(profile.deletion_due_at!, locale, profile.timezone) })}</p>
         <div><a href="/login" className="btn">{t('返回登录')}</a></div></section>}
       {profile?.status === 'active' && me && <div className="account-layout"><nav className="account-nav" aria-label={t('账户设置导航')}>
-        {[['profile', '个人资料'], ['email', '邮箱与口令'], ['security', '登录与安全'], ['devices', '登录的设备'], ['workspaces', '工作空间'], ['notifications', '通知'], ['activity', '安全活动'], ['privacy', '数据与账户']].map(([id, label]) => <a key={id} href={`#${id}`}>{t(label)}</a>)}
+        {[['profile', '个人资料'], ['email', '邮箱与口令'], ['security', '登录与安全'], ['devices', '登录的设备'], ['workspaces', '工作空间'], ['notifications', '通知'], ['activity', '安全活动'], ['connected-apps', '已授权的应用'], ['privacy', '数据与账户']].map(([id, label]) => <a key={id} href={`#${id}`}>{t(label)}</a>)}
       </nav><div className="account-content">
         <ProfileSection profile={profile} onChange={setProfile} /><EmailSection profile={profile} />
         <div id="security" className="col gap12 account-section"><PasskeySection timezone={profile.timezone} /><LinkedIdentities timezone={profile.timezone} /><MfaSection /></div>
@@ -114,7 +115,7 @@ export default function Account() {
               <button className="btn ghost sm" onClick={() => setLeaving(w)}>{t('退出工作空间')}</button></div></td></tr>)}</tbody></table></div>
           {!me.workspaces.length && <p className="muted">{t('你当前不属于任何工作空间。')}</p>}
         </section>
-        <ActivitySection timezone={profile.timezone} /><PrivacySection profile={profile} onDeleted={due => setProfile({ ...profile, status: 'pending_delete', deletion_due_at: due })} />
+        <ActivitySection timezone={profile.timezone} /><ConnectedAppsSection timezone={profile.timezone} /><PrivacySection profile={profile} onDeleted={due => setProfile({ ...profile, status: 'pending_delete', deletion_due_at: due })} />
       </div></div>}
     </main></div>
     {leaving && <LeaveDialog wid={leaving.id} wsName={leaving.name} soleOwner={false} onClose={() => setLeaving(null)} onDone={() => window.location.reload()} />}

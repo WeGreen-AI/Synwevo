@@ -12,6 +12,11 @@ the authority on **who** may do **what**, which no document format can be:
   (and they are told) rather than applied; the role is re-checked every ``COLLAB_RECHECK_S``
   seconds, so a demotion turns the connection read-only and a removal closes it (4403);
   an expired or revoked session closes it too (4401) — an idle tab does not keep a session alive;
+* and it is re-checked before every frame that reads or writes the document (a sync step, an
+  update, a live table's operation), the way every HTTP request re-checks membership: a member
+  removed, a workspace frozen or its historical data unassigned cannot pull the document or push
+  an edit in the seconds before the next periodic re-check (review finding, Q21). The periodic
+  check still closes a connection that only listens;
 * awareness (name, colour, caret) is only accepted for the identity the connection proved;
 * the live document is persisted whole into the single database (``collab_docs``) a second after
   the last change and when the room empties, so a crash or restart loses at most that second;
@@ -24,9 +29,9 @@ told and marks itself clean); restoring, undoing or redoing a version replaces t
 for everyone in the room; a save from outside the room (the machine API) does the same.
 
 A table template's room carries presence and version frames only — unless the switch
-``SYNWEVO_SHEET_LIVE`` is on, when it holds the live table state instead (``collab_sheet_room``,
-docs-sheet-live.md B1 step ②): frames of type ``MESSAGE_SHEET`` carry operations the server checks,
-orders and attributes.
+``SYNWEVO_SHEET_LIVE`` is on for the template's workspace (``on``, or a list of workspace ids: the
+trial), when it holds the live table state instead (``collab_sheet_room``, docs-sheet-live.md B1 step
+②): frames of type ``MESSAGE_SHEET`` carry operations the server checks, orders and attributes.
 
 Locks, in the one order they are ever nested (review 3 of sheet-live step ②): the store's write
 lock (a transaction) → ``CollabHub._rooms_mu`` → a room's ``mu`` → a room's queue lock. Under
@@ -75,6 +80,10 @@ log = logging.getLogger("synwevo.docs.collab")
 MESSAGE_META = 100                 # this server's own frames beside sync (0), awareness (1), query awareness (3)
 MESSAGE_SHEET = 101                # a live table room's operations and patches (collab_sheet_room)
 MESSAGE_QUERY_AWARENESS = 3
+#: Frames that read or write the document — a sync step or update, a live table's operation — and
+#: are therefore re-authorised before they are handled (``CollabHub._frame_gate``). Presence (awareness)
+#: carries no content and is left to the periodic re-check.
+CONTENT_FRAMES = frozenset({0, MESSAGE_SHEET})       # 0: YMessageType.SYNC
 CLOSE_BAD_REQUEST, CLOSE_UNAUTHORIZED, CLOSE_FORBIDDEN, CLOSE_NOT_FOUND, CLOSE_GONE, CLOSE_ERROR = 4400, 4401, 4403, 4404, 4410, 1011
 #: A tab reconnecting with a document from a previous seeding of the room (CI-115): merging it would
 #: put back what a restore replaced, next to the restored text.
@@ -129,10 +138,51 @@ def recheck_seconds() -> float:
     return float(env.get("COLLAB_RECHECK_S") or 30)
 
 
-def sheet_live_enabled() -> bool:
-    """``SYNWEVO_SHEET_LIVE``: a table template's room holds the live table state (docs-sheet-live.md
-    B1, rolled out step by step; off by default). Read when a room opens."""
-    return env.flag("SHEET_LIVE")
+_SHEET_LIVE_OFF = frozenset({"", "0", "false", "no", "off"})
+_SHEET_LIVE_ON = frozenset({"1", "true", "yes", "on"})
+
+
+def sheet_live_scope() -> bool | frozenset[str]:
+    """``SYNWEVO_SHEET_LIVE``: whose table templates' rooms hold the live table state (docs-sheet-live.md
+    B1, rolled out step by step; off by default). ``False`` — unset, empty or ``off`` (``0``, ``false``,
+    ``no``); ``True`` — ``on`` (``1``, ``true``, ``yes``): every workspace; otherwise a comma-separated
+    list of workspace ids (a room's tenant) — the trial: only those. Whitespace around the value and
+    each id, and empty entries, are ignored; a list with no id left is off; an id that names no
+    workspace enables nothing (``sheet_live_report`` says so at start-up)."""
+    raw = (env.get("SHEET_LIVE") or "").strip()
+    if raw.lower() in _SHEET_LIVE_OFF:
+        return False
+    if raw.lower() in _SHEET_LIVE_ON:
+        return True
+    ids = frozenset(x.strip() for x in raw.split(",") if x.strip())
+    return ids or False
+
+
+def sheet_live_enabled(tenant: str | None) -> bool:
+    """Does a table room of workspace ``tenant`` hold the live table (``sheet_live_scope``)? Read when
+    a room opens — and by every server path that would otherwise treat a room or its draft as live
+    (the draft's unsaved edits in the guard and the change list): a workspace not listed is in CI-47's
+    presence-and-merge mode everywhere. Changing the switch needs a restart of Docs (§9)."""
+    scope = sheet_live_scope()
+    if isinstance(scope, bool):
+        return scope
+    return bool(tenant) and tenant in scope
+
+
+def sheet_live_report(store: Store) -> dict:
+    """What the switch says, for the start-up log and the operators' command (``synwevo_docs.cli
+    sheet-live``): ``{"mode": "off" | "on" | "workspaces", "workspaces": [listed ids that exist],
+    "unknown": [listed ids that name no workspace here]}``."""
+    scope = sheet_live_scope()
+    if isinstance(scope, bool):
+        return {"mode": "on" if scope else "off", "workspaces": [], "unknown": []}
+    ids = sorted(scope)
+    marks = ",".join("?" * len(ids))
+    try:
+        known = {r["id"] for r in store.all(f"SELECT id FROM workspaces WHERE id IN ({marks})", tuple(ids))}
+    except Exception:                                    # noqa: BLE001 — a store without the table (not initialised yet): nothing is known
+        known = set()
+    return {"mode": "workspaces", "workspaces": [i for i in ids if i in known], "unknown": [i for i in ids if i not in known]}
 
 
 #: The live table room whose save is being written on this thread (collab_sheet_room.SheetRoom.save):
@@ -186,6 +236,7 @@ class Conn:
     client_key: str | None = None
     seen: int = 0
     loop: Any = None
+    revoked: bool = False                  # a re-check refused it and closed the socket: nothing more is handled
     rate_until: float = 0.0                # told to wait until then (monotonic): frames before it are refused unread
     # a message refused for now (busy / rate limited, not recorded): nothing this connection sent after
     # it is applied before it comes back, so one tab's messages always apply in the order it sent them
@@ -728,6 +779,13 @@ class CollabHub:
             room.enqueue(lambda: None if (loading and room.head == head) else
                          room.outside_change(head, editor, reason, actor, actor_name, discard_live))
             return
+        if room.kind == "template" and not room.writable and not sheet_live_enabled(room.tenant):
+            # A table template's presence room: its workspace is not on the live-table list. A live table
+            # draft left from when it was (a trial that ended, docs-sheet-live.md §9) can never be saved
+            # from here; this version change drops it, as it does with nobody in the room. Kept while the
+            # table was open (in CI-47 mode the page that saves is in this room), listing the workspace
+            # again brought the abandoned edits back as unsaved live edits (the third review's follow-up).
+            self._drop_table_draft(key, room)
         snapshot = reason == "save" and actor is not None and any(c.user_id == actor for c in room.clients)
         if room.writable and (reason != "save" or not snapshot):
             became = f"v{source}" if reason == "restore" and source else f"v{head}"
@@ -736,6 +794,22 @@ class CollabHub:
             room.changes_rev += 1
         room.enqueue(lambda: None if (loading and room.head == head) else
                      room.apply_head_change(head, editor, reason, actor_name, snapshot, actor))
+
+    def _drop_table_draft(self, key: str, room: Room) -> None:
+        """Remove the live table draft of a template whose registered room is a presence room (the
+        switch is off for its workspace): nothing writes it while that room is registered, so a DELETE
+        decided now removes only the draft left from before — checked under the registration lock in
+        the DELETE's transaction (a newer room registered meanwhile keeps its row). Registered draft
+        work: an opener of the template waits for it."""
+        gen = room.gen
+
+        def drop() -> None:
+            with self.store.tx() as c:                   # the write lock first (the process's lock order) ...
+                with self._rooms_mu:                     # ... then a brief check: no SQL under it
+                    current = self._key_gen.get(key, 0) == gen
+                if current:
+                    c.execute("DELETE FROM collab_docs WHERE room=? AND model='sheet'", (key,))
+        self.draft_work(key, drop, room=None, name=f"collab-void-{room.tid}")
 
     def live_state(self, tid: str) -> dict:
         """What a restore, undo or redo would throw away: whether the live document carries edits
@@ -829,15 +903,17 @@ class CollabHub:
                 pending = bool(self._closing.get(key))
                 closed = self._pending_room(key)
             if closed is not None:
-                dirty = bool(closed.dirty and closed.persists()) and (not closed.sheet or sheet_live_enabled())
+                dirty = bool(closed.dirty and closed.persists()) and (not closed.sheet or sheet_live_enabled(closed.tenant))
                 return dirty, closed.sheet
             if pending:
                 return False, False                      # its draft is being removed
-        row = self.store.one("SELECT dirty, model FROM collab_docs WHERE room=?", (key,))
+        row = self.store.one("SELECT dirty, model, tenant FROM collab_docs WHERE room=?", (key,))
         sheet = bool(row and row.get("model") == "sheet")
-        # a live table draft counts while the switch is on; with it off the room cannot be opened to
-        # save it, and the next version change drops it (docs-sheet-live.md §9, rollback)
-        return bool(row and row["dirty"] and (not sheet or sheet_live_enabled())), sheet
+        # a live table draft counts while the switch is on for its workspace; with it off there the
+        # room cannot be opened to save it, and the next version change drops it — with nobody in the
+        # room or with the table open in its presence room (_drop_table_draft) (docs-sheet-live.md §9,
+        # rollback: save or discard every such draft before taking the workspace off the list)
+        return bool(row and row["dirty"] and (not sheet or sheet_live_enabled(row.get("tenant")))), sheet
 
     def _draft_last_writer(self, key: str) -> str | None:
         """Who last changed a persisted live table draft (nobody is in its room)."""
@@ -1075,8 +1151,11 @@ class CollabHub:
             with as_tenant(tenant):
                 return self.app.get_template(tid).get("kind")
         kind = await run_in_threadpool(kind_of)          # the service's 404 for a template not in this workspace
-        if kind == "builtin_sheet" and sheet_live_enabled():
-            # SYNWEVO_SHEET_LIVE: the live table (collab_sheet_room), or presence when it cannot be held
+        if kind == "builtin_sheet" and sheet_live_enabled(tenant):
+            # SYNWEVO_SHEET_LIVE on for this workspace: the live table (collab_sheet_room), or presence
+            # when it cannot be held. Every other path that treats a room as live (saves, the guard, the
+            # builtin PUT's live_room, the draft) follows from the room being a SheetRoom — or, with no
+            # room open, reads the switch for the draft's workspace (_dirty)
             from .collab_sheet_room import SheetRoom
             room = SheetRoom(self, tid, tenant)
         elif kind == "builtin_sheet":
@@ -1262,6 +1341,8 @@ class CollabHub:
                     log.warning("collab %s: %s sent a %d-byte frame (limit %d); closing", room.key, conn.user_id, len(data), MAX_FRAME_BYTES)
                     await ws.close(code=CLOSE_BAD_REQUEST, reason="frame_too_large")
                     break
+                if conn.revoked or (data[0] in CONTENT_FRAMES and not await self._frame_gate(conn, room)):
+                    break
                 await self._handle(room, conn, data)
         except WebSocketDisconnect:
             pass
@@ -1335,38 +1416,69 @@ class CollabHub:
         """Periodically prove the connection is still allowed, without extending the session.
 
         The session is read with ``touch=False``: staying connected is not activity. Membership and
-        the account are read live, like on every request."""
-        from synwevo_core.sessions import COOKIE_NAME
+        the account are read live, like on every request. This is what closes a connection that
+        only listens; one that reads or writes is also checked before each such frame (``_frame_gate``)."""
         interval = recheck_seconds()
         while True:
             await asyncio.sleep(interval)
             try:
-                verdict = await run_in_threadpool(self._still_allowed, conn, COOKIE_NAME)
+                if not await self._verify(conn, room):
+                    return
             except Exception:                                 # noqa: BLE001
                 log.exception("collab %s: re-check failed", room.key)
                 continue
-            code, role = verdict
-            if code is not None:
-                await conn.meta({"type": "closed", "reason": role})
+
+    async def _frame_gate(self, conn: Conn, room: Room) -> bool:
+        """Before a frame that reads or writes the document: is this connection still allowed?
+
+        The periodic re-check alone left up to ``COLLAB_RECHECK_S`` (30 s by default) in which a
+        removed member — or every former member of historical data whose assignment was just
+        undone — could pull the whole live document and push edits into the draft the next
+        assignee inherits, while their HTTP requests were already refused. The check is the same
+        one (live rows, ``touch=False``), so the answer is the one the next request would get. If
+        it cannot be made the frame is not handled and the tab is told to reconnect (4503), which
+        re-runs the full handshake gate: a failure to check is never a pass."""
+        try:
+            return await self._verify(conn, room)
+        except Exception:                                     # noqa: BLE001
+            log.exception("collab %s: frame re-check failed", room.key)
+            conn.revoked = True
+            with contextlib.suppress(Exception):
+                await conn.ws.close(code=CLOSE_TRY_LATER, reason="recheck_failed")
+            return False
+
+    async def _verify(self, conn: Conn, room: Room) -> bool:
+        """Apply the live verdict to the connection: close it (False) or adjust its role (True)."""
+        from synwevo_core.sessions import COOKIE_NAME
+        if conn.revoked:
+            return False
+        code, role = await run_in_threadpool(self._still_allowed, conn, COOKIE_NAME)
+        if conn.revoked:                                      # the other check closed it meanwhile
+            return False
+        if code is not None:
+            conn.revoked = True
+            await conn.meta({"type": "closed", "reason": role})
+            with contextlib.suppress(Exception):
+                await conn.ws.close(code=code, reason=role)
+            return False
+        readonly = role not in WRITE_ROLES
+        if not readonly and conn.readonly:
+            refusal = room.on_promoted(conn)
+            if refusal is not None:
+                # a viewer made a writer while the room already has as many writing tabs as it keeps
+                # records for (review 5, item 4)
+                conn.revoked = True
+                await conn.meta({"type": "closed", "reason": refusal})
                 with contextlib.suppress(Exception):
-                    await conn.ws.close(code=code, reason=role)
-                return
-            readonly = role not in WRITE_ROLES
-            if not readonly and conn.readonly:
-                refusal = room.on_promoted(conn)
-                if refusal is not None:
-                    # a viewer made a writer while the room already has as many writing tabs as it keeps
-                    # records for (review 5, item 4)
-                    await conn.meta({"type": "closed", "reason": refusal})
-                    with contextlib.suppress(Exception):
-                        await conn.ws.close(code=CLOSE_TOO_MANY, reason=refusal)
-                    return
-            if readonly != conn.readonly:
-                conn.readonly = readonly
-                conn.refused_told = False
-                await conn.meta({"type": "role", "readonly": readonly, "role": role})
-                room.broadcast_meta({"type": "joined", "user": {"id": conn.user_id, "name": conn.name, "color": conn.color, "readonly": readonly},
-                                     "online": len(room.peers())}, exclude=conn)
+                    await conn.ws.close(code=CLOSE_TOO_MANY, reason=refusal)
+                return False
+        if readonly != conn.readonly:
+            conn.readonly = readonly
+            conn.refused_told = False
+            await conn.meta({"type": "role", "readonly": readonly, "role": role})
+            room.broadcast_meta({"type": "joined", "user": {"id": conn.user_id, "name": conn.name, "color": conn.color, "readonly": readonly},
+                                 "online": len(room.peers())}, exclude=conn)
+        return True
 
     def _still_allowed(self, conn: Conn, cookie_name: str) -> tuple[int | None, str]:
         session = self.sessions.load(conn.request.cookies.get(cookie_name), touch=False)
