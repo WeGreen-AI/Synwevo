@@ -6,6 +6,7 @@ the target workspace whose output is read back."""
 from __future__ import annotations
 
 import io
+import threading
 import time
 
 import pytest
@@ -253,6 +254,90 @@ def test_a_changed_source_withdrawal_and_self_approval(world):
     # an organization workspace project cannot be the source of a request
     r = acting(w["c"]["bob"], wid).post(f"/api/projects/{mine['result']['project_id']}/copy-requests", json={"target_workspace_id": wid, "name": "x", "scope": {}})
     assert r.status_code == 409 and r.json()["error"] == "source_not_personal"
+
+
+def test_a_runner_that_reaches_a_request_someone_else_took_leaves_it_alone(world, monkeypatch):
+    """Two runners on one request — a self-approval wakes the runner thread while another tick has
+    already listed the same approved request — or a request withdrawn after a tick listed it. The
+    runner that gets there second used to read `status:running` / `status:done` / `status:withdrawn`
+    as a failed precondition and mark the request stale: over a copy in progress, over a finished
+    copy whose project already existed in the target, over a withdrawal — and told the requester
+    and the decider it had failed (the rare failure of the self-approval test above)."""
+    w = world; oid, wid = w["oid"], w["wid"]
+    runner = w["api"].state.copy_runner
+    runner.stop()                                        # this test plays both runners itself
+    t0 = time.time()
+    while runner.alive() and time.time() - t0 < 15:
+        time.sleep(0.01)
+    assert not runner.alive()
+    executor, copies, store = runner.executor, runner.copies, w["ident"].store
+    alice = acting(w["c"]["alice"], w["personal"]["alice"])
+    pid, _ = build_project(alice, "两个执行者")
+    bob = w["c"]["bob"]; reauth(bob)
+    A = f"/api/auth/organizations/{oid}/approvals"
+
+    def approved(name):
+        req = alice.post(f"/api/projects/{pid}/copy-requests", json={"target_workspace_id": wid, "name": name, "scope": {"sources": True}}).json()
+        assert bob.post(f"{A}/{req['id']}/decide", json={"action": "approve", "reason": "team needs it"}).json()["status"] == "approved"
+        return req["id"]
+
+    def failures(cid):
+        return [x for x in w["api"].state.notifier.list(w["users"]["alice"]["id"])["items"] if x["kind"] == "copy.failed" and x["object_id"] == cid]
+
+    def cards(cid):
+        return [r["event_id"] for r in store.all("SELECT event_id FROM messaging_outbox WHERE object_id=? ORDER BY created_at", (cid,))]
+
+    def copies_made():
+        return store.one("SELECT COUNT(*) AS n FROM projects WHERE origin LIKE 'copy:%' AND tenant=?", (wid,))["n"]
+
+    # one runner lists it, the other runs it to the end, then the first gets to it
+    cid = approved("先完成的副本")
+    listed = copies.next_approved()
+    assert [r["id"] for r in listed] == [cid]
+    first = executor.run(cid)
+    assert first["status"] == "done" and copies_made() == 1
+    second = executor.run(listed[0]["id"])
+    assert second["status"] == "done" and second["error"] is None and second["result"] == first["result"], second
+    assert copies.get(cid)["status"] == "done" and copies_made() == 1
+    assert failures(cid) == [] and cards(cid) == [f"copy:{cid}:approved", f"copy:{cid}:done"]
+    # the second runner arrives while the first one is copying
+    cid = approved("复制中的副本")
+    inside, release, out = threading.Event(), threading.Event(), []
+    real_copy = executor._copy
+
+    def held_copy(r, manifest):
+        inside.set()
+        assert release.wait(15)
+        return real_copy(r, manifest)
+    monkeypatch.setattr(executor, "_copy", held_copy)
+    t = threading.Thread(target=lambda: out.append(executor.run(cid)), name="the-first-runner")
+    t.start()
+    try:
+        assert inside.wait(15)
+        mid = executor.run(cid)
+        assert mid["status"] == "running" and mid["error"] is None, mid
+    finally:
+        release.set()
+        t.join(15)
+    monkeypatch.setattr(executor, "_copy", real_copy)
+    assert out and out[0]["status"] == "done" and copies_made() == 2
+    assert failures(cid) == [] and cards(cid) == [f"copy:{cid}:approved", f"copy:{cid}:done"]
+    # withdrawn after a tick listed it: it stays withdrawn, and nobody is told a copy failed
+    cid = approved("撤回的副本")
+    listed = copies.next_approved()
+    assert alice.post(f"/api/copy-requests/{cid}/withdraw", json={}).json()["status"] == "withdrawn"
+    assert executor.run(listed[0]["id"])["status"] == "withdrawn"
+    assert copies.get(cid)["status"] == "withdrawn" and copies.get(cid)["error"] is None and copies_made() == 2
+    assert failures(cid) == [] and cards(cid) == [f"copy:{cid}:approved"]
+    # a request that really went stale is still marked and told, once
+    cid = approved("来源已改")
+    assert alice.patch(f"/api/projects/{pid}", json={"record_rule": {"mode": "per_row", "table": {"sheet": "客户", "header_row": 0, "data_end": 1}}}).status_code == 200
+    listed = copies.next_approved()
+    stale = executor.run(listed[0]["id"])
+    assert stale["status"] == "stale" and stale["error"] == "source_changed"
+    again = executor.run(listed[0]["id"])
+    assert again["status"] == "stale" and again["error"] == "source_changed", "a second runner leaves the stale request as it is"
+    assert len(failures(cid)) == 1 and cards(cid) == [f"copy:{cid}:approved", f"copy:{cid}:stale"] and copies_made() == 2
 
 
 def test_a_copy_carries_neither_the_source_s_live_room_nor_its_history(world):

@@ -54,6 +54,17 @@ BUILTIN_FORMATS = {0: "General", 1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00", 9
                    40: "#,##0.00;[Red](#,##0.00)", 45: "mm:ss", 46: "[h]:mm:ss", 47: "mmss.0", 48: "##0.0E+0", 49: "@"}
 
 
+def count_breaks(root, rb) -> None:
+    """Keep a page-break list's ``count`` / ``manualBreakCount`` true after breaks were moved or
+    removed; an empty list goes (Excel does not write an empty ``rowBreaks``)."""
+    brks = rb.findall(s("brk"))
+    if not brks:
+        root.remove(rb)
+        return
+    rb.set("count", str(len(brks)))
+    rb.set("manualBreakCount", str(sum(1 for b in brks if b.get("man") in ("1", "true"))))
+
+
 class XlsxDoc:
     def __init__(self, data: bytes):
         self.pkg = Package(data)
@@ -550,6 +561,7 @@ class XlsxDoc:
                     rb.remove(brk)
                 else:
                     brk.set("id", str(nr))
+            count_breaks(root, rb)
         mc = root.find(s("mergeCells"))
         if mc is not None:
             mc.set("count", str(len(mc.findall(s("mergeCell")))))

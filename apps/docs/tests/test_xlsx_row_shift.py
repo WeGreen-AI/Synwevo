@@ -333,3 +333,45 @@ def test_rules_and_array_formulas_on_the_detail_row_follow_their_line():
     sheet = zipfile.ZipFile(io.BytesIO(out)).read("xl/worksheets/sheet1.xml").decode()
     import re
     assert re.findall(r'<c r="(D\d+)"[^>]*><f t="array" ref="([^"]+)"', sheet) == [("D5", "D5:E5"), ("D6", "D6:E6"), ("D7", "D7:E7")]
+
+
+def _with_breaks(at_rows: list[int]) -> bytes:
+    """Sheet 报表: header row 1, detail row 2 (empty policy remove_row), 合计 at row 5, and manual
+    page breaks after the given rows. TEST fixture."""
+    from openpyxl.worksheet.pagebreak import Break
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "报表"
+    ws["A1"], ws["B1"] = "品名", "金额"
+    ws["A2"], ws["B2"] = "示例", 0
+    ws["A5"], ws["B5"] = "合计", "=SUM(B2:B2)"
+    for r in at_rows:
+        ws.row_breaks.append(Break(id=r))
+    b = io.BytesIO()
+    wb.save(b)
+    return b.getvalue()
+
+
+def _row_breaks(data: bytes):
+    import re
+    xml = zipfile.ZipFile(io.BytesIO(data)).read("xl/worksheets/sheet1.xml").decode()
+    m = re.search(r"<rowBreaks\b([^>]*?)(?:/>|>(.*?)</rowBreaks>)", xml, re.S)
+    if not m:
+        return None
+    attrs = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
+    ids = [int(x) for x in re.findall(r'<brk[^>]*\bid="(\d+)"', m.group(2) or "")]
+    return attrs, ids
+
+
+def test_page_break_counts_stay_true_when_the_detail_row_goes():
+    """A detail row with no data is removed; a page break on it goes with it, and the list's counts
+    (which Excel reads) must say so — an empty list is not written at all."""
+    work, rep = T.xlsx_add_slot(_with_breaks([2]), {"kind": "repeat", "sheet": "报表", "row": 1, "c1": 0, "c2": 1,
+                                                    "name": "明细", "empty_policy": "remove_row"}, [])
+    out, _ = T.xlsx_fill(work, [rep], {rep["id"]: _rows(0)})
+    assert _row_breaks(out) is None
+    work, rep = T.xlsx_add_slot(_with_breaks([2, 5]), {"kind": "repeat", "sheet": "报表", "row": 1, "c1": 0, "c2": 1,
+                                                       "name": "明细", "empty_policy": "remove_row"}, [])
+    out, _ = T.xlsx_fill(work, [rep], {rep["id"]: _rows(0)})
+    attrs, ids = _row_breaks(out)
+    assert ids == [4] and attrs.get("count") == "1" and attrs.get("manualBreakCount") == "1", (attrs, ids)

@@ -11,10 +11,24 @@
  *  editor falls back to single-person editing of the saved version (see DocEditor).
  */
 import * as decoding from "lib0/decoding";
+import * as encoding from "lib0/encoding";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
 export const MESSAGE_META = 100;
+/** A live table's own frames (docs-sheet-live.md §9): JSON after the length, like the meta frames. */
+export const MESSAGE_SHEET = 101;
+
+/** What a live table room adds to the room (sheetroom.ts): its frames and the connection's life. */
+export interface LiveHooks {
+  onMeta?: (frame: any) => void;
+  onSheet?: (frame: any) => void;
+  onOpen?: () => void;
+  /** a socket closed (the browser reconnects unless it was 44xx); the close code when there was one */
+  onDisconnect?: (code: number | null) => void;
+  /** the server closed for good (44xx) */
+  onClosed?: (code: number, reason: string) => void;
+}
 
 export interface PeerInfo { id: string; name: string; color: number; readonly?: boolean; focus?: Focus | null }
 /** Where a person is in a project: a stable object, never a screen position. */
@@ -76,6 +90,12 @@ export interface Room {
   setUser(user: PeerInfo): void;
   /** Tell everyone which object we are on (null when none). */
   setFocus(focus: Focus | null): void;
+  /** Another field of our awareness state (a live table's selection). */
+  setField(key: string, value: unknown): void;
+  /** A query parameter of the next connection (a live table's client id); null removes it. */
+  setParam(key: string, value: string | null): void;
+  /** Send a live table frame (101); false when not connected. */
+  sendSheet(payload: Record<string, any>): boolean;
   destroy(): void;
 }
 
@@ -94,7 +114,7 @@ export function peersOf(states: Map<number, any>, myClientId: number, meId: stri
   return [...seen.values()];
 }
 
-export function openRoom(id: string, opts: { origin: string; workspaceId: string | null; kind?: RoomKind }): Room {
+export function openRoom(id: string, opts: { origin: string; workspaceId: string | null; kind?: RoomKind; live?: LiveHooks; epochParam?: boolean }): Room {
   const doc = new Y.Doc();
   const params: Record<string, string> = {};
   if (opts.workspaceId) params.workspace = opts.workspaceId;
@@ -112,14 +132,17 @@ export function openRoom(id: string, opts: { origin: string; workspaceId: string
     set({ peers: fromAwareness.length ? fromAwareness : state.peers });
   };
 
+  const live = opts.live;
   provider.messageHandlers[MESSAGE_META] = (_encoder, decoder) => {
     let frame: MetaFrame;
     try { frame = JSON.parse(decoding.readVarString(decoder)); } catch { return; }
+    try { live?.onMeta?.(frame); } catch (e) { console.error(e); }
     switch (frame.type) {
       case "hello":
         // Which seeding of the live document this tab now holds: sent again on every reconnect, so a
-        // room that was restored or reseeded meanwhile refuses to merge it back (4409, CI-115).
-        if (frame.epoch) provider.params = { ...provider.params, epoch: frame.epoch };
+        // room that was restored or reseeded meanwhile refuses to merge it back (4409, CI-115). A live
+        // table does not: it is told the new epoch in the hello and voids what it held itself.
+        if (frame.epoch && opts.epochParam !== false) provider.params = { ...provider.params, epoch: frame.epoch };
         // My other devices and tabs are not "others": the same person never shows up as a peer of themselves.
         set({ me: frame.user, readonly: frame.readonly, head: frame.head, dirty: frame.dirty, changesRev: frame.changes_rev,
               peers: (frame.peers || []).filter((p: PeerInfo) => p.id !== frame.user.id), recovered: frame.recovered === true, refused: false });
@@ -157,9 +180,18 @@ export function openRoom(id: string, opts: { origin: string; workspaceId: string
         break;                                   // the close event that follows carries the code
     }
   };
-  provider.on("status", ({ status }: { status: Status }) => set({ status }));
+  if (live) {
+    // a live table's own frames (101): JSON after the length, like the meta frames
+    provider.messageHandlers[MESSAGE_SHEET] = (_encoder, decoder) => {
+      let frame: any;
+      try { frame = JSON.parse(decoding.readVarString(decoder)); } catch { return; }
+      try { live.onSheet?.(frame); } catch (e) { console.error(e); }
+    };
+    provider.on("connection-close", (event: CloseEvent | null) => live.onDisconnect?.(event ? event.code : null));
+  }
+  provider.on("status", ({ status }: { status: Status }) => { set({ status }); if (status === "connected") live?.onOpen?.(); });
   provider.on("sync", (synced: boolean) => set({ synced }));
-  provider.on("closed", ({ code, reason }: { code: number; reason: string }) => set({ closed: { code, reason }, status: "disconnected" }));
+  provider.on("closed", ({ code, reason }: { code: number; reason: string }) => { set({ closed: { code, reason }, status: "disconnected" }); live?.onClosed?.(code, reason); });
   provider.awareness.on("change", refreshPeers);
 
   return {
@@ -169,6 +201,21 @@ export function openRoom(id: string, opts: { origin: string; workspaceId: string
     state: () => state,
     setUser(user) { provider.awareness.setLocalStateField("user", user); },
     setFocus(focus) { provider.awareness.setLocalStateField("focus", focus); },
+    setField(key, value) { provider.awareness.setLocalStateField(key, value); },
+    setParam(key, value) {
+      const next = { ...provider.params };
+      if (value === null) delete next[key]; else next[key] = value;
+      provider.params = next;
+    },
+    sendSheet(payload) {
+      const ws = provider.ws;
+      if (!provider.wsconnected || !ws || ws.readyState !== ws.OPEN) return false;
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, MESSAGE_SHEET);
+      encoding.writeVarString(enc, JSON.stringify(payload));
+      ws.send(encoding.toUint8Array(enc));
+      return true;
+    },
     destroy() { provider.awareness.off("change", refreshPeers); provider.destroy(); doc.destroy(); listeners.clear(); },
   };
 }

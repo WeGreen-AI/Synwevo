@@ -212,20 +212,31 @@ class ProjectCopies:
         return [self._out(r) for r in self.store.all("SELECT * FROM project_copies WHERE status='approved' AND approval_expires_at>? ORDER BY decided_at LIMIT 10", (now(),))]
 
     def finish(self, cid: str, status: str, *, result: dict | None = None, error: str | None = None) -> dict:
-        if status not in ("done", "failed", "stale"):
+        """The outcome of a copy this caller claimed (`claim_approved`): done or failed."""
+        if status not in ("done", "failed"):
             raise ValueError(status)
+        self._end(cid, status, result=result, error=error)
+        return self.get(cid)
+
+    def reset_stale(self, cid: str, *, error: str) -> dict | None:
+        """An approval whose preconditions no longer hold (source changed, authority gone):
+        approved → stale. None when the request is not approved any more — another runner
+        claimed or finished it, or it was withdrawn or expired after it was listed. Judging such
+        a request is not this caller's business: it used to overwrite a running or finished copy
+        (whose project already exists in the target) with `stale`, and a withdrawal likewise."""
+        return self.get(cid) if self._end(cid, "stale", error=error, only_from="approved") else None
+
+    def _end(self, cid: str, status: str, *, result: dict | None = None, error: str | None = None, only_from: str | None = None) -> bool:
         with self.store.tx() as t:
-            t.execute("UPDATE project_copies SET status=?, result=?, error=?, executed_at=?, updated_at=?, version=version+1 WHERE id=?",
-                      (status, json.dumps(result, ensure_ascii=False) if result is not None else None, (error or None), now() if status == "done" else None, now(), cid))
-            r = t.execute("SELECT target_organization_id, target_workspace_id FROM project_copies WHERE id=?", (cid,)).fetchone()
+            n = t.execute("UPDATE project_copies SET status=?, result=?, error=?, executed_at=?, updated_at=?, version=version+1 WHERE id=?"
+                          + (" AND status=?" if only_from else ""),
+                          (status, json.dumps(result, ensure_ascii=False) if result is not None else None, (error or None), now() if status == "done" else None, now(), cid)
+                          + ((only_from,) if only_from else ())).rowcount
+            r = t.execute("SELECT target_organization_id, target_workspace_id FROM project_copies WHERE id=?", (cid,)).fetchone() if n else None
             if r:
                 from .messaging_bridge import emit_copy      # the outcome's card (CI-75), same transaction
                 emit_copy(t, copy_id=cid, status=status, organization_id=r["target_organization_id"], workspace_id=r["target_workspace_id"])
-        return self.get(cid)
-
-    def reset_stale(self, cid: str, *, error: str) -> dict:
-        """An approval whose preconditions no longer hold (source changed, authority gone)."""
-        return self.finish(cid, "stale", error=error)
+        return bool(n)
 
     def sweep(self) -> int:
         ts = now()

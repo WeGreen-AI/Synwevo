@@ -15,7 +15,7 @@ admin/owner 的成员批准；批准后由 Docs 的执行器创建一份独立�
 | 预期变化 | Docs 项目菜单新增「复制到组织工作空间…」（仅个人空间的项目、仅所在者）：选目标空间（只列本人是编辑及以上、组织活跃的空间）、副本名、用途、是否带来源文件/修正，对话框实时显示将被复制的清单；申请后目标空间的可决定者收到收件箱事件与邮件，组织页新增「审批」区（`?approval=<id>` 直达），批准/拒绝要写理由并重新验证口令；批准后 Docs 执行器 10 s 内创建副本，申请人收到通知，对话框里「切换到目标空间并打开副本」。若申请人本人就是可决定者，可在申请时勾选「批准并复制」，记录为自行批准。 |
 | 边界与风险 | 权限：申请需要来源个人空间 owner + 目标空间 editor 及以上 + 目标组织成员；决定需要 `org.approvals.decide` + 目标空间 admin/owner + 组织活跃；执行前把这三方面全部重查（`preconditions`），任何一项丢失都不复制。内容：清单里只有名称、大小、哈希、数量与扫描状态，不含文件正文；批准的是清单摘要（`digest`），执行时重算，来源或模板/映射/规则变了就标 `stale` 要求重新申请。数据：一次事务写目标租户；来源 blob 共享（内容寻址、已经过接纳链），`source_files` 新 id，`templates`+`template_versions` 新建 v1（保留 `scan`），映射按新 id 重写、指向未复制来源的映射覆盖被丢弃并在结果里 `warnings`；任务、产物、上传记录、blob 授权、Webhook、API 凭据、来源提供记录一律不复制。时效：待审批 7 天过期，批准后 7 天不执行过期。三语言：Docs 32 条、组织页 45 条。移动端：审批区在 390 px 上完整可操作（浏览器证据）。 |
 | 验收 | §5 表；接口测试 `tests/integration/test_project_copy.py`（2 项，真实组合服务器 + 真实任务读回）；两引擎浏览器闭环 `ui_e2e_project_copy.py`；负向：目标 viewer 申请 403、非组织成员 404、持权限但非目标空间管理员的组织管理员 403、未重认证 `reauth_required`、理由过短 `reason_required`、重复申请 409、来源变更后 `stale`、撤回后不能再决定、组织空间项目不能作为来源。 |
-| 发布与恢复 | schema v13 只新增 `project_copies` 一张表，无数据迁移。回滚到旧版本：表被忽略，已创建的副本是普通项目不受影响；未执行的批准会在旧版本下停留在 `approved`，升级回来后若仍在 7 天内会被执行（执行前重查授权与摘要）。执行器每角色一个线程；多实例部署时 `claim_approved` 的条件更新保证一份申请只被执行一次。 |
+| 发布与恢复 | schema v13 只新增 `project_copies` 一张表，无数据迁移。回滚到旧版本：表被忽略，已创建的副本是普通项目不受影响；未执行的批准会在旧版本下停留在 `approved`，升级回来后若仍在 7 天内会被执行（执行前重查授权与摘要）。执行器每角色一个线程；多实例部署时 `claim_approved` 的条件更新保证一份申请只被执行一次，`reset_stale` 的条件更新保证后到者不会改写别人认领或已完成的申请。 |
 
 ## 2. 对象与状态
 
@@ -55,7 +55,11 @@ pending ──approve──▶ approved ──claim──▶ running ──▶ d
 
 `CopyRunner` 每 10 s 一轮（自行批准时立即唤醒）：先 `sweep()` 过期，再逐个 `next_approved()`：
 
-1. `preconditions()`：状态、批准时效、来源方仍是个人空间 owner、申请人仍可写目标、决定者仍有决定权、组织活跃；任一失败 → `stale`，原因写入 `error`。
+0. 轮到它时已不是 `approved` 的申请（另一个执行者已认领或已完成，或被列出后撤回/过期）原样返回，不判定、不通知。
+   自行批准会唤醒执行线程，而另一轮可能已把同一申请列为 approved：后到的执行者曾把 `status:running`/`status:done`/`status:withdrawn`
+   当作前提失败，把进行中或已完成（副本已在目标空间）的申请改成 `stale` 并告诉双方失败。
+1. `preconditions()`：批准时效、来源方仍是个人空间 owner、申请人仍可写目标、决定者仍有决定权、组织活跃；任一失败 → `stale`，原因写入 `error`。
+   `reset_stale()` 是条件更新 `approved → stale`：申请在检查期间被别人认领或撤回时不写、不通知。
 2. 在来源租户下重建清单并比较 `digest`；不同 → `stale: source_changed`。
 3. `claim_approved()`（条件更新 `approved → running`，多实例只有一个成功）。
 4. 一次事务：新模板 + v1（共享工作副本 blob，复制 `scan`）、新项目（`origin=copy:<cid>`，若原项目固定了模板版本则固定到 v1，`mapping_rev=1`）、
@@ -76,6 +80,7 @@ pending ──approve──▶ approved ──claim──▶ running ──▶ d
 | 原件不变 | 复制前后 `rev`/`mapping_rev`/`template_id`/名称一致；源项目无任务；副本对个人空间 404 |
 | 时效与变更 | 批准后改样本规则再执行 → `stale: source_changed`，目标空间没有副本、申请人收到 `copy.failed`；改名不改摘要 |
 | 自行批准 | 目标空间 owner 的个人项目：`can_self_approve=true`，申请即批准、`self_approved=true`、执行后 `done`；组织空间项目作为来源 409 |
+| 两个执行者 | 一个执行者列出后另一个先执行完 / 执行中后到 / 列出后撤回：后到者原样返回（`done`/`running`/`withdrawn`），无 `copy.failed`、无 `stale` 卡片，只有一份副本；来源真的改了的申请仍只标一次 `stale`（`source_changed`）并通知一次（`test_a_runner_that_reaches_a_request_someone_else_took_leaves_it_alone`） |
 | 移动端 | 审批区在 390 px（触摸）上：清单展开、批准、理由与口令、结果可读（浏览器截图） |
 
 ## 6. 明确未做
