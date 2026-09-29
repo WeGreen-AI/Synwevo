@@ -115,6 +115,14 @@ previous image. A failure after public traffic resumes does **not** automaticall
 new writes and revocations may already exist. Investigate and use the documented journal-aware
 recovery procedure in `docs/operations.md`; never blindly revive an old database.
 
+Stopping is graceful and must stay so: `docker compose stop` sends SIGTERM (through the image's
+`init`) and waits `stop_grace_period` (90 s, the shared service settings) before killing. Stopping the
+gateway first closes every browser's live-editing socket, so each open room writes its draft as its
+last person leaves; SIGTERM then runs Synwevo Docs' shutdown hook, which writes every room still open
+and waits for those closing writes. Never deploy or restart Docs with `kill`, `-t 0` or a shorter
+grace period: a live table keeps edits since its last draft write (at most a few seconds) only in
+memory and in the open pages (`infra/production/tests` checks the grace period and the stop order).
+
 A queued webhook waiting for retry can block deployment. Resolve it through authorized operations;
 the deployment script must not discard deliveries merely to pass. Backups are not pruned automatically.
 Monitor disk use and apply an explicit retention policy after restore verification.
