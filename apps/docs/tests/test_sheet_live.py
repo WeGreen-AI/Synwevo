@@ -1725,12 +1725,14 @@ def test_the_room_never_forgets_an_open_tab_and_says_what_it_applied(world):
     whose resend after a lost answer could then not be told apart from a new message (an inserted row
     applied twice). Open tabs are never forgotten, and `full` / `hello` carry each client's outcomes."""
     tabs = [join(world, "owner", client_id=f"owner-tab-{i:02d}") for i in range(cs.MAX_CLIENTS_PER_SCOPE)]
-    ops = []
+    ops, first_seq = [], None
     for i, o in enumerate(tabs):
         sid = o.content["order"][0]
         op = {"op": "append_rows", "sheet": sid, "count": 1}
         n = o.send(op, expect=_room(world).state["seq"])
-        assert o.ack(n)["ok"]
+        r0 = o.ack(n)
+        assert r0["ok"]
+        first_seq = first_seq or r0["seq"]
         ops.append((o, op, n))
     tabs[-1].close()                                             # one tab goes: its record may be forgotten now
     fresh = join(world, "owner", client_id="owner-tab-new")
@@ -1744,7 +1746,9 @@ def test_the_room_never_forgets_an_open_tab_and_says_what_it_applied(world):
     refused = o.do({"op": "set", "sheet": "nope", "row": "x", "col": "y", "v": 1}, expect=_room(world).state["seq"])
     o.frame({"type": "sync"})
     full = o.of("full")
-    assert full["outcomes"][str(ops[0][2])] is True and full["outcomes"][str(refused["n"])] == "not_found"
+    # an applied message by the seq it was answered with (the tab keeps it until a draft write covers it)
+    got = full["outcomes"][str(ops[0][2])]
+    assert type(got) is int and got == first_seq and full["outcomes"][str(refused["n"])] == "not_found", full["outcomes"]
     for p in tabs[:-1] + [fresh]:
         p.close()
 
@@ -2036,4 +2040,19 @@ def test_a_hold_does_not_outlive_the_epoch_it_was_made_in(world, clock):
     clock[0] += 1
     r = a.do(put(a, "A3", "新纪元"))
     assert r["ok"] is True, r
+    a.close()
+
+
+def test_steady_typing_still_writes_the_table_draft_within_the_bound(world, monkeypatch):
+    """Review of steps 3-5, round 2, item 2 (the table room): under steady editing the trailing
+    debounce never wrote the draft; the `persisted` mark the tabs keep their edits until never came."""
+    from synwevo_docs import collab as C
+    monkeypatch.setattr(C, "PERSIST_MAX_WAIT_S", 0.8, raising=False)   # fixture: a short bound (production: 5 s)
+    a = join(world, "editor")
+    for i in range(9):                                           # an edit every 0.25 s for 2 s
+        assert a.do(put(a, "A2", f"第{i}次"))["ok"]
+        time.sleep(0.25)
+    key = f"template:{world['tid']}"
+    assert world["store"].one("SELECT 1 AS x FROM collab_docs WHERE room=?", (key,)) is not None, "written while the editing went on"
+    assert any(m["type"] == "persisted" for m in a.meta), "and the tabs were told"
     a.close()

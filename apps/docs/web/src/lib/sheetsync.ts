@@ -71,8 +71,10 @@ interface Pending {
   undoable: boolean;
   /** undo was pressed while it was on its way: undone once answered */
   undoRequested: boolean;
-  /** an undo: the entry it undoes (back on the stack when it is refused) */
+  /** an undo: the entry it undoes */
   undoOf: UndoEntry | null;
+  /** its place in the queue (what the person did first comes first, also for edits sent again) */
+  ord: number;
 }
 
 /** A frame on the wire, waiting for its answer. `p` is null once its operation was voided (restart). */
@@ -80,7 +82,7 @@ type Wire = { kind: "op"; p: Pending | null; n: number } | { kind: "sync" };
 
 export type AttentionKind = "conflict" | "refused" | "unknown" | "dropped" | "overwritten";
 /** A cell of an operation someone else changed after the person acted (reported with a conflict). */
-export interface ChangedCell { sheet: string | null; ref: string | null; theirs: any }
+export interface ChangedCell { sheet: string | null; ref: string | null; theirs: any; /** who changed it (a person id), when known */ by?: string | null }
 export interface Attention {
   id: number;
   kind: AttentionKind;
@@ -95,6 +97,9 @@ export interface Attention {
    *  sent against that — a cell someone changes after the person read this is a new conflict, never
    *  silently replaced (H2) */
   seen?: { epoch: string | null; seq: number };
+  /** the place of the change it is about in this tab's queue: a cell a later change of mine wrote is
+   *  left to that change ("use my value" here does not overwrite it — P4) */
+  ord?: number;
 }
 
 export interface UndoEntry { patch: PatchEntry[]; before: PatchEntry[]; label: OpLabel; epoch: string; seq: number }
@@ -105,7 +110,7 @@ export interface Recent { by: Person; until: number }
 export interface Announcement { by: string | null; where: string; count: number }
 
 /** A change of mine the server acknowledged but has not yet written to its draft. */
-interface Acked { seq: number; op: any; label: OpLabel; undoable: boolean }
+interface Acked { seq: number; op: any; label: OpLabel; undoable: boolean; ord: number }
 
 export interface SyncSnapshot {
   status: SyncStatus;
@@ -121,6 +126,9 @@ export interface SyncSnapshot {
   version: number;
   attention: Attention[];
   canUndo: boolean;
+  /** my changes the room acknowledged but has not written to its draft yet (lost if its process dies
+   *  now and this page is gone: closing the page asks) */
+  unpersisted: number;
   closed: { code: number; reason: string } | null;
   limits: Limits | null;
 }
@@ -201,6 +209,26 @@ const valuePart = (cell: any): Record<string, any> | null => {
   return Object.keys(v).length ? v : null;
 };
 
+/** The cell values an operation (or group) writes: "sheet|row:col". */
+function cellsOf(op: any): string[] {
+  const ops: any[] = isDict(op) && op.op === "tx" && Array.isArray(op.ops) ? op.ops : [op];
+  return ops.filter((o) => isDict(o) && (o.op === "set" || o.op === "clear")).map((o) => `${o.sheet}|${o.row}:${o.col}`);
+}
+
+/** `op` without the writes of cells `drop` says; null when nothing is left. */
+function withoutCells(op: any, drop: (key: string) => boolean): any | null {
+  const cell = (o: any) => isDict(o) && (o.op === "set" || o.op === "clear") && drop(`${o.sheet}|${o.row}:${o.col}`);
+  if (isDict(op) && op.op === "tx" && Array.isArray(op.ops)) {
+    const ops = op.ops.filter((o: any) => !cell(o));
+    return ops.length === op.ops.length ? op : ops.length === 0 ? null : ops.length === 1 ? ops[0] : { ...op, ops };
+  }
+  return cell(op) ? null : op;
+}
+
+function loadOf(x: any): { id: string; seq: number } | null {
+  return isDict(x) && typeof x.id === "string" && typeof x.seq === "number" ? { id: x.id, seq: x.seq } : null;
+}
+
 export class SheetSync {
   private send: (frame: Record<string, any>) => void;
   private now: () => number;
@@ -210,6 +238,7 @@ export class SheetSync {
   private pending: Pending[] = [];
   private wire: Wire[] = [];
   private seqNo = 0;
+  private ordNo = 0;
   private attnNo = 0;
   private nextN = 1;
   private waitUntil = 0;
@@ -220,6 +249,10 @@ export class SheetSync {
   private dots = new Map<string, Set<string>>();
   /** the last sequence number at which another tab changed each sheet (undo never deletes that work) */
   private touched = new Map<string, number>();
+  /** who last changed each cell, as far as this tab saw it happen (patches): names in "also changed" */
+  private cellBy = new Map<string, string>();
+  /** the latest of my changes (its place in the queue) that writes each cell value */
+  private myCells = new Map<string, number>();
   private prevOutside = new Map<string, any>();
   private undoStack: UndoEntry[] = [];
   private acked: Acked[] = [];
@@ -273,6 +306,7 @@ export class SheetSync {
       status: this.status(), pending: this.pending.length, live: this.live, liveReason: this.liveReason, stale: this.stale,
       readonly: this.readonly, epoch: this.epoch, seq: this.seq, persisted: this.persisted, version: this.version,
       attention: [...this.attention],
+      unpersisted: this.acked.filter((a) => a.seq > this.persisted).length,
       canUndo: this.undoStack.some((u) => u.epoch === this.epoch) || this.pending.some((p) => p.undoable && !p.undoRequested),
       closed: this.closed, limits: this.limits,
     };
@@ -341,6 +375,7 @@ export class SheetSync {
     if (!this.canWrite() || !this.epoch) return false;
     const p = this.queue(op, opts);
     this.pending.push(p);
+    for (const k of cellsOf(op)) this.myCells.set(k, Math.max(this.myCells.get(k) ?? 0, p.ord));
     this.show(p);
     p.saw = p.local ? p.local.before : null;
     this.changed(true);
@@ -351,7 +386,7 @@ export class SheetSync {
   private queue(op: any, opts: { undoable?: boolean; label?: OpLabel; expect?: number; undoOf?: UndoEntry }): Pending {
     return { id: ++this.seqNo, op, expect: opts.expect ?? this.seq, epoch: this.epoch!, n: null, inFlight: false, connNo: null, uncertain: false,
       local: null, saw: null, predicted: null, label: opts.label ?? labelOf(this.base, op), undoable: opts.undoable ?? true,
-      undoRequested: false, undoOf: opts.undoOf ?? null };
+      undoRequested: false, undoOf: opts.undoOf ?? null, ord: ++this.ordNo };
   }
 
   /** The tab's prediction of an operation, applied to what it shows. */
@@ -466,7 +501,6 @@ export class SheetSync {
     this.stale = h.stale_head != null;
     if (typeof h.client === "string") this.clientId = h.client;
     if (isDict(h.limits)) this.limits = h.limits as Limits;
-    this.persisted = typeof h.persisted === "number" ? h.persisted : 0;
     this.take(h, h.resumed === true);
   }
 
@@ -475,71 +509,123 @@ export class SheetSync {
   private take(f: any, resumed: boolean) {
     const epoch: string = f.epoch;
     const seq: number = typeof f.seq === "number" ? f.seq : 0;
-    // the room's load (a fresh id each time it is opened from storage) and the seq it was loaded at
-    const loaded = isDict(f.loaded) && typeof f.loaded.id === "string" && typeof f.loaded.seq === "number" ? f.loaded as { id: string; seq: number } : null;
-    const reloaded = !!loaded && this.boot !== null && loaded.id !== this.boot && epoch === this.epoch;
+    const persisted = typeof f.persisted === "number" ? f.persisted : 0;
+    // the room's load (a fresh id each time it is opened from storage), the seq it was loaded at, and
+    // the loads of this epoch it remembers (a tab away across several finds its own among them)
+    const loaded = loadOf(f.loaded);
+    const loads: { id: string; seq: number }[] = (Array.isArray(f.loads) ? f.loads : []).map(loadOf).filter(Boolean);
+    let from: number | null = null;
+    if (this.epoch !== null && epoch === this.epoch) {
+      if (loaded && this.boot !== null && loaded.id !== this.boot) {
+        // opened again from storage since this tab last saw it (a process that died without its closing
+        // write — perhaps more than once): what this tab had acknowledged above the lowest seq any later
+        // load started from may be gone — also when others have filled those numbers again since (H4, P5)
+        const i = loads.findIndex((l) => l.id === this.boot);
+        const later = i >= 0 ? loads.slice(i + 1) : loads;
+        from = Math.min(seq, loaded.seq, ...later.map((l) => l.seq));
+      } else if (seq < this.seq) from = seq;
+    }
     if (loaded) this.boot = loaded.id;
     let lost: Acked[] = [];
     if (this.epoch !== null && epoch !== this.epoch) {
       // restarted while away (a version put in, or a draft that could not be read): nothing of the
-      // previous epoch applies — the queue and what was acknowledged but not yet kept go to the person
-      const gone = this.acked.filter((a) => a.seq > this.persisted);
-      for (const a of gone) this.attention.push({ id: ++this.attnNo, kind: "dropped", code: "lost", detail: {}, people: {}, label: a.label, retry: null });
+      // previous epoch applies — the queue and what was acknowledged but not yet kept (every entry
+      // left: written ones were dropped as the room said so) go to the person
+      for (const a of this.acked) this.attention.push({ id: ++this.attnNo, kind: "dropped", code: "lost", detail: {}, people: {}, label: a.label, retry: null });
       this.drop("dropped", "reset", this.pending);
       this.undoStack = [];
       this.acked = [];
       this.touched.clear();
-    } else if (this.epoch !== null && (reloaded || seq < this.seq)) {
-      // the same epoch, loaded again from storage: the server came back from its last draft (a
-      // process that died without its closing write). What it had acknowledged after the seq it was
-      // loaded at is gone — also when others have filled those numbers again since — and is sent again
-      // below; what is queued is sent against the history as it is now: a value written after the
-      // restart is a conflict, not silently replaced (H4, H10)
-      const from = reloaded ? Math.min(loaded!.seq, seq) : seq;
-      lost = this.acked.filter((a) => a.seq > from);
-      this.acked = this.acked.filter((a) => a.seq <= from);
-      this.undoStack = this.undoStack.filter((u) => u.seq <= from);
+      this.cellBy.clear();
+      this.myCells.clear();
+    } else if (from !== null) {
+      // what the room had acknowledged after `from` is sent again below; what is queued, and any
+      // "use my value" not answered yet, is sent against the history as it is now: a value written
+      // after the restart is a conflict, not silently replaced (H10)
+      lost = this.acked.filter((a) => a.seq > from!);
+      this.acked = this.acked.filter((a) => a.seq <= from!);
+      this.undoStack = this.undoStack.filter((u) => u.seq <= from!);
       for (const p of this.pending) p.expect = Math.min(p.expect, from);
       for (const a of this.attention) if (a.seen) a.seen.seq = Math.min(a.seen.seq, from);
     }
+    const sameEpoch = this.epoch === epoch;
     this.epoch = epoch;
     const outcomes: Record<string, any> = isDict(f.outcomes) ? f.outcomes : {};
     const next: number = typeof f.next === "number" ? f.next : 1;
-    const applied: Pending[] = [], refused: [Pending, string][] = [], unknown: Pending[] = [];
+    const applied: [Pending, number][] = [], refused: [Pending, string][] = [], unknown: Pending[] = [];
     for (const p of this.pending) {
       p.inFlight = false;
       if (p.n === null) continue;
       const o = outcomes[String(p.n)];
-      if (o === true) applied.push(p);
+      // applied: the seq it was answered with (a room before that answered `true`: at most this hello's)
+      if (o === true || typeof o === "number") applied.push([p, typeof o === "number" ? o : seq]);
       else if (typeof o === "string" && o !== "busy" && o !== "rate_limited") refused.push([p, o]);
       else if (!resumed) {
         if (repeatable(p.op)) { p.n = null; p.uncertain = true; }  // safe to send again: "already so" or a conflict
         else unknown.push(p);
       } else p.n = null;                                            // never received: renumbered from `next`
     }
-    const gone = new Set<Pending>([...applied, ...refused.map(([p]) => p), ...unknown]);
-    for (const [p, code] of refused) {
-      if (p.undoRequested) this.onUndone?.({ sent: false, skipped: [], label: p.label, cancelled: true });
-      else this.addAttention(code === "conflict" ? "conflict" : "refused", code, {}, {}, p);
-    }
-    for (const p of unknown) this.addAttention("unknown", "unknown", {}, {}, p, p.undoRequested ? null : undefined);
+    const gone = new Set<Pending>([...applied.map(([p]) => p), ...refused.map(([p]) => p), ...unknown]);
+    // what the room held as this tab last knew it, with my own changes it applied meanwhile: any sheet
+    // that differs now was changed by someone else while this tab was away (undo never deletes that)
+    const before = sameEpoch ? this.serverContent(applied.map(([p]) => p)) : null;
     this.pending = this.pending.filter((p) => !gone.has(p));
     this.base = copy(f.content);
     this.seq = seq;
+    this.persisted = persisted;
+    this.acked = this.acked.filter((a) => a.seq > this.persisted);
     this.nextN = Math.max(next, 1);
     this.waitUntil = 0;
+    if (before) this.noteChangedSheets(before, this.base!, seq);
     // what the server had acknowledged and lost goes first: it came before everything queued
-    const again = lost.map((a) => this.queue(a.op, { label: a.label, undoable: a.undoable, expect: reloaded ? Math.min(loaded!.seq, seq) : seq }));
+    const againExpect = from !== null ? from : seq;
+    const again = lost.map((a) => this.queue(a.op, { label: a.label, undoable: a.undoable, expect: againExpect }));
+    again.forEach((p, i) => { p.ord = lost[i].ord; });                // their own places: before everything still queued
     this.pending = [...again, ...this.pending];
     for (const p of this.pending) this.show(p);
     for (const p of again) p.saw = p.local ? p.local.before : null;
-    for (const p of applied) {
+    // refused and unknown ones are told against the room as it is now (who changed what since)
+    for (const [p, code] of refused) {
+      if (p.undoRequested) this.onUndone?.({ sent: false, skipped: [], label: p.label, cancelled: true });
+      else this.addAttention(code === "conflict" ? "conflict" : "refused", code, p.undoOf ? { undo: true } : {}, {}, p);
+    }
+    for (const p of unknown) this.addAttention("unknown", "unknown", {}, {}, p, p.undoRequested ? null : undefined);
+    for (const [p, at] of applied) {
       if (!p.local || !p.local.patch.length) continue;
-      if (p.undoRequested) this.undoFrom({ patch: p.local.patch, before: p.local.before, label: p.label, epoch, seq });
-      else if (p.undoable) this.pushUndo(p.local.patch, p.local.before, p.label, seq);
+      // resolved from `outcomes`: acknowledged like an answer — kept until a draft write covers it (P1)
+      if (at > this.persisted) this.acked.push({ seq: at, op: p.op, label: p.label, undoable: p.undoable, ord: p.ord });
+      if (p.undoRequested) this.undoFrom({ patch: p.local.patch, before: p.local.before, label: p.label, epoch, seq: at });
+      else if (p.undoable) this.pushUndo(p.local.patch, p.local.before, p.label, at);
     }
     this.changed(true);
     this.flush();
+  }
+
+  /** The room's content as this tab last knew it: what it shows without its own queued predictions,
+   *  plus `mine` (changes of mine the room applied meanwhile). */
+  private serverContent(mine: Pending[] = []): Content | null {
+    if (!this.base) return null;
+    const c = copy(this.base);
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const l = this.pending[i].local;
+      if (l) applyPatch(c, l.before);
+    }
+    for (const p of mine) if (p.local && this.pending.includes(p)) applyPatch(c, p.local.patch);
+    return c;
+  }
+
+  /** Sheets that differ between two contents were changed by someone else at `seq` (for undo). */
+  private noteChangedSheets(before: Content, now: Content, seq: number) {
+    const mark = (sid: string | null | undefined) => { if (sid) this.touched.set(sid, Math.max(this.touched.get(sid) ?? 0, seq)); };
+    for (const sid of new Set([...Object.keys(before.sheets), ...Object.keys(now.sheets)])) {
+      if (!eq(own(before.sheets, sid) ?? null, own(now.sheets, sid) ?? null)) mark(sid);
+    }
+    for (const part of ["merges", "fields"] as const) {
+      for (const k of new Set([...Object.keys(before[part]), ...Object.keys(now[part])])) {
+        const a = own(before[part], k), b = own(now[part], k);
+        if (!eq(a ?? null, b ?? null)) { mark(a?.sheet); mark(b?.sheet); }
+      }
+    }
   }
 
   private leaveLive(reason: any) {
@@ -564,7 +650,9 @@ export class SheetSync {
     if (this.epoch !== null && f.epoch !== this.epoch) { this.onReset({ ...f, by: null }); return; }
     // the answer to this tab's `sync`: everything answered before it is in this content; what is still
     // on the wire is answered after it (and keeps its number: nothing new may reuse one)
+    const before = this.serverContent();
     this.base = copy(f.content);
+    if (before) this.noteChangedSheets(before, this.base!, typeof f.seq === "number" ? f.seq : this.seq);
     if (typeof f.seq === "number") this.seq = f.seq;
     if (typeof f.next === "number") this.nextN = Math.max(this.nextN, f.next);
     if (typeof f.persisted === "number") this.persisted = f.persisted;
@@ -580,7 +668,10 @@ export class SheetSync {
     this.undoStack = [];
     this.acked = [];
     this.touched.clear();
+    this.cellBy.clear();
     this.epoch = f.epoch;
+    const loaded = loadOf(f.loaded);
+    if (loaded) this.boot = loaded.id;
     this.base = copy(f.content);
     this.seq = typeof f.seq === "number" ? f.seq : 0;
     this.nextN = typeof f.next === "number" ? f.next : 1;
@@ -603,6 +694,7 @@ export class SheetSync {
         if (e.p[0] === "sheets" && e.p.length >= 2) sid = e.p[1];
         else if ((e.p[0] === "merges" || e.p[0] === "fields") && e.p.length === 2) sid = (isDict(e.v) ? e.v.sheet : null) ?? own(own(this.base![e.p[0] as "merges" | "fields"], e.p[1]), "sheet") ?? null;
         if (sid) this.touched.set(sid, Math.max(this.touched.get(sid) ?? 0, seq));
+        if (by.id && e.p[0] === "sheets" && e.p[2] === "cells" && e.p.length === 4) this.cellBy.set(`${e.p[1]}|${e.p[3]}`, by.id);
       }
       if (outside) {
         // an outside version may replace someone's values: keep what they were ("use my value")
@@ -689,6 +781,7 @@ export class SheetSync {
       if (a.duplicate && !Array.isArray(a.patch)) {
         // applied before, its answer remembered only in short: keep what the tab shows and take the whole
         this.pending = this.pending.filter((x) => x !== p);
+        if (typeof a.seq === "number" && a.seq > this.persisted) this.acked.push({ seq: a.seq, op: p.op, label: p.label, undoable: p.undoable, ord: p.ord });
         this.requestFull();
         if (p.undoRequested) this.onUndone?.(null);
       } else {
@@ -698,7 +791,7 @@ export class SheetSync {
           applyPatch(this.base!, patch);
           if (typeof a.seq === "number") this.seq = a.seq;
         });
-        if (patch.length) this.acked.push({ seq: this.seq, op: p.op, label: p.label, undoable: p.undoable });
+        if (patch.length) this.acked.push({ seq: this.seq, op: p.op, label: p.label, undoable: p.undoable, ord: p.ord });
         const entry = patch.length && Array.isArray(a.before) ? { patch, before: a.before, label: p.label, epoch: this.epoch!, seq: this.seq } : null;
         if (p.undoRequested) {
           if (entry) this.undoFrom(entry);
@@ -750,7 +843,9 @@ export class SheetSync {
     if (code === "superseded") { this.onClose(4409, "superseded"); return; }
     this.removePending(p);
     if (code === "read_only") this.readonly = true;
-    if (p.undoOf && p.undoOf.epoch === this.epoch) { this.undoStack.push(p.undoOf); this.trimUndo(); }   // not undone: still there to undo
+    // a refused undo is set aside, not put back on top: the person is told, and the next undo reaches
+    // the change before it (P8; "use my value" / "do it again" where the refusal offers it)
+    if (p.undoOf) detail.undo = true;
     if (p.undoRequested) {
       // refused: it never happened, which is what the person asked for
       this.onUndone?.({ sent: false, skipped: [], label: p.label, cancelled: true });
@@ -766,21 +861,50 @@ export class SheetSync {
     this.rebase(() => { this.pending = this.pending.filter((x) => x !== p); });
   }
 
-  /** The other cells of `p` someone else changed after the person acted (not by my own later edits). */
-  private changedSince(p: Pending, except: string | null): ChangedCell[] {
+  /** The other cells of `p` someone else changed after the person acted, with what they hold in the
+   *  room now and who changed them (the room's `writers`, else the patches this tab saw). A cell one
+   *  of my own later queued edits also writes is reported too (P4): "use my value" on `p` would
+   *  replace it. Cells my own *earlier* queued edits write are left out: what I saw there was mine. */
+  private changedSince(p: Pending, except: string | null, detail: Record<string, any>): ChangedCell[] {
     if (!p.saw || !this.base) return [];
-    const mine = new Set<string>();
-    for (const x of this.pending) if (x !== p && x.local) for (const e of x.local.patch) mine.add(e.p.join("\u0001"));
-    const out: ChangedCell[] = [];
+    const writers = new Map<string, string>();
+    for (const w of Array.isArray(detail.writers) ? detail.writers : []) if (isDict(w) && typeof w.key === "string" && typeof w.by === "string") writers.set(w.key, w.by);
+    const earlier = new Set<string>();
+    for (const x of this.pending) if (x !== p && x.ord < p.ord && x.local) for (const e of x.local.patch) earlier.add(e.p.join("\u0001"));
+    // a cell a later change of mine also writes is that change's to decide (it has its own answer):
+    // not listed here, and "use my value" here leaves it alone (useMine)
+    const later = (sid: string, ck: string) => (this.myCells.get(`${sid}|${ck}`) ?? 0) > p.ord;
+    const out: (ChangedCell & { at: [number, number, number] })[] = [];
     for (const e of p.saw) {
       if (e.p[0] !== "sheets" || e.p[2] !== "cells" || e.p.length !== 4) continue;
       const key = e.p.join("\u0001");
-      if (key === except || mine.has(key)) continue;
+      if (key === except || earlier.has(key) || later(e.p[1], e.p[3])) continue;
       const saw = Object.hasOwn(e, "v") ? e.v : null;
-      const now = at(this.base, e.p)[0] ?? null;
-      if (!eq(valuePart(saw), valuePart(now))) out.push({ ...cellLabel(this.base, e.p[1], e.p[3]), theirs: valuePart(now) });
+      const now = this.roomValue(e.p, p);
+      if (eq(valuePart(saw), valuePart(now))) continue;
+      const by = writers.get(`v/${e.p[1]}/${e.p[3]}`) ?? this.cellBy.get(`${e.p[1]}|${e.p[3]}`) ?? null;
+      out.push({ ...cellLabel(this.base, e.p[1], e.p[3]), theirs: valuePart(now), by, at: this.position(e.p[1], e.p[3]) });
     }
-    return out;
+    // in reading order (sheet, row, column), not the inverse patch's order
+    out.sort((x, y) => x.at[0] - y.at[0] || x.at[1] - y.at[1] || x.at[2] - y.at[2]);
+    return out.map(({ at: _, ...c }) => c);
+  }
+
+  private position(sid: string, ck: string): [number, number, number] {
+    const sh = own(this.base!.sheets, sid);
+    const [rid, cid] = ck.split(":");
+    return [this.base!.order.indexOf(sid), sh ? sh.rows.indexOf(rid) : -1, sh ? sh.cols.indexOf(cid) : -1];
+  }
+
+  /** A path's value in the room's content: the first of my queued edits that writes it saw it so;
+   *  else what the tab shows. */
+  private roomValue(path: string[], skip: Pending): any {
+    for (const x of this.pending) {
+      if (x === skip || !x.local) continue;
+      const b = x.local.before.find((e) => e.p.length === path.length && e.p.every((k, i) => k === path[i]));
+      if (b) return Object.hasOwn(b, "v") ? b.v : null;
+    }
+    return at(this.base!, path)[0] ?? null;
   }
 
   /** "Needs you": what happened, whose value it was, every other cell changed since, and — where it
@@ -798,10 +922,17 @@ export class SheetSync {
       const mine = ops.find((o) => isDict(o) && o.sheet === sid && `${o.row}:${o.col}` === ck);
       label = { ...label, ...cellLabel(this.base, sid, ck), value: mine && mine.op === "set" && mine.v != null ? String(mine.v) : null };
     }
-    const also = kind === "conflict" || kind === "unknown" ? this.changedSince(p, except) : [];
     const offer = retry !== undefined ? retry : kind === "conflict" || kind === "unknown" || (kind === "refused" && code === "resync") ? p.op : null;
-    this.attention.push({ id: ++this.attnNo, kind, code, detail: also.length ? { ...detail, also } : detail, people, label, retry: offer,
-      seen: { epoch: this.epoch, seq: this.seq } });
+    // every cell someone changed since, with its value and who: for anything that can be sent again
+    // (a conflict, a message whose fate is unknown, one refused because the room forgot what it saw — P2)
+    const also = kind === "conflict" || kind === "unknown" || offer ? this.changedSince(p, except, detail) : [];
+    for (const c of also) if (c.by && !people[c.by]) { const who = this.people.get(c.by); if (who) people = { ...people, [c.by]: who }; }
+    const told: Record<string, any> = { ...detail };
+    delete told.writers;
+    if (also.length) told.also = also;
+    if (typeof told.by === "string" && told.by === this.me) told.self = true;       // my own other tab (item 10)
+    this.attention.push({ id: ++this.attnNo, kind, code, detail: told, people, label, retry: offer,
+      seen: { epoch: this.epoch, seq: this.seq }, ord: p.ord });
   }
 
   /** Queued operations that can no longer be sent go to the person (a restart, leaving live mode). */
@@ -822,9 +953,12 @@ export class SheetSync {
   useMine(id: number): boolean {
     const a = this.attention.find((x) => x.id === id);
     if (!a || !a.retry) return false;
+    // the cells a later change of mine wrote are left to it (and to its own answer): not sent again here
+    const retry = a.ord !== undefined ? withoutCells(a.retry, (k) => (this.myCells.get(k) ?? 0) > a.ord!) : a.retry;
     this.attention = this.attention.filter((x) => x !== a);
+    if (retry === null) { this.changed(); return true; }
     const expect = a.seen && a.seen.epoch === this.epoch ? Math.min(a.seen.seq, this.seq) : this.seq;
-    const ok = this.submit(a.retry, { label: a.label, expect });
+    const ok = this.submit(retry, { label: a.label, expect });
     if (!ok) this.attention.push(a);
     this.changed();
     return ok;

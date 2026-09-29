@@ -514,20 +514,26 @@ test("H3b: undo of my merge that replaced someone's unmerges mine before putting
   assert.equal(a.sync.snapshot().attention.length, 0);
 });
 
-test("H3: an undo the room refuses stays on the stack", () => {
+test("P8: an undo the room refuses is set aside and said — the next undo reaches the change before it", () => {
   const { room, a } = twoTabs();
+  a.sync.submit(set(0, 2, "更早的"));
+  pump(room);
   a.sync.submit(set(0, 3, "我的"));
   pump(room);
-  room.busy = 0;
   const r = a.sync.undo();
   assert.ok(r && r !== "deferred" && r.sent);
   const f = a.outbox.shift();
-  a.sync.onSheet({ type: "ack", n: f.n, ok: false, code: "invalid", detail: { reason: "fixture" } });
-  assert.ok(a.sync.snapshot().canUndo, "the entry is not used up by a refusal");
-  a.sync.dismiss(a.sync.snapshot().attention[0].id);
-  assert.ok((a.sync.undo() as any).sent);
+  a.sync.onSheet({ type: "ack", n: f.n, ok: false, code: "sheet_name_taken", detail: { name: "明细" } });
+  const [att] = a.sync.snapshot().attention;
+  setLocale("zh-Hans");
+  assert.equal(attentionText(att, 1), "已有名为「明细」的工作表（名称不区分大小写）。 这一步撤销没有完成；再按撤销会撤销更早的修改。");
+  setLocale("en");
+  assert.ok(/undo again/.test(attentionText(att, 1)));
+  setLocale("zh-Hans");
+  assert.ok((a.sync.undo() as any).sent, "not the same refusal again: the older change");
   pump(room);
-  assert.equal(cellOf(room.content, "D1"), undefined);
+  assert.equal(cellOf(room.content, "C1"), undefined, "the change before the refused one is undone");
+  assert.equal(cellOf(room.content, "D1"), "我的", "the refused one is left as it is");
 });
 
 test("H6 / H7 / H2: a conflict in a group names the cell it is about, offers my value, and lists what else changed", () => {
@@ -557,7 +563,7 @@ test("H6 / H7 / H2: a conflict in a group names the cell it is about, offers my 
   assert.equal(both.label.ref, "B6");
   assert.deepEqual(both.detail.also.map((c: any) => [c.ref, c.theirs?.v]), [["B7", "李四的B7"]]);
   setLocale("zh-Hans");
-  assert.equal(attentionText(both, 1), "李四 已先修改了 B6（现在是「李四的B6」）。 同一操作里 B7（现在是「李四的B7」） 在你之后也被改过；再发送你的修改会覆盖它们。");
+  assert.equal(attentionText(both, 1), "李四 已先修改了 B6（现在是「李四的B6」）。 同一操作里 B7（李四 改为「李四的B7」） 在你之后也被改过；再发送你的修改会覆盖它们。");
   setLocale("en");
   assert.ok(/B7/.test(attentionText(both, 1)) && !/[一-鿿]/.test(attentionText(both, 1).replace(/李四\S*/g, "")));
   setLocale("zh-Hans");

@@ -1189,3 +1189,21 @@ def test_an_opener_waits_for_every_pending_draft_delete(world, monkeypatch):
     assert hub.delete_draft(key, room.gen - 1) is False, "a DELETE decided before this room was registered leaves its draft"
     assert store.one("SELECT 1 AS x FROM collab_docs WHERE room=?", (key,)) is not None
     b.close()
+
+
+def test_steady_typing_still_writes_the_draft_within_the_bound(world, monkeypatch):
+    """Review of steps 3-5, round 2, item 2: the draft write was a trailing debounce — one second after
+    the last change — so under steady typing (someone always typing within the second) nothing was
+    written, and a process dying meanwhile lost everything since the room opened. Now the draft is
+    written at the latest PERSIST_MAX_WAIT_S after the first change not yet written (document rooms and
+    table rooms share it)."""
+    from synwevo_docs import collab as C
+    monkeypatch.setattr(C, "PERSIST_MAX_WAIT_S", 0.8, raising=False)   # fixture: a short bound (production: 5 s)
+    key = f"template:{world['tid']}"
+    a = _connect(world, "editor")
+    for i in range(9):                                           # a keystroke every 0.25 s for 2 s
+        a.append_text(str(i))
+        time.sleep(0.25)
+    row = world["store"].one("SELECT dirty FROM collab_docs WHERE room=?", (key,))
+    assert row is not None and row["dirty"] == 1, "written while the typing went on"
+    a.close()

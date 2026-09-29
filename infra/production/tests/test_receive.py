@@ -43,6 +43,46 @@ class ReleaseArchiveTests(unittest.TestCase):
             self.assertIn(b'Only deploy', run.stderr)
 
 
+class GracefulStopTests(unittest.TestCase):
+    """Live tables (and documents) are written out when Docs stops: the closing writes of every open
+    room and the shutdown hook's writes. A deploy must stop Docs with SIGTERM and wait for them — a
+    SIGKILL or a zero timeout would lose the edits since the last draft write (docs-sheet-live.md §3)."""
+
+    def test_docs_stops_on_sigterm_with_time_for_its_closing_writes(self):
+        import re
+        text = (SCRIPT.parent / 'compose.yaml').read_text()
+        app = text.split('x-app: &app', 1)[1].split('\nx-', 1)[0]
+        grace = re.search(r'^\s*stop_grace_period:\s*(\d+)s\s*$', app, re.M)
+        self.assertTrue(grace and int(grace.group(1)) >= 60, 'the shared service settings give at least 60 s to stop')
+        self.assertRegex(app, r'(?m)^\s*init:\s*true\s*$')          # tini passes SIGTERM on to uvicorn
+        docs = text.split('\n  docs:\n', 1)[1].split('\n  clamav:', 1)[0]
+        self.assertIn('<<: *app', docs)
+        for part in (app, docs):
+            self.assertNotRegex(part, r'stop_signal|stop_grace_period:\s*0|--timeout-graceful-shutdown')
+
+    def test_a_deploy_stops_the_gateway_then_the_services_gracefully(self):
+        import tempfile, json
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            DeploymentRecoveryTests().data(root)
+            (root / 'config').mkdir()
+            (root / 'current.json').write_text(json.dumps({'image': 'synwevo:old'}))
+            commands = []
+
+            def runner(args, *, image, **kw):
+                commands.append(args[len(module.COMPOSE):])
+            with patch.object(module, 'ROOT', root), patch.object(module, 'run', runner), \
+                    patch.object(module.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 0)):
+                try:
+                    module.promote('synwevo:new')
+                except Exception:
+                    pass                                   # the copy is not made here: only the stop order matters
+            self.assertEqual(commands[0], ['stop', 'gateway'])
+            self.assertEqual(commands[1], ['stop', *module.SERVICES])
+            self.assertFalse([c for c in commands if 'kill' in c or '-t' in c or '--timeout' in c], commands)
+
+
 class DeploymentRecoveryTests(unittest.TestCase):
     def data(self, root):
         import sqlite3

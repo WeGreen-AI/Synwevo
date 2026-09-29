@@ -33,7 +33,13 @@ State layout (``state["content"]`` is what clients mirror; the rest is the serve
              merges  {mid: {sheet, at: [r1, c1, r2, c2] ids}}
              fields  {key: {sheet, kind, at: anchor ids, raw: the field's other attributes}}
     seq      the last accepted operation's number; kseq {object key: [seq, by]}; kfloor
-    sheetw   {sid: {person: seq}} — the last write of each person on each sheet
+    sheetw   {sid: {person: seq}} — the last write of each person on each sheet; sheetc {sid: {client:
+             seq}} — the same per tab (one person's two tabs: a stale delete from one must not hide
+             what the other wrote)
+    wby      {cell value key: person} — who last wrote each cell value in this epoch, kept after the
+             first-writer records are compacted: a refusal names who changed the cells it is about
+    loads    [{id, seq}] — the room's loads of this epoch from storage (the room keeps it): a tab can
+             tell what a load it did not see dropped
     base     {content path: [value at the basis] or []} for every path changed since the basis
     basis    {seq, sheets: [[sid, name]], rows: {sid: [ids]}, cols: {sid: [ids]}} — position → id at
              the last seed / save / outside reconciliation
@@ -866,8 +872,8 @@ class _Tx:
     """One accepted-or-refused unit: every write goes through here so it can be undone as a whole,
     turned into the patch and its inverse, and tracked against the basis."""
 
-    def __init__(self, state: dict, by: str, expect: int | None, cap: int | None = None):
-        self.st, self.by, self.expect = state, by, expect
+    def __init__(self, state: dict, by: str, expect: int | None, cap: int | None = None, client: str | None = None):
+        self.st, self.by, self.expect, self.client = state, by, expect, client
         self.c = state["content"]
         self.cap = _cell_cap() if cap is None else min(_cell_cap(), cap)   # cells the state may hold after this group
         self.seq = state["seq"] + 1
@@ -926,6 +932,14 @@ class _Tx:
         sw = self.st["sheetw"]
         self.undo.append(("w", sid, sw.get(sid, {}).get(self.by)))
         sw.setdefault(sid, {})[self.by] = self.seq
+        if self.client:
+            sc = self.st.setdefault("sheetc", {})
+            self.undo.append(("c", sid, sc.get(sid, {}).get(self.client)))
+            sc.setdefault(sid, {})[self.client] = self.seq
+        if key.startswith("v/"):
+            wb = self.st.setdefault("wby", {})
+            self.undo.append(("b", key, wb.get(key)))
+            wb[key] = self.by
 
     def rollback(self):
         ks, sw = self.st["kseq"], self.st["sheetw"]
@@ -944,6 +958,20 @@ class _Tx:
                     ks.pop(a, None)
                 else:
                     ks[a] = b
+            elif kind == "c":
+                sc = self.st.get("sheetc", {})
+                if b is None:
+                    sc.get(a, {}).pop(self.client, None)
+                    if not sc.get(a, True):
+                        del sc[a]
+                else:
+                    sc[a][self.client] = b
+            elif kind == "b":
+                wb = self.st.get("wby", {})
+                if b is None:
+                    wb.pop(a, None)
+                else:
+                    wb[a] = b
             else:
                 if b is None:
                     sw.get(a, {}).pop(self.by, None)
@@ -1081,6 +1109,10 @@ class _Tx:
         if not self._checking():
             return
         later = [(s, who) for who, s in self.st["sheetw"].get(sid, {}).items() if s > self.expect and who != self.by]
+        if self.client:
+            # the sender's own other tab: what it wrote there after what this one saw is not hidden
+            # by a stale delete either (an undo of a new sheet pressed before that tab's edit arrived)
+            later += [(s, self.by) for c, s in self.st.get("sheetc", {}).get(sid, {}).items() if s > self.expect and c != self.client]
         if later:
             s, who = max(later)
             raise _Refused("conflict", key=f"x/{sid}", theirs={"sheet": sid, "name": self.c["sheets"][sid]["name"]}, by=who, at=s)
@@ -1764,12 +1796,19 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
             return {"ok": False, "code": "resync", "detail": {"reason": "forgotten", "applied": "unknown", "next": rec["hi"] + 1}}
     if expect is not None and (type(expect) is not int or expect < 0 or expect > state["seq"]):
         return {"ok": False, "code": "resync", "detail": {"reason": "unknown_expect", "expect": _echo(expect), "seq": state["seq"]}}
-    tx = _Tx(state, by, expect, max_cells)
+    tx = _Tx(state, by, expect, max_cells, client)
     try:
         _dispatch(tx, op, top=True)
     except _Refused as r:
         tx.rollback()
-        result = {"ok": False, "code": r.code, "detail": r.detail}
+        detail = r.detail
+        if r.code in ("conflict", "resync"):
+            # every cell value the operation writes, and who changed it last (when known): the
+            # person is told who changed what before choosing to send it again
+            named = _cell_writers(state, op)
+            if named:
+                detail = {**detail, "writers": named}
+        result = {"ok": False, "code": r.code, "detail": detail}
     except BaseException:
         tx.rollback()
         raise
@@ -1786,13 +1825,36 @@ def apply(state: dict, op: dict, *, by: str, client: str, n: int, expect: int | 
 
 
 def outcomes(state: dict, client: str) -> dict:
-    """What the room remembers of ``client``'s recent messages: ``{n: true | refusal code}`` (the last
-    ``CLIENT_WINDOW`` numbers). A client resyncing tells from it exactly which of its unanswered
-    messages were applied — never guessing for operations that must not apply twice."""
+    """What the room remembers of ``client``'s recent messages: ``{n: seq | refusal code}`` (the last
+    ``CLIENT_WINDOW`` numbers; an applied message by the sequence number it was answered with). A
+    client resyncing tells from it exactly which of its unanswered messages were applied — never
+    guessing for operations that must not apply twice — and keeps those as acknowledged at that
+    number until a draft write covers them."""
     rec = state["clients"].get(client)
     if rec is None:
         return {}
-    return {k: (True if r.get("ok") else r.get("code")) for k, r in sorted(rec["r"].items(), key=lambda kv: int(kv[0]))}
+    return {k: (r.get("seq", True) if r.get("ok") else r.get("code")) for k, r in sorted(rec["r"].items(), key=lambda kv: int(kv[0]))}
+
+
+MAX_WRITERS = 100
+
+
+def _cell_writers(state: dict, op) -> list:
+    """``[{key, by}]`` for the cell values ``op`` (or its group) writes whose last writer the room knows."""
+    wby = state.get("wby") or {}
+    ops = op.get("ops") if isinstance(op, dict) and op.get("op") == "tx" and isinstance(op.get("ops"), list) else [op]
+    out, seen = [], set()
+    for o in ops:
+        if not isinstance(o, dict) or o.get("op") not in ("set", "clear"):
+            continue
+        key = f"v/{o.get('sheet')}/{o.get('row')}:{o.get('col')}"
+        if key in seen or not isinstance(wby.get(key), str):
+            continue
+        seen.add(key)
+        out.append({"key": key, "by": wby[key]})
+        if len(out) >= MAX_WRITERS:
+            break
+    return out
 
 
 def compact(state: dict, *, upto: int):
@@ -1806,6 +1868,7 @@ def compact(state: dict, *, upto: int):
     keep_after = min(upto, state["basis"]["seq"])
     state["kseq"] = {k: v for k, v in state["kseq"].items() if v[0] > keep_after}
     state["sheetw"] = {sid: kept for sid, w in state["sheetw"].items() if (kept := {p: s for p, s in w.items() if s > keep_after})}
+    state["sheetc"] = {sid: kept for sid, w in (state.get("sheetc") or {}).items() if (kept := {c: s for c, s in w.items() if s > keep_after})}
     state["kfloor"] = upto
 
 
@@ -1910,6 +1973,11 @@ def mark_saved(state: dict, snap: dict) -> dict:
         state["seq"] = tx.seq
     for sid in purge:
         state["sheetw"].pop(sid, None)
+        (state.get("sheetc") or {}).pop(sid, None)
+    if purge:
+        wby = state.get("wby") or {}
+        for key in [k for k in wby if k.split("/", 2)[1] in purge]:
+            del wby[key]
     saved = _copy(snap["content"])
     for sid in purge:
         sh = saved["sheets"].pop(sid)
@@ -2295,6 +2363,8 @@ def reconcile(state: dict, current_editor: dict, *, by: str) -> dict:
         for path, old, new in changes:
             for key, sid in _changed_keys(path, old, new):
                 state["kseq"][key] = [seq, by]
+                if key.startswith("v/"):
+                    state.setdefault("wby", {})[key] = by
                 if sid:
                     state["sheetw"].setdefault(sid, {})[by] = seq
     state["content"] = new_c
@@ -2302,6 +2372,11 @@ def reconcile(state: dict, current_editor: dict, *, by: str) -> dict:
     state["basis"] = _basis(out_c, state["seq"])
     for sid in [s for s in state["sheetw"] if s not in new_c["sheets"]]:
         del state["sheetw"][sid]
+    for sid in [s for s in (state.get("sheetc") or {}) if s not in new_c["sheets"]]:
+        del state["sheetc"][sid]
+    wby = state.get("wby") or {}
+    for key in [k for k in wby if k.split("/", 2)[1] not in new_c["sheets"]]:
+        del wby[key]
     return {"seq": seq, "patch": patch, "before": before, "overwritten": sorted(overwritten),
             "conflicts": conflicts, "reset": reset}
 

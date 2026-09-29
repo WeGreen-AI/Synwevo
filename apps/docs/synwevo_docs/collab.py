@@ -98,6 +98,10 @@ class RoomBusy(Exception):
 
 
 PERSIST_DELAY_S = 1.0
+# ... and at the latest this long after the first change not yet written: under steady editing (a
+# change every second or faster) a trailing debounce alone would never write, and a process that
+# died meanwhile would lose everything since the room opened (document and table rooms alike)
+PERSIST_MAX_WAIT_S = 5.0
 # The largest frame a client may send. A keystroke is bytes, a paste a few KB, a whole document's
 # sync step well under a megabyte for the templates this editor holds; uvicorn's own ceiling is
 # 16 MiB, which is a lot of memory and fan-out to hand to any writer. Over the limit the connection
@@ -248,6 +252,7 @@ class Room:
         self.pending: list[bytes] = []
         self.sender: Conn | None = None
         self.persist_handle: asyncio.TimerHandle | None = None
+        self.persist_since: float | None = None     # the loop time of the first change not yet written
         self.activity_handle: asyncio.TimerHandle | None = None
         self.changes_rev = 0
         self.blocks = block_texts(self.doc)
@@ -438,13 +443,30 @@ class Room:
 
     # ---- persistence -----------------------------------------------------------------------------
     def schedule_persist(self) -> None:
+        """Write the draft ``PERSIST_DELAY_S`` after the last change, and no later than
+        ``PERSIST_MAX_WAIT_S`` after the first change not yet written."""
         loop = asyncio.get_running_loop()
+        now = loop.time()
+        if self.persist_since is None:
+            self.persist_since = now
         if self.persist_handle is not None:
             self.persist_handle.cancel()
-        self.persist_handle = loop.call_later(PERSIST_DELAY_S, lambda: asyncio.ensure_future(self.persist()))
+        due = min(now + PERSIST_DELAY_S, self.persist_since + PERSIST_MAX_WAIT_S)
+        self.persist_handle = loop.call_at(due, lambda: asyncio.ensure_future(self.persist()))
+
+    def cancel_persist(self) -> None:
+        if self.persist_handle is not None:
+            self.persist_handle.cancel()
+        self.persist_handle = None
+        self.persist_since = None
+
+    def persist_starting(self) -> None:
+        """A draft write takes the state now: a change after this starts the next wait."""
+        self.persist_handle = None
+        self.persist_since = None
 
     async def persist(self) -> None:
-        self.persist_handle = None
+        self.persist_starting()
         try:
             # the state and what the row says about it, taken together
             state, head, dirty = self.doc.get_update(), self.head, self.dirty
@@ -1379,9 +1401,7 @@ class CollabHub:
         closing = None
         with self._rooms_mu:
             if not room.clients and not room.joining:
-                if room.persist_handle is not None:
-                    room.persist_handle.cancel()
-                    room.persist_handle = None
+                room.cancel_persist()
                 if room.activity_handle is not None:
                     room.activity_handle.cancel()
                     room.activity_handle = None

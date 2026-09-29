@@ -71,10 +71,17 @@ const THING: Record<string, string> = { row: "行", col: "列", sheet: "工作�
 
 /** One refusal of the server (or the tab's prediction of it) as a sentence. */
 export function refusalText(code: string, d: Record<string, any>, people: Record<string, Person>, label: OpLabel, sheets = 2): string {
+  const text = refusalCore(code, d, people, label, sheets);
+  // an undo the room refused is set aside: undo again reaches the change before it
+  return d.undo ? text + " " + t("这一步撤销没有完成；再按撤销会撤销更早的修改。") : text;
+}
+
+function refusalCore(code: string, d: Record<string, any>, people: Record<string, Person>, label: OpLabel, sheets: number): string {
   const where = whereText(label, sheets);
   switch (code) {
     case "conflict":
-      return t("{v1} 已先修改了 {v2}（现在是「{v3}」）。", { v1: whoText(people, d.by), v2: where, v3: valueText(d.theirs) }) + alsoText(d, sheets);
+      if (d.self) return t("你在另一个标签页里已先修改了 {v1}（现在是「{v2}」）。", { v1: where, v2: valueText(d.theirs) }) + alsoText(d, people, sheets);
+      return t("{v1} 已先修改了 {v2}（现在是「{v3}」）。", { v1: whoText(people, d.by), v2: where, v3: valueText(d.theirs) }) + alsoText(d, people, sheets);
     case "covered":
       return t("{v1} 在 {v2} 合并的 {v3} 内，只能在合并区域的左上角写入值。", { v1: d.ref || where, v2: whoText(people, d.by), v3: d.range || "" });
     case "merge_overlap":
@@ -102,7 +109,7 @@ export function refusalText(code: string, d: Record<string, any>, people: Record
     case "invalid":
       return invalidText(d, where);
     case "resync":
-      return t("表格在你看到之后已保存并整理过，{v1} 的修改未应用；请确认后再做一次。", { v1: where });
+      return t("表格在你看到之后已保存并整理过，{v1} 的修改未应用；请确认后再做一次。", { v1: where }) + alsoText(d, people, sheets, "since");
     case "read_only":
       return t("你现在只能查看这个模板，{v1} 的修改未应用。", { v1: where });
     case "not_live":
@@ -112,7 +119,7 @@ export function refusalText(code: string, d: Record<string, any>, people: Record
     case "closed":
       return t("实时连接已断开，{v1} 的修改没有同步。", { v1: where });
     case "unknown":
-      return t("无法确认 {v1} 的修改是否已生效（连接中断期间服务器已不记得这个标签页）；请核对后决定是否再做一次。", { v1: where }) + alsoText(d, sheets);
+      return t("无法确认 {v1} 的修改是否已生效（连接中断期间服务器已不记得这个标签页）；请核对后决定是否再做一次。", { v1: where }) + alsoText(d, people, sheets);
     case "lost":
       return t("表格已从已保存的版本重新开始，你在 {v1} 的修改没有保留下来。", { v1: where });
     case "error":
@@ -123,13 +130,20 @@ export function refusalText(code: string, d: Record<string, any>, people: Record
 }
 
 /** The other cells of the same operation someone changed after the person acted: named, with what
- *  they hold now — "use my value" / "do it again" would replace them too. */
-function alsoText(d: Record<string, any>, sheets: number): string {
+ *  they hold now and who changed them — "use my value" / "do it again" would replace them too.
+ *  `since`: the operation as a whole was refused (the room no longer knew what the person had seen),
+ *  so every cell of it is listed, not the others of one. */
+function alsoText(d: Record<string, any>, people: Record<string, Person>, sheets: number, kind: "also" | "since" = "also"): string {
   const also: any[] = Array.isArray(d.also) ? d.also : [];
   if (!also.length) return "";
-  const list = also.slice(0, 6).map((c) => t("{v1}（现在是「{v2}」）", { v1: whereText({ sheet: c.sheet ?? null, ref: c.ref ?? null }, sheets), v2: valueText(c.theirs) })).join(t("、"));
+  const list = also.slice(0, 6).map((c) => {
+    const at = whereText({ sheet: c.sheet ?? null, ref: c.ref ?? null }, sheets);
+    return c.by ? t("{v1}（{v3} 改为「{v2}」）", { v1: at, v2: valueText(c.theirs), v3: whoText(people, c.by) })
+      : t("{v1}（现在是「{v2}」）", { v1: at, v2: valueText(c.theirs) });
+  }).join(t("、"));
   const more = also.length > 6 ? t("等 {count} 处", { count: also.length }) : "";
-  return " " + t("同一操作里 {v1}{v2} 在你之后也被改过；再发送你的修改会覆盖它们。", { v1: list, v2: more });
+  return " " + (kind === "since" ? t("其中 {v1}{v2} 在你之后被改过；再做一次会覆盖它们。", { v1: list, v2: more })
+    : t("同一操作里 {v1}{v2} 在你之后也被改过；再发送你的修改会覆盖它们。", { v1: list, v2: more }));
 }
 
 function placementText(code: string, d: Record<string, any>, people: Record<string, Person>, where: string): string {

@@ -24,11 +24,17 @@ import pytest
 # Suffixes after SYNWEVO_DOCS_ / SYNWEVO_ / DOCWEAVE_ that may pass through: tool locations only.
 TOOL_SETTINGS = frozenset({"SOFFICE", "TESSERACT", "TESSDATA", "CJK_FONTS", "CJK_FONT_FILE",
                            "LO_PROFILE"})
+# ... and the controls of this test run itself, which no product code reads: CI says the real-room
+# client tests must run (`required`: fail instead of skipping without Node) and how many seeds the
+# random ones take. Scrubbed, `required` silently turned into a skip.
+TEST_RUN_SETTINGS = frozenset({"SYNWEVO_SHEET_CLIENTS", "SYNWEVO_SHEET_FUZZ_SEEDS"})
 
 
 def _scrub_ambient_configuration() -> list[str]:
     removed = []
     for key in list(os.environ):
+        if key in TEST_RUN_SETTINGS:
+            continue
         for prefix in ("SYNWEVO_DOCS_", "SYNWEVO_", "DOCWEAVE_"):
             if key.startswith(prefix):
                 if key[len(prefix):] not in TOOL_SETTINGS:

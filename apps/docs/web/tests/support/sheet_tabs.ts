@@ -29,6 +29,8 @@ interface TabRec {
   fates: Map<number, string>;
   ops: Map<number, any>;
   undos: { id: number; op: any; undoneSeq: number; epoch: string }[];
+  /** the message number and client each of its changes the room applied had (matched against the room's log) */
+  appliedN: Map<number, { n: number; client: string | null; epoch: string | null }>;
 }
 const tabs = new Map<string, TabRec>();
 let clock = 1_000_000;
@@ -68,7 +70,7 @@ P.undo = function () {
 };
 
 function mk(name: string): TabRec {
-  const rec: TabRec = { sync: null as any, out: [], undone: [], fates: new Map(), ops: new Map(), undos: [] };
+  const rec: TabRec = { sync: null as any, out: [], undone: [], fates: new Map(), ops: new Map(), undos: [], appliedN: new Map() };
   rec.sync = new SheetSync({ send: (f) => rec.out.push(f), now: () => clock, newId });
   (rec.sync as any).__rec = rec;
   rec.sync.onUndone = (r) => rec.undone.push(r);
@@ -180,8 +182,14 @@ function handle(m: any): any {
   // a change undo was pressed on while it was on its way leaves the queue without being applied as
   // itself when it is refused or taken back: what the person asked for
   const undoIds = new Set<number>(s.debugPending().filter((p: any) => p.undoRequested).map((p: any) => p.id));
+  const numbered = new Map<number, number | null>(s.debugPending().map((p: any) => [p.id, p.n]));
+  const client = s.clientId, epoch = s.epoch;
   try { return handleCmd(m, rec, s); } finally {
     for (const id of undoIds) if (!s.pending.some((p: any) => p.id === id) && !rec.fates.has(id)) rec.fates.set(id, "undone");
+    // left the queue without a fate: applied, under the number it was sent with
+    for (const [id, n] of numbered) {
+      if (n !== null && !rec.fates.has(id) && !s.pending.some((p: any) => p.id === id)) rec.appliedN.set(id, { n, client, epoch });
+    }
   }
 }
 
@@ -225,6 +233,7 @@ function handleCmd(m: any, rec: TabRec, s: any): any {
     case "useMine": result = s.useMine(m.id); break;
     case "dismiss": s.dismiss(m.id); break;
     case "state": result = view(rec); break;
+    case "snapshot": { const x = s.snapshot(); result = { pending: x.pending, unpersisted: x.unpersisted, canUndo: x.canUndo, status: x.status }; break; }
     case "fates": {
       const pendingIds = new Set(s.pending.map((p: any) => p.id));
       const out: any[] = [];
@@ -233,6 +242,7 @@ function handleCmd(m: any, rec: TabRec, s: any): any {
       break;
     }
     case "undos": result = rec.undos; break;
+    case "appliedN": result = Object.fromEntries(rec.appliedN); break;
     case "undone": result = rec.undone.splice(0); break;
     case "texts": {
       const out: any = {};
