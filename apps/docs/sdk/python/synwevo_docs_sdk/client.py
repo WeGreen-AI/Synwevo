@@ -218,6 +218,18 @@ class Client:
     def get_project(self, project_id: str) -> dict:
         return self._get(f"{API}/projects/{_q(project_id)}")
 
+    def update_project(self, project_id: str, *, base_settings_rev: int, name: str | None = None,
+                       archived: bool | None = None, output: dict | None = None) -> dict:
+        """Rename, archive/unarchive or change output defaults. ``base_settings_rev`` is the project's
+        ``settings_rev`` you read; someone else's edit since is 409 stale_project. Not retried."""
+        body: dict = {"base_settings_rev": base_settings_rev}
+        for key, value in (("name", name), ("archived", archived), ("output", output)):
+            if value is not None:
+                body[key] = value
+        if self.validate and len(body) == 1:
+            raise ValidationError("give name, archived or output to change", "body")
+        return self._json("PATCH", f"{API}/projects/{_q(project_id)}", json=body, retry_safe=False)
+
     def delete_project(self, project_id: str) -> dict:
         return self._json("DELETE", f"{API}/projects/{_q(project_id)}", retry_safe=True)
 

@@ -528,6 +528,16 @@ export class Client {
   }
   listProjects(query = {}) { return this.paginate('/projects', query); }
   getProject(pid) { return this.get(`/projects/${encodeURIComponent(pid)}`); }
+  /** Rename, archive/unarchive or change output defaults; `baseSettingsRev` is the `settings_rev`
+   *  you read (someone else's edit since is 409 stale_project). Not retried automatically. */
+  updateProject(pid, { baseSettingsRev, name, archived, output } = {}) {
+    if (!Number.isInteger(baseSettingsRev) || baseSettingsRev < 0) throw new ValidationError('baseSettingsRev must be the settings_rev you read', { field: 'base_settings_rev' });
+    const json = { base_settings_rev: baseSettingsRev };
+    if (name != null) json.name = name;
+    if (archived != null) json.archived = archived;
+    if (output != null) json.output = output;
+    return this.requestJson('PATCH', `/projects/${encodeURIComponent(pid)}`, { json, retry: false });
+  }
   deleteProject(pid) { return this.requestJson('DELETE', `/projects/${encodeURIComponent(pid)}`); }
   putRule(pid, rule) { return this.requestJson('PUT', `/projects/${encodeURIComponent(pid)}/rule`, { json: { rule } }); }
   bindTemplate(pid, templateId, { version = null } = {}) {

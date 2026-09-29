@@ -50,7 +50,7 @@
 | 幂等（数据库唯一约束、同键冲突、重放复核） | 已验证 | `idempotency.py`、`jobs.py` | Webhook 创建/轮换/ping/重投拒收幂等键；恢复版本、组织发布无幂等 |
 | OCR 触发 | 已验证 | **API-2** `POST /api/v1/files/{fid}/ocr`（同一服务、未接纳 409、识别槽位 429 `ocr_busy`）；`test_machine_ocr_*`；SDK 实跑 | 同步执行（≤50 页）；超长识别未做成任务 |
 | 上传模板的字段修改/删除 | 已验证 | **API-2** `PATCH`/`DELETE /templates/{tid}/fields/{field_id}`（`base_head` 条件更新）；`test_api_template_fields.py`；SDK 实跑 | 整份定义替换（按定义对账）未做 |
-| 项目改名/归档、规则试算 | 需实现 | 浏览器专有 | 批次 API-2 |
+| 项目改名/归档/输出默认值 | 已验证 | **API-2** `PATCH /api/v1/projects/{pid}`（`base_settings_rev` 必填、同事务）；`test_api_project_settings.py`（4，含 6 路并发） | 规则试算（不保存）仍为浏览器专有 |
 | 跨空间复制（审批）、评论/提及、活动 | 需实现 | 浏览器会话专有 | 批次 API-5 |
 | 组织模板 | 部分 | 只接受委托令牌（成员身份属于人） | 设计如此；服务账户场景待定 |
 

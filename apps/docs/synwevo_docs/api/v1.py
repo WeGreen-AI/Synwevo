@@ -328,7 +328,47 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                        "head": d["head"], "pinned": bool(pinned), "fields": len(slots or [])}
         return {"id": p["id"], "name": p["name"], "created_at": p["created_at"], "updated_at": p["updated_at"],
                 "rule": p.get("record_rule") or {}, "output": p.get("output") or {}, "mapping_rev": p["mapping_rev"],
+                "settings_rev": int(p.get("settings_rev") or 0), "archived_at": p.get("archived_at"),
                 "template": tpl, "files": app_.list_sources(pid), "mappings": len(app_.get_mappings(pid)["mappings"])}
+
+    # Renaming, archiving and output defaults (API-2). The same service as the workbench's project
+    # page; base_settings_rev is required here (it is optional there for old browser tabs), so a
+    # machine client never overwrites a settings change it has not seen.
+    @r.patch("/projects/{pid}", summary="修改项目名称、归档状态或输出默认值（base_settings_rev 必填，不符则 409 stale_project）",
+             openapi_extra=_ox("write", requestBody={"content": {"application/json": {"schema": {
+                 "type": "object", "required": ["base_settings_rev"], "additionalProperties": False, "properties": {
+                     "base_settings_rev": {"type": "integer", "minimum": 0, "description": "读取项目时的 settings_rev"},
+                     "name": {"type": "string", "minLength": 1, "maxLength": 200},
+                     "archived": {"type": "boolean", "description": "归档只从默认列表隐藏，项目照常可用、可恢复"},
+                     "output": {"type": "object", "description": "输出默认值：formats、naming、error_policy、layout"}}}}}}))
+    def patch_project(request: Request, pid: str, body: dict = Body(...)):
+        scope(request, "write")
+        unknown = sorted(set(body) - {"base_settings_rev", "name", "archived", "output"})
+        if unknown:
+            raise ServiceError(400, "invalid", f"不支持修改的项目属性：{unknown[0]}", {"field": unknown[0]})
+        base = body.get("base_settings_rev")
+        if type(base) is not int or base < 0:
+            raise ServiceError(400, "invalid", "base_settings_rev 必须是读取项目时的 settings_rev（非负整数）",
+                               {"field": "base_settings_rev"})
+        values: dict = {"base_settings_rev": base}
+        if "name" in body:
+            name = body["name"]
+            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 200:
+                raise ServiceError(400, "invalid", "项目名称必须是 1 至 200 个字", {"field": "name"})
+            values["name"] = name.strip()
+        if "archived" in body:
+            if type(body["archived"]) is not bool:
+                raise ServiceError(400, "invalid", "archived 必须是布尔值", {"field": "archived"})
+            values["archived"] = body["archived"]
+        if "output" in body:
+            values["output"] = body["output"]
+        if len(values) == 1:
+            raise ServiceError(400, "invalid", "没有要修改的属性", {"field": "body"})
+        # One write transaction: the revision check and the write are one decision, so two clients
+        # that read the same revision cannot both succeed.
+        with store.tx():
+            app_.update_project(pid, values)
+        return get_project(request, pid)
 
     @r.delete("/projects/{pid}", summary="删除项目", openapi_extra=_ox("admin"))
     def delete_project(request: Request, pid: str):

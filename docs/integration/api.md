@@ -166,7 +166,8 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 |---|---|---|---|
 | POST | `/projects` | write | 创建项目 |
 | GET | `/projects` | read | 列表（分页：`offset`、`limit`） |
-| GET | `/projects/{pid}` | read | 详情：模板绑定、规则、来源文件、映射数 |
+| GET | `/projects/{pid}` | read | 详情：模板绑定、规则、来源文件、映射数、`settings_rev`、`archived_at` |
+| PATCH | `/projects/{pid}` | write | `{base_settings_rev, name?, archived?, output?}`：改名、归档/恢复（只从默认列表隐藏，照常可用）、输出默认值；`base_settings_rev` 必填，与当前不符 409 `stale_project`（`details.settings_rev`）；修改检查与写入同一事务，同一版本上的并发修改只有一个成功；其他属性 400 |
 | DELETE | `/projects/{pid}` | admin | 删除项目（软删除，产物保留） |
 | POST | `/projects/{pid}/files` | write | 上传来源文件：`multipart/form-data` 的 `file` 字段；或 JSON `{"path": "..."}`（仅限 `SYNWEVO_DOCS_IMPORT_ROOTS` 下） |
 | GET | `/projects/{pid}/files` | read | 来源文件与解析状态 |

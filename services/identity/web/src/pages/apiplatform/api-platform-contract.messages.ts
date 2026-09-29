@@ -692,6 +692,26 @@ export const contractEntries: [string, string, string][] = [
     "project_id 给出时是否移除映射",
     "Whether to remove the mappings when project_id is given",
     "給出 project_id 時是否移除映射"
+  ],
+  [
+    "修改项目名称、归档状态或输出默认值（base_settings_rev 必填，不符则 409 stale_project）",
+    "Rename a project, archive or restore it, or change its output defaults (base_settings_rev is required; a mismatch is 409 stale_project)",
+    "修改專案名稱、封存狀態或輸出預設值（base_settings_rev 必填，不符則 409 stale_project）"
+  ],
+  [
+    "读取项目时的 settings_rev",
+    "The settings_rev you read from the project",
+    "讀取專案時的 settings_rev"
+  ],
+  [
+    "归档只从默认列表隐藏，项目照常可用、可恢复",
+    "Archiving only hides the project from the default list; it stays usable and can be restored",
+    "封存只從預設清單隱藏，專案照常可用、可恢復"
+  ],
+  [
+    "输出默认值：formats、naming、error_policy、layout",
+    "Output defaults: formats, naming, error_policy, layout",
+    "輸出預設值：formats、naming、error_policy、layout"
   ]
 ];
 registerMessages(Object.fromEntries(contractEntries.map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }])));

@@ -21,6 +21,7 @@ GET /api/v1/whoami | whoami | whoami
 POST /api/v1/projects | create_project | projects create
 GET /api/v1/projects | list_projects,iter_projects | projects list
 GET /api/v1/projects/{pid} | get_project | projects get
+PATCH /api/v1/projects/{pid} | update_project |
 DELETE /api/v1/projects/{pid} | delete_project | projects delete
 PUT /api/v1/projects/{pid}/rule | put_rule | rule put
 PUT /api/v1/projects/{pid}/template | set_project_template | projects template

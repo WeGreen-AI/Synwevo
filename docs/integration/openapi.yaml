@@ -283,6 +283,74 @@ paths:
             - read
         - platformToken:
             - docweave.read
+    patch:
+      tags:
+        - v1
+      summary: 修改项目名称、归档状态或输出默认值（base_settings_rev 必填，不符则 409 stale_project）
+      operationId: patch_project_api_v1_projects__pid__patch
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Pid
+        - $ref: "#/components/parameters/XRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              title: Body
+              required:
+                - base_settings_rev
+              properties:
+                base_settings_rev:
+                  type: integer
+                  minimum: 0
+                  description: 读取项目时的 settings_rev
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                archived:
+                  type: boolean
+                  description: 归档只从默认列表隐藏，项目照常可用、可恢复
+                output:
+                  type: object
+                  description: 输出默认值：formats、naming、error_policy、layout
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
     delete:
       tags:
         - v1
