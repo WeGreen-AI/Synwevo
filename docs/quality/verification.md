@@ -1941,6 +1941,22 @@ PDF 明细区域早有「超出时：视为错误 / 复制本页续写 / 压缩�
 单独重跑 3 次、负载下 12 次、集成套件单独 658 通过均未复现；该测试在上一次合并的全量运行中通过，两次合并都未改复制代码；已交独立代理
 查根因（进行中）。
 
+### 16.92 表格实时协同 B1 ③④⑤（浏览器同步、编辑器、两账户证明）
+
+③ `sheetmodel.ts`/`sheetsync.ts`：与 `collab_sheet.py` 同一套操作语义，约 1 300 步的共享语料由 Python 生成并检入，
+`sheetmodel.test.ts` 逐步重放，`test_sheet_live_corpus.py` 保证语料与 Python 模型一致；④ `SheetEditor` 在房间说「实时」时用同步视图，
+否则仍是 CI-47 模式；⑤ `services/identity/scripts/ui_e2e_sheet_live.py`。
+
+证明（隔离实例 31765/31770，`scratchpad/sheet_live_run.py` 代管该实例的 Docs 进程：数据目录必须是 scratch 路径，重启只动这个进程——
+脚本自带的 `platform.py restart docs` 在未设 `SYNWEVO_DATA_DIR` 时会落到仓库的 `data/`，因此不用）：`SYNWEVO_SHEET_LIVE=1`，
+两个真实账户（桌面 + 390 px 手机），Chrome 与 WebKit 全部通过：互见选区与名字、双向实时修改、同格冲突「用我的值」、离线加 10 行
+回来恰好一次（9 → 19 行）、手机输入期间重启 Docs 进程（0.7 s）后两边回到同一房间且未丢/未重、区域字段与合并冲突以句子拒绝、
+撤销跳过对方之后改过的单元格并说明、保存为 v2 且内容正确、繁体与英文界面无残留、390 px 无横向滚动
+（截图 `scratchpad/sheetlive-shots/`）。开关关闭时同一代码上 `ui_e2e_sheet_collab.py`、`ui_e2e_collab.py` 通过（现有模式不变）。
+合并后预推送 2616 通过、1 跳过；docs-web 111 项。
+
+未验证：同步引擎的独立审查（进行中，是打开开关的门槛）；变更记录与查看者专项（B2）；生产。
+
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 
 | 项 | 本轮完成 | 需要真实条件 |
