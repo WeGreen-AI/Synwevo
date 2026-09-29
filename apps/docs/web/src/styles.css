@@ -126,3 +126,18 @@
 .collab-live-changes > summary { cursor: pointer; color: var(--text-2); }
 .collab-log.compact { max-height: 40vh; overflow: auto; margin-top: 6px; }
 .collab-log.compact li { padding: 4px 0; }
+/* ---- live tables (docs-sheet-live.md §5): where the others are (their colour and name; an initial on
+   phones; dashed while they type), cells they just changed (their colour, ~3 s), sheets with their
+   changes, and what needs the person */
+.gpeer { position: absolute; box-sizing: border-box; border: 2px solid var(--peer-color, var(--accent)); pointer-events: none; z-index: 4; }
+.gpeer.typing { border-style: dashed; }
+.gpeer-name { position: absolute; top: -15px; left: -2px; padding: 0 4px; border-radius: 3px 3px 3px 0; font-size: 10px; line-height: 13px; font-weight: 600; white-space: nowrap; color: var(--paper); background: var(--peer-color, var(--accent)); }
+.gpeer-name .initial { display: none; }
+@media (max-width: 620px) { .gpeer-name .full { display: none; } .gpeer-name .initial { display: inline; } }
+.gcell.recent { box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--peer-color, var(--accent)) 22%, transparent); }
+.tabdot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 5px; vertical-align: 2px; }
+.sheet-attn { flex: none; max-height: 30vh; overflow: auto; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--warn-weak); }
+.sheet-attn-h { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--warn); }
+.sheet-attn ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sheet-attn li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+.sheet-attn li .grow { flex: 1 1 240px; min-width: 0; }

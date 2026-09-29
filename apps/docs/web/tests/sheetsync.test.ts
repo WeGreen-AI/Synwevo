@@ -256,6 +256,26 @@ test("edits made offline are sent on reconnect and applied exactly once", () => 
   assert.deepEqual(a.sync.content, room.content);
 });
 
+test("a reconnected socket carries nothing before its hello, which decides the numbering", () => {
+  const { room, a } = twoTabs();
+  a.sync.submit(set(4, 0, "发出未答"));
+  const inFlight = a.outbox.shift();
+  room.receive(a, inFlight);                          // applied; the answer is lost with the connection
+  a.disconnect();
+  a.sync.submit(set(4, 1, "离线时写的"));
+  a.online = true;
+  a.sync.onOpen();                                    // the socket is up, the hello not here yet
+  assert.equal(a.sync.status(), "offline");
+  a.sync.flush();
+  assert.deepEqual(a.outbox, [], "nothing on a socket that has not been greeted");
+  room.hello(a);
+  pump(room);
+  assert.equal(room.seq, 2, "each applied once");
+  assert.equal(cellOf(room.content, "A5"), "发出未答");
+  assert.equal(cellOf(room.content, "B5"), "离线时写的");
+  assert.deepEqual(a.sync.content, room.content);
+});
+
 test("a message applied just before the connection dropped is not sent again (outcomes say so)", () => {
   const { room, a } = twoTabs();
   a.sync.submit(set(5, 5, "一次"));

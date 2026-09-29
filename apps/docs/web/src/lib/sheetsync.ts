@@ -179,6 +179,8 @@ export class SheetSync {
   seq = 0;
   persisted = 0;
   connected = false;
+  /** this connection's hello has arrived: before it, nothing is sent (it says what became of the queue) */
+  greeted = false;
   helloSeen = false;
   closed: { code: number; reason: string } | null = null;
   limits: Limits | null = null;
@@ -201,7 +203,7 @@ export class SheetSync {
   status(): SyncStatus {
     if (this.closed || (this.helloSeen && !this.live)) return "single";
     if (!this.helloSeen) return "connecting";
-    if (!this.connected) return "offline";
+    if (!this.connected || !this.greeted) return "offline";
     return this.pending.length ? "syncing" : "live";
   }
 
@@ -244,12 +246,14 @@ export class SheetSync {
   whoIs(id: string | null | undefined): Person | null { return id ? this.people.get(id) ?? null : null; }
 
   // ------------------------------------------------------------------ connection
-  /** A socket is up (the hello that follows says what the room is). */
-  onOpen() { this.connected = true; this.wire = []; this.changed(); }
+  /** A socket is up. Nothing is sent on it before its hello, which says what became of the queue
+   *  (outcomes, next): sent earlier, a message could be renumbered by that hello and go twice. */
+  onOpen() { this.connected = true; this.greeted = false; this.wire = []; this.changed(); }
 
   /** The socket is gone: nothing is on the wire any more; the next hello says (outcomes) what became of it. */
   onDisconnect() {
     this.connected = false;
+    this.greeted = false;
     this.wire = [];
     for (const p of this.pending) p.inFlight = false;
     this.changed();
@@ -304,7 +308,7 @@ export class SheetSync {
 
   /** Send what is queued, in order, while connected, not told to wait, and within the window. */
   flush() {
-    if (!this.connected || !this.helloSeen || !this.live || this.closed || !this.epoch) return;
+    if (!this.connected || !this.greeted || !this.live || this.closed || !this.epoch) return;
     if (this.waitUntil > this.now()) return;
     for (const p of this.pending) {
       if (p.inFlight) continue;
@@ -318,7 +322,7 @@ export class SheetSync {
 
   /** Ask for the whole state again (answered with `full`). */
   requestFull() {
-    if (!this.connected) return;
+    if (!this.connected || !this.greeted) return;
     this.wire.push({ kind: "sync" });
     this.send({ type: "sync" });
   }
@@ -362,6 +366,7 @@ export class SheetSync {
   private onHello(h: any) {
     this.helloSeen = true;
     this.connected = true;
+    this.greeted = true;
     this.wire = [];
     if (isDict(h.user) && h.user.id) { this.me = h.user.id; this.people.set(h.user.id, { id: h.user.id, name: h.user.name ?? null, color: h.user.color ?? null }); }
     for (const p of Array.isArray(h.peers) ? h.peers : []) if (isDict(p) && p.id) this.people.set(p.id, { id: p.id, name: p.name ?? null, color: p.color ?? null });
