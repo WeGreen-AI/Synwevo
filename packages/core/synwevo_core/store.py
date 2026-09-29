@@ -811,6 +811,14 @@ class Store:
         # the types it does not know; the trigger keeps writing rows its feed lists with job_id ''.
         from .docs_file_events import SCHEMA_SQL as DOCS_FILE_EVENTS_SCHEMA
         c.executescript(DOCS_FILE_EVENTS_SCHEMA)
+        # API-4 (additive): a person's consent to an integration, and authorization requests parked
+        # for it. Live delegations that predate consent are recorded once as legacy consents so they
+        # can be seen and withdrawn. Rollback: older code never reads either table (it issues codes
+        # without asking, as before); withdrawals already made stay revoked on the tokens.
+        from .oauth_consent import SCHEMA_SQL as OAUTH_CONSENT_SCHEMA, grandfather as consent_grandfather
+        c.executescript(OAUTH_CONSENT_SCHEMA)
+        with self.tx() as t:
+            consent_grandfather(t)
         c.executescript("""
             CREATE TABLE IF NOT EXISTS account_recoveries (
                 id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),

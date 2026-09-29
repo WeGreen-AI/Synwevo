@@ -17,6 +17,7 @@
 | 行为变化 | 新增工作空间合计默认 1 200 次/分钟（`SYNWEVO_API_WORKSPACE_RATE_PER_MIN`）；`RateLimit`/`RateLimit-Policy` 由一项变两项（`"key"` 仍在第一位） |
 | API-2 进度 | **机器 OCR**：`POST /api/v1/files/{fid}/ocr`（与工作台同一服务，未接纳来源 409，识别槽位 2 个/进程、占满 429 `ocr_busy`，浏览器同受约束）；**字段编辑**：`PATCH`/`DELETE /api/v1/templates/{tid}/fields/{field_id}`（`base_head` 必填，重发与并发都得 409 `stale_template`，删除可连带移除本项目映射，内置模板 409）；两个 SDK 各加对应方法；OpenAPI 重新导出（77 个路径）。证据：`test_api_source_operations.py`（68，含真实识别）、`test_api_template_fields.py`（4）、隔离实例用已安装 Python SDK 实跑（扫描件识别 14 词→ready；字段改名 head 2→3；重复旧 head 409；删除 head 4） |
 | API-2 续 | **文件事件** `file.ready/needs_ocr/rejected/failed`（触发器与状态同事务写入，f0cf701）；**项目设置** `PATCH /api/v1/projects/{pid}`（改名/归档/输出默认值，`base_settings_rev` 必填）；任务完成事件不带产物清单是有意的（负载只给计数，产物用凭据读取，撤权即时生效） |
+| API-4 | **OAuth 第三方同意**：API 权限与 offline_access 需本人同意（按客户端 + 工作空间 + 权限记录，暂存请求 10 分钟且只属于发起会话）；同意页（`/oauth/consent`，三语言）；「账户与安全 → 已授权的应用」撤回即撤该客户端在该空间的全部令牌并写安全日志（新日志类 `consent_withdrawn`，恢复备份后重放）；升级前的委托记为旧授权；RFC 7662 自省（只答自己的令牌）；令牌/撤销端点接受 `client_secret_basic`；撤销的刷新令牌不再被说成重放。证据：`test_oauth_consent.py`（10）、身份与集成套件 1 346 passed、隔离实例浏览器实跑（同意页 → 批准 → 令牌调用 200 → 页面撤回 → 401 / 刷新 400、日志条目） |
 | 下一步 | API-2 余项（请求编号已进入任务与 job.created）：事件与投递保留期（数据生命周期 Q4 的一部分，保留期需持有人决定，先做可配置、默认不删）；之后 API-4（OAuth 第三方同意）或 API-3（待 B1-2） |
 
 ## 批次队列
@@ -26,7 +27,7 @@
 | API-1 | 流量与容量策略、调用诊断、凭据页修正 | 本地完成，待推送 | — |
 | API-2 | Docs 自动化缺口：OCR 触发 ✓、上传模板字段修改/删除（`base_head`）✓、项目改名/归档；文件接纳/拒绝事件与任务完成事件带产物清单；事件与投递保留期；任务/事件/投递带 request_id | 进行中 | — |
 | API-3 | 平台管理机器身份：第二资源与 `platform.*` scope、审批与期限；管理只读 API（审计、调用、配额）与低风险写（配额修改）；场景 D | 待办 | 管理员平台 B1-2 委派权限 |
-| API-4 | OAuth 第三方客户端：同意页与已存授权、已连接应用页、自省、`client_secret_basic`；README 更正 | 待办 | — |
+| API-4 | OAuth 第三方客户端：同意页与已存授权、已连接应用页、自省、`client_secret_basic` | 本地完成 | — |
 | API-5 | 成员/邀请/资格机器 API、通知发出、对象卡片与机器人、跨空间复制申请与状态 API；场景 C | 待办 | API-3 的资源模型 |
 | API-6 | 控制台：跨工作空间 Webhook 与投递、任务管理、审计页签、契约差异与弃用；手机卡片化 | 待办 | — |
 | API-7 | 契约类型化（响应模型）、TS 类型声明、SDK 验收进 CI、覆盖清单更新、版本与兼容说明 | 待办 | — |

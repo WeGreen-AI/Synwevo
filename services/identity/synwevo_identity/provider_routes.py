@@ -12,6 +12,8 @@ redirect gets built by accident.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import secrets
 import urllib.parse
@@ -25,6 +27,7 @@ from synwevo_core.store import Store, new_id, now
 
 from synwevo_core import oidc
 from synwevo_core.apps import Apps
+from synwevo_core.oauth_consent import Consents, needed as consent_needed
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliver=None) -> APIRouter:
@@ -38,6 +41,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
     clients = oidc.Clients(store)
     grants = oidc.Grants(store)
     apps = Apps(store, ident)
+    consents = Consents(store)
 
     # ------------------------------------------------------------------ metadata
     @r.get("/.well-known/openid-configuration")
@@ -120,6 +124,21 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
                   object_id=client["app_id"], result="denied", meta={"reason": reason})
             return back(error="access_denied", error_description=reason)
 
+        # Signing in is not consenting: a request for API scopes or offline access needs this
+        # person's stored consent for this client and workspace (API-4). Without it the request is
+        # parked here — every parameter already validated — and the person decides on a page of
+        # this origin. Nothing the client sends later can change what they are shown or approve.
+        if not consents.covers(user["id"], client_id, workspace_id, scope):
+            rid = consents.park(user_id=user["id"], central_session_id=session["id"], client_id=client_id,
+                                redirect_uri=redirect_uri, state=state, scope=scope, nonce=q.get("nonce"),
+                                code_challenge=challenge, code_challenge_method=method or None,
+                                workspace_id=workspace_id, auth_time=session.get("reauth_at") or session["created_at"],
+                                amr=session.get("amr") or "password")
+            audit(request, "oidc.consent_requested", actor_id=user["id"], object_kind="app",
+                  object_id=client["app_id"], result="ok", meta={"client_id": client_id, "scopes": consent_needed(scope)})
+            language = "&" + urllib.parse.urlencode({"lang": locale}) if locale is not None else ""
+            return RedirectResponse(f"/oauth/consent?{urllib.parse.urlencode({'request': rid})}{language}", status_code=303)
+
         code = grants.issue_code(
             client_id=client_id, user_id=user["id"], redirect_uri=redirect_uri, scope=scope,
             nonce=q.get("nonce"), code_challenge=challenge, code_challenge_method=method or None,
@@ -129,6 +148,85 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         audit(request, "oidc.authorize", actor_id=user["id"], object_kind="app",
               object_id=client["app_id"], result="ok", meta={"client_id": client_id})
         return back(code=code)
+
+    # ------------------------------------------------------------------ consent (API-4)
+    def _consent_actor(request: Request) -> tuple[dict, dict]:
+        session = sessions.load(request.cookies.get(COOKIE_NAME), touch=False)
+        if not session:
+            raise ServiceError(401, "unauthorized", "请先登录")
+        user = ident.get_user(session["user_id"])
+        if not user or user["status"] != "active":
+            raise ServiceError(401, "unauthorized", "账户不可用，请重新登录")
+        return session, user
+
+    def _redirect_to(row: dict, **params) -> str:
+        params = {k: v for k, v in params.items() if v is not None}
+        if row.get("state") is not None:
+            params["state"] = row["state"]
+        sep = "&" if urllib.parse.urlparse(row["redirect_uri"]).query else "?"
+        return f"{row['redirect_uri']}{sep}{urllib.parse.urlencode(params)}"
+
+    @r.get("/api/auth/oauth-consent/{rid}")
+    def consent_request(request: Request, rid: str):
+        session, user = _consent_actor(request)
+        row = consents.pending(rid, user_id=user["id"], central_session_id=session["id"])
+        client = clients.get(row["client_id"])
+        if not client:
+            raise ServiceError(410, "consent_expired", "该应用已停用，授权请求不再有效")
+        ws = ident.get_workspace(row["workspace_id"]) if row.get("workspace_id") else None
+        existing = consents.active(user["id"], row["client_id"], row.get("workspace_id"))
+        wanted = consent_needed(row["scope"])
+        return {"id": rid, "client": {"id": client["client_id"], "name": client["name"], "app_id": client["app_id"]},
+                "scopes": wanted, "already_granted": sorted(set(wanted) & set((existing or {}).get("scopes") or [])),
+                "identity_scopes": sorted(set(row["scope"].split()) - set(wanted)),
+                "workspace": {"id": ws["id"], "name": ws["name"]} if ws else None,
+                "redirect_host": urllib.parse.urlparse(row["redirect_uri"]).netloc, "expires_at": row["expires_at"]}
+
+    @r.post("/api/auth/oauth-consent/{rid}/{decision}")
+    def consent_decide(request: Request, rid: str, decision: str):
+        if decision not in ("approve", "deny"):
+            raise ServiceError(404, "not_found", "页面不存在")
+        session, user = _consent_actor(request)
+        with store.tx() as c:
+            row = consents.pending(rid, user_id=user["id"], central_session_id=session["id"], c=c)
+            client = clients.get(row["client_id"])
+            if not client:
+                raise ServiceError(410, "consent_expired", "该应用已停用，授权请求不再有效")
+            if not consents.decide(c, rid, decision):
+                raise ServiceError(409, "consent_decided", "这个授权请求已经处理过了")
+            if decision == "deny":
+                audit(request, "oidc.consent_denied", actor_id=user["id"], object_kind="app", object_id=client["app_id"],
+                      result="ok", meta={"client_id": client["client_id"]})
+                return {"redirect": _redirect_to(row, error="access_denied", error_description="the person declined")}
+            # The entitlement may have changed while the page was open: ask again, now.
+            entitled, workspace_id, reason = apps.check_access(user["id"], client["app_id"], row.get("workspace_id"))
+            if not entitled or workspace_id != row.get("workspace_id"):
+                return {"redirect": _redirect_to(row, error="access_denied", error_description=reason or "workspace changed")}
+            consents.grant(c, user["id"], client["client_id"], workspace_id, consent_needed(row["scope"]))
+            code = grants.issue_code(client_id=client["client_id"], user_id=user["id"], redirect_uri=row["redirect_uri"],
+                                     scope=row["scope"], nonce=row["nonce"], code_challenge=row["code_challenge"],
+                                     code_challenge_method=row["code_challenge_method"], auth_time=row["auth_time"],
+                                     amr=row["amr"] or "password", central_session_id=session["id"], workspace_id=workspace_id)
+        audit(request, "oidc.consent_granted", actor_id=user["id"], object_kind="app", object_id=client["app_id"],
+              result="ok", meta={"client_id": client["client_id"], "scopes": consent_needed(row["scope"])})
+        return {"redirect": _redirect_to(row, code=code)}
+
+    @r.get("/api/auth/connected-apps")
+    def connected_apps(request: Request):
+        _, user = _consent_actor(request)
+        return {"items": [{"id": c["id"], "client": {"id": c["client_id"], "name": c["client_name"], "app_id": c["app_id"]},
+                           "workspace": {"id": c["workspace_id"], "name": c["workspace_name"]} if c["workspace_id"] else None,
+                           "scopes": c["scopes"], "source": c["source"], "granted_at": c["granted_at"],
+                           "last_issued_at": c["last_issued_at"]} for c in consents.list_for_user(user["id"])]}
+
+    @r.post("/api/auth/connected-apps/{consent_id}/revoke")
+    def connected_app_revoke(request: Request, consent_id: str):
+        _, user = _consent_actor(request)
+        out = consents.withdraw(user["id"], consent_id)
+        audit(request, "oidc.consent_withdrawn", actor_id=user["id"], object_kind="oauth_client",
+              object_id=out["client_id"], workspace_id=out["workspace_id"], result="ok",
+              meta={"tokens_revoked": out["tokens_revoked"]})
+        return out
 
     # ------------------------------------------------------------------ token
     def _target(client: dict, resources: list[str] | None) -> tuple[str | None, JSONResponse | None]:
@@ -155,6 +253,45 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
                                       status_code=400)
         return wanted[0], None
 
+    # ------------------------------------------------------------------ client authentication
+    def _client_auth(request: Request, form_id: str | None, form_secret: str | None,
+                     *, confidential: bool = False) -> tuple[dict | None, JSONResponse | None]:
+        """The calling client: `client_secret_post` (form) or `client_secret_basic` (RFC 6749 §2.3.1:
+        form-urlencoded id and secret in an HTTP Basic header). One method per request — both is
+        refused — and a Basic id that disagrees with a form `client_id` is not this client."""
+        def refuse(code="invalid_client", status=401):
+            headers = {"WWW-Authenticate": 'Basic realm="synwevo-oidc"'} if status == 401 else None
+            return None, JSONResponse({"error": code}, status_code=status, headers=headers)
+
+        header = request.headers.get("authorization") or ""
+        basic_id = basic_secret = None
+        if header[:6].lower() == "basic ":
+            try:
+                raw = base64.b64decode(header[6:].strip(), validate=True).decode("utf-8")
+                left, sep, right = raw.partition(":")
+                if not sep:
+                    return refuse()
+                basic_id, basic_secret = urllib.parse.unquote_plus(left), urllib.parse.unquote_plus(right)
+            except (binascii.Error, UnicodeDecodeError):
+                return refuse()
+            if form_secret is not None:
+                return refuse("invalid_request", 400)
+            if form_id is not None and form_id != basic_id:
+                return refuse()
+        client = clients.get((basic_id if basic_id is not None else form_id) or "")
+        if not client:
+            return refuse()
+        secret = basic_secret if basic_id is not None else form_secret
+        if client["token_endpoint_auth_method"] == "none":
+            # A public client has no secret to check (anything sent is ignored, as before); it may
+            # not use endpoints that exist only for confidential clients.
+            if confidential:
+                return refuse()
+            return client, None
+        if not clients.check_secret(client["client_id"], secret or ""):
+            return refuse()
+        return client, None
+
     @r.post("/oidc/token")
     def token(request: Request,
               grant_type: str = Form(...), code: str = Form(None), redirect_uri: str = Form(None),
@@ -164,12 +301,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         """Deliberately cookie-blind. Credentials come from the request body, never the browser."""
         if grant_type not in ("authorization_code", "refresh_token", "client_credentials"):
             return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
-        client = clients.get(client_id or "")
-        if not client:
-            return JSONResponse({"error": "invalid_client"}, status_code=401)
-        if client["token_endpoint_auth_method"] != "none":
-            if not clients.check_secret(client["client_id"], client_secret or ""):
-                return JSONResponse({"error": "invalid_client"}, status_code=401)
+        client, refused = _client_auth(request, client_id, client_secret)
+        if refused:
+            return refused
         audience, bad_target = _target(client, resource)
         if bad_target:
             return bad_target
@@ -325,18 +459,52 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
     @r.post("/oidc/revoke")
     def revoke(request: Request, token: str = Form(...), client_id: str = Form(None),
                client_secret: str = Form(None)):
-        client = clients.get(client_id or "")
-        if not client:
-            return JSONResponse({"error": "invalid_client"}, status_code=401)
-        if client["token_endpoint_auth_method"] != "none" and \
-                not clients.check_secret(client["client_id"], client_secret or ""):
-            return JSONResponse({"error": "invalid_client"}, status_code=401)
+        client, refused = _client_auth(request, client_id, client_secret)
+        if refused:
+            return refused
         # RFC 7009 §2.1: only a token issued to this client. Revoking anyone's token through any
         # client identity is not what the endpoint promises, even if the holder could.
         grants.revoke_token(token, "client_revoked", client_id=client["client_id"])
         # RFC 7009: an unknown token is still a success. Distinguishing them would turn this
         # endpoint into an oracle for whether a token is valid.
         return JSONResponse({}, status_code=200)
+
+    @r.post("/oidc/introspect")
+    def introspect(request: Request, token: str = Form(...), token_type_hint: str = Form(None),
+                   client_id: str = Form(None), client_secret: str = Form(None)):
+        """RFC 7662 for confidential clients, about their own tokens only: another client's token
+        answers exactly like an unknown one, so the endpoint is no oracle for tokens it did not issue
+        to the caller. `active` is decided now — revocation, expiry, a disabled client, and for a
+        person's token their account status — not by what the token said when it was issued."""
+        client, refused = _client_auth(request, client_id, client_secret, confidential=True)
+        if refused:
+            return refused
+        inactive = JSONResponse({"active": False}, headers={"Cache-Control": "no-store"})
+        digest = oidc._sha(token or "")
+        order = ("refresh_hash", "access_hash") if token_type_hint == "refresh_token" else ("access_hash", "refresh_hash")
+        row, kind = None, None
+        for column in order:
+            row = store.one(f"SELECT * FROM oauth_tokens WHERE {column}=?", (digest,))
+            if row:
+                kind = column
+                break
+        t = now()
+        if not row or row["client_id"] != client["client_id"] or row.get("revoked_at"):
+            return inactive
+        exp = row["access_expires_at"] if kind == "access_hash" else row["refresh_expires_at"]
+        if not exp or exp <= t or clients.get(row["client_id"]) is None:
+            return inactive
+        if row.get("user_id"):
+            u = ident.get_user(row["user_id"])
+            if not u or u["status"] != "active":
+                return inactive
+        body = {"active": True, "scope": row["scope"], "client_id": row["client_id"],
+                "token_type": "Bearer" if kind == "access_hash" else "refresh_token",
+                "sub": row.get("user_id") or row["client_id"], "aud": row.get("audience"),
+                "iss": oidc.issuer(), "exp": int(exp), "iat": int(row["issued_at"])}
+        if row.get("workspace_id"):
+            body["workspace_id"] = row["workspace_id"]
+        return JSONResponse({k: v for k, v in body.items() if v is not None}, headers={"Cache-Control": "no-store"})
 
     # ------------------------------------------------------------------ logout
     def _end_central_session(request: Request, session: dict, reason: str) -> dict:

@@ -1052,7 +1052,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             apply_security_headers(request, resp)
             if path.startswith("/api/"):
                 resp.headers.setdefault("Cache-Control", "no-store")
-            if path.startswith(("/api/", "/auth/", "/oidc/", "/account", "/admin", "/organizations", "/messages", "/c/")) or path in (
+            if path.startswith(("/api/", "/auth/", "/oidc/", "/oauth/", "/account", "/admin", "/organizations", "/messages", "/c/")) or path in (
                     "/login", "/register", "/invite", "/verify-email", "/forgot-password", "/reset-password", "/onboarding", "/logged-out"):
                 resp.headers.setdefault("Cache-Control", "no-store")
                 resp.headers.setdefault("X-Robots-Tag", "noindex, nofollow")

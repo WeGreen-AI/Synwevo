@@ -26,3 +26,6 @@
   .account-fields { grid-template-columns: minmax(0, 1fr); }
   .account-hero { align-items: flex-start; }
 }
+.connected-app { padding: 12px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.connected-app ul, .consent-page ul { margin: 0; padding-inline-start: 20px; }
+.consent-page { width: min(560px, 100%); margin: 0 auto; padding: 32px 16px; }

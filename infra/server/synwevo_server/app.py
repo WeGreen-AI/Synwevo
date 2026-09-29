@@ -9,7 +9,7 @@ from synwevo_core.http import (build_platform, install as install_platform, inst
 
 ACCOUNT_SHELL_PATHS = ("/login", "/register", "/verify-email", "/onboarding", "/organizations",
                        "/account", "/invite", "/forgot-password", "/reset-password",
-                       "/logged-out", "/admin")
+                       "/logged-out", "/admin", "/oauth")
 #: On `all` the messages shell shares the origin with the workbench and the account pages: it owns
 #: the conversation list (`/messages`, the address it had on the account origin) and the thread
 #: deep links (`/c/<cid>`, the address it has on its own origin) and the object entry

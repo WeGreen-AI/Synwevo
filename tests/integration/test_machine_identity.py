@@ -22,6 +22,7 @@ from synwevo_core.identity import Identity
 from synwevo_core import oidc
 from synwevo_core.apps import Apps, bootstrap_docs_app
 from synwevo_core.store import Store
+from services.identity.tests.oauth_consent_helper import through_consent
 
 PW = "a-sufficiently-long-passphrase"
 REDIRECT = "http://docweave.localhost:8765/auth/callback"
@@ -72,7 +73,7 @@ def delegated_token(env, scope: str = "openid docweave.read docweave.write") -> 
     ch = base64.urlsafe_b64encode(hashlib.sha256(v.encode()).digest()).rstrip(b"=").decode()
     q = {"client_id": "docweave-web", "redirect_uri": REDIRECT, "response_type": "code",
          "scope": scope, "state": "s", "code_challenge": ch, "code_challenge_method": "S256"}
-    r = c.get("/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False)
+    r = through_consent(c, c.get("/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False))
     loc = urllib.parse.urlparse(r.headers["location"])
     code = dict(urllib.parse.parse_qsl(loc.query))["code"]
     out = c.post("/oidc/token", data={"grant_type": "authorization_code", "code": code,

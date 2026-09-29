@@ -17,6 +17,7 @@ from synwevo_core.apps import Apps, bootstrap_docs_app
 from synwevo_core.identity import Identity
 from synwevo_core.organizations import Organizations
 from synwevo_core.store import Store
+from services.identity.tests.oauth_consent_helper import through_consent
 
 PW = "a-sufficiently-long-passphrase"
 REDIRECT = "http://docweave.localhost:8765/auth/callback"
@@ -64,7 +65,7 @@ def delegated(env, email: str, workspace_id: str) -> str:
     ch = base64.urlsafe_b64encode(hashlib.sha256(v.encode()).digest()).rstrip(b"=").decode()
     q = {"client_id": "docweave-web", "redirect_uri": REDIRECT, "response_type": "code", "scope": "openid docweave.read docweave.write",
          "state": "s", "code_challenge": ch, "code_challenge_method": "S256", "workspace_id": workspace_id}
-    r = c.get("/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False)
+    r = through_consent(c, c.get("/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False))
     assert r.status_code in (302, 303), r.text
     code = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(r.headers["location"]).query))["code"]
     out = c.post("/oidc/token", data={"grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT, "client_id": "docweave-web", "code_verifier": v})
