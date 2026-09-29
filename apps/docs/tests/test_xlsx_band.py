@@ -589,6 +589,81 @@ def test_libreoffice_agrees_with_the_filled_down_running_balance():
     assert [lo[r].value for r in ("G5", "G6", "G10")] == [ours[r].value for r in ("G5", "G6", "G10")] == [5, 8, 10]
 
 
+def _section_template(extra) -> bytes:
+    """Order header row 3 (B3 order no., D3 the order's discount — both block columns), line header
+    row 4, line row 5 (B quantity, C price), subtotal row 6."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "对账单"
+    ws["A3"], ws["B3"], ws["C3"], ws["D3"] = "订单号：", "O-0", "折扣：", 0
+    ws["A4"], ws["B4"], ws["C4"] = "品名", "数量", "单价"
+    ws["A5"], ws["B5"], ws["C5"] = "示例", 1, 1
+    ws["A6"], ws["B6"] = "小计", "=SUM(B5:B5)"
+    extra(ws)
+    b = io.BytesIO()
+    wb.save(b)
+    return b.getvalue()
+
+
+def _sections(work):
+    work, rep = _detail(work)
+    band = {**_band(), "columns": [{"key": "c0", "name": "订单号", "cell": "B3"}, {"key": "c1", "name": "折扣", "cell": "D3"}]}
+    line = lambda n, q, p: {"c0": V.text(n), "c1": V.from_python(q), "c2": V.from_python(p)}  # noqa: E731
+    groups = [[line("甲", 2, 10), line("乙", 1, 20), line("丙", 3, 10)], [line("丁", 4, 10)]]
+    values = {band["id"]: {"kind": "rows", "rows": [{"c0": V.text("A-1"), "c1": V.from_python(0.1)},
+                                                   {"c0": V.text("A-2"), "c1": V.from_python(0.5)}], "sections": ["A-1", "A-2"]},
+              rep["id"]: {"kind": "rows", "rows": [r for g in groups for r in g], "groups": groups}}
+    return T.xlsx_fill(work, [band, rep], values)
+
+
+def test_a_line_using_its_orders_header_row_reads_its_own_copys_header():
+    """Round 2, item 2: the fill-down also moved references to the block's other rows above the
+    line — `=B5*C5*(1-D3)` (D3 the order's discount, a block column) became `(1-D4)`, `(1-D5)` on the
+    second and third lines. Only the row directly above the detail row is filled down now."""
+    out, issues = _sections(_section_template(lambda ws: ws.__setitem__("E5", "=B5*C5*(1-D3)")))
+    assert not [i for i in issues if i["level"] == "error"], issues
+    ws = _book(out)["对账单"]
+    assert [ws[f"E{r}"].value for r in (5, 6, 7, 11)] == ["=B5*C5*(1-D3)", "=B6*C6*(1-D3)", "=B7*C7*(1-D3)", "=B11*C11*(1-D9)"]
+    calc = _book(out, data_only=True)["对账单"]
+    assert [round(calc[f"E{r}"].value, 9) for r in (5, 6, 7, 11)] == [18, 18, 27, 20]
+
+
+def test_a_range_over_the_detail_row_with_an_absolute_end_is_the_sections_list():
+    """Round 2, item 1 inside a block: `$B$5:$B$5` on a line meant the section's first line only —
+    a share of 1 and 3 instead of 0.25 and 0.75, RANK #N/A. It is the section's whole list now."""
+    def extra(ws):
+        ws["E5"], ws["F5"] = "=B5/SUM($B$5:$B$5)", "=RANK(B5,$B$5:$B$5)"
+        ws["G5"] = "=SUM($B$5:B5)"                         # relative end: still the running total
+    out, issues = _sections(_section_template(extra))
+    assert not [i for i in issues if i["level"] == "error"], issues
+    ws = _book(out)["对账单"]
+    assert [ws[f"E{r}"].value for r in (5, 7, 11)] == ["=B5/SUM($B$5:$B$7)", "=B7/SUM($B$5:$B$7)", "=B11/SUM($B$11:$B$11)"]
+    calc = _book(out, data_only=True)["对账单"]
+    assert [round(calc[f"E{r}"].value, 9) for r in (5, 6, 7, 11)] == [round(x, 9) for x in (2 / 6, 1 / 6, 3 / 6, 1)]
+    assert [calc[f"F{r}"].value for r in (5, 6, 7, 11)] == [2, 3, 1, 1]
+    assert [calc[f"G{r}"].value for r in (5, 6, 7, 11)] == [2, 3, 6, 4]
+
+
+@soffice
+def test_libreoffice_agrees_with_section_lists_and_header_values():
+    from synwevo_docs.engine.converters import recalc_xlsx
+
+    def extra(ws):
+        ws["E5"], ws["F5"], ws["G5"] = "=B5*C5*(1-D3)", "=B5/SUM($B$5:$B$5)", "=RANK(B5,$B$5:$B$5)"
+    out, _ = _sections(_section_template(extra))
+    lo = openpyxl.load_workbook(io.BytesIO(recalc_xlsx(out)), data_only=True)["对账单"]
+    ours = _book(out, data_only=True)["对账单"]
+    for col in "EFG":
+        for r in (5, 6, 7, 11):
+            assert lo[f"{col}{r}"].value == pytest.approx(ours[f"{col}{r}"].value), f"{col}{r}"
+    assert [lo[f"E{r}"].value for r in (5, 6, 7, 11)] == pytest.approx([18, 18, 27, 20])
+
+
+def test_a_rule_on_the_line_looking_at_its_orders_header_stays_on_that_copys_header():
+    out, _ = _sections(_section_template(lambda ws: ws.conditional_formatting.add("B5", FormulaRule(formula=["B5>D3*10"]))))
+    assert [(sq, f) for sq, f, _ in _rules_of(out)] == [("B5:B7", ["B5>D$3*10"]), ("B11", ["B11>D$9*10"])]
+
+
 def _rules_of(out) -> list[tuple[str, list[str], str]]:
     """(sqref, formulas, priority) of each conditional format rule, in the file's order."""
     root = etree.fromstring(zipfile.ZipFile(io.BytesIO(out)).read("xl/worksheets/sheet1.xml"))

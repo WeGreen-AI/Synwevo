@@ -9,10 +9,13 @@ How references follow the copies (block = rows b1..b2, 1-based):
 
 * a formula inside the block that points inside it follows its own copy — a range ending on a
   detail row ends on that copy's last detail row, so a block subtotal covers only its own lines;
-  on a detail row, a relative reference to its own row stays on the same line, an absolute one
-  (``$5``) points at the copy's first line, and a relative reference to a row above it in the
-  block is filled down like Excel does (line i looks at line i-1; the first line at the row above
-  the detail row) — running balances such as ``N(C4)+B5`` work as in a single detail row;
+  on a detail row, a relative reference to its own row stays on the same line, an absolute single
+  cell (``$B$5``) is the copy's first line, a range whose end row is absolute (``$B$5:$B$5``) is
+  the copy's whole list of lines (as a single detail row's grows over all lines), and a relative
+  reference to the row directly above the detail row is filled down (line i looks at line i-1, the
+  first line at that row) — running balances such as ``N(C4)+B5`` work as in a single detail row;
+  references to other rows of the block (a header row holding a block column, say) stay on the
+  copy's own row;
 * a formula inside the block that points outside it stays where it points, with or without
   ``$`` (rows below the block move by the rows inserted) — unlike a single detail row, which
   keeps Excel's fill-down behaviour;
@@ -590,15 +593,19 @@ class Layout:
     def map(self, k: int, r: int, which: str, host: tuple[int, int] | None = None, absolute: bool = False) -> int | None:
         """Row ``r`` of the template block in copy k, as the ``which`` end of a reference
         ("start", "end" or "single"); ``host``: (detail index, line) of the cell writing it.
-        From a detail line, a relative reference to a row above the detail row is filled down:
-        line j looks j rows further (the previous line, or the row above for the first line)."""
+        From a detail line: a relative reference to its own row is that line; an absolute one is the
+        copy's first line, or its last as the end of a range (the whole list); a relative reference
+        to the row directly above the detail row is filled down (line j looks at line j-1, the first
+        line at that row). Other rows are the copy's own, for every line."""
         i = self.idx.get(r)
         if i is None:
-            if host is not None and not absolute and r < self.details[host[0]]:
+            if host is not None and not absolute and r == self.details[host[0]] - 1:
                 return self.row(k, r) + host[1]
             return self.row(k, r)
         if host is not None and host[0] == i:
-            return self.first(k, i) + (0 if absolute else host[1])
+            if not absolute:
+                return self.first(k, i) + host[1]
+            return self.last(k, i) if which == "end" else self.first(k, i)
         if self.m[k][i] == 0:
             if which == "single":
                 return None
@@ -607,11 +614,12 @@ class Layout:
 
     def follows_line(self, r: int, host, absolute: bool) -> bool:
         """Whether a reference end at template row ``r``, written on detail line ``host``, moves
-        with the line (its own row, or a row above it — filled down) rather than staying put."""
+        with the line (its own row, or the row directly above it — filled down) rather than
+        staying put."""
         if host is None or absolute:
             return False
         d = self.details[host[0]]
-        return r == d or (r < d and r not in self.idx)
+        return r == d or (r == d - 1 and r not in self.idx)
 
     def span(self, k: int, ref: Ref, host=None) -> tuple[int, int] | None:
         if ref.b is None:
