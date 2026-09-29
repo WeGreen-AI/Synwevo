@@ -25,7 +25,13 @@ docs/security/file-acceptance.md §8 is the operator's description:
   (or missing content) is reported and changes nothing. One scan per digest per run.
 * **Verdicts.** ``clean`` changes only the scan record (``rescan: true``); ``infected`` rejects
   every row that shares the bytes and moves them to `synwevo_core.quarantine`; ``error`` and
-  ``too_large`` record the attempt and leave the row as it was.
+  ``too_large`` record the attempt and leave the row as it was. ``encrypted`` (password-protected:
+  the engine cannot look inside, §8.7) is **not** malware and does **not** change access: the row
+  keeps its state, the record says ``encrypted`` with ``rescan: true`` and ``access: unchanged``
+  (so the upload gate's refusal, `malware.encrypted_refusal`, does not apply to it), the summary
+  lists the ids and the exit status is 1 — withdrawing a file people have been using for weeks is
+  its owner's decision, not the command's. Such rows are not selected again; a new upload of the
+  same bytes is refused by the gate as usual.
 * **Refusing to guess.** A scanner that is off or unreachable at the start ends the command with
   exit status 3 before anything is read or written; one that goes away mid-run stops it there.
 * **Output.** Ids, digests, sizes, signatures and counts — never file names, contents or other
@@ -47,7 +53,8 @@ from . import malware as M
 from . import quarantine as Q
 from .store import Store
 
-#: Scan statuses a rescan may act on. `None`/"" is "no record" (read as `unscanned`).
+#: Scan statuses a rescan may act on. `None`/"" is "no record" (read as `unscanned`). `encrypted`
+#: is an answer, like `clean`: the row is not looked at again.
 SELECTABLE = frozenset({None, "", "unscanned", "not_configured", "error", "too_large"})
 NEVER_TRIED = frozenset({None, "", "unscanned", "not_configured"})
 
@@ -59,12 +66,17 @@ OUTCOME_WORDS = {
     "applied": "已有隔离结论：已拒绝",
     "error": "扫描出错：状态未改，下次运行重试",
     "too_large": "超过扫描上限：未检查，状态未改",
+    "encrypted": "设有密码或含有加密内容：无法检查，不是恶意软件；访问未改，由所有者决定",
     "mismatch": "内容与记录的摘要不符：未改动",
     "missing": "内容不在存储中：未改动",
     "changed": "扫描期间被改动：未写入，下次运行重试",
 }
 #: Outcomes that make the exit status non-zero: someone should look.
-ATTENTION = frozenset({"infected", "applied", "error", "mismatch", "missing"})
+ATTENTION = frozenset({"infected", "applied", "error", "mismatch", "missing", "encrypted"})
+#: What the summary says once about encrypted findings (docs/security/file-acceptance.md §8.1).
+ENCRYPTED_NOTE = ("设有密码或含有加密内容的文件无法检查，也不能当作干净：本次只记下了结论（scan.status=encrypted，access=unchanged），"
+                  "没有改变任何访问。它们是扫描上线前存入、成员已在使用的文件；是否撤回、通知上传者或要求去掉密码后重新上传，"
+                  "由所有者决定（docs/security/file-acceptance.md §8.1）。同样的字节再上传会被上传闸门拒绝。")
 
 
 def scan_status(rec) -> str | None:
@@ -103,6 +115,25 @@ def clean_record(res: M.ScanResult, sha: str, prev, **extra) -> dict:
 def infected_record(signature: str | None, engine: str | None, sha: str) -> dict:
     return {"status": "infected", "signature": signature, "engine": engine, "sha256": sha,
             "checked_at": time.time(), "rescan": True, "quarantined": True}
+
+
+def encrypted_record(v: "Verdict", sha: str, prev, **extra) -> dict:
+    """A rescan's finding that stored bytes are password-protected (or could not be checked):
+    recorded, access unchanged."""
+    res = v.result
+    rec = {"status": "encrypted", "reason": v.reason, "signature": v.signature, "sha256": sha, "engine": v.engine,
+           "checked": getattr(res, "checked", None), "detail": getattr(res, "detail", None),
+           "checked_at": time.time(), "rescan": True, "access": "unchanged", "previous": previous_status(prev), **extra}
+    return {k: val for k, val in rec.items() if val is not None}
+
+
+def encrypted_detail(v: "Verdict") -> str:
+    """The summary's words for an encrypted finding: the kind, and whether it was a password or a
+    structure the check could not finish (with what stopped it)."""
+    res = v.result
+    if getattr(res, "checked", None) is False:
+        return f"{v.reason or '-'}，结构无法检查（{getattr(res, 'detail', None) or '-'}）"
+    return v.reason or ""
 
 
 def attempt_record(status: str, reason: str, sha: str, prev, **extra) -> dict:
@@ -149,7 +180,7 @@ class ScannerLost(Exception):
 
 @dataclass
 class Verdict:
-    outcome: str                  # clean | infected | too_large | error | missing | mismatch
+    outcome: str                  # clean | infected | encrypted | too_large | error | missing | mismatch
     sha256: str
     signature: str | None = None
     engine: str | None = None
@@ -236,7 +267,18 @@ class Examiner:
             return Verdict("clean", sha, engine=res.engine, result=res)
         if res.status == "infected":
             return Verdict("infected", sha, signature=res.signature, engine=res.engine, result=res, data=data)
+        if res.status == "encrypted":
+            return Verdict("encrypted", sha, signature=res.signature, engine=res.engine, reason=res.reason, result=res)
         return Verdict("too_large", sha, engine=res.engine, reason=res.reason, result=res)
+
+
+def release_refused(res: M.ScanResult, sha: str) -> str:
+    """Why `quarantine release` does not put these bytes back: only a clean answer releases."""
+    if res.status == "encrypted":
+        return (f"当前引擎（{res.engine}）对 sha256={sha} 不再报告签名，但这份内容设有密码或含有加密内容（{res.reason or '-'}），"
+                "无法检查，不能判定为干净：不恢复，行保持拒绝。是否另作处理由所有者决定（docs/security/file-acceptance.md §8.1）。")
+    return (f"当前引擎（{res.engine}）对 sha256={sha} 的结论仍是 {res.status}"
+            + (f"（{res.signature}）" if res.signature else "") + "：签名撤回之前不能恢复。")
 
 
 # ------------------------------------------------------------------ one run at a time
@@ -345,6 +387,8 @@ class Report:
                 self.say(f"    {f['kind']} {f['id']} sha256={f['sha256'] or '-'}" + (f" {f['detail']}" if f["detail"] else ""))
             if len(items) > 50:
                 self.say(f"    …另有 {len(items) - 50} 项")
+        if by.get("encrypted"):
+            self.say(ENCRYPTED_NOTE)
         if self.stopped:
             self.say(f"扫描器在运行中不可达，已停止：{self.stopped}。已完成的结论保留；再次运行会从未完成处继续。")
         if self.deferred:

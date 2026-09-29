@@ -31,10 +31,13 @@ _REACHABLE = (
     # source files, via their project. Only live ones: removing a file uploaded by mistake has
     # to stop its bytes being served, and every source row hands its blob id to the browser.
     # Only accepted ones too: a file still being checked, or rejected — including one a rescan
-    # rejected after it had been parsed, whose converted copy and parsed workbook remain (CI-90).
+    # rejected after it had been parsed, whose converted copy and parsed workbook remain (CI-90) —
+    # or refused by the gate as encrypted (§8.7; `malware.encrypted_refusal`: a rescan's record,
+    # `rescan: true`, leaves a stored file's access as it was).
     "SELECT 1 FROM source_files s JOIN projects p ON p.id=s.project_id "
     "WHERE (s.blob=:b OR s.parsed_blob=:b OR s.working_blob=:b) AND s.removed=0 "
     "AND COALESCE(s.status,'') NOT IN ('rejected','scanning','scan_failed') "
+    "AND NOT (COALESCE(json_extract(s.scan,'$.status'),'')='encrypted' AND COALESCE(json_extract(s.scan,'$.rescan'),0)=0) "
     f"AND s.blob NOT IN {_HELD} AND COALESCE(s.working_blob,'') NOT IN {_HELD} "
     "AND COALESCE(p.deleted,0)=0 AND COALESCE(p.tenant,'default')=:t",
     # uploaded template originals, unless a rescan found the template infected or any of its

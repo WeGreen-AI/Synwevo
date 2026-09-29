@@ -12,7 +12,9 @@ Message's command line only wires it up. Selection, digest binding and verdicts 
 * ``clean`` changes only the scan record; ``infected`` makes every attachment row on the same
   bytes ``rejected`` — the download (`Messaging.attachment_for_download`, 410
   ``rejected_malware``), inline display and forwarding all refuse it — and moves the bytes to the
-  quarantine; ``error`` / ``too_large`` record the attempt and change nothing else.
+  quarantine; ``error`` / ``too_large`` record the attempt and change nothing else; ``encrypted``
+  (password-protected, cannot be checked) records the finding and leaves the attachment as it
+  was — withdrawing it is the owner's decision (docs/security/file-acceptance.md §8.1).
 
 Nobody is told in the inbox: the notification catalogue has no category for "an attachment you
 sent was withdrawn" (``docs.file_rejected`` names a Docs project), and this change does not invent
@@ -94,6 +96,11 @@ class AttachmentRescan:
         if v.outcome == "clean":
             made = [self._publish(r, RS.clean_record(v.result, sha, r.get("scan"))) for r in rows]
             self.report.unit(KIND, ident, sha, "clean" if any(made) else "changed", len(rows))
+            return
+        if v.outcome == "encrypted":
+            # Not malware, and not something this command withdraws: recorded, access unchanged.
+            made = [self._publish(r, RS.encrypted_record(v, sha, r.get("scan"))) for r in rows]
+            self.report.unit(KIND, ident, sha, "encrypted" if any(made) else "changed", len(rows), RS.encrypted_detail(v))
             return
         limit = ex.scanner.max_bytes
         for r in rows:
@@ -195,8 +202,7 @@ def _release(store: Store, sha: str, by: str, out) -> int:
         print(str(e), file=sys.stderr)
         return RS.EXIT_FINDINGS
     if res.status != "clean":
-        print(f"当前引擎（{res.engine}）对 sha256={sha} 的结论仍是 {res.status}"
-              + (f"（{res.signature}）" if res.signature else "") + "：签名撤回之前不能恢复。", file=out)
+        print(RS.release_refused(res, sha), file=out)
         return RS.EXIT_FINDINGS
     Q.put_back(store, sha, data)                 # a damaged store copy is replaced, never kept
     restored, kept = 0, []

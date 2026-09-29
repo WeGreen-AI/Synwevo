@@ -498,27 +498,29 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                              "schema": {"type": "string"}}]))
     async def upload_file(request: Request, pid: str, file: UploadFile | None = File(default=None),
                           sha256: str | None = Form(default=None)):
+        from starlette.concurrency import run_in_threadpool     # storing and reading files is not event-loop work
         scope(request, "write")
         app_.get_project(pid)
         route = "/api/v1/projects/{pid}/files"
         if file is not None:
             data, name, digest = await _read_checked(file, sha256, request)
-            return idem.run(request, route, {"pid": pid, "file": digest, "filename": name},
-                            lambda: app_.add_source(pid, name, data),
-                            replay_check=lambda out: app_.get_source(out["id"]), status=201)
+            return await run_in_threadpool(idem.run, request, route, {"pid": pid, "file": digest, "filename": name},
+                                           lambda: app_.add_source(pid, name, data),
+                                           replay_check=lambda out: app_.get_source(out["id"]), status=201)
         body = await _json_body(request, ("path", "upload_id"),
                                 "请以 multipart 上传文件，或提供 upload_id / path（path 需配置 SYNWEVO_DOCS_IMPORT_ROOTS）")
         if body.get("upload_id") is not None:
-            return idem.run(request, route, {"pid": pid, "body": body},
-                            lambda: use_upload(store, body["upload_id"], lambda n, d: app_.add_source(pid, n, d), "source"),
-                            replay_check=lambda out: app_.get_source(out["id"]), status=201)
+            return await run_in_threadpool(idem.run, request, route, {"pid": pid, "body": body},
+                                           lambda: use_upload(store, body["upload_id"], lambda n, d: app_.add_source(pid, n, d), "source"),
+                                           replay_check=lambda out: app_.get_source(out["id"]), status=201)
         tenant = current_tenant()
 
         def from_path():
             data, name = _read_from_roots(body["path"], tenant)
             return app_.add_source(pid, name, data)
 
-        return idem.run(request, route, {"pid": pid, "body": body}, from_path, replay_check=lambda out: app_.get_source(out["id"]), status=201)
+        return await run_in_threadpool(idem.run, request, route, {"pid": pid, "body": body}, from_path,
+                                       replay_check=lambda out: app_.get_source(out["id"]), status=201)
 
     @r.get("/projects/{pid}/files", summary="项目的来源文件（按上传顺序；offset 或 cursor 分页）", openapi_extra=_ox("read"))
     def list_files(request: Request, response: Response, pid: str, offset: int = _offset_q(),
@@ -556,20 +558,21 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                              "schema": {"type": "string"}}]))
     async def upload_template(request: Request, file: UploadFile | None = File(default=None), name: str | None = None,
                               sha256: str | None = Form(default=None)):
+        from starlette.concurrency import run_in_threadpool     # the security check and template analysis
         scope(request, "write")
         route = "/api/v1/templates"
         if file is not None:
             data, fname, digest = await _read_checked(file, sha256, request)
-            return idem.run(request, route, {"file": digest, "filename": fname, "name": name},
-                            lambda: app_.upload_template(fname, data, name),
-                            replay_check=lambda out: app_.get_template(out["id"]), status=201)
+            return await run_in_threadpool(idem.run, request, route, {"file": digest, "filename": fname, "name": name},
+                                           lambda: app_.upload_template(fname, data, name),
+                                           replay_check=lambda out: app_.get_template(out["id"]), status=201)
         body = await _json_body(request, ("upload_id", "name"), "请以 multipart 上传模板，或提供 upload_id")
         tname = body.get("name", name)
         if tname is not None and not isinstance(tname, str):
             raise ServiceError(400, "invalid", "name 必须是字符串", {"field": "name"})
-        return idem.run(request, route, {"body": body, "name": name},
-                        lambda: use_upload(store, body["upload_id"], lambda n, d: app_.upload_template(n, d, tname), "template"),
-                        replay_check=lambda out: app_.get_template(out["id"]), status=201)
+        return await run_in_threadpool(idem.run, request, route, {"body": body, "name": name},
+                                       lambda: use_upload(store, body["upload_id"], lambda n, d: app_.upload_template(n, d, tname), "template"),
+                                       replay_check=lambda out: app_.get_template(out["id"]), status=201)
 
     @r.get("/templates", summary="模板列表（按创建时间倒序；offset 或 cursor 分页）", openapi_extra=_ox("read"))
     def list_templates(request: Request, response: Response, offset: int = _offset_q(),

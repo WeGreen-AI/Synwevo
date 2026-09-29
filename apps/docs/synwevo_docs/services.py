@@ -33,7 +33,7 @@ def scan_out(rec: dict | None) -> dict:
     Rows written before scanning existed are `unscanned` — honest, and distinct from clean."""
     if not rec:
         return {"status": "unscanned"}
-    keys = ("status", "signature", "engine", "reason", "sha256", "checked_at", "attempts", "retry_at")
+    keys = ("status", "signature", "engine", "reason", "checked", "sha256", "checked_at", "attempts", "retry_at")
     return {k: rec[k] for k in keys if k in rec}
 
 def template_blobs(store: Store, t: dict) -> list[str]:
@@ -47,6 +47,23 @@ def template_blobs(store: Store, t: dict) -> list[str]:
         if b and b not in out:
             out.append(b)
     return out
+
+
+def encrypted_file(filename: str, kind: str | None, checked: bool = True) -> ServiceError:
+    """Password-protected bytes — or a structure the check could not finish (`checked` False): the
+    security check cannot look inside them, so they are not accepted; they are not malware either
+    (no quarantine, no rejected digest). Requirement §8.7. The second case has its own sentence: its
+    reader has no password to remove."""
+    if not checked:
+        return ServiceError(400, "unchecked_file", "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传",
+                            {"filename": filename, "kind": kind, "checked": False})
+    return ServiceError(400, "encrypted_file", "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传",
+                        {"filename": filename, "kind": kind})
+
+
+#: The same sentences on the row of a source the gate refused.
+ENCRYPTED_ERROR = "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传"
+UNCHECKED_ERROR = "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传"
 
 
 def earlier_malicious(filename: str) -> ServiceError:
@@ -349,8 +366,10 @@ class App:
         parser takes over), `rejected` (a signature matched; the bytes are quarantined — the
         blob is unlinked and every row sharing that hash is rejected), `scan_failed` (the engine
         was unreachable, timed out or refused the size; the file stays unusable and is retried
-        with backoff — an engine outage never lets a file through). The verdict is published
-        only if the row is the version and blob that were scanned."""
+        with backoff — an engine outage never lets a file through), `error` with
+        `scan.status=encrypted` (password-protected, so nobody can check what is inside: never
+        parsed, previewed or served, and not malware — no quarantine; §8.7). The verdict is
+        published only if the row is the version and blob that were scanned."""
         with self.store.tx():
             row = self.store.one("SELECT s.* FROM source_files s JOIN projects p ON p.id=s.project_id "
                                  "WHERE s.id=? AND s.removed=0 AND COALESCE(p.deleted,0)=0", (sid,))
@@ -389,6 +408,15 @@ class App:
                                    sid, row.get("tenant") or "-", row["blob"], res.signature, res.engine)
             self._quarantine_blob(row["blob"], res)
             self._notify_rejected(row)
+        elif res.status == "encrypted":
+            # Password-protected, or could not be checked (§8.7) — decided after the engine, so a
+            # signature on the same bytes wins and is quarantined above. Terminal: the uploader has
+            # to remove the password and upload again. The bytes stay where the row points
+            # (unreadable through every path, like a file over the scan limit); reclaiming
+            # unreferenced bytes is the blob reclamation's job, not this gate's.
+            self._publish_scan(row, rec, "error", error=UNCHECKED_ERROR if M.unchecked(res) else ENCRYPTED_ERROR)
+            acceptance_log.warning("scan.encrypted source=%s tenant=%s sha256=%s kind=%s checked=%s detail=%s signature=%s engine=%s",
+                                   sid, row.get("tenant") or "-", row["blob"], res.reason, res.checked, res.detail, res.signature, res.engine)
         else:   # too_large: not scanned is never clean
             self._publish_scan(row, rec, "scan_failed", error=f"文件超过安全检查的大小上限（{self.scan_policy.max_bytes // (1024 * 1024)} MB），无法接纳；请拆分或压缩后重新上传")
             acceptance_log.warning("scan.too_large source=%s tenant=%s sha256=%s size=%s limit=%s",
@@ -486,13 +514,20 @@ class App:
             pass
 
     def require_accepted(self, row: dict) -> None:
-        """The original bytes of a source may leave the server only once the scan said OK — and
+        """The original bytes of a source may leave the server only once the scan said OK — never
+        after the gate refused them as encrypted (§8.7) — and
         not while a quarantine verdict on them stands, although this row is not marked yet
         (another application's rescan found the bytes first, or a restored backup predates the
         verdict; CI-90). Whatever this process cached of such a row is dropped."""
         st = row.get("status")
         if st == "rejected":
             raise ServiceError(410, "rejected_malware", "该文件未通过安全检查，已被拒绝并隔离", {"scan": scan_out(row.get("scan"))})
+        if M.encrypted_refusal(row.get("scan")):
+            if M.unchecked(row.get("scan")):
+                raise ServiceError(410, "unchecked_file", "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传",
+                                   {"scan": scan_out(row.get("scan"))})
+            raise ServiceError(410, "encrypted_file", "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传",
+                               {"scan": scan_out(row.get("scan"))})
         if st in ("scanning", "scan_failed"):
             raise ServiceError(409, "not_yet_accepted", "该文件尚未通过安全检查，暂不能下载", {"status": st, "scan": scan_out(row.get("scan"))})
         held = Q.standing(self.store)
@@ -549,6 +584,10 @@ class App:
             acceptance_log.warning("scan.rejected template sha256=%s signature=%s engine=%s", sha, res.signature, res.engine)
             raise ServiceError(400, "malware_detected", f"文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝",
                                {"signature": res.signature, "filename": filename})
+        if res.status == "encrypted":
+            acceptance_log.info("scan.encrypted template sha256=%s kind=%s checked=%s detail=%s signature=%s engine=%s",
+                                sha, res.reason, res.checked, res.detail, res.signature, res.engine)
+            raise encrypted_file(filename, res.reason, checked=not M.unchecked(res))
         if res.status == "too_large":
             acceptance_log.warning("scan.too_large template sha256=%s size=%s limit=%s", sha, len(data), self.scan_policy.max_bytes)
             raise ServiceError(413, "scan_limit", f"文件超过安全检查的大小上限（{self.scan_policy.max_bytes // (1024 * 1024)} MB），无法接纳",
@@ -575,7 +614,7 @@ class App:
         with self.store.tx():
             row = self.store.one("SELECT s.* FROM source_files s JOIN projects p ON p.id=s.project_id "
                                  "WHERE s.id=? AND s.removed=0 AND COALESCE(p.deleted,0)=0", (sid,))
-        if not row or row["status"] in ("scanning", "scan_failed", "rejected"):
+        if not row or row["status"] in ("scanning", "scan_failed", "rejected") or M.encrypted_refusal(row.get("scan")):
             return              # not accepted (yet): the scan gate decides, never the parser
         ps = None
         try:
@@ -663,6 +702,9 @@ class App:
     def set_source_options(self, sid: str, options: dict) -> dict:
         with self.store.tx():
             r = self.get_source(sid, raw=True)
+            # A reparse opens the bytes: only an accepted file's. This flipped a file still being
+            # checked to `parsing`, which parsed it unscanned and made the scan's verdict stale.
+            self.require_accepted(r)
             opts = dict(r.get("options") or {})
             opts.update(options or {})
             self.store.update("source_files", {"id": sid}, {"options": opts, "status": "parsing", "version": r["version"] + 1,
@@ -700,7 +742,8 @@ class App:
         from .engine import desensitize as D
         self.get_project(pid)
         ids = body.get("file_ids") or [r["id"] for r in self.project_sources(pid, ready_only=False)
-                                       if (r.get("status") or "") not in ("rejected", "scanning", "scan_failed")]
+                                       if (r.get("status") or "") not in ("rejected", "scanning", "scan_failed")
+                                       and not M.encrypted_refusal(r.get("scan"))]
         sess = D.Session(seed=body.get("seed"), words=body.get("words") or [], patterns=body.get("patterns"))
         out, skipped = [], []
         for sid in ids:

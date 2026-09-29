@@ -185,6 +185,7 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 | 接口返回 429 | 调整 `SYNWEVO_API_RATE_PER_MIN` 或在客户端退避重试（响应带 `Retry-After`） |
 | 来源文件停在「安全检查暂不可用」（`scan_failed`）、`/readyz` 的 `malware_scanner` 为 `down: …` | clamd 不可达：`docker compose logs clamav`（首次启动要先下载病毒库，`start_period` 15 分钟）；恢复后文件按 30 s→10 min 的间隔自动重试，不需要重新上传。文件超过扫描上限（`scan.status=too_large`）则调大 `SYNWEVO_CLAMD_MAX_BYTES` 与 clamd 的 `StreamMaxLength` 后让用户重新上传 |
 | 上传返回 400 `malware_detected`、文件显示「安全检查未通过」 | 引擎命中签名（`scan.signature`、`scan.engine` 记录了判定时的引擎与病毒库）。字节已从 blob 存储删除；没有"仍然处理"的入口。怀疑误报按 docs/security/file-acceptance.md §8 处理 |
+| 上传返回 400 `encrypted_file`（「文件设有密码或含有加密内容…」）或 `unchecked_file`（「文件的结构无法安全地完成检查…」），或来源显示「错误」且 `scan.status=encrypted` | 文件有打开密码，或（`scan.checked=false`、`unchecked_file`）结构读不完——截断、超出识别器上限，同样不能当作干净；接纳日志的 `scan.encrypted … checked=False detail=…` 写着是什么让检查停下（`detail.kind`/`scan.reason`：`archive`/`office`/`pdf`）。安全检查看不到里面：不是恶意软件，也不会被接纳。请用户去掉密码或另存不加密的副本后重新上传；没有"跳过检查"的入口。补扫对历史文件报告的 `encrypted` 不改访问，处理方式由所有者决定（file-acceptance §8.1） |
 | 模板上传返回 503 `scan_unavailable` | 模板是同步扫描：clamd 不可达时拒绝并给 `Retry-After`，clamd 恢复后重试即可 |
 
 ## 6. 账户邮件（仅发信）
@@ -359,6 +360,29 @@ VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose re
 | 观察 | `/readyz` 的 `checks.malware_scanner`（`ok`/`off`/`down: …`，不影响就绪判定）；`/api/v1/capabilities` 的 `environment.malware_scan`；审计事件 `source.rejected`（见 file-acceptance §8） |
 | 回滚 | 从 docs 服务去掉两个环境变量并重建；已写入的 `scan` 列保留，`rejected` 的行保持拒绝 |
 | 不做 | 不把用户文件送往 VirusTotal 等外部平台；不提供跳过扫描的按钮；不用测试密钥或关闭检查让流水线变绿 |
+| 加密文件（§8.7） | 开启扫描时，设有密码的压缩包、Office 文档和要密码才能打开的 PDF 一律不接纳（400/410 `encrypted_file`，不是恶意软件、不进隔离区）。顶层的加密由应用自己识别；clamd 加 `AlertEncryptedArchive yes` 后，**嵌在文档或压缩包里的**加密压缩包也会以 `Heuristics.Encrypted.*` 报出（应用同样当作"加密、不接纳"）。只开这一项：`AlertEncrypted`/`AlertEncryptedDoc` 会把只设权限密码、不需要密码就能打开的 PDF 也报出来 |
+
+**clamd 选项 `AlertEncryptedArchive yes`（主机侧，随下一次部署执行；参考 compose 已加挂载）。** 官方镜像只接受挂载进来的
+配置文件，所以用同一标签镜像自带的 `clamd.conf` 加一行，挂到 `/etc/clamav/clamd.conf`（只读）。**先建文件再合并 compose**：
+文件不存在时 Docker 会在那个位置建一个目录，clamd 起不来。换镜像标签时按同样步骤重新生成。
+
+```bash
+cd /opt/synwevo/config
+docker run --rm --entrypoint cat clamav/clamav:1.4 /etc/clamav/clamd.conf > clamd.conf.new
+grep -q '^AlertEncryptedArchive' clamd.conf.new || printf '\nAlertEncryptedArchive yes\n' >> clamd.conf.new
+grep -n '^AlertEncrypted' clamd.conf.new          # 只应有一行：AlertEncryptedArchive yes
+install -m 0644 clamd.conf.new clamd.conf && rm clamd.conf.new
+# 先用一次性容器确认镜像读得懂这份文件（不碰正在运行的服务）：
+docker run --rm -v /opt/synwevo/config/clamd.conf:/etc/clamav/clamd.conf:ro --entrypoint clamconf clamav/clamav:1.4 -n | grep -i alertencrypted
+# 把 infra/production/compose.yaml 里 clamav 的这一行挂载并入本机 compose：
+#   - /opt/synwevo/config/clamd.conf:/etc/clamav/clamd.conf:ro
+docker compose config --quiet
+docker compose up -d --no-deps --force-recreate --wait clamav
+docker compose exec -T clamav clamconf -n </dev/null | grep -i alertencrypted   # AlertEncryptedArchive = "yes"
+```
+
+回滚：去掉那一行挂载并 `up -d --no-deps --force-recreate --wait clamav`；应用对顶层加密文件的识别不依赖这个选项。
+重建 clamav 期间新上传按原规则等待（来源停在隔离态自动重试，模板/附件/成员导入回 503），不影响已接纳的文件。
 
 自 CI-25 起账户服务也接收上传（组织成员批量导入）。仓库 compose 已给 `accounts` 加上同样的 `SYNWEVO_CLAMD_ADDRESS`/`SYNWEVO_MALWARE_SCAN=required`
 与 `depends_on: clamav`；接收器不同步 compose，运维把这两项与依赖合并进 `/opt/synwevo/config` 的 compose 后 `up -d accounts` 即生效。
@@ -393,6 +417,7 @@ docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwev
 | 恢复备份之后 | 再运行一次两个 `rescan --apply`：比结论更早的数据库里，行还不知道结论（读取已由索引把关；补扫标记行、把存储副本移走） |
 | 误报 | 提交到 `https://www.clamav.net/reports/fp`，等 freshclam 取到撤回签名的库（`scan.engine` 与容器日志里有库版本）后再 `release` |
 | 资源 | 每份内容一次 `INSTREAM`；超过 `SYNWEVO_CLAMD_MAX_BYTES` 的不发送，只记 `too_large`。补扫与在线上传共用同一个 clamd，`--limit` 分批即可 |
+| 加密的历史文件 | 结论 `encrypted`（设有密码或含有加密内容，无法检查）：不是恶意软件，**访问不变**，只记 `scan.status=encrypted`（`rescan: true`、`access: unchanged`），摘要列出 id，退出码 1；下一次运行不再选中它们。是否撤回、通知上传者或要求去掉密码后重新上传由所有者决定（file-acceptance §8.1）；`quarantine release` 遇到加密内容不恢复（不能判定为干净） |
 | 未覆盖 | 成员导入的原文件（账户服务；到期清理开启后连文件删除，见 file-acceptance §8.1）。已生成的产物不扫描，但输入被拒后一律 410（摘要列出用过被拒字节的任务 id） |
 
 ## 9. 人机验证（Cloudflare Turnstile）

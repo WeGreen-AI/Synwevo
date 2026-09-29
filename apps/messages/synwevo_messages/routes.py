@@ -750,7 +750,7 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
                 dur = int(duration_ms)
             except (TypeError, ValueError):
                 raise ServiceError(400, "invalid_field", "duration_ms 必须是整数毫秒", {"field": "duration_ms"}) from None
-        scan = await run_in_threadpool(accept_upload, filename, data)       # 400 infected / 503 scanner down / 413
+        scan = await run_in_threadpool(accept_upload, filename, data)       # 400 infected or encrypted / 503 scanner down / 413
         out = await run_in_threadpool(lambda: svc.attach(cid, uid, filename=filename, data=data, scan=scan, duration_ms=dur))
         audit(request, "messaging.attachment.upload", actor_id=uid, object_kind="conversation", object_id=cid, result="ok",
               meta={"attachment_id": out["id"], "size": out["size"], "content_type": out["content_type"], "scan": (scan or {}).get("status"),

@@ -13,8 +13,11 @@ export interface SourceFile {
   error?: string | null;
   notes: string[];
   structure: any;
-  scan?: { status: "pending" | "clean" | "infected" | "error" | "too_large" | "not_configured" | "unscanned";
-           signature?: string; engine?: string; reason?: string; sha256?: string; checked_at?: number;
+  /** `encrypted` (§8.7): password-protected — or, with `checked: false`, a structure the check could
+   *  not finish; nobody can check what is inside. On an upload the row is `error` and never served;
+   *  on a file a rescan found, its state is unchanged. */
+  scan?: { status: "pending" | "clean" | "infected" | "encrypted" | "error" | "too_large" | "not_configured" | "unscanned";
+           signature?: string; engine?: string; reason?: string; checked?: boolean; sha256?: string; checked_at?: number;
            attempts?: number; retry_at?: number };
   version: number;
   representative: boolean;

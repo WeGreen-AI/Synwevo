@@ -39,11 +39,24 @@ const SHARED_CODES = new Set(["unauthorized", "too_many_attempts"]);
  *  a recorder-produced duration; `moved` is handled by code where it can occur (Messages.tsx). */
 const API_ONLY_NUMBERED = new Set(["unknown_app", "moved", "invalid_field:duration_ms", "invalid_field:key"]);
 
+/** An attachment goes through the platform's acceptance gate before it is stored (the route calls
+ *  `member_import.accept_upload`): its refusals — malware, a password-protected file (§8.7), the
+ *  scanner down, the scan limit — reach the composer too. Only that function is read. */
+const ACCEPTANCE = { file: "packages/core/synwevo_core/member_import.py", fn: "def accept_upload(" };
+function acceptanceSource(): string {
+  const src = readFileSync(join(ROOT, ACCEPTANCE.file), "utf8");
+  const start = src.indexOf(ACCEPTANCE.fn);
+  assert.ok(start >= 0, "accept_upload is where attachments are scanned");
+  const end = src.indexOf("\ndef ", start + 1);
+  return src.slice(start, end < 0 ? undefined : end);
+}
+
 type Refusal = { file: string; status: number; code: string; fstring: boolean; text: string; field: string | null };
 function refusals(): Refusal[] {
   const out: Refusal[] = [];
-  for (const file of SERVER) {
-    const src = readFileSync(join(ROOT, file), "utf8");
+  const sources: [string, string][] = [...SERVER.map(f => [f, readFileSync(join(ROOT, f), "utf8")] as [string, string]),
+    [`${ACCEPTANCE.file} (accept_upload)`, acceptanceSource()]];
+  for (const [file, src] of sources) {
     for (const m of src.matchAll(/ServiceError\(\s*(\d{3})\s*,\s*"([a-z_]+)"\s*,\s*(f?)"((?:[^"\\\n]|\\.)*)"([^\n]*)/g)) {
       const field = /"field":\s*"([a-z_]+)"/.exec(m[5])?.[1] ?? (/\{key\}/.test(m[4]) ? "key" : null);
       out.push({ file, status: Number(m[1]), code: m[2], fstring: m[3] === "f", text: m[4], field });
@@ -57,6 +70,7 @@ test("the scan finds the server's refusals (guards the pattern itself)", () => {
   assert.ok(all.length > 80, `only ${all.length} refusals found`);
   assert.ok(all.some(r => r.code === "owner_must_transfer"));
   assert.ok(all.some(r => r.code === "recall_window_closed" && r.fstring));
+  assert.ok(all.some(r => r.code === "encrypted_file" && r.file.includes("accept_upload")), "the attachment gate's refusals are read");
 });
 
 test("every refusal a person can meet is in the catalogue or worded from its detail", () => {
@@ -90,6 +104,9 @@ test("numbered refusals read in every language, from the detail the server sends
     ["file_too_large", 413, { limit: 10 * 1024 * 1024, kind: "voice" }, { "zh-Hans": "语音超过 10 MB 上限" }],
     ["invalid_field", 400, { field: "name", limit: 80 }, { en: "A group name needs 1–80 characters" }],
     ["too_many_targets", 400, { field: "conversation_ids", limit: 5 }, { "zh-Hant": "一次最多轉發到 5 個會話" }],
+    // the attachment gate (member_import.accept_upload)
+    ["malware_detected", 400, { filename: "a.zip", signature: "Win.Test.EICAR_HDB-1" }, { en: "“a.zip” was identified as malicious (Win.Test.EICAR_HDB-1) and was refused" }],
+    ["scan_limit", 413, { limit: 25 * 1024 * 1024 }, { en: "The file is over the security check's size limit (25 MB) and cannot be accepted", "zh-Hans": "文件超过安全检查的大小上限（25 MB），无法接纳" }],
   ];
   try {
     for (const [code, status, detail, expected] of cases) {
@@ -103,6 +120,23 @@ test("numbered refusals read in every language, from the detail the server sends
     assert.equal(apiFailureText({ code: "invalid_field", status: 400, detail: { field: "user_ids" }, originalMessage: "请用「退出群聊」离开" }), "Use “Leave group” to leave");
     assert.equal(apiFailureText({ code: "owner_must_transfer", status: 409, originalMessage: "群主退出前请先把群主交接给其他成员，或归档群聊" }),
       "Before leaving, hand over ownership to another member or archive the group");
+    // §8.7: a password-protected attachment is refused with a sentence that says what to do
+    const encrypted = { code: "encrypted_file", status: 400, detail: { filename: "a.zip", kind: "archive" },
+      originalMessage: "文件设有密码或含有加密内容，安全检查无法查看其中的内容，因此未被接纳；请移除密码（或另存一份不加密的副本）后重新上传" };
+    assert.equal(apiFailureText(encrypted), "The file is password-protected or contains encrypted content, so the security check cannot look inside it and it was not accepted. Remove the password (or save an unencrypted copy) and upload it again.");
+    setLocale("zh-Hant");
+    assert.equal(apiFailureText(encrypted), "檔案設有密碼或含有加密內容，安全檢查無法查看其中的內容，因此未被接收；請移除密碼（或另存一份不加密的副本）後重新上傳");
+    // a structure the check could not finish has its own sentence: there may be no password to remove
+    const unchecked = { code: "unchecked_file", status: 400, detail: { filename: "a.zip", kind: "archive", checked: false },
+      originalMessage: "文件的结构无法安全地完成检查（可能已损坏、被截断或结构异常），因此未被接纳；如果它没有设密码，请用生成它的程序重新保存（或拆分成较小的文件）后重新上传" };
+    assert.equal(apiFailureText(unchecked), "檔案的結構無法安全地完成檢查（可能已損壞、被截斷或結構異常），因此未被接收；如果它沒有設密碼，請用產生它的程式重新儲存（或拆分成較小的檔案）後重新上傳");
+    setLocale("en");
+    assert.equal(apiFailureText(unchecked), "The file's structure could not be checked safely (it may be damaged, cut short or built in an unusual way), so it was not accepted. If it is not password-protected, save it again from the program that made it (or split it into smaller files) and upload it again.");
+    setLocale("zh-Hant");
+    // an earlier verdict on the same bytes names no file: the server's own sentence
+    setLocale("en");
+    assert.equal(apiFailureText({ code: "malware_detected", status: 400, originalMessage: "该文件此前已被判定为恶意内容，已拒绝" }),
+      "This file was already identified as malicious and has been rejected");
   } finally { setLocale("zh-Hans"); }
 });
 

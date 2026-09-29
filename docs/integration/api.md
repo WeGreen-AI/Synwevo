@@ -170,8 +170,8 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 引擎判定干净才进入 `parsing`；命中签名则变为 `rejected`（字节已隔离删除，`/files/{fid}/content` 返回 410
 `rejected_malware`，同样的字节再上传直接 400 `malware_detected`）；引擎暂不可用或文件超过扫描上限则停在
 `scan_failed`（服务端按 30 s→10 min 的间隔自动重试，下载返回 409 `not_yet_accepted`）。**不要因为 `scan_failed`
-重新上传**：那只会把同样的字节再排一次队。`scan` 对象给出结论：`status`（`pending`/`clean`/`infected`/`error`/
-`too_large`/`not_configured`/`unscanned`）、`signature`、`engine`（引擎与病毒库版本）、`sha256`（结论绑定的内容摘要）、
+重新上传**：那只会把同样的字节再排一次队。`scan` 对象给出结论：`status`（`pending`/`clean`/`infected`/`encrypted`/`error`/
+`too_large`/`not_configured`/`unscanned`）、`signature`、`engine`（引擎与病毒库版本）、`reason`、`sha256`（结论绑定的内容摘要）、
 `checked_at`、`attempts`、`retry_at`。未配置扫描器的部署把每个文件标为 `not_configured`，扫描功能上线前的历史文件为
 `unscanned`——两者都不是"干净"。模板上传是同步扫描：命中返回 400 `malware_detected`，引擎不可用返回 503
 `scan_unavailable`（`detail.retry_after` 秒后重试），超过扫描上限返回 413 `scan_limit`。`/capabilities` 的
@@ -181,6 +181,16 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 历史来源同样变为 `rejected`（`scan.status=infected`），模板的 `scan.status` 为 `infected` 时，凡要用到其内容的接口
 （详情、下载、字段与版本操作、预览、生成）回 410 `rejected_malware`，列表仍列出它、仍可删除；项目详情里的 `template`
 此时是 `{"id", "name", "format", "rejected": true, "scan": {…}}`，需要换模板。
+
+**设有密码的文件不被接纳（需求 §8.7）。** 开启扫描的部署不接纳加密的压缩包（ZIP/7z/RAR）、设有打开密码的 Office 文档
+（含 OpenDocument）和需要密码才能打开的 PDF——安全检查看不到里面的内容，这既不是"干净"也不是恶意软件。只设了权限
+（所有者）密码、不输入密码就能打开的 PDF 照常接纳。模板（含可续传上传的使用）直接返回
+400 `encrypted_file`（`detail.kind` 为 `archive`/`office`/`pdf`，`detail.filename`），不建模板；去掉密码
+（或另存一份不加密的副本）后重新上传即可。**来源文件**与恶意软件扫描走同一条异步路径：上传返回 201、`scanning`，引擎先看（签名优先，
+按恶意软件拒绝），随后变为 `error`、`scan.status=encrypted`，`/files/{fid}/content` 回 410 `encrypted_file`，不解析、不预览、不能改解析选项；
+结构读不完（截断、超出识别器的上限）同样不接纳——读不完就不能说它干净——但用自己的一句话和代码：`scan.checked=false`，下载 410、模板 400 `unchecked_file`（`detail.checked=false`），因为读者多半没有密码可去。可续传上传在 `/complete` 时字节已经入库，
+被拒后没有任何接口能读到它们。补扫发现的扫描上线前存入的加密文件只记下 `scan.status=encrypted`，
+状态与可读性都不变——撤回已经在用的文件由所有者决定（`docs/security/file-acceptance.md` §8.1）。
 
 来源选择接口与界面调用同一服务，所有位置从 0 开始。以下列表接口采用 `offset`/`limit`，
 默认 50（视图和词列表为 200），最大 200；返回 `total`、`next_offset` 和相对 `Link`。

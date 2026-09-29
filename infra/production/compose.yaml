@@ -107,6 +107,15 @@ services:
       CLAMD_STARTUP_TIMEOUT: '1800'
     volumes:
       - /opt/synwevo/clamav:/var/lib/clamav
+      # The image's own /etc/clamav/clamd.conf plus one line, `AlertEncryptedArchive yes`: an
+      # encrypted ZIP/7z/RAR — also one nested inside a document or another archive — is answered
+      # `Heuristics.Encrypted.*`, which the applications treat as "password-protected, not
+      # accepted" (never as malware; docs/security/file-acceptance.md §3). Not `AlertEncrypted` or
+      # `AlertEncryptedDoc`: those also flag PDFs that carry only an owner password and open
+      # without one. The image takes clamd options only as a mounted file, so the file is the
+      # image's default copied out of the same tag (host step: docs/operations.md §8); regenerate
+      # it whenever the tag changes. The applications detect top-level encrypted files themselves.
+      - /opt/synwevo/config/clamd.conf:/etc/clamav/clamd.conf:ro
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=256m
       - /run/clamav:rw,nosuid,nodev,size=8m
