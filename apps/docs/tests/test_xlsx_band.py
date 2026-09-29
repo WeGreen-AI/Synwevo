@@ -693,6 +693,27 @@ def test_conditional_formats_follow_the_copies_like_cell_formulas():
     assert sorted(int(p) for _, _, p in rules) == [1, 2, 3, 4]    # every rule its own priority, in order
 
 
+def test_a_data_bar_beside_a_mapped_rule_stays_one_rule_over_every_copy():
+    """Round 2, item 8: a data bar in the same <conditionalFormatting> as a rule written per copy was
+    written per copy too — one scale per order instead of one over the list."""
+    from openpyxl.formatting.rule import DataBarRule
+
+    def extra(wb):
+        ws = wb["对账单"]
+        ws.conditional_formatting.add("D5", DataBarRule(start_type="min", end_type="max", color="FF638EC6"))
+        ws.conditional_formatting.add("D5", FormulaRule(formula=["D5>$D$6/2"]))
+    work, slots, band, rep, values = _standard(extra)
+    out, issues, errors = _fill(work, slots, values)
+    assert not errors, errors
+    root = etree.fromstring(zipfile.ZipFile(io.BytesIO(out)).read("xl/worksheets/sheet1.xml"))
+    got = [(cf.get("sqref"), [(r.get("type"), [f.text for f in r.iter(f"{{{MAIN}}}formula")]) for r in cf.iter(f"{{{MAIN}}}cfRule")])
+           for cf in root.iter(f"{{{MAIN}}}conditionalFormatting")]
+    assert got == [("D5:D6 D10", [("dataBar", [])]),
+                   ("D5:D6", [("expression", ["D5>$D$7/2"])]), ("D10", [("expression", ["D10>$D$11/2"])])]
+    prios = [int(r.get("priority")) for r in root.iter(f"{{{MAIN}}}cfRule")]
+    assert sorted(prios) == [1, 2, 3]
+
+
 def test_data_validations_follow_the_copies_like_cell_formulas():
     def extra(wb):
         dv = DataValidation(type="custom", formula1="B5<=B6")     # a line's quantity against the subtotal row

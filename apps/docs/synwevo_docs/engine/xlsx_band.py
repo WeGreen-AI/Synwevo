@@ -717,6 +717,7 @@ class _RuleSet:
         self.copy: list[dict] = []
         self.mapped: list[dict] = []
         self.plain: list[tuple] = []          # ignoredError / protectedRange: areas only
+        self._split_mixed()
         for rule in _rules(root):
             texts = [f.text for f in rule["formulas"]]
             mode = classify_rule(rule["kind"], rule["sqref"], texts, sheet, b1, b2, rule["extended"])
@@ -743,6 +744,24 @@ class _RuleSet:
                 sq = el.get("sqref") or ""
                 if _sqref_areas(sq) and any(where(r1 + 1, r2 + 1, b1, b2) != "outside" for r1, _, r2, _ in _sqref_areas(sq)):
                     self.plain.append((el, "sqref", self._park(el, "sqref", sq)))
+
+    def _split_mixed(self) -> None:
+        """One <conditionalFormatting> may hold several rules over the same areas. When some must be
+        written per copy and others need not (a data bar next to a rule looking at the subtotal),
+        the others move to their own element first, so they stay one rule over every copy — a data
+        bar keeps one scale for the whole list instead of one per copy."""
+        for cf in list(self.root.findall(s("conditionalFormatting"))):
+            rules = cf.findall(s("cfRule"))
+            if len(rules) < 2:
+                continue
+            modes = [classify_rule("cf", cf.get("sqref") or "", [f.text for f in r.iter(s("formula"))],
+                                   self.sheet, self.b1, self.b2, any(True for _ in r.iter("{%s}id" % X14))) for r in rules]
+            if "map" not in modes or all(m == "map" for m in modes):
+                continue
+            keep = copy.deepcopy(cf)
+            for r, kr, m in zip(rules, keep.findall(s("cfRule")), modes):
+                (kr if m == "map" else r).getparent().remove(kr if m == "map" else r)
+            cf.addprevious(keep)
 
     def _park(self, el, attr, sq: str) -> list:
         """Split the areas at the block's edges: the outside parts stay (the row shift moves them),
