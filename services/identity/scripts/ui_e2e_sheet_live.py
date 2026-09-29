@@ -423,10 +423,13 @@ def live_flow(a, b, engine: str, docs: str, tid: str, ha: dict, *, owner_name: s
     pa.locator(".sheettab").filter(has_text=re.compile("^Sheet2$")).click()
     pa.get_by_role("button", name="删除当前表").click()
     pa.locator(".modal").get_by_role("button", name="删除工作表").click()
-    expect(pb.get_by_text("工作表「Sheet2」已被删除，你在 A1 输入的「写在新表上」没有写入。")).to_be_visible(timeout=10000)
+    expect(pb.get_by_text("工作表「Sheet2」已被删除，你在 A1 输入的「写在新表上」没有写入；保存为版本之前，可以从「已删除的工作表」恢复这张表。")).to_be_visible(timeout=10000)
     expect(pb.locator(".sheettab[aria-current=true]")).to_have_text("结果")
     expect(cell(pb, "A1")).to_have_text("客户")                             # not written into the sheet shown now
-    pb.locator("[data-testid=sheet-restore]").select_option(label="恢复「Sheet2」")
+    pb.locator("[data-testid=sheet-restore]").select_option(label="Sheet2")         # choosing does not restore
+    pb.wait_for_timeout(1500)                                                # a restore would have reached the owner by now
+    expect(pa.locator(".sheettab").filter(has_text=re.compile("^Sheet2$"))).to_have_count(0)
+    pb.get_by_role("button", name="恢复工作表").click()
     expect(pa.locator(".sheettab").filter(has_text=re.compile("^Sheet2$"))).to_have_count(1, timeout=10000)
     expect(pb.locator(".sheettab[aria-current=true]")).to_have_text("Sheet2")
     pb.locator(".sheettab").filter(has_text=re.compile("^结果$")).click()
