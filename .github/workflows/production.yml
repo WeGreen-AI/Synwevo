@@ -37,6 +37,9 @@ jobs:
           npm run typecheck
           npm run build
           npm test --workspaces --if-present
+          # the live table's browser sync engine against the real room (Node + Python: only here;
+          # the runtime image below has no Node and skips it)
+          SYNWEVO_SHEET_CLIENTS=required python -m pytest apps/docs/tests/test_sheet_live_clients.py -q
           python -m unittest discover -s infra/production/tests -v
       - name: Verify the deployment runtime
         run: |

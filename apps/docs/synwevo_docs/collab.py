@@ -183,6 +183,11 @@ class Conn:
     seen: int = 0
     loop: Any = None
     rate_until: float = 0.0                # told to wait until then (monotonic): frames before it are refused unread
+    # a message refused for now (busy / rate limited, not recorded): nothing this connection sent after
+    # it is applied before it comes back, so one tab's messages always apply in the order it sent them
+    held_n: int | None = None
+    held_code: str = "busy"
+    held_epoch: str | None = None          # a hold belongs to the room's epoch: a restart voids it
 
     async def send(self, data: bytes) -> None:
         try:

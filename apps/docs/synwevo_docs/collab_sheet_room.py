@@ -87,6 +87,7 @@ TX_COST_UNIT = 100                # a group costs one message more per full hund
 PARSE_UNIT = 64 * 1024            # ... and at least one message per started 64 KiB of frame
 SYNC_COST = 10                    # a whole state sent again costs like ten messages
 BUSY_RETRY_S = 0.25               # while a version is folded in: try again after this
+HELD_RETRY_S = 0.05               # a message sent after one of the same tab refused for now: try again after this
 GROWTH = 3                        # a patch grows the state by its content, its basis copy and the bookkeeping
 SAVE_WAIT_S = 30.0                # a save waits this long for the room's loop to mark it saved
 SYSTEM = "system"                 # `by` of changes no person made (an outside save without a person, the server's bookkeeping)
@@ -225,6 +226,11 @@ class SheetRoom(Room):
         self.state: dict | None = None
         self.live_reason: dict | None = None
         self.persisted_seq = 0
+        # this load of the room (a new id each time it is opened from storage) and the seq it was loaded
+        # at: a tab that sees a new id knows that what it had acknowledged above that seq may be gone (a
+        # process that died without its closing write) — whatever the room's seq is by the time it is back
+        self.boot = new_id("rb")
+        self.loaded_seq = 0
         self.approx_bytes = 0                           # the state's JSON size: exact at each write, grown per patch between
         self.basis_gen = 0                              # changes whenever the basis does (a save, a folded version, a restart)
         self.stale_head: int | None = None              # a version that could not be folded in while edits were unsaved
@@ -283,6 +289,7 @@ class SheetRoom(Room):
                         # unsaved edits are never dropped: kept live, where only shrinking edits pass
                         log.warning("collab %s: the persisted live table with unsaved edits is beyond the room's caps (%s)", self.key, over)
                     self.state, self.epoch, self.dirty, self.persisted_seq, self.approx_bytes = st, st["epoch"], dirty, st["seq"], len(raw)
+                    self.loaded_seq = st["seq"]
                     if row.get("head") != template["head"]:
                         # unsaved edits left at an older version (a version that could not be folded
                         # in while they were there): keep them, fold the head version in on opening
@@ -333,6 +340,7 @@ class SheetRoom(Room):
                 hello.update({"live": True, "seq": st["seq"], "client": conn.client, "next": CS.next_number(st, conn.client_key),
                               "resumed": conn.client_key in st["clients"], "outcomes": CS.outcomes(st, conn.client_key),
                               "persisted": self.persisted_seq, "content": st["content"],
+                              "loaded": {"id": self.boot, "seq": self.loaded_seq},
                               "stale_head": self.stale_head,
                               "limits": {"max_tx": CS.MAX_TX, "max_frame_bytes": _collab.MAX_FRAME_BYTES, "ops_per_min": self.hub.sheet_rate.cap,
                                          "max_cells": max_cells(), "max_bytes": max_bytes()}})
@@ -384,10 +392,16 @@ class SheetRoom(Room):
     def _refuse(self, conn: Conn, n, code: str, **detail) -> None:
         self._send(conn, {"type": "ack", "n": n if type(n) is int else None, "ok": False, "code": code, "detail": detail})
 
-    def _wait_refusal(self, conn: Conn, n, code: str, wait: float) -> None:
-        """Refused for now (``rate_limited`` / ``busy``); frames sooner than that are refused unread."""
+    def _wait_refusal(self, conn: Conn, n, code: str, wait: float, *, epoch=None) -> None:
+        """Refused for now (``rate_limited`` / ``busy``); frames sooner than that are refused unread. A
+        message of the room's current ``epoch`` refused so is held: the connection's later messages wait
+        for it (``on_sheet_frame``). One of an epoch the room has left is not: the tab has voided it and
+        never sends it again."""
         wait = round(max(wait, 0.01), 2)
         conn.rate_until = time.monotonic() + wait
+        st = self.state
+        if epoch is not None and st is not None and epoch == st["epoch"] and type(n) is int and conn.held_n is None:
+            conn.held_n, conn.held_code, conn.held_epoch = n, code, epoch
         self._refuse(conn, n, code, retry_after=wait)
 
     def on_sheet_frame(self, conn: Conn, data: bytes) -> None:
@@ -414,8 +428,20 @@ class SheetRoom(Room):
         op = msg.get("op")
         if kind == "op" and msg.get("tx") is not None:
             op = {"op": "tx", "ops": msg["tx"]} if op is None else None
+        if conn.held_n is not None and (self.state is None or conn.held_epoch != self.state["epoch"]):
+            conn.held_n = None                           # held under an epoch the room has left: void
+        if kind == "op" and conn.held_n is not None and n != conn.held_n:
+            # an earlier message of this tab was refused for now and has not come back: nothing it sent
+            # after that applies before it (the tab sends them all again, in order) — else its later
+            # value would be overwritten by its earlier one, or an edit in rows it had just added refused
+            ok, _left, wait = bucket.take(key, fee)
+            if not ok:
+                self._wait_refusal(conn, n, "rate_limited", wait)
+                return
+            self._refuse(conn, n, conn.held_code, retry_after=round(max(conn.rate_until - now, HELD_RETRY_S), 2), held=conn.held_n)
+            return
         if self.holding():
-            self._wait_refusal(conn, n, "busy", BUSY_RETRY_S)
+            self._wait_refusal(conn, n, "busy", BUSY_RETRY_S, epoch=msg.get("epoch") if kind == "op" else None)
             return
         # the whole message is paid for at once, and a refused one pays nothing: waiting the time it
         # is told is always enough (RateBuckets.take with a cost)
@@ -423,8 +449,10 @@ class SheetRoom(Room):
         cost = max(SYNC_COST, 1 + self.approx_bytes // PARSE_UNIT) if kind == "sync" else _cost(op)
         ok, _left, wait = bucket.take(key, max(fee, cost))
         if not ok:
-            self._wait_refusal(conn, n, "rate_limited", wait)
+            self._wait_refusal(conn, n, "rate_limited", wait, epoch=msg.get("epoch") if kind == "op" else None)
             return
+        if kind == "op" and conn.held_n == n:
+            conn.held_n = None                           # the held message is back: it is answered now, in order
         if kind == "sync":
             self._send_full(conn)
             return
@@ -808,6 +836,7 @@ class SheetRoom(Room):
         frames: dict[int, bytes] = {}
         for c in list(self.clients):
             c.seen = 0
+            c.held_n = None                              # a message of the previous epoch will not come back
             nxt = CS.next_number(st, c.client_key or "")
             if nxt not in frames:
                 head_json = _dumps({"type": "reset", "epoch": st["epoch"], "previous_epoch": previous, "seq": st["seq"], "next": nxt,

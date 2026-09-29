@@ -53,7 +53,7 @@ function whoText(people: Record<string, Person>, id: any): string {
 }
 function peopleText(people: Record<string, Person>, ids: any): string {
   const names = (Array.isArray(ids) ? ids : []).map((id) => personName(people, id)).filter((x): x is string => !!x);
-  return names.length ? names.join("、") : t("其他成员");
+  return names.length ? names.join(t("、")) : t("其他成员");
 }
 
 function valueText(x: any): string {
@@ -74,13 +74,13 @@ export function refusalText(code: string, d: Record<string, any>, people: Record
   const where = whereText(label, sheets);
   switch (code) {
     case "conflict":
-      return t("{v1} 已先修改了 {v2}（现在是「{v3}」）。", { v1: whoText(people, d.by), v2: where, v3: valueText(d.theirs) });
+      return t("{v1} 已先修改了 {v2}（现在是「{v3}」）。", { v1: whoText(people, d.by), v2: where, v3: valueText(d.theirs) }) + alsoText(d, sheets);
     case "covered":
       return t("{v1} 在 {v2} 合并的 {v3} 内，只能在合并区域的左上角写入值。", { v1: d.ref || where, v2: whoText(people, d.by), v3: d.range || "" });
     case "merge_overlap":
       return t("无法合并 {v1}：它与 {v2} 合并的 {v3} 重叠。", { v1: d.want || where, v2: whoText(people, d.by), v3: d.range || "" });
     case "covers_values":
-      return t("无法合并 {v1}：会隐藏 {count} 个有值的单元格（{v2}），请先清空它们。", { v1: d.want || where, count: d.count ?? 0, v2: (Array.isArray(d.cells) ? d.cells : []).join("、") });
+      return t("无法合并 {v1}：会隐藏 {count} 个有值的单元格（{v2}），请先清空它们。", { v1: d.want || where, count: d.count ?? 0, v2: (Array.isArray(d.cells) ? d.cells : []).join(t("、")) });
     case "merged_inner":
     case "merged":
     case "vertical_merge":
@@ -112,12 +112,24 @@ export function refusalText(code: string, d: Record<string, any>, people: Record
     case "closed":
       return t("实时连接已断开，{v1} 的修改没有同步。", { v1: where });
     case "unknown":
-      return t("无法确认 {v1} 的修改是否已生效（连接中断期间服务器已不记得这个标签页）；请核对后决定是否再做一次。", { v1: where });
+      return t("无法确认 {v1} 的修改是否已生效（连接中断期间服务器已不记得这个标签页）；请核对后决定是否再做一次。", { v1: where }) + alsoText(d, sheets);
+    case "lost":
+      return t("表格已从已保存的版本重新开始，你在 {v1} 的修改没有保留下来。", { v1: where });
     case "error":
       return t("服务器处理 {v1} 的修改时出错，修改未应用。", { v1: where });
     default:
       return t("{v1} 的修改未应用（{v2}）。", { v1: where, v2: code });
   }
+}
+
+/** The other cells of the same operation someone changed after the person acted: named, with what
+ *  they hold now — "use my value" / "do it again" would replace them too. */
+function alsoText(d: Record<string, any>, sheets: number): string {
+  const also: any[] = Array.isArray(d.also) ? d.also : [];
+  if (!also.length) return "";
+  const list = also.slice(0, 6).map((c) => t("{v1}（现在是「{v2}」）", { v1: whereText({ sheet: c.sheet ?? null, ref: c.ref ?? null }, sheets), v2: valueText(c.theirs) })).join(t("、"));
+  const more = also.length > 6 ? t("等 {count} 处", { count: also.length }) : "";
+  return " " + t("同一操作里 {v1}{v2} 在你之后也被改过；再发送你的修改会覆盖它们。", { v1: list, v2: more });
 }
 
 function placementText(code: string, d: Record<string, any>, people: Record<string, Person>, where: string): string {
@@ -181,6 +193,7 @@ export function attentionText(a: Attention, sheets = 2): string {
 /** What undo left alone, and why. */
 export function skippedText(s: Skipped, sheets = 2): string {
   if (s.reason === "append") return t("新增的行和列不能撤销。");
+  if (s.reason === "sheet_changed") return t("工作表「{v1}」之后有其他人的修改（或不再是空表），撤销不会删除它；确实要删除，请用「删除当前表」。", { v1: s.sheet ?? "" });
   if (s.reason === "idless") return t("没有 ID 的字段「{v1}」不能恢复。", { v1: s.field ?? "" });
   const where = s.field ? t("字段「{v1}」", { v1: s.field }) : whereText({ sheet: s.sheet, ref: s.ref }, sheets);
   return t("未撤销 {v1}：其他成员之后改过它。", { v1: where });
@@ -199,8 +212,11 @@ export function saveText(res: any): [string, "ok" | "info"] {
   if (res?.live?.pending) return [t("已保存为第 {v1} 版；表格稍后标记为已保存。", { v1: no }), "ok"];
   return [t("已保存为第 {v1} 版。", { v1: no }), "ok"];
 }
-export function saveRefusalText(e: any): string | null {
+/** `stale`: the room could not fold a newer version in and keeps its unsaved edits — waiting does not
+ *  help until someone with permission confirms discarding them. */
+export function saveRefusalText(e: any, stale = false): string | null {
   if (e?.code === "not_live") return t("表格已不在实时协同中，不能这样保存；请刷新页面。");
+  if (e?.code === "stale_template" && stale) return t("有人另外保存的新版本无法并入这里的修改，这里的修改暂时不能保存为版本：先把需要的内容复制出来，再请有权限的成员确认放弃这些实时修改。");
   if (e?.code === "stale_template") return t("刚有人保存了新版本，表格正在合并它；请稍后再保存。");
   return null;
 }

@@ -351,6 +351,16 @@ def down(args) -> int:
                                          if stale else ""))
             _pidfile(name).unlink(missing_ok=True)
             continue
+        if getattr(args, "kill", False):
+            # a crash rehearsal: no graceful shutdown, so nothing is written on the way out
+            os.kill(pid, signal.SIGKILL)
+            for _ in range(40):
+                if not _alive(name):
+                    break
+                time.sleep(0.1)
+            print(f"  ✓ {name} 已强制结束（pid {pid}，未走优雅关闭）")
+            _pidfile(name).unlink(missing_ok=True)
+            continue
         os.kill(pid, signal.SIGTERM)
         for _ in range(40):
             if not _alive(name):
@@ -558,6 +568,7 @@ def main() -> int:
 
     d = sub.add_parser("down", help="停止服务（不指定则全部）")
     d.add_argument("services", nargs="*", type=_service, default=[])
+    d.add_argument("--kill", action="store_true", help="不走优雅关闭，直接结束进程（演练进程崩溃）")
     d.set_defaults(func=down)
 
     rs = sub.add_parser("restart", help="重启服务")

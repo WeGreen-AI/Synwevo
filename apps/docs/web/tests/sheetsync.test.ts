@@ -450,8 +450,221 @@ test("undo pressed while my last change is on its way undoes that change once an
   a.sync.submit({ op: "set", sheet: SID, row: "zzzzzzzz", col: C(0), v: "没有这一行" });
   assert.equal(a.sync.undo(), "deferred");
   pump(room);
-  assert.deepEqual(results.slice(1), [null]);
+  assert.deepEqual(results.slice(1).map((r) => ({ sent: r.sent, cancelled: !!r.cancelled })), [{ sent: false, cancelled: true }]);
   assert.equal(cellOf(room.content, "F1"), "前一次");
+});
+
+// ------------------------------------------------------------------ the review of steps ③–⑤ (each failed on 0a6c0cd)
+test("H5: undo targets the change on top when pressed — a change never sent is taken off the queue", () => {
+  const { room, a } = twoTabs();
+  const A2 = set(1, 0, "要撤销的"), C2 = set(1, 2, "留下");
+  a.disconnect();
+  a.sync.submit(A2);
+  const r = a.sync.undo();
+  assert.ok(r && r !== "deferred" && r.cancelled && !r.sent, "taken back at once");
+  assert.equal(cellOf(a.sync.content, "A2"), undefined);
+  a.sync.submit(C2);                                  // the person carries on
+  a.connect(); pump(room);
+  assert.equal(cellOf(room.content, "A2"), undefined, "the undone change never reached the room");
+  assert.equal(cellOf(room.content, "C2"), "留下", "the change typed after pressing undo stays");
+  assert.deepEqual(a.sync.content, room.content);
+});
+
+test("H5: undo pressed while my change is on its way undoes that change, not one typed after pressing", () => {
+  const { room, a } = twoTabs();
+  const results: any[] = [];
+  a.sync.onUndone = (r) => results.push(r);
+  a.sync.submit(set(1, 0, "在路上"));                 // sent, unanswered
+  assert.equal(a.sync.undo(), "deferred");
+  a.sync.submit(set(1, 2, "之后输入"));
+  pump(room);
+  assert.equal(results.length, 1);
+  assert.equal(cellOf(room.content, "A2"), undefined, "the change that was on top when undo was pressed is undone");
+  assert.equal(cellOf(room.content, "C2"), "之后输入");
+  assert.deepEqual(a.sync.content, room.content);
+});
+
+test("H3: undo of a merge that cleared values unmerges first, then puts the values back", () => {
+  const { room, a } = twoTabs();
+  a.sync.submit(set(3, 0, "左上"));
+  a.sync.submit(set(3, 1, "被盖住"));
+  pump(room);
+  a.sync.submit({ op: "tx", ops: [{ op: "clear", sheet: SID, row: R(3), col: C(1) }, { op: "merge", sheet: SID, range: [R(3), C(0), R(3), C(1)], id: "mrgh3001" }] });
+  pump(room);
+  assert.ok(room.content.merges.mrgh3001);
+  const r = a.sync.undo();
+  assert.ok(r && r !== "deferred" && r.sent);
+  pump(room);
+  assert.equal(room.content.merges.mrgh3001, undefined, "unmerged");
+  assert.equal(cellOf(room.content, "B4"), "被盖住", "and the value is back");
+  assert.equal(a.sync.snapshot().attention.length, 0);
+});
+
+test("H3b: undo of my merge that replaced someone's unmerges mine before putting theirs back", () => {
+  const { room, a, b } = twoTabs();
+  b.sync.submit({ op: "merge", sheet: SID, range: [R(2), C(2), R(3), C(2)], id: "mrgbbbb1" });
+  pump(room);
+  a.sync.submit({ op: "merge", sheet: SID, range: [R(2), C(2), R(3), C(3)], id: "mrgaaaa1", replaces: ["mrgbbbb1"] });
+  pump(room);
+  const r = a.sync.undo();
+  assert.ok(r && r !== "deferred" && r.sent);
+  pump(room);
+  assert.equal(room.content.merges.mrgaaaa1, undefined);
+  assert.equal(Object.values(room.content.merges).length, 1, "the replaced range is merged again");
+  assert.equal(a.sync.snapshot().attention.length, 0);
+});
+
+test("H3: an undo the room refuses stays on the stack", () => {
+  const { room, a } = twoTabs();
+  a.sync.submit(set(0, 3, "我的"));
+  pump(room);
+  room.busy = 0;
+  const r = a.sync.undo();
+  assert.ok(r && r !== "deferred" && r.sent);
+  const f = a.outbox.shift();
+  a.sync.onSheet({ type: "ack", n: f.n, ok: false, code: "invalid", detail: { reason: "fixture" } });
+  assert.ok(a.sync.snapshot().canUndo, "the entry is not used up by a refusal");
+  a.sync.dismiss(a.sync.snapshot().attention[0].id);
+  assert.ok((a.sync.undo() as any).sent);
+  pump(room);
+  assert.equal(cellOf(room.content, "D1"), undefined);
+});
+
+test("H6 / H7 / H2: a conflict in a group names the cell it is about, offers my value, and lists what else changed", () => {
+  const { room, a, b } = twoTabs();
+  a.sync.submit(set(1, 1, "a2")); a.sync.submit(set(2, 1, "a3"));
+  pump(room);
+  b.sync.submit(set(2, 1, "李四的B3"));
+  room.receive(b, b.outbox.shift());                  // on the server first; A has not heard of it
+  a.sync.submit({ op: "tx", ops: [{ op: "clear", sheet: SID, row: R(1), col: C(1) }, { op: "clear", sheet: SID, row: R(2), col: C(1) }] });
+  pump(room);
+  const [att] = a.sync.snapshot().attention;
+  assert.equal(att.label.ref, "B3", "H6: the cell the refusal is about");
+  // H7: typing at the edge is a group [append_rows, set]: the cell and my value, not just the sheet
+  b.sync.submit(set(3, 0, "李四的A4"));
+  room.receive(b, b.outbox.shift());
+  a.sync.submit({ op: "tx", ops: [{ op: "append_rows", sheet: SID, count: 2, ids: ["edgerow1", "edgerow2"], h: 24 }, set(3, 0, "我在边上输入")] });
+  pump(room);
+  const edge = a.sync.snapshot().attention.at(-1)!;
+  assert.equal(edge.label.ref, "A4");
+  assert.equal(edge.label.value, "我在边上输入");
+  // H2: B changed both cells of A's group; the room names the first, the sentence names the other too
+  b.sync.submit(set(5, 1, "李四的B6")); b.sync.submit(set(6, 1, "李四的B7"));
+  room.receive(b, b.outbox.shift()); room.receive(b, b.outbox.shift());
+  a.sync.submit({ op: "tx", ops: [set(5, 1, "我的B6"), set(6, 1, "我的B7")] });
+  pump(room);
+  const both = a.sync.snapshot().attention.at(-1)!;
+  assert.equal(both.label.ref, "B6");
+  assert.deepEqual(both.detail.also.map((c: any) => [c.ref, c.theirs?.v]), [["B7", "李四的B7"]]);
+  setLocale("zh-Hans");
+  assert.equal(attentionText(both, 1), "李四 已先修改了 B6（现在是「李四的B6」）。 同一操作里 B7（现在是「李四的B7」） 在你之后也被改过；再发送你的修改会覆盖它们。");
+  setLocale("en");
+  assert.ok(/B7/.test(attentionText(both, 1)) && !/[一-鿿]/.test(attentionText(both, 1).replace(/李四\S*/g, "")));
+  setLocale("zh-Hans");
+});
+
+test("H1: a change refused for now goes again only after everything sent behind it is answered, then all in order", () => {
+  const { a } = twoTabs();
+  a.sync.submit(set(2, 0, "先"));
+  a.sync.submit(set(2, 1, "后"));
+  const [f1, f2] = a.outbox.splice(0);
+  a.sync.onSheet({ type: "ack", n: f1.n, ok: false, code: "busy", detail: { retry_after: 0.25 } });
+  a.clock.t += 300;
+  a.sync.submit(set(2, 2, "更后"));                   // typed meanwhile
+  a.sync.flush();
+  assert.deepEqual(a.outbox, [], "nothing while the frame sent after the refused one is on its way (the room refuses it too)");
+  a.sync.onSheet({ type: "ack", n: f2.n, ok: false, code: "busy", detail: { retry_after: 0.05, held: f1.n } });
+  a.clock.t += 100;
+  a.sync.flush();
+  assert.deepEqual(a.outbox.map((f) => f.op.v), ["先", "后", "更后"], "then every one, in the order typed");
+  assert.deepEqual(a.outbox.map((f) => f.n).slice(0, 2), [f1.n, f2.n], "with the same numbers");
+});
+
+test("H2: 'use my value' is sent against what the person was shown — a cell changed after that is a new conflict", () => {
+  const { room, a, b } = twoTabs();
+  b.sync.submit(set(8, 1, "李四的B9"));
+  room.receive(b, b.outbox.shift());
+  a.sync.submit({ op: "tx", ops: [set(8, 1, "我的B9"), set(9, 1, "我的B10")] });
+  pump(room);
+  const [shown] = a.sync.snapshot().attention;
+  assert.equal(shown.label.ref, "B9");
+  assert.equal(shown.detail.also, undefined, "B10 had not changed when the person was told");
+  b.sync.submit(set(9, 1, "李四之后写的B10"));        // after the person read the sentence
+  pump(room);
+  assert.ok(a.sync.useMine(shown.id));
+  pump(room);
+  assert.equal(cellOf(room.content, "B10"), "李四之后写的B10", "not replaced without telling");
+  const [again] = a.sync.snapshot().attention;
+  assert.equal(again.kind, "conflict");
+  assert.equal(again.label.ref, "B10");
+});
+
+test("H9: undo never deletes a sheet someone else worked on since — it says so", () => {
+  const { room, a, b } = twoTabs();
+  const add = { op: "sheet_add", id: "shth9001", name: "新表", rows: 3, cols: 3, row_ids: ["h9row001", "h9row002", "h9row003"], col_ids: ["h9col001", "h9col002", "h9col003"], h: 24, w: 100 };
+  a.sync.submit(add);
+  pump(room);
+  b.sync.submit({ op: "set", sheet: "shth9001", row: "h9row001", col: "h9col001", v: "李四的工作" });
+  pump(room);
+  const r = a.sync.undo();
+  assert.ok(r && r !== "deferred" && !r.sent);
+  assert.deepEqual(r.skipped.map((s) => s.reason), ["sheet_changed"]);
+  setLocale("zh-Hans");
+  assert.equal(skippedText(r.skipped[0], 2), "工作表「新表」之后有其他人的修改（或不再是空表），撤销不会删除它；确实要删除，请用「删除当前表」。");
+  pump(room);
+  assert.equal(room.content.sheets.shth9001.gone, false);
+  // a sheet nobody touched since is still taken back by undo
+  a.sync.submit({ ...add, id: "shth9002", name: "空表", row_ids: ["h9row011", "h9row012", "h9row013"], col_ids: ["h9col011", "h9col012", "h9col013"] });
+  pump(room);
+  assert.ok((a.sync.undo() as any).sent);
+  pump(room);
+  assert.equal(room.content.sheets.shth9002.gone, true);
+});
+
+test("H9b: undo of my restore of a sheet leaves it when someone worked on it since", () => {
+  const { room, a, b } = twoTabs();
+  a.sync.submit({ op: "sheet_add", id: "shth9b01", name: "恢复表", rows: 2, cols: 2, row_ids: ["h9brow01", "h9brow02"], col_ids: ["h9bcol01", "h9bcol02"] });
+  pump(room);
+  b.sync.submit({ op: "sheet_delete", sheet: "shth9b01" });
+  pump(room);
+  a.sync.submit({ op: "sheet_restore", sheet: "shth9b01" });
+  pump(room);
+  b.sync.submit({ op: "set", sheet: "shth9b01", row: "h9brow01", col: "h9bcol01", v: "恢复后写的" });
+  pump(room);
+  const r = a.sync.undo();
+  assert.ok(r && r !== "deferred");
+  assert.deepEqual(r.skipped.map((s) => s.reason), ["sheet_changed"]);
+  pump(room);
+  assert.equal(room.content.sheets.shth9b01.gone, false);
+});
+
+test("my own other tab's edits are not tinted or announced as someone else's", () => {
+  const room = new FixtureRoom();
+  const a = new Tab(room, "u1", "tabAAAAA"), a2 = new Tab(room, "u1", "tabA2222"), b = new Tab(room, "u2", "tabBBBBB");
+  a.connect(); a2.connect(); b.connect(); pump(room);
+  a2.sync.submit(set(0, 0, "另一个标签页"));
+  b.sync.submit(set(0, 1, "李四"));
+  pump(room);
+  assert.equal(a.sync.recentAt(SID, R(0), C(0)), null, "mine, from my other tab");
+  assert.equal(a.sync.recentAt(SID, R(0), C(1))?.by.id, "u2");
+  assert.deepEqual(a.sync.takeAnnouncements().map((x) => x.by), ["李四"]);
+});
+
+test("a whole-state request refused by the rate limit is asked again after the wait", () => {
+  const { room, a } = twoTabs();
+  a.sync.submit(set(9, 8, "短"));
+  const f = a.outbox.shift();
+  room.receive(a, f);
+  a.inbox = [];
+  a.sync.onSheet({ type: "ack", n: f.n, ok: true, seq: 1, patch: null, before: null, trimmed: true, duplicate: true });
+  assert.deepEqual(a.outbox.splice(0), [{ type: "sync" }]);
+  a.sync.onSheet({ type: "ack", n: null, ok: false, code: "rate_limited", detail: { retry_after: 2 } });
+  assert.equal(a.sync.wakeAt(), a.clock.t + 2000);
+  a.clock.t += 2100;
+  a.sync.flush();
+  assert.deepEqual(a.outbox, [{ type: "sync" }], "asked again");
+  pump(room);
+  assert.deepEqual(a.sync.content, room.content);
 });
 
 test("undo of styles, sizes, merges, fields and sheets; added rows cannot be taken away", () => {
