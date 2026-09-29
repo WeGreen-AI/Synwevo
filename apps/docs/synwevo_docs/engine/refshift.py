@@ -8,6 +8,9 @@ Rules (documented in docs/FORMATS.md):
   one-row detail template becomes ``SUM(D5:D9)``; for a repeat content block
   (``expand_from`` = its first row, ``expand_row`` = its last) only a range that
   contains the whole block grows, never one inside it;
+* on the detail row itself (``shift_formula(..., line_row=…)``) a range ending on it grows only when
+  its end row is absolute — ``SUM($B$5:$B$5)``, ``RANK(B5,$B$5:$B$5)``: the whole list — and is
+  filled down when its end row is relative — ``SUM($B$5:B5)``, ``SUM(B5:C5)``: each line's own;
 * removing rows turns references to removed cells into ``#REF!`` and shrinks
   ranges that partially cover them;
 * a sheet has ``MAX_ROW`` rows: inserting pushes nothing past it. A range whose end would go
@@ -141,9 +144,26 @@ def shift_sqref(sqref: str, sh: Shift) -> str:
     return " ".join(out)
 
 
-def shift_formula(formula: str, sh: Shift, target_sheet: str, host_sheet: str) -> str:
+def _end_is_relative(area: str) -> bool:
+    """Whether the end (the larger row; the second one written when both are the same row) of a
+    range has a relative row."""
+    m = _REF_RE.match(area)
+    if m and m.group("b"):
+        a, b = _PART_RE.match(m.group("a")), _PART_RE.match(m.group("b"))
+        end = a if int(a.group(4)) > int(b.group(4)) else b
+        return end.group(3) != "$"
+    m = _ROWS_RE.match(area)
+    if m:
+        ga, gb = m.group("a"), m.group("b")
+        end = ga if int(ga.lstrip("$")) > int(gb.lstrip("$")) else gb
+        return not end.startswith("$")
+    return False
+
+
+def shift_formula(formula: str, sh: Shift, target_sheet: str, host_sheet: str, line_row: int | None = None) -> str:
     """Shift references to ``target_sheet`` inside ``formula`` (without leading '=')
-    evaluated on ``host_sheet``."""
+    evaluated on ``host_sheet``. ``line_row``: the formula is written on that (template detail)
+    row — a range ending there with a relative end row is filled down, not grown."""
     if not formula:
         return formula
     try:
@@ -162,7 +182,10 @@ def shift_formula(formula: str, sh: Shift, target_sheet: str, host_sheet: str) -
             continue
         if "[" in area or not (_REF_RE.match(area) or _ROWS_RE.match(area) or _COLS_RE.match(area)):
             continue  # names / structured refs
-        new_area = shift_area(area, sh)
+        use = sh
+        if line_row is not None and sh.expand_row == line_row and _end_is_relative(area):
+            use = Shift(sh.start, sh.delta, None, sh.expand_single, None)
+        new_area = shift_area(area, use)
         if new_area != area:
             prefix = t.value[: len(t.value) - len(area)]
             t.value = "#REF!" if new_area == "#REF!" else prefix + new_area

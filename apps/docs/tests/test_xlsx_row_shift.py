@@ -248,3 +248,88 @@ def test_formulas_on_the_detail_row_are_filled_down_not_grown():
     calc = openpyxl.load_workbook(io.BytesIO(out), data_only=True)["报表"]
     assert [calc[f"D{r}"].value for r in (5, 6, 7)] == [1, 3, 6]
     assert [calc[f"C{r}"].value for r in (5, 6, 7)] == [1, 3, 6] and calc["B8"].value == 6
+
+
+# per-line formulas on the detail row (row 5), lines B = 3, 1, 4, 2 and C = 1, 2, 3, 4: the template's
+# formula, the first and second lines' formulas, and each line's value — computed from those lines, as
+# Excel fills down (relative end row) or reads the whole list (absolute end row)
+LINE_FORMULAS = {
+    "D": ("=B5*C5", "=B5*C5", "=B6*C6", [3, 2, 12, 8]),
+    "E": ("=SUM($B$5:B5)", "=SUM($B$5:B5)", "=SUM($B$5:B6)", [3, 4, 8, 10]),
+    "F": ("=N(F4)+B5", "=N(F4)+B5", "=N(F5)+B6", [3, 4, 8, 10]),
+    "G": ("=B5*$K$1", "=B5*$K$1", "=B6*$K$1", [6, 2, 8, 4]),
+    "H": ("=SUM(B5:C5)", "=SUM(B5:C5)", "=SUM(B6:C6)", [4, 3, 7, 6]),
+    "I": ("=SUM(B$4:B5)", "=SUM(B$4:B5)", "=SUM(B$4:B6)", [3, 4, 8, 10]),
+    "J": ("=B5/SUM($B$5:$B$5)", "=B5/SUM($B$5:$B$8)", "=B6/SUM($B$5:$B$8)", [0.3, 0.1, 0.4, 0.2]),
+    "L": ("=RANK(B5,$B$5:$B$5)", "=RANK(B5,$B$5:$B$8)", "=RANK(B6,$B$5:$B$8)", [2, 4, 1, 3]),
+    "M": ("=COUNTIF($A$5:$A$5,A5)", "=COUNTIF($A$5:$A$8,A5)", "=COUNTIF($A$5:$A$8,A6)", [1, 1, 1, 1]),
+    "N": ("=MATCH(B5,$B$5:$B$5,0)", "=MATCH(B5,$B$5:$B$8,0)", "=MATCH(B6,$B$5:$B$8,0)", [1, 2, 3, 4]),
+    "O": ("=MAX($B$1:$B$5)", "=MAX($B$1:$B$8)", "=MAX($B$1:$B$8)", [4, 4, 4, 4]),
+}
+
+
+def _line_template() -> bytes:
+    def build(ws):
+        ws["K1"] = 2
+        ws["A4"], ws["B4"], ws["C4"] = "品名", "数量", "序号"
+        ws["A5"], ws["B5"], ws["C5"] = "示例", 1, 1
+        for col, (f, _, _, _) in LINE_FORMULAS.items():
+            ws[f"{col}5"] = f
+        ws["A7"], ws["B7"] = "合计", "=SUM(B5:B5)"
+    return _xlsx(build)
+
+
+def _four_lines(work, rep):
+    rows = {"kind": "rows", "rows": [{"c0": V.text(a), "c1": V.Value(V.INT, b, str(b)), "c2": V.Value(V.INT, c, str(c))}
+                                     for a, b, c in (("甲", 3, 1), ("乙", 1, 2), ("丙", 4, 3), ("丁", 2, 4))]}
+    return T.xlsx_fill(work, [rep], {rep["id"]: rows})
+
+
+def test_a_range_on_the_detail_row_with_an_absolute_end_is_the_whole_list():
+    """Round 2, item 1: the fill-down above also held ranges whose end row is absolute on the first
+    line — `B5/SUM($B$5:$B$5)` gave 1, 0.33, 1.33…, RANK and MATCH #N/A from the second line.
+    Absolute end row: the whole list (grows, as before); relative end row: filled down."""
+    work, rep = T.xlsx_add_slot(_line_template(), {"kind": "repeat", "sheet": "报表", "row": 4, "c1": 0, "c2": 2, "name": "明细"}, [])
+    out, issues = _four_lines(work, rep)
+    assert not [i for i in issues if i["level"] == "error"], issues
+    ws = openpyxl.load_workbook(io.BytesIO(out))["报表"]
+    calc = openpyxl.load_workbook(io.BytesIO(out), data_only=True)["报表"]
+    for col, (_, first, second, want) in LINE_FORMULAS.items():
+        assert (ws[f"{col}5"].value, ws[f"{col}6"].value) == (first, second), col
+        assert [calc[f"{col}{r}"].value for r in range(5, 9)] == pytest.approx(want), col
+
+
+@soffice
+def test_libreoffice_reads_the_detail_row_formulas_the_same_way():
+    from synwevo_docs.engine.converters import recalc_xlsx
+    work, rep = T.xlsx_add_slot(_line_template(), {"kind": "repeat", "sheet": "报表", "row": 4, "c1": 0, "c2": 2, "name": "明细"}, [])
+    out, _ = _four_lines(work, rep)
+    lo = openpyxl.load_workbook(io.BytesIO(recalc_xlsx(out)), data_only=True)["报表"]
+    for col, (_, _, _, want) in LINE_FORMULAS.items():
+        assert [lo[f"{col}{r}"].value for r in range(5, 9)] == pytest.approx(want), col
+
+
+def test_rules_and_array_formulas_on_the_detail_row_follow_their_line():
+    """Round 2, item 7: a validation written on the detail row grew like a subtotal
+    (`B5<=SUM($B$5:B5)` became `…:B7` on every line), and a one-row array formula kept a grown range
+    (`D5:E7`) overlapping its copies — a file Excel repairs."""
+    from openpyxl.worksheet.formula import ArrayFormula
+
+    def build(ws):
+        ws["A4"], ws["B4"], ws["C4"] = "品名", "数量", "单价"
+        ws["A5"], ws["B5"], ws["C5"] = "示例", 1, 2
+        ws["D5"] = ArrayFormula("D5:E5", "=B5:C5*2")
+        ws["A6"], ws["B6"] = "小计", "=SUM(B5:B5)"
+        dv = DataValidation(type="custom", formula1="B5<=SUM($B$5:B5)")
+        dv.add("B5")
+        ws.add_data_validation(dv)
+        ws.conditional_formatting.add("B6", CellIsRule(operator="greaterThan", formula=["SUM(B5:B5)"]))   # on the subtotal row
+    work, rep = _detail(_xlsx(build), row=4)
+    out, issues = T.xlsx_fill(work, [rep], {rep["id"]: _rows(3)})
+    assert not [i for i in issues if i["level"] == "error"], issues
+    ws = openpyxl.load_workbook(io.BytesIO(out))["报表"]
+    assert [(str(d.sqref), d.formula1) for d in ws.data_validations.dataValidation] == [("B5:B7", "B5<=SUM($B$5:B5)")]
+    assert [(str(r.sqref), [x.formula for x in r.rules]) for r in ws.conditional_formatting] == [("B8", [["SUM(B5:B7)"]])]
+    sheet = zipfile.ZipFile(io.BytesIO(out)).read("xl/worksheets/sheet1.xml").decode()
+    import re
+    assert re.findall(r'<c r="(D\d+)"[^>]*><f t="array" ref="([^"]+)"', sheet) == [("D5", "D5:E5"), ("D6", "D6:E6"), ("D7", "D7:E7")]

@@ -672,16 +672,26 @@ class XlsxDoc:
                         # a multi-row array formula has one master cell; copying the row cannot
                         # make a consistent block of it
                         raise XlsxError("array_formula", f"模板明细行 {template_row} 中的数组公式跨越多行（{f.get('ref')}），无法随明细行复制")
-        # The template row's own formulas are per-line formulas, copied down like Excel's fill-down:
-        # a range ending on the template row must not grow there (`SUM($B$5:B5)` would become
-        # `SUM($B$5:B7)` on the first line and include the rows after it). Only formulas elsewhere —
-        # a subtotal below, a total on another sheet — grow over the inserted lines.
+        # The template row's own formulas are per-line formulas. A range ending on the template row
+        # grows there only when its end row is absolute — `SUM($B$5:$B$5)`, `RANK(B5,$B$5:$B$5)`: the
+        # whole list, the same in every line; one with a relative end row is filled down like Excel —
+        # `SUM($B$5:B5)` on line i is `SUM($B$5:B(4+i))`, not the rows after it and the subtotal.
+        # Conditional formats and validations written on the template row (their first area starts
+        # there) follow the same rule; formulas elsewhere — a subtotal below, a total on another
+        # sheet — grow over the inserted lines as before.
         self.expand_shared_formulas()
-        own = [(f, f.text) for f in tpl0.iter(s("f")) if f.text] if tpl0 is not None else []
-        self.shift_rows(sheet, Shift(template_row + 1, count, expand_row=template_row))
-        line = Shift(template_row + 1, count)
-        for f, text in own:
-            f.text = shift_formula(text, line, sheet, sheet)
+        grow = Shift(template_row + 1, count, expand_row=template_row)
+        own = [(f, f.text, f.get("ref") if f.get("t") == "array" else None)
+               for f in tpl0.iter(s("f")) if f.text or f.get("t") == "array"] if tpl0 is not None else []
+        on_row = self._rules_on_row(root, template_row)
+        self.shift_rows(sheet, grow)
+        for f, text, ref in own:
+            if text:
+                f.text = shift_formula(text, grow, sheet, sheet, line_row=template_row)
+            if ref:
+                f.set("ref", ref)            # a one-row array stays on its row; each copy gets its own below
+        for f, text in on_row:
+            f.text = shift_formula(text, grow, sheet, sheet, line_row=template_row)
         tpl = self._find_row(sd, template_row, True)
         anchor = tpl
         row_merges = [(c1, c2) for (r1, c1, r2, c2) in merges if r1 == r2 == template_row - 1]
@@ -716,6 +726,32 @@ class XlsxDoc:
         if mc is not None:
             mc.set("count", str(len(mc.findall(s("mergeCell")))))
         self._rows_changed()
+
+    @staticmethod
+    def _rules_on_row(root, row: int) -> list:
+        """(formula element, text) of the conditional formats and validations whose first area
+        starts on 1-based ``row``: their formulas are written as on that row."""
+        from .ooxml import NS
+        x14, xm = NS["x14"], NS["xm"]
+        out = []
+
+        def starts_here(sqref: str) -> bool:
+            first = (sqref or "").split()[:1]
+            try:
+                return bool(first) and parse_range(first[0].replace("$", ""))[0] == row - 1
+            except ValueError:
+                return False
+        for cf in root.findall(s("conditionalFormatting")):
+            if starts_here(cf.get("sqref")):
+                out += [(f, f.text) for f in cf.iter(s("formula")) if f.text]
+        for dv in root.iter(s("dataValidation")):
+            if starts_here(dv.get("sqref")):
+                out += [(f, f.text) for f in dv if f.tag in (s("formula1"), s("formula2")) and f.text]
+        for tag in ("conditionalFormatting", "dataValidation"):
+            for el in root.iter("{%s}%s" % (x14, tag)):
+                if starts_here(el.findtext("{%s}sqref" % xm)):
+                    out += [(f, f.text) for f in el.iter("{%s}f" % xm) if f.text]
+        return out
 
     def delete_row(self, sheet: str, row: int) -> None:
         merges = self.merges(sheet)
