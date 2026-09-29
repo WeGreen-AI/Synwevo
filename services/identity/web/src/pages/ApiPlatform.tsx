@@ -10,6 +10,7 @@ import { Requests } from './apiplatform/Requests';
 import { Calls, Operations } from './apiplatform/Observability';
 import { Quotas } from './apiplatform/Quotas';
 import { WebhookOps } from './apiplatform/WebhookOps';
+import { AuditPanel, JobsPanel } from './apiplatform/JobsAudit';
 import { BASE, Confirm, DataState, Secret, type Action, type Outcome } from './apiplatform/common';
 import './api-platform.messages';
 import './apiplatform/api-platform.css';
@@ -40,7 +41,8 @@ export default function ApiPlatform() {
   };
   const act = (action: Action) => setAction(action);
   const tabs: [string, string][] = [['approvals', t('授权审批')], ['credentials', t('服务凭据')],
-    ['quotas', t('流量与配额')], ['webhooks', t('Webhook')], ['operations', t('接口契约')], ['calls', t('调用记录')], ['debug', t('请求调试')]];
+    ['quotas', t('流量与配额')], ['webhooks', t('Webhook')], ['jobs', t('生成任务')], ['operations', t('接口契约')], ['calls', t('调用记录')],
+    ['audit', t('审计')], ['debug', t('请求调试')]];
   return <div className="app">
     <Topbar title={t('API 管理平台')} />
     <main className="api-platform-main"><div className="acct-page col gap16">
@@ -62,6 +64,8 @@ export default function ApiPlatform() {
         {tab === 'credentials' && <Credentials act={act} revision={revision} />}
         {tab === 'quotas' && <Quotas act={act} revision={revision} />}
         {tab === 'webhooks' && <><WebhookOps act={act} revision={revision} /><Requests key="webhooks" act={act} webhooks /></>}
+        {tab === 'jobs' && <JobsPanel act={act} revision={revision} />}
+        {tab === 'audit' && <AuditPanel />}
         {tab === 'operations' && <Operations />}
         {tab === 'calls' && <Calls />}
         {tab === 'debug' && <Requests key="debug" act={act} webhooks={false} />}

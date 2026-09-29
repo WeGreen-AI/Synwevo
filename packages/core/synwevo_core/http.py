@@ -581,7 +581,8 @@ def build_platform(data_dir_arg: str | None = None) -> Platform:
 
     def audit(request: Request, action: str, *, actor_id: str | None = None, actor_kind: str = "user",
               workspace_id: str | None = None, object_kind: str | None = None,
-              object_id: str | None = None, result: str = "ok", meta: dict | None = None) -> None:
+              object_id: str | None = None, result: str = "ok", meta: dict | None = None,
+              workspace_given: bool = False) -> None:
         """Append a security event.
 
         Metadata only — never a password, token, TOTP seed, recovery code or document content.
@@ -593,7 +594,10 @@ def build_platform(data_dir_arg: str | None = None) -> Platform:
             "INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,"
             "object_id,result,request_id,ip,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (new_id("ae"), time.time(), actor_kind, actor_id,
-             workspace_id or getattr(getattr(request, "state", None), "workspace_id", None), action, object_kind, object_id,
+             # workspace_given: the caller named the target (possibly none); do not substitute the
+             # actor's own session workspace, which would attribute a platform action to it.
+             workspace_id if workspace_given else (workspace_id or getattr(getattr(request, "state", None), "workspace_id", None)),
+             action, object_kind, object_id,
              result, getattr(getattr(request, "state", None), "request_id", None),
              # Background runners (mail, imports) audit with request=None: no request id, no address.
              (client_ip(request) or None) if request is not None else None,

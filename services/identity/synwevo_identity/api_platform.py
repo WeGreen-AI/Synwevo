@@ -60,6 +60,13 @@ def build_router(store: Store, ident, sessions, audit,
 
     @contextmanager
     def mutation(request, body, action, object_id=None, *, admin=True, workspace=None, outcome=None):
+        # The audit row names the target workspace (never the administrator's own session workspace,
+        # which audit() would otherwise fall back to) and, for creations, the object the route made:
+        # a route may fill outcome["workspace"] / outcome["object_id"] once it knows them.
+        def _ws():
+            return (outcome or {}).get("workspace") or workspace or None
+        def _oid():
+            return (outcome or {}).get("object_id") or object_id
         user = actor(request, admin=admin)
         reason = body.get("reason")
         meta = {"permission": MANAGE_PERMISSION if admin else "workspace.owner.consent"}
@@ -71,19 +78,19 @@ def build_router(store: Store, ident, sessions, audit,
             meta["reason"] = reason.strip()
             yield user, reason.strip()
         except ServiceError as e:
-            audit(request, f"api_platform.{action}", actor_id=user["id"], workspace_id=workspace,
-                  object_kind="api_platform", object_id=object_id,
+            audit(request, f"api_platform.{action}", actor_id=user["id"], workspace_id=_ws(),
+                  object_kind="api_platform", object_id=_oid(), workspace_given=True,
                   result="denied" if e.status < 500 else "error", meta={**meta, "code": e.code})
             raise
         except (OSError, JournalWriteFailed) as e:
-            audit(request, f"api_platform.{action}", actor_id=user["id"], workspace_id=workspace,
-                  object_kind="api_platform", object_id=object_id, result="error",
+            audit(request, f"api_platform.{action}", actor_id=user["id"], workspace_id=_ws(),
+                  object_kind="api_platform", object_id=_oid(), workspace_given=True, result="error",
                   meta={**meta, "code": "journal_unavailable"})
             raise ServiceError(503, "journal_unavailable", "无法持久记录安全操作，请检查安全日志") from e
         else:
             status = (outcome or {}).get("status", 200)
-            audit(request, f"api_platform.{action}", actor_id=user["id"], workspace_id=workspace,
-                  object_kind="api_platform", object_id=object_id,
+            audit(request, f"api_platform.{action}", actor_id=user["id"], workspace_id=_ws(),
+                  object_kind="api_platform", object_id=_oid(), workspace_given=True,
                   result="error" if status >= 500 else "denied" if status >= 400 else "ok",
                   meta={**meta, "status": status})
 
@@ -135,12 +142,27 @@ def build_router(store: Store, ident, sessions, audit,
         result["items"] = [approvals.get(x["id"]) for x in result["items"]]
         return result
 
+    def approval_workspace(aid: str) -> str | None:
+        row = store.one("SELECT workspace_id FROM api_platform_approvals WHERE id=?", (aid,))
+        return row["workspace_id"] if row else None
+
+    def credential_workspace(kind: str, cid: str) -> str | None:
+        if kind == "api_key":
+            row = store.one("SELECT tenant FROM api_keys WHERE id=?", (cid,))
+            return row["tenant"] if row else None
+        row = store.one("SELECT workspace_id FROM oauth_clients WHERE client_id=?", (cid,))
+        return row["workspace_id"] if row else None
+
     @r.post(PREFIX + "/approvals", status_code=201)
     def request_approval(request: Request, body: dict = Body(...)):
-        with mutation(request, body, "approval.request") as (user, reason):
+        target = body.get("workspace_id") if isinstance(body.get("workspace_id"), str) else None
+        outcome: dict = {}
+        with mutation(request, body, "approval.request", workspace=target, outcome=outcome) as (user, reason):
             with store.tx():
                 user = mutation_actor(request)
-                return approvals.create(user["id"], body, reason)
+                created = approvals.create(user["id"], body, reason)
+                outcome["object_id"] = created["id"]
+                return created
 
     @r.get(CONSENT)
     def owner_approvals(request: Request, limit: int = Query(25, ge=1, le=100),
@@ -154,7 +176,7 @@ def build_router(store: Store, ident, sessions, audit,
 
     @r.post(CONSENT + "/{aid}/{action}")
     def owner_decision(request: Request, aid: str, action: str, body: dict = Body(...)):
-        with mutation(request, body, "approval." + action, aid, admin=False) as (user, reason):
+        with mutation(request, body, "approval." + action, aid, admin=False, workspace=approval_workspace(aid)) as (user, reason):
             with store.tx():
                 user = mutation_actor(request, admin=False)
                 row = approvals.get(aid)
@@ -180,14 +202,14 @@ def build_router(store: Store, ident, sessions, audit,
 
     @r.post(PREFIX + "/approvals/{aid}/revoke")
     def admin_revoke(request: Request, aid: str, body: dict = Body(...)):
-        with mutation(request, body, "approval.revoke", aid):
+        with mutation(request, body, "approval.revoke", aid, workspace=approval_workspace(aid)):
             with store.tx():
                 mutation_actor(request)
                 return revoke_approval(aid, body["reason"].strip())
 
     @r.post(PREFIX + "/approvals/{aid}/issue", status_code=201)
     def issue(request: Request, response: Response, aid: str, body: dict = Body(...)):
-        with mutation(request, body, "credential.issue", aid) as (user, _):
+        with mutation(request, body, "credential.issue", aid, workspace=approval_workspace(aid)) as (user, _):
             with store.tx():
                 # Admission to the request is not authority to finish it after a demotion.
                 # Serialize this check with owner authority, creation and approval binding.
@@ -254,7 +276,8 @@ def build_router(store: Store, ident, sessions, audit,
     @r.post(PREFIX + "/credentials/{kind}/{cid}/{action}")
     def credential_action(request: Request, response: Response, kind: str, cid: str,
                           action: str, body: dict = Body(...)):
-        with mutation(request, body, "credential." + action, cid):
+        with mutation(request, body, "credential." + action, cid,
+                      workspace=credential_workspace(kind, cid) if kind in ("api_key", "service_account") else None):
             with store.tx():
                 mutation_actor(request)
                 if kind not in ("api_key", "service_account") or action not in ("rotate", "disable", "enable", "revoke-tokens"):
@@ -429,6 +452,52 @@ def build_router(store: Store, ident, sessions, audit,
             if adapter_.webhook_tenant(sid) is None:
                 raise ServiceError(404, "not_found", "订阅不存在")
             return adapter_.webhook_pause(sid)
+
+    # ------------------------------------------------------------------ jobs (API-6)
+    @r.get(PREFIX + "/jobs")
+    def jobs_overview(request: Request, workspace_id: str = Query("", max_length=100),
+                      status: str = Query("", pattern="^(|active|queued|running|cancelling|completed|completed_with_errors|failed|cancelled)$"),
+                      origin: str = Query("", pattern="^(|ui|api)$"),
+                      limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=2**31)):
+        actor(request)
+        return require_adapter().jobs_overview(workspace_id=workspace_id, status=status, origin=origin,
+                                               limit=limit, offset=offset)
+
+    @r.post(PREFIX + "/jobs/{jid}/cancel")
+    def job_cancel(request: Request, jid: str, body: dict = Body(...)):
+        adapter_ = require_adapter()
+        with mutation(request, body, "job.cancel", jid, workspace=adapter_.job_tenant(jid)):
+            mutation_actor(request)
+            return adapter_.job_cancel(jid)
+
+    # ------------------------------------------------------------------ audit (API-6)
+    # The API platform's own trail: console changes, OAuth consent and client use, and machine
+    # credentials' self-service. Read-only, like every audit view; the broader security log is
+    # the administration page's.
+    AUDIT_PREFIXES = ("api_platform.", "oidc.", "api.credential.", "cli.client.")
+
+    @r.get(PREFIX + "/audit")
+    def audit_trail(request: Request, action: str = Query("", max_length=80),
+                    result: str = Query("", pattern="^(|ok|denied|error)$"),
+                    workspace_id: str = Query("", max_length=100), request_id: str = Query("", max_length=128),
+                    limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=2**31)):
+        actor(request)
+        if action and not action.startswith(AUDIT_PREFIXES):
+            raise ServiceError(400, "invalid_action_filter", "只能查看 API 平台相关的操作")
+        prefixes = " OR ".join("a.action LIKE ?" for _ in AUDIT_PREFIXES)
+        source = (f"audit_events a LEFT JOIN users u ON u.id=a.actor_id WHERE ({prefixes}) AND (?='' OR a.action=?) "
+                  "AND (?='' OR a.result=?) AND (?='' OR a.workspace_id=?) AND (?='' OR a.request_id=?)")
+        args = (*[p + "%" for p in AUDIT_PREFIXES], action, action, result, result, workspace_id, workspace_id,
+                request_id, request_id)
+        out = page(source, "a.seq, a.id, a.at, a.actor_kind, a.actor_id, u.email AS actor_email, a.workspace_id, a.action, "
+                   "a.object_kind, a.object_id, a.result, a.request_id, a.meta", args,
+                   limit=limit, offset=offset, order="a.at DESC, a.seq DESC")
+        for row in out["items"]:
+            try:
+                row["meta"] = json.loads(row["meta"] or "{}")
+            except ValueError:
+                row["meta"] = {}
+        return out
 
     @r.get(PREFIX + "/openapi")
     def openapi(request: Request):

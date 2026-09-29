@@ -111,6 +111,60 @@ class DocsControlPlane:
         out = subs.pause(None, sid)
         return {"id": out["id"], "tenant": out.get("tenant"), "status": out["status"]}
 
+    # ------------------------------------------------------------------ job operations (API-6)
+    def jobs_overview(self, *, workspace_id: str = "", status: str = "", origin: str = "",
+                      limit: int = 25, offset: int = 0) -> dict:
+        """Generation jobs across workspaces, as metadata: ids, status, phase, counts, timing, origin and
+        the submitting request's id. No project or template names, sample data or artifacts."""
+        store = self.api.state.app.store
+        where, args = ["1=1"], []
+        if workspace_id:
+            where.append("tenant=?"); args.append(workspace_id)
+        if status == "active":
+            where.append("status IN ('queued','running','cancelling')")
+        elif status:
+            where.append("status=?"); args.append(status)
+        if origin:
+            where.append("origin=?"); args.append(origin)
+        sql = " AND ".join(where)
+        total = store.one(f"SELECT COUNT(*) AS n FROM jobs WHERE {sql}", tuple(args))["n"]
+        rows = store.all(f"SELECT id, tenant, project_id, status, phase, counts, created_at, started_at, finished_at, origin, "
+                         f"request_id, halt_reason, run_no FROM jobs WHERE {sql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                         (*args, limit, offset))
+        items = []
+        for r in rows:
+            c = r["counts"] if isinstance(r["counts"], dict) else json.loads(r["counts"] or "{}")
+            items.append({**{k: r[k] for k in ("id", "tenant", "project_id", "status", "phase", "created_at", "started_at",
+                                               "finished_at", "origin", "request_id", "halt_reason", "run_no")},
+                          "counts": {"samples": c.get("total", 0), "documents": c.get("success", 0), "failed": c.get("failed", 0),
+                                     "pending": c.get("pending", 0), "running": c.get("running", 0)}})
+        totals = store.one("SELECT SUM(status='queued') AS queued, SUM(status='running') AS running, "
+                           "SUM(status='cancelling') AS cancelling, MIN(CASE WHEN status='queued' THEN created_at END) AS oldest_queued_at "
+                           "FROM jobs WHERE status IN ('queued','running','cancelling')")
+        return {"items": items, "total": total, "offset": offset, "limit": limit,
+                "next_offset": offset + limit if offset + limit < total else None,
+                "totals": {k: (totals[k] or 0) if k != "oldest_queued_at" else totals[k] for k in totals},
+                "measured_at": time.time()}
+
+    def job_tenant(self, jid: str) -> str | None:
+        row = self.api.state.app.store.one("SELECT tenant FROM jobs WHERE id=?", (jid,))
+        return row["tenant"] if row else None
+
+    def job_cancel(self, jid: str) -> dict:
+        """Stop a runaway job for the platform: the workspace's own cancel, with the same rules (queued →
+        cancelled; running → cancelling, the sample in progress finishes and keeps its result)."""
+        tenant = self.job_tenant(jid)
+        if tenant is None:
+            raise ServiceError(404, "not_found", "任务不存在")
+        jobs = getattr(self.api.state, "jobs", None)
+        if jobs is None:
+            # The account process runs no job runner (start_jobs=False); a non-running service writes
+            # the same cancellation, which the runner in the Docs process observes.
+            from .jobs import JobService
+            jobs = JobService(self.api.state.app, start=False, notifier=getattr(self.api.state, "notifier", None))
+        out = jobs.cancel(jid, tenant)
+        return {"id": jid, "tenant": tenant, "status": out["status"], "cancel": out.get("cancel")}
+
     def webhook_tenant(self, sid: str) -> str | None:
         row = self.api.state.app.store.one("SELECT tenant FROM webhook_subscriptions WHERE id=? AND deleted_at IS NULL", (sid,))
         return row["tenant"] if row else None
