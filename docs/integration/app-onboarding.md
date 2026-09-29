@@ -213,6 +213,11 @@ python python -m synwevo_docs.cli --data data app list
 * **不改写任何一行业务数据**；
 * 不给管理员自己任何读取权。
 
+指派错了可以撤销（「撤销指派」，`POST /api/admin/workspaces/{wid}/unclaim`，同样的重认证与书面理由；
+冻结的指派也可直接撤销）：一个事务内移除全部成员、资格、应用启用、邀请与令牌，数据回到无人指派的
+`pending_claim`，**不删除任何数据**，之后可以重新认领。先看影响用只读的 `…/unclaim-preview`。完整规则同样
+在 `docs/security/permissions.md` §3.3。
+
 重认证作用域是一个封闭集合（`mfa` / `admin`）。空作用域满足所有检查，所以它必须是请求无法要求的值。
 
 ## 5.2 机器身份：服务账户与用户委托

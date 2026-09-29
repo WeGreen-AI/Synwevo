@@ -191,3 +191,140 @@ def test_machine_credentials_follow_the_rules_already_in_force(world):
     _claim(world)
     assert CANARY in _names(_v1(world, approved))
     assert _service_token(world).status_code == 200
+
+
+def test_a_frozen_wrong_assignment_is_undone_without_the_assignee_getting_it_back(world):
+    """The administrator who spots a wrong assignment freezes it first (the stop switch). The undo
+    used to be refused until it was unfrozen, and the unfreeze gave the wrong account the data back
+    — its browser could select the workspace and read the project again — until the undo ran."""
+    alice_c = world["c"]["alice"]
+    _claim(world)
+    assert _post(alice_c, "/api/auth/workspace", {"workspace_id": LEGACY}).status_code == 200
+    assert alice_c.get("/api/projects/p_legacy").json()["name"] == CANARY
+    _admin(world, "freeze", {"reason": "指派错了，先停止访问"})
+    assert alice_c.get("/api/projects/p_legacy", headers={"X-Synwevo-Workspace": LEGACY}).status_code == 403
+
+    out = _unclaim(world)
+    assert out["previous_status"] == "frozen" and out["status"] == "pending_claim"
+    assert _post(alice_c, "/api/auth/workspace", {"workspace_id": LEGACY}).status_code in (403, 404)
+    assert alice_c.get("/api/projects/p_legacy").status_code == 404
+    assert CANARY not in str(alice_c.get("/api/projects").json())
+    assert not world["store"].all("SELECT * FROM audit_events WHERE action='admin.workspace.unfreeze'")
+    # assigned again, the normal way
+    _claim(world)
+    assert _post(alice_c, "/api/auth/workspace", {"workspace_id": LEGACY}).status_code == 200
+    assert alice_c.get("/api/projects/p_legacy").status_code == 200
+
+
+class _Tab:
+    """Fixture: the part of a browser tab's live-editing client this test needs — Yjs sync over the
+    room's socket (`synwevo_docs.collab`), a local copy of the document, and the server's frames."""
+
+    def __init__(self, client, tid):
+        from pycrdt import Doc
+        self.cm = client.websocket_connect(f"/api/collab/templates/{tid}", headers={"origin": "http://testserver"})
+        self.ws = self.cm.__enter__()
+        self.doc, self.meta, self.synced = Doc(), [], False
+
+    def frame(self):
+        import json
+        from pycrdt import YMessageType, YSyncMessageType, handle_sync_message, read_message
+        from synwevo_docs.collab import MESSAGE_META
+        data = self.ws.receive_bytes()
+        if data[0] == MESSAGE_META:
+            self.meta.append(json.loads(read_message(data[1:])))
+            return "meta"
+        if data[0] == YMessageType.SYNC:
+            reply = handle_sync_message(data[1:], self.doc)
+            if data[1] == YSyncMessageType.SYNC_STEP1 and reply is not None:
+                self.ws.send_bytes(reply)
+            if data[1] == YSyncMessageType.SYNC_STEP2:
+                self.synced = True
+                return "step2"
+        return "other"
+
+    def sync(self):
+        from pycrdt import create_sync_message
+        self.synced = False
+        self.ws.send_bytes(create_sync_message(self.doc))
+        for _ in range(20):
+            if self.frame() == "step2":
+                return
+            if self.meta and self.meta[-1].get("type") == "closed":
+                return
+        raise AssertionError(f"no answer; meta: {self.meta}")
+
+    def text(self) -> str:
+        from pycrdt import XmlFragment
+        return str(self.doc.get("body", type=XmlFragment))
+
+    def type(self, text: str):
+        """Append to the first paragraph's text and send the update, like a keystroke."""
+        from pycrdt import XmlFragment, create_update_message
+        updates = []
+        sub = self.doc.observe(lambda ev: updates.append(ev.update))
+        with self.doc.transaction():
+            node = self.doc.get("body", type=XmlFragment).children[0].children[0]
+            node.insert(len(node), text)
+        self.doc.unobserve(sub)
+        assert updates, "the edit produced no update"
+        for u in updates:
+            self.ws.send_bytes(create_update_message(u))
+
+    def closed(self):
+        from starlette.websockets import WebSocketDisconnect
+        for _ in range(20):
+            try:
+                self.frame()
+            except WebSocketDisconnect as e:
+                return e.code, [m for m in self.meta if m.get("type") == "closed"]
+        raise AssertionError(f"still open; meta: {self.meta}")
+
+    def close(self):
+        self.cm.__exit__(None, None, None)
+
+
+def test_an_open_live_editing_tab_can_neither_read_nor_write_after_the_undo(world, monkeypatch):
+    """The former owner's template tab is open when the administrator undoes the assignment. Their
+    HTTP requests were refused at once, but the socket was re-checked only every 30 s: it still
+    answered a fresh sync with the whole document and saved an edit into the draft the next
+    assignee would inherit (review finding). Each reading or writing frame is now re-checked."""
+    # the periodic re-check plays no part here (and bounds the test, rather than hanging it, without the fix)
+    monkeypatch.setenv("SYNWEVO_COLLAB_RECHECK_S", "5")
+    alice_c, store = world["c"]["alice"], world["store"]
+    doc = {"page": {"size": "A4", "orientation": "portrait", "margins": {"top": 25.4, "bottom": 25.4, "left": 31.8, "right": 31.8}},
+           "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "客户："}]}]},
+           "header": {"type": "doc", "content": [{"type": "paragraph"}]}, "footer": {"type": "doc", "content": [{"type": "paragraph"}]}}
+    with TestClient(world["api"]):
+        _claim(world)
+        assert _post(alice_c, "/api/auth/workspace", {"workspace_id": LEGACY}).status_code == 200
+        r = _post(alice_c, "/api/templates/builtin", {"kind": "builtin_doc", "editor": doc, "name": "历史合同模板"})
+        assert r.status_code == 200, r.text
+        tid = r.json()["id"]
+        reader, writer = _Tab(alice_c, tid), _Tab(alice_c, tid)
+        for tab in (reader, writer):
+            tab.sync()
+            assert "客户：" in tab.text()
+
+        _unclaim(world)
+        assert alice_c.get(f"/api/templates/{tid}").status_code in (403, 404)
+        # a fresh sync asks for the whole document: refused, nothing sent
+        from pycrdt import Doc
+        reader.doc = Doc()
+        reader.sync()
+        assert reader.synced is False and "客户：" not in reader.text()
+        assert reader.closed() == (4403, [{"type": "closed", "reason": "membership_ended"}])
+        # an edit: refused, never applied
+        writer.type("（撤销之后写入）")
+        assert writer.closed() == (4403, [{"type": "closed", "reason": "membership_ended"}])
+        reader.close()
+        writer.close()
+    # nothing of it reached the draft the next assignee inherits
+    for row in store.all("SELECT state FROM collab_docs WHERE template_id=?", (tid,)):
+        from pycrdt import Doc, XmlFragment
+        d = Doc()
+        d.apply_update(row["state"])
+        assert "撤销之后" not in str(d.get("body", type=XmlFragment))
+    _claim(world)
+    assert _post(alice_c, "/api/auth/workspace", {"workspace_id": LEGACY}).status_code == 200
+    assert alice_c.get(f"/api/templates/{tid}").status_code == 200

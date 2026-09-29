@@ -236,15 +236,31 @@ def test_an_ordinary_workspace_is_not_undone_through_this_route(env):
     assert post(env["c"], "/api/admin/workspaces/w_nothing/unclaim", {"reason": REASON}).status_code == 404
 
 
-def test_a_frozen_assignment_is_unfrozen_first(env):
-    _claim(env, env["alice"]["id"])
-    assert post(env["c"], f"/api/admin/workspaces/{LEGACY}/freeze", {"reason": "先冻结调查一下这个空间"}).status_code == 200
-    for r in (_unclaim(env), _preview(env)):
-        assert r.status_code == 409 and r.json()["error"] == "workspace_frozen"
-        assert "请先解冻" in r.json()["message"]
-    assert _ws(env)["status"] == "frozen" and _members(env) == {env["alice"]["id"]}
-    assert post(env["c"], f"/api/admin/workspaces/{LEGACY}/unfreeze", {"reason": "调查结束，恢复使用"}).status_code == 200
-    assert _unclaim(env).status_code == 200
+def test_a_frozen_assignment_is_undone_without_handing_the_data_back_first(env):
+    """Freezing is the stop switch an administrator pulls on seeing a wrong assignment. The undo
+    works from there: it used to demand an unfreeze first, which gave the wrong account the data
+    back for as long as the two steps took (review finding: frozen → unfreeze → access)."""
+    apps, alice = env["apps"], env["alice"]["id"]
+    _claim(env, alice)
+    assert post(env["c"], f"/api/admin/workspaces/{LEGACY}/freeze", {"reason": "指派错了，先停止访问"}).status_code == 200
+    assert apps.check_access(alice, "docweave", LEGACY)[0] is False
+
+    plan = _preview(env)
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["workspace"]["status"] == "frozen"
+    assert [m["email"] for m in plan.json()["members"]] == ["alice@example.com"]
+    r = _unclaim(env)
+    assert r.status_code == 200, r.text
+    assert r.json()["previous_status"] == "frozen" and r.json()["status"] == "pending_claim"
+    # at no point did the wrong account get the data back
+    assert apps.check_access(alice, "docweave", LEGACY)[0] is False
+    assert _members(env) == set() and _ws(env)["status"] == "pending_claim"
+    assert _audit(env, "admin.workspace.unfreeze") == []
+    [row] = _audit(env)
+    assert row["meta"]["previous_status"] == "frozen"
+    # the freeze does not outlive the undo: a new assignment works the normal way
+    _claim(env, env["bob"]["id"])
+    assert _ws(env)["status"] == "active" and apps.check_access(env["bob"]["id"], "docweave", LEGACY)[0] is True
 
 
 def test_a_deleted_workspace_is_refused(env):
@@ -349,17 +365,18 @@ def test_the_undo_withdraws_every_kind_of_access_and_deletes_no_data(env):
     # nothing of the data is deleted
     assert {t: _snapshot(store)[t] for t in data_before} == data_before
     assert store.has_blob(env["blob"])
-    # the removals are journalled, so an older backup restored later does not bring them back
-    entries = journal.read(store.root)
-    assert {e["user_id"] for e in entries if e["kind"] == "member_removed" and e["workspace_id"] == LEGACY} == {alice, bob}
-    assert any(e["kind"] == "invitation_revoked" and e["invitation_id"] == pending["id"] for e in entries)
-    assert any(e["kind"] == "workspace_app_disabled" and e["workspace_id"] == LEGACY for e in entries)
+    # the undo is journalled (one entry, written ahead of the commit), so an older backup
+    # restored later does not bring the access back
+    entries = [e for e in journal.read(store.root) if e["kind"] == "workspace_unclaimed"]
+    assert [(e["workspace_id"], e["label_restored"]) for e in entries] == [(LEGACY, True)]
     assert out["journaled"] is True
-    # the people who lost access are told, the way removing a member tells them
+    # the people who lost access are told, the way removing a member tells them — by the
+    # administrator's role, not their name or email
     for uid in (alice, bob):
         items = env["api"].state.notifier.list(uid)["items"]
         removed = [i for i in items if i["kind"] == "member.removed"]
-        assert removed and "历史数据" in removed[0]["title"] and "平台管理员甲" in removed[0]["body"]
+        assert removed and "历史数据" in removed[0]["title"] and "由 平台管理员 操作" in removed[0]["body"]
+        assert "平台管理员甲" not in removed[0]["body"] and "admin@example.com" not in removed[0]["body"]
     assert out["notified"] == 2
     # platform administration gained nothing
     assert apps.check_access(env["admin"]["id"], "docweave", LEGACY)[0] is False
@@ -457,6 +474,9 @@ def test_the_undo_is_audited_with_who_why_and_what_it_withdrew(env):
     assert meta["name"] == GENERATED and meta["status"] == "pending_claim"
     assert meta["assigned_by"] == env["admin"]["id"]
     assert meta["projects"] == 3 and meta["templates"] == 2
+    assert meta["operator_keys"] == 0 and meta["jobs_stopping"] == 0
+    # it can say so: the journal entry is written before the commit or the undo does not happen
+    assert meta["journaled"] is True
     assert "历史项目" not in row["meta"].__repr__(), "审计只记数量，不记历史文档的名字"
     # the claim now records the names it saw and set, inside its own transaction
     [claim] = _audit(env, "admin.workspace.claim")
@@ -588,3 +608,235 @@ def test_claim_undo_claim_works_repeatedly(env):
         assert overview["status"] == "pending_claim" and overview["members"] == 0 and overview["apps"] == []
         assert overview["projects"] == 3
     assert [e["meta"]["removed_members"][0]["user_id"] for e in _audit(env)] == [alice, bob, alice]
+
+
+# ---------------------------------------------------------------- what the confirmation must say
+def test_the_preview_counts_what_keeps_working_and_what_stops(env):
+    """Two things the undo does not do, said before it is confirmed: an operator's `dw_` key keeps
+    working (the `pending_claim` rule), and queued or running work of the people and credentials
+    that lose access is cancelled by the runner (`authority.check`). The counts must agree with
+    what the runner and the key checker then decide."""
+    from synwevo_core import authority
+    from synwevo_core.api_platform import Approvals
+    from synwevo_core.auth import Auth
+    from synwevo_core.machine import docs_resource
+    store, alice = env["store"], env["alice"]["id"]
+    _claim(env, alice)
+    auth = Auth(store)
+    _, operator_key = auth.create_key("运维脚本", LEGACY, ("read", "write"))
+    _, revoked_key = auth.create_key("停用的脚本", LEGACY, ("read",))
+    auth.revoke_key(revoked_key["id"])
+    _, elsewhere = auth.create_key("别的空间", env["ident"].workspaces_for(env["bob"]["id"])[0]["id"], ("read",))
+    approvals = Approvals(store)
+    row = approvals.create(env["admin"]["id"], {"workspace_id": LEGACY, "name": "历史导出", "credential_kind": "api_key",
+                                                "scopes": ["docweave.write"], "resources": [docs_resource()]}, "fixture approval")
+    approvals.decide(row["id"], alice, "approve", {"scopes": ["docweave.write"], "resources": [docs_resource()]}, "同意导出")
+    with store.tx():
+        _, bound_key = auth.create_key("历史导出", LEGACY, ("write",))
+        approvals.bind(row["id"], "api_key", bound_key["id"])
+    oidc.Clients(store).register(client_id="svc_legacy", app_id="docweave", name="批处理", redirect_uris=[],
+                                 confidential=True, kind="service", workspace_id=LEGACY, api_scopes="docweave.write")
+    jobs = {
+        "j_person": ("running", {"kind": "user", "user_id": alice, "tenant": LEGACY}),
+        "j_delegated": ("queued", {"kind": "delegated", "client_id": "docweave-web", "user_id": alice,
+                                   "family_id": "fam_x", "tenant": LEGACY}),
+        "j_service": ("queued", {"kind": "service_account", "client_id": "svc_legacy", "tenant": LEGACY}),
+        "j_approved_key": ("queued", {"kind": "api_key", "key_id": bound_key["id"], "lineage": bound_key["id"], "tenant": LEGACY}),
+        "j_operator_key": ("running", {"kind": "api_key", "key_id": operator_key["id"], "lineage": operator_key["id"],
+                                       "tenant": LEGACY}),
+        "j_operator": ("queued", None),                                   # the pre-identity operator modes
+        "j_finished": ("completed", {"kind": "user", "user_id": alice, "tenant": LEGACY}),
+    }
+    for jid, (status, desc) in jobs.items():
+        store.execute("INSERT INTO jobs (id,project_id,status,created_at,tenant,principal) VALUES (?,?,?,?,?,?)",
+                      (jid, "p_legacy0", status, now(), LEGACY, authority.dumps(desc)))
+
+    plan = _preview(env).json()
+    assert plan["operator_keys"] == 1, "只数没有被所有者审批绑定、未撤销、属于这个空间的运维密钥"
+    assert plan["jobs_stopping"] == 4
+    out = _unclaim(env).json()
+    assert out["operator_keys"] == 1 and out["jobs_stopping"] == 4
+    # ...and that is what the rules then decide
+    stopped = {jid for jid, (status, desc) in jobs.items() if status != "completed"
+               and not authority.check(store, desc, need="write", tenant=LEGACY)[0]}
+    assert stopped == {"j_person", "j_delegated", "j_service", "j_approved_key"}
+    assert elsewhere["tenant"] != LEGACY
+
+
+# ---------------------------------------------------------------- the notice former members get
+def test_former_members_are_told_by_the_role_never_by_the_administrator_s_email(env):
+    """An administrator without a display name used to be named by their email in the inbox
+    and the mail of every former member — including an account the data was assigned to by
+    mistake. The notice names the role, in each language, and stores no identity of theirs."""
+    store, alice = env["store"], env["alice"]["id"]
+    env["ident"].create_user("root-admin@example.com", PW, status="active", platform_role="admin")
+    root = _login(env["api"], "root-admin@example.com")
+    _claim(env, alice)
+    _reauth(root)
+    assert _unclaim(env, client=root).status_code == 200
+    row = store.one("SELECT * FROM notifications WHERE user_id=? AND kind='member.removed'", (alice,))
+    assert "root-admin" not in row["params"] and "@" not in row["params"]
+    notifier = env["api"].state.notifier
+    body = {loc: notifier.render(row, loc)["body"] for loc in ("zh-Hans", "zh-Hant", "en")}
+    assert body["zh-Hans"].startswith("由 平台管理员 操作。")
+    assert body["zh-Hant"].startswith("由 平台管理員 操作。")
+    assert body["en"].startswith("Done by a platform administrator.")
+    # the marker is its own key: a person whose name reads like it is still named as themselves
+    spoof = {**row, "params": json.dumps({"workspace": "某空间", "actor": "platform_admin"})}
+    assert notifier.render(spoof, "en")["body"].startswith("Done by platform_admin.")
+
+
+# ---------------------------------------------------------------- the security journal
+def test_the_undo_is_journalled_before_it_commits(env, monkeypatch):
+    """Write-ahead: when the entry is written, the undo is not yet visible to anyone else. A line
+    written after the COMMIT could be lost to a crash in between, and an older backup restored
+    later would then give the former members their access back."""
+    import sqlite3
+    _claim(env, env["alice"]["id"])
+    seen = []
+    real = journal.record
+
+    def spy(store, kind, **fields):
+        # what everyone else sees at the moment each journal line is written: committed rows only
+        other = sqlite3.connect(f"file:{store.db_path}?mode=ro", uri=True)
+        try:
+            seen.append((kind, other.execute("SELECT status FROM workspaces WHERE id=?", (LEGACY,)).fetchone()[0],
+                         other.execute("SELECT COUNT(*) FROM memberships WHERE workspace_id=?", (LEGACY,)).fetchone()[0]))
+        finally:
+            other.close()
+        return real(store, kind, **fields)
+
+    monkeypatch.setattr(journal, "record", spy)
+    assert _unclaim(env).status_code == 200
+    assert seen == [("workspace_unclaimed", "active", 1)], "每一行日志都写在撤销提交之前"
+
+
+def test_an_undo_that_cannot_be_journalled_is_not_performed(env, monkeypatch):
+    """No undo that a restore would silently reverse: nothing changes, the administrator is told
+    why in a sentence, and the attempt is audited as an error."""
+    _claim(env, env["alice"]["id"])
+    before = _snapshot(env["store"])
+    real = journal.record
+
+    def broken(store, kind, **fields):
+        raise OSError("fixture: the journal's disk is full")
+
+    monkeypatch.setattr(journal, "record", broken)
+    r = _unclaim(env)
+    assert r.status_code == 503 and r.json()["error"] == "journal_unavailable", r.text
+    assert "没有执行" in r.json()["message"] and "冻结" in r.json()["message"]
+    after = _snapshot(env["store"])
+    assert {t: v for t, v in after.items() if t != "audit_events"} == {t: v for t, v in before.items() if t != "audit_events"}
+    [row] = _audit(env)
+    assert row["result"] == "error" and row["meta"] == {"code": "journal_unavailable", "reason": REASON}
+    assert env["apps"].check_access(env["alice"]["id"], "docweave", LEGACY)[0] is True
+    # the audited claim is still the assignment the overview shows
+    assert _preview(env).json()["assigned"]["to_email"] == "alice@example.com"
+    monkeypatch.setattr(journal, "record", real)
+    assert _unclaim(env).status_code == 200
+    assert [a["result"] for a in _audit(env)] == ["error", "ok"]
+
+
+def _backup(env, tmp_path, name):
+    """Fixture: a copy of the database as a backup taken now would hold it (SQLite's own backup)."""
+    import sqlite3
+    from pathlib import Path
+    dest = tmp_path / name
+    dest.mkdir()
+    src = sqlite3.connect(env["store"].db_path)
+    dst = sqlite3.connect(dest / Path(env["store"].db_path).name)
+    try:
+        src.backup(dst)
+    finally:
+        src.close()
+        dst.close()
+    return Store(dest)
+
+
+def test_a_restore_from_before_the_undo_applies_it_whatever_the_backup_s_time(env, tmp_path):
+    """A backup taken between the journal line and the COMMIT has neither the undo nor — by its
+    cutoff — a reason to replay the line. The undo's entry is replayed on every restore and
+    applied as of its own time."""
+    from synwevo_identity.invites import Invites
+    store, ident, alice, bob = env["store"], env["ident"], env["alice"]["id"], env["bob"]["id"]
+    _claim(env, alice)
+    _, raw = Invites(store, ident).create(workspace_id=LEGACY, email="bob@example.com", role="editor", actor_id=alice)
+    Invites(store, ident).accept(raw, password=None, display_name=None, as_user_id=bob)
+    pending, _ = Invites(store, ident).create(workspace_id=LEGACY, email="carol@example.com", role="viewer", actor_id=alice)
+    _token(env, user_id=alice)
+    restored = _backup(env, tmp_path, "assigned")
+    assert _unclaim(env).status_code == 200
+
+    journal.apply(restored, journal.read(store.root, since=now() + 60))     # a cutoff later than every line
+    assert restored.one("SELECT status, name FROM workspaces WHERE id=?", (LEGACY,)) == \
+        {"status": "pending_claim", "name": GENERATED}
+    assert restored.all("SELECT * FROM memberships WHERE workspace_id=?", (LEGACY,)) == []
+    assert restored.all("SELECT * FROM workspace_apps WHERE workspace_id=?", (LEGACY,)) == []
+    assert restored.one("SELECT COUNT(*) AS n FROM app_entitlements WHERE workspace_id=? AND revoked_at IS NULL",
+                        (LEGACY,))["n"] == 0
+    assert restored.one("SELECT revoked_at FROM invitations WHERE id=?", (pending["id"],))["revoked_at"] is not None
+    assert restored.one("SELECT COUNT(*) AS n FROM oauth_tokens WHERE workspace_id=? AND revoked_at IS NULL",
+                        (LEGACY,))["n"] == 0
+    for uid in (alice, bob):
+        assert Apps(restored, Identity(restored)).check_access(uid, "docweave", LEGACY)[0] is False
+    # applying it again changes nothing
+    once = _snapshot(restored)
+    journal.apply(restored, journal.read(store.root))
+    assert _snapshot(restored) == once
+
+
+def test_replaying_an_undo_never_takes_back_a_later_assignment(env, tmp_path):
+    """Grants are not journalled, so a restore replays every undo; whatever was assigned after
+    one — the membership, the application, the grant, tokens, invitations — must survive it."""
+    from synwevo_identity.invites import Invites
+    store, ident, alice, bob = env["store"], env["ident"], env["alice"]["id"], env["bob"]["id"]
+    _claim(env, alice)
+    assert _unclaim(env).status_code == 200
+    _claim(env, bob)
+    bob_token = _token(env, user_id=bob)
+    pending, _ = Invites(store, ident).create(workspace_id=LEGACY, email="carol@example.com", role="viewer", actor_id=bob)
+    restored = _backup(env, tmp_path, "reassigned")
+
+    journal.apply(restored, journal.read(store.root))                        # every line: the oldest cutoff there is
+    assert restored.one("SELECT status FROM workspaces WHERE id=?", (LEGACY,))["status"] == "active"
+    assert {r["user_id"] for r in restored.all("SELECT user_id FROM memberships WHERE workspace_id=?", (LEGACY,))} == {bob}
+    assert [r["app_id"] for r in restored.all("SELECT app_id FROM workspace_apps WHERE workspace_id=?", (LEGACY,))] == ["docweave"]
+    assert Apps(restored, Identity(restored)).check_access(bob, "docweave", LEGACY) == (True, LEGACY, "ok")
+    assert oidc.Grants(restored).load_access(bob_token) is not None
+    assert restored.one("SELECT revoked_at FROM invitations WHERE id=?", (pending["id"],))["revoked_at"] is None
+
+
+# ---------------------------------------------------------------- a new claim after an undo
+def test_a_new_claim_records_its_own_grant_not_the_undo_s(env):
+    """The undo writes an explicit revoked row per former member; claiming the data for one of
+    them later must record that claim's time and administrator (`entitlement_granted_at`)."""
+    from synwevo_identity.invites import Invites
+    store, ident, alice, bob = env["store"], env["ident"], env["alice"]["id"], env["bob"]["id"]
+    _claim(env, alice)
+    _, raw = Invites(store, ident).create(workspace_id=LEGACY, email="bob@example.com", role="editor", actor_id=alice)
+    Invites(store, ident).accept(raw, password=None, display_name=None, as_user_id=bob)
+    other = ident.create_user("admin2@example.com", PW, status="active", platform_role="admin")
+    second = _login(env["api"], "admin2@example.com")
+    _reauth(second)
+    assert _unclaim(env, client=second).status_code == 200
+    _claim(env, bob)
+    row = store.one("SELECT granted_at, granted_by, revoked_at FROM app_entitlements WHERE workspace_id=? "
+                    "AND app_id='docweave' AND user_id=?", (LEGACY, bob))
+    member = store.one("SELECT created_at FROM memberships WHERE workspace_id=? AND user_id=?", (LEGACY, bob))
+    assert row["revoked_at"] is None
+    assert row["granted_by"] == env["admin"]["id"] != other["id"]
+    assert row["granted_at"] == member["created_at"], "同一次认领写下的成员关系与使用资格"
+
+
+def test_an_undo_racing_a_freeze_always_ends_unassigned(env):
+    """Freeze first: the undo takes the frozen assignment. Undo first: there is nothing left to
+    freeze. Either way nobody is left holding the data."""
+    for _ in range(3):
+        _claim(env, env["alice"]["id"])
+        undo, freeze = _race(lambda: _unclaim(env),
+                             lambda: post(env["c"], f"/api/admin/workspaces/{LEGACY}/freeze", {"reason": "指派错了，先停止访问"}))
+        assert undo.status_code == 200, undo.text
+        assert freeze.status_code in (200, 409), freeze.text
+        if freeze.status_code == 409:
+            assert freeze.json()["error"] == "not_active"
+        assert _consistent(env)[0] == "pending_claim"

@@ -12,6 +12,11 @@ the authority on **who** may do **what**, which no document format can be:
   (and they are told) rather than applied; the role is re-checked every ``COLLAB_RECHECK_S``
   seconds, so a demotion turns the connection read-only and a removal closes it (4403);
   an expired or revoked session closes it too (4401) — an idle tab does not keep a session alive;
+* and it is re-checked before every frame that reads or writes the document (a sync step, an
+  update, a live table's operation), the way every HTTP request re-checks membership: a member
+  removed, a workspace frozen or its historical data unassigned cannot pull the document or push
+  an edit in the seconds before the next periodic re-check (review finding, Q21). The periodic
+  check still closes a connection that only listens;
 * awareness (name, colour, caret) is only accepted for the identity the connection proved;
 * the live document is persisted whole into the single database (``collab_docs``) a second after
   the last change and when the room empties, so a crash or restart loses at most that second;
@@ -75,6 +80,10 @@ log = logging.getLogger("synwevo.docs.collab")
 MESSAGE_META = 100                 # this server's own frames beside sync (0), awareness (1), query awareness (3)
 MESSAGE_SHEET = 101                # a live table room's operations and patches (collab_sheet_room)
 MESSAGE_QUERY_AWARENESS = 3
+#: Frames that read or write the document — a sync step or update, a live table's operation — and
+#: are therefore re-authorised before they are handled (``CollabHub._frame_gate``). Presence (awareness)
+#: carries no content and is left to the periodic re-check.
+CONTENT_FRAMES = frozenset({0, MESSAGE_SHEET})       # 0: YMessageType.SYNC
 CLOSE_BAD_REQUEST, CLOSE_UNAUTHORIZED, CLOSE_FORBIDDEN, CLOSE_NOT_FOUND, CLOSE_GONE, CLOSE_ERROR = 4400, 4401, 4403, 4404, 4410, 1011
 #: A tab reconnecting with a document from a previous seeding of the room (CI-115): merging it would
 #: put back what a restore replaced, next to the restored text.
@@ -186,6 +195,7 @@ class Conn:
     client_key: str | None = None
     seen: int = 0
     loop: Any = None
+    revoked: bool = False                  # a re-check refused it and closed the socket: nothing more is handled
     rate_until: float = 0.0                # told to wait until then (monotonic): frames before it are refused unread
     # a message refused for now (busy / rate limited, not recorded): nothing this connection sent after
     # it is applied before it comes back, so one tab's messages always apply in the order it sent them
@@ -1262,6 +1272,8 @@ class CollabHub:
                     log.warning("collab %s: %s sent a %d-byte frame (limit %d); closing", room.key, conn.user_id, len(data), MAX_FRAME_BYTES)
                     await ws.close(code=CLOSE_BAD_REQUEST, reason="frame_too_large")
                     break
+                if conn.revoked or (data[0] in CONTENT_FRAMES and not await self._frame_gate(conn, room)):
+                    break
                 await self._handle(room, conn, data)
         except WebSocketDisconnect:
             pass
@@ -1335,38 +1347,69 @@ class CollabHub:
         """Periodically prove the connection is still allowed, without extending the session.
 
         The session is read with ``touch=False``: staying connected is not activity. Membership and
-        the account are read live, like on every request."""
-        from synwevo_core.sessions import COOKIE_NAME
+        the account are read live, like on every request. This is what closes a connection that
+        only listens; one that reads or writes is also checked before each such frame (``_frame_gate``)."""
         interval = recheck_seconds()
         while True:
             await asyncio.sleep(interval)
             try:
-                verdict = await run_in_threadpool(self._still_allowed, conn, COOKIE_NAME)
+                if not await self._verify(conn, room):
+                    return
             except Exception:                                 # noqa: BLE001
                 log.exception("collab %s: re-check failed", room.key)
                 continue
-            code, role = verdict
-            if code is not None:
-                await conn.meta({"type": "closed", "reason": role})
+
+    async def _frame_gate(self, conn: Conn, room: Room) -> bool:
+        """Before a frame that reads or writes the document: is this connection still allowed?
+
+        The periodic re-check alone left up to ``COLLAB_RECHECK_S`` (30 s by default) in which a
+        removed member — or every former member of historical data whose assignment was just
+        undone — could pull the whole live document and push edits into the draft the next
+        assignee inherits, while their HTTP requests were already refused. The check is the same
+        one (live rows, ``touch=False``), so the answer is the one the next request would get. If
+        it cannot be made the frame is not handled and the tab is told to reconnect (4503), which
+        re-runs the full handshake gate: a failure to check is never a pass."""
+        try:
+            return await self._verify(conn, room)
+        except Exception:                                     # noqa: BLE001
+            log.exception("collab %s: frame re-check failed", room.key)
+            conn.revoked = True
+            with contextlib.suppress(Exception):
+                await conn.ws.close(code=CLOSE_TRY_LATER, reason="recheck_failed")
+            return False
+
+    async def _verify(self, conn: Conn, room: Room) -> bool:
+        """Apply the live verdict to the connection: close it (False) or adjust its role (True)."""
+        from synwevo_core.sessions import COOKIE_NAME
+        if conn.revoked:
+            return False
+        code, role = await run_in_threadpool(self._still_allowed, conn, COOKIE_NAME)
+        if conn.revoked:                                      # the other check closed it meanwhile
+            return False
+        if code is not None:
+            conn.revoked = True
+            await conn.meta({"type": "closed", "reason": role})
+            with contextlib.suppress(Exception):
+                await conn.ws.close(code=code, reason=role)
+            return False
+        readonly = role not in WRITE_ROLES
+        if not readonly and conn.readonly:
+            refusal = room.on_promoted(conn)
+            if refusal is not None:
+                # a viewer made a writer while the room already has as many writing tabs as it keeps
+                # records for (review 5, item 4)
+                conn.revoked = True
+                await conn.meta({"type": "closed", "reason": refusal})
                 with contextlib.suppress(Exception):
-                    await conn.ws.close(code=code, reason=role)
-                return
-            readonly = role not in WRITE_ROLES
-            if not readonly and conn.readonly:
-                refusal = room.on_promoted(conn)
-                if refusal is not None:
-                    # a viewer made a writer while the room already has as many writing tabs as it keeps
-                    # records for (review 5, item 4)
-                    await conn.meta({"type": "closed", "reason": refusal})
-                    with contextlib.suppress(Exception):
-                        await conn.ws.close(code=CLOSE_TOO_MANY, reason=refusal)
-                    return
-            if readonly != conn.readonly:
-                conn.readonly = readonly
-                conn.refused_told = False
-                await conn.meta({"type": "role", "readonly": readonly, "role": role})
-                room.broadcast_meta({"type": "joined", "user": {"id": conn.user_id, "name": conn.name, "color": conn.color, "readonly": readonly},
-                                     "online": len(room.peers())}, exclude=conn)
+                    await conn.ws.close(code=CLOSE_TOO_MANY, reason=refusal)
+                return False
+        if readonly != conn.readonly:
+            conn.readonly = readonly
+            conn.refused_told = False
+            await conn.meta({"type": "role", "readonly": readonly, "role": role})
+            room.broadcast_meta({"type": "joined", "user": {"id": conn.user_id, "name": conn.name, "color": conn.color, "readonly": readonly},
+                                 "online": len(room.peers())}, exclude=conn)
+        return True
 
     def _still_allowed(self, conn: Conn, cookie_name: str) -> tuple[int | None, str]:
         session = self.sessions.load(conn.request.cookies.get(cookie_name), touch=False)

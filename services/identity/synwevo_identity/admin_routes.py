@@ -362,8 +362,11 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
 
         n_projects = store.one("SELECT COUNT(*) AS n FROM projects WHERE tenant=? AND deleted=0",
                                (wid,))["n"]
-        ts = now()
         with store.tx() as t:
+            # Taken under the write lock, not before waiting for it: an undo's security-journal
+            # entry is replayed "as of" its own time (journal.UNCLAIM_KIND), and a claim that
+            # queued behind that undo must not carry a time from before it.
+            ts = now()
             # Re-checked inside the transaction. Checked only before it, two concurrent claims
             # for different accounts both passed and the "unclaimed" data got two owners.
             live = t.execute("SELECT status, name FROM workspaces WHERE id=? AND kind='legacy'",
@@ -394,9 +397,13 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             t.execute("INSERT INTO workspace_apps (workspace_id,app_id,enabled_at,enabled_by) "
                       "VALUES (?,?,?,?) ON CONFLICT(workspace_id,app_id) DO NOTHING",
                       (wid, DOCS_APP_ID, ts, actor["id"]))
+            # A row left by an earlier assignment (an undo writes an explicit revoked row per
+            # former member) is granted anew: when and by whom is this claim's, as `Apps.grant`
+            # records it — not the undo's time and the administrator who ran the undo.
             t.execute("INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by) "
                       "VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,app_id,user_id) DO UPDATE SET "
-                      "revoked_at=NULL", (wid, DOCS_APP_ID, target_id, ts, actor["id"]))
+                      "revoked_at=NULL, granted_at=excluded.granted_at, granted_by=excluded.granted_by",
+                      (wid, DOCS_APP_ID, target_id, ts, actor["id"]))
             audit(request, "admin.workspace.claim", actor_id=actor["id"], workspace_id=wid,
                   object_kind="workspace", object_id=wid, result="ok",
                   meta={"target_user": target_id, "target_email": target["email"], "role": role,
@@ -414,6 +421,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         claim, an undo or a freeze that commits in between is judged by the row as it is then,
         never by the one read a moment earlier. Two undos at once: one commits, the other finds
         `pending_claim` and is told there is nothing to undo.
+
+        A frozen assignment is still an assignment and is undone as it is. Freezing is the stop
+        switch an administrator reaches for first when they see a wrong assignment; asking them to
+        unfreeze before undoing handed the data straight back to the wrong account for as long as
+        the two steps took. The undo ends the freeze with the assignment — the data goes to
+        `pending_claim`, which nobody can open either.
         """
         w = store.one("SELECT id, name, kind, status, organization_id, deleted_at FROM workspaces "
                       "WHERE id=?", (wid,))
@@ -425,9 +438,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             raise ServiceError(409, "workspace_deleted", "这个工作空间已被删除，不能撤销指派")
         if w["organization_id"]:
             raise ServiceError(409, "organization_workspace", "这个工作空间属于一个组织，不能在平台管理中撤销指派")
-        if w["status"] == "frozen":
-            raise ServiceError(409, "workspace_frozen", "这个工作空间已被冻结：请先解冻，再撤销指派")
-        if w["status"] != "active":
+        if w["status"] not in ("active", "frozen"):
             raise ServiceError(409, "not_assigned", "这份历史数据目前没有指派给任何人，无需撤销")
         return w
 
@@ -470,6 +481,45 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             return current
         return LEGACY_WORKSPACE_NAME if current == LEGACY_CLAIMED_NAME else current
 
+    def _table(name: str) -> bool:
+        return bool(store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)))
+
+    def _operator_keys(wid: str, ts: float) -> int:
+        """Operator-issued `dw_` keys of this tenant that no owner's approval binds. The undo does
+        not stop them: the documented `pending_claim` rule (`MachineAuth._legacy_key`) keeps them
+        working with the historical data, as before the claim. Counted per lineage — a rotation's
+        grace period has two keys of one lineage alive."""
+        unbound = ("AND NOT EXISTS (SELECT 1 FROM api_platform_bindings b WHERE b.kind='api_key' "
+                   "AND b.credential_id=COALESCE(k.lineage, k.id))") if _table("api_platform_bindings") else ""
+        return store.one("SELECT COUNT(DISTINCT COALESCE(k.lineage, k.id)) AS n FROM api_keys k "
+                         "WHERE k.tenant=? AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>?) "
+                         + unbound, (wid, ts))["n"]
+
+    def _jobs_stopping(wid: str) -> int:
+        """Queued or running generation jobs here that stop once nobody holds the data.
+
+        Work is re-authorised against its submitter (`synwevo_core.authority.check`): a person's,
+        a delegation's and a service account's need a member or an active workspace, and an API
+        key bound to an owner's approval needs that owner — the undo takes all of these away, and
+        the runner cancels what is left of such a job (`authorization_revoked`; finished results
+        stay, a retry is needed after a new assignment). Work of an operator's `dw_` key or of the
+        pre-identity operator modes keeps running, as before the claim."""
+        from synwevo_core import authority
+        bindings = _table("api_platform_bindings")
+        n = 0
+        for row in store.all("SELECT j.principal AS job_p, r.principal AS run_p FROM jobs j LEFT JOIN job_runs r "
+                             "ON r.job_id=j.id AND r.run_no=COALESCE(j.run_no, 1) "
+                             "WHERE j.tenant=? AND j.status IN ('queued','running')", (wid,)):
+            desc = authority.loads(row["run_p"] if row["run_p"] not in (None, "") else row["job_p"]) or {}
+            kind = desc.get("kind")
+            if kind in ("user", "delegated", "service_account"):
+                n += 1
+            elif kind == "api_key" and bindings and store.one(
+                    "SELECT 1 FROM api_platform_bindings WHERE kind='api_key' AND credential_id=?",
+                    (desc.get("lineage") or desc.get("key_id"),)):
+                n += 1
+        return n
+
     def _unclaim_plan(w: dict) -> dict:
         """Everything undoing this assignment would change, read as it is now.
 
@@ -486,7 +536,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         assignment = _assignment(wid)
         name_after = _name_after_unclaim(w["name"], assignment)
         approvals = 0
-        if store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='api_platform_approvals'"):
+        if _table("api_platform_approvals"):
             approvals = store.one("SELECT COUNT(*) AS n FROM api_platform_approvals WHERE workspace_id=? "
                                   "AND status='approved' AND revoked_at IS NULL AND expires_at>?",
                                   (wid, ts))["n"]
@@ -505,6 +555,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             "service_accounts": store.one("SELECT COUNT(*) AS n FROM oauth_clients WHERE kind='service' "
                                           "AND workspace_id=? AND disabled_at IS NULL", (wid,))["n"],
             "approvals": approvals,
+            # what the undo does NOT stop, said before it is confirmed rather than discovered after
+            "operator_keys": _operator_keys(wid, ts),
+            "jobs_stopping": _jobs_stopping(wid),
             "projects": store.one("SELECT COUNT(*) AS n FROM projects WHERE tenant=? AND deleted=0", (wid,))["n"],
             "templates": store.one("SELECT COUNT(*) AS n FROM templates WHERE tenant=? AND deleted=0", (wid,))["n"],
             "assigned": None if assignment is None else {
@@ -514,22 +567,27 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     @r.get("/workspaces/{wid}/unclaim-preview")
     def unclaim_preview(request: Request, wid: str):
         """What undoing the assignment would do, without doing it: who loses access, how many
-        invitations and sign-in tokens are withdrawn, what the data amounts to (numbers only),
-        the name it gets back, and when and by whom it was assigned. Reads only; looking needs
-        no re-authentication — the undo itself does."""
+        invitations and sign-in tokens are withdrawn, what keeps working (operator keys) and what
+        stops (jobs), what the data amounts to (numbers only), the name it gets back, and when and
+        by whom it was assigned. Reads only; looking needs no re-authentication — the undo
+        itself does."""
         _admin(request)
         return _unclaim_plan(_assigned_legacy(wid))
 
-    def _notify_removed(request: Request, actor: dict, uid: str, workspace_name: str, wid: str) -> bool:
+    def _notify_removed(request: Request, uid: str, workspace_name: str, wid: str) -> bool:
         """The inbox item a member gets when they are removed from a workspace (`member.removed`,
         worded in their language), best effort as in `members._notify`: access is already gone
-        whether or not the row lands."""
+        whether or not the row lands.
+
+        The actor is the role, not the person (`actor_kind`): a platform administrator's email or
+        name has never been handed to workspace members, and the account the data was assigned
+        to by mistake may be a stranger."""
         notifier = getattr(request.app.state, "notifier", None)
         if notifier is None:
             return False
         try:
             notifier.emit(uid, "member.removed",
-                          params={"workspace": workspace_name, "actor": actor.get("display_name") or actor["email"]},
+                          params={"workspace": workspace_name, "actor_kind": "platform_admin"},
                           workspace_id=wid, object_kind="membership", object_id=uid,
                           target={"origin": "accounts", "path": "/account#workspaces"})
             return True
@@ -542,7 +600,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         """Undo `claim`: the historical data goes back to belonging to nobody.
 
         `{"reason", "expected_members"?}` with recent `admin` re-authentication — the same gate
-        as the claim; a workspace or organization role never opens it. One transaction:
+        as the claim; a workspace or organization role never opens it. An assignment that has
+        been frozen is undone as it is (see `_assigned_legacy`). One transaction:
 
         * **every** membership goes, not only the account the claim named — anyone invited since
           would otherwise keep data the assignment was never meant to give them;
@@ -555,23 +614,36 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
           (`workspace_unclaimed`), and unexchanged sign-in codes for it are spent;
         * status `pending_claim`; the generated label comes back only over the name the claim set.
 
+        The security journal gets one `workspace_unclaimed` entry **before** any of it, inside the
+        transaction (write-ahead, like the organization withdrawals): a restore from an older
+        backup then re-applies the undo whether the process stopped after the commit or the
+        backup was taken before it, and the entry's own time keeps it from touching a later
+        assignment. When the journal cannot be written the undo is not performed at all
+        (`journal_unavailable`, nothing changed): an undo a restore would silently reverse is not
+        reported as done. Freezing remains available as the immediate stop.
+
         Machine credentials follow the rules already in force, nothing new: a service account
         needs an active workspace with the application on (`Apps.check_access_for_workspace`), and
         an API approval counts only while its approver is a current owner
         (`Approvals.require_owner`) — both stop here without being deleted, exactly as when a
-        workspace is frozen or loses its owners. Operator-issued `dw_` keys follow the documented
-        `pending_claim` rule (`MachineAuth._legacy_key`), as before the claim.
+        workspace is frozen or loses its owners, and an approval counts again if the data is
+        assigned back to the owner who gave it. Operator-issued `dw_` keys follow the documented
+        `pending_claim` rule (`MachineAuth._legacy_key`) and keep working, as before the claim;
+        the preview counts them (`operator_keys`), and the queued work that stops (`jobs_stopping`).
 
         Sessions are left alone: membership is checked on every request, and a session whose
-        workspace the person no longer belongs to is cleared then (`http._session_gate`).
+        workspace the person no longer belongs to is cleared then (`http._session_gate`). A tab
+        that still names this workspace in `X-Synwevo-Workspace` is refused
+        (`workspace_context_invalid`) until it chooses again — the overview drops that context
+        itself when its own tab named the workspace.
 
-        Nothing is deleted: projects, templates, sources, jobs, results and files stay, readable
-        by nobody — platform administrators included — until the data is assigned again.
+        Nothing is deleted: projects, templates, sources, jobs, results and files stay, and no
+        account can open them — platform administrators included — until the data is assigned
+        again.
 
         `expected_members` (the user ids the confirmation showed) makes the undo refuse, rather
         than remove someone the administrator never saw, when the members changed after they
-        looked. The removals are journalled after the commit like every other withdrawal, so a
-        restore from an older backup does not bring the access back.
+        looked.
         """
         _admin(request)
         _assigned_legacy(wid)
@@ -581,63 +653,77 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         if expected is not None and (not isinstance(expected, list) or len(expected) > 10_000
                                      or not all(isinstance(x, str) for x in expected)):
             raise ServiceError(400, "bad_expected_members", "expected_members 必须是账户 ID 列表")
+        from synwevo_core import journal as security_journal
         from synwevo_core.apps import DOCS_APP_ID
         from synwevo_core.oidc import Grants
-        from .withdrawals import record as journal
-        ts = now()
-        with store.tx() as t:
-            w = _assigned_legacy(wid)
-            plan = _unclaim_plan(w)
-            members = plan["members"]
-            if expected is not None and set(expected) != {m["user_id"] for m in members}:
-                raise ServiceError(409, "assignment_changed",
-                                   "你确认之后，这个空间的成员发生了变化。请重新查看将失去访问的人，再确认撤销")
-            apps_off = [r["app_id"] for r in store.all(
-                "SELECT app_id FROM workspace_apps WHERE workspace_id=? ORDER BY app_id", (wid,))]
-            entitlements = t.execute("UPDATE app_entitlements SET revoked_at=? WHERE workspace_id=? "
-                                     "AND revoked_at IS NULL", (ts, wid)).rowcount
-            for m in members:
-                for app_id in sorted(set(apps_off) | {DOCS_APP_ID}):
-                    t.execute("INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by,"
-                              "revoked_at) VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id,app_id,user_id) "
-                              "DO UPDATE SET revoked_at=COALESCE(app_entitlements.revoked_at, excluded.revoked_at)",
-                              (wid, app_id, m["user_id"], ts, actor["id"], ts))
-            t.execute("DELETE FROM memberships WHERE workspace_id=?", (wid,))
-            t.execute("DELETE FROM workspace_apps WHERE workspace_id=?", (wid,))
-            invitation_ids = [r["id"] for r in store.all(
-                "SELECT id FROM invitations WHERE workspace_id=? AND accepted_at IS NULL AND revoked_at IS NULL "
-                "ORDER BY created_at, id", (wid,))]
-            if invitation_ids:
-                t.execute(f"UPDATE invitations SET revoked_at=? WHERE id IN ({','.join('?' * len(invitation_ids))})",
-                          (ts, *invitation_ids))
-            tokens = Grants(store).revoke_for_workspace(wid, UNCLAIM_TOKEN_REASON)
-            codes = t.execute("UPDATE oauth_codes SET used_at=? WHERE workspace_id=? AND used_at IS NULL",
-                              (ts, wid)).rowcount
-            t.execute("UPDATE workspaces SET status='pending_claim', name=?, updated_at=? WHERE id=?",
-                      (plan["name_after"], ts, wid))
-            removed = [{"user_id": m["user_id"], "email": m["email"], "role": m["role"]} for m in members]
-            outcome = {"removed_members": removed, "invitations_revoked": len(invitation_ids),
-                       "tokens_revoked": tokens, "codes_spent": codes, "entitlements_revoked": entitlements,
-                       "apps_disabled": apps_off, "previous_name": w["name"], "name": plan["name_after"],
-                       "previous_status": w["status"], "status": "pending_claim",
-                       "service_accounts": plan["service_accounts"], "approvals": plan["approvals"],
-                       "projects": plan["projects"], "templates": plan["templates"]}
-            audit(request, "admin.workspace.unclaim", actor_id=actor["id"], workspace_id=wid,
-                  object_kind="workspace", object_id=wid, result="ok",
-                  meta={**outcome, "reason": reason,
-                        "assigned_at": (plan["assigned"] or {}).get("at"),
-                        "assigned_by": (plan["assigned"] or {}).get("by_id")})
+        journal_error: Exception | None = None
+        try:
+            with store.tx() as t:
+                ts = now()
+                w = _assigned_legacy(wid)
+                plan = _unclaim_plan(w)
+                members = plan["members"]
+                if expected is not None and set(expected) != {m["user_id"] for m in members}:
+                    raise ServiceError(409, "assignment_changed",
+                                       "你确认之后，这个空间的成员发生了变化。请重新查看将失去访问的人，再确认撤销")
+                # Every refusal is decided above; from here on the undo happens. The journal line
+                # goes first, so there is no moment at which the undo is committed and not journalled.
+                try:
+                    security_journal.record(store, security_journal.UNCLAIM_KIND, workspace_id=wid,
+                                            label_restored=bool(plan["name_restored"]))
+                except (OSError, ValueError) as e:
+                    journal_error = e
+                    raise ServiceError(503, "journal_unavailable",
+                                       "安全日志暂时无法写入，撤销指派没有执行，什么都没有改变。请检查安全日志；"
+                                       "需要立即停止访问时，可以先冻结这个空间") from e
+                apps_off = [r["app_id"] for r in store.all(
+                    "SELECT app_id FROM workspace_apps WHERE workspace_id=? ORDER BY app_id", (wid,))]
+                entitlements = t.execute("UPDATE app_entitlements SET revoked_at=? WHERE workspace_id=? "
+                                         "AND revoked_at IS NULL", (ts, wid)).rowcount
+                for m in members:
+                    for app_id in sorted(set(apps_off) | {DOCS_APP_ID}):
+                        t.execute("INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by,"
+                                  "revoked_at) VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id,app_id,user_id) "
+                                  "DO UPDATE SET revoked_at=COALESCE(app_entitlements.revoked_at, excluded.revoked_at)",
+                                  (wid, app_id, m["user_id"], ts, actor["id"], ts))
+                t.execute("DELETE FROM memberships WHERE workspace_id=?", (wid,))
+                t.execute("DELETE FROM workspace_apps WHERE workspace_id=?", (wid,))
+                invitation_ids = [r["id"] for r in store.all(
+                    "SELECT id FROM invitations WHERE workspace_id=? AND accepted_at IS NULL AND revoked_at IS NULL "
+                    "ORDER BY created_at, id", (wid,))]
+                if invitation_ids:
+                    t.execute(f"UPDATE invitations SET revoked_at=? WHERE id IN ({','.join('?' * len(invitation_ids))})",
+                              (ts, *invitation_ids))
+                tokens = Grants(store).revoke_for_workspace(wid, UNCLAIM_TOKEN_REASON)
+                codes = t.execute("UPDATE oauth_codes SET used_at=? WHERE workspace_id=? AND used_at IS NULL",
+                                  (ts, wid)).rowcount
+                t.execute("UPDATE workspaces SET status='pending_claim', name=?, updated_at=? WHERE id=?",
+                          (plan["name_after"], ts, wid))
+                removed = [{"user_id": m["user_id"], "email": m["email"], "role": m["role"]} for m in members]
+                outcome = {"removed_members": removed, "invitations_revoked": len(invitation_ids),
+                           "tokens_revoked": tokens, "codes_spent": codes, "entitlements_revoked": entitlements,
+                           "apps_disabled": apps_off, "previous_name": w["name"], "name": plan["name_after"],
+                           "previous_status": w["status"], "status": "pending_claim",
+                           "service_accounts": plan["service_accounts"], "approvals": plan["approvals"],
+                           "operator_keys": plan["operator_keys"], "jobs_stopping": plan["jobs_stopping"],
+                           "projects": plan["projects"], "templates": plan["templates"]}
+                audit(request, "admin.workspace.unclaim", actor_id=actor["id"], workspace_id=wid,
+                      object_kind="workspace", object_id=wid, result="ok",
+                      meta={**outcome, "reason": reason, "journaled": True,
+                            "assigned_at": (plan["assigned"] or {}).get("at"),
+                            "assigned_by": (plan["assigned"] or {}).get("by_id")})
+        except ServiceError:
+            if journal_error is not None:
+                print(f"[synwevo] security journal write failed for {security_journal.UNCLAIM_KIND}: "
+                      f"{type(journal_error).__name__}: {journal_error}", flush=True)
+                audit(request, "admin.workspace.unclaim", actor_id=actor["id"], workspace_id=wid,
+                      object_kind="workspace", object_id=wid, result="error",
+                      meta={"code": "journal_unavailable", "reason": reason})
+            raise
 
-        journaled = True
-        for m in removed:
-            journaled = journal(store, "member_removed", workspace_id=wid, user_id=m["user_id"]) and journaled
-        for iid in invitation_ids:
-            journaled = journal(store, "invitation_revoked", invitation_id=iid) and journaled
-        for app_id in apps_off:
-            journaled = journal(store, "workspace_app_disabled", workspace_id=wid, app_id=app_id) and journaled
-        notified = sum(_notify_removed(request, actor, m["user_id"], w["name"], wid)
+        notified = sum(_notify_removed(request, m["user_id"], w["name"], wid)
                        for m in removed if m["user_id"] != actor["id"])
-        return {"ok": True, **outcome, "journaled": journaled, "notified": notified,
+        return {"ok": True, **outcome, "journaled": True, "notified": notified,
                 "workspace": _workspace_row(ident.get_workspace(wid))}
 
     # ------------------------------------------------------------------ users

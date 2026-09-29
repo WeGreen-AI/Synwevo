@@ -39,6 +39,19 @@ ORGANIZATION_KINDS = {
 }
 _ORG_RECEIPT = "organization_withdrawal:"
 
+# Undoing the assignment of the historical data (`admin.workspace.unclaim`) is one entry, written
+# ahead of the transaction it describes, like the organization withdrawals and for the same two
+# reasons: a process that dies between COMMIT and a journal line written afterwards would let an
+# older backup give the former members their access back, and a backup taken between a line and
+# its COMMIT has neither. Instead of a receipt it carries its own time and is applied "as of"
+# then: only memberships, grants, enablements, invitations and tokens that existed at `at` are
+# withdrawn, and the status goes back to `pending_claim` only if nobody was assigned the data
+# since. So it is re-applied on every restore (read() ignores the cutoff for it) and can never
+# undo a later assignment — a restore from a backup taken after a new claim keeps that claim.
+UNCLAIM_KIND = "workspace_unclaimed"
+#: Entries re-applied whatever the backup's time: their own rules decide what is still to do.
+ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND}
+
 KINDS = {
     "api_platform_approval_revoked",  # {approval_id}, including unconsumed approvals
     "api_key_revoked",          # {key_id} — and every key of its lineage
@@ -58,6 +71,7 @@ KINDS = {
     "workspace_app_disabled",   # {workspace_id, app_id}
     "invitation_revoked",       # {invitation_id}
     "api_key_superseded",       # {key_id} — a rotated-out key; the successor is not recreated
+    UNCLAIM_KIND,               # {workspace_id, label_restored} — the assignment of legacy data undone
 } | ORGANIZATION_KINDS
 
 _REQUIRED = {
@@ -72,6 +86,7 @@ _REQUIRED = {
     "workspace_frozen": ("workspace_id",), "webhook_disabled": ("subscription_id",),
     "passkey_removed": ("credential_id",), "workspace_app_disabled": ("workspace_id", "app_id"),
     "invitation_revoked": ("invitation_id",), "tokens_revoked": (),
+    UNCLAIM_KIND: ("workspace_id",),
     **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
     "organization_member_removed": ("event_id", "organization_id", "user_id"),
     "organization_role_changed": ("event_id", "organization_id", "user_id", "role"),
@@ -95,6 +110,8 @@ def _validate(entry, line: int) -> None:
     if any(not isinstance(entry.get(k), str) or not entry[k].strip() for k in required):
         bad()
     if kind == "role_changed" and entry["role"] not in {"owner", "admin", "editor", "viewer"}:
+        bad()
+    if kind == UNCLAIM_KIND and type(entry.get("label_restored", False)) is not bool:
         bad()
     if kind in ORGANIZATION_KINDS:
         scope = entry.get("workspace_ids")
@@ -185,7 +202,49 @@ def record_organization(store: Store, kind: str, *, organization_id: str, **fiel
 
 def read(root: str | Path, since: float = 0.0) -> list[dict]:
     return [entry for entry, _ in validated_lines(path(root))
-            if entry["at"] > since or entry["kind"] in ORGANIZATION_KINDS]
+            if entry["at"] > since or entry["kind"] in ALWAYS_REPLAYED]
+
+
+def _apply_unclaim(c, e) -> int:
+    """Make "the assignment undone at `at`" true, touching nothing granted after it.
+
+    Everything is compared with the entry's own time: a membership, grant, enablement,
+    invitation, token or code from after it belongs to a later assignment and stays. The
+    status goes back to `pending_claim` only when no membership is left and the workspace row
+    itself has not changed since (a later claim sets `updated_at`)."""
+    from .apps import DOCS_APP_ID
+    from .store import LEGACY_WORKSPACE_NAME
+    wid, at = e["workspace_id"], e["at"]
+    if not c.execute("SELECT 1 FROM workspaces WHERE id=? AND kind='legacy'", (wid,)).fetchone():
+        return 0
+    removed = [r["user_id"] for r in c.execute(
+        "SELECT user_id FROM memberships WHERE workspace_id=? AND created_at<=?", (wid, at))]
+    apps = {r["app_id"] for r in c.execute(
+        "SELECT app_id FROM workspace_apps WHERE workspace_id=? AND enabled_at<=?", (wid, at))} | {DOCS_APP_ID}
+    for uid in removed:
+        for app_id in sorted(apps):
+            # an explicit revoked row per former member, as the undo wrote it (under the `members`
+            # policy "no row" means "allowed"); the withdrawal keeps its own time
+            c.execute("INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by,revoked_at) "
+                      "VALUES (?,?,?,?,NULL,?) ON CONFLICT(workspace_id,app_id,user_id) "
+                      "DO UPDATE SET revoked_at=MAX(COALESCE(app_entitlements.revoked_at,0),excluded.revoked_at)",
+                      (wid, app_id, uid, at, at))
+    n = c.execute("DELETE FROM memberships WHERE workspace_id=? AND created_at<=?", (wid, at)).rowcount
+    c.execute("UPDATE app_entitlements SET revoked_at=? WHERE workspace_id=? AND revoked_at IS NULL "
+              "AND granted_at<=?", (at, wid, at))
+    c.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND enabled_at<=?", (wid, at))
+    c.execute("UPDATE invitations SET revoked_at=? WHERE workspace_id=? AND accepted_at IS NULL "
+              "AND revoked_at IS NULL AND created_at<=?", (at, wid, at))
+    c.execute("UPDATE oauth_tokens SET revoked_at=?, revoked_reason='workspace_unclaimed' "
+              "WHERE workspace_id=? AND revoked_at IS NULL AND issued_at<=?", (at, wid, at))
+    c.execute("UPDATE oauth_codes SET used_at=COALESCE(used_at,?) WHERE workspace_id=? AND created_at<=?",
+              (at, wid, at))
+    name = ", name=?" if e.get("label_restored") else ""
+    n += c.execute(f"UPDATE workspaces SET status='pending_claim'{name}, updated_at=? WHERE id=? AND kind='legacy' "
+                   "AND status IN ('active','frozen') AND updated_at<=? "
+                   "AND NOT EXISTS (SELECT 1 FROM memberships WHERE workspace_id=?)",
+                   ((LEGACY_WORKSPACE_NAME,) if name else ()) + (at, wid, at, wid)).rowcount
+    return n
 
 
 def _org_scope(c, e):
@@ -281,6 +340,8 @@ def apply(store: Store, entries: list[dict]) -> dict:
             n = 0
             if k in ORGANIZATION_KINDS:
                 n = _apply_organization(c, e, demoted_orgs, demoted_workspaces)
+            elif k == UNCLAIM_KIND:
+                n = _apply_unclaim(c, e)
             elif k == "api_key_revoked":
                 kid = e.get("key_id")
                 row = c.execute("SELECT COALESCE(lineage, id) AS l FROM api_keys WHERE id=?", (kid,)).fetchone()
