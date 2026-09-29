@@ -10,6 +10,8 @@ from __future__ import annotations
 import importlib
 
 import pytest
+
+from .platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core.identity import Identity
@@ -35,8 +37,10 @@ def env(tmp_path, monkeypatch):
     store = Store(tmp_path / "d")
     ident = Identity(store)
     for email, role in (("alice@example.com", "none"), ("root@example.com", "admin")):
-        u = ident.create_user(email, PW, status="active", platform_role=role)
+        u = ident.create_user(email, PW, status="active")
         store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), u["id"]))
+        if role == "admin":
+            make_platform_admin(store, u)
     return {"api": api, "store": store}
 
 

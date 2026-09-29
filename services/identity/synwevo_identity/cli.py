@@ -93,7 +93,7 @@ def cmd_bootstrap(args) -> int:
 
     if args.action == "status":
         admins = ident.platform_admins()
-        print(f"平台管理员：{len(admins)} 名" + ("（需要引导）" if not admins else ""))
+        print(f"可用的最高管理员：{len(admins)} 名" + ("（需要引导）" if not admins else ""))
         for a in admins:
             print(f"  {a['email']}\t{a['id']}\t{_ts(a['created_at'])}")
         print(f"注册模式：{registration_mode(store)}（持久策略优先于 SYNWEVO_REGISTRATION）")
@@ -127,14 +127,19 @@ def cmd_bootstrap(args) -> int:
                 print("两次输入不一致")
                 return 1
         try:
-            u = ident.create_user(args.email, pw, display_name=args.name,
-                                  status="active", platform_role="admin")
+            u = ident.create_user(args.email, pw, display_name=args.name, status="active")
         except (ServiceError, PasswordError) as e:
             print(f"未创建：{getattr(e, 'message', str(e))}")
             return 1
-        _audit(store, "cli.bootstrap.admin", object_kind="user", object_id=u["id"],
-               meta={"email": u["email"], "forced": bool(args.force)})
-        print(f"已创建平台管理员 {u['email']}（{u['id']}）。")
+        # A super administrator grant under host authority, in one transaction with its audit
+        # line: whoever runs this command controls the deployment (platform_access.HOST_SOURCES).
+        from synwevo_core.platform_access import SUPER_ADMIN, PlatformAccess
+        with store.tx():
+            PlatformAccess(store).host_grant(u["id"], SUPER_ADMIN, source="bootstrap:cli",
+                                             reason="命令行 bootstrap admin 创建的最高管理员")
+            _audit(store, "cli.bootstrap.admin", object_kind="user", object_id=u["id"],
+                   meta={"email": u["email"], "forced": bool(args.force), "role": SUPER_ADMIN})
+        print(f"已创建最高管理员 {u['email']}（{u['id']}）。")
         print("该账户同时拥有一个个人工作空间；历史数据仍在「历史数据（待认领）」空间中，")
         print("需要在管理后台显式指派后才可访问。")
         return 0

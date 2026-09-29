@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { ApiError, platformHandoffUrl, useSession, MessagesLink, messagesHref, NotificationBell } from "@synwevo/auth-client";
+import { ApiError, holdsPlatformAccess, platformHandoffUrl, useSession, MessagesLink, messagesHref, NotificationBell } from "@synwevo/auth-client";
 import { Brand, Drawer, LanguageMenu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { chooseReturnTarget, rememberOrigin } from "../lib/returnTarget";
 import "./Topbar.messages";
@@ -54,7 +54,8 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
   const parent = parentOf(pathname);
   const backLabel = appBack ? t("返回 {app}", { app: appBack.name }) : null;
   const overview = pathname !== "/account";
-  const isAdmin = me?.platform_role === "admin";
+  // Any platform permission draws 平台管理; API 管理 needs `api_platform.manage` on this session.
+  const isAdmin = holdsPlatformAccess(me);
   const canApi = isAdmin && !!me?.permissions?.includes("api_platform.manage");
   const current = (path: string) => (pathname === path || pathname.startsWith(path + "/") ? "page" : undefined);
   const items = (

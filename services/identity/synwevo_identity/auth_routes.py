@@ -15,6 +15,7 @@ import os
 from fastapi import APIRouter, Body, Request, Response
 
 from synwevo_auth_client.session_routes import describe_user
+from synwevo_core.platform_access import SUPER_ADMIN, PlatformAccess
 from synwevo_core import env
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity, registration_mode
@@ -234,7 +235,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
                              persistent=persistent, auth_provider=auth_provider, describe=_me)
 
     def _me(user: dict, spaces: list[dict], session: dict | None = None) -> dict:
-        return describe_user(user, spaces, session)
+        return describe_user(user, spaces, session, store=ident.store)
 
     @r.post("/bootstrap")
     def bootstrap(request: Request, response: Response, body: dict = Body(...)):
@@ -261,14 +262,23 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
             raise ServiceError(403, "bad_token", "引导令牌无效或已过期，请重新生成")
         try:
             user = ident.create_user(email, password, display_name=body.get("display_name"),
-                                     status="active", platform_role="admin")
+                                     status="active")
         except PasswordError as e:
             raise ServiceError(400, "weak_password", str(e), {"field": "password", **e.detail}) from None
         # Consumed after the account exists so a failed creation does not burn the token; a
-        # concurrent bootstrap that spent it first leaves nothing of this attempt behind.
-        if not ident.consume_bootstrap_token(token, user_id=user["id"]):
+        # concurrent bootstrap that spent it first leaves nothing of this attempt behind. The
+        # super administrator grant commits with the consumption, under host authority (the
+        # token is the host's), so a spent token always has its administrator.
+        granted = False
+        with ident.store.tx():
+            if ident.consume_bootstrap_token(token, user_id=user["id"]):
+                PlatformAccess(ident.store).host_grant(user["id"], SUPER_ADMIN, source="bootstrap:web",
+                                                       reason="首位平台管理员（一次性引导令牌）")
+                granted = True
+        if not granted:
             ident.purge_new_account(user["id"])
             raise ServiceError(403, "bad_token", "引导令牌无效或已过期，请重新生成")
+        user = ident.get_user(user["id"])
         audit(request, "auth.bootstrap", actor_id=user["id"], object_kind="user",
               object_id=user["id"], result="ok")
         return _issue(response, user, amr="password", request=request)
@@ -342,8 +352,8 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         # administrator, must not be entered on one factor, so for them the authenticator has to
         # verify the person in this ceremony (a PIN or biometric: possession plus knowledge or
         # inherence). Everyone else may still sign in with possession alone, as before; `amr`
-        # records which it was.
-        if not out["user_verified"] and (user["platform_role"] == "admin"
+        # records which it was. "Administrator" is anyone a platform grant gives a permission.
+        if not out["user_verified"] and (PlatformAccess(ident.store).effective_permissions(user)
                                          or (mfa and mfa.enabled_for(user["id"]))):
             audit(request, "auth.login.passkey", actor_id=user["id"], object_kind="passkey",
                   object_id=out["passkey_id"], result="denied", meta={"reason": "uv_required"})
@@ -654,9 +664,13 @@ def issue_session(ident: Identity, sessions: Sessions, response: Response, user:
     cases, so a cookie that outlives its row is simply refused.
     """
     spaces = ident.workspaces_for(user["id"])
+    # Anyone a platform grant gives a permission signs in under the administrator rule: the short
+    # idle window and no "keep me signed in". A grant made later tightens existing sessions the
+    # same way (PlatformAccess._tighten_sessions).
+    admin = bool(PlatformAccess(ident.store).effective_permissions(user))
     raw, row = sessions.create(user["id"], workspace_id=spaces[0]["id"] if spaces else None, amr=amr,
                                user_agent=request.headers.get("user-agent"), ip=client_ip(request),
-                               admin=user["platform_role"] == "admin", persistent=persistent,
+                               admin=admin, persistent=persistent,
                                auth_provider=auth_provider)
     secure = cookies_secure()
     max_age = sessions.cookie_max_age(row)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Brand, LanguageMenu, Logo, Menu, useI18n, useMediaQuery } from "@synwevo/ui";
-import { ApiError, get, post, setWorkspaceContext, SignedOut, type Me, useSession } from "@synwevo/auth-client";
+import { ApiError, get, holdsPlatformAccess, post, setWorkspaceContext, SignedOut, type Me, useSession } from "@synwevo/auth-client";
 import { PublicHome } from "./PublicHome";
 import { PublicPage } from "./PublicPages";
 import { PUBLIC_META, isWorkspacePath, publicPath, publicRoute, siteHref, workspaceSurface } from "./publicRoutes";
@@ -12,7 +12,7 @@ type Workspace = { id: string; name: string; kind: string; role: string; status?
 type App = { id: string; name: string; icon: string | null; launch_url: string; workspace_id: string | null; workspace_name: string | null };
 type Invitation = { id: string; workspace_id: string; workspace_name: string; role: string; expires_at: number };
 type Home = {
-  platform: { name: string }; user: Pick<Me, "id" | "email" | "display_name" | "platform_role">; workspaces: Workspace[]; current_workspace_id: string | null;
+  platform: { name: string }; user: Pick<Me, "id" | "email" | "display_name" | "platform_role" | "platform_permissions">; workspaces: Workspace[]; current_workspace_id: string | null;
   apps: App[]; account_url: string; pending_invitations?: Invitation[];
   organizations?: {id: string; name: string; status: string; role: string}[];
 };
@@ -137,7 +137,8 @@ export function Portal() {
   const { home, me } = state;
   const current = home.workspaces.find(w => w.id === home.current_workspace_id);
   const invitations = home.pending_invitations;
-  const isPlatformAdmin = me.platform_role === "admin" && home.user.platform_role === "admin";
+  // Any platform grant draws 平台管理 (the account service decides each view); both answers must agree.
+  const isPlatformAdmin = holdsPlatformAccess(me) && holdsPlatformAccess(home.user);
   const canManageApi = isPlatformAdmin && me.permissions?.includes("api_platform.manage");
   const role = (value: string) => t(({ owner: "所有者", admin: "管理员", editor: "编辑者", viewer: "查看者" } as Record<string, string>)[value] || "成员");
   const unavailableOrganizations = new Set(home.organizations?.filter(org => org.status !== "active").map(org => org.id));

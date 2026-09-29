@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from synwevo_core.avatar_image import MAX_AVATAR_BYTES, canonical_avatar  # noqa: F401 — the platform's one set of avatar rules (CI-78)
 from synwevo_core.errors import ServiceError
 from synwevo_core.oidc import Grants
+from synwevo_core.platform_access import PlatformAccess
 from synwevo_core.sessions import Sessions
 from synwevo_core.store import now
 
@@ -71,9 +72,12 @@ def invalidate_access(store, uid: str, reason: str) -> None:
 
 def check_deletion_constraints(store, user: dict) -> None:
     uid = user["id"]
-    if user["platform_role"] == "admin" and not store.one(
-            "SELECT 1 FROM users WHERE id<>? AND platform_role='admin' AND status='active' AND deleted_at IS NULL", (uid,)):
-        raise ServiceError(409, "last_admin", "你是最后一个平台管理员，请先移交管理权限")
+    # Called inside the deletion's write transaction, so two last super administrators deleting
+    # themselves at once cannot both pass (the second re-reads the first's pending_delete).
+    access = PlatformAccess(store)
+    if access.is_usable_super_admin(user) and not access.usable_super_admins(excluding=uid):
+        raise ServiceError(409, "last_super_admin",
+                           "你是最后一名可用的最高管理员。请先授予另一位最高管理员，并确认对方能登录并完成身份确认")
     if store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='organization_memberships'"):
         for member in store.all("SELECT m.organization_id,m.role FROM organization_memberships m "
                                 "JOIN organizations o ON o.id=m.organization_id WHERE m.user_id=? "
@@ -138,6 +142,9 @@ def finalize_deletions(store) -> int:
             store.execute("UPDATE users SET status='deleted',deleted_at=?,updated_at=?,display_name=NULL,"
                           "email='',email_verified_at=NULL,avatar_blob=NULL,locale='zh-Hans',timezone='UTC',"
                           "platform_role='none' WHERE id=?", (now(), now(), uid))
+            # Platform grants end with the account (they stopped counting at pending_delete).
+            PlatformAccess(store).system_revoke_all(uid, source="system:account_deleted",
+                                                    reason="账户已删除")
             # Commit a retry marker with the deletion. A filesystem failure after this
             # transaction must not make the sweeper permanently forget the withdrawal.
             store.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",

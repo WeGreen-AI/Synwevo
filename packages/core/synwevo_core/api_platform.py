@@ -57,11 +57,23 @@ class ControlPlaneAdapter(Protocol):
 
 
 def require_manage(ident: Identity, user_id: str) -> dict:
+    """The caller, if a platform grant gives them `api_platform.manage` (platform_access.py).
+
+    Read afresh on every call, so a revocation between admission and issuance is seen by the
+    re-check inside the operation. An account with no platform permission at all gets the 404 of
+    a page that does not exist; one that holds other platform permissions gets 403
+    `platform_permission_denied`. Workspace and organization roles never reach this permission.
+    """
+    from .platform_access import PlatformAccess
     user = ident.get_user(user_id)
     if not user or user["status"] != "active":
         raise ServiceError(401, "unauthorized", "账户不可用，请重新登录")
-    if user.get("platform_role") != "admin":
+    held = PlatformAccess(ident.store).effective_permissions(user)
+    if not held:
         raise ServiceError(404, "not_found", "页面不存在")
+    if MANAGE_PERMISSION not in held:
+        raise ServiceError(403, "platform_permission_denied", "你的平台角色不包含这项操作所需的权限",
+                           {"permission": MANAGE_PERMISSION})
     return user
 
 

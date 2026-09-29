@@ -15,6 +15,7 @@ from synwevo_core.config import platform_name
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
 from synwevo_core.organizations import Organizations, workspace_access_failure
+from synwevo_core.platform_access import PlatformAccess, sorted_permissions
 from synwevo_core.sessions import Sessions
 from synwevo_core.store import Store, now
 
@@ -45,9 +46,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, apps=
         spaces = ident.workspaces_for(user["id"])
         return {
             "platform": {"name": platform_name()},
+            # `platform_permissions` decides whether the administration links are drawn (any
+            # platform grant); each administration view is still decided by the account service.
             "user": {"id": user["id"], "email": user["email"],
                      "display_name": user.get("display_name"),
-                     "platform_role": user["platform_role"]},
+                     "platform_role": user["platform_role"],
+                     "platform_permissions": sorted_permissions(PlatformAccess(store).effective_permissions(user))},
             "workspaces": [{"id": w["id"], "name": w["name"], "kind": w["kind"],
                             "role": w["role"], "status": w["status"],
                             **{key: w[key] for key in ("org_id", "org_name", "organization_id", "organization_name") if key in w}}

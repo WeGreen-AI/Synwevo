@@ -16,6 +16,8 @@ import urllib.parse
 
 import pyotp
 import pytest
+
+from .platform_fixture import make_platform_admin
 from authlib.jose import JsonWebKey, jwt
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import JSONResponse
@@ -341,7 +343,7 @@ def test_unlinking_needs_reauth_and_never_removes_the_last_way_in(env):
 
 
 def test_platform_administrators_through_a_provider_are_restricted_until_a_second_factor(env):
-    root = env["ident"].create_user("root@example.com", PW, status="active", platform_role="admin")
+    root = make_platform_admin(env["ident"].store, env["ident"].create_user("root@example.com", PW, status="active"))
     env["store"].execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), root["id"]))
     c = TestClient(env["api"])
     code, state = env["idp"].accept(_start(c), subject="idp-root", email="root@example.com")

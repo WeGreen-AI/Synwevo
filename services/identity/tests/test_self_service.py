@@ -10,6 +10,8 @@ import zlib
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+
+from .platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core.errors import ServiceError
@@ -213,8 +215,9 @@ def test_recovery_expired_or_suspended_never_reactivates(account):
 
 
 def test_last_platform_admin_cannot_delete(account):
-    account['store'].execute("UPDATE users SET platform_role='admin' WHERE id=?", (account['user']['id'],))
-    assert send(account, 'POST', '/deletion', {'password': PW}).status_code == 409
+    make_platform_admin(account['store'], account['user']['id'])
+    r = send(account, 'POST', '/deletion', {'password': PW})
+    assert r.status_code == 409 and r.json()['error'] == 'last_super_admin'
     assert account['ident'].get_user(account['user']['id'])['status'] == 'active'
 
 
@@ -297,14 +300,15 @@ def test_deletion_revokes_codes_tokens_tickets_and_every_session(account):
 
 
 def test_concurrent_last_admin_deletions_cannot_remove_both(account):
-    account['store'].execute("UPDATE users SET platform_role='admin' WHERE id=?", (account['user']['id'],))
-    other = account['ident'].create_user('second-admin@example.test', PW, status='active', platform_role='admin')
+    make_platform_admin(account['store'], account['user']['id'])
+    other = make_platform_admin(account['store'], account['ident'].create_user('second-admin@example.test', PW, status='active'))
     second = login(account, other['email'])
     def remove(client):
         return send(account, 'POST', '/deletion', {'password': PW}, client).status_code
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(remove, [account['c'], second])) == [200, 409]
     assert account['store'].one("SELECT COUNT(*) AS n FROM users WHERE platform_role='admin' AND status='active'")['n'] == 1
+    assert len(account['ident'].platform_admins()) == 1
 
 
 def test_expired_deleted_organization_does_not_trap_account(account):

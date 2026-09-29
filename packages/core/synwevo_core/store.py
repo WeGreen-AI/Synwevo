@@ -19,7 +19,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -127,6 +127,10 @@ CREATE TABLE IF NOT EXISTS users (
     CHECK (status IN ('pending','active','suspended','pending_delete','deleted')),
   -- platform_role is NOT a superset of workspace access: a platform admin manages accounts and
   -- service state and still has no read access to any workspace's documents (docs/security/permissions.md §4.1).
+  -- Since v27 this column is the rollback mirror of `platform_role_grants` (platform_access.py):
+  -- 'admin' exactly while a live super administrator grant exists, else 'none'. Nothing reads it
+  -- to decide access; 'operator' is no longer written (the CHECK is kept rather than rebuilding
+  -- the table).
   platform_role TEXT NOT NULL DEFAULT 'none'
     CHECK (platform_role IN ('none','operator','admin')),
   created_at REAL NOT NULL, updated_at REAL NOT NULL, deleted_at REAL
@@ -863,6 +867,21 @@ class Store:
         # the index current for a later upgrade); the new columns/tables are unused, not harmful.
         from .messaging_search import ensure_index as ensure_message_index
         ensure_message_index(c)
+        # v27: delegated platform permissions (platform_access.py). The grants table, then — once,
+        # marked in `meta` in the same transaction so a crash cannot relabel it — every
+        # `platform_role='admin'` becomes a super administrator grant from `migration:v27` and every
+        # 'operator' becomes 'none'. On every later open the same reconciliation carries a change
+        # the previous release made to the mirror during a rollback into the grants; while every
+        # grant change keeps the mirror in step it finds nothing to do. Rollback to v26 code: the
+        # table is ignored and `platform_role` still says who the super administrators are.
+        from .platform_access import SCHEMA_SQL as PLATFORM_ACCESS_SCHEMA, reconcile_mirror
+        c.executescript(PLATFORM_ACCESS_SCHEMA)
+        with self.tx():
+            first = not self.one("SELECT 1 AS x FROM meta WHERE key='platform_grants.migrated'")
+            reconcile_mirror(self, source="migration:v27" if first else "reconcile:mirror")
+            if first:
+                self.execute("INSERT INTO meta (key, value) VALUES ('platform_grants.migrated', ?)",
+                             (str(now()),))
 
     @staticmethod
     def _seed_legacy_workspace(t: sqlite3.Connection) -> None:

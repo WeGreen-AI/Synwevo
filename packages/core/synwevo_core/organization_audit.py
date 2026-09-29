@@ -130,10 +130,18 @@ def read(store: Store, oid: str, *, before: int | None = None, limit: int = 50, 
         r["object_id"] for r in rows if r["object_kind"] in ("membership", "organization_membership", "user") and r["object_id"]} | {
         str(m["user_id"]) for m in metas if m.get("user_id")}
     people = {}
+    platform_holders: set[str] = set()
     if people_ids:
         marks = ",".join("?" * len(people_ids))
         for u in store.all(f"SELECT id, display_name, email, platform_role, status FROM users WHERE id IN ({marks})", tuple(people_ids)):
             people[u["id"]] = u
+        # Anyone holding a platform grant (any role, live or since ended) acted as the platform, not
+        # as an outsider; `platform_role='admin'` covers events written before the grants existed.
+        try:
+            platform_holders = {r["user_id"] for r in store.all(
+                f"SELECT DISTINCT user_id FROM platform_role_grants WHERE user_id IN ({marks})", tuple(people_ids))}
+        except Exception:  # noqa: BLE001 - a deployment without the grants table has none
+            platform_holders = set()
     details = [_detail(r["meta"]) for r in rows]
     role_ids = {r["object_id"] for r in rows if r["object_kind"] in ("org_role", "organization_role") and r["object_id"]}
     role_ids |= {x for d in details for k in ROLE_LISTS for x in d.get(k, [])}
@@ -152,7 +160,7 @@ def read(store: Store, oid: str, *, before: int | None = None, limit: int = 50, 
         if not u or u.get("status") == "deleted":
             return {"kind": "outside"}
         if uid not in members:
-            if u.get("platform_role") == "admin":
+            if u.get("platform_role") == "admin" or uid in platform_holders:
                 return {"kind": "platform_admin"}
             # Not (or no longer) in the organization: the name they chose, never anything from
             # their address — an invitee who declined is not the organization's to identify.

@@ -224,9 +224,10 @@ def main():
             for w in governed[:3]:
                 signed.append(f"{accounts}/account/workspaces/{w['id']}/members")
                 signed.append(f"{accounts}/account/workspaces/{w['id']}/members?tab=invites")
-            if me.get("platform_role") == "admin" and not me.get("admin_locked"):
-                signed += [f"{accounts}/admin?tab={t}" for t in ("overview", "users", "workspaces", "organizations", "registration", "identity", "mail", "audit")]
-                signed += [f"{accounts}/admin/api-platform"]
+            if me.get("platform_permissions") and not me.get("admin_locked"):
+                signed += [f"{accounts}/admin?tab={t}" for t in ("overview", "users", "admins", "workspaces", "organizations", "registration", "identity", "mail", "audit")]
+                if "api_platform.manage" in me.get("permissions", []):
+                    signed += [f"{accounts}/admin/api-platform"]
             for u in signed:
                 rows.append(measure(page, u, settle="section.card, table.gov, .acct-page, .idp-card, .empty"))
                 if u.endswith("/admin/api-platform"):

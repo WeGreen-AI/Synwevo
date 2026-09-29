@@ -10,6 +10,8 @@ import re
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+
+from tests.integration.platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core.oidc import Clients
@@ -167,7 +169,7 @@ def test_workspace_headers_isolate_two_tabs_without_mutating_cookie_default(worl
     for wid in [world['outsider'], 'missing-fixture-workspace']:
         assert client.get('/api/projects', headers={'X-Synwevo-Workspace': wid}).status_code == 403
 
-    world['store'].execute("UPDATE users SET platform_role='admin' WHERE id=?", (world['user']['id'],))
+    make_platform_admin(world['store'], world['user']['id'])
     assert client.get('/api/projects', headers={'X-Synwevo-Workspace': world['outsider']}).status_code == 403
 
 

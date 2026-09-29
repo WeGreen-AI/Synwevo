@@ -107,7 +107,7 @@ export default function Account() {
         </section>
         <NotificationsSection timezone={profile.timezone} />
         <section id="workspaces" className="card card-b col gap12 account-section"><h2 className="secttl">{t('工作空间')}</h2>
-          {me.platform_role === 'admin' && <p className="tiny muted">{t('平台管理权限不会授予工作空间文档的读取权限。')}</p>}
+          {!!me.platform_permissions?.length && <p className="tiny muted">{t('平台管理权限不会授予工作空间文档的读取权限。')}</p>}
           <div className="account-table"><table className="tbl"><thead><tr><th>{t('名称')}</th><th>{t('我的角色')}</th><th>{t('可导出')}</th><th>{t('操作')}</th></tr></thead>
             <tbody>{me.workspaces.map(w => <tr key={w.id}><td>{w.name}</td><td>{t(roles[w.role] || w.role)}</td><td>{t(canExport(w.role, w.can_export) ? '是' : '否')}</td><td><div className="row gap4 wrap">
               {(w.role === 'owner' || w.role === 'admin') && <Link className="btn sm" to={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>{t('成员与邀请')}</Link>}

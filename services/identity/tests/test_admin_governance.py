@@ -3,6 +3,8 @@ import json
 import re
 
 import pytest
+
+from .platform_fixture import legacy_platform_role_row, make_platform_admin
 from fastapi.testclient import TestClient
 from synwevo_core.identity import Identity, registration_mode
 from synwevo_core.organizations import Organizations
@@ -36,9 +38,12 @@ def fixture(tmp_path, monkeypatch):
     ident = Identity(store)
     # This is a real persisted setting in a disposable fixture, never repository data/.
     store.execute("INSERT INTO meta(key,value) VALUES ('registration.mode','open')")
-    admin = ident.create_user("admin@example.test", PW, status="active", platform_role="admin")
+    admin = make_platform_admin(store, ident.create_user("admin@example.test", PW, status="active"))
     user = ident.create_user("owner@example.test", PW, status="active")
-    operator = ident.create_user("operator@example.test", PW, status="active", platform_role="operator")
+    # The retired 「平台运维」: a row as the previous release wrote it. v27 reads no capability
+    # from the column (and clears 'operator' on the next open of the store).
+    operator = ident.create_user("operator@example.test", PW, status="active")
+    legacy_platform_role_row(store, operator["id"], "operator")
     org = Organizations(store, ident).create(user["id"], "Fixture organization", "Fixture workspace", "fixture-org-001")
     clients = []
     for u in (admin, user, operator):
@@ -209,7 +214,7 @@ def test_real_org_and_workspace_admin_roles_do_not_grant_platform_management(fix
         assert c.get(path).status_code == 404
     assert post(c, "/api/admin/users/" + f["user"]["id"] + "/recovery", {"reason": REASON}).status_code == 404
     # Even a platform administrator who is an organization admin cannot impersonate its owner.
-    f["ident"].set_platform_role(candidate["id"], "admin")
+    make_platform_admin(f["store"], candidate["id"])
     reauth(c)
     assert post(c, f"/api/admin/organizations/{oid}/freeze", {"reason": REASON}).status_code == 403
     assert f["store"].one("SELECT status FROM organizations WHERE id=?", (oid,))["status"] == "active"

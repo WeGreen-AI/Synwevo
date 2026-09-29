@@ -13,7 +13,10 @@ from fastapi.testclient import TestClient
 
 from synwevo_core.identity import Identity
 from synwevo_core.apps import Apps, bootstrap_docs_app
+from synwevo_core.platform_access import PlatformAccess
 from synwevo_core.store import Store, now
+
+from .platform_fixture import make_platform_admin
 
 PW = "a-sufficiently-long-passphrase"
 REASON = "把历史数据交给它原本的所有者"
@@ -31,7 +34,7 @@ def env(tmp_path, monkeypatch):
     ident = Identity(store)
     bootstrap_docs_app(store, ident)
 
-    admin = ident.create_user("admin@example.com", PW, status="active", platform_role="admin")
+    admin = make_platform_admin(store, ident.create_user("admin@example.com", PW, status="active"))
     alice = ident.create_user("alice@example.com", PW, status="active")
 
     # The pre-identity data: one workspace, zero members, projects carrying tenant='default'.
@@ -142,6 +145,7 @@ def test_a_successful_claim_opens_exactly_that_workspace(env):
 
     # ...and nothing else moved.
     assert ident.get_user(env["alice"]["id"])["platform_role"] == "none", "认领不得顺带授予平台管理权"
+    assert not PlatformAccess(store).live_grants(env["alice"]["id"]), "认领不得顺带授予任何平台角色"
     assert store.one("SELECT COUNT(*) AS n FROM memberships WHERE user_id=? AND workspace_id<>'default'",
                      (env["alice"]["id"],))["n"] == 1        # only their own personal workspace
     rows = store.all("SELECT tenant FROM projects WHERE id LIKE 'p_legacy%'")
@@ -214,8 +218,11 @@ def test_the_last_administrator_cannot_be_suspended(env):
                {"status": "suspended", "reason": "试图停用最后一个管理员"})
     assert r.status_code == 400 and r.json()["error"] == "self_suspend"
 
-    second = env["ident"].create_user("two@example.com", PW, status="active", platform_role="admin")
-    env["ident"].set_platform_role(second["id"], "none")     # back to one admin
+    second = make_platform_admin(env["store"], env["ident"].create_user("two@example.com", PW, status="active"))
+    # back to one admin, through the real revocation
+    grant = PlatformAccess(env["store"]).live_grants(second["id"])[0]
+    r = post(c, f"/api/admin/platform-grants/{grant['id']}/revoke", {"reason": "第二位管理员已完成交接"})
+    assert r.status_code == 200, r.text
     r = post(c, f"/api/admin/users/{second['id']}/status",
                {"status": "suspended", "reason": "这个不是管理员，可以停用"})
     assert r.status_code == 200
@@ -326,7 +333,7 @@ def test_suspension_revokes_tokens_and_restoring_does_not_bring_them_back(env):
 
 
 def test_an_administrator_must_be_demoted_before_being_suspended(env):
-    other = env["ident"].create_user("two@example.com", PW, status="active", platform_role="admin")
+    other = make_platform_admin(env["store"], env["ident"].create_user("two@example.com", PW, status="active"))
     _reauth(env["c"])
     r = post(env["c"], f"/api/admin/users/{other['id']}/status",
              {"status": "suspended", "reason": "另一位管理员离职"})
@@ -429,17 +436,23 @@ def test_user_filters_and_counts_apply_before_pagination(env):
     c, store, ident = env['c'], env['store'], env['ident']
     for n in range(6):
         u = ident.create_user(f'filter{n}@example.test', None, display_name='Matching person',
-                              status='active' if n % 2 else 'suspended', platform_role='operator',
-                              with_personal_workspace=False)
+                              status='active' if n % 2 else 'suspended', with_personal_workspace=False)
+        make_platform_admin(store, u, role='auditor')
         if n == 0:
             store.execute('UPDATE users SET deleted_at=? WHERE id=?', (now(), u['id']))
-    page = c.get('/api/admin/users', params={'q': 'Matching', 'status': 'active', 'role': 'operator',
+    page = c.get('/api/admin/users', params={'q': 'Matching', 'status': 'active', 'role': 'auditor',
                                            'limit': 2, 'offset': 2}).json()
     assert page['total'] == 3 and len(page['items']) == 1
-    assert page['items'][0]['status'] == 'active' and page['items'][0]['platform_role'] == 'operator'
+    item = page['items'][0]
+    # a delegated role keeps the rollback mirror at 'none' (a rollback removes it, never widens it)
+    assert item['status'] == 'active' and item['platform_roles'] == ['auditor'] and item['platform_role'] == 'none'
     assert c.get('/api/admin/users?q=filter&status=suspended').json()['total'] == 2
+    assert c.get('/api/admin/users', params={'q': 'Matching', 'role': 'any'}).json()['total'] == 5
+    assert c.get('/api/admin/users', params={'q': 'Matching', 'role': 'none'}).json()['total'] == 0
+    assert c.get('/api/admin/users', params={'q': 'Matching', 'role': 'super_admin'}).json()['total'] == 0
     assert c.get('/api/admin/users?q=absent').json()['total'] == 0
     assert c.get('/api/admin/users?role=owner').status_code == 422
+    assert c.get('/api/admin/users?role=operator').status_code == 422, "「平台运维」已停用，不再是筛选项"
 
 
 def test_audit_pages_reach_past_500_and_filter_the_whole_log(env):

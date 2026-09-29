@@ -21,6 +21,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.sessions import admin_capable
 from synwevo_core.machine import SCOPE_MANAGE, SCOPE_READ, SCOPE_WRITE
 from synwevo_core.oidc import Clients, Grants, MAX_SECRET_GRACE_S, docs_resource
+from synwevo_core.platform_access import audit_denied
 from synwevo_core.sessions import COOKIE_NAME, Sessions
 from synwevo_core.store import Store, new_id, now
 
@@ -40,7 +41,15 @@ def build_router(store: Store, ident, sessions, audit,
             raise ServiceError(401, "unauthorized", "请先登录")
         request.state.session = session
         if admin:
-            user = require_manage(ident, session["user_id"])
+            # `api_platform.manage` from a platform grant (platform_access.py). Someone who holds
+            # other platform permissions but not this one is refused with 403 and the attempt is
+            # recorded (at most once a minute per person); no platform permission at all is 404.
+            try:
+                user = require_manage(ident, session["user_id"])
+            except ServiceError as e:
+                if e.code == "platform_permission_denied":
+                    audit_denied(store, audit, request, session["user_id"], MANAGE_PERMISSION)
+                raise
             if not admin_capable(session.get("amr") or ""):
                 raise ServiceError(403, "step_up_required", "当前登录只验证了一个因素：请在账户页输入口令确认身份后再使用 API 管理",
                                    {"scope": "admin"})

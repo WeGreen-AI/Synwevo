@@ -19,6 +19,8 @@ import json
 import struct
 
 import pytest
+
+from .platform_fixture import make_platform_admin
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
@@ -443,7 +445,7 @@ def test_a_verified_passkey_still_signs_in_an_account_with_totp(env):
 
 def test_a_platform_admin_needs_user_verification(env):
     auth, _ = enrol(env, SoftAuthenticator(user_verified=False))
-    env["store"].execute("UPDATE users SET platform_role='admin' WHERE id=?", (env["user"]["id"],))
+    make_platform_admin(env["store"], env["user"]["id"])
     fresh = TestClient(env["api"])
     opts = post(fresh, "/api/auth/passkeys/authenticate/begin").json()
     r = post(fresh, "/api/auth/login/passkey", {"credential": auth.authenticate(opts["challenge"])})

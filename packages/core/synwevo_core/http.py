@@ -832,10 +832,12 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         request.state.session = session
         if path == "/admin" or path.startswith("/admin/"):
             user = identity.get_user(session["user_id"]) if session else None
-            if not user or user["status"] != "active" or user["platform_role"] != "admin":
+            from .platform_access import PlatformAccess
+            if not user or user["status"] != "active" or not PlatformAccess(store).effective_permissions(user):
                 return _error_response(request, 404, "not_found", "页面不存在", None)
-            # The shell itself is served to every administrator; whether this *session* may use
-            # the role is decided per request by the admin routes (sessions.admin_capable).
+            # The shell itself is served to anyone holding a platform permission; which views
+            # they may use, and whether this *session* may use them at all, is decided per
+            # request by the admin routes (platform_access.require_platform).
 
         if session and request.method not in SAFE_METHODS and path.startswith("/api/"):
             # Double-submit CSRF on every state-changing request. Login is exempt because it has

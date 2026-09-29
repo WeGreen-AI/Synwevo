@@ -124,7 +124,9 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.include_router(build_invite_router(identity, sessions, invites, mailer, audit))
     api.include_router(build_mfa_router(identity, sessions, mfa, audit))
     from .email_login import build_router as build_email_login_router
-    from synwevo_auth_client.session_routes import describe_user
+    from functools import partial
+    from synwevo_auth_client.session_routes import describe_user as _describe_user
+    describe_user = partial(_describe_user, store=store)
     api.include_router(build_email_login_router(identity, sessions, mailer, mfa, tickets, audit,
                                                 describe=describe_user))
     api.include_router(build_recovery_router(identity, sessions, invites, mailer, mfa, audit))

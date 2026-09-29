@@ -7,6 +7,8 @@ import { registerMessages } from "@synwevo/ui";
 export const messages = {
   // ---- server sentences met on more than one page (the same wording as the page catalogues that also hold them)
   "这一步需要重新验证身份": { en: "This step requires identity verification.", "zh-Hant": "這一步需要重新驗證身分" },
+  // a platform permission this person's roles do not carry (platform administration and the API console)
+  "你的平台角色不包含这项操作所需的权限": { en: "Your platform roles do not include the permission this action needs.", "zh-Hant": "你的平台角色不包含這項操作所需的權限" },
   "请写明理由（8 至 500 个字）": { en: "Enter a reason (8 to 500 characters)", "zh-Hant": "請寫明理由（8 至 500 個字）" },
   "账户不可用": { en: "Account unavailable", "zh-Hant": "帳戶不可用" },
   "找不到该工作空间": { en: "This workspace was not found.", "zh-Hant": "找不到此工作空間" },

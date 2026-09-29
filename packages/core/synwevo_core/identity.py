@@ -26,6 +26,9 @@ from .store import Store, new_id, now
 
 ROLES = ("viewer", "editor", "admin", "owner")
 ROLE_RANK = {r: i for i, r in enumerate(ROLES)}
+#: Values of the `users.platform_role` column, which since v27 is only the rollback mirror of the
+#: platform grants (platform_access.py). Nothing creates an account with a platform role: roles
+#: are granted through `PlatformAccess`, under its rules.
 PLATFORM_ROLES = ("none", "operator", "admin")
 
 # Backoff schedule for repeated failures, in seconds, indexed by failure count.
@@ -85,8 +88,10 @@ class Identity:
                     with_personal_workspace: bool = True, locale: str | None = None) -> dict:
         if not valid_email(email):
             raise ServiceError(400, "bad_email", "邮箱格式不正确", {"field": "email"})
-        if platform_role not in PLATFORM_ROLES:
-            raise ServiceError(400, "bad_role", f"未知的平台角色 {platform_role!r}")
+        if platform_role != "none":
+            # A platform role is a grant with an actor, a reason and rules (platform_access.py);
+            # bootstrap and the CLI grant it after the account exists, under host authority.
+            raise ValueError("accounts are created without a platform role; grant one through PlatformAccess")
         key = normalise_email(email)
         if password is not None:
             passwords.check_policy(password, email=email, display_name=display_name, single_factor=True)
@@ -770,26 +775,18 @@ class Identity:
             t.execute("DELETE FROM memberships WHERE user_id=?", (uid,))
             t.execute("DELETE FROM app_entitlements WHERE user_id=?", (uid,))
             t.execute("DELETE FROM user_passwords WHERE user_id=?", (uid,))
+            # a grant made in the same moment (bootstrap grants on consumption) goes with it
+            t.execute("DELETE FROM platform_role_grants WHERE user_id=?", (uid,))
             t.execute("DELETE FROM users WHERE id=?", (uid,))
 
     # ------------------------------------------------------------------ platform admins
     def platform_admins(self) -> list[dict]:
-        return self.store.all("SELECT * FROM users WHERE platform_role='admin' "
-                              "AND status='active' AND deleted_at IS NULL")
-
-    def set_platform_role(self, uid: str, role: str) -> None:
-        if role not in PLATFORM_ROLES:
-            raise ServiceError(400, "bad_role", f"未知的平台角色 {role!r}")
-        with self.store.tx() as t:
-            cur = t.execute("SELECT platform_role FROM users WHERE id=?", (uid,)).fetchone()
-            if not cur:
-                raise ServiceError(404, "no_user", "账户不存在")
-            if cur["platform_role"] == "admin" and role != "admin":
-                n = t.execute("SELECT COUNT(*) AS n FROM users WHERE platform_role='admin' "
-                              "AND status='active' AND deleted_at IS NULL AND id<>?", (uid,)).fetchone()["n"]
-                if n == 0:
-                    raise ServiceError(409, "last_admin", "这是最后一名平台管理员，降级后将无人可管理本服务")
-            t.execute("UPDATE users SET platform_role=?, updated_at=? WHERE id=?", (role, now(), uid))
+        """The usable super administrators: active, not an application identity, verified (or
+        granted under host authority), able to complete the administrator step-up. What
+        bootstrap, the CLI and the overview mean by "there is an administrator". Granting and
+        revoking platform roles is `synwevo_core.platform_access.PlatformAccess`."""
+        from .platform_access import PlatformAccess
+        return PlatformAccess(self.store).usable_super_admins()
 
     # ------------------------------------------------------------------ first-admin bootstrap
     def create_bootstrap_token(self, ttl_s: int = 900) -> str:

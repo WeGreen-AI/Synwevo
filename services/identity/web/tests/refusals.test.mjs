@@ -83,7 +83,7 @@ const SERVER = [
   { file: CLIENT + "session_routes.py", surfaces: ALL },
   { file: CORE + "identity.py", fns: ["create_user", "set_password", "ensure_personal_workspace"], surfaces: ["signin", "account"] },
   { file: CORE + "identity.py", fns: ["add_member"], surfaces: ["signin", "admin"] },
-  { file: CORE + "identity.py", fns: ["set_status", "set_workspace_frozen", "set_platform_role"], surfaces: ["admin"] },
+  { file: CORE + "identity.py", fns: ["set_status", "set_workspace_frozen"], surfaces: ["admin"] },
   { file: CORE + "identity.py", fns: ["create_workspace"], surfaces: ["org"] },
   { file: CORE + "identity.py", surfaces: ["members"] },
   { file: CORE + "organizations.py", fns: ["accept_workspace_invitation"], surfaces: ["signin"] },
@@ -102,6 +102,8 @@ const SERVER = [
   { file: CORE + "sessions.py", surfaces: [], why: "an application identity has no password or passkey to sign in with" },
   { file: CORE + "api_platform.py", fns: ["enforce_principal"], surfaces: [], why: "checked on Synwevo Docs' business API, not in this shell" },
   { file: CORE + "api_platform.py", surfaces: ["api"] },
+  // delegated platform roles: the one request check, grants and revocations (platform administration)
+  { file: CORE + "platform_access.py", surfaces: ["admin"] },
   { file: CORE + "auth.py", fns: ["rotate_key"], surfaces: ["api"] },
   { file: CORE + "auth.py", surfaces: [], why: "API keys presented to Synwevo Docs; the console only rotates and revokes them" },
   { file: CORE + "oidc.py", fns: ["rotate_secret"], surfaces: ["api"] },
@@ -139,8 +141,7 @@ const API_ONLY = {
   "邮件主题不能包含换行。": "subjects are written by the service from names that cannot hold a line break",
   // administration and members
   "请选择有效的注册策略": FIXED, "未知的角色 {role!r}": FIXED, "状态只能是 active 或 suspended": FIXED,
-  "平台角色只能是 none、operator 或 admin": FIXED, "未知的账户状态 {status!r}": FIXED, "未知的平台角色 {platform_role!r}": FIXED,
-  "未知的平台角色 {role!r}": FIXED, "移交后自己的角色只能是 admin、editor 或 viewer": FIXED,
+  "未知的账户状态 {status!r}": FIXED, "移交后自己的角色只能是 admin、editor 或 viewer": FIXED,
   "entitlement 只能是 active、revoked 或 none": FIXED, "未知的邀请状态 {state!r}": FIXED, "action 只能是 revoke 或 resend": FIXED,
   "请选择要认领这些数据的账户": "the claim button stays disabled until an account is chosen",
   "请提供 {key}（非空列表）": "bulk actions are offered only with a selection", "请提供 changes（非空列表）": "bulk actions are offered only with a selection",

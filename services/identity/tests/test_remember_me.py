@@ -12,6 +12,8 @@ import time
 
 import pyotp
 import pytest
+
+from .platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core.identity import Identity
@@ -34,7 +36,7 @@ def env(tmp_path, monkeypatch):
     store = Store(tmp_path / "d")
     ident = Identity(store)
     ident.create_user("alice@example.com", PW, status="active")
-    ident.create_user("root@example.com", PW, status="active", platform_role="admin")
+    make_platform_admin(ident.store, ident.create_user("root@example.com", PW, status="active"))
     return {"api": api, "store": store, "ident": ident}
 
 

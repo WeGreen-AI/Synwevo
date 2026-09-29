@@ -12,6 +12,8 @@ import time
 
 import pyotp
 import pytest
+
+from .platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -187,7 +189,8 @@ def fresh_service(tmp_path, monkeypatch):
 
 def _counts(store):
     return {t: store.one(f"SELECT COUNT(*) AS n FROM {t}")["n"]
-            for t in ("users", "workspaces", "memberships", "user_passwords", "app_entitlements", "workspace_apps")}
+            for t in ("users", "workspaces", "memberships", "user_passwords", "app_entitlements", "workspace_apps",
+                      "platform_role_grants")}
 
 
 def test_a_made_up_bootstrap_token_creates_nothing(fresh_service):
@@ -216,7 +219,7 @@ def test_a_real_token_still_bootstraps(fresh_service):
 
 def test_a_lost_bootstrap_race_leaves_nothing_behind(ident):
     before = _counts(ident.store)
-    u = ident.create_user("late@example.com", PW, status="active", platform_role="admin")
+    u = make_platform_admin(ident.store, ident.create_user("late@example.com", PW, status="active"))
     ident.purge_new_account(u["id"])
     assert _counts(ident.store) == before
 

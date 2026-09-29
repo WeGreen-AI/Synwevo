@@ -12,6 +12,8 @@ import os
 import time
 
 import pytest
+
+from tests.integration.platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from apps.docs.sdk.acceptance.make_kit import check_docx, make as make_kit
@@ -43,7 +45,9 @@ def pipeline(tmp_path, monkeypatch):
     ident = Identity(store)
     try:
         for name, role in (("administrator", "admin"), ("owner", "none")):
-            users[name] = ident.create_user(f"pipeline-{name}@example.test", PW, status="active", platform_role=role)
+            users[name] = ident.create_user(f"pipeline-{name}@example.test", PW, status="active")
+            if role == "admin":
+                users[name] = make_platform_admin(store, users[name])
             client = TestClient(api)
             response = post(client, "/api/auth/login", {"email": users[name]["email"], "password": PW})
             assert response.status_code == 200, response.text

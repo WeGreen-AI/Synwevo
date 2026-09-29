@@ -3,6 +3,7 @@ import { t, joinMessages } from "@synwevo/ui";
 import * as base from "../lib/labels";
 import { refusalText } from "../lib/refusals";
 import "./messages";
+import "./platform.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -36,9 +37,9 @@ const errors: Record<string, string> = {
   missing_reason: "请写明理由（8 至 500 个字）", bad_credentials: "口令不正确，请重试。",
   unauthorized: "登录已失效，请重新登录。", reauth_required: "这一步需要重新验证身份。",
   forbidden: "当前角色无权执行此操作。", not_found: "页面不存在", no_organization: "找不到该组织或你不是其成员。",
-  bad_target: "目标账户不存在或不可用。", no_user: "找不到该账户。", last_admin: "必须保留至少一位平台管理员。",
+  bad_target: "目标账户不存在或不可用。", no_user: "找不到该账户。", last_super_admin: "必须保留至少一位可用的最高管理员。",
   last_owner: "必须保留至少一位正常的所有者。", sole_owner: "请先移交所有权，再退出工作空间。",
-  demote_first: "请先将平台角色改为普通用户", self_suspend: "不能停用自己的账户",
+  demote_first: "请先撤销该账户的全部平台权限", self_suspend: "不能停用自己的账户",
   policy_changed: "注册策略已更改，请刷新后重试。", mail_rate_limited: "发送过于频繁，请稍后重试。",
   mail_not_configured: "邮件服务尚未配置。", public_url_missing: "邮件链接地址尚未配置，请联系部署管理员。",
   smtp_not_configured: "邮件服务尚未配置。", smtp_config_invalid: "邮件服务配置无效，请联系部署管理员。",

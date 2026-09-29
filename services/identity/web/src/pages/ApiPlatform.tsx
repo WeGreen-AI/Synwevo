@@ -23,7 +23,8 @@ export default function ApiPlatform() {
   const [revision, setRevision] = useState(0);
   const [action, setAction] = useState<Action | null>(null);
   const [secret, setSecret] = useState<Outcome | null>(null);
-  const allowed = me?.platform_role === 'admin';
+  // The console is `api_platform.manage`'s (a platform grant); the server re-checks every request.
+  const allowed = !!me?.platform_permissions?.includes('api_platform.manage');
   const key = allowed ? `${BASE}/overview?revision=${revision}` : null;
   const load = useLoad<Overview>(key, signal => get(key!, signal));
   useEffect(() => { document.title = `${t('API 管理平台')} · Synwevo Account`; }, [t]);

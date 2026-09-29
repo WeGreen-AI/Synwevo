@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 
 import pytest
+
+from tests.integration.platform_fixture import end_platform_grants, legacy_platform_role_row, make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core import authority, journal
@@ -46,7 +48,12 @@ def plane(tmp_path, monkeypatch):
     ident = Identity(store)
     users, clients = {}, {}
     for name, role in (("administrator", "admin"), ("owner", "none"), ("stranger", "none"), ("operator", "operator")):
-        users[name] = ident.create_user(f"{name}@example.test", PW, status="active", platform_role=role)
+        users[name] = ident.create_user(f"{name}@example.test", PW, status="active")
+        if role == "admin":
+            users[name] = make_platform_admin(store, users[name])
+        elif role == "operator":
+            # the retired 「平台运维」 as the previous release wrote it: no capability
+            legacy_platform_role_row(store, users[name], "operator")
         c = TestClient(api)
         r = post(c, "/api/auth/login", {"email": users[name]["email"], "password": PW})
         assert r.status_code == 200, r.text
@@ -140,7 +147,7 @@ def test_signed_out_and_live_admin_demotion(plane):
     e = plane
     assert TestClient(e["api"]).get(BASE + "/overview").status_code == 401
     assert e["admin"].get(BASE + "/overview").json()["permission"] == "api_platform.manage"
-    e["store"].execute("UPDATE users SET platform_role='none' WHERE id=?", (e["users"]["administrator"]["id"],))
+    end_platform_grants(e["store"], e["users"]["administrator"])
     assert e["admin"].get(BASE + "/overview").status_code == 404
 
 
@@ -408,7 +415,8 @@ def test_accounts_private_adapter_does_not_mount_a_public_data_surface(tmp_path,
     monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
     data = tmp_path / "account-fixture"
     api = create_app(str(data), role="accounts", start_jobs=False)
-    user = Identity(Store(data)).create_user("isolated-admin@example.test", PW, status="active", platform_role="admin")
+    store = Store(data)
+    user = make_platform_admin(store, Identity(store).create_user("isolated-admin@example.test", PW, status="active"))
     c = TestClient(api)
     assert post(c, "/api/auth/login", {"email": user["email"], "password": PW}).status_code == 200
     assert c.get(BASE + "/overview").json()["adapter_available"] is True

@@ -10,6 +10,8 @@ from __future__ import annotations
 import importlib
 
 import pytest
+
+from tests.integration.platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core import authority, oidc
@@ -36,7 +38,7 @@ def world(tmp_path, monkeypatch):
     bootstrap_docs_app(store, ident)
     alice = ident.create_user("alice@example.com", PW, status="active")
     carol = ident.create_user("carol@example.com", PW, status="active")
-    admin = ident.create_user("root@example.com", PW, status="active", platform_role="admin")
+    admin = make_platform_admin(store, ident.create_user("root@example.com", PW, status="active"))
     ws = ident.workspaces_for(alice["id"])[0]["id"]
     ident.add_member(ws, carol["id"], "editor")
     Apps(store, ident).grant(ws, "docweave", carol["id"])

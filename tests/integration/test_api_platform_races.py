@@ -22,6 +22,7 @@ from synwevo_core.sessions import Sessions
 from synwevo_docs import control_plane
 import httpx
 from synwevo_identity import api_platform as routes
+from tests.integration.platform_fixture import end_platform_grants
 from tests.integration.test_api_platform import (
     BASE, OWNER, REASON, approve, call, issue, plane, post, request_approval,
     service_token,
@@ -59,8 +60,7 @@ def test_admin_demoted_after_admission_cannot_finish_issuance(plane, monkeypatch
         future = pool.submit(post, e["admin"], f"{BASE}/approvals/{approval['id']}/issue", {"reason": REASON})
         try:
             assert admitted.wait(5)
-            e["store"].execute("UPDATE users SET platform_role='none' WHERE id=?",
-                               (e["users"]["administrator"]["id"],))
+            end_platform_grants(e["store"], e["users"]["administrator"])
         finally:
             resume.set()
         assert future.result(timeout=5).status_code == 404
@@ -228,7 +228,7 @@ def test_admin_mutations_recheck_session_and_role_inside_write_transaction(plane
         try:
             assert admitted.wait(5)
             if change == 'demotion':
-                e['store'].execute("UPDATE users SET platform_role='none' WHERE id=?", (e['users']['administrator']['id'],))
+                end_platform_grants(e['store'], e['users']['administrator'])
             else:
                 Sessions(e['store']).revoke_all_for_user(e['users']['administrator']['id'], 'synthetic_concurrent_logout')
         finally:
@@ -321,7 +321,7 @@ def test_debugger_withholds_real_response_after_inflight_authority_change(plane,
         try:
             assert completed.wait(5)
             if change == 'demotion':
-                e['store'].execute("UPDATE users SET platform_role='none' WHERE id=?", (e['users']['administrator']['id'],))
+                end_platform_grants(e['store'], e['users']['administrator'])
             elif change == 'logout':
                 Sessions(e['store']).revoke_all_for_user(e['users']['administrator']['id'], 'synthetic_debug_logout')
             elif change == 'approval':

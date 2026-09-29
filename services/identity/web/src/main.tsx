@@ -13,7 +13,7 @@ import { StrictMode, Suspense, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { DialogProvider, ToastProvider, initTheme, I18nProvider, PageState, StatusPage, useI18n, registerMessages, lazyRoute, pick } from "@synwevo/ui";
-import { RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
+import { holdsPlatformAccess, RequireSession, SessionProvider, useSession } from "@synwevo/auth-client";
 import Login from "./pages/Login";
 import { AccountCapabilityGate, platformHomeUrl } from "./pages/org/AuthFlow";
 
@@ -58,10 +58,11 @@ function RouteLoading() {
 }
 function AdminOnly({children}: {children: ReactNode}) {
   const {me} = useSession(); const {t} = useI18n();
-  // The role, not the current permission set: an administrator whose session proved one factor
-  // (`admin_locked`) must reach the page to see what is missing and confirm the password there;
-  // the page itself withholds every management view until then, and the server answers 403.
-  return me?.platform_role === "admin" ? children : <PageState role="alert">{t("仅平台管理员可访问")}</PageState>;
+  // Any platform permission, not the session's current strength: an administrator whose session
+  // proved one factor (`admin_locked`) must reach the page to see what is missing and confirm the
+  // password there; the page withholds every management view until then, and the server decides
+  // each view on its own (404 without any platform permission, 403 for one this person lacks).
+  return holdsPlatformAccess(me) ? children : <PageState role="alert">{t("仅平台管理员可访问")}</PageState>;
 }
 
 function SignedOut() {

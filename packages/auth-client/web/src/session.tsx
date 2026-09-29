@@ -14,7 +14,14 @@ export interface Me {
   email: string;
   display_name: string | null;
   status: string;
+  /** The rollback mirror of the platform grants ('admin' while a super administrator grant is
+   *  live). Kept for older pages; decide nothing new from it. */
   platform_role: "none" | "operator" | "admin";
+  /** What this account's platform grants give it (synwevo_core.platform_access). Any entry means
+   *  the administration links are drawn; every view is still decided by the server. */
+  platform_permissions?: string[];
+  /** The built-in platform roles those grants carry (super_admin, access_admin, …). */
+  platform_roles?: string[];
   locale?: "zh-Hans" | "zh-Hant" | "en";
   timezone?: string;
   email_verified?: boolean;
@@ -30,6 +37,12 @@ export interface Me {
   /** The workspace this session is currently acting in; null when none is selected. */
   workspace_id?: string | null;
   session?: { id: string; amr: string };
+}
+
+/** Whether a platform grant gives this person any platform permission: the administration links
+ *  and the /admin shell are drawn for them. Which views they may use is the server's decision. */
+export function holdsPlatformAccess(me: Pick<Me, "platform_permissions"> | null | undefined): boolean {
+  return !!me?.platform_permissions?.length;
 }
 
 export interface AuthState {
