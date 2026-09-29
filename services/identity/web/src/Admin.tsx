@@ -1,6 +1,7 @@
 import { RegistrationTab, MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
-import { PlatformAccessDialog, PlatformAdminsTab, platformRoleLabel, platformRolesText, ROLE_ORDER } from "./governance/PlatformAccess";
+import { PlatformAccessDialog, PlatformAdminsTab, platformRoleLabel, platformRolesText, ROLE_ORDER, systemReasonText } from "./governance/PlatformAccess";
+import { AUDIT_SCOPES, heldPermissions, mayClaim, permitted, userOffers, visibleTabs, type Held, type Tab } from "./governance/access";
 import { holdsPlatformAccess } from "@synwevo/auth-client";
 import { useAdminData, useAdminPage } from "./governance/data";
 import { t as tr, useI18n, PageState } from "@synwevo/ui";
@@ -42,30 +43,21 @@ type Workspace = {
 };
 type User = {
   id: string; email: string; display_name: string | null; status: string;
-  platform_role: string; platform_roles?: string[]; created_at: number; workspaces: number; sessions: number;
+  platform_role: string; platform_roles?: string[]; outranks_caller?: boolean; created_at: number; workspaces: number; sessions: number;
 };
 type AuditRow = {
-  id: string; at: number; action: string; actor_email: string | null;
+  id: string; at: number; action: string; actor_kind: string; actor_email: string | null;
   object_kind: string | null; object_id: string | null; result: string;
   meta: Record<string, unknown>;
 };
-
-type Tab = "overview" | "users" | "admins" | "workspaces" | "organizations" | "registration" | "identity" | "mail" | "audit";
-/** The platform permission each view reads with (synwevo_core.platform_access). Only the views
- *  the caller's grants open are drawn; the server answers every request on its own anyway. */
-const TAB_PERMISSION: Record<Tab, string> = {
-  overview: "platform.overview.view", users: "platform.users.view", admins: "platform.roles.view",
-  workspaces: "platform.workspaces.view", organizations: "platform.orgs.view", registration: "platform.config.view",
-  identity: "platform.config.view", mail: "platform.mail.view", audit: "platform.audit.view",
-};
-const TABS = Object.keys(TAB_PERMISSION) as Tab[];
 
 export default function Admin() {
   useI18n();
   const { me, refresh } = useSession();
   const [params, setParams] = useSearchParams();
-  const held = new Set(me?.platform_permissions || []);
-  const visible = TABS.filter((t) => held.has(TAB_PERMISSION[t]));
+  // Views and the controls inside them follow the caller's permissions (governance/access.ts).
+  const held = heldPermissions(me);
+  const visible = visibleTabs(held);
   // A ?tab= deep link keeps working for anyone whose grants open that view; otherwise the first
   // view they may use.
   const asked = params.get("tab") as Tab | null;
@@ -111,14 +103,14 @@ export default function Admin() {
             </button>
           ))}
         </nav>}
-          {!me?.admin_locked && tab === "overview" && <OverviewTab onDenied={onDenied} />}
-          {!me?.admin_locked && tab === "users" && <UsersTab revision={accessRevision} onDenied={onDenied} onAccess={setAccess} />}
+          {!me?.admin_locked && tab === "overview" && <OverviewTab onDenied={onDenied} held={held} />}
+          {!me?.admin_locked && tab === "users" && <UsersTab revision={accessRevision} onDenied={onDenied} onAccess={setAccess} held={held} />}
           {!me?.admin_locked && tab === "admins" && <PlatformAdminsTab key={accessRevision} onDenied={onDenied} onOpen={setAccess} />}
-          {!me?.admin_locked && tab === "workspaces" && <WorkspacesTab onDenied={onDenied} />}
-          {!me?.admin_locked && tab === "organizations" && <OrganizationsTab onDenied={onDenied} />}
-          {!me?.admin_locked && tab === "registration" && <RegistrationTab onDenied={onDenied} />}
+          {!me?.admin_locked && tab === "workspaces" && <WorkspacesTab onDenied={onDenied} held={held} />}
+          {!me?.admin_locked && tab === "organizations" && <OrganizationsTab onDenied={onDenied} held={held} />}
+          {!me?.admin_locked && tab === "registration" && <RegistrationTab onDenied={onDenied} held={held} />}
           {!me?.admin_locked && tab === "identity" && <IdentityProvidersTab onDenied={onDenied} />}
-          {!me?.admin_locked && tab === "mail" && <MailTab onDenied={onDenied} />}
+          {!me?.admin_locked && tab === "mail" && <MailTab onDenied={onDenied} held={held} />}
           {!me?.admin_locked && tab === "audit" && <AuditTab onDenied={onDenied} />}
           {access && <PlatformAccessDialog user={access} onClose={() => setAccess(null)} onChanged={() => {
             setAccessRevision((n) => n + 1);
@@ -131,7 +123,7 @@ export default function Admin() {
   );
 }
 
-function OverviewTab({ onDenied }: { onDenied: () => void }) {
+function OverviewTab({ onDenied, held }: { onDenied: () => void; held: Held }) {
   const { data, err, loading, reload } = useAdminData<Overview>("/api/admin/overview", onDenied);
   if (loading) return <div className="empty">{tr("加载中…")}</div>;
   if (err) return <div className="notice err" role="alert">{err} <button className="btn" onClick={reload}>{tr("重试")}</button></div>;
@@ -153,7 +145,9 @@ function OverviewTab({ onDenied }: { onDenied: () => void }) {
         <section className="card card-b col gap12">
           <h2>{tr("待认领的历史数据")}</h2>
           <p className="muted">{tr("账户体系建立之前的数据，属于一个没有成员的工作空间，目前没有人能读取（包括平台管理员）。指派给一个已有账户后才能打开。")}</p>
-          <ClaimCard ws={data.unclaimed} />
+          {/* the claim and its account search need permissions only a super administrator holds */}
+          {mayClaim(held) ? <ClaimCard ws={data.unclaimed} />
+            : <p>{tr("{count} 个项目。只有最高管理员可以把它指派给一个没有平台权限的账户。", {count: data.unclaimed.projects})}</p>}
         </section>
       )}
     </>
@@ -175,11 +169,13 @@ function ClaimCard({ ws }: { ws: Workspace }) {
   const [confirming, setConfirming] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const query = useDebounced(q.trim());
-  const users = useAdminPage<User>(`/api/admin/users${qs({ q: query, status: "active" })}`);
+  // Only accounts without any platform grant: the server refuses the others (target_is_platform_admin).
+  const users = useAdminPage<User>(`/api/admin/users${qs({ q: query, status: "active", role: "none" })}`);
   const searching = query !== q.trim();
   if (done) return <div className="notice ok" role="status">{tr(done)}</div>;
   return <div className="col gap12">
     <p>{tr("{p0} 个项目，{p1} 位成员。请选择接收这个工作空间的已有账户。", {p0: ws.projects, p1: ws.members})}</p>
+    <p className="small muted">{tr("只列出没有平台权限的账户：平台管理与业务数据须由不同账户持有，也不能指派给你自己。")}</p>
     <label className="field">{tr("搜索接收账户")}<input className="input" type="search" maxLength={100} value={q}
       onChange={(e) => { setQ(e.target.value); setChosen(null); }} /></label>
     {(users.loading || searching) && <p role="status">{tr("正在查找账户…")}</p>}
@@ -200,7 +196,7 @@ function ClaimCard({ ws }: { ws: Workspace }) {
   </div>;
 }
 
-function UsersTab({ onDenied, onAccess, revision }: { onDenied: () => void; onAccess: (user: User) => void; revision: number }) {
+function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void; onAccess: (user: User) => void; revision: number; held: Held }) {
   const [q, setQ] = useState("");
   const query = useDebounced(q.trim());
   const [status, setStatus] = useState("");
@@ -209,7 +205,6 @@ function UsersTab({ onDenied, onAccess, revision }: { onDenied: () => void; onAc
   const { me, refresh } = useSession();
   const toast = useToast();
   const [action, setAction] = useState<{ user: User; kind: "status" | "revoke" | "recovery" } | null>(null);
-  const canRoles = !!me?.platform_permissions?.includes("platform.roles.view");
   // A grant or revocation in the platform-access dialog changes this list's platform column.
   useEffect(() => { if (revision) reload(); }, [revision]); // eslint-disable-line react-hooks/exhaustive-deps
   const items = loading || err ? [] : data?.items || [];
@@ -232,17 +227,17 @@ function UsersTab({ onDenied, onAccess, revision }: { onDenied: () => void; onAc
     {loading && <p role="status">{tr("正在加载账户…")}</p>}
     <div className="list-wrap"><table className="gov" aria-label={tr("平台账户")} aria-busy={loading}>
       <thead><tr><th scope="col">{tr("账户")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("平台权限")}</th><th scope="col">{tr("工作空间")}</th><th scope="col">{tr("在线会话")}</th><th scope="col">{tr("操作")}</th></tr></thead>
-      <tbody>{items.map((user) => <tr key={user.id}>
+      <tbody>{items.map((user) => { const o = userOffers(held, user, me?.id); const hint = (h?: string) => h && tr(h);
+        return <tr key={user.id}>
         <th scope="row">{user.display_name || "—"}<div className="who2">{user.email}</div></th>
         <td>{ACCOUNT_STATUS[user.status] || user.status}</td><td>{platformRolesText(user.platform_roles)}</td><td>{user.workspaces}</td><td>{user.sessions}</td>
         <td className="act"><RowMenu label={tr("{p0} 的账户操作", {p0: user.email})} items={[
           { label: user.status === "active" ? tr("停用账户") : tr("恢复账户"), danger: user.status === "active",
-            disabled: loading || !!err || (user.status === "active" && (user.id === me?.id || !!user.platform_roles?.length)),
-            hint: user.id === me?.id ? tr("不能停用自己的账户") : tr("请先撤销该账户的全部平台权限"), onSelect: () => setAction({ user, kind: "status" }) },
-          { label: tr("发送找回邮件"), disabled: loading || !!err || !["active", "pending"].includes(user.status), onSelect: () => setAction({ user, kind: "recovery" }) },
-          { label: tr("撤销全部会话"), danger: true, disabled: loading || !!err, onSelect: () => setAction({ user, kind: "revoke" }) },
-          { label: tr("平台权限"), disabled: loading || !!err || !canRoles, onSelect: () => onAccess(user) },
-        ]} /></td></tr>)}
+            disabled: loading || !!err || o.status.disabled, hint: hint(o.status.hint), onSelect: () => setAction({ user, kind: "status" }) },
+          { label: tr("发送找回邮件"), disabled: loading || !!err || o.recovery.disabled, hint: hint(o.recovery.hint), onSelect: () => setAction({ user, kind: "recovery" }) },
+          { label: tr("撤销全部会话"), danger: true, disabled: loading || !!err || o.revoke.disabled, hint: hint(o.revoke.hint), onSelect: () => setAction({ user, kind: "revoke" }) },
+          { label: tr("平台权限"), disabled: loading || !!err || o.access.disabled, hint: hint(o.access.hint), onSelect: () => onAccess(user) },
+        ]} /></td></tr>; })}
       {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的账户。")}</td></tr>}</tbody>
     </table></div>
     <PageControls offset={offset} total={data?.total || 0} busy={loading || !!err} onPage={setOffset} />
@@ -259,18 +254,20 @@ function UsersTab({ onDenied, onAccess, revision }: { onDenied: () => void; onAc
   </section>;
 }
 
-function WorkspacesTab({ onDenied }: { onDenied: () => void }) {
+function WorkspacesTab({ onDenied, held }: { onDenied: () => void; held: Held }) {
   const [q, setQ] = useState("");
   const query = useDebounced(q.trim());
   const { data, err, loading, reload, offset, setOffset } = useAdminPage<Workspace>(`/api/admin/workspaces${qs({ q: query })}`, onDenied);
   const [action, setAction] = useState<Workspace | null>(null);
   const [notice, setNotice] = useState("");
   const { me } = useSession();
+  const manage = permitted(held, "platform.workspaces.manage");
   const items = loading || err ? [] : data?.items || [];
   return <section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{tr("工作空间")}</h2><input className="input" type="search" aria-label={tr("搜索工作空间")} value={q} maxLength={100} onChange={(e) => setQ(e.target.value)} />
       <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新工作空间")}</button></div>
     <p className="muted small">{tr("只显示数量，不显示内容；平台管理权限不包含读取文档或管理工作空间成员。")}</p>
+    {manage.hint && <p className="notice" role="note">{tr("你的平台角色可以查看工作空间，但不能冻结或解冻。")}</p>}
     {notice && <div className="notice" role="status">{tr(notice)}</div>}
     {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
     {loading && <p role="status">{tr("正在加载工作空间…")}</p>}
@@ -278,7 +275,7 @@ function WorkspacesTab({ onDenied }: { onDenied: () => void }) {
       <thead><tr><th scope="col">{tr("名称")}</th><th scope="col">{tr("类型")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("成员")}</th><th scope="col">{tr("项目")}</th><th scope="col">{tr("操作")}</th></tr></thead>
       <tbody>{items.map((w) => <tr key={w.id}>
         <th scope="row">{w.name}</th><td>{WORKSPACE_KIND[w.kind] || w.kind}</td><td>{WORKSPACE_STATUS[w.status] || w.status}</td><td>{w.members}</td><td>{w.projects}</td>
-        <td><div className="row gap4 wrap">{(w.status === "active" || w.status === "frozen") && <button className="btn sm" disabled={loading || !!err} onClick={() => setAction(w)}>{w.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")}</button>}
+        <td><div className="row gap4 wrap">{(w.status === "active" || w.status === "frozen") && <button className="btn sm" disabled={loading || !!err || manage.disabled} onClick={() => setAction(w)}>{w.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")}</button>}
           {me?.workspaces.some((m) => m.id === w.id && (m.role === "owner" || m.role === "admin")) && <a className="btn sm" href={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>{tr("成员与邀请")}</a>}</div></td>
       </tr>)}
       {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的工作空间。")}</td></tr>}</tbody>
@@ -301,8 +298,7 @@ function AuditTab({ onDenied }: { onDenied: () => void }) {
     <div className="row gap12 wrap"><h2 className="grow">{tr("审计记录")}</h2><input className="input" type="search" maxLength={100} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("操作者邮箱或对象")} aria-label={tr("搜索审计记录")} />
       <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新审计")}</button></div>
     <label className="field">{tr("操作范围")}<select className="input" aria-label={tr("筛选审计操作")} value={action} onChange={(e) => setAction(e.target.value)}>
-      <option value="">{tr("全部操作")}</option><option value="admin.user.">{tr("账户管理")}</option><option value="admin.workspace.">{tr("工作空间管理")}</option>
-      <option value="auth.">{tr("登录与账户安全")}</option><option value="member.">{tr("成员管理")}</option><option value="invite.">{tr("邀请")}</option><option value="mfa.">{tr("两步验证")}</option>
+      {AUDIT_SCOPES.map(([prefix, label]) => <option key={prefix} value={prefix}>{tr(label)}</option>)}
     </select></label>
     <p className="muted small">{tr("翻页时保留本次查询的范围；刷新后包含新记录。")}</p>
     {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
@@ -311,7 +307,8 @@ function AuditTab({ onDenied }: { onDenied: () => void }) {
       <thead><tr><th scope="col">{tr("时间")}</th><th scope="col">{tr("操作")}</th><th scope="col">{tr("操作者")}</th><th scope="col">{tr("对象")}</th><th scope="col">{tr("结果")}</th><th scope="col">{tr("理由")}</th></tr></thead>
       <tbody>{items.map((a) => <tr key={a.id}>
         <td>{fmtTime(a.at)}</td><td>{a.action}</td><td>{a.actor_email || "—"}</td>
-        <td>{a.object_id || "—"}</td><td>{a.result === "ok" ? tr("成功") : a.result === "denied" ? tr("被拒绝") : a.result}</td><td>{String(a.meta.reason || "")}</td>
+        <td>{a.object_id || "—"}</td><td>{a.result === "ok" ? tr("成功") : a.result === "denied" ? tr("被拒绝") : a.result}</td>
+        <td>{a.actor_kind === "system" ? systemReasonText(String(a.meta.reason || "")) : String(a.meta.reason || "")}</td>
       </tr>)}{!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的记录。")}</td></tr>}</tbody>
     </table></div>
     <PageControls offset={offset} total={data?.total || 0} busy={loading || !!err} onPage={setOffset} />

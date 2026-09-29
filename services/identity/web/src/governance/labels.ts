@@ -38,6 +38,8 @@ const errors: Record<string, string> = {
   unauthorized: "登录已失效，请重新登录。", reauth_required: "这一步需要重新验证身份。",
   forbidden: "当前角色无权执行此操作。", not_found: "页面不存在", no_organization: "找不到该组织或你不是其成员。",
   bad_target: "目标账户不存在或不可用。", no_user: "找不到该账户。", last_super_admin: "必须保留至少一位可用的最高管理员。",
+  target_outranks_actor: "该账户持有你没有的平台权限", not_suspended: "只有已停用的账户可以恢复",
+  platform_permission_denied: "你的平台角色不包含这项操作",
   last_owner: "必须保留至少一位正常的所有者。", sole_owner: "请先移交所有权，再退出工作空间。",
   demote_first: "请先撤销该账户的全部平台权限", self_suspend: "不能停用自己的账户",
   policy_changed: "注册策略已更改，请刷新后重试。", mail_rate_limited: "发送过于频繁，请稍后重试。",

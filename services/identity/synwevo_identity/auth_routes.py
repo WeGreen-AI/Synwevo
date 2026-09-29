@@ -15,7 +15,7 @@ import os
 from fastapi import APIRouter, Body, Request, Response
 
 from synwevo_auth_client.session_routes import describe_user
-from synwevo_core.platform_access import SUPER_ADMIN, PlatformAccess
+from synwevo_core.platform_access import SUPER_ADMIN, SYSTEM_REASONS, PlatformAccess
 from synwevo_core import env
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity, registration_mode
@@ -273,7 +273,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         with ident.store.tx():
             if ident.consume_bootstrap_token(token, user_id=user["id"]):
                 PlatformAccess(ident.store).host_grant(user["id"], SUPER_ADMIN, source="bootstrap:web",
-                                                       reason="首位平台管理员（一次性引导令牌）")
+                                                       reason=SYSTEM_REASONS["bootstrap_web"])
                 granted = True
         if not granted:
             ident.purge_new_account(user["id"])

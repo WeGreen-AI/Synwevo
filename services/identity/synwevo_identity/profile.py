@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from synwevo_core.avatar_image import MAX_AVATAR_BYTES, canonical_avatar  # noqa: F401 — the platform's one set of avatar rules (CI-78)
 from synwevo_core.errors import ServiceError
 from synwevo_core.oidc import Grants
-from synwevo_core.platform_access import PlatformAccess
+from synwevo_core.platform_access import SYSTEM_REASONS, PlatformAccess
 from synwevo_core.sessions import Sessions
 from synwevo_core.store import now
 
@@ -144,7 +144,7 @@ def finalize_deletions(store) -> int:
                           "platform_role='none' WHERE id=?", (now(), now(), uid))
             # Platform grants end with the account (they stopped counting at pending_delete).
             PlatformAccess(store).system_revoke_all(uid, source="system:account_deleted",
-                                                    reason="账户已删除")
+                                                    reason=SYSTEM_REASONS["account_deleted"])
             # Commit a retry marker with the deletion. A filesystem failure after this
             # transaction must not make the sweeper permanently forget the withdrawal.
             store.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",

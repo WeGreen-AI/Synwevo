@@ -44,7 +44,7 @@ ROUTES = [
     ("POST", "/api/admin/users/{uid}/revoke-sessions", "platform.users.support", True),
     ("GET", "/api/admin/workspaces", "platform.workspaces.view", False),
     ("GET", "/api/admin/workspaces/{wid}/members", "platform.workspaces.view", False),
-    ("POST", "/api/admin/workspaces/{wid}/claim", "platform.workspaces.manage", True),
+    ("POST", "/api/admin/workspaces/{wid}/claim", "platform.workspaces.claim", True),
     ("POST", "/api/admin/workspaces/{wid}/freeze", "platform.workspaces.manage", True),
     ("POST", "/api/admin/workspaces/{wid}/unfreeze", "platform.workspaces.manage", True),
     ("GET", "/api/admin/organizations", "platform.orgs.view", False),
@@ -199,11 +199,24 @@ def test_no_platform_permission_sees_404_everywhere_including_owners_and_workspa
         assert c.get(CONSOLE_GET).status_code == 404
         assert post(c, CONSOLE_POST, {"reason": REASON}).status_code == 404
         assert c.get("/admin").status_code == 404 and c.get("/admin/api-platform").status_code == 404
+        # Nor does request validation, which runs before a route's own check, tell them apart: a
+        # bad parameter, a body that is not JSON, a method the route lacks and a path that does
+        # not exist all meet the same 404 (the role pattern used to come back in a 422).
+        missing = c.get("/api/admin/no-such-page")
+        for r in (c.get("/api/admin/users?role=bogus"), c.get("/api/admin/users?limit=many"),
+                  c.post(f"/api/admin/users/{world['plain']['id']}/platform-grants", content=b"{not json",
+                         headers={CSRF_HEADER: c.cookies.get(CSRF_COOKIE) or "", "content-type": "application/json"}),
+                  c.put("/api/admin/overview", headers={CSRF_HEADER: c.cookies.get(CSRF_COOKIE) or ""}), missing):
+            assert r.status_code == 404 and r.json()["error"] == "not_found", (who["email"], r.request.url, r.text)
+            assert "super_admin" not in r.text and r.json()["message"] == missing.json()["message"]
         me = c.get("/api/auth/me").json()
         assert me["platform_permissions"] == [] and me["platform_roles"] == [] and me["permissions"] == []
         assert me["admin_locked"] is False
     assert not store.one("SELECT 1 AS x FROM audit_events WHERE action='admin.access.denied'"), \
         "没有平台权限的人得到的是 404，不留下「被拒绝的管理操作」"
+    # a holder still gets the ordinary validation answer: the gate only disguises, it does not validate
+    root = world["login"](world["root"])
+    assert root.get("/api/admin/users?role=bogus").status_code == 422
 
 
 def test_the_admin_shell_opens_for_any_platform_permission(world):
@@ -307,17 +320,140 @@ def test_holding_is_not_granting_and_nobody_changes_their_own_authority_to_assig
     assert r.status_code == 403 and r.json()["error"] == "self_assignment"
     # a role without assigning permissions may be added to oneself (it adds nothing to a super admin)
     assert post(root, f"/api/admin/users/{me}/platform-grants", {"role": "auditor", "reason": REASON}).status_code == 200
+    # the explanation names the refusal the service would give, grant by grant, so the page can say it
+    mine = root.get(f"/api/admin/users/{me}/platform-access").json()
+    assert {g["role"]: g["revoke_refusal"] for g in mine["grants"]} == {SUPER_ADMIN: "self_assignment", "auditor": None}
+    assert mine["assign_refusal"] is None and SUPER_ADMIN not in mine["assignable_roles"]
     # an access administrator holds users.manage but cannot grant anything
     access_admin = world["login"](holder(world, "access_admin"))
     reauth(access_admin)
     r = post(access_admin, f"/api/admin/users/{world['plain']['id']}/platform-grants", {"role": "support", "reason": REASON})
     assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied"
+    seen = access_admin.get(f"/api/admin/users/{me}/platform-access").json()
+    assert seen["assignable_roles"] == [] and seen["assign_refusal"] == "platform_permission_denied"
+    assert {g["revoke_refusal"] for g in seen["grants"]} == {"platform_permission_denied"}
     # the service refuses a role wider than the actor's own permissions, and super_admin without assign_super
     access = PlatformAccess(store)
     with pytest.raises(ServiceError) as e:
         access.grant(world["plain"]["id"], world["plain"]["id"], "auditor", REASON)
     assert e.value.code == "platform_permission_denied"
     assert PlatformAccess(store).is_usable_super_admin(me)
+
+
+# ---------------------------------------------------------------- the historical data
+def _legacy_workspace(store) -> None:
+    """The pre-identity data as the v1 migration leaves it (fixture): no members, pending_claim."""
+    ts = now()
+    store.execute("INSERT INTO workspaces (id,name,kind,status,created_at,updated_at) "
+                  "VALUES ('default','历史数据（待认领）','legacy','pending_claim',?,?)", (ts, ts))
+
+
+def test_the_historical_data_goes_only_from_a_super_administrator_to_an_ordinary_account(world):
+    """A platform role is never the way to a document: an account and access administrator may
+    freeze workspaces but not claim the historical data (least of all for themselves), and a
+    super administrator may hand it only to an account that holds no platform grant."""
+    from synwevo_core.apps import bootstrap_docs_app
+    store, ident = world["store"], world["ident"]
+    bootstrap_docs_app(store, ident)
+    _legacy_workspace(store)
+    access_admin = holder(world, "access_admin")
+    aa = world["login"](access_admin)
+    reauth(aa)
+    r = post(aa, "/api/admin/workspaces/default/claim", {"user_id": access_admin["id"], "reason": REASON})
+    assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied", r.text
+    assert r.json()["detail"]["permission"] == "platform.workspaces.claim"
+    root = world["login"](world["root"])
+    reauth(root)
+    r = post(root, "/api/admin/workspaces/default/claim", {"user_id": world["root"]["id"], "reason": REASON})
+    assert r.status_code == 409 and r.json()["error"] == "self_claim", r.text
+    for other in (access_admin, holder(world, "support")):
+        r = post(root, "/api/admin/workspaces/default/claim", {"user_id": other["id"], "reason": REASON})
+        assert r.status_code == 409 and r.json()["error"] == "target_is_platform_admin", r.text
+    assert ident.get_workspace("default")["status"] == "pending_claim"
+    assert not store.one("SELECT 1 AS x FROM memberships WHERE workspace_id='default'")
+    r = post(root, "/api/admin/workspaces/default/claim", {"user_id": world["plain"]["id"], "reason": REASON})
+    assert r.status_code == 200, r.text
+    assert ident.membership("default", world["plain"]["id"])["role"] == "owner"
+    assert ident.membership("default", world["root"]["id"]) is None
+
+
+# ---------------------------------------------------------------- a lower administrator and a higher one
+def _failed_reset_mail(store, user) -> str:
+    """A reset mail the transport refused (fixture row): retryable by `platform.mail.manage`."""
+    mid = "mail_fixture_reset"
+    store.execute("INSERT INTO mail_outbox (id,to_addr,subject,body,kind,ref_id,status,attempts,last_error,created_at) "
+                  "VALUES (?,?,'fixture','fixture','reset',?,'failed',3,'smtp_authentication_failed',?)",
+                  (mid, user["email"], user["id"], now() - 7200))
+    return mid
+
+
+def test_a_lower_administrator_does_not_act_on_a_higher_one(world):
+    store = world["store"]
+    root_client = world["login"](world["root"])
+    support_user, access_user = holder(world, "support"), holder(world, "access_admin")
+    support = world["login"](support_user)
+    reauth(support)
+    for path in (f"/api/admin/users/{world['root']['id']}/revoke-sessions", f"/api/admin/users/{world['root']['id']}/recovery",
+                 f"/api/admin/users/{access_user['id']}/revoke-sessions"):
+        r = post(support, path, {"reason": REASON})
+        assert r.status_code == 403 and r.json()["error"] == "target_outranks_actor", (path, r.text)
+        assert "platform.users.manage" in r.json()["detail"]["permissions"]
+    # nothing happened to the super administrator: still signed in, no reset mail queued
+    assert root_client.get("/api/admin/overview").status_code == 200
+    assert not store.one("SELECT 1 AS x FROM mail_outbox WHERE ref_id=?", (world["root"]["id"],))
+    # an account at or below the actor's permissions is theirs to support
+    for target in (world["plain"], holder(world, "support", "support-2@example.test")):
+        r = post(support, f"/api/admin/users/{target['id']}/revoke-sessions", {"reason": REASON})
+        assert r.status_code == 200, r.text
+    # retrying a super administrator's reset mail is acting on them too
+    mid = _failed_reset_mail(store, world["root"])
+    access = world["login"](access_user)
+    reauth(access)
+    r = post(access, f"/api/admin/mail/{mid}/retry", {"reason": REASON})
+    assert r.status_code == 403 and r.json()["error"] == "target_outranks_actor", r.text
+    assert store.one("SELECT last_error FROM mail_outbox WHERE id=?", (mid,))["last_error"] == "smtp_authentication_failed"
+    # audited, once per actor and account per window
+    rows = store.all("SELECT * FROM audit_events WHERE action='admin.access.denied' AND object_kind='user' ORDER BY seq")
+    assert [(r["actor_id"], r["object_id"]) for r in rows] == [
+        (support_user["id"], world["root"]["id"]), (support_user["id"], access_user["id"]),
+        (access_user["id"], world["root"]["id"])]
+    assert all(json.loads(r["meta"])["code"] == "target_outranks_actor" for r in rows)
+    # the listing marks the rows the page should not offer
+    listed = {u["email"]: u["outranks_caller"] for u in support.get("/api/admin/users?limit=200").json()["items"]}
+    assert listed["root@example.test"] and listed["access_admin@example.test"]
+    assert not listed["plain@example.test"] and not listed["support@example.test"]
+
+
+def test_restoring_is_for_suspended_accounts_and_by_an_administrator_who_outranks_them(world):
+    from synwevo_core import journal
+    store, ident = world["store"], world["ident"]
+    second = make_platform_admin(store, verified(store, ident, "second-super@example.test"))
+    # the second super administrator asks to delete their account: pending_delete, grants not counted
+    c2 = world["login"](second)
+    assert post(c2, "/api/auth/deletion", {"password": PW}).status_code == 200
+    assert ident.get_user(second["id"])["status"] == "pending_delete"
+    assert PlatformAccess(store).effective_permissions(second["id"]) == frozenset()
+    access = world["login"](holder(world, "access_admin"))
+    reauth(access)
+    root = world["login"](world["root"])
+    reauth(root)
+    pending = ident.create_user("pending-restore@example.test", PW)
+    for client in (access, root):
+        for target in (second, pending, world["plain"]):
+            r = post(client, f"/api/admin/users/{target['id']}/status", {"status": "active", "reason": REASON})
+            assert r.status_code == 409 and r.json()["error"] == "not_suspended", r.text
+    assert ident.get_user(second["id"])["status"] == "pending_delete", "恢复不能让正在删除的最高管理员复活"
+    assert ident.get_user(pending["id"])["status"] == "pending", "恢复不能跳过邮箱验证"
+    # A suspended account that still holds grants (a backup restored and the journal replayed
+    # over it): restoring it brings them back, so only an administrator who outranks it may.
+    third = make_platform_admin(store, verified(store, ident, "third-super@example.test"))
+    journal.apply(store, [{"kind": "user_suspended", "user_id": third["id"], "at": now()}])
+    assert ident.get_user(third["id"])["status"] == "suspended"
+    r = post(access, f"/api/admin/users/{third['id']}/status", {"status": "active", "reason": REASON})
+    assert r.status_code == 403 and r.json()["error"] == "target_outranks_actor", r.text
+    assert ident.get_user(third["id"])["status"] == "suspended"
+    r = post(root, f"/api/admin/users/{third['id']}/status", {"status": "active", "reason": REASON})
+    assert r.status_code == 200 and ident.get_user(third["id"])["status"] == "active"
 
 
 # ---------------------------------------------------------------- the last usable super administrator
@@ -385,6 +521,56 @@ def test_two_super_admins_revoking_each_other_at_once_leave_exactly_one(world, m
     assert store.one("SELECT COUNT(*) AS n FROM users WHERE platform_role='admin'")["n"] == 1, "回滚镜像同步"
 
 
+def _passkey(store, user, rp_id: str) -> None:
+    """A registered, user-verifying passkey row (fixture: public material only, never used to sign)."""
+    store.execute("INSERT INTO passkeys (id,user_id,credential_id,public_key,rp_id,uv_capable,name,created_at) "
+                  "VALUES (?,?,?,?,?,1,'fixture key',?)",
+                  (f"pk_{user['id']}_{rp_id}", user["id"], f"cred-{user['id']}-{rp_id}", "fixture-public-key", rp_id, now()))
+
+
+def test_a_super_administrator_who_cannot_reauthenticate_does_not_keep_the_platform(world):
+    """Every grant, revocation and policy change asks for the strict re-authentication, which
+    takes a password until D10. A passkey-only super administrator can read every page and change
+    nothing, so they do not count as the one who keeps the platform administrable."""
+    store, ident = world["store"], world["ident"]
+    passkey_only = verified(store, ident, "passkey-only@example.test", password=None)
+    from synwevo_identity.passkeys import rp_id
+    _passkey(store, passkey_only, rp_id())
+    step = PlatformAccess(store).step_up(passkey_only["id"])
+    assert step["capable"] and not step["reauth"]
+    root = world["login"](world["root"])
+    reauth(root)
+    r = post(root, f"/api/admin/users/{passkey_only['id']}/platform-grants", {"role": SUPER_ADMIN, "reason": REASON})
+    assert r.status_code == 409 and r.json()["error"] == "target_cannot_reauth", r.text
+    # a read-mostly delegated role is fine: the step-up is all it needs to open its pages
+    assert post(root, f"/api/admin/users/{passkey_only['id']}/platform-grants",
+                {"role": "auditor", "reason": REASON}).status_code == 200
+    # made super administrator some other way (host authority), it still does not count ...
+    make_platform_admin(store, passkey_only)
+    assert [u["id"] for u in ident.platform_admins()] == [world["root"]["id"]]
+    assert not ident.bootstrap_needed()
+    # ... so the only super administrator who can re-authenticate cannot leave
+    r = post(root, "/api/auth/deletion", {"password": PW})
+    assert r.status_code == 409 and r.json()["error"] == "last_super_admin", r.text
+    with pytest.raises(ServiceError) as e:
+        PlatformAccess(store).revoke(passkey_only["id"], grant_of(world, world["root"], SUPER_ADMIN)["id"], REASON)
+    assert e.value.code == "last_super_admin"
+    assert ident.get_user(world["root"]["id"])["status"] == "active"
+
+
+def test_a_passkey_bound_to_an_earlier_domain_is_not_a_way_to_confirm_identity(world):
+    store, ident = world["store"], world["ident"]
+    stale = verified(store, ident, "stale-passkey@example.test", password=None)
+    _passkey(store, stale, "old-accounts.example.test")
+    assert PlatformAccess(store).step_up(stale["id"])["capable"] is False
+    root = world["login"](world["root"])
+    reauth(root)
+    r = post(root, f"/api/admin/users/{stale['id']}/platform-grants", {"role": "auditor", "reason": REASON})
+    assert r.status_code == 409 and r.json()["error"] == "target_cannot_step_up", r.text
+    from synwevo_identity.passkeys import rp_id
+    assert platform_access.current_rp_id() == rp_id(), "the core reads the RP ID by the account service's rule"
+
+
 # ---------------------------------------------------------------- sessions: tightening and revocation
 def test_a_grant_tightens_the_grantees_sessions_and_a_revocation_applies_on_the_next_request(world):
     store = world["store"]
@@ -419,6 +605,7 @@ def test_expired_grants_are_ignored_and_can_be_granted_again(world, monkeypatch)
     r = post(root, f"/api/admin/users/{target['id']}/platform-grants",
              {"role": "auditor", "reason": REASON, "expires_at": now() + 600})
     assert r.status_code == 200
+    first_grant = r
     c = world["login"](target)
     assert c.get("/api/admin/audit").status_code == 200
     later = now() + 700
@@ -426,9 +613,66 @@ def test_expired_grants_are_ignored_and_can_be_granted_again(world, monkeypatch)
     assert c.get("/api/admin/audit").status_code == 404
     assert c.get("/api/auth/me").json()["platform_roles"] == []
     assert target["id"] not in {row["user"]["id"] for row in root.get("/api/admin/platform/roles").json()["roster"]}
+    first = first_grant.json()["grant"]["id"]
     r = post(root, f"/api/admin/users/{target['id']}/platform-grants", {"role": "auditor", "reason": REASON})
     assert r.status_code == 200 and r.json()["after"] == ["auditor"]
     assert c.get("/api/admin/audit").status_code == 200
+    # the expired row the new grant replaced is named in the grant's own record
+    ev = world["store"].one("SELECT meta FROM audit_events WHERE action='admin.platform.grant' AND object_id=? "
+                            "ORDER BY seq DESC LIMIT 1", (target["id"],))
+    assert json.loads(ev["meta"])["replaced_expired_grant"] == first
+    assert world["store"].one("SELECT revoked_by FROM platform_role_grants WHERE id=?", (first,))["revoked_by"] == "system:expired"
+
+
+# ---------------------------------------------------------------- every change is audited
+def test_the_audit_names_what_a_change_did_even_on_an_account_whose_grants_do_not_count(world):
+    """before/after are the live grants, not the counted ones: ending a grant of a pending-deletion
+    account is a change, and the record says so."""
+    store, ident = world["store"], world["ident"]
+    root = world["login"](world["root"])
+    reauth(root)
+    target = verified(store, ident, "leaving@example.test")
+    granted = post(root, f"/api/admin/users/{target['id']}/platform-grants", {"role": "support", "reason": REASON}).json()
+    assert post(world["login"](target), "/api/auth/deletion", {"password": PW}).status_code == 200
+    assert PlatformAccess(store).roles(target["id"]) == []
+    r = post(root, f"/api/admin/platform-grants/{granted['grant']['id']}/revoke", {"reason": REASON})
+    assert r.status_code == 200 and r.json()["before"] == ["support"] and r.json()["after"] == []
+    meta = json.loads(store.one("SELECT meta FROM audit_events WHERE action='admin.platform.revoke' AND object_id=?",
+                                (target["id"],))["meta"])
+    assert meta["before"] == ["support"] and meta["after"] == []
+
+
+def test_a_finalized_deletion_records_each_grant_it_ends(world):
+    from synwevo_identity.profile import finalize_deletions
+    store, ident = world["store"], world["ident"]
+    leaving = holder(world, "auditor", "leaving-auditor@example.test")
+    PlatformAccess(store).host_grant(leaving["id"], "support", source="fixture:tests", reason="test fixture: second role")
+    store.execute("UPDATE users SET status='pending_delete', deletion_due_at=? WHERE id=?", (now() - 1, leaving["id"]))
+    assert finalize_deletions(store) == 1
+    assert not PlatformAccess(store).live_grants(leaving["id"])
+    rows = store.all("SELECT * FROM audit_events WHERE action='admin.platform.revoke' AND object_id=? ORDER BY seq",
+                     (leaving["id"],))
+    metas = [json.loads(r["meta"]) for r in rows]
+    assert sorted(m["role"] for m in metas) == ["auditor", "support"]
+    assert all(m["source"] == "system:account_deleted" and m["reason"] == "账户已删除" for m in metas)
+    assert metas[-1]["after"] == [] and all(r["actor_kind"] == "system" for r in rows)
+
+
+def test_a_replayed_deletion_ends_the_grants_with_the_account(world, tmp_path):
+    """journal.apply of `user_deleted` writes platform_role='none'; the grants end in the same
+    transaction, recorded as a deletion — not left for the next start to "reconcile" as if the
+    previous release had demoted the account during a rollback."""
+    from synwevo_core import journal
+    store, ident = world["store"], world["ident"]
+    second = make_platform_admin(store, verified(store, ident, "replayed-super@example.test"))
+    journal.apply(store, [{"kind": "user_deleted", "user_id": second["id"], "at": now()}])
+    assert store.one("SELECT platform_role FROM users WHERE id=?", (second["id"],))["platform_role"] == "none"
+    assert not PlatformAccess(store).live_grants(second["id"]), "镜像与授予在同一事务里一致"
+    ended = store.one("SELECT * FROM platform_role_grants WHERE user_id=?", (second["id"],))
+    assert ended["revoked_by"] == "system:journal_replay"
+    Store(store.root)                                   # the next start reconciles nothing
+    rows = store.all("SELECT meta FROM audit_events WHERE action='admin.platform.revoke' AND object_id=?", (second["id"],))
+    assert [json.loads(r["meta"])["source"] for r in rows] == ["system:journal_replay"]
 
 
 # ---------------------------------------------------------------- explanation, roster, session

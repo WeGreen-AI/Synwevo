@@ -23,12 +23,17 @@ from fastapi import APIRouter, Body, Query, Request
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity, REGISTRATION_MODES, registration_mode
 from synwevo_core.platform_access import (ASSIGN, ASSIGN_SUPER, PlatformAccess, ROLES, SUPER_ADMIN, catalogue, clock,
-                                          require_platform, sorted_permissions, sorted_roles)
+                                          require_outranking, require_platform, sorted_permissions, sorted_roles)
 from synwevo_core.organizations import Organizations
 from synwevo_core.sessions import admin_capable, Sessions
 from synwevo_core.store import Store, now
 
 REAUTH_SCOPE = "admin"
+#: `_admin` called without naming a permission. A route merged from a branch written before the
+#: permissions existed fails loudly (500, fail-closed) instead of guessing one. Historical-data
+#: routes (claim, and unclaim when it lands) take "platform.workspaces.claim"; see
+#: synwevo_core.platform_access.PERMISSIONS for the rest.
+_UNNAMED = object()
 UNFREEZE_RESTORE_NOTE = ("解冻不会写入安全日志（它只记录收回访问的操作）：如果之后从早于此刻的备份恢复，"
                          "冻结会被重新应用，需要再解冻一次。")
 
@@ -36,7 +41,7 @@ UNFREEZE_RESTORE_NOTE = ("解冻不会写入安全日志（它只记录收回访
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, mailer=None) -> APIRouter:
     r = APIRouter(prefix="/api/admin", tags=["admin"])
 
-    def _admin(request: Request, permission: str | None, *, dangerous: bool = False,
+    def _admin(request: Request, permission=_UNNAMED, *, dangerous: bool = False,
                step_up: bool = True) -> dict:
         """The caller, if a platform grant gives them `permission`. Raises otherwise.
 
@@ -47,8 +52,17 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         trains people to type it without reading the page, which is the opposite of what a
         re-authentication prompt is for.
         """
+        if permission is _UNNAMED:
+            raise RuntimeError(f"{request.method} {request.url.path}: an /api/admin route must name the platform "
+                               "permission it needs (platform_access.PERMISSIONS); the historical-data routes "
+                               "use 'platform.workspaces.claim'")
         return require_platform(request, permission, store=store, audit=audit,
                                 dangerous=dangerous, step_up=step_up)
+
+    def _not_outranked(request: Request, actor: dict, target_id: str | None) -> None:
+        """A lower administrator does not act on a higher one (platform_access.require_outranking)."""
+        if target_id:
+            require_outranking(request, actor, target_id, store=store, audit=audit)
 
     def _page(table: str, *, where: str, params: tuple, order: str,
               limit: int | None, offset: int, snapshot: int | None,
@@ -179,6 +193,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     def dispatch_recovery(request: Request, uid: str, body: dict = Body(...)):
         actor = _admin(request, "platform.users.support", dangerous=True)
         reason = _reason(body)
+        _not_outranked(request, actor, uid)
         with store.tx():
             delivery = _dispatch(request, uid, "reset")
             audit(request, "admin.user.recovery", actor_id=actor["id"], object_kind="user",
@@ -189,6 +204,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     def retry_mail(request: Request, mid: str, body: dict = Body(...)):
         actor = _admin(request, "platform.mail.manage", dangerous=True)
         reason = _reason(body)
+        # Reset and verify mail (the only retryable kinds) name the account in ref_id, which never
+        # changes; ranked before the write transaction so the denied attempt's record is kept.
+        named = store.one("SELECT ref_id FROM mail_outbox WHERE id=?", (mid,))
+        _not_outranked(request, actor, named and named["ref_id"])
         with store.tx():
             row = store.one("SELECT id,to_addr,kind,ref_id,status,attempts,created_at,sent_at,"
                             "next_attempt_at,last_error FROM mail_outbox WHERE id=?", (mid,))
@@ -322,7 +341,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         member but no application, or an owner who cannot export — states nobody would think to
         look for.
         """
-        actor = _admin(request, "platform.workspaces.manage", dangerous=True)
+        actor = _admin(request, "platform.workspaces.claim", dangerous=True)
         target_id = (body.get("user_id") or "").strip()
         reason = (body.get("reason") or "").strip()
         role = (body.get("role") or "owner").strip()
@@ -354,6 +373,15 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             if t.execute("SELECT 1 FROM memberships WHERE workspace_id=? AND user_id=?",
                          (wid, target_id)).fetchone():
                 raise ServiceError(409, "already_member", "该账户已经是这个空间的成员了")
+            # A platform role is never the way to a document: not for the administrator acting,
+            # and not for anyone else holding a platform grant (platform_access.PERMISSIONS,
+            # `platform.workspaces.claim`). Checked here, with the write.
+            if target_id == actor["id"]:
+                raise ServiceError(409, "self_claim",
+                                   "不能把历史数据指派给自己：平台管理权限不带来任何文档的访问。请指派给数据实际所有者的普通账户")
+            if PlatformAccess(store).live_grants(target_id):
+                raise ServiceError(409, "target_is_platform_admin",
+                                   "该账户持有平台权限，不能接收历史数据：平台管理与业务数据须由不同账户持有。请指派给没有平台权限的账户")
             t.execute("INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,"
                       "updated_at,created_by) VALUES (?,?,?,1,?,?,?)",
                       (wid, target_id, role, ts, ts, actor["id"]))
@@ -392,7 +420,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         """`role`: '' every account, `none` no live platform grant, `any` at least one, a built-in
         role id its holders, `admin` the super administrators by the rollback mirror (older links).
         The retired `operator` is not a filter any more (422)."""
-        _admin(request, "platform.users.view")
+        actor = _admin(request, "platform.users.view")
         ts = clock()
         live = ("SELECT 1 FROM platform_role_grants g WHERE g.user_id=users.id AND g.revoked_at IS NULL "
                 "AND (g.expires_at IS NULL OR g.expires_at>?)")
@@ -406,8 +434,11 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                      offset=offset, snapshot=snapshot)
         rows = page["items"]
         access = PlatformAccess(store)
+        held = actor["platform_permissions"]
         for u in rows:
             u["platform_roles"] = sorted_roles({g["role"] for g in access.live_grants(u["id"], at=ts)})
+            # the page greys out what the server would refuse with target_outranks_actor
+            u["outranks_caller"] = u["id"] != actor["id"] and bool(access.outranking(held, u["id"]))
             u["workspaces"] = store.one(
                 "SELECT COUNT(*) AS n FROM memberships WHERE user_id=?", (u["id"],))["n"]
             u["sessions"] = store.one(
@@ -423,10 +454,13 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
 
         Tokens go too: they used to be left alone, so an account suspended *because* it was
         compromised got the attacker's refresh and delegated API tokens back the moment an
-        administrator restored it. A platform administrator or operator is refused with
+        administrator restored it. Anyone holding a platform grant is refused with
         `demote_first` (GitHub Enterprise's rule): demotion is the transactional step that
         protects the last administrator, and suspending admins directly let two of them suspend
         each other at the same moment and leave the platform with none.
+
+        Restoring applies to a suspended account only (409 `not_suspended`), and not to one whose
+        grants outrank the caller's (403 `target_outranks_actor`).
         """
         actor = _admin(request, "platform.users.manage", dangerous=True)
         status = (body.get("status") or "").strip()
@@ -438,6 +472,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         target = ident.get_user(uid)
         if not target:
             raise ServiceError(404, "no_user", "找不到该账户")
+        # Suspension needs no rank check: it refuses every grant holder (demote_first below), and
+        # an account without grants outranks nobody. Restoring is ranked (below).
         revoked = tokens = 0
         journaled = None
         if status == "suspended":
@@ -461,7 +497,18 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             from .withdrawals import record as journal
             journaled = journal(store, "user_suspended", user_id=uid)
         else:
-            ident.set_status(uid, status)
+            # Restoring undoes a suspension, and only that: an account pending verification or
+            # deletion (or already deleted) is not "restored" by an administrator — that would
+            # skip the verification, or bring back a deleting super administrator's grants.
+            if target["status"] != "suspended":
+                raise ServiceError(409, "not_suspended", "只有已停用的账户可以恢复")
+            # Ranked outside the write so the denied attempt's record is kept; nobody can grant
+            # a role to a suspended account meanwhile (PlatformAccess._precondition).
+            _not_outranked(request, actor, uid)
+            with store.tx() as t:
+                if not t.execute("UPDATE users SET status='active', updated_at=? WHERE id=? AND status='suspended'",
+                                 (now(), uid)).rowcount:
+                    raise ServiceError(409, "not_suspended", "只有已停用的账户可以恢复")
         audit(request, "admin.user.status", actor_id=actor["id"], object_kind="user",
               object_id=uid, result="ok",
               meta={"status": status, "reason": reason[:500], "sessions_revoked": revoked,
@@ -477,6 +524,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             raise ServiceError(400, "missing_reason", "请写明理由（至少 8 个字）")
         if not ident.get_user(uid):
             raise ServiceError(404, "no_user", "找不到该账户")
+        _not_outranked(request, actor, uid)
         n = sessions.revoke_all_for_user(uid, "admin_revoked")
         # Tokens issued from those sessions go too; otherwise an application keeps working with
         # an access token minted by a session that no longer exists.
@@ -564,10 +612,17 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                         "AND oidc_sid IS NULL AND central_session_id IS NULL", (uid,))
         return row["at"] if row else None
 
-    def _may_assign(held: frozenset, actor_id: str, uid: str, role: str) -> bool:
+    def _assign_refusal(held: frozenset, actor_id: str, uid: str, role: str) -> str | None:
+        """Why the caller could not grant or revoke `role` on this account — the code the service
+        would refuse with (PlatformAccess._require_actor, the self rule) — or None."""
         needed = {ASSIGN} | ({ASSIGN_SUPER} if role == SUPER_ADMIN else set())
-        self_blocked = uid == actor_id and bool(ROLES[role] & {ASSIGN, ASSIGN_SUPER})
-        return needed <= held and ROLES[role] <= held and not self_blocked
+        if not needed <= held:
+            return "platform_permission_denied"
+        if not ROLES[role] <= held:
+            return "role_exceeds_own"
+        if uid == actor_id and ROLES[role] & {ASSIGN, ASSIGN_SUPER}:
+            return "self_assignment"
+        return None
 
     @r.get("/session")
     def admin_session(request: Request):
@@ -621,10 +676,16 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         explained = PlatformAccess(store).explain(uid)
         held = actor["platform_permissions"]
         live = {g["role"] for g in explained["grants"]}
-        explained["assignable_roles"] = [r for r in sorted_roles(ROLES)
-                                         if r not in live and _may_assign(held, actor["id"], uid, r)]
+        open_roles = [r for r in sorted_roles(ROLES) if r not in live]
+        refusals = {r: _assign_refusal(held, actor["id"], uid, r) for r in open_roles}
+        explained["assignable_roles"] = [r for r in open_roles if refusals[r] is None]
+        # When nothing can be granted, the reason the page shows (the first role's; for a caller
+        # without assign it is the same for every role).
+        explained["assign_refusal"] = None if explained["assignable_roles"] or not open_roles \
+            else refusals[open_roles[0]]
         for g in explained["grants"]:
-            g["revocable"] = _may_assign(held, actor["id"], uid, g["role"])
+            g["revoke_refusal"] = _assign_refusal(held, actor["id"], uid, g["role"])
+            g["revocable"] = g["revoke_refusal"] is None
         explained["caller_permissions"] = sorted_permissions(held)
         explained["catalogue"] = catalogue()["roles"]
         return explained

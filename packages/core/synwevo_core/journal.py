@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sqlite3
 import time
 from pathlib import Path
 
@@ -263,6 +264,29 @@ def _apply_organization(c, e, orphan_orgs, orphan_workspaces):
     return 1
 
 
+def _end_platform_grants(c, uid: str, t: float) -> None:
+    """A replayed deletion ends the account's platform grants too, as the deletion itself did
+    (profile.finalize_deletions), with the same `admin.platform.revoke` record. Left live, they
+    would disagree with the `platform_role='none'` just written, and the next Store open would
+    end them as if the previous release had demoted the account during a rollback."""
+    from .platform_access import SYSTEM_REASONS
+    reason = SYSTEM_REASONS["journal_deleted"]
+    try:
+        rows = c.execute("SELECT id, role FROM platform_role_grants WHERE user_id=? AND revoked_at IS NULL "
+                         "ORDER BY granted_at, id", (uid,)).fetchall()
+    except sqlite3.OperationalError:   # a database from before schema 27 has no grants
+        return
+    for g in rows:
+        c.execute("UPDATE platform_role_grants SET revoked_at=?, revoked_by='system:journal_replay', "
+                  "revoke_reason=? WHERE id=?", (t, reason, g["id"]))
+        c.execute("INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,object_id,"
+                  "result,request_id,ip,meta) VALUES (?,?,'system',NULL,NULL,'admin.platform.revoke','user',?,"
+                  "'ok',NULL,NULL,?)",
+                  (new_id("ae"), t, uid, json.dumps({"grant_id": g["id"], "role": g["role"],
+                                                      "source": "system:journal_replay",
+                                                      "reason": reason}, ensure_ascii=False)))
+
+
 def apply(store: Store, entries: list[dict]) -> dict:
     """Make every withdrawal in `entries` true in `store`. Returns counts per kind.
 
@@ -319,6 +343,7 @@ def apply(store: Store, entries: list[dict]) -> dict:
                                   "recovery_codes", "account_recoveries", "mfa_tickets", "webauthn_challenges"):
                         c.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
                     c.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
+                    _end_platform_grants(c, uid, t)
                 else:
                     n = c.execute("UPDATE users SET status='suspended' WHERE id=? AND status IN ('active','pending')",
                                   (uid,)).rowcount

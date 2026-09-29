@@ -26,6 +26,13 @@ for each (the brief asks that each be written here):
   workspaces; the route still also requires organization ownership, as before.
 * `platform.config.view` also covers the read-only external sign-in provider status
   (`GET /api/admin/identity-providers`): it is configuration, and it never returns a secret.
+* `platform.workspaces.claim` is split from `platform.workspaces.manage`. Assigning the historical
+  workspace (and, once it lands, taking that assignment back) hands every pre-identity document to
+  a named account, which is business-content access, not a stop switch. Under `.manage` an
+  account and access administrator could name themselves and read it all. It is the super
+  administrator's only (by construction), and the claim itself refuses the actor and any account
+  holding a live platform grant (`self_claim`, `target_is_platform_admin`): a platform role is
+  never the way to a document, for whoever holds it. `.manage` keeps freeze and unfreeze.
 
 Rules that are properties of the data rather than of a caller's discipline:
 
@@ -38,14 +45,26 @@ Rules that are properties of the data rather than of a caller's discipline:
 * **Holding is not granting.** Granting or revoking needs `platform.roles.assign`, and
   `platform.roles.assign_super` for `super_admin`; the actor must also hold every permission of
   the role concerned (a lower administrator cannot act on a higher one).
+* **A lower administrator does not act on a higher one.** Ending someone's sessions, mailing
+  their recovery link, retrying their mail, suspending or restoring them is refused with 403
+  `target_outranks_actor` (audited) when the target's live grants carry a permission the actor
+  lacks (`require_outranking`). Live, not counted: a pending-deletion super administrator's grant
+  counts again the moment the account is restored, so restoring it is acting on a super
+  administrator.
 * **Nobody changes their own authority to assign.** No one grants to or revokes from themselves a
   role that carries an assigning permission: no self-escalation, no self-demotion. A hand-over is
   "grant the successor → the successor signs in and completes step-up → the successor revokes".
-* **At least one usable super administrator.** Revoking the last active, verified, step-up-capable
+* **At least one usable super administrator.** Usable means counted *and able to administer*:
+  every grant, revocation and configuration change asks for the strict re-authentication, which
+  today takes the password only (D10). A super administrator with only a passkey or a TOTP app can
+  read every page and change nothing, so they are not counted, and a super administrator grant
+  goes only to an account with a password (409 `target_cannot_reauth`). Revoking the last usable
   super administrator is refused with 409 `last_super_admin`, checked inside the same
   `BEGIN IMMEDIATE` transaction as the write, so two super administrators revoking each other at
   the same moment cannot both succeed. Suspension of any grant holder is refused (`demote_first`)
-  and self-deletion of the last usable super administrator is refused too.
+  and self-deletion of the last usable super administrator is refused too. Removing a passkey or
+  turning TOTP off cannot take usability away (a password cannot be removed from an account), so
+  those paths need no check; when D10 lets a passkey re-authenticate, they will.
 * **A super administrator grant has no expiry.** An expiring one could leave the platform with no
   super administrator by the clock, where no checked action could refuse it.
 * **Rollback mirror.** `users.platform_role` stays: `'admin'` exactly when the account holds a
@@ -78,7 +97,8 @@ PERMISSIONS: dict[str, str] = {
     "platform.users.manage": "suspend and restore accounts",
     "platform.users.support": "send recovery mail and end an account's sessions",
     "platform.workspaces.view": "list workspaces and their members (counts, never content)",
-    "platform.workspaces.manage": "freeze and unfreeze workspaces; assign and unassign the historical data",
+    "platform.workspaces.manage": "freeze and unfreeze workspaces",
+    "platform.workspaces.claim": "assign the historical (pre-identity) workspace to an ordinary account, and take it back",
     "platform.orgs.view": "list organizations",
     "platform.orgs.manage": "run an owned organization's lifecycle from the admin console",
     "platform.config.view": "read the registration policy and the sign-in provider status",
@@ -126,6 +146,21 @@ DENIED_AUDIT_WINDOW_S = 60
 
 REASON_MIN, REASON_MAX = 8, 500
 
+#: Reasons the service writes itself (host grants, reconciliation, deletion). Fixed sentences,
+#: so the pages show them in the reader's language (PlatformAccess.tsx `SYSTEM_REASONS`, held to
+#: this list by services/identity/web/tests/admin-access.test.mjs). A reason an administrator
+#: typed is shown as typed.
+SYSTEM_REASONS: dict[str, str] = {
+    "migration": "平台管理员（platform_role=admin）迁移为最高管理员",
+    "rollback_grant": "上一版本在回滚期间把该账户设为平台管理员",
+    "rollback_revoke": "上一版本在回滚期间撤销了该账户的平台管理员角色",
+    "bootstrap_web": "首位平台管理员（一次性引导令牌）",
+    "bootstrap_cli": "命令行 bootstrap admin 创建的最高管理员",
+    "account_deleted": "账户已删除",
+    "journal_deleted": "账户已删除（安全日志重放）",
+    "operator_cleared": "「平台运维」角色没有任何能力，迁移为无平台权限",
+}
+
 # Imported and executed by Store's migration only.
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS platform_role_grants (
@@ -158,6 +193,15 @@ def clock() -> float:
     """The time grant expiry is judged by. Every reader of grants (the routes' listings included)
     uses this one clock, so a grant cannot count in one answer and not in the next."""
     return _now()
+
+
+def current_rp_id() -> str:
+    """The domain passkeys are bound to now: `SYNWEVO_RP_ID`, else the issuer's host — the rule
+    the account service's `passkeys.rp_id` and the shells' `passkeys_registered_elsewhere` apply."""
+    from urllib.parse import urlparse
+    from . import env
+    from .oidc import issuer
+    return (env.get("RP_ID") or "").strip() or (urlparse(issuer()).hostname or "localhost")
 
 
 def sorted_permissions(perms) -> list[str]:
@@ -242,17 +286,27 @@ class PlatformAccess:
         return frozenset(out)
 
     def roles(self, user_or_id) -> list[str]:
+        """The roles that count now (what the account may use)."""
         return sorted_roles({g["role"] for g in self.counted_grants(user_or_id)})
+
+    def live_roles(self, uid: str) -> list[str]:
+        """The roles of every live grant, counted or not — what a grant or revocation changed.
+        The audit records these: a grant ended on a suspended account is still a change."""
+        return sorted_roles({g["role"] for g in self.live_grants(uid)})
 
     def step_up(self, uid: str) -> dict:
         """What this account could use to reach an admin-capable session (sessions.admin_capable):
         a password sign-in, a user-verifying passkey, or a second factor (TOTP) after a mailed
         code or an external provider. `reauth` is the strict re-authentication the dangerous
-        operations ask for, which today takes the password only (D10)."""
+        operations ask for, which today takes the password only (D10).
+
+        A passkey counts only when it is bound to the current RP ID: one registered under an
+        earlier domain is never offered by the browser again (passkeys.py), so it proves nothing
+        an administrator could use."""
         password = self.store.one("SELECT 1 AS x FROM user_passwords WHERE user_id=?", (uid,)) is not None
         try:
             passkey = self.store.one("SELECT 1 AS x FROM passkeys WHERE user_id=? AND uv_capable=1 "
-                                     "AND deleted_at IS NULL", (uid,)) is not None
+                                     "AND deleted_at IS NULL AND rp_id=?", (uid, current_rp_id())) is not None
         except sqlite3.OperationalError:
             passkey = False
         totp = self.store.one("SELECT 1 AS x FROM totp_secrets WHERE user_id=? AND confirmed_at IS NOT NULL",
@@ -261,7 +315,8 @@ class PlatformAccess:
                 "totp": totp, "reauth": password}
 
     def usable_super_admins(self, *, excluding: str | None = None) -> list[dict]:
-        """Active, verified (or host-granted), step-up-capable super administrators."""
+        """Active, verified (or host-granted) super administrators who can complete both the
+        step-up and the strict re-authentication (see "At least one usable super administrator")."""
         rows = self.store.all(
             "SELECT DISTINCT u.* FROM users u JOIN platform_role_grants g ON g.user_id=u.id "
             "WHERE g.role=? AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>?) "
@@ -271,8 +326,25 @@ class PlatformAccess:
 
     def is_usable_super_admin(self, user_or_id) -> bool:
         user = self._user(user_or_id)
-        return bool(user) and any(g["role"] == SUPER_ADMIN for g in self.counted_grants(user)) \
-            and self.step_up(user["id"])["capable"]
+        if not user or not any(g["role"] == SUPER_ADMIN for g in self.counted_grants(user)):
+            return False
+        step = self.step_up(user["id"])
+        # `reauth` until D10: a super administrator who cannot re-authenticate can grant, revoke
+        # and change nothing, so the platform would be left with nobody able to administer it.
+        return step["capable"] and step["reauth"]
+
+    def live_permissions(self, uid: str) -> frozenset[str]:
+        """Every permission this account's live grants carry, whether or not they count now (a
+        suspended or pending-deletion account's grants count again once it is restored)."""
+        out: set[str] = set()
+        for g in self.live_grants(uid):
+            out |= ROLES.get(g["role"], frozenset())
+        return frozenset(out)
+
+    def outranking(self, held: frozenset, target_id: str) -> frozenset[str]:
+        """The permissions `target_id`'s live grants carry that `held` lacks: empty when a holder
+        of `held` may act on that account."""
+        return self.live_permissions(target_id) - held
 
     def explain(self, user_or_id) -> dict:
         """Each effective permission with the grants it comes from, plus every live grant and
@@ -368,28 +440,33 @@ class PlatformAccess:
             if target_id == actor_id and ROLES[role] & ASSIGNING:
                 raise ServiceError(403, "self_assignment",
                                    "不能给自己授予或撤销带授权能力的平台角色，请由另一位最高管理员操作")
-            target = self._precondition(target_id)
+            self._precondition(target_id, role)
             live = self.store.one("SELECT * FROM platform_role_grants WHERE user_id=? AND role=? "
                                   "AND revoked_at IS NULL", (target_id, role))
+            replaced = None
             if live and live["expires_at"] is not None and live["expires_at"] <= ts:
+                # The expired row is closed here so the new one can take its place; the grant's
+                # audit names it, so the record of that row's end is not a silent one.
                 self.store.execute("UPDATE platform_role_grants SET revoked_at=?, revoked_by='system:expired', "
                                    "revoke_reason='expired' WHERE id=?", (ts, live["id"]))
+                replaced = live["id"]
             elif live:
                 raise ServiceError(409, "already_granted", "该账户已经持有这个平台角色；要改期限，请先撤销再授予")
-            before = self.roles(target)
+            before = self.live_roles(target_id)
             gid = new_id("pg")
             self.store.execute(
                 "INSERT INTO platform_role_grants (id,user_id,role,granted_by,granted_at,reason,expires_at) "
                 "VALUES (?,?,?,?,?,?,?)", (gid, target_id, role, actor_id, ts, reason, expires_at))
             self._sync_mirror(target_id, ts)
-            after = self.roles(target_id)
+            after = self.live_roles(target_id)
             tightened = self._tighten_sessions(target_id)
             self._audit("admin.platform.grant", actor_id=actor_id, target=target_id,
                         meta={"grant_id": gid, "role": role, "before": before, "after": after,
-                              "reason": reason, "expires_at": expires_at, "sessions_tightened": tightened})
+                              "reason": reason, "expires_at": expires_at, "sessions_tightened": tightened,
+                              **({"replaced_expired_grant": replaced} if replaced else {})})
         return {"grant": self.grant_row(gid), "before": before, "after": after, "sessions_tightened": tightened}
 
-    def _precondition(self, target_id: str) -> dict:
+    def _precondition(self, target_id: str, role: str) -> dict:
         """What an account must be to receive a platform role (closes D2)."""
         target = self._user(target_id)
         if not target or target.get("deleted_at") or target.get("status") == "deleted":
@@ -405,6 +482,12 @@ class PlatformAccess:
         if not self.step_up(target_id)["capable"]:
             raise ServiceError(409, "target_cannot_step_up",
                                "该账户没有口令、可验证身份的安全密钥或动态验证码，无法完成管理员身份确认；请先让本人设置")
+        if role == SUPER_ADMIN and not self.step_up(target_id)["reauth"]:
+            # Until D10 the strict re-authentication takes a password: a super administrator
+            # without one could never grant, revoke or change anything, and would still count
+            # as the one who keeps the platform administrable.
+            raise ServiceError(409, "target_cannot_reauth",
+                               "该账户没有口令，无法完成危险操作要求的重新验证；最高管理员必须能重新验证身份，请先让本人设置口令")
         return target
 
     def grant_row(self, gid: str) -> dict | None:
@@ -437,7 +520,7 @@ class PlatformAccess:
             rows = self.store.all("SELECT * FROM platform_role_grants WHERE user_id=? AND revoked_at IS NULL "
                                   "ORDER BY granted_at, id", (target_id,))
             out = [self._revoke(actor_id, g, reason) for g in rows]
-        return {"revoked": [o["grant"]["id"] for o in out], "after": out[-1]["after"] if out else self.roles(target_id)}
+        return {"revoked": [o["grant"]["id"] for o in out], "after": out[-1]["after"] if out else self.live_roles(target_id)}
 
     def _revoke(self, actor_id: str, g: dict, reason: str) -> dict:
         ts = _now()
@@ -452,11 +535,11 @@ class PlatformAccess:
                 and not self.usable_super_admins(excluding=uid):
             raise ServiceError(409, "last_super_admin",
                                "这是最后一名可用的最高管理员。请先授予另一位最高管理员，并确认对方能登录并完成身份确认")
-        before = self.roles(uid)
+        before = self.live_roles(uid)
         self.store.execute("UPDATE platform_role_grants SET revoked_at=?, revoked_by=?, revoke_reason=? "
                            "WHERE id=? AND revoked_at IS NULL", (ts, actor_id, reason, g["id"]))
         self._sync_mirror(uid, ts)
-        after = self.roles(uid)
+        after = self.live_roles(uid)
         self._audit("admin.platform.revoke", actor_id=actor_id, target=uid,
                     meta={"grant_id": g["id"], "role": g["role"], "before": before, "after": after,
                           "reason": reason})
@@ -474,9 +557,12 @@ class PlatformAccess:
             if self.store.one("SELECT 1 AS x FROM platform_role_grants WHERE user_id=? AND role=? "
                               "AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)", (uid, role, ts)):
                 return {"grant": None, "unchanged": True}
+            # nothing unexpired is left for (uid, role): any unrevoked row is an expired one
+            replaced = [r["id"] for r in self.store.all(
+                "SELECT id FROM platform_role_grants WHERE user_id=? AND role=? AND revoked_at IS NULL", (uid, role))]
             self.store.execute("UPDATE platform_role_grants SET revoked_at=?, revoked_by='system:expired', "
                                "revoke_reason='expired' WHERE user_id=? AND role=? AND revoked_at IS NULL", (ts, uid, role))
-            before = self.roles(uid)
+            before = self.live_roles(uid)
             gid = new_id("pg")
             self.store.execute(
                 "INSERT INTO platform_role_grants (id,user_id,role,granted_by,granted_at,reason) VALUES (?,?,?,?,?,?)",
@@ -485,18 +571,28 @@ class PlatformAccess:
             self._tighten_sessions(uid)
             _system_audit(self.store, "admin.platform.grant", uid,
                           {"grant_id": gid, "role": role, "source": source, "reason": reason,
-                           "before": before, "after": self.roles(uid)})
+                           "before": before, "after": self.live_roles(uid),
+                           **({"replaced_expired_grant": replaced[0]} if replaced else {})})
         return {"grant": self.grant_row(gid)}
 
     def system_revoke_all(self, uid: str, *, source: str, reason: str) -> int:
         """End every live grant of an account the system is deleting. No last-administrator check:
-        an account that is being deleted is no longer active, so it is not counted already."""
+        an account that is being deleted is no longer active, so it is not counted already. Each
+        ended grant gets its `admin.platform.revoke` record in the same transaction, as every
+        revocation does."""
         ts = _now()
         with self.store.tx():
-            n = self.store.execute("UPDATE platform_role_grants SET revoked_at=?, revoked_by=?, revoke_reason=? "
-                                   "WHERE user_id=? AND revoked_at IS NULL", (ts, source, reason, uid))
+            rows = self.store.all("SELECT * FROM platform_role_grants WHERE user_id=? AND revoked_at IS NULL "
+                                  "ORDER BY granted_at, id", (uid,))
+            for g in rows:
+                before = self.live_roles(uid)
+                self.store.execute("UPDATE platform_role_grants SET revoked_at=?, revoked_by=?, revoke_reason=? "
+                                   "WHERE id=? AND revoked_at IS NULL", (ts, source, reason, g["id"]))
+                _system_audit(self.store, "admin.platform.revoke", uid,
+                              {"grant_id": g["id"], "role": g["role"], "source": source, "reason": reason,
+                               "before": before, "after": self.live_roles(uid)})
             self._sync_mirror(uid, ts)
-        return n
+        return len(rows)
 
 
 def _system_audit(store: Store, action: str, target: str, meta: dict) -> None:
@@ -525,46 +621,68 @@ def reconcile_mirror(store: Store, *, source: str) -> int:
         store.execute("UPDATE users SET platform_role='none', updated_at=? WHERE id=?", (ts, row["id"]))
         _system_audit(store, "admin.platform.operator_cleared", row["id"],
                       {"source": source, "before": "operator", "after": "none",
-                       "reason": "「平台运维」角色没有任何能力，迁移为无平台权限"})
+                       "reason": SYSTEM_REASONS["operator_cleared"]})
         changed += 1
     for row in store.all(
             "SELECT u.id FROM users u WHERE u.platform_role='admin' AND NOT EXISTS (SELECT 1 FROM "
             "platform_role_grants g WHERE g.user_id=u.id AND g.role=? AND g.revoked_at IS NULL "
             "AND (g.expires_at IS NULL OR g.expires_at>?))", (SUPER_ADMIN, ts)):
         access.host_grant(row["id"], SUPER_ADMIN, source=source,
-                          reason="平台管理员（platform_role=admin）迁移为最高管理员" if source == "migration:v27"
-                          else "上一版本在回滚期间把该账户设为平台管理员")
+                          reason=SYSTEM_REASONS["migration" if source == "migration:v27" else "rollback_grant"])
         changed += 1
     for row in store.all(
-            "SELECT g.id, g.user_id FROM platform_role_grants g JOIN users u ON u.id=g.user_id "
+            "SELECT g.id, g.user_id, u.status, u.deleted_at FROM platform_role_grants g JOIN users u ON u.id=g.user_id "
             "WHERE g.role=? AND g.revoked_at IS NULL AND u.platform_role<>'admin'", (SUPER_ADMIN,)):
+        # Say what happened: a deleted account's mirror was cleared by the deletion (a journal
+        # replay, or the previous release's sweep), not by a demotion.
+        deleted = row["status"] == "deleted" or row["deleted_at"] is not None
+        reason = SYSTEM_REASONS["account_deleted" if deleted else "rollback_revoke"]
         store.execute("UPDATE platform_role_grants SET revoked_at=?, revoked_by=?, revoke_reason=? WHERE id=?",
-                      (ts, source, "上一版本在回滚期间撤销了该账户的平台管理员角色", row["id"]))
+                      (ts, source, reason, row["id"]))
         _system_audit(store, "admin.platform.revoke", row["user_id"],
-                      {"grant_id": row["id"], "role": SUPER_ADMIN, "source": source,
-                       "reason": "users.platform_role 不再是 admin"})
+                      {"grant_id": row["id"], "role": SUPER_ADMIN, "source": source, "reason": reason,
+                       "cause": "users.platform_role 不再是 admin"})
         changed += 1
     return changed
 
 
 # ---------------------------------------------------------------------- the one request check
-def audit_denied(store: Store, audit, request, uid: str, permission: str) -> None:
+def audit_denied(store: Store, audit, request, uid: str, object_id: str, *, object_kind: str = "permission",
+                 code: str = "platform_permission_denied", meta: dict | None = None) -> None:
     """A denied attempt by someone who holds other platform permissions: recorded, at most once per
-    actor and permission per window, so a page that keeps asking cannot flood the log. The refusal
-    stands whether or not the record could be written."""
+    actor and object (the missing permission, or the account acted on) per window, so a page that
+    keeps asking cannot flood the log. The refusal stands whether or not the record could be
+    written."""
     if audit is None:
         return
     try:
         recent = store.one("SELECT 1 AS x FROM audit_events WHERE actor_id=? AND action='admin.access.denied' "
-                           "AND object_id=? AND at>? LIMIT 1", (uid, permission, _now() - DENIED_AUDIT_WINDOW_S))
+                           "AND object_kind=? AND object_id=? AND at>? LIMIT 1",
+                           (uid, object_kind, object_id, _now() - DENIED_AUDIT_WINDOW_S))
         if recent:
             return
         url = getattr(request, "url", None)
-        audit(request, "admin.access.denied", actor_id=uid, object_kind="permission", object_id=permission,
-              result="denied", meta={"code": "platform_permission_denied", "method": getattr(request, "method", None),
-                                     "path": getattr(url, "path", None)})
+        audit(request, "admin.access.denied", actor_id=uid, object_kind=object_kind, object_id=object_id,
+              result="denied", meta={"code": code, "method": getattr(request, "method", None),
+                                     "path": getattr(url, "path", None), **(meta or {})})
     except Exception:                                  # noqa: BLE001 - the refusal does not depend on it
         _log.exception("could not record a denied platform request")
+
+
+def require_outranking(request, actor: dict, target_id: str, *, store: Store, audit=None) -> None:
+    """Refuse to act on an account whose live platform grants carry a permission the actor lacks
+    ("A lower administrator does not act on a higher one"): 403 `target_outranks_actor`, audited
+    like any denied attempt. Acting on oneself is not ranked. `actor` is `require_platform`'s
+    answer (it carries `platform_permissions`)."""
+    if target_id == actor["id"]:
+        return
+    missing = PlatformAccess(store).outranking(actor["platform_permissions"], target_id)
+    if missing:
+        audit_denied(store, audit, request, actor["id"], target_id, object_kind="user",
+                     code="target_outranks_actor", meta={"permissions": sorted_permissions(missing)})
+        raise ServiceError(403, "target_outranks_actor",
+                           "该账户持有你没有的平台权限：只有权限不低于它的管理员才能对它执行这项操作",
+                           {"permissions": sorted_permissions(missing)})
 
 
 def require_platform(request, permission: str | None, *, store: Store, audit=None,

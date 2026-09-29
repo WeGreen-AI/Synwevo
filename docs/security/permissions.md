@@ -168,6 +168,11 @@ Uvicorn 访问日志在共享 HTTP 工厂安装过滤器，仅保留请求路径
 
 认领只能由平台管理员经 `POST /api/admin/workspaces/{wid}/claim` 完成，并且：
 
+* 需要 `platform.workspaces.claim`，只有最高管理员持有（B1-2 复审，2026-09-29 本地）：认领把全部历史文档交给
+  一个账户，是业务内容的交付，不是「冻结」那样的停止开关；
+* 目标**不能是操作者本人**（409 `self_claim`），也**不能是持有任何平台授予的账户**
+  （409 `target_is_platform_admin`），在认领的事务内检查：平台权限从来不是读取文档的途径，对谁都一样；
+
 * 目标必须是**已经存在**的账户；这一步不创建账户；
 * 需要**带作用域的近期重认证**（`scope=admin`，且 `strict`——刚登录不算，必须为这件事重新输入口令）；
 * 需要**书面理由**，原样写入审计；
@@ -292,15 +297,16 @@ Webhook 是本服务**主动向外发起**的请求，因此它的风险方向�
 | 内置角色 | 权限 | 明确不可以 |
 |---|---|---|
 | `super_admin` 最高管理员 | 目录中的全部权限（按定义；新登记的权限自动属于它） | **不获得任何工作空间内文档正文的读取权** |
-| `access_admin` 账户与访问管理员 | 概览；账户查看/停用恢复/支持；空间查看/冻结解冻/认领；组织查看/自有组织生命周期；配置查看；邮件查看/重试；审计；管理员名册 | 授予或撤销任何平台角色；修改注册策略；API 管理 |
+| `access_admin` 账户与访问管理员 | 概览；账户查看/停用恢复/支持；空间查看/冻结解冻；组织查看/自有组织生命周期；配置查看；邮件查看/重试；审计；管理员名册 | 授予或撤销任何平台角色；指派历史数据；修改注册策略；API 管理 |
 | `support` 支持 | 概览；账户查看；找回邮件与结束会话；空间、组织、邮件查看 | 停用账户；任何修改配置或空间状态的操作 |
 | `auditor` 审计查看 | 概览、账户、空间、组织、配置、邮件、审计、管理员名册的只读 | 任何写操作 |
 | `api_platform_admin` API 平台管理员 | 概览；`api_platform.manage` | 账户、空间与配置管理 |
 
-权限 ID：`platform.overview.view`、`platform.users.view|manage|support`、`platform.workspaces.view|manage`、
+权限 ID：`platform.overview.view`、`platform.users.view|manage|support`、`platform.workspaces.view|manage|claim`、
 `platform.orgs.view|manage`、`platform.config.view|manage`、`platform.mail.view|manage`、`platform.audit.view`、
 `platform.roles.view|assign|assign_super`、`api_platform.manage`。与草案（admin-coverage.md §3.1）相比新增
-`platform.orgs.manage`，理由写在模块文档里：组织生命周期路由是写操作，不能挂在只读权限上。
+`platform.orgs.manage`（组织生命周期路由是写操作，不能挂在只读权限上）和 `platform.workspaces.claim`
+（指派历史数据是业务内容的交付，只属于最高管理员；`.manage` 只剩冻结与解冻），理由写在模块文档里。
 
 强制点与规则：
 
@@ -309,6 +315,12 @@ Webhook 是本服务**主动向外发起**的请求，因此它的风险方向�
   **没有任何平台权限 404（与不存在的页面同形；组织 owner、空间 admin 也是 404）** → 有其他平台权限但缺这一项
   403 `platform_permission_denied`（写审计 `admin.access.denied`，同一操作者同一权限每 60 秒最多一条）→
   一因素会话 403 `step_up_required` → 危险操作未严格重认证 403 `reauth_required`。
+  「没有任何平台权限」在请求闸门（`core/http.py`）里、路由之前就判定：参数或请求体校验（422）、不支持的方法（405）
+  与不存在的路径对这些账户都是同一个 404，校验错误不再回显角色目录。
+* **低权限管理员不能对高权限管理员下手**：结束会话、发找回邮件、重试其邮件、恢复账户时，若目标的有效授予
+  （不论当前是否计入）含有操作者没有的权限，403 `target_outranks_actor`，写审计（同一操作者同一目标每 60 秒一条）。
+  停用本身已拒绝任何持有授予的账户（`demote_first`）。**恢复只作用于 `suspended` 账户**（409 `not_suspended`），
+  不能让待验证或正在删除的账户变为 active。
 * **谁计入**：账户 active、未删除、不是应用身份、邮箱已验证。例外：主机权限下的授予（`migration:v27`、
   `bootstrap:web`、`bootstrap:cli`）不要求邮箱已验证——引导创建的首位管理员从未验证过邮箱，要求它会在迁移时
   把唯一的管理员锁在外面。
@@ -318,12 +330,18 @@ Webhook 是本服务**主动向外发起**的请求，因此它的风险方向�
   （有口令、可做用户验证的 Passkey 或已启用 TOTP，与 `sessions.admin_capable` 接受的方式一致）；
   否则 409 `target_pending` / `target_unavailable` / `target_unverified` / `application_identity` /
   `target_cannot_step_up`。
-* **至少一名可用的最高管理员**（可用 = 计入且能完成身份确认）：撤销、停用、本人删除会让可用最高管理员归零时
-  409 `last_super_admin`；检查与写入在同一个 `BEGIN IMMEDIATE` 事务内，两人同时互相撤销只成功一个。
+* **至少一名可用的最高管理员**（可用 = 计入、能完成身份确认，**并能完成严格重认证**——D10 之前即有口令；
+  只有 Passkey 或 TOTP 的最高管理员能看全部页面却改不了任何东西，不计入；Passkey 只计绑定当前 RP ID 的）：
+  撤销、停用、本人删除会让可用最高管理员归零时 409 `last_super_admin`；检查与写入在同一个 `BEGIN IMMEDIATE`
+  事务内，两人同时互相撤销只成功一个。`super_admin` 只授予有口令的账户（409 `target_cannot_reauth`）。
+  口令不能从账户上移除，所以移除 Passkey 或关闭 TOTP 不会让人失去「可用」，无需检查（D10 之后需要）。
   持有任何平台授予的账户不能被直接停用（409 `demote_first`）。最高管理员授予不设期限。
 * **生效与失效**：授予时把被授予者现有的中央会话收紧到管理员闲置时限（`SYNWEVO_ADMIN_IDLE_S`）并取消保持登录；
   撤销在对方的下一个请求生效（权限每个请求重读）；到期的委派授予不再计入。
-* **审计**：`admin.platform.grant` / `admin.platform.revoke` 在同一事务内写入，含前后角色集合、理由与请求 ID。
+* **审计**：`admin.platform.grant` / `admin.platform.revoke` 在同一事务内写入，含前后角色集合（有效授予，不论是否
+  计入）、理由与请求 ID；替换到期授予时记下被替换的授予。系统结束授予也写 `admin.platform.revoke`：账户删除到期
+  （`system:account_deleted`）与安全日志重放的删除（`system:journal_replay`，与 `platform_role='none'` 同一事务）。
+  系统自己写的理由是固定句子（`platform_access.SYSTEM_REASONS`），页面按读者语言显示。
 * **回滚镜像**：`users.platform_role` 保留，值为 `admin` 当且仅当存在有效的 `super_admin` 授予，否则 `none`，
   与每次授予变更同一事务写入。只有委派角色的管理员镜像为 `none`：回到上一版本时他们失去权限而不是变宽。
   `Store` 每次打开时对账：上一版本在回滚期间对该列的升降会被带入授予；遗留的 `operator` 变为 `none` 并写审计。
@@ -334,9 +352,15 @@ Webhook 是本服务**主动向外发起**的请求，因此它的风险方向�
 也没有代登录。业务文档访问必须通过该空间的真实成员关系、应用资格与读/写/导出权限检查。
 「平台运维」（`operator`）从未带有任何能力（D17），v27 迁移为无平台权限，并从所有选择器中移除。
 
+页面（`acweb/governance/access.ts`）只提供调用者权限够得着的操作：不可用的写操作显示为禁用并写明原因，
+概览里的「指派历史数据」只对能指派且能搜索账户的人显示；服务器仍逐个请求裁决。
+
 验证：`services/identity/tests/test_platform_access.py`（五个内置角色 × 全部 `/api/admin` 路由与 API 控制台的
-允许/拒绝矩阵、404 伪装、拒绝审计与限流、前置条件、自我授予/撤销、最后可用最高管理员的撤销/停用/删除与并发互撤、
-v26→v27 迁移、回滚镜像、授予收紧会话、撤权下一请求生效、到期忽略）、`test_self_service.py`（最后最高管理员删除与
+允许/拒绝矩阵、404 伪装（含校验错误、405 与不存在的路径）、拒绝审计与限流、前置条件、自我授予/撤销、
+历史数据只由最高管理员指派给无平台权限的账户、低权限不能对高权限下手、恢复只对已停用账户、
+最后可用最高管理员的撤销/停用/删除与并发互撤、只有 Passkey 的最高管理员不计入、旧域名 Passkey 不算身份确认、
+审计的前后集合与系统结束授予、安全日志重放的删除、v26→v27 迁移、回滚镜像、授予收紧会话、撤权下一请求生效、到期忽略）、
+`services/identity/web/tests/admin-access.test.mjs`（页面按权限提供操作、审计筛选、系统理由的翻译、拒绝原因）、`test_self_service.py`（最后最高管理员删除与
 并发删除）、`test_identity.py`、`test_email_code_login.py`（锁定管理员的 `/api/admin/session`）。
 
 ### 4.1.1 组织级权限目录与自定义角色（2026-09-26，CI-23）

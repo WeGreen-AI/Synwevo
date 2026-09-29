@@ -867,6 +867,14 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             request.state.session = None
             return _error_response(request, 401, "unauthorized", "账户不可用，请重新登录", None)
         request.state.user = user
+        if path == "/api/admin" or path.startswith("/api/admin/"):
+            # Decided before routing, so an account without any platform permission meets the
+            # same 404 everywhere under /api/admin — not a 422 from parameter or body validation
+            # (which ran before the route's own check and echoed, for one, the role catalogue in
+            # a pattern), and not a 405. The routes decide each permission on their own.
+            from .platform_access import PlatformAccess
+            if not PlatformAccess(store).effective_permissions(user):
+                return _error_response(request, 404, "not_found", "页面不存在", None)
 
         requested_workspace = request.headers.get("X-Synwevo-Workspace")
         wid = requested_workspace or session.get("workspace_id")

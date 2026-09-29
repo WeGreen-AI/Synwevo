@@ -133,10 +133,10 @@ def cmd_bootstrap(args) -> int:
             return 1
         # A super administrator grant under host authority, in one transaction with its audit
         # line: whoever runs this command controls the deployment (platform_access.HOST_SOURCES).
-        from synwevo_core.platform_access import SUPER_ADMIN, PlatformAccess
+        from synwevo_core.platform_access import SUPER_ADMIN, SYSTEM_REASONS, PlatformAccess
         with store.tx():
             PlatformAccess(store).host_grant(u["id"], SUPER_ADMIN, source="bootstrap:cli",
-                                             reason="命令行 bootstrap admin 创建的最高管理员")
+                                             reason=SYSTEM_REASONS["bootstrap_cli"])
             _audit(store, "cli.bootstrap.admin", object_kind="user", object_id=u["id"],
                    meta={"email": u["email"], "forced": bool(args.force), "role": SUPER_ADMIN})
         print(f"已创建最高管理员 {u['email']}（{u['id']}）。")
