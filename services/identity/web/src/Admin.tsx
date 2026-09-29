@@ -1,6 +1,7 @@
 import { RegistrationTab, MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
 import { PlatformAccessDialog, PlatformAdminsTab, platformRoleLabel, platformRolesText, ROLE_ORDER } from "./governance/PlatformAccess";
+import { holdsPlatformAccess } from "@synwevo/auth-client";
 import { useAdminData, useAdminPage } from "./governance/data";
 import { t as tr, useI18n, PageState } from "@synwevo/ui";
 import "./governance/messages";
@@ -24,7 +25,7 @@ import { PageControls } from "./governance/ListControls";
 import { useDebounced } from "./lib/hooks";
 import { ACCOUNT_STATUS, WORKSPACE_KIND, WORKSPACE_STATUS } from "./governance/labels";
 import { post, qs } from "@synwevo/auth-client";
-import { holdsPlatformAccess, useSession } from "@synwevo/auth-client";
+import { useSession } from "@synwevo/auth-client";
 import { fmtTime, useToast } from "@synwevo/ui";
 import AdminStepUp from "./components/AdminStepUp";
 
