@@ -58,3 +58,24 @@ def reset_actor(token) -> None:
         _actor.reset(token)
     except (ValueError, LookupError):
         pass
+
+
+# The request's trace id (the gate's validated X-Request-ID), for records that outlive the request:
+# a job remembers the request that submitted it, and its first event says so, so an integrator can
+# follow one id from the call log to the job and its webhooks. Never an authorization input.
+_request_id: ContextVar[str | None] = ContextVar("synwevo_request_id", default=None)
+
+
+def request_id() -> str | None:
+    return _request_id.get()
+
+
+def set_request_id(value: str | None):
+    return _request_id.set(value)
+
+
+def reset_request_id(token) -> None:
+    try:
+        _request_id.reset(token)
+    except (ValueError, LookupError):
+        pass

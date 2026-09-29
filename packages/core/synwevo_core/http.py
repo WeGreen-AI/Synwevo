@@ -1149,15 +1149,17 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             return await finish(await _svc_err(request, e))
         # Who acts, for attribution: the session's person, or the person a delegated machine
         # token acts for; None for service accounts and anonymous paths.
-        from .context import reset_actor, set_actor
+        from .context import reset_actor, reset_request_id, set_actor, set_request_id
         _user = getattr(request.state, "user", None)
         _principal = getattr(request.state, "principal", None)
         actor_token = set_actor((_user or {}).get("id") or (_principal or {}).get("user_id"))
+        rid_token = set_request_id(request.state.request_id)
         try:
             resp = await call_next(request)
         except Exception as exc:
             resp = await _unexpected(request, exc)
         finally:
+            reset_request_id(rid_token)
             reset_actor(actor_token)
             if token is not None:
                 try:

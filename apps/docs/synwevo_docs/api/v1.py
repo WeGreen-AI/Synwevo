@@ -1158,6 +1158,8 @@ def _job_out(j: dict) -> dict:
            "halt_reason": j.get("halt_reason"),
            # Who asked for it, as a secret-free label; the stored descriptor itself stays internal.
            "principal": j.get("submitted_by"),
+           # The X-Request-ID of the request that submitted it (the call log and job.created carry it too).
+           "request_id": j.get("request_id"),
            "counts": {"samples": counts.get("total", 0), "documents": counts.get("success", 0), "files": counts.get("files", 0),
                       "failed": counts.get("failed", 0), "skipped": counts.get("skipped", 0), "cancelled": counts.get("cancelled", 0),
                       "pending": counts.get("pending", 0), "running": counts.get("running", 0),

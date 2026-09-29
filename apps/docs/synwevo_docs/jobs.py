@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from synwevo_core import authority, env
-from synwevo_core.context import tenant as current_tenant
+from synwevo_core.context import request_id as current_request_id, tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import new_id, now
 from synwevo_core import workers
@@ -1252,7 +1252,7 @@ class JobService:
                     c.execute("INSERT INTO jobs (id, project_id, status, created_at, snapshot, options, counts, request_id, tenant, run_no, origin, "
                               "principal, phase, summary) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                               (jid, pid, "queued", t, json.dumps(snapshot, ensure_ascii=False), json.dumps(opts, ensure_ascii=False),
-                               "{}", None, tenant, 1, origin, authority.dumps(desc), phase, json.dumps(summary)))
+                               "{}", current_request_id(), tenant, 1, origin, authority.dumps(desc), phase, json.dumps(summary)))
                     c.executemany("INSERT INTO job_items (id, job_id, seq, record_key, record, status, issues, file_base, label, run_no) "
                                   "VALUES (?,?,?,?,?,?,?,?,?,1)",
                                   [(new_id("i"), jid, rec["index"], rec["key"], json.dumps(rec, ensure_ascii=False, default=str),
@@ -1262,7 +1262,8 @@ class JobService:
                               (jid, 1, "create", origin, (n - invalid_n) if sync else None, t, "queued", authority.dumps(desc)))
                     self._update_counts(jid, c)
                     self._emit(c, jid, tenant, "job.created", {"status": "queued", "phase": phase, "run_no": 1, "samples": n,
-                                                                "skipped": invalid_n if sync else None, "formats": formats})
+                                                                "skipped": invalid_n if sync else None, "formats": formats,
+                                                                "request_id": current_request_id()})
         except sqlite3.IntegrityError:
             # another process inserted the same idempotency key between our check and our insert
             replay = self._idem_find(tenant, scopes, idem_key or "", hashes) if idem_key else None

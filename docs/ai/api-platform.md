@@ -17,7 +17,7 @@
 | 行为变化 | 新增工作空间合计默认 1 200 次/分钟（`SYNWEVO_API_WORKSPACE_RATE_PER_MIN`）；`RateLimit`/`RateLimit-Policy` 由一项变两项（`"key"` 仍在第一位） |
 | API-2 进度 | **机器 OCR**：`POST /api/v1/files/{fid}/ocr`（与工作台同一服务，未接纳来源 409，识别槽位 2 个/进程、占满 429 `ocr_busy`，浏览器同受约束）；**字段编辑**：`PATCH`/`DELETE /api/v1/templates/{tid}/fields/{field_id}`（`base_head` 必填，重发与并发都得 409 `stale_template`，删除可连带移除本项目映射，内置模板 409）；两个 SDK 各加对应方法；OpenAPI 重新导出（77 个路径）。证据：`test_api_source_operations.py`（68，含真实识别）、`test_api_template_fields.py`（4）、隔离实例用已安装 Python SDK 实跑（扫描件识别 14 词→ready；字段改名 head 2→3；重复旧 head 409；删除 head 4） |
 | API-2 续 | **文件事件** `file.ready/needs_ocr/rejected/failed`（触发器与状态同事务写入，f0cf701）；**项目设置** `PATCH /api/v1/projects/{pid}`（改名/归档/输出默认值，`base_settings_rev` 必填）；任务完成事件不带产物清单是有意的（负载只给计数，产物用凭据读取，撤权即时生效） |
-| 下一步 | API-2 余项：任务/事件/投递带 request_id；事件与投递保留期（数据生命周期 Q4 的一部分，保留期需持有人决定，先做可配置、默认不删）；之后 API-4（OAuth 第三方同意）或 API-3（待 B1-2） |
+| 下一步 | API-2 余项（请求编号已进入任务与 job.created）：事件与投递保留期（数据生命周期 Q4 的一部分，保留期需持有人决定，先做可配置、默认不删）；之后 API-4（OAuth 第三方同意）或 API-3（待 B1-2） |
 
 ## 批次队列
 

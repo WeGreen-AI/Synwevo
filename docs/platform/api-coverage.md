@@ -28,7 +28,7 @@
 |---|---|---|---|
 | OpenAPI 3.1 由实际路由导出，漂移测试 | 已验证 | `python -m synwevo_docs.cli openapi`；`test_api_docs.py` | 70 个响应无类型；管理 API 不在契约里 |
 | 错误信封 + 可选 RFC 9457（`Accept: application/problem+json`） | 已验证 | `http.py`；`test_gate_api_errors.py` | 类型 URN 不可解引用 |
-| `X-Request-ID` 全链路回显、调用记录 | 部分 | `http.py` 网关；**API-1**：调用记录带错误代码与客户端，可按请求编号/凭据/接口/状态/错误代码查询；网关拒绝的请求记在接口模板下 | 任务、事件、Webhook 投递不带 request_id；无 traceparent |
+| `X-Request-ID` 全链路回显、调用记录 | 部分 | `http.py` 网关；**API-1**：调用记录带错误代码与客户端，可按请求编号/凭据/接口/状态/错误代码查询；网关拒绝的请求记在接口模板下 | **API-2**：提交任务的请求编号记在任务 `request_id` 与 `job.created`（`test_request_trace.py`）；无 traceparent |
 | 分页：offset 与游标 | 已验证 | `v1.py:181-240` | 游标未签名（安全依赖每个查询的租户过滤） |
 
 ## 3. 流量、配额与用量
