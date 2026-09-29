@@ -804,8 +804,26 @@ class Store:
         c.executescript(SCHEMA_V4)
         c.executescript(SCHEMA_V5)
         c.executescript(SCHEMA_V7)
-        from .api_platform import SCHEMA_SQL as API_PLATFORM_SCHEMA
+        from .api_platform import CALL_COLUMNS as API_CALL_COLUMNS, SCHEMA_SQL as API_PLATFORM_SCHEMA
         c.executescript(API_PLATFORM_SCHEMA)
+        # API-1 (additive, no version step): layered request-rate / capacity policies, their history,
+        # and the shared GCRA state every process reads. Rollback: older code never reads them and
+        # falls back to its per-process limiter at SYNWEVO_API_RATE_PER_MIN.
+        from .api_quotas import SCHEMA_SQL as API_QUOTA_SCHEMA
+        c.executescript(API_QUOTA_SCHEMA)
+        # API-2 (additive): a trigger turns every Docs source-file verdict into an event row in the
+        # same transaction (file.ready / needs_ocr / rejected / failed). Rollback: older code ignores
+        # the types it does not know; the trigger keeps writing rows its feed lists with job_id ''.
+        from .docs_file_events import SCHEMA_SQL as DOCS_FILE_EVENTS_SCHEMA
+        c.executescript(DOCS_FILE_EVENTS_SCHEMA)
+        # API-4 (additive): a person's consent to an integration, and authorization requests parked
+        # for it. Live delegations that predate consent are recorded once as legacy consents so they
+        # can be seen and withdrawn. Rollback: older code never reads either table (it issues codes
+        # without asking, as before); withdrawals already made stay revoked on the tokens.
+        from .oauth_consent import SCHEMA_SQL as OAUTH_CONSENT_SCHEMA, grandfather as consent_grandfather
+        c.executescript(OAUTH_CONSENT_SCHEMA)
+        with self.tx() as t:
+            consent_grandfather(t)
         c.executescript("""
             CREATE TABLE IF NOT EXISTS account_recoveries (
                 id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
@@ -854,7 +872,7 @@ class Store:
         from .messaging_bridge import COLUMNS as MESSAGING_BRIDGE_COLUMNS, SCHEMA as MESSAGING_BRIDGE_SCHEMA
         c.executescript(MESSAGING_BRIDGE_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

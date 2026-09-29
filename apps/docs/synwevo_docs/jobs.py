@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from synwevo_core import authority, env
-from synwevo_core.context import tenant as current_tenant
+from synwevo_core.context import request_id as current_request_id, tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import new_id, now
 from synwevo_core import workers
@@ -465,7 +465,15 @@ def sync_plan_max() -> int:
 
 
 def max_active_jobs() -> int:
-    return _env_int("MAX_ACTIVE_JOBS", 10)
+    """The deployment default (``SYNWEVO_DOCS_MAX_ACTIVE_JOBS``); a workspace's effective capacity is
+    the layered policy administrators edit (``synwevo_core.api_quotas``), which falls back to this."""
+    from synwevo_core.api_quotas import deployment_defaults
+    return deployment_defaults()["active_jobs"]
+
+
+def _active_limit(store, tenant) -> int:
+    from synwevo_core.api_quotas import active_jobs_limit
+    return active_jobs_limit(store, tenant)["value"]
 
 
 def plan_batch() -> int:
@@ -1113,13 +1121,16 @@ class JobService:
         Checked there because a count taken before the transaction can be raced: two requests
         both see nine active jobs and both insert the tenth. ``BEGIN IMMEDIATE`` serialises the
         writers, so the count and the insert are one decision."""
-        limit = max_active_jobs()
+        from synwevo_core.api_quotas import active_jobs_limit
+        effective = active_jobs_limit(self.store, tenant)
+        limit = effective["value"]
         n = c.execute("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','running','cancelling') AND tenant=?",
                       (tenant,)).fetchone()["n"]
         if n >= limit:
             raise ServiceError(429, "queue_full",
                                f"本工作空间已有 {n} 个任务在排队或进行中（上限 {limit}）；请等部分任务结束后再提交",
-                               {"retry_after": QUEUE_RETRY_AFTER_S, "active_jobs": n, "limit": limit})
+                               {"retry_after": QUEUE_RETRY_AFTER_S, "active_jobs": n, "limit": limit,
+                                "policy_source": effective["source"]})
 
     # -------------------------------------------------------------- create
     def create(self, pid: str, options: dict, tenant: str | None = None, idem_key: str | None = None, origin: str = "ui",
@@ -1241,7 +1252,7 @@ class JobService:
                     c.execute("INSERT INTO jobs (id, project_id, status, created_at, snapshot, options, counts, request_id, tenant, run_no, origin, "
                               "principal, phase, summary) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                               (jid, pid, "queued", t, json.dumps(snapshot, ensure_ascii=False), json.dumps(opts, ensure_ascii=False),
-                               "{}", None, tenant, 1, origin, authority.dumps(desc), phase, json.dumps(summary)))
+                               "{}", current_request_id(), tenant, 1, origin, authority.dumps(desc), phase, json.dumps(summary)))
                     c.executemany("INSERT INTO job_items (id, job_id, seq, record_key, record, status, issues, file_base, label, run_no) "
                                   "VALUES (?,?,?,?,?,?,?,?,?,1)",
                                   [(new_id("i"), jid, rec["index"], rec["key"], json.dumps(rec, ensure_ascii=False, default=str),
@@ -1251,7 +1262,8 @@ class JobService:
                               (jid, 1, "create", origin, (n - invalid_n) if sync else None, t, "queued", authority.dumps(desc)))
                     self._update_counts(jid, c)
                     self._emit(c, jid, tenant, "job.created", {"status": "queued", "phase": phase, "run_no": 1, "samples": n,
-                                                                "skipped": invalid_n if sync else None, "formats": formats})
+                                                                "skipped": invalid_n if sync else None, "formats": formats,
+                                                                "request_id": current_request_id()})
         except sqlite3.IntegrityError:
             # another process inserted the same idempotency key between our check and our insert
             replay = self._idem_find(tenant, scopes, idem_key or "", hashes) if idem_key else None
@@ -1369,7 +1381,7 @@ class JobService:
             unplanned += max(0, int((r["summary"] or {}).get("records") or 0) - int((r["counts"] or {}).get("planned") or 0))
         return {"active_jobs": sum(by.values()), "queued_jobs": by.get("queued", 0), "running_jobs": by.get("running", 0),
                 "cancelling_jobs": by.get("cancelling", 0), "planning_jobs": planning, "pending_items": pending + unplanned,
-                "limits": {"max_active_jobs": max_active_jobs(), "max_records_per_job": LIMITS.max_records_per_job,
+                "limits": {"max_active_jobs": _active_limit(self.store, tenant), "max_records_per_job": LIMITS.max_records_per_job,
                            "sync_plan_max": sync_plan_max()}}
 
     # -------------------------------------------------------------- control

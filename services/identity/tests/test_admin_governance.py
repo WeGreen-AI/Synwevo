@@ -9,6 +9,7 @@ from synwevo_core.organizations import Organizations
 from synwevo_core.store import Store, now
 from synwevo_identity.app import create_app
 from synwevo_identity.invites import Invites
+from services.identity.tests.oauth_consent_helper import through_consent
 
 PW = "a-sufficiently-long-fixture-passphrase"
 REASON = "Local fixture governance verification"
@@ -300,9 +301,9 @@ def protocol_code(f, client):
         redirect_uris=["http://localhost/auth/callback"], scopes="openid offline_access")
     verifier = "isolated-fixture-proof-key-with-more-than-43-characters"
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    result = client.get("/oidc/authorize", params={"client_id": "governance-review", "response_type": "code",
+    result = through_consent(client, client.get("/oidc/authorize", params={"client_id": "governance-review", "response_type": "code",
         "redirect_uri": "http://localhost/auth/callback", "scope": "openid offline_access", "state": "fixture",
-        "code_challenge": challenge, "code_challenge_method": "S256"}, follow_redirects=False)
+        "code_challenge": challenge, "code_challenge_method": "S256"}, follow_redirects=False))
     assert result.status_code == 303, result.text
     code = parse_qs(urlsplit(result.headers["location"]).query)["code"][0]
     return {"grant_type": "authorization_code", "code": code, "client_id": "governance-review",

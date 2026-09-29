@@ -12,6 +12,7 @@ export const refusalMessages = {
   // the live table room (docs-sheet-live.md §9): an editor that saves the whole model while the room is live, a live save with no room
   "这张表格正在实时协同：请刷新页面进入实时协同后再编辑": { en: "This table is being edited live. Reload the page to join the live editing, then edit.", "zh-Hant": "這張表格正在即時協作：請重新整理頁面進入即時協作後再編輯" },
   "这张表格没有正在进行的实时协同": { en: "This table is not being edited live.", "zh-Hant": "這張表格沒有正在進行的即時協作" },
+  "表格的实时修改暂时无法写入，这次没有保存为版本；请稍后再保存": { en: "The table's live changes could not be written just now, so no version was saved. Please save again in a moment.", "zh-Hant": "表格的即時修改暫時無法寫入，這次沒有儲存為版本；請稍後再儲存" },
   "模板编辑器里有尚未保存为版本的实时修改：请先在编辑器里保存，再修改字段": { en: "The template editor holds live changes nobody has saved as a version yet. Save them in the editor first, then change the field.", "zh-Hant": "模板編輯器裡有尚未儲存為版本的即時修改：請先在編輯器裡儲存，再修改欄位" },
   "这个模板由内置编辑器维护：请在编辑器里添加或删除字段（在这里改动，下次在编辑器保存时会丢失）": { en: "This template is maintained in the built-in editor: add or remove its fields there (a change made here would be lost the next time the editor saves).", "zh-Hant": "這個模板由內建編輯器維護：請在編輯器裡新增或刪除欄位（在這裡改動，下次在編輯器儲存時會遺失）" },
   // ------------------------------------------------------------------ gate: workspace and application access
@@ -179,6 +180,7 @@ export const refusalMessages = {
 
   // ------------------------------------------------------------------ generation jobs and downloads
   "这个项目正在进行另一次模拟生成；请稍后再试": { en: "This project is already running another simulated generation. Try again later.", "zh-Hant": "這個項目正在進行另一次模擬生成；請稍後再試" },
+  "服务器正在识别其他文件；请稍后再试": { en: "The server is recognising text in other files. Try again later.", "zh-Hant": "伺服器正在辨識其他檔案；請稍後再試" },
   "服务器正在进行其他模拟生成；请稍后再试": { en: "The server is running other simulated generations. Try again later.", "zh-Hant": "伺服器正在進行其他模擬生成；請稍後再試" },
   "没有识别到任何样本，无法生成": { en: "No samples were found, so nothing can be generated.", "zh-Hant": "沒有識別到任何樣本，無法生成" },
   "这个任务因样本错误没有开始生成（有错误则不开始）；请修正数据后重新提交，或以「跳过错误样本」提交新任务": { en: "This job did not start because of sample errors (“stop if any errors”). Fix the data and submit again, or submit a new job with “Skip samples with errors”.", "zh-Hant": "這個任務因樣本錯誤沒有開始生成（有錯誤則不開始）；請修正資料後重新提交，或以「跳過錯誤樣本」提交新任務" },

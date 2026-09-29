@@ -131,10 +131,16 @@ export function parseRetryAfter(value, nowMs = Date.now()) {
   return Number.isNaN(at) ? null : Math.max(0, (at - nowMs) / 1000);
 }
 
-/** The `t` (seconds until quota is back) of an IETF RateLimit header, e.g. `"key";r=0;t=12`. */
+/** The `t` (seconds until quota is back) of an IETF RateLimit header, e.g. `"key";r=0;t=12`.
+ *  With several policies (`"key";r=298;t=1, "workspace";r=0;t=20`) the longest reset among those with
+ *  nothing left decides; when every policy has budget left, the first item's reset is returned. */
 export function parseRateLimitReset(value) {
-  const m = /(?:^|;)\s*t=(\d+)/.exec(String(value ?? ''));
-  return m ? Number(m[1]) : null;
+  const items = String(value ?? '').split(',').map(item => ({
+    r: /(?:^|;)\s*r=(\d+)/.exec(item), t: /(?:^|;)\s*t=(\d+)/.exec(item) }));
+  const spent = items.filter(i => i.r && i.t && Number(i.r[1]) === 0).map(i => Number(i.t[1]));
+  if (spent.length) return Math.max(...spent);
+  const first = items.find(i => i.t);
+  return first ? Number(first.t[1]) : null;
 }
 
 /** Build the typed error for a non-2xx response (the envelope, RFC 9457 problem+json or OAuth). */
@@ -522,6 +528,16 @@ export class Client {
   }
   listProjects(query = {}) { return this.paginate('/projects', query); }
   getProject(pid) { return this.get(`/projects/${encodeURIComponent(pid)}`); }
+  /** Rename, archive/unarchive or change output defaults; `baseSettingsRev` is the `settings_rev`
+   *  you read (someone else's edit since is 409 stale_project). Not retried automatically. */
+  updateProject(pid, { baseSettingsRev, name, archived, output } = {}) {
+    if (!Number.isInteger(baseSettingsRev) || baseSettingsRev < 0) throw new ValidationError('baseSettingsRev must be the settings_rev you read', { field: 'base_settings_rev' });
+    const json = { base_settings_rev: baseSettingsRev };
+    if (name != null) json.name = name;
+    if (archived != null) json.archived = archived;
+    if (output != null) json.output = output;
+    return this.requestJson('PATCH', `/projects/${encodeURIComponent(pid)}`, { json, retry: false });
+  }
   deleteProject(pid) { return this.requestJson('DELETE', `/projects/${encodeURIComponent(pid)}`); }
   putRule(pid, rule) { return this.requestJson('PUT', `/projects/${encodeURIComponent(pid)}/rule`, { json: { rule } }); }
   bindTemplate(pid, templateId, { version = null } = {}) {
@@ -559,6 +575,18 @@ export class Client {
   listFiles(pid, query = {}) { return this.paginate(`/projects/${encodeURIComponent(pid)}/files`, query); }
   getFile(fid, opts = {}) { return this.get(`/files/${encodeURIComponent(fid)}`, undefined, opts); }
   deleteFile(fid) { return this.requestJson('DELETE', `/files/${encodeURIComponent(fid)}`); }
+  /** Recognise text on a scanned PDF (default: every scanned/mixed page) or image, at most 50 pages.
+   *  Synchronous on the server: waits 30 s + 6 s per page unless `timeoutMs` says otherwise, and is
+   *  not retried automatically. After a timeout, the page-words route reports `source: "ocr"` for
+   *  pages already recognised. */
+  runSourceOcr(fid, { pages, timeoutMs } = {}) {
+    if (pages != null && (!Array.isArray(pages) || pages.length > 50 || pages.some(n => !Number.isInteger(n) || n < 0))) {
+      throw new ValidationError('pages must be an array of at most 50 zero-based page numbers', { field: 'pages' });
+    }
+    const wait = timeoutMs ?? Math.max(this.timeoutMs, 30_000 + 6_000 * (pages ? pages.length : 50));
+    return this.requestJson('POST', `/files/${encodeURIComponent(fid)}/ocr`,
+      { json: pages == null ? {} : { pages }, retry: false, timeoutMs: wait });
+  }
 
   uploadSource(pid, filePath, { filename, idempotencyKey = randomUUID() } = {}) {
     return this._uploadTo(`/projects/${encodeURIComponent(pid)}/files`, filePath,
@@ -686,6 +714,21 @@ export class Client {
       { json: { editor, name, base_version: baseVersion }, idempotencyKey, precondition: true });
   }
   getFields(tid) { return this.get(`/templates/${encodeURIComponent(tid)}/fields`); }
+  /** Change one field's properties as one new version; `baseHead` is the head you read (a moved
+   *  head, or a repeat of a call that succeeded, is 409 stale_template). Not retried automatically. */
+  updateField(tid, fieldId, { baseHead, ...values } = {}) {
+    if (!Number.isInteger(baseHead) || baseHead < 1) throw new ValidationError('baseHead must be the template head you read', { field: 'base_head' });
+    return this.requestJson('PATCH', `/templates/${encodeURIComponent(tid)}/fields/${encodeURIComponent(fieldId)}`,
+      { json: { base_head: baseHead, ...values }, retry: false });
+  }
+  /** Remove one field as one new version; with `projectId` also that project's mappings bound only to it. */
+  deleteField(tid, fieldId, { baseHead, projectId, cascade = true } = {}) {
+    if (!Number.isInteger(baseHead) || baseHead < 1) throw new ValidationError('baseHead must be the template head you read', { field: 'base_head' });
+    const query = { base_head: baseHead };
+    if (projectId) Object.assign(query, { project_id: projectId, cascade: cascade ? 'true' : 'false' });
+    return this.requestJson('DELETE', `/templates/${encodeURIComponent(tid)}/fields/${encodeURIComponent(fieldId)}`,
+      { query, retry: false });
+  }
   createFields(tid, definition, { idempotencyKey = randomUUID() } = {}) {
     return this.requestJson('POST', `/templates/${encodeURIComponent(tid)}/fields`, { json: definition, idempotencyKey });
   }

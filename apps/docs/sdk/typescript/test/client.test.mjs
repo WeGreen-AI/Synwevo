@@ -26,6 +26,8 @@ test('Retry-After supports delta seconds and dates, and backoff never undercuts 
   assert.equal(parseRetryAfter('Thu, 24 Sep 2026 00:00:05 GMT', Date.UTC(2026, 8, 24)), 5);
   assert.equal(parseRetryAfter('invalid'), null);
   assert.equal(parseRateLimitReset('"key";r=0;t=12'), 12);
+  assert.equal(parseRateLimitReset('"key";r=298;t=1, "workspace";r=0;t=20'), 20);
+  assert.equal(parseRateLimitReset('"key";r=0;t=3, "workspace";r=0;t=20'), 20);
   const client = new Client('http://127.0.0.1:1', new ApiKey('synthetic'), { random: () => 0.5 });
   assert.equal(client.backoffMs(0, 5), 5000);
   assert.equal(client.backoffMs(0, 121), null);

@@ -33,9 +33,10 @@ State layout (``state["content"]`` is what clients mirror; the rest is the serve
              merges  {mid: {sheet, at: [r1, c1, r2, c2] ids}}
              fields  {key: {sheet, kind, at: anchor ids, raw: the field's other attributes}}
     seq      the last accepted operation's number; kseq {object key: [seq, by]}; kfloor
-    sheetw   {sid: {person: seq}} — the last write of each person on each sheet; sheetc {sid: {client:
-             seq}} — the same per tab (one person's two tabs: a stale delete from one must not hide
-             what the other wrote)
+    sheetw   {sid: {person: seq}} — the last write of each person on each sheet (adding rows or
+             columns counts); sheetc {sid: {client: seq}} — the same per tab (one person's two tabs:
+             a stale delete from one must not hide what the other wrote; only the sender's own scope's
+             tabs are read from it)
     wby      {cell value key: person} — who last wrote each cell value in this epoch, kept after the
              first-writer records are compacted: a refusal names who changed the cells it is about
     loads    [{id, seq}] — the room's loads of this epoch from storage (the room keeps it): a tab can
@@ -929,6 +930,15 @@ class _Tx:
         ks = self.st["kseq"]
         self.undo.append(("k", key, ks.get(key)))
         ks[key] = [self.seq, self.by]
+        self.wsheet(sid)
+        if key.startswith("v/"):
+            wb = self.st.setdefault("wby", {})
+            self.undo.append(("b", key, wb.get(key)))
+            wb[key] = self.by
+
+    def wsheet(self, sid: str):
+        """Record that the sender (and its tab) wrote on sheet ``sid`` — also for what has no object
+        key of its own (rows and columns added): a stale delete of the sheet must not hide it."""
         sw = self.st["sheetw"]
         self.undo.append(("w", sid, sw.get(sid, {}).get(self.by)))
         sw.setdefault(sid, {})[self.by] = self.seq
@@ -936,10 +946,6 @@ class _Tx:
             sc = self.st.setdefault("sheetc", {})
             self.undo.append(("c", sid, sc.get(sid, {}).get(self.client)))
             sc.setdefault(sid, {})[self.client] = self.seq
-        if key.startswith("v/"):
-            wb = self.st.setdefault("wby", {})
-            self.undo.append(("b", key, wb.get(key)))
-            wb[key] = self.by
 
     def rollback(self):
         ks, sw = self.st["kseq"], self.st["sheetw"]
@@ -1109,10 +1115,15 @@ class _Tx:
         if not self._checking():
             return
         later = [(s, who) for who, s in self.st["sheetw"].get(sid, {}).items() if s > self.expect and who != self.by]
-        if self.client:
+        mine = _scope(self.client) if self.client else None
+        if mine is not None:
             # the sender's own other tab: what it wrote there after what this one saw is not hidden
-            # by a stale delete either (an undo of a new sheet pressed before that tab's edit arrived)
-            later += [(s, self.by) for c, s in self.st.get("sheetc", {}).get(sid, {}).items() if s > self.expect and c != self.client]
+            # by a stale delete either (an undo of a new sheet pressed before that tab's edit arrived).
+            # Only the tabs of the sender's own scope (the room's person): other people's tabs are in
+            # `sheetw` under their own names — labelled as the sender, their work was blamed on "you,
+            # in another tab" (review round 3, R3c2)
+            later += [(s, self.by) for c, s in self.st.get("sheetc", {}).get(sid, {}).items()
+                      if s > self.expect and c != self.client and _scope(c) == mine]
         if later:
             s, who = max(later)
             raise _Refused("conflict", key=f"x/{sid}", theirs={"sheet": sid, "name": self.c["sheets"][sid]["name"]}, by=who, at=s)
@@ -1306,6 +1317,9 @@ def _op_append(tx: _Tx, op: dict, part: str):
     for p in range(sh[count], sh[count] + n):
         tx.put(("sheets", sid, store, ids[p]), {key: size} if size is not None else {})
     tx.put(("sheets", sid, count), sh[count] + n)
+    # new rows or columns are work on the sheet: a stale delete of it (or a lost one sent again after a
+    # crash) is checked against them like against a value (review round 3, R3h)
+    tx.wsheet(sid)
 
 
 # ------------------------------------------------------------------------------------ merges
@@ -2362,9 +2376,10 @@ def reconcile(state: dict, current_editor: dict, *, by: str) -> dict:
         seq = state["seq"] = state["seq"] + 1
         for path, old, new in changes:
             for key, sid in _changed_keys(path, old, new):
-                state["kseq"][key] = [seq, by]
-                if key.startswith("v/"):
-                    state.setdefault("wby", {})[key] = by
+                if key is not None:
+                    state["kseq"][key] = [seq, by]
+                    if key.startswith("v/"):
+                        state.setdefault("wby", {})[key] = by
                 if sid:
                     state["sheetw"].setdefault(sid, {})[by] = seq
     state["content"] = new_c
@@ -2404,4 +2419,6 @@ def _changed_keys(path: tuple, old: list, new: list):
         return out
     if len(path) == 4 and path[2] in ("rh", "cw"):
         return [(f"{'h' if path[2] == 'rh' else 'w'}/{sid}/{path[3]}", sid)]
+    if len(path) == 3 and path[2] in ("nr", "nc"):
+        return [(None, sid)]                             # rows or columns added: a write on the sheet, no object of its own
     return []

@@ -21,9 +21,11 @@ ISSUE_LEVELS = ("error", "warning")
 TEMPLATE_CONTENT = ("original", "working")
 UPLOAD_PURPOSES = ("source", "template")
 DELIVERY_STATUSES = ("pending", "delivered", "failed", "dropped")
-EVENT_TYPES = ("job.created", "job.started", "job.cancel_requested", "job.retry_requested", "job.recovered",
-               "job.completed", "job.completed_with_errors", "job.failed", "job.cancelled")
-EVENT_FILTERS = ("*", "job.*") + EVENT_TYPES
+# The server's catalogue (synwevo_docs.webhooks.EVENT_TYPES); apps/docs/tests/test_file_events.py keeps them equal.
+EVENT_TYPES = ("job.created", "job.started", "job.planned", "job.cancel_requested", "job.retry_requested", "job.recovered",
+               "job.completed", "job.completed_with_errors", "job.failed", "job.cancelled",
+               "file.ready", "file.needs_ocr", "file.rejected", "file.failed")
+EVENT_FILTERS = ("*", "job.*", "file.*") + EVENT_TYPES
 _FORMAT = re.compile(r"^[a-z0-9]{1,10}$")
 
 

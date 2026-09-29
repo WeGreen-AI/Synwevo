@@ -77,6 +77,18 @@ API 台浏览器脚本 `tests/integration/api_platform_browser_acceptance.py` �
 Chrome CDP 虚拟 CTAP2 是测试设施，不是实体认证器验证；秘密只留内存，截图遮盖凭据输入，报告不含恢复码或种子。
 反复执行注册脚本会触发真实限流；按测试场景使用独立初始化的数据目录，不关闭限流或重置用户库。
 
+## 3.x SDK
+
+两个 SDK 的单元测试（本机回环桩，不联网）不在仓库的 pytest testpaths 里，CI 的 verify 步骤单独运行它们：
+
+```bash
+.venv/bin/python -m pip install --no-deps --force-reinstall apps/docs/sdk/python   # 已安装的是副本，改完要重装
+.venv/bin/python -m pytest apps/docs/sdk/python/tests -q
+node --test apps/docs/sdk/typescript/test/*.test.mjs
+```
+
+连接真实服务的验收在 `apps/docs/sdk/acceptance/`（隔离实例上运行）。
+
 ## 4. 性能
 
 ```bash

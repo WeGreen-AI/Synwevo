@@ -76,6 +76,8 @@ const SERVER = [
   { file: ID + "passkeys.py", fns: ["_spend_challenge_for"], surfaces: ["signin", "account"] },
   { file: ID + "passkeys.py", surfaces: ["account"] },
   { file: ID + "profile.py", surfaces: ["account"] },
+  { file: ID + "provider_routes.py", fns: ["build_router._consent_actor", "build_router.consent_request", "build_router.consent_decide",
+      "build_router.connected_apps", "build_router.connected_app_revoke"], surfaces: ["account"] },
   { file: ID + "provider_routes.py", surfaces: [], why: "OIDC protocol endpoints: a client's redirect or back channel, never a page of this shell" },
   { file: ID + "push_routes.py", surfaces: ["account"] },
   { file: ID + "registration.py", surfaces: ["signin"] },
@@ -102,6 +104,8 @@ const SERVER = [
   { file: CORE + "sessions.py", surfaces: [], why: "an application identity has no password or passkey to sign in with" },
   { file: CORE + "api_platform.py", fns: ["enforce_principal"], surfaces: [], why: "checked on Synwevo Docs' business API, not in this shell" },
   { file: CORE + "api_platform.py", surfaces: ["api"] },
+  { file: CORE + "api_quotas.py", surfaces: ["api"] },
+  { file: CORE + "oauth_consent.py", surfaces: ["account"] },
   { file: CORE + "auth.py", fns: ["rotate_key"], surfaces: ["api"] },
   { file: CORE + "auth.py", surfaces: [], why: "API keys presented to Synwevo Docs; the console only rotates and revokes them" },
   { file: CORE + "oidc.py", fns: ["rotate_secret"], surfaces: ["api"] },
@@ -226,6 +230,7 @@ const SAMPLE_DETAIL = {
   "最多 {MAX_SUBSCRIPTIONS_PER_USER} 个设备，请先移除不用的设备": { limit: 10 },
   "一个组织最多 {MAX_ROLES} 个自定义角色": { limit: 50 },
   "请写明理由（至少 {REASON_MIN} 个字），它会写入审计记录": { field: "reason", min: 8 },
+  "限制值必须是 {lo} 至 {hi} 之间的整数，留空表示继承": { field: "active_jobs", min: 1, max: 1000 },
 };
 
 // ------------------------------------------------------------------------------------ scanning

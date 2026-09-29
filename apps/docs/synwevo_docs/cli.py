@@ -9,6 +9,8 @@
     python -m synwevo_docs.cli jobs recover                  # resume jobs left by a stopped worker
     python -m synwevo_docs.cli projects                      # 清单与清理（按来源证据，默认 dry-run）
     python -m synwevo_docs.cli info                          # 数据目录、schema 版本、运行配置
+    python -m synwevo_docs.cli sheet-live [--workspace ID] [--json]
+                                                             # 实时表格开关读成什么、哪些表格有未保存的实时修改（只读）
     python -m synwevo_docs.cli rescan [--apply] [--limit N] [--workspace ID] [--only sources|templates|cases]
                                                              # 补扫扫描上线前存入的来源文件与模板（不加 --apply 只预览）
     python -m synwevo_docs.cli quarantine list | release <sha256> | purge <sha256> --yes
@@ -471,6 +473,67 @@ def cmd_info(args) -> int:
 
 
 
+def cmd_sheet_live(args) -> int:
+    """实时表格开关与未保存的实时修改（docs/platform/docs-sheet-live.md §9、§15）：只读。
+
+    把工作空间移出试用名单或关闭开关之前，这里列出的每一张表都要先保存为版本或确认放弃；
+    处理完再运行一次，应当没有剩下的。"""
+    import zlib
+    from synwevo_core.identity import Identity
+    from .collab import sheet_live_report
+    from .collab_sheet_room import last_writer
+    store = Store(data_dir(args), migrate=False)          # inspect only
+    rep = sheet_live_report(store)
+    raw = env.get("SHEET_LIVE")
+    if args.workspace and store.schema_version():
+        try:
+            known = store.one("SELECT 1 AS x FROM workspaces WHERE id=?", (args.workspace,)) is not None
+        except Exception:                                  # noqa: BLE001 — a store without the table: nothing is known
+            known = False
+        if not known:
+            # a mistyped id would list nothing and read as "0 unsaved" — the end-of-trial check passed
+            # while the real workspace still had unsaved live tables (the third review's follow-up)
+            if args.json:
+                print(json.dumps({"error": "unknown_workspace", "workspace": args.workspace}, ensure_ascii=False))
+            else:
+                print(f"没有 ID 为 {args.workspace} 的工作空间：请核对 ID。不带 --workspace 运行会列出所有工作空间的未保存表格。", file=sys.stderr)
+            return 2
+    where, params = "d.model='sheet' AND d.dirty=1", []
+    if args.workspace:
+        where += " AND d.tenant=?"
+        params.append(args.workspace)
+    rows = store.all("SELECT d.tenant, d.template_id, d.head, d.updated_at, d.state, t.name AS template_name "
+                     f"FROM collab_docs d LEFT JOIN templates t ON t.id=d.template_id WHERE {where} ORDER BY d.tenant, d.updated_at",
+                     tuple(params)) if store.schema_version() else []
+    ident = Identity(store)
+    drafts = []
+    for r in rows:
+        try:
+            uid = last_writer(json.loads(zlib.decompress(bytes(r["state"]))))
+        except Exception:                                  # noqa: BLE001 — an unreadable draft names nobody
+            uid = None
+        user = ident.get_user(uid) if uid else None
+        drafts.append({"workspace": r["tenant"], "template_id": r["template_id"], "template_name": r.get("template_name"), "head": r["head"],
+                       "updated_at": r["updated_at"], "last_editor": uid,
+                       "last_editor_name": (user or {}).get("display_name") or ((user or {}).get("email") or "").split("@")[0] or None})
+    names = {r["id"]: r["name"] for r in store.all("SELECT id, name FROM workspaces WHERE id IN (%s)" % ",".join("?" * len(rep["workspaces"])),
+                                                   tuple(rep["workspaces"]))} if rep["workspaces"] else {}
+    if args.json:
+        print(json.dumps({"switch": raw, **rep, "workspace_names": names, "unsaved_drafts": drafts}, ensure_ascii=False, indent=2))
+        return 0
+    listed = ", ".join(f"{w}（{names.get(w) or '-'}）" for w in rep["workspaces"])
+    mode = {"off": "关闭（所有工作空间：保存时合并）", "on": "打开（所有工作空间）",
+            "workspaces": f"试用：{listed or '（名单里没有存在的工作空间）'}"}[rep["mode"]]
+    print(f"开关          : SYNWEVO_SHEET_LIVE={raw if raw is not None else '（未设置）'} → {mode}")
+    if rep["unknown"]:
+        print(f"不存在的 ID   : {', '.join(rep['unknown'])}（这些 ID 不会打开任何表格的实时协同）")
+    print(f"未保存的表格  : {len(drafts)}" + (f"（工作空间 {args.workspace}）" if args.workspace else ""))
+    for d in drafts:
+        who = d["last_editor_name"] or d["last_editor"] or "-"
+        print(f"  {d['workspace']}\t{d['template_id']}\t{d['template_name'] or '-'}\t第 {d['head']} 版起\t最后修改 {_ts(d['updated_at'])}\t{who}")
+    return 0
+
+
 def cmd_rescan(args) -> int:
     """补扫与隔离区（docs/security/file-acceptance.md §8）；逻辑在 `synwevo_docs.rescan`。"""
     from .rescan import main_rescan
@@ -521,6 +584,11 @@ def main() -> int:
 
     i = sub.add_parser("info", help="部署信息")
     i.set_defaults(func=cmd_info)
+
+    sl = sub.add_parser("sheet-live", help="实时表格开关与未保存的实时修改（只读；试用开始与结束前查看）")
+    sl.add_argument("--workspace", help="只看这个工作空间（移出试用名单之前）")
+    sl.add_argument("--json", action="store_true", help="输出 JSON")
+    sl.set_defaults(func=cmd_sheet_live)
 
     # Webhook subscriptions of a workspace: CLI-only administration (there is no product UI).
     from .cli_webhooks import register as register_webhooks

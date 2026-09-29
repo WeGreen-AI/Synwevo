@@ -182,7 +182,7 @@ python apps/docs/scripts/regression.py                  # 回归用例（若已�
 | 生成 PDF 报「未检测到 LibreOffice」 | 安装 LibreOffice 或设置 `SYNWEVO_DOCS_SOFFICE`；`/api/v1/capabilities` 会如实显示该能力不可用 |
 | 导出 PDF 中文不显示 | 安装中文字体（容器镜像已含 Noto CJK），或用 `SYNWEVO_DOCS_CJK_FONTS` 指定字体文件 |
 | Webhook 未送达 | 查看 `webhook_deliveries` 表的 `status`/`last_error`；内网地址需加入 `SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE`；回调失败不影响产物下载 |
-| 接口返回 429 | 调整 `SYNWEVO_API_RATE_PER_MIN` 或在客户端退避重试（响应带 `Retry-After`） |
+| 接口返回 429 | 看 `details.limit_scope`/`policy_source`（或管理台「调用记录」按请求编号查）：在「流量与配额」调整对应层的设置，或在客户端按 `Retry-After` 退避；部署默认值为 `SYNWEVO_API_RATE_PER_MIN`（每凭据）与 `SYNWEVO_API_WORKSPACE_RATE_PER_MIN`（每工作空间合计） |
 | 来源文件停在「安全检查暂不可用」（`scan_failed`）、`/readyz` 的 `malware_scanner` 为 `down: …` | clamd 不可达：`docker compose logs clamav`（首次启动要先下载病毒库，`start_period` 15 分钟）；恢复后文件按 30 s→10 min 的间隔自动重试，不需要重新上传。文件超过扫描上限（`scan.status=too_large`）则调大 `SYNWEVO_CLAMD_MAX_BYTES` 与 clamd 的 `StreamMaxLength` 后让用户重新上传 |
 | 上传返回 400 `malware_detected`、文件显示「安全检查未通过」 | 引擎命中签名（`scan.signature`、`scan.engine` 记录了判定时的引擎与病毒库）。字节已从 blob 存储删除；没有"仍然处理"的入口。怀疑误报按 docs/security/file-acceptance.md §8 处理 |
 | 上传返回 400 `encrypted_file`（「文件设有密码或含有加密内容…」）或 `unchecked_file`（「文件的结构无法安全地完成检查…」），或来源显示「错误」且 `scan.status=encrypted` | 文件有打开密码，或（`scan.checked=false`、`unchecked_file`）结构读不完——截断、超出识别器上限，同样不能当作干净；接纳日志的 `scan.encrypted … checked=False detail=…` 写着是什么让检查停下（`detail.kind`/`scan.reason`：`archive`/`office`/`pdf`）。安全检查看不到里面：不是恶意软件，也不会被接纳。请用户去掉密码或另存不加密的副本后重新上传；没有"跳过检查"的入口。补扫对历史文件报告的 `encrypted` 不改访问，处理方式由所有者决定（file-acceptance §8.1） |
@@ -432,6 +432,70 @@ docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwev
 | 故障 | siteverify 不可达时注册/找回/验证码登录返回 503 `challenge_unavailable`（`Retry-After: 30`），不放行；已登录业务、未触发风险的口令登录、机器接口不受影响。审计 `auth.challenge result=error` 记录原因 |
 | 回滚 | 删除两个变量并重启；页面不再加载 Cloudflare 脚本，CSP 回到默认 |
 | 不做 | 不在生产使用测试密钥（测试密钥对任何令牌都通过，且令牌不带 action）；不给机器接口、Webhook、探针返回挑战 |
+
+## 10. 实时表格（`SYNWEVO_SHEET_LIVE`）：开始与结束试用
+
+表格模板的实时逐项协同（[platform/docs-sheet-live.md](platform/docs-sheet-live.md) §9、§15）缺省关闭。开关只有 Docs 读，取值
+`off` / `on` / 逗号分隔的**工作空间 id 名单**（限定试用：只有这些工作空间的表格实时协同，其余照旧「保存时合并」）。它写在主机的
+**`/opt/synwevo/config/runtime.env`**：这个文件只在主机上，发布和安装审核过的 `compose.yaml` 都不会替换它（写在 `compose.yaml` 里，
+下一次安装基础设施改动就会悄悄结束试用，而且不走下面的结束步骤）；`compose.yaml` 不得再设这个变量——`environment` 会盖过
+`runtime.env`。开关在房间打开时读取，改了要**优雅重启 Docs**（按 90 秒宽限期停止；不得 `kill`、`-t 0`，见 infra/production/README.md）：
+
+```bash
+docker compose -f /opt/synwevo/config/compose.yaml up -d --no-deps --force-recreate --wait docs
+```
+
+下面两条命令都是只读的：
+
+```bash
+docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli sheet-live </dev/null
+docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli sheet-live --workspace <工作空间ID> </dev/null
+```
+
+它显示开关读成什么（试用名单里各工作空间的名字；名单里不存在的 ID 单独列出——打错的 ID 会让试用悄悄不生效）和有未保存实时修改的
+表格（工作空间、模板、从哪个版本起、最后修改时间与修改者）。`--workspace` 给的 ID 不是工作空间时报错并返回 2，不显示「0」。
+**开关读成什么以这个命令为准**：生产的 uvicorn 日志配置不输出 Docs 的 INFO 行，`docker compose logs docs` 里只有名单含不存在的 ID
+时的那条警告。
+
+**试用期间**：`docs/quality/deployment.md` 记着试用的开始（开始第 5 步）。其间每次 `docker compose up -d`（一次部署、安装审核过的
+`compose.yaml`、任何重启）之后运行一次 `sheet-live`，确认仍读成「试用：<ID>」。若读成别的，试用是没有走结束步骤就停了：在任何人
+保存那些表格之前，把 ID 写回 `runtime.env` 并重启 Docs——未保存的表格草稿还在，房间重新打开就接上。
+
+**开始试用**
+
+1. 找到要试用的内部工作空间的 ID。
+2. 在 `runtime.env` 加一行 `SYNWEVO_SHEET_LIVE=<工作空间ID>`（多个用逗号分隔），然后运行上面的重启命令。
+3. 运行 `sheet-live`：应读成「试用：<ID>（工作空间名）」，且没有「不存在的 ID」。
+4. 在该工作空间打开一张表格模板：顶栏显示「实时协同中」；其他工作空间的表格没有实时状态行（保存时合并）。
+5. 在 `docs/quality/deployment.md` 记一条：试用开始、工作空间 ID、UTC 时间、正在运行的提交、操作人。
+
+**结束试用 / 回滚**（顺序不能反：先改名单，未保存的实时修改就再也没有房间能保存，那张表的下一次版本变化会删掉它们的草稿）
+
+1. **冻结**：请试用成员在约定的时间点之前保存并关闭各自打开的实时表格，此后不再编辑。仍开着的页面会在第 5 步重启时退出实时协同。
+2. `sheet-live --workspace <ID>` 列出有未保存实时修改的表格，逐个处理：请有编辑权限的成员在实时编辑器里「保存模板」；确实不要的，
+   由有权限的成员在版本历史里恢复或撤销时选择放弃实时修改，或用机器接口带 `discard_live: true` 保存。处理完再运行一次，应显示
+   「未保存的表格  : 0」。
+3. 备份（在主机上照抄即可运行；一次性的容器用 docs 的镜像和数据卷，按 §2 的方式——SQLite 备份 API——在线取一致快照，临时文件写在
+   备份目录里而不是容器 512 MB 的 `/tmp`；归档含账户、密钥和业务数据，留在主机）：
+
+   ```bash
+   B=/opt/synwevo/backups/sheet-live-$(date -u +%Y%m%dT%H%M%SZ)
+   install -d -m 0700 -o 1000 -g 1000 "$B"
+   docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$B":/backup docs \
+     python apps/docs/scripts/snapshot.py create --data /data --out /backup </dev/null
+   docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$B":/backup docs \
+     python apps/docs/scripts/snapshot.py verify --archive /backup/<上一步写出的 synwevo-….tar.gz> --journal-from /data </dev/null
+   ```
+
+   `verify` 要以「N/N 项通过」结束。
+4. **紧接着重启之前**再运行一次 `sheet-live --workspace <ID>`：必须是「未保存的表格  : 0」。不是 0（冻结之后又有人编辑了）就回到第 2 步。
+5. 从 `runtime.env` 去掉该 ID（全部结束就设 `off` 或删掉这一行），运行上面的重启命令。
+6. 运行 `sheet-live`（不带 `--workspace`：所有工作空间）：该工作空间不应再有未保存的表格。**若有**（第 4 步与重启之间又有人编辑）：
+   在任何人保存那张表之前，把 ID 写回 `runtime.env` 并重启 Docs——房间重新读入那份草稿，修改回到页面上——然后从第 1 步重来。
+   不要手工删除草稿。
+7. 在 `docs/quality/deployment.md` 记下试用结束（UTC 时间、正在运行的提交、第 3 步的备份目录）。
+
+**回滚代码**到不认识表格草稿的版本之前，另按 docs-sheet-live.md §9 末尾清掉表格草稿。
 
 ## 成员导入到期清理（CI-96）
 

@@ -21,6 +21,7 @@ from synwevo_core import oidc
 from synwevo_core.apps import Apps, bootstrap_docs_app
 from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
 from synwevo_core.store import Store, now
+from services.identity.tests.oauth_consent_helper import through_consent
 
 PW = "a-sufficiently-long-passphrase"
 REDIRECT = "http://docweave.localhost:8765/auth/callback"
@@ -64,7 +65,7 @@ def _authorize(c, **over):
          "code_challenge": ch, "code_challenge_method": "S256"}
     q.update(over)
     q = {k: val for k, val in q.items() if val is not None}
-    return c.get("/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False), v
+    return through_consent(c, c.get("/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False)), v
 
 
 def _params(resp) -> dict:

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from synwevo_core.oidc import Clients
 from synwevo_core.organizations import Organizations
 from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, Sessions
+from services.identity.tests.oauth_consent_helper import through_consent
 
 PW = 'Isolated device testing passphrase 2026!'
 REDIRECT = 'http://localhost/auth/callback'
@@ -70,9 +71,9 @@ def post(client, path, body=None, headers=None):
 
 def authorize(client):
     challenge = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest()).rstrip(b'=').decode()
-    response = client.get('/oidc/authorize', params={'client_id': 'review-web', 'redirect_uri': REDIRECT,
+    response = through_consent(client, client.get('/oidc/authorize', params={'client_id': 'review-web', 'redirect_uri': REDIRECT,
         'response_type': 'code', 'scope': 'openid offline_access', 'state': 'fixture', 'nonce': 'fixture',
-        'code_challenge': challenge, 'code_challenge_method': 'S256'}, follow_redirects=False)
+        'code_challenge': challenge, 'code_challenge_method': 'S256'}, follow_redirects=False))
     assert response.status_code == 303, response.text
     query = parse_qs(urlsplit(response.headers['location']).query)
     assert 'code' in query, query

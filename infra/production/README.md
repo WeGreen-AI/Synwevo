@@ -101,7 +101,9 @@ Never place a general SSH/root key, server root secret, database, or tunnel toke
 
 The host receiver and Compose are intentionally not overwritten by incoming releases. Infrastructure
 changes require an operator to review and install those files using the normal administrative SSH
-connection. Pinning npm/Python dependencies and Actions commits does not make apt/base image tags
+connection. Host-only settings live in `runtime.env` (and `smtp.env`), which such an install does not
+replace — a live-table trial's `SYNWEVO_SHEET_LIVE` among them; after installing, run the checks of the
+changed service (for Docs during a trial: `sheet-live`, below). Pinning npm/Python dependencies and Actions commits does not make apt/base image tags
 bit reproducible; their resolved image IDs are part of the deployment evidence.
 
 ## Backup, upgrade and rollback
@@ -122,6 +124,39 @@ last person leaves; SIGTERM then runs Synwevo Docs' shutdown hook, which writes 
 and waits for those closing writes. Never deploy or restart Docs with `kill`, `-t 0` or a shorter
 grace period: a live table keeps edits since its last draft write (at most a few seconds) only in
 memory and in the open pages (`infra/production/tests` checks the grace period and the stop order).
+
+### Live tables: starting and ending a trial (`SYNWEVO_SHEET_LIVE`)
+
+Live table editing (docs/platform/docs-sheet-live.md §9, §15) is off unless Docs' environment says
+otherwise: `off`, `on`, or a comma-separated list of workspace ids — the trial: only those workspaces'
+table templates are edited live, every other workspace keeps save-and-merge. It is set in the host-only
+`/opt/synwevo/config/runtime.env` (`SYNWEVO_SHEET_LIVE=<workspace id>`), never in `compose.yaml`: an
+operator installing a reviewed `compose.yaml` (the procedure above) would otherwise end a running trial
+silently, without the steps below, and a value under `environment` would override `runtime.env`. Docs
+reads it when a room opens, so a change takes a graceful restart of Docs —
+`docker compose -f /opt/synwevo/config/compose.yaml up -d --no-deps --force-recreate --wait docs` (the
+90 s grace period above; never `kill` or `-t 0`). A release does not change it. Its reading is checked
+with `docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwevo_docs.cli sheet-live </dev/null`
+(read-only; uvicorn's logging configuration does not show Docs' INFO lines, so the start-up log shows
+only a warning for a listed id that is no workspace).
+
+* **Start**: add the line to `runtime.env`, restart Docs as above, check that `sheet-live` reads
+  "试用：<id>（workspace name）" with no unknown id, open one table in that workspace (its top bar says
+  实时协同中 / Live), and record the start in `docs/quality/deployment.md` (workspace id, UTC time,
+  running commit, operator). While the trial runs, run `sheet-live` after every `docker compose up -d`
+  (a deployment, an installed `compose.yaml`, any restart); if it no longer reads the trial, put the id
+  back and restart Docs before anyone saves those tables.
+* **End (and roll back)** — in this order, or unsaved live edits are lost: ask the trial members to save
+  and close their live tables by an agreed time (a freeze); `sheet-live --workspace <id>` lists the
+  tables with unsaved live edits — have each saved as a version in the live editor, or discarded by
+  someone with the right (restore/undo with discard, or the machine API with `discard_live: true`) —
+  until it shows 0 (an id that is no workspace is refused, exit 2, never "0"); take a backup with the
+  one-off container of docs/operations.md §10 step 3 (the receiver's backup runs only inside a deploy);
+  run `sheet-live --workspace <id>` again right before the restart (0, or back to the listing); remove
+  the id and restart Docs; run `sheet-live` without `--workspace`: if that workspace still lists an
+  unsaved table (someone typed after the last check), put the id back and restart Docs before anyone
+  saves it, then start again from the freeze; record the end in `docs/quality/deployment.md`. Full
+  steps: docs/operations.md §10.
 
 A queued webhook waiting for retry can block deployment. Resolve it through authorized operations;
 the deployment script must not discard deliveries merely to pass. Backups are not pruned automatically.

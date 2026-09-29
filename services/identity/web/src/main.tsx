@@ -35,6 +35,7 @@ const Onboarding = lazyRoute(() => import("./pages/Onboarding"));
 const Organizations = lazyRoute(() => import("./pages/Organizations"));
 const ApiPlatform = lazyRoute(() => import("./pages/ApiPlatform"));
 const OwnerApiApprovals = lazyRoute(pick(() => import("./pages/ApiPlatform"), "OwnerApiApprovals"));
+const OAuthConsent = lazyRoute(() => import("./pages/OAuthConsent"));
 import "./account.css";
 import "@synwevo/ui/styles.css";
 
@@ -119,6 +120,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/account" element={<AccountCapabilityGate><RequireSession><Account /></RequireSession></AccountCapabilityGate>} />
               <Route path="/account/recovery" element={<AccountRecovery />} />
               <Route path="/account/api-approvals" element={<RequireSession><OwnerApiApprovals /></RequireSession>} />
+              <Route path="/oauth/consent" element={<RequireSession><OAuthConsent /></RequireSession>} />
               {/* The route exists for everyone; the server answers 404 to a non-administrator,
                   and the page renders that same answer. Access control is on the route, not on
                   whether a link is drawn. */}

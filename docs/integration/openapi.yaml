@@ -283,6 +283,74 @@ paths:
             - read
         - platformToken:
             - docweave.read
+    patch:
+      tags:
+        - v1
+      summary: 修改项目名称、归档状态或输出默认值（base_settings_rev 必填，不符则 409 stale_project）
+      operationId: patch_project_api_v1_projects__pid__patch
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Pid
+        - $ref: "#/components/parameters/XRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              title: Body
+              required:
+                - base_settings_rev
+              properties:
+                base_settings_rev:
+                  type: integer
+                  minimum: 0
+                  description: 读取项目时的 settings_rev
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                archived:
+                  type: boolean
+                  description: 归档只从默认列表隐藏，项目照常可用、可恢复
+                output:
+                  type: object
+                  description: 输出默认值：formats、naming、error_policy、layout
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
     delete:
       tags:
         - v1
@@ -2096,6 +2164,171 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
+  "/api/v1/templates/{tid}/fields/{field_id}":
+    patch:
+      tags:
+        - v1
+      summary: 修改一个字段的属性（产生一个新模板版本；base_head 必填，不符则 409 stale_template）
+      operationId: patch_field_api_v1_templates__tid__fields__field_id__patch
+      parameters:
+        - name: tid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Tid
+        - name: field_id
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Field Id
+        - $ref: "#/components/parameters/XRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              title: Body
+              required:
+                - base_head
+              properties:
+                base_head:
+                  type: integer
+                  minimum: 1
+                align: {}
+                binding: {}
+                color: {}
+                columns: {}
+                data_type: {}
+                default: {}
+                empty_policy: {}
+                font_size: {}
+                format: {}
+                keep_header_when_empty: {}
+                min_font_size: {}
+                min_row_scale: {}
+                mode: {}
+                name: {}
+                overflow: {}
+                placeholder: {}
+                remove_column: {}
+                repeat_header: {}
+                required: {}
+                separator: {}
+                shrink: {}
+                shrink_min: {}
+                valign: {}
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
+    delete:
+      tags:
+        - v1
+      summary: 删除一个字段（产生一个新模板版本；base_head 必填；可同时移除某项目里绑定它的映射）
+      operationId: delete_field_api_v1_templates__tid__fields__field_id__delete
+      parameters:
+        - name: tid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Tid
+        - name: field_id
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Field Id
+        - name: base_head
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            description: 读取模板时的 head；不符则 409 stale_template
+            title: Base Head
+          description: 读取模板时的 head；不符则 409 stale_template
+        - name: project_id
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: string
+                maxLength: 128
+              - type: "null"
+            description: 同时移除该项目中只绑定这个字段的映射
+            title: Project Id
+          description: 同时移除该项目中只绑定这个字段的映射
+        - name: cascade
+          in: query
+          required: false
+          schema:
+            type: boolean
+            description: project_id 给出时是否移除映射
+            default: true
+            title: Cascade
+          description: project_id 给出时是否移除映射
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
         5XX:
           $ref: "#/components/responses/ServerError"
       security:
@@ -4411,6 +4644,73 @@ paths:
             - write
         - platformToken:
             - docweave.write
+  "/api/v1/files/{fid}/ocr":
+    post:
+      tags:
+        - v1
+      summary: Ocr
+      description: "Recognise text on an accepted scanned PDF (by default every scanned or mixed page; at most 50 pages per call) or image, with the workbench's engine, synchronously. Results merge into the stored OCR (pages recognised again are replaced); a needs_ocr source becomes ready and its version advances. Repeating a call recognises the same pages again and stores the same words. A source still scanning, rejected or failed is refused (409 source_not_ready). 429 ocr_busy when the server's recognition slots stay full: wait retry_after seconds. After a client timeout, list_source_page_words reports source=ocr for pages already recognised."
+      operationId: run_source_ocr
+      parameters:
+        - name: fid
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            title: Fid
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceOcrResult"
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                pages:
+                  anyOf:
+                    - items:
+                        maximum: 1000000
+                        minimum: 0
+                        type: integer
+                      maxItems: 1000
+                      type: array
+                    - type: "null"
+                  title: Pages
+              title: SourceOcr
+              type: object
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
   "/api/v1/files/{fid}/representative":
     post:
       tags:
@@ -5924,6 +6224,39 @@ components:
         - proposals
         - warnings
       title: SourceLocator
+    SourceOcrResult:
+      properties:
+        recognized:
+          items:
+            type: integer
+          type: array
+          title: Recognized
+        pages:
+          items:
+            type: integer
+          type: array
+          title: Pages
+        words:
+          type: integer
+          title: Words
+        low_conf:
+          type: integer
+          title: Low Conf
+        status:
+          type: string
+          title: Status
+        version:
+          type: integer
+          title: Version
+      type: object
+      required:
+        - recognized
+        - pages
+        - words
+        - low_conf
+        - status
+        - version
+      title: SourceOcrResult
     SourceRecord:
       properties:
         index:
@@ -6458,11 +6791,11 @@ components:
             tenant: {}
             created_at: {}
             finished_at: {}
-          description: 任务摘要；测试事件为 null
+          description: 任务摘要；测试事件与文件事件为 null
         data:
           type: object
           additionalProperties: true
-          description: status、run_no、counts；被平台停止的任务带 halt_reason
+          description: 任务事件：status、run_no、counts；被平台停止的任务带 halt_reason。文件事件：file_id、project_id、status、reason（安全检查结论）、version
       additionalProperties: true
     EditorNode:
       type: object
@@ -7527,6 +7860,306 @@ webhooks:
       summary: job.cancelled 事件回调
       description: 默认投递的事件。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
       operationId: webhook_job_cancelled
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  file.ready:
+    post:
+      summary: file.ready 事件回调
+      description: 订阅时在 events 中列出才会投递。来源文件的接纳结论，与状态变化同一事务写入；job 为 null，data 只有 file_id、project_id、status、reason、version，文件名与内容请用凭据另行读取。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_file_ready
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  file.needs_ocr:
+    post:
+      summary: file.needs_ocr 事件回调
+      description: 订阅时在 events 中列出才会投递。来源文件的接纳结论，与状态变化同一事务写入；job 为 null，data 只有 file_id、project_id、status、reason、version，文件名与内容请用凭据另行读取。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_file_needs_ocr
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  file.rejected:
+    post:
+      summary: file.rejected 事件回调
+      description: 订阅时在 events 中列出才会投递。来源文件的接纳结论，与状态变化同一事务写入；job 为 null，data 只有 file_id、project_id、status、reason、version，文件名与内容请用凭据另行读取。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_file_rejected
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  file.failed:
+    post:
+      summary: file.failed 事件回调
+      description: 订阅时在 events 中列出才会投递。来源文件的接纳结论，与状态变化同一事务写入；job 为 null，data 只有 file_id、project_id、status、reason、version，文件名与内容请用凭据另行读取。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_file_failed
       parameters:
         - name: webhook-id
           in: header

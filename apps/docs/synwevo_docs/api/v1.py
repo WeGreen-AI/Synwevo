@@ -328,7 +328,47 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                        "head": d["head"], "pinned": bool(pinned), "fields": len(slots or [])}
         return {"id": p["id"], "name": p["name"], "created_at": p["created_at"], "updated_at": p["updated_at"],
                 "rule": p.get("record_rule") or {}, "output": p.get("output") or {}, "mapping_rev": p["mapping_rev"],
+                "settings_rev": int(p.get("settings_rev") or 0), "archived_at": p.get("archived_at"),
                 "template": tpl, "files": app_.list_sources(pid), "mappings": len(app_.get_mappings(pid)["mappings"])}
+
+    # Renaming, archiving and output defaults (API-2). The same service as the workbench's project
+    # page; base_settings_rev is required here (it is optional there for old browser tabs), so a
+    # machine client never overwrites a settings change it has not seen.
+    @r.patch("/projects/{pid}", summary="修改项目名称、归档状态或输出默认值（base_settings_rev 必填，不符则 409 stale_project）",
+             openapi_extra=_ox("write", requestBody={"content": {"application/json": {"schema": {
+                 "type": "object", "required": ["base_settings_rev"], "additionalProperties": False, "properties": {
+                     "base_settings_rev": {"type": "integer", "minimum": 0, "description": "读取项目时的 settings_rev"},
+                     "name": {"type": "string", "minLength": 1, "maxLength": 200},
+                     "archived": {"type": "boolean", "description": "归档只从默认列表隐藏，项目照常可用、可恢复"},
+                     "output": {"type": "object", "description": "输出默认值：formats、naming、error_policy、layout"}}}}}}))
+    def patch_project(request: Request, pid: str, body: dict = Body(...)):
+        scope(request, "write")
+        unknown = sorted(set(body) - {"base_settings_rev", "name", "archived", "output"})
+        if unknown:
+            raise ServiceError(400, "invalid", f"不支持修改的项目属性：{unknown[0]}", {"field": unknown[0]})
+        base = body.get("base_settings_rev")
+        if type(base) is not int or base < 0:
+            raise ServiceError(400, "invalid", "base_settings_rev 必须是读取项目时的 settings_rev（非负整数）",
+                               {"field": "base_settings_rev"})
+        values: dict = {"base_settings_rev": base}
+        if "name" in body:
+            name = body["name"]
+            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 200:
+                raise ServiceError(400, "invalid", "项目名称必须是 1 至 200 个字", {"field": "name"})
+            values["name"] = name.strip()
+        if "archived" in body:
+            if type(body["archived"]) is not bool:
+                raise ServiceError(400, "invalid", "archived 必须是布尔值", {"field": "archived"})
+            values["archived"] = body["archived"]
+        if "output" in body:
+            values["output"] = body["output"]
+        if len(values) == 1:
+            raise ServiceError(400, "invalid", "没有要修改的属性", {"field": "body"})
+        # One write transaction: the revision check and the write are one decision, so two clients
+        # that read the same revision cannot both succeed.
+        with store.tx():
+            app_.update_project(pid, values)
+        return get_project(request, pid)
 
     @r.delete("/projects/{pid}", summary="删除项目", openapi_extra=_ox("admin"))
     def delete_project(request: Request, pid: str):
@@ -806,6 +846,57 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                         lambda: D.import_template_fields(app_, tid, body),
                         replay_check=lambda out: app_.get_template(tid), status=200)
 
+    # Editing and removing one field (API-2). Both name the template head they read: a newer head is
+    # 409 stale_template with the current head, so a retry after a lost response cannot change a
+    # version twice and two editors cannot overwrite each other.
+    FIELD_EDITABLE = {"name", "required", "data_type", "format", "default", "font_size", "min_font_size", "align",
+                      "valign", "empty_policy", "placeholder", "repeat_header", "keep_header_when_empty", "binding",
+                      "mode", "columns", "overflow", "min_row_scale", "color", "separator", "remove_column", "shrink",
+                      "shrink_min"}
+
+    def _base_head(value) -> int:
+        if type(value) is not int or value < 1:
+            raise ServiceError(400, "invalid", "base_head 必须是读取模板时的 head（正整数）", {"field": "base_head"})
+        return value
+
+    def _field_result(tid: str, d: dict) -> dict:
+        d = app_.template_detail(tid)
+        return {"id": d["id"], "name": d["name"], "format": d["format"], "kind": d["kind"], "head": d["head"],
+                "version": d["version"]["no"], "fields": d["version"]["slots"]}
+
+    @r.patch("/templates/{tid}/fields/{field_id}",
+             summary="修改一个字段的属性（产生一个新模板版本；base_head 必填，不符则 409 stale_template）",
+             openapi_extra=_ox("write", requestBody={"content": {"application/json": {"schema": {
+                 "type": "object", "required": ["base_head"], "additionalProperties": True,
+                 "properties": {"base_head": {"type": "integer", "minimum": 1},
+                                **{k: {} for k in sorted(FIELD_EDITABLE)}}}}}}))
+    def patch_field(request: Request, tid: str, field_id: str, body: dict = Body(...)):
+        p = scope(request, "write")
+        base = _base_head(body.get("base_head"))
+        values = {k: v for k, v in body.items() if k != "base_head"}
+        unknown = sorted(set(values) - FIELD_EDITABLE)
+        if unknown:
+            raise ServiceError(400, "invalid", f"不可修改的字段属性：{unknown[0]}", {"field": unknown[0]})
+        if not values:
+            raise ServiceError(400, "invalid", "没有要修改的属性", {"field": "body"})
+        with request.app.state.collab.acting(tid, (p or {}).get("user_id")):
+            d = app_.update_slot(tid, field_id, values, expect_head=base)
+        return _field_result(tid, d)
+
+    @r.delete("/templates/{tid}/fields/{field_id}",
+              summary="删除一个字段（产生一个新模板版本；base_head 必填；可同时移除某项目里绑定它的映射）",
+              openapi_extra=_ox("write"))
+    def delete_field(request: Request, tid: str, field_id: str,
+                     base_head: int = Query(..., ge=1, description="读取模板时的 head；不符则 409 stale_template"),
+                     project_id: str | None = Query(None, max_length=128, description="同时移除该项目中只绑定这个字段的映射"),
+                     cascade: bool = Query(True, description="project_id 给出时是否移除映射")):
+        p = scope(request, "write")
+        if project_id:
+            app_.get_project(project_id)                     # the project is the caller's, or 404
+        with request.app.state.collab.acting(tid, (p or {}).get("user_id")):
+            d = app_.remove_slot(tid, field_id, project_id, cascade, expect_head=base_head)
+        return {**_field_result(tid, d), "removed_mappings": d.get("removed_mappings", [])}
+
     @r.get("/templates/{tid}/content", summary="下载模板文件（原始或工作副本）",
            openapi_extra=_ox("export", binary=("application/octet-stream",)))
     def template_content(request: Request, tid: str,
@@ -1067,6 +1158,8 @@ def _job_out(j: dict) -> dict:
            "halt_reason": j.get("halt_reason"),
            # Who asked for it, as a secret-free label; the stored descriptor itself stays internal.
            "principal": j.get("submitted_by"),
+           # The X-Request-ID of the request that submitted it (the call log and job.created carry it too).
+           "request_id": j.get("request_id"),
            "counts": {"samples": counts.get("total", 0), "documents": counts.get("success", 0), "files": counts.get("files", 0),
                       "failed": counts.get("failed", 0), "skipped": counts.get("skipped", 0), "cancelled": counts.get("cancelled", 0),
                       "pending": counts.get("pending", 0), "running": counts.get("running", 0),
@@ -1322,9 +1415,10 @@ def _components() -> dict:
         "version": {"type": "integer", "example": 1},
         "occurred_at": {"type": "number", "description": "Unix 秒"},
         "tenant": {"type": "string", "description": "工作空间 id"},
-        "job": {**job_ref, "type": ["object", "null"], "description": "任务摘要；测试事件为 null"},
+        "job": {**job_ref, "type": ["object", "null"], "description": "任务摘要；测试事件与文件事件为 null"},
         "data": {"type": "object", "additionalProperties": True,
-                 "description": "status、run_no、counts；被平台停止的任务带 halt_reason"}},
+                 "description": "任务事件：status、run_no、counts；被平台停止的任务带 halt_reason。"
+                                "文件事件：file_id、project_id、status、reason（安全检查结论）、version"}},
         "additionalProperties": True}
     s = {"type": "string"}
     headers = {
@@ -1400,7 +1494,9 @@ def _webhooks() -> dict:
         out[etype] = {"post": {
             "summary": f"{etype} 事件回调",
             "description": ("测试事件：订阅的 ping 或 CLI 的测试发送，job 为 null。" if etype == W.PING_EVENT else
-                            ("默认投递的事件。" if etype in W.DEFAULT_EVENTS else "订阅时在 events 中列出才会投递。"))
+                            ("默认投递的事件。" if etype in W.DEFAULT_EVENTS else "订阅时在 events 中列出才会投递。")
+                            + ("来源文件的接纳结论，与状态变化同一事务写入；job 为 null，data 只有 file_id、project_id、"
+                               "status、reason、version，文件名与内容请用凭据另行读取。" if etype.startswith("file.") else ""))
                            + "接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。",
             "operationId": "webhook_" + etype.replace(".", "_"),
             "parameters": params,

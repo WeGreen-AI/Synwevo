@@ -72,6 +72,7 @@ KINDS = {
     "invitation_revoked",       # {invitation_id}
     "api_key_superseded",       # {key_id} — a rotated-out key; the successor is not recreated
     UNCLAIM_KIND,               # {workspace_id, label_restored} — the assignment of legacy data undone
+    "consent_withdrawn",        # {user_id, client_id, workspace_id?} — the consent and that client's tokens
 } | ORGANIZATION_KINDS
 
 _REQUIRED = {
@@ -87,6 +88,7 @@ _REQUIRED = {
     "passkey_removed": ("credential_id",), "workspace_app_disabled": ("workspace_id", "app_id"),
     "invitation_revoked": ("invitation_id",), "tokens_revoked": (),
     UNCLAIM_KIND: ("workspace_id",),
+    "consent_withdrawn": ("user_id", "client_id"),
     **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
     "organization_member_removed": ("event_id", "organization_id", "user_id"),
     "organization_role_changed": ("event_id", "organization_id", "user_id", "role"),
@@ -353,6 +355,15 @@ def apply(store: Store, entries: list[dict]) -> dict:
                               (t, e.get("client_id"))).rowcount
                 c.execute("UPDATE oauth_tokens SET revoked_at=?, revoked_reason='client_disabled' "
                           "WHERE client_id=? AND revoked_at IS NULL", (t, e.get("client_id")))
+            elif k == "consent_withdrawn":
+                # A restored backup must not bring back a consent the person withdrew afterwards: it
+                # would let the client's next authorization skip the consent page.
+                ws = e.get("workspace_id") or ""
+                n = c.execute("UPDATE oauth_consents SET revoked_at=?, revoked_reason='journal_replay', updated_at=? "
+                              "WHERE user_id=? AND client_id=? AND workspace_id=? AND revoked_at IS NULL AND granted_at<=?",
+                              (t, t, e["user_id"], e["client_id"], ws, e["at"])).rowcount
+                c.execute("UPDATE oauth_tokens SET revoked_at=?, revoked_reason='journal_replay' WHERE user_id=? AND client_id=? "
+                          "AND COALESCE(workspace_id,'')=? AND revoked_at IS NULL", (t, e["user_id"], e["client_id"], ws))
             elif k == "client_secret_rotated":
                 n = c.execute("UPDATE oauth_clients SET secret_hash=? WHERE client_id=?",
                               (e.get("secret_hash"), e.get("client_id"))).rowcount

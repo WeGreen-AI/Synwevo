@@ -307,11 +307,12 @@ RATELIMIT_POLICY_NAME = "key"
 
 
 class RateBuckets:
-    """One token bucket per credential, per process.
+    """One token bucket per key, per process — for limits that are about one live connection
+    (the live-editing rooms pace a socket's frames with it).
 
-    Per process on purpose and documented as such: with N worker processes the effective limit
-    is N × the configured rate. Sharing the bucket would need a shared store written on every
-    request, which is a cost this deployment (one worker) does not need to pay.
+    The machine API no longer uses it: request rate there is the layered policy administrators
+    edit, counted in the shared store so N processes do not mean N × the limit
+    (`synwevo_core.api_quotas.RateGate`, API-1).
 
     The same arithmetic as `synwevo_core.auth.rate_limiter`, but it also reports how much is
     left, so every response can tell the client how to pace itself instead of only the 429 that
@@ -367,6 +368,34 @@ class RateBuckets:
         name = self.name
         return {"RateLimit-Policy": f'"{name}";q={self.cap};w={self.WINDOW_S}',
                 "RateLimit": f'"{name}";r={remaining};t={reset}'}
+
+
+def _route_template(request: Request) -> str:
+    """The /api/v1 route template a request *would* have reached, for requests refused before
+    routing (rate limit, credential checks), so their call record names the operation rather than
+    "<unmatched>". Only a template is ever returned — never the request's own path, which can carry
+    names a caller chose. The flattened route list is built once per application."""
+    from starlette.routing import Match
+    app = request.app
+    routes = getattr(app.state, "v1_route_index", None)
+    if routes is None:
+        routes, pending = [], list(getattr(app, "routes", ()))
+        while pending:
+            route = pending.pop(0)
+            inner = getattr(route, "original_router", None)          # an included router (FastAPI ≥ 0.140)
+            if inner is not None:
+                pending[:0] = list(getattr(inner, "routes", ()))
+            elif str(getattr(route, "path", "")).startswith("/api/v1/") and hasattr(route, "matches"):
+                routes.append(route)
+        app.state.v1_route_index = routes
+    for route in routes:
+        try:
+            match, _ = route.matches(request.scope)
+        except Exception:  # noqa: BLE001 - a route that cannot judge this scope simply does not match
+            continue
+        if match == Match.FULL:
+            return route.path
+    return ""
 
 
 def app_access_refusal(store: Store, identity: Identity, user_id: str, workspace_id: str,
@@ -552,7 +581,8 @@ def build_platform(data_dir_arg: str | None = None) -> Platform:
 
     def audit(request: Request, action: str, *, actor_id: str | None = None, actor_kind: str = "user",
               workspace_id: str | None = None, object_kind: str | None = None,
-              object_id: str | None = None, result: str = "ok", meta: dict | None = None) -> None:
+              object_id: str | None = None, result: str = "ok", meta: dict | None = None,
+              workspace_given: bool = False) -> None:
         """Append a security event.
 
         Metadata only — never a password, token, TOTP seed, recovery code or document content.
@@ -564,7 +594,10 @@ def build_platform(data_dir_arg: str | None = None) -> Platform:
             "INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,"
             "object_id,result,request_id,ip,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (new_id("ae"), time.time(), actor_kind, actor_id,
-             workspace_id or getattr(getattr(request, "state", None), "workspace_id", None), action, object_kind, object_id,
+             # workspace_given: the caller named the target (possibly none); do not substitute the
+             # actor's own session workspace, which would attribute a platform action to it.
+             workspace_id if workspace_given else (workspace_id or getattr(getattr(request, "state", None), "workspace_id", None)),
+             action, object_kind, object_id,
              result, getattr(getattr(request, "state", None), "request_id", None),
              # Background runners (mail, imports) audit with request=None: no request id, no address.
              (client_ip(request) or None) if request is not None else None,
@@ -603,11 +636,12 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     store, auth, identity, sessions, machine = plat.store, plat.auth, plat.identity, plat.sessions, plat.machine
     api.state.role = validate_role(role or env.get("ROLE"))
     this_role_static = api.state.role
-    # Read when the application is built, not when this module was first imported, so a
-    # process (or a test) that sets the rate before building an app gets that rate.
-    rate_per_min = int(env.get("API_RATE_PER_MIN", str(API_RATE_PER_MIN)))
-    buckets = RateBuckets(rate_per_min)
-    api.state.rate_buckets = buckets
+    # Request rate for machine callers: per credential and per workspace, from the layered policy
+    # administrators edit (api_quotas), shared by every process through the store. The deployment
+    # defaults (SYNWEVO_API_RATE_PER_MIN, SYNWEVO_API_WORKSPACE_RATE_PER_MIN) are read per request.
+    from .api_quotas import RateGate
+    rate_gate = RateGate(store)
+    api.state.rate_gate = rate_gate
 
     def _error_body(request: Request, code: str, message: str, detail: dict | None):
         rid = getattr(request.state, "request_id", "")
@@ -629,6 +663,9 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         /api/v1 callers that send `Accept: application/problem+json` get RFC 9457 problem
         details; everyone else gets the envelope they were written against, byte for byte.
         """
+        # The refusal's code travels with the request so the call record can say *why* (a
+        # diagnosis by request ID needs "rate_limited" or "queue_full", not only "429").
+        request.state.error_code = code
         if request.url.path.startswith("/api/v1") and wants_problem(request):
             return JSONResponse(problem_body(getattr(request.state, "request_id", ""), status, code,
                                              message, detail),
@@ -639,9 +676,9 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     def _v1_extra_headers(request: Request) -> dict:
         """Headers every /api/v1 response carries, including ones built outside the gate."""
         out = {"X-Request-ID": getattr(request.state, "request_id", "") or ""}
-        left = getattr(request.state, "ratelimit_left", None)
-        if left is not None and request.url.path.startswith("/api/v1"):
-            out.update(buckets.headers(left))
+        decision = getattr(request.state, "ratelimit", None)
+        if decision is not None and request.url.path.startswith("/api/v1"):
+            out.update(decision.headers())
         return out
 
     @api.exception_handler(ServiceError)
@@ -1007,7 +1044,8 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         started = time.perf_counter()
         rid = (request.headers.get("X-Request-ID") or "")[:64] or secrets.token_hex(8)
         request.state.request_id = "".join(ch for ch in rid if ch.isalnum() or ch in "-_") or secrets.token_hex(8)
-        request.state.ratelimit_left = None
+        request.state.ratelimit = None
+        request.state.error_code = None
         path = request.url.path
         token = None
 
@@ -1018,23 +1056,24 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             apply_security_headers(request, resp)
             if path.startswith("/api/"):
                 resp.headers.setdefault("Cache-Control", "no-store")
-            if path.startswith(("/api/", "/auth/", "/oidc/", "/account", "/admin", "/organizations", "/messages", "/c/")) or path in (
+            if path.startswith(("/api/", "/auth/", "/oidc/", "/oauth/", "/account", "/admin", "/organizations", "/messages", "/c/")) or path in (
                     "/login", "/register", "/invite", "/verify-email", "/forgot-password", "/reset-password", "/onboarding", "/logged-out"):
                 resp.headers.setdefault("Cache-Control", "no-store")
                 resp.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
-            if request.state.ratelimit_left is not None and path.startswith("/api/v1"):
+            if request.state.ratelimit is not None and path.startswith("/api/v1"):
                 # On every response to an authenticated /api/v1 call, success or not, so a
                 # client can pace itself before it is refused rather than only after.
-                for k, v in buckets.headers(request.state.ratelimit_left).items():
+                for k, v in request.state.ratelimit.headers().items():
                     resp.headers[k] = v
             if path.startswith("/api/v1"):
                 from .api_platform import record_call
-                matched = getattr(request.scope.get("route"), "path", "")
+                matched = getattr(request.scope.get("route"), "path", "") or _route_template(request)
                 template = matched if matched.startswith("/api/v1/") else "/api/v1/<unmatched>"
                 try:
                     await run_in_threadpool(record_call, store, getattr(request.state, "principal", None),
                                             request.method, template, resp.status_code,
-                                            (time.perf_counter() - started) * 1000, request.state.request_id)
+                                            (time.perf_counter() - started) * 1000, request.state.request_id,
+                                            request.state.error_code if resp.status_code >= 400 else None)
                 except Exception:
                     # Never change a completed business response or expose payloads in telemetry.
                     import logging
@@ -1060,11 +1099,15 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                     # workspace through set_tenant's fallback.
                     raise ServiceError(403, "no_workspace", "该凭据没有绑定工作空间，不能调用业务接口")
                 request.state.principal = principal
-                ok, left, wait = buckets.take(principal["key_id"])
-                request.state.ratelimit_left = left
-                if not ok:
-                    raise ServiceError(429, "rate_limited", f"请求过于频繁（限制 {buckets.cap} 次/分钟）",
-                                       {"retry_after": wait})
+                decision = await run_in_threadpool(rate_gate.take, principal)
+                request.state.ratelimit = decision
+                if not decision.allowed:
+                    lim = decision.refused_by
+                    scope = "credential" if lim.name == "key" else "workspace"
+                    where = "此凭据" if scope == "credential" else "本工作空间的全部机器凭据合计"
+                    raise ServiceError(429, "rate_limited", f"请求过于频繁：{where}限制 {lim.cap} 次/分钟",
+                                       {"retry_after": decision.retry_after, "limit_scope": scope,
+                                        "limit": lim.cap, "window_s": 60, "policy_source": lim.source})
                 token = set_tenant(principal["tenant"])
             else:
                 # Everything that is not a key-authenticated /api/v1 route goes through the UI
@@ -1110,15 +1153,17 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             return await finish(await _svc_err(request, e))
         # Who acts, for attribution: the session's person, or the person a delegated machine
         # token acts for; None for service accounts and anonymous paths.
-        from .context import reset_actor, set_actor
+        from .context import reset_actor, reset_request_id, set_actor, set_request_id
         _user = getattr(request.state, "user", None)
         _principal = getattr(request.state, "principal", None)
         actor_token = set_actor((_user or {}).get("id") or (_principal or {}).get("user_id"))
+        rid_token = set_request_id(request.state.request_id)
         try:
             resp = await call_next(request)
         except Exception as exc:
             resp = await _unexpected(request, exc)
         finally:
+            reset_request_id(rid_token)
             reset_actor(actor_token)
             if token is not None:
                 try:

@@ -6,6 +6,7 @@ import io
 import hashlib
 import time
 import json
+import threading
 
 from synwevo_core.context import tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
@@ -174,11 +175,27 @@ class Views:
         raise ServiceError(400, "no_words", "该文件没有页面文字层")
 
     MAX_OCR_PAGES = 50
+    #: Recognition runs at most this many at a time in a process, for the workbench and the machine
+    #: API alike: a page is seconds of CPU, and one caller's fifty-page runs must not hold every
+    #: worker thread. A caller that finds no slot within OCR_WAIT_S is told to come back.
+    OCR_CONCURRENCY = 2
+    OCR_WAIT_S = 5.0
+    OCR_RETRY_AFTER_S = 15
+    _ocr_slots = threading.BoundedSemaphore(OCR_CONCURRENCY)
 
     def run_ocr(self, sid: str, pages: list[int] | None = None) -> dict:
+        r = self.app.get_source(sid, raw=True)
+        if not self._ocr_slots.acquire(timeout=self.OCR_WAIT_S):
+            raise ServiceError(429, "ocr_busy", "服务器正在识别其他文件；请稍后再试",
+                               {"retry_after": self.OCR_RETRY_AFTER_S})
+        try:
+            return self._run_ocr(sid, r, pages)
+        finally:
+            self._ocr_slots.release()
+
+    def _run_ocr(self, sid: str, r: dict, pages: list[int] | None) -> dict:
         from .engine.images import to_png
         from .engine.ocr import OcrError, ocr_png
-        r = self.app.get_source(sid, raw=True)
         doc = self.app._doc_from_row(r)
         done: dict[str, dict] = {}
         try:
@@ -224,7 +241,8 @@ class Views:
                       (json.dumps(results, ensure_ascii=False), status, cur["version"] + 1, sid))
         self.store.bump_project(r["project_id"])
         return {"pages": sorted(int(k) for k in results), "words": sum(len(v["words"]) for v in results.values()),
-                "low_conf": sum(1 for v in results.values() for w in v["words"] if w["conf"] < 60)}
+                "low_conf": sum(1 for v in results.values() for w in v["words"] if w["conf"] < 60),
+                "recognized": sorted(int(k) for k in done), "status": status, "version": cur["version"] + 1}
 
     def set_correction(self, sid: str, mapping_id: str, value: str | None, confirmed: bool = True) -> dict:
         r = self.app.get_source(sid, raw=True)

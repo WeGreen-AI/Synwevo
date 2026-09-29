@@ -8,12 +8,16 @@ import { ApprovalsPanel } from './apiplatform/Approvals';
 import { Credentials } from './apiplatform/Credentials';
 import { Requests } from './apiplatform/Requests';
 import { Calls, Operations } from './apiplatform/Observability';
+import { Quotas } from './apiplatform/Quotas';
+import { WebhookOps } from './apiplatform/WebhookOps';
+import { AuditPanel, JobsPanel } from './apiplatform/JobsAudit';
 import { BASE, Confirm, DataState, Secret, type Action, type Outcome } from './apiplatform/common';
 import './api-platform.messages';
 import './apiplatform/api-platform.css';
 
 type Overview = { permission: string; adapter_available: boolean; resource: string; scopes: string[];
   pending_approvals: number; calls: { calls: number; errors: number; mean_duration_ms: number | null };
+  webhooks: { pending: number; failing: number } | null;
   sdk_links: { name: string; url: string }[] };
 
 export default function ApiPlatform() {
@@ -37,7 +41,8 @@ export default function ApiPlatform() {
   };
   const act = (action: Action) => setAction(action);
   const tabs: [string, string][] = [['approvals', t('授权审批')], ['credentials', t('服务凭据')],
-    ['webhooks', t('Webhook')], ['operations', t('接口契约')], ['calls', t('调用记录')], ['debug', t('请求调试')]];
+    ['quotas', t('流量与配额')], ['webhooks', t('Webhook')], ['jobs', t('生成任务')], ['operations', t('接口契约')], ['calls', t('调用记录')],
+    ['audit', t('审计')], ['debug', t('请求调试')]];
   return <div className="app">
     <Topbar title={t('API 管理平台')} />
     <main className="api-platform-main"><div className="acct-page col gap16">
@@ -49,13 +54,18 @@ export default function ApiPlatform() {
           <Stat label={t('失败调用')} value={t('{count} 次', { count: load.data.calls.errors })} />
           <Stat label={t('平均耗时')} value={load.data.calls.mean_duration_ms === null ? t('暂无调用') : t('{count} 毫秒', { count: Math.round(load.data.calls.mean_duration_ms) })} />
           <Stat label={t('待审批')} value={t('{count} 条', { count: load.data.pending_approvals })} />
+          {load.data.webhooks && <Stat label={t('事件积压')} value={t('{count} 次投递', { count: load.data.webhooks.pending })} />}
+          {load.data.webhooks && <Stat label={t('持续失败的订阅')} value={t('{count} 个', { count: load.data.webhooks.failing })} />}
         </section>
         {!load.data.adapter_available && <p className="notice warn">{t('此部署未连接 Synwevo Docs，接口契约、Webhook 和请求调试暂不可用。')}</p>}
         <nav className="row gap8 wrap" aria-label={t('API 管理导航')}>{tabs.map(([id, label]) => <button key={id} className={`btn ${tab === id ? 'primary' : ''}`} aria-current={tab === id ? 'page' : undefined}
           onClick={() => setTab(id)}>{label}</button>)}</nav>
         {tab === 'approvals' && <ApprovalsPanel act={act} scopes={load.data.scopes} resource={load.data.resource} revision={revision} />}
         {tab === 'credentials' && <Credentials act={act} revision={revision} />}
-        {tab === 'webhooks' && <Requests key="webhooks" act={act} webhooks />}
+        {tab === 'quotas' && <Quotas act={act} revision={revision} />}
+        {tab === 'webhooks' && <><WebhookOps act={act} revision={revision} /><Requests key="webhooks" act={act} webhooks /></>}
+        {tab === 'jobs' && <JobsPanel act={act} revision={revision} />}
+        {tab === 'audit' && <AuditPanel />}
         {tab === 'operations' && <Operations />}
         {tab === 'calls' && <Calls />}
         {tab === 'debug' && <Requests key="debug" act={act} webhooks={false} />}

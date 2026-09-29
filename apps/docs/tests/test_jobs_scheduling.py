@@ -221,6 +221,30 @@ def test_workspace_active_job_limit(api, fixtures, monkeypatch):
     assert api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"]}).status_code == 429
 
 
+def test_a_workspace_policy_replaces_the_deployment_limit(api, fixtures, monkeypatch):
+    """API-1: the capacity an administrator sets for a workspace is what admission enforces, on the
+    browser route as on the machine API, and the refusal says which layer decided it."""
+    from synwevo_core.api_quotas import Policies
+    monkeypatch.setenv("SYNWEVO_DOCS_MAX_ACTIVE_JOBS", "5")
+    store = api.c.app_state.app.store
+    if not store.one("SELECT 1 FROM workspaces WHERE id='default'"):
+        store.insert("workspaces", {"id": "default", "name": "fixture workspace", "kind": "personal",   # fixture row
+                                    "status": "active", "created_at": 0, "updated_at": 0})
+    Policies(store).change("workspace", "default", {"active_jobs": 1, "base_version": 0},
+                           actor_id="u_fixture", reason="fixture: one job at a time")
+    pid = _project(api, fixtures, rows=2)
+    _manual(api)
+    api.ok(api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"]}))
+    r = api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"]})
+    assert r.status_code == 429 and r.json()["error"] == "queue_full"
+    assert r.json()["detail"]["limit"] == 1 and r.json()["detail"]["policy_source"] == "workspace"
+    assert api.c.app_state.jobs.usage("default")["limits"]["max_active_jobs"] == 1
+    # Clearing the override falls back to the deployment default (5): the next job is admitted.
+    Policies(store).change("workspace", "default", {"active_jobs": None, "base_version": 1},
+                           actor_id="u_fixture", reason="fixture: back to the default")
+    api.ok(api.c.post(f"/api/projects/{pid}/jobs", json={"formats": ["docx"]}))
+
+
 def test_the_limit_cannot_be_raced(api, fixtures, monkeypatch):
     monkeypatch.setenv("SYNWEVO_DOCS_MAX_ACTIVE_JOBS", "3")
     pid = _project(api, fixtures, rows=2)

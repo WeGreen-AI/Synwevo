@@ -498,8 +498,13 @@ class Grants:
             raise ServiceError(400, "invalid_grant", "刷新令牌不属于该客户端")
         if row.get("revoked_at"):
             n = self.revoke_family(row["family_id"] or row["id"], "refresh_replayed")
-            raise ServiceError(400, "invalid_grant",
-                               f"刷新令牌已被使用过，该授权的全部令牌已撤销（{n} 个）")
+            if row.get("revoked_reason") == "rotated":
+                # Spent by an earlier refresh: whoever presents it now holds a leaked copy.
+                raise ServiceError(400, "invalid_grant",
+                                   f"刷新令牌已被使用过，该授权的全部令牌已撤销（{n} 个）")
+            # Revoked for another reason (the person withdrew consent, signed out, an administrator
+            # acted): say so, rather than calling the holder's own token a replay.
+            raise ServiceError(400, "invalid_grant", "该授权已被撤销，请重新授权")
         if (row["refresh_expires_at"] or 0) <= now():
             raise ServiceError(400, "invalid_grant", "刷新令牌已过期")
 
@@ -783,13 +788,16 @@ def discovery() -> dict:
         "userinfo_endpoint": f"{iss}/oidc/userinfo",
         "jwks_uri": f"{iss}/oidc/jwks.json",
         "revocation_endpoint": f"{iss}/oidc/revoke",
+        "introspection_endpoint": f"{iss}/oidc/introspect",
+        "introspection_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
+        "revocation_endpoint_auth_methods_supported": ["none", "client_secret_basic", "client_secret_post"],
         "end_session_endpoint": f"{iss}/oidc/logout",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": [ALG],
         "scopes_supported": list(SUPPORTED_SCOPES),
-        "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
+        "token_endpoint_auth_methods_supported": ["none", "client_secret_basic", "client_secret_post"],
         "code_challenge_methods_supported": ["S256"],
         "claims_supported": ["sub", "iss", "aud", "exp", "iat", "auth_time", "amr", "sid",
                              "email", "email_verified", "name", "nonce", "at_hash"],

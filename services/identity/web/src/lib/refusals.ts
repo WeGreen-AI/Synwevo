@@ -101,6 +101,11 @@ export const REFUSAL_TEMPLATES: Record<string, ErrorTemplate> = {
   too_many_roles: (d) => { const n = positive(d.limit); return n == null ? null : ["一个组织最多 {n} 个自定义角色", { n }] as const; },
   // the fixed "8 至 500 个字" sentences are catalogued; only the one quoting the floor is worded here
   missing_reason: (d) => { const n = positive(d.min); return n == null ? null : ["请写明理由（至少 {n} 个字），它会写入审计记录", { n }] as const; },
+  // API-1 traffic and capacity policies: the range depends on the field
+  invalid_limit: (d) => {
+    const min = positive(d.min), max = positive(d.max);
+    return min == null || max == null ? null : ["限制值必须是 {min} 至 {max} 之间的整数，留空表示继承", { min, max }] as const;
+  },
 };
 
 /** Codes whose several server sentences share one meaning, or whose sentence names something the
