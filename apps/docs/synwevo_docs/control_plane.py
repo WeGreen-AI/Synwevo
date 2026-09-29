@@ -6,9 +6,11 @@ There is no operator principal and no administrator-cookie fallback.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-import asyncio
+import time
+import urllib.parse
 
 import httpx
 
@@ -40,12 +42,78 @@ MAX_RESPONSE_BYTES = 1024 * 1024
 DISPATCH_TIMEOUT_SECONDS = 15
 
 
+def _origin(url: str) -> str:
+    """scheme://host[:port] of a receiver URL. Paths and queries are withheld from the platform view:
+    a receiver's path can carry its own token, and an administrator does not need it to see health."""
+    parts = urllib.parse.urlsplit(url or "")
+    return f"{parts.scheme}://{parts.hostname or ''}{f':{parts.port}' if parts.port else ''}" if parts.scheme else ""
+
+
 class DocsControlPlane:
     def __init__(self, api):
         self.api = api
 
     def contract(self) -> dict:
         return openapi_subset(self.api, issuer=issuer())
+
+    # ------------------------------------------------------------------ webhook operations (API-6)
+    # A platform view of delivery health across workspaces: metadata only — no event payloads, no
+    # receiver paths, no signing secrets — and one protective action (pause). Resuming, redelivering
+    # and editing stay with the workspace's own credential, as before.
+    def webhook_overview(self, *, workspace_id: str = "", status: str = "", failing: bool = False,
+                         limit: int = 25, offset: int = 0) -> dict:
+        store = self.api.state.app.store
+        since = time.time() - 7 * 86400
+        where, args = ["s.deleted_at IS NULL"], []
+        if workspace_id:
+            where.append("s.tenant=?"); args.append(workspace_id)
+        if status:
+            where.append("s.status=?"); args.append(status)
+        if failing:
+            where.append("s.consecutive_failures>0")
+        sql_where = " AND ".join(where)
+        total = store.one(f"SELECT COUNT(*) AS n FROM webhook_subscriptions s WHERE {sql_where}", tuple(args))["n"]
+        rows = store.all(
+            "SELECT s.id, s.tenant, s.url, s.events, s.status, s.disabled_reason, s.consecutive_failures, s.last_success_at, "
+            "s.last_failure_at, s.created_at, s.updated_at, s.version, "
+            "(SELECT COUNT(*) FROM webhook_deliveries d WHERE d.subscription_id=s.id AND d.status='pending') AS pending, "
+            "(SELECT COUNT(*) FROM webhook_deliveries d WHERE d.subscription_id=s.id AND d.status='failed' AND d.created_at>=?) AS failed_7d, "
+            "(SELECT COUNT(*) FROM webhook_deliveries d WHERE d.subscription_id=s.id AND d.status='delivered' AND d.created_at>=?) AS delivered_7d, "
+            "(SELECT d.last_error FROM webhook_deliveries d WHERE d.subscription_id=s.id AND d.last_error IS NOT NULL "
+            " ORDER BY d.created_at DESC LIMIT 1) AS last_error "
+            f"FROM webhook_subscriptions s WHERE {sql_where} ORDER BY s.consecutive_failures DESC, s.updated_at DESC LIMIT ? OFFSET ?",
+            (since, since, *args, limit, offset))
+        items = []
+        for r in rows:
+            try:
+                events = json.loads(r["events"] or "[]")
+            except ValueError:
+                events = []
+            items.append({**{k: r[k] for k in ("id", "tenant", "status", "disabled_reason", "consecutive_failures",
+                                               "last_success_at", "last_failure_at", "created_at", "updated_at", "version",
+                                               "pending", "failed_7d", "delivered_7d")},
+                          "receiver": _origin(r["url"]), "events": events,
+                          "last_error": (r["last_error"] or "")[:200] or None})
+        totals = store.one(
+            "SELECT (SELECT COUNT(*) FROM webhook_deliveries WHERE status='pending') AS pending, "
+            "(SELECT COUNT(*) FROM webhook_subscriptions WHERE deleted_at IS NULL AND consecutive_failures>0) AS failing, "
+            "(SELECT COUNT(*) FROM webhook_subscriptions WHERE deleted_at IS NULL AND status='disabled') AS disabled, "
+            "(SELECT MIN(next_attempt_at) FROM webhook_deliveries WHERE status='pending') AS next_attempt_at")
+        return {"items": items, "total": total, "offset": offset, "limit": limit,
+                "next_offset": offset + limit if offset + limit < total else None,
+                "totals": totals, "window_days": 7, "measured_at": time.time()}
+
+    def webhook_pause(self, sid: str) -> dict:
+        """Pause one subscription for the platform (a failing or abusive receiver). Reversible by the
+        workspace (resume); queued deliveries are dropped exactly as the owner's own pause does."""
+        from .webhooks import Subscriptions
+        subs = Subscriptions(self.api.state.app.store, getattr(self.api.state, "webhooks", None))
+        out = subs.pause(None, sid)
+        return {"id": out["id"], "tenant": out.get("tenant"), "status": out["status"]}
+
+    def webhook_tenant(self, sid: str) -> str | None:
+        row = self.api.state.app.store.one("SELECT tenant FROM webhook_subscriptions WHERE id=? AND deleted_at IS NULL", (sid,))
+        return row["tenant"] if row else None
 
     async def request(self, credential: str, method: str, path: str,
                       query: dict, body: dict | None) -> dict:

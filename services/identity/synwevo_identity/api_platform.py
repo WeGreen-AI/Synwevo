@@ -107,7 +107,15 @@ def build_router(store: Store, ident, sessions, audit,
         counts = store.one("SELECT COUNT(*) AS calls, SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END) AS errors,"
                            "AVG(duration_ms) AS mean_duration_ms, MIN(at) AS first_at, MAX(at) AS last_at "
                            "FROM api_platform_calls WHERE at>=?", (now() - 30 * 86400,))
-        return {"permission": MANAGE_PERMISSION, "adapter_available": adapter is not None,
+        # Event backlog for the overview (API-6): pending deliveries and failing subscriptions, so an
+        # administrator sees a stuck receiver without opening every workspace.
+        webhooks = None
+        if adapter is not None:
+            try:
+                webhooks = adapter.webhook_overview(limit=1)["totals"]
+            except Exception:  # noqa: BLE001 - the overview must render even if Docs' tables are unreadable
+                webhooks = None
+        return {"permission": MANAGE_PERMISSION, "adapter_available": adapter is not None, "webhooks": webhooks,
                 "resource": docs_resource(), "scopes": sorted(SCOPES), "retention_days": 30,
                 "calls": {**counts, "errors": counts["errors"] or 0},
                 "pending_approvals": store.one("SELECT COUNT(*) AS n FROM api_platform_approvals "
@@ -403,6 +411,24 @@ def build_router(store: Store, ident, sessions, audit,
         kind, sid = _quota_scope(scope)
         Policies.validate_target(kind, sid)
         return policies.history(kind, sid, limit=limit, offset=offset)
+
+    # ------------------------------------------------------------------ webhook operations (API-6)
+    @r.get(PREFIX + "/webhooks")
+    def webhook_overview(request: Request, workspace_id: str = Query("", max_length=100),
+                         status: str = Query("", pattern="^(|active|paused|disabled)$"), failing: bool = False,
+                         limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=2**31)):
+        actor(request)
+        return require_adapter().webhook_overview(workspace_id=workspace_id, status=status, failing=failing,
+                                                  limit=limit, offset=offset)
+
+    @r.post(PREFIX + "/webhooks/{sid}/pause")
+    def webhook_pause(request: Request, sid: str, body: dict = Body(...)):
+        adapter_ = require_adapter()
+        with mutation(request, body, "webhook.pause", sid, workspace=adapter_.webhook_tenant(sid)):
+            mutation_actor(request)
+            if adapter_.webhook_tenant(sid) is None:
+                raise ServiceError(404, "not_found", "订阅不存在")
+            return adapter_.webhook_pause(sid)
 
     @r.get(PREFIX + "/openapi")
     def openapi(request: Request):
