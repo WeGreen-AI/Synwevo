@@ -20,7 +20,7 @@
 
 | 接口 | 权限 | 说明 |
 |---|---|---|
-| `WS /api/collab/templates/{tid}?workspace=` | 空间成员（查看者只读） | Yjs 同步（0）、awareness（1）、查询 awareness（3）帧照协议；服务端自有帧（100）为 JSON：`hello`（我是谁、只读、版本号、是否有未保存修改、在线成员、复核间隔）、`state`、`head`（版本操作：`reason` save/restore/undo/redo/replace、`by`）、`role`、`refused`、`joined`/`left`、`activity`、`closed`。关闭码：4400 非文档模板、4401 未登录/会话失效、4403 Origin/权限、4404 不存在、4410 已删除。 |
+| `WS /api/collab/templates/{tid}?workspace=` | 空间成员（查看者只读） | Yjs 同步（0）、awareness（1）、查询 awareness（3）帧照协议；服务端自有帧（100）为 JSON：`hello`（我是谁、只读、版本号、是否有未保存修改、在线成员、复核间隔）、`state`、`head`（版本操作：`reason` save/restore/undo/redo/replace、`by`）、`role`、`refused`、`joined`/`left`、`activity`、`closed`。关闭码：4400 非文档模板、4401 未登录/会话失效、4403 Origin/权限、4404 不存在、4410 已删除（握手期间被删除的同样）；4503 `room_busy`：模板的草稿还在写入或删除，25 秒内未完成（非 44xx，客户端按退避重连）。 |
 | `GET /api/templates/{tid}/collab/changes?limit=` | 空间成员 | `{items:[{user:{id,name}, part, kind, block_no, node_type, excerpt, count, started_at, updated_at}], dirty, online, changes_rev}` |
 
 模板服务在保存/恢复/撤销/重做/删除后调用 `on_template_change`；路由用 `collab.acting(tid, user_id)` 标明操作者，用于归属与区分「协作者的快照」和「房间外的保存」。

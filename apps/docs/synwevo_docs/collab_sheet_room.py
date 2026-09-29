@@ -232,6 +232,7 @@ class SheetRoom(Room):
         self._gen = 0                                   # serialisations handed out ...
         self._written = 0                               # ... and the newest one on disk (under the hub's room lock)
         self._names: dict[str, dict] = {}
+        self._drop_pending = False
 
     # ---- mode --------------------------------------------------------------------------------------
     def persists(self) -> bool:
@@ -317,12 +318,11 @@ class SheetRoom(Room):
                 # resend): so it admits no more open tabs than it keeps records for (review 4, item 4)
                 taking_over = isinstance(requested_client, str) and _CLIENT.fullmatch(requested_client) is not None and any(
                     c.user_id == conn.user_id and c.client == requested_client for c in self.clients)
-                if not taking_over:
-                    live = [c for c in self.clients if c.client_key]
-                    if sum(1 for c in live if c.user_id == conn.user_id) >= CS.MAX_CLIENTS_PER_SCOPE:
-                        raise RoomFull("too_many_tabs")
-                    if len(live) >= CS.MAX_CLIENTS:
-                        raise RoomFull("room_full")
+                if not taking_over and not conn.readonly:
+                    # only tabs that can write hold records: viewers never lock writers out (review 5, item 4)
+                    refusal = self._over_tab_caps(conn)
+                    if refusal is not None:
+                        raise RoomFull(refusal)
                 self._claim(conn, requested_client)
                 conn.seen = st["seq"]
             self.clients.add(conn)
@@ -337,6 +337,24 @@ class SheetRoom(Room):
                               "limits": {"max_tx": CS.MAX_TX, "max_frame_bytes": _collab.MAX_FRAME_BYTES, "ops_per_min": self.hub.sheet_rate.cap,
                                          "max_cells": max_cells(), "max_bytes": max_bytes()}})
             return meta_frame(hello)
+
+    def _over_tab_caps(self, conn: Conn) -> str | None:
+        """Under ``mu``: would one more writing tab of this person pass what the room keeps records for?"""
+        writers = [c for c in self.clients if c.client_key and not c.readonly and c is not conn]
+        if sum(1 for c in writers if c.user_id == conn.user_id) >= CS.MAX_CLIENTS_PER_SCOPE:
+            return "too_many_tabs"
+        if len(writers) >= CS.MAX_CLIENTS:
+            return "room_full"
+        return None
+
+    def on_promoted(self, conn: Conn) -> str | None:
+        if self.state is None:
+            return None
+        with self.mu:
+            return self._over_tab_caps(conn)
+
+    def closing_job(self) -> Callable[[], None]:
+        return self.close_final                          # serialised in the writing thread
 
     def state_payload(self) -> dict:
         out = super().state_payload()
@@ -477,6 +495,18 @@ class SheetRoom(Room):
                            "persisted": self.persisted_seq, "content": st["content"]}
             self._send(conn, payload)
 
+    def _persist_soon(self) -> None:
+        """Schedule the draft write — for a room still registered, when a loop runs here; a room
+        finishing a fold or marking a save after it closed leaves the writing to its closing write
+        (which comes after them) or its correction."""
+        if self.hub.rooms.get(self.key) is not self:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self.schedule_persist()
+
     def _changed(self) -> None:
         """After an accepted edit (event loop, under the lock). Whether the room is dirty is read from
         the state's record of changed paths (O(1)); the exact answer — a rendering — is taken when
@@ -576,13 +606,10 @@ class SheetRoom(Room):
         thread of its own (this runs on the loop, under the room's lock, which never waits for the
         database). A write already past its check commits first; the DELETE follows it."""
         self.dropped = True
-
-        def delete():
-            try:
-                self.hub.store.execute("DELETE FROM collab_docs WHERE room=?", (self.key,))
-            except Exception:                            # noqa: BLE001
-                log.exception("collab %s: removing the live table draft failed", self.key)
-        self.hub.background(delete, f"collab-drop-{self.tid}")
+        # registered draft work: an opener of the template waits for it (review 5, item 3); and it
+        # removes only this room's draft — none of a room registered after it (item 5)
+        self.hub.draft_work(self.key, lambda gen=self.gen: self.hub.delete_draft(self.key, gen),
+                            room=None, name=f"collab-drop-{self.tid}")
 
     # ---- saving ------------------------------------------------------------------------------------
     def save(self, user_id: str | None, note) -> dict:
@@ -660,11 +687,14 @@ class SheetRoom(Room):
             if inline:
                 self.persist_now()                       # no loop to schedule on: write now
             else:
-                self.schedule_persist()
-        else:
-            # marked after the room closed: its closing write may have written the unsaved state —
-            # correct it (off the loop), unless a newer room has been opened since (review 3, item 3)
-            self.hub.background(lambda: self._write_now(final=True), f"collab-saved-{self.tid}")
+                self._persist_soon()
+        elif self.closing_started:
+            # marked after the room's closing write began: that write may carry the unsaved state —
+            # correct it (off the loop, as registered draft work an opener waits for), unless a newer
+            # room has been opened since; the newer serialisation wins over the closing write's
+            # whichever commits last (review 3, item 3; review 5, item 3). Marked before (the last one
+            # out runs the queue ahead of its closing write), the closing write carries it.
+            self.hub.draft_work(self.key, lambda: self._write_now(final=True), room=self, name=f"collab-saved-{self.tid}")
         return out
 
     # ---- versions from outside the room -------------------------------------------------------------
@@ -680,7 +710,6 @@ class SheetRoom(Room):
         self._fold(kind, head, editor, reason, actor_id, actor_name)
 
     def _fold(self, kind: str, head, editor, reason, actor_id, actor_name) -> None:
-        from starlette.concurrency import run_in_threadpool
         self.hold()
         by = actor_id or SYSTEM
         dirty = self.dirty
@@ -702,17 +731,37 @@ class SheetRoom(Room):
                 return ("seed_error", over)              # beyond the room's caps: as if it could not be held at all
             return ("reconciled", mine, res, CS.dirty(mine), size)
 
-        async def run():
+        def finish(out):
             try:
-                try:
-                    out = await run_in_threadpool(work)
-                except Exception:                        # noqa: BLE001 — a bug must neither wedge the room nor drop edits
-                    log.exception("collab %s: folding v%s into the live table failed", self.key, head)
-                    out = ("error", {"code": "error"})
                 self._folded(kind, out, dirty, head, editor, reason, actor_id, actor_name)
+                if self._drop_pending:                   # left live mode: its draft's DELETE, outside the room's lock
+                    self._drop_pending = False
+                    self._drop_draft()
             finally:
-                self.release()
-        asyncio.ensure_future(run())
+                self.release()                           # runs what waited: a closing write writes this result
+
+        def thread():
+            try:
+                out = work()
+            except Exception:                            # noqa: BLE001 — a bug must neither wedge the room nor drop edits
+                log.exception("collab %s: folding v%s into the live table failed", self.key, head)
+                out = ("error", {"code": "error"})
+            # the result goes to a loop serving the room — not a task of the loop that started it, which
+            # may be gone with its connection (the last one out while the fold ran: review 5, item 1);
+            # with no loop serving the room any more, it is finished here
+            loop = self.work_loop()
+            if loop is not None:
+                try:
+                    loop.call_soon_threadsafe(finish, out)
+                    return
+                except RuntimeError:                     # that loop has just closed
+                    pass
+            finish(out)
+        try:
+            threading.Thread(target=thread, name=f"collab-fold-{self.tid}", daemon=True).start()
+        except Exception:                                # noqa: BLE001 — no thread to be had: fold here
+            log.exception("collab %s: could not start the fold; folding here", self.key)
+            thread()
 
     def _folded(self, kind, out, dirty, head, editor, reason, actor_id, actor_name) -> None:
         by = actor_id or SYSTEM
@@ -727,7 +776,7 @@ class SheetRoom(Room):
                 if res["overwritten"]:
                     self.broadcast_meta({"type": "overwritten", "people": [self._who(p) for p in res["overwritten"]], "conflicts": res["conflicts"],
                                          "by": self._who(by), "head": head, "seq": res["seq"], "reset": res["reset"]})
-                self.schedule_persist()
+                self._persist_soon()
                 self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor_name, "by_id": actor_id})
                 return
             if out[0] == "seeded":
@@ -765,7 +814,7 @@ class SheetRoom(Room):
                                     "head": head, "dirty": False, "reason": reason, "by": self._who(actor_id), "persisted": 0})
                 frames[nxt] = bytes([MESSAGE_SHEET]) + write_message((head_json[:-1] + ',"content":' + content + "}").encode())
             c.post(frames[nxt])
-        self.schedule_persist()
+        self._persist_soon()
         self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor_name, "by_id": actor_id})
 
     def _leave_live(self, head, reason, actor_id, actor_name, why: dict) -> None:
@@ -782,6 +831,6 @@ class SheetRoom(Room):
         # released (the lock order never nests the database inside a room's lock — even when no thread
         # can be started for it and it runs on the loop)
         self.dropped = True
-        asyncio.get_running_loop().call_soon(self._drop_draft)
+        self._drop_pending = True                        # the fold's finish deletes the draft once the lock is released
         self.broadcast_meta({"type": "live", "live": False, "reason": why, "head": head})
         self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor_name, "by_id": actor_id})

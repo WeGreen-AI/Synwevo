@@ -82,10 +82,21 @@ CLOSE_STALE = 4409
 #: A live table room refuses a tab it could not remember: the person already has as many open tabs
 #: in it as the room keeps de-duplication records for (or the room as many as it keeps in all).
 CLOSE_TOO_MANY = 4429
+#: The template's draft work (a closing write, a version's DELETE) did not finish in time: try again
+#: (45xx: the browser's provider reconnects with backoff, unlike 44xx)
+CLOSE_TRY_LATER = 4503
+#: how long an opener waits for a template's draft work before it is told to try again
+OPEN_WAIT_S = 25.0
 
 
 class RoomFull(Exception):
     """``Room.admit`` refuses this connection (reason in ``args[0]``)."""
+
+
+class RoomBusy(Exception):
+    """The template's draft work did not finish within ``OPEN_WAIT_S``."""
+
+
 PERSIST_DELAY_S = 1.0
 # The largest frame a client may send. A keystroke is bytes, a paste a few KB, a whole document's
 # sync step well under a megabyte for the templates this editor holds; uvicorn's own ceiling is
@@ -95,6 +106,19 @@ MAX_FRAME_BYTES = int(os.environ.get("SYNWEVO_COLLAB_MAX_FRAME_BYTES") or 2 * 10
 COALESCE_S = 120.0
 KEEP_CHANGES = 500
 EXCERPT = 80
+
+
+async def _wait_until(done: threading.Event, deadline: float) -> bool:
+    """Wait for draft work to finish, until ``deadline`` (``time.monotonic``) — on the loop, without
+    holding a worker thread for it (a storm of openers would otherwise use up the pool)."""
+    pause = 0.002
+    while not done.is_set():
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return False
+        await asyncio.sleep(min(pause, left))
+        pause = min(pause * 2, 0.05)
+    return True
 
 
 def recheck_seconds() -> float:
@@ -237,6 +261,13 @@ class Room:
         #: handshakes that passed the registration check and are building their hello: the room stays
         #: open for them (CollabHub.serve / _leave)
         self.joining = 0
+        #: its closing write has been made: a change reaching it later corrects the draft itself
+        self.closed_written = False
+        #: its closing write has begun (on the loop, before a table's is serialised in its thread): a
+        #: change reaching it earlier is carried by that write, one reaching it later corrects the draft
+        self.closing_started = False
+        self._final_head: int | None = None
+        self._final_dirty = False
         # the room's work queue (``enqueue``/``pump``): changes from other threads, run on the room's
         # loop in arrival order, never while the room is held (opening, or folding a version in)
         self._qlock = threading.Lock()
@@ -250,6 +281,11 @@ class Room:
 
     def holding(self) -> bool:
         return self._holds > 0
+
+    def has_work(self) -> bool:
+        """Held, or changes still queued: its state is not final yet."""
+        with self._qlock:
+            return bool(self._holds or self._queued)
 
     def release(self) -> None:
         """End one hold (on the room's loop) and run what waited for it."""
@@ -332,13 +368,25 @@ class Room:
         return self.writable
 
     def closing_snapshot(self) -> None:
-        """On the event loop, right after the room is unregistered: what its closing write writes."""
-        self._final_state = self.doc.get_update()
+        """On the event loop, once the room is closed and its queued changes are done: what its
+        closing write writes (the state and its head and dirty flag, taken together)."""
+        self._final_state, self._final_head, self._final_dirty = self.doc.get_update(), self.head, self.dirty
 
     def close_final(self) -> None:
-        """The closing write (a thread of its own, see CollabHub._leave)."""
+        """The closing write (CollabHub._close_if_empty)."""
         if self._final_state is not None:
-            self.hub.write_state(self, self._final_state, final=True)
+            self.hub.write_state(self, self._final_state, head=self._final_head, dirty=self._final_dirty, final=True)
+
+    def closing_job(self) -> Callable[[], None]:
+        """What the closing write runs: a document's state is taken where it lives (the loop)."""
+        def job():
+            self.closing_snapshot()
+            self.close_final()
+        return job
+
+    def on_promoted(self, conn: Conn) -> str | None:
+        """A viewer became a writer while connected: why the room cannot keep it, or None."""
+        return None
 
     def live(self) -> bool:
         return False
@@ -393,8 +441,9 @@ class Room:
     async def persist(self) -> None:
         self.persist_handle = None
         try:
-            state = self.doc.get_update()
-            await run_in_threadpool(self.hub.write_state, self, state)
+            # the state and what the row says about it, taken together
+            state, head, dirty = self.doc.get_update(), self.head, self.dirty
+            await run_in_threadpool(lambda: self.hub.write_state(self, state, head=head, dirty=dirty))
         except Exception:                                    # noqa: BLE001 — the next change retries
             log.exception("collab %s: persisting the live document failed", self.key)
 
@@ -461,12 +510,15 @@ class Room:
         if self.writable:
             if self.hub.rooms.get(self.key) is self:
                 self.schedule_persist()
-            else:
-                # queued before the room's last person left, run after: its closing write has the
-                # state from before this change (a phantom "unsaved" after a save). Correct it — off
-                # the loop, and refused when a newer room has been opened since (write_state)
-                state = self.doc.get_update()
-                self.hub.background(lambda: self.hub.write_state(self, state, final=True), f"collab-correct-{self.tid}")
+            elif self.closed_written:
+                # reached the room after its closing write (the hook found it just before it closed):
+                # that write has the state from before this change (a phantom "unsaved" after a save).
+                # Correct it as registered draft work — an opener waits for it — with the head and dirty
+                # flag taken with the state; refused when a newer room has been opened since. (Queued
+                # before the close, the change runs first and the closing write carries it.)
+                state, h, d = self.doc.get_update(), self.head, self.dirty
+                self.hub.draft_work(self.key, lambda: self.hub.write_state(self, state, head=h, dirty=d, final=True),
+                                    room=self, name=f"collab-correct-{self.tid}")
         self.broadcast_meta({**self.state_payload(), "type": "head", "reason": reason, "by": actor, "by_id": actor_id})
 
 
@@ -507,9 +559,10 @@ class CollabHub:
         #: in a room its last person has just closed (it opens the room again instead); every write of a
         #: live draft is checked and made under it too (``write_state``)
         self._rooms_mu = threading.RLock()
-        #: rooms closed by their last person whose closing write is still running (done, room): the next
-        #: opener of the same template waits for it before reading the draft; the guard reads the room
-        self._closing: dict[str, tuple[threading.Event, Room]] = {}
+        #: draft work still running per template (done, room or None): a closed room's closing write, a
+        #: correction after it, a version change's DELETE, a dropped table draft's DELETE. The next opener
+        #: of the template waits for all of it before reading the draft; the guard reads the rooms.
+        self._closing: dict[str, list[tuple[threading.Event, Room | None]]] = {}
         #: how many rooms each template has had registered (Room.gen)
         self._key_gen: dict[str, int] = {}
         from synwevo_core.http import RateBuckets
@@ -590,15 +643,15 @@ class CollabHub:
         actor = self.actor(tid)
         with self._rooms_mu:
             room = self.rooms.get(key)
-            closing = self._closing.get(key)
         if reason != "delete":
             for prow in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):
                 self.on_project_change(prow["id"], f"template.{reason}", {"template_id": tid, "head": head})
         if reason == "delete":
             if room is not None:
                 with self._rooms_mu:
-                    room.gone = True                     # nobody joins it any more (serve opens it again: 404)
-                    if not room.clients and not room.loading and self.rooms.get(key) is room:
+                    room.gone = True                     # nobody joins it any more (serve opens it again: 404; a
+                    #                                      handshake already past its check is closed 4410 after admit)
+                    if not room.clients and not room.loading and not room.joining and self.rooms.get(key) is room:
                         del self.rooms[key]              # nobody left to close it (a room being opened: _room drops it)
                 if room.sheet:
                     room.forget_draft()                  # the last one out must not write it back
@@ -619,23 +672,24 @@ class CollabHub:
             # never reads the draft in between (review 4 of sheet-live step ②).
             with self._rooms_mu:
                 room = self.rooms.get(key)
+                own = getattr(OWN_LIVE_SAVE, "room", None)
+                if (room is None and reason == "save" and own is not None and own.key == key and not own.dropped
+                        and not own.gone and self._key_gen.get(key, 0) == own.gen):
+                    # a live table's own save, written after its last person left (and before any newer
+                    # room): the draft is that room's and may hold edits typed after the save's snapshot —
+                    # its mark corrects it (SheetRoom._saved); dropping it here lost them
+                    return
                 if room is None:
-                    closing = self._closing.get(key)
-                    closed = closing[1] if closing is not None else None
-                    if closed is not None and closed.sheet and closed.dirty and closed.persists() and not discard_live:
+                    closed = [r for _e, r in self._closing.get(key, []) if r is not None and not r.dropped]
+                    last = closed[-1] if closed else None
+                    if last is not None and last.sheet and last.dirty and last.persists() and not discard_live:
                         return
-                    if closed is not None:
-                        closed.dropped = True
-                    pending = threading.Event()
-                    self._closing[key] = (pending, None)
+                    for r in closed:
+                        r.dropped = True                 # every write still on its way refuses itself ...
+                    self._key_gen[key] = gen = self._key_gen.get(key, 0) + 1     # ... and so does any later correction
+                    pending = self._pending_add(key, None)
             if room is None:
-                try:
-                    self.store.execute("DELETE FROM collab_docs WHERE room=?", (key,))
-                finally:
-                    with self._rooms_mu:
-                        if self._closing.get(key, (None,))[0] is pending:
-                            del self._closing[key]
-                    pending.set()
+                self._run_draft_work(key, pending, lambda: self.delete_draft(key, gen), f"collab-void-{tid}", threaded=False)
                 return
         # A room still being opened (``_room``) read the template after it was registered: a change it
         # already read is not applied twice (versions only ever get new numbers, so an equal head is it)
@@ -663,7 +717,7 @@ class CollabHub:
         key = f"template:{tid}"
         with self._rooms_mu:
             room = self.rooms.get(key)
-            closing = self._closing.get(key)
+            closed = self._pending_room(key)
         opened = room is not None and not room.loading
         dirty, sheet = self._dirty(key, room)
         online = [p["name"] for p in room.peers() if not p.get("readonly")] if opened else []
@@ -672,7 +726,7 @@ class CollabHub:
         if dirty:
             uid = None
             if sheet:
-                source = room if opened else (closing[1] if closing is not None and room is None and closing[1] is not None else None)
+                source = room if opened else (closed if room is None else None)
                 uid = source.last_writer() if source is not None else self._draft_last_writer(key)
             else:
                 last = self.store.one("SELECT user_id FROM collab_changes WHERE room=? ORDER BY updated_at DESC LIMIT 1", (key,))
@@ -690,9 +744,52 @@ class CollabHub:
         deadline = time.monotonic() + timeout
         while True:
             with self._rooms_mu:
-                closing = self._closing.get(key)
-            if closing is None or not closing[0].wait(max(0.0, deadline - time.monotonic())):
+                entries = list(self._closing.get(key, []))
+            if not entries or not entries[0][0].wait(max(0.0, deadline - time.monotonic())):
                 return
+
+    def _pending_add(self, key: str, room: Room | None) -> threading.Event:
+        """Under ``_rooms_mu``: register draft work for ``key`` (see ``_closing``)."""
+        done = threading.Event()
+        self._closing.setdefault(key, []).append((done, room))
+        return done
+
+    def _pending_room(self, key: str) -> Room | None:
+        """Under ``_rooms_mu``: the latest closed room whose draft work is still running (not dropped)."""
+        rooms = [r for _e, r in self._closing.get(key, []) if r is not None and not r.dropped]
+        return rooms[-1] if rooms else None
+
+    def _run_draft_work(self, key: str, done: threading.Event, fn: Callable[[], None], name: str, *, threaded: bool = True) -> None:
+        """Run registered draft work — in a thread of its own (off the loop and outside every room lock),
+        here when ``threaded`` is false or no thread can be started — and unregister it whatever
+        happens (review 5, item 5: an entry left behind made every opener wait)."""
+        def run():
+            try:
+                fn()
+            except Exception:                                # noqa: BLE001
+                log.exception("collab %s: %s failed", key, name)
+            finally:
+                with self._rooms_mu:
+                    entries = self._closing.get(key)
+                    if entries is not None:
+                        entries[:] = [e for e in entries if e[0] is not done]
+                        if not entries:
+                            del self._closing[key]
+                done.set()
+        if not threaded:
+            run()
+            return
+        try:
+            threading.Thread(target=run, name=name, daemon=True).start()
+        except Exception:                                    # noqa: BLE001 — no thread to be had: do it here
+            log.exception("collab %s: could not start %s; running it here", key, name)
+            run()
+
+    def draft_work(self, key: str, fn: Callable[[], None], *, room: Room | None, name: str) -> None:
+        """A draft write or DELETE off the loop, registered so the next opener waits for it."""
+        with self._rooms_mu:
+            done = self._pending_add(key, room)
+        self._run_draft_work(key, done, fn, name)
 
     def _dirty(self, key: str, room: Room | None) -> tuple[bool, bool]:
         """(unsaved live edits?, is it a live table?) — from the open room; from a room just closed
@@ -702,13 +799,13 @@ class CollabHub:
             return bool(room.dirty and room.persists()), room.sheet
         if room is None:
             with self._rooms_mu:
-                closing = self._closing.get(key)
-            if closing is not None:
-                closed = closing[1]
-                if closed is None or closed.dropped:
-                    return False, bool(closed is not None and closed.sheet)      # its draft is being removed
+                pending = bool(self._closing.get(key))
+                closed = self._pending_room(key)
+            if closed is not None:
                 dirty = bool(closed.dirty and closed.persists()) and (not closed.sheet or sheet_live_enabled())
                 return dirty, closed.sheet
+            if pending:
+                return False, False                      # its draft is being removed
         row = self.store.one("SELECT dirty, model FROM collab_docs WHERE room=?", (key,))
         sheet = bool(row and row.get("model") == "sheet")
         # a live table draft counts while the switch is on; with it off the room cannot be opened to
@@ -743,7 +840,7 @@ class CollabHub:
         final writes of rooms closed just before are waited for."""
         with self._rooms_mu:
             rooms = list(self.rooms.values())
-            closing = list(self._closing.values())
+            closing = [e for entries in self._closing.values() for e in entries]
         for room in rooms:
             if room.persists() and room.clients:
                 room.persist_now()
@@ -788,6 +885,22 @@ class CollabHub:
                 return False
             return self._upsert_draft(c, room, state, model, room.head if head is _ROOM else head,
                                       1 if (room.dirty if dirty is _ROOM else dirty) else 0, room.epoch if epoch is _ROOM else epoch)
+
+    def delete_draft(self, key: str, gen: int) -> bool:
+        """Remove a template's draft for a drop decided at registration generation ``gen`` (the hook's
+        drop path: the generation it moved to; a table leaving live mode: its room's). ``False``, and
+        nothing deleted, once a newer room has been registered for the template: its draft is not the
+        one the drop meant (review 5, item 5 — a late DELETE removed a newer room's first draft). Checked
+        in the DELETE's transaction, like ``write_state``; openers also wait for every pending DELETE
+        (``_closing``), so a newer room is not registered while one is on its way."""
+        with self.store.tx() as c:                       # the write lock first (the process's lock order) ...
+            with self._rooms_mu:                         # ... then a brief check: no SQL, no waiting under it
+                current = self._key_gen.get(key, 0) == gen
+            if not current:
+                log.info("collab %s: a draft DELETE for generation %s skipped (a newer room is registered)", key, gen)
+                return False
+            c.execute("DELETE FROM collab_docs WHERE room=?", (key,))
+            return True
 
     def _may_write(self, room: Room, final: bool) -> bool:
         """Under ``_rooms_mu``: may ``room`` write its draft now? The registered room may; a room after
@@ -903,81 +1016,93 @@ class CollabHub:
             return room
 
     async def _room(self, tid: str, tenant: str) -> Room | None:
+        """The template's room, opened when nobody is in it. One bound for all of it (review 5, item 5):
+        the template's open lock (another tab opening it), then its draft work — ``OPEN_WAIT_S``, then
+        ``RoomBusy`` (4503 room_busy, which the browser retries) — and no worker thread held meanwhile."""
         key = f"template:{tid}"
+        deadline = time.monotonic() + OPEN_WAIT_S
         lock = self._room_locks.setdefault(key, asyncio.Lock())
-        async with lock:
-            with self._rooms_mu:
-                room = self.rooms.get(key)
-                closing = self._closing.get(key)
-            if room is None and closing is not None:
-                # the previous room's last write is still running: read the draft after it
-                await run_in_threadpool(closing[0].wait, 60)
-                with self._rooms_mu:
-                    room = self.rooms.get(key)
-            if room is not None and not room.gone:
-                # The room was opened by someone in the template's workspace; a person signed into
-                # another workspace used to be let in while it was open — reading and writing the live
-                # document of a template their own workspace cannot see (CI-118). Same answer as closed.
-                if (room.tenant or "default") != (tenant or "default"):
-                    not_found("模板")
-                return room
+        try:
+            async with asyncio.timeout(OPEN_WAIT_S):
+                await lock.acquire()
+        except TimeoutError:
+            raise RoomBusy() from None
+        try:
+            return await self._open_room(key, tid, tenant, deadline)
+        finally:
+            lock.release()
 
-            def kind_of():
-                with as_tenant(tenant):
-                    return self.app.get_template(tid).get("kind")
-            kind = await run_in_threadpool(kind_of)          # the service's 404 for a template not in this workspace
-            if kind == "builtin_sheet" and sheet_live_enabled():
-                # SYNWEVO_SHEET_LIVE: the live table (collab_sheet_room), or presence when it cannot be held
-                from .collab_sheet_room import SheetRoom
-                room = SheetRoom(self, tid, tenant)
-            elif kind == "builtin_sheet":
-                # A table template: who is here and what they are on, plus version frames; the
-                # cells themselves are merged on save (builtin_service.merge_sheets).
-                room = Room(self, tid, tenant, kind="template", writable=False)
-            elif kind == "builtin_doc":
-                room = Room(self, tid, tenant)
-            else:
-                return None
-            # Registered *before* its state is read: a version written meanwhile either happened before
-            # the read (the read sees it) or finds the room and waits in its queue until it is loaded.
-            # Registered after, such a version found no room, the room opened at the old head and could
-            # never save again — and a reopen reseeded it, losing what was typed (review item 3).
-            room.loading = True
-            room.hold()
-            for _ in range(10):
-                with self._rooms_mu:
-                    # registered only while no draft work (a closing write, a version's DELETE) is
-                    # pending for the template, checked in the same step: the read below sees its result
-                    closing = self._closing.get(key)
-                    if closing is None:
-                        self._key_gen[key] = room.gen = self._key_gen.get(key, 0) + 1
-                        self.rooms[key] = room
-                        break
-                await run_in_threadpool(closing[0].wait, 60)
-            else:
-                raise RuntimeError("room_busy: the draft work of this template did not finish")
-            try:
-                await self._load(room, tid, tenant, kind)
-            except BaseException:
-                with self._rooms_mu:
-                    if self.rooms.get(key) is room:
-                        del self.rooms[key]
-                raise
-            room.loading = False
-            room.pending.clear()                             # loading is not a change anyone made
-            if room.gone:
-                # the template was deleted after the read: nobody will join (or close) this room
-                with self._rooms_mu:
-                    if self.rooms.get(key) is room:
-                        del self.rooms[key]
+    async def _open_room(self, key: str, tid: str, tenant: str, deadline: float) -> Room | None:
+        """Under the template's open lock (``_room``)."""
+        with self._rooms_mu:
+            room = self.rooms.get(key)
+        if room is not None and not room.gone:
+            # The room was opened by someone in the template's workspace; a person signed into
+            # another workspace used to be let in while it was open — reading and writing the live
+            # document of a template their own workspace cannot see (CI-118). Same answer as closed.
+            if (room.tenant or "default") != (tenant or "default"):
                 not_found("模板")
-            catch_up = getattr(room, "catch_up", None)
-            if catch_up is not None:
-                # before the versions that arrived while it opened: those are newer than the head it read
-                room.catch_up = None
-                room.enqueue(lambda: room.outside_change(catch_up[0], catch_up[1], "save", None, None, False), first=True)
-            room.release()
             return room
+
+        def kind_of():
+            with as_tenant(tenant):
+                return self.app.get_template(tid).get("kind")
+        kind = await run_in_threadpool(kind_of)          # the service's 404 for a template not in this workspace
+        if kind == "builtin_sheet" and sheet_live_enabled():
+            # SYNWEVO_SHEET_LIVE: the live table (collab_sheet_room), or presence when it cannot be held
+            from .collab_sheet_room import SheetRoom
+            room = SheetRoom(self, tid, tenant)
+        elif kind == "builtin_sheet":
+            # A table template: who is here and what they are on, plus version frames; the
+            # cells themselves are merged on save (builtin_service.merge_sheets).
+            room = Room(self, tid, tenant, kind="template", writable=False)
+        elif kind == "builtin_doc":
+            room = Room(self, tid, tenant)
+        else:
+            return None
+        # Registered *before* its state is read: a version written meanwhile either happened before
+        # the read (the read sees it) or finds the room and waits in its queue until it is loaded.
+        # Registered after, such a version found no room, the room opened at the old head and could
+        # never save again — and a reopen reseeded it, losing what was typed (review item 3).
+        room.loading = True
+        room.hold()
+        while True:
+            with self._rooms_mu:
+                # registered only while no draft work (a closing write, a correction, a version's
+                # DELETE) is pending for the template, checked in the same step: the read below
+                # sees its result
+                entries = self._closing.get(key)
+                if not entries:
+                    self._key_gen[key] = room.gen = self._key_gen.get(key, 0) + 1
+                    self.rooms[key] = room
+                    break
+                done = entries[0][0]
+            if not await _wait_until(done, deadline):
+                # one bounded wait (review 5, item 5): a proxy must not cut it first, and the tab
+                # is told to come back (4503, retried) instead of a bare error
+                raise RoomBusy()
+        try:
+            await self._load(room, tid, tenant, kind)
+        except BaseException:
+            with self._rooms_mu:
+                if self.rooms.get(key) is room:
+                    del self.rooms[key]
+            raise
+        room.loading = False
+        room.pending.clear()                             # loading is not a change anyone made
+        if room.gone:
+            # the template was deleted after the read: nobody will join (or close) this room
+            with self._rooms_mu:
+                if self.rooms.get(key) is room:
+                    del self.rooms[key]
+            not_found("模板")
+        catch_up = getattr(room, "catch_up", None)
+        if catch_up is not None:
+            # before the versions that arrived while it opened: those are newer than the head it read
+            room.catch_up = None
+            room.enqueue(lambda: room.outside_change(catch_up[0], catch_up[1], "save", None, None, False), first=True)
+        room.release()
+        return room
 
     async def _load(self, room: Room, tid: str, tenant: str, kind: str) -> None:
         """Read a room's state: the head version and its persisted draft."""
@@ -1029,6 +1154,8 @@ class CollabHub:
             """(the room, None) or (None, (close code, reason))."""
             try:
                 room = await (self._project_room(tid, info["tenant"]) if kind == "project" else self._room(tid, info["tenant"]))
+            except RoomBusy:
+                return None, (CLOSE_TRY_LATER, "room_busy")
             except Exception as e:                            # noqa: BLE001 — a 404 from get_template, or worse
                 status = getattr(e, "status", 500)
                 return None, (CLOSE_NOT_FOUND if status == 404 else CLOSE_ERROR, getattr(e, "code", "error"))
@@ -1057,6 +1184,7 @@ class CollabHub:
             if reserved:
                 # the hello (a live table's whole content) is built outside the registration lock:
                 # every draft write takes that lock inside its transaction (review 4, item 5)
+                gone = False
                 try:
                     # `client`: the id a live table tab numbers its messages under, brought back to resume them
                     hello = room.admit(conn, ws.query_params.get("client"))
@@ -1065,10 +1193,18 @@ class CollabHub:
                 finally:
                     with self._rooms_mu:
                         room.joining -= 1
-                    if hello is None or isinstance(hello, RoomFull):
+                        # the template was deleted while this tab built its hello: it was not among the
+                        # connections the delete closed (review 5, item 2)
+                        gone = room.gone and isinstance(hello, bytes)
+                        if gone:
+                            room.clients.discard(conn)
+                    if hello is None or isinstance(hello, RoomFull) or gone:
                         self._close_if_empty(room)
                 if isinstance(hello, RoomFull):
                     await ws.close(code=CLOSE_TOO_MANY, reason=str(hello.args[0]))
+                    return
+                if gone:
+                    await ws.close(code=CLOSE_GONE, reason="template_deleted")
                     return
                 break
             # its last person left (or its template went) while this handshake ran: that room is closed
@@ -1107,39 +1243,6 @@ class CollabHub:
         finally:
             checker.cancel()
             await self._leave(room, conn)
-
-    def _close_in_background(self, room: Room, done: threading.Event, *, threaded: bool = True) -> None:
-        """The closing write in a thread of its own — off the event loop and outside every room lock;
-        a plain thread, since the handler may be cancelled (shutdown, the test client) and the write
-        may not. When no thread can be started, it is written here (review 3, item 6): the next opener
-        must not wait for a write that will never come."""
-        def final(key=room.key):
-            try:
-                room.close_final()
-            except Exception:                                # noqa: BLE001
-                log.exception("collab %s: the closing write failed", key)
-            finally:
-                with self._rooms_mu:
-                    if self._closing.get(key, (None,))[0] is done:
-                        del self._closing[key]
-                done.set()
-        if not threaded:
-            final()
-            return
-        try:
-            threading.Thread(target=final, name=f"collab-close-{room.tid}", daemon=True).start()
-        except Exception:                                    # noqa: BLE001 — no thread to be had: write now
-            log.exception("collab %s: could not start the closing write; writing it here", room.key)
-            final()
-
-    def background(self, fn: Callable[[], None], name: str) -> None:
-        """Run ``fn`` (a database write) off the event loop, in a thread of its own; here when no
-        thread can be started."""
-        try:
-            threading.Thread(target=fn, name=name, daemon=True).start()
-        except Exception:                                    # noqa: BLE001
-            log.exception("collab: could not start %s; running it here", name)
-            fn()
 
     async def _handle(self, room: Room, conn: Conn, data: bytes) -> None:
         kind = data[0]
@@ -1222,6 +1325,15 @@ class CollabHub:
                     await conn.ws.close(code=code, reason=role)
                 return
             readonly = role not in WRITE_ROLES
+            if not readonly and conn.readonly:
+                refusal = room.on_promoted(conn)
+                if refusal is not None:
+                    # a viewer made a writer while the room already has as many writing tabs as it keeps
+                    # records for (review 5, item 4)
+                    await conn.meta({"type": "closed", "reason": refusal})
+                    with contextlib.suppress(Exception):
+                        await conn.ws.close(code=CLOSE_TOO_MANY, reason=refusal)
+                    return
             if readonly != conn.readonly:
                 conn.readonly = readonly
                 conn.refused_told = False
@@ -1270,15 +1382,28 @@ class CollabHub:
                     room.activity_handle = None
                 if self.rooms.get(room.key) is room:
                     del self.rooms[room.key]
-                    if room.persists():
-                        closing = threading.Event()
-                        self._closing[room.key] = (closing, room)
+                    if room.persists() and not room.gone:
+                        closing = self._pending_add(room.key, room)
         if closing is not None:
             # A live table (up to 16 MiB) is serialised, compressed and written in a thread of its own;
-            # a document's state is small and is taken and written here, as before (it waits for the
-            # database like any write on the loop, never under a lock)
-            if room.sheet:
-                self._close_in_background(room, closing)
+            # a document's state is small and is taken and written here, on the loop where it lives
+            # (it waits for the database like any write on the loop, never under a lock). A room still
+            # held (a version being folded in) or with changes queued writes after them — its draft is
+            # what they leave, not what they replace (review 5, items 1 and 3); openers wait meanwhile.
+            def job(room=room, done=closing):
+                room.closing_started = True
+
+                def write():
+                    try:
+                        room.closing_job()()
+                    finally:
+                        room.closed_written = True
+                self._run_draft_work(room.key, done, write, f"collab-close-{room.tid}", threaded=room.sheet)
+            if room.has_work():
+                room.enqueue(job)
+                # run what is queued here, on this (running) loop, unless a fold holds the room (its
+                # finish pumps): the loop the queued work was sent to may be gone with its connection,
+                # and a closing write never run would keep every opener waiting
+                room.pump()
             else:
-                room.closing_snapshot()
-                self._close_in_background(room, closing, threaded=False)
+                job()
