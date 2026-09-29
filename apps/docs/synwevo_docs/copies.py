@@ -106,22 +106,22 @@ class CopyExecutor:
         r = self.copies.get(cid)
         if not r:
             raise ServiceError(404, "no_copy_request", "找不到该复制申请")
+        if r["status"] != "approved":
+            # Listed as approved, but by now another runner claimed or finished it (a self-approval
+            # wakes the runner thread while another tick has listed the same request), or it was
+            # withdrawn or expired meanwhile. Not ours to judge: this used to mark it stale — over
+            # a copy whose project already existed in the target — and tell both people it failed.
+            return r
         why = self.copies.preconditions(r)
         if why:
-            out = self.copies.reset_stale(cid, error=why)
-            self._tell(out, "copy.failed", outcome_key="stale", reason=why)
-            return out
+            return self._stale(r, why, why)
         with as_tenant(r["source_workspace_id"]):
             try:
                 manifest, digest = build_manifest(self.app, r["source_project_id"], r["scope"] or {})
             except ServiceError as e:
-                out = self.copies.reset_stale(cid, error=f"source:{e.code}")
-                self._tell(out, "copy.failed", outcome_key="stale", reason=e.code)
-                return out
+                return self._stale(r, f"source:{e.code}", e.code)
         if digest != r["digest"]:
-            out = self.copies.reset_stale(cid, error="source_changed")
-            self._tell(out, "copy.failed", outcome_key="stale", reason="source_changed")
-            return out
+            return self._stale(r, "source_changed", "source_changed")
         claimed = self.copies.claim_approved(cid)
         if not claimed:
             return self.copies.get(cid)
@@ -134,6 +134,15 @@ class CopyExecutor:
             return out
         out = self.copies.finish(cid, "done", result=result)
         self._tell(out, "copy.done")
+        return out
+
+    def _stale(self, r: dict, error: str, reason: str) -> dict:
+        """approved → stale, told to both people — only when this runner made that transition; a
+        request someone else took or withdrew between the checks and now is left as it is."""
+        out = self.copies.reset_stale(r["id"], error=error)
+        if out is None:
+            return self.copies.get(r["id"])
+        self._tell(out, "copy.failed", outcome_key="stale", reason=reason)
         return out
 
     def _copy(self, r: dict, manifest: dict) -> dict:
