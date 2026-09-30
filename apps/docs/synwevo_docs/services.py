@@ -80,13 +80,14 @@ class App:
     def __init__(self, store: Store):
         self.store = store
         self.parse_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="parse")
-        workers.register(self)                          # so a process shutdown releases the pool
         # Malware scanning policy (synwevo_docs.malware): decided once at start-up so a bad
         # configuration fails the process instead of silently scanning nothing.
         self.scan_policy = M.policy()
         self.scanner = M.scanner_for(self.scan_policy)
         self._scan_retry_lock = threading.Lock()
         self._scan_timers: dict[str, threading.Timer] = {}
+        self._closed = False
+        workers.register(self)                          # register after the shutdown state exists
         self._src_cache: dict[tuple, SourceDoc] = {}
         self._cache_lock = threading.Lock()
         self.on_event = None          # set by the API layer: called after a job event is stored
@@ -453,9 +454,15 @@ class App:
     def _schedule_scan_retry(self, sid: str, delay: float) -> None:
         def fire():
             with self._scan_retry_lock:
+                if self._closed or self._scan_timers.get(sid) is not t:
+                    return  # cancelled/replaced callbacks may already have left Timer.run's wait
                 self._scan_timers.pop(sid, None)
-            self.parse_pool.submit(self._scan_then_parse, sid)
+                # Serialize submission with close(): Timer.cancel alone cannot stop a callback
+                # already running, nor may close shut the pool between this check and submit.
+                self.parse_pool.submit(self._scan_then_parse, sid)
         with self._scan_retry_lock:
+            if self._closed:
+                return  # an in-flight scan can report an outage after the process began closing
             old = self._scan_timers.pop(sid, None)
             if old:
                 old.cancel()
@@ -1088,9 +1095,14 @@ class App:
         self.store.after_commit(run)
 
     def close(self) -> None:
-        """Release the parse pool at the end of the process. A parse that had not started stays
-        'parsing' in the store and is picked up by the next process (`resume_parsing`)."""
-        self.parse_pool.shutdown(wait=False, cancel_futures=True)
+        """Stop retry timers and release the parse pool. Unfinished parsing/scanning remains in
+        the store for the next process (`resume_parsing`); a running scan may finish its verdict."""
+        with self._scan_retry_lock:
+            self._closed = True
+            for timer in self._scan_timers.values():
+                timer.cancel()
+            self._scan_timers.clear()
+            self.parse_pool.shutdown(wait=False, cancel_futures=True)
 
     stop = close                                        # the worker registry speaks stop()
 
