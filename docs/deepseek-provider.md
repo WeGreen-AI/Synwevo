@@ -10,6 +10,9 @@ isolated tests, not evidence of a production model call.
 
 ## Official facts and unresolved differences
 
+Coordinator recheck on 2026-09-30: the [Open Platform Terms](https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html)
+state release 2026-04-22 and effectiveness 2026-04-29. They describe downstream integration for internal and external users, require server-side key protection and the downstream operator's own end-user/data-processing obligations. This is not blanket permission for unrelated resale or brand endorsement. Their own privacy policy does not cover Synwevo's downstream data processing. The actual contracting entity, operating markets and API-specific retention settings remain unconfirmed; no zero-retention or tax/refund conclusion is inferred. The provider's own prepaid refund clause is not Synwevo's retail refund policy. A later fetch of the pricing page timed out; the earlier successful same-day reading below remains the dated evidence, not a newly verified price import.
+
 | Topic | Findings and source |
 | --- | --- |
 | API and usage | Chat Completions uses streamed JSON deltas and `[DONE]`. Terminal usage is on the last content chunk with one choice and a finish reason, **not** a separate empty-choices chunk. Input is cache hit plus miss; `cached_tokens` aliases cache hits; reasoning is within output. See [Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/). |

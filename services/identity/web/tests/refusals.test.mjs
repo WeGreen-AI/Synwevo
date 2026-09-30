@@ -50,6 +50,8 @@ const SERVER = [
   { file: ID + "admin_routes.py", surfaces: ["admin"] },
   { file: ID + "admin_operations.py", surfaces: ["admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
+  { file: ID + "admin_model_prices.py", surfaces: ["admin"] },
+  { file: CORE + "billing/catalogue.py", surfaces: ["admin"] },
   { file: ID + "admin_handover.py", surfaces: ["account", "admin"] },
   { file: ID + "api_platform.py", surfaces: ["api"] },
   { file: ID + "approval_routes.py", surfaces: ["org"] },

@@ -1,3 +1,4 @@
+import { ModelPricesTab } from "./governance/ModelPricesTab";
 import { SettingsTab } from "./governance/SettingsTab";
 import { SuperAdminOffersAdmin, SuperAdminReadiness } from "./governance/SuperAdminHandover";
 import { MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
@@ -86,6 +87,7 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
       {held.has("platform.roles.assign_super") && <SuperAdminOffersAdmin key={`offers-${accessRevision}`} />}</> }
     {tab === "workspaces" && <WorkspacesTab onDenied={onDenied} held={held} />}
     {tab === "organizations" && <OrganizationsTab onDenied={onDenied} held={held} />}
+    {tab === "model-prices" && <ModelPricesTab onDenied={onDenied} held={held} />}
     {tab === "registration" && <SettingsTab onDenied={onDenied} held={held} />}
     {tab === "identity" && <IdentityProvidersTab onDenied={onDenied} />}
     {tab === "mail" && <MailTab onDenied={onDenied} held={held} />}

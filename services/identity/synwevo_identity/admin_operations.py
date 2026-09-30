@@ -33,6 +33,8 @@ class Operation:
 OPERATIONS = {
     "admin.user.status": Operation("platform.users.manage", "high"),
     "admin.settings.publish": Operation("platform.config.manage", "high"),
+    "admin.model_price.draft": Operation("platform.config.manage", "medium"),
+    "admin.model_price.publish": Operation("platform.config.manage", "high"),
     "admin.super_admin.offer": Operation("platform.roles.assign_super", "high"),
     "admin.super_admin.cancel": Operation("platform.roles.assign_super", "high"),
     "admin.super_admin.ready": Operation("platform.roles.assign_super", "high"),
