@@ -102,6 +102,29 @@ sha256/purpose、完整收到字节数和每次都有的 upload_url。Python SDK
 `uploads-sdk-unit.log`、`uploads-sdk-mypy.log`、`uploads-sdk-typescript.log`；真实 SDK 结果在
 `/private/tmp/synwevo-api7-uploads-sdk-20260930/acceptance.json`。SDK 上传状态和产物响应只包含合成夹具。
 
+## 固定提交主机全量回归
+
+固定 `14b9811`（目录、复制、任务模型、签名游标、上传契约及验证修复已提交），
+全程没有改动源码或导出的契约。命令：
+
+```sh
+.venv/bin/python -m pytest -o addopts='--import-mode=importlib' -q --tb=short
+npm run typecheck
+npm run build
+.venv/bin/python scripts/check_boundaries.py
+.venv/bin/python scripts/check_brand.py
+.venv/bin/python scripts/check_design.py
+.venv/bin/python scripts/check_component_names.py
+.venv/bin/python scripts/brand_assets.py --check
+```
+
+主机 Python 3.14：**2 973 passed / 2 skipped / 239 warnings，1111.67 秒**，退出码 0。
+警告为 SWIG、Pillow 像素读取、AnyIO 别名及测试客户端逐请求 Cookie 的弃用提示；没有将警告隐藏或声称零警告。
+四个前端的类型检查与生产构建、五项仓库检查全部退出 0。证据在主验证目录
+`pytest-final-14b9811.log`、`final-typecheck.log`、`final-build.log`、`final-boundaries.log`、
+`final-brand.log`、`final-design.log`、`final-components.log`、`final-logo.log`。
+这确认本机固定提交的完整回归，不替代生产 Python 3.12、Linux 镜像全量验证或 GitHub CI。
+
 ## 发布与尚未闭环的范围
 
 2026-09-30 只读核对生产容器：accounts、docs、portal、messages 均运行
