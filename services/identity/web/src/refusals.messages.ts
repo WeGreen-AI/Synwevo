@@ -5,6 +5,19 @@ import { registerMessages } from "@synwevo/ui";
  *  the entry chunk, so these read the same wherever they are met; a refusal met on one page only
  *  belongs to that page's catalogue. */
 export const messages = {
+  // Directory application authority is checked both by the API and when a person accepts an invitation.
+  "邀请必须绑定当前批准人与原审批": { en: "The invitation must remain bound to its original approval and current approver.", "zh-Hant": "邀請必須繫結目前核准人與原核准紀錄" },
+  "邀请的原审批已失效": { en: "The original approval for this invitation is no longer valid.", "zh-Hant": "邀請的原核准紀錄已失效" },
+  "发出邀请的集成已不再具备权限，请联系空间管理员重新邀请": { en: "The integration that sent this invitation no longer has permission. Ask a workspace administrator for a new invitation.", "zh-Hant": "發出邀請的整合已不再具備權限，請聯絡空間管理員重新邀請" },
+  "集成发出的邀请只能赋予普通成员角色；请撤回这份邀请，再以本人身份重新发送": { en: "An integration's invitation can only grant a regular member role. Withdraw it, then send a new invitation as yourself.", "zh-Hant": "整合發出的邀請只能授予一般成員角色；請撤回這份邀請，再以本人身分重新傳送" },
+  "管理员与所有者的成员操作需要本人在账户页面完成": { en: "Administrator and owner membership changes must be made by a person on the account page.", "zh-Hant": "管理員與擁有者的成員操作需要本人在帳戶頁面完成" },
+  "角色必须为 viewer 或 editor": { en: "The role must be viewer or editor.", "zh-Hant": "角色必須為 viewer 或 editor" },
+  "服务账户的目录写入授权已失效": { en: "This service account's permission to change the workspace directory is no longer valid.", "zh-Hant": "服務帳戶的目錄寫入授權已失效" },
+  "服务账户没有获批的成员写入权限": { en: "This service account has no approved permission to change members.", "zh-Hant": "服務帳戶沒有獲准的成員寫入權限" },
+  "该幂等键的先前请求结果尚未确认，不能自动重做；请先核对原请求结果": { en: "The outcome of the earlier request using this idempotency key is unknown. Check that request's result before trying again.", "zh-Hant": "此冪等鍵的先前請求結果尚未確認，不能自動重做；請先核對原請求結果" },
+  "使用同一个幂等键的请求尚无已确认的响应；请稍后用同一个键重试": { en: "The request using this idempotency key has no confirmed response yet. Try again later with the same key.", "zh-Hant": "使用同一冪等鍵的請求尚無已確認的回應；請稍後以同一個鍵重試" },
+  "该幂等键已用于另一个不同内容的请求；请换一个新的幂等键，或发送与原请求完全相同的内容": { en: "This idempotency key was used for a different request. Use a new key or send exactly the original request.", "zh-Hant": "此冪等鍵已用於另一個不同內容的請求；請換用新的冪等鍵，或傳送與原請求完全相同的內容" },
+  "Idempotency-Key 必须是 1–255 个可打印 ASCII 字符，建议使用 UUID": { en: "Idempotency-Key must contain 1–255 printable ASCII characters. A UUID is recommended.", "zh-Hant": "Idempotency-Key 必須為 1–255 個可列印的 ASCII 字元，建議使用 UUID" },
   // ---- server sentences met on more than one page (the same wording as the page catalogues that also hold them)
   "这一步需要重新验证身份": { en: "This step requires identity verification.", "zh-Hant": "這一步需要重新驗證身分" },
   "请写明理由（8 至 500 个字）": { en: "Enter a reason (8 to 500 characters)", "zh-Hant": "請寫明理由（8 至 500 個字）" },

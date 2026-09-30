@@ -56,7 +56,8 @@ export function Operations() {
   // Fetching once also keeps page boundaries stable while the language changes.
   const items = useMemo(() => Object.entries(load.data?.paths || {}).flatMap(([path, methods]) =>
     Object.entries(methods).filter(([method]) => ['get', 'post', 'put', 'patch', 'delete'].includes(method))
-      .map(([method, operation]) => ({ ...operation, path, method: method.toUpperCase() })))
+      .map(([method, operation]) => ({ ...operation, path, method: method.toUpperCase(),
+        scopes: [...new Set(operation.security?.flatMap(scheme => Object.values(scheme).flat()) || [])] })))
     .filter(row => `${JSON.stringify(row)} ${JSON.stringify(localizeContract(row, t))}`.toLocaleLowerCase().includes(q.toLocaleLowerCase())), [load.data, q, t]);
   const offset = Math.min(position.query === q ? position.offset : 0, Math.max(0, Math.ceil(items.length / 25) - 1) * 25);
   const page = { items: items.slice(offset, offset + 25), total: items.length, offset, limit: 25,
@@ -68,7 +69,7 @@ export function Operations() {
     {!load.loading && !load.error && page.items.map(row => <article className="api-platform-record col gap8" key={row.method + row.path}>
       <code>{row.method} {row.path}</code><strong>{contractText(row.summary || '', t)}</strong>
       {row.description && <p>{contractText(row.description, t)}</p>}
-      {!!row.security?.some(scheme => scheme.platformToken?.length) && <p>{t('所需权限')} · <code>{row.security.flatMap(scheme => scheme.platformToken || []).join(', ')}</code></p>}
+      {!!row.scopes.length && <p>{t('所需权限')} · <code>{row.scopes.join(', ')}</code></p>}
       <details><summary>{t('请求与响应结构')}</summary><pre className="api-platform-json">{JSON.stringify(localizeContract({ security: row.security, parameters: row.parameters, requestBody: row.requestBody, responses: row.responses }, t), null, 2)}</pre></details>
     </article>)}
     <Pager page={page} move={offset => setPosition({ query: q, offset })} busy={load.loading} />

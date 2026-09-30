@@ -142,11 +142,14 @@ def _principal(request: Request) -> dict:
     return p
 
 
-def _ox(scope: str | None = None, *, idempotent: bool = False, binary: tuple[str, ...] = (), **extra) -> dict:
+def _ox(scope: str | None = None, *, idempotent: bool = False, binary: tuple[str, ...] = (),
+        identity: str | None = None, **extra) -> dict:
     """OpenAPI annotations for a route, read back by `openapi_subset`."""
     out = dict(extra)
     if scope:
         out["x-scope"] = scope
+    if identity:
+        out["x-synwevo-identity"] = identity
     if idempotent:
         out["x-idempotent"] = True
     if binary:
@@ -1134,8 +1137,9 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
 
     # Governance (credentials, usage) and webhook subscriptions live in their own modules; they
     # share this router's prefix and the same authentication done by the platform gate.
-    from . import v1_governance, v1_sources, v1_webhooks
+    from . import v1_copies, v1_governance, v1_sources, v1_webhooks
     v1_sources.register(r, app_, views, scope, attachment, auth)
+    v1_copies.register(r, app_, scope, idem)
     r.include_router(v1_governance.build_router(app_, views, jobs, auth))
     r.include_router(v1_webhooks.build_router(app_, views, jobs, auth))
     return r
@@ -1418,7 +1422,8 @@ def _components() -> dict:
         "job": {**job_ref, "type": ["object", "null"], "description": "任务摘要；测试事件与文件事件为 null"},
         "data": {"type": "object", "additionalProperties": True,
                  "description": "任务事件：status、run_no、counts；被平台停止的任务带 halt_reason。"
-                                "文件事件：file_id、project_id、status、reason（安全检查结论）、version"}},
+                                "文件事件：file_id、project_id、status、reason（安全检查结论）、version。"
+                                "复制事件：copy_id、source_project_id、target_workspace_id、status、version"}},
         "additionalProperties": True}
     s = {"type": "string"}
     headers = {
@@ -1496,7 +1501,10 @@ def _webhooks() -> dict:
             "description": ("测试事件：订阅的 ping 或 CLI 的测试发送，job 为 null。" if etype == W.PING_EVENT else
                             ("默认投递的事件。" if etype in W.DEFAULT_EVENTS else "订阅时在 events 中列出才会投递。")
                             + ("来源文件的接纳结论，与状态变化同一事务写入；job 为 null，data 只有 file_id、project_id、"
-                               "status、reason、version，文件名与内容请用凭据另行读取。" if etype.startswith("file.") else ""))
+                               "status、reason、version，文件名与内容请用凭据另行读取。" if etype.startswith("file.") else "")
+                            + ("复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，"
+                               "data 只有 copy_id、source_project_id、target_workspace_id、status、version；"
+                               "清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。" if etype.startswith("copy.") else ""))
                            + "接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。",
             "operationId": "webhook_" + etype.replace(".", "_"),
             "parameters": params,
@@ -1516,12 +1524,20 @@ def openapi_subset(api, issuer: str | None = None) -> dict:
     drift test names them, instead of silently inheriting "any credential".
     """
     spec = json.loads(json.dumps(api.openapi()))
-    token_url = (issuer or DEV_ISSUER).rstrip("/") + "/oidc/token"
+    issuer_url = (issuer or DEV_ISSUER).rstrip("/")
+    token_url = issuer_url + "/oidc/token"
+    oauth_scopes = {
+        "docweave.read": "读取项目、模板、任务与产物（等价旧的 read）",
+        "docweave.write": "创建、修改、提交任务（等价旧的 write）",
+        "docweave.manage": "删除项目与模板、管理 Webhook 订阅与自身凭据（等价旧的 admin）"}
+    authorization_code = {"authorizationUrl": issuer_url + "/oidc/authorize", "tokenUrl": token_url,
+                          "scopes": oauth_scopes}
     spec["paths"] = {p: v for p, v in spec["paths"].items() if p.startswith("/api/v1") or p in ("/healthz", "/readyz")}
     spec["info"] = {"title": "Synwevo Docs 机器接口", "version": API_VERSION,
                     "description": "Synwevo Docs 的自动化接口。/api/v1 接受两种凭据：旧式 API 密钥"
                                    "（Authorization: Bearer dw_<id>_<secret>，权限 read / write / admin）与平台签发的访问令牌"
-                                   "（client_credentials，权限 docweave.read / docweave.write / docweave.manage）。"
+                                   "（服务账户 client_credentials 或用户委托 authorization_code，权限 "
+                                   "docweave.read / docweave.write / docweave.manage）。复制接口仅接受用户委托。"
                                    "错误统一为 {error:{code,message,field,request_id,details}}。详见 docs/integration/api.md。"}
     comps = _components()
     spec["components"] = spec.get("components", {})
@@ -1533,10 +1549,14 @@ def openapi_subset(api, issuer: str | None = None) -> dict:
                                          "（tokenUrl 是本地开发平台的账户服务；部署中请换成该部署的 $ISSUER，"
                                          "或读 $ISSUER/.well-known/openid-configuration 的 token_endpoint）；"
                                          "用户委托令牌来自授权码流程。每次调用都重新核验账户、成员关系与应用资格",
-                          "flows": {"clientCredentials": {"tokenUrl": token_url, "scopes": {
-                              "docweave.read": "读取项目、模板、任务与产物（等价旧的 read）",
-                              "docweave.write": "创建、修改、提交任务（等价旧的 write）",
-                              "docweave.manage": "删除项目与模板、管理 Webhook 订阅与自身凭据（等价旧的 admin）"}}}},
+                          "flows": {"clientCredentials": {"tokenUrl": token_url, "scopes": oauth_scopes},
+                                    "authorizationCode": authorization_code}},
+        # A separate scheme makes the per-operation restriction usable by OAuth clients;
+        # scopes on a scheme with both flows cannot express "authorization code only".
+        "delegatedToken": {"type": "oauth2", "x-synwevo-identity": "delegated",
+                           "description": "项目所有者本人通过授权码流程授予应用的访问令牌；使用 PKCE S256，"
+                                          "选择来源个人工作空间并完成同意。访问密钥与 client_credentials 不可调用复制接口",
+                           "flows": {"authorizationCode": authorization_code}},
     }
     spec["security"] = [{"apiKey": []}, {"platformToken": []}]
     undeclared = []
@@ -1570,6 +1590,9 @@ def _annotate(path: str, op: dict) -> bool:
     scope = op.pop("x-scope", None)
     if scope is not None and scope not in X_SCOPES:
         raise ValueError(f"{path}: unknown x-scope {scope!r} (expected one of {', '.join(X_SCOPES)})")
+    identity = op.get("x-synwevo-identity")
+    if identity not in (None, "delegated"):
+        raise ValueError(f"{path}: unknown x-synwevo-identity {identity!r}")
     idempotent = op.pop("x-idempotent", False)
     binary = op.pop("x-binary", None)
     deprecated_inputs = op.pop("x-deprecated-inputs", None)
@@ -1578,11 +1601,13 @@ def _annotate(path: str, op: dict) -> bool:
     if probe or op.get("security") == []:
         op["security"] = []
     elif scope == "any":
-        op["security"] = [{"apiKey": []}, {"platformToken": []}]
+        op["security"] = ([{"delegatedToken": []}] if identity == "delegated" else
+                          [{"apiKey": []}, {"platformToken": []}])
         op["description"] = ((op.get("description") or "") + "\n\n" + _ANY_NOTE).strip()
     elif scope:
         need = SCOPE_AS.get(scope, scope)
-        op["security"] = [{"apiKey": [need]}, {"platformToken": [SCOPE_NAMES[need]]}]
+        op["security"] = ([{"delegatedToken": [SCOPE_NAMES[need]]}] if identity == "delegated" else
+                          [{"apiKey": [need]}, {"platformToken": [SCOPE_NAMES[need]]}])
         if scope == "export":
             op["description"] = ((op.get("description") or "") + "\n\n" + _EXPORT_NOTE).strip()
     else:

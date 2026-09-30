@@ -38,7 +38,7 @@ export function ApprovalsPanel({ act, scopes, resource, resources, revision, own
       <fieldset><legend>{t('申请权限')}</legend><div className="row gap12 wrap">{targetScopes.map(scope => <label key={scope}><input type="checkbox" checked={selected.includes(scope)} onChange={e => setSelected(e.target.checked ? [...selected, scope] : selected.filter(x => x !== scope))} /> <code>{scope}</code></label>)}</div></fieldset>
       <p className="muted">{t('API 资源')} · <code>{target}</code></p>
       {docsTarget ? <p className="muted">{t('访问密钥的管理权限包含读写权限；申请管理权限时必须选择全部权限。')}</p>
-        : <p className="muted">{t('工作空间目录接口只签发服务客户端，只读成员、角色与邀请，不能读取任何文档。')}</p>}
+        : <p className="muted">{t('工作空间目录接口只签发服务客户端。读取权限用于成员与邀请；成员写入权限可邀请、调整或移除查看者与编辑者，不能管理管理员、所有者或读取文档。')}</p>}
       <button className="btn primary" disabled={!name.trim() || !workspace.trim() || !selected.length || !Number.isInteger(days) || days < 1 || days > 365}
         onClick={() => act({ title: t('提交审批申请'), impact: t('所有者需要在账户的授权审批页明确批准，管理员才能签发凭据。'),
           run: reason => post(BASE + '/approvals', { reason, name: name.trim(), workspace_id: workspace.trim(), credential_kind: kind, scopes: selected, resources: [target], expires_in_days: days }) })}>{t('提交审批申请')}</button>
@@ -70,6 +70,7 @@ function ApprovalRow({ row, owner, act, locale, labels }: { row: Approval; owner
     <div className="row gap8 wrap">{row.requested_scopes.map(scope => owner && row.status === 'pending' ?
       <label key={scope}><input type="checkbox" checked={selected.includes(scope)} onChange={e => setSelected(e.target.checked ? [...selected, scope] : selected.filter(x => x !== scope))} /> <code>{scope}</code></label> : <code className="chip" key={scope}>{scope}</code>)}</div>
     {row.approved_scopes.length > 0 && <p>{t('批准权限')} · <code>{row.approved_scopes.join(', ')}</code></p>}
+    {row.requested_scopes.includes('workspace.members.write') && <p className="notice info">{t('成员写入权限可发送邀请并调整或移除查看者与编辑者。撤回授权后，尚未接受的集成邀请也会失效。')}</p>}
     <div className="row gap8 wrap">
       {owner && row.status === 'pending' && live && <>
         <button className="btn primary" disabled={!selected.length} onClick={() => act({ title: t('批准授权'), impact: <>{t('你批准的权限将允许管理员签发绑定此工作空间的机器凭据。')} <code>{row.workspace_id}</code></>, run: reason => post(`${base}/${row.id}/approve`, { reason, scopes: selected, resources: row.requested_resources }) })}>{t('批准授权')}</button>

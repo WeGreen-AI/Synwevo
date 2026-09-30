@@ -55,9 +55,9 @@ export default function ApiPlatform() {
           <Stat label={t('平均耗时')} value={load.data.calls.mean_duration_ms === null ? t('暂无调用') : t('{count} 毫秒', { count: Math.round(load.data.calls.mean_duration_ms) })} />
           <Stat label={t('待审批')} value={t('{count} 条', { count: load.data.pending_approvals })} />
           {load.data.webhooks && <Stat label={t('事件积压')} value={t('{count} 次投递', { count: load.data.webhooks.pending })} />}
-          {load.data.webhooks && <Stat label={t('持续失败的订阅')} value={t('{count} 个', { count: load.data.webhooks.failing })} />}
+          {load.data.webhooks && <Stat label={t('持续失败的订阅')} value={t('{count} 个订阅', { count: load.data.webhooks.failing })} />}
         </section>
-        {!load.data.adapter_available && <p className="notice warn">{t('此部署未连接 Synwevo Docs，接口契约、Webhook 和请求调试暂不可用。')}</p>}
+        {!load.data.adapter_available && <p className="notice warn">{t('此部署未连接 Synwevo Docs，Docs 契约、Webhook 和请求调试暂不可用；工作空间接口契约仍可查看。')}</p>}
         <nav className="row gap8 wrap" aria-label={t('API 管理导航')}>{tabs.map(([id, label]) => <button key={id} className={`btn ${tab === id ? 'primary' : ''}`} aria-current={tab === id ? 'page' : undefined}
           onClick={() => setTab(id)}>{label}</button>)}</nav>
         {tab === 'approvals' && <ApprovalsPanel act={act} scopes={load.data.scopes} resource={load.data.resource} resources={load.data.resources} revision={revision} />}

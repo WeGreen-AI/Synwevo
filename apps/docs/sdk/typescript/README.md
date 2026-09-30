@@ -98,6 +98,53 @@ CLI stdout is JSON; progress/errors go to stderr. Exit codes are 0 success, 2 us
 preflight failure, 4 transport/server/integrity failure, 5 failed/cancelled job, 6 wait timeout,
 130 interruption. `--cancel-on-interrupt` cancels a known job when interrupting generation/wait.
 
+## Workspace directory
+
+`WorkspaceClient` is an independent export for `/api/workspace/v1` on the Account
+origin. `await WorkspaceClient.fromEnv()` reads only `SYNWEVO_WORKSPACE_BASE_URL`
+(default `https://accounts.synwevo.com`), `SYNWEVO_WORKSPACE_CLIENT_ID`,
+`SYNWEVO_WORKSPACE_CLIENT_SECRET_FILE` or `SYNWEVO_WORKSPACE_CLIENT_SECRET`, and
+optional `SYNWEVO_WORKSPACE_TOKEN_URL`. Its resource is always
+`urn:synwevo:platform:workspace`; scope defaults to `workspace.read`. Set
+`SYNWEVO_WORKSPACE_SCOPE=workspace.read workspace.members.write` explicitly when
+that write permission has been approved by the workspace owner. Docs defaults and
+credentials are not inherited. An explicit constructor accepts an origin and
+`ClientCredentials` configured with that resource and scope.
+
+```js
+import { WorkspaceClient } from '@synwevo/docs-sdk';
+const directory = await WorkspaceClient.fromEnv();
+const who = await directory.whoami();
+const members = await directory.listMembers({ role: 'viewer', limit: 50 });
+const invitation = await directory.createInvitation({ email: 'colleague@example.com', role: 'viewer' },
+  { idempotencyKey: 'onboard-2026-09' });
+const resent = await directory.resendInvitation(invitation.id, { idempotencyKey: 'remind-2026-09' });
+await directory.revokeInvitation(resent.id);
+await directory.changeMember(memberId, { role: 'editor', expectedRole: 'viewer' });
+await directory.removeMember(memberId, { expectedRole: 'editor', reason: 'Membership ended' });
+```
+
+`iterMembers` and `iterInvitations` are async iterators over offset pages.
+`expectedRole` is mandatory for both member mutations; concurrent edits return
+409 `role_changed`. Only `viewer`/`editor` roles are writable. Create/resend reuse
+one key on retries; other writes are not retried after uncertain server outcomes.
+The [directory acceptance](../python/README.md#verification) installs a local npm
+tarball, uses real owner approval and service tokens, and checks mail/audit effects.
+
+## Copy requests
+
+Use the project owner's delegated OAuth token with `copyTargets()`,
+`copyManifest(projectId)`, `requestCopy(projectId, { targetWorkspaceId },
+{ idempotencyKey })`, `listCopyRequests(projectId, { status: 'pending', limit: 50 })`,
+`getCopyRequest(copyId)`, and `withdrawCopyRequest(copyId)`. API keys and service
+accounts cannot act for the owner. Creation retries reuse the same key; withdrawal
+is not automatically retried after an uncertain server result. Read its status
+before deciding the next action. Lists are newest first, capped at 100, with no
+cursor. Approval stays in the target approver's authenticated browser flow.
+`CopyRequest` and `CopyStatus` describe results; `CopyEventType` narrows webhook/feed
+events. `copy.*` is a webhook subscription filter; event feed filters use explicit
+types such as `copy.requested` and `copy.withdrawn`.
+
 ## Types
 
 `synwevo-docs.d.ts` declares every export: the constants, the error classes and their fields,

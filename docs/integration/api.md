@@ -124,10 +124,32 @@ curl -s -X POST "$ISSUER/oidc/token" \
 `tests/integration/automation_example.py` 两种都支持：给 `--key` 用旧密钥，给
 `--issuer --client-id --client-secret` 用服务账户。
 
+### 1.1a 复制申请（API-5，场景 C）
+
+把个人空间里的项目复制到组织工作空间，需要目标组织审批人批准。机器接口只接受**项目所有者本人授权的应用**
+（用户委托令牌，`docweave.read`/`docweave.write`，同意时选择项目所在的个人空间）；访问密钥与服务账户 403
+`delegation_required`。审批本身不开放给机器：审批人在「组织 → 审批」页面决定（需要近期重新验证），在请求里带
+`decide`/`reason` 得 400 `decision_in_browser`。执行前在发布事务内重新核对来源摘要、申请人与审批人的权限，
+以及发起申请的原 OAuth 授权家族与客户端；撤回同意或停用客户端后，尚未执行的申请也会成为 `stale`。
+副本与完成状态原子提交；恢复旧版不确定记录时先核对持久副本，不盲目重做。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/copy-targets` | read | 本人可编辑的组织工作空间（可作目标）；`source_is_personal` |
+| GET | `/projects/{pid}/copy-manifest?sources=&corrections=` | read | 预览将被冻结的清单与摘要，不创建申请 |
+| POST | `/projects/{pid}/copy-requests` | write | `{target_workspace_id, name?, purpose?, scope?: {sources, corrections}}`，支持 `Idempotency-Key`（同键重放同一申请，改参 409）；同一目标已有未完成申请 409 `copy_already_requested`；审批人收到站内待办 |
+| GET | `/projects/{pid}/copy-requests?status=&limit=` | read | 本人发起的申请，先过滤再截取最新结果；默认 50，最多 100，无后续页游标 |
+| GET | `/copy-requests/{cid}` | read | 状态、清单、审批人与理由、结果（`done` 时 `result.project_id` 为目标空间的新项目） |
+| POST | `/copy-requests/{cid}/withdraw` | write | 撤回待审批或已批准未执行的申请；已撤回再撤 409 `not_withdrawable`；SDK 不自动重试 |
+
+状态变化以事件 `copy.requested/approved/rejected/withdrawn/expired/done/failed/stale` 发往来源个人空间的事件流与订阅
+（触发器与状态同一事务写入；负载只有 `copy_id`、`source_project_id`、`target_workspace_id`、`status`、`version`）。
+副本是目标空间里的独立项目：不带原项目的凭据、任务、产物、Webhook 与协作房间，来源空间的令牌也读不到它。
+
 ### 1.2 工作空间目录接口（API-5）
 
 账户服务上的 `/api/workspace/v1` 是另一个机器接口：一个工作空间的成员、角色与邀请，给该空间所有者批准的**服务账户**。
-它有自己的资源 `urn:synwevo:platform:workspace`（`SYNWEVO_WORKSPACE_RESOURCE` 可改）与权限 `workspace.read`；
+它有自己的资源 `urn:synwevo:platform:workspace`（`SYNWEVO_WORKSPACE_RESOURCE` 可改）与权限 `workspace.read`、`workspace.members.write`；
 申请令牌时带 `resource=urn:synwevo:platform:workspace`。Docs 的密钥与令牌不能调用它（受众不符 401 `invalid_audience`；
 `dw_` 密钥 403 `wrong_credential`），它的令牌也不能调用 `/api/v1`。凭据经管理台「授权审批」选择「工作空间目录接口」申请，
 所有者批准后签发（只签发服务客户端）；每次调用复核审批、所有者资格与工作空间状态，冻结或撤回即停止。
@@ -137,9 +159,23 @@ curl -s -X POST "$ISSUER/oidc/token" \
 | GET | `/whoami` | workspace.read | 凭据所属工作空间与权限 |
 | GET | `/members?role=&q=&offset=&limit=` | workspace.read | 成员：`user_id`、`email`、`display_name`、`role`、`account_status`、`joined_at`；`owner_count` |
 | GET | `/invitations?state=&offset=&limit=` | workspace.read | 邀请：`id`、`email`、`role`、`state`（pending/accepted/declined/revoked/expired）、时间 |
+| POST | `/invitations` | workspace.members.write | `{email,role,can_export?,expires_in_days?}`，仅 viewer/editor；201 表示真实邀请及邮件已入队，不表示已加入或邮件送达；支持幂等键 |
+| POST | `/invitations/{iid}/resend` | workspace.members.write | 新邀请替代旧链接；同一地址冷却 60 秒；支持幂等键 |
+| POST | `/invitations/{iid}/revoke` | workspace.members.write | 撤回本空间普通成员邀请；已接受不能撤回 |
+| PATCH | `/members/{user_id}` | workspace.members.write | `{role,expected_role}` 均必填，viewer/editor；旧角色不符 409 `role_changed` |
+| POST | `/members/{user_id}/remove` | workspace.members.write | `{expected_role,reason}` 均必填；仅 viewer/editor，原因 4–500 字；清理现有成员权限 |
 
-只返回目录元数据，不含任何成员创作的内容。同一套限流、调用记录与错误信封（含 RFC 9457）适用。邀请、改角色与移除成员
-暂时只在账户页面完成（机器写入需要明确的应用操作者，邀请邮件要写明是谁邀请的，属于下一步 API-5b）。
+只返回目录元数据，不含任何成员创作的内容。同一套限流、调用记录与错误信封（含 RFC 9457）适用。
+新成员仍通过真实邀请和本人验证加入；邀请邮件、页面和通知标明集成与批准人。邀请接受时检查原批准 ID，
+重新审批不会复活被撤回的旧邀请。机器不能管理管理员/所有者，也不能向邀请写入 `owner_id` 等保护字段。
+网页提升这类邀请为管理角色时须撤回后由本人重新邀请。
+
+SDK 使用同一包的独立 `WorkspaceClient`，账户 Base URL 默认 `https://accounts.synwevo.com`；见
+[Python](../../apps/docs/sdk/python/README.md#workspace-directory) 与 [TypeScript](../../apps/docs/sdk/typescript/README.md)。
+只有邀请创建/重发会自动复用幂等键重试；其他写操作结果未知时先查询状态。
+权威契约：[workspace-openapi.json](workspace-openapi.json)，命令
+`python -m synwevo_identity.cli workspace-openapi --out docs/integration/workspace-openapi.json` 从真实路由重新生成。
+机器读写目录的回滚要求与安全日志边界见 [目录写入运行说明](../platform/api-directory-writes.md#升级与恢复边界)。
 
 ## 2. 错误与追踪
 

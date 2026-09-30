@@ -37,6 +37,9 @@ import { fileURLToPath } from 'node:url';
 
 export const VERSION = '0.1.0';
 export const API_PREFIX = '/api/v1';
+export const WORKSPACE_BASE_URL = 'https://accounts.synwevo.com';
+export const WORKSPACE_RESOURCE = 'urn:synwevo:platform:workspace';
+export const WORKSPACE_API_PREFIX = '/api/workspace/v1';
 export const TERMINAL_STATUSES = Object.freeze(['completed', 'completed_with_errors', 'failed', 'cancelled']);
 export const SUCCESS_STATUSES = Object.freeze(['completed', 'completed_with_errors']);
 export const ERROR_POLICIES = Object.freeze(['block', 'skip']);
@@ -528,6 +531,22 @@ export class Client {
   }
   listProjects(query = {}) { return this.paginate('/projects', query); }
   getProject(pid) { return this.get(`/projects/${encodeURIComponent(pid)}`); }
+  // Copy requests: only a delegated token (the project owner's authorization) may use these; the
+  // target's approver decides in the browser. Follow a request with getCopyRequest or copy.* events.
+  copyTargets() { return this.get('/copy-targets'); }
+  copyManifest(pid, { sources = false, corrections = false } = {}) {
+    return this.get(`/projects/${encodeURIComponent(pid)}/copy-manifest`, { sources: String(!!sources), corrections: String(!!corrections) });
+  }
+  requestCopy(pid, { targetWorkspaceId, name, purpose, sources = false, corrections = false } = {}, { idempotencyKey = randomUUID() } = {}) {
+    if (typeof targetWorkspaceId !== 'string' || !targetWorkspaceId) throw new ValidationError('targetWorkspaceId is required', { field: 'target_workspace_id' });
+    const json = { target_workspace_id: targetWorkspaceId, scope: { sources: !!sources, corrections: !!corrections } };
+    if (name != null) json.name = name;
+    if (purpose != null) json.purpose = purpose;
+    return this.requestJson('POST', `/projects/${encodeURIComponent(pid)}/copy-requests`, { json, idempotencyKey });
+  }
+  listCopyRequests(pid, { status, limit = 50 } = {}) { return this.get(`/projects/${encodeURIComponent(pid)}/copy-requests`, { status, limit }); }
+  getCopyRequest(cid) { return this.get(`/copy-requests/${encodeURIComponent(cid)}`); }
+  withdrawCopyRequest(cid) { return this.requestJson('POST', `/copy-requests/${encodeURIComponent(cid)}/withdraw`, { retry: false }); }
   /** Rename, archive/unarchive or change output defaults; `baseSettingsRev` is the `settings_rev`
    *  you read (someone else's edit since is 409 stale_project). Not retried automatically. */
   updateProject(pid, { baseSettingsRev, name, archived, output } = {}) {
@@ -1026,6 +1045,73 @@ export class Client {
     return { tenant: me.tenant, project_id: project.id, template_id: tpl.id, files: files.map((f) => ({ id: f.id, filename: f.filename, format: f.format, status: f.status })),
       preview, preflight: { records: pf.records, valid: pf.valid, invalid: pf.invalid, expected_outputs: pf.expected_outputs },
       job: { id: job.id, status: job.status, counts: job.counts, run_no: job.run_no }, artifacts };
+  }
+}
+
+// The directory client reuses the transport and pagination implementation, with its own fixed
+// prefix. Composition keeps Docs operations out of WorkspaceClient's public interface.
+class WorkspaceTransport extends Client {
+  url(path, query) {
+    const url = new URL(this.baseUrl + WORKSPACE_API_PREFIX + path);
+    for (const [key, value] of Object.entries(query || {})) {
+      if (value == null) continue;
+      for (const item of Array.isArray(value) ? value : [value]) url.searchParams.append(key, String(item));
+    }
+    return url.toString();
+  }
+}
+
+function managedRole(value, field) {
+  if (!['viewer', 'editor'].includes(value)) throw new ValidationError(`${field} must be viewer or editor`, { field });
+  return value;
+}
+
+function directoryId(value) {
+  if (typeof value !== 'string' || !value) throw new ValidationError('A directory resource ID is required', { field: 'id' });
+  return encodeURIComponent(value);
+}
+
+export class WorkspaceClient {
+  #transport;
+  constructor(baseUrl = WORKSPACE_BASE_URL, credentials, options = {}) {
+    this.#transport = new WorkspaceTransport(baseUrl, credentials, { userAgent: `synwevo-workspace-node/${VERSION}`, ...options });
+  }
+
+  /** Only SYNWEVO_WORKSPACE_* variables are read; Docs credentials and defaults are ignored. */
+  static async fromEnv(env = process.env, options = {}) {
+    const baseUrl = env.SYNWEVO_WORKSPACE_BASE_URL || WORKSPACE_BASE_URL;
+    const clientId = env.SYNWEVO_WORKSPACE_CLIENT_ID;
+    if (!clientId) throw new ValidationError('Set SYNWEVO_WORKSPACE_CLIENT_ID for an approved directory service account', { field: 'SYNWEVO_WORKSPACE_CLIENT_ID' });
+    const clientSecret = env.SYNWEVO_WORKSPACE_CLIENT_SECRET
+      || (env.SYNWEVO_WORKSPACE_CLIENT_SECRET_FILE && await readSecretFile(env.SYNWEVO_WORKSPACE_CLIENT_SECRET_FILE, 'SYNWEVO_WORKSPACE_CLIENT_SECRET_FILE'));
+    const credentials = new ClientCredentials({ tokenUrl: env.SYNWEVO_WORKSPACE_TOKEN_URL || String(baseUrl).replace(/\/+$/, '') + '/oidc/token',
+      clientId, clientSecret, scope: env.SYNWEVO_WORKSPACE_SCOPE || 'workspace.read', resource: WORKSPACE_RESOURCE,
+      fetch: options.fetch, timeoutMs: options.timeoutMs });
+    return new WorkspaceClient(baseUrl, credentials, options);
+  }
+
+  get baseUrl() { return this.#transport.baseUrl; }
+  whoami() { return this.#transport.get('/whoami'); }
+  listMembers({ role, q, limit = 50, offset = 0 } = {}) { return this.#transport.get('/members', { role, q, limit, offset }); }
+  iterMembers({ role, q, limit = 50 } = {}) { return this.#transport.paginate('/members', { role, q, limit }); }
+  listInvitations({ state, limit = 50, offset = 0 } = {}) { return this.#transport.get('/invitations', { state, limit, offset }); }
+  iterInvitations({ state, limit = 50 } = {}) { return this.#transport.paginate('/invitations', { state, limit }); }
+  createInvitation({ email, role, canExport, expiresInDays = 7 }, { idempotencyKey = randomUUID() } = {}) {
+    const json = { email, role: managedRole(role, 'role'), expires_in_days: expiresInDays };
+    if (canExport != null) json.can_export = canExport;
+    return this.#transport.requestJson('POST', '/invitations', { json, idempotencyKey });
+  }
+  resendInvitation(id, { idempotencyKey = randomUUID() } = {}) {
+    return this.#transport.requestJson('POST', `/invitations/${directoryId(id)}/resend`, { json: {}, idempotencyKey });
+  }
+  revokeInvitation(id) { return this.#transport.requestJson('POST', `/invitations/${directoryId(id)}/revoke`, { json: {}, retry: false }); }
+  changeMember(id, { role, expectedRole }) {
+    return this.#transport.requestJson('PATCH', `/members/${directoryId(id)}`, {
+      json: { role: managedRole(role, 'role'), expected_role: managedRole(expectedRole, 'expected_role') }, retry: false });
+  }
+  removeMember(id, { expectedRole, reason }) {
+    return this.#transport.requestJson('POST', `/members/${directoryId(id)}/remove`, {
+      json: { expected_role: managedRole(expectedRole, 'expected_role'), reason }, retry: false });
   }
 }
 

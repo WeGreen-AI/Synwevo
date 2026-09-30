@@ -479,6 +479,7 @@ def build_router(store: Store, ident, sessions, audit,
     # credentials' self-service. Read-only, like every audit view; the broader security log is
     # the administration page's.
     AUDIT_PREFIXES = ("api_platform.", "oidc.", "api.credential.", "cli.client.")
+    DIRECTORY_ACTIONS = ("invite.create", "invite.resend", "invite.revoke", "member.role", "member.remove")
 
     @r.get(PREFIX + "/audit")
     def audit_trail(request: Request, action: str = Query("", max_length=80),
@@ -486,12 +487,13 @@ def build_router(store: Store, ident, sessions, audit,
                     workspace_id: str = Query("", max_length=100), request_id: str = Query("", max_length=128),
                     limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=2**31)):
         actor(request)
-        if action and not action.startswith(AUDIT_PREFIXES):
+        if action and not action.startswith(AUDIT_PREFIXES) and action not in DIRECTORY_ACTIONS:
             raise ServiceError(400, "invalid_action_filter", "只能查看 API 平台相关的操作")
         prefixes = " OR ".join("a.action LIKE ?" for _ in AUDIT_PREFIXES)
+        prefixes += " OR (a.actor_kind='machine' AND a.action IN (" + ",".join("?" for _ in DIRECTORY_ACTIONS) + "))"
         source = (f"audit_events a LEFT JOIN users u ON u.id=a.actor_id WHERE ({prefixes}) AND (?='' OR a.action=?) "
                   "AND (?='' OR a.result=?) AND (?='' OR a.workspace_id=?) AND (?='' OR a.request_id=?)")
-        args = (*[p + "%" for p in AUDIT_PREFIXES], action, action, result, result, workspace_id, workspace_id,
+        args = (*[p + "%" for p in AUDIT_PREFIXES], *DIRECTORY_ACTIONS, action, action, result, result, workspace_id, workspace_id,
                 request_id, request_id)
         out = page(source, "a.seq, a.id, a.at, a.actor_kind, a.actor_id, u.email AS actor_email, a.workspace_id, a.action, "
                    "a.object_kind, a.object_id, a.result, a.request_id, a.meta", args,
@@ -506,13 +508,15 @@ def build_router(store: Store, ident, sessions, audit,
     @r.get(PREFIX + "/openapi")
     def openapi(request: Request):
         actor(request)
-        return require_adapter().contract()
+        from .workspace_contract import catalogue
+        from synwevo_core.oidc import issuer
+        return catalogue(request.app, adapter.contract() if adapter else None, issuer=issuer())
 
     @r.get(PREFIX + "/operations")
     def operations(request: Request, q: str = Query("", max_length=100),
                    limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=2**31)):
         actor(request)
-        paths = require_adapter().contract()["paths"]
+        paths = openapi(request)["paths"]
         items = [{"path": path, "method": method.upper(), **op} for path, methods in paths.items()
                  for method, op in methods.items() if method in ("get", "post", "put", "patch", "delete")]
         items = [x for x in items if q.casefold() in json.dumps(x, ensure_ascii=False).casefold()]

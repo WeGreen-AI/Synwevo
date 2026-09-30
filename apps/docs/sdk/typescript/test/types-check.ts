@@ -5,7 +5,7 @@
 import type { IncomingHttpHeaders } from 'node:http';
 
 import {
-  ApiKey, Client, ConflictError, credentialsFromEnv, isTerminal, SUCCESS_STATUSES, verifyWebhook,
+  ApiKey, Client, WorkspaceClient, ConflictError, credentialsFromEnv, isTerminal, SUCCESS_STATUSES, verifyWebhook,
   WaitTimeoutError, WebhookVerificationError,
   type Artifact, type Job, type JobStatus, type SourceFile, type WebhookEvent,
 } from '@synwevo/docs-sdk';
@@ -13,6 +13,39 @@ import {
 import * as vendored from '../synwevo-docs.mjs';
 
 const sameClient: typeof Client = vendored.Client;
+
+export async function directoryFlow(client: WorkspaceClient): Promise<string> {
+  const who = await client.whoami();
+  const invite = await client.createInvitation({ email: 'synthetic@example.invalid', role: 'viewer' });
+  const resent = await client.resendInvitation(invite.id);
+  await client.revokeInvitation(resent.id);
+  for await (const member of client.iterMembers({ role: 'viewer', limit: 1 })) {
+    await client.changeMember(member.user_id, { role: 'editor', expectedRole: 'viewer' });
+    await client.removeMember(member.user_id, { expectedRole: 'editor', reason: 'Synthetic cleanup' });
+  }
+  // @ts-expect-error a concurrency precondition is required
+  await client.changeMember('user', { role: 'viewer' });
+  // @ts-expect-error a directory integration cannot manage elevated roles
+  await client.createInvitation({ email: 'synthetic@example.invalid', role: 'owner' });
+  // @ts-expect-error workspace clients do not expose Docs operations
+  await client.createProject({ name: 'not a directory action' });
+  return who.workspace.id;
+}
+
+export async function copyFlow(client: Client, pid: string, targetWorkspaceId: string): Promise<string> {
+  const targets = await client.copyTargets();
+  const personal: boolean = targets.source_is_personal;
+  const manifest = await client.copyManifest(pid, { sources: true });
+  const request = await client.requestCopy(pid, { targetWorkspaceId, sources: true, purpose: 'Types check' }, { idempotencyKey: 'types:copy' });
+  const listed = await client.listCopyRequests(pid, { status: 'pending', limit: 10 });
+  const current = await client.getCopyRequest(request.id);
+  const withdrawn = await client.withdrawCopyRequest(request.id);
+  // @ts-expect-error approval is an interactive action, not a machine request field
+  await client.requestCopy(pid, { targetWorkspaceId, decide: true });
+  // @ts-expect-error request status values are stable machine identifiers
+  await client.listCopyRequests(pid, { status: 'complete' });
+  return `${personal} ${manifest.digest} ${listed.items.length} ${current.version} ${withdrawn.status}`;
+}
 
 export async function mainFlow(): Promise<string[]> {
   const client = new Client('http://127.0.0.1:8765', new ApiKey('dw_example_key'), {
@@ -93,6 +126,15 @@ function describe(event: WebhookEvent): string {
       return `${event.type} ${event.data.file_id} in ${event.data.project_id}`;
     case 'webhook.ping':
       return `ping ${event.data.subscription_id ?? ''}`;
+    case 'copy.requested':
+    case 'copy.approved':
+    case 'copy.rejected':
+    case 'copy.withdrawn':
+    case 'copy.expired':
+    case 'copy.done':
+    case 'copy.failed':
+    case 'copy.stale':
+      return `${event.type} ${event.data.copy_id} → ${event.data.target_workspace_id}`;
     default:
       return `${event.type} ${event.job.id} ${event.job.status}`;
   }

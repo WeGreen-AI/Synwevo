@@ -19,6 +19,9 @@ import type { IncomingHttpHeaders, Server } from 'node:http';
 // ============================================================================ constants
 export declare const VERSION: string;
 export declare const API_PREFIX: '/api/v1';
+export declare const WORKSPACE_BASE_URL: 'https://accounts.synwevo.com';
+export declare const WORKSPACE_RESOURCE: 'urn:synwevo:platform:workspace';
+export declare const WORKSPACE_API_PREFIX: '/api/workspace/v1';
 export declare const TERMINAL_STATUSES: readonly ['completed', 'completed_with_errors', 'failed', 'cancelled'];
 export declare const SUCCESS_STATUSES: readonly ['completed', 'completed_with_errors'];
 export declare const ERROR_POLICIES: readonly ['block', 'skip'];
@@ -60,12 +63,16 @@ export type JobEventType =
   | 'job.created' | 'job.started' | 'job.planned' | 'job.cancel_requested' | 'job.retry_requested'
   | 'job.recovered' | 'job.completed' | 'job.completed_with_errors' | 'job.failed' | 'job.cancelled';
 export type FileEventType = 'file.ready' | 'file.needs_ocr' | 'file.rejected' | 'file.failed';
+/** Copy request status changes, sent to the source (personal) workspace. */
+export type CopyEventType =
+  | 'copy.requested' | 'copy.approved' | 'copy.rejected' | 'copy.withdrawn' | 'copy.expired'
+  | 'copy.done' | 'copy.failed' | 'copy.stale';
 /** Types in the workspace event feed (`GET /events`). */
-export type EventType = JobEventType | FileEventType;
+export type EventType = JobEventType | FileEventType | CopyEventType;
 /** Types a webhook delivery can carry: the feed's plus the test ping. */
 export type WebhookEventType = EventType | 'webhook.ping';
 /** A subscription filter: everything, a family, or one type. */
-export type WebhookEventFilter = '*' | 'job.*' | 'file.*' | EventType;
+export type WebhookEventFilter = '*' | 'job.*' | 'file.*' | 'copy.*' | EventType;
 export type SubscriptionStatus = 'active' | 'paused' | 'disabled';
 export type DeliveryStatus = 'pending' | 'delivered' | 'failed' | 'dropped';
 export type WebhookVerificationErrorCode =
@@ -1276,8 +1283,30 @@ export interface FileFeedEvent {
   data: FileEventData;
 }
 
+export type CopyStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn' | 'expired' | 'running' | 'done' | 'failed' | 'stale';
+
+/** Ids and status only: the manifest and the decision's reason come from getCopyRequest. */
+export interface CopyEventData {
+  copy_id: string;
+  source_project_id: string;
+  target_workspace_id: string;
+  status: CopyStatus;
+  version: number;
+}
+
+export interface CopyFeedEvent {
+  id: string;
+  type: CopyEventType;
+  version: number;
+  occurred_at: number;
+  job_id: null;
+  project_id: string;
+  copy_id: string;
+  data: CopyEventData;
+}
+
 /** An item of events(): the workspace feed; narrow on `type`. `id` equals the webhook-id of the same event. */
-export type FeedEvent = JobFeedEvent | FileFeedEvent;
+export type FeedEvent = JobFeedEvent | FileFeedEvent | CopyFeedEvent;
 
 /** The job summary a job webhook carries. The deployment endpoint's payload adds tenant and times. */
 export interface WebhookJobSummary {
@@ -1323,8 +1352,64 @@ export interface PingWebhookEvent {
   data: { subscription_id?: string };
 }
 
+export interface CopyWebhookEvent {
+  id: string;
+  type: CopyEventType;
+  version: number;
+  occurred_at: number;
+  tenant: string;
+  job: null;
+  data: CopyEventData;
+}
+
 /** The JSON body of a delivery; narrow on `type`. */
-export type WebhookEvent = JobWebhookEvent | FileWebhookEvent | PingWebhookEvent;
+export type WebhookEvent = JobWebhookEvent | FileWebhookEvent | CopyWebhookEvent | PingWebhookEvent;
+
+export interface CopyTarget {
+  id: string;
+  name: string;
+  role: 'editor' | 'admin' | 'owner';
+  organization_id: string;
+  organization_name: string | null;
+}
+
+export interface CopyPerson { user_id: string; name: string }
+
+/** A copy request as its requester sees it (the source workspace id is never echoed). */
+export interface CopyRequest {
+  id: string;
+  source_project_id: string;
+  target_organization_id: string;
+  target_workspace_id: string;
+  name: string;
+  purpose: string | null;
+  scope: { sources: boolean; corrections: boolean };
+  manifest: Record<string, unknown>;
+  digest: string;
+  status: CopyStatus;
+  requester: CopyPerson | null;
+  decider: CopyPerson | null;
+  decided_at: number | null;
+  decision_reason: string | null;
+  self_approved: boolean;
+  approval_expires_at: number | null;
+  executed_at: number | null;
+  /** When done: the new project's id in the target workspace and what was copied. */
+  result: ({ project_id: string } & Record<string, unknown>) | null;
+  error: string | null;
+  version: number;
+  created_at: number;
+  updated_at: number;
+  expires_at: number;
+}
+
+export interface RequestCopyInput {
+  targetWorkspaceId: string;
+  name?: string;
+  purpose?: string;
+  sources?: boolean;
+  corrections?: boolean;
+}
 
 /** Raw body bytes exactly as received (never re-serialised JSON). */
 export type WebhookBody = Uint8Array | ArrayBuffer | string;
@@ -1483,6 +1568,80 @@ export interface IdempotencyOptions {
   idempotencyKey?: string;
 }
 
+export type DirectoryManagedRole = 'viewer' | 'editor';
+export type DirectoryMemberRole = DirectoryManagedRole | 'admin' | 'owner';
+export type DirectoryInvitationState = 'pending' | 'accepted' | 'declined' | 'revoked' | 'expired';
+export interface DirectoryWhoami {
+  workspace: { id: string; name: string | null; kind: string | null };
+  client_id: string;
+  name: string | null;
+  scopes: string[];
+}
+export interface DirectoryMember {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  role: DirectoryMemberRole;
+  account_status: string;
+  joined_at: number;
+}
+export interface DirectoryPage<T> {
+  items: T[];
+  total: number;
+  offset: number;
+  limit: number;
+  next_offset: number | null;
+}
+export interface DirectoryMemberPage extends DirectoryPage<DirectoryMember> { owner_count: number }
+export interface DirectoryInvitation {
+  id: string;
+  email: string;
+  role: DirectoryMemberRole;
+  state: DirectoryInvitationState;
+  created_at: number;
+  expires_at: number;
+  invited_via: string | null;
+}
+export interface DirectoryInvitationCreated extends DirectoryInvitation { can_export: boolean; mail: 'queued' }
+export interface DirectoryMemberChanged {
+  user_id: string;
+  role: DirectoryManagedRole;
+  can_export: boolean;
+  previous_role: DirectoryManagedRole;
+  journaled: boolean | null;
+}
+export interface DirectoryMemberRemoved { user_id: string; removed: boolean; journaled: boolean }
+export interface DirectoryInvitationRevoked { id: string; state: 'revoked'; journaled: boolean }
+export interface DirectoryInvitationInput {
+  email: string;
+  role: DirectoryManagedRole;
+  canExport?: boolean;
+  expiresInDays?: number;
+}
+export interface DirectoryMemberQuery { role?: DirectoryMemberRole; q?: string; limit?: number; offset?: number }
+export interface DirectoryInvitationQuery { state?: DirectoryInvitationState; limit?: number; offset?: number }
+export type WorkspaceClientOptions = Omit<ClientOptions, 'multipartMaxBytes' | 'chunkBytes'>;
+
+/** Independent directory client. No Docs operations, Docs default scope or API key environment fallback. */
+export declare class WorkspaceClient {
+  /** Passing undefined for baseUrl selects https://accounts.synwevo.com. */
+  constructor(baseUrl: string | URL | undefined, credentials: Credentials, options?: WorkspaceClientOptions);
+  /** Only SYNWEVO_WORKSPACE_* variables; workspace.read by default, fixed workspace resource. */
+  static fromEnv(env?: Record<string, string | undefined>, options?: WorkspaceClientOptions): Promise<WorkspaceClient>;
+  readonly baseUrl: string;
+  whoami(): Promise<WithMeta<DirectoryWhoami>>;
+  listMembers(query?: DirectoryMemberQuery): Promise<WithMeta<DirectoryMemberPage>>;
+  iterMembers(query?: Omit<DirectoryMemberQuery, 'offset'>): AsyncGenerator<DirectoryMember, void, unknown>;
+  listInvitations(query?: DirectoryInvitationQuery): Promise<WithMeta<DirectoryPage<DirectoryInvitation>>>;
+  iterInvitations(query?: Omit<DirectoryInvitationQuery, 'offset'>): AsyncGenerator<DirectoryInvitation, void, unknown>;
+  createInvitation(input: DirectoryInvitationInput, options?: IdempotencyOptions): Promise<WithMeta<DirectoryInvitationCreated>>;
+  resendInvitation(id: string, options?: IdempotencyOptions): Promise<WithMeta<DirectoryInvitationCreated>>;
+  revokeInvitation(id: string): Promise<WithMeta<DirectoryInvitationRevoked>>;
+  /** expectedRole must be the role most recently read; stale state is 409 role_changed. */
+  changeMember(id: string, input: { role: DirectoryManagedRole; expectedRole: DirectoryManagedRole }): Promise<WithMeta<DirectoryMemberChanged>>;
+  removeMember(id: string, input: { expectedRole: DirectoryManagedRole; reason: string }): Promise<WithMeta<DirectoryMemberRemoved>>;
+}
+
 export declare class Client {
   /**
    * @param baseUrl e.g. http://127.0.0.1:8765 (a trailing /api/v1 is removed)
@@ -1539,6 +1698,15 @@ export declare class Client {
    * @throws ValidationError (synchronously) when baseSettingsRev is not a non-negative integer.
    */
   updateProject(pid: string, input: UpdateProjectInput): Promise<WithMeta<Project>>;
+  /** Delegated tokens only (403 delegation_required otherwise). */
+  copyTargets(): Promise<WithMeta<{ items: CopyTarget[]; source_is_personal: boolean }>>;
+  copyManifest(pid: string, options?: { sources?: boolean; corrections?: boolean }): Promise<WithMeta<{ manifest: Record<string, unknown>; digest: string }>>;
+  /** @throws ValidationError synchronously without targetWorkspaceId. */
+  requestCopy(pid: string, input: RequestCopyInput, options?: IdempotencyOptions): Promise<WithMeta<CopyRequest>>;
+  /** Newest requests first; limit is 1–100 (default 50). This endpoint has no cursor. */
+  listCopyRequests(pid: string, options?: { status?: CopyStatus; limit?: number }): Promise<WithMeta<{ items: CopyRequest[] }>>;
+  getCopyRequest(cid: string): Promise<WithMeta<CopyRequest>>;
+  withdrawCopyRequest(cid: string): Promise<WithMeta<CopyRequest>>;
   deleteProject(pid: string): Promise<WithMeta<{ deleted: string }>>;
   putRule(pid: string, rule: RecordRule): Promise<WithMeta<RuleResult>>;
   /** Bind a template; `version` pins that version, null or omitted follows the head. */

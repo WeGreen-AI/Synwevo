@@ -75,12 +75,19 @@ class Invites:
             return self._create(**kwargs)
 
     def _create(self, *, workspace_id: str, email: str, role: str, actor_id: str,
-               can_export: bool | None = None, ttl_s: int = INVITE_TTL_S) -> tuple[dict, str]:
+               can_export: bool | None = None, ttl_s: int = INVITE_TTL_S,
+               invited_via: str | None = None, invited_approval_id: str | None = None) -> tuple[dict, str]:
         if not INVITE_TTL_MIN_S <= ttl_s <= INVITE_TTL_MAX_S:
             raise ServiceError(400, "bad_expiry", "邀请有效期必须在 1 到 30 天之间")
         if not valid_email(email):
             raise ServiceError(400, "bad_email", "邮箱格式不正确", {"field": "email"})
         self.may_invite(actor_id, workspace_id, role)
+        if invited_via:
+            from .workspace_actor import require_role, service_approval
+            require_role(role)
+            approval = service_approval(self.store, invited_via, workspace_id, approval_id=invited_approval_id)
+            if not invited_approval_id or approval["approved_by"] != actor_id:
+                raise ServiceError(403, "approval_inactive", "邀请必须绑定当前批准人与原审批")
         ws = self.ident.get_workspace(workspace_id)
         if not ws:
             raise ServiceError(404, "no_workspace", "找不到该工作空间")
@@ -93,6 +100,11 @@ class Invites:
             raise ServiceError(409, "workspace_unavailable", "该工作空间当前不可用")
 
         key = normalise_email(email)
+        if invited_via and self.store.one(
+                "SELECT 1 FROM invitations WHERE workspace_id=? AND email_key=? "
+                "AND role IN ('admin','owner') AND accepted_at IS NULL AND revoked_at IS NULL", (workspace_id, key)):
+            # Superseding an administrator invitation is itself a privileged role change.
+            require_role("admin")
         existing_user = self.ident.by_email(key)
         if existing_user and self.ident.membership(workspace_id, existing_user["id"]):
             raise ServiceError(409, "already_member", "该邮箱已经是这个空间的成员")
@@ -104,6 +116,7 @@ class Invites:
         row = {"id": new_id("iv"), "email_key": key, "workspace_id": workspace_id, "role": role,
                "can_export": 1 if (can_export if can_export is not None else role != "viewer") else 0,
                "token_hash": _digest(raw), "invited_by": actor_id,
+               "invited_via": invited_via, "invited_approval_id": invited_approval_id,
                "created_at": now(), "expires_at": now() + ttl_s}
         with self.store.tx() as t:
             # Counted inside the same transaction as the insert, so concurrent requests cannot
@@ -125,8 +138,8 @@ class Invites:
                 t.execute(f"UPDATE invitations SET revoked_at=? WHERE id IN ({','.join('?' * len(superseded))})",
                           (now(), *superseded))
             t.execute("INSERT INTO invitations (id,email_key,workspace_id,role,can_export,token_hash,"
-                      "invited_by,created_at,expires_at) VALUES (:id,:email_key,:workspace_id,:role,"
-                      ":can_export,:token_hash,:invited_by,:created_at,:expires_at)", row)
+                      "invited_by,invited_via,invited_approval_id,created_at,expires_at) VALUES (:id,:email_key,:workspace_id,:role,"
+                      ":can_export,:token_hash,:invited_by,:invited_via,:invited_approval_id,:created_at,:expires_at)", row)
         # Named so the caller can journal each withdrawn link: a restore from before this moment
         # must not bring back the link a resend was meant to kill.
         row["superseded_ids"] = superseded
@@ -139,11 +152,20 @@ class Invites:
         if state and state not in STATES:
             raise ServiceError(400, "bad_state", f"未知的邀请状态 {state!r}", {"field": "state"})
         rows = self.store.all(
-            "SELECT i.id,i.email_key,i.role,i.can_export,i.invited_by,i.created_at,i.expires_at,"
-            "i.accepted_at,i.revoked_at,i.declined_at,u.email AS invited_by_email "
+            "SELECT i.id,i.email_key,i.role,i.can_export,i.invited_by,i.invited_via,i.created_at,i.expires_at,"
+            "i.accepted_at,i.revoked_at,i.declined_at,u.email AS invited_by_email, "
+            "u.display_name AS inviter_name,c.name AS integration_name "
             "FROM invitations i LEFT JOIN users u ON u.id=i.invited_by "
+            "LEFT JOIN oauth_clients c ON c.client_id=i.invited_via "
             "WHERE i.workspace_id=? ORDER BY i.created_at DESC", (workspace_id,))
         out = [{**r, "state": self._state(r)} for r in rows]
+        viewer = self.ident.get_user(actor_id) or {}
+        from .workspace_actor import format_actor_label
+        for item in out:
+            name = item.pop("inviter_name") or item["invited_by_email"] or item["invited_by"]
+            app = item.pop("integration_name") or item["invited_via"]
+            item["inviter"] = (format_actor_label(app, name, viewer.get("locale") or "zh-Hans")
+                               if item.get("invited_via") else item["invited_by_email"])
         return [r for r in out if not state or r["state"] == state]
 
     def get(self, invite_id: str) -> dict | None:
@@ -164,6 +186,9 @@ class Invites:
         self.may_invite(actor_id, r["workspace_id"], r["role"])
         new_role = role or r["role"]
         self.may_invite(actor_id, r["workspace_id"], new_role)
+        if r.get("invited_via") and new_role in ("admin", "owner"):
+            raise ServiceError(403, "role_needs_person",
+                               "集成发出的邀请只能赋予普通成员角色；请撤回这份邀请，再以本人身份重新发送")
         if self._state(r) != "pending":
             raise ServiceError(409, "invite_not_pending", "只能修改尚未接受、未撤销、未过期的邀请")
         export = r["can_export"] if can_export is None else (1 if can_export else 0)
@@ -224,11 +249,15 @@ class Invites:
         state = self._state(r)
         ws = self.ident.get_workspace(r["workspace_id"])
         inviter = self.ident.get_user(r["invited_by"])
+        name = (inviter or {}).get("display_name") or (inviter or {}).get("email")
+        if r.get("invited_via"):
+            from .workspace_actor import actor_label
+            name = actor_label(self.store, r["invited_via"], r["invited_by"], r.get("locale") or "zh-Hans")
         return {"state": state, "email": r["email_key"], "role": r["role"],
                 "role_label": ROLE_LABEL.get(r["role"], r["role"]),
                 "workspace": (ws or {}).get("name"),
                 "workspace_status": (ws or {}).get("status"),
-                "inviter": (inviter or {}).get("display_name") or (inviter or {}).get("email"),
+                "inviter": name,
                 "expires_at": r["expires_at"],
                 # Whether the visitor needs to choose a password, decided without saying whether
                 # the address is registered: the client is told only what it must render.
@@ -282,6 +311,17 @@ class Invites:
         ws = self.ident.get_workspace(r["workspace_id"])
         if not ws or ws["status"] != "active":
             raise ServiceError(409, "workspace_unavailable", "该工作空间已不可用")
+
+        if r.get("invited_via"):
+            from .workspace_actor import require_role, service_approval
+            try:
+                require_role(r["role"])
+                approval = service_approval(self.store, r["invited_via"], r["workspace_id"],
+                                            approval_id=r.get("invited_approval_id"))
+                if not r.get("invited_approval_id") or approval["approved_by"] != r["invited_by"]:
+                    raise ServiceError(403, "approval_inactive", "邀请的原审批已失效")
+            except ServiceError:
+                raise ServiceError(409, "inviter_lost_permission", "发出邀请的集成已不再具备权限，请联系空间管理员重新邀请") from None
 
         # The inviter's authority is re-checked at acceptance, not only at issue. An invitation
         # written by someone who has since been removed or demoted must not still let them add

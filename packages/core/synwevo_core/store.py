@@ -628,6 +628,13 @@ V6_COLUMNS = [
     ("users", "onboarding_completed_at", "REAL"),
     ("invitations", "locale", "TEXT NOT NULL DEFAULT 'zh-Hans'"),
     ("invitations", "declined_at", "REAL"),
+    # Machine invitations retain the exact approval that authorized them. Re-approval must
+    # never revive invitations whose original delegation was withdrawn.
+    ("invitations", "invited_via", "TEXT"),
+    ("invitations", "invited_approval_id", "TEXT"),
+    # API copy requests retain their delegated authority for execution-time revocation checks.
+    # Historical browser requests stay NULL and continue the existing live user checks.
+    ("project_copies", "requested_authority", "TEXT"),
 ]
 
 # columns added to v1 tables (name, table, definition)
@@ -853,6 +860,9 @@ class Store:
         # v13: approved copies of personal Docs projects into organization workspaces.
         from .project_copies import SCHEMA as PROJECT_COPIES_SCHEMA
         c.executescript(PROJECT_COPIES_SCHEMA)
+        # API-5 (additive): copy.* events for the source workspace, written by triggers.
+        from .project_copies import EVENTS_SQL as PROJECT_COPY_EVENTS
+        c.executescript(PROJECT_COPY_EVENTS)
         # v15: Web Push keys, subscriptions and the per-notification push queue.
         from .push import SCHEMA as PUSH_SCHEMA
         c.executescript(PUSH_SCHEMA)

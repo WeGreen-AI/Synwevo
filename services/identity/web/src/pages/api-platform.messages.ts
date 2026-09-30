@@ -2,6 +2,7 @@ import { registerMessages } from '@synwevo/ui';
 
 // Module-local copy. API resource IDs, scopes, request IDs and user-authored data stay literal.
 const entries: [string, string, string][] = [
+  ['{count} 个订阅', '{count} subscriptions', '{count} 個訂閱'],
   ['API 管理导航', 'API administration navigation', 'API 管理導覽'],
   ['API 管理平台', 'API administration', 'API 管理平台'],
   ['API 资源', 'API resource', 'API 資源'],
@@ -114,7 +115,7 @@ const entries: [string, string, string][] = [
   ['这是公共客户端，没有密钥可以轮换。', 'This is a public client; it has no secret to rotate.', '這是公開用戶端，沒有金鑰可以輪換。'],
   ['该密钥已经轮换过；请改用新密钥，或对新密钥再次轮换。', 'This key has already been rotated. Use the new key, or rotate the new key again.', '該金鑰已經輪換過；請改用新金鑰，或對新金鑰再次輪換。'],
   ["管理权限不授予文档数据访问；凭据须经工作空间所有者批准。", "Management permission grants no document data access; credentials require workspace owner approval.", "管理權限不授予文件資料存取；憑證須經工作空間擁有者批准。"],
-  ["此部署未连接 Synwevo Docs，接口契约、Webhook 和请求调试暂不可用。", "This deployment is not connected to Synwevo Docs; API contracts, webhooks and request debugging are unavailable.", "此部署未連接 Synwevo Docs，介面契約、Webhook 和請求偵錯暫不可用。"],
+  ["此部署未连接 Synwevo Docs，Docs 契约、Webhook 和请求调试暂不可用；工作空间接口契约仍可查看。", "This deployment is not connected to Synwevo Docs; Docs contracts, webhooks and request debugging are unavailable. Workspace API contracts remain available.", "此部署未連接 Synwevo Docs，Docs 契約、Webhook 和請求偵錯暫不可用；工作空間介面契約仍可查看。"],
   ["这里只批准或撤回你拥有的工作空间的授权。", "Here you approve or withdraw access only for workspaces you own.", "這裡只批准或撤回你擁有的工作空間的授權。"],
   ["历史凭据按原有授权继续使用；没有绑定审批的历史凭据不能在这里轮换。", "Existing credentials keep their original authorization; an existing credential without a bound approval cannot be rotated here.", "歷史憑證按原有授權繼續使用；沒有綁定審批的歷史憑證不能在這裡輪換。"],
   ["请求只使用你提供的服务凭据；管理员会话不带来任何业务数据权限。", "The request uses only the service credential you provide; the administrator session brings no business data access.", "請求只使用你提供的服務憑證；管理員工作階段不帶來任何業務資料權限。"],
@@ -248,6 +249,7 @@ const entries: [string, string, string][] = [
   ['接口', 'API', '介面'],
   ['Synwevo Docs 接口', 'Synwevo Docs API', 'Synwevo Docs 介面'],
   ['工作空间目录接口', 'Workspace directory API', '工作空間目錄介面'],
-  ['工作空间目录接口只签发服务客户端，只读成员、角色与邀请，不能读取任何文档。', 'The workspace directory API issues service clients only; they read members, roles and invitations, never documents.', '工作空間目錄介面只簽發服務用戶端，只讀成員、角色與邀請，不能讀取任何文件。'],
+  ['工作空间目录接口只签发服务客户端。读取权限用于成员与邀请；成员写入权限可邀请、调整或移除查看者与编辑者，不能管理管理员、所有者或读取文档。', 'The workspace directory API issues service clients only. Read access covers members and invitations; member write access can invite, change or remove viewers and editors. It cannot manage admins or owners, or read documents.', '工作空間目錄介面只簽發服務用戶端。讀取權限用於成員與邀請；成員寫入權限可邀請、調整或移除檢視者與編輯者，不能管理管理員、擁有者或讀取文件。'],
+  ['成员写入权限可发送邀请并调整或移除查看者与编辑者。撤回授权后，尚未接受的集成邀请也会失效。', 'Member write access can send invitations and change or remove viewers and editors. Withdrawing approval also invalidates pending invitations from the integration.', '成員寫入權限可傳送邀請並調整或移除檢視者與編輯者。撤回授權後，尚未接受的整合邀請也會失效。'],
 ];
 registerMessages(Object.fromEntries(entries.map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }])));

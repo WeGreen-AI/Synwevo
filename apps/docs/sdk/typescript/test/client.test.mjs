@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { ApiKey, Client, errorFromResponse, ConflictError, RateLimitError, ValidationError,
+import { ApiKey, Client, WorkspaceClient, errorFromResponse, ConflictError, RateLimitError, ValidationError,
   parseRetryAfter, parseRateLimitReset, safeFilename, signWebhook, verifyWebhook,
   verifyLegacyWebhook, createWebhookReceiver } from '../synwevo-docs.mjs';
 
@@ -101,4 +101,79 @@ test('the gate\'s own rate limit is retried after Retry-After even for a non-ide
   const bare = async () => new Response(JSON.stringify({ error: { code: 'limited', message: 'fixture' } }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '0' } });
   const strict = new Client('http://fixture.invalid', new ApiKey('fixture'), { fetch: bare, sleep: async () => {} });
   await assert.rejects(() => strict.putMappings('p', []), RateLimitError);
+});
+
+test('copy requests keep one key across retries and withdrawal is not retried', async () => {
+  // Labelled transport-fault fixture; real authorization and copying use integration acceptance.
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: new URL(url), method: init.method, key: init.headers['Idempotency-Key'], body: init.body });
+    const fail = calls.length === 1 || new URL(url).pathname.endsWith('/withdraw');
+    return new Response(JSON.stringify(fail
+      ? { error: { code: 'unavailable', message: 'synthetic fault fixture' } }
+      : { id: 'pc_fixture', status: 'pending' }),
+    { status: fail ? 503 : 200, headers: { 'content-type': 'application/json', 'retry-after': '0' } });
+  };
+  const client = new Client('http://fixture.invalid', new ApiKey('fixture'), { fetch: fetchImpl, sleep: async () => {} });
+  assert.throws(() => client.requestCopy('p', {}), ValidationError);
+  assert.equal(calls.length, 0);
+  const created = await client.requestCopy('p 1', { targetWorkspaceId: 'w_fixture', sources: true, name: 'copy' });
+  assert.equal(created.id, 'pc_fixture');
+  assert.equal(calls.length, 2);
+  assert.ok(calls[0].key);
+  assert.equal(calls[0].key, calls[1].key);
+  assert.equal(calls[0].body, calls[1].body);
+  assert.equal(calls[0].url.pathname, '/api/v1/projects/p%201/copy-requests');
+  assert.deepEqual(JSON.parse(calls[0].body), { target_workspace_id: 'w_fixture', scope: { sources: true, corrections: false }, name: 'copy' });
+  await assert.rejects(() => client.withdrawCopyRequest('pc fixture'), { status: 503 });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].url.pathname, '/api/v1/copy-requests/pc%20fixture/withdraw');
+  assert.equal(calls[2].key, undefined);
+  await client.copyManifest('p', { corrections: true });
+  assert.equal(calls[3].url.search, '?sources=false&corrections=true');
+  await client.listCopyRequests('p', { status: 'withdrawn', limit: 10 });
+  assert.equal(calls[4].url.search, '?status=withdrawn&limit=10');
+});
+
+test('directory credentials use account origin and workspace audience independently of Docs', async () => {
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url: String(url), body: init.body });
+    return new Response(JSON.stringify(calls.length === 1 ? { access_token: 'synthetic-token', expires_in: 300 } : { client_id: 'fixture' }), { status: 200 });
+  };
+  const client = await WorkspaceClient.fromEnv({ SYNWEVO_BASE_URL: 'https://docs.invalid', SYNWEVO_API_KEY: 'docs-only-fixture',
+    SYNWEVO_WORKSPACE_CLIENT_ID: 'fixture', SYNWEVO_WORKSPACE_CLIENT_SECRET: 'synthetic-secret' }, { fetch });
+  assert.equal(client.baseUrl, 'https://accounts.synwevo.com');
+  assert.equal(typeof client.createProject, 'undefined');
+  await client.whoami();
+  assert.equal(calls[0].url, 'https://accounts.synwevo.com/oidc/token');
+  assert.equal(calls[0].body.get('scope'), 'workspace.read');
+  assert.equal(calls[0].body.get('resource'), 'urn:synwevo:platform:workspace');
+  assert.equal(calls[1].url, 'https://accounts.synwevo.com/api/workspace/v1/whoami');
+  await assert.rejects(() => WorkspaceClient.fromEnv({ SYNWEVO_CLIENT_ID: 'docs-only-fixture' }), ValidationError);
+});
+
+test('directory invitation create/resend keep retry keys and member edits are not retried', async () => {
+  const calls = [];
+  const fetch = async (url, init) => {
+    const path = new URL(url).pathname;
+    calls.push({ path, method: init.method, key: init.headers['Idempotency-Key'], body: init.body });
+    const count = calls.filter(c => c.path === path && c.method === init.method).length;
+    const retryable = path === '/api/workspace/v1/invitations' || path.endsWith('/resend');
+    const ok = retryable && count === 2;
+    return new Response(JSON.stringify(ok ? { id: 'inv_fixture' } : { error: { code: 'unavailable', message: 'synthetic fault' } }),
+      { status: ok ? 200 : 503, headers: { 'retry-after': '0' } });
+  };
+  const client = new WorkspaceClient('http://fixture.invalid', new ApiKey('synthetic-token'), { fetch, sleep: async () => {} });
+  await client.createInvitation({ email: 'new@example.invalid', role: 'viewer' });
+  await client.resendInvitation('inv 1');
+  await assert.rejects(() => client.revokeInvitation('inv 1'), { status: 503 });
+  await assert.rejects(() => client.changeMember('user 1', { role: 'editor', expectedRole: 'viewer' }), { status: 503 });
+  await assert.rejects(() => client.removeMember('user 1', { expectedRole: 'viewer', reason: 'Synthetic removal' }), { status: 503 });
+  assert.throws(() => client.changeMember('user 1', { role: 'viewer' }), ValidationError);
+  assert.equal(calls.length, 7);
+  for (const [a, b] of [[calls[0], calls[1]], [calls[2], calls[3]]]) { assert.ok(a.key); assert.deepEqual(a, b); }
+  assert.equal(calls[2].path, '/api/workspace/v1/invitations/inv%201/resend');
+  assert.deepEqual(JSON.parse(calls[5].body), { role: 'editor', expected_role: 'viewer' });
+  assert.ok(calls.slice(4).every(c => c.key === undefined));
 });

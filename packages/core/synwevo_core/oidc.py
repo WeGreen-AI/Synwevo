@@ -52,7 +52,7 @@ API_SCOPES = ("docweave.read", "docweave.write", "docweave.manage")
 # The workspace directory API (API-5, accounts origin, /api/workspace/v1): a workspace's members,
 # roles and invitations, for service accounts its owner approved. Its own resource and audience, so
 # a Docs credential cannot reach it and a directory credential cannot reach Docs.
-WORKSPACE_API_SCOPES = ("workspace.read",)
+WORKSPACE_API_SCOPES = ("workspace.read", "workspace.members.write")
 ALL_API_SCOPES = API_SCOPES + WORKSPACE_API_SCOPES
 SUPPORTED_SCOPES = IDENTITY_SCOPES + ALL_API_SCOPES
 

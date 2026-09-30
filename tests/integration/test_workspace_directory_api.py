@@ -96,7 +96,7 @@ def test_approval_rules_for_the_directory(plane):
                                                "resources": [workspace_resource(), docs_resource()]})
     assert r.status_code == 400 and r.json()["error"] == "one_resource"
     overview = e["admin"].get(BASE + "/overview").json()
-    assert overview["resources"][workspace_resource()] == ["workspace.read"]
+    assert set(overview["resources"][workspace_resource()]) == {"workspace.read", "workspace.members.write"}
 
 
 def test_withdrawing_the_approval_or_freezing_the_workspace_stops_it(plane):

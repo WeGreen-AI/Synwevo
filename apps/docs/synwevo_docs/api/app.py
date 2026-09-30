@@ -83,9 +83,11 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     # Approved copies of personal projects into organization workspaces are executed here, the
     # only process that can read the source rows and write the target rows.
     from synwevo_core.project_copies import ProjectCopies as _ProjectCopies
-    from ..copies import CopyExecutor, CopyRunner, build_manifest
+    from ..copies import CopyExecutor, CopyRunner, announce_request, build_manifest
     copies = _ProjectCopies(store, plat.identity)
     api.state.copy_runner = CopyRunner(CopyExecutor(app_, copies, notifier), copies, start=start_jobs)
+    api.state.copies = copies                          # the machine copy-request routes (v1_copies)
+    api.state.platform_audit = plat.audit
 
     def _uid(request: Request) -> str:
         s = getattr(request.state, "session", None)
@@ -202,26 +204,13 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
                           purpose=body.get("purpose"), scope=scope, manifest=manifest, digest=digest)
         plat.audit(request, "docs.copy.request", actor_id=uid, workspace_id=current_tenant(), object_kind="project_copy", object_id=r["id"], result="ok",
                    meta={"project_id": pid, "target_workspace_id": r["target_workspace_id"], "scope": r["scope"], "digest": digest})
-        me = plat.identity.get_user(uid) or {}
-        ws = store.one("SELECT name FROM workspaces WHERE id=?", (r["target_workspace_id"],)) or {}
         if body.get("decide") == "approve":
             r = copies.decide(r["id"], uid, "approve", reason=str(body.get("reason") or ""))
             plat.audit(request, "docs.copy.decide", actor_id=uid, object_kind="project_copy", object_id=r["id"], result="ok",
                        meta={"action": "approve", "self_approved": True, "organization_id": r["target_organization_id"]})
             api.state.copy_runner.wake()
         else:
-            for who in copies.deciders(r["target_organization_id"], r["target_workspace_id"]):
-                if who == uid:
-                    continue
-                try:
-                    notifier.emit(who, "copy.requested", params={"requester": me.get("display_name") or me.get("email") or "—", "project": manifest["project"]["name"],
-                                                                 "workspace": ws.get("name") or "—"},
-                                  organization_id=r["target_organization_id"], workspace_id=r["target_workspace_id"], object_kind="project_copy", object_id=r["id"],
-                                  dedupe_key=f"copy:{r['id']}:requested:{who}", actionable=True,
-                                  target={"origin": "accounts", "path": f"/organizations/{r['target_organization_id']}?approval={r['id']}"})
-                except Exception as e:  # noqa: BLE001
-                    import logging as _logging
-                    _logging.getLogger("synwevo.copies").warning("copy request notification skipped: %s", type(e).__name__)
+            announce_request(store, plat.identity, copies, notifier, r, uid, manifest["project"]["name"])
         return copies.public(r, for_requester=True)
 
     # ------------------------------------------------------------------ comments and mentions

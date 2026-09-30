@@ -218,6 +218,44 @@ class Client:
     def get_project(self, project_id: str) -> dict:
         return self._get(f"{API}/projects/{_q(project_id)}")
 
+    # ------------------------------------------------------------------ copy requests (delegated tokens only)
+    def copy_targets(self) -> dict:
+        """Organization workspaces the person behind this delegated token can copy a project into."""
+        return self._get(f"{API}/copy-targets")
+
+    def copy_manifest(self, project_id: str, *, sources: bool = False, corrections: bool = False) -> dict:
+        """What a copy request would carry (manifest and digest); creates nothing."""
+        return self._get(f"{API}/projects/{_q(project_id)}/copy-manifest",
+                         params={"sources": str(bool(sources)).lower(), "corrections": str(bool(corrections)).lower()})
+
+    def request_copy(self, project_id: str, target_workspace_id: str, *, name: str | None = None, purpose: str | None = None,
+                     sources: bool = False, corrections: bool = False, idempotency_key: str | None = None) -> dict:
+        """Ask for a copy of a personal project into an organization workspace. The target's approver
+        decides in the browser; follow the request with get_copy_request or copy.* events. Only a
+        delegated token (the project owner's authorization) may ask. Retried with one idempotency key."""
+        body: dict = {"target_workspace_id": target_workspace_id, "scope": {"sources": bool(sources), "corrections": bool(corrections)}}
+        if name is not None:
+            body["name"] = name
+        if purpose is not None:
+            body["purpose"] = purpose
+        return self._json("POST", f"{API}/projects/{_q(project_id)}/copy-requests", json=body,
+                          idempotency_key=self._key(idempotency_key))
+
+    def list_copy_requests(self, project_id: str, *, status: str | None = None, limit: int = 50) -> dict:
+        """Newest requests first, at most ``limit`` (1–100); this endpoint has no cursor."""
+        params: dict = {"limit": limit}
+        if status is not None:
+            params["status"] = status
+        return self._get(f"{API}/projects/{_q(project_id)}/copy-requests", params=params)
+
+    def get_copy_request(self, copy_id: str) -> dict:
+        return self._get(f"{API}/copy-requests/{_q(copy_id)}")
+
+    def withdraw_copy_request(self, copy_id: str) -> dict:
+        """Withdraw a pending (or approved, not yet run) request. Not retried automatically: a
+        repeat of a withdrawal that succeeded answers 409 not_withdrawable."""
+        return self._json("POST", f"{API}/copy-requests/{_q(copy_id)}/withdraw", retry_safe=False)
+
     def update_project(self, project_id: str, *, base_settings_rev: int, name: str | None = None,
                        archived: bool | None = None, output: dict | None = None) -> dict:
         """Rename, archive/unarchive or change output defaults. ``base_settings_rev`` is the project's

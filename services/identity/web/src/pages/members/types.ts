@@ -40,6 +40,8 @@ export interface Invitation {
   can_export: boolean;
   invited_by: string | null;
   invited_by_email: string | null;
+  inviter?: string;
+  invited_via?: string | null;
   created_at: number;
   expires_at: number;
   accepted_at: number | null;
