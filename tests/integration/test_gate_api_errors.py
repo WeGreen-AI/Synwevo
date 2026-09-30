@@ -134,7 +134,15 @@ def test_an_unexpected_failure_on_the_browser_api_has_a_body_too(v1):
 
 
 # ---------------------------------------------------------------- rate limits
-def test_every_response_says_how_much_budget_is_left(v1):
+def test_every_response_says_how_much_budget_is_left(v1, monkeypatch):
+    from types import SimpleNamespace
+    from synwevo_core import api_quotas
+    # Exact decrement arithmetic requires one instant: at 1200/min the real workspace
+    # budget legitimately refills after only 50ms on a busy runner. Freeze this module's
+    # decision clock, not global time or the gate, and retain every response assertion.
+    stamp = api_quotas.time.time_ns()
+    monkeypatch.setattr(api_quotas, "time", SimpleNamespace(
+        time_ns=lambda: stamp, monotonic=api_quotas.time.monotonic))
     c, h = v1["c"], v1["h"]
     seen = []
     for _ in range(3):
