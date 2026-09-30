@@ -17,7 +17,9 @@ MANIFEST = AppManifest(
     summary={"zh-Hans": "设计表单，发出填写请求，收集资料与附件，要求补充并确认。",
              "zh-Hant": "設計表單，發出填寫請求，收集資料與附件，要求補充並確認。",
              "en": "Design forms, send fill-in requests, collect answers and files, ask for changes and accept."},
-    object_kinds=("form", "form_request", "form_submission"))
+    object_kinds=("form", "form_request", "form_submission"),
+    object_paths=(("form", "/forms/w/{workspace}/f/{id}"), ("form_request", "/forms/w/{workspace}/r/{id}"),
+                  ("form_submission", "/forms/w/{workspace}/s/{id}")))
 
 
 def install(ctx) -> None:

@@ -196,7 +196,9 @@ class Apps:
         if app["status"] != "active":
             return False, None, "该应用已停用"
         if app_id in PERSONAL_APP_IDS:
-            return self._check_platform(user_id, None)
+            # Opening the application needs a live account; an operation that names a workspace (a
+            # workspace's own policy for it) needs membership of that workspace as well.
+            return self._check_platform(user_id, workspace_id)
         if app_id == MESSAGES_APP_ID:
             # Organization-scoped, not workspace-scoped (see MESSAGES_APP_ID): the application is
             # open to every live account, and someone with no workspace at all still has their

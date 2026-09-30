@@ -3,5 +3,6 @@
  *  finds no workspace to work in and says so). */
 import type { ReactNode } from "react";
 import { formsRoutes } from "./apps/forms";
+import { agentRoutes } from "./apps/agent";
 
-export const APP_ROUTES: ReactNode[] = [...formsRoutes()];
+export const APP_ROUTES: ReactNode[] = [...formsRoutes(), ...agentRoutes()];

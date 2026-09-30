@@ -94,6 +94,15 @@ class AppManifest:
     object_kinds: tuple[str, ...] = ()
     scope: str = "workspace"                 # or "personal" (the Agent)
     version: str = "1"
+    #: Where an object of each kind opens, as (kind, path template) with ``{workspace}`` and
+    #: ``{id}`` — result cards and notifications link to the real record through these.
+    object_paths: tuple[tuple[str, str], ...] = ()
+
+    def object_path(self, kind: str | None, object_id: str | None, workspace_id: str | None) -> str | None:
+        for k, template in self.object_paths:
+            if k == kind and object_id and ("{workspace}" not in template or workspace_id):
+                return template.replace("{workspace}", workspace_id or "").replace("{id}", object_id)
+        return None
 
     def __post_init__(self):
         _text(self.summary, what=f"app {self.id} summary")
@@ -133,6 +142,10 @@ class Operation:
     #: target itself (`Capabilities.check_workspace`) — copying from where you can read into where
     #: you can write. Only then may a read-level operation have side effects.
     writes_elsewhere: bool = False
+    #: Recheck resource/field/source access before exposing a completed mutation's stored
+    #: result. Called with the freshly authorized caller and the original run; must never
+    #: repeat the mutation. Without this guard, old mutation payloads remain private.
+    result_guard: Callable[["Call", dict], None] | None = None
 
     def __post_init__(self):
         _text(self.title, what=f"operation {self.id} title")
@@ -353,7 +366,7 @@ class Capabilities:
         row = self.store.one("SELECT status FROM apps WHERE id=?", (op.app,))
         if not manifest or not row or row["status"] != "active":
             raise ServiceError(404, "app_unavailable", "该应用未启用或已停用")
-        if op.need == "personal" or manifest.scope == "personal":
+        if op.need == "personal":
             if workspace_id:
                 # A personal operation that accepted a workspace would be a way to smuggle one
                 # into records that belong to the person; the Agent names targets per tool call.
@@ -510,6 +523,50 @@ class Capabilities:
                 "replayed": False, "workspace_id": workspace_id}
 
     # ---------------------------------------------------------------- helpers
+    def inspect(self, op_id: str, payload: Any, *, user_id: str,
+                workspace_id: str | None = None) -> Any:
+        """Re-read a synchronous read through its real ACLs without creating another run.
+
+        Used for source checks and cached-result access. Application read maintenance (for
+        example expiring an overdue request) still follows that application's own contract.
+        This is an internal entry point, not a way to execute writes without an audit.
+        """
+        op = self.registry.get(op_id)
+        if not op or op.side_effect != "none" or op.mode != "sync":
+            raise ServiceError(409, "source_unverifiable", "无法重新核实来源权限")
+        user, role = self.authorize(op, user_id, workspace_id)
+        if len(canonical(payload).encode("utf-8")) > MAX_INPUT_BYTES:
+            raise ServiceError(413, "input_too_large", "输入过大")
+        try:
+            parsed = op.input.model_validate(payload)
+        except ValidationError as err:
+            raise ServiceError(422, "invalid_input", "输入不符合该操作的要求", _validation_detail(err)) from None
+        call = Call(self.store, self.identity, op, user, workspace_id, role,
+                    "", "system", "", {}, capabilities=self)
+        result = _dump(op.handler(call, parsed))
+        if call.events:
+            raise ServiceError(409, "source_unverifiable", "读取操作不能生成未提交的事件")
+        if op.output is not None and result is not None:
+            result = op.output.model_validate(result).model_dump(mode="json")
+        return result
+
+    def _check_result(self, row: dict) -> None:
+        op = self.registry.get(row["op"])
+        if op is None:
+            raise ServiceError(404, "app_unavailable", "该应用未启用或已停用")
+        user, role = self.authorize(op, row["user_id"], row["workspace_id"])
+        if op.side_effect == "none" and op.mode == "sync":
+            current = self.inspect(op.id, _j(row["input"]), user_id=row["user_id"],
+                                   workspace_id=row["workspace_id"])
+            if fingerprint(current) != fingerprint(_j(row["output"])):
+                raise ServiceError(409, "result_access_changed", "来源或权限已变化，请打开当前业务记录")
+        elif op.result_guard is not None:
+            call = Call(self.store, self.identity, op, user, row["workspace_id"], role,
+                        row["id"], row["via"], row["correlation_id"], {}, capabilities=self)
+            op.result_guard(call, row)
+        else:
+            raise ServiceError(409, "result_access_unverifiable", "请在应用中打开当前业务记录")
+
     def _idempotent(self, op: Operation, user_id: str, workspace_id: str | None, key: str) -> dict | None:
         return self.store.one(
             "SELECT * FROM op_runs WHERE user_id=? AND op=? AND COALESCE(workspace_id,'')=? AND idempotency_key=?",
@@ -520,8 +577,14 @@ class Capabilities:
             # A failed attempt is not a result to hand back forever: the business error is
             # repeated so the caller sees the same answer, and a new key starts a new attempt.
             raise ServiceError(409, "idempotent_failure",
-                               prior["error_message"] or "该请求此前已失败",
+                               "该请求此前已失败；重试不会再次执行",
                                {"run_id": prior["id"], "code": prior["error_code"]})
+        try:
+            self._check_result(prior)
+        except ServiceError:
+            # Keep the receipt, but never replay a side effect to reconstruct its payload.
+            raise ServiceError(409, "run_result_unavailable", "该请求已执行，当前无法读取原结果。请核实业务记录，不要重复提交。",
+                               {"run_id": prior["id"], "status": prior["status"]}) from None
         return {"run_id": prior["id"], "operation": prior["op"], "status": prior["status"],
                 "output": _j(prior["output"]),
                 "replayed": True, "workspace_id": prior["workspace_id"]}
@@ -614,7 +677,24 @@ class Capabilities:
         row = self.store.one("SELECT * FROM op_runs WHERE id=?", (run_id,))
         if not row or row["user_id"] != user_id:
             raise ServiceError(404, "run_not_found", "运行记录不存在")
-        return public_run(row)
+        return self.present_run(row, user_id=user_id)
+
+    def present_run(self, row: dict, *, user_id: str) -> dict:
+        """History is a receipt, not a second unguarded business-data store."""
+        if row["user_id"] != user_id:
+            raise ServiceError(404, "run_not_found", "运行记录不存在")
+        out = public_run(row)
+        # Inputs may hold personal text, deleted memories or former source content. Show
+        # parameters in the owning application's authorized view instead of generic history.
+        out["input"] = None
+        out["error"] = {"code": row["error_code"]} if row.get("error_code") else None
+        try:
+            self._check_result(row)
+        except ServiceError:
+            out.update(output=None, object=None, delegation=None, snapshot_hidden=True)
+        else:
+            out["snapshot_hidden"] = False
+        return out
 
     def update_run(self, run_id: str, status: str, *, output: Any = None, error: ServiceError | None = None) -> None:
         """For asynchronous operations: the worker reports progress or the outcome."""

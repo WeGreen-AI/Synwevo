@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel, Field
 
-from synwevo_core.capabilities import manifest_json, public_run
+from synwevo_core.capabilities import manifest_json
 from synwevo_core.errors import ServiceError
 
 from .web import page_args, signed_in
@@ -74,7 +74,7 @@ def build_router(ctx) -> APIRouter:
         rows = caps.store.all(sql + " ORDER BY created_at DESC LIMIT ?", (*args, n + 1))
         more = len(rows) > n
         rows = rows[:n]
-        return {"runs": [public_run(x) for x in rows],
+        return {"runs": [caps.present_run(x, user_id=user["id"]) for x in rows],
                 "next_before": rows[-1]["created_at"] if more and rows else None}
 
     @r.get("/runs/{run_id}")

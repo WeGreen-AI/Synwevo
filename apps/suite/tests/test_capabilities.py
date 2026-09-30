@@ -65,9 +65,15 @@ def _setup(c):
         call.emit("fixture.other")
         return {}
 
+    def note_result(call, row):
+        if not store.one("SELECT 1 FROM fixture_notes WHERE id=? AND workspace_id=?",
+                         (row["object_id"], call.workspace_id)):
+            raise ServiceError(404, "note_not_found", "夹具记录不存在")
+
     reg.register(Operation(id="fixture.note.create", app="fixture", title=TEXT, summary="Create a note",
                            input=NoteIn, output=NoteOut, handler=create, need="write", side_effect="write",
-                           agent="confirm", events=("fixture.note.created",), object_kind="note"))
+                           agent="confirm", events=("fixture.note.created",), object_kind="note",
+                           result_guard=note_result))
     reg.register(Operation(id="fixture.note.list", app="fixture", title=TEXT, summary="List notes",
                            input=Empty, handler=listing))
     reg.register(Operation(id="fixture.decide", app="fixture", title=TEXT, summary="A person's decision",

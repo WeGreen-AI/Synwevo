@@ -70,6 +70,7 @@ LOOKALIKES: tuple[tuple[str, str, str], ...] = (
     ("form_versions", "definition_hash", "表单版本定义的指纹，不是 blob"),
     ("form_requests", "token_hash", "填写链接令牌的哈希，不是 blob"),
     ("form_submissions", "answers_hash", "提交内容的指纹，不是 blob"),
+    ("agent_tool_calls", "input_hash", "Agent 工具调用参数的指纹（确认绑定），不是 blob"),
     ("external_auth_requests", "state_hash", "外部登录 state 的哈希，不是 blob"),
     ("external_link_offers", "token_hash", "外部账户关联令牌哈希，不是 blob"),
     ("push_subscriptions", "endpoint_hash", "推送端点的哈希，不是 blob"),

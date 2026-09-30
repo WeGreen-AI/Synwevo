@@ -38,6 +38,8 @@ PURPOSES = {
     # Synwevo Forms fill-in links: kept so an editor can copy a link again (the hash is what
     # opening a link is checked against).
     "forms-fill-link": (b"synwevo/forms-fill-link/v1", b"forms-fill-link"),
+    # A person's own AI provider key for their Agent: used server-side only, never returned.
+    "agent-provider-key": (b"synwevo/agent-provider-key/v1", b"agent-provider-key"),
 }
 
 # Every sealed column in the schema: (table, primary key, column, purpose). `rekey` walks exactly
@@ -49,6 +51,7 @@ SEALED_COLUMNS = (
     ("webhook_subscriptions", "id", "secret_prev_enc", "webhook-secret"),
     ("forms", "id", "public_token_sealed", "forms-fill-link"),
     ("form_requests", "id", "token_sealed", "forms-fill-link"),
+    ("agent_settings", "user_id", "personal_key_sealed", "agent-provider-key"),
 )
 
 

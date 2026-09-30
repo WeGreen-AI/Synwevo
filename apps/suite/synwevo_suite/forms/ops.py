@@ -7,9 +7,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field as F
 
 from synwevo_core.capabilities import Operation
+from synwevo_core.errors import ServiceError
 
 from .definition import Definition
-from .service import Forms
+from .service import Forms, _j
 
 FORM_ID = r"^frm_[a-f0-9]{12}$"
 REQ_ID = r"^freq_[a-f0-9]{12}$"
@@ -144,7 +145,26 @@ class Accept(_In):
 
 
 def register(registry, forms: Forms) -> None:
+    def result_guard(c, row):
+        # A former editor's fill links must not escape via the operation receipt. The
+        # invoker rechecks the original role; copies also require the destination's role.
+        output = _j(row.get("output"), {})
+        target = output.get("workspace_id") or c.workspace_id
+        if target != c.workspace_id or c.op.writes_elsewhere:
+            c.capabilities.check_workspace(c.user_id, "forms", target, "write")
+        kind, oid = row.get("object_kind"), row.get("object_id")
+        if kind == "form":
+            forms._form(target, oid)
+        elif kind == "form_request":
+            forms._request(target, oid)
+        elif kind == "form_submission":
+            forms.get_submission(target, oid)
+        else:
+            raise ServiceError(409, "result_access_unverifiable", "无法核实原结果的访问权限")
+
     def op(**kw):
+        if kw.get("side_effect", "none") != "none":
+            kw.setdefault("result_guard", result_guard)
         registry.register(Operation(app="forms", **kw))
 
     op(id="forms.form.list", title=T("列出表单", "列出表單", "List forms"),

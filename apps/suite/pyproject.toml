@@ -9,9 +9,9 @@ description = "Synwevo 业务应用：Forms、Tables、DataPrep、Approvals、Ex
 requires-python = ">=3.12"
 # Only the shared layer. Each application is a subpackage that never imports a sibling; they reach
 # one another — and Synwevo Docs and Message — through the capability registry in synwevo-core.
-#   httpx   — the personal Agent's model provider calls
-#   openpyxl — DataPrep reads and writes .xlsx
-dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "httpx", "openpyxl"]
+#   anthropic — the personal Agent's model provider (official SDK)
+#   openpyxl  — DataPrep and Tables read and write .xlsx
+dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "anthropic", "openpyxl"]
 
 [tool.setuptools.packages.find]
 include = ["synwevo_suite*"]

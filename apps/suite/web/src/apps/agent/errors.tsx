@@ -1,0 +1,44 @@
+import { ApiError } from "@synwevo/auth-client";
+import { useI18n } from "@synwevo/ui";
+import { Failure } from "../../shared/states";
+
+const errors: Record<string, string> = {
+  agent_not_configured: "模型服务未配置。请先打开 Agent 设置。",
+  provider_auth: "模型凭据不可用，请检查 Agent 设置。",
+  provider_forbidden: "模型服务拒绝访问，请检查账户权限。",
+  provider_model_missing: "所配置的模型不可用，请联系平台管理员。",
+  provider_rate_limited: "模型服务额度不足或请求过于频繁，请稍后重试。",
+  provider_timeout: "模型响应超时，已完成的操作保留。",
+  provider_unreachable: "暂时无法连接模型服务，请稍后重试。",
+  provider_overloaded: "模型服务暂时繁忙，请稍后重试。",
+  provider_refused: "模型未接受这个请求。你可以调整任务后重新发送。",
+  provider_truncated: "回答已达到长度上限，请拆分任务。",
+  budget_exceeded: "已达到本次回答的资源上限，请拆分任务。",
+  step_limit: "已达到本次回答的步骤上限，请检查结果后继续。",
+  interrupted: "服务重启中断了回答。已完成的操作保留。",
+  outcome_unresolved: "部分操作的结果尚未确定，请先在对应应用核实。",
+  model_configuration_changed: "模型配置已变化，请重新发起回答。",
+  source_access_changed: "来源内容或权限已变化，请新建会话重新读取。",
+  source_policy_changed: "来源空间已停止允许当前模型处理内容。",
+  confirmation_mismatch: "确认依据、目标或内容已变化，请刷新后重新核对。",
+  not_awaiting_confirmation: "此操作已处理，请刷新查看结果。",
+  turn_running: "已有回答正在进行，请等待或先停止。",
+  turn_cancelled: "回答已停止，后续操作未执行。",
+  conversation_sealed: "访问权限已改变，相关内容已隐藏。请新建会话继续。",
+};
+
+export function agentErrorText(error: unknown, t: (key: string) => string): string {
+  let code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+  if (error instanceof ApiError && code === "idempotent_failure") code = error.detail?.code ?? code;
+  if (errors[code]) return t(errors[code]);
+  if (error instanceof ApiError) return error.message;
+  return t("未能完成此操作，请核对结果后重试。");
+}
+
+export function AgentFailure({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+  const { t } = useI18n();
+  const safe = new ApiError(error instanceof ApiError ? error.status : 0, "agent_error", "");
+  Object.defineProperty(safe, "message", { get: () => agentErrorText(error, t) });
+  if (error instanceof ApiError) safe.requestId = error.requestId;
+  return <Failure error={safe} onRetry={onRetry} />;
+}

@@ -30,7 +30,8 @@ def apply(c) -> None:
             c.executescript(schema)
         columns = getattr(mod, "COLUMNS", ())
         indexes = getattr(mod, "INDEXES", ())
-        if not columns and not indexes:
+        migrate = getattr(mod, "migrate", None)
+        if not columns and not indexes and migrate is None:
             continue
         c.execute("BEGIN IMMEDIATE")
         try:
@@ -42,6 +43,8 @@ def apply(c) -> None:
                 have = {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
                 if set(cols) <= have:
                     c.execute(f"CREATE INDEX IF NOT EXISTS {iname} ON {table}({', '.join(cols)})")
+            if migrate is not None:
+                migrate(c)
             c.execute("COMMIT")
         except BaseException:
             c.execute("ROLLBACK")
