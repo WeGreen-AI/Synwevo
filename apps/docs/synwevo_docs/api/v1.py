@@ -41,6 +41,8 @@ from ..engine.limits import LIMITS
 from ..jobs import ProjectContext
 from ..services import scan_out
 from . import idempotency as I
+from .v1_job_models import (JobArtifact, JobCancelledView, JobEventsPage, JobItem, JobListItem,
+                            JobPage, JobRun, JobView)
 from .v1_uploads import build_router as build_uploads_router
 from .v1_uploads import upload_body_schema, use_upload
 
@@ -940,7 +942,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         "idempotency_key": {"type": "string", "deprecated": True, "description": "已弃用：请改用 Idempotency-Key 请求头"},
         "request_id": {"type": "string", "deprecated": True, "description": "已弃用：请改用 Idempotency-Key 请求头"}}}
 
-    @r.post("/projects/{pid}/jobs", status_code=202, summary="提交生成任务（支持 Idempotency-Key）",
+    @r.post("/projects/{pid}/jobs", status_code=202, response_model=JobView, response_model_exclude_unset=True,
+            summary="提交生成任务（支持 Idempotency-Key）",
             openapi_extra=_ox("write", idempotent=True, requestBody={"content": {"application/json": {"schema": job_body}}},
                               **{"x-deprecated-inputs": ["idempotency_key", "request_id"]}))
     def create_job(request: Request, response: Response, pid: str, body: dict = Body(default={})):
@@ -951,7 +954,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         _job_headers(response, job, legacy)
         return job_view(job)
 
-    @r.get("/projects/{pid}/jobs", summary="项目的任务列表（按创建时间倒序；offset 或 cursor 分页）",
+    @r.get("/projects/{pid}/jobs", response_model=JobPage[JobListItem], response_model_exclude_unset=True,
+           summary="项目的任务列表（按创建时间倒序；offset 或 cursor 分页）",
            openapi_extra=_ox("read"))
     def project_jobs(request: Request, response: Response, pid: str, offset: int = _offset_q(),
                      limit: int | None = _limit_q(DEFAULT_LIMIT, MAX_LIMIT), cursor: str | None = _cursor_q()):
@@ -969,12 +973,14 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
             j["principal"] = authority.label(desc) if desc else None
         return page
 
-    @r.get("/jobs/{jid}", summary="任务状态与计数", openapi_extra=_ox("read"))
+    @r.get("/jobs/{jid}", response_model=JobView, response_model_exclude_unset=True,
+           summary="任务状态与计数", openapi_extra=_ox("read"))
     def get_job(request: Request, jid: str):
         scope(request, "read")
         return job_view(jobs.get(jid))
 
-    @r.get("/jobs/{jid}/items", summary="逐样本结果（可按状态过滤；offset 或 cursor 分页）", openapi_extra=_ox("read"))
+    @r.get("/jobs/{jid}/items", response_model=JobPage[JobItem], response_model_exclude_unset=True,
+           summary="逐样本结果（可按状态过滤；offset 或 cursor 分页）", openapi_extra=_ox("read"))
     def job_items(request: Request, response: Response, jid: str,
                   status: str | None = Query(None, description="、".join(ITEM_STATUSES)),
                   offset: int = _offset_q(), limit: int | None = _limit_q(ITEM_LIMIT, ITEM_MAX),
@@ -997,7 +1003,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
             it["issues"] = jobs._public_issues(it["issues"])
         return page
 
-    @r.get("/jobs/{jid}/runs", summary="任务的运行记录（初次与重试；offset 或 cursor 分页）", openapi_extra=_ox("read"))
+    @r.get("/jobs/{jid}/runs", response_model=JobPage[JobRun], response_model_exclude_unset=True,
+           summary="任务的运行记录（初次与重试；offset 或 cursor 分页）", openapi_extra=_ox("read"))
     def job_runs(request: Request, response: Response, jid: str, offset: int = _offset_q(),
                  limit: int | None = _limit_q(DEFAULT_LIMIT, MAX_LIMIT), cursor: str | None = _cursor_q()):
         scope(request, "read")
@@ -1013,19 +1020,22 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
             run["requested_by_principal"] = authority.label(desc) if desc else None
         return page
 
-    @r.get("/jobs/{jid}/events", summary="任务事件（轮询用，seq 递增）", openapi_extra=_ox("read"))
+    @r.get("/jobs/{jid}/events", response_model=JobEventsPage, response_model_exclude_unset=True,
+           summary="任务事件（轮询用，seq 递增）", openapi_extra=_ox("read"))
     def job_events(request: Request, jid: str, after: int = 0, limit: int | None = _limit_q(200, 1000)):
         scope(request, "read")
         jobs.get(jid)
         evs = jobs.events(jid, after, _check_limit(limit, 200, 1000))
         return {"items": evs, "next_after": evs[-1]["seq"] if evs else after}
 
-    @r.post("/jobs/{jid}/cancel", summary="取消任务", openapi_extra=_ox("write"))
+    @r.post("/jobs/{jid}/cancel", response_model=JobCancelledView, response_model_exclude_unset=True,
+            summary="取消任务", openapi_extra=_ox("write"))
     def cancel_job(request: Request, jid: str):
         scope(request, "write")
         return job_view(jobs.cancel(jid))
 
-    @r.post("/jobs/{jid}/retry", summary="重试失败项（沿用原快照，可带 Idempotency-Key）",
+    @r.post("/jobs/{jid}/retry", response_model=JobView, response_model_exclude_unset=True,
+            summary="重试失败项（沿用原快照，可带 Idempotency-Key）",
             openapi_extra=_ox("write", idempotent=True, requestBody={"content": {"application/json": {"schema": {
                 "type": "object", "properties": {
                     "include_skipped": {"type": "boolean"},
@@ -1042,7 +1052,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         _job_headers(response, job, legacy)
         return job_view(job)
 
-    @r.get("/jobs/{jid}/artifacts", summary="产物清单（offset 或 cursor 分页）", openapi_extra=_ox("read"))
+    @r.get("/jobs/{jid}/artifacts", response_model=JobPage[JobArtifact], response_model_exclude_unset=True,
+           summary="产物清单（offset 或 cursor 分页）", openapi_extra=_ox("read"))
     def job_artifacts(request: Request, response: Response, jid: str, offset: int = _offset_q(),
                       limit: int | None = _limit_q(ARTIFACT_LIMIT, ARTIFACT_MAX), cursor: str | None = _cursor_q()):
         scope(request, "read")

@@ -34,6 +34,8 @@ from ._http import ApiDict, Transport, new_idempotency_key, wrap
 from .auth import ApiKey, ClientCredentials, credentials_from_env
 from .source_types import (CSVOptions, CorrectionValue, SourceStructure, SourceView, SourceBlocks,
                            SourceSearch, SourceWords, SourceFile, SourceRecords, SourceRecord, SourceBlock, SourceWord)
+from .job_types import (Artifact, ArtifactsPage, CancelledJob, ItemArtifact, Job, JobEvent, JobEventsPage,
+                        JobItem, JobItemsPage, JobListItem, JobRun, JobsPage)
 from .errors import (ConflictError, IntegrityError, RangeNotSatisfiableError, RateLimitError, ServerError,
                      SynwevoError, TransportError, ValidationError, WaitTimeoutError, parse_retry_after)
 
@@ -867,7 +869,7 @@ class Client:
     # ================================================================== jobs
     def create_job(self, project_id: str, *, formats: list[str] | None = None, naming: str | None = None,
                    error_policy: str | None = None, layout: str | None = None, keep_fields: bool | None = None,
-                   idempotency_key: str | None = None) -> dict:
+                   idempotency_key: str | None = None) -> Job:
         """Submit a generation job. Repeating the call with the same ``idempotency_key`` and the
         same options returns the same job (``replayed`` is true); different options with the
         same key are refused with `ConflictError` (``idempotency_conflict``)."""
@@ -882,37 +884,37 @@ class Client:
             body["layout"] = self._check(V.one_of, layout, V.LAYOUTS, "layout")
         if keep_fields is not None:
             body["keep_fields"] = bool(keep_fields)
-        return self._json("POST", f"{API}/projects/{_q(project_id)}/jobs", json=body,
-                          idempotency_key=self._key(idempotency_key))
+        return cast(Job, self._json("POST", f"{API}/projects/{_q(project_id)}/jobs", json=body,
+                                   idempotency_key=self._key(idempotency_key)))
 
     def list_jobs(self, project_id: str, *, limit: int | None = None, cursor: str | None = None,
-                  offset: int | None = None) -> dict:
-        return self._get(f"{API}/projects/{_q(project_id)}/jobs", self._page_params(limit, cursor, offset))
+                  offset: int | None = None) -> JobsPage:
+        return cast(JobsPage, self._get(f"{API}/projects/{_q(project_id)}/jobs", self._page_params(limit, cursor, offset)))
 
-    def iter_jobs(self, project_id: str, page_size: int | None = None) -> Iterator[dict]:
-        return self._iterate(f"{API}/projects/{_q(project_id)}/jobs", page_size=page_size)
+    def iter_jobs(self, project_id: str, page_size: int | None = None) -> Iterator[JobListItem]:
+        return cast(Iterator[JobListItem], self._iterate(f"{API}/projects/{_q(project_id)}/jobs", page_size=page_size))
 
-    def get_job(self, job_id: str) -> dict:
-        return self._get(f"{API}/jobs/{_q(job_id)}")
+    def get_job(self, job_id: str) -> Job:
+        return cast(Job, self._get(f"{API}/jobs/{_q(job_id)}"))
 
     def list_job_items(self, job_id: str, *, status: str | None = None, limit: int | None = None,
-                       cursor: str | None = None, offset: int | None = None) -> dict:
+                       cursor: str | None = None, offset: int | None = None) -> JobItemsPage:
         if self.validate:
             V.one_of(status, V.ITEM_STATUSES, "status")
-        return self._get(f"{API}/jobs/{_q(job_id)}/items", self._page_params(limit, cursor, offset, status=status))
+        return cast(JobItemsPage, self._get(f"{API}/jobs/{_q(job_id)}/items", self._page_params(limit, cursor, offset, status=status)))
 
-    def iter_job_items(self, job_id: str, *, status: str | None = None, page_size: int | None = None) -> Iterator[dict]:
+    def iter_job_items(self, job_id: str, *, status: str | None = None, page_size: int | None = None) -> Iterator[JobItem]:
         if self.validate:
             V.one_of(status, V.ITEM_STATUSES, "status")
-        return self._iterate(f"{API}/jobs/{_q(job_id)}/items", {"status": status}, page_size)
+        return cast(Iterator[JobItem], self._iterate(f"{API}/jobs/{_q(job_id)}/items", {"status": status}, page_size))
 
-    def iter_job_runs(self, job_id: str, page_size: int | None = None) -> Iterator[dict]:
-        return self._iterate(f"{API}/jobs/{_q(job_id)}/runs", page_size=page_size)
+    def iter_job_runs(self, job_id: str, page_size: int | None = None) -> Iterator[JobRun]:
+        return cast(Iterator[JobRun], self._iterate(f"{API}/jobs/{_q(job_id)}/runs", page_size=page_size))
 
-    def job_events(self, job_id: str, *, after: int = 0, limit: int | None = None) -> dict:
-        return self._get(f"{API}/jobs/{_q(job_id)}/events", {"after": after, "limit": limit})
+    def job_events(self, job_id: str, *, after: int = 0, limit: int | None = None) -> JobEventsPage:
+        return cast(JobEventsPage, self._get(f"{API}/jobs/{_q(job_id)}/events", {"after": after, "limit": limit}))
 
-    def iter_job_events(self, job_id: str, *, after: int = 0) -> Iterator[dict]:
+    def iter_job_events(self, job_id: str, *, after: int = 0) -> Iterator[JobEvent]:
         """The job's events recorded so far, oldest first (``seq`` increases)."""
         while True:
             page = self.job_events(job_id, after=after)
@@ -922,12 +924,12 @@ class Client:
                 return
             after = page["next_after"]
 
-    def cancel_job(self, job_id: str) -> dict:
+    def cancel_job(self, job_id: str) -> CancelledJob:
         # Cancelling twice is answered, not refused (cancel.reason = already_requested / already_terminal).
-        return self._json("POST", f"{API}/jobs/{_q(job_id)}/cancel", json={}, retry_safe=True)
+        return cast(CancelledJob, self._json("POST", f"{API}/jobs/{_q(job_id)}/cancel", json={}, retry_safe=True))
 
     def retry_job(self, job_id: str, *, include_skipped: bool = False, failed_only: bool = False,
-                  idempotency_key: str | None = None) -> dict:
+                  idempotency_key: str | None = None) -> Job:
         """Run the failed and cancelled samples again (plus skipped ones with ``include_skipped``)
         from the job's original snapshot; successful samples keep their files. ``failed_only``
         selects only failed items, excludes cancelled/skipped/unplanned work, and cannot be
@@ -940,11 +942,11 @@ class Client:
         body = {"include_skipped": True} if include_skipped else {}
         if failed_only:
             body["failed_only"] = True
-        return self._json("POST", f"{API}/jobs/{_q(job_id)}/retry", json=body,
-                          idempotency_key=self._key(idempotency_key))
+        return cast(Job, self._json("POST", f"{API}/jobs/{_q(job_id)}/retry", json=body,
+                                   idempotency_key=self._key(idempotency_key)))
 
     def wait_for_job(self, job_id: str, *, timeout: float | None = None, poll_interval: float = 1.0,
-                     max_poll_interval: float = 10.0, on_event: Callable[[dict], None] | None = None) -> dict:
+                     max_poll_interval: float = 10.0, on_event: Callable[[JobEvent], None] | None = None) -> Job:
         """Poll until the job ends and return its final state.
 
         The interval grows by half each quiet poll up to ``max_poll_interval`` and drops back
@@ -987,13 +989,13 @@ class Client:
 
     # ================================================================== artifacts and downloads
     def list_artifacts(self, job_id: str, *, limit: int | None = None, cursor: str | None = None,
-                       offset: int | None = None) -> dict:
-        return self._get(f"{API}/jobs/{_q(job_id)}/artifacts", self._page_params(limit, cursor, offset))
+                       offset: int | None = None) -> ArtifactsPage:
+        return cast(ArtifactsPage, self._get(f"{API}/jobs/{_q(job_id)}/artifacts", self._page_params(limit, cursor, offset)))
 
-    def iter_artifacts(self, job_id: str, page_size: int | None = None) -> Iterator[dict]:
-        return self._iterate(f"{API}/jobs/{_q(job_id)}/artifacts", page_size=page_size)
+    def iter_artifacts(self, job_id: str, page_size: int | None = None) -> Iterator[Artifact]:
+        return cast(Iterator[Artifact], self._iterate(f"{API}/jobs/{_q(job_id)}/artifacts", page_size=page_size))
 
-    def download_artifact(self, artifact: dict | str, dest: str | os.PathLike, *,
+    def download_artifact(self, artifact: Artifact | ItemArtifact | dict | str, dest: str | os.PathLike, *,
                           expected_sha256: str | None = None) -> dict:
         """Stream one artifact to ``dest`` (a file path, or an existing directory to put it in),
         verify its SHA-256 against ``X-Content-SHA256`` and the manifest, then rename it into

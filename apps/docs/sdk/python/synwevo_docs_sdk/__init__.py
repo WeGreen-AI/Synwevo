@@ -9,6 +9,12 @@ from .errors import (
 )
 from .webhooks import verify_legacy_signature, verify_webhook
 from .workspace import WorkspaceClient
+from .job_types import (
+    Artifact, ArtifactsPage, CancelledJob, ItemArtifact, ItemStatus, Job, JobCancel,
+    JobCounts, JobEvent, JobEventsPage, JobEventType, JobItem, JobItemsPage, JobListItem,
+    JobOptions, JobPhase, JobRun, JobRunsPage, JobsPage, JobStatus, JobTemplate, JSONValue,
+    RawJobCounts,
+)
 
 __all__ = [
     "Client", "WorkspaceClient", "ApiKey", "ClientCredentials", "credentials_from_env", "read_secret",
@@ -17,4 +23,8 @@ __all__ = [
     "NotFoundError", "PayloadTooLargeError", "PermissionDeniedError", "RangeNotSatisfiableError",
     "RateLimitError", "ServerError", "TransportError", "ValidationError", "WaitTimeoutError",
     "WebhookVerificationError",
+    "Artifact", "ArtifactsPage", "CancelledJob", "ItemArtifact", "ItemStatus", "Job", "JobCancel",
+    "JobCounts", "JobEvent", "JobEventsPage", "JobEventType", "JobItem", "JobItemsPage", "JobListItem",
+    "JobOptions", "JobPhase", "JobRun", "JobRunsPage", "JobsPage", "JobStatus", "JobTemplate", "JSONValue",
+    "RawJobCounts",
 ]

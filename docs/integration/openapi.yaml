@@ -2450,7 +2450,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2535,7 +2536,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobPage_JobListItem_"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2581,7 +2583,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2667,7 +2670,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobPage_JobItem_"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2745,7 +2749,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobPage_JobRun_"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2810,7 +2815,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobEventsPage"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2854,7 +2860,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobCancelledView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2922,7 +2929,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -3008,7 +3016,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobPage_JobArtifact_"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -6670,6 +6679,941 @@ components:
         - value
         - confirmed
       title: CorrectionValue
+    JobArtifact:
+      properties:
+        id:
+          type: string
+          title: Id
+        item_id:
+          type: string
+          title: Item Id
+        format:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Format
+        filename:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Filename
+        size:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Size
+        sha256:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Sha256
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        seq:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Seq
+        label:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Label
+      type: object
+      required:
+        - id
+        - item_id
+        - format
+        - filename
+        - size
+        - sha256
+        - created_at
+        - run_no
+        - seq
+        - label
+      title: JobArtifact
+    JobCancellation:
+      properties:
+        accepted:
+          type: boolean
+          title: Accepted
+        reason:
+          anyOf:
+            - type: string
+              enum:
+                - already_terminal
+                - already_requested
+            - type: "null"
+          title: Reason
+      type: object
+      required:
+        - accepted
+        - reason
+      title: JobCancellation
+    JobCancelledView:
+      properties:
+        id:
+          type: string
+          title: Id
+        project_id:
+          type: string
+          title: Project Id
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - cancelling
+            - completed
+            - completed_with_errors
+            - failed
+            - cancelled
+          title: Status
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        template:
+          anyOf:
+            - $ref: "#/components/schemas/JobTemplate"
+            - type: "null"
+        options:
+          anyOf:
+            - $ref: "#/components/schemas/JobOptions"
+            - type: "null"
+        error:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error
+        error_code:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error Code
+        cancel_requested:
+          type: boolean
+          title: Cancel Requested
+        phase:
+          type: string
+          enum:
+            - planning
+            - generating
+          title: Phase
+        halt_reason:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Halt Reason
+        principal:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Principal
+        request_id:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Request Id
+        counts:
+          $ref: "#/components/schemas/JobCounts"
+        idempotent_replay:
+          type: boolean
+          title: Idempotent Replay
+          default: false
+        cancel:
+          $ref: "#/components/schemas/JobCancellation"
+      type: object
+      required:
+        - id
+        - project_id
+        - status
+        - run_no
+        - created_at
+        - started_at
+        - finished_at
+        - template
+        - options
+        - error
+        - error_code
+        - cancel_requested
+        - phase
+        - halt_reason
+        - principal
+        - request_id
+        - counts
+        - cancel
+      title: JobCancelledView
+    JobCounts:
+      properties:
+        samples:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Samples
+        documents:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Documents
+        files:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Files
+        failed:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Failed
+        skipped:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Skipped
+        cancelled:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Cancelled
+        pending:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Pending
+        running:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Running
+        planned:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Planned
+        unplanned:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Unplanned
+      type: object
+      required:
+        - samples
+        - documents
+        - files
+        - failed
+        - skipped
+        - cancelled
+        - pending
+        - running
+        - planned
+        - unplanned
+      title: JobCounts
+    JobEvent:
+      properties:
+        seq:
+          type: integer
+          title: Seq
+        id:
+          type: string
+          title: Id
+        type:
+          type: string
+          title: Type
+        version:
+          type: integer
+          title: Version
+        job_id:
+          type: string
+          title: Job Id
+        occurred_at:
+          type: number
+          title: Occurred At
+        data:
+          $ref: "#/components/schemas/JsonValue"
+      type: object
+      required:
+        - seq
+        - id
+        - type
+        - version
+        - job_id
+        - occurred_at
+        - data
+      title: JobEvent
+    JobEventsPage:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobEvent"
+          type: array
+          title: Items
+        next_after:
+          type: integer
+          title: Next After
+      type: object
+      required:
+        - items
+        - next_after
+      title: JobEventsPage
+    JobItem:
+      properties:
+        id:
+          type: string
+          title: Id
+        seq:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Seq
+        record_key:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Record Key
+        label:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Label
+        status:
+          type: string
+          enum:
+            - pending
+            - running
+            - success
+            - failed
+            - skipped
+            - cancelled
+          title: Status
+        issues:
+          $ref: "#/components/schemas/JsonValue"
+        attempts:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Attempts
+        file_base:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: File Base
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        artifacts:
+          items:
+            $ref: "#/components/schemas/JobItemArtifact"
+          type: array
+          title: Artifacts
+      type: object
+      required:
+        - id
+        - seq
+        - record_key
+        - label
+        - status
+        - issues
+        - attempts
+        - file_base
+        - started_at
+        - finished_at
+        - run_no
+        - artifacts
+      title: JobItem
+    JobItemArtifact:
+      properties:
+        id:
+          type: string
+          title: Id
+        item_id:
+          type: string
+          title: Item Id
+        format:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Format
+        filename:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Filename
+        sha256:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Sha256
+        size:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Size
+        verification:
+          $ref: "#/components/schemas/JsonValue"
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+      type: object
+      required:
+        - id
+        - item_id
+        - format
+        - filename
+        - sha256
+        - size
+        - verification
+        - run_no
+      title: JobItemArtifact
+    JobListItem:
+      properties:
+        id:
+          type: string
+          title: Id
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - cancelling
+            - completed
+            - completed_with_errors
+            - failed
+            - cancelled
+          title: Status
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        counts:
+          anyOf:
+            - $ref: "#/components/schemas/JobRawCounts"
+            - type: "null"
+        options:
+          anyOf:
+            - $ref: "#/components/schemas/JobOptions"
+            - type: "null"
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        phase:
+          type: string
+          enum:
+            - planning
+            - generating
+          title: Phase
+        halt_reason:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Halt Reason
+        error_code:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error Code
+        principal:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Principal
+      type: object
+      required:
+        - id
+        - status
+        - created_at
+        - started_at
+        - finished_at
+        - counts
+        - options
+        - run_no
+        - phase
+        - halt_reason
+        - error_code
+        - principal
+      title: JobListItem
+    JobOptions:
+      properties:
+        formats:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: "null"
+          title: Formats
+        error_policy:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error Policy
+        naming:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Naming
+        keep_fields:
+          anyOf:
+            - type: boolean
+            - type: "null"
+          title: Keep Fields
+        layout:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Layout
+      additionalProperties: true
+      type: object
+      title: JobOptions
+    JobPage_JobArtifact_:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobArtifact"
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+        next_offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Next Offset
+        next_cursor:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Next Cursor
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+        - next_offset
+        - next_cursor
+      title: "JobPage[JobArtifact]"
+    JobPage_JobItem_:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobItem"
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+        next_offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Next Offset
+        next_cursor:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Next Cursor
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+        - next_offset
+        - next_cursor
+      title: "JobPage[JobItem]"
+    JobPage_JobListItem_:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobListItem"
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+        next_offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Next Offset
+        next_cursor:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Next Cursor
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+        - next_offset
+        - next_cursor
+      title: "JobPage[JobListItem]"
+    JobPage_JobRun_:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobRun"
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+        next_offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Next Offset
+        next_cursor:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Next Cursor
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+        - next_offset
+        - next_cursor
+      title: "JobPage[JobRun]"
+    JobRawCounts:
+      properties:
+        total:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Total
+        planned:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Planned
+        unplanned:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Unplanned
+        files:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Files
+        documents:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Documents
+        pending:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Pending
+        running:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Running
+        success:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Success
+        failed:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Failed
+        skipped:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Skipped
+        cancelled:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Cancelled
+      additionalProperties: true
+      type: object
+      title: JobRawCounts
+    JobRun:
+      properties:
+        run_no:
+          type: integer
+          title: Run No
+        trigger:
+          type: string
+          title: Trigger
+        requested_by:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Requested By
+        items:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Items
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        status:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Status
+        requested_by_principal:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Requested By Principal
+      type: object
+      required:
+        - run_no
+        - trigger
+        - requested_by
+        - items
+        - created_at
+        - started_at
+        - finished_at
+        - status
+        - requested_by_principal
+      title: JobRun
+    JobTemplate:
+      properties:
+        id:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Id
+        name:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Name
+        format:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Format
+        version_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Version No
+      type: object
+      required:
+        - id
+        - name
+        - format
+        - version_no
+      title: JobTemplate
+    JobView:
+      properties:
+        id:
+          type: string
+          title: Id
+        project_id:
+          type: string
+          title: Project Id
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - cancelling
+            - completed
+            - completed_with_errors
+            - failed
+            - cancelled
+          title: Status
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        template:
+          anyOf:
+            - $ref: "#/components/schemas/JobTemplate"
+            - type: "null"
+        options:
+          anyOf:
+            - $ref: "#/components/schemas/JobOptions"
+            - type: "null"
+        error:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error
+        error_code:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error Code
+        cancel_requested:
+          type: boolean
+          title: Cancel Requested
+        phase:
+          type: string
+          enum:
+            - planning
+            - generating
+          title: Phase
+        halt_reason:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Halt Reason
+        principal:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Principal
+        request_id:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Request Id
+        counts:
+          $ref: "#/components/schemas/JobCounts"
+        idempotent_replay:
+          type: boolean
+          title: Idempotent Replay
+          default: false
+      type: object
+      required:
+        - id
+        - project_id
+        - status
+        - run_no
+        - created_at
+        - started_at
+        - finished_at
+        - template
+        - options
+        - error
+        - error_code
+        - cancel_requested
+        - phase
+        - halt_reason
+        - principal
+        - request_id
+        - counts
+      title: JobView
     JsonValue: {}
     LocatorProposal:
       properties:

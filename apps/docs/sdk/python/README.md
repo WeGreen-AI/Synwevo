@@ -51,6 +51,33 @@ dicts with additional `request_id`, `status_code`, `headers`, and `replayed` att
 Errors derive from `SynwevoError`, with status, code, field, details, request_id,
 and retry_after. Status-specific subclasses and `to_dict()` support automation.
 
+Job lifecycle methods have public `TypedDict` return types: `Job`, `CancelledJob`,
+`JobListItem`, `JobItem`, `JobRun`, `JobEvent`, `Artifact` and their page types, imported
+directly from `synwevo_docs_sdk`. These are static descriptions; response dictionaries,
+unknown JSON fields and response metadata remain unchanged. Lists keep sparse stored
+counts; job details always include ten counters (missing keys become zero, explicit
+historical nulls remain null). Check nullable historical fields before using them.
+`idempotent_replay` is present only on replayed requests, and `cancel` only on a cancellation
+response. Cursor pages have `offset=None`; planning runs may have `items=None`.
+Issues, verification and event data retain their open JSON shapes.
+
+The compile-only consumer example is `tests/types_check.py`; use a separately installed
+Mypy with `--strict --follow-imports=silent --python-executable <installed-sdk-python>`.
+The SDK does not depend on Mypy or any server model package.
+
+For the nine job lifecycle routes and a real failed-only recovery, run from the repository root:
+
+```sh
+.venv/bin/python tests/integration/sdk_acceptance/job_types_run.py \
+  --sdk-python /tmp/synwevo-sdk-env/bin/python --evidence /tmp/synwevo-jobs-sdk-evidence
+```
+
+This creates a temporary service and synthetic documents, temporarily removes one template
+blob after submission, then restores the identical bytes. It verifies eleven failed samples
+recover through `failed_only=True`, one invalid skipped sample stays unchanged, the frozen
+snapshot stays identical, and every generated document matches its content and checksum.
+It never accepts an existing service or data directory; it restores the fixture blob on exit.
+
 Retries use bounded exponential backoff with full jitter and respect Retry-After
 (delta or HTTP date) and the server's RateLimit reset hint. Creating calls use one
 UUID per logical call. Supply your own key to safely repeat a create across process

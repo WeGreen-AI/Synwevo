@@ -8,11 +8,34 @@ import {
   ApiKey, Client, WorkspaceClient, ConflictError, credentialsFromEnv, isTerminal, SUCCESS_STATUSES, verifyWebhook,
   WaitTimeoutError, WebhookVerificationError,
   type Artifact, type Job, type JobStatus, type SourceFile, type WebhookEvent,
+  type JobOptions, type RawJobCounts, type JobRun, type JobItem, type JobEvent, type Page,
 } from '@synwevo/docs-sdk';
 // The vendored-copy import from the README resolves to the same declarations.
 import * as vendored from '../synwevo-docs.mjs';
 
 const sameClient: typeof Client = vendored.Client;
+
+// Historical and in-flight wire states must remain representable, without inventing defaults.
+export function jobBoundaries(job: Job, item: JobItem, run: JobRun, event: JobEvent, page: Page<Job>): void {
+  const emptyCounts: RawJobCounts = {};
+  const historicOptions: JobOptions = { formats: ['docx'], error_policy: 'skip' };
+  const unplanned: JobRun = { ...run, items: null };
+  const historical: Job = { ...job, template: { id: null, name: null, format: null, version_no: null }, options: {} };
+  const nullableCounts: Job['counts'] = { ...job.counts, documents: null };
+  const diagnostics: JobItem = { ...item, issues: [{ code: 'render_failed', detail: [null, 1, 'context'] }, 'legacy'] };
+  const cursor: Page<Job> = { ...page, offset: null, next_offset: null, next_cursor: null };
+  const oldEvent: JobEvent = { ...event, type: 'job.future_event', data: null };
+  // @ts-expect-error detail counters are required even when stored list counts were empty
+  const missingCounts: Job['counts'] = {};
+  // @ts-expect-error replay appears only on replayed requests
+  const replay: boolean = job.idempotent_replay;
+  // @ts-expect-error planning runs can have no item count yet
+  const count: number = run.items;
+  // @ts-expect-error diagnostics contain JSON, not callbacks
+  const unsafeIssues: JobItem['issues'] = () => 'not JSON';
+  console.log(emptyCounts, historicOptions, unplanned, historical, nullableCounts, diagnostics, cursor, oldEvent,
+    missingCounts, replay, count, unsafeIssues);
+}
 
 export async function directoryFlow(client: WorkspaceClient): Promise<string> {
   const who = await client.whoami();
@@ -87,7 +110,7 @@ export async function mainFlow(): Promise<string[]> {
   try {
     job = await client.waitForJob(submitted.id, {
       timeoutMs: 120_000,
-      onEvent: (event) => console.log(event.seq, event.type, event.data.status),
+      onEvent: (event) => console.log(event.seq, event.type, event.data),
     });
   } catch (e) {
     if (e instanceof WaitTimeoutError) await client.cancelJob(submitted.id);

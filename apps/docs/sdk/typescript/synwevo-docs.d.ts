@@ -30,6 +30,9 @@ export declare const ITEM_STATUSES: readonly ['pending', 'running', 'success', '
 /** Seconds a webhook timestamp may differ from the local clock. */
 export declare const WEBHOOK_TOLERANCE_S: 300;
 
+/** JSON payloads with no client-side coercion or format-specific schema. */
+export type JSONValue = null | boolean | number | string | JSONValue[] | { [key: string]: JSONValue };
+
 // ============================================================================ enumerations
 export type TerminalJobStatus = (typeof TERMINAL_STATUSES)[number];
 export type SuccessJobStatus = (typeof SUCCESS_STATUSES)[number];
@@ -482,17 +485,17 @@ export interface CreatedProject {
 
 /** Job counts as stored (webhooks, events, list rows): item statuses plus totals. */
 export interface RawJobCounts {
-  total?: number;
-  planned?: number;
-  unplanned?: number;
-  files?: number;
-  documents?: number;
-  pending?: number;
-  running?: number;
-  success?: number;
-  failed?: number;
-  skipped?: number;
-  cancelled?: number;
+  total?: number | null;
+  planned?: number | null;
+  unplanned?: number | null;
+  files?: number | null;
+  documents?: number | null;
+  pending?: number | null;
+  running?: number | null;
+  success?: number | null;
+  failed?: number | null;
+  skipped?: number | null;
+  cancelled?: number | null;
 }
 
 /** An item of listProjects (archived projects are not listed). */
@@ -965,28 +968,30 @@ export interface SaveBuiltinTemplateInput {
 
 // ============================================================================ API objects: jobs
 export interface JobCounts {
-  samples: number;
+  samples: number | null;
   /** Successful samples. */
-  documents: number;
+  documents: number | null;
   /** Output files (successful samples × formats). */
-  files: number;
-  failed: number;
-  skipped: number;
-  cancelled: number;
-  pending: number;
-  running: number;
+  files: number | null;
+  failed: number | null;
+  skipped: number | null;
+  cancelled: number | null;
+  pending: number | null;
+  running: number | null;
   /** While phase is `planning`: samples with a plan so far, and those without. */
-  planned: number;
-  unplanned: number;
+  planned: number | null;
+  unplanned: number | null;
 }
 
+/** Stored options: historical rows can be sparse or explicitly null. */
 export interface JobOptions {
-  formats: string[];
-  error_policy: ErrorPolicy;
-  naming: string;
-  keep_fields: boolean;
+  formats?: string[] | null;
+  error_policy?: string | null;
+  naming?: string | null;
+  keep_fields?: boolean | null;
   /** Missing on jobs created before layout checks existed. */
-  layout?: Layout;
+  layout?: string | null;
+  [key: string]: unknown;
 }
 
 /** GET /jobs/{jid} (also createJob, retryJob, cancelJob). */
@@ -994,12 +999,12 @@ export interface Job {
   id: string;
   project_id: string;
   status: JobStatus;
-  run_no: number;
-  created_at: number;
+  run_no: number | null;
+  created_at: number | null;
   started_at: number | null;
   finished_at: number | null;
-  template: { id: string; name: string; format: string; version_no: number };
-  options: JobOptions;
+  template: { id: string | null; name: string | null; format: string | null; version_no: number | null } | null;
+  options: JobOptions | null;
   error: string | null;
   /** Machine-readable reason for `failed`, e.g. `has_errors`. */
   error_code: string | null;
@@ -1024,12 +1029,12 @@ export interface CancelledJob extends Job {
 export interface JobListItem {
   id: string;
   status: JobStatus;
-  created_at: number;
+  created_at: number | null;
   started_at: number | null;
   finished_at: number | null;
-  counts: RawJobCounts;
-  options: JobOptions;
-  run_no: number;
+  counts: RawJobCounts | null;
+  options: JobOptions | null;
+  run_no: number | null;
   phase: JobPhase;
   halt_reason: string | null;
   error_code: string | null;
@@ -1043,37 +1048,37 @@ export interface JobRun {
   requested_by: string | null;
   /** Items in this run; null while a large batch is still being planned. */
   items: number | null;
-  created_at: number;
+  created_at: number | null;
   started_at: number | null;
   finished_at: number | null;
-  status: string;
+  status: string | null;
   requested_by_principal: string | null;
 }
 
 export interface ItemArtifact {
   id: string;
   item_id: string;
-  format: string;
-  filename: string;
-  sha256: string;
-  size: number;
-  verification: Record<string, unknown> | null;
-  run_no: number;
+  format: string | null;
+  filename: string | null;
+  sha256: string | null;
+  size: number | null;
+  verification: JSONValue;
+  run_no: number | null;
 }
 
 /** An item of items(): one sample's result. */
 export interface JobItem {
   id: string;
-  seq: number;
-  record_key: string;
+  seq: number | null;
+  record_key: string | null;
   label: string | null;
   status: ItemStatus;
-  issues: Issue[];
-  attempts: number;
+  issues: JSONValue;
+  attempts: number | null;
   file_base: string | null;
   started_at: number | null;
   finished_at: number | null;
-  run_no: number;
+  run_no: number | null;
   artifacts: ItemArtifact[];
 }
 
@@ -1095,11 +1100,11 @@ export interface JobEventData {
 export interface JobEvent {
   seq: number;
   id: string;
-  type: JobEventType;
+  type: string;
   version: number;
   job_id: string;
   occurred_at: number;
-  data: JobEventData;
+  data: JSONValue;
 }
 
 export interface JobEventsPage {
@@ -1134,15 +1139,15 @@ export interface WaitForJobOptions {
 export interface Artifact {
   id: string;
   item_id: string;
-  format: string;
-  filename: string;
-  size: number;
+  format: string | null;
+  filename: string | null;
+  size: number | null;
   /** Content SHA-256; downloads are checked against it. */
-  sha256: string;
-  created_at: number;
-  run_no: number;
+  sha256: string | null;
+  created_at: number | null;
+  run_no: number | null;
   /** The sample's sequence number and label. */
-  seq: number;
+  seq: number | null;
   label: string | null;
 }
 

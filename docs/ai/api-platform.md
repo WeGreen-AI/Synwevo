@@ -9,7 +9,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 分支 / HEAD | `main`（本地）；推送与部署受 GitHub Actions 额度阻塞至 10 月 1 日（见 iteration-state） |
+| 分支 / HEAD | `main`（本地）；目录/复制批次 `b8ee007`，扫描退出修复 `b431b54`、Push 回环 fixture 修复 `8161041`，ZIP/验证镜像修复 `118a8cb`；任务契约续批与本检查点一起提交。本轮尚未推送；2026-09-30 查询 GitHub Actions 仍为账单/支出限制，不能将日期到达视作自动恢复 |
 | 已交付（本地验证） | **API-1 流量与容量策略**：`synwevo_core/api_quotas.py`（分层策略、版本、历史、GCRA 共享计数）；网关按凭据 + 工作空间双层限流（`RateLimit` 两项）；Docs 任务并发上限读工作空间策略；管理 API `/api/admin/api-platform/quotas*`（查看、生效值与此刻用量、预演、带版本的修改、历史，全部复用 `mutation` 审计）；控制台「流量与配额」页签；调用记录可按请求编号/凭据/接口/状态/错误代码查询、记录拒绝代码与委托客户端、网关拒绝的请求记在接口模板下；凭据列表显示最近使用、轮换可选重叠期、`rotated` 状态文案修正；两个 SDK 解析多项 `RateLimit` |
 | 证据 | `tests/integration/test_api_platform_quotas.py`（15）、`test_jobs_scheduling.py::test_a_workspace_policy_replaces_the_deployment_limit`、SDK 单元测试（Python 21、TS 7）、账户前端 `npm test`（7）；隔离实例 `127.0.0.1:32765`（scratchpad `api1/`，合成账户）浏览器实跑：预演 → 重新验证 → 保存 → 两把真实密钥第 4 次调用 429（`limit_scope=workspace`、`Retry-After: 20`）→ 重启后策略仍生效 → 按请求编号查到拒绝与原因 |
 | 全量回归 | 2026-09-29：API-1 状态 `pytest` 2 781 passed / 6 skipped / 0 failed；API-1 + API-2 前半 2 783 passed / 2 skipped / 1 failed（控制台契约三语言缺 7 条新说明，已补，`test_api_platform_contract_i18n.py` 通过）；账户前端 `npm test` 7/7、Docs 前端 132/132、typecheck、`check_boundaries`/`check_brand`/`check_design`/`check_component_names`、infra 单元测试均通过 |
@@ -21,8 +21,10 @@
 | API-5 续 | 工作空间目录只读（9a965d3）；**复制申请机器接口（场景 C）**：本人委托令牌申请/查看/撤回、审批留在网页、`copy.*` 事件、两个 SDK 方法与类型；场景 C 端到端（目标另行授权生成、卡片不授权、事件不串）已验证 |
 | API-5b / API-7 本批 | **目录写入**：邀请、重发、撤销、改角色、移除成员；仅批准的服务账户、`workspace.members.write`、viewer/editor 范围、当前角色条件更新、应用署名及审计。邀请绑定原审批，撤权后不能经重新绑定复活；浏览器也不能将机器邀请升级到管理角色。**复制**：请求/响应类型、并发幂等、执行时复核原委托、恢复不重复复制。**契约与 SDK**：独立目录 OpenAPI（8 操作）、管理员目录聚合、Python/TS 独立 WorkspaceClient；详见 [本批证据](../quality/api-platform-2026-09-30.md) |
 | 本批实跑 | 两种已安装 SDK 均经真实 Accounts 服务跑通目录 8 操作；浏览器真实申请 → 手机批准 → 手机签发 → 令牌调用 200 → 页面撤回 → 同令牌 401。简繁英契约页各列 8 个目录操作，390px 无横向溢出；无页面脚本错误。所有账户、邮件和文档均为隔离夹具 |
+| API-7 任务续批 | 9 个任务响应模型及双 SDK 类型，保持缺省与 null、分页与产物差异；未约束 2xx JSON schema 从 73 减至 64。真实 SDK 以合成模板暂时缺失制造 11 个失败项，恢复原内容后 failed_only 在同一任务第二次运行生成 11 份 DOCX，读取正文与 SHA-256，跳过项和快照未变。Python SDK 27/27、TS 10/10 与双 SDK 严格类型检查通过；版本、弃用兼容边界写入集成指南 |
+| 最终运行门槛 | 固定 `b8ee007` 的 Linux arm64 镜像构建及非 root 只读冒烟通过；镜像全量测试在约 72% 时因本机 Colima 收到 SIGTERM 中断，未完成。已定位并修复 ZIP 头枚举在内存跟踪器下超时（同镜像加密文件套件 45 passed / 1 skipped），以及验证镜像未安装 SDK；后者尚待重建。Docker 恢复确认待答复，未自行重启被停止的运行环境 |
 | 部署核对 | 2026-09-30 只读 `docker ps`：accounts/docs/portal/messages 均为 `aadcb9e839c3c13386f1831a942e8449852dab15` 且 healthy；本批尚未上线。Actions 36569205283 的 verify 因账单/支出上限未启动，deploy 跳过；未绕过既有工作流 |
-| 下一步 | 收敛本批全量回归与发布镜像验证后提交；API-5 评论/提及、通知与 Message 机器身份；API-3 待 B1-2 合入 main 后开始（设计见 `../platform/api-management-identity.md`）；事件与投递保留期（可配置、默认不删）；API-7 剩余响应模型与兼容说明 |
+| 下一步 | Docker 恢复后从固定提交重建镜像并完成全量回归，现有 CI 门槛恢复后再发布。独立推进 API-5 评论/提及、通知与 Message 机器身份，API-7 剩余响应模型和兼容差异视图；API-3 待 B1-2 合入 main（设计见 `../platform/api-management-identity.md`）；事件与投递保留期（可配置、默认不删） |
 
 ## 批次队列
 
@@ -34,7 +36,7 @@
 | API-4 | OAuth 第三方客户端：同意页与已存授权、已连接应用页、自省、`client_secret_basic` | 本地完成 | — |
 | API-5 | 工作空间目录只读 ✓；成员/邀请写入与应用操作者 ✓；跨空间复制申请与状态、场景 C ✓；评论/提及、通知发出、对象卡片与机器人待补 | 进行中，本批本地验证 | — |
 | API-6 | 控制台：Webhook 运行概况与保护性暂停 ✓、总览事件积压 ✓、手机卡片化 ✓、生成任务视图与保护性停止 ✓、API 平台审计页签 ✓、审计归属修正 ✓；契约差异与弃用移入 API-7 | 本地完成 | — |
-| API-7 | TS 类型声明与本地包 ✓、SDK 单元测试进 CI ✓（c4e8fca）；目录/复制请求响应类型与独立契约 ✓、覆盖清单按实跑证据重生 ✓；剩余响应模型、版本与兼容说明、契约差异与弃用视图 | 进行中 | — |
+| API-7 | TS 类型声明与本地包 ✓、SDK 单元测试进 CI ✓（c4e8fca）；目录/复制请求响应类型与独立契约 ✓、覆盖清单按实跑证据重生 ✓；9 个任务响应模型与双 SDK 类型 ✓、真实 failed_only 恢复 ✓、版本与弃用兼容说明 ✓；剩余响应模型、契约差异与弃用视图 | 进行中 | — |
 
 ---
 

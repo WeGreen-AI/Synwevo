@@ -27,7 +27,7 @@
 | 基础检查 | 边界、品牌、设计、组件名、22 个 Logo 衍生文件、四外壳 typecheck/build、前端测试及 8 项 infra 单元测试通过 |
 | 首轮全量 Python | 完整执行后 4 项失败：3 个 Push 回环测试和 1 个运行期间改动造成的目录导出漂移；目录当前代码重跑 3/3 通过。Push 原样复现 3 failed / 1 passed，仅隔离代理后 4/4 通过；将 NO_PROXY 限定在测试 fixture 后再次 4/4 通过，未改变生产网络行为。不能称首轮全量通过 |
 | 扫描退出竞争 | 首轮日志暴露晚到 Timer 向已关闭解析池提交任务；3 个确定性用例修复前全部失败、修复后通过；扫描/源生命周期/进程清理共 18 项通过，验证时线程异常警告按 error 处理。修复单独提交为 `b431b54` |
-| 发布镜像 | 已有候选镜像从锁文件构建成功（本地 Linux arm64）；最终固定源码镜像的隔离全量验证待执行。GitHub 的 Linux amd64 发布门槛仍需工作流实际运行 |
+| 发布镜像 | 固定 `b8ee007` 从锁文件构建成功（本地 Linux arm64），非 root、只读根目录、无网络冒烟通过；全量套件收集 2 865 项，执行到约 72% 时 Colima 在 15:58 收到 SIGTERM，容器退出 125，验证未完成。GitHub 的 Linux amd64 发布门槛仍需工作流实际运行 |
 
 可重复入口：`tests/integration/test_workspace_directory_writes.py`、`test_workspace_contract.py`、
 `test_api_copy_requests.py`，以及 `tests/integration/sdk_acceptance/workspace_run.py`。
@@ -39,6 +39,32 @@ SDK 命令与实跑参数见两个 SDK 的 README。
 - `/private/tmp/synwevo-api-sdk-python-20260930-r3/acceptance.json`：Docs SDK 实跑。
 - `/private/tmp/synwevo-workspace-sdk-20260930-r3/acceptance.json`、`operation-coverage.json`：目录双 SDK 实跑。
 - `/private/tmp/synwevo-openapi-review.wcrehf/instance-report.json`：响应实例验证。
+
+## API-7 任务契约与 SDK 续批
+
+9 个现有任务操作（提交、项目任务列表、详情、逐项结果、运行记录、事件、取消、重试、产物）
+新增明确响应模型，不改变任务调度逻辑。输出保留历史 null、稀疏计数/选项、仅重放时出现的标记，
+并区分任务详情与列表计数、逐项产物与平铺产物。未知内部顶层字段被过滤，公开的可扩展 JSON 诊断仍保留。
+Python 的公开 TypedDict 和 TypeScript 声明与此对应，SDK 运行时仍返回原字典/对象。
+
+| 检查 | 结果与证据 |
+|---|---|
+| 合同兼容 | `test_api_job_models.py` 用真实 HTTP 检查历史 null、缺省字段、取消状态、重放、分页、产物及内部字段过滤。主代理发现显式 null 计数会被初版整数模型拒绝，先复现失败，再同时修正服务端与双 SDK 类型；最终模型/契约/管理目录三语言 13 项通过 |
+| 真实失败重试 | `tests/integration/sdk_acceptance/job_types_run.py` 从安装包运行 SDK，对冻结后的合成模板暂时移开 blob，11 项真实生成失败；按原摘要恢复后，同一任务 run 2 重试成功，11 份 DOCX 的内容及 SHA-256 均核对；一个跳过项保持原样，冻结快照与数据库一致。脚本 finally 恢复夹具文件，不使用生产内容或伪造生成器 |
+| 全部任务操作 | 专项 HTTP 观测覆盖全部 9 个任务操作，包括 offset/cursor、幂等重放、取消、事件及两种产物形状；本次共观测 18 个成功操作，是独立子集，不能替换前批联合 56 个成功操作统计 |
+| SDK | 已安装 Python SDK 27/27 单元测试、mypy 1.18.2 strict；TypeScript 10/10 与严格类型检查。主代理的 TS 回环接收测试首次受沙箱 EPERM 阻止，获准启动本机回环测试服务后重跑 10/10 |
+| OpenAPI | 当前 Docs 与目录导出均通过 openapi-spec-validator 0.9.0；任务契约采集 61 个真实响应，覆盖 9 个成功操作及 403/404/409；另行独立 HTTP 审查 23 个响应。最终 null 计数兼容修正后的契约再次通过规范校验。Docs 未约束的 2xx JSON schema 由 73 降至 64，尚未全量类型化 |
+| 共享文件接纳 | 镜像中的 2 个恶意 ZIP 性能用例在 tracemalloc 下分别约 6.36/8.07 秒，超过原有 3 秒预算；以 C 层签名计数及正则预筛减去普通头的 Python 分配，保持 700 000 头拒绝上限与原有标记/清单判定。同一旧镜像挂载当前实现后完整加密文件套件 45 passed / 1 skipped；新增全部 256 种低位标记组合及成员导入/Message 接纳回归共 7 项在主机通过，未放宽时间或内存预算 |
+| 验证镜像依赖 | `test_file_events::test_the_sdk_knows_the_server_catalogue` 暴露 SDK 只装在 CI 主机、未装进隔离验证镜像。`Dockerfile.verify` 补装仓库内真实 SDK，生产镜像不变；重建尝试时 Docker 已停止，尚不能宣称此修复通过容器验收 |
+
+续批证据：`/private/tmp/synwevo-api7-jobs-sdk-20260930-r3/acceptance.json` 与 `sdk/responses.json`；
+主验证目录里的 `api7-sdk-*.log`、`api7-ts-root-recheck.log`、`job-contract-final.log`、
+`encrypted-optimized-container.log`、`encrypted-cross-app-local.log`、`docker-pytest-b8ee007.log`。
+主机真实表格客户端套件另有 98 passed / 6 warnings，见 `sheet-clients-final.log`。
+
+继续验证需先恢复原 Colima profile（不重建数据），从最终提交归档构建 runtime 与 verify 两个镜像，
+再运行 `.github/workflows/deploy.yml` 的容器全量检查和发布门槛。当前已询问运行环境恢复，未收到答复；
+没有将中断后的剩余用例视为通过，也没有自动重启可能由其他工作停止的环境。
 
 ## 发布与尚未闭环的范围
 

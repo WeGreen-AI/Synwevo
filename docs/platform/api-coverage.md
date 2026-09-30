@@ -7,7 +7,7 @@
 「对外」= 外部系统可用机器凭据调用；「管理」= 平台管理员 `api_platform.manage`；「仅内部」= 只有浏览器会话。
 建立于 2026-09-29（三路代码走读 + 实跑），逐条以代码为准；旧记录里的「完成」是线索，不是证据。
 
-**2026-09-30 本批更新：目录写入、复制授权与执行恢复、契约及 SDK 已完成本地验证，尚未部署。**
+**2026-09-30 本批更新：目录写入、复制授权与执行恢复、任务响应契约及 SDK 已完成本地验证，尚未部署。**
 本页的「已验证」不代表 CI 通过或正式环境已经发布。Docs 当前导出为 82 个路径、100 个操作（包含健康检查）；
 Python SDK 映射 98 个、CLI 可达 64 个，本轮联合实跑成功观测 56 个。目录单独为 7 个路径、8 个操作（3 读、5 写），
 Python 与 TypeScript 的独立 `WorkspaceClient` 均实现并实跑 8/8。方法存在、某次调用成功与完整参数/故障覆盖是不同口径，
@@ -32,7 +32,8 @@ Python 与 TypeScript 的独立 `WorkspaceClient` 均实现并实跑 8/8。方�
 
 | 能力 | 状态 | 实现与证据 | 缺口 |
 |---|---|---|---|
-| Docs 与目录各自从实际路由导出 OpenAPI 3.1，管理台组合两份契约 | 已验证（本地） | [Docs 契约](../integration/openapi.yaml)、[目录契约](../integration/workspace-openapi.json)；`synwevo_docs.cli openapi`、`synwevo_identity.cli workspace-openapi`；`test_api_docs.py`、`test_workspace_contract.py`。复制 6 操作与目录 8 操作有显式请求/响应模型；目录导出不打开数据库，独立账户服务不依赖 Docs；组合仅保留业务路径与可达 schema | Docs 当前仍有 **73 条 2xx JSON 响应 schema 未约束**（全量扫描当前导出，不是 4 条采样），不能称全部响应已类型化；管理 API 不在对外业务契约里 |
+| Docs 与目录各自从实际路由导出 OpenAPI 3.1，管理台组合两份契约 | 已验证（本地） | [Docs 契约](../integration/openapi.yaml)、[目录契约](../integration/workspace-openapi.json)；`synwevo_docs.cli openapi`、`synwevo_identity.cli workspace-openapi`；`test_api_docs.py`、`test_workspace_contract.py`。复制 6 操作与目录 8 操作有显式请求/响应模型，任务生命周期 9 操作补齐响应模型；保留历史 null、缺省字段和不同产物清单形状。目录导出不打开数据库，独立账户服务不依赖 Docs；组合仅保留业务路径与可达 schema | Docs 当前仍有 **64 条 2xx JSON 响应 schema 未约束**（全量扫描当前导出），不能称全部响应已类型化；管理 API 不在对外业务契约里 |
+| 版本与弃用规则 | 部分（本地） | [版本说明与弃用清单](../integration/api.md#deprecations) 区分 HTTP、契约、事件、SDK 与部署版本；记录现有任务正文幂等别名、替代请求头、优先级、Deprecation 头及未设 Sunset 的事实 | 管理台兼容差异视图、按客户端统计旧字段使用仍未实现 |
 | 错误信封 + 可选 RFC 9457（`Accept: application/problem+json`） | 已验证 | `http.py`；`test_gate_api_errors.py` | 类型 URN 不可解引用 |
 | `X-Request-ID` 全链路回显、调用记录 | 部分 | `http.py` 网关；**API-1**：调用记录带错误代码与客户端，可按请求编号/凭据/接口/状态/错误代码查询；网关拒绝的请求记在接口模板下 | **API-2**：提交任务的请求编号记在任务 `request_id` 与 `job.created`（`test_request_trace.py`）；无 traceparent |
 | 分页：offset 与游标 | 已验证 | `v1.py:181-240` | 游标未签名（安全依赖每个查询的租户过滤） |
@@ -85,7 +86,7 @@ Python 与 TypeScript 的独立 `WorkspaceClient` 均实现并实跑 8/8。方�
 
 | 能力 | 状态 | 证据 | 缺口 |
 |---|---|---|---|
-| Python SDK 0.1.0（重试、幂等键、流式下载、续传、Webhook 验签） | 已验证（本地续验） | 本地重新安装的包：单元测试 25/25；[操作覆盖清单](../../apps/docs/sdk/python/operation-coverage.json) 从实际契约与 HTTP 观测重生：Docs 100 操作 / SDK 映射 98 / CLI 可达 64 / 联合成功观测 56；`tests/integration/sdk_acceptance/` 真实服务验收 | 未覆盖来源页 PNG 与 locator probe；CLI 为子集；未实跑操作不据此获证。SDK 单元测试已进入 CI，完整隔离服务验收仍由脚本运行；未公开发布包 |
+| Python SDK 0.1.0（重试、幂等键、流式下载、续传、Webhook 验签） | 已验证（本地续验） | 本地重新安装的包：单元测试 27/27、安装包的 mypy 严格类型检查通过；任务生命周期公开 TypedDict 不改变字典运行行为。[操作覆盖清单](../../apps/docs/sdk/python/operation-coverage.json)：Docs 100 操作 / SDK 映射 98 / CLI 可达 64 / 前批联合成功观测 56；`tests/integration/sdk_acceptance/` 真实服务验收 | 未覆盖来源页 PNG 与 locator probe；CLI 为子集；未实跑操作不据此获证。SDK 单元测试已进入 CI，完整隔离服务验收仍由脚本运行；未公开发布包 |
 | TypeScript SDK 0.1.0（`.mjs`、类型声明、独立目录客户端） | 已验证（本地续验） | 本地打包安装后 10/10 单元测试、严格类型检查通过；上传模板 SDK/CLI 各 12 份 DOCX，内置模板 12 DOCX + 12 XLSX 与 2 预览读回验证；来源检视、模板恢复、凭据与签名链接的方法及声明已存在；复制 6 操作、目录 8 操作均有真实 HTTP 验收 | Docs 尚无 TypeScript 独立逐项成功覆盖证明；不能把 Python/CLI 联合 56 操作计数说成每种语言均覆盖 56。同步抛出的 ValidationError 仍无法由类型系统表达；包未公开发布 |
 | Python / TypeScript `WorkspaceClient` | 已验证（本地，未部署） | 独立于 Docs 客户端，使用账户源站及目录 resource，不继承 Docs 方法、默认 scope 或 API key 环境变量；两种已安装包分别实跑 8/8。r3 合计 36 次目录业务 HTTP、4 封真实 file-mail/outbox、10 条邀请/成员审计；`audit_workspace_openapi.py` 校验操作与方法映射 | 写权限须在所有者审批时明确授予；改角色/移除必须带 `expected_role`，不自动重试不确定结果。没有目录 CLI |
 | 多策略 `RateLimit` 头解析 | 已验证 | **API-1** 两个 SDK 取 `r=0` 各项最长 `t` | — |
@@ -95,7 +96,14 @@ TypeScript `synwevo-api-sdk-ts-20260930/verification.json` 与 `builtin-verifica
 目录 `synwevo-workspace-sdk-20260930-r3/acceptance.json`（均在 `/private/tmp/`）。Python 报告读回的
 24 份上传模板 DOCX 为 SDK/CLI 各 12 份，48 份内置产物为 SDK/CLI 各 12 DOCX + 12 XLSX，另有 4 份内置与 3 份上传模板预览。
 全部使用标明的合成夹具，不是生产用户文档。56 个成功操作是 Python SDK/CLI、本人委托及复制 TypeScript 链路的联合去重结果；
-不是全参数覆盖，未观测操作不作成功推断。`failed_only` 验收证明排除取消项及选择指纹冲突，尚不证明真实失败项重试的正向链路。
+不是全参数覆盖，未观测操作不作成功推断。
+
+API-7 任务续验 `synwevo-api7-jobs-sdk-20260930-r3/acceptance.json`（同在 `/private/tmp/`）另有
+18 个成功操作观测，其中覆盖全部 9 个任务操作；这是专项子集，不能替换前批联合 56 的口径。
+验收使用已安装 Python SDK 和真实生成器：冻结任务后暂时移开合成模板 blob，产生 11 个真实失败项，
+按原摘要恢复模板后以 `failed_only=True` 重试，同一任务第二次运行生成 11 份 DOCX，逐份读取内容并核对 SHA-256。
+一个校验失败的跳过项保持原样，任务快照与数据库逐项相符；取消、重放、分页及嵌套/平铺产物清单均实际调用。
+服务端历史空值、未知内部字段过滤和响应 schema 由 `test_api_job_models.py` 验证。
 
 ## 8. 管理控制台（Synwevo Admin「API 管理」）
 

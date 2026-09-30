@@ -166,6 +166,13 @@ const client = new Client(process.env.SYNWEVO_BASE_URL ?? '', await credentialsF
 const job: Job = await client.waitForJob(jobId);
 ```
 
+Job declarations preserve historical nullable fields and sparse stored options/counts.
+Detail counts always contain ten keys; an absent stored key becomes zero, while an explicit
+null stays null. `idempotent_replay` remains optional, cancellation responses require `cancel`,
+and a run's `items` may be null while planning. Issues, verification and job-event data are
+open `JSONValue`; narrow their shape before reading format-specific fields. These declaration
+corrections do not change JavaScript response objects or HTTP behavior.
+
 When vendoring, copy `synwevo-docs.mjs`, `synwevo-docs.d.ts` and `synwevo-docs.d.mts` together:
 for a relative `.mjs` import TypeScript reads the `.d.mts`, which only re-exports the `.d.ts`.
 `test/types-check.ts` exercises the main flow and some misuse the types must reject; from the
