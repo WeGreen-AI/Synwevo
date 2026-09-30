@@ -11,6 +11,12 @@ export const contractEntries: [string, string, string][] = [
   ["资源不存在", "Not Found", "資源不存在"],
   ["请求过于频繁", "Too Many Requests", "請求過於頻繁"],
   ["凭据无效", "Unauthorized", "憑據無效"],
+  ["资源已过期或取消", "Gone", "資源已過期或取消"],
+  ["内容过大", "Content Too Large", "內容過大"],
+  ["字节范围无效", "Range Not Satisfiable", "位元組範圍無效"],
+  ["资源已过期或已取消，无法继续该操作", "The resource expired or was cancelled; this operation cannot continue", "資源已過期或已取消，無法繼續此操作"],
+  ["文件或请求体超过大小上限", "The file or request body exceeds the size limit", "檔案或請求本文超過大小上限"],
+  ["字节范围不可满足；检查当前 received 后继续上传", "The byte range cannot be accepted; check the current received offset before resuming", "位元組範圍無法接受；請檢查目前的 received 後繼續上傳"],
   ["工作空间成员（地址、名称、角色、加入时间；分页）", "Workspace members with email, name, role and join date (paginated)", "工作空間成員（地址、名稱、角色、加入時間；分頁）"],
   ["工作空间邀请及其状态（分页，最新在前）", "Workspace invitations and states (paginated, newest first)", "工作空間邀請及其狀態（分頁，最新在前）"],
   ["当前凭据与它所属的工作空间", "Current credential and its workspace", "目前憑據與它所屬的工作空間"],
@@ -55,9 +61,9 @@ export const contractEntries: [string, string, string][] = [
     "一筆投遞記錄"
   ],
   [
-    "上一页返回的 next_cursor（不透明，按稳定排序续读；与 offset 二选一）",
-    "Opaque next_cursor from the previous page; continues stable ordering. Use either cursor or offset",
-    "上一頁傳回的 next_cursor（不透明，按穩定排序續讀；與 offset 二選一）"
+    "上一页返回的 next_cursor（不透明、签名，有效 24 小时，绑定工作空间、列表与筛选；与 offset 二选一；过期后从第一页重读）",
+    "Opaque, signed next_cursor from the previous page; valid for 24 hours and bound to the workspace, list and filters. Use either cursor or offset; restart from page one after expiry",
+    "上一頁傳回的 next_cursor（不透明、簽章，有效 24 小時，綁定工作空間、清單與篩選；與 offset 二選一；過期後從第一頁重讀）"
   ],
   [
     "上传来源文件（multipart、已完成的可续传上传 upload_id，或授权目录下的 path）",

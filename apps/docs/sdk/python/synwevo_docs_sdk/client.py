@@ -36,6 +36,7 @@ from .source_types import (CSVOptions, CorrectionValue, SourceStructure, SourceV
                            SourceSearch, SourceWords, SourceFile, SourceRecords, SourceRecord, SourceBlock, SourceWord)
 from .job_types import (Artifact, ArtifactsPage, CancelledJob, ItemArtifact, Job, JobEvent, JobEventsPage,
                         JobItem, JobItemsPage, JobListItem, JobRun, JobsPage)
+from .upload_types import Upload
 from .errors import (ConflictError, IntegrityError, RangeNotSatisfiableError, RateLimitError, ServerError,
                      SynwevoError, TransportError, ValidationError, WaitTimeoutError, parse_retry_after)
 
@@ -759,7 +760,7 @@ class Client:
 
     # ================================================================== resumable uploads
     def create_upload(self, filename: str, size: int, sha256: str | None = None, purpose: str | None = None, *,
-                      idempotency_key: str | None = None) -> dict:
+                      idempotency_key: str | None = None) -> Upload:
         if self.validate:
             V.one_of(purpose, V.UPLOAD_PURPOSES, "purpose")
         body: dict = {"filename": filename, "size": size}
@@ -767,31 +768,31 @@ class Client:
             body["sha256"] = sha256
         if purpose:
             body["purpose"] = purpose
-        return self._json("POST", f"{API}/uploads", json=body, idempotency_key=self._key(idempotency_key))
+        return cast(Upload, self._json("POST", f"{API}/uploads", json=body, idempotency_key=self._key(idempotency_key)))
 
-    def get_upload(self, upload_id: str) -> dict:
-        return self._get(f"{API}/uploads/{_q(upload_id)}")
+    def get_upload(self, upload_id: str) -> Upload:
+        return cast(Upload, self._get(f"{API}/uploads/{_q(upload_id)}"))
 
-    def put_upload_chunk(self, upload_id: str, path: str | os.PathLike, start: int, length: int, total: int) -> dict:
+    def put_upload_chunk(self, upload_id: str, path: str | os.PathLike, start: int, length: int, total: int) -> Upload:
         """Send bytes [start, start+length) of ``path``, streamed from disk. Not retried here:
         after a failure the caller asks the server how much it has (`resumable_upload` does)."""
         headers = {"Content-Range": f"bytes {start}-{start + length - 1}/{total}",
                    "Content-Type": "application/octet-stream", "Content-Length": str(length)}
-        return self._json("PUT", f"{API}/uploads/{_q(upload_id)}", headers=headers, retry_safe=False,
-                          body=lambda: {"content": iter_slice(path, start, length)})
+        return cast(Upload, self._json("PUT", f"{API}/uploads/{_q(upload_id)}", headers=headers, retry_safe=False,
+                                      body=lambda: {"content": iter_slice(path, start, length)}))
 
-    def complete_upload(self, upload_id: str, sha256: str | None = None) -> dict:
+    def complete_upload(self, upload_id: str, sha256: str | None = None) -> Upload:
         # Completing twice is not an error on the server, so a lost answer is safely repeated.
-        return self._json("POST", f"{API}/uploads/{_q(upload_id)}/complete",
-                          json={"sha256": sha256} if sha256 else {}, retry_safe=True)
+        return cast(Upload, self._json("POST", f"{API}/uploads/{_q(upload_id)}/complete",
+                                      json={"sha256": sha256} if sha256 else {}, retry_safe=True))
 
-    def abort_upload(self, upload_id: str) -> dict:
-        return self._json("POST", f"{API}/uploads/{_q(upload_id)}/abort", retry_safe=True)
+    def abort_upload(self, upload_id: str) -> Upload:
+        return cast(Upload, self._json("POST", f"{API}/uploads/{_q(upload_id)}/abort", retry_safe=True))
 
     def resumable_upload(self, path: str | os.PathLike, *, filename: str | None = None, purpose: str | None = None,
                          chunk_size: int | None = None, upload_id: str | None = None,
                          on_progress: Callable[[int, int], None] | None = None,
-                         idempotency_key: str | None = None) -> dict:
+                         idempotency_key: str | None = None) -> Upload:
         """Upload a file in chunks and complete it; returns the completed upload (use its ``id``
         with `upload_source` / `upload_template`, which do this for you).
 

@@ -114,6 +114,36 @@ def test_openapi_describes_the_error_and_header_contract():
     # binary downloads are typed as binary, not as JSON
     dl = _codes(spec["paths"]["/api/v1/artifacts/{aid}/content"]["get"])["200"]["content"]
     assert "application/json" not in dl and dl["application/octet-stream"]["schema"]["format"] == "binary"
+    # A self-authenticating download URL still refuses an invalid/revoked issuer
+    # or an expired signature. Rendering also refuses changed/blocked inputs.
+    signed = _codes(spec["paths"]["/api/v1/download/{token}"]["get"])
+    assert signed["403"]["$ref"] == "#/components/responses/Forbidden"
+    assert signed["410"]["$ref"] == "#/components/responses/Gone"
+    preview = _codes(spec["paths"]["/api/v1/projects/{pid}/preview"]["post"])
+    assert preview["409"]["$ref"] == "#/components/responses/Conflict"
+
+
+def test_upload_contract_declares_resume_failures_and_all_public_states():
+    spec = _spec()
+    operations = {
+        ("post", "/api/v1/uploads"): ("201", {"409", "410", "413"}),
+        ("get", "/api/v1/uploads/{uid}"): ("200", set()),
+        ("put", "/api/v1/uploads/{uid}"): ("200", {"409", "410", "416"}),
+        ("post", "/api/v1/uploads/{uid}/complete"): ("200", {"409", "410"}),
+        ("post", "/api/v1/uploads/{uid}/abort"): ("200", {"409"}),
+    }
+    for (method, path), (success, failures) in operations.items():
+        responses = _codes(spec["paths"][path][method])
+        assert failures <= set(responses), (method, path)
+        assert responses[success]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/UploadView"}
+        for failure in failures:
+            component = spec["components"]["responses"][responses[failure]["$ref"].split("/")[-1]]
+            assert set(component["content"]) == {"application/json", "application/problem+json"}
+            assert "X-Request-ID" in component["headers"]
+    shape = spec["components"]["schemas"]["UploadView"]
+    assert set(shape["properties"]["status"]["enum"]) == {"open", "complete", "consumed", "expired", "aborted"}
+    assert {"sha256", "purpose", "complete", "received", "upload_url"} <= set(shape["required"])
+    assert not {"tenant", "principal", "blob", "consumed_by"} & set(shape["properties"])
 
 
 def test_copy_contract_requires_user_delegation_and_types_public_results():

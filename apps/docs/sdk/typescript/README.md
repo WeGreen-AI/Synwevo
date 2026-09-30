@@ -56,6 +56,11 @@ It uses no legacy API key or admin scope. `retryJob(id, {failedOnly: true})` and
 The exported `Client` covers projects, files, template fields, rules, mappings, definitions,
 preflight/issues, jobs/items/events/runs, manifests/downloads/reports and webhook subscriptions.
 List helpers are async iterators; `get`, `requestJson` and `paginate` expose lower-level API access.
+Docs resource-list cursors are opaque and signed, last 24 hours, and bind the workspace,
+list and filters. On `400 invalid_cursor`, explicitly restart the list and deduplicate by
+resource ID; iterators do not silently restart. Old unsigned cursors and cursors minted
+before server root-key rotation need restarting. This rule does not apply to `/events`
+checkpoints, Webhook delivery pagination or WorkspaceClient offset pages.
 Typed errors include status, code, request ID, field, details and retry delay. Retries are bounded,
 use jitter, honor Retry-After, and only repeat safe/idempotent operations. A rejected concurrency
 precondition is never retried automatically. Resumable uploads stream chunks from disk and query

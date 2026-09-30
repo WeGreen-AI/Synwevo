@@ -5,7 +5,11 @@ an opaque cursor (`next_cursor` + `Link: <…>; rel="next"`) that neither skips 
 when earlier rows are deleted between requests. `offset`/`limit`/`total`/`next_offset` stay
 for existing clients.
 """
+import base64
+import json
 import re
+import subprocess
+import sys
 import time
 import urllib.parse
 
@@ -130,6 +134,88 @@ def test_page_size_and_cursor_are_validated(api, keys):
     assert r.status_code == 400 and r.json()["error"]["field"] == "cursor"
 
 
+def test_cursor_cannot_be_reused_in_another_workspace(api, keys):
+    c = api.c
+    _fixture_projects(api, 3)
+    _fixture_projects(api, 3, "tenant-b")
+    cursor = _ok(c.get("/api/v1/projects?limit=1", headers=keys["rw"]))["next_cursor"]
+    response = c.get("/api/v1/projects", params={"cursor": cursor}, headers=keys["other"])
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_cursor"
+
+
+def test_cursor_boundary_cannot_be_edited(api, keys):
+    c, h = api.c, keys["rw"]
+    _fixture_projects(api, 3)
+    cursor = _ok(c.get("/api/v1/projects?limit=1", headers=h))["next_cursor"]
+    pieces = cursor.split(".")
+    payload = pieces[1] if len(pieces) == 3 else cursor
+    data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    data["k"][0] = 0
+    edited = base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+    tampered = ".".join((pieces[0], edited, pieces[2])) if len(pieces) == 3 else edited
+    response = c.get("/api/v1/projects", params={"cursor": tampered}, headers=h)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_cursor"
+
+
+def test_cursor_expiry_is_bounded_and_bad_encodings_do_not_become_server_errors(api, keys, monkeypatch):
+    from synwevo_docs.api import v1_cursor
+
+    c, h = api.c, keys["rw"]
+    _fixture_projects(api, 3)
+    now = int(time.time())
+    monkeypatch.setattr(v1_cursor, "_clock", lambda: now)
+    cursor = _ok(c.get("/api/v1/projects?limit=1", headers=h))["next_cursor"]
+    monkeypatch.setattr(v1_cursor, "_clock", lambda: now + v1_cursor.TTL_S - 1)
+    assert c.get("/api/v1/projects", params={"cursor": cursor}, headers=h).status_code == 200
+    monkeypatch.setattr(v1_cursor, "_clock", lambda: now + v1_cursor.TTL_S)
+    # Includes the previous unsigned format: a failed signature never permits fallback.
+    legacy = base64.urlsafe_b64encode(b'{"l":"projects","k":[0,"p"],"f":"old"}').decode()
+    for invalid in (cursor, legacy, "游标", "c1.x.y", "c1." + "a" * 5000 + ".b", cursor + "=", cursor + "\n"):
+        response = c.get("/api/v1/projects", params={"cursor": invalid}, headers=h)
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_cursor"
+        assert response.json()["error"]["field"] == "cursor"
+    assert c.get("/api/v1/projects?limit=1", headers=h).status_code == 200
+
+
+def test_cursor_survives_key_rotation_but_never_authorizes_a_revoked_key(api, keys):
+    c, h = api.c, keys["rw"]
+    _fixture_projects(api, 4)
+    cursor = _ok(c.get("/api/v1/projects?limit=1", headers=h))["next_cursor"]
+    auth = keys["auth"]
+    old = auth.store.one("SELECT id FROM api_keys WHERE name='rw'")["id"]
+    token, current, _ = auth.rotate_key(old, grace_s=0)
+    rotated = {"Authorization": f"Bearer {token}"}
+    assert c.get("/api/v1/projects", params={"cursor": cursor}, headers=h).status_code == 401
+    assert c.get("/api/v1/projects", params={"cursor": cursor}, headers=rotated).status_code == 200
+    auth.revoke_key(current["id"])
+    assert c.get("/api/v1/projects", params={"cursor": cursor}, headers=rotated).status_code == 401
+
+
+def test_cursor_is_usable_by_a_separate_process_with_the_same_store(api, keys):
+    c, h = api.c, keys["rw"]
+    _fixture_projects(api, 3)
+    cursor = _ok(c.get("/api/v1/projects?limit=1", headers=h))["next_cursor"]
+    expected = _ok(c.get("/api/v1/projects", params={"cursor": cursor}, headers=h))
+    # A fresh interpreter and app rule out an accidental process-local signing key/cache.
+    # Only this test's temporary Store and synthetic credential are passed on stdin.
+    program = """
+import json, sys
+from fastapi.testclient import TestClient
+from synwevo_docs.api.app import create_app
+p = json.load(sys.stdin)
+with TestClient(create_app(p['root'], start_jobs=False)) as c:
+    r = c.get('/api/v1/projects', params={'cursor': p['cursor']}, headers=p['headers'])
+    print(json.dumps({'status': r.status_code, 'ids': [v['id'] for v in r.json().get('items', [])]}))
+"""
+    result = subprocess.run([sys.executable, "-c", program], input=json.dumps({
+        "root": str(c.app_state.app.store.root), "cursor": cursor, "headers": h}),
+        text=True, capture_output=True, timeout=30, check=True)
+    assert json.loads(result.stdout) == {"status": 200, "ids": [v["id"] for v in expected["items"]]}
+
+
 def test_job_lists_page_beyond_the_old_hard_cap(api, keys, fixtures):
     """Project jobs used to stop at 50 while reporting total=50 and next_offset=null."""
     c, h = api.c, keys["rw"]
@@ -183,3 +269,6 @@ def test_files_list_is_paged(api, keys, fixtures):
     assert body["total"] == 3 and [x["id"] for x in body["items"]] == ids[:2]
     nxt = _ok(c.get(_next_link(r), headers=h))
     assert [x["id"] for x in nxt["items"]] == ids[2:] and nxt["next_cursor"] is None
+    other = api.project("TEST FIXTURE: another list scope")
+    swapped = c.get(f"/api/v1/projects/{other}/files", params={"cursor": body["next_cursor"]}, headers=h)
+    assert swapped.status_code == 400 and swapped.json()["error"]["code"] == "invalid_cursor"

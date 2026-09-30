@@ -45,6 +45,9 @@ def test_ranged_upload_resume_complete_and_use_as_source(api, keys, fixtures):
     # a gap is refused with the offset to continue from
     gap = _put(c, h, uid, data[half + 10:], half + 10, n)
     assert gap.status_code == 416 and gap.json()["error"]["details"]["received"] == half
+    problem = _put(c, {**h, "Accept": "application/problem+json"}, uid, data[half + 10:], half + 10, n)
+    assert problem.status_code == 416 and problem.headers["content-type"].startswith("application/problem+json")
+    assert problem.json()["status"] == 416 and problem.json()["code"] == "upload_range_gap"
     # a resend that overlaps what we have is accepted: only the new bytes are appended
     r = _put(c, h, uid, data[half - 100:], half - 100, n)
     assert r.status_code == 200 and r.json()["received"] == n
@@ -63,7 +66,12 @@ def test_ranged_upload_resume_complete_and_use_as_source(api, keys, fixtures):
     # one upload, one use
     again = c.post(f"/api/v1/projects/{pid}/files", json={"upload_id": uid}, headers=h)
     assert again.status_code == 409 and again.json()["error"]["code"] == "upload_consumed"
-    assert _ok(c.get(f"/api/v1/uploads/{uid}", headers=h))["status"] == "consumed"
+    consumed = _ok(c.get(f"/api/v1/uploads/{uid}", headers=h))
+    assert consumed["status"] == "consumed" and consumed["complete"] is True
+    assert consumed["sha256"] == digest and consumed["purpose"] == "source"
+    assert set(consumed) == {"id", "filename", "size", "sha256", "purpose", "received", "status",
+                             "created_at", "updated_at", "expires_at", "complete", "upload_url"}
+    assert _ok(c.post(f"/api/v1/uploads/{uid}/complete", json={}, headers=h)) == consumed
 
 
 def test_checksum_mismatch_is_not_stored_and_resets(api, keys):
@@ -112,8 +120,12 @@ def test_size_limit_aborted_expired_and_foreign_uploads(api, keys, monkeypatch):
     pid = _ok(c.post("/api/v1/projects", json={"name": "拒绝"}, headers=h))["id"]
 
     aborted = _new(c, h, b"abc")
+    assert aborted["sha256"] is None and aborted["purpose"] is None and aborted["complete"] is False
     _put(c, h, aborted["id"], b"abc", 0, 3)
-    _ok(c.post(f"/api/v1/uploads/{aborted['id']}/abort", headers=h))
+    cancelled = _ok(c.post(f"/api/v1/uploads/{aborted['id']}/abort", headers=h))
+    assert cancelled["status"] == "aborted" and cancelled["complete"] is False
+    assert cancelled["sha256"] is None and cancelled["purpose"] is None
+    assert _ok(c.get(f"/api/v1/uploads/{aborted['id']}", headers=h)) == cancelled
     assert not U.part_path(c.app_state.app.store, aborted["id"]).exists()
     r = c.post(f"/api/v1/projects/{pid}/files", json={"upload_id": aborted["id"]}, headers=h)
     assert r.status_code == 410 and r.json()["error"]["code"] == "upload_aborted"
@@ -126,6 +138,9 @@ def test_size_limit_aborted_expired_and_foreign_uploads(api, keys, monkeypatch):
     store.execute("UPDATE uploads SET expires_at=? WHERE id=?", (time.time() - 1, expired["id"]))
     r = c.post(f"/api/v1/projects/{pid}/files", json={"upload_id": expired["id"]}, headers=h)
     assert r.status_code == 410 and r.json()["error"]["code"] == "upload_expired"
+    stale = _ok(c.get(f"/api/v1/uploads/{expired['id']}", headers=h))
+    assert stale["status"] == "expired" and stale["complete"] is False and stale["purpose"] is None
+    assert stale["sha256"] == hashlib.sha256(b"abc").hexdigest()
 
     # another workspace cannot see, write, complete or use this upload
     mine = _new(c, h, b"abc")

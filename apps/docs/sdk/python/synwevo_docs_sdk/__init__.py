@@ -9,6 +9,7 @@ from .errors import (
 )
 from .webhooks import verify_legacy_signature, verify_webhook
 from .workspace import WorkspaceClient
+from .upload_types import Upload, UploadPurpose, UploadStatus
 from .job_types import (
     Artifact, ArtifactsPage, CancelledJob, ItemArtifact, ItemStatus, Job, JobCancel,
     JobCounts, JobEvent, JobEventsPage, JobEventType, JobItem, JobItemsPage, JobListItem,
@@ -26,5 +27,5 @@ __all__ = [
     "Artifact", "ArtifactsPage", "CancelledJob", "ItemArtifact", "ItemStatus", "Job", "JobCancel",
     "JobCounts", "JobEvent", "JobEventsPage", "JobEventType", "JobItem", "JobItemsPage", "JobListItem",
     "JobOptions", "JobPhase", "JobRun", "JobRunsPage", "JobsPage", "JobStatus", "JobTemplate", "JSONValue",
-    "RawJobCounts",
+    "RawJobCounts", "Upload", "UploadPurpose", "UploadStatus",
 ]

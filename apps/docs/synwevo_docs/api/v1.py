@@ -18,7 +18,6 @@ Contract rules this module keeps in one place:
 """
 from __future__ import annotations
 
-import base64
 import calendar
 import hashlib
 import json
@@ -41,6 +40,7 @@ from ..engine.limits import LIMITS
 from ..jobs import ProjectContext
 from ..services import scan_out
 from . import idempotency as I
+from . import v1_cursor
 from .v1_job_models import (JobArtifact, JobCancelledView, JobEventsPage, JobItem, JobListItem,
                             JobPage, JobRun, JobView)
 from .v1_uploads import build_router as build_uploads_router
@@ -172,7 +172,8 @@ def _offset_q():
 
 
 def _cursor_q():
-    return Query(None, description="上一页返回的 next_cursor（不透明，按稳定排序续读；与 offset 二选一）")
+    return Query(None, description="上一页返回的 next_cursor（不透明、签名，有效 24 小时，绑定工作空间、列表与筛选；与 offset 二选一；过期后从第一页重读）",
+                 json_schema_extra={"maxLength": v1_cursor.MAX_LENGTH})
 
 
 def _check_limit(limit: int | None, default: int, maximum: int) -> int:
@@ -181,26 +182,6 @@ def _check_limit(limit: int | None, default: int, maximum: int) -> int:
     if limit < 1 or limit > maximum:
         raise ServiceError(400, "invalid", f"limit 必须在 1–{maximum} 之间", {"field": "limit"})
     return limit
-
-
-def _encode_cursor(name: str, key: list, filters: dict | None) -> str:
-    raw = json.dumps({"l": name, "k": key, "f": I.fingerprint(filters or {})[:16]}, separators=(",", ":"))
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
-
-
-def _decode_cursor(raw: str, name: str, filters: dict | None, width: int) -> list:
-    bad = ServiceError(400, "invalid_cursor", "cursor 无效：请使用上一页响应中的 next_cursor 原样传回", {"field": "cursor"})
-    try:
-        data = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-    except Exception as e:  # noqa: BLE001 - any malformed cursor is the same client error
-        raise bad from e
-    if not isinstance(data, dict) or data.get("l") != name or not isinstance(data.get("k"), list) \
-            or len(data["k"]) != width or not all(isinstance(v, (int, float, str)) for v in data["k"]):
-        raise bad
-    if data.get("f") != I.fingerprint(filters or {})[:16]:
-        raise ServiceError(400, "invalid_cursor", "cursor 与本次请求的筛选条件不一致；换筛选条件请从第一页开始",
-                           {"field": "cursor"})
-    return data["k"]
 
 
 def _next_url(request: Request, **params) -> str:
@@ -227,7 +208,7 @@ def _paged(store, request: Request, response: Response, *, name: str, select: st
     marks = ", ".join(f"{k} AS _k{i}" for i, k in enumerate(keys))
     cond, cargs = "", ()
     if cursor:
-        pos = _decode_cursor(cursor, name, filters, len(keys))
+        pos = v1_cursor.decode(store, current_tenant(), cursor, name, filters, len(keys))
         cond = f" AND ({', '.join(keys)}) {'<' if desc else '>'} ({', '.join('?' * len(keys))})"
         cargs = tuple(pos)
     rows = store.all(f"{select}, {marks} {frm}{cond} ORDER BY {order} LIMIT ? OFFSET ?",
@@ -235,7 +216,7 @@ def _paged(store, request: Request, response: Response, *, name: str, select: st
     more = len(rows) > lim
     rows = rows[:lim]
     total = store.one(f"SELECT COUNT(*) AS n {frm}", args)["n"]
-    nxt = _encode_cursor(name, [rows[-1][f"_k{i}"] for i in range(len(keys))], filters) if more and rows else None
+    nxt = v1_cursor.encode(store, current_tenant(), name, [rows[-1][f"_k{i}"] for i in range(len(keys))], filters) if more and rows else None
     for r in rows:
         for i in range(len(keys)):
             r.pop(f"_k{i}", None)
@@ -488,6 +469,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
     # ------------------------------------------------------------ files
     @r.post("/projects/{pid}/preview", operation_id="render_project_preview",
             summary="生成并下载一个样本的真实原生格式预览",
+            responses={409: {"$ref": "#/components/responses/Conflict"}},
             description="与界面预览共用模板版本、样本计划及渲染/读回校验。需要 write 与导出权限；"
                         "不创建批次任务或正式产物。一次仅渲染一个样本，受模拟生成并发限制。"
                         "响应是二进制附件；signature 可用预检返回值固定输入版本。",
@@ -734,13 +716,16 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         _, uid = person(request, "read")
         org = shared.organization_of(current_tenant())
         if not org:
+            if cursor:
+                raise ServiceError(400, "invalid_cursor", "当前工作空间不属于组织；请移除 cursor 从第一页重新读取",
+                                   {"field": "cursor"})
             page = {"items": [], "total": 0, "next_offset": None, "next_cursor": None}
             return {**page, "organization": None}
         member = shared._org_member(org["id"], uid)
         page = _paged(store, request, response, name="organization-templates", select="SELECT *",
                       frm="FROM organization_templates WHERE organization_id=?" + ("" if include_deprecated else " AND deprecated_at IS NULL"),
                       args=(org["id"],), keys=("COALESCE(updated_at, 0)", "id"), desc=True, offset=offset, limit=limit, cursor=cursor,
-                      filters={"include_deprecated": include_deprecated})
+                      filters={"organization_id": org["id"], "include_deprecated": include_deprecated})
         page["items"] = [shared_out(shared._out(x, uid, member)) for x in page["items"]]
         page["organization"] = {"id": org["id"], "name": org["name"]}
         return page
@@ -1122,6 +1107,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         return attachment(jobs.report_csv(jid), f"report_{jid}.csv", "csv")
 
     @r.get("/download/{token}", summary="按签名链接下载（链接本身即凭据）",
+           responses={403: {"$ref": "#/components/responses/Forbidden"},
+                      410: {"$ref": "#/components/responses/Gone"}},
            openapi_extra=_ox(binary=("application/octet-stream", "application/zip"), security=[]))
     def signed_download(token: str):
         data = auth.open_link(token)
@@ -1475,6 +1462,9 @@ def _components() -> dict:
             "Forbidden": resp("凭据有效但权限不足"),
             "NotFound": resp("资源不存在或不属于该工作空间"),
             "Conflict": resp("幂等键冲突、版本过期或状态不允许"),
+            "Gone": resp("资源已过期或已取消，无法继续该操作"),
+            "PayloadTooLarge": resp("文件或请求体超过大小上限"),
+            "RangeNotSatisfiable": resp("字节范围不可满足；检查当前 received 后继续上传"),
             "RateLimited": resp("超过限流", "Retry-After", "RateLimit", "RateLimit-Policy"),
             "ServerError": resp("未预期错误（带 request_id，服务端日志有同一个 id）"),
         },

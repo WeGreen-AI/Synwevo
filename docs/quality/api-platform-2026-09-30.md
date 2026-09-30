@@ -66,6 +66,84 @@ Python 的公开 TypedDict 和 TypeScript 声明与此对应，SDK 运行时仍�
 再运行 `.github/workflows/deploy.yml` 的容器全量检查和发布门槛。当前已询问运行环境恢复，未收到答复；
 没有将中断后的剩余用例视为通过，也没有自动重启可能由其他工作停止的环境。
 
+## 资源列表游标续批
+
+资源列表游标续批（在任务契约提交 `4b74796` 后）：原游标的篡改位置、跨工作空间复用两用例均以
+200 响应复现失败，原查询仍有租户过滤，未据此声称泄露其他空间数据。新实现使用现有根密钥派生的
+独立 HMAC 签名，24 小时有效，绑定空间、列表、对象与筛选，组织共享模板额外绑定组织。
+分页与任务模型 16 项通过，包含独立 Python 进程启动应用后续读、凭据轮换后续读、撤销后拒绝、过期、
+旧格式、异常输入和跨对象范围；组织模板另验证同组织不同空间与筛选不可混用。
+管理台契约说明同步简繁英，OpenAPI 3.1.0 再次校验通过。组织模板/契约/三语言复核 11 项通过，
+账户前端 typecheck、设计与组件名检查通过。
+已安装 SDK 在 `/private/tmp/synwevo-api7-cursor-sdk-20260930/acceptance.json` 记录新的真实分页与
+11 个失败项恢复、产物读回验收。`cursor-before.log`、`cursor-after.log`、`cursor-contract.log`、
+`cursor-sdk.log` 在主验证目录；SDK 日志中的合成 blob 缺失异常是主动故障场景，随后成功恢复。
+升级/回滚需要重开旧资源列表游标，offset 兼容保留；不会静默重新迭代而重复处理。事件 feed 和 Webhook
+投递的长期检查点没有改成短期列表游标。此批仍未经过完整容器回归或部署。
+
+## 断点上传契约续批
+
+5 个上传操作共用明确的 `UploadView`，保留 open/complete/consumed/aborted/expired、显式 null 的
+sha256/purpose、完整收到字节数和每次都有的 upload_url。Python SDK 导出 `Upload`、`UploadStatus`、
+`UploadPurpose`，6 个方法返回该静态类型；TypeScript 修正 upload_url 的必填性。没有更改状态机、
+扫描/文件接纳规则、SQL、迁移或上传重试行为。
+
+实际响应审查另外发现此前未写进契约的 409、410、413、416，已按各路由真实路径补齐，复用统一错误信封
+及 RFC 9457 响应。最终 134 个 HTTP 响应覆盖 23 组操作/状态、5 个上传状态及两种错误媒体格式，
+全部符合 OpenAPI 3.1.0。包括故意注入存储故障的 500，并未将其误记为成功上传。
+当前仍有 59 条成功 JSON 响应未明确建模，未声称全部契约已完成。
+
+上传/耐久/重放/契约共 33 项通过，另外 1 项三语言目录检查发现新增 HTTP 默认文案缺译，补齐后该项复核通过。
+已安装 Python SDK 27/27、mypy strict、TypeScript strict 与账户前端 typecheck 通过。
+真实 SDK 续验改为 2 KiB 分片上传来源和模板，另建部分上传并取消，覆盖全部 5 个上传操作；随后
+同一真实任务的 11 个失败项恢复与 11 份产物内容/摘要验证继续通过。
+
+证据：主验证目录 `uploads-schema-report.json`、`uploads-final.log`、`uploads-i18n-final.log`、
+`uploads-sdk-unit.log`、`uploads-sdk-mypy.log`、`uploads-sdk-typescript.log`；真实 SDK 结果在
+`/private/tmp/synwevo-api7-uploads-sdk-20260930/acceptance.json`。SDK 上传状态和产物响应只包含合成夹具。
+
+## 固定提交主机全量回归
+
+固定 `14b9811`（目录、复制、任务模型、签名游标、上传契约及验证修复已提交），
+全程没有改动源码或导出的契约。命令：
+
+```sh
+.venv/bin/python -m pytest -o addopts='--import-mode=importlib' -q --tb=short
+npm run typecheck
+npm run build
+.venv/bin/python scripts/check_boundaries.py
+.venv/bin/python scripts/check_brand.py
+.venv/bin/python scripts/check_design.py
+.venv/bin/python scripts/check_component_names.py
+.venv/bin/python scripts/brand_assets.py --check
+```
+
+主机 Python 3.14：**2 973 passed / 2 skipped / 239 warnings，1111.67 秒**，退出码 0。
+警告为 SWIG、Pillow 像素读取、AnyIO 别名及测试客户端逐请求 Cookie 的弃用提示；没有将警告隐藏或声称零警告。
+四个前端的类型检查与生产构建、五项仓库检查全部退出 0。证据在主验证目录
+`pytest-final-14b9811.log`、`final-typecheck.log`、`final-build.log`、`final-boundaries.log`、
+`final-brand.log`、`final-design.log`、`final-components.log`、`final-logo.log`。
+这确认本机固定提交的完整回归，不替代生产 Python 3.12、Linux 镜像全量验证或 GitHub CI。
+
+## 来源与下载错误契约续批
+
+全量主机回归之后，补齐已有来源操作的 409/410/413、预览冲突 409、签名下载拒绝 403 与过期 410。
+没有改变来源状态机、文件读取、隔离、认证或渲染行为；元数据仍可读取 pending/error 状态。
+JSON 请求体统一受已有 256 KiB 上限，原始内容缺失、隔离拒绝及渲染期间输入变化均有对应错误声明。
+集成指南补充等待状态、重新预检、停止重试和重申请下载链接的区别。
+
+新增 6 个实际 HTTP 用例在修正前全部因错误未登记而失败，修正后全部通过。
+用例在隔离夹具中设置生命周期状态、移开并恢复原始内容、保存真实隔离结论，核对服务的真实拒绝；
+不是恶意软件识别引擎验收。保留仍可读取元数据及其他来源不受影响的独立断言。
+来源操作、预览、签名链接、导出同步及管理员三语言契约共 **101 passed / 6 warnings**。
+实际采集 **222 个错误响应、77 组操作/状态、23 个错误码**，包含默认 JSON 与 RFC 9457；
+openapi-spec-validator 0.9.0 与 OpenAPI 3.1 响应实例校验全部通过。
+采集只记录规范化路由模板，不保存签名下载 URL、认证头或凭据。
+边界、品牌与 diff 检查通过；这次只改契约声明与文档，未重复整个主机套件。
+
+证据在主验证目录：`source-errors-before.log`、`source-errors-after.log`、`source-errors-final.log`、
+`source-error-responses.json`、`source-error-schema-report.json`。
+
 ## 发布与尚未闭环的范围
 
 2026-09-30 只读核对生产容器：accounts、docs、portal、messages 均运行
@@ -76,3 +154,20 @@ Python 的公开 TypedDict 和 TypeScript 声明与此对应，SDK 运行时仍�
 
 剩余 API-5 评论/提及、通知、Message 机器身份，以及 API-7 旧响应模型、兼容差异视图继续在能力表跟踪。
 API-3 管理机器身份依赖管理员专项 B1-2；本批不伪造该依赖，也不赋予业务服务账户平台管理权。
+
+## 按用户要求收尾
+
+用户于 2026-09-30 要求「做完这一轮结束 goal」。交付边界为已提交的目录/复制、任务、游标、上传及错误契约；
+最新实现提交 `161f9cb`，主机全量回归基准 `14b9811`，回归记录提交 `06f5b11`。
+后续评论 API 仅开始了授权与服务草稿，尚未形成完整端到端链路，因此已准确反向应用本任务自己的补丁，
+从工作区移除；未触碰另一任务的 `docs/agent-work/` 改动。未执行这份草稿的迁移或签发其新权限。
+草稿仅存于主验证临时目录 `comments-incomplete.patch`，不得将它视为已实现或已验证的接口。
+
+接续评论时已确认的边界：网页 viewer 可评论，需独立本人委托权限而非复用文档写权限；
+创建需要同事务幂等、通知/卡片去重及应用署名；修改应条件更新并检测旧浏览器写入；
+协作推送必须在外层事务提交后发送。API、双 SDK、三语言界面与真实浏览器/调用验收均待实现。
+
+本任务临时浏览器验收服务已正常退出，全部测试进程结束，没有运行中的子代理。
+此前每分钟接续自动化被自动审批拒绝（要求补充明确的持续运行确认），未创建；用户现在要求停止，
+不再等待或重试该调度请求。Colima 仍未恢复，GitHub CI 仍受已记录的账单限制，本轮没有推送或部署。
+完整 API 平台仍有覆盖表中的未完成项；停止持续执行不等于宣称完整目标已达成。
