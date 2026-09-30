@@ -127,6 +127,9 @@ CREATE TABLE IF NOT EXISTS agent_workspace_policies (
 """
 
 
+COLUMNS = (("agent_turns", "usage_state", "TEXT NOT NULL DEFAULT 'known'"),)
+
+
 def migrate(c):
     """Remove credentials from pre-release operation snapshots, preserving replay hashes.
 

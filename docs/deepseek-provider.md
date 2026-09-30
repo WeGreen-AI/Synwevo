@@ -1,3 +1,5 @@
+> Coordinator integration update (2026-09-30): httpx is now explicitly declared and the protocol suite was independently rerun (148 adapter + existing Agent checks). MeteredDeepSeek and MeteredTurnProvider connect the transport to durable billing evidence and the real Agent tool loop; production route/quote, user wallet and price governance are not enabled. The original handoff below records the transport's bounded scope.
+
 # DeepSeek adapter: bounded transport, not an enabled paid route
 
 Verified against public official documentation on **2026-09-30**. Implementation base:

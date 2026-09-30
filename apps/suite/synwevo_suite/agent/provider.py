@@ -47,6 +47,8 @@ class StepResult:
     usage: dict = field(default_factory=dict)
     model: str | None = None
     stop_details: dict | None = None
+    api_message: dict | None = field(default=None, repr=False)  # Lossless, private provider-native replay.
+    usage_reliability: str | None = None
 
 
 @dataclass

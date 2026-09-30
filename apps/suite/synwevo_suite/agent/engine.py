@@ -180,7 +180,9 @@ class Agent:
                 "body": "" if hidden else m["body"], "hidden": hidden,
                 "error": {"code": m["error_code"], "message": m["error_message"]} if m["error_code"] and not hidden else None,
                 "turn": ({"id": t["id"], "status": t["status"], "model": t["model"], "credential": t["credential"],
-                          "usage": {"input": t["input_tokens"], "output": t["output_tokens"]}} if t else None),
+                          "usage": {"input": t["input_tokens"] if t["usage_state"] == "known" else None,
+                                    "output": t["output_tokens"] if t["usage_state"] == "known" else None,
+                                    "state": t["usage_state"]}} if t else None),
                 "tool_calls": by_turn.get(t["id"], []) if t else [],
                 "created_at": m["created_at"]})
         top = self.store.one("SELECT COALESCE(MAX(seq),0) AS s FROM agent_events WHERE conversation_id=?", (row["id"],))
@@ -326,6 +328,12 @@ class Agent:
         if credential is None:
             raise ServiceError(503, "agent_not_configured",
                                "个人 Agent 还没有可用的模型服务：平台尚未配置，你也没有设置自己的密钥。")
+        # Provider-native private history is not portable (reasoning signatures, tool wire
+        # format and processing policies differ). Never send it to a newly selected provider.
+        if self.store.one("SELECT 1 FROM agent_turns t JOIN agent_messages m ON m.id=t.assistant_message_id "
+                          "WHERE t.conversation_id=? AND t.provider<>? AND m.api_json IS NOT NULL",
+                          (cid, self.provider.name)):
+            raise ServiceError(409, "provider_history_incompatible", "模型提供方已变化，请新建会话继续")
         ts = now()
         if regenerate_of:
             old = self.store.one("SELECT * FROM agent_messages WHERE id=? AND conversation_id=? AND role='assistant'",
@@ -498,7 +506,8 @@ class Agent:
         if credential is None:
             self._finish(t, "failed", ProviderError("agent_not_configured", "模型服务未配置"))
             return
-        if credential.kind != t["credential"] or credential.model != t["model"]:
+        if (credential.kind != t["credential"] or credential.model != t["model"]
+                or self.provider.name != t["provider"]):
             self._finish(t, "failed", ProviderError("model_configuration_changed", "模型配置已变化，请重新发起回答"))
             return
         conv = self.store.one("SELECT * FROM agent_conversations WHERE id=?", (t["conversation_id"],))
@@ -538,29 +547,31 @@ class Agent:
                 return self._closed or not row or bool(row["cancel_requested"])
 
             try:
-                result = self.provider.step(credential=credential, system=system, tools=TOOLS,
-                                            messages=base + turn_msgs, effort=self._effort(user["id"]),
-                                            on_text=on_text, should_stop=should_stop)
-            except Cancelled:
+                arguments = dict(credential=credential, system=system, tools=TOOLS,
+                                 messages=base + turn_msgs, effort=self._effort(user["id"]),
+                                 on_text=on_text, should_stop=should_stop)
+                metered = getattr(self.provider, "step_for_turn", None)
+                result = (metered(turn=t, logical_call_id=f"step:{steps}", **arguments)
+                          if metered else self.provider.step(**arguments))
+            except Cancelled as err:
+                if hasattr(err, "metered_usage"):
+                    self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability)
                 self._flush(t, buf)
                 self._finish(t, "cancelled", None, api=turn_msgs)
                 return
             except ProviderError as err:
+                if hasattr(err, "metered_usage"):
+                    self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability)
                 self._flush(t, buf)
                 self._finish(t, "failed", err, api=turn_msgs)
                 return
             self._flush(t, buf)
+            self._record_usage(turn_id, steps, result.usage or {}, result.usage_reliability)
             if should_stop():
                 self._finish(t, "cancelled", None, api=turn_msgs)
                 return
-            usage = result.usage or {}
-            self.store.execute("UPDATE agent_turns SET steps=?, input_tokens=input_tokens+?, output_tokens=output_tokens+?, "
-                               "updated_at=? WHERE id=?",
-                               (steps, int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
-                                + int(usage.get("cache_creation_input_tokens") or 0), int(usage.get("output_tokens") or 0),
-                                now(), turn_id))
             content = replayable(result.content)
-            turn_msgs.append({"role": "assistant", "content": content})
+            turn_msgs.append(result.api_message if result.api_message is not None else {"role": "assistant", "content": content})
             self._save_api(t, turn_msgs)
             if result.stop_reason == "refusal":
                 cat = (result.stop_details or {}).get("category")
@@ -601,6 +612,15 @@ class Agent:
             turn_msgs.append(self._tool_results(turn_id, steps, tool_uses))
             self._save_api(t, turn_msgs)
 
+    def _record_usage(self, turn_id: str, steps: int, usage: dict, reliability: str | None) -> None:
+        # Counters summarize trusted observations. A missing terminal count is never a zero
+        # fee/usage claim; billing evidence remains authoritative for every physical attempt.
+        self.store.execute("UPDATE agent_turns SET steps=?, input_tokens=input_tokens+?, output_tokens=output_tokens+?, "
+                           "usage_state=CASE WHEN ? THEN 'pending' ELSE usage_state END, updated_at=? WHERE id=?",
+                           (steps, int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
+                            + int(usage.get("cache_creation_input_tokens") or 0), int(usage.get("output_tokens") or 0),
+                            bool(reliability and reliability != "trusted_terminal"), now(), turn_id))
+
     def _effort(self, user_id: str) -> str:
         row = self.store.one("SELECT effort FROM agent_settings WHERE user_id=?", (user_id,))
         return row["effort"] if row else "medium"
@@ -626,7 +646,8 @@ class Agent:
     # ---------------------------------------------------------------- tools
     def _check_context(self, t: dict, credential: Credential) -> None:
         current = resolve_credential(self.store, t["user_id"])
-        if not current or current.kind != credential.kind or current.model != credential.model:
+        if (not current or current.kind != credential.kind or current.model != credential.model
+                or self.provider.name != t["provider"]):
             raise ProviderError("model_configuration_changed", "模型配置已变化，请重新发起回答")
         try:
             self.conversation(t["user_id"], t["conversation_id"])
@@ -922,7 +943,13 @@ class Agent:
         turn_msgs = _j(asst["api_json"], []) or []
         if not turn_msgs or turn_msgs[-1]["role"] != "assistant":
             return
-        tool_uses = [b for b in turn_msgs[-1]["content"] if b.get("type") == "tool_use"]
+        previous = turn_msgs[-1]
+        if "tool_calls" in previous:
+            # Native replay retains private reasoning and exact argument bytes. The durable
+            # tool records already contain validated inputs; resumption only needs call IDs.
+            tool_uses = [{"id": call["id"]} for call in previous["tool_calls"]]
+        else:
+            tool_uses = [b for b in previous["content"] if b.get("type") == "tool_use"]
         step = t["steps"]
         turn_msgs.append(self._tool_results(t["id"], step, tool_uses))
         self._save_api(t, turn_msgs)

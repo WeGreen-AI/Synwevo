@@ -112,3 +112,20 @@
 - flowtrigger_608f19d50fc4：Asia/Hong_Kong09:00工作日、跳过超出300秒宽限、最多1次、明确至撤销；创建后立即UI停用，刷新保持停用，未产生触发记录。此验证不是计划时间到达后的真实调度验收（后端调度/重复事件/时区故障专项另有测试）。日期控件工具填入未保留，空期限被正确拒绝，指定日期UI路径未算完成。
 - 当前模型核验：项目内新发现已忽略产品凭据；权限0600，未输出/复制密钥。官方GET /models及/user/balance均200，API声明deepseek-flash(DeepSeek-V4.1-Flash)和deepseek-v4-pro可用，is_available=true；未记录余额金额。没有真实推理/计费/有效路由验证。旧缺密钥阻塞改为网关、价表和实际推理待集成。
 - E4仍受Actions账户限制；本地通过不等于CI/部署通过。
+
+### 2026-09-30 WP7已推送与DeepSeek接入开始
+
+- 普通提交d453e3da61933bccf916f02770518363adfd7dc5已推送feat/business-apps；68文件范围审查、敏感凭据对照检查及diff检查通过。此前285项最终回归、35项前端与真实双空间个人自动化证据归于该提交。
+- [Actions 36703155098](https://github.com/WeGreen-AI/Synwevo/actions/runs/36703155098)：verify109847073304未启动、steps=[]，注解仍为账户payments失败或spending limit；deploy skipped。没有CI/上线通过声明，未绕过门禁。
+- d453e3d后未提交DeepSeek三文件及httpx直接依赖：协调者重验148项协议/Agent测试通过，0失败/跳过，JUnit /private/tmp/synwevo-deepseek-integrated.xml。不是实际推理或收费验证。
+- Admin专项已暂停，d4dd1ba工作树干净；原报告退出Timer竞态需检查是否被业务分支7bb3f95覆盖，其他完整门槛仍待集成后重验。
+
+### 2026-09-30 Admin/API统一集成与计费网关
+
+- 本地27823e7保存DeepSeek适配器；e9b9f2c正常合并main@2dd03c7，43b221c正常合并codex/admin-platform@d4dd1ba。四处文本冲突保留suite+SDK安装、等价回环隔离注释及两套错误词库；未改主检出未提交文件。
+- 合并专项JUnit /private/tmp/synwevo-unified-merge.xml：632项，614通过，18夹具错误，0失败/跳过，261.362s；根因旧夹具直接设置platform_role，新权限模型要求实际grant。改用PlatformAccess测试授权，36项受影响文件/适配器/Agent回归全部通过（synwevo-unified-fixture-fix.xml，24.765s），原拒绝断言保留。Admin原退出Timer竞态修复7bb3f95仍存在，专项通过。
+- 所有前端typecheck/test/build完成，日志synwevo-unified-front.log；5项守卫通过（631Python/320前端，1185品牌分类，22Logo）。gh pr edit遇弃用Projects字段，改官方PR REST更新同一描述成功。一次隔离测试权限自动审查超时，按返回指示仅重试一次成功，未绕过权限。
+- 账本由协调者完整走读并接入Store：无余额/价格种子；test/live、整数复式、原子预留、一次dispatch、未知期限释放、迟到成本不补扣。首次库存检查发现2个新指纹列缺分类，已说明用途补全；原守卫通过。
+- DeepSeek→持久网关→Ledger→Agent真实Forms工具循环：synwevo-agent-billing-final.xml 100项通过（0失败/跳过），包含47账本测试、11网关测试、39Agent测试及3库存检查。新测试初次SSE夹具缺object字段与Store snapshot已解码处理均已修正；没有削弱断言。协议流、支付授权事实均明确隔离替身，不是实网调用。
+- 实际Agent/Forms用例：创建运行，预留后发送；请求创建表单进入waiting_confirmation，确认后生成一份表单；第二次模型收到原生私有上下文和工具结果；两笔独立用量/结算，恢复不重放，公开会话无隐藏reasoning。换提供方后拒绝重用旧私有历史。未知usage不置零，数据库结算故障从已存usage恢复不再发模型请求。
+- 当前增量尚待提交和完整联合门槛；不是CI通过/上线/实网计费验收。生产Agent工厂没有自动开启收费路线。

@@ -1,5 +1,13 @@
 import { registerMessages } from "@synwevo/ui/i18n-core";
 export const agentMessages = {
+  "模型提供方已变化，请新建会话继续。": { en: "The model provider changed. Start a new conversation to continue.", "zh-Hant": "模型提供方已變更，請建立新會話繼續。" },
+  "请先确认本次运行的价格与预算。": { en: "Confirm this run's price and budget before continuing.", "zh-Hant": "請先確認本次執行的價格與預算。" },
+  "可用余额不足，后续调用尚未开始。": { en: "Available balance is insufficient. Subsequent calls have not started.", "zh-Hant": "可用餘額不足，後續呼叫尚未開始。" },
+  "上次模型调用的用量待核实，后续调用已暂停。": { en: "Usage from the last model call is awaiting verification. Further calls are paused.", "zh-Hant": "上次模型呼叫的用量待核實，後續呼叫已暫停。" },
+  "本次运行已达到授权预算，后续调用尚未开始。": { en: "This run reached its authorized budget. Subsequent calls have not started.", "zh-Hant": "本次執行已達到授權預算，後續呼叫尚未開始。" },
+  "平台模型服务余额不足，请联系管理员。": { en: "The platform model service has insufficient funds. Contact an administrator.", "zh-Hant": "平台模型服務餘額不足，請聯絡管理員。" },
+  "模型连接已中断，用量待核实，已完成操作保留。": { en: "The model connection was interrupted. Usage is awaiting verification; completed actions are retained.", "zh-Hant": "模型連線已中斷，用量待核實，已完成操作保留。" },
+  "费用或授权状态暂不允许继续，请核对后重试。": { en: "Billing or authorization currently prevents continuing. Check the status before retrying.", "zh-Hant": "費用或授權狀態暫不允許繼續，請核對後重試。" },
   "目标工作空间": { en: "Target workspace", "zh-Hant": "目標工作空間" },
   "模型凭据不可用，请检查 Agent 设置。": { en: "The model credential is unavailable. Check Agent settings.", "zh-Hant": "模型憑據不可用，請檢查 Agent 設定。" },
   "模型服务拒绝访问，请检查账户权限。": { en: "The model provider denied access. Check account permissions.", "zh-Hant": "模型服務拒絕存取，請檢查帳戶權限。" },

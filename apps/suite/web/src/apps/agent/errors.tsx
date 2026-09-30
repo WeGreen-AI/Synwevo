@@ -4,6 +4,14 @@ import { Failure } from "../../shared/states";
 
 const errors: Record<string, string> = {
   agent_not_configured: "模型服务未配置。请先打开 Agent 设置。",
+  provider_history_incompatible: "模型提供方已变化，请新建会话继续。",
+  billing_authorization_required: "请先确认本次运行的价格与预算。",
+  billing_insufficient_funds: "可用余额不足，后续调用尚未开始。",
+  billing_usage_pending: "上次模型调用的用量待核实，后续调用已暂停。",
+  billing_run_budget_exceeded: "本次运行已达到授权预算，后续调用尚未开始。",
+  provider_balance: "平台模型服务余额不足，请联系管理员。",
+  provider_stream_incomplete: "模型连接已中断，用量待核实，已完成操作保留。",
+  provider_transport: "模型连接已中断，用量待核实，已完成操作保留。",
   provider_auth: "模型凭据不可用，请检查 Agent 设置。",
   provider_forbidden: "模型服务拒绝访问，请检查账户权限。",
   provider_model_missing: "所配置的模型不可用，请联系平台管理员。",
@@ -31,6 +39,7 @@ export function agentErrorText(error: unknown, t: (key: string) => string): stri
   let code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
   if (error instanceof ApiError && code === "idempotent_failure") code = error.detail?.code ?? code;
   if (errors[code]) return t(errors[code]);
+  if (code.startsWith("billing_")) return t("费用或授权状态暂不允许继续，请核对后重试。");
   if (error instanceof ApiError) return error.message;
   return t("未能完成此操作，请核对结果后重试。");
 }
