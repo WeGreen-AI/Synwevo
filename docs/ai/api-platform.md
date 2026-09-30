@@ -9,7 +9,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 分支 / HEAD | `main`（本地）；目录/复制批次 `b8ee007`，扫描退出修复 `b431b54`、Push 回环 fixture 修复 `8161041`，ZIP/验证镜像修复 `118a8cb`；任务契约 `4b74796`、列表游标 `a1fd327`、断点上传 `14b9811`。本轮尚未推送；2026-09-30 查询 GitHub Actions 仍为账单/支出限制，不能将日期到达视作自动恢复 |
+| 分支 / HEAD | `main`（本地）；目录/复制批次 `b8ee007`，扫描退出修复 `b431b54`、Push 回环 fixture 修复 `8161041`，ZIP/验证镜像修复 `118a8cb`；任务契约 `4b74796`、列表游标 `a1fd327`、断点上传 `14b9811`；固定提交回归记录 `06f5b11`、来源/下载错误契约 `161f9cb`。本轮尚未推送；2026-09-30 查询 GitHub Actions 仍为账单/支出限制，不能将日期到达视作自动恢复 |
 | 已交付（本地验证） | **API-1 流量与容量策略**：`synwevo_core/api_quotas.py`（分层策略、版本、历史、GCRA 共享计数）；网关按凭据 + 工作空间双层限流（`RateLimit` 两项）；Docs 任务并发上限读工作空间策略；管理 API `/api/admin/api-platform/quotas*`（查看、生效值与此刻用量、预演、带版本的修改、历史，全部复用 `mutation` 审计）；控制台「流量与配额」页签；调用记录可按请求编号/凭据/接口/状态/错误代码查询、记录拒绝代码与委托客户端、网关拒绝的请求记在接口模板下；凭据列表显示最近使用、轮换可选重叠期、`rotated` 状态文案修正；两个 SDK 解析多项 `RateLimit` |
 | 证据 | `tests/integration/test_api_platform_quotas.py`（15）、`test_jobs_scheduling.py::test_a_workspace_policy_replaces_the_deployment_limit`、SDK 单元测试（Python 21、TS 7）、账户前端 `npm test`（7）；隔离实例 `127.0.0.1:32765`（scratchpad `api1/`，合成账户）浏览器实跑：预演 → 重新验证 → 保存 → 两把真实密钥第 4 次调用 429（`limit_scope=workspace`、`Retry-After: 20`）→ 重启后策略仍生效 → 按请求编号查到拒绝与原因 |
 | 全量回归 | 2026-09-29：API-1 状态 `pytest` 2 781 passed / 6 skipped / 0 failed；API-1 + API-2 前半 2 783 passed / 2 skipped / 1 failed（控制台契约三语言缺 7 条新说明，已补，`test_api_platform_contract_i18n.py` 通过）；账户前端 `npm test` 7/7、Docs 前端 132/132、typecheck、`check_boundaries`/`check_brand`/`check_design`/`check_component_names`、infra 单元测试均通过 |
@@ -28,7 +28,8 @@
 | 固定提交主机回归 | `14b9811`：2 973 passed / 2 skipped / 239 warnings，18 分 31 秒；四外壳 typecheck/build 与边界、品牌、设计、组件名、Logo 检查通过。全程冻结源码；不是 Linux 容器或 CI 发布验收 |
 | 最终运行门槛 | 固定 `b8ee007` 的 Linux arm64 镜像构建及非 root 只读冒烟通过；镜像全量测试在约 72% 时因本机 Colima 收到 SIGTERM 中断，未完成。已定位并修复 ZIP 头枚举在内存跟踪器下超时（同镜像加密文件套件 45 passed / 1 skipped），以及验证镜像未安装 SDK；后者尚待重建。Docker 恢复确认待答复，未自行重启被停止的运行环境 |
 | 部署核对 | 2026-09-30 只读 `docker ps`：accounts/docs/portal/messages 均为 `aadcb9e839c3c13386f1831a942e8449852dab15` 且 healthy；本批尚未上线。Actions 36569205283 的 verify 因账单/支出上限未启动，deploy 跳过；未绕过既有工作流 |
-| 下一步 | Docker 恢复后从固定提交重建镜像并完成全量回归，现有 CI 门槛恢复后再发布。独立推进 API-5 评论/提及、通知与 Message 机器身份，API-7 剩余响应模型和兼容差异视图；API-3 待 B1-2 合入 main（设计见 `../platform/api-management-identity.md`）；事件与投递保留期（可配置、默认不删） |
+| 执行停止 | 用户于 2026-09-30 明确要求「做完这一轮结束 goal」。本轮以已提交并验证的契约改动收尾，停止持续执行。刚开始的评论 API 草稿已撤出工作区，未签发新权限、未运行新增迁移、未提交未完成接口。没有创建每分钟接续自动化 |
+| 后续接续点（需用户重新启动） | Docker 恢复后从固定提交重建镜像并完成全量回归，现有 CI 门槛恢复后再发布。独立推进 API-5 评论/提及、通知与 Message 机器身份，API-7 剩余响应模型和兼容差异视图；API-3 待 B1-2 合入 main（设计见 `../platform/api-management-identity.md`）；事件与投递保留期（可配置、默认不删） |
 
 ## 批次队列
 
