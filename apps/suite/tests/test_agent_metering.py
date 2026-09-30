@@ -127,8 +127,8 @@ def test_unknown_usage_holds_and_stops_next_step_until_final_deadline(gateway):
 
 def test_cancellation_after_dispatch_before_handoff_is_not_resent(gateway,monkeypatch):
     g=gateway; dispatch=g.ledger.dispatch
-    def fence_then_cancel(ticket):
-        dispatch(ticket); g.stopped[0]=True
+    def fence_then_cancel(ticket, **kwargs):
+        dispatch(ticket, **kwargs); g.stopped[0]=True
     monkeypatch.setattr(g.ledger,'dispatch',fence_then_cancel)
     with pytest.raises(DeepSeekCancelled):
         g.model.step(**g.args)

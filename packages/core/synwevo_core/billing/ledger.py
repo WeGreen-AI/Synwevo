@@ -405,7 +405,7 @@ class Ledger:
             self._event(t, call["id"], "claimed", "expired_preparation_only", attempt_key)
             return AttemptTicket(attempt_key, owner, fence)
 
-    def dispatch(self, ticket: AttemptTicket) -> None:
+    def dispatch(self, ticket: AttemptTicket, *, block_unresolved_run: bool = False) -> None:
         """Commit the one-shot send boundary; a replay is REFUSED, never permission to resend.
 
         Success means 'may have been sent' even if the process crashes before network I/O.
@@ -420,6 +420,14 @@ class Ledger:
                     or attempt["status"] != "prepared" or attempt["lease_until"] <= self._now()
                     or call["status"] != "reserved" or call["cancel_requested"]):
                 raise BillingError("dispatch_fenced")
+            # Sequential model gateways must check under this same writer lock. A read
+            # before reservation cannot exclude a competing worker crossing the send fence.
+            if block_unresolved_run and t.execute(
+                    "SELECT 1 FROM billing_attempts a JOIN billing_calls c ON c.id=a.call_key "
+                    "WHERE c.run_key=? AND a.id<>? AND c.status='reserved' "
+                    "AND a.status IN ('dispatch_unknown','usage_pending') LIMIT 1",
+                    (call["run_key"], attempt["id"])).fetchone():
+                raise BillingError("usage_pending")
             t.execute("UPDATE billing_attempts SET status='dispatch_unknown',dispatched_at=? WHERE id=?",
                       (self._now(), ticket.attempt_key))
             self._event(t, call["id"], "dispatch_unknown", "committed_before_network", ticket.attempt_key)

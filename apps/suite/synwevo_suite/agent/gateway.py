@@ -158,7 +158,8 @@ class MeteredDeepSeek:
         return row, Route(**json.loads(row["route"]))
 
     def step(self, *, context: ChargeContext, logical_call_id: str, credential: Credential,
-             system: list, tools: list, messages: list, effort: str, on_text, should_stop) -> DeepSeekResult:
+             system: list, tools: list, messages: list, effort: str, on_text, should_stop,
+             validate_result=None) -> DeepSeekResult:
         self._check(context)
         run, route = self._run(context)
         if self.store.one("SELECT 1 FROM billing_attempts a JOIN billing_calls c ON c.id=a.call_key "
@@ -201,7 +202,7 @@ class MeteredDeepSeek:
                     raise DeepSeekCancelled(Attempt())
                 if route.valid_until <= self.ledger._now():
                     raise BillingError("route_confirmation_expired")
-                self.ledger.dispatch(ticket)
+                self.ledger.dispatch(ticket, block_unresolved_run=True)
 
             provider = DeepSeekProvider(limits=replace(self.limits, max_tokens=route.output_token_ceiling),
                                         transport=self.transport)
@@ -214,6 +215,22 @@ class MeteredDeepSeek:
                     user_id=pseudonym, before_dispatch=before_dispatch)
             except (DeepSeekError, DeepSeekCancelled) as exc:
                 self._observe(key, ticket, route, exc.attempt, completed=False)
+                raise
+            # A syntactically valid stream can still be a refusal, truncation or an
+            # invalid continuation of this Agent turn. Accept it before selling usage.
+            try:
+                if result.step.stop_reason == "refusal":
+                    raise ProviderError("provider_refused", "模型拒绝回答这个请求")
+                if result.step.stop_reason == "max_tokens":
+                    raise ProviderError("provider_truncated", "回答过长被截断，请把任务拆小一些")
+                if validate_result:
+                    validate_result(result.step)
+            except ProviderError as exc:
+                self._observe(key, ticket, route, result.attempt, completed=False)
+                usage = result.attempt.usage
+                exc.metered_usage = ({"input_tokens": usage.prompt_tokens, "output_tokens": usage.completion_tokens}
+                    if result.attempt.usage_reliability == "trusted_terminal" and usage else {})
+                exc.usage_reliability = result.attempt.usage_reliability
                 raise
             self._observe(key, ticket, route, result.attempt, completed=True)
             return result

@@ -551,43 +551,42 @@ class Agent:
                                  messages=base + turn_msgs, effort=self._effort(user["id"]),
                                  on_text=on_text, should_stop=should_stop)
                 metered = getattr(self.provider, "step_for_turn", None)
-                result = (metered(turn=t, logical_call_id=f"step:{steps}", **arguments)
-                          if metered else self.provider.step(**arguments))
+                if metered:
+                    # Persist uncertainty before external I/O. An observation/settlement
+                    # write failure must not leave the public turn claiming known zero.
+                    self.store.execute("UPDATE agent_turns SET usage_state='pending',updated_at=? WHERE id=?",
+                                       (now(), turn_id))
+                    result = metered(turn=t, logical_call_id=f"step:{steps}",
+                                     validate_result=lambda step: self._validate_result(turn_id, step), **arguments)
+                else:
+                    result = self.provider.step(**arguments)
             except Cancelled as err:
                 if hasattr(err, "metered_usage"):
-                    self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability)
+                    self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability,
+                                       previous_pending=t["usage_state"] == "pending")
                 self._flush(t, buf)
                 self._finish(t, "cancelled", None, api=turn_msgs)
                 return
             except ProviderError as err:
                 if hasattr(err, "metered_usage"):
-                    self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability)
+                    self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability,
+                                       previous_pending=t["usage_state"] == "pending")
                 self._flush(t, buf)
                 self._finish(t, "failed", err, api=turn_msgs)
                 return
             self._flush(t, buf)
-            self._record_usage(turn_id, steps, result.usage or {}, result.usage_reliability)
+            self._record_usage(turn_id, steps, result.usage or {}, result.usage_reliability,
+                               previous_pending=t["usage_state"] == "pending")
             if should_stop():
                 self._finish(t, "cancelled", None, api=turn_msgs)
                 return
             content = replayable(result.content)
             turn_msgs.append(result.api_message if result.api_message is not None else {"role": "assistant", "content": content})
             self._save_api(t, turn_msgs)
-            if result.stop_reason == "refusal":
-                cat = (result.stop_details or {}).get("category")
-                self._finish(t, "failed", ProviderError("provider_refused", "模型拒绝回答这个请求" + (f"（{cat}）" if cat else "")),
-                             api=turn_msgs)
-                return
-            tool_uses = [b for b in content if b.get("type") == "tool_use"]
-            if (len(tool_uses) > MAX_TOOLS_PER_STEP
-                    or any(not isinstance(b.get("id"), str) or not b["id"] or not isinstance(b.get("name"), str) for b in tool_uses)
-                    or len({b.get("id") for b in tool_uses}) != len(tool_uses)
-                    or any(self.store.one("SELECT 1 FROM agent_tool_calls WHERE turn_id=? AND tool_use_id=?",
-                                          (turn_id, b["id"])) for b in tool_uses)):
-                self._finish(t, "failed", ProviderError("provider_bad_output", "模型返回了过多或重复的工具调用"), api=turn_msgs)
-                return
-            if result.stop_reason == "max_tokens":
-                self._finish(t, "failed", ProviderError("provider_truncated", "回答过长被截断，请把任务拆小一些"), api=turn_msgs)
+            try:
+                tool_uses = self._validate_result(turn_id, result)
+            except ProviderError as err:
+                self._finish(t, "failed", err, api=turn_msgs)
                 return
             if result.stop_reason == "pause_turn":
                 continue
@@ -612,14 +611,31 @@ class Agent:
             turn_msgs.append(self._tool_results(turn_id, steps, tool_uses))
             self._save_api(t, turn_msgs)
 
-    def _record_usage(self, turn_id: str, steps: int, usage: dict, reliability: str | None) -> None:
+    def _validate_result(self, turn_id, result):
+        """Pure acceptance check reused before metered settlement and before tool execution."""
+        if result.stop_reason == "refusal":
+            cat = (result.stop_details or {}).get("category")
+            raise ProviderError("provider_refused", "模型拒绝回答这个请求" + (f"（{cat}）" if cat else ""))
+        tool_uses = [b for b in replayable(result.content) if b.get("type") == "tool_use"]
+        if (len(tool_uses) > MAX_TOOLS_PER_STEP
+                or any(not isinstance(b.get("id"), str) or not b["id"] or not isinstance(b.get("name"), str) for b in tool_uses)
+                or len({b.get("id") for b in tool_uses}) != len(tool_uses)
+                or any(self.store.one("SELECT 1 FROM agent_tool_calls WHERE turn_id=? AND tool_use_id=?",
+                                      (turn_id, b["id"])) for b in tool_uses)):
+            raise ProviderError("provider_bad_output", "模型返回了过多或重复的工具调用")
+        if result.stop_reason == "max_tokens":
+            raise ProviderError("provider_truncated", "回答过长被截断，请把任务拆小一些")
+        return tool_uses
+
+    def _record_usage(self, turn_id: str, steps: int, usage: dict, reliability: str | None, *, previous_pending=False) -> None:
         # Counters summarize trusted observations. A missing terminal count is never a zero
         # fee/usage claim; billing evidence remains authoritative for every physical attempt.
         self.store.execute("UPDATE agent_turns SET steps=?, input_tokens=input_tokens+?, output_tokens=output_tokens+?, "
-                           "usage_state=CASE WHEN ? THEN 'pending' ELSE usage_state END, updated_at=? WHERE id=?",
+                           "usage_state=CASE WHEN ? THEN 'pending' WHEN ? THEN 'known' ELSE usage_state END, updated_at=? WHERE id=?",
                            (steps, int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
                             + int(usage.get("cache_creation_input_tokens") or 0), int(usage.get("output_tokens") or 0),
-                            bool(reliability and reliability != "trusted_terminal"), now(), turn_id))
+                            bool(previous_pending or (reliability and reliability != "trusted_terminal")),
+                            reliability == "trusted_terminal", now(), turn_id))
 
     def _effort(self, user_id: str) -> str:
         row = self.store.one("SELECT effort FROM agent_settings WHERE user_id=?", (user_id,))
