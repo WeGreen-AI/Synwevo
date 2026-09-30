@@ -1,14 +1,14 @@
 # 业务应用与个人 Agent：状态与断点
 
-最后检查：2026-09-30（Admin/API已集成，计费网关验证中）。协调任务 `01a0f104-e57f-7092-ab67-50359f43b547`；持续执行目标未完成，未另建递归 loop。
+最后检查：2026-09-30 20:22 HKT（Admin/API、计费修复、价格治理与钱包读取已整合）。协调任务 `01a0f104-e57f-7092-ab67-50359f43b547`；持续执行目标未完成，未另建递归 loop。
 
 | 项 | 当前事实 |
 |---|---|
 | 协调锁 | 本目录 `.coordinator.lock`，由当前任务持有；不得仅因超时接管活动任务 |
-| 代码 | feat/business-apps @43b221c本地；d453e3d已推送。27823e7接入DeepSeek传输，e9b9f2c合并main@2dd03c7，43b221c合并Admin@d4dd1ba；账本/网关为未提交增量 |
+| 代码 | feat/business-apps @f6fb865本地；d453e3d已推送。27823e7接入DeepSeek传输，e9b9f2c合并main@2dd03c7，43b221c合并Admin@d4dd1ba；41069bd保存账本/网关/Agent集成 |
 | 主检出 | main @ 2dd03c7，API专项已提交停止；不自动发布其未推送代码；进度只维护本目录 |
-| 正在做 | 账本Store迁移、DeepSeek持久预留/尝试/usage与Agent真实工具循环接入；100项关联回归通过，正式配置/价格/钱包/支付尚未启用 |
-| 下一动作 | 保存计费网关检查点并跑统一完整回归；继续提供方/价表治理、钱包授权与费用界面，补齐真实DeepSeek与支付链路 |
+| 正在做 | 基线完整回归3765通过/2跳过；三个增量提交已整合：计费故障修复、模型价格治理、个人钱包只读API/UI。正式收费/支付未启用 |
+| 下一动作 | 更新PR并按已授权流程推送当前候选版本；继续提供方配置、个人运行报价/预算授权、平台成本/限流与有限对账，补齐真实DeepSeek工具链路；价格/钱包浏览器尚受拦截 |
 | 验证环境 | 共享主检出 `.venv`；显式 worktree PYTHONPATH（必须含 `apps/docs/sdk/python`、suite 及其余包）；测试 `NO_PROXY=127.0.0.1,localhost` 防止本机系统代理截获隔离 Push 测试 |
 | Git/发布 | 草稿 PR #1 已无合并冲突（UNSTABLE）；d453e3d 的 Actions run36703155098 verify 未启动（账单/支出限制），deploy skipped。未合并/部署 |
 
@@ -29,7 +29,7 @@
 
 - Ampere已完成并关闭；五文件已整合，协调者接好路由并完成双空间只读运行/定时停用/桌面手机验收。
 - Locke 已完成并关闭；其 Extract→DataPrep 已由协调者审查整合，当前这些文件归协调者。
-- Parfit已完成并关闭；DeepSeek三文件已走读，待复制整合；需要suite直接声明已锁定httpx。
+- Parfit已完成并关闭；DeepSeek三文件与httpx声明已整合27823e7。
 - Kierkegaard已完成并关闭：47项独立账本测试，6文件由协调者实读接管；Store注册及网关集成已由协调者完成，未启用收费。
 - 旧 Tables/DataPrep/Approvals/Extract/Flows/Adapters 子任务已停止；旧 Claude 429 通知不等于其工作完成。
 
@@ -51,3 +51,12 @@
 个人自动化浏览器：flow_54d623bdc01b/v1，flowrun_a53e36718407唯一运行成功（两个明确空间）；flowtrigger_608f19d50fc4仅允许forms.form.list、两个空间、最多1次、至撤销，已停用且0次触发。刷新不重放。DeepSeek本地凭据文件已受.gitignore保护、权限收紧0600；仅官方只读核验，不在日志/文档输出凭据和金额。
 
 当前计费实现是持久服务与Agent接入端口，工厂未自动启用DeepSeek。已请求支付主体/币种信息；配置草稿/发布、用户报价与预算授权、钱包/充值/退款/争议、周期与平台成本预算/限流、有限对账调度和真实模型/支付验收均仍待完成。
+
+## 当前计费工作包（已整合，尚未发布）
+
+- 41069bd完整基线：3767 collected，3765 passed，2 skipped（CLAMD_TEST_ADDRESS未配置、LICENSE未选定），0失败/错误，4065.211s。日志/XML：`/private/tmp/synwevo-unified-41069bd`。session54759已正常退出。
+- 三个临时树提交已快进整合：0371c20修复CR-008–010；77d4b2a价格治理；f6fb865个人钱包只读。增量分别有36项价格、44项钱包/账户、100项账本/Agent/价格关联测试；Accounts25项前端、类型/build和五项守卫通过。不是f6fb865重新全量回归声明。
+- `/private/tmp/synwevo-price-validation` detached@f6fb865保留；原协调分支8个旧草稿备份在stash `513202cb1e188d613472d1506d755f238d9d14ed`。整合版含其后续修正，不要盲目apply旧stash。
+- Carver/Leibniz/Darwin均已完成关闭，文件所有权已回到协调者。主检出应用图标任务已有未提交成果，完整保留；尚未整合本分支。
+- 价格隔离Accounts进程session16153/33772仍是较早加载的代码，data `/private/tmp/synwevo-price-browser-data`，健康200/instance=test；内置浏览器原地址两次ERR_BLOCKED_BY_CLIENT，未绕过。价格/钱包真实视觉、键盘、窄屏验收未完成。下次刷新代码前须确认自有进程身份。
+- 钱包只读取本人已入账事实，三语言界面与大整数/18位单位精度；host需明确环境和已登记单位。无默认币种、售价或资金，读取Ledger无消费/支付回调。正式充值/退款、运行授权、提供方治理、费用恢复均未完成。
