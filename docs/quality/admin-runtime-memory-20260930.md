@@ -58,8 +58,28 @@ tests/integration/test_encrypted_member_import.py
 
 原 Linux double 的新增生命周期回归先失败，日志 `/private/tmp/synwevo-admin-b2-clamd-before.log`；修复后两模块均通过六次创建/关闭/GC 及半帧连接关闭回归。模块边界检查覆盖 521 Python、254 前端文件通过，diff whitespace 检查通过。此结果是指定文件的回归，仍不是新冻结完整门禁。
 
-## 后续完整门禁
+## 冻结 b348fb6 的完整门禁
 
-先完成 Linux 的协同整份测试及全部直接使用上述 double 的适用文件回归，再由根代理审阅并提交。以包含这些修复的新完整 commit SHA 重新 `git archive`，复刻 0700 私有解包，制作按该 SHA 命名的独立 runtime/verify 镜像；不使用未提交工作树、不把 d26782a 标签当新源码。先跑同样 UID 1000/断网/read-only runtime 工厂 smoke，再在同 3 GiB/2 CPU、断网条件下运行默认完整四套件。记录新 image IDs、真实 pytest 汇总/skip 原因、退出状态、运行时间及采样内存。此次挂起记录保留，只有新冻结完整门禁实际完成才能更新为通过。
+上述Linux回归完成后，经根代理独立审查已提交b348fb6。以该完整commit SHA重新 `git archive`，复刻 0700 私有解包，制作按该 SHA 命名的独立 runtime/verify 镜像；不使用未提交工作树、不把 d26782a 标签当新源码。先跑同样 UID 1000/断网/read-only runtime 工厂 smoke，再在同 3 GiB/2 CPU、断网条件下运行默认完整四套件。记录新 image IDs、真实 pytest 汇总/skip 原因、退出状态、运行时间及采样内存。此次挂起记录保留，只有新冻结完整门禁实际完成才能更新为通过。
 
-Linux精确回归已完成：在冻结d26782a镜像中只覆盖上述5个修复后的测试文件，11个适用文件共188 passed、1 skipped、2 warnings，152.70秒、退出0。包括完整71项表格协同、两模块scanner double生命周期、扫描/补扫/加密/文件事件、消息附件与跨模块共享字节/加密成员导入。唯一skip为未提供真实`CLAMD_TEST_ADDRESS`；显式double不能替代真实扫描器验证。日志`/private/tmp/synwevo-admin-b2-fixture-after.log`。模块边界521个Python/254个前端文件及diff检查通过；根代理独立审查保留原协议断言和有界线程清理。该覆盖挂载只用于定位和窄回归，仍需新提交冻结完整门禁。
+
+本轮新冻结运行已自然结束，**门禁未通过**；没有OOM，也没有重现旧表格永久等待。此结果只覆盖`b348fb6e171d835614e1de961d42ff95dacdd48e`（包含B3及扫描/协同夹具修复），不包含B4接任与后续两项测试修复。
+
+| 证据 | 实际结果 |
+|---|---|
+| 源归档 | SHA-256 `860582b08de9a754803de129a81cac51c8685380eb1ea9b03ad145e9857f0333`；私有0700解包；没有未提交代码或真实data |
+| runtime | `synwevo:admin-b3-runtime-b348fb6`；`sha256:687a68f16fd67289f82895ed2550b3952946a0d9be44ba2bff478b20794b0cc6`；UID1000/断网/read-only rootfs工厂smoke通过 |
+| verify | `synwevo:admin-b3-verify-b348fb6`；`sha256:de70b4cb28827d8e180947153f28a2487c86a728de1b31ee39b51abd84e35a0e` |
+| 容器 | `synwevo-admin-b3-full-b348fb6`；ID `9a36c2c89237c411ad6f3051c227721ebedaf6de21506020f451d12574753476`；3GiB、2CPU、断网；只有匿名fixture卷 |
+| 默认四套件 | `python -m pytest --tb=short`；**3091 passed、4 failed、5 skipped、236 warnings，2350.26秒**；自然退出1 |
+| 运行/资源 | 容器实际2355.473222秒，`OOMKilled=false`；469次采样峰值2145336164字节（约1.998GiB），不是内核精确高水位 |
+| 原始日志 | `/private/tmp/synwevo-admin-b3-b348fb6-container-full.log`；SHA-256 `d351e1301c6ac54fb5238e41d602763fa5f46550b9ab7eb4e1566b1a31e5e1f7` |
+| 结构化记录 | 同前缀`container-result.json`及`container-stats.jsonl`；result保留commit、image、container、实际资源限制、退出状态与日志哈希 |
+
+四个失败均为`test_factory_memory_lifecycle.py::test_test_teardown_releases_completed_factories`原四参数节点。API/Store/bridge弱引用已回收、waker检查通过，失败在进程级`workers.live()==[]`：该registry按契约包含仍被外部持有的已停止worker，本冻结仍登记131个前序对象；主机关联全套为9个。本轮没有逐一追查这些前序对象的外部持有链。不能将这些四项报告成“B4业务失败”，也不能把原运行改写成通过。
+
+后续提交`496c1e2`只修测试归属：保留原对象弱引用/waker检查，对本次全部登记worker逐一检查回收，线程须退出，registry不得多出前序集合之外的对象；加入前序真实工厂停止后仍被持有、随后释放也完全回收的场景。8个矩阵节点通过。未修改产品worker registry或放宽资源限制。另一个主机全套中的限流精确计数假设由`ff715a1`固定测试模块私有时钟，13项通过；本冻结容器没有出现该限流失败。
+
+**仍未解决或未验证：**本次默认输出没有`-rs`，仅有5 skipped汇总，未逐项取得跳过原因；不据此声称真实扫描器或其他可选外部依赖已验证。另有一个`PytestUnhandledThreadExceptionWarning`：捕获于`apps/docs/tests/test_engine_formula_edges.py::test_numeric_edge_cases[=POWER(-8,1/3)-#NUM!]`时，`services.py:457`的Timer `fire`向已shutdown的`parse_pool`提交任务，抛出`cannot schedule new futures after shutdown`。捕获节点不证明它创建了Timer；本轮没有单独复现或修复此退出竞态，不将其当作普通第三方弃用警告。
+
+用户要求完成本轮后停止goal。已收取该自然结束结果并保存后续有限修复；不再开新完整容器。当前提交尚未完成修复后的完整门禁，后续如恢复工作，应先处理Timer退出竞态并按现有CI/CD重新验证。所有镜像、已退出容器和日志保留供核对，未停止其他工作负载。
