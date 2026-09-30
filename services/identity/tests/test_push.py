@@ -57,6 +57,9 @@ def browser_subscription(endpoint: str) -> dict:
 
 @pytest.fixture()
 def world(tmp_path, monkeypatch):
+    # PushDouble is local: host proxy settings must not route fixture traffic outside it.
+    for key in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(key, "127.0.0.1,localhost,::1")
     for k, v in {"UI_AUTH": "session", "COOKIE_SECURE": "0", "DATA_DIR": str(tmp_path / "d"), "MAIL_MODE": "file", "MAIL_DIR": str(tmp_path / "mail"),
                  "MAIL_FROM": "synwevo@example.test", "PUBLIC_URL": "http://testserver", "ISSUER": "http://testserver"}.items():
         monkeypatch.setenv("SYNWEVO_" + k, v)
