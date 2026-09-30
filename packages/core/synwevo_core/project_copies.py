@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 
+from . import authority
 from .errors import ServiceError
 from .identity import Identity, ROLE_RANK
 from .org_roles import OrgRoles
@@ -44,6 +45,35 @@ CREATE INDEX IF NOT EXISTS ix_project_copies_requester ON project_copies(request
 """
 
 STATUSES = ("pending", "approved", "rejected", "withdrawn", "expired", "running", "done", "failed", "stale")
+
+# Copy outcomes as events for the source workspace (API-5): the requester's integration hears
+# "requested", the decision and the result from the event feed and webhooks. Written by triggers in
+# the transaction that changes the row, so no committed status is without its event (the same outbox
+# as jobs and files, job_id ''). Data is ids and status only: no manifest, names or reasons.
+COPY_EVENT_TYPES = ("copy.requested", "copy.approved", "copy.rejected", "copy.withdrawn", "copy.expired",
+                    "copy.done", "copy.failed", "copy.stale")
+EVENTS_SQL = """
+CREATE TRIGGER IF NOT EXISTS project_copies_requested_event
+AFTER INSERT ON project_copies
+BEGIN
+  INSERT INTO job_events (id, job_id, tenant, type, version, occurred_at, data)
+  VALUES ('ev_' || lower(hex(randomblob(10))), '', NEW.source_workspace_id, 'copy.requested', 1,
+          (julianday('now') - 2440587.5) * 86400.0,
+          json_object('copy_id', NEW.id, 'source_project_id', NEW.source_project_id,
+                      'target_workspace_id', NEW.target_workspace_id, 'status', NEW.status, 'version', NEW.version));
+END;
+CREATE TRIGGER IF NOT EXISTS project_copies_status_event
+AFTER UPDATE OF status ON project_copies
+WHEN NEW.status IS NOT OLD.status
+  AND NEW.status IN ('approved', 'rejected', 'withdrawn', 'expired', 'done', 'failed', 'stale')
+BEGIN
+  INSERT INTO job_events (id, job_id, tenant, type, version, occurred_at, data)
+  VALUES ('ev_' || lower(hex(randomblob(10))), '', NEW.source_workspace_id, 'copy.' || NEW.status, 1,
+          (julianday('now') - 2440587.5) * 86400.0,
+          json_object('copy_id', NEW.id, 'source_project_id', NEW.source_project_id,
+                      'target_workspace_id', NEW.target_workspace_id, 'status', NEW.status, 'version', NEW.version));
+END;
+"""
 PENDING_TTL_S = 7 * 24 * 3600          # a request nobody decides on expires
 APPROVAL_TTL_S = 7 * 24 * 3600         # an approval that was never executed expires
 SCOPE_KEYS = ("sources", "corrections")
@@ -115,34 +145,50 @@ class ProjectCopies:
             raise ServiceError(403, "target_write_required", "你需要是目标工作空间的编辑成员（或以上）才能把项目复制过去")
         if not current_membership(self.store, ws["organization_id"], uid):
             raise ServiceError(403, "target_write_required", "你不是目标组织的成员")
+        org = organization_for_workspace(self.store, wid)
+        if not org or org["status"] != "active":
+            raise ServiceError(403, "target_write_required", "目标组织当前不可用")
+        from .authority import check
+        if not check(self.store, {"kind": "user", "user_id": uid, "tenant": wid}, need="write", tenant=wid)[0]:
+            raise ServiceError(403, "target_write_required", "你目前无权在目标工作空间使用文档应用")
         return ws
 
     # ------------------------------------------------------------------ lifecycle
     def create(self, *, requester_id: str, source_workspace_id: str, source_project_id: str, target_workspace_id: str,
-               name: str, purpose: str | None, scope: dict, manifest: dict, digest: str) -> dict:
-        src = self.ident.get_workspace(source_workspace_id)
-        if not src or src.get("kind") != "personal":
-            raise ServiceError(409, "source_not_personal", "只有个人空间里的项目可以申请复制到组织工作空间")
-        sm = self.ident.membership(source_workspace_id, requester_id)
-        if not sm or sm["role"] != "owner":
-            raise ServiceError(403, "source_owner_required", "只有项目所在个人空间的所有者可以申请复制")
-        ws = self.requester_may_target(requester_id, target_workspace_id)
-        name = (name or "").strip()[:100]
-        if not name:
-            raise ServiceError(400, "invalid_field", "请为副本命名", {"field": "name"})
-        clean_scope = {k: bool((scope or {}).get(k)) for k in SCOPE_KEYS}
-        open_ = self.store.one("SELECT id FROM project_copies WHERE source_project_id=? AND target_workspace_id=? AND status IN ('pending','approved','running')",
-                               (source_project_id, target_workspace_id))
-        if open_:
-            raise ServiceError(409, "copy_already_requested", "这个项目已有一个未完成的复制申请指向该工作空间", {"copy_id": open_["id"]})
-        ts = now()
-        cid = new_id("pc")
-        self.store.insert("project_copies", {
-            "id": cid, "source_workspace_id": source_workspace_id, "source_project_id": source_project_id, "requester_id": requester_id,
-            "target_organization_id": ws["organization_id"], "target_workspace_id": target_workspace_id, "name": name,
-            "purpose": (purpose or "").strip()[:500] or None, "scope": json.dumps(clean_scope), "manifest": json.dumps(manifest, ensure_ascii=False),
-            "digest": digest, "status": "pending", "created_at": ts, "updated_at": ts, "expires_at": ts + PENDING_TTL_S})
-        return self.get(cid)
+               name: str, purpose: str | None, scope: dict, manifest: dict, digest: str,
+               requested_authority: dict | None = None) -> dict:
+        # Serialize validation, the open-request check and insertion across processes,
+        # including browser/API calls without an Idempotency-Key.
+        with self.store.tx():
+            src = self.ident.get_workspace(source_workspace_id)
+            if not src or src.get("kind") != "personal":
+                raise ServiceError(409, "source_not_personal", "只有个人空间里的项目可以申请复制到组织工作空间")
+            sm = self.ident.membership(source_workspace_id, requester_id)
+            if not sm or sm["role"] != "owner":
+                raise ServiceError(403, "source_owner_required", "只有项目所在个人空间的所有者可以申请复制")
+            if requested_authority is not None:
+                if (requested_authority.get("kind") != "delegated" or requested_authority.get("user_id") != requester_id
+                        or requested_authority.get("tenant") != source_workspace_id
+                        or not authority.check(self.store, requested_authority, need="write", tenant=source_workspace_id)[0]):
+                    raise ServiceError(403, "delegation_required", "发起复制申请的本人委托已失效")
+            ws = self.requester_may_target(requester_id, target_workspace_id)
+            name = (name or "").strip()[:100]
+            if not name:
+                raise ServiceError(400, "invalid_field", "请为副本命名", {"field": "name"})
+            clean_scope = {k: bool((scope or {}).get(k)) for k in SCOPE_KEYS}
+            open_ = self.store.one("SELECT id FROM project_copies WHERE source_project_id=? AND target_workspace_id=? AND status IN ('pending','approved','running')",
+                                   (source_project_id, target_workspace_id))
+            if open_:
+                raise ServiceError(409, "copy_already_requested", "这个项目已有一个未完成的复制申请指向该工作空间", {"copy_id": open_["id"]})
+            ts = now()
+            cid = new_id("pc")
+            self.store.insert("project_copies", {
+                "id": cid, "source_workspace_id": source_workspace_id, "source_project_id": source_project_id, "requester_id": requester_id,
+                "target_organization_id": ws["organization_id"], "target_workspace_id": target_workspace_id, "name": name,
+                "purpose": (purpose or "").strip()[:500] or None, "scope": json.dumps(clean_scope), "manifest": json.dumps(manifest, ensure_ascii=False),
+                "digest": digest, "requested_authority": authority.dumps(requested_authority),
+                "status": "pending", "created_at": ts, "updated_at": ts, "expires_at": ts + PENDING_TTL_S})
+            return self.get(cid)
 
     def list_for_organization(self, oid: str, *, status: str | None = None, limit: int = 50) -> list[dict]:
         where, args = "target_organization_id=?", [oid]
@@ -151,12 +197,17 @@ class ProjectCopies:
         args.append(limit)
         return [self._out(r) for r in self.store.all(f"SELECT * FROM project_copies WHERE {where} ORDER BY created_at DESC LIMIT ?", tuple(args))]
 
-    def list_for_requester(self, uid: str, *, source_project_id: str | None = None, limit: int = 50) -> list[dict]:
+    def list_for_requester(self, uid: str, *, source_project_id: str | None = None, source_workspace_id: str | None = None,
+                           status: str | None = None, limit: int = 50) -> list[dict]:
         where, args = "requester_id=?", [uid]
         if source_project_id:
             where += " AND source_project_id=?"; args.append(source_project_id)
+        if source_workspace_id:
+            where += " AND source_workspace_id=?"; args.append(source_workspace_id)
+        if status:
+            where += " AND status=?"; args.append(status)
         args.append(limit)
-        return [self._out(r) for r in self.store.all(f"SELECT * FROM project_copies WHERE {where} ORDER BY created_at DESC LIMIT ?", tuple(args))]
+        return [self._out(r) for r in self.store.all(f"SELECT * FROM project_copies WHERE {where} ORDER BY created_at DESC, id DESC LIMIT ?", tuple(args))]
 
     def decide(self, cid: str, uid: str, action: str, *, reason: str, version: int | None = None) -> dict:
         if action not in ("approve", "reject"):
@@ -204,34 +255,38 @@ class ProjectCopies:
         """Move one approved request to `running`; None when someone else got it or it is not
         approved any more. Execution-time authority checks happen in the caller, before this."""
         with self.store.tx() as t:
-            n = t.execute("UPDATE project_copies SET status='running', updated_at=? WHERE id=? AND status='approved' AND approval_expires_at>?",
+            n = t.execute("UPDATE project_copies SET status='running', updated_at=?, version=version+1 WHERE id=? AND status='approved' AND approval_expires_at>?",
                           (now(), cid, now())).rowcount
-        return self.get(cid) if n else None
+            # Read the fencing version before releasing the write lock: another runner may
+            # recover and claim the row as soon as this transaction commits.
+            return self.get(cid) if n else None
 
     def next_approved(self) -> list[dict]:
         return [self._out(r) for r in self.store.all("SELECT * FROM project_copies WHERE status='approved' AND approval_expires_at>? ORDER BY decided_at LIMIT 10", (now(),))]
 
-    def finish(self, cid: str, status: str, *, result: dict | None = None, error: str | None = None) -> dict:
+    def finish(self, cid: str, status: str, *, result: dict | None = None, error: str | None = None,
+               expected_version: int | None = None) -> dict | None:
         """The outcome of a copy this caller claimed (`claim_approved`): done or failed."""
         if status not in ("done", "failed"):
             raise ValueError(status)
-        self._end(cid, status, result=result, error=error)
-        return self.get(cid)
+        return self.get(cid) if self._end(cid, status, result=result, error=error, only_from="running", expected_version=expected_version) else None
 
-    def reset_stale(self, cid: str, *, error: str) -> dict | None:
+    def reset_stale(self, cid: str, *, error: str, claimed_version: int | None = None) -> dict | None:
         """An approval whose preconditions no longer hold (source changed, authority gone):
         approved → stale. None when the request is not approved any more — another runner
         claimed or finished it, or it was withdrawn or expired after it was listed. Judging such
         a request is not this caller's business: it used to overwrite a running or finished copy
         (whose project already exists in the target) with `stale`, and a withdrawal likewise."""
-        return self.get(cid) if self._end(cid, "stale", error=error, only_from="approved") else None
+        return self.get(cid) if self._end(cid, "stale", error=error, only_from="running" if claimed_version is not None else "approved",
+                                         expected_version=claimed_version) else None
 
-    def _end(self, cid: str, status: str, *, result: dict | None = None, error: str | None = None, only_from: str | None = None) -> bool:
+    def _end(self, cid: str, status: str, *, result: dict | None = None, error: str | None = None, only_from: str | None = None,
+             expected_version: int | None = None) -> bool:
         with self.store.tx() as t:
             n = t.execute("UPDATE project_copies SET status=?, result=?, error=?, executed_at=?, updated_at=?, version=version+1 WHERE id=?"
-                          + (" AND status=?" if only_from else ""),
+                          + (" AND status=?" if only_from else "") + (" AND version=?" if expected_version is not None else ""),
                           (status, json.dumps(result, ensure_ascii=False) if result is not None else None, (error or None), now() if status == "done" else None, now(), cid)
-                          + ((only_from,) if only_from else ())).rowcount
+                          + ((only_from,) if only_from else ()) + ((expected_version,) if expected_version is not None else ())).rowcount
             r = t.execute("SELECT target_organization_id, target_workspace_id FROM project_copies WHERE id=?", (cid,)).fetchone() if n else None
             if r:
                 from .messaging_bridge import emit_copy      # the outcome's card (CI-75), same transaction
@@ -252,8 +307,19 @@ class ProjectCopies:
             return "approval_expired"
         src = self.ident.get_workspace(r["source_workspace_id"])
         sm = self.ident.membership(r["source_workspace_id"], r["requester_id"])
-        if not src or src.get("kind") != "personal" or not sm or sm["role"] != "owner":
+        from .authority import check
+        if not src or src.get("kind") != "personal" or not sm or sm["role"] != "owner" or not check(
+                self.store, {"kind": "user", "user_id": r["requester_id"], "tenant": r["source_workspace_id"]},
+                need="write", tenant=r["source_workspace_id"])[0]:
             return "source_authority_lost"
+        if r.get("requested_authority") is not None:
+            desc = authority.loads(r["requested_authority"])
+            if (not desc or desc.get("kind") != "delegated" or desc.get("user_id") != r["requester_id"]
+                    or desc.get("tenant") != r["source_workspace_id"]):
+                return "delegation:invalid_authority"
+            permitted, reason = authority.check(self.store, desc, need="write", tenant=r["source_workspace_id"])
+            if not permitted:
+                return f"delegation:{reason}"
         try:
             self.requester_may_target(r["requester_id"], r["target_workspace_id"])
         except ServiceError as e:

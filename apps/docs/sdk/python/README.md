@@ -51,6 +51,33 @@ dicts with additional `request_id`, `status_code`, `headers`, and `replayed` att
 Errors derive from `SynwevoError`, with status, code, field, details, request_id,
 and retry_after. Status-specific subclasses and `to_dict()` support automation.
 
+Job lifecycle methods have public `TypedDict` return types: `Job`, `CancelledJob`,
+`JobListItem`, `JobItem`, `JobRun`, `JobEvent`, `Artifact` and their page types, imported
+directly from `synwevo_docs_sdk`. These are static descriptions; response dictionaries,
+unknown JSON fields and response metadata remain unchanged. Lists keep sparse stored
+counts; job details always include ten counters (missing keys become zero, explicit
+historical nulls remain null). Check nullable historical fields before using them.
+`idempotent_replay` is present only on replayed requests, and `cancel` only on a cancellation
+response. Cursor pages have `offset=None`; planning runs may have `items=None`.
+Issues, verification and event data retain their open JSON shapes.
+
+The compile-only consumer example is `tests/types_check.py`; use a separately installed
+Mypy with `--strict --follow-imports=silent --python-executable <installed-sdk-python>`.
+The SDK does not depend on Mypy or any server model package.
+
+For the nine job lifecycle routes and a real failed-only recovery, run from the repository root:
+
+```sh
+.venv/bin/python tests/integration/sdk_acceptance/job_types_run.py \
+  --sdk-python /tmp/synwevo-sdk-env/bin/python --evidence /tmp/synwevo-jobs-sdk-evidence
+```
+
+This creates a temporary service and synthetic documents, temporarily removes one template
+blob after submission, then restores the identical bytes. It verifies eleven failed samples
+recover through `failed_only=True`, one invalid skipped sample stays unchanged, the frozen
+snapshot stays identical, and every generated document matches its content and checksum.
+It never accepts an existing service or data directory; it restores the fixture blob on exit.
+
 Retries use bounded exponential backoff with full jitter and respect Retry-After
 (delta or HTTP date) and the server's RateLimit reset hint. Creating calls use one
 UUID per logical call. Supply your own key to safely repeat a create across process
@@ -140,6 +167,52 @@ Webhook add/rotate responses contain a new secret once: save stdout privately.
 | 6 | Wait timeout |
 | 130 | Interrupted; `--cancel-on-interrupt` requests cancellation before exiting |
 
+## Workspace directory
+
+The same package exports an independent `WorkspaceClient` for Account's
+`/api/workspace/v1` API. It exposes directory methods only. Its environment factory
+uses `SYNWEVO_WORKSPACE_BASE_URL` (default `https://accounts.synwevo.com`),
+`SYNWEVO_WORKSPACE_CLIENT_ID`, `SYNWEVO_WORKSPACE_CLIENT_SECRET_FILE` (or
+`SYNWEVO_WORKSPACE_CLIENT_SECRET`), and optional `SYNWEVO_WORKSPACE_TOKEN_URL`
+(default: the selected origin plus `/oidc/token`). Docs environment variables are
+ignored. It always requests resource `urn:synwevo:platform:workspace` and defaults
+to scope `workspace.read`. To write, explicitly set `SYNWEVO_WORKSPACE_SCOPE` to
+`workspace.read workspace.members.write` after the workspace owner has approved it.
+
+```python
+from synwevo_docs_sdk import WorkspaceClient
+
+with WorkspaceClient.from_env() as directory:
+    workspace = directory.whoami()["workspace"]
+    members = directory.list_members(role="viewer", limit=50)
+    invitation = directory.create_invitation("colleague@example.com", "viewer",
+                                             idempotency_key="onboard-2026-09")
+    resent = directory.resend_invitation(invitation["id"], idempotency_key="remind-2026-09")
+    directory.revoke_invitation(resent["id"])
+    # Use the role just read; a concurrent edit returns 409 role_changed.
+    directory.change_member(member_id, "editor", expected_role="viewer")
+    directory.remove_member(member_id, expected_role="editor", reason="Membership ended")
+```
+
+`iter_members` and `iter_invitations` follow bounded offset pages. Only invitation
+create/resend are keyed writes with automatic retries; member changes/removal and
+invitation revocation must be read back after uncertain outcomes. Manageable roles
+are `viewer` and `editor`; neither a directory token nor this client can grant
+owner/admin authority. Output annotations live in `synwevo_docs_sdk.workspace`.
+
+## Copy requests
+
+The project owner's delegated OAuth token can call `copy_targets()`,
+`copy_manifest(project_id)`, `request_copy(project_id, target_workspace_id,
+idempotency_key=...)`, `list_copy_requests(project_id, status="pending", limit=50)`,
+`get_copy_request(copy_id)`, and `withdraw_copy_request(copy_id)`. Creation retries
+keep one idempotency key. Withdrawal has no automatic retry after an uncertain
+server outcome; read the request status first. Lists are newest first, capped at
+100, and have no cursor. API keys and service accounts cannot act for the owner.
+Approval remains an authenticated browser action by a target workspace approver.
+Subscribe to `copy.*` webhook events or filter the event feed by explicit event
+types such as `copy.requested` and `copy.withdrawn`.
+
 ## Built-in template models
 
 `create_builtin_template(kind, editor, name=None, *, idempotency_key=None)`,
@@ -203,6 +276,8 @@ interpreter (or `--sdk-python` pointing to a separately installed SDK environmen
 .venv/bin/python apps/docs/sdk/acceptance/python_full_flow.py --sdk-python /tmp/synwevo-sdk-env/bin/python --evidence /tmp/synwevo-python-acceptance
 ```
 
+The runner also needs Node.js 18+ (`ACCEPTANCE_NODE` can select its executable) to
+exercise the TypeScript copy-request methods with the same delegated test identity.
 That script builds the unchanged shared synthetic kit and starts separate real
 Account and Docs roles on temporary loopback ports with a fresh disposable store.
 The cross-module service launcher lives in `tests/integration/sdk_acceptance/python_service.py`;
@@ -232,18 +307,41 @@ under the same key conflicted. This does **not** test a positive failed-item ret
 claim that default retry is failed-only. Redacted HTTP evidence checks every machine
 request's principal/scopes and rejects any Cookie, Set-Cookie or legacy API key.
 The script accepts no live server URL and never uses external user data.
+The person authorizes each workspace through the actual consent endpoint and CSRF
+check. Python and TypeScript each exercise copy target/manifest discovery, request
+creation and idempotent replay, filtered listing, status, withdrawal, and the two
+corresponding feed events. Approval and execution are covered by the separate
+scenario C integration tests; this SDK smoke does not claim to exercise them.
+
+The directory acceptance runs both clients against fresh Accounts services and
+file-only mail delivery. It creates synthetic identities, obtains owner approval
+and credentials through real HTTP, checks invitation replay/resend/revocation and
+member role conflicts/removal, and independently verifies mail and machine audit
+records. Python uses the installed SDK environment; TypeScript is packed and
+installed from the local package without publishing it:
+
+```sh
+.venv/bin/python tests/integration/sdk_acceptance/workspace_run.py \
+  --sdk-python /tmp/synwevo-sdk-env/bin/python --evidence /tmp/synwevo-directory-new-run
+.venv/bin/python apps/docs/sdk/python/tools/audit_workspace_openapi.py \
+  docs/integration/workspace-openapi.json \
+  --http-evidence /tmp/synwevo-directory-new-run/http.jsonl --out /tmp/workspace-coverage.json
+```
+
+The directory audit checks every operation against both clients' method inventories
+and labels actual successful HTTP observations separately from implementation.
 
 ## API coverage and limits
 
 [`operation-coverage.json`](operation-coverage.json) inventories every operationId from
-the actual exported v1 OpenAPI, including probes. The reviewed snapshot (2026-09-26) contains
-90 operations: 86 have SDK methods and 64 have CLI commands (some upload
-operations are reached indirectly). The SDK operations without a method are `GET /readyz`, the
-signed-link `GET /api/v1/download/{token}`, the source page image and the source locator probe.
-The real acceptance run observed successful responses for 50 operations over two legs: a
+the actual exported v1 OpenAPI, including probes. The reviewed snapshot (2026-09-30) contains
+100 operations: 98 have SDK methods and 64 have CLI commands (some upload
+operations are reached indirectly). The SDK operations without a method are the
+source page image and the source locator probe.
+The real acceptance run observed successful responses for 56 operations over two legs: a
 service account (client_credentials) for the document flows, and a person signing in at the
 account service and authorizing a public client (authorization_code with PKCE) for the
-organization-shared template operations, which need a delegated token. Implementation
+organization-shared template and copy-request operations, which need a delegated token. Implementation
 coverage is not test coverage. Credential administration, webhook administration and several
 peripheral methods remain outside the acceptance chain. CLI coverage is a subset.
 

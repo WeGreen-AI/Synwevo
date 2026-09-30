@@ -3,6 +3,22 @@ import { registerMessages, type Translator } from '@synwevo/ui';
 // Human contract prose only. Wire fields, paths, enums, scopes and schema titles stay literal.
 // Keep this literal catalog testable against the real Docs OpenAPI surface.
 export const contractEntries: [string, string, string][] = [
+  ["请求无效", "Bad Request", "請求無效"],
+  ["状态冲突", "Conflict", "狀態衝突"],
+  ["权限不足", "Forbidden", "權限不足"],
+  ["服务内部错误", "Internal Server Error", "服務內部錯誤"],
+  ["服务暂不可用", "Service Unavailable", "服務暫不可用"],
+  ["资源不存在", "Not Found", "資源不存在"],
+  ["请求过于频繁", "Too Many Requests", "請求過於頻繁"],
+  ["凭据无效", "Unauthorized", "憑據無效"],
+  ["工作空间成员（地址、名称、角色、加入时间；分页）", "Workspace members with email, name, role and join date (paginated)", "工作空間成員（地址、名稱、角色、加入時間；分頁）"],
+  ["工作空间邀请及其状态（分页，最新在前）", "Workspace invitations and states (paginated, newest first)", "工作空間邀請及其狀態（分頁，最新在前）"],
+  ["当前凭据与它所属的工作空间", "Current credential and its workspace", "目前憑據與它所屬的工作空間"],
+  ["撤回本空间的普通成员邀请", "Revoke a viewer or editor invitation in this workspace", "撤回本空間的一般成員邀請"],
+  ["更改普通成员角色（expected_role 必填，冲突时返回 role_changed）", "Change a viewer or editor role (expected_role required; conflicts return role_changed)", "更改一般成員角色（expected_role 必填，衝突時回傳 role_changed）"],
+  ["由获批集成发送真实成员邀请（只限 viewer/editor；支持 Idempotency-Key）", "Send a member invitation through an approved integration (viewer/editor only; supports Idempotency-Key)", "由獲批整合傳送真實成員邀請（只限 viewer/editor；支援 Idempotency-Key）"],
+  ["移除普通成员并撤回其工作空间权限（expected_role 与原因必填）", "Remove a viewer or editor and withdraw workspace access (expected_role and reason required)", "移除一般成員並撤回其工作空間權限（expected_role 與原因必填）"],
+  ["重发待接受或过期邀请，新链接取代旧链接（支持 Idempotency-Key）", "Resend a pending or expired invitation and replace its link (supports Idempotency-Key)", "重發待接受或過期邀請，新連結取代舊連結（支援 Idempotency-Key）"],
   [
     "编辑器里有尚未保存为版本的实时修改时，保存会替换并丢弃它们：未带 true 即 409 live_edits",
     "While the editor holds live edits not yet saved as a version, a save replaces and discards them: without true it is 409 live_edits",
@@ -712,6 +728,36 @@ export const contractEntries: [string, string, string][] = [
     "输出默认值：formats、naming、error_policy、layout",
     "Output defaults: formats, naming, error_policy, layout",
     "輸出預設值：formats、naming、error_policy、layout"
+  ],
+  [
+    "一个复制申请的状态、清单与结果",
+    "One copy request: its status, manifest and result",
+    "一個複製申請的狀態、清單與結果"
+  ],
+  [
+    "可作为复制目标的组织工作空间（本人可编辑的）",
+    "Organization workspaces this person can write to, the possible copy targets",
+    "可作為複製目標的組織工作空間（本人可編輯的）"
+  ],
+  [
+    "撤回待审批或已批准未执行的复制申请",
+    "Withdraw a copy request that is pending, or approved but not yet run",
+    "撤回待審批或已批准未執行的複製申請"
+  ],
+  [
+    "本项目的复制申请（本人发起的，最新在前）",
+    "This project's copy requests made by this person, newest first",
+    "本專案的複製申請（本人發起的，最新在前）"
+  ],
+  [
+    "申请把个人项目复制到组织工作空间（由目标审批人在网页中决定；可幂等重试）",
+    "Ask to copy a personal project into an organization workspace (the target's approver decides in the browser; safe to retry with an idempotency key)",
+    "申請把個人專案複製到組織工作空間（由目標審批人在網頁中決定；可冪等重試）"
+  ],
+  [
+    "预览复制清单与摘要（不创建申请）",
+    "Preview the copy manifest and digest (creates no request)",
+    "預覽複製清單與摘要（不建立申請）"
   ]
 ];
 registerMessages(Object.fromEntries(contractEntries.map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }])));

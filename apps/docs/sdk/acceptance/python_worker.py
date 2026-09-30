@@ -298,7 +298,25 @@ def delegated_token(accounts: str, email: str, password: str, client_id: str, re
              "state": secrets.token_urlsafe(8), "code_challenge": challenge, "code_challenge_method": "S256", "workspace_id": workspace_id}
         r = h.get("/oidc/authorize", params=q, follow_redirects=False)
         assert r.status_code in (302, 303), (r.status_code, r.text[:200])
-        code = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(r.headers["location"]).query))["code"]
+        location = r.headers["location"]
+        if urllib.parse.urlparse(location).path == "/oauth/consent":
+            rid = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(location).query))["request"]
+            shown = h.get(f"/api/auth/oauth-consent/{rid}")
+            assert shown.status_code == 200
+            details = shown.json()
+            assert details["client"]["id"] == client_id and details["workspace"]["id"] == workspace_id
+            assert set(details["scopes"]) == {"docweave.read", "docweave.write"}
+            # Synthetic person approves the exact displayed client/workspace/scopes through the
+            # production consent endpoint, with their real session CSRF token.
+            approved = h.post(f"/api/auth/oauth-consent/{rid}/approve",
+                              headers={"X-Synwevo-CSRF": h.cookies["dw_csrf"]})
+            assert approved.status_code == 200, approved.status_code
+            location = approved.json()["redirect"]
+        parsed = urllib.parse.urlparse(location)
+        assert parsed._replace(query="", fragment="").geturl() == redirect
+        params = dict(urllib.parse.parse_qsl(parsed.query))
+        assert params["state"] == q["state"]
+        code = params["code"]
     with httpx.Client(base_url=accounts, timeout=30) as h:      # no cookies: the token request is the client's own
         r = h.post("/oidc/token", data={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect,
                                         "client_id": client_id, "code_verifier": verifier})
@@ -315,7 +333,34 @@ def person_flow(kit, out, record, fields):
     common = (env["ACCEPTANCE_ACCOUNTS_URL"], env["ACCEPTANCE_PERSON_EMAIL"], password, env["ACCEPTANCE_PERSON_CLIENT_ID"], env["ACCEPTANCE_PERSON_REDIRECT"])
     token_a = delegated_token(*common, env["ACCEPTANCE_WORKSPACE_A"])
     token_b = delegated_token(*common, env["ACCEPTANCE_WORKSPACE_B"])
+    token_personal = delegated_token(*common, env["ACCEPTANCE_PERSONAL_WORKSPACE"])
     base = env["SYNWEVO_BASE_URL"]
+
+    with Client(base, ApiKey(token_personal)) as personal:
+        targets = record("copy_targets", personal.copy_targets())
+        assert targets["source_is_personal"] and env["ACCEPTANCE_WORKSPACE_A"] in {w["id"] for w in targets["items"]}
+        source = personal.create_project("SYNTHETIC Python copy request")
+        template = personal.upload_template(kit / "template.docx")
+        personal.set_project_template(source["id"], template["id"])
+        preview = record("copy_manifest", personal.copy_manifest(source["id"]))
+        request = record("request_copy", personal.request_copy(source["id"], env["ACCEPTANCE_WORKSPACE_A"], idempotency_key="python-copy"))
+        assert request["status"] == "pending" and request["digest"] == preview["digest"]
+        assert personal.request_copy(source["id"], env["ACCEPTANCE_WORKSPACE_A"], idempotency_key="python-copy")["id"] == request["id"]
+        assert record("get_copy_request", personal.get_copy_request(request["id"]))["status"] == "pending"
+        listed = record("list_copy_requests", personal.list_copy_requests(source["id"], status="pending", limit=1))
+        assert [r["id"] for r in listed["items"]] == [request["id"]]
+        assert record("withdraw_copy_request", personal.withdraw_copy_request(request["id"]))["status"] == "withdrawn"
+        assert personal.list_copy_requests(source["id"], status="pending")["items"] == []
+        events = personal.events_page(types=["copy.requested", "copy.withdrawn"])["items"]
+        assert {e["type"] for e in events if e.get("copy_id") == request["id"]} == {"copy.requested", "copy.withdrawn"}
+        python_copy = {"project_id": source["id"], "copy_id": request["id"], "status": "withdrawn", "events": 2}
+
+    # The Node client uses the same real delegated authorization over HTTP. Its token is only
+    # passed through the child environment, never a command argument or persisted output.
+    ts = subprocess.run([env.get("ACCEPTANCE_NODE", "node"), str(Path(__file__).with_name("ts_copy.mjs"))],
+                        env={**env, "ACCEPTANCE_COPY_TOKEN": token_personal}, capture_output=True, text=True, timeout=60)
+    assert ts.returncode == 0, (ts.returncode, ts.stderr)
+    typescript_copy = record("TypeScript copy request flow", json.loads(ts.stdout))
 
     def cli_b(*args, code=0):
         child = {k: v for k, v in env.items() if not k.startswith("SYNWEVO_CLIENT")}
@@ -356,9 +401,10 @@ def person_flow(kit, out, record, fields):
         refused = cli_b("org-templates", "use", pub["id"], code=3)
         assert refused["error"]["code"] == "deprecated"
         assert a.deprecate_organization_template(pub["id"], deprecated=False)["deprecated"] is False
-        assert len(b.get_template(copy["id"])["fields"]) == len(t.get("fields", [])) or True
+        assert b.get_template(copy["id"])["fields"] == [], "the copied release keeps its original fields after a later source edit"
         return {"publication_id": pub["id"], "source_template_id": t["id"], "copy_template_id": copy["id"], "cli_copy_template_id": cli_copy["id"],
-                "project_id": project["id"], "releases": 2, "deprecated_then_restored": True}
+                "project_id": project["id"], "releases": 2, "deprecated_then_restored": True,
+                "copy_requests": {"python": python_copy, "typescript": typescript_copy}}
 
 
 if __name__ == "__main__":

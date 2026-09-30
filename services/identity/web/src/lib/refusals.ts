@@ -112,6 +112,7 @@ export const REFUSAL_TEMPLATES: Record<string, ErrorTemplate> = {
  *  catalogue cannot hold (an exception class, a provider's name). Consulted after the server's
  *  catalogued sentence and after the page's own code map. */
 export const REFUSAL_SOURCES: Record<string, string> = {
+  invalid_idempotency_key: "Idempotency-Key 必须是 1–255 个可打印 ASCII 字符，建议使用 UUID",
   // operator settings: the server names the variable, a person needs to know whom to ask
   public_url_missing: "邮件链接地址尚未配置，请联系部署管理员。",
   mail_not_configured: "邮件服务尚未配置，请联系管理员。",

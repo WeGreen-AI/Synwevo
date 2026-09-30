@@ -3,7 +3,6 @@ import json
 import re
 from pathlib import Path
 
-from synwevo_docs.control_plane import DocsControlPlane
 from tests.integration.test_api_platform import plane
 
 
@@ -33,5 +32,7 @@ def test_every_visible_contract_summary_and_description_has_three_languages(plan
                 else:
                     walk(item)
 
-    walk(DocsControlPlane(plane["api"]).contract()["paths"])
+    response = plane["admin"].get("/api/admin/api-platform/openapi")
+    assert response.status_code == 200, response.text
+    walk(response.json()["paths"])
     assert not missing, "Add module-local translations for current contract prose: " + repr(sorted(missing))

@@ -3,14 +3,21 @@ import { post } from '@synwevo/auth-client';
 import { useI18n } from '@synwevo/ui';
 import { BASE, DataState, Pager, usePage, type Action, type Approval } from './common';
 
-export function ApprovalsPanel({ act, scopes, resource, revision, owner = false }: {
-  act: (action: Action) => void; scopes: string[]; resource: string; revision: number; owner?: boolean;
+/** The APIs an owner can approve credentials for (API-5): Docs, and the workspace directory. */
+const RESOURCE_NAMES: Record<string, string> = { 'urn:synwevo:app:docweave': 'Synwevo Docs 接口', 'urn:synwevo:platform:workspace': '工作空间目录接口' };
+
+export function ApprovalsPanel({ act, scopes, resource, resources, revision, owner = false }: {
+  act: (action: Action) => void; scopes: string[]; resource: string; resources?: Record<string, string[]>; revision: number; owner?: boolean;
 }) {
   const { t, locale } = useI18n();
   const [name, setName] = useState('');
   const [workspace, setWorkspace] = useState('');
   const [kind, setKind] = useState('service_account');
+  const [target, setTarget] = useState(resource);
   const [selected, setSelected] = useState<string[]>([]);
+  const choices = resources && Object.keys(resources).length ? resources : { [resource]: scopes };
+  const targetScopes = choices[target] || scopes;
+  const docsTarget = target === resource;
   const [days, setDays] = useState(30);
   const [status, setStatus] = useState('');
   const source = owner ? '/api/auth/api-approvals' : BASE + '/approvals';
@@ -23,15 +30,18 @@ export function ApprovalsPanel({ act, scopes, resource, revision, owner = false 
       <div className="api-platform-grid">
         <label className="field">{t('凭据名称')}<input className="input" maxLength={100} value={name} onChange={e => setName(e.target.value)} /></label>
         <label className="field">{t('工作空间 ID')}<input className="input" maxLength={100} value={workspace} onChange={e => setWorkspace(e.target.value)} /></label>
-        <label className="field">{t('凭据类型')}<select className="input" value={kind} onChange={e => setKind(e.target.value)}><option value="service_account">{t('服务客户端')}</option><option value="api_key">{t('访问密钥')}</option></select></label>
+        <label className="field">{t('接口')}<select className="input" value={target} onChange={e => { setTarget(e.target.value); setSelected([]); if (e.target.value !== resource) setKind('service_account'); }}>
+          {Object.keys(choices).map(r => <option key={r} value={r}>{RESOURCE_NAMES[r] ? t(RESOURCE_NAMES[r]) : r}</option>)}</select></label>
+        <label className="field">{t('凭据类型')}<select className="input" value={kind} onChange={e => setKind(e.target.value)}><option value="service_account">{t('服务客户端')}</option>{docsTarget && <option value="api_key">{t('访问密钥')}</option>}</select></label>
         <label className="field">{t('有效天数')}<input className="input" type="number" min={1} max={365} value={days} onChange={e => setDays(Number(e.target.value))} /></label>
       </div>
-      <fieldset><legend>{t('申请权限')}</legend><div className="row gap12 wrap">{scopes.map(scope => <label key={scope}><input type="checkbox" checked={selected.includes(scope)} onChange={e => setSelected(e.target.checked ? [...selected, scope] : selected.filter(x => x !== scope))} /> <code>{scope}</code></label>)}</div></fieldset>
-      <p className="muted">{t('API 资源')} · <code>{resource}</code></p>
-      <p className="muted">{t('访问密钥的管理权限包含读写权限；申请管理权限时必须选择全部权限。')}</p>
+      <fieldset><legend>{t('申请权限')}</legend><div className="row gap12 wrap">{targetScopes.map(scope => <label key={scope}><input type="checkbox" checked={selected.includes(scope)} onChange={e => setSelected(e.target.checked ? [...selected, scope] : selected.filter(x => x !== scope))} /> <code>{scope}</code></label>)}</div></fieldset>
+      <p className="muted">{t('API 资源')} · <code>{target}</code></p>
+      {docsTarget ? <p className="muted">{t('访问密钥的管理权限包含读写权限；申请管理权限时必须选择全部权限。')}</p>
+        : <p className="muted">{t('工作空间目录接口只签发服务客户端。读取权限用于成员与邀请；成员写入权限可邀请、调整或移除查看者与编辑者，不能管理管理员、所有者或读取文档。')}</p>}
       <button className="btn primary" disabled={!name.trim() || !workspace.trim() || !selected.length || !Number.isInteger(days) || days < 1 || days > 365}
         onClick={() => act({ title: t('提交审批申请'), impact: t('所有者需要在账户的授权审批页明确批准，管理员才能签发凭据。'),
-          run: reason => post(BASE + '/approvals', { reason, name: name.trim(), workspace_id: workspace.trim(), credential_kind: kind, scopes: selected, resources: [resource], expires_in_days: days }) })}>{t('提交审批申请')}</button>
+          run: reason => post(BASE + '/approvals', { reason, name: name.trim(), workspace_id: workspace.trim(), credential_kind: kind, scopes: selected, resources: [target], expires_in_days: days }) })}>{t('提交审批申请')}</button>
     </section>}
     <section className="card card-b col gap12">
       <div className="row gap12 wrap"><h2>{owner ? t('工作空间授权审批') : t('审批记录')}</h2><span className="spacer" />
@@ -60,6 +70,7 @@ function ApprovalRow({ row, owner, act, locale, labels }: { row: Approval; owner
     <div className="row gap8 wrap">{row.requested_scopes.map(scope => owner && row.status === 'pending' ?
       <label key={scope}><input type="checkbox" checked={selected.includes(scope)} onChange={e => setSelected(e.target.checked ? [...selected, scope] : selected.filter(x => x !== scope))} /> <code>{scope}</code></label> : <code className="chip" key={scope}>{scope}</code>)}</div>
     {row.approved_scopes.length > 0 && <p>{t('批准权限')} · <code>{row.approved_scopes.join(', ')}</code></p>}
+    {row.requested_scopes.includes('workspace.members.write') && <p className="notice info">{t('成员写入权限可发送邀请并调整或移除查看者与编辑者。撤回授权后，尚未接受的集成邀请也会失效。')}</p>}
     <div className="row gap8 wrap">
       {owner && row.status === 'pending' && live && <>
         <button className="btn primary" disabled={!selected.length} onClick={() => act({ title: t('批准授权'), impact: <>{t('你批准的权限将允许管理员签发绑定此工作空间的机器凭据。')} <code>{row.workspace_id}</code></>, run: reason => post(`${base}/${row.id}/approve`, { reason, scopes: selected, resources: row.requested_resources }) })}>{t('批准授权')}</button>

@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Synwevo Docs 机器接口
   version: "1.0"
-  description: "Synwevo Docs 的自动化接口。/api/v1 接受两种凭据：旧式 API 密钥（Authorization: Bearer dw_<id>_<secret>，权限 read / write / admin）与平台签发的访问令牌（client_credentials，权限 docweave.read / docweave.write / docweave.manage）。错误统一为 {error:{code,message,field,request_id,details}}。详见 docs/integration/api.md。"
+  description: "Synwevo Docs 的自动化接口。/api/v1 接受两种凭据：旧式 API 密钥（Authorization: Bearer dw_<id>_<secret>，权限 read / write / admin）与平台签发的访问令牌（服务账户 client_credentials 或用户委托 authorization_code，权限 docweave.read / docweave.write / docweave.manage）。复制接口仅接受用户委托。错误统一为 {error:{code,message,field,request_id,details}}。详见 docs/integration/api.md。"
 paths:
   /healthz:
     get:
@@ -2450,7 +2450,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2535,7 +2536,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobPage_JobListItem_"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2581,7 +2583,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2667,7 +2670,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobPage_JobItem_"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2745,7 +2749,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobPage_JobRun_"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2810,7 +2815,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobEventsPage"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2854,7 +2860,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobCancelledView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -2922,7 +2929,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -3008,7 +3016,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/JobPage_JobArtifact_"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -5021,6 +5030,309 @@ paths:
             - read
         - platformToken:
             - docweave.read
+  /api/v1/copy-targets:
+    get:
+      tags:
+        - v1
+      summary: 可作为复制目标的组织工作空间（本人可编辑的）
+      operationId: copy_targets_api_v1_copy_targets_get
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CopyTargetsResponse"
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      x-synwevo-identity: delegated
+      security:
+        - delegatedToken:
+            - docweave.read
+      parameters:
+        - $ref: "#/components/parameters/XRequestID"
+  "/api/v1/projects/{pid}/copy-manifest":
+    get:
+      tags:
+        - v1
+      summary: 预览复制清单与摘要（不创建申请）
+      operationId: copy_manifest_api_v1_projects__pid__copy_manifest_get
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Pid
+        - name: sources
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+            title: Sources
+        - name: corrections
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+            title: Corrections
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CopyManifestResponse"
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      x-synwevo-identity: delegated
+      security:
+        - delegatedToken:
+            - docweave.read
+  "/api/v1/projects/{pid}/copy-requests":
+    get:
+      tags:
+        - v1
+      summary: 本项目的复制申请（本人发起的，最新在前）
+      operationId: list_copy_requests_api_v1_projects__pid__copy_requests_get
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Pid
+        - name: status
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: string
+                pattern: "^(pending|approved|rejected|withdrawn|expired|running|done|failed|stale)$"
+              - type: "null"
+            title: Status
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            maximum: 100
+            minimum: 1
+            default: 50
+            title: Limit
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CopyRequestList"
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      x-synwevo-identity: delegated
+      security:
+        - delegatedToken:
+            - docweave.read
+    post:
+      tags:
+        - v1
+      summary: 申请把个人项目复制到组织工作空间（由目标审批人在网页中决定；可幂等重试）
+      operationId: request_copy_api_v1_projects__pid__copy_requests_post
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Pid
+        - $ref: "#/components/parameters/XRequestID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CopyRequestCreate"
+      responses:
+        "201":
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CopyRequestView"
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/Idempotent-Replayed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      x-synwevo-identity: delegated
+      security:
+        - delegatedToken:
+            - docweave.write
+  "/api/v1/copy-requests/{cid}":
+    get:
+      tags:
+        - v1
+      summary: 一个复制申请的状态、清单与结果
+      operationId: get_copy_request_api_v1_copy_requests__cid__get
+      parameters:
+        - name: cid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Cid
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CopyRequestView"
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      x-synwevo-identity: delegated
+      security:
+        - delegatedToken:
+            - docweave.read
+  "/api/v1/copy-requests/{cid}/withdraw":
+    post:
+      tags:
+        - v1
+      summary: 撤回待审批或已批准未执行的复制申请
+      operationId: withdraw_copy_request_api_v1_copy_requests__cid__withdraw_post
+      parameters:
+        - name: cid
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Cid
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CopyRequestView"
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Conflict
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      x-synwevo-identity: delegated
+      security:
+        - delegatedToken:
+            - docweave.write
   /api/v1/usage:
     get:
       tags:
@@ -5849,6 +6161,511 @@ components:
           title: Sha256
       type: object
       title: Body_upload_template_api_v1_templates_post
+    CopyCorrectionsManifest:
+      properties:
+        included:
+          type: boolean
+          title: Included
+      type: object
+      required:
+        - included
+      title: CopyCorrectionsManifest
+    CopyManifest:
+      properties:
+        project:
+          $ref: "#/components/schemas/CopyProjectManifest"
+        template:
+          anyOf:
+            - $ref: "#/components/schemas/CopyTemplateManifest"
+            - type: "null"
+        mappings:
+          $ref: "#/components/schemas/CopyMappingsManifest"
+        sources:
+          $ref: "#/components/schemas/CopySourcesManifest"
+        corrections:
+          $ref: "#/components/schemas/CopyCorrectionsManifest"
+        excluded:
+          items:
+            type: string
+          type: array
+          title: Excluded
+      type: object
+      required:
+        - project
+        - template
+        - mappings
+        - sources
+        - corrections
+        - excluded
+      title: CopyManifest
+    CopyManifestResponse:
+      properties:
+        manifest:
+          $ref: "#/components/schemas/CopyManifest"
+        digest:
+          type: string
+          title: Digest
+      type: object
+      required:
+        - manifest
+        - digest
+      title: CopyManifestResponse
+    CopyMappingsManifest:
+      properties:
+        rev:
+          type: integer
+          title: Rev
+        count:
+          type: integer
+          title: Count
+        enabled:
+          type: integer
+          title: Enabled
+      type: object
+      required:
+        - rev
+        - count
+        - enabled
+      title: CopyMappingsManifest
+    CopyPerson:
+      properties:
+        user_id:
+          type: string
+          title: User Id
+        name:
+          type: string
+          title: Name
+      type: object
+      required:
+        - user_id
+        - name
+      title: CopyPerson
+    CopyProjectManifest:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        step:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Step
+        rev:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Rev
+        record_rule:
+          additionalProperties: true
+          type: object
+          title: Record Rule
+        output:
+          additionalProperties: true
+          type: object
+          title: Output
+      type: object
+      required:
+        - id
+        - name
+        - step
+        - rev
+        - record_rule
+        - output
+      title: CopyProjectManifest
+    CopyRequestCreate:
+      properties:
+        target_workspace_id:
+          type: string
+          minLength: 1
+          title: Target Workspace Id
+        name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Name
+        purpose:
+          type: string
+          maxLength: 500
+          title: Purpose
+        scope:
+          $ref: "#/components/schemas/CopyScope"
+      additionalProperties: false
+      type: object
+      required:
+        - target_workspace_id
+      title: CopyRequestCreate
+    CopyRequestList:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/CopyRequestView"
+          type: array
+          title: Items
+      type: object
+      required:
+        - items
+      title: CopyRequestList
+    CopyRequestView:
+      properties:
+        id:
+          type: string
+          title: Id
+        source_project_id:
+          type: string
+          title: Source Project Id
+        target_organization_id:
+          type: string
+          title: Target Organization Id
+        target_workspace_id:
+          type: string
+          title: Target Workspace Id
+        name:
+          type: string
+          title: Name
+        purpose:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Purpose
+        scope:
+          $ref: "#/components/schemas/CopyScope"
+        manifest:
+          $ref: "#/components/schemas/CopyManifest"
+        digest:
+          type: string
+          title: Digest
+        status:
+          type: string
+          enum:
+            - pending
+            - approved
+            - rejected
+            - withdrawn
+            - expired
+            - running
+            - done
+            - failed
+            - stale
+          title: Status
+        decided_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Decided At
+        decision_reason:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Decision Reason
+        self_approved:
+          type: boolean
+          title: Self Approved
+        approval_expires_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Approval Expires At
+        executed_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Executed At
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/CopyResult"
+            - type: "null"
+        error:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error
+        version:
+          type: integer
+          title: Version
+        created_at:
+          type: number
+          title: Created At
+        updated_at:
+          type: number
+          title: Updated At
+        expires_at:
+          type: number
+          title: Expires At
+        requester:
+          anyOf:
+            - $ref: "#/components/schemas/CopyPerson"
+            - type: "null"
+        decider:
+          anyOf:
+            - $ref: "#/components/schemas/CopyPerson"
+            - type: "null"
+      type: object
+      required:
+        - id
+        - source_project_id
+        - target_organization_id
+        - target_workspace_id
+        - name
+        - purpose
+        - scope
+        - manifest
+        - digest
+        - status
+        - decided_at
+        - decision_reason
+        - self_approved
+        - approval_expires_at
+        - executed_at
+        - result
+        - error
+        - version
+        - created_at
+        - updated_at
+        - expires_at
+        - requester
+        - decider
+      title: CopyRequestView
+    CopyResult:
+      properties:
+        project_id:
+          type: string
+          title: Project Id
+        template_id:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Template Id
+        sources:
+          type: integer
+          title: Sources
+        mappings:
+          type: integer
+          title: Mappings
+        warnings:
+          items:
+            type: string
+          type: array
+          title: Warnings
+        manifest_digest:
+          type: string
+          title: Manifest Digest
+      type: object
+      required:
+        - project_id
+        - template_id
+        - sources
+        - mappings
+        - warnings
+        - manifest_digest
+      title: CopyResult
+    CopyScope:
+      properties:
+        sources:
+          type: boolean
+          title: Sources
+          default: false
+        corrections:
+          type: boolean
+          title: Corrections
+          default: false
+      additionalProperties: false
+      type: object
+      title: CopyScope
+    CopySourceIncluded:
+      properties:
+        filename:
+          type: string
+          title: Filename
+        size:
+          type: integer
+          title: Size
+        format:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Format
+        id:
+          type: string
+          title: Id
+        family:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Family
+        sha256:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Sha256
+        version:
+          type: integer
+          title: Version
+        scan:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Scan
+        has_ocr:
+          type: boolean
+          title: Has Ocr
+        has_corrections:
+          type: boolean
+          title: Has Corrections
+      type: object
+      required:
+        - filename
+        - size
+        - format
+        - id
+        - family
+        - sha256
+        - version
+        - scan
+        - has_ocr
+        - has_corrections
+      title: CopySourceIncluded
+    CopySourceSummary:
+      properties:
+        filename:
+          type: string
+          title: Filename
+        size:
+          type: integer
+          title: Size
+        format:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Format
+      type: object
+      required:
+        - filename
+        - size
+        - format
+      title: CopySourceSummary
+    CopySourcesManifest:
+      properties:
+        included:
+          type: boolean
+          title: Included
+        count:
+          type: integer
+          title: Count
+        total_bytes:
+          type: integer
+          title: Total Bytes
+        items:
+          items:
+            anyOf:
+              - $ref: "#/components/schemas/CopySourceIncluded"
+              - $ref: "#/components/schemas/CopySourceSummary"
+          type: array
+          title: Items
+      type: object
+      required:
+        - included
+        - count
+        - total_bytes
+        - items
+      title: CopySourcesManifest
+    CopyTarget:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        role:
+          type: string
+          enum:
+            - editor
+            - admin
+            - owner
+          title: Role
+        organization_id:
+          type: string
+          title: Organization Id
+        organization_name:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Organization Name
+      type: object
+      required:
+        - id
+        - name
+        - role
+        - organization_id
+        - organization_name
+      title: CopyTarget
+    CopyTargetsResponse:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/CopyTarget"
+          type: array
+          title: Items
+        source_is_personal:
+          type: boolean
+          title: Source Is Personal
+      type: object
+      required:
+        - items
+        - source_is_personal
+      title: CopyTargetsResponse
+    CopyTemplateManifest:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        kind:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Kind
+        format:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Format
+        version_no:
+          type: integer
+          title: Version No
+        pinned:
+          type: boolean
+          title: Pinned
+        working_sha256:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Working Sha256
+        slots:
+          type: integer
+          title: Slots
+        scan:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Scan
+      type: object
+      required:
+        - id
+        - name
+        - kind
+        - format
+        - version_no
+        - pinned
+        - working_sha256
+        - slots
+        - scan
+      title: CopyTemplateManifest
     CorrectionValue:
       properties:
         value:
@@ -5862,6 +6679,941 @@ components:
         - value
         - confirmed
       title: CorrectionValue
+    JobArtifact:
+      properties:
+        id:
+          type: string
+          title: Id
+        item_id:
+          type: string
+          title: Item Id
+        format:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Format
+        filename:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Filename
+        size:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Size
+        sha256:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Sha256
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        seq:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Seq
+        label:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Label
+      type: object
+      required:
+        - id
+        - item_id
+        - format
+        - filename
+        - size
+        - sha256
+        - created_at
+        - run_no
+        - seq
+        - label
+      title: JobArtifact
+    JobCancellation:
+      properties:
+        accepted:
+          type: boolean
+          title: Accepted
+        reason:
+          anyOf:
+            - type: string
+              enum:
+                - already_terminal
+                - already_requested
+            - type: "null"
+          title: Reason
+      type: object
+      required:
+        - accepted
+        - reason
+      title: JobCancellation
+    JobCancelledView:
+      properties:
+        id:
+          type: string
+          title: Id
+        project_id:
+          type: string
+          title: Project Id
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - cancelling
+            - completed
+            - completed_with_errors
+            - failed
+            - cancelled
+          title: Status
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        template:
+          anyOf:
+            - $ref: "#/components/schemas/JobTemplate"
+            - type: "null"
+        options:
+          anyOf:
+            - $ref: "#/components/schemas/JobOptions"
+            - type: "null"
+        error:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error
+        error_code:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error Code
+        cancel_requested:
+          type: boolean
+          title: Cancel Requested
+        phase:
+          type: string
+          enum:
+            - planning
+            - generating
+          title: Phase
+        halt_reason:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Halt Reason
+        principal:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Principal
+        request_id:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Request Id
+        counts:
+          $ref: "#/components/schemas/JobCounts"
+        idempotent_replay:
+          type: boolean
+          title: Idempotent Replay
+          default: false
+        cancel:
+          $ref: "#/components/schemas/JobCancellation"
+      type: object
+      required:
+        - id
+        - project_id
+        - status
+        - run_no
+        - created_at
+        - started_at
+        - finished_at
+        - template
+        - options
+        - error
+        - error_code
+        - cancel_requested
+        - phase
+        - halt_reason
+        - principal
+        - request_id
+        - counts
+        - cancel
+      title: JobCancelledView
+    JobCounts:
+      properties:
+        samples:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Samples
+        documents:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Documents
+        files:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Files
+        failed:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Failed
+        skipped:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Skipped
+        cancelled:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Cancelled
+        pending:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Pending
+        running:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Running
+        planned:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Planned
+        unplanned:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Unplanned
+      type: object
+      required:
+        - samples
+        - documents
+        - files
+        - failed
+        - skipped
+        - cancelled
+        - pending
+        - running
+        - planned
+        - unplanned
+      title: JobCounts
+    JobEvent:
+      properties:
+        seq:
+          type: integer
+          title: Seq
+        id:
+          type: string
+          title: Id
+        type:
+          type: string
+          title: Type
+        version:
+          type: integer
+          title: Version
+        job_id:
+          type: string
+          title: Job Id
+        occurred_at:
+          type: number
+          title: Occurred At
+        data:
+          $ref: "#/components/schemas/JsonValue"
+      type: object
+      required:
+        - seq
+        - id
+        - type
+        - version
+        - job_id
+        - occurred_at
+        - data
+      title: JobEvent
+    JobEventsPage:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobEvent"
+          type: array
+          title: Items
+        next_after:
+          type: integer
+          title: Next After
+      type: object
+      required:
+        - items
+        - next_after
+      title: JobEventsPage
+    JobItem:
+      properties:
+        id:
+          type: string
+          title: Id
+        seq:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Seq
+        record_key:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Record Key
+        label:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Label
+        status:
+          type: string
+          enum:
+            - pending
+            - running
+            - success
+            - failed
+            - skipped
+            - cancelled
+          title: Status
+        issues:
+          $ref: "#/components/schemas/JsonValue"
+        attempts:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Attempts
+        file_base:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: File Base
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        artifacts:
+          items:
+            $ref: "#/components/schemas/JobItemArtifact"
+          type: array
+          title: Artifacts
+      type: object
+      required:
+        - id
+        - seq
+        - record_key
+        - label
+        - status
+        - issues
+        - attempts
+        - file_base
+        - started_at
+        - finished_at
+        - run_no
+        - artifacts
+      title: JobItem
+    JobItemArtifact:
+      properties:
+        id:
+          type: string
+          title: Id
+        item_id:
+          type: string
+          title: Item Id
+        format:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Format
+        filename:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Filename
+        sha256:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Sha256
+        size:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Size
+        verification:
+          $ref: "#/components/schemas/JsonValue"
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+      type: object
+      required:
+        - id
+        - item_id
+        - format
+        - filename
+        - sha256
+        - size
+        - verification
+        - run_no
+      title: JobItemArtifact
+    JobListItem:
+      properties:
+        id:
+          type: string
+          title: Id
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - cancelling
+            - completed
+            - completed_with_errors
+            - failed
+            - cancelled
+          title: Status
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        counts:
+          anyOf:
+            - $ref: "#/components/schemas/JobRawCounts"
+            - type: "null"
+        options:
+          anyOf:
+            - $ref: "#/components/schemas/JobOptions"
+            - type: "null"
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        phase:
+          type: string
+          enum:
+            - planning
+            - generating
+          title: Phase
+        halt_reason:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Halt Reason
+        error_code:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error Code
+        principal:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Principal
+      type: object
+      required:
+        - id
+        - status
+        - created_at
+        - started_at
+        - finished_at
+        - counts
+        - options
+        - run_no
+        - phase
+        - halt_reason
+        - error_code
+        - principal
+      title: JobListItem
+    JobOptions:
+      properties:
+        formats:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: "null"
+          title: Formats
+        error_policy:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error Policy
+        naming:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Naming
+        keep_fields:
+          anyOf:
+            - type: boolean
+            - type: "null"
+          title: Keep Fields
+        layout:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Layout
+      additionalProperties: true
+      type: object
+      title: JobOptions
+    JobPage_JobArtifact_:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobArtifact"
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+        next_offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Next Offset
+        next_cursor:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Next Cursor
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+        - next_offset
+        - next_cursor
+      title: "JobPage[JobArtifact]"
+    JobPage_JobItem_:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobItem"
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+        next_offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Next Offset
+        next_cursor:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Next Cursor
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+        - next_offset
+        - next_cursor
+      title: "JobPage[JobItem]"
+    JobPage_JobListItem_:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobListItem"
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+        next_offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Next Offset
+        next_cursor:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Next Cursor
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+        - next_offset
+        - next_cursor
+      title: "JobPage[JobListItem]"
+    JobPage_JobRun_:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/JobRun"
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+        next_offset:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Next Offset
+        next_cursor:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Next Cursor
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+        - next_offset
+        - next_cursor
+      title: "JobPage[JobRun]"
+    JobRawCounts:
+      properties:
+        total:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Total
+        planned:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Planned
+        unplanned:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Unplanned
+        files:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Files
+        documents:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Documents
+        pending:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Pending
+        running:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Running
+        success:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Success
+        failed:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Failed
+        skipped:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Skipped
+        cancelled:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Cancelled
+      additionalProperties: true
+      type: object
+      title: JobRawCounts
+    JobRun:
+      properties:
+        run_no:
+          type: integer
+          title: Run No
+        trigger:
+          type: string
+          title: Trigger
+        requested_by:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Requested By
+        items:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Items
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        status:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Status
+        requested_by_principal:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Requested By Principal
+      type: object
+      required:
+        - run_no
+        - trigger
+        - requested_by
+        - items
+        - created_at
+        - started_at
+        - finished_at
+        - status
+        - requested_by_principal
+      title: JobRun
+    JobTemplate:
+      properties:
+        id:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Id
+        name:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Name
+        format:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Format
+        version_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Version No
+      type: object
+      required:
+        - id
+        - name
+        - format
+        - version_no
+      title: JobTemplate
+    JobView:
+      properties:
+        id:
+          type: string
+          title: Id
+        project_id:
+          type: string
+          title: Project Id
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - cancelling
+            - completed
+            - completed_with_errors
+            - failed
+            - cancelled
+          title: Status
+        run_no:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Run No
+        created_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Created At
+        started_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Started At
+        finished_at:
+          anyOf:
+            - type: number
+            - type: "null"
+          title: Finished At
+        template:
+          anyOf:
+            - $ref: "#/components/schemas/JobTemplate"
+            - type: "null"
+        options:
+          anyOf:
+            - $ref: "#/components/schemas/JobOptions"
+            - type: "null"
+        error:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error
+        error_code:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Error Code
+        cancel_requested:
+          type: boolean
+          title: Cancel Requested
+        phase:
+          type: string
+          enum:
+            - planning
+            - generating
+          title: Phase
+        halt_reason:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Halt Reason
+        principal:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Principal
+        request_id:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Request Id
+        counts:
+          $ref: "#/components/schemas/JobCounts"
+        idempotent_replay:
+          type: boolean
+          title: Idempotent Replay
+          default: false
+      type: object
+      required:
+        - id
+        - project_id
+        - status
+        - run_no
+        - created_at
+        - started_at
+        - finished_at
+        - template
+        - options
+        - error
+        - error_code
+        - cancel_requested
+        - phase
+        - halt_reason
+        - principal
+        - request_id
+        - counts
+      title: JobView
     JsonValue: {}
     LocatorProposal:
       properties:
@@ -6795,7 +8547,7 @@ components:
         data:
           type: object
           additionalProperties: true
-          description: 任务事件：status、run_no、counts；被平台停止的任务带 halt_reason。文件事件：file_id、project_id、status、reason（安全检查结论）、version
+          description: 任务事件：status、run_no、counts；被平台停止的任务带 halt_reason。文件事件：file_id、project_id、status、reason（安全检查结论）、version。复制事件：copy_id、source_project_id、target_workspace_id、status、version
       additionalProperties: true
     EditorNode:
       type: object
@@ -7020,6 +8772,25 @@ components:
       description: 平台签发的访问令牌：服务账户用 client_credentials 向账户服务的 $ISSUER/oidc/token 申请（tokenUrl 是本地开发平台的账户服务；部署中请换成该部署的 $ISSUER，或读 $ISSUER/.well-known/openid-configuration 的 token_endpoint）；用户委托令牌来自授权码流程。每次调用都重新核验账户、成员关系与应用资格
       flows:
         clientCredentials:
+          tokenUrl: "http://accounts.localhost:8770/oidc/token"
+          scopes:
+            docweave.read: 读取项目、模板、任务与产物（等价旧的 read）
+            docweave.write: 创建、修改、提交任务（等价旧的 write）
+            docweave.manage: 删除项目与模板、管理 Webhook 订阅与自身凭据（等价旧的 admin）
+        authorizationCode:
+          authorizationUrl: "http://accounts.localhost:8770/oidc/authorize"
+          tokenUrl: "http://accounts.localhost:8770/oidc/token"
+          scopes:
+            docweave.read: 读取项目、模板、任务与产物（等价旧的 read）
+            docweave.write: 创建、修改、提交任务（等价旧的 write）
+            docweave.manage: 删除项目与模板、管理 Webhook 订阅与自身凭据（等价旧的 admin）
+    delegatedToken:
+      type: oauth2
+      x-synwevo-identity: delegated
+      description: 项目所有者本人通过授权码流程授予应用的访问令牌；使用 PKCE S256，选择来源个人工作空间并完成同意。访问密钥与 client_credentials 不可调用复制接口
+      flows:
+        authorizationCode:
+          authorizationUrl: "http://accounts.localhost:8770/oidc/authorize"
           tokenUrl: "http://accounts.localhost:8770/oidc/token"
           scopes:
             docweave.read: 读取项目、模板、任务与产物（等价旧的 read）
@@ -8160,6 +9931,606 @@ webhooks:
       summary: file.failed 事件回调
       description: 订阅时在 events 中列出才会投递。来源文件的接纳结论，与状态变化同一事务写入；job 为 null，data 只有 file_id、project_id、status、reason、version，文件名与内容请用凭据另行读取。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
       operationId: webhook_file_failed
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  copy.requested:
+    post:
+      summary: copy.requested 事件回调
+      description: "订阅时在 events 中列出才会投递。复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，data 只有 copy_id、source_project_id、target_workspace_id、status、version；清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
+      operationId: webhook_copy_requested
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  copy.approved:
+    post:
+      summary: copy.approved 事件回调
+      description: "订阅时在 events 中列出才会投递。复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，data 只有 copy_id、source_project_id、target_workspace_id、status、version；清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
+      operationId: webhook_copy_approved
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  copy.rejected:
+    post:
+      summary: copy.rejected 事件回调
+      description: "订阅时在 events 中列出才会投递。复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，data 只有 copy_id、source_project_id、target_workspace_id、status、version；清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
+      operationId: webhook_copy_rejected
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  copy.withdrawn:
+    post:
+      summary: copy.withdrawn 事件回调
+      description: "订阅时在 events 中列出才会投递。复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，data 只有 copy_id、source_project_id、target_workspace_id、status、version；清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
+      operationId: webhook_copy_withdrawn
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  copy.expired:
+    post:
+      summary: copy.expired 事件回调
+      description: "订阅时在 events 中列出才会投递。复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，data 只有 copy_id、source_project_id、target_workspace_id、status、version；清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
+      operationId: webhook_copy_expired
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  copy.done:
+    post:
+      summary: copy.done 事件回调
+      description: "订阅时在 events 中列出才会投递。复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，data 只有 copy_id、source_project_id、target_workspace_id、status、version；清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
+      operationId: webhook_copy_done
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  copy.failed:
+    post:
+      summary: copy.failed 事件回调
+      description: "订阅时在 events 中列出才会投递。复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，data 只有 copy_id、source_project_id、target_workspace_id、status、version；清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
+      operationId: webhook_copy_failed
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  copy.stale:
+    post:
+      summary: copy.stale 事件回调
+      description: "订阅时在 events 中列出才会投递。复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，data 只有 copy_id、source_project_id、target_workspace_id、status、version；清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
+      operationId: webhook_copy_stale
       parameters:
         - name: webhook-id
           in: header

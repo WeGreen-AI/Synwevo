@@ -13,11 +13,17 @@ from .apps import Apps, DOCS_APP_ID
 from .errors import ServiceError
 from .identity import Identity
 from .machine import SCOPE_MANAGE, SCOPE_READ, SCOPE_WRITE
-from .oidc import docs_resource
+from .oidc import WORKSPACE_API_SCOPES, docs_resource, workspace_resource
 from .store import Store, new_id, now
 
 MANAGE_PERMISSION = "api_platform.manage"
 SCOPES = frozenset((SCOPE_READ, SCOPE_WRITE, SCOPE_MANAGE))
+
+
+def resource_scopes() -> dict[str, frozenset]:
+    """The APIs an owner can approve credentials for, and the scopes each one has (API-5): the Docs
+    API, and the workspace directory. One approval names exactly one of them."""
+    return {docs_resource(): SCOPES, workspace_resource(): frozenset(WORKSPACE_API_SCOPES)}
 
 # Imported and executed by Store's migration only, never by a router/service constructor.
 SCHEMA_SQL = """
@@ -59,6 +65,14 @@ class ControlPlaneAdapter(Protocol):
     def contract(self) -> dict: ...
     async def request(self, credential: str, method: str, path: str,
                       query: dict, body: dict | None) -> dict: ...
+    def webhook_overview(self, *, workspace_id: str = "", status: str = "", failing: bool = False,
+                         limit: int = 25, offset: int = 0) -> dict: ...
+    def webhook_pause(self, sid: str) -> dict: ...
+    def webhook_tenant(self, sid: str) -> str | None: ...
+    def jobs_overview(self, *, workspace_id: str = "", status: str = "", origin: str = "",
+                      limit: int = 25, offset: int = 0) -> dict: ...
+    def job_tenant(self, jid: str) -> str | None: ...
+    def job_cancel(self, jid: str) -> dict: ...
 
 
 def require_manage(ident: Identity, user_id: str) -> dict:
@@ -96,11 +110,13 @@ class Approvals:
             raise ServiceError(404, "not_found", "审批不存在")
         return _decoded(row)
 
-    def require_owner(self, workspace_id: str, uid: str) -> None:
+    def require_owner(self, workspace_id: str, uid: str, resource: str | None = None) -> None:
         user = self.ident.get_user(uid)
         member = self.ident.membership(workspace_id, uid)
         if not user or user["status"] != "active" or not member or member["role"] != "owner":
             raise ServiceError(403, "owner_required", "需要该工作空间当前所有者批准")
+        if resource is not None and resource != docs_resource():
+            return                      # the directory is the workspace's own: ownership is the question
         ok, wid, _ = Apps(self.store, self.ident).check_access(uid, DOCS_APP_ID, workspace_id)
         if not ok or wid != workspace_id:
             raise ServiceError(403, "approver_unavailable", "审批人当前没有此应用的使用资格")
@@ -117,8 +133,13 @@ class Approvals:
         kind = body.get("credential_kind")
         if kind not in ("api_key", "service_account"):
             raise ServiceError(400, "invalid_kind", "不支持的凭据类型")
-        scopes = _strings(body.get("scopes"), field="scopes", allowed=SCOPES)
-        resources = _strings(body.get("resources"), field="resources", allowed={docs_resource()})
+        by_resource = resource_scopes()
+        resources = _strings(body.get("resources"), field="resources", allowed=set(by_resource))
+        if len(resources) != 1:
+            raise ServiceError(400, "one_resource", "一次审批只能针对一个接口", {"field": "resources"})
+        scopes = _strings(body.get("scopes"), field="scopes", allowed=by_resource[resources[0]])
+        if resources[0] != docs_resource() and kind != "service_account":
+            raise ServiceError(400, "service_account_required", "工作空间目录接口只签发服务账户", {"field": "credential_kind"})
         days = body.get("expires_in_days", 30)
         if type(days) is not int or not 1 <= days <= 365:
             raise ServiceError(400, "invalid_expiry", "审批有效期必须为 1 至 365 天")
@@ -135,15 +156,17 @@ class Approvals:
     def decide(self, aid: str, uid: str, action: str, body: dict, reason: str) -> dict:
         with self.store.tx():
             row = self.get(aid)
-            self.require_owner(row["workspace_id"], uid)
+            self.require_owner(row["workspace_id"], uid, (row["requested_resources"] or [None])[0])
             if row["status"] != "pending" or row["expires_at"] <= now():
                 raise ServiceError(409, "approval_not_pending", "审批已处理或已过期")
             if action not in ("approve", "reject"):
                 raise ServiceError(400, "invalid_action", "不支持的操作")
             scopes, resources = [], []
             if action == "approve":
-                wanted = _strings(body.get("scopes"), field="scopes", allowed=SCOPES)
-                targets = _strings(body.get("resources"), field="resources", allowed={docs_resource()})
+                by_resource = resource_scopes()
+                targets = _strings(body.get("resources"), field="resources", allowed=set(by_resource))
+                allowed_scopes = frozenset().union(*(by_resource[r] for r in targets))
+                wanted = _strings(body.get("scopes"), field="scopes", allowed=allowed_scopes)
                 scopes = sorted(set(wanted) & set(row["requested_scopes"]))
                 resources = sorted(set(targets) & set(row["requested_resources"]))
                 if not scopes or not resources:
@@ -162,10 +185,13 @@ class Approvals:
             raise ServiceError(403, "approval_inactive", "工作空间审批无效、已撤回或已过期")
         if tenant is not None and tenant != row["workspace_id"]:
             raise ServiceError(403, "approval_resource_mismatch", "凭据超出已批准的工作空间")
-        self.require_owner(row["workspace_id"], row["approved_by"])
-        if docs_resource() not in set(row["approved_resources"]) & set(row["requested_resources"]):
+        by_resource = resource_scopes()
+        granted = [r for r in set(row["approved_resources"]) & set(row["requested_resources"]) if r in by_resource]
+        if not granted:
             raise ServiceError(403, "approval_resource_mismatch", "凭据超出已批准的 API 资源")
-        row["effective_scopes"] = sorted(set(row["approved_scopes"]) & set(row["requested_scopes"]) & SCOPES)
+        self.require_owner(row["workspace_id"], row["approved_by"], granted[0])
+        row["resource"] = granted[0]
+        row["effective_scopes"] = sorted(set(row["approved_scopes"]) & set(row["requested_scopes"]) & by_resource[granted[0]])
         return row
 
     def bind(self, aid: str, kind: str, credential_id: str) -> None:
@@ -247,7 +273,7 @@ def record_call(store: Store, principal: dict | None, method: str, route: str, s
     credentials or local paths. Raw headers, body, query and response are never accepted.
     """
     p = principal or {}
-    if not route.startswith("/api/v1/") or "?" in route or len(route) > 200:
+    if not route.startswith(("/api/v1/", "/api/workspace/v1/")) or "?" in route or len(route) > 200:
         route = "/api/v1/<unmatched>"
     with store.tx():
         store.insert("api_platform_calls", {"id": new_id("call"), "at": now(),

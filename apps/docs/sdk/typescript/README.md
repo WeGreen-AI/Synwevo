@@ -1,8 +1,8 @@
 # Synwevo Docs Node / TypeScript client
 
 `synwevo-docs.mjs` is the executable second-language client: a dependency-free ES module for
-Node 18+. It can be imported from JavaScript or a TypeScript application that accepts `.mjs`
-modules. It does not ship TypeScript declaration files or require a build step.
+Node 18+. It can be imported from JavaScript or TypeScript and needs no build step; its type
+declarations are `synwevo-docs.d.ts` (see [Types](#types)).
 
 Run commands from the repository root (or use the script's absolute path from another directory):
 
@@ -97,6 +97,96 @@ receipts; see [the receiver workflow](../n8n/README.md).
 CLI stdout is JSON; progress/errors go to stderr. Exit codes are 0 success, 2 usage, 3 API 4xx or
 preflight failure, 4 transport/server/integrity failure, 5 failed/cancelled job, 6 wait timeout,
 130 interruption. `--cancel-on-interrupt` cancels a known job when interrupting generation/wait.
+
+## Workspace directory
+
+`WorkspaceClient` is an independent export for `/api/workspace/v1` on the Account
+origin. `await WorkspaceClient.fromEnv()` reads only `SYNWEVO_WORKSPACE_BASE_URL`
+(default `https://accounts.synwevo.com`), `SYNWEVO_WORKSPACE_CLIENT_ID`,
+`SYNWEVO_WORKSPACE_CLIENT_SECRET_FILE` or `SYNWEVO_WORKSPACE_CLIENT_SECRET`, and
+optional `SYNWEVO_WORKSPACE_TOKEN_URL`. Its resource is always
+`urn:synwevo:platform:workspace`; scope defaults to `workspace.read`. Set
+`SYNWEVO_WORKSPACE_SCOPE=workspace.read workspace.members.write` explicitly when
+that write permission has been approved by the workspace owner. Docs defaults and
+credentials are not inherited. An explicit constructor accepts an origin and
+`ClientCredentials` configured with that resource and scope.
+
+```js
+import { WorkspaceClient } from '@synwevo/docs-sdk';
+const directory = await WorkspaceClient.fromEnv();
+const who = await directory.whoami();
+const members = await directory.listMembers({ role: 'viewer', limit: 50 });
+const invitation = await directory.createInvitation({ email: 'colleague@example.com', role: 'viewer' },
+  { idempotencyKey: 'onboard-2026-09' });
+const resent = await directory.resendInvitation(invitation.id, { idempotencyKey: 'remind-2026-09' });
+await directory.revokeInvitation(resent.id);
+await directory.changeMember(memberId, { role: 'editor', expectedRole: 'viewer' });
+await directory.removeMember(memberId, { expectedRole: 'editor', reason: 'Membership ended' });
+```
+
+`iterMembers` and `iterInvitations` are async iterators over offset pages.
+`expectedRole` is mandatory for both member mutations; concurrent edits return
+409 `role_changed`. Only `viewer`/`editor` roles are writable. Create/resend reuse
+one key on retries; other writes are not retried after uncertain server outcomes.
+The [directory acceptance](../python/README.md#verification) installs a local npm
+tarball, uses real owner approval and service tokens, and checks mail/audit effects.
+
+## Copy requests
+
+Use the project owner's delegated OAuth token with `copyTargets()`,
+`copyManifest(projectId)`, `requestCopy(projectId, { targetWorkspaceId },
+{ idempotencyKey })`, `listCopyRequests(projectId, { status: 'pending', limit: 50 })`,
+`getCopyRequest(copyId)`, and `withdrawCopyRequest(copyId)`. API keys and service
+accounts cannot act for the owner. Creation retries reuse the same key; withdrawal
+is not automatically retried after an uncertain server result. Read its status
+before deciding the next action. Lists are newest first, capped at 100, with no
+cursor. Approval stays in the target approver's authenticated browser flow.
+`CopyRequest` and `CopyStatus` describe results; `CopyEventType` narrows webhook/feed
+events. `copy.*` is a webhook subscription filter; event feed filters use explicit
+types such as `copy.requested` and `copy.withdrawn`.
+
+## Types
+
+`synwevo-docs.d.ts` declares every export: the constants, the error classes and their fields,
+`ApiKey` / `ClientCredentials`, every `Client` method with its option object, the webhook helpers
+and `main`. Responses are typed after what `/api/v1` returns (`Project`, `SourceFile`, `Template`,
+`Job`, `JobItem`, `Artifact`, `WebhookEvent`, `Page<T>`, …); objects the server describes only
+loosely are `Record<string, unknown>` plus their known fields. Statuses are unions (`JobStatus`,
+`SourceFileStatus`, `ItemStatus`) and a webhook or feed event narrows on `type`. JSON objects the
+client returns carry a non-enumerable `$meta` (`WithMeta<T>`: HTTP status, request ID, idempotent
+replay). The declarations reference Node's types, so a TypeScript project needs `@types/node`.
+Argument checks that the client does before sending (for example `updateField` without
+`baseHead`) throw a `ValidationError` synchronously; the declarations catch most of them at
+compile time.
+
+```ts
+import { Client, credentialsFromEnv, type Job } from '@synwevo/docs-sdk';  // from a packed tarball
+// vendored copy: import { Client, credentialsFromEnv, type Job } from './synwevo-docs.mjs';
+const client = new Client(process.env.SYNWEVO_BASE_URL ?? '', await credentialsFromEnv());
+const job: Job = await client.waitForJob(jobId);
+```
+
+Job declarations preserve historical nullable fields and sparse stored options/counts.
+Detail counts always contain ten keys; an absent stored key becomes zero, while an explicit
+null stays null. `idempotent_replay` remains optional, cancellation responses require `cancel`,
+and a run's `items` may be null while planning. Issues, verification and job-event data are
+open `JSONValue`; narrow their shape before reading format-specific fields. These declaration
+corrections do not change JavaScript response objects or HTTP behavior.
+
+When vendoring, copy `synwevo-docs.mjs`, `synwevo-docs.d.ts` and `synwevo-docs.d.mts` together:
+for a relative `.mjs` import TypeScript reads the `.d.mts`, which only re-exports the `.d.ts`.
+`test/types-check.ts` exercises the main flow and some misuse the types must reject; from the
+repository root:
+
+```sh
+node_modules/.bin/tsc --noEmit --strict --module nodenext --moduleResolution nodenext \
+  --target es2022 apps/docs/sdk/typescript/test/types-check.ts
+```
+
+`package.json` names the package `@synwevo/docs-sdk` 0.1.0. It is **private: not published to npm
+or any other registry**. `npm pack` in this directory builds a local tarball (the module, the
+declarations and this README) that another project can install by path, and `npm test` runs the
+contract tests. It has no dependencies and is not one of the repository's npm workspaces.
 
 ## Reproducible synthetic acceptance
 

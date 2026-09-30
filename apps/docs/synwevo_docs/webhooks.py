@@ -56,6 +56,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id
 from synwevo_core import workers
 from synwevo_core.docs_file_events import FILE_EVENT_TYPES
+from synwevo_core.project_copies import COPY_EVENT_TYPES
 
 # Standard Webhooks' example schedule: after the first attempt, 9 more over ~3.1 days.
 BACKOFF_S = (5, 300, 1800, 7200, 18000, 36000, 50400, 72000, 86400)
@@ -73,8 +74,8 @@ JOB_EVENT_TYPES = ("job.created", "job.started", "job.planned", "job.cancel_requ
                    "job.completed", "job.completed_with_errors", "job.failed", "job.cancelled")
 # Source-file verdicts, written by a trigger in the transaction that changes the file's status
 # (synwevo_core.docs_file_events): job_id is '' and data carries file_id / project_id / status.
-EVENT_TYPES = JOB_EVENT_TYPES + FILE_EVENT_TYPES
-EVENT_PREFIXES = ("job.*", "file.*")
+EVENT_TYPES = JOB_EVENT_TYPES + FILE_EVENT_TYPES + COPY_EVENT_TYPES
+EVENT_PREFIXES = ("job.*", "file.*", "copy.*")
 PING_EVENT = "webhook.ping"
 DELIVERY_STATUSES = ("pending", "delivered", "failed", "dropped")
 
@@ -1461,6 +1462,9 @@ def events_feed(store: Store, tenant: str, cursor: str | None = None, types: str
             # A file verdict belongs to no job: its file and project come from the event itself.
             item["file_id"] = data.get("file_id")
             item["project_id"] = data.get("project_id")
+        elif r["type"].startswith("copy.") and isinstance(data, dict):
+            item["copy_id"] = data.get("copy_id")
+            item["project_id"] = data.get("source_project_id")
         items.append(item)
     nxt = rows[-1]["seq"] if rows else (after or 0)
     return {"items": items, "next_cursor": _enc_cursor("e1", nxt), "has_more": more}

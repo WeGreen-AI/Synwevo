@@ -15,13 +15,19 @@ from pathlib import Path
 # METHOD PATH | SDK methods (including pagination helpers) | CLI commands (semicolon separated)
 ROUTES = """
 GET /healthz | health | health
-GET /readyz | |
+GET /readyz | readiness |
 GET /api/v1/capabilities | capabilities | capabilities
 GET /api/v1/whoami | whoami | whoami
 POST /api/v1/projects | create_project | projects create
 GET /api/v1/projects | list_projects,iter_projects | projects list
 GET /api/v1/projects/{pid} | get_project | projects get
 PATCH /api/v1/projects/{pid} | update_project |
+GET /api/v1/copy-targets | copy_targets |
+GET /api/v1/projects/{pid}/copy-manifest | copy_manifest |
+GET /api/v1/projects/{pid}/copy-requests | list_copy_requests |
+POST /api/v1/projects/{pid}/copy-requests | request_copy |
+GET /api/v1/copy-requests/{cid} | get_copy_request |
+POST /api/v1/copy-requests/{cid}/withdraw | withdraw_copy_request |
 DELETE /api/v1/projects/{pid} | delete_project | projects delete
 PUT /api/v1/projects/{pid}/rule | put_rule | rule put
 PUT /api/v1/projects/{pid}/template | set_project_template | projects template
@@ -85,7 +91,7 @@ POST /api/v1/artifacts/{aid}/link | artifact_link |
 GET /api/v1/jobs/{jid}/archive | download_archive | archive download
 POST /api/v1/jobs/{jid}/archive-link | archive_link |
 GET /api/v1/jobs/{jid}/report.csv | download_report | report download
-GET /api/v1/download/{token} | |
+GET /api/v1/download/{token} | download_signed |
 POST /api/v1/uploads | create_upload,resumable_upload | files upload --resumable; templates upload --resumable
 GET /api/v1/uploads/{uid} | get_upload | files upload --resumable; templates upload --resumable
 PUT /api/v1/uploads/{uid} | put_upload_chunk | files upload --resumable; templates upload --resumable
@@ -165,7 +171,7 @@ def audit(spec_path, evidence):
             "evidence": [{"file": p.name, "sha256": digest(p)} for p in evidence],
             "unmatched_http_observations": {route: dict(counts) for route, counts in observed.items() if route not in actual},
             "interpretation": "Implementation inventory reviewed against source; method existence and exact route/operation inventory checked. Observed statuses combine SDK/CLI and harness probes; they do not prove every parameter or behavior. Empty counts mean not exercised by this run.",
-            "limitations": ["No readyz SDK method", "No signed-token download SDK method; authenticated downloads are implemented",
+            "limitations": ["No source page image or source locator probe SDK method",
                             "CLI is a subset; resumable session routes are exercised indirectly by uploads",
                             "Credential administration and webhooks are implemented but not part of the read/write service acceptance",
                             "failed_only verifies exclusion of cancelled items and selection fingerprint conflict, not a positive failed-item retry"],

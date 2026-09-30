@@ -240,6 +240,13 @@ UNREAD_TITLE = {
     "zh-Hans": "「{conversation}」有 {n} 条未读消息", "zh-Hant": "「{conversation}」有 {n} 則未讀訊息", "en": "{n} unread in “{conversation}”",
 }
 ATTACHMENT_WORD = {"zh-Hans": "[附件]", "zh-Hant": "[附件]", "en": "[attachment]"}
+#: Who did it, when the actor is a role rather than a person the reader knows (`actor_kind`, set
+#: only by server code): a platform administrator acting on a workspace — undoing the assignment
+#: of the historical data — is named by the role. Their email or name would otherwise go to every
+#: former member, including an account the data was assigned to by mistake.
+ACTOR_WORDS = {
+    "platform_admin": {"zh-Hans": "平台管理员", "zh-Hant": "平台管理員", "en": "a platform administrator"},
+}
 OUTCOME_WORDS = {
     "completed": {"zh-Hans": "已完成", "zh-Hant": "已完成", "en": "finished"},
     "completed_with_errors": {"zh-Hans": "已完成，部分失败", "zh-Hant": "已完成，部分失敗", "en": "finished with errors"},
@@ -716,6 +723,10 @@ def _clean_params(params: dict) -> dict:
 
 def _localised_params(params: dict, loc: str) -> dict:
     out = dict(params)
+    if out.get("actor_kind") in ACTOR_WORDS:
+        # A separate key, never the `actor` text itself: a person whose display name happens to
+        # read "platform_admin" must not be rendered as the platform's administrator.
+        out["actor"] = ACTOR_WORDS[out["actor_kind"]][loc]
     if "role" in out and out["role"] in ROLE_WORDS:
         out["role"] = ROLE_WORDS[out["role"]][loc]
     if "what" in out and out["what"] in SECURITY_WHAT:

@@ -130,6 +130,14 @@ def apply_security_headers(request: Request, resp) -> None:
     if request_is_https(request):
         resp.headers.setdefault("Strict-Transport-Security", HSTS)
 PUBLIC_V1 = ("/api/v1/download/",)          # signed links carry their own proof
+#: The workspace directory API (API-5): machine-only, on the account service, its own resource.
+DIRECTORY_V1 = "/api/workspace/v1"
+
+
+def machine_path(path: str) -> bool:
+    """A path of a machine API (Docs /api/v1 or the workspace directory): the error envelope,
+    RateLimit headers and call record apply to both."""
+    return path.startswith("/api/v1") or path.startswith(DIRECTORY_V1)
 
 #: The roles a process can be composed as. Anything else is refused at startup: an unknown role
 #: used to fall through every branch and start a server whose API answered 404 everywhere while
@@ -394,7 +402,7 @@ def _route_template(request: Request) -> str:
             inner = getattr(route, "original_router", None)          # an included router (FastAPI ≥ 0.140)
             if inner is not None:
                 pending[:0] = list(getattr(inner, "routes", ()))
-            elif str(getattr(route, "path", "")).startswith("/api/v1/") and hasattr(route, "matches"):
+            elif machine_path(str(getattr(route, "path", ""))) and hasattr(route, "matches"):
                 routes.append(route)
         app.state.v1_route_index = routes
     for route in routes:
@@ -590,7 +598,8 @@ def build_platform(data_dir_arg: str | None = None) -> Platform:
 
     def audit(request: Request, action: str, *, actor_id: str | None = None, actor_kind: str = "user",
               workspace_id: str | None = None, object_kind: str | None = None,
-              object_id: str | None = None, result: str = "ok", meta: dict | None = None) -> None:
+              object_id: str | None = None, result: str = "ok", meta: dict | None = None,
+              workspace_given: bool = False) -> None:
         """Append a security event.
 
         Metadata only — never a password, token, TOTP seed, recovery code or document content.
@@ -602,7 +611,10 @@ def build_platform(data_dir_arg: str | None = None) -> Platform:
             "INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,"
             "object_id,result,request_id,ip,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (new_id("ae"), time.time(), actor_kind, actor_id,
-             workspace_id or getattr(getattr(request, "state", None), "workspace_id", None), action, object_kind, object_id,
+             # workspace_given: the caller named the target (possibly none); do not substitute the
+             # actor's own session workspace, which would attribute a platform action to it.
+             workspace_id if workspace_given else (workspace_id or getattr(getattr(request, "state", None), "workspace_id", None)),
+             action, object_kind, object_id,
              result, getattr(getattr(request, "state", None), "request_id", None),
              # Background runners (mail, imports) audit with request=None: no request id, no address.
              (client_ip(request) or None) if request is not None else None,
@@ -650,7 +662,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
 
     def _error_body(request: Request, code: str, message: str, detail: dict | None):
         rid = getattr(request.state, "request_id", "")
-        if request.url.path.startswith("/api/v1"):
+        if machine_path(request.url.path):
             body = {"error": {"code": code, "message": message, "request_id": rid}}
             if isinstance(detail, dict) and detail.get("field"):
                 body["error"]["field"] = detail["field"]
@@ -671,7 +683,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         # The refusal's code travels with the request so the call record can say *why* (a
         # diagnosis by request ID needs "rate_limited" or "queue_full", not only "429").
         request.state.error_code = code
-        if request.url.path.startswith("/api/v1") and wants_problem(request):
+        if machine_path(request.url.path) and wants_problem(request):
             return JSONResponse(problem_body(getattr(request.state, "request_id", ""), status, code,
                                              message, detail),
                                 status_code=status, media_type=PROBLEM_JSON, headers=headers)
@@ -682,7 +694,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         """Headers every /api/v1 response carries, including ones built outside the gate."""
         out = {"X-Request-ID": getattr(request.state, "request_id", "") or ""}
         decision = getattr(request.state, "ratelimit", None)
-        if decision is not None and request.url.path.startswith("/api/v1"):
+        if decision is not None and machine_path(request.url.path):
             out.update(decision.headers())
         return out
 
@@ -710,7 +722,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         """Malformed parameters on /api/v1 get the documented 400 envelope (api.md §2), with
         every failing field listed — not FastAPI's bare 422 `{"detail": [...]}`. The browser
         API keeps FastAPI's own shape, which its client already handles."""
-        if not request.url.path.startswith("/api/v1"):
+        if not machine_path(request.url.path):
             return await request_validation_exception_handler(request, exc)
         errors = []
         for e in exc.errors():
@@ -732,7 +744,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
 
     @api.exception_handler(StarletteHTTPException)
     async def _http_err(request: Request, exc: StarletteHTTPException):
-        if not request.url.path.startswith("/api/v1"):
+        if not machine_path(request.url.path):
             return await http_exception_handler(request, exc)
         code, message = {404: ("not_found", "接口不存在"),
                          405: ("method_not_allowed", "该接口不支持这个请求方法")}.get(
@@ -953,7 +965,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     # `/auth/external/` is the account service's outbound sign-in through an external OpenID
     # provider — account-owned, unlike `/auth/start` and `/auth/callback`, which are the
     # relying-party side that every application serves for itself.
-    ACCOUNT_PATHS = ("/api/auth/", "/api/admin/", "/oidc/", "/.well-known/", "/auth/external/")
+    ACCOUNT_PATHS = ("/api/auth/", "/api/admin/", "/api/workspace/", "/oidc/", "/.well-known/", "/auth/external/")
     SHARED_PATHS = ("/api/health", "/healthz", "/readyz", "/assets/")
     # Liveness and readiness. An **exact set**, not a prefix: SHARED_PATHS above matches by
     # prefix, so a route added later called /healthz-debug would inherit anonymity by accident.
@@ -1074,15 +1086,16 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                     "/login", "/register", "/invite", "/verify-email", "/forgot-password", "/reset-password", "/onboarding", "/logged-out"):
                 resp.headers.setdefault("Cache-Control", "no-store")
                 resp.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
-            if request.state.ratelimit is not None and path.startswith("/api/v1"):
+            if request.state.ratelimit is not None and machine_path(path):
                 # On every response to an authenticated /api/v1 call, success or not, so a
                 # client can pace itself before it is refused rather than only after.
                 for k, v in request.state.ratelimit.headers().items():
                     resp.headers[k] = v
-            if path.startswith("/api/v1"):
+            if machine_path(path):
                 from .api_platform import record_call
                 matched = getattr(request.scope.get("route"), "path", "") or _route_template(request)
-                template = matched if matched.startswith("/api/v1/") else "/api/v1/<unmatched>"
+                prefix = DIRECTORY_V1 if path.startswith(DIRECTORY_V1) else "/api/v1"
+                template = matched if matched.startswith(prefix + "/") else prefix + "/<unmatched>"
                 try:
                     await run_in_threadpool(record_call, store, getattr(request.state, "principal", None),
                                             request.method, template, resp.status_code,
@@ -1104,7 +1117,20 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 # accounts-origin cookie reaching Synwevo Docs' data would defeat the whole point
                 # of giving them separate origins.
                 return await finish(_error_response(request, 404, "not_in_this_role", off, None))
-            if path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):
+            if path.startswith(DIRECTORY_V1):
+                # The workspace directory (API-5): only its own service accounts, only its own
+                # audience; the same rate gate and call record as the Docs API.
+                principal = await run_in_threadpool(machine.verify_workspace, request.headers.get("Authorization"))
+                request.state.principal = principal
+                decision = await run_in_threadpool(rate_gate.take, principal)
+                request.state.ratelimit = decision
+                if not decision.allowed:
+                    lim = decision.refused_by
+                    raise ServiceError(429, "rate_limited", f"请求过于频繁（限制 {lim.cap} 次/分钟）",
+                                       {"retry_after": decision.retry_after, "limit_scope": "credential" if lim.name == "key" else "workspace",
+                                        "limit": lim.cap, "window_s": 60, "policy_source": lim.source})
+                token = set_tenant(principal["tenant"])
+            elif path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):
                 # Credential checks read (and occasionally write) the database, so they run in
                 # a worker thread rather than blocking the event loop for every other request.
                 principal = await run_in_threadpool(machine.verify, request.headers.get("Authorization"))

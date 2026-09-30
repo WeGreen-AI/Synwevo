@@ -24,8 +24,10 @@ DELIVERY_STATUSES = ("pending", "delivered", "failed", "dropped")
 # The server's catalogue (synwevo_docs.webhooks.EVENT_TYPES); apps/docs/tests/test_file_events.py keeps them equal.
 EVENT_TYPES = ("job.created", "job.started", "job.planned", "job.cancel_requested", "job.retry_requested", "job.recovered",
                "job.completed", "job.completed_with_errors", "job.failed", "job.cancelled",
-               "file.ready", "file.needs_ocr", "file.rejected", "file.failed")
-EVENT_FILTERS = ("*", "job.*", "file.*") + EVENT_TYPES
+               "file.ready", "file.needs_ocr", "file.rejected", "file.failed",
+               "copy.requested", "copy.approved", "copy.rejected", "copy.withdrawn", "copy.expired",
+               "copy.done", "copy.failed", "copy.stale")
+EVENT_FILTERS = ("*", "job.*", "file.*", "copy.*") + EVENT_TYPES
 _FORMAT = re.compile(r"^[a-z0-9]{1,10}$")
 
 

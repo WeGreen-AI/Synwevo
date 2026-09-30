@@ -47,6 +47,11 @@ jobs:
           # the runtime image below has no Node and skips it)
           SYNWEVO_SHEET_CLIENTS=required python -m pytest apps/docs/tests/test_sheet_live_clients.py -q
           python -m unittest discover -s infra/production/tests -v
+          # Both SDKs' unit tests (loopback stubs, no network). They sit outside the repository's
+          # pytest testpaths, so without this step an SDK regression would ship unnoticed.
+          python -m pip install --no-deps apps/docs/sdk/python
+          python -m pytest apps/docs/sdk/python/tests -q
+          node --test apps/docs/sdk/typescript/test/*.test.mjs
       - name: Verify the deployment runtime
         run: |
           # Reproduce the receiver's private source extraction, including 0700 directories.

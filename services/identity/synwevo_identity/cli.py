@@ -557,10 +557,30 @@ def cmd_info(args) -> int:
     return 0
 
 
+def cmd_workspace_openapi(args) -> int:
+    """Export route metadata only: no Store, migration, credentials or workers are opened."""
+    from fastapi import FastAPI
+    from .workspace_api import build_router
+    from .workspace_contract import contract
+    api = FastAPI()
+    # Route construction captures dependencies; schema extraction never invokes a handler.
+    api.include_router(build_router(None, None, None, None, None))
+    spec = contract(api, issuer="https://accounts.synwevo.com")
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"已写出 {out}（{len(spec['paths'])} 个路径）")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", help="数据目录（默认 $SYNWEVO_DATA_DIR 或仓库根目录 data/）")
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    contract = sub.add_parser("workspace-openapi", help="导出工作空间机器接口契约（不打开数据库）")
+    contract.add_argument("--out", required=True, help="JSON 输出文件")
+    contract.set_defaults(func=cmd_workspace_openapi)
 
     b = sub.add_parser("bootstrap", help="建立首位平台管理员（无默认口令）")
     b.add_argument("action", choices=["status", "token", "admin"])

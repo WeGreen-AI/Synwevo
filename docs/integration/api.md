@@ -4,7 +4,7 @@
 接口不依赖浏览器、页面、DOM 或鼠标选区。受控 CLI 与平台管理员专用 API 台可管理凭据与回调；
 普通用户的文档业务接口仍按正常空间和对象权限使用。控制台说明见下节。
 
-## 管理员 API 台（本机开发轮，2026-09-25）
+## 管理员 API 台
 
 账户源站 `/admin/api-platform` 及 `/api/admin/api-platform/*` 要求有效平台管理员的
 `api_platform.manage`。组织所有者通过 `/account/api-approvals` 批准**自己有权管理的空间**；
@@ -12,7 +12,7 @@
 在凭据签发和每次机器调用时再次检查。撤销批准不能通过重新启用客户端绕过。
 
 控制台包括真实调用元数据/状态汇总、一次性秘密展示、服务身份和旧式密钥生命周期、实际 OpenAPI 文档，
-以及受限凭据调试与 Webhook 管理。请求记录只保存路由模板、关联 ID、状态与耗时，不存令牌、请求正文或文档。
+以及受限凭据调试与 Webhook 管理。「Webhook」页签顶部的投递运行概况（API-6，`GET /api/admin/api-platform/webhooks`）跨工作空间列出订阅健康：接收方只显示来源（scheme://host:port，路径与查询可能含对方令牌，不显示）、状态、连续失败、排队数、近 7 天成功/失败、最近错误；总览显示事件积压与持续失败的订阅数。平台可对失败或异常的接收方做保护性暂停（`POST …/webhooks/{sid}/pause`，近期重新验证 + 理由 + 审计，排队投递随之丢弃）；恢复、重投与修改仍由工作空间用自己的凭据完成。不显示事件内容或签名密钥。「生成任务」页签（`GET …/jobs`、`POST …/jobs/{jid}/cancel`）跨工作空间列出任务元数据（状态、阶段、计数、来源、提交请求编号，不含项目/模板名称与样本内容），可对失控任务做保护性停止（规则与工作空间自己取消相同，重新验证 + 理由 + 审计）。「审计」页签（`GET …/audit`）只读列出 API 平台相关动作（`api_platform.*`、`oidc.*`、`api.credential.*`、`cli.client.*`），含被拒绝与出错的尝试，可按动作、结果、工作空间、请求编号筛选；控制台审计行记录目标工作空间与所建对象的 id。请求记录只保存路由模板、关联 ID、状态与耗时，不存令牌、请求正文或文档。
 机器契约里的路径、字段、错误码和枚举不随界面语言变化。界面说明使用独立三语言资源。
 
 Docs 的实现通过组装层注入 `DocsControlPlane`，账户服务没有导入 Docs 的实现。调试必须提供显式受限
@@ -24,9 +24,12 @@ HTTP 页面访问和每次管理调用都有服务端权限检查；仅隐藏导
 验证入口：`test_api_platform.py`、`test_api_platform_races.py`、`test_api_platform_pipeline.py`、
 `test_api_platform_contract_i18n.py` 以及同目录浏览器验收脚本。当前结果见 [handoff](../quality/handoff.md)。
 
-* 基础地址：`http://<host>:<port>/api/v1`（默认 `http://127.0.0.1:8765/api/v1`，端口见 [ports.md](ports.md)）
+* 正式 Docs 基础地址：`https://docwave.synwevo.com/api/v1`；工作空间目录在 `https://accounts.synwevo.com/api/workspace/v1`。自托管使用该部署配置的对应源站；本机开发端口见 [ports.md](ports.md)。
 * 机器可读规范：[openapi.yaml](openapi.yaml)（由 `python -m synwevo_docs.cli openapi` 从实际路由导出，`apps/docs/tests/test_api_docs.py` 校验其与代码一致）
 * 调用示例与脚本：[automation.md](automation.md)
+
+本文描述仓库内已实现的契约，不代表所有变更已部署到正式地址。当前批次的本地验证与线上版本分别记录在
+[API 检查点](../ai/api-platform.md)和[发布记录](../quality/deployment.md)。
 
 2026-09-24：API 与浏览器均继续复用业务引擎。本轮增加原生文件预览、严格仅失败项重试和当前权限复核；
 完整综合验收仍在进行，实际证据与未完成项见 [handoff](../quality/handoff.md)。以下表格按能力组织，
@@ -123,6 +126,59 @@ curl -s -X POST "$ISSUER/oidc/token" \
 
 `tests/integration/automation_example.py` 两种都支持：给 `--key` 用旧密钥，给
 `--issuer --client-id --client-secret` 用服务账户。
+
+### 1.1a 复制申请（API-5，场景 C）
+
+把个人空间里的项目复制到组织工作空间，需要目标组织审批人批准。机器接口只接受**项目所有者本人授权的应用**
+（用户委托令牌，`docweave.read`/`docweave.write`，同意时选择项目所在的个人空间）；访问密钥与服务账户 403
+`delegation_required`。审批本身不开放给机器：审批人在「组织 → 审批」页面决定（需要近期重新验证），在请求里带
+`decide`/`reason` 得 400 `decision_in_browser`。执行前在发布事务内重新核对来源摘要、申请人与审批人的权限，
+以及发起申请的原 OAuth 授权家族与客户端；撤回同意或停用客户端后，尚未执行的申请也会成为 `stale`。
+副本与完成状态原子提交；恢复旧版不确定记录时先核对持久副本，不盲目重做。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/copy-targets` | read | 本人可编辑的组织工作空间（可作目标）；`source_is_personal` |
+| GET | `/projects/{pid}/copy-manifest?sources=&corrections=` | read | 预览将被冻结的清单与摘要，不创建申请 |
+| POST | `/projects/{pid}/copy-requests` | write | `{target_workspace_id, name?, purpose?, scope?: {sources, corrections}}`，支持 `Idempotency-Key`（同键重放同一申请，改参 409）；同一目标已有未完成申请 409 `copy_already_requested`；审批人收到站内待办 |
+| GET | `/projects/{pid}/copy-requests?status=&limit=` | read | 本人发起的申请，先过滤再截取最新结果；默认 50，最多 100，无后续页游标 |
+| GET | `/copy-requests/{cid}` | read | 状态、清单、审批人与理由、结果（`done` 时 `result.project_id` 为目标空间的新项目） |
+| POST | `/copy-requests/{cid}/withdraw` | write | 撤回待审批或已批准未执行的申请；已撤回再撤 409 `not_withdrawable`；SDK 不自动重试 |
+
+状态变化以事件 `copy.requested/approved/rejected/withdrawn/expired/done/failed/stale` 发往来源个人空间的事件流与订阅
+（触发器与状态同一事务写入；负载只有 `copy_id`、`source_project_id`、`target_workspace_id`、`status`、`version`）。
+副本是目标空间里的独立项目：不带原项目的凭据、任务、产物、Webhook 与协作房间，来源空间的令牌也读不到它。
+
+### 1.2 工作空间目录接口（API-5）
+
+账户服务上的 `/api/workspace/v1` 是另一个机器接口：一个工作空间的成员、角色与邀请，给该空间所有者批准的**服务账户**。
+它有自己的资源 `urn:synwevo:platform:workspace`（`SYNWEVO_WORKSPACE_RESOURCE` 可改）与权限 `workspace.read`、`workspace.members.write`；
+申请令牌时带 `resource=urn:synwevo:platform:workspace`。Docs 的密钥与令牌不能调用它（受众不符 401 `invalid_audience`；
+`dw_` 密钥 403 `wrong_credential`），它的令牌也不能调用 `/api/v1`。凭据经管理台「授权审批」选择「工作空间目录接口」申请，
+所有者批准后签发（只签发服务客户端）；每次调用复核审批、所有者资格与工作空间状态，冻结或撤回即停止。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/whoami` | workspace.read | 凭据所属工作空间与权限 |
+| GET | `/members?role=&q=&offset=&limit=` | workspace.read | 成员：`user_id`、`email`、`display_name`、`role`、`account_status`、`joined_at`；`owner_count` |
+| GET | `/invitations?state=&offset=&limit=` | workspace.read | 邀请：`id`、`email`、`role`、`state`（pending/accepted/declined/revoked/expired）、时间 |
+| POST | `/invitations` | workspace.members.write | `{email,role,can_export?,expires_in_days?}`，仅 viewer/editor；201 表示真实邀请及邮件已入队，不表示已加入或邮件送达；支持幂等键 |
+| POST | `/invitations/{iid}/resend` | workspace.members.write | 新邀请替代旧链接；同一地址冷却 60 秒；支持幂等键 |
+| POST | `/invitations/{iid}/revoke` | workspace.members.write | 撤回本空间普通成员邀请；已接受不能撤回 |
+| PATCH | `/members/{user_id}` | workspace.members.write | `{role,expected_role}` 均必填，viewer/editor；旧角色不符 409 `role_changed` |
+| POST | `/members/{user_id}/remove` | workspace.members.write | `{expected_role,reason}` 均必填；仅 viewer/editor，原因 4–500 字；清理现有成员权限 |
+
+只返回目录元数据，不含任何成员创作的内容。同一套限流、调用记录与错误信封（含 RFC 9457）适用。
+新成员仍通过真实邀请和本人验证加入；邀请邮件、页面和通知标明集成与批准人。邀请接受时检查原批准 ID，
+重新审批不会复活被撤回的旧邀请。机器不能管理管理员/所有者，也不能向邀请写入 `owner_id` 等保护字段。
+网页提升这类邀请为管理角色时须撤回后由本人重新邀请。
+
+SDK 使用同一包的独立 `WorkspaceClient`，账户 Base URL 默认 `https://accounts.synwevo.com`；见
+[Python](../../apps/docs/sdk/python/README.md#workspace-directory) 与 [TypeScript](../../apps/docs/sdk/typescript/README.md)。
+只有邀请创建/重发会自动复用幂等键重试；其他写操作结果未知时先查询状态。
+权威契约：[workspace-openapi.json](workspace-openapi.json)，命令
+`python -m synwevo_identity.cli workspace-openapi --out docs/integration/workspace-openapi.json` 从真实路由重新生成。
+机器读写目录的回滚要求与安全日志边界见 [目录写入运行说明](../platform/api-directory-writes.md#升级与恢复边界)。
 
 ## 2. 错误与追踪
 
@@ -489,3 +545,50 @@ SYNWEVO_DOCS_WEBHOOK_EVENTS=job.completed,job.completed_with_errors,job.failed,j
 * 文件大小上限 `SYNWEVO_DOCS_MAX_FILE_MB`（默认 100 MB）；单任务样本上限 `SYNWEVO_DOCS_MAX_RECORDS_PER_JOB`（默认 20 000）。
 * 数据保留：产物与来源文件保存在 `SYNWEVO_DATA_DIR`，不自动过期；清理策略见 [../operations.md](../operations.md)。
 * 兼容性：`/api/v1` 路径与字段只增不删；新增字段可能随时出现，客户端应忽略未知字段。定义文档（`docweave.*`）带 `version`，不兼容版本会被拒绝并说明。界面内部接口（不含 `/v1`）不属于兼容承诺范围。
+
+## 6. 版本与兼容
+
+各版本号分别回答不同问题，不能用 SDK 版本或 OpenAPI 格式版本推断线上部署版本：
+
+| 标识 | 当前仓库值 | 含义与来源 |
+|---|---|---|
+| HTTP 路径版本 | `/api/v1`、`/api/workspace/v1` | Docs 与目录各自的稳定业务表面，身份与受众不同 |
+| OpenAPI 格式 | `3.1.0` | schema 文档的格式，不是业务发布号；两份导出均按该版本验证 |
+| Docs API 版本 | `1.0` | Docs `API_VERSION` 与其 OpenAPI `info.version` |
+| 目录及聚合目录版本 | `1.0.0` | Accounts `workspace_contract.VERSION`；不代替各操作的源站与资源声明 |
+| 事件版本 | `1` | 每条事件中的 `version`；事件类型与业务事实 ID 独立于投递尝试 |
+| Python / TypeScript SDK | `0.1.0` | 当前本地包版本；没有以本轮工作声称完成公共包发布 |
+| 部署版本 | Git commit SHA | 从实际部署记录/主机镜像核对；匿名存活探测不暴露 SHA |
+
+客户端应容忍新增响应字段；服务端不依赖客户端回传它不需要的响应字段。显式写入模型按路由规则拒绝未知字段，
+不能把“响应可扩展”理解为可以写任意内部字段。scope、错误码、资源 ID 与枚举不随界面语言改名。
+安全撤权及权限修复仍即时生效，版本兼容不保留越权访问。
+
+补齐响应模型时，保留现有状态码、头和 JSON 字段的存在性：已有 `null` 不变成缺省；历史缺省字段不自动填入默认值。
+例如任务详情的规范化计数与列表的稀疏原始计数不同；`idempotent_replay` 只在重放时存在，`cancel` 只在取消响应出现。
+扩展业务细节仍可带额外 JSON 字段，授权描述符和堆栈继续由原有公开输出过滤规则排除。
+该原则以实际历史夹具、成功/失败状态、游标分页、重放和取消响应核对，而非只比较 schema 文件。
+
+<a id="deprecations"></a>
+
+### 6.1 当前弃用项
+
+任务提交与重试请求体里的 `idempotency_key`、`request_id` 自 **2026-09-24 00:00 UTC** 起标记弃用，
+目前仍接受；迁移到 `Idempotency-Key` 请求头。目前没有确定停止支持日期，因此不发送 `Sunset`。
+不要把旧请求体的 `request_id` 当作追踪编号：追踪使用 `X-Request-ID`，幂等使用 `Idempotency-Key`。
+
+| 情况 | 当前行为 |
+|---|---|
+| 只有请求体旧字段 | 接受并校验该键；成功响应带 `Deprecation` 和 `Link; rel="deprecation"` |
+| 同时有头和旧字段 | 请求头优先；仍返回弃用提示，便于发现尚未迁移的调用方 |
+| 两个旧字段同时存在而无头 | 按 `idempotency_key`、`request_id` 顺序选择第一个非 null 值 |
+| 只用 `Idempotency-Key` 请求头 | 正常幂等，不因这项旧输入返回弃用提示 |
+
+`Deprecation` 使用带 `@` 的 Unix 秒日期；未来若设停止支持时间，`Sunset` 使用 HTTP 日期且不得早于弃用时间。
+这些头分别表达弃用与预期停止服务时间；弃用提示本身不改变当前请求行为。
+依据 [RFC 9745](https://www.rfc-editor.org/rfc/rfc9745.html) 与
+[RFC 8594](https://www.rfc-editor.org/rfc/rfc8594.html)（核查于 2026-09-30）。
+
+部署可通过 `SYNWEVO_DOCS_API_DOC_URL` 指向有权集成者可读的本文地址，`Link` 会附加 `#deprecations`；
+未配置时返回文档 URN，不能将它说成可直接打开的公开文档站。管理接口仍要求管理员权限，文档链接不授予调用权。
+验证见 `test_api_contract_idempotency.py`。控制台尚无契约历史差异/弃用用量视图，该缺口继续在能力表跟踪。

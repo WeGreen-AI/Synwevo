@@ -99,9 +99,9 @@ export const governanceMessages = {
     "en": "Assign historical data",
     "zh-Hant": "指派歷史資料"
   },
-  "将把「{p0}」及其中{p1}个项目的访问权交给{p2}，角色为所有者。不会授予平台管理权限。": {
-    "en": "Give {p2} ownership of “{p0}” and access to its {p1} projects. This does not grant platform administration rights.",
-    "zh-Hant": "將把「{p0}」及其中{p1}個專案的訪問權交給{p2}，角色為所有者。不會授予平台管理權限。"
+  "将把「{name}」及其中 {projects}的访问权交给{email}，角色为所有者。不会授予平台管理权限。": {
+    "en": "Give {email} ownership of “{name}” and access to its {projects}. This does not grant platform administration rights.",
+    "zh-Hant": "將把「{name}」及其中 {projects}的訪問權交給{email}，角色為所有者。不會授予平台管理權限。"
   },
   "发送找回邮件": {
     "en": "Send recovery email",
@@ -1440,8 +1440,6 @@ export const governanceMessages = {
     "zh-Hant": "請求編號：{id}"
   },
   "账户体系建立之前的数据，属于一个没有成员的工作空间，目前没有人能读取（包括平台管理员）。指派给一个已有账户后才能打开。": { en: "Data from before the account system, held in a workspace with no members: nobody can read it right now, platform administrators included. Assign it to an existing account to make it accessible.", "zh-Hant": "帳戶體系建立之前的資料，屬於一個沒有成員的工作空間，目前沒有人能讀取（包括平台管理員）。指派給一個已有帳戶後才能開啟。" },
-  "{p0} 个项目，{p1} 位成员。请选择接收这个工作空间的已有账户。": { en: "{p0} projects, {p1} members. Choose an existing account to receive this workspace.", "zh-Hant": "{p0} 個專案，{p1} 位成員。請選擇接收這個工作空間的已有帳戶。" },
-  "已把包含 {p0} 个项目的工作空间指派给 {p1}。": { en: "Assigned the workspace with {p0} projects to {p1}.", "zh-Hant": "已把包含 {p0} 個專案的工作空間指派給 {p1}。" },
   "刷新工作空间": { en: "Refresh workspaces", "zh-Hant": "重新整理工作空間" },
   "只显示数量，不显示内容；平台管理权限不包含读取文档或管理工作空间成员。": { en: "Counts only, never content; platform administration does not include reading documents or managing workspace members.", "zh-Hant": "只顯示數量，不顯示內容；平台管理權限不包含讀取文件或管理工作空間成員。" },
   "冻结工作空间": { en: "Freeze workspace", "zh-Hant": "凍結工作空間" },
@@ -1522,5 +1520,48 @@ export const governanceMessages = {
   "不能管理与自己同级或更高角色的成员": { en: "You cannot manage members with the same or a higher role.", "zh-Hant": "不能管理與自己同級或更高角色的成員" },
   "这个工作空间只有 {p0} 位正常的所有者。建议再指定一位，以免无人能管理。": { en: "This workspace has only {p0} active owner. Appoint another so it can still be managed if that owner becomes unavailable.", "zh-Hant": "這個工作空間只有 {p0} 位正常的所有者。建議再指定一位，以免無人能管理。" },
 
+  // ---- undoing the assignment of the historical data (overview card and its confirmation)
+  "历史数据已指派": { en: "Historical data assigned", "zh-Hant": "歷史資料已指派" },
+  "账户体系建立之前的数据已经指派给下列账户。如果指派错了，可以撤销：数据回到任何账户都无法读取的待认领状态，不删除任何内容，之后可以重新指派。": { en: "The data from before the account system has been assigned to the accounts below. If that was a mistake, undo it: the data goes back to waiting for assignment, where no account can read it. Nothing is deleted, and it can be assigned again.", "zh-Hant": "帳戶體系建立之前的資料已經指派給下列帳戶。如果指派錯了，可以撤銷：資料回到任何帳戶都無法讀取的待認領狀態，不刪除任何內容，之後可以重新指派。" },
+  "这个空间目前被冻结。撤销指派会同时结束冻结：数据直接回到待认领状态，中间不会重新开放给这些账户。": { en: "This workspace is frozen. Undoing the assignment ends the freeze with it: the data goes straight back to waiting for assignment and is not reopened to these accounts in between.", "zh-Hant": "這個空間目前被凍結。撤銷指派會同時結束凍結：資料直接回到待認領狀態，中間不會重新開放給這些帳戶。" },
+  "它目前被冻结；冻结随撤销一并结束，不需要先解冻。": { en: "It is frozen at the moment; the freeze ends with the undo, so there is no need to unfreeze it first.", "zh-Hant": "它目前被凍結；凍結隨撤銷一併結束，不需要先解凍。" },
+  "再次指派之后：经批准的凭据只有在数据回到当初批准它们的账户时才重新生效；运维直接登记的服务账户随空间一起恢复。": { en: "After a new assignment, an approved credential works again only if the data goes back to the account that approved it; a service account an operator registered directly works again with the workspace.", "zh-Hant": "再次指派之後：經批准的憑據只有在資料回到當初批准它們的帳戶時才重新生效；運維直接登記的服務帳戶隨空間一起恢復。" },
+  "{count} 个排队或运行中的生成任务会停止：剩余样本被取消，已生成的结果保留；再次指派之后需要重新运行。": { en: { one: "{count} queued or running generation job stops: its remaining samples are cancelled and the results already generated are kept. It has to be run again after a new assignment.", other: "{count} queued or running generation jobs stop: their remaining samples are cancelled and the results already generated are kept. They have to be run again after a new assignment." }, "zh-Hant": "{count} 個排隊或執行中的生成任務會停止：剩餘樣本被取消，已生成的結果保留；再次指派之後需要重新執行。" },
+  "不会删除任何数据：{projects}和 {templates}原样保留。": { en: "No data is deleted: {projects} and {templates} stay as they are.", "zh-Hant": "不會刪除任何資料：{projects}和 {templates}原樣保留。" },
+  "{count} 个模板": { en: { one: "{count} template", other: "{count} templates" }, "zh-Hant": "{count} 個範本" },
+  "{count} 位成员": { en: { one: "{count} member", other: "{count} members" }, "zh-Hant": "{count} 位成員" },
+  "在再次指派之前，任何账户都不能打开它，包括平台管理员。": { en: "Until it is assigned again, no account can open it, platform administrators included.", "zh-Hant": "在再次指派之前，任何帳戶都不能開啟它，包括平台管理員。" },
+  "例外：{count} 个由运维签发的 dw_ 访问密钥不受撤销影响，和指派之前一样可以读写这些数据，直到运维撤销它们。": { en: { one: "Exception: {count} dw_ access key issued by an operator is not affected by the undo. As before the assignment, it can read and write this data until an operator revokes it.", other: "Exception: {count} dw_ access keys issued by an operator are not affected by the undo. As before the assignment, they can read and write this data until an operator revokes them." }, "zh-Hant": "例外：{count} 個由運維簽發的 dw_ 存取金鑰不受撤銷影響，和指派之前一樣可以讀寫這些資料，直到運維撤銷它們。" },
+  "{projects}，{members}。请选择接收这个工作空间的已有账户。": { en: "{projects}, {members}. Choose an existing account to receive this workspace.", "zh-Hant": "{projects}，{members}。請選擇接收這個工作空間的已有帳戶。" },
+  "已把包含 {projects}的工作空间指派给 {email}。": { en: "Assigned the workspace with {projects} to {email}.", "zh-Hant": "已把包含 {projects}的工作空間指派給 {email}。" },
+  "正在读取指派情况…": { en: "Reading the assignment…", "zh-Hant": "正在讀取指派情況…" },
+  "刷新概览": { en: "Refresh overview", "zh-Hant": "重新整理概覽" },
+  "所有者账户": { en: "Owner accounts", "zh-Hant": "擁有者帳戶" },
+  "没有所有者": { en: "No owner", "zh-Hant": "沒有擁有者" },
+  "成员人数": { en: "Members", "zh-Hant": "成員人數" },
+  "共 {count} 位": { en: "{count} in total", "zh-Hant": "共 {count} 位" },
+  "指派时间": { en: "Assigned on", "zh-Hant": "指派時間" },
+  "没有找到指派记录": { en: "No record of the assignment was found", "zh-Hant": "沒有找到指派記錄" },
+  "指派人": { en: "Assigned by", "zh-Hant": "指派人" },
+  "{count} 个项目": { en: { one: "{count} project", other: "{count} projects" }, "zh-Hant": "{count} 個專案" },
+  "撤销指派": { en: "Undo assignment", "zh-Hant": "撤銷指派" },
+  "例如：指派给了错误的账户": { en: "For example: assigned to the wrong account", "zh-Hant": "例如：指派給了錯誤的帳戶" },
+  "已撤销指派：{count} 位成员失去访问，数据全部保留。": { en: { one: "Assignment undone: {count} member lost access. All data is kept.", other: "Assignment undone: {count} members lost access. All data is kept." }, "zh-Hant": "已撤銷指派：{count} 位成員失去存取權，資料全部保留。" },
+  "「{name}」将回到待认领状态。": { en: "“{name}” goes back to waiting for assignment.", "zh-Hant": "「{name}」將回到待認領狀態。" },
+  "以下 {count} 位成员将失去访问：": { en: { one: "{count} member will lose access:", other: "These {count} members will lose access:" }, "zh-Hant": "以下 {count} 位成員將失去存取權：" },
+  "将失去访问的成员": { en: "Members who will lose access", "zh-Hant": "將失去存取權的成員" },
+  "这个空间目前没有成员。": { en: "This workspace has no members at the moment.", "zh-Hant": "這個空間目前沒有成員。" },
+  "{count} 个尚未接受的邀请将被撤回。": { en: { one: "{count} invitation not yet accepted will be withdrawn.", other: "{count} invitations not yet accepted will be withdrawn." }, "zh-Hant": "{count} 個尚未接受的邀請將被撤回。" },
+  "{count} 个仍可使用的应用登录凭据将被撤销。": { en: { one: "{count} application sign-in token that still works will be revoked.", other: "{count} application sign-in tokens that still work will be revoked." }, "zh-Hant": "{count} 個仍可使用的應用登入憑據將被撤銷。" },
+  "这个空间的服务账户（{p0} 个）和经批准的 API 凭据（{p1} 项）将停止工作，但不会被删除。": { en: "This workspace's service accounts ({p0}) and approved API credentials ({p1}) stop working, but are not deleted.", "zh-Hant": "這個空間的服務帳戶（{p0} 個）和經批准的 API 憑據（{p1} 項）將停止運作，但不會被刪除。" },
+  "名称改回「{name}」。": { en: "The name goes back to “{name}”.", "zh-Hant": "名稱改回「{name}」。" },
+  "名称「{name}」保持不变。": { en: "The name “{name}” stays as it is.", "zh-Hant": "名稱「{name}」保持不變。" },
+  // the account service's refusals of the undo (admin_routes.unclaim / unclaim_preview)
+  "只有历史数据空间可以撤销指派，这个工作空间不是": { en: "Only the historical data workspace can have its assignment undone, and this workspace is not it.", "zh-Hant": "只有歷史資料空間可以撤銷指派，這個工作空間不是" },
+  "这个工作空间已被删除，不能撤销指派": { en: "This workspace has been deleted, so its assignment cannot be undone.", "zh-Hant": "這個工作空間已被刪除，不能撤銷指派" },
+  "这个工作空间属于一个组织，不能在平台管理中撤销指派": { en: "This workspace belongs to an organization; its assignment cannot be undone from platform administration.", "zh-Hant": "這個工作空間屬於一個組織，不能在平台管理中撤銷指派" },
+  "这份历史数据目前没有指派给任何人，无需撤销": { en: "This historical data is not assigned to anyone right now, so there is nothing to undo.", "zh-Hant": "這份歷史資料目前沒有指派給任何人，無需撤銷" },
+  "安全日志暂时无法写入，撤销指派没有执行，什么都没有改变。请检查安全日志；需要立即停止访问时，可以先冻结这个空间": { en: "The security journal cannot be written right now, so the assignment was not undone and nothing changed. Check the security journal; to stop access immediately, freeze this workspace first.", "zh-Hant": "安全日誌暫時無法寫入，撤銷指派沒有執行，什麼都沒有改變。請檢查安全日誌；需要立即停止存取時，可以先凍結這個空間" },
+  "你确认之后，这个空间的成员发生了变化。请重新查看将失去访问的人，再确认撤销": { en: "The members of this workspace changed after you looked. Review who will lose access again, then confirm the undo.", "zh-Hant": "你確認之後，這個空間的成員發生了變化。請重新查看將失去存取權的人，再確認撤銷" },
 };
 registerMessages(governanceMessages);

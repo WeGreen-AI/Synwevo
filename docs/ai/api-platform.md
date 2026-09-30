@@ -5,11 +5,11 @@
 > 管理员平台的委派权限（B1-2 `require_platform`）落地后，控制台与管理 API 一并改用它。
 > 能力地图：[`../platform/api-coverage.md`](../platform/api-coverage.md)。持续迭代的记录（问题、证据、部署）仍在 `docs/quality/`。
 
-## 检查点（2026-09-29 22:05 HKT）
+## 检查点（2026-09-30）
 
 | 项 | 内容 |
 |---|---|
-| 分支 / HEAD | `main`（本地）；推送与部署受 GitHub Actions 额度阻塞至 10 月 1 日（见 iteration-state） |
+| 分支 / HEAD | `main`（本地）；目录/复制批次 `b8ee007`，扫描退出修复 `b431b54`、Push 回环 fixture 修复 `8161041`，ZIP/验证镜像修复 `118a8cb`；任务契约续批与本检查点一起提交。本轮尚未推送；2026-09-30 查询 GitHub Actions 仍为账单/支出限制，不能将日期到达视作自动恢复 |
 | 已交付（本地验证） | **API-1 流量与容量策略**：`synwevo_core/api_quotas.py`（分层策略、版本、历史、GCRA 共享计数）；网关按凭据 + 工作空间双层限流（`RateLimit` 两项）；Docs 任务并发上限读工作空间策略；管理 API `/api/admin/api-platform/quotas*`（查看、生效值与此刻用量、预演、带版本的修改、历史，全部复用 `mutation` 审计）；控制台「流量与配额」页签；调用记录可按请求编号/凭据/接口/状态/错误代码查询、记录拒绝代码与委托客户端、网关拒绝的请求记在接口模板下；凭据列表显示最近使用、轮换可选重叠期、`rotated` 状态文案修正；两个 SDK 解析多项 `RateLimit` |
 | 证据 | `tests/integration/test_api_platform_quotas.py`（15）、`test_jobs_scheduling.py::test_a_workspace_policy_replaces_the_deployment_limit`、SDK 单元测试（Python 21、TS 7）、账户前端 `npm test`（7）；隔离实例 `127.0.0.1:32765`（scratchpad `api1/`，合成账户）浏览器实跑：预演 → 重新验证 → 保存 → 两把真实密钥第 4 次调用 429（`limit_scope=workspace`、`Retry-After: 20`）→ 重启后策略仍生效 → 按请求编号查到拒绝与原因 |
 | 全量回归 | 2026-09-29：API-1 状态 `pytest` 2 781 passed / 6 skipped / 0 failed；API-1 + API-2 前半 2 783 passed / 2 skipped / 1 failed（控制台契约三语言缺 7 条新说明，已补，`test_api_platform_contract_i18n.py` 通过）；账户前端 `npm test` 7/7、Docs 前端 132/132、typecheck、`check_boundaries`/`check_brand`/`check_design`/`check_component_names`、infra 单元测试均通过 |
@@ -18,7 +18,13 @@
 | API-2 进度 | **机器 OCR**：`POST /api/v1/files/{fid}/ocr`（与工作台同一服务，未接纳来源 409，识别槽位 2 个/进程、占满 429 `ocr_busy`，浏览器同受约束）；**字段编辑**：`PATCH`/`DELETE /api/v1/templates/{tid}/fields/{field_id}`（`base_head` 必填，重发与并发都得 409 `stale_template`，删除可连带移除本项目映射，内置模板 409）；两个 SDK 各加对应方法；OpenAPI 重新导出（77 个路径）。证据：`test_api_source_operations.py`（68，含真实识别）、`test_api_template_fields.py`（4）、隔离实例用已安装 Python SDK 实跑（扫描件识别 14 词→ready；字段改名 head 2→3；重复旧 head 409；删除 head 4） |
 | API-2 续 | **文件事件** `file.ready/needs_ocr/rejected/failed`（触发器与状态同事务写入，f0cf701）；**项目设置** `PATCH /api/v1/projects/{pid}`（改名/归档/输出默认值，`base_settings_rev` 必填）；任务完成事件不带产物清单是有意的（负载只给计数，产物用凭据读取，撤权即时生效） |
 | API-4 | **OAuth 第三方同意**：API 权限与 offline_access 需本人同意（按客户端 + 工作空间 + 权限记录，暂存请求 10 分钟且只属于发起会话）；同意页（`/oauth/consent`，三语言）；「账户与安全 → 已授权的应用」撤回即撤该客户端在该空间的全部令牌并写安全日志（新日志类 `consent_withdrawn`，恢复备份后重放）；升级前的委托记为旧授权；RFC 7662 自省（只答自己的令牌）；令牌/撤销端点接受 `client_secret_basic`；撤销的刷新令牌不再被说成重放。证据：`test_oauth_consent.py`（10）、身份与集成套件 1 346 passed、隔离实例浏览器实跑（同意页 → 批准 → 令牌调用 200 → 页面撤回 → 401 / 刷新 400、日志条目） |
-| 下一步 | API-2 余项（请求编号已进入任务与 job.created）：事件与投递保留期（数据生命周期 Q4 的一部分，保留期需持有人决定，先做可配置、默认不删）；之后 API-4（OAuth 第三方同意）或 API-3（待 B1-2） |
+| API-5 续 | 工作空间目录只读（9a965d3）；**复制申请机器接口（场景 C）**：本人委托令牌申请/查看/撤回、审批留在网页、`copy.*` 事件、两个 SDK 方法与类型；场景 C 端到端（目标另行授权生成、卡片不授权、事件不串）已验证 |
+| API-5b / API-7 本批 | **目录写入**：邀请、重发、撤销、改角色、移除成员；仅批准的服务账户、`workspace.members.write`、viewer/editor 范围、当前角色条件更新、应用署名及审计。邀请绑定原审批，撤权后不能经重新绑定复活；浏览器也不能将机器邀请升级到管理角色。**复制**：请求/响应类型、并发幂等、执行时复核原委托、恢复不重复复制。**契约与 SDK**：独立目录 OpenAPI（8 操作）、管理员目录聚合、Python/TS 独立 WorkspaceClient；详见 [本批证据](../quality/api-platform-2026-09-30.md) |
+| 本批实跑 | 两种已安装 SDK 均经真实 Accounts 服务跑通目录 8 操作；浏览器真实申请 → 手机批准 → 手机签发 → 令牌调用 200 → 页面撤回 → 同令牌 401。简繁英契约页各列 8 个目录操作，390px 无横向溢出；无页面脚本错误。所有账户、邮件和文档均为隔离夹具 |
+| API-7 任务续批 | 9 个任务响应模型及双 SDK 类型，保持缺省与 null、分页与产物差异；未约束 2xx JSON schema 从 73 减至 64。真实 SDK 以合成模板暂时缺失制造 11 个失败项，恢复原内容后 failed_only 在同一任务第二次运行生成 11 份 DOCX，读取正文与 SHA-256，跳过项和快照未变。Python SDK 27/27、TS 10/10 与双 SDK 严格类型检查通过；版本、弃用兼容边界写入集成指南 |
+| 最终运行门槛 | 固定 `b8ee007` 的 Linux arm64 镜像构建及非 root 只读冒烟通过；镜像全量测试在约 72% 时因本机 Colima 收到 SIGTERM 中断，未完成。已定位并修复 ZIP 头枚举在内存跟踪器下超时（同镜像加密文件套件 45 passed / 1 skipped），以及验证镜像未安装 SDK；后者尚待重建。Docker 恢复确认待答复，未自行重启被停止的运行环境 |
+| 部署核对 | 2026-09-30 只读 `docker ps`：accounts/docs/portal/messages 均为 `aadcb9e839c3c13386f1831a942e8449852dab15` 且 healthy；本批尚未上线。Actions 36569205283 的 verify 因账单/支出上限未启动，deploy 跳过；未绕过既有工作流 |
+| 下一步 | Docker 恢复后从固定提交重建镜像并完成全量回归，现有 CI 门槛恢复后再发布。独立推进 API-5 评论/提及、通知与 Message 机器身份，API-7 剩余响应模型和兼容差异视图；API-3 待 B1-2 合入 main（设计见 `../platform/api-management-identity.md`）；事件与投递保留期（可配置、默认不删） |
 
 ## 批次队列
 
@@ -28,9 +34,9 @@
 | API-2 | Docs 自动化缺口：OCR 触发 ✓、上传模板字段修改/删除（`base_head`）✓、项目改名/归档；文件接纳/拒绝事件与任务完成事件带产物清单；事件与投递保留期；任务/事件/投递带 request_id | 进行中 | — |
 | API-3 | 平台管理机器身份：第二资源与 `platform.*` scope、审批与期限；管理只读 API（审计、调用、配额）与低风险写（配额修改）；场景 D | 待办 | 管理员平台 B1-2 委派权限 |
 | API-4 | OAuth 第三方客户端：同意页与已存授权、已连接应用页、自省、`client_secret_basic` | 本地完成 | — |
-| API-5 | 成员/邀请/资格机器 API、通知发出、对象卡片与机器人、跨空间复制申请与状态 API；场景 C | 待办 | API-3 的资源模型 |
-| API-6 | 控制台：跨工作空间 Webhook 与投递、任务管理、审计页签、契约差异与弃用；手机卡片化 | 待办 | — |
-| API-7 | 契约类型化（响应模型）、TS 类型声明、SDK 验收进 CI、覆盖清单更新、版本与兼容说明 | 待办 | — |
+| API-5 | 工作空间目录只读 ✓；成员/邀请写入与应用操作者 ✓；跨空间复制申请与状态、场景 C ✓；评论/提及、通知发出、对象卡片与机器人待补 | 进行中，本批本地验证 | — |
+| API-6 | 控制台：Webhook 运行概况与保护性暂停 ✓、总览事件积压 ✓、手机卡片化 ✓、生成任务视图与保护性停止 ✓、API 平台审计页签 ✓、审计归属修正 ✓；契约差异与弃用移入 API-7 | 本地完成 | — |
+| API-7 | TS 类型声明与本地包 ✓、SDK 单元测试进 CI ✓（c4e8fca）；目录/复制请求响应类型与独立契约 ✓、覆盖清单按实跑证据重生 ✓；9 个任务响应模型与双 SDK 类型 ✓、真实 failed_only 恢复 ✓、版本与弃用兼容说明 ✓；剩余响应模型、契约差异与弃用视图 | 进行中 | — |
 
 ---
 

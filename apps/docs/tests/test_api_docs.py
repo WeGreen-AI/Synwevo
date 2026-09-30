@@ -116,6 +116,69 @@ def test_openapi_describes_the_error_and_header_contract():
     assert "application/json" not in dl and dl["application/octet-stream"]["schema"]["format"] == "binary"
 
 
+def test_copy_contract_requires_user_delegation_and_types_public_results():
+    from synwevo_docs.api.v1 import SCOPE_NAMES
+
+    spec = _spec()
+    copies = {
+        ("get", "/api/v1/copy-targets"): ("read", "CopyTargetsResponse"),
+        ("get", "/api/v1/projects/{pid}/copy-manifest"): ("read", "CopyManifestResponse"),
+        ("get", "/api/v1/projects/{pid}/copy-requests"): ("read", "CopyRequestList"),
+        ("post", "/api/v1/projects/{pid}/copy-requests"): ("write", "CopyRequestView"),
+        ("get", "/api/v1/copy-requests/{cid}"): ("read", "CopyRequestView"),
+        ("post", "/api/v1/copy-requests/{cid}/withdraw"): ("write", "CopyRequestView"),
+    }
+    delegated = set()
+    for path, ops in spec["paths"].items():
+        for method, op in ops.items():
+            if method not in METHODS:
+                continue
+            if (method, path) not in copies:
+                # Adding a restricted flow must not silently remove the credentials accepted
+                # by any existing operation, including probes and signed download links.
+                assert not any("delegatedToken" in scheme for scheme in op.get("security", []))
+                continue
+            scope, response = copies[(method, path)]
+            assert op["x-synwevo-identity"] == "delegated"
+            assert op["security"] == [{"delegatedToken": [SCOPE_NAMES[scope]]}]
+            ok = next(v for k, v in _codes(op).items() if k.startswith("2"))
+            assert ok["content"]["application/json"]["schema"] == {"$ref": f"#/components/schemas/{response}"}
+            assert {"401", "403"} <= set(_codes(op))
+            delegated.add((method, path))
+    assert delegated == set(copies)
+    create = spec["paths"]["/api/v1/projects/{pid}/copy-requests"]["post"]
+    assert create["requestBody"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/CopyRequestCreate"}
+    for operation in (create, spec["paths"]["/api/v1/copy-requests/{cid}/withdraw"]["post"]):
+        assert _codes(operation)["409"]["$ref"] == "#/components/responses/Conflict"
+    for name, schema in spec["components"]["schemas"].items():
+        if name.startswith("Copy"):
+            assert "requested_authority" not in json.dumps(schema)
+
+
+def test_delegated_oauth_flow_uses_actual_account_endpoints(client):
+    from synwevo_core import oidc
+    from synwevo_docs.api.v1 import SCOPE_NAMES, openapi_subset
+
+    discovery = oidc.discovery()
+    spec = openapi_subset(client.app, issuer=discovery["issuer"] + "/")
+    schemes = spec["components"]["securitySchemes"]
+    delegated = schemes["delegatedToken"]
+    assert delegated["type"] == "oauth2" and delegated["x-synwevo-identity"] == "delegated"
+    assert set(delegated["flows"]) == {"authorizationCode"}  # client_credentials cannot act for an owner
+    flow = delegated["flows"]["authorizationCode"]
+    assert flow["authorizationUrl"] == discovery["authorization_endpoint"]
+    assert flow["tokenUrl"] == discovery["token_endpoint"]
+    assert "authorization_code" in discovery["grant_types_supported"]
+    assert set(flow["scopes"]) == set(SCOPE_NAMES.values())
+    assert set(flow["scopes"]) <= set(discovery["scopes_supported"])
+    assert schemes["platformToken"]["flows"]["authorizationCode"] == flow
+    assert schemes["platformToken"]["flows"]["clientCredentials"]["tokenUrl"] == flow["tokenUrl"]
+    custom = openapi_subset(client.app, issuer="https://accounts.example.test/custom/")
+    custom_flow = custom["components"]["securitySchemes"]["delegatedToken"]["flows"]["authorizationCode"]
+    assert custom_flow["authorizationUrl"] == "https://accounts.example.test/custom/oidc/authorize"
+    assert custom_flow["tokenUrl"] == "https://accounts.example.test/custom/oidc/token"
+
+
 def test_openapi_describes_webhooks():
     spec = _spec()
     from synwevo_docs import webhooks as W

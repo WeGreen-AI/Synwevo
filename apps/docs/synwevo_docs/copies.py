@@ -26,6 +26,28 @@ from synwevo_core import workers
 log = logging.getLogger("synwevo.copies")
 
 
+def announce_request(store, ident, copies: ProjectCopies, notifier, r: dict, requester_id: str, project_name: str) -> int:
+    """Tell the people who may decide a new copy request that it is waiting for them (inbox,
+    actionable). The requester is not told about their own request. Shared by the workbench and
+    the API, so both ask the same people the same way. Returns how many were told."""
+    me = ident.get_user(requester_id) or {}
+    ws = store.one("SELECT name FROM workspaces WHERE id=?", (r["target_workspace_id"],)) or {}
+    told = 0
+    for who in copies.deciders(r["target_organization_id"], r["target_workspace_id"]):
+        if who == requester_id:
+            continue
+        try:
+            notifier.emit(who, "copy.requested", params={"requester": me.get("display_name") or me.get("email") or "—", "project": project_name,
+                                                         "workspace": ws.get("name") or "—"},
+                          organization_id=r["target_organization_id"], workspace_id=r["target_workspace_id"], object_kind="project_copy",
+                          object_id=r["id"], dedupe_key=f"copy:{r['id']}:requested:{who}", actionable=True,
+                          target={"origin": "accounts", "path": f"/organizations/{r['target_organization_id']}?approval={r['id']}"})
+            told += 1
+        except Exception as e:  # noqa: BLE001 - the request stands even if one inbox item does not
+            log.warning("copy request notification skipped: %s", type(e).__name__)
+    return told
+
+
 def _canonical(obj) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -77,9 +99,14 @@ _COPY_REASONS = {
                                  "en": "The target organization is currently unavailable."},
     "target": {"zh-Hans": "申请人已不能把项目复制到目标工作空间。", "zh-Hant": "申請人已不能把項目複製到目標工作空間。",
                "en": "The requester can no longer copy the project into the target workspace."},
+    "delegation": {"zh-Hans": "发起申请的应用委托已失效，请重新授权并申请。", "zh-Hant": "發起申請的應用委託已失效，請重新授權並申請。",
+                   "en": "The integration's delegation is no longer valid. Authorize it again before making a new request."},
     "source": {"zh-Hans": "源项目已不可用。", "zh-Hant": "來源項目已不可用。", "en": "The source project is no longer available."},
     "failed": {"zh-Hans": "复制过程出错，没有创建任何内容。", "zh-Hant": "複製過程出錯，沒有建立任何內容。",
                "en": "Copying failed and nothing was created."},
+    "copy_recovery_ambiguous": {"zh-Hans": "发现无法唯一确认的既有副本，已保留全部内容，需要管理员核对。",
+                                "zh-Hant": "發現無法唯一確認的既有副本，已保留全部內容，需要管理員核對。",
+                                "en": "Existing copies could not be uniquely reconciled. All content was preserved for administrator review."},
 }
 
 
@@ -90,7 +117,7 @@ def copy_failure_reason(reason: str | None, locale: str) -> str:
     language — as its body (CI-86)."""
     key = reason or ""
     if key not in _COPY_REASONS:
-        key = key.split(":", 1)[0] if key.split(":", 1)[0] in ("target", "source") else "failed"
+        key = key.split(":", 1)[0] if key.split(":", 1)[0] in ("target", "source", "delegation") else "failed"
     text = _COPY_REASONS[key]
     return text.get(locale, text["en"])
 
@@ -126,20 +153,43 @@ class CopyExecutor:
         if not claimed:
             return self.copies.get(cid)
         try:
-            result = self._copy(claimed, manifest)
+            # Claiming stays visible to other runners, but publication and its terminal
+            # record are one commit. A restart can only recover an unpublished claim; it
+            # cannot replay a copy whose project committed before its `done` record.
+            with self.app.store.tx():
+                current = self.copies.get(cid)
+                if current["status"] != "running" or current["version"] != claimed["version"]:
+                    return current
+                # The earlier checks are advisory. Under the write lock, repeat both
+                # authority and snapshot checks before copying the rows they describe.
+                why = self.copies.preconditions({**current, "status": "approved"})
+                if why:
+                    return self._stale(current, why, why, claimed_version=claimed["version"])
+                with as_tenant(current["source_workspace_id"]):
+                    try:
+                        manifest, digest = build_manifest(self.app, current["source_project_id"], current["scope"] or {})
+                    except ServiceError as e:
+                        return self._stale(current, f"source:{e.code}", e.code, claimed_version=claimed["version"])
+                if digest != current["digest"]:
+                    return self._stale(current, "source_changed", "source_changed", claimed_version=claimed["version"])
+                result = self._copy(current, manifest)
+                out = self.copies.finish(cid, "done", result=result, expected_version=claimed["version"])
+                if out is None:
+                    raise RuntimeError("Copy claim changed before publication")
         except Exception as e:  # noqa: BLE001 - whatever failed, the request records it and nothing half-made stays visible
             log.warning("project copy %s failed: %s", cid, type(e).__name__)
-            out = self.copies.finish(cid, "failed", error=f"{type(e).__name__}")
+            out = self.copies.finish(cid, "failed", error=f"{type(e).__name__}", expected_version=claimed["version"])
+            if out is None:
+                return self.copies.get(cid)
             self._tell(out, "copy.failed", outcome_key="failed", reason=type(e).__name__)
             return out
-        out = self.copies.finish(cid, "done", result=result)
         self._tell(out, "copy.done")
         return out
 
-    def _stale(self, r: dict, error: str, reason: str) -> dict:
+    def _stale(self, r: dict, error: str, reason: str, *, claimed_version: int | None = None) -> dict:
         """approved → stale, told to both people — only when this runner made that transition; a
         request someone else took or withdrew between the checks and now is left as it is."""
-        out = self.copies.reset_stale(r["id"], error=error)
+        out = self.copies.reset_stale(r["id"], error=error, claimed_version=claimed_version)
         if out is None:
             return self.copies.get(r["id"])
         self._tell(out, "copy.failed", outcome_key="stale", reason=reason)
@@ -244,12 +294,39 @@ class CopyRunner:
         self.executor, self.copies = executor, copies
         self._wake, self._stop = threading.Event(), threading.Event()
         self._thread: threading.Thread | None = None
-        # a copy left `running` by a previous process: nothing half-made is visible (one transaction), so it is retried
-        self.copies.store.execute("UPDATE project_copies SET status='approved', updated_at=? WHERE status='running'", (now(),))
+        self._recover_running()
         if start:
             self._thread = threading.Thread(target=self._run, name="project-copies", daemon=True)
             self._thread.start()
             workers.register(self, self._thread)
+
+    def _recover_running(self) -> None:
+        """Reconcile old split commits before retrying. Older releases could commit the
+        cloned project and crash before recording `done`; its durable origin identifies
+        the already published result. Ambiguous publications are never executed again."""
+        store, recovered = self.copies.store, []
+        with store.tx():
+            for r in store.all("SELECT * FROM project_copies WHERE status='running'"):
+                published = store.all("SELECT id, tenant, template_id FROM projects WHERE origin=?", (f"copy:{r['id']}",))
+                if not published:
+                    store.execute("UPDATE project_copies SET status='approved', updated_at=?, version=version+1 WHERE id=?",
+                                  (now(), r["id"]))
+                    continue
+                if len(published) != 1 or published[0]["tenant"] != r["target_workspace_id"]:
+                    out = self.copies.finish(r["id"], "failed", error="copy_recovery_ambiguous", expected_version=r["version"])
+                    recovered.append((out, "copy.failed"))
+                    continue
+                p = published[0]
+                mappings = store.one("SELECT data FROM mapping_revs WHERE project_id=? AND rev=1", (p["id"],)) or {}
+                sources = store.one("SELECT COUNT(*) AS n FROM source_files WHERE project_id=?", (p["id"],))["n"]
+                result = {"project_id": p["id"], "template_id": p["template_id"], "sources": sources,
+                          "mappings": len(mappings.get("data") or []), "warnings": ["recovered_previous_publication"],
+                          "manifest_digest": r["digest"]}
+                out = self.copies.finish(r["id"], "done", result=result, expected_version=r["version"])
+                recovered.append((out, "copy.done"))
+        for out, kind in recovered:
+            if out:
+                self.executor._tell(out, kind, reason=out.get("error"))
 
     def wake(self) -> None:
         self._wake.set()

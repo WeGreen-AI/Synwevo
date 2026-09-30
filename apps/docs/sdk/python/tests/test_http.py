@@ -133,6 +133,33 @@ class HTTPTests(unittest.TestCase):
                 c.put_mappings("p", [])
         self.assertEqual(len(paths), 2)
 
+    def test_copy_requests_keep_one_key_across_retries_and_withdrawal_is_not_retried(self):
+        seen = []
+        def respond(h):
+            seen.append((h.command, h.path, h.headers.get("Idempotency-Key"), h.body))
+            if h.command == "POST" and h.path.endswith("/copy-requests") and len(seen) == 1:
+                h.answer(503, {"error": {"code": "unavailable", "message": "fixture"}}, {"Retry-After": "0"})
+            elif h.path.endswith("/withdraw"):
+                h.answer(503, {"error": {"code": "unavailable", "message": "fixture"}}, {"Retry-After": "0"})
+            else:
+                h.answer(201 if h.command == "POST" else 200, {"id": "pc_1", "status": "pending"})
+        with fixture(respond) as base, Client(base, ApiKey("fixture"), max_retries=2) as c:
+            out = c.request_copy("p 1", "w_org", name="copy", sources=True)
+            self.assertEqual(out["id"], "pc_1")
+            with self.assertRaises(APIError):
+                c.withdraw_copy_request("pc_1")
+            c.copy_manifest("p1", sources=True)
+            c.list_copy_requests("p1", status="withdrawn", limit=10)
+        posts = [x for x in seen if x[1].endswith("/copy-requests")]
+        self.assertEqual(len(posts), 2, "one retry of the request, with the same key")
+        self.assertTrue(posts[0][2] and posts[0][2] == posts[1][2])
+        self.assertEqual(json.loads(posts[0][3]), {"target_workspace_id": "w_org", "scope": {"sources": True, "corrections": False},
+                                                   "name": "copy"})
+        self.assertEqual(posts[0][1], "/api/v1/projects/p%201/copy-requests")
+        self.assertEqual(len([x for x in seen if x[1].endswith("/withdraw")]), 1, "a withdrawal is never retried")
+        self.assertEqual(seen[-2][1], "/api/v1/projects/p1/copy-manifest?sources=true&corrections=false")
+        self.assertEqual(seen[-1][1], "/api/v1/projects/p1/copy-requests?limit=10&status=withdrawn")
+
     def test_the_gates_own_rate_limit_is_retried_even_for_unsafe_writes(self):
         """`429 rate_limited` is Synwevo's gate refusing before the route runs — nothing executed,
         so even a non-idempotent PUT is sent again after Retry-After. An acceptance flow of ~400

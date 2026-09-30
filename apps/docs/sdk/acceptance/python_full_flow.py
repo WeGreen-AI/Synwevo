@@ -61,7 +61,7 @@ def services(testenv, out):
                    "ACCEPTANCE_ACCOUNTS_URL": account, "ACCEPTANCE_PERSON_EMAIL": person["email"],
                    "ACCEPTANCE_PERSON_PASSWORD_FILE": str(root / "person-password"), "ACCEPTANCE_PERSON_CLIENT_ID": person["client_id"],
                    "ACCEPTANCE_PERSON_REDIRECT": person["redirect_uri"], "ACCEPTANCE_WORKSPACE_A": person["workspace_a"],
-                   "ACCEPTANCE_WORKSPACE_B": person["workspace_b"]}
+                   "ACCEPTANCE_WORKSPACE_B": person["workspace_b"], "ACCEPTANCE_PERSONAL_WORKSPACE": person["personal_workspace"]}
         finally:
             for proc in reversed(processes):
                 proc.terminate()
@@ -153,7 +153,8 @@ def main():
     # Cookies exist only where a person signs in and authorizes (the delegated leg); the machine
     # calls carry none.
     cookie_paths = {r["path"] for r in audits if r["cookie"] or r["set_cookie"]}
-    assert cookie_paths <= {"/api/auth/login", "/oidc/authorize"}, cookie_paths
+    assert all(path in {"/api/auth/login", "/oidc/authorize"} or path.startswith("/api/auth/oauth-consent/")
+               for path in cookie_paths), cookie_paths
     tokens = [r for r in audits if r["path"] == "/oidc/token"]
     service_tokens = [r for r in tokens if r["grant"]["grant_type"] == ["client_credentials"]]
     person_tokens = [r for r in tokens if r["grant"]["grant_type"] == ["authorization_code"]]

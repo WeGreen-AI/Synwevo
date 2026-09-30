@@ -36,6 +36,8 @@ def bootstrap(root):
     password = secrets.token_urlsafe(24)
     person = ident.create_user("python-person@example.invalid", password, status="active", display_name="SYNTHETIC person",
                                with_personal_workspace=True)
+    personal_workspace = next(w["id"] for w in ident.workspaces_for(person["id"]) if w["kind"] == "personal")
+    Apps(store, ident).enable_for_workspace(personal_workspace, "docweave")
     store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (1.0, person["id"]))
     orgs = Organizations(store, ident)
     created = orgs.create(person["id"], "SYNTHETIC org", "SYNTHETIC team A", "fixture-idem-python-person-org")
@@ -54,7 +56,8 @@ def bootstrap(root):
         "client_id": client["client_id"], "kind": client["kind"], "workspace": workspace,
         "scopes": client["api_scopes"].split(), "audiences": client["audiences"],
         "person": {"email": "python-person@example.invalid", "client_id": "synthetic-python-person", "redirect_uri": redirect,
-                   "organization": created["organization"]["id"], "workspace_a": ws_a, "workspace_b": ws_b},
+                   "organization": created["organization"]["id"], "workspace_a": ws_a, "workspace_b": ws_b,
+                   "personal_workspace": personal_workspace},
         "bootstrap": "Store + Identity + Apps + Clients + Organizations fixture APIs; no business-table writes"}))
 
 

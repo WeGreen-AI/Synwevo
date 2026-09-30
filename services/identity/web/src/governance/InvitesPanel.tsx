@@ -70,7 +70,7 @@ export function InvitesPanel({ wid, ws, callerRole, list, loading, error, reload
               <td className="pick"><input type="checkbox" data-pick={i.id} checked={selection.ids.includes(i.id)}
                 disabled={blocked || !repeatable} aria-label={tr("选择邀请 {p0}", {p0: i.email_key})} onChange={() => {}}
                 onClick={(e) => selection.pick(i.id, { shift: e.shiftKey })} /></td>
-              <th scope="row" className="who">{i.email_key}<span className="cell-note">{tr("邀请人：{p0}", {p0: i.invited_by_email || tr("无记录")})}</span></th>
+              <th scope="row" className="who">{i.email_key}<span className="cell-note">{tr("邀请人：{p0}", {p0: i.inviter || i.invited_by_email || tr("无记录")})}</span></th>
               <td>{roleLabel(i.role)} / {hasExport(i.role, i.can_export) ? tr("允许导出") : tr("不允许导出")}</td>
               <td>{INVITE_STATE[i.state]}</td><td>{MAIL_STATE[i.mail] || i.mail}
                 {i.mail === "failed" && <span className="cell-note err">{tr("发送失败；可重发或联系管理员。")}</span>}</td>
