@@ -132,3 +132,25 @@ def test_v1_shared_templates_follow_the_person_behind_the_token(env):
     assert call(env, bob, "POST", f"/api/v1/organization-templates/{pub['id']}/use", json={}).json()["error"]["code"] == "deprecated"
     assert call(env, ann, "POST", f"/api/v1/organization-templates/{pub['id']}/deprecate", json={"deprecated": False}).json()["deprecated"] is False
     assert call(env, bob, "GET", f"/api/v1/templates/{copy['id']}").json()["version"] == 1, "the copy keeps release 1"
+
+
+def test_shared_template_cursor_binds_workspace_and_filter(env):
+    ann = delegated(env, "ann@example.com", env["wa"])
+    bob = delegated(env, "bob@example.com", env["wb"])
+    for i in range(2):
+        uploaded = call(env, ann, "POST", "/api/v1/templates", files={"file": (f"fixture-{i}.docx", _docx())})
+        assert uploaded.status_code == 201
+        assert call(env, ann, "POST", f"/api/v1/templates/{uploaded.json()['id']}/publish", json={}).status_code == 201
+    first = call(env, bob, "GET", "/api/v1/organization-templates?limit=1").json()
+    cursor = first["next_cursor"]
+    assert cursor
+    tail = call(env, bob, "GET", "/api/v1/organization-templates", params={"cursor": cursor})
+    assert tail.status_code == 200 and len(tail.json()["items"]) == 1
+    assert tail.json()["items"][0]["id"] != first["items"][0]["id"]
+    # Even two workspaces in the same organization restart their own view.
+    for token, params in ((ann, {"cursor": cursor}), (bob, {"cursor": cursor, "include_deprecated": "true"})):
+        response = call(env, token, "GET", "/api/v1/organization-templates", params=params)
+        assert response.status_code == 400 and response.json()["error"]["code"] == "invalid_cursor"
+    personal = env["ident"].ensure_personal_workspace(env["bob"]["id"])["id"]
+    response = call(env, delegated(env, "bob@example.com", personal), "GET", "/api/v1/organization-templates", params={"cursor": cursor})
+    assert response.status_code == 400 and response.json()["error"]["code"] == "invalid_cursor"

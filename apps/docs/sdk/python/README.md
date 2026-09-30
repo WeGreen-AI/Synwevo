@@ -51,6 +51,13 @@ dicts with additional `request_id`, `status_code`, `headers`, and `replayed` att
 Errors derive from `SynwevoError`, with status, code, field, details, request_id,
 and retry_after. Status-specific subclasses and `to_dict()` support automation.
 
+Docs resource-list cursors are opaque, signed, valid for 24 hours, and bound to the
+workspace, list and filters. Pass them unchanged. On `400 invalid_cursor`, explicitly
+restart from the first page and deduplicate by resource ID; the SDK does not silently
+restart an iterator. Upgrading from unsigned cursors or rotating the server root key
+also requires restarting a list. This rule does not apply to the `/events` checkpoint,
+Webhook delivery pagination or WorkspaceClient's offset pages.
+
 Job lifecycle methods have public `TypedDict` return types: `Job`, `CancelledJob`,
 `JobListItem`, `JobItem`, `JobRun`, `JobEvent`, `Artifact` and their page types, imported
 directly from `synwevo_docs_sdk`. These are static descriptions; response dictionaries,

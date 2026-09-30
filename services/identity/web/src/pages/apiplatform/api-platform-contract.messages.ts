@@ -55,9 +55,9 @@ export const contractEntries: [string, string, string][] = [
     "一筆投遞記錄"
   ],
   [
-    "上一页返回的 next_cursor（不透明，按稳定排序续读；与 offset 二选一）",
-    "Opaque next_cursor from the previous page; continues stable ordering. Use either cursor or offset",
-    "上一頁傳回的 next_cursor（不透明，按穩定排序續讀；與 offset 二選一）"
+    "上一页返回的 next_cursor（不透明、签名，有效 24 小时，绑定工作空间、列表与筛选；与 offset 二选一；过期后从第一页重读）",
+    "Opaque, signed next_cursor from the previous page; valid for 24 hours and bound to the workspace, list and filters. Use either cursor or offset; restart from page one after expiry",
+    "上一頁傳回的 next_cursor（不透明、簽章，有效 24 小時，綁定工作空間、清單與篩選；與 offset 二選一；過期後從第一頁重讀）"
   ],
   [
     "上传来源文件（multipart、已完成的可续传上传 upload_id，或授权目录下的 path）",

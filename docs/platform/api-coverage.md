@@ -36,7 +36,7 @@ Python 与 TypeScript 的独立 `WorkspaceClient` 均实现并实跑 8/8。方�
 | 版本与弃用规则 | 部分（本地） | [版本说明与弃用清单](../integration/api.md#deprecations) 区分 HTTP、契约、事件、SDK 与部署版本；记录现有任务正文幂等别名、替代请求头、优先级、Deprecation 头及未设 Sunset 的事实 | 管理台兼容差异视图、按客户端统计旧字段使用仍未实现 |
 | 错误信封 + 可选 RFC 9457（`Accept: application/problem+json`） | 已验证 | `http.py`；`test_gate_api_errors.py` | 类型 URN 不可解引用 |
 | `X-Request-ID` 全链路回显、调用记录 | 部分 | `http.py` 网关；**API-1**：调用记录带错误代码与客户端，可按请求编号/凭据/接口/状态/错误代码查询；网关拒绝的请求记在接口模板下 | **API-2**：提交任务的请求编号记在任务 `request_id` 与 `job.created`（`test_request_trace.py`）；无 traceparent |
-| 分页：offset 与游标 | 已验证 | `v1.py:181-240` | 游标未签名（安全依赖每个查询的租户过滤） |
+| 分页：offset 与资源列表游标 | 已验证（本地） | Docs 8 类资源列表使用 24 小时签名游标，绑定空间、列表、对象/筛选和组织；每次仍重新鉴权，当前有效的后继凭据可续读，独立进程可读同一游标。`test_api_contract_pagination.py`、`test_org_templates_v1.py`；已安装 SDK 的任务分页实跑通过 | 移动视图，不承诺冻结快照；升级/回滚时旧格式需从头同步。`/events` 与 Webhook 投递游标仍是各自既有格式，本批未更改其长期消费语义 |
 
 ## 3. 流量、配额与用量
 

@@ -541,10 +541,22 @@ SYNWEVO_DOCS_WEBHOOK_EVENTS=job.completed,job.completed_with_errors,job.failed,j
 （`/api/admin/api-platform/calls`）可按请求编号、凭据或客户端、接口、状态类别与错误代码查询，被网关拒绝的
 请求同样记在其接口模板下（从不记录原始路径、令牌、查询或正文）。
 
-* 分页：`offset` + `limit`，响应含 `total`、`next_offset`（`null` 表示到底）。
+* Docs 项目、来源文件、模板、组织共享模板、任务/逐项结果/运行记录/产物列表支持 `offset` + `limit`，响应含 `total`、`next_offset`；也可原样跟随 `next_cursor` 或 `Link; rel="next"`。两种定位不能同时使用。
 * 文件大小上限 `SYNWEVO_DOCS_MAX_FILE_MB`（默认 100 MB）；单任务样本上限 `SYNWEVO_DOCS_MAX_RECORDS_PER_JOB`（默认 20 000）。
 * 数据保留：产物与来源文件保存在 `SYNWEVO_DATA_DIR`，不自动过期；清理策略见 [../operations.md](../operations.md)。
 * 兼容性：`/api/v1` 路径与字段只增不删；新增字段可能随时出现，客户端应忽略未知字段。定义文档（`docweave.*`）带 `version`，不兼容版本会被拒绝并说明。界面内部接口（不含 `/v1`）不属于兼容承诺范围。
+
+上述资源列表游标有签名，每个游标有效 **24 小时**，绑定工作空间、列表、对象与筛选条件；组织共享模板也绑定当前组织。
+服务端始终重新验证当前凭据和对象权限，游标不授予任何访问权；同一工作空间的有效后继凭据可在轮换后续读。
+分页仍是移动视图，`total` 是本次查询值，不是冻结快照。排序字段发生变化时，资源可能前移或后移；客户端应按稳定 ID 去重。
+`limit` 可调整到该路由允许的范围，筛选或空间变化时应从第一页开始。
+
+格式是内部实现，客户端不得解码或编辑。无效、被修改、过期、跨范围游标统一答 `400 invalid_cursor`（`field=cursor`），
+移除游标后重新同步；SDK 原样报告错误，不静默重开迭代，以免重复处理已读项。
+本次升级拒绝旧未签名的资源列表游标；发布/回滚混合版本期间也可能需要从第一页重读，offset 方式保持兼容。
+使用现有根密钥派生独立签名密钥，无新增持久密钥或迁移；受控根密钥轮换会使尚未到期的旧资源列表游标失效。
+**此规则不改变** `/events` 的持久消费检查点、Webhook 投递分页、目录分页或其他 offset 接口；它们按各自契约处理。
+验证：`test_api_contract_pagination.py`、`test_org_templates_v1.py`。
 
 ## 6. 版本与兼容
 
