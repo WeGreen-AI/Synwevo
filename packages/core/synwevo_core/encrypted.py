@@ -137,7 +137,14 @@ def _guard(kind: str):
 
 
 # =================================================================================== ZIP
-_ZIP_SIGS = re.compile(rb"PK(\x03\x04|\x01\x02)")
+# Only flagged entries and the OpenDocument manifest can affect this check. Let the bytes
+# regex engine skip ordinary headers without allocating hundreds of thousands of Python
+# Match/unpack/name objects (especially costly under the memory-budget tracer on Python 3.12).
+# These are only prefilters: the same plausibility and exact-name checks below still decide.
+_ZIP_ODD_BYTE = b"[" + re.escape(bytes(range(1, 256, 2))) + b"]"
+_ZIP_INTERESTING = re.compile(
+    rb"PK(\x03\x04(?=.." + _ZIP_ODD_BYTE + rb"|.{26}META-INF/manifest\.xml)"
+    rb"|\x01\x02(?=...." + _ZIP_ODD_BYTE + rb"|.{42}META-INF/manifest\.xml))", re.DOTALL)
 #: Local plus central headers: a local header is at least 31 bytes and a central one 47, so the 25
 #: MiB scan limit holds at most ~335 000 entries (~670 000 headers). Above this: cannot be checked.
 _ZIP_MAX_HEADERS = 700_000
@@ -158,14 +165,14 @@ def _zip(data: bytes) -> str | None:
     not be checked". A cheap field test drops four signature bytes that land in machine code by
     chance, and nothing more: it never decides that a flagged header is safe to accept, so it does
     not lean on how leniently one reader or another treats the bytes."""
-    seen = 0
+    # Count every signature, including those skipped by the prefilter. A file over the
+    # existing structural budget is still refused; the optimization must not bypass the cap.
+    if data.count(b"PK\x03\x04") + data.count(b"PK\x01\x02") > _ZIP_MAX_HEADERS:
+        raise _Unchecked(ARCHIVE, "more ZIP headers than the scan limit can hold")
     manifests: list[tuple[int, int, int, int]] = []       # (data offset, method, csize, flags) of local manifest entries
     sizes: dict[bytes, int] = {}                          # central-directory sizes, for local headers with a descriptor
     flagged_local = False                                 # a local header carried the flag, awaiting a central record
-    for m in _ZIP_SIGS.finditer(data):
-        seen += 1
-        if seen > _ZIP_MAX_HEADERS:
-            raise _Unchecked(ARCHIVE, "more ZIP headers than the scan limit can hold")
+    for m in _ZIP_INTERESTING.finditer(data):
         p = m.start()
         if m.group(1) == b"\x03\x04":
             if p + 30 > len(data):

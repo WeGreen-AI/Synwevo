@@ -92,6 +92,19 @@ def test_formats_are_found_where_readers_find_them():
     assert encrypted_kind(b"\n" * 2048 + owner) is None and encrypted_kind(b"%XYZ-1.7" + owner[8:]) is None
 
 
+def test_zip_encryption_flag_is_preserved_with_every_other_low_flag_bit():
+    """Skipping ordinary ZIP headers must not skip bit 0 when other flags are also set."""
+    import struct
+
+    plain = F.zip_bytes({"synthetic.txt": b"TEST FIXTURE"})
+    local, central = plain.index(b"PK\x03\x04"), plain.index(b"PK\x01\x02")
+    for flags in range(256):
+        changed = bytearray(plain)
+        struct.pack_into("<H", changed, local + 6, flags)
+        struct.pack_into("<H", changed, central + 8, flags)
+        assert inspect(bytes(changed)) == (("archive", True) if flags & 1 else (None, True)), flags
+
+
 def test_a_pdf_trailer_is_read_however_long_it_is():
     """The first version gave up on a trailer dictionary over 256 KiB and answered "clean"."""
     for method in ("PDF_ENCRYPT_AES_256", "PDF_ENCRYPT_RC4_128"):
