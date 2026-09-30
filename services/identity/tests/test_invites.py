@@ -10,6 +10,8 @@ import threading
 
 import pytest
 
+from .platform_fixture import make_platform_admin
+
 from synwevo_identity import mail as mail_mod
 from synwevo_core.identity import Identity
 from synwevo_identity.invites import Invites
@@ -63,7 +65,7 @@ def test_nobody_can_invite_above_their_own_role(env):
 def test_platform_admin_gets_no_workspace_authority_from_it(env):
     """Platform role manages accounts and service state; it is not workspace membership."""
     ident, inv, ws = env["ident"], env["inv"], env["ws"]
-    root = ident.create_user("root@example.com", PW, status="active", platform_role="admin")
+    root = make_platform_admin(ident.store, ident.create_user("root@example.com", PW, status="active"))
     with pytest.raises(ServiceError) as e:
         inv.create(workspace_id=ws, email="x@example.com", role="viewer", actor_id=root["id"])
     assert e.value.status == 403

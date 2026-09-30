@@ -1,6 +1,6 @@
 """Repository-wide pytest configuration.
 
-`testpaths` in pyproject.toml lists three suites that belong to three modules, and this file is
+`testpaths` in pyproject.toml lists four suites with distinct module boundaries, and this file is
 what makes running them together mean the same thing as running each on its own: the packages
 are installed (editable) rather than reached by inserting directories into `sys.path`, so a test
 that accidentally imports across a module boundary fails here exactly as it would in production.
@@ -55,3 +55,34 @@ ROOT = repo_root() or Path(__file__).resolve().parent
 @pytest.fixture(scope="session")
 def platform_root() -> Path:
     return ROOT
+
+
+def _release_factory_resources() -> None:
+    """Release finished test applications retained by FastAPI 0.141.1's pure caches.
+
+    Its three callable-classification LRUs strongly retain up to 4096 route closures each.
+    Our factory routes close over services and sometimes the entire application: even a
+    completed TestClient lifespan can therefore retain its Store and route graph. Only
+    pytest clears these recomputable classifications; production caching is unchanged.
+    """
+    import gc
+
+    from fastapi.dependencies.models import (
+        _is_async_gen_callable_cached, _is_coroutine_callable_cached, _is_gen_callable_cached,
+    )
+    from synwevo_core.workers import stop_all
+
+    left = stop_all(wait=3.0)
+    _is_gen_callable_cached.cache_clear()
+    _is_async_gen_callable_cached.cache_clear()
+    _is_coroutine_callable_cached.cache_clear()
+    gc.collect()
+    assert not left, f"Background workers outlived test teardown: {left}"
+
+
+@pytest.fixture(autouse=True)
+def release_factory_resources():
+    # Root fixtures finish after suite-local fixtures. stop_all is also safe here when a
+    # test has no suite-specific cleanup; expose this same cleanup for lifecycle regressions.
+    yield _release_factory_resources
+    _release_factory_resources()

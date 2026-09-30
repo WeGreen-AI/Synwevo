@@ -29,7 +29,7 @@ def prepare(data: Path):
     assert store.instance_kind() == "test"
     ident = Identity(store)
     bootstrap_docs_app(store, ident)
-    owner = ident.create_user("owner@example.test", PASSWORD, status="active", platform_role="admin", with_personal_workspace=False)
+    owner = ident.create_user("owner@example.test", PASSWORD, status="active", with_personal_workspace=False)
     ws = ident.create_workspace("Synthetic Docs review", owner_id=owner["id"])
     for who, role, export in [("editor", "editor", None), ("viewer", "viewer", False), ("exporter", "viewer", True)]:
         user = ident.create_user(who + "@example.test", PASSWORD, status="active", with_personal_workspace=False)

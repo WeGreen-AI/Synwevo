@@ -1982,9 +1982,10 @@ def test_a_message_refused_for_now_is_not_overtaken_by_the_tabs_next_one(world, 
     n1 = a.send(put(a, "A3", "先输入"))
     r1 = a.ack(n1)
     assert r1["ok"] is False and r1["code"] == "busy"
-    n2 = a.send(put(a, "A3", "后改正"))                            # on its way before the refusal arrived
     room.release()
     clock[0] += 0.3                                               # after the wait it was told
+    # Set the arrival time before handing the frame to the concurrent ASGI loop.
+    n2 = a.send(put(a, "A3", "后改正"))
     r2 = a.ack(n2)
     assert r2["ok"] is False and r2["code"] == "busy" and r2["detail"]["held"] == n1, r2
     clock[0] += 1
@@ -2009,14 +2010,44 @@ def test_a_rate_limited_message_is_not_overtaken_either(world, clock):
     n1 = a.send(tx=grow)
     r1 = a.ack(n1)
     assert r1["ok"] is False and r1["code"] == "rate_limited"
-    n2 = a.send(typed)
+    # Otherwise the ASGI loop can read it during cooldown and correctly reply with n=None.
     clock[0] += r1["detail"]["retry_after"] + 0.1
+    n2 = a.send(typed)
     r2 = a.ack(n2)
     assert r2["ok"] is False and r2["code"] == "rate_limited" and r2["detail"]["held"] == n1, r2
     clock[0] += 5
     assert a.do(tx=grow, n=n1)["ok"] is True
     assert a.do(typed, n=n2)["ok"] is True
     a.close()
+
+
+
+def test_an_early_rate_limited_frame_has_no_number_and_cannot_overtake(world, clock):
+    """Cooldown deliberately refuses bytes before parsing their sequence number."""
+    from synwevo_core.http import RateBuckets
+    world["app"].state.collab.sheet_rate = RateBuckets(60)
+    a = join(world, "editor")
+    try:
+        for i in range(60):
+            assert a.do(put(a, "B3", f"x{i}"))["ok"]
+        n1 = a.send(put(a, "B3", "first"))
+        first = a.ack(n1)
+        assert first["ok"] is False and first["code"] == "rate_limited"
+        n2 = a.send(put(a, "B3", "second"))
+        # Await any ack, so an incorrect numbered reply fails instead of blocking forever.
+        early = a.wait(lambda kind, frame: kind == "sheet" and frame["type"] == "ack")
+        assert early["n"] is None and early["ok"] is False and early["code"] == "rate_limited"
+        assert early["detail"]["retry_after"] > 0
+        assert a.cells()["B3"] == {"v": "x59"}
+        clock[0] += first["detail"]["retry_after"] + 0.1
+        held = a.do(put(a, "B3", "second"), n=n2)
+        assert held["ok"] is False and held["code"] == "rate_limited" and held["detail"]["held"] == n1
+        clock[0] += 5
+        assert a.do(put(a, "B3", "first"), n=n1)["ok"]
+        assert a.do(put(a, "B3", "second"), n=n2)["ok"]
+        assert a.cells()["B3"] == {"v": "second"}
+    finally:
+        a.close()
 
 
 def test_a_hold_does_not_outlive_the_epoch_it_was_made_in(world, clock):

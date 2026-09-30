@@ -1,7 +1,24 @@
 # Synwevo Admin 管理能力覆盖表
 
-> 状态：2026-09-29 建立，是批次 1 的起点。依据是 7 个分区对 HEAD `e54b66e` 的只读代码核查：没有启动服务，没有读 `data/`、`.env`、秘密或用户内容。生产运行 `aadcb9e`。
+> 本表于2026-09-29建立，当前进度见下节。历史盘点依据是 7 个分区对 HEAD `e54b66e` 的只读代码核查：没有启动服务，没有读 `data/`、`.env`、秘密或用户内容。当时记录生产运行 `aadcb9e`，本轮未重新核实生产版本。
 > 本文是管理员平台唯一的覆盖表。专项约定见 [`../ai/admin-platform.md`](../ai/admin-platform.md)，设计调研见 [`admin-references.md`](admin-references.md)。行号取自 `e54b66e`，修改前先复核。旧记录里的"完成"只当线索。每完成一条链路，就在这里更新状态、证据和发布状态。
+
+## 2026-09-30 接续核查（当前批次，覆盖下面历史快照）
+
+- B1-2 实现确实已存在于未合入的 `worktree-wf_a24f2626-a32-1`，本轮在 `codex/admin-platform` 继承并审查；历史“无权限目录”描述只适用于主检出旧快照。
+- B1-1 已接入共用管理外壳，导航由真实 `/api/admin/session` 权限驱动，保留旧 `?tab=` 与 API 子路由；没有创建不存在的模块页面。
+- B1-3/4 本地实现并通过专项验收；冻结提交dde47cc的容器全量在3GB限制下OOM，门禁未通过：`ac/admin_operations.py` 的 `admin.user.status`，权限 `platform.users.manage`，平台范围/单账户/高风险；只读影响预览签名绑定操作者、目标、参数、源站、资源版本和5分钟时限；实际执行重新检查当前会话/权限；幂等结果持久到唯一 Store 的 `admin_operations` 表。
+- 停用允许 active/pending 普通人类账户，持平台角色者先撤权；恢复只允许 suspended，邮箱未验证保持 pending。状态、全部会话/委托令牌、未完成认证票据和成功审计同事务；恢复不复活旧凭据。
+- 会话撤销、授予/撤销与兼容角色路由、注册配置、邮件及空间冻结写入增加事务内会话/权限复核。拒绝记录在失败事务外保留。
+- B2已实现初始化事务与短时令牌期限校验、口令/Passkey UV按用途重认证、最后可用最高管理员的验证方式保护；真实Chromium虚拟认证器11条链路通过，三语320/390触摸布局与SPA离开取消已证。主机关联回归505项通过，未部署；详见 [B2记录](../quality/admin-b2-20260930.md)。
+- 配置执行依赖：通知邮件派发已补写锁内预算/当前资格复核与认领-outbox-关联原子性，72项关联回归通过；保持私信邮件默认关闭。B3已接入摘要间隔和滚动24小时上限的版本、差异、冲突、回滚及实际消费；普通偏好显示安全有效值。后端114项分别通过（113+修正误报专项1）、消费关联88项、账户前端19+23检查与构建通过，真实浏览器8场景/18布局检查通过。逐实例应用确认未实现，见 [B3证据](../quality/admin-b3-settings-20260930.md)。
+- B4最高管理员接任已在`6cef796`实现并完成专项验收：签名预览发起、本人专用UV接受、进入后台第二次UV确认就绪、独立撤权；旧即时最高授予关闭，未就绪者不计入最后可用管理员。两次证明不刷新普通管理重认证；恢复作废所有pending提议。38项接任回归、浏览器12项业务/9组三语布局及键盘检查通过；关联全套1707通过/5项测试假设失败，修复后分别13及8项通过，未重跑全套。完整应急恢复与无日志授权核对仍未完成，详见[B4证据](../quality/admin-b4-handover-20260930.md)。
+- 本轮最终冻结容器`b348fb6`自然结束3091通过/4失败/5跳过；无OOM，4失败为工厂测试的全局登记表假设，后续`496c1e2`窄验8项通过。另有Timer向关闭解析池提交的退出竞态警告未处理，修复后完整门禁未重跑，发布仍未通过。详见[容器证据](../quality/admin-runtime-memory-20260930.md)。
+- 用户要求本轮结束后停止goal；本轮已收尾，goal暂停，一分钟自动跟进已停用，不开始D3或其他新批次。
+- 此批仍未部署；Actions `36569205283` 的真实阻塞注解已于2026-09-30重新读取。全局搜索、保存视图、完整配置版本、所有业务治理和主机运维尚未交付，下面未实现项继续有效。
+- 证据见 [本批验证记录](../quality/admin-b1-20260930.md)：前端252项、部署工具8项、浏览器10链路、Docs跨模块2项；主机全量首次2998通过/7失败/2跳过，失败均已窄修通过，冻结源码容器在约83%被OOM终止，待定位与重验。专项测试组互有重叠，不累加，不沿用历史通过数。
+
+使用与恢复说明：[admin-operations.md](admin-operations.md)。本批截图与浏览器报告在 `output/playwright/admin-review/`（明确隔离fixture，无生产数据）。
 
 ## 0. 读法
 
@@ -150,23 +167,23 @@
 
 | 编号 | 风险 | 缺陷 |
 |---|---|---|
-| D1 | 高 | **恢复账户不校验原状态（已复核）。** 调用链：`admin_routes.py:457-458` → `identity.py:137-140`。<br>• `pending` → `active`：跳过邮箱验证，并保留预注册者的口令和因素。<br>• `pending_delete` → `active`：不清 `deletion_due_at`，也不作废找回令牌。<br>• UI 对所有非 active 状态都显示"恢复账户"，且没有测试覆盖这两种情况。 |
-| D2 | 高 | **提升平台角色时不校验目标（已复核）。** `pending`、`suspended` 的账户和应用身份都能被提升。`platform_admins()` 的计数包含应用身份和无法重认证的管理员，而最后管理员保护与 bootstrap 判断都依赖这个计数。 |
+| D1 | 高 | **已修复（本批，仅本地）**：恢复只接受 suspended；未验证邮箱恢复 pending；pending/pending_delete均拒绝，不更改删除期限或借道取消删除。停用清除待完成认证/恢复凭据；恢复不复活旧凭据。证据：`test_admin_operations.py`、`it/test_admin_user_operations.py` 和真实双浏览器停用/恢复。 |
+| D2 | 高·已修复（仅本地） | 历史问题是提升角色不校验目标，计数包含应用身份或不能认证的账户。B1-2授予要求active、邮箱已验证、人类账户及真实可用认证方式；B2支持口令或当前RP的Passkey UV严格证明。B4普通最高grant不再即时授予：提议允许尚无UV的合格目标，但接受必须本人完成专用UV；实际后台再次UV就绪后才计入最后可用管理员。旧/主机授予保留原有资格，不能把元数据夹具当实际接任证据。`test_platform_access.py`、`test_admin_handover.py`及B4浏览器提供相应验证。 |
 | D3 | 高 | **注册策略 `closed` 与 `invite` 的执行完全相同（已复核）。** 两处都只判断 `!= "open"`（`ac/registration.py:66`、`ac/external.py:580`），所以 `closed` 下邀请仍能创建账号。 |
 | D4 | 高 | **API 控制台轮换时写死零过渡期。** `Credentials.tsx:19` 传 `grace_seconds:0`，`Requests.tsx:27` 传 `overlap_s:0`，而后端支持最长 24 h。每次轮换都会立即中断正在运行的集成。 |
 | D5 | 高 | **命令行可绕过所有者同意。** `dw/cli.py` 的 `apikey create` 和 `ac/cli.py` 的 `client register --service` 创建的凭据不绑定审批，控制台也不标记。CLI 还能扩大未绑定服务账户的 scope 或换掉空间。 |
 | D6 | 高 | **CLI 应用开关绕过服务层。**<br>• `app disable --workspace` 直接删行，不写安全日志（`ac/cli.py:221-226`），从备份恢复时可能被静默重新启用。<br>• `app grant` 不检查成员身份、冻结状态和空间是否启用了该应用。 |
 | D7 | 高 | **停用 messages 应用后出现两个写入源。** 停用后 `messages_launch_url()` 返回 None，账户源上旧的 `/api/auth/messaging` 路由重新可写；消息进程却继续服务已有会话。 |
-| D8 | 高 | **5 个管理写操作在提交后才写审计（已复核）。** 涉及 status、claim、freeze/unfreeze、platform-role、revoke-sessions。`audit()` 失败会抛出异常，此时变更已生效却没有记录。 |
+| D8 | 高 | **已修复（本批，仅本地）**：status、claim、freeze/unfreeze、platform-role、revoke-sessions 的业务变更与成功审计同事务；持写锁后复核当前会话/权限。账户停用和会话撤销的前置日志失败使事务回滚。拒绝记录在失败事务外保存。证据：`test_admin_operations.py`、`test_admin_operation_audit_edges.py`、`test_admin_write_races.py`、`test_admin_recovery_safety.py`。 |
 | D9 | 高 | **`keys retire` 没有保护。** 可以退役当前正在用的签名密钥，也可以在最长令牌有效期结束前退役。 |
-| D10 | 高 | **管理员重认证只接受口令。** 只用外部身份登录、没有口令的管理员永远无法使用后台。平台也不要求管理员启用 MFA。 |
+| D10 | 高·部分修复 | B2本地已接入口令及Passkey UV用途重认证，可用最高管理员按当前RP的验证能力计；删除最后验证方式与角色撤销在同一写锁下保护。邮件验证码不能代替证明，TOTP单独严格重认证及管理员必须MFA策略仍未完成。真实签名反向/竞态/审计回滚和Chromium虚拟UV浏览器已有证据；实体设备尚未验证。 |
 | D11 | 高 | **停用前不检查唯一拥有者。** 停用账户时不检查对方是否是某组织或空间的唯一拥有者（账户删除会查，`ac/profile.py:71-103`），也没有平台交接路径，可能留下无主的组织或空间。 |
 | D12 | 中 | **组织自定义角色的理由被丢弃。**<br>• UI 要求填写理由，但路由既不接收也不存储（`ac/organization_routes.py:191,203,217,229,241`）。<br>• 移除角色时不要求操作者持有该角色的权限（`core/org_roles.py:287-289`）。 |
 | D13 | 中 | **举报复核有并发问题。**<br>• 先查后改，更新语句没有 `WHERE status='open'`（`core/messaging.py:699-721`），两人同时复核时后者覆盖前者。<br>• 其他管理者的 `conversation.reported` 待办永远停在 pending。 |
 | D14 | 中 | **转换器内存上限高于容器上限。** `CONVERTER_MEMORY_MB` 默认 8192 MB，而 docs 容器的 `mem_limit` 是 2304m（`prod/compose.yaml:69`）。 |
 | D15 | 中 | **扫描上限低于上传上限。** 扫描上限 25 MiB（`SYNWEVO_CLAMD_MAX_BYTES`），Docs 上传上限 100 MB，nginx `client_max_body_size` 是 100m。25–100 MiB 的文件会被接收，然后永远停在 `scan_failed/too_large`。 |
 | D16 | 中 | **服务账户重新启用不留痕。** 不写安全日志，也不像空间解冻那样返回恢复说明；从旧备份恢复时可能重新应用停用。 |
-| D17 | 中 | **`operator` 角色名不副实（已复核）。** 它没有任何能力，把管理员改成 operator 会静默移除全部管理权，而 UI 把它标为"平台运维"（`acweb/Admin.tsx:237`）。 |
+| D17 | 中 | **`operator` 角色名不副实（已复核）。** 它没有任何能力，把管理员改成 operator 会静默移除全部管理权，而 UI 把它标为"平台运维"（`acweb/Admin.tsx:237`）。<br>**已修复（仅本地，B1-2）**：v27 迁移为无平台权限并写审计，选择器与筛选移除，兼容路由拒绝 `operator`（A3）。 |
 | D18 | 低–中 | **没有调用方的代码和虚设路径。**<br>• 无调用方：`Messaging.sweep_unused_attachments`（未发送的附件永不清理）、`messaging_search.rebuild`、`PushSubscriptions.revoke_all_for_user`、`capabilities.clear_probe_cache`。<br>• `ac/notify.py:9` 说"由管理员 outbox 重驱"，但这个路径不存在。<br>• 桥接 outbox 失败 10 次后静默退出处理，也看不到。 |
 | D19 | 低 | **有配置绕过 `env.py` 读取。** `SYNWEVO_COLLAB_MAX_FRAME_BYTES`、`SYNWEVO_MESSAGING_*_WINDOW_S`、`*_UI_DIR` 直接读 `os.environ`；`dw/cli.py` 的 `info` 用 `os.environ.get`，会误报。 |
 | D20 | 低 | **webhook 与调试器的交互问题。**<br>• 重复点击 webhook 重投会重复创建投递。<br>• 调试器的 query 字段 `JSON.parse` 失败未被处理。 |
@@ -177,12 +194,12 @@
 
 | 模块 | 资源 | 动作 | 现有服务与接口 | 当前后台入口 | 状态 | 缺失 | 所需权限 | 作用域 | 风险 | 执行方 | 验收方式 | 发布状态 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| O1 管理台外壳 | `/admin` 入口 | 进入、访问保护 | `core/http.py:833-839` 非管理员 shell 404；`ac/admin_routes.py:37-64` `_admin`；`/api`、`/admin` no-store | `acweb/main.tsx:59-65,125-126` RequireSession+AdminOnly；`portalweb/Portal.tsx:140-162` | 已接入 | 无分组导航、面包屑、环境与范围标识；AdminOnly 按角色而非权限判断（为让锁定管理员能到达 step-up，属于设计） | PA | 全局 | 高 | 每请求重读 users 行 | 普通用户、组织 owner、空间 admin、operator 访问 `/admin` 与 `/api/admin/overview` 均 404，管理员 200（`ac-tests/test_admin.py:74-93`、`test_admin_governance.py:74-81`） | 已上线 |
+| O1 管理台外壳 | `/admin` 入口 | 进入、访问保护 | `core/http.py`、`core/platform_access.py`、`ac/admin_routes.py`；敏感响应 no-store | `acweb/admin/AdminLayout.tsx`、`Admin.tsx`、`pages/ApiPlatform.tsx` | 已接入（本批） | 全局搜索、命令面板、完整范围切换和保存视图尚未实现 | 任一有效平台权限；实际视图按具体权限和 step-up | 平台 | 高 | 每请求重读会话/授权；前端复用权限目录 | `browser_admin_review.py`：三语1440/390/320、触屏Drawer/键盘焦点、旧深链、API tab、锁定会话step-up；`test_platform_access.py` 角色矩阵 | 仅本地，未部署 |
 | O2 管理台外壳 | 全局搜索、命令面板、对象详情 | 按 ID/引用查找用户、组织、空间、项目、任务、复制请求；执行受权操作 | 无 | 无 | 缺后端 | 按权限过滤的服务端搜索（不索引正文，不返回文档标题）；对象详情（概览、配置、关联、任务、审计）；命令面板只调用已登记操作 | 目标 各 `platform.*.view` | 全局 | 中 | Store 查询 | 审计查看员搜不到账户管理动作；测试文档标题不出现在结果中；未知 ID 无结果 | 未实现 |
 | O3 概览 | 平台概览 | 查看 | `GET /api/admin/overview`（`admin_routes.py:261-275`：账户、停用、空间、管理员、未认领） | `acweb/Admin.tsx:108-144` | 已接入 | 无数据时间、定义与下钻；缺待验证、待删除、失败邮件、挑战故障、封禁地址、待审批、最近管理变更；admins 计数含应用身份（D2） | PA | 全局 | 低 | users/workspaces COUNT | 在隔离实例停用账户后刷新，计数与筛选列表一致；每个新指标下钻总数相同 | 已上线 |
 | O4 概览 | 运行与通信健康摘要 | 查看、下钻 | 仅各角色匿名 `/readyz`（`core/http.py:1132-1230`：database、storage、worker、malware_scanner、messaging 计数）；邮件积压见 `/api/admin/mail` | 无 | 缺后端 | 汇总邮件积压/失败、通知与推送投递、开放举报、桥接积压/死信、消息流连接、失败 webhook 订阅、Docs 队列、worker 存活；进程不可达显示"未接入"而非 0；明细见 R16–R18 | PA | 全局（每角色） | 低 | 只读聚合 + 读取固定源站 `/readyz` | 造一封失败邮件与一条开放举报，计数变化并能下钻到对应列表 | 未实现 |
 | O5 待处理 | 治理待办中心 | 查看并跳到对象 | 仅 overview 的 `unclaimed` | `Admin.tsx:126-131` ClaimCard | 缺后端 | 无有效拥有者的组织/空间、临近清除的已删组织、待决复制与 API 审批、停滞导入、失败 webhook 与桥接死信、隔离待复核、卡住任务；"已解决"指对象状态改变，不是已读 | PA | 全局 | 低 | 只读查询 | 每个计数等于下钻行数，底层修复后才归零 | 未实现 |
-| O6 待处理 | 未认领历史空间 | 认领给已有账户 | `POST /api/admin/workspaces/{wid}/claim`（`admin_routes.py:319-393`，事务内复检，单一拥有者） | `Admin.tsx:146-175` ClaimCard | 已接入 | 账户选择器含应用身份；UI 固定 owner 且隐藏可选 name；审计在提交后写（D8） | PA! | 空间 | 高 | memberships、workspaces、workspace_apps、app_entitlements 同一事务 | `ac-tests/test_admin.py:127-198,347-367`（并发下单一拥有者；管理员仍读不到文档） | 已上线 |
+| O6 待处理 | 未认领历史空间 | 认领给已有账户 | `POST /api/admin/workspaces/{wid}/claim`（`admin_routes.py:319-393`，事务内复检，单一拥有者） | `Admin.tsx:146-175` ClaimCard | 已接入 | 账户选择器含应用身份；UI 固定 owner 且隐藏可选 name；审计在提交后写（D8）。B1-2 复审（仅本地）：需要 `platform.workspaces.claim`（仅最高管理员）；事务内拒绝本人（`self_claim`）与持有平台授予的账户（`target_is_platform_admin`）；选择器只列无平台权限的账户，卡片只对能指派且能搜索账户的人显示（`test_platform_access.py::test_the_historical_data_goes_only_from_a_super_administrator_to_an_ordinary_account`、`admin-access.test.mjs`） | PA! | 空间 | 高 | memberships、workspaces、workspace_apps、app_entitlements 同一事务 | `ac-tests/test_admin.py:127-198,347-367`（并发下单一拥有者；管理员仍读不到文档） | 已上线 |
 
 ### 2.2 账户与访问
 
@@ -190,16 +207,16 @@
 
 | 模块 | 资源 | 动作 | 现有服务与接口 | 当前后台入口 | 状态 | 缺失 | 所需权限 | 作用域 | 风险 | 执行方 | 验收方式 | 发布状态 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A1 平台权限 | 平台角色 admin | 授予 | `POST /api/admin/users/{uid}/platform-role`（`admin_routes.py:522-541`）→ `core/identity.py:780-792` | Users 行菜单"修改平台角色"（`Admin.tsx:215,220-233`） | 已接入·有缺陷 | 不校验目标（D2）；无 expected-role 版本检查；审计无前值且在提交后写（D8）；被提升者的已有会话保留 12 h 或 14 天闲置窗口（1 h 规则只在建会话时生效，`core/sessions.py:127-128`）；无接任验证，不通知目标 | PA! | 全局 | 高 | users.platform_role，由 `_admin`、`core/http.py:835`、`core/api_platform.py:60-66`、`authc/session_routes.py:112-119`、`ac/auth_routes.py:346,659`、`ac/profile.py:74` 读取 | 在隔离实例提升测试账户：step-up 后 `/api/admin/overview` 200，`/api/auth/me` 含 `api_platform.manage`，门户出现"平台管理"；未重认证时 403 reauth_required；非管理员 404 | 已上线 |
-| A2 平台权限 | 平台角色 admin | 撤销，最后管理员保护 | 同上；`identity.py:787-791` 在事务内计数其他有效管理员 | 同上 | 已接入·有缺陷 | 计数含应用身份和无法重认证的管理员；不验证接任者可用；降级依赖下一请求重读，没有显式会话或缓存失效 | PA! | 全局 | 高 | 同上 | 两名管理员：降一名后其下一次 `/api/admin/*` 404；降最后一名 409 last_admin；并发互降只成功一个 | 已上线 |
-| A3 平台权限 | 平台角色 operator（"平台运维"） | 分配 | `admin_routes.py:527-529`；`core/identity.py:29`；`core/store.py:128-131` CHECK | `Admin.tsx:198-200,231-237` | 缺后端 | 没有任何能力（D17），`docs/security/permissions.md:293-294` 也写明无运维角色；应映射到真实权限集合或从选择器移除 | PA! | 全局 | 中 | 无（只在 `demote_first` 被读取） | operator 访问后台与 API 控制台均 404（`test_admin_governance.py:74-81`）；落地后委派动作成功、其余 403/404 | 已上线 |
-| A4 平台权限 | 委派权限目录、内置角色、授予（运营/安全/运维/支持/审计；查看/配置/执行/导出/授权/敏感内容；范围与期限） | 定义、授予、撤销、列出有效权限 | 无；唯一命名权限 `api_platform.manage` 由角色派生（`core/api_platform.py:19`、`authc/session_routes.py:118`） | 无 | 缺后端 | 权限目录、角色到权限映射、带来源/期限/范围的授予表；"持有≠可授予"；撤权作用于现有会话和排队工作；并发安全的最后最高管理员保护。属批次 1 主体（§3.1） | 目标 `platform.roles.assign`、`platform.roles.assign_super` | 全局（后续可到组织或应用） | 高 | 新授予表 + `synwevo_core` 共用 `require_platform` | 逐个内置角色验证：允许的动作成功，其余在服务端被拒（REST、API 控制台、异步执行）；撤权后已有会话的下一请求失效；审计含授予/撤销前后值 | 未实现 |
-| A5 平台权限 | 权限解释与模拟 | 说明为何允许或拒绝 | 无 | 无 | 缺后端 | 返回有效平台权限及来源、step-up 状态、重认证剩余时间；模拟不执行业务 | 目标 `platform.roles.view` | 全局 | 低 | 只读计算 | 锁定管理员的解释给出 step_up_required；模拟前后各表行数不变 | 未实现 |
-| A6 平台权限 | 平台管理员名册 | 查看授予来源、强认证状态、能否 step-up、最近登录、会话 | 部分：用户列表按角色筛选（`admin_routes.py:396-417`）；授予来源只在审计里 | `Admin.tsx:198-200` 角色筛选 | 缺界面 | 名册视图；把没有口令的管理员标为"无法完成重认证"（D10） | PA | 全局 | 中 | users、audit_events、sessions | 名册人数等于可用的有效管理员；无口令管理员被标记 | 已上线（部分） |
-| A7 最高管理员恢复 | 首位管理员 | 一次性令牌初始化 | `ac/cli.py:98-111` → `identity.py:795-818`；`POST /api/auth/bootstrap`（`ac/auth_routes.py:239-275`，每地址 10 次/15 分钟，已有管理员后 409） | 无（登录页在 `bootstrap_required` 时提供） | 仅命令行 | 按设计只在主机上做；后台可只读显示初始化状态与历史（审计 `auth.bootstrap`、`cli.bootstrap.token`） | 主机 | 全局 | 高 | bootstrap_tokens 原子消费 | 新隔离数据目录中用令牌建出有效管理员；重用或过期 403 bad_token；已有管理员后 409 already_bootstrapped | 已上线 |
+| A1 平台权限 | 平台角色 | 授予与本人接任 | 委派角色继续经 `platform-grants`；最高角色的普通grant和旧`platform-role: admin`返回 `super_admin_acceptance_required`。`admin_handover.py`实现签名预览/24小时提议、指定本人专用Passkey UV接受、后台独立UV就绪；所有成功变更/操作结果/审计同事务 | 账户「平台权限」发起；本人 `/account#admin-handover`；后台就绪区和提议列表 | 已接入（B4专项已验证） | 本批不外发接任通知；完整应急恢复与无日志恢复核对仍缺（A8/R21） | 委派需`platform.roles.assign`；最高发起/取消需`platform.roles.assign_super`及严格admin认证；接受/就绪绑定本人及专用UV | 全局/指定账户 | 高 | platform_super_admin_offers、platform_role_grants、reauth_challenges、admin_operations；会话策略只收紧 | `test_admin_handover.py`、原平台权限/恢复用例；浏览器12项业务、9组三语/视口及键盘检查通过 | B4仅本地 |
+| A2 平台权限 | 平台角色 | 撤销，最后可用最高管理员保护 | `POST /api/admin/platform-grants/{gid}/revoke {reason}` → `PlatformAccess.revoke`：同一事务内计数可用最高管理员（active、计入、能完成身份确认与严格重认证；应用身份、停用/删除/待验证账户、只有TOTP、没有可用严格验证方式的账户与到期授予不计），B4新接任授予还须该准确grant已完成ready；未就绪者不计入。归零时 409 `last_super_admin`；停用路由对最后一名返回 `last_super_admin`、对其他持有授予者返回 `demote_first`；本人删除（`ac/profile.py`）同样检查 | 同上 | 已接入 | 撤销不通知目标；本批 `platform_grant_revoked` 保护旧备份撤权，旧恢复工具须升级（见使用说明）；无日志恢复仍缺门禁 | 同上 | 全局 | 高 | 同上；权限每个请求重读，撤销在下一请求生效 | `services/identity/tests/test_platform_access.py`：`test_last_super_admin_under_revocation_suspension_and_self_deletion`、`test_two_super_admins_revoking_each_other_at_once_leave_exactly_one`（两人同时互撤只成功一个）、`test_existing_host_granted_passwordless_admin_with_current_uv_is_usable`（可用 = 能严格重认证）、`test_the_audit_names_what_a_change_did_even_on_an_account_whose_grants_do_not_count`、`test_a_finalized_deletion_records_each_grant_it_ends`、`test_a_replayed_deletion_ends_the_grants_with_the_account`；`test_self_service.py`：`test_last_platform_admin_cannot_delete`、`test_concurrent_last_admin_deletions_cannot_remove_both`；`test_identity.py::test_last_platform_admin_cannot_be_demoted` | 仅本地 |
+| A3 平台权限 | 平台角色 operator（「平台运维」） | 停用 | v27 迁移与每次打开库的对账（`core/platform_access.py` `reconcile_mirror`）把 `operator` 改为 `none` 并写审计 `admin.platform.operator_cleared`；兼容路由对 `operator` 返回 400 `operator_retired`；`users.platform_role` 的 CHECK 保留，不重建表 | 选择器与筛选中已移除（`role=operator` 筛选为 422），旧行显示为「无平台权限」 | 已接入 | — | — | 全局 | 低 | 迁移与对账 | `services/identity/tests/test_platform_access.py`::`test_migration_26_to_27_makes_admins_super_admins_and_clears_operators`；`test_admin.py::test_user_filters_and_counts_apply_before_pagination`；`test_admin_governance.py::test_workspace_org_owner_and_operator_cannot_enter_platform_governance` | 仅本地 |
+| A4 平台权限 | 权限目录、内置角色、授予（查看 / 管理 / 支持 / 授权；期限） | 定义、授予、撤销、列出有效权限 | `core/platform_access.py`：18 项权限（B1-2 复审新增 `platform.workspaces.claim`）、5 个内置角色（`super_admin` 按定义等于整个目录，其余逐项列出）、`platform_role_grants`（schema v27；`(user_id, role)` 部分唯一索引；角色 CHECK）。`require_platform` 用于全部 `/api/admin` 路由与 `/admin` 外壳，`require_manage` 查 `api_platform.manage`；`describe_user` 新增 `platform_permissions`、`platform_roles` | 标签按调用者权限显示（`acweb/Admin.tsx`）；标签内的写操作按权限禁用并写明原因（`acweb/governance/access.ts`）；审计筛选含「平台权限」与「被拒绝的管理请求」；门户与账户顶栏按任一平台权限显示「平台管理」 | 已接入 | 作用域只有全局（组织/应用范围、可激活授予留待后续）；没有自定义角色；异步任务里还没有平台权限执行点；导出与敏感内容权限尚未登记 | `platform.roles.*` | 全局 | 高 | 授予表，每个请求重读 | `services/identity/tests/test_platform_access.py`：`test_each_built_in_role_is_allowed_exactly_its_permissions`（5 个角色 × 全部管理路由与 API 控制台）、`test_every_admin_route_is_in_the_matrix`、`test_no_platform_permission_sees_404_everywhere_including_owners_and_workspace_admins`、`test_the_admin_shell_opens_for_any_platform_permission`、`test_a_denied_attempt_is_audited_once_per_window`、`test_expired_grants_are_ignored_and_can_be_granted_again`、`test_the_rollback_mirror_follows_every_grant_and_carries_a_rollbacks_changes_forward`、`test_a_lower_administrator_does_not_act_on_a_higher_one`（`target_outranks_actor`，审计限流）；`services/identity/web/tests/admin-access.test.mjs`（页面按角色提供的操作与服务器一致） | 仅本地 |
+| A5 平台权限 | 权限解释与模拟 | 说明为何允许或拒绝 | `GET /api/admin/users/{uid}/platform-access`：每项权限及其来源授予、每个授予是否计入、调用者可授予的角色与可撤销的授予，以及不能授予（`assign_refusal`）或不能撤销（每个授予的 `revoke_refusal`）的原因代码；`GET /api/admin/session`：调用者的有效权限与来源、step-up 状态、重认证剩余秒数、实例标记（与 `/healthz` 同源的 `instance_kind`） | 「平台权限」对话框的「有效权限」，不能撤销或授予的原因以可见文字写在按钮旁（确认框叠在对话框之上，关闭后焦点回到原按钮）；系统写的理由按读者语言显示；管理页顶栏在测试实例上显示「测试实例」 | 已接入（解释）；缺后端（模拟） | 受控模拟（不执行业务、不泄露无权对象） | `platform.roles.view`；session 只需任一平台权限（锁定会话也可读） | 全局 | 低 | 只读计算 | `services/identity/tests/test_platform_access.py`：`test_session_roster_and_explanation`、`test_a_super_administrator_grants_and_revokes_through_the_routes`；`test_email_code_login.py`（锁定管理员读到 `step_up.required=true`） | 仅本地 |
+| A6 平台权限 | 平台管理员名册 | 查看授予来源、能否完成身份确认、最近登录 | `GET /api/admin/platform/roles`：目录与名册（授予、来源、到期、是否计入、口令 / 可验证 Passkey / TOTP、能否严格重认证、最近一次中央登录） | 「平台管理员」标签（`acweb/governance/PlatformAccess.tsx`）；少于 2 名可用最高管理员时常驻「建议至少 2 名」 | 已接入 | 会话列表与 MFA 普及统计（A32）；最近登录只读保留的会话行（结束一周后清理） | `platform.roles.view` | 全局 | 中 | platform_role_grants、sessions、user_passwords、passkeys、totp_secrets | `services/identity/tests/test_platform_access.py`::`test_session_roster_and_explanation` | 仅本地 |
+| A7 最高管理员恢复 | 首位管理员 | 一次性令牌初始化 | `bootstrap token --ttl`限定60–3600秒；`POST /api/auth/bootstrap`在写锁内重新检查可用管理员和令牌，账户/个人空间/消费/授予/成功审计同事务；CLI同样原子提交 | 登录页受控领取 | 已接入 | 完整应急恢复仍见A8 | 主机生成、令牌领取 | 全局 | 高 | 唯一Store，bootstrap_tokens | `test_bootstrap_transactions.py`覆盖并发领取、有效期穿越、授予/审计故障回滚、会话交付失败后可重新登录、CLI二次检查 | B2仅本地 |
 | A8 最高管理员恢复 | 应急恢复（break-glass） | 在主机上创建新管理员 | `ac/cli.py:113-141` `bootstrap admin --email … --force`（审计 system `cli.bootstrap.admin`，`cli.py:52-71`） | 无 | 仅命令行 | 只能新建账户，不能提升或修复已有账户；无时限、演练记录、事后轮换和对账视图；依赖主机数据库访问 | 主机 | 全局 | 高 | 直接 `Identity.create_user` | 在隔离副本上把全部管理员降级或锁定后运行：新管理员能登录、step-up 并恢复他人；审计含 os_user 与 host | 已上线 |
-| A9 强认证 | 管理员 step-up（单因素会话） | 强制与完成 | `core/sessions.py:77-94` admin_capable、`:296-308` add_factor；`admin_routes.py:53-58`；`ac/api_platform.py:44-46`；`POST /api/auth/reauth`（`auth_routes.py:417-436`） | `acweb/components/AdminStepUp.tsx:28-76`；锁定时隐藏全部标签 | 已接入·有缺陷 | 只接受口令（D10），没有 TOTP 或 Passkey step-up；没有"管理员必须启用 MFA"的策略（仅口令的会话也算 admin_capable） | 角色 admin，且 amr 含口令、passkey_uv 或两个不同因素 | 全局 | 高 | sessions.amr | 用邮件验证码登录测试管理员：`/api/admin/overview` 403 step_up_required，`/api/auth/me` admin_locked=true；口令重认证后 200 | 已上线 |
-| A10 强认证 | 危险动作重认证 | 要求近期严格重认证 | `sessions.py:311-331`（strict）、`:50` REAUTH_S=600 s；`admin_routes.py:61-63` | `acweb/governance/ActionDialog.tsx:80-127`（收到 403 reauth_required 时内嵌口令并重试） | 已接入 | 只按 scope `admin` 绑定，不绑定操作者+目标+参数+版本（§5.2），一次确认在 10 分钟内解锁全部危险动作；只接受口令 | PA! | 全局 | 高 | sessions.reauth_at、reauth_scope | 未重认证 403 reauth_required；重认证后 200；600 s 后再 403；刚登录不满足 strict（`test_admin.py:105-111`） | 已上线 |
+| A9 强认证 | 管理员step-up | 要求和完成近期证明 | `reauth_routes.py`读取实际方式；口令或当前RP的UV密钥验证，在原会话追加已证明因素 | `AdminStepUp.tsx`及账户安全面板 | 已接入 | 管理员必须MFA策略未完成；仅口令仍按既有规则可管理 | 有效平台角色及会话 | 全局 | 高 | sessions.amr/reauth_scope与成功审计同事务 | 邮件码会话锁定、口令及真实签名Passkey UV证明；错误/撤销/审计失败不解锁 | B2仅本地 |
+| A10 强认证 | 危险动作重认证 | 近期严格用途证明 | `reauth_routes.py`、`Passkeys`、`Sessions.confirm_reauth`；独立一次性挑战绑定用户/中央会话/admin或mfa/RP/origin/时限，服务端要求UP及UV | `ActionDialog.tsx`按真实可用方式呈现，SPA卸载取消待处理证明 | 已接入 | 用途证明仍可在窗口内用于同类动作；账户停用另绑定目标/参数/版本预览，其余危险动作的独立影响预览仍待补齐 | 对应平台权限+严格重认证+理由 | 全局/目标 | 高 | 原sessions行，无新登录或Cookie；默认600秒窗口 | `test_passkey_reauth.py`真实签名反向、竞争、审计故障；浏览器11条链路与三语手机截图 | B2仅本地 |
 | A11 强认证 | 第二因素要求策略（管理员 / 组织 / 全体） | 设置与执行 | 无；现有规则只有 admin_capable，以及管理员和 TOTP 用户的 Passkey 须做用户验证（`auth_routes.py:346-352`） | 无 | 缺后端 | 策略存储；登录与 step-up 时执行；注册宽限期；防止唯一管理员陷入无法完成的 MFA 循环（§4.2、§7.11） | 目标 `platform.security.manage` | 全局 | 高 | — | 开启"管理员须 MFA"后，仅口令的会话被锁，直到完成 TOTP 或 Passkey；普通用户不受影响；最后一名无 MFA 管理员被引导去注册，而不是被锁死 | 未实现 |
 
 #### 用户与账户
@@ -208,9 +225,9 @@
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | A12 用户 | 账户列表 | 列表、搜索、筛选 | `GET /api/admin/users`（`admin_routes.py:396-417`，按 q/status/role，每页 ≤200，快照分页） | `Admin.tsx:177-219` | 已接入 | 缺邮箱验证、最近登录、MFA/Passkey/IdP 列，缺排序和保存视图；应用身份被当作人列出；`status=deleted` 可选但恒为空；sessions 计数含依赖方会话行 | PA | 全局 | 低 | users、memberships、sessions | `test_admin.py:404-443`；补测：应用身份不出现，pending 只含未验证账户 | 已上线 |
 | A13 用户 | 账户详情与安全时间线 | 查看资料、验证状态、登录方式、成员关系、组织、会话、退避状态、近期事件 | 没有 `GET /api/admin/users/{uid}`；可用零件：`core/sessions.py:260-282`、`ac/external.py:375`、`ac/mfa.py:214`、audit_events、auth_attempts | 无（只能在审计里按邮箱搜） | 缺后端 | 只返回元数据的详情接口与视图（不含口令哈希、TOTP 种子、恢复码、令牌）；关联对象与审计时间线 | 目标 `platform.users.view` | 对象 | 中 | — | 详情与本人账户页一致；响应中没有秘密字段；失败登录出现在时间线 | 未实现 |
-| A14 用户 | 账户 | 停用 | `POST /api/admin/users/{uid}/status` suspended（`admin_routes.py:419-464`：拒绝自停用；admin/operator 返回 409 demote_first；撤销会话 `sessions.py:246-258` 与 OAuth 令牌 `core/oidc.py:618-621`；安全日志 user_suspended） | Users 行菜单"停用账户"（`Admin.tsx:210-212,220-230`） | 已接入 | 无 expected-status 版本检查；审计无前值且在提交后写（D8）；无影响预览、批量、通知；不检查唯一拥有者（D11）；空间 API key 与服务账户按设计不动 | PA! | 对象 | 高 | users.status，由 `core/http.py:861-866` 会话闸门、`identity.py:180-183` 登录、`core/authority.py:216-220`（排队任务、委托）、`dw/collab.py:1334-1380`、`msg/routes.py:774-777` 读取 | 测试用户同时持有浏览器会话、委托令牌、协同 socket。停用后：下一次 API 401，令牌失效，socket 在重检间隔内关闭，口令登录被拒（审计 status_suspended）（`test_admin.py:199-223,313-335`） | 已上线 |
-| A15 用户 | 账户 | 恢复 | 同一接口 status=active → `identity.py:137-140`（不查原状态） | "恢复账户"对所有非 active 状态可见（`Admin.tsx:210-213`） | 已接入·有缺陷 | D1：只应允许 suspended→active；不写安全日志也不给恢复说明（从旧备份恢复会再次停用）；pending 与 pending_delete 两种情况无测试 | PA! | 对象 | 高 | users.status | suspended→active 后能登录，已撤销的会话和令牌不复活（`test_admin.py:313-326`）；补测：对 pending、pending_delete 返回 409 且状态不变 | 已上线 |
-| A16 用户 | 会话与令牌 | 全部撤销 | `POST /api/admin/users/{uid}/revoke-sessions`（`admin_routes.py:466-484`：会话 + OAuth 授权 + 安全日志） | Users 行菜单"撤销全部会话" | 已接入 | 结果只给数量，不说明结束了哪些客户端或委托；计数含依赖方行；审计在提交后写 | PA! | 对象 | 中 | sessions.revoked_at、oauth_tokens.revoked_at | 两个浏览器上下文均在下一请求 401，刷新令牌被拒（`test_admin.py:224-253,337-346`） | 已上线 |
+| A14 用户 | 账户 | 停用 | `POST /api/admin/users/{uid}/status-preview` 与 `/status` → `ac/admin_operations.py` | 账户行菜单，影响预览/理由/重认证/持久结果 | 已接入（本批） | 批量、通知、唯一拥有者诊断/交接（D11）；机器身份按原有独立授权控制 | `platform.users.manage` + 严格重认证 | 平台/单账户/当前源站 | 高 | users、sessions、委托与待完成证明、audit_events、admin_operations 同一Store事务；user_suspended前置日志+收据 | `test_admin_operations.py` 绑定/并发/幂等/故障；`it/test_admin_user_operations.py` 真实Docs会话与委托拒绝、跨空间/内容边界；浏览器双context前后验证 | 仅本地，未部署 |
+| A15 用户 | 账户 | 恢复 | 同一已确认操作接口，只允许 suspended；原邮箱未验证恢复 pending | 同上，结果说明旧凭据不恢复 | 已接入（本批） | 完整交接与孤儿治理（A37）；不提供取消删除的旁路 | 同A14；不能作用于权限更高者 | 平台/单账户 | 高 | users.status；不重新签发或恢复旧访问凭据 | `test_admin_operations.py` 拒绝pending/pending_delete/应用身份、恢复保留邮箱验证；跨模块与双浏览器：旧会话/令牌仍拒绝、新登录有效 | 仅本地，未部署 |
+| A16 用户 | 会话与令牌 | 全部撤销 | `POST /api/admin/users/{uid}/revoke-sessions`，持写锁复核权限 | 账户行菜单 | 已接入（本批加固） | 尚未提供逐设备清单、单设备管理员撤销、完整影响预览/幂等目录 | `platform.users.support` + 严格重认证，禁止对更高权限者操作 | 单账户 | 高 | 会话/委托/未完成认证证明与审计同事务，sessions_revoked日志+收据 | 管理员回归；安全日志恢复回归验证旧备份不能复活登录证明 | 仅本地加固，未部署 |
 | A17 用户 | 会话/设备、Passkey、外部身份绑定、推送设备 | 按用户列出；撤销单个设备；移除 Passkey；解绑外部身份；撤销全部推送订阅 | 服务已有，但只供本人使用：`sessions.py:221-244` revoke_device、`ac/provider_routes.py:407`、`ac/passkeys.py:103-104`、`ac/external.py:699-721`（含最后登录方式检查 `:445`）、`core/push.py:181`（无调用方） | 无（只有会话数列） | 缺界面 | 管理只读接口；危险动作需理由、通知和安全日志；IP 属个人数据，谨慎展示 | 目标 `platform.users.manage` | 对象 | 中 | sessions、client_sessions、passkeys、external_identities、push_subscriptions | 撤销两台设备之一：该上下文 401，另一台仍可用；被移除的 Passkey 无法登录；解绑后回调不再登入该账户 | 已上线（服务） |
 | A18 用户 | 账户 | 批量停用、批量撤销会话 | 无 | 无（`acweb/governance/BulkResult.tsx` 只用于空间成员） | 缺后端 | 服务端快照目标、逐项结果、幂等、跳过持有平台权限者、取消与重试（§5.3） | 目标 `platform.users.manage` | 全局 | 高 | — | 只停用筛选快照列出的 ID；超时重试不重复写安全日志；集合中的管理员被报告为拒绝 | 未实现 |
 | A19 用户 | 账户邮箱与资料 | 支持更正 | 只有本人能改：`ac/account_routes.py:166-217`（换邮箱需重认证）、`:83-90` | 无 | 缺后端 | 新地址必须由持有人验证；撤销会话；通知新旧两个地址；审计 | 目标 `platform.users.manage` | 对象 | 中 | users.email、email_key | 新地址确认前不能登录；旧地址收到通知 | 未实现 |
@@ -335,7 +352,7 @@
 | B40 邮件 | 发信域认证、退信与投诉、发信总量、多发件地址 | 查看 SPF/DKIM/DMARC；退信和投诉入库并维护抑制名单；全局和按类型的限额；多地址路由 | 无（DNS 靠人工检查，见 `docs/operations.md:265-279`；最终投递结果只在外部中继里；只有单一发件人，`ac/mail.py:150`） | 无 | 缺后端 + 缺外部配置；多发件地址：不适用 | 只读 DNS 查询并显示检查时间，不能点一下就标为通过；退信入库并映射到 outbox，`Mailer.enqueue` 遵守抑制名单；发送预算及其可见状态；代码中只有一个 MAIL_FROM，按 §7.8 记为不存在 | 目标 `platform.mail.manage` | 全局 | 中 | DNS 解析（只读）；将改 Mailer.enqueue | 状态反映真实的 TXT 记录并带检查时间；一条测试退信事件把对应行标为退信，并拒绝下一封发往该地址的邮件 | 未实现 |
 | B41 邮件 | 邮件与通知模板 | 三语言预览；编辑、版本、变量校验、发布、回滚 | 模板写在代码里：`ac/mail.py:388-555`、`ac/mail_layout.py:106`、`core/notifications.py:99`；预览脚本 `services/identity/scripts/mail_preview.py` | 无 | 预览：仅命令行；编辑：缺后端 | 后台预览：HTML + 纯文本、三种语言、变量契约、用合成数据、不发送。是否把文案移出代码需要决定；如果移出：版本化存储、变量检查、不执行服务端代码、改版后不重发历史事件 | 代码；目标 `platform.mail.manage` | 全局 | 中 | mail_layout.render、Notifier.render | 同一输入下，后台预览与 mail_preview.py 的输出逐字节相同 | 已上线（预览脚本） |
 | B42 通知 | 事件目录；投递队列（notification_deliveries、push_queue） | 查看目录；查看积压、失败、跳过及原因；重试失败项 | `core/notifications.py:82,99,338-357,632-648`；`ac/notify.py:74,138` | 无 | 目录：缺界面；队列与重试：缺后端 | 需要补齐：<br>• 只读目录：接收者、渠道默认值、是否关键。<br>• 队列：按状态计数，列出跳过原因，关联 outbox 行。<br>• D18：`ac/notify.py:9` 所说的"管理员 outbox 重驱"不存在。<br>• 重试在发送时重新检查 stale_reason、偏好、免打扰，不重发已读或已静音的条目。 | 目标 `platform.mail.view`、`platform.mail.manage` | 全局/对象 | 中 | 账户进程的 NotificationDispatcher | 关闭渠道后通知显示 skipped；SMTP 故障时显示 pending 和下次重试时间；重试一条已被读取的条目时以"应用内已读"跳过，不产生邮件 | 已上线（无入口） |
-| B43 通知 | 摘要与重试预算（DIGEST_WINDOW_S、CONVERSATION_DIGEST_INTERVAL_S 30 分钟、每日上限 8、RETRY_DELAYS_S、INTERVAL_S、BATCH）；默认偏好策略 | 查看、修改 | 代码常量：`core/notifications.py:88-93,236,289,492,589`；`ac/notify.py:34-35` | 无 | 缺后端 | §6 点名的管理值：类型化配置，带上下界，发送时读取。默认策略只作用于没有保存过偏好的读者；以下规则锁定：安全类通知恒开；会话邮件默认关闭，而且永远不能设为逐条发送 | 代码；目标 `platform.config.manage` | 全局 | 中 | NotificationDispatcher | 把间隔设为 60 分钟后，同一读者的第二封会话摘要推迟到上一封之后 60 分钟；把会话默认值设为 immediate 被拒 | 未实现 |
+| B43 通知 | 摘要间隔、滚动24小时上限；聚合/重试及默认偏好策略 | 查看、发布、默认恢复、历史回滚 | `core/platform_settings.py`；`ac/admin_settings.py`四路由；`core/notifications.py`及`ac/notify.py`实际读取 | 管理员中心→平台配置→消息摘要策略 | 摘要间隔/每日上限已接入（本地）；其余需补齐 | 逐实例应用确认、聚合/重试等其他策略尚未纳入；私信默认关闭及不得逐条发送规则锁定 | `platform.config.view/manage` | 全局 | 高（发布） | 每收件人写事务内读取版本，预算/outbox/关联原子提交 | 版本竞争/ABA、权限撤销、审计失败回滚、同键重试、收紧/放宽预算、跨Store和默认/历史恢复已证；三语浏览器8场景/18布局通过 | 仅本地，见B3记录 |
 | B44 通知 | 用户的通知偏好 | 只读诊断；代用户修改 | `core/notifications.py:476,492`；本人使用的路由 `authc/session_routes.py:312-317` | 无 | 只读诊断：缺后端；代改：不适用 | 只读诊断视图，写审计，不显示收件箱内容；代用户修改被 §1.1、§4.3 禁止，不做 | 目标 `platform.users.view` | 对象 | 高 | notification_preferences | 诊断结果与该用户自己 GET 偏好的结果一致；测试断言管理员会话不能 PUT 他人的偏好 | 未实现 |
 | B45 通知 | 平台公告（站内通知广播） | 撰写、预览受众、发送、撤回 | 无：`platform` 类别存在（`notifications.py:82`），但没有对应事件 | 无 | 缺后端 | 目录项；受众预览；内容版本；经 Notifier.emit 发送（遵守偏好和免打扰）；幂等批次；撤回（已发出的邮件撤不回）。绝不用于私信邮件 | 目标 `platform.mail.manage`（高风险外发） | 全局 | 高 | Notifier.emit + NotificationDispatcher | 预览显示 N 人；发送产生 N 条，重试不再增加；关闭了平台邮件的用户收不到邮件；撤回后从收件箱消失 | 未实现 |
 | B46 推送 | Web Push（SYNWEVO_PUSH、PUSH_CONTACT）；VAPID 密钥 | 查看状态、开关；查看指纹、轮换 | `core/push.py:70-104`（密钥在首次使用时生成并入库；schema 有 retired 状态，但没有轮换代码）；`ac/push_routes.py:34` | 无 | 开关：仅主机；轮换：缺后端 | 只读状态：是否启用、是否有联系人、密钥 id 和公钥指纹。轮换需要：退役旧密钥、触发重新订阅、影响预览、审计 | 主机；目标 `platform.config.manage` | 全局 | 高 | push_keys；WebPush.headers | SYNWEVO_PUSH=off 并重启后，`/api/auth/push/config` 返回 enabled=false，且不再产生 push_queue 行；轮换后返回新公钥，设备重新订阅 | 已上线（值待核实） |
@@ -400,7 +417,7 @@
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | R19 备份 | 一致性备份 | 创建；计划、保留、加密、异地存放 | `scripts/platform.py:515` → `dws/snapshot.py:222`；生产环境只有部署前的 `cp -a`，备份从不清理 | 无 | 仅命令行 / 缺后端 + 缺外部配置 | 生产从不按计划备份；不写审计；备份未加密；没有异地副本；计划和保留策略需所有者决定 | 主机；目标 `platform.backup.execute` | 全局 | 高 | 主机上的 snapshot.py | 创建后 verify-restore 逐行通过；按计划运行，并按策略清理旧备份 | 已上线（CLI） |
 | R20 备份 | 恢复点清单；恢复演练；部署前备份及其结果 | 查看；定期演练并记录 | `prod/receive.py:60-124`；`scripts/platform.py:526` → `snapshot.py:872` | 无 | 缺后端（需主机侧读取）/ 仅命令行 | 网页进程看不到备份目录，需要主机侧只读报告器；记录演练结果；部署时不写审计 | 主机 | 全局 | 高 | 主机 | 清单与主机上的实际目录一致；演练结果有记录 | 已上线（主机） |
-| R21 恢复 | 恢复 | 执行 | `scripts/platform.py:537` → `snapshot.py:716`，以及其中的 fence（`:506`） | 无 | 仅命令行 | 必须停服，由运维执行；后台最多显示预检结果并记录结果；目前不写审计；恢复后必须重扫 | 主机 | 全局 | 高 | 停服状态下在主机执行 | 恢复后旧会话失效，已撤销的密钥仍然无效，任务 halt | 已上线（主机） |
+| R21 恢复 | 数据及撤权状态 | 隔离恢复、受控切换 | 根脚本→Docs snapshot；core journal重放 | 仅主机CLI | 仅命令行，部分加固 | 无后台预检/作业/切换流程；`--no-journal`不能重建成员、账户、平台授权撤销，缺持久安全核对门禁；生产恢复仍需明确数据损失/写入协调 | 主机 | 整实例 | 高 | Store唯一迁移；安全日志撤销与事务收据 | `test_platform_grant_restore.py`、账户/组织恢复测试；新日志需兼容reader，细节见 [恢复说明](admin-operations.md) | 本批加固仅本地，未部署 |
 
 #### 发布与域名
 
@@ -415,9 +432,9 @@
 
 | 模块 | 资源 | 动作 | 现有服务与接口 | 当前后台入口 | 状态 | 缺失 | 所需权限 | 作用域 | 风险 | 执行方 | 验收方式 | 发布状态 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| G1 配置中心 | 配置目录：约 126 个环境键 + 每个 IdP 6 个键 + `registration.mode` | 查看每项的有效值、来源、默认值、类型、敏感性、生效方式 | 没有注册表；零散的只读片段：`ac/cli.py:531`、`dw/cli.py:449`、`/api/auth/state`、`/api/v1/capabilities` | 只覆盖三个切片 | 缺后端 | 基于 `core/env.py` 的类型化注册表；各角色自报有效值；秘密一律遮蔽；显示旧名是否在用、是否与新名冲突；标出 D19 | 主机；目标 `platform.config.view` | 全局（每容器） | 中 | 各容器进程的环境 | 目录中的值与主机上 `docker compose config` 的结果和实际观察到的行为一致 | 未实现 |
+| G1 配置中心 | 动态配置目录及约126个环境键、IdP配置、注册策略 | 查看有效值、来源、默认值、类型及生效方式 | B3两项摘要预算已有`core/platform_settings.py`目录与`GET /api/admin/settings`；其余仍是零散片段 | 平台配置→消息摘要策略；原注册/登录方式面板 | 摘要目录已接入；完整目录需补齐 | 环境变量/各角色有效值、秘密遮蔽、兼容冲突/漂移与逐实例报告仍缺；不能把数据库版本当作实例确认 | `platform.config.view`；部署配置由主机管理 | 全局 | 中 | 摘要由派发实际读取；其余各容器启动环境 | 摘要有效值与普通偏好/实际派发一致已证，其他配置逐项接入 | 两项摘要仅本地，其余未实现 |
 | G2 配置中心 | 环境类配置 | 修改并应用；历史、回滚、漂移 | 应用内没有；目前由运维编辑文件后重建容器 | 无 | 仅主机 / 缺后端 | 有边界的执行器：白名单键、校验后的覆盖存储、只重建指定服务；显示每个实例的应用状态；expected 版本检查；拒绝覆盖 x-env 中的强制值；版本化设置表和回滚；漂移报告 | 主机；目标 `platform.config.manage` | 全局（每服务） | 高 | docker compose 重建 | 应用后受影响的角色报告新值，未触及的角色不变；回滚会产生一个新版本 | 未实现 |
-| G3 配置中心 | 注册策略 `registration.mode` | 查看、修改；恢复继承 | `admin_routes.py:96-122`；`core/identity.py:851-865` | 注册策略标签 | 已接入·有缺陷 | D3；没有"恢复继承"；只能全局设置 | 读：PA；写：PA! | 全局 | 高 | 每次请求读取 meta 表 | 设为 invite 后注册返回 403，状态接口显示新值，审计有前后值（`test_admin_governance.py:55-72,274-310`） | 已上线 |
+| G3 配置中心 | 注册策略 `registration.mode` | 查看、修改；恢复继承 | `admin_routes.py:96-122`；`core/identity.py:851-865` | 平台配置中的注册策略面板 | 已接入·有缺陷 | D3；没有"恢复继承"；只能全局设置 | 读：PA；写：PA! | 全局 | 高 | 每次请求读取 meta 表 | 设为 invite 后注册返回 403，状态接口显示新值，审计有前后值（`test_admin_governance.py:55-72,274-310`） | 已上线 |
 | G4 功能开放 | 功能开关框架 | 创建开关、限定范围、紧急关闭 | 没有 flags 表 | 无 | 缺后端 | 作用域继承、依赖检查、无需重启的紧急关闭、审计；在 API 层执行，不只是隐藏界面 | 目标 `platform.config.manage` | 全局/组织/空间 | 高 | — | 对空间 W 关闭后，界面隐藏，直接调用 API 也被拒；其他空间不受影响 | 未实现 |
 
 #### 配置分项（目标：先进入 G1 的只读目录，再按需改为受控的动态配置或受控重建）
@@ -498,6 +515,7 @@
 **B1-2 委派平台权限模型**
 
 - 新增 `synwevo_core` 权限目录（草案；实现时以代码中的目录为准并回写本表）：
+  - **已实现（仅本地，2026-09-29）**：`packages/core/synwevo_core/platform_access.py` 是唯一目录，下表已回写。
 
 | 权限 | 最高 | 账户与访问 | 支持 | 审计查看 | API 平台管理 |
 |---|---|---|---|---|---|
@@ -506,6 +524,7 @@
 | `platform.users.manage` | ✓ | ✓ | — | — | — |
 | `platform.users.support` | ✓ | ✓ | ✓ | — | — |
 | `platform.workspaces.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — |
+| `platform.workspaces.claim`（复审新增：指派历史数据，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — |
 | `platform.orgs.view` | ✓ | ✓ | ✓ | ✓ | — |
 | `platform.config.view` / `.manage` | ✓/✓ | ✓/— | — | ✓/— | — |
 | `platform.mail.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — |
@@ -513,6 +532,7 @@
 | `platform.roles.view` | ✓ | ✓ | — | ✓ | — |
 | `platform.roles.assign` / `.assign_super` | ✓/✓ | — | — | — | — |
 | `api_platform.manage` | ✓ | — | — | — | ✓（仅由最高管理员显式授予，见 §4.1） |
+| `platform.orgs.manage`（实现时新增，理由见 `core/platform_access.py` 文档） | ✓ | ✓ | — | — | — |
 
 - 数据：新增 `platform_role_grants` 表。迁移时把现有 admin 转为最高管理员，同时保留 `users.platform_role` 并保持同步，方便回滚。
 - 改动集中在一个共用入口 `require_platform(perm)`，需要接入的位置：
@@ -629,7 +649,7 @@
 | 自降级与交接 | 最高管理员不能降级或停用自己；交接顺序是"先授予接任者 → 接任者登录并完成重认证 → 由接任者撤销原管理员" | 调研 c2、c3 |
 | `operator` | 今天没有任何能力（D17）；迁移为无平台权限，从选择器移除，旧值只读显示 | 生产无 operator；D17 |
 | 双人审批 | 本批不引入（现团队无法满足，专项约定明确不得凭空强制）；数据模型保留扩展位 | 专项约定 §4.2 |
-| 重认证方式与窗口 | 沿用口令与 600 s 窗口；邮件验证码不能用于 step-up；Passkey（UV）重认证列入后续批次（D10） | 现有 `sessions.py`；调研 b1 |
+| 重认证方式与窗口 | 沿用口令与 600 s 窗口；邮件验证码不能用于 step-up；B2已实现Passkey（UV）用途重认证；TOTP单独重认证仍待补齐（D10） | 现有 `sessions.py`；调研 b1 |
 | `api_platform.manage` | 仍是平台权限，只经平台授予获得；迁移后最高管理员持有，另有内置"API 平台管理员"角色可由最高管理员显式授予；组织/空间角色永远不得到它 | CLAUDE.md；专项约定 §1.1 |
 
 ### 4.2 需要所有者决定（未决前按最保守的现状执行，不替所有者作答）

@@ -124,7 +124,9 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.include_router(build_invite_router(identity, sessions, invites, mailer, audit))
     api.include_router(build_mfa_router(identity, sessions, mfa, audit))
     from .email_login import build_router as build_email_login_router
-    from synwevo_auth_client.session_routes import describe_user
+    from functools import partial
+    from synwevo_auth_client.session_routes import describe_user as _describe_user
+    describe_user = partial(_describe_user, store=store)
     api.include_router(build_email_login_router(identity, sessions, mailer, mfa, tickets, audit,
                                                 describe=describe_user))
     api.include_router(build_recovery_router(identity, sessions, invites, mailer, mfa, audit))
@@ -166,6 +168,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     from .workspace_api import build_router as build_workspace_api_router
     api.include_router(build_workspace_api_router(store, identity, invites, mailer, audit))
     api.include_router(build_passkey_router(identity, sessions, passkeys, audit))
+    from .reauth_routes import build_router as build_reauth_router
+    api.include_router(build_reauth_router(identity, sessions, passkeys, audit))
     # External OpenID providers: configured ones are validated here, at start-up, so a half
     # configured provider is a refusal to start rather than a button that fails at sign-in.
     from .external import ExternalIdentities, build_router as build_external_router, load_providers
@@ -183,6 +187,10 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     Apps(store, identity).adopt_once()
     api.include_router(build_oidc_router(store, identity, sessions, audit))
     api.include_router(build_admin_router(store, identity, sessions, audit, mailer=mailer))
+    from .admin_settings import build_router as build_settings_router
+    api.include_router(build_settings_router(store, audit))
+    from .admin_handover import build_router as build_handover_router
+    api.include_router(build_handover_router(identity, sessions, passkeys, audit))
 
 
 def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:

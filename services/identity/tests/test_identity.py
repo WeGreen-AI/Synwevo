@@ -10,6 +10,8 @@ import time
 
 import pytest
 
+from .platform_fixture import make_platform_admin
+
 from synwevo_core import passwords
 from synwevo_core.identity import Identity, normalise_email, valid_email
 from synwevo_core.errors import ServiceError
@@ -309,10 +311,19 @@ def test_viewer_gets_no_export_permission_by_default(ident):
 
 
 def test_last_platform_admin_cannot_be_demoted(ident):
-    a = ident.create_user("a@example.com", LONG_OK, status="active", platform_role="admin")
+    from synwevo_core.platform_access import PlatformAccess
+    a = make_platform_admin(ident.store, ident.create_user("a@example.com", LONG_OK, status="active"))
+    # a second super administrator who cannot complete the step-up (no password, passkey or TOTP)
+    b = make_platform_admin(ident.store, ident.create_user("b@example.com", None, status="active"))
+    access = PlatformAccess(ident.store)
+    grant = access.live_grants(a["id"])[0]
     with pytest.raises(ServiceError) as e:
-        ident.set_platform_role(a["id"], "none")
-    assert e.value.code == "last_admin"
+        access.revoke(b["id"], grant["id"], "离开团队，交接最高管理员")
+    assert e.value.code == "last_super_admin"
+    with pytest.raises(ServiceError) as e:
+        access.revoke(a["id"], grant["id"], "试图给自己降级的理由")
+    assert e.value.code == "self_assignment"
+    assert access.is_usable_super_admin(a["id"]) and ident.get_user(a["id"])["platform_role"] == "admin"
 
 
 # ---------------------------------------------------------------- bootstrap
@@ -325,11 +336,12 @@ def test_bootstrap_token_is_single_use_and_supersedes_the_previous_one(ident):
 
 
 def test_expired_bootstrap_token_is_refused(ident):
-    raw = ident.create_bootstrap_token(ttl_s=-1)
+    raw = ident.create_bootstrap_token()
+    ident.store.execute("UPDATE bootstrap_tokens SET expires_at=created_at-1")
     assert ident.consume_bootstrap_token(raw, user_id="u1") is False
 
 
 def test_bootstrap_is_needed_until_an_active_admin_exists(ident):
     assert ident.bootstrap_needed()
-    ident.create_user("root@example.com", LONG_OK, status="active", platform_role="admin")
+    make_platform_admin(ident.store, ident.create_user("root@example.com", LONG_OK, status="active"))
     assert not ident.bootstrap_needed()

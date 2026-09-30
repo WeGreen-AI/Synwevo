@@ -17,7 +17,8 @@ Model (docs/platform/notifications.md):
 * ``notification_deliveries`` — the e-mail channel's outbox: ``pending`` until the dispatcher
   renders and queues a mail, ``queued`` with the mail id afterwards, ``skipped`` when the
   deployment has no mail or the reader turned the channel off, ``failed`` after the retries.
-  Digest and quiet-hour preferences only move ``not_before``.
+  ``defer_reason`` separates aggregation, quiet hours, retry and budget waits. Only a budget
+  wait from an older ``policy_revision`` is reconsidered early after configuration changes.
 * ``notification_preferences`` — per reader, per category: in-app on/off and e-mail
   ``immediate`` / ``digest`` / ``off``; quiet hours in the reader's time zone; ``preview`` says
   whether message text may leave the platform in mail and push (off by default).
@@ -26,7 +27,8 @@ Model (docs/platform/notifications.md):
   The ``conversation`` category is the exception the other way: a private message is never
   mailed one by one. Its e-mail is off unless the reader turns the unread digest on, and the
   dispatcher re-checks at send time (``stale_reason``) that the item is still unread, the
-  conversation not muted or left, and holds digests to one per half hour, a few per day.
+  conversation not muted or left, and obeys the platform's current per-reader interval and
+  rolling daily budget. Defaults are one per half hour, at most eight per 24 hours.
 
 Reading a notification never changes business state: an approval is done in its own flow and
 reports back through ``action_state``.
@@ -86,8 +88,8 @@ EMAIL_MODES = ("immediate", "digest", "off")
 #: unread digest (opt-in) and off (the default).
 CONVERSATION_EMAIL_MODES = ("digest", "off")
 DIGEST_WINDOW_S = 30 * 60
-#: Unread digests about conversations: at most one per reader per half hour and per day cap,
-#: counted in mails (one digest carries many items), applied by the dispatcher at send time.
+#: Historical default constants retained for consumers that describe the default policy.
+#: Runtime decisions read PlatformSettings; one digest may carry many notification items.
 CONVERSATION_DIGEST_INTERVAL_S = 30 * 60
 CONVERSATION_DIGEST_DAILY_CAP = 8
 RETRY_DELAYS_S = (300, 900, 3600, 4 * 3600)
@@ -337,8 +339,9 @@ class Notifier:
                        dedupe_key, row["params"], row["target"], row["action_state"], row["created_at"]))
             if email_mode in ("immediate", "digest"):
                 not_before = row["created_at"] + (DIGEST_WINDOW_S if email_mode == "digest" and not critical else 0)
-                t.execute("INSERT INTO notification_deliveries (notification_id,channel,status,not_before,updated_at) VALUES (?,?,?,?,?)",
-                          (row["id"], "email", "pending", not_before, now()))
+                t.execute("INSERT INTO notification_deliveries (notification_id,channel,status,not_before,updated_at,defer_reason) VALUES (?,?,?,?,?,?)",
+                          (row["id"], "email", "pending", not_before, now(),
+                           "aggregation" if email_mode == "digest" and not critical else None))
             else:
                 t.execute("INSERT INTO notification_deliveries (notification_id,channel,status,not_before,updated_at,last_error) "
                           "VALUES (?,?,?,?,?,?)", (row["id"], "email", "skipped", None, now(), "channel off"))
@@ -509,7 +512,16 @@ class Notifier:
                     out["categories"][c] = {"in_app": bool(saved[c].get("in_app", True)), "email": email,
                                             "push": bool(saved[c].get("push", True))}
             out.update({"quiet_start": row["quiet_start"], "quiet_end": row["quiet_end"], "timezone": row["timezone"], "preview": row["preview"]})
+        out["conversation_digest_policy"] = self.conversation_digest_policy()
         return out
+
+    def conversation_digest_policy(self) -> dict:
+        """Safe current limits for a reader; no governance history, sources or actor data."""
+        from .platform_settings import PlatformSettings, INTERVAL_KEY, DAILY_CAP_KEY
+        settings = PlatformSettings(self.store).read()
+        return {"revision": settings["revision"], "interval_s": settings["values"][INTERVAL_KEY],
+                "daily_cap": settings["values"][DAILY_CAP_KEY],
+                "aggregation_window_s": DIGEST_WINDOW_S, "window_s": 86400}
 
     def set_preferences(self, user_id: str, data: dict) -> dict:
         if not isinstance(data, dict) or set(data) - {"categories", "quiet_start", "quiet_end", "timezone", "preview"}:
@@ -589,9 +601,17 @@ class Notifier:
         that still exist, and the latest of them — or None when they are not (or no longer) a
         member. Read here rather than through the messaging service because the dispatcher has
         no request context; the tables are synwevo_core.messaging's."""
-        m = self.store.one("SELECT last_read_seq, joined_seq, muted, muted_until, notify FROM conversation_members "
-                           "WHERE conversation_id=? AND user_id=? AND left_at IS NULL", (cid, user_id))
+        m = self.store.one("SELECT m.last_read_seq, m.joined_seq, m.muted, m.muted_until, m.notify, c.organization_id "
+                           "FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "
+                           "WHERE m.conversation_id=? AND m.user_id=? AND m.left_at IS NULL", (cid, user_id))
         if not m:
+            return None
+        from .organizations import current_membership
+        # Governance membership deliberately survives frozen/deleted organizations for
+        # recovery. That standing is not permission to send their business notifications.
+        org = self.store.one("SELECT status,deleted_at FROM organizations WHERE id=?", (m["organization_id"],))
+        if (not org or org["status"] != "active" or org["deleted_at"] is not None
+                or not current_membership(self.store, m["organization_id"], user_id)):
             return None
         floor = max(int(m["last_read_seq"] or 0), int(m["joined_seq"] or 0))
         # `deleted_at` is set by every delete-for-everyone — the sender's recall, a group manager's
@@ -608,10 +628,14 @@ class Notifier:
         muted = bool(m["muted"]) or m["notify"] == "none" or bool(m.get("muted_until") and float(m["muted_until"]) > now())
         return {"unread": int((agg or {}).get("n") or 0), "muted": muted, "latest": latest}
 
-    def conversation_digest_hold(self, user_id: str, at: float | None = None) -> float | None:
-        """When the reader's next unread digest may go out, if not now: at least
-        CONVERSATION_DIGEST_INTERVAL_S after the previous one and at most
-        CONVERSATION_DIGEST_DAILY_CAP in 24 hours. Counts mails, not items."""
+    def conversation_digest_hold(self, user_id: str, at: float | None = None, *, policy: dict | None = None) -> float | None:
+        """Next allowed unread digest under the current platform budget, counting mails.
+
+        The dispatcher passes the snapshot read while holding its writer transaction; other
+        callers get a fresh read. The initial aggregation, quiet hours and retry wait are
+        independent and are never shortened by this budget calculation.
+        """
+        policy = self.conversation_digest_policy() if policy is None else policy
         ts = at if at is not None else now()
         rows = self.store.all("SELECT d.mail_id, MIN(d.updated_at) AS sent_at FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id "
                               "WHERE n.user_id=? AND n.category='conversation' AND d.channel='email' AND d.status='queued' AND d.mail_id IS NOT NULL "
@@ -619,11 +643,13 @@ class Notifier:
         if not rows:
             return None
         last = max(float(r["sent_at"]) for r in rows)
-        if ts - last < CONVERSATION_DIGEST_INTERVAL_S:
-            return last + CONVERSATION_DIGEST_INTERVAL_S
-        if len(rows) >= CONVERSATION_DIGEST_DAILY_CAP:
-            return float(rows[0]["sent_at"]) + 86400
-        return None
+        until = last + policy["interval_s"]
+        cap = policy["daily_cap"]
+        if len(rows) >= cap:
+            # A lowered cap can be smaller than the existing history. Enough mails must age
+            # out, not just its oldest one, before another digest has a slot.
+            until = max(until, float(rows[len(rows) - cap]["sent_at"]) + 86400)
+        return until if until > ts else None
 
     def render_external(self, row: dict, locale: str, prefs: dict) -> dict:
         """What leaves the platform (mail, push) for one item. A conversation item is rebuilt from
@@ -653,28 +679,58 @@ class Notifier:
     # ------------------------------------------------------------------ the e-mail outbox side
     def due_deliveries(self, limit: int = 200) -> list[dict]:
         ts = now()
+        revision = self.conversation_digest_policy()["revision"]
         return self.store.all("SELECT d.*, n.user_id, n.kind, n.category, n.severity, n.params, n.target, n.created_at AS notified_at "
                               "FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id "
-                              "WHERE d.status='pending' AND (d.not_before IS NULL OR d.not_before<=?) ORDER BY d.not_before LIMIT ?", (ts, limit))
+                              "WHERE d.channel='email' AND d.status='pending' "
+                              "AND (d.not_before IS NULL OR d.not_before<=? "
+                              "OR (d.defer_reason='budget' AND COALESCE(d.policy_revision,-1)<>?)) "
+                              "ORDER BY d.not_before, d.notification_id LIMIT ?", (ts, revision, limit))
 
-    def defer_delivery(self, notification_id: str, until: float) -> None:
-        self.store.execute("UPDATE notification_deliveries SET not_before=?, updated_at=? WHERE notification_id=? AND channel='email'",
-                           (until, now(), notification_id))
+    def pending_email_deliveries(self, user_id: str, notification_ids: list[str], *, policy_revision: int | None = None) -> list[dict]:
+        """Re-read a dispatcher's bounded candidates under its write transaction.
+
+        Only a wait caused by an earlier budget can be reconsidered before not_before.
+        Initial aggregation, quiet hours, retry and unclassified historical waits remain due
+        on their original schedule. No row's schedule changes merely by reading candidates.
+        """
+        if not notification_ids:
+            return []
+        revision = self.conversation_digest_policy()["revision"] if policy_revision is None else policy_revision
+        placeholders = ",".join("?" for _ in notification_ids)
+        return self.store.all("SELECT d.*, n.user_id, n.kind, n.category, n.severity, n.params, n.target, n.created_at AS notified_at "
+                              "FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id "
+                              "WHERE n.user_id=? AND d.channel='email' AND d.status='pending' "
+                              "AND (d.not_before IS NULL OR d.not_before<=? "
+                              "OR (d.defer_reason='budget' AND COALESCE(d.policy_revision,-1)<>?)) "
+                              f"AND d.notification_id IN ({placeholders}) ORDER BY d.not_before, d.notification_id",
+                              (user_id, now(), revision, *notification_ids))
+
+    def defer_delivery(self, notification_id: str, until: float, *, reason: str = "quiet", policy_revision: int | None = None) -> None:
+        if reason not in ("quiet", "budget") or (reason == "budget" and type(policy_revision) is not int):
+            raise ValueError("invalid notification defer reason or policy revision")
+        self.store.execute("UPDATE notification_deliveries SET not_before=?, updated_at=?, defer_reason=?, policy_revision=? "
+                           "WHERE notification_id=? AND channel='email'",
+                           (until, now(), reason, policy_revision if reason == "budget" else None, notification_id))
 
     def finish_delivery(self, notification_id: str, status: str, *, mail_id: str | None = None, error: str | None = None) -> None:
         if status not in ("queued", "skipped", "failed"):
             raise ValueError(status)
-        self.store.execute("UPDATE notification_deliveries SET status=?, mail_id=?, last_error=?, updated_at=? WHERE notification_id=? AND channel='email'",
-                           (status, mail_id, (error or None) and error[:200], now(), notification_id))
+        self.store.execute("UPDATE notification_deliveries SET status=?, mail_id=?, last_error=?, updated_at=?, defer_reason=NULL, "
+                           "policy_revision=CASE WHEN ?='queued' THEN policy_revision ELSE NULL END "
+                           "WHERE notification_id=? AND channel='email'",
+                           (status, mail_id, (error or None) and error[:200], now(), status, notification_id))
 
     def retry_delivery(self, notification_id: str, error: str) -> None:
         row = self.store.one("SELECT attempts FROM notification_deliveries WHERE notification_id=? AND channel='email'", (notification_id,))
         attempts = int((row or {}).get("attempts") or 0) + 1
         if attempts > len(RETRY_DELAYS_S):
-            self.store.execute("UPDATE notification_deliveries SET status='failed', attempts=?, last_error=?, updated_at=? WHERE notification_id=? AND channel='email'",
+            self.store.execute("UPDATE notification_deliveries SET status='failed', attempts=?, last_error=?, updated_at=?, "
+                               "defer_reason=NULL, policy_revision=NULL WHERE notification_id=? AND channel='email'",
                                (attempts, error[:200], now(), notification_id))
             return
-        self.store.execute("UPDATE notification_deliveries SET attempts=?, not_before=?, last_error=?, updated_at=? WHERE notification_id=? AND channel='email'",
+        self.store.execute("UPDATE notification_deliveries SET attempts=?, not_before=?, last_error=?, updated_at=?, "
+                           "defer_reason='retry', policy_revision=NULL WHERE notification_id=? AND channel='email'",
                            (attempts, now() + RETRY_DELAYS_S[attempts - 1], error[:200], now(), notification_id))
 
     def quiet_until(self, prefs: dict, at: float | None = None) -> float | None:

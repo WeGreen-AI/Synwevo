@@ -48,10 +48,14 @@ const ALL = ["signin", "account", "org", "admin", "members", "api"];
 const SERVER = [
   { file: ID + "account_routes.py", surfaces: ["account"] },
   { file: ID + "admin_routes.py", surfaces: ["admin"] },
+  { file: ID + "admin_operations.py", surfaces: ["admin"] },
+  { file: ID + "admin_settings.py", surfaces: ["admin"] },
+  { file: ID + "admin_handover.py", surfaces: ["account", "admin"] },
   { file: ID + "api_platform.py", surfaces: ["api"] },
   { file: ID + "approval_routes.py", surfaces: ["org"] },
   // re-authentication is asked for on every page that changes something
   { file: ID + "auth_routes.py", fns: ["_too_many", "check_reauth_password", "reauth"], surfaces: ALL },
+  { file: ID + "reauth_routes.py", surfaces: ["account", "org", "admin", "members", "api"] },
   { file: ID + "auth_routes.py", fns: ["build_router._require_session", "revoke_session", "build_passkey_router", "build_mfa_router"], surfaces: ["account"] },
   { file: ID + "auth_routes.py", fns: ["verify_send"], surfaces: ["signin", "account"] },
   { file: ID + "auth_routes.py", fns: ["build_invite_router._session"], surfaces: ["signin", "members"] },
@@ -74,6 +78,7 @@ const SERVER = [
   { file: ID + "organization_routes.py", surfaces: ["org"] },
   { file: ID + "passkeys.py", fns: ["verify"], surfaces: ["signin"] },
   { file: ID + "passkeys.py", fns: ["_spend_challenge_for"], surfaces: ["signin", "account"] },
+  { file: ID + "passkeys.py", fns: ["current_reauth_session", "begin_reauthentication", "_reauth_client_data", "spend_reauthentication", "verify_reauthentication"], surfaces: ["account", "org", "admin", "members", "api"] },
   { file: ID + "passkeys.py", surfaces: ["account"] },
   { file: ID + "profile.py", surfaces: ["account"] },
   { file: ID + "provider_routes.py", fns: ["build_router._consent_actor", "build_router.consent_request", "build_router.consent_decide",
@@ -87,7 +92,7 @@ const SERVER = [
   { file: CLIENT + "session_routes.py", surfaces: ALL },
   { file: CORE + "identity.py", fns: ["create_user", "set_password", "ensure_personal_workspace"], surfaces: ["signin", "account"] },
   { file: CORE + "identity.py", fns: ["add_member"], surfaces: ["signin", "admin"] },
-  { file: CORE + "identity.py", fns: ["set_status", "set_workspace_frozen", "set_platform_role"], surfaces: ["admin"] },
+  { file: CORE + "identity.py", fns: ["set_status", "set_workspace_frozen"], surfaces: ["admin"] },
   { file: CORE + "identity.py", fns: ["create_workspace"], surfaces: ["org"] },
   { file: CORE + "identity.py", surfaces: ["members"] },
   { file: CORE + "organizations.py", fns: ["accept_workspace_invitation"], surfaces: ["signin"] },
@@ -103,9 +108,15 @@ const SERVER = [
   { file: CORE + "challenge.py", surfaces: ["signin"] },
   { file: CORE + "passwords.py", surfaces: ALL },
   { file: CORE + "avatar_image.py", surfaces: ["account", "org"] },
+  { file: CORE + "sessions.py", fns: ["confirm_reauth"], surfaces: ["account", "org", "admin", "members", "api"] },
   { file: CORE + "sessions.py", surfaces: [], why: "an application identity has no password or passkey to sign in with" },
   { file: CORE + "api_platform.py", fns: ["enforce_principal"], surfaces: [], why: "checked on Synwevo Docs' business API, not in this shell" },
   { file: CORE + "api_platform.py", surfaces: ["api"] },
+  // delegated platform roles: the one request check, grants and revocations (platform administration)
+  { file: CORE + "platform_access.py", fns: ["_grant_accepted_offer"], surfaces: ["account", "admin"] },
+  { file: CORE + "platform_access.py", surfaces: ["admin"] },
+  { file: CORE + "platform_settings.py", fns: ["_entry"], surfaces: ALL },
+  { file: CORE + "platform_settings.py", surfaces: ["admin"] },
   { file: CORE + "api_quotas.py", surfaces: ["api"] },
   { file: CORE + "idempotency.py", surfaces: ["api"] },
   { file: CORE + "oauth_consent.py", surfaces: ["account"] },
@@ -139,15 +150,13 @@ const API_ONLY = {
   "订阅密钥无效": "the browser's push service writes the subscription",
   "登录响应缺少凭据标识": "the browser's WebAuthn response always carries the credential id",
   // sign-in
-  "未知的重认证用途 {scope!r}": "each page asks for the re-authentication purpose it needs",
   "请提供链接令牌与新口令": "the reset page submits only with the link's token and a password",
   "请求包含不支持的字段": "the sign-in page sends only its own fields",
   "未知的邮件令牌类型 {kind!r}": "the service names its mail token kinds itself",
   "邮件主题不能包含换行。": "subjects are written by the service from names that cannot hold a line break",
   // administration and members
   "请选择有效的注册策略": FIXED, "未知的角色 {role!r}": FIXED, "状态只能是 active 或 suspended": FIXED,
-  "平台角色只能是 none、operator 或 admin": FIXED, "未知的账户状态 {status!r}": FIXED, "未知的平台角色 {platform_role!r}": FIXED,
-  "未知的平台角色 {role!r}": FIXED, "移交后自己的角色只能是 admin、editor 或 viewer": FIXED,
+  "未知的账户状态 {status!r}": FIXED, "移交后自己的角色只能是 admin、editor 或 viewer": FIXED,
   "entitlement 只能是 active、revoked 或 none": FIXED, "未知的邀请状态 {state!r}": FIXED, "action 只能是 revoke 或 resend": FIXED,
   "请选择要认领这些数据的账户": "the claim button stays disabled until an account is chosen",
   "expected_members 必须是账户 ID 列表": "the undo dialog sends the member ids of the preview it shows",
@@ -355,7 +364,7 @@ function problem(surface, r) {
 test("the scan finds the server's refusals (guards the pattern itself)", () => {
   const { all } = refusals();
   assert.ok(all.length > 400, `only ${all.length} refusals found`);
-  assert.ok(all.some((r) => r.code === "last_factor" && r.file.endsWith("auth_routes.py")));
+  assert.ok(all.some((r) => r.code === "last_factor" && r.file.endsWith("passkeys.py")));
   assert.ok(all.some((r) => r.code === "uv_required" && r.text.includes("动态验证码登录")), "a sentence split over two literals is read whole");
   assert.ok(all.some((r) => r.code === "invite_rate_limited" && r.fstring));
   // each page has a catalogue of its own: a sentence only the organization pages load is not the console's

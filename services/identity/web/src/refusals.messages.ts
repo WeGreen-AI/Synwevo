@@ -18,8 +18,11 @@ export const messages = {
   "使用同一个幂等键的请求尚无已确认的响应；请稍后用同一个键重试": { en: "The request using this idempotency key has no confirmed response yet. Try again later with the same key.", "zh-Hant": "使用同一冪等鍵的請求尚無已確認的回應；請稍後以同一個鍵重試" },
   "该幂等键已用于另一个不同内容的请求；请换一个新的幂等键，或发送与原请求完全相同的内容": { en: "This idempotency key was used for a different request. Use a new key or send exactly the original request.", "zh-Hant": "此冪等鍵已用於另一個不同內容的請求；請換用新的冪等鍵，或傳送與原請求完全相同的內容" },
   "Idempotency-Key 必须是 1–255 个可打印 ASCII 字符，建议使用 UUID": { en: "Idempotency-Key must contain 1–255 printable ASCII characters. A UUID is recommended.", "zh-Hant": "Idempotency-Key 必須為 1–255 個可列印的 ASCII 字元，建議使用 UUID" },
+  "配置记录暂不可用，请联系管理员检查": { en: "Settings records are temporarily unavailable. Contact an administrator.", "zh-Hant": "設定記錄暫時無法使用，請聯絡管理員檢查" },
   // ---- server sentences met on more than one page (the same wording as the page catalogues that also hold them)
   "这一步需要重新验证身份": { en: "This step requires identity verification.", "zh-Hant": "這一步需要重新驗證身分" },
+  // a platform permission this person's roles do not carry (platform administration and the API console)
+  "你的平台角色不包含这项操作所需的权限": { en: "Your platform roles do not include the permission this action needs.", "zh-Hant": "你的平台角色不包含這項操作所需的權限" },
   "请写明理由（8 至 500 个字）": { en: "Enter a reason (8 to 500 characters)", "zh-Hant": "請寫明理由（8 至 500 個字）" },
   "账户不可用": { en: "Account unavailable", "zh-Hant": "帳戶不可用" },
   "找不到该工作空间": { en: "This workspace was not found.", "zh-Hant": "找不到此工作空間" },
@@ -30,6 +33,15 @@ export const messages = {
   "账户不存在": { en: "The account does not exist.", "zh-Hant": "帳戶不存在" },
   // password checks shed load with 503 before comparing anything: not a server fault
   "当前登录请求过多，请稍后再试": { en: "Too many sign-in requests right now. Try again shortly.", "zh-Hant": "目前登入請求過多，請稍後再試" },
+
+  // Scoped password/Passkey confirmation is used by account and governance pages.
+  "请选择有效的身份确认用途": { en: "Choose a valid purpose for identity verification.", "zh-Hant": "請選擇有效的身分確認用途" },
+  "当前页面不能完成身份确认，请从账户服务重新开始": { en: "Identity verification is not available on this page. Start again from the account service.", "zh-Hant": "目前頁面無法完成身分確認，請從帳戶服務重新開始" },
+  "安全密钥验证失败，请重新开始身份确认": { en: "The security key could not be verified. Start identity verification again.", "zh-Hant": "安全金鑰驗證失敗，請重新開始身分確認" },
+  "当前账户没有可用于身份确认的安全密钥": { en: "This account has no security key available for identity verification.", "zh-Hant": "目前帳戶沒有可用於身分確認的安全金鑰" },
+  "身份确认已过期或已使用，请重新开始": { en: "This identity verification has expired or was already used. Start again.", "zh-Hant": "身分確認已過期或已使用，請重新開始" },
+  "账户不可用，请重新登录": { en: "The account is unavailable. Sign in again.", "zh-Hant": "帳戶無法使用，請重新登入" },
+  "不能移除最后一名可用最高管理员的身份确认方式": { en: "You cannot remove the identity verification method of the last available super administrator.", "zh-Hant": "不能移除最後一名可用最高管理員的身分確認方式" },
 
   // ---- worded from detail (lib/refusals.ts REFUSAL_TEMPLATES)
   "验证码不正确，请重新获取。": { en: "Incorrect code. Request a new one.", "zh-Hant": "驗證碼不正確，請重新取得。" },
@@ -68,3 +80,7 @@ export const messages = {
 };
 
 registerMessages(messages);
+
+registerMessages({
+  "引导令牌有效期须为 60 至 3600 秒": { en: "The bootstrap token must be valid for 60 to 3600 seconds.", "zh-Hant": "引導權杖有效期須為 60 至 3600 秒" },
+});

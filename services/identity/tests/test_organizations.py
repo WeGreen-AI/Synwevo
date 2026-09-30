@@ -12,6 +12,8 @@ import json
 import threading
 
 import pytest
+
+from .platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core.errors import ServiceError
@@ -222,7 +224,7 @@ def test_platform_admin_outsider_has_no_org_membership_or_content_authority(env)
     created = create(env)
     oid, wid = created["organization"]["id"], created["workspace"]["id"]
     uid = env["users"]["outsider"]["id"]
-    env["ident"].set_platform_role(uid, "admin")
+    make_platform_admin(env["ident"].store, uid)
     expect_error("no_organization", lambda: env["orgs"].get(oid, uid))
     assert env["orgs"].list_for_user(uid) == []
     assert workspace_access_failure(env["store"], wid, uid) == "not_an_organization_member"

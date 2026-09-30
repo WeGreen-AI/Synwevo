@@ -20,6 +20,7 @@ from synwevo_core.apps import Apps, DOCS_APP_ID, MESSAGES_APP_ID
 from synwevo_core.context import as_tenant
 from synwevo_core.errors import ServiceError
 from synwevo_core.organizations import Organizations
+from .platform_fixture import make_platform_admin
 from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions
 from synwevo_docs.definitions import TEMPLATE_FIELDS_SCHEMA, import_template_fields
 from synwevo_server.app import create_app
@@ -52,8 +53,9 @@ def world(tmp_path, monkeypatch, request):
     ident, store = ctx.identity, ctx.store
     users = {}
     for name in ("owner", "editor", "viewer", "other", "admin"):
-        u = ident.create_user(f"{name}@example.test", PW, status="active", display_name=name,
-                              platform_role="admin" if name == "admin" else "none")
+        u = ident.create_user(f"{name}@example.test", PW, status="active", display_name=name)
+        if name == "admin":
+            make_platform_admin(store, u)
         store.execute("UPDATE users SET email_verified_at=1 WHERE id=?", (u["id"],))
         users[name] = u["id"]
     orgs = Organizations(store, ident)

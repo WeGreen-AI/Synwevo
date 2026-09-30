@@ -15,6 +15,8 @@ import time
 
 import pyotp
 import pytest
+
+from .platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core.identity import Identity
@@ -42,8 +44,10 @@ def env(tmp_path, monkeypatch):
     store = Store(tmp_path / "d")
     ident = Identity(store)
     for email, role in (("alice@example.com", "none"), ("root@example.com", "admin")):
-        u = ident.create_user(email, PW, status="active", platform_role=role)
+        u = ident.create_user(email, PW, status="active")
         store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), u["id"]))
+        if role == "admin":
+            make_platform_admin(store, u)
     ident.create_user("unverified@example.com", PW, status="active")
     return {"api": api, "store": store, "ident": ident}
 
@@ -162,6 +166,10 @@ def test_platform_administrators_get_a_one_factor_session_that_cannot_manage_unt
     csrf = {CSRF_HEADER: c.cookies.get(CSRF_COOKIE)}
     denied = c.get("/api/admin/overview")
     assert denied.status_code == 403 and denied.json()["error"] == "step_up_required"
+    # the locked administrator can still learn what is missing, and nothing more
+    session = c.get("/api/admin/session")
+    assert session.status_code == 200 and session.json()["step_up"] == {"required": True, "amr": "email"}
+    assert me["platform_roles"] == ["super_admin"] and "api_platform.manage" in me["platform_permissions"]
     assert c.get("/api/admin/api-platform/overview").status_code == 403
     # The password, re-entered on the account page, is the second distinct factor.
     wrong = c.post("/api/auth/reauth", json={"password": "not-it", "scope": "admin"}, headers=csrf)

@@ -44,7 +44,11 @@ def run():
         from synwevo_identity.app import create_app
         app = create_app(tmp, start_jobs=False)
         ident = app.state.identity
-        ident.create_user('fixture-admin@example.test', PW, status='active', platform_role='admin')
+        from synwevo_core.platform_access import PlatformAccess, SUPER_ADMIN
+        admin = ident.create_user('fixture-admin@example.test', PW, status='active')
+        ident.store.execute('UPDATE users SET email_verified_at=? WHERE id=?', (time.time(), admin['id']))
+        PlatformAccess(ident.store).host_grant(admin['id'], SUPER_ADMIN, source='fixture:browser-review',
+                                               reason='browser review fixture administrator')
         user = ident.create_user('browser-proof@example.test', PW, display_name='Browser proof fixture', status='active')
         ident.store.execute("UPDATE users SET locale='en',timezone='UTC',email_verified_at=? WHERE id=?", (time.time(), user['id']))
         server = uvicorn.Server(uvicorn.Config(app, log_level='error', access_log=False))

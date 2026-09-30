@@ -371,16 +371,21 @@ ADVERSARIAL = {
 def test_adversarial_inputs_stay_within_time_and_memory(name):
     build, want = ADVERSARIAL[name]
     data = build()
-    tracemalloc.start()
+    # Measure production latency without tracing: tracking each temporary header allocation
+    # can multiply ZIP scan time. A second pass measures memory under the same semantic contract.
     t = time.perf_counter()
+    got = inspect(data)
+    elapsed = time.perf_counter() - t
+    assert got == want, got
+    assert elapsed < 3.0, f"{name}: {elapsed:.2f}s"
+
+    tracemalloc.start()
     try:
-        got = inspect(data)
-        elapsed = time.perf_counter() - t
+        traced = inspect(data)
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
-    assert got == want, got
-    assert elapsed < 3.0, f"{name}: {elapsed:.2f}s"                  # measured well under 0.5 s (tracing costs more)
+    assert traced == want, traced
     assert peak < 96 * MiB, f"{name}: {peak / MiB:.0f} MiB"          # measured ≤ 48 MiB (the 16 MiB 7z header cap)
 
 

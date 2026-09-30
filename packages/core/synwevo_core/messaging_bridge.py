@@ -540,8 +540,11 @@ class BridgeWorker:
         self._wake, self._stopped = threading.Event(), threading.Event()
         self._thread: threading.Thread | None = None
         self._last_sweep = 0.0
-        _wakers.append(self.wake)
         if start:
+            # Passive workers are driven by run_once(), so they have nothing to wake.
+            # Registering their bound method globally would retain every fixture Store
+            # even after its application and the thread-cleanup registry let it go.
+            _wakers.append(self.wake)
             from . import workers
             self._thread = threading.Thread(target=self._run, name="messaging-bridge", daemon=True)
             self._thread.start()

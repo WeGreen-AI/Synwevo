@@ -9,6 +9,7 @@ import MfaSection from '../components/MfaSection';
 import PasskeySection from '../components/PasskeySection';
 import LinkedIdentities from '../components/LinkedIdentities';
 import AdminStepUp from '../components/AdminStepUp';
+import { SuperAdminInbox } from '../governance/SuperAdminHandover';
 import ProfileSection from './account/ProfileSection';
 import EmailSection from './account/EmailSection';
 import PrivacySection from './account/PrivacySection';
@@ -94,6 +95,7 @@ export default function Account() {
       {profile?.status === 'active' && me && <div className="account-layout"><nav className="account-nav" aria-label={t('账户设置导航')}>
         {[['profile', '个人资料'], ['email', '邮箱与口令'], ['security', '登录与安全'], ['devices', '登录的设备'], ['workspaces', '工作空间'], ['notifications', '通知'], ['activity', '安全活动'], ['connected-apps', '已授权的应用'], ['privacy', '数据与账户']].map(([id, label]) => <a key={id} href={`#${id}`}>{t(label)}</a>)}
       </nav><div className="account-content">
+        <SuperAdminInbox />
         <ProfileSection profile={profile} onChange={setProfile} /><EmailSection profile={profile} />
         <div id="security" className="col gap12 account-section"><PasskeySection timezone={profile.timezone} /><LinkedIdentities timezone={profile.timezone} /><MfaSection /></div>
         <section id="devices" className="card card-b col gap12 account-section"><div className="row gap12 wrap"><h2 className="secttl grow">{t('登录的设备')}</h2>
@@ -108,7 +110,7 @@ export default function Account() {
         </section>
         <NotificationsSection timezone={profile.timezone} />
         <section id="workspaces" className="card card-b col gap12 account-section"><h2 className="secttl">{t('工作空间')}</h2>
-          {me.platform_role === 'admin' && <p className="tiny muted">{t('平台管理权限不会授予工作空间文档的读取权限。')}</p>}
+          {!!me.platform_permissions?.length && <p className="tiny muted">{t('平台管理权限不会授予工作空间文档的读取权限。')}</p>}
           <div className="account-table"><table className="tbl"><thead><tr><th>{t('名称')}</th><th>{t('我的角色')}</th><th>{t('可导出')}</th><th>{t('操作')}</th></tr></thead>
             <tbody>{me.workspaces.map(w => <tr key={w.id}><td>{w.name}</td><td>{t(roles[w.role] || w.role)}</td><td>{t(canExport(w.role, w.can_export) ? '是' : '否')}</td><td><div className="row gap4 wrap">
               {(w.role === 'owner' || w.role === 'admin') && <Link className="btn sm" to={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>{t('成员与邀请')}</Link>}

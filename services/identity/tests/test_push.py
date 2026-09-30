@@ -57,7 +57,8 @@ def browser_subscription(endpoint: str) -> dict:
 
 @pytest.fixture()
 def world(tmp_path, monkeypatch):
-    # PushDouble is local: host proxy settings must not route fixture traffic outside it.
+    # This test talks only to its loopback PushDouble. httpx also discovers system proxies
+    # (on macOS even with no *_PROXY environment variable); never route the fixture through one.
     for key in ("NO_PROXY", "no_proxy"):
         monkeypatch.setenv(key, "127.0.0.1,localhost,::1")
     for k, v in {"UI_AUTH": "session", "COOKIE_SECURE": "0", "DATA_DIR": str(tmp_path / "d"), "MAIL_MODE": "file", "MAIL_DIR": str(tmp_path / "mail"),

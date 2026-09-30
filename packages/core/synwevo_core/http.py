@@ -886,10 +886,12 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         request.state.session = session
         if path == "/admin" or path.startswith("/admin/"):
             user = identity.get_user(session["user_id"]) if session else None
-            if not user or user["status"] != "active" or user["platform_role"] != "admin":
+            from .platform_access import PlatformAccess
+            if not user or user["status"] != "active" or not PlatformAccess(store).effective_permissions(user):
                 return _error_response(request, 404, "not_found", "页面不存在", None)
-            # The shell itself is served to every administrator; whether this *session* may use
-            # the role is decided per request by the admin routes (sessions.admin_capable).
+            # The shell itself is served to anyone holding a platform permission; which views
+            # they may use, and whether this *session* may use them at all, is decided per
+            # request by the admin routes (platform_access.require_platform).
 
         if session and request.method not in SAFE_METHODS and path.startswith("/api/"):
             # Double-submit CSRF on every state-changing request. Login is exempt because it has
@@ -926,6 +928,14 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             request.state.session = None
             return _error_response(request, 401, "unauthorized", "账户不可用，请重新登录", None)
         request.state.user = user
+        if path == "/api/admin" or path.startswith("/api/admin/"):
+            # Decided before routing, so an account without any platform permission meets the
+            # same 404 everywhere under /api/admin — not a 422 from parameter or body validation
+            # (which ran before the route's own check and echoed, for one, the role catalogue in
+            # a pattern), and not a 405. The routes decide each permission on their own.
+            from .platform_access import PlatformAccess
+            if not PlatformAccess(store).effective_permissions(user):
+                return _error_response(request, 404, "not_found", "页面不存在", None)
 
         requested_workspace = request.headers.get("X-Synwevo-Workspace")
         wid = requested_workspace or session.get("workspace_id")

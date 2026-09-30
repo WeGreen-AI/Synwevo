@@ -1,0 +1,167 @@
+import { registerMessages } from "@synwevo/ui";
+
+// Platform roles and permissions in the administration pages (synwevo_core.platform_access).
+// Source text is Simplified Chinese; every entry carries English and Traditional Chinese.
+export const platformMessages = {
+  // ---- roles
+  "最高管理员": { en: "Super administrator", "zh-Hant": "最高管理員" },
+  "账户与访问管理员": { en: "Account and access administrator", "zh-Hant": "帳戶與存取管理員" },
+  "支持": { en: "Support", "zh-Hant": "支援" },
+  "审计查看": { en: "Audit viewer", "zh-Hant": "稽核檢視" },
+  "API 平台管理员": { en: "API platform administrator", "zh-Hant": "API 平台管理員" },
+  "全部平台管理能力，包括授予和撤销管理员角色。": { en: "Every platform management capability, including granting and revoking administrator roles.", "zh-Hant": "全部平台管理能力，包括授予和撤銷管理員角色。" },
+  "管理账户、工作空间、组织和邮件，查看审计；不能授予管理员角色。": { en: "Manages accounts, workspaces, organizations and mail, and reads the audit log; cannot grant administrator roles.", "zh-Hant": "管理帳戶、工作空間、組織和郵件，檢視稽核；不能授予管理員角色。" },
+  "查看账户与工作空间，发送找回邮件、结束会话；不能停用账户。": { en: "Views accounts and workspaces, sends recovery mail and ends sessions; cannot suspend accounts.", "zh-Hant": "檢視帳戶與工作空間，傳送找回郵件、結束工作階段；不能停用帳戶。" },
+  "只读：概览、账户、工作空间、组织、配置、邮件、审计与管理员名册。": { en: "Read-only: overview, accounts, workspaces, organizations, settings, mail, audit and the administrator roster.", "zh-Hant": "唯讀：概覽、帳戶、工作空間、組織、設定、郵件、稽核與管理員名冊。" },
+  "只使用 API 管理平台和概览；不含账户管理。": { en: "Uses the API management console and the overview only; no account management.", "zh-Hant": "只使用 API 管理平台和概覽；不含帳戶管理。" },
+
+  // ---- permissions
+  "查看平台概览": { en: "View the platform overview", "zh-Hant": "檢視平台概覽" },
+  "查看账户": { en: "View accounts", "zh-Hant": "檢視帳戶" },
+  "停用与恢复账户": { en: "Suspend and restore accounts", "zh-Hant": "停用與恢復帳戶" },
+  "发送找回邮件、结束会话": { en: "Send recovery mail and end sessions", "zh-Hant": "傳送找回郵件、結束工作階段" },
+  "查看工作空间（只含数量）": { en: "View workspaces (counts only)", "zh-Hant": "檢視工作空間（只含數量）" },
+  "冻结与解冻工作空间": { en: "Freeze and unfreeze workspaces", "zh-Hant": "凍結與解凍工作空間" },
+  "把历史数据指派给没有平台权限的账户": { en: "Assign the historical data to an account without platform access", "zh-Hant": "把歷史資料指派給沒有平台權限的帳戶" },
+  "查看组织": { en: "View organizations", "zh-Hant": "檢視組織" },
+  "在管理后台管理自己拥有的组织": { en: "Manage organizations you own from the console", "zh-Hant": "在管理後台管理自己擁有的組織" },
+  "查看平台配置与登录方式": { en: "View platform settings and sign-in methods", "zh-Hant": "檢視平台設定與登入方式" },
+  "修改注册策略与非秘密平台配置": { en: "Change the registration policy and non-secret platform settings", "zh-Hant": "修改註冊政策與非秘密平台設定" },
+  "查看邮件投递": { en: "View mail delivery", "zh-Hant": "檢視郵件投遞" },
+  "重试失败的找回与验证邮件": { en: "Retry failed recovery and verification mail", "zh-Hant": "重試失敗的找回與驗證郵件" },
+  "查看审计记录": { en: "View the audit log", "zh-Hant": "檢視稽核記錄" },
+  "查看平台管理员与权限说明": { en: "View platform administrators and permission explanations", "zh-Hant": "檢視平台管理員與權限說明" },
+  "授予和撤销委派角色": { en: "Grant and revoke delegated roles", "zh-Hant": "授予和撤銷委派角色" },
+  "授予和撤销最高管理员": { en: "Grant and revoke the super administrator role", "zh-Hant": "授予和撤銷最高管理員" },
+  "使用 API 管理平台": { en: "Use the API management console", "zh-Hant": "使用 API 管理平台" },
+
+  // ---- where a grant came from
+  "数据迁移（原平台管理员）": { en: "Data migration (former platform administrator)", "zh-Hant": "資料遷移（原平台管理員）" },
+  "主机初始化": { en: "Host initialization", "zh-Hant": "主機初始化" },
+  "版本回滚后同步": { en: "Synchronized after a rollback", "zh-Hant": "版本回退後同步" },
+  "系统": { en: "System", "zh-Hant": "系統" },
+
+  // ---- lists and dialogs
+  "平台权限": { en: "Platform access", "zh-Hant": "平台權限" },
+  "无平台权限": { en: "No platform access", "zh-Hant": "無平台權限" },
+  "任一平台角色": { en: "Any platform role", "zh-Hant": "任一平台角色" },
+  "查看平台权限": { en: "View platform access", "zh-Hant": "檢視平台權限" },
+  "平台权限：{email}": { en: "Platform access: {email}", "zh-Hant": "平台權限：{email}" },
+  "平台管理员名册": { en: "Platform administrator roster", "zh-Hant": "平台管理員名冊" },
+  "持有平台角色的账户。角色由最高管理员授予；撤销在对方的下一个请求生效。平台角色不授予任何工作空间或文档的访问。": {
+    en: "Accounts that hold a platform role. Roles are granted by a super administrator; a revocation takes effect on that person's next request. No platform role grants access to any workspace or document.",
+    "zh-Hant": "持有平台角色的帳戶。角色由最高管理員授予；撤銷在對方的下一個請求生效。平台角色不授予任何工作空間或文件的存取。" },
+  "只有 {count} 名可用的最高管理员。建议至少 2 名，由不同的人持有：唯一的最高管理员无法登录时，没有人能管理平台。": {
+    en: { one: "There is only {count} usable super administrator. Keep at least 2, held by different people: if the only one cannot sign in, nobody can manage the platform.",
+          other: "There are only {count} usable super administrators. Keep at least 2, held by different people: if the only one cannot sign in, nobody can manage the platform." },
+    "zh-Hant": "只有 {count} 名可用的最高管理員。建議至少 2 名，由不同的人持有：唯一的最高管理員無法登入時，沒有人能管理平台。" },
+  "没有可用的最高管理员。需要由能访问服务器的人用命令行初始化一名。": {
+    en: "There is no usable super administrator. Someone with access to the server has to create one with the command line.",
+    "zh-Hant": "沒有可用的最高管理員。需要由能存取伺服器的人用命令列初始化一名。" },
+  "角色": { en: "Role", "zh-Hant": "角色" },
+  "授予者": { en: "Granted by", "zh-Hant": "授予者" },
+  "授予时间": { en: "Granted", "zh-Hant": "授予時間" },
+  "到期": { en: "Expires", "zh-Hant": "到期" },
+  "长期": { en: "No expiry", "zh-Hant": "長期" },
+  "身份确认": { en: "Identity confirmation", "zh-Hant": "身分確認" },
+  "最近登录": { en: "Last sign-in", "zh-Hant": "最近登入" },
+  "能完成身份确认": { en: "Can confirm identity", "zh-Hant": "能完成身分確認" },
+  "不能完成身份确认": { en: "Cannot confirm identity", "zh-Hant": "不能完成身分確認" },
+  "尚无支持危险操作的身份验证方式": { en: "No verification method is available for sensitive actions yet", "zh-Hant": "尚無支援危險操作的身分驗證方式" },
+  "未计入：邮箱未验证": { en: "Not counted: email not verified", "zh-Hant": "未計入：電郵未驗證" },
+  "该账户当前不可用，这些授权不生效。": { en: "This account is not active, so these grants do not take effect.", "zh-Hant": "此帳戶目前不可用，這些授權不生效。" },
+  "有效权限": { en: "Effective permissions", "zh-Hant": "有效權限" },
+  "内置角色与权限": { en: "Built-in roles and their permissions", "zh-Hant": "內建角色與權限" },
+  "没有持有平台角色的账户。": { en: "No account holds a platform role.", "zh-Hant": "沒有持有平台角色的帳戶。" },
+  "这个账户没有平台角色。": { en: "This account holds no platform role.", "zh-Hant": "這個帳戶沒有平台角色。" },
+  "授予平台角色": { en: "Grant a platform role", "zh-Hant": "授予平台角色" },
+  "授予角色": { en: "Grant role", "zh-Hant": "授予角色" },
+  "撤销平台角色": { en: "Revoke platform role", "zh-Hant": "撤銷平台角色" },
+  "撤销": { en: "Revoke", "zh-Hant": "撤銷" },
+  "你的平台角色不能撤销这项授权": { en: "Your platform role cannot revoke this grant", "zh-Hant": "你的平台角色不能撤銷這項授權" },
+  "你的平台角色不能授予或撤销平台角色。": { en: "Your platform role cannot grant or revoke platform roles.", "zh-Hant": "你的平台角色不能授予或撤銷平台角色。" },
+  "这个角色包含你没有的权限，只有持有这些权限的管理员能撤销它。": { en: "This role includes permissions you do not hold; only an administrator who holds them can revoke it.", "zh-Hant": "這個角色包含你沒有的權限，只有持有這些權限的管理員能撤銷它。" },
+  "不能撤销自己带授权能力的角色，请由另一位最高管理员操作。": { en: "You cannot revoke your own role that can grant roles. Ask another super administrator.", "zh-Hant": "不能撤銷自己帶授權能力的角色，請由另一位最高管理員操作。" },
+  "你的平台角色可以查看平台权限，但不能授予或撤销平台角色。": { en: "Your platform role can view platform access but cannot grant or revoke platform roles.", "zh-Hant": "你的平台角色可以檢視平台權限，但不能授予或撤銷平台角色。" },
+  "没有你可以授予这个账户的角色：只能授予由你自己持有的权限组成的角色。": { en: "There is no role you can grant this account: you can grant only roles made of permissions you hold yourself.", "zh-Hant": "沒有你可以授予這個帳戶的角色：只能授予由你自己持有的權限組成的角色。" },
+  "带授权能力的角色不能授予自己，请由另一位最高管理员操作。": { en: "A role that can grant roles cannot be granted to yourself. Ask another super administrator.", "zh-Hant": "帶授權能力的角色不能授予自己，請由另一位最高管理員操作。" },
+  "你的平台角色不包含这项操作": { en: "Your platform role does not include this action", "zh-Hant": "你的平台角色不包含這項操作" },
+  "该账户持有你没有的平台权限": { en: "This account holds platform permissions you do not have", "zh-Hant": "該帳戶持有你沒有的平台權限" },
+  "只有已停用的账户可以恢复": { en: "Only a suspended account can be restored", "zh-Hant": "只有已停用的帳戶可以恢復" },
+  "该账户当前不能接收找回邮件": { en: "This account cannot receive a recovery mail right now", "zh-Hant": "該帳戶目前不能接收找回郵件" },
+  "不计为可用的最高管理员": { en: "Not counted as a usable super administrator", "zh-Hant": "不計為可用的最高管理員" },
+  "你的平台角色可以查看工作空间，但不能冻结或解冻。": { en: "Your platform role can view workspaces but cannot freeze or unfreeze them.", "zh-Hant": "你的平台角色可以檢視工作空間，但不能凍結或解凍。" },
+  "你的平台角色可以查看注册策略，但不能修改。": { en: "Your platform role can view the registration policy but cannot change it.", "zh-Hant": "你的平台角色可以檢視註冊政策，但不能修改。" },
+  "你的平台角色可以查看邮件投递，但不能重试。": { en: "Your platform role can view mail delivery but cannot retry it.", "zh-Hant": "你的平台角色可以檢視郵件投遞，但不能重試。" },
+  "你的平台角色可以查看组织，但不能在管理后台执行组织的生命周期操作。": { en: "Your platform role can view organizations but cannot run their lifecycle from the console.", "zh-Hant": "你的平台角色可以檢視組織，但不能在管理後台執行組織的生命週期操作。" },
+  "{count} 个项目。只有最高管理员可以把它指派给一个没有平台权限的账户。": {
+    en: { one: "{count} project. Only a super administrator can assign it to an account without platform access.", other: "{count} projects. Only a super administrator can assign it to an account without platform access." },
+    "zh-Hant": "{count} 個專案。只有最高管理員可以把它指派給一個沒有平台權限的帳戶。" },
+  "只列出没有平台权限的账户：平台管理与业务数据须由不同账户持有，也不能指派给你自己。": {
+    en: "Only accounts without platform access are listed: platform administration and business data are held by different accounts, and it cannot be assigned to yourself.",
+    "zh-Hant": "只列出沒有平台權限的帳戶：平台管理與業務資料須由不同帳戶持有，也不能指派給你自己。" },
+  "只有最高管理员可以查看指派详情或撤销指派。": { en: "Only a super administrator can see the assignment details or undo the assignment.", "zh-Hant": "只有最高管理員可以檢視指派詳情或撤銷指派。" },
+  "被拒绝的管理请求": { en: "Refused administration requests", "zh-Hant": "被拒絕的管理請求" },
+  "新角色": { en: "New role", "zh-Hant": "新角色" },
+  "期限": { en: "Duration", "zh-Hant": "期限" },
+  "不设期限": { en: "No expiry", "zh-Hant": "不設期限" },
+  "{count} 天": { en: { one: "{count} day", other: "{count} days" }, "zh-Hant": "{count} 天" },
+  "最高管理员不设期限：到期会在无人操作时让平台失去最高管理员。": { en: "A super administrator role has no expiry: expiring would leave the platform without one while nobody acts.", "zh-Hant": "最高管理員不設期限：到期會在無人操作時讓平台失去最高管理員。" },
+  "{email} 将获得「{role}」：{permissions}。这不授予任何工作空间或文档的访问。对方现有的登录会按管理员规则缩短闲置时限，且不再保持登录。": {
+    en: "{email} will receive “{role}”: {permissions}. This grants no access to any workspace or document. Their existing sign-ins move to the administrator idle limit and stop being remembered.",
+    "zh-Hant": "{email} 將獲得「{role}」：{permissions}。這不授予任何工作空間或文件的存取。對方現有的登入會按管理員規則縮短閒置時限，且不再保持登入。" },
+  "{email} 将失去「{role}」。撤销在对方的下一个请求生效，此前完成的操作不受影响。": {
+    en: "{email} will lose “{role}”. The revocation takes effect on their next request; what they already did is unaffected.",
+    "zh-Hant": "{email} 將失去「{role}」。撤銷在對方的下一個請求生效，此前完成的操作不受影響。" },
+  "已授予「{role}」。": { en: "Granted “{role}”.", "zh-Hant": "已授予「{role}」。" },
+  "已撤销「{role}」。": { en: "Revoked “{role}”.", "zh-Hant": "已撤銷「{role}」。" },
+  "请先撤销该账户的全部平台权限": { en: "Revoke this account's platform access first", "zh-Hant": "請先撤銷該帳戶的全部平台權限" },
+  "测试实例": { en: "Test instance", "zh-Hant": "測試實例" },
+
+  // ---- the server's refusals (synwevo_core.platform_access, admin_routes)
+  "只能授予或撤销由你自己持有的权限组成的平台角色": { en: "You can grant or revoke only platform roles made of permissions you hold yourself.", "zh-Hant": "只能授予或撤銷由你自己持有的權限組成的平台角色" },
+  "不能给自己授予或撤销带授权能力的平台角色，请由另一位最高管理员操作": { en: "You cannot grant or revoke a role that can grant roles for yourself. Ask another super administrator.", "zh-Hant": "不能給自己授予或撤銷帶授權能力的平台角色，請由另一位最高管理員操作" },
+  "这是最后一名可用的最高管理员。请先授予另一位最高管理员，并确认对方能登录并完成身份确认": { en: "This is the last usable super administrator. First grant the role to someone else, and make sure they can sign in and confirm their identity.", "zh-Hant": "這是最後一名可用的最高管理員。請先授予另一位最高管理員，並確認對方能登入並完成身分確認" },
+  "应用身份不是人，不能持有平台权限": { en: "An application identity is not a person and cannot hold platform access.", "zh-Hant": "應用身分不是人，不能持有平台權限" },
+  "该账户还没有完成邮箱验证，不能获得平台权限": { en: "This account has not finished email verification and cannot receive platform access.", "zh-Hant": "該帳戶還沒有完成電郵驗證，不能獲得平台權限" },
+  "该账户已停用或正在删除，不能获得平台权限": { en: "This account is suspended or being deleted and cannot receive platform access.", "zh-Hant": "該帳戶已停用或正在刪除，不能獲得平台權限" },
+  "该账户的邮箱尚未验证，不能获得平台权限": { en: "This account's email address is not verified, so it cannot receive platform access.", "zh-Hant": "該帳戶的電郵尚未驗證，不能獲得平台權限" },
+  "该账户没有口令、可验证身份的安全密钥或动态验证码，无法完成管理员身份确认；请先让本人设置": { en: "This account has no password, identity-verifying security key or authenticator code, so it cannot confirm an administrator's identity. Ask its owner to set one up first.", "zh-Hant": "該帳戶沒有口令、可驗證身分的安全金鑰或動態驗證碼，無法完成管理員身分確認；請先讓本人設定" },
+  "该账户已经持有这个平台角色；要改期限，请先撤销再授予": { en: "This account already holds this platform role. To change its duration, revoke it and grant it again.", "zh-Hant": "該帳戶已經持有這個平台角色；要改期限，請先撤銷再授予" },
+  "找不到这项平台授权": { en: "This platform grant was not found.", "zh-Hant": "找不到這項平台授權" },
+  "这项授权已经撤销": { en: "This grant has already been revoked.", "zh-Hant": "這項授權已經撤銷" },
+  "请选择一个内置平台角色": { en: "Choose a built-in platform role.", "zh-Hant": "請選擇一個內建平台角色" },
+  "最高管理员不设期限：到期会在无人操作的情况下让平台失去最高管理员": { en: "A super administrator role has no expiry: expiring would leave the platform without one while nobody acts.", "zh-Hant": "最高管理員不設期限：到期會在無人操作的情況下讓平台失去最高管理員" },
+  "到期时间须在 5 分钟之后、一年之内": { en: "The expiry must be more than 5 minutes and less than a year away.", "zh-Hant": "到期時間須在 5 分鐘之後、一年之內" },
+  "「平台运维」角色已停用：它从未带有任何权限。请改为授予一个内置平台角色": { en: "The “platform operations” role is retired: it never carried any permission. Grant a built-in platform role instead.", "zh-Hant": "「平台運維」角色已停用：它從未帶有任何權限。請改為授予一個內建平台角色" },
+  "平台角色只能是 none 或 admin": { en: "The platform role can only be none or admin.", "zh-Hant": "平台角色只能是 none 或 admin" },
+  "请先撤销该账户的全部平台权限，再停用它": { en: "Revoke all of this account's platform access before suspending it.", "zh-Hant": "請先撤銷該帳戶的全部平台權限，再停用它" },
+  "找不到该账户": { en: "That account was not found.", "zh-Hant": "找不到該帳戶" },
+
+  "该账户没有口令或可验证身份的安全密钥，无法完成危险操作要求的重新验证": {
+    en: "This account has no password or user-verifying passkey, so it cannot complete verification for sensitive actions.",
+    "zh-Hant": "該帳戶沒有口令或可驗證身分的安全金鑰，無法完成危險操作要求的重新驗證" },
+  "该账户持有你没有的平台权限：只有权限不低于它的管理员才能对它执行这项操作": {
+    en: "This account holds platform permissions you do not have: only an administrator whose permissions cover it can do this.",
+    "zh-Hant": "該帳戶持有你沒有的平台權限：只有權限不低於它的管理員才能對它執行這項操作" },
+  "不能把历史数据指派给自己：平台管理权限不带来任何文档的访问。请指派给数据实际所有者的普通账户": {
+    en: "You cannot assign the historical data to yourself: platform administration never brings access to documents. Assign it to the ordinary account of the data's actual owner.",
+    "zh-Hant": "不能把歷史資料指派給自己：平台管理權限不帶來任何文件的存取。請指派給資料實際擁有者的一般帳戶" },
+  "该账户持有平台权限，不能接收历史数据：平台管理与业务数据须由不同账户持有。请指派给没有平台权限的账户": {
+    en: "This account holds platform access and cannot receive the historical data: platform administration and business data are held by different accounts. Assign it to an account without platform access.",
+    "zh-Hant": "該帳戶持有平台權限，不能接收歷史資料：平台管理與業務資料須由不同帳戶持有。請指派給沒有平台權限的帳戶" },
+
+  // ---- reasons the service writes itself (platform_access.SYSTEM_REASONS)
+  "平台管理员（platform_role=admin）迁移为最高管理员": { en: "Platform administrator (platform_role=admin) migrated to super administrator", "zh-Hant": "平台管理員（platform_role=admin）遷移為最高管理員" },
+  "上一版本在回滚期间把该账户设为平台管理员": { en: "The previous release made this account a platform administrator during a rollback", "zh-Hant": "上一版本在回退期間把該帳戶設為平台管理員" },
+  "上一版本在回滚期间撤销了该账户的平台管理员角色": { en: "The previous release revoked this account's platform administrator role during a rollback", "zh-Hant": "上一版本在回退期間撤銷了該帳戶的平台管理員角色" },
+  "首位平台管理员（一次性引导令牌）": { en: "First platform administrator (one-time bootstrap token)", "zh-Hant": "首位平台管理員（一次性引導權杖）" },
+  "命令行 bootstrap admin 创建的最高管理员": { en: "Super administrator created with the command line (bootstrap admin)", "zh-Hant": "命令列 bootstrap admin 建立的最高管理員" },
+  "账户已删除": { en: "Account deleted", "zh-Hant": "帳戶已刪除" },
+  "账户已删除（安全日志重放）": { en: "Account deleted (security journal replay)", "zh-Hant": "帳戶已刪除（安全日誌重放）" },
+  "「平台运维」角色没有任何能力，迁移为无平台权限": { en: "The “platform operations” role carried no capability and was migrated to no platform access", "zh-Hant": "「平台運維」角色沒有任何能力，遷移為無平台權限" },
+
+  // ---- refusal code fallbacks (labels.ts)
+  "必须保留至少一位可用的最高管理员。": { en: "At least one usable super administrator must remain.", "zh-Hant": "必須保留至少一位可用的最高管理員。" },
+};
+registerMessages(platformMessages);

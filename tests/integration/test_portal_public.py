@@ -5,6 +5,8 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import pytest
+
+from tests.integration.platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core.apps import Apps, bootstrap_docs_app
@@ -41,9 +43,10 @@ def portal(tmp_path, monkeypatch):
 def user(portal, name="member", *, admin=False, personal=False):
     _, store, ident = portal
     u = ident.create_user(f"{name}@example.test", None, status="active",
-                          platform_role="admin" if admin else "none",
                           with_personal_workspace=personal)
     store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), u["id"]))
+    if admin:
+        make_platform_admin(store, u)
     return ident.get_user(u["id"])
 
 
@@ -180,8 +183,11 @@ def test_empty_account_and_platform_admin_do_not_inherit_business_access(portal)
     for name, admin in (("unaffiliated", False), ("platform-admin", True)):
         u = user(portal, name, admin=admin)
         client = signed_in(portal, u)
-        assert client.get("/api/auth/me").json()["platform_role"] == ("admin" if admin else "none")
+        me = client.get("/api/auth/me").json()
+        assert me["platform_role"] == ("admin" if admin else "none")
+        assert me["platform_roles"] == (["super_admin"] if admin else [])
         home = client.get("/api/portal/home").json()
+        assert bool(home["user"]["platform_permissions"]) is admin
         assert home["workspaces"] == [] and home["apps"] == []
         assert home["pending_invitations"] == []
         assert home["current_workspace_id"] is None

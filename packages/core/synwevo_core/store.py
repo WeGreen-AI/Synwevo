@@ -19,7 +19,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -127,6 +127,10 @@ CREATE TABLE IF NOT EXISTS users (
     CHECK (status IN ('pending','active','suspended','pending_delete','deleted')),
   -- platform_role is NOT a superset of workspace access: a platform admin manages accounts and
   -- service state and still has no read access to any workspace's documents (docs/security/permissions.md §4.1).
+  -- Since v27 this column is the rollback mirror of `platform_role_grants` (platform_access.py):
+  -- 'admin' exactly while a live super administrator grant exists, else 'none'. Nothing reads it
+  -- to decide access; 'operator' is no longer written (the CHECK is kept rather than rebuilding
+  -- the table).
   platform_role TEXT NOT NULL DEFAULT 'none'
     CHECK (platform_role IN ('none','operator','admin')),
   created_at REAL NOT NULL, updated_at REAL NOT NULL, deleted_at REAL
@@ -380,6 +384,17 @@ CREATE TABLE IF NOT EXISTS webauthn_challenges (
   rp_id TEXT NOT NULL, origin TEXT NOT NULL,
   created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
 );
+
+-- A scoped confirmation is not a sign-in. Old login code never sees these challenges.
+-- No new identity authority: both references name the existing account and session.
+CREATE TABLE IF NOT EXISTS reauth_challenges (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK (purpose='reauth'),
+  scope TEXT NOT NULL CHECK (scope IN ('mfa','admin')),
+  challenge TEXT NOT NULL UNIQUE, rp_id TEXT NOT NULL, origin TEXT NOT NULL,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_reauth_session ON reauth_challenges(session_id,expires_at);
 
 CREATE TABLE IF NOT EXISTS rp_auth_requests (
   -- Synwevo Docs' side of a sign-in in progress. state, nonce and the PKCE verifier live here,
@@ -717,6 +732,13 @@ V2_COLUMNS = [
     ("artifacts", "deleted_at", "REAL"),
 ]
 
+# Budget deferrals remember the observed configuration revision. NULL preserves the meaning
+# of pre-policy deliveries; no migration invents a worker acknowledgement for them.
+PLATFORM_SETTINGS_DELIVERY_COLUMNS = [
+    ("notification_deliveries", "defer_reason", "TEXT"),
+    ("notification_deliveries", "policy_revision", "INTEGER"),
+]
+
 JSON_COLS = {"record_rule", "output", "notes", "structure", "options", "ocr", "corrections", "slots", "editor", "data",
              "snapshot", "counts", "record", "issues", "trace", "verification", "info", "summary", "scan"}
 
@@ -887,7 +909,7 @@ class Store:
         from .suite_schema import apply as apply_suite_schema
         apply_suite_schema(c)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS + PLATFORM_SETTINGS_DELIVERY_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
@@ -901,6 +923,65 @@ class Store:
         # the index current for a later upgrade); the new columns/tables are unused, not harmful.
         from .messaging_search import ensure_index as ensure_message_index
         ensure_message_index(c)
+        # Durable admin results commit alongside the mutation and its audit event. Additive:
+        # older releases ignore this table; no user or tenant identity is duplicated.
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS admin_operations (
+                id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL,
+                target_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+                result_json TEXT NOT NULL, created_at REAL NOT NULL,
+                UNIQUE(actor_id,idempotency_key)
+            );
+            CREATE INDEX IF NOT EXISTS ix_admin_operations_target ON admin_operations(target_id,created_at);
+        """)
+        # Versioned non-secret platform overrides. All reads/writes use this Store; older
+        # releases ignore these additive rows. A reset/rollback appends a new revision.
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS platform_settings_versions (
+                revision INTEGER PRIMARY KEY AUTOINCREMENT CHECK (revision > 0),
+                overrides TEXT NOT NULL, actor_id TEXT NOT NULL, reason TEXT NOT NULL,
+                operation_id TEXT NOT NULL UNIQUE, created_at REAL NOT NULL,
+                rollback_revision INTEGER CHECK (rollback_revision IS NULL OR rollback_revision >= 0)
+            );
+        """)
+        # v27: delegated platform permissions (platform_access.py). The grants table, then — once,
+        # marked in `meta` in the same transaction so a crash cannot relabel it — every
+        # `platform_role='admin'` becomes a super administrator grant from `migration:v27` and every
+        # 'operator' becomes 'none'. On every later open the same reconciliation carries a change
+        # the previous release made to the mirror during a rollback into the grants; while every
+        # grant change keeps the mirror in step it finds nothing to do. Rollback to v26 code: the
+        # table is ignored and `platform_role` still says who the super administrators are.
+        from .platform_access import SCHEMA_SQL as PLATFORM_ACCESS_SCHEMA, reconcile_mirror
+        c.executescript(PLATFORM_ACCESS_SCHEMA)
+        # B4: recipient-owned UV acceptance and a separate administrator readiness proof.
+        # Existing grants remain grandfathered; pending offers confer no authority.
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS platform_super_admin_offers (
+                id TEXT PRIMARY KEY, proposer_id TEXT NOT NULL, proposer_grant_id TEXT NOT NULL,
+                recipient_id TEXT NOT NULL, reason TEXT NOT NULL, created_at REAL NOT NULL,
+                expires_at REAL NOT NULL, state TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(state IN ('pending','accepted','ready','declined','cancelled','expired','invalidated')),
+                closed_at REAL, closed_by TEXT, closed_reason TEXT,
+                accepted_grant_id TEXT UNIQUE, accepted_at REAL, accepted_session_id TEXT,
+                accepted_challenge_id TEXT, accepted_passkey_id TEXT,
+                ready_at REAL, ready_session_id TEXT, ready_challenge_id TEXT, ready_passkey_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_super_offers_recipient ON platform_super_admin_offers(recipient_id,created_at,id);
+            CREATE INDEX IF NOT EXISTS ix_super_offers_proposer ON platform_super_admin_offers(proposer_id,state);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_super_offers_pending ON platform_super_admin_offers(recipient_id) WHERE state='pending';
+        """)
+        with self.tx() as t:
+            for table, column in (("platform_role_grants", "offer_id"),
+                                  ("reauth_challenges", "context_kind"), ("reauth_challenges", "context_id")):
+                if column not in {r["name"] for r in t.execute(f"PRAGMA table_info({table})")}:
+                    t.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            t.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_platform_grant_offer ON platform_role_grants(offer_id)")
+        with self.tx():
+            first = not self.one("SELECT 1 AS x FROM meta WHERE key='platform_grants.migrated'")
+            reconcile_mirror(self, source="migration:v27" if first else "reconcile:mirror")
+            if first:
+                self.execute("INSERT INTO meta (key, value) VALUES ('platform_grants.migrated', ?)",
+                             (str(now()),))
 
     @staticmethod
     def _seed_legacy_workspace(t: sqlite3.Connection) -> None:

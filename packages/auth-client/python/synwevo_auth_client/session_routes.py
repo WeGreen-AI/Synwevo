@@ -101,24 +101,34 @@ def passkeys_registered_elsewhere(store) -> bool:
         return False
 
 
-def describe_user(user: dict, spaces: list[dict], session: dict | None = None) -> dict:
+def describe_user(user: dict, spaces: list[dict], session: dict | None = None, *, store) -> dict:
     """The signed-in person as every shell sees them.
 
-    `permissions` depends on the *session*, not only on the account: a platform administrator
-    who signed in with one factor (a mailed code, an external provider) holds the role but may
-    not use it until a second factor is proved (`sessions.admin_capable`). `admin_locked` tells
-    the account page to say so and to offer the password step-up.
+    `platform_permissions` / `platform_roles` are what this account's platform grants give it
+    (synwevo_core.platform_access), read afresh on each call; the shells show the administration
+    links for any of them, and the server decides each view on its own. `platform_role` stays for
+    older clients: it is the rollback mirror ('admin' while a super administrator grant is live).
+
+    `permissions` depends on the *session*, not only on the account: an administrator who signed
+    in with one factor (a mailed code, an external provider) holds their permissions but may not
+    use them until a second factor is proved (`sessions.admin_capable`). `admin_locked` tells the
+    account page to say so and to offer the password step-up. `api_platform.manage` appears in
+    `permissions` only when a grant carries it.
     """
+    from synwevo_core.platform_access import PlatformAccess, sorted_permissions
     from synwevo_core.sessions import admin_capable
-    is_admin = user["status"] == "active" and user["platform_role"] == "admin"
+    access = PlatformAccess(store)
+    held = access.effective_permissions(user) if user["status"] == "active" else frozenset()
     capable = admin_capable(session.get("amr") or "") if session is not None else True
     return {"id": user["id"], "email": user["email"], "display_name": user.get("display_name"),
             "status": user["status"], "platform_role": user["platform_role"],
+            "platform_permissions": sorted_permissions(held),
+            "platform_roles": access.roles(user) if held else [],
             "locale": user.get("locale") or "zh-Hans", "timezone": user.get("timezone") or "UTC",
             "email_verified": bool(user.get("email_verified_at")),
             "onboarding_completed": bool(user.get("onboarding_completed_at") or spaces),
-            "permissions": ["api_platform.manage"] if is_admin and capable else [],
-            "admin_locked": bool(is_admin and not capable),
+            "permissions": ["api_platform.manage"] if "api_platform.manage" in held and capable else [],
+            "admin_locked": bool(held and not capable),
             "workspaces": [{"id": w["id"], "name": w["name"], "kind": w["kind"],
                             "status": w.get("status", "active"),
                             "organization_id": w.get("organization_id"), "organization_name": w.get("organization_name"),
@@ -156,7 +166,7 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
     r = APIRouter(prefix="/api/auth", tags=["auth"])
 
     def _me(user: dict, spaces: list[dict], session: dict | None = None) -> dict:
-        return describe_user(user, spaces, session)
+        return describe_user(user, spaces, session, store=ident.store)
 
     def _require_session(request: Request) -> dict:
         s = getattr(request.state, "session", None)

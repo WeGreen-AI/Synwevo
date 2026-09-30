@@ -70,12 +70,15 @@ function render(locale, element) {
   try { return renderToStaticMarkup(element); } finally { ui.setLocale("zh-Hans"); }
 }
 const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-function page(locale, status, { plan = PLAN, loading = false, extra } = {}) {
+// A super administrator's permissions (the claim, its undo and the account search); a role without
+// them is covered in admin-access.test.mjs.
+const SUPER = new Set(["platform.overview.view", "platform.users.view", "platform.workspaces.claim"]);
+function page(locale, status, { plan = PLAN, loading = false, extra, held = SUPER } = {}) {
   globalThis.__fixtures = {
     "/api/admin/overview": { data: overview(status, extra), loading },
     "/api/admin/workspaces/default/unclaim-preview": { data: { ...plan, workspace: { ...plan.workspace, status } } },
   };
-  return render(locale, React.createElement(admin.OverviewTab, { onDenied() {} }));
+  return render(locale, React.createElement(admin.OverviewTab, { onDenied() {}, held }));
 }
 const impact = (locale, plan) => text(render(locale, React.createElement(admin.UnclaimImpact, { plan })));
 const HAN = /[㐀-鿿]/;
@@ -143,4 +146,11 @@ test("a tab whose workspace context names the unassigned workspace stops sending
   assert.equal(context.releaseWorkspaceContext("default"), false);
   assert.equal(client.authHeaders("GET", false)["X-Synwevo-Workspace"], "w_own");
   client.setWorkspaceContext(null, { initial: true });
+});
+
+test("without the claim permission the assigned card names no one and offers no undo", () => {
+  const html = page("zh-Hans", "active", { held: new Set(["platform.overview.view"]) });
+  assert.ok(text(html).includes("只有最高管理员可以查看指派详情或撤销指派。"), text(html));
+  assert.ok(!/<button[^>]*>撤销指派</.test(html), "no undo button");
+  assert.ok(!html.includes("owner@example.test"), "the members are the claim permission's to see");
 });

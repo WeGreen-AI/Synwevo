@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { get, useSession } from '@synwevo/auth-client';
-import { PageState, useI18n } from '@synwevo/ui';
+import { useSearchParams } from 'react-router-dom';
+import { AdminLayout } from '../admin/AdminLayout';
+import { get } from '@synwevo/auth-client';
+import { useI18n } from '@synwevo/ui';
 import { Topbar } from '../components/Topbar';
-import AdminStepUp from '../components/AdminStepUp';
 import { useLoad } from '../lib/hooks';
 import { ApprovalsPanel } from './apiplatform/Approvals';
 import { Credentials } from './apiplatform/Credentials';
@@ -21,18 +22,20 @@ type Overview = { permission: string; adapter_available: boolean; resource: stri
   sdk_links: { name: string; url: string }[] };
 
 export default function ApiPlatform() {
+  return <AdminLayout contentClassName="api-platform-main">{() => <ApiPlatformContent />}</AdminLayout>;
+}
+
+function ApiPlatformContent() {
   const { t } = useI18n();
-  const { me } = useSession();
-  const [tab, setTab] = useState('approvals');
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('tab');
+  const tab = ['approvals', 'credentials', 'quotas', 'webhooks', 'jobs', 'operations', 'calls', 'audit', 'debug'].includes(asked || '') ? asked! : 'approvals';
+  const setTab = (value: string) => setParams(before => { const next = new URLSearchParams(before); next.set('tab', value); return next; });
   const [revision, setRevision] = useState(0);
   const [action, setAction] = useState<Action | null>(null);
   const [secret, setSecret] = useState<Outcome | null>(null);
-  const allowed = me?.platform_role === 'admin';
-  const key = allowed ? `${BASE}/overview?revision=${revision}` : null;
-  const load = useLoad<Overview>(key, signal => get(key!, signal));
-  useEffect(() => { document.title = `${t('API 管理平台')} · Synwevo Account`; }, [t]);
-  if (!allowed) return <PageState as="main"><h1>{t('页面不存在')}</h1><a href="/account">{t('账户与安全')}</a></PageState>;
-  if (me?.admin_locked) return <div className="app"><Topbar title={t('API 管理平台')} /><main className="api-platform-main"><div className="acct-page col gap16"><AdminStepUp compact /></div></main></div>;
+  const key = `${BASE}/overview?revision=${revision}`;
+  const load = useLoad<Overview>(key, signal => get(key, signal));
   // The outcome of an action is the refreshed list (and, for a new secret, the one-time dialog);
   // no generic "done" banner on top of it.
   const done = (out: Outcome) => {
@@ -43,9 +46,7 @@ export default function ApiPlatform() {
   const tabs: [string, string][] = [['approvals', t('授权审批')], ['credentials', t('服务凭据')],
     ['quotas', t('流量与配额')], ['webhooks', t('Webhook')], ['jobs', t('生成任务')], ['operations', t('接口契约')], ['calls', t('调用记录')],
     ['audit', t('审计')], ['debug', t('请求调试')]];
-  return <div className="app">
-    <Topbar title={t('API 管理平台')} />
-    <main className="api-platform-main"><div className="acct-page col gap16">
+  return <>
       <p className="notice info">{t('管理权限不授予文档数据访问；凭据须经工作空间所有者批准。')}</p>
       <DataState loading={load.loading} error={load.error} empty={false} retry={load.reload} />
       {load.data && !load.error && <>
@@ -71,10 +72,9 @@ export default function ApiPlatform() {
         {tab === 'debug' && <Requests key="debug" act={act} webhooks={false} />}
         <footer className="row gap12 wrap"><strong>{t('SDK 与集成文档')}</strong>{load.data.sdk_links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">{t(link.name)}</a>)}</footer>
       </>}
-    </div></main>
     {action && <Confirm action={action} close={() => setAction(null)} done={done} />}
     {secret && <Secret result={secret} close={() => setSecret(null)} />}
-  </div>;
+  </>;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

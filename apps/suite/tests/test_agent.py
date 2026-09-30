@@ -307,7 +307,9 @@ def test_conversations_are_private(agent):
 def test_platform_admins_get_no_extra_reach(agent):
     """C10: a platform administrator's Agent sees only their own memberships."""
     p = agent.people
-    p.store.execute("UPDATE users SET platform_role='admin' WHERE id=?", (p.uid("out"),))
+    from synwevo_core.platform_access import PlatformAccess, SUPER_ADMIN
+    PlatformAccess(p.store).host_grant(p.uid("out"), SUPER_ADMIN, source="fixture:suite-agent",
+                                      reason="test fixture: administrator has no business access")
     agent.sign_in("out")
     conv, out = start(agent, [
         call("run_operation", {"operation": "forms.form.list", "workspace_id": p.a, "input": {}}),

@@ -13,6 +13,8 @@ import sys
 import pyotp
 import pytest
 
+from .platform_fixture import make_platform_admin
+
 from synwevo_core import journal, oidc, sealed
 from synwevo_core.apps import bootstrap_docs_app
 from synwevo_core.identity import Identity
@@ -119,7 +121,7 @@ def test_disable_revokes_tokens_and_enable_restores_the_client_only(world, capsy
 
 # ---------------------------------------------------------------- F075: bootstrap token
 def test_no_bootstrap_token_once_an_administrator_exists(world, capsys):
-    world["ident"].create_user("root@example.com", PW, status="active", platform_role="admin")
+    make_platform_admin(world["ident"].store, world["ident"].create_user("root@example.com", PW, status="active"))
     for extra in ((), ("--force",)):
         code, out, err = cli(world, capsys, "bootstrap", "token", *extra)
         assert code == 1 and "bootstrap admin" in err

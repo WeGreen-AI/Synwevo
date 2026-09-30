@@ -123,23 +123,29 @@ class Sessions:
             raise ServiceError(403, "app_account", "应用身份不能登录")
         raw = secrets.token_urlsafe(32)
         sid = _digest(raw)
-        ts = now()
-        persistent = bool(persistent) and not admin
-        idle = ADMIN_IDLE_SECONDS if admin else (PERSISTENT_IDLE_SECONDS if persistent else IDLE_SECONDS)
-        row = {
-            "id": sid, "user_id": user_id, "workspace_id": workspace_id,
-            "created_at": ts, "last_seen_at": ts,
-            "idle_expires_at": ts + min(idle, ABSOLUTE_SECONDS), "absolute_expires_at": ts + ABSOLUTE_SECONDS,
-            "persistent": 1 if persistent else 0, "auth_provider": auth_provider,
-            # A fresh login is itself a recent authentication, scoped to nothing in particular.
-            # For a session created by SSO, `auth_time` is when the *central* authentication
-            # actually happened. Taking "now" instead would let a sign-in that only replayed an
-            # hours-old central session claim to be a fresh re-authentication.
-            "reauth_at": auth_time if auth_time is not None else ts, "reauth_scope": "",
-            "amr": amr, "user_agent": (user_agent or "")[:300], "ip": (ip or "")[:64],
-            "oidc_sid": oidc_sid, "central_session_id": central_session_id,
-        }
         with self.store.tx() as t:
+            # The caller may have read the role before a concurrent grant. Decide again under
+            # the same lock as insertion, so either this row is tightened by that grant or it
+            # starts with the administrator limits. RP sessions retain their own policy.
+            if oidc_sid is None and central_session_id is None:
+                from .platform_access import PlatformAccess
+                admin = admin or bool(PlatformAccess(self.store).effective_permissions(user_id))
+            ts = now()
+            persistent = bool(persistent) and not admin
+            idle = ADMIN_IDLE_SECONDS if admin else (PERSISTENT_IDLE_SECONDS if persistent else IDLE_SECONDS)
+            row = {
+                "id": sid, "user_id": user_id, "workspace_id": workspace_id,
+                "created_at": ts, "last_seen_at": ts,
+                "idle_expires_at": ts + min(idle, ABSOLUTE_SECONDS), "absolute_expires_at": ts + ABSOLUTE_SECONDS,
+                "persistent": 1 if persistent else 0, "auth_provider": auth_provider,
+                # A fresh login is itself a recent authentication, scoped to nothing in particular.
+                # For a session created by SSO, `auth_time` is when the *central* authentication
+                # actually happened. Taking "now" instead would let a sign-in that only replayed an
+                # hours-old central session claim to be a fresh re-authentication.
+                "reauth_at": auth_time if auth_time is not None else ts, "reauth_scope": "",
+                "amr": amr, "user_agent": (user_agent or "")[:300], "ip": (ip or "")[:64],
+                "oidc_sid": oidc_sid, "central_session_id": central_session_id,
+            }
             t.execute(
                 "INSERT INTO sessions (id,user_id,workspace_id,created_at,last_seen_at,idle_expires_at,"
                 "absolute_expires_at,reauth_at,reauth_scope,amr,user_agent,ip,oidc_sid,central_session_id,"
@@ -160,6 +166,23 @@ class Sessions:
         if not row.get("persistent"):
             return None
         return max(60, int(row["absolute_expires_at"] - now()))
+
+    def current(self, admitted: dict | None) -> dict | None:
+        """Recheck an admitted session without extending it or acquiring a write lock.
+
+        A request may wait before its mutation starts. Use this inside the mutation's Store.tx()
+        to serialize its authority check with revocation; the returned AMR and re-authentication
+        fields are the current stored values, never the earlier middleware snapshot.
+        """
+        if not admitted or not admitted.get("id") or not admitted.get("user_id"):
+            return None
+        row = self.store.one("SELECT * FROM sessions WHERE id=?", (admitted["id"],))
+        if not row or row["user_id"] != admitted["user_id"] or row.get("revoked_at") is not None:
+            return None
+        ts = now()
+        if ts >= row["idle_expires_at"] or ts >= row["absolute_expires_at"]:
+            return None
+        return row
 
     def load(self, raw_cookie: str | None, *, touch: bool = True) -> dict | None:
         """The live session for this cookie, or None. Expiry is enforced here, on read.
@@ -190,8 +213,17 @@ class Sessions:
             # when the stored deadline is already within a minute of the right one. Skipping
             # it costs at most a minute of idle time and never extends anything.
             if deadline - row["idle_expires_at"] > TOUCH_SLACK_SECONDS or deadline < row["idle_expires_at"]:
-                self.store.execute("UPDATE sessions SET last_seen_at=?, idle_expires_at=? WHERE id=?",
-                                   (ts, deadline, row["id"]))
+                # A role grant can shorten this clock after the read above. Never overwrite
+                # that change using the old window; nor return a session revoked while waiting
+                # for the write lock. A competing touch needs no second write either.
+                changed = self.store.execute(
+                    "UPDATE sessions SET last_seen_at=?, idle_expires_at=? WHERE id=? "
+                    "AND revoked_at IS NULL AND last_seen_at=? AND idle_expires_at=? "
+                    "AND absolute_expires_at=? AND persistent=?",
+                    (ts, deadline, row["id"], row["last_seen_at"], row["idle_expires_at"],
+                     row["absolute_expires_at"], row["persistent"]))
+                if not changed:
+                    return self.current(row)
                 row = {**row, "last_seen_at": ts, "idle_expires_at": deadline}
         return row
 
@@ -289,6 +321,27 @@ class Sessions:
             "OR absolute_expires_at<?", (cutoff, cutoff))
 
     # ------------------------------------------------------------------ recent re-authentication
+    def confirm_reauth(self, admitted: dict, scope: str, factor: str) -> dict:
+        """Commit a proven factor and its scoped confirmation on the still-live session.
+
+        The caller verifies the proof and writes its success audit in the same Store.tx().
+        This does not create a session, change its identity, or extend either expiry clock.
+        """
+        from .errors import ServiceError
+        if scope not in REAUTH_SCOPES or factor not in ("password", "passkey_uv"):
+            raise ValueError("unknown scoped re-authentication proof")
+        with self.store.tx():
+            current = self.current(admitted)
+            if not current:
+                raise ServiceError(401, "unauthorized", "请先登录")
+            amr = current.get("amr") or ""
+            if factor not in amr.split("+") and factor not in factor_kinds(amr):
+                amr = f"{amr}+{factor}" if amr else factor
+            ts = now()
+            self.store.execute("UPDATE sessions SET reauth_at=?,reauth_scope=?,amr=? WHERE id=?",
+                               (ts, scope, amr, current["id"]))
+            return {**current, "reauth_at": ts, "reauth_scope": scope, "amr": amr}
+
     def mark_reauth(self, session_id: str, scope: str) -> None:
         self.store.execute("UPDATE sessions SET reauth_at=?, reauth_scope=? WHERE id=?",
                            (now(), scope, session_id))
@@ -315,8 +368,8 @@ class Sessions:
         in which deleting the workspace is also unlocked, so a stored scope only satisfies the
         same scope — or an empty stored scope, which is what a fresh login grants.
 
-        `strict` drops that last allowance: the person must have deliberately re-entered their
-        password *for this purpose*, not merely have signed in a moment ago. Used for the
+        `strict` drops that last allowance: the person must have deliberately re-proved their identity
+        *for this purpose*, not merely have signed in a moment ago. Used for the
         operations where the prompt is the point — reassigning who owns a body of documents,
         suspending an account, changing a platform role. Without it the confirmation an
         administrator sees would be one they could silently never be shown, which is a

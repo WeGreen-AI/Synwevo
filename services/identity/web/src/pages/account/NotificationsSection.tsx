@@ -15,6 +15,7 @@ interface Prefs {
   categories_order: string[];
   quiet_start: string | null; quiet_end: string | null; timezone: string | null;
   preview: 'full' | 'minimal';
+  conversation_digest_policy: { revision: number; interval_s: number; daily_cap: number; aggregation_window_s: number; window_s: number };
 }
 type PrefsPatch = { categories?: Record<string, Partial<{ in_app: boolean; email: EmailMode; push: boolean }>>; quiet_start?: string | null;
   quiet_end?: string | null; timezone?: string | null; preview?: 'full' | 'minimal' };
@@ -77,7 +78,7 @@ export default function NotificationsSection({ timezone }: { timezone?: string }
           </tr>;
         })}</tbody>
       </table></div>
-      <p className="tiny muted">{t('消息不逐条发邮件。开启「未读摘要」后，仍未读的会话合成一封，至少间隔 30 分钟，每天最多 8 封；读过、静音或已撤回的内容不寄出。')}</p>
+      <p className="tiny muted">{prefs.conversation_digest_policy ? t('消息不逐条发邮件。开启未读摘要后，首次等候 {window} 秒聚合，后续至少间隔 {interval} 秒，任意24小时内最多 {cap} 封；已读、静音或撤回的内容不寄出。', { window: prefs.conversation_digest_policy.aggregation_window_s, interval: prefs.conversation_digest_policy.interval_s, cap: prefs.conversation_digest_policy.daily_cap }) : t('当前摘要预算暂不可用，请刷新通知偏好。')}</p>
       <PushSection />
       <div className="col gap8">
         <label className="check"><input type="checkbox" checked={quiet} disabled={busy} onChange={e => {

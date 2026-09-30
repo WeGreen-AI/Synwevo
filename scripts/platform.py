@@ -435,10 +435,12 @@ def _require_data_dir(args) -> None:
     raise SystemExit(2)
 
 
+# Development checkout packages. The SDK is needed by catalogue/acceptance tests;
+# production services do not depend on it (their packages are installed in infra/Dockerfile).
 MODULES = ["packages/core", "packages/auth-client/python", "services/identity",
-           "apps/portal", "apps/docs", "apps/messages", "apps/suite", "infra/server"]
+           "apps/portal", "apps/docs", "apps/messages", "apps/suite", "infra/server", "apps/docs/sdk/python"]
 IMPORTS = ["synwevo_core", "synwevo_auth_client", "synwevo_identity", "synwevo_portal",
-           "synwevo_docs", "synwevo_messages", "synwevo_suite", "synwevo_server"]
+           "synwevo_docs", "synwevo_messages", "synwevo_suite", "synwevo_server", "synwevo_docs_sdk"]
 
 
 def setup(args) -> int:

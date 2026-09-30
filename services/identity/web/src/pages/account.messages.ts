@@ -101,9 +101,9 @@ registerMessages({
     "en": "This link is invalid or expired. Request a new one.",
     "zh-Hant": "連結無效或已過期，請重新申請"
   },
-  "你是最后一个平台管理员，请先移交管理权限": {
-    "en": "Transfer platform administration before deleting the last administrator.",
-    "zh-Hant": "你是最後一位平台管理員，請先移交管理權限"
+  "你是最后一名可用的最高管理员。请先授予另一位最高管理员，并确认对方能登录并完成身份确认": {
+    "en": "You are the last usable super administrator. First grant the role to someone else, and make sure they can sign in and confirm their identity.",
+    "zh-Hant": "你是最後一名可用的最高管理員。請先授予另一位最高管理員，並確認對方能登入並完成身分確認"
   },
   "请先移交共享工作空间的所有权和管理权限": {
     "en": "Transfer ownership and administration of your shared workspaces first.",

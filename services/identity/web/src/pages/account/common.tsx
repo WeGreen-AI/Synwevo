@@ -13,7 +13,7 @@ const errors: Record<string, string> = {
   bad_display_name: '名称须为 1 至 80 个字符', bad_locale: '请选择支持的语言',
   bad_timezone: '请选择有效的 IANA 时区', email_unavailable: '此邮箱无法使用',
   bad_email: '请输入不同的有效邮箱', bad_token: '链接无效或已过期，请重新申请',
-  last_admin: '你是最后一个平台管理员，请先移交管理权限',
+  last_super_admin: '你是最后一名可用的最高管理员。请先授予另一位最高管理员，并确认对方能登录并完成身份确认',
   ownership_required: '请先移交共享工作空间的所有权和管理权限',
   organization_ownership_required: '请先移交组织的所有权和管理权限',
   mail_not_configured: '邮件服务尚未配置，请联系管理员', public_url_missing: '邮件服务尚未配置，请联系管理员',

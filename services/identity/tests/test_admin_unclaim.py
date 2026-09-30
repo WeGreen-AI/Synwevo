@@ -23,6 +23,8 @@ from synwevo_core.identity import Identity
 from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
 from synwevo_core.store import Store, new_id, now
 
+from .platform_fixture import make_platform_admin
+
 PW = "a-sufficiently-long-passphrase"
 REASON = "指派给了错误的账户，撤销后重新指派"
 CLAIM_REASON = "把历史数据交给它原本的所有者"
@@ -41,8 +43,8 @@ def env(tmp_path, monkeypatch):
     store = Store(tmp_path / "d")
     ident = Identity(store)
     bootstrap_docs_app(store, ident)
-    admin = ident.create_user("admin@example.com", PW, status="active", platform_role="admin",
-                              display_name="平台管理员甲")
+    admin = make_platform_admin(store, ident.create_user("admin@example.com", PW, status="active",
+                                                        display_name="平台管理员甲"))
     alice = ident.create_user("alice@example.com", PW, status="active", display_name="Alice")
     bob = ident.create_user("bob@example.com", PW, status="active", display_name="Bob")
 
@@ -382,11 +384,33 @@ def test_the_undo_withdraws_every_kind_of_access_and_deletes_no_data(env):
     assert apps.check_access(env["admin"]["id"], "docweave", LEGACY)[0] is False
 
 
-def test_the_administrator_who_assigned_it_to_themselves_is_not_notified_by_themselves(env):
-    _claim(env, env["admin"]["id"])
+def test_the_administrator_running_the_undo_is_removed_like_everyone_and_not_notified_by_themselves(env):
+    """Was "the administrator who assigned it to themselves is not notified by themselves". The
+    delegated platform permissions (B1-2) refuse that premise: a claim never names the acting
+    administrator (409 `self_claim`), nor any account holding a platform grant — platform
+    administration and business data are held by different accounts. The property is kept on
+    the one path to membership that remains, a workspace owner's own invitation (platform
+    permissions neither grant nor block it): the undo removes the administrator with everyone
+    else, tells every other former member, and does not notify the administrator of their own act."""
+    from synwevo_identity.invites import Invites
+    store, ident, admin, alice = env["store"], env["ident"], env["admin"]["id"], env["alice"]["id"]
+    _reauth(env["c"])
+    r = post(env["c"], f"/api/admin/workspaces/{LEGACY}/claim", {"user_id": admin, "reason": CLAIM_REASON})
+    assert r.status_code == 409 and r.json()["error"] == "self_claim", r.text
+    assert _members(env) == set() and _ws(env)["status"] == "pending_claim"
+
+    _claim(env, alice)
+    _, raw = Invites(store, ident).create(workspace_id=LEGACY, email="admin@example.com", role="viewer", actor_id=alice)
+    Invites(store, ident).accept(raw, password=None, display_name=None, as_user_id=admin)
+    assert _members(env) == {alice, admin}
     r = _unclaim(env)
-    assert r.status_code == 200 and r.json()["notified"] == 0
+    assert r.status_code == 200, r.text
+    assert {m["user_id"] for m in r.json()["removed_members"]} == {alice, admin}
+    assert r.json()["notified"] == 1
     assert _members(env) == set()
+    removed = lambda uid: [i for i in env["api"].state.notifier.list(uid)["items"]  # noqa: E731
+                           if i["kind"] == "member.removed"]
+    assert removed(alice) and removed(admin) == []
 
 
 def test_approvals_stop_counting_by_the_existing_owner_rule_and_are_not_revoked(env):
@@ -669,7 +693,7 @@ def test_former_members_are_told_by_the_role_never_by_the_administrator_s_email(
     and the mail of every former member — including an account the data was assigned to by
     mistake. The notice names the role, in each language, and stores no identity of theirs."""
     store, alice = env["store"], env["alice"]["id"]
-    env["ident"].create_user("root-admin@example.com", PW, status="active", platform_role="admin")
+    make_platform_admin(store, env["ident"].create_user("root-admin@example.com", PW, status="active"))
     root = _login(env["api"], "root-admin@example.com")
     _claim(env, alice)
     _reauth(root)
@@ -815,7 +839,7 @@ def test_a_new_claim_records_its_own_grant_not_the_undo_s(env):
     _claim(env, alice)
     _, raw = Invites(store, ident).create(workspace_id=LEGACY, email="bob@example.com", role="editor", actor_id=alice)
     Invites(store, ident).accept(raw, password=None, display_name=None, as_user_id=bob)
-    other = ident.create_user("admin2@example.com", PW, status="active", platform_role="admin")
+    other = make_platform_admin(store, ident.create_user("admin2@example.com", PW, status="active"))
     second = _login(env["api"], "admin2@example.com")
     _reauth(second)
     assert _unclaim(env, client=second).status_code == 200

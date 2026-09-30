@@ -12,6 +12,8 @@ import json
 import threading
 
 import pytest
+
+from .platform_fixture import make_platform_admin
 from fastapi.testclient import TestClient
 
 from synwevo_core import journal, oidc
@@ -110,7 +112,7 @@ def test_only_admins_and_owners_can_list_and_outsiders_learn_nothing(env):
 
 
 def test_platform_admin_gets_no_member_view_of_a_workspace_they_are_not_in(env):
-    env["ident"].set_platform_role(uid(env, "erin"), "admin")
+    make_platform_admin(env["ident"].store, uid(env, "erin"))
     admin = _login(env["api"], "erin@example.com")
     assert admin.get(f"/api/auth/workspaces/{env['ws']}/members").status_code == 404
 

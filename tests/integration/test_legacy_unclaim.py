@@ -20,6 +20,7 @@ from synwevo_core.identity import Identity
 from synwevo_core.machine import docs_resource
 from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
 from synwevo_core.store import Store, new_id, now
+from tests.integration.platform_fixture import make_platform_admin
 
 PW = "a-sufficiently-long-passphrase"
 LEGACY = "default"
@@ -39,7 +40,7 @@ def world(tmp_path, monkeypatch):
     ident = Identity(store)
     bootstrap_docs_app(store, ident)
     alice = ident.create_user("alice@example.com", PW, status="active")
-    admin = ident.create_user("root@example.com", PW, status="active", platform_role="admin")
+    admin = make_platform_admin(store, ident.create_user("root@example.com", PW, status="active"))
     # Fixture: the pre-identity data, with one project carrying tenant='default'.
     ts = now()
     store.execute("INSERT INTO workspaces (id,name,kind,status,created_at,updated_at) "

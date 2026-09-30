@@ -3,10 +3,10 @@
 Only the account service has a mailer, so only it runs this. Every role writes inbox rows and
 `pending` delivery rows (synwevo_core.notifications); this worker, alone, renders them in the
 reader's language and queues them through the same `Mailer` (and so the same `mail_outbox`,
-retries and admin view) that invitations use. It is idempotent by construction: a delivery is
-claimed by flipping its status inside a transaction before any mail is queued, so two account
-processes cannot both mail the same row, and a crash between the flip and the enqueue leaves a
-`queued` row without a mail id — visible, and re-driven by the admin outbox, never silently lost.
+retries and admin view) that invitations use. Current eligibility, the reader's digest budget,
+claiming a delivery, inserting its outbox mail and linking the two share one write transaction.
+Two account processes therefore share the same budget, and a failed enqueue or process exit
+cannot leave a committed `queued` delivery without its mail. SMTP runs later in the mail worker.
 
 Reader preferences are applied here, at send time, not at emit time: quiet hours defer the mail
 to the end of the window, `digest` groups whatever is due for one reader into one message.
@@ -16,7 +16,7 @@ quiet hours that hide the fact.
 Before anything non-critical leaves, the row is checked again (`Notifier.stale_reason`): read in
 the app since, channel turned off since, a conversation that was read, muted, left or whose
 unread messages were all recalled — those are skipped with the reason on the row, not mailed.
-Conversation digests are additionally held to one per reader per half hour and a daily cap, and
+Conversation digests additionally obey the current per-reader interval and daily budget, and
 render from the live unread state, without message text unless the reader asked for it.
 """
 from __future__ import annotations
@@ -72,22 +72,37 @@ class NotificationDispatcher:
 
     # ------------------------------------------------------------------ one pass
     def run_once(self) -> dict:
+        # This is only a bounded candidate list. A second dispatcher, an account change or
+        # a reader's preference/read state may win before we acquire the writer lock.
         due = self.notifier.due_deliveries(BATCH)
-        by_user: dict[str, list[dict]] = {}
+        by_user: dict[str, list[str]] = {}
         for d in due:
-            by_user.setdefault(d["user_id"], []).append(d)
-        out = {"queued": 0, "deferred": 0, "skipped": 0, "digested": 0}
-        for uid, rows in by_user.items():
+            by_user.setdefault(d["user_id"], []).append(d["notification_id"])
+        out = {"queued": 0, "deferred": 0, "skipped": 0, "digested": 0, "failed": 0}
+        for uid, ids in by_user.items():
+            result = self._email_user(uid, ids)
+            for key, value in result.items():
+                out[key] += value
+        out.update(self._push_pass())
+        return out
+
+    def _email_user(self, uid: str, ids: list[str]) -> dict:
+        out = {"queued": 0, "deferred": 0, "skipped": 0, "digested": 0, "failed": 0}
+        with self.store.tx():
+            prefs = self.notifier.preferences(uid)
+            policy = prefs["conversation_digest_policy"]
+            rows = self.notifier.pending_email_deliveries(uid, ids, policy_revision=policy["revision"])
+            if not rows:
+                return out
             user = self.ident.get_user(uid)
             if not user or user.get("deleted_at") or user["status"] not in ("active", "pending"):
                 for d in rows:
                     self.notifier.finish_delivery(d["notification_id"], "skipped", error="reader inactive")
                 out["skipped"] += len(rows)
-                continue
-            prefs = self.notifier.preferences(uid)
+                return out
             locale = user.get("locale") or "zh-Hans"
             quiet_until = self.notifier.quiet_until(prefs)
-            send_now, deferred = [], []
+            send_now = []
             hold = None
             for d in rows:
                 reason = self._stale(d, prefs)
@@ -96,43 +111,61 @@ class NotificationDispatcher:
                     out["skipped"] += 1
                     continue
                 if quiet_until and d["severity"] != "critical":
-                    deferred.append(d); self.notifier.defer_delivery(d["notification_id"], quiet_until)
+                    self.notifier.defer_delivery(d["notification_id"], quiet_until, reason="quiet")
+                    out["deferred"] += 1
                 elif d["category"] == "conversation" and d["severity"] != "critical":
                     if hold is None:
-                        hold = self.notifier.conversation_digest_hold(uid) or 0.0
+                        hold = self.notifier.conversation_digest_hold(uid, policy=policy) or 0.0
                     if hold:
-                        deferred.append(d); self.notifier.defer_delivery(d["notification_id"], hold)
+                        self.notifier.defer_delivery(d["notification_id"], hold, reason="budget", policy_revision=policy["revision"])
+                        out["deferred"] += 1
                     else:
                         send_now.append(d)
                 else:
                     send_now.append(d)
-            out["deferred"] += len(deferred)
-            if not send_now:
-                continue
-            # Claim first: nobody else mails these rows even if this process dies mid-way.
-            claimed = []
-            with self.store.tx() as t:
-                for d in send_now:
-                    n = t.execute("UPDATE notification_deliveries SET status='queued', updated_at=? WHERE notification_id=? AND channel='email' AND status='pending'",
-                                  (now(), d["notification_id"])).rowcount
-                    if n:
-                        claimed.append(d)
-            if not claimed:
-                continue
-            critical = [d for d in claimed if d["severity"] == "critical"]
-            others = [d for d in claimed if d["severity"] != "critical"]
-            for d in critical:
-                self._mail_one(user, d, locale, prefs)
-                out["queued"] += 1
-            if len(others) == 1:
-                self._mail_one(user, others[0], locale, prefs)
-                out["queued"] += 1
-            elif others:
-                self._mail_digest(user, others, locale, prefs)
-                out["queued"] += len(others)
-                out["digested"] += 1
-        out.update(self._push_pass())
+            critical = [[d] for d in send_now if d["severity"] == "critical"]
+            others = [d for d in send_now if d["severity"] != "critical"]
+            for batch in critical + ([others] if others else []):
+                state = self._queue_email(user, batch, locale, prefs)
+                out[state] += len(batch)
+                if state == "queued" and len(batch) > 1:
+                    out["digested"] += 1
         return out
+
+    def _queue_email(self, user: dict, rows: list[dict], locale: str, prefs: dict) -> str:
+        # Store.tx() is re-entrant, not a nested rollback boundary. A savepoint keeps one
+        # malformed/render-failing message from undoing other independent security notices,
+        # while an outbox insert followed by a failed delivery link is rolled back together.
+        # The enclosing _email_user transaction retains the lock across eligibility and budget
+        # checks, enqueue and these links. Mailer.enqueue does no network I/O.
+        with self.store.tx() as tx:
+            tx.execute("SAVEPOINT notification_email")
+            try:
+                for d in rows:
+                    revision = (prefs["conversation_digest_policy"]["revision"]
+                                if d["category"] == "conversation" and d["severity"] != "critical" else None)
+                    tx.execute("UPDATE notification_deliveries SET status='queued', updated_at=?, "
+                               "defer_reason=NULL, policy_revision=? "
+                               "WHERE notification_id=? AND channel='email' AND status='pending'",
+                               (now(), revision, d["notification_id"]))
+                if len(rows) == 1:
+                    self._mail_one(user, rows[0], locale, prefs)
+                else:
+                    self._mail_digest(user, rows, locale, prefs)
+            except Exception as exc:
+                tx.execute("ROLLBACK TO notification_email")
+                tx.execute("RELEASE notification_email")
+                if isinstance(exc, MailNotConfigured):
+                    for d in rows:
+                        self.notifier.finish_delivery(d["notification_id"], "skipped", error="mail not configured")
+                    return "skipped"
+                # Never persist arbitrary exception text: a renderer or transport validation
+                # error may contain the recipient, notification body or a live link.
+                for d in rows:
+                    self.notifier.retry_delivery(d["notification_id"], "notification_enqueue_failed")
+                return "failed"
+            tx.execute("RELEASE notification_email")
+        return "queued"
 
     # ------------------------------------------------------------------ Web Push
     def _push_pass(self) -> dict:
@@ -236,20 +269,10 @@ class NotificationDispatcher:
         self._enqueue(user, rows, subject, text, html)
 
     def _enqueue(self, user: dict, rows: list[dict], subject: str, body: str, html: str | None = None) -> None:
-        try:
-            mail = self.mailer.enqueue(user["email"], subject, body, kind="notification", ref_id=rows[0]["notification_id"], html=html)
-        except MailNotConfigured:
-            for d in rows:
-                self.notifier.finish_delivery(d["notification_id"], "skipped", error="mail not configured")
-            return
-        except Exception as e:  # noqa: BLE001 - public URL missing, address refused, …
-            for d in rows:
-                self.store.execute("UPDATE notification_deliveries SET status='pending', updated_at=? WHERE notification_id=? AND channel='email'",
-                                   (now(), d["notification_id"]))
-                self.notifier.retry_delivery(d["notification_id"], f"{type(e).__name__}: {str(e)[:120]}")
-            return
+        mail = self.mailer.enqueue(user["email"], subject, body, kind="notification",
+                                   ref_id=rows[0]["notification_id"], html=html)
         for d in rows:
-            self.notifier.finish_delivery(d["notification_id"], "queued", mail_id=(mail or {}).get("id"))
+            self.notifier.finish_delivery(d["notification_id"], "queued", mail_id=mail["id"])
 
 
 def inbox_security(request, user: dict | None, what: str) -> None:
