@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 # The one distribution that may depend on all of them, because it is the deployment and not an
 # application. Everything else is checked against this: no app may depend on another app.
 dependencies = ["synwevo-core", "synwevo-auth-client", "synwevo-identity",
-                "synwevo-portal", "synwevo-docs", "synwevo-messages", "synwevo-suite", "fastapi", "uvicorn"]
+                "synwevo-portal", "synwevo-docs", "synwevo-messages", "synwevo-suite", "fastapi", "uvicorn", "pydantic==2.13.5"]
 
 [tool.setuptools.packages.find]
 include = ["synwevo_server*"]

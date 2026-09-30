@@ -99,6 +99,9 @@ def install(api: FastAPI, plat, *, docs: Any = None, start_jobs: bool = True,
             module.install(ctx)
     if docs is not None and hasattr(docs, "register"):
         docs.register(ctx)
+    if registry.app("agent") is not None:
+        from .flows import install as install_flows
+        install_flows(ctx)
     from .common.routes import build_router
     api.include_router(build_router(ctx))
     return ctx

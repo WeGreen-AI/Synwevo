@@ -32,6 +32,7 @@ from synwevo_core.store import new_id, now
 
 from .definition import ACCEPTABLE, Definition, check_answers
 from .service import APP, REQUEST_STATES_OPEN, Forms, _field_list, _j, token_hash
+from ..common.files import available_blob, read_blob
 
 log = logging.getLogger("synwevo.forms")
 
@@ -211,9 +212,11 @@ class Filling:
 
     # ---------------------------------------------------------------- files
     def _files(self, request_id: str, filler: str) -> dict[str, dict]:
-        rows = self.store.all("SELECT id, field_id, filename, size FROM form_files WHERE request_id=? AND filler_key=? "
+        rows = self.store.all("SELECT id, field_id, filename, size, blob FROM form_files WHERE request_id=? AND filler_key=? "
                               "AND state IN ('staged','attached')", (request_id, filler))
-        return {r["id"]: r for r in rows}
+        from synwevo_core.quarantine import standing
+        held = standing(self.store)
+        return {r["id"]: r for r in rows if r["blob"] not in held}
 
     def upload(self, ctx: dict, field_id: str, filename: str, content_type: str | None, data: bytes) -> dict:
         req, filler = ctx["request"], ctx["filler"]
@@ -243,6 +246,7 @@ class Filling:
         # The platform's upload check (malware scan, password-protected containers): the same gate
         # member imports and message attachments pass. Size is checked above in this form's terms.
         from synwevo_core.member_import import accept_upload
+        available_blob(self.store, hashlib.sha256(data).hexdigest())
         scan = accept_upload(name, data)
         blob = self.store.put_blob(data)
         fid = new_id("ffile")
@@ -270,7 +274,7 @@ class Filling:
                              (file_id, req["id"], filler))
         if not row:
             raise ServiceError(404, "file_not_found", "附件不存在")
-        return row, self.store.get_blob(row["blob"])
+        return row, read_blob(self.store, row["blob"])
 
     # ---------------------------------------------------------------- submit
     def submit(self, ctx: dict, body: SubmitBody, capabilities) -> dict:

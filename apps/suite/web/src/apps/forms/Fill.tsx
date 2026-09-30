@@ -321,7 +321,7 @@ function uploadCode(e: unknown): string {
   if (!(e instanceof ApiError)) return "upload_failed";
   const map: Record<string, string> = {
     file_too_large: "file_too_large", scan_limit: "file_too_large", file_type_not_accepted: "file_type",
-    too_many_files: "too_many", empty_file: "file_empty", malware_detected: "file_malware",
+    too_many_files: "too_many", empty_file: "file_empty", malware_detected: "file_malware", file_quarantined: "file_malware",
     encrypted_file: "file_encrypted", unchecked_file: "file_unchecked", scan_unavailable: "scan_unavailable",
     rate_limited: "rate_limited",
   };

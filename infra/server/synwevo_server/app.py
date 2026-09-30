@@ -47,6 +47,8 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
 
     def worker_alive() -> bool:
         jobs = getattr(api.state, "jobs", None)
+        if jobs is None and start_jobs:
+            jobs = getattr(getattr(api.state, "suite_adapters", None), "jobs", None)
         mailer = getattr(api.state, "mailer", None)
         return ((jobs.runner_alive() if jobs else True)
                 and (mailer.alive() if mailer else True))
@@ -69,7 +71,7 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
         # (CI-74); read lazily because the messaging router is installed below.
         from synwevo_messages.app import messaging_health
         degradable["messaging"] = lambda: messaging_health(api)
-    install_probes(api, plat.store, worker=worker_alive if (wants_app or wants_accounts) else None,
+    install_probes(api, plat.store, worker=worker_alive if (wants_app or wants_accounts or wants_portal) else None,
                    degradable=degradable or None)
 
     # Who is signed in, which workspace, how to leave. The same four routes in every role, from
@@ -133,12 +135,14 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
         # The business applications live on the workplace origin (docs/agent-work/DECISIONS.md D1):
         # the host every deployment already routes to this role, with its single sign-on.
         from synwevo_suite import app as suite_app
-        reader = None
-        if "extract" in suite_app.released_apps():
-            # Stateless, spawn-pickleable engine reader; Suite never imports Docs internals.
-            from synwevo_docs.ingest import DocumentIngest
-            reader = DocumentIngest()
-        suite_app.install(api, plat, docs=reader, start_jobs=start_jobs)
+        adapters = None
+        if suite_app.released_apps():
+            from synwevo_core import env
+            from .suite_adapters import prepare
+            adapters = prepare(api, plat, docs_api=api if wants_app else None,
+                               messages_api=api if wants_messages else None,
+                               public_url=env.get("APP_URL") or "", start_jobs=start_jobs)
+        suite_app.install(api, plat, docs=adapters, start_jobs=start_jobs)
 
     # The relying-party half is mounted everywhere the account service is not the whole story.
     # It stays on `all` too: a single-process install can be configured against an external

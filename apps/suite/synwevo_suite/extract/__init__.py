@@ -9,8 +9,8 @@ from fastapi.responses import Response
 from synwevo_core.capabilities import AppManifest, canonical
 from .ops import Revision
 
-_paths = {"object_paths": (("extract_template", "/extract/w/{workspace_id}/templates/{id}"),
-                           ("extract_task", "/extract/w/{workspace_id}/tasks/{id}"))} if "object_paths" in inspect.signature(AppManifest).parameters else {}
+_paths = {"object_paths": (("extract_template", "/extract/w/{workspace}/templates/{id}"),
+                           ("extract_task", "/extract/w/{workspace}/tasks/{id}"))} if "object_paths" in inspect.signature(AppManifest).parameters else {}
 MANIFEST = AppManifest(id="extract", name="Synwevo Extract", path="/extract", icon="scan",
     summary={"zh-Hans": "从真实文件提取字段，核对来源，保留人工修正和确认版本。",
              "zh-Hant": "從真實檔案提取欄位，核對來源，保留人工修正和確認版本。",
@@ -50,9 +50,8 @@ def install(ctx):
     @ctx.api.get("/api/suite/extract/files/{file_id}", tags=["extract"])
     def download(request: Request, workspace_id: str, file_id: str):
         user = signed_in(request)
-        service.export_right(user["id"], workspace_id)
-        row = service.row(workspace_id, "file", file_id)
-        return Response(ctx.store.get_blob(row["blob"]), media_type=row["content_type"], headers={
+        row, data = service.file_bytes(user["id"], workspace_id, file_id)
+        return Response(data, media_type=row["content_type"], headers={
             "Content-Disposition": "attachment; filename*=UTF-8''" + quote(row["filename"], safe=""),
             "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 import json
 import logging
@@ -11,10 +12,12 @@ import time
 from synwevo_core.capabilities import canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
+from ..common.files import available_blob, read_blob
 from .engine import Table, Row, bounds, execute, refuse, Cancelled
 from .files import inspect, read_file, export_csv, export_xlsx
-from .history import check_sources
-from .models import Definition, StartRun, MAX_TABLE_BYTES, MAX_ROWS, MAX_CELLS
+from .history import check_sources, extract_result, extract_snapshot
+from .models import (Definition, StartRun, ExtractSource, ExtractDataset, MAX_TABLE_BYTES,
+                     MAX_ROWS, MAX_CELLS, MAX_TEXT, MAX_EXTRACT_DETAILS)
 
 log = logging.getLogger('synwevo.dataprep')
 ACTIVE = ('queued', 'running')
@@ -36,9 +39,18 @@ class DataPrep:
         row = self.store.one(f'SELECT * FROM dataprep_{table} WHERE id=? AND workspace_id=?', (id, workspace))
         if row is None:
             raise ServiceError(404, 'dataprep_not_found', '数据或方案不存在')
+        if table == 'files':
+            available_blob(self.store, row['blob'])
         return row
 
-    def page(self, table, workspace, offset, limit):
+    def check_run_sources(self, workspace, user, row):
+        seen = set()
+        for ref in json.loads(row['inputs_json']).values():
+            check_sources(self, workspace, user, ref['dataset_id'], seen)
+        if row['output_dataset_id']:
+            check_sources(self, workspace, user, row['output_dataset_id'], seen)
+
+    def page(self, table, workspace, offset, limit, user):
         selection = ('id,workspace_id,name,origin,file_id,run_id,columns_json,row_count,column_count,content_hash,status,created_by,created_at'
                      if table == 'datasets' else 'id,workspace_id,name,description,status,draft_rev,published_version,created_at,updated_at'
                      if table == 'recipes' else '*')
@@ -46,6 +58,10 @@ class DataPrep:
                               (workspace, limit + 1, offset))
         items = []
         for row in rows[:limit]:
+            if table == 'datasets':
+                check_sources(self, workspace, user, row['id'])
+            elif table == 'runs':
+                self.check_run_sources(workspace, user, row)
             item = decode(row)
             items.append(item)
         return {'items': items, 'next_offset': offset + limit if len(rows) > limit else None}
@@ -58,6 +74,7 @@ class DataPrep:
         ext = name.rsplit('.', 1)[-1].lower()
         if ext not in ('csv', 'xlsx'):
             refuse('file_type')
+        available_blob(self.store, hashlib.sha256(data).hexdigest())
         scan = accept_upload(name, data)
         info = inspect(data, ext)
         with self.store.tx():
@@ -65,13 +82,13 @@ class DataPrep:
             old = self.store.one('SELECT * FROM dataprep_files WHERE workspace_id=? AND uploaded_by=? AND upload_key=?',
                                  (workspace, user, key))
             if old:
-                import hashlib
                 if old['blob'] != hashlib.sha256(data).hexdigest() or old['filename'] != name:
                     raise ServiceError(409, 'idempotency_conflict', '重试参数已改变')
                 return {**decode(old), **info, 'scan_status': old['scan'].get('status')}
             usage = self.store.one('SELECT COUNT(*) AS n,COALESCE(SUM(size),0) AS bytes FROM dataprep_files WHERE workspace_id=?', (workspace,))
             if usage['n'] >= 500 or usage['bytes'] + len(data) > 256 * 1024 * 1024:
                 refuse('storage_limit')
+            available_blob(self.store, hashlib.sha256(data).hexdigest())
             fid = new_id('dpf')
             blob = self.store.put_blob(data)
             self.store.insert('dataprep_files', {'id': fid, 'workspace_id': workspace, 'blob': blob,
@@ -102,7 +119,7 @@ class DataPrep:
 
     def load(self, workspace, did):
         row = self.get('datasets', workspace, did)
-        with gzip.GzipFile(fileobj=io.BytesIO(self.store.get_blob(row['rows_blob']))) as stream:
+        with gzip.GzipFile(fileobj=io.BytesIO(read_blob(self.store, row['rows_blob']))) as stream:
             raw = stream.read(MAX_TABLE_BYTES + 1)
         if len(raw) > MAX_TABLE_BYTES:
             refuse('table_limit')
@@ -133,7 +150,7 @@ class DataPrep:
 
     def import_file(self, call, input):
         file = self.get('files', call.workspace_id, input.file_id)
-        table, notes = read_file(self.store.get_blob(file['blob']), file['format'], input.options, file['id'])
+        table, notes = read_file(read_blob(self.store, file['blob']), file['format'], input.options, file['id'])
         out = self.save_table(call.workspace_id, call.user_id, input.name, table, file_id=file['id'],
                               source={'file_id': file['id'], 'options': input.options.model_dump()}, notes=notes)
         call.touches('dataprep_dataset', out['id'])
@@ -168,6 +185,58 @@ class DataPrep:
         call.touches('dataprep_dataset', out['id'])
         call.emit('dataprep.dataset.created', object_kind='dataprep_dataset', object_id=out['id'], data={'dataset_id': out['id']})
         return out
+
+    def extract_records(self, call, input):
+        """Atomic snapshot of explicit confirmed revisions. No sibling imports or source writes.
+
+        Repeated fields zip by position; unequal lengths fail the entire import. Scalars
+        broadcast. Empty detail lists produce zero rows, never a fabricated summary row.
+        """
+        rows, snapshots, result_bytes, row_bytes = [], [], 0, 0
+        for ref in input.tasks:
+            result = extract_result(self, call.workspace_id, call.user_id, ref)
+            result_bytes += len(canonical(result).encode())
+            if result_bytes > MAX_TABLE_BYTES:
+                refuse('extract_source_limit')
+            snapshots.append(extract_snapshot(result))
+            selected, lengths = {}, set()
+            for fid in input.field_ids:
+                field = result['values'].get(fid)
+                if not isinstance(field, dict) or 'value' not in field:
+                    refuse('extract_field_missing', {'task_id': ref.task_id, 'field_id': fid})
+                value, status = field['value'], field.get('status')
+                if status not in ('extracted', 'unverified', 'missing'):
+                    refuse('extract_value_invalid', {'task_id': ref.task_id, 'field_id': fid})
+                parts = value if isinstance(value, list) else [value]
+                if (len(parts) > MAX_EXTRACT_DETAILS
+                        or any(v is not None and (not isinstance(v, str) or len(v) > MAX_TEXT) for v in parts)
+                        or (status == 'missing' and value is not None and value != [])):
+                    refuse('extract_value_invalid', {'task_id': ref.task_id, 'field_id': fid})
+                if isinstance(value, list):
+                    lengths.add(len(value))
+                if status != 'missing':
+                    selected[fid] = value
+            if len(lengths) > 1:
+                refuse('extract_detail_length', {'task_id': ref.task_id, 'lengths': sorted(lengths)})
+            count = next(iter(lengths)) if lengths else 1
+            if len(rows) + count > MAX_ROWS or (len(rows) + count) * len(input.field_ids) > MAX_CELLS:
+                refuse('table_limit')
+            for index in range(count):
+                values = {fid: value[index] if isinstance(value, list) else value for fid, value in selected.items()}
+                origins = [[ref.task_id, index + 1, ref.revision]]
+                row_bytes += len(canonical({'values': values, 'origins': origins}).encode())
+                if row_bytes > MAX_TABLE_BYTES:
+                    refuse('table_limit')
+                rows.append(Row(values, origins))
+        source = ExtractSource(workspace_id=call.workspace_id, field_ids=input.field_ids,
+                               detail_policy=input.detail_policy, tasks=snapshots)
+        # The existing schema permits records, not a new extract enum. The typed source
+        # is the authoritative discriminator; a new storage enum would require a migration.
+        out = self.save_table(call.workspace_id, call.user_id, input.name, Table(input.field_ids, rows),
+                              origin='records', source=source.model_dump(mode='json'))
+        call.touches('dataprep_dataset', out['id'])
+        call.emit('dataprep.dataset.created', object_kind='dataprep_dataset', object_id=out['id'], data={'dataset_id': out['id']})
+        return {key: out[key] for key in ExtractDataset.model_fields}
 
     def recipe(self, workspace, rid):
         out = decode(self.get('recipes', workspace, rid))
@@ -296,12 +365,15 @@ class DataPrep:
 
     def cancel(self, call, input):
         row = self.get('runs', call.workspace_id, input.run_id)
+        # The registry already requires current DataPrep write authority. Stopping work
+        # must remain possible after a source is revoked or quarantined; return no data.
         if row['status'] in ACTIVE:
             self.store.update('dataprep_runs', {'id': row['id'], 'workspace_id': call.workspace_id}, {'cancel_requested': 1, 'updated_at': now()})
             if row['status'] == 'queued':
                 self.finish(row, 'cancelled')
         call.touches('dataprep_run', row['id'])
-        return decode(self.get('runs', call.workspace_id, row['id']))
+        current = self.get('runs', call.workspace_id, row['id'])
+        return {k: current[k] for k in ('id', 'status', 'cancel_requested')}
 
     def retry(self, call, input):
         row = self.get('runs', call.workspace_id, input.run_id)

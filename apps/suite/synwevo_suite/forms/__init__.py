@@ -23,7 +23,6 @@ MANIFEST = AppManifest(
 
 
 def install(ctx) -> None:
-    from synwevo_core.errors import ServiceError
     from ..common.web import signed_in
     from ..common.worker import Ticker
     from .filling import Filling, _attachment, build_public_router
@@ -40,15 +39,8 @@ def install(ctx) -> None:
         """An attachment of a submission, for members of its workspace who may take files out
         (editors and above, or a member with the export right — the same rule as Docs)."""
         user = signed_in(request)
-        ctx.capabilities.check_workspace(user["id"], "forms", workspace_id, "read")
-        member = ctx.identity.membership(workspace_id, user["id"])
-        if not (member and (member["role"] in ("owner", "admin", "editor") or member.get("can_export"))):
-            raise ServiceError(403, "export_not_allowed", "你在该工作空间没有导出权限，不能下载附件")
-        row = ctx.store.one("SELECT * FROM form_files WHERE id=? AND workspace_id=? AND state='attached'",
-                            (file_id, workspace_id))
-        if not row:
-            raise ServiceError(404, "file_not_found", "附件不存在")
-        return _attachment(row, ctx.store.get_blob(row["blob"]))
+        row, data = forms.file_bytes(user["id"], workspace_id, file_id)
+        return _attachment(row, data)
 
     if ctx.start_jobs:
         Ticker("forms-expiry", forms.sweep_expired, 60).start(ctx.api)

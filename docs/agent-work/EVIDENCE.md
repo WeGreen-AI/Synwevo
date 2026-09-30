@@ -7,7 +7,7 @@
 * Git：remote `git@github.com:WeGreen-AI/Synwevo.git`；工作树有另一会话（API 平台 API-4 OAuth 同意）的未提交修改，
   本专项不触碰；同目录另有运行中的会话「Synwevo 平台统一体系与完整交付」（管理员平台主线）。
 * 部署：线上 aadcb9e（2026-09-28 12:47 UTC，run 36421027638）；此后 `main` 的运行都被 GitHub Actions 账单拒绝
-  （组织每月 2 000 分钟、支出上限 $0，2026-09-28 用尽；10 月 1 日重置或持有人提高上限）。
+  （账单/支出限制；具体恢复时间未核实，不以月初推断已解除）。
 * 部署机制：`.github/workflows/production.yml` verify → deploy（`git archive` 经受限 SSH 送到 `receive.py`，主机构建
   镜像、备份并校验、`compose up --wait`、`/readyz`）。`nginx.conf` 与 `compose.yaml` 不随部署下发。
 * 模型提供方：仓库无任何模型调用；`.venv` 无 `anthropic`/`openai`；本机无产品可用的模型密钥。
@@ -36,3 +36,79 @@
   确认 → 修订历史。窄屏（646 px）布局。过程中修复：工作空间绑定使在途响应失效导致列表一直“加载中”（先绑定再渲染）、
   描述标签与输入框并排、必填勾选框布局、字段卡片与品牌链接缺少可访问名称、抽屉内按钮被共享样式拉成整行。
 * 未做：英文/繁体与宽屏的浏览器走查、API 机器凭据调用（WP9）、Docs/Message 联动（WP7）。
+
+## 2026-09-30 Codex 接续核查
+
+- 主检出 main @ 01082ba；业务分支 d16a89b，Agent 后端、Markdown 渲染器及相关共享扩展未提交。三个应用子工作树仅有未提交的 schema/字段初稿，不能计为完成。
+- 旧协调者在 Claude UI 显示 Weekly limit reached/context full；经核实停止后更新本专项锁持有者，未停止任何无关进程。
+- GitHub run https://github.com/WeGreen-AI/Synwevo/actions/runs/36569205283（e4971c1）：verify failure、steps=[]，check-run 109408657447 注解为账单/支出限制；deploy skipped。
+- workplace 公开 /healthz 返回 status=ok，仅为健康探测，不证明本专项上线或确定代码版本。
+
+## 2026-09-30 WP2 未提交 checkpoint（business-apps @ d16a89b + 增量）
+
+- Agent 后端审查子任务冻结时 75 passed（含 4 个 SSE 撤权/续传测试）；协调者再修复通用 `op_runs` 详情、列表与幂等重放的历史快照权限。新增 6 个测试覆盖成员撤权、资源删除、应用停用、字段可见性降级、个人会话派生内容与旧密钥脱敏。全部通过。
+- 最后增量专项命令：显式 worktree PYTHONPATH + 主检出 .venv，`pytest apps/suite/tests tests/integration/test_suite_mount.py tests/integration/test_blob_references.py -q`，exit 0。仅 Starlette/SWIG 既存弃用警告。全量 pytest 正在执行，不能计为通过。
+- `npm run typecheck && npm run build && npm test --workspaces --if-present` exit 0（全部外壳）。suite 前端 15 tests pass；五项仓库守卫与 git diff --check 通过。
+- 真实浏览器、隔离 OIDC 账户 Alice：新建会话、长名称重命名、刷新保留、A/B 两空间范围、归档/恢复、英语/繁体切换、设置页新增个人偏好并停用记忆。手机 390×844 与桌面 1280×720 检查；键盘打开/关闭范围弹窗后焦点恢复，控制台 errors=[]。截图 [繁体手机](evidence/2026-09-30-agent/agent-mobile-hant.png)、[英文桌面](evidence/2026-09-30-agent/agent-desktop-en.png)。
+- 重启本任务 portal（33769）后，深链接会话、名称、双空间范围和未配置状态从持久记录恢复。仅重启核实 cwd 与实例身份属于本任务的进程，保留 accounts 和其他任务。
+- 未配置真实模型，发送正确禁用；未发出模型请求，不能算真实模型或工具整链路验收。生产未启用 Agent，也未提交/推送/部署。
+
+## 2026-09-30 15:57 集成与审批恢复
+
+- WP2 checkpoint 已本地提交 a472820，尚未推送或部署。前述专项与 UI 证据对应这个提交；完整模型链路仍未配置。
+- a472820 + 未提交三应用：Tables/DataPrep/Approvals 接入统一路由，新增 blob 引用登记、Tables 记录深链接及 Agent 组合资源确认；共享调用在取得写锁后重新鉴权。专项 suite + suite_mount + blob_references 日志 /private/tmp/synwevo-integrated-targeted.log exit 0，套件前端 typecheck/build exit 0。
+- 审批浏览器：Alice 创建并发布模板 apt_2aad1f80b504/v1，必填资料字段 f_f1f2b6cbe83c；创建请求 apr_b6f73c31dd1d，固定修订 1，唯一审批人 Bob。空必填提交未创建申请。发起人无审批决定按钮。仅重启已确认 cwd 的自有 portal 45264 → 48905，深链接刷新后原内容/修订/待审状态恢复，Bob 经真实 OIDC 登录后显示决定控件。尚未提交决定、未验证流程下游，不能计整个 B3 通过。
+- 全量 unrestricted pytest session 94436 仍运行；已有一个 F，等待最终错误详情。受限沙箱的 PDF 分页用例失败，在允许本机排版进程的同一环境/用例下通过，未改断言。
+
+## 2026-09-30 16:26 三应用真实操作与回归诊断（a472820 + 未提交增量）
+
+- Approvals：apr_b6f73c31dd1d 在重启等待后由 Bob 提交批准与测试意见，时间线仅一项决定，刷新不重放。图：[等待](evidence/2026-09-30-approvals/pending-mobile-hant.png)、[已批准](evidence/2026-09-30-approvals/approved-mobile-hant.png)。这不替代完整 B3 流程下游证据。
+- DataPrep：真实上传 business-input.csv（5行：前导零、空值、重复编号、bad金额）；方案dpr_c7542c530a55/v1，样本范围1–2/5；全量dpu_3af1d497b26c为partial，逐步5→5→4→3，文件第4行invalid_decimal。结果dset_dc62a1ff2250含0001/123.40、0002/0.10、0004/null；异常清单下载事件完成。图：[桌面结果](evidence/2026-09-30-dataprep/result-desktop-en.png)、[繁体手机](evidence/2026-09-30-dataprep/result-mobile-hant.png)。移动页宽390，无页面横向溢出，内部网格可键盘横移。
+- Tables：真实UI创建tbl_83f4c65f3741，唯一必填文本fld_db245fcd5939与HKD金额fld_455be25e32f2。快捷键保存rec_edca4ce7d3ff，第一页面把123.40改为124.40/rev2，第二页面以rev1提交999.00被拒，载入最新保留124.40。重复0001被拒；改0002创建rec_58647e8223f5，归档rev2、恢复rev3，网格共2行。[冲突](evidence/2026-09-30-tables/concurrent-conflict-desktop.png)、[英文网格](evidence/2026-09-30-tables/grid-desktop-en.png)。确认框现复用统一DialogProvider，明确表名/记录，恢复经键盘确认。新浏览器页视口覆盖未实际生效，Tables手机证据未计通过。
+- UI修复：DataPrep撤销编辑翻译避免误为撤销授权；审批按钮使用业务措辞；Tables金额历史显示精确金额/币种。Tables/DataPrep失败重试保留原幂等键，包括写入已提交但结果隐藏的4xx。前端typecheck/build与15项测试通过；Tables统一弹窗修改后typecheck/build再次通过。
+- 完整旧回归 /private/tmp/synwevo-business-full-unrestricted.log 最终4失败。SDK目录来自主检出安装包（catalog差异），Push3项因系统代理导致RemoteProtocolError。显式worktree SDK路径与回环NO_PROXY后同5项专项通过（/private/tmp/synwevo-push-direct.log）。未改产品代理策略或测试断言。
+- 同次日志暴露Docs解析重试线程在close之后提交已关闭执行器：现重试/关闭共用锁，关闭标记拒绝新重试，旧timer不能移除替代timer。apps/docs/tests/test_parse_shutdown.py三项通过。修正环境后的全量回归session88953仍运行，不能计成功；输出和JUnit前缀synwevo-business-full-isolated。
+- Extract回收文件独立17项测试exit0（/private/tmp/synwevo-extract-recovery-tests.log）；Flows/适配器子任务已终止并交付，尚未在协调分支验收。Git/CI/生产状态未变化。
+
+## 2026-09-30 16:38 代码检查点与全量回归
+
+- 7bb3f95：Docs 停机重试竞态；03d4ff9：Tables/DataPrep/Approvals 与共享契约集成。均为普通本地提交，已正常推送 origin/feat/business-apps。草稿 [PR #1](https://github.com/WeGreen-AI/Synwevo/pull/1) 已创建；未合并/部署。
+- 03d4ff9 的 Python 内容与完整回归运行时一致：/private/tmp/synwevo-business-full-isolated.log，JUnit /private/tmp/synwevo-business-full-isolated.xml：3053 collected，3051 passed，0 failures/errors，2 skipped，239 warnings，1080s。跳过原因分别为 CLAMD_TEST_ADDRESS 未配置与项目尚未选定 LICENSE；没有隐藏或删除失败测试。
+- 最新五项仓库守卫 exit0（537 Python/291前端、11边界/8包、22Logo）；suite typecheck、15测试与build exit0。运行环境显式 worktree SDK/各包 PYTHONPATH，NO_PROXY 回环；未改变产品代理策略。
+- Tables 搜索0001并保存视图 view_abe7515b7c2d，刷新深链接后仍显示唯一符合的记录/124.40 HKD。DataPrep 运行页以固定版本显示清理空白→类型转换→去重与实际数据集名称，[运行步骤](evidence/2026-09-30-dataprep/run-steps-hant.png)，控制台无错误。
+- 主检出另一个任务推进到14b9811；未动其文件。读取主分支保护API返回403（当前计划不支持此接口），不能由此宣称没有门禁；本次仅推功能分支/草稿PR，没有改保护设置。
+- Extract后续改动不包含在上述已通过提交中，需单独验证。已发现并修复其初稿把异步受理记为成功、共享运行回执不随任务更新的问题；新增队列→等待复核→确认/取消专项与真实PDF来源测试，结果待收取。
+
+## 2026-09-30 16:56 HKT · Extract 检查点 352526f
+
+- 实现：原 Docs DocumentIngest 由 server 注入；异步回执随真实排队/复核/确认状态更新；正常部署中断可在两次预算内恢复纯解析；人工结果不能伪造机器来源。
+- 浏览器发现并修复 multipart 经 JSON 序列化造成422；共享 api 保留真实 FormData、CSRF、显式 workspace、幂等键，新增风险测试。发布失败保留同一草稿与修订，不重复创建模板。
+- `/private/tmp/synwevo-extract-final.xml`：204 passed、0 skipped，56.34s；所有 suite 与 PDF/挂载/blob专项。`/private/tmp/synwevo-extract-final.log` 对应352526f后端。共享auth-client41项与suite前端15项通过；所有前端typecheck/build通过（`/private/tmp/synwevo-extract-all-front-build.log`）。五项边界/品牌/设计/组件/Logo检查通过；修复Extract私有!important，未降低门槛。
+- 真实浏览器/隔离Alice：extpl_296ef6d1acb5/v1；PDF extask_ecee09ec2b6d；000127、123456789.01准确，备注missing。修正备注→r2且unverified；无ack确认被拒，ack后r3成功；JSON真实下载，刷新只有一修正一确认。
+- 实际本机文字识别存在chi_sim/eng/osd；扫描件extask_651c541d466e准确提取同编号/金额，人工确认r2。OCR文本Issued误认lssued如实保留，未映射该字段，不把它报告为全部文字无误。
+- 截图：`evidence/2026-09-30-extract/{source-narrow588-hant,confirmed-narrow588-hant,ocr-desktop-hant,ocr-mobile-hant}.png`。真实视口1280×800、390×844；手机scrollWidth=390，无页面横向溢出。浏览器console错误为空。
+- Tables此前视口工具故障已恢复；390×844真实补验保存视图→键盘Return开记录→历史金额124.40；`evidence/2026-09-30-tables/{grid-mobile390-hant,record-mobile390-hant}.png`。原名grid-mobile-hant.png的/tmp旧图不是手机证据，未采纳。
+- 352526f只是本地验证检查点，尚无CI或部署成功声明。PR#1此前DIRTY且无run，现正常合并远端origin/main @4b74796，不引入主检出未推送提交。
+
+## 2026-09-30 WP7 当前集成检查点（8e8fcec + 未提交增量）
+
+- 8e8fcec 正常合并 origin/main@4b74796 并推送；210项合并专项通过（/private/tmp/synwevo-main-merge.xml）。所有前端 typecheck/build/test 与五项守卫通过。主检出同伴代码未修改。
+- 当前提交 [Actions 36693142151](https://github.com/WeGreen-AI/Synwevo/actions/runs/36693142151)：verify job109814773242 steps=[]；注解为 recent account payments have failed or your spending limit needs to be increased，deploy skipped。PR UNSTABLE；没有 CI 通过或部署证据。
+- Flows/适配器已接入应用工厂、真实 Docs worker 生命周期和 portal 健康探测；Extract 解析器注入保留。/private/tmp/synwevo-wp7-integrated.xml：270 passed、0 skipped、6 warnings、90.50s；含真实 Forms→Approvals→Forms 等待/重启/重复事件恢复及17项Docs/Message适配器测试。尚不能替代七应用B1。
+- 后续库存守卫发现 flow_runs.input_digest 未分类，已按实际含义登记为流程输入指纹（不承载blob），等待专项复验；不删除检查或降低断言。
+
+### 2026-09-30 WP7跨应用文件输入与隔离（8e8fcec上未提交增量）
+
+- `synwevo-wp7-files.xml`：282 tests，0 failures/errors/skips，97.167s。实际Forms附件→Extract真实CSV解析/来源→人工确认→DataPrep，金额123456789.01和编号000127保持；各合法请求独立，同键重放不复制新文件。
+- 故障注入后字节仍存在于Store，quarantine事实阻止Forms/Extract下载、提取历史、衍生数据集和Extract排队worker；没有将测试隔离判定作为实际扫描证明。
+- suite前端类型/15项模型测试/构建通过；boundaries/design/component检查通过。Logo初次用了无Pillow的系统Python而失败；以项目.venv复跑22衍生文件一致。brand全部1177处已归类，diff检查通过。
+- 这是本机隔离验证，不等于完整B1、真实模型或上线验证。DataPrep取消的来源依赖问题单列CR-007，正在修复。
+
+### 2026-09-30 WP7提交前最终门槛
+
+- `/private/tmp/synwevo-wp7-final.xml`：285 tests，0 failures/errors/skips，162.215s；后端代码为8e8fcec后的当前WP7增量。20项DataPrep隔离/来源取消专项亦全过；新增测试初次导入路径和数据库列名错误已修正，未削弱业务断言。
+- Suite前端35项测试、类型检查、生产构建通过；边界588 Python/303前端/11模块/8包、设计、组件检查通过；品牌与Logo此前同批通过。
+- 真浏览器：flow_54d623bdc01b/v1，flowrun_a53e36718407，两步分别读取Acme与只读Beta；实际Forms业务结果、4次预算消耗、唯一运行与刷新恢复核实。手机390×844 scrollWidth=390、长标题/键盘确认无阻碍，console error/warn为空。截图在evidence/2026-09-30-automations。desktop-run为发现日期标签问题时的截图，后续mobile-deeplink/disabled-trigger已确认修复。
+- flowtrigger_608f19d50fc4：Asia/Hong_Kong09:00工作日、跳过超出300秒宽限、最多1次、明确至撤销；创建后立即UI停用，刷新保持停用，未产生触发记录。此验证不是计划时间到达后的真实调度验收（后端调度/重复事件/时区故障专项另有测试）。日期控件工具填入未保留，空期限被正确拒绝，指定日期UI路径未算完成。
+- 当前模型核验：项目内新发现已忽略产品凭据；权限0600，未输出/复制密钥。官方GET /models及/user/balance均200，API声明deepseek-flash(DeepSeek-V4.1-Flash)和deepseek-v4-pro可用，is_available=true；未记录余额金额。没有真实推理/计费/有效路由验证。旧缺密钥阻塞改为网关、价表和实际推理待集成。
+- E4仍受Actions账户限制；本地通过不等于CI/部署通过。

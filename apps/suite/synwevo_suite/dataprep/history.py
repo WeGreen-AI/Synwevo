@@ -1,14 +1,17 @@
 """Live authorization before returning stored write results; never repeats business writes.
 
-Dataset permissions are workspace-scoped. Snapshots made from Forms additionally retain a read
-dependency on each originating submission; derived datasets retain their input dependencies.
+Dataset permissions are workspace-scoped. Forms and Extract snapshots additionally retain a
+read dependency on their current sources; derived datasets retain their input dependencies.
 The coordinator's result_guard/inspect contract invokes this on history and idempotent replay.
 """
 from __future__ import annotations
 
 import json
+from pydantic import ValidationError
 from synwevo_core.errors import ServiceError
 from synwevo_core.capabilities import fingerprint
+from .models import ExtractSource, ExtractSnapshot
+from ..common.files import available_blob
 
 
 def parsed(value):
@@ -24,6 +27,33 @@ def hidden():
     raise ServiceError(403, 'result_unavailable', '历史结果的来源权限已改变，不能显示旧内容')
 
 
+def extract_result(service, workspace, user, ref):
+    """Only the registry may resolve a current confirmed revision, including its live ACLs."""
+    inspect = getattr(service.caps, 'inspect', None)
+    operation = service.caps.registry.get('extract.task.result')
+    if inspect is None or operation is None or operation.version != 1:
+        raise ServiceError(409, 'source_unverifiable', '无法核实已确认的提取来源')
+    result = inspect(operation.id, {'task_id': ref.task_id, 'revision': ref.revision},
+                     user_id=user, workspace_id=workspace)
+    if (not isinstance(result, dict) or result.get('task_id') != ref.task_id
+            or result.get('revision') != ref.revision or not isinstance(result.get('values'), dict)
+            or not isinstance(result.get('review'), dict) or result['review'].get('kind') != 'confirmation'
+            or result['review'].get('task_id') != ref.task_id or result['review'].get('revision') != ref.revision
+            or result['review'].get('values') != result['values']):
+        raise ServiceError(409, 'source_unverifiable', '提取结果不符合已确认版本契约')
+    return result
+
+
+def extract_snapshot(result):
+    try:
+        return ExtractSnapshot(task_id=result['task_id'], revision=result['revision'],
+            template_id=result['template_id'], template_version=result['template_version'],
+            definition_digest=result['definition_digest'], file_id=result['file']['id'],
+            content_digest=result['file']['content_digest'], result_fingerprint=fingerprint(result))
+    except (KeyError, TypeError, ValidationError):
+        raise ServiceError(409, 'source_unverifiable', '提取来源信息不完整') from None
+
+
 def check_sources(service, workspace, user, dataset_id, seen=None):
     seen = set() if seen is None else seen
     if dataset_id in seen:
@@ -33,7 +63,21 @@ def check_sources(service, workspace, user, dataset_id, seen=None):
     seen.add(dataset_id)
     service.caps.authorize(service.caps.registry.get('dataprep.dataset.get'), user, workspace)
     row = service.get('datasets', workspace, dataset_id)
+    available_blob(service.store, row['rows_blob'])
+    if row['file_id']:
+        service.get('files', workspace, row['file_id'])  # also checks the current quarantine verdict
     source = parsed(row['source_json']) or {}
+    if source.get('kind') == 'extract':
+        try:
+            bound = ExtractSource.model_validate(source)
+        except ValidationError:
+            hidden()
+        if bound.workspace_id != workspace:
+            hidden()
+        for ref in bound.tasks:
+            current = extract_result(service, workspace, user, ref)
+            if extract_snapshot(current) != ref:
+                hidden()
     if row['origin'] == 'form':
         inspect = getattr(service.caps, 'inspect', None)
         if inspect is None:
@@ -59,6 +103,12 @@ def result_guard(service, call, historic):
     input, output = parsed(historic.get('input')), parsed(historic.get('output'))
     if not isinstance(input, dict) or not isinstance(output, dict):
         hidden()
+    if call.op.id == 'dataprep.run.cancel':
+        # A safe cancellation receipt has no source values, names, parameters or results.
+        row = service.get('runs', call.workspace_id, input.get('run_id'))
+        if set(output) != {'id', 'status', 'cancel_requested'} or output['id'] != row['id']:
+            hidden()
+        return
     for sid in input.get('submission_ids', []):
         inspect = getattr(service.caps, 'inspect', None)
         if inspect is None:

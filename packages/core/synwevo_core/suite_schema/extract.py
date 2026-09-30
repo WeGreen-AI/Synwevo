@@ -3,6 +3,8 @@
 Blob reference integration: extract_files.blob (workspace_id); definition_digest and
 content_digest are checksums, never alternate blob access paths.
 """
+
+COLUMNS = (("extract_files", "source_json", "TEXT NOT NULL DEFAULT '{}'"),)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS extract_templates (
  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL,

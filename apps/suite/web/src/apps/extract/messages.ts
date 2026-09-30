@@ -1,5 +1,8 @@
 import { registerMessages } from "@synwevo/ui/i18n-core";
 export const extract = {
+  "查看来源表单提交": {en: "View the source form submission", "zh-Hant": "查看來源表單提交"},
+  "文件已被隔离，当前不能读取或处理": {en: "This file is quarantined and cannot be read or processed.", "zh-Hant": "檔案已被隔離，目前無法讀取或處理"},
+  "文件当前不可用，请联系管理员核实存储状态": {en: "This file is unavailable. Ask an administrator to check its storage status.", "zh-Hant": "檔案目前無法使用，請聯絡管理員核實儲存狀態"},
   "提取文件": {"en": "Extract files", "zh-Hant": "提取檔案"},
   "提取模板": {"en": "Extraction templates", "zh-Hant": "提取範本"},
   "待复核队列": {"en": "Review queue", "zh-Hant": "待覆核佇列"},

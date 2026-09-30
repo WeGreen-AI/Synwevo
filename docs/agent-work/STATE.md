@@ -1,25 +1,51 @@
 # 业务应用与个人 Agent：状态与断点
 
-最后检查：2026-09-30 00:45 HKT（协调者会话 df1f0b15…，`/loop` 调度 9d5641b6，每分钟、会话内）
+最后检查：2026-09-30（WP7 集成中）。协调任务 `01a0f104-e57f-7092-ab67-50359f43b547`；持续执行目标未完成，未另建递归 loop。
 
-| 项 | 内容 |
+| 项 | 当前事实 |
 |---|---|
-| 协调者锁 | 主检出 `docs/agent-work/.coordinator.lock`（不进 Git）。持有者会话仍在运行时不得删除；释放只释放自己的 |
-| 代码分支 | `feat/business-apps` @ d16a89b（51614b4 基础+Forms，d16a89b 模块规则），worktree `.claude/worktrees/business-apps`；基于 `main` @ 2ba1e3f。并行实现者：`feat/suite-tables|dataprep|approvals`（worktree `suite-*`，从 d16a89b 分出） |
-| 进度文件 | 本目录只在主检出提交到 `main`（仅 `docs/` 的推送不触发 CI）；代码只在功能分支 |
-| 正在做 | WP2 个人 Agent（协调者）；WP3/WP4/WP6 由并行实现者进行，完成后由协调者合并、浏览器验证 |
-| 下一条具体动作 | 实现 `synwevo_suite/agent`：会话/消息表、提供方适配器（Anthropic Messages，未配置即显示未配置）、从注册表发现工具、确认绑定、SSE；随后 Docs/Message 适配器与流程引擎（WP7） |
-| 运行环境 | 测试在 worktree 里用共享 `.venv`，必须 `PYTHONPATH` 指向 worktree 各包（含 `apps/suite`）；浏览器验证用隔离 317xx 实例（一次只能跑一个 `platform.py` 实例，先确认其他会话没有在跑） |
-| 线上 | aadcb9e；本专项尚无任何发布 |
+| 协调锁 | 本目录 `.coordinator.lock`，由当前任务持有；不得仅因超时接管活动任务 |
+| 代码 | feat/business-apps @8e8fcec 已推送，已正常合并 origin/main@4b74796；WP7 Flows/Docs/Message 适配器为未提交增量 |
+| 主检出 | main @ 2dd03c7，API专项已提交停止；不自动发布其未推送代码；进度只维护本目录 |
+| 正在做 | WP7 已接入真实应用工厂：285 项业务/集成通过；补齐 Forms 附件→Extract、Extract→DataPrep 与个人自动化界面 |
+| 下一动作 | WP7代码、个人自动化界面与285项回归通过，准备提交；接着整合DeepSeek适配器、账本及网关，收费尚未启用 |
+| 验证环境 | 共享主检出 `.venv`；显式 worktree PYTHONPATH（必须含 `apps/docs/sdk/python`、suite 及其余包）；测试 `NO_PROXY=127.0.0.1,localhost` 防止本机系统代理截获隔离 Push 测试 |
+| Git/发布 | 草稿 PR #1 已无合并冲突（UNSTABLE）；8e8fcec 的 Actions run36693142151 verify 未启动（账单/支出限制），deploy skipped。未合并/部署 |
 
-## 阻塞（外部条件）
+## 本轮实测与已知余项
 
-| 阻塞 | 影响 | 解除条件 |
-|---|---|---|
-| GitHub Actions 额度用尽（2026-09-28 起所有运行被拒） | 任何推送都不能部署（E4、WP10） | 10 月 1 日重置，或持有人在 Billing & plans 提高支出上限 |
-| 没有模型提供方密钥 | Agent 真实模型链路（§9.3 “至少一条真实模型链路”、C9 的真实部分） | 持有人提供一个提供方（如 Anthropic）API 密钥，放在服务端环境变量（不进 Git） |
-| 生产 nginx/compose 属主机 | 若将来拆出独立容器或子域 | 目前按 D1 不需要 |
+- Approvals：Alice 发布 apt_2aad1f80b504/v1，发起 apr_b6f73c31dd1d/revision1；portal 重启后仍待 Bob 决定；Bob 真实登录后批准，刷新保持唯一决定。手机繁体长内容无页面横向溢出。完整 B3 下游去重尚未验证。
+- DataPrep：真实 CSV 5 行导入 dset_502171dc30b6；方案 dpr_c7542c530a55/v1 清理姓名、精确金额、编号去重。2 行样本与全量清楚区分；运行 dpu_3af1d497b26c 为 partial，1 条坏金额、3 行真实结果 dset_dc62a1ff2250，前导零/null 保留。桌面/繁体手机与异常下载已操作。
+- Tables：tbl_83f4c65f3741；必填唯一编号与 HKD 金额。重复编号拒绝；双页面旧修订拒绝覆盖；rec_58647e8223f5 归档后恢复到 rev3。已复用统一确认框并验证键盘恢复。桌面英文与繁体通过；16:54 视口覆盖生效，390px 网格/记录详情无页面横向溢出，已保存真实手机截图。
+- 发现并修复 Docs 关闭解析执行器与延时重试的竞态，新增3项故障注入测试通过；完整回归已通过（3051 passed, 2 skipped, 239 warnings, 1080s）。
+- 之前完整回归4项失败：1项来自误导入主检出已安装 SDK；3项来自系统代理截获回环 Push。按隔离路径/NO_PROXY 修正后同5项专项通过，未改断言。
+- Agent a472820 已有本地权限/会话/设置证据；真实模型、附件、跨空间转移政策、完整工具执行与个人自动化界面仍待完成。
 
-## 本任务启动的进程
+## 隔离进程与数据
 
-隔离验证实例（scratchpad `live/`，`live/up.sh`，数据只在 scratchpad）：accounts 33770、portal 33769（suite 代码来自 worktree）。保留供后续浏览器验证；pid 在 `live/logs/*.pid`。
+自有 portal 33769：PID90629/session65459；accounts33770：PID54277/session12762。accounts 原进程正常退出，确认无监听后按原配置/数据恢复。数据与夹具账户在原 scratchpad/live，不能输出密码或放进Git。不要触碰其他任务31765/32765。
+
+## 并行任务与文件所有权
+
+- Ampere已完成并关闭；五文件已整合，协调者接好路由并完成双空间只读运行/定时停用/桌面手机验收。
+- Locke 已完成并关闭；其 Extract→DataPrep 已由协调者审查整合，当前这些文件归协调者。
+- Parfit已完成并关闭；DeepSeek三文件已走读，待复制整合；需要suite直接声明已锁定httpx。
+- Kierkegaard `01a0f19f-4411-7760-bf3a-4544d9f23ee5`：billing-ledger，只写账本模块/DDL提案/测试/说明；Store注册与迁移由协调者串行处理。
+- 旧 Tables/DataPrep/Approvals/Extract/Flows/Adapters 子任务已停止；旧 Claude 429 通知不等于其工作完成。
+
+## 外部阻塞（只阻塞对应范围，其他工作继续）
+
+| 条件 | 影响与恢复 |
+|---|---|
+| GitHub Actions 账单/支出限制 | 当前8e8fcec run36693142151 verify无步骤、deploy跳过；E4/WP10需持有人解除限制并实际跑门禁，不推断恢复日期，不走替代SSH部署 |
+| DeepSeek网关/价表尚未接通 | 已发现本地产品凭据，官方models与balance GET均200、可调用；不是推理/工具/计费验收。继续网关与账本，不将余额查询视为真实模型验证 |
+
+恢复入口：在本仓库读取 MASTER_PROMPT.md、STATE.md、BACKLOG.md、EVIDENCE.md，检查锁与真实Git/进程/CI后继续下一动作。全部需求仍未完成。
+
+- Extract 浏览器：extpl_296ef6d1acb5/v1；PDF extask_ecee09ec2b6d r3、扫描件 extask_651c541d466e r2，已确认并真实导出。金额来源高亮真实；人工补充无可靠来源，未明确接受限制时确认被拒。OCR将 Issued 识别成 lssued，未自动改写或掩盖（未映射该字段）。
+
+## 新统一目标
+
+用户2026-09-30更新完整目标为应用/Admin/API/DeepSeek预付费收费；MASTER_PROMPT已保存完整新正文，CODE_REVIEW和BACKLOG统一索引已建立。正式模型/商业价表/商户配置尚未核实可用，不启用收费。Admin任务01a0f112-883b-7803-9d29-4d800d0460df仍活动并有自己的结束指令，已通知保持现有文件范围并请求交接；不重启它的新批次。DeepSeek子任务使用独立deepseek-provider工作树，只交付adapter/测试/官方事实记录，不动钱包schema/engine/配置。
+
+个人自动化浏览器：flow_54d623bdc01b/v1，flowrun_a53e36718407唯一运行成功（两个明确空间）；flowtrigger_608f19d50fc4仅允许forms.form.list、两个空间、最多1次、至撤销，已停用且0次触发。刷新不重放。DeepSeek本地凭据文件已受.gitignore保护、权限收紧0600；仅官方只读核验，不在日志/文档输出凭据和金额。

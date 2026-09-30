@@ -20,6 +20,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id, now
 
 from .definition import Definition, check_answers, problems
+from ..common.files import read_blob
 
 log = logging.getLogger("synwevo.forms")
 APP = "forms"
@@ -58,6 +59,18 @@ class Forms:
         self.identity = identity
         self.caps = capabilities
         self._expire_lock = threading.Lock()
+
+    def file_bytes(self, user_id: str, workspace_id: str, file_id: str, *, submission_id: str | None = None):
+        """Export a submitted attachment through the same policy for downloads and adapters."""
+        self.caps.check_workspace(user_id, APP, workspace_id, "read")
+        member = self.identity.membership(workspace_id, user_id)
+        if not (member and (member["role"] in ("owner", "admin", "editor") or member.get("can_export"))):
+            raise ServiceError(403, "export_not_allowed", "你在该工作空间没有导出权限，不能下载附件")
+        row = self.store.one("SELECT * FROM form_files WHERE id=? AND workspace_id=? AND state='attached'",
+                             (file_id, workspace_id))
+        if not row or (submission_id is not None and row["submission_id"] != submission_id):
+            raise ServiceError(404, "file_not_found", "附件不存在或不属于该提交")
+        return row, read_blob(self.store, row["blob"])
 
     # ============================================================== definitions
     def _form(self, workspace_id: str, form_id: str) -> dict:

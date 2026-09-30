@@ -11,6 +11,9 @@ MAX_COLUMNS = 64
 MAX_CELLS = 500_000
 MAX_TEXT = 4096
 MAX_TABLE_BYTES = 24 * 1024 * 1024
+# Bound both registry reads per import and retained source checks on later access.
+MAX_EXTRACT_TASKS = 100
+MAX_EXTRACT_DETAILS = 100
 Name = Annotated[str, StringConstraints(min_length=1, max_length=120)]
 Text = Annotated[str, StringConstraints(max_length=MAX_TEXT)]
 Scalar = Text | None  # Numbers travel as decimal text, never IEEE-754 JSON numbers.
@@ -202,6 +205,62 @@ class Records(In):
 class FormRecords(In):
     name: Name
     submission_ids: list[Annotated[str, StringConstraints(pattern=r'^fsub_[a-f0-9]+$')]] = Field(min_length=1, max_length=100)
+
+
+ExtractFieldID = Annotated[str, StringConstraints(pattern=r'^[a-z][a-z0-9_]{0,39}$')]
+Digest = Annotated[str, StringConstraints(pattern=r'^[a-f0-9]{64}$')]
+
+
+class ExtractRef(In):
+    task_id: str = Field(pattern=r'^extask_[a-f0-9]{12}$')
+    revision: int = Field(ge=1, le=201, strict=True)
+
+
+class ExtractRecords(In):
+    name: Name
+    tasks: list[ExtractRef] = Field(min_length=1, max_length=MAX_EXTRACT_TASKS)
+    field_ids: list[ExtractFieldID] = Field(min_length=1, max_length=MAX_COLUMNS)
+    detail_policy: Literal['zip_strict'] = 'zip_strict'
+
+    @model_validator(mode='after')
+    def unique_refs(self):
+        if len({t.task_id for t in self.tasks}) != len(self.tasks):
+            raise ValueError('duplicate task ID')
+        if len(set(self.field_ids)) != len(self.field_ids):
+            raise ValueError('duplicate field ID')
+        return self
+
+
+class ExtractSnapshot(ExtractRef):
+    template_id: str = Field(pattern=r'^extpl_[a-f0-9]{12}$')
+    template_version: int = Field(ge=1, le=100)
+    definition_digest: Digest
+    file_id: str = Field(pattern=r'^exfile_[a-f0-9]{12}$')
+    content_digest: Digest
+    result_fingerprint: Digest
+
+
+class ExtractSource(In):
+    kind: Literal['extract'] = 'extract'
+    workspace_id: str
+    operation: Literal['extract.task.result'] = 'extract.task.result'
+    operation_version: Literal[1] = 1
+    field_ids: list[ExtractFieldID] = Field(min_length=1, max_length=MAX_COLUMNS)
+    detail_policy: Literal['zip_strict'] = 'zip_strict'
+    tasks: list[ExtractSnapshot] = Field(min_length=1, max_length=MAX_EXTRACT_TASKS)
+
+
+class ExtractDataset(In):
+    """Version 1 import receipt; rows are read through dataset.get, never a fake preview."""
+    id: str
+    workspace_id: str
+    name: Name
+    origin: Literal['records']
+    source: ExtractSource
+    columns: list[ExtractFieldID]
+    row_count: int
+    column_count: int
+    content_hash: Digest
 
 
 class RecipeRef(In):

@@ -127,6 +127,8 @@ def test_shared_receipt_tracks_queue_review_confirmation_and_cancellation(ex):
     args = {"template_id": tid, "version": 1, "file_id": fid}
     created = op(ex, "task.create", args, key="receipt-fixture")
     rid, receipt = created["output"]["id"], created["run_id"]
+    manifest = ex.caps.registry.app("extract")
+    assert manifest.object_path("extract_task", rid, ex.people.a) == f"/extract/w/{ex.people.a}/tasks/{rid}"
     assert created["status"] == "queued"
     assert ex.get(f"/api/suite/runs/{receipt}").json()["status"] == "queued"
     ex.api.state.extract.tick()
@@ -322,3 +324,18 @@ def test_queue_bound_pagination_review_validation_and_viewer(ex):
     op(ex, "task.correct", {"task_id": rid, "revision": 1, "values": {"amount": "1e3"}, "note": "Fixture"}, status=422)
     op(ex, "task.get", {"task_id": rid}, user="vera")
     op(ex, "task.confirm", {"task_id": rid, "revision": 1, "note": "Fixture"}, status=403)
+
+
+def test_quarantine_after_enqueue_stops_worker_before_parsing(ex):
+    from synwevo_core import quarantine
+    rid = task(ex)
+    service = ex.api.state.extract
+    queued = service.row(ex.people.a, "task", rid)
+    source = service.row(ex.people.a, "file", queued["file_id"])
+    quarantine.hold(ex.people.store, source["blob"], CSV, signature="isolated-fixture", engine="test-injection", rows=[], by="test")
+    service.tick()
+    final = service.row(ex.people.a, "task", rid)
+    assert final["status"] == "failed" and final["error_code"] == "file_quarantined"
+    assert final["machine_json"] is None  # no parse result was ever produced
+    receipt = ex.people.store.one("SELECT status,error_code FROM op_runs WHERE id=?", (final["operation_run_id"],))
+    assert receipt["status"] == "failed" and receipt["error_code"] == "file_quarantined"

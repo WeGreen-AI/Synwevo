@@ -10,15 +10,18 @@ import Chat from "./Chat";
 import { activeTurn, type Conversation, type Workspace } from "./types";
 import { useConversation } from "./useConversation";
 import "./messages";
+import { automationCopy } from "./automations.messages";
 import "./agent.css";
 
 const Settings = lazy(() => import("./Settings"));
+const Automations = lazy(() => import("./Automations"));
 
 function AgentApp() {
   const { t } = useI18n();
   const dialog = useDialog();
   const { app, error: catalogError, reload } = useApp("agent");
   const id = useMatch("/agent/c/:cid")?.params.cid;
+  const automations = !!useMatch("/agent/automations");
   const settings = useLocation().pathname === "/agent/settings";
   const navigate = useNavigate();
   const { value: conversation, error, refresh, connection } = useConversation(id);
@@ -137,11 +140,12 @@ function AgentApp() {
           {listError != null ? <Failure error={listError} onRetry={() => setTick((n) => n + 1)} /> : !list ? <Loading /> : !list.length ? <p className="muted">{t("尚无会话")}</p> : list.map((c) => <NavLink key={c.id} to={`/agent/c/${c.id}`} className={({ isActive }) => `ag-history-link${isActive ? " selected" : ""}`} onClick={() => setSidebar(false)}>{c.title === "新会话" ? t("新会话") : c.title}</NavLink>)}
           {before != null && <button className="btn ghost sm" disabled={busy} onClick={() => void more()}>{t("加载更多会话")}</button>}
         </nav>
+        <NavLink className="btn ghost" to="/agent/automations" onClick={() => setSidebar(false)}>{t(automationCopy.title[0])}</NavLink>
         <NavLink className="btn ghost" to="/agent/settings" onClick={() => setSidebar(false)}>{t("Agent 设置")}</NavLink>
         <Link className="btn ghost" to="/workspace">{t("返回工作空间")}</Link>
       </aside>
       <main className="ag-main">
-        {settings ? <Settings /> : <>
+        {automations ? <Automations /> : settings ? <Settings /> : <>
           <div className="ag-toolbar"><h1>{title ?? t("新会话")}</h1>
             {conversation && <div className="ag-toolbar-actions">
               <button className="btn ghost sm" disabled={busy} onClick={() => void manage("rename")}>{t("重命名会话")}</button>

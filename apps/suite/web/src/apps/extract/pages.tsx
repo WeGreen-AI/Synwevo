@@ -188,6 +188,8 @@ export function TaskDetail({ ws, canWrite }: Props) {
     {task.values && <Review key={`${task.id}:${task.revision}`} task={task} ws={ws} canWrite={canWrite} reload={load.reload} />}
     <details className="extract-section"><summary>{t("原文件与检查状态")}</summary><p className="extract-long"><code>{task.file.content_digest}</code></p>
       <p>{task.file.scan.status === "not_configured" ? t("安全扫描未配置，未声称扫描通过。") : t("文件接纳状态：{status}", { status: task.file.scan.status })}</p>
+      {task.file.source?.app === "forms" && task.file.source.workspace_id === ws.id && task.file.source.submission_id &&
+        <p><Link to={`/forms/w/${encodeURIComponent(ws.id)}/s/${encodeURIComponent(task.file.source.submission_id)}`}>{t("查看来源表单提交")}</Link></p>}
       <a className="btn" href={`/api/suite/extract/files/${task.file.id}?workspace_id=${encodeURIComponent(ws.id)}`}>{t("下载原文件（需要导出权限）")}</a></details>
   </>;
 }

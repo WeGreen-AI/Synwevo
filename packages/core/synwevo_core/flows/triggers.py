@@ -1,0 +1,213 @@
+"""Durable event consumption and timezone schedules. Wake-ups never substitute for a read."""
+from __future__ import annotations
+
+import json
+
+from ..capabilities import canonical
+from ..errors import ServiceError
+from ..store import new_id
+from .models import Policy, Trigger, WaitStep, next_occurrence
+
+
+def refusal(code):
+    return ServiceError(409, code, "流程触发条件或授权不可用，请检查设置")
+
+
+class Triggers:
+    @staticmethod
+    def _check_scope(spec, policy):
+        for step in spec.steps:
+            refs = [step] if step.kind == "call" else ([step.read] if step.kind == "wait" else [])
+            if step.kind == "call" and step.result_read:
+                refs.append(step.result_read)
+            for ref in refs:
+                if ref.operation not in policy.tools or (ref.workspace_id and ref.workspace_id not in policy.workspaces):
+                    raise refusal("flow_policy_scope")
+
+    def create_trigger(self, flow_id, *, user_id, version, trigger, policy):
+        try:
+            spec = Trigger.model_validate(trigger)
+            grant = Policy.model_validate(policy)
+        except ValueError:
+            raise refusal("flow_trigger_invalid") from None
+        with self.store.tx() as t:
+            self._flow(flow_id, user_id)
+            definition = self._spec(flow_id, version)
+            self._authorize_definition(definition, user_id)
+            self._check_scope(definition, grant)
+            ts = self.clock()
+            if grant.expires_at is not None and grant.expires_at <= ts:
+                raise refusal("flow_policy_expired")
+            if spec.kind == "event":
+                if spec.workspace_id not in grant.workspaces:
+                    raise refusal("flow_policy_scope")
+                if not self.caps.registry.app(spec.event_type.split(".")[0]):
+                    raise refusal("app_unavailable")
+                self.caps.check_workspace(user_id, spec.event_type.split(".")[0], spec.workspace_id, "read")
+            else:
+                try:
+                    definition.parameters_for(spec.input)
+                except ValueError:
+                    raise refusal("flow_parameters_invalid") from None
+            count = self.store.one("SELECT COUNT(*) AS n FROM flow_triggers WHERE user_id=?", (user_id,))["n"]
+            if count >= 100:
+                raise refusal("flow_trigger_quota")
+            tid = new_id("flowtrigger")
+            cursor = self.store.one("SELECT COALESCE(MAX(seq),0) AS n FROM app_events")["n"]
+            nxt = next_occurrence(spec, ts) if spec.kind == "schedule" else None
+            t.execute("INSERT INTO flow_triggers (id,flow_id,version,user_id,spec_json,policy_json,next_at,cursor,created_at,updated_at) "
+                      "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (tid, flow_id, version, user_id, canonical(spec.model_dump(mode="json")),
+                       canonical(grant.model_dump(mode="json")), nxt, cursor, ts, ts))
+            return {"trigger_id": tid, "next_at": nxt, "enabled": True}
+
+    def trigger(self, trigger_id, *, user_id):
+        self._user(user_id)
+        row = self.store.one("SELECT * FROM flow_triggers WHERE id=? AND user_id=?", (trigger_id, user_id))
+        if not row:
+            raise ServiceError(404, "flow_trigger_not_found", "触发器不存在")
+        return row
+
+    def triggers(self, flow_id, *, user_id):
+        self._flow(flow_id, user_id)
+        # Creation is capped at 100 per owner, so this list is complete and bounded.
+        return {"triggers": [self._trigger_public(r) for r in self.store.all("SELECT * FROM flow_triggers WHERE flow_id=? AND user_id=? ORDER BY id", (flow_id, user_id))]}
+
+    @staticmethod
+    def _trigger_public(row):
+        return {k: v for k, v in row.items() if k not in ("spec_json", "policy_json")} | {
+            "trigger": json.loads(row["spec_json"]), "policy": json.loads(row["policy_json"])}
+
+    def trigger_view(self, trigger_id, *, user_id):
+        return self._trigger_public(self.trigger(trigger_id, user_id=user_id))
+
+    def deliveries(self, trigger_id, *, user_id, after="", limit=50):
+        self.trigger(trigger_id, user_id=user_id)
+        if not 1 <= limit <= 200:
+            raise refusal("flow_page_invalid")
+        rows = self.store.all("SELECT * FROM flow_trigger_deliveries WHERE trigger_id=? AND occurrence>? ORDER BY occurrence LIMIT ?",
+                              (trigger_id, after, limit + 1))
+        return {"deliveries": rows[:limit], "next": rows[limit - 1]["occurrence"] if len(rows) > limit else None}
+
+    def set_trigger_enabled(self, trigger_id, *, user_id, enabled):
+        with self.store.tx() as t:
+            row = self.trigger(trigger_id, user_id=user_id)
+            ts = self.clock()
+            spec = Trigger.model_validate(json.loads(row["spec_json"]))
+            policy = Policy.model_validate(json.loads(row["policy_json"]))
+            cursor, nxt = row["cursor"], row["next_at"]
+            if enabled:
+                self._authorize_definition(self._spec(row["flow_id"], row["version"]), user_id)
+                if policy.expires_at is not None and ts >= policy.expires_at:
+                    raise refusal("flow_policy_expired")
+                if row["runs_used"] >= policy.max_runs:
+                    raise refusal("flow_trigger_budget_exhausted")
+                if not row["enabled"]:
+                    cursor = self.store.one("SELECT COALESCE(MAX(seq),0) AS n FROM app_events")["n"]
+                    nxt = next_occurrence(spec, ts) if spec.kind == "schedule" else None
+            t.execute("UPDATE flow_triggers SET enabled=?,cursor=?,next_at=?,error_code=NULL,updated_at=? WHERE id=?",
+                      (int(enabled), cursor, nxt, ts, trigger_id))
+            if not enabled:
+                for run in self.store.all("SELECT * FROM flow_runs WHERE trigger_id=? AND status IN "
+                                          "('queued','running','waiting_input','waiting_approval','retrying','paused')", (trigger_id,)):
+                    self._release(t, run, "blocked", code="flow_policy_revoked")
+                    t.execute("UPDATE flow_runs SET fence=fence+1 WHERE id=?", (run["id"],))
+                    self._history(t, run, "policy_revoked", "blocked", code="flow_policy_revoked")
+            return {"trigger_id": trigger_id, "enabled": bool(enabled), "next_at": nxt}
+
+    def _deliver(self, t, row, spec, policy, occurrence, *, event=None, skip=False):
+        prior = self.store.one("SELECT 1 FROM flow_trigger_deliveries WHERE trigger_id=? AND occurrence=?", (row["id"], occurrence))
+        if prior:
+            return
+        ts, rid, code, state = self.clock(), None, None, "skipped" if skip else "started"
+        t.execute("SAVEPOINT flow_delivery")
+        try:
+            if not skip:
+                if policy.expires_at is not None and ts >= policy.expires_at:
+                    raise refusal("flow_policy_expired")
+                # Read the counter in the same transaction for concurrent workers/event batches.
+                used = self.store.one("SELECT runs_used FROM flow_triggers WHERE id=?", (row["id"],))["runs_used"]
+                if used >= policy.max_runs:
+                    raise refusal("flow_trigger_budget_exhausted")
+                definition = self._spec(row["flow_id"], row["version"])
+                self._check_scope(definition, policy)
+                if event:
+                    if not self.caps.registry.app(event["app"]):
+                        raise refusal("app_unavailable")
+                    self.caps.check_workspace(row["user_id"], event["app"], spec.workspace_id, "read")
+                payload = self._trigger_input(spec.input, event)
+                # Only identity/routing metadata survives. Business data must come from operations.
+                routing = {k: event[k] for k in ("id", "type", "object_id", "workspace_id")} if event else None
+                result = self._start(row["flow_id"], user_id=row["user_id"], version=row["version"], parameters=payload,
+                                     idempotency_key=f"trigger:{row['id']}:{occurrence}", trigger_id=row["id"], event=routing,
+                                     correlation_id=event.get("correlation_id") if event else None,
+                                     parent_run_id=event.get("run_id") if event else None,
+                                     depth=int(event.get("depth", 0)) + 1 if event else 0)
+                rid = result["id"]
+                t.execute("UPDATE flow_triggers SET runs_used=runs_used+1 WHERE id=?", (row["id"],))
+        except ServiceError as exc:
+            t.execute("ROLLBACK TO flow_delivery")
+            code, state = exc.code, "refused"
+        t.execute("RELEASE flow_delivery")
+        t.execute("INSERT INTO flow_trigger_deliveries VALUES (?,?,?,?,?,?)", (row["id"], occurrence, rid, state, code, ts))
+        t.execute("UPDATE flow_triggers SET error_code=?,updated_at=? WHERE id=?", (code, ts, row["id"]))
+
+    def _trigger_input(self, value, event):
+        if isinstance(value, dict):
+            if set(value) == {"$ref"}:
+                return event[value["$ref"].split(".")[1]]
+            return {k: self._trigger_input(v, event) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._trigger_input(v, event) for v in value]
+        return value
+
+    def trigger_tick(self, *, limit=20):
+        # Fair rotation (updated_at), bounded event pages. Cursor advances atomically with runs
+        # and refusal receipts. A restart cannot lose an event between advance and insert.
+        ts = self.clock()
+        rows = self.store.all("SELECT id FROM flow_triggers WHERE enabled=1 AND COALESCE(error_code,'') NOT IN "
+                              "('flow_policy_expired','flow_trigger_budget_exhausted') AND (next_at IS NULL OR next_at<=?) "
+                              "ORDER BY updated_at,id LIMIT ?", (ts, limit))
+        for item in rows:
+            with self.store.tx() as t:
+                row = self.store.one("SELECT * FROM flow_triggers WHERE id=? AND enabled=1", (item["id"],))
+                if not row:
+                    continue
+                spec = Trigger.model_validate(json.loads(row["spec_json"]))
+                policy = Policy.model_validate(json.loads(row["policy_json"]))
+                if spec.kind == "schedule":
+                    if row["next_at"] > ts:
+                        continue
+                    due = row["next_at"]
+                    self._deliver(t, row, spec, policy, str(int(due)), skip=spec.misfire == "skip" and ts - due > spec.grace_s)
+                    # Coalesce downtime to at most one occurrence, then move strictly ahead.
+                    t.execute("UPDATE flow_triggers SET next_at=?,updated_at=? WHERE id=?", (next_occurrence(spec, ts), ts, row["id"]))
+                else:
+                    events = self.caps.events_after(row["cursor"], limit=100)
+                    for ev in events:
+                        if (ev["type"] == spec.event_type and ev["app"] == spec.event_type.split(".")[0]
+                                and ev["version"] == 1 and ev["workspace_id"] == spec.workspace_id
+                                and (not spec.object_kind or ev["object_kind"] == spec.object_kind)
+                                and (not spec.object_id or ev["object_id"] == spec.object_id)):
+                            self._deliver(t, row, spec, policy, ev["id"], event=ev)
+                    if events:
+                        t.execute("UPDATE flow_triggers SET cursor=? WHERE id=?", (events[-1]["seq"], row["id"]))
+                    t.execute("UPDATE flow_triggers SET updated_at=? WHERE id=?", (ts, row["id"]))
+        self._wake_waits()
+
+    def _wake_waits(self):
+        # Subscriptions are only latency hints; every wait also has a durable polling deadline.
+        with self.store.tx() as t:
+            consumer = "flows.wait.v1"
+            seq = self.caps.cursor(consumer)
+            events = self.caps.events_after(seq, limit=200)
+            if not events:
+                return
+            pairs = {(e["workspace_id"], e["type"]) for e in events if e["version"] == 1 and e["type"].startswith(e["app"] + ".")}
+            runs = self.store.all("SELECT * FROM flow_runs WHERE status IN ('waiting_input','waiting_approval') ORDER BY due_at LIMIT 200")
+            for run in runs:
+                spec = self._spec(run["flow_id"], run["version"])
+                step = next(s for s in spec.steps if s.id == run["step_id"])
+                if isinstance(step, WaitStep) and any((step.read.workspace_id, typ) in pairs for typ in step.event_types):
+                    t.execute("UPDATE flow_runs SET due_at=MIN(due_at,?) WHERE id=?", (self.clock(), run["id"]))
+            self.caps.advance(t, consumer, events[-1]["seq"])

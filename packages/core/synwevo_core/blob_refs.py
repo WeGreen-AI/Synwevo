@@ -53,6 +53,7 @@ FILE_ROOTS: tuple[tuple[str, str, str], ...] = (
 
 #: Columns that look like a digest but are not a blob reference, with the reason.
 LOOKALIKES: tuple[tuple[str, str, str], ...] = (
+    ("flow_runs", "input_digest", "固定流程输入与幂等请求的指纹，不是 blob 引用"),
     ("extract_files", "content_digest", "source content integrity, not a blob access path"),
     ("extract_versions", "definition_digest", "immutable extraction template fingerprint"),
     ("idempotency", "request_hash", "请求指纹，不是 blob"),

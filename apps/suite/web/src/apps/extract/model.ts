@@ -21,7 +21,7 @@ export interface Segment { id: string; text: string; source: Location; located: 
 export interface Task {
   id: string; title: string; workspace_id: string; template_id: string; template_version: number; status: string;
   revision: number; confirmed_revision: number | null; error_code: string | null; attempts: number;
-  file: { id: string; filename: string; content_digest: string; scan: { status: string } };
+  file: { id: string; filename: string; content_digest: string; scan: { status: string }; source?: { app?: string; submission_id?: string; workspace_id?: string } };
   definition: { fields: Field[] }; machine: Record<string, Value> | null; values: Record<string, Value> | null;
   history: { revision: number; kind: string; note: string; actor_id: string; created_at: number }[];
 }
@@ -76,6 +76,7 @@ export function useAction(workspace: string) {
   return { busy, error, setError, execute };
 }
 export const errors: Record<string, string> = {
+  file_quarantined: "文件已被隔离，当前不能读取或处理", file_unavailable: "文件当前不可用，请联系管理员核实存储状态",
   parser_not_configured: "文件解析服务未配置", ocr_not_configured: "文字识别服务未配置",
   ocr_required: "文件需要启用文字识别", ocr_incomplete: "文字识别未完整完成",
   parse_failed: "文件无法解析，请检查格式或重新导出", encrypted_file: "请移除文件密码后重新上传",

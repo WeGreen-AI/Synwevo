@@ -4,14 +4,13 @@ from . import models as M
 from .service import decode
 from .files import inspect
 from .history import result_guard, check_sources
+from ..common.files import read_blob
 
 
 def register(registry, service):
     def run_read(call, rid):
-        import json
         row = service.get('runs', call.workspace_id, rid)
-        for ref in json.loads(row['inputs_json']).values():
-            check_sources(service, call.workspace_id, call.user_id, ref['dataset_id'])
+        service.check_run_sources(call.workspace_id, call.user_id, row)
         return decode(row)
 
     def add(id, title, model, handler, *, write=False, events=(), **kw):
@@ -30,13 +29,16 @@ def register(registry, service):
 
     for table, word in [('datasets', ('数据集', '資料集', 'datasets')), ('recipes', ('方案', '方案', 'recipes')), ('runs', ('运行', '執行', 'runs'))]:
         add(table[:-1] + '.list', ('列出' + word[0], '列出' + word[1], 'List ' + word[2]), M.Page,
-            lambda c, i, table=table: service.page(table, c.workspace_id, i.offset, i.limit))
+            lambda c, i, table=table: service.page(table, c.workspace_id, i.offset, i.limit, c.user_id))
     add('file.inspect', ('查看工作表', '查看工作表', 'Inspect worksheets and import limits'), M.FileRef,
-        lambda c, i: inspect(service.store.get_blob(service.get('files', c.workspace_id, i.file_id)['blob']), service.get('files', c.workspace_id, i.file_id)['format']))
+        lambda c, i: inspect(read_blob(service.store, service.get('files', c.workspace_id, i.file_id)['blob']), service.get('files', c.workspace_id, i.file_id)['format']))
     created = ('dataprep.dataset.created',)
     add('dataset.import', ('导入文件', '匯入檔案', 'Import the complete selected CSV or XLSX range'), M.ImportFile, service.import_file, write=True, events=created)
     add('dataset.from_records', ('导入记录', '匯入記錄', 'Import scalar records; numeric values must be decimal strings'), M.Records, service.records, write=True, events=created)
     add('dataset.from_forms', ('导入表单提交', '匯入表單提交', 'Snapshot authorized Forms submissions through the registry'), M.FormRecords, service.form_records, write=True, events=created)
+    add('dataset.from_extract', ('导入已确认的提取结果', '匯入已確認的提取結果', 'Import confirmed extraction results'),
+        M.ExtractRecords, service.extract_records, write=True, events=created, version=1,
+        output=M.ExtractDataset, object_kind='dataprep_dataset')
     add('dataset.get', ('查看数据', '查看資料', 'Read dataset metadata and a bounded page with source positions'), M.DatasetPage,
         lambda c, i: (check_sources(service, c.workspace_id, c.user_id, i.dataset_id),
                       service.dataset(c.workspace_id, i.dataset_id, i.offset, i.limit))[1])

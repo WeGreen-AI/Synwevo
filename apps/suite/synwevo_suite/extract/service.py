@@ -18,6 +18,7 @@ from synwevo_core.store import new_id, now
 
 from .definition import Definition, extract, value_error
 from .worker import TIMEOUT, parse_bounded
+from ..common.files import available_blob, read_blob
 
 MAX_FILE_BYTES = 12 * 1024 * 1024
 FORMATS = {"pdf": "application/pdf", "csv": "text/csv", "tsv": "text/tab-separated-values",
@@ -137,7 +138,7 @@ class Extract:
         self.emit(call, "extract.template.retired", data={"version": i.version})
         return {"id": i.template_id, "version": i.version, "retired": True}
 
-    def upload(self, user_id, workspace_id, filename, data, key):
+    def upload(self, user_id, workspace_id, filename, data, key, *, source=None):
         self.auth(user_id, workspace_id, "write")
         if not key or len(key) > 200:
             fail("idempotency_required", "上传需要有效幂等键", 422)
@@ -150,11 +151,13 @@ class Extract:
         if not data or len(data) > MAX_FILE_BYTES:
             fail("file_limit", "文件为空或超过 12 MB", 413)
         digest = hashlib.sha256(data).hexdigest()
+        available_blob(self.store, digest)
+        provenance = canonical(source or {})
         # Replays do not re-scan, but still authorize and compare exact content and filename.
         prior = self.store.one("SELECT * FROM extract_files WHERE workspace_id=? AND created_by=? AND idempotency_key=?",
                                (workspace_id, user_id, key))
         if prior:
-            if prior["content_digest"] != digest or prior["filename"] != filename:
+            if prior["content_digest"] != digest or prior["filename"] != filename or prior["source_json"] != provenance:
                 fail("idempotency_conflict")
             return self.file_json(prior)
         scan = accept_upload(filename, data)
@@ -163,25 +166,36 @@ class Extract:
             prior = self.store.one("SELECT * FROM extract_files WHERE workspace_id=? AND created_by=? AND idempotency_key=?",
                                    (workspace_id, user_id, key))
             if prior:
-                if prior["content_digest"] != digest or prior["filename"] != filename:
+                if prior["content_digest"] != digest or prior["filename"] != filename or prior["source_json"] != provenance:
                     fail("idempotency_conflict")
                 return self.file_json(prior)
             usage = self.store.one("SELECT COUNT(*) AS n, COALESCE(SUM(size),0) AS bytes FROM extract_files WHERE workspace_id=?", (workspace_id,))
             if usage["n"] >= 500 or usage["bytes"] + len(data) > 250 * 1024 * 1024:
                 fail("storage_limit", "该空间已达提取文件上限", 413)
+            available_blob(self.store, digest)
             fid = new_id("exfile")
             blob = self.store.put_blob(data)
             self.store.insert("extract_files", {"id": fid, "workspace_id": workspace_id, "filename": filename,
                               "content_type": FORMATS[extension], "blob": blob, "content_digest": digest,
                               "size": len(data), "scan_json": canonical(scan), "created_by": user_id,
-                              "created_at": now(), "idempotency_key": key})
+                              "created_at": now(), "idempotency_key": key, "source_json": provenance})
             record_event(t, type_="extract.file.uploaded", app="extract", workspace_id=workspace_id,
                          object_kind="extract_file", object_id=fid, user_id=user_id, data={"file_id": fid})
         return self.file_json(self.row(workspace_id, "file", fid))
 
     @staticmethod
     def file_json(r):
-        return {k: r[k] for k in ("id", "filename", "content_type", "size", "content_digest")} | {"scan": decode(r["scan_json"])}
+        return {k: r[k] for k in ("id", "filename", "content_type", "size", "content_digest")} | {"scan": decode(r["scan_json"]), "source": decode(r.get("source_json") or "{}")}
+
+    def task_file(self, task):
+        row = self.row(task["workspace_id"], "file", task["file_id"])
+        available_blob(self.store, row["blob"])
+        return row
+
+    def file_bytes(self, user_id, workspace_id, file_id):
+        self.export_right(user_id, workspace_id)
+        row = self.row(workspace_id, "file", file_id)
+        return row, read_blob(self.store, row["blob"])
 
     def export_right(self, user_id, workspace_id):
         self.auth(user_id, workspace_id)
@@ -196,7 +210,8 @@ class Extract:
         ver = self.version(call.workspace_id, i.template_id, i.version)
         if tpl["archived"] or ver["retired"]:
             fail("version_retired", "模板或版本已停用")
-        self.row(call.workspace_id, "file", i.file_id)
+        file = self.row(call.workspace_id, "file", i.file_id)
+        available_blob(self.store, file["blob"])
         active = self.store.one("SELECT COUNT(*) AS n FROM extract_tasks WHERE workspace_id=? AND status IN ('queued','running')", (call.workspace_id,))
         total = self.store.one("SELECT COUNT(*) AS n FROM extract_tasks WHERE status IN ('queued','running')")
         if active["n"] >= 20 or total["n"] >= 200:
@@ -220,6 +235,7 @@ class Extract:
 
     def task(self, workspace_id, identifier):
         r = self.row(workspace_id, "task", identifier)
+        self.task_file(r)
         ver = self.version(workspace_id, r["template_id"], r["template_version"])
         reviews = self.store.all("SELECT revision,kind,note,actor_id,created_at FROM extract_reviews WHERE workspace_id=? AND task_id=? ORDER BY revision", (workspace_id, identifier))
         parsed = decode(r["parse_json"]) or {}
@@ -232,11 +248,12 @@ class Extract:
 
     def segments(self, call, i):
         r = self.row(call.workspace_id, "task", i.task_id)
+        self.task_file(r)
         values = (decode(r["parse_json"]) or {}).get("segments", [])
         return {"items": values[i.offset:i.offset+i.limit], "total": len(values)}
 
     def review_version(self, call, i):
-        self.row(call.workspace_id, "task", i.task_id)
+        self.task_file(self.row(call.workspace_id, "task", i.task_id))
         r = self.store.one("SELECT * FROM extract_reviews WHERE workspace_id=? AND task_id=? AND revision=?",
                            (call.workspace_id, i.task_id, i.revision))
         if not r:
@@ -246,6 +263,7 @@ class Extract:
 
     def correct(self, call, i):
         r = self.row(call.workspace_id, "task", i.task_id)
+        self.task_file(r)
         if r["status"] not in ("waiting_input", "succeeded") or r["revision"] != i.revision:
             fail("review_conflict", "结果状态或版本已变化，请重新载入")
         if r["revision"] >= 200:
@@ -267,6 +285,7 @@ class Extract:
 
     def confirm(self, call, i):
         r = self.row(call.workspace_id, "task", i.task_id)
+        self.task_file(r)
         if r["status"] != "waiting_input" or r["revision"] != i.revision:
             fail("review_conflict", "结果状态或版本已变化，请重新载入")
         fields = Definition.model_validate_json(self.version(call.workspace_id, r["template_id"], r["template_version"])["definition_json"]).fields
@@ -299,6 +318,7 @@ class Extract:
 
     def result(self, call, i):
         r = self.row(call.workspace_id, "task", i.task_id)
+        self.task_file(r)
         # Consumers pin the accepted revision. After later corrections, old revisions remain historical,
         # but are no longer eligible as the current accepted output.
         if r["status"] != "succeeded" or r["confirmed_revision"] != i.revision:
@@ -327,7 +347,11 @@ class Extract:
         kind = {"extract_template": "template", "extract_task": "task", "extract_file": "file"}.get(row.get("object_kind"))
         if kind is None or row.get("workspace_id") != call.workspace_id:
             fail("result_access_unverifiable")
-        self.row(call.workspace_id, kind, row.get("object_id"))
+        resource = self.row(call.workspace_id, kind, row.get("object_id"))
+        if kind == "task":
+            self.task_file(resource)
+        elif kind == "file":
+            available_blob(self.store, resource["blob"])
 
     def stop(self):
         self.stopping.set()
@@ -380,10 +404,11 @@ class Extract:
             if current["status"] != "running" or current["lease_token"] != token:
                 fail("task_cancelled")
             self.auth(row["created_by"], row["workspace_id"], "write")
+            self.task_file(row)
         try:
             check()
             file = self.row(row["workspace_id"], "file", row["file_id"])
-            data = self.store.get_blob(file["blob"])
+            data = read_blob(self.store, file["blob"])
             if hashlib.sha256(data).hexdigest() != file["content_digest"]:
                 fail("file_integrity_error")
             parsed = parse_bounded(self.reader, data, file["filename"], bool(row["ocr"]), check)
