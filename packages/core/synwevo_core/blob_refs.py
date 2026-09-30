@@ -15,6 +15,7 @@ from __future__ import annotations
 
 #: Columns that hold a blob digest directly.
 DIRECT: tuple[tuple[str, str], ...] = (
+    ("extract_files", "blob"),
     ("source_files", "blob"),
     ("source_files", "parsed_blob"),
     ("source_files", "working_blob"),
@@ -52,6 +53,8 @@ FILE_ROOTS: tuple[tuple[str, str, str], ...] = (
 
 #: Columns that look like a digest but are not a blob reference, with the reason.
 LOOKALIKES: tuple[tuple[str, str, str], ...] = (
+    ("extract_files", "content_digest", "source content integrity, not a blob access path"),
+    ("extract_versions", "definition_digest", "immutable extraction template fingerprint"),
     ("idempotency", "request_hash", "请求指纹，不是 blob"),
     ("organization_idempotency", "request_hash", "请求指纹，不是 blob"),
     ("organization_idempotency", "key_hash", "幂等键的哈希，不是 blob"),

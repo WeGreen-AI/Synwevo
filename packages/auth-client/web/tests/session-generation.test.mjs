@@ -78,7 +78,7 @@ async function setup({ search = '', blockedStorage = false } = {}) {
     subscribeLocale: () => () => {}, useI18n: () => ({ t: value => value }),
     PageState: ({ children, role }) => ({ type: 'PageState', props: { children, role } }) };
   const context = vm.createContext({ window, document, sessionStorage, localStorage: { setItem: () => {} },
-    URL, URLSearchParams, DOMException, CustomEvent, AbortController, Error, XMLHttpRequest: XHR,
+    URL, URLSearchParams, DOMException, CustomEvent, AbortController, FormData, Error, XMLHttpRequest: XHR,
     setTimeout, clearTimeout, fetch: (path, opts) => new Promise((resolve, reject) => requests.push({ path, opts, resolve, reject })) });
   const synthetic = (name, members) => new vm.SyntheticModule(Object.keys(members), function () {
     for (const [key, value] of Object.entries(members)) this.setExport(key, value);
@@ -119,6 +119,25 @@ async function setup({ search = '', blockedStorage = false } = {}) {
   return { api, session, render, next, answer, bootstrap, beginRefresh, requests, navigation, xhrs, events, storage, window,
     children, currentChildren: () => provider.props.children };
 }
+
+test('multipart preserves bytes, explicit target, CSRF and retry identity without a JSON content type', async () => {
+  const h = await setup(); await h.bootstrap();
+  const form = new FormData(); form.append('file', new Blob(['code,amount\n00127,123.40\n']), 'fixture.csv');
+  const pending = h.api.api('/api/suite/extract/files?workspace_id=B', {
+    method: 'POST', body: form, workspaceId: 'B',
+    headers: { 'Idempotency-Key': 'fixture-upload-key', 'Content-Type': 'application/json' },
+  });
+  const request = h.next('/api/suite/extract/files?workspace_id=B');
+  assert.equal(request.opts.body, form);
+  assert.equal(await request.opts.body.get('file').text(), 'code,amount\n00127,123.40\n');
+  assert.equal(request.opts.headers['Content-Type'], undefined);
+  assert.equal(request.opts.headers['X-Synwevo-Workspace'], 'B');
+  assert.equal(request.opts.headers['X-Synwevo-CSRF'], 'fixture-csrf');
+  assert.equal(request.opts.headers['Idempotency-Key'], 'fixture-upload-key');
+  await h.answer(request, { id: 'fixture-file' });
+  assert.deepEqual(await pending, { id: 'fixture-file' });
+  assert.equal(h.api.workspaceContext(), 'A');
+});
 
 test('G-S01: an obsolete workspace refusal cannot clear the newer tab context or probe a fallback', async () => {
   const h = await setup(); await h.bootstrap();

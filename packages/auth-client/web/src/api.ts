@@ -222,7 +222,11 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   let res: Response;
   const generation = getSessionGeneration();
   const method = opts.method || (opts.body !== undefined ? "POST" : "GET");
-  const headers = { ...opts.headers, ...authHeaders(method, opts.body !== undefined) };
+  const multipart = typeof FormData !== "undefined" && opts.body instanceof FormData;
+  const headers = { ...opts.headers, ...authHeaders(method, opts.body !== undefined && !multipart) };
+  // The browser supplies the multipart boundary. Keep CSRF, the explicit workspace
+  // and caller idempotency headers on exactly the same authenticated request path.
+  if (multipart) for (const key of Object.keys(headers)) if (key.toLowerCase() === 'content-type') delete headers[key];
   if (opts.workspaceId !== undefined) {
     for (const key of Object.keys(headers)) if (key.toLowerCase() === 'x-synwevo-workspace') delete headers[key];
     if (opts.workspaceId) headers['X-Synwevo-Workspace'] = opts.workspaceId;
@@ -232,7 +236,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       method,
       // Explicit context is still validated by the backend; it never grants authorization.
       headers,
-      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      body: multipart ? opts.body : opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       signal: opts.signal,
     });
   } catch (e: any) {

@@ -133,7 +133,12 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
         # The business applications live on the workplace origin (docs/agent-work/DECISIONS.md D1):
         # the host every deployment already routes to this role, with its single sign-on.
         from synwevo_suite import app as suite_app
-        suite_app.install(api, plat, start_jobs=start_jobs)
+        reader = None
+        if "extract" in suite_app.released_apps():
+            # Stateless, spawn-pickleable engine reader; Suite never imports Docs internals.
+            from synwevo_docs.ingest import DocumentIngest
+            reader = DocumentIngest()
+        suite_app.install(api, plat, docs=reader, start_jobs=start_jobs)
 
     # The relying-party half is mounted everywhere the account service is not the whole story.
     # It stays on `all` too: a single-process install can be configured against an external

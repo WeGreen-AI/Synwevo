@@ -41,6 +41,7 @@ WRITERS = {
     ("apps/suite/synwevo_suite/forms/filling.py", "upload"): "form_files.blob",
     ("apps/suite/synwevo_suite/dataprep/service.py", "upload"): "dataprep_files.blob",
     ("apps/suite/synwevo_suite/dataprep/service.py", "save_table"): "dataprep_datasets.rows_blob",
+    ("apps/suite/synwevo_suite/extract/service.py", "upload"): "extract_files.blob",
     ("packages/core/synwevo_core/store.py", "put_blob"): "(the store itself)",
     ("packages/core/synwevo_core/store.py", "put_json_blob"): "(the store itself)",
 }
