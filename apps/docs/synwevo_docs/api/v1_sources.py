@@ -392,11 +392,18 @@ def _input_schema(model: type[BaseModel]) -> dict:
     return inline(schema)
 
 
-def _contract(scope: str, model: type[BaseModel] | None = None) -> dict:
+def _contract(scope: str, model: type[BaseModel] | None = None, *, errors: tuple[int, ...] = ()) -> dict:
     out = {"x-scope": scope}
     if model is not None:
         out["requestBody"] = {"required": True, "content": {
             "application/json": {"schema": _input_schema(model)}}}
+    # Every typed body goes through _body's byte limit. Lifecycle errors are
+    # declared per operation because metadata reads can still return pending rows.
+    names = {409: "Conflict", 410: "Gone", 413: "PayloadTooLarge"}
+    codes = set(errors) | ({413} if model is not None else set())
+    if codes:
+        out["responses"] = {str(code): {"$ref": f"#/components/responses/{names[code]}"}
+                            for code in sorted(codes)}
     return out
 
 
@@ -459,7 +466,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return source(fid)
 
     @r.get("/files/{fid}/view", operation_id="get_source_view", response_model=SourceView,
-           response_model_exclude_unset=True, openapi_extra=_contract("read"),
+           response_model_exclude_unset=True, openapi_extra=_contract("read", errors=(409, 410)),
            description="Browser service view. offset/limit window grid rows only; other formats return their native document view.")
     def view(request: Request, fid: FileID, sheet: Annotated[str | None, Query(min_length=1, max_length=255)] = None,
              offset: Offset = 0, limit: Limit = 200, block: BlockIndex = None):
@@ -473,7 +480,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return views.source_view(fid, sheet, offset, limit, block)
 
     @r.get("/files/{fid}/blocks", operation_id="list_source_blocks", response_model=SourceBlocks,
-           response_model_exclude_unset=True, openapi_extra=_contract("read"),
+           response_model_exclude_unset=True, openapi_extra=_contract("read", errors=(409, 410)),
            description="Current per-block rule results, paged after the shared splitter runs. No block state is stored by this endpoint.")
     def blocks(request: Request, response: Response, fid: FileID, offset: Offset = 0, limit: Limit = 50):
         gate(request, "read", ("offset", "limit"))
@@ -483,7 +490,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return {**out, **_page(request, response, rows[offset:offset + limit], len(rows), offset, limit)}
 
     @r.get("/files/{fid}/search", operation_id="search_source", response_model=SourceSearch,
-           response_model_exclude_unset=True, openapi_extra=_contract("read"),
+           response_model_exclude_unset=True, openapi_extra=_contract("read", errors=(409, 410)),
            description="Literal text search in the shared viewer order. The service scans the source to count all matches; retains at most offset+limit hits. Offset is limited to 10000.")
     def search(request: Request, response: Response, fid: FileID,
                q: Annotated[str, Query(min_length=1, max_length=256)],
@@ -503,7 +510,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return page
 
     @r.get("/files/{fid}/words/{page}", operation_id="list_source_page_words", response_model=SourceWords,
-           response_model_exclude_unset=True, openapi_extra=_contract("read"),
+           response_model_exclude_unset=True, openapi_extra=_contract("read", errors=(409, 410)),
            description="Zero-based page and optional block. Pages the existing text layer or previously stored OCR words; does not execute OCR.")
     def words(request: Request, response: Response, fid: FileID, page: Annotated[int, Path(ge=0, le=1000000)],
               offset: Offset = 0, limit: Limit = 200, block: BlockIndex = None):
@@ -524,7 +531,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return {**out, **_page(request, response, rows[offset:offset + limit], len(rows), offset, limit)}
 
     @r.get("/files/{fid}/page/{page}.png", operation_id="render_source_page", response_class=Response,
-           openapi_extra={**_contract("export"), "x-binary": ["image/png"]},
+           openapi_extra={**_contract("export", errors=(409, 410)), "x-binary": ["image/png"]},
            responses={200: {"content": {"image/png": {"schema": {"type": "string", "format": "binary"}}}}},
            description="Zero-based PDF/image page, rendered by the browser engine. PDF zoom is bounded by the pixel budget; image sources return native dimensions. No stored artifact; current export permission is required.")
     def page_png(request: Request, fid: FileID, page: Annotated[int, Path(ge=0, le=1000000)],
@@ -550,7 +557,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
                         "X-Content-Type-Options": "nosniff", "X-Content-SHA256": hashlib.sha256(data).hexdigest()})
 
     @r.post("/files/{fid}/locator", operation_id="build_source_locator", response_model=SourceLocator,
-            response_model_exclude_unset=True, openapi_extra=_contract("read", SourceLocatorInput),
+            response_model_exclude_unset=True, openapi_extra=_contract("read", SourceLocatorInput, errors=(409, 410)),
             description="Build structured locator proposals from a native source selection. Uses the browser service and current project rule; does not save a mapping or execute OCR. Coordinates and indices are zero-based; PDF/image nrect is visual normalized [x0,y0,x1,y1].")
     async def locator(request: Request, fid: FileID):
         gate(request, "read")
@@ -568,7 +575,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return await run_in_threadpool(propose)
 
     @r.put("/files/{fid}/options", operation_id="update_source_options", response_model=SourceFile,
-           openapi_extra=_contract("write", SourceOptions),
+           openapi_extra=_contract("write", SourceOptions, errors=(409, 410)),
            description="CSV/TSV only. Replaces the csv options group (omitted controls reset to auto/default), synchronously reparses through the shared service. Check returned status/error.")
     async def options(request: Request, fid: FileID):
         gate(request, "write")
@@ -587,7 +594,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return await run_in_threadpool(update)
 
     @r.put("/files/{fid}/corrections/{mid}", operation_id="update_source_correction",
-           response_model=dict[str, CorrectionValue], openapi_extra=_contract("write", SourceCorrection),
+           response_model=dict[str, CorrectionValue], openapi_extra=_contract("write", SourceCorrection, errors=(409,)),
            description="Set or clear (value=null) a correction for a mapping in the source project's current revision. Returns all current corrections.")
     async def correction(request: Request, fid: FileID, mid: FileID):
         gate(request, "write")
@@ -603,7 +610,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return await run_in_threadpool(update)
 
     @r.post("/files/{fid}/ocr", operation_id="run_source_ocr", response_model=SourceOcrResult,
-            openapi_extra=_contract("write", SourceOcr),
+            openapi_extra=_contract("write", SourceOcr, errors=(409, 410)),
             description="Recognise text on an accepted scanned PDF (by default every scanned or mixed page; at most 50 pages "
                         "per call) or image, with the workbench's engine, synchronously. Results merge into the stored OCR "
                         "(pages recognised again are replaced); a needs_ocr source becomes ready and its version advances. "
@@ -622,7 +629,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return await run_in_threadpool(run)
 
     @r.post("/files/{fid}/representative", operation_id="select_representative_source", response_model=SourceFile,
-            openapi_extra=_contract("write"), description="Select an existing live source as the project's representative; creates no object.")
+            openapi_extra=_contract("write", errors=(409,)), description="Select an existing live source as the project's representative; creates no object.")
     async def representative(request: Request, fid: FileID):
         gate(request, "write")
         async for chunk in request.stream():
@@ -658,7 +665,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return await run_in_threadpool(update)
 
     @r.get("/files/{fid}/content", operation_id="download_source_content", response_class=Response,
-           openapi_extra={**_contract("export"), "x-binary": ["*/*"]},
+           openapi_extra={**_contract("export", errors=(409, 410)), "x-binary": ["*/*"]},
            responses={200: {"content": {"*/*": {"schema": {"type": "string", "format": "binary"}}}}},
            description="Original upload bytes, with safe attachment filename, no-store and X-Content-SHA256. Content-Type reflects the original file format.")
     def content(request: Request, fid: FileID):
@@ -672,7 +679,7 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
         return result
 
     @r.get("/projects/{pid}/locate", operation_id="locate_source_mappings",
-           response_model=dict[str, list[dict[str, JsonValue]]], openapi_extra=_contract("read"),
+           response_model=dict[str, list[dict[str, JsonValue]]], openapi_extra=_contract("read", errors=(409, 410)),
            description="Resolve current saved mappings to positions in one source belonging to this project; read only.")
     def locate(request: Request, pid: FileID, file: Annotated[str, Query(min_length=1, max_length=128)], block: BlockIndex = None):
         gate(request, "read", ("file", "block"))

@@ -95,7 +95,11 @@ def test_unbound_legacy_links_cannot_survive_credential_revocation(api, keys, fi
     replacement = _ok(c.post(f"/api/v1/artifacts/{art['id']}/link", headers=keys["rw"]))["url"]
     assert c.get(_path(replacement)).headers["X-Content-SHA256"] == art["sha256"]
     expired, _ = auth.sign_link("artifact", art["id"], "default", ttl_s=-5)
-    assert c.get(f"/api/v1/download/{expired}").json()["error"]["code"] == "link_expired"
+    result = c.get(f"/api/v1/download/{expired}")
+    assert result.status_code == 410 and result.json()["error"]["code"] == "link_expired"
+    problem = c.get(f"/api/v1/download/{expired}", headers={"Accept": "application/problem+json"})
+    assert problem.status_code == 410 and problem.headers["content-type"].startswith("application/problem+json")
+    assert problem.json()["code"] == "link_expired" and problem.json()["status"] == 410
 
 
 def test_download_origins_ignore_untrusted_forwarded_headers(api, keys, fixtures, monkeypatch):

@@ -469,6 +469,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
     # ------------------------------------------------------------ files
     @r.post("/projects/{pid}/preview", operation_id="render_project_preview",
             summary="生成并下载一个样本的真实原生格式预览",
+            responses={409: {"$ref": "#/components/responses/Conflict"}},
             description="与界面预览共用模板版本、样本计划及渲染/读回校验。需要 write 与导出权限；"
                         "不创建批次任务或正式产物。一次仅渲染一个样本，受模拟生成并发限制。"
                         "响应是二进制附件；signature 可用预检返回值固定输入版本。",
@@ -1106,6 +1107,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         return attachment(jobs.report_csv(jid), f"report_{jid}.csv", "csv")
 
     @r.get("/download/{token}", summary="按签名链接下载（链接本身即凭据）",
+           responses={403: {"$ref": "#/components/responses/Forbidden"},
+                      410: {"$ref": "#/components/responses/Gone"}},
            openapi_extra=_ox(binary=("application/octet-stream", "application/zip"), security=[]))
     def signed_download(token: str):
         data = auth.open_link(token)

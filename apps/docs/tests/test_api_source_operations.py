@@ -399,7 +399,9 @@ def test_streamed_body_limit_and_malformed_json(env):
     c, sid, h = env["client"], env["src"]["csv"]["id"], env["h"]["rw"]
     url = f"/api/v1/files/{sid}/options"
     json_headers = {**h, "Content-Type": "application/json"}
-    error(c.put(url, headers=json_headers, content=iter([b'{"csv":', b' ' * (sources_api.MAX_BODY_BYTES + 1)])), 413)
+    too_large = c.put(url, headers=json_headers, content=iter([b'{"csv":', b' ' * (sources_api.MAX_BODY_BYTES + 1)]))
+    error(too_large, 413, "source_body_too_large")
+    _assert_error_is_documented(env, too_large)
     error(c.put(url, headers=json_headers, content=b'{'), 400)
     error(c.put(url, headers=json_headers, content=b'\xff'), 400)
     error(c.put(url, headers=json_headers, content=b'{"csv":{"delimiter":",","delimiter":";"}}'), 400)
@@ -574,3 +576,92 @@ def test_machine_ocr_waits_for_a_slot_then_says_when_to_return(env, monkeypatch)
     error(r, 429, "ocr_busy")
     assert int(r.headers["Retry-After"]) == Views.OCR_RETRY_AFTER_S
     assert ok(c.get(f"/api/v1/files/{src['id']}", headers=h))["status"] == "needs_ocr"
+
+
+@pytest.mark.parametrize("state", ["parsing", "scanning", "scan_failed", "rejected"])
+def test_source_lifecycle_failures_match_the_declared_contract(env, state):
+    """Inject stored lifecycle states in a synthetic fixture, then use the real HTTP gates."""
+    c, h, app = env["client"], env["h"]["rw"], env["app"]
+    sid = env["src"]["pdf"]["id"]
+    csv_id = env["src"]["csv"]["id"]
+    app.store.execute("UPDATE source_files SET status=? WHERE id IN (?,?)", (state, sid, csv_id))
+    calls = [(method, url, body) for method, url, body in source_calls(env)
+             if not url.endswith(("/structure", "/view", "/content", "/options"))]
+    calls += [("GET", f"/api/v1/files/{sid}/view?block=0", None),
+              ("GET", f"/api/v1/projects/{env['pid']}/locate?file={sid}", None)]
+    for method, url, body in calls:
+        result = c.request(method, url, headers=h, **({"json": body} if body is not None else {}))
+        error(result, 409, "source_not_ready")
+        _assert_error_is_documented(env, result)
+    result = c.put(f"/api/v1/files/{csv_id}/options", headers=h, json={"csv": {}})
+    error(result, 410 if state == "rejected" else 409,
+          "rejected_malware" if state == "rejected" else "source_not_ready" if state == "parsing" else "not_yet_accepted")
+    _assert_error_is_documented(env, result)
+    result = c.get(f"/api/v1/files/{sid}/content", headers=h)
+    if state == "parsing":
+        # Scanning already accepted these bytes; parsing has no extra download barrier.
+        assert result.status_code == 200 and result.content == env["files"]["pdf"]
+    else:
+        error(result, 410 if state == "rejected" else 409,
+              "rejected_malware" if state == "rejected" else "not_yet_accepted")
+        _assert_error_is_documented(env, result)
+    assert ok(c.get(f"/api/v1/files/{sid}/structure", headers=h))["status"] == state
+    assert ok(c.get(f"/api/v1/files/{sid}/view", headers=h))["view"] == ("error" if state == "rejected" else "pending")
+
+
+def _assert_error_is_documented(env, response):
+    """An observed response must resolve to both documented error media types."""
+    import re
+    spec = openapi_subset(env["api"])
+    method, actual = response.request.method.lower(), response.request.url.path
+    operation = next(item[method] for path, item in spec["paths"].items()
+                     if method in item and re.fullmatch(re.sub(r"\{[^}]+\}", r"[^/]+", path), actual))
+    response_spec = operation["responses"].get(str(response.status_code))
+    assert response_spec is not None, (method, actual, response.status_code)
+    ref = response_spec["$ref"].rsplit("/", 1)[1]
+    assert set(spec["components"]["responses"][ref]["content"]) == {"application/json", "application/problem+json"}
+
+
+def test_missing_original_bytes_return_a_documented_problem(env):
+    c, h, app = env["client"], env["h"]["rw"], env["app"]
+    sid = env["src"]["pdf"]["id"]
+    row = app.get_source(sid, raw=True)
+    path = app.store.blob_path(row["blob"])
+    content = path.read_bytes()
+    path.unlink()  # Controlled fixture storage loss; always restore the exact original bytes.
+    try:
+        result = c.get(f"/api/v1/files/{sid}/content", headers={**h, "Accept": "application/problem+json"})
+        assert result.status_code == 410
+        body = result.json()
+        assert body["code"] == "source_content_missing" and body["status"] == 410
+        assert body["request_id"] == result.headers["X-Request-ID"]
+        _assert_error_is_documented(env, result)
+    finally:
+        path.write_bytes(content)
+    assert c.get(f"/api/v1/files/{sid}/content", headers=h).content == content
+
+
+def test_standing_quarantine_is_documented_even_before_source_rows_change(env):
+    """A persisted quarantine verdict, with old ready rows/caches, must still refuse reads."""
+    from synwevo_core import quarantine as Q
+    c, h, app = env["client"], env["h"]["rw"], env["app"]
+    sid = env["src"]["pdf"]["id"]
+    base = f"/api/v1/files/{sid}"
+    assert c.get(base + "/page/0.png", headers=h).status_code == 200
+    ok(c.put(f"/api/v1/projects/{env['pid']}/rule", headers=h,
+             json={"rule": {"mode": "per_block", "block": {"anchor": "Alpha", "match": "starts"}}}))
+    for fmt in ("pdf", "csv"):
+        row = app.get_source(env["src"][fmt]["id"], raw=True)
+        Q.hold(app.store, row["blob"], env["files"][fmt], signature="Synthetic contract verdict",
+               engine="fixture", rows=[], by="test")
+    calls = [(method, url, body) for method, url, body in source_calls(env)
+             if not url.endswith(("/structure", "/options", "/representative")) and "/corrections/" not in url]
+    calls += [("GET", f"/api/v1/projects/{env['pid']}/locate?file={sid}", None),
+              ("PUT", f"/api/v1/files/{env['src']['csv']['id']}/options", {"csv": {}})]
+    for method, url, body in calls:
+        result = c.request(method, url, headers=h, **({"json": body} if body is not None else {}))
+        error(result, 410, "rejected_malware")
+        _assert_error_is_documented(env, result)
+    assert ok(c.get(base + "/structure", headers=h))["status"] == "ready"
+    # Another accepted source in the same project still serves its own bytes.
+    assert c.get(f"/api/v1/files/{env['src']['docx']['id']}/content", headers=h).content == env["files"]["docx"]

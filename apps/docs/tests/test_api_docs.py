@@ -114,6 +114,13 @@ def test_openapi_describes_the_error_and_header_contract():
     # binary downloads are typed as binary, not as JSON
     dl = _codes(spec["paths"]["/api/v1/artifacts/{aid}/content"]["get"])["200"]["content"]
     assert "application/json" not in dl and dl["application/octet-stream"]["schema"]["format"] == "binary"
+    # A self-authenticating download URL still refuses an invalid/revoked issuer
+    # or an expired signature. Rendering also refuses changed/blocked inputs.
+    signed = _codes(spec["paths"]["/api/v1/download/{token}"]["get"])
+    assert signed["403"]["$ref"] == "#/components/responses/Forbidden"
+    assert signed["410"]["$ref"] == "#/components/responses/Gone"
+    preview = _codes(spec["paths"]["/api/v1/projects/{pid}/preview"]["post"])
+    assert preview["409"]["$ref"] == "#/components/responses/Conflict"
 
 
 def test_upload_contract_declares_resume_failures_and_all_public_states():

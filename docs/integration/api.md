@@ -196,7 +196,7 @@ SDK 使用同一包的独立 `WorkspaceClient`，账户 Base URL 默认 `https:/
 | 404 | 资源不存在或不属于该租户 |
 | 409 | 幂等键冲突（`idempotency_conflict`）、映射版本过期（`stale`）、预检发现错误（`has_errors`）、任务状态不允许（`job_active`、`nothing_to_retry`） |
 | 410 | 产物已删除 / 链接过期（`artifact_deleted`、`link_expired`） |
-| 413 | 超过文件大小上限 |
+| 413 | 超过文件大小或该操作的 JSON 请求体上限 |
 | 429 | 限流 |
 | 500 | 未预期错误（响应含 `request_id`，服务端日志打印同一个 id） |
 
@@ -292,6 +292,20 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 未知参数、重复查询键、非法枚举和超范围参数拒绝；JSON 写入上限 256 KiB。
 CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解析未就绪返回 409 `source_not_ready`。
 移除来源或删除项目后，来源读取、修改及迟到的解析结果发布均被拒绝；软删除项目仍保留已生成的独立产物。
+
+来源读取与解析选项的错误按当前状态判断。元数据读取仍可返回 pending/error 的文件，
+并不保证同一文件此刻可预览、导出或重新解析。安全扫描已接纳但还在解析的来源允许下载原文件。
+以下恢复条件同时适用于默认错误信封和 `application/problem+json`：
+
+| 状态 / 错误码 | 调用方处理 |
+|---|---|
+| 409 `source_not_ready`、`not_yet_accepted` | 读取来源状态；等待其进入所需状态后再操作，不重复上传或绕过接纳 |
+| 409 `source_changed`、`stale` | 渲染期间输入改变；重新读取来源或预检取得新签名，再重新渲染 |
+| 409 `preview_blocked` | 根据 issues 修正样本或配置；相同输入的自动重试不能消除问题 |
+| 410 `rejected_malware`、`encrypted_file`、`unchecked_file` | 内容已被拒绝；停止重试，按安全检查结果修正文件或走现有受权复核流程。旧 ready 状态和已解析缓存不覆盖后来的隔离结论 |
+| 410 `source_content_missing` | 存储中没有原始内容；需要受权恢复或重新上传，重试下载不能重建字节 |
+| 413 `source_body_too_large` | 将该来源操作的 JSON 请求体缩小到 256 KiB 以内 |
+| 403 `bad_link`、`link_revoked`；410 `link_expired` | 签名下载链接失效；用当前仍有权的凭据重新申请链接。撤权不能通过重复请求旧链接恢复 |
 
 续传上传使用 `/uploads` → PUT 字节范围 → `/complete`，完成后以 `upload_id` 绑定来源或模板。
 同一主体在幂等保留期内重放创建上传请求，可取回已消费会话的原响应（包括原始 open 状态）；

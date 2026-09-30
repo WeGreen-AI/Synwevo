@@ -125,6 +125,25 @@ npm run build
 `final-brand.log`、`final-design.log`、`final-components.log`、`final-logo.log`。
 这确认本机固定提交的完整回归，不替代生产 Python 3.12、Linux 镜像全量验证或 GitHub CI。
 
+## 来源与下载错误契约续批
+
+全量主机回归之后，补齐已有来源操作的 409/410/413、预览冲突 409、签名下载拒绝 403 与过期 410。
+没有改变来源状态机、文件读取、隔离、认证或渲染行为；元数据仍可读取 pending/error 状态。
+JSON 请求体统一受已有 256 KiB 上限，原始内容缺失、隔离拒绝及渲染期间输入变化均有对应错误声明。
+集成指南补充等待状态、重新预检、停止重试和重申请下载链接的区别。
+
+新增 6 个实际 HTTP 用例在修正前全部因错误未登记而失败，修正后全部通过。
+用例在隔离夹具中设置生命周期状态、移开并恢复原始内容、保存真实隔离结论，核对服务的真实拒绝；
+不是恶意软件识别引擎验收。保留仍可读取元数据及其他来源不受影响的独立断言。
+来源操作、预览、签名链接、导出同步及管理员三语言契约共 **101 passed / 6 warnings**。
+实际采集 **222 个错误响应、77 组操作/状态、23 个错误码**，包含默认 JSON 与 RFC 9457；
+openapi-spec-validator 0.9.0 与 OpenAPI 3.1 响应实例校验全部通过。
+采集只记录规范化路由模板，不保存签名下载 URL、认证头或凭据。
+边界、品牌与 diff 检查通过；这次只改契约声明与文档，未重复整个主机套件。
+
+证据在主验证目录：`source-errors-before.log`、`source-errors-after.log`、`source-errors-final.log`、
+`source-error-responses.json`、`source-error-schema-report.json`。
+
 ## 发布与尚未闭环的范围
 
 2026-09-30 只读核对生产容器：accounts、docs、portal、messages 均运行

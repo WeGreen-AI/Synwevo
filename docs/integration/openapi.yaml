@@ -927,6 +927,9 @@ paths:
               $ref: "#/components/headers/RateLimit-Policy"
             X-Content-SHA256:
               $ref: "#/components/headers/X-Content-SHA256"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Conflict
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3349,6 +3352,12 @@ paths:
               $ref: "#/components/headers/X-Request-ID"
             X-Content-SHA256:
               $ref: "#/components/headers/X-Content-SHA256"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+          description: Forbidden
+        "410":
+          $ref: "#/components/responses/Gone"
+          description: Gone
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -3775,6 +3784,10 @@ paths:
               $ref: "#/components/headers/RateLimit-Policy"
             Link:
               $ref: "#/components/headers/Link"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3843,6 +3856,10 @@ paths:
               $ref: "#/components/headers/RateLimit-Policy"
             Link:
               $ref: "#/components/headers/Link"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3929,6 +3946,10 @@ paths:
               $ref: "#/components/headers/RateLimit-Policy"
             Link:
               $ref: "#/components/headers/Link"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4015,6 +4036,10 @@ paths:
               $ref: "#/components/headers/RateLimit-Policy"
             Link:
               $ref: "#/components/headers/Link"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4093,6 +4118,10 @@ paths:
               $ref: "#/components/headers/RateLimit-Policy"
             X-Content-SHA256:
               $ref: "#/components/headers/X-Content-SHA256"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4141,6 +4170,12 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4545,6 +4580,12 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4652,6 +4693,10 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4721,6 +4766,12 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4788,6 +4839,8 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4839,6 +4892,8 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4909,6 +4964,10 @@ paths:
               $ref: "#/components/headers/RateLimit-Policy"
             X-Content-SHA256:
               $ref: "#/components/headers/X-Content-SHA256"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4982,6 +5041,10 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
