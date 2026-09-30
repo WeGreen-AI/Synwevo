@@ -10,8 +10,9 @@ requires-python = ">=3.12"
 # Only the shared layer. Each application is a subpackage that never imports a sibling; they reach
 # one another — and Synwevo Docs and Message — through the capability registry in synwevo-core.
 #   anthropic — the personal Agent's model provider (official SDK)
+#   httpx     — bounded DeepSeek streaming transport
 #   openpyxl  — DataPrep and Tables read and write .xlsx
-dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "anthropic", "openpyxl"]
+dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "anthropic", "httpx", "openpyxl"]
 
 [tool.setuptools.packages.find]
 include = ["synwevo_suite*"]
