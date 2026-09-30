@@ -574,9 +574,13 @@ class Notifier:
         that still exist, and the latest of them — or None when they are not (or no longer) a
         member. Read here rather than through the messaging service because the dispatcher has
         no request context; the tables are synwevo_core.messaging's."""
-        m = self.store.one("SELECT last_read_seq, joined_seq, muted, muted_until, notify FROM conversation_members "
-                           "WHERE conversation_id=? AND user_id=? AND left_at IS NULL", (cid, user_id))
+        m = self.store.one("SELECT m.last_read_seq, m.joined_seq, m.muted, m.muted_until, m.notify, c.organization_id "
+                           "FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "
+                           "WHERE m.conversation_id=? AND m.user_id=? AND m.left_at IS NULL", (cid, user_id))
         if not m:
+            return None
+        from .organizations import current_membership
+        if not current_membership(self.store, m["organization_id"], user_id):
             return None
         floor = max(int(m["last_read_seq"] or 0), int(m["joined_seq"] or 0))
         # `deleted_at` is set by every delete-for-everyone — the sender's recall, a group manager's
@@ -640,7 +644,24 @@ class Notifier:
         ts = now()
         return self.store.all("SELECT d.*, n.user_id, n.kind, n.category, n.severity, n.params, n.target, n.created_at AS notified_at "
                               "FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id "
-                              "WHERE d.status='pending' AND (d.not_before IS NULL OR d.not_before<=?) ORDER BY d.not_before LIMIT ?", (ts, limit))
+                              "WHERE d.channel='email' AND d.status='pending' AND (d.not_before IS NULL OR d.not_before<=?) "
+                              "ORDER BY d.not_before, d.notification_id LIMIT ?", (ts, limit))
+
+    def pending_email_deliveries(self, user_id: str, notification_ids: list[str]) -> list[dict]:
+        """Re-read a dispatcher's bounded candidates under its write transaction.
+
+        Never return another reader's row, a delivery already claimed by a second instance,
+        or a row that the other instance postponed after the initial candidate query.
+        """
+        if not notification_ids:
+            return []
+        placeholders = ",".join("?" for _ in notification_ids)
+        return self.store.all("SELECT d.*, n.user_id, n.kind, n.category, n.severity, n.params, n.target, n.created_at AS notified_at "
+                              "FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id "
+                              "WHERE n.user_id=? AND d.channel='email' AND d.status='pending' "
+                              "AND (d.not_before IS NULL OR d.not_before<=?) "
+                              f"AND d.notification_id IN ({placeholders}) ORDER BY d.not_before, d.notification_id",
+                              (user_id, now(), *notification_ids))
 
     def defer_delivery(self, notification_id: str, until: float) -> None:
         self.store.execute("UPDATE notification_deliveries SET not_before=?, updated_at=? WHERE notification_id=? AND channel='email'",
