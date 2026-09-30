@@ -96,3 +96,27 @@ def test_legacy_secret_redaction_is_repeatable_and_preserves_idempotency(agent):
     assert p.store.one("SELECT personal_key_sealed FROM agent_settings WHERE user_id=?", (p.uid("alice"),)) == sealed
     again = agent.caps.invoke("agent.settings.update", {"personal_key": secret}, **args)
     assert again["replayed"] and again["run_id"] == first["run_id"]
+
+
+def test_revocation_between_admission_and_write_lock_prevents_mutation(suite, monkeypatch):
+    store = _setup(suite)
+    p = suite.people
+    authorize = suite.caps.authorize
+    admission = True
+
+    def revoke_after_first_check(*args, **kwargs):
+        nonlocal admission
+        authorized = authorize(*args, **kwargs)
+        if admission:
+            admission = False
+            # Deterministic scheduling of a competing permission change after admission.
+            store.execute("UPDATE memberships SET role='viewer' WHERE workspace_id=? AND user_id=?",
+                          (p.a, p.uid("bob")))
+        return authorized
+
+    monkeypatch.setattr(suite.caps, "authorize", revoke_after_first_check)
+    with pytest.raises(ServiceError) as error:
+        suite.caps.invoke("fixture.note.create", {"text": "must not be stored"},
+                          user_id=p.uid("bob"), workspace_id=p.a)
+    assert error.value.code == "read_only_role"
+    assert store.one("SELECT COUNT(*) AS n FROM fixture_notes")["n"] == 0

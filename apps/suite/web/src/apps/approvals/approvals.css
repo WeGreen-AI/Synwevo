@@ -1,0 +1,44 @@
+/* Approvals uses the workspace shell and shared white/blue tokens. */
+.ap-panel { margin-block: var(--sp-4); padding: var(--sp-4); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); min-width: 0; }
+.ap-panel h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-5); }
+.ap-panel h3 { font-size: var(--fs-4); }
+.ap-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin-block: var(--sp-3); }
+.ap-toolbar h2 { margin: 0; flex: 1; }
+.ap-toolbar .grow, .ap-toolbar label { min-width: 0; }
+.ap-fields { display: grid; gap: var(--sp-4); }
+.ap-fields > .btn { justify-self: start; }
+.ap-field, .ap-panel label, .ap-toolbar label, .ap-editor label { display: grid; gap: var(--sp-2); }
+.ap-panel .input, .ap-editor .input { max-width: 100%; width: 100%; }
+.ap-panel textarea.input, .ap-editor textarea.input { height: auto; min-height: 96px; resize: vertical; padding: var(--sp-2); }
+.ap-panel h1, .ap-panel label, .ap-panel strong { overflow-wrap: anywhere; }
+.ap-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); align-items: start; }
+.ap-edit-block { min-width: 0; margin-block: var(--sp-4); padding: var(--sp-4); border: 1px solid var(--line); border-radius: var(--radius); }
+.ap-edit-block legend { font-weight: 600; max-width: 100%; overflow-wrap: anywhere; }
+.ap-condition { padding: var(--sp-3); background: var(--surface); border-inline-start: 3px solid var(--accent); margin-block: var(--sp-3); }
+.ap-panel .ap-choice, .ap-editor .ap-choice { display: flex; align-items: center; gap: var(--sp-2); margin-block: var(--sp-2); }
+.ap-people { margin-block: var(--sp-3); }
+.ap-candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); max-height: 220px; overflow-y: auto; padding: var(--sp-2); border: 1px solid var(--line); margin-top: var(--sp-2); }
+.ap-candidates .ap-choice { min-height: 32px; overflow-wrap: anywhere; }
+.ap-selected { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.ap-selected .badge { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
+.ap-detail-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: var(--sp-4); align-items: start; }
+.ap-detail-grid > * { min-width: 0; }
+.ap-snapshot { margin: 0; }
+.ap-snapshot > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: var(--sp-3); padding: var(--sp-3); border-bottom: 1px solid var(--line); }
+.ap-snapshot dt { color: var(--text-2); }
+.ap-snapshot dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ap-changed { background: var(--accent-weak); padding: var(--sp-3); border-radius: var(--radius-sm); }
+.ap-prose { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.ap-digest { display: block; overflow-wrap: anywhere; font-size: var(--fs-2); }
+.ap-stages, .ap-timeline { padding-inline-start: var(--sp-4); }
+.ap-stages > li { padding: var(--sp-2) 0 var(--sp-4) var(--sp-2); }
+.ap-timeline { list-style: none; border-inline-start: 2px solid var(--line); margin-inline-start: var(--sp-2); }
+.ap-timeline > li { padding-bottom: var(--sp-4); }
+.ap-timeline .ap-toolbar { margin-bottom: var(--sp-1); }
+.ap-participant { padding-block: var(--sp-3); display: flex; flex-wrap: wrap; gap: var(--sp-2); justify-content: space-between; border-bottom: 1px solid var(--line); }
+.ap-panel summary { cursor: pointer; padding-block: var(--sp-3); }
+.ap-panel :focus-visible, .ap-editor :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.ap-panel .btn { transition: background-color var(--dur-1) var(--ease); }
+@media (max-width: 800px) { .ap-detail-grid { grid-template-columns: minmax(0, 1fr); } .ap-detail-grid aside { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); } }
+@media (max-width: 560px) { .ap-grid, .ap-detail-grid aside { grid-template-columns: minmax(0, 1fr); } .ap-panel { padding: var(--sp-3); } .ap-edit-block { padding: var(--sp-2); } .ap-snapshot > div { grid-template-columns: minmax(0, 1fr); gap: var(--sp-1); } .ap-toolbar { align-items: stretch; } .ap-toolbar label { width: 100%; } .ap-toolbar .btn { min-height: 40px; } }
+@media (prefers-reduced-motion: reduce) { .ap-panel *, .ap-editor * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

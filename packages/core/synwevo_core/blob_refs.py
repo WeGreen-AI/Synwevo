@@ -24,6 +24,8 @@ DIRECT: tuple[tuple[str, str], ...] = (
     ("blob_grants", "blob"),                      # previews, layout PDFs, desensitized outputs: the grant is the reference
     ("message_attachments", "blob"),              # Synwevo Message
     ("form_files", "blob"),                       # Synwevo Forms attachments (staged, attached or discarded)
+    ("dataprep_files", "blob"),                   # bounded CSV/XLSX inputs
+    ("dataprep_datasets", "rows_blob"),           # immutable canonical datasets
     ("uploads", "blob"),                          # a completed upload not used yet: its only reference
     ("organization_templates", "working_blob"),   # outlives the source template by design
     ("organization_template_releases", "working_blob"),
@@ -71,6 +73,13 @@ LOOKALIKES: tuple[tuple[str, str, str], ...] = (
     ("form_requests", "token_hash", "填写链接令牌的哈希，不是 blob"),
     ("form_submissions", "answers_hash", "提交内容的指纹，不是 blob"),
     ("agent_tool_calls", "input_hash", "Agent 工具调用参数的指纹（确认绑定），不是 blob"),
+    ("dataprep_datasets", "content_hash", "规范化数据内容指纹，不是 blob"),
+    ("dataprep_recipe_versions", "definition_hash", "已发布处理方案指纹，不是 blob"),
+    ("dataprep_runs", "definition_hash", "运行固定方案指纹，不是 blob"),
+    ("dataprep_runs", "output_hash", "处理结果内容指纹，不是 blob"),
+    ("approval_template_versions", "definition_hash", "审批模板版本指纹，不是 blob"),
+    ("approval_revisions", "fields_hash", "审批字段快照指纹，不是 blob"),
+    ("approval_revisions", "basis_hash", "审批依据文本指纹，不是 blob"),
     ("external_auth_requests", "state_hash", "外部登录 state 的哈希，不是 blob"),
     ("external_link_offers", "token_hash", "外部账户关联令牌哈希，不是 blob"),
     ("push_subscriptions", "endpoint_hash", "推送端点的哈希，不是 blob"),

@@ -52,11 +52,17 @@ def resource_reads(caps, op, clean: dict) -> list[tuple[str, dict]]:
         for read in caps.registry.operations(op.app):
             required = {k for k, f in read.input.model_fields.items() if f.is_required()}
             if (read.id.endswith(".get") and read.side_effect == "none" and read.mode == "sync"
-                    and read.agent != "never" and required == {key}):
-                matches.append((read.id, {key: value}))
+                    and read.agent != "never" and key in required and required <= clean.keys()):
+                matches.append((read.id, {k: clean[k] for k in required}))
+        # Composite resources (a record inside a table) require both identifiers. Prefer
+        # the narrowest exact contract; ambiguous alternatives still need explicit review.
+        if matches:
+            fewest = min(len(payload) for _, payload in matches)
+            matches = [(name, payload) for name, payload in matches if len(payload) == fewest]
         if len(matches) != 1:
             raise ServiceError(409, "confirmation_basis_unavailable", "此操作尚不能核实目标版本，请在应用中执行")
-        reads.extend(matches)
+        if matches[0] not in reads:
+            reads.extend(matches)
     return reads
 
 TOOLS: list[dict] = [

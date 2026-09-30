@@ -476,6 +476,9 @@ class Capabilities:
                         if idempotency_key is not None and "UNIQUE" in str(exc):
                             raise _Replay() from None
                         raise
+                    # The first check precedes the write lock. A revocation that wins that
+                    # lock must also win over a request that was already waiting for it.
+                    call.user, call.role = self.authorize(op, user_id, workspace_id)
                     result = op.handler(call, parsed)
                     output = self._finish(t, call, result)
                 self._after(call)

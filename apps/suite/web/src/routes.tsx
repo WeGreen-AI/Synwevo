@@ -4,5 +4,8 @@
 import type { ReactNode } from "react";
 import { formsRoutes } from "./apps/forms";
 import { agentRoutes } from "./apps/agent";
+import { tablesRoutes } from "./apps/tables";
+import { dataprepRoutes } from "./apps/dataprep";
+import { approvalsRoutes } from "./apps/approvals";
 
-export const APP_ROUTES: ReactNode[] = [...formsRoutes(), ...agentRoutes()];
+export const APP_ROUTES: ReactNode[] = [...formsRoutes(), ...agentRoutes(), ...tablesRoutes(), ...dataprepRoutes(), ...approvalsRoutes()];

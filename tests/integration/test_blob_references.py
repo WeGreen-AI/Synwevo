@@ -39,6 +39,8 @@ WRITERS = {
     ("apps/docs/synwevo_docs/api/v1_uploads.py", "_copy_completed_blob"): "uploads.blob (bypasses put_blob: writes blob_path directly)",
     ("packages/core/synwevo_core/messaging.py", "attach"): "message_attachments.blob",
     ("apps/suite/synwevo_suite/forms/filling.py", "upload"): "form_files.blob",
+    ("apps/suite/synwevo_suite/dataprep/service.py", "upload"): "dataprep_files.blob",
+    ("apps/suite/synwevo_suite/dataprep/service.py", "save_table"): "dataprep_datasets.rows_blob",
     ("packages/core/synwevo_core/store.py", "put_blob"): "(the store itself)",
     ("packages/core/synwevo_core/store.py", "put_json_blob"): "(the store itself)",
 }

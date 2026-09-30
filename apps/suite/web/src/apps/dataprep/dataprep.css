@@ -1,0 +1,38 @@
+/* DataPrep's independent editor and data grid; shared design tokens only. */
+.dp-panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--sp-4); margin: 0 0 var(--sp-4); min-width: 0; }
+.dp-panel h2 { margin-top: 0; font-size: var(--fs-5); }
+.dp-field { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; margin-bottom: var(--sp-3); font-size: var(--fs-3); }
+.dp-field > span { color: var(--text-2); font-weight: 600; }
+.dp-field textarea { min-height: 80px; resize: vertical; }
+.dp-field input, .dp-field select { min-width: 0; max-width: 100%; }
+.dp-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: var(--sp-3); align-items: start; }
+.dp-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0; }
+.dp-actions .dp-field { margin: 0; flex: 1; min-width: 160px; }
+.dp-editor-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--sp-4); align-items: start; }
+.dp-editor-layout > section { min-width: 0; }
+.dp-run-panel > .btn { margin-bottom: var(--sp-3); width: 100%; }
+.dp-run-panel summary, .dp-parameters summary { cursor: pointer; padding: var(--sp-2) 0; font-weight: 600; }
+.dp-step { border-top: 1px solid var(--line); padding: var(--sp-3) 0; }
+.dp-step-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); }
+.dp-step-head h3 { font-size: var(--fs-4); margin: 0; }
+.dp-step-head .dp-actions { margin-left: auto; }
+.dp-multiselect { min-height: 104px; }
+.dp-check { display: flex; align-items: center; gap: var(--sp-2); min-height: 40px; }
+.dp-check input { accent-color: var(--accent); }
+.dp-measures { grid-column: 1 / -1; }
+.dp-grid { overflow: auto; max-height: 620px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); margin: var(--sp-3) 0; }
+.dp-grid table { width: 100%; border-collapse: collapse; font-size: var(--fs-3); }
+.dp-grid caption { text-align: left; padding: var(--sp-3); font-weight: 600; color: var(--text); }
+.dp-grid th, .dp-grid td { text-align: left; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--line); vertical-align: top; min-width: 110px; max-width: 360px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.dp-grid th { color: var(--text-2); background: var(--surface); }
+.dp-grid thead th { position: sticky; top: 0; z-index: 1; }
+.dp-grid tbody tr:hover { background: var(--surface-hover); }
+.dp-grid details { max-width: 210px; }
+.dp-grid summary { cursor: pointer; }
+.dp-grid:focus-visible { outline: none; box-shadow: var(--focus); }
+.dp-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-3); }
+.dp-summary { padding: var(--sp-3); background: var(--accent-weak); border-radius: var(--radius); font-size: var(--fs-5); }
+.dp-editor .btn { transition: background-color var(--dur-1) var(--ease); }
+@media (max-width: 1000px) { .dp-editor-layout { grid-template-columns: minmax(0, 1fr); } .dp-comparison { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .dp-panel { padding: var(--sp-3); } .dp-grid th, .dp-grid td { padding: var(--sp-2); max-width: 240px; } .dp-step-head .dp-actions { width: 100%; margin-left: 0; } }
+@media (prefers-reduced-motion: reduce) { .dp-editor .btn { transition: none; } }
