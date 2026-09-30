@@ -1,4 +1,5 @@
-import { RegistrationTab, MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
+import { SettingsTab } from "./governance/SettingsTab";
+import { MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
 import { PlatformAccessDialog, PlatformAdminsTab, platformRoleLabel, platformRolesText, ROLE_ORDER, systemReasonText } from "./governance/PlatformAccess";
 import { AUDIT_SCOPES, mayClaim, permitted, userOffers, type Held, type Tab } from "./governance/access";
@@ -13,7 +14,7 @@ import "./governance/messages";
  * which is the exact leak the unclaimed workspace exists to prevent.
  *
  * Every dangerous action states its object and its effect, requires a written reason, and asks
- * for the password again. The server enforces all three; this screen is the explanation, not
+ * for scoped identity verification again. The server enforces all three; this screen is the explanation, not
  * the control.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -82,7 +83,7 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
     {tab === "admins" && <PlatformAdminsTab key={accessRevision} onDenied={onDenied} onOpen={setAccess} />}
     {tab === "workspaces" && <WorkspacesTab onDenied={onDenied} held={held} />}
     {tab === "organizations" && <OrganizationsTab onDenied={onDenied} held={held} />}
-    {tab === "registration" && <RegistrationTab onDenied={onDenied} held={held} />}
+    {tab === "registration" && <SettingsTab onDenied={onDenied} held={held} />}
     {tab === "identity" && <IdentityProvidersTab onDenied={onDenied} />}
     {tab === "mail" && <MailTab onDenied={onDenied} held={held} />}
     {tab === "audit" && <AuditTab onDenied={onDenied} />}

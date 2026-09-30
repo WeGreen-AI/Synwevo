@@ -725,6 +725,13 @@ V2_COLUMNS = [
     ("artifacts", "deleted_at", "REAL"),
 ]
 
+# Budget deferrals remember the observed configuration revision. NULL preserves the meaning
+# of pre-policy deliveries; no migration invents a worker acknowledgement for them.
+PLATFORM_SETTINGS_DELIVERY_COLUMNS = [
+    ("notification_deliveries", "defer_reason", "TEXT"),
+    ("notification_deliveries", "policy_revision", "INTEGER"),
+]
+
 JSON_COLS = {"record_rule", "output", "notes", "structure", "options", "ocr", "corrections", "slots", "editor", "data",
              "snapshot", "counts", "record", "issues", "trace", "verification", "info", "summary", "scan"}
 
@@ -887,7 +894,7 @@ class Store:
         from .messaging_bridge import COLUMNS as MESSAGING_BRIDGE_COLUMNS, SCHEMA as MESSAGING_BRIDGE_SCHEMA
         c.executescript(MESSAGING_BRIDGE_SCHEMA)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS + PLATFORM_SETTINGS_DELIVERY_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
@@ -911,6 +918,16 @@ class Store:
                 UNIQUE(actor_id,idempotency_key)
             );
             CREATE INDEX IF NOT EXISTS ix_admin_operations_target ON admin_operations(target_id,created_at);
+        """)
+        # Versioned non-secret platform overrides. All reads/writes use this Store; older
+        # releases ignore these additive rows. A reset/rollback appends a new revision.
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS platform_settings_versions (
+                revision INTEGER PRIMARY KEY AUTOINCREMENT CHECK (revision > 0),
+                overrides TEXT NOT NULL, actor_id TEXT NOT NULL, reason TEXT NOT NULL,
+                operation_id TEXT NOT NULL UNIQUE, created_at REAL NOT NULL,
+                rollback_revision INTEGER CHECK (rollback_revision IS NULL OR rollback_revision >= 0)
+            );
         """)
         # v27: delegated platform permissions (platform_access.py). The grants table, then — once,
         # marked in `meta` in the same transaction so a crash cannot relabel it — every

@@ -5,6 +5,7 @@ import { registerMessages } from "@synwevo/ui";
  *  the entry chunk, so these read the same wherever they are met; a refusal met on one page only
  *  belongs to that page's catalogue. */
 export const messages = {
+  "配置记录暂不可用，请联系管理员检查": { en: "Settings records are temporarily unavailable. Contact an administrator.", "zh-Hant": "設定記錄暫時無法使用，請聯絡管理員檢查" },
   // ---- server sentences met on more than one page (the same wording as the page catalogues that also hold them)
   "这一步需要重新验证身份": { en: "This step requires identity verification.", "zh-Hant": "這一步需要重新驗證身分" },
   // a platform permission this person's roles do not carry (platform administration and the API console)

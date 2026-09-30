@@ -16,7 +16,7 @@ quiet hours that hide the fact.
 Before anything non-critical leaves, the row is checked again (`Notifier.stale_reason`): read in
 the app since, channel turned off since, a conversation that was read, muted, left or whose
 unread messages were all recalled — those are skipped with the reason on the row, not mailed.
-Conversation digests are additionally held to one per reader per half hour and a daily cap, and
+Conversation digests additionally obey the current per-reader interval and daily budget, and
 render from the live unread state, without message text unless the reader asked for it.
 """
 from __future__ import annotations
@@ -89,7 +89,9 @@ class NotificationDispatcher:
     def _email_user(self, uid: str, ids: list[str]) -> dict:
         out = {"queued": 0, "deferred": 0, "skipped": 0, "digested": 0, "failed": 0}
         with self.store.tx():
-            rows = self.notifier.pending_email_deliveries(uid, ids)
+            prefs = self.notifier.preferences(uid)
+            policy = prefs["conversation_digest_policy"]
+            rows = self.notifier.pending_email_deliveries(uid, ids, policy_revision=policy["revision"])
             if not rows:
                 return out
             user = self.ident.get_user(uid)
@@ -98,7 +100,6 @@ class NotificationDispatcher:
                     self.notifier.finish_delivery(d["notification_id"], "skipped", error="reader inactive")
                 out["skipped"] += len(rows)
                 return out
-            prefs = self.notifier.preferences(uid)
             locale = user.get("locale") or "zh-Hans"
             quiet_until = self.notifier.quiet_until(prefs)
             send_now = []
@@ -110,13 +111,13 @@ class NotificationDispatcher:
                     out["skipped"] += 1
                     continue
                 if quiet_until and d["severity"] != "critical":
-                    self.notifier.defer_delivery(d["notification_id"], quiet_until)
+                    self.notifier.defer_delivery(d["notification_id"], quiet_until, reason="quiet")
                     out["deferred"] += 1
                 elif d["category"] == "conversation" and d["severity"] != "critical":
                     if hold is None:
-                        hold = self.notifier.conversation_digest_hold(uid) or 0.0
+                        hold = self.notifier.conversation_digest_hold(uid, policy=policy) or 0.0
                     if hold:
-                        self.notifier.defer_delivery(d["notification_id"], hold)
+                        self.notifier.defer_delivery(d["notification_id"], hold, reason="budget", policy_revision=policy["revision"])
                         out["deferred"] += 1
                     else:
                         send_now.append(d)
@@ -141,9 +142,12 @@ class NotificationDispatcher:
             tx.execute("SAVEPOINT notification_email")
             try:
                 for d in rows:
-                    tx.execute("UPDATE notification_deliveries SET status='queued', updated_at=? "
+                    revision = (prefs["conversation_digest_policy"]["revision"]
+                                if d["category"] == "conversation" and d["severity"] != "critical" else None)
+                    tx.execute("UPDATE notification_deliveries SET status='queued', updated_at=?, "
+                               "defer_reason=NULL, policy_revision=? "
                                "WHERE notification_id=? AND channel='email' AND status='pending'",
-                               (now(), d["notification_id"]))
+                               (now(), revision, d["notification_id"]))
                 if len(rows) == 1:
                     self._mail_one(user, rows[0], locale, prefs)
                 else:

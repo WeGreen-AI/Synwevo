@@ -74,7 +74,7 @@
 
 **寄出前复核（CI-68）。** 非安全投递在真正寄出前再检查一次（`Notifier.stale_reason`）：读者已在站内读过/归档 → skipped `read in app`；该类别邮件此刻已关 → `channel off`；会话类条目再看读者在该会话的实时状态——已不是成员 → `no longer a member`、已静音、「不通知」或定时静音 `muted_until` 尚未到期（CI-74）→ `conversation muted`、读游标之后没有未撤回的消息（读完了，或唯一的未读被撤回）→ `nothing unread`。推送队列走同一复核。
 
-**私信邮件是选择加入的未读摘要，不逐条寄。** `conversation` 类别的邮件缺省关；读者在「账户 → 通知」开启后只能是「未读摘要」（`set_preferences` 拒绝 `immediate`；旧行里的 `immediate` 读作 `digest`）。摘要寄出前额外限速：同一读者两封会话摘要至少相隔 30 分钟，24 小时内最多 8 封（`conversation_digest_hold`，按邮件计，不按条目），超出的投递推到可寄时刻。摘要条目按寄出时的实时状态渲染（`render_external`）：标题是「『X』有 N 条未读消息」，正文默认为空；读者把 `preview` 改为 `full` 才附最新一条未读的发送者与前 120 字。v23 迁移把旧偏好行里 conversation 的 `digest/immediate` 重置为 `off`——那是缺省值被一起保存下来的，不是读者的选择。
+**私信邮件是选择加入的未读摘要，不逐条寄。** `conversation` 类别的邮件缺省关；读者在「账户 → 通知」开启后只能是「未读摘要」（`set_preferences` 拒绝 `immediate`；旧行里的 `immediate` 读作 `digest`）。摘要寄出前额外限速：同一读者按当前平台配置限制两封会话摘要的最短间隔及滚动最近24小时上限，默认30分钟、8封（`conversation_digest_hold`，按不同outbox邮件计，不按条目；这是入队预算，不是最终收件证明），超出的投递推到可寄时刻。摘要条目按寄出时的实时状态渲染（`render_external`）：标题是「『X』有 N 条未读消息」，正文默认为空；读者把 `preview` 改为 `full` 才附最新一条未读的发送者与前 120 字。v23 迁移把旧偏好行里 conversation 的 `digest/immediate` 重置为 `off`——那是缺省值被一起保存下来的，不是读者的选择。
 
 ## 5. 界面
 
@@ -93,3 +93,9 @@
 * 链接来源（CI-31 修正）：`docs` 目标的链接取应用注册表里 Docs 进程登记的启动地址；账户服务的 `SYNWEVO_APP_URL` 是它自己的地址，曾让邮件与账户外壳铃铛里的 Docs 链接指向 `accounts…/p/<id>`。只有 Docs 自己的进程才回退到 `SYNWEVO_APP_URL`；两者都没有时不给链接。
 * 每会话静音、仅提及：随消息功能接入。
 * 管理端不新增"通知仪表盘"；投递可在邮件管理页按 kind=`notification` 追踪。
+
+## 版本化摘要预算（Admin B3，2026-09-30，仅本地）
+
+`PlatformSettings`由唯一Store保存完整覆盖快照。发布、恢复默认和历史回滚都追加新版本；派发无进程缓存，在每收件人写事务中读取当前版本。`defer_reason`区分首次聚合、预算、免打扰与重试，只有旧版本预算等待能提前复核。旧投递迁移保持原`not_before`和未知版本NULL，不虚构执行确认。冻结/删除组织、当前成员资格、未读/静音/撤回均在入队前重新检查。
+
+配置界面与使用步骤见[管理员说明](admin-operations.md#配置与发布边界)；本批证据见[B3记录](../quality/admin-b3-settings-20260930.md)。私信邮件默认关闭、主动开启、无逐条邮件规则保持不变。

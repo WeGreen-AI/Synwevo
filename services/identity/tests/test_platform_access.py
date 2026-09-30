@@ -52,6 +52,10 @@ ROUTES = [
     ("POST", "/api/admin/workspaces/{wid}/unfreeze", "platform.workspaces.manage", True),
     ("GET", "/api/admin/organizations", "platform.orgs.view", False),
     ("POST", "/api/admin/organizations/{oid}/{action}", "platform.orgs.manage", True),
+    ("GET", "/api/admin/settings", "platform.config.view", False),
+    ("GET", "/api/admin/settings/history", "platform.config.view", False),
+    ("POST", "/api/admin/settings/preview", "platform.config.manage", False),
+    ("POST", "/api/admin/settings/publish", "platform.config.manage", True),
     ("GET", "/api/admin/registration", "platform.config.view", False),
     ("POST", "/api/admin/registration", "platform.config.manage", True),
     ("GET", "/api/admin/identity-providers", "platform.config.view", False),
@@ -142,6 +146,8 @@ def _path(template, w, *, legacy: str | None = None):
 def _call(client, method, path):
     if method == "GET":
         return client.get(path)
+    if path == "/api/admin/settings/preview":
+        return post(client, path, {"expected_revision": 0, "changes": {"notifications.conversation_digest_daily_cap": 9}})
     return post(client, path, {"reason": REASON, "status": "suspended", "mode": "open", "role": "auditor",
                                "user_id": "u_fixture_missing"})
 
@@ -725,7 +731,12 @@ def test_session_roster_and_explanation(world):
     assert by_email["root@example.test"]["last_sign_in_at"]
     assert by_email["auditor@example.test"]["roles"] == ["auditor"]
     assert "plain@example.test" not in by_email
-    assert "secret" not in json.dumps(roster) and "phc" not in json.dumps(roster)
+    # Static permission descriptions may say "non-secret"; the dynamic account/grant payload
+    # still contains neither secret fields nor password material.
+    assert "secret" not in json.dumps(roster["roster"]) and "phc" not in json.dumps(roster["roster"])
+    serialized = json.dumps(roster)
+    for password in store.all("SELECT phc FROM user_passwords"):
+        assert password["phc"] not in serialized
 
 
 # ---------------------------------------------------------------- migration and the rollback mirror

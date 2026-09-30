@@ -30,7 +30,10 @@ class Operation:
     risk: str
 
 
-OPERATIONS = {"admin.user.status": Operation("platform.users.manage", "high")}
+OPERATIONS = {
+    "admin.user.status": Operation("platform.users.manage", "high"),
+    "admin.settings.publish": Operation("platform.config.manage", "high"),
+}
 PREVIEW_SECONDS = 300
 
 
@@ -38,7 +41,41 @@ def canonical(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-class AccountOperations:
+class SignedPreview:
+    """Shared encoding for the small, explicitly registered administration operations.
+
+    Callers bind their own action, actor, scope, origin, inputs and current resource version.
+    The signature is proof of a preview, never authorization to execute it.
+    """
+
+    @staticmethod
+    def _environment(request):
+        # The origin comes from the host-validated request, never a submitted scope selector.
+        return str(request.base_url).rstrip("/")
+
+    def _key(self):
+        return hmac.new(Auth(self.store).secret(), b"synwevo/admin-preview/v1", hashlib.sha256).digest()
+
+    def _sign(self, value):
+        data = base64.urlsafe_b64encode(canonical(value).encode()).decode().rstrip("=")
+        return data + "." + hmac.new(self._key(), data.encode(), hashlib.sha256).hexdigest()
+
+    def _verify(self, token):
+        try:
+            if not isinstance(token, str) or len(token) > 8192:
+                raise ValueError()
+            data, sig = token.split(".")
+            if not hmac.compare_digest(sig, hmac.new(self._key(), data.encode(), hashlib.sha256).hexdigest()):
+                raise ValueError()
+            payload = json.loads(base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)))
+            if not isinstance(payload, dict) or payload.get("v") != 1:
+                raise ValueError()
+            return payload
+        except (ValueError, TypeError, UnicodeError):
+            raise ServiceError(409, "admin_preview_invalid", "请重新预览操作影响后再确认") from None
+
+
+class AccountOperations(SignedPreview):
     action = "admin.user.status"
 
     def __init__(self, store, audit):
@@ -92,32 +129,6 @@ class AccountOperations:
         counts = {"sessions": len(refs["sessions"]), "tokens": len(refs["oauth_tokens"]),
                   "pending_authentication": sum(len(refs[t]) for t in tables[2:])}
         return hashlib.sha256(canonical(version).encode()).hexdigest(), counts
-
-    @staticmethod
-    def _environment(request):
-        # The origin comes from the host-validated request, never a submitted scope selector.
-        return str(request.base_url).rstrip("/")
-
-    def _key(self):
-        return hmac.new(Auth(self.store).secret(), b"synwevo/admin-preview/v1", hashlib.sha256).digest()
-
-    def _sign(self, value):
-        data = base64.urlsafe_b64encode(canonical(value).encode()).decode().rstrip("=")
-        return data + "." + hmac.new(self._key(), data.encode(), hashlib.sha256).hexdigest()
-
-    def _verify(self, token):
-        try:
-            if not isinstance(token, str) or len(token) > 8192:
-                raise ValueError()
-            data, sig = token.split(".")
-            if not hmac.compare_digest(sig, hmac.new(self._key(), data.encode(), hashlib.sha256).hexdigest()):
-                raise ValueError()
-            payload = json.loads(base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)))
-            if not isinstance(payload, dict) or payload.get("v") != 1:
-                raise ValueError()
-            return payload
-        except (ValueError, TypeError, UnicodeError):
-            raise ServiceError(409, "admin_preview_invalid", "请重新预览操作影响后再确认") from None
 
     def preview(self, request, uid, status):
         actor = self._actor(request)

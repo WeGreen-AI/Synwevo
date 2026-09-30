@@ -152,6 +152,7 @@ def test_a_full_daily_budget_defers_even_after_the_minimum_interval_has_passed(e
     ("suspend", "reader inactive"), ("off", "channel off"), ("read", "read in app"),
     ("left", "no longer a member"), ("organization_member_removed", "no longer a member"),
     ("muted", "conversation muted"), ("recalled", "nothing unread"), ("postponed", None),
+    ("organization_frozen", "no longer a member"), ("organization_deleted", "no longer a member"),
 ])
 def test_current_state_is_rechecked_after_waiting_for_the_writer_lock(env, monkeypatch, change, expected):
     nid, cid, mid = conversation_item(env)
@@ -184,6 +185,9 @@ def test_current_state_is_rechecked_after_waiting_for_the_writer_lock(env, monke
                 store.execute("UPDATE conversation_members SET left_at=? WHERE conversation_id=? AND user_id=?", (now(), cid, uid))
             elif change == "organization_member_removed":
                 store.execute("DELETE FROM organization_memberships WHERE organization_id=? AND user_id=?", (env["oid"], uid))
+            elif change in ("organization_frozen", "organization_deleted"):
+                Organizations(store, env["ident"]).transition(env["oid"], env["users"]["owner"]["id"],
+                    "freeze" if change == "organization_frozen" else "delete", reason="Isolated queued notification lifecycle fixture")
             elif change == "muted":
                 store.execute("UPDATE conversation_members SET muted=1 WHERE conversation_id=? AND user_id=?", (cid, uid))
             elif change == "recalled":

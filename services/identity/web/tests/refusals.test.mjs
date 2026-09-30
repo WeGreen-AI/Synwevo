@@ -49,6 +49,7 @@ const SERVER = [
   { file: ID + "account_routes.py", surfaces: ["account"] },
   { file: ID + "admin_routes.py", surfaces: ["admin"] },
   { file: ID + "admin_operations.py", surfaces: ["admin"] },
+  { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "api_platform.py", surfaces: ["api"] },
   { file: ID + "approval_routes.py", surfaces: ["org"] },
   // re-authentication is asked for on every page that changes something
@@ -111,6 +112,8 @@ const SERVER = [
   { file: CORE + "api_platform.py", surfaces: ["api"] },
   // delegated platform roles: the one request check, grants and revocations (platform administration)
   { file: CORE + "platform_access.py", surfaces: ["admin"] },
+  { file: CORE + "platform_settings.py", fns: ["_entry"], surfaces: ALL },
+  { file: CORE + "platform_settings.py", surfaces: ["admin"] },
   { file: CORE + "api_quotas.py", surfaces: ["api"] },
   { file: CORE + "oauth_consent.py", surfaces: ["account"] },
   { file: CORE + "auth.py", fns: ["rotate_key"], surfaces: ["api"] },

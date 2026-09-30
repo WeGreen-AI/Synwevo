@@ -67,3 +67,8 @@ registerMessages({
   "免打扰时段：期间不发普通通知邮件，结束后再发；账户安全邮件不受影响": { en: "Quiet hours: ordinary notification e-mails are held until the window ends; account security e-mails are unaffected", "zh-Hant": "免打擾時段：期間不寄一般通知郵件，結束後再寄；帳戶安全郵件不受影響" },
   "开启后，这台设备会在通知中心有新内容时收到系统通知，关闭标签页也能收到；每台设备各自开启。推送哪些类别在上表设置。": { en: "Once enabled, this device receives a system notification when something new reaches your notification centre, even with the tab closed; each device is enabled separately. Which categories are pushed is set in the table above.", "zh-Hant": "開啟後，這台裝置會在通知中心有新內容時收到系統通知，關閉分頁也能收到；每台裝置各自開啟。推播哪些類別在上表設定。" },
 });
+
+registerMessages({
+  "消息不逐条发邮件。开启未读摘要后，首次等候 {window} 秒聚合，后续至少间隔 {interval} 秒，任意24小时内最多 {cap} 封；已读、静音或撤回的内容不寄出。": { en: "Messages are never emailed individually. After you enable unread digests, the initial aggregation window is {window} seconds, with at least {interval} seconds between subsequent emails and at most {cap} emails in any 24 hours. Read, muted or recalled content is excluded.", "zh-Hant": "訊息不逐則寄送電郵。開啟未讀摘要後，首次等候 {window} 秒彙整，後續至少間隔 {interval} 秒，任意24小時內最多 {cap} 封；已讀、靜音或收回的內容不寄出。" },
+  "当前摘要预算暂不可用，请刷新通知偏好。": { en: "The current digest budget is unavailable. Refresh notification preferences.", "zh-Hant": "目前摘要限額暫不可用，請重新讀取通知偏好。" },
+});
