@@ -18,6 +18,7 @@ import hashlib
 import socket
 import struct
 import threading
+import time
 
 EICAR = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
@@ -42,15 +43,38 @@ class ClamdDouble:
         self.port = self.srv.getsockname()[1]
         self.address = f"tcp://127.0.0.1:{self.port}"
         self._stop = False
-        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self._lock = threading.Lock()
+        self._connections: set[socket.socket] = set()
+        self._handlers: set[threading.Thread] = set()
+        self.thread = threading.Thread(target=self._serve, name="clamd-fixture-accept", daemon=True)
         self.thread.start()
 
     def close(self):
-        self._stop = True
+        with self._lock:
+            self._stop = True
+            connections = tuple(self._connections)
+            handlers = tuple(self._handlers)
+        # On Linux close() in another thread does not interrupt a blocking accept().
+        # Shutdown wakes it; active handlers also need waking when a frame was incomplete.
+        self._close_socket(self.srv)
+        for conn in connections:
+            self._close_socket(conn)
+        deadline = time.monotonic() + 2.0
+        threads = (self.thread, *handlers)
+        for thread in threads:
+            if thread is not threading.current_thread():
+                thread.join(max(0.0, deadline - time.monotonic()))
+        alive = [thread.name for thread in threads if thread.is_alive()]
+        if alive:
+            raise RuntimeError(f"Scanner fixture threads did not stop: {alive}")
+
+    @staticmethod
+    def _close_socket(sock):
         try:
-            self.srv.close()
+            sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
+        sock.close()
 
     def _serve(self):
         while not self._stop:
@@ -58,7 +82,26 @@ class ClamdDouble:
                 conn, _ = self.srv.accept()
             except OSError:
                 return
-            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+            with self._lock:
+                if self._stop:
+                    conn.close()
+                    return
+                thread = threading.Thread(target=self._connection, args=(conn,), name="clamd-fixture-handler", daemon=True)
+                self._connections.add(conn)
+                self._handlers.add(thread)
+                thread.start()
+
+    def _connection(self, conn):
+        try:
+            self._handle(conn)
+        except OSError:
+            if not self._stop:
+                raise
+        finally:
+            conn.close()
+            with self._lock:
+                self._connections.discard(conn)
+                self._handlers.discard(threading.current_thread())
 
     def _handle(self, conn: socket.socket):
         with conn:
