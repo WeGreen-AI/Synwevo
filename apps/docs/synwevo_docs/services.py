@@ -87,6 +87,7 @@ class App:
         self.scanner = M.scanner_for(self.scan_policy)
         self._scan_retry_lock = threading.Lock()
         self._scan_timers: dict[str, threading.Timer] = {}
+        self._closing = False
         self._src_cache: dict[tuple, SourceDoc] = {}
         self._cache_lock = threading.Lock()
         self.on_event = None          # set by the API layer: called after a job event is stored
@@ -453,9 +454,15 @@ class App:
     def _schedule_scan_retry(self, sid: str, delay: float) -> None:
         def fire():
             with self._scan_retry_lock:
+                if self._closing or self._scan_timers.get(sid) is not t:
+                    return
                 self._scan_timers.pop(sid, None)
-            self.parse_pool.submit(self._scan_then_parse, sid)
+                # Submission and shutdown share the lock: a fired timer must not submit
+                # after close() has shut down the executor.
+                self.parse_pool.submit(self._scan_then_parse, sid)
         with self._scan_retry_lock:
+            if self._closing:
+                return  # the persisted scan is resumed by the next process
             old = self._scan_timers.pop(sid, None)
             if old:
                 old.cancel()
@@ -1090,7 +1097,12 @@ class App:
     def close(self) -> None:
         """Release the parse pool at the end of the process. A parse that had not started stays
         'parsing' in the store and is picked up by the next process (`resume_parsing`)."""
-        self.parse_pool.shutdown(wait=False, cancel_futures=True)
+        with self._scan_retry_lock:
+            self._closing = True
+            for timer in self._scan_timers.values():
+                timer.cancel()
+            self._scan_timers.clear()
+            self.parse_pool.shutdown(wait=False, cancel_futures=True)
 
     stop = close                                        # the worker registry speaks stop()
 
