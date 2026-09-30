@@ -890,6 +890,17 @@ class Store:
         # the index current for a later upgrade); the new columns/tables are unused, not harmful.
         from .messaging_search import ensure_index as ensure_message_index
         ensure_message_index(c)
+        # Durable admin results commit alongside the mutation and its audit event. Additive:
+        # older releases ignore this table; no user or tenant identity is duplicated.
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS admin_operations (
+                id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL,
+                target_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+                result_json TEXT NOT NULL, created_at REAL NOT NULL,
+                UNIQUE(actor_id,idempotency_key)
+            );
+            CREATE INDEX IF NOT EXISTS ix_admin_operations_target ON admin_operations(target_id,created_at);
+        """)
         # v27: delegated platform permissions (platform_access.py). The grants table, then — once,
         # marked in `meta` in the same transaction so a crash cannot relabel it — every
         # `platform_role='admin'` becomes a super administrator grant from `migration:v27` and every

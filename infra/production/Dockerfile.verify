@@ -4,7 +4,10 @@ FROM ${RUNTIME_IMAGE}
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir -r requirements-dev.txt && pip check
+# The catalogue tests import the external SDK; it belongs only in this verification image.
+RUN pip install --no-cache-dir -r requirements-dev.txt \
+    && pip install --no-cache-dir --no-deps --no-build-isolation apps/docs/sdk/python \
+    && pip check
 COPY infra/production infra/production
 # Match repository test isolation and shared fixtures; runtime configuration is scrubbed before collection.
 COPY conftest.py ./conftest.py

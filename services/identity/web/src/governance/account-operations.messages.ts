@@ -1,0 +1,25 @@
+import { registerMessages } from "@synwevo/ui";
+export const accountOperationMessages = {
+  "操作预览无效，请重新预览影响。": { en: "The preview is invalid. Review the impact again.", "zh-Hant": "操作預覽無效，請重新預覽影響。" },
+  "操作预览已过期，请重新预览影响。": { en: "The preview expired. Review the impact again.", "zh-Hant": "操作預覽已過期，請重新預覽影響。" },
+  "账户或访问权限已变化，请重新预览影响。": { en: "The account or its access has changed. Review the impact again.", "zh-Hant": "帳戶或存取權限已變更，請重新預覽影響。" },
+  "请先预览操作影响，再确认执行。": { en: "Review the impact before confirming this action.", "zh-Hant": "請先預覽操作影響，再確認執行。" },
+  "账户状态已变化，请刷新后重试。": { en: "The account status changed. Refresh and try again.", "zh-Hant": "帳戶狀態已變更，請重新整理後重試。" },
+  "请通过应用身份管理操作该账户。": { en: "Manage this account through application identities.", "zh-Hant": "請透過應用程式身分管理操作該帳戶。" },
+  "操作编号已用于其他请求，请重新预览影响。": { en: "This operation ID was used for a different request. Review the impact again.", "zh-Hant": "操作編號已用於其他請求，請重新預覽影響。" },
+  "安全记录暂不可用，操作未提交，请稍后重试。": { en: "Security recording is unavailable. The action was not committed. Try again later.", "zh-Hant": "安全記錄暫不可用，操作未提交，請稍後重試。" },
+  "此操作仅影响这个账户；不会授予管理员任何文档或私信内容访问权。": { en: "This action affects only this account. It grants no access to documents or private messages.", "zh-Hant": "此操作僅影響這個帳戶；不會授予管理員任何文件或私訊內容存取權。" },
+  "请先查看操作影响。": { en: "Review the impact first.", "zh-Hant": "請先查看操作影響。" },
+  "正在核对账户与操作影响…": { en: "Checking the account and impact…", "zh-Hant": "正在核對帳戶與操作影響…" },
+  "状态：{before} → {after}": { en: "Status: {before} → {after}", "zh-Hant": "狀態：{before} → {after}" },
+  "撤销 {sessions} 个会话和 {tokens} 个应用令牌。": { en: "Sessions to revoke: {sessions}; application tokens: {tokens}.", "zh-Hant": "撤銷 {sessions} 個工作階段和 {tokens} 個應用程式權杖。" },
+  "作废 {count} 个待完成的登录或恢复凭据。": { en: "Invalidate {count} pending sign-in or recovery credentials.", "zh-Hant": "作廢 {count} 個待完成的登入或復原憑證。" },
+  "正在运行的任务和连接会在下一次权限检查时停止；已经生成的数据保留。": { en: "Running tasks and connections stop at their next permission check. Generated data is preserved.", "zh-Hant": "正在執行的任務和連線會在下一次權限檢查時停止；已經產生的資料保留。" },
+  "邮箱尚未验证，恢复后仍需本人完成邮箱验证；旧会话、令牌和找回链接不会恢复。": { en: "The account still needs email verification after restoration. Previous sessions, tokens and recovery links remain invalid.", "zh-Hant": "電子郵件尚未驗證，復原後仍需本人完成驗證；舊工作階段、權杖和找回連結不會復原。" },
+  "恢复后可以重新登录；旧会话、令牌和找回链接不会恢复。": { en: "The user can sign in again. Previous sessions, tokens and recovery links remain invalid.", "zh-Hant": "復原後可以重新登入；舊工作階段、權杖和找回連結不會復原。" },
+  "预览有效至 {time}。账户变化后必须重新预览。": { en: "Preview valid until {time}. Review again if the account changes.", "zh-Hant": "預覽有效至 {time}。帳戶變更後必須重新預覽。" },
+  "我已核对目标账户和上述影响。": { en: "I have checked the target account and these effects.", "zh-Hant": "我已核對目標帳戶和上述影響。" },
+  "重新预览影响": { en: "Review impact again", "zh-Hant": "重新預覽影響" },
+  "操作 {id} 已完成，账户状态为「{status}」。": { en: "Operation {id} completed. Account status: {status}.", "zh-Hant": "操作 {id} 已完成，帳戶狀態為「{status}」。" },
+};
+registerMessages(accountOperationMessages);

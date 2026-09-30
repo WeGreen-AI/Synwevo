@@ -51,7 +51,11 @@ _ORG_RECEIPT = "organization_withdrawal:"
 # undo a later assignment — a restore from a backup taken after a new claim keeps that claim.
 UNCLAIM_KIND = "workspace_unclaimed"
 #: Entries re-applied whatever the backup's time: their own rules decide what is still to do.
-ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND}
+# Older restore code must reject this new kind instead of silently losing a demotion.
+# Code rollback retains the mirror; recovery requires a reader supporting platform grants.
+PLATFORM_GRANT_KIND = "platform_grant_revoked"
+_PLATFORM_RECEIPT = "platform_withdrawal:"
+ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND}
 
 KINDS = {
     "api_platform_approval_revoked",  # {approval_id}, including unconsumed approvals
@@ -72,6 +76,7 @@ KINDS = {
     "workspace_app_disabled",   # {workspace_id, app_id}
     "invitation_revoked",       # {invitation_id}
     "api_key_superseded",       # {key_id} — a rotated-out key; the successor is not recreated
+    PLATFORM_GRANT_KIND,       # {event_id, user_id, grant_id, role, granted_at, granted_by}
     UNCLAIM_KIND,               # {workspace_id, label_restored} — the assignment of legacy data undone
     "consent_withdrawn",        # {user_id, client_id, workspace_id?} — the consent and that client's tokens
 } | ORGANIZATION_KINDS
@@ -88,6 +93,7 @@ _REQUIRED = {
     "workspace_frozen": ("workspace_id",), "webhook_disabled": ("subscription_id",),
     "passkey_removed": ("credential_id",), "workspace_app_disabled": ("workspace_id", "app_id"),
     "invitation_revoked": ("invitation_id",), "tokens_revoked": (),
+    PLATFORM_GRANT_KIND: ("event_id", "user_id", "grant_id", "role", "granted_by"),
     UNCLAIM_KIND: ("workspace_id",),
     "consent_withdrawn": ("user_id", "client_id"),
     **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
@@ -105,6 +111,9 @@ def _validate(entry, line: int) -> None:
     kind, at = entry.get("kind"), entry.get("at")
     if not isinstance(kind, str) or kind not in KINDS or type(at) not in (int, float) or not math.isfinite(at) or at < 0:
         bad()
+    if "account_event_id" in entry and (kind not in {"user_suspended", "sessions_revoked"}
+            or not isinstance(entry["account_event_id"], str) or not entry["account_event_id"].strip()):
+        bad()
     required = _REQUIRED[kind]
     if kind == "tokens_revoked":
         required = tuple(k for k in ("client_id", "user_id", "family_id") if k in entry)
@@ -112,6 +121,12 @@ def _validate(entry, line: int) -> None:
             bad()
     if any(not isinstance(entry.get(k), str) or not entry[k].strip() for k in required):
         bad()
+    if kind == PLATFORM_GRANT_KIND:
+        from .platform_access import ROLES
+        granted_at = entry.get("granted_at")
+        if (entry["role"] not in ROLES or type(granted_at) not in (int, float)
+                or not math.isfinite(granted_at) or not 0 <= granted_at <= at):
+            bad()
     if kind == "role_changed" and entry["role"] not in {"owner", "admin", "editor", "viewer"}:
         bad()
     if kind == UNCLAIM_KIND and type(entry.get("label_restored", False)) is not bool:
@@ -203,9 +218,42 @@ def record_organization(store: Store, kind: str, *, organization_id: str, **fiel
         c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_ORG_RECEIPT + eid,))
 
 
+def record_account(store: Store, kind: str, *, user_id: str, event_id: str) -> None:
+    """Write-ahead account withdrawal plus receipt, like organization withdrawals.
+
+    Existing kinds stay readable by older releases. New restores replay an unreceipted
+    intent even across the backup cutoff, and do not reapply a withdrawal already in a
+    backup after an explicit recovery. No credential or content enters this file.
+    """
+    if kind not in {"user_suspended", "sessions_revoked"}:
+        raise ValueError("not an account withdrawal")
+    with store.conn() as c:
+        if not c.in_transaction:
+            raise RuntimeError("account withdrawal requires a write transaction")
+        record(store, kind, user_id=user_id, account_event_id=event_id)
+        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", ("account_withdrawal:" + event_id,))
+
+
+def record_platform_revocation(store: Store, grant: dict, *, at: float) -> None:
+    """Persist the exact grant withdrawal before COMMIT, after its authorization and audit.
+
+    The receipt commits with the demotion. A failed fsync aborts the live change; a later
+    commit failure can leave a restrictive intent which recovery must honor. No mailbox,
+    administrator-supplied reason or credential is written to the journal.
+    """
+    with store.conn() as c:
+        if not c.in_transaction:
+            raise RuntimeError("platform withdrawal requires a write transaction")
+        eid = new_id("pw")
+        record(store, PLATFORM_GRANT_KIND, at=at, event_id=eid, user_id=grant["user_id"],
+               grant_id=grant["id"], role=grant["role"], granted_at=grant["granted_at"],
+               granted_by=grant["granted_by"])
+        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_PLATFORM_RECEIPT + eid,))
+
+
 def read(root: str | Path, since: float = 0.0) -> list[dict]:
     return [entry for entry, _ in validated_lines(path(root))
-            if entry["at"] > since or entry["kind"] in ALWAYS_REPLAYED]
+            if entry["at"] > since or entry["kind"] in ALWAYS_REPLAYED or entry.get("account_event_id")]
 
 
 def _apply_unclaim(c, e) -> int:
@@ -348,6 +396,46 @@ def _end_platform_grants(c, uid: str, t: float) -> None:
                                                       "reason": reason}, ensure_ascii=False)))
 
 
+def _apply_platform_revocation(store: Store, c, entry: dict) -> int:
+    """End the named grant, or its regenerated migration equivalent from a v26 backup.
+
+    A pre-v27 backup cannot hold the original grant ID. Store has just migrated its legacy
+    admin mirror into a new host grant. Its unchanged users.updated_at proves that this
+    mirror predates the withdrawal. A later legacy regrant updates that timestamp; a later
+    normal grant has a different ID and source. Neither is revoked by this old intent.
+    """
+    from .platform_access import PlatformAccess, SUPER_ADMIN, _system_audit
+    receipt = _PLATFORM_RECEIPT + entry["event_id"]
+    if c.execute("SELECT 1 FROM meta WHERE key=?", (receipt,)).fetchone():
+        return 0
+    uid, at = entry["user_id"], entry["at"]
+    exact = c.execute("SELECT * FROM platform_role_grants WHERE id=?", (entry["grant_id"],)).fetchone()
+    candidates = []
+    if exact:
+        if any(exact[key] != entry[key] for key in ("user_id", "role", "granted_at", "granted_by")):
+            raise ValueError("platform withdrawal does not match the restored grant; restore refused")
+        if exact["revoked_at"] is None:
+            candidates.append(dict(exact))
+    elif entry["role"] == SUPER_ADMIN:
+        candidates = [dict(row) for row in c.execute(
+            "SELECT g.* FROM platform_role_grants g JOIN users u ON u.id=g.user_id "
+            "WHERE g.user_id=? AND g.role=? AND g.revoked_at IS NULL "
+            "AND g.granted_by IN ('migration:v27','reconcile:mirror') AND g.granted_at>? "
+            "AND u.platform_role='admin' AND u.updated_at<=?", (uid, SUPER_ADMIN, at, at))]
+    for grant in candidates:
+        c.execute("UPDATE platform_role_grants SET revoked_at=?, revoked_by='system:journal_replay', "
+                  "revoke_reason='security_journal_replay' WHERE id=? AND revoked_at IS NULL",
+                  (at, grant["id"]))
+        _system_audit(store, "admin.platform.revoke", uid,
+                      {"grant_id": grant["id"], "role": grant["role"], "source": "system:journal_replay",
+                       "withdrawal_id": entry["event_id"], "original_grant_id": entry["grant_id"],
+                       "reason": "平台授权已撤销（安全日志重放）"})
+    if candidates:
+        PlatformAccess(store)._sync_mirror(uid, at)
+    c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (receipt,))
+    return len(candidates)
+
+
 def apply(store: Store, entries: list[dict]) -> dict:
     """Make every withdrawal in `entries` true in `store`. Returns counts per kind.
 
@@ -361,10 +449,21 @@ def apply(store: Store, entries: list[dict]) -> dict:
     demoted_orgs: set[str] = set()
     role_rank = {"viewer": 0, "editor": 1, "admin": 2, "owner": 3}
     with store.tx() as c:
+        from .platform_access import PlatformAccess
+        # A fresh/never-bootstrapped archive may legitimately have no administrator. Reject
+        # only a replay that removes the last usable one present at the start, whether by
+        # grant withdrawal, account suspension/deletion or loss of its last sign-in proof.
+        had_usable_super_admin = bool(PlatformAccess(store).usable_super_admins())
         for e in entries:
             k = e.get("kind")
             n = 0
-            if k in ORGANIZATION_KINDS:
+            account_event = e.get("account_event_id")
+            if account_event and c.execute("SELECT 1 FROM meta WHERE key=?",
+                                           ("account_withdrawal:" + account_event,)).fetchone():
+                continue
+            if k == PLATFORM_GRANT_KIND:
+                n = _apply_platform_revocation(store, c, e)
+            elif k in ORGANIZATION_KINDS:
                 n = _apply_organization(c, e, demoted_orgs, demoted_workspaces)
             elif k == UNCLAIM_KIND:
                 n = _apply_unclaim(c, e)
@@ -417,6 +516,10 @@ def apply(store: Store, entries: list[dict]) -> dict:
                     c.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
                     _end_platform_grants(c, uid, t)
                 else:
+                    for table in ("mfa_tickets", "webauthn_challenges"):
+                        c.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
+                    for table in ("email_tokens", "account_recoveries"):
+                        c.execute(f"UPDATE {table} SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
                     n = c.execute("UPDATE users SET status='suspended' WHERE id=? AND status IN ('active','pending')",
                                   (uid,)).rowcount
                 c.execute("UPDATE oauth_codes SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
@@ -433,6 +536,15 @@ def apply(store: Store, entries: list[dict]) -> dict:
                               (t, e.get("user_id"))).rowcount
                 c.execute("UPDATE oauth_tokens SET revoked_at=?, revoked_reason='journal_replay' WHERE user_id=? AND revoked_at IS NULL",
                           (t, e.get("user_id")))
+                if k == "sessions_revoked":
+                    # The live account operation also ends unfinished authentication. An old
+                    # backup must not turn its spent MFA/email/Passkey/OIDC proof into a new
+                    # session after its restored sessions were revoked. Match invalidate_access.
+                    for table in ("oauth_codes", "email_tokens"):
+                        c.execute(f"UPDATE {table} SET used_at=COALESCE(used_at,?) WHERE user_id=?",
+                                  (t, e["user_id"]))
+                    for table in ("mfa_tickets", "webauthn_challenges"):
+                        c.execute(f"DELETE FROM {table} WHERE user_id=?", (e["user_id"],))
                 if k == "password_changed":
                     c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
                               (f"password_reset_required:{e.get('user_id')}", str(t)))
@@ -493,7 +605,14 @@ def apply(store: Store, entries: list[dict]) -> dict:
                         n += c.execute(f"DELETE FROM {table} WHERE id=?", (e.get("credential_id"),)).rowcount
                     except Exception:  # noqa: BLE001 - table name differs across versions
                         pass
+            if account_event:
+                c.execute("INSERT OR IGNORE INTO meta (key,value) VALUES (?, '1')",
+                          ("account_withdrawal:" + account_event,))
             counts[k] = counts.get(k, 0) + n
+        if had_usable_super_admin and not PlatformAccess(store).usable_super_admins():
+            # Never resurrect a revoked administrator when the backup lacks its successor.
+            raise ValueError("restored backup has no usable super administrator after security withdrawals; "
+                             "restore refused; use a newer backup containing an authorized successor")
         for oid in sorted(demoted_orgs):
             owner = c.execute("SELECT 1 FROM organization_memberships m JOIN users u ON u.id=m.user_id "
                               "WHERE m.organization_id=? AND m.role='owner' "

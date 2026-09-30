@@ -124,7 +124,7 @@ export function PlatformAdminsTab({ onDenied, onOpen }: { onDenied: () => void; 
     {load.err && <div className="notice err" role="alert">{load.err} <button className="btn sm" onClick={load.reload}>{tr("重试")}</button></div>}
     {load.loading && <p role="status">{tr("加载中…")}</p>}
     <div className="list-wrap"><table className="gov" aria-label={tr("平台管理员名册")} aria-busy={load.loading}>
-      <thead><tr><th scope="col">{tr("账户")}</th><th scope="col">{tr("角色")}</th><th scope="col">{tr("身份确认")}</th><th scope="col">{tr("最近登录")}</th><th scope="col">{tr("操作")}</th></tr></thead>
+      <thead><tr><th scope="col">{tr("账户")}</th><th scope="col">{tr("角色")}</th><th scope="col">{tr("身份确认")}</th><th scope="col">{tr("最近登录")}</th><th scope="col" className="act">{tr("操作")}</th></tr></thead>
       <tbody>{!load.loading && !load.err && data?.roster.map((row) => <tr key={row.user.id}>
         <th scope="row">{row.user.display_name || "—"}<div className="who2">{row.user.email}</div>
           {row.blocked_by.length > 0 && <span className="cell-note err">{tr("该账户当前不可用，这些授权不生效。")}</span>}</th>
@@ -199,7 +199,7 @@ export function PlatformAccessDialog({ user, onClose, onChanged }: {
         {data.blocked_by.length > 0 && <p className="notice warn">{tr("该账户当前不可用，这些授权不生效。")}</p>}
         <div className="row gap8 wrap">{tr("身份确认")}<StepUpText step={data.step_up} /></div>
         <div className="list-wrap"><table className="gov" aria-label={tr("平台权限")}>
-          <thead><tr><th scope="col">{tr("角色")}</th><th scope="col">{tr("授予者")}</th><th scope="col">{tr("授予时间")}</th><th scope="col">{tr("到期")}</th><th scope="col">{tr("理由")}</th><th scope="col">{tr("操作")}</th></tr></thead>
+          <thead><tr><th scope="col">{tr("角色")}</th><th scope="col">{tr("授予者")}</th><th scope="col">{tr("授予时间")}</th><th scope="col">{tr("到期")}</th><th scope="col">{tr("理由")}</th><th scope="col" className="act">{tr("操作")}</th></tr></thead>
           <tbody>{data.grants.map((g) => <tr key={g.id}>
             <th scope="row">{platformRoleLabel(g.role)}{!g.counted && !data.blocked_by.length && <span className="cell-note">{tr("未计入：邮箱未验证")}</span>}</th>
             <td>{grantedByText(g)}</td><td>{fmtTime(g.granted_at)}</td><td>{g.expires_at ? fmtTime(g.expires_at) : tr("长期")}</td>

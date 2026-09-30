@@ -212,3 +212,19 @@
 - Google 多方审批页面没有说明请求何时过期，也没有说申请人能否自批。
 - Google 自定义角色页面没有分别说明控制台权限和 API 权限。
 - GitHub 组织页面没有写明最后一个 owner 能否被移除。
+
+
+## 2026-09-30 接续设计复核
+
+实际问题：旧会话快照可与撤权竞争；账户操作无法证明管理员确认的是哪一版目标。
+本轮重新读取 [OWASP Authorization](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) 与
+[Transaction Authorization](https://cheatsheetseries.owasp.org/cheatsheets/Transaction_Authorization_Cheat_Sheet.html)（访问2026-09-30）。
+适用理由：每请求检查还必须覆盖排队等待写锁后的执行时刻，确认必须绑定操作数据。
+实现：事务内重读真实会话/权限；五分钟签名影响预览、目标版本检查、幂等结果与审计同事务。
+验收：撤权/过期、目标变化、签名串改、换操作者/目标/源站、同键不同请求、审计失败回滚及旧凭据不复活。
+
+实际问题：旧后台平铺页面与独立 API 外壳让管理任务失去上下文。
+本轮重新读取 [Carbon Data table](https://carbondesignsystem.com/components/data-table/usage/) 与
+[Cloudflare account roles](https://developers.cloudflare.com/fundamentals/manage-members/roles/)（访问2026-09-30）。
+采用一致对象列表与按职责开放能力，保留 Synwevo 白蓝令牌和真实路由；不照搬产品外观。
+验收：同一导航/当前位置/范围标识、受权入口、API 深链接刷新、三语与手机键盘路径。

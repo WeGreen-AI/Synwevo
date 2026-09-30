@@ -39,7 +39,7 @@ Rules that are properties of the data rather than of a caller's discipline:
 * **Who counts.** A grant counts only for an account that is active, not deleted, not an
   application identity (`app_accounts`), and whose address is verified. The one exception to the
   last condition is a grant made under host authority (`HOST_SOURCES`: the v27 migration, the
-  bootstrap token, the CLI): the first administrator is created by bootstrap, which never verifies
+  bootstrap token, the CLI, or reconciliation of a legacy admin mirror after a rollback): the first administrator is created by bootstrap, which never verifies
   the address, so requiring it there would lock the only administrator out at migration. Host
   access is a stronger proof than a mail link; a delegated grant from another administrator is not.
 * **Holding is not granting.** Granting or revoking needs `platform.roles.assign`, and
@@ -75,10 +75,12 @@ Rules that are properties of the data rather than of a caller's discipline:
   carried into the grants when this release starts again, and a leftover `'operator'` (a role with
   no capability, D17) becomes `'none'` with an audit line.
 
-Grants are **not** written to the security journal (journal.py): a restore from a backup older
-than a revocation brings the grant back, exactly as a restore brought back `platform_role='admin'`
-before. Adding a journal kind makes the journal unreadable to the previous release, so it is left
-to the typed admin operations step (admin-coverage.md §3.1 B1-3).
+Explicit grant revocations are write-ahead entries in the security journal (`platform_grant_revoked`)
+with a receipt committed alongside the change. Recovery removes that exact grant, including the
+migration equivalent of a pre-v27 admin mirror, and preserves later deliberate regrants. A replay
+that removes the last usable super administrator is refused; an initially unbootstrapped backup
+may still be restored. Older restore tools reject this
+new kind; code rollback remains possible, but recovery must use a reader supporting these entries.
 """
 from __future__ import annotations
 
@@ -136,8 +138,9 @@ ROLES: dict[str, frozenset[str]] = {
 ROLE_ORDER = (SUPER_ADMIN, "access_admin", "support", "auditor", "api_platform_admin")
 assert set(ROLE_ORDER) == set(ROLES) and all(r <= set(PERMISSIONS) for r in ROLES.values())
 
-#: Grants made under host authority rather than by another administrator. See "Who counts".
-HOST_SOURCES = ("migration:v27", "bootstrap:web", "bootstrap:cli")
+#: Grants made under host authority rather than by another administrator. Reconciliation only
+#: carries an existing legacy admin mirror forward; it cannot be requested by an HTTP caller.
+HOST_SOURCES = ("migration:v27", "bootstrap:web", "bootstrap:cli", "reconcile:mirror")
 #: Delegated grants may expire; not later than this from now.
 MAX_EXPIRY_S = 366 * 24 * 3600
 MIN_EXPIRY_S = 5 * 60
@@ -519,10 +522,14 @@ class PlatformAccess:
                 raise ServiceError(404, "no_user", "找不到该账户")
             rows = self.store.all("SELECT * FROM platform_role_grants WHERE user_id=? AND revoked_at IS NULL "
                                   "ORDER BY granted_at, id", (target_id,))
-            out = [self._revoke(actor_id, g, reason) for g in rows]
+            # Complete every permission check and audit before any durable restore intent.
+            out = [self._revoke(actor_id, g, reason, journal=False) for g in rows]
+            from .journal import record_platform_revocation
+            for item in out:
+                record_platform_revocation(self.store, item["grant"], at=item["grant"]["revoked_at"])
         return {"revoked": [o["grant"]["id"] for o in out], "after": out[-1]["after"] if out else self.live_roles(target_id)}
 
-    def _revoke(self, actor_id: str, g: dict, reason: str) -> dict:
+    def _revoke(self, actor_id: str, g: dict, reason: str, *, journal: bool = True) -> dict:
         ts = _now()
         if g["revoked_at"] is not None:
             raise ServiceError(409, "grant_revoked", "这项授权已经撤销")
@@ -543,6 +550,9 @@ class PlatformAccess:
         self._audit("admin.platform.revoke", actor_id=actor_id, target=uid,
                     meta={"grant_id": g["id"], "role": g["role"], "before": before, "after": after,
                           "reason": reason})
+        if journal:
+            from .journal import record_platform_revocation
+            record_platform_revocation(self.store, g, at=ts)
         return {"grant": self.grant_row(g["id"]), "before": before, "after": after}
 
     # ------------------------------------------------------------------ host authority
@@ -631,7 +641,7 @@ def reconcile_mirror(store: Store, *, source: str) -> int:
                           reason=SYSTEM_REASONS["migration" if source == "migration:v27" else "rollback_grant"])
         changed += 1
     for row in store.all(
-            "SELECT g.id, g.user_id, u.status, u.deleted_at FROM platform_role_grants g JOIN users u ON u.id=g.user_id "
+            "SELECT g.*, u.status, u.deleted_at FROM platform_role_grants g JOIN users u ON u.id=g.user_id "
             "WHERE g.role=? AND g.revoked_at IS NULL AND u.platform_role<>'admin'", (SUPER_ADMIN,)):
         # Say what happened: a deleted account's mirror was cleared by the deletion (a journal
         # replay, or the previous release's sweep), not by a demotion.
@@ -642,6 +652,9 @@ def reconcile_mirror(store: Store, *, source: str) -> int:
         _system_audit(store, "admin.platform.revoke", row["user_id"],
                       {"grant_id": row["id"], "role": SUPER_ADMIN, "source": source, "reason": reason,
                        "cause": "users.platform_role 不再是 admin"})
+        if not deleted:
+            from .journal import record_platform_revocation
+            record_platform_revocation(store, row, at=ts)
         changed += 1
     return changed
 
@@ -702,7 +715,11 @@ def require_platform(request, permission: str | None, *, store: Store, audit=Non
     what is missing.
     """
     from .sessions import Sessions, admin_capable
-    s = getattr(request.state, "session", None)
+    # Admission may predate a queued write. Re-read without touching the idle clock; callers
+    # performing a mutation repeat this check inside its Store.tx() so revocation and execution
+    # serialize. Do not trust the request's earlier AMR or re-authentication window either.
+    s = Sessions(store).current(getattr(request.state, "session", None))
+    request.state.session = s
     if not s:
         raise ServiceError(401, "unauthorized", "请先登录")
     user = store.one("SELECT * FROM users WHERE id=? AND deleted_at IS NULL", (s["user_id"],))

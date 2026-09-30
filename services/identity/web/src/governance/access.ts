@@ -43,7 +43,7 @@ export type UserRow = { id: string; status: string; platform_roles?: string[]; o
 export function userOffers(held: Held, user: UserRow, meId: string | undefined) {
   const outranks = !!user.outranks_caller && user.id !== meId;
   const status = !held.has("platform.users.manage") ? offer(NOT_IN_ROLE)
-    : user.status === "active"
+    : ["active", "pending"].includes(user.status)
       ? offer(user.id === meId ? "不能停用自己的账户" : user.platform_roles?.length ? "请先撤销该账户的全部平台权限" : undefined)
       : offer(user.status !== "suspended" ? "只有已停用的账户可以恢复" : outranks ? OUTRANKS_YOU : undefined);
   const support = (extra?: string) => offer(!held.has("platform.users.support") ? NOT_IN_ROLE : outranks ? OUTRANKS_YOU : extra);

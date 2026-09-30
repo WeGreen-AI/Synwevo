@@ -4,6 +4,7 @@ import * as base from "../lib/labels";
 import { refusalText } from "../lib/refusals";
 import "./messages";
 import "./platform.messages";
+import "./account-operations.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -27,6 +28,14 @@ export function fmtDuration(seconds: number) {
   return t("{n} 小时", { n: Math.ceil(seconds / 3600) });
 }
 const errors: Record<string, string> = {
+  admin_preview_invalid: "操作预览无效，请重新预览影响。",
+  admin_preview_expired: "操作预览已过期，请重新预览影响。",
+  admin_preview_stale: "账户或访问权限已变化，请重新预览影响。",
+  admin_confirmation_required: "请先预览操作影响，再确认执行。",
+  account_state_conflict: "账户状态已变化，请刷新后重试。",
+  application_identity: "请通过应用身份管理操作该账户。",
+  idempotency_conflict: "操作编号已用于其他请求，请重新预览影响。",
+  journal_unavailable: "安全记录暂不可用，操作未提交，请稍后重试。",
   mail_config_invalid: "邮件服务配置无效，请联系部署管理员。",
   role_too_high: "不能管理同级或更高角色的成员",
   self_role: "不能修改自己的权限，请使用退出工作空间或移交所有权",

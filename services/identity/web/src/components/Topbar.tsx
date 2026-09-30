@@ -24,7 +24,7 @@ export function parentOf(pathname: string): { href: string; label: string } | nu
   return { href: "/account", label: "账户与安全" };
 }
 
-export function Topbar({ title, children }: { title: ReactNode; children?: ReactNode }) {
+export function Topbar({ title, children, product = "Account", mobileNavigation }: { title: ReactNode; children?: ReactNode; product?: "Account" | "Admin"; mobileNavigation?: ReactNode }) {
   const { t, locale } = useI18n();
   const { state, me, signOut } = useSession();
   const { pathname, search } = useLocation();
@@ -34,7 +34,7 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
   const narrow = useMediaQuery("(max-width: 720px)");
   useEffect(() => { rememberOrigin(search); }, [search]);
   useEffect(() => { if (!narrow) setOpen(false); }, [narrow]);
-  useEffect(() => { setOpen(false); }, [pathname]);
+  useEffect(() => { setOpen(false); }, [pathname, search]);
   const link = (destination: string) => {
     try {
       const url = new URL(destination, window.location.origin);
@@ -65,8 +65,8 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
       {/* Conversations are Synwevo Message's (CI-66): the registry address through its sign-in
           start; the account origin's own /messages (a server redirect) only while it is not registered. */}
       <MessagesLink href={messagesHref(state, { lang: locale })} />
-      {isAdmin && <a className="btn ghost sm" href={link("/admin")} aria-current={pathname === "/admin" ? "page" : undefined}>{t("平台管理")}</a>}
-      {canApi && <a className="btn ghost sm" href={link("/admin/api-platform")} aria-current={current("/admin/api-platform")}>{t("API 管理")}</a>}
+      {isAdmin && product !== "Admin" && <a className="btn ghost sm" href={link("/admin")} aria-current={pathname === "/admin" ? "page" : undefined}>{t("平台管理")}</a>}
+      {canApi && product !== "Admin" && <a className="btn ghost sm" href={link("/admin/api-platform")} aria-current={current("/admin/api-platform")}>{t("API 管理")}</a>}
     </>
   );
   const signOutButton = (
@@ -77,7 +77,7 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
     }}>{t(busy ? "正在退出…" : "退出登录")}</button>
   );
   return <><header className="topbar wrap acct-topbar">
-    <Brand href={platformHandoffUrl(state?.portal_url, { next: "/workspace", lang: locale }) ?? link("/")} product="Account" label={t("返回工作空间")} markBelow={720} />
+    <Brand href={product === "Admin" ? link("/admin") : platformHandoffUrl(state?.portal_url, { next: "/workspace", lang: locale }) ?? link("/")} product={product} label={t(product === "Admin" ? "管理员中心" : "返回工作空间")} markBelow={720} />
     <nav className="acct-back row gap4" aria-label={t("返回")}>
       {workspaceUrl && <a className="btn ghost sm acct-back-link acct-back-workspace" href={workspaceUrl}>← {t(narrow ? "工作空间" : "返回工作空间")}</a>}
       {appBack && <a className="btn ghost sm acct-back-link" href={link(appBack.url)} title={appBack.workspace_name ? t("回到「{name}」继续之前的任务", { name: appBack.workspace_name }) : undefined}>← {backLabel}</a>}
@@ -87,10 +87,11 @@ export function Topbar({ title, children }: { title: ReactNode; children?: React
     {narrow ? (
       <>
         <button type="button" className="btn ghost sm" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>{t("菜单")} <span aria-hidden="true">☰</span></button>
-        {open && <Drawer title={t("账户导航")} onClose={() => setOpen(false)}>
+        {open && <Drawer title={t(product === "Admin" ? "管理员导航" : "账户导航")} onClose={() => setOpen(false)}>
           {me && <div className="drawer-label" aria-hidden="true">{me.email}</div>}
           {workspaceUrl && <a className="btn ghost" href={workspaceUrl}>← {t("返回工作空间")}</a>}
           {appBack && <a className="btn ghost" href={link(appBack.url)}>← {backLabel}</a>}
+          {mobileNavigation && <>{mobileNavigation}<hr /></>}
           {items}
           <hr />
           <div className="row gap8 wrap" style={{ padding: "4px 8px" }}><NotificationBell preferencesHref={link("/account#notifications")} /><LanguageMenu /></div>

@@ -39,6 +39,7 @@ ROUTES = [
     ("GET", "/api/admin/overview", "platform.overview.view", False),
     ("GET", "/api/admin/session", None, False),
     ("GET", "/api/admin/users", "platform.users.view", False),
+    ("POST", "/api/admin/users/{uid}/status-preview", "platform.users.manage", False),
     ("POST", "/api/admin/users/{uid}/status", "platform.users.manage", True),
     ("POST", "/api/admin/users/{uid}/recovery", "platform.users.support", True),
     ("POST", "/api/admin/users/{uid}/revoke-sessions", "platform.users.support", True),
@@ -482,7 +483,11 @@ def test_restoring_is_for_suspended_accounts_and_by_an_administrator_who_outrank
     r = post(access, f"/api/admin/users/{third['id']}/status", {"status": "active", "reason": REASON})
     assert r.status_code == 403 and r.json()["error"] == "target_outranks_actor", r.text
     assert ident.get_user(third["id"])["status"] == "suspended"
-    r = post(root, f"/api/admin/users/{third['id']}/status", {"status": "active", "reason": REASON})
+    preview = post(root, f"/api/admin/users/{third['id']}/status-preview", {"status": "active"})
+    assert preview.status_code == 200, preview.text
+    r = post(root, f"/api/admin/users/{third['id']}/status",
+             {"status": "active", "reason": REASON, "preview_token": preview.json()["preview_token"],
+              "idempotency_key": "fixture-restore-third-super"})
     assert r.status_code == 200 and ident.get_user(third["id"])["status"] == "active"
 
 
@@ -521,17 +526,21 @@ def test_two_super_admins_revoking_each_other_at_once_leave_exactly_one(world, m
     reauth(a)
     reauth(b)
     grant_a, grant_b = grant_of(world, world["root"], SUPER_ADMIN), grant_of(world, second, SUPER_ADMIN)
-    # Both requests pass the route's permission check before either reaches the service, so the
-    # outcome is decided by the re-check inside the write transaction (the pause substitutes no
-    # authorization result; it only orders the two real calls).
+    # Both requests pass their first permission check before either enters the write
+    # transaction. The second check and service execute under the writer lock; putting the
+    # barrier inside that lock would deadlock the fixture instead of exercising the race.
+    from synwevo_identity import admin_routes
     admitted, results = threading.Barrier(2, timeout=10), {}
-    original = PlatformAccess.revoke
+    original = admin_routes.require_platform
 
-    def after_admission(self, *args, **kwargs):
-        admitted.wait()
-        return original(self, *args, **kwargs)
+    def after_admission(request, *args, **kwargs):
+        actor = original(request, *args, **kwargs)
+        if not getattr(request.state, "fixture_admission_synchronized", False):
+            request.state.fixture_admission_synchronized = True
+            admitted.wait()
+        return actor
 
-    monkeypatch.setattr(PlatformAccess, "revoke", after_admission)
+    monkeypatch.setattr(admin_routes, "require_platform", after_admission)
 
     def revoke(name, client, gid):
         results[name] = post(client, f"/api/admin/platform-grants/{gid}/revoke", {"reason": REASON})
@@ -543,9 +552,11 @@ def test_two_super_admins_revoking_each_other_at_once_leave_exactly_one(world, m
     for t in threads:
         t.join()
     codes = sorted(r.status_code for r in results.values())
-    assert codes[0] == 200 and codes[1] in (403, 409), {k: v.text for k, v in results.items()}
+    # The writer-lock recheck sees the losing caller's only grant has ended. As for every
+    # caller with no platform permission, that is the same masked 404 as an absent route.
+    assert codes == [200, 404], {k: v.text for k, v in results.items()}
     loser = next(r for r in results.values() if r.status_code != 200)
-    assert loser.json()["error"] in ("platform_permission_denied", "last_super_admin")
+    assert loser.json()["error"] == "not_found"
     assert len(ident.platform_admins()) == 1
     assert store.one("SELECT COUNT(*) AS n FROM platform_role_grants WHERE role='super_admin' AND revoked_at IS NULL")["n"] == 1
     assert store.one("SELECT COUNT(*) AS n FROM users WHERE platform_role='admin'")["n"] == 1, "回滚镜像同步"

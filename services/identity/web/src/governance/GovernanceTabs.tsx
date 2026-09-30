@@ -67,12 +67,12 @@ export function MailTab({ onDenied, held }: Props) {
     {manage.hint && <p className="notice" role="note">{t("你的平台角色可以查看邮件投递，但不能重试。")}</p>}
     {load.err && <p className="notice err" role="alert">{load.err}</p>}
     {load.loading && <p role="status">{t("加载中…")}</p>}
-    <div className="list-wrap"><table className="gov" aria-label={t("邮件投递")} aria-busy={load.loading}><thead><tr>{["收件人", "类型", "状态", "尝试次数", "时间", "操作"].map(label => <th scope="col" key={label}>{t(label)}</th>)}</tr></thead>
+    <div className="list-wrap"><table className="gov" aria-label={t("邮件投递")} aria-busy={load.loading}><thead><tr>{["收件人", "类型", "状态", "尝试次数", "时间", "操作"].map(label => <th scope="col" className={label === "操作" ? "act" : undefined} key={label}>{t(label)}</th>)}</tr></thead>
       <tbody>{!load.loading && !load.err && load.data?.items.map(row => <tr key={row.id}>
         <th scope="row">{row.to_addr}<div className="who2 mono">{row.id}</div></th><td>{kinds[row.kind] || t("其他邮件")}</td>
         <td>{MAIL_STATE[row.status] || row.status}{row.error_code && <span className="cell-note">{failure(row.error_code)} <code>{row.error_code}</code></span>}</td>
         <td>{row.attempts}</td><td>{fmtTime(row.created_at)}{row.sent_at && <span className="cell-note">{t("寄出时间：{time}", { time: fmtTime(row.sent_at) })}</span>}{row.next_attempt_at && <span className="cell-note">{t("下一次尝试：{time}", { time: fmtTime(row.next_attempt_at) })}</span>}</td>
-        <td><button className="btn sm" disabled={!row.retryable || mode === "disabled" || manage.disabled} onClick={() => setRetry(row)}>{t("生成新链接并重试")}</button></td>
+        <td className="act"><button className="btn sm" disabled={!row.retryable || mode === "disabled" || manage.disabled} onClick={() => setRetry(row)}>{t("生成新链接并重试")}</button></td>
       </tr>)}{!load.loading && !load.err && !load.data?.items.length && <tr><td colSpan={6}>{t("没有匹配的邮件。")}</td></tr>}</tbody>
     </table></div><PageControls offset={load.offset} total={load.data?.total || 0} busy={load.loading || !!load.err} onPage={load.setOffset} />
     {retry && <ActionDialog title={t("生成新链接并重试")} confirmLabel={t("重新排队")} reason="required"
@@ -101,10 +101,10 @@ export function OrganizationsTab({ onDenied, held }: Props) {
     <div className="row gap12 wrap"><label className="field grow">{t("搜索组织名称或编号")}<input className="input" type="search" maxLength={100} value={q} onChange={e => setQ(e.target.value)} /></label>
       <label className="field">{t("状态")}<select className="input" value={status} onChange={e => setStatus(e.target.value)}><option value="">{t("全部状态")}</option>{Object.entries(names).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label></div>
     {load.err && <p className="notice err" role="alert">{load.err}</p>}{load.loading && <p role="status">{t("加载中…")}</p>}
-    <div className="list-wrap"><table className="gov" aria-label={t("组织治理")} aria-busy={load.loading}><thead><tr>{["组织", "状态", "成员", "工作空间", "操作"].map(label => <th scope="col" key={label}>{t(label)}</th>)}</tr></thead>
+    <div className="list-wrap"><table className="gov" aria-label={t("组织治理")} aria-busy={load.loading}><thead><tr>{["组织", "状态", "成员", "工作空间", "操作"].map(label => <th scope="col" className={label === "操作" ? "act" : undefined} key={label}>{t(label)}</th>)}</tr></thead>
       <tbody>{!load.loading && !load.err && load.data?.items.map(org => <tr key={org.id}>
         <th scope="row">{org.name}<div className="who2 mono">{org.id}</div></th><td>{names[org.status]}{org.recover_until && <span className="cell-note">{t("恢复期限：{time}", { time: fmtTime(org.recover_until) })}</span>}</td><td>{org.members}</td><td>{org.workspaces}</td>
-        <td><div className="row gap4 wrap">{org.role && <a className="btn sm" href={`/organizations/${encodeURIComponent(org.id)}`}>{t("组织设置")}</a>}
+        <td className="act"><div className="row gap4 wrap">{org.role && <a className="btn sm" href={`/organizations/${encodeURIComponent(org.id)}`}>{t("组织设置")}</a>}
           {org.role === "owner" ? (org.status === "deleted" ? ["recover"] : [org.status === "active" ? "freeze" : "unfreeze", "delete"]).map(kind => <button className="btn sm" key={kind} disabled={manage.disabled || (kind === "recover" && (!org.recover_until || org.recover_until * 1000 <= Date.now()))} onClick={() => setAction({ org, kind })}>{actions[kind]}</button>) : <span className="muted small">{t("生命周期操作需要组织所有者权限")}</span>}</div></td>
       </tr>)}{!load.loading && !load.err && !load.data?.items.length && <tr><td colSpan={5}>{t("没有匹配的组织。")}</td></tr>}</tbody>
     </table></div><PageControls offset={load.offset} total={load.data?.total || 0} busy={load.loading || !!load.err} onPage={load.setOffset} />

@@ -48,6 +48,7 @@ const ALL = ["signin", "account", "org", "admin", "members", "api"];
 const SERVER = [
   { file: ID + "account_routes.py", surfaces: ["account"] },
   { file: ID + "admin_routes.py", surfaces: ["admin"] },
+  { file: ID + "admin_operations.py", surfaces: ["admin"] },
   { file: ID + "api_platform.py", surfaces: ["api"] },
   { file: ID + "approval_routes.py", surfaces: ["org"] },
   // re-authentication is asked for on every page that changes something

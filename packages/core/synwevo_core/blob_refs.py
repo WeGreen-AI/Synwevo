@@ -50,6 +50,7 @@ FILE_ROOTS: tuple[tuple[str, str, str], ...] = (
 #: Columns that look like a digest but are not a blob reference, with the reason.
 LOOKALIKES: tuple[tuple[str, str, str], ...] = (
     ("idempotency", "request_hash", "请求指纹，不是 blob"),
+    ("admin_operations", "request_hash", "管理操作的幂等请求指纹，不是 blob"),
     ("organization_idempotency", "request_hash", "请求指纹，不是 blob"),
     ("organization_idempotency", "key_hash", "幂等键的哈希，不是 blob"),
     ("api_keys", "secret_hash", "密钥哈希，不是 blob"),

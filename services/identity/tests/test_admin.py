@@ -73,6 +73,16 @@ def _reauth(client):
     return r
 
 
+def _confirmed_status(client, uid, status, reason):
+    """Exercise the same bound preview and per-attempt key as the administration form."""
+    import uuid
+    preview = post(client, f"/api/admin/users/{uid}/status-preview", {"status": status})
+    assert preview.status_code == 200, preview.text
+    return post(client, f"/api/admin/users/{uid}/status",
+                {"status": status, "reason": reason, "preview_token": preview.json()["preview_token"],
+                 "idempotency_key": uuid.uuid4().hex})
+
+
 # ---------------------------------------------------------------- access
 def test_an_ordinary_account_cannot_see_the_admin_backend(env):
     """404, not 403: an ordinary account learns nothing about what exists here."""
@@ -204,8 +214,7 @@ def test_suspending_ends_the_existing_sessions_too(env):
     c, plain = env["c"], env["plain"]
     assert plain.get("/api/auth/me").status_code == 200
     _reauth(c)
-    r = post(c, f"/api/admin/users/{env['alice']['id']}/status",
-               {"status": "suspended", "reason": "离职交接完成，停用账户"})
+    r = _confirmed_status(c, env['alice']['id'], "suspended", "离职交接完成，停用账户")
     assert r.status_code == 200 and r.json()["sessions_revoked"] >= 1
     assert plain.get("/api/auth/me").status_code == 401, "停用在下一次请求生效，不是等会话过期"
 
@@ -223,8 +232,7 @@ def test_the_last_administrator_cannot_be_suspended(env):
     grant = PlatformAccess(env["store"]).live_grants(second["id"])[0]
     r = post(c, f"/api/admin/platform-grants/{grant['id']}/revoke", {"reason": "第二位管理员已完成交接"})
     assert r.status_code == 200, r.text
-    r = post(c, f"/api/admin/users/{second['id']}/status",
-               {"status": "suspended", "reason": "这个不是管理员，可以停用"})
+    r = _confirmed_status(c, second['id'], "suspended", "这个不是管理员，可以停用")
     assert r.status_code == 200
 
 
@@ -321,12 +329,10 @@ def test_suspension_revokes_tokens_and_restoring_does_not_bring_them_back(env):
     from synwevo_core import journal, oidc
     raw = _live_token(env)
     _reauth(env["c"])
-    r = post(env["c"], f"/api/admin/users/{env['alice']['id']}/status",
-             {"status": "suspended", "reason": "账户疑似被盗，先停用"})
+    r = _confirmed_status(env["c"], env['alice']['id'], "suspended", "账户疑似被盗，先停用")
     assert r.status_code == 200 and r.json()["tokens_revoked"] == 1 and r.json()["journaled"] is True
     assert oidc.Grants(env["store"]).load_access(raw) is None
-    r = post(env["c"], f"/api/admin/users/{env['alice']['id']}/status",
-             {"status": "active", "reason": "已确认安全，恢复账户"})
+    r = _confirmed_status(env["c"], env['alice']['id'], "active", "已确认安全，恢复账户")
     assert r.status_code == 200
     assert oidc.Grants(env["store"]).load_access(raw) is None, "恢复账户不能让被盗的令牌复活"
     assert any(e["kind"] == "user_suspended" for e in journal.read(env["store"].root))
