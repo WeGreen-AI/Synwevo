@@ -358,3 +358,25 @@ def test_restore_fences_inflight_scoped_passkey_proofs(recovery, no_journal):
         assert Sessions(w.store).current(session)
     finally:
         w.snapshot._close(restored)
+
+
+@pytest.mark.parametrize("no_journal", [False, True])
+def test_restore_invalidates_pending_super_offers_and_keeps_accepted_history(recovery, no_journal):
+    """Synthetic offer rows exercise the real restored-copy fence in both recovery modes."""
+    from synwevo_core.store import now
+    w = recovery
+    ts = now()
+    for state in ("pending", "accepted", "ready", "cancelled"):
+        w.store.execute("INSERT INTO platform_super_admin_offers(id,proposer_id,proposer_grant_id,recipient_id,reason,"
+                        "created_at,expires_at,state) VALUES (?,?,?,?,?,?,?,?)",
+                        ("fixture-offer-" + state, w.a["id"], "fixture-source-grant", w.b["id"], "Fixture restore intent", ts, ts+86400, state))
+    archive = _backup(w)
+    restored = _restore(w, archive, no_journal=no_journal)
+    try:
+        pending = restored.one("SELECT * FROM platform_super_admin_offers WHERE id='fixture-offer-pending'")
+        assert pending["state"] == "invalidated" and pending["closed_reason"] == "restored_invalidated"
+        for state in ("accepted", "ready", "cancelled"):
+            assert restored.one("SELECT state FROM platform_super_admin_offers WHERE id=?", ("fixture-offer-" + state,))["state"] == state
+        assert w.store.one("SELECT state FROM platform_super_admin_offers WHERE id='fixture-offer-pending'")["state"] == "pending"
+    finally:
+        w.snapshot._close(restored)

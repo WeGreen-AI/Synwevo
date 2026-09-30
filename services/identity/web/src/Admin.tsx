@@ -1,4 +1,5 @@
 import { SettingsTab } from "./governance/SettingsTab";
+import { SuperAdminOffersAdmin, SuperAdminReadiness } from "./governance/SuperAdminHandover";
 import { MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
 import { PlatformAccessDialog, PlatformAdminsTab, platformRoleLabel, platformRolesText, ROLE_ORDER, systemReasonText } from "./governance/PlatformAccess";
@@ -78,9 +79,11 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
   const onDenied = useCallback(() => setDenied(true), []);
   if (denied) return <PageState><div className="big">{tr("页面不存在")}</div><a href="/account">{tr("前往账户设置")}</a></PageState>;
   return <>
+    <SuperAdminReadiness onInspect={setAccess} onChanged={() => setAccessRevision(value => value + 1)} />
     {tab === "overview" && <OverviewTab onDenied={onDenied} held={held} />}
     {tab === "users" && <UsersTab revision={accessRevision} onDenied={onDenied} onAccess={setAccess} held={held} />}
-    {tab === "admins" && <PlatformAdminsTab key={accessRevision} onDenied={onDenied} onOpen={setAccess} />}
+    {tab === "admins" && <><PlatformAdminsTab key={accessRevision} onDenied={onDenied} onOpen={setAccess} />
+      {held.has("platform.roles.assign_super") && <SuperAdminOffersAdmin key={`offers-${accessRevision}`} />}</> }
     {tab === "workspaces" && <WorkspacesTab onDenied={onDenied} held={held} />}
     {tab === "organizations" && <OrganizationsTab onDenied={onDenied} held={held} />}
     {tab === "registration" && <SettingsTab onDenied={onDenied} held={held} />}

@@ -938,6 +938,29 @@ class Store:
         # table is ignored and `platform_role` still says who the super administrators are.
         from .platform_access import SCHEMA_SQL as PLATFORM_ACCESS_SCHEMA, reconcile_mirror
         c.executescript(PLATFORM_ACCESS_SCHEMA)
+        # B4: recipient-owned UV acceptance and a separate administrator readiness proof.
+        # Existing grants remain grandfathered; pending offers confer no authority.
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS platform_super_admin_offers (
+                id TEXT PRIMARY KEY, proposer_id TEXT NOT NULL, proposer_grant_id TEXT NOT NULL,
+                recipient_id TEXT NOT NULL, reason TEXT NOT NULL, created_at REAL NOT NULL,
+                expires_at REAL NOT NULL, state TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(state IN ('pending','accepted','ready','declined','cancelled','expired','invalidated')),
+                closed_at REAL, closed_by TEXT, closed_reason TEXT,
+                accepted_grant_id TEXT UNIQUE, accepted_at REAL, accepted_session_id TEXT,
+                accepted_challenge_id TEXT, accepted_passkey_id TEXT,
+                ready_at REAL, ready_session_id TEXT, ready_challenge_id TEXT, ready_passkey_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_super_offers_recipient ON platform_super_admin_offers(recipient_id,created_at,id);
+            CREATE INDEX IF NOT EXISTS ix_super_offers_proposer ON platform_super_admin_offers(proposer_id,state);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_super_offers_pending ON platform_super_admin_offers(recipient_id) WHERE state='pending';
+        """)
+        with self.tx() as t:
+            for table, column in (("platform_role_grants", "offer_id"),
+                                  ("reauth_challenges", "context_kind"), ("reauth_challenges", "context_id")):
+                if column not in {r["name"] for r in t.execute(f"PRAGMA table_info({table})")}:
+                    t.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            t.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_platform_grant_offer ON platform_role_grants(offer_id)")
         with self.tx():
             first = not self.one("SELECT 1 AS x FROM meta WHERE key='platform_grants.migrated'")
             reconcile_mirror(self, source="migration:v27" if first else "reconcile:mirror")

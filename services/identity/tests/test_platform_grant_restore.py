@@ -43,6 +43,10 @@ def backup(store, tmp_path, name):
 
 def grant(world, role="support"):
     store, root, target = world
+    if role == SUPER_ADMIN:
+        # This fixture isolates journal/mirror semantics. Real recipient UV acceptance and
+        # accepted-vs-ready restore protection are covered by test_admin_handover.
+        return PlatformAccess(store).host_grant(target["id"], role, source="fixture:restore", reason=REASON)["grant"]
     return PlatformAccess(store).grant(root["id"], target["id"], role, REASON)["grant"]
 
 

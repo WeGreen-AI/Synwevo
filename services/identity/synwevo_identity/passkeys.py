@@ -259,10 +259,12 @@ class Passkeys:
         return self.store.all("SELECT * FROM passkeys WHERE user_id=? AND deleted_at IS NULL "
                               "AND rp_id=? AND uv_capable=1 ORDER BY id", (user_id, rp_id()))
 
-    def begin_reauthentication(self, admitted: dict, scope: str, origin: str) -> dict:
+    def begin_reauthentication(self, admitted: dict, scope: str, origin: str, *,
+                               context_kind: str | None = None, context_id: str | None = None) -> dict:
         import webauthn
         from synwevo_core.sessions import REAUTH_SCOPES
         from webauthn.helpers.structs import PublicKeyCredentialDescriptor, UserVerificationRequirement
+        self._reauth_context(context_kind, context_id)
         if scope not in REAUTH_SCOPES or origin not in allowed_origins():
             raise ServiceError(400, "bad_scope", "请选择有效的身份确认用途")
         with self.store.tx():
@@ -274,16 +276,26 @@ class Passkeys:
                 rp_id=rp_id(), allow_credentials=[PublicKeyCredentialDescriptor(id=_b64d(k["credential_id"])) for k in keys],
                 user_verification=UserVerificationRequirement.REQUIRED, timeout=CHALLENGE_TTL_S * 1000)
             # Requests are limited at the route. Bound reclamation to keep this write small;
-            # the periodic sweep handles the rest. Revoked sessions never authorize finish.
+            # the periodic sweep handles the rest. A consumed dedicated proof remains until
+            # expiry: its grant transaction still checks that receipt after the spend commits.
+            # Revoked sessions never authorize finish.
             ts = now()
             self.store.execute("DELETE FROM reauth_challenges WHERE id IN (SELECT r.id FROM reauth_challenges r "
-                               "LEFT JOIN sessions s ON s.id=r.session_id WHERE r.expires_at<=? OR r.used_at IS NOT NULL "
+                               "LEFT JOIN sessions s ON s.id=r.session_id WHERE r.expires_at<=? "
+                               "OR (r.used_at IS NOT NULL AND r.context_kind IS NULL) "
                                "OR s.id IS NULL OR s.revoked_at IS NOT NULL LIMIT 200)", (ts,))
             self.store.execute("INSERT INTO reauth_challenges (id,user_id,session_id,purpose,scope,challenge,"
-                               "rp_id,origin,created_at,expires_at) VALUES (?,?,?,'reauth',?,?,?,?,?,?)",
+                               "rp_id,origin,created_at,expires_at,context_kind,context_id) VALUES (?,?,?,'reauth',?,?,?,?,?,?,?,?)",
                                (new_id("rc"), session["user_id"], session["id"], scope, _b64e(opts.challenge),
-                                rp_id(), origin, ts, ts + CHALLENGE_TTL_S))
+                                rp_id(), origin, ts, ts + CHALLENGE_TTL_S, context_kind, context_id))
             return json.loads(webauthn.options_to_json(opts))
+
+    @staticmethod
+    def _reauth_context(kind, identifier):
+        if kind is None and identifier is None:
+            return
+        if kind not in ("super_admin_accept", "super_admin_ready") or not isinstance(identifier, str) or not identifier:
+            raise ValueError("invalid dedicated reauthentication context")
 
     @staticmethod
     def _reauth_client_data(response: dict) -> dict:
@@ -298,32 +310,37 @@ class Passkeys:
         except (ValueError, TypeError, KeyError):
             raise ServiceError(400, "no_challenge", "身份确认已过期或已使用，请重新开始") from None
 
-    def spend_reauthentication(self, admitted: dict, scope: str, response: dict, origin: str) -> dict:
+    def spend_reauthentication(self, admitted: dict, scope: str, response: dict, origin: str, *,
+                               context_kind: str | None = None, context_id: str | None = None) -> dict:
         """Claim this proof once, in its own transaction, before doing cryptographic work.
 
         Failure afterwards cannot unspend a captured response. The following writer transaction
         still rechecks the session, account and credential before marking any confirmation.
         """
+        self._reauth_context(context_kind, context_id)
         value = self._reauth_client_data(response)["challenge"].rstrip("=")
         with self.store.tx() as tx:
             session = self.current_reauth_session(admitted)
             row = self.store.one("SELECT * FROM reauth_challenges WHERE challenge=? AND purpose='reauth' "
                                  "AND user_id=? AND session_id=? AND scope=? AND origin=? AND rp_id=? "
-                                 "AND used_at IS NULL AND expires_at>?",
-                                 (value, session["user_id"], session["id"], scope, origin, rp_id(), now()))
+                                 "AND context_kind IS ? AND context_id IS ? AND used_at IS NULL AND expires_at>?",
+                                 (value, session["user_id"], session["id"], scope, origin, rp_id(), context_kind, context_id, now()))
             if not row or not tx.execute("UPDATE reauth_challenges SET used_at=? WHERE id=? "
                                          "AND used_at IS NULL AND expires_at>?", (now(), row["id"], now())).rowcount:
                 raise ServiceError(400, "no_challenge", "身份确认已过期或已使用，请重新开始")
             return row
 
-    def verify_reauthentication(self, admitted: dict, scope: str, row: dict, response: dict) -> dict:
+    def verify_reauthentication(self, admitted: dict, scope: str, row: dict, response: dict, *,
+                                context_kind: str | None = None, context_id: str | None = None) -> dict:
         """Verify current user, RP, origin, UP and UV while the caller holds Store.tx()."""
         import webauthn
+        self._reauth_context(context_kind, context_id)
         with self.store.conn() as connection:
             if not connection.in_transaction:
                 raise RuntimeError("reauthentication verification requires a write transaction")
         session = self.current_reauth_session(admitted)
         if (row["user_id"] != session["user_id"] or row["session_id"] != session["id"] or row["scope"] != scope
+                or row.get("context_kind") != context_kind or row.get("context_id") != context_id
                 or row["purpose"] != "reauth" or row["rp_id"] != rp_id() or row["origin"] not in allowed_origins()
                 or row["expires_at"] <= now()):
             raise ServiceError(400, "no_challenge", "身份确认已过期或已使用，请重新开始")

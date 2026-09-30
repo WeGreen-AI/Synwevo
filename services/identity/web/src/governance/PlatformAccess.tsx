@@ -3,6 +3,7 @@ import { get, post } from "@synwevo/auth-client";
 import { fmtTime, Modal, t as tr, useI18n, useToast } from "@synwevo/ui";
 import { useLoad } from "../lib/hooks";
 import { ActionDialog } from "./ActionDialog";
+import { SuperAdminOfferDialog } from "./SuperAdminHandover";
 import { useAdminData } from "./data";
 import { errText } from "./labels";
 import "./messages";
@@ -92,6 +93,7 @@ type Explained = {
   user_id: string; email: string; status: string; email_verified: boolean; blocked_by: string[]; step_up: StepUp;
   roles: string[]; permissions: { permission: string; sources: { role: string }[] }[]; grants: Grant[];
   assignable_roles: string[];
+  can_offer_super_admin?: boolean; offer_refusal?: string | null;
   /** Why nothing can be granted, when `assignable_roles` is empty and the account lacks a role. */
   assign_refusal?: string | null;
   /** The server's catalogue: each built-in role and its permissions. */
@@ -159,8 +161,10 @@ export function PlatformAccessDialog({ user, onClose, onChanged }: {
   const [step, setStep] = useState<{ kind: "grant" } | { kind: "revoke"; grant: Grant } | null>(null);
   const [role, setRole] = useState("");
   const [days, setDays] = useState(0);
+  const [offering, setOffering] = useState(false);
+  const [offerResult, setOfferResult] = useState<string | null>(null);
   const data = load.data;
-  const assignable = data?.assignable_roles || [];
+  const assignable = (data?.assignable_roles || []).filter(role => role !== "super_admin");
   const chosen = role && assignable.includes(role) ? role : assignable[0] || "";
   const done = (message: string) => { setStep(null); load.reload(); onChanged(); toast(message, "ok"); };
 
@@ -191,10 +195,12 @@ export function PlatformAccessDialog({ user, onClose, onChanged }: {
   return <><Modal title={tr("平台权限：{email}", { email: user.email })} onClose={onClose} size="wide"
     footer={<><span className="spacer" />
       <button type="button" className="btn" onClick={onClose}>{tr("关闭")}</button>
+      {data?.can_offer_super_admin && <button type="button" className="btn" onClick={() => setOffering(true)}>{tr("发起最高管理员接任")}</button>}
       <button type="button" className="btn primary" disabled={!data || !assignable.length} onClick={() => { setRole(chosen); setDays(0); setStep({ kind: "grant" }); }}>{tr("授予平台角色")}</button></>}>
     <div className="col gap12">
       {load.loading && <p role="status">{tr("加载中…")}</p>}
       {!!load.error && <div className="notice err" role="alert">{errText(load.error)} <button className="btn sm" onClick={load.reload}>{tr("重试")}</button></div>}
+      {offerResult && <div className="notice ok col gap8" role="status"><p>{offerResult}</p><label className="field">{tr("接任入口（须由指定账户本人登录）")}<input className="input" readOnly value={`${window.location.origin}/account#admin-handover`} onFocus={event => event.target.select()} /></label></div>}
       {data && <>
         {data.blocked_by.length > 0 && <p className="notice warn">{tr("该账户当前不可用，这些授权不生效。")}</p>}
         <div className="row gap8 wrap">{tr("身份确认")}<StepUpText step={data.step_up} /></div>
@@ -217,5 +223,7 @@ export function PlatformAccessDialog({ user, onClose, onChanged }: {
         </details>}
       </>}
     </div>
-  </Modal>{confirm}</>;
+  </Modal>{confirm}{offering && <SuperAdminOfferDialog user={user} onClose={() => setOffering(false)} onDone={out => {
+    setOffering(false); load.reload(); onChanged(); setOfferResult(tr("接任提议已创建，操作编号：{id}。请让 {email} 在本人的账户与安全页接受。", { id: out.operation_id, email: user.email }));
+  }} />}</>;
 }

@@ -52,6 +52,13 @@ ROUTES = [
     ("POST", "/api/admin/workspaces/{wid}/unfreeze", "platform.workspaces.manage", True),
     ("GET", "/api/admin/organizations", "platform.orgs.view", False),
     ("POST", "/api/admin/organizations/{oid}/{action}", "platform.orgs.manage", True),
+    ("GET", "/api/admin/super-admin-offers", "platform.roles.assign_super", False),
+    ("POST", "/api/admin/super-admin-offers/preview", "platform.roles.assign_super", False),
+    ("POST", "/api/admin/super-admin-offers", "platform.roles.assign_super", True),
+    ("POST", "/api/admin/super-admin-offers/{oid}/cancel", "platform.roles.assign_super", True),
+    ("GET", "/api/admin/super-admin-offers/{oid}/readiness", "platform.roles.assign_super", False),
+    ("POST", "/api/admin/super-admin-offers/{oid}/ready/begin", "platform.roles.assign_super", False),
+    ("POST", "/api/admin/super-admin-offers/{oid}/ready/finish", "platform.roles.assign_super", False),
     ("GET", "/api/admin/settings", "platform.config.view", False),
     ("GET", "/api/admin/settings/history", "platform.config.view", False),
     ("POST", "/api/admin/settings/preview", "platform.config.manage", False),
@@ -188,6 +195,12 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
         elif dangerous:
             # past the permission check, stopped by the strict re-authentication: nothing changed
             assert r.status_code == 403 and r.json()["error"] == "reauth_required", (role, method, path, r.text)
+        elif template.startswith("/api/admin/super-admin-offers/"):
+            # These routes require a recipient-owned offer or a valid target. The matrix
+            # intentionally supplies neither; all lower roles must still fail permission first.
+            code = "super_offer_bad_target" if template.endswith("/preview") else "admin_confirmation_required" \
+                if template.endswith("/finish") else "super_offer_not_found"
+            assert r.status_code == (400 if code != "super_offer_not_found" else 404) and r.json()["error"] == code, (role, path, r.text)
         else:
             assert r.status_code == 200, (role, method, path, r.text)
     overview, mutation = c.get(CONSOLE_GET), post(c, CONSOLE_POST, {"reason": REASON})
@@ -295,7 +308,8 @@ def test_a_super_administrator_grants_and_revokes_through_the_routes(world):
     assert explained["roles"] == ["support"] and explained["grants"][0]["granted_by_email"] == "root@example.test"
     assert {p["permission"] for p in explained["permissions"]} == ROLES["support"]
     assert all(p["sources"][0]["role"] == "support" for p in explained["permissions"])
-    assert SUPER_ADMIN in explained["assignable_roles"] and "support" not in explained["assignable_roles"]
+    assert SUPER_ADMIN not in explained["assignable_roles"] and "support" not in explained["assignable_roles"]
+    assert explained["can_offer_super_admin"]
     r = post(root, f"/api/admin/platform-grants/{body['grant']['id']}/revoke", {"reason": REASON})
     assert r.status_code == 200 and r.json()["after"] == []
     ev = store.one("SELECT meta FROM audit_events WHERE action='admin.platform.revoke' AND object_id=?", (target["id"],))
@@ -322,9 +336,9 @@ def test_grant_preconditions_close_d2(world):
         assert r.json()["error"] == code, (code, r.text)
         assert r.status_code == (404 if code == "no_user" else 409)
     assert not store.one("SELECT 1 AS x FROM platform_role_grants WHERE user_id<>?", (world["root"]["id"],))
-    # the compatibility route applies the same rules
+    # The compatibility promotion no longer grants the highest role without recipient proof.
     r = post(root, f"/api/admin/users/{pending['id']}/platform-role", {"role": "admin", "reason": REASON})
-    assert r.json()["error"] == "target_pending"
+    assert r.json()["error"] == "super_admin_acceptance_required"
     assert post(root, f"/api/admin/users/{world['plain']['id']}/platform-role",
                 {"role": "operator", "reason": REASON}).json()["error"] == "operator_retired"
 
@@ -575,9 +589,9 @@ def _passkey(store, user, rp_id: str) -> None:
                   (f"pk_{user['id']}_{rp_id}", user["id"], f"cred-{user['id']}-{rp_id}", "fixture-public-key", rp_id, now()))
 
 
-def test_a_current_uv_passkey_allows_a_passwordless_super_administrator_to_take_over(world):
-    """Strict UV signatures are exercised in test_passkey_reauth; this metadata fixture
-    verifies the capability and delegation policy."""
+def test_existing_host_granted_passwordless_admin_with_current_uv_is_usable(world):
+    """Existing/host-granted capability fixture. Actual UV succession is independently
+    exercised in test_admin_handover; this metadata does not prove acceptance."""
     store, ident = world["store"], world["ident"]
     target = verified(store, ident, "passkey-only@example.test", password=None)
     from synwevo_identity.passkeys import rp_id
@@ -587,7 +601,8 @@ def test_a_current_uv_passkey_allows_a_passwordless_super_administrator_to_take_
     root = world["login"](world["root"])
     reauth(root)
     result = post(root, f"/api/admin/users/{target['id']}/platform-grants", {"role": SUPER_ADMIN, "reason": REASON})
-    assert result.status_code == 200, result.text
+    assert result.status_code == 409 and result.json()["error"] == "super_admin_acceptance_required"
+    make_platform_admin(store, target)  # Explicit host fixture, never acceptance evidence.
     assert {u["id"] for u in ident.platform_admins()} == {world["root"]["id"], target["id"]}
     PlatformAccess(store).revoke(target["id"], grant_of(world, world["root"], SUPER_ADMIN)["id"], REASON)
     assert [u["id"] for u in ident.platform_admins()] == [target["id"]]
@@ -790,7 +805,7 @@ def test_the_rollback_mirror_follows_every_grant_and_carries_a_rollbacks_changes
     PlatformAccess(store).revoke(a["id"], grant_of({"store": store}, b, SUPER_ADMIN)["id"], REASON)
     assert role_of(b) == "none"
     # the previous release, during a rollback, demoted `a` and promoted `delegated` in the column
-    PlatformAccess(store).grant(a["id"], b["id"], SUPER_ADMIN, REASON)
+    make_platform_admin(store, b)  # Host fixture for mirror behavior, not an ordinary handover.
     legacy_platform_role_row(store, a, "none")
     legacy_platform_role_row(store, delegated, "admin")
     reopened = Store(tmp_path / "d")

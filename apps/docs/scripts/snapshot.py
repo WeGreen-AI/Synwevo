@@ -560,6 +560,9 @@ def fence(data_dir: Path, *, since: float | None, journal_dir: Path | None,
                 "UPDATE reauth_challenges SET used_at=? WHERE used_at IS NULL",
                 "UPDATE rp_auth_requests SET used_at=? WHERE used_at IS NULL",
             ))
+            report["super_admin_offers_invalidated"] = run(
+                "UPDATE platform_super_admin_offers SET state='invalidated',closed_at=?,closed_by='system:restore', "
+                "closed_reason='restored_invalidated' WHERE state='pending'", (t,))
             # Nothing is re-sent. A delivery pending in the backup was either delivered by the
             # live system afterwards or given up on; sending it again from a restored copy is a
             # duplicate the receiver never asked for.

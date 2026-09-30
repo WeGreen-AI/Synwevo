@@ -52,13 +52,17 @@ Rules that are properties of the data rather than of a caller's discipline:
   counts again the moment the account is restored, so restoring it is acting on a super
   administrator.
 * **Nobody changes their own authority to assign.** No one grants to or revokes from themselves a
-  role that carries an assigning permission: no self-escalation, no self-demotion. A hand-over is
-  "grant the successor → the successor signs in and completes step-up → the successor revokes".
-* **At least one usable super administrator.** Usable means counted *and able to administer*:
-  every grant, revocation and configuration change asks for the strict re-authentication, which
-  accepts a password or a scoped Passkey ceremony with user verification. TOTP alone does not
-  prove this confirmation. A super administrator grant needs one usable strict method
-  (409 `target_cannot_reauth`). Revoking the last usable
+  role that carries an assigning permission: no self-escalation, no self-demotion. A new highest
+  role requires a different administrator's proposal and the recipient's dedicated real UV
+  acceptance. Ordinary `grant(super_admin)` refuses; host/bootstrap authority remains explicit.
+* **At least one usable super administrator.** Existing and host grants retain their current
+  capability policy. New offer-linked grants also require an exact matching, completed readiness
+  record: the recipient has entered the admin surface and proved a second dedicated UV challenge.
+  Acceptance is a real grant but is not yet a usable successor. Readiness does not expire by the
+  clock; current account, grant and authentication capability still apply. Ordinary dangerous
+  operations continue to require separate strict scoped reauthentication by password or Passkey
+  UV; dedicated acceptance/readiness never refreshes that generic scope. TOTP alone is not such a
+  confirmation. Revoking the last usable
   super administrator is refused with 409 `last_super_admin`, checked inside the same
   `BEGIN IMMEDIATE` transaction as the write, so two super administrators revoking each other at
   the same moment cannot both succeed. Suspension of any grant holder is refused (`demote_first`)
@@ -79,7 +83,9 @@ with a receipt committed alongside the change. Recovery removes that exact grant
 migration equivalent of a pre-v27 admin mirror, and preserves later deliberate regrants. A replay
 that removes the last usable super administrator is refused; an initially unbootstrapped backup
 may still be restored. Older restore tools reject this
-new kind; code rollback remains possible, but recovery must use a reader supporting these entries.
+new kind; recovery must use a reader supporting these entries. An older release also lacks the
+B4 acceptance/readiness and challenge-context rules: additive schema is not a promise that a code
+downgrade preserves these protections (docs/platform/admin-handover.md).
 """
 from __future__ import annotations
 
@@ -317,8 +323,11 @@ class PlatformAccess:
                 "totp": totp, "reauth": password or passkey}
 
     def usable_super_admins(self, *, excluding: str | None = None) -> list[dict]:
-        """Active, verified (or host-granted) super administrators who can complete both the
-        step-up and the strict re-authentication (see "At least one usable super administrator")."""
+        """Currently capable highest administrators; offer-linked grants must also be ready.
+
+        Grandfathered/host grants keep their existing capability policy. A pending readiness
+        proof must not unlock removal of the last administrator who was already usable.
+        """
         rows = self.store.all(
             "SELECT DISTINCT u.* FROM users u JOIN platform_role_grants g ON g.user_id=u.id "
             "WHERE g.role=? AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>?) "
@@ -328,7 +337,11 @@ class PlatformAccess:
 
     def is_usable_super_admin(self, user_or_id) -> bool:
         user = self._user(user_or_id)
-        if not user or not any(g["role"] == SUPER_ADMIN for g in self.counted_grants(user)):
+        if not user or not any(g["role"] == SUPER_ADMIN and (
+                not g.get("offer_id") or self.store.one(
+                    "SELECT 1 FROM platform_super_admin_offers WHERE id=? AND accepted_grant_id=? "
+                    "AND recipient_id=? AND state='ready' AND ready_at IS NOT NULL",
+                    (g["offer_id"], g["id"], user["id"]))) for g in self.counted_grants(user)):
             return False
         step = self.step_up(user["id"])
         # A super administrator who cannot re-authenticate can grant, revoke
@@ -425,6 +438,31 @@ class PlatformAccess:
             _system_audit(self.store, action, target, meta)
 
     def grant(self, actor_id: str, target_id: str, role: str, reason: str, expires_at=None) -> dict:
+        return self._grant(actor_id, target_id, role, reason, expires_at)
+
+    def _grant_accepted_offer(self, offer_id: str) -> dict:
+        """Internal: the UV verifier has written this exact acceptance receipt in our writer tx.
+
+        No HTTP field may supply this receipt. The surrounding operation commits proof, role,
+        current session factor, result and audit together, or rolls them all back.
+        """
+        with self.store.conn() as c:
+            if not c.in_transaction:
+                raise RuntimeError("offer acceptance requires a write transaction")
+        offer = self.store.one("SELECT * FROM platform_super_admin_offers WHERE id=? AND state='pending' "
+                               "AND accepted_challenge_id IS NOT NULL AND accepted_passkey_id IS NOT NULL", (offer_id,))
+        if not offer:
+            raise ServiceError(409, "super_admin_acceptance_required", "最高管理员须由本人通过安全密钥接受提议")
+        challenge = self.store.one("SELECT 1 FROM reauth_challenges WHERE id=? AND user_id=? AND session_id=? "
+                                   "AND context_kind='super_admin_accept' AND context_id=? AND used_at IS NOT NULL",
+                                   (offer["accepted_challenge_id"], offer["recipient_id"], offer["accepted_session_id"], offer_id))
+        original = self.grant_row(offer["proposer_grant_id"])
+        if not challenge or not original or original["user_id"] != offer["proposer_id"] or original["role"] != SUPER_ADMIN \
+                or original["revoked_at"] is not None or offer["expires_at"] <= _now():
+            raise ServiceError(409, "super_offer_authority_changed", "提议的原授权已失效，请由最高管理员重新发起")
+        return self._grant(offer["proposer_id"], offer["recipient_id"], SUPER_ADMIN, offer["reason"], offer_id=offer_id)
+
+    def _grant(self, actor_id: str, target_id: str, role: str, reason: str, expires_at=None, *, offer_id=None) -> dict:
         if role not in ROLES:
             raise ServiceError(400, "bad_platform_role", "请选择一个内置平台角色")
         reason = _reason(reason)
@@ -443,6 +481,8 @@ class PlatformAccess:
                 raise ServiceError(403, "self_assignment",
                                    "不能给自己授予或撤销带授权能力的平台角色，请由另一位最高管理员操作")
             self._precondition(target_id, role)
+            if role == SUPER_ADMIN and not offer_id:
+                raise ServiceError(409, "super_admin_acceptance_required", "最高管理员须由本人通过安全密钥接受提议")
             live = self.store.one("SELECT * FROM platform_role_grants WHERE user_id=? AND role=? "
                                   "AND revoked_at IS NULL", (target_id, role))
             replaced = None
@@ -457,14 +497,15 @@ class PlatformAccess:
             before = self.live_roles(target_id)
             gid = new_id("pg")
             self.store.execute(
-                "INSERT INTO platform_role_grants (id,user_id,role,granted_by,granted_at,reason,expires_at) "
-                "VALUES (?,?,?,?,?,?,?)", (gid, target_id, role, actor_id, ts, reason, expires_at))
+                "INSERT INTO platform_role_grants (id,user_id,role,granted_by,granted_at,reason,expires_at,offer_id) "
+                "VALUES (?,?,?,?,?,?,?,?)", (gid, target_id, role, actor_id, ts, reason, expires_at, offer_id))
             self._sync_mirror(target_id, ts)
             after = self.live_roles(target_id)
             tightened = self._tighten_sessions(target_id)
-            self._audit("admin.platform.grant", actor_id=actor_id, target=target_id,
+            self._audit("admin.platform.grant", actor_id=target_id if offer_id else actor_id, target=target_id,
                         meta={"grant_id": gid, "role": role, "before": before, "after": after,
                               "reason": reason, "expires_at": expires_at, "sessions_tightened": tightened,
+                              **({"offer_id": offer_id, "authorized_by": actor_id} if offer_id else {}),
                               **({"replaced_expired_grant": replaced} if replaced else {})})
         return {"grant": self.grant_row(gid), "before": before, "after": after, "sessions_tightened": tightened}
 

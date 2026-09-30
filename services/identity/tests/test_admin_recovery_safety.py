@@ -59,7 +59,7 @@ def test_failed_suspension_intent_cannot_lock_out_a_later_authorized_successor(w
     receipt = "account_withdrawal:" + intent["account_event_id"]
     assert not store.one("SELECT value FROM meta WHERE key=?", (receipt,))
     access = PlatformAccess(store)
-    access.grant(root["id"], target["id"], "super_admin", REASON)
+    access.host_grant(target["id"], "super_admin", source="fixture:restore", reason=REASON)
     root_grant = access.live_grants(root["id"])[0]
     access.revoke(target["id"], root_grant["id"], REASON)
     restored = Store(backup(store, tmp_path, "after-legitimate-succession"))

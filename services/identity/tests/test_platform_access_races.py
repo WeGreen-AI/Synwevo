@@ -95,7 +95,12 @@ def test_inflight_session_touch_cannot_undo_a_platform_grants_shorter_idle_windo
     def after_session_read(sql, args=()):
         if sql.startswith("UPDATE sessions SET last_seen_at=") and not interleaved:
             interleaved.append(True)
-            PlatformAccess(store).grant(root["id"], target["id"], role, REASON)
+            if role == SUPER_ADMIN:
+                # Host fixture isolates stale session touching; accepted-role idle policy is
+                # covered through actual dedicated signatures in test_admin_handover.
+                PlatformAccess(store).host_grant(target["id"], role, source="fixture:idle", reason=REASON)
+            else:
+                PlatformAccess(store).grant(root["id"], target["id"], role, REASON)
         return original(sql, args)
 
     monkeypatch.setattr(store, "execute", after_session_read)

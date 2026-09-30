@@ -50,6 +50,7 @@ const SERVER = [
   { file: ID + "admin_routes.py", surfaces: ["admin"] },
   { file: ID + "admin_operations.py", surfaces: ["admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
+  { file: ID + "admin_handover.py", surfaces: ["account", "admin"] },
   { file: ID + "api_platform.py", surfaces: ["api"] },
   { file: ID + "approval_routes.py", surfaces: ["org"] },
   // re-authentication is asked for on every page that changes something
@@ -111,6 +112,7 @@ const SERVER = [
   { file: CORE + "api_platform.py", fns: ["enforce_principal"], surfaces: [], why: "checked on Synwevo Docs' business API, not in this shell" },
   { file: CORE + "api_platform.py", surfaces: ["api"] },
   // delegated platform roles: the one request check, grants and revocations (platform administration)
+  { file: CORE + "platform_access.py", fns: ["_grant_accepted_offer"], surfaces: ["account", "admin"] },
   { file: CORE + "platform_access.py", surfaces: ["admin"] },
   { file: CORE + "platform_settings.py", fns: ["_entry"], surfaces: ALL },
   { file: CORE + "platform_settings.py", surfaces: ["admin"] },

@@ -887,8 +887,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     @r.post("/users/{uid}/platform-role")
     def set_platform_role(request: Request, uid: str, body: dict = Body(...)):
         """Compatibility with older clients, through the grant service and all its rules:
-        `admin` grants `super_admin`, `none` revokes every live grant of the account (one
-        transaction), `operator` is refused — it never carried a capability (D17)."""
+        `admin` now requires the dedicated recipient acceptance flow; `none` revokes every
+        live grant atomically. `operator` is refused — it never carried a capability (D17)."""
         actor = _admin(request, ASSIGN, dangerous=True)
         role = (body.get("role") or "").strip()
         if role == "operator":
@@ -901,8 +901,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             actor = _admin(request, ASSIGN, dangerous=True)
             access = _access(request)
             if role == "admin":
-                if SUPER_ADMIN not in {g["role"] for g in access.live_grants(uid)}:
-                    access.grant(actor["id"], uid, SUPER_ADMIN, reason)
+                access._require_actor(actor["id"], SUPER_ADMIN)
+                raise ServiceError(409, "super_admin_acceptance_required", "最高管理员须由本人通过安全密钥接受提议")
             else:
                 access.revoke_all(actor["id"], uid, reason)
             return {"ok": True, "role": role, "platform_roles": access.roles(uid)}
@@ -989,7 +989,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         explained = PlatformAccess(store).explain(uid)
         held = actor["platform_permissions"]
         live = {g["role"] for g in explained["grants"]}
-        open_roles = [r for r in sorted_roles(ROLES) if r not in live]
+        open_roles = [r for r in sorted_roles(ROLES) if r not in live and r != SUPER_ADMIN]
         refusals = {r: _assign_refusal(held, actor["id"], uid, r) for r in open_roles}
         explained["assignable_roles"] = [r for r in open_roles if refusals[r] is None]
         # When nothing can be granted, the reason the page shows (the first role's; for a caller
@@ -999,6 +999,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         for g in explained["grants"]:
             g["revoke_refusal"] = _assign_refusal(held, actor["id"], uid, g["role"])
             g["revocable"] = g["revoke_refusal"] is None
+        from .admin_handover import offer_eligibility
+        refusal = offer_eligibility(store, actor["id"], uid)
+        explained["can_offer_super_admin"] = refusal is None
+        explained["offer_refusal"] = refusal
         explained["caller_permissions"] = sorted_permissions(held)
         explained["catalogue"] = catalogue()["roles"]
         return explained

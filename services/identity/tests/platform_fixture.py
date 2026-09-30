@@ -1,7 +1,7 @@
 """Test fixture: platform grants for test accounts, labelled as a fixture.
 
-In the product a platform role is granted by an administrator through `PlatformAccess.grant`
-(with every rule it enforces) or under host authority (bootstrap token, CLI). A test that only
+In the product a delegated role uses `PlatformAccess.grant`; a new highest role needs the
+recipient's actual UV acceptance and readiness. Host authority (bootstrap token, CLI) is explicit. A test that only
 needs "this account is an administrator" uses this helper instead: the grant goes through the
 same service (`PlatformAccess.host_grant`, which keeps the `users.platform_role` mirror in step)
 with the source `fixture:tests`, and the address is marked verified, as a delegated
