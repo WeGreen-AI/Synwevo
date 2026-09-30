@@ -797,6 +797,9 @@ class Identity:
         unused token is invalidated so two concurrent bootstraps cannot both succeed.
         """
         import hashlib
+        if isinstance(ttl_s, bool) or not isinstance(ttl_s, int) or not 60 <= ttl_s <= 3600:
+            raise ServiceError(400, "bad_bootstrap_ttl", "引导令牌有效期须为 60 至 3600 秒",
+                               {"field": "ttl", "min": 60, "max": 3600})
         raw = secrets.token_urlsafe(32)
         ts = now()
         with self.store.tx() as t:

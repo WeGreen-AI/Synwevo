@@ -9,10 +9,12 @@
  * domain change simply will not be offered again. That is shown as a fact on the row rather
  * than left as a key that mysteriously stops working.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { del, get, patch, post } from "@synwevo/auth-client";
 import { useToast, useI18n } from "@synwevo/ui";
-import { errorText } from "../pages/account/common";
+import { MfaReauthPrompt, mfaErrorText, requiresMfaReauth, useMfaStateRefresh } from "./MfaSection";
+import { manualCreationOptions, toJSON, type PublicKeyCredentialCreationOptionsJSON } from "../lib/webauthn";
+export { b64urlToBuf, bufToB64url, toJSON } from "../lib/webauthn";
 
 type Passkey = {
   id: string;
@@ -36,7 +38,6 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
   const [data, setData] = useState<Listing | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [password, setPassword] = useState("");
   const [name, setName] = useState("");
 
   const load = useCallback(async () => {
@@ -44,26 +45,16 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
       setData(await get<Listing>("/api/auth/passkeys"));
       setErr(null);
     } catch (e) {
-      setErr(errorText(e, t));
+      setErr(mfaErrorText(e, t));
     }
   }, [t]);
-  useEffect(() => { void load(); }, [load]);
-
-  async function reauth(): Promise<boolean> {
-    if (!password) {
-      setErr(t("请输入你的口令"));
-      return false;
-    }
-    await post("/api/auth/reauth", { password, scope: "mfa" });
-    setPassword("");
-    return true;
-  }
+  useMfaStateRefresh(load);
 
   async function enrol() {
+    if (!data?.reauth_fresh || busy) return;
     setBusy(true);
     setErr(null);
     try {
-      if (!(await reauth())) return;
       const options = await post<PublicKeyCredentialCreationOptionsJSON>(
         "/api/auth/passkeys/register/begin", {});
       // Built-in parser where available; the manual path keeps older browsers working.
@@ -73,18 +64,19 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
           }).parseCreationOptionsFromJSON(options)
         : manualCreationOptions(options);
       const cred = await navigator.credentials.create({ publicKey }) as PublicKeyCredential | null;
-      if (!cred) throw new Error(t("没有收到安全密钥的响应"));
+      if (!cred) { setErr(t("没有收到安全密钥的响应")); return; }
       await post("/api/auth/passkeys/register/finish",
                  { credential: toJSON(cred), name: name.trim() || undefined });
       setName("");
       toast(t("安全密钥已登记"), "ok");
       await load();
     } catch (e) {
+      if (requiresMfaReauth(e)) setData(value => value && { ...value, reauth_fresh: false });
       // A cancelled prompt is not an error worth shouting about; anything else is.
       if (e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "AbortError")) {
         setErr(t("已取消，或安全密钥没有响应。"));
       } else {
-        setErr(errorText(e, t));
+        setErr(mfaErrorText(e, t));
       }
     } finally {
       setBusy(false);
@@ -92,15 +84,16 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
   }
 
   async function remove(pk: Passkey) {
+    if (!data?.reauth_fresh || busy) return;
     setBusy(true);
     setErr(null);
     try {
-      if (!(await reauth())) return;
       await del(`/api/auth/passkeys/${pk.id}`);
       toast(t("已删除"), "ok");
       await load();
     } catch (e) {
-      setErr(errorText(e, t));
+      if (requiresMfaReauth(e)) setData(value => value && { ...value, reauth_fresh: false });
+      setErr(mfaErrorText(e, t));
     } finally {
       setBusy(false);
     }
@@ -112,7 +105,7 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
       await patch(`/api/auth/passkeys/${pk.id}`, { name: next.trim() });
       await load();
     } catch (e) {
-      setErr(errorText(e, t));
+      setErr(mfaErrorText(e, t));
     }
   }
 
@@ -125,9 +118,10 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
       <p className="muted">{t("用设备上的指纹、面容或 PIN 登录。私钥留在你的设备上，仅对 {domain} 生效。", { domain: data.rp_id })}</p>
 
       {!supported && (
-        <div className="notice warn">{t("这个浏览器不支持安全密钥。你仍然可以用口令和验证器应用登录。")}</div>
+        <div className="notice warn">{t("当前浏览器不能登记安全密钥。请使用支持安全密钥的浏览器。")}</div>
       )}
       {err && <div className="notice err" role="alert">{err}</div>}
+      {!data.reauth_fresh && <MfaReauthPrompt onVerified={load} />}
 
       {data.items.length > 0 && (
         <div className="account-table"><table className="tbl">
@@ -149,7 +143,7 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
                     : <span className="badge warn" title={t("登记于 {domain}", { domain: pk.rp_id })}>{t("域名已变更，无法使用")}</span>}
                 </td>
                 <td>
-                  <button className="btn danger sm" disabled={busy}
+                  <button className="btn danger sm" disabled={busy || !data.reauth_fresh}
                           onClick={() => void remove(pk)}>{t("删除")}</button>
                 </td>
               </tr>
@@ -165,14 +159,8 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
             <input className="input" value={name} onChange={(e) => setName(e.target.value)}
                    placeholder={t("例如：工作手机")} maxLength={60} />
           </label>
-          <label className="col gap4">
-            <span>{t("你的口令")}</span>
-            <input className="input" type="password" aria-label={t("你的口令")} value={password} autoComplete="current-password"
-                   onChange={(e) => setPassword(e.target.value)} />
-            <span className="muted sm">{t("增加或删除登录方式前需要输入口令确认身份。")}</span>
-          </label>
           <div className="row gap12">
-            <button className="btn primary" disabled={busy || !password} onClick={() => void enrol()}>
+            <button data-reauth-next className="btn primary" disabled={busy || !data.reauth_fresh} onClick={() => void enrol()}>
               {busy ? t("请按照设备提示操作…") : t("登记一个安全密钥")}
             </button>
           </div>
@@ -181,61 +169,3 @@ export default function PasskeySection({ timezone = "UTC" }: { timezone?: string
     </section>
   );
 }
-
-/* ------------------------------------------------------------------ plumbing */
-
-type PublicKeyCredentialCreationOptionsJSON = Record<string, unknown>;
-
-function b64urlToBuf(s: string): ArrayBuffer {
-  const pad = s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4);
-  const bin = atob(pad);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out.buffer;
-}
-
-function bufToB64url(b: ArrayBuffer): string {
-  const bytes = new Uint8Array(b);
-  let s = "";
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-/** The pre-`parseCreationOptionsFromJSON` path: decode exactly the fields that must be buffers. */
-function manualCreationOptions(o: PublicKeyCredentialCreationOptionsJSON): PublicKeyCredentialCreationOptions {
-  const src = o as {
-    challenge: string;
-    user: { id: string; name: string; displayName: string };
-    excludeCredentials?: { id: string; type: string; transports?: string[] }[];
-  };
-  return {
-    ...(o as unknown as PublicKeyCredentialCreationOptions),
-    challenge: b64urlToBuf(src.challenge),
-    user: { ...src.user, id: b64urlToBuf(src.user.id) },
-    excludeCredentials: (src.excludeCredentials || []).map((c) => ({
-      ...c, id: b64urlToBuf(c.id), type: "public-key" as const,
-      transports: c.transports as AuthenticatorTransport[] | undefined,
-    })),
-  };
-}
-
-/** The shape the server verifies. Shared with the sign-in page. */
-export function toJSON(cred: PublicKeyCredential): Record<string, unknown> {
-  const r = cred.response as AuthenticatorAttestationResponse & AuthenticatorAssertionResponse;
-  const out: Record<string, unknown> = {
-    id: cred.id, rawId: bufToB64url(cred.rawId), type: cred.type,
-    clientExtensionResults: cred.getClientExtensionResults(),
-    response: { clientDataJSON: bufToB64url(r.clientDataJSON) } as Record<string, unknown>,
-  };
-  const resp = out.response as Record<string, unknown>;
-  if (r.attestationObject) {
-    resp.attestationObject = bufToB64url(r.attestationObject);
-    if (typeof r.getTransports === "function") resp.transports = r.getTransports();
-  }
-  if (r.authenticatorData) resp.authenticatorData = bufToB64url(r.authenticatorData);
-  if (r.signature) resp.signature = bufToB64url(r.signature);
-  if (r.userHandle) resp.userHandle = bufToB64url(r.userHandle);
-  return out;
-}
-
-export { b64urlToBuf, bufToB64url };

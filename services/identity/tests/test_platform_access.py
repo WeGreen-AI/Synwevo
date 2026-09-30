@@ -569,34 +569,23 @@ def _passkey(store, user, rp_id: str) -> None:
                   (f"pk_{user['id']}_{rp_id}", user["id"], f"cred-{user['id']}-{rp_id}", "fixture-public-key", rp_id, now()))
 
 
-def test_a_super_administrator_who_cannot_reauthenticate_does_not_keep_the_platform(world):
-    """Every grant, revocation and policy change asks for the strict re-authentication, which
-    takes a password until D10. A passkey-only super administrator can read every page and change
-    nothing, so they do not count as the one who keeps the platform administrable."""
+def test_a_current_uv_passkey_allows_a_passwordless_super_administrator_to_take_over(world):
+    """Strict UV signatures are exercised in test_passkey_reauth; this metadata fixture
+    verifies the capability and delegation policy."""
     store, ident = world["store"], world["ident"]
-    passkey_only = verified(store, ident, "passkey-only@example.test", password=None)
+    target = verified(store, ident, "passkey-only@example.test", password=None)
     from synwevo_identity.passkeys import rp_id
-    _passkey(store, passkey_only, rp_id())
-    step = PlatformAccess(store).step_up(passkey_only["id"])
-    assert step["capable"] and not step["reauth"]
+    _passkey(store, target, rp_id())
+    step = PlatformAccess(store).step_up(target["id"])
+    assert step["capable"] and step["reauth"]
     root = world["login"](world["root"])
     reauth(root)
-    r = post(root, f"/api/admin/users/{passkey_only['id']}/platform-grants", {"role": SUPER_ADMIN, "reason": REASON})
-    assert r.status_code == 409 and r.json()["error"] == "target_cannot_reauth", r.text
-    # a read-mostly delegated role is fine: the step-up is all it needs to open its pages
-    assert post(root, f"/api/admin/users/{passkey_only['id']}/platform-grants",
-                {"role": "auditor", "reason": REASON}).status_code == 200
-    # made super administrator some other way (host authority), it still does not count ...
-    make_platform_admin(store, passkey_only)
-    assert [u["id"] for u in ident.platform_admins()] == [world["root"]["id"]]
+    result = post(root, f"/api/admin/users/{target['id']}/platform-grants", {"role": SUPER_ADMIN, "reason": REASON})
+    assert result.status_code == 200, result.text
+    assert {u["id"] for u in ident.platform_admins()} == {world["root"]["id"], target["id"]}
+    PlatformAccess(store).revoke(target["id"], grant_of(world, world["root"], SUPER_ADMIN)["id"], REASON)
+    assert [u["id"] for u in ident.platform_admins()] == [target["id"]]
     assert not ident.bootstrap_needed()
-    # ... so the only super administrator who can re-authenticate cannot leave
-    r = post(root, "/api/auth/deletion", {"password": PW})
-    assert r.status_code == 409 and r.json()["error"] == "last_super_admin", r.text
-    with pytest.raises(ServiceError) as e:
-        PlatformAccess(store).revoke(passkey_only["id"], grant_of(world, world["root"], SUPER_ADMIN)["id"], REASON)
-    assert e.value.code == "last_super_admin"
-    assert ident.get_user(world["root"]["id"])["status"] == "active"
 
 
 def test_a_passkey_bound_to_an_earlier_domain_is_not_a_way_to_confirm_identity(world):

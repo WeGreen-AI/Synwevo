@@ -321,6 +321,27 @@ class Sessions:
             "OR absolute_expires_at<?", (cutoff, cutoff))
 
     # ------------------------------------------------------------------ recent re-authentication
+    def confirm_reauth(self, admitted: dict, scope: str, factor: str) -> dict:
+        """Commit a proven factor and its scoped confirmation on the still-live session.
+
+        The caller verifies the proof and writes its success audit in the same Store.tx().
+        This does not create a session, change its identity, or extend either expiry clock.
+        """
+        from .errors import ServiceError
+        if scope not in REAUTH_SCOPES or factor not in ("password", "passkey_uv"):
+            raise ValueError("unknown scoped re-authentication proof")
+        with self.store.tx():
+            current = self.current(admitted)
+            if not current:
+                raise ServiceError(401, "unauthorized", "请先登录")
+            amr = current.get("amr") or ""
+            if factor not in amr.split("+") and factor not in factor_kinds(amr):
+                amr = f"{amr}+{factor}" if amr else factor
+            ts = now()
+            self.store.execute("UPDATE sessions SET reauth_at=?,reauth_scope=?,amr=? WHERE id=?",
+                               (ts, scope, amr, current["id"]))
+            return {**current, "reauth_at": ts, "reauth_scope": scope, "amr": amr}
+
     def mark_reauth(self, session_id: str, scope: str) -> None:
         self.store.execute("UPDATE sessions SET reauth_at=?, reauth_scope=? WHERE id=?",
                            (now(), scope, session_id))
@@ -347,8 +368,8 @@ class Sessions:
         in which deleting the workspace is also unlocked, so a stored scope only satisfies the
         same scope — or an empty stored scope, which is what a fresh login grants.
 
-        `strict` drops that last allowance: the person must have deliberately re-entered their
-        password *for this purpose*, not merely have signed in a moment ago. Used for the
+        `strict` drops that last allowance: the person must have deliberately re-proved their identity
+        *for this purpose*, not merely have signed in a moment ago. Used for the
         operations where the prompt is the point — reassigning who owns a body of documents,
         suspending an account, changing a platform role. Without it the confirmation an
         administrator sees would be one they could silently never be shown, which is a

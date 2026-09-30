@@ -77,11 +77,11 @@ class AccountOperations:
         # Stable references enter only the opaque version digest, never the response or audit.
         # SQLite rowids can be reused after cleanup, so they cannot identify a proof version.
         tables = ("sessions", "oauth_tokens", "oauth_codes", "email_tokens", "mfa_tickets",
-                  "webauthn_challenges", "account_recoveries")
+                  "webauthn_challenges", "account_recoveries", "reauth_challenges")
         refs = {}
         for table in tables:
             predicate = " AND revoked_at IS NULL" if table in ("sessions", "oauth_tokens") else ""
-            if table in ("oauth_codes", "email_tokens", "account_recoveries"):
+            if table in ("oauth_codes", "email_tokens", "account_recoveries", "reauth_challenges"):
                 predicate = " AND used_at IS NULL"
             column = "code_hash" if table == "oauth_codes" else "id"
             refs[table] = [r["ref"] for r in self.store.all(

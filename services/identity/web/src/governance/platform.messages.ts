@@ -67,7 +67,7 @@ export const platformMessages = {
   "最近登录": { en: "Last sign-in", "zh-Hant": "最近登入" },
   "能完成身份确认": { en: "Can confirm identity", "zh-Hant": "能完成身分確認" },
   "不能完成身份确认": { en: "Cannot confirm identity", "zh-Hant": "不能完成身分確認" },
-  "没有口令：危险操作要求的重新验证暂时无法完成": { en: "No password: the re-verification dangerous actions require cannot be completed yet", "zh-Hant": "沒有口令：危險操作要求的重新驗證暫時無法完成" },
+  "尚无支持危险操作的身份验证方式": { en: "No verification method is available for sensitive actions yet", "zh-Hant": "尚無支援危險操作的身分驗證方式" },
   "未计入：邮箱未验证": { en: "Not counted: email not verified", "zh-Hant": "未計入：電郵未驗證" },
   "该账户当前不可用，这些授权不生效。": { en: "This account is not active, so these grants do not take effect.", "zh-Hant": "此帳戶目前不可用，這些授權不生效。" },
   "有效权限": { en: "Effective permissions", "zh-Hant": "有效權限" },
@@ -138,9 +138,9 @@ export const platformMessages = {
   "请先撤销该账户的全部平台权限，再停用它": { en: "Revoke all of this account's platform access before suspending it.", "zh-Hant": "請先撤銷該帳戶的全部平台權限，再停用它" },
   "找不到该账户": { en: "That account was not found.", "zh-Hant": "找不到該帳戶" },
 
-  "该账户没有口令，无法完成危险操作要求的重新验证；最高管理员必须能重新验证身份，请先让本人设置口令": {
-    en: "This account has no password, so it cannot complete the re-verification dangerous actions require. A super administrator must be able to re-verify; ask its owner to set a password first.",
-    "zh-Hant": "該帳戶沒有口令，無法完成危險操作要求的重新驗證；最高管理員必須能重新驗證身分，請先讓本人設定口令" },
+  "该账户没有口令或可验证身份的安全密钥，无法完成危险操作要求的重新验证": {
+    en: "This account has no password or user-verifying passkey, so it cannot complete verification for sensitive actions.",
+    "zh-Hant": "該帳戶沒有口令或可驗證身分的安全金鑰，無法完成危險操作要求的重新驗證" },
   "该账户持有你没有的平台权限：只有权限不低于它的管理员才能对它执行这项操作": {
     en: "This account holds platform permissions you do not have: only an administrator whose permissions cover it can do this.",
     "zh-Hant": "該帳戶持有你沒有的平台權限：只有權限不低於它的管理員才能對它執行這項操作" },

@@ -100,14 +100,19 @@ def cmd_bootstrap(args) -> int:
         return 0
 
     if args.action == "token":
-        if ident.platform_admins():
-            # The web endpoint refuses every token once an administrator exists, so a token
-            # printed here would be one nobody can use. `--force` used to print it anyway.
-            print("已存在平台管理员，引导令牌在网页上不会再被接受。"
-                  "如确需再加一名管理员，请用：bootstrap admin --email ... --force", file=sys.stderr)
+        try:
+            with store.tx():
+                if ident.platform_admins():
+                    # An existing administrator makes every web bootstrap token unusable,
+                    # including one requested with --force. Serialize this check with grants.
+                    print("已存在平台管理员，引导令牌在网页上不会再被接受。"
+                          "如确需再加一名管理员，请用：bootstrap admin --email ... --force", file=sys.stderr)
+                    return 1
+                raw = ident.create_bootstrap_token(ttl_s=args.ttl)
+                _audit(store, "cli.bootstrap.token", meta={"ttl_s": args.ttl})
+        except ServiceError as e:
+            print(e.message, file=sys.stderr)
             return 1
-        raw = ident.create_bootstrap_token(ttl_s=args.ttl)
-        _audit(store, "cli.bootstrap.token", meta={"ttl_s": args.ttl})
         print("一次性引导令牌（只显示一次，%d 秒后过期）：\n\n%s\n" % (args.ttl, raw))
         print("用法：在浏览器打开服务后按提示粘贴该令牌创建首位管理员。")
         print("说明：单次使用；生成新令牌会使旧令牌立即失效；过期后需重新生成。")
@@ -126,19 +131,22 @@ def cmd_bootstrap(args) -> int:
             if pw != again:
                 print("两次输入不一致")
                 return 1
+        from synwevo_core.platform_access import SUPER_ADMIN, SYSTEM_REASONS, PlatformAccess
         try:
-            u = ident.create_user(args.email, pw, display_name=args.name, status="active")
+            # The password prompts stay outside the lock. A concurrent bootstrap may have
+            # finished while the operator was typing, so repeat the check before any creation.
+            with store.tx():
+                if ident.platform_admins() and not args.force:
+                    print("已存在平台管理员；如确需再加一名，请加 --force")
+                    return 1
+                u = ident.create_user(args.email, pw, display_name=args.name, status="active")
+                PlatformAccess(store).host_grant(u["id"], SUPER_ADMIN, source="bootstrap:cli",
+                                                 reason=SYSTEM_REASONS["bootstrap_cli"])
+                _audit(store, "cli.bootstrap.admin", object_kind="user", object_id=u["id"],
+                       meta={"email": u["email"], "forced": bool(args.force), "role": SUPER_ADMIN})
         except (ServiceError, PasswordError) as e:
             print(f"未创建：{getattr(e, 'message', str(e))}")
             return 1
-        # A super administrator grant under host authority, in one transaction with its audit
-        # line: whoever runs this command controls the deployment (platform_access.HOST_SOURCES).
-        from synwevo_core.platform_access import SUPER_ADMIN, SYSTEM_REASONS, PlatformAccess
-        with store.tx():
-            PlatformAccess(store).host_grant(u["id"], SUPER_ADMIN, source="bootstrap:cli",
-                                             reason=SYSTEM_REASONS["bootstrap_cli"])
-            _audit(store, "cli.bootstrap.admin", object_kind="user", object_id=u["id"],
-                   meta={"email": u["email"], "forced": bool(args.force), "role": SUPER_ADMIN})
         print(f"已创建最高管理员 {u['email']}（{u['id']}）。")
         print("该账户同时拥有一个个人工作空间；历史数据仍在「历史数据（待认领）」空间中，")
         print("需要在管理后台显式指派后才可访问。")

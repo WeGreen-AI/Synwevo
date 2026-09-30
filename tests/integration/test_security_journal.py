@@ -333,3 +333,28 @@ def test_restore_cannot_revive_machine_credentials_and_public_login_survives(rec
         assert w.store.all("SELECT * FROM oauth_clients ORDER BY client_id") == live_clients
     finally:
         w.snapshot._close(restored)
+
+
+@pytest.mark.parametrize("no_journal", [False, True])
+def test_restore_fences_inflight_scoped_passkey_proofs(recovery, no_journal):
+    """A synthetic pending ceremony from a backup must not become spendable after restore."""
+    from synwevo_core.sessions import COOKIE_NAME, Sessions
+    from synwevo_core.store import now
+    w = recovery
+    client = _login(w.api)
+    session = Sessions(w.store).load(client.cookies.get(COOKIE_NAME), touch=False)
+    ts = now()
+    w.store.execute("INSERT INTO reauth_challenges (id,user_id,session_id,purpose,scope,challenge,rp_id,origin,created_at,expires_at) "
+                    "VALUES (?,?,?,'reauth','admin',?,'localhost','http://localhost',?,?)",
+                    ("fixture-pending-proof", w.a["id"], session["id"], "fixture-unspent-challenge", ts, ts + 300))
+    archive = _backup(w)
+    restored = _restore(w, archive, no_journal=no_journal)
+    try:
+        assert restored.one("SELECT used_at FROM reauth_challenges WHERE id='fixture-pending-proof'")["used_at"]
+        assert restored.one("SELECT revoked_at FROM sessions WHERE id=?", (session["id"],))["revoked_at"]
+        assert not Sessions(restored).current(session)
+        # The restoration touches only the isolated copy, even when the original ceremony is live.
+        assert w.store.one("SELECT used_at FROM reauth_challenges WHERE id='fixture-pending-proof'")["used_at"] is None
+        assert Sessions(w.store).current(session)
+    finally:
+        w.snapshot._close(restored)

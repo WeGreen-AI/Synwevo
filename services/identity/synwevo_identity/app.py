@@ -168,6 +168,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     from .workspace_api import build_router as build_workspace_api_router
     api.include_router(build_workspace_api_router(store, identity))
     api.include_router(build_passkey_router(identity, sessions, passkeys, audit))
+    from .reauth_routes import build_router as build_reauth_router
+    api.include_router(build_reauth_router(identity, sessions, passkeys, audit))
     # External OpenID providers: configured ones are validated here, at start-up, so a half
     # configured provider is a refusal to start rather than a button that fails at sign-in.
     from .external import ExternalIdentities, build_router as build_external_router, load_providers

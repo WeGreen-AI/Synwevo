@@ -53,6 +53,7 @@ const SERVER = [
   { file: ID + "approval_routes.py", surfaces: ["org"] },
   // re-authentication is asked for on every page that changes something
   { file: ID + "auth_routes.py", fns: ["_too_many", "check_reauth_password", "reauth"], surfaces: ALL },
+  { file: ID + "reauth_routes.py", surfaces: ["account", "org", "admin", "members", "api"] },
   { file: ID + "auth_routes.py", fns: ["build_router._require_session", "revoke_session", "build_passkey_router", "build_mfa_router"], surfaces: ["account"] },
   { file: ID + "auth_routes.py", fns: ["verify_send"], surfaces: ["signin", "account"] },
   { file: ID + "auth_routes.py", fns: ["build_invite_router._session"], surfaces: ["signin", "members"] },
@@ -75,6 +76,7 @@ const SERVER = [
   { file: ID + "organization_routes.py", surfaces: ["org"] },
   { file: ID + "passkeys.py", fns: ["verify"], surfaces: ["signin"] },
   { file: ID + "passkeys.py", fns: ["_spend_challenge_for"], surfaces: ["signin", "account"] },
+  { file: ID + "passkeys.py", fns: ["current_reauth_session", "begin_reauthentication", "_reauth_client_data", "spend_reauthentication", "verify_reauthentication"], surfaces: ["account", "org", "admin", "members", "api"] },
   { file: ID + "passkeys.py", surfaces: ["account"] },
   { file: ID + "profile.py", surfaces: ["account"] },
   { file: ID + "provider_routes.py", fns: ["build_router._consent_actor", "build_router.consent_request", "build_router.consent_decide",
@@ -103,6 +105,7 @@ const SERVER = [
   { file: CORE + "challenge.py", surfaces: ["signin"] },
   { file: CORE + "passwords.py", surfaces: ALL },
   { file: CORE + "avatar_image.py", surfaces: ["account", "org"] },
+  { file: CORE + "sessions.py", fns: ["confirm_reauth"], surfaces: ["account", "org", "admin", "members", "api"] },
   { file: CORE + "sessions.py", surfaces: [], why: "an application identity has no password or passkey to sign in with" },
   { file: CORE + "api_platform.py", fns: ["enforce_principal"], surfaces: [], why: "checked on Synwevo Docs' business API, not in this shell" },
   { file: CORE + "api_platform.py", surfaces: ["api"] },
@@ -140,7 +143,6 @@ const API_ONLY = {
   "订阅密钥无效": "the browser's push service writes the subscription",
   "登录响应缺少凭据标识": "the browser's WebAuthn response always carries the credential id",
   // sign-in
-  "未知的重认证用途 {scope!r}": "each page asks for the re-authentication purpose it needs",
   "请提供链接令牌与新口令": "the reset page submits only with the link's token and a password",
   "请求包含不支持的字段": "the sign-in page sends only its own fields",
   "未知的邮件令牌类型 {kind!r}": "the service names its mail token kinds itself",
@@ -355,7 +357,7 @@ function problem(surface, r) {
 test("the scan finds the server's refusals (guards the pattern itself)", () => {
   const { all } = refusals();
   assert.ok(all.length > 400, `only ${all.length} refusals found`);
-  assert.ok(all.some((r) => r.code === "last_factor" && r.file.endsWith("auth_routes.py")));
+  assert.ok(all.some((r) => r.code === "last_factor" && r.file.endsWith("passkeys.py")));
   assert.ok(all.some((r) => r.code === "uv_required" && r.text.includes("动态验证码登录")), "a sentence split over two literals is read whole");
   assert.ok(all.some((r) => r.code === "invite_rate_limited" && r.fstring));
   // each page has a catalogue of its own: a sentence only the organization pages load is not the console's

@@ -20,6 +20,15 @@ export const messages = {
   // password checks shed load with 503 before comparing anything: not a server fault
   "当前登录请求过多，请稍后再试": { en: "Too many sign-in requests right now. Try again shortly.", "zh-Hant": "目前登入請求過多，請稍後再試" },
 
+  // Scoped password/Passkey confirmation is used by account and governance pages.
+  "请选择有效的身份确认用途": { en: "Choose a valid purpose for identity verification.", "zh-Hant": "請選擇有效的身分確認用途" },
+  "当前页面不能完成身份确认，请从账户服务重新开始": { en: "Identity verification is not available on this page. Start again from the account service.", "zh-Hant": "目前頁面無法完成身分確認，請從帳戶服務重新開始" },
+  "安全密钥验证失败，请重新开始身份确认": { en: "The security key could not be verified. Start identity verification again.", "zh-Hant": "安全金鑰驗證失敗，請重新開始身分確認" },
+  "当前账户没有可用于身份确认的安全密钥": { en: "This account has no security key available for identity verification.", "zh-Hant": "目前帳戶沒有可用於身分確認的安全金鑰" },
+  "身份确认已过期或已使用，请重新开始": { en: "This identity verification has expired or was already used. Start again.", "zh-Hant": "身分確認已過期或已使用，請重新開始" },
+  "账户不可用，请重新登录": { en: "The account is unavailable. Sign in again.", "zh-Hant": "帳戶無法使用，請重新登入" },
+  "不能移除最后一名可用最高管理员的身份确认方式": { en: "You cannot remove the identity verification method of the last available super administrator.", "zh-Hant": "不能移除最後一名可用最高管理員的身分確認方式" },
+
   // ---- worded from detail (lib/refusals.ts REFUSAL_TEMPLATES)
   "验证码不正确，请重新获取。": { en: "Incorrect code. Request a new one.", "zh-Hant": "驗證碼不正確，請重新取得。" },
   "口令至少需要 {min} 个字符（当前 {length} 个）。长句子比复杂符号更好记也更安全。": { en: "Your password needs at least {min} characters (it has {length}). A long sentence is easier to remember and safer than complex symbols.", "zh-Hant": "密碼至少需要 {min} 個字元（目前 {length} 個）。長句子比複雜符號更好記也更安全。" },
@@ -57,3 +66,7 @@ export const messages = {
 };
 
 registerMessages(messages);
+
+registerMessages({
+  "引导令牌有效期须为 60 至 3600 秒": { en: "The bootstrap token must be valid for 60 to 3600 seconds.", "zh-Hant": "引導權杖有效期須為 60 至 3600 秒" },
+});

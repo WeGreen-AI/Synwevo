@@ -385,6 +385,17 @@ CREATE TABLE IF NOT EXISTS webauthn_challenges (
   created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
 );
 
+-- A scoped confirmation is not a sign-in. Old login code never sees these challenges.
+-- No new identity authority: both references name the existing account and session.
+CREATE TABLE IF NOT EXISTS reauth_challenges (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK (purpose='reauth'),
+  scope TEXT NOT NULL CHECK (scope IN ('mfa','admin')),
+  challenge TEXT NOT NULL UNIQUE, rp_id TEXT NOT NULL, origin TEXT NOT NULL,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_reauth_session ON reauth_challenges(session_id,expires_at);
+
 CREATE TABLE IF NOT EXISTS rp_auth_requests (
   -- Synwevo Docs' side of a sign-in in progress. state, nonce and the PKCE verifier live here,
   -- server-side; the browser only carries an opaque id, so none of the three can be supplied by

@@ -557,6 +557,7 @@ def fence(data_dir: Path, *, since: float | None, journal_dir: Path | None,
                 "UPDATE email_tokens SET used_at=? WHERE used_at IS NULL",
                 "UPDATE bootstrap_tokens SET used_at=? WHERE used_at IS NULL",
                 "UPDATE webauthn_challenges SET used_at=? WHERE used_at IS NULL",
+                "UPDATE reauth_challenges SET used_at=? WHERE used_at IS NULL",
                 "UPDATE rp_auth_requests SET used_at=? WHERE used_at IS NULL",
             ))
             # Nothing is re-sent. A delivery pending in the backup was either delivered by the

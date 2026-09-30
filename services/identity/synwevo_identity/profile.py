@@ -68,6 +68,7 @@ def invalidate_access(store, uid: str, reason: str) -> None:
     store.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=?", (ts, uid))
     store.execute("DELETE FROM mfa_tickets WHERE user_id=?", (uid,))
     store.execute("DELETE FROM webauthn_challenges WHERE user_id=?", (uid,))
+    store.execute("DELETE FROM reauth_challenges WHERE user_id=?", (uid,))
 
 
 def check_deletion_constraints(store, user: dict) -> None:

@@ -228,3 +228,14 @@
 [Cloudflare account roles](https://developers.cloudflare.com/fundamentals/manage-members/roles/)（访问2026-09-30）。
 采用一致对象列表与按职责开放能力，保留 Synwevo 白蓝令牌和真实路由；不照搬产品外观。
 验收：同一导航/当前位置/范围标识、受权入口、API 深链接刷新、三语与手机键盘路径。
+
+
+## 2026-09-30 无口令管理确认
+
+实际问题：已用安全密钥登录的管理员仍被要求输入不存在的口令；新身份确认还必须与登录、MFA设置及其他会话隔离。
+参考 [W3C WebAuthn 验证断言](https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion) 与
+[OWASP 更换 MFA 因素](https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html#changing-mfa-factors)（访问2026-09-30）。
+适用理由：已登记密钥不等于本次操作证明；必须核对当前账户、挑战、RP、origin、签名、UP及UV，变更认证方式之前再次证明身份。
+实现：在唯一Store保存与用户/中央会话/用途绑定的短时挑战；服务端强制UV，挑战先一次性消费，再将当前会话的用途证明与成功审计原子保存。
+界面只显示真实可用方式；账户安全面板完成证明后仍由用户选择动作；管理弹框保留原目标/理由/预览，离开页面取消待处理证明，防止旧弹框继续执行。
+验收：真实签名的错误用途/会话/RP/origin/UV/重放/撤销拒绝与审计故障回滚；真实Chromium虚拟UV设备登记、登录、用途确认、最后可用管理员保护和操作效果；实体设备与其他浏览器仍需单独验证。

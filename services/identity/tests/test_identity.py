@@ -336,7 +336,8 @@ def test_bootstrap_token_is_single_use_and_supersedes_the_previous_one(ident):
 
 
 def test_expired_bootstrap_token_is_refused(ident):
-    raw = ident.create_bootstrap_token(ttl_s=-1)
+    raw = ident.create_bootstrap_token()
+    ident.store.execute("UPDATE bootstrap_tokens SET expires_at=created_at-1")
     assert ident.consume_bootstrap_token(raw, user_id="u1") is False
 
 

@@ -511,12 +511,12 @@ def apply(store: Store, entries: list[dict]) -> dict:
                                   "avatar_blob=NULL,locale='zh-Hans',timezone='UTC',platform_role='none' WHERE id=?",
                                   (at, at, uid)).rowcount
                     for table in ("user_passwords", "passkeys", "webauthn_credentials", "totp_secrets",
-                                  "recovery_codes", "account_recoveries", "mfa_tickets", "webauthn_challenges"):
+                                  "recovery_codes", "account_recoveries", "mfa_tickets", "webauthn_challenges", "reauth_challenges"):
                         c.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
                     c.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
                     _end_platform_grants(c, uid, t)
                 else:
-                    for table in ("mfa_tickets", "webauthn_challenges"):
+                    for table in ("mfa_tickets", "webauthn_challenges", "reauth_challenges"):
                         c.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
                     for table in ("email_tokens", "account_recoveries"):
                         c.execute(f"UPDATE {table} SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
@@ -543,7 +543,7 @@ def apply(store: Store, entries: list[dict]) -> dict:
                     for table in ("oauth_codes", "email_tokens"):
                         c.execute(f"UPDATE {table} SET used_at=COALESCE(used_at,?) WHERE user_id=?",
                                   (t, e["user_id"]))
-                    for table in ("mfa_tickets", "webauthn_challenges"):
+                    for table in ("mfa_tickets", "webauthn_challenges", "reauth_challenges"):
                         c.execute(f"DELETE FROM {table} WHERE user_id=?", (e["user_id"],))
                 if k == "password_changed":
                     c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",

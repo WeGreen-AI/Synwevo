@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { del, get, post } from "@synwevo/auth-client";
 import { useI18n, useToast } from "@synwevo/ui";
-import { errorText } from "../pages/account/common";
+import { MfaReauthPrompt, mfaErrorText, requiresMfaReauth, useMfaStateRefresh } from "./MfaSection";
 import { ProviderMark } from "../pages/Login";
 
 type Identity = { id: string; provider: string; label: string; email: string | null; email_verified: boolean;
@@ -22,14 +22,13 @@ export default function LinkedIdentities({ timezone = "UTC" }: { timezone?: stri
   const [data, setData] = useState<Listing | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [password, setPassword] = useState("");
   const [linkedNotice, setLinkedNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try { setData(await get<Listing>("/api/auth/external/identities")); setErr(null); }
-    catch (e) { setErr(errorText(e, t)); }
+    catch (e) { setErr(mfaErrorText(e, t)); }
   }, [t]);
-  useEffect(() => { void load(); }, [load]);
+  useMfaStateRefresh(load);
   useEffect(() => {
     const linked = new URLSearchParams(window.location.search).get("linked");
     if (!linked) return;
@@ -38,29 +37,28 @@ export default function LinkedIdentities({ timezone = "UTC" }: { timezone?: stri
     window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
   }, []);
 
-  async function reauth(): Promise<boolean> {
-    if (data?.reauth_fresh) return true;
-    if (!password) { setErr(t("请输入你的口令")); return false; }
-    await post("/api/auth/reauth", { password, scope: "mfa" });
-    setPassword("");
-    return true;
-  }
   async function link(id: string) {
+    if (!data?.reauth_fresh || busy) return;
     setBusy(true); setErr(null);
     try {
-      if (!(await reauth())) return;
       const { url } = await post<{ url: string }>(`/api/auth/external/${encodeURIComponent(id)}/link`, { locale });
       window.location.assign(url);
-    } catch (e) { setErr(errorText(e, t)); setBusy(false); }
+    } catch (e) {
+      if (requiresMfaReauth(e)) setData(value => value && { ...value, reauth_fresh: false });
+      setErr(mfaErrorText(e, t));
+    } finally { setBusy(false); }
   }
   async function unlink(row: Identity) {
+    if (!data?.reauth_fresh || busy) return;
     setBusy(true); setErr(null);
     try {
-      if (!(await reauth())) return;
       await del(`/api/auth/external/identities/${encodeURIComponent(row.id)}`);
       toast(t("已解除关联"), "ok");
       await load();
-    } catch (e) { setErr(errorText(e, t)); } finally { setBusy(false); }
+    } catch (e) {
+      if (requiresMfaReauth(e)) setData(value => value && { ...value, reauth_fresh: false });
+      setErr(mfaErrorText(e, t));
+    } finally { setBusy(false); }
   }
 
   if (!data) return <section className="card card-b col gap12"><h2>{t("外部登录方式")}</h2>
@@ -79,16 +77,12 @@ export default function LinkedIdentities({ timezone = "UTC" }: { timezone?: stri
         <td className="sm">{row.email || "—"}{row.email && !row.email_verified && <span className="badge warn" style={{ marginLeft: 6 }}>{t("未验证")}</span>}</td>
         <td className="muted sm">{new Date(row.created_at * 1000).toLocaleDateString(locale, { timeZone: timezone })}</td>
         <td className="muted sm">{row.last_used_at ? new Date(row.last_used_at * 1000).toLocaleString(locale, { timeZone: timezone }) : t("从未")}</td>
-        <td><button className="btn danger sm" disabled={busy} onClick={() => void unlink(row)}>{t("解除关联")}</button></td>
+        <td><button data-reauth-next className="btn danger sm" disabled={busy || !data.reauth_fresh} onClick={() => void unlink(row)}>{t("解除关联")}</button></td>
       </tr>)}</tbody></table></div>}
     {data.other_methods === 0 && data.items.length === 1 && <p className="notice info">{t("这是账户唯一的登录方式。请先设置口令或添加安全密钥，再解除关联。")}</p>}
-    {!data.reauth_fresh && (linkable.length > 0 || data.items.length > 0) && <label className="col gap4">
-      <span>{t("你的口令")}</span>
-      <input className="input" type="password" aria-label={t("你的口令")} value={password} autoComplete="current-password" onChange={e => setPassword(e.target.value)} />
-      <span className="muted sm">{t("增加或删除登录方式前需要输入口令确认身份。")}</span>
-    </label>}
+    {!data.reauth_fresh && (linkable.length > 0 || data.items.length > 0) && <MfaReauthPrompt onVerified={load} />}
     {linkable.length > 0 && <div className="row gap12 wrap">
-      {linkable.map(p => <button key={p.id} type="button" className="btn flow-provider" disabled={busy || (!data.reauth_fresh && !password)} onClick={() => void link(p.id)}><ProviderMark id={p.id} />{t("关联 {label}", { label: p.label })}</button>)}
+      {linkable.map(p => <button data-reauth-next key={p.id} type="button" className="btn flow-provider" disabled={busy || !data.reauth_fresh} onClick={() => void link(p.id)}><ProviderMark id={p.id} />{t("关联 {label}", { label: p.label })}</button>)}
     </div>}
   </section>;
 }

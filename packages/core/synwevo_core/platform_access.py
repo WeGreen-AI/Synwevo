@@ -56,15 +56,14 @@ Rules that are properties of the data rather than of a caller's discipline:
   "grant the successor → the successor signs in and completes step-up → the successor revokes".
 * **At least one usable super administrator.** Usable means counted *and able to administer*:
   every grant, revocation and configuration change asks for the strict re-authentication, which
-  today takes the password only (D10). A super administrator with only a passkey or a TOTP app can
-  read every page and change nothing, so they are not counted, and a super administrator grant
-  goes only to an account with a password (409 `target_cannot_reauth`). Revoking the last usable
+  accepts a password or a scoped Passkey ceremony with user verification. TOTP alone does not
+  prove this confirmation. A super administrator grant needs one usable strict method
+  (409 `target_cannot_reauth`). Revoking the last usable
   super administrator is refused with 409 `last_super_admin`, checked inside the same
   `BEGIN IMMEDIATE` transaction as the write, so two super administrators revoking each other at
   the same moment cannot both succeed. Suspension of any grant holder is refused (`demote_first`)
-  and self-deletion of the last usable super administrator is refused too. Removing a passkey or
-  turning TOTP off cannot take usability away (a password cannot be removed from an account), so
-  those paths need no check; when D10 lets a passkey re-authenticate, they will.
+  and self-deletion of the last usable super administrator is refused too. Passkey removal
+  rechecks the same invariant under its writer lock. TOTP alone is not a strict reauth method.
 * **A super administrator grant has no expiry.** An expiring one could leave the platform with no
   super administrator by the clock, where no checked action could refuse it.
 * **Rollback mirror.** `users.platform_role` stays: `'admin'` exactly when the account holds a
@@ -301,7 +300,7 @@ class PlatformAccess:
         """What this account could use to reach an admin-capable session (sessions.admin_capable):
         a password sign-in, a user-verifying passkey, or a second factor (TOTP) after a mailed
         code or an external provider. `reauth` is the strict re-authentication the dangerous
-        operations ask for, which today takes the password only (D10).
+        operations ask for: a password or a fresh, user-verified Passkey ceremony.
 
         A passkey counts only when it is bound to the current RP ID: one registered under an
         earlier domain is never offered by the browser again (passkeys.py), so it proves nothing
@@ -315,7 +314,7 @@ class PlatformAccess:
         totp = self.store.one("SELECT 1 AS x FROM totp_secrets WHERE user_id=? AND confirmed_at IS NOT NULL",
                               (uid,)) is not None
         return {"capable": password or passkey or totp, "password": password, "passkey_uv": passkey,
-                "totp": totp, "reauth": password}
+                "totp": totp, "reauth": password or passkey}
 
     def usable_super_admins(self, *, excluding: str | None = None) -> list[dict]:
         """Active, verified (or host-granted) super administrators who can complete both the
@@ -332,7 +331,7 @@ class PlatformAccess:
         if not user or not any(g["role"] == SUPER_ADMIN for g in self.counted_grants(user)):
             return False
         step = self.step_up(user["id"])
-        # `reauth` until D10: a super administrator who cannot re-authenticate can grant, revoke
+        # A super administrator who cannot re-authenticate can grant, revoke
         # and change nothing, so the platform would be left with nobody able to administer it.
         return step["capable"] and step["reauth"]
 
@@ -486,11 +485,10 @@ class PlatformAccess:
             raise ServiceError(409, "target_cannot_step_up",
                                "该账户没有口令、可验证身份的安全密钥或动态验证码，无法完成管理员身份确认；请先让本人设置")
         if role == SUPER_ADMIN and not self.step_up(target_id)["reauth"]:
-            # Until D10 the strict re-authentication takes a password: a super administrator
-            # without one could never grant, revoke or change anything, and would still count
-            # as the one who keeps the platform administrable.
+            # The account must be able to deliberately confirm a dangerous operation,
+            # with either its password or a usable, user-verifying Passkey.
             raise ServiceError(409, "target_cannot_reauth",
-                               "该账户没有口令，无法完成危险操作要求的重新验证；最高管理员必须能重新验证身份，请先让本人设置口令")
+                               "该账户没有口令或可验证身份的安全密钥，无法完成危险操作要求的重新验证")
         return target
 
     def grant_row(self, gid: str) -> dict | None:

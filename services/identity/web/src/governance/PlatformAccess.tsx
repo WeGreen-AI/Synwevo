@@ -106,7 +106,7 @@ type Roster = {
 
 function StepUpText({ step }: { step: StepUp }) {
   return <>{step.capable ? <span className="badge ok">{tr("能完成身份确认")}</span> : <span className="badge err">{tr("不能完成身份确认")}</span>}
-    {step.capable && !step.reauth && <span className="cell-note">{tr("没有口令：危险操作要求的重新验证暂时无法完成")}</span>}</>;
+    {step.capable && !step.reauth && <span className="cell-note">{tr("尚无支持危险操作的身份验证方式")}</span>}</>;
 }
 
 /** The roster: who holds which platform role, whether they can use it, and the catalogue. */

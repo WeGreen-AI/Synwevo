@@ -261,26 +261,39 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
             audit(request, "auth.bootstrap", result="denied", meta={"reason": "bad_token"})
             raise ServiceError(403, "bad_token", "引导令牌无效或已过期，请重新生成")
         try:
-            user = ident.create_user(email, password, display_name=body.get("display_name"),
-                                     status="active")
-        except PasswordError as e:
-            raise ServiceError(400, "weak_password", str(e), {"field": "password", **e.detail}) from None
-        # Consumed after the account exists so a failed creation does not burn the token; a
-        # concurrent bootstrap that spent it first leaves nothing of this attempt behind. The
-        # super administrator grant commits with the consumption, under host authority (the
-        # token is the host's), so a spent token always has its administrator.
-        granted = False
-        with ident.store.tx():
-            if ident.consume_bootstrap_token(token, user_id=user["id"]):
+            # Admission can predate another bootstrap. Recheck while holding the writer lock,
+            # then commit the account, personal workspace, token, grant and audit together.
+            with ident.store.tx():
+                if not ident.bootstrap_needed():
+                    raise ServiceError(409, "already_bootstrapped", "本服务已经有平台管理员了")
+                if not ident.peek_bootstrap_token(token):
+                    raise ServiceError(403, "bad_token", "引导令牌无效或已过期，请重新生成")
+                user = ident.create_user(email, password, display_name=body.get("display_name"),
+                                         status="active")
+                # Hashing the password can cross the token's expiry. A failed conditional
+                # consumption rolls the newly created account and its workspace back too.
+                if not ident.consume_bootstrap_token(token, user_id=user["id"]):
+                    raise ServiceError(403, "bad_token", "引导令牌无效或已过期，请重新生成")
                 PlatformAccess(ident.store).host_grant(user["id"], SUPER_ADMIN, source="bootstrap:web",
                                                        reason=SYSTEM_REASONS["bootstrap_web"])
-                granted = True
-        if not granted:
-            ident.purge_new_account(user["id"])
-            raise ServiceError(403, "bad_token", "引导令牌无效或已过期，请重新生成")
-        user = ident.get_user(user["id"])
-        audit(request, "auth.bootstrap", actor_id=user["id"], object_kind="user",
-              object_id=user["id"], result="ok")
+                user = ident.get_user(user["id"])
+                audit(request, "auth.bootstrap", actor_id=user["id"], object_kind="user",
+                      object_id=user["id"], result="ok")
+        except Exception as exc:
+            error = (ServiceError(400, "weak_password", str(exc), {"field": "password", **exc.detail})
+                     if isinstance(exc, PasswordError) else exc)
+            code = error.code if isinstance(error, ServiceError) else "bootstrap_failed"
+            # The failed creation has rolled back. Keep only a stable reason: there is no
+            # committed claimant to identify, and the submitted email/password/token are private.
+            # A failing audit must also roll back its own partial write and remain fail closed.
+            with ident.store.tx():
+                audit(request, "auth.bootstrap", workspace_given=True,
+                      result="denied" if isinstance(error, ServiceError) and error.status < 500 else "error",
+                      meta={"reason": code})
+            if error is not exc:
+                raise error from None
+            raise
+        # Session delivery is separate: if it fails, the committed administrator can sign in.
         return _issue(response, user, amr="password", request=request)
 
     # ------------------------------------------------------------------ login / logout
@@ -431,18 +444,9 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         The scope comes from a closed set. A client-chosen string would let a page ask for
         `scope=""`, which satisfies every check — the one value that must not be requestable.
         """
-        from synwevo_core.sessions import REAUTH_SECONDS, REAUTH_SCOPES
-        s = _require_session(request)
-        scope = (body.get("scope") or "").strip()
-        if scope not in REAUTH_SCOPES:
-            raise ServiceError(400, "bad_scope", f"未知的重认证用途 {scope!r}")
-        check_reauth_password(ident, sessions, request, s, body.get("password") or "", audit, scope)
-        sessions.mark_reauth(s["id"], scope)
-        # The password is a second, distinct factor for a session that began with a mailed code
-        # or an external provider; recording it is what unlocks platform administration.
-        amr = sessions.add_factor(s["id"], "password")
-        audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": scope, "amr": amr})
-        return {"ok": True, "scope": scope, "valid_for_s": REAUTH_SECONDS, "amr": amr}
+        from .reauth_routes import confirm_password
+        return confirm_password(request, body.get("password"), body.get("scope"),
+                                ident=ident, sessions=sessions, audit=audit)
 
     # ------------------------------------------------------------------ sessions
     @r.get("/sessions")
@@ -916,9 +920,8 @@ def build_passkey_router(ident: Identity, sessions: Sessions, passkeys, audit) -
     SCOPE = "mfa"
 
     def _session(request: Request) -> dict:
-        s = getattr(request.state, "session", None)
-        if not s:
-            raise ServiceError(401, "unauthorized", "请先登录")
+        s = passkeys.current_reauth_session(getattr(request.state, "session", None))
+        request.state.session = s
         return s
 
     def _fresh(request: Request) -> dict:
@@ -988,20 +991,27 @@ def build_passkey_router(ident: Identity, sessions: Sessions, passkeys, audit) -
         Someone with a passkey and no password would lock themselves out permanently, and the
         dialog they clicked through would be the only record of how.
         """
-        s = _fresh(request)
-        has_password = ident.store.one("SELECT 1 FROM user_passwords WHERE user_id=?",
-                                       (s["user_id"],))
-        if not has_password and passkeys.count(s["user_id"]) <= 1:
-            raise ServiceError(409, "last_factor",
-                               "这是你唯一的登录方式，删除后将无法登录。请先设置口令或再登记一个安全密钥。")
-        passkeys.remove(s["user_id"], pid)
-        # A key removed because it was lost must stay removed after a restore from backup.
-        from .withdrawals import record as journal
-        journaled = journal(ident.store, "passkey_removed", credential_id=pid)
-        audit(request, "auth.passkey.remove", actor_id=s["user_id"], object_kind="passkey",
-              object_id=pid, result="ok", meta={"journaled": journaled})
+        from synwevo_core import journal
+        try:
+            with ident.store.tx():
+                s = _fresh(request)
+                passkeys.remove(s["user_id"], pid)
+                audit(request, "auth.passkey.remove", actor_id=s["user_id"], object_kind="passkey",
+                      object_id=pid, result="ok", meta={"journaled": True})
+                # The key, the last-admin check and its success audit are transactional.
+                # A lost-key withdrawal must be durable before the removal commits.
+                try:
+                    journal.record(ident.store, "passkey_removed", credential_id=pid)
+                except (OSError, ValueError):
+                    raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
+        except ServiceError as exc:
+            admitted = getattr(request.state, "session", None)
+            if admitted:
+                audit(request, "auth.passkey.remove", actor_id=admitted["user_id"], object_kind="passkey",
+                      object_id=pid, result="denied" if exc.status < 500 else "error", meta={"code": exc.code})
+            raise
         notify_security_change(request, ident.get_user(s["user_id"]), "删除了一个安全密钥（Passkey）")
-        return {"ok": True}
+        return {"ok": True, "journaled": True}
 
     return r
 
@@ -1034,12 +1044,9 @@ def build_mfa_router(ident: Identity, sessions: Sessions, mfa, audit) -> APIRout
     @r.post("/reauth")
     def reauth(request: Request, body: dict = Body(...)):
         """Re-prove the password, for this purpose only and for a few minutes."""
-        s = _session(request)
-        check_reauth_password(ident, sessions, request, s, body.get("password") or "", audit, SCOPE)
-        sessions.mark_reauth(s["id"], SCOPE)
-        amr = sessions.add_factor(s["id"], "password")
-        audit(request, "auth.reauth", actor_id=s["user_id"], result="ok", meta={"scope": SCOPE, "amr": amr})
-        return {"ok": True, "valid_for_s": REAUTH_SECONDS, "amr": amr}
+        from .reauth_routes import confirm_password
+        return confirm_password(request, body.get("password"), SCOPE,
+                                ident=ident, sessions=sessions, audit=audit)
 
     @r.get("")
     def state(request: Request):
