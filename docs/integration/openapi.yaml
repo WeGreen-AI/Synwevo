@@ -3395,7 +3395,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/UploadView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -3405,6 +3406,12 @@ paths:
               $ref: "#/components/headers/RateLimit-Policy"
             Idempotent-Replayed:
               $ref: "#/components/headers/Idempotent-Replayed"
+        "410":
+          description: Gone
+          $ref: "#/components/responses/Gone"
+        "413":
+          description: Content Too Large
+          $ref: "#/components/responses/PayloadTooLarge"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3447,7 +3454,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/UploadView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -3498,7 +3506,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/UploadView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -3506,6 +3515,15 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Conflict
+        "410":
+          $ref: "#/components/responses/Gone"
+          description: Gone
+        "416":
+          $ref: "#/components/responses/RangeNotSatisfiable"
+          description: Range Not Satisfiable
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3558,7 +3576,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/UploadView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -3566,6 +3585,12 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Conflict
+        "410":
+          $ref: "#/components/responses/Gone"
+          description: Gone
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3603,7 +3628,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/UploadView"
           headers:
             X-Request-ID:
               $ref: "#/components/headers/X-Request-ID"
@@ -3611,6 +3637,9 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Conflict
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -8454,6 +8483,73 @@ components:
         - index
         - source
       title: SourceWords
+    UploadView:
+      properties:
+        id:
+          type: string
+          title: Id
+        filename:
+          type: string
+          title: Filename
+        size:
+          type: integer
+          title: Size
+        sha256:
+          anyOf:
+            - type: string
+            - type: "null"
+          title: Sha256
+        purpose:
+          anyOf:
+            - type: string
+              enum:
+                - source
+                - template
+            - type: "null"
+          title: Purpose
+        received:
+          type: integer
+          title: Received
+        status:
+          type: string
+          enum:
+            - open
+            - complete
+            - consumed
+            - expired
+            - aborted
+          title: Status
+        created_at:
+          type: number
+          title: Created At
+        updated_at:
+          type: number
+          title: Updated At
+        expires_at:
+          type: number
+          title: Expires At
+        complete:
+          type: boolean
+          title: Complete
+        upload_url:
+          type: string
+          title: Upload Url
+      type: object
+      required:
+        - id
+        - filename
+        - size
+        - sha256
+        - purpose
+        - received
+        - status
+        - created_at
+        - updated_at
+        - expires_at
+        - complete
+        - upload_url
+      title: UploadView
+      description: The public session, not a blob/authority record. Null metadata stays explicit.
     Error:
       type: object
       required:
@@ -8910,6 +9006,42 @@ components:
             $ref: "#/components/schemas/Problem"
     Conflict:
       description: 幂等键冲突、版本过期或状态不允许
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/X-Request-ID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Gone:
+      description: 资源已过期或已取消，无法继续该操作
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/X-Request-ID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PayloadTooLarge:
+      description: 文件或请求体超过大小上限
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/X-Request-ID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    RangeNotSatisfiable:
+      description: 字节范围不可满足；检查当前 received 后继续上传
       headers:
         X-Request-ID:
           $ref: "#/components/headers/X-Request-ID"

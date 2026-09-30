@@ -68,6 +68,13 @@ historical nulls remain null). Check nullable historical fields before using the
 response. Cursor pages have `offset=None`; planning runs may have `items=None`.
 Issues, verification and event data retain their open JSON shapes.
 
+Resumable-upload methods return the public `Upload` TypedDict, with `UploadStatus` and
+`UploadPurpose`. A missing declared digest or purpose is explicit `None`; `complete` is
+true for both completed and consumed sessions. `upload_url` is always present. Expired
+and aborted sessions can still be read, while further writes are rejected. Types do not
+turn upload completion into file admission: consuming a source/template uses its normal
+validation and scanning flow.
+
 The compile-only consumer example is `tests/types_check.py`; use a separately installed
 Mypy with `--strict --follow-imports=silent --python-executable <installed-sdk-python>`.
 The SDK does not depend on Mypy or any server model package.
@@ -83,6 +90,8 @@ This creates a temporary service and synthetic documents, temporarily removes on
 blob after submission, then restores the identical bytes. It verifies eleven failed samples
 recover through `failed_only=True`, one invalid skipped sample stays unchanged, the frozen
 snapshot stays identical, and every generated document matches its content and checksum.
+Source and template use real 2 KiB resumable chunks; a separate partial session is read
+and cancelled, covering all five upload operations as well as the nine job operations.
 It never accepts an existing service or data directory; it restores the fixture blob on exit.
 
 Retries use bounded exponential backoff with full jitter and respect Retry-After

@@ -81,6 +81,27 @@ Python 的公开 TypedDict 和 TypeScript 声明与此对应，SDK 运行时仍�
 升级/回滚需要重开旧资源列表游标，offset 兼容保留；不会静默重新迭代而重复处理。事件 feed 和 Webhook
 投递的长期检查点没有改成短期列表游标。此批仍未经过完整容器回归或部署。
 
+## 断点上传契约续批
+
+5 个上传操作共用明确的 `UploadView`，保留 open/complete/consumed/aborted/expired、显式 null 的
+sha256/purpose、完整收到字节数和每次都有的 upload_url。Python SDK 导出 `Upload`、`UploadStatus`、
+`UploadPurpose`，6 个方法返回该静态类型；TypeScript 修正 upload_url 的必填性。没有更改状态机、
+扫描/文件接纳规则、SQL、迁移或上传重试行为。
+
+实际响应审查另外发现此前未写进契约的 409、410、413、416，已按各路由真实路径补齐，复用统一错误信封
+及 RFC 9457 响应。最终 134 个 HTTP 响应覆盖 23 组操作/状态、5 个上传状态及两种错误媒体格式，
+全部符合 OpenAPI 3.1.0。包括故意注入存储故障的 500，并未将其误记为成功上传。
+当前仍有 59 条成功 JSON 响应未明确建模，未声称全部契约已完成。
+
+上传/耐久/重放/契约共 33 项通过，另外 1 项三语言目录检查发现新增 HTTP 默认文案缺译，补齐后该项复核通过。
+已安装 Python SDK 27/27、mypy strict、TypeScript strict 与账户前端 typecheck 通过。
+真实 SDK 续验改为 2 KiB 分片上传来源和模板，另建部分上传并取消，覆盖全部 5 个上传操作；随后
+同一真实任务的 11 个失败项恢复与 11 份产物内容/摘要验证继续通过。
+
+证据：主验证目录 `uploads-schema-report.json`、`uploads-final.log`、`uploads-i18n-final.log`、
+`uploads-sdk-unit.log`、`uploads-sdk-mypy.log`、`uploads-sdk-typescript.log`；真实 SDK 结果在
+`/private/tmp/synwevo-api7-uploads-sdk-20260930/acceptance.json`。SDK 上传状态和产物响应只包含合成夹具。
+
 ## 发布与尚未闭环的范围
 
 2026-09-30 只读核对生产容器：accounts、docs、portal、messages 均运行

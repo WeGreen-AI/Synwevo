@@ -50,6 +50,7 @@ import hashlib
 import os
 import re
 from pathlib import Path
+from typing import Literal
 
 try:                                    # POSIX: a lock that also holds across worker processes
     import fcntl
@@ -57,6 +58,7 @@ except ImportError:                     # pragma: no cover - Windows has no floc
     fcntl = None
 
 from fastapi import APIRouter, Body, Request
+from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
 from synwevo_core import authority, env
@@ -74,6 +76,24 @@ _ID = re.compile(r"^up_[0-9a-f]{12}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+|\*)$")
 _CHUNK = 1024 * 1024
+
+
+class UploadView(BaseModel):
+    """The public session, not a blob/authority record. Null metadata stays explicit."""
+    model_config = ConfigDict(strict=True)
+
+    id: str
+    filename: str
+    size: int
+    sha256: str | None
+    purpose: Literal["source", "template"] | None
+    received: int
+    status: Literal["open", "complete", "consumed", "expired", "aborted"]
+    created_at: float
+    updated_at: float
+    expires_at: float
+    complete: bool
+    upload_url: str
 
 
 # --------------------------------------------------------------------- storage
@@ -335,7 +355,9 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
                 not_found("上传")
         return row
 
-    @r.post("/uploads", status_code=201, summary="创建可续传上传（大文件分段上传）",
+    @r.post("/uploads", status_code=201, response_model=UploadView, summary="创建可续传上传（大文件分段上传）",
+            responses={410: {"$ref": "#/components/responses/Gone"},
+                       413: {"$ref": "#/components/responses/PayloadTooLarge"}},
             openapi_extra={"x-scope": "write", "x-idempotent": True, "requestBody": {"content": {"application/json": {
                 "schema": {"type": "object", "required": ["filename", "size"], "properties": {
                     "filename": {"type": "string", "maxLength": 255},
@@ -393,12 +415,16 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
         return idem.run(request, "/api/v1/uploads", {"body": body}, make,
                         replay_check=replay_check, status=201)
 
-    @r.get("/uploads/{uid}", summary="上传状态（已收到的字节数，用于断点续传）", openapi_extra={"x-scope": "read"})
+    @r.get("/uploads/{uid}", response_model=UploadView,
+           summary="上传状态（已收到的字节数，用于断点续传）", openapi_extra={"x-scope": "read"})
     def get_upload(request: Request, uid: str):
         scope(request, "read")
         return _view(visible_upload(uid), public_base(request))
 
-    @r.put("/uploads/{uid}", summary="写入一段字节（Content-Range: bytes 起-止/总长）",
+    @r.put("/uploads/{uid}", response_model=UploadView, summary="写入一段字节（Content-Range: bytes 起-止/总长）",
+           responses={409: {"$ref": "#/components/responses/Conflict"},
+                      410: {"$ref": "#/components/responses/Gone"},
+                      416: {"$ref": "#/components/responses/RangeNotSatisfiable"}},
            openapi_extra={"x-scope": "write", "requestBody": {"required": True, "content": {
                "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
                "parameters": [{"name": "Content-Range", "in": "header", "required": False,
@@ -483,7 +509,10 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
         row = await run_in_threadpool(visible_upload, uid)
         return _view(row, public_base(request))
 
-    @r.post("/uploads/{uid}/complete", summary="完成上传：校验大小与 SHA-256 后保存", openapi_extra={"x-scope": "write"})
+    @r.post("/uploads/{uid}/complete", response_model=UploadView,
+            responses={409: {"$ref": "#/components/responses/Conflict"},
+                       410: {"$ref": "#/components/responses/Gone"}},
+            summary="完成上传：校验大小与 SHA-256 后保存", openapi_extra={"x-scope": "write"})
     def complete_upload(request: Request, uid: str, body: dict = Body(default={})):
         scope(request, "write")
         row = visible_upload(uid)
@@ -550,7 +579,9 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
             _unlink_part(store, uid)
         return _view(visible_upload(uid), public_base(request))
 
-    @r.post("/uploads/{uid}/abort", summary="取消上传并删除已收到的字节", openapi_extra={"x-scope": "write"})
+    @r.post("/uploads/{uid}/abort", response_model=UploadView,
+            responses={409: {"$ref": "#/components/responses/Conflict"}},
+            summary="取消上传并删除已收到的字节", openapi_extra={"x-scope": "write"})
     def abort_upload(request: Request, uid: str):
         scope(request, "write")
         row = visible_upload(uid)

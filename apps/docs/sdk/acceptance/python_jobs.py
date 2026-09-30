@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
-from synwevo_docs_sdk import Client, JobCounts
+from synwevo_docs_sdk import Client, JobCounts, Upload
 
 
 def main():
@@ -40,12 +40,22 @@ def main():
         assert all(type(n) is int for n in value["counts"].values())
         return value
 
-    with Client.from_env() as client:
+    with Client.from_env(chunk_size=2048) as client:
         assert client.health()["instance"] == "test"
+        source_path = args.kit / "customers.xlsx"
+        abandoned = record("upload_open", client.create_upload("SYNTHETIC cancelled.xlsx", source_path.stat().st_size))
+        assert set(abandoned) == Upload.__required_keys__
+        assert abandoned["sha256"] is None and abandoned["purpose"] is None and not abandoned["complete"]
+        part = record("upload_partial", client.put_upload_chunk(abandoned["id"], source_path, 0, 100, source_path.stat().st_size))
+        assert part["received"] == 100 and part["status"] == "open"
+        assert client.get_upload(abandoned["id"]) == part
+        aborted = record("upload_aborted", client.abort_upload(abandoned["id"]))
+        assert aborted["status"] == "aborted" and not aborted["complete"]
+        assert client.get_upload(abandoned["id"]) == aborted
         project = client.create_project("SYNTHETIC failed-only SDK contract")
-        source = client.upload_source(project["id"], args.kit / "customers.xlsx")
+        source = client.upload_source(project["id"], source_path, resumable=True)
         client.wait_for_file(source["id"], timeout=60)
-        template = client.upload_template(args.kit / "template.docx", "SYNTHETIC recoverable template")
+        template = client.upload_template(args.kit / "template.docx", "SYNTHETIC recoverable template", resumable=True)
         client.create_template_fields(template["id"], json.loads((args.kit / "fields.json").read_text()))
         client.set_project_template(project["id"], template["id"])
         client.put_definition(project["id"], json.loads((args.kit / "project.json").read_text()))
@@ -122,7 +132,7 @@ def main():
             assert all(v not in text for v in expected["forbidden_text"])
             downloads.append(saved)
         record("downloads", downloads)
-        (args.out / "acceptance.json").write_text(json.dumps({"passed": True, "operations": 9,
+        (args.out / "acceptance.json").write_text(json.dumps({"passed": True, "operations": 9, "upload_operations": 5,
             "failed_items": len(failed_items), "recovered_artifacts": len(downloads), "same_snapshot": True,
             "retry_selection": "failed_only", "skipped_items_unchanged": len(skipped_items), "run_numbers": [1, 2]}, indent=2))
 

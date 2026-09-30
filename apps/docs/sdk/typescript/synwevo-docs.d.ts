@@ -724,7 +724,7 @@ export interface Upload {
   expires_at: number;
   /** status is complete or consumed. */
   complete: boolean;
-  upload_url?: string;
+  upload_url: string;
 }
 
 export interface UploadOptions {

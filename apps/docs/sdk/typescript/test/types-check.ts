@@ -8,12 +8,25 @@ import {
   ApiKey, Client, WorkspaceClient, ConflictError, credentialsFromEnv, isTerminal, SUCCESS_STATUSES, verifyWebhook,
   WaitTimeoutError, WebhookVerificationError,
   type Artifact, type Job, type JobStatus, type SourceFile, type WebhookEvent,
-  type JobOptions, type RawJobCounts, type JobRun, type JobItem, type JobEvent, type Page,
+  type JobOptions, type RawJobCounts, type JobRun, type JobItem, type JobEvent, type Page, type Upload,
 } from '@synwevo/docs-sdk';
 // The vendored-copy import from the README resolves to the same declarations.
 import * as vendored from '../synwevo-docs.mjs';
 
 const sameClient: typeof Client = vendored.Client;
+
+export async function uploadBoundary(client: Client, filePath: string): Promise<Upload> {
+  const upload = await client.resumableUpload(filePath, { purpose: 'source' });
+  const location: string = upload.upload_url;
+  const bytes: number = upload.received;
+  const nullable: Upload = { ...upload, sha256: null, purpose: null };
+  // @ts-expect-error Uploads do not have a source parser's ready state.
+  const impossible: Upload = { ...upload, status: 'ready' };
+  // @ts-expect-error The digest may be null before completion.
+  const digest: string = upload.sha256;
+  console.log(location, bytes, impossible, digest);
+  return nullable;
+}
 
 // Historical and in-flight wire states must remain representable, without inventing defaults.
 export function jobBoundaries(job: Job, item: JobItem, run: JobRun, event: JobEvent, page: Page<Job>): void {

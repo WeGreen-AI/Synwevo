@@ -8,7 +8,7 @@ from typing_extensions import assert_type
 
 from synwevo_docs_sdk import (
     Artifact, ArtifactsPage, CancelledJob, Client, Job, JobCounts, JobEvent, JobEventsPage,
-    JobItem, JobItemsPage, JobListItem, JobOptions, JobRun, JobsPage, RawJobCounts,
+    JobItem, JobItemsPage, JobListItem, JobOptions, JobRun, JobsPage, RawJobCounts, Upload,
 )
 
 
@@ -51,3 +51,19 @@ def boundaries(job: Job, run: JobRun, item: JobItem, page: JobsPage) -> None:
     definite_items: int = run["items"]  # type: ignore[assignment]
     item["issues"] = lambda: "not JSON"  # type: ignore[typeddict-item]
     print(empty_counts, missing_counts, definite_items)
+
+
+def upload_session(client: Client, path: str) -> None:
+    upload = client.create_upload("synthetic.xlsx", 100)
+    assert_type(upload, Upload)
+    assert_type(client.get_upload(upload["id"]), Upload)
+    assert_type(client.put_upload_chunk(upload["id"], path, 0, 100, 100), Upload)
+    assert_type(client.complete_upload(upload["id"]), Upload)
+    assert_type(client.abort_upload(upload["id"]), Upload)
+    assert_type(client.resumable_upload(path), Upload)
+    upload["purpose"] = None
+    upload["sha256"] = None
+    upload["status"] = "consumed"
+    upload["status"] = "ready"  # type: ignore[typeddict-item]
+    digest: str = upload["sha256"]  # type: ignore[assignment]
+    print(digest)
