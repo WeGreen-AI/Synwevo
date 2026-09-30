@@ -38,6 +38,8 @@ CREATE VIEW IF NOT EXISTS billing_entries AS
     SELECT id AS journal_id, environment,unit,debit_account AS account_id,-amount AS delta FROM billing_journal
     UNION ALL
     SELECT id,environment,unit,credit_account,amount FROM billing_journal;
+CREATE INDEX IF NOT EXISTS billing_journal_personal_debits ON billing_journal(environment,debit_account,kind);
+CREATE INDEX IF NOT EXISTS billing_journal_personal_credits ON billing_journal(environment,credit_account);
 CREATE TRIGGER IF NOT EXISTS billing_journal_apply AFTER INSERT ON billing_journal BEGIN
     SELECT CASE WHEN (SELECT COUNT(*) FROM billing_balances WHERE account_id IN
         (NEW.debit_account,NEW.credit_account))<>2 THEN RAISE(ABORT,'balance_cache_missing') END;

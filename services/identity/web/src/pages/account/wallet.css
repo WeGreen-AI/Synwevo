@@ -1,0 +1,16 @@
+.wallet-scroll { overflow: auto; flex: 1; }
+.wallet-unit { padding: 16px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.wallet-amounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 16px 0 0; }
+.wallet-amounts dt { color: var(--text-2); font-size: 12px; margin-bottom: 6px; }
+.wallet-amounts dd { margin: 0; font-size: 20px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.wallet-amounts small { color: var(--text-2); font-size: 12px; }
+.wallet-history { margin: 0; padding: 0; list-style: none; }
+.wallet-history li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.wallet-history details { margin-top: 8px; }
+.wallet-history summary { cursor: pointer; }
+.wallet-history code { display: block; overflow-wrap: anywhere; margin-top: 8px; }
+.wallet-delta { text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .wallet-amounts, .wallet-history li { grid-template-columns: minmax(0, 1fr); }
+  .wallet-delta { text-align: left; }
+}

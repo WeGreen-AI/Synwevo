@@ -191,6 +191,10 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.include_router(build_settings_router(store, audit))
     from .admin_model_prices import build_router as build_model_prices_router
     api.include_router(build_model_prices_router(store, audit))
+    from .wallet_routes import build_router as build_wallet_router, from_host as wallet_from_host
+    wallet_ledger, wallet_units = wallet_from_host(store)
+    api.include_router(build_wallet_router(identity, sessions, mailer, audit,
+                                          ledger=wallet_ledger, units=wallet_units))
     from .admin_handover import build_router as build_handover_router
     api.include_router(build_handover_router(identity, sessions, passkeys, audit))
 

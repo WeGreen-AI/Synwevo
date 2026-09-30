@@ -563,6 +563,45 @@ class Ledger:
             booked, held = self._balance(t, row["id"])
             return Balance(unit, booked, held)
 
+    def overview_for_user(self, *, requester_user_id: str, payer_user_id: str, units) -> dict:
+        """One personal money snapshot, including settled sales across namespaces.
+
+        Units are trusted host configuration, not caller-selected currency/precision. The
+        indexed aggregate stays in SQLite; the HTTP request never pages through an unbounded
+        history. Lifetime sales cannot exceed the ledger's bounded revenue account balance.
+        """
+        if requester_user_id != payer_user_id:
+            raise BillingError("wallet_forbidden")
+        if (not isinstance(units, (tuple, list)) or not 1 <= len(units) <= 16
+                or any(not isinstance(unit, Unit) for unit in units)
+                or len({unit.code for unit in units}) != len(units)):
+            raise BillingError("invalid_unit")
+        with self._tx() as t:
+            self._active_user(t, requester_user_id)
+            self._expire(t)
+            through = 0
+            balances = []
+            for unit in units:
+                known = t.execute("SELECT scale FROM billing_units WHERE code=?", (unit.code,)).fetchone()
+                if not known or known[0] != unit.scale:
+                    raise BillingError("unit_scale_conflict")
+                account = t.execute("SELECT id FROM billing_accounts WHERE environment=? AND unit=? "
+                                    "AND owner=? AND kind='wallet'",
+                                    (self.environment, unit.code, payer_user_id)).fetchone()
+                booked = held = used = 0
+                if account:
+                    booked, held = self._balance(t, account[0])
+                    latest = t.execute("SELECT COALESCE(MAX(rowid),0) FROM billing_journal WHERE environment=? "
+                                       "AND (debit_account=? OR credit_account=?)",
+                                       (self.environment, account[0], account[0])).fetchone()[0]
+                    through = max(through, latest)
+                    used = t.execute("SELECT COALESCE(SUM(amount),0) FROM billing_journal "
+                                     "WHERE environment=? AND debit_account=? AND kind='sale'",
+                                     (self.environment, account[0])).fetchone()[0]
+                balances.append({"unit": unit.code, "scale": unit.scale, "booked": booked,
+                                 "used": used, "held": held, "available": booked-held})
+            return {"balances": balances, "used_through_seq": through}
+
     def statement_for_user(self, *, requester_user_id: str, payer_user_id: str,
                            after_seq: int = 0, limit: int = 100) -> list[dict]:
         """Allowlisted personal journal projection; no cost/evidence/delegation/workspace leak.

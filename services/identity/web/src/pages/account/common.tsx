@@ -2,6 +2,7 @@ import { ApiError } from '@synwevo/auth-client';
 import { useI18n, type Locale, type Translator } from '@synwevo/ui';
 import { refusalText } from '../../lib/refusals';
 import '../account.messages';
+import './wallet.messages';
 
 export interface Profile {
   id: string; email: string; display_name: string | null; status: string;
