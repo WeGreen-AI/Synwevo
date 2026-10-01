@@ -15,4 +15,7 @@ COPY conftest.py ./conftest.py
 RUN chown -R synwevo:synwevo /app
 USER synwevo
 HEALTHCHECK NONE
-CMD ["python", "-m", "pytest", "--tb=short"]
+# A failed gate must print its first traceback before the outer job timeout.
+# Successful runs still execute the complete configured suite; timings and skip
+# reasons make capacity and unavailable integration dependencies reviewable.
+CMD ["python", "-m", "pytest", "--tb=short", "--maxfail=1", "--durations=20", "-ra"]

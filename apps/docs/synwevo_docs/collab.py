@@ -307,7 +307,7 @@ class Room:
         self.activity_handle: asyncio.TimerHandle | None = None
         self.changes_rev = 0
         self.blocks = block_texts(self.doc)
-        self.doc.observe(lambda event: self.pending.append(event.update))
+        self._doc_mu = threading.RLock()
         #: registered in the hub while its state is still being read (``CollabHub._room``): version
         #: changes that land meanwhile wait in the queue instead of missing the room
         self.loading = False
@@ -334,6 +334,26 @@ class Room:
         self._qlock = threading.Lock()
         self._queued: list[Callable[[], None]] = []
         self._holds = 0
+
+    @contextlib.contextmanager
+    def capture_changes(self):
+        """Collect one synchronous mutation's real updates, then release its native observer.
+
+        A permanent callback retains the Room/Hub/Store through pycrdt's native graph. Its
+        subscription is also thread-affine: registering and closing on different socket loops
+        is invalid. Keeping it within a mutation covers failure and replaced documents too.
+        """
+        with self._doc_mu:
+            doc = self.doc
+            subscription = doc.observe(lambda event: self.pending.append(event.update))
+            try:
+                yield
+            finally:
+                doc.unobserve(subscription)
+                # pycrdt 0.14.6 retires the dropped observer on the next completed transaction.
+                # This changes no content and creates no database write or broadcast update.
+                with doc.transaction():
+                    pass
 
     # ---- the work queue ----------------------------------------------------------------------
     def hold(self) -> None:
@@ -575,7 +595,8 @@ class Room:
         """Runs on the event loop. A collaborator's save is a snapshot of this document; anything
         else (restore, undo, redo, a save from the machine API) replaces the live document."""
         if not snapshot and self.writable:
-            seed(self.doc, editor)
+            with self.capture_changes():
+                seed(self.doc, editor)
             self.blocks = block_texts(self.doc)
             updates, self.pending = self.pending, []
             for u in updates:
@@ -1270,6 +1291,7 @@ class CollabHub:
             if held and room.epoch and held != room.epoch:
                 # the tab's document belongs to a previous seeding (the room was restored or reseeded while
                 # it was away): its sync would merge the replaced text back next to the new one (CI-115)
+                self._close_if_empty(room)
                 return None, (CLOSE_STALE, "stale_document")
             return room, None
         room, refusal = await open_room()
@@ -1378,7 +1400,8 @@ class CollabHub:
                     return
                 room.sender = conn
                 try:
-                    handle_sync_message(data[1:], room.doc)
+                    with room.capture_changes():
+                        handle_sync_message(data[1:], room.doc)
                 finally:
                     room.sender = None
                 await room.flush(conn)

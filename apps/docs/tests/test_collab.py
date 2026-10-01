@@ -87,7 +87,6 @@ class Peer:
         self.ws = self.cm.__enter__()
         self.doc = doc if doc is not None else Doc()          # a browser reconnecting brings its own document along
         self.updates: list[bytes] = []
-        self.doc.observe(lambda ev: self.updates.append(ev.update))
         self.meta: list[dict] = []
         self.awareness: list[bytes] = []
         self.synced = False
@@ -151,8 +150,16 @@ class Peer:
     def edit(self, fn):
         """Change the local document and send the resulting update, like a keystroke."""
         self.updates.clear()
-        with self.doc.transaction():
-            fn()
+        # Native subscriptions must be created and retired on the same thread. Peers are also
+        # deliberately opened/closed on different threads by the room concurrency regressions.
+        observer = self.doc.observe(lambda ev: self.updates.append(ev.update))
+        try:
+            with self.doc.transaction():
+                fn()
+        finally:
+            self.doc.unobserve(observer)
+            with self.doc.transaction():
+                pass
         assert self.updates, "the edit produced no update"
         for u in self.updates:
             self.ws.send_bytes(create_update_message(u))
@@ -632,8 +639,12 @@ def test_a_corrupt_persisted_draft_does_not_keep_the_room_from_opening(world):
     a = _connect(world, "editor")
     assert a.hello["recovered"] is True and a.hello["head"] == 1 and a.hello["dirty"] is False
     assert a.texts() == ["客户："]                                    # the head version, not garbage
+    b = _connect(world, "owner")
     a.append_text("修好了")
+    assert b.recv(want="update") == "update" and b.texts() == ["客户：修好了"]
+    assert b.recv_meta("state")["dirty"] is True
     a.close()                                                        # the next persist replaces the corrupt row
+    b.close()
     row = store.one("SELECT state FROM collab_docs WHERE room=?", (f"template:{tid}",))
     fixed = Doc()
     fixed.apply_update(bytes(row["state"]))

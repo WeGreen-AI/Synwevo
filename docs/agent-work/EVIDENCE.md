@@ -195,3 +195,21 @@
 - Accounts typecheck、31项前端+19项组件检查、build通过；五项守卫通过（653Python/334前端、1185品牌分类、22Logo）。前端浮点expires_at契约不匹配已修正；测试后缀改为默认门槛实际加载的mjs。新接口拒绝词句在默认语言检查中登记并通过，没有修改断言标准。
 - 本地Accounts健康200；内置浏览器对已配置prices.localhost:33772返回ERR_BLOCKED_BY_CLIENT，当前UI视觉/键盘/窄屏未验收。未切换工具或弱化安全来绕过。正式收费仍关闭。
 - [CI7190408](https://github.com/WeGreen-AI/Synwevo/actions/runs/36800670629)在45min时限取消，构建成功，容器测试到49%并已有1F；日志`/private/tmp/synwevo-ci-7190408.log`。没有最终traceback/全套结果，不能归为只超时无业务失败。1bc6c42新CI运行中。
+
+### CI首个失败：部署Python版本下的契约漂移
+
+- 首个F定位到第92项OpenAPI文件同步。使用既有`de70b4cb2882` Python3.12验证镜像、只读当前源码挂载（不是本提交新建生产产物），断网/3GiB/2CPU，只跑该失败定位，复现413与416默认短语跨版本差异。
+- `v1_uploads.py`固定既有公开协议文案；没有改文档快照、业务限制或测试断言。最终`/private/tmp/synwevo-ci-openapi-fixed.log`：2 passed/1.38s；`/private/tmp/synwevo-openapi-py314.xml`：2 passed/1.22s。先前本机上传/OpenAPI关联17项通过5.98s；第二个字段后以两项同步/结构用例重新绑定。
+- 验证镜像CMD增加--maxfail=1/--durations=20/-ra，以在首个失败时打印traceback而非等待外层超时，成功仍执行全部套件。45分钟容量诊断继续；不是CI通过或部署声明。
+- 成本策略`dee89fb`已本地提交，22文件/暂存秘密模式与diff检查通过；尚未推送。自有Accounts6763已停止，隔离数据保留。
+
+### 2026-10-01T14:30:06+00:00 · CI修复与协作内存生命周期（dee89fb后的未提交增量）
+
+- [1bc6c42 CI](https://github.com/WeGreen-AI/Synwevo/actions/runs/36802776113)：verify110184975517于02:51:37Z取消，已实际执行构建与容器测试；deploy110195960046 skipped。没有发布。
+- `/private/tmp/synwevo-collab-memory-red-final.xml`：原产品四项真实Room生命周期均失败（6.568s），每项6个隔离应用，保留API/Store/Hub/Room/Doc。草稿内容、关闭、SQLite故障与重开断言先通过。只记录合成材料，不含用户数据。
+- 当前协作回归 `/private/tmp/synwevo-collab-lifecycle-regression.xml`：210 passed，0失败/错误/跳过，71.822s；撤权、并发、版本、保存、恢复、表格、项目presence保持通过。初次“关闭时退订”实验跨线程错误已改为操作内注册/退订，不屏蔽异常。
+- `/private/tmp/synwevo-ci-repair-validation.xml`：33 passed，0失败/错误/跳过，17.879s，包含4项新内存回归、文档CRDT转换、OpenAPI/上传及真实工厂生命周期。初次命令误写不存在的test_api_uploads.py以exit4结束，按实际test_api_contract_uploads.py重选；没有删减测试。
+- 五项守卫通过（654Python/334前端、1185品牌分类、22Logo），diff格式检查通过。当前未改前端，无新浏览器UI声明。
+- Python3.12既有隔离镜像关联测试进行中；新完整CI尚未开始。45min上限及全部测试范围保持，正式模型/收费没有启用。
+
+- Python3.12最终隔离关联50项全部通过（exit0，`/private/tmp/synwevo-ci-repair-py312.log`），覆盖完整text协作、新内存回归与OpenAPI。未升级依赖；不是生产镜像构建/完整CI通过声明。Hilbert已确认停止，测试文件所有权回到协调者。
