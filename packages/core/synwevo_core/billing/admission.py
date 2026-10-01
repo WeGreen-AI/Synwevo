@@ -103,8 +103,8 @@ class CostAdmission:
                   " LEFT JOIN billing_usage u ON u.attempt_key=a.attempt_key")
         # A capped cardinality probe detects overflow BEFORE materializing/summing facts.
         # At most 10,000 records enter Python; the extra SQL count is only an overflow sentinel.
-        # The immutable schema has no index of unresolved admissions: finding old unknown
-        # rows still requires inspecting historical account rows inside SQLite.
+        # Both branches use scope indexes; historical unknowns come from the pending
+        # projection, so settled history is not scanned for this count.
         count = t.execute("SELECT COUNT(*) FROM (" + candidates + ")", args).fetchone()[0]
         if count + adding > _MAX_RECORDS:
             raise BillingError("cost_accounting_capacity")

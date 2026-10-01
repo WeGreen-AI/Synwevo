@@ -185,3 +185,13 @@
 - [本机成本快照测量](evidence/2026-10-01-model-cost/admission-benchmark.json)：macOS27/arm64、Python3.14.5、10000条合成pending、单并发30次，median24.863ms/P9530.647ms/max34.036ms；不代表HTTP、支付、真实模型吞吐或生产SLA。
 - Suite typecheck/41前端/build通过；五项守卫通过（648Python/330前端、1185品牌分类、22Logo）；diff检查通过。只新增错误文案，沿用已验收的预算/错误布局；本包未新做浏览器流程，不沿用它冒充新现场。
 - 正式付费模型仍未启用；提供方账户/路由治理、付款周期预算、RPM/TPM/公平排队、成本调查Admin、支付与真实收费验收尚未完成。7190408的CI部署容器检查仍在进行，尚无本包CI/上线声明。
+
+- 2026-10-01 09:50 HKT：普通提交`1bc6c427aa9e8ca2c4b37490951358cf7355e437`已正常推送feat/business-apps，18文件。staged diff/高置信秘密模式检查通过；PR仍draft且mergeable_state=clean。精确SHA的[Actions36802776113](https://github.com/WeGreen-AI/Synwevo/actions/runs/36802776113)为pending，按既有concurrency等待7190408运行完成；没有取消门禁或重复手工部署。
+
+### 2026-10-01 · 成本策略治理当前增量（尚未提交）
+
+- Store不可变策略版本、实际CostAdmission消费者、四个类型化管理API及三语言编辑/预览/发布/历史已实现。平台view/manage分别鉴权；签名绑定环境/当前版本/操作者/源站/固定账户与精确参数；新发布/成功审计/幂等结果同事务。
+- `/private/tmp/synwevo-cost-governance-final.xml`：257 passed，0失败/错误/跳过，78.161s；其中HTTP72、核心策略14，另含成本准入125、Agent成本10、价格36。停用即时拒绝新发送，已发生用量仍结算；重复/竞争/撤权/审计回滚真实验证。隔离夹具，不是外网模型或付款。
+- Accounts typecheck、31项前端+19项组件检查、build通过；五项守卫通过（653Python/334前端、1185品牌分类、22Logo）。前端浮点expires_at契约不匹配已修正；测试后缀改为默认门槛实际加载的mjs。新接口拒绝词句在默认语言检查中登记并通过，没有修改断言标准。
+- 本地Accounts健康200；内置浏览器对已配置prices.localhost:33772返回ERR_BLOCKED_BY_CLIENT，当前UI视觉/键盘/窄屏未验收。未切换工具或弱化安全来绕过。正式收费仍关闭。
+- [CI7190408](https://github.com/WeGreen-AI/Synwevo/actions/runs/36800670629)在45min时限取消，构建成功，容器测试到49%并已有1F；日志`/private/tmp/synwevo-ci-7190408.log`。没有最终traceback/全套结果，不能归为只超时无业务失败。1bc6c42新CI运行中。

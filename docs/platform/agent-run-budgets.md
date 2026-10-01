@@ -141,3 +141,41 @@ Governed provider-account configuration, aggregate rollups for larger workloads,
 budgets, RPM/TPM, fair queues, upstream balance alerts and an audited unknown-cost investigation
 surface remain separate requirements. The default deployed factory still does not enable this
 paid route. Isolated admission tests are not evidence of live provider capacity or live billing.
+
+## Governed cost policy
+
+Account administration exposes `/admin?tab=model-costs` and the typed
+`/api/admin/billing/cost-policy` endpoints: GET current state, GET `/history` with
+`before_revision` and bounded `limit`, POST `/preview`, and POST `/publish`.
+`platform.config.view` permits reads; `platform.config.manage` permits preparation and
+publication, with fresh `admin` authentication and an 8–500 character reason for publication.
+Workspace ownership alone grants neither permission. The host captures
+`SYNWEVO_BILLING_ENVIRONMENT=test|live` at startup. Missing configuration returns an explicit
+unconfigured read state and refuses writes. Reads never create a policy or a price.
+
+The editor takes exact major-unit decimal amounts; the API carries int64-bounded smallest-unit
+integer strings. Its available units come only from published DeepSeek cost prices in the same
+environment. All budgets, call limits and enablement must be explicit. There is no seeded
+currency, budget or default authorization. The installation's one platform DeepSeek account
+has the fixed internal reference `platform-deepseek`; neither the API nor a key rotation may
+choose a new scope. This reference is not a claim that upstream account ownership has been
+verified. Credential/route governance must bind the actual account before enabling dispatch.
+
+The signed preview binds the actor, origin, environment, fixed account, expected revision,
+current state and exact proposed policy, and expires after five minutes. The publication's
+policy version, successful audit and idempotent result commit in one Store transaction, with
+current authorization rechecked inside that transaction. An identical retry returns its original
+result even after a later publication; a changed payload with that key conflicts. Concurrent
+publishers cannot overwrite each other. Historical versions are immutable: restoring old settings
+means copying them into a new reviewed publication, never rewriting past costs.
+
+`CostSettings(store, environment=...).policy` is the current-policy callback for `CostAdmission`.
+The next dispatch reads the latest revision under its own writer transaction. Turning admission
+off stops new dispatches but leaves incurred usage settlement and reconciliation working. Unit
+changes cannot hide relevant existing exposure. Publication changes neither wallet balances,
+retail prices nor model-route enablement. The default deployed factory still needs the governed
+provider composition before it can make a paid request.
+
+The editor retains inputs on revision conflicts and locks an uncertain publication to its original
+request/key for retry. Its three-language layout and exact amount helpers are implemented; current
+visual/keyboard acceptance is tracked separately in the evidence log and is not implied by a build.
