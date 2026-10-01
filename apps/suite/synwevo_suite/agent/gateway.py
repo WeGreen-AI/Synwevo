@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
+import math
 from typing import Callable
 from uuid import uuid4
 
@@ -84,10 +85,14 @@ class MeteredDeepSeek:
     name = "deepseek"
 
     def __init__(self, ledger: Ledger, *, current_authority: Callable[[ChargeContext], bool],
-                 transport=None, limits: Limits | None = None):
+                 transport=None, limits: Limits | None = None, cost_admission=None):
         if not callable(current_authority):
             raise BillingError("model_authority_required")
+        if cost_admission is not None and (getattr(cost_admission, "ledger", None) is not ledger
+                                          or not callable(getattr(cost_admission, "admit", None))):
+            raise BillingError("model_cost_admission_required")
         self.ledger, self.store = ledger, ledger.store
+        self.cost_admission = cost_admission
         self.current_authority = current_authority
         self.transport = transport  # Trusted Python fixture injection only; not a route option.
         self.limits = limits or Limits()
@@ -171,7 +176,7 @@ class MeteredDeepSeek:
         if route.valid_until <= self.ledger._now():
             raise BillingError("route_confirmation_expired")
         identifier(logical_call_id)
-        sale, _ = self._prices(route)
+        sale, cost = self._prices(route)
         request = _json({"route": asdict(route), "context": asdict(context), "system": system,
                          "tools": tools, "messages": messages, "effort": effort})
         if len(request.encode()) > self.limits.request_bytes:
@@ -196,13 +201,25 @@ class MeteredDeepSeek:
             self.store.execute("UPDATE agent_metered_calls SET call_key=?,attempt_key=? WHERE id=?",
                                (call_key, ticket.attempt_key, key))
 
+            admission_refusal = None
+
             def before_dispatch():
                 self._check(context)
                 if should_stop():
                     raise DeepSeekCancelled(Attempt())
                 if route.valid_until <= self.ledger._now():
                     raise BillingError("route_confirmation_expired")
-                self.ledger.dispatch(ticket, block_unresolved_run=True)
+                def admit(transaction, dispatch_ticket):
+                    nonlocal admission_refusal
+                    try:
+                        self.cost_admission.admit(transaction, dispatch_ticket,
+                            amount=self.upper_bound(route, cost),
+                            expires_at=self.ledger._now() + math.ceil(self.limits.timeout_s) + 1)
+                    except BillingError as exc:
+                        admission_refusal = exc
+                        raise
+                self.ledger.dispatch(ticket, block_unresolved_run=True,
+                                     admission=admit if self.cost_admission is not None else None)
 
             provider = DeepSeekProvider(limits=replace(self.limits, max_tokens=route.output_token_ceiling),
                                         transport=self.transport)
@@ -215,6 +232,11 @@ class MeteredDeepSeek:
                     user_id=pseudonym, before_dispatch=before_dispatch)
             except (DeepSeekError, DeepSeekCancelled) as exc:
                 self._observe(key, ticket, route, exc.attempt, completed=False)
+                if admission_refusal is not None:
+                    # The transport deliberately sanitizes callback exceptions. Preserve
+                    # only our local typed refusal, after recording the unsent attempt.
+                    admission_refusal.not_dispatched = True
+                    raise admission_refusal from None
                 raise
             # A syntactically valid stream can still be a refusal, truncation or an
             # invalid continuation of this Agent turn. Accept it before selling usage.
@@ -311,6 +333,8 @@ class MeteredTurnProvider:
         if quotes is not None and (quotes.gateway is not gateway or not callable(credential_resolver)
                                    or gateway.ledger.authorize != quotes.authorize):
             raise BillingError("model_configuration_required")
+        if quotes is not None and gateway.cost_admission is None:
+            raise BillingError("model_cost_admission_required")
         self.gateway, self.quotes = gateway, quotes
         self.credential_resolver = credential_resolver
 
@@ -343,7 +367,11 @@ class MeteredTurnProvider:
             exc.usage_reliability = exc.attempt.usage_reliability
             raise
         except BillingError as exc:
-            raise ProviderError("billing_" + exc.code, "本次运行的预算或用量状态暂不允许继续，请查看费用记录") from None
+            error = ProviderError("billing_" + exc.code, "本次运行的预算或用量状态暂不允许继续，请查看费用记录")
+            if getattr(exc, "not_dispatched", False):
+                error.metered_usage = {"input_tokens": 0, "output_tokens": 0}
+                error.usage_reliability = "not_dispatched"
+            raise error from None
         step = result.step
         step.api_message = result.replay_message
         step.usage_reliability = result.attempt.usage_reliability

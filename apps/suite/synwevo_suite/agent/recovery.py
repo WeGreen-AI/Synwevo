@@ -282,7 +282,7 @@ class MeteringRecovery:
                          (row["run_key"],)).fetchone():
                 return None  # Every physical call in this run must belong to the projection.
             records = t.execute(
-                "SELECT m.id,m.logical_id,m.metering_state,m.attempt_key,a.id AS physical_id,a.status,b.status AS call_status,u.facts "
+                "SELECT m.id,m.logical_id,m.metering_state,m.attempt_key,a.id AS physical_id,a.status,a.dispatched_at,b.status AS call_status,u.facts "
                 "FROM agent_metered_calls m LEFT JOIN billing_calls b ON b.id=m.call_key AND b.run_key=m.run_key "
                 "AND b.logical_call_id=m.logical_id LEFT JOIN billing_attempts a ON a.call_key=b.id "
                 "LEFT JOIN billing_usage u ON u.attempt_key=a.id WHERE m.run_key=? ORDER BY m.rowid LIMIT ?",
@@ -294,6 +294,10 @@ class MeteringRecovery:
                 return None
             input_tokens = output_tokens = 0
             for record in records:
+                if (record["metering_state"] == "released" and record["status"] == "released"
+                        and record["physical_id"] == record["attempt_key"] and record["dispatched_at"] is None
+                        and record["call_status"] == "released" and not record["facts"]):
+                    continue  # Proven unsent, not a missing provider usage estimate.
                 if (record["metering_state"] != "settled" or record["status"] != "settled"
                         or record["physical_id"] != record["attempt_key"] or not record["facts"]
                         or record["call_status"] not in ("settled", "released")):

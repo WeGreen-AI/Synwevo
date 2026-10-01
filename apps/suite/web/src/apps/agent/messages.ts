@@ -8,6 +8,7 @@ export const agentMessages = {
   "平台模型服务余额不足，请联系管理员。": { en: "The platform model service has insufficient funds. Contact an administrator.", "zh-Hant": "平台模型服務餘額不足，請聯絡管理員。" },
   "模型连接已中断，用量待核实，已完成操作保留。": { en: "The model connection was interrupted. Usage is awaiting verification; completed actions are retained.", "zh-Hant": "模型連線已中斷，用量待核實，已完成操作保留。" },
   "费用或授权状态暂不允许继续，请核对后重试。": { en: "Billing or authorization currently prevents continuing. Check the status before retrying.", "zh-Hant": "費用或授權狀態暫不允許繼續，請核對後重試。" },
+  "平台模型服务暂不接纳新调用，当前调用尚未发送。请稍后重试或联系管理员。": { en: "The platform model service is not accepting new calls. This call was not sent. Try later or contact an administrator.", "zh-Hant": "平台模型服務暫不接納新呼叫，目前呼叫尚未傳送。請稍後重試或聯絡管理員。" },
   "目标工作空间": { en: "Target workspace", "zh-Hant": "目標工作空間" },
   "模型凭据不可用，请检查 Agent 设置。": { en: "The model credential is unavailable. Check Agent settings.", "zh-Hant": "模型憑據不可用，請檢查 Agent 設定。" },
   "模型服务拒绝访问，请检查账户权限。": { en: "The model provider denied access. Check account permissions.", "zh-Hant": "模型服務拒絕存取，請檢查帳戶權限。" },

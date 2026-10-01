@@ -50,7 +50,8 @@ so a quote is not a promise that funds will remain available.
 `RunQuotes` receives an existing `MeteredDeepSeek`, a callable returning the current approved
 `Route`, and a current run/data-policy authority callback. Composition installs `quotes.authorize`
 as Ledger's payment callback and passes the same quotes plus a server-side credential resolver
-to `MeteredTurnProvider`. The constructor rejects mismatched callbacks or gateway instances.
+to `MeteredTurnProvider`. The constructor rejects mismatched callbacks or gateway instances,
+and a quoted provider requires the platform cost admission service described below.
 The Agent, capabilities, quote service and gateway must share the same Store for admission.
 Credentials are neither inferred from Anthropic settings nor included in quotes.
 
@@ -85,6 +86,8 @@ The worker settles only persisted trusted usage and expires holds at their fixed
 A late observation can record platform cost but cannot charge a finally released hold. It never
 requests the model, resumes an Agent turn or replays a business operation. Missing/unreliable
 usage remains pending after money is released; release is not evidence of zero consumption.
+A released attempt with no committed dispatch timestamp is provably unsent and contributes
+known zero tokens, including when the engine's projection must be recovered after a crash.
 One corrupt record is isolated and cursor rotation allows later records to be processed.
 
 For ended turns, complete trusted step evidence replaces public token counters in one transaction
@@ -93,3 +96,48 @@ add usage or duplicate the event. An event-write failure rolls back the projecti
 are left to the engine to avoid racing its incremental counters. The browser's event handler only
 reloads an authorized snapshot. Detailed failures in `last_round` are internal metadata, with no
 exception prose or content; a complete Admin recovery surface and operational alerting remain due.
+
+## Platform cost admission
+
+`CostAdmission` is an internal service injected into the metered gateway, with an explicit
+`CostPolicy` supplied by trusted current configuration. It has no default budget, account,
+currency or enablement. Its provider account reference must identify the real account across
+credential rotations; changing a key or gateway namespace cannot create fresh budget. Test and
+live remain separate. This service does not infer provider identity from a key.
+
+The gateway calculates a conservative cost bound from the fixed cost-price version and route
+limits, separately from the customer's retail hold. `Ledger.dispatch` invokes admission in
+the same FULL-durability writer transaction that commits its one-shot send fence. A denial or
+commit failure rolls back both. Only after that transaction commits may the transport send.
+Customer holds reserved before a denial are released without charging. No network call occurs
+inside this transaction, and `admit()` alone is never send permission.
+
+Policy sets integer daily, weekly, monthly and unknown-cost budgets plus separate maximum
+inflight and unknown counts. Calendar boundaries are fixed UTC: midnight, Monday midnight,
+and the first day of the month. Costs are attributed to the original admission period, not
+the settlement date. There is no mutable timezone with which to reset a period. Changing the
+cost unit while relevant exposure remains is refused rather than treated as a new budget.
+
+Each immutable `model_cost_admissions` row records the physical attempt, provider account,
+cost unit, bound, admission time, connection expiry and policy revision/limits. Trusted
+`billing_usage` replaces the bound with its exact rational actual cost, including platform
+failures, late results and amounts beyond the estimate. The service never caps known cost
+to hide an overrun. Unknown exposure remains counted across all periods until reliable usage
+arrives, including after final release of the customer's money. Connection expiry releases
+only the inflight slot; it is not proof of zero cost or permission to resend.
+
+The current implementation materializes at most 10,000 relevant admissions per provider
+account (current calendar periods plus all unknowns), using an overflow probe and refusing
+new work at capacity. Recent facts and historical unknowns use disjoint indexed ranges,
+bounded before joining usage. `model_cost_pending` is a derived pending projection, inserted
+with admission and removed only with trusted usage in the same transaction. Store backfills
+it once under a migration marker; ordinary reopen does not rescan settled history. This is a
+declared fail-closed accounting limit, not a throughput claim.
+The internal snapshot exposes consistent counters only; it grants no dispatch authority and
+is not a public Admin API. Disabling admission stops new calls while existing usage recording,
+wallet release and settlement remain available.
+
+Governed provider-account configuration, aggregate rollups for larger workloads, payer period
+budgets, RPM/TPM, fair queues, upstream balance alerts and an audited unknown-cost investigation
+surface remain separate requirements. The default deployed factory still does not enable this
+paid route. Isolated admission tests are not evidence of live provider capacity or live billing.

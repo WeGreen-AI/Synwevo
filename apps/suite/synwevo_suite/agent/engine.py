@@ -663,8 +663,8 @@ class Agent:
                            "usage_state=CASE WHEN ? THEN 'pending' WHEN ? THEN 'known' ELSE usage_state END, updated_at=? WHERE id=?",
                            (steps, int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
                             + int(usage.get("cache_creation_input_tokens") or 0), int(usage.get("output_tokens") or 0),
-                            bool(previous_pending or (reliability and reliability != "trusted_terminal")),
-                            reliability == "trusted_terminal", now(), turn_id))
+                            bool(previous_pending or (reliability and reliability not in ("trusted_terminal", "not_dispatched"))),
+                            reliability in ("trusted_terminal", "not_dispatched"), now(), turn_id))
 
     def _effort(self, user_id: str) -> str:
         row = self.store.one("SELECT effort FROM agent_settings WHERE user_id=?", (user_id,))

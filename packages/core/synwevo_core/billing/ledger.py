@@ -405,12 +405,18 @@ class Ledger:
             self._event(t, call["id"], "claimed", "expired_preparation_only", attempt_key)
             return AttemptTicket(attempt_key, owner, fence)
 
-    def dispatch(self, ticket: AttemptTicket, *, block_unresolved_run: bool = False) -> None:
+    def dispatch(self, ticket: AttemptTicket, *, block_unresolved_run: bool = False,
+                 admission=None) -> None:
         """Commit the one-shot send boundary; a replay is REFUSED, never permission to resend.
 
         Success means 'may have been sent' even if the process crashes before network I/O.
         There is deliberately no automatic recovery send for this ambiguous window.
+        A trusted local admission callback may reserve provider-account capacity/cost in
+        this same writer transaction. It must not perform network I/O. Its writes and
+        the dispatch fence either commit together with FULL durability or both roll back.
         """
+        if admission is not None and not callable(admission):
+            raise BillingError("invalid_dispatch_admission")
         with self._tx() as t:
             self._expire(t)
             attempt = self._attempt(t, ticket.attempt_key)
@@ -428,6 +434,8 @@ class Ledger:
                     "AND a.status IN ('dispatch_unknown','usage_pending') LIMIT 1",
                     (call["run_key"], attempt["id"])).fetchone():
                 raise BillingError("usage_pending")
+            if admission is not None:
+                admission(t, ticket)
             t.execute("UPDATE billing_attempts SET status='dispatch_unknown',dispatched_at=? WHERE id=?",
                       (self._now(), ticket.attempt_key))
             self._event(t, call["id"], "dispatch_unknown", "committed_before_network", ticket.attempt_key)

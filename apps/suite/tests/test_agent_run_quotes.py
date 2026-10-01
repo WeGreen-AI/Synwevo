@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from synwevo_core.billing import BillingError
+from synwevo_core.billing.admission import CostAdmission, CostPolicy
 from synwevo_core.errors import ServiceError
 from synwevo_suite.agent.gateway import MeteredTurnProvider
 from synwevo_suite.agent.provider import Credential
@@ -29,6 +30,10 @@ def paid(gateway, monkeypatch):
     g.store.execute('UPDATE users SET email_verified_at=1 WHERE id=?',(user['id'],))
     # Admission and its grant share the exact Store transaction, as deployment composition must.
     g.store=agent.store;g.ledger.store=agent.store;g.model.store=agent.store
+    from synwevo_core.billing import Unit
+    policy=CostPolicy('fixture-policy-v1','fixture-provider-account','deepseek',Unit('FIXTURE-GATEWAY-COST',8),
+                      True,10000,10000,10000,10000,10,10)
+    g.model.cost_admission=CostAdmission(g.ledger,current_policy=lambda:policy)
     route=[g.route]
     quotes=RunQuotes(g.model,current_route=lambda:route[0],current_authority=lambda context:g.authority[0])
     g.ledger.authorize=quotes.authorize

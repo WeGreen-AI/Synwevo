@@ -39,6 +39,7 @@ export function agentErrorText(error: unknown, t: (key: string) => string): stri
   let code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
   if (error instanceof ApiError && code === "idempotent_failure") code = error.detail?.code ?? code;
   if (errors[code]) return t(errors[code]);
+  if (code.startsWith("billing_cost_")) return t("平台模型服务暂不接纳新调用，当前调用尚未发送。请稍后重试或联系管理员。");
   if (code.startsWith("billing_")) return t("费用或授权状态暂不允许继续，请核对后重试。");
   if (error instanceof ApiError) return error.message;
   return t("未能完成此操作，请核对结果后重试。");

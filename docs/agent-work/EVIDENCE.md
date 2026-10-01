@@ -168,3 +168,20 @@
 - 截图：[手机报价](evidence/2026-10-01-agent-budget/quote-mobile-hant.png)、[英文桌面](evidence/2026-10-01-agent-budget/budget-desktop-en.png)、[简体精度拒绝](evidence/2026-10-01-agent-budget/precision-validation-hans.png)、[余额不足](evidence/2026-10-01-agent-budget/balance-refusal-desktop-hans.png)。手机图早于最后单token措辞修正，布局/焦点代码相同。视口已reset；未宣称真实reduced-motion或完整WCAG验收。
 - 验收后关闭浏览器事件连接，TERM退出PID74817/41002，恢复普通portal PID77949/session44945，healthz200/instance=test；未启用付费模型。33770/33772旧进程已停止，不沿用历史健康证据。
 - 235项是当前后端增量的关联验证，不是当前提交全仓重跑；全仓基线3765/2仍只绑定41069bd。提供方/成本准入、周期预算、持续授权、支付/退款/商户与真实模型验收仍未完成；正式收费保持关闭。
+
+### 2026-10-01 · 7190408推送与成本准入开始
+
+- 普通提交7190408428b5e1b86c4b6295888452e42bab6832已推送，28文件；预算/恢复证据归于此提交。草稿PR #1已更新；未合并、未部署。
+- [Actions36800670629](https://github.com/WeGreen-AI/Synwevo/actions/runs/36800670629)精确headSha=7190408；verify110174044102的依赖安装、Verify and build成功，Verify the deployment runtime仍运行。旧账户额度失败不再代表当前CI。
+- 提交前初次文本扫描试图UTF-8解码PNG失败；推送前改为bytes扫描实际git show，通过高置信秘密模式检查，四张图片已视觉审查。没有把失败扫描写成通过。
+- 新增成本准入包尚未验证，正式DeepSeek/收费仍未启用。
+
+### 2026-10-01 09:46 HKT · 平台成本准入与未知用量敞口（7190408后增量）
+
+- Store新增不可变admission与pending投影；Ledger同一FULL事务提交成本准入与一次发送边界，按稳定提供方账户跨namespace累计固定UTC日/周/月、未知总额/数量与在途连接。实际成本使用精确分数，不因平台故障、迟到或超过估值被截断。用户预留最终释放不清除未知平台敞口。
+- `/private/tmp/synwevo-cost-final.xml`：289 passed，0失败/错误/跳过，38.395s，当前完整成本增量+Ledger/Agent/报价/恢复/生命周期/blob关联回归。独立8个Store争抢最后预算只有1个准入；投影/发送/结算故障均回滚；重复打开和一次性回填保留事实。没有真实支付或模型流量。
+- 修复CR-013：10,000条历史已结算记录下捕获实际SQL并EXPLAIN，当前区间与历史pending分别使用scope索引，没有底层全历史扫描；最多10001候选溢出探测，最多10000参与累加，超限拒绝，不默默截断。
+- 修复CR-014：明确未发的成本拒绝显示已知0；终态恢复同样识别无dispatch时间戳的已释放attempt。一次真实Agent工具调用后下一步被成本拒绝，保留单次工具、已计量13输入/7输出与一次销售；真正发送后未知仍pending。
+- [本机成本快照测量](evidence/2026-10-01-model-cost/admission-benchmark.json)：macOS27/arm64、Python3.14.5、10000条合成pending、单并发30次，median24.863ms/P9530.647ms/max34.036ms；不代表HTTP、支付、真实模型吞吐或生产SLA。
+- Suite typecheck/41前端/build通过；五项守卫通过（648Python/330前端、1185品牌分类、22Logo）；diff检查通过。只新增错误文案，沿用已验收的预算/错误布局；本包未新做浏览器流程，不沿用它冒充新现场。
+- 正式付费模型仍未启用；提供方账户/路由治理、付款周期预算、RPM/TPM/公平排队、成本调查Admin、支付与真实收费验收尚未完成。7190408的CI部署容器检查仍在进行，尚无本包CI/上线声明。
