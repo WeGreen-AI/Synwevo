@@ -60,6 +60,68 @@ class StartTurn(_In):
     text: str | None = F(default=None, max_length=20_000)
     parent_message_id: str | None = F(default=None, pattern=MSG)
     regenerate_of: str | None = F(default=None, pattern=MSG)
+    quote_id: str | None = F(default=None, pattern=r"^quote_[a-f0-9]{12}$")
+
+
+class QuoteTurn(_In):
+    conversation_id: str = F(pattern=CONV)
+    text: str | None = F(default=None, max_length=20_000)
+    parent_message_id: str | None = F(default=None, pattern=MSG)
+    regenerate_of: str | None = F(default=None, pattern=MSG)
+    budget: str = F(pattern=r"^[1-9][0-9]{0,18}$")
+    max_calls: int = F(strict=True, ge=1, le=12)
+    run_seconds: int = F(strict=True, ge=1, le=3600)
+
+
+class QuoteRef(_In):
+    conversation_id: str = F(pattern=CONV)
+    quote_id: str = F(pattern=r"^quote_[a-f0-9]{12}$")
+
+
+class MoneyUnit(_In):
+    code: str
+    scale: int = F(strict=True, ge=0, le=18)
+
+
+class RationalRate(_In):
+    numerator: str = F(pattern=r"^[0-9]+$")
+    denominator: str = F(pattern=r"^[1-9][0-9]*$")
+
+
+class TokenRates(_In):
+    input_uncached: RationalRate
+    input_cached: RationalRate
+    output: RationalRate
+
+
+class ModelTerms(_In):
+    environment: Literal["test", "live"]
+    model: str
+    confirmed_route: str
+    route_version: str
+    price_id: str
+    unit: MoneyUnit
+    rates: TokenRates
+    per_tokens: int = F(strict=True, ge=1)
+    terms_ref: str
+    per_call_hold: str = F(pattern=r"^[0-9]+$")
+
+
+class ModelOffer(ModelTerms):
+    max_calls_limit: int
+    run_seconds_limit: int
+
+
+class QuoteResult(ModelTerms):
+    id: str
+    payer_user_id: str
+    conversation_id: str
+    budget: str = F(pattern=r"^[0-9]+$")
+    max_calls: int
+    deadline: int
+    expires_at: int
+    turn_id: str | None
+    status: Literal["quoted", "accepted", "expired", "revoked"]
 
 
 class TurnRef(_In):
@@ -113,23 +175,25 @@ class PolicySet(_In):
     processing: Literal["none", "platform", "any"]
 
 
-def settings_json(store, user_id: str) -> dict:
+def settings_json(store, user_id: str, agent=None) -> dict:
     row = store.one("SELECT * FROM agent_settings WHERE user_id=?", (user_id,))
-    cred = resolve_credential(store, user_id)
+    cred = agent._credential(user_id) if agent is not None else resolve_credential(store, user_id)
     from synwevo_core import env
+    paid = bool(agent and getattr(agent.provider, "quotes", None))
     return {"effort": row["effort"] if row else "medium",
             "prefer_personal_key": bool(row and row["prefer_personal_key"]),
             "memory_enabled": bool(row["memory_enabled"]) if row else True,
             "personal_key": {"set": bool(row and row["personal_key_sealed"]),
                              "hint": row["personal_key_hint"] if row else None},
-            "model_configured": bool(configured_model()),
-            "platform_configured": bool((env.get("AGENT_ANTHROPIC_API_KEY") or "").strip()
+            "model_configured": bool(cred) if paid else bool(configured_model()),
+            "platform_configured": bool(cred) if paid else bool((env.get("AGENT_ANTHROPIC_API_KEY") or "").strip()
                                         and configured_model()),
             "active": {"credential": cred.kind, "model": cred.model} if cred else None,
+            "billing": {"required": paid},
             "efforts": list(EFFORTS)}
 
 
-def update_settings(store, user_id: str, i: Settings) -> dict:
+def update_settings(store, user_id: str, i: Settings, agent=None) -> dict:
     row = store.one("SELECT * FROM agent_settings WHERE user_id=?", (user_id,))
     if not row:
         store.execute("INSERT INTO agent_settings (user_id, updated_at) VALUES (?,?)", (user_id, now()))
@@ -153,7 +217,7 @@ def update_settings(store, user_id: str, i: Settings) -> dict:
         sets += ["personal_key_sealed=?", "personal_key_hint=?"]
         args += [sealed.seal(store, KEY_PURPOSE, key), "…" + key[-4:]]
     store.execute(f"UPDATE agent_settings SET {', '.join(sets)} WHERE user_id=?", (*args, user_id))
-    return settings_json(store, user_id)
+    return settings_json(store, user_id, agent)
 
 
 def policies_json(store, identity, user_id: str) -> dict:
@@ -186,7 +250,7 @@ def register(registry, agent: Agent, store, identity) -> None:
             item = store.one("SELECT conversation_id FROM agent_tool_calls WHERE id=? AND user_id=?",
                              (inp.get("tool_call_id"), c.user_id))
             cid = item["conversation_id"] if item else None
-        elif c.op.id.startswith("agent.turn."):
+        elif c.op.id.startswith("agent.turn.") and c.op.id != "agent.turn.quote":
             item = store.one("SELECT conversation_id FROM agent_turns WHERE id=? AND user_id=?",
                              (inp.get("turn_id") or out.get("turn_id"), c.user_id))
             cid = item["conversation_id"] if item else None
@@ -221,11 +285,48 @@ def register(registry, agent: Agent, store, identity) -> None:
     op(id="agent.conversation.delete", title=T("删除会话", "刪除會話", "Delete a conversation"),
        summary="Delete a conversation permanently.", input=ConversationRef, side_effect="write", agent="never",
        handler=lambda c, i: agent.delete_conversation(c.user_id, i.conversation_id))
+    def billing_offer(c, i):
+        quotes = getattr(agent.provider, "quotes", None)
+        if quotes is None:
+            raise ServiceError(503, "billing_not_configured", "付费模型服务尚未配置")
+        from synwevo_core.billing import BillingError
+        try:
+            return quotes.offer()
+        except BillingError as exc:
+            raise ServiceError(503, "billing_" + exc.code, "模型价格暂不可用") from None
+
+    op(id="agent.billing.offer", title=T("查看模型价格", "查看模型價格", "Model pricing"), input=Empty,
+       summary="Current governed model offer, without starting a call or granting payment authority.",
+       agent="never", output=ModelOffer, handler=billing_offer)
+    def quote_read(c, i, *, revoke=False):
+        quotes = getattr(agent.provider, "quotes", None)
+        if quotes is None:
+            raise ServiceError(503, "billing_not_configured", "付费模型服务尚未配置")
+        agent.conversation(c.user_id, i.conversation_id)
+        from synwevo_core.billing import BillingError
+        try:
+            result = quotes.get(c.user_id, i.quote_id)
+            if result["conversation_id"] != i.conversation_id:
+                raise ServiceError(404, "quote_not_found", "报价不存在")
+            return quotes.revoke(c.user_id, i.quote_id) if revoke else result
+        except BillingError as exc:
+            raise ServiceError(404, "billing_" + exc.code, "报价不可用") from None
+
+    op(id="agent.turn.quote", title=T("查看运行报价", "查看執行報價", "Quote a run"),
+       summary="Bind this message and conversation to a personal price, deadline and maximum budget; no model call or funds held.",
+       input=QuoteTurn, output=QuoteResult, side_effect="write", agent="never", unattended=False,
+       handler=lambda c, i: agent.quote_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
+           regenerate_of=i.regenerate_of, budget=int(i.budget), max_calls=i.max_calls, run_seconds=i.run_seconds))
+    op(id="agent.quote.get", title=T("查看报价", "查看報價", "Read a quote"), input=QuoteRef,
+       summary="Read the person's own fixed price and budget.", agent="never", output=QuoteResult, handler=quote_read)
+    op(id="agent.quote.revoke", title=T("撤销运行预算", "撤銷執行預算", "Revoke a run budget"), input=QuoteRef,
+       summary="Stop this grant from authorizing further paid calls; incurred facts still settle.",
+       side_effect="write", agent="never", output=QuoteResult, handler=lambda c, i: quote_read(c, i, revoke=True))
     op(id="agent.turn.start", title=T("发送消息", "傳送訊息", "Send a message"),
        summary="Send a message (or regenerate an answer) and start the answer.", input=StartTurn,
        side_effect="write", agent="never", transactional=False,
        handler=lambda c, i: agent.start_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
-                                             regenerate_of=i.regenerate_of))
+                                             regenerate_of=i.regenerate_of, quote_id=i.quote_id))
     op(id="agent.turn.cancel", title=T("停止回答", "停止回答", "Stop the answer"),
        summary="Stop an answer: nothing further runs.", input=TurnRef, side_effect="write", agent="never",
        transactional=False, handler=lambda c, i: agent.cancel(c.user_id, i.turn_id))
@@ -238,10 +339,10 @@ def register(registry, agent: Agent, store, identity) -> None:
        unattended=False, handler=lambda c, i: agent.decide(c.user, i.tool_call_id, confirm=False, confirmation=None))
     op(id="agent.settings.get", title=T("查看 Agent 设置", "查看 Agent 設定", "Agent settings"),
        summary="Model access and preferences.", input=Empty, agent="never",
-       handler=lambda c, i: settings_json(store, c.user_id))
+       handler=lambda c, i: settings_json(store, c.user_id, agent))
     op(id="agent.settings.update", title=T("修改 Agent 设置", "修改 Agent 設定", "Change Agent settings"),
        summary="Change effort, memory, or the person's own provider key.", input=Settings, side_effect="write",
-       agent="never", handler=lambda c, i: update_settings(store, c.user_id, i))
+       agent="never", handler=lambda c, i: update_settings(store, c.user_id, i, agent))
     op(id="agent.memory.list", title=T("查看记忆", "查看記憶", "Memories"), summary="What the Agent remembers about the person.",
        input=Empty, agent="never",
        handler=lambda c, i: {"memories": store.all("SELECT id, body, created_at, updated_at FROM agent_memories "

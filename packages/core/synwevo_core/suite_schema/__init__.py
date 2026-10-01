@@ -14,7 +14,7 @@ import importlib
 
 #: One module per application, applied in this order; ``runs`` (the capability layer's run records
 #: and event outbox) first.
-MODULES = ("runs", "forms", "tables", "dataprep", "approvals", "extract", "agent", "flows", "billing", "model_gateway", "model_prices")
+MODULES = ("runs", "forms", "tables", "dataprep", "approvals", "extract", "agent", "flows", "billing", "model_gateway", "model_prices", "model_quotes")
 
 
 def apply(c) -> None:

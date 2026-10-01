@@ -307,11 +307,26 @@ class MeteredTurnProvider:
     """
     name = "deepseek"
 
-    def __init__(self, gateway: MeteredDeepSeek):
-        self.gateway = gateway
+    def __init__(self, gateway: MeteredDeepSeek, *, quotes=None, credential_resolver=None):
+        if quotes is not None and (quotes.gateway is not gateway or not callable(credential_resolver)
+                                   or gateway.ledger.authorize != quotes.authorize):
+            raise BillingError("model_configuration_required")
+        self.gateway, self.quotes = gateway, quotes
+        self.credential_resolver = credential_resolver
+
+    def resolve_credential(self, store, user_id):
+        if self.credential_resolver is not None:
+            return self.credential_resolver(store, user_id)
+        from .provider import resolve_credential
+        return resolve_credential(store, user_id)
 
     def step_for_turn(self, *, turn, logical_call_id, **arguments):
         ledger, store = self.gateway.ledger, self.gateway.store
+        if self.quotes is not None:
+            try:
+                self.quotes.open_turn(turn)
+            except BillingError as exc:
+                raise ProviderError("billing_" + exc.code, "本次运行的价格或预算授权不可用，请重新确认") from None
         row = store.one("SELECT context FROM billing_runs WHERE environment=? AND namespace=? AND run_id=?",
                         (ledger.environment, ledger.namespace, turn["id"]))
         if not row:

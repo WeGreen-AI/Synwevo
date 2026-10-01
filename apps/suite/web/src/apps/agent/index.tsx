@@ -15,6 +15,7 @@ import "./agent.css";
 
 const Settings = lazy(() => import("./Settings"));
 const Automations = lazy(() => import("./Automations"));
+const BudgetDialog = lazy(() => import("./BudgetDialog"));
 
 function AgentApp() {
   const { t } = useI18n();
@@ -35,6 +36,13 @@ function AgentApp() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>();
   const [configured, setConfigured] = useState<boolean>();
+  const [billingRequired, setBillingRequired] = useState(false);
+  const [budgetIntent, setBudgetIntent] = useState<{ conversation_id: string; text?: string; regenerate_of?: string; parent_message_id?: string }>();
+  const [sentDraft, setSentDraft] = useState(0);
+  const currentConversation = useRef(id);
+  currentConversation.current = id;
+  const currentBudgetIntent = useRef(budgetIntent);
+  currentBudgetIntent.current = budgetIntent;
   const [spaces, setSpaces] = useState<Workspace[]>([]);
   const intents = useRef(new Map<string, string>());
   const retryCreate = useRef<string | undefined>(undefined);
@@ -64,14 +72,20 @@ function AgentApp() {
   useEffect(() => {
     const abort = new AbortController();
     Promise.all([
-      read<{ active: unknown }>("agent.settings.get", {}, null, abort.signal),
+      read<{ active: unknown; billing?: { required: boolean } }>("agent.settings.get", {}, null, abort.signal),
       read<{ workspaces: Workspace[] }>("agent.workspace_policy.list", {}, null, abort.signal),
-    ]).then(([model, policies]) => { setConfigured(!!model.active); setSpaces(policies.workspaces); })
+    ]).then(([model, policies]) => { setConfigured(!!model.active); setBillingRequired(!!model.billing?.required); setSpaces(policies.workspaces); })
       .catch((e) => { if (!abort.signal.aborted) setActionError(e); });
     return () => abort.abort();
   }, [settings]);
 
   async function act(operation: string, input: Record<string, unknown>) {
+    if (operation === "agent.turn.start" && billingRequired) {
+      setBudgetIntent({ conversation_id: String(input.conversation_id),
+        ...(typeof input.regenerate_of === "string" ? { regenerate_of: input.regenerate_of } : {}),
+        ...(typeof input.text === "string" ? { text: input.text } : {}) });
+      return;
+    }
     const result = await write(operation, input);
     await refresh(); setTick((n) => n + 1);
     return result;
@@ -79,9 +93,11 @@ function AgentApp() {
   async function send(text: string) {
     let cid = id ?? retryCreate.current;
     if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
+    if (billingRequired) { setBudgetIntent({ conversation_id: cid!, text }); return false; }
     await write("agent.turn.start", { conversation_id: cid, text });
     retryCreate.current = undefined;
     navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
+    return true;
   }
   async function newConversation() {
     setBusy(true); setActionError(undefined);
@@ -155,9 +171,26 @@ function AgentApp() {
           </div>
           {actionError != null && <Failure error={actionError} />}
           <Chat key={id ?? "new"} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
-            spaces={spaces} configured={configured} act={act} send={send} refresh={refresh} />
+            spaces={spaces} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft} />
         </>}
       </main>
+      {budgetIntent && <BudgetDialog intent={budgetIntent} onClose={() => setBudgetIntent(undefined)}
+        onQuote={(params) => write("agent.turn.quote", { ...budgetIntent, ...params })}
+        onConfirm={async (quote) => {
+          const acceptedIntent = budgetIntent;
+          await write("agent.turn.start", { ...acceptedIntent, quote_id: quote.id });
+          const sameDialog = currentBudgetIntent.current === acceptedIntent;
+          const sameConversation = currentConversation.current === acceptedIntent.conversation_id
+            || (currentConversation.current === undefined && retryCreate.current === acceptedIntent.conversation_id);
+          // A closed dialog does not undo a submitted request. Late completion must not
+          // dismiss another consent dialog, clear its text or steal a newly opened page.
+          if (sameDialog && sameConversation && acceptedIntent.text !== undefined) setSentDraft((n) => n + 1);
+          if (retryCreate.current === acceptedIntent.conversation_id) retryCreate.current = undefined;
+          setBudgetIntent((current) => current === acceptedIntent ? undefined : current);
+          if (sameDialog && sameConversation) navigate(`/agent/c/${acceptedIntent.conversation_id}`);
+          setTick((n) => n + 1);
+          await refresh();
+        }} />}
     </div>
   </div>;
 }

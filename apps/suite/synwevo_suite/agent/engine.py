@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
+from synwevo_core.billing import BillingError
 from synwevo_core.capabilities import Capabilities, canonical, fingerprint
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id, now
@@ -73,6 +74,23 @@ class Agent:
         self._signal: dict[str, int] = {}
         self._signal_lock = threading.Lock()
         self._closed = False
+
+    def _credential(self, user_id):
+        resolver = getattr(self.provider, "resolve_credential", resolve_credential)
+        return resolver(self.store, user_id)
+
+    def quote_turn(self, user, cid, text, *, parent_id, regenerate_of, budget, max_calls, run_seconds):
+        quotes = getattr(self.provider, "quotes", None)
+        if quotes is None:
+            raise ServiceError(503, "billing_not_configured", "付费模型服务尚未配置")
+        conv = self.conversation(user["id"], cid)
+        if self._sealed(user["id"], conv):
+            raise ServiceError(409, "conversation_sealed", "来源权限已变化，请新建会话")
+        try:
+            return quotes.issue(user["id"], conv, text=text, parent_id=parent_id,
+                regenerate_of=regenerate_of, budget=budget, max_calls=max_calls, run_seconds=run_seconds)
+        except BillingError as exc:
+            raise ServiceError(409, "billing_" + exc.code, "无法生成本次运行的报价，请检查预算与模型配置") from None
 
     def close(self) -> None:
         self._closed = True
@@ -302,13 +320,13 @@ class Agent:
 
     # ================================================================ turns
     def start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
-                   regenerate_of: str | None) -> dict:
+                   regenerate_of: str | None, quote_id: str | None = None) -> dict:
         # The active-turn check, quota and every message insert form one admission decision.
         with self.store.tx():
-            return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of)
+            return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of, quote_id=quote_id)
 
     def _start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
-                    regenerate_of: str | None) -> dict:
+                    regenerate_of: str | None, quote_id: str | None = None) -> dict:
         """A new user message (or a regeneration of an answer) and the turn that answers it."""
         row = self.conversation(user["id"], cid)
         if row["status"] != "active":
@@ -324,7 +342,7 @@ class Agent:
                                 "WHERE status IN ('queued','running','waiting_confirmation')", (user["id"],))
         if active["total"] >= MAX_ACTIVE_TOTAL or active["owned"] >= MAX_ACTIVE_USER:
             raise ServiceError(429, "agent_busy", "进行中的任务已达到上限，请先完成或停止已有任务")
-        credential = resolve_credential(self.store, user["id"])
+        credential = self._credential(user["id"])
         if credential is None:
             raise ServiceError(503, "agent_not_configured",
                                "个人 Agent 还没有可用的模型服务：平台尚未配置，你也没有设置自己的密钥。")
@@ -360,6 +378,17 @@ class Agent:
             raise ServiceError(409, "conversation_too_long", "会话已经很长了，请新建会话继续")
         asst_id = new_id("msg")
         turn_id = new_id("turn")
+        quotes = getattr(self.provider, "quotes", None)
+        if quotes is not None:
+            if not quote_id:
+                raise ServiceError(409, "billing_authorization_required", "请先查看并确认本次运行的价格与预算")
+            try:
+                quotes.bind(user["id"], quote_id, row, turn_id=turn_id, text=text,
+                            parent_id=parent_id, regenerate_of=regenerate_of)
+            except BillingError as exc:
+                raise ServiceError(409, "billing_" + exc.code, "本次预算授权已变化，请重新获取报价") from None
+        elif quote_id is not None:
+            raise ServiceError(409, "billing_not_configured", "付费模型服务尚未配置")
         with self.store.tx() as t:
             t.execute("INSERT INTO agent_messages (id,conversation_id,user_id,parent_id,role,status,body,created_at,updated_at) "
                       "VALUES (?,?,?,?,'assistant','streaming','',?,?)", (asst_id, cid, user["id"], user_msg_id, ts, ts))
@@ -502,7 +531,7 @@ class Agent:
         if t["cancel_requested"]:
             self._finish(t, "cancelled", None)
             return
-        credential = resolve_credential(self.store, user["id"])
+        credential = self._credential(user["id"])
         if credential is None:
             self._finish(t, "failed", ProviderError("agent_not_configured", "模型服务未配置"))
             return
@@ -661,7 +690,7 @@ class Agent:
 
     # ---------------------------------------------------------------- tools
     def _check_context(self, t: dict, credential: Credential) -> None:
-        current = resolve_credential(self.store, t["user_id"])
+        current = self._credential(t["user_id"])
         if (not current or current.kind != credential.kind or current.model != credential.model
                 or self.provider.name != t["provider"]):
             raise ProviderError("model_configuration_changed", "模型配置已变化，请重新发起回答")
@@ -900,7 +929,7 @@ class Agent:
                 # The card the person saw is not the call on record: nothing runs.
                 raise ServiceError(409, "confirmation_mismatch", "确认的内容与待执行的操作不一致，请刷新后重新确认")
             conv = self.store.one("SELECT scope_json FROM agent_conversations WHERE id=?", (c["conversation_id"],))
-            credential = resolve_credential(self.store, user["id"])
+            credential = self._credential(user["id"])
             if not credential or credential.kind != t["credential"] or credential.model != t["model"]:
                 raise ServiceError(409, "model_configuration_changed", "模型配置已变化，请重新发起回答")
             try:

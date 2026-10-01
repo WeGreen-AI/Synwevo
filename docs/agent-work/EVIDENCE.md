@@ -151,3 +151,20 @@
 - Accounts类型检查、25项前端测试与构建通过；准确金额显示覆盖大于2^53、负微额与18位精度，简繁英词库及拒绝码完整。五项守卫通过；最后UI环境提示文字后再次typecheck/build通过。
 - 隔离SQLite投影：10,001条合成流水、1单位、单并发30次，median2.289ms/P952.848ms/max2.904ms；只验证本机读侧，非HTTP/支付/模型负载或生产SLA。`/private/tmp/synwevo-wallet-bench.json`。
 - 价格与钱包页面仍未完成真实浏览器验收；客户端拦截隔离地址。正式支付、生产价表、真实模型收费链路与上线验收均未完成。测试均不代表真实充值；正常推送候选分支不代表发布。
+
+### 2026-09-30 — 0609ff5推送与新CI核验
+
+- 普通push：d453e3d → 0609ff57e31dea79b1805b6166d63cc795f54ad3，开发分支feat/business-apps；草稿PR #1范围/证据已更新。
+- 精确HEAD的[Actions 36714880199](https://github.com/WeGreen-AI/Synwevo/actions/runs/36714880199)：verify109885245745 failure/steps=[]；annotation明确recent account payments failed or spending limit needs increase；deploy109885264587 skipped。无CI通过、部署或上线声明。
+- 报价进行中：21项专项通过（/private/tmp/synwevo-run-quotes.xml）；曾发现测试fixture Store实例与Agent事务分离、测试误用Capabilities.read、真实result_guard误把quote当turn，分别修正实例、调用inspect、报价权限回放分支；未删有效断言。
+
+## 2026-10-01 · 单次预算报价与有限对账验收（0609ff5 后增量）
+
+- 真实Store/Agent/Ledger及HTTP链路：`/private/tmp/synwevo-quotes-recovery-final.xml` 235 passed，0失败/错误/跳过，43.087s；报价22、恢复45、生命周期3与关联回归。协议和资金使用明确隔离夹具，不是实网推理/真实付款。
+- 恢复器有界读取、逐项隔离、到期释放、可信计量结算与终态usage投影；事件和投影同事务。两worker与重复执行不重复扣费或事件；不会重放模型/业务工具。
+- 最终Suite类型、41项前端、build通过（BudgetDialog-DG3jNFmf.js）；五项守卫通过：644Python/330前端、1185品牌分类、22Logo。审查发现新增binding_digest未在blob库存分类，按实际非blob用途登记；原3项库存测试通过（synwevo-quotes-blob-final.xml）。
+- 浏览器使用已有portal.localhost:33769隔离数据；临时测试装配无余额且模型网络一律拒绝。conv_fa7f3a332c4b保持唯一turn_07f86a79cda1/failed/billing_insufficient_funds；真实Store读侧核对browser-budget-fixture的attempt=0、journal=0。刷新和报价/关闭不新建运行。
+- Enter获取报价后焦点曾丢到页面，修复为总预算区域；实际复验Tab仍在弹窗、Escape回到重新生成按钮。预算2.969在2位精度下拒绝；3.00固定报价成功。三语言实际切换；英文单token复数标签已修复。390×844页面scrollWidth=390，dialog358×759.59；桌面1280×900、长标题、可滚动正文/固定按钮已检查，console error/warn为空。
+- 截图：[手机报价](evidence/2026-10-01-agent-budget/quote-mobile-hant.png)、[英文桌面](evidence/2026-10-01-agent-budget/budget-desktop-en.png)、[简体精度拒绝](evidence/2026-10-01-agent-budget/precision-validation-hans.png)、[余额不足](evidence/2026-10-01-agent-budget/balance-refusal-desktop-hans.png)。手机图早于最后单token措辞修正，布局/焦点代码相同。视口已reset；未宣称真实reduced-motion或完整WCAG验收。
+- 验收后关闭浏览器事件连接，TERM退出PID74817/41002，恢复普通portal PID77949/session44945，healthz200/instance=test；未启用付费模型。33770/33772旧进程已停止，不沿用历史健康证据。
+- 235项是当前后端增量的关联验证，不是当前提交全仓重跑；全仓基线3765/2仍只绑定41069bd。提供方/成本准入、周期预算、持续授权、支付/退款/商户与真实模型验收仍未完成；正式收费保持关闭。

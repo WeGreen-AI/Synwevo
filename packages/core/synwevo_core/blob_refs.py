@@ -53,6 +53,7 @@ FILE_ROOTS: tuple[tuple[str, str, str], ...] = (
 
 #: Columns that look like a digest but are not a blob reference, with the reason.
 LOOKALIKES: tuple[tuple[str, str, str], ...] = (
+    ("agent_model_quotes", "binding_digest", "个人预算绑定消息与会话状态的指纹，不保存正文，不是 blob 引用"),
     ("agent_metered_calls", "request_digest", "模型请求幂等指纹，不保存请求正文，不是 blob 引用"),
     ("billing_payment_events", "payload_sha256", "已验证支付事件的完整性指纹，不是 blob 引用"),
     ("flow_runs", "input_digest", "固定流程输入与幂等请求的指纹，不是 blob 引用"),

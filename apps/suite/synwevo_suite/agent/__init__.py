@@ -43,6 +43,17 @@ def install(ctx) -> None:
         hooks.append(agent.close)
     if ctx.start_jobs:
         agent.recover()
+    # A paid provider is installed only by trusted deployment composition. Recovery itself
+    # never discovers credentials, enables billing, dispatches a model or replays a tool.
+    from .gateway import MeteredTurnProvider
+    if isinstance(agent.provider, MeteredTurnProvider):
+        from .recovery import MeteringRecovery
+        recovery = MeteringRecovery(gateway=agent.provider.gateway)
+        ctx.api.state.agent_metering_recovery = recovery
+        if hooks is not None:
+            hooks.append(recovery.close)
+        if ctx.start_jobs:
+            recovery.start()
 
     @ctx.api.get("/api/suite/agent/conversations/{cid}/events", tags=["agent"])
     async def events(cid: str, request: Request, after: int = 0):

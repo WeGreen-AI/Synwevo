@@ -53,7 +53,7 @@ export function useConversation(id: string | undefined) {
         if (Number.isFinite(next)) seq = Math.max(seq, next);
         invalidate();
       };
-      for (const name of ["text", "tool", "turn.started", "turn.waiting", "turn.resumed", "turn.finished", "access.changed"])
+      for (const name of ["text", "tool", "turn.started", "turn.waiting", "turn.resumed", "turn.finished", "usage.reconciled", "access.changed"])
         source.addEventListener(name, event as EventListener);
       source.addEventListener("reconnect", () => { source?.close(); connect(); });
     }

@@ -73,9 +73,9 @@ function Scope({ scope, spaces, change, close }: { scope: string[] | null; space
   </Modal>;
 }
 
-export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh }: {
+export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0 }: {
   conversation?: Conversation; loading: boolean; error: unknown; connection: string; configured: boolean | undefined;
-  spaces: Workspace[]; act: Act; send: (text: string) => Promise<unknown>; refresh: () => Promise<void>;
+  spaces: Workspace[]; act: Act; send: (text: string) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
 }) {
   const { t } = useI18n();
   const [text, setText] = useState("");
@@ -90,6 +90,7 @@ export default function Chat({ conversation, loading, error, connection, configu
   const branch = branchMessages(conversation?.messages ?? [], conversation?.head_id ?? null);
   const running = (conversation?.messages ?? []).find(activeTurn);
   const blocked = busy || !!running || !!conversation?.sealed || conversation?.status === "archived" || configured === false;
+  useEffect(() => { if (sentDraft) { setText(""); stick.current = true; input.current?.focus(); } }, [sentDraft]);
   useEffect(() => { setFailure(undefined); stick.current = true; setNewContent(false); }, [conversation?.id]);
   useEffect(() => {
     const box = scroller.current;
@@ -105,7 +106,7 @@ export default function Chat({ conversation, loading, error, connection, configu
     e?.preventDefault();
     if (blocked || !text.trim()) return;
     setBusy(true); setFailure(undefined);
-    try { await send(text); setText(""); stick.current = true; input.current?.focus(); }
+    try { if (await send(text) !== false) { setText(""); stick.current = true; input.current?.focus(); } }
     catch (e) { setFailure(e); } finally { setBusy(false); }
   }
   function answer(m: Message) {
