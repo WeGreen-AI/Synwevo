@@ -3,6 +3,7 @@ import { ApiError } from "@synwevo/auth-client";
 import { useDialog, useI18n } from "@synwevo/ui";
 import { newKey, op, read, type RunStatus } from "../../shared/ops";
 import { Empty, Failure, Loading, RunBadge } from "../../shared/states";
+import PayerBudget from "./PayerBudget";
 import "./settings/messages";
 import "./messages";
 
@@ -16,6 +17,7 @@ interface AgentSettings {
   memory_enabled: boolean;
   personal_key: { set: boolean };
   personal_key_supported: boolean;
+  billing: { required: boolean };
   model_configured: boolean;
   platform_configured: boolean;
   active: { credential: "platform" | "personal"; model: string; provider: ModelProvider } | null;
@@ -175,13 +177,15 @@ function WriteFeedback({ write }: { write: ReturnType<typeof useWrite> }) {
 function AccessSettings() {
   const { t } = useI18n();
   const resource = useRead<AgentSettings>("agent.settings.get");
-  return <section className="card" aria-labelledby="ag-access-title">
+  return <><section className="card" aria-labelledby="ag-access-title">
     <div className="card-h"><h2 id="ag-access-title">{t("模型服务与个人偏好")}</h2></div>
     <div className="card-b col gap16">
       {resource.loading ? <Loading /> : resource.error != null ? <ErrorNotice error={resource.error} retry={resource.reload} />
         : resource.data && <AccessForm settings={resource.data} onChanged={resource.setData} />}
     </div>
-  </section>;
+  </section>
+    {resource.data?.billing.required && <PayerBudget />}
+  </>;
 }
 
 function AccessForm({ settings, onChanged }: { settings: AgentSettings; onChanged: (value: AgentSettings) => void }) {

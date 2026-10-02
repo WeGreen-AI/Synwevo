@@ -233,3 +233,19 @@
 - 没有启用任何正式路线、价格或真实收费；dcca816 CI仍failed/deploy skipped。本包尚未提交/推送，完整新CI尚未执行。
 
 - 最后单条政策快照/日期及模型标识边界后76项通过，20.918s（`/private/tmp/synwevo-provider-final-diff.xml`）；Suite46前端/typecheck/build通过，Settings-m-JyxStT.js；Accounts56前端复验通过。最终边界664Python/339前端，设计/组件与diff通过。三个子任务全部移交关闭。
+
+- 2026-10-02T10:50:50.042308+00:00：提供方包正常提交并推送`bff35a8ac66e998e49bfa2d8bef1ab6d92bfe103`，49文件；暂存diff与高置信秘密模式检查通过。精确SHA的[Actions36997527305](https://github.com/WeGreen-AI/Synwevo/actions/runs/36997527305)运行中；草稿PR #1尚未合并/部署。
+
+
+### 2026-10-02 · 个人日/周/月支出上限（bff35a8后未提交增量）
+
+- 最终本机关联回归 `/private/tmp/synwevo-payer-integrated-final.xml`：544 passed、0失败/错误/跳过，87.050s；PayerBudgets/旧账务迁移/容量/原子故障、Ledger、成本/提供方、blob与全部Agent/DeepSeek关联。一次Starlette对AnyIO旧别名弃用警告，不是业务错误。早期526项及边界28项为过程证据，不叠加成更多独立测试。
+- 独立审查发现跨UTC午夜检查与call写入时间不一致，统一固定timestamp；日/周/月三例验证。读预算操作加unattended=False，flow/个人自动化/模型不能读取或修改此个人配置。网关只保留payer_*原因，原unknown/fence契约不变。
+- 另15项独立测试已审阅：有事实旧库迁移/两次reopen不改变账本；两个真实funded fixture单位独立限额；实际10000候选全部算入，10001拒绝；缺settlement无假零；event/audit实际INSERT后故障整笔回滚，独立Store看不到未提交版本，无revision缺口。
+- Suite typecheck、61前端测试、build通过（Settings-C8AZOH7d.js），五守卫通过：670Python/343前端、1185品牌分类、22Logo；diff格式通过。仅把技术说明收进原生可键盘展开详情，保留实际支出/预留/禁用影响和具体确认。
+- 浏览器正常OIDC登录已有隔离Alice，经portal.localhost:33769/agent/settings访问真实工厂和共享操作。1.001对2位精度拒绝并聚焦Daily；1.00/5.00/20.00 TEST_ONLY确认保存revision1。刷新/重新载入和历史核对仍只有1个版本。390×844繁体手机以键盘Enter核对停用+日限额0，返回编辑焦点恢复checkbox，确认保存revision2；重新载入保持2及disabled。三语言实际切换，周期时间可Enter展开；document/client宽390，无水平溢出，console error/warn为空。桌面1280×720和繁体手机截图已在本任务工具记录视觉检查；当前浏览器不支持content.export，未声称本包PNG已存仓库，也未声称真实reduced-motion或完整WCAG审计。
+- 当前无真实模型/付款调用；测试预算只是限制，不生成资金或持续授权。自有服务仅使用既有隔离测试库、start_jobs=False；未改正式部署环境。
+- CI容量诊断：Plato在Python3.12.14/2CPU/3GiB禁网容器抽样63项，基线→每10项GC→每10项GC→基线，共252通过、0源文件改动。平均总耗时11.708s→11.314s（3.4%），峰值258.8→285.6MiB；stop_all/cache微小，不支持以GC批处理解决45min容量。原清理保持。证据 `/private/tmp/colima/synwevo-capacity-profile-1wm78hiz/summary.json`及同目录节点/插件/runner；小样本ARM64，不外推完整CI。
+
+- 最终Python3.12.14诊断镜像专项54通过、2弃用警告、12.75s（Nietzsche工具结果）；只读当前apps/packages/services/infra/tests/scripts/conftest/pyproject、禁网/3GiB/2CPU、tmpfs无真实数据。随后UI合法旧结算总额超过int64的显示校验已修，新增精确显示回归；最终62前端/typecheck/build通过（Settings-BoK2sgf4.js），不是重新增加后端运行计数。
+- [bff35a8 CI36997527305](https://github.com/WeGreen-AI/Synwevo/actions/runs/36997527305)最终：2922 passed/1 failed/3 skipped，2377.14s；verify job44m57，失败SDK源码来源断言，非超时。实际SDK路径/usr/local/lib/python3.12/site-packages/synwevo_docs_sdk；日志/private/tmp/synwevo-ci-bff35a8-job.log。原3skip是Node另步执行、未配置clamd和未选LICENSE；未新增skip。deploy skipped，待修镜像与容量后新SHA验证。

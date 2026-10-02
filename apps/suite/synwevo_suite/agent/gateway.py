@@ -205,6 +205,7 @@ class MeteredDeepSeek:
             admission_refusal = None
 
             def before_dispatch():
+                nonlocal admission_refusal
                 self._check(context)
                 if should_stop():
                     raise DeepSeekCancelled(Attempt())
@@ -219,8 +220,15 @@ class MeteredDeepSeek:
                     except BillingError as exc:
                         admission_refusal = exc
                         raise
-                self.ledger.dispatch(ticket, block_unresolved_run=True,
-                                     admission=admit if self.cost_admission is not None else None)
+                try:
+                    self.ledger.dispatch(ticket, block_unresolved_run=True,
+                                         admission=admit if self.cost_admission is not None else None)
+                except BillingError as exc:
+                    # Preserve the existing transport contract for fencing/unknown usage;
+                    # only our typed payer-policy refusal needs the new user-facing reason.
+                    if exc.code.startswith("payer_"):
+                        admission_refusal = exc
+                    raise
 
             provider = DeepSeekProvider(limits=replace(self.limits, max_tokens=route.output_token_ceiling),
                                         transport=self.transport)

@@ -43,6 +43,7 @@ class Ledger:
         self.environment = environment
         self.namespace = identifier(namespace)
         self.authorize = authorize
+        self.payer_budgets = None  # Trusted composition installs a policy consumer, never an implicit grant.
         self.verify_payment = verify_payment
         self.clock = clock or (lambda: int(time.time()))
         self.max_hold_seconds = integer(max_hold_seconds, positive=True, maximum=86400)
@@ -329,10 +330,13 @@ class Ledger:
             booked, held = self._balance(t, account)
             if amount > booked - held:
                 raise BillingError("insufficient_funds")
+            payer_policy = self.payer_budgets.check(t, account, amount=amount, at=now) if self.payer_budgets else None
             key = _id()
             t.execute("INSERT INTO billing_calls(id,run_key,logical_call_id,context,account_id,price_id,hold_units,deadline,status,created_at) "
                       "VALUES (?,?,?,?,?,?,?,?,'reserved',?)",
                       (key, run["id"], logical_call_id, encoded, account, price_id, amount, deadline, now))
+            if payer_policy is not None:
+                self.payer_budgets.record(t, key, payer_policy)
             self._event(t, key, "reserved", "authorized_upper_bound")
             return key
 
@@ -426,6 +430,9 @@ class Ledger:
                     or attempt["status"] != "prepared" or attempt["lease_until"] <= self._now()
                     or call["status"] != "reserved" or call["cancel_requested"]):
                 raise BillingError("dispatch_fenced")
+            if self.payer_budgets is not None:
+                policy = self.payer_budgets.check(t, call["account_id"], amount=0, at=self._now())
+                self._event(t, call["id"], "payer_budget_checked", "revision:" + str(policy["revision"]), ticket.attempt_key)
             # Sequential model gateways must check under this same writer lock. A read
             # before reservation cannot exclude a competing worker crossing the send fence.
             if block_unresolved_run and t.execute(

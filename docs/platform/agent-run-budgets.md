@@ -137,8 +137,7 @@ The internal snapshot exposes consistent counters only; it grants no dispatch au
 is not a public Admin API. Disabling admission stops new calls while existing usage recording,
 wallet release and settlement remain available.
 
-Governed provider-account configuration, aggregate rollups for larger workloads, payer period
-budgets, RPM/TPM, fair queues, upstream balance alerts and an audited unknown-cost investigation
+Aggregate rollups for larger workloads, RPM/TPM, fair queues, upstream balance alerts and an audited unknown-cost investigation
 surface remain separate requirements. The default deployed factory still does not enable this
 paid route. Isolated admission tests are not evidence of live provider capacity or live billing.
 
@@ -221,7 +220,7 @@ from public conversation and billing responses.
 
 The current evidence log distinguishes isolated protocol/ledger tests from actual inference,
 retail payments, browser acceptance and production deployment. No real model or payment service
-is enabled by these tests. Rate/fairness limits, payer period budgets, actual checkout/refund
+is enabled by these tests. Rate/fairness limits, continuing payment consent, actual checkout/refund
 integration and full production acceptance remain in the unified backlog.
 
 Workspace processing consent additionally names allowed providers (`anthropic`/`deepseek`).
@@ -236,3 +235,57 @@ current provider consent. Policy changes commit their audit/event with the state
 The paid platform route does not accept a personal Anthropic key. Existing keys remain sealed
 and can be removed; personal-key submission/preference enablement is refused on that route.
 The settings response identifies the actual active provider and whether personal keys are supported.
+
+
+## Personal spending limits
+
+The governed DeepSeek factory now installs `PayerBudgets` on its Ledger. Missing or disabled
+personal limits refuse new paid calls. This is an additional restriction, not payment consent:
+each run still needs its bound quote, current business permissions, wallet funds, provider policy
+and platform cost admission. Only the authenticated person can read or set these limits through
+`agent.billing.budget.get` and `agent.billing.budget.set`; they are unavailable to model tools,
+workflow steps and personal unattended automation. Ordinary business API access is unchanged.
+
+The limits belong to the stable user, billing environment and published retail unit. They apply
+across gateway namespaces and price revisions. Day, week and month begin at UTC midnight,
+Monday and the first of the month. Current exposure includes settled retail charges attributed
+to their original reservation timestamp and **every still-reserved hold**, including older periods.
+Changing limits or versions does not reset usage. A separate unit does not consume another unit's
+limit. Zero blocks new positive charges. Disabling stops new calls; it neither cancels settled
+bills nor releases holds from already accepted work. Trusted settlement and final release retain
+the existing ledger rules, including no late charge after final release.
+
+Reservation checks the full additional hold inside the same writer transaction, using exactly
+the timestamp that will be stored on the call, and saves an immutable admission-policy reference.
+Dispatch rechecks current limits and exposure before committing the send fence. The held amount
+is already included at dispatch and is not added again. All accounting uses integer smallest units;
+no second balance or duplicate funds reservation is created.
+
+The get operation takes `{}` and returns `environment`, `timezone: "UTC"`, and `budgets` (at most
+100 published retail units). Each item contains `unit`, current `revision`, `configured`, `enabled`,
+three decimal-integer-string budgets, `usage_state`, `periods`, and the latest 20 immutable policy
+revisions. Available period values contain UTC `start`/exclusive `end`, and integer-string `spent`,
+`held`, `remaining`; remaining is floored at zero and is not wallet balance. Bounded indexed reads
+consider at most 10,000 relevant calls. Overflow or missing settlement evidence returns
+`usage_state: "capacity"|"inconsistent"` with `periods: null`, never invented zero usage, and refuses
+new calls. Configuration remains editable so the person can still disable their limits.
+
+The set operation requires `unit_code`, `expected_revision`, explicit `enabled`, and
+`daily_budget`, `weekly_budget`, `monthly_budget` as nonnegative int64 decimal strings.
+It accepts no supplied payer identity. Revision conflicts cannot overwrite another editor.
+Policy revision, successful operation receipt, personal audit and `agent.payer_budget.changed`
+event commit in the existing capability transaction. Repeating the same request/key returns
+its receipt; changed input conflicts. Failed persistence consumes no revision and no success event.
+The event has no workspace and carries the unit/revision, never conversation content.
+
+The Agent settings page has exact decimal inputs, current spending/holds, a concrete before/after
+review, manual same-request recovery when a save outcome is unknown, and revision history.
+Refresh/navigation does not automatically submit writes. Simplified Chinese, Traditional Chinese
+and English share this contract. These controls grant no recurring payment authority.
+
+Migration adds policy/admission tables and a partial settled-call index through Store only.
+Existing money facts, credentials and configuration are preserved; existing users receive no
+implicit enabled policy or funds. Reopen is idempotent. Deploy new consumers together: an older
+paid consumer that does not enforce this new restriction must be stopped before admitting paid
+work under these limits. Code rollback preserves policy and financial facts, and paid admission
+must stay disabled until the restored consumer can enforce all current restrictions.

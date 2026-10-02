@@ -52,7 +52,7 @@ def governed(request, monkeypatch):
     return g
 
 
-def configure(g):
+def configure(g, *, payer_budget=True):
     cat = PriceCatalogue(g.store, environment='test')
     ids = {}
     with g.store.tx():
@@ -73,6 +73,11 @@ def configure(g):
             'cost_basis_ref': 'fixture:cost', 'sale_price_id': ids['sale'], 'cost_price_id': ids['cost'],
             'input_token_ceiling': 300, 'output_token_ceiling': 64, 'valid_until': int(time.time())+3600}}
         publish(g, {'action': 'replace', 'api_key': KEY})
+    if payer_budget:
+        result = g.suite.caps.invoke('agent.billing.budget.set', {'unit_code': UNIT.code, 'expected_revision': 0,
+            'enabled': True, 'daily_budget': '1000000', 'weekly_budget': '1000000', 'monthly_budget': '1000000'},
+            user_id=g.user['id'], idempotency_key='factory-fixture-payer-budget')
+        assert result['status'] == 'succeeded'
     g.conversation = g.agent.create_conversation(g.user['id'], 'Factory integration fixture', [g.wid])
 
 

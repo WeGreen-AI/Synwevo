@@ -1,5 +1,11 @@
 import { registerMessages } from "@synwevo/ui/i18n-core";
 export const agentMessages = {
+  "请在 Agent 设置中配置个人日、周、月支出上限。当前调用尚未发送。": { en: "Set your personal daily, weekly and monthly spending limits in Agent settings. This call was not sent.", "zh-Hant": "請在 Agent 設定中設定個人日、週、月支出上限。目前呼叫尚未傳送。" },
+  "个人支出已暂停，当前调用尚未发送。可在 Agent 设置中核对。": { en: "Personal spending is paused. This call was not sent. Review Agent settings.", "zh-Hant": "個人支出已暫停，目前呼叫尚未傳送。可在 Agent 設定中核對。" },
+  "个人今日支出上限不足以容纳本次预留，当前调用尚未发送。": { en: "Your daily spending limit cannot cover this reservation. This call was not sent.", "zh-Hant": "個人今日支出上限不足以容納本次預留，目前呼叫尚未傳送。" },
+  "个人本周支出上限不足以容纳本次预留，当前调用尚未发送。": { en: "Your weekly spending limit cannot cover this reservation. This call was not sent.", "zh-Hant": "個人本週支出上限不足以容納本次預留，目前呼叫尚未傳送。" },
+  "个人本月支出上限不足以容纳本次预留，当前调用尚未发送。": { en: "Your monthly spending limit cannot cover this reservation. This call was not sent.", "zh-Hant": "個人本月支出上限不足以容納本次預留，目前呼叫尚未傳送。" },
+  "暂时无法安全核算个人周期支出，已停止新调用。请联系管理员。": { en: "Personal period spending cannot be calculated safely. New calls are stopped. Contact an administrator.", "zh-Hant": "暫時無法安全核算個人週期支出，已停止新呼叫。請聯絡管理員。" },
   "当前付费模型服务不支持个人密钥，可清除已保存的旧密钥。": { en: "The current paid model service does not support personal API keys. You can remove an older saved key.", "zh-Hant": "目前的付費模型服務不支援個人密鑰，可清除已儲存的舊密鑰。" },
   "已保存的个人密钥偏好保留，但在当前付费模型服务中不可用。请求使用平台凭据并按已确认的报价收费。": { en: "Your saved personal-key preference is retained but is unavailable with this paid model service. Requests use platform credentials and are billed under the confirmed quote.", "zh-Hant": "已儲存的個人密鑰偏好保留，但在目前的付費模型服務中不可用。請求使用平台憑據並按已確認的報價收費。" },
   "Agent 目前无法使用模型，请平台管理员核对模型与平台凭据配置。": { en: "Agent cannot currently use the model. Ask a platform administrator to check the model and platform credentials.", "zh-Hant": "Agent 目前無法使用模型，請平台管理員核對模型與平台憑據設定。" },

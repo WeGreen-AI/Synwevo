@@ -113,6 +113,57 @@ class ModelOffer(ModelTerms):
     run_seconds_limit: int
 
 
+class PayerBudgetSet(_In):
+    unit_code: str = F(min_length=1, max_length=200)
+    expected_revision: int = F(strict=True, ge=0, le=2**63-2)
+    enabled: bool = F(strict=True)
+    daily_budget: str = F(pattern=r"^(0|[1-9][0-9]{0,18})$")
+    weekly_budget: str = F(pattern=r"^(0|[1-9][0-9]{0,18})$")
+    monthly_budget: str = F(pattern=r"^(0|[1-9][0-9]{0,18})$")
+
+
+class PayerBudgetHistory(_In):
+    revision: int
+    enabled: bool
+    daily_budget: str
+    weekly_budget: str
+    monthly_budget: str
+    created_at: int
+
+
+class PayerBudgetPeriod(_In):
+    start: int
+    end: int
+    spent: str
+    held: str
+    remaining: str
+
+
+class PayerBudgetPeriods(_In):
+    daily: PayerBudgetPeriod
+    weekly: PayerBudgetPeriod
+    monthly: PayerBudgetPeriod
+
+
+class PayerBudgetResult(_In):
+    unit: MoneyUnit
+    revision: int
+    configured: bool
+    enabled: bool
+    daily_budget: str
+    weekly_budget: str
+    monthly_budget: str
+    usage_state: Literal["available", "capacity", "inconsistent"]
+    periods: PayerBudgetPeriods | None
+    history: list[PayerBudgetHistory]
+
+
+class PayerBudgetList(_In):
+    environment: Literal["test", "live"]
+    timezone: Literal["UTC"]
+    budgets: list[PayerBudgetResult]
+
+
 class QuoteResult(ModelTerms):
     id: str
     payer_user_id: str
@@ -250,7 +301,7 @@ def register(registry, agent: Agent, store, identity) -> None:
         if c.op.id == "agent.conversation.create":
             cid = out.get("id")
         if c.op.id in ("agent.conversation.delete", "agent.memory.delete", "agent.settings.update",
-                       "agent.workspace_policy.set"):
+                       "agent.workspace_policy.set", "agent.billing.budget.set"):
             # Only a deletion receipt, masked key state or policy enum; no business body.
             return
         if c.op.id.startswith("agent.memory."):
@@ -310,6 +361,33 @@ def register(registry, agent: Agent, store, identity) -> None:
     op(id="agent.billing.offer", title=T("查看模型价格", "查看模型價格", "Model pricing"), input=Empty,
        summary="Current governed model offer, without starting a call or granting payment authority.",
        agent="never", output=ModelOffer, handler=billing_offer)
+
+    def payer_budget(c, i, *, change=False):
+        quotes = getattr(agent.provider, "quotes", None)
+        service = getattr(quotes.ledger, "payer_budgets", None) if quotes else None
+        if service is None:
+            raise ServiceError(503, "billing_not_configured", "付费模型服务尚未配置")
+        from synwevo_core.billing import BillingError
+        try:
+            if not change:
+                return service.read(c.user_id)
+            result = service.set(c.user_id, unit_code=i.unit_code, expected_revision=i.expected_revision,
+                enabled=i.enabled, daily_budget=int(i.daily_budget), weekly_budget=int(i.weekly_budget),
+                monthly_budget=int(i.monthly_budget))
+            c.touches("payer_budget", c.user_id)
+            c.emit("agent.payer_budget.changed", object_kind="payer_budget", object_id=c.user_id,
+                   data={"unit_code": i.unit_code, "revision": result["revision"]})
+            return result
+        except BillingError as exc:
+            raise ServiceError(409, "billing_" + exc.code, "个人支出上限暂不可用，请重新核对设置") from None
+
+    op(id="agent.billing.budget.get", title=T("查看个人支出上限", "查看個人支出上限", "Personal spending limits"),
+       summary="UTC payer-wide limits, current reserved and settled amounts, and latest 20 revisions per unit.",
+       input=Empty, output=PayerBudgetList, agent="never", unattended=False, handler=payer_budget)
+    op(id="agent.billing.budget.set", title=T("设置个人支出上限", "設定個人支出上限", "Set personal spending limits"),
+       summary="Change only this person's calendar limits; grants no run, tool or payment authority.",
+       input=PayerBudgetSet, output=PayerBudgetResult, side_effect="write", agent="never", unattended=False,
+       events=("agent.payer_budget.changed",), handler=lambda c, i: payer_budget(c, i, change=True))
     def quote_read(c, i, *, revoke=False):
         quotes = getattr(agent.provider, "quotes", None)
         if quotes is None:
