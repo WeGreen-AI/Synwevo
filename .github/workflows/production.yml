@@ -1,6 +1,6 @@
 name: Verify and deploy Synwevo
-# Actions minutes are a budget (2,000 a month included; every run here is ~28 minutes of verify + deploy,
-# and September 2026 ran out on the 28th). Records under docs/ are not part of the product — nothing at
+# Actions minutes are a budget. The complete runtime suite is kept in one bounded verify job.
+# Records under docs/ are not part of the product — nothing at
 # runtime reads them — so a push that only changes them does not verify or deploy. docs/integration/ stays
 # in: tests compare its generated OpenAPI file with the code. workflow_dispatch still runs anything.
 on:
@@ -18,7 +18,9 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Run 36997527305: 2,922 tests took 39m37s at ~69% (before an SDK install failure).
+    # Allow the complete suite plus image build; retain every test and the 3 GiB / 2 CPU limits.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}

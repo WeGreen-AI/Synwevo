@@ -249,3 +249,13 @@
 
 - 最终Python3.12.14诊断镜像专项54通过、2弃用警告、12.75s（Nietzsche工具结果）；只读当前apps/packages/services/infra/tests/scripts/conftest/pyproject、禁网/3GiB/2CPU、tmpfs无真实数据。随后UI合法旧结算总额超过int64的显示校验已修，新增精确显示回归；最终62前端/typecheck/build通过（Settings-BoK2sgf4.js），不是重新增加后端运行计数。
 - [bff35a8 CI36997527305](https://github.com/WeGreen-AI/Synwevo/actions/runs/36997527305)最终：2922 passed/1 failed/3 skipped，2377.14s；verify job44m57，失败SDK源码来源断言，非超时。实际SDK路径/usr/local/lib/python3.12/site-packages/synwevo_docs_sdk；日志/private/tmp/synwevo-ci-bff35a8-job.log。原3skip是Node另步执行、未配置clamd和未选LICENSE；未新增skip。deploy skipped，待修镜像与容量后新SHA验证。
+
+
+### 2026-10-02 · SDK来源与完整CI容量修复（d3cba3c后增量）
+
+- 个人预算包已本地提交d3cba3c212e20e528a9c933323df9b4008672de4，24文件；暂存diff与高置信秘密模式检查通过。为避免重复执行已知失败CI，待本修复一起正常推送。
+- CR-027：验证Dockerfile将SDK常规安装到site-packages，与当前检出来源断言冲突。验证镜像改为和其他业务包一致的editable安装；未改断言/SDK功能/生产镜像，宿主机SDK检查继续测试常规安装。
+- 使用实际infra/production/Dockerfile.verify、既有诊断基底构建synwevo:payer-sdk-verify-d3cba3c（image config b26baa3dcfde697c32014935fc3f8b6cb17392f925f96e150490a893a9c902c3）；当前源只读挂载、无网/3GiB/2CPU/无真实数据。失败的源码来源检查所在DataPrep/Extract文件17项通过；SDK按自己的pytest根配置独立运行27 passed、14subtests、11.14s，exit0。日志/private/tmp/synwevo-sdk-source-fixed.log与构建log。初次诊断基底无Suite安装导致collection error，明确加载当前业务包；随后同次混合SDK根配置导致test_http导入失败，按其已有独立配置分开执行。未跳过或改断言；SDK不经PYTHONPATH加载，仍验证新editable安装。
+- 8项部署接收器unittest通过；workflow YAML可解析，verify→deploy/production环境/容器资源断言保留。主分支保护API返回403（账户套餐限制）；没有更改保护、审批、deploy条件或触发分支。
+- 容量独立只读收集：bff35a8共4214项，失败为第2925项，余1289；d3cba3c当前4257项。按2925项/2377.14s线性估算，当前完整测试约57m40+前置5m14=62m54；75min提供约12min余量，非真实完整运行保证。证据/private/tmp/colima/synwevo-runtime-groups-4w9czjfy/capacity-comparison.json。
+- 只将verify timeout45→75；全部testpaths、断言、清理、skip策略、Node单独必跑、原镜像及资源边界保持。发现Docs生成testdata而integration直接读，以及带时间ZIP参数ID不稳定；本次不引入未验证分组/产物供应链。后续完整新SHA CI仍须实际通过；未声称本地诊断镜像就是生产产物。

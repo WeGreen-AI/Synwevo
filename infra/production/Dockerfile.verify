@@ -4,9 +4,10 @@ FROM ${RUNTIME_IMAGE}
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
-# The catalogue tests import the external SDK; it belongs only in this verification image.
+# The catalogue tests import the external SDK from this same source checkout, like the
+# runtime modules. The separate CI SDK step still tests a regular non-editable installation.
 RUN pip install --no-cache-dir -r requirements-dev.txt \
-    && pip install --no-cache-dir --no-deps --no-build-isolation apps/docs/sdk/python \
+    && pip install --no-cache-dir --no-deps --no-build-isolation -e apps/docs/sdk/python \
     && pip check
 COPY infra/production infra/production
 # Match repository test isolation and shared fixtures; runtime configuration is scrubbed before collection.
