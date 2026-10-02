@@ -171,7 +171,8 @@ class MeteredDeepSeek:
                           "WHERE c.run_key=? AND a.status IN ('dispatch_unknown','usage_pending') AND c.status='reserved'",
                           (run["id"],)):
             raise BillingError("usage_pending")
-        if credential.kind != "platform" or credential.model != route.requested_model:
+        if (credential.kind != "platform" or credential.provider != self.name
+                or credential.model != route.requested_model):
             raise BillingError("model_configuration_changed")
         if route.valid_until <= self.ledger._now():
             raise BillingError("route_confirmation_expired")
@@ -341,8 +342,8 @@ class MeteredTurnProvider:
     def resolve_credential(self, store, user_id):
         if self.credential_resolver is not None:
             return self.credential_resolver(store, user_id)
-        from .provider import resolve_credential
-        return resolve_credential(store, user_id)
+        # A missing DeepSeek configuration must never borrow a different provider's key.
+        return None
 
     def step_for_turn(self, *, turn, logical_call_id, **arguments):
         ledger, store = self.gateway.ledger, self.gateway.store

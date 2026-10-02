@@ -173,9 +173,66 @@ means copying them into a new reviewed publication, never rewriting past costs.
 The next dispatch reads the latest revision under its own writer transaction. Turning admission
 off stops new dispatches but leaves incurred usage settlement and reconciliation working. Unit
 changes cannot hide relevant existing exposure. Publication changes neither wallet balances,
-retail prices nor model-route enablement. The default deployed factory still needs the governed
-provider composition before it can make a paid request.
+retail prices nor model-route enablement. The explicit governed provider composition described below is required for a paid request;
+the default deployment does not select it automatically.
 
 The editor retains inputs on revision conflicts and locks an uncertain publication to its original
 request/key for retry. Its three-language layout and exact amount helpers are implemented; current
 visual/keyboard acceptance is tracked separately in the evidence log and is not implied by a build.
+
+## Governed provider composition
+
+Account administration now mounts `/admin?tab=model-provider` and four typed routes under
+`/api/admin/billing/model-provider`: GET current state, GET `/history`, POST `/preview`,
+and POST `/publish`. Reading requires `platform.config.view`; changing configuration requires
+`platform.config.manage`, a bound preview and fresh admin authentication at publication.
+A platform role never supplies workspace access, payment consent or wallet funds.
+
+The host explicitly selects `SYNWEVO_AGENT_PROVIDER=deepseek` and
+`SYNWEVO_BILLING_ENVIRONMENT=test|live` for the Suite/portal process. Without the provider
+selection, the existing Anthropic configuration remains in use. An unsupported explicit
+selection fails startup. Merely selecting DeepSeek creates no model configuration or funds:
+Account governance must publish an enabled route, a current credential, confirmed account/
+route/cost evidence references, applicable sale/cost prices and an enabled matching cost policy.
+The references record an administrator's verification; they do not themselves verify upstream
+account ownership or establish that a pricing announcement applies to that account.
+
+`configuration.GovernedDeepSeek` assembles the same Store, ProviderSettings, Ledger,
+CostAdmission, RunQuotes, MeteredDeepSeek and Agent authority checks. It does not accept
+browser-supplied provider URLs or credentials. It never borrows an Anthropic personal/platform
+key, guesses retail prices, creates a payment grant or assumes a balance. The ledger's payment
+authorizer is the current quote binding; its dispatch transaction also rechecks cancellation,
+current Agent/account access, sealed source access, processing policy, configuration revision
+and cost admission. Every quoted turn still needs the existing explicit user budget consent.
+This is single-run consent, not the unfinished recurring payment authorization feature.
+
+The active provider key is sealed with the platform-model-key purpose and participates in the
+existing root rekey mechanism. Rotation/revocation replaces the active ciphertext; immutable
+configuration history contains metadata only. Preview/idempotency binding uses a commitment,
+never the plaintext key. The existing root-storage security model is unchanged: database-local
+root storage is not protection against an adversary who can read the entire database.
+
+A turn pins an internal credential binding containing provider, kind, model, configuration
+revision and key identity. Worker start, restart, confirmation continuation and each dispatch
+compare the current binding. Pre-migration queued turns with no binding fail closed rather than
+adopting today's key. Already incurred usage can still settle; cancellation or a configuration
+change never promises that completed business side effects were undone. The binding is absent
+from public conversation and billing responses.
+
+The current evidence log distinguishes isolated protocol/ledger tests from actual inference,
+retail payments, browser acceptance and production deployment. No real model or payment service
+is enabled by these tests. Rate/fairness limits, payer period budgets, actual checkout/refund
+integration and full production acceptance remain in the unified backlog.
+
+Workspace processing consent additionally names allowed providers (`anthropic`/`deepseek`).
+The credential-source choice (`none`/`platform`/`any`) remains a separate restriction.
+Existing organization policies without a provider list retain Anthropic-only scope; they never
+implicitly authorize the new DeepSeek path. An unset personal workspace follows its owner's
+choice. An explicit empty provider list refuses all processing. Legacy clients that omit the
+new field preserve an already explicit list (or the legacy Anthropic-only scope), including
+when changing `none` back to another mode. Every tool result and replayed result rechecks the
+current provider consent. Policy changes commit their audit/event with the state.
+
+The paid platform route does not accept a personal Anthropic key. Existing keys remain sealed
+and can be removed; personal-key submission/preference enablement is refused on that route.
+The settings response identifies the actual active provider and whether personal keys are supported.

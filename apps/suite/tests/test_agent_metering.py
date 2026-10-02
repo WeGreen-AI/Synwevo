@@ -83,7 +83,7 @@ def gateway(tmp_path, monkeypatch):
     model.open_run(ctx,route=route,budget=1000,max_calls=3,deadline=STAMP+500)
     def balance():
         return ledger.balance_for_user(requester_user_id=user,payer_user_id=user,unit=UNIT)
-    args=dict(context=ctx,logical_call_id='step-1',credential=Credential('platform','fixture-key-not-real',route.requested_model),
+    args=dict(context=ctx,logical_call_id='step-1',credential=Credential('platform','fixture-key-not-real',route.requested_model, provider='deepseek'),
               system=[{'type':'text','text':'private-fixture-system'}],tools=[],messages=[{'role':'user','content':'fixture question'}],
               effort='high',on_text=lambda text:None,should_stop=lambda:stopped[0])
     return SimpleNamespace(store=store,ledger=ledger,model=model,route=route,context=ctx,args=args,ticks=ticks,
@@ -219,17 +219,18 @@ def test_real_agent_tool_confirmation_preserves_private_native_history_and_bills
     g=gateway
     monkeypatch.setenv('SYNWEVO_SUITE_APPS','forms,agent')
     monkeypatch.setenv('SYNWEVO_AGENT_MODEL',g.route.requested_model)
-    monkeypatch.setenv('SYNWEVO_AGENT_ANTHROPIC_API_KEY','fixture-key-not-real')
     api=create_app(str(g.store.root),start_jobs=False)
     agent=api.state.agent
     monkeypatch.setattr(agent,'_submit',lambda turn_id:None)  # deterministic worker scheduling only
-    agent.provider=MeteredTurnProvider(g.model)
+    agent.provider=MeteredTurnProvider(g.model, credential_resolver=lambda *_: g.args['credential'])
     uid=g.context.actor_user_id
     identity=api.state.identity
     user=identity.get_user(uid)
     g.store.execute('UPDATE users SET email_verified_at=1 WHERE id=?',(uid,))
     wid=identity.create_workspace('Metered isolated workspace',owner_id=uid)['id']
     g.store.execute("INSERT INTO agent_workspace_policies VALUES (?,'platform',?,?)",(wid,uid,STAMP))
+    api.state.capabilities.invoke("agent.workspace_policy.set", {"processing": "platform", "providers": ["deepseek"]},
+                                  user_id=uid, workspace_id=wid, idempotency_key="metering-policy-consent")
     conversation=agent.create_conversation(uid,'Metered fixture',[wid])
     turn=agent.start_turn(user,conversation['id'],'Create the authorized test form',parent_id=None,regenerate_of=None)
     context=replace(g.context,run_id=turn['turn_id'])
@@ -269,7 +270,7 @@ def test_real_agent_tool_confirmation_preserves_private_native_history_and_bills
         agent.recover()
         assert len(requests)==2 and len(g.store.all('SELECT * FROM forms'))==1
         from synwevo_core.errors import ServiceError
-        agent.provider=SimpleNamespace(name='different-provider')
+        agent.provider=SimpleNamespace(name='different-provider', resolve_credential=lambda store, user_id: g.args['credential'])
         with pytest.raises(ServiceError) as refused:
             agent.start_turn(user,conversation['id'],'Continue',parent_id=None,regenerate_of=None)
         assert refused.value.code=='provider_history_incompatible'

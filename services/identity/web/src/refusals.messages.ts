@@ -82,5 +82,23 @@ export const messages = {
 registerMessages(messages);
 
 registerMessages({
+  // Model provider administration: exact server sentences and safe code-only defaults.
+  "此部署尚未配置计费环境": { en: "This deployment has no billing environment configured.", "zh-Hant": "此部署尚未設定計費環境" },
+  "模型配置字段无效，请检查路线、有效期和凭据": { en: "Invalid model configuration fields. Check the route, expiry and credential.", "zh-Hant": "模型設定欄位無效，請檢查路線、有效期和憑據" },
+  "模型配置暂不可用，请稍后重试": { en: "Model configuration is temporarily unavailable. Try again later.", "zh-Hant": "模型設定暫不可用，請稍後重試" },
+  "模型配置记录暂不可用，请联系管理员检查": { en: "Model configuration records are temporarily unavailable. Contact an administrator to investigate.", "zh-Hant": "模型設定記錄暫不可用，請聯絡管理員檢查" },
+  "模型价格记录暂不可用，请联系管理员检查": { en: "Model price records are temporarily unavailable. Contact an administrator to investigate.", "zh-Hant": "模型價格記錄暫不可用，請聯絡管理員檢查" },
+  "请先发布同一环境的销售价格与成本价格": { en: "First publish sale and cost prices in the same environment.", "zh-Hant": "請先發佈同一環境的銷售價格與成本價格" },
+  "模型路线与已生效价格不匹配，请重新选择": { en: "The model route does not match the effective prices. Select matching prices.", "zh-Hant": "模型路線與已生效價格不匹配，請重新選擇" },
+  "模型配置版本无效，请重新读取": { en: "Invalid model configuration version. Read the latest configuration again.", "zh-Hant": "模型設定版本無效，請重新讀取" },
+  "模型配置已变化，请保留输入并重新读取": { en: "The model configuration has changed. Keep your input and read the latest version.", "zh-Hant": "模型設定已變更，請保留輸入並重新讀取" },
+  "启用模型前请配置平台凭据": { en: "Configure the platform credential before enabling the model.", "zh-Hant": "啟用模型前請設定平台憑據" },
+  "模型路线核实已过期，请重新核实": { en: "Model route verification has expired. Verify the route again.", "zh-Hant": "模型路線核實已過期，請重新核實" },
+  "启用模型前请发布有效的成本预算": { en: "Publish a valid cost budget before enabling the model.", "zh-Hant": "啟用模型前請發佈有效的成本預算" },
+  "模型成本价格与已启用的成本预算不匹配": { en: "The model cost price does not match the enabled cost budget.", "zh-Hant": "模型成本價格與已啟用的成本預算不匹配" },
+  "请检查模型成本预算已启用，并与成本价格的单位一致。": { en: "Check that the model cost budget is enabled and uses the same unit as the cost price.", "zh-Hant": "請檢查模型成本預算已啟用，並與成本價格的單位一致。" },
+  "模型配置未发生变化，无需提交": { en: "The model configuration has not changed. No publication is needed.", "zh-Hant": "模型設定未發生變更，無需提交" },
+  "模型配置历史分页参数无效": { en: "Invalid model configuration history pagination parameters.", "zh-Hant": "模型設定歷史分頁參數無效" },
+  "请重新预览操作影响后再确认": { en: "Preview the operation's effects again before confirming.", "zh-Hant": "請重新預覽操作影響後再確認" },
   "引导令牌有效期须为 60 至 3600 秒": { en: "The bootstrap token must be valid for 60 to 3600 seconds.", "zh-Hant": "引導權杖有效期須為 60 至 3600 秒" },
 });

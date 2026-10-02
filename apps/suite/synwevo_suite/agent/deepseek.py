@@ -445,6 +445,7 @@ class DeepSeekProvider:
         try:
             if should_stop():
                 raise DeepSeekCancelled(a)
+            _require(credential.provider == self.name)
             _require(isinstance(credential.model, str) and bool(_ID.fullmatch(credential.model)))
             a.requested_model = credential.model
             _require(isinstance(credential.api_key, str) and 1 <= len(credential.api_key) <= 4096

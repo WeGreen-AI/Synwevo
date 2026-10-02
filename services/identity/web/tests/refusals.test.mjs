@@ -52,9 +52,11 @@ const SERVER = [
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },
   { file: ID + "admin_model_costs.py", surfaces: ["admin"] },
+  { file: ID + "admin_model_provider.py", surfaces: ["admin"] },
   { file: ID + "wallet_routes.py", surfaces: ["account"] },
   { file: CORE + "billing/catalogue.py", surfaces: ["admin"] },
   { file: CORE + "billing/cost_settings.py", surfaces: ["admin"] },
+  { file: CORE + "billing/provider_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_handover.py", surfaces: ["account", "admin"] },
   { file: ID + "api_platform.py", surfaces: ["api"] },
   { file: ID + "approval_routes.py", surfaces: ["org"] },
@@ -410,6 +412,52 @@ test("every refusal a person can meet reads as a sentence in their language on t
     }
   }
   assert.deepEqual(failures, []);
+});
+
+test("model-provider route and settings refusals are scanned and localized through the real Admin module graph", () => {
+  const files = [ID + 'admin_model_provider.py', CORE + 'billing/provider_settings.py'];
+  const found = refusals().all.filter(r => files.includes(r.file));
+  for (const file of files) assert.ok(found.some(r => r.file === file), file);
+  for (const r of found) {
+    assert.deepEqual(placeOf(r).surfaces, ['admin']);
+    assert.ok(pages.admin.ui.hasMessage(r.text), `${r.code}: ${r.text}`);
+    reads('admin', r.status, r.code, r.text, {}, Object.fromEntries(['zh-Hans', 'zh-Hant', 'en'].map(locale =>
+      [locale, pages.admin.ui.translate(locale, r.text)])));
+  }
+});
+
+test("every model-provider refusal has a specific, translated code-only default that never echoes credential diagnostics", async () => {
+  const { REFUSAL_SOURCES: defaults } = await pages.admin.server.ssrLoadModule('/src/lib/refusals.ts');
+  const expected = {
+    billing_not_configured: 'This deployment has no billing environment configured.',
+    model_config_invalid: 'Invalid model configuration fields. Check the route, expiry and credential.',
+    model_config_unavailable: 'Model configuration is temporarily unavailable. Try again later.',
+    model_bad_revision: 'Invalid model configuration version. Read the latest configuration again.',
+    model_revision_conflict: 'The model configuration has changed. Keep your input and read the latest version.',
+    model_credential_required: 'Configure the platform credential before enabling the model.',
+    model_route_expired: 'Model route verification has expired. Verify the route again.',
+    model_price_unavailable: 'First publish sale and cost prices in the same environment.',
+    model_price_mismatch: 'The model route does not match the effective prices. Select matching prices.',
+    model_cost_policy_required: 'Check that the model cost budget is enabled and uses the same unit as the cost price.',
+    model_no_change: 'The model configuration has not changed. No publication is needed.',
+    model_bad_page: 'Invalid model configuration history pagination parameters.',
+  };
+  const providerFiles = [ID + 'admin_model_provider.py', CORE + 'billing/provider_settings.py'];
+  const codes = new Set(refusals().all.filter(r => providerFiles.includes(r.file) && (r.code.startsWith('model_') || r.code === 'billing_not_configured')).map(r => r.code));
+  assert.deepEqual([...codes].sort(), Object.keys(expected).sort(), 'new backend codes need an explicit default');
+  for (const [code, en] of Object.entries(expected)) {
+    assert.ok(defaults[code], code);
+    assert.ok(pages.admin.ui.hasMessage(defaults[code]), code);
+    const translations = { en, 'zh-Hans': defaults[code], 'zh-Hant': pages.admin.ui.translate('zh-Hant', defaults[code]) };
+    for (const diagnostic of ['', 'fixture-unrecognized-error fixture-secret fixture-digest']) {
+      reads('admin', 409, code, diagnostic, { api_key: 'fixture-secret', digest: 'fixture-digest' }, translations);
+    }
+  }
+  // Shared publication refusals keep their established defaults in the same page.
+  for (const [code, source] of Object.entries({ admin_preview_invalid: '操作预览无效，请重新预览影响。',
+    admin_preview_expired: '操作预览已过期，请重新预览影响。', idempotency_conflict: '操作编号已用于其他请求，请重新预览影响。' })) {
+    reads('admin', 409, code, '', {}, Object.fromEntries(['zh-Hans', 'zh-Hant', 'en'].map(locale => [locale, pages.admin.ui.translate(locale, source)])));
+  }
 });
 
 test("the API-only list names nothing the server no longer says, and every entry has a reason", () => {

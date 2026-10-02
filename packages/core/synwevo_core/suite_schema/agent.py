@@ -2,7 +2,7 @@
 memories, plus each workspace's policy on sending its content to an AI provider. Owner:
 `synwevo_suite.agent`.
 
-Everything here except ``agent_workspace_policies`` belongs to one user (``user_id``) and is never
+Everything here except the workspace policy tables belongs to one user (``user_id``) and is never
 a workspace's record: business results the Agent produces live in the application that made them.
 """
 
@@ -124,10 +124,20 @@ CREATE TABLE IF NOT EXISTS agent_workspace_policies (
     updated_by TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
+
+-- A separate row preserves the historical four-column policy insert contract. Absence means
+-- legacy provider consent; a stored [] means explicitly refusing every provider.
+CREATE TABLE IF NOT EXISTS agent_workspace_model_providers (
+    workspace_id TEXT PRIMARY KEY,
+    providers_json TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
-COLUMNS = (("agent_turns", "usage_state", "TEXT NOT NULL DEFAULT 'known'"),)
+COLUMNS = (("agent_turns", "usage_state", "TEXT NOT NULL DEFAULT 'known'"),
+           ("agent_turns", "credential_binding", "TEXT"))
 
 
 def migrate(c):

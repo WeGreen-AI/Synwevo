@@ -13,12 +13,12 @@ export type Held = ReadonlySet<string>;
 export const heldPermissions = (me?: { platform_permissions?: string[] } | null): Held =>
   new Set(me?.platform_permissions || []);
 
-export type Tab = "model-costs" | "model-prices" | "overview" | "users" | "admins" | "workspaces" | "organizations" | "registration" | "identity" | "mail" | "audit";
+export type Tab = "model-provider" | "model-costs" | "model-prices" | "overview" | "users" | "admins" | "workspaces" | "organizations" | "registration" | "identity" | "mail" | "audit";
 /** The permission each view reads with. Only the views the caller's grants open are drawn. */
 export const TAB_PERMISSION: Record<Tab, string> = {
   overview: "platform.overview.view", users: "platform.users.view", admins: "platform.roles.view",
   workspaces: "platform.workspaces.view", organizations: "platform.orgs.view", registration: "platform.config.view",
-  "model-costs": "platform.config.view", "model-prices": "platform.config.view", identity: "platform.config.view", mail: "platform.mail.view", audit: "platform.audit.view",
+  "model-provider": "platform.config.view", "model-costs": "platform.config.view", "model-prices": "platform.config.view", identity: "platform.config.view", mail: "platform.mail.view", audit: "platform.audit.view",
 };
 export const visibleTabs = (held: Held): Tab[] =>
   (Object.keys(TAB_PERMISSION) as Tab[]).filter((t) => held.has(TAB_PERMISSION[t]));

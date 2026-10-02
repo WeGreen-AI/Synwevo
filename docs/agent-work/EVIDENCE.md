@@ -213,3 +213,23 @@
 - Python3.12既有隔离镜像关联测试进行中；新完整CI尚未开始。45min上限及全部测试范围保持，正式模型/收费没有启用。
 
 - Python3.12最终隔离关联50项全部通过（exit0，`/private/tmp/synwevo-ci-repair-py312.log`），覆盖完整text协作、新内存回归与OpenAPI。未升级依赖；不是生产镜像构建/完整CI通过声明。Hilbert已确认停止，测试文件所有权回到协调者。
+
+- 提交并正常推送`dcca816d3e843278362e5ee2e71396efd1f58ff2`（9文件），含CR-016–018修复/独立回归/检查点；成本策略dee89fb一并推送。暂存高置信秘密模式与diff检查通过。既有草稿[PR #1](https://github.com/WeGreen-AI/Synwevo/pull/1)已更新；精确SHA的[CI36877286851](https://github.com/WeGreen-AI/Synwevo/actions/runs/36877286851)当前构建检查通过、运行时回归进行中。没有重复部署。
+
+### 2026-10-02 · 中断恢复与 dcca816 失败定位
+
+- 精确HEAD的Actions36877286851：构建通过，运行时验证2289 passed/1 failed/3 skipped，1770.76s，未达到45分钟超时；deploy skipped。失败为管理路由与权限矩阵不一致，新增价格7/成本4端点缺席；日志 `/private/tmp/synwevo-ci-dcca816-job.log`。gh --log-failed为空，改读实际job110419843983日志定位，未盲目重跑。
+- 当前提供方配置/凭据/跨空间修复联合197项通过（`/private/tmp/synwevo-provider-integrated-core.xml`，隔离协议/资金，无真实模型或付款）；未提交、非CI或发布证据。
+
+### 2026-10-02 · 治理配置、工厂与权限闭环（当前未提交增量）
+
+- 管理/价格/成本/权限矩阵/blob引用联合261项通过，0失败/错误/跳过，114.212s：`/private/tmp/synwevo-provider-admin-final.xml`。Identity默认工厂真实挂4端点各一次，不借测试手工挂路由。
+- 全部Agent、流、报价、计量/恢复、DeepSeek适配与提供方政策304项通过，0失败/错误/跳过，54.514s：`/private/tmp/synwevo-agent-governance-full.xml`。来源/目标归属与凭据binding同时覆盖；旧组织授权不扩张。
+- 现有Python3.12镜像只读、禁网、3GiB/2CPU：权限矩阵+提供方HTTP+核心150项通过，exit0（`/private/tmp/synwevo-provider-matrix-py312.log`）；该诊断镜像不是当前生产产物。
+- 实际Suite工厂11项通过，4.057s；真实表单读取、两次模型步骤/独立结算与恢复不重复；在预留后分别旋转密钥、停用、取消、撤账户/应用、归档、关闭成本均阻止发送并释放预留。模型SSE/支付凭据为隔离夹具。最初测试误用操作名/余额方法/账本表以及重复上游请求ID，已按实际契约修正；未改业务断言标准。
+- 新增路线日期和模型标识边界后核心/工厂33项复验通过：`/private/tmp/synwevo-provider-contract-final.xml`。五项守卫通过（664Python/338前端、1185品牌分类、22Logo）；后续UI政策落盘后仍需最终守卫。
+- Accounts真实管理入口`/admin?tab=model-provider`；简繁英56前端测试+19组件检查、typecheck/build通过。Suite政策页面仍在最终收尾。
+- 自有Accounts33772 healthz200/instance=test；原prices.localhost被内置浏览器ERR_BLOCKED_BY_CLIENT再次拦截。没有更换源站或工具绕过；随后停止自有PID81168，保留隔离数据。当前UI视觉/键盘/窄屏验收未通过。
+- 没有启用任何正式路线、价格或真实收费；dcca816 CI仍failed/deploy skipped。本包尚未提交/推送，完整新CI尚未执行。
+
+- 最后单条政策快照/日期及模型标识边界后76项通过，20.918s（`/private/tmp/synwevo-provider-final-diff.xml`）；Suite46前端/typecheck/build通过，Settings-m-JyxStT.js；Accounts56前端复验通过。最终边界664Python/339前端，设计/组件与diff通过。三个子任务全部移交关闭。

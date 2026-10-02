@@ -63,6 +63,21 @@ ROUTES = [
     ("GET", "/api/admin/settings/history", "platform.config.view", False),
     ("POST", "/api/admin/settings/preview", "platform.config.manage", False),
     ("POST", "/api/admin/settings/publish", "platform.config.manage", True),
+    ("GET", "/api/admin/billing/prices", "platform.config.view", False),
+    ("GET", "/api/admin/billing/prices/drafts/{draft_id}", "platform.config.view", False),
+    ("POST", "/api/admin/billing/prices/drafts", "platform.config.manage", False),
+    ("PATCH", "/api/admin/billing/prices/drafts/{draft_id}", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/prices/drafts/{draft_id}/calculate", "platform.config.view", False),
+    ("POST", "/api/admin/billing/prices/drafts/{draft_id}/preview", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/prices/drafts/{draft_id}/publish", "platform.config.manage", True),
+    ("GET", "/api/admin/billing/cost-policy", "platform.config.view", False),
+    ("GET", "/api/admin/billing/cost-policy/history", "platform.config.view", False),
+    ("POST", "/api/admin/billing/cost-policy/preview", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/cost-policy/publish", "platform.config.manage", True),
+    ("GET", "/api/admin/billing/model-provider", "platform.config.view", False),
+    ("GET", "/api/admin/billing/model-provider/history", "platform.config.view", False),
+    ("POST", "/api/admin/billing/model-provider/preview", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/model-provider/publish", "platform.config.manage", True),
     ("GET", "/api/admin/registration", "platform.config.view", False),
     ("POST", "/api/admin/registration", "platform.config.manage", True),
     ("GET", "/api/admin/identity-providers", "platform.config.view", False),
@@ -78,6 +93,15 @@ ROUTES = [
 CONSOLE_GET = "/api/admin/api-platform/overview"
 CONSOLE_POST = "/api/admin/api-platform/approvals"
 
+# Synthetic configuration only: no funds, provider credential or model request.
+PRICE_SPEC = {"name": "Permission matrix fixture", "purpose": "cost", "provider": "deepseek",
+              "model": "fixture-route", "unit": {"code": "FIX_MATRIX", "scale": 6},
+              "input_uncached": "1", "input_cached": "0.1", "output": "2",
+              "terms_ref": "fixture:matrix", "effective_from": 0, "previous_price_id": None}
+COST_SPEC = {"enabled": False, "unit": PRICE_SPEC["unit"], "daily_budget": "100",
+             "weekly_budget": "100", "monthly_budget": "100", "unknown_budget": "0",
+             "max_inflight": 1, "max_unknown": 1}
+
 
 def post(client, path, body=None):
     return client.post(path, json=body if body is not None else {},
@@ -86,6 +110,7 @@ def post(client, path, body=None):
 
 @pytest.fixture()
 def world(tmp_path, monkeypatch):
+    monkeypatch.setenv("SYNWEVO_BILLING_ENVIRONMENT", "test")
     # Explicit shell fixture (the account page's own index.html): the tests run before or after a
     # front-end build, and the /admin gate is decided before the shell is served.
     dist = tmp_path / "fixture-build"
@@ -101,6 +126,15 @@ def world(tmp_path, monkeypatch):
     store = Store(tmp_path / "d")
     ident = Identity(store)
     root = make_platform_admin(store, ident.create_user("root@example.test", PW, status="active"))
+    from synwevo_core.billing.catalogue import PriceCatalogue
+    catalogue = PriceCatalogue(store, environment="test")
+    with store.tx():
+        published, _ = catalogue.create(spec=PRICE_SPEC, actor_id=root["id"],
+                                        idempotency_key="matrix_cost_fixture")
+        catalogue.publish(published["id"], expected_revision=1, actor_id=root["id"],
+                          operation_id="matrix_cost_publish", reason=REASON)
+        draft, _ = catalogue.create(spec=PRICE_SPEC, actor_id=root["id"],
+                                    idempotency_key="matrix_draft_fixture")
     plain = verified(store, ident, "plain@example.test")
     clients: list[TestClient] = []
 
@@ -112,6 +146,7 @@ def world(tmp_path, monkeypatch):
         return c
 
     w = {"api": api, "store": store, "ident": ident, "root": root, "plain": plain, "login": login,
+         "draft_id": draft["id"],
          "wid": ident.workspaces_for(plain["id"])[0]["id"]}
     yield w
     for c in clients:
@@ -147,12 +182,32 @@ LEGACY_WID = "default"
 def _path(template, w, *, legacy: str | None = None):
     wid = legacy if legacy and template.endswith(HISTORICAL) else w["wid"]
     return template.format(uid=w["plain"]["id"], wid=wid, mid="mail_fixture_missing",
+                           draft_id=w["draft_id"],
                            oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing")
 
 
 def _call(client, method, path):
     if method == "GET":
         return client.get(path)
+    if path.startswith("/api/admin/billing/"):
+        if path.endswith("/drafts"):
+            body = {"spec": PRICE_SPEC, "idempotency_key": "matrix_http_draft"}
+        elif "/prices/drafts/" in path:
+            body = {"expected_revision": 1}
+            if method == "PATCH":
+                body["spec"] = PRICE_SPEC  # No-op keeps this fixture's revision fixed.
+            elif path.endswith("/calculate"):
+                body.update(input_uncached=10, input_cached=1, output=2)
+        elif "/cost-policy/" in path:
+            body = {"expected_revision": 0, "spec": COST_SPEC}
+        else:
+            body = {"expected_revision": 0, "spec": {"enabled": False, "route": None},
+                    "credential": {"action": "keep", "api_key": None}}
+        if path.endswith("/publish"):
+            body.update(preview_token="matrix-not-confirmed", idempotency_key="matrix_unconfirmed",
+                        reason=REASON)
+        return client.request(method, path, json=body,
+                              headers={CSRF_HEADER: client.cookies.get(CSRF_COOKIE) or ""})
     if path == "/api/admin/settings/preview":
         return post(client, path, {"expected_revision": 0, "changes": {"notifications.conversation_digest_daily_cap": 9}})
     return post(client, path, {"reason": REASON, "status": "suspended", "mode": "open", "role": "auditor",

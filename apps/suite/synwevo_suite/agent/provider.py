@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import os
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
@@ -56,10 +58,18 @@ class Credential:
     kind: str                       # "platform" or "personal"
     api_key: str = field(repr=False)
     model: str
+    provider: str = "anthropic"
+    revision: str | None = None
 
     @property
     def label(self) -> str:
-        return f"anthropic:{self.kind}"
+        return f"{self.provider}:{self.kind}"
+
+    @property
+    def binding(self) -> str:
+        """Internal rotation fence, never a bearer credential or a public response field."""
+        value = (self.provider, self.kind, self.model, self.revision, self.api_key)
+        return hashlib.sha256(json.dumps(value, separators=(",", ":")).encode()).hexdigest()
 
 
 class Provider(Protocol):
@@ -123,6 +133,8 @@ class AnthropicProvider:
 
     def step(self, *, credential: Credential, system: list[dict], tools: list[dict], messages: list[dict],
              effort: str, on_text: Callable[[str], None], should_stop: Callable[[], bool]) -> StepResult:
+        if credential.provider != self.name:
+            raise ProviderError("model_configuration_changed", "模型配置已变化，请重新发起回答")
         import anthropic
 
         # D5: the host's Claude tooling configuration is not a product provider configuration.

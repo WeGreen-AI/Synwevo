@@ -38,7 +38,7 @@ def paid(gateway, monkeypatch):
     quotes=RunQuotes(g.model,current_route=lambda:route[0],current_authority=lambda context:g.authority[0])
     g.ledger.authorize=quotes.authorize
     agent.provider=MeteredTurnProvider(g.model,quotes=quotes,
-        credential_resolver=lambda store,uid:Credential('platform','fixture-only',route[0].requested_model))
+        credential_resolver=lambda store,uid:Credential('platform','fixture-only',route[0].requested_model, provider='deepseek'))
     conversation=agent.create_conversation(user['id'],'Budget fixture',[])
     def issue(**kwargs):
         args=dict(parent_id=None,regenerate_of=None,budget=1000,max_calls=3,run_seconds=500)

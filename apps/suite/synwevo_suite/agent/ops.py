@@ -7,12 +7,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field as F, SecretStr, field_serializer, field_validator
 
 from synwevo_core import sealed
-from synwevo_core.capabilities import Operation, fingerprint
+from synwevo_core.capabilities import Operation, canonical, fingerprint
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
 
 from .engine import Agent, _j
 from .provider import EFFORTS, KEY_PURPOSE, configured_model, resolve_credential
+from .tools import workspace_policy
 
 CONV = r"^conv_[a-f0-9]{12}$"
 MSG = r"^msg_[a-f0-9]{12}$"
@@ -173,6 +174,15 @@ class MemoryRef(_In):
 
 class PolicySet(_In):
     processing: Literal["none", "platform", "any"]
+    providers: list[Literal["anthropic", "deepseek"]] | None = F(default=None, max_length=2)
+
+    @field_validator("providers")
+    @classmethod
+    def valid_providers(cls, value):
+        # The omitted field is the legacy client contract. Explicit null is not a scope.
+        if value is None or len(set(value)) != len(value):
+            raise ValueError("提供方范围必须是无重复的列表")
+        return sorted(value)
 
 
 def settings_json(store, user_id: str, agent=None) -> dict:
@@ -188,12 +198,16 @@ def settings_json(store, user_id: str, agent=None) -> dict:
             "model_configured": bool(cred) if paid else bool(configured_model()),
             "platform_configured": bool(cred) if paid else bool((env.get("AGENT_ANTHROPIC_API_KEY") or "").strip()
                                         and configured_model()),
-            "active": {"credential": cred.kind, "model": cred.model} if cred else None,
+            "active": {"credential": cred.kind, "model": cred.model, "provider": cred.provider} if cred else None,
+            "personal_key_supported": not paid,
             "billing": {"required": paid},
             "efforts": list(EFFORTS)}
 
 
 def update_settings(store, user_id: str, i: Settings, agent=None) -> dict:
+    paid = bool(agent and getattr(agent.provider, "quotes", None))
+    if paid and (i.personal_key is not None or i.prefer_personal_key is True):
+        raise ServiceError(409, "model_personal_key_unsupported", "当前付费模型服务不支持个人密钥，可清除已保存的旧密钥。")
     row = store.one("SELECT * FROM agent_settings WHERE user_id=?", (user_id,))
     if not row:
         store.execute("INSERT INTO agent_settings (user_id, updated_at) VALUES (?,?)", (user_id, now()))
@@ -224,10 +238,8 @@ def policies_json(store, identity, user_id: str) -> dict:
     """Every workspace the person belongs to, with its AI-processing policy and whether they may change it."""
     out = []
     for w in identity.workspaces_for(user_id):
-        row = store.one("SELECT processing, updated_at FROM agent_workspace_policies WHERE workspace_id=?", (w["id"],))
-        effective = row["processing"] if row else ("any" if w["kind"] == "personal" else "none")
         out.append({"workspace_id": w["id"], "name": w["name"], "kind": w["kind"], "role": w["role"],
-                    "processing": effective, "explicit": bool(row), "can_change": w["role"] in ("owner", "admin")})
+                    **workspace_policy(store, w["id"]), "can_change": w["role"] in ("owner", "admin")})
     return {"workspaces": out}
 
 
@@ -383,12 +395,24 @@ def register(registry, agent: Agent, store, identity) -> None:
        input=Empty, agent="never", handler=lambda c, i: policies_json(store, identity, c.user_id))
 
     def set_policy(c, i):
+        current = workspace_policy(store, c.workspace_id)
+        providers = i.providers if i.providers is not None else (
+            current["providers"] if current["providers_explicit"] else ["anthropic"])
+        ts = now()
         store.execute("INSERT INTO agent_workspace_policies (workspace_id, processing, updated_by, updated_at) VALUES (?,?,?,?) "
                       "ON CONFLICT(workspace_id) DO UPDATE SET processing=excluded.processing, updated_by=excluded.updated_by, "
-                      "updated_at=excluded.updated_at", (c.workspace_id, i.processing, c.user_id, now()))
+                      "updated_at=excluded.updated_at", (c.workspace_id, i.processing, c.user_id, ts))
+        store.execute("INSERT INTO agent_workspace_model_providers (workspace_id, providers_json, updated_by, updated_at) "
+                      "VALUES (?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET providers_json=excluded.providers_json, "
+                      "updated_by=excluded.updated_by, updated_at=excluded.updated_at",
+                      (c.workspace_id, canonical(providers), c.user_id, ts))
         c.touches("workspace", c.workspace_id)
-        return {"workspace_id": c.workspace_id, "processing": i.processing}
+        result = {"workspace_id": c.workspace_id, "processing": i.processing, "providers": providers,
+                  "providers_explicit": True}
+        c.emit("agent.workspace_policy.changed", object_kind="workspace", object_id=c.workspace_id, data=result)
+        return result
 
     op(id="agent.workspace_policy.set", title=T("设置 AI 处理政策", "設定 AI 處理政策", "Set the AI processing policy"),
        summary="Owners and admins decide whether the workspace's content may be sent to the Agent's model provider.",
-       input=PolicySet, need="manage", side_effect="write", agent="never", unattended=False, handler=set_policy)
+       input=PolicySet, need="manage", side_effect="write", agent="never", unattended=False,
+       events=("agent.workspace_policy.changed",), handler=set_policy)

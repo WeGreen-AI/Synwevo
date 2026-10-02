@@ -109,7 +109,7 @@ PERMISSIONS: dict[str, str] = {
     "platform.orgs.view": "list organizations",
     "platform.orgs.manage": "run an owned organization's lifecycle from the admin console",
     "platform.config.view": "read the registration policy, sign-in provider status and non-secret dynamic platform settings",
-    "platform.config.manage": "change the registration policy and non-secret dynamic platform settings",
+    "platform.config.manage": "change platform settings and govern model credentials, routes, prices and cost limits",
     "platform.mail.view": "read the mail outbox metadata",
     "platform.mail.manage": "retry a failed reset or verification mail",
     "platform.audit.view": "read the platform audit log",

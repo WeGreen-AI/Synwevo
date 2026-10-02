@@ -33,9 +33,12 @@ def install(ctx) -> None:
     from ..common.web import signed_in
     from .engine import Agent
     from .ops import register
-    from .provider import AnthropicProvider
+    from .configuration import GovernedDeepSeek, configured_provider
 
-    agent = Agent(ctx.store, ctx.identity, ctx.capabilities, getattr(ctx.api.state, "agent_provider", None) or AnthropicProvider())
+    provider = getattr(ctx.api.state, "agent_provider", None) or configured_provider(ctx.store)
+    agent = Agent(ctx.store, ctx.identity, ctx.capabilities, provider)
+    if isinstance(provider, GovernedDeepSeek):
+        provider.bind(agent)
     ctx.api.state.agent = agent
     register(ctx.registry, agent, ctx.store, ctx.identity)
     hooks = getattr(ctx.api.state, "shutdown_hooks", None)

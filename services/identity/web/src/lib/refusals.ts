@@ -112,6 +112,20 @@ export const REFUSAL_TEMPLATES: Record<string, ErrorTemplate> = {
  *  catalogue cannot hold (an exception class, a provider's name). Consulted after the server's
  *  catalogued sentence and after the page's own code map. */
 export const REFUSAL_SOURCES: Record<string, string> = {
+  // Provider governance: safe defaults when the server sends only a code or an
+  // uncatalogued diagnostic. Never interpolate submitted credential or digest detail.
+  billing_not_configured: "此部署尚未配置计费环境",
+  model_config_invalid: "模型配置字段无效，请检查路线、有效期和凭据",
+  model_config_unavailable: "模型配置暂不可用，请稍后重试",
+  model_bad_revision: "模型配置版本无效，请重新读取",
+  model_revision_conflict: "模型配置已变化，请保留输入并重新读取",
+  model_credential_required: "启用模型前请配置平台凭据",
+  model_route_expired: "模型路线核实已过期，请重新核实",
+  model_price_unavailable: "请先发布同一环境的销售价格与成本价格",
+  model_price_mismatch: "模型路线与已生效价格不匹配，请重新选择",
+  model_cost_policy_required: "请检查模型成本预算已启用，并与成本价格的单位一致。",
+  model_no_change: "模型配置未发生变化，无需提交",
+  model_bad_page: "模型配置历史分页参数无效",
   invalid_idempotency_key: "Idempotency-Key 必须是 1–255 个可打印 ASCII 字符，建议使用 UUID",
   // operator settings: the server names the variable, a person needs to know whom to ask
   public_url_missing: "邮件链接地址尚未配置，请联系部署管理员。",

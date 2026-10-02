@@ -20,11 +20,10 @@ def worker(gateway, monkeypatch):
     g = gateway
     monkeypatch.setenv("SYNWEVO_SUITE_APPS", "forms,agent")
     monkeypatch.setenv("SYNWEVO_AGENT_MODEL", g.route.requested_model)
-    monkeypatch.setenv("SYNWEVO_AGENT_ANTHROPIC_API_KEY", "fixture-key-not-real")
     api = create_app(str(g.store.root), start_jobs=False)
     agent = api.state.agent
     monkeypatch.setattr(agent, "_submit", lambda turn_id: None)
-    agent.provider = MeteredTurnProvider(g.model)
+    agent.provider = MeteredTurnProvider(g.model, credential_resolver=lambda *_: g.args["credential"])
     user = api.state.identity.get_user(g.context.actor_user_id)
     g.store.execute("UPDATE users SET email_verified_at=1 WHERE id=?", (user["id"],))
     conv = agent.create_conversation(user["id"], "Fault fixture", [])

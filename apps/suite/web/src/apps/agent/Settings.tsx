@@ -4,23 +4,28 @@ import { useDialog, useI18n } from "@synwevo/ui";
 import { newKey, op, read, type RunStatus } from "../../shared/ops";
 import { Empty, Failure, Loading, RunBadge } from "../../shared/states";
 import "./settings/messages";
+import "./messages";
 
 type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 type Processing = "none" | "platform" | "any";
+type ModelProvider = "anthropic" | "deepseek";
+const providerNames: Record<ModelProvider, string> = { anthropic: "Anthropic", deepseek: "DeepSeek" };
 interface AgentSettings {
   effort: Effort;
   prefer_personal_key: boolean;
   memory_enabled: boolean;
   personal_key: { set: boolean };
+  personal_key_supported: boolean;
   model_configured: boolean;
   platform_configured: boolean;
-  active: { credential: "platform" | "personal"; model: string } | null;
+  active: { credential: "platform" | "personal"; model: string; provider: ModelProvider } | null;
   efforts: Effort[];
 }
 interface Memory { id: string; body: string }
 interface WorkspacePolicy {
   workspace_id: string; name: string; kind: string; role: string;
   processing: Processing; explicit: boolean; can_change: boolean;
+  providers: ModelProvider[]; providers_explicit: boolean;
 }
 
 const effortLabels: Record<Effort, string> = {
@@ -30,9 +35,9 @@ const policyLabels: Record<Processing, string> = {
   none: "不允许模型处理", platform: "仅平台凭据", any: "平台或个人凭据",
 };
 const policyImpact: Record<Processing, string> = {
-  none: "Agent 不得通过应用操作读取或处理此工作空间的业务内容。",
-  platform: "获授权成员可通过 Agent 将此空间的业务内容发送给 Anthropic，仅使用平台的模型服务账户；个人密钥不能处理此空间内容。",
-  any: "获授权成员可通过 Agent 将此空间的业务内容发送给 Anthropic，使用平台账户或成员自己的模型服务账户。",
+  none: "此空间的业务内容不得发送给任何模型提供方；已获授权的应用操作仍可执行。",
+  platform: "仅使用平台凭据，将获授权的业务内容发送给此空间允许的提供方。个人密钥不能处理此空间内容。",
+  any: "可使用平台或个人凭据，将获授权的业务内容发送给此空间允许的提供方；具体凭据仍须受当前模型服务支持。",
 };
 
 /** Do not render server prose or validation details: they may include submitted secrets. */
@@ -43,6 +48,7 @@ function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
     : null;
   const messages: Record<string, string> = {
     bad_key: "密钥格式不正确，请输入 20–300 个不含空白的字符。",
+    model_personal_key_unsupported: "当前付费模型服务不支持个人密钥，可清除已保存的旧密钥。",
     invalid_input: "输入不符合要求，请检查后再提交。",
     too_many_memories: "最多保存 50 条个人记忆，请先删除一些。",
     memory_not_found: "这条记忆已不存在，请重新加载记忆列表。",
@@ -194,7 +200,8 @@ function AccessForm({ settings, onChanged }: { settings: AgentSettings; onChange
 
   function savePreferences() {
     if (locked || !changed) return;
-    write.start<AgentSettings>("agent.settings.update", { effort, prefer_personal_key: prefer, memory_enabled: memory }, (value) => {
+    write.start<AgentSettings>("agent.settings.update", { effort, memory_enabled: memory,
+      ...(settings.personal_key_supported ? { prefer_personal_key: prefer } : {}) }, (value) => {
       onChanged(value);
       setEffort(value.effort); setPrefer(value.prefer_personal_key); setMemory(value.memory_enabled);
     });
@@ -211,7 +218,7 @@ function AccessForm({ settings, onChanged }: { settings: AgentSettings; onChange
 
   return <>
     <div className="col">
-      <div className="row wrap"><strong>{t("模型服务商")}</strong><span>Anthropic</span></div>
+      <div className="row wrap"><strong>{t("模型服务商")}</strong><span>{settings.active ? providerNames[settings.active.provider] : t("未配置")}</span></div>
       <div className="row wrap"><span>{t("模型配置")}</span>
         <span className={`badge ${settings.model_configured ? "info" : "warn"}`}>
           {settings.model_configured ? t("已配置") : t("未配置")}</span></div>
@@ -226,33 +233,38 @@ function AccessForm({ settings, onChanged }: { settings: AgentSettings; onChange
           {settings.active.credential === "personal" ? t("个人密钥") : t("平台凭据")}</strong></div>
       </> : <p className="notice warn">{!settings.model_configured
         ? t("平台尚未指定模型，Agent 无法回答。请联系平台管理员配置模型；单独保存个人密钥不能启用模型服务。")
-        : t("Agent 目前无法使用模型。请检查个人密钥，或请平台管理员核对模型与平台凭据配置。")}</p>}
-      <p className="muted small">{t("模型由平台管理员指定，个人密钥使用同一模型。")}</p>
+        : settings.personal_key_supported ? t("Agent 目前无法使用模型。请检查个人密钥，或请平台管理员核对模型与平台凭据配置。")
+        : t("Agent 目前无法使用模型，请平台管理员核对模型与平台凭据配置。")}</p>}
+      {settings.personal_key_supported && <p className="muted small">{t("模型由平台管理员指定，个人密钥使用同一模型。")}</p>}
       <p className="muted small">{t("配置状态不代表密钥已通过模型服务商验证；实际可用性以请求结果为准。")}</p>
     </div>
 
     <form className="col" onSubmit={(e) => {
       e.preventDefault();
-      if (locked || !validKey) return;
+      if (locked || !settings.personal_key_supported || !validKey) return;
       // Empty the visible field immediately; only the pending request retains the secret for retry.
       setKey("");
       write.start<AgentSettings>("agent.settings.update", { personal_key: cleanKey }, onChanged);
     }}>
       <label className="field"><span>{settings.personal_key.set ? t("替换个人密钥") : t("设置个人密钥")}</span>
         <input className="input" type="password" autoComplete="new-password" spellCheck={false} autoCapitalize="none"
-          value={key} maxLength={300} disabled={locked} aria-describedby="ag-key-help"
+          value={key} maxLength={300} disabled={locked || !settings.personal_key_supported} aria-describedby="ag-key-help"
           onChange={(e) => { setKey(e.target.value); write.dismiss(); }} /></label>
-      <p id="ag-key-help" className="muted small">{t("输入 Anthropic API 密钥。密钥在服务端加密保存，保存后不会在此页面回显。密钥长度为 20–300 个字符，不含空白。")}</p>
+      <p id="ag-key-help" className="muted small">{settings.personal_key_supported
+        ? t("输入 Anthropic API 密钥。密钥在服务端加密保存，保存后不会在此页面回显。密钥长度为 20–300 个字符，不含空白。")
+        : t("当前付费模型服务不支持个人密钥，可清除已保存的旧密钥。")}</p>
       <div className="row wrap">
-        <button type="submit" className="btn" disabled={locked || !validKey}>{t("保存个人密钥")}</button>
+        <button type="submit" className="btn" disabled={locked || !settings.personal_key_supported || !validKey}>{t("保存个人密钥")}</button>
         {settings.personal_key.set && <button type="button" className="btn danger" disabled={locked} onClick={() => void clearKey()}>{t("清除个人密钥")}</button>}
       </div>
     </form>
 
     <form className="col gap12" onSubmit={(e) => { e.preventDefault(); savePreferences(); }}>
-      <label className="check"><input type="checkbox" checked={prefer} disabled={locked}
+      <label className="check"><input type="checkbox" checked={prefer} disabled={locked || !settings.personal_key_supported}
         onChange={(e) => { setPrefer(e.target.checked); write.dismiss(); }} /><span>{t("优先使用个人密钥")}</span></label>
-      <p className="muted small">{t("启用后优先使用已保存且可解密的个人密钥，否则使用平台凭据。未启用时优先使用平台凭据；平台未配置时仍会尝试个人密钥。平台专用的工作空间不会自动切换凭据。")}</p>
+      <p className="muted small">{settings.personal_key_supported
+        ? t("启用后优先使用已保存且可解密的个人密钥，否则使用平台凭据。未启用时优先使用平台凭据；平台未配置时仍会尝试个人密钥。平台专用的工作空间不会自动切换凭据。")
+        : t("已保存的个人密钥偏好保留，但在当前付费模型服务中不可用。请求使用平台凭据并按已确认的报价收费。")}</p>
       <label className="field"><span>{t("推理投入")}</span>
         <select className="input" value={effort} disabled={locked} onChange={(e) => { setEffort(e.target.value as Effort); write.dismiss(); }}>
           {settings.efforts.map((value) => <option key={value} value={value}>{t(effortLabels[value] ?? value)}</option>)}
@@ -299,7 +311,7 @@ function Memories() {
       <button type="button" className="btn ghost sm" disabled={locked || edit !== null}
         onClick={() => { write.dismiss(); resource.reload(); }}>{t("重新加载记忆")}</button></div>
     <div className="card-b col gap16">
-      <p className="muted">{t("只保存你希望 Agent 记住的个人偏好，不要在此保存工作空间业务资料或密钥。启用个人记忆时，这些内容会随模型请求发送给 Anthropic。")}</p>
+      <p className="muted">{t("只保存你希望 Agent 记住的个人偏好，不要在此保存工作空间业务资料或密钥。启用个人记忆时，这些内容会随请求发送给当前模型提供方。")}</p>
       {resource.loading ? <Loading /> : resource.error != null ? <ErrorNotice error={resource.error} retry={resource.reload} /> : memories && <>
         <p className="muted small">{t("已保存 {n} / 50 条记忆，每条最多 500 个字符。", { n: memories.length })}</p>
         {memories.length === 0 ? <Empty title={t("还没有个人记忆")} /> : <div className="suite-list">
@@ -345,27 +357,34 @@ function Memories() {
   </section>;
 }
 
-function PolicyRow({ workspace, onChanged }: { workspace: WorkspacePolicy; onChanged: (value: Processing) => void }) {
+type PolicySaved = Pick<WorkspacePolicy, "processing" | "providers" | "providers_explicit">;
+function PolicyRow({ workspace, onChanged }: { workspace: WorkspacePolicy; onChanged: (value: PolicySaved) => void }) {
   const { t } = useI18n();
   const dialog = useDialog();
   const write = useWrite();
   const [processing, setProcessing] = useState(workspace.processing);
+  const [providers, setProviders] = useState(workspace.providers);
   const [confirming, setConfirming] = useState(false);
   const locked = write.locked || confirming;
+  const changed = processing !== workspace.processing || providers.length !== workspace.providers.length
+    || providers.some((p) => !workspace.providers.includes(p));
+  const providerLabel = (values: ModelProvider[]) => values.length ? values.map((p) => providerNames[p]).join(", ") : t("未允许任何提供方");
 
   async function save() {
-    if (locked || !workspace.can_change || processing === workspace.processing) return;
+    if (locked || !workspace.can_change || !changed) return;
     const proposed = processing;
+    const proposedProviders = [...providers];
     setConfirming(true);
     try {
       if (!await dialog.confirm(t("确认更改工作空间处理政策"), <div className="col">
         <p>{t("目标工作空间：{name}", { name: workspace.name })}</p><code>{workspace.workspace_id}</code>
         <p>{t("从「{before}」更改为「{after}」。", { before: t(policyLabels[workspace.processing]), after: t(policyLabels[proposed]) })}</p>
+        <p>{t("提供方范围从「{before}」更改为「{after}」。", { before: providerLabel(workspace.providers), after: providerLabel(proposedProviders) })}</p>
         <p>{t(policyImpact[proposed])}</p>
         <p>{t("此政策影响该空间的所有成员，不会扩大任何人的业务访问权限，也无法收回模型服务商已经收到的内容。")}</p>
       </div>, t("确认更改政策"), true)) return;
-      write.start<{ workspace_id: string; processing: Processing }>("agent.workspace_policy.set", { processing: proposed }, (out) => {
-        onChanged(out.processing); setProcessing(out.processing);
+      write.start<PolicySaved>("agent.workspace_policy.set", { processing: proposed, providers: proposedProviders }, (out) => {
+        onChanged(out); setProcessing(out.processing); setProviders(out.providers);
       }, workspace.workspace_id);
     } finally { setConfirming(false); }
   }
@@ -376,14 +395,27 @@ function PolicyRow({ workspace, onChanged }: { workspace: WorkspacePolicy; onCha
       <div className="row wrap"><strong>{t(policyLabels[workspace.processing])}</strong>
         <span className="badge">{workspace.explicit ? t("已明确设置") : t("默认政策")}</span></div>
       <p className="muted small">{t(policyImpact[workspace.processing])}</p>
+      <p>{t("提供方范围：{providers}", { providers: providerLabel(workspace.providers) })}</p>
+      {!workspace.providers_explicit && <p className="muted small">{workspace.kind === "personal" && !workspace.explicit
+        ? t("个人空间尚未设置政策，默认跟随个人的提供方选择。保存后仅允许勾选的提供方。")
+        : t("旧政策仅允许 Anthropic，启用 DeepSeek 需要所有者或管理员明确选择。")}</p>}
       {workspace.can_change ? <form className="col" onSubmit={(e) => { e.preventDefault(); void save(); }}>
         <label className="field"><span>{t("{name} 的模型处理政策", { name: workspace.name })}</span>
           <select className="input" value={processing} disabled={locked}
             onChange={(e) => { setProcessing(e.target.value as Processing); write.dismiss(); }}>
             {(["none", "platform", "any"] as const).map((value) => <option key={value} value={value}>{t(policyLabels[value])}</option>)}
           </select></label>
+        <fieldset className="col" disabled={locked}>
+          <legend>{t("允许处理此工作空间内容的提供方")}</legend>
+          {(Object.keys(providerNames) as ModelProvider[]).map((provider) => <label className="check" key={provider}>
+            <input type="checkbox" name="provider" value={provider} checked={providers.includes(provider)}
+              onChange={(e) => { setProviders((old) => e.target.checked ? [...old, provider].sort() : old.filter((p) => p !== provider)); write.dismiss(); }} />
+            <span>{providerNames[provider]}</span>
+          </label>)}
+        </fieldset>
+        <p className="muted small">{t("提供方范围与凭据来源同时生效。新增提供方不会自动获得许可；未选择任何提供方时全部拒绝。")}</p>
         {processing !== workspace.processing && <p className="muted small">{t(policyImpact[processing])}</p>}
-        <div><button type="submit" className="btn" disabled={locked || processing === workspace.processing}>{t("更改处理政策")}</button></div>
+        <div><button type="submit" className="btn" disabled={locked || !changed}>{t("更改处理政策")}</button></div>
       </form> : <p className="muted small">{t("仅此工作空间的所有者或管理员可以更改政策。")}</p>}
       <WriteFeedback write={write} />
     </div>
@@ -400,8 +432,8 @@ function WorkspacePolicies() {
       {resource.loading ? <Loading /> : resource.error != null ? <ErrorNotice error={resource.error} retry={resource.reload} />
         : resource.data?.workspaces.length === 0 ? <Empty title={t("没有可显示的工作空间政策")} />
         : <div className="suite-list">{resource.data?.workspaces.map((workspace) => <PolicyRow key={workspace.workspace_id} workspace={workspace}
-          onChanged={(processing) => resource.setData((old) => old && ({ workspaces: old.workspaces.map((w) =>
-            w.workspace_id === workspace.workspace_id ? { ...w, processing, explicit: true } : w) }))} />)}</div>}
+          onChanged={(policy) => resource.setData((old) => old && ({ workspaces: old.workspaces.map((w) =>
+            w.workspace_id === workspace.workspace_id ? { ...w, ...policy, explicit: true } : w) }))} />)}</div>}
     </div>
   </section>;
 }

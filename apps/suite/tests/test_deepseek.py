@@ -69,7 +69,7 @@ def invoke(body=None, *, limits=None, status=200, headers=None, wire=None, handl
         return httpx.Response(status, headers={"Content-Type": "text/event-stream", **(headers or {})}, stream=stream)
 
     provider = DeepSeekProvider(transport=httpx.MockTransport(respond), limits=limits)
-    args = dict(credential=Credential("platform", KEY, "deepseek-v4-pro"), system=[{"type": "text", "text": "fixture system"}],
+    args = dict(credential=Credential("platform", KEY, "deepseek-v4-pro", provider="deepseek"), system=[{"type": "text", "text": "fixture system"}],
                 tools=[], messages=[{"role": "user", "content": "fixture request"}], effort="medium",
                 on_text=visible.append, should_stop=lambda: False)
     args.update(kwargs)
@@ -210,8 +210,8 @@ def test_body_dispatch_trace_remains_observed_on_lost_response():
 
 
 @pytest.mark.parametrize("kwargs", [
-    {"credential": Credential("platform", KEY, "")}, {"credential": Credential("platform", KEY, "https://fixture.invalid")},
-    {"credential": Credential("platform", "fixture\nkey", "deepseek-flash")}, {"effort": "unknown"},
+    {"credential": Credential("platform", KEY, "", provider="deepseek")}, {"credential": Credential("platform", KEY, "https://fixture.invalid", provider="deepseek")},
+    {"credential": Credential("platform", "fixture\nkey", "deepseek-flash", provider="deepseek")}, {"effort": "unknown"},
     {"user_id": "user@example.test"}, {"messages": [{"role": "tool", "tool_call_id": "orphan", "content": "fixture"}]},
     {"messages": [{"role": "assistant", "content": [{"type": "thinking", "thinking": "foreign"}]}]},
     {"messages": [{"role": "user", "content": [{"type": "image", "source": "fixture"}]}]},
@@ -483,7 +483,7 @@ def test_transport_options_are_explicit_and_no_environment_credentials(monkeypat
     provider.step(**args)
     assert seen_options[0]["trust_env"] is False and seen_options[0]["follow_redirects"] is False
     monkeypatch.setenv("DEEPSEEK_API_KEY", KEY)
-    args["credential"] = Credential("platform", "", "deepseek-flash")
+    args["credential"] = Credential("platform", "", "deepseek-flash", provider="deepseek")
     with pytest.raises(DeepSeekError) as exc:
         provider.step(**args)
     assert exc.value.attempt.dispatch == "definitely_not_requested" and len(seen_options) == 1

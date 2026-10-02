@@ -393,8 +393,9 @@ class Agent:
             t.execute("INSERT INTO agent_messages (id,conversation_id,user_id,parent_id,role,status,body,created_at,updated_at) "
                       "VALUES (?,?,?,?,'assistant','streaming','',?,?)", (asst_id, cid, user["id"], user_msg_id, ts, ts))
             t.execute("INSERT INTO agent_turns (id,conversation_id,user_id,user_message_id,assistant_message_id,status,provider,"
-                      "credential,model,created_at,updated_at) VALUES (?,?,?,?,?,'queued',?,?,?,?,?)",
-                      (turn_id, cid, user["id"], user_msg_id, asst_id, self.provider.name, credential.kind, credential.model, ts, ts))
+                      "credential,model,credential_binding,created_at,updated_at) VALUES (?,?,?,?,?,'queued',?,?,?,?,?,?)",
+                      (turn_id, cid, user["id"], user_msg_id, asst_id, self.provider.name, credential.kind,
+                       credential.model, credential.binding, ts, ts))
             title = row["title"]
             if title == "新会话" and not regenerate_of:
                 title = (text or "").strip().splitlines()[0][:60] or title
@@ -535,12 +536,13 @@ class Agent:
         if credential is None:
             self._finish(t, "failed", ProviderError("agent_not_configured", "模型服务未配置"))
             return
-        if (credential.kind != t["credential"] or credential.model != t["model"]
-                or self.provider.name != t["provider"]):
-            self._finish(t, "failed", ProviderError("model_configuration_changed", "模型配置已变化，请重新发起回答"))
+        try:
+            self._check_credential_binding(t, credential)
+        except ProviderError as err:
+            self._finish(t, "failed", err)
             return
         conv = self.store.one("SELECT * FROM agent_conversations WHERE id=?", (t["conversation_id"],))
-        ctx = ToolContext(self.caps, user, _j(conv["scope_json"], None), credential.kind)
+        ctx = ToolContext(self.caps, user, _j(conv["scope_json"], None), credential.kind, credential.provider)
         asst = self.store.one("SELECT * FROM agent_messages WHERE id=?", (t["assistant_message_id"],))
         turn_msgs: list[dict] = _j(asst["api_json"], []) or []
         base = self._api_history(t["conversation_id"], t["user_message_id"])
@@ -689,11 +691,19 @@ class Agent:
                            (canonical(turn_msgs), now(), t["assistant_message_id"]))
 
     # ---------------------------------------------------------------- tools
-    def _check_context(self, t: dict, credential: Credential) -> None:
-        current = self._credential(t["user_id"])
-        if (not current or current.kind != credential.kind or current.model != credential.model
+    def _check_credential_binding(self, t: dict, credential: Credential | None) -> None:
+        # The persisted fence survives worker reloads and confirmation pauses. A legacy
+        # NULL cannot prove which secret was authorized; never bind it to today's key.
+        binding = t.get("credential_binding")
+        if (not credential or not binding or credential.binding != binding
+                or credential.kind != t["credential"] or credential.model != t["model"]
                 or self.provider.name != t["provider"]):
             raise ProviderError("model_configuration_changed", "模型配置已变化，请重新发起回答")
+
+    def _check_context(self, t: dict, credential: Credential) -> None:
+        self._check_credential_binding(t, credential)
+        current = self._credential(t["user_id"])
+        self._check_credential_binding(t, current)
         try:
             self.conversation(t["user_id"], t["conversation_id"])
         except ServiceError:
@@ -702,16 +712,39 @@ class Agent:
             raise ProviderError("source_access_changed", "来源内容或权限已变化，请新建会话重新读取")
         # Historical API messages were captured for this credential class. Recheck the policy
         # before *every* provider request, including a resumed confirmation and later turns.
-        for m in self._path(t["conversation_id"], t["assistant_message_id"]):
-            for wid in self._source_workspaces(m):
-                if not policy_allows(self.store, wid, credential.kind):
-                    # A withheld result is safe to keep withheld. Only previously transmitted
-                    # content makes a newly closed policy unsafe to replay.
-                    for c in self.store.all("SELECT for_model_json FROM agent_tool_calls WHERE conversation_id=? "
-                                            "AND workspace_id=?", (t["conversation_id"], wid)):
-                        payload = _j(c["for_model_json"], {})
-                        if payload and not payload.get("withheld") and "result" in payload:
-                            raise ProviderError("source_policy_changed", "来源空间不再允许当前模型处理已有内容")
+        for wid in self._transmitted_workspaces(t):
+            if not policy_allows(self.store, wid, credential.kind, credential.provider):
+                raise ProviderError("source_policy_changed", "来源空间不再允许当前模型处理已有内容")
+
+    @staticmethod
+    def _result_workspace(op, wid: str | None, clean: dict) -> str | None:
+        # The registry's explicit copy contract returns an independently owned target
+        # object/receipt. It does not return the source definition. Source content read by
+        # another operation keeps its own provenance and processing-policy dependency.
+        return (clean.get("target_workspace_id") or wid) if op and op.writes_elsewhere else wid
+
+    def _transmitted_workspaces(self, t: dict) -> set[str]:
+        branch = {m["id"] for m in self._path(t["conversation_id"], t["assistant_message_id"])}
+        workspaces = set()
+        for c in self.store.all(
+                "SELECT c.*,t.assistant_message_id FROM agent_tool_calls c JOIN agent_turns t ON t.id=c.turn_id "
+                "WHERE c.conversation_id=?", (t["conversation_id"],)):
+            if c["assistant_message_id"] not in branch:
+                continue
+            payload = _j(c["for_model_json"], {}) or {}
+            if payload.get("withheld") or "result" not in payload:
+                continue  # A previously withheld result stays withheld, even after policy changes.
+            if "source_workspaces" in payload:
+                workspaces.update(payload["source_workspaces"])
+            else:
+                # Pre-fix tool rows label the invocation workspace, which can differ from
+                # the returned object's owner. Recover the existing explicit copy contract
+                # without rewriting private history or granting any additional permission.
+                op = self.caps.registry.get(c["operation"])
+                wid = self._result_workspace(op, c["workspace_id"], _j(c["input_json"], {}))
+                if wid:
+                    workspaces.add(wid)
+        return workspaces
 
     def _read_only_turn(self, t: dict) -> bool:
         # A regeneration is the second answer to the same user message. Persisted topology,
@@ -735,7 +768,7 @@ class Agent:
     def _handle_tool(self, t: dict, ctx: ToolContext, step: int, tu: dict) -> bool:
         """Record and, where allowed, run one tool call. True when it waits for the person."""
         conv = self.conversation(t["user_id"], t["conversation_id"])
-        ctx = ToolContext(self.caps, ctx.user, _j(conv["scope_json"]), ctx.credential_kind)
+        ctx = ToolContext(self.caps, ctx.user, _j(conv["scope_json"]), ctx.credential_kind, ctx.provider)
         if self.store.one("SELECT 1 FROM agent_tool_calls WHERE turn_id=? AND tool_use_id=?", (t["id"], tu["id"])):
             return bool(self.store.one("SELECT 1 FROM agent_tool_calls WHERE turn_id=? AND tool_use_id=? AND status='awaiting_confirmation'",
                                        (t["id"], tu["id"])))
@@ -797,9 +830,7 @@ class Agent:
             # Workspace facts may not become unrestricted personal memories. Nor may a generic
             # write serve as an export route with no source-policy/target-audience contract.
             asst = self.store.one("SELECT sources_json FROM agent_messages WHERE id=?", (t["assistant_message_id"],))
-            transmitted = {c["workspace_id"] for c in self.store.all(
-                "SELECT workspace_id,for_model_json FROM agent_tool_calls WHERE conversation_id=?",
-                (t["conversation_id"],)) if "result" in (_j(c["for_model_json"], {}) or {})}
+            transmitted = self._transmitted_workspaces(t)
             sources = {s if isinstance(s, str) else s["workspace_id"]
                        for s in _j(asst["sources_json"], []) or [] if isinstance(s, str) or "catalogue_name" not in s} & transmitted
             if ((op.need == "personal" and self._source_workspaces(asst))
@@ -838,15 +869,19 @@ class Agent:
                 self._update_call(t, call_id, "failed", error=e, for_model={"error": e})
             return
         result = out["output"]
-        for_model = ctx.for_model(op, wid, {"status": out["status"], "run_id": out["run_id"], "output": result})
+        result_wid = self._result_workspace(op, wid, clean)
+        result_workspaces = {result_wid} if result_wid else set()
+        for_model = ctx.for_model(op, result_wid, {"status": out["status"], "run_id": out["run_id"], "output": result})
+        if not for_model.get("withheld"):
+            for_model["source_workspaces"] = sorted(result_workspaces)
         status = "succeeded" if out["status"] == "succeeded" else "unknown"
         error = None if status == "succeeded" else {"code": "outcome_unresolved", "message": "操作尚未确认完成，请在应用中查看"}
         if record:
             record(status, result=result, for_model=for_model, run_id=out["run_id"], input_hash=binding, error=error)
         else:
             self._update_call(t, call_id, status, result=result, for_model=for_model, run_id=out["run_id"], error=error)
-        if wid:
-            self._record_source(t, op, wid, clean, result, out["run_id"])
+        for result_wid in result_workspaces:
+            self._record_source(t, op, result_wid, clean, result, out["run_id"])
 
     def _update_call(self, t: dict, call_id: str, status: str, *, result=None, for_model=None, error=None, run_id=None) -> None:
         self.store.execute("UPDATE agent_tool_calls SET status=?, result_json=COALESCE(?,result_json), "
@@ -858,6 +893,7 @@ class Agent:
         self._event(t["conversation_id"], t["user_id"], t["id"], "tool", {"tool_call_id": call_id, "status": status})
 
     def _record_source(self, t: dict, op, wid: str, clean: dict, result, run_id: str) -> None:
+        # wid is the result's owner, exactly as used for its first model exposure.
         source = {"workspace_id": wid}
         if op.side_effect == "none":
             source.update(operation=op.id, input=clean, snapshot_hash=fingerprint(result))
@@ -873,10 +909,9 @@ class Agent:
                 required = [k for k, f in read.input.model_fields.items() if f.is_required()]
                 if len(required) == 1 and run["object_id"]:
                     payload = {required[0]: run["object_id"]}
-                    target = clean.get("target_workspace_id") or wid
                     try:
-                        snapshot = snapshot_read(self.caps, t["user_id"], read.id, target, payload)
-                        source.update(workspace_id=target, operation=read.id, input=payload, snapshot_hash=fingerprint(snapshot))
+                        snapshot = snapshot_read(self.caps, t["user_id"], read.id, wid, payload)
+                        source.update(operation=read.id, input=payload, snapshot_hash=fingerprint(snapshot))
                     except ServiceError:
                         pass  # Missing proof is hidden by _lost_workspaces, never assumed safe.
         self._add_source(t["assistant_message_id"], source)
@@ -936,7 +971,8 @@ class Agent:
                 self._check_context(t, credential)
             except ProviderError as err:
                 raise ServiceError(409, err.code, err.message) from None
-            ctx = ToolContext(self.caps, user, _j(conv["scope_json"], None), credential.kind if credential else "platform")
+            ctx = ToolContext(self.caps, user, _j(conv["scope_json"], None), credential.kind if credential else "platform",
+                              credential.provider if credential else self.provider.name)
             args = {"operation": c["operation"], "workspace_id": c["workspace_id"], "input": _j(c["input_json"], {})}
             prepared = ctx.prepare(args)
             if not isinstance(prepared, dict):
@@ -1053,6 +1089,12 @@ class Agent:
                 self.store.execute("UPDATE agent_tool_calls SET status='unknown', error_code='outcome_unknown', "
                                    "error_message='服务重启时操作状态不明，请在对应应用中核实', updated_at=? WHERE id=?", (now(), c["id"]))
         for t in self.store.all("SELECT * FROM agent_turns WHERE status IN ('queued','running','waiting_confirmation')"):
+            try:
+                self._check_credential_binding(t, self._credential(t["user_id"]))
+            except ProviderError as err:
+                self._finish(t, "failed", err)
+                n += 1
+                continue
             if (t["status"] == "waiting_confirmation" and not t["cancel_requested"] and t["id"] not in interrupted
                     and not self.store.one("SELECT 1 FROM agent_tool_calls WHERE turn_id=? AND decided_at IS NOT NULL", (t["id"],))):
                 continue

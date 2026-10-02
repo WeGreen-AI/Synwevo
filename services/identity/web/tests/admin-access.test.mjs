@@ -73,6 +73,21 @@ test("the historical data is offered only to whoever may assign it and search fo
   assert.deepEqual(access.visibleTabs(ROLES.super_admin), Object.keys(access.TAB_PERMISSION));
 });
 
+test("model provider uses the existing config grants, never a role name or a manage-implies-view default", () => {
+  assert.equal(access.TAB_PERMISSION['model-provider'], 'platform.config.view');
+  for (const [role, held] of Object.entries(ROLES)) {
+    assert.equal(access.visibleTabs(held).includes('model-provider'), held.has('platform.config.view'), role);
+    assert.equal(access.permitted(held, 'platform.config.manage').disabled, !held.has('platform.config.manage'), role);
+  }
+  for (const identity of [undefined, null, {}, { role: 'owner' }, { role: 'admin' }, { platform_role: 'super_admin' }]) {
+    assert.equal(access.visibleTabs(access.heldPermissions(identity)).includes('model-provider'), false);
+  }
+  const readOnly = access.heldPermissions({ platform_permissions: ['platform.config.view'] });
+  assert.equal(access.visibleTabs(readOnly).includes('model-provider'), true);
+  assert.equal(access.permitted(readOnly, 'platform.config.manage').disabled, true);
+  assert.equal(access.visibleTabs(new Set(['platform.config.manage'])).includes('model-provider'), false);
+});
+
 test("each account action is offered as the server would answer it", () => {
   const me = "u_me";
   const plain = { id: "u_plain", status: "active", platform_roles: [] };
