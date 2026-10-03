@@ -202,3 +202,16 @@ def test_losing_the_application_itself_is_still_refused_with_its_reason(watch):
     used, error, receipts = w.state(bob)
     assert w.fired(bob) == [] and used == 0
     assert error == "app_access_denied" and receipts == [("refused", "app_access_denied")]
+
+
+def test_an_owner_who_is_no_longer_available_is_still_refused_not_skipped(watch):
+    """Unchanged as well, for an application that decides per record: a suspended owner's trigger
+    records the refusal it always did, rather than treating every event as a hidden record."""
+    w, p = watch, watch.p
+    bob = w.on("dataprep.dataset.created", "bob", look="dataprep.dataset.list")
+    p.store.execute("UPDATE users SET status='suspended' WHERE id=?", (p.uid("bob"),))
+    w.call("dataprep.dataset.from_records", {"name": "Plain rows", "columns": ["id"], "records": [{"id": "1"}]})
+    w.tick()
+    used, error, receipts = w.state(bob)
+    assert w.fired(bob) == [] and used == 0 and error is not None
+    assert [status for status, _ in receipts] == ["refused"] and receipts[0][1] == error

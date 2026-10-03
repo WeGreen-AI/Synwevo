@@ -162,7 +162,9 @@ class Triggers:
         nothing of the event in any row the owner can read. It is not delivered later either: the
         cursor moves on, and a record that becomes readable fires from then.
 
-        Applications that declare no such decision keep the workspace-level check in `_deliver`.
+        What is not a hidden record stays with `_deliver`, which refuses with the reason as it
+        always has: an owner who is no longer available, an application closed to them here, and
+        every application that declares no per-record decision.
         """
         shown, by_app = set(), {}
         for ev in events:
@@ -174,13 +176,15 @@ class Triggers:
                 shown |= ids
                 continue
             try:
+                self._user(row["user_id"])
+                self.caps.check_workspace(row["user_id"], app, workspace_id, "read")
+            except ServiceError:
+                shown |= ids
+                continue
+            try:
                 shown |= feed.visible(row["user_id"], workspace_id, batch) & ids
             except ServiceError:
-                try:
-                    self.caps.check_workspace(row["user_id"], app, workspace_id, "read")
-                except ServiceError:
-                    shown |= ids            # the application itself is closed to them: `_deliver` records that refusal
-                # otherwise the decision could not be made, and nothing is shown
+                pass                        # the decision could not be made: nothing is shown
         return shown
 
     def _trigger_input(self, value, event):
