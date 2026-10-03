@@ -354,7 +354,8 @@ def _person_required(op_id: str) -> ServiceError:
 
 
 def _inner_refusal() -> ServiceError:
-    """A credential lacks a scope for something a handler reached on its behalf. Says no more."""
+    """A credential may not have something a handler reached on its behalf — it lacks the scope, or
+    no credential can ask for it at all. One refusal for both, and it says no more than that."""
     return ServiceError(403, "insufficient_scope", "该凭据的权限不足以读取这项内容所依赖的其他数据")
 
 
@@ -368,13 +369,14 @@ def _scope_refusal(op: Operation, manifest: AppManifest | None, held: frozenset,
     — is covered by that write or decide scope. Anything else it reaches, in its own application
     or another, needs the scope that operation names; a handler cannot widen its caller by the way
     it happens to make the inner call. The refusal for an inner operation names neither it nor the
-    scope it wanted: which application a record came from is not the caller's to learn from an
-    error. (What an operation always reads elsewhere is public — `Operation.reaches`, in the
-    contract — and is refused by name before the call starts.)
+    scope it wanted, and does not say whether it was a scope that was missing or an operation only
+    a person may run: what a record depends on is not the caller's to learn from an error. (What an
+    operation always reads elsewhere is public — `Operation.reaches`, in the contract — and is
+    refused by name before the call starts.)
     """
     required = machine_scope(op, manifest)
     if required is None:
-        return _person_required(op.id)
+        return _person_required(op.id) if within is None else _inner_refusal()
     if required in held:
         return None
     if within is not None:
@@ -549,7 +551,7 @@ class Capabilities:
                 raise _person_required(op_id)
             refusal = _scope_refusal(op, self.registry.app(op.app), held)
             if refusal:
-                if credential is not None and refusal.code == "insufficient_scope":
+                if credential is not None:
                     # asked from inside a machine call: an inner refusal, however the handler asked
                     refusal = _inner_refusal()
                 raise refusal

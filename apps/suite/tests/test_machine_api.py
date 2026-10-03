@@ -602,6 +602,60 @@ def test_a_handler_cannot_widen_the_credential_it_runs_under(api):
     assert page["output"] == {"seen": {"secret": "beta business"}}
 
 
+def test_an_inner_operation_only_a_person_may_run_is_refused_without_being_named(api):
+    """A handler serving a credential reaches an operation no credential can ask for — one of an
+    application without a machine API. It is refused and does not run, and the refusal is the same
+    one a missing scope gets: it does not name the inner operation, or say which kind it was."""
+    from pydantic import BaseModel
+    from synwevo_core.apps import Apps
+    from synwevo_core.capabilities import AppManifest, Operation
+    p, reg = api.people, api.caps.registry
+    text = {"zh-Hans": "夹具", "zh-Hant": "夾具", "en": "Fixture"}
+    apps = Apps(p.store, p.ident)
+    for name, machine in (("alpha", True), ("vault", False)):
+        apps.register(app_id=name, name=f"Fixture {name}", icon="doc", launch_url=f"http://workplace.testserver/{name}")
+        apps.enable_for_workspace(p.a, name)
+        reg.register_app(AppManifest(id=name, name=f"Fixture {name}", path=f"/{name}", icon="doc", summary=text,
+                                     machine=machine))
+
+    class Nothing(BaseModel):
+        pass
+
+    class How(BaseModel):
+        as_credential: bool = False
+
+    ran = []
+
+    def open_vault(call, _):
+        ran.append(call.via)
+        return {"secret": "vault business"}
+
+    def pull(call, how):
+        claim = {"via": "api", "scopes": frozenset({"alpha.read", "vault.read"})} if how.as_credential else {"via": "ui"}
+        inner = call.capabilities.invoke("vault.open", {}, user_id=call.user_id, workspace_id=call.workspace_id, **claim)
+        return {"seen": inner["output"]}
+
+    reg.register(Operation(id="vault.open", app="vault", title=text, summary="Fixture person-only read",
+                           input=Nothing, handler=open_vault))
+    reg.register(Operation(id="alpha.pull", app="alpha", title=text, summary="Fixture read that opens the vault",
+                           input=How, handler=pull))
+    who = {"user_id": p.uid("alice"), "workspace_id": p.a, "via": "api", "scopes": frozenset({"alpha.read"})}
+
+    for as_credential in (False, True):                    # however the handler makes the inner call
+        with pytest.raises(ServiceError) as e:
+            api.caps.invoke("alpha.pull", {"as_credential": as_credential}, **who)
+        assert (e.value.status, e.value.code) == (403, "insufficient_scope") and not e.value.detail
+        assert "vault" not in e.value.message and "本人" not in e.value.message
+    assert ran == [], "the inner operation did not run"
+    # asked for directly it is named: that is the caller's own request, not something it reached
+    with pytest.raises(ServiceError) as e:
+        api.caps.invoke("vault.open", {}, **who)
+    assert e.value.code == "person_required" and e.value.detail == {"operation": "vault.open"}
+    # and the person in the page is not a credential
+    page = api.caps.invoke("alpha.pull", {}, user_id=p.uid("alice"), workspace_id=p.a)
+    assert page["output"] == {"seen": {"secret": "vault business"}} and ran == ["ui"]
+
+
 def test_no_kind_of_credential_reaches_spending_or_consent(api):
     """The operations that spend a person's funds or record their consent to spend, asked for by
     each kind of credential the platform issues. All refused; no turn, quote, consent, budget,
