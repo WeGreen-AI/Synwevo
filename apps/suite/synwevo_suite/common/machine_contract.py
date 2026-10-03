@@ -3,7 +3,9 @@
 One path per operation, with that operation's own input and output models as its schemas — the
 same Pydantic models `Capabilities.invoke` validates with, so the document cannot describe a
 request the server would parse differently. `docs/integration/suite-openapi.json` is this
-function's output for every application; a test rebuilds it and fails when the two differ.
+function's output for the composed deployment (`python -m synwevo_server.suite_contract`: the
+applications plus the operations only the composition root registers); a cross-module test rebuilds
+it and fails when the two differ.
 
 What the document deliberately does not contain: the page-only routes under `/api/suite/`, the
 public fill-in links, and any operation a credential may not ask for (the personal Agent among
@@ -145,7 +147,8 @@ def _operation(op: Operation, scope: str, schemas: _Schemas) -> dict:
     if rule != "none":
         out["parameters"] = [{"$ref": "#/components/parameters/"
                                       + ("IdempotencyKeyRequired" if rule == "required" else "IdempotencyKey")}]
-    return _common(out, scopes=[scope])
+    out["x-synwevo-scope"] = scope
+    return _common(out, scopes=[scope, *op.reaches])
 
 
 def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
@@ -201,13 +204,16 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                                   "apps": {"type": "array", "items": {"type": "string"}},
                                   "expires_at": {"type": ["number", "null"]}}},
         "OperationContract": {"type": "object",
-                              "required": ["id", "app", "version", "title", "summary", "path", "scope", "need",
+                              "required": ["id", "app", "version", "title", "summary", "path", "scope",
+                                           "also_requires", "need",
                                            "side_effect", "mode", "cancellable", "idempotency", "events",
                                            "object_kind", "input_schema", "output_schema", "granted"],
                               "properties": {"id": {"type": "string"}, "app": {"type": "string"},
                                              "version": {"type": "integer"}, "title": text,
                                              "summary": {"type": "string"}, "path": {"type": "string"},
                                              "scope": {"enum": list(SUITE_API_SCOPES)},
+                                             "also_requires": {"type": "array",
+                                                               "items": {"enum": list(SUITE_API_SCOPES)}},
                                              "need": {"enum": ["read", "write", "manage"]},
                                              "side_effect": {"enum": ["none", "write", "external"]},
                                              "mode": {"enum": ["sync", "async"]},

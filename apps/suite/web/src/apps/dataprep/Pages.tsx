@@ -18,6 +18,7 @@ export function Library({ ws, write, kind }: { ws: WS; write: boolean; kind: "da
     {kind === "recipe" && write && <form className="dp-actions dp-panel" onSubmit={e => { e.preventDefault(); void action.run<Recipe>("recipe.create", { name }, r => navigate(`${base}/recipes/${r.id}`)); }}>
       <Field label={t("方案名称")}><input className="input" value={name} required maxLength={120} onChange={e => setName(e.target.value)} /></Field><button className="btn primary" disabled={action.busy}>{t("新建方案")}</button></form>}
     {action.error && <ErrorState error={action.error} />}
+    {!!result.data?.hidden && <p className="notice info" role="status">{t("有 {n} 条记录的来源权限已改变，未在此显示。", { n: result.data.hidden })}</p>}
     {result.error ? <ErrorState error={result.error} retry={result.reload} /> : !result.data ? <Loading /> : !result.data.items.length ? <Empty title={t("这里还没有记录")} /> : <>
       <div className="suite-list">{result.data.items.map(item => <Link className="suite-row" key={item.id} to={`${base}/${kind === "dataset" ? "datasets" : kind === "recipe" ? "recipes" : "runs"}/${item.id}`}>
         <div className="grow"><div className="title">{item.name || item.output_name}</div><div className="sub">{when(item.created_at)}</div></div>

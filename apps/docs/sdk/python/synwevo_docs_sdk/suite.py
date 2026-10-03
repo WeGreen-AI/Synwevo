@@ -54,6 +54,7 @@ class SuiteOperation(TypedDict):
     summary: str
     path: str
     scope: str
+    also_requires: list[str]
     need: Literal["read", "write", "manage"]
     side_effect: Literal["none", "write", "external"]
     mode: Literal["sync", "async"]
@@ -137,7 +138,10 @@ class SuiteClient:
         ``SYNWEVO_SUITE_ACCESS_TOKEN[_FILE]`` and/or ``SYNWEVO_SUITE_REFRESH_TOKEN[_FILE]``; with a
         refresh token also ``SYNWEVO_SUITE_CLIENT_ID``, optionally
         ``SYNWEVO_SUITE_CLIENT_SECRET[_FILE]`` and ``SYNWEVO_SUITE_TOKEN_URL``. A refresh token
-        rotates on use: without ``on_rotate`` the successor lives only in this process.
+        rotates on use: without ``on_rotate`` the successor lives only in this process, and the
+        value in the environment is spent after the first refresh. For that reason this is for a
+        single process — a second one started from the same variable would present a spent token
+        and end the grant for both (see `UserToken`).
         """
         env = os.environ if environ is None else environ
 

@@ -209,6 +209,7 @@
           }
         },
         "x-synwevo-object-kind": "approval_request",
+        "x-synwevo-scope": "approvals.read",
         "security": [
           {
             "suiteToken": [
@@ -356,6 +357,7 @@
           }
         },
         "x-synwevo-object-kind": "approval_request",
+        "x-synwevo-scope": "approvals.read",
         "security": [
           {
             "suiteToken": [
@@ -531,6 +533,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -701,6 +704,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -871,6 +875,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.decide",
         "security": [
           {
             "suiteToken": [
@@ -1013,6 +1018,7 @@
           }
         },
         "x-synwevo-object-kind": "approval_request",
+        "x-synwevo-scope": "approvals.read",
         "security": [
           {
             "suiteToken": [
@@ -1160,6 +1166,7 @@
           }
         },
         "x-synwevo-object-kind": "approval_request",
+        "x-synwevo-scope": "approvals.read",
         "security": [
           {
             "suiteToken": [
@@ -1335,6 +1342,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.decide",
         "security": [
           {
             "suiteToken": [
@@ -1505,6 +1513,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -1647,6 +1656,7 @@
           }
         },
         "x-synwevo-object-kind": "approval_request",
+        "x-synwevo-scope": "approvals.read",
         "security": [
           {
             "suiteToken": [
@@ -1794,6 +1804,7 @@
           }
         },
         "x-synwevo-object-kind": "approval_request",
+        "x-synwevo-scope": "approvals.read",
         "security": [
           {
             "suiteToken": [
@@ -1969,6 +1980,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.decide",
         "security": [
           {
             "suiteToken": [
@@ -2193,6 +2205,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -2363,6 +2376,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -2533,6 +2547,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -2703,6 +2718,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -2845,6 +2861,7 @@
           }
         },
         "x-synwevo-object-kind": "approval_template",
+        "x-synwevo-scope": "approvals.read",
         "security": [
           {
             "suiteToken": [
@@ -2992,6 +3009,7 @@
           }
         },
         "x-synwevo-object-kind": "approval_template",
+        "x-synwevo-scope": "approvals.read",
         "security": [
           {
             "suiteToken": [
@@ -3167,6 +3185,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -3337,6 +3356,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -3507,6 +3527,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "approvals.write",
         "security": [
           {
             "suiteToken": [
@@ -3649,6 +3670,7 @@
           }
         },
         "x-synwevo-object-kind": "approval_template",
+        "x-synwevo-scope": "approvals.read",
         "security": [
           {
             "suiteToken": [
@@ -3808,10 +3830,12 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
-              "dataprep.write"
+              "dataprep.write",
+              "extract.read"
             ]
           }
         ],
@@ -3959,10 +3983,12 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
-              "dataprep.write"
+              "dataprep.write",
+              "forms.read"
             ]
           }
         ],
@@ -4110,6 +4136,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
@@ -4251,6 +4278,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -4407,6 +4435,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
@@ -4548,6 +4577,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -4694,6 +4724,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -4840,6 +4871,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -4994,6 +5026,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
@@ -5143,6 +5176,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
@@ -5284,6 +5318,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -5430,6 +5465,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -5576,6 +5612,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -5732,6 +5769,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
@@ -5881,6 +5919,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
@@ -6030,6 +6069,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
@@ -6171,6 +6211,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -6331,6 +6372,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
@@ -6472,6 +6514,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -6618,6 +6661,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -6764,6 +6808,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "dataprep.read",
         "security": [
           {
             "suiteToken": [
@@ -6978,6 +7023,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
@@ -7187,10 +7233,165 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "dataprep.write",
         "security": [
           {
             "suiteToken": [
               "dataprep.write"
+            ]
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
+    "/api/suite/v1/ops/extract.file.from_forms": {
+      "post": {
+        "operationId": "extract.file.from_forms",
+        "summary": "Import an authorized submitted attachment in this workspace; reuses upload safety and quotas. Requires an idempotency key.",
+        "tags": [
+          "extract"
+        ],
+        "x-synwevo-need": "write",
+        "x-synwevo-side-effect": "write",
+        "x-synwevo-mode": "sync",
+        "x-synwevo-idempotency": "required",
+        "x-synwevo-events": [
+          "extract.file.imported"
+        ],
+        "x-synwevo-operation-version": 1,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "input": {
+                    "$ref": "#/components/schemas/extract.file.from_forms.input"
+                  },
+                  "workspace_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100,
+                    "description": "Optional. The credential is bound to one workspace; any other value is refused."
+                  },
+                  "idempotency_key": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[!-~]+$",
+                    "description": "Same as the Idempotency-Key header."
+                  },
+                  "correlation_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "run_id",
+                    "operation",
+                    "status",
+                    "output",
+                    "replayed",
+                    "workspace_id"
+                  ],
+                  "properties": {
+                    "run_id": {
+                      "type": "string"
+                    },
+                    "operation": {
+                      "const": "extract.file.from_forms"
+                    },
+                    "status": {
+                      "enum": [
+                        "partial",
+                        "succeeded"
+                      ]
+                    },
+                    "output": {},
+                    "replayed": {
+                      "type": "boolean"
+                    },
+                    "workspace_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableContent"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "x-synwevo-object-kind": "extract_file",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyRequired"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "x-synwevo-scope": "extract.write",
+        "security": [
+          {
+            "suiteToken": [
+              "extract.write",
+              "forms.read"
             ]
           }
         ],
@@ -7339,6 +7540,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "extract.write",
         "security": [
           {
             "suiteToken": [
@@ -7491,6 +7693,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "extract.decide",
         "security": [
           {
             "suiteToken": [
@@ -7643,6 +7846,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "extract.decide",
         "security": [
           {
             "suiteToken": [
@@ -7852,6 +8056,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "extract.write",
         "security": [
           {
             "suiteToken": [
@@ -7994,6 +8199,7 @@
           }
         },
         "x-synwevo-object-kind": "extract_task",
+        "x-synwevo-scope": "extract.read",
         "security": [
           {
             "suiteToken": [
@@ -8140,6 +8346,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "extract.read",
         "security": [
           {
             "suiteToken": [
@@ -8287,6 +8494,7 @@
           }
         },
         "x-synwevo-object-kind": "extract_task",
+        "x-synwevo-scope": "extract.read",
         "security": [
           {
             "suiteToken": [
@@ -8434,6 +8642,7 @@
           }
         },
         "x-synwevo-object-kind": "extract_task",
+        "x-synwevo-scope": "extract.read",
         "security": [
           {
             "suiteToken": [
@@ -8581,6 +8790,7 @@
           }
         },
         "x-synwevo-object-kind": "extract_task",
+        "x-synwevo-scope": "extract.read",
         "security": [
           {
             "suiteToken": [
@@ -8738,6 +8948,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "extract.write",
         "security": [
           {
             "suiteToken": [
@@ -8890,6 +9101,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "extract.write",
         "security": [
           {
             "suiteToken": [
@@ -9032,6 +9244,7 @@
           }
         },
         "x-synwevo-object-kind": "extract_template",
+        "x-synwevo-scope": "extract.read",
         "security": [
           {
             "suiteToken": [
@@ -9178,6 +9391,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "extract.read",
         "security": [
           {
             "suiteToken": [
@@ -9335,6 +9549,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "extract.write",
         "security": [
           {
             "suiteToken": [
@@ -9487,6 +9702,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "extract.write",
         "security": [
           {
             "suiteToken": [
@@ -9639,6 +9855,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "extract.write",
         "security": [
           {
             "suiteToken": [
@@ -9789,6 +10006,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -9939,6 +10157,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -10081,6 +10300,7 @@
           }
         },
         "x-synwevo-object-kind": "form",
+        "x-synwevo-scope": "forms.read",
         "security": [
           {
             "suiteToken": [
@@ -10227,6 +10447,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "forms.read",
         "security": [
           {
             "suiteToken": [
@@ -10384,6 +10605,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -10534,6 +10756,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -10684,6 +10907,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -10826,6 +11050,7 @@
           }
         },
         "x-synwevo-object-kind": "form",
+        "x-synwevo-scope": "forms.read",
         "security": [
           {
             "suiteToken": [
@@ -10981,6 +11206,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -11134,6 +11360,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -11286,6 +11513,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -11436,6 +11664,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -11578,6 +11807,7 @@
           }
         },
         "x-synwevo-object-kind": "form_request",
+        "x-synwevo-scope": "forms.read",
         "security": [
           {
             "suiteToken": [
@@ -11724,6 +11954,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "forms.read",
         "security": [
           {
             "suiteToken": [
@@ -11879,6 +12110,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -12031,6 +12263,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -12173,6 +12406,7 @@
           }
         },
         "x-synwevo-object-kind": "form_submission",
+        "x-synwevo-scope": "forms.read",
         "security": [
           {
             "suiteToken": [
@@ -12319,6 +12553,7 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         },
+        "x-synwevo-scope": "forms.read",
         "security": [
           {
             "suiteToken": [
@@ -12476,6 +12711,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "forms.write",
         "security": [
           {
             "suiteToken": [
@@ -12631,6 +12867,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -12786,6 +13023,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -12941,6 +13179,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -13083,6 +13322,7 @@
           }
         },
         "x-synwevo-object-kind": "table",
+        "x-synwevo-scope": "tables.read",
         "security": [
           {
             "suiteToken": [
@@ -13243,6 +13483,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -13398,6 +13639,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -13540,6 +13782,7 @@
           }
         },
         "x-synwevo-object-kind": "table",
+        "x-synwevo-scope": "tables.read",
         "security": [
           {
             "suiteToken": [
@@ -13700,6 +13943,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -13855,6 +14099,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -13997,6 +14242,7 @@
           }
         },
         "x-synwevo-object-kind": "table",
+        "x-synwevo-scope": "tables.read",
         "security": [
           {
             "suiteToken": [
@@ -14144,6 +14390,7 @@
           }
         },
         "x-synwevo-object-kind": "table",
+        "x-synwevo-scope": "tables.read",
         "security": [
           {
             "suiteToken": [
@@ -14291,6 +14538,7 @@
           }
         },
         "x-synwevo-object-kind": "table",
+        "x-synwevo-scope": "tables.read",
         "security": [
           {
             "suiteToken": [
@@ -14451,6 +14699,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -14606,6 +14855,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -14761,6 +15011,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -14916,6 +15167,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -15058,6 +15310,7 @@
           }
         },
         "x-synwevo-object-kind": "table",
+        "x-synwevo-scope": "tables.read",
         "security": [
           {
             "suiteToken": [
@@ -15205,6 +15458,7 @@
           }
         },
         "x-synwevo-object-kind": "table",
+        "x-synwevo-scope": "tables.read",
         "security": [
           {
             "suiteToken": [
@@ -15365,6 +15619,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -15520,6 +15775,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -15675,6 +15931,7 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ],
+        "x-synwevo-scope": "tables.write",
         "security": [
           {
             "suiteToken": [
@@ -18715,6 +18972,27 @@
           }
         },
         "title": "Rule",
+        "type": "object"
+      },
+      "extract.file.from_forms.input": {
+        "additionalProperties": false,
+        "properties": {
+          "submission_id": {
+            "pattern": "^fsub_[a-f0-9]{12}$",
+            "title": "Submission Id",
+            "type": "string"
+          },
+          "file_id": {
+            "pattern": "^ffile_[a-f0-9]{12}$",
+            "title": "File Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "submission_id",
+          "file_id"
+        ],
+        "title": "FromForms",
         "type": "object"
       },
       "extract.task.cancel.input": {
@@ -21782,6 +22060,7 @@
           "summary",
           "path",
           "scope",
+          "also_requires",
           "need",
           "side_effect",
           "mode",
@@ -21843,6 +22122,25 @@
               "approvals.write",
               "approvals.decide"
             ]
+          },
+          "also_requires": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "forms.read",
+                "forms.write",
+                "tables.read",
+                "tables.write",
+                "dataprep.read",
+                "dataprep.write",
+                "extract.read",
+                "extract.write",
+                "extract.decide",
+                "approvals.read",
+                "approvals.write",
+                "approvals.decide"
+              ]
+            }
           },
           "need": {
             "enum": [

@@ -56,15 +56,22 @@ class DataPrep:
                      if table == 'recipes' else '*')
         rows = self.store.all(f'SELECT {selection} FROM dataprep_{table} WHERE workspace_id=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?',
                               (workspace, limit + 1, offset))
-        items = []
+        items, hidden = [], 0
         for row in rows[:limit]:
-            if table == 'datasets':
-                check_sources(self, workspace, user, row['id'])
-            elif table == 'runs':
-                self.check_run_sources(workspace, user, row)
-            item = decode(row)
-            items.append(item)
-        return {'items': items, 'next_offset': offset + limit if len(rows) > limit else None}
+            # A row whose sources this caller may not read now — a source withdrawn or changed, an
+            # application the person lost, a scope a credential does not hold — is withheld, name
+            # and all, and counted. One such row must not close the whole list, and the refusal for
+            # it must not say where it came from; opening the row itself still refuses, as before.
+            try:
+                if table == 'datasets':
+                    check_sources(self, workspace, user, row['id'])
+                elif table == 'runs':
+                    self.check_run_sources(workspace, user, row)
+            except ServiceError:
+                hidden += 1
+                continue
+            items.append(decode(row))
+        return {'items': items, 'next_offset': offset + limit if len(rows) > limit else None, 'hidden': hidden}
 
     def upload(self, workspace, user, filename, data, key):
         from synwevo_core.member_import import accept_upload

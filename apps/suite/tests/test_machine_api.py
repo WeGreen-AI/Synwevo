@@ -251,10 +251,18 @@ def test_operations_that_are_a_persons_own_have_no_machine_door(api):
     for op_id in closed:
         r = api.post(f"/api/suite/v1/ops/{op_id}", json={"input": {}}, headers={**auth, "Idempotency-Key": "k1"})
         refused(r, 403, "person_required")
-        # the capability layer refuses on its own, whatever HTTP entry passed the call along
+        # The capability layer refuses on its own, whatever HTTP entry passed the call along —
+        # asked with every scope there is, so it is the operation that is closed, not the caller
+        # that came without scopes (that refusal is a different branch, checked just after).
+        target = None if reg.get(op_id).need == "personal" else p.a
         with pytest.raises(ServiceError) as e:
-            api.caps.invoke(op_id, {}, user_id=p.uid("alice"), via="api",
-                            workspace_id=None if reg.get(op_id).need == "personal" else p.a)
+            api.caps.invoke(op_id, {}, user_id=p.uid("alice"), via="api", workspace_id=target,
+                            scopes=frozenset(ALL_SCOPES.split()) | {f"{reg.get(op_id).app}.{verb}"
+                                                                    for verb in ("read", "write", "decide")})
+        assert (e.value.status, e.value.code) == (403, "person_required"), op_id
+        assert e.value.detail == {"operation": op_id}
+        with pytest.raises(ServiceError) as e:
+            api.caps.invoke(op_id, {}, user_id=p.uid("alice"), via="api", workspace_id=target)
         assert (e.value.status, e.value.code) == (403, "person_required"), op_id
     assert counts(p.store, "agent_", "billing_", "op_runs", "app_events") == before
     refused(api.post("/api/suite/v1/ops/agent.turn.launch", json={"input": {}}, headers=auth), 404, "unknown_operation")
@@ -502,14 +510,34 @@ def test_reaching_into_another_application_needs_that_applications_scope(api):
     assert m(api, wide, "dataprep.dataset.get", {"dataset_id": dataset})["output"]["id"] == dataset
     # the dataset exists now; a credential without forms.read still cannot open what came from Forms
     err = m(api, narrow, "dataprep.dataset.get", {"dataset_id": dataset}, expect=403)["error"]
-    assert err["code"] == "insufficient_scope" and err["details"]["required_scope"] == "forms.read"
+    assert err["code"] == "insufficient_scope" and err["details"] == {"required_scope": "forms.read"}
+    # ... but one such dataset does not close the list for it: the row is withheld and counted, the
+    # rest is there, and nothing in the answer says which application the withheld row came from
+    plain = m(api, narrow, "dataprep.dataset.from_records", {"name": "Plain rows", "columns": ["id"],
+              "records": [{"id": "1"}]}, key="plain")["output"]["id"]
+    listed = api.post("/api/suite/v1/ops/dataprep.dataset.list", json={"input": {}}, headers=narrow)
+    assert listed.status_code == 200, listed.text
+    assert [d["id"] for d in listed.json()["output"]["items"]] == [plain] and listed.json()["output"]["hidden"] == 1
+    assert "forms" not in listed.text and dataset not in listed.text
+    everything = m(api, wide, "dataprep.dataset.list")["output"]
+    assert {d["id"] for d in everything["items"]} == {plain, dataset} and everything["hidden"] == 0
+    # the same for runs: one that read the Forms-sourced dataset is withheld from the narrow credential
+    recipe = m(api, wide, "dataprep.recipe.create", {"name": "Fixture recipe", "definition": {"steps": []}},
+               key="recipe")["output"]
+    m(api, wide, "dataprep.recipe.publish", {"recipe_id": recipe["id"], "draft_rev": 1}, key="publish")
+    for name, source in (("run-forms", dataset), ("run-plain", plain)):
+        m(api, wide, "dataprep.run.start", {"recipe_id": recipe["id"], "version": 1, "inputs": {"main": source}},
+          key=name, expect=202)
+    runs = m(api, narrow, "dataprep.run.list")["output"]
+    assert len(runs["items"]) == 1 and runs["hidden"] == 1
+    assert len(m(api, wide, "dataprep.run.list")["output"]["items"]) == 2
     # nor read the import's receipt, nor have it replayed
     receipt = api.get(f"/api/suite/v1/runs/{made['run_id']}", headers=narrow).json()
     assert receipt["snapshot_hidden"] is True and receipt["output"] is None
-    again = m(api, narrow, "dataprep.dataset.from_forms", ask, key="import-2", expect=409)["error"]
-    assert again["code"] == "run_result_unavailable"
+    again = m(api, narrow, "dataprep.dataset.from_forms", ask, key="import-2", expect=403)["error"]
+    assert again["code"] == "insufficient_scope" and again["details"]["required_scope"] == "forms.read"
     assert api.get(f"/api/suite/v1/runs/{made['run_id']}", headers=wide).json()["snapshot_hidden"] is False
-    assert p.store.one("SELECT COUNT(*) AS n FROM dataprep_datasets")["n"] == 1
+    assert p.store.one("SELECT COUNT(*) AS n FROM dataprep_datasets")["n"] == 2
     # the page is the person, not a credential: nothing above changed what Bob himself can do
     api.sign_in("bob")
     page = api.post("/api/suite/ops/dataprep.dataset.get", headers={"X-Synwevo-CSRF": "fixture-csrf"},
@@ -602,3 +630,95 @@ def test_no_kind_of_credential_reaches_spending_or_consent(api):
             r = api.post(f"/api/suite/v1/ops/{op_id}", json=body, headers={**auth, "Idempotency-Key": "k"})
             assert (r.status_code, r.json()["error"]["code"]) == (status, code), (kind, op_id, r.text)
     assert counts(p.store, *watched) == before
+
+
+def test_a_handler_cannot_widen_its_caller_inside_its_own_application_either(api):
+    """`alpha.peek` is a read whose handler runs a write of the same application and hard-codes
+    ``via="ui"`` for it — the shape of a future mistake. Under a credential the inner operation
+    still needs its own scope. The allowance the other way is deliberate: a write's handler reading
+    its own application's records is covered by the write scope."""
+    from pydantic import BaseModel
+    from synwevo_core.apps import Apps
+    from synwevo_core.capabilities import AppManifest, Operation
+    p, reg = api.people, api.caps.registry
+    text = {"zh-Hans": "夹具", "zh-Hant": "夾具", "en": "Fixture"}
+    Apps(p.store, p.ident).register(app_id="alpha", name="Fixture alpha", icon="doc",
+                                    launch_url="http://workplace.testserver/alpha")
+    Apps(p.store, p.ident).enable_for_workspace(p.a, "alpha")
+    reg.register_app(AppManifest(id="alpha", name="Fixture alpha", path="/alpha", icon="doc", summary=text, machine=True))
+    written = []
+
+    class Nothing(BaseModel):
+        pass
+
+    def change(call, _):
+        written.append(call.via)
+        seen = call.capabilities.inspect("alpha.look", {}, user_id=call.user_id, workspace_id=call.workspace_id)
+        return {"changed": True, "saw": seen}
+
+    def peek(call, _):
+        inner = call.capabilities.invoke("alpha.change", {}, user_id=call.user_id, workspace_id=call.workspace_id,
+                                         via="ui")
+        return inner["output"]
+
+    reg.register(Operation(id="alpha.look", app="alpha", title=text, summary="Fixture read", input=Nothing,
+                           handler=lambda call, _: {"rows": 1}))
+    reg.register(Operation(id="alpha.change", app="alpha", title=text, summary="Fixture write", input=Nothing,
+                           handler=change, need="write", side_effect="write", agent="confirm"))
+    reg.register(Operation(id="alpha.peek", app="alpha", title=text, summary="Fixture read that writes inside",
+                           input=Nothing, handler=peek))
+    who = {"user_id": p.uid("alice"), "workspace_id": p.a, "via": "api"}
+
+    with pytest.raises(ServiceError) as e:
+        api.caps.invoke("alpha.peek", {}, scopes=frozenset({"alpha.read"}), **who)
+    assert e.value.code == "insufficient_scope" and e.value.detail == {"required_scope": "alpha.write"}
+    assert written == [], "the inner write did not run"
+    both = api.caps.invoke("alpha.peek", {}, scopes=frozenset({"alpha.read", "alpha.write"}), **who)
+    assert both["output"] == {"changed": True, "saw": {"rows": 1}} and written == ["ui"]
+    # a write-only credential: its own handler's read of its own application is part of the write
+    only_write = api.caps.invoke("alpha.change", {}, scopes=frozenset({"alpha.write"}), **who)
+    assert only_write["output"] == {"changed": True, "saw": {"rows": 1}}
+    # ... but that allowance is not a read scope: asked for directly, the read is refused
+    with pytest.raises(ServiceError) as e:
+        api.caps.invoke("alpha.look", {}, scopes=frozenset({"alpha.write"}), **who)
+    assert e.value.code == "insufficient_scope" and e.value.detail["required_scope"] == "alpha.read"
+
+
+def test_a_person_cannot_write_into_a_clients_idempotency_namespace(api):
+    """The stored form of a client's key is `api:<client digest>:<key>`. From the page (or any
+    caller that is not a credential) that prefix is refused; and a row that carries such a key
+    without having been made by a credential is never replayed to the client as its own."""
+    import hashlib
+    p = api.people
+    auth = bearer(api, "alice", "tables.read tables.write")
+    table = m(api, auth, "tables.table.create", {"name": "Fixture contacts"}, key="t-1")["output"]["id"]
+    stored = "api:" + hashlib.sha256(b"crm-sync").hexdigest()[:16] + ":order-7"
+    assert p.store.one("SELECT idempotency_key FROM op_runs WHERE op='tables.table.create'")["idempotency_key"] \
+        == stored.replace("order-7", "t-1")
+
+    # the page, pre-seeding the key the client will use
+    api.sign_in("alice")
+    seeded = api.post("/api/suite/ops/tables.record.create", headers={"X-Synwevo-CSRF": "fixture-csrf"},
+                      json={"workspace_id": p.a, "input": {"table_id": table, "cells": {}}, "idempotency_key": stored})
+    api.cookies.clear()
+    assert seeded.status_code == 400 and seeded.json()["error"] == "bad_idempotency_key", seeded.text
+    for via in ("ui", "flow", "agent", "automation", "system"):
+        with pytest.raises(ServiceError) as e:
+            api.caps.invoke("tables.record.create", {"table_id": table, "cells": {}}, user_id=p.uid("alice"),
+                            workspace_id=p.a, via=via, idempotency_key=stored)
+        assert e.value.code in ("bad_idempotency_key", "not_for_agent"), via
+    assert p.store.one("SELECT COUNT(*) AS n FROM tb_records WHERE table_id=?", (table,))["n"] == 0
+
+    # a row with that key that no credential made (as one written before the prefix was reserved
+    # would be): the page's own run, re-keyed in place
+    page = api.caps.invoke("tables.record.create", {"table_id": table, "cells": {}}, user_id=p.uid("alice"),
+                           workspace_id=p.a, idempotency_key="page-key")
+    assert p.store.execute("UPDATE op_runs SET idempotency_key=? WHERE id=?", (stored, page["run_id"])) == 1
+    clash = m(api, auth, "tables.record.create", {"table_id": table, "cells": {}}, key="order-7", expect=409)
+    assert clash["error"]["code"] == "idempotency_conflict" and "details" not in clash["error"]
+    assert page["run_id"] not in str(clash)
+    assert p.store.one("SELECT COUNT(*) AS n FROM tb_records WHERE table_id=?", (table,))["n"] == 1
+    # the client's own keys still work, and still replay to it
+    first = m(api, auth, "tables.record.create", {"table_id": table, "cells": {}}, key="order-8")
+    again = m(api, auth, "tables.record.create", {"table_id": table, "cells": {}}, key="order-8")
+    assert (first["replayed"], again["replayed"], again["run_id"]) == (False, True, first["run_id"])

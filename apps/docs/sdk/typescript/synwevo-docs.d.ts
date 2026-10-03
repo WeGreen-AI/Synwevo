@@ -281,7 +281,8 @@ export interface UserTokenOptions {
 /**
  * A person's delegation to this client (authorization code + PKCE): an access token, replaced
  * with a rotating refresh token when the person granted `offline_access`. Presenting a spent
- * refresh token revokes the whole grant, so persist what `onRotate` receives.
+ * refresh token revokes the whole grant, so persist what `onRotate` receives — and give each
+ * refresh token one holder: two processes started from the same one end the grant for both.
  */
 export declare class UserToken implements Credentials {
   /** @throws ValidationError without a token, or with a refresh token but no tokenUrl / clientId. */
@@ -1744,7 +1745,9 @@ export interface SuiteOperation {
   path: string;
   /** The scope this operation needs. */
   scope: SuiteScope;
-  /** Whether this credential holds it. */
+  /** Scopes of other applications the operation also needs (its handler reads there for the caller). */
+  also_requires: SuiteScope[];
+  /** Whether this credential holds `scope` and everything in `also_requires`. */
   granted: boolean;
   need: 'read' | 'write' | 'manage';
   side_effect: 'none' | 'write' | 'external';
@@ -1811,7 +1814,7 @@ export type SuiteClientOptions = Omit<ClientOptions, 'multipartMaxBytes' | 'chun
 export declare class SuiteClient {
   /** Passing undefined for baseUrl selects https://workplace.synwevo.com. @throws ValidationError unless credentials is a UserToken. */
   constructor(baseUrl: string | URL | undefined, credentials: UserToken, options?: SuiteClientOptions);
-  /** Only SYNWEVO_SUITE_* variables; the suite resource is fixed. */
+  /** Only SYNWEVO_SUITE_* variables; the suite resource is fixed. Single process only when a refresh token is given. */
   static fromEnv(env?: Record<string, string | undefined>,
     options?: SuiteClientOptions & { onRotate?: UserTokenOptions['onRotate'] }): Promise<SuiteClient>;
   readonly baseUrl: string;

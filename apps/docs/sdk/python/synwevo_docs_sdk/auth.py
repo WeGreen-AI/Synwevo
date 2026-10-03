@@ -188,6 +188,11 @@ class UserToken:
     A refresh whose answer never arrived is not known to have failed. The next call tries the same
     refresh token again; if the server had already spent it the grant ends and the person has to
     authorise the client again, which is the only safe outcome of a lost successor.
+
+    **One holder per refresh token.** Two processes (or two `UserToken` objects) started from the
+    same refresh token will both try to spend it; the second presents a spent token, the platform
+    treats that as a leak and revokes the grant for both. Let one process refresh and hand the
+    others the current access token, or keep the token behind a store with a lock.
     """
 
     def __init__(self, access_token: str | None = None, *, refresh_token: str | None = None,

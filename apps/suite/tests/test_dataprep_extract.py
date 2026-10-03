@@ -270,8 +270,13 @@ def test_source_changes_block_all_read_export_worker_rerun_history_and_replay(ex
         op(ex, 'dataprep.dataset.get', {'dataset_id': target}, status=denial)
         op(ex, 'dataprep.dataset.issues', {'dataset_id': target}, status=denial)
         assert export(ex, target).status_code == denial
+    # A list withholds what can no longer be verified and says how many; it does not close as a
+    # whole because of them (opening any of those rows still refuses, above and below).
+    listed = op(ex, 'dataprep.dataset.list', {})['output']
+    assert listed['hidden'] >= 2 and not {did, derived} & {d['id'] for d in listed['items']}
+    runs = op(ex, 'dataprep.run.list', {})['output']
+    assert runs['hidden'] >= 1 and done['id'] not in {r['id'] for r in runs['items']}
     for operation, args in [
-        ('dataprep.dataset.list', {}), ('dataprep.run.list', {}),
         ('dataprep.recipe.preview', {'definition': {}, 'inputs': {'main': did}}),
         ('dataprep.run.get', {'run_id': done['id']}), ('dataprep.run.issues', {'run_id': done['id']}),
         ('dataprep.run.retry', {'run_id': done['id']}),

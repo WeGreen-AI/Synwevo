@@ -272,6 +272,10 @@ export class ClientCredentials {
  * the person's whole grant. A refresh whose answer never arrived is tried again with the same
  * token on the next call; if the server had already spent it the grant ends and the person has to
  * authorise the client again.
+ *
+ * One holder per refresh token: two processes (or two UserToken objects) started from the same
+ * refresh token both try to spend it, the second presents a spent one, and the platform revokes
+ * the grant for both. Let one process refresh and share the current access token.
  */
 export class UserToken {
   constructor({ accessToken = null, refreshToken = null, tokenUrl = null, clientId = null, clientSecret = null,
@@ -1262,7 +1266,8 @@ export class SuiteClient {
    * Only SYNWEVO_SUITE_* variables are read: SYNWEVO_SUITE_ACCESS_TOKEN[_FILE] and/or
    * SYNWEVO_SUITE_REFRESH_TOKEN[_FILE]; with a refresh token also SYNWEVO_SUITE_CLIENT_ID,
    * optionally SYNWEVO_SUITE_CLIENT_SECRET[_FILE] and SYNWEVO_SUITE_TOKEN_URL. A refresh token
-   * rotates on use: without `onRotate` the successor lives only in this process.
+   * rotates on use: without `onRotate` the successor lives only in this process, and the value in
+   * the environment is spent after the first refresh — use this from a single process only.
    */
   static async fromEnv(env = process.env, { onRotate = null, ...options } = {}) {
     const secret = async (name) => (env[name] && String(env[name]).trim())

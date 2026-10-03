@@ -60,17 +60,19 @@ def machine_operations(registry) -> list[tuple[Operation, str]]:
 
 
 def idempotency_rule(op: Operation) -> str:
-    """``required``: the call reaches someone outside, and a blind retry would reach them twice.
-    ``supported``: a change inside Synwevo. ``none``: a read."""
-    if op.side_effect == "external":
+    """``required``: the call reaches someone outside, and a blind retry would reach them twice —
+    or the operation's own handler will not run without a key. ``supported``: a change inside
+    Synwevo. ``none``: a read."""
+    if op.side_effect == "external" or op.requires_key:
         return "required"
     return "supported" if op.side_effect != "none" else "none"
 
 
 def contract(op: Operation, scope: str) -> dict:
-    """An operation as an integration sees it."""
+    """An operation as an integration sees it. ``scope`` is the operation's own; ``also_requires``
+    lists the scopes of other applications its handler reads in on the caller's behalf."""
     return {"id": op.id, "app": op.app, "version": op.version, "title": op.title, "summary": op.summary,
-            "path": f"{SUITE_V1}/ops/{op.id}", "scope": scope, "need": op.need,
+            "path": f"{SUITE_V1}/ops/{op.id}", "scope": scope, "also_requires": list(op.reaches), "need": op.need,
             "side_effect": op.side_effect, "mode": op.mode, "cancellable": op.cancellable,
             "idempotency": idempotency_rule(op), "events": list(op.events),
             "object_kind": op.object_kind, "input_schema": op.input_schema(),
@@ -112,10 +114,10 @@ def build_machine_router(ctx) -> APIRouter:
             raise ServiceError(400, "bad_idempotency_key", "请求头与请求体里的幂等键不一致")
         key = in_body or in_header
         if key is None:
-            if op.side_effect == "external":
+            if idempotency_rule(op) == "required":
                 raise ServiceError(400, "idempotency_key_required",
-                                   "这个操作会向他人发出请求、通知或链接；请带 Idempotency-Key，重试才不会重复发出",
-                                   {"operation": op.id})
+                                   "这个操作必须带 Idempotency-Key：它会向他人发出请求、通知或链接，或以该键识别重试，"
+                                   "没有键的重试会重复执行", {"operation": op.id})
             return None
         if not 1 <= len(key) <= MAX_CALLER_KEY or any(not 33 <= ord(ch) <= 126 for ch in key):
             raise ServiceError(400, "bad_idempotency_key",
@@ -145,7 +147,7 @@ def build_machine_router(ctx) -> APIRouter:
         if app is not None and app not in usable:
             raise ServiceError(404, "app_unavailable", "该应用未启用或你不能使用它")
         held = set(p["scopes"])
-        ops = [{**contract(op, scope), "granted": scope in held} for op, scope in callable_ops
+        ops = [{**contract(op, scope), "granted": {scope, *op.reaches} <= held} for op, scope in callable_ops
                if op.app in usable and (app is None or op.app == app)]
         return {"workspace_id": p["tenant"], "operations": ops,
                 "apps": [manifest_json(m) for m in caps.registry.apps() if m.id in usable]}
@@ -154,7 +156,8 @@ def build_machine_router(ctx) -> APIRouter:
         def invoke(body: MachineInvoke, request: Request, response: Response,
                    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
             p = caller(request)
-            require_scope(p, scope)
+            for needed in (scope, *op.reaches):
+                require_scope(p, needed)
             if body.workspace_id is not None and body.workspace_id != p["tenant"]:
                 raise ServiceError(403, "workspace_mismatch", "该凭据只能在授权时选定的工作空间内使用",
                                    {"workspace_id": p["tenant"]})

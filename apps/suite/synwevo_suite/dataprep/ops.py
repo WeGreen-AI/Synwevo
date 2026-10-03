@@ -35,10 +35,11 @@ def register(registry, service):
     created = ('dataprep.dataset.created',)
     add('dataset.import', ('导入文件', '匯入檔案', 'Import the complete selected CSV or XLSX range'), M.ImportFile, service.import_file, write=True, events=created)
     add('dataset.from_records', ('导入记录', '匯入記錄', 'Import scalar records; numeric values must be decimal strings'), M.Records, service.records, write=True, events=created)
-    add('dataset.from_forms', ('导入表单提交', '匯入表單提交', 'Snapshot authorized Forms submissions through the registry'), M.FormRecords, service.form_records, write=True, events=created)
+    add('dataset.from_forms', ('导入表单提交', '匯入表單提交', 'Snapshot authorized Forms submissions through the registry'), M.FormRecords, service.form_records, write=True, events=created,
+        reaches=('forms.read',))
     add('dataset.from_extract', ('导入已确认的提取结果', '匯入已確認的提取結果', 'Import confirmed extraction results'),
         M.ExtractRecords, service.extract_records, write=True, events=created, version=1,
-        output=M.ExtractDataset, object_kind='dataprep_dataset')
+        output=M.ExtractDataset, object_kind='dataprep_dataset', reaches=('extract.read',))
     add('dataset.get', ('查看数据', '查看資料', 'Read dataset metadata and a bounded page with source positions'), M.DatasetPage,
         lambda c, i: (check_sources(service, c.workspace_id, c.user_id, i.dataset_id),
                       service.dataset(c.workspace_id, i.dataset_id, i.offset, i.limit))[1])

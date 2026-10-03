@@ -3,8 +3,9 @@
 Synwevo Forms、Tables、DataPrep、Extract、Approvals 的机器接口。它不是另一套实现：每个操作与应用页面调用的是同一个
 入口（`Capabilities.invoke`），校验、实时角色、运行记录、幂等与事件完全一致；这一层只增加凭据才需要的东西。
 
-* 契约：[`suite-openapi.json`](suite-openapi.json)（OpenAPI 3.1，由运行时注册表生成；`python -m synwevo_suite.cli openapi --out …`
-  重新生成，测试会比对）。
+* 契约：[`suite-openapi.json`](suite-openapi.json)（OpenAPI 3.1，由**组装后的部署**的运行时注册表生成——五个应用，加上只有
+  组装层才登记的跨应用操作；`python -m synwevo_server.suite_contract --out docs/integration/suite-openapi.json` 重新生成，
+  `tests/integration/test_suite_machine_contract.py` 会比对文件、导出器与实际路由）。
 * 源站：工作空间源站（正式环境 `https://workplace.synwevo.com`）。令牌由账户服务签发（`https://accounts.synwevo.com`）。
 * 状态：本地实现并验证，**尚未部署**；正式环境是否开放以 [`../platform/api-coverage.md`](../platform/api-coverage.md) 为准。
 
@@ -49,8 +50,16 @@ python -m synwevo_identity.cli client register crm-sync --app platform --name "C
 `*.decide` 单独存在：同意“写入”不等于同意“替我做决定”。同意页逐项列出客户端请求的 scope。
 
 每个操作需要哪个 scope 由操作自身的声明推导（`capabilities.machine_scope`），`GET /operations` 与契约里都写明。
-**跨应用读取同样受 scope 约束**：`dataprep.dataset.from_forms` 需要 `dataprep.write` 和 `forms.read`；打开一个来自
-Forms/Extract 的数据集会重新读取来源，缺少来源应用的 read scope 时拒绝。
+**处理函数触达的一切同样受凭据的 scope 约束**，无论它以什么方式发起内层调用：
+
+* 跨应用：`dataprep.dataset.from_forms` 需要 `dataprep.write` **和** `forms.read`，`dataprep.dataset.from_extract` 需要
+  `extract.read`，`extract.file.from_forms` 需要 `extract.write` 和 `forms.read`（契约的 `security` 与 `/operations` 的
+  `also_requires` 列出）。打开一个来自 Forms/Extract 的数据集会重新读取来源，缺少来源应用的 read scope 时拒绝
+  （403 `insufficient_scope`，只给出所需 scope，不说明记录来自哪里）。
+* 同一应用内：内层操作仍需要它自己的 scope。唯一的放宽是“写/决定操作的处理函数读取本应用自己的记录”由该 write /
+  decide scope 覆盖；这不等于持有 read scope——直接调用只读操作仍需 `<app>.read`。
+* 列表不因个别行而整体失败：`dataprep.dataset.list` / `dataprep.run.list` 把来源此刻不可核实的行**隐去并计数**
+  （`hidden`），其余照常返回。
 
 ### 1.3 不在这个接口里的
 
@@ -88,10 +97,12 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 * 有副作用的操作支持 `Idempotency-Key`（或请求体 `idempotency_key`，两者同时给出必须一致）：1–128 个可见 ASCII 字符。
   同键同参返回第一次的结果（`replayed: true`）；同键不同参 409 `idempotency_conflict`；先前失败的同键请求 409
   `idempotent_failure`，不会重新执行。
-* 会向他人发出请求、通知或链接的操作（契约中 `x-synwevo-idempotency: required`，如 `forms.request.create`）**必须**带键，
-  否则 400 `idempotency_key_required`。
+* 会向他人发出请求、通知或链接的操作，以及处理函数以该键识别重试的操作（契约中 `x-synwevo-idempotency: required`，如
+  `forms.request.create`、`extract.file.from_forms`）**必须**带键，否则 400 `idempotency_key_required`。
 * 命名空间是“本人 + 操作 + 工作空间 + 客户端”。轮换客户端密钥或换一个访问令牌不改变命名空间；两个不同客户端使用同一个
-  键互不影响；页面上的同名键也互不影响。
+  键互不影响；页面上的同名键也互不影响。凭据的键以 `api:<客户端>:` 前缀存储，这个前缀对页面、流程和 Agent 一律拒绝；
+  一次运行只会重放给**同一类调用方**——页面产生的运行永远不会作为凭据调用的“重放结果”返回，反之亦然（409
+  `idempotency_conflict`）。
 * 只读操作忽略键：客户端可以无条件带键并重试，读到的是当下的数据。
 * 重放前重新鉴权：原结果的来源此刻不可读时返回 409 `run_result_unavailable`，不会重新执行。
 * 超时意味着结果未知：用同一个键重试，或查询 `GET /runs/{id}`。
@@ -155,8 +166,11 @@ const made = await suite.invoke('tables.record.create', { table_id: tid, cells: 
 ```
 
 * 每次 `invoke` 都带幂等键（你的，或为这一次调用生成的），网络失败与 5xx 用同一个键重试。
-* **刷新令牌只能用一次。** 每次刷新返回后继者，SDK 在使用新访问令牌之前把它交给 `on_rotate` / `onRotate`——务必保存：
-  再次出示已用过的刷新令牌会撤销本人的整组授权。
+* **刷新令牌只能用一次，而且只能有一个持有者。** 每次刷新返回后继者，SDK 在使用新访问令牌之前把它交给
+  `on_rotate` / `onRotate`——务必保存：再次出示已用过的刷新令牌会撤销本人的整组授权。因此**不要让两个进程（或两台机器、
+  一个进程里的两个 `UserToken`）从同一个刷新令牌启动**：第一个刷新后，第二个出示的就是已用过的令牌，平台按泄露处理，
+  两边同时失效，本人必须重新授权。多进程部署时由一个进程（或一个带锁的共享存储）负责刷新，其余只读取当前访问令牌；
+  `from_env` / `fromEnv` 读到的是启动时的那一个刷新令牌，只适合单进程。
 * `from_env` / `fromEnv` 只读 `SYNWEVO_SUITE_*` 变量，不借用 Docs 或目录接口的凭据。
 * 尚未发布到公共包仓库；从本仓库安装（`apps/docs/sdk/python`、`apps/docs/sdk/typescript`）。
 
@@ -165,7 +179,8 @@ const made = await suite.invoke('tables.record.create', { table_id: tid, cells: 
 | 内容 | 位置 |
 |---|---|
 | 身份、scope、单一工作空间、实时撤权、个人操作无入口、幂等、回执、调用记录与审计 | `apps/suite/tests/test_machine_api.py` |
-| 契约与运行时一致、路由全部入档 | `apps/suite/tests/test_machine_contract.py` |
+| 应用自身的操作全部按构建结果入档、路由与契约一致 | `apps/suite/tests/test_machine_contract.py` |
+| 发布的契约 = 组装后部署的注册表 = 导出器输出；组装层操作的 scope 与幂等声明与实际一致 | `tests/integration/test_suite_machine_contract.py` |
 | Python SDK 对真实应用 | `apps/suite/tests/test_machine_sdk.py` |
 | 授权结束后延后工作停止（五种结束方式 × 排队中/处理中途），轮换与过期不误停，页面发起的不受影响 | `apps/suite/tests/test_machine_deferred.py` |
 | 真实登录 → 同意 → 令牌 → 三个机器接口互不通用 → SDK 刷新轮换 → 重放撤销 → 撤回同意 | `tests/integration/test_suite_machine_flow.py` |

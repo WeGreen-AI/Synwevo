@@ -37,4 +37,5 @@ def register(ctx):
         title={"zh-Hans": "导入表单附件", "zh-Hant": "匯入表單附件", "en": "Import a form attachment"},
         summary="Import an authorized submitted attachment in this workspace; reuses upload safety and quotas. Requires an idempotency key.",
         input=FromForms, handler=copy, need="write", side_effect="write", agent="confirm",
-        object_kind="extract_file", result_guard=extract.result_guard, events=("extract.file.imported",)))
+        object_kind="extract_file", result_guard=extract.result_guard, events=("extract.file.imported",),
+        requires_key=True, reaches=("forms.read",)))

@@ -71,6 +71,9 @@ TERMINAL_STATES = frozenset({"succeeded", "partial", "failed", "cancelled"})
 MAX_INPUT_BYTES = 256 * 1024
 MAX_OUTPUT_BYTES = 1024 * 1024
 MAX_IDEMPOTENCY_KEY = 200
+#: Keys of machine callers (``via="api"``) are stored as ``api:<client>:<key>``; nobody else may
+#: use the prefix, and a run is only ever replayed to the kind of caller that made it.
+MACHINE_KEY_PREFIX = "api:"
 #: A chain of runs started by runs (a flow step whose event triggers another flow…) stops here
 #: rather than looping; see :meth:`Capabilities.invoke`'s ``depth``.
 MAX_DEPTH = 8
@@ -151,6 +154,14 @@ class Operation:
     #: target itself (`Capabilities.check_workspace`) — copying from where you can read into where
     #: you can write. Only then may a read-level operation have side effects.
     writes_elsewhere: bool = False
+    #: Scopes of *other* applications a machine caller must also hold, because the handler reads
+    #: there on its behalf ("forms.read" for importing Forms answers). A declaration for the
+    #: contract and for refusing up front; the enforcement is `authorize`, which holds the inner
+    #: call to the credential whether or not it was declared here.
+    reaches: tuple[str, ...] = ()
+    #: The handler refuses to run without the caller's idempotency key (it uses the key as its own
+    #: retry identity — an upload's, say). Declared so the contract says what the handler does.
+    requires_key: bool = False
     #: Recheck resource/field/source access before exposing a completed mutation's stored
     #: result. Called with the freshly authorized caller and the original run; must never
     #: repeat the mutation. Without this guard, old mutation payloads remain private.
@@ -317,11 +328,12 @@ def machine_scope(op: Operation, manifest: AppManifest | None) -> str | None:
 
 
 #: The credential a machine call is running under, while its handler runs: the scopes it holds and
-#: the application of the operation it was admitted for. A handler that reaches into another
-#: application on the caller's behalf (DataPrep importing Forms answers, re-checking an Extract
-#: source) is still that credential asking, so `authorize` holds the inner operation to the same
-#: scopes — the person's own authority is necessary there, not sufficient. Set only by
-#: :meth:`Capabilities.invoke`; background workers never inherit it.
+#: the application of the operation it was admitted for. Whatever a handler reaches on the caller's
+#: behalf (DataPrep importing Forms answers, re-checking an Extract source, another operation of its
+#: own application) is still that credential asking, so `authorize` holds every inner operation to
+#: the same scopes — the person's own authority is necessary there, not sufficient. Set by
+#: :meth:`Capabilities.invoke`, by :meth:`Capabilities.resumed` for a step of deferred work, and by
+#: :func:`machine_credential`; a background thread never inherits it.
 _CREDENTIAL: contextvars.ContextVar[dict | None] = contextvars.ContextVar("synwevo_machine_credential", default=None)
 
 
@@ -341,14 +353,30 @@ def _person_required(op_id: str) -> ServiceError:
                         "这个操作必须由本人在应用里亲自完成，不能通过接口凭据代为执行。", {"operation": op_id})
 
 
-def _scope_refusal(op: Operation, manifest: AppManifest | None, held: frozenset) -> ServiceError | None:
+def _scope_refusal(op: Operation, manifest: AppManifest | None, held: frozenset, *,
+                   within: str | None = None) -> ServiceError | None:
+    """Why a credential holding `held` may not have this operation run for it, or None.
+
+    `within` is set for what a handler reaches while serving a machine call (the application of the
+    operation the call was admitted for). There the rule is the same with one allowance: an
+    application's own handler reading its own records to do what was asked — a write or a decision
+    — is covered by that write or decide scope. Anything else it reaches, in its own application
+    or another, needs the scope that operation names; a handler cannot widen its caller by the way
+    it happens to make the inner call. The refusal for an inner operation does not name it: which
+    application a record came from is not the caller's to learn from an error.
+    """
     required = machine_scope(op, manifest)
     if required is None:
         return _person_required(op.id)
-    if required not in held:
-        return ServiceError(403, "insufficient_scope", f"该凭据没有 {required} 权限",
-                            {"required_scope": required, "operation": op.id})
-    return None
+    if required in held:
+        return None
+    if within is not None:
+        own_read = within == op.app and required == f"{op.app}.read"
+        if own_read and (f"{op.app}.write" in held or f"{op.app}.decide" in held):
+            return None
+        return ServiceError(403, "insufficient_scope", f"该凭据没有 {required} 权限", {"required_scope": required})
+    return ServiceError(403, "insufficient_scope", f"该凭据没有 {required} 权限",
+                        {"required_scope": required, "operation": op.id})
 
 
 def role_allows(role: str | None, need: str) -> bool:
@@ -435,9 +463,10 @@ class Capabilities:
         if not manifest or not row or row["status"] != "active":
             raise ServiceError(404, "app_unavailable", "该应用未启用或已停用")
         credential = _CREDENTIAL.get()
-        if credential is not None and op.app != credential["app"]:
-            # Inside a machine call, reaching another application: its own scope, or nothing.
-            refusal = _scope_refusal(op, manifest, credential["scopes"])
+        if credential is not None:
+            # Inside a machine call every authorization is the credential's too — the operation it
+            # asked for, and whatever the handler reaches from there, however it makes that call.
+            refusal = _scope_refusal(op, manifest, credential["scopes"], within=credential["app"])
             if refusal:
                 raise refusal
         if op.need == "personal":
@@ -521,6 +550,11 @@ class Capabilities:
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= MAX_IDEMPOTENCY_KEY:
                 raise ServiceError(400, "bad_idempotency_key", "幂等键须为 1–200 个字符")
+            if via != "api" and idempotency_key.startswith(MACHINE_KEY_PREFIX):
+                # Machine callers' keys are stored under this prefix, per client. A person (or a
+                # flow, or the Agent) naming one would be writing into a client's namespace.
+                raise ServiceError(400, "bad_idempotency_key",
+                                   f"以 {MACHINE_KEY_PREFIX} 开头的幂等键保留给接口凭据，请换一个")
 
         entered = _CREDENTIAL.set(credential)
         try:
@@ -553,12 +587,8 @@ class Capabilities:
         in_hash = fingerprint(clean)
 
         if idempotency_key is not None:
-            prior = self._idempotent(op, user_id, workspace_id, idempotency_key)
+            prior = self._prior(op, user_id, workspace_id, idempotency_key, via, in_hash)
             if prior is not None:
-                if prior["input_hash"] != in_hash:
-                    raise ServiceError(409, "idempotency_conflict",
-                                       "同一个幂等键已用于不同的参数。请换一个幂等键，或使用相同的参数重试。",
-                                       {"run_id": prior["id"]})
                 return self._replay(prior)
 
         from . import authority
@@ -597,8 +627,8 @@ class Capabilities:
                 return {"run_id": run_id, "operation": op.id, "status": output[0], "output": output[1],
                         "replayed": False, "workspace_id": workspace_id}
             except _Replay:
-                prior = self._idempotent(op, user_id, workspace_id, idempotency_key)
-                if prior is None or prior["input_hash"] != in_hash:
+                prior = self._prior(op, user_id, workspace_id, idempotency_key, via, in_hash)
+                if prior is None:
                     raise ServiceError(409, "idempotency_conflict", "同一个幂等键已用于不同的参数。") from None
                 return self._replay(prior)
             except ServiceError as err:
@@ -616,8 +646,8 @@ class Capabilities:
                 t.execute(insert, row)
         except Exception as exc:  # noqa: BLE001
             if idempotency_key is not None and "UNIQUE" in str(exc):
-                prior = self._idempotent(op, user_id, workspace_id, idempotency_key)
-                if prior is not None and prior["input_hash"] == in_hash:
+                prior = self._prior(op, user_id, workspace_id, idempotency_key, via, in_hash)
+                if prior is not None:
                     return self._replay(prior)
                 raise ServiceError(409, "idempotency_conflict", "同一个幂等键已用于不同的参数。") from None
             raise
@@ -681,6 +711,22 @@ class Capabilities:
             op.result_guard(call, row)
         else:
             raise ServiceError(409, "result_access_unverifiable", "请在应用中打开当前业务记录")
+
+    def _prior(self, op: Operation, user_id: str, workspace_id: str | None, key: str, via: str,
+               in_hash: str) -> dict | None:
+        """The earlier run this call repeats, or None when the key is new. A key already used for
+        other parameters, or by the other kind of caller, is a conflict — never a replay: a run a
+        person made in the page is not an answer to a credential's call, and the reverse."""
+        prior = self._idempotent(op, user_id, workspace_id, key)
+        if prior is None:
+            return None
+        if (prior["via"] == "api") != (via == "api"):
+            raise ServiceError(409, "idempotency_conflict", "这个幂等键已被另一种调用方式使用，请换一个幂等键。")
+        if prior["input_hash"] != in_hash:
+            raise ServiceError(409, "idempotency_conflict",
+                               "同一个幂等键已用于不同的参数。请换一个幂等键，或使用相同的参数重试。",
+                               {"run_id": prior["id"]})
+        return prior
 
     def _idempotent(self, op: Operation, user_id: str, workspace_id: str | None, key: str) -> dict | None:
         return self.store.one(
