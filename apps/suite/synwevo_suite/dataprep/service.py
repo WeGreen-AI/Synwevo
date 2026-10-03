@@ -54,19 +54,39 @@ class DataPrep:
         """Which of these events this caller may know about: the rule `page` applies to the lists.
         A dataset or a run whose sources the caller may not read now — a source withdrawn or
         changed, an application the person lost, a scope a credential does not hold — is withheld,
-        and so is every event about it. Each record is checked once per batch."""
-        verdict, shown = {}, set()
+        and so is every event about it.
+
+        A dataset's sources are read once per batch however many runs used it: `reach` keeps what
+        each check read, and a run is readable when every dataset it took and made is, within the
+        same bound `check_sources` puts on one walk (`check_run_sources` shares one walk across a
+        run's datasets; the union of the separate walks is that walk)."""
+        reach, verdict, shown = {}, {}, set()
+
+        def sources(dataset_id):
+            if dataset_id not in reach:
+                seen = set()
+                try:
+                    check_sources(self, workspace, user, dataset_id, seen)
+                    reach[dataset_id] = frozenset(seen)
+                except ServiceError:
+                    reach[dataset_id] = None
+            return reach[dataset_id]
+
         for e in events:
             key = (e['object_kind'], e['object_id'])
             if key not in verdict:
                 try:
                     if key[0] == 'dataprep_dataset':
-                        check_sources(self, workspace, user, key[1])
+                        verdict[key] = sources(key[1]) is not None
                     elif key[0] == 'dataprep_run':
-                        self.check_run_sources(workspace, user, self.get('runs', workspace, key[1]))
+                        row = self.get('runs', workspace, key[1])
+                        ids = [ref['dataset_id'] for ref in json.loads(row['inputs_json']).values()]
+                        ids += [row['output_dataset_id']] if row['output_dataset_id'] else []
+                        walked = [sources(d) for d in ids]
+                        verdict[key] = all(w is not None for w in walked) and len(frozenset().union(*walked)) <= 64
                     else:
                         self.get('recipes', workspace, key[1])
-                    verdict[key] = True
+                        verdict[key] = True
                 except ServiceError:
                     verdict[key] = False
             if verdict[key]:

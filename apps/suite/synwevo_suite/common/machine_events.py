@@ -21,27 +21,45 @@ every read is filtered again by what the credential holds and the person may rea
 grant that was narrowed sees less from the same cursor, and one that was widened sees the new
 application from where the cursor stands, not from the beginning.
 
-The feed serves `RETENTION_S` of history. A cursor is good for as long as nothing after it can have
-left that window; one that has waited longer is refused (410 ``cursor_expired``) rather than
-continued across a gap — the client lists what it tracks again and starts a new cursor.
+A read without a cursor starts `RETENTION_S` back. A cursor is good until what follows it is older
+than that by `CURSOR_GRACE_S` — the margin lets a client that started at the far edge keep paging —
+and one that has waited longer is refused (410 ``cursor_expired``) rather than continued across a
+gap: the client lists what it tracks again and starts a new cursor. So is a cursor that no longer
+agrees with the log (a database restored from an older backup), whether the log is still behind
+it or has grown past it again.
+
+Every request is bounded in what it reads, not only in what it returns: `SCAN_ROWS` rows of the
+workspace's log whoever they are for, and `CHECKED_ROWS` handed to an application's per-record
+decision, which reads that application's records. A request that stops for either says
+``has_more`` and the next one continues.
 """
 from __future__ import annotations
 
 import json
+import math
 import re
+import struct
 
 from synwevo_core import sealed_token
 from synwevo_core.capabilities import EventFeed, machine_credential
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import now
 
-#: How far back the feed goes, and so how long a client may stay away and still continue.
+#: How far back a read without a cursor starts.
 RETENTION_S = 30 * 24 * 3600
+#: How much older than that the events after a cursor may be before the cursor is refused. Without
+#: it a cursor issued for a page at the far edge of the window would expire before its next use.
+CURSOR_GRACE_S = 24 * 3600
+#: A cursor's time may trail the row it stands on by this much (a clock step) and still agree with it.
+CLOCK_SLACK_S = 60
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 500
-#: Rows read for one request, shown or not: a page of events the caller may not see costs the same
-#: as one it may, and is bounded the same way. The next request continues where this one stopped.
+#: Rows of the workspace's log read for one request, served or not, of any application: a page of
+#: events the caller may not see costs the same as one it may, and is bounded the same way.
 SCAN_ROWS = 1000
+BATCH_ROWS = 200
+#: Rows handed to an application's per-record decision in one request (it reads their records).
+CHECKED_ROWS = 300
 MAX_TYPES = 50
 MAX_CURSOR = 256
 STARTS = ("oldest", "now")
@@ -64,9 +82,9 @@ def _holder(p: dict) -> bytes:
 
 def seal_cursor(store, p: dict, position: int, floor: float) -> str:
     """`position`: the last place read. `floor`: no event after it is older than this — the time
-    of the last event read, or of the request when it reached the end of the log."""
-    body = json.dumps({"q": int(position), "t": float(floor)}, separators=(",", ":")).encode("ascii")
-    return _VERSION + sealed_token.seal(store, _KEY_LABEL, body, _holder(p))
+    of the last event read, or of the request when it reached the end of the log. Fixed width: the
+    length of a cursor says nothing about where it stands."""
+    return _VERSION + sealed_token.seal(store, _KEY_LABEL, struct.pack(">Qd", int(position), float(floor)), _holder(p))
 
 
 def open_cursor(store, p: dict, raw: str) -> tuple[int, float]:
@@ -74,23 +92,19 @@ def open_cursor(store, p: dict, raw: str) -> tuple[int, float]:
     if not isinstance(raw, str) or len(raw) > MAX_CURSOR or not raw.startswith(_VERSION):
         raise bad
     opened = sealed_token.unseal(store, _KEY_LABEL, raw[len(_VERSION):], _holder(p), max_length=MAX_CURSOR)
-    if opened is None:
+    if opened is None or len(opened) != struct.calcsize(">Qd"):
         raise bad
-    try:
-        body = json.loads(opened)
-    except ValueError:
-        raise bad from None
-    position, floor = (body.get("q"), body.get("t")) if isinstance(body, dict) else (None, None)
-    if type(position) is not int or position < 0 or type(floor) not in (int, float):
+    position, floor = struct.unpack(">Qd", opened)
+    if not math.isfinite(floor):
         raise bad
-    return position, float(floor)
+    return position, floor
 
 
 def _expired() -> ServiceError:
     return ServiceError(410, "cursor_expired",
                         "该游标之后的事件已超出事件流的保留期（或事件日志已恢复到更早的状态），不能再从这里继续；"
                         "请重新读取你关注的记录，然后不带 cursor 重新开始",
-                        {"field": "cursor", "retention_seconds": RETENTION_S})
+                        {"field": "cursor", "retention_seconds": RETENTION_S, "grace_seconds": CURSOR_GRACE_S})
 
 
 # --------------------------------------------------------------------------------- what is served
@@ -125,40 +139,45 @@ def _before(store, cutoff: float, top: int) -> int:
     return lo
 
 
-def _shown(caps, p: dict, usable: dict[str, EventFeed], rows: list[dict]) -> set[str]:
-    """The events of this batch the person may know about now."""
+def _shown(caps, p: dict, usable: dict[str, EventFeed], names: set[str], rows: list[dict]) -> tuple[set[str], int]:
+    """The events of this batch the person may know about now, and how many of its rows an
+    application had to decide one by one."""
     shown: set[str] = set()
     by_app: dict[str, list[dict]] = {}
     for r in rows:
         feed = usable.get(r["app"])
-        declared = feed.type(r["type"]) if feed else None
+        declared = feed.type(r["type"]) if feed and r["type"] in names else None
         # Fail closed on anything that is not exactly what the application declared.
-        if declared is None or r["object_kind"] != declared.object_kind or not r["object_id"]:
+        if (declared is None or r["object_kind"] != declared.object_kind
+                or not isinstance(r["object_id"], str) or not _ID.fullmatch(r["object_id"])):
             continue
         by_app.setdefault(r["app"], []).append(r)
+    checked = 0
     for app, batch in by_app.items():
         visible = usable[app].visible
         if visible is None:
             shown.update(r["id"] for r in batch)
             continue
-        with machine_credential(p["scopes"], app):       # what it reads elsewhere is the credential's
+        checked += len(batch)
+        # What it reads elsewhere is the credential's. An error that is not a refusal is not caught:
+        # the request fails and the cursor stays where it was, rather than passing over events.
+        with machine_credential(p["scopes"], app):
             shown.update(visible(p["user_id"], p["tenant"], batch) & {r["id"] for r in batch})
-    return shown
+    return shown, checked
 
 
-def _own(store, p: dict, column: str, values) -> set[str]:
-    """Which of these run ids (or correlation ids) belong to runs this client started for this
-    person here. `column` is a literal of this module."""
-    values = sorted({v for v in values if isinstance(v, str) and v})
+def _own(store, p: dict, run_ids) -> set[str]:
+    """Which of these runs this client started for this person here."""
+    values = sorted({v for v in run_ids if isinstance(v, str) and v})
     out: set[str] = set()
     for i in range(0, len(values), 200):
         chunk = values[i:i + 200]
         rows = store.all(
-            f"SELECT DISTINCT {column} AS v FROM op_runs WHERE {column} IN ({','.join('?' * len(chunk))}) "
+            f"SELECT id FROM op_runs WHERE id IN ({','.join('?' * len(chunk))}) "
             "AND user_id=? AND workspace_id=? AND via='api' AND CASE WHEN json_valid(delegation) THEN "
             "json_extract(delegation,'$.kind') || ':' || json_extract(delegation,'$.client_id') END = ?",
             (*chunk, p["user_id"], p["tenant"], "oauth_client:" + p["client_id"]))
-        out.update(r["v"] for r in rows)
+        out.update(r["id"] for r in rows)
     return out
 
 
@@ -172,8 +191,8 @@ def _data(row: dict) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _item(row: dict, feed: EventFeed, runs: set[str], correlations: set[str]) -> dict:
-    data, refs = _data(row), {}
+def _item(row: dict, feed: EventFeed, runs: set[str]) -> dict:
+    data, refs, own = _data(row), {}, row["run_id"] in runs
     for name in feed.type(row["type"]).refs:
         value = data.get(name)
         if isinstance(value, str) and _ID.fullmatch(value):
@@ -181,10 +200,12 @@ def _item(row: dict, feed: EventFeed, runs: set[str], correlations: set[str]) ->
     return {"id": row["id"], "type": row["type"], "version": row["version"], "app": row["app"],
             "object": {"kind": row["object_kind"], "id": row["object_id"]}, "refs": refs,
             "occurred_at": row["created_at"],
-            # A run or a correlation id is the caller's to see only when it is the caller's own:
-            # another caller's correlation id is free text that caller chose.
-            "run_id": row["run_id"] if row["run_id"] in runs else None,
-            "correlation_id": row["correlation_id"] if row["correlation_id"] in correlations else None}
+            # The run that caused the event, and the correlation id it carried, are the caller's to
+            # see only when that run is the caller's own. Another caller's correlation id is free
+            # text of its choosing — and matching it against ids this client has used would let a
+            # client claim another integration's by using the same text once.
+            "run_id": row["run_id"] if own else None,
+            "correlation_id": row["correlation_id"] if own else None}
 
 
 # --------------------------------------------------------------------------------- the feed
@@ -216,13 +237,18 @@ def feed(caps, p: dict, *, cursor: str | None = None, types: str | None = None, 
                 raise ServiceError(403, "insufficient_scope", f"该凭据没有 {known[name]}.read 权限",
                                    {"required_scope": f"{known[name]}.read"})
 
-    started = _clock()
+    # The end of the log first, the time second: everything up to `top` was written before `started`.
     top = store.one("SELECT COALESCE(MAX(seq), 0) AS s FROM app_events")["s"]
+    started = _clock()
     if cursor:
         position, floor = open_cursor(store, p, cursor)
-        # Ahead of the log: the database was restored from an older backup, and new events will
-        # reuse positions this cursor has passed. Behind the window: something after it may be gone.
-        if position > top or floor < started - RETENTION_S:
+        # Behind the window: something after it may be gone. Not agreeing with the log: the database
+        # was restored from an older backup, and positions this cursor has passed are being used
+        # again — the log is still behind the cursor, or it has grown past it, in which case the row
+        # the cursor stands on was written after the cursor was.
+        under = store.one("SELECT created_at FROM app_events WHERE seq<=? ORDER BY seq DESC LIMIT 1", (position,))
+        if (position > top or floor < started - RETENTION_S - CURSOR_GRACE_S
+                or (under is not None and under["created_at"] > floor + CLOCK_SLACK_S)):
             raise _expired()
     elif start == "now":
         return {"workspace_id": p["tenant"], "items": [], "next_cursor": seal_cursor(store, p, top, started),
@@ -238,20 +264,23 @@ def feed(caps, p: dict, *, cursor: str | None = None, types: str | None = None, 
         except ServiceError:
             continue
         usable[app] = declared
-    names = sorted(t.type for f in usable.values() for t in f.types if wanted is None or t.type in wanted)
+    names = {t.type for f in usable.values() for t in f.types if wanted is None or t.type in wanted}
 
-    picked, floor, drained, scanned = [], started, not names, 0
+    picked, floor, drained, scanned, checked = [], started, not names, 0, 0
     if names:
+        # Every row of the workspace's log in order, by its own index, whatever it is about: what is
+        # not this caller's is dropped here rather than in the query, so that it counts as read.
         sql = ("SELECT seq, id, type, version, app, object_kind, object_id, run_id, correlation_id, data, created_at "
-               f"FROM app_events WHERE workspace_id=? AND seq>? AND seq<=? AND type IN ({','.join('?' * len(names))}) "
+               "FROM app_events INDEXED BY app_events_workspace WHERE workspace_id=? AND seq>? AND seq<=? "
                "ORDER BY seq LIMIT ?")
         while True:
-            batch = min(SCAN_ROWS - scanned, max(2 * (lim - len(picked)), 50))
-            rows = store.all(sql, (p["tenant"], position, top, *names, batch))
+            batch = min(SCAN_ROWS - scanned, BATCH_ROWS)
+            rows = store.all(sql, (p["tenant"], position, top, batch))
             for r in rows:
                 r["data"] = _data(r)
             scanned += len(rows)
-            shown = _shown(caps, p, usable, rows)
+            shown, asked = _shown(caps, p, usable, names, rows)
+            checked += asked
             full = False
             for r in rows:
                 if r["id"] in shown:
@@ -265,13 +294,12 @@ def feed(caps, p: dict, *, cursor: str | None = None, types: str | None = None, 
             if len(rows) < batch:
                 drained = True
                 break
-            if scanned >= SCAN_ROWS:
+            if scanned >= SCAN_ROWS or checked >= CHECKED_ROWS:
                 break
     if drained:
         # Everything up to the end of the log, as it stood when this request began, has been read.
         position, floor = top, started
-    runs = _own(store, p, "id", (r["run_id"] for r in picked))
-    correlations = _own(store, p, "correlation_id", (r["correlation_id"] for r in picked))
+    runs = _own(store, p, (r["run_id"] for r in picked))
     return {"workspace_id": p["tenant"],
-            "items": [_item(r, usable[r["app"]], runs, correlations) for r in picked],
+            "items": [_item(r, usable[r["app"]], runs) for r in picked],
             "next_cursor": seal_cursor(store, p, position, floor), "has_more": not drained}

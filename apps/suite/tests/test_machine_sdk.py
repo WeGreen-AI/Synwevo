@@ -151,7 +151,7 @@ def test_an_integration_follows_what_changed_and_opens_it_through_the_operations
     with pytest.raises(PermissionDeniedError) as e:
         sdk(api, "alice", "tables.write").events_page()
     assert e.value.code == "insufficient_scope"
-    monkeypatch.setattr(machine_events, "_clock", lambda: now() + 31 * 24 * 3600)
+    monkeypatch.setattr(machine_events, "_clock", lambda: now() + 32 * 24 * 3600)
     with pytest.raises(GoneError) as e:
         c.events_page(cursor=start["next_cursor"])
-    assert e.value.code == "cursor_expired" and e.value.details == {"retention_seconds": 30 * 24 * 3600}
+    assert e.value.code == "cursor_expired" and e.value.details["retention_seconds"] == 30 * 24 * 3600

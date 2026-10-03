@@ -151,6 +151,11 @@ def test_a_run_or_correlation_id_is_shown_only_to_the_client_whose_it_is(api):
         assert e["run_id"] is None and e["correlation_id"] is None
     assert of(other, theirs["output"]["id"])["correlation_id"] == "acme-payroll-2026-09"
     assert "acme-payroll" not in json.dumps(everything(api, mine)[0])
+    # using another integration's text does not make its runs one's own: the id is shown on the
+    # events of this client's runs, never as a label on theirs
+    probe = a_record(api, mine, table, "probe", correlation_id="acme-payroll-2026-09")
+    assert of(mine, probe["output"]["id"])["correlation_id"] == "acme-payroll-2026-09"
+    assert of(mine, theirs["output"]["id"])["correlation_id"] is None
 
 
 # --------------------------------------------------------------------------------- whose events
@@ -273,9 +278,11 @@ def test_a_dataset_whose_source_the_credential_may_not_read_is_not_an_event_for_
     less, _ = everything(api, narrow)
     assert kinds(less) == [("dataprep.dataset.created", plain)]
     assert snapshot not in json.dumps(less) and sub not in json.dumps(less)
-    # a submission made through the public link is an event too, for those who may read Forms
+    # a submission made through the public link is an event too, for those who may read Forms;
+    # nobody's run made it, so it carries no run and no correlation id
     forms, _ = everything(api, wide, types="forms.submission.created")
     assert [(e["object"], e["refs"]["form_id"]) for e in forms] == [({"kind": "form_submission", "id": sub}, form)]
+    assert forms[0]["run_id"] is None and forms[0]["correlation_id"] is None
 
 
 def test_an_application_the_person_can_no_longer_use_here_is_simply_absent(api):
@@ -316,10 +323,19 @@ def test_the_cursor_is_its_holders_alone_and_cannot_be_read_or_made(api):
                    "s1." + base64.urlsafe_b64encode(json.dumps({"q": 0, "t": 0}).encode()).decode().rstrip("="),
                    "s1." + "A" * 400):
         bad(forged)
-    # it does not say where in the log it stands, and two cursors for one position differ
+    # it does not say where in the log it stands — not in its bytes, not in its length — and two
+    # cursors for one position differ
     raw = base64.urlsafe_b64decode(cursor[3:] + "=" * (-len(cursor[3:]) % 4))
-    assert b'"q"' not in raw and b"{" not in raw[:1]
+    assert len(raw) == 12 + 16 + 16                        # nonce, a fixed-width body, tag
     assert page(api, auth, limit=1)["next_cursor"] != cursor
+    with p.store.tx() as t:                                # far further on in the log
+        ev = record_event(t, type_="tables.table.changed", app="tables", workspace_id=p.b, object_kind="table",
+                          object_id="tbl_elsewhere", data={"table_id": "tbl_elsewhere"})
+    p.store.execute("UPDATE app_events SET seq=? WHERE id=?", (10 ** 12, ev["id"]))
+    far = page(api, auth, start="now")["next_cursor"]
+    assert len(far) == len(cursor)
+    p.store.execute("DELETE FROM app_events WHERE id=?", (ev["id"],))
+    p.store.execute("UPDATE sqlite_sequence SET seq=(SELECT MAX(seq) FROM app_events) WHERE name='app_events'")
     # its holder continues with it — under a token issued later, too
     a_record(api, auth, table, "r1")
     again = page(api, bearer(api, "alice", "tables.read"), cursor=cursor)
@@ -426,6 +442,87 @@ def test_a_page_of_events_the_person_may_not_see_is_bounded_like_any_other(api, 
     assert kinds(items) == [("tables.table.changed", open_)]
 
 
+def test_rows_that_are_not_the_callers_count_as_read_too(api, monkeypatch):
+    """A credential that may read one quiet application, in a workspace busy with another: the
+    request reads a bounded number of the workspace's rows whoever they are for, says there is
+    more, and gets there in the end."""
+    from synwevo_suite.common import machine_events
+    owner = bearer(api, "alice", "forms.read forms.write tables.read tables.write")
+    quiet = bearer(api, "alice", "forms.read")
+    table = a_table(api, owner, "Fixture contacts", "table")
+    for i in range(60):
+        a_record(api, owner, table, f"busy-{i}")
+    form = a_form(api, owner)
+    monkeypatch.setattr(machine_events, "SCAN_ROWS", 25)
+    first = page(api, quiet)
+    assert first["items"] == [] and first["has_more"] is True
+    items, _ = everything(api, quiet)
+    assert kinds(items) == [("forms.form.published", form)]
+
+
+def test_what_an_application_must_decide_row_by_row_is_bounded_per_request(api, monkeypatch):
+    from synwevo_suite.common import machine_events
+    auth = bearer(api, "alice", "tables.read tables.write")
+    table = a_table(api, auth, "Fixture contacts", "table")
+    records = [a_record(api, auth, table, f"r{i}")["output"]["id"] for i in range(12)]
+    asked = []
+    monkeypatch.setattr(machine_events, "BATCH_ROWS", 5)
+    monkeypatch.setattr(machine_events, "CHECKED_ROWS", 10)
+    monkeypatch.setattr(machine_events, "_shown", lambda caps, p, usable, names, rows, inner=machine_events._shown:
+                        (asked.append(len(rows)), inner(caps, p, usable, names, rows))[1])
+    first = page(api, auth, limit=100)
+    assert len(first["items"]) == 10 and first["has_more"] is True and asked == [5, 5]
+    rest = page(api, auth, limit=100, cursor=first["next_cursor"])
+    assert rest["has_more"] is False
+    assert kinds(first["items"] + rest["items"]) == [("tables.table.changed", table)] + [("tables.record.changed", r) for r in records]
+
+
+def test_a_dataset_many_runs_share_is_verified_once_per_batch(api, monkeypatch):
+    from synwevo_suite.dataprep import service as dataprep
+    auth = bearer(api, "bob", "dataprep.read dataprep.write")
+    data = m(api, auth, "dataprep.dataset.from_records", {"name": "Fixture amounts", "columns": ["id"],
+             "records": [{"id": "1"}]}, key="rows")["output"]["id"]
+    recipe = m(api, auth, "dataprep.recipe.create", {"name": "Fixture recipe", "definition": {"steps": []}},
+               key="recipe")["output"]["id"]
+    m(api, auth, "dataprep.recipe.publish", {"recipe_id": recipe, "draft_rev": 1}, key="publish")
+    runs = [m(api, auth, "dataprep.run.start", {"recipe_id": recipe, "version": 1, "inputs": {"main": data}},
+              key=f"run-{i}", expect=202)["output"]["id"] for i in range(6)]
+    walked = []
+    monkeypatch.setattr(dataprep, "check_sources", lambda service, ws, user, dataset_id, seen=None, inner=dataprep.check_sources:
+                        (walked.append(dataset_id), inner(service, ws, user, dataset_id, seen))[1])
+    queued, _ = everything(api, auth, types="dataprep.run.queued")
+    assert [e["object"]["id"] for e in queued] == runs
+    assert walked.count(data) == 1, "six runs over one dataset read its sources once"
+
+
+def test_events_written_by_workers_and_file_routes_are_served_like_the_rest(api):
+    """Not every event comes from an operation's own transaction: a worker finishing a run, an
+    upload. They are declared with the application's other events, and served the same way."""
+    auth = bearer(api, "bob", "dataprep.read dataprep.write extract.read extract.write")
+    data = m(api, auth, "dataprep.dataset.from_records", {"name": "Fixture amounts", "columns": ["id", "amount"],
+             "records": [{"id": "001", "amount": "0.10"}]}, key="rows")["output"]["id"]
+    recipe = m(api, auth, "dataprep.recipe.create", {"name": "Fixture recipe", "definition": {"steps": []}},
+               key="recipe")["output"]["id"]
+    m(api, auth, "dataprep.recipe.publish", {"recipe_id": recipe, "draft_rev": 1}, key="publish")
+    started = m(api, auth, "dataprep.run.start", {"recipe_id": recipe, "version": 1, "inputs": {"main": data}},
+                key="run", expect=202)
+    assert api.api.state.dataprep.tick()                   # the worker runs it
+    uploaded = api.post("/api/suite/v1/extract/files", params={"workspace_id": api.people.a},
+                        headers={**auth, "Idempotency-Key": "fixture-file"},
+                        files={"file": ("invoice.csv", b"code,amount\n00127,1.00\n", "text/csv")})
+    assert uploaded.status_code == 200, uploaded.text
+
+    items, _ = everything(api, auth)
+    run = [e for e in items if e["object"] == {"kind": "dataprep_run", "id": started["output"]["id"]}]
+    assert [e["type"] for e in run] == ["dataprep.run.queued", "dataprep.run.succeeded"]
+    done = run[1]
+    output = api.people.store.one("SELECT output_dataset_id AS d FROM dataprep_runs WHERE id=?", (started["output"]["id"],))["d"]
+    assert done["refs"] == {"output_dataset_id": output} and done["run_id"] == started["run_id"]
+    assert ("extract.file.uploaded", uploaded.json()["id"]) in kinds(items)
+    # a run's output is announced by the run (its `refs`), not by a dataset event of its own
+    assert output and ("dataprep.dataset.created", output) not in kinds(items)
+
+
 # --------------------------------------------------------------------------------- how long a cursor lasts
 def test_a_cursor_that_waited_past_the_window_is_refused_not_continued_across_a_gap(api, monkeypatch):
     from synwevo_core.store import now
@@ -444,16 +541,36 @@ def test_a_cursor_that_waited_past_the_window_is_refused_not_continued_across_a_
     later(29)                                              # away for less than the window: carries on
     assert page(api, auth, cursor=at_end)["items"] == []
     assert len(page(api, auth, cursor=mid_way["next_cursor"])["items"]) == 2
-    later(31)                                              # longer: what came after it may be gone
+    later(32)                                              # longer than the window and its margin
     for stale in (at_end, mid_way["next_cursor"]):
         err = refused(api.get("/api/suite/v1/events", params={"cursor": stale}, headers=auth), 410, "cursor_expired")
-        assert err["details"] == {"retention_seconds": 30 * DAY} and err["field"] == "cursor"
+        assert err["details"] == {"retention_seconds": 30 * DAY, "grace_seconds": DAY} and err["field"] == "cursor"
     # starting again reads the window, and those events are now outside it
     fresh = page(api, auth)
     assert fresh["items"] == [] and fresh["has_more"] is False
     assert page(api, auth, cursor=fresh["next_cursor"])["items"] == []
     later(0)
     assert len(page(api, auth)["items"]) == 4
+
+
+def test_a_reader_that_starts_at_the_far_edge_of_the_window_can_keep_paging(api, monkeypatch):
+    """The first page from `oldest` ends on an event almost as old as the window. Its cursor must
+    still be good a moment later, when that event has slipped out of the window — otherwise a
+    busy workspace could never be read from the start: every restart would expire the same way."""
+    from synwevo_core.store import now
+    from synwevo_suite.common import machine_events
+    auth = bearer(api, "alice", "tables.read tables.write")
+    table = a_table(api, auth, "Fixture contacts", "table")
+    records = [a_record(api, auth, table, f"r{i}")["output"]["id"] for i in range(5)]
+    edge = now() + 30 * DAY                                # these events are now just inside the window
+
+    monkeypatch.setattr(machine_events, "_clock", lambda: edge - 5)
+    first = page(api, auth, limit=2)
+    assert len(first["items"]) == 2 and first["has_more"] is True
+    monkeypatch.setattr(machine_events, "_clock", lambda: edge + 600)      # ten minutes on: outside it
+    assert page(api, auth, limit=2)["items"] == []                         # a fresh start no longer lists them
+    rest, _ = everything(api, auth, cursor=first["next_cursor"], limit=2)  # but the reader under way goes on
+    assert kinds(first["items"] + rest) == [("tables.table.changed", table)] + [("tables.record.changed", r) for r in records]
 
 
 def test_a_cursor_ahead_of_the_log_is_refused(api):
@@ -468,6 +585,31 @@ def test_a_cursor_ahead_of_the_log_is_refused(api):
     p.store.execute("DELETE FROM app_events WHERE seq=?", (last,))
     refused(api.get("/api/suite/v1/events", params={"cursor": cursor}, headers=auth), 410, "cursor_expired")
     assert len(page(api, auth)["items"]) == 1
+
+
+def test_a_cursor_the_log_has_grown_past_again_after_a_restore_is_refused_too(api):
+    """Restored to an older backup, the log regrows: the positions the cursor passed now hold other
+    events, written after the cursor was. By the time the client asks, the log may be longer than
+    the cursor's position again — it must still be told to start over, not continued past them."""
+    from synwevo_core.store import now
+    p = api.people
+    auth = bearer(api, "alice", "tables.read tables.write")
+    table = a_table(api, auth, "Fixture contacts", "table")
+    for i in range(3):
+        a_record(api, auth, table, f"r{i}")
+    _, cursor = everything(api, auth)                      # stands on the last of 4 events
+    # the restore: the last two events are gone, and so is the counter that numbered them
+    top = p.store.one("SELECT MAX(seq) AS s FROM app_events")["s"]
+    p.store.execute("DELETE FROM app_events WHERE seq>?", (top - 2,))
+    p.store.execute("UPDATE sqlite_sequence SET seq=? WHERE name='app_events'", (top - 2,))
+    # the log regrows past the cursor's position; these rows are written later than the cursor
+    with p.store.tx() as t:
+        for i in range(3):
+            record_event(t, type_="tables.record.changed", app="tables", workspace_id=p.a, object_kind="table_record",
+                         object_id=f"rec_regrown{i}", data={"table_id": table})
+    p.store.execute("UPDATE app_events SET created_at=? WHERE seq>?", (now() + 3600, top - 2))
+    assert p.store.one("SELECT MAX(seq) AS s FROM app_events")["s"] == top + 1
+    refused(api.get("/api/suite/v1/events", params={"cursor": cursor}, headers=auth), 410, "cursor_expired")
 
 
 # --------------------------------------------------------------------------------- what is declared

@@ -307,7 +307,7 @@
           "credential"
         ],
         "summary": "What changed in this workspace since the cursor, for the applications the credential may read: where to look, never what is there",
-        "description": "Items are in the order the events were written. An item names the object and the identifiers needed to open it; the event's data is not served. Only events about records the person may read now are returned. Keep `next_cursor` and send it back; a cursor is good for 30 days after it was issued at the end of the feed, and is refused with 410 once what follows it may have left that window.",
+        "description": "Items are in the order the events were written. An item names the object and the identifiers needed to open it; the event's data is not served. Only events about records the person may read now are returned. Keep `next_cursor` and send it back. A read without a cursor starts 30 days back; a cursor is refused with 410 once what follows it is older than that by more than 24 hours, or when it no longer agrees with the log (a restore). One request reads a bounded part of the log: `has_more` says to ask again, even after an empty page.",
         "parameters": [
           {
             "name": "cursor",
@@ -834,7 +834,8 @@
             "scope": "tables.read"
           }
         ],
-        "x-synwevo-retention-seconds": 2592000
+        "x-synwevo-retention-seconds": 2592000,
+        "x-synwevo-cursor-grace-seconds": 86400
       }
     },
     "/api/suite/v1/extract/files": {
@@ -23745,7 +23746,7 @@
               "string",
               "null"
             ],
-            "description": "Present when it belongs to a run this client started."
+            "description": "The correlation id of the run that caused the event, when this client started that run."
           }
         }
       },

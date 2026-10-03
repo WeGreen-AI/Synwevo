@@ -251,10 +251,12 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                        "read: where to look, never what is there",
             "description": "Items are in the order the events were written. An item names the object and the "
                            "identifiers needed to open it; the event's data is not served. Only events about "
-                           "records the person may read now are returned. Keep `next_cursor` and send it back; "
-                           f"a cursor is good for {machine_events.RETENTION_S // 86400} days after it was issued "
-                           "at the end of the feed, and is refused with 410 once what follows it may have left "
-                           "that window.",
+                           "records the person may read now are returned. Keep `next_cursor` and send it back. "
+                           f"A read without a cursor starts {machine_events.RETENTION_S // 86400} days back; a "
+                           "cursor is refused with 410 once what follows it is older than that by more than "
+                           f"{machine_events.CURSOR_GRACE_S // 3600} hours, or when it no longer agrees with the "
+                           "log (a restore). One request reads a bounded part of the log: `has_more` says to ask "
+                           "again, even after an empty page.",
             "parameters": [
                 {"name": "cursor", "in": "query", "required": False,
                  "description": "The `next_cursor` of the previous page. Opaque; belongs to this client, person "
@@ -274,7 +276,8 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                           "410": {"$ref": "#/components/responses/Gone"}}}, scopes=[]),
             "security": [{"suiteToken": [scope]} for scope in sorted({e["scope"] for e in served})],
             "x-synwevo-event-types": served,
-            "x-synwevo-retention-seconds": machine_events.RETENTION_S}}
+            "x-synwevo-retention-seconds": machine_events.RETENTION_S,
+            "x-synwevo-cursor-grace-seconds": machine_events.CURSOR_GRACE_S}}
 
     text = {"type": "object", "required": ["zh-Hans", "zh-Hant", "en"],
             "properties": {k: {"type": "string"} for k in ("zh-Hans", "zh-Hant", "en")}}
@@ -339,7 +342,8 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                       "run_id": {"type": ["string", "null"],
                                  "description": "The run that caused the event, when this client started it."},
                       "correlation_id": {"type": ["string", "null"],
-                                         "description": "Present when it belongs to a run this client started."}}},
+                                         "description": "The correlation id of the run that caused the event, "
+                                                        "when this client started that run."}}},
         "EventPage": {"type": "object", "additionalProperties": False,
                       "required": ["workspace_id", "items", "next_cursor", "has_more"],
                       "properties": {"workspace_id": {"type": "string"},
