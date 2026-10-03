@@ -191,18 +191,36 @@ def test_a_dataset_whose_source_the_owner_lost_does_not_fire(watch):
     assert w.fired(bob) == [plain, regained]
 
 
-def test_losing_the_application_itself_is_still_refused_with_its_reason(watch):
-    """Unchanged: when the owner may no longer use the application here at all, the trigger says
-    so (a refusal receipt and the trigger's error), as before — that is not a hidden record."""
+def test_losing_the_application_itself_is_refused_with_its_reason_and_nothing_of_the_events(watch):
+    """When the owner may no longer use the application here at all, the trigger says so — its
+    error, and one receipt carrying the reason. Not one receipt per event, and no event's id: what
+    happens in an application closed to them is not theirs to count or to name."""
     w, p = watch, watch.p
+    apps = Apps(p.store, p.ident)
     bob = w.on("tables.record.changed", "bob")
     table = w.table("Fixture contacts")
-    Apps(p.store, p.ident).revoke(p.a, "tables", p.uid("bob"))
-    w.record(table)
+    apps.revoke(p.a, "tables", p.uid("bob"))
+    unseen = [w.record(table) for _ in range(3)]
     w.tick()
     used, error, receipts = w.state(bob)
     assert w.fired(bob) == [] and used == 0
     assert error == "app_access_denied" and receipts == [("refused", "app_access_denied")]
+    kept = w.flow_rows("bob")
+    for record in unseen:
+        assert record not in kept and w.event_id(record) not in kept
+    assert w.store.one("SELECT occurrence FROM flow_trigger_deliveries WHERE trigger_id=?", (bob,))["occurrence"] \
+        == "closed:app_access_denied"
+
+    apps.grant(p.a, "tables", p.uid("bob"))                # theirs again: fires from now, error cleared
+    seen = w.record(table)
+    w.tick()
+    assert w.fired(bob) == [seen] and w.state(bob)[1] is None
+    apps.revoke(p.a, "tables", p.uid("bob"))               # and lost again: the error returns, still one receipt
+    again = w.record(table)
+    w.tick()
+    used, error, receipts = w.state(bob)
+    assert error == "app_access_denied" and receipts.count(("refused", "app_access_denied")) == 1
+    assert w.fired(bob) == [seen] and again not in w.flow_rows("bob")
 
 
 def test_a_triggers_place_in_the_event_log_is_not_shown_to_its_owner(watch):

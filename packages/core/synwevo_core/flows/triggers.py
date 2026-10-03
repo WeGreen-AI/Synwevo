@@ -129,9 +129,18 @@ class Triggers:
         if prior:
             return
         ts, rid, code, state = self.clock(), None, None, "skipped" if skip else "started"
+        closed = False
         t.execute("SAVEPOINT flow_delivery")
         try:
             if not skip:
+                if event:
+                    # Before anything else is decided about the event: may its owner read this
+                    # application here at all? If not, the receipt says why and nothing of the event.
+                    closed = True
+                    if not self.caps.registry.app(event["app"]):
+                        raise refusal("app_unavailable")
+                    self.caps.check_workspace(row["user_id"], event["app"], spec.workspace_id, "read")
+                    closed = False
                 if policy.expires_at is not None and ts >= policy.expires_at:
                     raise refusal("flow_policy_expired")
                 # Read the counter in the same transaction for concurrent workers/event batches.
@@ -140,10 +149,6 @@ class Triggers:
                     raise refusal("flow_trigger_budget_exhausted")
                 definition = self._spec(row["flow_id"], row["version"])
                 self._check_scope(definition, policy)
-                if event:
-                    if not self.caps.registry.app(event["app"]):
-                        raise refusal("app_unavailable")
-                    self.caps.check_workspace(row["user_id"], event["app"], spec.workspace_id, "read")
                 payload = self._trigger_input(spec.input, event)
                 # Only identity/routing metadata survives. Business data must come from operations.
                 routing = {k: event[k] for k in ("id", "type", "object_id", "workspace_id")} if event else None
@@ -158,7 +163,12 @@ class Triggers:
             t.execute("ROLLBACK TO flow_delivery")
             code, state = exc.code, "refused"
         t.execute("RELEASE flow_delivery")
-        t.execute("INSERT INTO flow_trigger_deliveries VALUES (?,?,?,?,?,?)", (row["id"], occurrence, rid, state, code, ts))
+        if closed:
+            # The application is closed to the owner: an event there is not theirs to know about, so
+            # the receipt carries the reason in place of the event's id — and, the reason being its
+            # key, there is one such receipt however many events were refused, not one per event.
+            occurrence = "closed:" + code
+        t.execute("INSERT OR IGNORE INTO flow_trigger_deliveries VALUES (?,?,?,?,?,?)", (row["id"], occurrence, rid, state, code, ts))
         t.execute("UPDATE flow_triggers SET error_code=?,updated_at=? WHERE id=?", (code, ts, row["id"]))
 
     def _readable(self, row, workspace_id, events):
