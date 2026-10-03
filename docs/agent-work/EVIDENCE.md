@@ -281,3 +281,11 @@
 - 6533c2a：更快测试暴露GCRA以时间保存债务——清除3/min覆盖后旧债务按1200/min算满一分钟、收紧限额又给新突发。改为记录计费间隔、按请求数换算，收紧最多满桶且拒绝时也记录换算。新增单元与HTTP回归各1项，相关62项通过。
 - [6533c2a Actions37103506897](https://github.com/WeGreen-AI/Synwevo/actions/runs/37103506897)：verify 24min（原74），pytest 1184.54s，3583 passed/1 failed/3 skipped；失败为test_docs_notifications工作簿字节跨秒脆弱性（3488e6d修复）。
 - WP9（并行会话，api→deferred→files 13提交）两轮独立安全审查：第一轮无机器凭据到达Agent/付费/同意/会话或绕过scope的路径，6项修复已并入；第二轮无阻断，1项应修（standing对畸形principal放行）与3项注记已交修。合并后本地全量4454项/1014s，0失败/错误，2环境跳过，峰值801MB；五守卫、typecheck/build、6个npm工作区、SDK34+14、infra unittest通过；扫描无秘密；推送cf1bb32。
+
+### 2026-10-03 · 模型流量、B1 链路底座（af68968 已推送；ab69741/0e95fcc/d2e1f15 本地）
+
+- 27ab127 模型调用 RPM/TPM/付款人在途/公平有界等待：核心 24 项 + 组合 4 项 + 管理 API 176 项 + 前端 58/71 项通过；合并 WP9 栈后本地全量 4533 项/1077s，0 失败/错误，2 环境跳过；门槛全部通过后推送 af68968。
+- B1 只读调研（子代理）：发现异步 partial/failed/cancelled 被当成 unknown、Docs 无数据输入入口、生产 portal 角色无 Message 发送、unknown 发送无法核销等缺口。
+- ab69741：partial 完成步骤并可用 outcome.<step> 分支，failed/cancelled 走 on_error，只有真正未知才需核对；9 项新测试中 5 项在旧引擎失败；Suite+integration 1784 项通过。
+- 0e95fcc：Message 发送在所有角色改为与收据同事务写 outbox，由 Message 进程以本人身份投递（访问、对象讨论、归档、受众、账户再核对，run id 去重），收据 ticker 只按真实结果结算；20 项适配/桥接与 63 项 Message 测试通过，Suite+integration 1785 项通过。
+- d2e1f15：docweave.project.from_dataset 以模板项目为每次运行建立固定模板版本的新项目与唯一输入（DataPrep 字符串单元格 XLSX，经 Docs 原有接纳链），缺映射列在创建前拒绝；3 项新测试与 25 项相关测试通过。

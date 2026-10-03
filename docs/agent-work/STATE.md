@@ -1,17 +1,17 @@
 # 业务应用、Admin/API 与个人 Agent：状态与断点
 
-最后检查：2026-10-03T07:20Z。协调任务 Claude `df1f0b15-17ae-4370-a6b0-aacd082144be`（/loop 9d5641b6）；统一目标仍执行，无递归loop。
+最后检查：2026-10-03T12:00Z。协调任务 Claude `df1f0b15-17ae-4370-a6b0-aacd082144be`（/loop f5cb7ce9，取代 9d5641b6）；统一目标仍执行，无递归loop。
 
 | 项 | 当前事实 |
 |---|---|
 | 锁 | 主检出docs/agent-work/.coordinator.lock由df1f0b15持有，每轮更新heartbeat。2026-10-03T04:09Z自Codex `01a0f104…`接管：其goal paused、turn被用户中断（2026-10-02T15:05Z），服务15:10Z退出，此后无事件 |
-| 实施树 | .claude/worktrees/business-apps，feat/business-apps；HEAD=remote cf1bb32（consent 21f2cd5、CI提速00c4f54、限流修复6533c2a、WP9三层13提交） |
+| 实施树 | .claude/worktrees/business-apps，feat/business-apps；remote af68968（WP9事件层+traffic+CODE_REVIEW）；本地另有 ab69741 流程结果语义、0e95fcc Message排队发送、d2e1f15 数据集→文档输入（未推送） |
 | PR | 草稿PR #1，https://github.com/WeGreen-AI/Synwevo/pull/1；未合并/部署本分支 |
 | 主检出 | main@2dd03c7；其他图标任务改动完整保留，不触碰 |
-| CI | 6533c2a Actions37103506897：verify 24min（原74），pytest 19m44/1184.54s，3583 passed/1 failed/3 skipped；唯一失败为工作簿字节跨秒的既有脆弱测试，修复3488e6d已含于cf1bb32。cf1bb32 CI运行中 |
-| 当前包 | 已完成并推送：持续同意、CI固定成本根因修复、GCRA跨限额变更修复、WP9机器入口/延后工作撤权/文件路由。下一包：模型调用RPM/TPM与公平等待 |
-| 并行 | local_561a6cda「Synwevo 项目交付与代码审查」：WP9第二轮审查4项修复（standing失败关闭、Tables票据按客户端、范围不泄露来源、started事件顺序）后做事件拉取claude/suite-machine-events；只本地提交，不碰agent/**、billing/** |
-| 下一动作 | 跟踪cf1bb32 CI；实施模型调用RPM/TPM/在途/有界公平等待（扩展版本化成本策略、Admin三语言）；合并WP9审查修复与事件拉取 |
+| CI | cf1bb32 Actions37105534440 success；af68968 Actions37119711384 verify 运行中（11:27Z 起） |
+| 当前包 | B1 跨应用链路：引擎 partial/failed/cancelled 语义、portal 角色 Message 排队投递与收据结算、DataPrep 数据集物化为 Docs 输入均已本地验证并提交；B1 七应用端到端测试由子代理编写中 |
+| 并行 | local_561a6cda：签名 Webhook（claude/suite-machine-webhooks，叠在 af68968），CR-035 已修复于 1dba69b/47daf54；只本地提交 |
+| 下一动作 | 完成 B1 端到端测试与浏览器验收；全量门槛后推送 ab69741..；合并 Webhook 栈；随后跨空间 Agent（C1–C4） |
 
 ## 已验证与边界
 
