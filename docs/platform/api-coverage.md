@@ -26,7 +26,7 @@ Python 与 TypeScript 的独立 `WorkspaceClient` 均实现并实跑 8/8。方�
 | OAuth 授权码 + PKCE（S256 强制）、刷新轮换与重放检测、RFC 7009 撤销、精确回调 | 已验证 | `provider_routes.py`、`oidc.py` | — |
 | 第三方客户端同意页、已连接应用管理 | 已验证 | **API-4** 同意暂存与决定、「已授权的应用」撤回即撤令牌、撤回写安全日志、旧委托记为旧授权；`test_oauth_consent.py`（10）；隔离实例浏览器实跑（同意页 → 批准 → 令牌 200 → 撤回 → 401） | 组织层面的管理员代同意不做（同意属于本人） |
 | 令牌自省（RFC 7662）、`client_secret_basic` | 已验证 | **API-4** `/oidc/introspect`（只答自己的令牌）、令牌/撤销端点接受 Basic；发现文档已登记 | `private_key_jwt`、mTLS、DPoP 未做 |
-| **平台管理机器身份**（管理 scope、管理 API 可程序化调用） | 需实现 | `/api/admin/*` 只认会话 Cookie；机器凭据现有两个资源（Docs、工作空间目录，API-5 已把审批与验证泛化） | 批次 API-3，依赖管理员平台 B1-2 委派权限 |
+| **平台管理机器身份**（管理 scope、管理 API 可程序化调用） | 需实现 | `/api/admin/*` 只认会话 Cookie；机器凭据现有三个资源（Docs、工作空间目录、业务应用操作；后者只接受用户委托，不走所有者审批） | 批次 API-3，依赖管理员平台 B1-2 委派权限 |
 
 ## 2. 契约、错误与追踪
 
@@ -77,6 +77,7 @@ Python 与 TypeScript 的独立 `WorkspaceClient` 均实现并实跑 8/8。方�
 | 模块 | 状态 | 实现与证据 | 缺口 |
 |---|---|---|---|
 | 工作空间目录：3 读 + 5 写 | 已验证（本地，未部署） | **API-5/5b** `/api/workspace/v1`：whoami、成员/邀请列表、邀请创建/重发/撤回、角色修改、成员移除；独立资源与受众，`workspace.read` / `workspace.members.write`，所有者批准的服务身份。`test_workspace_directory_api.py`、`test_workspace_directory_writes.py`；真实邮件 outbox → 本人接受 → 改角色 → 移除；并发幂等、原审批撤权、版本冲突、字段白名单、冻结/限额、三语言署名与治理审计已验证 | 仅 viewer/editor；admin/owner 必须本人操作，用户委托目录操作与应用资格写入未开放。安全日志先落盘后事务失败时，恢复可能保守撤权；降级旧代码前须处置未接受的机器邀请，见 [目录写入与恢复边界](api-directory-writes.md) |
+| 业务应用操作（Forms、Tables、DataPrep、Extract、Approvals）：101 个操作 + whoami / operations / runs | 已验证（本地，未部署）；**仅用户委托** | **WP9** `/api/suite/v1`，工作空间源站：独立资源 `urn:synwevo:platform:suite`，12 个 scope（各应用 read/write，`approvals.decide`、`extract.decide`）。每个操作一条路由，统一经 `Capabilities.invoke(via="api", scopes=…)`；scope 由操作声明推导（`machine_scope`），嵌套的跨应用读取同样受凭据 scope 约束；凭据只属于授权时选定的一个工作空间；幂等键按客户端命名空间；回执只对发起它的客户端可见。契约 [`suite-openapi.json`](../integration/suite-openapi.json) 由注册表生成并有漂移测试；Python / TypeScript `SuiteClient` + `UserToken`（刷新轮换）。`apps/suite/tests/test_machine_api.py`（19）、`test_machine_contract.py`（3）、`test_machine_sdk.py`（2）、`tests/integration/test_suite_machine_flow.py`（真实同意与令牌端点）。说明见 [业务应用操作接口](../integration/suite-api.md) | **服务账户不支持**（各应用在 `invoke` 之外约十余处按用户行与成员关系重新授权，需主体感知的统一授权，另立工作包）；文件上传/下载无机器路由；无事件订阅/Webhook；个人 Agent、计费与同意不在机器接口内（设计如此）；委托发起的延后工作按本人实时权限继续，不随授权撤回而停（与 Docs 不同，待定） |
 | 成员导入 | 需实现机器接口 | 已有异步任务 + 预检 + 确认 | 需组织级机器主体 |
 | 通知发出、对象卡片 | 部分 | 复制生命周期对象卡片、邀请/成员写入通知来自真实业务事件 | 无供外部集成任意发通知/卡片的通用入口 |
 | Message（会话、消息、机器人） | 需实现 | 现有会话接口 | 机器入口未开放；机器人身份需清楚标识 |

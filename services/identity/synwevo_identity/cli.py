@@ -631,7 +631,8 @@ def main() -> int:
                     help="该客户端可获得令牌的 API 受众（RFC 8707 resource），可重复；"
                          "Synwevo Docs 的接口客户端（--app docweave）省略时默认为 SYNWEVO_DOCS_RESOURCE")
     cl.add_argument("--scopes", default="openid profile email",
-                    help="该客户端可申请的权限，空格分隔；用户客户端要代表本人调用接口时在此列出 docweave.*")
+                    help="该客户端可申请的权限，空格分隔；用户客户端要代表本人调用接口时在此列出 docweave.*，"
+                         "或（--app platform）业务应用操作接口的权限：forms.* tables.* dataprep.* extract.* approvals.*")
     cl.add_argument("--confidential", action="store_true", help="机密客户端：生成一次性 client_secret")
     cl.add_argument("--service", action="store_true",
                     help="登记为服务账户（机器身份）：必须机密，必须绑定一个工作空间")
