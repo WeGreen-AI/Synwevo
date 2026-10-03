@@ -14,14 +14,17 @@ are the page's own (acceptance A4). What this layer adds is what only a credenti
 * the **workspace is the credential's**, never the body's: naming another one is refused;
 * the caller's idempotency key is kept **per client**, so two integrations acting for one person
   cannot replay each other's calls, and rotating a secret does not start a second attempt;
-* a run can be read back only by the client that started it.
+* a run can be read back only by the client that started it;
+* the routes that move bytes (`acting`) are the applications' own, served a second time here.
 
 Operations that are a person's own (the Agent, spending, consent) have no route and no scope: the
 capability layer refuses them for every ``via="api"`` caller, whatever asked.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import APIRouter, Header, Request, Response
@@ -29,8 +32,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from synwevo_core import authority
 from synwevo_core.apps import Apps
-from synwevo_core.capabilities import (TERMINAL_STATES, Operation, machine_credential, machine_scope,
-                                       manifest_json, public_run)
+from synwevo_core.capabilities import (MACHINE_KEY_PREFIX, TERMINAL_STATES, Operation, machine_credential,
+                                       machine_scope, manifest_json, public_run)
 from synwevo_core.errors import ServiceError
 from synwevo_core.http import SUITE_V1
 from synwevo_core.oidc import suite_resource
@@ -47,6 +50,68 @@ class MachineInvoke(BaseModel):
     workspace_id: str | None = Field(default=None, max_length=100)
     idempotency_key: str | None = Field(default=None, max_length=MAX_CALLER_KEY)
     correlation_id: str | None = Field(default=None, max_length=100)
+
+
+def caller_key(client_id: str, key: str) -> str:
+    """A caller's idempotency key as it is stored. The client is part of the name; its secret and
+    the token are not, so a rotation does not start a second attempt. A digest keeps the stored key
+    inside the limit whatever the client was called."""
+    if not isinstance(key, str) or not 1 <= len(key) <= MAX_CALLER_KEY or any(not 33 <= ord(ch) <= 126 for ch in key):
+        raise ServiceError(400, "bad_idempotency_key",
+                           f"幂等键须为 1–{MAX_CALLER_KEY} 个可见 ASCII 字符", {"maximum": MAX_CALLER_KEY})
+    return MACHINE_KEY_PREFIX + hashlib.sha256(client_id.encode("utf-8")).hexdigest()[:16] + ":" + key
+
+
+@dataclass
+class Acting:
+    """Who a file route is serving: the signed-in person, or the person a credential acts for."""
+    user: dict
+    via: str = "ui"
+    client_id: str | None = None
+    #: What a nested `Capabilities.invoke` needs to record the call as this credential's.
+    invoke: dict = field(default_factory=dict)
+
+    def key(self, raw: str | None) -> str | None:
+        """An upload's retry key as it is stored: kept apart per client for a credential, exactly as
+        operations' keys are — and, for the same reason, a person may not name a client's."""
+        if not raw:
+            return raw
+        if self.client_id is None:
+            if raw.startswith(MACHINE_KEY_PREFIX):
+                raise ServiceError(400, "bad_idempotency_key",
+                                   f"以 {MACHINE_KEY_PREFIX} 开头的幂等键保留给接口凭据，请换一个")
+            return raw
+        return caller_key(self.client_id, raw)
+
+
+@contextlib.contextmanager
+def acting(ctx, request: Request, workspace_id: str, *, app: str, scope: str):
+    """For the routes that move bytes (uploads, downloads, exports), which are served twice: under
+    the page's prefix for a session, and under ``/api/suite/v1`` for a credential. The handler is
+    one function and everything behind it — the upload check, quarantine, the person's export
+    right — is the same; this decides who is asking. On the machine path that is the credential's
+    person, only with the scope the route names, only in the credential's workspace, and with the
+    credential's scopes in effect for whatever the handler reads in another application."""
+    if not request.url.path.startswith(SUITE_V1 + "/"):
+        from .web import signed_in
+        yield Acting(user=signed_in(request))
+        return
+    p = getattr(request.state, "principal", None)
+    if not p or p.get("kind") != "delegated" or not p.get("user_id") or not p.get("tenant"):
+        raise ServiceError(401, "unauthorized", "缺少凭据（Authorization: Bearer <平台访问令牌>）")
+    if scope not in (p.get("scopes") or ()):
+        raise ServiceError(403, "insufficient_scope", f"该凭据没有 {scope} 权限",
+                           {"required_scope": scope, "scopes": sorted(p.get("scopes") or ())})
+    if workspace_id != p["tenant"]:
+        raise ServiceError(403, "workspace_mismatch", "该凭据只能在授权时选定的工作空间内使用",
+                           {"workspace_id": p["tenant"]})
+    user = ctx.identity.get_user(p["user_id"])
+    if not user or user["status"] != "active":
+        raise ServiceError(401, "unauthorized", "该凭据背后的账户不可用")
+    with machine_credential(p["scopes"], app):
+        yield Acting(user=user, via="api", client_id=p["client_id"], invoke={
+            "principal": authority.describe(p),
+            "delegation": {"kind": "oauth_client", "client_id": p["client_id"], "grant": p["grant_family"]}})
 
 
 def machine_operations(registry) -> list[tuple[Operation, str]]:
@@ -119,16 +184,10 @@ def build_machine_router(ctx) -> APIRouter:
                                    "这个操作必须带 Idempotency-Key：它会向他人发出请求、通知或链接，或以该键识别重试，"
                                    "没有键的重试会重复执行", {"operation": op.id})
             return None
-        if not 1 <= len(key) <= MAX_CALLER_KEY or any(not 33 <= ord(ch) <= 126 for ch in key):
-            raise ServiceError(400, "bad_idempotency_key",
-                               f"幂等键须为 1–{MAX_CALLER_KEY} 个可见 ASCII 字符", {"maximum": MAX_CALLER_KEY})
-        if op.side_effect == "none":
-            # A read has nothing to make repeatable: a client may send its key on every call and
-            # retry freely, and a retried read answers with what is true now, not a stored copy.
-            return None
-        # The client is part of the name; its secret and the token are not. A digest keeps the
-        # stored key inside the run table's limit whatever the client was called.
-        return "api:" + hashlib.sha256(p["client_id"].encode("utf-8")).hexdigest()[:16] + ":" + key
+        stored = caller_key(p["client_id"], key)
+        # A read has nothing to make repeatable: a client may send its key on every call and
+        # retry freely, and a retried read answers with what is true now, not a stored copy.
+        return None if op.side_effect == "none" else stored
 
     @r.get("/whoami")
     def whoami(request: Request):

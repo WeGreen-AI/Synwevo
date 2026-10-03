@@ -151,12 +151,74 @@ def _operation(op: Operation, scope: str, schemas: _Schemas) -> dict:
     return _common(out, scopes=[scope, *op.reaches])
 
 
+#: The routes that move bytes: the applications' own upload, download and export handlers, served a
+#: second time under the machine prefix (`machine.acting`). (app, method, path, id in the contract,
+#: scope, what it is, kind) — kind: "upload" (multipart `file`, JSON answer), "upload-keyed" (the
+#: same, and the handler will not run without an Idempotency-Key), "file" (bytes), "json-file" (a
+#: JSON attachment).
+FILE_ROUTES = (
+    ("forms", "get", "/forms/files/{file_id}", "forms.file.download", "forms.read",
+     "Download an attachment of a submission (the person's export right applies)", "file"),
+    ("tables", "post", "/tables/{table_id}/imports", "tables.import.upload", "tables.write",
+     "Upload a CSV or XLSX to stage an import; returns the import ticket for tables.import.get / apply", "upload"),
+    ("tables", "get", "/tables/exports/{export_id}", "tables.export.download", "tables.read",
+     "Download an export created with tables.export.create: the records the person may read now", "file"),
+    ("dataprep", "post", "/dataprep/files", "dataprep.file.upload", "dataprep.write",
+     "Upload a CSV or XLSX through the platform's upload check; returns the file for dataprep.dataset.import",
+     "upload-keyed"),
+    ("dataprep", "get", "/dataprep/datasets/{dataset_id}/export", "dataprep.dataset.export", "dataprep.read",
+     "Export a dataset as csv, xlsx or json; its sources are re-checked as this credential", "file"),
+    ("dataprep", "get", "/dataprep/runs/{run_id}/issues", "dataprep.run.issues.export", "dataprep.read",
+     "Every issue of a run, as a JSON attachment", "json-file"),
+    ("extract", "post", "/extract/files", "extract.file.upload", "extract.write",
+     "Upload a PDF, image or CSV/TSV through the platform's upload check; returns the file for extract.task.create",
+     "upload-keyed"),
+    ("extract", "get", "/extract/files/{file_id}", "extract.file.download", "extract.read",
+     "Download an uploaded original (the person's export right applies)", "file"),
+    ("extract", "get", "/extract/tasks/{task_id}/export", "extract.task.export", "extract.read",
+     "A confirmed result revision, as a JSON attachment", "json-file"),
+)
+_FILE_QUERY = {"/dataprep/datasets/{dataset_id}/export": [
+                   {"name": "format", "in": "query", "required": False, "schema": {"enum": ["csv", "xlsx", "json"]}}],
+               "/extract/tasks/{task_id}/export": [
+                   {"name": "revision", "in": "query", "required": True, "schema": {"type": "integer", "minimum": 1}}]}
+
+
+def _file_route(app: str, path: str, name: str, scope: str, summary: str, kind: str) -> dict:
+    import re
+    parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
+                  for name in re.findall(r"{(\w+)}", path)]
+    parameters.append({"name": "workspace_id", "in": "query", "required": True, "schema": {"type": "string"},
+                       "description": "The credential's workspace; any other value is refused."})
+    parameters += _FILE_QUERY.get(path, [])
+    out = {"operationId": name, "summary": summary, "tags": [app], "x-synwevo-scope": scope,
+           "parameters": parameters}
+    if kind.startswith("upload"):
+        if kind == "upload-keyed":
+            parameters.append({"$ref": "#/components/parameters/IdempotencyKeyRequired"})
+        out["requestBody"] = {"required": True, "content": {"multipart/form-data": {"schema": {
+            "type": "object", "required": ["file"], "properties": {"file": {"type": "string", "format": "binary"}}}}}}
+        ok = {"application/json": {"schema": {"type": "object"}}}
+    elif kind == "json-file":
+        ok = {"application/json": {"schema": {}}}
+    else:
+        ok = {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}
+    out["responses"] = {"200": {"description": "OK", "headers": _headers("200"), "content": ok},
+                        **_errors({"400", "401", "403", "404", "409", "422", "429", "500"})}
+    return _common(out, scopes=[scope])
+
+
 def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
     """The document for every machine operation registered in `registry`."""
     schemas = _Schemas()
     paths: dict[str, dict] = {}
     for op, scope in machine_operations(registry):
         paths[f"{SUITE_V1}/ops/{op.id}"] = {"post": _operation(op, scope, schemas)}
+
+    for app, method, path, name, scope, summary, kind in FILE_ROUTES:
+        manifest = registry.app(app)
+        if manifest is not None and manifest.machine:
+            paths[SUITE_V1 + path] = {method: _file_route(app, path, name, scope, summary, kind)}
 
     def json_ok(schema):
         return {"200": {"description": "OK", "headers": _headers("200"),

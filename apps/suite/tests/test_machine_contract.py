@@ -82,7 +82,7 @@ def test_every_reference_resolves_and_requests_are_closed_objects(suite):
     walk(doc)
     for path, item in doc["paths"].items():
         post = item.get("post")
-        if not post:
+        if not post or "/ops/" not in path:                # the routes that move bytes are checked below
             continue
         body = post["requestBody"]["content"]["application/json"]["schema"]
         assert body["additionalProperties"] is False and set(body["properties"]) == {
@@ -94,3 +94,21 @@ def test_every_reference_resolves_and_requests_are_closed_objects(suite):
         assert ("IdempotencyKey" in names) == (rule == "supported"), path
         assert ("202" in post["responses"]) == (post["x-synwevo-mode"] == "async"), path
         assert (post["x-synwevo-side-effect"] == "none") == (rule == "none"), path
+
+
+def test_the_routes_that_move_bytes_are_documented_with_their_scope(suite):
+    from synwevo_suite.common.machine_contract import FILE_ROUTES
+    doc = contract(suite.caps.registry)
+    assert len(FILE_ROUTES) == 9
+    for app, method, path, name, scope, _, kind in FILE_ROUTES:
+        op = doc["paths"]["/api/suite/v1" + path][method]
+        assert (op["operationId"], op["security"], op["tags"]) == (name, [{"suiteToken": [scope]}], [app])
+        assert scope.split(".")[0] == app and scope.endswith(".write") == (method == "post")
+        named = [p.get("name") for p in op["parameters"] if "name" in p]
+        assert "workspace_id" in named
+        keyed = {"$ref": "#/components/parameters/IdempotencyKeyRequired"} in op["parameters"]
+        assert keyed == (kind == "upload-keyed"), path
+        assert ("multipart/form-data" in op.get("requestBody", {}).get("content", {})) == kind.startswith("upload")
+    # no operation and no file route share an id
+    ids = [op["operationId"] for item in doc["paths"].values() for op in item.values()]
+    assert len(ids) == len(set(ids))

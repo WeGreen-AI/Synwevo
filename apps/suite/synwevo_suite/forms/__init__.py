@@ -24,7 +24,8 @@ MANIFEST = AppManifest(
 
 
 def install(ctx) -> None:
-    from ..common.web import signed_in
+    from synwevo_core.http import SUITE_V1
+    from ..common.machine import acting
     from ..common.worker import Ticker
     from .filling import Filling, _attachment, build_public_router
     from .ops import register
@@ -36,11 +37,12 @@ def install(ctx) -> None:
     ctx.api.include_router(build_public_router(Filling(forms), ctx.capabilities))
 
     @ctx.api.get("/api/suite/forms/files/{file_id}", tags=["forms"])
+    @ctx.api.get(SUITE_V1 + "/forms/files/{file_id}", tags=["forms"])
     def download(file_id: str, workspace_id: str, request: Request) -> Response:
         """An attachment of a submission, for members of its workspace who may take files out
         (editors and above, or a member with the export right — the same rule as Docs)."""
-        user = signed_in(request)
-        row, data = forms.file_bytes(user["id"], workspace_id, file_id)
+        with acting(ctx, request, workspace_id, app="forms", scope="forms.read") as who:
+            row, data = forms.file_bytes(who.user["id"], workspace_id, file_id)
         return _attachment(row, data)
 
     if ctx.start_jobs:

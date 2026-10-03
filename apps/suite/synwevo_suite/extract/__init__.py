@@ -19,7 +19,8 @@ MANIFEST = AppManifest(id="extract", name="Synwevo Extract", path="/extract", ic
 
 
 def install(ctx):
-    from ..common.web import signed_in
+    from synwevo_core.http import SUITE_V1
+    from ..common.machine import acting
     from ..common.worker import Ticker
     from .ops import register
     from .service import Extract, MAX_FILE_BYTES
@@ -33,40 +34,45 @@ def install(ctx):
     ctx.api.state.extract = service
     register(ctx.registry, service)
 
+    # Each file route is served under the page's prefix (a session) and under the machine API's (a
+    # credential holding the scope named here); `acting` decides which, the rest is one path.
     @ctx.api.post("/api/suite/extract/files", tags=["extract"])
+    @ctx.api.post(SUITE_V1 + "/extract/files", tags=["extract"])
     async def upload(request: Request, workspace_id: str, file: UploadFile = File(...),
                      idempotency_key: str = Header(default="", alias="Idempotency-Key")):
-        user = signed_in(request)
-        service.auth(user["id"], workspace_id, "write")
         try:
-            data = await file.read(MAX_FILE_BYTES + 1)
-            # Scanner is blocking; leave the event loop free for cancellation/status calls.
-            from starlette.concurrency import run_in_threadpool
-            return await run_in_threadpool(service.upload, user["id"], workspace_id, file.filename or "",
-                                          data, idempotency_key)
+            with acting(ctx, request, workspace_id, app="extract", scope="extract.write") as who:
+                service.auth(who.user["id"], workspace_id, "write")
+                data = await file.read(MAX_FILE_BYTES + 1)
+                # Scanner is blocking; leave the event loop free for cancellation/status calls.
+                from starlette.concurrency import run_in_threadpool
+                return await run_in_threadpool(service.upload, who.user["id"], workspace_id, file.filename or "",
+                                              data, who.key(idempotency_key))
         finally:
             await file.close()
 
     @ctx.api.get("/api/suite/extract/files/{file_id}", tags=["extract"])
+    @ctx.api.get(SUITE_V1 + "/extract/files/{file_id}", tags=["extract"])
     def download(request: Request, workspace_id: str, file_id: str):
-        user = signed_in(request)
-        row, data = service.file_bytes(user["id"], workspace_id, file_id)
+        with acting(ctx, request, workspace_id, app="extract", scope="extract.read") as who:
+            row, data = service.file_bytes(who.user["id"], workspace_id, file_id)
         return Response(data, media_type=row["content_type"], headers={
             "Content-Disposition": "attachment; filename*=UTF-8''" + quote(row["filename"], safe=""),
             "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
     @ctx.api.get("/api/suite/extract/tasks/{task_id}/export", tags=["extract"])
+    @ctx.api.get(SUITE_V1 + "/extract/tasks/{task_id}/export", tags=["extract"])
     def export(request: Request, workspace_id: str, task_id: str, revision: int):
-        user = signed_in(request)
-        service.export_right(user["id"], workspace_id)
-        # Query parameters are validated by the exact operation schema, not a second business path.
-        from pydantic import ValidationError
-        try:
-            args = Revision(task_id=task_id, revision=revision)
-        except ValidationError:
-            raise ServiceError(422, "invalid_input", "导出参数无效") from None
-        result = ctx.capabilities.invoke("extract.task.result", args.model_dump(),
-                                        user_id=user["id"], workspace_id=workspace_id, via="ui")
+        with acting(ctx, request, workspace_id, app="extract", scope="extract.read") as who:
+            service.export_right(who.user["id"], workspace_id)
+            # Query parameters are validated by the exact operation schema, not a second business path.
+            from pydantic import ValidationError
+            try:
+                args = Revision(task_id=task_id, revision=revision)
+            except ValidationError:
+                raise ServiceError(422, "invalid_input", "导出参数无效") from None
+            result = ctx.capabilities.invoke("extract.task.result", args.model_dump(), user_id=who.user["id"],
+                                            workspace_id=workspace_id, via=who.via, **who.invoke)
         return Response(canonical(result["output"]).encode(), media_type="application/json", headers={
             "Content-Disposition": f'attachment; filename="{task_id}-r{revision}.json"',
             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})

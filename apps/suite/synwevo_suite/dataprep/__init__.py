@@ -21,5 +21,7 @@ def install(ctx):
     ctx.api.state.dataprep = service
     register(ctx.registry, service)
     ctx.api.include_router(router(ctx, service))
+    from synwevo_core.http import SUITE_V1
+    ctx.api.include_router(router(ctx, service, prefix=SUITE_V1 + '/dataprep'))   # the same handlers, for a credential
     if ctx.start_jobs:
         Ticker('dataprep', service.tick, 1).start(ctx.api)

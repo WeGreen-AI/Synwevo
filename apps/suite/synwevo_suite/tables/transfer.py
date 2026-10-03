@@ -226,22 +226,28 @@ class Transfers:
 
 
 def install_routes(ctx, service):
-    from ..common.web import signed_in
+    from synwevo_core.http import SUITE_V1
+    from ..common.machine import acting
 
-    def context(request, workspace_id):
-        user = signed_in(request)
-        return SimpleNamespace(user_id=user['id'], workspace_id=workspace_id)
+    def context(who, workspace_id):
+        return SimpleNamespace(user_id=who.user['id'], workspace_id=workspace_id)
 
+    # Each route is served under the page's prefix (a session) and under the machine API's (a
+    # credential holding the scope named here); `acting` decides which, the rest is one path.
     @ctx.api.post('/api/suite/tables/{table_id}/imports', tags=['tables'])
+    @ctx.api.post(SUITE_V1 + '/tables/{table_id}/imports', tags=['tables'])
     async def upload(table_id: str, workspace_id: str, request: Request, file: UploadFile = File(...)):
-        c = context(request, workspace_id)
-        service.table(c, table_id, write=True, active=True)
-        content = await file.read(MAX_FILE_BYTES+1)
-        await file.close()
-        with service.store.tx():
-            return service.stage_import(c, table_id, file.filename or '', content)
+        with acting(ctx, request, workspace_id, app='tables', scope='tables.write') as who:
+            c = context(who, workspace_id)
+            service.table(c, table_id, write=True, active=True)
+            content = await file.read(MAX_FILE_BYTES+1)
+            await file.close()
+            with service.store.tx():
+                return service.stage_import(c, table_id, file.filename or '', content)
 
     @ctx.api.get('/api/suite/tables/exports/{export_id}', tags=['tables'])
+    @ctx.api.get(SUITE_V1 + '/tables/exports/{export_id}', tags=['tables'])
     def download(export_id: str, workspace_id: str, request: Request):
-        with service.store.tx():
-            return service.export_download(context(request, workspace_id), export_id)
+        with acting(ctx, request, workspace_id, app='tables', scope='tables.read') as who:
+            with service.store.tx():
+                return service.export_download(context(who, workspace_id), export_id)
