@@ -1,5 +1,18 @@
 import { registerMessages } from "@synwevo/ui/i18n-core";
 export const agentMessages = {
+  "请只选择一种付款授权。": {"en": "Choose only one payment authorization.", "zh-Hant": "請只選擇一種付款授權。"},
+  "这项持续付款授权不可用，请核对当前会话。": {"en": "This continuing payment consent is unavailable. Check the current conversation.", "zh-Hant": "這項持續付款授權不可用，請核對目前會話。"},
+  "持续付款授权已撤销，尚未开始的付费调用已停止。": {"en": "Continuing payment consent was revoked. Paid calls that had not started are stopped.", "zh-Hant": "持續付款授權已撤銷，尚未開始的付費呼叫已停止。"},
+  "持续付款授权已到期，请重新核对价格与范围。": {"en": "Continuing payment consent expired. Review the price and scope again.", "zh-Hant": "持續付款授權已到期，請重新核對價格與範圍。"},
+  "持续付款授权的运行次数已用完。继续前请查看已有结果，再重新授权。": {"en": "All allowed runs have been used. Check existing results before approving more runs.", "zh-Hant": "持續付款授權的執行次數已用完。繼續前請查看已有結果，再重新授權。"},
+  "会话的工作空间范围已变化，请撤销旧付款授权并重新核对。": {"en": "The conversation workspace scope changed. Revoke the old payment consent and review it again.", "zh-Hant": "會話的工作空間範圍已變更，請撤銷舊付款授權並重新核對。"},
+  "模型或价格条件已变化，请撤销旧付款授权并重新核对。": {"en": "The model or price terms changed. Revoke the old payment consent and review it again.", "zh-Hant": "模型或價格條件已變更，請撤銷舊付款授權並重新核對。"},
+  "此会话目前无法使用持续付款授权。": {"en": "This conversation cannot currently use continuing payment consent.", "zh-Hant": "此會話目前無法使用持續付款授權。"},
+  "请先在会话中明确选择工作空间范围，再设置持续付款授权。": {"en": "Select an explicit workspace scope in the conversation before setting continuing payment consent.", "zh-Hant": "請先在會話中明確選擇工作空間範圍，再設定持續付款授權。"},
+  "此会话已有持续付款授权，请先查看或撤销原授权。": {"en": "This conversation already has continuing payment consent. Review or revoke it first.", "zh-Hant": "此會話已有持續付款授權，請先查看或撤銷原授權。"},
+  "有效的持续付款授权已达到上限，请先撤销不再需要的授权。": {"en": "The active consent limit has been reached. Revoke consents you no longer need first.", "zh-Hant": "有效的持續付款授權已達到上限，請先撤銷不再需要的授權。"},
+  "请选择未来一年内的到期时间，或明确选择持续有效至撤销。": {"en": "Choose an expiry within the next year, or explicitly allow consent until revoked.", "zh-Hant": "請選擇未來一年內的到期時間，或明確選擇持續有效至撤銷。"},
+  "请选择到期时间，或明确选择持续有效至撤销。": {"en": "Choose an expiry, or explicitly allow consent until revoked.", "zh-Hant": "請選擇到期時間，或明確選擇持續有效至撤銷。"},
   "请在 Agent 设置中配置个人日、周、月支出上限。当前调用尚未发送。": { en: "Set your personal daily, weekly and monthly spending limits in Agent settings. This call was not sent.", "zh-Hant": "請在 Agent 設定中設定個人日、週、月支出上限。目前呼叫尚未傳送。" },
   "个人支出已暂停，当前调用尚未发送。可在 Agent 设置中核对。": { en: "Personal spending is paused. This call was not sent. Review Agent settings.", "zh-Hant": "個人支出已暫停，目前呼叫尚未傳送。可在 Agent 設定中核對。" },
   "个人今日支出上限不足以容纳本次预留，当前调用尚未发送。": { en: "Your daily spending limit cannot cover this reservation. This call was not sent.", "zh-Hant": "個人今日支出上限不足以容納本次預留，目前呼叫尚未傳送。" },

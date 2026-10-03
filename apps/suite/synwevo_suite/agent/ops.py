@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field as F, SecretStr, field_serializer, field_validator
 
 from synwevo_core import sealed
+from synwevo_core.billing import BillingError
 from synwevo_core.capabilities import Operation, canonical, fingerprint
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
@@ -62,6 +63,7 @@ class StartTurn(_In):
     parent_message_id: str | None = F(default=None, pattern=MSG)
     regenerate_of: str | None = F(default=None, pattern=MSG)
     quote_id: str | None = F(default=None, pattern=r"^quote_[a-f0-9]{12}$")
+    consent_id: str | None = F(default=None, pattern=r"^consent_[a-f0-9]{12}$")
 
 
 class QuoteTurn(_In):
@@ -111,6 +113,37 @@ class ModelTerms(_In):
 class ModelOffer(ModelTerms):
     max_calls_limit: int
     run_seconds_limit: int
+
+
+class ConsentCreate(QuoteRef):
+    max_runs: int = F(strict=True, ge=1, le=1000)
+    expires_at: int | None = F(strict=True, ge=1)
+    until_revoked: bool = F(strict=True)
+
+
+class ConsentRef(_In):
+    consent_id: str = F(pattern=r"^consent_[a-f0-9]{12}$")
+
+
+class ConsentResult(ModelTerms):
+    id: str
+    conversation_id: str
+    scope: list[str]
+    max_runs: int
+    used_runs: int
+    remaining_runs: int
+    status: Literal["active", "revoked", "expired", "exhausted", "scope_changed", "model_changed", "conversation_unavailable"]
+    created_at: int
+    expires_at: int | None
+    until_revoked: bool
+    budget: str
+    total_maximum: str
+    max_calls: int
+    run_seconds: int
+
+
+class ConsentList(_In):
+    consents: list[ConsentResult]
 
 
 class PayerBudgetSet(_In):
@@ -301,7 +334,8 @@ def register(registry, agent: Agent, store, identity) -> None:
         if c.op.id == "agent.conversation.create":
             cid = out.get("id")
         if c.op.id in ("agent.conversation.delete", "agent.memory.delete", "agent.settings.update",
-                       "agent.workspace_policy.set", "agent.billing.budget.set"):
+                       "agent.workspace_policy.set", "agent.billing.budget.set",
+                       "agent.consent.create", "agent.consent.revoke"):
             # Only a deletion receipt, masked key state or policy enum; no business body.
             return
         if c.op.id.startswith("agent.memory."):
@@ -393,7 +427,6 @@ def register(registry, agent: Agent, store, identity) -> None:
         if quotes is None:
             raise ServiceError(503, "billing_not_configured", "付费模型服务尚未配置")
         agent.conversation(c.user_id, i.conversation_id)
-        from synwevo_core.billing import BillingError
         try:
             result = quotes.get(c.user_id, i.quote_id)
             if result["conversation_id"] != i.conversation_id:
@@ -412,11 +445,71 @@ def register(registry, agent: Agent, store, identity) -> None:
     op(id="agent.quote.revoke", title=T("撤销运行预算", "撤銷執行預算", "Revoke a run budget"), input=QuoteRef,
        summary="Stop this grant from authorizing further paid calls; incurred facts still settle.",
        side_effect="write", agent="never", output=QuoteResult, handler=lambda c, i: quote_read(c, i, revoke=True))
+    def person_only(c):
+        # Spending consent is granted and used only by the person in the page. Capabilities refuses
+        # agent/flow/automation; "system" and machine/delegated API callers are refused here too
+        # until an API surface is reviewed for it on its own.
+        if c.via != "ui":
+            raise ServiceError(403, "person_required", "此操作需要本人在页面操作")
+
+    def model_consent(c, i, *, action):
+        person_only(c)
+        quotes = getattr(agent.provider, "quotes", None)
+        if quotes is None:
+            raise ServiceError(503, "billing_not_configured", "付费模型服务尚未配置")
+        try:
+            if action == "list":
+                agent.conversation(c.user_id, i.conversation_id)
+                return quotes.consents.list(c.user_id, i.conversation_id)
+            if action == "create":
+                conv = agent.conversation(c.user_id, i.conversation_id)
+                if agent._sealed(c.user_id, conv):
+                    raise ServiceError(409, "conversation_sealed", "来源权限已变化，请新建会话")
+                basis = quotes.get(c.user_id, i.quote_id)
+                if basis["conversation_id"] != i.conversation_id:
+                    raise ServiceError(404, "quote_not_found", "报价不存在")
+                result = quotes.consents.create(c.user_id, i.quote_id, max_runs=i.max_runs,
+                    expires_at=i.expires_at, until_revoked=i.until_revoked)
+            elif action == "revoke":
+                already = quotes.consents.get(c.user_id, i.consent_id)["status"] == "revoked"
+                result = quotes.consents.revoke(c.user_id, i.consent_id)
+                if already:
+                    return result
+            else:
+                return quotes.consents.get(c.user_id, i.consent_id)
+            c.touches("model_consent", result["id"])
+            c.emit("agent.consent." + ("created" if action == "create" else "revoked"),
+                object_kind="model_consent", object_id=result["id"],
+                data={"consent_id": result["id"], "conversation_id": result["conversation_id"]})
+            return result
+        except BillingError as exc:
+            if exc.code.endswith("_not_found"):
+                raise ServiceError(404, "billing_" + exc.code, "付款授权不存在") from None
+            raise ServiceError(409, "billing_" + exc.code, "持续付款授权暂不可用，请重新核对范围与预算") from None
+
+    for action, title, input_model, output_model in (
+        ("create", T("允许本会话后续运行", "允許本會話後續執行", "Allow further runs in this conversation"), ConsentCreate, ConsentResult),
+        ("get", T("查看持续付款授权", "查看持續付款授權", "Read continuing payment consent"), ConsentRef, ConsentResult),
+        ("list", T("列出本会话付款授权", "列出本會話付款授權", "Conversation payment consents"), ConversationRef, ConsentList),
+        ("revoke", T("撤销持续付款授权", "撤銷持續付款授權", "Revoke continuing payment consent"), ConsentRef, ConsentResult),
+    ):
+        writes = action in ("create", "revoke")
+        event = "agent.consent." + ("created" if action == "create" else "revoked")
+        op(id="agent.consent." + action, title=title, input=input_model, output=output_model,
+           summary="Personal bounded model-spending consent; does not authorize business tools or unattended runs.",
+           side_effect="write" if writes else "none", agent="never", unattended=False,
+           events=(event,) if writes else (), handler=lambda c, i, action=action: model_consent(c, i, action=action))
+
+    def start_turn(c, i):
+        if i.consent_id:
+            person_only(c)
+        return agent.start_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
+            regenerate_of=i.regenerate_of, quote_id=i.quote_id, consent_id=i.consent_id)
+
     op(id="agent.turn.start", title=T("发送消息", "傳送訊息", "Send a message"),
        summary="Send a message (or regenerate an answer) and start the answer.", input=StartTurn,
        side_effect="write", agent="never", transactional=False,
-       handler=lambda c, i: agent.start_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
-                                             regenerate_of=i.regenerate_of, quote_id=i.quote_id))
+       handler=start_turn)
     op(id="agent.turn.cancel", title=T("停止回答", "停止回答", "Stop the answer"),
        summary="Stop an answer: nothing further runs.", input=TurnRef, side_effect="write", agent="never",
        transactional=False, handler=lambda c, i: agent.cancel(c.user_id, i.turn_id))

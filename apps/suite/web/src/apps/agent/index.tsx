@@ -1,6 +1,6 @@
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Route, useLocation, useMatch, useNavigate } from "react-router-dom";
-import { PlatformNav, RequireSession } from "@synwevo/auth-client";
+import { PlatformNav, RequireSession, useSession } from "@synwevo/auth-client";
 import { Brand, useDialog, useI18n } from "@synwevo/ui";
 import { useApp } from "../../shared/catalog";
 import { Empty, Loading } from "../../shared/states";
@@ -9,6 +9,10 @@ import { newKey, op, read } from "../../shared/ops";
 import Chat from "./Chat";
 import { activeTurn, type Conversation, type Workspace } from "./types";
 import { useConversation } from "./useConversation";
+import { ConsentPanel, ConsentRecovery, useConversationConsents } from "./ConsentControls";
+import { ConsentStateError, PendingConsentOperation, createConsentWriter, effectiveConsentStatus, validateConsent,
+  validateCreatedConsent, type Consent, type ConsentWriter } from "./consent";
+import type { BudgetIntent } from "./budget";
 import "./messages";
 import { automationCopy } from "./automations.messages";
 import "./agent.css";
@@ -47,6 +51,21 @@ function AgentApp() {
   const intents = useRef(new Map<string, string>());
   const retryCreate = useRef<string | undefined>(undefined);
   const generation = useRef(0);
+  const { me } = useSession();
+  const payer = me?.display_name || me?.email || "";
+  // One payment writer per conversation: an uncertain outcome stays locked across navigation.
+  const writers = useRef(new Map<string, ConsentWriter>());
+  const writerFor = useCallback((cid: string) => {
+    let writer = writers.current.get(cid);
+    if (!writer) {
+      writer = createConsentWriter((operation, input, key) => op(operation, input, { key }), newKey);
+      writers.current.set(cid, writer);
+    }
+    return writer;
+  }, []);
+  const consents = useConversationConsents(id, conversation?.scope, connection, billingRequired && !!id);
+  const [single, setSingle] = useState(false);
+  useEffect(() => setSingle(false), [id]);
 
   const write = useCallback(async (operation: string, input: Record<string, unknown>) => {
     const signature = JSON.stringify([operation, input]);
@@ -79,11 +98,51 @@ function AgentApp() {
     return () => abort.abort();
   }, [settings]);
 
+  /** The active consent for a manual send, or null for a single-run quote. Never guessed from a stale list. */
+  function consentFor(cid: string): Consent | null {
+    if (writers.current.get(cid)?.pending()) throw new PendingConsentOperation();
+    if (cid !== id) return null;  // A conversation created by this send has no consent yet.
+    if (!conversation || conversation.id !== cid || consents.error != null || !consents.data) throw new ConsentStateError("consent_state_unavailable");
+    if (single) return null;
+    return consents.data.find((c) => effectiveConsentStatus(c, conversation.scope) === "active") ?? null;
+  }
+  /** The writer shows a refusal or an unresolved outcome itself; nothing is resent or switched to a quote. */
+  async function consentSend(consent: Consent, input: Record<string, unknown>) {
+    try {
+      await writerFor(consent.conversation_id).start("agent.turn.start", { ...input, consent_id: consent.id }, checkTurn);
+      return true;
+    } catch { return false; } finally { consents.refresh(); setTick((n) => n + 1); await refresh(); }
+  }
+  async function revoke(consent: Consent) {
+    try {
+      await writerFor(consent.conversation_id).start("agent.consent.revoke", { consent_id: consent.id }, (value: Consent) => {
+        validateConsent(value, consent.conversation_id);
+        if (value.id !== consent.id || value.status !== "revoked") throw new Error("invalid_consent_response");
+      });
+    } finally { consents.refresh(); }
+  }
+  function finishDialogSend(acceptedIntent: BudgetIntent) {
+    const sameDialog = currentBudgetIntent.current === acceptedIntent;
+    const sameConversation = currentConversation.current === acceptedIntent.conversation_id
+      || (currentConversation.current === undefined && retryCreate.current === acceptedIntent.conversation_id);
+    // A closed dialog does not undo a submitted request. Late completion must not
+    // dismiss another consent dialog, clear its text or steal a newly opened page.
+    if (sameDialog && sameConversation && acceptedIntent.text !== undefined) setSentDraft((n) => n + 1);
+    if (retryCreate.current === acceptedIntent.conversation_id) retryCreate.current = undefined;
+    setBudgetIntent((current) => current === acceptedIntent ? undefined : current);
+    if (sameDialog && sameConversation) navigate(`/agent/c/${acceptedIntent.conversation_id}`);
+    setSingle(false);
+    setTick((n) => n + 1);
+  }
+
   async function act(operation: string, input: Record<string, unknown>) {
     if (operation === "agent.turn.start" && billingRequired) {
-      setBudgetIntent({ conversation_id: String(input.conversation_id),
+      const intent = { conversation_id: String(input.conversation_id),
         ...(typeof input.regenerate_of === "string" ? { regenerate_of: input.regenerate_of } : {}),
-        ...(typeof input.text === "string" ? { text: input.text } : {}) });
+        ...(typeof input.text === "string" ? { text: input.text } : {}) };
+      const consent = consentFor(intent.conversation_id);
+      if (consent) await consentSend(consent, intent);
+      else setBudgetIntent(intent);
       return;
     }
     const result = await write(operation, input);
@@ -93,7 +152,11 @@ function AgentApp() {
   async function send(text: string) {
     let cid = id ?? retryCreate.current;
     if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
-    if (billingRequired) { setBudgetIntent({ conversation_id: cid!, text }); return false; }
+    if (billingRequired) {
+      const consent = consentFor(cid!);
+      if (consent) return consentSend(consent, { conversation_id: cid, text });
+      setBudgetIntent({ conversation_id: cid!, text }); return false;
+    }
     await write("agent.turn.start", { conversation_id: cid, text });
     retryCreate.current = undefined;
     navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
@@ -138,6 +201,9 @@ function AgentApp() {
   if (app === undefined) return <Loading />;
   if (!app) return <Empty title={t("个人 Agent 尚未开放")} />;
   const running = conversation?.messages?.some(activeTurn);
+  const writer = billingRequired && id ? writerFor(id) : undefined;
+  const blocking = consents.data?.some((c) => !["revoked", "expired"].includes(effectiveConsentStatus(c, conversation?.scope ?? null)));
+  const dialogScope = budgetIntent?.conversation_id === id ? conversation?.scope ?? null : null;
   const title = conversation?.title === "新会话" ? t("新会话") : conversation?.title;
   return <div className="ag-app">
     <header className="topbar">
@@ -171,28 +237,51 @@ function AgentApp() {
           </div>
           {actionError != null && <Failure error={actionError} />}
           <Chat key={id ?? "new"} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
-            spaces={spaces} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft} />
+            spaces={spaces} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft}
+            aside={writer && id && <>
+              <ConsentPanel consents={consents.data} loading={consents.loading} error={consents.error} refresh={consents.refresh}
+                scope={conversation?.scope ?? null} spaces={spaces} payer={payer} writer={writer} single={single} setSingle={setSingle} revoke={revoke} />
+              <ConsentRecovery writer={writer} retry={async () => {
+                try { await writer.retry(); } finally { consents.refresh(); setTick((n) => n + 1); await refresh(); }
+              }} />
+            </>} />
         </>}
       </main>
       {budgetIntent && <BudgetDialog intent={budgetIntent} onClose={() => setBudgetIntent(undefined)}
         onQuote={(params) => write("agent.turn.quote", { ...budgetIntent, ...params })}
         onConfirm={async (quote) => {
           const acceptedIntent = budgetIntent;
+          if (writers.current.get(acceptedIntent.conversation_id)?.pending()) throw new PendingConsentOperation();
           await write("agent.turn.start", { ...acceptedIntent, quote_id: quote.id });
-          const sameDialog = currentBudgetIntent.current === acceptedIntent;
-          const sameConversation = currentConversation.current === acceptedIntent.conversation_id
-            || (currentConversation.current === undefined && retryCreate.current === acceptedIntent.conversation_id);
-          // A closed dialog does not undo a submitted request. Late completion must not
-          // dismiss another consent dialog, clear its text or steal a newly opened page.
-          if (sameDialog && sameConversation && acceptedIntent.text !== undefined) setSentDraft((n) => n + 1);
-          if (retryCreate.current === acceptedIntent.conversation_id) retryCreate.current = undefined;
-          setBudgetIntent((current) => current === acceptedIntent ? undefined : current);
-          if (sameDialog && sameConversation) navigate(`/agent/c/${acceptedIntent.conversation_id}`);
-          setTick((n) => n + 1);
+          finishDialogSend(acceptedIntent);
           await refresh();
+        }}
+        consent={budgetIntent.conversation_id === id && (!consents.data || blocking) ? undefined : {
+          scope: dialogScope, spaces, payer, writer: writerFor(budgetIntent.conversation_id),
+          create: async (quote, input, params, retry) => {
+            const scope = dialogScope ?? [];
+            const target = writerFor(input.conversation_id);
+            try {
+              return retry ? await target.retry<Consent>() : await target.start<Consent>("agent.consent.create", { ...input },
+                (value) => validateCreatedConsent(value, input, quote, scope, params));
+            } finally { consents.refresh(); }
+          },
+          send: async (consent, retry) => {
+            const acceptedIntent = budgetIntent;
+            const target = writerFor(consent.conversation_id);
+            if (retry) await target.retry();
+            else await target.start("agent.turn.start", { ...acceptedIntent, consent_id: consent.id }, checkTurn);
+            finishDialogSend(acceptedIntent);
+            consents.refresh();
+            await refresh();
+          },
         }} />}
     </div>
   </div>;
+}
+
+function checkTurn(value: { turn_id?: unknown }) {
+  if (!value || typeof value.turn_id !== "string" || !value.turn_id) throw new Error("invalid_turn_response");
 }
 
 export function agentRoutes() {

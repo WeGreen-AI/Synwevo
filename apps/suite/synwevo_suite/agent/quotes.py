@@ -14,6 +14,7 @@ from synwevo_core.billing import BillingError, ChargeContext
 from synwevo_core.billing.models import integer
 from synwevo_core.store import new_id
 
+from .consents import ModelConsents
 from .gateway import Route, _json
 
 
@@ -23,6 +24,7 @@ class RunQuotes:
             raise BillingError("model_authority_required")
         self.gateway, self.ledger, self.store = gateway, gateway.ledger, gateway.store
         self.current_route, self.current_authority = current_route, current_authority
+        self.consents = ModelConsents(self)
 
     @staticmethod
     def binding(conversation, *, text, parent_id, regenerate_of):
@@ -146,6 +148,8 @@ class RunQuotes:
             "AND c.scope_json IS q.scope_json AND t.cancel_requested=0 AND t.status IN ('queued','running','waiting_confirmation')",
             (context.authorization_ref, context.actor_user_id, self.ledger.environment, self.ledger.namespace, context.run_id)).fetchone()
         if not row or row["revoked_at"] is not None:
+            return False
+        if not self.consents.authorize(transaction, context.actor_user_id, row["id"]):
             return False
         terms = json.loads(row["terms_json"])
         return (terms["deadline"] > self.ledger._now() and self.current_route() == Route(**terms["route"])

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Modal, useI18n } from "@synwevo/ui";
 import { Loading, RunBadge } from "../../shared/states";
@@ -73,9 +73,11 @@ function Scope({ scope, spaces, change, close }: { scope: string[] | null; space
   </Modal>;
 }
 
-export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0 }: {
+export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0, aside }: {
   conversation?: Conversation; loading: boolean; error: unknown; connection: string; configured: boolean | undefined;
   spaces: Workspace[]; act: Act; send: (text: string) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
+  /** Payment state for this conversation, shown above the composer. */
+  aside?: ReactNode;
 }) {
   const { t } = useI18n();
   const [text, setText] = useState("");
@@ -139,6 +141,7 @@ export default function Chat({ conversation, loading, error, connection, configu
     </div>
     {newContent && <button className="btn ag-new-content" onClick={() => { stick.current = true; const el = scroller.current; if (el) el.scrollTop = el.scrollHeight; setNewContent(false); }}>{t("查看新内容")}</button>}
     <div className="ag-composer-area">
+      {aside}
       {conversation?.sealed && <p className="notice" role="alert">{t("访问权限已改变，相关内容已隐藏。请新建会话继续。")}</p>}
       {conversation?.status === "archived" && <p className="notice">{t("这个会话已归档。恢复后可继续。")}</p>}
       {configured === false && <p className="notice"><Link to="/agent/settings">{t("模型服务未配置。请先打开 Agent 设置。")}</Link></p>}

@@ -320,13 +320,13 @@ class Agent:
 
     # ================================================================ turns
     def start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
-                   regenerate_of: str | None, quote_id: str | None = None) -> dict:
+                   regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None) -> dict:
         # The active-turn check, quota and every message insert form one admission decision.
         with self.store.tx():
-            return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of, quote_id=quote_id)
+            return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of, quote_id=quote_id, consent_id=consent_id)
 
     def _start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
-                    regenerate_of: str | None, quote_id: str | None = None) -> dict:
+                    regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None) -> dict:
         """A new user message (or a regeneration of an answer) and the turn that answers it."""
         row = self.conversation(user["id"], cid)
         if row["status"] != "active":
@@ -380,14 +380,19 @@ class Agent:
         turn_id = new_id("turn")
         quotes = getattr(self.provider, "quotes", None)
         if quotes is not None:
-            if not quote_id:
+            if quote_id and consent_id:
+                raise ServiceError(409, "billing_authorization_conflict", "请只选择一种付款授权")
+            if not quote_id and not consent_id:
                 raise ServiceError(409, "billing_authorization_required", "请先查看并确认本次运行的价格与预算")
             try:
+                if consent_id:
+                    quote_id = quotes.consents.issue(user["id"], consent_id, row, text=text,
+                        parent_id=parent_id, regenerate_of=regenerate_of)
                 quotes.bind(user["id"], quote_id, row, turn_id=turn_id, text=text,
                             parent_id=parent_id, regenerate_of=regenerate_of)
             except BillingError as exc:
                 raise ServiceError(409, "billing_" + exc.code, "本次预算授权已变化，请重新获取报价") from None
-        elif quote_id is not None:
+        elif quote_id is not None or consent_id is not None:
             raise ServiceError(409, "billing_not_configured", "付费模型服务尚未配置")
         with self.store.tx() as t:
             t.execute("INSERT INTO agent_messages (id,conversation_id,user_id,parent_id,role,status,body,created_at,updated_at) "
