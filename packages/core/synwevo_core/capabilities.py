@@ -974,27 +974,63 @@ class Capabilities:
         if (not delegated or (by_client and started.get("client_id") != desc.get("client_id"))
                 or desc.get("user_id") != row["user_id"] or desc.get("tenant") != row["workspace_id"]):
             raise ServiceError(403, "unknown_principal", f"无法确认发起这项工作的应用凭据，{stopped}", {"run_id": run_id})
-        from .oidc import Clients, SUITE_API_SCOPES
-        client = self.store.one("SELECT client_id, scopes, api_scopes, disabled_at FROM oauth_clients WHERE client_id=?",
-                                (desc.get("client_id"),))
-        if not client or client["disabled_at"]:
-            raise ServiceError(403, "credential_revoked", f"发起这项工作的应用已停用，{stopped}", {"run_id": run_id})
-        family = desc.get("family_id")
-        last = self.store.one(
-            "SELECT revoked_at, revoked_reason, scope FROM oauth_tokens "
-            "WHERE (family_id=? OR id=?) AND client_id=? AND user_id=? AND workspace_id=? "
-            "ORDER BY issued_at DESC, (revoked_at IS NULL) DESC LIMIT 1",
-            (family, family, client["client_id"], desc.get("user_id"), desc.get("tenant"))) if family else None
-        if not last or (last["revoked_at"] and (last["revoked_reason"] or "") != "rotated"):
-            raise ServiceError(403, "grant_revoked", f"发起这项工作的应用授权已撤回，{stopped}", {"run_id": run_id})
-        registered = Clients.allowed_scopes(client)
-        scopes = frozenset(sc for sc in (last["scope"] or "").split() if sc in SUITE_API_SCOPES and sc in registered)
+        scopes = self.grant_scopes(desc, detail={"run_id": run_id})
         op = self.registry.get(row["op"])
         required = machine_scope(op, self.registry.app(row["app"])) if op is not None else None
         if required is None or required not in scopes:
             raise ServiceError(403, "scope_withdrawn", f"发起这项工作的应用已不再持有所需权限，{stopped}",
                                {"run_id": run_id, "required_scope": required})
         return {"scopes": scopes, "app": row["app"]}
+
+    def grant_scopes(self, desc: dict, *, detail: dict | None = None, renewable: bool = False) -> frozenset:
+        """The business applications' scopes the grant behind a delegated descriptor holds **now**:
+        those of its newest token that the client is still registered for. A refusal once the grant
+        has ended — the client is gone or disabled (``credential_revoked``), or its tokens were
+        revoked (``grant_revoked``; a refresh rotation is not a revocation, an access token merely
+        expiring is not one either). For anything that acts for a grant after the request that
+        asked for it: queued work (`standing`), a webhook subscription.
+
+        ``renewable`` is for what acts for a grant with no end of its own (a subscription): the
+        grant must be one the client could still renew at this moment. Ending a sign-in, an
+        account or an entitlement reaches a token when its client next refreshes it, and so
+        reaches a client that pulls within one access-token lifetime; something that pushes
+        would never meet that refresh, so what it would be refused for is asked here instead:
+        no refresh token (``grant_not_renewable``), the refresh token has run out
+        (``grant_expired``), the sign-in the grant came from was ended (``session_ended``), the
+        person may no longer use the client's application in that workspace
+        (``entitlement_revoked``)."""
+        stopped = "后续步骤已停止"
+        from .apps import Apps
+        from .oidc import Clients, SUITE_API_SCOPES
+        client = self.store.one("SELECT client_id, app_id, scopes, api_scopes, disabled_at FROM oauth_clients "
+                                "WHERE client_id=?", (desc.get("client_id"),))
+        if not client or client["disabled_at"]:
+            raise ServiceError(403, "credential_revoked", f"发起这项工作的应用已停用，{stopped}", detail)
+        family = desc.get("family_id")
+        last = self.store.one(
+            "SELECT revoked_at, revoked_reason, scope, refresh_hash, refresh_expires_at, central_session_id "
+            "FROM oauth_tokens WHERE (family_id=? OR id=?) AND client_id=? AND user_id=? AND workspace_id=? "
+            "ORDER BY issued_at DESC, (revoked_at IS NULL) DESC LIMIT 1",
+            (family, family, client["client_id"], desc.get("user_id"), desc.get("tenant"))) if family else None
+        if not last or (last["revoked_at"] and (last["revoked_reason"] or "") != "rotated"):
+            raise ServiceError(403, "grant_revoked", f"发起这项工作的应用授权已撤回，{stopped}", detail)
+        if renewable:
+            if last["revoked_at"] or not last["refresh_hash"] or last["refresh_expires_at"] is None:
+                # No refresh token to renew it with (or the newest one was spent and nothing came of it).
+                raise ServiceError(403, "grant_not_renewable", "这项授权不能续期（申请授权时需要 offline_access）", detail)
+            if last["refresh_expires_at"] <= now():
+                raise ServiceError(403, "grant_expired", f"发起这项工作的应用授权已过期，{stopped}", detail)
+            if last["central_session_id"]:
+                # An explicit end only, as at a refresh: an idle or expired sign-in is not one.
+                session = self.store.one("SELECT revoked_at FROM sessions WHERE id=?", (last["central_session_id"],))
+                if session and session["revoked_at"]:
+                    raise ServiceError(403, "session_ended", f"这项授权所依据的登录已结束，{stopped}", detail)
+            entitled, _, _ = Apps(self.store, self.identity).check_access(
+                desc.get("user_id"), client["app_id"], desc.get("tenant"))
+            if not entitled:
+                raise ServiceError(403, "entitlement_revoked", f"本人已不能在该工作空间使用这个应用，{stopped}", detail)
+        registered = Clients.allowed_scopes(client)
+        return frozenset(sc for sc in (last["scope"] or "").split() if sc in SUITE_API_SCOPES and sc in registered)
 
     @contextlib.contextmanager
     def resumed(self, run_id: str | None):

@@ -16,9 +16,14 @@ from synwevo_docs_sdk.errors import ConflictError, NotFoundError, PermissionDeni
 
 # The token and client fixtures of the machine API's own tests, loaded by path: test modules in
 # this directory are not importable by name under every way the suites are run.
-_spec = importlib.util.spec_from_file_location("suite_machine_fixtures", Path(__file__).with_name("test_machine_api.py"))
-_fx = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_fx)
+def _load(name: str):
+    spec = importlib.util.spec_from_file_location("suite_sdk_" + name, Path(__file__).with_name(name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_fx = _load("test_machine_api")
 ALL_SCOPES, bearer, register = _fx.ALL_SCOPES, _fx.bearer, _fx.register
 
 
@@ -155,3 +160,75 @@ def test_an_integration_follows_what_changed_and_opens_it_through_the_operations
     with pytest.raises(GoneError) as e:
         c.events_page(cursor=start["next_cursor"])
     assert e.value.code == "cursor_expired" and e.value.details["retention_seconds"] == 30 * 24 * 3600
+
+
+def test_an_integration_subscribes_and_verifies_what_it_is_pushed(api, monkeypatch):
+    """`SuiteClient`'s webhook calls against the real service, deliveries made by the real dispatcher
+    to a receiver on 127.0.0.1 (a fixture; allowed for this test only), verified with the SDK's own
+    `verify_webhook`."""
+    from synwevo_docs_sdk import verify_webhook
+    from synwevo_docs_sdk.errors import RateLimitError
+    _wh = _load("test_machine_webhooks")
+    register(api, client_id="bi-tool", scopes="offline_access " + ALL_SCOPES)
+    api.cookies.clear()
+    monkeypatch.setenv("SYNWEVO_SUITE_WEBHOOK_ALLOW_PRIVATE", "127.0.0.1")
+    monkeypatch.setenv("SYNWEVO_SUITE_WEBHOOK_ALLOW_HTTP", "1")
+    service = api.app.state.suite_webhooks
+    service.concurrency = 1
+    rx = _wh.Receiver(lambda n: 503 if n == 1 else 200)
+    try:
+        renewable = _wh.grant(api, "alice", client_id="bi-tool")
+        c = SuiteClient("http://workplace.testserver", UserToken(renewable["access"]), http=api, sleep=lambda _: None)
+        # a subscription outlives an access token: one that cannot be renewed may not ask for it
+        with pytest.raises(PermissionDeniedError) as e:
+            sdk(api, "alice", ALL_SCOPES).create_webhook(rx.url, ["tables.*"])
+        assert e.value.code == "grant_not_renewable"
+
+        made = c.create_webhook(rx.url, ["tables.*"], description="Fixture sync")
+        secret, sid = made["secret"], made["id"]
+        assert made["authorized_by_caller"] is True and made["missed_events_cursor"] is None
+        with pytest.raises(ConflictError) as e:                                 # a second try after a lost answer
+            c.create_webhook(rx.url, ["tables.*"])
+        assert e.value.code == "subscription_exists" and e.value.details["id"] == sid
+        assert [s["id"] for s in c.list_webhooks()["items"]] == [sid] and "secret" not in c.get_webhook(sid)
+
+        table = c.invoke("tables.table.create", {"name": "Fixture contacts"})["output"]["id"]
+        service.tick()                                                          # refused once (503): retried
+        row = api.people.store.one("SELECT id FROM suite_webhook_deliveries WHERE subscription_id=?", (sid,))
+        api.people.store.execute("UPDATE suite_webhook_deliveries SET next_attempt_at=0 WHERE id=?", (row["id"],))
+        service.tick()
+        first, second = rx.received
+        for request in (first, second):
+            event = verify_webhook(request["headers"], request["body"], secret)
+            assert (event["type"], event["object"]["id"], event["subscription_id"]) == ("tables.table.changed", table, sid)
+        # the same event under the same id; each attempt signed anew
+        assert first["headers"]["webhook-id"] == second["headers"]["webhook-id"] == event["id"]
+        assert first["headers"]["webhook-signature"] != second["headers"]["webhook-signature"] or \
+            first["headers"]["webhook-timestamp"] == second["headers"]["webhook-timestamp"]
+        assert [e["id"] for e in c.iter_events(types=["tables.table.changed"])] == [event["id"]], "the feed's id"
+
+        ping = c.ping_webhook(sid)
+        assert (ping["status"], ping["last_code"]) == ("delivered", 200)
+        assert verify_webhook(rx.received[-1]["headers"], rx.received[-1]["body"], secret)["type"] == "webhook.ping"
+        with pytest.raises(RateLimitError) as e:
+            c.ping_webhook(sid)
+        assert e.value.code == "ping_rate_limited" and e.value.details["retry_after"] > 0
+
+        log = c.webhook_deliveries(sid, status="delivered")
+        assert [d["attempts"] for d in log["items"]] == [1, 2] and log["has_more"] is False
+        assert c.webhook_delivery(sid, log["items"][-1]["id"])["webhook_id"] == event["id"]
+        assert c.redeliver_webhook(sid, log["items"][-1]["id"])["redelivery"] is True
+
+        # what happens while it is stopped is pulled from where it stopped
+        paused = c.pause_webhook(sid)
+        record = c.invoke("tables.record.create", {"table_id": table, "cells": {}})["output"]["id"]
+        resumed = c.resume_webhook(sid)
+        assert (paused["status"], resumed["status"]) == ("paused", "active")
+        assert [e["object"]["id"] for e in c.iter_events(cursor=resumed["missed_events_cursor"])] == [record]
+
+        rotated = c.rotate_webhook_secret(sid, overlap_s=0)
+        assert rotated["secret"] != secret and c.update_webhook(sid, events=["tables.record.changed"],
+                                                               version=rotated["version"])["version"] == rotated["version"] + 1
+        assert c.delete_webhook(sid) == {"deleted": sid} and c.list_webhooks()["items"] == []
+    finally:
+        rx.stop()

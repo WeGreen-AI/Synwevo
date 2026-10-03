@@ -599,6 +599,11 @@ def apply(store: Store, entries: list[dict]) -> dict:
             elif k == "webhook_disabled":
                 n = c.execute("UPDATE webhook_subscriptions SET status='disabled', disabled_reason=COALESCE(disabled_reason,'journal_replay'), "
                               "updated_at=? WHERE id=?", (t, e.get("subscription_id"))).rowcount
+                # The business applications' subscriptions are journalled under the same kind; their
+                # ids do not collide with Docs' (suite_schema/webhooks.py).
+                n += c.execute("UPDATE suite_webhook_subscriptions SET status='disabled', "
+                               "disabled_reason=COALESCE(disabled_reason,'journal_replay'), updated_at=? WHERE id=?",
+                               (t, e.get("subscription_id"))).rowcount
             elif k == "passkey_removed":
                 for table in ("webauthn_credentials", "passkeys"):
                     try:

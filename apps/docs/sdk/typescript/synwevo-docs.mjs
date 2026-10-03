@@ -1380,6 +1380,55 @@ export class SuiteClient {
     for await (const page of this.eventPages(options)) yield* page.items ?? [];
   }
 
+  // ----- webhooks: the event feed, pushed to an https endpoint of yours and signed (Standard
+  // Webhooks — verify with verifyWebhook). A subscription belongs to this client, for this person,
+  // in this workspace. Calls that answer with a secret or start a send carry no idempotency key and
+  // are not retried: a lost answer must not leave a secret nobody saw.
+  #hook(sid, rest = '') {
+    if (sid !== undefined && (typeof sid !== 'string' || !sid)) {
+      throw new ValidationError('A subscription ID is required', { field: 'subscription_id' });
+    }
+    return '/webhooks/subscriptions' + (sid === undefined ? '' : `/${encodeURIComponent(sid)}`) + rest;
+  }
+
+  /** `events`: event types, "<app>.*" or "*". The answer's `secret` is shown this once. */
+  createWebhook({ url, events, description } = {}, opts = {}) {
+    if (!Array.isArray(events) || !events.length) throw new ValidationError('events must be a non-empty array', { field: 'events' });
+    const json = { url, events };
+    if (description != null) json.description = description;
+    return this.#transport.requestJson('POST', this.#hook(), { json, retry: false, ...opts });
+  }
+  listWebhooks(opts = {}) { return this.#transport.get(this.#hook(), undefined, opts); }
+  getWebhook(sid, opts = {}) { return this.#transport.get(this.#hook(sid), undefined, opts); }
+  /** `version` (from the subscription you read) refuses a lost update. */
+  updateWebhook(sid, changes = {}, { version, ...opts } = {}) {
+    const headers = version != null ? { 'If-Match': `"${Number(version)}"` } : undefined;
+    return this.#transport.requestJson('PATCH', this.#hook(sid), { json: changes, headers, retry: false, ...opts });
+  }
+  deleteWebhook(sid, opts = {}) { return this.#transport.requestJson('DELETE', this.#hook(sid), { retry: false, ...opts }); }
+  pauseWebhook(sid, opts = {}) { return this.#transport.requestJson('POST', this.#hook(sid, '/pause'), { retry: true, ...opts }); }
+  /** Delivers again from now: what happened while it was stopped is not sent afterwards. */
+  resumeWebhook(sid, opts = {}) { return this.#transport.requestJson('POST', this.#hook(sid, '/resume'), { retry: true, ...opts }); }
+  /** A new `secret` (shown once); the previous one keeps signing for `overlapS` seconds (default and maximum one day). */
+  rotateWebhookSecret(sid, { overlapS, ...opts } = {}) {
+    return this.#transport.requestJson('POST', this.#hook(sid, '/rotate-secret'),
+      { json: overlapS != null ? { overlap_s: overlapS } : {}, retry: false, ...opts });
+  }
+  /** One signed `webhook.ping` now; resolves with how the receiver answered. */
+  pingWebhook(sid, opts = {}) { return this.#transport.requestJson('POST', this.#hook(sid, '/ping'), { retry: false, ...opts }); }
+  /** One page of the delivery log, newest first. */
+  webhookDeliveries(sid, { status, cursor, limit } = {}, opts = {}) {
+    return this.#transport.get(this.#hook(sid, '/deliveries'), { status, cursor: cursor ?? undefined, limit }, opts);
+  }
+  webhookDelivery(sid, did, opts = {}) {
+    return this.#transport.get(this.#hook(sid, `/deliveries/${encodeURIComponent(did)}`), undefined, opts);
+  }
+  /** Queues the event of an earlier delivery once more (same `webhook-id`); sent only if still readable. */
+  redeliverWebhook(sid, did, opts = {}) {
+    return this.#transport.requestJson('POST', this.#hook(sid, `/deliveries/${encodeURIComponent(did)}/redeliver`),
+      { retry: false, ...opts });
+  }
+
   // ----- files: the routes that move bytes. They name the credential's workspace in the query
   // (the service refuses any other), which is read once from whoami.
   async #where() {

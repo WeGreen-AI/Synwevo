@@ -67,8 +67,8 @@ python -m synwevo_identity.cli client register crm-sync --app platform --name "C
 * **个人 Agent 的一切**（会话、记忆、个人自动化、报价、预算、付款同意、发起对话）：没有路由，也没有 scope；
   能力层对任何 `via="api"` 调用一律返回 403 `person_required`。
 * 跨工作空间写入（`forms.form.duplicate`）：凭据只属于一个工作空间。
-* 事件推送（签名 Webhook）：尚未实现。发生了什么用事件流**拉取**（§2.5）；异步操作的结果通过对应应用的读取操作或
-  `GET /runs/{id}` 查询。
+* 服务账户的订阅、面向本人或空间管理员的订阅列表：尚未提供（§2.6 末尾）。异步操作的结果通过对应应用的读取操作或
+  `GET /runs/{id}` 查询；发生了什么用事件流拉取（§2.5）或签名 Webhook 推送（§2.6）。
 
 ## 2. 调用
 
@@ -200,6 +200,112 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
   日志此刻仍落后于游标，还是已经重新增长并越过了它。服务端根密钥更换后，旧游标是 400 `invalid_cursor`，同样重新开始。
 * 投递语义是“至少一次、按序”：处理完一页再保存游标；保存前崩溃会重读到同一页，用 `id` 去重。
 
+### 2.6 签名 Webhook（推送）
+
+事件流的推送形式：订阅一个 https 地址，之后**这份凭据此刻能从 `GET /events` 读到的事件**会被签名后 POST 过去。内容与
+事件流的条目完全相同（只说去哪里看，不含记录的数据），`webhook-id` 就是事件的 `id`——推和拉可以共用一张去重表。
+
+| 路由（前缀 `/api/suite/v1/webhooks/subscriptions`） | 作用 |
+|---|---|
+| `POST ""`（201） | 创建；应答里的 `secret`（`whsec_…`）**只出现这一次** |
+| `GET ""`、`GET /{id}` | 本授权自己的订阅（`limit`、`workspace_limit` 一并给出） |
+| `PATCH /{id}` | 改地址、事件或说明；`If-Match: "<version>"`（或 body 里的 `version`）防止覆盖别人的修改，冲突 409 `version_conflict` |
+| `POST /{id}/pause`、`/resume` | 暂停 / 恢复 |
+| `POST /{id}/rotate-secret` | 换签名密钥（`overlap_s` 0–86400，默认一天） |
+| `POST /{id}/ping` | 立即发送一条签名的 `webhook.ping` |
+| `GET /{id}/deliveries`、`GET /{id}/deliveries/{did}` | 投递记录（最新在前，`cursor` 翻页，`status` 过滤） |
+| `POST /{id}/deliveries/{did}/redeliver`（202） | 把那次投递的事件再排一次 |
+| `DELETE /{id}` | 删除：队列清空，密钥销毁 |
+
+`events` 是事件类型、`"<应用>.*"` 或 `"*"`（凭据此刻可读的全部）的列表；点名一个未持有 read scope 的应用是 403
+`insufficient_scope`。创建、换密钥、ping、重新投递**不接受 `Idempotency-Key`**（400 `idempotency_not_supported`）：
+应答里有密钥或会触发一次发送，都不能被存下来重放。
+
+**收到的请求**
+
+```
+POST <你的地址>
+webhook-id: evt_…                    事件 id，与事件流里的 id 相同
+webhook-timestamp: 1790000123        本次尝试的时间（不是事件发生的时间；那是 body 里的 occurred_at）
+webhook-signature: v1,<base64>       轮换重叠期内有两个，空格分隔，任一匹配即可
+X-Synwevo-Subscription: whsub_…      哪个订阅——也就是用哪个密钥验证
+X-Synwevo-Delivery: whdel_…          这条投递记录
+X-Synwevo-Event: tables.record.changed
+
+{"id":"evt_…","type":"tables.record.changed","version":1,"app":"tables","object":{"kind":"table_record","id":"rec_…"},
+ "refs":{"table_id":"tbl_…"},"occurred_at":1790000000.12,"run_id":null,"correlation_id":null,
+ "workspace_id":"ws_…","subscription_id":"whsub_…"}
+```
+
+* **验证**（Standard Webhooks）：对**原始请求体字节**计算 `HMAC-SHA256(密钥, "<webhook-id>.<webhook-timestamp>.<body>")`，
+  与任一 `v1,` 签名做定长比较；`webhook-timestamp` 与当前时间相差超过几分钟的拒绝。不要对重新序列化的 JSON 验签。
+  SDK：`verify_webhook(headers, body, secret)` / `verifyWebhook(...)`。
+* **2xx 表示收下**，须在 15 秒内应答；响应体不会被读取。**不跟随重定向**（3xx 算失败）。**410 表示“别再发了”**：订阅
+  停用（`gone`）。其余应答和连接失败按 5 秒、5 分钟、30 分钟、2、5、10、14、20、24 小时重试（±20%；429 / 503 的
+  `Retry-After` 是下限），共 10 次后该条记为 `failed`。请先收下再处理：因为处理不了而应答非 2xx，会让后面的事件一直
+  排在它之后。
+* **顺序与去重。** 一个订阅的投递按入队顺序一条一条发：最早的一条在重试期间，后面的都不发（ping 不在此列）。语义是
+  “至少一次”——用 `webhook-id` 去重。**同一个地址服务多个人的授权时**，每个授权有自己的订阅、自己的密钥、各自判定的
+  一份：同一事件会以相同的 `webhook-id` 到达多次（`run_id` / `correlation_id` 只在发起者那一份里），去重键是
+  `(subscription_id, webhook-id)`，属于谁以**验签通过的那个密钥**为准；`subscription_id` 在签名覆盖的 body 里。
+* **不会淹没接收端。** 一个订阅最多有 100 条等待中的投递，其余留在日志里按序跟上；同一主机每个工作进程每分钟最多
+  300 个请求（所有订阅合计）。平台自身的故障（解析器繁忙、主机额度用完、签名密钥暂不可读）不计入尝试次数，也不影响
+  订阅的健康度（记录里是 `resolver_busy` / `destination_busy` / `signing_key_unavailable`）。
+
+**谁为订阅负责。** 订阅属于“这个客户端 + 这个人 + 这个工作空间”，别的客户端、别的人、别的空间看到的是 404。投递按
+**绑定它的那组授权**判定——创建它、恢复它、或最后一次改它的地址 / 事件 / 密钥的那一组（只改说明不算）。这些调用把订阅
+绑定到调用方的授权，并按调用方持有的 scope 重新核对整个事件过滤器。`authorized_by_caller` 说明当前调用的授权是不是
+负责的那一组；重新授权（得到新的一组令牌）之后，对仍在运行的订阅调一次 `resume` 即可改绑——不会跳过任何事件。
+
+**授权必须可续期。** 订阅没有自己的期限，所以背后的授权必须是客户端此刻还能刷新的：申请授权时带 `offline_access`，
+否则创建是 403 `grant_not_renewable`。入队时和**每次发送之前**（重试可以持续几天）都重新核对；以下任一成立，订阅停用为
+`authorization_revoked:<原因>`，队列清空，不再发出任何请求：
+
+| 原因 | 含义 |
+|---|---|
+| `grant_revoked` | 本人撤回、令牌被撤销、刷新令牌被重放 |
+| `grant_expired` | 刷新令牌已过期——**只推不拉的集成也要按时刷新令牌**（刷新令牌默认 14 天有效） |
+| `session_ended` | 授权所依据的登录被结束（退出、结束设备、管理员撤销会话） |
+| `entitlement_revoked`、`not_a_member`、`account_unavailable`、`workspace_unavailable` | 本人不再能在该空间使用 |
+| `credential_revoked` | 客户端被停用 |
+| `grant_not_renewable`、`unknown_principal` | 授权不可续期 / 无法确认 |
+
+只是**少了一个 scope、应用在该空间停用、或某条记录本人不再可读**时不停用订阅：对应的事件不发（投递记录为
+`dropped` / `no_longer_readable`），与事件流的过滤一致。其他停用原因：`failing`（连续 3 天且整整一轮 10 次尝试没有一次
+成功）、`backlog_expired`（落后超过事件流的保留期）、`journal_replay`（数据库从更早的备份恢复，而此后订阅曾被暂停、
+改地址、换密钥或停用：请核对地址、重新换密钥后再 `resume`）。任何停用状态都用 `resume` 重新启用。停用超过 30 天的
+`authorization_revoked` 订阅会被删除（密钥一并销毁）。
+
+**停了之后补什么。** 暂停和停用都会丢弃等待中的投递，恢复后**从当下开始**，中间发生的不补发。订阅的
+`missed_events_cursor` 是“上次停在哪里”的事件流游标（属于同一授权，恢复后仍保留）：`resume` 之后用它读
+`GET /events?cursor=…` 就是恰好没推的那一段，按 `id` 去重。它超过事件流保留期后为 null（此时请重新列出记录）。
+只推不拉的集成请定期读一下订阅（`status`、`disabled_reason`、`stalled_since`）。`stalled_since` 非空表示平台一侧出错、
+有一条事件暂时无法判定：它之后的事件都在等，不会被跳过。
+
+**密钥。** 只在创建和轮换的应答里出现一次（`Cache-Control: no-store`），服务端密封保存。轮换后旧密钥在 `overlap_s`
+内继续一起签名（`previous_secret_expires_at`）。**重叠期内再次轮换只替换最新的那一把**，更早的那把及其到期时间不变
+——所以轮换的应答丢了可以直接再轮换一次，接收端手里的旧密钥不会被挤掉；`overlap_s: 0` 立即作废所有旧密钥。
+同一授权对同一地址只能有一个订阅：创建的应答丢了再创建一次，会得到 409 `subscription_exists`（`details.id` 是已有的
+那个），对它 `rotate-secret`（`overlap_s: 0`）即可拿到新密钥。
+
+**地址。** 只接受 https、可公开路由的地址，URL 里不能带账号密码；创建、修改、恢复时检查，**每次发送前再检查一次**，并且
+只连接到刚检查过的那个地址（主机名不会被解析第二次）。“无法解析”和“解析到不允许的地址”是同一个拒绝，不加区分。
+投递记录的 `last_error` 是固定词表（`http_status`、`redirect_not_followed`、`timeout`、`tls_failed`、`connect_failed`、
+`destination_unavailable` 等），从不包含接收端的应答或平台的网络细节。
+
+**限额。** 每组授权 4 个订阅（含已停用的，可自行删除）；每个客户端在一个工作空间 32 个、每个工作空间 64 个启用或暂停的
+订阅（运维可调，超出为 409 `subscription_limit_reached` / `workspace_subscription_limit_reached`）。`ping` 每个订阅
+10 秒一次、每小时 20 次（429 `ping_rate_limited`，带 `Retry-After`），不重试，不计入健康度，对 ping 应答 410 不会停用
+订阅。重新投递：同一事件最多 5 次，事件发生 30 天内，且订阅须处于启用状态；重新投递同样先过全部检查。投递记录保留
+30 天。
+
+**记录。** 创建、改地址或事件、换密钥、暂停、恢复、删除都写入工作空间审计（本人、客户端、目标主机；不含密钥，也不含
+地址的路径）。
+
+**尚未提供。** ① 本人和空间管理员还看不到“哪些地址在接收我的事件”的列表——现在要停止推送，请在「已授权的应用」撤回
+对该客户端的授权（立即生效），或让集成方删除订阅；② 接收地址不需要证明自己愿意接收（没有握手），靠上面的限额约束；
+③ 不能按客户端登记允许的接收主机；④ 服务账户不能订阅。见 [API 覆盖情况](../platform/api-coverage.md)。
+
 ## 3. SDK
 
 Python（`synwevo_docs_sdk`）与 TypeScript（`@synwevo/docs-sdk`）各有独立的 `SuiteClient` 与 `UserToken`：
@@ -237,6 +343,10 @@ const made = await suite.invoke('tables.record.create', { table_id: tid, cells: 
   接受磁盘路径或字节；带键的上传用同一个键重试，`tables_import_upload` 不重试。
 * 事件流：`events_page` / `eventsPage`（一页）、`iter_event_pages` / `eventPages`（逐页，`follow` 时持续轮询）、
   `iter_events` / `events`（逐条）。游标过期是 `GoneError`（`cursor_expired`）。处理完一页后保存该页的 `next_cursor`。
+* Webhook：`create_webhook` / `createWebhook`、`list_webhooks`、`get_webhook`、`update_webhook`（`version`）、
+  `pause_webhook`、`resume_webhook`、`rotate_webhook_secret`、`ping_webhook`、`webhook_deliveries`、`webhook_delivery`、
+  `redeliver_webhook`、`delete_webhook`（TypeScript 为对应的驼峰命名）。会返回密钥或触发发送的调用不自动重试。接收端用
+  `verify_webhook` / `verifyWebhook` 验签（与 Docs 的 Webhook 同一个函数）。
 * `from_env` / `fromEnv` 只读 `SYNWEVO_SUITE_*` 变量，不借用 Docs 或目录接口的凭据。
 * 尚未发布到公共包仓库；从本仓库安装（`apps/docs/sdk/python`、`apps/docs/sdk/typescript`）。
 
@@ -253,4 +363,5 @@ const made = await suite.invoke('tables.record.create', { table_id: tid, cells: 
 | 真实登录 → 同意 → 令牌 → 三个机器接口互不通用 → SDK 刷新轮换 → 重放撤销 → 撤回同意 | `tests/integration/test_suite_machine_flow.py` |
 | 事件流：条目只含路由信息、仅本工作空间、按 read scope、Tables / DataPrep 逐记录可见性、未声明与个人事件不提供、游标密封且只属于持有者、授权缩小即少、恰好一次按序、扫描上限、保留期与 410、契约与实际应答一致 | `apps/suite/tests/test_machine_events.py` |
 | 流程的事件触发器只对所有者此刻可读的记录触发（读取角色、来源丢失、重新可读后不补发） | `apps/suite/tests/test_flow_trigger_visibility.py` |
+| 签名 Webhook：投递 = 事件流条目且同 id、密钥只出现一次并密封、订阅只属于其授权、入队与每次发送前复核（八种授权结束方式 × 已入队/未入队）、授权须可续期、绑定规则、按序与队列上限、落后即停、停止处的补读游标、无法判定时原地等待、本端故障不计尝试、主机额度、未回报的尝试仍计数、地址策略与连接固定、轮换重叠、ping 限额、恢复后不复活、审计、契约与实际应答一致 | `apps/suite/tests/test_machine_webhooks.py` |
 | SDK 重试、键、令牌轮换、事件流翻页与跟随（传输故障夹具） | `apps/docs/sdk/python/tests/test_suite.py`、`apps/docs/sdk/typescript/test/suite.test.mjs` |

@@ -56,6 +56,11 @@ class UrlUnresolvable(UrlRejected):
     it stays a `UrlRejected` so creating a subscription for an unresolvable host is refused."""
 
 
+class ResolverBusy(UrlUnresolvable):
+    """No resolver was free in time: this process's fault, not the host's. A caller that counts
+    attempts against a receiver can tell the two apart; one that does not sees an unresolved host."""
+
+
 def resolve_checked(url: str, *, deadline: float | None = None, allow_http: bool = False,
                     allow_private=(), timeout: float = DEFAULT_TIMEOUT_S,
                     http_refusal: str = "回调默认要求 https") -> list:
@@ -102,7 +107,7 @@ def resolve_checked(url: str, *, deadline: float | None = None, allow_http: bool
 
 def _resolve(host: str, port: int, deadline: float):
     if not _DNS_SLOTS.acquire(timeout=max(0, deadline - time.monotonic())):
-        raise UrlUnresolvable("无法解析回调地址主机：解析超时")
+        raise ResolverBusy("无法解析回调地址主机：解析超时")
     result = Future()
 
     def run():

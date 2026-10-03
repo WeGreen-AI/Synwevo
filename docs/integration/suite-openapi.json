@@ -17408,6 +17408,968 @@
         "x-synwevo-identity": "delegated"
       }
     },
+    "/api/suite/v1/webhooks/subscriptions": {
+      "post": {
+        "operationId": "webhooks.subscription.create",
+        "summary": "Subscribe an https endpoint to the events this credential may read. The signing secret is in this answer and never again. The grant must be renewable (offline_access); one subscription per address, so a second create for the same address is refused with 409 subscription_exists naming the first",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscriptionWithSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookCreate"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "suiteToken": [
+              "approvals.read"
+            ]
+          },
+          {
+            "suiteToken": [
+              "dataprep.read"
+            ]
+          },
+          {
+            "suiteToken": [
+              "extract.read"
+            ]
+          },
+          {
+            "suiteToken": [
+              "forms.read"
+            ]
+          },
+          {
+            "suiteToken": [
+              "tables.read"
+            ]
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      },
+      "get": {
+        "operationId": "webhooks.subscription.list",
+        "summary": "This grant's subscriptions",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscriptionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
+    "/api/suite/v1/webhooks/subscriptions/{sid}": {
+      "get": {
+        "operationId": "webhooks.subscription.get",
+        "summary": "One subscription of this grant",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      },
+      "patch": {
+        "operationId": "webhooks.subscription.update",
+        "summary": "Change the address, the events or the description; If-Match (or `version`) guards against a lost update. Changing the address or the events makes the calling grant the one that answers for the subscription",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookUpdate"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      },
+      "delete": {
+        "operationId": "webhooks.subscription.delete",
+        "summary": "Delete a subscription: its queue is dropped and its secret destroyed",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
+    "/api/suite/v1/webhooks/subscriptions/{sid}/deliveries": {
+      "get": {
+        "operationId": "webhooks.delivery.list",
+        "summary": "The delivery log, newest first",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "pending",
+                "delivered",
+                "failed",
+                "dropped"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeliveryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
+    "/api/suite/v1/webhooks/subscriptions/{sid}/deliveries/{did}": {
+      "get": {
+        "operationId": "webhooks.delivery.get",
+        "summary": "One delivery",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "did",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
+    "/api/suite/v1/webhooks/subscriptions/{sid}/deliveries/{did}/redeliver": {
+      "post": {
+        "operationId": "webhooks.delivery.redeliver",
+        "summary": "Queue the event of an earlier delivery once more; it passes the same checks before it is sent. At most 5 times for one event, within 30 days of the event",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "did",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
+    "/api/suite/v1/webhooks/subscriptions/{sid}/pause": {
+      "post": {
+        "operationId": "webhooks.subscription.pause",
+        "summary": "Stop delivering, including what is already queued (those deliveries end as dropped). Nothing changes if it is already paused",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
+    "/api/suite/v1/webhooks/subscriptions/{sid}/ping": {
+      "post": {
+        "operationId": "webhooks.subscription.ping",
+        "summary": "Send one signed webhook.ping now, through the same checks and connection as a delivery. Not retried, apart from the subscription's health; at most one per 10 s and 20 per hour for a subscription (429 ping_rate_limited with Retry-After)",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
+    "/api/suite/v1/webhooks/subscriptions/{sid}/resume": {
+      "post": {
+        "operationId": "webhooks.subscription.resume",
+        "summary": "Make the subscription active under the calling grant. Paused or disabled: delivers again from the present (what happened meanwhile is in the event feed, not sent). Already active: its place and queue are kept; only the answering grant changes, and nothing at all if that is already the caller's",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
+    "/api/suite/v1/webhooks/subscriptions/{sid}/rotate-secret": {
+      "post": {
+        "operationId": "webhooks.subscription.rotate_secret",
+        "summary": "Issue a new signing secret; the one it replaces keeps signing for the overlap. Rotating again inside an overlap replaces only the newest secret and keeps the earlier one and its end; overlap_s 0 ends every earlier secret at once",
+        "tags": [
+          "credential"
+        ],
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscriptionWithSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookRotate"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "suiteToken": []
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated"
+      }
+    },
     "/api/suite/v1/whoami": {
       "get": {
         "operationId": "whoami",
@@ -17462,6 +18424,83 @@
             "$ref": "#/components/parameters/RequestId"
           }
         ]
+      }
+    }
+  },
+  "webhooks": {
+    "event": {
+      "post": {
+        "operationId": "webhooks.event",
+        "tags": [
+          "credential"
+        ],
+        "summary": "What a subscribed endpoint receives: the feed's item, signed",
+        "description": "Standard Webhooks. `X-Synwevo-Subscription` names the subscription, hence the secret. Verify `webhook-signature` (v1,<base64 HMAC-SHA256(secret, \"<webhook-id>.<webhook-timestamp>.<body>\")>; during a rotation there are two, either may match) over the raw body as received, and reject a `webhook-timestamp` more than a few minutes from now — it is the time of this attempt, not of the event (`occurred_at`). `webhook-id` is the event's id, the same value the feed gives: de-duplicate on it within one grant, and on (subscription, webhook-id) when one endpoint serves several people's grants — each gets its own copy, decided for that person. Answer 2xx within 15 s to accept; 410 to be unsubscribed; anything else, a redirect included, is retried, and later events of the subscription wait behind it: a subscription's deliveries are sent one at a time in the order they were queued. At most 100 wait for one subscription (the rest stay in the log until there is room) and one host is sent at most 300 requests a minute by one worker, whoever subscribed.",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Synwevo-Subscription",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Synwevo-Delivery",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Synwevo-Event",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEvent"
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Accepted. The response body is never read."
+          }
+        }
       }
     }
   },
@@ -23867,6 +24906,845 @@
           },
           "snapshot_hidden": {
             "type": "boolean"
+          }
+        }
+      },
+      "WebhookSubscription": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "workspace_id",
+          "url",
+          "description",
+          "events",
+          "status",
+          "disabled_reason",
+          "status_changed_at",
+          "missed_events_cursor",
+          "stalled_since",
+          "authorized_at",
+          "authorized_by_caller",
+          "created_at",
+          "updated_at",
+          "version",
+          "consecutive_failures",
+          "last_success_at",
+          "last_failure_at",
+          "previous_secret_expires_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "*",
+                "approvals.*",
+                "dataprep.*",
+                "extract.*",
+                "forms.*",
+                "tables.*",
+                "approvals.request.approved",
+                "approvals.request.commented",
+                "approvals.request.created",
+                "approvals.request.rejected",
+                "approvals.request.resumed",
+                "approvals.request.returned",
+                "approvals.request.revised",
+                "approvals.request.stalled",
+                "approvals.request.withdrawn",
+                "approvals.stage.approved",
+                "approvals.stage.escalated",
+                "approvals.stage.opened",
+                "approvals.stage.reminder",
+                "approvals.stage.skipped",
+                "approvals.task.decided",
+                "approvals.task.reassigned",
+                "approvals.task.revoked",
+                "approvals.task.transferred",
+                "approvals.template.published",
+                "dataprep.dataset.created",
+                "dataprep.recipe.published",
+                "dataprep.run.cancelled",
+                "dataprep.run.failed",
+                "dataprep.run.partial",
+                "dataprep.run.queued",
+                "dataprep.run.succeeded",
+                "extract.file.imported",
+                "extract.file.uploaded",
+                "extract.task.cancelled",
+                "extract.task.confirmation",
+                "extract.task.correction",
+                "extract.task.failed",
+                "extract.task.queued",
+                "extract.task.ready",
+                "extract.task.started",
+                "extract.template.archived",
+                "extract.template.created",
+                "extract.template.published",
+                "extract.template.retired",
+                "extract.template.saved",
+                "forms.form.published",
+                "forms.request.closed",
+                "forms.request.created",
+                "forms.request.expired",
+                "forms.request.revoked",
+                "forms.submission.accepted",
+                "forms.submission.changes_requested",
+                "forms.submission.created",
+                "forms.submission.resubmitted",
+                "tables.record.changed",
+                "tables.schema.changed",
+                "tables.table.changed",
+                "tables.view.changed"
+              ]
+            }
+          },
+          "status": {
+            "enum": [
+              "active",
+              "paused",
+              "disabled"
+            ]
+          },
+          "disabled_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why delivery stopped: gone (the receiver answered 410), failing (no success for 3 days and 10 attempts in a row), backlog_expired (it fell further behind than the feed keeps events), journal_replay (the database was restored from before a later pause, move, rotation or disable: check the address, rotate the secret, resume), or authorization_revoked:<code> — the grant that answered for it ended; <code> is one of unknown_principal, account_unavailable, workspace_unavailable, not_a_member, credential_revoked, grant_revoked, grant_not_renewable, grant_expired, session_ended, entitlement_revoked. `resume` re-enables any of them under the calling grant."
+          },
+          "status_changed_at": {
+            "type": "number",
+            "description": "When it became active, paused or disabled."
+          },
+          "missed_events_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where pushing last stopped (a pause, a disable), as a `cursor` for GET /events of this same grant: read from it to get what was not pushed, de-duplicating on the event id. Kept after a resume; null if it never stopped or the place is older than the feed keeps."
+          },
+          "stalled_since": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Set while an event cannot be decided because of a fault on the platform's side: nothing after it is sent until it can be, and nothing is passed over."
+          },
+          "authorized_at": {
+            "type": "number",
+            "description": "When the grant that answers for it was bound: on create, resume, a change of address or events, or a secret rotation."
+          },
+          "authorized_by_caller": {
+            "type": "boolean",
+            "description": "Whether the grant making this call is the one deliveries are decided for. If false, that other grant ending disables the subscription; `resume` binds it to the caller."
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "consecutive_failures": {
+            "type": "integer"
+          },
+          "last_success_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "last_failure_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "previous_secret_expires_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "WebhookSubscriptionWithSecret": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "workspace_id",
+          "url",
+          "description",
+          "events",
+          "status",
+          "disabled_reason",
+          "status_changed_at",
+          "missed_events_cursor",
+          "stalled_since",
+          "authorized_at",
+          "authorized_by_caller",
+          "created_at",
+          "updated_at",
+          "version",
+          "consecutive_failures",
+          "last_success_at",
+          "last_failure_at",
+          "previous_secret_expires_at",
+          "secret"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "*",
+                "approvals.*",
+                "dataprep.*",
+                "extract.*",
+                "forms.*",
+                "tables.*",
+                "approvals.request.approved",
+                "approvals.request.commented",
+                "approvals.request.created",
+                "approvals.request.rejected",
+                "approvals.request.resumed",
+                "approvals.request.returned",
+                "approvals.request.revised",
+                "approvals.request.stalled",
+                "approvals.request.withdrawn",
+                "approvals.stage.approved",
+                "approvals.stage.escalated",
+                "approvals.stage.opened",
+                "approvals.stage.reminder",
+                "approvals.stage.skipped",
+                "approvals.task.decided",
+                "approvals.task.reassigned",
+                "approvals.task.revoked",
+                "approvals.task.transferred",
+                "approvals.template.published",
+                "dataprep.dataset.created",
+                "dataprep.recipe.published",
+                "dataprep.run.cancelled",
+                "dataprep.run.failed",
+                "dataprep.run.partial",
+                "dataprep.run.queued",
+                "dataprep.run.succeeded",
+                "extract.file.imported",
+                "extract.file.uploaded",
+                "extract.task.cancelled",
+                "extract.task.confirmation",
+                "extract.task.correction",
+                "extract.task.failed",
+                "extract.task.queued",
+                "extract.task.ready",
+                "extract.task.started",
+                "extract.template.archived",
+                "extract.template.created",
+                "extract.template.published",
+                "extract.template.retired",
+                "extract.template.saved",
+                "forms.form.published",
+                "forms.request.closed",
+                "forms.request.created",
+                "forms.request.expired",
+                "forms.request.revoked",
+                "forms.submission.accepted",
+                "forms.submission.changes_requested",
+                "forms.submission.created",
+                "forms.submission.resubmitted",
+                "tables.record.changed",
+                "tables.schema.changed",
+                "tables.table.changed",
+                "tables.view.changed"
+              ]
+            }
+          },
+          "status": {
+            "enum": [
+              "active",
+              "paused",
+              "disabled"
+            ]
+          },
+          "disabled_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why delivery stopped: gone (the receiver answered 410), failing (no success for 3 days and 10 attempts in a row), backlog_expired (it fell further behind than the feed keeps events), journal_replay (the database was restored from before a later pause, move, rotation or disable: check the address, rotate the secret, resume), or authorization_revoked:<code> — the grant that answered for it ended; <code> is one of unknown_principal, account_unavailable, workspace_unavailable, not_a_member, credential_revoked, grant_revoked, grant_not_renewable, grant_expired, session_ended, entitlement_revoked. `resume` re-enables any of them under the calling grant."
+          },
+          "status_changed_at": {
+            "type": "number",
+            "description": "When it became active, paused or disabled."
+          },
+          "missed_events_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where pushing last stopped (a pause, a disable), as a `cursor` for GET /events of this same grant: read from it to get what was not pushed, de-duplicating on the event id. Kept after a resume; null if it never stopped or the place is older than the feed keeps."
+          },
+          "stalled_since": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Set while an event cannot be decided because of a fault on the platform's side: nothing after it is sent until it can be, and nothing is passed over."
+          },
+          "authorized_at": {
+            "type": "number",
+            "description": "When the grant that answers for it was bound: on create, resume, a change of address or events, or a secret rotation."
+          },
+          "authorized_by_caller": {
+            "type": "boolean",
+            "description": "Whether the grant making this call is the one deliveries are decided for. If false, that other grant ending disables the subscription; `resume` binds it to the caller."
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "consecutive_failures": {
+            "type": "integer"
+          },
+          "last_success_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "last_failure_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "previous_secret_expires_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "secret": {
+            "type": "string",
+            "description": "whsec_<base64>. Shown here once; store it now."
+          }
+        }
+      },
+      "WebhookSubscriptionList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "limit",
+          "workspace_limit"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookSubscription"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Subscriptions one grant may have, disabled ones included."
+          },
+          "workspace_limit": {
+            "type": "integer",
+            "description": "Active and paused subscriptions the workspace may have, everyone's together; one client may hold 32."
+          }
+        }
+      },
+      "WebhookCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "events"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "https, to a publicly routable address."
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "enum": [
+                "*",
+                "approvals.*",
+                "dataprep.*",
+                "extract.*",
+                "forms.*",
+                "tables.*",
+                "approvals.request.approved",
+                "approvals.request.commented",
+                "approvals.request.created",
+                "approvals.request.rejected",
+                "approvals.request.resumed",
+                "approvals.request.returned",
+                "approvals.request.revised",
+                "approvals.request.stalled",
+                "approvals.request.withdrawn",
+                "approvals.stage.approved",
+                "approvals.stage.escalated",
+                "approvals.stage.opened",
+                "approvals.stage.reminder",
+                "approvals.stage.skipped",
+                "approvals.task.decided",
+                "approvals.task.reassigned",
+                "approvals.task.revoked",
+                "approvals.task.transferred",
+                "approvals.template.published",
+                "dataprep.dataset.created",
+                "dataprep.recipe.published",
+                "dataprep.run.cancelled",
+                "dataprep.run.failed",
+                "dataprep.run.partial",
+                "dataprep.run.queued",
+                "dataprep.run.succeeded",
+                "extract.file.imported",
+                "extract.file.uploaded",
+                "extract.task.cancelled",
+                "extract.task.confirmation",
+                "extract.task.correction",
+                "extract.task.failed",
+                "extract.task.queued",
+                "extract.task.ready",
+                "extract.task.started",
+                "extract.template.archived",
+                "extract.template.created",
+                "extract.template.published",
+                "extract.template.retired",
+                "extract.template.saved",
+                "forms.form.published",
+                "forms.request.closed",
+                "forms.request.created",
+                "forms.request.expired",
+                "forms.request.revoked",
+                "forms.submission.accepted",
+                "forms.submission.changes_requested",
+                "forms.submission.created",
+                "forms.submission.resubmitted",
+                "tables.record.changed",
+                "tables.schema.changed",
+                "tables.table.changed",
+                "tables.view.changed"
+              ]
+            },
+            "description": "Event types, \"<app>.*\" or \"*\" (everything the credential may read)."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "WebhookUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "https, to a publicly routable address."
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "enum": [
+                "*",
+                "approvals.*",
+                "dataprep.*",
+                "extract.*",
+                "forms.*",
+                "tables.*",
+                "approvals.request.approved",
+                "approvals.request.commented",
+                "approvals.request.created",
+                "approvals.request.rejected",
+                "approvals.request.resumed",
+                "approvals.request.returned",
+                "approvals.request.revised",
+                "approvals.request.stalled",
+                "approvals.request.withdrawn",
+                "approvals.stage.approved",
+                "approvals.stage.escalated",
+                "approvals.stage.opened",
+                "approvals.stage.reminder",
+                "approvals.stage.skipped",
+                "approvals.task.decided",
+                "approvals.task.reassigned",
+                "approvals.task.revoked",
+                "approvals.task.transferred",
+                "approvals.template.published",
+                "dataprep.dataset.created",
+                "dataprep.recipe.published",
+                "dataprep.run.cancelled",
+                "dataprep.run.failed",
+                "dataprep.run.partial",
+                "dataprep.run.queued",
+                "dataprep.run.succeeded",
+                "extract.file.imported",
+                "extract.file.uploaded",
+                "extract.task.cancelled",
+                "extract.task.confirmation",
+                "extract.task.correction",
+                "extract.task.failed",
+                "extract.task.queued",
+                "extract.task.ready",
+                "extract.task.started",
+                "extract.template.archived",
+                "extract.template.created",
+                "extract.template.published",
+                "extract.template.retired",
+                "extract.template.saved",
+                "forms.form.published",
+                "forms.request.closed",
+                "forms.request.created",
+                "forms.request.expired",
+                "forms.request.revoked",
+                "forms.submission.accepted",
+                "forms.submission.changes_requested",
+                "forms.submission.created",
+                "forms.submission.resubmitted",
+                "tables.record.changed",
+                "tables.schema.changed",
+                "tables.table.changed",
+                "tables.view.changed"
+              ]
+            },
+            "description": "Event types, \"<app>.*\" or \"*\" (everything the credential may read)."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "version": {
+            "type": "integer"
+          }
+        }
+      },
+      "WebhookRotate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "overlap_s": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400,
+            "default": 86400
+          }
+        }
+      },
+      "WebhookDeleted": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "string"
+          }
+        }
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "webhook_id",
+          "event_type",
+          "status",
+          "attempts",
+          "last_code",
+          "last_error",
+          "duration_ms",
+          "created_at",
+          "delivered_at",
+          "next_attempt_at",
+          "redelivery",
+          "redelivery_of"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "webhook_id": {
+            "type": "string",
+            "description": "The event's id: the dedupe key."
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "delivered",
+              "failed",
+              "dropped"
+            ]
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "last_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What ended the last attempt: one of http_status, redirect_not_followed, timeout, tls_failed, connect_failed, destination_unavailable, internal_error, attempts_exhausted; why a pending delivery waits through no fault of the receiver (not counted as an attempt): resolver_busy, destination_busy, signing_key_unavailable, subscription_changed; or why it was dropped unsent: subscription_paused, subscription_deleted, subscription_disabled:<reason>, no_longer_readable, event_out_of_window, event_missing. Never a receiver's answer and never the platform's view of the network."
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "delivered_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "next_attempt_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "redelivery": {
+            "type": "boolean"
+          },
+          "redelivery_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "WebhookDeliveryPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookDelivery"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WebhookEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "type",
+          "version",
+          "app",
+          "object",
+          "refs",
+          "occurred_at",
+          "run_id",
+          "correlation_id",
+          "workspace_id",
+          "subscription_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "approvals.request.approved",
+              "approvals.request.commented",
+              "approvals.request.created",
+              "approvals.request.rejected",
+              "approvals.request.resumed",
+              "approvals.request.returned",
+              "approvals.request.revised",
+              "approvals.request.stalled",
+              "approvals.request.withdrawn",
+              "approvals.stage.approved",
+              "approvals.stage.escalated",
+              "approvals.stage.opened",
+              "approvals.stage.reminder",
+              "approvals.stage.skipped",
+              "approvals.task.decided",
+              "approvals.task.reassigned",
+              "approvals.task.revoked",
+              "approvals.task.transferred",
+              "approvals.template.published",
+              "dataprep.dataset.created",
+              "dataprep.recipe.published",
+              "dataprep.run.cancelled",
+              "dataprep.run.failed",
+              "dataprep.run.partial",
+              "dataprep.run.queued",
+              "dataprep.run.succeeded",
+              "extract.file.imported",
+              "extract.file.uploaded",
+              "extract.task.cancelled",
+              "extract.task.confirmation",
+              "extract.task.correction",
+              "extract.task.failed",
+              "extract.task.queued",
+              "extract.task.ready",
+              "extract.task.started",
+              "extract.template.archived",
+              "extract.template.created",
+              "extract.template.published",
+              "extract.template.retired",
+              "extract.template.saved",
+              "forms.form.published",
+              "forms.request.closed",
+              "forms.request.created",
+              "forms.request.expired",
+              "forms.request.revoked",
+              "forms.submission.accepted",
+              "forms.submission.changes_requested",
+              "forms.submission.created",
+              "forms.submission.resubmitted",
+              "tables.record.changed",
+              "tables.schema.changed",
+              "tables.table.changed",
+              "tables.view.changed",
+              "webhook.ping"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "app": {
+            "enum": [
+              "approvals",
+              "dataprep",
+              "extract",
+              "forms",
+              "tables",
+              null
+            ]
+          },
+          "object": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "refs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Identifiers needed to open the object, by name."
+          },
+          "occurred_at": {
+            "type": "number"
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The run that caused the event, when this client started it."
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The correlation id of the run that caused the event, when this client started that run."
+          },
+          "workspace_id": {
+            "type": "string"
+          },
+          "subscription_id": {
+            "type": "string",
+            "description": "The subscription this copy was decided for — under the signature, so it is that person's grant and no other's."
           }
         }
       }

@@ -177,6 +177,47 @@ test('a stored cursor that is still null starts where the caller said, not from 
   assert.deepEqual(asked, [{ start: 'now' }, { start: 'now' }]);
 });
 
+test('webhook calls that carry a secret or start a send are sent once, without a key', async () => {
+  const calls = [];
+  const fetch = async (url, init) => {
+    const u = new URL(url);
+    calls.push([init.method, u.pathname, init.headers['Idempotency-Key'], init.headers['If-Match'], init.body ? JSON.parse(init.body) : null,
+      Object.fromEntries(u.searchParams)]);
+    // every first attempt of a write fails: what is tried again shows which calls the client considers repeatable
+    const attempts = calls.filter((c) => c[0] === init.method && c[1] === u.pathname).length;
+    if (init.method !== 'GET' && attempts === 1) {
+      return json(503, { error: { code: 'unavailable', message: 'synthetic fixture' } }, { 'Retry-After': '0' });
+    }
+    return json(200, { id: 'whsub_1', version: 2, secret: 'whsec_synthetic', items: [], next_cursor: null, has_more: false });
+  };
+  const client = new SuiteClient('https://workplace.invalid', new UserToken({ accessToken: 'synthetic-access' }), { fetch, ...quiet });
+  const base = '/api/suite/v1/webhooks/subscriptions';
+  assert.throws(() => client.createWebhook({ url: 'https://hooks.invalid/x', events: 'tables.*' }), ValidationError);
+  assert.throws(() => client.getWebhook(''), ValidationError);
+  for (const once of [() => client.createWebhook({ url: 'https://hooks.invalid/x', events: ['tables.*'], description: 'sync' }),
+    () => client.rotateWebhookSecret('whsub 1', { overlapS: 600 }), () => client.pingWebhook('whsub 1'),
+    () => client.redeliverWebhook('whsub 1', 'whdel/1'), () => client.updateWebhook('whsub 1', { events: ['*'] }, { version: 3 }),
+    () => client.deleteWebhook('whsub 1')]) {
+    await assert.rejects(once(), (e) => e.status === 503);        // not tried again
+  }
+  await client.pauseWebhook('whsub 1');                             // these two say the same thing twice safely
+  await client.resumeWebhook('whsub 1');
+  const page = await client.webhookDeliveries('whsub 1', { status: 'failed', cursor: null, limit: 10 });
+  await client.webhookDelivery('whsub 1', 'whdel/1');
+  await client.listWebhooks();
+  assert.deepEqual(page.items, []);
+  assert.deepEqual(calls.map((c) => `${c[0]} ${c[1]}`), [
+    `POST ${base}`, `POST ${base}/whsub%201/rotate-secret`, `POST ${base}/whsub%201/ping`,
+    `POST ${base}/whsub%201/deliveries/whdel%2F1/redeliver`, `PATCH ${base}/whsub%201`, `DELETE ${base}/whsub%201`,
+    `POST ${base}/whsub%201/pause`, `POST ${base}/whsub%201/pause`, `POST ${base}/whsub%201/resume`, `POST ${base}/whsub%201/resume`,
+    `GET ${base}/whsub%201/deliveries`, `GET ${base}/whsub%201/deliveries/whdel%2F1`, `GET ${base}`]);
+  assert.ok(calls.every((c) => c[2] === undefined), 'no idempotency key on any webhook call');
+  assert.deepEqual(calls[0][4], { url: 'https://hooks.invalid/x', events: ['tables.*'], description: 'sync' });
+  assert.deepEqual(calls[1][4], { overlap_s: 600 });
+  assert.deepEqual([calls[4][3], calls[4][4]], ['"3"', { events: ['*'] }]);
+  assert.deepEqual(calls[10][5], { status: 'failed', limit: '10' });
+});
+
 test('waiting for a run stops at a terminal state or at the deadline', async () => {
   const states = ['queued', 'running', 'succeeded'];
   const fetch = async () => json(200, { id: 'run_1', status: states.shift() ?? 'running' });
