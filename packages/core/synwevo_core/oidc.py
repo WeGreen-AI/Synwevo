@@ -53,7 +53,17 @@ API_SCOPES = ("docweave.read", "docweave.write", "docweave.manage")
 # roles and invitations, for service accounts its owner approved. Its own resource and audience, so
 # a Docs credential cannot reach it and a directory credential cannot reach Docs.
 WORKSPACE_API_SCOPES = ("workspace.read", "workspace.members.write")
-ALL_API_SCOPES = API_SCOPES + WORKSPACE_API_SCOPES
+# The business applications' operations API (workplace origin, /api/suite/v1): Forms, Tables,
+# DataPrep, Approvals and Extract, for a client a person authorised. One resource and audience for
+# the five, a read and a write scope per application, and a separate `decide` scope for the
+# operations that are a person's own decision (an approval decision, confirming an extraction):
+# consenting to "write" must not quietly include "decide as me". Written out rather than derived,
+# so a new scope is a decision; `capabilities.machine_scope` names the scope each operation needs
+# and a test holds the two together. The personal Agent has no scope here on purpose.
+SUITE_API_SCOPES = ("forms.read", "forms.write", "tables.read", "tables.write",
+                    "dataprep.read", "dataprep.write", "extract.read", "extract.write",
+                    "extract.decide", "approvals.read", "approvals.write", "approvals.decide")
+ALL_API_SCOPES = API_SCOPES + WORKSPACE_API_SCOPES + SUITE_API_SCOPES
 SUPPORTED_SCOPES = IDENTITY_SCOPES + ALL_API_SCOPES
 
 # Only these algorithms are ever accepted on a token this platform verifies. Authlib's module
@@ -84,10 +94,13 @@ def docs_resource() -> str:
 
 def api_scope_app(scope: str) -> str | None:
     """The application an API scope belongs to (`docweave.read` -> `docweave`,
-    `workspace.read` -> the platform), or None."""
+    `workspace.read` and `forms.write` -> the platform), or None."""
     if scope in API_SCOPES:
         return scope.split(".", 1)[0]
-    if scope in WORKSPACE_API_SCOPES:
+    if scope in WORKSPACE_API_SCOPES or scope in SUITE_API_SCOPES:
+        # Platform clients: the directory is the platform's own, and one business-application
+        # client may span several applications — each call is checked against the application it
+        # names, live, by the capability layer.
         from .apps import PLATFORM_APP_ID
         return PLATFORM_APP_ID
     return None
@@ -96,6 +109,11 @@ def api_scope_app(scope: str) -> str | None:
 def workspace_resource() -> str:
     """The resource indicator (RFC 8707) of the workspace directory API."""
     return (env.get("WORKSPACE_RESOURCE") or "urn:synwevo:platform:workspace").strip()
+
+
+def suite_resource() -> str:
+    """The resource indicator (RFC 8707) of the business applications' operations API."""
+    return (env.get("SUITE_RESOURCE") or "urn:synwevo:platform:suite").strip()
 
 
 def _docs_app_id() -> str:
@@ -231,6 +249,14 @@ class Clients:
         bad = [s for s in api_scopes.split() if s not in ALL_API_SCOPES]
         if bad:
             raise ServiceError(400, "bad_scope", f"未知的接口权限：{' '.join(bad)}")
+        own = [s for s in api_scopes.split() if s in SUITE_API_SCOPES]
+        if own:
+            # `api_scopes` is what a service account may hold with nobody behind it. Every business
+            # application operation is recorded and authorized for a person today, so these scopes
+            # exist only as something a person delegates (`scopes`).
+            raise ServiceError(400, "suite_delegation_only",
+                               f"业务应用操作接口的权限（{' '.join(sorted(own))}）目前只能由本人授权给客户端，"
+                               "不能登记为服务账户权限")
         unknown = [s for s in (scopes or "").split() if s not in SUPPORTED_SCOPES]
         if unknown:
             raise ServiceError(400, "bad_scope", f"未知的权限：{' '.join(unknown)}")
@@ -266,6 +292,8 @@ class Clients:
             auds = [docs_resource()]
         elif not auds and has_api and any(s in WORKSPACE_API_SCOPES for s in api_scopes.split()):
             auds = [workspace_resource()]
+        elif not auds and any(s in SUITE_API_SCOPES for s in (scopes or "").split()):
+            auds = [suite_resource()]
         ts = now()
         self.store.execute(
             "INSERT INTO oauth_clients (client_id,app_id,name,secret_hash,redirect_uris,"

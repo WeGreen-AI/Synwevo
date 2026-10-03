@@ -230,7 +230,8 @@ def test_concurrent_corrections_and_human_only(ex):
     def correct(value):
         try:
             return ex.caps.invoke("extract.task.correct", {"task_id": rid, "revision": 1, "values": {"amount": value}, "note": "Fixture correction"},
-                user_id=ex.people.uid("alice"), workspace_id=ex.people.a, via="api")["output"]
+                user_id=ex.people.uid("alice"), workspace_id=ex.people.a, via="api",
+                scopes=frozenset({"extract.decide"}))["output"]
         except ServiceError as err:
             return err.code
     with ThreadPoolExecutor(2) as pool:

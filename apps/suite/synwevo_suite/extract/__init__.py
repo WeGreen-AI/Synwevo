@@ -15,7 +15,7 @@ MANIFEST = AppManifest(id="extract", name="Synwevo Extract", path="/extract", ic
     summary={"zh-Hans": "从真实文件提取字段，核对来源，保留人工修正和确认版本。",
              "zh-Hant": "從真實檔案提取欄位，核對來源，保留人工修正和確認版本。",
              "en": "Extract fields from real files, check sources and preserve correction and confirmation versions."},
-    object_kinds=("extract_template", "extract_task", "extract_file"), **_paths)
+    object_kinds=("extract_template", "extract_task", "extract_file"), machine=True, **_paths)
 
 
 def install(ctx):

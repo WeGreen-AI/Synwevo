@@ -132,12 +132,17 @@ def apply_security_headers(request: Request, resp) -> None:
 PUBLIC_V1 = ("/api/v1/download/",)          # signed links carry their own proof
 #: The workspace directory API (API-5): machine-only, on the account service, its own resource.
 DIRECTORY_V1 = "/api/workspace/v1"
+#: The business applications' operations API: machine-only, on the workplace origin, its own
+#: resource. Under the applications' prefix, so the roles that do not serve them refuse it too;
+#: unlike everything else there it never reads a session cookie.
+SUITE_V1 = "/api/suite/v1"
+MACHINE_PREFIXES = ("/api/v1", DIRECTORY_V1, SUITE_V1)
 
 
 def machine_path(path: str) -> bool:
-    """A path of a machine API (Docs /api/v1 or the workspace directory): the error envelope,
-    RateLimit headers and call record apply to both."""
-    return path.startswith("/api/v1") or path.startswith(DIRECTORY_V1)
+    """A path of a machine API (Docs /api/v1, the workspace directory, the business applications'
+    operations): the error envelope, RateLimit headers and call record apply to all of them."""
+    return path.startswith(MACHINE_PREFIXES)
 
 #: The roles a process can be composed as. Anything else is refused at startup: an unknown role
 #: used to fall through every branch and start a server whose API answered 404 everywhere while
@@ -1104,7 +1109,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             if machine_path(path):
                 from .api_platform import record_call
                 matched = getattr(request.scope.get("route"), "path", "") or _route_template(request)
-                prefix = DIRECTORY_V1 if path.startswith(DIRECTORY_V1) else "/api/v1"
+                prefix = next((p for p in (DIRECTORY_V1, SUITE_V1) if path.startswith(p)), "/api/v1")
                 template = matched if matched.startswith(prefix + "/") else prefix + "/<unmatched>"
                 try:
                     await run_in_threadpool(record_call, store, getattr(request.state, "principal", None),
@@ -1138,6 +1143,22 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                     lim = decision.refused_by
                     raise ServiceError(429, "rate_limited", f"请求过于频繁（限制 {lim.cap} 次/分钟）",
                                        {"retry_after": decision.retry_after, "limit_scope": "credential" if lim.name == "key" else "workspace",
+                                        "limit": lim.cap, "window_s": 60, "policy_source": lim.source})
+                token = set_tenant(principal["tenant"])
+            elif path.startswith(SUITE_V1):
+                # The business applications' operations: a bearer token for their own audience and
+                # nothing else — no session cookie is read on this branch, so a signed-in browser
+                # is not a credential here and a credential is not a session anywhere else.
+                principal = await run_in_threadpool(machine.verify_suite, request.headers.get("Authorization"))
+                request.state.principal = principal
+                decision = await run_in_threadpool(rate_gate.take, principal)
+                request.state.ratelimit = decision
+                if not decision.allowed:
+                    lim = decision.refused_by
+                    scope = "credential" if lim.name == "key" else "workspace"
+                    where = "此凭据" if scope == "credential" else "本工作空间的全部机器凭据合计"
+                    raise ServiceError(429, "rate_limited", f"请求过于频繁：{where}限制 {lim.cap} 次/分钟",
+                                       {"retry_after": decision.retry_after, "limit_scope": scope,
                                         "limit": lim.cap, "window_s": 60, "policy_source": lim.source})
                 token = set_tenant(principal["tenant"])
             elif path.startswith("/api/v1") and not any(path.startswith(p) for p in PUBLIC_V1):

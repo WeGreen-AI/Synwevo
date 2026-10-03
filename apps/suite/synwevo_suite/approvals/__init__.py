@@ -8,7 +8,8 @@ MANIFEST = AppManifest(
              "en": "Request approval, review the evidence, decide independently and track every revision."},
     object_kinds=("approval_template", "approval_request"),
     object_paths=(("approval_template", "/approvals/w/{workspace}/t/{id}"),
-                  ("approval_request", "/approvals/w/{workspace}/r/{id}")))
+                  ("approval_request", "/approvals/w/{workspace}/r/{id}")),
+    machine=True)
 
 
 def install(ctx):

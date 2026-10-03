@@ -363,7 +363,7 @@ def test_recovered_worker_rechecks_confirmation_at_result_commit(ex, monkeypatch
         # while the job is in flight; no mocked engine result or hand-written business record.
         ex.caps.invoke('extract.task.correct', {**ref, 'values': {'amount': ['1.00', '0.20']},
             'note': 'Correction while the fixture worker is executing'}, via='api',
-            workspace_id=ex.people.a, user_id=ex.people.uid('alice'))
+            scopes=frozenset({'extract.decide'}), workspace_id=ex.people.a, user_id=ex.people.uid('alice'))
         return result
 
     monkeypatch.setattr(service, 'execute', correct_after_processing)

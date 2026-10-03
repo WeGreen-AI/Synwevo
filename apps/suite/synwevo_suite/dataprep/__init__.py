@@ -8,7 +8,8 @@ MANIFEST = AppManifest(id='dataprep', name='Synwevo DataPrep', path='/dataprep',
     object_kinds=('dataprep_dataset', 'dataprep_recipe', 'dataprep_run'),
     object_paths=(('dataprep_dataset', '/dataprep/w/{workspace}/datasets/{id}'),
                   ('dataprep_recipe', '/dataprep/w/{workspace}/recipes/{id}'),
-                  ('dataprep_run', '/dataprep/w/{workspace}/runs/{id}')))
+                  ('dataprep_run', '/dataprep/w/{workspace}/runs/{id}')),
+    machine=True)
 
 
 def install(ctx):

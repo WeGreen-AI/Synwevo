@@ -285,7 +285,7 @@ def record_call(store: Store, principal: dict | None, method: str, route: str, s
     credentials or local paths. Raw headers, body, query and response are never accepted.
     """
     p = principal or {}
-    if not route.startswith(("/api/v1/", "/api/workspace/v1/")) or "?" in route or len(route) > 200:
+    if not route.startswith(("/api/v1/", "/api/workspace/v1/", "/api/suite/v1/")) or "?" in route or len(route) > 200:
         route = "/api/v1/<unmatched>"
     with store.tx():
         store.insert("api_platform_calls", {"id": new_id("call"), "at": now(),

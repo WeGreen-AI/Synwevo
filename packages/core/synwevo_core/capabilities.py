@@ -26,6 +26,8 @@ by the checks above and then by the application's own object-level rules inside 
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -97,6 +99,11 @@ class AppManifest:
     #: Where an object of each kind opens, as (kind, path template) with ``{workspace}`` and
     #: ``{id}`` — result cards and notifications link to the real record through these.
     object_paths: tuple[tuple[str, str], ...] = ()
+    #: Its operations form a machine API: a client a person authorised may call them through
+    #: ``/api/suite/v1`` with this application's scopes (:func:`machine_scope`). Off unless the
+    #: application says so — an adapter for something that has its own API (Docs), or anything
+    #: personal, must not gain a second door by being registered here.
+    machine: bool = False
 
     def object_path(self, kind: str | None, object_id: str | None, workspace_id: str | None) -> str | None:
         for k, template in self.object_paths:
@@ -108,6 +115,8 @@ class AppManifest:
         _text(self.summary, what=f"app {self.id} summary")
         if self.scope not in ("workspace", "personal"):
             raise ValueError(f"app {self.id}: scope must be workspace or personal")
+        if self.machine and self.scope != "workspace":
+            raise ValueError(f"app {self.id}: only a workspace application can have a machine API")
         if not self.path.startswith("/"):
             raise ValueError(f"app {self.id}: path must start with /")
 
@@ -283,6 +292,65 @@ class Call:
             raise refusal
 
 
+def machine_scope(op: Operation, manifest: AppManifest | None) -> str | None:
+    """The API scope a machine caller (``via="api"``) needs for this operation, or None when no
+    machine caller may ask for it at all.
+
+    Derived from what the operation already declares, so the page, the Agent and the machine API
+    cannot disagree about what kind of act it is: a decision that belongs to a person
+    (``unattended=False``) needs the application's ``decide`` scope, which a person grants by name;
+    a pure read needs ``read``; everything else ``write``. Personal operations, applications that
+    did not opt in, and operations that write into a second workspace have no scope — a credential
+    is bound to one workspace and to workspace business, never to a person's own records.
+    Holding the scope is necessary, not sufficient: the person's live role and the application's
+    own rules are checked exactly as for any other caller.
+    """
+    if manifest is None or not manifest.machine or manifest.id != op.app:
+        return None
+    if op.need == "personal" or op.writes_elsewhere:
+        return None
+    if not op.unattended:
+        return f"{op.app}.decide"
+    if op.need == "read" and op.side_effect == "none":
+        return f"{op.app}.read"
+    return f"{op.app}.write"
+
+
+#: The credential a machine call is running under, while its handler runs: the scopes it holds and
+#: the application of the operation it was admitted for. A handler that reaches into another
+#: application on the caller's behalf (DataPrep importing Forms answers, re-checking an Extract
+#: source) is still that credential asking, so `authorize` holds the inner operation to the same
+#: scopes — the person's own authority is necessary there, not sufficient. Set only by
+#: :meth:`Capabilities.invoke`; background workers never inherit it.
+_CREDENTIAL: contextvars.ContextVar[dict | None] = contextvars.ContextVar("synwevo_machine_credential", default=None)
+
+
+@contextlib.contextmanager
+def machine_credential(scopes, app: str):
+    """Hold what follows to a credential's scopes, as :meth:`Capabilities.invoke` does while a
+    handler runs — for the machine API's own reads of stored results, which re-check sources."""
+    entered = _CREDENTIAL.set({"scopes": frozenset(scopes), "app": app})
+    try:
+        yield
+    finally:
+        _CREDENTIAL.reset(entered)
+
+
+def _person_required(op_id: str) -> ServiceError:
+    return ServiceError(403, "person_required",
+                        "这个操作必须由本人在应用里亲自完成，不能通过接口凭据代为执行。", {"operation": op_id})
+
+
+def _scope_refusal(op: Operation, manifest: AppManifest | None, held: frozenset) -> ServiceError | None:
+    required = machine_scope(op, manifest)
+    if required is None:
+        return _person_required(op.id)
+    if required not in held:
+        return ServiceError(403, "insufficient_scope", f"该凭据没有 {required} 权限",
+                            {"required_scope": required, "operation": op.id})
+    return None
+
+
 def role_allows(role: str | None, need: str) -> bool:
     if need == "personal":
         return True
@@ -366,6 +434,12 @@ class Capabilities:
         row = self.store.one("SELECT status FROM apps WHERE id=?", (op.app,))
         if not manifest or not row or row["status"] != "active":
             raise ServiceError(404, "app_unavailable", "该应用未启用或已停用")
+        credential = _CREDENTIAL.get()
+        if credential is not None and op.app != credential["app"]:
+            # Inside a machine call, reaching another application: its own scope, or nothing.
+            refusal = _scope_refusal(op, manifest, credential["scopes"])
+            if refusal:
+                raise refusal
         if op.need == "personal":
             if workspace_id:
                 # A personal operation that accepted a workspace would be a way to smuggle one
@@ -396,13 +470,18 @@ class Capabilities:
     def invoke(self, op_id: str, payload: Any, *, user_id: str, workspace_id: str | None = None,
                via: str = "ui", idempotency_key: str | None = None, correlation_id: str | None = None,
                parent_run_id: str | None = None, delegation: dict | None = None, depth: int = 0,
-               request: Any = None, principal: dict | None = None) -> dict:
+               request: Any = None, principal: dict | None = None,
+               scopes: frozenset | None = None) -> dict:
         """Run one operation for one person in one explicitly named workspace.
 
         Returns ``{"run_id", "operation", "status", "output", "replayed", "workspace_id"}``.
         Raises :class:`ServiceError` for refusals and business errors — a failed run is recorded
         first (except for refusals before a run exists: bad input, no access, unknown operation),
         so the caller's error and the run history agree.
+
+        ``via="api"`` is a credential: ``scopes`` is what it holds (:func:`machine_scope` says what
+        each operation needs). A call made from inside such a call inherits them, and one with
+        neither is refused — there is no unscoped machine caller.
         """
         op = self.registry.get(op_id)
         if op is None:
@@ -420,10 +499,43 @@ class Capabilities:
         if via == "agent" and op.agent == "never":
             raise ServiceError(403, "not_for_agent", "这个操作不能由 Agent 执行，请在应用里亲自完成。",
                                {"operation": op_id})
+        credential = _CREDENTIAL.get()
+        if via == "api":
+            # Whatever HTTP entry passed this along: a credential never reaches a person's own
+            # records (conversations, spending, consents) or an application without a machine
+            # API, and reaches the rest only with the scope each operation names.
+            held = frozenset(scopes) if scopes is not None else None
+            if credential is not None:
+                # Inside a machine call the outer credential is the ceiling: a handler passing
+                # scopes of its own can narrow what it asks with, never widen it.
+                held = credential["scopes"] if held is None else held & credential["scopes"]
+            if held is None:
+                raise _person_required(op_id)
+            refusal = _scope_refusal(op, self.registry.app(op.app), held)
+            if refusal:
+                raise refusal
+            if credential is None:
+                credential = {"scopes": held, "app": op.app}
+        elif scopes is not None:
+            raise ValueError("scopes describe a credential: only via='api' carries them")
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= MAX_IDEMPOTENCY_KEY:
                 raise ServiceError(400, "bad_idempotency_key", "幂等键须为 1–200 个字符")
 
+        entered = _CREDENTIAL.set(credential)
+        try:
+            return self._run(op, payload, user_id=user_id, workspace_id=workspace_id, via=via,
+                             idempotency_key=idempotency_key, correlation_id=correlation_id,
+                             parent_run_id=parent_run_id, delegation=delegation, depth=depth,
+                             request=request, principal=principal)
+        finally:
+            _CREDENTIAL.reset(entered)
+
+    def _run(self, op: Operation, payload: Any, *, user_id: str, workspace_id: str | None, via: str,
+             idempotency_key: str | None, correlation_id: str | None, parent_run_id: str | None,
+             delegation: dict | None, depth: int, request: Any, principal: dict | None) -> dict:
+        """The body of :meth:`invoke`, entered with the caller's credential (if any) in effect."""
+        op_id = op.id
         user, role = self.authorize(op, user_id, workspace_id)
 
         raw = payload if payload is not None else {}
@@ -644,7 +756,13 @@ class Capabilities:
                    canonical(meta)))
 
     def _after(self, call: Call) -> None:
-        self.announce(call.events)
+        # Listeners (flow wake-ups) act for whoever owns what they wake, never for this caller:
+        # nothing they start may run under — or be refused by — this call's credential.
+        outside = _CREDENTIAL.set(None)
+        try:
+            self.announce(call.events)
+        finally:
+            _CREDENTIAL.reset(outside)
 
     def announce(self, events: list[dict]) -> None:
         """Wake the listeners for events that are committed (see ``listeners``)."""

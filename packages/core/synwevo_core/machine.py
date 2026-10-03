@@ -196,6 +196,81 @@ class MachineAuth:
                      "expires_at": row.get("access_expires_at")}
         return enforce_principal(self.store, principal)
 
+    # ------------------------------------------------------------------ business applications
+    def verify_suite(self, header: str | None) -> dict:
+        """The business applications' operations API's caller: a client a person authorised, with a
+        token that names that API and the workspace the person chose when they consented.
+
+        Legacy dw_ keys belong to Docs. Service accounts are refused, not merely unregistered:
+        every operation of these applications is authorized and recorded for a person (their live
+        role, their name on what they create), and a machine with nobody behind it has no such
+        answer yet. What comes out is a `delegated` principal; which application each call may
+        reach, and with what role, is asked again per operation by the capability layer — this
+        gate only establishes who is asking, for whom, where, and with which scopes still standing.
+        """
+        from .api_platform import enforce_principal
+        from .apps import PLATFORM_APP_ID
+        from .oidc import Clients, Grants, SUITE_API_SCOPES, suite_resource
+        from .organizations import workspace_access_failure
+        token = _bearer(header)
+        if not token:
+            raise ServiceError(401, "unauthorized", "缺少凭据（Authorization: Bearer <平台访问令牌>）")
+        if token.startswith("dw_"):
+            raise ServiceError(403, "wrong_credential",
+                               "访问密钥只能调用 Synwevo Docs 接口；业务应用操作接口需要本人授权的访问令牌")
+        row = Grants(self.store).load_access(token)
+        if not row:
+            raise ServiceError(401, "unauthorized", "凭据无效、已过期或已撤销")
+        if row.get("audience") != suite_resource():
+            raise ServiceError(401, "invalid_audience",
+                               f"该访问令牌不是签发给业务应用操作接口的；请申请令牌时带 resource={suite_resource()}",
+                               {"audience": row.get("audience"), "expected": suite_resource()})
+        clients = Clients(self.store)
+        client = clients.get(row["client_id"])
+        if not client:
+            raise ServiceError(401, "client_unavailable", "签发该凭据的客户端已停用")
+        if client.get("app_id") != PLATFORM_APP_ID:
+            raise ServiceError(403, "wrong_audience",
+                               f"该凭据由属于其它应用（{client.get('app_id')}）的客户端取得，不能调用业务应用操作接口")
+        if not row["user_id"] or client.get("kind") == "service":
+            raise ServiceError(403, "wrong_credential",
+                               "业务应用操作接口目前只接受本人授权的访问令牌，服务账户尚未开放",
+                               {"reason": "service_account_not_supported"})
+        held = tuple(s for s in (row["scope"] or "").split() if s in SUITE_API_SCOPES)
+        if not held:
+            raise ServiceError(403, "wrong_credential",
+                               "这是身份凭据，不能用于调用业务接口；请申请带业务应用权限（如 forms.read）的访问令牌")
+        registered = clients.allowed_scopes(client)
+        scopes = tuple(s for s in held if s in registered)
+        if not scopes:
+            raise ServiceError(403, "forbidden",
+                               "签发该凭据的客户端已不再登记这些接口权限（" + " ".join(held) + "）",
+                               {"reason": "scope_withdrawn"})
+        user = self.ident.get_user(row["user_id"])
+        if not user or user["status"] != "active":
+            raise ServiceError(401, "unauthorized", "该凭据背后的账户不可用")
+        ws = row.get("workspace_id")
+        if not ws:
+            raise ServiceError(403, "no_workspace", "该凭据没有绑定工作空间，不能调用业务接口")
+        space = self.ident.get_workspace(ws)
+        if not space or space.get("deleted_at") or space["status"] != "active":
+            raise ServiceError(403, "forbidden", "该工作空间不可用")
+        why = workspace_access_failure(self.store, ws, user["id"])
+        if why:
+            raise ServiceError(403, "forbidden", "你已不是该组织的成员" if why == "not_an_organization_member"
+                               else "该组织当前不可用", {"reason": why})
+        member = self.ident.membership(ws, user["id"])
+        if not member:
+            raise ServiceError(403, "forbidden", "你已不是该工作空间的成员")
+        principal = {"kind": "delegated", "key_id": f"{client['client_id']}:{user['id']}",
+                     "tenant": ws, "scopes": scopes, "user_id": user["id"],
+                     "client_id": client["client_id"],
+                     "name": f"{client['name']}（代表 {user['email']}）",
+                     "lineage": None, "grant_family": row.get("family_id") or row["id"],
+                     "role": member["role"], "can_export": bool(member.get("can_export")),
+                     "expires_at": row.get("access_expires_at")}
+        return enforce_principal(self.store, principal)
+
     # ------------------------------------------------------------------ legacy dw_ keys
     def _legacy_key(self, header: str | None) -> dict:
         """The pre-platform credential, with the platform's workspace and application checks.

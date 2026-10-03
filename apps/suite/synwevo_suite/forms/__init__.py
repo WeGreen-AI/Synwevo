@@ -19,7 +19,8 @@ MANIFEST = AppManifest(
              "en": "Design forms, send fill-in requests, collect answers and files, ask for changes and accept."},
     object_kinds=("form", "form_request", "form_submission"),
     object_paths=(("form", "/forms/w/{workspace}/f/{id}"), ("form_request", "/forms/w/{workspace}/r/{id}"),
-                  ("form_submission", "/forms/w/{workspace}/s/{id}")))
+                  ("form_submission", "/forms/w/{workspace}/s/{id}")),
+    machine=True)
 
 
 def install(ctx) -> None:

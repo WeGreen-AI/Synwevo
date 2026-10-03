@@ -102,7 +102,11 @@ def install(api: FastAPI, plat, *, docs: Any = None, start_jobs: bool = True,
     if registry.app("agent") is not None:
         from .flows import install as install_flows
         install_flows(ctx)
+    from .common.machine import build_machine_router
     from .common.routes import build_router
+    # After every application (and the injected adapters) registered: the machine API gets one
+    # route per operation that exists in this process, and none for one that does not.
+    api.include_router(build_machine_router(ctx))
     api.include_router(build_router(ctx))
     return ctx
 

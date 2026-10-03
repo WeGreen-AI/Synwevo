@@ -7,7 +7,8 @@ MANIFEST = AppManifest(id='tables', name='Synwevo Tables', path='/tables', icon=
              'en': 'Manage typed business data, related records, saved views and change history.'},
     object_kinds=('table', 'table_record', 'table_view'),
     object_paths=(('table', '/tables/w/{workspace}/t/{id}'),
-                  ('table_record', '/tables/w/{workspace}/r/{id}')))
+                  ('table_record', '/tables/w/{workspace}/r/{id}')),
+    machine=True)
 
 
 def install(ctx):
