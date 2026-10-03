@@ -16,6 +16,7 @@ supply "where LibreOffice is installed on this machine".
 """
 from __future__ import annotations
 
+import functools
 import os
 from pathlib import Path
 
@@ -55,6 +56,103 @@ ROOT = repo_root() or Path(__file__).resolve().parent
 @pytest.fixture(scope="session")
 def platform_root() -> Path:
     return ROOT
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "production_password_hash: use the deployed Argon2 parameters "
+                            "(tests of the parameters themselves, rehash upgrades and hash timing)")
+    config.addinivalue_line("markers", "fresh_store_schema: build a new database from nothing instead "
+                            "of starting from the session's migrated template")
+
+
+def pytest_collection_finish(session):
+    """Exempt what collection built from every later full collection.
+
+    Imported modules, test functions and their parameters live for the whole session, yet each
+    `gc.collect()` in the per-test cleanup below traversed all of them again: about 150 ms per
+    test in a full run. Frozen objects are still freed by reference counting; only the cycle
+    collector skips them. Everything created by a test stays collectable exactly as before.
+    """
+    import gc
+
+    gc.collect()
+    gc.freeze()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _migrated_store_template(tmp_path_factory):
+    """Start each new test database from one migrated copy built for the session.
+
+    Creating the schema from nothing runs ~70 additive ALTERs, each of which makes SQLite reparse
+    a ~700-object schema: ~75-120 ms for every one of several thousand test databases. The
+    template keeps only `schema_version` in `meta`, so the normal constructor still runs on the
+    copy and performs every first-open step itself (instance stamping from the environment, the
+    one-time markers); only the column additions it would find already present are skipped.
+    Existing databases, read-only opens and tests marked fresh_store_schema are untouched.
+    """
+    import shutil
+    import sqlite3
+
+    from synwevo_core import store as store_module
+
+    built = tmp_path_factory.mktemp("migrated-store-template")
+    with store_module.Store(built).tx() as t:
+        t.execute("DELETE FROM meta WHERE key<>'schema_version'")
+    template = built / "template.sqlite3"
+    source, target = sqlite3.connect(built / "docweave.sqlite3"), sqlite3.connect(template)
+    try:
+        source.backup(target)  # a consistent single file, WAL contents included
+    finally:
+        source.close()
+        target.close()
+
+    original = store_module.Store.__init__
+
+    def from_template(self, root, migrate=True):
+        db = Path(root) / "docweave.sqlite3"
+        if migrate and not _FRESH_STORE_SCHEMA[0] and not db.exists():
+            db.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(template, db)
+        original(self, root, migrate)
+
+    store_module.Store.__init__ = from_template
+    try:
+        yield
+    finally:
+        store_module.Store.__init__ = original
+
+
+_FRESH_STORE_SCHEMA = [False]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_store_schema(request):
+    _FRESH_STORE_SCHEMA[0] = request.node.get_closest_marker("fresh_store_schema") is not None
+    yield
+    _FRESH_STORE_SCHEMA[0] = False
+
+
+@pytest.fixture(autouse=True)
+def _test_password_hasher(request, monkeypatch):
+    """Argon2 at the deployed cost (46 MiB, t=2) is ~45-100 ms per hash and verification; fixtures
+    create several accounts each, which made hashing about a fifth of a full run. Tests use the
+    same algorithm and code path with test-only parameters; PHC strings carry their parameters,
+    so hashes made either way still verify. Tests about the parameters, rehash upgrades and hash
+    timing keep the real hasher with @pytest.mark.production_password_hash."""
+    if request.node.get_closest_marker("production_password_hash"):
+        return
+    from synwevo_core import passwords
+
+    monkeypatch.setattr(passwords, "_hasher", _test_hasher())
+
+
+@functools.cache
+def _test_hasher():
+    from argon2 import PasswordHasher
+    from argon2.low_level import Type
+
+    return PasswordHasher(time_cost=1, memory_cost=1024, parallelism=1, hash_len=32, salt_len=16,
+                          type=Type.ID)
 
 
 def _release_factory_resources() -> None:

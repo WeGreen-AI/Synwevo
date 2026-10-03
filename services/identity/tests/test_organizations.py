@@ -495,6 +495,7 @@ def test_stale_organization_version_cannot_overwrite_updated_policy(env):
     assert stale.status_code == 409 and stale.json()["error"] == "organization_changed"
 
 
+@pytest.mark.fresh_store_schema  # builds the v5 schema itself
 def test_v5_upgrade_is_additive_without_historical_adoption(tmp_path, monkeypatch):
     """Build a v5-era fixture through Store, then upgrade it through real Store."""
     import synwevo_core.organizations as org_module

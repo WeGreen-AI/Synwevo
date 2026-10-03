@@ -75,6 +75,7 @@ def legacy_money(request, monkeypatch):
     return fixture
 
 
+@pytest.mark.fresh_store_schema  # builds the pre-feature schema itself
 def test_populated_pre_feature_migration_preserves_facts_without_grants(legacy_money):
     old_store, _, users, ticks = legacy_money
     before = _facts(old_store)
@@ -96,6 +97,7 @@ def test_populated_pre_feature_migration_preserves_facts_without_grants(legacy_m
         assert_balanced(reopened)
 
 
+@pytest.mark.fresh_store_schema  # builds the pre-feature schema itself
 def test_first_limits_include_legacy_namespaces_prices_and_old_holds_after_reopen(legacy_money):
     old_store, _, users, ticks = legacy_money
     reopened = Store(old_store.root)

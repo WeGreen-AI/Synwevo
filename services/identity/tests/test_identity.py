@@ -81,6 +81,7 @@ def test_password_may_not_contain_the_account_email_or_name():
         passwords.check_policy("zhangsan-my-long-password", email="zhangsan@example.com")
 
 
+@pytest.mark.production_password_hash
 def test_hash_is_argon2id_with_the_measured_parameters():
     phc = passwords.hash_password(LONG_OK)
     assert phc.startswith("$argon2id$")
@@ -130,6 +131,7 @@ def test_legacy_workspace_never_appears_for_anyone(ident):
 
 
 # ---------------------------------------------------------------- authentication
+@pytest.mark.production_password_hash
 def test_login_succeeds_and_upgrades_a_stale_hash(ident, monkeypatch):
     u = ident.create_user("alice@example.com", LONG_OK, status="active")
     # simulate a hash made with weaker parameters
@@ -154,6 +156,7 @@ def test_wrong_password_and_unknown_account_are_indistinguishable(ident):
     assert (a["ok"], "retry_after" in a) == (b["ok"], "retry_after" in b)
 
 
+@pytest.mark.production_password_hash
 def test_unknown_account_still_pays_for_a_hash(ident):
     """Returning early for an unknown address is enumeration by stopwatch."""
     ident.create_user("alice@example.com", LONG_OK, status="active")
