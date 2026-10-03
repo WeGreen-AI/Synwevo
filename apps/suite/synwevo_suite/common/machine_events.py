@@ -225,7 +225,7 @@ def feed(caps, p: dict, *, cursor: str | None = None, types: str | None = None, 
         known = {t.type: app for app, f in served.items() for t in f.types}
         unknown = sorted(wanted - known.keys())
         if not wanted or len(wanted) > MAX_TYPES or unknown:
-            raise ServiceError(400, "invalid_events", "types 里有未知的事件类型，或数量超出上限",
+            raise ServiceError(400, "invalid_events", f"types 须为 1–{MAX_TYPES} 个以逗号分隔的事件类型，且不能有未知的类型",
                                {"field": "types", "unknown": unknown[:MAX_TYPES], "maximum": MAX_TYPES})
         for name in sorted(wanted):
             if known[name] not in held:
