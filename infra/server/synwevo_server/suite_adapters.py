@@ -422,7 +422,7 @@ class SuiteAdapters:
         if self._ctx is not None or ctx.store is not self.store:
             raise ValueError("One prepared adapter belongs to one Suite context and one Store")
         self._ctx = ctx
-        from .suite_files import register as register_files
+        from .suite_files import register as register_files, register_dataset_input
         register_files(ctx)
         docs = AppManifest(DOCS_APP_ID, "Synwevo Docs", "/", "file-text",
                            T("文档生成与产物", "文件生成與產物", "Document jobs and artifacts"),
@@ -447,6 +447,7 @@ class SuiteAdapters:
            "Page the job's live artifacts through Docs ACLs.", Artifacts, self.artifacts, output=ArtifactsResult)
         op(DOCS_APP_ID, "artifact.get", ("读取产物链接", "讀取產物連結", "Read artifact link"),
            "Read artifact metadata and an authenticated download URL; requires export permission.", Artifact, self.artifact, output=ArtifactLink)
+        register_dataset_input(ctx, self)
         if self.messaging is not None:
             ctx.registry.register_app(AppManifest(MESSAGES_APP_ID, "Synwevo Message", "/messages", "message-circle",
                 T("工作空间会话", "工作空間會話", "Workspace conversations"), object_kinds=("conversation", "message")))
@@ -467,8 +468,30 @@ class SuiteAdapters:
 
     def sync_receipts(self):
         self.sync_jobs()
+        self.sync_inputs()
         if self.messaging is not None:
             self.sync_messages()
+
+    def sync_inputs(self):
+        """Settle dataset-to-document inputs from the source's real check/parse outcome."""
+        rows = self.store.all("SELECT id,workspace_id,output FROM op_runs WHERE op=? AND status IN ('queued','running') "
+                              "ORDER BY id LIMIT 200", (f"{DOCS_APP_ID}.project.from_dataset",))
+        for row in rows:
+            out = _json(row["output"])
+            try:
+                with as_tenant(row["workspace_id"]):
+                    source = self.docs.get_source(out.get("source_id"))
+            except ServiceError as err:
+                if err.status == 404:
+                    self._ctx.capabilities.update_run(row["id"], "failed", output={**out, "state": "failed", "error_code": "source_missing"},
+                                                      error=ServiceError(409, "source_missing", "文档输入已不存在"))
+                continue
+            if source.get("status") == "ready":
+                self._ctx.capabilities.update_run(row["id"], "succeeded", output={**out, "state": "ready", "error_code": None})
+            elif source.get("status") in ("rejected", "scan_failed", "failed", "needs_ocr"):
+                code = "source_" + source["status"]
+                self._ctx.capabilities.update_run(row["id"], "failed", output={**out, "state": "failed", "error_code": code},
+                                                  error=ServiceError(409, code, "文档输入未通过检查或解析"))
 
     def sync_messages(self):
         """Settle queued sends from what Message actually did; never sends or re-queues anything."""

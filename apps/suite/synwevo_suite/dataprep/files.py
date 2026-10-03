@@ -230,11 +230,14 @@ def export_csv(table: Table):
     return ('\ufeff' + output.getvalue()).encode('utf-8')
 
 
-def export_xlsx(table: Table):
+def export_xlsx(table: Table, sheet_name: str = 'Data'):
     from openpyxl import Workbook as Writer
     from openpyxl.cell import WriteOnlyCell
+    from openpyxl.workbook.child import INVALID_TITLE_REGEX
+    if not isinstance(sheet_name, str) or not 1 <= len(sheet_name) <= 31 or INVALID_TITLE_REGEX.search(sheet_name):
+        refuse('xlsx_invalid_sheet')
     book = Writer(write_only=True)
-    sheet = book.create_sheet('Data')
+    sheet = book.create_sheet(sheet_name)
     # Explicit string cells prevent formula execution and preserve identifiers and precision.
     from itertools import chain
     from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
