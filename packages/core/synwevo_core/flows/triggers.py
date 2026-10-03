@@ -82,7 +82,9 @@ class Triggers:
 
     @staticmethod
     def _trigger_public(row):
-        return {k: v for k, v in row.items() if k not in ("spec_json", "policy_json")} | {
+        # `cursor` is this trigger's place in the event log, which counts every workspace's events:
+        # shown, it would tell its owner how busy everyone else is. It stays the engine's.
+        return {k: v for k, v in row.items() if k not in ("spec_json", "policy_json", "cursor")} | {
             "trigger": json.loads(row["spec_json"]), "policy": json.loads(row["policy_json"])}
 
     def trigger_view(self, trigger_id, *, user_id):

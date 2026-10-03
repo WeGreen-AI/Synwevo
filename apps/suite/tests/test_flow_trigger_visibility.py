@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from synwevo_core.apps import Apps
+from synwevo_core.capabilities import record_event
 from synwevo_core.flows import Flows
 
 
@@ -202,6 +203,25 @@ def test_losing_the_application_itself_is_still_refused_with_its_reason(watch):
     used, error, receipts = w.state(bob)
     assert w.fired(bob) == [] and used == 0
     assert error == "app_access_denied" and receipts == [("refused", "app_access_denied")]
+
+
+def test_a_triggers_place_in_the_event_log_is_not_shown_to_its_owner(watch):
+    """`flow_triggers.cursor` counts every workspace's events. Neither reading a trigger nor listing
+    a flow's triggers returns it."""
+    w, p = watch, watch.p
+    bob = w.on("tables.record.changed", "bob")
+    with p.store.tx() as t:                                # activity elsewhere moves the log on
+        for i in range(5):
+            record_event(t, type_="tables.table.changed", app="tables", workspace_id=p.b, object_kind="table",
+                         object_id=f"tbl_elsewhere{i}", data={"table_id": f"tbl_elsewhere{i}"})
+    w.tick()
+    stored = w.store.one("SELECT flow_id, cursor FROM flow_triggers WHERE id=?", (bob,))
+    assert stored["cursor"] >= 5
+    one = w.caps.invoke("agent.flow.trigger.get", {"trigger_id": bob}, user_id=p.uid("bob"))["output"]
+    listed = w.caps.invoke("agent.flow.trigger.list", {"flow_id": stored["flow_id"]}, user_id=p.uid("bob"))["output"]
+    for shown in (one, listed["triggers"][0]):
+        assert "cursor" not in shown and shown["id"] == bob and shown["trigger"]["event_type"] == "tables.record.changed"
+        assert stored["cursor"] not in shown.values()
 
 
 def test_an_owner_who_is_no_longer_available_is_still_refused_not_skipped(watch):
