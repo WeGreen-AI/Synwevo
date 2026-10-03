@@ -22,6 +22,11 @@ export declare const API_PREFIX: '/api/v1';
 export declare const WORKSPACE_BASE_URL: 'https://accounts.synwevo.com';
 export declare const WORKSPACE_RESOURCE: 'urn:synwevo:platform:workspace';
 export declare const WORKSPACE_API_PREFIX: '/api/workspace/v1';
+export declare const SUITE_BASE_URL: 'https://workplace.synwevo.com';
+export declare const SUITE_TOKEN_URL: 'https://accounts.synwevo.com/oidc/token';
+export declare const SUITE_RESOURCE: 'urn:synwevo:platform:suite';
+export declare const SUITE_API_PREFIX: '/api/suite/v1';
+export declare const SUITE_TERMINAL_STATUSES: readonly ['succeeded', 'partial', 'failed', 'cancelled'];
 export declare const TERMINAL_STATUSES: readonly ['completed', 'completed_with_errors', 'failed', 'cancelled'];
 export declare const SUCCESS_STATUSES: readonly ['completed', 'completed_with_errors'];
 export declare const ERROR_POLICIES: readonly ['block', 'skip'];
@@ -239,6 +244,67 @@ export declare class ClientCredentials implements Credentials {
   invalidate(): void;
   authorization(): Promise<string>;
   toJSON(): { type: 'client_credentials'; token_url: string; client_id: string; scope: string | null };
+}
+
+/** What `onRotate` receives after every refresh. Store it: the previous refresh token is spent. */
+export interface RotatedTokens {
+  accessToken: string;
+  /** null when the token endpoint returned no successor (the grant has no `offline_access`). */
+  refreshToken: string | null;
+  /** Seconds since the epoch. */
+  expiresAt: number;
+  scope: string | null;
+}
+
+export interface UserTokenOptions {
+  /** At least one of accessToken / refreshToken. */
+  accessToken?: string | null;
+  /** Needs tokenUrl and clientId. Single use: each refresh replaces it. */
+  refreshToken?: string | null;
+  tokenUrl?: string | null;
+  clientId?: string | null;
+  /** For a confidential client (client_secret_post). */
+  clientSecret?: string | null;
+  /** RFC 8707 resource, e.g. `urn:synwevo:platform:suite`. */
+  resource?: string | null;
+  /** When the given access token expires, seconds since the epoch. Unknown: used until refused. */
+  expiresAt?: number | null;
+  /** Awaited after each refresh, before the new access token is used. */
+  onRotate?: ((tokens: RotatedTokens) => void | Promise<void>) | null;
+  fetch?: FetchLike;
+  /** Token request timeout. Default 30 000. */
+  timeoutMs?: number;
+  /** Refresh this many seconds before the access token expires. Default 60. */
+  refreshMarginS?: number;
+}
+
+/**
+ * A person's delegation to this client (authorization code + PKCE): an access token, replaced
+ * with a rotating refresh token when the person granted `offline_access`. Presenting a spent
+ * refresh token revokes the whole grant, so persist what `onRotate` receives.
+ */
+export declare class UserToken implements Credentials {
+  /** @throws ValidationError without a token, or with a refresh token but no tokenUrl / clientId. */
+  constructor(options: UserTokenOptions);
+  tokenUrl: string | null;
+  clientId: string | null;
+  /** Not enumerable. */
+  readonly clientSecret: string | null;
+  resource: string | null;
+  onRotate: ((tokens: RotatedTokens) => void | Promise<void>) | null;
+  fetch: FetchLike;
+  timeoutMs: number;
+  refreshMarginS: number;
+  /** The scope the token endpoint last reported, or null before the first refresh. */
+  grantedScope: string | null;
+  /** True while a refresh token is held. */
+  readonly refreshable: boolean;
+  /** Seconds since the epoch, or null when unknown or no access token is held. */
+  readonly expiresAt: number | null;
+  invalidate(): void;
+  /** @throws AuthenticationError (`token_expired`) when no token is usable and none can be fetched. */
+  authorization(): Promise<string>;
+  toJSON(): { type: 'user_token'; client_id: string | null; refreshable: boolean };
 }
 
 /**
@@ -1645,6 +1711,117 @@ export declare class WorkspaceClient {
   /** expectedRole must be the role most recently read; stale state is 409 role_changed. */
   changeMember(id: string, input: { role: DirectoryManagedRole; expectedRole: DirectoryManagedRole }): Promise<WithMeta<DirectoryMemberChanged>>;
   removeMember(id: string, input: { expectedRole: DirectoryManagedRole; reason: string }): Promise<WithMeta<DirectoryMemberRemoved>>;
+}
+
+// ============================================================================ business applications
+export type SuiteRunStatus = 'queued' | 'running' | 'waiting_input' | 'waiting_approval' | 'succeeded' | 'partial'
+  | 'failed' | 'cancelled' | 'unknown';
+export type SuiteScope = 'forms.read' | 'forms.write' | 'tables.read' | 'tables.write' | 'dataprep.read'
+  | 'dataprep.write' | 'extract.read' | 'extract.write' | 'extract.decide' | 'approvals.read' | 'approvals.write'
+  | 'approvals.decide';
+
+export interface SuiteWhoami {
+  kind: 'delegated';
+  client_id: string;
+  user_id: string;
+  /** The one workspace this credential acts in. */
+  workspace_id: string;
+  /** The person's current role there; it caps what any scope allows. */
+  role: 'owner' | 'admin' | 'editor' | 'viewer';
+  scopes: SuiteScope[];
+  resource: string;
+  /** The applications the person can use in this workspace now. */
+  apps: string[];
+  expires_at: number | null;
+}
+
+export interface SuiteOperation {
+  id: string;
+  app: string;
+  version: number;
+  title: { 'zh-Hans': string; 'zh-Hant': string; en: string };
+  summary: string;
+  path: string;
+  /** The scope this operation needs. */
+  scope: SuiteScope;
+  /** Whether this credential holds it. */
+  granted: boolean;
+  need: 'read' | 'write' | 'manage';
+  side_effect: 'none' | 'write' | 'external';
+  mode: 'sync' | 'async';
+  cancellable: boolean;
+  /** `required`: the server refuses the call without a key. `none`: a read; keys are ignored. */
+  idempotency: 'required' | 'supported' | 'none';
+  events: string[];
+  object_kind: string | null;
+  /** JSON Schema of `input`. */
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown> | null;
+}
+
+export interface SuiteOperations {
+  workspace_id: string;
+  operations: SuiteOperation[];
+  apps: Record<string, unknown>[];
+}
+
+/** One call's answer. A `status` other than succeeded / partial means accepted, not finished. */
+export interface SuiteResult<Output = JSONValue> {
+  run_id: string;
+  operation: string;
+  status: SuiteRunStatus;
+  output: Output;
+  /** An earlier call's answer: same client, same key, same input. Also on `$meta.replayed`. */
+  replayed: boolean;
+  workspace_id: string;
+}
+
+export interface SuiteRun {
+  id: string;
+  operation: string;
+  app: string;
+  workspace_id: string;
+  status: SuiteRunStatus;
+  via: 'api';
+  /** Never returned: read parameters through the application's own operations. */
+  input: null;
+  /** null while `snapshot_hidden`. */
+  output: JSONValue;
+  error: { code: string } | null;
+  object: { kind: string; id: string } | null;
+  correlation_id: string;
+  created_at: number;
+  finished_at: number | null;
+  /** The stored result is withheld: what it was made from is no longer readable by this credential. */
+  snapshot_hidden: boolean;
+}
+
+export interface SuiteInvokeOptions extends RequestOptions {
+  /** 1–128 visible ASCII characters. Default: a new UUID for this call (kept across its retries). */
+  idempotencyKey?: string;
+  correlationId?: string;
+}
+
+export type SuiteClientOptions = Omit<ClientOptions, 'multipartMaxBytes' | 'chunkBytes'>;
+
+/**
+ * Operations of Synwevo Forms, Tables, DataPrep, Extract and Approvals for a client a person
+ * authorised. Independent of the Docs API; the personal Agent is not part of it.
+ */
+export declare class SuiteClient {
+  /** Passing undefined for baseUrl selects https://workplace.synwevo.com. @throws ValidationError unless credentials is a UserToken. */
+  constructor(baseUrl: string | URL | undefined, credentials: UserToken, options?: SuiteClientOptions);
+  /** Only SYNWEVO_SUITE_* variables; the suite resource is fixed. */
+  static fromEnv(env?: Record<string, string | undefined>,
+    options?: SuiteClientOptions & { onRotate?: UserTokenOptions['onRotate'] }): Promise<SuiteClient>;
+  readonly baseUrl: string;
+  whoami(options?: RequestOptions): Promise<WithMeta<SuiteWhoami>>;
+  operations(query?: { app?: string }, options?: RequestOptions): Promise<WithMeta<SuiteOperations>>;
+  /** @throws ValidationError for a malformed operation id, key or input; APIError for a refusal. */
+  invoke<Output = JSONValue>(operation: string, input?: Record<string, unknown>, options?: SuiteInvokeOptions): Promise<WithMeta<SuiteResult<Output>>>;
+  run(runId: string, options?: RequestOptions): Promise<WithMeta<SuiteRun>>;
+  /** @throws WaitTimeoutError (`details` is the last state) when the run has not settled in time. */
+  wait(runId: string, options?: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal }): Promise<WithMeta<SuiteRun>>;
 }
 
 export declare class Client {

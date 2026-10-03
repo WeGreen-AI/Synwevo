@@ -40,6 +40,11 @@ export const API_PREFIX = '/api/v1';
 export const WORKSPACE_BASE_URL = 'https://accounts.synwevo.com';
 export const WORKSPACE_RESOURCE = 'urn:synwevo:platform:workspace';
 export const WORKSPACE_API_PREFIX = '/api/workspace/v1';
+export const SUITE_BASE_URL = 'https://workplace.synwevo.com';
+export const SUITE_TOKEN_URL = 'https://accounts.synwevo.com/oidc/token';
+export const SUITE_RESOURCE = 'urn:synwevo:platform:suite';
+export const SUITE_API_PREFIX = '/api/suite/v1';
+export const SUITE_TERMINAL_STATUSES = Object.freeze(['succeeded', 'partial', 'failed', 'cancelled']);
 export const TERMINAL_STATUSES = Object.freeze(['completed', 'completed_with_errors', 'failed', 'cancelled']);
 export const SUCCESS_STATUSES = Object.freeze(['completed', 'completed_with_errors']);
 export const ERROR_POLICIES = Object.freeze(['block', 'skip']);
@@ -255,6 +260,100 @@ export class ClientCredentials {
     if (!body.access_token) throw new AuthenticationError('令牌端点没有返回 access_token', { status: res.status });
     this._token = body.access_token;
     this._expiresAt = Date.now() / 1000 + Number(body.expires_in || 300);
+  }
+}
+
+/**
+ * A person's delegation to this client (authorization code + PKCE at the account service): the
+ * access token and, when the person granted `offline_access`, the refresh token that replaces it.
+ *
+ * A refresh token is single use. Every refresh returns its successor, which is passed to
+ * `onRotate` — store it: the previous one is spent, and presenting a spent refresh token revokes
+ * the person's whole grant. A refresh whose answer never arrived is tried again with the same
+ * token on the next call; if the server had already spent it the grant ends and the person has to
+ * authorise the client again.
+ */
+export class UserToken {
+  constructor({ accessToken = null, refreshToken = null, tokenUrl = null, clientId = null, clientSecret = null,
+    resource = null, expiresAt = null, onRotate = null, fetch: fetchImpl = globalThis.fetch, timeoutMs = 30_000,
+    refreshMarginS = 60 } = {}) {
+    const access = typeof accessToken === 'string' && accessToken.trim() ? accessToken.trim() : null;
+    const refresh = typeof refreshToken === 'string' && refreshToken.trim() ? refreshToken.trim() : null;
+    if (!access && !refresh) throw new ValidationError('用户授权凭据需要 accessToken 或 refreshToken', { field: 'user_token' });
+    if (refresh && !(tokenUrl && clientId)) {
+      throw new ValidationError('使用 refreshToken 时还需要 tokenUrl 与 clientId', { field: 'user_token' });
+    }
+    this.tokenUrl = tokenUrl;
+    this.clientId = clientId;
+    this.resource = resource;
+    this.onRotate = onRotate;
+    this.fetch = fetchImpl;
+    this.timeoutMs = timeoutMs;
+    this.refreshMarginS = refreshMarginS;
+    this.grantedScope = null;
+    // Kept off the enumerable properties so console.log(client) cannot print a token or the secret.
+    for (const [name, value] of Object.entries({ clientSecret, _access: access, _refresh: refresh })) {
+      Object.defineProperty(this, name, { value, writable: name !== 'clientSecret', enumerable: false });
+    }
+    this._expiresAt = expiresAt == null ? null : Number(expiresAt);
+    this._pending = null;
+  }
+
+  get refreshable() { return Boolean(this._refresh); }
+  get expiresAt() { return this._access ? this._expiresAt : null; }
+  /** The API refused the access token. With a refresh token there is one more thing to try. */
+  invalidate() { if (this._refresh) this._access = null; }
+  toJSON() { return { type: 'user_token', client_id: this.clientId, refreshable: this.refreshable }; }
+
+  async authorization() {
+    const stale = !this._access
+      || (this._expiresAt != null && Date.now() / 1000 >= this._expiresAt - this.refreshMarginS);
+    if (stale && this._refresh) {
+      // Concurrent callers share one exchange: a second one would present a spent token.
+      this._pending ??= this._rotate().finally(() => { this._pending = null; });
+      await this._pending;
+    }
+    if (!this._access) {
+      throw new AuthenticationError('访问令牌已失效，且没有可用的刷新令牌；请让本人重新授权', { status: 401, code: 'token_expired' });
+    }
+    return `Bearer ${this._access}`;
+  }
+
+  async _rotate() {
+    const form = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: this._refresh, client_id: this.clientId });
+    if (this.clientSecret) form.set('client_secret', this.clientSecret);
+    if (this.resource) form.set('resource', this.resource);
+    let res;
+    try {
+      res = await this.fetch(this.tokenUrl, { method: 'POST', body: form, signal: AbortSignal.timeout(this.timeoutMs), redirect: 'manual',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' } });
+    } catch (e) {
+      throw new TransportError(`无法连接令牌端点：${e.message}`, { method: 'POST', url: this.tokenUrl, cause: e });
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      const err = errorFromResponse(res.status, res.headers, text, { method: 'POST', url: this.tokenUrl });
+      if (res.status === 400 || res.status === 401) {
+        // invalid_grant: spent, expired or withdrawn. Nothing this process holds can fix it.
+        this._refresh = null;
+        throw new AuthenticationError(`令牌端点拒绝了刷新令牌，请让本人重新授权：${err.message}`,
+          { status: res.status, code: err.code, requestId: err.requestId, method: 'POST', url: this.tokenUrl });
+      }
+      throw err;
+    }
+    let body;
+    try { body = JSON.parse(text); } catch { body = null; }
+    if (!body || typeof body.access_token !== 'string' || !body.access_token.trim()) {
+      throw new AuthenticationError('令牌端点没有返回 access_token', { status: res.status, code: 'invalid_token_response' });
+    }
+    this._access = body.access_token;
+    this._expiresAt = Date.now() / 1000 + Math.max(1, Number(body.expires_in) || 300);
+    this._refresh = typeof body.refresh_token === 'string' && body.refresh_token.trim() ? body.refresh_token : null;
+    this.grantedScope = body.scope ?? null;
+    // The old refresh token is spent now. If storing the successor fails, fail here, while this
+    // process still holds it, rather than at the next start with nothing valid.
+    await this.onRotate?.({ accessToken: this._access, refreshToken: this._refresh, expiresAt: this._expiresAt,
+      scope: this.grantedScope });
   }
 }
 
@@ -1112,6 +1211,118 @@ export class WorkspaceClient {
   removeMember(id, { expectedRole, reason }) {
     return this.#transport.requestJson('POST', `/members/${directoryId(id)}/remove`, {
       json: { expected_role: managedRole(expectedRole, 'expected_role'), reason }, retry: false });
+  }
+}
+
+// --------------------------------------------------------------------------- business applications
+class SuiteTransport extends Client {
+  url(path, query) {
+    const url = new URL(this.baseUrl + SUITE_API_PREFIX + path);
+    for (const [key, value] of Object.entries(query || {})) {
+      if (value == null) continue;
+      url.searchParams.append(key, String(value));
+    }
+    return url.toString();
+  }
+}
+
+function suiteOperation(value) {
+  if (typeof value !== 'string' || value.length > 100 || !/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(value)) {
+    throw new ValidationError("operation must be an operation id such as 'forms.form.list'", { field: 'operation' });
+  }
+  return value;
+}
+
+function suiteKey(value) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 128 || !/^[!-~]+$/.test(value)) {
+    throw new ValidationError('idempotencyKey must be 1–128 visible ASCII characters (a UUID is fine)', { field: 'Idempotency-Key' });
+  }
+  return value;
+}
+
+/**
+ * Operations of Synwevo Forms, Tables, DataPrep, Extract and Approvals, for a client a person
+ * authorised. Every call acts as that person, in the one workspace they chose, with their current
+ * role; the scopes the client holds are necessary, never sufficient. Independent of the Docs API.
+ *
+ * Every `invoke` carries an idempotency key (yours, or one generated for that call) and is retried
+ * on network failures and 5xx with that same key: a change runs once however many attempts it
+ * took, and a read — for which the server ignores the key — is simply read again.
+ */
+export class SuiteClient {
+  #transport;
+  constructor(baseUrl = SUITE_BASE_URL, credentials, options = {}) {
+    if (!(credentials instanceof UserToken)) {
+      throw new ValidationError("SuiteClient requires a UserToken (a person's delegation) or fromEnv()", { field: 'credentials' });
+    }
+    this.#transport = new SuiteTransport(baseUrl, credentials, { userAgent: `synwevo-suite-node/${VERSION}`, ...options });
+  }
+
+  /**
+   * Only SYNWEVO_SUITE_* variables are read: SYNWEVO_SUITE_ACCESS_TOKEN[_FILE] and/or
+   * SYNWEVO_SUITE_REFRESH_TOKEN[_FILE]; with a refresh token also SYNWEVO_SUITE_CLIENT_ID,
+   * optionally SYNWEVO_SUITE_CLIENT_SECRET[_FILE] and SYNWEVO_SUITE_TOKEN_URL. A refresh token
+   * rotates on use: without `onRotate` the successor lives only in this process.
+   */
+  static async fromEnv(env = process.env, { onRotate = null, ...options } = {}) {
+    const secret = async (name) => (env[name] && String(env[name]).trim())
+      || (env[`${name}_FILE`] ? readSecretFile(env[`${name}_FILE`], `${name}_FILE`) : null);
+    const accessToken = await secret('SYNWEVO_SUITE_ACCESS_TOKEN');
+    const refreshToken = await secret('SYNWEVO_SUITE_REFRESH_TOKEN');
+    if (!accessToken && !refreshToken) {
+      throw new ValidationError("Set SYNWEVO_SUITE_ACCESS_TOKEN or SYNWEVO_SUITE_REFRESH_TOKEN (a person's delegation)",
+        { field: 'SYNWEVO_SUITE_ACCESS_TOKEN' });
+    }
+    const credentials = new UserToken({ accessToken, refreshToken, clientId: env.SYNWEVO_SUITE_CLIENT_ID || null,
+      clientSecret: await secret('SYNWEVO_SUITE_CLIENT_SECRET'),
+      tokenUrl: refreshToken ? (env.SYNWEVO_SUITE_TOKEN_URL || SUITE_TOKEN_URL) : null, resource: SUITE_RESOURCE,
+      onRotate, fetch: options.fetch, timeoutMs: options.timeoutMs });
+    return new SuiteClient(env.SYNWEVO_SUITE_BASE_URL || SUITE_BASE_URL, credentials, options);
+  }
+
+  get baseUrl() { return this.#transport.baseUrl; }
+  whoami(opts = {}) { return this.#transport.get('/whoami', undefined, opts); }
+  /** The contract of every operation the person can use here, with `granted` per scope. */
+  operations({ app } = {}, opts = {}) { return this.#transport.get('/operations', { app }, opts); }
+
+  /**
+   * Run one operation. Rejects with the typed APIError for a refusal or a business error;
+   * `result.replayed` says the answer is an earlier call's (same key, same input). A `status`
+   * other than succeeded / partial means the call was accepted, not finished.
+   */
+  async invoke(operation, input = {}, { idempotencyKey = randomUUID(), correlationId, signal, timeoutMs } = {}) {
+    if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+      throw new ValidationError('input must be a JSON object', { field: 'input' });
+    }
+    const json = { input };
+    if (correlationId != null) json.correlation_id = correlationId;
+    const result = await this.#transport.requestJson('POST', `/ops/${suiteOperation(operation)}`,
+      { json, idempotencyKey: suiteKey(idempotencyKey), signal, timeoutMs });
+    result.$meta.replayed = Boolean(result.replayed);
+    return result;
+  }
+
+  /** A run this client started. Its output is null (`snapshot_hidden`) once its sources are no longer readable. */
+  run(runId, opts = {}) {
+    if (typeof runId !== 'string' || !runId) throw new ValidationError('A run ID is required', { field: 'run_id' });
+    return this.#transport.get(`/runs/${encodeURIComponent(runId)}`, undefined, opts);
+  }
+
+  /**
+   * Poll a run until it settles. A run waiting for a person (an approval, a form) can take days:
+   * this gives up after `timeoutMs` with WaitTimeoutError (`details` is the last state) and the
+   * run carries on.
+   */
+  async wait(runId, { timeoutMs = 300_000, pollMs = 2_000, signal } = {}) {
+    const t0 = Date.now();
+    for (;;) {
+      signal?.throwIfAborted();
+      const state = await this.run(runId, { signal });
+      if (SUITE_TERMINAL_STATUSES.includes(state.status)) return state;
+      const left = timeoutMs - (Date.now() - t0);
+      if (left <= 0) throw new WaitTimeoutError(`run ${runId} is still ${state.status} after ${timeoutMs} ms`, { details: state });
+      await this.#transport.sleep(Math.min(pollMs, left), signal);
+    }
   }
 }
 

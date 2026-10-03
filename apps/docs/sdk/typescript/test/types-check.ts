@@ -201,3 +201,29 @@ export function misuse(client: Client): void {
   void client.downloadPreview('p', './preview.docx', { index: 0, key: 'k' });
   console.log(status, sameClient);
 }
+
+// ---------------------------------------------------------------- business applications
+import { SuiteClient, UserToken, SUITE_RESOURCE, type RotatedTokens, type SuiteResult, type SuiteRun } from '@synwevo/docs-sdk';
+
+export async function suiteBoundary(stored: { refreshToken: string }, save: (t: RotatedTokens) => Promise<void>): Promise<string[]> {
+  const token = new UserToken({ refreshToken: stored.refreshToken, clientId: 'crm-sync', clientSecret: 'secret',
+    tokenUrl: 'https://accounts.synwevo.com/oidc/token', resource: SUITE_RESOURCE, onRotate: save });
+  const suite = new SuiteClient(undefined, token);
+  const who = await suite.whoami();
+  const role: 'owner' | 'admin' | 'editor' | 'viewer' = who.role;
+  const made = await suite.invoke<{ id: string }>('tables.record.create',
+    { table_id: 't', cells: {} }, { idempotencyKey: 'order-42', correlationId: 'sync-7' });
+  const plain: SuiteResult<{ id: string }> = made;
+  const replayed: boolean = made.$meta.replayed && plain.replayed && made.output.id.length > 0;
+  const run: SuiteRun = await suite.wait(made.run_id, { timeoutMs: 1000 });
+  const hidden: boolean = run.snapshot_hidden;
+  const granted = (await suite.operations({ app: 'tables' })).operations.filter((o) => o.granted).map((o) => o.scope);
+  // @ts-expect-error An API key is not a person's delegation.
+  const wrong = new SuiteClient(undefined, new ApiKey('dw_x_y'));
+  // @ts-expect-error A run's input is never returned.
+  const input: string = run.input;
+  // @ts-expect-error Scopes are a closed set.
+  const scope: 'agent.read' = who.scopes[0];
+  console.log(role, replayed, hidden, wrong, input, scope);
+  return granted;
+}

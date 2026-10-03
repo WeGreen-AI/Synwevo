@@ -31,7 +31,7 @@ import httpx
 from . import validation as V
 from ._files import AtomicWriter, iter_slice, safe_filename, sha256_file
 from ._http import ApiDict, Transport, new_idempotency_key, wrap
-from .auth import ApiKey, ClientCredentials, credentials_from_env
+from .auth import ApiKey, ClientCredentials, credentials_from_env, UserToken
 from .source_types import (CSVOptions, CorrectionValue, SourceStructure, SourceView, SourceBlocks,
                            SourceSearch, SourceWords, SourceFile, SourceRecords, SourceRecord, SourceBlock, SourceWord)
 from .job_types import (Artifact, ArtifactsPage, CancelledJob, ItemArtifact, Job, JobEvent, JobEventsPage,
@@ -78,7 +78,7 @@ class Client:
     ...     print(c.whoami()["tenant"])
     """
 
-    def __init__(self, base_url: str, credentials: ApiKey | ClientCredentials, *, timeout: float = 30.0,
+    def __init__(self, base_url: str, credentials: ApiKey | ClientCredentials | UserToken, *, timeout: float = 30.0,
                  max_retries: int = 4, user_agent: str | None = None, validate: bool = True,
                  resumable_threshold: int = 8 * MiB, chunk_size: int = 4 * MiB, problem_json: bool = False,
                  http: httpx.Client | None = None, backoff_base: float = 0.5, backoff_max: float = 30.0,

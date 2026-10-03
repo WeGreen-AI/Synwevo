@@ -1,5 +1,5 @@
 """Public interface of the standalone Synwevo Docs client."""
-from .auth import ApiKey, ClientCredentials, credentials_from_env, read_secret
+from .auth import ApiKey, ClientCredentials, UserToken, credentials_from_env, read_secret
 from .client import Client, __version__
 from .errors import (
     APIError, AuthenticationError, BadRequestError, ConflictError, GoneError,
@@ -9,6 +9,7 @@ from .errors import (
 )
 from .webhooks import verify_legacy_signature, verify_webhook
 from .workspace import WorkspaceClient
+from .suite import SuiteClient
 from .upload_types import Upload, UploadPurpose, UploadStatus
 from .job_types import (
     Artifact, ArtifactsPage, CancelledJob, ItemArtifact, ItemStatus, Job, JobCancel,
@@ -18,7 +19,8 @@ from .job_types import (
 )
 
 __all__ = [
-    "Client", "WorkspaceClient", "ApiKey", "ClientCredentials", "credentials_from_env", "read_secret",
+    "Client", "WorkspaceClient", "SuiteClient", "ApiKey", "ClientCredentials", "UserToken",
+    "credentials_from_env", "read_secret",
     "__version__", "verify_webhook", "verify_legacy_signature", "SynwevoError", "APIError",
     "AuthenticationError", "BadRequestError", "ConflictError", "GoneError", "IntegrityError",
     "NotFoundError", "PayloadTooLargeError", "PermissionDeniedError", "RangeNotSatisfiableError",

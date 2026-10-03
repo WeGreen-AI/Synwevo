@@ -1,6 +1,6 @@
-"""Credentials: a `dw_` API key, or a service account's client credentials.
+"""Credentials: a `dw_` API key, a service account's client credentials, or a person's delegation.
 
-Both end up as ``Authorization: Bearer <token>``; the difference is where the token comes from.
+All end up as ``Authorization: Bearer <token>``; the difference is where the token comes from.
 
 * `ApiKey` is the operator-issued key (``python -m synwevo_docs.cli apikey create``). It is sent
   as is.
@@ -9,6 +9,12 @@ Both end up as ``Authorization: Bearer <token>``; the difference is where the to
   endpoint (OAuth 2.0 client_credentials, ``client_secret_post`` — the only confidential method
   the endpoint supports), caches it, and fetches a new one shortly before it expires or when the
   API answers 401 (a token can be revoked before it expires).
+
+* `UserToken` is a person's delegation to a client they authorised (authorization code + PKCE at
+  the account service). It carries the access token and, when the person granted
+  ``offline_access``, the refresh token that replaces it. Refresh tokens are single use: each
+  refresh hands back a successor, which `UserToken` passes to ``on_rotate`` so the caller can
+  store it before anything else happens.
 
 Secrets are read from the environment or from files, never required on a command line (where they
 would land in shell history and the process list), and never appear in ``repr`` or in errors.
@@ -19,13 +25,13 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 import httpx
 
 from .errors import AuthenticationError, SynwevoError, TransportError, error_from_response
 
-__all__ = ["ApiKey", "ClientCredentials", "Credentials", "credentials_from_env", "read_secret"]
+__all__ = ["ApiKey", "ClientCredentials", "Credentials", "UserToken", "credentials_from_env", "read_secret"]
 
 DEFAULT_SCOPE = "docweave.read docweave.write"
 
@@ -170,7 +176,116 @@ class ClientCredentials:
         return f"ClientCredentials(token_url={self.token_url!r}, client_id={self.client_id!r}, scope={self.scope!r})"
 
 
-Credentials = ApiKey | ClientCredentials
+class UserToken:
+    """A person's delegation to this client: an access token, refreshed with a rotating refresh token.
+
+    Give the access token, the refresh token, or both. With a refresh token the client's
+    ``client_id`` and the token endpoint are needed too (and ``client_secret`` for a confidential
+    client). ``on_rotate`` receives ``{"access_token", "refresh_token", "expires_at", "scope"}``
+    after every refresh: persist it — the previous refresh token is spent, and presenting a spent
+    one revokes the person's whole grant.
+
+    A refresh whose answer never arrived is not known to have failed. The next call tries the same
+    refresh token again; if the server had already spent it the grant ends and the person has to
+    authorise the client again, which is the only safe outcome of a lost successor.
+    """
+
+    def __init__(self, access_token: str | None = None, *, refresh_token: str | None = None,
+                 token_url: str | None = None, client_id: str | None = None, client_secret: str | None = None,
+                 resource: str | None = None, expires_at: float | None = None,
+                 on_rotate: Callable[[dict], None] | None = None, refresh_margin: float = 60.0,
+                 clock=time.time):
+        access_token = (access_token or "").strip() or None
+        refresh_token = (refresh_token or "").strip() or None
+        if not access_token and not refresh_token:
+            raise SynwevoError(None, "missing_credentials", "用户授权凭据需要 access_token 或 refresh_token")
+        if refresh_token and not (token_url and client_id):
+            raise SynwevoError(None, "missing_credentials", "使用 refresh_token 时还需要 token_url 与 client_id")
+        self.token_url = token_url
+        self.client_id = client_id
+        self._secret = client_secret
+        self.resource = resource
+        self.refresh_margin = refresh_margin
+        self.on_rotate = on_rotate
+        self._clock = clock
+        self._access = access_token
+        self._refresh = refresh_token
+        self._expires_at = float(expires_at) if expires_at else None
+        self.granted_scope: str | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def expires_at(self) -> float | None:
+        return self._expires_at if self._access else None
+
+    def authorization(self, http: httpx.Client) -> str:
+        with self._lock:
+            stale = self._access is None or (
+                self._expires_at is not None and self._clock() >= self._expires_at - self.refresh_margin)
+            if stale and self._refresh:
+                self._rotate(http)
+            if self._access is None:
+                raise AuthenticationError(401, "token_expired", "访问令牌已失效，且没有可用的刷新令牌；请让本人重新授权")
+            return f"Bearer {self._access}"
+
+    def invalidate(self) -> bool:
+        """The API refused the access token. With a refresh token there is one more thing to try."""
+        with self._lock:
+            if not self._refresh or self._access is None:
+                return False
+            self._access = None
+            return True
+
+    def _rotate(self, http: httpx.Client) -> None:
+        form = {"grant_type": "refresh_token", "refresh_token": self._refresh, "client_id": self.client_id}
+        if self._secret:
+            form["client_secret"] = self._secret
+        if self.resource:
+            form["resource"] = self.resource
+        try:
+            resp = http.post(self.token_url, data=form, headers={"Accept": "application/json"}, follow_redirects=False)
+        except httpx.TransportError as e:
+            raise TransportError(None, "token_endpoint_unreachable",
+                                 f"无法连接令牌端点 {self.token_url}：{type(e).__name__}") from None
+        if resp.status_code != 200:
+            err = error_from_response(resp.status_code, resp.headers, resp.content, method="POST", url=self.token_url)
+            if resp.status_code in (400, 401):
+                # invalid_grant: spent, expired or withdrawn. Nothing this process holds can fix it.
+                self._refresh = None
+                raise AuthenticationError(resp.status_code, err.code, f"令牌端点拒绝了刷新令牌，请让本人重新授权：{err.message}",
+                                          err.request_id, err.field, err.details, method="POST", url=self.token_url)
+            raise err
+        try:
+            body = resp.json()
+            access = body["access_token"]
+            if not isinstance(access, str) or not access.strip():
+                raise ValueError("empty access token")
+        except (ValueError, KeyError, TypeError):
+            raise AuthenticationError(resp.status_code, "invalid_token_response", "令牌端点的响应里没有 access_token",
+                                      method="POST", url=self.token_url) from None
+        if str(body.get("token_type", "Bearer")).lower() != "bearer":
+            raise AuthenticationError(resp.status_code, "invalid_token_response",
+                                      f"不支持的令牌类型：{body.get('token_type')}")
+        try:
+            lifetime = max(1.0, float(body.get("expires_in") or 300))
+        except (TypeError, ValueError):
+            lifetime = 300.0
+        successor = body.get("refresh_token")
+        self._access = access
+        self._expires_at = self._clock() + lifetime
+        self._refresh = successor if isinstance(successor, str) and successor.strip() else None
+        self.granted_scope = body.get("scope")
+        if self.on_rotate is not None:
+            # The old refresh token is spent now. If storing the successor fails, say so here,
+            # while this process still holds it, rather than at the next start with nothing valid.
+            self.on_rotate({"access_token": self._access, "refresh_token": self._refresh,
+                            "expires_at": self._expires_at, "scope": self.granted_scope})
+
+    def __repr__(self) -> str:
+        return f"UserToken(client_id={self.client_id!r}, refreshable={self._refresh is not None})"
+
+
+Credentials = ApiKey | ClientCredentials | UserToken
 
 
 def credentials_from_env(environ: Mapping[str, str] | None = None) -> ApiKey | ClientCredentials:
