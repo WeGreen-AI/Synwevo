@@ -327,6 +327,23 @@ def test_the_cursor_is_its_holders_alone_and_cannot_be_read_or_made(api):
     assert _api.counts(p.store, "app_events", "op_runs")["app_events"] == before["app_events"] + 1
 
 
+def test_a_sealed_token_opens_only_as_it_was_sealed(api):
+    """`synwevo_core.sealed_token`, which the cursor is made with: the same label and the same
+    holder, unchanged — anything else is not a token."""
+    from synwevo_core import sealed_token
+    store = api.people.store
+    label, holder, body = b"synwevo/fixture-token/v1", b'["ws","client","person"]', b'{"q":41}'
+    token = sealed_token.seal(store, label, body, holder)
+    assert sealed_token.unseal(store, label, token, holder) == body
+    assert body not in base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))        # not readable
+    assert sealed_token.seal(store, label, body, holder) != token                       # nor comparable
+    for other in ((b"synwevo/another-label/v1", token, holder), (label, token, b'["ws","client","someone else"]'),
+                  (label, token[:-1] + ("A" if token[-1] != "A" else "B"), holder), (label, token[:20], holder),
+                  (label, token + "=", holder), (label, "", holder), (label, None, holder), (label, token * 40, holder)):
+        assert sealed_token.unseal(store, *other) is None
+    assert sealed_token.unseal(store, label, token, holder, max_length=len(token) - 1) is None
+
+
 def test_a_narrowed_grant_sees_less_from_the_same_cursor_and_a_widened_one_is_not_backfilled(api):
     both = bearer(api, "alice", "forms.read forms.write tables.read tables.write")
     forms_only = bearer(api, "alice", "forms.read")
