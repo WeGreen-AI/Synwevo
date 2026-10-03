@@ -28,6 +28,7 @@ application registry and the object id — never from an event payload.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -222,9 +223,12 @@ def emit(t: sqlite3.Connection | sqlite3.Cursor, *, app: str, event_id: str, kin
 def audience_fingerprint(conv: dict) -> str:
     """Who a message would reach, as `Messaging.get` shows it to a member: the destination is
     confirmed against this before queueing and checked again at delivery."""
-    from .capabilities import fingerprint
-    return fingerprint({"id": conv["id"], "workspace_id": conv["workspace_id"], "organization_id": conv["organization_id"],
-                        "archived": conv["archived"], "members": sorted(m["user_id"] for m in conv["members"])})
+    value = {"id": conv["id"], "workspace_id": conv["workspace_id"], "organization_id": conv["organization_id"],
+             "archived": conv["archived"], "members": sorted(m["user_id"] for m in conv["members"])}
+    # The canonical form of `capabilities.fingerprint`, kept here so the account service, which runs
+    # this worker, does not load the capability registry.
+    canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def emit_user_message(t, *, event_id: str, conversation_id: str, workspace_id: str, organization_id: str | None,
