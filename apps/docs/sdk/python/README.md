@@ -216,6 +216,43 @@ invitation revocation must be read back after uncertain outcomes. Manageable rol
 are `viewer` and `editor`; neither a directory token nor this client can grant
 owner/admin authority. Output annotations live in `synwevo_docs_sdk.workspace`.
 
+## Business applications
+
+The same package exports an independent `SuiteClient` for the operations API of
+Synwevo Forms, Tables, DataPrep, Extract and Approvals (`/api/suite/v1` on the
+workplace origin). It takes only a person's delegation (`UserToken`): every call
+acts as that person, in the one workspace they chose when they consented, with
+their current role. `SuiteClient.from_env()` reads only `SYNWEVO_SUITE_BASE_URL`
+(default `https://workplace.synwevo.com`), `SYNWEVO_SUITE_ACCESS_TOKEN[_FILE]`
+and/or `SYNWEVO_SUITE_REFRESH_TOKEN[_FILE]`, and with a refresh token
+`SYNWEVO_SUITE_CLIENT_ID`, `SYNWEVO_SUITE_CLIENT_SECRET[_FILE]` and optional
+`SYNWEVO_SUITE_TOKEN_URL`. Docs and directory credentials are not borrowed.
+
+```python
+from synwevo_docs_sdk import SuiteClient
+
+with SuiteClient.from_env(on_rotate=save_tokens) as suite:
+    suite.whoami()                           # the person, the workspace, the scopes still held
+    made = suite.invoke("tables.record.create", {"table_id": table_id, "cells": {}},
+                        idempotency_key="order-42")
+    suite.wait(made["run_id"], timeout=60)   # for operations that answer 202
+    # What changed since the stored cursor: where to look, never what is there.
+    for page in suite.iter_event_pages(cursor=saved_cursor, types=["tables.record.changed"]):
+        for event in page["items"]:
+            suite.invoke("tables.record.get", {"table_id": event["refs"]["table_id"],
+                                               "record_id": event["object"]["id"]})
+        save_cursor(page["next_cursor"])     # after the page is handled
+```
+
+A refresh token is single-use and has one holder: save what `on_rotate` hands over
+before the new access token is used, and do not start two processes from the same
+refresh token. Every `invoke` carries an idempotency key and retries with it.
+Uploads and downloads have their own methods (`extract_upload`,
+`dataprep_export`, `tables_export_download`, ...). An event cursor kept past the
+feed's 30-day window raises `GoneError` (`cursor_expired`). The operations, scopes
+and event types are in [`suite-openapi.json`](../../../../docs/integration/suite-openapi.json);
+the rules are in the [integration guide](../../../../docs/integration/suite-api.md).
+
 ## Copy requests
 
 The project owner's delegated OAuth token can call `copy_targets()`,

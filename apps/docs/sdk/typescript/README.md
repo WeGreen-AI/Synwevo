@@ -136,6 +136,42 @@ one key on retries; other writes are not retried after uncertain server outcomes
 The [directory acceptance](../python/README.md#verification) installs a local npm
 tarball, uses real owner approval and service tokens, and checks mail/audit effects.
 
+## Business applications
+
+`SuiteClient` is an independent export for the operations API of Synwevo Forms,
+Tables, DataPrep, Extract and Approvals (`/api/suite/v1` on the workplace origin).
+It accepts only a person's delegation (`UserToken`): every call acts as that
+person, in the one workspace they chose when they consented, with their current
+role. `await SuiteClient.fromEnv()` reads only `SYNWEVO_SUITE_BASE_URL` (default
+`https://workplace.synwevo.com`), `SYNWEVO_SUITE_ACCESS_TOKEN[_FILE]` and/or
+`SYNWEVO_SUITE_REFRESH_TOKEN[_FILE]`, and with a refresh token
+`SYNWEVO_SUITE_CLIENT_ID`, `SYNWEVO_SUITE_CLIENT_SECRET[_FILE]` and optional
+`SYNWEVO_SUITE_TOKEN_URL`. Docs and directory credentials are not inherited.
+
+```js
+import { SuiteClient } from '@synwevo/docs-sdk';
+const suite = await SuiteClient.fromEnv(process.env, { onRotate: saveTokens });
+const made = await suite.invoke('tables.record.create', { table_id: tableId, cells: {} },
+  { idempotencyKey: 'order-42' });
+await suite.wait(made.run_id, { timeoutMs: 60_000 });   // for operations that answer 202
+// What changed since the stored cursor: where to look, never what is there.
+for await (const page of suite.eventPages({ cursor: savedCursor, types: ['tables.record.changed'] })) {
+  for (const event of page.items) {
+    await suite.invoke('tables.record.get', { table_id: event.refs.table_id, record_id: event.object.id });
+  }
+  await saveCursor(page.next_cursor);                   // after the page is handled
+}
+```
+
+A refresh token is single-use and has one holder: persist what `onRotate` hands
+over before the new access token is used, and do not start two processes from the
+same refresh token. Every `invoke` carries an idempotency key and retries with it.
+Uploads and downloads have their own methods (`extractUpload`, `dataprepExport`,
+`tablesExportDownload`, ...). An event cursor kept past the feed's 30-day window
+is refused with `GoneError` (`cursor_expired`). The operations, scopes and event
+types are in [`suite-openapi.json`](../../../../docs/integration/suite-openapi.json);
+the rules are in the [integration guide](../../../../docs/integration/suite-api.md).
+
 ## Copy requests
 
 Use the project owner's delegated OAuth token with `copyTargets()`,
