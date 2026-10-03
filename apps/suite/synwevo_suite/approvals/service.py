@@ -158,7 +158,8 @@ class Approvals:
         # become an approver simply because their identifier was supplied by a browser.
         rows = self.store.all("SELECT u.id,u.display_name,m.role FROM memberships m JOIN users u ON u.id=m.user_id "
                               "WHERE m.workspace_id=? AND u.status='active' ORDER BY u.id", (c.workspace_id,))
-        rows = [r for r in rows if self._eligible(c.workspace_id, r["id"]) and i.q.casefold() in r["display_name"].casefold()]
+        # A display name is optional on an account; a member without one is still a candidate.
+        rows = [r for r in rows if self._eligible(c.workspace_id, r["id"]) and i.q.casefold() in (r["display_name"] or "").casefold()]
         return {"items": rows[i.offset:i.offset+i.limit], "total": len(rows),
                 "next_offset": i.offset+i.limit if i.offset+i.limit < len(rows) else None}
 

@@ -428,3 +428,14 @@ def test_guard_hides_old_eligibility_before_sweeper_updates_task(suite):
     # in the old projection is false now; no background reconciliation is needed to refuse it.
     error("approval_result_unavailable",lambda:c.op.result_guard(c,row))
     assert suite.people.store.one("SELECT status FROM approval_tasks WHERE id=?",(result["output"]["tasks"][0]["id"],))["status"]=="pending"
+
+
+def test_a_member_without_a_display_name_does_not_break_the_approver_list(suite):
+    p=suite.people
+    nameless=p.ident.create_user("nameless@example.test","harbor lights guide the evening ferry home",status="active")
+    assert nameless.get("display_name") is None
+    p.ident.add_member(p.a,nameless["id"],"editor")
+    everyone=out(suite,"members")
+    assert nameless["id"] in {m["id"] for m in everyone["items"]} and p.uid("bob") in {m["id"] for m in everyone["items"]}
+    named=out(suite,"members",{"q":"bob"})
+    assert {m["id"] for m in named["items"]}=={p.uid("bob")}
