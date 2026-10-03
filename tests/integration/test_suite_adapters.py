@@ -30,6 +30,12 @@ ORIGIN = "http://suite.testserver"
 PW = "harbor lights guide the evening ferry home"
 
 
+def deliver(api, adapters):
+    """One pass of Message's own outbox worker, then Suite's receipt reconciler (no sends there)."""
+    api.state.bridge_worker.run_once()
+    adapters.sync_messages()
+
+
 def wait_for(fn):
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
@@ -182,10 +188,18 @@ def test_real_docx_job_protected_download_and_test_message(world):
     assert "FORM-0007" in "\n".join(p.text for p in document.paragraphs)
     payload = send_input(w, artifact_ids=[aid])
     sent = w.invoke("message.send", payload, app=MESSAGES_APP_ID, key="send-business-request-1", via="flow")
-    assert sent["status"] == "succeeded" and sent["output"]["delivery"] == "recorded"
-    stored_msg = w.store.one("SELECT * FROM messages WHERE id=?", (sent["output"]["message_id"],))
+    assert sent["status"] == "queued" and sent["output"]["delivery"] == "queued"
+    # Queued with its receipt; only Message's own process writes the message.
+    assert w.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id=?", (sent["run_id"],))["n"] == 0
+    deliver(w.api, w.adapters)
+    receipt = w.caps.run(sent["run_id"], user_id=w.users["editor"])
+    assert receipt["status"] == "succeeded" and receipt["output"]["delivery"] == "recorded"
+    stored_msg = w.store.one("SELECT * FROM messages WHERE id=?", (receipt["output"]["message_id"],))
     assert stored_msg["sender_id"] == w.users["editor"] and link in stored_msg["body"]
+    assert w.store.one("SELECT COUNT(*) AS n FROM app_events WHERE type='messages.message.recorded' AND run_id=?",
+                       (sent["run_id"],))["n"] == 1
     assert w.invoke("message.send", payload, app=MESSAGES_APP_ID, key="send-business-request-1")["replayed"]
+    deliver(w.api, w.adapters)
     assert w.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id=?", (sent["run_id"],))["n"] == 1
     assert w.store.one("SELECT COUNT(*) AS n FROM mail_outbox")["n"] == 0
     sign_in(w, "other")
@@ -291,29 +305,55 @@ def test_message_audience_scope_and_revocation(world):
         w.invoke("message.send", inp, app=MESSAGES_APP_ID, key="current-audience")
     assert err.value.code == "run_result_unavailable"
     assert w.caps.run(sent["run_id"], user_id=w.users["editor"])["snapshot_hidden"]
+    # Removed after confirming, before delivery: Message refuses it; nothing reaches the group.
+    before = w.store.one("SELECT COUNT(*) AS n FROM messages")["n"]
+    deliver(w.api, w.adapters)
+    assert w.store.one("SELECT status,error_code FROM op_runs WHERE id=?", (sent["run_id"],))["status"] == "failed"
+    assert w.store.one("SELECT COUNT(*) AS n FROM messages")["n"] == before
 
 
-def test_lost_ack_reconciles_read_only_and_never_resends(world, monkeypatch):
+def test_audience_or_archive_changes_after_confirmation_stop_delivery(world):
+    w = world
+    grown = w.invoke("message.send", send_input(w), app=MESSAGES_APP_ID, key="audience-grows")
+    w.api.state.messaging.add_members(w.cid, w.users["owner"], [w.users["other"]])
+    deliver(w.api, w.adapters)
+    run = w.store.one("SELECT status,error_code FROM op_runs WHERE id=?", (grown["run_id"],))
+    assert (run["status"], run["error_code"]) == ("failed", "audience_changed")
+    archived = w.invoke("message.send", send_input(w), app=MESSAGES_APP_ID, key="archived-later")
+    w.api.state.messaging.archive(w.cid, w.users["owner"])
+    deliver(w.api, w.adapters)
+    run = w.store.one("SELECT status,error_code FROM op_runs WHERE id=?", (archived["run_id"],))
+    assert (run["status"], run["error_code"]) == ("failed", "archived")
+    assert w.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id IN (?,?)",
+                       (grown["run_id"], archived["run_id"]))["n"] == 0
+    receipt = w.read("message.inspect", {"run_id": grown["run_id"]}, app=MESSAGES_APP_ID)
+    assert receipt["delivery"] == "failed" and receipt["error_code"] == "audience_changed"
+
+
+def test_a_lost_receipt_commits_nothing_so_nothing_can_be_sent(world, monkeypatch):
+    """The queued message and its receipt share one transaction: losing the receipt loses both."""
     w = world
     inp = send_input(w)
     real_finish = w.caps._finish
-    def crash_after_business_commit(*args, **kwargs):
-        raise RuntimeError("TEST FIXTURE: process lost after committed message, before operation receipt")
-    monkeypatch.setattr(w.caps, "_finish", crash_after_business_commit)
-    with pytest.raises(RuntimeError):
+    def crash_before_receipt(*args, **kwargs):
+        raise RuntimeError("TEST FIXTURE: process lost before the operation receipt is stored")
+    monkeypatch.setattr(w.caps, "_finish", crash_before_receipt)
+    with pytest.raises(ServiceError):
         w.invoke("message.send", inp, app=MESSAGES_APP_ID, key="lost-ack")
     monkeypatch.setattr(w.caps, "_finish", real_finish)
     row = w.store.one("SELECT * FROM op_runs WHERE idempotency_key='lost-ack'")
-    w.caps.reconcile_stale(older_than_s=-1)
+    assert w.store.one("SELECT COUNT(*) AS n FROM messaging_outbox WHERE event_id=?", (row["id"],))["n"] == 0
     before = w.store.one("SELECT COUNT(*) AS n FROM messages")["n"]
-    receipt = w.caps.inspect(f"{MESSAGES_APP_ID}.message.inspect", {"run_id": row["id"]},
-                             user_id=w.users["editor"], workspace_id=w.a)
-    assert receipt["delivery"] == "recorded"
-    replay = w.invoke("message.send", inp, app=MESSAGES_APP_ID, key="lost-ack")
-    assert replay["status"] == "unknown" and replay["replayed"]
+    deliver(w.api, w.adapters)
     assert w.store.one("SELECT COUNT(*) AS n FROM messages")["n"] == before
+    with pytest.raises(ServiceError) as err:  # The failed attempt is never replayed as a send.
+        w.invoke("message.send", inp, app=MESSAGES_APP_ID, key="lost-ack")
+    assert err.value.code == "idempotent_failure"
+    again = w.invoke("message.send", inp, app=MESSAGES_APP_ID, key="lost-ack-retry")
+    deliver(w.api, w.adapters)
+    assert w.store.one("SELECT COUNT(*) AS n FROM messages")["n"] == before + 1
     with pytest.raises(ServiceError):
-        w.caps.inspect(f"{MESSAGES_APP_ID}.message.inspect", {"run_id": row["id"]},
+        w.caps.inspect(f"{MESSAGES_APP_ID}.message.inspect", {"run_id": again["run_id"]},
                        user_id=w.users["owner"], workspace_id=w.a)
 
 
@@ -338,31 +378,27 @@ def test_inspect_does_not_write_or_send_and_policies_are_explicit(world):
         assert err.value.code == "idempotency_key_required"
 
 
-def test_real_process_rebuild_reconciles_message_without_resend(world, monkeypatch):
+def test_a_queued_message_survives_a_process_rebuild_and_is_sent_once(world):
     w = world
     payload = send_input(w)
-    real_finish = w.caps._finish
-    def lose_receipt(*args, **kwargs):
-        raise RuntimeError("TEST FIXTURE: server dies after the business transaction")
-    monkeypatch.setattr(w.caps, "_finish", lose_receipt)
-    with pytest.raises(RuntimeError):
-        w.invoke("message.send", payload, app=MESSAGES_APP_ID, key="restart-send")
-    monkeypatch.setattr(w.caps, "_finish", real_finish)
-    row = w.store.one("SELECT id FROM op_runs WHERE idempotency_key='restart-send'")
+    queued = w.invoke("message.send", payload, app=MESSAGES_APP_ID, key="restart-send")
     fresh_api = create_app(str(w.store.root), role="all", start_jobs=False)
     fresh_ctx = fresh_api.state.suite
     fresh = fresh_api.state.suite_adapters
     assert fresh._ctx is fresh_ctx
     with TestClient(fresh_api, base_url=ORIGIN):
-        fresh_ctx.capabilities.reconcile_stale(older_than_s=-1)
-        got = fresh_ctx.capabilities.inspect(f"{MESSAGES_APP_ID}.message.inspect", {"run_id": row["id"]},
+        assert fresh_ctx.capabilities.inspect(f"{MESSAGES_APP_ID}.message.inspect", {"run_id": queued["run_id"]},
+                                              user_id=w.users["editor"], workspace_id=w.a)["delivery"] == "queued"
+        deliver(fresh_api, fresh)
+        deliver(fresh_api, fresh)
+        got = fresh_ctx.capabilities.inspect(f"{MESSAGES_APP_ID}.message.inspect", {"run_id": queued["run_id"]},
                                              user_id=w.users["editor"], workspace_id=w.a)
         assert got["delivery"] == "recorded"
         replay = fresh_ctx.capabilities.invoke(f"{MESSAGES_APP_ID}.message.send", payload,
                                                user_id=w.users["editor"], workspace_id=w.a,
                                                idempotency_key="restart-send")
-        assert replay["status"] == "unknown" and replay["replayed"]
-        assert fresh.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id=?", (row["id"],))["n"] == 1
+        assert replay["status"] == "succeeded" and replay["replayed"]
+        assert fresh.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id=?", (queued["run_id"],))["n"] == 1
 
 
 def test_artifact_acl_is_rechecked_for_sent_message_receipts(world):
@@ -381,18 +417,36 @@ def test_artifact_acl_is_rechecked_for_sent_message_receipts(world):
         w.read("message.inspect", {"run_id": sent["run_id"]}, app=MESSAGES_APP_ID)
 
 
-def test_unknown_send_without_record_remains_unknown(world, monkeypatch):
+def test_delivery_faults_retry_without_duplicates_and_end_failed_at_the_limit(world, monkeypatch):
+    from synwevo_core.messaging_bridge import MAX_ATTEMPTS
     w = world
-    inp = send_input(w)
-    def timeout(*args, **kwargs):
-        raise TimeoutError("TEST FIXTURE: timeout before durable acknowledgement")
-    monkeypatch.setattr(w.adapters.sender, "send", timeout)
+    worker = w.api.state.bridge_worker
     count = w.store.one("SELECT COUNT(*) AS n FROM messages")["n"]
-    sent = w.invoke("message.send", inp, app=MESSAGES_APP_ID, key="timeout")
-    assert sent["status"] == "unknown"
-    assert w.read("message.inspect", {"run_id": sent["run_id"]}, app=MESSAGES_APP_ID)["delivery"] == "unknown"
-    assert w.invoke("message.send", inp, app=MESSAGES_APP_ID, key="timeout")["replayed"]
-    assert w.store.one("SELECT COUNT(*) AS n FROM messages")["n"] == count
+    # A crash after the message is stored but before the queue row is marked: the next pass
+    # finds the same client id and marks it, never a second message.
+    ok = w.invoke("message.send", send_input(w), app=MESSAGES_APP_ID, key="crash-after-insert")
+    real_execute, marked = w.store.execute, []
+    def lose_mark(sql, args=()):
+        if sql.startswith("UPDATE messaging_outbox SET delivered_at") and not marked:
+            marked.append(1)
+            raise RuntimeError("TEST FIXTURE: crash after the message, before the queue mark")
+        return real_execute(sql, args)
+    monkeypatch.setattr(w.store, "execute", lose_mark)
+    worker.run_once()
+    monkeypatch.setattr(w.store, "execute", real_execute)
+    deliver(w.api, w.adapters)
+    assert w.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id=?", (ok["run_id"],))["n"] == 1
+    assert w.caps.run(ok["run_id"], user_id=w.users["editor"])["status"] == "succeeded"
+    # A delivery that keeps failing stops at the attempt limit and the receipt says so.
+    stuck = w.invoke("message.send", send_input(w), app=MESSAGES_APP_ID, key="never-delivered")
+    def unavailable(*args, **kwargs):
+        raise TimeoutError("TEST FIXTURE: messaging store unavailable")
+    monkeypatch.setattr(worker.messaging, "send", unavailable)
+    for _ in range(MAX_ATTEMPTS + 2):
+        deliver(w.api, w.adapters)
+    run = w.store.one("SELECT status,error_code FROM op_runs WHERE id=?", (stuck["run_id"],))
+    assert (run["status"], run["error_code"]) == ("failed", "delivery_failed")
+    assert w.store.one("SELECT COUNT(*) AS n FROM messages")["n"] == count + 1
 
 
 def test_message_concurrent_retries_and_archived_refusal(world):
@@ -401,6 +455,8 @@ def test_message_concurrent_retries_and_archived_refusal(world):
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: w.invoke("message.send", inp, app=MESSAGES_APP_ID, key="send-concurrent"), range(4)))
     assert len({r["run_id"] for r in results}) == 1
+    assert w.store.one("SELECT COUNT(*) AS n FROM messaging_outbox WHERE event_id=?", (results[0]["run_id"],))["n"] == 1
+    deliver(w.api, w.adapters)
     assert w.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id=?", (results[0]["run_id"],))["n"] == 1
     with pytest.raises(ServiceError) as err:
         w.invoke("message.send", {**inp, "body": "different"}, app=MESSAGES_APP_ID, key="send-concurrent")
@@ -431,7 +487,8 @@ def test_prepare_before_install_private_docs_lifecycle(tmp_path, monkeypatch):
     assert prepared.jobs.runner_alive()
     ctx = install_suite(api, plat, docs=prepared, start_jobs=True, released=frozenset())
     assert ctx.registry.get(f"{DOCS_APP_ID}.job.create") is not None
-    assert ctx.registry.get(f"{MESSAGES_APP_ID}.message.send") is None  # no detached Message writer
+    # Message runs in its own process here: sends are queued for it, never written from this one.
+    assert ctx.registry.get(f"{MESSAGES_APP_ID}.message.send").mode == "async"
     assert plat.store.one("SELECT COUNT(*) AS n FROM workspace_apps")["n"] == grants
     with TestClient(api, base_url=ORIGIN):
         assert prepared.ticker.thread.is_alive()

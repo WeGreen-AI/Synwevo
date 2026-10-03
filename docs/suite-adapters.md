@@ -128,13 +128,21 @@ Agent 使用同一个可变 registry，在首次服务请求前完成注册即�
 - `start_jobs=False`：不启动 Docs 生成线程、收据 ticker 或新 Message bridge；测试显式驱动原 JobService。
   参数应与 Suite、宿主一致；不会停止宿主此前已经自行启动的 worker。
 - `messages_api` 只接受当前进程真正承载 Message 的实例，并且必须与 Suite 使用相同 Store 对象。
-  缺失时只注册 Docs operations；**不新建一个私有 Message 写服务/独立事件 hub**。
+  缺失时（生产 portal 角色）只用核心 `Messaging` 做同规则的只读核对；**不新建私有 Message 写服务/事件 hub**。
+- `messages.message.send`（2026-10-03 起为 async）：核对会话、受众指纹、产物导出权与发送频率后，
+  在同一事务里写入 operation 收据与 `messaging_outbox`（kind `user.message`，event_id=run id）。
+  Message 自己的进程（`BridgeWorker`）以本人身份投递：投递前再次核对本人访问、对象讨论授权、归档状态、
+  完整受众指纹与账户状态，以 run id 作为 client_id，崩溃重投不会产生第二条；明确拒绝记录为
+  archived / audience_changed / no_conversation / account_unavailable 等，超出尝试上限为 delivery_failed。
+  Suite 的收据 ticker（`sync_messages`）只按真实结果把收据更新为 succeeded（含 message_id，并写入
+  `messages.message.recorded` 事件）或 failed；从不发送、不重排队。
 - `public_url` 为空仍可读取相对下载路径，但带产物的 Message 发送明确返回未配置；生产须配置真实 Suite origin。
 - prepare/register 不调用应用 bootstrap，不给任何用户/空间授权；原应用部署仍负责稳定 app_id 注册。
 
-当前 composed `all` 可以按上面方式同时接入二者。独立 `portal` 角色可准备私有 Docs；若 Message
-运行在另一进程，协调者仍需提供有真实用户委托的进程间调用及所属 Message 进程的写入契约。
-不能直接构造另一个 hub 假装完整，也不能使用管理 token。当前没有宣称跨进程 Message 已接通。
+`all` 与 `portal` 角色使用同一条发送路径：发送只排队，由 Message 进程写入与扇出，因此跨进程
+（workplace 源与 message 源分属不同容器、共享同一数据库）的实时推送、未读与摘要与在 Message 内发送一致。
+测试以 `bridge_worker.run_once()` 与 `sync_messages()` 显式驱动；隔离与故障用例见
+`tests/integration/test_suite_adapters.py`。生产线上跨进程投递尚未做线上复查。
 
 ## 上游及协调者需要提供的契约
 
