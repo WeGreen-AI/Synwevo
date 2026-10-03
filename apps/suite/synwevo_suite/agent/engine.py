@@ -65,7 +65,9 @@ def _j(v, default=None):
 
 
 class Agent:
-    def __init__(self, store: Store, identity, caps: Capabilities, provider: Provider, *, workers: int = 4):
+    # One thread per admissible active turn: a turn waiting for model capacity must not hold
+    # back another person's turn behind it (docs/platform/model-traffic.md §3).
+    def __init__(self, store: Store, identity, caps: Capabilities, provider: Provider, *, workers: int = MAX_ACTIVE_TOTAL):
         self.store = store
         self.identity = identity
         self.caps = caps
@@ -342,6 +344,16 @@ class Agent:
                                 "WHERE status IN ('queued','running','waiting_confirmation')", (user["id"],))
         if active["total"] >= MAX_ACTIVE_TOTAL or active["owned"] >= MAX_ACTIVE_USER:
             raise ServiceError(429, "agent_busy", "进行中的任务已达到上限，请先完成或停止已有任务")
+        traffic = getattr(getattr(self.provider, "gateway", None), "traffic", None)
+        if traffic is not None:
+            # Backpressure: do not accept a run whose model call could not even wait for capacity.
+            try:
+                waiting = traffic.queue_state(user["id"])
+            except BillingError:
+                raise ServiceError(503, "model_traffic_unavailable", "模型调用容量暂时无法核对，当前消息尚未发送") from None
+            if waiting and waiting["full"]:
+                raise ServiceError(429, "model_queue_full", "模型调用排队已满，当前消息尚未发送，请稍后再试",
+                                   {"retry_after": waiting["retry_after"]})
         credential = self._credential(user["id"])
         if credential is None:
             raise ServiceError(503, "agent_not_configured",

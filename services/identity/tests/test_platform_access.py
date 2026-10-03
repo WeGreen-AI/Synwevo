@@ -72,6 +72,7 @@ ROUTES = [
     ("POST", "/api/admin/billing/prices/drafts/{draft_id}/publish", "platform.config.manage", True),
     ("GET", "/api/admin/billing/cost-policy", "platform.config.view", False),
     ("GET", "/api/admin/billing/cost-policy/history", "platform.config.view", False),
+    ("GET", "/api/admin/billing/cost-policy/traffic", "platform.config.view", False),
     ("POST", "/api/admin/billing/cost-policy/preview", "platform.config.manage", False),
     ("POST", "/api/admin/billing/cost-policy/publish", "platform.config.manage", True),
     ("GET", "/api/admin/billing/model-provider", "platform.config.view", False),

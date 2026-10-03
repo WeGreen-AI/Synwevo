@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from synwevo_core.billing import BillingError, ChargeContext, Ledger, PriceSnapshot, Usage, UsageEvidence
 from synwevo_core.billing.models import identifier, integer
+from synwevo_core.billing.traffic import TrafficCancelled
 
 from .deepseek import (Attempt, DeepSeekCancelled, DeepSeekError,
                        DeepSeekProvider, DeepSeekResult, Limits, normalize_usage)
@@ -85,14 +86,16 @@ class MeteredDeepSeek:
     name = "deepseek"
 
     def __init__(self, ledger: Ledger, *, current_authority: Callable[[ChargeContext], bool],
-                 transport=None, limits: Limits | None = None, cost_admission=None):
+                 transport=None, limits: Limits | None = None, cost_admission=None, traffic=None):
         if not callable(current_authority):
             raise BillingError("model_authority_required")
         if cost_admission is not None and (getattr(cost_admission, "ledger", None) is not ledger
                                           or not callable(getattr(cost_admission, "admit", None))):
             raise BillingError("model_cost_admission_required")
+        if traffic is not None and getattr(traffic, "ledger", None) is not ledger:
+            raise BillingError("model_traffic_required")
         self.ledger, self.store = ledger, ledger.store
-        self.cost_admission = cost_admission
+        self.cost_admission, self.traffic = cost_admission, traffic
         self.current_authority = current_authority
         self.transport = transport  # Trusted Python fixture injection only; not a route option.
         self.limits = limits or Limits()
@@ -184,6 +187,27 @@ class MeteredDeepSeek:
             raise BillingError("model_request_too_large")
         digest = hashlib.sha256(request.encode()).hexdigest()
         request = None  # Request bodies are not persisted in the money evidence tables.
+        claim = None
+        if self.traffic is not None:
+            # Wait for rate/in-flight capacity before reserving any money (docs/platform/model-traffic.md).
+            try:
+                claim = self.traffic.acquire(context.payer_user_id,
+                    est_tokens=route.input_token_ceiling + route.output_token_ceiling,
+                    deadline=run["deadline"], should_stop=should_stop)
+            except TrafficCancelled:
+                raise DeepSeekCancelled(Attempt()) from None
+            except BillingError as exc:
+                exc.not_dispatched = True  # Waiting never reserves money or sends anything.
+                raise
+        try:
+            return self._step(context, logical_call_id, credential, system, tools, messages, effort, on_text,
+                              should_stop, validate_result, run, route, sale, cost, digest, claim)
+        finally:
+            if claim is not None:
+                self.traffic.abandon(claim)  # Only a grant never admitted is freed here.
+
+    def _step(self, context, logical_call_id, credential, system, tools, messages, effort, on_text,
+              should_stop, validate_result, run, route, sale, cost, digest, claim):
         key, owner = uuid4().hex, uuid4().hex
         with self.store.tx() as t:
             prior = t.execute("SELECT request_digest FROM agent_metered_calls WHERE run_key=? AND logical_id=?",
@@ -214,6 +238,9 @@ class MeteredDeepSeek:
                 def admit(transaction, dispatch_ticket):
                     nonlocal admission_refusal
                     try:
+                        if claim is not None:
+                            self.traffic.admit(transaction, claim, attempt_key=dispatch_ticket.attempt_key,
+                                inflight_until=self.ledger._now() + math.ceil(self.limits.timeout_s) + 1)
                         self.cost_admission.admit(transaction, dispatch_ticket,
                             amount=self.upper_bound(route, cost),
                             expires_at=self.ledger._now() + math.ceil(self.limits.timeout_s) + 1)
@@ -240,7 +267,7 @@ class MeteredDeepSeek:
                     effort=effort, on_text=on_text, should_stop=should_stop,
                     user_id=pseudonym, before_dispatch=before_dispatch)
             except (DeepSeekError, DeepSeekCancelled) as exc:
-                self._observe(key, ticket, route, exc.attempt, completed=False)
+                self._observe(key, ticket, route, exc.attempt, completed=False, claim=claim)
                 if admission_refusal is not None:
                     # The transport deliberately sanitizes callback exceptions. Preserve
                     # only our local typed refusal, after recording the unsent attempt.
@@ -257,13 +284,13 @@ class MeteredDeepSeek:
                 if validate_result:
                     validate_result(result.step)
             except ProviderError as exc:
-                self._observe(key, ticket, route, result.attempt, completed=False)
+                self._observe(key, ticket, route, result.attempt, completed=False, claim=claim)
                 usage = result.attempt.usage
                 exc.metered_usage = ({"input_tokens": usage.prompt_tokens, "output_tokens": usage.completion_tokens}
                     if result.attempt.usage_reliability == "trusted_terminal" and usage else {})
                 exc.usage_reliability = result.attempt.usage_reliability
                 raise
-            self._observe(key, ticket, route, result.attempt, completed=True)
+            self._observe(key, ticket, route, result.attempt, completed=True, claim=claim)
             return result
         except BaseException:
             # cancel_call releases only proven unsent/known consumption. Unknown holds remain
@@ -272,7 +299,7 @@ class MeteredDeepSeek:
                 self.ledger.cancel_call(call_key)
             raise
 
-    def _observe(self, key, ticket, route, attempt, *, completed):
+    def _observe(self, key, ticket, route, attempt, *, completed, claim=None):
         payload = {k: getattr(attempt,k) for k in ("requested_model", "dispatch", "provider_request_id", "returned_model",
                    "capability_version", "http_status", "finish_reason", "stream_complete", "usage_reliability", "usage_reason")}
         payload.update(raw_usage=_raw_counters(attempt.raw_usage), completed=completed,
@@ -281,6 +308,9 @@ class MeteredDeepSeek:
         with self.store.tx() as t:
             t.execute("INSERT INTO agent_model_observations(call_id,attempt_key,evidence,created_at) VALUES (?,?,?,?)",
                       (key, ticket.attempt_key, _json(payload), payload["metered_at"]))
+        if claim is not None:
+            usage = attempt.usage if attempt.usage_reliability == "trusted_terminal" else None
+            self.traffic.finish(claim, tokens=(usage.prompt_tokens + usage.completion_tokens) if usage else None)
         if attempt.usage_reliability == "trusted_terminal" and attempt.provider_request_id:
             self._settle(key)
         elif attempt.dispatch != "definitely_not_requested":

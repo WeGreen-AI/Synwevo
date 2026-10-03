@@ -9,18 +9,36 @@ from __future__ import annotations
 import json
 import time
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_serializer
 
 from ..errors import ServiceError
 from .admission import CostAdmission, CostPolicy
 from .catalogue import PriceUnit
 from .ledger import Ledger
 from .models import BillingError, Unit, identifier
+from .traffic import TrafficLimits
 
 PROVIDER = "deepseek"
 # This installation currently uses one platform provider account. All keys, namespaces
 # and routes share this identity. A credential rotation cannot choose a new budget scope.
 ACCOUNT_REF = "platform-deepseek"
+
+
+class TrafficSpec(BaseModel):
+    """Optional. Platform rates must match the verified provider-account quota (several keys
+    of one account are one quota). A payer cannot be allowed more than the platform."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    platform_rpm: int = Field(ge=1, le=1_000_000)
+    platform_tpm: int = Field(ge=1, le=10**12)
+    payer_rpm: int = Field(ge=1, le=1_000_000)
+    payer_tpm: int = Field(ge=1, le=10**12)
+    payer_inflight: int = Field(ge=1, le=10000)
+    wait_seconds: int = Field(ge=0, le=900)
+    max_waiting: int = Field(ge=1, le=10000)
+    max_waiting_per_payer: int = Field(ge=1, le=10000)
+
+    def limits(self) -> TrafficLimits:
+        return TrafficLimits(**self.model_dump())
 
 
 class CostPolicySpec(BaseModel):
@@ -33,6 +51,15 @@ class CostPolicySpec(BaseModel):
     unknown_budget: str = Field(pattern=r"^(0|[1-9][0-9]{0,18})$")
     max_inflight: int = Field(ge=1, le=10000)
     max_unknown: int = Field(ge=1, le=10000)
+    traffic: TrafficSpec | None = None
+
+    @model_serializer(mode="wrap")
+    def _without_unset_traffic(self, handler):
+        # Revisions without traffic limits keep their exact stored and signed shape.
+        data = handler(self)
+        if isinstance(data, dict) and data.get("traffic") is None:
+            data.pop("traffic", None)
+        return data
 
     @field_validator("daily_budget", "weekly_budget", "monthly_budget", "unknown_budget")
     @classmethod
@@ -44,6 +71,7 @@ class CostPolicySpec(BaseModel):
     def policy(self, revision: str) -> CostPolicy:
         values = self.model_dump()
         values["unit"] = Unit(**values["unit"])
+        values["traffic"] = self.traffic.limits() if self.traffic is not None else None
         for name in ("daily_budget", "weekly_budget", "monthly_budget", "unknown_budget"):
             values[name] = int(values[name])
         return CostPolicy(revision=revision, account_ref=ACCOUNT_REF, provider=PROVIDER, **values)
@@ -57,9 +85,15 @@ def _revision(value):
 
 def validate_spec(value):
     try:
-        return CostPolicySpec.model_validate(value)
+        spec = CostPolicySpec.model_validate(value)
     except (ValidationError, TypeError, ValueError):
         raise ServiceError(400, "cost_invalid", "成本策略字段无效，请检查金额、单位及调用上限") from None
+    try:
+        spec.policy("validation")
+    except BillingError:
+        raise ServiceError(400, "cost_traffic_invalid",
+                           "速率与排队设置无效：付款人上限不能高于平台上限，排队上限须在总上限内") from None
+    return spec
 
 
 class CostSettings:

@@ -1,5 +1,13 @@
 import { registerMessages } from "@synwevo/ui/i18n-core";
 export const agentMessages = {
+  "模型调用排队超过等待上限，当前调用尚未发送，请稍后重试。": {"en": "The model call waited longer than allowed and was not sent. Try again later.", "zh-Hant": "模型呼叫排隊超過等待上限，目前呼叫尚未傳送，請稍後重試。"},
+  "模型调用排队已满，当前调用尚未发送，请稍后再试。": {"en": "The model call queue is full. This call was not sent; try again later.", "zh-Hant": "模型呼叫排隊已滿，目前呼叫尚未傳送，請稍後再試。"},
+  "你的模型调用排队已满，当前调用尚未发送，请等待已排队的调用完成。": {"en": "Your model call queue is full. This call was not sent; wait for queued calls to finish.", "zh-Hant": "你的模型呼叫排隊已滿，目前呼叫尚未傳送，請等待已排隊的呼叫完成。"},
+  "单次模型调用超过每分钟 token 上限，无法发送。请联系管理员核对设置。": {"en": "One model call exceeds the tokens-per-minute limit and cannot be sent. Ask an administrator to check the settings.", "zh-Hant": "單次模型呼叫超過每分鐘 token 上限，無法傳送。請聯絡管理員核對設定。"},
+  "模型调用的放行已过期，当前调用尚未发送，请重试。": {"en": "The model call's admission expired. This call was not sent; try again.", "zh-Hant": "模型呼叫的放行已過期，目前呼叫尚未傳送，請重試。"},
+  "模型调用速率设置已变化，当前调用尚未发送，请重试。": {"en": "Model call rate settings changed. This call was not sent; try again.", "zh-Hant": "模型呼叫速率設定已變更，目前呼叫尚未傳送，請重試。"},
+  "模型调用排队已满，当前消息尚未发送，请稍后再试": {"en": "The model call queue is full. This message was not sent; try again later.", "zh-Hant": "模型呼叫排隊已滿，目前訊息尚未傳送，請稍後再試"},
+  "模型调用容量暂时无法核对，当前消息尚未发送": {"en": "Model call capacity cannot be checked right now. This message was not sent.", "zh-Hant": "模型呼叫容量暫時無法核對，目前訊息尚未傳送"},
   "请只选择一种付款授权。": {"en": "Choose only one payment authorization.", "zh-Hant": "請只選擇一種付款授權。"},
   "这项持续付款授权不可用，请核对当前会话。": {"en": "This continuing payment consent is unavailable. Check the current conversation.", "zh-Hant": "這項持續付款授權不可用，請核對目前會話。"},
   "持续付款授权已撤销，尚未开始的付费调用已停止。": {"en": "Continuing payment consent was revoked. Paid calls that had not started are stopped.", "zh-Hant": "持續付款授權已撤銷，尚未開始的付費呼叫已停止。"},

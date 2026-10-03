@@ -13,6 +13,7 @@ from synwevo_core.billing.admission import CostAdmission
 from synwevo_core.billing.cost_settings import CostSettings
 from synwevo_core.billing.provider_settings import ProviderSettings
 from synwevo_core.billing.payer_budgets import PayerBudgets
+from synwevo_core.billing.traffic import ModelTraffic
 from synwevo_core.errors import ServiceError
 
 from .gateway import MeteredDeepSeek, MeteredTurnProvider, Route
@@ -28,7 +29,8 @@ class GovernedDeepSeek(MeteredTurnProvider):
         ledger.payer_budgets = PayerBudgets(ledger)
         costs = CostSettings(store, environment=environment)
         gateway = MeteredDeepSeek(ledger, current_authority=self.authorized,
-            cost_admission=CostAdmission(ledger, current_policy=costs.policy))
+            cost_admission=CostAdmission(ledger, current_policy=costs.policy),
+            traffic=ModelTraffic(ledger, current_policy=costs.policy))
         quotes = RunQuotes(gateway, current_route=self.route, current_authority=self.authorized)
         ledger.authorize = quotes.authorize
         super().__init__(gateway, quotes=quotes, credential_resolver=self.credential)

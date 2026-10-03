@@ -438,7 +438,8 @@ def test_openapi_and_runtime_responses_are_typed_with_no_implicit_policy_default
     w = cost_world
     schema = w["api"].openapi()
     paths, models = schema["paths"], schema["components"]["schemas"]
-    assert {path for path in paths if path.startswith(BASE)} == {BASE, BASE + "/history", BASE + "/preview", BASE + "/publish"}
+    assert {path for path in paths if path.startswith(BASE)} == {BASE, BASE + "/history", BASE + "/traffic",
+                                                             BASE + "/preview", BASE + "/publish"}
     for path, methods in paths.items():
         if not path.startswith(BASE):
             continue
@@ -461,3 +462,46 @@ def test_openapi_and_runtime_responses_are_typed_with_no_implicit_policy_default
     # The final int64 revision can be read even though it cannot be advanced again.
     terminal = {**result["state"], "revision": 2**63-1}
     assert admin_model_costs.CostState.model_validate(terminal).model_dump() == terminal
+
+
+TRAFFIC = {"platform_rpm": 600, "platform_tpm": 2_000_000, "payer_rpm": 60, "payer_tpm": 200_000,
+           "payer_inflight": 1, "wait_seconds": 300, "max_waiting": 500, "max_waiting_per_payer": 20}
+
+
+def test_traffic_limits_publish_exactly_and_invalid_combinations_are_refused(cost_world):
+    w = cost_world
+    spec = {**SPEC, "traffic": TRAFFIC}
+    plan = preview(w, spec=spec)
+    assert plan["after"] == spec
+    saved = publish(w, command(plan))
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["state"]["spec"]["traffic"] == TRAFFIC
+    for change in ({"payer_rpm": 601}, {"payer_tpm": 2_000_001}, {"max_waiting_per_payer": 501},
+                   {"payer_inflight": 2}, {"wait_seconds": 901}, {"platform_rpm": 0}, {"extra": 1}):
+        r = post(w["admin"], BASE + "/preview", {"expected_revision": 1, "spec": {**SPEC, "traffic": {**TRAFFIC, **change}}})
+        assert r.status_code == 400 and r.json()["error"] in ("cost_invalid", "cost_traffic_invalid"), change
+        assert "601" not in r.text and "2000001" not in r.text  # Submitted values are not echoed.
+    # A policy without traffic keeps its exact former shape: no "traffic": null appears.
+    plan = preview(w, revision=1, spec=SPEC)
+    assert "traffic" not in plan["after"] and plan["before"]["spec"]["traffic"] == TRAFFIC
+
+
+def test_traffic_usage_is_platform_wide_counters_for_viewers_only(cost_world):
+    w = cost_world
+    assert w["ordinary"].get(BASE + "/traffic").status_code == 404
+    viewer = make_platform_admin(w["store"], w["ident"].create_user("traffic-viewer@example.test", PW, status="active"), "auditor")
+    client = w["login"](viewer)
+    empty = client.get(BASE + "/traffic")
+    assert empty.status_code == 200 and empty.json()["configured"] is False and empty.json()["requests"] == 0
+    assert publish(w, command(preview(w, spec={**SPEC, "traffic": TRAFFIC}))).status_code == 200
+    now = int(time.time())
+    for state, admitted in (("admitted", now), ("finished", now - 10), ("waiting", None), ("finished", now - 3600)):
+        w["store"].execute("INSERT INTO model_traffic_claims(id,environment,account_ref,payer_user_id,est_tokens,state,"
+                           "enqueued_at,wait_until,admitted_at,inflight_until,actual_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                           ("traffic_" + uuid.uuid4().hex[:12], "test", "platform-deepseek", w["target"]["id"], 100, state,
+                            now - 5, now + 300, admitted, now + 60 if state == "admitted" else None,
+                            40 if state == "finished" else None))
+    usage = client.get(BASE + "/traffic").json()
+    # Two admitted within the minute (100 estimated + 40 actual); the hour-old call is outside it.
+    assert (usage["configured"], usage["requests"], usage["tokens"], usage["inflight"], usage["waiting"]) == (True, 2, 140, 1, 1)
+    assert usage["oldest_wait_s"] >= 5 and w["target"]["id"] not in json.dumps(usage)

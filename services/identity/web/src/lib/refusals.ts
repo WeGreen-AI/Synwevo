@@ -124,6 +124,7 @@ export const REFUSAL_SOURCES: Record<string, string> = {
   model_price_unavailable: "请先发布同一环境的销售价格与成本价格",
   model_price_mismatch: "模型路线与已生效价格不匹配，请重新选择",
   model_cost_policy_required: "请检查模型成本预算已启用，并与成本价格的单位一致。",
+  cost_traffic_invalid: "速率与排队设置无效：付款人上限不能高于平台上限，排队上限须在总上限内",
   model_no_change: "模型配置未发生变化，无需提交",
   model_bad_page: "模型配置历史分页参数无效",
   invalid_idempotency_key: "Idempotency-Key 必须是 1–255 个可打印 ASCII 字符，建议使用 UUID",

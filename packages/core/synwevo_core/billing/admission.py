@@ -15,6 +15,7 @@ import json
 
 from .ledger import Ledger
 from .models import AttemptTicket, BillingError, Unit, identifier, integer
+from .traffic import TrafficLimits
 
 _MAX_RECORDS = 10_000
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -33,6 +34,8 @@ class CostPolicy:
     unknown_budget: int
     max_inflight: int
     max_unknown: int
+    # Request/token rates, per-payer in-flight calls and waiting; None keeps the limits above only.
+    traffic: TrafficLimits | None = None
 
     def __post_init__(self):
         for value in (self.revision, self.account_ref, self.provider):
@@ -43,6 +46,9 @@ class CostPolicy:
             integer(value)
         for value in (self.max_inflight, self.max_unknown):
             integer(value, positive=True, maximum=_MAX_RECORDS)
+        if self.traffic is not None and (not isinstance(self.traffic, TrafficLimits)
+                                         or self.traffic.payer_inflight > self.max_inflight):
+            raise BillingError("invalid_cost_policy")
 
 
 def _windows(now: int) -> dict[str, int]:

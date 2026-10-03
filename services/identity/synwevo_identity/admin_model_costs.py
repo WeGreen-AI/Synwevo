@@ -17,8 +17,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
+from synwevo_core.billing import BillingError, Ledger
 from synwevo_core.billing.catalogue import PriceUnit
 from synwevo_core.billing.cost_settings import ACCOUNT_REF, PROVIDER, CostPolicySpec, CostSettings
+from synwevo_core.billing.traffic import ModelTraffic
 from synwevo_core.errors import ServiceError
 from synwevo_core.platform_access import require_platform
 from synwevo_core.store import new_id
@@ -74,6 +76,19 @@ class CostPreview(CostContract):
     expires_at: float
     risk: Literal["high"]
     environment: Literal["test", "live"]
+
+
+class TrafficUsage(CostContract):
+    """Platform-wide counters only: no payer, conversation or request content."""
+    environment: Literal["test", "live"] | None
+    configured: bool
+    as_of: int | None
+    window_s: int
+    requests: int
+    tokens: int
+    inflight: int
+    waiting: int
+    oldest_wait_s: int
 
 
 class CostPublication(CostContract):
@@ -141,6 +156,23 @@ class CostOperations(SignedPreview):
                 "created_at": None, "reason": None, "operation_id": None}
             self._actor(request, view=True)
             return state
+
+    def traffic(self, request):
+        self._actor(request, view=True)
+        empty = {"environment": self.environment, "configured": False, "as_of": None, "window_s": 60,
+                 "requests": 0, "tokens": 0, "inflight": 0, "waiting": 0, "oldest_wait_s": 0}
+        if not self.environment:
+            return empty
+        with self.store.tx():
+            self._actor(request, view=True)
+            ledger = Ledger(self.store, environment=self.environment, namespace="platform-cost-governance")
+            try:
+                usage = ModelTraffic(ledger, current_policy=self._settings().policy).snapshot()
+            except BillingError as exc:
+                if exc.code != "cost_not_configured":
+                    raise
+                return empty
+            return {**usage, "environment": self.environment}
 
     def history(self, request, *, before_revision=None, limit=20):
         self._actor(request, view=True)
@@ -233,6 +265,10 @@ def build_router(store, audit):
     @router.get("", response_model=CostState)
     def read(request: Request):
         return operations.read(request)
+
+    @router.get("/traffic", response_model=TrafficUsage)
+    def traffic(request: Request):
+        return operations.traffic(request)
 
     @router.get("/history", response_model=CostHistory)
     def history(request: Request, before_revision: int | None = Query(None, ge=0, lt=2**63 - 1),

@@ -8,7 +8,7 @@ import { transformWithOxc } from 'vite';
 // optimizer cache, experimental Node TS stripping or additional dependency is needed.
 const file = new URL('../src/governance/model-costs.ts', import.meta.url);
 const { code } = await transformWithOxc(await readFile(file, 'utf8'), fileURLToPath(file));
-const { amountToUnits, unitsToAmount, callLimit, costForm, emptyCostForm, validateCostForm, validCostSpec } =
+const { amountToUnits, unitsToAmount, callLimit, costForm, emptyCostForm, validateCostForm, validCostSpec, sameCostSpec, trafficNumber } =
   await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 
 test('major-unit budgets preserve cents and values above the JavaScript safe integer limit', () => {
@@ -64,5 +64,48 @@ test('only exact units supplied by the server are accepted, including when copyi
   assert.ok(validCostSpec(spec));
   for (const change of [{ daily_budget: 1 }, { daily_budget: '01' }, { unknown_budget: '9223372036854775808' }, { enabled: 'false' }, { max_unknown: true }, { unit: null }]) {
     assert.equal(validCostSpec({ ...spec, ...change }), false);
+  }
+});
+
+const trafficSpec = { enabled: true, unit: { code: 'TEST_COST', scale: 2 }, daily_budget: '100', weekly_budget: '100',
+  monthly_budget: '100', unknown_budget: '100', max_inflight: 8, max_unknown: 8,
+  traffic: { platform_rpm: 600, platform_tpm: 1000000000000, payer_rpm: 60, payer_tpm: 200000, payer_inflight: 2,
+    wait_seconds: 300, max_waiting: 500, max_waiting_per_payer: 20 } };
+
+test('traffic limits round-trip exactly and a policy edited in the form never silently loses them', () => {
+  const form = costForm(trafficSpec);
+  assert.equal(form.traffic, 'yes');
+  assert.deepEqual(validateCostForm(form, [trafficSpec.unit]).spec, trafficSpec);
+  // Editing an unrelated field keeps the traffic section; turning it off is an explicit choice.
+  const edited = validateCostForm({ ...form, daily_budget: '2' }, [trafficSpec.unit]).spec;
+  assert.deepEqual(edited.traffic, trafficSpec.traffic);
+  const off = validateCostForm({ ...form, traffic: 'no' }, [trafficSpec.unit]).spec;
+  assert.equal(off.traffic, undefined);
+  assert.equal(sameCostSpec(off, trafficSpec), false);
+  assert.equal(sameCostSpec(edited, { ...trafficSpec, daily_budget: '200' }), true);
+  // Older policies without traffic are shown as an explicit "not set", never blank.
+  const legacy = { ...trafficSpec }; delete legacy.traffic;
+  assert.equal(costForm(legacy).traffic, 'no');
+  assert.equal(validateCostForm({ ...costForm(legacy), traffic: '' }, [trafficSpec.unit]).spec, null);
+});
+
+test('traffic inputs are bounded integers and payers never exceed the platform', () => {
+  assert.equal(trafficNumber('wait_seconds', '0'), 0);
+  assert.equal(trafficNumber('wait_seconds', '900'), 900);
+  assert.equal(trafficNumber('platform_tpm', '1000000000000'), 1000000000000);
+  for (const [key, value] of [['wait_seconds', '901'], ['platform_rpm', '0'], ['platform_tpm', '1000000000001'],
+    ['payer_inflight', '10001'], ['max_waiting', '1.5'], ['payer_rpm', '01'], ['payer_rpm', '-1'], ['payer_rpm', '1e3']]) {
+    assert.equal(trafficNumber(key, value), null, `${key}=${value}`);
+  }
+  const form = costForm(trafficSpec);
+  for (const [change, field] of [[{ payer_rpm: '601' }, 'payer_rpm'], [{ payer_tpm: '1000000000000', platform_tpm: '999' }, 'payer_tpm'],
+    [{ max_waiting_per_payer: '501' }, 'max_waiting_per_payer'], [{ payer_inflight: '9' }, 'payer_inflight']]) {
+    const result = validateCostForm({ ...form, ...change }, [trafficSpec.unit]);
+    assert.equal(result.spec, null);
+    assert.ok(result.errors[field], field);
+  }
+  assert.ok(validCostSpec(trafficSpec));
+  for (const traffic of [null, {}, { ...trafficSpec.traffic, wait_seconds: 901 }, { ...trafficSpec.traffic, payer_rpm: '60' }]) {
+    assert.equal(validCostSpec({ ...trafficSpec, traffic }), false);
   }
 });

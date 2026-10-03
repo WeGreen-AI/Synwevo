@@ -7,8 +7,8 @@ import { useAdminData } from './data';
 import { errText } from './labels';
 import { useUnsavedChanges } from '../lib/hooks';
 import { walletAmount } from '../pages/account/money';
-import { budgetKeys, limitKeys, costForm, emptyCostForm, sameCostSpec, unitKey, validCostSpec, validUnit,
-  validateCostForm, unitsToAmount, type CostForm, type CostPolicySpec, type CostUnit } from './model-costs';
+import { budgetKeys, limitKeys, trafficBounds, trafficKeys, costForm, emptyCostForm, sameCostSpec, unitKey, validCostSpec, validUnit,
+  validateCostForm, unitsToAmount, type CostForm, type CostPolicySpec, type CostUnit, type TrafficKey } from './model-costs';
 import './model-costs.messages';
 
 type Environment = 'test' | 'live' | null;
@@ -18,11 +18,19 @@ type Current = PolicyState & { units: CostUnit[] };
 type History = { items: PolicyState[]; next_before_revision: number | null };
 type Plan = { before: PolicyState; after: CostPolicySpec; preview_token: string; expires_at: number; risk: 'high'; environment: Environment };
 type Publication = { operation_id: string; status: 'succeeded'; state: PolicyState };
+type TrafficUsage = { environment: Environment; configured: boolean; as_of: number | null; window_s: number; requests: number;
+  tokens: number; inflight: number; waiting: number; oldest_wait_s: number };
+const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
+const validUsage = (value: TrafficUsage | null): value is TrafficUsage => !!value && typeof value.configured === 'boolean' &&
+  (value.as_of === null || count(value.as_of)) && [value.window_s, value.requests, value.tokens, value.inflight, value.waiting, value.oldest_wait_s].every(count);
 type Attempt = { environment: Environment; body: { expected_revision: number; spec: CostPolicySpec; preview_token: string;
   idempotency_key: string; reason: string } };
 const API = '/api/admin/billing/cost-policy';
 const labels = { daily_budget: '每日成本上限', weekly_budget: '每周成本上限', monthly_budget: '每月成本上限',
-  unknown_budget: '用量待确认的成本上限', max_inflight: '同时进行的调用上限', max_unknown: '用量待确认的调用上限' };
+  unknown_budget: '用量待确认的成本上限', max_inflight: '同时进行的调用上限', max_unknown: '用量待确认的调用上限',
+  platform_rpm: '平台每分钟调用数', platform_tpm: '平台每分钟 token 数', payer_rpm: '每个付款人每分钟调用数',
+  payer_tpm: '每个付款人每分钟 token 数', payer_inflight: '每个付款人同时进行的调用数', wait_seconds: '最长排队等待（秒）',
+  max_waiting: '排队中的调用总数上限', max_waiting_per_payer: '每个付款人排队中的调用上限' };
 const grid: CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 16 };
 const fieldset: CSSProperties = { margin: 0, padding: 0, border: 0, minWidth: 0 };
 const sameForm = (a: CostForm, b: CostForm) => Object.keys(a).every(key => a[key as keyof CostForm] === b[key as keyof CostForm]);
@@ -46,6 +54,9 @@ function PolicyDetails({ spec }: { spec: CostPolicySpec | null }) {
     <div><dt>{t('成本单位')}</dt><dd style={{ margin: 0 }}>{t('{code}（小数位数：{scale}）', spec.unit)}</dd></div>
     {budgetKeys.map(key => <div key={key}><dt>{t(labels[key])}</dt><dd style={{ margin: 0 }}>{walletAmount(spec[key], spec.unit.scale, locale)} {spec.unit.code}</dd></div>)}
     {limitKeys.map(key => <div key={key}><dt>{t(labels[key])}</dt><dd style={{ margin: 0 }}>{spec[key]}</dd></div>)}
+    <div><dt>{t('模型调用速率与排队')}</dt><dd style={{ margin: 0 }}>{t(spec.traffic ? '已启用' : '未设置（只执行同时进行的调用上限）')}</dd></div>
+    {spec.traffic && trafficKeys.map(key => <div key={key}><dt>{t(labels[key])}</dt>
+      <dd style={{ margin: 0 }}>{new Intl.NumberFormat(locale).format(spec.traffic![key])}</dd></div>)}
   </dl>;
 }
 
@@ -62,6 +73,8 @@ function ModelCostsContent({ held, onDenied }: { held: Held; onDenied: () => voi
   const [cursors, setCursors] = useState<(number | null)[]>([null]);
   const cursor = cursors[cursors.length - 1];
   const history = useAdminData<History>(`${API}/history?limit=20${cursor === null ? '' : `&before_revision=${cursor}`}`, onDenied);
+  const traffic = useAdminData<TrafficUsage>(`${API}/traffic`, onDenied);
+  const usage = validUsage(traffic.data) ? traffic.data : null;
   const [base, setBase] = useState<PolicyState | null>(null);
   const [form, setForm] = useState<CostForm>(emptyCostForm);
   const [saved, setSaved] = useState<CostForm>(emptyCostForm);
@@ -122,7 +135,7 @@ function ModelCostsContent({ held, onDenied }: { held: Held; onDenied: () => voi
     }
   }
   function setOriginal(value: Attempt | null) { attemptRef.current = value; setAttempt(value); }
-  function refresh() { current.reload(); history.reload(); }
+  function refresh() { current.reload(); history.reload(); traffic.reload(); }
   function edit(key: keyof CostForm, value: string) {
     if (frozen || !canWrite) return;
     setForm({ ...form, [key]: value }); setPlan(null); setOriginal(null); setResult(null);
@@ -203,13 +216,18 @@ function ModelCostsContent({ held, onDenied }: { held: Held; onDenied: () => voi
       {item.operation_id && <p className="small muted">{t('操作编号：{id}', { id: item.operation_id })}</p>}
     </div>;
   }
-  function field(key: typeof budgetKeys[number] | typeof limitKeys[number], monetary: boolean) {
+  function field(key: typeof budgetKeys[number] | typeof limitKeys[number] | TrafficKey, monetary: boolean) {
     const problem = tried ? validation.errors[key] : undefined;
+    const traffic = (trafficKeys as readonly string[]).includes(key);
     return <label className="field" htmlFor={`${id}-${key}`} key={key} style={{ minWidth: 0 }}>
       <span>{t(labels[key])}{monetary && selectedUnit ? ` (${selectedUnit.code})` : ''}</span>
       <input id={`${id}-${key}`} className="input" type="text" inputMode={monetary ? 'decimal' : 'numeric'} required
-        maxLength={monetary ? 33 : 5} value={form[key]} onChange={event => edit(key, event.target.value)}
-        aria-invalid={!!problem} aria-describedby={`${id}-amount-help${problem ? ` ${id}-${key}-error` : ''}`} style={{ width: '100%', minWidth: 0 }} />
+        maxLength={monetary ? 33 : traffic ? 13 : 5} value={form[key]} onChange={event => edit(key, event.target.value)}
+        aria-invalid={!!problem} aria-describedby={`${id}-${traffic ? `${key}-range` : 'amount-help'}${problem ? ` ${id}-${key}-error` : ''}`}
+        style={{ width: '100%', minWidth: 0 }} />
+      {traffic && <span id={`${id}-${key}-range`} className="small muted">{t('范围 {low}–{high}', {
+        low: new Intl.NumberFormat(locale).format(trafficBounds[key as TrafficKey][0]),
+        high: new Intl.NumberFormat(locale).format(trafficBounds[key as TrafficKey][1]) })}</span>}
       {problem && <span className="small" id={`${id}-${key}-error`}>{t(problem)}</span>}
     </label>;
   }
@@ -237,6 +255,21 @@ function ModelCostsContent({ held, onDenied }: { held: Held; onDenied: () => voi
         {changedEnvironment && <p>{t('环境已变化，不能在另一环境重试原请求。')}</p>}
         <div><button type="button" className="btn" disabled={!canWrite || !!busy || dialogOpen || changedEnvironment} onClick={() => { setConfirmed(false); setDialogOpen(true); }}>{t('核对并重试原请求')}</button></div>
       </div>}
+    </section>
+
+    <section className="card card-b col gap12" aria-labelledby={`${id}-traffic-usage`} aria-busy={traffic.loading}>
+      <h3 id={`${id}-traffic-usage`}>{t('当前模型调用流量')}</h3>
+      <p className="small muted">{t('仅显示平台合计，不显示付款人或会话。数值在读取时计算，不会自动刷新。')}</p>
+      {traffic.err ? <p className="notice err" role="alert">{t(traffic.err)}</p> : traffic.loading ? <p role="status">{t('正在读取模型调用流量…')}</p>
+        : !usage ? <p className="notice err" role="alert">{t('无法确认模型调用流量，请刷新后重试。')}</p> : <>
+        {!usage.configured && <p className="notice">{t('当前成本策略未设置速率与排队限制；以下数值仅供参考。')}</p>}
+        <dl className="small" style={grid}>
+          {([['最近 {window} 秒内放行的调用', usage.requests], ['最近 {window} 秒内计入的 token', usage.tokens],
+            ['进行中的调用', usage.inflight], ['正在排队的调用', usage.waiting], ['最久排队（秒）', usage.oldest_wait_s]] as const).map(([label, value]) =>
+            <div key={label}><dt>{t(label, { window: usage.window_s })}</dt><dd style={{ margin: 0 }}>{new Intl.NumberFormat(locale).format(value)}</dd></div>)}
+        </dl>
+        {usage.as_of !== null && <p className="small muted">{t('读取于 {time}', { time: time(usage.as_of) })}</p>}
+      </>}
     </section>
 
     <section className="card card-b col gap12" aria-labelledby={`${id}-current`} aria-busy={current.loading}>
@@ -277,6 +310,17 @@ function ModelCostsContent({ held, onDenied }: { held: Held; onDenied: () => voi
           </div>
           {selectedUnit && <p className="small muted">{t('此单位的单项金额上限为 {amount} {code}。', {
             amount: unitsToAmount('9223372036854775807', selectedUnit.scale), code: selectedUnit.code })}</p>}
+        </fieldset>
+        <fieldset className="col gap12" style={fieldset} disabled={!canWrite || frozen}>
+          <legend>{t('模型调用速率与排队')}</legend>
+          <p className="small muted" id={`${id}-traffic-help`}>{t('调用在预留资金前排队；按付款人轮流放行，单个付款人的上限不影响其他人。平台上限须按已核实的提供方账户额度填写，多个密钥不代表多个账户额度。超过最长等待仍未放行的调用不会发送。')}</p>
+          <label className="field" htmlFor={`${id}-traffic`} style={{ maxWidth: 480 }}><span>{t('速率与排队限制')}</span>
+            <select id={`${id}-traffic`} className="input" required value={form.traffic} onChange={event => edit('traffic', event.target.value)}
+              aria-invalid={tried && !!validation.errors.traffic} aria-describedby={`${id}-traffic-help${tried && validation.errors.traffic ? ` ${id}-traffic-error` : ''}`}>
+              <option value="">{t('请选择是否启用')}</option><option value="yes">{t('启用')}</option><option value="no">{t('不设置（只执行同时进行的调用上限）')}</option>
+            </select>{tried && validation.errors.traffic && <span id={`${id}-traffic-error`} className="small">{t(validation.errors.traffic)}</span>}
+          </label>
+          {form.traffic === 'yes' && <div style={grid}>{trafficKeys.map(key => field(key, false))}</div>}
         </fieldset>
         {tried && !validation.spec && <p className="notice err" role="alert">{t('请修正已标出的成本字段，再预览变更。')}</p>}
         <div><button type="submit" className="btn primary" disabled={!canWrite || frozen || changedBase || conflict || (validation.spec !== null && sameCostSpec(validation.spec, base.spec))}>{t('预览成本变更')}</button></div>
