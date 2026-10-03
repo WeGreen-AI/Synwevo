@@ -66,8 +66,6 @@ python -m synwevo_identity.cli client register crm-sync --app platform --name "C
 * **个人 Agent 的一切**（会话、记忆、个人自动化、报价、预算、付款同意、发起对话）：没有路由，也没有 scope；
   能力层对任何 `via="api"` 调用一律返回 403 `person_required`。
 * 跨工作空间写入（`forms.form.duplicate`）：凭据只属于一个工作空间。
-* 文件上传与下载（Forms 附件、Tables 导入导出文件、DataPrep 上传、Extract 文件）：这些路由目前只接受会话。相关操作可以
-  调用，但文件环节需在页面完成——尚未实现的下一步。
 * 事件订阅 / Webhook：尚未实现。异步操作的结果通过对应应用的读取操作或 `GET /runs/{id}` 查询。
 
 ## 2. 调用
@@ -92,7 +90,28 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 
 `workspace_id` 可省略；若给出必须等于凭据绑定的工作空间，否则 403 `workspace_mismatch`。
 
-### 2.1 幂等
+### 2.1 文件
+
+上传、下载与导出是各应用**同一个处理函数**在本前缀下的第二次挂载：上传检查（格式、大小、安全扫描与隔离判定）、来源复核、
+本人的导出权（编辑者及以上，或带导出权的成员）与页面完全相同；凭据只改变“谁在问”。每条都要带
+`?workspace_id=<凭据的工作空间>`（其他值 403 `workspace_mismatch`）。
+
+| 路由 | scope | 说明 |
+|---|---|---|
+| `POST /extract/files` | `extract.write` | 上传 PDF、图片或 CSV/TSV，供 `extract.task.create` 使用。**必须**带 `Idempotency-Key`：同键同内容返回同一个文件，同键不同内容 409 |
+| `GET /extract/files/{file_id}` | `extract.read` | 下载原文件 |
+| `GET /extract/tasks/{task_id}/export?revision=` | `extract.read` | 已确认的结果版本（JSON 附件）；未确认或已被替代 409 |
+| `POST /dataprep/files` | `dataprep.write` | 上传 CSV / XLSX，供 `dataprep.dataset.import` 使用。**必须**带 `Idempotency-Key` |
+| `GET /dataprep/datasets/{dataset_id}/export?format=csv\|xlsx\|json` | `dataprep.read` | 导出数据集；来源来自其他应用时还需要该应用的 read scope |
+| `GET /dataprep/runs/{run_id}/issues` | `dataprep.read` | 一次运行的全部异常（JSON 附件） |
+| `POST /tables/{table_id}/imports` | `tables.write` | 上传 CSV / XLSX 暂存为导入单，再用 `tables.import.apply` 映射并写入。没有幂等键：重复上传会多一张导入单，SDK 不自动重试 |
+| `GET /tables/exports/{export_id}` | `tables.read` | 下载用 `tables.export.create` 建立的导出：下载**那一刻**本人可读的记录；导出单只属于建立它的人 |
+| `GET /forms/files/{file_id}` | `forms.read` | 下载提交的附件（`forms.submission.get` 输出里的 `files[].id`） |
+
+操作输出里的 `url` 字段（附件、导出）是页面路径；凭据请用上表的路径和输出里的 `id`。上传键与操作的幂等键一样按客户端
+命名空间保存，页面不能使用 `api:` 前缀。下载是带 `no-store` 的直接响应，没有可转交的签名链接——撤权后下一次下载即被拒绝。
+
+### 2.2 幂等
 
 * 有副作用的操作支持 `Idempotency-Key`（或请求体 `idempotency_key`，两者同时给出必须一致）：1–128 个可见 ASCII 字符。
   同键同参返回第一次的结果（`replayed: true`）；同键不同参 409 `idempotency_conflict`；先前失败的同键请求 409
@@ -107,7 +126,7 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 * 重放前重新鉴权：原结果的来源此刻不可读时返回 409 `run_result_unavailable`，不会重新执行。
 * 超时意味着结果未知：用同一个键重试，或查询 `GET /runs/{id}`。
 
-### 2.2 错误
+### 2.3 错误
 
 与 Docs 机器接口相同的信封（`Accept: application/problem+json` 时为 RFC 9457）：
 
@@ -128,7 +147,7 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 每个响应带 `X-Request-ID`；成功与 429 响应带 `RateLimit` / `RateLimit-Policy`。调用记录（接口模板、状态、错误代码、
 客户端、请求编号，不含请求体）进入 API 控制台的调用记录；写操作进入工作空间审计，署名为本人并注明客户端。
 
-### 2.3 撤权
+### 2.4 撤权
 
 每次调用重新核对，以下任一发生后**下一次调用**即被拒绝：本人在「已授权的应用」撤回、令牌被撤销、刷新令牌被重放（整组
 授权撤销）、客户端被停用或缩小登记范围、本人被移出工作空间/降为查看者/账户停用、工作空间冻结、应用在该空间停用。
@@ -171,6 +190,9 @@ const made = await suite.invoke('tables.record.create', { table_id: tid, cells: 
   一个进程里的两个 `UserToken`）从同一个刷新令牌启动**：第一个刷新后，第二个出示的就是已用过的令牌，平台按泄露处理，
   两边同时失效，本人必须重新授权。多进程部署时由一个进程（或一个带锁的共享存储）负责刷新，其余只读取当前访问令牌；
   `from_env` / `fromEnv` 读到的是启动时的那一个刷新令牌，只适合单进程。
+* 文件：`extract_upload` / `extractUpload`、`extract_download`、`extract_export`、`dataprep_upload`、`dataprep_export`、
+  `dataprep_run_issues`、`tables_import_upload`、`tables_export_download`、`forms_file`（TypeScript 为对应的驼峰命名）。上传
+  接受磁盘路径或字节；带键的上传用同一个键重试，`tables_import_upload` 不重试。
 * `from_env` / `fromEnv` 只读 `SYNWEVO_SUITE_*` 变量，不借用 Docs 或目录接口的凭据。
 * 尚未发布到公共包仓库；从本仓库安装（`apps/docs/sdk/python`、`apps/docs/sdk/typescript`）。
 
@@ -181,7 +203,8 @@ const made = await suite.invoke('tables.record.create', { table_id: tid, cells: 
 | 身份、scope、单一工作空间、实时撤权、个人操作无入口、幂等、回执、调用记录与审计 | `apps/suite/tests/test_machine_api.py` |
 | 应用自身的操作全部按构建结果入档、路由与契约一致 | `apps/suite/tests/test_machine_contract.py` |
 | 发布的契约 = 组装后部署的注册表 = 导出器输出；组装层操作的 scope 与幂等声明与实际一致 | `tests/integration/test_suite_machine_contract.py` |
-| Python SDK 对真实应用 | `apps/suite/tests/test_machine_sdk.py` |
+| 文件路由：scope / 工作空间 / 会话不算凭据、上传键命名空间、与页面相同的上传检查、导出权与跨应用上限、三条无浏览器的完整流程 | `apps/suite/tests/test_machine_files.py` |
+| Python SDK 对真实应用（含文件上传 → 处理 → 导出） | `apps/suite/tests/test_machine_sdk.py` |
 | 授权结束后延后工作停止（五种结束方式 × 排队中/处理中途），轮换与过期不误停，页面发起的不受影响 | `apps/suite/tests/test_machine_deferred.py` |
 | 真实登录 → 同意 → 令牌 → 三个机器接口互不通用 → SDK 刷新轮换 → 重放撤销 → 撤回同意 | `tests/integration/test_suite_machine_flow.py` |
 | SDK 重试、键、令牌轮换（传输故障夹具） | `apps/docs/sdk/python/tests/test_suite.py`、`apps/docs/sdk/typescript/test/suite.test.mjs` |

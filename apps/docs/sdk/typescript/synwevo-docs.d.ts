@@ -1825,6 +1825,34 @@ export declare class SuiteClient {
   run(runId: string, options?: RequestOptions): Promise<WithMeta<SuiteRun>>;
   /** @throws WaitTimeoutError (`details` is the last state) when the run has not settled in time. */
   wait(runId: string, options?: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal }): Promise<WithMeta<SuiteRun>>;
+
+  // Files. Uploads take a path, bytes or a Blob (bytes and Blobs need `filename`). The service's
+  // own limits are 8–12 MB, so results are returned whole.
+  /** Scope extract.write. The same key and bytes answer with the same file. */
+  extractUpload(file: SuiteUploadSource, options?: SuiteUploadOptions): Promise<WithMeta<Record<string, unknown> & { id: string }>>;
+  /** Scope extract.read and the person's export right. */
+  extractDownload(fileId: string, options?: RequestOptions): Promise<Uint8Array>;
+  extractExport(taskId: string, revision: number, options?: RequestOptions): Promise<Record<string, unknown>>;
+  /** Scope dataprep.write. */
+  dataprepUpload(file: SuiteUploadSource, options?: SuiteUploadOptions): Promise<WithMeta<Record<string, unknown> & { id: string }>>;
+  /** Scope dataprep.read, the export right, and the read scope of the application the dataset came from. */
+  dataprepExport(datasetId: string, options?: RequestOptions & { format?: 'csv' | 'xlsx' | 'json' }): Promise<Uint8Array>;
+  dataprepRunIssues(runId: string, options?: RequestOptions): Promise<Record<string, unknown>[]>;
+  /** Scope tables.write. Not retried: a repeat would stage a second import. */
+  tablesImportUpload(tableId: string, file: SuiteUploadSource, options?: Omit<SuiteUploadOptions, 'idempotencyKey'>): Promise<WithMeta<Record<string, unknown> & { id: string; row_count: number }>>;
+  /** Scope tables.read and the person's export right: the records readable at the moment of the download. */
+  tablesExportDownload(exportId: string, options?: RequestOptions): Promise<Uint8Array>;
+  /** Scope forms.read and the person's export right. */
+  formsFile(fileId: string, options?: RequestOptions): Promise<Uint8Array>;
+}
+
+/** A path on disk, or the bytes themselves (then `filename` is required). */
+export type SuiteUploadSource = string | Uint8Array | Blob;
+export interface SuiteUploadOptions {
+  filename?: string;
+  /** 1–128 visible ASCII characters. Default: a new UUID for this upload (kept across its retries). */
+  idempotencyKey?: string;
+  signal?: AbortSignal;
 }
 
 export declare class Client {

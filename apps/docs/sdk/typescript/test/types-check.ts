@@ -227,3 +227,17 @@ export async function suiteBoundary(stored: { refreshToken: string }, save: (t: 
   console.log(role, replayed, hidden, wrong, input, scope);
   return granted;
 }
+
+export async function suiteFiles(suite: SuiteClient, path: string): Promise<number> {
+  const file = await suite.extractUpload(path, { idempotencyKey: 'invoice-00127' });
+  const id: string = file.id;
+  const original: Uint8Array = await suite.extractDownload(id);
+  const staged = await suite.tablesImportUpload('tbl_1', new Uint8Array([1]), { filename: 'codes.csv' });
+  const rows: number = staged.row_count;
+  const sheet: Uint8Array = await suite.dataprepExport('dset_1', { format: 'xlsx' });
+  // @ts-expect-error An import upload has no idempotency key: a repeat stages a second import.
+  await suite.tablesImportUpload('tbl_1', path, { idempotencyKey: 'k' });
+  // @ts-expect-error Only csv, xlsx and json are exported.
+  await suite.dataprepExport('dset_1', { format: 'pdf' });
+  return original.length + rows + sheet.length;
+}

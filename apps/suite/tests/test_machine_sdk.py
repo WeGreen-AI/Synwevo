@@ -79,3 +79,44 @@ def test_refusals_arrive_as_the_typed_errors_the_sdk_documents(api):
     assert e.value.code == "unknown_operation"
     assert reader.invoke("forms.form.list", idempotency_key="reads-ignore-keys")["output"]["forms"] == []
     assert reader.invoke("forms.form.list", idempotency_key="reads-ignore-keys").replayed is False
+
+
+def test_an_integration_moves_files_through_the_sdk(api, tmp_path):
+    """Upload, process and take the result out, with the SDK alone: a file on disk in, bytes out."""
+    import csv
+    import io
+    source = tmp_path / "amounts.csv"
+    source.write_bytes(b"id,amount\n001,0.10\n002,0.20\n002,0.20\n")
+    c = sdk(api, "bob", "dataprep.read dataprep.write tables.read tables.write")
+    uploaded = c.dataprep_upload(source, idempotency_key="amounts-2026-10")
+    assert uploaded["filename"] == "amounts.csv" and uploaded["upload_key"] == "amounts-2026-10"
+    assert c.dataprep_upload(source, idempotency_key="amounts-2026-10")["id"] == uploaded["id"]     # a repeat, not a second file
+    data = c.invoke("dataprep.dataset.import", {"file_id": uploaded["id"], "name": "Imported amounts"})["output"]
+    recipe = c.invoke("dataprep.recipe.create", {"name": "Deduplicate", "definition": {"steps": [
+        {"id": "dedupe", "type": "dedupe", "columns": ["id"]}]}})["output"]
+    c.invoke("dataprep.recipe.publish", {"recipe_id": recipe["id"], "draft_rev": 1})
+    started = c.invoke("dataprep.run.start", {"recipe_id": recipe["id"], "version": 1, "inputs": {"main": data["id"]}})
+    assert started["status"] == "queued" and started.status_code == 202
+    assert api.api.state.dataprep.tick()
+    done = c.wait(started["run_id"], timeout=5)
+    assert done["status"] in ("succeeded", "partial")
+    result = c.invoke("dataprep.run.get", {"run_id": started["output"]["id"]})["output"]["output_dataset_id"]
+    rows = list(csv.reader(io.StringIO(c.dataprep_export(result).decode("utf-8-sig"))))
+    assert rows[0] == ["id", "amount"] and sorted(rows[1:]) == [["001", "0.10"], ["002", "0.20"]]
+    assert isinstance(c.dataprep_run_issues(started["output"]["id"]), list)
+
+    # the same result into a table, and out again as the table's own export
+    owner = sdk(api, "alice", "tables.read tables.write")
+    table = owner.invoke("tables.table.create", {"name": "Amounts"})["output"]["id"]
+    rev = owner.invoke("tables.table.get", {"table_id": table})["output"]["schema_rev"]
+    field = owner.invoke("tables.field.save", {"table_id": table, "schema_rev": rev,
+                                               "field": {"name": "id", "type": "text"}})["output"]["field_id"]
+    ticket = owner.tables_import_upload(table, c.dataprep_export(result), filename="result.csv")
+    assert ticket["row_count"] == 2
+    owner.invoke("tables.import.apply", {"table_id": table, "import_id": ticket["id"], "mapping": {"id": field},
+                                         "atomic": False, "preview": False})
+    export = owner.invoke("tables.export.create", {"table_id": table})["output"]["id"]
+    assert sorted(owner.tables_export_download(export).decode("utf-8-sig").split()) == ["001", "002", "id"]
+    with pytest.raises(PermissionDeniedError) as e:        # a client without the scope is told which one
+        sdk(api, "alice", "tables.write").tables_export_download(export)
+    assert e.value.code == "insufficient_scope" and e.value.details["required_scope"] == "tables.read"

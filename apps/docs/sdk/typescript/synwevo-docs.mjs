@@ -1255,6 +1255,7 @@ function suiteKey(value) {
  */
 export class SuiteClient {
   #transport;
+  #workspace = null;
   constructor(baseUrl = SUITE_BASE_URL, credentials, options = {}) {
     if (!(credentials instanceof UserToken)) {
       throw new ValidationError("SuiteClient requires a UserToken (a person's delegation) or fromEnv()", { field: 'credentials' });
@@ -1329,6 +1330,66 @@ export class SuiteClient {
       await this.#transport.sleep(Math.min(pollMs, left), signal);
     }
   }
+
+  // ----- files: the routes that move bytes. They name the credential's workspace in the query
+  // (the service refuses any other), which is read once from whoami.
+  async #where() {
+    this.#workspace ??= (await this.whoami()).workspace_id;
+    return { workspace_id: this.#workspace };
+  }
+
+  async #upload(path, file, filename, { idempotencyKey, keyed, signal } = {}) {
+    let blob;
+    if (typeof file === 'string') {
+      blob = await fileBlob(file, MIME[extname(file).toLowerCase()] || 'application/octet-stream');
+      filename ??= basename(file);
+    } else {
+      if (!filename) throw new ValidationError('filename is required when uploading bytes', { field: 'filename' });
+      blob = file instanceof Blob ? file : new Blob([file], { type: MIME[extname(filename).toLowerCase()] || 'application/octet-stream' });
+    }
+    const query = await this.#where();
+    // A keyed upload answers a repeat with the first file. Without a key a repeat would stage a
+    // second import, so it is not retried.
+    return this.#transport.requestJson('POST', path, { query, signal, retry: keyed,
+      idempotencyKey: keyed ? suiteKey(idempotencyKey ?? randomUUID()) : undefined,
+      form: () => { const form = new FormData(); form.append('file', blob, filename); return form; } });
+  }
+
+  async #download(path, query = {}, opts = {}) {
+    return this.#transport.send('GET', path, { ...opts, query: { ...(await this.#where()), ...query },
+      consume: async (res) => new Uint8Array(await res.arrayBuffer()) });
+  }
+
+  /** Upload a PDF, image or CSV/TSV for extract.task.create (scope extract.write). `file` is a path, bytes or a Blob. */
+  extractUpload(file, { filename, idempotencyKey, signal } = {}) {
+    return this.#upload('/extract/files', file, filename, { idempotencyKey, keyed: true, signal });
+  }
+  /** The uploaded original (extract.read and the person's export right). */
+  extractDownload(fileId, opts = {}) { return this.#download(`/extract/files/${encodeURIComponent(fileId)}`, {}, opts); }
+  /** A confirmed result revision (extract.read and the person's export right). */
+  async extractExport(taskId, revision, opts = {}) {
+    return JSON.parse(new TextDecoder().decode(await this.#download(`/extract/tasks/${encodeURIComponent(taskId)}/export`, { revision }, opts)));
+  }
+  /** Upload a CSV or XLSX for dataprep.dataset.import (scope dataprep.write). */
+  dataprepUpload(file, { filename, idempotencyKey, signal } = {}) {
+    return this.#upload('/dataprep/files', file, filename, { idempotencyKey, keyed: true, signal });
+  }
+  /** A dataset as a file (dataprep.read, the export right, and the read scope of where it came from). */
+  dataprepExport(datasetId, { format = 'csv', ...opts } = {}) {
+    return this.#download(`/dataprep/datasets/${encodeURIComponent(datasetId)}/export`, { format }, opts);
+  }
+  /** Every issue of a run (dataprep.read and the person's export right). */
+  async dataprepRunIssues(runId, opts = {}) {
+    return JSON.parse(new TextDecoder().decode(await this.#download(`/dataprep/runs/${encodeURIComponent(runId)}/issues`, {}, opts)));
+  }
+  /** Stage a CSV or XLSX for tables.import.apply (scope tables.write). Not retried. */
+  tablesImportUpload(tableId, file, { filename, signal } = {}) {
+    return this.#upload(`/tables/${encodeURIComponent(tableId)}/imports`, file, filename, { keyed: false, signal });
+  }
+  /** The file of an export made with tables.export.create (tables.read and the person's export right). */
+  tablesExportDownload(exportId, opts = {}) { return this.#download(`/tables/exports/${encodeURIComponent(exportId)}`, {}, opts); }
+  /** An attachment of a submission (forms.read and the person's export right). */
+  formsFile(fileId, opts = {}) { return this.#download(`/forms/files/${encodeURIComponent(fileId)}`, {}, opts); }
 }
 
 // --------------------------------------------------------------------------- webhooks
