@@ -303,6 +303,11 @@ def test_a_queued_extraction_does_not_run_once_the_grant_has_ended(api, extracti
     assert row["parse_json"] is None and row["machine_json"] is None and row["current_json"] is None
     receipt = api.people.store.one("SELECT status FROM op_runs WHERE id=?", (run_id,))
     assert receipt["status"] == "failed"
+    # it was never started, and nothing says it was: no `started` event, no attempt spent
+    kinds = [e["type"] for e in api.people.store.all(
+        "SELECT type FROM app_events WHERE object_kind='extract_task' AND object_id=? ORDER BY seq", (task_id,))]
+    assert kinds == ["extract.task.queued", "extract.task.failed"]
+    assert api.people.store.one("SELECT attempts FROM extract_tasks WHERE id=?", (task_id,))["attempts"] == 0
 
 
 def test_an_extraction_whose_grant_ends_while_it_parses_stores_nothing(api, extracting, monkeypatch):

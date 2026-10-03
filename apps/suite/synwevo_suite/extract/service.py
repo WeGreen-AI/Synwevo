@@ -394,6 +394,14 @@ class Extract:
                 self.store.update("extract_tasks", {"id": row["id"]}, {"status": "failed", "error_code": "worker_interrupted", "updated_at": now()})
                 self._event(t, row, "extract.task.failed")
                 return
+            # A task whose client's grant has already ended is not started, and nobody is told it
+            # was: it fails here with the reason. `check` below asks again at every later step.
+            try:
+                self.caps.standing(row["operation_run_id"])
+            except ServiceError as gone:
+                self.store.update("extract_tasks", {"id": row["id"]}, {"status": "failed", "error_code": gone.code, "updated_at": now()})
+                self._event(t, row, "extract.task.failed")
+                return
             self.store.update("extract_tasks", {"id": row["id"]}, {"status": "running", "attempts": row["attempts"] + 1,
                               "lease_token": token, "lease_until": now() + TIMEOUT + 30, "updated_at": now()})
             self._event(t, row, "extract.task.started")
