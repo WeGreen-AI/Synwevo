@@ -17,6 +17,7 @@ from synwevo_core.capabilities import RUN_STATES, TERMINAL_STATES, Operation, ca
 from synwevo_core.http import SUITE_V1
 from synwevo_core.oidc import SUITE_API_SCOPES, suite_resource
 
+from . import machine_events
 from .machine import MAX_CALLER_KEY, idempotency_rule, machine_operations
 
 VERSION = "1.0.0"
@@ -241,6 +242,40 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
         "responses": {**json_ok(_ref("Run")), **_errors({"401", "403", "404", "429", "500"})}},
         scopes=[])}
 
+    served = machine_events.event_types(registry)
+    if served:
+        # Any one application's read scope opens the feed; each event needs its own application's.
+        paths[f"{SUITE_V1}/events"] = {"get": {**_common({
+            "operationId": "events", "tags": ["credential"],
+            "summary": "What changed in this workspace since the cursor, for the applications the credential may "
+                       "read: where to look, never what is there",
+            "description": "Items are in the order the events were written. An item names the object and the "
+                           "identifiers needed to open it; the event's data is not served. Only events about "
+                           "records the person may read now are returned. Keep `next_cursor` and send it back; "
+                           f"a cursor is good for {machine_events.RETENTION_S // 86400} days after it was issued "
+                           "at the end of the feed, and is refused with 410 once what follows it may have left "
+                           "that window.",
+            "parameters": [
+                {"name": "cursor", "in": "query", "required": False,
+                 "description": "The `next_cursor` of the previous page. Opaque; belongs to this client, person "
+                                "and workspace.",
+                 "schema": {"type": "string", "maxLength": machine_events.MAX_CURSOR}},
+                {"name": "types", "in": "query", "required": False,
+                 "description": "Comma-separated event types to return (see `x-synwevo-event-types`).",
+                 "schema": {"type": "string"}},
+                {"name": "limit", "in": "query", "required": False,
+                 "schema": {"type": "integer", "minimum": 1, "maximum": machine_events.MAX_LIMIT,
+                            "default": machine_events.DEFAULT_LIMIT}},
+                {"name": "start", "in": "query", "required": False,
+                 "description": "Without a cursor: `oldest` (the default) reads the retained window from its "
+                                "beginning; `now` returns no items and a cursor at the present.",
+                 "schema": {"enum": list(machine_events.STARTS)}}],
+            "responses": {**json_ok(_ref("EventPage")), **_errors({"400", "401", "403", "429", "500"}),
+                          "410": {"$ref": "#/components/responses/Gone"}}}, scopes=[]),
+            "security": [{"suiteToken": [scope]} for scope in sorted({e["scope"] for e in served})],
+            "x-synwevo-event-types": served,
+            "x-synwevo-retention-seconds": machine_events.RETENTION_S}}
+
     text = {"type": "object", "required": ["zh-Hans", "zh-Hant", "en"],
             "properties": {k: {"type": "string"} for k in ("zh-Hans", "zh-Hant", "en")}}
     components = dict(sorted(schemas.out.items()))
@@ -290,6 +325,30 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                           "properties": {"workspace_id": {"type": "string"},
                                          "operations": {"type": "array", "items": _ref("OperationContract")},
                                          "apps": {"type": "array", "items": {"type": "object"}}}},
+        "Event": {"type": "object", "additionalProperties": False,
+                  "required": ["id", "type", "version", "app", "object", "refs", "occurred_at", "run_id",
+                               "correlation_id"],
+                  "properties": {
+                      "id": {"type": "string"}, "type": {"enum": [e["type"] for e in served]},
+                      "version": {"type": "integer"}, "app": {"enum": sorted({e["app"] for e in served})},
+                      "object": {"type": "object", "additionalProperties": False, "required": ["kind", "id"],
+                                 "properties": {"kind": {"type": "string"}, "id": {"type": "string"}}},
+                      "refs": {"type": "object", "additionalProperties": {"type": "string"},
+                               "description": "Identifiers needed to open the object, by name."},
+                      "occurred_at": {"type": "number"},
+                      "run_id": {"type": ["string", "null"],
+                                 "description": "The run that caused the event, when this client started it."},
+                      "correlation_id": {"type": ["string", "null"],
+                                         "description": "Present when it belongs to a run this client started."}}},
+        "EventPage": {"type": "object", "additionalProperties": False,
+                      "required": ["workspace_id", "items", "next_cursor", "has_more"],
+                      "properties": {"workspace_id": {"type": "string"},
+                                     "items": {"type": "array", "items": _ref("Event"),
+                                               "maxItems": machine_events.MAX_LIMIT},
+                                     "next_cursor": {"type": "string"},
+                                     "has_more": {"type": "boolean",
+                                                  "description": "True when the request stopped before the end "
+                                                                 "of the feed — even with no items. Ask again."}}},
         "Run": {"type": "object",
                 "required": ["id", "operation", "app", "workspace_id", "status", "via", "input", "output", "error",
                              "object", "created_at", "finished_at", "snapshot_hidden"],
@@ -310,7 +369,10 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                                 "chose, with their current role; the scope is necessary, not sufficient."},
         "servers": [{"url": server.rstrip("/")}],
         "paths": dict(sorted(paths.items())),
-        "components": {"schemas": components, "responses": _error_responses(), "headers": {
+        "components": {"schemas": components, "responses": {**_error_responses(), "Gone": {
+            "description": "Gone", "headers": _headers("410"), "content": {
+                "application/json": {"schema": _ref("SuiteError")},
+                "application/problem+json": {"schema": _ref("SuiteProblem")}}}}, "headers": {
             "RequestId": {"schema": {"type": "string"}},
             "RateLimit": {"schema": {"type": "string"}},
             "RateLimitPolicy": {"schema": {"type": "string"}},

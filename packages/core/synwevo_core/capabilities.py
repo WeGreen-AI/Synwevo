@@ -201,12 +201,43 @@ class Operation:
                 "output_schema": self.output_schema()}
 
 
+@dataclass(frozen=True)
+class EventType:
+    """One kind of event an application lets a credential read about (`EventFeed`)."""
+    type: str                                # "tables.record.changed"
+    object_kind: str                         # what `object_id` names
+    #: Identifiers in the event's data a reader needs to open the object — the table a record is
+    #: in, the form a submission answers. Named one by one; nothing else in the data is served.
+    refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EventFeed:
+    """What a machine caller may learn from an application's events, and who may learn it.
+
+    An event is a fact about a record, so reading one is reading that record's existence. The
+    application says which event types it serves and, when its records are not readable by
+    everyone who can read the application in the workspace (a table with a reading role, a dataset
+    whose sources the person lost), which of a batch this person may know about now. An
+    application that registers nothing serves nothing, and so does an event type it left out.
+    """
+    types: tuple[EventType, ...]
+    #: ``(user_id, workspace_id, events) -> ids of the events this person may know about now``.
+    #: Called with the credential in effect, so what it reads in another application is held to
+    #: the credential's scopes. None: every record is readable with the application.
+    visible: Callable[[str, str, list[dict]], set[str]] | None = None
+
+    def type(self, name: str) -> EventType | None:
+        return next((t for t in self.types if t.type == name), None)
+
+
 class Registry:
     """The process's applications and operations. Filled at install time, read everywhere."""
 
     def __init__(self):
         self._apps: dict[str, AppManifest] = {}
         self._ops: dict[str, Operation] = {}
+        self._feeds: dict[str, EventFeed] = {}
         self._lock = threading.Lock()
 
     def register_app(self, manifest: AppManifest) -> None:
@@ -225,6 +256,28 @@ class Registry:
                 raise ValueError(f"operation {op.id} is already registered")
             self._ops[op.id] = op
 
+    def register_events(self, app_id: str, feed: EventFeed) -> None:
+        """The events of `app_id` a machine caller may read (see `EventFeed`)."""
+        with self._lock:
+            manifest = self._apps.get(app_id)
+            if manifest is None or not manifest.machine:
+                raise ValueError(f"application {app_id} has no machine API to serve events through")
+            names = [t.type for t in feed.types]
+            if len(set(names)) != len(names):
+                raise ValueError(f"application {app_id}: an event type is declared twice")
+            for t in feed.types:
+                if not t.type.startswith(app_id + "."):
+                    raise ValueError(f"event {t.type} must be named under its application {app_id}")
+                if t.object_kind not in manifest.object_kinds:
+                    raise ValueError(f"event {t.type}: {t.object_kind} is not one of {app_id}'s object kinds")
+            existing = self._feeds.get(app_id)
+            if existing is not None and existing != feed:
+                raise ValueError(f"application {app_id} already declared its events")
+            self._feeds[app_id] = feed
+
+    def events(self, app_id: str) -> EventFeed | None:
+        return self._feeds.get(app_id)
+
     def app(self, app_id: str) -> AppManifest | None:
         return self._apps.get(app_id)
 
@@ -242,6 +295,7 @@ class Registry:
         with self._lock:
             self._apps.clear()
             self._ops.clear()
+            self._feeds.clear()
 
 
 # --------------------------------------------------------------------------------- schema

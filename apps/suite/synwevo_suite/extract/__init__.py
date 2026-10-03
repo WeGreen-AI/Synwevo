@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 from fastapi import Request, UploadFile, File, Header
 from fastapi.responses import Response
-from synwevo_core.capabilities import AppManifest, canonical
+from synwevo_core.capabilities import AppManifest, EventFeed, EventType, canonical
 from .ops import Revision
 
 _paths = {"object_paths": (("extract_template", "/extract/w/{workspace}/templates/{id}"),
@@ -16,6 +16,15 @@ MANIFEST = AppManifest(id="extract", name="Synwevo Extract", path="/extract", ic
              "zh-Hant": "從真實檔案提取欄位，核對來源，保留人工修正和確認版本。",
              "en": "Extract fields from real files, check sources and preserve correction and confirmation versions."},
     object_kinds=("extract_template", "extract_task", "extract_file"), machine=True, **_paths)
+
+#: What a credential may read about Extract's events. Templates, tasks and files are readable by
+#: everyone who can read Extract in the workspace.
+EVENTS = EventFeed(types=(
+    *(EventType(f"extract.template.{what}", "extract_template")
+      for what in ("created", "saved", "published", "retired", "archived")),
+    *(EventType(f"extract.task.{what}", "extract_task")
+      for what in ("queued", "started", "ready", "failed", "cancelled", "correction", "confirmation")),
+    *(EventType(f"extract.file.{what}", "extract_file") for what in ("uploaded", "imported"))))
 
 
 def install(ctx):
@@ -33,6 +42,7 @@ def install(ctx):
     service = Extract(ctx.store, ctx.identity, ctx.capabilities, reader)
     ctx.api.state.extract = service
     register(ctx.registry, service)
+    ctx.registry.register_events(MANIFEST.id, EVENTS)
 
     # Each file route is served under the page's prefix (a session) and under the machine API's (a
     # credential holding the scope named here); `acting` decides which, the rest is one path.

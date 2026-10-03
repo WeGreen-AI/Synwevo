@@ -1,5 +1,5 @@
 """Synwevo DataPrep: deterministic, versioned data preparation."""
-from synwevo_core.capabilities import AppManifest
+from synwevo_core.capabilities import AppManifest, EventFeed, EventType
 
 MANIFEST = AppManifest(id='dataprep', name='Synwevo DataPrep', path='/dataprep', icon='table',
     summary={'zh-Hans': '导入、清洗与校验数据，复用处理方案，追踪异常并导出结果。',
@@ -20,6 +20,14 @@ def install(ctx):
     service = DataPrep(ctx.store, ctx.identity, ctx.capabilities)
     ctx.api.state.dataprep = service
     register(ctx.registry, service)
+    # A dataset or a run is withheld from someone who may not read its sources now, in the lists
+    # and so in the events (`DataPrep.events_visible`).
+    ctx.registry.register_events(MANIFEST.id, EventFeed(types=(
+        EventType('dataprep.dataset.created', 'dataprep_dataset'),
+        EventType('dataprep.recipe.published', 'dataprep_recipe'),
+        EventType('dataprep.run.queued', 'dataprep_run'),
+        *(EventType(f'dataprep.run.{state}', 'dataprep_run', refs=('output_dataset_id',))
+          for state in ('succeeded', 'partial', 'failed', 'cancelled'))), visible=service.events_visible))
     ctx.api.include_router(router(ctx, service))
     from synwevo_core.http import SUITE_V1
     ctx.api.include_router(router(ctx, service, prefix=SUITE_V1 + '/dataprep'))   # the same handlers, for a credential

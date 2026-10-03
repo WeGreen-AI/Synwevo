@@ -57,6 +57,31 @@ class Tables:
             refuse('table_archived', 409)
         return row
 
+    def events_visible(self, user_id, workspace_id, events):
+        """Which of these events this person may know about: those of tables — and, for a record's
+        events, of records — their role can read now, the rule `table` and `record` apply to every
+        read. An event that does not name its table, or names something that is gone, is not shown."""
+        role = self.caps.check_workspace(user_id, 'tables', workspace_id, 'read')
+        named = {}
+        for e in events:
+            tid = e['data'].get('table_id') if isinstance(e.get('data'), dict) else None
+            if isinstance(tid, str) and (e['object_kind'] != 'table' or e['object_id'] == tid):
+                named[e['id']] = (tid, e['object_id'] if e['object_kind'] == 'table_record' else None)
+
+        def rows(table, columns, ids):                  # `table` and `columns` are literals of this method
+            ids = sorted(ids)
+            for i in range(0, len(ids), 200):
+                chunk = ids[i:i+200]
+                yield from self.store.all(f"SELECT {columns} FROM {table} WHERE workspace_id=? AND id IN ({','.join('?' * len(chunk))})",
+                                          (workspace_id, *chunk))
+
+        tables = {r['id'] for r in rows('tb_tables', 'id, read_role', {t for t, _ in named.values()})
+                  if ft.readable(role, r['read_role'])}
+        records = {r['id']: r['table_id'] for r in rows('tb_records', 'id, table_id, read_role',
+                                                         {r for _, r in named.values() if r})
+                   if ft.readable(role, r['read_role'])}
+        return {eid for eid, (tid, rid) in named.items() if tid in tables and (rid is None or records.get(rid) == tid)}
+
     def fields(self, tid, *, deleted=False):
         rows = self.store.all('SELECT * FROM tb_fields WHERE table_id=? AND status=? ORDER BY position,id',
                               (tid, 'deleted' if deleted else 'active'))

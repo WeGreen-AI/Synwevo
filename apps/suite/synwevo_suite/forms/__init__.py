@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import Request
 from fastapi.responses import Response
 
-from synwevo_core.capabilities import AppManifest
+from synwevo_core.capabilities import AppManifest, EventFeed, EventType
 
 MANIFEST = AppManifest(
     id="forms", name="Synwevo Forms", path="/forms", icon="form",
@@ -21,6 +21,15 @@ MANIFEST = AppManifest(
     object_paths=(("form", "/forms/w/{workspace}/f/{id}"), ("form_request", "/forms/w/{workspace}/r/{id}"),
                   ("form_submission", "/forms/w/{workspace}/s/{id}")),
     machine=True)
+
+#: What a credential may read about Forms' events. Forms, requests and submissions are readable by
+#: everyone who can read Forms in the workspace, so there is no per-record decision to make.
+EVENTS = EventFeed(types=(
+    EventType("forms.form.published", "form"),
+    *(EventType(f"forms.request.{what}", "form_request", refs=("form_id",))
+      for what in ("created", "closed", "revoked", "expired")),
+    *(EventType(f"forms.submission.{what}", "form_submission", refs=("form_id", "request_id"))
+      for what in ("created", "resubmitted", "changes_requested", "accepted"))))
 
 
 def install(ctx) -> None:
@@ -34,6 +43,7 @@ def install(ctx) -> None:
     forms = Forms(ctx.store, ctx.identity, ctx.capabilities)
     ctx.api.state.forms = forms
     register(ctx.registry, forms)
+    ctx.registry.register_events(MANIFEST.id, EVENTS)
     ctx.api.include_router(build_public_router(Filling(forms), ctx.capabilities))
 
     @ctx.api.get("/api/suite/forms/files/{file_id}", tags=["forms"])

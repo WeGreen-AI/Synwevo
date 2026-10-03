@@ -300,6 +300,543 @@
         "x-synwevo-identity": "delegated"
       }
     },
+    "/api/suite/v1/events": {
+      "get": {
+        "operationId": "events",
+        "tags": [
+          "credential"
+        ],
+        "summary": "What changed in this workspace since the cursor, for the applications the credential may read: where to look, never what is there",
+        "description": "Items are in the order the events were written. An item names the object and the identifiers needed to open it; the event's data is not served. Only events about records the person may read now are returned. Keep `next_cursor` and send it back; a cursor is good for 30 days after it was issued at the end of the feed, and is refused with 410 once what follows it may have left that window.",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The `next_cursor` of the previous page. Opaque; belongs to this client, person and workspace.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated event types to return (see `x-synwevo-event-types`).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "description": "Without a cursor: `oldest` (the default) reads the retained window from its beginning; `now` returns no items and a cursor at the present.",
+            "schema": {
+              "enum": [
+                "oldest",
+                "now"
+              ]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimitPolicy"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
+          }
+        },
+        "security": [
+          {
+            "suiteToken": [
+              "approvals.read"
+            ]
+          },
+          {
+            "suiteToken": [
+              "dataprep.read"
+            ]
+          },
+          {
+            "suiteToken": [
+              "extract.read"
+            ]
+          },
+          {
+            "suiteToken": [
+              "forms.read"
+            ]
+          },
+          {
+            "suiteToken": [
+              "tables.read"
+            ]
+          }
+        ],
+        "x-synwevo-resource": "urn:synwevo:platform:suite",
+        "x-synwevo-identity": "delegated",
+        "x-synwevo-event-types": [
+          {
+            "type": "approvals.request.approved",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.request.commented",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.request.created",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.request.rejected",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.request.resumed",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.request.returned",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.request.revised",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.request.stalled",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.request.withdrawn",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.stage.approved",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.stage.escalated",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.stage.opened",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.stage.reminder",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.stage.skipped",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.task.decided",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.task.reassigned",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.task.revoked",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.task.transferred",
+            "app": "approvals",
+            "object_kind": "approval_request",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "approvals.template.published",
+            "app": "approvals",
+            "object_kind": "approval_template",
+            "refs": [],
+            "scope": "approvals.read"
+          },
+          {
+            "type": "dataprep.dataset.created",
+            "app": "dataprep",
+            "object_kind": "dataprep_dataset",
+            "refs": [],
+            "scope": "dataprep.read"
+          },
+          {
+            "type": "dataprep.recipe.published",
+            "app": "dataprep",
+            "object_kind": "dataprep_recipe",
+            "refs": [],
+            "scope": "dataprep.read"
+          },
+          {
+            "type": "dataprep.run.cancelled",
+            "app": "dataprep",
+            "object_kind": "dataprep_run",
+            "refs": [
+              "output_dataset_id"
+            ],
+            "scope": "dataprep.read"
+          },
+          {
+            "type": "dataprep.run.failed",
+            "app": "dataprep",
+            "object_kind": "dataprep_run",
+            "refs": [
+              "output_dataset_id"
+            ],
+            "scope": "dataprep.read"
+          },
+          {
+            "type": "dataprep.run.partial",
+            "app": "dataprep",
+            "object_kind": "dataprep_run",
+            "refs": [
+              "output_dataset_id"
+            ],
+            "scope": "dataprep.read"
+          },
+          {
+            "type": "dataprep.run.queued",
+            "app": "dataprep",
+            "object_kind": "dataprep_run",
+            "refs": [],
+            "scope": "dataprep.read"
+          },
+          {
+            "type": "dataprep.run.succeeded",
+            "app": "dataprep",
+            "object_kind": "dataprep_run",
+            "refs": [
+              "output_dataset_id"
+            ],
+            "scope": "dataprep.read"
+          },
+          {
+            "type": "extract.file.imported",
+            "app": "extract",
+            "object_kind": "extract_file",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.file.uploaded",
+            "app": "extract",
+            "object_kind": "extract_file",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.task.cancelled",
+            "app": "extract",
+            "object_kind": "extract_task",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.task.confirmation",
+            "app": "extract",
+            "object_kind": "extract_task",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.task.correction",
+            "app": "extract",
+            "object_kind": "extract_task",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.task.failed",
+            "app": "extract",
+            "object_kind": "extract_task",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.task.queued",
+            "app": "extract",
+            "object_kind": "extract_task",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.task.ready",
+            "app": "extract",
+            "object_kind": "extract_task",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.task.started",
+            "app": "extract",
+            "object_kind": "extract_task",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.template.archived",
+            "app": "extract",
+            "object_kind": "extract_template",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.template.created",
+            "app": "extract",
+            "object_kind": "extract_template",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.template.published",
+            "app": "extract",
+            "object_kind": "extract_template",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.template.retired",
+            "app": "extract",
+            "object_kind": "extract_template",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "extract.template.saved",
+            "app": "extract",
+            "object_kind": "extract_template",
+            "refs": [],
+            "scope": "extract.read"
+          },
+          {
+            "type": "forms.form.published",
+            "app": "forms",
+            "object_kind": "form",
+            "refs": [],
+            "scope": "forms.read"
+          },
+          {
+            "type": "forms.request.closed",
+            "app": "forms",
+            "object_kind": "form_request",
+            "refs": [
+              "form_id"
+            ],
+            "scope": "forms.read"
+          },
+          {
+            "type": "forms.request.created",
+            "app": "forms",
+            "object_kind": "form_request",
+            "refs": [
+              "form_id"
+            ],
+            "scope": "forms.read"
+          },
+          {
+            "type": "forms.request.expired",
+            "app": "forms",
+            "object_kind": "form_request",
+            "refs": [
+              "form_id"
+            ],
+            "scope": "forms.read"
+          },
+          {
+            "type": "forms.request.revoked",
+            "app": "forms",
+            "object_kind": "form_request",
+            "refs": [
+              "form_id"
+            ],
+            "scope": "forms.read"
+          },
+          {
+            "type": "forms.submission.accepted",
+            "app": "forms",
+            "object_kind": "form_submission",
+            "refs": [
+              "form_id",
+              "request_id"
+            ],
+            "scope": "forms.read"
+          },
+          {
+            "type": "forms.submission.changes_requested",
+            "app": "forms",
+            "object_kind": "form_submission",
+            "refs": [
+              "form_id",
+              "request_id"
+            ],
+            "scope": "forms.read"
+          },
+          {
+            "type": "forms.submission.created",
+            "app": "forms",
+            "object_kind": "form_submission",
+            "refs": [
+              "form_id",
+              "request_id"
+            ],
+            "scope": "forms.read"
+          },
+          {
+            "type": "forms.submission.resubmitted",
+            "app": "forms",
+            "object_kind": "form_submission",
+            "refs": [
+              "form_id",
+              "request_id"
+            ],
+            "scope": "forms.read"
+          },
+          {
+            "type": "tables.record.changed",
+            "app": "tables",
+            "object_kind": "table_record",
+            "refs": [
+              "table_id"
+            ],
+            "scope": "tables.read"
+          },
+          {
+            "type": "tables.schema.changed",
+            "app": "tables",
+            "object_kind": "table",
+            "refs": [
+              "table_id"
+            ],
+            "scope": "tables.read"
+          },
+          {
+            "type": "tables.table.changed",
+            "app": "tables",
+            "object_kind": "table",
+            "refs": [
+              "table_id"
+            ],
+            "scope": "tables.read"
+          },
+          {
+            "type": "tables.view.changed",
+            "app": "tables",
+            "object_kind": "table",
+            "refs": [
+              "table_id"
+            ],
+            "scope": "tables.read"
+          }
+        ],
+        "x-synwevo-retention-seconds": 2592000
+      }
+    },
     "/api/suite/v1/extract/files": {
       "post": {
         "operationId": "extract.file.upload",
@@ -23083,6 +23620,164 @@
           }
         }
       },
+      "Event": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "type",
+          "version",
+          "app",
+          "object",
+          "refs",
+          "occurred_at",
+          "run_id",
+          "correlation_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "approvals.request.approved",
+              "approvals.request.commented",
+              "approvals.request.created",
+              "approvals.request.rejected",
+              "approvals.request.resumed",
+              "approvals.request.returned",
+              "approvals.request.revised",
+              "approvals.request.stalled",
+              "approvals.request.withdrawn",
+              "approvals.stage.approved",
+              "approvals.stage.escalated",
+              "approvals.stage.opened",
+              "approvals.stage.reminder",
+              "approvals.stage.skipped",
+              "approvals.task.decided",
+              "approvals.task.reassigned",
+              "approvals.task.revoked",
+              "approvals.task.transferred",
+              "approvals.template.published",
+              "dataprep.dataset.created",
+              "dataprep.recipe.published",
+              "dataprep.run.cancelled",
+              "dataprep.run.failed",
+              "dataprep.run.partial",
+              "dataprep.run.queued",
+              "dataprep.run.succeeded",
+              "extract.file.imported",
+              "extract.file.uploaded",
+              "extract.task.cancelled",
+              "extract.task.confirmation",
+              "extract.task.correction",
+              "extract.task.failed",
+              "extract.task.queued",
+              "extract.task.ready",
+              "extract.task.started",
+              "extract.template.archived",
+              "extract.template.created",
+              "extract.template.published",
+              "extract.template.retired",
+              "extract.template.saved",
+              "forms.form.published",
+              "forms.request.closed",
+              "forms.request.created",
+              "forms.request.expired",
+              "forms.request.revoked",
+              "forms.submission.accepted",
+              "forms.submission.changes_requested",
+              "forms.submission.created",
+              "forms.submission.resubmitted",
+              "tables.record.changed",
+              "tables.schema.changed",
+              "tables.table.changed",
+              "tables.view.changed"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "app": {
+            "enum": [
+              "approvals",
+              "dataprep",
+              "extract",
+              "forms",
+              "tables"
+            ]
+          },
+          "object": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "id"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "refs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Identifiers needed to open the object, by name."
+          },
+          "occurred_at": {
+            "type": "number"
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The run that caused the event, when this client started it."
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present when it belongs to a run this client started."
+          }
+        }
+      },
+      "EventPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspace_id",
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "properties": {
+          "workspace_id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "maxItems": 500
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "True when the request stopped before the end of the feed — even with no items. Ask again."
+          }
+        }
+      },
       "Run": {
         "type": "object",
         "required": [
@@ -23327,6 +24022,26 @@
       },
       "InternalServerError": {
         "description": "Internal Server Error",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SuiteError"
+            }
+          },
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/SuiteProblem"
+            }
+          }
+        }
+      },
+      "Gone": {
+        "description": "Gone",
         "headers": {
           "X-Request-ID": {
             "$ref": "#/components/headers/RequestId"

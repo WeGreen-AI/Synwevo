@@ -15,7 +15,8 @@ are the page's own (acceptance A4). What this layer adds is what only a credenti
 * the caller's idempotency key is kept **per client**, so two integrations acting for one person
   cannot replay each other's calls, and rotating a secret does not start a second attempt;
 * a run can be read back only by the client that started it;
-* the routes that move bytes (`acting`) are the applications' own, served a second time here.
+* the routes that move bytes (`acting`) are the applications' own, served a second time here;
+* what changed since the client last asked is a feed it pulls (`machine_events`).
 
 Operations that are a person's own (the Agent, spending, consent) have no route and no scope: the
 capability layer refuses them for every ``via="api"`` caller, whatever asked.
@@ -245,6 +246,14 @@ def build_machine_router(ctx) -> APIRouter:
         raise ServiceError(403, "person_required",
                            "这个操作必须由本人在应用里亲自完成，不能通过接口凭据代为执行。",
                            {"operation": operation})
+
+    @r.get("/events")
+    def events(request: Request, cursor: str | None = None, types: str | None = None,
+               limit: int | None = None, start: str | None = None):
+        """What changed in this credential's workspace since `cursor`, for the applications it may
+        read: where to look, never what is there (see `machine_events`)."""
+        from . import machine_events
+        return machine_events.feed(caps, caller(request), cursor=cursor, types=types, limit=limit, start=start)
 
     @r.get("/runs/{run_id}")
     def run(run_id: str, request: Request):

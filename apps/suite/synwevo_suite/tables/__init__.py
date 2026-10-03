@@ -1,5 +1,5 @@
 """Synwevo Tables: independent structured business data, exposed through shared operations."""
-from synwevo_core.capabilities import AppManifest
+from synwevo_core.capabilities import AppManifest, EventFeed, EventType
 
 MANIFEST = AppManifest(id='tables', name='Synwevo Tables', path='/tables', icon='table',
     summary={'zh-Hans': '管理业务数据、关联记录、保存视图并追溯每次变更。',
@@ -24,6 +24,11 @@ def install(ctx):
     service = TablesService(ctx.store, ctx.identity, ctx.capabilities)
     ctx.api.state.tables = service
     register(ctx.registry, service)
+    # A table has a reading role: an event about a table, its fields, views or records is for the
+    # people who can read that table (`Tables.events_visible`).
+    ctx.registry.register_events(MANIFEST.id, EventFeed(types=(
+        *(EventType(f'tables.{what}.changed', 'table', refs=('table_id',)) for what in ('table', 'schema', 'view')),
+        EventType('tables.record.changed', 'table_record', refs=('table_id',))), visible=service.events_visible))
     install_routes(ctx, service)
     if ctx.start_jobs:
         from ..common.worker import Ticker

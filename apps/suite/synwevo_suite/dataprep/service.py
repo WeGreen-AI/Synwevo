@@ -50,6 +50,29 @@ class DataPrep:
         if row['output_dataset_id']:
             check_sources(self, workspace, user, row['output_dataset_id'], seen)
 
+    def events_visible(self, user, workspace, events):
+        """Which of these events this caller may know about: the rule `page` applies to the lists.
+        A dataset or a run whose sources the caller may not read now — a source withdrawn or
+        changed, an application the person lost, a scope a credential does not hold — is withheld,
+        and so is every event about it. Each record is checked once per batch."""
+        verdict, shown = {}, set()
+        for e in events:
+            key = (e['object_kind'], e['object_id'])
+            if key not in verdict:
+                try:
+                    if key[0] == 'dataprep_dataset':
+                        check_sources(self, workspace, user, key[1])
+                    elif key[0] == 'dataprep_run':
+                        self.check_run_sources(workspace, user, self.get('runs', workspace, key[1]))
+                    else:
+                        self.get('recipes', workspace, key[1])
+                    verdict[key] = True
+                except ServiceError:
+                    verdict[key] = False
+            if verdict[key]:
+                shown.add(e['id'])
+        return shown
+
     def page(self, table, workspace, offset, limit, user):
         selection = ('id,workspace_id,name,origin,file_id,run_id,columns_json,row_count,column_count,content_hash,status,created_by,created_at'
                      if table == 'datasets' else 'id,workspace_id,name,description,status,draft_rev,published_version,created_at,updated_at'
