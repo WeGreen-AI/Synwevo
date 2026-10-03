@@ -152,6 +152,7 @@ test('the event feed is followed page by page with the service\'s cursor', async
   for (const wrong of [{ types: 'tables.record.changed' }, { types: [''] }, { start: 'yesterday' }, { start: 'now', cursor: 's1.A' }]) {
     assert.throws(() => client.eventsPage(wrong), ValidationError);
   }
+  await assert.rejects(client.events({ follow: true, intervalMs: 0 }).next(), ValidationError);
   assert.deepEqual(seen, ['evt_1', 'evt_2', 'evt_3']);
   assert.equal(later.id, 'evt_4');
   assert.deepEqual(naps, [7500]);                                   // slept only when there was nothing more to read
@@ -162,6 +163,18 @@ test('the event feed is followed page by page with the service\'s cursor', async
     { cursor: 's1.A', types: wanted, limit: '2' },
     { cursor: 's1.B', types: wanted, limit: '2' },
     { cursor: 's1.C' }, { cursor: 's1.D' }]);
+});
+
+test('a stored cursor that is still null starts where the caller said, not from the oldest event', async () => {
+  const asked = [];
+  const fetch = async (url) => {
+    asked.push(Object.fromEntries(new URL(url).searchParams));
+    return json(200, { workspace_id: 'w_1', items: [], next_cursor: 's1.A', has_more: false });
+  };
+  const client = new SuiteClient('https://workplace.invalid', new UserToken({ accessToken: 'synthetic-access' }), { fetch, ...quiet });
+  for await (const page of client.eventPages({ cursor: null, start: 'now' })) assert.equal(page.next_cursor, 's1.A');
+  await client.eventsPage({ cursor: null, start: 'now' });
+  assert.deepEqual(asked, [{ start: 'now' }, { start: 'now' }]);
 });
 
 test('waiting for a run stops at a terminal state or at the deadline', async () => {

@@ -1795,7 +1795,7 @@ export interface SuiteEvent {
   occurred_at: number;
   /** The run that caused it, when this client started that run. */
   run_id: string | null;
-  /** Present when it belongs to a run this client started. */
+  /** The correlation id of the run that caused it, when this client started that run. */
   correlation_id: string | null;
 }
 
@@ -1809,7 +1809,8 @@ export interface SuiteEventPage {
 }
 
 export interface SuiteEventQuery {
-  cursor?: string;
+  /** null is the same as leaving it out: a client that has not stored one yet. */
+  cursor?: string | null;
   types?: string[];
   /** 1–500; the service's default is 100. */
   limit?: number;
@@ -1818,13 +1819,14 @@ export interface SuiteEventQuery {
 }
 
 export interface SuiteEventFollowOptions {
-  cursor?: string;
+  /** null is the same as leaving it out: a client that has not stored one yet. */
+  cursor?: string | null;
   types?: string[];
   start?: 'oldest' | 'now';
   pageSize?: number;
   /** Keep polling when the end is reached. Default false. */
   follow?: boolean;
-  /** Default 5000. */
+  /** Default 5000; must be positive when following. */
   intervalMs?: number;
   signal?: AbortSignal;
 }

@@ -154,6 +154,8 @@ class SuiteTests(unittest.TestCase):
                           {"start": "now", "cursor": "s1.A"}):
                 with self.assertRaises(ValidationError):
                     c.events_page(**wrong)
+            with self.assertRaises(ValidationError):       # following without a pause would spin
+                next(c.iter_events(follow=True, interval=0))
         self.assertEqual(seen, ["evt_1", "evt_2", "evt_3"])
         self.assertEqual(later["id"], "evt_4")
         self.assertEqual((gone.exception.code, gone.exception.request_id), ("cursor_expired", "req_gone"))

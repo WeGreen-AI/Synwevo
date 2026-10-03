@@ -14,6 +14,7 @@ holds are necessary, never sufficient. The personal Agent is not part of this AP
 """
 from __future__ import annotations
 
+import math
 import mimetypes
 import os
 import re
@@ -279,6 +280,8 @@ class SuiteClient:
         """Pages in order. Each page's ``next_cursor`` resumes right after it: store it once the
         page's events are handled. With ``follow`` it keeps polling, every ``interval`` seconds
         when there is nothing new."""
+        if follow and not (isinstance(interval, (int, float)) and math.isfinite(interval) and interval > 0):
+            raise ValidationError("interval must be a positive number when following", "interval")
         while True:
             page = self.events_page(cursor=cursor, types=types, limit=page_size, start=None if cursor else start)
             yield page

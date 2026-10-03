@@ -1344,13 +1344,14 @@ export class SuiteClient {
     if (types !== undefined && (!Array.isArray(types) || types.some((t) => typeof t !== 'string' || !t))) {
       throw new ValidationError('types must be an array of event type names', { field: 'types' });
     }
-    if (start !== undefined && !SUITE_EVENT_STARTS.includes(start)) {
+    if (start != null && !SUITE_EVENT_STARTS.includes(start)) {
       throw new ValidationError("start must be 'oldest' or 'now'", { field: 'start' });
     }
-    if (start !== undefined && cursor !== undefined) {
+    if (start != null && cursor != null) {
       throw new ValidationError('start cannot be combined with a cursor', { field: 'start' });
     }
-    return this.#transport.get('/events', { cursor, types: types?.length ? types.join(',') : undefined, limit, start }, opts);
+    return this.#transport.get('/events', { cursor: cursor ?? undefined, types: types?.length ? types.join(',') : undefined,
+      limit, start: start ?? undefined }, opts);
   }
 
   /**
@@ -1358,9 +1359,14 @@ export class SuiteClient {
    * events are handled. With `follow` it keeps polling, every `intervalMs` when there is nothing new.
    */
   async *eventPages({ cursor, types, start, pageSize, follow = false, intervalMs = 5_000, signal } = {}) {
+    if (follow && !(Number.isFinite(intervalMs) && intervalMs > 0)) {
+      throw new ValidationError('intervalMs must be a positive number when following', { field: 'intervalMs' });
+    }
     for (;;) {
       signal?.throwIfAborted();
-      const page = await this.eventsPage({ cursor, types, limit: pageSize, start: cursor === undefined ? start : undefined }, { signal });
+      // `start` only while there is no cursor (null and undefined alike): once the service has
+      // handed one over, the feed continues from it.
+      const page = await this.eventsPage({ cursor, types, limit: pageSize, start: cursor == null ? start : undefined }, { signal });
       yield page;
       cursor = page.next_cursor ?? cursor;
       if (page.has_more) continue;
