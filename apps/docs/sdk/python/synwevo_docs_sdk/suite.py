@@ -19,7 +19,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable, Literal, TypedDict
+from typing import Any, Callable, Iterator, Literal, TypedDict
 
 from .auth import UserToken, read_secret
 from .client import Client, _q, __version__
@@ -99,6 +99,31 @@ class SuiteRun(TypedDict):
     created_at: float
     finished_at: float | None
     snapshot_hidden: bool
+
+
+class SuiteEventObject(TypedDict):
+    kind: str
+    id: str
+
+
+class SuiteEvent(TypedDict):
+    """Where to look, never what is there: read the object through its own operation."""
+    id: str
+    type: str
+    version: int
+    app: str
+    object: SuiteEventObject
+    refs: dict[str, str]
+    occurred_at: float
+    run_id: str | None
+    correlation_id: str | None
+
+
+class SuiteEventPage(TypedDict):
+    workspace_id: str
+    items: list[SuiteEvent]
+    next_cursor: str
+    has_more: bool
 
 
 def _operation(name: str) -> str:
@@ -229,6 +254,49 @@ class SuiteClient:
             if self._clock() >= deadline:
                 raise WaitTimeoutError(f"run {run_id} is still {state['status']} after {timeout:g}s", state)
             self._sleep(min(poll, max(0.0, deadline - self._clock())))
+
+    # ------------------------------------------------------------------ events
+    def events_page(self, *, cursor: str | None = None, types: list[str] | None = None, limit: int | None = None,
+                    start: Literal["oldest", "now"] | None = None) -> SuiteEventPage:
+        """One page of what changed in the workspace, oldest first, for the applications this
+        credential may read. Send ``next_cursor`` back to continue; ``has_more`` can be true with
+        no items (the service stopped part-way) — ask again. Without a cursor, ``start="now"``
+        returns no items and a cursor at the present. A cursor that waited longer than the feed
+        keeps events raises `GoneError` (``cursor_expired``): list what you track again and start
+        a new cursor."""
+        if types is not None and (isinstance(types, str) or not all(isinstance(t, str) and t for t in types)):
+            raise ValidationError("types must be a list of event type names", "types")
+        if start is not None and start not in ("oldest", "now"):
+            raise ValidationError("start must be 'oldest' or 'now'", "start")
+        if start is not None and cursor is not None:
+            raise ValidationError("start cannot be combined with a cursor", "start")
+        return self._client._get(SUITE_API + "/events", {"cursor": cursor, "types": ",".join(types) if types else None,
+                                                         "limit": limit, "start": start})
+
+    def iter_event_pages(self, *, cursor: str | None = None, types: list[str] | None = None,
+                         start: Literal["oldest", "now"] | None = None, follow: bool = False,
+                         interval: float = 5.0, page_size: int | None = None) -> Iterator[SuiteEventPage]:
+        """Pages in order. Each page's ``next_cursor`` resumes right after it: store it once the
+        page's events are handled. With ``follow`` it keeps polling, every ``interval`` seconds
+        when there is nothing new."""
+        while True:
+            page = self.events_page(cursor=cursor, types=types, limit=page_size, start=None if cursor else start)
+            yield page
+            cursor = page.get("next_cursor") or cursor
+            if page.get("has_more"):
+                continue
+            if not follow:
+                return
+            self._sleep(interval)
+
+    def iter_events(self, *, cursor: str | None = None, types: list[str] | None = None,
+                    start: Literal["oldest", "now"] | None = None, follow: bool = False,
+                    interval: float = 5.0, page_size: int | None = None) -> Iterator[SuiteEvent]:
+        """Events in order. An event may be seen again after a crash between handling it and
+        storing the cursor: its ``id`` is stable, so de-duplicate on that."""
+        for page in self.iter_event_pages(cursor=cursor, types=types, start=start, follow=follow, interval=interval,
+                                          page_size=page_size):
+            yield from page.get("items") or []
 
     # ------------------------------------------------------------------ files
     # The routes that move bytes. They name the credential's workspace in the query (the service

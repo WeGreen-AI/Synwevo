@@ -45,6 +45,7 @@ export const SUITE_TOKEN_URL = 'https://accounts.synwevo.com/oidc/token';
 export const SUITE_RESOURCE = 'urn:synwevo:platform:suite';
 export const SUITE_API_PREFIX = '/api/suite/v1';
 export const SUITE_TERMINAL_STATUSES = Object.freeze(['succeeded', 'partial', 'failed', 'cancelled']);
+export const SUITE_EVENT_STARTS = Object.freeze(['oldest', 'now']);
 export const TERMINAL_STATUSES = Object.freeze(['completed', 'completed_with_errors', 'failed', 'cancelled']);
 export const SUCCESS_STATUSES = Object.freeze(['completed', 'completed_with_errors']);
 export const ERROR_POLICIES = Object.freeze(['block', 'skip']);
@@ -1329,6 +1330,48 @@ export class SuiteClient {
       if (left <= 0) throw new WaitTimeoutError(`run ${runId} is still ${state.status} after ${timeoutMs} ms`, { details: state });
       await this.#transport.sleep(Math.min(pollMs, left), signal);
     }
+  }
+
+  // ----- events: what changed, to pull.
+  /**
+   * One page of what changed in the workspace, oldest first, for the applications this credential
+   * may read. An item says where to look, never what is there. Send `next_cursor` back to
+   * continue; `has_more` can be true with no items (the service stopped part-way) — ask again.
+   * Without a cursor, `start: 'now'` returns no items and a cursor at the present. A cursor that
+   * waited longer than the feed keeps events is refused with GoneError (`cursor_expired`).
+   */
+  eventsPage({ cursor, types, limit, start } = {}, opts = {}) {
+    if (types !== undefined && (!Array.isArray(types) || types.some((t) => typeof t !== 'string' || !t))) {
+      throw new ValidationError('types must be an array of event type names', { field: 'types' });
+    }
+    if (start !== undefined && !SUITE_EVENT_STARTS.includes(start)) {
+      throw new ValidationError("start must be 'oldest' or 'now'", { field: 'start' });
+    }
+    if (start !== undefined && cursor !== undefined) {
+      throw new ValidationError('start cannot be combined with a cursor', { field: 'start' });
+    }
+    return this.#transport.get('/events', { cursor, types: types?.length ? types.join(',') : undefined, limit, start }, opts);
+  }
+
+  /**
+   * Pages in order. Each page's `next_cursor` resumes right after it: store it once the page's
+   * events are handled. With `follow` it keeps polling, every `intervalMs` when there is nothing new.
+   */
+  async *eventPages({ cursor, types, start, pageSize, follow = false, intervalMs = 5_000, signal } = {}) {
+    for (;;) {
+      signal?.throwIfAborted();
+      const page = await this.eventsPage({ cursor, types, limit: pageSize, start: cursor === undefined ? start : undefined }, { signal });
+      yield page;
+      cursor = page.next_cursor ?? cursor;
+      if (page.has_more) continue;
+      if (!follow) return;
+      await this.#transport.sleep(intervalMs, signal);
+    }
+  }
+
+  /** Events in order. An event may be seen again after a crash before the cursor was stored: de-duplicate on `id`. */
+  async *events(options = {}) {
+    for await (const page of this.eventPages(options)) yield* page.items ?? [];
   }
 
   // ----- files: the routes that move bytes. They name the credential's workspace in the query

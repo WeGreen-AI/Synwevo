@@ -120,3 +120,38 @@ def test_an_integration_moves_files_through_the_sdk(api, tmp_path):
     with pytest.raises(PermissionDeniedError) as e:        # a client without the scope is told which one
         sdk(api, "alice", "tables.write").tables_export_download(export)
     assert e.value.code == "insufficient_scope" and e.value.details["required_scope"] == "tables.read"
+
+
+def test_an_integration_follows_what_changed_and_opens_it_through_the_operations(api, monkeypatch):
+    from synwevo_docs_sdk.errors import BadRequestError, GoneError
+    from synwevo_core.store import now
+    from synwevo_suite.common import machine_events
+    c = sdk(api, "alice", "tables.read tables.write")
+    table = c.invoke("tables.table.create", {"name": "Fixture contacts"})["output"]["id"]
+    start = c.events_page(start="now")
+    assert start["items"] == [] and start["has_more"] is False
+    made = [c.invoke("tables.record.create", {"table_id": table, "cells": {}}, correlation_id="sync-1") for _ in range(3)]
+
+    pages = list(c.iter_event_pages(cursor=start["next_cursor"], page_size=2))
+    events = [e for page in pages for e in page["items"]]
+    assert [len(page["items"]) for page in pages] == [2, 1] and pages[-1]["has_more"] is False
+    assert [e["object"]["id"] for e in events] == [m["output"]["id"] for m in made]
+    assert {e["run_id"] for e in events} == {m["run_id"] for m in made} and {e["correlation_id"] for e in events} == {"sync-1"}
+    # the event says where; the record is read through its operation, with the identifiers it gave
+    first = events[0]
+    record = c.invoke("tables.record.get", {"table_id": first["refs"]["table_id"], "record_id": first["object"]["id"]})
+    assert record["output"]["id"] == made[0]["output"]["id"]
+    assert list(c.iter_events(cursor=pages[-1]["next_cursor"])) == []
+    assert [e["type"] for e in c.iter_events(types=["tables.table.changed"])] == ["tables.table.changed"]
+
+    # another credential's cursor, and one kept too long, arrive as the typed errors
+    with pytest.raises(BadRequestError) as e:
+        sdk(api, "bob", "tables.read").events_page(cursor=start["next_cursor"])
+    assert e.value.code == "invalid_cursor" and e.value.request_id
+    with pytest.raises(PermissionDeniedError) as e:
+        sdk(api, "alice", "tables.write").events_page()
+    assert e.value.code == "insufficient_scope"
+    monkeypatch.setattr(machine_events, "_clock", lambda: now() + 31 * 24 * 3600)
+    with pytest.raises(GoneError) as e:
+        c.events_page(cursor=start["next_cursor"])
+    assert e.value.code == "cursor_expired" and e.value.details == {"retention_seconds": 30 * 24 * 3600}

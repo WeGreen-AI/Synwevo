@@ -9,7 +9,8 @@ import unittest
 from urllib.parse import parse_qs
 
 from synwevo_docs_sdk import SuiteClient, UserToken, ValidationError
-from synwevo_docs_sdk.errors import AuthenticationError, PermissionDeniedError, SynwevoError, WaitTimeoutError
+from synwevo_docs_sdk.errors import (AuthenticationError, GoneError, PermissionDeniedError, SynwevoError,
+                                     WaitTimeoutError)
 from test_http import fixture
 
 
@@ -126,6 +127,44 @@ class SuiteTests(unittest.TestCase):
                 with self.assertRaises(AuthenticationError):
                     c.whoami()
         self.assertEqual(hits.count("/oidc/token"), 1)
+
+    def test_the_event_feed_is_followed_page_by_page_with_the_services_cursor(self):
+        asked, naps = [], []
+        pages = [{"workspace_id": "w_1", "items": [{"id": "evt_1"}, {"id": "evt_2"}], "next_cursor": "s1.A", "has_more": True},
+                 {"workspace_id": "w_1", "items": [], "next_cursor": "s1.B", "has_more": True},      # stopped part-way
+                 {"workspace_id": "w_1", "items": [{"id": "evt_3"}], "next_cursor": "s1.C", "has_more": False},
+                 {"workspace_id": "w_1", "items": [{"id": "evt_4"}], "next_cursor": "s1.D", "has_more": False}]
+
+        def respond(h):
+            path, _, query = h.path.partition("?")
+            asked.append((h.command, path, {k: v[0] for k, v in parse_qs(query).items()}))
+            if len(asked) > len(pages):
+                h.answer(410, {"error": {"code": "cursor_expired", "message": "synthetic fixture", "request_id": "req_gone",
+                                         "field": "cursor", "details": {"retention_seconds": 2592000}}})
+            else:
+                h.answer(200, pages[len(asked) - 1])
+        with fixture(respond) as base, SuiteClient(base, UserToken("synthetic-access"), sleep=naps.append) as c:
+            seen = [e["id"] for e in c.iter_events(types=["tables.record.changed", "forms.submission.created"],
+                                                   start="now", page_size=2)]
+            follow = c.iter_events(cursor="s1.C", follow=True, interval=7.5)
+            later = next(follow)
+            with self.assertRaises(GoneError) as gone:
+                next(follow)
+            for wrong in ({"types": "tables.record.changed"}, {"types": [""]}, {"start": "yesterday"},
+                          {"start": "now", "cursor": "s1.A"}):
+                with self.assertRaises(ValidationError):
+                    c.events_page(**wrong)
+        self.assertEqual(seen, ["evt_1", "evt_2", "evt_3"])
+        self.assertEqual(later["id"], "evt_4")
+        self.assertEqual((gone.exception.code, gone.exception.request_id), ("cursor_expired", "req_gone"))
+        self.assertEqual(naps, [7.5])                      # slept only when there was nothing more to read
+        self.assertEqual({(m, p) for m, p, _ in asked}, {("GET", "/api/suite/v1/events")})
+        wanted = "tables.record.changed,forms.submission.created"
+        self.assertEqual([q for _, _, q in asked], [
+            {"types": wanted, "limit": "2", "start": "now"},                 # start only without a cursor
+            {"types": wanted, "limit": "2", "cursor": "s1.A"},
+            {"types": wanted, "limit": "2", "cursor": "s1.B"},
+            {"cursor": "s1.C"}, {"cursor": "s1.D"}])
 
     def test_waiting_for_a_run_stops_at_a_terminal_state_or_the_deadline(self):
         states = iter(["queued", "running", "succeeded"])

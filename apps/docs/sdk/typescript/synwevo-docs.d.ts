@@ -27,6 +27,7 @@ export declare const SUITE_TOKEN_URL: 'https://accounts.synwevo.com/oidc/token';
 export declare const SUITE_RESOURCE: 'urn:synwevo:platform:suite';
 export declare const SUITE_API_PREFIX: '/api/suite/v1';
 export declare const SUITE_TERMINAL_STATUSES: readonly ['succeeded', 'partial', 'failed', 'cancelled'];
+export declare const SUITE_EVENT_STARTS: readonly ['oldest', 'now'];
 export declare const TERMINAL_STATUSES: readonly ['completed', 'completed_with_errors', 'failed', 'cancelled'];
 export declare const SUCCESS_STATUSES: readonly ['completed', 'completed_with_errors'];
 export declare const ERROR_POLICIES: readonly ['block', 'skip'];
@@ -1779,6 +1780,55 @@ export interface SuiteResult<Output = JSONValue> {
   workspace_id: string;
 }
 
+/** Where to look, never what is there: read the object through its own operation. */
+export interface SuiteEvent {
+  /** Stable: de-duplicate on it. */
+  id: string;
+  /** For example `tables.record.changed`; the contract lists them (`x-synwevo-event-types`). */
+  type: string;
+  version: number;
+  app: string;
+  object: { kind: string; id: string };
+  /** Identifiers needed to open the object, by name: `table_id` for a record, `form_id` for a submission. */
+  refs: Record<string, string>;
+  /** Seconds since the epoch. */
+  occurred_at: number;
+  /** The run that caused it, when this client started that run. */
+  run_id: string | null;
+  /** Present when it belongs to a run this client started. */
+  correlation_id: string | null;
+}
+
+export interface SuiteEventPage {
+  workspace_id: string;
+  items: SuiteEvent[];
+  /** Opaque; belongs to this client, person and workspace. Store it once the page is handled. */
+  next_cursor: string;
+  /** True when the service stopped before the end of the feed — even with no items. Ask again. */
+  has_more: boolean;
+}
+
+export interface SuiteEventQuery {
+  cursor?: string;
+  types?: string[];
+  /** 1–500; the service's default is 100. */
+  limit?: number;
+  /** Without a cursor: 'oldest' (the default) reads the retained window, 'now' starts at the present. */
+  start?: 'oldest' | 'now';
+}
+
+export interface SuiteEventFollowOptions {
+  cursor?: string;
+  types?: string[];
+  start?: 'oldest' | 'now';
+  pageSize?: number;
+  /** Keep polling when the end is reached. Default false. */
+  follow?: boolean;
+  /** Default 5000. */
+  intervalMs?: number;
+  signal?: AbortSignal;
+}
+
 export interface SuiteRun {
   id: string;
   operation: string;
@@ -1825,6 +1875,14 @@ export declare class SuiteClient {
   run(runId: string, options?: RequestOptions): Promise<WithMeta<SuiteRun>>;
   /** @throws WaitTimeoutError (`details` is the last state) when the run has not settled in time. */
   wait(runId: string, options?: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal }): Promise<WithMeta<SuiteRun>>;
+
+  // Events: what changed in the workspace, for the applications the credential may read.
+  /** @throws ValidationError for malformed arguments; GoneError (`cursor_expired`) for a cursor kept past the retained window. */
+  eventsPage(query?: SuiteEventQuery, options?: RequestOptions): Promise<WithMeta<SuiteEventPage>>;
+  /** Pages in order; with `follow` it keeps polling. Store each page's `next_cursor` once handled. */
+  eventPages(options?: SuiteEventFollowOptions): AsyncGenerator<WithMeta<SuiteEventPage>, void, void>;
+  /** Events in order. One may be seen again after a crash before the cursor was stored. */
+  events(options?: SuiteEventFollowOptions): AsyncGenerator<SuiteEvent, void, void>;
 
   // Files. Uploads take a path, bytes or a Blob (bytes and Blobs need `filename`). The service's
   // own limits are 8–12 MB, so results are returned whole.

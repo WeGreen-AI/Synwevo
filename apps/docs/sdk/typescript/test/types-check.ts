@@ -203,7 +203,8 @@ export function misuse(client: Client): void {
 }
 
 // ---------------------------------------------------------------- business applications
-import { SuiteClient, UserToken, SUITE_RESOURCE, type RotatedTokens, type SuiteResult, type SuiteRun } from '@synwevo/docs-sdk';
+import { SuiteClient, UserToken, SUITE_RESOURCE, type RotatedTokens, type SuiteEvent, type SuiteEventPage,
+  type SuiteResult, type SuiteRun } from '@synwevo/docs-sdk';
 
 export async function suiteBoundary(stored: { refreshToken: string }, save: (t: RotatedTokens) => Promise<void>): Promise<string[]> {
   const token = new UserToken({ refreshToken: stored.refreshToken, clientId: 'crm-sync', clientSecret: 'secret',
@@ -226,6 +227,31 @@ export async function suiteBoundary(stored: { refreshToken: string }, save: (t: 
   const scope: 'agent.read' = who.scopes[0];
   console.log(role, replayed, hidden, wrong, input, scope);
   return granted;
+}
+
+export async function suiteEvents(suite: SuiteClient, saved: string | undefined, save: (cursor: string) => Promise<void>): Promise<string[]> {
+  const opened: string[] = [];
+  for await (const page of suite.eventPages({ cursor: saved, types: ['tables.record.changed'], pageSize: 100 })) {
+    const typed: SuiteEventPage = page;
+    for (const event of typed.items) {
+      const e: SuiteEvent = event;
+      const table: string | undefined = e.refs.table_id;
+      const mine: string | null = e.run_id;
+      opened.push(`${e.object.kind}:${e.object.id}:${table}:${mine}`);
+      // @ts-expect-error An event never carries the record's data.
+      void e.data;
+    }
+    await save(page.next_cursor);
+  }
+  const first = await suite.eventsPage({ start: 'now', limit: 1 });
+  const more: boolean = first.has_more;
+  for await (const event of suite.events({ cursor: first.next_cursor, follow: true, intervalMs: 1000 })) opened.push(event.id);
+  // @ts-expect-error types is a list of names, not a comma-separated string.
+  await suite.eventsPage({ types: 'tables.record.changed' });
+  // @ts-expect-error A feed starts at the oldest retained event or now.
+  await suite.eventsPage({ start: 'yesterday' });
+  console.log(more);
+  return opened;
 }
 
 export async function suiteFiles(suite: SuiteClient, path: string): Promise<number> {

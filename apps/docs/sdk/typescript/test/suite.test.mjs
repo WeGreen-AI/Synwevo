@@ -2,7 +2,7 @@
 // variables are read, what is retried and with which key, and how a rotating refresh token is kept.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ApiKey, SuiteClient, UserToken, AuthenticationError, PermissionDeniedError, ValidationError,
+import { ApiKey, SuiteClient, UserToken, AuthenticationError, GoneError, PermissionDeniedError, ValidationError,
   WaitTimeoutError, SUITE_RESOURCE } from '../synwevo-docs.mjs';
 
 const json = (status, body, headers = {}) => new Response(JSON.stringify(body),
@@ -123,6 +123,45 @@ test('a refused refresh token is not presented again', async () => {
   await assert.rejects(client.whoami(), AuthenticationError);
   await assert.rejects(client.whoami(), AuthenticationError);
   assert.equal(exchanges, 1);
+});
+
+test('the event feed is followed page by page with the service\'s cursor', async () => {
+  const asked = [];
+  const naps = [];
+  const pages = [
+    { workspace_id: 'w_1', items: [{ id: 'evt_1' }, { id: 'evt_2' }], next_cursor: 's1.A', has_more: true },
+    { workspace_id: 'w_1', items: [], next_cursor: 's1.B', has_more: true },          // stopped part-way
+    { workspace_id: 'w_1', items: [{ id: 'evt_3' }], next_cursor: 's1.C', has_more: false },
+    { workspace_id: 'w_1', items: [{ id: 'evt_4' }], next_cursor: 's1.D', has_more: false }];
+  const fetch = async (url, init) => {
+    const u = new URL(url);
+    asked.push([init.method, u.pathname, Object.fromEntries(u.searchParams)]);
+    if (asked.length > pages.length) {
+      return json(410, { error: { code: 'cursor_expired', message: 'synthetic fixture', request_id: 'req_gone',
+        field: 'cursor', details: { retention_seconds: 2592000 } } });
+    }
+    return json(200, pages[asked.length - 1]);
+  };
+  const client = new SuiteClient('https://workplace.invalid', new UserToken({ accessToken: 'synthetic-access' }),
+    { fetch, sleep: async (ms) => { naps.push(ms); }, random: () => 0 });
+  const seen = [];
+  for await (const e of client.events({ types: ['tables.record.changed', 'forms.submission.created'], start: 'now', pageSize: 2 })) seen.push(e.id);
+  const follow = client.events({ cursor: 's1.C', follow: true, intervalMs: 7500 });
+  const later = (await follow.next()).value;
+  await assert.rejects(follow.next(), (e) => e instanceof GoneError && e.code === 'cursor_expired' && e.requestId === 'req_gone');
+  for (const wrong of [{ types: 'tables.record.changed' }, { types: [''] }, { start: 'yesterday' }, { start: 'now', cursor: 's1.A' }]) {
+    assert.throws(() => client.eventsPage(wrong), ValidationError);
+  }
+  assert.deepEqual(seen, ['evt_1', 'evt_2', 'evt_3']);
+  assert.equal(later.id, 'evt_4');
+  assert.deepEqual(naps, [7500]);                                   // slept only when there was nothing more to read
+  assert.deepEqual([...new Set(asked.map(([m, p]) => `${m} ${p}`))], ['GET /api/suite/v1/events']);
+  const wanted = 'tables.record.changed,forms.submission.created';
+  assert.deepEqual(asked.map(([, , q]) => q), [
+    { types: wanted, limit: '2', start: 'now' },                    // start only without a cursor
+    { cursor: 's1.A', types: wanted, limit: '2' },
+    { cursor: 's1.B', types: wanted, limit: '2' },
+    { cursor: 's1.C' }, { cursor: 's1.D' }]);
 });
 
 test('waiting for a run stops at a terminal state or at the deadline', async () => {
