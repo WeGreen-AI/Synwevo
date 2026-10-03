@@ -1,17 +1,17 @@
 # 业务应用、Admin/API 与个人 Agent：状态与断点
 
-最后检查：2026-10-03T04:50Z。协调任务 Claude `df1f0b15-17ae-4370-a6b0-aacd082144be`（/loop 9d5641b6）；统一目标仍执行，无递归loop。
+最后检查：2026-10-03T07:20Z。协调任务 Claude `df1f0b15-17ae-4370-a6b0-aacd082144be`（/loop 9d5641b6）；统一目标仍执行，无递归loop。
 
 | 项 | 当前事实 |
 |---|---|
 | 锁 | 主检出docs/agent-work/.coordinator.lock由df1f0b15持有，每轮更新heartbeat。2026-10-03T04:09Z自Codex `01a0f104…`接管：其goal paused、turn被用户中断（2026-10-02T15:05Z），服务15:10Z退出，此后无事件 |
-| 实施树 | .claude/worktrees/business-apps，feat/business-apps；本地HEAD 21f2cd5（持续付款同意），remote仍6052c13；**21f2cd5未推送**（见CI容量） |
+| 实施树 | .claude/worktrees/business-apps，feat/business-apps；HEAD=remote cf1bb32（consent 21f2cd5、CI提速00c4f54、限流修复6533c2a、WP9三层13提交） |
 | PR | 草稿PR #1，https://github.com/WeGreen-AI/Synwevo/pull/1；未合并/部署本分支 |
 | 主检出 | main@2dd03c7；其他图标任务改动完整保留，不触碰 |
-| CI | 6052c13 Actions37002797970 success：verify 11:45:53→13:00:29（74m36，预算75），4253 passed/5 skipped/4092s；deploy按分支跳过。余量约0.5%，新增约60项将超时 |
-| 当前包 | 持续模型付款同意：本地已验证并提交21f2cd5（后端/前端/浏览器证据见EVIDENCE 2026-10-03） |
-| 并行 | 会话 local_561a6cda「Synwevo 项目交付与代码审查」认领WP9（机器凭据调用Suite），隔离分支claude/suite-machine-api、只本地提交；已告知同意仅UI、机器/委托调用须反向权限测试、先rebase到21f2cd5再交付 |
-| 下一动作 | 等CI单测固定成本根因分析（后台agent a89a60d…）→有证据的修复并本地复验→推送21f2cd5+修复；随后RPM/TPM公平队列、上游余额/成本治理、跨应用B1/跨空间Agent、API双SDK |
+| CI | 6533c2a Actions37103506897：verify 24min（原74），pytest 19m44/1184.54s，3583 passed/1 failed/3 skipped；唯一失败为工作簿字节跨秒的既有脆弱测试，修复3488e6d已含于cf1bb32。cf1bb32 CI运行中 |
+| 当前包 | 已完成并推送：持续同意、CI固定成本根因修复、GCRA跨限额变更修复、WP9机器入口/延后工作撤权/文件路由。下一包：模型调用RPM/TPM与公平等待 |
+| 并行 | local_561a6cda「Synwevo 项目交付与代码审查」：WP9第二轮审查4项修复（standing失败关闭、Tables票据按客户端、范围不泄露来源、started事件顺序）后做事件拉取claude/suite-machine-events；只本地提交，不碰agent/**、billing/** |
+| 下一动作 | 跟踪cf1bb32 CI；实施模型调用RPM/TPM/在途/有界公平等待（扩展版本化成本策略、Admin三语言）；合并WP9审查修复与事件拉取 |
 
 ## 已验证与边界
 

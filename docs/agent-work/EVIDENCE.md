@@ -273,3 +273,11 @@
 - 浏览器发现并修复：保存同意后页面刷新列表导致对话框撤回同意步骤并恢复已退役报价的单次确认按钮；改为对话框打开时固定同意选项，复验通过。非active同意不再显示“改用单次报价”。
 - 数据核对（隔离库只读）：两份同意（一份已撤销）、各绑定1次、3条事件仅含consent_id/conversation_id；billing_attempts与billing_calls均为0。fixture凭据未标明deepseek提供方，网关在预留前以billing_model_configuration_changed拒绝，属于launcher夹具，不是产品回退。
 - 未运行：Python3.12容器复验、完整三套件CI（因容量余量不足暂不推送）。
+
+### 2026-10-03 · CI固定成本根因、限流修复与WP9合并（cf1bb32已推送）
+
+- 根因测量（后台agent，scratchpad/ci-profile）：HEAD全量4383项/3016s中，每测gc.collect 685s、新库建表（约70次ALTER×700对象）670s、生产Argon2 600s、FastAPI建路由309s。
+- 00c4f54（仅测试基础设施，无断言改动）：收集后gc.freeze、会话级已迁移模板库（meta只留schema_version，首开步骤照常执行；3项自建旧schema测试标fresh_store_schema）、测试专用Argon2参数（参数/重哈希/计时3项保留生产hasher）。identity A/B：571.5→455.5s，峰值250→191MB；全量4385项/1046s，0失败，2环境跳过，峰值657MB。
+- 6533c2a：更快测试暴露GCRA以时间保存债务——清除3/min覆盖后旧债务按1200/min算满一分钟、收紧限额又给新突发。改为记录计费间隔、按请求数换算，收紧最多满桶且拒绝时也记录换算。新增单元与HTTP回归各1项，相关62项通过。
+- [6533c2a Actions37103506897](https://github.com/WeGreen-AI/Synwevo/actions/runs/37103506897)：verify 24min（原74），pytest 1184.54s，3583 passed/1 failed/3 skipped；失败为test_docs_notifications工作簿字节跨秒脆弱性（3488e6d修复）。
+- WP9（并行会话，api→deferred→files 13提交）两轮独立安全审查：第一轮无机器凭据到达Agent/付费/同意/会话或绕过scope的路径，6项修复已并入；第二轮无阻断，1项应修（standing对畸形principal放行）与3项注记已交修。合并后本地全量4454项/1014s，0失败/错误，2环境跳过，峰值801MB；五守卫、typecheck/build、6个npm工作区、SDK34+14、infra unittest通过；扫描无秘密；推送cf1bb32。
