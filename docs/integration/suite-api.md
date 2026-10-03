@@ -104,8 +104,8 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 | `POST /dataprep/files` | `dataprep.write` | 上传 CSV / XLSX，供 `dataprep.dataset.import` 使用。**必须**带 `Idempotency-Key` |
 | `GET /dataprep/datasets/{dataset_id}/export?format=csv\|xlsx\|json` | `dataprep.read` | 导出数据集；来源来自其他应用时还需要该应用的 read scope |
 | `GET /dataprep/runs/{run_id}/issues` | `dataprep.read` | 一次运行的全部异常（JSON 附件） |
-| `POST /tables/{table_id}/imports` | `tables.write` | 上传 CSV / XLSX 暂存为导入单，再用 `tables.import.apply` 映射并写入。没有幂等键：重复上传会多一张导入单，SDK 不自动重试 |
-| `GET /tables/exports/{export_id}` | `tables.read` | 下载用 `tables.export.create` 建立的导出：下载**那一刻**本人可读的记录；导出单只属于建立它的人 |
+| `POST /tables/{table_id}/imports` | `tables.write` | 上传 CSV / XLSX 暂存为导入单，再用 `tables.import.apply` 映射并写入。没有幂等键：重复上传会多一张导入单，SDK 不自动重试。导入单只属于建立它的应用：同一个人授权的另一个应用、本人在页面里，都查不到它（404） |
+| `GET /tables/exports/{export_id}` | `tables.read` | 下载用 `tables.export.create` 建立的导出：下载**那一刻**本人可读的记录。导出单只属于建立它的应用（规则同上；页面里建立的导出单，应用也取不到），`tables.export.create` 返回的 `url` 就是这个地址 |
 | `GET /forms/files/{file_id}` | `forms.read` | 下载提交的附件（`forms.submission.get` 输出里的 `files[].id`） |
 
 操作输出里的 `url` 字段（附件、导出）是页面路径；凭据请用上表的路径和输出里的 `id`。上传键与操作的幂等键一样按客户端

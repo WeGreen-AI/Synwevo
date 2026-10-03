@@ -1,6 +1,13 @@
-"""Bounded CSV/XLSX staging and fresh-authorized export tickets. No stored blob references."""
+"""Bounded CSV/XLSX staging and fresh-authorized export tickets. No stored blob references.
+
+A ticket belongs to whoever made it: the person in the page, or one client acting for them. It is
+stored under its maker (`stored_ticket`), so the same id asked for by the page, or by another
+client the person also authorised, names nothing — the rule run receipts and idempotency keys
+already follow.
+"""
 import csv
 import io
+import re
 import zipfile
 from datetime import date, datetime
 from types import SimpleNamespace
@@ -21,6 +28,22 @@ from .service import refuse, unpack
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_IMPORT_ROWS = 500
+_TICKET = re.compile(r'(imp|exp)_[a-f0-9]{12}')
+
+
+def stored_ticket(c, ticket_id, missing):
+    """A ticket's id as it is stored: as issued for a person, and under the client's name for a
+    credential (`caller_key`, as its idempotency keys are). Anything that is not an id this module
+    issued — a stored id passed back in, say — is the same 404 as a ticket that does not exist."""
+    if not isinstance(ticket_id, str) or not _TICKET.fullmatch(ticket_id):
+        refuse(missing, 404)
+    if getattr(c, 'via', 'ui') != 'api':
+        return ticket_id
+    client = (getattr(c, 'delegation', None) or {}).get('client_id')
+    if not client:
+        refuse(missing, 404)
+    from ..common.machine import caller_key
+    return caller_key(client, ticket_id)
 
 
 class Transfers:
@@ -90,20 +113,20 @@ class Transfers:
             refuse('import_ticket_limit', 409)
         iid, ts = new_id('imp'), now()
         self.store.execute('INSERT INTO tb_imports (id,table_id,workspace_id,user_id,filename,format,columns_json,rows_json,row_count,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                           (iid, tid, c.workspace_id, c.user_id, filename.replace('\\', '/').rsplit('/', 1)[-1][:200], fmt, canonical(columns), canonical(data), len(data), 'ready', ts, ts+3600))
+                           (stored_ticket(c, iid, 'import_not_found'), tid, c.workspace_id, c.user_id, filename.replace('\\', '/').rsplit('/', 1)[-1][:200], fmt, canonical(columns), canonical(data), len(data), 'ready', ts, ts+3600))
         return {'id': iid, 'columns': columns, 'rows': data[:20], 'row_count': len(data), 'expires_at': ts+3600}
 
     def import_row(self, c, tid, iid):
         self.table(c, tid, write=True, active=True)
         row = self.store.one('SELECT * FROM tb_imports WHERE id=? AND table_id=? AND workspace_id=? AND user_id=? AND expires_at>?',
-                             (iid, tid, c.workspace_id, c.user_id, now()))
+                             (stored_ticket(c, iid, 'import_not_found'), tid, c.workspace_id, c.user_id, now()))
         if not row:
             refuse('import_not_found', 404)
         return row
 
     def import_get(self, c, i):
         row = self.import_row(c, i.table_id, i.import_id)
-        return {'id': row['id'], 'columns': unpack(row['columns_json']), 'rows': unpack(row['rows_json'])[:20],
+        return {'id': i.import_id, 'columns': unpack(row['columns_json']), 'rows': unpack(row['rows_json'])[:20],
                 'row_count': row['row_count'], 'status': row['status'], 'outcome': unpack(row['outcome_json']), 'expires_at': row['expires_at']}
 
     def import_apply(self, c, i):
@@ -157,7 +180,7 @@ class Transfers:
             output = {'atomic': i.atomic, 'items': outcomes, 'succeeded': len(data)-failed, 'failed': failed,
                       '__run_status__': 'partial' if failed else 'succeeded'}
             self.store.execute('UPDATE tb_imports SET status=?,mapping_json=?,outcome_json=?,run_id=?,finished_at=? WHERE id=?',
-                               ('partial' if failed else 'done', canonical(settings), canonical(output), c.run_id, now(), i.import_id))
+                               ('partial' if failed else 'done', canonical(settings), canonical(output), c.run_id, now(), row['id']))
             return output
         finally:
             if i.preview:
@@ -182,15 +205,18 @@ class Transfers:
             refuse('export_ticket_limit', 409)
         eid, ts = new_id('exp'), now()
         self.store.execute('INSERT INTO tb_exports (id,table_id,workspace_id,user_id,format,query_json,run_id,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?)',
-                           (eid, i.table_id, c.workspace_id, c.user_id, i.format, canonical(query), c.run_id, ts, ts+600))
+                           (stored_ticket(c, eid, 'export_not_found'), i.table_id, c.workspace_id, c.user_id, i.format, canonical(query), c.run_id, ts, ts+600))
         c.touches('table', i.table_id)
-        return {'id': eid, 'url': '/api/suite/tables/exports/'+eid+'?'+urlencode({'workspace_id': c.workspace_id}),
+        # Where its maker downloads it: the page's route for a person, the machine API's for a client.
+        from synwevo_core.http import SUITE_V1
+        base = SUITE_V1 if c.via == 'api' else '/api/suite'
+        return {'id': eid, 'url': base+'/tables/exports/'+eid+'?'+urlencode({'workspace_id': c.workspace_id}),
                 'expires_at': ts+600, 'policy': 'current_authorized_records_at_download'}
 
     def export_download(self, c, eid):
         self.export_right(c)
         row = self.store.one('SELECT * FROM tb_exports WHERE id=? AND workspace_id=? AND user_id=? AND expires_at>?',
-                             (eid, c.workspace_id, c.user_id, now()))
+                             (stored_ticket(c, eid, 'export_not_found'), c.workspace_id, c.user_id, now()))
         if not row:
             refuse('export_not_found', 404)
         rows, fields, _ = self.query_rows(c, Query.model_validate(unpack(row['query_json'])))
@@ -220,7 +246,7 @@ class Transfers:
             stream = io.BytesIO()
             book.save(stream)
             content, mime = stream.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        self.store.execute('UPDATE tb_exports SET downloads=downloads+1 WHERE id=?', (eid,))
+        self.store.execute('UPDATE tb_exports SET downloads=downloads+1 WHERE id=?', (row['id'],))
         return Response(content, media_type=mime, headers={'Content-Disposition': 'attachment; filename="tables.'+row['format']+'"',
                                                           'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
@@ -230,7 +256,8 @@ def install_routes(ctx, service):
     from ..common.machine import acting
 
     def context(who, workspace_id):
-        return SimpleNamespace(user_id=who.user['id'], workspace_id=workspace_id)
+        return SimpleNamespace(user_id=who.user['id'], workspace_id=workspace_id, via=who.via,
+                               delegation=who.invoke.get('delegation'))
 
     # Each route is served under the page's prefix (a session) and under the machine API's (a
     # credential holding the scope named here); `acting` decides which, the rest is one path.

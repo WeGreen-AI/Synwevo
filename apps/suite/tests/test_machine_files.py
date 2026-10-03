@@ -234,7 +234,60 @@ def test_tables_from_import_file_to_export_file_without_a_session(api):
     assert sorted(data.content.decode("utf-8-sig").split()) == ["00042", "00043", "Code"]
     # a ticket is the person's who made it: Bob's credential, in the same workspace, cannot take it
     take(api, bearer(api, "bob", "tables.read tables.write"), f"/tables/exports/{export['id']}", expect=404)
-    assert p.store.one("SELECT user_id FROM tb_exports WHERE id=?", (export["id"],))["user_id"] == p.uid("alice")
+    assert p.store.one("SELECT user_id FROM tb_exports WHERE id=?", (CLIENT + export["id"],))["user_id"] == p.uid("alice")
+
+
+def test_a_ticket_is_its_makers_another_client_of_the_same_person_and_the_page_cannot_use_it(api):
+    """Import and export tickets follow the rule run receipts follow: the client that made one may
+    use it; another client the person also authorised, and the person's own page, are told it does
+    not exist — and the reverse, a ticket made in the page is not a client's."""
+    p = api.people
+    register(api, client_id="bi-tool")
+    maker = bearer(api, "alice", "tables.read tables.write")
+    other = bearer(api, "alice", "tables.read tables.write", client_id="bi-tool")
+    table = m(api, maker, "tables.table.create", {"name": "Fixture contacts"}, key="table")["output"]["id"]
+    rev = m(api, maker, "tables.table.get", {"table_id": table})["output"]["schema_rev"]
+    field = m(api, maker, "tables.field.save", {"table_id": table, "schema_rev": rev,
+              "field": {"name": "Code", "type": "text"}}, key="field")["output"]["field_id"]
+    ticket = put(api, maker, f"/tables/{table}/imports", "codes.csv", b"Code\n00042\n").json()
+    use = {"table_id": table, "import_id": ticket["id"]}
+    apply = {**use, "mapping": {"Code": field}, "atomic": False, "preview": False}
+
+    def page(operation, input, key):
+        return api.post(f"/api/suite/ops/{operation}", headers=CSRF,
+                        json={"workspace_id": p.a, "input": input, "idempotency_key": key})
+
+    # the import ticket: not the other client's, not the page's — and nothing was imported by asking
+    refused(api.post("/api/suite/v1/ops/tables.import.get", json={"input": use}, headers=other), 404, "import_not_found")
+    refused(api.post("/api/suite/v1/ops/tables.import.apply", json={"input": apply},
+                     headers={**other, "Idempotency-Key": "other-apply"}), 404, "import_not_found")
+    api.sign_in("alice")
+    for r in (page("tables.import.get", use, None), page("tables.import.apply", apply, "page-apply")):
+        assert r.status_code == 404 and r.json()["error"] == "import_not_found", r.text   # the page's envelope
+    api.cookies.clear()
+    assert p.store.one("SELECT COUNT(*) AS n FROM tb_records WHERE table_id=?", (table,))["n"] == 0
+    assert m(api, maker, "tables.import.get", use)["output"]["id"] == ticket["id"]
+    assert m(api, maker, "tables.import.apply", apply, key="apply")["output"]["succeeded"] == 1
+
+    # the export ticket: its maker is told where *it* downloads from, and only it can
+    export = m(api, maker, "tables.export.create", {"table_id": table}, key="export")["output"]
+    assert export["url"] == f"/api/suite/v1/tables/exports/{export['id']}?workspace_id={p.a}"
+    take(api, other, f"/tables/exports/{export['id']}", expect=404)
+    api.sign_in("alice")
+    assert api.get(f"/api/suite/tables/exports/{export['id']}", params={"workspace_id": p.a}).status_code == 404
+    # the id it is stored under is not an id anyone may ask for
+    assert api.get(f"/api/suite/tables/exports/{CLIENT + export['id']}", params={"workspace_id": p.a}).status_code == 404
+    # a ticket made in the page is the page's
+    made = page("tables.export.create", {"table_id": table}, "page-export")
+    assert made.status_code == 200, made.text
+    own = made.json()["output"]
+    assert own["url"] == f"/api/suite/tables/exports/{own['id']}?workspace_id={p.a}"
+    assert b"00042" in api.get(own["url"]).content
+    api.cookies.clear()
+    take(api, maker, f"/tables/exports/{own['id']}", expect=404)
+    take(api, maker, f"/tables/exports/{CLIENT + export['id']}", expect=404)
+    assert b"00042" in take(api, maker, f"/tables/exports/{export['id']}").content
+    assert p.store.one("SELECT downloads FROM tb_exports WHERE id=?", (CLIENT + export["id"],))["downloads"] == 1
 
 
 # --------------------------------------------------------------------------------- what stays the person's
