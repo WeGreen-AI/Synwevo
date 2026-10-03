@@ -54,8 +54,9 @@ python -m synwevo_identity.cli client register crm-sync --app platform --name "C
 
 * 跨应用：`dataprep.dataset.from_forms` 需要 `dataprep.write` **和** `forms.read`，`dataprep.dataset.from_extract` 需要
   `extract.read`，`extract.file.from_forms` 需要 `extract.write` 和 `forms.read`（契约的 `security` 与 `/operations` 的
-  `also_requires` 列出）。打开一个来自 Forms/Extract 的数据集会重新读取来源，缺少来源应用的 read scope 时拒绝
-  （403 `insufficient_scope`，只给出所需 scope，不说明记录来自哪里）。
+  `also_requires` 列出），缺少时在调用开始前按名拒绝（`details.required_scope`）。打开一个来自 Forms/Extract 的数据集
+  会重新读取来源；缺少来源应用的 read scope 时同样拒绝，但这次**不给出 scope，也不说明记录来自哪个应用**
+  （403 `insufficient_scope`，没有 `details`）——一条记录的来源不该从错误里读出来。列表里这样的行被隐去并计数（`hidden`）。
 * 同一应用内：内层操作仍需要它自己的 scope。唯一的放宽是“写/决定操作的处理函数读取本应用自己的记录”由该 write /
   decide scope 覆盖；这不等于持有 read scope——直接调用只读操作仍需 `<app>.read`。
 * 列表不因个别行而整体失败：`dataprep.dataset.list` / `dataprep.run.list` 把来源此刻不可核实的行**隐去并计数**

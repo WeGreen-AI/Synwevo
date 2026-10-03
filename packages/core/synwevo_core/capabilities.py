@@ -353,6 +353,11 @@ def _person_required(op_id: str) -> ServiceError:
                         "这个操作必须由本人在应用里亲自完成，不能通过接口凭据代为执行。", {"operation": op_id})
 
 
+def _inner_refusal() -> ServiceError:
+    """A credential lacks a scope for something a handler reached on its behalf. Says no more."""
+    return ServiceError(403, "insufficient_scope", "该凭据的权限不足以读取这项内容所依赖的其他数据")
+
+
 def _scope_refusal(op: Operation, manifest: AppManifest | None, held: frozenset, *,
                    within: str | None = None) -> ServiceError | None:
     """Why a credential holding `held` may not have this operation run for it, or None.
@@ -362,8 +367,10 @@ def _scope_refusal(op: Operation, manifest: AppManifest | None, held: frozenset,
     application's own handler reading its own records to do what was asked — a write or a decision
     — is covered by that write or decide scope. Anything else it reaches, in its own application
     or another, needs the scope that operation names; a handler cannot widen its caller by the way
-    it happens to make the inner call. The refusal for an inner operation does not name it: which
-    application a record came from is not the caller's to learn from an error.
+    it happens to make the inner call. The refusal for an inner operation names neither it nor the
+    scope it wanted: which application a record came from is not the caller's to learn from an
+    error. (What an operation always reads elsewhere is public — `Operation.reaches`, in the
+    contract — and is refused by name before the call starts.)
     """
     required = machine_scope(op, manifest)
     if required is None:
@@ -374,7 +381,7 @@ def _scope_refusal(op: Operation, manifest: AppManifest | None, held: frozenset,
         own_read = within == op.app and required == f"{op.app}.read"
         if own_read and (f"{op.app}.write" in held or f"{op.app}.decide" in held):
             return None
-        return ServiceError(403, "insufficient_scope", f"该凭据没有 {required} 权限", {"required_scope": required})
+        return _inner_refusal()
     return ServiceError(403, "insufficient_scope", f"该凭据没有 {required} 权限",
                         {"required_scope": required, "operation": op.id})
 
@@ -542,6 +549,9 @@ class Capabilities:
                 raise _person_required(op_id)
             refusal = _scope_refusal(op, self.registry.app(op.app), held)
             if refusal:
+                if credential is not None and refusal.code == "insufficient_scope":
+                    # asked from inside a machine call: an inner refusal, however the handler asked
+                    refusal = _inner_refusal()
                 raise refusal
             if credential is None:
                 credential = {"scopes": held, "app": op.app}

@@ -509,8 +509,9 @@ def test_reaching_into_another_application_needs_that_applications_scope(api):
     dataset = made["output"]["id"]
     assert m(api, wide, "dataprep.dataset.get", {"dataset_id": dataset})["output"]["id"] == dataset
     # the dataset exists now; a credential without forms.read still cannot open what came from Forms
+    # — and the refusal does not say where it came from: no scope, no application named
     err = m(api, narrow, "dataprep.dataset.get", {"dataset_id": dataset}, expect=403)["error"]
-    assert err["code"] == "insufficient_scope" and err["details"] == {"required_scope": "forms.read"}
+    assert err["code"] == "insufficient_scope" and "details" not in err and "forms" not in str(err).lower()
     # ... but one such dataset does not close the list for it: the row is withheld and counted, the
     # rest is there, and nothing in the answer says which application the withheld row came from
     plain = m(api, narrow, "dataprep.dataset.from_records", {"name": "Plain rows", "columns": ["id"],
@@ -592,7 +593,8 @@ def test_a_handler_cannot_widen_the_credential_it_runs_under(api):
 
     with pytest.raises(ServiceError) as e:
         api.caps.invoke("alpha.pull", {}, scopes=frozenset({"alpha.write"}), **who)
-    assert e.value.code == "insufficient_scope" and e.value.detail["required_scope"] == "beta.read"
+    # refused, without naming the application the handler reached into or the scope it wanted
+    assert e.value.code == "insufficient_scope" and not e.value.detail and "beta" not in e.value.message
     allowed = api.caps.invoke("alpha.pull", {}, scopes=frozenset({"alpha.write", "beta.read"}), **who)
     assert allowed["output"] == {"seen": {"secret": "beta business"}}
     # the person in the page is not a credential: the same handler's inner claim is all there is
@@ -671,7 +673,7 @@ def test_a_handler_cannot_widen_its_caller_inside_its_own_application_either(api
 
     with pytest.raises(ServiceError) as e:
         api.caps.invoke("alpha.peek", {}, scopes=frozenset({"alpha.read"}), **who)
-    assert e.value.code == "insufficient_scope" and e.value.detail == {"required_scope": "alpha.write"}
+    assert e.value.code == "insufficient_scope" and not e.value.detail and "alpha" not in e.value.message
     assert written == [], "the inner write did not run"
     both = api.caps.invoke("alpha.peek", {}, scopes=frozenset({"alpha.read", "alpha.write"}), **who)
     assert both["output"] == {"changed": True, "saw": {"rows": 1}} and written == ["ui"]

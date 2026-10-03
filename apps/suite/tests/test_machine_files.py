@@ -319,7 +319,8 @@ def test_the_persons_export_right_and_the_credentials_reach_both_apply_to_downlo
     narrow = bearer(api, "bob", "dataprep.read dataprep.write")
     denied = take(api, narrow, f"/dataprep/datasets/{snapshot}/export", format="csv", expect=403)
     assert denied.json()["error"]["code"] == "insufficient_scope"
-    assert denied.json()["error"]["details"] == {"required_scope": "forms.read"}
+    # ... and is not told which application the data came from
+    assert "details" not in denied.json()["error"] and "forms" not in denied.text.lower()
     assert b"0001" not in denied.content
 
 
