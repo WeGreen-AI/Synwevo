@@ -67,7 +67,8 @@ python -m synwevo_identity.cli client register crm-sync --app platform --name "C
 * **个人 Agent 的一切**（会话、记忆、个人自动化、报价、预算、付款同意、发起对话）：没有路由，也没有 scope；
   能力层对任何 `via="api"` 调用一律返回 403 `person_required`。
 * 跨工作空间写入（`forms.form.duplicate`）：凭据只属于一个工作空间。
-* 事件订阅 / Webhook：尚未实现。异步操作的结果通过对应应用的读取操作或 `GET /runs/{id}` 查询。
+* 事件推送（签名 Webhook）：尚未实现。发生了什么用事件流**拉取**（§2.5）；异步操作的结果通过对应应用的读取操作或
+  `GET /runs/{id}` 查询。
 
 ## 2. 调用
 
@@ -159,6 +160,41 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 不保存解析结果、不把审批决定交给等待方）。运行读取其他应用的来源时，同样只在授权**此刻**仍持有的 scope 范围内。
 刷新轮换和访问令牌自然过期不算撤回。本人在页面里发起的工作不受任何客户端授权影响。与 Synwevo Docs 任务的规则一致。
 
+### 2.5 事件流（拉取）
+
+`GET /events?cursor=&types=&limit=&start=` 回答“自上次以来这个工作空间发生了什么”。
+
+```json
+{"workspace_id": "ws_…", "has_more": false, "next_cursor": "s1.…",
+ "items": [{"id": "evt_…", "type": "tables.record.changed", "version": 1, "app": "tables",
+            "object": {"kind": "table_record", "id": "rec_…"}, "refs": {"table_id": "tbl_…"},
+            "occurred_at": 1790000000.12, "run_id": "run_…", "correlation_id": "sync-7"}]}
+```
+
+* **只说去哪里看，不说那里有什么。** 一条事件给出类型、对象、打开对象所需的标识（`refs`，逐个类型声明：记录的
+  `table_id`、提交的 `form_id` / `request_id`、运行的 `output_dataset_id`）和时间。事件的数据（备注、审批人、结果）
+  **不提供**；要内容就用对应的读取操作，届时照常鉴权。`run_id` / `correlation_id` 只在属于本客户端自己发起的运行时给出，
+  其他调用方的关联标识是它们自定的文本，不会转给你。`id` 稳定，可用来去重。
+* **能看到哪些。** 只有凭据所在工作空间的事件；只有凭据持有 `<app>.read` 且本人此刻仍可使用的应用（只有 write / decide
+  不算；一个 read scope 都没有时 403 `insufficient_scope`，`details.any_of` 列出可用的）。事件是关于一条记录的事实，
+  所以**本人此刻读不到的记录没有事件**：Tables 按数据表与记录的读取角色，DataPrep 按数据集 / 运行的来源此刻是否可读
+  （与列表里隐去的行同一规则，来源应用的 read scope 也要持有）。之后变得可读的记录，重新从头读取时会出现；已经读过的
+  位置之后不补发。个人 Agent、计费、付款同意、Docs、Message 的事件永远不在这里；可提供的类型见契约
+  `x-synwevo-event-types`。
+* **游标。** 保存每页的 `next_cursor` 并原样送回。它不透明、不可伪造，只属于“这个客户端 + 这个人 + 这个工作空间”：换一个
+  客户端、换一个人或换一个工作空间出示都是 400 `invalid_cursor`。游标不是授权——每次读取都按**此刻**的 scope 与权限
+  过滤：授权缩小后，同一个游标读到的更少；授权扩大后，新应用的事件从游标所在位置开始，不回补。
+* **分页有界。** `limit` 1–500（默认 100）。`has_more: true` 表示这次请求在流的末尾之前停下了——即使 `items` 为空
+  （一次请求扫描的事件数有上限，其中可能都不是你可见的）——带着 `next_cursor` 再读即可。到达末尾时 `has_more: false`，
+  之后按自己的节奏轮询。`types=a,b` 只要指定类型（未知类型 400 `invalid_events`；属于未持有 read scope 的应用 403）。
+* **从哪里开始。** 不带游标默认从保留期内最早的事件开始（`start=oldest`）；`start=now` 不返回事件，只给出“现在”的
+  游标，适合只关心今后的集成。
+* **保留期 30 天。** 事件流只提供最近 30 天的事件。游标在“它之后的事件都还在保留期内”时有效：读到末尾的游标自签发起
+  30 天内有效，停在中途的游标以它读到的最后一条事件的时间起算。超过之后是 410 `cursor_expired`
+  （`details.retention_seconds`），**不会**跳过缺口继续——请重新列出你关注的记录，再不带游标重新开始。数据库从更早的
+  备份恢复后，超前于日志的游标同样是 410。
+* 投递语义是“至少一次、按序”：处理完一页再保存游标；保存前崩溃会重读到同一页，用 `id` 去重。
+
 ## 3. SDK
 
 Python（`synwevo_docs_sdk`）与 TypeScript（`@synwevo/docs-sdk`）各有独立的 `SuiteClient` 与 `UserToken`：
@@ -194,6 +230,8 @@ const made = await suite.invoke('tables.record.create', { table_id: tid, cells: 
 * 文件：`extract_upload` / `extractUpload`、`extract_download`、`extract_export`、`dataprep_upload`、`dataprep_export`、
   `dataprep_run_issues`、`tables_import_upload`、`tables_export_download`、`forms_file`（TypeScript 为对应的驼峰命名）。上传
   接受磁盘路径或字节；带键的上传用同一个键重试，`tables_import_upload` 不重试。
+* 事件流：`events_page` / `eventsPage`（一页）、`iter_event_pages` / `eventPages`（逐页，`follow` 时持续轮询）、
+  `iter_events` / `events`（逐条）。游标过期是 `GoneError`（`cursor_expired`）。处理完一页后保存该页的 `next_cursor`。
 * `from_env` / `fromEnv` 只读 `SYNWEVO_SUITE_*` 变量，不借用 Docs 或目录接口的凭据。
 * 尚未发布到公共包仓库；从本仓库安装（`apps/docs/sdk/python`、`apps/docs/sdk/typescript`）。
 
@@ -208,4 +246,6 @@ const made = await suite.invoke('tables.record.create', { table_id: tid, cells: 
 | Python SDK 对真实应用（含文件上传 → 处理 → 导出） | `apps/suite/tests/test_machine_sdk.py` |
 | 授权结束后延后工作停止（五种结束方式 × 排队中/处理中途），轮换与过期不误停，页面发起的不受影响 | `apps/suite/tests/test_machine_deferred.py` |
 | 真实登录 → 同意 → 令牌 → 三个机器接口互不通用 → SDK 刷新轮换 → 重放撤销 → 撤回同意 | `tests/integration/test_suite_machine_flow.py` |
-| SDK 重试、键、令牌轮换（传输故障夹具） | `apps/docs/sdk/python/tests/test_suite.py`、`apps/docs/sdk/typescript/test/suite.test.mjs` |
+| 事件流：条目只含路由信息、仅本工作空间、按 read scope、Tables / DataPrep 逐记录可见性、未声明与个人事件不提供、游标密封且只属于持有者、授权缩小即少、恰好一次按序、扫描上限、保留期与 410、契约与实际应答一致 | `apps/suite/tests/test_machine_events.py` |
+| 流程的事件触发器只对所有者此刻可读的记录触发（读取角色、来源丢失、重新可读后不补发） | `apps/suite/tests/test_flow_trigger_visibility.py` |
+| SDK 重试、键、令牌轮换、事件流翻页与跟随（传输故障夹具） | `apps/docs/sdk/python/tests/test_suite.py`、`apps/docs/sdk/typescript/test/suite.test.mjs` |
