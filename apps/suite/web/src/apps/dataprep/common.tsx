@@ -54,7 +54,7 @@ export const errorKeys: Record<string, string> = {
   draft_conflict: "方案已被修改，请重新载入", recipe_archived: "方案已归档", version_retired: "版本已停用或方案已归档", version_missing: "方案版本不存在",
   run_active: "运行尚未结束", processing_failed: "处理失败，请重试", recovery_exhausted: "运行多次中断，请检查后重试", input_changed: "输入校验失败",
   run_timeout: "运行超时，请缩小范围", queue_limit: "排队数量已达上限", storage_limit: "工作空间存储限额已达上限", preview_limit: "预览结果过大，请缩小样本",
-  credential_revoked: "发起这次运行的应用已停用，运行已停止", grant_revoked: "发起这次运行的应用授权已撤回，运行已停止", scope_withdrawn: "发起这次运行的应用已不再持有所需权限，运行已停止",
+  credential_revoked: "发起这次运行的应用已停用，运行已停止", grant_revoked: "发起这次运行的应用授权已撤回，运行已停止", scope_withdrawn: "发起这次运行的应用已不再持有所需权限，运行已停止", unknown_principal: "无法确认发起这次运行的应用凭据，运行已停止",
   export_not_allowed: "你没有导出权限", xlsx_invalid_char: "内容含不支持的表格字符，请导出 JSON", result_unavailable: "来源权限已改变，无法显示历史结果", invalid_input: "请检查必填字段与步骤参数",
 };
 export function ErrorState({ error, retry }: { error: unknown; retry?: () => void }) {

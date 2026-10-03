@@ -888,13 +888,26 @@ class Capabilities:
         its tokens were revoked (a refresh rotation is not a revocation; an access token merely
         expiring is not one either). The same rule Docs applies to its jobs (`authority.check`).
 
+        Whether a client started the run is read from how the run was made (``via``, the recorded
+        delegation), not from the stored descriptor alone: a descriptor that is missing, unreadable
+        or names someone else must not turn a client's run into a person's own. Such a run is
+        refused (``unknown_principal``), as `authority.check` refuses a descriptor it cannot read.
+
         The person's own access is not asked here; every worker already asks that separately.
         """
-        row = self.store.one("SELECT op, app, principal FROM op_runs WHERE id=?", (run_id,)) if run_id else None
-        desc = _j(row["principal"]) if row else None
-        if not isinstance(desc, dict) or desc.get("kind") != "delegated":
+        row = self.store.one("SELECT op, app, via, user_id, workspace_id, principal, delegation FROM op_runs "
+                             "WHERE id=?", (run_id,)) if run_id else None
+        if not row:
+            return None
+        desc, started = _j(row["principal"]), _j(row["delegation"])
+        delegated = isinstance(desc, dict) and desc.get("kind") == "delegated"
+        by_client = isinstance(started, dict) and started.get("kind") == "oauth_client"
+        if row["via"] != "api" and not by_client and not delegated:
             return None
         stopped = "后续步骤已停止"
+        if (not delegated or (by_client and started.get("client_id") != desc.get("client_id"))
+                or desc.get("user_id") != row["user_id"] or desc.get("tenant") != row["workspace_id"]):
+            raise ServiceError(403, "unknown_principal", f"无法确认发起这项工作的应用凭据，{stopped}", {"run_id": run_id})
         from .oidc import Clients, SUITE_API_SCOPES
         client = self.store.one("SELECT client_id, scopes, api_scopes, disabled_at FROM oauth_clients WHERE client_id=?",
                                 (desc.get("client_id"),))

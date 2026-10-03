@@ -91,7 +91,7 @@ export const errors: Record<string, string> = {
   unsupported_format: "请选择支持的文件格式", run_result_unavailable: "操作已执行，请核实业务记录后再操作",
   idempotent_failure: "上次操作已失败，请刷新记录后重试", worker_interrupted: "任务中断次数过多，请重新发起",
   worker_stopped: "服务已停止该任务，请重新发起", file_integrity_error: "原文件校验失败",
-  credential_revoked: "发起这个任务的应用已停用，任务已停止", grant_revoked: "发起这个任务的应用授权已撤回，任务已停止", scope_withdrawn: "发起这个任务的应用已不再持有所需权限，任务已停止",
+  credential_revoked: "发起这个任务的应用已停用，任务已停止", grant_revoked: "发起这个任务的应用授权已撤回，任务已停止", scope_withdrawn: "发起这个任务的应用已不再持有所需权限，任务已停止", unknown_principal: "无法确认发起这个任务的应用凭据，任务已停止",
 };
 export function useErrorText(error: unknown) {
   const { t } = useI18n();

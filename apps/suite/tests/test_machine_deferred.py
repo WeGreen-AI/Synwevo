@@ -168,6 +168,49 @@ def test_what_is_not_the_end_of_a_grant_does_not_stop_a_run(api):
     assert done["status"] == "succeeded" and done["error_code"] is None and done["output_dataset_id"]
 
 
+UNREADABLE = ["{not json", json.dumps("a string"), json.dumps({"kind": "user"}), "",
+              json.dumps({"kind": "delegated", "client_id": "someone-else"})]
+UNREADABLE_IDS = ["malformed", "not an object", "says a person", "empty", "names another client"]
+
+
+@pytest.mark.parametrize("descriptor", UNREADABLE, ids=UNREADABLE_IDS)
+@pytest.mark.parametrize("ended", [True, False], ids=["grant ended", "grant standing"])
+def test_a_clients_run_with_an_unreadable_descriptor_is_stopped_not_taken_for_the_persons_own(api, descriptor, ended):
+    """Who started a run is read from how it was made (via, the recorded delegation). A stored
+    descriptor that cannot be read — or that says something else — must not turn a client's run
+    into one the person started in the page, which no revocation would ever stop."""
+    g = grant(api, "bob")
+    rid, run_id = queued_run(api, g)
+    store = api.people.store
+    made = store.one("SELECT via, delegation FROM op_runs WHERE id=?", (run_id,))
+    assert made["via"] == "api" and json.loads(made["delegation"])["kind"] == "oauth_client"
+    before = counts(store, "dataprep_datasets")
+    assert store.execute("UPDATE op_runs SET principal=? WHERE id=?", (descriptor, run_id)) == 1
+    if ended:
+        _client_disabled(api, g)
+    assert api.api.state.dataprep.tick()
+    assert run_row(api, rid) == {"status": "failed", "error_code": "unknown_principal", "output_dataset_id": None}
+    receipt = nothing_published(api, run_id, before)
+    assert (receipt["status"], receipt["error_code"]) == ("failed", "unknown_principal")
+
+
+@pytest.mark.parametrize("descriptor", UNREADABLE[:4], ids=UNREADABLE_IDS[:4])
+def test_standing_refuses_a_clients_run_it_cannot_attribute_whichever_mark_remains(api, descriptor):
+    """Either mark of a client's run is enough to hold it to a credential: `via`, or the recorded
+    delegation. Losing one of them (and the descriptor) does not make it a person's own."""
+    from synwevo_core.errors import ServiceError
+    g = grant(api, "bob")
+    _, run_id = queued_run(api, g)
+    store, caps = api.people.store, api.api.state.capabilities
+    assert caps.standing(run_id)["app"] == "dataprep"            # as made: a standing credential
+    store.execute("UPDATE op_runs SET principal=? WHERE id=?", (descriptor, run_id))
+    for via, delegation in (("api", None), ("flow", json.dumps({"kind": "oauth_client", "client_id": "crm-sync"}))):
+        store.execute("UPDATE op_runs SET via=?, delegation=? WHERE id=?", (via, delegation, run_id))
+        with pytest.raises(ServiceError) as e:
+            caps.standing(run_id)
+        assert (e.value.status, e.value.code) == (403, "unknown_principal")
+
+
 def test_a_run_the_person_started_in_the_page_is_not_a_credentials_to_stop(api):
     p = api.people
     g = grant(api, "bob")

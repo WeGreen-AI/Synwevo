@@ -848,6 +848,10 @@ export const dataprep = {
     "en": "The app that started this run no longer holds the permission it needs; the run was stopped",
     "zh-Hant": "發起這次執行的應用已不再持有所需權限，執行已停止"
   },
+  "无法确认发起这次运行的应用凭据，运行已停止": {
+    "en": "The credential of the app that started this run could not be confirmed; the run was stopped",
+    "zh-Hant": "無法確認發起這次執行的應用憑證，執行已停止"
+  },
   "有 {n} 条记录的来源权限已改变，未在此显示。": {
     "en": "{n} record(s) are not shown because access to their sources has changed.",
     "zh-Hant": "有 {n} 筆記錄的來源權限已改變，未在此顯示。"
