@@ -84,3 +84,17 @@ Room.load损坏路径替换Doc，但原常驻观察者仍留在旧Doc，新Doc�
 ## CR-027 · CI验证镜像SDK来源不一致（已本地修复）
 
 bff35a8真实CI在test_dataprep_extract.py来源断言失败：SDK被Dockerfile.verify常规安装到site-packages，其他模块是editable当前检出。验证镜像统一SDK来源安装；保留原断言。实际修改后Dockerfile诊断构建及17项相关/27项SDK通过。宿主机SDK仍常规安装，两个安装用例目的不同。完整新SHA门槛待推送。
+
+## 2026-10-03 · 本会话（协调者 df1f0b15）审查与处置
+
+| ID | 位置/证据 | 影响/严重度 | 来源 | 处置/验证 | 状态 |
+|---|---|---|---|---|---|
+| CR-028 | agent/ops.py model_consent 捕获 BillingError 但模块未导入，同意的全部拒绝变为 500 operation_failed | 高：所有拒绝原因丢失，前端无法恢复 | 在途同意初稿 | 模块级导入；not_found 映射 404；新语义测试 23 项覆盖每类拒绝码 | 已验证 21f2cd5 |
+| CR-029 | 同意守卫用拒绝列表（agent/flow/automation），via=system/api 可创建/使用他人钱包的持续同意 | 高：机器/系统路径可替本人花费 | 在途同意初稿 | 改为仅 ui；4 类调用方反向测试 | 已验证 21f2cd5 |
+| CR-030 | BudgetDialog 在保存同意后因页面刷新同意列表而撤回同意步骤，并恢复已退役报价的单次确认按钮 | 中：用户可能点击已失效报价，流程迷惑 | 在途同意 UI | 对话框打开时固定同意选项；真实浏览器复验 | 已验证 21f2cd5 |
+| CR-031 | api_quotas GCRA 以时间保存债务：清除 3/min 覆盖后旧债务按 1200/min 记满一分钟；收紧限额又给新突发 | 中：管理变更不按“下一请求生效” | 原有 API 平台 a3b52cd（由更快测试暴露） | 记录计费间隔，按请求数换算，收紧最多满桶且拒绝时也记录；单元+HTTP 回归 | 已验证 6533c2a，CI 37105534440 通过 |
+| CR-032 | 每测固定成本：全量 gc.collect、新库 ~70 次 ALTER、生产 Argon2，CI verify 74m36/75 | 高：发布门槛即将超时 | 原有测试基础设施 | gc.freeze、迁移模板库、测试 Argon2；参数/迁移/计时测试显式保留生产路径 | 已验证 00c4f54，CI verify 24min |
+| CR-033 | 管理端成本策略表单未知 traffic 字段会在编辑时被丢弃；旧版本序列化新增 "traffic": null | 高：管理员一次普通编辑即静默取消限流 | 本批 traffic 初稿 | 表单显式“启用/不设置”；spec 序列化省略未设置 traffic；测试覆盖往返与旧版本形状 | 已验证 27ab127（本地） |
+| CR-034 | flows/triggers.py 只按工作空间应用读权投递事件；Tables 低于 read_role 的表、失去来源的 DataPrep 行仍触发并带 object_id | 中：对象存在性泄露、按不可读对象运行 | 原有 WP8 | 并行会话 3f60059/aa81da3：同一 EventFeed.visible 判定，隐藏即不运行、不留痕、不回补 | 已合并 ed1b0a9，本地全量复验中 |
+| CR-035 | flows.trigger.get/list 返回原始全局 flow_triggers.cursor；拒绝收据在用户失去应用后仍存事件 id | 低：泄露全局事件计数/事件存在 | 原有 WP8 | 已指派并行会话分别修复并补测试 | 待修复 |
+| CR-036 | WP9 两轮独立安全审查（机器入口、延后工作、文件路由、事件）：standing 对畸形 principal 放行、Tables 票据按人不按客户端、内层拒绝泄露来源 scope、started 事件早于授权检查等 | 中/低 | 并行会话 WP9 | 全部按审查修复并有反向测试 | 已合并 ed1b0a9 |
