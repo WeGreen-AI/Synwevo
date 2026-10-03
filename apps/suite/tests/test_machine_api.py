@@ -570,3 +570,35 @@ def test_a_handler_cannot_widen_the_credential_it_runs_under(api):
     # the person in the page is not a credential: the same handler's inner claim is all there is
     page = api.caps.invoke("alpha.pull", {}, user_id=p.uid("alice"), workspace_id=p.a)
     assert page["output"] == {"seen": {"secret": "beta business"}}
+
+
+def test_no_kind_of_credential_reaches_spending_or_consent(api):
+    """The operations that spend a person's funds or record their consent to spend, asked for by
+    each kind of credential the platform issues. All refused; no turn, quote, consent, budget,
+    ledger or run row appears."""
+    from synwevo_core.oidc import Clients, Grants
+    p = api.people
+    spending = sorted(op.id for op in api.caps.registry.operations() if op.id.startswith(
+        ("agent.consent.", "agent.turn.", "agent.quote.", "agent.billing.")))
+    for must in ("agent.consent.create", "agent.consent.get", "agent.consent.list", "agent.consent.revoke",
+                 "agent.turn.start", "agent.turn.quote", "agent.quote.get", "agent.billing.budget.set"):
+        assert must in spending, must
+    Clients(p.store).register(client_id="dir-svc", app_id="platform", name="Fixture directory", redirect_uris=[],
+                              kind="service", workspace_id=p.a, confidential=True, api_scopes="workspace.read",
+                              audiences=[SUITE])
+    service = Grants(p.store).issue_for_service(client=Clients(p.store).get("dir-svc"), scope="workspace.read",
+                                                audience=SUITE)["access_token"]
+    credentials = {
+        "delegated user token": (bearer(api, "alice", ALL_SCOPES), 403, "person_required"),
+        "service credential": ({"Authorization": "Bearer " + service}, 403, "wrong_credential"),
+        "access key": ({"Authorization": "Bearer dw_abc123_notasecret"}, 403, "wrong_credential"),
+    }
+    watched = ("agent_", "billing_", "op_runs", "app_events")
+    before = counts(p.store, *watched)
+    assert {"agent_turns", "agent_model_consents"} <= set(before) and any(t.startswith("billing_") for t in before)
+    for kind, (auth, status, code) in credentials.items():
+        for op_id in spending:
+            body = {"input": {"conversation_id": "c_fixture", "text": "spend", "consent_id": "mc_fixture"}}
+            r = api.post(f"/api/suite/v1/ops/{op_id}", json=body, headers={**auth, "Idempotency-Key": "k"})
+            assert (r.status_code, r.json()["error"]["code"]) == (status, code), (kind, op_id, r.text)
+    assert counts(p.store, *watched) == before
