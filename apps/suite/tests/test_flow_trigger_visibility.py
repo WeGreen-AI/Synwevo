@@ -215,3 +215,53 @@ def test_an_owner_who_is_no_longer_available_is_still_refused_not_skipped(watch)
     used, error, receipts = w.state(bob)
     assert w.fired(bob) == [] and used == 0 and error is not None
     assert [status for status, _ in receipts] == ["refused"] and receipts[0][1] == error
+
+
+def test_a_fault_in_an_applications_decision_holds_that_trigger_and_nothing_else(watch, monkeypatch):
+    """Not a refusal — a bug in the application's own check. The trigger keeps its place (nothing
+    is passed over, nothing is delivered undecided) and is tried again; other triggers and the
+    rest of the tick carry on; when the fault is gone the events arrive."""
+    import dataclasses
+    w, p = watch, watch.p
+    tables = w.on("tables.record.changed", "bob")
+    forms = w.on("forms.form.published", "bob", look="forms.form.list")
+    table = w.table("Fixture contacts")
+    record = w.record(table)
+    form = w.call("forms.form.create", {"title": "Fixture intake", "definition": {
+        "fields": [{"id": "f_amount01", "type": "text", "label": "ID"}]}})
+    w.call("forms.form.publish", {"form_id": form["id"], "draft_rev": 1})
+    before = w.store.one("SELECT cursor FROM flow_triggers WHERE id=?", (tables,))["cursor"]
+
+    registry = w.caps.registry
+    sound = registry.events("tables")
+
+    def broken(user_id, workspace_id, events):
+        raise RuntimeError("fixture fault in the application's check")
+    monkeypatch.setitem(registry._feeds, "tables", dataclasses.replace(sound, visible=broken))
+    w.tick()
+    w.tick()
+    assert w.fired(forms) == [form["id"]], "the other trigger was not held up"
+    assert w.fired(tables) == [] and w.state(tables) == (0, None, [])
+    assert w.store.one("SELECT cursor FROM flow_triggers WHERE id=?", (tables,))["cursor"] == before
+
+    monkeypatch.setitem(registry._feeds, "tables", sound)
+    w.tick()
+    assert w.fired(tables) == [record]
+
+
+def test_the_decision_is_made_for_a_bounded_number_of_events_per_tick(watch, monkeypatch):
+    from synwevo_core.flows import triggers
+    w = watch
+    monkeypatch.setattr(triggers, "DECIDED_PER_TICK", 3)
+    bob = w.on("tables.record.changed", "bob")
+    table = w.table("Fixture contacts")
+    records = [w.record(table, **({"read_role": "admin"} if i in (1, 4) else {})) for i in range(8)]
+    visible = [r for i, r in enumerate(records) if i not in (1, 4)]
+    w.engine.trigger_tick()
+    assert w.fired(bob) == visible[:2]                     # three decided, one of them hidden
+    w.engine.trigger_tick()
+    assert w.fired(bob) == visible[:4]
+    w.engine.trigger_tick()
+    w.engine.trigger_tick()
+    assert w.fired(bob) == visible, "each one exactly once, in order, none passed over"
+    assert all(records[i] not in w.flow_rows("bob") for i in (1, 4))

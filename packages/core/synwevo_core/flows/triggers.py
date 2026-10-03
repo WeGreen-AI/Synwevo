@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from ..capabilities import canonical
 from ..errors import ServiceError
 from ..store import new_id
 from .models import Policy, Trigger, WaitStep, next_occurrence
+
+log = logging.getLogger("synwevo.flows")
+
+#: Events decided record by record for one trigger in one tick. The decision reads the
+#: application's records inside the tick's transaction; the rest waits for the next tick.
+DECIDED_PER_TICK = 20
 
 
 def refusal(code):
@@ -184,7 +191,7 @@ class Triggers:
             try:
                 shown |= feed.visible(row["user_id"], workspace_id, batch) & ids
             except ServiceError:
-                pass                        # the decision could not be made: nothing is shown
+                pass                        # the decision was refused: nothing is shown
         return shown
 
     def _trigger_input(self, value, event):
@@ -224,12 +231,26 @@ class Triggers:
                                    and ev["version"] == 1 and ev["workspace_id"] == spec.workspace_id
                                    and (not spec.object_kind or ev["object_kind"] == spec.object_kind)
                                    and (not spec.object_id or ev["object_id"] == spec.object_id))]
-                    readable = self._readable(row, spec.workspace_id, matched) if matched else set()
+                    upto = events[-1]["seq"] if events else None
+                    feed = self.caps.registry.events(spec.event_type.split(".")[0])
+                    if feed is not None and feed.visible is not None and len(matched) > DECIDED_PER_TICK:
+                        matched = matched[:DECIDED_PER_TICK]
+                        upto = matched[-1]["seq"]           # the rest is read again by the next tick
+                    try:
+                        readable = self._readable(row, spec.workspace_id, matched) if matched else set()
+                    except Exception:  # noqa: BLE001 — an application's decision failed, not this engine
+                        # Not a refusal: a fault in the application's own check. This trigger keeps its
+                        # place and is tried again next tick — nothing is passed over, and nothing is
+                        # delivered undecided — while the other triggers and every run carry on.
+                        log.exception("flow trigger %s: the per-record decision of %s failed", row["id"],
+                                      spec.event_type.split(".")[0])
+                        t.execute("UPDATE flow_triggers SET updated_at=? WHERE id=?", (ts, row["id"]))
+                        continue
                     for ev in matched:
                         if ev["id"] in readable:
                             self._deliver(t, row, spec, policy, ev["id"], event=ev)
-                    if events:
-                        t.execute("UPDATE flow_triggers SET cursor=? WHERE id=?", (events[-1]["seq"], row["id"]))
+                    if upto is not None:
+                        t.execute("UPDATE flow_triggers SET cursor=? WHERE id=?", (upto, row["id"]))
                     t.execute("UPDATE flow_triggers SET updated_at=? WHERE id=?", (ts, row["id"]))
         self._wake_waits()
 
