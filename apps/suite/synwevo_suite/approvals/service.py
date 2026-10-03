@@ -564,11 +564,23 @@ class Approvals:
     def _wait_output(self,r):
         return {"request_id":r["id"],"revision":r["revision"],"decision":r["status"],"state_version":r["state_version"]}
 
+    def _credential_gone(self,run_id):
+        """Why the client that started this wait may no longer be told its result, or None. A wait
+        a person started in the page has no credential and is never stopped by this."""
+        try:
+            self.caps.standing(run_id)
+        except ServiceError as gone:
+            return gone.code
+        return None
+
     def _settle(self,r,ts=None):
         ts = ts or now()
         for w in self.store.all("SELECT * FROM approval_waits WHERE request_id=? AND workspace_id=? AND status='waiting'",(r["id"],r["workspace_id"])):
             status,reason = None,None
-            if not self._eligible(r["workspace_id"],w["user_id"]):
+            gone = self._credential_gone(w["run_id"])
+            if gone:
+                status,reason = "failed",gone
+            elif not self._eligible(r["workspace_id"],w["user_id"]):
                 status,reason = "failed","access_revoked"
             elif w["revision"]!=r["revision"]:
                 status,reason = "cancelled","revision_changed"

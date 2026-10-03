@@ -403,8 +403,10 @@ class Extract:
             current = self.row(row["workspace_id"], "task", row["id"])
             if current["status"] != "running" or current["lease_token"] != token:
                 fail("task_cancelled")
-            self.auth(row["created_by"], row["workspace_id"], "write")
-            self.task_file(row)
+            # A task a client started stops with that client's grant; a person's own does not.
+            with self.caps.resumed(row["operation_run_id"]):
+                self.auth(row["created_by"], row["workspace_id"], "write")
+                self.task_file(row)
         try:
             check()
             file = self.row(row["workspace_id"], "file", row["file_id"])

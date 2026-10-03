@@ -836,6 +836,18 @@ export const dataprep = {
     "en": "Run parameters",
     "zh-Hant": "執行參數"
   },
+  "发起这次运行的应用已停用，运行已停止": {
+    "en": "The app that started this run has been disabled; the run was stopped",
+    "zh-Hant": "發起這次執行的應用已停用，執行已停止"
+  },
+  "发起这次运行的应用授权已撤回，运行已停止": {
+    "en": "Access for the app that started this run was withdrawn; the run was stopped",
+    "zh-Hant": "發起這次執行的應用授權已撤回，執行已停止"
+  },
+  "发起这次运行的应用已不再持有所需权限，运行已停止": {
+    "en": "The app that started this run no longer holds the permission it needs; the run was stopped",
+    "zh-Hant": "發起這次執行的應用已不再持有所需權限，執行已停止"
+  },
   "运行多次中断，请检查后重试": {
     "en": "Run interrupted repeatedly; investigate before retrying",
     "zh-Hant": "執行多次中斷，請檢查後重試"

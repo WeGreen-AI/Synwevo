@@ -442,9 +442,12 @@ class DataPrep:
                     raise Cancelled()
                 if current['cancel_requested']:
                     raise Cancelled()
-                self.caps.authorize(self.caps.registry.get('dataprep.run.start'), row['created_by'], row['workspace_id'])
-                for ref in json.loads(row['inputs_json']).values():
-                    check_sources(self, row['workspace_id'], row['created_by'], ref['dataset_id'])
+                # A run a client started stops with that client's grant, and reads its sources
+                # only as far as the grant still reaches; a person's own run is unaffected.
+                with self.caps.resumed(row['op_run_id']):
+                    self.caps.authorize(self.caps.registry.get('dataprep.run.start'), row['created_by'], row['workspace_id'])
+                    for ref in json.loads(row['inputs_json']).values():
+                        check_sources(self, row['workspace_id'], row['created_by'], ref['dataset_id'])
                 if time.monotonic() - started > 90:
                     raise ServiceError(408, 'run_timeout', '运行超时，请缩小数据范围')
                 self.store.execute("UPDATE dataprep_runs SET heartbeat_at=?,progress_json=?,updated_at=? WHERE id=? AND worker=? AND status='running'",

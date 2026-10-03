@@ -829,6 +829,65 @@ class Capabilities:
              error.code if error else None, error.message[:500] if error else None,
              ts if status in TERMINAL_STATES else None, ts, run_id))
 
+    # ---------------------------------------------------------------- deferred work
+    def standing(self, run_id: str | None) -> dict | None:
+        """The credential behind a run, as it stands **now**, for work that continues after the
+        request that started it: a queued job, a wait, a retry.
+
+        None when a person started the run themselves (the page): their work goes on under their
+        own live authority, as before. For a run a client started on someone's behalf it is the
+        scopes that client's grant still holds — and a refusal once the grant is gone. Queued
+        work must not outlive the authorization that asked for it: the person withdrew the client,
+        the client was disabled, its registration no longer includes what the operation needs, or
+        its tokens were revoked (a refresh rotation is not a revocation; an access token merely
+        expiring is not one either). The same rule Docs applies to its jobs (`authority.check`).
+
+        The person's own access is not asked here; every worker already asks that separately.
+        """
+        row = self.store.one("SELECT op, app, principal FROM op_runs WHERE id=?", (run_id,)) if run_id else None
+        desc = _j(row["principal"]) if row else None
+        if not isinstance(desc, dict) or desc.get("kind") != "delegated":
+            return None
+        stopped = "后续步骤已停止"
+        from .oidc import Clients, SUITE_API_SCOPES
+        client = self.store.one("SELECT client_id, scopes, api_scopes, disabled_at FROM oauth_clients WHERE client_id=?",
+                                (desc.get("client_id"),))
+        if not client or client["disabled_at"]:
+            raise ServiceError(403, "credential_revoked", f"发起这项工作的应用已停用，{stopped}", {"run_id": run_id})
+        family = desc.get("family_id")
+        last = self.store.one(
+            "SELECT revoked_at, revoked_reason, scope FROM oauth_tokens "
+            "WHERE (family_id=? OR id=?) AND client_id=? AND user_id=? AND workspace_id=? "
+            "ORDER BY issued_at DESC, (revoked_at IS NULL) DESC LIMIT 1",
+            (family, family, client["client_id"], desc.get("user_id"), desc.get("tenant"))) if family else None
+        if not last or (last["revoked_at"] and (last["revoked_reason"] or "") != "rotated"):
+            raise ServiceError(403, "grant_revoked", f"发起这项工作的应用授权已撤回，{stopped}", {"run_id": run_id})
+        registered = Clients.allowed_scopes(client)
+        scopes = frozenset(sc for sc in (last["scope"] or "").split() if sc in SUITE_API_SCOPES and sc in registered)
+        op = self.registry.get(row["op"])
+        required = machine_scope(op, self.registry.app(row["app"])) if op is not None else None
+        if required is None or required not in scopes:
+            raise ServiceError(403, "scope_withdrawn", f"发起这项工作的应用已不再持有所需权限，{stopped}",
+                               {"run_id": run_id, "required_scope": required})
+        return {"scopes": scopes, "app": row["app"]}
+
+    @contextlib.contextmanager
+    def resumed(self, run_id: str | None):
+        """A step of deferred work, taken under the credential that started the run — refused if
+        that credential no longer stands, and bounded by what it holds now for whatever the step
+        reads in another application. Workers wrap each checkpoint (and the transaction that
+        publishes a result) in this, so a revocation takes effect at the next step, and nothing
+        is written after it."""
+        credential = self.standing(run_id)
+        if credential is None:
+            yield
+            return
+        entered = _CREDENTIAL.set(credential)
+        try:
+            yield
+        finally:
+            _CREDENTIAL.reset(entered)
+
     def reconcile_stale(self, *, older_than_s: float = 600) -> int:
         """Two-phase runs left `running` by a crash become `unknown`: the side effect may or may not
         have happened, and saying either would be a guess. The owner of the operation (or a

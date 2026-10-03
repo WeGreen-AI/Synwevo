@@ -122,8 +122,11 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 每次调用重新核对，以下任一发生后**下一次调用**即被拒绝：本人在「已授权的应用」撤回、令牌被撤销、刷新令牌被重放（整组
 授权撤销）、客户端被停用或缩小登记范围、本人被移出工作空间/降为查看者/账户停用、工作空间冻结、应用在该空间停用。
 
-已经排队的延后工作（DataPrep 运行、Extract 任务、审批等待）属于本人：按本人的实时权限继续或停止，不取决于客户端的授权
-是否仍在。
+**延后工作随授权一起结束。** 客户端发起的 DataPrep 运行、Extract 任务与审批等待，在每个复核点（开始前、处理中、发布
+结果的同一事务内）重新核对发起它的授权：授权撤回、令牌撤销、刷新令牌重放、客户端停用或不再登记所需 scope 之后，下一步
+即被拒绝，运行以 `grant_revoked` / `credential_revoked` / `scope_withdrawn` 失败，此后不再写入任何结果（不产生输出数据集、
+不保存解析结果、不把审批决定交给等待方）。运行读取其他应用的来源时，同样只在授权**此刻**仍持有的 scope 范围内。
+刷新轮换和访问令牌自然过期不算撤回。本人在页面里发起的工作不受任何客户端授权影响。与 Synwevo Docs 任务的规则一致。
 
 ## 3. SDK
 
@@ -164,5 +167,6 @@ const made = await suite.invoke('tables.record.create', { table_id: tid, cells: 
 | 身份、scope、单一工作空间、实时撤权、个人操作无入口、幂等、回执、调用记录与审计 | `apps/suite/tests/test_machine_api.py` |
 | 契约与运行时一致、路由全部入档 | `apps/suite/tests/test_machine_contract.py` |
 | Python SDK 对真实应用 | `apps/suite/tests/test_machine_sdk.py` |
+| 授权结束后延后工作停止（五种结束方式 × 排队中/处理中途），轮换与过期不误停，页面发起的不受影响 | `apps/suite/tests/test_machine_deferred.py` |
 | 真实登录 → 同意 → 令牌 → 三个机器接口互不通用 → SDK 刷新轮换 → 重放撤销 → 撤回同意 | `tests/integration/test_suite_machine_flow.py` |
 | SDK 重试、键、令牌轮换（传输故障夹具） | `apps/docs/sdk/python/tests/test_suite.py`、`apps/docs/sdk/typescript/test/suite.test.mjs` |
