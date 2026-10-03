@@ -15,8 +15,8 @@ served at all: the Agent's, spending, consent.
 
 The cursor is a position its holder can neither read nor make. Positions in the log count every
 workspace's events — a readable one would tell a client how busy everyone else is, and whether
-something it may not see just happened — so it is sealed (AES-GCM under a key derived from the
-server secret) and bound to the workspace, the client and the person. It carries no authority:
+something it may not see just happened — so it is sealed (`synwevo_core.sealed_token`) and bound
+to the workspace, the client and the person. It carries no authority:
 every read is filtered again by what the credential holds and the person may read *now*, so a
 grant that was narrowed sees less from the same cursor, and one that was widened sees the new
 application from where the cursor stands, not from the beginning.
@@ -27,17 +27,10 @@ continued across a gap — the client lists what it tracks again and starts a ne
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
 import re
-import secrets
 
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-from synwevo_core.auth import Auth
+from synwevo_core import sealed_token
 from synwevo_core.capabilities import EventFeed, machine_credential
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import now
@@ -55,7 +48,6 @@ STARTS = ("oldest", "now")
 
 _KEY_LABEL = b"synwevo/suite-event-cursor/v1"
 _VERSION = "s1."
-_SEALED = re.compile(r"[A-Za-z0-9_-]+")
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,100}")
 
 
@@ -64,10 +56,6 @@ def _clock() -> float:
 
 
 # --------------------------------------------------------------------------------- the cursor
-def _key(store) -> bytes:
-    return hmac.new(Auth(store).secret(), _KEY_LABEL, hashlib.sha256).digest()
-
-
 def _holder(p: dict) -> bytes:
     """Whose cursor it is. Part of the seal, so another client's, another person's or another
     workspace's cursor does not open at all."""
@@ -77,24 +65,20 @@ def _holder(p: dict) -> bytes:
 def seal_cursor(store, p: dict, position: int, floor: float) -> str:
     """`position`: the last place read. `floor`: no event after it is older than this — the time
     of the last event read, or of the request when it reached the end of the log."""
-    nonce = secrets.token_bytes(12)
     body = json.dumps({"q": int(position), "t": float(floor)}, separators=(",", ":")).encode("ascii")
-    sealed = nonce + AESGCM(_key(store)).encrypt(nonce, body, _holder(p))
-    return _VERSION + base64.urlsafe_b64encode(sealed).decode("ascii").rstrip("=")
+    return _VERSION + sealed_token.seal(store, _KEY_LABEL, body, _holder(p))
 
 
 def open_cursor(store, p: dict, raw: str) -> tuple[int, float]:
     bad = ServiceError(400, "invalid_cursor", "游标无效；请不带 cursor 重新开始读取", {"field": "cursor"})
-    # Bound the work before touching the key: length, alphabet, shape.
     if not isinstance(raw, str) or len(raw) > MAX_CURSOR or not raw.startswith(_VERSION):
         raise bad
-    text = raw[len(_VERSION):]
-    if not _SEALED.fullmatch(text):
+    opened = sealed_token.unseal(store, _KEY_LABEL, raw[len(_VERSION):], _holder(p), max_length=MAX_CURSOR)
+    if opened is None:
         raise bad
     try:
-        sealed = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-        body = json.loads(AESGCM(_key(store)).decrypt(sealed[:12], sealed[12:], _holder(p)))
-    except (InvalidTag, ValueError):
+        body = json.loads(opened)
+    except ValueError:
         raise bad from None
     position, floor = (body.get("q"), body.get("t")) if isinstance(body, dict) else (None, None)
     if type(position) is not int or position < 0 or type(floor) not in (int, float):
