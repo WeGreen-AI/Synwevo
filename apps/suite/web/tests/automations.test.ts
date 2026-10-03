@@ -77,6 +77,12 @@ test('reference namespaces, malformed objects, forward references and prototype 
   assert.ok(validateValue({ $ref: 'params.record', extra: 'x' }, {}, {}, '', true).length);
   assert.ok(validateValue(JSON.parse('{"__proto__":{"polluted":true}}'), {}).length);
 });
+test('a branch may test an earlier call\'s outcome; nowhere else and only as a whole value', () => {
+  const condition = { ...context(), condition: true };
+  assert.equal(validateReference('outcome.source', condition), null);
+  for (const path of ['outcome.source.status', 'outcome.save', 'outcome.missing']) assert.equal(validateReference(path, condition), 'reference', path);
+  assert.equal(validateReference('outcome.source', context()), 'reference');
+});
 test('parameter size limits count UTF-8 bytes, including Chinese business content', () => {
   assert.ok(validateParameters(definition(), { record: '资料'.repeat(50000) }).some((i) => i.code === 'budget'));
 });

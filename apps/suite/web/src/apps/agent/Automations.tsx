@@ -27,6 +27,7 @@ function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
   const { m } = useText();
   const code = safeCode(error instanceof ApiError ? error.code === 'idempotent_failure' ? error.detail?.code : error.code : error instanceof Error ? error.message : error);
   const key: AutomationText = code === 'pending_intent' ? 'conflictIntent' : code === 'flow_version_conflict' ? 'conflict'
+    : /operation_failed|operation_cancelled/.test(code) ? 'operationEnded'
     : /reconciliation|outcome_unknown/.test(code) ? 'reconciliation' : /source_changed|source_unavailable|result_unverifiable/.test(code) ? 'changedSource'
     : /expired|exhausted|deadline|quota/.test(code) ? 'limitError' : /unknown_operation|app_unavailable/.test(code) ? 'unavailable'
     : error instanceof ApiError && error.status === 403 ? 'denied' : 'error';

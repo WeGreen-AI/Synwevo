@@ -17,6 +17,13 @@ from .triggers import Triggers
 
 ACTIVE = ("queued", "running", "waiting_input", "waiting_approval", "retrying")
 TERMINAL = ("succeeded", "partial", "failed", "cancelled")
+# A step is complete when its operation reached a definite outcome with a result. "partial" (for
+# example a DataPrep run that finished with row issues) completes it too and stays visible to
+# branches as outcome.<step>; the run that ends after it ends partial, never plain succeeded.
+COMPLETE = ("succeeded", "partial")
+# The operation itself ended the receipt: a definite outcome, so on_error applies. Unlike a lost
+# acknowledgement this is not an uncertain dispatch and is never "unknown".
+DEFINITE = {"failed": "flow_operation_failed", "cancelled": "flow_operation_cancelled"}
 NO_TARGET = object()
 
 
@@ -286,7 +293,7 @@ class Flows(Triggers):
         return value
 
     def _source(self, run, step, *, charge):
-        if step["status"] != "succeeded":
+        if step["status"] not in COMPLETE:
             raise error("flow_source_unavailable")
         reader = decode(step["reader_json"])
         if reader:
@@ -320,7 +327,7 @@ class Flows(Triggers):
                 path = value["$ref"].split(".")
                 if path[0] == "steps":
                     step = self.store.one("SELECT * FROM flow_steps WHERE run_id=? AND step_id=?", (run["id"], path[1]))
-                    if not step or step["status"] != "succeeded":
+                    if not step or step["status"] not in COMPLETE:
                         raise error("flow_reference_missing", 422)
                     if target_workspace is not NO_TARGET:
                         origin = next(s for s in self._spec(run["flow_id"], run["version"]).steps if s.id == path[1])
@@ -336,6 +343,11 @@ class Flows(Triggers):
                     if fingerprint(saved) != fingerprint(current):
                         raise error("flow_source_changed", 403)
                     return saved
+                if path[0] == "outcome":
+                    done = self.store.one("SELECT status FROM flow_steps WHERE run_id=? AND step_id=?", (run["id"], path[1]))
+                    if len(path) != 2 or not done or done["status"] not in COMPLETE:
+                        raise error("flow_reference_missing", 422)
+                    return done["status"]
                 roots = {"params": decode(run["params_json"]), **extra}
                 if path[0] not in roots:
                     raise error("flow_reference_missing", 422)
@@ -395,7 +407,7 @@ class Flows(Triggers):
         target = target or step.next or (spec.steps[index + 1].id if index + 1 < len(spec.steps) else "end")
         state = "queued"
         if target == "end":
-            failed = self.store.one("SELECT 1 FROM flow_steps WHERE run_id=? AND status='failed'", (run["id"],))
+            failed = self.store.one("SELECT 1 FROM flow_steps WHERE run_id=? AND status IN ('failed','partial')", (run["id"],))
             state = "partial" if failed else "succeeded"
         self._release(t, run, state, next_step=target)
         self._history(t, run, "advanced", state)
@@ -486,8 +498,11 @@ class Flows(Triggers):
         # A dispatch marker survives only non-transactional calls, async receipts, or faults.
         if saved["status"] in ("executing", "operation_wait", "unknown"):
             prior = self._prior_op(run, step, saved)
-            if prior and prior["status"] == "succeeded":
-                self._complete_call(t, run, spec, step, {"run_id": prior["id"], "output": decode(prior["output"]), "status": "succeeded"})
+            if prior and prior["status"] in COMPLETE:
+                self._complete_call(t, run, spec, step, {"run_id": prior["id"], "output": decode(prior["output"]), "status": prior["status"]})
+            elif saved["status"] == "operation_wait" and prior and prior["status"] in DEFINITE:
+                t.execute("UPDATE flow_steps SET op_run_id=? WHERE run_id=? AND step_id=?", (prior["id"], run["id"], step.id))
+                raise error(DEFINITE[prior["status"]], 409)
             elif saved["status"] == "operation_wait" and prior and prior["status"] in ("queued", "running", "waiting_input", "waiting_approval"):
                 self._release(t, run, "waiting_approval" if prior["status"] == "waiting_approval" else "waiting_input",
                               due=min(self.clock() + 30, run["deadline"]))
@@ -521,7 +536,9 @@ class Flows(Triggers):
             self._release(t, run, "waiting_approval" if state == "waiting_approval" else "waiting_input",
                           due=min(self.clock() + 30, run["deadline"]))
             return
-        if state != "succeeded":
+        if state in DEFINITE:
+            raise error(DEFINITE[state], 409)
+        if state not in COMPLETE:
             raise error("flow_outcome_unknown" if state == "unknown" else "flow_operation_incomplete")
         reader, value = None, result["output"]
         if step.result_read:
@@ -537,11 +554,11 @@ class Flows(Triggers):
                           workspace_id=step.workspace_id, input=payload)
         if reader:
             value = self._inspect(reader, run["user_id"], run=run)
-        t.execute("UPDATE flow_steps SET status='succeeded',value_json=?,reader_json=?,error_code=NULL,updated_at=? "
+        t.execute("UPDATE flow_steps SET status=?,value_json=?,reader_json=?,error_code=NULL,updated_at=? "
                   "WHERE run_id=? AND step_id=?",
-                  (canonical(value), canonical(reader.model_dump(mode="json")) if reader else None,
+                  (state, canonical(value), canonical(reader.model_dump(mode="json")) if reader else None,
                    self.clock(), run["id"], step.id))
-        self._history(t, run, "step_completed", "succeeded", step=self._step_row(run))
+        self._history(t, run, "step_completed", state, step=self._step_row(run))
         self._advance(t, run, spec, step)
 
     def _external(self, claim, step, payload, key):
@@ -585,7 +602,8 @@ class Flows(Triggers):
             if charges:
                 self.store.execute("UPDATE flow_runs SET calls_used=calls_used+? WHERE id=?", (charges, run["id"]))
             state, due = "failed", ts
-            uncertain = saved["status"] in ("executing", "operation_wait", "unknown")
+            uncertain = (saved["status"] in ("executing", "operation_wait", "unknown")
+                         and exc.code not in DEFINITE.values())
             if exc.code == "flow_outcome_unknown" or uncertain:
                 state = "unknown"
             if exc.status in (401, 403):
@@ -638,7 +656,7 @@ class Flows(Triggers):
                 self._operation(step, user_id)
                 if saved and saved["status"] in ("executing", "unknown"):
                     prior = self._prior_op(run, step, saved)
-                    if not prior or prior["status"] != "succeeded":
+                    if not prior or prior["status"] not in COMPLETE:
                         raise error("flow_reconciliation_required")
                     t.execute("UPDATE flow_steps SET status='unknown' WHERE run_id=? AND step_id=?", (run_id, step.id))
                 elif saved and saved["status"] != "operation_wait" and saved["attempt"] >= step.max_attempts:

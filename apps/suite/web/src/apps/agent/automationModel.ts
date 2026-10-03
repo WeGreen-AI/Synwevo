@@ -165,6 +165,8 @@ export function referenceRoots(ctx: RefContext): string[] {
     const op = step.kind === 'call' ? ctx.capabilities.find((c) => c.id === step.operation) : null;
     if ((step.kind === 'wait' || (step.kind === 'call' && (step.result_read || op?.side_effect === 'none'))) &&
         (ctx.condition || stepWorkspace(step) === ctx.workspace)) roots.push(`steps.${step.id}`);
+    // "succeeded" or "partial" of an earlier call (e.g. a run that finished with row issues).
+    if (ctx.condition && step.kind === 'call') roots.push(`outcome.${step.id}`);
   });
   if (ctx.receipt) roots.push('receipt');
   if (ctx.record) roots.push('record');
@@ -174,6 +176,7 @@ export function validateReference(path: string, ctx: RefContext, expected: Schem
   const bits = path.split('.');
   if (bits.length < 2 || bits.length > 24 || bits.some((b) => !/^[\p{L}\p{N}_ -]{1,100}$/u.test(b) || forbidden.has(b))) return 'reference';
   if (ctx.event) return referenceRoots(ctx).includes(path) && (!expected.type || expected.type === 'string') ? null : 'reference';
+  if (bits[0] === 'outcome') return referenceRoots(ctx).includes(path) && (!expected.type || expected.type === 'string') ? null : 'reference';
   if (bits[0] === 'steps') {
     const source = ctx.definition.steps.slice(0, ctx.index).find((s) => s.id === bits[1]);
     if (!source || bits.length < 3) return 'reference';

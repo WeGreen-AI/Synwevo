@@ -101,6 +101,7 @@ export const automationCopy = {
   error: ['未能完成请求。请核对权限、输入与运行记录后重试。', 'The request could not be completed. Check access, inputs, and run history before retrying.', '未能完成請求。請核對權限、輸入與執行記錄後重試。'],
   denied: ['当前权限不足。请刷新应用与空间列表后核对。', 'Your current access is insufficient. Refresh the app and workspace list.', '目前權限不足。請重新整理應用與空間清單後核對。'],
   conflict: ['已有更新版本。请刷新并基于最新版本编辑；当前修改未覆盖服务器版本。', 'A newer version exists. Refresh and edit from that version; your changes have not overwritten it.', '已有更新版本。請重新整理並基於最新版本編輯；目前修改未覆蓋伺服器版本。'],
+  operationEnded: ['这一步调用的操作本身已失败或已被取消，没有重复发送。流程按错误处理继续；原因请在对应应用中查看。', 'The operation called by this step itself failed or was cancelled; it was not sent again. The flow continues through its error handling; see the application for the reason.', '這一步呼叫的操作本身已失敗或已被取消，沒有重複傳送。流程按錯誤處理繼續；原因請在對應應用中查看。'],
   reconciliation: ['原操作结果尚未核实。需要业务服务核实原操作记录后，才能继续此运行。', 'The original operation is unresolved. Its business service must reconcile the original receipt before this run can resume.', '原操作結果尚未核實。需要業務服務核實原操作記錄後，才能繼續此執行。'],
   limitError: ['已到运行上限或授权期限。请核对原运行或触发器的范围与期限。', 'A run limit or authority deadline has been reached. Review the original run or trigger limits.', '已到執行上限或授權期限。請核對原執行或觸發器的範圍與期限。'],
   changedSource: ['来源内容或权限已变化，请在对应应用核对后处理。', 'Source content or access has changed. Review it in the source app.', '來源內容或權限已變更，請在對應應用核對後處理。'],
