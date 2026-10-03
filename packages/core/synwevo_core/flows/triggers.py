@@ -152,6 +152,37 @@ class Triggers:
         t.execute("INSERT INTO flow_trigger_deliveries VALUES (?,?,?,?,?,?)", (row["id"], occurrence, rid, state, code, ts))
         t.execute("UPDATE flow_triggers SET error_code=?,updated_at=? WHERE id=?", (code, ts, row["id"]))
 
+    def _readable(self, row, workspace_id, events):
+        """The events of this batch the trigger's owner may know about now.
+
+        Reading the application in the workspace is not always reading the record: a table has a
+        reading role, a dataset is withheld from someone who lost its sources. The application
+        says which (`EventFeed.visible`, the decision the machine event feed uses), and an event
+        about a record its owner may not read does not exist for this trigger — no run, no receipt,
+        nothing of the event in any row the owner can read. It is not delivered later either: the
+        cursor moves on, and a record that becomes readable fires from then.
+
+        Applications that declare no such decision keep the workspace-level check in `_deliver`.
+        """
+        shown, by_app = set(), {}
+        for ev in events:
+            by_app.setdefault(ev["app"], []).append(ev)
+        for app, batch in by_app.items():
+            ids = {ev["id"] for ev in batch}
+            feed = self.caps.registry.events(app)
+            if feed is None or feed.visible is None:
+                shown |= ids
+                continue
+            try:
+                shown |= feed.visible(row["user_id"], workspace_id, batch) & ids
+            except ServiceError:
+                try:
+                    self.caps.check_workspace(row["user_id"], app, workspace_id, "read")
+                except ServiceError:
+                    shown |= ids            # the application itself is closed to them: `_deliver` records that refusal
+                # otherwise the decision could not be made, and nothing is shown
+        return shown
+
     def _trigger_input(self, value, event):
         if isinstance(value, dict):
             if set(value) == {"$ref"}:
@@ -184,11 +215,14 @@ class Triggers:
                     t.execute("UPDATE flow_triggers SET next_at=?,updated_at=? WHERE id=?", (next_occurrence(spec, ts), ts, row["id"]))
                 else:
                     events = self.caps.events_after(row["cursor"], limit=100)
-                    for ev in events:
-                        if (ev["type"] == spec.event_type and ev["app"] == spec.event_type.split(".")[0]
-                                and ev["version"] == 1 and ev["workspace_id"] == spec.workspace_id
-                                and (not spec.object_kind or ev["object_kind"] == spec.object_kind)
-                                and (not spec.object_id or ev["object_id"] == spec.object_id)):
+                    matched = [ev for ev in events
+                               if (ev["type"] == spec.event_type and ev["app"] == spec.event_type.split(".")[0]
+                                   and ev["version"] == 1 and ev["workspace_id"] == spec.workspace_id
+                                   and (not spec.object_kind or ev["object_kind"] == spec.object_kind)
+                                   and (not spec.object_id or ev["object_id"] == spec.object_id))]
+                    readable = self._readable(row, spec.workspace_id, matched) if matched else set()
+                    for ev in matched:
+                        if ev["id"] in readable:
                             self._deliver(t, row, spec, policy, ev["id"], event=ev)
                     if events:
                         t.execute("UPDATE flow_triggers SET cursor=? WHERE id=?", (events[-1]["seq"], row["id"]))
