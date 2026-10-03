@@ -3,6 +3,7 @@ and when a file they uploaded fails the security check: real composed server, re
 real engine, a scanner test double for the refusal. Machine uploads have nobody to tell."""
 from __future__ import annotations
 
+import functools
 import io
 import time
 
@@ -24,7 +25,12 @@ class _Infected:
         return ScanResult(status="infected", signature="Win.Test.EICAR_HDB-1", engine=self.engine, sha256=sha256)
 
 
+@functools.cache
 def _xlsx() -> bytes:
+    """One workbook, built once. Saving it again is not the same file: the archive's entry times
+    and the document's created/modified properties move with the clock, so two uploads of "the
+    same" list a second apart were different bytes — and the test that uploads known-bad content
+    twice saw the second one accepted for scanning instead of refused."""
     import openpyxl
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "客户"
     ws.append(["姓名"]); ws.append(["张三"]); ws.append(["李四"])
