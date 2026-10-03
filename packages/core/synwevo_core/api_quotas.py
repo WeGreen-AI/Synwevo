@@ -71,8 +71,10 @@ CREATE TABLE IF NOT EXISTS api_quota_history (
  before TEXT NOT NULL, after TEXT NOT NULL, at REAL NOT NULL, actor_id TEXT NOT NULL, reason TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS api_quota_history_scope ON api_quota_history(scope_kind, scope_id, at);
-CREATE TABLE IF NOT EXISTS api_rate_state (bucket TEXT PRIMARY KEY, tat_ns INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS api_rate_state (bucket TEXT PRIMARY KEY, tat_ns INTEGER NOT NULL, interval_ns INTEGER);
 """
+#: Additive: the emission interval a bucket was last charged at (NULL on rows written before it).
+RATE_STATE_COLUMNS = [("api_rate_state", "interval_ns", "INTEGER")]
 
 
 def deployment_defaults() -> dict[str, int]:
@@ -325,6 +327,20 @@ def _ceil_s(ns: int) -> int:
     return max(1, -(-ns // 1_000_000_000))
 
 
+def _rescaled(tat_ns: int | None, t_ns: int, interval: int, charged: int | None) -> int | None:
+    """Carry the requests in use across a limit change, not the time they were charged at.
+
+    A bucket's debt is (requests in use) x (interval charged). Kept as raw time, three requests
+    under 3/min (60 s) would read as the whole 1200/min budget after the override is cleared, and
+    a tightened limit would admit a new full burst on top of what was just used. Raising a limit
+    therefore applies on the next request; lowering one leaves at most a full bucket, so it bites
+    from now on without charging past usage retroactively for longer than one window.
+    """
+    if tat_ns is None or not charged or charged == interval or tat_ns <= t_ns:
+        return tat_ns
+    return t_ns + min(WINDOW_NS, (tat_ns - t_ns) * interval // charged)
+
+
 def _gcra(tat_ns: int | None, t_ns: int, cap: int) -> tuple[bool, int, int, int, float]:
     """One GCRA step: (allowed, new tat, remaining, reset, retry_after seconds).
 
@@ -380,28 +396,37 @@ class RateGate:
     def _take_shared(self, wanted) -> Decision:
         t = time.time_ns()
         with self.store.tx() as c:
-            steps = []
+            steps, writes = [], []
             for name, bucket, spec in wanted:
-                row = c.execute("SELECT tat_ns FROM api_rate_state WHERE bucket=?", (bucket,)).fetchone()
-                steps.append((name, bucket, spec, _gcra(row["tat_ns"] if row else None, t, int(spec["value"]))))
+                row = c.execute("SELECT tat_ns, interval_ns FROM api_rate_state WHERE bucket=?", (bucket,)).fetchone()
+                interval = max(1, WINDOW_NS // int(spec["value"]))
+                tat = _rescaled(row["tat_ns"], t, interval, row["interval_ns"]) if row else None
+                steps.append((name, bucket, spec, _gcra(tat, t, int(spec["value"]))))
+                writes.append((bucket, tat, interval, bool(row) and row["interval_ns"] != interval))
             allowed = all(s[3][0] for s in steps)
-            if allowed:
-                for _, bucket, _, (_, tat, _, _, _) in steps:
-                    c.execute("INSERT INTO api_rate_state (bucket, tat_ns) VALUES (?,?) "
-                              "ON CONFLICT(bucket) DO UPDATE SET tat_ns=excluded.tat_ns", (bucket, tat))
+            # Charge every bucket when admitted. When refused, still record a converted bucket so the
+            # requests in use drain at the limit now in force rather than at the one they were made under.
+            for (_, _, _, (_, charged, _, _, _)), (bucket, tat, interval, converted) in zip(steps, writes):
+                if allowed or converted:
+                    c.execute("INSERT INTO api_rate_state (bucket, tat_ns, interval_ns) VALUES (?,?,?) "
+                              "ON CONFLICT(bucket) DO UPDATE SET tat_ns=excluded.tat_ns, interval_ns=excluded.interval_ns",
+                              (bucket, charged if allowed else max(tat or 0, t), interval))
         return self._decision(steps, allowed)
 
     def _take_local(self, wanted) -> Decision:
         t = time.time_ns()
         with self._lock:
-            steps = []
+            steps, writes = [], []
             for name, bucket, spec in wanted:
-                tat = self._local.get(bucket, [None])[0]
+                previous, charged = (self._local.get(bucket) or [None, None])[:2]
+                interval = max(1, WINDOW_NS // int(spec["value"]))
+                tat = _rescaled(previous, t, interval, charged)
                 steps.append((name, bucket, spec, _gcra(tat, t, int(spec["value"]))))
+                writes.append((bucket, tat, interval, previous is not None and charged != interval))
             allowed = all(s[3][0] for s in steps)
-            if allowed:
-                for _, bucket, _, (_, tat, _, _, _) in steps:
-                    self._local[bucket] = [tat]
+            for (_, _, _, (_, admitted, _, _, _)), (bucket, tat, interval, converted) in zip(steps, writes):
+                if allowed or converted:
+                    self._local[bucket] = [admitted if allowed else max(tat or 0, t), interval]
             if len(self._local) > 4096:
                 for k in [k for k, v in self._local.items() if v[0] < t]:
                     del self._local[k]
@@ -428,9 +453,10 @@ class RateGate:
                                 ("workspace", "w:" + workspace_id if workspace_id else None, "workspace_rpm")):
             if not bucket:
                 continue
-            row = self.store.one("SELECT tat_ns FROM api_rate_state WHERE bucket=?", (bucket,))
+            row = self.store.one("SELECT tat_ns, interval_ns FROM api_rate_state WHERE bucket=?", (bucket,))
             cap = int(eff[f]["value"])
-            debt = max(0, (row["tat_ns"] if row else 0) - t)
+            tat = _rescaled(row["tat_ns"], t, max(1, WINDOW_NS // cap), row["interval_ns"]) if row else None
+            debt = max(0, (tat or 0) - t)
             out[name] = {"limit": cap, "window_s": WINDOW_S, "source": eff[f]["source"], "measured_at": at,
                          "remaining": max(0, min(cap, (WINDOW_NS - debt) // max(1, WINDOW_NS // cap)))}
         return out

@@ -212,3 +212,35 @@ def test_the_arithmetic_admits_exactly_the_budget_at_any_size(cap):
     ok, tat2, remaining, _, _ = _gcra(tat, later, cap)
     assert ok and remaining == 0
     assert not _gcra(tat2, later, cap)[0]
+
+
+def test_a_limit_change_carries_requests_in_use_not_the_time_they_cost():
+    """Debt is requests x interval. Three requests under 3/min are three requests, not a full minute
+    of a relaxed 1200/min budget; a tightened limit starts full at most, never a fresh burst."""
+    from synwevo_core.api_quotas import WINDOW_NS, _gcra, _rescaled
+    t, tat = 1_790_000_000 * 10**9, None
+    for _ in range(3):
+        ok, tat, *_ = _gcra(tat, t, 3)
+        assert ok
+    assert not _gcra(tat, t, 3)[0]
+    # Relaxed: the next request at the same instant is admitted with 1196 of 1200 left after it.
+    relaxed = _rescaled(tat, t, WINDOW_NS // 1200, WINDOW_NS // 3)
+    ok, after, remaining, *_ = _gcra(relaxed, t, 1200)
+    assert ok and remaining == 1200 - 4 and after == t + 4 * (WINDOW_NS // 1200)
+    # Tightened after 600 of 1200 were used: a full bucket now, one more after one 3/min interval.
+    full = _rescaled(t + 600 * (WINDOW_NS // 1200), t, WINDOW_NS // 3, WINDOW_NS // 1200)
+    assert full == t + WINDOW_NS and not _gcra(full, t, 3)[0]
+    assert _gcra(full, t + WINDOW_NS // 3, 3)[0]
+    # Rows written before the interval was recorded, or unchanged limits, are left as they are.
+    assert _rescaled(tat, t, WINDOW_NS // 1200, None) == tat
+    assert _rescaled(tat, t, WINDOW_NS // 3, WINDOW_NS // 3) == tat
+
+
+def test_tightening_a_workspace_limit_counts_the_requests_already_made(plane):
+    e = plane
+    key, _ = api_key(e)
+    assert [whoami(e["api"], key).status_code for _ in range(3)] == [200, 200, 200]
+    set_policy(e, f"workspace/{e['ws']}", {"workspace_rpm": 3})
+    # Three were made under the default; a 3/min workspace has no room left, not a new burst.
+    r = whoami(e["api"], key)
+    assert r.status_code == 429 and r.json()["error"]["details"]["limit_scope"] == "workspace"

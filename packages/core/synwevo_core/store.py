@@ -838,7 +838,7 @@ class Store:
         # API-1 (additive, no version step): layered request-rate / capacity policies, their history,
         # and the shared GCRA state every process reads. Rollback: older code never reads them and
         # falls back to its per-process limiter at SYNWEVO_API_RATE_PER_MIN.
-        from .api_quotas import SCHEMA_SQL as API_QUOTA_SCHEMA
+        from .api_quotas import RATE_STATE_COLUMNS as API_RATE_STATE_COLUMNS, SCHEMA_SQL as API_QUOTA_SCHEMA
         c.executescript(API_QUOTA_SCHEMA)
         # API-2 (additive): a trigger turns every Docs source-file verdict into an event row in the
         # same transaction (file.ready / needs_ocr / rejected / failed). Rollback: older code ignores
@@ -909,7 +909,7 @@ class Store:
         from .suite_schema import apply as apply_suite_schema
         apply_suite_schema(c)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS + PLATFORM_SETTINGS_DELIVERY_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS + API_RATE_STATE_COLUMNS + PLATFORM_SETTINGS_DELIVERY_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
