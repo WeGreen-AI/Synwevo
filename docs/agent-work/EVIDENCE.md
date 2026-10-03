@@ -259,3 +259,17 @@
 - 8项部署接收器unittest通过；workflow YAML可解析，verify→deploy/production环境/容器资源断言保留。主分支保护API返回403（账户套餐限制）；没有更改保护、审批、deploy条件或触发分支。
 - 容量独立只读收集：bff35a8共4214项，失败为第2925项，余1289；d3cba3c当前4257项。按2925项/2377.14s线性估算，当前完整测试约57m40+前置5m14=62m54；75min提供约12min余量，非真实完整运行保证。证据/private/tmp/colima/synwevo-runtime-groups-4w9czjfy/capacity-comparison.json。
 - 只将verify timeout45→75；全部testpaths、断言、清理、skip策略、Node单独必跑、原镜像及资源边界保持。发现Docs生成testdata而integration直接读，以及带时间ZIP参数ID不稳定；本次不引入未验证分组/产物供应链。后续完整新SHA CI仍须实际通过；未声称本地诊断镜像就是生产产物。
+
+- 普通提交并推送6052c13979dc315a784b94a8673ad4a1d53d4e84（含预算d3cba3c）；草稿PR #1更新并附任务。精确SHA [Actions37002797970](https://github.com/WeGreen-AI/Synwevo/actions/runs/37002797970)运行中；未合并/部署。未重复触发手工发布。
+
+### 2026-10-03 · 持续模型付款同意（feat/business-apps本地21f2cd5，未推送）
+
+- 协调锁：Codex 01a0f104 goal paused、turn_aborted(by user) 2026-10-02T15:05Z、服务15:10Z退出且13小时无事件；df1f0b15于04:09Z接管并每轮更新heartbeat。
+- [6052c13 Actions37002797970](https://github.com/WeGreen-AI/Synwevo/actions/runs/37002797970)：conclusion success；verify 74m36（预算75），4253 passed/5 skipped/4092s；deploy按分支跳过。
+- 后端：新增test_agent_model_consents 23项（期限/次数/范围/int64总额/basis退役/冲突/唯一与上限/跨人跨会话/当前状态5种/删除/耗尽与撤销/期限裁剪/不可变/并发恰一/调用方5种/HTTP CSRF与404/审计仅ID）；关联61项通过。全Suite `apps/suite/tests` 568 passed/0失败/0错误/0跳过，283.358s（scratchpad/suite-consent-full.xml）。
+- 测试发现并修复：ops.py未在模块级导入BillingError，同意的全部拒绝变成500；未找到改为404；总额溢出改专用码consent_total_too_large；列表同秒排序改rowid；撤销重复不再重复发事件；system与api调用不能创建/使用同意（仅UI）；每次运行期限同时受同意到期与route有效期裁剪。
+- 前端：agent-consent 9项新测（总额/期限/范围/响应校验/状态/未知结果锁定与原key核实/拒绝解锁/三语言/渲染）；Suite前端71/71、typecheck、build通过；五守卫通过（674 Python/347前端、品牌、设计、组件名、22 Logo）。
+- 浏览器（隔离accounts33770+portal33769 fixture路由，网络阻断，无资金）：OIDC登录；明确范围后报价→勾选持续同意→空次数与未选期限分别明确拒绝→3次直到撤销→核对5.00×3=15.00 TEST_ONLY→保存；过去到期拒绝→2次至10月10日12:00→保存→“按此同意发送原消息”→草稿清空、剩余1/2；面板撤销复核→已撤销；全局发现范围仅提示须明确范围、单次报价保留；勾“下一条改用单次报价”打开无同意选项的报价框；英文/繁体完整翻译；390px无横向溢出；键盘Tab顺序、Enter打开条款、Esc关闭且焦点回到触发按钮。
+- 浏览器发现并修复：保存同意后页面刷新列表导致对话框撤回同意步骤并恢复已退役报价的单次确认按钮；改为对话框打开时固定同意选项，复验通过。非active同意不再显示“改用单次报价”。
+- 数据核对（隔离库只读）：两份同意（一份已撤销）、各绑定1次、3条事件仅含consent_id/conversation_id；billing_attempts与billing_calls均为0。fixture凭据未标明deepseek提供方，网关在预留前以billing_model_configuration_changed拒绝，属于launcher夹具，不是产品回退。
+- 未运行：Python3.12容器复验、完整三套件CI（因容量余量不足暂不推送）。
