@@ -353,6 +353,21 @@ export const forms = {
   "待确认": { en: "To review", "zh-Hant": "待確認" },
   "已要求补充": { en: "Changes requested", "zh-Hant": "已要求補充" },
   "已被新修订取代": { en: "Superseded", "zh-Hant": "已被新修訂取代" },
+  // Saving and publishing what the canvas shows (acceptance D1).
+  "明细项 {n}": { en: "Detail {n}", "zh-Hant": "明細項 {n}" },
+  "草稿没有保存，请先处理：": { en: "The draft was not saved. Fix this first:", "zh-Hant": "草稿沒有儲存，請先處理：" },
+  "草稿没有保存，所以没有发布。请先处理提示的问题。": { en: "The draft was not saved, so nothing was published. Fix what is listed first.", "zh-Hant": "草稿沒有儲存，所以沒有發佈。請先處理提示的問題。" },
+  "有修改还没有保存，没有发布。保存后再发布。": { en: "Some changes are not saved yet, so nothing was published. Publish again once they are saved.", "zh-Hant": "有修改還沒有儲存，沒有發佈。儲存後再發佈。" },
+  "第 {n} 个字段（{type}）": { en: "Field {n} ({type})", "zh-Hant": "第 {n} 個欄位（{type}）" },
+  "「{group}」里的第 {n} 个字段还没有名称": { en: "Field {n} in “{group}” has no name yet", "zh-Hant": "「{group}」裡的第 {n} 個欄位還沒有名稱" },
+  "{field}还没有标题": { en: "{field} has no heading yet", "zh-Hant": "{field}還沒有標題" },
+  "{field}还没有填写问题": { en: "{field} has no question yet", "zh-Hant": "{field}還沒有填寫問題" },
+  "「{field}」的选项 {n} 的文字和值都不能为空": { en: "Option {n} of “{field}” needs both a text and a value", "zh-Hant": "「{field}」的選項 {n} 的文字和值都不能為空" },
+  "第 {n} 步还没有名称": { en: "Step {n} has no name yet", "zh-Hant": "第 {n} 步還沒有名稱" },
+  "第 {n} 条跨字段校验还没有填写提示": { en: "Check {n} across fields has no message yet", "zh-Hant": "第 {n} 條跨欄位驗證還沒有填寫提示" },
+  "表单名称不能为空": { en: "The form needs a name", "zh-Hant": "表單名稱不能為空" },
+  "「{field}」的设置不符合要求": { en: "A setting of “{field}” is not valid", "zh-Hant": "「{field}」的設定不符合要求" },
+  "表单的设置不符合要求": { en: "A setting of the form is not valid", "zh-Hant": "表單的設定不符合要求" },
 } as const;
 
 registerMessages(forms);

@@ -1,9 +1,32 @@
 /** How the Forms pages word the server's codes: field errors, publishing problems, field types,
  *  statuses. Every code the server can return has a sentence here (the catalogue test checks the
  *  strings exist in all three languages). */
-import type { FieldError, FieldType } from "./logic";
+import type { Definition, DraftRefusal, FieldError, FieldType } from "./logic";
 
 type T = (key: string, params?: Record<string, any>) => string;
+
+/** A refused draft save, said as what to change and where (`draftRefusals` in logic.ts). */
+export function refusalText(t: T, r: DraftRefusal, defn: Definition): string {
+  const top = r.index !== undefined ? defn.fields[r.index] : undefined;
+  const name = (f: { label: string; type: FieldType } | undefined, n: number) =>
+    f?.label?.trim() ? f.label : t("第 {n} 个字段（{type}）", { n, type: f ? typeLabel(t, f.type) : "" });
+  switch (r.part) {
+    case "label":
+      return r.sub !== undefined
+        ? t("「{group}」里的第 {n} 个字段还没有名称", { group: name(top, (r.index ?? 0) + 1), n: r.sub + 1 })
+        : top?.type === "section" ? t("{field}还没有标题", { field: name(top, (r.index ?? 0) + 1) })
+        : t("{field}还没有填写问题", { field: name(top, (r.index ?? 0) + 1) });
+    case "option": {
+      const owner = r.sub !== undefined ? top?.fields?.[r.sub] : top;
+      return t("「{field}」的选项 {n} 的文字和值都不能为空", { field: name(owner, (r.sub ?? r.index ?? 0) + 1), n: (r.option ?? 0) + 1 });
+    }
+    case "step": return t("第 {n} 步还没有名称", { n: (r.index ?? 0) + 1 });
+    case "rule": return t("第 {n} 条跨字段校验还没有填写提示", { n: (r.index ?? 0) + 1 });
+    case "title": return t("表单名称不能为空");
+    default:
+      return top ? t("「{field}」的设置不符合要求", { field: name(top, (r.index ?? 0) + 1) }) : t("表单的设置不符合要求");
+  }
+}
 
 export function errorText(t: T, e: FieldError): string {
   const p = e.params ?? {};

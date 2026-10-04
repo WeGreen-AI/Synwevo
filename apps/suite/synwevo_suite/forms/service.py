@@ -163,13 +163,27 @@ class Forms:
         call.touches("form", form_id)
         return self.form_json(self._form(call.workspace_id, form_id), with_versions=True, can_write=True)
 
-    def publish(self, call: Call, form_id: str, *, draft_rev: int, note: str) -> dict:
+    def publish(self, call: Call, form_id: str, *, draft_rev: int, note: str, seen: dict | None = None) -> dict:
+        """Freeze the stored draft at ``draft_rev``. ``seen`` is what the person publishing is
+        looking at (title, description, definition — each optional): a part given must equal the
+        stored draft, or nothing is published. The revision alone cannot tell: a save the server
+        refused leaves the revision where it was, and publishing then froze the older draft
+        while the page still showed the newer one."""
         row = self._form(call.workspace_id, form_id)
         if row["status"] != "active":
             raise ServiceError(409, "form_archived", "表单已归档，恢复后才能发布")
         if row["draft_rev"] != draft_rev:
             raise ServiceError(409, "draft_conflict", "表单草稿已被其他人修改，请查看最新内容后再发布")
         defn = Definition.model_validate(_j(row["draft_json"], {}))
+        seen = seen or {}
+        differs = [part for part, stored in (("title", row["title"]), ("description", row["description"] or ""))
+                   if seen.get(part) is not None and seen[part] != stored]
+        if seen.get("definition") is not None and fingerprint(seen["definition"].model_dump(mode="json", by_alias=True)) \
+                != fingerprint(defn.model_dump(mode="json", by_alias=True)):
+            differs.append("definition")
+        if differs:
+            raise ServiceError(409, "draft_unsaved", "要发布的内容还没有保存为草稿，请先保存再发布",
+                               {"draft_rev": row["draft_rev"], "differs": differs})
         found = problems(defn)
         if found:
             raise ServiceError(422, "form_not_publishable", "表单还不能发布，请先处理列出的问题", {"problems": found})

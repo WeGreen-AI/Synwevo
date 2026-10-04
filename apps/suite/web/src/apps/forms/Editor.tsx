@@ -2,7 +2,10 @@
  *
  *  Saving is automatic and says what actually happened: "已保存" only after the server accepted
  *  the draft revision; a revision someone else saved first is shown as a conflict with a choice,
- *  never overwritten silently. Undo/redo work on this editor's own changes (Ctrl/⌘+Z, Shift for
+ *  never overwritten silently; a save refused as invalid says what to change and where, and keeps
+ *  the edit on the canvas. Publishing publishes what the canvas shows or nothing: it saves first,
+ *  stops when that save is refused, and sends what it shows so the server can refuse a draft
+ *  that differs (`draft_unsaved`). Undo/redo work on this editor's own changes (Ctrl/⌘+Z, Shift for
  *  redo). Fields move with buttons as well as the keyboard — no drag-only operation. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -10,10 +13,11 @@ import { ApiError } from "@synwevo/auth-client";
 import { Drawer, Menu, Modal, useDialog, useI18n, useToast, formatDate } from "@synwevo/ui";
 import { op, newKey } from "../../shared/ops";
 import { Failure, Loading } from "../../shared/states";
-import { newFieldId, type Condition, type Definition, type FieldDef, type FieldType } from "./logic";
+import { blankField, draftRefusals, newFieldId, owningField, type Condition, type Definition, type DraftRefusal,
+         type FieldDef, type FieldType } from "./logic";
 import { Renderer } from "./Renderer";
 import { FieldProps } from "./FieldProps";
-import { problemText, typeLabel } from "./text";
+import { problemText, refusalText, typeLabel } from "./text";
 import { ShareDrawer } from "./Share";
 
 interface FormData_ {
@@ -27,15 +31,6 @@ type Save = "saved" | "pending" | "saving" | "conflict" | "error";
 
 const PALETTE: FieldType[] = ["text", "textarea", "number", "money", "date", "datetime", "select", "multiselect",
   "boolean", "file", "repeat", "section"];
-
-function blank(type: FieldType, label: string): FieldDef {
-  const f: FieldDef = { id: newFieldId(), type, label };
-  if (type === "select" || type === "multiselect") f.options = [{ value: "a", label: "A" }, { value: "b", label: "B" }];
-  if (type === "money") { f.currency = "CNY"; }
-  if (type === "file") { f.accept = [".pdf", ".png", ".jpg", ".jpeg"]; f.max_files = 1; f.max_size_mb = 10; }
-  if (type === "repeat") f.fields = [{ id: newFieldId(), type: "text", label: "" }];
-  return f;
-}
 
 export default function Editor({ ws, canWrite }: { ws: { id: string; name: string }; canWrite: boolean }) {
   const { t } = useI18n();
@@ -56,41 +51,71 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
   const [problems, setProblems] = useState<{ code: string; field?: string }[] | null>(null);
   const [panel, setPanel] = useState<"versions" | "share" | null>(null);
   const [conflict, setConflict] = useState<FormData_ | null>(null);
+  // A save the server refused as invalid: where, in the definition that was sent.
+  const [refused, setRefused] = useState<{ defn: Definition; items: DraftRefusal[] } | null>(null);
   const rev = useRef(1);
   const undo = useRef<{ defn: Definition; title: string; description: string }[]>([]);
   const redo = useRef<{ defn: Definition; title: string; description: string }[]>([]);
   const timer = useRef<number | undefined>(undefined);
   const latest = useRef({ defn, title, description });
   latest.current = { defn, title, description };
+  // The canvas as the server last stored it (this page's own snapshot), and the save in flight:
+  // saves run one at a time, so a publish never races an autosave into a false conflict.
+  const stored = useRef("");
+  const saving = useRef<Promise<boolean> | null>(null);
+  const snapshot = (cur: typeof latest.current) => JSON.stringify([savedTitle(cur.title), cur.description, cur.defn]);
+  const savedTitle = (s: string) => s.trim() || t("未命名表单");
 
   const load = useCallback(async () => {
     setError(null);
     try {
       const out = await op<FormData_>("forms.form.get", { form_id: fid }, { workspace: ws.id });
+      const next = { defn: out.output.draft?.fields ? out.output.draft : { fields: [] }, title: out.output.title,
+                     description: out.output.description };
       setForm(out.output);
-      setDefn(out.output.draft?.fields ? out.output.draft : { fields: [] });
-      setTitle(out.output.title);
-      setDescription(out.output.description);
+      setDefn(next.defn);
+      setTitle(next.title);
+      setDescription(next.description);
       rev.current = out.output.draft_rev;
+      stored.current = JSON.stringify([next.title, next.description, next.defn]);
+      setRefused(null);
       setSave("saved");
     } catch (e) { setError(e); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fid, ws.id]);
   useEffect(() => { void load(); }, [load]);
 
-  const persist = useCallback(async () => {
-    const cur = latest.current;
-    setSave("saving");
-    try {
-      const out = await op<FormData_>("forms.form.update_draft", {
-        form_id: fid, draft_rev: rev.current, title: cur.title.trim() || t("未命名表单"), description: cur.description,
-        definition: cur.defn }, { workspace: ws.id });
-      rev.current = out.output.draft_rev;
-      setForm(out.output);
-      setSave((s) => s === "saving" ? "saved" : s);
-    } catch (e) {
-      if (e instanceof ApiError && e.code === "draft_conflict") { setConflict(e.detail?.current ?? null); setSave("conflict"); }
-      else { setSave("error"); toast(e instanceof ApiError ? e.message : String(e), "err"); }
-    }
+  /** Save what the canvas shows now. True only when the server stored exactly that. */
+  const persist = useCallback((): Promise<boolean> => {
+    const run = async (): Promise<boolean> => {
+      const cur = latest.current;
+      setSave("saving");
+      try {
+        const out = await op<FormData_>("forms.form.update_draft", {
+          form_id: fid, draft_rev: rev.current, title: savedTitle(cur.title), description: cur.description,
+          definition: cur.defn }, { workspace: ws.id });
+        rev.current = out.output.draft_rev;
+        stored.current = snapshot(cur);
+        setForm(out.output);
+        setRefused(null);
+        setSave((s) => s === "saving" ? "saved" : s);
+        return true;
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "draft_conflict") { setConflict(e.detail?.current ?? null); setSave("conflict"); }
+        else if (e instanceof ApiError && e.code === "invalid_input") {
+          // Said as what to change and where; the canvas keeps the edit.
+          const items = draftRefusals(cur.defn, e.detail);
+          setRefused({ defn: cur.defn, items: items.length ? items : [{ part: "other" }] });
+          setSave("error");
+        } else { setSave("error"); toast(e instanceof ApiError ? e.message : String(e), "err"); }
+        return false;
+      }
+    };
+    const next = (saving.current ?? Promise.resolve(true)).then(run, run);
+    saving.current = next;
+    void next.finally(() => { if (saving.current === next) saving.current = null; });
+    return next;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fid, ws.id, t, toast]);
 
   function schedule() {
@@ -137,7 +162,7 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
   const current = index >= 0 ? defn.fields[index] : null;
 
   function add(type: FieldType) {
-    const f = blank(type, type === "section" ? t("新的分节") : typeLabel(t, type));
+    const f = blankField(type, type === "section" ? t("新的分节") : typeLabel(t, type), t("明细项 {n}", { n: 1 }));
     const at = index >= 0 ? index + 1 : defn.fields.length;
     const fields = [...defn.fields.slice(0, at), f, ...defn.fields.slice(at)];
     let steps = defn.steps;
@@ -184,18 +209,37 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
     setSelected(copy.id);
   }
 
+  /** Publish exactly what the canvas shows: save it first, and publish nothing when that save is
+   *  refused (the server also refuses a publish whose title, description or definition differ
+   *  from the stored draft). The canvas is never reloaded over the person's edits. */
   async function publish() {
     window.clearTimeout(timer.current);
-    if (save !== "saved") await persist();
+    if (snapshot(latest.current) !== stored.current || save !== "saved") {
+      if (!(await persist())) { toast(t("草稿没有保存，所以没有发布。请先处理提示的问题。"), "err"); return; }
+    }
+    const seen = latest.current;
     try {
-      const out = await op<{ version: number }>("forms.form.publish", { form_id: fid, draft_rev: rev.current }, { workspace: ws.id, key: newKey() });
+      const out = await op<{ version: number }>("forms.form.publish", {
+        form_id: fid, draft_rev: rev.current, title: savedTitle(seen.title), description: seen.description,
+        definition: seen.defn }, { workspace: ws.id, key: newKey() });
       toast(t("已发布版本 {v}", { v: out.output.version }), "ok");
       setProblems(null);
-      await load();
+      await refreshVersions();
     } catch (e) {
       if (e instanceof ApiError && e.code === "form_not_publishable") setProblems(e.detail?.problems ?? []);
-      else toast(e instanceof ApiError ? e.message : String(e), "err");
+      else if (e instanceof ApiError && e.code === "draft_unsaved") {
+        toast(t("有修改还没有保存，没有发布。保存后再发布。"), "err");
+        schedule();
+      } else toast(e instanceof ApiError ? e.message : String(e), "err");
     }
+  }
+
+  /** The versions and links after a publish, without touching the canvas. */
+  async function refreshVersions() {
+    try {
+      const out = await op<FormData_>("forms.form.get", { form_id: fid }, { workspace: ws.id });
+      setForm(out.output);
+    } catch { /* the page shows the new version on its next load */ }
   }
 
   async function archive(archived: boolean) {
@@ -242,13 +286,26 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
       {form.status === "archived" && ` · ${t("已归档")}`}
     </p>
 
+    {refused && <div className="notice err fm-problems" role="alert">
+      <strong>{t("草稿没有保存，请先处理：")}</strong>
+      <ul>{refused.items.map((r, i) => <li key={i}>
+        {refusalText(t, r, refused.defn)}
+        {(r.parent ?? r.field) && owningField(defn, r.parent ?? r.field!) && <> — <button type="button" className="linkish"
+          onClick={() => { setSelected(r.parent ?? r.field!); setTab("build"); }}>{t("查看字段")}</button></>}
+      </li>)}</ul>
+    </div>}
     {problems && <div className="notice err fm-problems" role="alert">
       <strong>{t("还不能发布：")}</strong>
-      <ul>{problems.map((p, i) => <li key={i}>
-        {problemText(t, p.code)}
-        {p.field && <> — <button type="button" className="linkish" onClick={() => { setSelected(p.field!); setTab("build"); }}>
-          {defn.fields.find((f) => f.id === p.field)?.label || t("查看字段")}</button></>}
-      </li>)}</ul>
+      <ul>{problems.map((p, i) => {
+        // A problem of a repeating group's sub-field opens the group that holds it.
+        const owner = p.field ? owningField(defn, p.field) : undefined;
+        const sub = owner && owner.id !== p.field ? owner.fields?.find((s) => s.id === p.field) : undefined;
+        return <li key={i}>
+          {problemText(t, p.code)}
+          {owner && <> — <button type="button" className="linkish" onClick={() => { setSelected(owner.id); setTab("build"); }}>
+            {(sub ? [owner.label, sub.label].filter(Boolean).join(" › ") : owner.label) || t("查看字段")}</button></>}
+        </li>;
+      })}</ul>
     </div>}
 
     {tab === "preview" ? <div className="fm-preview-wrap">

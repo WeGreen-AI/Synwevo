@@ -280,3 +280,66 @@ export function newFieldId(): string {
   crypto.getRandomValues(bytes);
   return "f_" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+/** A field as the editor adds it. It must save as a draft the moment it appears: the server
+ *  refuses a draft with an unnamed field (`Field.label`, at least one character), so a repeating
+ *  group's first sub-field comes with a name (`subLabel`). */
+export function blankField(type: FieldType, label: string, subLabel: string): FieldDef {
+  const f: FieldDef = { id: newFieldId(), type, label };
+  if (type === "select" || type === "multiselect") f.options = [{ value: "a", label: "A" }, { value: "b", label: "B" }];
+  if (type === "money") f.currency = "CNY";
+  if (type === "file") { f.accept = [".pdf", ".png", ".jpg", ".jpeg"]; f.max_files = 1; f.max_size_mb = 10; }
+  if (type === "repeat") f.fields = [blankSubField(subLabel)];
+  return f;
+}
+
+export function blankSubField(label: string): FieldDef {
+  return { id: newFieldId(), type: "text", label };
+}
+
+/** What a refused draft save (`invalid_input`) points at, in the definition that was sent.
+ *  `index` is the top-level field (or step, or rule) position, `sub` a repeating group's
+ *  sub-field, `option` a choice. */
+export interface DraftRefusal {
+  part: "label" | "option" | "step" | "rule" | "title" | "other";
+  field?: string; parent?: string; index?: number; sub?: number; option?: number;
+}
+
+/** The server's validation detail (`{fields: [{loc: ["definition", "fields", "3", "fields",
+ *  "0", "label"], …}]}`) as places in `defn` a person can be sent to. One entry per place. */
+export function draftRefusals(defn: Definition, detail: any): DraftRefusal[] {
+  const out: DraftRefusal[] = [];
+  const seen = new Set<string>();
+  const push = (r: DraftRefusal) => {
+    const k = JSON.stringify(r);
+    if (!seen.has(k)) { seen.add(k); out.push(r); }
+  };
+  for (const e of Array.isArray(detail?.fields) ? detail.fields : []) {
+    const loc: string[] = Array.isArray(e?.loc) ? e.loc.map(String) : [];
+    if (loc[0] === "title") { push({ part: "title" }); continue; }
+    if (loc[0] !== "definition") { push({ part: "other" }); continue; }
+    const [, where, a, kind, b, prop] = loc;
+    const n = Number(a);
+    if (where === "steps" && Number.isInteger(n)) { push({ part: "step", index: n }); continue; }
+    if (where === "rules" && Number.isInteger(n)) { push({ part: "rule", index: n }); continue; }
+    const top = where === "fields" && Number.isInteger(n) ? defn.fields[n] : undefined;
+    if (!top) { push({ part: "other" }); continue; }
+    const m = Number(b);
+    if (kind === "fields" && Number.isInteger(m) && top.fields?.[m]) {
+      const s = top.fields[m];
+      push({ part: prop === "label" ? "label" : prop === "options" ? "option" : "other", field: s.id, parent: top.id, index: n, sub: m,
+             ...(prop === "options" && Number.isInteger(Number(loc[6])) ? { option: Number(loc[6]) } : {}) });
+      continue;
+    }
+    if (kind === "label") { push({ part: "label", field: top.id, index: n }); continue; }
+    if (kind === "options" && Number.isInteger(m)) { push({ part: "option", field: top.id, index: n, option: m }); continue; }
+    push({ part: "other", field: top.id, index: n });
+  }
+  return out;
+}
+
+/** The top-level field a person opens to change `id`: the field itself, or the repeating group
+ *  that holds it. */
+export function owningField(defn: Definition, id: string): FieldDef | undefined {
+  return defn.fields.find((f) => f.id === id) ?? defn.fields.find((f) => f.fields?.some((s) => s.id === id));
+}

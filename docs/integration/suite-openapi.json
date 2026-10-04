@@ -11669,7 +11669,7 @@
     "/api/suite/v1/ops/forms.form.publish": {
       "post": {
         "operationId": "forms.form.publish",
-        "summary": "Freeze the draft into a new immutable version. Existing requests keep the version they pinned.",
+        "summary": "Freeze the draft into a new immutable version. Existing requests keep the version they pinned. Pass the title, description and definition you are looking at to refuse (draft_unsaved) when the saved draft is not what you see.",
         "tags": [
           "forms"
         ],
@@ -22585,6 +22585,47 @@
             "maxLength": 500,
             "title": "Note",
             "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The title as the publisher sees it; must equal the saved draft's",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The description as the publisher sees it; must equal the saved draft's",
+            "title": "Description"
+          },
+          "definition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/forms.Definition"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The definition as the publisher sees it; must equal the saved draft's"
           }
         },
         "required": [
