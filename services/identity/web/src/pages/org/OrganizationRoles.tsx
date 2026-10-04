@@ -78,10 +78,10 @@ export default function OrganizationRoles({ organization, mine, catalogue, onCha
         : action.kind === "copy" ? t("副本与「{name}」有相同的说明和权限，不分配给任何成员；之后可以单独编辑。", { name: action.role.name })
         : t("角色只能包含你自己已持有的权限。分配给成员后，成员立即获得这些权限。"),
       danger: action.kind === "delete",
-      run: reason => action.kind === "create" ? post(`${orgPath(organization.id)}/roles`, { name: name.trim(), description: description.trim() || undefined, permissions: perms })
-        : action.kind === "copy" ? post(`${orgPath(organization.id)}/roles/${encodeURIComponent(action.role.id)}/copy`, { name: name.trim() })
-        : action.kind === "edit" ? patch(`${orgPath(organization.id)}/roles/${encodeURIComponent(action.role.id)}`, { name: name.trim(), description: description.trim() || null, permissions: perms, version: action.role.version })
-        : api(`${orgPath(organization.id)}/roles/${encodeURIComponent(action.role.id)}`, { method: "DELETE", body: { unassign: !!action.role.assigned_count } }).then(() => reason),
+      run: reason => action.kind === "create" ? post(`${orgPath(organization.id)}/roles`, { name: name.trim(), description: description.trim() || undefined, permissions: perms, reason })
+        : action.kind === "copy" ? post(`${orgPath(organization.id)}/roles/${encodeURIComponent(action.role.id)}/copy`, { name: name.trim(), reason })
+        : action.kind === "edit" ? patch(`${orgPath(organization.id)}/roles/${encodeURIComponent(action.role.id)}`, { name: name.trim(), description: description.trim() || null, permissions: perms, version: action.role.version, reason })
+        : api(`${orgPath(organization.id)}/roles/${encodeURIComponent(action.role.id)}`, { method: "DELETE", body: { unassign: !!action.role.assigned_count, reason } }),
     }} ready={action.kind === "delete" || (action.kind === "copy" ? !!name.trim() : (!!name.trim() && perms.length > 0))} onClose={() => setAction(null)} onDone={reload}>
       {action.kind === "copy" && <div className="field"><label htmlFor="role-name">{t("角色名称")}</label><input id="role-name" className="input" value={name} maxLength={60} required onChange={e => setName(e.target.value)} /></div>}
       {(action.kind === "create" || action.kind === "edit") && <>

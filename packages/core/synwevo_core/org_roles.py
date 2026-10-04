@@ -277,20 +277,29 @@ class OrgRoles:
         return {"deleted": rid, "unassigned": n}
 
     def assign(self, oid: str, actor_id: str, uid: str, role_ids: list) -> dict:
-        """Replace the member's set of custom roles. The assigner must hold every permission the
-        new set carries; the member must be a current organization member."""
+        """Replace the member's set of custom roles; the member must be a current organization
+        member. The assigner must hold every permission of each role whose assignment changes —
+        added or taken away. A role the member keeps untouched needs nothing: leaving it in place
+        grants nothing, while taking away a role above the assigner's reach would let a delegate
+        strip the owner's own delegations (admin defect D12)."""
         if not isinstance(role_ids, list) or not all(isinstance(r, str) for r in role_ids):
             raise ServiceError(400, "invalid_field", "role_ids 必须是角色 ID 列表", {"field": "role_ids"})
         wanted = {}
         for rid in role_ids:
             wanted[rid] = self.get(oid, rid)
-        needed = frozenset(p for r in wanted.values() for p in r["permissions"])
         with self.store.tx() as t:
-            self._manager(oid, actor_id, needs=needed)
+            held = self._manager(oid, actor_id)
             if not self.base_role(oid, uid):
                 raise ServiceError(404, "no_member", "该用户不是这个组织的成员")
-            before = {r["id"] for r in self.assigned(oid, uid)}
+            current = {r["id"]: r for r in self.assigned(oid, uid)}
+            before = set(current)
             after = set(wanted)
+            granting = frozenset(p for rid in after - before for p in wanted[rid]["permissions"]) - held
+            if granting:
+                raise ServiceError(403, "permission_not_held", "不能授予自己没有的权限", {"permissions": sorted(granting)})
+            taking = frozenset(p for rid in before - after for p in current[rid]["permissions"]) - held
+            if taking:
+                raise ServiceError(403, "permission_not_held", "不能收回包含自己没有的权限的角色", {"permissions": sorted(taking)})
             for rid in before - after:
                 t.execute("DELETE FROM organization_role_assignments WHERE organization_id=? AND user_id=? AND role_id=?", (oid, uid, rid))
             for rid in after - before:

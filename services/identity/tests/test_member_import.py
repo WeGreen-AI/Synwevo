@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 from synwevo_core.member_import import MemberImports, candidates, suggest_mapping, text_extraction
 from synwevo_core.org_roles import OrgRoles
 
+WHY = "fixture: reason recorded with a role change"   # role writes need 8+ characters (D12)
+
 PW = "harbor lights guide the evening ferry home"
 CSRF = "X-Synwevo-CSRF"
 
@@ -94,7 +96,7 @@ def test_readers_and_mapping_suggestion_without_the_engine():
 def test_import_plans_only_what_the_importer_may_do_and_a_row_is_not_membership(org):
     c = org
     h = login(c, "owner")
-    role = c.post(f"/api/auth/organizations/{c.oid}/roles", headers=h, json={"name": "Space builder", "permissions": ["org.workspaces.create", "org.members.view"]}).json()["role"]
+    role = c.post(f"/api/auth/organizations/{c.oid}/roles", headers=h, json={"name": "Space builder", "permissions": ["org.workspaces.create", "org.members.view"], "reason": WHY}).json()["role"]
     cap = c.get(f"{base(c)}/capabilities").json()
     assert cap["ingest"]["engine"] == "basic" and "csv" in cap["ingest"]["formats"] and cap["limits"]["rows"] == 500
     r = upload(c, h, CSV)
@@ -166,10 +168,10 @@ def test_import_plans_only_what_the_importer_may_do_and_a_row_is_not_membership(
 def test_roles_the_importer_may_not_delegate_block_the_row_and_permission_is_required(org):
     c = org
     h = login(c, "owner")
-    settings = c.post(f"/api/auth/organizations/{c.oid}/roles", headers=h, json={"name": "Settings", "permissions": ["org.settings.manage"]}).json()["role"]
+    settings = c.post(f"/api/auth/organizations/{c.oid}/roles", headers=h, json={"name": "Settings", "permissions": ["org.settings.manage"], "reason": WHY}).json()["role"]
     importer = c.post(f"/api/auth/organizations/{c.oid}/roles", headers=h,
-                      json={"name": "Importer", "permissions": ["org.members.import", "org.members.invite", "org.roles.manage", "org.members.view"]}).json()["role"]
-    assert c.put(f"/api/auth/organizations/{c.oid}/members/{c.users['plain']['id']}/roles", headers=h, json={"role_ids": [importer["id"]]}).status_code == 200
+                      json={"name": "Importer", "permissions": ["org.members.import", "org.members.invite", "org.roles.manage", "org.members.view"], "reason": WHY}).json()["role"]
+    assert c.put(f"/api/auth/organizations/{c.oid}/members/{c.users['plain']['id']}/roles", headers=h, json={"role_ids": [importer["id"]], "reason": WHY}).status_code == 200
     # a plain member without the permission cannot even see the capabilities
     hm = login(c, "member", reauth=False)
     assert c.get(f"{base(c)}/capabilities").status_code == 403
@@ -187,7 +189,7 @@ def test_roles_the_importer_may_not_delegate_block_the_row_and_permission_is_req
     # a delegated importer whose delegation is withdrawn cannot execute: the row fails, nothing is sent
     assert c.post(f"{base(c)}/{imp['id']}/confirm", headers=hp, json={"version": plan["version"], "only_valid": True}).status_code == 200
     h = login(c, "owner")
-    assert c.put(f"/api/auth/organizations/{c.oid}/members/{c.users['plain']['id']}/roles", headers=h, json={"role_ids": []}).status_code == 200
+    assert c.put(f"/api/auth/organizations/{c.oid}/members/{c.users['plain']['id']}/roles", headers=h, json={"role_ids": [], "reason": WHY}).status_code == 200
     assert c.api.state.member_import_runner.run_once() == 1
     out = c.get(f"{base(c)}/{imp['id']}", headers=h).json()
     assert out["status"] == "failed" and out["summary"]["outcome"]["failed"] == 1

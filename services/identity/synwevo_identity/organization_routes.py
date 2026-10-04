@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import Response
 
 from synwevo_core.errors import ServiceError
-from synwevo_core.organizations import Organizations
+from synwevo_core.organizations import Organizations, audit_reason
 from synwevo_core.sessions import Sessions
 from synwevo_core.store import now
 from .profile import canonical_avatar
@@ -82,9 +82,7 @@ def build_router(store, ident, sessions, audit, invites, mailer) -> APIRouter:
         allowed = {"reason"} if remove else {"reason", "image_base64"}
         if set(body) - allowed:
             raise ServiceError(400, "invalid_field", "头像请求包含不支持的字段")
-        reason = body.get("reason")
-        if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500:
-            raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字），它会写入审计记录")
+        reason = audit_reason(body.get("reason"))
         def operation(orgs, uid):
             orgs.require(oid, uid, permission="org.settings.manage", active=True)
             if remove:
@@ -188,63 +186,68 @@ def build_router(store, ident, sessions, audit, invites, mailer) -> APIRouter:
 
     @r.post("/{oid}/roles", status_code=201)
     def create_role(request: Request, oid: str, body: dict = Body(...)):
-        if set(body) - {"name", "description", "permissions"}:
+        if set(body) - {"name", "description", "permissions", "reason"}:
             raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
         def op(orgs, uid):
+            reason = audit_reason(body.get("reason"))
             orgs.require(oid, uid, active=True)
             role = OrgRoles(store).create(oid, uid, name=body.get("name"), description=body.get("description"), permissions=body.get("permissions"))
             audit(request, "organization.role.create", actor_id=uid, object_kind="organization_role", object_id=role["id"], result="ok",
-                  meta={"organization_id": oid, "permissions": role["permissions"]})
+                  meta={"organization_id": oid, "permissions": role["permissions"], "reason": reason})
             return {"role": role}
         return write(request, op, sensitive=True)
 
     @r.patch("/{oid}/roles/{rid}")
     def update_role(request: Request, oid: str, rid: str, body: dict = Body(...)):
-        if set(body) - {"name", "description", "permissions", "version"}:
+        if set(body) - {"name", "description", "permissions", "version", "reason"}:
             raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
         def op(orgs, uid):
+            reason = audit_reason(body.get("reason"))
             orgs.require(oid, uid, active=True)
             role = OrgRoles(store).update(oid, uid, rid, name=body.get("name"), description=body.get("description"),
                                           permissions=body.get("permissions"), version=body.get("version"))
             audit(request, "organization.role.update", actor_id=uid, object_kind="organization_role", object_id=rid, result="ok",
-                  meta={"organization_id": oid, "permissions": role["permissions"]})
+                  meta={"organization_id": oid, "permissions": role["permissions"], "reason": reason})
             return {"role": role}
         return write(request, op, sensitive=True)
 
     @r.post("/{oid}/roles/{rid}/copy", status_code=201)
     def copy_role(request: Request, oid: str, rid: str, body: dict = Body(default={})):
         """A copy of a role, to adjust from (CI-94): the same rules as creating one."""
-        if set(body) - {"name"}:
+        if set(body) - {"name", "reason"}:
             raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
         def op(orgs, uid):
+            reason = audit_reason(body.get("reason"))
             orgs.require(oid, uid, active=True)
             role = OrgRoles(store).copy(oid, uid, rid, name=body.get("name"))
             audit(request, "organization.role.create", actor_id=uid, object_kind="organization_role", object_id=role["id"], result="ok",
-                  meta={"organization_id": oid, "permissions": role["permissions"], "copied_from": rid})
+                  meta={"organization_id": oid, "permissions": role["permissions"], "copied_from": rid, "reason": reason})
             return {"role": role}
         return write(request, op, sensitive=True)
 
     @r.delete("/{oid}/roles/{rid}")
     def delete_role(request: Request, oid: str, rid: str, body: dict = Body(default={})):
-        if set(body) - {"unassign"}:
+        if set(body) - {"unassign", "reason"}:
             raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
         def op(orgs, uid):
+            reason = audit_reason(body.get("reason"))
             orgs.require(oid, uid, active=True)
             out = OrgRoles(store).delete(oid, uid, rid, unassign=bool(body.get("unassign")))
             audit(request, "organization.role.delete", actor_id=uid, object_kind="organization_role", object_id=rid, result="ok",
-                  meta={"organization_id": oid, "unassigned": out["unassigned"]})
+                  meta={"organization_id": oid, "unassigned": out["unassigned"], "reason": reason})
             return out
         return write(request, op, sensitive=True)
 
     @r.put("/{oid}/members/{member_id}/roles")
     def assign_roles(request: Request, oid: str, member_id: str, body: dict = Body(...)):
-        if set(body) - {"role_ids"}:
+        if set(body) - {"role_ids", "reason"}:
             raise ServiceError(400, "invalid_field", "角色请求包含不支持的字段")
         def op(orgs, uid):
+            reason = audit_reason(body.get("reason"))
             orgs.require(oid, uid, active=True)
             out = OrgRoles(store).assign(oid, uid, member_id, body.get("role_ids"))
             audit(request, "organization.role.assign", actor_id=uid, object_kind="organization_membership", object_id=member_id, result="ok",
-                  meta={"organization_id": oid, "added": out["added"], "removed": out["removed"]})
+                  meta={"organization_id": oid, "added": out["added"], "removed": out["removed"], "reason": reason})
             if (out["added"] or out["removed"]) and member_id != uid:
                 _inbox(request, oid, uid, member_id, "organization.roles_assigned",
                        roles="、".join(r["name"] for r in out["roles"]) or "—")

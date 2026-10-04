@@ -26,6 +26,8 @@ from playwright.sync_api import Browser, expect, sync_playwright
 from localhost_proxy import LocalhostProxy
 from ui_e2e_messaging import mail_text
 
+WHY = "fixture: reason recorded with a role change"   # role writes need 8+ characters (D12)
+
 expect.set_options(timeout=15000)
 PW = "harbor lights guide the evening ferry home"
 
@@ -107,7 +109,7 @@ def run(browser: Browser, engine: str, accounts: str, mail_dir: Path, ctx_extra:
     assert r.status == 201, (r.status, r.text()[:200])
     oid = r.json()["organization"]["id"]
     assert page.request.post(f"{accounts}/api/auth/reauth", data={"password": PW, "scope": "admin"}, headers={"X-Synwevo-CSRF": csrf}).ok
-    role = page.request.post(f"{accounts}/api/auth/organizations/{oid}/roles", data={"name": "Space builder", "permissions": ["org.workspaces.create", "org.members.view"]},
+    role = page.request.post(f"{accounts}/api/auth/organizations/{oid}/roles", data={"name": "Space builder", "permissions": ["org.workspaces.create", "org.members.view"], "reason": WHY},
                              headers={"X-Synwevo-CSRF": csrf}).json()["role"]
     notes.append(f"{engine}: fresh owner registered through the mailed link, created an organization and a custom role")
 

@@ -54,14 +54,15 @@ export default function OrganizationMembers({ organization, mine = [], catalogue
       title: t(selected.operation === "role" ? "修改成员角色" : selected.operation === "transfer" ? "交接组织所有权" : selected.operation === "assign" ? "分配自定义角色" : "移除组织成员"),
       impact: selected.operation === "assign" ? t("为 {email} 设置自定义角色。成员立即获得所选角色的组织级权限；工作空间内的权限不变。", { email: selected.member.email }) : t(selected.operation === "role" ? "修改 {email} 的组织角色。工作空间内的权限不变。" : selected.operation === "transfer" ? "将组织所有权交给 {email}，你的组织角色将变为管理员。工作空间所有权不会自动转移。" : "移除 {email} 后，对方会失去此组织及所属工作空间的成员资格，相关会话、令牌和待处理邀请会被撤销。", { email: selected.member.email }),
       danger: selected.operation !== "role",
-      run: reason => selected.operation === "assign" ? put(`${orgPath(organization.id)}/members/${encodeURIComponent(selected.member.user_id)}/roles`, { role_ids: picked }).then(() => reason)
+      run: reason => selected.operation === "assign" ? put(`${orgPath(organization.id)}/members/${encodeURIComponent(selected.member.user_id)}/roles`, { role_ids: picked, reason })
         : selected.operation === "role" ? patch(`${orgPath(organization.id)}/members/${encodeURIComponent(selected.member.user_id)}`, { role, reason })
         : selected.operation === "transfer" ? post(`${orgPath(organization.id)}/transfer`, { user_id: selected.member.user_id, reason })
         : api(`${orgPath(organization.id)}/members/${encodeURIComponent(selected.member.user_id)}`, { method: "DELETE", body: { reason } }),
     }} ready={selected.operation === "assign" ? true : selected.operation !== "role" || role !== selected.member.role} onClose={() => setSelected(null)} onDone={reload}>
       {selected.operation === "assign" && (roles === null ? <Loading /> : !roles.length ? <p className="muted">{t("还没有自定义角色。")}</p>
-        : <fieldset className="flow-options"><legend>{t("自定义角色")}</legend>{roles.map(r => <label key={r.id} className="check" title={r.permissions.map(labelOf).join("、")}>
-          <input type="checkbox" checked={picked.includes(r.id)} onChange={e => setPicked(e.target.checked ? [...picked, r.id] : picked.filter(x => x !== r.id))} /><span>{r.name}{r.description && <small className="muted">{r.description}</small>}</span></label>)}</fieldset>)}
+        : <fieldset className="flow-options"><legend>{t("自定义角色")}</legend>{roles.map(r => { const beyond = !r.permissions.every(p => mine.includes(p)); return <label key={r.id} className="check" title={beyond ? t("这个角色包含你没有的权限，不能分配或收回") : r.permissions.map(labelOf).join("、")}>
+          {/* adding or taking away a role needs every permission it carries (D12); one the member keeps untouched needs nothing */}
+          <input type="checkbox" checked={picked.includes(r.id)} disabled={beyond} onChange={e => setPicked(e.target.checked ? [...picked, r.id] : picked.filter(x => x !== r.id))} /><span>{r.name}{r.description && <small className="muted">{r.description}</small>}</span></label>; })}</fieldset>)}
       {selected.operation === "role" && <div className="field"><label htmlFor="member-role">{t("新角色")}</label><select id="member-role" className="input" value={role} onChange={e => setRole(e.target.value as OrganizationRole)}>{(["member", "admin", "owner"] as const).map(r => <option key={r} value={r}>{t(roleSource(r))}</option>)}</select></div>}
     </OrganizationAction>}
     {effective && <Modal title={t("有效权限：{name}", { name: effective.member.display_name || effective.member.email })} onClose={() => setEffective(null)} size="narrow">
