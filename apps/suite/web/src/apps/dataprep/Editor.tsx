@@ -68,7 +68,9 @@ export function Editor({ ws, write }: { ws: WS; write: boolean }) {
   async function sample() {
     if (previewing) return;
     setPreviewing(true); setPreviewError(null);
-    try { setPreview(await read("dataprep.recipe.preview", { definition: def, ...bind(def), offset: sampleOffset, limit: sampleSize }, ws.id)); }
+    // Keep the previewed definition: undo/redo change the draft without clearing the preview,
+    // and its issues must be labelled by the steps that produced them.
+    try { setPreview({ ...await read("dataprep.recipe.preview", { definition: def, ...bind(def), offset: sampleOffset, limit: sampleSize }, ws.id), definition: def }); }
     catch (e) { setPreviewError(e); } finally { setPreviewing(false); }
   }
   return <div className="dp-editor" onClickCapture={e => {
@@ -118,6 +120,6 @@ export function Editor({ ws, write }: { ws: WS; write: boolean }) {
     {previewError && <ErrorState error={previewError} />}{previewing && <Loading />}
     {preview && <section className="dp-preview"><h2>{t("前后对比（仅所选样本）")}</h2><p className="notice">{Object.entries(preview.ranges).map(([k, r]: [string, any]) => `${k}: ${r.offset + 1}–${r.offset + r.selected} / ${r.total}`).join(" · ")}</p>
       <div className="dp-comparison"><Grid columns={sourceColumns[def.source] || []} rows={preview.before || []} caption={t("处理前")} /><Grid columns={preview.columns} rows={preview.rows} caption={t("处理后")} /></div>
-      <p>{t("预览产出 {n} 行，最多显示 200 行", { n: preview.output_rows })}</p><IssueList items={preview.issues} /></section>}
+      <p>{t("预览产出 {n} 行，最多显示 200 行", { n: preview.output_rows })}</p><IssueList items={preview.issues} steps={preview.definition.steps} /></section>}
   </div>;
 }

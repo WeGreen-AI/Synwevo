@@ -3,7 +3,7 @@ import { ApiError } from "@synwevo/auth-client";
 import { useI18n, formatDate } from "@synwevo/ui";
 import { read, op, newKey } from "../../shared/ops";
 import { Empty, Failure } from "../../shared/states";
-import type { DataRow, Issue } from "./model";
+import { stepLabels, type DataRow, type Issue, type Step } from "./model";
 
 export const when = (ts: number) => formatDate(ts * 1000, { dateStyle: "medium", timeStyle: "short" });
 export function useRead<T>(operation: string, input: Record<string, unknown>, workspace: string, poll = false, enabled = true) {
@@ -72,11 +72,12 @@ export function Grid({ columns, rows, caption }: { columns: string[]; rows: Data
     <tbody>{rows.map((r, i) => <tr key={i}><th scope="row"><details><summary>{r.origins[0]?.[1] ?? i + 1}</summary><span className="small">{r.origins.map(o => o.join(":" )).join(" · ")}{r.origin_count && r.origin_count > r.origins.length ? ` (+${r.origin_count - r.origins.length})` : ""}</span></details></th>
       {columns.map(c => <td key={c}>{!(c in r.values) ? <em className="muted">{t("缺失")}</em> : r.values[c] === null ? <em className="muted">{t("空值")}</em> : r.values[c] === "" ? <em className="muted">{t("空字符串")}</em> : r.values[c]}</td>)}</tr>)}</tbody></table></div>;
 }
-export function IssueList({ items, stepLabels = {} }: { items: Issue[]; stepLabels?: Record<string, string> }) {
-  const { t } = useI18n();
+/** `steps` is the definition that produced these issues ([] for import issues, which have no step). */
+export function IssueList({ items, steps }: { items: Issue[]; steps: Step[] }) {
+  const { t } = useI18n(), labels = stepLabels(steps, t);
   if (!items.length) return <Empty title={t("当前范围没有异常")} />;
   return <div className="dp-grid" tabIndex={0} role="region" aria-label={t("异常行")}><table><thead><tr>{["来源", "来源行", "列", "步骤", "异常原因"].map(k => <th key={k} scope="col">{t(k)}</th>)}</tr></thead>
-    <tbody>{items.map((i, n) => <tr key={n}><td title={i.input_label ? i.input_name : undefined}>{i.input_label || i.input_name || "—"}</td><td>{i.source_row ?? "—"}</td><td>{i.column_name || "—"}</td><td>{i.step_id ? stepLabels[i.step_id] || t("步骤") : "—"}</td><td>{t(errorKeys[i.code] || "未通过校验规则")}{i.code === "rule_failed" && i.message && i.message !== i.code ? ` · ${i.message}` : ""}</td></tr>)}</tbody></table></div>;
+    <tbody>{items.map((i, n) => <tr key={n}><td title={i.input_label ? i.input_name : undefined}>{i.input_label || i.input_name || "—"}</td><td>{i.source_row ?? "—"}</td><td>{i.column_name || "—"}</td><td>{i.step_id ? labels[i.step_id] || t("步骤") : "—"}</td><td>{t(errorKeys[i.code] || "未通过校验规则")}{i.code === "rule_failed" && i.message && i.message !== i.code ? ` · ${i.message}` : ""}</td></tr>)}</tbody></table></div>;
 }
 export function Pager({ offset, next, set }: { offset: number; next: number | null; set: (n: number) => void }) {
   const { t } = useI18n();
