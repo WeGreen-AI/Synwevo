@@ -189,11 +189,13 @@ def every_resolver_taken(hub, monkeypatch):
     (the pool is the real one, shared with Synwevo Docs), and an address check waits 0.3 s for one
     instead of its whole deadline. Nothing of the code under test is replaced."""
     from synwevo_core import webhook_delivery
-    held = 0
-    while webhook_delivery._DNS_SLOTS.acquire(blocking=False):
+    held, patience = 0, time.monotonic() + 10
+    # Every one of them: a lookup an earlier test left running gives its slot back when it returns,
+    # which would free a resolver in the middle of the test. It is waited for.
+    while held < webhook_delivery.DNS_SLOTS and webhook_delivery._DNS_SLOTS.acquire(timeout=max(0.0, patience - time.monotonic())):
         held += 1
     try:
-        assert held, "fixture: there was no resolver slot to take"
+        assert held == webhook_delivery.DNS_SLOTS, "fixture: not every resolver slot could be taken"
         with monkeypatch.context() as short:
             short.setattr(hub.W, "TIMEOUT_S", 0.3)
             yield

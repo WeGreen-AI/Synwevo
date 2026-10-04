@@ -44,7 +44,8 @@ DEFAULT_TIMEOUT_S = 15.0
 
 # libc resolution cannot be cancelled. Bound abandoned resolver threads across all dispatchers;
 # they only resolve names, never send, and release their slot if libc eventually returns.
-_DNS_SLOTS = threading.BoundedSemaphore(16)
+DNS_SLOTS = 16
+_DNS_SLOTS = threading.BoundedSemaphore(DNS_SLOTS)
 
 
 # ----------------------------------------------------------------------------- address policy

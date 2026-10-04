@@ -183,11 +183,13 @@ def test_no_free_resolver_is_an_unresolved_host_not_the_receivers_timeout(hub, m
     sub = hub.create(rx.url, events=["*"])
     d = hub.dispatcher()
     fixture_event(hub.store, "default")
-    held = 0
-    while webhook_delivery._DNS_SLOTS.acquire(blocking=False):      # TEST FIXTURE: the real pool, emptied
+    # TEST FIXTURE: the real pool, emptied. Every slot — a lookup an earlier test left running
+    # gives its own back when it returns, and is waited for rather than left to free one mid-test.
+    held, patience = 0, time.monotonic() + 10
+    while held < webhook_delivery.DNS_SLOTS and webhook_delivery._DNS_SLOTS.acquire(timeout=max(0.0, patience - time.monotonic())):
         held += 1
     try:
-        assert held
+        assert held == webhook_delivery.DNS_SLOTS
         d.run_once()
     finally:
         for _ in range(held):
