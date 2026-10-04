@@ -115,8 +115,14 @@ class Approvals:
                     hidden()
                 current = self.get(call, SimpleNamespace(request_id=rid))
                 # A result stored before requests were read without their correlation still holds
-                # it: compared without it, as the request now reads (review R5).
-                output = _without_correlation(dict(output))
+                # the requester's. It goes back to the requester alone, compared without it as the
+                # request now reads (review R5); anyone else's such result — an approver's decision,
+                # a transfer — stays hidden, because the stored result is replayed as it is and its
+                # correlation must not reach them (review R6).
+                if "correlation_id" in output:
+                    if call.user_id != self._request(call.workspace_id, rid)["requester_id"]:
+                        hidden()
+                    output = _without_correlation(dict(output))
             else:
                 hidden()
             if fingerprint(output) != fingerprint(current):

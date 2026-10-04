@@ -476,3 +476,25 @@ def test_a_result_stored_before_requests_lost_their_correlation_still_replays(su
     again=call(c,"request.create",payload,key="fixture-replay-k1")
     assert again["run_id"]==first["run_id"] and again["output"]["id"]==first["output"]["id"]
     assert c.people.store.one("SELECT COUNT(*) AS n FROM approval_requests")["n"]==1
+
+
+def test_an_approvers_result_stored_with_the_requesters_correlation_stays_hidden(suite):
+    """Review R6: results stored before requests lost their correlation hold the requester's; the
+    stored result is replayed as it is, so an approver's decision result passed back to the
+    approver would carry the requester's private tracing text. Only the requester's own replays."""
+    import json as _json
+    c=suite
+    t=template(c)
+    r=c.caps.invoke("approvals.request.create",{"template_id":t["id"],"title":"Fixture traced claim","values":{"f_amount":"9.00"},
+                                                "basis":"Invoice fixture"},user_id=c.people.uid("alice"),workspace_id=c.people.a,
+                     correlation_id="fixture-alice-private-trace")["output"]
+    task=next(x for x in r["tasks"] if x["assignee_id"]==c.people.uid("bob") and x["status"]=="pending")
+    payload=change(r,task_id=task["id"],decision="approve",note="Fixture review")
+    first=call(c,"request.decide",payload,user="bob",key="fixture-bob-decide-k1")
+    row=c.people.store.one("SELECT output FROM op_runs WHERE id=?",(first["run_id"],))
+    old=dict(row["output"]) if isinstance(row["output"],dict) else _json.loads(row["output"])
+    old["correlation_id"]="fixture-alice-private-trace"     # the shape such a result was stored in
+    c.people.store.execute("UPDATE op_runs SET output=? WHERE id=?",(_json.dumps(old),first["run_id"]))
+    error("run_result_unavailable",lambda: call(c,"request.decide",payload,user="bob",key="fixture-bob-decide-k1"))
+    receipt=c.caps.run(first["run_id"],user_id=c.people.uid("bob"))
+    assert "fixture-alice-private-trace" not in _json.dumps(receipt), receipt
