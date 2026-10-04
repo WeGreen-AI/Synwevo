@@ -1,5 +1,30 @@
 # Vultr Tokyo deployment — current record
 
+## 2026-10-04 — business applications deployed dark (6f463ba)
+
+**Running source:** `6f463ba12ef81ec5880117e8e77f8ed965db5b56` — `feat/business-apps` (PR #1, now merged) fast-forwarded
+onto `main@7d690f1`: the five business applications (Forms, DataPrep, Approvals, Extract, Tables), flows, the personal
+Agent, governed administration and billing foundations, with every fix of the third to sixth adversarial reviews
+(CODE_REVIEW CR-051..053: one high, a removed member kept receiving submission notifications; data-flow, correlation,
+webhook and flow-engine mediums). **Nothing new is open to users:** read-only checks after the deploy show the app
+registry holds only `docweave` and `messages`, `SYNWEVO_SUITE_APPS` is unset (each application stays unavailable until
+named there, a host-side setting to be agreed first), no Agent model or key is configured, and no billing environment is
+set (paid calls and payment collection stay closed). The 55 suite tables were created empty by the additive schema.
+
+The first attempt, [Actions 37201117273](https://github.com/WeGreen-AI/Synwevo/actions/runs/37201117273) on `f6df024`,
+failed verify on one test fixture only (3256 passed): a 5000-deep object encoded with `json.dumps`, which raises
+`RecursionError` on the image's Python 3.12; nothing was deployed. `6f463ba` writes that fixture as text.
+[Actions 37202855430](https://github.com/WeGreen-AI/Synwevo/actions/runs/37202855430) (12:39 → 13:20 UTC) passed verify
+and the restricted SSH deployment; pre-upgrade backup `/opt/synwevo/backups/20261004T132023Z`. Checks at ~13:22 UTC:
+`/readyz` 200 on synwevo.com, accounts, docwave, workplace and message (database, storage, worker, malware scanner `ok`
+where the role has them); read-only `docker ps`: `synwevo-accounts-1`, `-docs-1`, `-portal-1`, `-messages-1` all
+`synwevo:6f463ba1…` and healthy, gateway recreated, ClamAV unchanged.
+
+Local gates on the same code (`a47b148`, plus the fixture change): pytest 4788 passed, 2 skipped; five guards, typecheck,
+build, npm tests, Python SDK 40, TypeScript SDK 25, infra unittest 8. Owner decisions still open: R3-FE-04 (status checks
+counted against a flow's call budget), the shared webhook resolver pool cap (R3-WH-2 remainder, R4-webhooks-merge-1/2),
+D3, D5 remainder, D7 step 2, the ClamAV host step; and which applications to enable, after their acceptance.
+
 ## 2026-10-04 — admin governance fixes deployed (7ae3527)
 
 **Running source:** `7ae35276bfb285c1462718631d31f21cc35394db` (fast-forward `9bf71b9..7ae3527`, 13 commits from
