@@ -1,5 +1,34 @@
 # Vultr Tokyo deployment — current record
 
+## 2026-10-04 — production leaves aadcb9e (GitHub Actions billing block cleared)
+
+**Running source:** `b8cb31a8d3add65a855fa3cea04dd71af325bb0d`. Production had stayed on `aadcb9e` since 2026-09-28, when
+GitHub Actions stopped starting jobs for the account's spending limit; every `main` push since was queued and never ran.
+After the October reset the rerun of `4b74796` (Actions 36688073906) reached verify and failed there on two latent test
+defects, both fixed on `main` before this deploy:
+
+* `37cd253` — `tests/integration/test_gate_api_errors.py` asserted the workspace rate-limit budget at exactly `r=1197`;
+  the GCRA bucket refills one request every 50 ms, so the slower CI container read `r=1198`. The assertion now bounds the
+  remaining budget by the elapsed time (reproduced locally with a delayed client).
+* `b8cb31a` — the resumable-upload routes left their 413/416 response descriptions to FastAPI, which takes them from the
+  running Python; 3.13 renamed both (RFC 9110), so the contract generated on the local 3.14 venv differed from the CI image's
+  3.12 (`test_openapi_file_is_in_sync`, contract i18n). The descriptions are now declared; the regenerated
+  `docs/integration/openapi.yaml` is identical under both phrase sets.
+
+[Actions 37171551868](https://github.com/WeGreen-AI/Synwevo/actions/runs/37171551868) (created 02:35 UTC, finished 03:09 UTC)
+passed verification (full suite in the 3 GB image) and the restricted SSH deployment; pre-upgrade backup
+`/opt/synwevo/backups/20261004T030921Z` (`{"deployed": "synwevo:b8cb31a…"}`). Checks at ~03:12 UTC:
+`/readyz` 200 on synwevo.com, accounts, docwave, workplace and message (database, storage, worker, malware scanner `ok`
+where the role has them); read-only `docker ps` on the host: `synwevo-accounts-1`, `-docs-1`, `-portal-1`, `-messages-1`
+all `synwevo:b8cb31a8…` and healthy, gateway recreated, ClamAV unchanged.
+
+The deployed range `aadcb9e..b8cb31a` includes the security fixes recorded as CI-118 (no cross-workspace join into Docs
+collaboration rooms) and the refusal of encrypted archives the scanner cannot inspect, and the API platform work up to
+`161f9cb` (signed resource cursors — an old unsigned cursor now answers 400 `invalid_cursor` with a restart instruction —,
+typed resumable uploads, source lifecycle and signed download errors). Not deployed: `feat/business-apps` (PR #1, the five
+applications, Agent and data-flow contract), which stays off `main` until its second adversarial review has no open high or
+medium finding.
+
 ## 2026-09-25 continuous iteration — CI-01 deployed, CI-02/03/04 in flight
 
 **Running source:** `9b10602d362feffa8af05079703162adf15727b0` (CI-01: WCAG 2.2 reflow and target-size minimums on every
