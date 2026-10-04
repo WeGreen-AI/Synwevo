@@ -149,6 +149,12 @@ audiences for that trigger. Step budget/deadline also apply. Disabling fences ac
 re-enabling does not restore exhausted budget, reset cursors backwards, or resume runs silently.
 Expired/exhausted triggers stop generating refusal rows on every subsequent tick.
 
+A stored row this release cannot read (damaged, or written by a later or earlier release) is
+refused for what it concerns alone, never for the worker: a trigger records `flow_trigger_invalid`
+and keeps its cursor and due time (its owner can still switch it off; switching it on is refused);
+a delivery or a run on such a version is refused or fails with `flow_definition_invalid`; a run
+whose trigger policy cannot be read is blocked with `flow_trigger_invalid`.
+
 Production-app registration is integrated. The combined 2026-09-30 suite and adapter gate passed
 270 tests without skips, including both actual Approvals restart cases. The personal automation
 UI and full seven-application B1–B6 acceptance remain in progress.

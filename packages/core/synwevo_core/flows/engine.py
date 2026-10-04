@@ -90,21 +90,56 @@ class Flows(Triggers):
         return row
 
     def _spec(self, flow_id, version):
+        """A stored version — or, for one this release cannot read (damaged, or stored by a later or
+        earlier release), a refusal for whatever asked about it. It must never escape a worker's
+        loop: the trigger, policy, source and step checks of every run read versions, and one such
+        row would stop every person's runs (CR-048 DF-B4, R3-FE-01)."""
         row = self.store.one("SELECT spec_json FROM flow_versions WHERE flow_id=? AND version=?", (flow_id, version))
         if not row:
             raise error("flow_version_not_found", 404)
-        return Definition.model_validate(decode(row["spec_json"]))
+        try:
+            return Definition.model_validate(decode(row["spec_json"]))
+        except ValueError as exc:                           # pydantic's ValidationError is a ValueError
+            raise error("flow_definition_invalid", 409) from exc
 
     def _stored_step(self, run):
         """The run's pinned definition and the step it is at — or, for a row that no longer fits
-        its definition (a damaged row, a version a later or earlier release stored that this one
-        cannot read), a refusal for that run alone. It must never escape a worker's loop: one such
-        row would stop every person's runs (CR-048 DF-B4)."""
+        its definition, a refusal for that run alone (see ``_spec``)."""
+        spec = self._spec(run["flow_id"], run["version"])
+        step = next((st for st in spec.steps if st.id == run["step_id"]), None)
+        if step is None:
+            raise error("flow_definition_invalid", 409)
+        return spec, step
+
+    def _steps_of(self, flow_id, version):
+        """A stored version's steps by ID, or None for a version this release cannot read."""
         try:
-            spec = self._spec(run["flow_id"], run["version"])
-            return spec, next(st for st in spec.steps if st.id == run["step_id"])
-        except (StopIteration, ValueError) as exc:          # pydantic's ValidationError is a ValueError
-            raise error("flow_definition_invalid", 409) from exc
+            return {st.id: st for st in self._spec(flow_id, version).steps}
+        except ServiceError:
+            return None
+
+    def _named(self, flow_id, version):
+        """Every workspace a stored version names, read from the row as it was stored. For a
+        version this release cannot read, which of its steps ran or read where cannot be told,
+        so each of them counts as a source. A row that is not even JSON tells nothing: what the
+        run may carry cannot be told, and that is a refusal."""
+        found = set()
+
+        def walk(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key == "workspace_id" and isinstance(item, str):
+                        found.add(item)
+                    walk(item)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+        row = self.store.one("SELECT spec_json FROM flow_versions WHERE flow_id=? AND version=?", (flow_id, version))
+        try:
+            walk(json.loads(row["spec_json"]))
+        except (TypeError, ValueError, RecursionError):
+            raise error("flow_sources_unknown", 403) from None
+        return found
 
     def _operation(self, ref, user_id, *, read=False):
         op = self.caps.registry.get(ref.operation)
@@ -250,8 +285,9 @@ class Flows(Triggers):
                 # though _sources leaves the current step's failure out for a step being retried.
                 version = (row["flow_id"], row["version"])
                 if version not in specs:
-                    specs[version] = {st.id: st for st in self._spec(*version).steps}
-                found |= self._places(specs[version].get(row["step_id"]))
+                    specs[version] = self._steps_of(*version)
+                step = specs[version].get(row["step_id"]) if specs[version] is not None else None
+                found |= self._places(step) if step is not None else self._named(*version)
         return sorted(found - {None})
 
     def run(self, run_id, *, user_id, after=0, limit=100, outputs=True):
@@ -266,7 +302,7 @@ class Flows(Triggers):
         steps = []
         try:
             spec = self._spec(row["flow_id"], row["version"])
-        except (ValueError, ServiceError):
+        except ServiceError:
             spec = None                                     # a damaged row still shows what it holds
         positions = {s.id: n for n, s in enumerate(spec.steps)} if spec else {}
         stored_steps = self.store.all("SELECT * FROM flow_steps WHERE run_id=?", (run_id,))
@@ -318,7 +354,12 @@ class Flows(Triggers):
             trigger = self.store.one("SELECT * FROM flow_triggers WHERE id=?", (run["trigger_id"],))
             if not trigger or not trigger["enabled"]:
                 raise error("flow_policy_revoked", 403)
-            policy = Policy.model_validate(decode(trigger["policy_json"]))
+            try:
+                policy = Policy.model_validate(decode(trigger["policy_json"]))
+            except ValueError:
+                # The authority the run acts on cannot be read by this release: it is refused, as
+                # a revoked one is, and no on_error path is taken on it.
+                raise error("flow_trigger_invalid", 403) from None
             if policy.expires_at is not None and self.clock() >= policy.expires_at:
                 raise error("flow_policy_expired", 403)
             self._check_scope(self._spec(run["flow_id"], run["version"]), policy)
@@ -358,7 +399,11 @@ class Flows(Triggers):
             raise error("flow_source_unavailable")
         reader = decode(step["reader_json"])
         if reader:
-            return self._inspect(Read.model_validate(reader), run["user_id"], run=run if charge else None)
+            try:
+                reader = Read.model_validate(reader)
+            except ValueError:                              # a reader this release cannot read
+                raise error("flow_result_unverifiable", 403) from None
+            return self._inspect(reader, run["user_id"], run=run if charge else None)
         if step["op_run_id"]:
             op_row = self.store.one("SELECT * FROM op_runs WHERE id=? AND user_id=?", (step["op_run_id"], run["user_id"]))
             op = self.caps.registry.get(op_row["op"]) if op_row else None
@@ -409,7 +454,7 @@ class Flows(Triggers):
         for r in self.store.all("SELECT DISTINCT delegation FROM op_runs WHERE correlation_id=? AND user_id=? "
                                 "AND delegation LIKE '%transfer_from%'", chain):
             found.update((decode(r["delegation"], {}) or {}).get("transfer_from") or ())
-        specs = {}
+        specs, named = {}, {}
         # Distinct facts, not one row per step: a chain of events can be thousands of runs long.
         # A handled failure is an answer too; the step being run again has not given one yet.
         for row in self.store.all(
@@ -420,8 +465,15 @@ class Flows(Triggers):
             found.add(row["place"])
             version = (row["flow_id"], row["version"])
             if version not in specs:
-                specs[version] = {s.id: s for s in self._spec(*version).steps}
-            step = specs[version][row["step_id"]]
+                specs[version] = self._steps_of(*version)
+            step = specs[version].get(row["step_id"]) if specs[version] is not None else None
+            if step is None:
+                # A version of the chain this release cannot read (R3-FE-01): which of its steps
+                # ran or read where cannot be told, so every workspace it names counts.
+                if version not in named:
+                    named[version] = self._named(*version)
+                found |= named[version]
+                continue
             used = {path[1] for path in references(step.model_dump(mode="json")) if path[0] in ("steps", "outcome")}
             if row["failed"] and step.on_error:
                 # A handled failure is an answer from where the step ran. A result read it never

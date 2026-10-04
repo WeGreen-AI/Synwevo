@@ -7,6 +7,12 @@ the fixture store, as a damaged or downgraded database would hold it.
 """
 from __future__ import annotations
 
+import json
+
+import pytest
+
+from synwevo_core.errors import ServiceError
+
 from .test_flows import flow  # noqa: F401 — the isolated fixture application
 
 
@@ -108,3 +114,138 @@ def test_a_role_withdrawn_while_waiting_and_restored_lets_the_run_finish(flow):
     f.e.resume(rid, user_id=f.uid)
     f.tick()
     assert state(f, rid)[0] == "succeeded", (state(f, rid), steps_of(f, rid))
+
+
+# ---------------------------------------------------------------- rows beyond the step (R3-FE-01)
+# The same premise as DF-B4 — a row another release stored that this one cannot read — reached
+# through a trigger, a run's policy, the chain a run's sources are read over, and the Agent's view.
+
+def _later_release(f, table, column, key, value, **extra):
+    """The row as a later release stored it: the same document with fields this one does not know."""
+    row = f.store.one(f"SELECT {column} FROM {table} WHERE {key}=?", (value,))
+    f.store.execute(f"UPDATE {table} SET {column}=? WHERE {key}=?", (json.dumps(json.loads(row[column]) | extra), value))
+
+
+def _schedule(f, fid):
+    return f.e.create_trigger(fid, user_id=f.uid, version=1, policy=f.policy(),
+                              trigger={"kind": "schedule", "timezone": "UTC", "at": "00:01", "misfire": "once"})["trigger_id"]
+
+
+def test_a_due_schedule_on_a_version_this_release_cannot_read_is_refused_alone(flow):
+    f = flow
+    fid = f.create([f.write()])
+    tid = _schedule(f, fid)
+    _later_release(f, "flow_versions", "spec_json", "flow_id", fid, concurrency=2)
+    healthy = f.start(f.create([f.write()]), key="healthy")
+    f.clock.advance(120)
+    f.tick()                                                 # used to raise ValidationError
+    assert state(f, healthy)[0] == "succeeded"
+    receipts = f.e.deliveries(tid, user_id=f.uid)["deliveries"]
+    assert [(d["status"], d["error_code"]) for d in receipts] == [("refused", "flow_definition_invalid")]
+    assert f.store.one("SELECT COUNT(*) AS n FROM flow_runs WHERE trigger_id=?", (tid,))["n"] == 0
+
+
+def test_an_event_trigger_this_release_cannot_read_is_refused_alone_and_can_be_switched_off(flow):
+    f = flow
+    tid = f.e.create_trigger(f.create([f.write()]), user_id=f.uid, version=1, policy=f.policy(),
+                             trigger={"kind": "event", "event_type": "fixtureflow.decided", "workspace_id": f.ws})["trigger_id"]
+    _later_release(f, "flow_triggers", "spec_json", "id", tid, debounce_s=30)
+    healthy = f.start(f.create([f.write()]), key="healthy")
+    f.tick()                                                 # no event needed: read on every tick
+    assert state(f, healthy)[0] == "succeeded"
+    assert f.e.trigger(tid, user_id=f.uid)["error_code"] == "flow_trigger_invalid"
+    assert f.e.trigger_view(tid, user_id=f.uid)["trigger"]["debounce_s"] == 30   # still shows what it holds
+    # Its owner can always switch it off; switching it on asks this release to read it.
+    assert f.e.set_trigger_enabled(tid, user_id=f.uid, enabled=False)["enabled"] is False
+    with pytest.raises(ServiceError) as err:
+        f.e.set_trigger_enabled(tid, user_id=f.uid, enabled=True)
+    assert err.value.code == "flow_trigger_invalid"
+
+
+def test_a_triggered_run_whose_definition_this_release_cannot_read_fails_alone(flow):
+    f = flow
+    fid = f.create([f.write()])
+    _schedule(f, fid)
+    f.clock.advance(120)
+    f.e.trigger_tick()
+    poison = f.store.one("SELECT id FROM flow_runs")["id"]
+    _later_release(f, "flow_versions", "spec_json", "flow_id", fid, concurrency=2)
+    healthy = f.start(f.create([f.write()]), key="healthy")
+    f.tick()                                                 # its policy check read the version first
+    assert state(f, poison) == ("failed", "flow_definition_invalid")
+    assert state(f, healthy)[0] == "succeeded"
+
+
+def test_a_triggered_run_whose_policy_this_release_cannot_read_is_blocked_alone(flow):
+    f = flow
+    fid = f.create([f.write()])
+    tid = _schedule(f, fid)
+    f.clock.advance(120)
+    f.e.trigger_tick()
+    poison = f.store.one("SELECT id FROM flow_runs")["id"]
+    _later_release(f, "flow_triggers", "policy_json", "id", tid, max_cost=5)
+    healthy = f.start(f.create([f.write()]), key="healthy")
+    f.tick()
+    # The run's authority cannot be read: it is refused, not failed — no on_error path is taken.
+    assert state(f, poison) == ("blocked", "flow_trigger_invalid")
+    assert state(f, healthy)[0] == "succeeded"
+    assert f.store.one("SELECT COUNT(*) AS n FROM fixture_flow_records")["n"] == 1
+
+
+def test_a_chain_with_a_version_this_release_cannot_read_counts_every_workspace_it_names(flow):
+    """A run started by an event of a run whose version later became unreadable: which of that
+    version's steps ran where cannot be told, so each workspace it names is a source of the chain.
+    Alice is a viewer in B (no export right): the child's write into A is refused for B, alone."""
+    f = flow
+    origin_flow = f.create([f.write()])
+    child_flow = f.create([f.write("second", result_read=None)])
+    f.e.create_trigger(child_flow, user_id=f.uid, version=1, policy=f.policy(runs=1),
+                       trigger={"kind": "event", "event_type": "fixtureflow.created", "workspace_id": f.ws})
+    origin = f.start(origin_flow, key="origin")
+    f.e.tick(limit=1)
+    assert state(f, origin)[0] == "succeeded"
+    f.e.trigger_tick()
+    child = f.store.one("SELECT id FROM flow_runs WHERE trigger_id IS NOT NULL")["id"]
+    assert f.row(child)["correlation_id"] == f.row(origin)["correlation_id"]
+    later_step = {"id": "later", "kind": "notify", "workspace_id": f.p.b}      # a step kind this release lacks
+    spec = json.loads(f.store.one("SELECT spec_json FROM flow_versions WHERE flow_id=?", (origin_flow,))["spec_json"])
+    _later_release(f, "flow_versions", "spec_json", "flow_id", origin_flow, steps=[*spec["steps"], later_step])
+    healthy = f.start(f.create([f.write()]), key="healthy")
+    f.tick()                                                 # used to raise inside the child's transfer question
+    assert state(f, child) == ("blocked", "transfer_export_denied")
+    assert state(f, healthy)[0] == "succeeded"
+    assert f.e.carried([child], user_id=f.uid) == sorted([f.ws, f.p.b])
+
+
+def test_a_run_whose_definition_this_release_cannot_read_still_names_its_sources(flow):
+    f = flow
+    from synwevo_suite.flows import install
+    install(f.suite.api.state.suite)
+    fid = f.create([f.write()])
+    broken = f.start(fid, key="broken")
+    _later_release(f, "flow_versions", "spec_json", "flow_id", fid, concurrency=2)
+    f.tick()
+    assert state(f, broken) == ("failed", "flow_definition_invalid")
+    # Where its steps would have run is all that can be told of it, and it counts.
+    assert f.e.carried([broken], user_id=f.uid) == [f.ws]
+    answer = f.caps.invoke("agent.flow.run", {"run_id": broken}, user_id=f.uid, via="agent")["output"]
+    assert answer["status"] == "failed" and answer["source_workspaces"] == [f.ws]
+    with pytest.raises(ServiceError) as err:                 # a refusal, not a server fault
+        f.e.definition(fid, user_id=f.uid, version=1)
+    assert err.value.code == "flow_definition_invalid"
+
+
+def test_a_stored_reader_this_release_cannot_read_refuses_its_source_alone(flow):
+    f = flow
+    rid = f.start(f.create([f.write(), f.write("copy", input={"text": {"$ref": "steps.write.text"}})]), key="poison")
+    f.e.tick(limit=1)
+    assert f.row(rid)["step_id"] == "copy"
+    row = f.store.one("SELECT reader_json FROM flow_steps WHERE run_id=? AND step_id='write'", (rid,))
+    f.store.execute("UPDATE flow_steps SET reader_json=? WHERE run_id=? AND step_id='write'",
+                    (json.dumps(json.loads(row["reader_json"]) | {"consistency": "strong"}), rid))
+    healthy = f.start(f.create([f.write()]), key="healthy")
+    f.tick()                                                 # used to raise while re-reading the source
+    assert state(f, rid) == ("blocked", "flow_result_unverifiable")
+    assert state(f, healthy)[0] == "succeeded"
+    view = f.e.run(rid, user_id=f.uid)                       # metadata stays, the snapshot is hidden
+    assert [s["output"] for s in view["steps"] if s["step_id"] == "write"] == [None]

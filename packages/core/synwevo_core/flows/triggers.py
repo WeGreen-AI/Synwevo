@@ -102,10 +102,14 @@ class Triggers:
         with self.store.tx() as t:
             row = self.trigger(trigger_id, user_id=user_id)
             ts = self.clock()
-            spec = Trigger.model_validate(json.loads(row["spec_json"]))
-            policy = Policy.model_validate(json.loads(row["policy_json"]))
             cursor, nxt = row["cursor"], row["next_at"]
             if enabled:
+                # Only switching on reads the row: its owner can always switch off a trigger this
+                # release cannot read (R3-FE-01).
+                try:
+                    spec, policy = self._trigger_row(row)
+                except ValueError:
+                    raise refusal("flow_trigger_invalid") from None
                 self._authorize_definition(self._spec(row["flow_id"], row["version"]), user_id)
                 if policy.expires_at is not None and ts >= policy.expires_at:
                     raise refusal("flow_policy_expired")
@@ -123,6 +127,10 @@ class Triggers:
                     t.execute("UPDATE flow_runs SET fence=fence+1 WHERE id=?", (run["id"],))
                     self._history(t, run, "policy_revoked", "blocked", code="flow_policy_revoked")
             return {"trigger_id": trigger_id, "enabled": bool(enabled), "next_at": nxt}
+
+    @staticmethod
+    def _trigger_row(row):
+        return Trigger.model_validate(json.loads(row["spec_json"])), Policy.model_validate(json.loads(row["policy_json"]))
 
     def _deliver(self, t, row, spec, policy, occurrence, *, event=None, skip=False):
         prior = self.store.one("SELECT 1 FROM flow_trigger_deliveries WHERE trigger_id=? AND occurrence=?", (row["id"], occurrence))
@@ -237,8 +245,16 @@ class Triggers:
                 row = self.store.one("SELECT * FROM flow_triggers WHERE id=? AND enabled=1", (item["id"],))
                 if not row:
                     continue
-                spec = Trigger.model_validate(json.loads(row["spec_json"]))
-                policy = Policy.model_validate(json.loads(row["policy_json"]))
+                try:
+                    spec, policy = self._trigger_row(row)
+                except ValueError:                  # pydantic's ValidationError is a ValueError
+                    # A row this release cannot read (damaged, or stored by another release): it is
+                    # refused alone and says why, and keeps its place — its cursor and due time stay,
+                    # so a release that reads it goes on from there. Every other trigger and run go
+                    # on (R3-FE-01).
+                    t.execute("UPDATE flow_triggers SET error_code='flow_trigger_invalid',updated_at=? WHERE id=?",
+                              (ts, row["id"]))
+                    continue
                 if spec.kind == "schedule":
                     if row["next_at"] > ts:
                         continue
