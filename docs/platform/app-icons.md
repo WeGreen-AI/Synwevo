@@ -10,7 +10,7 @@
 原包、说明、提示词和原图不进入 public 或运行时构建。没有 SVG、可编辑矢量源文件。
 
 唯一手写映射是 `packages/ui/app-icons/registry.json`。`scripts/app_icon_assets.py` 从它和原图生成
-`packages/ui/src/app-icons/assets.ts`、18 张透明 PNG 及 `derived-manifest.json`（来源哈希、输出哈希、尺寸、字节数）。
+`packages/ui/src/app-icons/assets.ts`、透明 PNG 变体（2026-10-04 起 36 张）及 `derived-manifest.json`（来源哈希、输出哈希、尺寸、字节数）。
 `@synwevo/ui` 导出的 `AppIcon` 是页面唯一图片入口；不再按 `icon: doc/chat` 或显示名称判断身份。
 服务端注册表、稳定 ID、安装身份及授权关系均不变。
 
@@ -28,7 +28,7 @@
 | API 控制中心 | `/admin/api-platform`（Admin 内部模块） | `icons/platform/synwevo-api.png` | `synwevo-api-{32,64,96}.png` | 门户 API 链接/移动菜单；账户桌面导航、移动抽屉和 API 控制台标题 |
 
 主要调用文件：门户 `Portal.tsx` / `PublicHome.tsx`；共享 `PlatformNav.tsx` / `MessagesLink.tsx`；
-账户 `components/Topbar.tsx`、`Admin.tsx`、`pages/Account.tsx` / `ApiPlatform.tsx` / `Members.tsx`；
+账户 `components/Topbar.tsx`、`admin/AdminLayout.tsx`（平台管理与 API 控制台共用的布局，标题位按当前页取图）、`pages/Account.tsx` / `Members.tsx`；
 Message `components/cards.tsx` / `MessageItem.tsx` / `InfoPanel.tsx`。Docs 通过共享导航接入。
 页面没有硬编码 PNG 地址。治理模块使用路径作为明确的图标键，不从当前 URL、语言或动态工作空间 ID 猜测。
 
@@ -49,6 +49,8 @@ Message `components/cards.tsx` / `MessageItem.tsx` / `InfoPanel.tsx`。Docs 通�
 | Agent | `agent` | `icons/apps/synwevo-agent.png` | `synwevo-agent-{32,64,168}.png` | 变体已生成；应用开放后由应用卡与切换器按 ID 使用，未开放时不出现 |
 
 业务应用页面顶栏的品牌位仍是母品牌 `Brand` 加产品名，与 Docs、Message 一致；应用身份在应用卡与切换器中。
+账户顶栏的横排导航只用文字（加图标后 1280px 英文会折成两行）；图标用于手机抽屉等纵向列表，无图标的项用同宽占位对齐；
+窄屏的返回链接不带图标，避免挤出页宽（2026-10-05 复核）。
 变体总计 36 张、195,812 字节。
 
 ## 尺寸、视觉与部署
@@ -59,11 +61,11 @@ Message `components/cards.tsx` / `MessageItem.tsx` / `InfoPanel.tsx`。Docs 通�
   小幅平移补偿原图中心偏差。组件固定正方形容器、不参与 flex 压缩、`object-fit: contain`，不裁断图形。
 - 实际 CSS 尺寸：16px 应用卡/关联对象/成员资格，20px 导航/菜单，24px 入口标题，32px 应用发送者，48px 应用卡片。
   没有实际 64px 身份位，因此没有添加 64px 产品 UI 或大套尺寸变体。
-- 18 张变体总计 **85,400 字节**；单张约 1.2–13 KB。`srcSet`/`sizes` 按光学校正后的显示宽度选择分辨率，
+- 2026-09-30 首批 18 张变体总计 85,400 字节；加入业务应用后 36 张、**195,812 字节**；单张约 1.2–13 KB。`srcSet`/`sizes` 按光学校正后的显示宽度选择分辨率，
   浏览器复用同 URL 缓存；图标元素有 `width`/`height`，不下载 316–515 KB 原图。
 - Vite `?no-inline` 资源导入产生带内容指纹的独立 PNG；分别进入 `assets/`、`portal-assets/`、
   `account-assets/`、`messages-assets/`。沿用现有缓存策略，图片更新改变 URL。
-  四个生产构建已实地加载；额外的 `/icon-check/` base 和示例 CDN base 构建均逐一核对 18 个 URL 与产物。
+  2026-09-30 时四个生产构建已实地加载（业务应用的第五个构建见“业务应用”一节）；额外的 `/icon-check/` base 和示例 CDN base 构建均逐一核对 18 个 URL 与产物。
   CDN 仅验证构建 URL，不声称真实 CDN 的传输/CSP 配置已经部署验收。
 - 默认装饰性 `aria-hidden` + 空 alt，有名称的控件不重复朗读；需要独立说明时组件支持本地化 `label`。
   当前/禁用/hover/focus 沿用所属控件；未新增动效，也未修改角标定位。未知 ID 与图片失败均为同尺寸中性网格。
@@ -83,7 +85,7 @@ Docs 评论通过真实 API 写入，再经 Message bridge worker 生成应用�
 | `pytest tests/integration/test_shells.py tests/integration/test_portal_public.py -q` | 37 项先通过；1 项被沙箱本机端口限制阻止，获得本地权限单独重跑通过，共 38 项 |
 | boundaries / design / component_names / brand 守卫 | 通过；未修改守卫豁免规则 |
 | `brand_assets.py --check` | 22 份母品牌资源匹配确认原图 |
-| `app_icon_assets.py --check` | 12 原图哈希、18 衍生文件及生成映射通过 |
+| `app_icon_assets.py --check` | 12 原图哈希、衍生文件及生成映射通过（2026-10-04：36 份；CI 的 verify 也运行它） |
 | 桌面 1440px / 移动 375px，DPR 1 / 3 | 16 个真实页面/菜单视图通过：Workspace、Account、Admin、API、Docs、Message、切换器、门户菜单与账户抽屉 |
 | DPR 2 | 公开应用卡、门户、账户、Message 应用卡实测并截图 |
 | 320px，简体/繁体/英文 | 真实公开页均显示正确 Docs/Message 图标，没有横向溢出 |
