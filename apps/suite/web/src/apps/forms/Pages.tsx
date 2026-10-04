@@ -8,6 +8,7 @@ import { Empty, Failure, Loading } from "../../shared/states";
 import { requestStatus, submissionStatus } from "./text";
 import { NewRequest, CopyField } from "./Share";
 import { fmtBytes } from "./Renderer";
+import { formatAnswer } from "./answers";
 
 type WS = { id: string; name: string; role: string };
 
@@ -298,20 +299,9 @@ function FieldAnswer({ f, value, files }: { f: any; value: any; files: any[] }) 
       {x.scan === "clean" ? <span className="badge ok">{t("已通过安全检查")}</span> : x.scan === "not_configured" ? <span className="badge">{t("未进行病毒扫描")}</span> : null}
     </li>)}</ul> : shown;
   } else if (value !== undefined && value !== null && value !== "") {
-    shown = formatValue(t, f, value);
+    shown = formatAnswer(t, f, value);
   }
   return <><dt>{f.label}</dt><dd>{shown}</dd></>;
-}
-
-function formatValue(t: (k: string) => string, f: any, v: any): ReactNode {
-  if (f.type === "money" && typeof v === "object") return `${v.amount} ${v.currency}`;
-  if (f.type === "boolean") return v ? t("是") : t("否");
-  if (f.type === "select") return f.options?.find((o: any) => o.value === v)?.label ?? v;
-  if (f.type === "multiselect") return (v as string[]).map((x) => f.options?.find((o: any) => o.value === x)?.label ?? x).join("、");
-  if (f.type === "repeat") return <table className="fm-table"><thead><tr>{(f.fields ?? []).map((s: any) => <th key={s.id}>{s.label}</th>)}</tr></thead>
-    <tbody>{(v as any[]).map((row, i) => <tr key={i}>{(f.fields ?? []).map((s: any) => <td key={s.id}>{row[s.id] !== undefined ? String(formatValue(t, s, row[s.id])) : ""}</td>)}</tr>)}</tbody></table>;
-  if (f.type === "datetime") return formatDate(new Date(v).getTime(), { dateStyle: "medium", timeStyle: "short" });
-  return <span className="fm-pre">{String(v)}</span>;
 }
 
 function RequestChanges({ ws, data, onClose, onDone }: { ws: WS; data: any; onClose: () => void; onDone: () => void }) {

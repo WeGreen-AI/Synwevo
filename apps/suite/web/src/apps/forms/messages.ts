@@ -368,6 +368,8 @@ export const forms = {
   "表单名称不能为空": { en: "The form needs a name", "zh-Hant": "表單名稱不能為空" },
   "「{field}」的设置不符合要求": { en: "A setting of “{field}” is not valid", "zh-Hant": "「{field}」的設定不符合要求" },
   "表单的设置不符合要求": { en: "A setting of the form is not valid", "zh-Hant": "表單的設定不符合要求" },
+  // Between the chosen options of one answer.
+  "、": { en: ", ", "zh-Hant": "、" },
 } as const;
 
 registerMessages(forms);

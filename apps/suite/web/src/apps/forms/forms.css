@@ -92,7 +92,10 @@
 .fm-row-remove { margin-top: var(--sp-2); }
 .fm-answers dd { white-space: normal; }
 .fm-pre { white-space: pre-wrap; }
+/* A wide group scrolls inside its own box on a phone instead of widening the page. */
+.fm-table-wrap { max-width: 100%; overflow-x: auto; }
 .fm-table { border-collapse: collapse; width: 100%; font-size: var(--fs-3); }
+.fm-table td { white-space: pre-wrap; overflow-wrap: anywhere; }
 .fm-table th, .fm-table td { border: 1px solid var(--line); padding: var(--sp-1) var(--sp-2); text-align: left; }
 .fm-file-list, .fm-history { margin: 0; padding-left: var(--sp-4); }
 
