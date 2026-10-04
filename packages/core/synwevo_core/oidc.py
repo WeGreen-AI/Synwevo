@@ -301,16 +301,22 @@ class Clients:
             auds = [docs_resource()]
         elif not auds and has_api and any(s in WORKSPACE_API_SCOPES for s in api_scopes.split()):
             auds = [workspace_resource()]
-        if existing and existing["kind"] == "service":
+        if existing and "service" in (existing["kind"], kind):
             # A service account's secret already acts in its workspace. Re-registering it renames
             # or narrows it; moving it to another workspace or application, turning it into another
-            # kind or widening its scopes or audiences would hand whoever holds that secret more
-            # than anyone approved (admin defect D5).
+            # kind — either way: a user client's secret, held by a relying party, must not become a
+            # workspace credential — or widening its scopes, audiences, callbacks or delegation
+            # scopes would hand whoever holds that secret more than anyone approved (admin defect
+            # D5). The identity scopes are harmless on a client no person signs in to.
             had_scopes = set((existing["api_scopes"] or "").split())
             had_auds = set(json.loads(existing["audiences"] or "[]"))
-            if (kind != "service" or existing["app_id"] != app_id
+            had_redirects = set(json.loads(existing["redirect_uris"] or "[]"))
+            had_delegation = set((existing["scopes"] or "").split())
+            if (existing["kind"] != "service" or kind != "service" or existing["app_id"] != app_id
                     or (existing["workspace_id"] or None) != (workspace_id or None)
-                    or not set(api_scopes.split()) <= had_scopes or not set(auds) <= had_auds):
+                    or not set(api_scopes.split()) <= had_scopes or not set(auds) <= had_auds
+                    or not set(redirect_uris) <= had_redirects
+                    or not set((scopes or "").split()) - {"openid", "profile", "email"} <= had_delegation):
                 raise ServiceError(409, "service_account_change",
                                    f"服务账户 {client_id} 不能改换工作空间、应用或类型，也不能扩大权限；"
                                    "请通过工作空间所有者批准的新凭据申请")
