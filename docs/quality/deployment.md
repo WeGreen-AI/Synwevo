@@ -1,5 +1,32 @@
 # Vultr Tokyo deployment — current record
 
+## 2026-10-05 — business applications released; app icons; acceptance fixes (a4b42c8)
+
+**Running source:** `a4b42c8da0cee86677cc7d6409e8eaff57543b2b`. **The five business applications are now open to
+users:** on the owner's instruction (2026-10-04) the host's `/opt/synwevo/config/runtime.env` gained
+`SYNWEVO_SUITE_APPS=forms,tables,dataprep,approvals,extract` (backup `runtime.env.bak-20261004T153728Z`) and the portal
+role was recreated; the registry shows forms, tables, dataprep, approvals and extract active. The personal Agent stays
+off (no provider model or key; the DeepSeek path also needs confirmed prices and a cost policy).
+
+Release acceptance on an isolated instance running the deployed code with the same switch (real sign-in, headless Chrome
+and the HTTP API, three languages, 390px, keyboard, memory; CODE_REVIEW CR-054) found Forms failing (publishing while
+autosave failed dropped a new field; repeated-group cells showed "[object Object]") and medium defects in the other four;
+all 30 acceptance defects and the icon review's findings were fixed with failing-first tests before this release.
+Capacity: a 50,000-row DataPrep run peaked at 388 MB and a 12-page OCR at 493 MB for the whole container, so the portal
+service's limit was raised to 1536 MiB in the host Compose (backup `compose.yaml.bak-20261004T174954Z`) and in
+`infra/production/compose.yaml`. Also released: the Synwevo app icons (Docs, Message, the five applications, workspace,
+account, admin, API console) from one generated source, with `app_icon_assets.py --check` now in verify.
+
+The first attempt, [Actions 37225946982](https://github.com/WeGreen-AI/Synwevo/actions/runs/37225946982) on `6507785`,
+failed verify on that new check only (it compared PNG bytes; the CI encoder writes different bytes for the same pixels);
+nothing was deployed. `a4b42c8` compares pixels within 2 per channel, as `brand_assets.py` does.
+[Actions 37226305708](https://github.com/WeGreen-AI/Synwevo/actions/runs/37226305708) (18:55 → 19:43 UTC) passed verify
+and deployed; pre-upgrade backup `/opt/synwevo/backups/20261004T194321Z`. Checks: `/readyz` 200 on all five hosts;
+`/forms`, `/tables`, `/dataprep`, `/approvals`, `/extract` 200 on workplace; read-only `docker ps`: accounts, docs, portal,
+messages all `synwevo:a4b42c8d…` and healthy, portal limit 1.5 GiB, gateway recreated, ClamAV unchanged; no exceptions in
+the portal log; the public bundle serves the icon files (200, image/png). Local gates on the same tree: pytest 4817
+passed, 2 skipped; guards, brand and app-icon checks, typecheck, build, npm tests, Python SDK 40, infra 8.
+
 ## 2026-10-04 — business applications deployed dark (6f463ba)
 
 **Running source:** `6f463ba12ef81ec5880117e8e77f8ed965db5b56` — `feat/business-apps` (PR #1, now merged) fast-forwarded
