@@ -3,6 +3,7 @@ import { upload } from "@synwevo/auth-client";
 import { useDialog, useI18n } from "@synwevo/ui";
 import { Loading, Empty, RunBadge } from "../../shared/states";
 import { useRead, useMutation, TableFailure, issueText } from "./common";
+import { historyText } from "./display";
 import type { Workspace, Table, RecordRow } from "./types";
 
 const actionKeys: Record<string, string> = {created: "已创建", updated: "已更新", archived: "已归档", restored: "已恢复",
@@ -15,21 +16,13 @@ export function History({ws, table, record, onRestore}: {ws: Workspace; table: T
   const [tick, setTick] = useState(0);
   const mutation = useMutation(ws.id);
   const {data, error} = useRead<{changes: any[]; next_before: number | null}>("tables.history.list", {table_id: table.id, record_id: record?.id ?? null, before}, ws.id, tick);
-  function value(v: any): string {
-    if (v == null) return "—";
-    if (typeof v === "boolean") return t(v ? "是" : "否");
-    // Historical values may predate a field type change; format their own shape.
-    if (typeof v === "object" && typeof v.amount === "string" && typeof v.currency === "string") return `${v.amount} ${v.currency}`;
-    if (Array.isArray(v)) return v.map(value).join(", ");
-    return typeof v === "object" ? JSON.stringify(v) : String(v);
-  }
   return <section className="tables-history"><h2>{t("变更记录")}</h2>
     <TableFailure error={error || mutation.error} retry={() => setTick(n => n+1)} />
     {!data && !error && <Loading />}
     {data && !data.changes.length && <Empty title={t("还没有可见的变更")} />}
     <ol>{data?.changes.map(change => <li key={change.id}><header><strong>{t(actionKeys[change.action] ?? "数据变更")}</strong><span>{change.actor_name || t("未知操作者")}</span><time dateTime={new Date(change.at*1000).toISOString()}>{new Intl.DateTimeFormat(locale, {dateStyle: "medium", timeStyle: "short"}).format(change.at*1000)}</time>{change.rev && <span>{t("修订 {n}", {n: change.rev})}</span>}</header>
       {change.record_id && !record && <a href={`/tables/w/${ws.id}/t/${table.id}/r/${change.record_id}`}>{t("查看记录")}</a>}
-      <dl>{Object.entries(change.diff ?? {}).map(([fid, diff]: [string, any]) => <div key={fid}><dt>{table.fields.find(f => f.id === fid)?.name ?? t("字段")}</dt><dd><del>{value(diff.before)}</del><span aria-hidden="true"> → </span><ins>{value(diff.after)}</ins></dd></div>)}</dl>
+      <dl>{Object.entries(change.diff ?? {}).map(([fid, diff]: [string, any]) => {const f = table.fields.find(x => x.id === fid); return <div key={fid}><dt>{f?.name ?? t("字段")}</dt><dd><del>{historyText(t, f, diff.before, change.titles)}</del><span aria-hidden="true"> → </span><ins>{historyText(t, f, diff.after, change.titles)}</ins></dd></div>;})}</dl>
       {record && record.can_write && table.can_write && !record.deleted_at && Object.keys(change.diff ?? {}).length > 0 && <button className="btn sm" disabled={mutation.busy} onClick={async () => {if (await dialog.confirm(t("恢复变更前的值"), <><p>{table.name} · {t("记录 {n}", {n: record.seq})} · {t("修订 {n}", {n: change.rev})}</p><p>{t("按当前权限与约束恢复这次变更之前的值？")}</p></>, t("确定"), true)) void mutation.run("tables.record.restore_change", {table_id: table.id, record_id: record.id, rev: record.rev, change_id: change.id}).then(() => {setTick(n => n+1); onRestore?.();}).catch(() => {});}}>{t("恢复变更前的值")}</button>}
     </li>)}</ol>
     <div className="tables-pagination"><button className="btn sm" disabled={before === null} onClick={() => setBefore(null)}>{t("最新记录")}</button><button className="btn sm" disabled={!data?.next_before} onClick={() => setBefore(data?.next_before ?? null)}>{t("更早记录")}</button></div>

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useDialog, useI18n } from "@synwevo/ui";
 import { Loading } from "../../shared/states";
 import { useRead, useMutation, TableFailure, valueText, roleKeys, errorKey } from "./common";
+import { relationLabel } from "./display";
 import { COMPUTED } from "./types";
 import type { Workspace, Table, Field, RecordRow, QueryResult } from "./types";
 import { History } from "./transfer";
@@ -51,7 +52,7 @@ function RecordForm({ws, table, row, reload}: {ws: Workspace; table: Table; row?
         {table.fields.map(f => <div className="tables-record-field" key={f.id}>
           <label htmlFor={`cell-${f.id}`}>{f.name}{f.required && <span> *</span>}</label>
           {f.description && <p className="muted small">{f.description}</p>}
-          {writable && f.can_write && !COMPUTED.has(f.type) ? <CellInput ws={ws} field={f} value={cells[f.id]} onChange={v => {setCells({...cells, [f.id]: v}); setSaved(false);}} /> : <div className="tables-value" id={`cell-${f.id}`}>{row?.formula_errors[f.id] ? t(errorKey(row.formula_errors[f.id])) : f.type === "link" && row ? row.relations[f.id]?.map(link => <Link key={link.id} to={`/tables/w/${ws.id}/t/${link.table_id}/r/${link.id}`}>{link.title}</Link>) : f.type === "boolean" && cells[f.id] != null ? t(cells[f.id] ? "是" : "否") : valueText(f, cells[f.id], locale, row)}</div>}
+          {writable && f.can_write && !COMPUTED.has(f.type) ? <CellInput ws={ws} field={f} value={cells[f.id]} titles={Object.fromEntries((row?.relations[f.id] ?? []).map(x => [x.id, x.title]))} onChange={v => {setCells({...cells, [f.id]: v}); setSaved(false);}} /> : <div className="tables-value" id={`cell-${f.id}`}>{row?.formula_errors[f.id] ? t(errorKey(row.formula_errors[f.id])) : f.type === "link" && row ? row.relations[f.id]?.map(link => <Link key={link.id} to={`/tables/w/${ws.id}/t/${link.table_id}/r/${link.id}`}>{link.title}</Link>) : f.type === "boolean" && cells[f.id] != null ? t(cells[f.id] ? "是" : "否") : valueText(f, cells[f.id], locale, row)}</div>}
         </div>)}
         {table.can_manage && writable && <details><summary>{t("记录权限")}</summary>
           <label>{t("可查看")}<select className="input" value={readRole} onChange={e => setReadRole(e.target.value)}>{Object.keys(roleKeys).map(role => <option key={role} value={role}>{t(roleKeys[role])}</option>)}</select></label>
@@ -67,10 +68,10 @@ function RecordForm({ws, table, row, reload}: {ws: Workspace; table: Table; row?
   </section>;
 }
 
-function CellInput({ws, field: f, value, onChange}: {ws: Workspace; field: Field; value: any; onChange: (v: any) => void}) {
+function CellInput({ws, field: f, value, titles, onChange}: {ws: Workspace; field: Field; value: any; titles: Record<string, string>; onChange: (v: any) => void}) {
   const {t} = useI18n();
   const props = {id: `cell-${f.id}`, className: "input", required: f.required};
-  if (f.type === "link") return <RelationPicker ws={ws} field={f} value={value ?? []} onChange={onChange} />;
+  if (f.type === "link") return <RelationPicker ws={ws} field={f} value={value ?? []} titles={titles} onChange={onChange} />;
   if (f.type === "boolean") return <select {...props} value={value == null ? "" : String(value)} onChange={e => onChange(e.target.value === "" ? null : e.target.value === "true")}><option value="">{t("留空")}</option><option value="true">{t("是")}</option><option value="false">{t("否")}</option></select>;
   if (["single_select", "multi_select"].includes(f.type)) return <select {...props} multiple={f.type === "multi_select"} value={value ?? (f.type === "multi_select" ? [] : "")} onChange={e => onChange(f.type === "multi_select" ? [...e.target.selectedOptions].map(o => o.value) : e.target.value || null)}>
     {f.type === "single_select" && <option value="">{t("留空")}</option>}{f.config.choices.map((c: any) => <option key={c.id} value={c.id}>{c.label}</option>)}
@@ -80,15 +81,17 @@ function CellInput({ws, field: f, value, onChange}: {ws: Workspace; field: Field
   return <div className="tables-input-unit"><input {...props} type={f.type === "date" ? "date" : f.type === "email" ? "email" : f.type === "url" ? "url" : "text"} inputMode={["number", "money"].includes(f.type) ? "decimal" : undefined} value={f.type === "money" ? value?.amount ?? value ?? "" : value ?? ""} onChange={e => onChange(e.target.value || null)} />{f.type === "money" && <span>{f.config.currency}</span>}</div>;
 }
 
-function RelationPicker({ws, field, value, onChange}: {ws: Workspace; field: Field; value: string[]; onChange: (v: string[]) => void}) {
+function RelationPicker({ws, field, value, titles, onChange}: {ws: Workspace; field: Field; value: string[]; titles: Record<string, string>; onChange: (v: string[]) => void}) {
   const {t, locale} = useI18n();
+  // Names of the chosen records: those the record already had, and those picked from the list.
+  const [labels, setLabels] = useState(titles);
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
   const {data, error} = useRead<QueryResult>("tables.record.query", {table_id: field.config.table_id, q, offset, limit: 25}, ws.id);
   return <div className="tables-relations">
     <input className="input" id={`cell-${field.id}`} type="search" placeholder={t("搜索关联记录")} aria-label={t("搜索关联记录")} value={q} onChange={e => {setQ(e.target.value); setOffset(0);}} />
-    {!!value.length && <div className="tables-checks">{value.map(id => <button className="btn sm" key={id} type="button" onClick={() => onChange(value.filter(x => x !== id))}>{t("移除关联")} {id}</button>)}</div>}
+    {!!value.length && <div className="tables-checks">{value.map(id => <button className="btn sm" key={id} type="button" onClick={() => onChange(value.filter(x => x !== id))}>{t("移除关联")} {relationLabel(t, id, labels)}</button>)}</div>}
     <TableFailure error={error} />{!data && !error && <Loading />}
-    {data && <><ul>{data.records.map(row => <li key={row.id}><label className="tables-check"><input type="checkbox" checked={value.includes(row.id)} onChange={e => onChange(e.target.checked ? field.config.multiple ? [...value, row.id] : [row.id] : value.filter(x => x !== row.id))} />{data.fields[0] ? valueText(data.fields[0], row.cells[data.fields[0].id], locale, row) : `#${row.seq}`}</label></li>)}</ul><div className="tables-pagination"><button className="btn sm" type="button" disabled={!offset} onClick={() => setOffset(Math.max(0, offset-25))}>{t("上一页")}</button><span>{t("共 {n} 条记录", {n: data.total})}</span><button className="btn sm" type="button" disabled={data.next_offset === null} onClick={() => setOffset(data.next_offset!)}>{t("下一页")}</button></div></>}
+    {data && <><ul>{data.records.map(row => {const label = data.fields[0] ? valueText(data.fields[0], row.cells[data.fields[0].id], locale, row) : `#${row.seq}`; return <li key={row.id}><label className="tables-check"><input type="checkbox" checked={value.includes(row.id)} onChange={e => {setLabels({...labels, [row.id]: label}); onChange(e.target.checked ? field.config.multiple ? [...value, row.id] : [row.id] : value.filter(x => x !== row.id));}} />{label}</label></li>;})}</ul><div className="tables-pagination"><button className="btn sm" type="button" disabled={!offset} onClick={() => setOffset(Math.max(0, offset-25))}>{t("上一页")}</button><span>{t("共 {n} 条记录", {n: data.total})}</span><button className="btn sm" type="button" disabled={data.next_offset === null} onClick={() => setOffset(data.next_offset!)}>{t("下一页")}</button></div></>}
   </div>;
 }

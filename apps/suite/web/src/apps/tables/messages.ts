@@ -231,6 +231,8 @@ export const tables = {
   '公式存在循环引用。': {en: 'The formula has a circular reference.', 'zh-Hant': '公式存在循環參照。'},
   '请输入名称。': {en: 'Enter a name.', 'zh-Hant': '請輸入名稱。'},
   '操作未完成，请检查输入和权限后重试。': {en: 'The operation did not complete. Check the inputs and permissions, then retry.', 'zh-Hant': '操作未完成，請檢查輸入和權限後重試。'},
+  '（已删除的选项）': {en: '(Deleted option)', 'zh-Hant': '（已刪除的選項）'},
+  '（不可用的记录）': {en: '(Unavailable record)', 'zh-Hant': '（無法使用的記錄）'},
   '列「{column}」：找不到名为“{value}”的关联记录。': {en: 'Column "{column}": no related record is named "{value}".', 'zh-Hant': '欄「{column}」：找不到名為『{value}』的關聯記錄。'},
   '列「{column}」：有多条关联记录名为“{value}”，无法确定是哪一条。': {en: 'Column "{column}": several related records are named "{value}", so the import cannot tell which one.', 'zh-Hant': '欄「{column}」：有多條關聯記錄名為『{value}』，無法確定是哪一條。'},
 } as const;

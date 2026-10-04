@@ -1,4 +1,35 @@
 import type { Translator } from "@synwevo/ui/i18n-core";
+import type { Field } from "./types";
+
+const CHOICE_ID = /^opt_[a-f0-9]{8}$/;
+const RECORD_ID = /^rec_[a-f0-9]{12}$/;
+
+/** A related record as people know it: by the name the page has for it. Internal ids are never
+ *  shown; a record with no name the page can show reads as unavailable. */
+export function relationLabel(t: Translator, id: string, titles: Record<string, string>): string {
+  return Object.hasOwn(titles, id) ? titles[id] || "—" : t("（不可用的记录）");
+}
+
+/** A value in the change history, in the shape it was stored then: options by their current
+ *  label, related records by the names the server resolved for this reader (`titles`). */
+export function historyText(t: Translator, field: Field | undefined, v: unknown, titles: Record<string, string> = {}): string {
+  if (v == null) return "—";
+  if (typeof v === "boolean") return t(v ? "是" : "否");
+  if (Array.isArray(v)) return v.length ? v.map(x => historyText(t, field, x, titles)).join(", ") : "—";
+  if (typeof v === "object") {
+    // Historical values may predate a field type change; format their own shape.
+    const money = v as {amount?: unknown; currency?: unknown};
+    return typeof money.amount === "string" && typeof money.currency === "string" ? `${money.amount} ${money.currency}` : JSON.stringify(v);
+  }
+  const text = String(v);
+  if (field && (field.type === "single_select" || field.type === "multi_select")) {
+    const choice = (field.config.choices ?? []).find((c: {id: string; label: string}) => c.id === text);
+    if (choice) return choice.label;
+    if (CHOICE_ID.test(text)) return t("（已删除的选项）");
+  }
+  if (field?.type === "link" && RECORD_ID.test(text)) return relationLabel(t, text, titles);
+  return text;
+}
 
 /** How Tables words a refusal by its code. Server prose is never shown as page copy. */
 const errorKeys: Record<string, string> = {

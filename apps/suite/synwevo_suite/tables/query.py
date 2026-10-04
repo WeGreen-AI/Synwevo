@@ -203,16 +203,20 @@ class Queries:
                     raise
                 diff = unpack(row['diff'], {})
                 # Do not show old relation identifiers without resolving their CURRENT permissions.
-                projected = {}
+                # The related records shown are named as the grid names them, never by their id.
+                projected, titles = {}, {}
                 for edge in ('before', 'after'):
                     cells = {k: v.get(edge) for k, v in diff.items()}
-                    projected[edge] = self.project(c, dict(current, cells=cells), fields)['cells']
+                    view = self.project(c, dict(current, cells=cells), fields)
+                    projected[edge] = view['cells']
+                    titles.update({x['id']: x['title'] for links in view['relations'].values() for x in links})
                 row['diff'] = {f['id']: {edge: projected[edge].get(f['id']) for edge in ('before', 'after')}
                                for f in fields if f['id'] in diff}
+                row['titles'] = titles
             elif not ft.readable(self.role(c), 'admin'):
                 continue
             else:
-                row['diff'] = {}
+                row['diff'], row['titles'] = {}, {}
             actor = self.identity.get_user(row['actor_id']) if row['actor_id'] else None
             row['actor_name'] = actor.get('display_name') if actor else None
             out.append(row)
