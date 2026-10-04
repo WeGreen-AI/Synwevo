@@ -382,7 +382,7 @@ class SuiteClient:
 
     def redeliver_webhook(self, subscription_id: str, delivery_id: str) -> dict:
         """Queue the event of an earlier delivery once more (same ``webhook-id``). It is sent only
-        if this credential may still read the event. `ConflictError` ``delivery_queue_full`` while
+        if the grant bound to the subscription may still read the event. `ConflictError` ``delivery_queue_full`` while
         the subscription already has as many deliveries waiting as it may."""
         return self._client._json("POST", self._hook(subscription_id, f"/deliveries/{_q(delivery_id)}/redeliver"),
                                   retry_safe=False)

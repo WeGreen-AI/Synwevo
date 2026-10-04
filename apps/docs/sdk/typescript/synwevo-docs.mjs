@@ -1518,6 +1518,7 @@ function toBytes(body) {
 }
 
 /** Standard Webhooks key material: `whsec_<base64>` is decoded; anything else is used as UTF-8. */
+export const WEBHOOK_MIN_KEY_BYTES = 16;
 export function webhookKeyBytes(secret) {
   if (Buffer.isBuffer(secret) || secret instanceof Uint8Array) return Buffer.from(secret);
   const s = String(secret);
@@ -1551,9 +1552,13 @@ export function verifyWebhook(headers, body, secret, { toleranceS = WEBHOOK_TOLE
     throw new WebhookVerificationError('timestamp_out_of_tolerance', `webhook-timestamp 与当前时间相差超过 ${toleranceS} 秒（可能是重放）`);
   }
   const raw = toBytes(body);
-  const expected = (Array.isArray(secret) ? secret : [secret]).filter(Boolean)
-    .map((s) => createHmac('sha256', webhookKeyBytes(s)).update(`${id}.${ts}.`).update(raw).digest());
-  if (!expected.length) throw new WebhookVerificationError('no_secret', '没有提供签名密钥');
+  const keys = (Array.isArray(secret) ? secret : [secret]).filter(Boolean).map(webhookKeyBytes);
+  if (!keys.length) throw new WebhookVerificationError('no_secret', '没有提供签名密钥');
+  // An empty or truncated key (an unset variable, 'whsec_' alone) would let anyone sign: refused.
+  if (keys.some((k) => k.length < WEBHOOK_MIN_KEY_BYTES)) {
+    throw new WebhookVerificationError('weak_secret', `签名密钥为空或过短（至少 ${WEBHOOK_MIN_KEY_BYTES} 字节）：请检查配置`);
+  }
+  const expected = keys.map((k) => createHmac('sha256', k).update(`${id}.${ts}.`).update(raw).digest());
   for (const part of sig.split(' ')) {
     const comma = part.indexOf(',');
     if (comma < 0 || part.slice(0, comma) !== 'v1') continue;

@@ -34,6 +34,9 @@ __all__ = ["verify_webhook", "verify_legacy_signature", "sign_webhook", "Webhook
 
 SECRET_PREFIX = "whsec_"
 DEFAULT_TOLERANCE = 300
+#: Shorter key material is a configuration mistake (an unset variable, a truncated file), and an
+#: empty HMAC key would let anyone sign: refused rather than verified with.
+MIN_KEY_BYTES = 16
 
 
 def _lower(headers) -> dict[str, str]:
@@ -56,11 +59,11 @@ def _key_bytes(secret: str | bytes) -> bytes:
 
 
 def _secrets(secret) -> list:
-    if isinstance(secret, (str, bytes)):
-        return [secret]
-    out = [s for s in (secret or []) if s]
+    out = [secret] if isinstance(secret, (str, bytes)) else [s for s in (secret or []) if s]
     if not out:
         raise WebhookVerificationError("没有配置用于校验的密钥")
+    if any(len(_key_bytes(s)) < MIN_KEY_BYTES for s in out):
+        raise WebhookVerificationError(f"签名密钥为空或过短（至少 {MIN_KEY_BYTES} 字节）：请检查配置")
     return out
 
 

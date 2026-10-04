@@ -177,3 +177,13 @@ test('directory invitation create/resend keep retry keys and member edits are no
   assert.deepEqual(JSON.parse(calls[5].body), { role: 'editor', expected_role: 'viewer' });
   assert.ok(calls.slice(4).every(c => c.key === undefined));
 });
+
+test('a verifier refuses empty or short key material (CR-049 WH-4)', () => {
+  const body = Buffer.from('{"type":"fixture"}'); const ts = String(Math.floor(Date.now() / 1000));
+  const forged = 'v1,' + createHmac('sha256', Buffer.alloc(0)).update(`msg_1.${ts}.`).update(body).digest('base64');
+  const headers = { 'webhook-id': 'msg_1', 'webhook-timestamp': ts, 'webhook-signature': forged };
+  for (const weak of ['whsec_', ['whsec_'], 'short', 'whsec_' + Buffer.alloc(15, 120).toString('base64')]) {
+    assert.throws(() => verifyWebhook(headers, body, weak), (e) => e.code === 'weak_secret', String(weak));
+  }
+  assert.throws(() => verifyWebhook(headers, body, ''), (e) => e.code === 'no_secret');
+});

@@ -84,8 +84,11 @@ export type WebhookEventType = EventType | 'webhook.ping';
 export type WebhookEventFilter = '*' | 'job.*' | 'file.*' | 'copy.*' | EventType;
 export type SubscriptionStatus = 'active' | 'paused' | 'disabled';
 export type DeliveryStatus = 'pending' | 'delivered' | 'failed' | 'dropped';
+/** Shortest decoded webhook key a verifier accepts; shorter is a configuration mistake. */
+export declare const WEBHOOK_MIN_KEY_BYTES: 16;
 export type WebhookVerificationErrorCode =
-  | 'missing_headers' | 'invalid_timestamp' | 'timestamp_out_of_tolerance' | 'invalid_signature' | 'no_secret';
+  | 'missing_headers' | 'invalid_timestamp' | 'timestamp_out_of_tolerance' | 'invalid_signature' | 'no_secret'
+  | 'weak_secret';
 
 // ============================================================================ errors
 export interface SynwevoErrorOptions {
@@ -1539,7 +1542,7 @@ export declare function signWebhook(id: string, timestamp: string | number, body
  * Verify a Standard Webhooks delivery over the *raw* body bytes. `secret` may be a list (old
  * and new while rotating).
  * @throws WebhookVerificationError (missing_headers, invalid_timestamp, timestamp_out_of_tolerance,
- *   invalid_signature, no_secret)
+ *   invalid_signature, no_secret, weak_secret)
  * @throws TypeError when `body` is not raw bytes or a string.
  */
 export declare function verifyWebhook<E = WebhookEvent>(
