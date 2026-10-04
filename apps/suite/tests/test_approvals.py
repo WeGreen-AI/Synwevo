@@ -439,3 +439,22 @@ def test_a_member_without_a_display_name_does_not_break_the_approver_list(suite)
     assert nameless["id"] in {m["id"] for m in everyone["items"]} and p.uid("bob") in {m["id"] for m in everyone["items"]}
     named=out(suite,"members",{"q":"bob"})
     assert {m["id"] for m in named["items"]}=={p.uid("bob")}
+
+
+def test_a_requests_correlation_is_not_handed_to_other_members(suite):
+    """Review R4: approvals.request.list and .get returned whole rows, so every member who can read
+    approvals saw the requester's correlation — free text they chose for their own tracing, or
+    their own run id. Requests are read without it, as Forms requests are."""
+    c=suite
+    t=template(c)
+    named=c.caps.invoke("approvals.request.create",{"template_id":t["id"],"title":"Fixture traced claim","values":{"f_amount":"9.00"},
+                                                    "basis":"Invoice fixture"},user_id=c.people.uid("alice"),workspace_id=c.people.a,
+                         correlation_id="fixture-alice-private-trace")["output"]
+    plain=request(c,t)
+    stored={r["correlation_id"] for r in c.people.store.all("SELECT correlation_id FROM approval_requests")}
+    assert "fixture-alice-private-trace" in stored, "the requester's correlation is still kept for her runs"
+    for who in ("bob","alice"):
+        listed=out(c,"request.list",{"view":"all"},user=who)["items"]
+        assert {x["id"] for x in listed}>={named["id"],plain["id"]} and all("correlation_id" not in x for x in listed), who
+        for rid in (named["id"],plain["id"]):
+            assert "correlation_id" not in out(c,"request.get",{"request_id":rid},user=who), (who,rid)

@@ -32,6 +32,14 @@ def decode(row):
     return out
 
 
+def _without_correlation(request):
+    """A request as members read it. Its stored correlation is the requester's own — free text
+    they chose or their own run id — and reaches nobody else (review R4: list/get handed it to
+    every member who can read approvals); Forms requests never return theirs either."""
+    request.pop("correlation_id", None)
+    return request
+
+
 class Approvals:
     def __init__(self, store, identity, capabilities):
         self.store, self.identity, self.caps = store, identity, capabilities
@@ -373,12 +381,14 @@ class Approvals:
             args.append(c.user_id)
         elif i.view=="handled":
             where+=" AND EXISTS (SELECT 1 FROM approval_decisions d WHERE d.request_id=approval_requests.id AND d.decider_id=?)"; args.append(c.user_id)
-        return self._page("approval_requests",where,args,i,"updated_at DESC,id")
+        page = self._page("approval_requests",where,args,i,"updated_at DESC,id")
+        page["items"] = [_without_correlation(x) for x in page["items"]]
+        return page
 
     def get(self,c,i):
         self._auth(c)
         r = self._request(c.workspace_id,i.request_id)
-        out = decode(r)
+        out = _without_correlation(decode(r))
         out["definition"] = self._def(r).model_dump()
         out["revisions"] = self.store.all("SELECT revision,fields_hash,basis_hash,note,submitted_by,submitted_at FROM approval_revisions WHERE request_id=? AND workspace_id=? ORDER BY revision",(r["id"],c.workspace_id))
         out["snapshot"] = self.revision(c,SimpleNamespace(request_id=r["id"],revision=r["revision"]))
