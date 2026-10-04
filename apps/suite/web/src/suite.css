@@ -4,14 +4,16 @@
 .suite-app { min-height: 100vh; min-height: 100dvh; background: var(--bg); }
 .suite-topbar { position: sticky; top: 0; z-index: 30; }
 
-/* The secondary bar: which workspace this page works in, then the application's sections. */
+/* The secondary bar: which workspace this page works in, then the application's sections.
+   The sections sit beside the workspace when they fit, else on a row of their own, and wrap onto
+   further rows rather than scroll: a strip that scrolled with its scrollbar hidden cut later
+   sections off at phone width with nothing saying there were more (every application uses it). */
 .suite-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4);
   padding: var(--sp-2) var(--sp-4); background: var(--surface); border-bottom: 1px solid var(--line); }
 .suite-ws { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
 .suite-ws select { max-width: 240px; }
-.suite-sections { display: flex; gap: var(--sp-1); overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 1; }
-.suite-sections::-webkit-scrollbar { display: none; }
-.suite-section { display: inline-flex; align-items: center; height: 32px; padding: 0 var(--sp-3); border-radius: var(--radius-sm);
+.suite-sections { display: flex; flex-wrap: wrap; gap: var(--sp-1); min-width: 0; flex: 1 1 auto; }
+.suite-section { display: inline-flex; align-items: center; min-height: 32px; max-width: 100%; padding: 0 var(--sp-3); border-radius: var(--radius-sm);
   color: var(--text-2); text-decoration: none; white-space: nowrap; font-size: var(--fs-4);
   transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
 .suite-section:hover { background: var(--surface-hover); color: var(--text); text-decoration: none; }
@@ -58,4 +60,5 @@ a.suite-row:focus-visible { outline: none; box-shadow: inset var(--focus); }
   .suite-head h1 { font-size: var(--fs-6); }
   .suite-head .actions { margin-left: 0; width: 100%; }
   .suite-ws select { max-width: 60vw; }
+  .suite-sections .suite-section { white-space: normal; overflow-wrap: anywhere; }
 }
