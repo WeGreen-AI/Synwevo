@@ -3531,8 +3531,8 @@ paths:
           $ref: "#/components/responses/Gone"
           description: Gone
         "416":
-          $ref: "#/components/responses/RangeNotSatisfiable"
           description: Range Not Satisfiable
+          $ref: "#/components/responses/RangeNotSatisfiable"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
