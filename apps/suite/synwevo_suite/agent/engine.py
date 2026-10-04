@@ -332,7 +332,9 @@ class Agent:
         sources = self._content_workspaces(asst) & self._transmitted_workspaces(t, carried=True)
         # What this conversation's writes left in the target, in any branch, goes along with
         # whatever is written there next (publishing a draft another branch filled, for one).
-        sources |= self._carried_into(t, {target})
+        # A copy also carries what this conversation's writes left in the place it copies from
+        # (review R4: a flow it started could fill a form there that a duplicate then took on).
+        sources |= self._carried_into(t, {target, wid} if op.writes_elsewhere and wid else {target})
         if op.writes_elsewhere and wid:
             sources.add(wid)  # The operation itself copies from where it runs; its service checks it too.
         # A message or a form request reaches whoever it is addressed to, not only the target's
