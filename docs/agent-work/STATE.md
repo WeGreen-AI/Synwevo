@@ -5,7 +5,7 @@
 | 项 | 当前事实 |
 |---|---|
 | 锁 | 主检出 docs/agent-work/.coordinator.lock 由 80146fec 持有（记录了接管证据），每轮更新 heartbeat |
-| 实施树 | feat/business-apps 已全部合入 main（PR #1 merged）；生产运行 6f463ba，业务应用/Agent/计费均未开放（应用注册表仅 docweave、messages，SYNWEVO_SUITE_APPS 未设，无 Agent 模型，无计费环境） |
+| 实施树 | feat/business-apps 已全部合入 main（PR #1 merged）；生产运行 6f463ba，业务应用/Agent/计费均未开放（应用注册表仅 Docs、Message，SYNWEVO_SUITE_APPS 未设，无 Agent 模型，无计费环境） |
 | PR | PR #1 已合并（main@6f463ba） |
 | 主检出 | main@7d690f1（7ae3527 部署 + 部署记录）；主检出工作树的图标任务等其他会话改动完整保留，不触碰 |
 | CI / 部署 | **生产已更新到 6f463ba**：Actions 37202855430（12:39→13:20 UTC）验证并部署；首次 37201117273 在 f6df024 仅因 3.12 下测试夹具 json.dumps 递归失败，未部署；五主机 /readyz 200，四角色同为 synwevo:6f463ba1（只读核对），备份 20261004T132023Z；记录 docs/quality/deployment.md |
