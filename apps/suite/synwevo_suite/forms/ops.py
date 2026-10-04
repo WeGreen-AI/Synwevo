@@ -241,17 +241,19 @@ def register(registry, forms: Forms) -> None:
        summary="A fill-in request with its status and submissions.", input=RequestRef, object_kind="form_request",
        handler=lambda c, i: forms.get_request(c.workspace_id, i.request_id, can_write=c.can("write")))
     op(id="forms.request.close", title=T("关闭或撤销填写请求", "關閉或撤銷填寫請求", "Close or revoke a request"),
-       summary="Stop a request accepting answers (close), or invalidate its link entirely (revoke).",
+       summary="Stop a personal request accepting answers (close), or invalidate its link entirely (revoke). "
+               "The public link's request follows forms.public_link.set (public_link_request otherwise).",
        input=CloseRequest, need="write", side_effect="write", agent="confirm", object_kind="form_request",
        events=("forms.request.closed", "forms.request.revoked"),
        handler=lambda c, i: forms.close_request(c, i.request_id, mode=i.mode, reason=i.reason))
     op(id="forms.request.extend", title=T("修改截止时间", "修改截止時間", "Change the deadline"),
-       summary="Change or clear a request's deadline; an expired request reopens.",
+       summary="Change or clear a personal request's deadline; an expired request reopens.",
        input=ExtendRequest, need="write", side_effect="write", agent="confirm", object_kind="form_request",
        shown_to_link_holders=True,
        handler=lambda c, i: forms.extend_request(c, i.request_id, i.due_at))
     op(id="forms.request.reissue_link", title=T("重新生成链接", "重新產生連結", "Reissue the link"),
-       summary="Replace a request's link; the old link stops working.",
+       summary="Replace a personal request's link; the old link stops working. A public link is replaced "
+               "with forms.public_link.set (public_link_request otherwise).",
        input=RequestRef, need="write", side_effect="external", agent="confirm", object_kind="form_request",
        # The new link goes back to the caller only; whatever sends it on is asked for itself.
        outward_when=lambda i: False,

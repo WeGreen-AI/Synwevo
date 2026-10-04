@@ -5,7 +5,7 @@ import { ApiError } from "@synwevo/auth-client";
 import { Modal, useDialog, useI18n, useToast, formatDate } from "@synwevo/ui";
 import { op, newKey, read } from "../../shared/ops";
 import { Empty, Failure, Loading } from "../../shared/states";
-import { requestStatus, submissionStatus } from "./text";
+import { requestHeading, requestStatus, submissionStatus } from "./text";
 import { NewRequest, CopyField } from "./Share";
 import { fmtBytes } from "./Renderer";
 import { formatAnswer } from "./answers";
@@ -84,7 +84,7 @@ export function Library({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
 }
 
 // ------------------------------------------------------------------------ requests
-interface RequestRow { id: string; form_id: string; form_title: string; title: string; status: string; due_at: number | null;
+interface RequestRow { id: string; kind: "personal" | "public"; form_id: string; form_title: string; title: string; status: string; due_at: number | null;
                        recipient: { email: string | null; name: string | null } | null; created_at: number;
                        url: string | null; submission_policy: string; require_sign_in: boolean; form_version: number;
                        prefill: Record<string, any>; source: any; closed_reason: string | null }
@@ -149,6 +149,8 @@ export function RequestDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
   if (!data) return <Loading />;
   const [label, tone] = requestStatus(t, data.status);
   const active = !["closed", "revoked", "accepted"].includes(data.status);
+  // The public link's request is the form's public fill-in: it changes in the share settings.
+  const isPublic = data.kind === "public";
 
   async function act(name: string, input: Record<string, unknown>, confirm?: [string, string, string, boolean?]) {
     if (confirm && !(await dialog.confirm(confirm[0], confirm[1], confirm[2], confirm[3]))) return;
@@ -168,11 +170,14 @@ export function RequestDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
     <div className="suite-head">
       <div>
         <p className="muted small"><Link to={`/forms/w/${ws.id}/requests`}>← {t("填写请求")}</Link></p>
-        <h1>{data.title}</h1>
+        <h1>{requestHeading(t, data)}</h1>
         <p className="lede"><span className={`badge ${tone}`}>{label}</span> · {t("表单版本 {v}", { v: data.form_version })}
           {data.source?.via && data.source.via !== "ui" ? ` · ${viaText(t, data.source.via)}` : ""}</p>
       </div>
-      {canWrite && active && <div className="actions">
+      {canWrite && isPublic && <div className="actions">
+        <Link className="btn sm" to={`/forms/w/${ws.id}/f/${data.form_id}?panel=share`}>{t("在分享设置中管理")}</Link>
+      </div>}
+      {canWrite && active && !isPublic && <div className="actions">
         <button type="button" className="btn sm" onClick={() => void extend()}>{t("修改截止时间")}</button>
         <button type="button" className="btn sm" onClick={() => void act("forms.request.reissue_link", { request_id: rid },
           [t("重新生成链接"), t("旧链接会立即失效。确定生成新链接？"), t("生成")])}>{t("重新生成链接")}</button>
@@ -185,7 +190,7 @@ export function RequestDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
     <div className="suite-cols">
       <section className="card"><div className="card-b">
         <dl className="suite-kv">
-          <dt>{t("收件人")}</dt><dd>{[data.recipient?.name, data.recipient?.email].filter(Boolean).join(" · ") || t("未指定")}</dd>
+          <dt>{t("收件人")}</dt><dd>{isPublic ? t("任何持有公开链接的人") : [data.recipient?.name, data.recipient?.email].filter(Boolean).join(" · ") || t("未指定")}</dd>
           <dt>{t("截止时间")}</dt><dd>{data.due_at ? when(data.due_at) : t("不限")}</dd>
           <dt>{t("提交次数")}</dt><dd>{data.submission_policy === "once" ? t("只能提交一次") : t("可以提交多次")}</dd>
           <dt>{t("登录要求")}</dt><dd>{data.require_sign_in ? t("仅收件人登录后可填写") : t("持有链接即可填写")}</dd>
@@ -193,6 +198,7 @@ export function RequestDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
           {data.closed_reason && <><dt>{t("结束原因")}</dt><dd>{data.closed_reason}</dd></>}
         </dl>
         {data.url && active && <><p className="fm-label small">{t("填写链接")}</p><CopyField value={data.url} label={t("填写链接")} /></>}
+        {isPublic && <p className="muted small">{t("公开链接在表单的“分享与填写请求”里管理：在那里复制、更换或关闭。")}</p>}
         {Object.keys(data.prefill || {}).length > 0 && <p className="muted small">{t("包含 {n} 项预填内容", { n: Object.keys(data.prefill).length })}</p>}
       </div></section>
       <section>

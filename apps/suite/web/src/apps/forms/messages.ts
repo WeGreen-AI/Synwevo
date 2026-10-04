@@ -368,6 +368,11 @@ export const forms = {
   "表单名称不能为空": { en: "The form needs a name", "zh-Hant": "表單名稱不能為空" },
   "「{field}」的设置不符合要求": { en: "A setting of “{field}” is not valid", "zh-Hant": "「{field}」的設定不符合要求" },
   "表单的设置不符合要求": { en: "A setting of the form is not valid", "zh-Hant": "表單的設定不符合要求" },
+  // The public link's request page (acceptance D4).
+  "「{form}」的公开填写": { en: "Public fill-in of “{form}”", "zh-Hant": "「{form}」的公開填寫" },
+  "在分享设置中管理": { en: "Manage in share settings", "zh-Hant": "在分享設定中管理" },
+  "任何持有公开链接的人": { en: "Anyone with the public link", "zh-Hant": "任何持有公開連結的人" },
+  "公开链接在表单的“分享与填写请求”里管理：在那里复制、更换或关闭。": { en: "The public link is managed in the form's “Share and requests”: copy, replace or turn it off there.", "zh-Hant": "公開連結在表單的「分享與填寫請求」裡管理：在那裡複製、更換或關閉。" },
   // Between the chosen options of one answer.
   "、": { en: ", ", "zh-Hant": "、" },
 } as const;

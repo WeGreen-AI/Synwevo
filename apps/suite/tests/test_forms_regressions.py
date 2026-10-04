@@ -5,6 +5,8 @@ relies on (fixture people and workspaces only; isolated store under ``tmp_path``
   field the person had just added disappeared.
 * D3 — after a resubmission that kept the earlier attachment, revision 1 showed no attachment: the
   file was moved to revision 2.
+* D4 — the request page behind a public submission offered the personal-request actions;
+  重新生成链接 there minted a link that opened to 链接无效 while the old public link kept working.
 """
 from __future__ import annotations
 
@@ -124,3 +126,32 @@ def test_a_file_is_exported_only_under_a_submission_that_used_it(suite):
         forms.file_bytes(p.uid("bob"), p.a, up["id"], submission_id=subs[2])
     assert refused.value.status == 404 and refused.value.code == "file_not_found"
     assert op(suite, "forms.submission.get", p.a, {"submission_id": subs[2]})["output"]["files"] == []
+
+
+# ---------------------------------------------------------------- D4: the public link's request
+
+def test_the_public_links_request_is_managed_in_the_share_settings_only(suite):
+    p = suite.people
+    suite.sign_in("bob")
+    fid = published_form(suite, p.a)
+    public = token_of(op(suite, "forms.public_link.set", p.a, {"form_id": fid, "enabled": True})["output"]["url"])
+    base = f"/api/suite/public/forms/r/{public}"
+    filler = {"X-Synwevo-Filler": "p" * 32, **CSRF}
+    sid = suite.post(base + "/submit", headers=filler, json={"version": 1, "answers": good_answers(),
+                                                             "idempotency_key": "d4-submit-0001"}).json()["submission_id"]
+    rid = op(suite, "forms.submission.get", p.a, {"submission_id": sid})["output"]["request_id"]
+    req = op(suite, "forms.request.get", p.a, {"request_id": rid})["output"]
+    assert req["kind"] == "public" and req["form_title"] == "Expense claim"
+    # A personal request's actions do not apply: each is refused with a reason, and none of them
+    # changes what the public link does.
+    for name, extra in (("forms.request.reissue_link", {}), ("forms.request.extend", {"due_at": None}),
+                        ("forms.request.close", {"mode": "close"}), ("forms.request.close", {"mode": "revoke"})):
+        refused = op(suite, name, p.a, {"request_id": rid, **extra}, expect=409)
+        assert refused["error"] == "public_link_request", name
+    row = p.store.one("SELECT status, token_hash, due_at FROM form_requests WHERE id=?", (rid,))
+    assert row == {"status": "open", "token_hash": None, "due_at": None}
+    assert "definition" in suite.get(base, headers=filler).json()
+    # The share settings are where it changes: a new public link replaces the old one at once.
+    new = token_of(op(suite, "forms.public_link.set", p.a, {"form_id": fid, "enabled": True})["output"]["url"])
+    assert suite.get(base, headers=filler).status_code == 404
+    assert "definition" in suite.get(f"/api/suite/public/forms/r/{new}", headers=filler).json()

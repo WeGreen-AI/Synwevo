@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { blankField, checkAnswers, draftRefusals, evaluate, owningField, visibleFields, type Definition } from "../src/apps/forms/logic.ts";
-import { refusalText } from "../src/apps/forms/text.ts";
+import { refusalText, requestHeading } from "../src/apps/forms/text.ts";
 
 const VECTORS = JSON.parse(readFileSync(join(import.meta.dirname, "forms-vectors.json"), "utf8"));
 
@@ -56,4 +56,13 @@ test("a refused save names the group and the sub-field without a name", () => {
   assert.equal(refusalText(SAY, top[0], defn), "第 1 个字段（单行文本）还没有填写问题");
   // Unknown places still say something, never nothing.
   assert.deepEqual(draftRefusals(defn, { fields: [{ loc: ["definition"] }] }), [{ part: "other" }]);
+});
+
+// ------------------------------------------------------------------ request pages (acceptance D4)
+test("the public link's request page is headed by its form, never left empty", () => {
+  // `forms.request.get` of the public link's request: no title of its own, the form's title beside it.
+  const shown = requestHeading(SAY, { kind: "public", title: "", form_title: "Expense claim" });
+  assert.equal(shown, "「Expense claim」的公开填写");
+  assert.equal(requestHeading(SAY, { kind: "personal", title: "", form_title: "Expense claim" }), "Expense claim");
+  assert.equal(requestHeading(SAY, { kind: "personal", title: "Q3 claim", form_title: "Expense claim" }), "Q3 claim");
 });

@@ -8,7 +8,7 @@
  *  that differs (`draft_unsaved`). Undo/redo work on this editor's own changes (Ctrl/⌘+Z, Shift for
  *  redo). Fields move with buttons as well as the keyboard — no drag-only operation. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError } from "@synwevo/auth-client";
 import { Drawer, Menu, Modal, useDialog, useI18n, useToast, formatDate } from "@synwevo/ui";
 import { op, newKey } from "../../shared/ops";
@@ -38,6 +38,7 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
   const dialog = useDialog();
   const navigate = useNavigate();
   const { fid = "" } = useParams();
+  const [params, setParams] = useSearchParams();
   const [form, setForm] = useState<FormData_ | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [defn, setDefn] = useState<Definition>({ fields: [] });
@@ -84,6 +85,14 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fid, ws.id]);
   useEffect(() => { void load(); }, [load]);
+  // `?panel=share` (from a request page: the public link is managed here) opens the share settings.
+  useEffect(() => {
+    if (!form?.published_version || params.get("panel") !== "share") return;
+    setPanel("share");
+    const next = new URLSearchParams(params);
+    next.delete("panel");
+    setParams(next, { replace: true });
+  }, [form?.published_version, params, setParams]);
 
   /** Save what the canvas shows now. True only when the server stored exactly that. */
   const persist = useCallback((): Promise<boolean> => {

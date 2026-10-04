@@ -103,6 +103,13 @@ export function typeLabel(t: T, type: FieldType): string {
   }
 }
 
+/** A request page's heading. The public link's request has no title of its own: it is the
+ *  form's public fill-in, named after the form. */
+export function requestHeading(t: T, r: { kind?: string; title?: string | null; form_title?: string | null }): string {
+  if (r.kind === "public") return t("「{form}」的公开填写", { form: r.form_title || t("未命名表单") });
+  return r.title || r.form_title || t("未命名表单");
+}
+
 export function requestStatus(t: T, s: string): [string, string] {
   switch (s) {
     case "open": return [t("待填写"), "info"];

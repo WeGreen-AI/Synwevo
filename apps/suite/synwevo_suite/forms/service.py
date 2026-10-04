@@ -467,8 +467,17 @@ class Forms:
         out["form_title"] = form["title"]
         return out
 
+    def _personal(self, row: dict) -> dict:
+        """The actions of a request page (deadline, new link, close, revoke) are a personal
+        request's. The public link's request follows the form's share settings: its link is
+        the form's public token, and turning the link off there closes it — so changing it here
+        would mint a link nothing resolves, or close a link the share settings still show open."""
+        if row["kind"] != "personal":
+            raise ServiceError(409, "public_link_request", "公开填写由表单的分享设置管理，请在那里更换链接或关闭公开填写")
+        return row
+
     def close_request(self, call: Call, request_id: str, *, mode: str, reason: str) -> dict:
-        row = self._request(call.workspace_id, request_id)
+        row = self._personal(self._request(call.workspace_id, request_id))
         if row["status"] in ("closed", "revoked", "expired", "accepted") and not (mode == "revoke" and row["status"] != "revoked"):
             return self.request_json(row, can_write=True)
         state = "revoked" if mode == "revoke" else "closed"
@@ -482,7 +491,7 @@ class Forms:
         return self.request_json(self._request(call.workspace_id, request_id), can_write=True)
 
     def extend_request(self, call: Call, request_id: str, due_at: float | None) -> dict:
-        row = self._request(call.workspace_id, request_id)
+        row = self._personal(self._request(call.workspace_id, request_id))
         if row["status"] in ("revoked", "closed", "accepted"):
             raise ServiceError(409, "request_finished", "这份填写请求已经结束，不能再修改截止时间")
         if due_at is not None and due_at <= time.time():
@@ -501,7 +510,7 @@ class Forms:
         return self.request_json(self._request(call.workspace_id, request_id), can_write=True)
 
     def reissue_link(self, call: Call, request_id: str) -> dict:
-        row = self._request(call.workspace_id, request_id)
+        row = self._personal(self._request(call.workspace_id, request_id))
         if row["status"] in ("revoked", "closed", "accepted"):
             raise ServiceError(409, "request_finished", "这份填写请求已经结束，不能重新生成链接")
         token, digest, seal_ = self._mint()
