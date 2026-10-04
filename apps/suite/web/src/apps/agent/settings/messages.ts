@@ -98,6 +98,8 @@ export const agentSettingsMessages = {
   "新政策只约束之后的转移；已转移到其他空间的独立记录按目标空间的权限管理。": { en: "The new policy governs later transfers only. Records already carried into another workspace follow that workspace's access.", "zh-Hant": "新政策只約束之後的轉移；已轉移到其他空間的獨立紀錄按目標空間的權限管理。" },
   "所属组织只允许内容留在组织内：组织以外的目标仍会被拒绝。": { en: "The organization keeps its content inside: targets outside it are still refused.", "zh-Hant": "所屬組織只允許內容留在組織內：組織以外的目標仍會被拒絕。" },
   "{name} 的数据流政策": { en: "Data-flow policy of {name}", "zh-Hant": "{name} 的資料流政策" },
+  "明确设置为此政策": { en: "Keep this as an explicit policy", "zh-Hant": "明確設定為此政策" },
+  "把默认政策「{policy}」明确设为本工作空间的政策：之后成员变化不会再改变它。": { en: "Make the default “{policy}” this workspace's explicit policy. Later membership changes will no longer change it.", "zh-Hant": "把預設政策「{policy}」明確設為本工作空間的政策：之後成員變化不會再改變它。" },
   "更改数据流政策": { en: "Change the data-flow policy", "zh-Hant": "變更資料流政策" },
   "工作空间的数据流政策": { en: "Workspace data-flow policies", "zh-Hant": "工作空間的資料流政策" },
   "决定各工作空间的内容能否被 Agent、流程或表单复制带入其他工作空间。能同时阅读两个空间不等于可以转移：转移人还需要来源空间的导出权限（所有者、管理员、编辑者，或被授予导出权限的成员）。": { en: "Decide whether each workspace's content may be carried into other workspaces by the Agent, flows or form copies. Reading both workspaces is not enough: the person also needs the right to export from the source (owners, admins, editors, or members granted export).", "zh-Hant": "決定各工作空間的內容能否被 Agent、流程或表單複製帶入其他工作空間。能同時閱讀兩個空間不等於可以轉移：轉移人還需要來源空間的匯出權限（擁有者、管理員、編輯者，或被授予匯出權限的成員）。" },

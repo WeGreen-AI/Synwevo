@@ -451,18 +451,23 @@ function TransferRow({ workspace, onChanged }: { workspace: WorkspacePolicy; onC
   const [outbound, setOutbound] = useState(current.outbound);
   const [confirming, setConfirming] = useState(false);
   const locked = write.locked || confirming;
+  // A default follows the workspace (a personal workspace becomes "audience" once shared, and
+  // returns to "any" when it is not): choosing the same value pins it as an explicit decision.
+  const pin = outbound === current.outbound && !current.explicit;
+  const unchanged = outbound === current.outbound && current.explicit;
   // "Same organization" can never be met by a workspace outside one; it stays visible only if already chosen.
   const choices = (["none", "audience", "organization", "any"] as const)
     .filter((value) => value !== "organization" || current.in_organization || current.outbound === "organization");
 
   async function save() {
-    if (locked || !workspace.can_change || outbound === current.outbound) return;
+    if (locked || !workspace.can_change || unchanged) return;
     const proposed = outbound;
     setConfirming(true);
     try {
       if (!await dialog.confirm(t("确认更改数据流政策"), <div className="col">
         <p>{t("目标工作空间：{name}", { name: workspace.name })}</p><code>{workspace.workspace_id}</code>
-        <p>{t("从「{before}」更改为「{after}」。", { before: t(outboundLabels[current.outbound]), after: t(outboundLabels[proposed]) })}</p>
+        <p>{pin ? t("把默认政策「{policy}」明确设为本工作空间的政策：之后成员变化不会再改变它。", { policy: t(outboundLabels[proposed]) })
+          : t("从「{before}」更改为「{after}」。", { before: t(outboundLabels[current.outbound]), after: t(outboundLabels[proposed]) })}</p>
         <p>{t(outboundImpact[proposed])}</p>
         <p>{t("新政策只约束之后的转移；已转移到其他空间的独立记录按目标空间的权限管理。")}</p>
       </div>, t("确认更改政策"), true)) return;
@@ -487,7 +492,7 @@ function TransferRow({ workspace, onChanged }: { workspace: WorkspacePolicy; onC
             {choices.map((value) => <option key={value} value={value}>{t(outboundLabels[value])}</option>)}
           </select></label>
         {outbound !== current.outbound && <p className="muted small">{t(outboundImpact[outbound])}</p>}
-        <div><button type="submit" className="btn" disabled={locked || outbound === current.outbound}>{t("更改数据流政策")}</button></div>
+        <div><button type="submit" className="btn" disabled={locked || unchanged}>{pin ? t("明确设置为此政策") : t("更改数据流政策")}</button></div>
       </form> : <p className="muted small">{t("仅此工作空间的所有者或管理员可以更改政策。")}</p>}
       <WriteFeedback write={write} />
     </div>
