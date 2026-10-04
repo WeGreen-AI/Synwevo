@@ -31,7 +31,8 @@ test('operation picker respects app availability, role, personal scope, and unat
   assert.deepEqual(targets({ ...cap, need: 'manage' }, apps), []);
   assert.deepEqual(targets({ ...cap, app: 'missing' }, apps), []);
   assert.deepEqual(targets({ ...cap, side_effect: 'write' }, apps), []);
-  assert.deepEqual(targets({ ...cap, app: 'agent', id: 'agent.personal', need: 'personal' }, apps), [null]);
+  // Personal operations are never flow steps (person_required on the server).
+  assert.deepEqual(targets({ ...cap, app: 'agent', id: 'agent.personal', need: 'personal' }, apps), []);
   assert.deepEqual(availableCapabilities([cap, write, { ...cap, unattended: false }, { ...cap, writes_elsewhere: true }, { ...cap, id: 'agent.flow.create' }], apps, true), [cap]);
 });
 test('valid definitions keep explicit target and operation version; revoked permissions fail validation', () => {
@@ -96,14 +97,15 @@ test('receipt and record references are limited to result reads and wait predica
   def.steps[1].result_read.input.id = { $ref: 'record.id' };
   assert.ok(validateDefinition(def, caps, apps).some((e) => e.code === 'reference'));
 });
-test('result mappings cannot transfer business content across spaces or consume unguarded write outputs', () => {
-  assert.equal(validateReference('steps.source.id', { ...context(), workspace: 'B' }), 'transfer');
-  assert.equal(validateReference('steps.source.id', { ...context(), workspace: null }), 'transfer');
+test('cross-space mappings are left to the server policy; unguarded write outputs stay unreferencable', () => {
+  // The source workspace's data-flow policy decides at run time (docs/platform/data-flow.md §3);
+  // the editor no longer refuses what the policy may allow.
+  assert.equal(validateReference('steps.source.id', { ...context(), workspace: 'B' }), null);
   const def = definition(); if (def.steps[0].kind !== 'call') throw new Error('fixture');
   def.steps[0].operation = write.id;
   assert.ok(!referenceRoots({ ...context(), definition: def }).includes('steps.source'));
   def.steps[0].result_read = { operation: cap.id, operation_version: 1, workspace_id: 'B', input: { id: 'x' } };
-  assert.ok(validateDefinition(def, caps, apps).some((e) => e.code === 'transfer'));
+  assert.deepEqual(validateDefinition(def, caps, apps), []);
 });
 test('independent operations in multiple explicit spaces remain allowed', () => {
   const def = definition(); if (def.steps[1].kind !== 'call') throw new Error('fixture');
