@@ -121,11 +121,12 @@ def test_tokens_meant_for_something_else_are_refused(api):
     err = refused(api.get("/api/suite/v1/whoami", headers={"Authorization": "Bearer " + svc["access_token"]}),
                   401, "invalid_audience")
     assert err["details"]["audience"] == workspace_resource()
-    # the same service account, mis-registered so its token names this API: still not a person
-    Clients(store).register(client_id="dir-svc", app_id="platform", name="Fixture directory", redirect_uris=[],
+    # a service account mis-registered so its token names this API: still not a person (registered
+    # that way from the start — widening an existing service account's audiences is refused, D5)
+    Clients(store).register(client_id="dir-svc-mis", app_id="platform", name="Fixture directory", redirect_uris=[],
                             kind="service", workspace_id=p.a, confidential=True, api_scopes="workspace.read",
                             audiences=[SUITE, workspace_resource()])
-    svc = Grants(store).issue_for_service(client=Clients(store).get("dir-svc"), scope="workspace.read",
+    svc = Grants(store).issue_for_service(client=Clients(store).get("dir-svc-mis"), scope="workspace.read",
                                           audience=SUITE)
     err = refused(api.get("/api/suite/v1/whoami", headers={"Authorization": "Bearer " + svc["access_token"]}),
                   403, "wrong_credential")
