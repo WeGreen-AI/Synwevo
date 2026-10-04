@@ -706,6 +706,9 @@ def test_the_lists_are_read_through_indexes_by_the_statements_the_routes_build(w
     assert ids == ["run_given"] and "op_runs_correlation" in plan
     scans = [p for s, _, p in ran if "SELECT DISTINCT correlation_id" in s]
     assert scans and all("INDEX op_runs_correlation" in p and "SCAN r " not in p for p in scans), ran
+    # each batch is read in the index's own (text, person) order, never sorted afresh: a sort per
+    # batch over the rest of the range made the search quadratic in the number of runs (review R4)
+    assert all("op_runs_correlation_user" in p and "TEMP B-TREE" not in p for p in scans), scans
     # the related runs of one run: the correlation index, in its own order
     del statements[:]
     assert [x["id"] for x in c.get(f"/api/admin/app-runs/{root}").json()["related"]] == ["run_child"]

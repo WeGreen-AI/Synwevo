@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS op_runs (
 CREATE INDEX IF NOT EXISTS op_runs_user ON op_runs(user_id, created_at);
 CREATE INDEX IF NOT EXISTS op_runs_workspace ON op_runs(workspace_id, created_at);
 CREATE INDEX IF NOT EXISTS op_runs_correlation ON op_runs(correlation_id);
+-- the platform's run search walks (correlation_id, user_id) pairs in that order, batch by batch:
+-- without this index every batch sorted the whole remaining range (quadratic, review R4)
+CREATE INDEX IF NOT EXISTS op_runs_correlation_user ON op_runs(correlation_id, user_id);
 CREATE INDEX IF NOT EXISTS op_runs_parent ON op_runs(parent_run_id);
 CREATE INDEX IF NOT EXISTS op_runs_status ON op_runs(status, updated_at);
 CREATE UNIQUE INDEX IF NOT EXISTS op_runs_idempotency
