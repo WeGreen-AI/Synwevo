@@ -356,9 +356,9 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
         return row
 
     @r.post("/uploads", status_code=201, response_model=UploadView, summary="创建可续传上传（大文件分段上传）",
+            # Explicit RFC 9110 names: FastAPI otherwise takes them from the running Python,
+            # whose 413/416 phrases changed in 3.13, so the published contract would depend on it.
             responses={410: {"$ref": "#/components/responses/Gone"},
-                       # Pin the contract text: Python 3.12 and 3.14 use different
-                       # HTTPStatus phrases, which FastAPI otherwise inserts here.
                        413: {"description": "Content Too Large", "$ref": "#/components/responses/PayloadTooLarge"}},
             openapi_extra={"x-scope": "write", "x-idempotent": True, "requestBody": {"content": {"application/json": {
                 "schema": {"type": "object", "required": ["filename", "size"], "properties": {
@@ -426,7 +426,7 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
     @r.put("/uploads/{uid}", response_model=UploadView, summary="写入一段字节（Content-Range: bytes 起-止/总长）",
            responses={409: {"$ref": "#/components/responses/Conflict"},
                       410: {"$ref": "#/components/responses/Gone"},
-                      416: {"$ref": "#/components/responses/RangeNotSatisfiable", "description": "Range Not Satisfiable"}},
+                      416: {"description": "Range Not Satisfiable", "$ref": "#/components/responses/RangeNotSatisfiable"}},
            openapi_extra={"x-scope": "write", "requestBody": {"required": True, "content": {
                "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
                "parameters": [{"name": "Content-Range", "in": "header", "required": False,
