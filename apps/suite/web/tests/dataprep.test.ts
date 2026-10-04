@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { translate, type Params } from "@synwevo/ui/i18n-core";
-import { draftProblems, stepLabels, type Step } from "../src/apps/dataprep/model.ts";
+import { draftProblems, refusalWithPlace, stepLabels, type Step } from "../src/apps/dataprep/model.ts";
 import "../src/apps/dataprep/messages.ts";
 
 // Explicit fixtures: recipe steps as the editor holds them; not a stand-in for browser acceptance.
@@ -64,4 +64,17 @@ test("an unfinished draft names the step and the field to fix, in every language
   // Anything the page cannot place keeps the general message only.
   assert.deepEqual(draftProblems(undefined, draft, zh), []);
   assert.deepEqual(draftProblems({ fields: [{ loc: ["definition", "steps", "99", "cast", "column"], type: "missing" }] }, draft, zh), []);
+});
+
+test("an unreadable CSV names the line its record starts on", () => {
+  // Release acceptance: an unbalanced quote was refused as "文件结构无效" with no line number.
+  // `detail` is the invalid_csv refusal's, as dataprep.dataset.import returns it.
+  const placed = refusalWithPlace("invalid_csv", { line: 3 });
+  assert.ok(placed);
+  assert.equal(translate("zh-Hans", ...placed), "文件结构无效：第 3 行开始的记录无法读取，请检查引号是否成对");
+  assert.equal(translate("en", ...placed), "Invalid file structure: the record starting on line 3 cannot be read; check that its quotes are paired");
+  assert.equal(translate("zh-Hant", ...placed), "檔案結構無效：第 3 行開始的記錄無法讀取，請檢查引號是否成對");
+  // Without a usable line the general wording stays.
+  for (const [code, detail] of [["invalid_csv", {}], ["invalid_csv", { line: "3" }], ["invalid_csv", null], ["invalid_workbook", { line: 3 }]] as const)
+    assert.equal(refusalWithPlace(code, detail), null);
 });

@@ -59,6 +59,14 @@ export function draftProblems(detail: unknown, steps: Step[], t: (key: string, p
   }
   return lines;
 }
+/** A refusal's wording when its detail says where to look: an unreadable CSV record names the
+ *  physical line it starts on. Null keeps the general wording for the code. */
+export function refusalWithPlace(code: string, detail: unknown): [string, { line: number }] | null {
+  const line = (detail as { line?: unknown } | null)?.line;
+  if (code === "invalid_csv" && typeof line === "number" && Number.isInteger(line) && line > 0)
+    return ["文件结构无效：第 {line} 行开始的记录无法读取，请检查引号是否成对", { line }];
+  return null;
+}
 export const typeNames: Record<string, string> = { text: "文本", integer: "整数", decimal: "金额", date: "日期", datetime: "日期时间", boolean: "布尔值" };
 export function newStep(type: string): Step {
   const id = `s_${Math.random().toString(36).slice(2, 10)}`;

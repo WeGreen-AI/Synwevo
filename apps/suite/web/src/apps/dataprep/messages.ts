@@ -944,6 +944,10 @@ export const dataprep = {
     "en": "Preview is too large; reduce the sample size",
     "zh-Hant": "預覽結果過大，請縮小樣本"
   },
+  "文件结构无效：第 {line} 行开始的记录无法读取，请检查引号是否成对": {
+    "en": "Invalid file structure: the record starting on line {line} cannot be read; check that its quotes are paired",
+    "zh-Hant": "檔案結構無效：第 {line} 行開始的記錄無法讀取，請檢查引號是否成對"
+  },
   "请填写「{field}」": {
     "en": "Fill in “{field}”",
     "zh-Hant": "請填寫「{field}」"

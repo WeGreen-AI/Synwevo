@@ -514,6 +514,24 @@ def test_an_unfinished_step_is_refused_with_its_position_and_field(suite):
     assert op(suite, 'recipe.get', {'recipe_id': r['id']})['draft_rev'] == 1
 
 
+def test_an_unreadable_csv_record_names_the_line_it_starts_on(suite):
+    """Release acceptance: a CSV with an unbalanced quote was refused as 文件结构无效 with no line
+    number. The reader knows the physical line where the unreadable record starts; say it."""
+    cases = ((b'id,name\r\n1,"ok"\r\n2,"broken"tail\r\n3,fine\r\n', 3),  # the acceptance malformed.csv
+             (b'id,name\n1,ok\n2,"never closed\n3,x\n4,y\n', 3),         # an open quote swallows the rest
+             (b'id,note\n1,"two\nlines"\n2,"bad"x\n', 4))                # a quoted line break counts as a line
+    for data, line in cases:
+        with pytest.raises(ServiceError) as e:
+            read_file(data, 'csv', ImportOptions(), 'fixture')
+        assert (e.value.code, e.value.detail) == ('invalid_csv', {'line': line}), data
+    suite.sign_in('bob')
+    upload = suite.post('/api/suite/dataprep/files', params={'workspace_id': suite.people.a}, headers={'X-Synwevo-CSRF': 'fixture-csrf'},
+                        data={'upload_key': 'fixture-malformed'}, files={'file': ('malformed.csv', cases[0][0])})
+    assert upload.status_code == 200, upload.text
+    refused = op(suite, 'dataset.import', {'file_id': upload.json()['id'], 'name': 'Malformed'}, status=422)
+    assert (refused['error'], refused['detail']) == ('invalid_csv', {'line': 3})
+
+
 def test_isolated_import_roots():
     from pathlib import Path
     import synwevo_core.store

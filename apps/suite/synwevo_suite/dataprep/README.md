@@ -151,6 +151,9 @@ synchronous record-import model without introducing an unbounded batch or anothe
 
 - Uploaded files: CSV (UTF-8 with optional BOM, UTF-16, GB18030; comma, semicolon, tab, pipe) and
   XLSX. Inclusive 1-based row/column range, first selected row is a unique nonempty header.
+  A CSV record the strict reader cannot parse (an unbalanced quote, text after a closing quote)
+  refuses the whole import as `invalid_csv` with `detail.line`, the physical line where that
+  record starts (quoted line breaks count as lines).
   Import creates an immutable dataset. The upload key is accepted as `Idempotency-Key` header
   or multipart `upload_key`, so the shared authenticated upload client can retry safely.
 - Limits: 8 MiB file, 32 MiB XLSX expanded content, 500 ZIP members, 50 sheets, 8 MiB per non-sheet

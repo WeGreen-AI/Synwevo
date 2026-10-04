@@ -3,7 +3,7 @@ import { ApiError } from "@synwevo/auth-client";
 import { useI18n, formatDate } from "@synwevo/ui";
 import { read, op, newKey } from "../../shared/ops";
 import { Empty, Failure } from "../../shared/states";
-import { draftProblems, stepLabels, type DataRow, type Issue, type Step } from "./model";
+import { draftProblems, refusalWithPlace, stepLabels, type DataRow, type Issue, type Step } from "./model";
 
 export const when = (ts: number) => formatDate(ts * 1000, { dateStyle: "medium", timeStyle: "short" });
 export function useRead<T>(operation: string, input: Record<string, unknown>, workspace: string, poll = false, enabled = true) {
@@ -63,6 +63,8 @@ export function ErrorState({ error, retry, steps }: { error: unknown; retry?: ()
   const code = error instanceof ApiError ? error.code : typeof error === "string" ? error : "";
   const problems = code === "invalid_input" && steps && error instanceof ApiError ? draftProblems(error.detail, steps, t) : [];
   if (problems.length) return <div className="suite-state err" role="alert"><p>{t(errorKeys[code])}</p><ul className="dp-problems">{problems.map(p => <li key={p}>{p}</li>)}</ul></div>;
+  const placed = error instanceof ApiError ? refusalWithPlace(code, error.detail) : null;
+  if (placed) return <Failure error={new Error(t(...placed))} onRetry={retry} />;
   return <Failure error={errorKeys[code] ? new Error(t(errorKeys[code])) : error} onRetry={retry} />;
 }
 export function Field({ label, children }: { label: string; children: ReactNode }) {
