@@ -699,25 +699,34 @@ class Messaging:
     def review_report(self, rid: str, uid: str, decision: str, note: str | None = None) -> dict:
         """`removed` deletes the reported message for everyone (as a group moderator would),
         `dismissed` leaves it. Other open reports of the same message are settled by the same
-        decision. Who may review is the route's check (org.messaging.manage, fresh reauth)."""
+        decision. Who may review is the route's check (org.messaging.manage, fresh reauth).
+
+        The report is claimed (open → decision) in the same transaction that removes the message,
+        before the message is touched: of two moderators deciding at once, exactly one decides and
+        the other gets 409 with nothing changed — a dismissal can no longer be overwritten by a
+        removal that read the report while it was still open."""
         if decision not in ("removed", "dismissed"):
             raise ServiceError(400, "invalid_field", "处理结果只能是 removed 或 dismissed", {"field": "decision"})
-        r = self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,))
-        if not r:
-            raise ServiceError(404, "no_report", "找不到该举报")
-        if r["status"] != "open":
-            raise ServiceError(409, "already_reviewed", "这条举报已经处理过了")
-        if decision == "removed":
-            with self.store.tx() as t:
-                t.execute("UPDATE messages SET deleted_at=COALESCE(deleted_at,?), body='' WHERE id=?", (now(), r["message_id"]))
+        note_v = (str(note).strip()[:MAX_REPORT_NOTE] or None) if note else None
+        ts = now()
+        with self.store.tx() as t:
+            r = t.execute("SELECT * FROM message_reports WHERE id=?", (rid,)).fetchone()
+            if not r:
+                raise ServiceError(404, "no_report", "找不到该举报")
+            claimed = t.execute("UPDATE message_reports SET status=?, reviewed_by=?, reviewed_at=?, decision_note=? "
+                                "WHERE id=? AND status='open'", (decision, uid, ts, note_v, rid)).rowcount
+            if claimed != 1:
+                raise ServiceError(409, "already_reviewed", "这条举报已经处理过了")
+            if decision == "removed":
+                t.execute("UPDATE messages SET deleted_at=COALESCE(deleted_at,?), body='' WHERE id=?", (ts, r["message_id"]))
                 t.execute("DELETE FROM message_reactions WHERE message_id=?", (r["message_id"],))
+            # other open reports of the same message are settled by the same decision
+            t.execute("UPDATE message_reports SET status=?, reviewed_by=?, reviewed_at=?, decision_note=? WHERE message_id=? AND status='open'",
+                      (decision, uid, ts, None, r["message_id"]))
+        if decision == "removed":
             msg = self.store.one("SELECT * FROM messages WHERE id=?", (r["message_id"],))
             if msg:
                 self.publish(self._active_user_ids(r["conversation_id"]), {"type": "message_updated", "conversation_id": r["conversation_id"], "message": self._message_out(dict(msg))})
-        self.store.update("message_reports", {"id": rid}, {"status": decision, "reviewed_by": uid, "reviewed_at": now(), "decision_note": (str(note).strip()[:MAX_REPORT_NOTE] or None) if note else None})
-        # other open reports of the same message are settled by the same decision
-        self.store.execute("UPDATE message_reports SET status=?, reviewed_by=?, reviewed_at=?, decision_note=? WHERE message_id=? AND status='open'",
-                           (decision, uid, now(), None, r["message_id"]))
         return self._report_out(self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,)))
 
     def report_get(self, rid: str) -> dict:

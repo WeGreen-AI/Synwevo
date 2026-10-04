@@ -92,6 +92,38 @@ def test_a_review_needs_the_permission_and_a_fresh_reauth_settles_the_message_an
     assert mine[0]["href"] == f"http://testserver/messages/{g['id']}", mine[0]["href"]
 
 
+def test_two_moderators_deciding_at_once_settle_the_report_exactly_once(org):
+    """Admin defect D13: the review read the report, checked it was open, removed the message and
+    only then wrote the decision — so a removal that had read the report before a concurrent
+    dismissal still deleted the message and overwrote the dismissal. The losing decision must now
+    be refused with nothing changed."""
+    c = org
+    U = c.users
+    from synwevo_core.errors import ServiceError
+    from synwevo_core.messaging import Messaging
+    svc = Messaging(c.ident.store, c.ident)
+    g = svc.create_group(c.oid, U["owner"]["id"], name="审核竞争", member_ids=[U["ann"]["id"], U["ben"]["id"]])
+    msg, _ = svc.send(g["id"], U["ann"]["id"], body="有争议但合规的消息")
+    rep = svc.report(msg["id"], U["ben"]["id"], "other")
+    # The race, made deterministic: the second moderator's review has already looked at the report
+    # (still open) when the first one's dismissal commits.
+    stale = dict(c.ident.store.one("SELECT * FROM message_reports WHERE id=?", (rep["id"],)))
+    assert stale["status"] == "open"
+    assert svc.review_report(rep["id"], U["owner"]["id"], "dismissed", "保留")["status"] == "dismissed"
+    real_one = svc.store.one
+    svc.store.one = lambda sql, params=(): stale if "FROM message_reports WHERE id=?" in sql else real_one(sql, params)
+    try:
+        with pytest.raises(ServiceError) as lost:
+            svc.review_report(rep["id"], U["owner"]["id"], "removed", "删除")
+    finally:
+        svc.store.one = real_one
+    assert (lost.value.status, lost.value.code) == (409, "already_reviewed")
+    row = c.ident.store.one("SELECT deleted_at, body FROM messages WHERE id=?", (msg["id"],))
+    assert row["deleted_at"] is None and row["body"] == "有争议但合规的消息"
+    settled = c.ident.store.one("SELECT status, reviewed_by, decision_note FROM message_reports WHERE id=?", (rep["id"],))
+    assert (settled["status"], settled["reviewed_by"], settled["decision_note"]) == ("dismissed", U["owner"]["id"], "保留")
+
+
 def test_the_outcome_points_at_the_messages_origin_once_the_application_is_registered(org):
     """The same review, on a deployment where Synwevo Message has registered itself: the
     reporter's item links to that origin's thread, resolved through the registry at read time."""
