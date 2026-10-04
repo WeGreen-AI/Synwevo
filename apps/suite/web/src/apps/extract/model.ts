@@ -16,7 +16,11 @@ export interface Template { id: string; title: string; draft_rev: number; publis
 export type Location = { page?: number; line?: number; table?: string; row?: number; column?: number; ocr?: boolean };
 export interface Evidence { segment_id: string; start: number; end: number; source: Location }
 export interface Value { value: string | string[] | null; status: string; origin: string;
-  candidates: { value: string; evidence: Evidence; verified: boolean; validation: string | null }[] }
+  candidates: { value: string; evidence: Evidence; verified: boolean; validation: string | null }[];
+  /** Labels the rule found with no value after them (results made before this was recorded have none). */
+  unresolved?: { evidence: Evidence; reason: string }[];
+  /** Matches of the rule against values read; `limit` is set when the matches exceeded it. */
+  occurrences?: { labelled: number; located: number }; limit?: number }
 export interface Segment { id: string; text: string; source: Location; located: boolean }
 export interface Task {
   id: string; title: string; workspace_id: string; template_id: string; template_version: number; status: string;
@@ -84,7 +88,7 @@ export const errors: Record<string, string> = {
   parse_timeout: "解析超时，请拆分文件后重试", parse_limit: "解析结果不完整，请拆分文件后重试",
   candidate_limit: "匹配值过多，请缩小规则范围", result_limit: "提取结果过大，请缩小规则范围",
   review_conflict: "结果已被修改，请刷新后重试", draft_conflict: "模板已被修改，请刷新后重试",
-  review_unresolved: "请先处理缺失、歧义、冲突或无效字段", unverified_ack_required: "请明确确认无可靠来源的值",
+  review_unresolved: "请先处理缺失、不完整、歧义、冲突、无效或匹配过多的字段", unverified_ack_required: "请明确确认无可靠来源的值",
   invalid_correction: "修正值未通过字段校验", queue_full: "提取队列已满，请稍后重试",
   export_not_allowed: "没有导出权限", result_not_confirmed: "该结果版本尚未确认或已被替代",
   not_a_member: "你已无权访问该工作空间", read_only_role: "你目前只有查看权限",

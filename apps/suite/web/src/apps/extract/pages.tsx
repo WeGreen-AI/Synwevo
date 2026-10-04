@@ -5,7 +5,7 @@ import { useI18n } from "@synwevo/ui";
 import { Empty, Failure, Loading, RunBadge } from "../../shared/states";
 import { newKey } from "../../shared/ops";
 import { blankField, displayValue, useAction, useErrorText, useLoad } from "./model";
-import type { Evidence, Field, Location, Props, Segment, Task, Template } from "./model";
+import type { Evidence, Field, Location, Props, Segment, Task, Template, Value } from "./model";
 
 function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
   const text = useErrorText(error);
@@ -172,7 +172,24 @@ function ImportFiles({ ws, onDone }: { ws: Props["ws"]; onDone: () => void }) {
   </section>;
 }
 
-const valueLabels: Record<string, string> = { extracted: "已定位取值", missing: "缺失", ambiguous: "有多个相同匹配", conflict: "取值冲突", invalid: "校验失败", unverified: "无可靠来源" };
+const valueLabels: Record<string, string> = { extracted: "已定位取值", missing: "缺失", ambiguous: "有多个相同匹配", conflict: "取值冲突", invalid: "校验失败", unverified: "无可靠来源",
+  incomplete: "不完整，需复核", over_limit: "匹配过多，未取值" };
+/** What the rule found for a field, beside its value: how many matches yielded a value, which
+ *  labels yielded none, and a field the match limit left unread. Machine facts, so not shown once a
+ *  person has replaced the value. */
+function Occurrences({ value, many, pick }: { value: Value; many: boolean; pick: (evidence: Evidence) => void }) {
+  const { t } = useI18n();
+  const counts = value.occurrences;
+  if (!counts || value.origin === "human") return null;
+  const unresolved = value.unresolved ?? [];
+  return <>
+    {value.status === "over_limit" ? <p className="notice warn" role="note">{t("共匹配 {labelled} 处，超过每个字段 {limit} 处的上限，此字段未取值；请缩小规则范围或拆分文件", { labelled: counts.labelled, limit: value.limit ?? 100 })}</p>
+      : (many || counts.labelled !== counts.located) && <p className="muted">{t("已读取 {located} 处取值，共匹配 {labelled} 处", { located: counts.located, labelled: counts.labelled })}</p>}
+    {unresolved.length > 0 && <p className="notice warn" role="note">{t("有 {n} 处标签后面没有读到值，请对照原文补全后保存修正", { n: unresolved.length })}</p>}
+    {unresolved.map((item, n) => <button key={`unresolved-${n}`} className="extract-evidence extract-unresolved" type="button" onClick={() => pick(item.evidence)}>
+      <span>{t("标签后没有读到值")}</span><small><LocationText source={item.evidence.source} /></small></button>)}
+  </>;
+}
 export function TaskDetail({ ws, canWrite }: Props) {
   const { tid } = useParams(); const { t } = useI18n();
   const load = useLoad<Task>("extract.task.get", { task_id: tid }, ws.id, true);
@@ -221,6 +238,7 @@ function Review({ task, ws, canWrite, reload }: Props & { task: Task; reload: ()
           disabled={!canWrite || action.busy} value={edits[field.id] ?? (value.value === null ? "" : displayValue(value))}
           onChange={e => setEdits(old => ({ ...old, [field.id]: e.target.value }))} /></label>
         <p className="muted">{value.origin === "human" ? t("当前值由人工修正") : t("当前值来自确定性规则")}</p>
+        <Occurrences value={value} many={field.many} pick={pick} />
         {value.candidates.map((candidate, n) => <button key={n} className="extract-evidence" type="button" onClick={() => pick(candidate.evidence)}>
           <span>{candidate.value}</span><small><LocationText source={candidate.evidence.source} />{!candidate.verified && ` · ${t("无可靠来源")}`}</small></button>)}
         <details><summary>{t("最初机器结果")}</summary><pre>{displayValue(task.machine?.[field.id])}</pre></details>

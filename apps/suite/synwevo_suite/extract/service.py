@@ -292,8 +292,11 @@ class Extract:
         values = decode(r["current_json"])
         for field in fields:
             result = values[field.id]
-            if result["status"] in ("conflict", "ambiguous", "invalid") or (field.required and result["status"] == "missing"):
-                fail("review_unresolved", "请先处理缺失、歧义、冲突或无效字段", 422)
+            # `incomplete`: a label whose value was not read; `over_limit`: more matches than a
+            # field holds. Both stay unresolved until a person corrects the field.
+            if (result["status"] in ("conflict", "ambiguous", "invalid", "incomplete", "over_limit")
+                    or (field.required and result["status"] == "missing")):
+                fail("review_unresolved", "请先处理缺失、不完整、歧义、冲突、无效或匹配过多的字段", 422)
             if result["status"] == "unverified" and not i.acknowledge_unverified:
                 fail("unverified_ack_required", "存在无可靠来源的值，请明确核对后确认", 422)
         if not i.note.strip():

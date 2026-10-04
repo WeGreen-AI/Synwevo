@@ -56,6 +56,14 @@ causality depth. Consumers must de-duplicate event IDs and bind confirmed revisi
 - Page/line, table/cell and actual text offsets are the source locations. No invented
   bounding boxes or model confidence probabilities. Missing, ambiguous, conflicting,
   invalid and unverified values are distinct. All parser/file content stays untrusted data.
+- Every match is accounted for: each field carries `occurrences` (`labelled` matches,
+  `located` values). A line that starts with the prefix but has nothing after it (text
+  recognition often reads a column of stacked labels apart from their values) is an
+  `unresolved` occurrence with its location, and the field is `incomplete`. Its value is not
+  taken from the next line, since the reading order does not prove which value belongs to
+  which label. A field with more than 100 matches is `over_limit`: it is left unread, with its
+  counts and a field-level message; the other fields are still read. `incomplete` and
+  `over_limit` block confirmation until a person corrects the field.
 - Text PDF ceiling: 200 pages; OCR ceiling: 20 pages. Known truncated reader results fail
   explicitly. A structurally damaged PDF fails with `damaged_file` and yields no values: the
   reader reports a page it cannot load, a page content entry that is not a stream or, after

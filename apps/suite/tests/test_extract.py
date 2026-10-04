@@ -323,6 +323,99 @@ def test_damaged_reader_result_is_refused_not_reviewed():
         assert exc.value.code == "damaged_file" and exc.value.status == 422
 
 
+#: Fixture: the line order text recognition produced for files/scan-4p.pdf in the release
+#: acceptance — page 2's stacked "Item:" labels read as one column, apart from their values.
+OCR_LAYOUT = [("Invoice No: INV-2026-0533", 1, 2), ("Item: Paper A4, 10 x 4.20 = 42.00", 1, 6),
+              ("Continued, page 2", 2, 1), ("Item:", 2, 2), ("Item:", 2, 3), ("Item:", 2, 4),
+              ("Spare part SP-100, 1 x 2.50 = 2.50", 2, 5), ("Spare part SP-101, 1 x 2.50 = 2.50", 2, 6),
+              ("Spare part SP-102, 1 x 2.50 = 2.50", 2, 7), ("Total: 172.00", 2, 8)]
+
+
+def ocr_lines(rows=OCR_LAYOUT):
+    return [{"text": text, "source": {"page": page, "line": line, "ocr": True, "conf": 80.0}} for text, page, line in rows]
+
+
+class LinesReader:
+    """Test fixture reader: hands Extract a fixed, declared line layout (OCR_LAYOUT). It reads
+    no file and claims no recognition of its own; it stands in for the parser's output shape."""
+    def __init__(self, rows=OCR_LAYOUT):
+        self.rows = rows
+
+    def describe(self):
+        return {"ocr": True}
+
+    def extract(self, data, filename, *, ocr=False):
+        return {"status": "ready", "pages": 2, "lines": ocr_lines(self.rows), "tables": [],
+                "ocr": {"applied": True}, "engine": "lines-test-fixture"}
+
+
+ITEMS = {"fields": [
+    {"id": "number", "label": "Invoice number", "rule": {"prefix": "Invoice No:"}},
+    {"id": "items", "label": "Items", "many": True, "rule": {"prefix": "Item:"}},
+    {"id": "total", "label": "Total", "type": "decimal", "rule": {"prefix": "Total:"}},
+]}
+
+
+def test_label_without_its_value_is_an_unresolved_occurrence_not_dropped():
+    """Acceptance defect: with OCR, stacked "Item:" labels stood alone on their lines; the rule
+    skipped each empty match without a word and the field read "located" with 2 of 38 items."""
+    parsed = normalize({"status": "ready", "lines": ocr_lines(), "tables": [], "ocr": {"applied": True}}, {}, ocr=True)
+    result = extract(Definition.model_validate(ITEMS), parsed)
+    items = result["items"]
+    assert items["status"] == "incomplete" and items["requires_review"]
+    assert items["value"] == ["Paper A4, 10 x 4.20 = 42.00"]
+    assert items["occurrences"] == {"labelled": 4, "located": 1}
+    # Each label that yielded no value is kept, with where it is, for the reviewer.
+    assert [u["evidence"]["source"]["line"] for u in items["unresolved"]] == [2, 3, 4]
+    assert all(u["reason"] == "no_value_after_label" for u in items["unresolved"])
+    seg = next(s for s in parsed["segments"] if s["id"] == items["unresolved"][0]["evidence"]["segment_id"])
+    assert seg["text"] == "Item:"
+    # The value on the next line is not guessed: in this layout it belongs to another label.
+    assert "Spare part SP-100, 1 x 2.50 = 2.50" not in items["value"]
+    assert result["number"]["status"] == "extracted" and result["number"]["occurrences"] == {"labelled": 1, "located": 1}
+    assert result["total"]["value"] == "172.00"
+
+
+def test_match_limit_is_reported_on_its_field_and_other_fields_are_read():
+    """The documented 100-match limit failed the whole task; now only that field is unread."""
+    rows = [("Total: 9.00", 1, 1)] + [(f"Item: part {n}", 1 + n // 50, 2 + n % 50) for n in range(101)]
+    parsed = normalize({"status": "ready", "lines": ocr_lines(rows), "tables": []}, {}, ocr=False)
+    result = extract(Definition.model_validate(ITEMS), parsed)
+    items = result["items"]
+    assert items["status"] == "over_limit" and items["value"] == [] and items["candidates"] == []
+    assert items["occurrences"] == {"labelled": 101, "located": 101} and items["limit"] == 100
+    assert result["total"]["status"] == "extracted" and result["total"]["value"] == "9.00"
+    assert result["number"]["status"] == "missing"
+    scalar = Definition.model_validate({"fields": [{"id": "x", "label": "X", "rule": {"prefix": "Item:"}}]})
+    assert extract(scalar, parsed)["x"]["status"] == "over_limit"
+    assert extract(scalar, parsed)["x"]["value"] is None
+
+
+def test_incomplete_and_over_limit_fields_block_confirmation_until_corrected(ex):
+    ex.api.state.extract.reader = LinesReader()
+    tid = template(ex, ITEMS)
+    rid = task(ex, tid=tid)
+    ex.api.state.extract.tick()
+    data = get(ex, rid)
+    assert data["status"] == "waiting_input" and data["values"]["items"]["status"] == "incomplete"
+    refused = op(ex, "task.confirm", {"task_id": rid, "revision": 1, "note": "Fixture", "acknowledge_unverified": True}, status=422)
+    assert refused["error"] == "review_unresolved"
+    complete = ["Paper A4, 10 x 4.20 = 42.00"] + [f"Spare part SP-10{n}, 1 x 2.50 = 2.50" for n in range(3)]
+    op(ex, "task.correct", {"task_id": rid, "revision": 1, "values": {"items": complete}, "note": "Read from the scan"})
+    corrected = get(ex, rid)["values"]["items"]
+    assert corrected["status"] == "unverified" and corrected["origin"] == "human" and corrected["value"] == complete
+    op(ex, "task.confirm", {"task_id": rid, "revision": 2, "note": "Checked", "acknowledge_unverified": True})
+    # Over the limit: the task still reaches review, the other fields are read, the field is not.
+    ex.api.state.extract.reader = LinesReader([("Total: 9.00", 1, 1)] + [(f"Item: part {n}", 1, 2 + n) for n in range(101)])
+    rid = task(ex, tid=tid, file_id=upload(ex, key="limit-fixture", data=CSV + b"limit\n")["id"])
+    ex.api.state.extract.tick()
+    data = get(ex, rid)
+    assert data["status"] == "waiting_input" and data["error_code"] is None
+    assert data["values"]["items"]["status"] == "over_limit" and data["values"]["total"]["value"] == "9.00"
+    refused = op(ex, "task.confirm", {"task_id": rid, "revision": 1, "note": "Fixture", "acknowledge_unverified": True}, status=422)
+    assert refused["error"] == "review_unresolved"
+
+
 def test_queue_bound_pagination_review_validation_and_viewer(ex):
     tid, fid = template(ex), upload(ex)["id"]
     ids = [task(ex, tid=tid, file_id=fid) for _ in range(20)]

@@ -148,11 +148,22 @@ def normalize(raw: dict, description: dict, *, ocr: bool) -> dict:
             "segments": segments}
 
 
+#: Matches one field may hold. Beyond it the field is left unread with its counts (`over_limit`);
+#: the other fields are still read and the task still reaches review.
+MAX_MATCHES = 100
+
+
 def extract(definition: Definition, parsed: dict) -> dict:
+    """Every match of a rule is accounted for. A line that starts with the label but has nothing
+    after it is an unresolved occurrence (text recognition often reads a column of stacked labels
+    apart from their values), never silently skipped: the field is `incomplete` and needs a
+    person. The value is not taken from the next line — the line order recognition produces does
+    not prove which value belongs to which label. `occurrences` counts labelled matches against
+    values located, so a reviewer sees 2 of 38 rather than a confident partial list."""
     results = {}
     segments = parsed["segments"]
     for field in definition.fields:
-        rule, found = field.rule, []
+        rule, found, unresolved, labelled, located = field.rule, [], [], 0, 0
         headers = [s for s in segments if s["kind"] == "cell" and s["table_row"] == 1
                    and s["text"] == rule.header and (not rule.table or s["source"]["table"] == rule.table)]
         for seg in segments:
@@ -173,16 +184,31 @@ def extract(definition: Definition, parsed: dict) -> dict:
             text = seg["text"][start:]
             start += len(text) - len(text.lstrip())
             value = text.strip()
+            labelled += 1
+            located += bool(value)
+            if labelled > MAX_MATCHES:
+                continue                    # only counted: the field is left unread below
             if not value:
+                # An empty cell is a cell read as empty; a label with nothing after it is not a reading.
+                if rule.kind == "prefix":
+                    unresolved.append({"reason": "no_value_after_label", "ocr": bool(seg["source"].get("ocr")),
+                                       "evidence": {"segment_id": seg["id"], "start": start, "end": start,
+                                                    "source": seg["source"]}})
                 continue
             found.append({"value": value, "evidence": {"segment_id": seg["id"], "start": start,
                           "end": start + len(value), "source": seg["source"]},
                           "verified": seg["located"], "validation": value_error(field, value),
                           "ocr": bool(seg["source"].get("ocr"))})
-            if len(found) > 100:
-                raise ServiceError(413, "candidate_limit", "匹配值过多，请缩小规则范围或拆分文件")
+        occurrences = {"labelled": labelled, "located": located}
+        if labelled > MAX_MATCHES:
+            results[field.id] = {"value": [] if field.many else None, "status": "over_limit", "candidates": [],
+                                 "unresolved": [], "occurrences": occurrences, "limit": MAX_MATCHES,
+                                 "requires_review": True, "origin": "deterministic_rule"}
+            continue
         status = "extracted"
-        if not found:
+        if unresolved:
+            status = "incomplete"
+        elif not found:
             status = "missing"
         elif not field.many and len(found) > 1:
             status = "ambiguous" if len({x["value"] for x in found}) == 1 else "conflict"
@@ -191,7 +217,8 @@ def extract(definition: Definition, parsed: dict) -> dict:
         elif not all(x["verified"] for x in found):
             status = "unverified"
         value = [x["value"] for x in found] if field.many else (found[0]["value"] if len(found) == 1 else None)
-        results[field.id] = {"value": value, "status": status, "candidates": found,
+        results[field.id] = {"value": value, "status": status, "candidates": found, "unresolved": unresolved,
+                             "occurrences": occurrences,
                              "requires_review": field.review_required or status != "extracted" or any(x["ocr"] for x in found),
                              "origin": "deterministic_rule"}
     import json
