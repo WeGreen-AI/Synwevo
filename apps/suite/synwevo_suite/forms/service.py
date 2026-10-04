@@ -68,9 +68,23 @@ class Forms:
             raise ServiceError(403, "export_not_allowed", "你在该工作空间没有导出权限，不能下载附件")
         row = self.store.one("SELECT * FROM form_files WHERE id=? AND workspace_id=? AND state='attached'",
                              (file_id, workspace_id))
-        if not row or (submission_id is not None and row["submission_id"] != submission_id):
+        if not row or (submission_id is not None and row["submission_id"] != submission_id
+                       and file_id not in self._files_used(self._submission(workspace_id, submission_id), row)):
             raise ServiceError(404, "file_not_found", "附件不存在或不属于该提交")
         return row, read_blob(self.store, row["blob"])
+
+    def _files_used(self, s: dict, row: dict | None = None) -> set[str]:
+        """The attachments a submission was made with: the file ids its answers name, among the
+        files of the same request and filler. A revision that keeps an earlier file names the
+        same file, and the file's record follows the latest revision, so its own
+        ``submission_id`` alone cannot say which revisions used it."""
+        if row is not None and (row["request_id"] != s["request_id"] or row["filler_key"] != s["filler_key"]):
+            return set()
+        v = self._version(s["form_id"], s["form_version"])
+        defn = Definition.model_validate(_j(v["definition_json"], {}))
+        answers = _j(s["answers_json"], {})
+        return {fid for f in defn.fields if f.type == "file" for fid in (answers.get(f.id) or [])
+                if isinstance(fid, str)}
 
     # ============================================================== definitions
     def _form(self, workspace_id: str, form_id: str) -> dict:
@@ -538,8 +552,13 @@ class Forms:
         s = self._submission(workspace_id, submission_id)
         v = self._version(s["form_id"], s["form_version"])
         defn = Definition.model_validate(_j(v["definition_json"], {}))
+        used = sorted(self._files_used(s))
+        marks = ",".join("?" for _ in used)
         files = self.store.all("SELECT id, field_id, filename, content_type, size, scan FROM form_files "
-                               "WHERE submission_id=? ORDER BY created_at", (submission_id,))
+                               "WHERE workspace_id=? AND state='attached' AND (submission_id=?"
+                               + (f" OR (request_id=? AND filler_key=? AND id IN ({marks}))" if used else "")
+                               + ") ORDER BY created_at",
+                               (workspace_id, submission_id, *((s["request_id"], s["filler_key"], *used) if used else ())))
         items = self.store.all("SELECT field_id, note, created_by, created_at FROM form_review_items "
                                "WHERE submission_id=? ORDER BY created_at", (submission_id,))
         history = self.store.all("SELECT id, revision, status, created_at FROM form_submissions WHERE request_id=? "
