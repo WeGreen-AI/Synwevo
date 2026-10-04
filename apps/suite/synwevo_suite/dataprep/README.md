@@ -170,6 +170,15 @@ synchronous record-import model without introducing an unbounded batch or anothe
   Split uses literal separators, limited by target count; the last field retains the remainder.
   Merge has an explicit null policy. Filter/check comparisons use operators, never code/eval/SQL.
   Parameter references are exact `$name` values declared in the recipe.
+- Filter and check comparisons read a **missing cell exactly like null**: neither has a value (a
+  short CSV row, a column another appended source lacks, an unmatched left join, an Extract field
+  with status `missing`). `eq`/`ne` treat no value as unlike every text, `""` included, so
+  `ne "x"` keeps null and missing rows and `eq "x"` drops them; `gt`/`ge`/`lt`/`le`/`contains`
+  never hold for them. An empty string is a value. `is_null`, `is_missing` and `is_empty` select
+  exactly one state. A check that a cell has a value is `contains ""` (or `ne` null through the
+  API); `ne ""` does not reject null or missing cells. Merge and numeric aggregation already read
+  missing as null; ascending sort orders missing, then null, then values; join and deduplication keys
+  keep the two apart.
 - Dates use ISO strings. Timestamps with an offset normalize to UTC; timestamps without one
   require a recipe-provided fixed offset. There is no guess at local timezone or daylight saving.
   XLSX dates use the workbook epoch and millisecond resolution, returning local ISO values;

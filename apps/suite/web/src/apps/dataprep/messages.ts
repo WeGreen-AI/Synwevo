@@ -943,6 +943,10 @@ export const dataprep = {
   "预览结果过大，请缩小样本": {
     "en": "Preview is too large; reduce the sample size",
     "zh-Hant": "預覽結果過大，請縮小樣本"
+  },
+  "空值与缺失按同一规则比较：「不等于」保留这两类行，其他比较都不成立。要检查单元格有值，请用「包含」并留空比较值。": {
+    "en": "Null and missing cells compare the same way: “Does not equal” keeps them and every other comparison fails. To check that a cell has a value, use “includes” with an empty comparison value.",
+    "zh-Hant": "空值與缺失按同一規則比較：「不等於」保留這兩類列，其他比較都不成立。要檢查儲存格有值，請用「包含」並留空比較值。"
   }
 } as const;
 

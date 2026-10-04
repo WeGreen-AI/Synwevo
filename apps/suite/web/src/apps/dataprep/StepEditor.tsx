@@ -20,6 +20,7 @@ export function StepEditor({ step: s, columns, sources, sourceColumns, change }:
     </select></Field>
     {!s.condition.op.startsWith("is_") && <Field label={t("比较值（$名称引用参数）")}><input className="input" maxLength={4096} value={s.condition.value ?? ""} onChange={e => patch({ condition: { ...s.condition, value: e.target.value } })} /></Field>}
     <label className="dp-check"><input type="checkbox" checked={s.condition.numeric} onChange={e => patch({ condition: { ...s.condition, numeric: e.target.checked } })} />{t("按精确数值比较")}</label>
+    {!s.condition.op.startsWith("is_") && <p className="muted small dp-hint">{t("空值与缺失按同一规则比较：「不等于」保留这两类行，其他比较都不成立。要检查单元格有值，请用「包含」并留空比较值。")}</p>}
   </>;
   return <div className="dp-fields">
     {["trim", "merge", "sort", "dedupe"].includes(s.type) && multi("columns", "选择列")}

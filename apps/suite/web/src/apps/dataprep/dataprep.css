@@ -20,6 +20,7 @@
 .dp-check { display: flex; align-items: center; gap: var(--sp-2); min-height: 40px; }
 .dp-check input { accent-color: var(--accent); }
 .dp-measures { grid-column: 1 / -1; }
+.dp-hint { grid-column: 1 / -1; margin: 0; }
 .dp-grid { overflow: auto; max-height: 620px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); margin: var(--sp-3) 0; }
 .dp-grid table { width: 100%; border-collapse: collapse; font-size: var(--fs-3); }
 .dp-grid caption { text-align: left; padding: var(--sp-3); font-weight: 600; color: var(--text); }

@@ -440,6 +440,35 @@ def test_count_reads_as_an_integer_in_preview_result_and_every_export(suite):
     assert [r['values']['orders'] for r in exported['rows']] == ['2', '1']
 
 
+def test_comparisons_read_a_missing_cell_as_null():
+    """Release acceptance: region ≠ "Test" silently dropped order 0005, a short CSV row with no
+    region, while note ≠ "x" kept 0003, whose note is null. A missing cell has no value, exactly
+    like null, in every comparison; only is_null / is_missing / is_empty tell them apart."""
+    data = b'order_id,amount,note,region\n0003,\\N,\\N,South\n0004,2,,North\n0005\n0011,1,x,Test\n'
+    table, _ = read_file(data, 'csv', ImportOptions(), 'fixture')
+    assert table.rows[0].values['note'] is None and 'note' not in table.rows[2].values
+
+    def kept(op, column, value=None, numeric=False, kind='filter'):
+        step = {'id': 'only', 'type': kind, 'condition': {'column': column, 'op': op, 'value': value, 'numeric': numeric}}
+        out, issues, _ = execute(Definition.model_validate({'steps': [step]}), {'main': table}, {})
+        return [r.values['order_id'] for r in out.rows], [i['source_row'] for i in issues]
+
+    assert kept('ne', 'region', 'Test') == (['0003', '0004', '0005'], [])
+    assert kept('ne', 'note', 'x') == (['0003', '0004', '0005'], [])
+    assert kept('ne', 'amount', '1.00', numeric=True) == (['0003', '0004', '0005'], [])
+    assert kept('eq', 'note', None) == (['0003', '0005'], [])  # API callers may compare with null itself
+    assert kept('ne', 'note', None) == (['0004', '0011'], [])  # "has a value"
+    for op in ('eq', 'gt', 'ge', 'lt', 'le', 'contains'):
+        assert not {'0003', '0005'} & set(kept(op, 'note', 'x')[0]), op
+        assert not {'0003', '0005'} & set(kept(op, 'amount', '0', numeric=op != 'contains')[0]), op
+    assert kept('contains', 'note', '')[0] == ['0004', '0011']  # "has a value", empty text included
+    assert kept('is_null', 'note')[0] == ['0003']
+    assert kept('is_missing', 'note')[0] == ['0005']
+    assert kept('is_empty', 'note')[0] == ['0004']
+    # A check uses the same rule as a filter: null and missing pass `ne`, only the real "Test" fails.
+    assert kept('ne', 'region', 'Test', kind='validate') == (['0003', '0004', '0005', '0011'], [5])
+
+
 def test_isolated_import_roots():
     from pathlib import Path
     import synwevo_core.store
