@@ -17,7 +17,7 @@ import pytest
 
 from synwevo_core import data_flow
 from synwevo_core.errors import ServiceError
-from .test_data_flow_runs import SECRET, TITLE, World, read
+from .test_data_flow_runs import SECRET, TITLE, World, branch, read
 from .test_forms import CSRF, DEFINITION, good_answers, token_of
 from .test_forms import op as ws_op
 
@@ -304,3 +304,52 @@ def test_a_removed_member_is_not_told_of_later_submissions(world):
     assert told_bob(w) == []
     # Nobody was told the draft's title: it is not on any page or notice outside the editor.
     assert w.store.all("SELECT id FROM notifications WHERE params LIKE ?", (f"%{DRAFT_ONLY}%",)) == []
+
+
+#: A fixture deadline (2100-01-01) and the one a branch would pick instead.
+FAR = 4102444800.0
+FARTHER = FAR + 86400
+
+
+def personal_request_of(w: World, form: dict) -> str:
+    return w.store.one("SELECT id FROM form_requests WHERE form_id=? AND kind='personal'", (form["id"],))["id"]
+
+
+def test_a_deadline_decided_on_a_source_is_an_outward_send(world):
+    """R3-DF-1: the fill page shows a request's deadline to whoever holds its link. Changing it
+    after reading A put a value decided on A's content in front of someone outside the workspace,
+    where sending that link with the same value was refused."""
+    w = world
+    form = exposed_form(w)
+    rid = personal_request_of(w, form)
+    before = page(w, form["personal"])["request"]["due_at"]
+
+    def extend(step_id, due):
+        return {"id": step_id, "kind": "call", "operation": "forms.request.extend", "workspace_id": w.small,
+                "input": {"request_id": rid, "due_at": due}, **({"next": "end"} if step_id == "yes" else {})}
+
+    steps = [read(w.p.a), branch("guess", TITLE, SECRET, "yes", "no"), extend("yes", FAR), extend("no", FARTHER)]
+    assert w.run(steps, "extend-branch") == ("blocked", "transfer_audience_external", "yes")
+    assert page(w, form["personal"])["request"]["due_at"] == before
+    # The Agent records what it carried the same way; the Forms service gives the same answer.
+    with pytest.raises(ServiceError) as err:
+        w.suite.caps.invoke("forms.request.extend", {"request_id": rid, "due_at": FAR}, user_id=w.alice,
+                            workspace_id=w.small, via="agent", idempotency_key="exposure-extend-agent",
+                            delegation={"kind": "agent_conversation", "id": "fixture", "transfer_from": [w.p.a]})
+    assert err.value.code == "transfer_audience_external"
+    assert page(w, form["personal"])["request"]["due_at"] == before
+    # A person changing the deadline by hand carries no recorded source.
+    ws_op(w.suite, "forms.request.extend", w.small, {"request_id": rid, "due_at": FAR})
+    assert page(w, form["personal"])["request"]["due_at"] == FAR
+
+
+def test_a_source_that_allows_outward_sends_may_set_the_deadline(world):
+    w = world
+    form = exposed_form(w)
+    rid = personal_request_of(w, form)
+    data_flow.set_workspace_outbound(w.store, w.p.a, "any", actor_id=w.alice,
+                                     revision=data_flow.workspace_outbound(w.store, w.p.a)["revision"])
+    steps = in_small(w, {"id": "extend", "kind": "call", "operation": "forms.request.extend", "workspace_id": None,
+                         "input": {"request_id": rid, "due_at": FAR}})
+    assert w.run(steps, "extend-open") == ("succeeded", None, "end")
+    assert page(w, form["personal"])["request"]["due_at"] == FAR

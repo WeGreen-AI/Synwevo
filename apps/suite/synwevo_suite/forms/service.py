@@ -184,12 +184,8 @@ class Forms:
                                {"version": last["version"]})
         if row["public_token_hash"] and not row["public_version"]:
             # The public link follows the latest version, so publishing puts this version in front
-            # of everyone holding that link: content this call carried from other workspaces is
-            # an outward send there, asked as one (docs/platform/data-flow.md §3, rule 8).
-            for source in (call.delegation or {}).get("transfer_from") or ():
-                if source != call.workspace_id:
-                    data_flow.check(self.store, user_id=call.user_id, source=source, target=call.workspace_id,
-                                    external=True)
+            # of everyone holding that link.
+            self._in_front_of_link_holders(call)
         version = (last["version"] if last else 0) + 1
         ts = now()
         with self.store.tx() as t:
@@ -251,6 +247,15 @@ class Forms:
         return {"form_id": fid, "workspace_id": target}
 
     # ============================================================== links
+    def _in_front_of_link_holders(self, call: Call) -> None:
+        """This write puts a value of the call in front of people holding a link, who need not be
+        the workspace's members: content the call carried from other workspaces is an outward
+        send there, asked as one (docs/platform/data-flow.md §3, rule 8), whoever the caller is."""
+        for source in (call.delegation or {}).get("transfer_from") or ():
+            if source != call.workspace_id:
+                data_flow.check(self.store, user_id=call.user_id, source=source, target=call.workspace_id,
+                                external=True)
+
     def _mint(self) -> tuple[str, str, str]:
         token = secrets.token_urlsafe(24)
         return token, token_hash(token), sealed.seal(self.store, LINK_PURPOSE, token)
@@ -454,6 +459,8 @@ class Forms:
             raise ServiceError(409, "request_finished", "这份填写请求已经结束，不能再修改截止时间")
         if due_at is not None and due_at <= time.time():
             raise ServiceError(400, "due_in_past", "截止时间必须晚于现在")
+        # The fill page shows the deadline to whoever holds the request's link.
+        self._in_front_of_link_holders(call)
         status = row["status"]
         if status == "expired":
             # Reopen: what the filler had submitted, if anything, decides where it resumes.
