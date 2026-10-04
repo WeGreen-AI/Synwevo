@@ -697,6 +697,14 @@ class Identity:
             if grant and not t.execute("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id=?",
                                        (wid, app_id)).fetchone():
                 raise ServiceError(409, "app_not_enabled", "这个空间还没有启用该应用，授予使用资格没有意义")
+            if grant:
+                # A frozen or unavailable workspace can still shed access but gains none, whoever
+                # asks — the members page, the operator CLI or anything later (members.py).
+                ws = t.execute("SELECT status FROM workspaces WHERE id=?", (wid,)).fetchone()
+                if not ws or ws["status"] != "active":
+                    frozen = bool(ws) and ws["status"] == "frozen"
+                    raise ServiceError(409, "workspace_frozen" if frozen else "workspace_unavailable",
+                                       "该工作空间已被冻结，暂时不能增加成员或权限" if frozen else "该工作空间当前不可用")
             before = t.execute("SELECT revoked_at FROM app_entitlements WHERE workspace_id=? AND app_id=? AND user_id=?",
                                (wid, app_id, uid)).fetchone()
             state_before = "none" if not before else ("revoked" if before["revoked_at"] else "active")

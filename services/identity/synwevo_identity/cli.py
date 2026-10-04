@@ -213,14 +213,34 @@ def cmd_app(args) -> int:
         print("workspace default 是待认领的历史数据空间，不能在这里直接授权；请使用认领流程。",
               file=sys.stderr)
         return 2
+    if not apps.get(args.app):
+        # No foreign key holds workspace_apps or app_entitlements to the registry: a mistyped id
+        # would be written, audited and reported as done.
+        print(f"没有名为 {args.app} 的应用", file=sys.stderr)
+        return 2
     if args.action == "enable":
+        if ws["status"] != "active":
+            print(f"工作空间 {args.workspace} 当前不可用（{ws['status']}），不能启用应用", file=sys.stderr)
+            return 2
         apps.enable_for_workspace(args.workspace, args.app)
         _audit(store, "cli.app.workspace_enable", object_kind="app", object_id=args.app,
                workspace_id=args.workspace)
         print(f"工作空间 {args.workspace} 已启用 {args.app}")
     elif args.action == "disable":
-        store.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
-                      (args.workspace, args.app))
+        # Through the service, which journals the withdrawal: restored from a backup taken while
+        # the application was on, it — and the keys and service accounts it gates — stays off.
+        try:
+            changed = apps.disable_for_workspace(args.workspace, args.app)
+        except OSError as e:
+            _audit(store, "cli.app.workspace_disable", object_kind="app", object_id=args.app,
+                   workspace_id=args.workspace, result="error", meta={"journal": "failed"})
+            print(f"工作空间 {args.workspace} 已停用 {args.app}（立即生效），但写入安全日志失败：{e}\n"
+                  "从备份恢复数据库时，这次停用不会被自动重放。请修复数据目录的写权限后再执行一次本命令。",
+                  file=sys.stderr)
+            return 3
+        if not changed:
+            print(f"工作空间 {args.workspace} 没有启用 {args.app}，没有需要停用的。")
+            return 0
         _audit(store, "cli.app.workspace_disable", object_kind="app", object_id=args.app,
                workspace_id=args.workspace)
         print(f"工作空间 {args.workspace} 已停用 {args.app}")
@@ -233,7 +253,13 @@ def cmd_app(args) -> int:
             print(f"找不到用户 {args.user}", file=sys.stderr)
             return 2
         if args.action == "grant":
-            apps.grant(args.workspace, args.app, u["id"])
+            # The rules the members page applies: a member, the application on in that
+            # workspace, the workspace active — one transaction, in the service.
+            try:
+                ident.set_entitlement(args.workspace, u["id"], args.app, grant=True)
+            except ServiceError as e:
+                print(f"未授予：{e.message}", file=sys.stderr)
+                return 2
         else:
             # The same explicit-revocation semantics as the workspace governance API: a revoked
             # row even when none existed, and the person's tokens for this app in this workspace

@@ -142,6 +142,55 @@ def test_revoking_an_app_entitlement_is_explicit_and_journalled(world, capsys):
     assert _audit(world, "cli.app.revoke")
 
 
+def test_disabling_an_app_for_a_workspace_is_journalled_and_survives_a_restore(world, capsys):
+    """CR D6: the CLI deleted the row directly, so a restore from a backup taken while the
+    application was on quietly turned it — and the keys and service accounts it gates — back on."""
+    store, ws = world["store"], world["ws"]
+    assert store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id='docweave'", (ws,))
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave", "--workspace", ws)
+    assert code == 0 and "已停用" in out
+    entries = [e for e in journal.read(world["d"]) if e["kind"] == "workspace_app_disabled"]
+    assert entries and entries[-1]["workspace_id"] == ws and entries[-1]["app_id"] == "docweave"
+    assert _audit(world, "cli.app.workspace_disable")
+    # the backup: the row as it was, then the journal replayed over it
+    store.execute("INSERT INTO workspace_apps (workspace_id, app_id, enabled_at) VALUES (?, 'docweave', 0)", (ws,))
+    journal.apply(store, journal.read(world["d"]))
+    assert not store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id='docweave'", (ws,))
+    # turning off what is already off is reported as such, and audited as nothing
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave", "--workspace", ws)
+    assert code == 0 and "没有需要停用的" in out and len(_audit(world, "cli.app.workspace_disable")) == 1
+    code, _, err = cli(world, capsys, "app", "disable", "no-such-app", "--workspace", ws)
+    assert code == 2 and "no-such-app" in err and len(_audit(world, "cli.app.workspace_disable")) == 1
+
+
+def test_granting_an_app_from_the_cli_follows_the_members_page_rules(world, capsys):
+    """CR D6: `app grant` was a bare upsert — a non-member, a workspace without the application, a
+    frozen workspace and an unknown application id were all written and reported as granted."""
+    ident, ws, store = world["ident"], world["ws"], world["store"]
+    bob = ident.create_user("bob@example.com", PW, status="active")
+    outsider = ident.create_user("out@example.com", PW, status="active")
+    ident.add_member(ws, bob["id"], "editor")
+
+    def rows(uid):
+        return store.all("SELECT * FROM app_entitlements WHERE workspace_id=? AND user_id=?", (ws, uid))
+
+    code, _, err = cli(world, capsys, "app", "grant", "docweave", "--workspace", ws, "--user", "out@example.com")
+    assert code == 2 and "未授予" in err and not rows(outsider["id"])
+    code, _, err = cli(world, capsys, "app", "grant", "no-such-app", "--workspace", ws, "--user", "bob@example.com")
+    assert code == 2 and not rows(bob["id"])
+    other = ident.create_workspace("Fixture other", owner_id=world["alice"]["id"])["id"]
+    store.execute("DELETE FROM workspace_apps WHERE workspace_id=?", (other,))
+    ident.add_member(other, bob["id"], "editor")
+    code, _, err = cli(world, capsys, "app", "grant", "docweave", "--workspace", other, "--user", "bob@example.com")
+    assert code == 2 and "未授予" in err
+    ident.set_workspace_frozen(ws, True)
+    code, _, err = cli(world, capsys, "app", "grant", "docweave", "--workspace", ws, "--user", "bob@example.com")
+    assert code == 2 and "冻结" in err and not rows(bob["id"])
+    ident.set_workspace_frozen(ws, False)
+    code, out, _ = cli(world, capsys, "app", "grant", "docweave", "--workspace", ws, "--user", "bob@example.com")
+    assert code == 0 and "已授予" in out and rows(bob["id"])[0]["revoked_at"] is None
+
+
 # ---------------------------------------------------------------- F055: the root secret
 def _enrol_totp(world) -> str:
     from synwevo_identity.mfa import Mfa
