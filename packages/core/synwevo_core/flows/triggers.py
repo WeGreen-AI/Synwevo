@@ -32,9 +32,9 @@ def _read_target(reader_json) -> set[str]:
     for everyone)."""
     try:
         reader = json.loads(reader_json or "{}")
+        return _ids(reader.get("input")) if isinstance(reader, dict) else set()
     except (TypeError, ValueError, RecursionError):
         return set()
-    return _ids(reader.get("input")) if isinstance(reader, dict) else set()
 
 
 def _ids(value, key: str | None = None) -> set[str]:
