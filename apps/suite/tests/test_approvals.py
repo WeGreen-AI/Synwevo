@@ -562,3 +562,18 @@ def test_a_template_result_stored_before_warnings_existed_still_replays(suite):
     old["problems"]=[{"code":"fixture","message":"changed"}]
     row["output"]=_json.dumps(old)
     error("approval_result_unavailable",lambda:guard.op.result_guard(guard,row))
+
+
+def test_the_approver_list_leaves_out_the_people_a_picker_hides_and_counts_what_it_lists(suite):
+    """Acceptance (Approvals, low): Bob's transfer picker hid the requester and the stage's current
+    approvers, but its count was the list's total with them in it ("共 3 项" over one name). The
+    list leaves out the people the picker names, so its total and pages are what it shows."""
+    c=suite;p=c.people
+    add_oscar(c)
+    assert out(c,"members",user="bob")["total"]==3          # Alice, Bob, Oscar; Vera only views
+    page=out(c,"members",{"exclude":[p.uid("alice"),p.uid("bob")]},user="bob")
+    assert [m["id"] for m in page["items"]]==[p.uid("oscar")] and page["total"]==1 and page["next_offset"] is None
+    page=out(c,"members",{"exclude":[p.uid("alice")],"limit":1},user="bob")
+    assert page["total"]==2 and len(page["items"])==1 and page["next_offset"]==1
+    assert out(c,"members",{"exclude":[p.uid("alice")],"q":"bob"},user="bob")["total"]==1
+    error("invalid_input",lambda:out(c,"members",{"exclude":["not a user id"]},user="bob"))

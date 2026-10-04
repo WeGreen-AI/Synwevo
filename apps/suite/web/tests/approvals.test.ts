@@ -130,3 +130,11 @@ test("a separator joins two things, never one and nothing", async () => {
   assert.ok(lines.includes("至少有一个阶段必须始终执行") && lines.includes("f_x · 条件引用的字段不存在"), lines.join(" | "));
   assert.deepEqual(stray(lines), []);
 });
+
+test("the approver picker asks the list to leave out whom it hides, so its count is what it lists", () => {
+  // Acceptance: the transfer picker listed one person under "共 3 项": it hid the requester and the
+  // current approvers itself, while the count was the server's total with them in it.
+  const picker = readFileSync(join(import.meta.dirname, "..", "src", "apps", "approvals", "Selector.tsx"), "utf8");
+  assert.match(picker, /useRead<Page<Member>>\("members", \{[^}]*\bexclude\b[^}]*\}/);
+  assert.doesNotMatch(picker, /\.items\.filter\(/);
+});
