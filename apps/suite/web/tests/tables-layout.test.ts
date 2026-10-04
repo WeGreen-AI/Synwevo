@@ -45,3 +45,14 @@ test("field settings: on a phone the field list scrolls inside the page instead 
   assert.equal(declarations(NARROW, ".tables-schema aside")["min-width"], "0");
   assert.equal(declarations(NARROW, ".tables-schema aside ul")["overflow-x"], "auto");
 });
+
+test("export menu: on a phone it spans the toolbar row instead of running past the screen", () => {
+  // Anchored to its own button, a 340 px menu starting at "Export" (further right in English)
+  // ran to 449 px. On a phone the toolbar is its containing block and it spans that row.
+  assert.equal(declarations(NARROW, ".tables-menu").position, "static");
+  assert.equal(declarations(NARROW, ".tables-toolbar").position, "relative");
+  const popover = declarations(NARROW, ".tables-popover");
+  assert.equal(popover.left, "0");
+  assert.equal(popover.right, "0");
+  assert.equal(popover.width, "auto");
+});
