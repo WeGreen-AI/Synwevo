@@ -3,7 +3,7 @@ import { ApiError } from "@synwevo/auth-client";
 import { useI18n, formatDate } from "@synwevo/ui";
 import { read, op, newKey } from "../../shared/ops";
 import { Empty, Failure } from "../../shared/states";
-import { stepLabels, type DataRow, type Issue, type Step } from "./model";
+import { draftProblems, stepLabels, type DataRow, type Issue, type Step } from "./model";
 
 export const when = (ts: number) => formatDate(ts * 1000, { dateStyle: "medium", timeStyle: "short" });
 export function useRead<T>(operation: string, input: Record<string, unknown>, workspace: string, poll = false, enabled = true) {
@@ -57,9 +57,12 @@ export const errorKeys: Record<string, string> = {
   credential_revoked: "发起这次运行的应用已停用，运行已停止", grant_revoked: "发起这次运行的应用授权已撤回，运行已停止", scope_withdrawn: "发起这次运行的应用已不再持有所需权限，运行已停止", unknown_principal: "无法确认发起这次运行的应用凭据，运行已停止",
   export_not_allowed: "你没有导出权限", xlsx_invalid_char: "内容含不支持的表格字符，请导出 JSON", result_unavailable: "来源权限已改变，无法显示历史结果", invalid_input: "请检查必填字段与步骤参数",
 };
-export function ErrorState({ error, retry }: { error: unknown; retry?: () => void }) {
+/** `steps`: the recipe steps a refused save sent, so an invalid_input refusal names each step and field. */
+export function ErrorState({ error, retry, steps }: { error: unknown; retry?: () => void; steps?: Step[] }) {
   const { t } = useI18n();
   const code = error instanceof ApiError ? error.code : typeof error === "string" ? error : "";
+  const problems = code === "invalid_input" && steps && error instanceof ApiError ? draftProblems(error.detail, steps, t) : [];
+  if (problems.length) return <div className="suite-state err" role="alert"><p>{t(errorKeys[code])}</p><ul className="dp-problems">{problems.map(p => <li key={p}>{p}</li>)}</ul></div>;
   return <Failure error={errorKeys[code] ? new Error(t(errorKeys[code])) : error} onRetry={retry} />;
 }
 export function Field({ label, children }: { label: string; children: ReactNode }) {

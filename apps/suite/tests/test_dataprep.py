@@ -498,6 +498,22 @@ def test_issue_lists_name_the_uploaded_file_a_row_number_refers_to(suite):
     assert [(i['input_name'], i['input_label']) for i in plain['issues']] == [('records', None)]
 
 
+def test_an_unfinished_step_is_refused_with_its_position_and_field(suite):
+    """The contract the editor names a step and field from (release acceptance: saving only said
+    "请检查必填字段与步骤参数"). apps/suite/web/tests/dataprep.test.ts uses these locations."""
+    suite.sign_in('bob')
+    r = op(suite, 'recipe.create', {'name': 'Fixture recipe'})
+    steps = [{'id': 's_trim0001', 'type': 'trim', 'columns': ['a']},
+             {'id': 's_cast0001', 'type': 'cast', 'column': '', 'to': 'decimal'},
+             {'id': 's_agg00001', 'type': 'aggregate', 'measures': [{'op': 'sum', 'column': None, 'target': 'total'}]}]
+    refused = op(suite, 'recipe.save', {'recipe_id': r['id'], 'draft_rev': 1, 'name': 'Fixture recipe', 'definition': {'steps': steps}}, status=422)
+    assert refused['error'] == 'invalid_input'
+    assert [(f['loc'], f['type']) for f in refused['detail']['fields']] == [
+        (['definition', 'steps', '1', 'cast', 'column'], 'string_too_short'),
+        (['definition', 'steps', '2', 'aggregate', 'measures', '0'], 'value_error')]
+    assert op(suite, 'recipe.get', {'recipe_id': r['id']})['draft_rev'] == 1
+
+
 def test_isolated_import_roots():
     from pathlib import Path
     import synwevo_core.store
