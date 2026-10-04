@@ -61,7 +61,7 @@ function RecordForm({ws, table, row, reload}: {ws: Workspace; table: Table; row?
         {writable && <div className="tables-toolbar"><button className="btn primary" disabled={mutation.busy}>{mutation.busy ? t("保存中…") : t("保存记录")}</button><button className="btn" type="button" disabled={!dirty} onClick={() => {setCells(initial); setReadRole(row?.read_role ?? "viewer"); setWriteRole(row?.write_role ?? "editor");}}>{t("撤销未保存修改")}</button><span className="muted small" aria-live="polite">{dirty ? t("有未保存的修改") : saved ? t("已保存") : t("按 Ctrl 或 Command + Enter 保存")}</span></div>}
       </fieldset>
     </form>
-    <TableFailure error={mutation.error} />
+    <TableFailure error={mutation.error} fields={table.fields} />
     {!!mutation.error && row && <button className="btn" onClick={async () => {if (!dirty || await dialog.confirm(t("撤销未保存修改"), t("放弃未保存的修改？"), t("确定"), true)) reload();}}>{t("放弃我的修改，载入最新")}</button>}
     {row && table.can_write && row.can_write && <button className="btn" disabled={mutation.busy} onClick={async () => {if (await dialog.confirm(t(row.deleted_at ? "恢复记录" : "归档记录"), <><p>{table.name} · {t("记录 {n}", {n: row.seq})}</p><p>{t("对记录执行归档或恢复？关联引用会保留。")}</p></>, t(row.deleted_at ? "恢复记录" : "归档记录"), !row.deleted_at)) void mutation.run("tables.record.state", {table_id: table.id, record_id: row.id, rev: row.rev, deleted: !row.deleted_at}).then(reload).catch(() => {});}}>{t(row.deleted_at ? "恢复记录" : "归档记录")}</button>}
     {row && <History key={row.rev} ws={ws} table={table} record={row} onRestore={reload} />}

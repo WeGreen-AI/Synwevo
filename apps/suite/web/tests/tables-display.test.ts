@@ -42,3 +42,17 @@ test("an import row whose related record cannot be found or told apart names the
   assert.equal(issueText(en, "link_ambiguous", {column: "Customer", value: "Twin"}),
     'Column "Customer": several related records are named "Twin", so the import cannot tell which one.');
 });
+
+test("a refused import row names its column, and a refused save names its field", () => {
+  const orderNo = {...fixtureField("text"), id: "fld_000000000009", name: "Order No"};
+  assert.equal(issueText(en, "invalid_cell", {reason: "not_number", column: "Quantity"}),
+    'Column "Quantity": The value does not match its field type. Check the number, date or option.');
+  assert.equal(issueText(zh, "unique_conflict", {field_id: orderNo.id, column: "订单号"}, [orderNo]),
+    "列「订单号」：该值已被使用，请输入唯一值。");
+  assert.equal(issueText(en, "unique_conflict", {field_id: orderNo.id}, [orderNo]),
+    'Field "Order No": That value is already in use. Enter a unique value.');
+  assert.equal(translate("zh-Hant", "字段「{field}」：{message}", {field: "Order No", message: "x"}), "欄位「Order No」：x");
+  // A field the reader is not shown is never named; the refusal stays general.
+  assert.equal(issueText(en, "unique_conflict", {}, [orderNo]), "That value is already in use. Enter a unique value.");
+  assert.equal(issueText(en, "required_cell", {field_id: "fld_00000000dead"}, [orderNo]), "Complete all required fields.");
+});

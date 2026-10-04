@@ -129,3 +129,46 @@ def test_import_link_names_follow_the_display_field_the_importer_can_read(suite)
     assert preview['valid'] == 1
     assert [(x['index'], x['error'], x['detail']) for x in preview['issues']] == [
         (1, 'link_not_found', {'column': 'Customer', 'value': 'Acme East'})]
+
+
+def refused(fn):
+    from synwevo_core.errors import ServiceError
+    try:
+        fn()
+    except ServiceError as e:
+        return e.code, e.detail
+    raise AssertionError('not refused')
+
+
+def test_a_duplicate_names_the_field_it_is_in_and_never_a_hidden_one(suite):
+    s = suite
+    tid = table(s, 'Fixture orders')
+    number = field(s, tid, 'Order No', is_unique=True)
+    # A unique field editors cannot read, filled by its default (fixture setup).
+    hidden = field(s, tid, 'Audit key', is_unique=True, default='fixed', read_role='admin', write_role='admin')
+    record(s, tid, {number: 'A-1'})
+    assert refused(lambda: record(s, tid, {number: ' a-1 '})) == ('unique_conflict', {'field_id': number})
+    code, detail = refused(lambda: out(s, 'record.create', {'table_id': tid, 'cells': {number: 'A-2'}}, who='bob'))
+    assert code == 'unique_conflict' and hidden not in str(detail) and detail == {}
+
+
+def test_import_row_errors_name_their_column_or_field(suite):
+    s = suite
+    tid = table(s, 'Fixture orders')
+    number = field(s, tid, 'Order No', is_unique=True)
+    qty = field(s, tid, 'Qty', 'number')
+    required = field(s, tid, 'Region', required=True)
+    record(s, tid, {number: 'A-1', required: 'South'})
+    iid = upload(s, 'alice', tid, [['No', 'Quantity', 'Area'], ['A-2', 'many', 'East'], ['A-1', '1', 'East'],
+                                   ['A-3', '2', ''], ['A-4', '3', 'West']])
+    mapping = {'No': number, 'Quantity': qty, 'Area': required}
+    preview = out(s, 'import.apply', {'table_id': tid, 'import_id': iid, 'mapping': mapping, 'atomic': False})
+    issues = {x['index']: (x['error'], x['detail']) for x in preview['issues']}
+    assert preview['valid'] == 1
+    assert issues[0] == ('invalid_cell', {'reason': 'not_number', 'column': 'Quantity'})
+    assert issues[1] == ('unique_conflict', {'field_id': number, 'column': 'No'})
+    assert issues[2] == ('required_cell', {'field_id': required, 'column': 'Area'})
+    # A required field the file does not map is named as a field.
+    iid = upload(s, 'alice', tid, [['No'], ['A-5']])
+    preview = out(s, 'import.apply', {'table_id': tid, 'import_id': iid, 'mapping': {'No': number}})
+    assert [(x['error'], x['detail']) for x in preview['issues']] == [('required_cell', {'field_id': required})]

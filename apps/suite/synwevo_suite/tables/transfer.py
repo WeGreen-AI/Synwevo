@@ -196,6 +196,13 @@ class Transfers:
         writable = {f['id']: f for f in self.visible_fields(c, fields) if f['can_write']}
         if not set(i.mapping.values()) <= writable.keys():
             refuse('field_forbidden', 403)
+        column_of = {fid: col for col, fid in i.mapping.items()}
+
+        def located(detail, column=None):
+            """A refused row's detail, with the file column it is about when it is about one."""
+            column = column or column_of.get((detail or {}).get('field_id'))
+            return dict(detail or {}, **({'column': column} if column else {}))
+
         items, errors, names = [], [], {}
         for n, values in enumerate(data):
             cells = {}
@@ -211,9 +218,9 @@ class Transfers:
                 self.normalize_cells(c, fields, cells)
                 items.append((n, BatchItem(action='create', cells=cells)))
             except ft.CellError as e:
-                errors.append({'index': n, 'ok': False, 'error': 'invalid_cell', 'detail': {'reason': e.code}})
+                errors.append({'index': n, 'ok': False, 'error': 'invalid_cell', 'detail': located({'reason': e.code}, col)})
             except ServiceError as e:
-                errors.append({'index': n, 'ok': False, 'error': e.code, 'detail': e.detail})
+                errors.append({'index': n, 'ok': False, 'error': e.code, 'detail': located(e.detail)})
         # Preview uses savepoints and the real writer, including uniqueness against existing rows
         # and previous input rows. It leaves no records, revisions or events behind.
         if i.preview:
@@ -226,7 +233,8 @@ class Transfers:
             for start in range(0, len(items), 100):
                 chunk = items[start:start+100]
                 result = self.batch(c, Batch(table_id=i.table_id, items=[v for _, v in chunk], atomic=i.atomic and not i.preview))
-                outcomes.extend(dict(v, index=chunk[v['index']][0]) for v in result['items'])
+                outcomes.extend(dict(v, index=chunk[v['index']][0], **({} if v['ok'] else {'detail': located(v['detail'])}))
+                                for v in result['items'])
             outcomes.sort(key=lambda v: v['index'])
             if i.preview:
                 return {'preview': True, 'rows': len(data), 'valid': sum(x['ok'] for x in outcomes),

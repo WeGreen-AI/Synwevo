@@ -52,12 +52,17 @@ const errorKeys: Record<string, string> = {
 export function hasErrorKey(code: string): boolean {return Object.hasOwn(errorKeys, code);}
 export function errorKey(code: string): string {return errorKeys[code] ?? "操作未完成，请检查输入和权限后重试。";}
 
-/** One refused import row, batch item or save, in the reader's language. */
-export function issueText(t: Translator, error: string, detail?: Record<string, unknown> | null): string {
+/** One refused import row, batch item or save, in the reader's language, naming what it is about:
+ *  the file column (`detail.column`), else the field (`detail.field_id`, one of `fields`). */
+export function issueText(t: Translator, error: string, detail?: Record<string, unknown> | null, fields: Field[] = []): string {
   const column = typeof detail?.column === "string" ? detail.column : null;
   const value = typeof detail?.value === "string" ? detail.value : "";
   // Related records are named in a file the way export writes them; say which name failed.
   if (column && error === "link_not_found") return t("列「{column}」：找不到名为“{value}”的关联记录。", {column, value});
   if (column && error === "link_ambiguous") return t("列「{column}」：有多条关联记录名为“{value}”，无法确定是哪一条。", {column, value});
-  return t(errorKey(error));
+  const message = t(errorKey(error));
+  if (column) return t("列「{column}」：{message}", {column, message});
+  const field = fields.find(f => f.id === detail?.field_id)?.name;
+  if (field) return t("字段「{field}」：{message}", {field, message});
+  return message;
 }

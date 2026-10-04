@@ -304,7 +304,7 @@ class Tables:
         if total + size - len(canonical(previous or {}).encode('utf-8')) > MAX_TABLE_CELL_BYTES:
             refuse('table_size_limit', 413, limit=MAX_TABLE_CELL_BYTES)
 
-    def indexes(self, tid, rid, fields, cells, *, live=True):
+    def indexes(self, c, tid, rid, fields, cells, *, live=True):
         self.store.execute('DELETE FROM tb_unique WHERE record_id=?', (rid,))
         self.store.execute('DELETE FROM tb_links WHERE record_id=?', (rid,))
         for f in fields:
@@ -315,8 +315,10 @@ class Tables:
                     try:
                         self.store.execute('INSERT INTO tb_unique VALUES (?,?,?,?)', (tid, f['id'], key, rid))
                     except sqlite3.IntegrityError:
-                        # Never identify the conflicting record or disclose its value.
-                        refuse('unique_conflict', 409)
+                        # Never identify the conflicting record or disclose its value. Name the
+                        # field only when the caller can read it, as `required_cell` does.
+                        visible = {x['id'] for x in self.visible_fields(c, fields)}
+                        refuse('unique_conflict', 409, **({'field_id': f['id']} if f['id'] in visible else {}))
             if f['type'] == 'link':
                 for target in value or []:
                     self.store.execute('INSERT INTO tb_links VALUES (?,?,?)', (f['id'], rid, target))
@@ -336,7 +338,7 @@ class Tables:
         self.store.execute('INSERT INTO tb_records (id,table_id,workspace_id,seq,cells,formula_errors,created_by,created_at,updated_by,updated_at,read_role,write_role) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                            (rid, i.table_id, c.workspace_id, table['next_seq'], canonical(cells), canonical(errors), c.user_id, ts, c.user_id, ts, i.read_role, i.write_role))
         self.store.execute('UPDATE tb_tables SET next_seq=next_seq+1,updated_at=? WHERE id=?', (ts, i.table_id))
-        self.indexes(i.table_id, rid, fields, cells)
+        self.indexes(c, i.table_id, rid, fields, cells)
         self.change(c, i.table_id, 'record', 'created', record={'id': rid, 'rev': 1},
                     diff={k: {'before': None, 'after': v} for k, v in cells.items()})
         return {'id': rid, 'rev': 1, 'changed': True}
@@ -356,7 +358,7 @@ class Tables:
         diff = {k: {'before': row['cells'].get(k), 'after': v} for k, v in cells.items() if row['cells'].get(k) != v}
         if not diff and errors == row['formula_errors'] and (rr, wr) == (row['read_role'], row['write_role']):
             return {'id': row['id'], 'rev': row['rev'], 'changed': False}
-        self.indexes(i.table_id, row['id'], fields, cells)
+        self.indexes(c, i.table_id, row['id'], fields, cells)
         self.store.execute('UPDATE tb_records SET cells=?,formula_errors=?,rev=rev+1,updated_at=?,updated_by=?,read_role=?,write_role=? WHERE id=? AND rev=?',
                            (canonical(cells), canonical(errors), now(), c.user_id, rr, wr, row['id'], i.rev))
         row['rev'] += 1
@@ -371,7 +373,7 @@ class Tables:
         fields = self.fields(i.table_id)
         if not i.deleted:
             self.normalize_cells(c, fields, {}, row['cells'])
-        self.indexes(i.table_id, row['id'], fields, row['cells'], live=not i.deleted)
+        self.indexes(c, i.table_id, row['id'], fields, row['cells'], live=not i.deleted)
         self.store.execute('UPDATE tb_records SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,rev=rev+1 WHERE id=?',
                            (now() if i.deleted else None, c.user_id if i.deleted else None, now(), c.user_id, row['id']))
         row['rev'] += 1

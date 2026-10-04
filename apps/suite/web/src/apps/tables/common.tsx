@@ -3,7 +3,7 @@ import { ApiError } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { read, op, newKey } from "../../shared/ops";
 import { Failure } from "../../shared/states";
-import { errorKey, hasErrorKey } from "./display";
+import { errorKey, hasErrorKey, issueText } from "./display";
 import type { Field, RecordRow } from "./types";
 
 export function useRead<T>(operation: string, input: Record<string, unknown>, workspace: string, tick = 0, enabled = true) {
@@ -51,10 +51,11 @@ export const typeKeys: Record<string, string> = {
 };
 export const roleKeys: Record<string, string> = {viewer: "查看者及以上", editor: "编辑者及以上", admin: "管理员及以上"};
 export { errorKey, issueText } from "./display";
-export function TableFailure({error, retry}: {error: unknown; retry?: () => void}) {
+/** A refusal in Tables' own words; with `fields`, it names the field it is about. */
+export function TableFailure({error, retry, fields}: {error: unknown; retry?: () => void; fields?: Field[]}) {
   const {t} = useI18n();
   if (!error) return null;
-  return <Failure error={error instanceof ApiError && hasErrorKey(error.code) ? new Error(t(errorKey(error.code))) : error} onRetry={retry} />;
+  return <Failure error={error instanceof ApiError && hasErrorKey(error.code) ? new Error(issueText(t, error.code, error.detail, fields)) : error} onRetry={retry} />;
 }
 export function valueText(f: Field, value: any, locale: string, row?: RecordRow): string {
   if (value === null || value === undefined || value === "") return "—";

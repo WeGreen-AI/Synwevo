@@ -148,7 +148,7 @@ class Schema:
             if outcome in ('failed', 'lossy'):
                 self.store.execute('INSERT INTO tb_leftovers (id,table_id,workspace_id,field_id,record_id,from_type,from_config,original_json,converted_json,outcome,schema_rev,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                                    (new_id('left'), i.table_id, c.workspace_id, fid, row['id'], previous['type'], canonical(previous['config']), canonical(row['cells'].get(fid)), canonical(cells.get(fid)), outcome, i.schema_rev+1, c.user_id, ts))
-            self.indexes(i.table_id, row['id'], new_fields, cells, live=not row['deleted_at'])
+            self.indexes(c, i.table_id, row['id'], new_fields, cells, live=not row['deleted_at'])
             diff = {k: {'before': row['cells'].get(k), 'after': v} for k, v in cells.items() if row['cells'].get(k) != v}
             if diff or unpack(row['formula_errors'], {}) != errors:
                 self.store.execute('UPDATE tb_records SET cells=?,formula_errors=?,rev=rev+1,updated_at=?,updated_by=? WHERE id=?',
@@ -192,7 +192,7 @@ class Schema:
             if not i.deleted and not row['deleted_at'] and f['required'] and ft.is_empty(row['cells'].get(f['id'])):
                 refuse('required_cell', 409, record_id=row['id'])
             errors = self.compute(new_fields, row['cells'])
-            self.indexes(i.table_id, row['id'], new_fields, row['cells'], live=not row['deleted_at'])
+            self.indexes(c, i.table_id, row['id'], new_fields, row['cells'], live=not row['deleted_at'])
             self.store.execute('UPDATE tb_records SET cells=?,formula_errors=?,rev=rev+1,updated_at=? WHERE id=?',
                                (canonical(row['cells']), canonical(errors), now(), row['id']))
         self.store.execute('UPDATE tb_fields SET status=?,deleted_at=?,deleted_by=? WHERE id=?',
