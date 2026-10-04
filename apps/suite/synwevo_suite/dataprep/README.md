@@ -182,7 +182,8 @@ synchronous record-import model without introducing an unbounded batch or anothe
   expansion. Duplicate right keys under unique matching are a structural failure.
 - Cast, numeric sort and numeric aggregate errors exclude the affected row and record its
   source; validation explicitly keeps or drops an invalid row. Numeric aggregations ignore
-  null/missing values, use exact arithmetic; count counts rows. Complete row errors are paged
+  null/missing values, use exact arithmetic and keep the input scale (`0.10 + 0.20` is `0.30`);
+  count counts rows and is written as an integer (`4`, never `4.000000`). Complete row errors are paged
   and downloadable. Structural failure commits no output dataset.
 - A preview applies the draft to actual selected samples (offset/size for each source), declares
   those ranges and is read-only. It displays up to 200 result rows and refuses oversized previews.

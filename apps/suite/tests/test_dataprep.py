@@ -402,6 +402,44 @@ def test_fractional_precision_rejection_rounding_and_large_sum():
     assert out.rows[0].values['total'] == '246913578024691357802469135780.24'
 
 
+def test_count_is_an_exact_integer_while_sum_min_max_keep_their_decimal_text():
+    """Release acceptance: 分组汇总 with 行数 read "4.000000" in the preview, the result grid and
+    all three exports. A count counts rows; it is an integer, never a formatted float."""
+    source = Table(['region', 'amount'], [Row({'region': r, 'amount': a}, [['fixture', n + 2]]) for n, (r, a) in
+                                          enumerate([('N', '0.10'), ('N', '0.20'), ('S', None), ('N', '1.00')])])
+    definition = Definition.model_validate({'steps': [{'id': 'totals', 'type': 'aggregate', 'group_by': ['region'], 'measures': [
+        {'op': 'count', 'target': 'orders'}, {'op': 'sum', 'column': 'amount', 'target': 'total'},
+        {'op': 'min', 'column': 'amount', 'target': 'low'}, {'op': 'max', 'column': 'amount', 'target': 'high'}]}]})
+    out, issues, _ = execute(definition, {'main': source}, {})
+    assert not issues
+    assert [r.values for r in out.rows] == [
+        {'region': 'N', 'orders': '3', 'total': '1.30', 'low': '0.10', 'high': '1.00'},
+        {'region': 'S', 'orders': '1', 'total': None, 'low': None, 'high': None}]
+    many = Table(['id'], [Row({'id': str(n)}) for n in range(1234)])
+    out, _, _ = execute(Definition.model_validate({'steps': [{'id': 'n', 'type': 'aggregate', 'measures': [{'op': 'count', 'target': 'n'}]}]}), {'main': many}, {})
+    assert out.rows[0].values == {'n': '1234'}
+
+
+def test_count_reads_as_an_integer_in_preview_result_and_every_export(suite):
+    suite.sign_in('bob')
+    d = dataset(suite, [{'id': '001', 'amount': '0.10'}, {'id': '001', 'amount': '0.20'}, {'id': '002', 'amount': '5'}])
+    steps = [{'id': 'totals', 'type': 'aggregate', 'group_by': ['id'], 'measures': [
+        {'op': 'count', 'target': 'orders'}, {'op': 'sum', 'column': 'amount', 'target': 'total'}]}]
+    preview = op(suite, 'recipe.preview', {'definition': {'steps': steps}, 'inputs': {'main': d['id']}})
+    assert [r['values'] for r in preview['rows']] == [{'id': '001', 'orders': '2', 'total': '0.30'}, {'id': '002', 'orders': '1', 'total': '5'}]
+    run = finish(suite, start(suite, recipe(suite, steps), d))
+    assert run['status'] == 'succeeded'
+    grid = op(suite, 'dataset.get', {'dataset_id': run['output_dataset_id']})
+    assert [r['values']['orders'] for r in grid['rows']] == ['2', '1']
+    url, params = f"/api/suite/dataprep/datasets/{run['output_dataset_id']}/export", {'workspace_id': suite.people.a}
+    csv = suite.get(url, params=params).text
+    assert csv.splitlines()[1:] == ['"001","2","0.30"', '"002","1","5"']
+    cells = [[c.value for c in row] for row in load_workbook(io.BytesIO(suite.get(url, params={**params, 'format': 'xlsx'}).content)).active.rows]
+    assert cells[1:] == [['001', '2', '0.30'], ['002', '1', '5']]
+    exported = suite.get(url, params={**params, 'format': 'json'}).json()
+    assert [r['values']['orders'] for r in exported['rows']] == ['2', '1']
+
+
 def test_isolated_import_roots():
     from pathlib import Path
     import synwevo_core.store

@@ -304,7 +304,9 @@ def execute(definition: Definition, sources: dict[str, Table], parameters: dict,
                             acc[j] = value if acc[j] is None else acc[j] + value if m.op == 'sum' else min(acc[j], value) if m.op == 'min' else max(acc[j], value)
                 out = []
                 for group, acc in groups.values():
-                    group.values.update({m.target: None if acc[j] is None else format(acc[j], 'f') for j, m in enumerate(step.measures)})
+                    # A count is an exact integer; sums/min/max keep their Decimal text (scale intact).
+                    group.values.update({m.target: None if acc[j] is None else str(acc[j]) if m.op == 'count' else format(acc[j], 'f')
+                                         for j, m in enumerate(step.measures)})
                     out.append(group)
                 table = Table(columns, out)
         bounds(table)
