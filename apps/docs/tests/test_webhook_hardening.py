@@ -303,6 +303,13 @@ def test_a_management_check_holds_its_place_only_for_the_checks_own_deadline(hub
     assert time.monotonic() - started < 5, "answered at the check's deadline, not the send's"
     assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_url", r.text
     assert W._CHECKS._value == W.CHECK_CONCURRENCY, "the place is free again"
+    # never longer than a send's own deadline (review R5): a name a delivery could not resolve in
+    # time is not accepted because the check waited longer for it
+    monkeypatch.setattr(W, "timeout_s", lambda: 0.3)
+    monkeypatch.setattr(W, "CHECK_TIMEOUT_S", 5.0)
+    started = time.monotonic()
+    r = hub.c.post(BASE, json={"url": "https://h2.slow.fixture.test/hook"}, headers=hub.keys["admin"])
+    assert time.monotonic() - started < 3 and r.status_code == 400, r.text
 
 
 def test_owners_that_fill_the_pool_between_them_cost_another_workspaces_receiver_nothing(hub, monkeypatch, slow_names):

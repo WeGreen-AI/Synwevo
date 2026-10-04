@@ -234,8 +234,9 @@ def _look_up(url: str, workspace: str) -> list:
         try:
             # The check's own short deadline, not a send's whole one: one of the process's few
             # places is held only that long, so names that answer slowly cannot keep every other
-            # tenant's management calls at 429 (review R4; the suite's rule).
-            return resolve_checked(url, owner=workspace, deadline=time.monotonic() + CHECK_TIMEOUT_S)
+            # tenant's management calls at 429 (review R4; the suite's rule). Never longer than a
+            # send's: a name a delivery could not resolve in time is not accepted (review R5).
+            return resolve_checked(url, owner=workspace, deadline=time.monotonic() + min(CHECK_TIMEOUT_S, timeout_s()))
         except ResolverBusy as e:
             raise ServiceError(429, "destination_check_busy", "正在检查的回调地址过多，请稍后再试",
                                {"retry_after": LOCAL_RETRY_S}) from e
