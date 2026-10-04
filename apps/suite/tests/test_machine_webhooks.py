@@ -1314,6 +1314,26 @@ def test_a_subscriptions_deliveries_go_out_in_the_order_they_were_queued(hub):
     assert objects(rx) == [table, table, record]
 
 
+def test_a_receiver_slower_than_the_round_holds_up_nobody_else(hub, monkeypatch):
+    """One receiver takes longer to answer than a round lasts (it answers 2xx, so it never backs
+    off). Its worker waits for it; every other subscription still gets turn after turn in that
+    round, in its own order, instead of one delivery each and then the slow one's whole answer."""
+    monkeypatch.setattr(hub.W, "ROUND_S", 2.0)
+    hub.service.concurrency = 4
+    alice = grant(hub.api, "alice")["auth"]
+    slow, fast = hub.receiver(delay=2.5), hub.receiver()
+    slow_sub = hub.subscribe(alice, slow.url, events=["tables.table.changed"])["id"]
+    fast_sub = hub.subscribe(alice, fast.url, events=["tables.record.changed"])["id"]
+    table = a_table(hub.api, alice)
+    records = [a_record(hub.api, alice, table, f"r{i}")["output"]["id"] for i in range(6)]
+    assert hub.service.fan_out() == 7
+    started = time.monotonic()
+    assert hub.service.deliver_due() == 7
+    assert 2.5 <= time.monotonic() - started < hub.W.TIMEOUT_S, "one round: it ended when the slow answer came"
+    assert objects(fast) == records and [r["status"] for r in hub.rows(fast_sub)] == ["delivered"] * 6
+    assert objects(slow) == [table] and [r["status"] for r in hub.rows(slow_sub)] == ["delivered"]
+
+
 def test_the_cursor_waits_while_the_queue_is_full(hub, monkeypatch):
     """A receiver slower than what it subscribed to costs a bounded number of rows; the rest stay in
     the log, behind the cursor, and follow in order when there is room. Nothing is lost."""

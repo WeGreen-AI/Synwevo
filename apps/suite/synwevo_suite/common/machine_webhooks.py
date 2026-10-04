@@ -1137,7 +1137,9 @@ class Webhooks:
     def deliver_due(self, limit: int = 100) -> int:
         """Send what is due. Every subscription with something due gets a turn before one gets a
         second; a round stops claiming after `ROUND_S` (a request already under way has its own
-        total deadline), so fan-out and the other subscriptions are returned to regularly."""
+        total deadline), so fan-out and the other subscriptions are returned to regularly. A
+        receiver that is slow to answer keeps one worker waiting and nobody else: the next turns
+        start for everyone who is not being sent to at that moment."""
         t = self.clock()
         if not self.store.one("SELECT 1 AS x FROM suite_webhook_deliveries WHERE status='pending' AND next_attempt_at<=? "
                               "AND (claimed_until IS NULL OR claimed_until<?) LIMIT 1", (t, t)):
@@ -1155,9 +1157,11 @@ class Webhooks:
                         return
                     with self._inflight_lock:
                         d = self.claim_next(tuple(self._inflight | served | blocked))
-                        if not d and served and not self._inflight:
-                            served.clear()
-                            d = self.claim_next(tuple(blocked))
+                        if not d and served - self._inflight:
+                            # Everyone has had a turn. Those still being sent to stay out (the
+                            # claim keeps their order anyway); the rest start the next one.
+                            served.intersection_update(self._inflight)
+                            d = self.claim_next(tuple(self._inflight | blocked))
                         if not d:
                             return
                         key = d["subscription_id"]
