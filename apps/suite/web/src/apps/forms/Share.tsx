@@ -31,7 +31,7 @@ export function ShareDrawer({ form, ws, canWrite, onClose, onChanged }: {
 
   async function setPublic(on: boolean) {
     if (on && enabled && !(await dialog.confirm(t("换一个公开链接"), t("旧的公开链接会立即失效。确定生成新链接？"), t("生成新链接")))) return;
-    if (!on && !(await dialog.confirm(t("关闭公开填写"), t("关闭后公开链接立即失效，正在填写的人将无法提交。"), t("关闭"), true))) return;
+    if (!on && !(await dialog.confirm(t("关闭公开填写"), t("关闭后公开链接立即失效，正在填写的人将无法提交。"), t("关闭公开填写"), true))) return;
     try {
       const out = await op<{ url: string | null }>("forms.public_link.set", { form_id: form.id, enabled: on }, { workspace: ws.id });
       setPublicUrl(out.output.url);

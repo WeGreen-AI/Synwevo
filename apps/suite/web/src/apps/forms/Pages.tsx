@@ -181,7 +181,7 @@ export function RequestDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
         <button type="button" className="btn sm" onClick={() => void act("forms.request.reissue_link", { request_id: rid },
           [t("重新生成链接"), t("旧链接会立即失效。确定生成新链接？"), t("生成")])}>{t("重新生成链接")}</button>
         <button type="button" className="btn sm" onClick={() => void act("forms.request.close", { request_id: rid, mode: "close" },
-          [t("关闭请求"), t("关闭后不再接收填写，已提交的内容保留。"), t("关闭")])}>{t("关闭")}</button>
+          [t("关闭请求"), t("关闭后不再接收填写，已提交的内容保留。"), t("关闭请求")])}>{t("关闭")}</button>
         <button type="button" className="btn sm danger" onClick={() => void act("forms.request.close", { request_id: rid, mode: "revoke" },
           [t("撤销请求"), t("撤销后链接立即失效，打开链接的人会看到“已撤销”。已提交的内容保留。"), t("撤销"), true])}>{t("撤销")}</button>
       </div>}
