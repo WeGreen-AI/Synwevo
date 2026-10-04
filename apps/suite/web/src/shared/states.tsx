@@ -8,9 +8,10 @@ export function Loading({ label }: { label?: string }) {
   return <div className="suite-state" role="status" aria-live="polite"><span className="suite-spinner" aria-hidden="true" />{label ?? t("加载中…")}</div>;
 }
 
-export function Failure({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+/** `text` is an application's own wording of the refusal (by its code), when it has one. */
+export function Failure({ error, onRetry, text: own }: { error: unknown; onRetry?: () => void; text?: string }) {
   const { t } = useI18n();
-  const text = error instanceof ApiError ? error.message : error instanceof Error ? error.message : String(error);
+  const text = own ?? (error instanceof ApiError ? error.message : error instanceof Error ? error.message : String(error));
   const rid = error instanceof ApiError ? error.requestId : undefined;
   return <div className="suite-state err" role="alert">
     <p>{text}</p>

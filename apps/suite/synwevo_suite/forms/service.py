@@ -68,9 +68,23 @@ class Forms:
             raise ServiceError(403, "export_not_allowed", "你在该工作空间没有导出权限，不能下载附件")
         row = self.store.one("SELECT * FROM form_files WHERE id=? AND workspace_id=? AND state='attached'",
                              (file_id, workspace_id))
-        if not row or (submission_id is not None and row["submission_id"] != submission_id):
+        if not row or (submission_id is not None and row["submission_id"] != submission_id
+                       and file_id not in self._files_used(self._submission(workspace_id, submission_id), row)):
             raise ServiceError(404, "file_not_found", "附件不存在或不属于该提交")
         return row, read_blob(self.store, row["blob"])
+
+    def _files_used(self, s: dict, row: dict | None = None) -> set[str]:
+        """The attachments a submission was made with: the file ids its answers name, among the
+        files of the same request and filler. A revision that keeps an earlier file names the
+        same file, and the file's record follows the latest revision, so its own
+        ``submission_id`` alone cannot say which revisions used it."""
+        if row is not None and (row["request_id"] != s["request_id"] or row["filler_key"] != s["filler_key"]):
+            return set()
+        v = self._version(s["form_id"], s["form_version"])
+        defn = Definition.model_validate(_j(v["definition_json"], {}))
+        answers = _j(s["answers_json"], {})
+        return {fid for f in defn.fields if f.type == "file" for fid in (answers.get(f.id) or [])
+                if isinstance(fid, str)}
 
     # ============================================================== definitions
     def _form(self, workspace_id: str, form_id: str) -> dict:
@@ -163,13 +177,27 @@ class Forms:
         call.touches("form", form_id)
         return self.form_json(self._form(call.workspace_id, form_id), with_versions=True, can_write=True)
 
-    def publish(self, call: Call, form_id: str, *, draft_rev: int, note: str) -> dict:
+    def publish(self, call: Call, form_id: str, *, draft_rev: int, note: str, seen: dict | None = None) -> dict:
+        """Freeze the stored draft at ``draft_rev``. ``seen`` is what the person publishing is
+        looking at (title, description, definition — each optional): a part given must equal the
+        stored draft, or nothing is published. The revision alone cannot tell: a save the server
+        refused leaves the revision where it was, and publishing then froze the older draft
+        while the page still showed the newer one."""
         row = self._form(call.workspace_id, form_id)
         if row["status"] != "active":
             raise ServiceError(409, "form_archived", "表单已归档，恢复后才能发布")
         if row["draft_rev"] != draft_rev:
             raise ServiceError(409, "draft_conflict", "表单草稿已被其他人修改，请查看最新内容后再发布")
         defn = Definition.model_validate(_j(row["draft_json"], {}))
+        seen = seen or {}
+        differs = [part for part, stored in (("title", row["title"]), ("description", row["description"] or ""))
+                   if seen.get(part) is not None and seen[part] != stored]
+        if seen.get("definition") is not None and fingerprint(seen["definition"].model_dump(mode="json", by_alias=True)) \
+                != fingerprint(defn.model_dump(mode="json", by_alias=True)):
+            differs.append("definition")
+        if differs:
+            raise ServiceError(409, "draft_unsaved", "要发布的内容还没有保存为草稿，请先保存再发布",
+                               {"draft_rev": row["draft_rev"], "differs": differs})
         found = problems(defn)
         if found:
             raise ServiceError(422, "form_not_publishable", "表单还不能发布，请先处理列出的问题", {"problems": found})
@@ -434,13 +462,22 @@ class Forms:
         subs = self.store.all("SELECT * FROM form_submissions WHERE request_id=? ORDER BY created_at DESC LIMIT 200",
                               (request_id,))
         out = self.request_json(row, can_write=can_write)
-        out["submissions"] = [self.submission_summary(s) for s in subs]
+        out["submissions"] = [self.submission_summary(s, row) for s in subs]
         form = self._form(workspace_id, row["form_id"])
         out["form_title"] = form["title"]
         return out
 
+    def _personal(self, row: dict) -> dict:
+        """The actions of a request page (deadline, new link, close, revoke) are a personal
+        request's. The public link's request follows the form's share settings: its link is
+        the form's public token, and turning the link off there closes it — so changing it here
+        would mint a link nothing resolves, or close a link the share settings still show open."""
+        if row["kind"] != "personal":
+            raise ServiceError(409, "public_link_request", "公开填写由表单的分享设置管理，请在那里更换链接或关闭公开填写")
+        return row
+
     def close_request(self, call: Call, request_id: str, *, mode: str, reason: str) -> dict:
-        row = self._request(call.workspace_id, request_id)
+        row = self._personal(self._request(call.workspace_id, request_id))
         if row["status"] in ("closed", "revoked", "expired", "accepted") and not (mode == "revoke" and row["status"] != "revoked"):
             return self.request_json(row, can_write=True)
         state = "revoked" if mode == "revoke" else "closed"
@@ -454,7 +491,7 @@ class Forms:
         return self.request_json(self._request(call.workspace_id, request_id), can_write=True)
 
     def extend_request(self, call: Call, request_id: str, due_at: float | None) -> dict:
-        row = self._request(call.workspace_id, request_id)
+        row = self._personal(self._request(call.workspace_id, request_id))
         if row["status"] in ("revoked", "closed", "accepted"):
             raise ServiceError(409, "request_finished", "这份填写请求已经结束，不能再修改截止时间")
         if due_at is not None and due_at <= time.time():
@@ -473,7 +510,7 @@ class Forms:
         return self.request_json(self._request(call.workspace_id, request_id), can_write=True)
 
     def reissue_link(self, call: Call, request_id: str) -> dict:
-        row = self._request(call.workspace_id, request_id)
+        row = self._personal(self._request(call.workspace_id, request_id))
         if row["status"] in ("revoked", "closed", "accepted"):
             raise ServiceError(409, "request_finished", "这份填写请求已经结束，不能重新生成链接")
         token, digest, seal_ = self._mint()
@@ -508,10 +545,19 @@ class Forms:
             return len(rows)
 
     # ============================================================== submissions
-    def submission_summary(self, s: dict) -> dict:
+    def submission_summary(self, s: dict, req: dict | None = None) -> dict:
+        """``recipient`` is the person a personal request names (its name and e-mail as the
+        sender wrote them), so a submission made through that link signed out is shown as
+        theirs rather than as anonymous; None for the public link. ``submitter_label`` stays
+        what the filler or their account said."""
+        if req is None:
+            req = self.store.one("SELECT kind, recipient_name, recipient_email FROM form_requests WHERE id=?",
+                                 (s["request_id"],)) or {}
+        recipient = ({"name": req.get("recipient_name"), "email": req.get("recipient_email")}
+                     if req.get("kind") == "personal" and (req.get("recipient_name") or req.get("recipient_email")) else None)
         return {"id": s["id"], "request_id": s["request_id"], "form_id": s["form_id"], "form_version": s["form_version"],
                 "revision": s["revision"], "status": s["status"], "submitted_by": s["submitted_by"],
-                "submitter_label": s["submitter_label"], "created_at": s["created_at"],
+                "submitter_label": s["submitter_label"], "recipient": recipient, "created_at": s["created_at"],
                 "reviewed_by": s["reviewed_by"], "reviewed_at": s["reviewed_at"], "review_note": s["review_note"]}
 
     def _submission(self, workspace_id: str, submission_id: str) -> dict:
@@ -524,8 +570,13 @@ class Forms:
         s = self._submission(workspace_id, submission_id)
         v = self._version(s["form_id"], s["form_version"])
         defn = Definition.model_validate(_j(v["definition_json"], {}))
+        used = sorted(self._files_used(s))
+        marks = ",".join("?" for _ in used)
         files = self.store.all("SELECT id, field_id, filename, content_type, size, scan FROM form_files "
-                               "WHERE submission_id=? ORDER BY created_at", (submission_id,))
+                               "WHERE workspace_id=? AND state='attached' AND (submission_id=?"
+                               + (f" OR (request_id=? AND filler_key=? AND id IN ({marks}))" if used else "")
+                               + ") ORDER BY created_at",
+                               (workspace_id, submission_id, *((s["request_id"], s["filler_key"], *used) if used else ())))
         items = self.store.all("SELECT field_id, note, created_by, created_at FROM form_review_items "
                                "WHERE submission_id=? ORDER BY created_at", (submission_id,))
         history = self.store.all("SELECT id, revision, status, created_at FROM form_submissions WHERE request_id=? "
@@ -538,21 +589,24 @@ class Forms:
 
     def list_submissions(self, workspace_id: str, *, form_id: str | None, request_id: str | None,
                          status: str | None, limit: int, before: float | None) -> dict:
-        sql = "SELECT * FROM form_submissions WHERE workspace_id=?"
+        sql = ("SELECT s.*, r.kind AS req_kind, r.recipient_name AS req_name, r.recipient_email AS req_email "
+               "FROM form_submissions s LEFT JOIN form_requests r ON r.id=s.request_id WHERE s.workspace_id=?")
         args: list = [workspace_id]
         for col, val in (("form_id", form_id), ("request_id", request_id), ("status", status)):
             if val:
-                sql += f" AND {col}=?"
+                sql += f" AND s.{col}=?"
                 args.append(val)
         if not status:
-            sql += " AND status!='superseded'"
+            sql += " AND s.status!='superseded'"
         if before is not None:
-            sql += " AND created_at<?"
+            sql += " AND s.created_at<?"
             args.append(before)
-        rows = self.store.all(sql + " ORDER BY created_at DESC LIMIT ?", (*args, limit + 1))
+        rows = self.store.all(sql + " ORDER BY s.created_at DESC LIMIT ?", (*args, limit + 1))
         more = len(rows) > limit
         rows = rows[:limit]
-        return {"submissions": [self.submission_summary(r) | {"answers": _j(r["answers_json"], {})} for r in rows],
+        return {"submissions": [self.submission_summary(r, {"kind": r["req_kind"], "recipient_name": r["req_name"],
+                                                            "recipient_email": r["req_email"]})
+                                | {"answers": _j(r["answers_json"], {})} for r in rows],
                 "next_before": rows[-1]["created_at"] if more and rows else None}
 
     def request_changes(self, call: Call, submission_id: str, *, note: str, items: list[dict]) -> dict:

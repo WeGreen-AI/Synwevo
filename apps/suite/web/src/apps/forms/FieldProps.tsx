@@ -1,6 +1,6 @@
 /** The settings of one field: what it asks, what counts as a valid answer, and when it shows. */
 import { useI18n } from "@synwevo/ui";
-import { newFieldId, type Condition, type Definition, type FieldDef, type FieldType } from "./logic";
+import { blankSubField, type Condition, type Definition, type FieldDef, type FieldType } from "./logic";
 import { typeLabel } from "./text";
 
 const ACCEPT = [".pdf", ".png", ".jpg", ".jpeg", ".webp", ".heic", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt", ".zip"];
@@ -153,7 +153,7 @@ function RepeatFields({ f, readOnly, onChange }: { f: FieldDef; readOnly: boolea
       {!readOnly && <button type="button" className="btn ghost sm" aria-label={t("删除字段 {n}", { n: i + 1 })}
                             onClick={() => onChange({ fields: subs.filter((_, j) => j !== i) })}>×</button>}
     </div>)}
-    {!readOnly && <button type="button" className="btn sm" onClick={() => onChange({ fields: [...subs, { id: newFieldId(), type: "text", label: "" }] })}>{t("添加字段")}</button>}
+    {!readOnly && <button type="button" className="btn sm" onClick={() => onChange({ fields: [...subs, blankSubField(t("明细项 {n}", { n: subs.length + 1 }))] })}>{t("添加字段")}</button>}
     <div className="fm-prop-row">
       <Num label={t("至少几项")} value={f.min_items} disabled={readOnly} onChange={(n) => onChange({ min_items: n })} />
       <Num label={t("最多几项")} value={f.max_items} disabled={readOnly} onChange={(n) => onChange({ max_items: n })} />

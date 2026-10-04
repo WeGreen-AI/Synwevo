@@ -1,11 +1,11 @@
 /** Sharing a published form: its public link, and personal fill-in requests. */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ApiError } from "@synwevo/auth-client";
 import { Drawer, useDialog, useI18n, useToast } from "@synwevo/ui";
 import { op, newKey } from "../../shared/ops";
 import type { Definition } from "./logic";
 import { Renderer } from "./Renderer";
+import { failureText } from "./text";
 
 export function CopyField({ value, label }: { value: string; label: string }) {
   const { t } = useI18n();
@@ -31,12 +31,12 @@ export function ShareDrawer({ form, ws, canWrite, onClose, onChanged }: {
 
   async function setPublic(on: boolean) {
     if (on && enabled && !(await dialog.confirm(t("换一个公开链接"), t("旧的公开链接会立即失效。确定生成新链接？"), t("生成新链接")))) return;
-    if (!on && !(await dialog.confirm(t("关闭公开填写"), t("关闭后公开链接立即失效，正在填写的人将无法提交。"), t("关闭"), true))) return;
+    if (!on && !(await dialog.confirm(t("关闭公开填写"), t("关闭后公开链接立即失效，正在填写的人将无法提交。"), t("关闭公开填写"), true))) return;
     try {
       const out = await op<{ url: string | null }>("forms.public_link.set", { form_id: form.id, enabled: on }, { workspace: ws.id });
       setPublicUrl(out.output.url);
       onChanged();
-    } catch (e) { toast(e instanceof ApiError ? e.message : String(e), "err"); }
+    } catch (e) { toast(failureText(t, e), "err"); }
   }
 
   return <Drawer title={t("分享与填写请求")} onClose={onClose}>
@@ -101,7 +101,7 @@ export function NewRequest({ formId, ws, onCreated }: { formId: string; ws: { id
       setCreated(out.output);
       onCreated?.(out.output.request_id);
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : String(e), "err");
+      toast(failureText(t, e), "err");
     } finally { setBusy(false); }
   }
 

@@ -53,6 +53,14 @@ class Publish(_In):
     form_id: str = F(pattern=FORM_ID)
     draft_rev: int = F(ge=1)
     note: str = F(default="", max_length=500)
+    # What the person publishing sees. Given, each must equal the stored draft, or nothing is
+    # published (draft_unsaved): a refused or lost save must not publish an older draft.
+    title: str | None = F(default=None, min_length=1, max_length=200,
+                          description="The title as the publisher sees it; must equal the saved draft's")
+    description: str | None = F(default=None, max_length=2000,
+                                description="The description as the publisher sees it; must equal the saved draft's")
+    definition: Definition | None = F(default=None,
+                                      description="The definition as the publisher sees it; must equal the saved draft's")
 
 
 class VersionRef(_In):
@@ -189,10 +197,14 @@ def register(registry, forms: Forms) -> None:
        handler=lambda c, i: forms.update_draft(c, i.form_id, draft_rev=i.draft_rev, title=i.title,
                                               description=i.description, definition=i.definition))
     op(id="forms.form.publish", title=T("发布表单", "發佈表單", "Publish a form"),
-       summary="Freeze the draft into a new immutable version. Existing requests keep the version they pinned.",
+       summary="Freeze the draft into a new immutable version. Existing requests keep the version they pinned. "
+               "Pass the title, description and definition you are looking at to refuse (draft_unsaved) "
+               "when the saved draft is not what you see.",
        input=Publish, need="write", side_effect="write", agent="confirm", object_kind="form",
        events=("forms.form.published",),
-       handler=lambda c, i: forms.publish(c, i.form_id, draft_rev=i.draft_rev, note=i.note))
+       handler=lambda c, i: forms.publish(c, i.form_id, draft_rev=i.draft_rev, note=i.note,
+                                         seen={"title": i.title, "description": i.description,
+                                               "definition": i.definition}))
     op(id="forms.form.retire_version", title=T("停用表单版本", "停用表單版本", "Retire a form version"),
        summary="Stop a published version from being used for new requests. Open requests on it continue.",
        input=VersionRef, need="write", side_effect="write", agent="confirm", object_kind="form",
@@ -229,17 +241,19 @@ def register(registry, forms: Forms) -> None:
        summary="A fill-in request with its status and submissions.", input=RequestRef, object_kind="form_request",
        handler=lambda c, i: forms.get_request(c.workspace_id, i.request_id, can_write=c.can("write")))
     op(id="forms.request.close", title=T("关闭或撤销填写请求", "關閉或撤銷填寫請求", "Close or revoke a request"),
-       summary="Stop a request accepting answers (close), or invalidate its link entirely (revoke).",
+       summary="Stop a personal request accepting answers (close), or invalidate its link entirely (revoke). "
+               "The public link's request follows forms.public_link.set (public_link_request otherwise).",
        input=CloseRequest, need="write", side_effect="write", agent="confirm", object_kind="form_request",
        events=("forms.request.closed", "forms.request.revoked"),
        handler=lambda c, i: forms.close_request(c, i.request_id, mode=i.mode, reason=i.reason))
     op(id="forms.request.extend", title=T("修改截止时间", "修改截止時間", "Change the deadline"),
-       summary="Change or clear a request's deadline; an expired request reopens.",
+       summary="Change or clear a personal request's deadline; an expired request reopens.",
        input=ExtendRequest, need="write", side_effect="write", agent="confirm", object_kind="form_request",
        shown_to_link_holders=True,
        handler=lambda c, i: forms.extend_request(c, i.request_id, i.due_at))
     op(id="forms.request.reissue_link", title=T("重新生成链接", "重新產生連結", "Reissue the link"),
-       summary="Replace a request's link; the old link stops working.",
+       summary="Replace a personal request's link; the old link stops working. A public link is replaced "
+               "with forms.public_link.set (public_link_request otherwise).",
        input=RequestRef, need="write", side_effect="external", agent="confirm", object_kind="form_request",
        # The new link goes back to the caller only; whatever sends it on is asked for itself.
        outward_when=lambda i: False,

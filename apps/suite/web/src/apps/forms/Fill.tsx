@@ -7,11 +7,12 @@
  *  again and its errors land on the fields they are about. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, ApiError, signInUrl, useSession } from "@synwevo/auth-client";
+import { api, ApiError, get, signInUrl, type AuthState } from "@synwevo/auth-client";
 import { Brand, LanguageMenu, useI18n, formatDate } from "@synwevo/ui";
 import { checkAnswers, visibleFields, type Definition, type FieldError } from "./logic";
 import { Renderer, type UploadedFile } from "./Renderer";
 import { Failure, Loading } from "../../shared/states";
+import { failureText } from "./text";
 
 interface Loaded {
   request: { id: string | null; kind: "personal" | "public"; title: string; status: string; due_at: number | null;
@@ -48,7 +49,6 @@ type SaveState = "idle" | "saving" | "saved" | "offline" | "conflict" | "error";
 export default function Fill() {
   const { t } = useI18n();
   const { token = "" } = useParams();
-  const { state } = useSession();
   const filler = useMemo(fillerKey, []);
   const headers = useMemo(() => ({ "X-Synwevo-Filler": filler }), [filler]);
   const base = `/api/suite/public/forms/r/${encodeURIComponent(token)}`;
@@ -239,7 +239,7 @@ export default function Fill() {
       <LanguageMenu />
     </header>
     <main className="fm-fill" id="main">
-      {error && !data ? <FillError error={error} state={state} onRetry={load} /> :
+      {error && !data ? <FillError error={error} onRetry={load} /> :
        !data ? <Loading /> :
        data.closed ? <div className="fm-fill-card"><h1>{data.request.title}</h1>
          <p className="fm-closed" role="status">{closedText(t, data.closed.code)}</p></div> :
@@ -269,7 +269,7 @@ export default function Fill() {
          {defn && <Renderer definition={defn} answers={answers} onChange={change} errors={errors} files={files}
                             onUpload={upload} onRemoveFile={removeFile} only={stepFields} notes={notes} />}
          {errors.length > 0 && <p className="fm-err" role="alert">{t("还有 {n} 处需要填写或更正。", { n: errors.length })}</p>}
-         {error ? <Failure error={error} /> : null}
+         {error ? <Failure error={error} text={failureText(t, error)} /> : null}
          <div className="fm-actions">
            <SaveIndicator state={save} at={savedAt} />
            <span className="spacer" />
@@ -294,17 +294,29 @@ function SaveIndicator({ state, at }: { state: SaveState; at: number | null }) {
   return <span className={`fm-save ${state}`} role="status" aria-live="polite">{text}</span>;
 }
 
-function FillError({ error, state, onRetry }: { error: unknown; state: any; onRetry: () => void }) {
+function FillError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   const { t } = useI18n();
-  if (error instanceof ApiError && error.code === "sign_in_required") {
-    return <div className="fm-fill-card"><h1>{t("需要登录")}</h1>
-      <p>{t("这份表单要求登录后填写。请用收到这份请求的邮箱对应的账户登录。")}</p>
-      <a className="btn primary" href={signInUrl(state, window.location.pathname)}>{t("登录")}</a></div>;
-  }
+  if (error instanceof ApiError && error.code === "sign_in_required") return <SignInNeeded />;
   if (error instanceof ApiError && (error.code === "link_not_found" || error.status === 404)) {
     return <div className="fm-fill-card"><h1>{t("链接无效")}</h1><p>{t("这个填写链接不存在或已失效。请向发出请求的人索取新的链接。")}</p></div>;
   }
-  return <Failure error={error} onRetry={onRetry} />;
+  return <Failure error={error} onRetry={onRetry} text={failureText(t, error)} />;
+}
+
+/** This page runs without the session (it asks nothing of a signed-out filler), so where signing
+ *  in starts is asked only here, from the deployment's public state (`/api/auth/state`). */
+function SignInNeeded() {
+  const { t } = useI18n();
+  const [state, setState] = useState<AuthState | null | undefined>(undefined);
+  useEffect(() => {
+    const abort = new AbortController();
+    get<AuthState>("/api/auth/state", abort.signal).then(setState, () => setState(null));
+    return () => abort.abort();
+  }, []);
+  return <div className="fm-fill-card"><h1>{t("需要登录")}</h1>
+    <p>{t("这份表单要求登录后填写。请用收到这份请求的邮箱对应的账户登录。")}</p>
+    {state === undefined ? <Loading /> :
+     <a className="btn primary" href={signInUrl(state, window.location.pathname)}>{t("登录")}</a>}</div>;
 }
 
 function closedText(t: (k: string, p?: any) => string, code: string): string {

@@ -11669,7 +11669,7 @@
     "/api/suite/v1/ops/forms.form.publish": {
       "post": {
         "operationId": "forms.form.publish",
-        "summary": "Freeze the draft into a new immutable version. Existing requests keep the version they pinned.",
+        "summary": "Freeze the draft into a new immutable version. Existing requests keep the version they pinned. Pass the title, description and definition you are looking at to refuse (draft_unsaved) when the saved draft is not what you see.",
         "tags": [
           "forms"
         ],
@@ -12423,7 +12423,7 @@
     "/api/suite/v1/ops/forms.request.close": {
       "post": {
         "operationId": "forms.request.close",
-        "summary": "Stop a request accepting answers (close), or invalidate its link entirely (revoke).",
+        "summary": "Stop a personal request accepting answers (close), or invalidate its link entirely (revoke). The public link's request follows forms.public_link.set (public_link_request otherwise).",
         "tags": [
           "forms"
         ],
@@ -12730,7 +12730,7 @@
     "/api/suite/v1/ops/forms.request.extend": {
       "post": {
         "operationId": "forms.request.extend",
-        "summary": "Change or clear a request's deadline; an expired request reopens.",
+        "summary": "Change or clear a personal request's deadline; an expired request reopens.",
         "tags": [
           "forms"
         ],
@@ -13176,7 +13176,7 @@
     "/api/suite/v1/ops/forms.request.reissue_link": {
       "post": {
         "operationId": "forms.request.reissue_link",
-        "summary": "Replace a request's link; the old link stops working.",
+        "summary": "Replace a personal request's link; the old link stops working. A public link is replaced with forms.public_link.set (public_link_request otherwise).",
         "tags": [
           "forms"
         ],
@@ -22594,6 +22594,47 @@
             "maxLength": 500,
             "title": "Note",
             "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The title as the publisher sees it; must equal the saved draft's",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The description as the publisher sees it; must equal the saved draft's",
+            "title": "Description"
+          },
+          "definition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/forms.Definition"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The definition as the publisher sees it; must equal the saved draft's"
           }
         },
         "required": [

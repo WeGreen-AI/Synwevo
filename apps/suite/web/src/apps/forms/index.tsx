@@ -33,9 +33,15 @@ function FormsApp() {
   </WorkspaceApp>;
 }
 
+/** The fill-in link: for people without an account. The shell renders it outside the session and
+ *  the application catalogue, which ask signed-in questions (/api/auth/me, /api/suite/catalog)
+ *  an anonymous filler can only be refused. */
+export function formsPublicRoutes() {
+  return [<Route key="forms-fill" path="/forms/fill/:token" element={<Fill />} />];
+}
+
 export function formsRoutes() {
   return [
-    <Route key="forms-fill" path="/forms/fill/:token" element={<Fill />} />,
     <Route key="forms" path="/forms" element={<RequireSession><FormsApp /></RequireSession>} />,
     <Route key="forms-ws" path="/forms/w/:wid/*" element={<RequireSession><FormsApp /></RequireSession>} />,
   ];

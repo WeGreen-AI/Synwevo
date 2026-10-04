@@ -1,9 +1,108 @@
 /** How the Forms pages word the server's codes: field errors, publishing problems, field types,
  *  statuses. Every code the server can return has a sentence here (the catalogue test checks the
  *  strings exist in all three languages). */
-import type { FieldError, FieldType } from "./logic";
+import type { Definition, DraftRefusal, FieldError, FieldType } from "./logic";
 
 type T = (key: string, params?: Record<string, any>) => string;
+
+/** Each refusal code of the Forms server (synwevo_suite/forms/*.py, plus the operation layer's
+ *  invalid_input) as one sentence. A code with several server sentences gets the one that is
+ *  true of all of them. `tests/forms-refusals.test.ts` reads the server's codes and fails on a
+ *  code without a sentence here. */
+const REFUSALS: Record<string, string> = {
+  invalid_input: "填写的内容不符合要求，请检查后再试",
+  // the fill-in link
+  link_not_found: "这个填写链接不存在或已失效。请向发出请求的人索取新的链接。",
+  link_revoked: "这个填写链接已被撤销。",
+  link_expired: "这份表单已过截止时间，不能再填写。如需延期请联系发出请求的人。",
+  request_closed: "这份表单已停止接收填写。",
+  link_unavailable: "这份表单当前不能填写。",
+  request_not_open: "这份表单当前不接收提交，请刷新页面查看状态",
+  form_version_changed: "表单已更新，请刷新页面后再填写",
+  already_submitted: "这份表单你已经提交过了。发出请求的人确认或要求补充后，你会看到相应状态。",
+  filler_key_required: "页面缺少填写标识，请刷新后重试",
+  sign_in_required: "这份表单要求登录后填写。请用收到这份请求的邮箱对应的账户登录。",
+  not_the_recipient: "这份表单是发给其他人的，你不能填写",
+  draft_too_large: "草稿过大，请减少内容后再试",
+  answers_invalid: "还有需要填写或更正的内容",
+  rate_limited: "操作过于频繁，请稍后再试",
+  // attachments
+  empty_file: "文件是空的",
+  file_type_not_accepted: "不接受这种文件类型",
+  not_a_file_field: "这个字段不接受附件",
+  too_many_files: "这个字段的附件数量已达上限",
+  file_too_large: "文件超过允许的大小",
+  file_not_found: "附件不存在，或已不能再修改",
+  export_not_allowed: "你在这个工作空间没有导出权限，不能下载附件",
+  // forms, versions and publishing
+  form_not_found: "表单不存在或不在这个工作空间",
+  form_version_not_found: "这个表单版本不存在",
+  draft_conflict: "内容已被其他人或其他页面修改，请刷新后再试",
+  draft_unsaved: "有修改还没有保存，没有发布。保存后再发布。",
+  form_not_publishable: "表单还不能发布，请先处理列出的问题",
+  nothing_to_publish: "草稿与最新发布的版本相同，不需要再次发布",
+  form_archived: "表单已归档，恢复后才能这样做",
+  form_not_published: "尚未发布：发布后才能发出填写请求或开放公开链接。",
+  form_version_retired: "这个版本已停用，请使用仍在使用的版本",
+  // requests and review
+  request_not_found: "填写请求不存在或不在这个工作空间",
+  request_finished: "这份填写请求已经结束，不能再修改",
+  public_link_request: "公开填写由表单的分享设置管理，请在那里更换链接或关闭公开填写",
+  due_in_past: "截止时间必须晚于现在",
+  recipient_required: "要求收件人登录填写时，需要填写收件人的邮箱",
+  recipient_not_found: "收件人账户不存在或不可用",
+  prefill_too_large: "预填内容过大",
+  prefill_unknown_field: "预填里有表单没有的字段",
+  prefill_file_field: "附件字段不能预填",
+  prefill_invalid: "预填内容不符合表单要求",
+  submission_not_found: "提交记录不存在或不在这个工作空间",
+  submission_not_reviewable: "这份提交已被处理过，请刷新后查看",
+  unknown_field: "补充要求里有表单没有的字段",
+  result_access_unverifiable: "无法核实这次操作结果的访问权限，请刷新后再试",
+};
+
+/** A refusal as the sentence a Forms page shows, or null when Forms has no sentence of its own
+ *  for it (the shared client's wording then stands). Takes anything with a `code`. */
+export function refusalSentence(t: T, e: unknown): string | null {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code !== "string") return null;
+  if (code === "invalid_input") {
+    const locs: string[][] = ((e as any).detail?.fields ?? []).map((f: any) => (Array.isArray(f?.loc) ? f.loc.map(String) : []));
+    if (locs.some((l) => l[0] === "recipient" && l[1] === "email")) return t("收件人邮箱格式不正确");
+  }
+  return Object.hasOwn(REFUSALS, code) ? t(REFUSALS[code]) : null;
+}
+
+/** What a Forms page says when something it asked for did not happen. */
+export function failureText(t: T, e: unknown): string {
+  const own = refusalSentence(t, e);
+  if (own) return own;
+  const message = (e as { message?: unknown } | null)?.message;
+  return typeof message === "string" ? message : String(e);
+}
+
+/** A refused draft save, said as what to change and where (`draftRefusals` in logic.ts). */
+export function refusalText(t: T, r: DraftRefusal, defn: Definition): string {
+  const top = r.index !== undefined ? defn.fields[r.index] : undefined;
+  const name = (f: { label: string; type: FieldType } | undefined, n: number) =>
+    f?.label?.trim() ? f.label : t("第 {n} 个字段（{type}）", { n, type: f ? typeLabel(t, f.type) : "" });
+  switch (r.part) {
+    case "label":
+      return r.sub !== undefined
+        ? t("「{group}」里的第 {n} 个字段还没有名称", { group: name(top, (r.index ?? 0) + 1), n: r.sub + 1 })
+        : top?.type === "section" ? t("{field}还没有标题", { field: name(top, (r.index ?? 0) + 1) })
+        : t("{field}还没有填写问题", { field: name(top, (r.index ?? 0) + 1) });
+    case "option": {
+      const owner = r.sub !== undefined ? top?.fields?.[r.sub] : top;
+      return t("「{field}」的选项 {n} 的文字和值都不能为空", { field: name(owner, (r.sub ?? r.index ?? 0) + 1), n: (r.option ?? 0) + 1 });
+    }
+    case "step": return t("第 {n} 步还没有名称", { n: (r.index ?? 0) + 1 });
+    case "rule": return t("第 {n} 条跨字段校验还没有填写提示", { n: (r.index ?? 0) + 1 });
+    case "title": return t("表单名称不能为空");
+    default:
+      return top ? t("「{field}」的设置不符合要求", { field: name(top, (r.index ?? 0) + 1) }) : t("表单的设置不符合要求");
+  }
+}
 
 export function errorText(t: T, e: FieldError): string {
   const p = e.params ?? {};
@@ -78,6 +177,21 @@ export function typeLabel(t: T, type: FieldType): string {
     case "repeat": return t("重复明细");
     case "section": return t("分节说明");
   }
+}
+
+/** A request page's heading. The public link's request has no title of its own: it is the
+ *  form's public fill-in, named after the form. */
+export function requestHeading(t: T, r: { kind?: string; title?: string | null; form_title?: string | null }): string {
+  if (r.kind === "public") return t("「{form}」的公开填写", { form: r.form_title || t("未命名表单") });
+  return r.title || r.form_title || t("未命名表单");
+}
+
+/** Who a submission is from: what the filler (or their account) gave, else the person the
+ *  personal request names (as the sender wrote them), else no one. */
+export function submitterName(t: T, s: { submitter_label?: string | null;
+                                        recipient?: { name?: string | null; email?: string | null } | null }): string {
+  if (s.submitter_label?.trim()) return s.submitter_label;
+  return [s.recipient?.name, s.recipient?.email].filter(Boolean).join(" · ") || t("匿名填写人");
 }
 
 export function requestStatus(t: T, s: string): [string, string] {
