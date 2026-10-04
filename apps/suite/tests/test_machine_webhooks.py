@@ -857,6 +857,23 @@ def test_failures_are_retried_on_the_schedule_then_give_up(hub, monkeypatch):
                for d in hub.api.get(f"{BASE}/{sid}/deliveries", headers=alice).json()["items"])
 
 
+@pytest.mark.parametrize("header", ["²", "1³"], ids=["a superscript digit", "digits and a superscript"])
+def test_an_unreadable_retry_after_is_no_retry_after(hub, header):
+    """Whatever a receiver writes in Retry-After, its 429 is a 429: recorded with its status,
+    retried on the schedule, and counted against the subscription like any other refusal."""
+    from synwevo_core.webhook_delivery import BACKOFF_S
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver(lambda n: (429, {"Retry-After": header}))
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    a_table(hub.api, alice)
+    hub.service.tick()
+    row = hub.rows(sid)[0]
+    assert (row["status"], row["attempts"], row["last_code"], row["last_error"]) == ("pending", 1, 429, "http_status")
+    assert 0.8 * BACKOFF_S[0] - 1 <= row["next_attempt_at"] - hub.clock() <= 1.2 * BACKOFF_S[0]
+    health = hub.api.get(f"{BASE}/{sid}", headers=alice).json()
+    assert health["consecutive_failures"] == 1 and health["last_failure_at"] is not None
+
+
 def test_410_and_three_days_of_failures_disable_the_subscription(hub):
     from synwevo_core.webhook_delivery import BACKOFF_S
     alice = grant(hub.api, "alice")["auth"]

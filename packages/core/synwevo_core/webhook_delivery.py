@@ -16,6 +16,7 @@ caller, so each application reads its own configuration.
 from __future__ import annotations
 
 import base64
+import datetime
 import email.utils
 import hashlib
 import hmac
@@ -196,18 +197,29 @@ def verify_standard(body: bytes, msg_id: str, ts: str | int, header: str, key: s
 
 # ----------------------------------------------------------------------------- retries
 def retry_after(headers, at: float) -> float | None:
-    """Retry-After as seconds (delta-seconds or an HTTP-date); None when absent or unreadable."""
+    """Retry-After as seconds (delta-seconds or an HTTP-date); None when absent or unreadable.
+
+    It is read while a receiver's refusal is being handled, so whatever the receiver put there it
+    does not raise: an error here would lose the refusal itself. Delta-seconds are ASCII digits
+    and nothing else — ``"²".isdigit()`` is true and ``float("²")`` is an error."""
     raw = headers.get("Retry-After") if headers is not None else None
     if not raw:
         return None
     raw = raw.strip()
-    if raw.isdigit():
+    if raw.isascii() and raw.isdigit():
         return float(raw)
     try:
         when = email.utils.parsedate_to_datetime(raw)
     except (TypeError, ValueError):
         return None
-    return max(0.0, when.timestamp() - at) if when else None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        # An HTTP-date is UTC even when it does not say so (RFC 9110 §5.6.7). Read as this server's
+        # local time it would mean a different moment on every machine — and one near the end of
+        # the calendar cannot be converted at all.
+        when = when.replace(tzinfo=datetime.timezone.utc)
+    return max(0.0, when.timestamp() - at)
 
 
 def next_delay(attempts: int, retry_after: float | None = None, *, schedule=BACKOFF_S, rng=random) -> float | None:
