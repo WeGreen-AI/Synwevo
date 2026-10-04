@@ -8,6 +8,7 @@ already follow.
 import csv
 import io
 import re
+import unicodedata
 import zipfile
 from datetime import date, datetime
 from types import SimpleNamespace
@@ -44,6 +45,34 @@ def stored_ticket(c, ticket_id, missing):
         refuse(missing, 404)
     from ..common.machine import caller_key
     return caller_key(client, ticket_id)
+
+
+def _fold(name):
+    return unicodedata.normalize('NFKC', name).strip().casefold()
+
+
+def link_cell(field, raw, column, names):
+    """A related-records cell of an import file, as record ids. Each related record is named the way
+    export writes it (its display name; several are joined by commas) or by its id. A name matches
+    exactly, else ignoring case and width. A name that matches no candidate or several, or an id
+    that is no candidate, is refused for this row, naming the column and the value."""
+    ids, exact, folded = names
+    text = raw.strip()
+    if not text:
+        return None
+
+    def one(name):
+        if ft.RECORD_ID.match(name):
+            hits = [name] if name in ids else []
+        else:
+            hits = exact.get(name) or folded.get(_fold(name), [])
+        if len(hits) != 1:
+            refuse('link_ambiguous' if hits else 'link_not_found', column=column, value=name[:200])
+        return hits[0]
+    # A name may itself contain a comma: the whole cell is one name when it names a candidate.
+    whole = ft.RECORD_ID.match(text) or text in exact or _fold(text) in folded
+    parts = [text] if whole or ',' not in text else [p.strip() for p in text.split(',') if p.strip()]
+    return ft.normalize(field, [one(p) for p in parts])
 
 
 class Transfers:
@@ -129,6 +158,27 @@ class Transfers:
         return {'id': i.import_id, 'columns': unpack(row['columns_json']), 'rows': unpack(row['rows_json'])[:20],
                 'row_count': row['row_count'], 'status': row['status'], 'outcome': unpack(row['outcome_json']), 'expires_at': row['expires_at']}
 
+    def link_names(self, c, field):
+        """What an importer can name in `field`'s related table: the live records they can read,
+        by id and by the name export writes for them (`record_title`). A record they cannot read is
+        no candidate, so its name reads as unknown — never as ambiguous, never as existing."""
+        table = self.table(c, field['config']['table_id'])
+        if table['status'] != 'active':
+            return set(), {}, {}
+        rank = ft.ROLE_RANK[self.role(c)]
+        allowed = [r for r in ft.READ_ROLES if ft.ROLE_RANK[r] <= rank]
+        rows = self.store.all(f"SELECT id, seq, cells FROM tb_records WHERE table_id=? AND workspace_id=? AND deleted_at IS NULL AND read_role IN ({','.join('?' * len(allowed))})",
+                              (table['id'], c.workspace_id, *allowed))
+        title_field = self.title_field(c, table)
+        ids, exact, folded = set(), {}, {}
+        for r in rows:
+            ids.add(r['id'])
+            title = self.record_title(title_field, r).strip()
+            if title:
+                exact.setdefault(title, []).append(r['id'])
+                folded.setdefault(_fold(title), []).append(r['id'])
+        return ids, exact, folded
+
     def import_apply(self, c, i):
         row = self.import_row(c, i.table_id, i.import_id)
         settings = {'mapping': i.mapping, 'atomic': i.atomic}
@@ -146,13 +196,18 @@ class Transfers:
         writable = {f['id']: f for f in self.visible_fields(c, fields) if f['can_write']}
         if not set(i.mapping.values()) <= writable.keys():
             refuse('field_forbidden', 403)
-        items, errors = [], []
+        items, errors, names = [], [], {}
         for n, values in enumerate(data):
             cells = {}
             try:
                 for col, fid in i.mapping.items():
                     f, raw = writable[fid], values[columns.index(col)]
-                    cells[fid] = ft.normalize(f, [v.strip() for v in raw.split(',') if v.strip()]) if f['type'] == 'link' else ft.parse_text(f, raw)
+                    if f['type'] == 'link':
+                        if fid not in names:
+                            names[fid] = self.link_names(c, f)
+                        cells[fid] = link_cell(f, raw, col, names[fid])
+                    else:
+                        cells[fid] = ft.parse_text(f, raw)
                 self.normalize_cells(c, fields, cells)
                 items.append((n, BatchItem(action='create', cells=cells)))
             except ft.CellError as e:

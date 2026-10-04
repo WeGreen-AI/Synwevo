@@ -206,6 +206,19 @@ class Tables:
         row['formula_errors'] = unpack(row['formula_errors'], {})
         return row
 
+    def title_field(self, c, table):
+        """The field whose value names a record of `table` for this caller — the table's primary
+        field while the caller can read it — or None, and records are named by their number."""
+        return next((x for x in self.visible_fields(c, self.fields(table['id']))
+                     if x['id'] == table['primary_field_id'] and x['type'] != 'link'), None)
+
+    @staticmethod
+    def record_title(title_field, record):
+        """How a related record is named: in relations, exports and the names imports resolve."""
+        if not title_field:
+            return str(record['seq'])
+        return ft.as_text(title_field, unpack(record['cells'], {}).get(title_field['id']))
+
     def project(self, c, row, fields=None):
         fields = fields if fields is not None else self.visible_fields(c, self.fields(row['table_id']))
         cells = unpack(row['cells'], {})
@@ -228,10 +241,8 @@ class Tables:
                         raise
                     if target['deleted_at'] or table['status'] != 'active':
                         continue
-                    tf = next((x for x in self.visible_fields(c, self.fields(target['table_id']))
-                               if x['id'] == table['primary_field_id'] and x['type'] != 'link'), None)
-                    title = ft.as_text(tf, target['cells'].get(tf['id'])) if tf else str(target['seq'])
-                    links.append({'id': rid, 'table_id': target['table_id'], 'title': title})
+                    links.append({'id': rid, 'table_id': target['table_id'],
+                                  'title': self.record_title(self.title_field(c, table), target)})
                 value = [x['id'] for x in links] or None
                 out['relations'][fid] = links
             out['cells'][fid] = value

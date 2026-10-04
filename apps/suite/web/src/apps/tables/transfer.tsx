@@ -2,7 +2,7 @@ import { useState } from "react";
 import { upload } from "@synwevo/auth-client";
 import { useDialog, useI18n } from "@synwevo/ui";
 import { Loading, Empty, RunBadge } from "../../shared/states";
-import { useRead, useMutation, TableFailure, errorKey } from "./common";
+import { useRead, useMutation, TableFailure, issueText } from "./common";
 import type { Workspace, Table, RecordRow } from "./types";
 
 const actionKeys: Record<string, string> = {created: "已创建", updated: "已更新", archived: "已归档", restored: "已恢复",
@@ -69,8 +69,8 @@ export function ImportPanel({ws, table}: {ws: Workspace; table: Table; reload?: 
       <label className="tables-check"><input type="checkbox" checked={atomic} disabled={!!outcome} onChange={e => {setAtomic(e.target.checked); setPreview(undefined);}} />{t("原子导入：任一行失败则整批不写入")}</label>
       {!atomic && <p className="notice">{t("有效行会写入；失败行逐项报告。再次导入失败行时请上传修正后的文件。")}</p>}
       {!outcome && <button className="btn" disabled={mutation.busy || !Object.keys(args.mapping).length} onClick={() => void mutation.run("tables.import.apply", {...args, preview: true}).then(setPreview).catch(() => {})}>{t("验证映射")}</button>}
-      {preview && !outcome && <section className="tables-preview"><h3>{t("导入检查")}</h3><p>{t("可写入 {ok} 行，需修复 {failed} 行", {ok: preview.valid, failed: preview.issues.length})}</p>{preview.issues.map((x: any) => <p key={x.index}>{t("文件第 {n} 行", {n: x.index+2})}: {t(errorKey(x.error))}</p>)}<button className="btn primary" disabled={mutation.busy || (atomic && preview.issues.length > 0) || !preview.valid} onClick={() => void mutation.run("tables.import.apply", {...args, preview: false}).then(setOutcome).catch(() => {})}>{t("确认导入")}</button></section>}
-      {outcome && <section className="notice" role="status"><RunBadge status={outcome.failed ? "partial" : "succeeded"} /><p>{t("成功 {ok} 项，失败 {failed} 项", {ok: outcome.succeeded, failed: outcome.failed})}</p>{outcome.items.filter((x: any) => !x.ok).map((x: any) => <p key={x.index}>{t("文件第 {n} 行", {n: x.index+2})}: {t(errorKey(x.error))}</p>)}<a className="btn" href={`/tables/w/${ws.id}/t/${table.id}`}>{t("查看导入结果")}</a></section>}
+      {preview && !outcome && <section className="tables-preview"><h3>{t("导入检查")}</h3><p>{t("可写入 {ok} 行，需修复 {failed} 行", {ok: preview.valid, failed: preview.issues.length})}</p>{preview.issues.map((x: any) => <p key={x.index}>{t("文件第 {n} 行", {n: x.index+2})}: {issueText(t, x.error, x.detail)}</p>)}<button className="btn primary" disabled={mutation.busy || (atomic && preview.issues.length > 0) || !preview.valid} onClick={() => void mutation.run("tables.import.apply", {...args, preview: false}).then(setOutcome).catch(() => {})}>{t("确认导入")}</button></section>}
+      {outcome && <section className="notice" role="status"><RunBadge status={outcome.failed ? "partial" : "succeeded"} /><p>{t("成功 {ok} 项，失败 {failed} 项", {ok: outcome.succeeded, failed: outcome.failed})}</p>{outcome.items.filter((x: any) => !x.ok).map((x: any) => <p key={x.index}>{t("文件第 {n} 行", {n: x.index+2})}: {issueText(t, x.error, x.detail)}</p>)}<a className="btn" href={`/tables/w/${ws.id}/t/${table.id}`}>{t("查看导入结果")}</a></section>}
     </>}
   </section>;
 }
