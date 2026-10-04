@@ -4,6 +4,11 @@ export const statuses: Record<string, string> = {
   stalled: "等待修正审批人", approved: "已批准", rejected: "最终驳回", returned: "退回补充", withdrawn: "已撤回",
   pending: "待处理", transferred: "已转交", revoked: "权限已撤销", cancelled: "已取消", skipped: "条件不符，已跳过", not_started: "尚未开始",
 };
+/** A stage on a request's approval path: its own progress, never the template's status words. */
+export const stageStatuses: Record<string, string> = {
+  active: "进行中", stalled: "等待修正审批人", approved: "已通过", rejected: "已驳回", returned: "已退回补充",
+  skipped: "条件不符，已跳过", cancelled: "已取消", not_started: "尚未开始",
+};
 export const fieldTypes: Record<string, string> = { text: "单行文本", textarea: "多行文本", number: "数值", money: "金额", date: "日期", select: "单选" };
 export const modes: Record<string, string> = { all: "会签：全员同意", any: "或签：一人同意", n_of_m: "指定票数" };
 export const operators: Record<string, string> = { eq: "等于", neq: "不等于", gt: "大于", gte: "大于或等于", lt: "小于", lte: "小于或等于", in: "属于列表", not_in: "不属于列表", filled: "已填写", empty: "为空" };

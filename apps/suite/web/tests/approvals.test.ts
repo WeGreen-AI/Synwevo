@@ -1,12 +1,48 @@
 /** Approvals wording a person meets: refusals and template warnings from the server, worded in
- *  every locale. Fixtures are isolated: no API, no user data. */
-import { test } from "node:test";
+ *  every locale, and what the request page shows. Fixtures are isolated: no API, no user data. */
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
+import { MemoryRouter } from "react-router-dom";
+import { createServer, type ViteDevServer } from "vite";
 import { translate } from "@synwevo/ui/i18n-core";
 import "../src/apps/approvals/messages.ts";
 import * as text from "../src/apps/approvals/text.ts";
+
+// The pages themselves, compiled the way the shell is and rendered to markup (in the default
+// locale: the server render does not read a saved language), without any API.
+let vite: ViteDevServer;
+before(async () => {
+  vite = await createServer({ root: join(import.meta.dirname, ".."), configFile: false, logLevel: "error", appType: "custom",
+    server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+});
+after(async () => { await vite?.close(); });
+async function render(module: string, name: string, props: object): Promise<string> {
+  const page = await vite.ssrLoadModule(module);
+  return renderToString(createElement(MemoryRouter, null, createElement(page[name], props)));
+}
+const visible = (html: string) => html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "\n").split("\n").map(x => x.trim()).filter(Boolean);
+const ws = { id: "w_fixture", name: "Fixture workspace", role: "editor" };
+const fixtureStage = (id: string, name: string, mode = "all") => ({ id, name, mode, approvers: { users: ["u_bob"] } });
+/** A request fixture: stage 1 passed, stage 2 skipped, stage 3 in progress, stage 4 not reached. */
+function fixtureRequest(note = "") {
+  const snapshot = { revision: 1, fields: { f_amount: "12.50" }, basis: "Fixture basis", fields_hash: "h1", basis_hash: "h2", note, submitted_at: 1791130949, submitted_by: "u_alice" };
+  const run = (n: number, status: string) => ({ id: `ast_${n}`, stage_name: `S${n}`, mode: "all", required: 1, status, due_at: null, reminded_at: null, escalated_at: null, skip: [] });
+  return { id: "apr_fixture00001", title: "Fixture claim", status: "in_review", revision: 1, state_version: 5, updated_at: 1791130949,
+    template_id: "apt_fixture00001", template_version: 1, requester_id: "u_alice",
+    definition: { fields: [{ id: "f_amount", label: "Amount", type: "money", currency: "USD", required: true, options: [] }],
+      stages: [fixtureStage("s_one", "Fixture first"), fixtureStage("s_two", "Fixture gated"), fixtureStage("s_three", "Fixture third"), fixtureStage("s_four", "Fixture last", "any")],
+      rules: { distinct_deciders: false } },
+    snapshot, previous: null, people: { u_alice: "Alice Fixture", u_bob: "Bob Fixture" },
+    revisions: [{ revision: 1, fields_hash: "h1", basis_hash: "h2", note, submitted_at: 1791130949, submitted_by: "u_alice" }],
+    stages: [run(1, "approved"), run(2, "skipped"), run(3, "active")],
+    tasks: [{ id: "atk_fixture00001", assignee_id: "u_bob", status: "pending", eligible: true, source: "explicit" }],
+    permissions: { requester: false, manage: false, task_ids: [] }, decisions: [] };
+}
+const detail = (r = fixtureRequest()) => render("/src/apps/approvals/Pages.tsx", "RequestDetail", { ws, r, reload: () => {} });
 
 const SERVER = join(import.meta.dirname, "..", "..", "synwevo_suite", "approvals");
 const codes = (file: string, call: RegExp) => [...new Set([...readFileSync(join(SERVER, file), "utf8").matchAll(call)].map(m => m[1]))].sort();
@@ -35,3 +71,15 @@ test("every template problem and warning the definition reports is worded", () =
   assert.match(english(text.warnings.stage_needs_requester, "warning"), /refused/);
 });
 
+test("a stage on the approval path shows its own progress, not a template's status", async () => {
+  // Acceptance: the stage in progress read 可用 / "Ready", the word for an active template.
+  const lines = visible(await detail());
+  const path = lines.slice(lines.indexOf("审批路径"), lines.indexOf("当前阶段参与人"));
+  const badge = (stage: string) => path[path.indexOf(stage) + 2];
+  assert.deepEqual(["Fixture first", "Fixture gated", "Fixture third", "Fixture last"].map(badge), ["已通过", "条件不符，已跳过", "进行中", "尚未开始"]);
+  assert.ok(!path.includes(text.statuses.active), path.join(" | "));
+  for (const status of ["active", "stalled", "approved", "rejected", "returned", "skipped", "cancelled", "not_started"]) {
+    english(text.stageStatuses[status], status);
+  }
+  assert.equal(translate("en", text.stageStatuses.active), "In progress");
+});

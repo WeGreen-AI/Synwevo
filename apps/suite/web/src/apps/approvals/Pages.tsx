@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useI18n } from "@synwevo/ui";
 import { canWrite } from "../../shared/AppFrame";
 import { Empty, Loading } from "../../shared/states";
-import { base, ErrorBox, events, modes, operators, Pager, stamp, Status, useAction, useRead } from "./common";
+import { base, ErrorBox, events, modes, operators, Pager, StageStatus, stamp, Status, useAction, useRead } from "./common";
 import { Fields } from "./Fields";
 import { PeoplePicker } from "./Selector";
 import type { ApprovalRequest, Definition, Page, RequestRow, Snapshot, Template, Timeline, Workspace } from "./types";
@@ -68,7 +68,7 @@ export function Detail({ ws }: { ws: Workspace }) {
   if (result.error) return <ErrorBox error={result.error} retry={result.reload} />; if (!result.data) return <Loading />;
   return <RequestDetail key={`${ws.id}:${rid}:${result.data.state_version}`} ws={ws} r={result.data} reload={result.reload} />;
 }
-function RequestDetail({ ws, r, reload }: { ws: Workspace; r: ApprovalRequest; reload: () => void }) {
+export function RequestDetail({ ws, r, reload }: { ws: Workspace; r: ApprovalRequest; reload: () => void }) {
   const { t } = useI18n(); const action = useAction(ws.id); const [note, setNote] = useState(""); const [selected, setSelected] = useState<string[]>([]);
   const [taskId, setTaskId] = useState(r.permissions.task_ids[0] ?? ""); const [decision, setDecision] = useState("approve");
   const [revision, setRevision] = useState(r.revision); const [revise, setRevise] = useState(false);
@@ -112,7 +112,7 @@ function RequestDetail({ ws, r, reload }: { ws: Workspace; r: ApprovalRequest; r
     </div><aside>
       <section className="ap-panel"><h2>{t("审批路径")}</h2><ol className="ap-stages">{r.definition.stages.map((s, n) => {
         const run = r.stages[n];
-        return <li key={s.id}><strong>{s.name}</strong><p>{t(modes[s.mode])}</p><Status value={run?.status ?? "not_started"} />
+        return <li key={s.id}><strong>{s.name}</strong><p>{t(modes[s.mode])}</p><StageStatus value={run?.status ?? "not_started"} />
           {run && <p className="muted">{t("需要 {n} 票同意", { n: run.required })}</p>}
           {run?.due_at && <p className="muted">{t("截止时间")}<br /><time>{stamp(run.due_at)}</time></p>}
           {!!run?.reminded_at && <p>{t("已提醒")}</p>}{!!run?.escalated_at && <p>{t("已升级")}</p>}</li>;

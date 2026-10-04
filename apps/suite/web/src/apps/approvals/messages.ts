@@ -446,6 +446,18 @@ export const approvals = {
     "en": "The revision limit has been reached. Create a new request.",
     "zh-Hant": "已達到修訂上限，請發起新的申請。"
   },
+  "已退回补充": {
+    "en": "Returned for changes",
+    "zh-Hant": "已退回補充"
+  },
+  "已通过": {
+    "en": "Passed",
+    "zh-Hant": "已通過"
+  },
+  "已驳回": {
+    "en": "Rejected",
+    "zh-Hant": "已駁回"
+  },
   "币种代码": {
     "en": "Currency code",
     "zh-Hant": "幣別代碼"
@@ -1025,6 +1037,10 @@ export const approvals = {
   "这次操作的内容已改变，请刷新后重试。": {
     "en": "This action's content changed. Refresh and retry.",
     "zh-Hant": "這次操作的內容已改變，請重新整理後重試。"
+  },
+  "进行中": {
+    "en": "In progress",
+    "zh-Hant": "進行中"
   },
   "连接中断，请使用相同内容重试。": {
     "en": "Connection interrupted. Retry with the same content.",

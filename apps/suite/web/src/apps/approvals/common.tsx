@@ -4,7 +4,7 @@ import { useI18n, formatDate } from "@synwevo/ui";
 import { newKey, op, read } from "../../shared/ops";
 import { Failure } from "../../shared/states";
 import type { Page } from "./types";
-import { errors, statuses, fieldTypes, modes, operators, events, problems, warnings } from "./text";
+import { errors, statuses, stageStatuses, fieldTypes, modes, operators, events, problems, warnings } from "./text";
 
 export { fieldTypes, modes, operators, events, problems, warnings };
 export const base = (ws: string) => `/approvals/w/${ws}`;
@@ -13,6 +13,12 @@ export function Status({ value }: { value: string }) {
   const { t } = useI18n();
   const tone = ["approved", "published", "active"].includes(value) ? "ok" : ["rejected", "revoked"].includes(value) ? "err" : ["stalled", "returned", "pending", "in_review"].includes(value) ? "warn" : "";
   return <span className={`badge ${tone}`}>{t(statuses[value] ?? value)}</span>;
+}
+/** A stage's own progress on a request's approval path. */
+export function StageStatus({ value }: { value: string }) {
+  const { t } = useI18n();
+  const tone = value === "approved" ? "ok" : value === "rejected" ? "err" : ["active", "stalled", "returned"].includes(value) ? "warn" : "";
+  return <span className={`badge ${tone}`}>{t(stageStatuses[value] ?? value)}</span>;
 }
 export function ErrorBox({ error, retry }: { error: unknown; retry?: () => void }) {
   const { t } = useI18n();
