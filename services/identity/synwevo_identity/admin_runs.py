@@ -20,9 +20,11 @@ They return **metadata, never content**, by construction rather than by filterin
 * text a caller chose is not shown either. A correlation id is returned as stored only when the
   platform made it (a run's or a flow run's own id). A caller may name any hundred characters
   instead — the workplace origin's operation route and the machine API both take one, and a flow
-  run inherits it — and that is returned as a digest (`correlation_token`). The runs that share
-  it are still grouped, on the server, by the stored value; a search by the digest, or by the
-  stored text for someone who was given it, still finds them.
+  run inherits it — and that is returned as a digest (`correlation_token`): keyed with a secret
+  derived from the server's root secret, so a guessed text cannot be tested against it offline,
+  and per person, so two people who chose the same text are not linked. The runs that share it
+  are still grouped, on the server, by the stored value, and a search by the digest finds them;
+  the text itself is not searchable, since a hit would confirm a guess.
 * an error code is the engine's or an operation's own identifier, with one exception: the code a
   flow's author writes into a `fail` step, which has the grammar of the step ids above. The flow
   routes read which steps of that version are `fail` steps and the code each ends with
@@ -45,12 +47,14 @@ services/identity/tests/test_admin_runs.py holds the copies to the originals.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 import time
 
 from fastapi import APIRouter, Query, Request
 
+from synwevo_core.auth import Auth
 from synwevo_core.errors import ServiceError
 from synwevo_core.platform_access import require_platform
 from synwevo_core.store import Store
@@ -73,8 +77,10 @@ FLOW_STATES = FLOW_ACTIVE + FLOW_PARKED + FLOW_TERMINAL
 FLOW_ATTENTION = ("failed", "partial", "blocked", "unknown")
 
 #: A `queued` or `running` operation that has not been touched for this long is reported as
-#: stalled. The capability layer's own sweep turns a `running` one into `unknown` after the same
-#: interval (`Capabilities.reconcile_stale`), so a stalled row here means that sweep has not run.
+#: stalled. The capability layer has a sweep that would turn such a `running` one into `unknown`
+#: (`Capabilities.reconcile_stale`), but nothing schedules it yet: a stalled row stays stalled
+#: until its owner or an operator acts. A flow run is stalled when it has been due this long and no
+#: runner holds it (the runner claims only due, unleased runs).
 STALE_AFTER_S = 600
 #: The summary counts runs updated inside a window; a day by default, a month at most, so the
 #: counting stays inside the (status, updated_at) index however large the history grows.
@@ -130,13 +136,22 @@ def _caller_of(principal, delegation) -> dict:
             "flow_run_id": _text(behalf.get("run_id")) if kind == "flow" else None}
 
 
-def correlation_token(stored: str) -> str:
+def token_key(store: Store) -> bytes:
+    """The key of `correlation_token`, derived from the server's root secret (as the API's list
+    cursors are): without it a digest cannot be recomputed from a guessed text."""
+    return hmac.new(Auth(store).secret(), b"synwevo/admin-runs/correlation/v2", hashlib.sha256).digest()
+
+
+def correlation_token(stored: str, user_id: str | None, key: bytes) -> str:
     """What the routes return for a stored correlation id: the id itself when the platform made
-    it, otherwise a digest of it — the same digest for the same text, so the runs of one chain
-    still read as one, and nothing of what the caller wrote."""
+    it, otherwise a keyed digest of it and of the person whose run it is — the same digest for
+    the same text of one person, so the runs of one chain still read as one; nothing of what the
+    caller wrote, no way to test a guess offline, and no link between two people who happened to
+    choose the same text."""
     if _GENERATED.fullmatch(stored):
         return stored
-    return "ext-" + hashlib.sha256(b"synwevo/admin-runs/correlation/v1\0" + stored.encode("utf-8")).hexdigest()[:24]
+    message = (user_id or "").encode("utf-8") + b"\0" + stored.encode("utf-8")
+    return "ext-" + hmac.new(key, message, hashlib.sha256).hexdigest()[:24]
 
 
 def _fail_steps(spec) -> dict[str, str]:
@@ -161,6 +176,13 @@ def build_router(store: Store, audit) -> APIRouter:
     def _caller(request: Request) -> frozenset[str]:
         return require_platform(request, PERMISSION, store=store, audit=audit)["platform_permissions"]
 
+    # Derived once, when the service starts (the root secret is established then): a read never
+    # becomes the first to create or record it, which would take the write lock mid-request.
+    key = token_key(store)
+
+    def _token(stored: str, user_id: str | None) -> str:
+        return correlation_token(stored, user_id, key)
+
     def _people(held: frozenset[str], rows: list[dict]) -> None:
         """Add the address and the workspace name the caller's other permissions let them read."""
         users = {row["user_id"] for row in rows if row.get("user_id")}
@@ -181,16 +203,18 @@ def build_router(store: Store, audit) -> APIRouter:
 
     def _run(row: dict, ts: float) -> dict:
         who = _caller_of(row.pop("principal", None), row.pop("delegation", None))
-        return {**row, **who, "correlation_id": correlation_token(row["correlation_id"]),
+        return {**row, **who, "correlation_id": _token(row["correlation_id"], row["user_id"]),
                 "stalled": row["status"] in RUN_ACTIVE and row["updated_at"] < ts - STALE_AFTER_S}
 
     def _flow(row: dict, ts: float, fails: dict[str, str]) -> dict:
         active = row["status"] in FLOW_ACTIVE
         lease, step = row.pop("lease_until"), row.pop("step_id")
         return {**row, "error_code": _shown_code(row["error_code"], step, fails),
-                "correlation_id": correlation_token(row["correlation_id"]), "leased": active and lease > ts,
+                "correlation_id": _token(row["correlation_id"], row["user_id"]), "leased": active and lease > ts,
                 # past the run's own deadline and still not finished: the runner has not reached it
-                "overdue": active and row["deadline"] < ts}
+                "overdue": active and row["deadline"] < ts,
+                # due this long and nobody holds it: the runner is down or stuck, whatever the deadline
+                "stalled": active and lease <= ts and row["due_at"] < ts - STALE_AFTER_S}
 
     def _fails(flow_id: str, version: int) -> dict[str, str]:
         row = store.one("SELECT spec_json FROM flow_versions WHERE flow_id=? AND version=?", (flow_id, version))
@@ -204,13 +228,19 @@ def build_router(store: Store, audit) -> APIRouter:
         A digest cannot be found through an index. The second half reads the correlation index
         alone, in batches, keeps the ids the platform did not make and compares their digests:
         linear in that index, and only when someone searches by a digest."""
-        found = [q] if store.one(f"SELECT 1 AS n FROM {table} WHERE correlation_id=? LIMIT 1", (q,)) else []
+        # Only an id the platform made is looked up as written: a caller's own text is never shown,
+        # and a search that found it would confirm a guess (CR-046 AR-1).
+        # A platform-made id names one chain whoever it belongs to: (id, None). A digest names one
+        # person's text: (text, person), so two people who chose the same text stay apart.
+        found = [(q, None)] if _GENERATED.fullmatch(q) and store.one(
+            f"SELECT 1 AS n FROM {table} WHERE correlation_id=? LIMIT 1", (q,)) else []
         after = ""
         while _TOKEN.fullmatch(q):
             batch = store.all(
-                f"SELECT DISTINCT correlation_id AS c FROM {table} WHERE correlation_id>? AND correlation_id NOT GLOB ? "
-                "AND correlation_id NOT GLOB ? ORDER BY correlation_id LIMIT ?", (after, *_GENERATED_GLOB, _TOKEN_BATCH))
-            found += [row["c"] for row in batch if row["c"] != q and correlation_token(row["c"]) == q]
+                f"SELECT DISTINCT correlation_id AS c, user_id AS u FROM {table} WHERE correlation_id>? "
+                "AND correlation_id NOT GLOB ? AND correlation_id NOT GLOB ? ORDER BY correlation_id LIMIT ?",
+                (after, *_GENERATED_GLOB, _TOKEN_BATCH))
+            found += [(row["c"], row["u"]) for row in batch if correlation_token(row["c"], row["u"], key) == q]
             if len(batch) < _TOKEN_BATCH:
                 break
             after = batch[-1]["c"]
@@ -223,13 +253,16 @@ def build_router(store: Store, audit) -> APIRouter:
         own = store.one(f"SELECT correlation_id FROM {table} WHERE id=?", (q,))
         stored = _stored_correlations(table, q)
         terms, args = [], []
-        if own and own["correlation_id"] not in stored:      # otherwise its chain already includes it
+        if own and own["correlation_id"] not in [c for c, _ in stored]:   # otherwise its chain includes it
             terms.append(f"{alias}.id=?")
             args.append(q)
-        if stored:
-            terms.append(f"{alias}.correlation_id=?" if len(stored) == 1
-                         else f"{alias}.correlation_id IN ({','.join('?' * len(stored))})")
-            args += stored
+        for chain, person in stored:
+            if person is None:
+                terms.append(f"{alias}.correlation_id=?")
+                args.append(chain)
+            else:
+                terms.append(f"({alias}.correlation_id=? AND {alias}.user_id=?)")
+                args += [chain, person]
         if not terms:
             return None
         return (terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"), args
@@ -342,15 +375,16 @@ def build_router(store: Store, audit) -> APIRouter:
         flows = {state: store.one("SELECT COUNT(*) AS n FROM flow_runs WHERE status=? AND updated_at>=?",
                                   (state, since))["n"] for state in FLOW_TERMINAL}
         flows_active = store.one(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(deadline<?), 0) AS overdue FROM flow_runs "
-            f"WHERE status IN ({','.join('?' * len(FLOW_ACTIVE))})", (ts, *FLOW_ACTIVE))
+            "SELECT COUNT(*) AS n, COALESCE(SUM(deadline<?), 0) AS overdue, "
+            "COALESCE(SUM(due_at<? AND lease_until<=?), 0) AS stalled FROM flow_runs "
+            f"WHERE status IN ({','.join('?' * len(FLOW_ACTIVE))})", (ts, ts - STALE_AFTER_S, ts, *FLOW_ACTIVE))
         parked = {state: store.one("SELECT COUNT(*) AS n FROM flow_runs WHERE status=?", (state,))["n"]
                   for state in FLOW_PARKED}
         return {"window_s": window_s, "since": since, "generated_at": ts, "stale_after_s": STALE_AFTER_S,
                 "runs": {"total": sum(by_status.values()), "by_status": by_status, "stalled": stalled,
                          "by_app": sorted(apps.values(), key=lambda a: (-a["total"], a["app"]))},
                 "flows": {"finished": flows, "active": flows_active["n"], "overdue": flows_active["overdue"],
-                          "parked": parked}}
+                          "stalled": flows_active["stalled"], "parked": parked}}
 
     @r.get("/app-runs/{run_id}")
     def app_run(request: Request, run_id: str):
@@ -362,10 +396,13 @@ def build_router(store: Store, audit) -> APIRouter:
         if not row:
             raise ServiceError(404, "run_not_found", "找不到这次运行")
         # grouped by the stored value (in insertion order, which the correlation index gives);
-        # what is returned for it is `correlation_token`'s answer, the same on every row
+        # what is returned for it is `correlation_token`'s answer, the same on every row of one person
+        # A caller's own text is one chain only for the person who used it (CR-046 AR-1).
+        mine = "" if _GENERATED.fullmatch(row["correlation_id"]) else " AND r.user_id IS ?"
         related = [_run(x, ts) for x in store.all(
-            f"SELECT {_RUN_COLUMNS} FROM op_runs r WHERE r.correlation_id=? AND r.id<>? "
-            "ORDER BY r.rowid LIMIT ?", (row["correlation_id"], run_id, RELATED_LIMIT + 1))]
+            f"SELECT {_RUN_COLUMNS} FROM op_runs r WHERE r.correlation_id=? AND r.id<>?{mine} "
+            "ORDER BY r.rowid LIMIT ?",
+            (row["correlation_id"], run_id, *((row["user_id"],) if mine else ()), RELATED_LIMIT + 1))]
         run = _run(row, ts)
         _people(held, [run, *related])
         return {"run": run, "related": related[:RELATED_LIMIT], "related_truncated": len(related) > RELATED_LIMIT,
@@ -387,8 +424,8 @@ def build_router(store: Store, audit) -> APIRouter:
         active = ",".join("?" * len(FLOW_ACTIVE))
         if status == "attention":
             where.append(f"(f.status IN ({','.join('?' * len(FLOW_ATTENTION))}) "
-                         f"OR (f.status IN ({active}) AND f.deadline<?))")
-            params += [*FLOW_ATTENTION, *FLOW_ACTIVE, ts]
+                         f"OR (f.status IN ({active}) AND (f.deadline<? OR (f.due_at<? AND f.lease_until<=?))))")
+            params += [*FLOW_ATTENTION, *FLOW_ACTIVE, ts, ts - STALE_AFTER_S, ts]
         elif status == "active":
             where.append(f"f.status IN ({active})")
             params += FLOW_ACTIVE
@@ -412,7 +449,7 @@ def build_router(store: Store, audit) -> APIRouter:
                                                if row["error_code"]}}
         page["items"] = [_flow(row, ts, fails.get((row["flow_id"], row["version"]), {})) for row in page["items"]]
         _people(held, page["items"])
-        return {**page, "generated_at": ts}
+        return {**page, "stale_after_s": STALE_AFTER_S, "generated_at": ts}
 
     @r.get("/flow-runs/{flow_run_id}")
     def flow_run(request: Request, flow_run_id: str):
@@ -439,6 +476,7 @@ def build_router(store: Store, audit) -> APIRouter:
         _people(held, [run])
         return {"run": run, "steps": [{"position": i + 1, **s} for i, s in enumerate(steps)],
                 "history": history[:HISTORY_LIMIT], "history_truncated": len(history) > HISTORY_LIMIT,
+                "stale_after_s": STALE_AFTER_S,
                 "generated_at": ts}
 
     return r

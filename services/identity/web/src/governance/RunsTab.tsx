@@ -7,7 +7,7 @@ import { useAdminData, useAdminPage } from "./data";
 import { PageControls } from "./ListControls";
 import { errText, fmtDuration } from "./labels";
 import { ADMIN_HEADING_ID } from "../admin/navigation";
-import { DELEGATION_LABEL, FLOW_STATES, FLOW_VIEW_KEYS, PRINCIPAL_LABEL, RUN_STATES, RUN_VIEW_KEYS, STATE_LABEL, VIA,
+import { DELEGATION_LABEL, FLOW_STATES, FLOW_VIEW_KEYS, HISTORY_LABEL, PRINCIPAL_LABEL, RUN_STATES, RUN_VIEW_KEYS, STATE_LABEL, VIA,
   VIA_LABEL, WINDOWS_S, WINDOW_LABEL, appName, closedWithoutFocus, elapsedSeconds, isCorrelationDigest, readView, runsHref,
   stateTone, windowOf, withView,
   type FlowDetail, type FlowRun, type FlowStep, type Run, type RunDetail, type RunSummary } from "./runs";
@@ -253,6 +253,7 @@ export function FlowRunsTab({ onDenied }: Props) {
     flow_id: view.flow, q: view.q })}`, onDenied);
   const [q, setQ] = useSearchText(view.q, (text) => set({ q: text }));
   const items = list.loading || list.err ? [] : list.data?.items || [];
+  const staleAfter = (list.data as (typeof list.data & { stale_after_s?: number }) | null)?.stale_after_s ?? 600;
   const filtered = !!(view.status || view.user || view.flow || view.q);
   const f = summary.data?.flows;
   return <>
@@ -288,8 +289,9 @@ export function FlowRunsTab({ onDenied }: Props) {
           <th scope="col" className="act">{t("详情")}</th></tr></thead>
         <tbody>{items.map((run) => <tr key={run.id}>
           <th scope="row"><span className="mono">{run.id}</span><div className="who2 mono">{run.flow_id} · {t("版本 {n}", { n: run.version })}</div></th>
-          <td data-label={t("状态")}><span><StateBadge status={run.status} flagged={run.overdue} />
+          <td data-label={t("状态")}><span><StateBadge status={run.status} flagged={run.overdue || run.stalled} />
             {run.overdue && <span className="cell-note">{t("已超过期限仍未结束")}</span>}
+            {run.stalled && <span className="cell-note">{t("已停滞：到期超过 {duration} 仍无执行器处理", { duration: fmtDuration(staleAfter) })}</span>}
             {run.leased && <span className="cell-note">{t("执行器正在处理")}</span>}
             {run.error_code && <span className="cell-note"><code>{run.error_code}</code></span>}</span></td>
           <td data-label={t("账户")}>{who(run)}</td>
@@ -316,6 +318,7 @@ export function FlowStats({ flows, time }: { flows: RunSummary["flows"]; time: n
     <div className="row gap12 wrap">
       <Stat label={t("未结束")} value={flows.active} />
       <Stat label={t("已超过期限仍未结束")} value={flows.overdue} tone="warn" />
+      <Stat label={t("已停滞（无执行器处理）")} value={flows.stalled} tone="warn" />
       <Stat label={t("受阻")} value={flows.parked.blocked || 0} tone="warn" />
       <Stat label={t("结果不明")} value={flows.parked.unknown || 0} tone="warn" />
       <Stat label={t("已暂停")} value={flows.parked.paused || 0} />
@@ -362,8 +365,9 @@ function FlowDialog({ id, search, onClose, onFilter }: {
           <Row name={t("流程运行编号")}><span className="mono">{run.id}</span></Row>
           <Row name={t("流程")}><span className="mono">{run.flow_id}</span> · {t("版本 {n}", { n: run.version })}
             <button className="btn sm" onClick={() => onFilter({ flow: run.flow_id, user: "", q: "", status: "" })}>{t("只看这个流程的运行")}</button></Row>
-          <Row name={t("状态")}><StateBadge status={run.status} flagged={run.overdue} />
+          <Row name={t("状态")}><StateBadge status={run.status} flagged={run.overdue || run.stalled} />
             {run.overdue && <span className="cell-note">{t("已超过期限仍未结束")}</span>}
+            {run.stalled && <span className="cell-note">{t("已停滞：到期超过 {duration} 仍无执行器处理", { duration: fmtDuration(load.data!.stale_after_s) })}</span>}
             {run.leased && <span className="cell-note">{t("执行器正在处理")}</span>}</Row>
           <Row name={t("错误代码")}>{run.error_code ? <code>{run.error_code}</code> : "—"}</Row>
           <Row name={t("账户")}>{who(run)}{run.user_email && <span className="cell-note mono">{run.user_id}</span>}
@@ -389,7 +393,7 @@ function FlowDialog({ id, search, onClose, onFilter }: {
               <thead><tr><th scope="col">{t("时间")}</th><th scope="col">{t("事件")}</th><th scope="col">{t("状态")}</th>
                 <th scope="col">{t("错误代码")}</th></tr></thead>
               <tbody>{load.data!.history.map((event) => <tr key={event.seq}>
-                <td>{fmtTime(event.created_at)}</td><td className="mono">{event.type}</td>
+                <td>{fmtTime(event.created_at)}</td><td>{label(t, HISTORY_LABEL, event.type)}</td>
                 <td>{label(t, STATE_LABEL, event.status)}</td><td>{event.error_code ? <code>{event.error_code}</code> : "—"}</td>
               </tr>)}</tbody></table></div>}
           {load.data!.history_truncated && <p className="muted small">{t("只列出最近的 {n} 条。", { n: load.data!.history.length })}</p>}

@@ -23,13 +23,15 @@ export type RunSummary = {
   window_s: number; since: number; generated_at: number; stale_after_s: number;
   runs: { total: number; by_status: Record<string, number>; stalled: number;
     by_app: { app: string; total: number; failed: number; unknown: number }[] };
-  flows: { finished: Record<string, number>; active: number; overdue: number; parked: Record<string, number> };
+  flows: { finished: Record<string, number>; active: number; overdue: number; stalled: number; parked: Record<string, number> };
 };
 export type FlowRun = {
   id: string; flow_id: string; version: number; user_id: string; user_email: string | null;
   status: string; error_code: string | null; correlation_id: string; parent_run_id: string | null;
   depth: number; trigger_id: string | null; calls_used: number; deadline: number; due_at: number;
   created_at: number; updated_at: number; finished_at: number | null; leased: boolean; overdue: boolean;
+  /** Due for longer than `stale_after_s` and no runner holds it: the runner is down or stuck. */
+  stalled: boolean;
 };
 export type FlowStep = {
   position: number; status: string; attempt: number; checks: number; error_code: string | null;
@@ -40,7 +42,8 @@ export type FlowEvent = {
   seq: number; type: string; status: string; attempt: number | null; op_run_id: string | null;
   error_code: string | null; fence: number; created_at: number;
 };
-export type FlowDetail = { run: FlowRun; steps: FlowStep[]; history: FlowEvent[]; history_truncated: boolean; generated_at: number };
+export type FlowDetail = { run: FlowRun; steps: FlowStep[]; history: FlowEvent[]; history_truncated: boolean;
+  stale_after_s: number; generated_at: number };
 
 /** The states an operation run can be in (synwevo_core.capabilities.RUN_STATES), in the order the
  *  filter lists them. */
@@ -63,6 +66,11 @@ export const STATE_LABEL: Record<string, string> = {
   unknown: "结果不明", paused: "已暂停", blocked: "受阻",
   // a flow step's own states (flow_steps.status)
   executing: "执行中", operation_wait: "等待操作结果",
+};
+/** What happened to a flow run (flow_history.type, written by the flow engine). */
+export const HISTORY_LABEL: Record<string, string> = {
+  started: "开始", advanced: "进入下一步", step_started: "步骤开始", step_completed: "步骤完成", step_failed: "步骤失败",
+  waiting: "等待中", paused: "已暂停", resumed: "继续", cancelled: "已取消", policy_revoked: "授权已撤销",
 };
 export const VIA_LABEL: Record<string, string> = {
   ui: "界面", api: "API 客户端", flow: "流程", agent: "Agent", automation: "个人自动化", system: "系统",

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import ast
 import inspect
+import hashlib
+import hmac
 import json
 import re
 import time
@@ -41,11 +43,17 @@ SECRETS = ("FIXTURE-INPUT-BODY", "FIXTURE-OUTPUT-BODY", "FIXTURE-ERROR-SENTENCE"
            "FIXTURE-FLOW-PARAMS", "FIXTURE-FLOW-EVENT", "FIXTURE-STEP-VALUE", "FIXTURE-STEP-RECEIPT",
            "FIXTURE-STEP-READER", "FIXTURE-FLOW-SPEC", "FIXTURE-GRANT-FAMILY", "FIXTURE-INPUT-HASH",
            "FIXTURE-CALLER-CORRELATION", "FIXTURE-AUTHORED-CODE")
-#: A correlation id as a caller may write one (any text up to 100 characters), and what is shown
-#: for it: "ext-" and the first 24 hex digits of SHA-256 over the module's label, a zero byte and
-#: the text — worked out with `shasum`, not with the module.
+#: A correlation id as a caller may write one (any text up to 100 characters).
 CALLER_TEXT = "FIXTURE-CALLER-CORRELATION acme merger 2026"
-CALLER_TOKEN = "ext-2b6b54ceaa180d19be45f03a"
+
+
+def caller_token(store, user_id: str, text: str) -> str:
+    """What is shown for a caller's correlation text, worked out here rather than with the module:
+    "ext-" and the first 24 hex digits of HMAC-SHA-256 over the person's id, a zero byte and the
+    text, keyed with HMAC-SHA-256(root secret, the module's label)."""
+    from synwevo_core.auth import Auth
+    key = hmac.new(Auth(store).secret(), b"synwevo/admin-runs/correlation/v2", hashlib.sha256).digest()
+    return "ext-" + hmac.new(key, user_id.encode() + b"\0" + text.encode(), hashlib.sha256).hexdigest()[:24]
 
 RUN_KEYS = {"id", "op", "app", "op_version", "workspace_id", "workspace_name", "user_id", "user_email", "via",
             "principal_kind", "client_id", "delegation_kind", "flow_run_id", "correlation_id", "parent_run_id",
@@ -53,7 +61,7 @@ RUN_KEYS = {"id", "op", "app", "op_version", "workspace_id", "workspace_name", "
             "finished_at", "updated_at", "stalled"}
 FLOW_KEYS = {"id", "flow_id", "version", "user_id", "user_email", "status", "error_code", "correlation_id",
              "parent_run_id", "depth", "trigger_id", "calls_used", "deadline", "due_at", "created_at",
-             "updated_at", "finished_at", "leased", "overdue"}
+             "updated_at", "finished_at", "leased", "overdue", "stalled"}
 STEP_KEYS = {"position", "status", "attempt", "checks", "error_code", "op_run_id", "op", "app", "op_status",
              "started_at", "updated_at"}
 HISTORY_KEYS = {"seq", "type", "status", "attempt", "op_run_id", "error_code", "fence", "created_at"}
@@ -206,7 +214,7 @@ def test_the_repeated_states_and_entries_are_the_capability_layers_and_the_flow_
     for prefix, module in (("run", capabilities), ("flowrun", flow_engine)):
         assert f'new_id("{prefix}")' in inspect.getsource(module)
         made = new_id(prefix)
-        assert admin_runs.correlation_token(made) == made
+        assert admin_runs.correlation_token(made, "u_fixture", b"fixture key") == made
     assert admin_runs.PERMISSION in platform_access.PERMISSIONS
     assert sorted(r for r in ROLES if admin_runs.PERMISSION in ROLES[r]) == \
         ["access_admin", "auditor", "super_admin", "support"]
@@ -255,7 +263,7 @@ def test_no_route_returns_an_input_an_output_a_message_an_authored_name_or_a_del
         "via": "ui", "principal_kind": "user", "client_id": None, "delegation_kind": None, "flow_run_id": None,
         # "run_plain" is this fixture's text, not an id the platform makes (`run_` and twelve hex
         # digits), so it is returned the way a caller's text is: as its digest
-        "correlation_id": "ext-a49465cb956308e07d5bc1d4", "parent_run_id": None, "depth": 0, "status": "succeeded", "error_code": None,
+        "correlation_id": caller_token(store, alice["id"], "run_plain"), "parent_run_id": None, "depth": 0, "status": "succeeded", "error_code": None,
         "object_kind": "form", "object_id": "form_1", "stalled": False,
         "created_at": 0, "started_at": 0, "finished_at": 0, "updated_at": 0}
     assert listed["run_failed"]["error_code"] == "invalid_input"
@@ -272,7 +280,7 @@ def test_no_route_returns_an_input_an_output_a_message_an_authored_name_or_a_del
     flows = answers[6].json()["items"]
     assert [f["id"] for f in flows] == ["fr_one"] and set(flows[0]) == FLOW_KEYS
     one = answers[7].json()
-    assert set(one) == {"run", "steps", "history", "history_truncated", "generated_at"} and set(one["run"]) == FLOW_KEYS
+    assert set(one) == {"run", "steps", "history", "history_truncated", "stale_after_s", "generated_at"} and set(one["run"]) == FLOW_KEYS
     assert [set(s) for s in one["steps"]] == [STEP_KEYS] and [set(h) for h in one["history"]] == [HISTORY_KEYS]
     assert one["steps"][0] | {"started_at": 0, "updated_at": 0} == {
         "position": 1, "status": "failed", "attempt": 2, "checks": 1, "error_code": "invalid_input",
@@ -293,8 +301,12 @@ def test_a_correlation_id_a_caller_chose_is_returned_as_a_digest_that_still_grou
         run(store, f"run_other_{i}", user=alice, workspace=ws, via="ui", correlation=text)
     flow(store, "fr_given", user=alice, correlation=CALLER_TEXT)
     flow(store, "fr_made", user=alice, correlation=made)
+    run(store, "run_bob_same_text", user=world["bob"], workspace=world["bob_ws"]["id"], via="api", correlation=CALLER_TEXT)
     monkeypatch.setattr(admin_runs, "_TOKEN_BATCH", 2)      # the digest is found past the first batch
     c = world["holder"]("auditor")
+    CALLER_TOKEN = caller_token(store, alice["id"], CALLER_TEXT)
+    # Keyed with the server's secret: an unkeyed digest of a guessed text (what v1 returned) no longer matches.
+    assert CALLER_TOKEN != "ext-" + hashlib.sha256(b"synwevo/admin-runs/correlation/v1\0" + CALLER_TEXT.encode()).hexdigest()[:24]
 
     listing = c.get("/api/admin/app-runs")
     listed = {row["id"]: row["correlation_id"] for row in listing.json()["items"]}
@@ -321,9 +333,14 @@ def test_a_correlation_id_a_caller_chose_is_returned_as_a_digest_that_still_grou
     assert ids == ["run_given_2", "run_given_1"]
     flows_by_token, ids = found("/api/admin/flow-runs", q=CALLER_TOKEN)
     assert ids == ["fr_given"]
-    # someone who was given the text may search by it; it is found, and still not echoed
+    # the text itself finds nothing: a hit would confirm a guess (CR-046 AR-1)
     by_text, ids = found("/api/admin/app-runs", q=CALLER_TEXT)
-    assert ids == ["run_given_2", "run_given_1"]
+    assert ids == []
+    assert found("/api/admin/flow-runs", q=CALLER_TEXT)[1] == []
+    # the same text chosen by another person is another digest: their runs are not linked
+    bobs = {row["id"]: row["correlation_id"] for row in c.get("/api/admin/app-runs").json()["items"]}
+    assert bobs["run_bob_same_text"] == caller_token(store, world["bob"]["id"], CALLER_TEXT) != CALLER_TOKEN
+    assert found("/api/admin/app-runs", q=CALLER_TOKEN)[1] == ["run_given_2", "run_given_1"]
     assert found("/api/admin/app-runs", q=made)[1] == ["run_child", made]
     assert found("/api/admin/flow-runs", q=made)[1] == ["fr_made"]
     assert found("/api/admin/app-runs", q="ext-" + "0" * 24)[1] == [], "没有人见过的摘要不对应任何运行"
@@ -453,7 +470,8 @@ def test_filters_select_by_state_entry_application_workspace_person_and_identifi
     assert listing["stale_after_s"] == 600, "列表自己说明停滞的阈值，页面按它写「超过多久没有更新」"
     assert (listing["total"], listing["total_capped"], listing["more"]) == (7, False, False)
     assert ids("?q=run_failed") == ["run_failed"]
-    assert ids("?q=corr_x") == ["run_fresh", "run_stalled"]
+    assert ids("?q=corr_x") == [], "a caller's own correlation text is not searchable (CR-046 AR-1)"
+    assert ids(f"?q={caller_token(store, bob['id'], 'corr_x')}") == ["run_fresh", "run_stalled"]
     assert ids("?q=tables.") == ["run_unknown"]
     # the search text is literal: `_` and `%` are not wildcards
     assert ids("?q=tables_record%25create") == ["run_fresh"] and ids("?q=tables_record") == ["run_fresh"]
@@ -520,7 +538,9 @@ def test_the_summary_counts_the_window_by_state_and_application_and_what_is_stal
                                      {"app": "tables", "total": 2, "failed": 1, "unknown": 1},
                                      {"app": "extract", "total": 1, "failed": 0, "unknown": 0}]
     assert day["flows"] == {"finished": {"succeeded": 1, "partial": 0, "failed": 1, "cancelled": 0},
-                            "active": 2, "overdue": 1, "parked": {"paused": 0, "blocked": 0, "unknown": 0}}
+                            "active": 2, "overdue": 1, "parked": {"paused": 0, "blocked": 0, "unknown": 0},
+                            # fr_overdue has been due for two hours and no runner holds it (CR-046 AR-2)
+                            "stalled": 1}
     week = c.get("/api/admin/app-runs/summary?window_s=604800").json()
     assert week["runs"]["by_status"]["succeeded"] == 5 and week["runs"]["by_status"]["running"] == 2
     assert week["flows"]["finished"]["failed"] == 2
@@ -644,8 +664,10 @@ def test_the_lists_are_read_through_indexes_by_the_statements_the_routes_build(w
     assert "LIKE" not in sql and " OR " not in sql
     ids, sql, plan, _ = read("/api/admin/app-runs", q="run_child")
     assert ids == ["run_child"] and "sqlite_autoindex_op_runs_1" in plan and "LIKE" not in sql and " OR " not in sql, (sql, plan)
+    # a caller's correlation text is not looked up as one (CR-046 AR-1): "tables" is read as the
+    # start of an operation id, and run_given (whose correlation it is) is not found by it
     ids, sql, plan, _ = read("/api/admin/app-runs", q="tables")
-    assert ids == ["run_given"] and "op_runs_correlation" in plan and "LIKE" not in sql, "精确匹配在先：不再按操作名开头去找"
+    assert ids == ["run_unknown_ops", "run_tables"][1:] and "correlation_id=?" not in sql, (ids, sql)
     # only a text that is neither is read as the start of an operation id
     ids, sql, plan, _ = read("/api/admin/app-runs", q="tables.")
     assert ids == ["run_tables"] and "r.op LIKE ? ESCAPE" in sql and "r.id=?" not in sql and "correlation_id=?" not in sql
@@ -654,12 +676,12 @@ def test_the_lists_are_read_through_indexes_by_the_statements_the_routes_build(w
     ids, sql, plan, _ = read("/api/admin/flow-runs", q="fr_a")
     assert ids == ["fr_a"] and "sqlite_autoindex_flow_runs_1" in plan, (sql, plan)
     assert read("/api/admin/flow-runs", q="fr_")[0] == [], "流程运行只按编号或关联编号精确查找"
-    # a digest is looked for in the correlation index alone, never in the table
-    token = admin_runs.correlation_token("tables")
+    # a digest is looked for through the correlation index, reading each candidate's person
+    token = admin_runs.correlation_token("tables", bob["id"], admin_runs.token_key(store))
     ids, sql, plan, ran = read("/api/admin/app-runs", q=token)
     assert ids == ["run_given"] and "op_runs_correlation" in plan
     scans = [p for s, _, p in ran if "SELECT DISTINCT correlation_id" in s]
-    assert scans and all("COVERING INDEX op_runs_correlation" in p for p in scans), ran
+    assert scans and all("INDEX op_runs_correlation" in p and "SCAN r " not in p for p in scans), ran
     # the related runs of one run: the correlation index, in its own order
     del statements[:]
     assert [x["id"] for x in c.get(f"/api/admin/app-runs/{root}").json()["related"]] == ["run_child"]
@@ -728,3 +750,22 @@ def test_reading_never_waits_for_a_business_write_and_changes_nothing(world, tmp
     after = {t: store.all(f"SELECT * FROM {t} ORDER BY rowid") for t in tables}
     assert after == before, "查看不改变任何运行：停滞的仍是 running，超期的仍在等待"
     assert store.one("SELECT COUNT(*) AS n FROM audit_events")["n"] == events, "读取运行元数据不写审计行"
+
+
+def test_a_flow_run_no_runner_picks_up_is_flagged_and_listed_for_attention(world):
+    """CR-046 AR-2: the runner claims only due runs with no lease. A run due long ago that nobody
+    holds is the stuck case — whatever its own deadline (seven days by default) still says."""
+    store, alice = world["store"], world["alice"]
+    ts = now()
+    flow(store, "fr_stuck", user=alice, status="queued", at=ts - 3600, deadline=ts + 6 * 86400)  # due an hour ago, no lease
+    flow(store, "fr_due_now", user=alice, status="queued")                                   # due just now
+    flow(store, "fr_held", user=alice, status="running", at=ts - 3600, lease_until=ts + 60,
+         deadline=ts + 6 * 86400)                                                            # a runner holds it
+    c = world["holder"]("auditor")
+    rows = {r["id"]: r for r in c.get("/api/admin/flow-runs").json()["items"]}
+    assert (rows["fr_stuck"]["stalled"], rows["fr_due_now"]["stalled"], rows["fr_held"]["stalled"]) == (True, False, False)
+    assert not rows["fr_stuck"]["overdue"], "its deadline is still days away: only the new flag shows it"
+    attention = [r["id"] for r in c.get("/api/admin/flow-runs?status=attention").json()["items"]]
+    assert attention == ["fr_stuck"]
+    assert c.get("/api/admin/flow-runs/fr_stuck").json()["run"]["stalled"] is True
+    assert c.get("/api/admin/app-runs/summary").json()["flows"]["stalled"] == 1
