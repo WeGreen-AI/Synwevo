@@ -20,7 +20,7 @@ The check passes only when all of these hold, read fresh on every call:
 | 8 | The source's policy is `audience` and the write reaches people who are not necessarily the target's members (an operation whose side effect is `external`: a message, a fill-in request, a public link; or a write the application knows lands in front of link holders, such as publishing a form whose public link follows the latest version): refused, because the membership comparison cannot vouch for those recipients. `any` (with an organization cap of `any`) is the owner's decision to allow it. | `transfer_audience_external` |
 | 9 | The source belongs to an organization whose content stays inside it — the workspace's policy is `organization` or the organization's cap is `organization`, including when nobody has chosen either (the defaults) — and the write reaches people outside the target (as in 8): refused, because those recipients need not be anyone in the organization. A send made from the source workspace itself is not a transfer and is not asked. | `transfer_organization_external` |
 
-All refusals are HTTP 403. A stored value this code does not know (written by a later version) is treated as
+All refusals are HTTP 403. A workspace whose organization is frozen or deleted, or whose organization the person has left, takes no operation of any application at all (`app_access_denied`), including a change of its own policies. A stored value this code does not know (written by a later version) is treated as
 the strictest one: an unknown workspace policy as `none`, an unknown organization cap as `organization`.
 Separately, the caller authorizes the write in the target exactly as for any other write.
 
@@ -42,8 +42,9 @@ it was decided on: a page loaded before someone else's change answers 409 (`tran
   * **Which writes count.** Writing into the workspace that will own the result counts as a transfer from every other workspace whose content reached the model in this conversation branch. Catalogue names alone do not count, and withheld results do not count. The model's input cannot be traced word by word, so every such source counts. A copy-type operation (`writes_elsewhere`) also counts its own source. What a write of this conversation branch carried into a workspace keeps where it came from: reading it back there, or the receipt of that write, counts those sources for later writes too (a copy made in the conversation does not lose its source). This is for the transfer question only: the copy is the target's content, so the model reads it under the target's processing policy, and leaving the source does not hide it.
   * **When it is checked.** At three points:
     * when the call is proposed, so no card is shown for a refused transfer;
-    * when the person confirms: the confirmation fingerprint includes each source's policy facts, so any change voids it;
+    * when the person confirms: the confirmation fingerprint includes each source's policy facts, so any change voids it. The card is then shown again with what it now rests on (for example a source the model read later in the same step), and the answer is 409 `confirmation_mismatch`; nothing runs until the person confirms the new card;
     * immediately before the operation runs.
+  * **Scope.** A conversation limited to some workspaces also limits the flows the Agent defines, publishes, starts or resumes: every workspace a step, a result read or a wait acts in must be inside it (`outside_conversation_scope`).
   * **What the person sees.** The card lists the source workspaces under the target, so the person can see who will be able to read the content.
   * **Provenance.** The target's run record keeps `delegation.transfer_from`: the source workspace IDs only, no content.
   * **Personal data.** Personal operations (memories) still never take workspace content (`source_transfer_unavailable`).
@@ -66,7 +67,7 @@ it was decided on: a page loaded before someone else's change answers 409 (`tran
 
 The record created in the target is independent:
 * It follows the target's access and policies.
-* It keeps its provenance (the source workspace ID).
+* A write by the Agent or a flow keeps its provenance on the target's run record (`delegation.transfer_from`: source workspace IDs only). A Forms duplicate made by a person on its page is recorded in the source workspace's run log with the copy as its object; the copy itself has no source column.
 * Later losing access to the source does not take it away from the target's readers.
 
 Conversation content that still depends on the source stays under the source's access. When the person loses access, it is hidden (`access_changed`), and pending writes are refused (`source_access_changed`).

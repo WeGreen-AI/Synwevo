@@ -66,6 +66,14 @@ def _j(v, default=None):
         return default
 
 
+
+class _Reissue(Exception):
+    """A confirmation whose basis changed: the card is shown again with the new one."""
+
+    def __init__(self, turn: dict, call_id: str, shown: str, binding: str, transfer: list[dict]):
+        super().__init__(call_id)
+        self.turn, self.call_id, self.shown, self.binding, self.transfer = turn, call_id, shown, binding, transfer
+
 class Agent:
     # One thread per admissible active turn: a turn waiting for model capacity must not hold
     # back another person's turn behind it (docs/platform/model-traffic.md §3).
@@ -1053,10 +1061,22 @@ class Agent:
         # checks. For external operations the atomic claim is the execution boundary.
         c = self.store.one("SELECT operation FROM agent_tool_calls WHERE id=? AND user_id=?", (call_id, user["id"]))
         operation = self.caps.registry.get(c["operation"]) if c else None
-        if operation and operation.transactional:
-            with self.store.tx():
-                return self._decide(user, call_id, confirm=confirm, confirmation=confirmation)
-        return self._decide(user, call_id, confirm=confirm, confirmation=confirmation)
+        try:
+            if operation and operation.transactional:
+                with self.store.tx():
+                    return self._decide(user, call_id, confirm=confirm, confirmation=confirmation)
+            return self._decide(user, call_id, confirm=confirm, confirmation=confirmation)
+        except _Reissue as r:
+            # Written after the decision's transaction is rolled back, and only over the card the
+            # person answered: a concurrent decision or another reissue wins.
+            n = self.store.execute("UPDATE agent_tool_calls SET input_hash=?, transfer_json=?, updated_at=? "
+                                   "WHERE id=? AND status='awaiting_confirmation' AND input_hash=?",
+                                   (r.binding, canonical(r.transfer) if r.transfer else None, now(), r.call_id, r.shown))
+            if n == 1:
+                self._event(r.turn["conversation_id"], r.turn["user_id"], r.turn["id"], "tool",
+                            {"tool_call_id": r.call_id, "status": "awaiting_confirmation"})
+            raise ServiceError(409, "confirmation_mismatch", "确认依据已变化，请核对更新后的内容再确认",
+                               {"reissued": n == 1}) from None
 
     def _decide(self, user: dict, call_id: str, *, confirm: bool, confirmation: str | None) -> dict:
         c = self.store.one("SELECT * FROM agent_tool_calls WHERE id=? AND user_id=?", (call_id, user["id"]))
@@ -1093,8 +1113,13 @@ class Agent:
                         raise
                     refused = {"code": err.code, "message": err.message}
                 else:
-                    if self._binding(t, call_id, op, wid, clean, transfer) != c["input_hash"]:
-                        raise ServiceError(409, "confirmation_mismatch", "操作内容、目标版本或范围已变化，请重新发起请求")
+                    binding = self._binding(t, call_id, op, wid, clean, transfer)
+                    if binding != c["input_hash"]:
+                        # What the card rests on changed since it was shown (a source read later in
+                        # the same step, a policy revision, the target's members): the old
+                        # confirmation is void. decide() shows the new basis as a new card instead
+                        # of one that can never pass; nothing runs until the person confirms that.
+                        raise _Reissue(t, call_id, c["input_hash"], binding, transfer)
             n = self.store.execute("UPDATE agent_tool_calls SET status='running', decided_at=?, updated_at=? WHERE id=? "
                                    "AND status='awaiting_confirmation' AND EXISTS (SELECT 1 FROM agent_turns "
                                    "WHERE id=? AND status='waiting_confirmation' AND cancel_requested=0)",

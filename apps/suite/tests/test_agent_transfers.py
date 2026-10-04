@@ -255,3 +255,29 @@ def test_a_copy_made_in_the_conversation_keeps_its_source_for_a_later_write(gove
     p.ident.remove_member(p.b, alice)
     shown = op(g.client, "agent.conversation.get", {"conversation_id": cid})["output"]
     assert not any(m["hidden"] for m in shown["messages"] if m["role"] == "assistant")
+
+
+def test_a_card_proposed_before_a_read_in_the_same_step_is_reissued_not_stuck(governed):
+    """CR-047 AGENT-DF-4: the model proposes a write into A and reads B in one step. At
+    confirmation B is a source the card did not show, so that confirmation is void — and the card
+    is shown again with B, rather than answering 409 forever."""
+    from synwevo_suite.agent.provider import StepResult
+    g = governed
+    setup(g)
+    legal_transfer(g)
+    write, look = create(g.people.a, "Written before reading B", "write-a"), read(g.people.b, "read-b")
+    both = StepResult(content=write.content + look.content, stop_reason="tool_use", usage={"output_tokens": 9})
+    _, turn = begin(g, [both, say("done")])
+    assert advance(g, turn)["status"] == "waiting_confirmation"
+    card = g.store.one("SELECT * FROM agent_tool_calls WHERE tool_use_id='write-a'")
+    assert card["transfer_json"] is None                       # nothing was read when it was proposed
+    refused = op(g.client, "agent.tool_call.confirm", {"tool_call_id": card["id"], "confirmation": card["input_hash"]},
+                 expect=409)
+    assert refused["error"] == "confirmation_mismatch"
+    assert forms_in(g, g.people.a) == ["A roster"]            # the old confirmation ran nothing
+    again = g.store.one("SELECT * FROM agent_tool_calls WHERE id=?", (card["id"],))
+    assert again["status"] == "awaiting_confirmation" and again["input_hash"] != card["input_hash"]
+    assert [b["source"] for b in json.loads(again["transfer_json"])] == [g.people.b]
+    done = op(g.client, "agent.tool_call.confirm", {"tool_call_id": card["id"], "confirmation": again["input_hash"]})["output"]
+    assert done["status"] == "succeeded"
+    assert forms_in(g, g.people.a) == ["A roster", "Written before reading B"]

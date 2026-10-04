@@ -5,14 +5,14 @@
 | 项 | 当前事实 |
 |---|---|
 | 锁 | 主检出 docs/agent-work/.coordinator.lock 由 80146fec 持有（记录了接管证据），每轮更新 heartbeat |
-| 实施树 | .claude/worktrees/business-apps，feat/business-apps；HEAD = 43e7e3c（df-flows 快进合入：流程运行按“整条事件链读过的空间”问数据流政策）＋本地记录；64e9348 已推送 origin/feat/business-apps，43e7e3c 待门槛通过后推送 |
+| 实施树 | .claude/worktrees/business-apps，feat/business-apps；origin 停在 43e7e3c（df-flows 合入），本地另有 CR-047 修复 0f0124b、af62448、64cdf9d、f7afc66、baad721、9048d40、3f43348 及 DFP-2/AGENT-DF-4/AGENT-DF-5 待提交批次；门槛通过后一次推送（Actions 额度：每次推送一次完整 verify） |
 | PR | 草稿 PR #1，https://github.com/WeGreen-AI/Synwevo/pull/1；64e9348 的 CI（Actions 37166232361）通过；未合并 |
 | 主检出 | main@2dd03c7；图标任务等其他会话的改动完整保留，不触碰 |
-| CI / 部署 | 重跑 36688073906（4b74796）verify 1 失败 / 2865 通过：tests/integration/test_gate_api_errors.py 断言工作空间余量恰为 1197，而 GCRA 每 50 ms 回补一次，CI 容器较慢时读到 1198（计时依赖的测试缺陷，非产品缺陷；本机延迟客户端复现）。修复 37cd253（按耗时界定余量），连同 API 会话已提交且本地验证的 5 个提交（游标签名、断点上传类型、来源/下载错误契约）于 01:55Z 快进推送 main；运行 37169458599 verify 进行中，通过后既有流水线部署并检查公网健康。生产仍为 aadcb9e，直到该运行完成 |
+| CI / 部署 | 生产仍为 aadcb9e。main 37cd253（GCRA 计时测试修复）运行 37169458599 verify 2 失败/2877 通过：API 会话提交的 OpenAPI 413/416 描述取自运行时 Python（本机 3.14 与 CI 3.12 措辞不同）；b8cb31a 固定为 RFC 9110 名称并重新生成契约（3.12 措辞注入下与提交文件一致；旧代码在同注入下复现 CI 差异），已推送，运行 37171551868 进行中，通过后由既有流水线部署 |
 | 本机门槛（提交前同一树，2026-10-04T00:25–00:48Z） | 五套件 4572 passed / 2 skipped / 0 failed（docs 1488+2 skipped、identity 1206、messages 63、suite 717、integration 1098）；五守卫、typecheck、build、npm test（6 个工作区 360 项）、infra unittest 8、Python SDK 35 均通过 |
 | 当前包 | ① data_flow：df-flows（F1、F3–F7）已复核并合入；df-forms（F2/AGENT-DF-1 高：公开表单页向持链接者暴露草稿）与 df-agent（AGENT-DF-2..5、DFP-1..6）两个 worker 因子代理额度耗尽中断，改由协调者直接做；**复核无高/中项前 PR #1 不得合并 main**；② Webhook：投递侧 8 个提交在 claude/suite-machine-webhooks（0c36724），管理侧修复与两项审查因额度中断；③ Admin 运行页：claude/admin-governance f85cada（AR-1..10），独立验证因额度中断；④ D3–D20 待分组修复（D3 语义待所有者决定） |
 | 并行 | 只读：data_flow 审查×2、admin 运行页审查×1（会话重启后已续跑）；工作流 wf_f4d87c36-c38（Webhook：交付侧修复→管理侧修复→授权/数据暴露与核心影响面两路审查+对抗核实，唯一写入者，仅 suite-machine-api；step 2 已本地提交 930a954）；工作流 wf_a9743a28-ba8（只读复核 admin-coverage D3–D20 并给出最小修复方案，6 组） |
-| 下一动作 | 等 37169458599 结果：成功则核对五个正式主机 /readyz、各角色镜像并写 docs/quality/deployment.md；失败读日志修根因。并行：apps/suite 全量测试（合入后），推送 43e7e3c；随后直接修 F2（公开表单草稿暴露） |
+| 下一动作 | 37171551868 通过则核对五个正式主机 /readyz、各角色镜像并写 docs/quality/deployment.md；失败读日志修根因。业务分支：提交 DFP-2/AGENT-DF-4/5 批次并推送；随后第二轮对抗复核（子代理额度恢复后，否则协调者自审）、浏览器验收 Settings/Automations 改动、CR-048 其余、Webhook 管理侧与 Admin 运行页合入 |
 
 ## 已验证与边界
 
