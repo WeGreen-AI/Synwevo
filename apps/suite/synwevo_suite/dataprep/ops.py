@@ -1,7 +1,7 @@
 """UI, automation and Agent share these operations and current workspace authorization."""
 from synwevo_core.capabilities import Operation
 from . import models as M
-from .service import decode
+from .service import decode, run_view
 from .files import inspect
 from .history import result_guard, check_sources
 from ..common.files import read_blob
@@ -11,7 +11,7 @@ def register(registry, service):
     def run_read(call, rid):
         row = service.get('runs', call.workspace_id, rid)
         service.check_run_sources(call.workspace_id, call.user_id, row)
-        return decode(row)
+        return run_view(row, call.user_id)
 
     def add(id, title, model, handler, *, write=False, events=(), **kw):
         # Older worktrees do not yet have the coordinator-owned history contract.

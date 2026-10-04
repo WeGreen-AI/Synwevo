@@ -29,6 +29,17 @@ def decode(row):
             for k, v in row.items() if k not in ('rows_blob', 'blob', 'scan', 'worker')}
 
 
+def run_view(row, viewer):
+    """A run as `viewer` reads it. Its correlation and operation run are the starter's own — free
+    text they chose for their tracing, or their own run id — and reach nobody else (review R5;
+    approvals requests and Forms requests never hand theirs to other members either)."""
+    out = decode(row)
+    if out.get('created_by') != viewer:
+        out.pop('correlation_id', None)
+        out.pop('op_run_id', None)
+    return out
+
+
 class DataPrep:
     def __init__(self, store, identity, caps):
         self.store, self.identity, self.caps = store, identity, caps
@@ -113,7 +124,7 @@ class DataPrep:
             except ServiceError:
                 hidden += 1
                 continue
-            items.append(decode(row))
+            items.append(run_view(row, user) if table == 'runs' else decode(row))
         return {'items': items, 'next_offset': offset + limit if len(rows) > limit else None, 'hidden': hidden}
 
     def upload(self, workspace, user, filename, data, key):

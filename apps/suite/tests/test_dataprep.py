@@ -411,3 +411,26 @@ def test_isolated_import_roots():
     assert Path(synwevo_core.store.__file__).is_relative_to(tree / 'packages/core')
     assert Path(synwevo_suite.dataprep.__file__).is_relative_to(tree / 'apps/suite')
     assert Path(synwevo_auth_client.__file__).is_relative_to(tree / 'packages/auth-client/python')
+
+
+def test_a_runs_correlation_and_operation_run_reach_only_its_starter(suite):
+    """Review R5: dataprep.run.list and .get returned whole rows, so every member who can read
+    DataPrep saw the starter's correlation — their own tracing text, or their own run id — and
+    their operation run id, which the run receipts hide from anyone else."""
+    c = suite
+    c.sign_in('bob')
+    d = dataset(c)
+    r = recipe(c)
+    start = {'recipe_id': r['id'], 'version': 1, 'inputs': {'main': d['id']}}
+    response = c.post('/api/suite/ops/dataprep.run.start', headers={'X-Synwevo-CSRF': 'fixture-csrf'},
+                      json={'workspace_id': c.people.a, 'input': start, 'correlation_id': 'fixture-bob-private-trace'})
+    assert response.status_code == 200, response.text
+    named = response.json()['output']
+    # the starter still reads his own
+    mine = op(c, 'run.get', {'run_id': named['id']})
+    assert mine['correlation_id'] == 'fixture-bob-private-trace' and mine['op_run_id']
+    c.sign_in('alice')
+    listed = op(c, 'run.list', {'offset': 0, 'limit': 20})['items']
+    assert listed and all('correlation_id' not in x and 'op_run_id' not in x for x in listed), listed
+    got = op(c, 'run.get', {'run_id': named['id']})
+    assert got['id'] == named['id'] and 'correlation_id' not in got and 'op_run_id' not in got
