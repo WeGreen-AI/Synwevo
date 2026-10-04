@@ -436,6 +436,29 @@ def test_review_history_names_the_people_not_their_ids(ex):
     assert get(ex, rid)["history"][0]["actor_name"] is None
 
 
+def test_template_refusals_name_the_field_and_the_rule_broken(ex):
+    """Acceptance defect: a minimum above the maximum, or a minimum of 1e3, came back as a
+    refusal the editor could only word generically. Each refusal now names the field input."""
+    def refused(**changes):
+        field = {"id": "amount", "label": "Amount", "type": "decimal", "rule": {"prefix": "Amount:"}}
+        for key, value in changes.items():
+            field = {**field, "rule": {**field["rule"], **value}} if key == "rule" else {**field, key: value}
+        body = op(ex, "template.create", {"title": "Fixture", "definition": {"fields": [DEFINITION["fields"][0], field]}}, status=422)
+        assert body["error"] == "invalid_input"
+        return [(e["loc"], e["type"]) for e in body["detail"]["fields"]]
+    assert refused(minimum="10", maximum="2") == [(["definition", "fields", "1", "maximum"], "bounds_order")]
+    assert refused(minimum="1e3") == [(["definition", "fields", "1", "minimum"], "string_pattern_mismatch")]
+    assert refused(rule={"prefix": "   "}) == [(["definition", "fields", "1", "rule", "prefix"], "prefix_required")]
+    assert refused(rule={"kind": "column", "header": " "}) == [(["definition", "fields", "1", "rule", "header"], "header_required")]
+    # An omitted prefix or header is refused like a blank one.
+    for rule in ({"kind": "prefix"}, {"kind": "column"}):
+        with pytest.raises(ValidationError) as missing:
+            Definition.model_validate({"fields": [{"id": "x", "label": "X", "rule": rule}]})
+        assert [e["type"] for e in missing.value.errors()] == ["prefix_required" if rule["kind"] == "prefix" else "header_required"]
+    assert Definition.model_validate({"fields": [{"id": "x", "label": "X", "rule": {"kind": "cell"}}]})
+    assert op(ex, "template.list")["output"]["items"] == []
+
+
 def test_queue_bound_pagination_review_validation_and_viewer(ex):
     tid, fid = template(ex), upload(ex)["id"]
     ids = [task(ex, tid=tid, file_id=fid) for _ in range(20)]

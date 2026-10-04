@@ -22,5 +22,8 @@ label.extract-check { display: flex; align-items: center; gap: var(--sp-2); marg
 .extract-long, .extract-history p, .extract-history small { overflow-wrap: anywhere; }
 .extract-history { align-items: flex-start; flex-wrap: wrap; }
 .extract-result pre, .extract-history-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A refused save: the message sits under the input it concerns. */
+.extract-problem { display: block; color: var(--err); font-size: var(--fs-2); overflow-wrap: anywhere; }
+.extract-editor .input[aria-invalid="true"] { border-color: var(--err); }
 @media (max-width: 800px) { .extract-review, .extract-grid { grid-template-columns: minmax(0, 1fr); } .extract-source { position: static; max-height: 45dvh; } .extract-actions .btn { min-height: 40px; } }
 @media (prefers-reduced-motion: reduce) { .extract-evidence { transition: none; } }

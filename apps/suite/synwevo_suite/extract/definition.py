@@ -5,7 +5,8 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 from synwevo_core.errors import ServiceError
 
 
@@ -13,21 +14,29 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# Refusals are raised on the input they concern, with their own type, so the template editor can
+# word each one next to that input (the operation layer returns `loc` and `type` per error).
 class Rule(Strict):
     kind: Literal["prefix", "cell", "column"] = "prefix"
-    prefix: str = Field(default="", max_length=120)
+    prefix: str = Field(default="", max_length=120, validate_default=True)
     table: str = Field(default="", max_length=120)
     row: int = Field(default=1, ge=1, le=2000)
     column: int = Field(default=1, ge=1, le=100)
-    header: str = Field(default="", max_length=120)
+    header: str = Field(default="", max_length=120, validate_default=True)
 
-    @model_validator(mode="after")
-    def valid(self):
-        if self.kind == "prefix" and not self.prefix.strip():
-            raise ValueError("prefix must be nonempty")
-        if self.kind == "column" and not self.header.strip():
-            raise ValueError("column header must be nonempty")
-        return self
+    @field_validator("prefix")
+    @classmethod
+    def prefix_given(cls, value: str, info: ValidationInfo):
+        if info.data.get("kind", "prefix") == "prefix" and not value.strip():
+            raise PydanticCustomError("prefix_required", "prefix must be nonempty")
+        return value
+
+    @field_validator("header")
+    @classmethod
+    def header_given(cls, value: str, info: ValidationInfo):
+        if info.data.get("kind") == "column" and not value.strip():
+            raise PydanticCustomError("header_required", "column header must be nonempty")
+        return value
 
 
 class FieldSpec(Strict):
@@ -42,11 +51,13 @@ class FieldSpec(Strict):
     minimum: str | None = Field(default=None, max_length=50, pattern=r"^-?[0-9]{1,30}(\.[0-9]{1,12})?$")
     maximum: str | None = Field(default=None, max_length=50, pattern=r"^-?[0-9]{1,30}(\.[0-9]{1,12})?$")
 
-    @model_validator(mode="after")
-    def bounds(self):
-        if self.minimum is not None and self.maximum is not None and Decimal(self.minimum) > Decimal(self.maximum):
-            raise ValueError("minimum exceeds maximum")
-        return self
+    @field_validator("maximum")
+    @classmethod
+    def bounds(cls, value: str | None, info: ValidationInfo):
+        minimum = info.data.get("minimum")       # absent when the minimum itself was refused
+        if value is not None and minimum is not None and Decimal(minimum) > Decimal(value):
+            raise PydanticCustomError("bounds_order", "maximum is below minimum")
+        return value
 
 
 class Definition(Strict):
