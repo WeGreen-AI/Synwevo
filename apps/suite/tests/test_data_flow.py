@@ -273,3 +273,59 @@ def test_a_flow_step_that_sends_to_other_people_is_held_to_the_same_rule(suite):
         outcomes[name] = (run["status"], run["error_code"])
     assert outcomes == {"send": ("blocked", "transfer_audience_external"), "keep": ("succeeded", None)}
     assert p.store.one("SELECT COUNT(*) AS n FROM form_requests")["n"] == 0
+
+
+def test_organization_content_does_not_leave_the_organization_by_an_outward_send(suite):
+    """CR-047 DFP-1: a sibling workspace's message or request goes to recipients who need not be
+    anyone in the organization, so content kept inside it — by the defaults too — is refused there."""
+    p = suite.people
+    alice = p.uid("alice")
+    orgs, oid, main = organization(p, "alice", "Fixture Org", "fixture-data-flow-org-ext")
+    sibling = orgs.create_workspace(oid, alice, "Fixture sibling space")["id"]
+
+    def external():
+        with pytest.raises(ServiceError) as err:
+            data_flow.check(p.store, user_id=alice, source=main, target=sibling, external=True)
+        return err.value.status, err.value.code
+
+    # Nobody has chosen anything: policy and cap are both the default "organization".
+    assert data_flow.check(p.store, user_id=alice, source=main, target=sibling)["same_organization"]
+    assert external() == (403, "transfer_organization_external")
+    # The workspace opens up, but the organization's cap still keeps its content inside.
+    data_flow.set_workspace_outbound(p.store, main, "any", actor_id=alice, revision=revision(p.store, main))
+    assert external() == (403, "transfer_organization_external")
+    # The organization opens up, but the workspace goes back to "organization".
+    data_flow.set_organization_outbound(p.store, oid, "any", actor_id=alice)
+    data_flow.set_workspace_outbound(p.store, main, "organization", actor_id=alice, revision=revision(p.store, main))
+    assert external() == (403, "transfer_organization_external")
+    # Both owners decided to let it out.
+    data_flow.set_workspace_outbound(p.store, main, "any", actor_id=alice, revision=revision(p.store, main))
+    assert data_flow.check(p.store, user_id=alice, source=main, target=sibling, external=True)["outbound"] == "any"
+    # Sending from the source workspace itself is that workspace's own act, not a transfer.
+    assert data_flow.check(p.store, user_id=alice, source=main, target=main, external=True)["same_workspace"]
+
+
+def test_a_flow_cannot_send_organization_content_out_from_a_sibling_workspace(suite):
+    p = suite.people
+    alice = p.uid("alice")
+    suite.sign_in("alice")
+    orgs, oid, main = organization(p, "alice", "Fixture Org", "fixture-data-flow-org-flow")
+    sibling = orgs.create_workspace(oid, alice, "Fixture sibling space")["id"]
+    op(suite, "forms.form.create", {"title": "Fixture payroll of the organization"}, ws=main)
+    form = op(suite, "forms.form.create", {"title": "Fixture request form"}, ws=sibling)["output"]["id"]
+    read = {"id": "read", "kind": "call", "operation": "forms.form.list", "workspace_id": main, "input": {}}
+    title = {"$ref": "steps.read.forms.0.title"}
+    send = {"id": "act", "kind": "call", "operation": "forms.request.create", "workspace_id": sibling,
+            "input": {"form_id": form, "title": title, "recipient": {"email": "outside@example.test"}}}
+    keep = {"id": "act", "kind": "call", "operation": "forms.form.create", "workspace_id": sibling, "input": {"title": title}}
+    flows = suite.api.state.flows
+    outcomes = {}
+    for name, step in (("send", send), ("keep", keep)):
+        flow_id = flows.create(user_id=alice, name="Fixture org " + name, definition={"steps": [read, step]})["flow_id"]
+        run_id = flows.start(flow_id, user_id=alice, version=1, parameters={}, idempotency_key="fixture-org-" + name)["id"]
+        flows.tick()
+        run = p.store.one("SELECT status, error_code FROM flow_runs WHERE id=?", (run_id,))
+        outcomes[name] = (run["status"], run["error_code"])
+    # Inside the organization the content may move; out to an address it may not.
+    assert outcomes == {"send": ("blocked", "transfer_organization_external"), "keep": ("succeeded", None)}
+    assert p.store.one("SELECT COUNT(*) AS n FROM form_requests")["n"] == 0

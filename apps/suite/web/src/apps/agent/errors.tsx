@@ -69,6 +69,7 @@ const errors: Record<string, string> = {
   transfer_audience_external: "来源工作空间的数据流政策只允许转移给已能看到这些内容的成员；对外发送的接收方无法逐一核对，这些内容没有发出。",
   transfer_organization_denied: "来源工作空间的数据流政策只允许转移到同一组织的工作空间。",
   transfer_organization_policy_denied: "来源所属组织不允许其内容转移到组织以外的工作空间。",
+  transfer_organization_external: "来源工作空间的内容只能留在所属组织内；对外发送的接收方可能不在组织内，这些内容没有发出。",
   source_transfer_unavailable: "工作空间的内容不能存为个人资料，请在应用中处理。",
   not_awaiting_confirmation: "此操作已处理，请刷新查看结果。",
   turn_running: "已有回答正在进行，请等待或先停止。",

@@ -65,6 +65,7 @@ REFUSALS = {
     "transfer_audience_external": "来源工作空间的数据流政策只允许转移给已能看到这些内容的成员；对外发送的接收方无法逐一核对，这些内容不能随之发出",
     "transfer_organization_denied": "来源工作空间的数据流政策只允许转移到同一组织的工作空间",
     "transfer_organization_policy_denied": "来源所属组织不允许其内容转移到组织以外的工作空间",
+    "transfer_organization_external": "来源工作空间的内容只能留在所属组织内；对外发送的接收方可能不在组织内，这些内容不能随之发出",
     "transfer_policy_changed": "数据流政策已被其他人修改，请刷新后重试",
 }
 
@@ -145,6 +146,11 @@ def check(store: Store, *, user_id: str, source: str, target: str | None, extern
         outside = len(audience - _members(store, source))
         if outside:
             raise refusal("transfer_audience_denied", outside=outside)
+    if external and src["organization_id"] and (policy["outbound"] == "organization" or cap["outbound"] != "any"):
+        # Recipients of an outward send are not the target's members and need not be anyone in
+        # the organization, so content kept inside the organization (by the workspace's policy
+        # or the organization's cap, defaults included) cannot go with it.
+        raise refusal("transfer_organization_external")
     return {"source": source, "target": target, "outbound": policy["outbound"], "revision": policy["revision"],
             "organization_outbound": cap["outbound"], "organization_revision": cap["revision"],
             "same_organization": same_org, "audience": len(audience)}

@@ -129,6 +129,7 @@ export const agentMessages = {
   "来源所属组织不允许其内容转移到组织以外的工作空间。": { en: "The source's organization keeps its content from leaving the organization.", "zh-Hant": "來源所屬組織不允許其內容轉移到組織以外的工作空間。" },
   "目标工作空间不可用，或你不是其成员，内容没有转移。": { en: "The target workspace is unavailable or you are not a member. Nothing was carried over.", "zh-Hant": "目標工作空間不可用，或你不是其成員，內容沒有轉移。" },
   "来源工作空间的数据流政策只允许转移给已能看到这些内容的成员；对外发送的接收方无法逐一核对，这些内容没有发出。": { en: "The source workspace's data-flow policy only lets content reach people who can already see it. The recipients of an outgoing message or request cannot be checked one by one, so nothing was sent.", "zh-Hant": "來源工作空間的資料流政策只允許轉移給已能看到這些內容的成員；對外傳送的接收方無法逐一核對，這些內容沒有送出。" },
+  "来源工作空间的内容只能留在所属组织内；对外发送的接收方可能不在组织内，这些内容没有发出。": { en: "The source workspace's content stays inside its organization. The recipients of an outgoing message or request may be outside it, so nothing was sent.", "zh-Hant": "來源工作空間的內容只能留在所屬組織內；對外傳送的接收方可能不在組織內，這些內容沒有送出。" },
   "工作空间的内容不能存为个人资料，请在应用中处理。": { en: "Workspace content cannot be saved as personal data. Handle it in the application.", "zh-Hant": "工作空間的內容不能存為個人資料，請在應用中處理。" },
   "会把以下工作空间的内容带入{target}，其成员将能看到：": { en: "Carries content from these workspaces into {target}, where its members can see it:", "zh-Hant": "會把以下工作空間的內容帶入{target}，其成員將能看到：" },
 };
