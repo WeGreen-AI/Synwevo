@@ -9,15 +9,22 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .. import data_flow
 from ..capabilities import MAX_DEPTH, canonical, fingerprint, record_event
 from ..errors import ServiceError
 from ..store import new_id, now
-from .models import (BranchStep, CallStep, Definition, FailStep, Policy, Read, WaitStep, bounded)
+from .models import (BranchStep, CallStep, Definition, FailStep, Policy, Read, WaitStep, bounded, references)
 from .triggers import Triggers
 
 ACTIVE = ("queued", "running", "waiting_input", "waiting_approval", "retrying")
 TERMINAL = ("succeeded", "partial", "failed", "cancelled")
-NO_TARGET = object()
+# A step is complete when its operation reached a definite outcome with a result. "partial" (for
+# example a DataPrep run that finished with row issues) completes it too and stays visible to
+# branches as outcome.<step>; the run that ends after it ends partial, never plain succeeded.
+COMPLETE = ("succeeded", "partial")
+# The operation itself ended the receipt: a definite outcome, so on_error applies. Unlike a lost
+# acknowledgement this is not an uncertain dispatch and is never "unknown".
+DEFINITE = {"failed": "flow_operation_failed", "cancelled": "flow_operation_cancelled"}
 
 
 def error(code, status=409):
@@ -76,14 +83,18 @@ class Flows(Triggers):
         op = self.caps.registry.get(ref.operation)
         if not op or op.version != ref.operation_version:
             raise error("flow_operation_version_unavailable")
-        if op.id.startswith("agent.flow.") or not op.unattended:
+        if op.need == "personal" or not op.unattended:
+            # A personal operation has no workspace, so no transfer question can be asked of it:
+            # as a step it would take workspace content into personal records (a memory, a
+            # conversation) or hand personal records, whatever they hold, to a workspace.
             raise error("person_required", 403)
         if op.writes_elsewhere:
             # Scope cannot be proven from the explicit target when an operation has implicit
             # second destinations. Compose separate, explicitly targeted operations instead.
             raise error("flow_indirect_target_unsupported", 403)
         if isinstance(ref, CallStep) and ref.result_read and ref.result_read.workspace_id != ref.workspace_id:
-            raise error("flow_transfer_policy_required", 403)
+            # The receipt of one workspace drives a read in another: the same transfer question.
+            data_flow.check(self.store, user_id=user_id, source=ref.workspace_id, target=ref.result_read.workspace_id)
         if read and (op.side_effect != "none" or op.mode != "sync"):
             raise error("flow_read_required")
         self.caps.authorize(op, user_id, ref.workspace_id)
@@ -193,7 +204,21 @@ class Flows(Triggers):
                                     "correlation_id", "parent_run_id", "depth", "calls_used", "deadline",
                                     "created_at", "updated_at", "finished_at")}
 
-    def run(self, run_id, *, user_id, after=0, limit=100):
+    def carried(self, run_ids, *, user_id) -> list[str]:
+        """Workspaces whose content these runs of this person may reflect (``_sources``). Not
+        only a step's value: which steps ran, a run's state and its error code were decided on
+        what the run read, so a reader that tracks sources counts them for a run's progress too."""
+        found = set()
+        for run_id in dict.fromkeys(run_ids):
+            row = self.store.one("SELECT * FROM flow_runs WHERE id=? AND user_id=?", (run_id, user_id))
+            if row:
+                found |= self._sources(row)
+        return sorted(found)
+
+    def run(self, run_id, *, user_id, after=0, limit=100, outputs=True):
+        """``outputs=False`` leaves the steps' business snapshots out: the answer of a personal
+        operation carries no source workspace, so a reader that tracks sources (the Agent's
+        model) must not be given workspace content through it."""
         if not 1 <= limit <= 200 or after < 0:
             raise error("flow_page_invalid", 422)
         row = self._owned_run(run_id, user_id)
@@ -210,7 +235,7 @@ class Flows(Triggers):
             if receipt:
                 public["op_run_id"] = receipt["id"]
             public.update(output=None, snapshot_hidden=bool(step["value_json"]))
-            if step["value_json"] is not None:
+            if outputs and step["value_json"] is not None:
                 try:
                     current = self._source(row, step, charge=False)
                     if fingerprint(current) == fingerprint(decode(step["value_json"])):
@@ -286,7 +311,7 @@ class Flows(Triggers):
         return value
 
     def _source(self, run, step, *, charge):
-        if step["status"] != "succeeded":
+        if step["status"] not in COMPLETE:
             raise error("flow_source_unavailable")
         reader = decode(step["reader_json"])
         if reader:
@@ -314,35 +339,108 @@ class Flows(Triggers):
                 raise error("flow_reference_missing", 422) from None
         return value
 
-    def _resolve(self, run, value, *, target_workspace=NO_TARGET, **extra):
+    @staticmethod
+    def _places(step):
+        """Where a step runs and reads, as its definition names them."""
+        if isinstance(step, CallStep):
+            return {step.workspace_id} | ({step.result_read.workspace_id} if step.result_read else set())
+        return {step.read.workspace_id} if isinstance(step, WaitStep) else set()
+
+    def _sources(self, run):
+        """Every workspace whose content this run may carry.
+
+        Which value came from where is not traced: a literal re-read of a workspace the run
+        wrote into, a branch or a wait that decided on a value, and a run started by an event
+        of another all carry content with no reference to follow. So a workspace counts once
+        a step has read it (the stored reader: only reads that happened), once another step
+        took a value or an outcome from a step there, once the run went on from a failure
+        there, and when the event that started the run came from it. The same holds for every
+        run of this person in the same chain of events: they share the correlation.
+        """
+        chain = (run["correlation_id"], run["user_id"])
+        found = {r["place"] for r in self.store.all(
+            "SELECT DISTINCT json_extract(event_json,'$.workspace_id') AS place FROM flow_runs "
+            "WHERE correlation_id=? AND user_id=? AND event_json IS NOT NULL", chain)}
+        specs = {}
+        # Distinct facts, not one row per step: a chain of events can be thousands of runs long.
+        # A handled failure is an answer too; the step being run again has not given one yet.
+        for row in self.store.all(
+                "SELECT DISTINCT r.flow_id, r.version, s.step_id, json_extract(s.reader_json,'$.workspace_id') AS place, "
+                "s.status='failed' AND NOT (r.id=? AND s.step_id=?) AS failed FROM flow_runs r "
+                "JOIN flow_steps s ON s.run_id=r.id WHERE r.correlation_id=? AND r.user_id=?",
+                (run["id"], run["step_id"], *chain)):
+            found.add(row["place"])
+            version = (row["flow_id"], row["version"])
+            if version not in specs:
+                specs[version] = {s.id: s for s in self._spec(*version).steps}
+            step = specs[version][row["step_id"]]
+            used = {path[1] for path in references(step.model_dump(mode="json")) if path[0] in ("steps", "outcome")}
+            if row["failed"] and step.on_error:
+                used.add(step.id)
+            for other in used:
+                found |= self._places(specs[version].get(other))
+        return found - {None}
+
+    def _transfer(self, run, target, *, external=False, also=()):
+        """Ask whether what this run may carry may become part of ``target``. Returns the
+        sources asked: their IDs are the provenance of a write."""
+        sources = sorted((self._sources(run) | set(also)) - {target, None})
+        for source in sources:
+            # Membership in two spaces does not grant transfer: the owner must still be
+            # allowed to carry each source's content there, every time.
+            data_flow.check(self.store, user_id=run["user_id"], source=source, target=target, external=external)
+        return sources
+
+    @staticmethod
+    def _takes(run, value, *, own=()):
+        """Whether an input takes a value the run obtained: a step's value or outcome, a
+        receipt, or parameters an event filled in. A literal, or a parameter the person gave
+        at the start, was fixed before the run read anything."""
+        roots = {path[0] for path in references(value)} - set(own)
+        if not run["event_json"]:
+            roots.discard("params")
+        return bool(roots)
+
+    def _carried(self, run, step, op):
+        """The transfer question of a call step, asked before it runs. A write takes along
+        whatever the run has read, with or without a reference: the path that led to it was
+        decided on that. A read is asked only when its input takes a value from the run, so
+        reading two workspaces to compare them is no transfer."""
+        carried = []
+        if op.side_effect != "none":
+            carried = self._transfer(run, step.workspace_id, external=op.side_effect == "external")
+        elif self._takes(run, step.input):
+            self._transfer(run, step.workspace_id)
+        if step.result_read and step.result_read.workspace_id != step.workspace_id:
+            # The receipt of one workspace drives a read in another, with all the step was given.
+            self._transfer(run, step.result_read.workspace_id, also={step.workspace_id})
+        return carried
+
+    def _resolve(self, run, value, **extra):
         if isinstance(value, dict):
             if set(value) == {"$ref"}:
                 path = value["$ref"].split(".")
                 if path[0] == "steps":
                     step = self.store.one("SELECT * FROM flow_steps WHERE run_id=? AND step_id=?", (run["id"], path[1]))
-                    if not step or step["status"] != "succeeded":
+                    if not step or step["status"] not in COMPLETE:
                         raise error("flow_reference_missing", 422)
-                    if target_workspace is not NO_TARGET:
-                        origin = next(s for s in self._spec(run["flow_id"], run["version"]).steps if s.id == path[1])
-                        reader = decode(step["reader_json"])
-                        source_workspace = reader["workspace_id"] if reader else getattr(origin, "workspace_id", None)
-                        if source_workspace is not None and source_workspace != target_workspace:
-                            # Membership in two spaces does not grant transfer/export permission.
-                            # Independent explicitly targeted steps work; content transfer needs
-                            # a shared data-flow policy contract before this gate can be extended.
-                            raise error("flow_transfer_policy_required", 403)
                     saved = self._path(decode(step["value_json"]), path[2:])
                     current = self._path(self._source(run, step, charge=True), path[2:])
                     if fingerprint(saved) != fingerprint(current):
                         raise error("flow_source_changed", 403)
                     return saved
+                if path[0] == "outcome":
+                    done = self.store.one("SELECT status FROM flow_steps WHERE run_id=? AND step_id=?", (run["id"], path[1]))
+                    if len(path) != 2 or not done or done["status"] not in COMPLETE:
+                        raise error("flow_reference_missing", 422)
+                    return done["status"]
                 roots = {"params": decode(run["params_json"]), **extra}
                 if path[0] not in roots:
                     raise error("flow_reference_missing", 422)
                 return self._path(roots[path[0]], path[1:])
-            return {k: self._resolve(run, v, target_workspace=target_workspace, **extra) for k, v in value.items()}
+            return {k: self._resolve(run, v, **extra) for k, v in value.items()}
         if isinstance(value, list):
-            return [self._resolve(run, v, target_workspace=target_workspace, **extra) for v in value]
+            return [self._resolve(run, v, **extra) for v in value]
         return value
 
     def _predicate(self, run, predicate, **extra):
@@ -395,7 +493,7 @@ class Flows(Triggers):
         target = target or step.next or (spec.steps[index + 1].id if index + 1 < len(spec.steps) else "end")
         state = "queued"
         if target == "end":
-            failed = self.store.one("SELECT 1 FROM flow_steps WHERE run_id=? AND status='failed'", (run["id"],))
+            failed = self.store.one("SELECT 1 FROM flow_steps WHERE run_id=? AND status IN ('failed','partial')", (run["id"],))
             state = "partial" if failed else "succeeded"
         self._release(t, run, state, next_step=target)
         self._history(t, run, "advanced", state)
@@ -451,7 +549,9 @@ class Flows(Triggers):
     def _wait(self, t, run, spec, step, saved):
         if self.clock() >= saved["started_at"] + step.timeout_s:
             raise error("flow_wait_timeout")
-        ref = step.read.model_copy(update={"input": self._resolve(run, step.read.input, target_workspace=step.read.workspace_id)})
+        if self._takes(run, step.read.input):
+            self._transfer(run, step.read.workspace_id)
+        ref = step.read.model_copy(update={"input": self._resolve(run, step.read.input)})
         record = self._inspect(ref, run["user_id"], run=run)
         if step.reject and self._predicate(run, step.reject, record=record):
             raise error("flow_wait_rejected", 422)
@@ -468,12 +568,15 @@ class Flows(Triggers):
             if saved["status"] != state:
                 self._history(t, run, "waiting", state)
 
-    def _invoke(self, run, step, payload, key):
+    def _invoke(self, run, step, payload, key, carried):
+        delegation = {"kind": "flow", "flow_id": run["flow_id"], "version": run["version"],
+                      "run_id": run["id"], "step_id": step.id, "trigger_id": run["trigger_id"]}
+        if carried:
+            # Provenance for the target's run record: workspace IDs only, never their content.
+            delegation["transfer_from"] = carried
         return self.caps.invoke(step.operation, payload, user_id=run["user_id"], workspace_id=step.workspace_id,
                                 via="flow", idempotency_key=key, correlation_id=run["correlation_id"],
-                                parent_run_id=run["id"], depth=run["depth"] + 1,
-                                delegation={"kind": "flow", "flow_id": run["flow_id"], "version": run["version"],
-                                            "run_id": run["id"], "step_id": step.id, "trigger_id": run["trigger_id"]})
+                                parent_run_id=run["id"], depth=run["depth"] + 1, delegation=delegation)
 
     def _prior_op(self, run, step, saved):
         if not saved["key"]:
@@ -486,8 +589,11 @@ class Flows(Triggers):
         # A dispatch marker survives only non-transactional calls, async receipts, or faults.
         if saved["status"] in ("executing", "operation_wait", "unknown"):
             prior = self._prior_op(run, step, saved)
-            if prior and prior["status"] == "succeeded":
-                self._complete_call(t, run, spec, step, {"run_id": prior["id"], "output": decode(prior["output"]), "status": "succeeded"})
+            if prior and prior["status"] in COMPLETE:
+                self._complete_call(t, run, spec, step, {"run_id": prior["id"], "output": decode(prior["output"]), "status": prior["status"]})
+            elif saved["status"] == "operation_wait" and prior and prior["status"] in DEFINITE:
+                t.execute("UPDATE flow_steps SET op_run_id=? WHERE run_id=? AND step_id=?", (prior["id"], run["id"], step.id))
+                raise error(DEFINITE[prior["status"]], 409)
             elif saved["status"] == "operation_wait" and prior and prior["status"] in ("queued", "running", "waiting_input", "waiting_approval"):
                 self._release(t, run, "waiting_approval" if prior["status"] == "waiting_approval" else "waiting_input",
                               due=min(self.clock() + 30, run["deadline"]))
@@ -496,7 +602,8 @@ class Flows(Triggers):
             return None
         if saved["attempt"] >= step.max_attempts:
             raise error("flow_attempts_exhausted")
-        payload = self._resolve(run, step.input, target_workspace=step.workspace_id)
+        carried = self._carried(run, step, op)
+        payload = self._resolve(run, step.input)
         attempt = saved["attempt"] + 1
         key = f"flow:{run['flow_id']}:{run['id']}:{step.id}:{attempt}"
         self._charge(run)
@@ -506,7 +613,7 @@ class Flows(Triggers):
         if not op.transactional:
             return step, payload, key
         try:
-            result = self._invoke(run, step, payload, key)
+            result = self._invoke(run, step, payload, key, carried)
             self._complete_call(t, run, spec, step, result, payload=payload)
         except ServiceError as exc:
             raise AttemptFailed(exc, attempt) from exc
@@ -521,14 +628,17 @@ class Flows(Triggers):
             self._release(t, run, "waiting_approval" if state == "waiting_approval" else "waiting_input",
                           due=min(self.clock() + 30, run["deadline"]))
             return
-        if state != "succeeded":
+        if state in DEFINITE:
+            raise error(DEFINITE[state], 409)
+        if state not in COMPLETE:
             raise error("flow_outcome_unknown" if state == "unknown" else "flow_operation_incomplete")
         reader, value = None, result["output"]
         if step.result_read:
-            if step.result_read.workspace_id != step.workspace_id:
-                raise error("flow_transfer_policy_required", 403)
-            reader = step.result_read.model_copy(update={"input": self._resolve(run, step.result_read.input,
-                            target_workspace=step.result_read.workspace_id, receipt=value)})
+            read = step.result_read
+            # Its own receipt back into the same workspace is no transfer; anything else is.
+            if read.workspace_id != step.workspace_id or self._takes(run, read.input, own=("receipt",)):
+                self._transfer(run, read.workspace_id, also={step.workspace_id})
+            reader = read.model_copy(update={"input": self._resolve(run, read.input, receipt=value)})
         elif self.caps.registry.get(step.operation).side_effect == "none":
             if payload is None:
                 prior = self.store.one("SELECT input FROM op_runs WHERE id=?", (result["run_id"],))
@@ -537,21 +647,22 @@ class Flows(Triggers):
                           workspace_id=step.workspace_id, input=payload)
         if reader:
             value = self._inspect(reader, run["user_id"], run=run)
-        t.execute("UPDATE flow_steps SET status='succeeded',value_json=?,reader_json=?,error_code=NULL,updated_at=? "
+        t.execute("UPDATE flow_steps SET status=?,value_json=?,reader_json=?,error_code=NULL,updated_at=? "
                   "WHERE run_id=? AND step_id=?",
-                  (canonical(value), canonical(reader.model_dump(mode="json")) if reader else None,
+                  (state, canonical(value), canonical(reader.model_dump(mode="json")) if reader else None,
                    self.clock(), run["id"], step.id))
-        self._history(t, run, "step_completed", "succeeded", step=self._step_row(run))
+        self._history(t, run, "step_completed", state, step=self._step_row(run))
         self._advance(t, run, spec, step)
 
     def _external(self, claim, step, payload, key):
-        # Check cancellation immediately before dispatch, without holding SQLite over I/O.
+        # Check cancellation and ask the transfer again immediately before dispatch, without
+        # holding SQLite over I/O.
         with self.store.tx():
             run = self._fenced(claim)
             self._policy(run)
-            self._operation(step, run["user_id"])
+            carried = self._carried(run, step, self._operation(step, run["user_id"]))
         try:
-            result = self._invoke(run, step, payload, key)
+            result = self._invoke(run, step, payload, key, carried)
         except Exception:  # A timeout or even an application error may follow an external write.
             self._failure(claim, error("flow_outcome_unknown"))
             return
@@ -585,7 +696,8 @@ class Flows(Triggers):
             if charges:
                 self.store.execute("UPDATE flow_runs SET calls_used=calls_used+? WHERE id=?", (charges, run["id"]))
             state, due = "failed", ts
-            uncertain = saved["status"] in ("executing", "operation_wait", "unknown")
+            uncertain = (saved["status"] in ("executing", "operation_wait", "unknown")
+                         and exc.code not in DEFINITE.values())
             if exc.code == "flow_outcome_unknown" or uncertain:
                 state = "unknown"
             if exc.status in (401, 403):
@@ -638,7 +750,7 @@ class Flows(Triggers):
                 self._operation(step, user_id)
                 if saved and saved["status"] in ("executing", "unknown"):
                     prior = self._prior_op(run, step, saved)
-                    if not prior or prior["status"] != "succeeded":
+                    if not prior or prior["status"] not in COMPLETE:
                         raise error("flow_reconciliation_required")
                     t.execute("UPDATE flow_steps SET status='unknown' WHERE run_id=? AND step_id=?", (run_id, step.id))
                 elif saved and saved["status"] != "operation_wait" and saved["attempt"] >= step.max_attempts:

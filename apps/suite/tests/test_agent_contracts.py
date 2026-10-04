@@ -13,6 +13,7 @@ import pytest
 from synwevo_core.errors import ServiceError
 from synwevo_suite.agent.provider import AnthropicProvider, Credential, ProviderError
 from .test_agent import agent, call, op, say, start, wait_turn, ScriptedModel  # noqa: F401 (fixture)
+from .test_data_flow import revision
 
 
 def pending(c, *, title="Fixture", operation="forms.form.create", payload=None):
@@ -355,17 +356,64 @@ def test_parallel_confirmation_never_resumes_while_another_action_is_running(age
 
 
 def test_real_template_copy_keeps_explicit_cross_workspace_contract(agent):
-    """C1/C2's existing template-copy contract: B viewer may copy its template into A."""
+    """C1/C2: a B viewer copies B's template into A only once B lets its content go there
+    (synwevo_core.data_flow): the export right, then B's outbound policy."""
     p = agent.people
     agent.sign_in("oscar")
     fid = op(agent, "forms.form.create", {"title": "Source template"}, ws=p.b)["output"]["id"]
+    copy = call("run_operation", {"operation": "forms.form.duplicate", "workspace_id": p.b,
+                                  "input": {"form_id": fid, "target_workspace_id": p.a}})
     agent.sign_in("alice")
-    conv, turn = start(agent, [call("run_operation", {"operation": "forms.form.duplicate", "workspace_id": p.b,
-                                                   "input": {"form_id": fid, "target_workspace_id": p.a}}), say("copied")])
+    _, refused = start(agent, [copy, say("could not copy")])
+    assert wait_turn(p.store, refused["turn_id"], ("succeeded", "failed")) == "succeeded"
+    row = p.store.one("SELECT status,error_code FROM agent_tool_calls WHERE turn_id=?", (refused["turn_id"],))
+    assert dict(row) == {"status": "failed", "error_code": "transfer_export_denied"}  # no card for a doomed copy
+    p.ident.change_role(p.b, p.uid("alice"), "viewer", can_export=True)
+    agent.sign_in("oscar")
+    op(agent, "agent.transfer_policy.set", {"outbound": "any", "revision": revision(p.store, p.b)}, ws=p.b)
+    agent.sign_in("alice")
+    conv, turn = start(agent, [copy, say("copied")])
     assert wait_turn(p.store, turn["turn_id"]) == "waiting_confirmation"
-    card = p.store.one("SELECT * FROM agent_tool_calls")
+    card = p.store.one("SELECT * FROM agent_tool_calls WHERE turn_id=?", (turn["turn_id"],))
+    shown = op(agent, "agent.conversation.get", {"conversation_id": conv})["output"]
+    pending = [c for m in shown["messages"] for c in m["tool_calls"] if c["id"] == card["id"]][0]
+    assert pending["transfer_from"] == [{"workspace_id": p.b, "workspace_name": "Workspace B", "outbound": "any"}]
     result = op(agent, "agent.tool_call.confirm", {"tool_call_id": card["id"], "confirmation": card["input_hash"]})["output"]
     assert result["status"] == "succeeded" and result["result"]["workspace_id"] == p.a
     assert result["target_workspace_id"] == p.a and f"/w/{p.a}/" in result["link"]
+    run = p.store.one("SELECT delegation FROM op_runs WHERE id=?", (result["run_id"],))
+    assert json.loads(run["delegation"])["transfer_from"] == [p.b]  # provenance: an ID, no content
     assert wait_turn(p.store, turn["turn_id"], ("succeeded", "failed")) == "succeeded"
     assert p.store.one("SELECT workspace_id FROM forms WHERE id=?", (result["result"]["form_id"],))["workspace_id"] == p.a
+
+
+def test_a_flow_the_agent_defines_or_starts_stays_inside_the_conversation_scope(agent):
+    """CR-047 AGENT-DF-5: flow operations are personal, so the scope check on a tool call's
+    workspace never saw the workspaces a flow's steps act in."""
+    from synwevo_suite.agent.tools import ToolContext
+    p = agent.people
+    alice = p.uid("alice")
+    ctx = ToolContext(agent.caps, p.users["alice"], [p.a], "platform")
+
+    def step(sid, ws, **extra):
+        return {"id": sid, "kind": "call", "operation": "forms.form.list", "workspace_id": ws, "input": {}, **extra}
+
+    inside = {"steps": [step("read", p.a)]}
+    outside = {"steps": [step("read", p.a), step("write", p.b)]}
+    receipt = {"steps": [step("read", p.a, result_read={"operation": "forms.form.list", "workspace_id": p.b})]}
+    for definition, code in ((inside, None), (outside, "outside_conversation_scope"), (receipt, "outside_conversation_scope")):
+        prepared = ctx.prepare({"operation": "agent.flow.create", "input": {"name": "Fixture flow", "definition": definition}})
+        assert (prepared.get("code") if isinstance(prepared, dict) else None) == code, definition
+    # A flow made on the page, outside the scope: the Agent can neither start nor resume it.
+    flows = agent.api.state.flows
+    flow_id = flows.create(user_id=alice, name="Fixture page flow", definition=outside)["flow_id"]
+    started = ctx.prepare({"operation": "agent.flow.start",
+                           "input": {"flow_id": flow_id, "version": 1, "idempotency_key": "fixture-scope"}})
+    assert started["code"] == "outside_conversation_scope"
+    run_id = flows.start(flow_id, user_id=alice, version=1, parameters={}, idempotency_key="fixture-scope-page")["id"]
+    resumed = ctx.prepare({"operation": "agent.flow.resume", "input": {"run_id": run_id}})
+    assert resumed["code"] == "outside_conversation_scope"
+    # The same calls are fine when the conversation covers every workspace.
+    wide = ToolContext(agent.caps, p.users["alice"], None, "platform")
+    assert not isinstance(wide.prepare({"operation": "agent.flow.start",
+                                        "input": {"flow_id": flow_id, "version": 1, "idempotency_key": "fixture-scope"}}), dict)

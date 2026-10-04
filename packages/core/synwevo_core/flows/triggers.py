@@ -154,7 +154,7 @@ class Triggers:
                 routing = {k: event[k] for k in ("id", "type", "object_id", "workspace_id")} if event else None
                 result = self._start(row["flow_id"], user_id=row["user_id"], version=row["version"], parameters=payload,
                                      idempotency_key=f"trigger:{row['id']}:{occurrence}", trigger_id=row["id"], event=routing,
-                                     correlation_id=event.get("correlation_id") if event else None,
+                                     correlation_id=self._chain(event) if event else None,
                                      parent_run_id=event.get("run_id") if event else None,
                                      depth=int(event.get("depth", 0)) + 1 if event else 0)
                 rid = result["id"]
@@ -170,6 +170,16 @@ class Triggers:
             occurrence = "closed:" + code
         t.execute("INSERT OR IGNORE INTO flow_trigger_deliveries VALUES (?,?,?,?,?,?)", (row["id"], occurrence, rid, state, code, ts))
         t.execute("UPDATE flow_triggers SET error_code=?,updated_at=? WHERE id=?", (code, ts, row["id"]))
+
+    def _chain(self, event):
+        """The chain of events this one belongs to. An application that records an event later,
+        from its own worker, may name only the operation run it settles; that run still knows
+        its correlation, and what the chain has read (`_sources`) must follow into the run
+        started here."""
+        if event.get("correlation_id") or not event.get("run_id"):
+            return event.get("correlation_id")
+        origin = self.store.one("SELECT correlation_id FROM op_runs WHERE id=?", (event["run_id"],))
+        return origin["correlation_id"] if origin else None
 
     def _readable(self, row, workspace_id, events):
         """The events of this batch the trigger's owner may know about now.

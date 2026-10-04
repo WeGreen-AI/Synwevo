@@ -480,7 +480,10 @@ def test_traffic_limits_publish_exactly_and_invalid_combinations_are_refused(cos
                    {"payer_inflight": 2}, {"wait_seconds": 901}, {"platform_rpm": 0}, {"extra": 1}):
         r = post(w["admin"], BASE + "/preview", {"expected_revision": 1, "spec": {**SPEC, "traffic": {**TRAFFIC, **change}}})
         assert r.status_code == 400 and r.json()["error"] in ("cost_invalid", "cost_traffic_invalid"), change
-        assert "601" not in r.text and "2000001" not in r.text  # Submitted values are not echoed.
+        # Submitted values are not echoed. The request id is random hex and can contain the same digits by
+        # chance (CI run 37124810853: "1833f60141cff808"), so it is left out of the comparison.
+        said = json.dumps({k: v for k, v in r.json().items() if k != "id"})
+        assert "601" not in said and "2000001" not in said
     # A policy without traffic keeps its exact former shape: no "traffic": null appears.
     plan = preview(w, revision=1, spec=SPEC)
     assert "traffic" not in plan["after"] and plan["before"]["spec"]["traffic"] == TRAFFIC

@@ -1,17 +1,18 @@
 # 业务应用、Admin/API 与个人 Agent：状态与断点
 
-最后检查：2026-10-03T07:20Z。协调任务 Claude `df1f0b15-17ae-4370-a6b0-aacd082144be`（/loop 9d5641b6）；统一目标仍执行，无递归loop。
+最后检查：2026-10-04T01:15Z。协调任务 Claude `80146fec-e8b8-43eb-aafb-6b062986dc5d`（/loop d90b5952）；2026-10-03T15:01Z 自 `df1f0b15…` 接管：用户于 14:00Z 中断其回合并取消其循环 f5cb7ce9，原并行会话 `12134ed7…`（Admin）与 `7bc70746…`（Webhook）同时被中断；三者均已书面交接并确认不再写入。
 
 | 项 | 当前事实 |
 |---|---|
-| 锁 | 主检出docs/agent-work/.coordinator.lock由df1f0b15持有，每轮更新heartbeat。2026-10-03T04:09Z自Codex `01a0f104…`接管：其goal paused、turn被用户中断（2026-10-02T15:05Z），服务15:10Z退出，此后无事件 |
-| 实施树 | .claude/worktrees/business-apps，feat/business-apps；HEAD=remote cf1bb32（consent 21f2cd5、CI提速00c4f54、限流修复6533c2a、WP9三层13提交） |
-| PR | 草稿PR #1，https://github.com/WeGreen-AI/Synwevo/pull/1；未合并/部署本分支 |
-| 主检出 | main@2dd03c7；其他图标任务改动完整保留，不触碰 |
-| CI | 6533c2a Actions37103506897：verify 24min（原74），pytest 19m44/1184.54s，3583 passed/1 failed/3 skipped；唯一失败为工作簿字节跨秒的既有脆弱测试，修复3488e6d已含于cf1bb32。cf1bb32 CI运行中 |
-| 当前包 | 已完成并推送：持续同意、CI固定成本根因修复、GCRA跨限额变更修复、WP9机器入口/延后工作撤权/文件路由。下一包：模型调用RPM/TPM与公平等待 |
-| 并行 | local_561a6cda「Synwevo 项目交付与代码审查」：WP9第二轮审查4项修复（standing失败关闭、Tables票据按客户端、范围不泄露来源、started事件顺序）后做事件拉取claude/suite-machine-events；只本地提交，不碰agent/**、billing/** |
-| 下一动作 | 跟踪cf1bb32 CI；实施模型调用RPM/TPM/在途/有界公平等待（扩展版本化成本策略、Admin三语言）；合并WP9审查修复与事件拉取 |
+| 锁 | 主检出 docs/agent-work/.coordinator.lock 由 80146fec 持有（记录了接管证据），每轮更新 heartbeat |
+| 实施树 | .claude/worktrees/business-apps，feat/business-apps；origin 停在 43e7e3c（df-flows 合入），本地另有 CR-047 修复 0f0124b、af62448、64cdf9d、f7afc66、baad721、9048d40、3f43348 及 DFP-2/AGENT-DF-4/AGENT-DF-5 待提交批次；门槛通过后一次推送（Actions 额度：每次推送一次完整 verify） |
+| PR | 草稿 PR #1，https://github.com/WeGreen-AI/Synwevo/pull/1；64e9348 的 CI（Actions 37166232361）通过；未合并 |
+| 主检出 | main@2dd03c7；图标任务等其他会话的改动完整保留，不触碰 |
+| CI / 部署 | 生产仍为 aadcb9e。main 37cd253（GCRA 计时测试修复）运行 37169458599 verify 2 失败/2877 通过：API 会话提交的 OpenAPI 413/416 描述取自运行时 Python（本机 3.14 与 CI 3.12 措辞不同）；b8cb31a 固定为 RFC 9110 名称并重新生成契约（3.12 措辞注入下与提交文件一致；旧代码在同注入下复现 CI 差异），已推送，运行 37171551868 进行中，通过后由既有流水线部署 |
+| 本机门槛（提交前同一树，2026-10-04T00:25–00:48Z） | 五套件 4572 passed / 2 skipped / 0 failed（docs 1488+2 skipped、identity 1206、messages 63、suite 717、integration 1098）；五守卫、typecheck、build、npm test（6 个工作区 360 项）、infra unittest 8、Python SDK 35 均通过 |
+| 当前包 | ① data_flow：df-flows（F1、F3–F7）已复核并合入；df-forms（F2/AGENT-DF-1 高：公开表单页向持链接者暴露草稿）与 df-agent（AGENT-DF-2..5、DFP-1..6）两个 worker 因子代理额度耗尽中断，改由协调者直接做；**复核无高/中项前 PR #1 不得合并 main**；② Webhook：投递侧 8 个提交在 claude/suite-machine-webhooks（0c36724），管理侧修复与两项审查因额度中断；③ Admin 运行页：claude/admin-governance f85cada（AR-1..10），独立验证因额度中断；④ D3–D20 待分组修复（D3 语义待所有者决定） |
+| 并行 | 只读：data_flow 审查×2、admin 运行页审查×1（会话重启后已续跑）；工作流 wf_f4d87c36-c38（Webhook：交付侧修复→管理侧修复→授权/数据暴露与核心影响面两路审查+对抗核实，唯一写入者，仅 suite-machine-api；step 2 已本地提交 930a954）；工作流 wf_a9743a28-ba8（只读复核 admin-coverage D3–D20 并给出最小修复方案，6 组） |
+| 下一动作 | 37171551868 通过则核对五个正式主机 /readyz、各角色镜像并写 docs/quality/deployment.md；失败读日志修根因。业务分支：提交 DFP-2/AGENT-DF-4/5 批次并推送；随后第二轮对抗复核（子代理额度恢复后，否则协调者自审）、浏览器验收 Settings/Automations 改动、CR-048 其余、Webhook 管理侧与 Admin 运行页合入 |
 
 ## 已验证与边界
 

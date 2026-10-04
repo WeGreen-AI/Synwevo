@@ -146,6 +146,10 @@ class Definition(Model):
                 elif path[0] == "params":
                     if path[1] not in self.parameters:
                         raise ValueError("Unknown parameter")
+                elif path[0] == "outcome":
+                    # "succeeded" or "partial" of an earlier completed step; no business content.
+                    if len(path) != 2 or positions.get(path[1], n) >= n:
+                        raise ValueError("Outcome references must name an earlier step")
                 elif path[0] not in ("record", "receipt"):
                     raise ValueError("Unsupported reference namespace")
             # Context-specific namespaces cannot sneak into operation input or branch rules.

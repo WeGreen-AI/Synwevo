@@ -137,7 +137,10 @@ CREATE TABLE IF NOT EXISTS agent_workspace_model_providers (
 
 
 COLUMNS = (("agent_turns", "usage_state", "TEXT NOT NULL DEFAULT 'known'"),
-           ("agent_turns", "credential_binding", "TEXT"))
+           ("agent_turns", "credential_binding", "TEXT"),
+           # Which other workspaces' content a write would carry into its target, and the policy
+           # facts the person confirmed (synwevo_core.data_flow); NULL when it carries none.
+           ("agent_tool_calls", "transfer_json", "TEXT"))
 
 
 def migrate(c):

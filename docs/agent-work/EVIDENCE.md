@@ -281,3 +281,33 @@
 - 6533c2a：更快测试暴露GCRA以时间保存债务——清除3/min覆盖后旧债务按1200/min算满一分钟、收紧限额又给新突发。改为记录计费间隔、按请求数换算，收紧最多满桶且拒绝时也记录换算。新增单元与HTTP回归各1项，相关62项通过。
 - [6533c2a Actions37103506897](https://github.com/WeGreen-AI/Synwevo/actions/runs/37103506897)：verify 24min（原74），pytest 1184.54s，3583 passed/1 failed/3 skipped；失败为test_docs_notifications工作簿字节跨秒脆弱性（3488e6d修复）。
 - WP9（并行会话，api→deferred→files 13提交）两轮独立安全审查：第一轮无机器凭据到达Agent/付费/同意/会话或绕过scope的路径，6项修复已并入；第二轮无阻断，1项应修（standing对畸形principal放行）与3项注记已交修。合并后本地全量4454项/1014s，0失败/错误，2环境跳过，峰值801MB；五守卫、typecheck/build、6个npm工作区、SDK34+14、infra unittest通过；扫描无秘密；推送cf1bb32。
+
+### 2026-10-03 · 模型流量、B1 链路底座（af68968 已推送；ab69741/0e95fcc/d2e1f15 本地）
+
+- 27ab127 模型调用 RPM/TPM/付款人在途/公平有界等待：核心 24 项 + 组合 4 项 + 管理 API 176 项 + 前端 58/71 项通过；合并 WP9 栈后本地全量 4533 项/1077s，0 失败/错误，2 环境跳过；门槛全部通过后推送 af68968。
+- B1 只读调研（子代理）：发现异步 partial/failed/cancelled 被当成 unknown、Docs 无数据输入入口、生产 portal 角色无 Message 发送、unknown 发送无法核销等缺口。
+- ab69741：partial 完成步骤并可用 outcome.<step> 分支，failed/cancelled 走 on_error，只有真正未知才需核对；9 项新测试中 5 项在旧引擎失败；Suite+integration 1784 项通过。
+- 0e95fcc：Message 发送在所有角色改为与收据同事务写 outbox，由 Message 进程以本人身份投递（访问、对象讨论、归档、受众、账户再核对，run id 去重），收据 ticker 只按真实结果结算；20 项适配/桥接与 63 项 Message 测试通过，Suite+integration 1785 项通过。
+- d2e1f15：docweave.project.from_dataset 以模板项目为每次运行建立固定模板版本的新项目与唯一输入（DataPrep 字符串单元格 XLSX，经 Docs 原有接纳链），缺映射列在创建前拒绝；3 项新测试与 25 项相关测试通过。
+- a1c024b 本机全量：4548 passed / 2 skipped / 1274s；五守卫、typecheck、build、infra unittest 通过；npm test 首次失败（account refusals：bridge 经 capabilities 可达）→ 67b08c4 修复后 58/58，相关套件 1293 passed；推送 67b08c4
+- 跨空间数据流（未提交）：test_data_flow 8、test_agent_transfers 4（C1 读两空间比较、只向合法目标写并准确说明阻塞；C2 卡片显示来源/目标、真实记录与 delegation.transfer_from；政策变化使确认失效；C4 撤销 B 后待确认写入 409、A 已完成部分保留、依赖 B 的会话内容隐藏、转移所得记录仍由 A 成员可读）、组织上限 1；Suite agent/forms/flow 子集 329 passed；变异：关闭 Agent 转移判定 4 失败、关闭 Forms 判定 1 失败、关闭流程判定 1 失败、同时关闭确认与执行复核 1 失败
+
+
+### 2026-10-03/04 · 协调者交接后的基线（会话 80146fec；未提交树 = 67b08c4 + data_flow + CR-039）
+
+- 交接：用户 2026-10-03T14:00Z 中断原协调者 df1f0b15 并取消其循环；15:01Z 本会话接管锁。三个原会话均书面确认停止并交接（data_flow 无半成品、32 个文件均应提交；admin-governance 末次修改后未复测、无浏览器验收；Webhook 分支有 9 项已核实未应用的审查结论、两路审查未完成）。
+- CI：67b08c4 verify 失败（Actions 37124810853，1 failed / 1574 passed / 3 skipped 后按 -x 停止，deploy skipped）。根因是测试断言撞上随机请求 id（CR-039），非产品缺陷；修复后该文件 74 passed。
+- 本机全量（2026-10-03T15:16–15:34Z，五套件并行，`scratchpad/wt-test.sh business-apps <suite>`，PYTHONPATH 指向本树）：apps/docs/tests 1488 passed / 2 skipped；services/identity/tests 1206 passed；apps/messages/tests 63 passed；apps/suite/tests 707 passed；tests/integration 1098 passed。合计 4562 passed / 2 skipped / 0 failed。
+- 其余门槛（同一树，2026-10-03T16:00Z 前后）：check_boundaries / check_brand / check_design / check_component_names / brand_assets --check、npm run typecheck、npm run build、npm test --workspaces --if-present、infra unittest（8）、Python SDK（35 passed, 14 subtests）均 exit 0。
+- 未运行/未验证：本会话尚未做浏览器验收（原协调者以带标注的脚本化模型替身在隔离实例完成过 data_flow 四项浏览器核对，属其证据，非本会话复验）；真实模型链路未验；CI 对新树未运行（尚未提交推送）。
+- 进行中：data_flow 两路独立只读审查、admin 运行页一路只读审查；Webhook 分支 step 2 已本地提交 930a954（基 27ab127，未变基、未推送），工作流 wf_f4d87c36-c38 依次应用交付侧/管理侧审查修复并补“授权与数据暴露”“核心改动影响面”两路审查与对抗式核实。
+
+### 2026-10-04 · data_flow 审查修复与推送（e6018ff、a407c2c）
+
+- 独立授权审查（只读子代理）在未提交的 data_flow 上报告 DF-A1–A10，并给出 13 项通过的复现脚本（scratchpad/agents/dataflow-authz/repro）；协调者本机复跑 13 项全部复现。修复后 10 项断言旁路的脚本失败，其余 3 项为不依赖旁路的探针。
+- 新回归测试：test_data_flow.py +8、test_agent_transfers.py +2、test_organizations.py 版本前置条件断言。变异脚本 scratchpad/mutate_df.py 逐项关闭 13 处保护，对应测试全部失败（首轮 2 项未捕获 → 补强“相同取值的过期修订”和“非零过期修订的条件写入”断言后捕获）。
+- 提交前同一树门槛（2026-10-04T00:25–00:48Z）：apps/docs/tests 1488 passed / 2 skipped；services/identity/tests 1206；apps/messages/tests 63；apps/suite/tests 717；tests/integration 1098；合计 4572 passed / 2 skipped / 0 failed。五守卫、npm run typecheck、npm run build、npm test --workspaces（19/41/145/25/72/58 全过）、infra unittest 8、Python SDK 35 均 exit 0。
+- 过程中的两次失败及处理：account-web refusals 测试要求新拒绝语句有三语言文案 → 已补；apps/suite 收集错误（test_flow_trigger_visibility 按路径加载 test_flows，新增的相对导入不可用）→ 去掉该导入后 717 passed。
+- 推送：用户 2026-10-04 指令“直接推送”。推送 feat/business-apps（PR #1 草稿）；未推 main、未部署。推送时正确性审查与三路对抗复核尚未返回，其结论另行处理。
+- 未验证：新 SHA 的 CI；本会话未做浏览器验收；真实模型链路。
+

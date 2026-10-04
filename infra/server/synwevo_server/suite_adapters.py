@@ -88,10 +88,13 @@ class JobResult(BaseModel):
 
 
 class SendResult(BaseModel):
-    delivery: Literal["recorded", "unknown"]
+    # queued: accepted and waiting for Message to deliver it; recorded: in the conversation;
+    # failed: Message refused it at delivery (error_code says why); unknown: no queue record.
+    delivery: Literal["queued", "recorded", "failed", "unknown"]
     conversation_id: str
     message_id: str | None = None
     seq: int | None = None
+    error_code: str | None = None
 
 
 class ProjectResult(BaseModel):
@@ -169,7 +172,7 @@ def _context(call):
 
 
 class SuiteAdapters:
-    def __init__(self, docs_api, messages_api=None, *, public_url=""):
+    def __init__(self, docs_api, messages_api=None, *, public_url="", ident=None):
         from synwevo_docs.ingest import DocumentIngest
         self.ingest = DocumentIngest()
         self.docs_api = docs_api
@@ -179,15 +182,11 @@ class SuiteAdapters:
         self.messaging = getattr(getattr(messages_api, "state", None), "messaging", None)
         if self.messaging is not None and self.messaging.store is not self.store:
             raise ValueError("Adapters must share the composition root's Store instance")
-        # Reuse the owning application's fan-out, but publish only after the enclosing adapter
-        # transaction commits. No temporary monkey-patching of a shared service instance.
-        self.sender = None
-        if self.messaging is not None:
+        if self.messaging is None and ident is not None:
+            # Message runs in its own process (the workplace origin in production). Reads use the
+            # same service rules; sends are queued for that process, which owns fan-out and digests.
             from synwevo_core.messaging import Messaging
-            def publish(users, event):
-                self.store.after_commit(lambda: self.messaging.publish(users, event))
-            self.sender = Messaging(self.store, self.messaging.ident, publish=publish,
-                                    presence=self.messaging.presence)
+            self.messaging = Messaging(self.store, ident)
         self.public_url = public_url.rstrip("/")
         if self.public_url:
             u = urlsplit(self.public_url)
@@ -325,9 +324,8 @@ class SuiteAdapters:
             if binding["app"] != DOCS_APP_ID or binding["kind"] != "project":
                 raise ServiceError(409, "conversation_not_supported", "该对象讨论暂不支持自动发送")
             self._project(c, binding["object_id"])
-        audience = fingerprint({"id": cid, "workspace_id": conv["workspace_id"],
-                                "organization_id": conv["organization_id"], "archived": conv["archived"],
-                                "members": sorted(m["user_id"] for m in conv["members"])})
+        from synwevo_core.messaging_bridge import audience_fingerprint
+        audience = audience_fingerprint(conv)
         return {"conversation_id": cid, "name": conv["name"], "workspace_id": conv["workspace_id"],
                 "organization_id": conv["organization_id"], "archived": conv["archived"],
                 "audience": audience, "members": [{"user_id": m["user_id"], "name": m["name"]} for m in conv["members"]]}
@@ -352,18 +350,24 @@ class SuiteAdapters:
         return self._conversation(c, i.conversation_id)
 
     def _message(self, c, row):
+        from synwevo_core.messaging_bridge import user_message_state
         i = Send.model_validate(_json(row["input"]))
         self._conversation(c, i.conversation_id)
         for aid in i.artifact_ids:
             self._artifact(c, aid, export=True)
+        out = {"conversation_id": i.conversation_id, "message_id": None, "seq": None, "error_code": None}
+        state = user_message_state(self.store, row["id"])
         found = self.store.one("SELECT id FROM messages WHERE conversation_id=? AND sender_id=? AND client_id=?",
-                              (i.conversation_id, c.user_id, row["id"]))
+                               (i.conversation_id, c.user_id, row["id"]))
         if not found:
-            return {"delivery": "unknown", "conversation_id": i.conversation_id, "message_id": None, "seq": None}
+            # Sends made before queueing existed have no queue row: their absence stays unknown.
+            if state["state"] == "failed":
+                return {**out, "delivery": "failed", "error_code": state["code"]}
+            return {**out, "delivery": "queued" if state["state"] == "queued" else "unknown"}
         msg, _, _ = self.messaging._visible_message(found["id"], c.user_id)
         if msg.get("deleted_at") or msg.get("recalled_at"):
             raise ServiceError(404, "no_message", "消息已撤回或删除")
-        return {"delivery": "recorded", "conversation_id": i.conversation_id, "message_id": msg["id"], "seq": msg["seq"]}
+        return {**out, "delivery": "recorded", "message_id": msg["id"], "seq": msg["seq"]}
 
     def receipt(self, c, i):
         row = self.store.one("SELECT * FROM op_runs WHERE id=? AND op=? AND user_id=? AND workspace_id=?",
@@ -400,33 +404,17 @@ class SuiteAdapters:
             allowed, wait = c.identity.window_allows(f"msg:{c.user_id}", limit=MESSAGES_PER_MINUTE, window_s=60)
             if not allowed:
                 raise ServiceError(429, "too_many_attempts", "发送过于频繁", {"retry_after": wait})
-        # External-visible boundary: a persistent run already exists. A thrown exception may
-        # follow a committed message (e.g. failed fan-out). Report unknown and reconcile, never
-        # let the registry label this a safe-to-repeat failure.
-        attempted = False
-        try:
-            # Hold validation and write in one transaction, including the audience comparison.
-            with self.store.tx():
-                self._authorize(c, MESSAGES_APP_ID, "write")
-                if self._conversation(c, i.conversation_id)["audience"] != i.audience:
-                    raise ServiceError(409, "audience_changed", "会话受众已变化，请重新核实后发送")
-                for aid in i.artifact_ids:
-                    self._artifact(c, aid, export=True)
-                attempted = True
-                msg, _ = self.sender.send(i.conversation_id, c.user_id, body=body, client_id=client_id)
-        except ServiceError:
-            # The service's business refusals roll back this local transaction. These are
-            # definite failures (archived, blocked, invalid message), not uncertain delivery.
-            raise
-        except Exception:
-            if not attempted:
-                raise
-            return {"__run_status__": "unknown", "delivery": "unknown", "conversation_id": i.conversation_id,
-                    "message_id": None, "seq": None}
-        c.touches("message", msg["id"])
-        c.emit("messages.message.recorded", object_kind="message", object_id=msg["id"],
-               data={"conversation_id": i.conversation_id, "message_id": msg["id"]})
-        return {"delivery": "recorded", "conversation_id": i.conversation_id, "message_id": msg["id"], "seq": msg["seq"]}
+            if conv["archived"]:
+                raise ServiceError(409, "archived", "会话已归档，不能再发消息")
+            # Queued in this operation's own transaction: the receipt and the queued message commit
+            # together, so a lost acknowledgement can never hide a sent message. Message's own process
+            # delivers it as this person after checking access, archive state and audience again.
+            from synwevo_core.messaging_bridge import emit_user_message
+            with self.store.tx() as t:
+                emit_user_message(t, event_id=client_id, conversation_id=i.conversation_id, workspace_id=conv["workspace_id"],
+                                  organization_id=conv["organization_id"], sender_id=c.user_id, body=body, audience=i.audience)
+        return {"__run_status__": "queued", "delivery": "queued", "conversation_id": i.conversation_id,
+                "message_id": None, "seq": None, "error_code": None}
 
     def register(self, ctx):
         if self._ctx is ctx:
@@ -434,7 +422,7 @@ class SuiteAdapters:
         if self._ctx is not None or ctx.store is not self.store:
             raise ValueError("One prepared adapter belongs to one Suite context and one Store")
         self._ctx = ctx
-        from .suite_files import register as register_files
+        from .suite_files import register as register_files, register_dataset_input
         register_files(ctx)
         docs = AppManifest(DOCS_APP_ID, "Synwevo Docs", "/", "file-text",
                            T("文档生成与产物", "文件生成與產物", "Document jobs and artifacts"),
@@ -459,6 +447,7 @@ class SuiteAdapters:
            "Page the job's live artifacts through Docs ACLs.", Artifacts, self.artifacts, output=ArtifactsResult)
         op(DOCS_APP_ID, "artifact.get", ("读取产物链接", "讀取產物連結", "Read artifact link"),
            "Read artifact metadata and an authenticated download URL; requires export permission.", Artifact, self.artifact, output=ArtifactLink)
+        register_dataset_input(ctx, self)
         if self.messaging is not None:
             ctx.registry.register_app(AppManifest(MESSAGES_APP_ID, "Synwevo Message", "/messages", "message-circle",
                 T("工作空间会话", "工作空間會話", "Workspace conversations"), object_kinds=("conversation", "message")))
@@ -468,14 +457,68 @@ class SuiteAdapters:
                "Read the controlled destination and its audience fingerprint before confirmation.", Conversation, self.conversation, output=ConversationResult)
             op(MESSAGES_APP_ID, "message.send", ("发送消息", "傳送訊息", "Send message"),
                "Send confirmed text and same-workspace protected artifact links to the exact audience. Requires idempotency key.",
-               Send, self.send, need="write", side_effect="external", agent="confirm", transactional=False,
+               Send, self.send, need="write", side_effect="external", agent="confirm", mode="async",
                result_guard=self.message_guard, output=SendResult, events=("messages.message.recorded",), object_kind="message")
             op(MESSAGES_APP_ID, "message.inspect", ("核实发送结果", "核實傳送結果", "Inspect message receipt"),
                "Read-only reconciliation of an unknown send by its run_id. Never sends or retries.", Receipt, self.receipt, output=SendResult)
         self._install_download(ctx)
         if ctx.start_jobs:
             from synwevo_suite.common.worker import Ticker
-            self.ticker = Ticker("suite-docs-receipts", self.sync_jobs, 2).start(ctx.api)
+            self.ticker = Ticker("suite-docs-receipts", self.sync_receipts, 2).start(ctx.api)
+
+    def sync_receipts(self):
+        self.sync_jobs()
+        self.sync_inputs()
+        if self.messaging is not None:
+            self.sync_messages()
+
+    def sync_inputs(self):
+        """Settle dataset-to-document inputs from the source's real check/parse outcome."""
+        rows = self.store.all("SELECT id,workspace_id,output FROM op_runs WHERE op=? AND status IN ('queued','running') "
+                              "ORDER BY id LIMIT 200", (f"{DOCS_APP_ID}.project.from_dataset",))
+        for row in rows:
+            out = _json(row["output"])
+            try:
+                with as_tenant(row["workspace_id"]):
+                    source = self.docs.get_source(out.get("source_id"))
+            except ServiceError as err:
+                if err.status == 404:
+                    self._ctx.capabilities.update_run(row["id"], "failed", output={**out, "state": "failed", "error_code": "source_missing"},
+                                                      error=ServiceError(409, "source_missing", "文档输入已不存在"))
+                continue
+            if source.get("status") == "ready":
+                self._ctx.capabilities.update_run(row["id"], "succeeded", output={**out, "state": "ready", "error_code": None})
+            elif source.get("status") in ("rejected", "scan_failed", "failed", "needs_ocr"):
+                code = "source_" + source["status"]
+                self._ctx.capabilities.update_run(row["id"], "failed", output={**out, "state": "failed", "error_code": code},
+                                                  error=ServiceError(409, code, "文档输入未通过检查或解析"))
+
+    def sync_messages(self):
+        """Settle queued sends from what Message actually did; never sends or re-queues anything."""
+        from synwevo_core.messaging_bridge import user_message_state
+        rows = self.store.all("SELECT id,workspace_id,user_id,input,output FROM op_runs WHERE op=? "
+                              "AND status IN ('queued','unknown') ORDER BY id LIMIT 200",
+                              (f"{MESSAGES_APP_ID}.message.send",))
+        for row in rows:
+            i = Send.model_validate(_json(row["input"]))
+            state = user_message_state(self.store, row["id"])
+            found = self.store.one("SELECT id, seq FROM messages WHERE conversation_id=? AND sender_id=? AND client_id=?",
+                                   (i.conversation_id, row["user_id"], row["id"]))
+            base = {"conversation_id": i.conversation_id, "error_code": None}
+            if found:
+                with self.store.tx() as t:
+                    self._ctx.capabilities.update_run(row["id"], "succeeded", output={
+                        **base, "delivery": "recorded", "message_id": found["id"], "seq": found["seq"]})
+                    t.execute("UPDATE op_runs SET object_kind='message', object_id=? WHERE id=?", (found["id"], row["id"]))
+                    # The receipt's event, now that the message exists: the conversation and the message id only.
+                    from synwevo_core.capabilities import record_event
+                    record_event(t, type_="messages.message.recorded", app=MESSAGES_APP_ID,
+                                 workspace_id=row["workspace_id"], user_id=row["user_id"], object_kind="message",
+                                 object_id=found["id"], run_id=row["id"],
+                                 data={"conversation_id": i.conversation_id, "message_id": found["id"]})
+            elif state["state"] == "failed":
+                self._ctx.capabilities.update_run(row["id"], "failed", output={**base, "delivery": "failed", "error_code": state["code"]},
+                    error=ServiceError(409, state["code"], "消息未发送：会话、成员或受众已变化"))
 
     def sync_jobs(self):
         """Worker-side reconciliation only. Read/inspect operations never update run records.
@@ -544,7 +587,7 @@ def prepare(api, plat, *, docs_api=None, messages_api=None, start_jobs=True, pub
         docs_api.state.jobs = JobService(docs_api.state.app, start=start_jobs,
                                         notifier=getattr(docs_api.state, "notifier", None))
         api.state.shutdown_hooks.append(docs_api.state.jobs.stop)
-    adapters = SuiteAdapters(docs_api, messages_api or api, public_url=public_url)
+    adapters = SuiteAdapters(docs_api, messages_api or api, public_url=public_url, ident=plat.identity)
     api.state.suite_adapters = adapters
     return adapters
 

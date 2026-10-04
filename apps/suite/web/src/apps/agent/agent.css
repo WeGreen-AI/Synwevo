@@ -33,6 +33,8 @@
 .ag-action.pending { border-color: var(--accent); }
 .ag-action-heading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 .ag-action-heading strong { flex: 1; }
+.ag-transfer { border-left: 3px solid var(--accent-line); padding-left: var(--sp-3); margin: var(--sp-2) 0; }
+.ag-transfer ul { margin: var(--sp-1) 0 0; padding-left: var(--sp-4); }
 .ag-action summary { cursor: pointer; padding: var(--sp-2) 0; }
 .ag-action-buttons { display: flex; gap: var(--sp-2); margin-top: var(--sp-3); flex-wrap: wrap; }
 .ag-values { margin: var(--sp-2) 0; padding-left: var(--sp-3); font-size: var(--fs-3); }

@@ -67,10 +67,25 @@ class Deliveries(TriggerRef):
     limit: int = Field(default=50, ge=1, le=200)
 
 
+def _runs_in(value: dict) -> list[str]:
+    """The flow runs an answer describes: a run, a page of runs, or a trigger's deliveries."""
+    if "runs" in value:
+        return [r["id"] for r in value["runs"]]
+    if "deliveries" in value:
+        return [d["run_id"] for d in value["deliveries"] if d.get("run_id")]
+    if value.get("id") and value.get("flow_id") and "status" in value:
+        return [value["id"]]
+    return []
+
+
 def register(registry, flows):
     def add(suffix, input_, handler, *, write=False, person=False):
         def invoke(call, inp):
             value = handler(call, inp)
+            if isinstance(value, dict) and call.via == "agent":
+                # A run's progress was decided on what it read. The Agent counts these workspaces
+                # as sources of what its model is told (processing policy, transfers, memories).
+                value = {**value, "source_workspaces": flows.carried(_runs_in(value), user_id=call.user_id)}
             if isinstance(value, dict):
                 if value.get("trigger_id"):
                     call.touches("flow_trigger", value["trigger_id"])
@@ -107,7 +122,10 @@ def register(registry, flows):
     add("start", Start, lambda c, i: flows.start(i.flow_id, user_id=c.user_id, version=i.version, parameters=i.parameters,
                                                 idempotency_key=i.idempotency_key, correlation_id=c.correlation_id,
                                                 parent_run_id=c.run_id, depth=c.depth), write=True)
-    add("run", History, lambda c, i: flows.run(i.run_id, user_id=c.user_id, after=i.after, limit=i.limit))
+    # The Agent's model gets the run's progress, not its steps' business snapshots: a personal
+    # operation's answer names no source workspace, so content passed through it would be untracked.
+    add("run", History, lambda c, i: flows.run(i.run_id, user_id=c.user_id, after=i.after, limit=i.limit,
+                                               outputs=c.via != "agent"))
     add("cancel", Run, lambda c, i: flows.cancel(i.run_id, user_id=c.user_id), write=True)
     add("pause", Run, lambda c, i: flows.pause(i.run_id, user_id=c.user_id), write=True)
     add("resume", Run, lambda c, i: flows.resume(i.run_id, user_id=c.user_id), write=True)

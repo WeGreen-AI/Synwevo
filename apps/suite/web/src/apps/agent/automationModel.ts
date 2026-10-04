@@ -46,7 +46,7 @@ export interface TriggerSpec {
 export interface Policy { tools: string[]; workspaces: string[]; max_runs: number; expires_at: number | null; until_revoked: boolean }
 export interface FlowTrigger { id: string; flow_id: string; version: number; enabled: boolean | number; trigger: TriggerSpec; policy: Policy; runs_used: number; next_at: number | null; error_code: string | null }
 export interface Delivery { occurrence: string; run_id: string | null; status: string; error_code: string | null; created_at: number }
-export interface Issue { path: string; code: 'required' | 'type' | 'range' | 'format' | 'unknownField' | 'reference' | 'transfer' | 'operation' | 'graph' | 'budget' | 'lifecycle' }
+export interface Issue { path: string; code: 'required' | 'type' | 'range' | 'format' | 'unknownField' | 'reference' | 'operation' | 'graph' | 'budget' | 'lifecycle' }
 const identifier = /^[A-Za-z][A-Za-z0-9_-]{0,79}$/;
 const forbidden = new Set(['__proto__', 'constructor', 'prototype']);
 export const parameterTypes: ParameterType[] = ['string', 'integer', 'number', 'boolean', 'object', 'array'];
@@ -61,7 +61,9 @@ export const readsOf = (definition: Definition): ReadSpec[] => definition.steps.
 export function targets(cap: Capability, apps: AppAccess[]): (string | null)[] {
   const app = apps.find((a) => a.id === cap.app);
   if (!app || !cap.unattended || cap.id.startsWith('agent.flow.') || cap.writes_elsewhere || (cap.need === 'read' && cap.side_effect !== 'none')) return [];
-  if (cap.need === 'personal') return app.scope === 'personal' ? [null] : [];
+  // Personal operations are never flow steps (the server answers person_required): they would
+  // take workspace content into personal records, or personal records into a workspace.
+  if (cap.need === 'personal') return [];
   const roles = cap.need === 'manage' ? ['owner', 'admin'] : cap.need === 'write' ? ['owner', 'admin', 'editor'] : cap.need === 'read' ? ['owner', 'admin', 'editor', 'viewer'] : [];
   return app.workspaces.filter((w) => roles.includes(w.role)).map((w) => w.id);
 }
@@ -163,8 +165,11 @@ export function referenceRoots(ctx: RefContext): string[] {
   const roots = Object.keys(ctx.definition.parameters).map((k) => `params.${k}`);
   ctx.definition.steps.slice(0, ctx.index).forEach((step) => {
     const op = step.kind === 'call' ? ctx.capabilities.find((c) => c.id === step.operation) : null;
-    if ((step.kind === 'wait' || (step.kind === 'call' && (step.result_read || op?.side_effect === 'none'))) &&
-        (ctx.condition || stepWorkspace(step) === ctx.workspace)) roots.push(`steps.${step.id}`);
+    // Steps of every workspace: whether a value may go into this one is the source's data-flow
+    // policy, decided by the server when the run gets here.
+    if (step.kind === 'wait' || (step.kind === 'call' && (step.result_read || op?.side_effect === 'none'))) roots.push(`steps.${step.id}`);
+    // "succeeded" or "partial" of an earlier call (e.g. a run that finished with row issues).
+    if (ctx.condition && step.kind === 'call') roots.push(`outcome.${step.id}`);
   });
   if (ctx.receipt) roots.push('receipt');
   if (ctx.record) roots.push('record');
@@ -174,10 +179,12 @@ export function validateReference(path: string, ctx: RefContext, expected: Schem
   const bits = path.split('.');
   if (bits.length < 2 || bits.length > 24 || bits.some((b) => !/^[\p{L}\p{N}_ -]{1,100}$/u.test(b) || forbidden.has(b))) return 'reference';
   if (ctx.event) return referenceRoots(ctx).includes(path) && (!expected.type || expected.type === 'string') ? null : 'reference';
+  if (bits[0] === 'outcome') return referenceRoots(ctx).includes(path) && (!expected.type || expected.type === 'string') ? null : 'reference';
   if (bits[0] === 'steps') {
     const source = ctx.definition.steps.slice(0, ctx.index).find((s) => s.id === bits[1]);
+    // Carrying a value into another workspace is decided by the server on the source's
+    // data-flow policy when the run reaches the step, not refused here.
     if (!source || bits.length < 3) return 'reference';
-    if (!ctx.condition && stepWorkspace(source) !== ctx.workspace) return 'transfer';
   }
   const root = referenceRoots(ctx).find((r) => path === r || path.startsWith(`${r}.`));
   if (!root || ((root === 'receipt' || root === 'record' || root.startsWith('steps.')) && path === root)) return 'reference';
@@ -208,7 +215,6 @@ export function validateDefinition(def: Definition, caps: Capability[], apps: Ap
     const checkRead = (ref: ReadSpec, readOnly: boolean, receipt = false) => {
       const cap = availableCapabilities(caps, apps, readOnly).find((c) => c.id === ref.operation && c.version === ref.operation_version);
       if (!cap || !targets(cap, apps).includes(ref.workspace_id)) { add(step.id, 'operation'); return; }
-      if (receipt && ref.workspace_id !== stepWorkspace(step)) add(step.id, 'transfer');
       const inputSchema = automationInputSchema(cap);
       errors.push(...validateValue(ref.input, inputSchema, inputSchema, `${step.id}.input`, true));
       errors.push(...mappingIssues(ref.input, inputSchema, inputSchema, { ...ctx, workspace: ref.workspace_id, receipt }, step.id));

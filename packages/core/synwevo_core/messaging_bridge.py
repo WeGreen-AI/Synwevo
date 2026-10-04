@@ -28,6 +28,7 @@ application registry and the object id — never from an event payload.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -78,6 +79,12 @@ SKIPPED_NO_CONVERSATION = "skipped_no_conversation"
 SKIPPED_OBJECT_GONE = "skipped_object_gone"
 SKIPPED_ARCHIVED = "skipped_archived"
 MAX_ATTEMPTS = 10
+# A person's own message queued by another process (Suite on the workplace origin), delivered
+# here so that fan-out, notifications and digests behave exactly as for a message typed in Message.
+USER_MESSAGE = "user.message"
+#: Definite refusals at delivery. Recorded on the row; the sender's receipt becomes failed.
+USER_MESSAGE_REFUSALS = frozenset({"archived", "audience_changed", "no_conversation", "not_member",
+                                   "account_unavailable", "blocked", "message_too_long", "empty_message"})
 MAX_TITLE = 80
 MAX_SUBTITLE = 80
 LOCALES = ("zh-Hans", "zh-Hant", "en")
@@ -211,6 +218,53 @@ def emit(t: sqlite3.Connection | sqlite3.Cursor, *, app: str, event_id: str, kin
             except Exception:  # noqa: BLE001
                 pass
     return written
+
+
+def audience_fingerprint(conv: dict) -> str:
+    """Who a message would reach, as `Messaging.get` shows it to a member: the destination is
+    confirmed against this before queueing and checked again at delivery."""
+    value = {"id": conv["id"], "workspace_id": conv["workspace_id"], "organization_id": conv["organization_id"],
+             "archived": conv["archived"], "members": sorted(m["user_id"] for m in conv["members"])}
+    # The canonical form of `capabilities.fingerprint`, kept here so the account service, which runs
+    # this worker, does not load the capability registry.
+    canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def emit_user_message(t, *, event_id: str, conversation_id: str, workspace_id: str, organization_id: str | None,
+                      sender_id: str, body: str, audience: str) -> bool:
+    """Queue a person's own message on the caller's transaction. `event_id` (the caller's operation
+    run) becomes the message's client id, so a redelivery can never become a second message."""
+    cur = t.execute("INSERT OR IGNORE INTO messaging_outbox (id,app,event_id,kind,object_kind,object_id,workspace_id,"
+                    "organization_id,actor_id,payload,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (new_id("ob"), "messages", event_id, USER_MESSAGE, "conversation", conversation_id, workspace_id,
+                     organization_id, sender_id, json.dumps({"conversation_id": conversation_id, "body": body,
+                                                              "audience": audience}, ensure_ascii=False), now()))
+    if cur.rowcount > 0:
+        for w in list(_wakers):
+            try:
+                w()
+            except Exception:  # noqa: BLE001
+                pass
+    return cur.rowcount > 0
+
+
+def user_message_state(store: Store, event_id: str) -> dict:
+    """Where a queued message stands: queued, recorded (with its message), failed (with a code), or
+    unknown when no queue row exists. Read-only; absence never means it is safe to send again."""
+    row = store.one("SELECT * FROM messaging_outbox WHERE event_id=? AND kind=?", (event_id, USER_MESSAGE))
+    if not row:
+        return {"state": "unknown"}
+    found = store.one("SELECT id, seq FROM messages WHERE conversation_id=? AND sender_id=? AND client_id=?",
+                      (row["object_id"], row["actor_id"], event_id))
+    if found:
+        return {"state": "recorded", "message_id": found["id"], "seq": found["seq"]}
+    if row["delivered_at"] is not None:
+        code = row["last_error"] if row["last_error"] in USER_MESSAGE_REFUSALS else "delivery_failed"
+        return {"state": "failed", "code": code}
+    if row["attempts"] >= MAX_ATTEMPTS:
+        return {"state": "failed", "code": "delivery_failed"}
+    return {"state": "queued"}
 
 
 def emit_comment(t, *, comment_id: str, project_id: str, workspace_id: str, author_id: str,
@@ -598,8 +652,42 @@ class BridgeWorker:
         self.store.execute("UPDATE messaging_outbox SET delivered_at=?, attempts=attempts+1, last_error=? WHERE id=?", (now(), why, row["id"]))
         return why
 
+    def _deliver_user(self, row: dict) -> str:
+        """A person's queued message, sent as them after re-checking everything that may have
+        changed since it was confirmed: their access, the object behind the discussion, the archive
+        state and the exact audience. A definite refusal is recorded, never retried."""
+        payload = _load(row.get("payload")) or {}
+        cid, sender = payload.get("conversation_id"), row["actor_id"]
+        user = self.ident.get_user(sender) if sender else None
+        if not user or user.get("status") != "active":
+            return self._skip(row, "account_unavailable")
+        try:
+            conv = self.messaging.get(cid, sender)
+        except ServiceError as e:
+            return self._skip(row, e.code if e.code in USER_MESSAGE_REFUSALS else "no_conversation")
+        if conv["workspace_id"] != row["workspace_id"]:
+            return self._skip(row, "no_conversation")
+        if self.store.one("SELECT 1 AS x FROM object_conversations WHERE conversation_id=?", (cid,)):
+            obj = self.objects.object_of(cid, sender)
+            if not obj or obj.get("degraded"):
+                return self._skip(row, "no_conversation")
+        if conv["archived"]:
+            return self._skip(row, "archived")
+        if audience_fingerprint(conv) != payload.get("audience"):
+            return self._skip(row, "audience_changed")
+        try:
+            # The same write path as Message's own route: fan-out, unread state and digests follow.
+            self.messaging.send(cid, sender, body=payload.get("body") or "", client_id=row["event_id"])
+        except ServiceError as e:
+            return self._skip(row, e.code if e.code in USER_MESSAGE_REFUSALS else "delivery_failed")
+        self.store.execute("UPDATE messaging_outbox SET delivered_at=?, attempts=attempts+1, last_error=NULL WHERE id=?",
+                           (now(), row["id"]))
+        return "delivered"
+
     def deliver(self, row: dict) -> str:
         """One row → one card message in the object's conversation, or a recorded skip."""
+        if row["kind"] == USER_MESSAGE:
+            return self._deliver_user(row)
         mapping = self.store.one("SELECT conversation_id FROM object_conversations WHERE app=? AND kind=? AND object_id=?", (row["app"], row["object_kind"], row["object_id"]))
         if not mapping:
             return self._skip(row, SKIPPED_NO_CONVERSATION)
