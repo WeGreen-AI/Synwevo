@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS flow_runs (
 );
 CREATE INDEX IF NOT EXISTS flow_runs_due ON flow_runs(status,due_at,lease_until);
 CREATE INDEX IF NOT EXISTS flow_runs_owner ON flow_runs(user_id,id);
+CREATE INDEX IF NOT EXISTS flow_runs_chain ON flow_runs(correlation_id,user_id);
 CREATE TABLE IF NOT EXISTS flow_steps (
  run_id TEXT NOT NULL, step_id TEXT NOT NULL, status TEXT NOT NULL,
  attempt INTEGER NOT NULL DEFAULT 0, checks INTEGER NOT NULL DEFAULT 0,
