@@ -332,3 +332,29 @@ def test_review_entries_are_bounded_and_typed(org):
     r = c.put(f"{base(c)}/{iid}/mapping", headers=h, json={"workspace_id": c.wid,
                                                           "mapping": {"mode": "lines", "reviews": {"p1:l1": {"email": "nope", "checked": True}}}})
     assert r.status_code == 200 and r.json()["summary"]["reasons"] == {"bad_email": 1}
+
+
+def test_an_import_invitation_adds_roles_beside_the_ones_a_member_already_holds(org):
+    """Review of D12: accepting an import invitation replaced the person's custom roles with the
+    import's, so an existing member silently lost every other role — and once taking a role away
+    needed the importer to hold it, acceptance was refused instead. The import's roles are added."""
+    c = org
+    h = login(c, "owner")
+    role = lambda name, perms: c.post(f"/api/auth/organizations/{c.oid}/roles", headers=h,
+                                      json={"name": name, "permissions": perms, "reason": WHY}).json()["role"]
+    kept, added = role("Settings", ["org.settings.manage"]), role("Viewer", ["org.members.view"])
+    importer = role("Importer", ["org.roles.manage", "org.members.view", "org.members.invite"])
+    plain, member = c.users["plain"]["id"], c.users["member"]["id"]
+    for who, ids in ((plain, [kept["id"]]), (member, [importer["id"]])):
+        assert c.put(f"/api/auth/organizations/{c.oid}/members/{who}/roles", headers=h,
+                     json={"role_ids": ids, "reason": WHY}).status_code == 200
+    # an import by the delegate whose invitation row is done (the shape the runner leaves)
+    mi = MemberImports(c.ident.store, c.ident)
+    imp = mi.create(c.oid, member, filename="fixture.csv", sha256="0" * 64, size=1, extraction={"tables": []},
+                    scan={"status": "not_configured"}, workspace_id=c.wid)
+    c.ident.store.insert("member_import_rows", {"id": "mir_fixture", "import_id": imp["id"], "seq": 1, "action": "invite",
+                                                "status": "done", "invitation_id": "inv_fixture",
+                                                "org_role_ids": json.dumps([added["id"]]), "updated_at": 1})
+    out = mi.on_invitation_accepted("inv_fixture", plain)
+    assert out["assigned"] == [added["id"]] and not out["refused"], out
+    assert sorted(x["id"] for x in OrgRoles(c.ident.store).assigned(c.oid, plain)) == sorted([kept["id"], added["id"]])
