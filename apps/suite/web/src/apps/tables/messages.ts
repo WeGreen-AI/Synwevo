@@ -231,6 +231,8 @@ export const tables = {
   '公式存在循环引用。': {en: 'The formula has a circular reference.', 'zh-Hant': '公式存在循環參照。'},
   '请输入名称。': {en: 'Enter a name.', 'zh-Hant': '請輸入名稱。'},
   '操作未完成，请检查输入和权限后重试。': {en: 'The operation did not complete. Check the inputs and permissions, then retry.', 'zh-Hant': '操作未完成，請檢查輸入和權限後重試。'},
+  '已保存视图「{name}」。': {en: 'View "{name}" saved.', 'zh-Hant': '已儲存檢視「{name}」。'},
+  '视图没有变化。': {en: 'The view has no changes.', 'zh-Hant': '檢視沒有變化。'},
   '列「{column}」：{message}': {en: 'Column "{column}": {message}', 'zh-Hant': '欄「{column}」：{message}'},
   '字段「{field}」：{message}': {en: 'Field "{field}": {message}', 'zh-Hant': '欄位「{field}」：{message}'},
   '（已删除的选项）': {en: '(Deleted option)', 'zh-Hant': '（已刪除的選項）'},

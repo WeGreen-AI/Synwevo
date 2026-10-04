@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, Navigate, NavLink, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useDialog, useI18n } from "@synwevo/ui";
 import { Empty, Loading } from "../../shared/states";
 import { useRead, useMutation, TableFailure, roleKeys } from "./common";
@@ -55,6 +55,11 @@ export function TablePage({ws}: {ws: Workspace}) {
   const [tick, setTick] = useState(0);
   const {data: table, error} = useRead<Table>("tables.table.get", {table_id: tid}, ws.id, tick);
   const reload = () => setTick(n => n+1);
+  // A confirmation kept here outlives the reload that remounts the page below; it ends when the
+  // person moves to another part of the table.
+  const [notice, setNotice] = useState<string>();
+  const {pathname} = useLocation();
+  useEffect(() => setNotice(undefined), [pathname]);
   if (error) return <TableFailure error={error} retry={reload} />;
   if (!table) return <Loading />;
   const base = `/tables/w/${ws.id}/t/${tid}`;
@@ -66,7 +71,7 @@ export function TablePage({ws}: {ws: Workspace}) {
       {[["", "数据网格"], ["fields", "字段设置"], ["history", "变更记录"], ["import", "导入数据"], ["settings", "数据表设置"]].filter(([path]) => path !== "import" || table.can_write).map(([path, label]) => <NavLink key={path} end={path === ""} to={`${base}/${path}`} className={({isActive}) => `suite-section${isActive ? " on" : ""}`}>{t(label)}</NavLink>)}
     </nav>
     <Routes>
-      <Route index element={<Grid key={tick} ws={ws} table={table} reload={reload} />} />
+      <Route index element={<Grid key={tick} ws={ws} table={table} reload={reload} notice={notice} onNotice={setNotice} />} />
       <Route path="fields" element={<FieldsEditor ws={ws} table={table} reload={reload} />} />
       <Route path="history" element={<History ws={ws} table={table} />} />
       <Route path="import" element={<ImportPanel ws={ws} table={table} reload={reload} />} />

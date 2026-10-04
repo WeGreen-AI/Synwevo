@@ -3,9 +3,10 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useDialog, useI18n } from "@synwevo/ui";
 import { Loading, Empty, RunBadge } from "../../shared/states";
 import { useRead, useMutation, TableFailure, valueText, errorKey, issueText } from "./common";
+import { viewSaved } from "./display";
 import type { Workspace, Table, Query, QueryResult } from "./types";
 
-export function Grid({ws, table, reload}: {ws: Workspace; table: Table; reload: () => void}) {
+export function Grid({ws, table, reload, notice, onNotice}: {ws: Workspace; table: Table; reload: () => void; notice?: string; onNotice: (text?: string) => void}) {
   const {t, locale} = useI18n();
   const dialog = useDialog();
   const [params, setParams] = useSearchParams();
@@ -27,7 +28,7 @@ export function Grid({ws, table, reload}: {ws: Workspace; table: Table; reload: 
   const {data, error} = useRead<QueryResult>("tables.record.query", {...query}, ws.id, tick);
   const mutation = useMutation(ws.id);
   const base = `/tables/w/${ws.id}/t/${table.id}`;
-  function changed() {setOffset(0); setPreviousPages([]); setSelected([]); setTicket(undefined);}
+  function changed() {setOffset(0); setPreviousPages([]); setSelected([]); setTicket(undefined); onNotice(undefined);}
   const viewRow = table.views.find(v => v.id === view);
   const writable = data?.records.filter(r => selected.includes(r.id) && r.can_write) ?? [];
   return <div>
@@ -62,10 +63,11 @@ export function Grid({ws, table, reload}: {ws: Workspace; table: Table; reload: 
         <fieldset><legend>{t("显示字段")}</legend><div className="tables-checks">{table.fields.map(f => <label className="tables-check" key={f.id}><input type="checkbox" checked={visible.includes(f.id)} onChange={e => {setVisible(e.target.checked ? [...visible, f.id] : visible.filter(x => x !== f.id)); changed();}} />{f.name}</label>)}</div></fieldset>
       </div>
     </details>}
-    {table.can_write && <form className="tables-toolbar" onSubmit={e => {e.preventDefault(); void mutation.run("tables.view.save", {table_id: table.id, name: viewName, ...(editingView ? {view_id: editingView.id, rev: editingView.rev} : {}), query: viewRow ? {...viewRow.config, table_id: table.id, view_id: null} : {...query, view_id: null}}).then(reload).catch(() => {});}}>
+    {table.can_write && <form className="tables-toolbar" onSubmit={e => {e.preventDefault(); void mutation.run("tables.view.save", {table_id: table.id, name: viewName, ...(editingView ? {view_id: editingView.id, rev: editingView.rev} : {}), query: viewRow ? {...viewRow.config, table_id: table.id, view_id: null} : {...query, view_id: null}}).then(result => {const saved = viewSaved(t, result, viewName); setParams(saved.params); onNotice(saved.notice); reload();}).catch(() => {});}}>
       <label>{t("视图名称")}<input className="input sm" required maxLength={100} value={viewName} onChange={e => setViewName(e.target.value)} /></label><button className="btn sm" disabled={mutation.busy}>{t(editingView ? "更新此视图" : "保存为新视图")}</button>
       {viewRow && <button className="btn sm" type="button" disabled={mutation.busy} onClick={async () => {if (await dialog.confirm(viewRow.name, t("删除此保存的视图？记录不会删除。"), t("删除视图"), true)) void mutation.run("tables.view.delete", {table_id: table.id, view_id: viewRow.id, rev: viewRow.rev}).then(() => {setParams({}); reload();}).catch(() => {});}}>{t("删除视图")}</button>}
     </form>}
+    {notice && <p className="notice ok" role="status">{notice}</p>}
     <TableFailure error={error || mutation.error} fields={table.fields} retry={() => setTick(n => n+1)} />
     {!data && !error && <Loading />}
     {data && <>

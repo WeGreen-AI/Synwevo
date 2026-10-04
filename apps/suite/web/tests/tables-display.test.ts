@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { translate } from "@synwevo/ui/i18n-core";
 import "../src/apps/tables/messages.ts";
-import { historyText, issueText, relationLabel } from "../src/apps/tables/display.ts";
+import { historyText, issueText, relationLabel, viewSaved } from "../src/apps/tables/display.ts";
 
 // How Tables words values and refusals for people. Fixture values only.
 const en = (source: string, params?: Record<string, any>) => translate("en", source, params);
@@ -55,4 +55,13 @@ test("a refused import row names its column, and a refused save names its field"
   // A field the reader is not shown is never named; the refusal stays general.
   assert.equal(issueText(en, "unique_conflict", {}, [orderNo]), "That value is already in use. Enter a unique value.");
   assert.equal(issueText(en, "required_cell", {field_id: "fld_00000000dead"}, [orderNo]), "Complete all required fields.");
+});
+
+test("saving a view selects it and says so", () => {
+  assert.deepEqual(viewSaved(en, {id: "view_000000000001", changed: true}, " Open orders "),
+    {params: {view: "view_000000000001"}, notice: 'View "Open orders" saved.'});
+  assert.deepEqual(viewSaved(zh, {id: "view_000000000001"}, "处理中"),
+    {params: {view: "view_000000000001"}, notice: "已保存视图「处理中」。"});
+  assert.deepEqual(viewSaved(en, {id: "view_000000000001", changed: false}, "Open orders"),
+    {params: {view: "view_000000000001"}, notice: "The view has no changes."});
 });

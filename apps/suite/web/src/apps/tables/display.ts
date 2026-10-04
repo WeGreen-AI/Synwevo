@@ -52,6 +52,12 @@ const errorKeys: Record<string, string> = {
 export function hasErrorKey(code: string): boolean {return Object.hasOwn(errorKeys, code);}
 export function errorKey(code: string): string {return errorKeys[code] ?? "操作未完成，请检查输入和权限后重试。";}
 
+/** After `tables.view.save`: the view to show (in the page address, which outlives the grid's
+ *  reload) and what to tell the person. */
+export function viewSaved(t: Translator, output: {id: string; changed?: boolean}, name: string): {params: {view: string}; notice: string} {
+  return {params: {view: output.id}, notice: output.changed === false ? t("视图没有变化。") : t("已保存视图「{name}」。", {name: name.trim()})};
+}
+
 /** One refused import row, batch item or save, in the reader's language, naming what it is about:
  *  the file column (`detail.column`), else the field (`detail.field_id`, one of `fields`). */
 export function issueText(t: Translator, error: string, detail?: Record<string, unknown> | null, fields: Field[] = []): string {
