@@ -11,6 +11,8 @@ Built through the deployment composer because the gate is shared by every role.
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -137,16 +139,23 @@ def test_an_unexpected_failure_on_the_browser_api_has_a_body_too(v1):
 def test_every_response_says_how_much_budget_is_left(v1):
     c, h = v1["c"], v1["h"]
     seen = []
+    started = time.monotonic()
     for _ in range(3):
         r = c.get("/api/v1/projects", headers=h)
         assert r.status_code == 200
         # Two policies since API-1: the credential's ("key", first, as before) and the workspace's.
         assert r.headers["RateLimit-Policy"] == '"key";q=3;w=60, "workspace";q=1200;w=60'
         seen.append(r.headers["RateLimit"])
+    elapsed = time.monotonic() - started
     assert [s.split(";")[1] for s in seen] == ["r=2", "r=1", "r=0"], seen
     assert all(int(s.split(",")[0].split("t=")[1]) >= 1 for s in seen)
-    # The workspace item: three requests spent from its (default) budget of 1200.
-    assert seen[-1].split(", ")[1].startswith('"workspace";r=1197;')
+    # The workspace item: three requests spent from its (default) budget of 1200. The bucket
+    # refills continuously (60 s / 1200 = one request every 50 ms), so on a slow runner part of
+    # what was spent is already back — never more than the elapsed time allows, never all of it.
+    ws = seen[-1].split(", ")[1]
+    assert ws.startswith('"workspace";r='), seen
+    left = int(ws.split(";")[1].removeprefix("r="))
+    assert 1197 <= left <= min(1199, 1197 + int(elapsed / 0.05) + 1), (seen, elapsed)
 
     r = c.get("/api/v1/projects", headers=h)
     assert r.status_code == 429 and r.json()["error"]["code"] == "rate_limited"
