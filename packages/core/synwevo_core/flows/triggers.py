@@ -162,7 +162,7 @@ class Triggers:
                 routing = {k: event[k] for k in ("id", "type", "object_id", "workspace_id")} if event else None
                 result = self._start(row["flow_id"], user_id=row["user_id"], version=row["version"], parameters=payload,
                                      idempotency_key=f"trigger:{row['id']}:{occurrence}", trigger_id=row["id"], event=routing,
-                                     correlation_id=self._chain(event) if event else None,
+                                     correlation_id=self._chain(event, row["user_id"]) if event else None,
                                      parent_run_id=event.get("run_id") if event else None,
                                      depth=int(event.get("depth", 0)) + 1 if event else 0)
                 rid = result["id"]
@@ -179,15 +179,31 @@ class Triggers:
         t.execute("INSERT OR IGNORE INTO flow_trigger_deliveries VALUES (?,?,?,?,?,?)", (row["id"], occurrence, rid, state, code, ts))
         t.execute("UPDATE flow_triggers SET error_code=?,updated_at=? WHERE id=?", (code, ts, row["id"]))
 
-    def _chain(self, event):
-        """The chain of events this one belongs to. An application that records an event later,
-        from its own worker, may name only the operation run it settles; that run still knows
-        its correlation, and what the chain has read (`_sources`) must follow into the run
-        started here."""
-        if event.get("correlation_id") or not event.get("run_id"):
-            return event.get("correlation_id")
-        origin = self.store.one("SELECT correlation_id FROM op_runs WHERE id=?", (event["run_id"],))
-        return origin["correlation_id"] if origin else None
+    def _chain(self, event, owner):
+        """The chain of events this one belongs to, for the runs it starts for ``owner``: what the
+        chain has read (`_sources`) must follow into them. An application that records an event
+        later, from its own worker, may name only the operation run it settles; that run still
+        knows its correlation.
+
+        A chain is one person's, and a correlation is something any caller may name. So the
+        event's chain is the owner's only when the owner's own operation caused it, or — for an
+        event an application records with no operation run (a submission, a decision) — when the
+        owner already has runs under its correlation. Otherwise, another member naming one
+        correlation on all their writes would gather every run the owner's triggers start into
+        one chain (R3-FE-07): the event begins a chain of its own, named after it and shared by
+        the runs it starts side by side."""
+        origin = (self.store.one("SELECT user_id, correlation_id FROM op_runs WHERE id=?", (event["run_id"],))
+                  if event.get("run_id") else None)
+        if origin is not None:
+            if origin["user_id"] == owner:
+                return event.get("correlation_id") or origin["correlation_id"]
+        elif event.get("correlation_id") and (
+                self.store.one("SELECT 1 FROM op_runs WHERE correlation_id=? AND user_id=? LIMIT 1",
+                               (event["correlation_id"], owner))
+                or self.store.one("SELECT 1 FROM flow_runs WHERE correlation_id=? AND user_id=? LIMIT 1",
+                                  (event["correlation_id"], owner))):
+            return event["correlation_id"]
+        return event["id"]
 
     def _readable(self, row, workspace_id, events):
         """The events of this batch the trigger's owner may know about now.

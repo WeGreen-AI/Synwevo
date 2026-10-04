@@ -476,3 +476,46 @@ def test_a_result_read_that_failed_counts_where_it_read(world):
     early = create("early", w.personal, "", on_error="land",
                    result_read={"operation": "forms.form.get", "workspace_id": w.p.a, "input": guess})
     assert w.run([early, create("land", w.wide, "Fixture literal")], "early-failure") == ("partial", None, "end")
+
+
+def test_a_correlation_another_member_names_does_not_gather_the_owners_triggered_runs(flow):
+    """R3-FE-07: Bob, an editor of A, names one correlation on each of his writes there. Alice's
+    two event triggers on A start runs for every write; none of them joins Bob's chain, and the
+    runs of different writes do not share one: an event another person's operation caused begins
+    a chain of its own, shared only by the runs that same event starts side by side."""
+    f = flow
+    spec = {"kind": "event", "event_type": "fixtureflow.created", "workspace_id": f.ws, "object_kind": "fixture_approval"}
+    for name in ("one", "two"):
+        fid = f.create([f.write(name, result_read=None, input={"text": "triggered"})])
+        f.e.create_trigger(fid, user_id=f.uid, version=1, trigger=spec, policy=f.policy(runs=10))
+    for n in range(3):
+        f.caps.invoke("fixtureflow.create", {"text": f"Fixture write {n} of Bob"}, user_id=f.p.uid("bob"),
+                      workspace_id=f.ws, via="ui", correlation_id="fixture-bobs-chain")
+    f.e.trigger_tick()
+    chains = {}
+    for r in f.store.all("SELECT correlation_id, event_json FROM flow_runs WHERE user_id=?", (f.uid,)):
+        chains.setdefault(r["correlation_id"], []).append(json.loads(r["event_json"])["id"])
+    assert "fixture-bobs-chain" not in chains
+    assert len(chains) == 3 and all(len(ids) == 2 and len(set(ids)) == 1 for ids in chains.values())
+
+
+def test_an_application_event_keeps_the_owners_chain_only(flow):
+    """An application that records an event itself (a submission to a request the run made, a
+    decision on its approval) names the correlation of the record, with no operation run. A
+    correlation the owner has runs in is their chain and the run joins it; one they have none in
+    is somebody else's naming, and the run begins its own chain."""
+    f = flow
+    origin = f.start(f.create([f.write()]), key="origin")
+    f.tick()
+    assert f.row(origin)["status"] == "succeeded"
+    fid = f.create([f.write("second", result_read=None)])
+    f.e.create_trigger(fid, user_id=f.uid, version=1, policy=f.policy(runs=5),
+                       trigger={"kind": "event", "event_type": "fixtureflow.decided", "workspace_id": f.ws})
+    record = f.result(origin, "write")["id"]
+    with f.store.tx() as t:
+        for chain in (origin, "fixture-named-elsewhere"):
+            record_event(t, type_="fixtureflow.decided", app="fixtureflow", workspace_id=f.ws,
+                         object_kind="fixture_approval", object_id=record, correlation_id=chain)
+    f.e.trigger_tick()
+    started = sorted(r["correlation_id"] for r in f.store.all("SELECT correlation_id FROM flow_runs WHERE flow_id=?", (fid,)))
+    assert len(started) == 2 and origin in started and "fixture-named-elsewhere" not in started

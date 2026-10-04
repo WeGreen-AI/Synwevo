@@ -141,6 +141,9 @@ Event input can reference routing identities (`id`, `object_id`, `workspace_id`,
 business content must be fetched with an authorized operation. Cursor advance, deduplication
 receipt, run creation and budget increment commit in one transaction. Correlation, causation
 and depth propagate; excessive depth records a refusal. Duplicate wait events only cause reads.
+The correlation is the owner's chain only when the owner's own operation caused the event, or
+(for an event an application records with no operation run) when the owner already has runs
+under it; any other event begins a chain named after it, shared by the runs it starts.
 
 Schedules use IANA `timezone`, local `at: HH:MM`, and `weekdays` (Monday=0). A spring-forward
 gap skips that local time; a fall-back fold runs only the first occurrence. `misfire=skip`
