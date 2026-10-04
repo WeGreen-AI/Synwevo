@@ -353,3 +353,33 @@ def test_a_source_that_allows_outward_sends_may_set_the_deadline(world):
                          "input": {"request_id": rid, "due_at": FAR}})
     assert w.run(steps, "extend-open") == ("succeeded", None, "end")
     assert page(w, form["personal"])["request"]["due_at"] == FAR
+
+
+def link_hash(w: World, form: dict):
+    return w.store.one("SELECT public_token_hash FROM forms WHERE id=?", (form["id"],))["public_token_hash"]
+
+
+def test_a_run_that_read_a_source_may_still_switch_a_public_link_off(world):
+    """R3-DF-5: switching a public link off, or replacing a request's link, reaches nobody; yet a
+    run that had read A was refused both as outward sends, and the link stayed open. Switching a
+    link on is still one."""
+    w = world
+    form = exposed_form(w)
+    off = {"id": "off", "kind": "call", "operation": "forms.public_link.set", "workspace_id": None,
+           "input": {"form_id": form["id"], "enabled": False}}
+    assert w.run(in_small(w, off), "link-off") == ("succeeded", None, "end")
+    assert link_hash(w, form) is None
+    on = {**off, "id": "on", "input": {"form_id": form["id"], "enabled": True}}
+    assert w.run(in_small(w, on), "link-on") == ("blocked", "transfer_audience_external", "on")
+    assert link_hash(w, form) is None
+    reissue = {"id": "reissue", "kind": "call", "operation": "forms.request.reissue_link", "workspace_id": None,
+               "input": {"request_id": personal_request_of(w, form)}}
+    assert w.run(in_small(w, reissue), "reissue") == ("succeeded", None, "end")
+    jar = dict(w.suite.cookies)
+    w.suite.cookies.clear()
+    try:
+        gone = w.suite.get(f"/api/suite/public/forms/r/{form['personal']}", headers={"X-Synwevo-Filler": "f" * 32, **CSRF})
+    finally:
+        for k, v in jar.items():
+            w.suite.cookies.set(k, v)
+    assert gone.status_code == 404 and gone.json()["error"] == "link_not_found"

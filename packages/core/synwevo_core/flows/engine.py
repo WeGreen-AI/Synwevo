@@ -460,7 +460,8 @@ class Flows(Triggers):
         reading two workspaces to compare them is no transfer."""
         carried = []
         if op.side_effect != "none":
-            carried = self._transfer(run, step.workspace_id, external=op.side_effect == "external")
+            # Asked on the input as written: a reference has no value yet, so it counts as outward.
+            carried = self._transfer(run, step.workspace_id, external=op.outward(step.input))
         elif self._takes(run, step.input):
             self._transfer(run, step.workspace_id)
         if step.result_read and step.result_read.workspace_id != step.workspace_id:

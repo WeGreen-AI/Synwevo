@@ -417,3 +417,28 @@ def test_a_flow_an_agent_write_started_keeps_its_sources_for_a_later_write(gover
     advance(g, later)
     assert calls(g, later)["land"] == ("failed", "transfer_audience_denied")
     assert w.titles(w.wide) == []
+
+
+def test_the_agent_may_switch_a_public_link_off_after_reading_a_source(governed):
+    """R3-DF-5 through the Agent: after reading A, switching a public link off reaches nobody and
+    is proposed for confirmation; switching it on is refused as an outward send, before any card."""
+    from .test_forms import DEFINITION
+    g = governed
+    setup(g)
+    g.client.sign_in("alice")
+    small = g.people.ident.create_workspace("Fixture Alice only", owner_id=g.people.uid("alice"))["id"]
+    form = op(g.client, "forms.form.create", {"title": "Fixture request form", "definition": DEFINITION}, ws=small)["output"]["id"]
+    op(g.client, "forms.form.publish", {"form_id": form, "draft_rev": 1}, ws=small)
+    op(g.client, "forms.public_link.set", {"form_id": form, "enabled": True}, ws=small)
+
+    def link(enabled, tid):
+        return call("run_operation", {"operation": "forms.public_link.set", "workspace_id": small,
+                                      "input": {"form_id": form, "enabled": enabled}}, tid=tid)
+
+    _, turn = begin(g, [read(g.people.a, "read-a"), link(True, "on"), link(False, "off"), say("Switched off.")])
+    assert advance(g, turn)["status"] == "waiting_confirmation"
+    done = calls(g, turn)
+    assert done["on"] == ("failed", "transfer_audience_external")
+    assert done["off"] == ("awaiting_confirmation", None)
+    assert _confirm_pending(g, turn)[1]["status"] == "succeeded"
+    assert g.store.one("SELECT public_token_hash FROM forms WHERE id=?", (form,))["public_token_hash"] is None

@@ -335,9 +335,10 @@ class Agent:
         sources |= self._carried_into(t, {target})
         if op.writes_elsewhere and wid:
             sources.add(wid)  # The operation itself copies from where it runs; its service checks it too.
-        # A message or a form request reaches whoever it is addressed to, not only the target's members.
+        # A message or a form request reaches whoever it is addressed to, not only the target's
+        # members; switching a public link off reaches nobody (Operation.outward).
         return [data_flow.check(self.store, user_id=t["user_id"], source=s, target=target,
-                                external=op.side_effect == "external")
+                                external=op.outward(clean))
                 for s in sorted(sources - {target})]
 
     def _sealed(self, user_id: str, row: dict) -> str | None:

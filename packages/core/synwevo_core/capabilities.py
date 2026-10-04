@@ -166,6 +166,12 @@ class Operation:
     #: result. Called with the freshly authorized caller and the original run; must never
     #: repeat the mutation. Without this guard, old mutation payloads remain private.
     result_guard: Callable[["Call", dict], None] | None = None
+    #: For an operation whose side effect is ``external`` in one direction only (switching a public
+    #: link on, not off): given the call's input as written, whether this call reaches people
+    #: outside the workspace — the outward send of docs/platform/data-flow.md rule 8. A value a
+    #: flow has yet to fill in is a reference, so the answer for it must be True. None: every
+    #: call of an ``external`` operation does. See :meth:`outward`.
+    outward_when: Callable[[dict], bool] | None = None
 
     def __post_init__(self):
         _text(self.title, what=f"operation {self.id} title")
@@ -184,6 +190,20 @@ class Operation:
             raise ValueError(f"operation {self.id}: a write needs more than read access")
         if self.mode not in ("sync", "async"):
             raise ValueError(f"operation {self.id}: mode must be sync or async")
+        if self.outward_when is not None and self.side_effect != "external":
+            raise ValueError(f"operation {self.id}: only an external operation can reach outside in one direction")
+
+    def outward(self, payload: Any) -> bool:
+        """Whether this call, with this input, reaches people outside the workspace it runs in,
+        so that content it carries from other workspaces is asked as an outward send."""
+        if self.side_effect != "external":
+            return False
+        if self.outward_when is None:
+            return True
+        try:
+            return bool(self.outward_when(payload if isinstance(payload, dict) else {}))
+        except Exception:  # noqa: BLE001 — an input the predicate cannot read is asked as outward
+            return True
 
     def input_schema(self) -> dict:
         return self.input.model_json_schema()

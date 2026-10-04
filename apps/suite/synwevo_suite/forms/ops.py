@@ -209,6 +209,8 @@ def register(registry, forms: Forms) -> None:
     op(id="forms.public_link.set", title=T("设置公开填写链接", "設定公開填寫連結", "Set the public link"),
        summary="Turn a form's public fill-in link on (a new link each time) or off.",
        input=PublicLink, need="write", side_effect="external", agent="confirm", object_kind="form",
+       # Switching the link off reaches nobody: a run that read another workspace may still do it.
+       outward_when=lambda i: i.get("enabled") is not False,
        handler=lambda c, i: forms.set_public_link(c, i.form_id, enabled=i.enabled, version=i.version))
     op(id="forms.request.create", title=T("发出填写请求", "發出填寫請求", "Send a fill-in request"),
        summary="Create a personal fill-in request for a published form version, with optional prefill, "
@@ -238,6 +240,8 @@ def register(registry, forms: Forms) -> None:
     op(id="forms.request.reissue_link", title=T("重新生成链接", "重新產生連結", "Reissue the link"),
        summary="Replace a request's link; the old link stops working.",
        input=RequestRef, need="write", side_effect="external", agent="confirm", object_kind="form_request",
+       # The new link goes back to the caller only; whatever sends it on is asked for itself.
+       outward_when=lambda i: False,
        handler=lambda c, i: forms.reissue_link(c, i.request_id))
     op(id="forms.submission.list", title=T("列出提交", "列出提交", "List submissions"),
        summary="Submissions with their answers keyed by field id, newest first.", input=ListSubmissions,
