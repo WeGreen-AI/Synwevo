@@ -44,6 +44,9 @@ and the subscription's health untouched.
 
 The per-record decision reads the applications' own records and is made outside any write
 transaction; what it decided is then written only if the subscription has not changed meanwhile.
+So is a stop: the dispatcher judges a row it read earlier — a batch ago, or a request of fifteen
+seconds ago — and disables only that row (`disable(version=…)`). One bound to another grant or
+moved to another address since is judged again, as it stands.
 """
 from __future__ import annotations
 
@@ -991,7 +994,6 @@ class Webhooks:
             return False
         attempts = d.get("attempts") or 1                    # counted when it was claimed
         single = d["event_type"] == PING_EVENT               # a ping is one attempt, whatever happens to it
-        local = lambda error, wait=LOCAL_RETRY_S: self._untried(d, error, wait)  # noqa: E731
         t = self.clock()
         try:
             keys = [sealed.unseal(self.store, "webhook-secret", sub["secret_enc"])]
@@ -1000,7 +1002,7 @@ class Webhooks:
         except Exception as e:  # noqa: BLE001
             # A configuration fault, not the receiver's: keep the event and say why.
             self.last_error = f"无法读取签名密钥：{type(e).__name__}"
-            return local("signing_key_unavailable", 300)
+            return self._untried(d, "signing_key_unavailable", 300)
         ts = int(t)
         headers = {"Content-Type": "application/json", "User-Agent": "Synwevo-Webhook/1",
                    "webhook-id": d["event_id"], "webhook-timestamp": str(ts),
@@ -1024,10 +1026,10 @@ class Webhooks:
                 if current is None:
                     return False
                 if current["version"] != sub["version"] or fresh != body:
-                    return local("subscription_changed", 0)
+                    return self._untried(d, "subscription_changed", 0)
                 wait = self._host_wait(url)
                 if wait:
-                    return local("destination_busy", wait)
+                    return self._untried(d, "destination_busy", wait)
                 req = urllib.request.Request(url, data=body, method="POST", headers=headers)
                 with _pinned_opener(validated, deadline).open(req, timeout=deadline.remaining()) as resp:
                     code = resp.status                      # the body is never read, let alone stored
@@ -1047,7 +1049,7 @@ class Webhooks:
                 return False
             return self._after_failure(d, sub, attempts, code, err, not single, wait, _ms(started))
         except ResolverBusy:
-            return local("resolver_busy")
+            return self._untried(d, "resolver_busy")
         except UrlRejected:
             # Does not resolve, or resolves somewhere it may not go: one answer and one treatment, so
             # neither the log nor the timing of retries tells them apart.
@@ -1080,6 +1082,7 @@ class Webhooks:
         return False
 
     def _unchanged(self, sub: dict) -> bool:
+        # Still the row that was read: every management change moves the version.
         return bool(self.store.one("SELECT 1 AS x FROM suite_webhook_subscriptions WHERE id=? AND version=?",
                                    (sub["id"], sub["version"])))
 
