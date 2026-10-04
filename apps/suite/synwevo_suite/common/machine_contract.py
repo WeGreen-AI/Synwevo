@@ -43,6 +43,11 @@ SCOPE_SUMMARY = {
 _ERRORS = (("400", "Bad Request"), ("401", "Unauthorized"), ("403", "Forbidden"), ("404", "Not Found"),
            ("409", "Conflict"), ("422", "Unprocessable Content"), ("429", "Too Many Requests"),
            ("500", "Internal Server Error"))
+#: Not one of the refusals any operation may give: only the routes that list it answer it.
+_UNAVAILABLE = ("503", "Service Unavailable")
+_UNAVAILABLE_MEANS = ("Service Unavailable: journal_unavailable. A change that takes something back (a pause, another "
+                      "address, another secret, a removal) is recorded durably before it is made; the record could not "
+                      "be written, so nothing was changed. Repeat the call.")
 
 
 def _ref(name: str) -> dict:
@@ -73,7 +78,8 @@ class _Schemas:
         return schema
 
 
-_ERROR_NAMES = {code: "".join(word.capitalize() for word in description.split()) for code, description in _ERRORS}
+_ERROR_NAMES = {code: "".join(word.capitalize() for word in description.split())
+                for code, description in (*_ERRORS, _UNAVAILABLE)}
 
 
 def _headers(code: str) -> dict:
@@ -88,14 +94,15 @@ def _headers(code: str) -> dict:
 
 def _errors(codes=None) -> dict:
     """Every refusal has the same two bodies; said once, under components."""
-    return {code: {"$ref": f"#/components/responses/{_ERROR_NAMES[code]}"} for code, _ in _ERRORS
-            if codes is None or code in codes}
+    return {code: {"$ref": f"#/components/responses/{_ERROR_NAMES[code]}"}
+            for code, _ in (_ERRORS if codes is None else (*_ERRORS, _UNAVAILABLE)) if codes is None or code in codes}
 
 
 def _error_responses() -> dict:
     return {_ERROR_NAMES[code]: {"description": description, "headers": _headers(code), "content": {
         "application/json": {"schema": _ref("SuiteError")},
-        "application/problem+json": {"schema": _ref("SuiteProblem")}}} for code, description in _ERRORS}
+        "application/problem+json": {"schema": _ref("SuiteProblem")}}}
+        for code, description in (*_ERRORS, (_UNAVAILABLE[0], _UNAVAILABLE_MEANS))}
 
 
 def _common(operation: dict, *, scopes: list[str]) -> dict:
@@ -243,8 +250,11 @@ WEBHOOK_ROUTES = (
     ("post", "/{sid}/ping", "webhooks.subscription.ping",
      "Send one signed webhook.ping now, through the same checks and connection as a delivery. Not retried, "
      "apart from the subscription's health; at most one per "
-     f"{machine_webhooks.PING_MIN_INTERVAL_S} s and {machine_webhooks.PING_PER_HOUR} per hour for a subscription "
-     "(429 ping_rate_limited with Retry-After)", None, "WebhookDelivery", "200", _SUB),
+     f"{machine_webhooks.PING_MIN_INTERVAL_S} s and {machine_webhooks.PING_PER_HOUR} per hour for a subscription, "
+     f"and {machine_webhooks.MAX_PER_GRANT} per {machine_webhooks.PING_MIN_INTERVAL_S} s and "
+     f"{machine_webhooks.MAX_PER_GRANT * machine_webhooks.PING_PER_HOUR} per hour for a grant, the subscriptions it "
+     "has deleted included (429 ping_rate_limited with Retry-After; details.reason is interval, hourly or busy — "
+     "one ping at a time for a workspace)", None, "WebhookDelivery", "200", _SUB),
     ("get", "/{sid}/deliveries", "webhooks.delivery.list", "The delivery log, newest first", None,
      "WebhookDeliveryPage", "200",
      _SUB + [{"name": "status", "in": "query", "required": False,
@@ -255,9 +265,14 @@ WEBHOOK_ROUTES = (
     ("get", "/{sid}/deliveries/{did}", "webhooks.delivery.get", "One delivery", None, "WebhookDelivery", "200", _DEL),
     ("post", "/{sid}/deliveries/{did}/redeliver", "webhooks.delivery.redeliver",
      "Queue the event of an earlier delivery once more; it passes the same checks before it is sent. At most "
-     f"{machine_webhooks.MAX_REDELIVERIES} times for one event, within "
-     f"{int(machine_webhooks.REDELIVERY_WINDOW_S // 86400)} days of the event", None, "WebhookDelivery", "202", _DEL),
+     f"{machine_webhooks.MAX_REDELIVERIES} times for one event (409 redelivery_limit_reached), within "
+     f"{int(machine_webhooks.REDELIVERY_WINDOW_S // 86400)} days of the event (409 redelivery_window_expired), and "
+     f"not while {machine_webhooks.MAX_PENDING} deliveries already wait for the subscription (409 "
+     "delivery_queue_full: ask again once some have settled)", None, "WebhookDelivery", "202", _DEL),
 )
+#: The changes that take something back, journalled before they are made (`Webhooks._journal`).
+_JOURNALLED = ("webhooks.subscription.update", "webhooks.subscription.delete", "webhooks.subscription.pause",
+               "webhooks.subscription.rotate_secret")
 
 
 def _webhook_route(method, name, summary, request, response, status, parameters, readers) -> dict:
@@ -265,7 +280,8 @@ def _webhook_route(method, name, summary, request, response, status, parameters,
            "parameters": [dict(x) for x in parameters],
            "responses": {status: {"description": "OK", "headers": _headers(status),
                                   "content": {"application/json": {"schema": _ref(response)}}},
-                         **_errors({"400", "401", "403", "404", "409", "429", "500"})}}
+                         **_errors({"400", "401", "403", "404", "409", "429", "500"}
+                                   | ({_UNAVAILABLE[0]} if name in _JOURNALLED else set()))}}
     if request:
         out["requestBody"] = {"required": request != "WebhookRotate",
                               "content": {"application/json": {"schema": _ref(request)}}}
@@ -312,7 +328,12 @@ def _webhook_schemas(registry, event: dict) -> dict:
         "created_at": {"type": "number"}, "updated_at": {"type": "number"}, "version": {"type": "integer"},
         "consecutive_failures": {"type": "integer"}, "last_success_at": {"type": ["number", "null"]},
         "last_failure_at": {"type": ["number", "null"]}, "previous_secret_expires_at": {"type": ["number", "null"]}}
-    writable = {"url": {"type": "string", "maxLength": 2048, "description": "https, to a publicly routable address."},
+    writable = {"url": {"type": "string", "maxLength": 2048,
+                        "description": "https, to a publicly routable address, without credentials in it. Where it "
+                                       "leads is checked when it is set and on resume, one address at a time for a "
+                                       "workspace: 429 destination_check_busy (Retry-After) says another is being "
+                                       "checked or no resolver is free — not a verdict on the address; nothing "
+                                       "changed, repeat the call."},
                 "events": {"type": "array", "minItems": 1, "maxItems": machine_webhooks.MAX_EVENTS,
                            "items": {"enum": machine_webhooks.subscribable(registry)},
                            "description": "Event types, \"<app>.*\" or \"*\" (everything the credential may read)."},

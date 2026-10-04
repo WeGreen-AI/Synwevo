@@ -34,6 +34,7 @@ import pytest
 
 from synwevo_core import sealed
 from synwevo_core.auth import Auth
+from synwevo_core.errors import ServiceError
 from synwevo_core.store import now
 
 
@@ -1992,3 +1993,94 @@ def test_the_contract_describes_subscriptions_deliveries_and_the_push_as_they_ar
     errors = schemas["WebhookDelivery"]["properties"]["last_error"]["description"]
     assert all(word in errors for word in (*hub.W.ATTEMPT_ERRORS, *hub.W.LOCAL_ERRORS))
     assert set(hub.W.DELIVERY_STATUSES) == set(schemas["WebhookDelivery"]["properties"]["status"]["enum"])
+
+
+def test_a_grant_cannot_renew_its_ping_ration_by_making_new_subscriptions(hub, monkeypatch):
+    """Subscriptions are made and removed at will, so the ration is also the grant's: every
+    subscription it has had in the hour, the deleted ones included, counts."""
+    monkeypatch.setattr(hub.W, "MAX_PER_GRANT", 2)
+    monkeypatch.setattr(hub.W, "PING_PER_HOUR", 2)
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    one, two = (hub.subscribe(alice, rx.url + f"/{n}", events=["tables.*"])["id"] for n in (1, 2))
+    assert hub.api.post(f"{BASE}/{one}/ping", headers=alice).status_code == 200
+    assert hub.api.post(f"{BASE}/{two}/ping", headers=alice).status_code == 200
+    assert hub.api.delete(f"{BASE}/{two}", headers=alice).status_code in (200, 204)
+    three = hub.subscribe(alice, rx.url + "/3", events=["tables.*"])["id"]
+    r = hub.api.post(f"{BASE}/{three}/ping", headers=alice)
+    err = refused(r, 429, "ping_rate_limited")
+    assert err["details"]["reason"] == "interval" and err["details"]["scope"] == "grant"
+    hub.clock.advance(11)
+    assert hub.api.post(f"{BASE}/{three}/ping", headers=alice).status_code == 200
+    hub.clock.advance(11)
+    assert hub.api.post(f"{BASE}/{one}/ping", headers=alice).status_code == 200      # its own second of the hour
+    hub.clock.advance(11)
+    r = hub.api.post(f"{BASE}/{three}/ping", headers=alice)                            # its own second, but the grant's fifth
+    err = refused(r, 429, "ping_rate_limited")
+    assert err["details"]["reason"] == "hourly" and err["details"]["scope"] == "grant"
+    assert len(rx.received) == 4, "a refused ping sends nothing"
+
+
+def test_a_workspace_waits_for_its_own_ping_and_keeps_nobody_else_out(hub):
+    alice = grant(hub.api, "alice")["auth"]
+    sid = hub.subscribe(alice, hub.receiver().url, events=["tables.*"])["id"]
+    busy = ServiceError(429, "fixture_busy", "fixture")
+    with hub.service._slot(hub.service._pings, hub.service._pinging, hub.p.a, busy):   # a ping of A under way
+        r = hub.api.post(f"{BASE}/{sid}/ping", headers=alice)
+        assert refused(r, 429, "ping_rate_limited")["details"]["reason"] == "busy"
+        # The process still has places for every other workspace.
+        with hub.service._slot(hub.service._pings, hub.service._pinging, "w_fixture_other", busy):
+            pass
+    assert hub.api.post(f"{BASE}/{sid}/ping", headers=alice).status_code == 200
+
+
+def test_what_can_be_refused_without_a_lookup_is_refused_before_one(hub, monkeypatch):
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    for n in range(hub.W.MAX_PER_GRANT):
+        hub.subscribe(alice, rx.url + f"/{n}", events=["tables.*"])
+    asked = []
+    real = socket.getaddrinfo
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: asked.append(a[0]) or real(*a, **k))
+    refused(hub.api.post(BASE, json={"url": rx.url + "/over", "events": ["*"]}, headers=alice), 409, "subscription_limit_reached")
+    refused(hub.api.post(BASE, json={"url": rx.url + "/0", "events": ["*"]}, headers=alice), 409, "subscription_exists")
+    for bad in ("https://@example.test/x", "https://[::1/x", "https://example.test:99999/x", "http://"):
+        refused(hub.api.post(BASE, json={"url": bad, "events": ["*"]}, headers=alice), 400, "invalid_url")
+    assert asked == [], "no resolver was asked for a call refused on its text, its address or its limits"
+    refused(hub.api.post(BASE, json={"url": rx.url + "/v", "events": ["*"], "version": 1}, headers=alice), 400, "unknown_field")
+
+
+def test_an_ipv6_spelling_of_an_ipv4_address_is_not_a_place_to_send(hub, monkeypatch):
+    """NAT64 prefixes are 'global' to ipaddress, but lead wherever the gateway translates them."""
+    alice = grant(hub.api, "alice")["auth"]
+    monkeypatch.delenv("SYNWEVO_SUITE_WEBHOOK_ALLOW_PRIVATE")
+    for spelled in ("64:ff9b::a00:1", "64:ff9b:1::a00:1"):
+        monkeypatch.setattr(socket, "getaddrinfo",
+                            lambda *a, _ip=spelled, **k: [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", (_ip, 443, 0, 0))])
+        refused(hub.api.post(BASE, json={"url": "https://nat64.fixture.test/hook", "events": ["*"]}, headers=alice),
+                400, "invalid_url")
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: (_ for _ in ()).throw(UnicodeError("label empty or too long")))
+    refused(hub.api.post(BASE, json={"url": "https://" + "a" * 64 + ".fixture.test/hook", "events": ["*"]}, headers=alice),
+            400, "invalid_url")
+    # At send time the same name is an unresolved host (a receiver's fault), not an error of this server.
+    from synwevo_core import webhook_delivery
+    with pytest.raises(webhook_delivery.UrlUnresolvable):
+        webhook_delivery.resolve_checked("https://" + "a" * 64 + ".fixture.test/hook", timeout=1.0)
+    assert hub.store.one("SELECT COUNT(*) AS n FROM suite_webhook_subscriptions")["n"] == 0
+
+
+def test_redelivery_waits_at_the_same_queue_bound_as_the_cursor(hub, monkeypatch):
+    monkeypatch.setattr(hub.W, "MAX_PENDING", 2)
+    owner = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(owner, rx.url, events=["tables.*"])["id"]
+    a_table(hub.api, owner)
+    hub.service.tick()
+    first = hub.api.get(f"{BASE}/{sid}/deliveries", headers=owner).json()["items"][0]
+    for _ in range(2):
+        assert hub.api.post(f"{BASE}/{sid}/deliveries/{first['id']}/redeliver", headers=owner).status_code == 202
+    err = refused(hub.api.post(f"{BASE}/{sid}/deliveries/{first['id']}/redeliver", headers=owner), 409, "delivery_queue_full")
+    assert err["details"] == {"limit": 2}
+    hub.service.tick()                                       # the queue drains…
+    assert hub.api.post(f"{BASE}/{sid}/deliveries/{first['id']}/redeliver", headers=owner).status_code == 202

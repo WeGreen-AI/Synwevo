@@ -210,6 +210,42 @@ class SuiteTests(unittest.TestCase):
         self.assertEqual((calls[4][3], calls[4][4]), ('"3"', {"events": ["*"]}))
         self.assertEqual(calls[10][5], {"status": "failed", "limit": "10"})
 
+    def test_a_missing_id_is_refused_before_sending_and_never_names_the_collection(self):
+        """An id read from a store that does not have it arrives as None. Left out of the path it
+        would turn "this subscription" into "the list" (and a write into a call on the collection)."""
+        calls = []
+
+        def respond(h):
+            calls.append(f"{h.command} {h.path}")
+            h.answer(200, {"items": [], "limit": 4, "workspace_limit": 64})
+        with fixture(respond) as url, SuiteClient(url, UserToken("synthetic-access"), sleep=lambda _: None) as c:
+            for missing in (None, "", 7):
+                for call in (c.get_webhook, c.delete_webhook, c.pause_webhook, c.resume_webhook, c.rotate_webhook_secret,
+                             c.ping_webhook, c.webhook_deliveries, lambda sid: c.update_webhook(sid, description="x"),
+                             lambda sid: c.webhook_delivery(sid, "whdel_1"), lambda sid: c.redeliver_webhook(sid, "whdel_1"),
+                             lambda did: c.webhook_delivery("whsub_1", did), lambda did: c.redeliver_webhook("whsub_1", did)):
+                    with self.assertRaises(ValidationError):
+                        call(missing)
+            self.assertEqual(calls, [], "nothing was sent")
+            c.list_webhooks()                                            # the collection is asked for by name only
+        self.assertEqual(calls, ["GET /api/suite/v1/webhooks/subscriptions"])
+
+    def test_the_lost_update_guard_goes_out_with_the_clients_own_headers(self):
+        sent = []
+
+        def respond(h):
+            sent.append({k: h.headers.get(k) for k in ("If-Match", "Authorization", "User-Agent", "Accept")})
+            h.answer(200, {"id": "whsub_1", "version": 4})
+        with fixture(respond) as url, SuiteClient(url, UserToken("synthetic-access"), sleep=lambda _: None) as c:
+            c.update_webhook("whsub_1", description="x", version=3)
+            c.update_webhook("whsub_1", description="x")
+        guarded, plain = sent
+        self.assertEqual(guarded["If-Match"], '"3"')
+        self.assertIsNone(plain["If-Match"], "no version asked for: no guard invented")
+        for request in sent:                                             # the guard is added to the request, not put in its place
+            self.assertEqual(request["Authorization"], "Bearer synthetic-access")
+            self.assertTrue(request["User-Agent"] and request["Accept"])
+
     def test_waiting_for_a_run_stops_at_a_terminal_state_or_the_deadline(self):
         states = iter(["queued", "running", "succeeded"])
         now = [0.0]

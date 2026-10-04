@@ -47,6 +47,11 @@ DEFAULT_TIMEOUT_S = 15.0
 DNS_SLOTS = 16
 _DNS_SLOTS = threading.BoundedSemaphore(DNS_SLOTS)
 
+# NAT64 (RFC 6052's well-known prefix, RFC 8215's local-use one): an IPv6 spelling of an IPv4
+# address. Where it leads is the translating gateway's decision — a private network included —
+# and `is_global` says yes to the first of them. Neither is a place a callback may go.
+TRANSLATED = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/48"))
+
 
 # ----------------------------------------------------------------------------- address policy
 class UrlRejected(ValueError):
@@ -63,6 +68,29 @@ class ResolverBusy(UrlUnresolvable):
     attempts against a receiver can tell the two apart; one that does not sees an unresolved host."""
 
 
+def check_address_text(url: str, *, allow_http: bool = False,
+                       http_refusal: str = "回调默认要求 https") -> tuple[str, int]:
+    """What the text of a callback address says, before any name is looked up: its host and port.
+    Raises `UrlRejected` — in this module's words, never the parser's — for text that is not a URL,
+    a scheme that may not be used, a missing host or an impossible port."""
+    try:
+        u = urlparse(url)
+        host = u.hostname or ""
+    except ValueError as e:
+        raise UrlRejected("回调地址格式无效") from e
+    if u.scheme not in ("https", "http"):
+        raise UrlRejected(f"回调地址必须是 http(s)：{url}")
+    if u.scheme == "http" and not allow_http:
+        raise UrlRejected(http_refusal)
+    if not host:
+        raise UrlRejected(f"回调地址缺少主机名：{url}")
+    try:
+        port = u.port or (443 if u.scheme == "https" else 80)
+    except ValueError as e:
+        raise UrlRejected(f"回调地址的端口无效：{url}") from e
+    return host, port
+
+
 def resolve_checked(url: str, *, deadline: float | None = None, allow_http: bool = False,
                     allow_private=(), timeout: float = DEFAULT_TIMEOUT_S,
                     http_refusal: str = "回调默认要求 https") -> list:
@@ -77,34 +105,29 @@ def resolve_checked(url: str, *, deadline: float | None = None, allow_http: bool
     `allow_private` lists hosts and networks the deployment's operator permits although they are
     not global addresses; `allow_http` permits plain http. Both default to the safe answer.
     """
-    u = urlparse(url)
-    if u.scheme not in ("https", "http"):
-        raise UrlRejected(f"回调地址必须是 http(s)：{url}")
-    if u.scheme == "http" and not allow_http:
-        raise UrlRejected(http_refusal)
-    host = u.hostname or ""
-    if not host:
-        raise UrlRejected(f"回调地址缺少主机名：{url}")
-    try:
-        port = u.port or (443 if u.scheme == "https" else 80)
-    except ValueError as e:
-        raise UrlRejected(f"回调地址的端口无效：{url}") from e
+    host, port = check_address_text(url, allow_http=allow_http, http_refusal=http_refusal)
     allow = list(allow_private)
     try:
         infos = _resolve(host, port, deadline if deadline is not None else time.monotonic() + timeout)
-    except socket.gaierror as e:
+    except (socket.gaierror, UnicodeError) as e:
+        # UnicodeError: a name that cannot be written as a DNS name at all (an empty label, one
+        # longer than 63 bytes) — the resolver's codec says so before any lookup is made.
         raise UrlUnresolvable("无法解析回调地址主机") from e
 
     ok = []
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if ip.is_global or host in allow or any(_in_allow(ip, a) for a in allow):
+        if _routable(ip) or host in allow or any(_in_allow(ip, a) for a in allow):
             ok.append(str(ip))
             continue
         raise UrlRejected("回调地址不被允许（内网地址需由运营方配置允许列表）")
     if not ok:
         raise UrlUnresolvable("无法解析回调地址主机")
     return ok
+
+
+def _routable(ip) -> bool:
+    return ip.is_global and not any(ip in net for net in TRANSLATED)
 
 
 def _resolve(host: str, port: int, deadline: float):
@@ -140,21 +163,33 @@ def _in_allow(ip, entry: str) -> bool:
 
 def validate_url(url, *, resolve=resolve_checked) -> str:
     """A subscription URL, checked the way a delivery will check it. Raises 400 with field=url.
-    `resolve` is the caller's own `resolve_checked`, carrying its deployment's policy."""
+    `resolve` is the caller's own `resolve_checked`, carrying its deployment's policy.
+
+    Every refusal is ``invalid_url`` in this module's words: what the URL parser or the resolver's
+    codec has to say about a malformed address is not an answer to give a caller."""
+    def refused(message: str) -> ServiceError:
+        return ServiceError(400, "invalid_url", message, {"field": "url"})
+
     if not isinstance(url, str) or not url.strip():
-        raise ServiceError(400, "invalid_url", "请提供回调地址（url）", {"field": "url"})
+        raise refused("请提供回调地址（url）")
     url = url.strip()
     if len(url) > MAX_URL_LEN or any(ch.isspace() for ch in url):
-        raise ServiceError(400, "invalid_url", f"回调地址过长或含空白字符（上限 {MAX_URL_LEN} 字符）", {"field": "url"})
-    u = urlparse(url)
-    if u.username or u.password:
-        # It would be stored in plain text and echoed back by every GET. The signing secret is
-        # the authentication a receiver should rely on.
-        raise ServiceError(400, "invalid_url", "回调地址不能包含用户名或密码；请用签名密钥校验来源", {"field": "url"})
+        raise refused(f"回调地址过长或含空白字符（上限 {MAX_URL_LEN} 字符）")
+    try:
+        netloc = urlparse(url).netloc
+    except ValueError:
+        raise refused("回调地址格式无效") from None
+    if "@" in netloc:
+        # In any form, an empty one included (``https://@host/``). It would be stored in plain
+        # text and echoed back by every GET, and a request made to such an address keeps it as
+        # part of the host. The signing secret is the authentication a receiver should rely on.
+        raise refused("回调地址不能包含用户名或密码；请用签名密钥校验来源")
     try:
         resolve(url)
     except UrlRejected as e:
-        raise ServiceError(400, "invalid_url", str(e), {"field": "url"}) from e
+        raise refused(str(e)) from e
+    except ValueError:
+        raise refused("回调地址格式无效") from None
     return url
 
 

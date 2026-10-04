@@ -308,10 +308,14 @@ class SuiteClient:
     # or last changed its address, filter or secret, and stop when that grant ends (keep it
     # refreshed). Calls that answer with a secret or start a send carry no idempotency key and
     # are not retried: a lost answer must not leave a secret nobody saw.
-    def _hook(self, sid: str | None = None, rest: str = "") -> str:
-        if sid is not None and (not isinstance(sid, str) or not sid):
+    _HOOKS = f"{SUITE_API}/webhooks/subscriptions"
+
+    def _hook(self, sid: str, rest: str = "") -> str:
+        """One subscription's path. A missing id is refused here, whatever its spelling (None,
+        ""): left out of the path it would name the collection, and answer with a list."""
+        if not isinstance(sid, str) or not sid:
             raise ValidationError("a subscription id is required", "subscription_id")
-        return f"{SUITE_API}/webhooks/subscriptions" + (f"/{_q(sid)}" if sid is not None else "") + rest
+        return f"{self._HOOKS}/{_q(sid)}{rest}"
 
     def create_webhook(self, url: str, events: list[str], *, description: str | None = None) -> dict:
         """Subscribe ``url``. ``events`` lists event types, ``"<app>.*"`` or ``"*"`` (everything this
@@ -326,10 +330,10 @@ class SuiteClient:
         body: dict[str, Any] = {"url": url, "events": list(events)}
         if description is not None:
             body["description"] = description
-        return self._client._json("POST", self._hook(), json=body, retry_safe=False)
+        return self._client._json("POST", self._HOOKS, json=body, retry_safe=False)
 
     def list_webhooks(self) -> dict:
-        return self._client._get(self._hook())
+        return self._client._get(self._HOOKS)
 
     def get_webhook(self, subscription_id: str) -> dict:
         return self._client._get(self._hook(subscription_id))
@@ -365,7 +369,7 @@ class SuiteClient:
 
     def ping_webhook(self, subscription_id: str) -> dict:
         """One signed ``webhook.ping`` now; returns how the receiver answered. Rationed per
-        subscription (`RateLimitError` ``ping_rate_limited`` says when to come back)."""
+        subscription and per grant (`RateLimitError` ``ping_rate_limited`` says when to come back)."""
         return self._client._json("POST", self._hook(subscription_id, "/ping"), retry_safe=False)
 
     def webhook_deliveries(self, subscription_id: str, *, status: str | None = None, cursor: str | None = None,
@@ -378,7 +382,8 @@ class SuiteClient:
 
     def redeliver_webhook(self, subscription_id: str, delivery_id: str) -> dict:
         """Queue the event of an earlier delivery once more (same ``webhook-id``). It is sent only
-        if this credential may still read the event."""
+        if this credential may still read the event. `ConflictError` ``delivery_queue_full`` while
+        the subscription already has as many deliveries waiting as it may."""
         return self._client._json("POST", self._hook(subscription_id, f"/deliveries/{_q(delivery_id)}/redeliver"),
                                   retry_safe=False)
 

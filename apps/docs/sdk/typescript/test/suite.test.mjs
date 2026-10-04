@@ -218,6 +218,45 @@ test('webhook calls that carry a secret or start a send are sent once, without a
   assert.deepEqual(calls[10][5], { status: 'failed', limit: '10' });
 });
 
+test('a missing id is refused before sending and never names the collection', async () => {
+  // An id read from a store that does not have it arrives as undefined. Left out of the path it
+  // would turn "this subscription" into "the list" (and a write into a call on the collection).
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push(`${init.method} ${new URL(url).pathname}`);
+    return json(200, { items: [], limit: 4, workspace_limit: 64 });
+  };
+  const client = new SuiteClient('https://workplace.invalid', new UserToken({ accessToken: 'synthetic-access' }), { fetch, ...quiet });
+  for (const missing of [undefined, null, '', 7]) {
+    for (const call of [(sid) => client.getWebhook(sid), (sid) => client.deleteWebhook(sid), (sid) => client.pauseWebhook(sid),
+      (sid) => client.resumeWebhook(sid), (sid) => client.rotateWebhookSecret(sid), (sid) => client.pingWebhook(sid),
+      (sid) => client.webhookDeliveries(sid), (sid) => client.updateWebhook(sid, { description: 'x' }),
+      (sid) => client.webhookDelivery(sid, 'whdel_1'), (sid) => client.redeliverWebhook(sid, 'whdel_1'),
+      (did) => client.webhookDelivery('whsub_1', did), (did) => client.redeliverWebhook('whsub_1', did)]) {
+      assert.throws(() => call(missing), ValidationError);
+    }
+  }
+  assert.deepEqual(calls, [], 'nothing was sent');
+  await client.listWebhooks();                                      // the collection is asked for by name only
+  assert.deepEqual(calls, ['GET /api/suite/v1/webhooks/subscriptions']);
+});
+
+test('the lost-update guard goes out together with the caller\'s own headers', async () => {
+  const sent = [];
+  const fetch = async (url, init) => {
+    sent.push(Object.fromEntries(Object.entries(init.headers).filter(([name]) => /^(if-match|x-request-id)$/i.test(name))));
+    return json(200, { id: 'whsub_1', version: 4 });
+  };
+  const client = new SuiteClient('https://workplace.invalid', new UserToken({ accessToken: 'synthetic-access' }), { fetch, ...quiet });
+  await client.updateWebhook('whsub_1', { description: 'x' }, { version: 3, headers: { 'X-Request-ID': 'trace-1' } });
+  await client.updateWebhook('whsub_1', { description: 'x' }, { version: 3, timeoutMs: 5000 });
+  // a guard of the caller's own, in any spelling, does not travel beside the one `version` asked for
+  await client.updateWebhook('whsub_1', { description: 'x' }, { version: 3, headers: { 'if-match': '"1"' } });
+  await client.updateWebhook('whsub_1', { description: 'x' }, { headers: { 'X-Request-ID': 'trace-2' } });
+  assert.deepEqual(sent, [{ 'If-Match': '"3"', 'X-Request-ID': 'trace-1' }, { 'If-Match': '"3"' }, { 'If-Match': '"3"' },
+    { 'X-Request-ID': 'trace-2' }]);
+});
+
 test('waiting for a run stops at a terminal state or at the deadline', async () => {
   const states = ['queued', 'running', 'succeeded'];
   const fetch = async () => json(200, { id: 'run_1', status: states.shift() ?? 'running' });

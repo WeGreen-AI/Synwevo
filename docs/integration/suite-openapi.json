@@ -17709,6 +17709,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "requestBody": {
@@ -17790,6 +17793,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "security": [
@@ -17990,7 +17996,7 @@
     "/api/suite/v1/webhooks/subscriptions/{sid}/deliveries/{did}/redeliver": {
       "post": {
         "operationId": "webhooks.delivery.redeliver",
-        "summary": "Queue the event of an earlier delivery once more; it passes the same checks before it is sent. At most 5 times for one event, within 30 days of the event",
+        "summary": "Queue the event of an earlier delivery once more; it passes the same checks before it is sent. At most 5 times for one event (409 redelivery_limit_reached), within 30 days of the event (409 redelivery_window_expired), and not while 100 deliveries already wait for the subscription (409 delivery_queue_full: ask again once some have settled)",
         "tags": [
           "credential"
         ],
@@ -18130,6 +18136,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "security": [
@@ -18144,7 +18153,7 @@
     "/api/suite/v1/webhooks/subscriptions/{sid}/ping": {
       "post": {
         "operationId": "webhooks.subscription.ping",
-        "summary": "Send one signed webhook.ping now, through the same checks and connection as a delivery. Not retried, apart from the subscription's health; at most one per 10 s and 20 per hour for a subscription (429 ping_rate_limited with Retry-After)",
+        "summary": "Send one signed webhook.ping now, through the same checks and connection as a delivery. Not retried, apart from the subscription's health; at most one per 10 s and 20 per hour for a subscription, and 4 per 10 s and 80 per hour for a grant, the subscriptions it has deleted included (429 ping_rate_limited with Retry-After; details.reason is interval, hourly or busy — one ping at a time for a workspace)",
         "tags": [
           "credential"
         ],
@@ -18349,6 +18358,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "requestBody": {
@@ -25300,7 +25312,7 @@
           "url": {
             "type": "string",
             "maxLength": 2048,
-            "description": "https, to a publicly routable address."
+            "description": "https, to a publicly routable address, without credentials in it. Where it leads is checked when it is set and on resume, one address at a time for a workspace: 429 destination_check_busy (Retry-After) says another is being checked or no resolver is free — not a verdict on the address; nothing changed, repeat the call."
           },
           "events": {
             "type": "array",
@@ -25385,7 +25397,7 @@
           "url": {
             "type": "string",
             "maxLength": 2048,
-            "description": "https, to a publicly routable address."
+            "description": "https, to a publicly routable address, without credentials in it. Where it leads is checked when it is set and on resume, one address at a time for a workspace: 429 destination_check_busy (Retry-After) says another is being checked or no resolver is free — not a verdict on the address; nothing changed, repeat the call."
           },
           "events": {
             "type": "array",
@@ -25901,6 +25913,26 @@
       },
       "InternalServerError": {
         "description": "Internal Server Error",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SuiteError"
+            }
+          },
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/SuiteProblem"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Service Unavailable: journal_unavailable. A change that takes something back (a pause, another address, another secret, a removal) is recorded durably before it is made; the record could not be written, so nothing was changed. Repeat the call.",
         "headers": {
           "X-Request-ID": {
             "$ref": "#/components/headers/RequestId"

@@ -1971,6 +1971,7 @@ export declare class SuiteClient {
   createWebhook(body: { url: string; events: string[]; description?: string }, options?: RequestOptions): Promise<WithMeta<SuiteWebhookWithSecret>>;
   listWebhooks(options?: RequestOptions): Promise<WithMeta<{ items: SuiteWebhook[]; limit: number; workspace_limit: number }>>;
   getWebhook(subscriptionId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhook>>;
+  /** `version` (from the subscription you read) is sent as If-Match, alongside any `headers` of yours, and refuses a lost update. */
   updateWebhook(subscriptionId: string, changes: { url?: string; events?: string[]; description?: string },
     options?: RequestOptions & { version?: number }): Promise<WithMeta<SuiteWebhook>>;
   deleteWebhook(subscriptionId: string, options?: RequestOptions): Promise<WithMeta<{ deleted: string }>>;
@@ -1982,11 +1983,12 @@ export declare class SuiteClient {
   resumeWebhook(subscriptionId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhook>>;
   /** Rotating again inside an overlap replaces only the newest secret; `overlapS: 0` ends every earlier one at once. */
   rotateWebhookSecret(subscriptionId: string, options?: RequestOptions & { overlapS?: number }): Promise<WithMeta<SuiteWebhookWithSecret>>;
-  /** Rationed per subscription: RateLimitError `ping_rate_limited` says when to come back. */
+  /** Rationed per subscription and per grant: RateLimitError `ping_rate_limited` says when to come back. */
   pingWebhook(subscriptionId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhookDelivery>>;
   webhookDeliveries(subscriptionId: string, query?: { status?: SuiteWebhookDelivery['status']; cursor?: string | null; limit?: number },
     options?: RequestOptions): Promise<WithMeta<{ items: SuiteWebhookDelivery[]; next_cursor: string | null; has_more: boolean }>>;
   webhookDelivery(subscriptionId: string, deliveryId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhookDelivery>>;
+  /** ConflictError `delivery_queue_full` while the subscription already has as many deliveries waiting as it may. */
   redeliverWebhook(subscriptionId: string, deliveryId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhookDelivery>>;
 
   // Files. Uploads take a path, bytes or a Blob (bytes and Blobs need `filename`). The service's

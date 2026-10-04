@@ -91,6 +91,7 @@ MAX_EVENTS = 50
 MAX_OVERLAP_S = DEFAULT_OVERLAP_S = 86400
 MAX_REDELIVERIES = 5                        # of one event to one subscription
 TIMEOUT_S = 15.0
+CHECK_TIMEOUT_S = 5.0                       # an address looked up for a management call: the caller is waiting
 CLAIM_MARGIN_S = 30
 LEASE_S = TIMEOUT_S + CLAIM_MARGIN_S         # how long a claim holds: the request's whole deadline and a margin
 MAX_ATTEMPTS = len(BACKOFF_S) + 1
@@ -98,7 +99,7 @@ DISABLE_AFTER_S = 3 * 86400                 # …with at least a whole schedule 
 MAX_PENDING = 100                           # deliveries waiting for one subscription; the cursor waits beyond it
 HOST_PER_MINUTE = 300                       # requests this process sends to one host, every subscription together
 LOCAL_RETRY_S = 15                          # after a fault of this server's own, which is not an attempt
-VALIDATION_CONCURRENCY = 4                  # addresses being checked for management calls at once
+VALIDATION_CONCURRENCY = 4                  # addresses being checked for management calls at once, one a workspace
 SWEEP_CHUNK = 2000
 REDELIVERY_WINDOW_S = machine_events.RETENTION_S
 LOG_RETENTION_S = 30 * 86400
@@ -107,9 +108,9 @@ FAN_ROWS = 200                              # rows of the event log read for one
 ROUND_S = 5.0
 CONCURRENCY = 4
 PING_EVENT = "webhook.ping"
-PING_MIN_INTERVAL_S = 10                    # per subscription
-PING_PER_HOUR = 20
-PING_CONCURRENCY = 4                        # pings are sent inside the request that asks for them
+PING_MIN_INTERVAL_S = 10                    # per subscription; a grant, deleted ones included, gets what
+PING_PER_HOUR = 20                          # `MAX_PER_GRANT` subscriptions could have between them
+PING_CONCURRENCY = 4                        # pings are sent inside the request that asks for them, one a workspace
 ORPHAN_AFTER_S = LOG_RETENTION_S            # a subscription whose grant ended is removed after this
 DELIVERY_STATUSES = ("pending", "delivered", "failed", "dropped")
 #: What `last_error` may say about an attempt. A closed list: never an exception's name or text,
@@ -146,30 +147,35 @@ def workspace_limit() -> int:
         return MAX_PER_WORKSPACE
 
 
+def _policy() -> dict:
+    return {"allow_http": _on("SUITE_WEBHOOK_ALLOW_HTTP"), "http_refusal": "回调地址必须使用 https"}
+
+
 def resolve_checked(url: str, *, deadline: float | None = None) -> list:
     """This deployment's policy for the business applications' callbacks: https to a globally
     routable address. The two switches are the operator's, for local development and tests.
 
-    One refusal for "does not resolve" and "resolves somewhere it may not go": told apart, they
-    would let a caller ask this server which internal names exist."""
+    What is wrong with the text of the URL is said as it is. Past that there is one refusal for
+    "does not resolve" and "resolves somewhere it may not go": told apart, they would let a caller
+    ask this server which internal names exist."""
+    delivery.check_address_text(url, **_policy())
     try:
         return delivery.resolve_checked(url, deadline=deadline, timeout=TIMEOUT_S, allow_private=_allow_private(),
-                                        allow_http=_on("SUITE_WEBHOOK_ALLOW_HTTP"), http_refusal="回调地址必须使用 https")
+                                        **_policy())
     except ResolverBusy:
         raise                                               # this server's fault: says nothing about the address
     except UrlUnresolvable as e:
         raise UrlUnresolvable("回调地址不可用：无法解析，或不被允许") from e
     except UrlRejected as e:
-        if "https" in str(e) or "http(s)" in str(e) or "端口" in str(e) or "主机名" in str(e):
-            raise                                           # about the text of the URL, not about where it leads
         raise UrlRejected("回调地址不可用：无法解析，或不被允许") from e
 
 
 def _resolve_now(url: str) -> list:
-    """The check a management call makes. No resolver free in time is not a verdict on the
-    address: the caller is told to come back, not that its URL is invalid."""
+    """The check a management call makes, on the request's own thread: it gets `CHECK_TIMEOUT_S`,
+    not a send's whole deadline. No resolver free in time is not a verdict on the address: the
+    caller is told to come back, not that its URL is invalid."""
     try:
-        return resolve_checked(url)
+        return resolve_checked(url, deadline=time.monotonic() + CHECK_TIMEOUT_S)
     except ResolverBusy as e:
         raise ServiceError(429, "destination_check_busy", "正在检查的回调地址过多，请稍后再试",
                            {"retry_after": LOCAL_RETRY_S}) from e
@@ -177,6 +183,13 @@ def _resolve_now(url: str) -> list:
 
 def validate_url(url) -> str:
     return delivery.validate_url(url, resolve=_resolve_now)
+
+
+def address_text(url) -> str:
+    """The address as it will be stored, refused for what its text alone shows (not a URL, too
+    long, a scheme or a port that may not be used, credentials in it). No name is looked up: this
+    is the part of `validate_url` that costs nothing, made before the part that does."""
+    return delivery.validate_url(url, resolve=lambda u: delivery.check_address_text(u, **_policy()))
 
 
 def _connect_pinned(address, timeout, deadline=None):
@@ -277,6 +290,7 @@ class Webhooks:
     def __init__(self, caps, *, clock=None, rng=None, worker_id: str | None = None, concurrency: int = CONCURRENCY):
         self.caps, self.store, self.identity = caps, caps.store, caps.identity
         self.clock = clock or now
+        self.elapsed = time.monotonic                       # the hosts' minute: time that passed, whatever the date says
         self.rng = rng or random
         self.worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}:{_secrets.token_hex(3)}"
         self.concurrency = max(1, min(16, concurrency))
@@ -286,6 +300,9 @@ class Webhooks:
         self._inflight_lock = threading.Lock()
         self._pings = threading.BoundedSemaphore(PING_CONCURRENCY)
         self._validations = threading.BoundedSemaphore(VALIDATION_CONCURRENCY)
+        self._pinging: set[str] = set()                     # workspaces with a ping under way…
+        self._validating: set[str] = set()                  # …and with an address being checked
+        self._slots_lock = threading.Lock()
         self._hosts: dict[str, collections.deque] = {}
         self._hosts_lock = threading.Lock()
 
@@ -341,19 +358,32 @@ class Webhooks:
         return self._descriptor(p)
 
     @contextlib.contextmanager
-    def _checking(self):
-        """An address checked for a management call resolves a name on the request's thread. Only
-        so many at once: the resolvers are shared with every delivery of every workspace."""
-        if not self._validations.acquire(blocking=False):
-            raise ServiceError(429, "destination_check_busy", "正在检查的回调地址过多，请稍后再试", {"retry_after": 2})
+    def _slot(self, pool, taken: set, workspace_id: str, busy: ServiceError):
+        """One of `pool`'s places for a call of this workspace, or `busy`. The pool bounds the
+        process: the resolvers and the sockets are shared with every delivery of every workspace.
+        Inside it a workspace holds one place at a time, so a caller whose names resolve slowly,
+        or whose receiver never answers, waits for itself and keeps nobody else out."""
+        with self._slots_lock:
+            if workspace_id in taken or not pool.acquire(blocking=False):
+                raise busy
+            taken.add(workspace_id)
         try:
             yield
         finally:
-            self._validations.release()
+            with self._slots_lock:
+                taken.discard(workspace_id)
+            pool.release()
 
-    def _address(self, url) -> str:
-        with self._checking():
-            return validate_url(url)
+    def _checking(self, p: dict):
+        """An address checked for a management call resolves a name on the request's thread."""
+        return self._slot(self._validations, self._validating, p["tenant"], ServiceError(
+            429, "destination_check_busy", "正在检查的回调地址过多，请稍后再试", {"retry_after": 2}))
+
+    def _look_up(self, p: dict, url: str) -> None:
+        """Where the address leads, asked last: after everything that could be refused without
+        asking a resolver (`address_text`, the filter, the grant, the limits)."""
+        with self._checking(p):
+            validate_url(url)
 
     def _journal(self, sid: str) -> None:
         """Written before a change that takes something back — a pause, another address, another
@@ -382,7 +412,7 @@ class Webhooks:
         if not isinstance(body, dict):
             raise ServiceError(400, "invalid_body", "请求体须为 JSON 对象")
         for k in body:
-            if k not in allowed and k != "version":
+            if k not in allowed:
                 raise ServiceError(400, "unknown_field", f"不支持的字段：{k}", {"field": k})
 
     @staticmethod
@@ -415,23 +445,29 @@ class Webhooks:
             raise ServiceError(409, "subscription_exists", "这个回调地址已有订阅；修改它，或轮换它的密钥",
                                {"id": taken["id"]})
 
+    def _may_create(self, c, p: dict, url: str) -> None:
+        # A lost answer and a second try do not leave two: the first is named instead.
+        self._address_free(c, p, url)
+        mine = c.execute("SELECT COUNT(*) AS n FROM suite_webhook_subscriptions WHERE workspace_id=? AND client_id=? "
+                         "AND user_id=? AND deleted_at IS NULL", self._holder(p)).fetchone()["n"]
+        if mine >= MAX_PER_GRANT:
+            raise ServiceError(409, "subscription_limit_reached", f"每个授权最多 {MAX_PER_GRANT} 个订阅",
+                               {"limit": MAX_PER_GRANT, "scope": "grant"})
+        self._room(c, p)
+
     def create(self, p: dict, body: dict, *, note=None) -> dict:
         self._check_fields(body, WRITABLE)
-        url = self._address(body.get("url"))
+        url = address_text(body.get("url"))
         events = normalize_events(self.caps.registry, body.get("events"), p["scopes"])
         description = self._description(body.get("description"))
         descriptor = self._binding(p, events)
+        with self.store.conn() as c:
+            self._may_create(c, p, url)                     # refused already: no resolver is asked for it
+        self._look_up(p, url)
         plain = new_secret()
         sid, t = new_id("whsub"), self.clock()
         with self.store.tx() as c:
-            # A lost answer and a second try do not leave two: the first is named instead.
-            self._address_free(c, p, url)
-            mine = c.execute("SELECT COUNT(*) AS n FROM suite_webhook_subscriptions WHERE workspace_id=? AND client_id=? "
-                             "AND user_id=? AND deleted_at IS NULL", self._holder(p)).fetchone()["n"]
-            if mine >= MAX_PER_GRANT:
-                raise ServiceError(409, "subscription_limit_reached", f"每个授权最多 {MAX_PER_GRANT} 个订阅",
-                                   {"limit": MAX_PER_GRANT, "scope": "grant"})
-            self._room(c, p)
+            self._may_create(c, p, url)                     # …and decided here, with the insert
             top = c.execute("SELECT COALESCE(MAX(seq), 0) AS s FROM app_events").fetchone()["s"]
             c.execute("INSERT INTO suite_webhook_subscriptions (id, workspace_id, client_id, user_id, created_by, authorized_at, "
                       "url, description, events, status, status_changed_at, secret_enc, version, cursor, cursor_at, "
@@ -451,7 +487,7 @@ class Webhooks:
         return _public(self.store, self._row(p, sid), self.clock(), p)
 
     def update(self, p: dict, sid: str, body: dict, expected_version, *, note=None) -> dict:
-        self._check_fields(body, WRITABLE)
+        self._check_fields(body, (*WRITABLE, "version"))
         row = self._row(p, sid)
         if expected_version is not None:
             try:
@@ -463,7 +499,7 @@ class Webhooks:
                                    {"current_version": row["version"]})
         values = {}
         if "url" in body:
-            values["url"] = self._address(body["url"])
+            values["url"] = address_text(body["url"])
         if "events" in body:
             values["events"] = json.dumps(normalize_events(self.caps.registry, body["events"], p["scopes"]))
         if values:
@@ -475,6 +511,11 @@ class Webhooks:
             values["description"] = self._description(body["description"])
         if values:
             moved = "url" in values and values["url"] != row["url"]
+            if "url" in values:
+                if moved:
+                    with self.store.conn() as c:
+                        self._address_free(c, p, values["url"], besides=sid)
+                self._look_up(p, values["url"])
             if moved:
                 self._journal(sid)                          # a restore must not send to the address it left
             sets = ", ".join(f"{k}=?" for k in values)       # keys of the closed set above
@@ -554,11 +595,10 @@ class Webhooks:
                              (descriptor, t, t, sid)).rowcount:
                     self._note(note, p, "suite.webhook.resume", sid, row["url"], rebound=True)
             return self.get(p, sid)
-        try:
-            with self._checking():
-                _resolve_now(row["url"])
-        except UrlRejected as e:
-            raise ServiceError(400, "invalid_url", str(e), {"field": "url"}) from e
+        if row["status"] == "disabled":
+            with self.store.conn() as c:
+                self._room(c, p, besides=sid)               # no room for it: no resolver is asked either
+        self._look_up(p, row["url"])
         with self.store.tx() as c:
             if row["status"] == "disabled":
                 self._room(c, p, besides=sid)
@@ -608,16 +648,18 @@ class Webhooks:
     def ping(self, p: dict, sid: str) -> dict:
         """One signed ``webhook.ping`` now, through the same checks and the same connection as a
         real delivery. It carries no event, is not retried and does not count for or against the
-        subscription's health — and it is rationed: the destination never proved it wants these."""
+        subscription's health — and it is rationed: the destination never proved it wants these.
+
+        The ration is the subscription's, and the grant's: a subscription is made and removed at
+        will, so the pings of every subscription the grant has had — the deleted ones too — count
+        towards what `MAX_PER_GRANT` subscriptions could have sent between them."""
         row = self._row(p, sid)
         if row["status"] == "disabled":
             raise ServiceError(409, "subscription_disabled", "订阅已停用；用 resume 重新启用", {"reason": row["disabled_reason"]})
-        limited = lambda wait, why: ServiceError(  # noqa: E731
+        limited = lambda wait, why, **of: ServiceError(  # noqa: E731
             429, "ping_rate_limited", "测试事件发送过于频繁，请稍后再试",
-            {"retry_after": wait, "reason": why, "min_interval_s": PING_MIN_INTERVAL_S, "per_hour": PING_PER_HOUR})
-        if not self._pings.acquire(blocking=False):
-            raise limited(5, "busy")
-        try:
+            {"retry_after": wait, "reason": why, "min_interval_s": PING_MIN_INTERVAL_S, "per_hour": PING_PER_HOUR, **of})
+        with self._slot(self._pings, self._pinging, p["tenant"], limited(5, "busy")):
             t, did = self.clock(), new_id("whdel")
             with self.store.tx() as c:
                 recent = c.execute("SELECT created_at FROM suite_webhook_deliveries WHERE subscription_id=? AND event_type=? "
@@ -626,6 +668,17 @@ class Webhooks:
                     raise limited(PING_MIN_INTERVAL_S - (t - recent[0]["created_at"]), "interval")
                 if len(recent) >= PING_PER_HOUR:
                     raise limited(recent[-1]["created_at"] + 3600 - t, "hourly")
+                # A subscription deleted more than an hour ago has no ping left in the hour.
+                held = c.execute(
+                    "SELECT d.created_at FROM suite_webhook_deliveries AS d WHERE d.event_type=? AND d.created_at>? "
+                    "AND d.subscription_id IN (SELECT id FROM suite_webhook_subscriptions WHERE workspace_id=? AND client_id=? "
+                    "AND user_id=? AND (deleted_at IS NULL OR deleted_at>?)) ORDER BY d.created_at DESC",
+                    (PING_EVENT, t - 3600, *self._holder(p), t - 3600)).fetchall()
+                burst = [r["created_at"] for r in held if t - r["created_at"] < PING_MIN_INTERVAL_S]
+                if len(burst) >= MAX_PER_GRANT:
+                    raise limited(burst[-1] + PING_MIN_INTERVAL_S - t, "interval", scope="grant")
+                if len(held) >= MAX_PER_GRANT * PING_PER_HOUR:
+                    raise limited(held[-1]["created_at"] + 3600 - t, "hourly", scope="grant")
                 # Queued already claimed and counted, as `claim_next` would hand it over.
                 c.execute("INSERT INTO suite_webhook_deliveries (id, subscription_id, workspace_id, event_id, event_type, "
                           "status, attempts, next_attempt_at, created_at, claimed_by, claimed_until) "
@@ -633,8 +686,6 @@ class Webhooks:
                           (did, sid, row["workspace_id"], new_id("evt"), PING_EVENT, t + LEASE_S, t, self.worker_id,
                            t + LEASE_S))
             self.send_one(self.store.one("SELECT * FROM suite_webhook_deliveries WHERE id=?", (did,)))
-        finally:
-            self._pings.release()
         return delivery_public(self.store.one("SELECT * FROM suite_webhook_deliveries WHERE id=?", (did,)))
 
     def _log_holder(self, p: dict, sid: str) -> bytes:
@@ -699,6 +750,12 @@ class Webhooks:
             if n >= MAX_REDELIVERIES:
                 raise ServiceError(409, "redelivery_limit_reached", f"同一事件最多重新投递 {MAX_REDELIVERIES} 次",
                                    {"limit": MAX_REDELIVERIES})
+            # The queue's bound is the queue's, whoever fills it: the cursor waits at it, and so does this.
+            waiting = c.execute("SELECT COUNT(*) AS n FROM suite_webhook_deliveries WHERE subscription_id=? "
+                                "AND status='pending'", (sid,)).fetchone()["n"]
+            if waiting >= MAX_PENDING:
+                raise ServiceError(409, "delivery_queue_full", f"该订阅等待中的投递已达上限（{MAX_PENDING}），请稍后再重新投递",
+                                   {"limit": MAX_PENDING})
             c.execute("INSERT INTO suite_webhook_deliveries (id, subscription_id, workspace_id, event_id, event_seq, event_type, "
                       "status, attempts, next_attempt_at, created_at, redelivery_of) VALUES (?,?,?,?,?,?,'pending',0,?,?,?)",
                       (new, sid, sub["workspace_id"], orig["event_id"], orig["event_seq"], orig["event_type"], t, t, did))
@@ -962,7 +1019,7 @@ class Webhooks:
         """Count one request to the address's host, or say how long until there is room for one.
         Whoever it is and however many subscriptions name it, a host gets `HOST_PER_MINUTE` from
         this process: an address never proved it wants the traffic."""
-        host, at = (urlsplit(url).hostname or "").lower(), time.monotonic()
+        host, at = (urlsplit(url).hostname or "").lower(), self.elapsed()
         with self._hosts_lock:
             sent = self._hosts.setdefault(host, collections.deque())
             while sent and at - sent[0] >= 60:

@@ -46,6 +46,7 @@ export const SUITE_RESOURCE = 'urn:synwevo:platform:suite';
 export const SUITE_API_PREFIX = '/api/suite/v1';
 export const SUITE_TERMINAL_STATUSES = Object.freeze(['succeeded', 'partial', 'failed', 'cancelled']);
 export const SUITE_EVENT_STARTS = Object.freeze(['oldest', 'now']);
+const SUITE_WEBHOOKS = '/webhooks/subscriptions';
 export const TERMINAL_STATUSES = Object.freeze(['completed', 'completed_with_errors', 'failed', 'cancelled']);
 export const SUCCESS_STATUSES = Object.freeze(['completed', 'completed_with_errors']);
 export const ERROR_POLICIES = Object.freeze(['block', 'skip']);
@@ -1384,11 +1385,17 @@ export class SuiteClient {
   // Webhooks — verify with verifyWebhook). A subscription belongs to this client, for this person,
   // in this workspace. Calls that answer with a secret or start a send carry no idempotency key and
   // are not retried: a lost answer must not leave a secret nobody saw.
+  // One subscription's path. A missing id is refused here, whatever its spelling (undefined, null,
+  // ''): left out of the path it would name the collection, and answer with a list.
   #hook(sid, rest = '') {
-    if (sid !== undefined && (typeof sid !== 'string' || !sid)) {
+    if (typeof sid !== 'string' || !sid) {
       throw new ValidationError('A subscription ID is required', { field: 'subscription_id' });
     }
-    return '/webhooks/subscriptions' + (sid === undefined ? '' : `/${encodeURIComponent(sid)}`) + rest;
+    return `${SUITE_WEBHOOKS}/${encodeURIComponent(sid)}${rest}`;
+  }
+  #delivery(sid, did, rest = '') {
+    if (typeof did !== 'string' || !did) throw new ValidationError('A delivery ID is required', { field: 'delivery_id' });
+    return this.#hook(sid, `/deliveries/${encodeURIComponent(did)}${rest}`);
   }
 
   /** `events`: event types, "<app>.*" or "*". The answer's `secret` is shown this once. */
@@ -1396,14 +1403,17 @@ export class SuiteClient {
     if (!Array.isArray(events) || !events.length) throw new ValidationError('events must be a non-empty array', { field: 'events' });
     const json = { url, events };
     if (description != null) json.description = description;
-    return this.#transport.requestJson('POST', this.#hook(), { json, retry: false, ...opts });
+    return this.#transport.requestJson('POST', SUITE_WEBHOOKS, { json, retry: false, ...opts });
   }
-  listWebhooks(opts = {}) { return this.#transport.get(this.#hook(), undefined, opts); }
+  listWebhooks(opts = {}) { return this.#transport.get(SUITE_WEBHOOKS, undefined, opts); }
   getWebhook(sid, opts = {}) { return this.#transport.get(this.#hook(sid), undefined, opts); }
   /** `version` (from the subscription you read) refuses a lost update. */
-  updateWebhook(sid, changes = {}, { version, ...opts } = {}) {
-    const headers = version != null ? { 'If-Match': `"${Number(version)}"` } : undefined;
-    return this.#transport.requestJson('PATCH', this.#hook(sid), { json: changes, headers, retry: false, ...opts });
+  updateWebhook(sid, changes = {}, { version, headers, ...opts } = {}) {
+    // The caller's own headers go with the request; they never take the place of the guard it asked for.
+    const guard = version != null ? { 'If-Match': `"${Number(version)}"` } : {};
+    const own = Object.entries(headers ?? {}).filter(([name]) => version == null || name.toLowerCase() !== 'if-match');
+    return this.#transport.requestJson('PATCH', this.#hook(sid),
+      { json: changes, retry: false, ...opts, headers: { ...Object.fromEntries(own), ...guard } });
   }
   deleteWebhook(sid, opts = {}) { return this.#transport.requestJson('DELETE', this.#hook(sid), { retry: false, ...opts }); }
   pauseWebhook(sid, opts = {}) { return this.#transport.requestJson('POST', this.#hook(sid, '/pause'), { retry: true, ...opts }); }
@@ -1421,12 +1431,11 @@ export class SuiteClient {
     return this.#transport.get(this.#hook(sid, '/deliveries'), { status, cursor: cursor ?? undefined, limit }, opts);
   }
   webhookDelivery(sid, did, opts = {}) {
-    return this.#transport.get(this.#hook(sid, `/deliveries/${encodeURIComponent(did)}`), undefined, opts);
+    return this.#transport.get(this.#delivery(sid, did), undefined, opts);
   }
   /** Queues the event of an earlier delivery once more (same `webhook-id`); sent only if still readable. */
   redeliverWebhook(sid, did, opts = {}) {
-    return this.#transport.requestJson('POST', this.#hook(sid, `/deliveries/${encodeURIComponent(did)}/redeliver`),
-      { retry: false, ...opts });
+    return this.#transport.requestJson('POST', this.#delivery(sid, did, '/redeliver'), { retry: false, ...opts });
   }
 
   // ----- files: the routes that move bytes. They name the credential's workspace in the query
