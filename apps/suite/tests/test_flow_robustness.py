@@ -116,6 +116,33 @@ def test_a_role_withdrawn_while_waiting_and_restored_lets_the_run_finish(flow):
     assert state(f, rid)[0] == "succeeded", (state(f, rid), steps_of(f, rid))
 
 
+def test_an_application_switched_off_while_waiting_for_a_receipt_keeps_the_wait(flow):
+    """R3-FE-03: not every check that stops before the receipt is read is a 401/403. An operator
+    switches the application off (404 app_unavailable) while its job runs; the job then fails
+    definitely and the application comes back. Resuming takes the job's own outcome (on_error), not
+    a reconciliation request that never goes away."""
+    from .test_flows_outcomes import job, jobs, steps_of
+    f = flow
+    started = jobs(f)
+    rid = f.start(f.create([job(f, on_error="cleanup"), f.write("after", next="end"), f.write("cleanup")]))
+    f.tick()
+    assert steps_of(f, rid)["job"][0] == "operation_wait"
+    f.store.execute("UPDATE apps SET status='disabled' WHERE id='fixtureflow'")
+    f.clock.advance(31)
+    f.tick()
+    assert state(f, rid) == ("blocked", "app_unavailable")
+    assert steps_of(f, rid)["job"][0] == "operation_wait", "the step still waits for its receipt"
+    with pytest.raises(ServiceError) as err:                 # resuming while it is off asks again
+        f.e.resume(rid, user_id=f.uid)
+    assert err.value.code == "app_unavailable"
+    f.store.execute("UPDATE apps SET status='active' WHERE id='fixtureflow'")
+    f.caps.update_run(started[0], "failed", error=ServiceError(422, "fixture_job_failed", "fixture"))
+    assert f.e.resume(rid, user_id=f.uid)["status"] == "queued"
+    f.tick()
+    assert state(f, rid) == ("partial", None)
+    assert steps_of(f, rid)["job"] == ("failed", "flow_operation_failed") and steps_of(f, rid)["cleanup"][0] == "succeeded"
+    assert "after" not in steps_of(f, rid) and len(started) == 1
+
 # ---------------------------------------------------------------- rows beyond the step (R3-FE-01)
 # The same premise as DF-B4 — a row another release stored that this one cannot read — reached
 # through a trigger, a run's policy, the chain a run's sources are read over, and the Agent's view.

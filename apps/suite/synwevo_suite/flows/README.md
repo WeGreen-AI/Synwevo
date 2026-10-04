@@ -107,7 +107,10 @@ rechecked. Application configuration/template versions belong explicitly in oper
   In-flight I/O timeout/cancellation remains the operation adapter's responsibility; the engine
   cannot safely kill an arbitrary Python handler or retract a remote write. Lease expiry fences
   it and prevents another worker from dispatching the same step.
-* Queued/running async receipts are polled without reinvoking the operation. Business waits
+* Queued/running async receipts are polled without reinvoking the operation. A poll stopped
+  before the receipt is read (a refusal, the application switched off, the operation's version
+  withdrawn) keeps the step waiting for that receipt and blocks the run; resuming polls it again
+  and takes its outcome, `on_error` included. Only the run's deadline ends such a wait (failed). Business waits
   persist their deadline and next check and hold no thread or model session between ticks.
 * Cancellation prevents unstarted steps and fences completion. It cannot recall an external
   effect already dispatched. History includes its operation ID/status even if the response

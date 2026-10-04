@@ -651,7 +651,8 @@ class Flows(Triggers):
         except LostLease:
             return False
         except ServiceError as exc:
-            self._failure(claim, exc, charges=run.get("_charges", 0) if run and not committed else 0)
+            self._failure(claim, exc, charges=run.get("_charges", 0) if run and not committed else 0,
+                          receipt_read=bool(run and run.get("_receipt_read")))
         return True
 
     def _wait(self, t, run, spec, step, saved):
@@ -697,6 +698,7 @@ class Flows(Triggers):
         # A dispatch marker survives only non-transactional calls, async receipts, or faults.
         if saved["status"] in ("executing", "operation_wait", "unknown"):
             prior = self._prior_op(run, step, saved)
+            run["_receipt_read"] = True                     # from here on, a failure is the receipt's answer
             if prior and prior["status"] in COMPLETE:
                 self._complete_call(t, run, spec, step, {"run_id": prior["id"], "output": decode(prior["output"]), "status": prior["status"]})
             elif saved["status"] == "operation_wait" and prior and prior["status"] in DEFINITE:
@@ -784,7 +786,7 @@ class Flows(Triggers):
         except ServiceError as exc:
             self._failure(claim, exc, charges=run.get("_charges", 0))
 
-    def _failure(self, claim, exc, *, charges=0):
+    def _failure(self, claim, exc, *, charges=0, receipt_read=False):
         with self.store.tx() as t:
             try:
                 run = self._fenced(claim)
@@ -817,16 +819,18 @@ class Flows(Triggers):
             if charges:
                 self.store.execute("UPDATE flow_runs SET calls_used=calls_used+? WHERE id=?", (charges, run["id"]))
             state, due = "failed", ts
-            # Refused while waiting for a dispatched operation's receipt (a policy closed, a role
-            # withdrawn): the operation's own run still records its outcome, so nothing is
-            # uncertain. The step keeps waiting for it, and the run resumes from there once the
-            # refusal is lifted (CR-048 DF-B3) instead of asking for a reconciliation for ever.
-            waiting = saved["status"] == "operation_wait" and exc.status in (401, 403)
+            # Stopped while waiting for a dispatched operation's acknowledged receipt — refused (a
+            # policy closed, a role withdrawn), or stopped before the receipt was read at all (the
+            # application switched off, the operation's version withdrawn): the operation's own run
+            # still records its outcome, so nothing is uncertain. The step keeps waiting for it and
+            # the run is blocked; it resumes from there once that is lifted (CR-048 DF-B3,
+            # R3-FE-03) instead of asking for a reconciliation for ever. Only its deadline ends it.
+            waiting = saved["status"] == "operation_wait" and (exc.status in (401, 403) or not receipt_read)
             uncertain = (not waiting and saved["status"] in ("executing", "operation_wait", "unknown")
                          and exc.code not in DEFINITE.values())
             if exc.code == "flow_outcome_unknown" or uncertain:
                 state = "unknown"
-            if exc.status in (401, 403):
+            if exc.status in (401, 403) or (waiting and exc.code != "flow_deadline_exceeded"):
                 state = "blocked"
             elif not uncertain and op and op.transactional and exc.status >= 500 and exc.code in step.retry_codes and attempts < step.max_attempts:
                 state, due = "retrying", ts + min(3600, step.backoff_s * 2 ** max(0, attempts - 1))
