@@ -278,7 +278,8 @@ X-Synwevo-Event: tables.record.changed
 
 **停了之后补什么。** 暂停和停用都会丢弃等待中的投递，恢复后**从当下开始**，中间发生的不补发。订阅的
 `missed_events_cursor` 是“上次停在哪里”的事件流游标（属于同一授权，恢复后仍保留）：`resume` 之后用它读
-`GET /events?cursor=…` 就是恰好没推的那一段，按 `id` 去重。它超过事件流保留期后为 null（此时请重新列出记录）。
+`GET /events?cursor=…` 就是恰好没推的那一段，按 `id` 去重——包括这次停止之前、自上一次成功投递以来已经用尽重试而记为
+`failed` 的事件。它超过事件流保留期后为 null（此时请重新列出记录）。
 只推不拉的集成请定期读一下订阅（`status`、`disabled_reason`、`stalled_since`）。`stalled_since` 非空表示平台一侧出错、
 有一条事件暂时无法判定：它之后的事件都在等，不会被跳过。
 

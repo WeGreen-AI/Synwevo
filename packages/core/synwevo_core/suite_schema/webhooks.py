@@ -73,12 +73,21 @@ def stopping(c, sub, unsent: int | None = None) -> tuple[int | None, float | Non
     """Where an active subscription stands as it stops (``gap_cursor``, ``gap_at``): before its
     place in the log, before the first event still waiting to be sent, and before `unsent` — the
     event whose refusal stopped it. Kept, so that what is not pushed can be pulled. One that had
-    already stopped keeps the place it stopped at."""
+    already stopped keeps the place it stopped at.
+
+    An event that ran out of attempts was not pushed either. Those of the run that ends here —
+    since the subscription last became active, and after its last success — are before the gap
+    too: whether the first failure of an outage is still waiting or already given up on when the
+    subscription stops depends only on where the jitter put its retries."""
     if sub["status"] != "active":
         return sub["gap_cursor"], sub["gap_at"]
     position, at = sub["cursor"], sub["cursor_at"]
-    first = c.execute("SELECT MIN(event_seq) AS s FROM suite_webhook_deliveries WHERE subscription_id=? AND status='pending' "
-                      "AND event_seq IS NOT NULL AND redelivery_of IS NULL", (sub["id"],)).fetchone()["s"]
+    first = c.execute(
+        "SELECT MIN(event_seq) AS s FROM suite_webhook_deliveries WHERE subscription_id=? AND event_seq IS NOT NULL "
+        "AND redelivery_of IS NULL AND (status='pending' OR (status='failed' AND created_at>=? AND rowid>COALESCE("
+        "(SELECT MAX(rowid) FROM suite_webhook_deliveries WHERE subscription_id=? AND status='delivered' "
+        "AND event_seq IS NOT NULL AND redelivery_of IS NULL), 0)))",
+        (sub["id"], sub["status_changed_at"], sub["id"])).fetchone()["s"]
     if unsent is not None and (first is None or unsent < first):
         first = unsent
     if first is not None and first - 1 < position:

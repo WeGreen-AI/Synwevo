@@ -495,18 +495,25 @@ class Webhooks:
         self._remove(sid, "deleted", lambda: self._note(note, p, "suite.webhook.delete", sid, row["url"]))
         return {"deleted": sid}
 
-    def _remove(self, sid: str, reason: str, noted=None) -> None:
+    def _remove(self, sid: str, reason: str, noted=None, *, orphaned_before: float | None = None) -> None:
+        """Remove a subscription, its secret and its queue. `orphaned_before`, the housekeeping's:
+        only if it still is what the sweep listed — disabled because its grant ended, since before
+        that time. One its holder has resumed in between is theirs again and stays whole."""
         t = self.clock()
+        still, args = "", ()
+        if orphaned_before is not None:
+            still = " AND status='disabled' AND disabled_reason LIKE 'authorization_revoked:%' AND status_changed_at<?"
+            args = (orphaned_before,)
         with self.store.tx() as c:
             if noted is not None:
                 noted()
             # The secret goes with it: nothing signs for a removed subscription again.
-            c.execute("UPDATE suite_webhook_subscriptions SET status='disabled', disabled_reason=?, deleted_at=?, "
-                      "status_changed_at=?, updated_at=?, version=version+1, secret_enc=?, secret_prev_enc=NULL, "
-                      "secret_prev_expires_at=NULL WHERE id=? AND deleted_at IS NULL",
-                      (reason, t, t, t, sealed.seal(self.store, "webhook-secret", ""), sid))
-            c.execute("UPDATE suite_webhook_deliveries SET status='dropped', last_error='subscription_deleted', "
-                      "next_attempt_at=NULL WHERE subscription_id=? AND status='pending'", (sid,))
+            if c.execute("UPDATE suite_webhook_subscriptions SET status='disabled', disabled_reason=?, deleted_at=?, "
+                         "status_changed_at=?, updated_at=?, version=version+1, secret_enc=?, secret_prev_enc=NULL, "
+                         "secret_prev_expires_at=NULL WHERE id=? AND deleted_at IS NULL" + still,
+                         (reason, t, t, t, sealed.seal(self.store, "webhook-secret", ""), sid, *args)).rowcount:
+                c.execute("UPDATE suite_webhook_deliveries SET status='dropped', last_error='subscription_deleted', "
+                          "next_attempt_at=NULL WHERE subscription_id=? AND status='pending'", (sid,))
 
     def pause(self, p: dict, sid: str, *, note=None) -> dict:
         row = self._row(p, sid)
@@ -887,6 +894,16 @@ class Webhooks:
                                    "AND claimed_until=? AND claimed_until>?",
                                    (d["id"], self.worker_id, d.get("claimed_until"), self.clock())))
 
+    def _not_sent(self, d: dict) -> bool:
+        """The claim is no longer this worker's, and nothing was sent. If that is because the
+        delivery was stopped meanwhile (its subscription paused, disabled or deleted), the attempt
+        the claim counted did not happen: it is taken back and the claim let go. A claim that ran
+        out or was taken over is another worker's row now, and is left as it is."""
+        self.store.execute("UPDATE suite_webhook_deliveries SET attempts=MAX(0, attempts-1), claimed_by=NULL, "
+                           "claimed_until=NULL WHERE id=? AND status='dropped' AND claimed_by=? AND claimed_until=?",
+                           (d["id"], self.worker_id, d.get("claimed_until")))
+        return False
+
     def _sendable(self, d: dict) -> tuple[dict | None, bytes | None]:
         """The subscription and the body to send — or (None, None) once the delivery has been
         dropped because, asked about the present, it may not be sent."""
@@ -968,7 +985,7 @@ class Webhooks:
 
     def _send(self, d: dict) -> bool:
         if not self._owns_claim(d):
-            return False
+            return self._not_sent(d)
         sub, body = self._sendable(d)
         if sub is None:
             return False
@@ -1002,7 +1019,7 @@ class Webhooks:
                 # DNS can take most of the attempt. A pause, a revocation or another claimant may
                 # have intervened since the body was made: never connect on stale authority.
                 if not self._owns_claim(d):
-                    return False
+                    return self._not_sent(d)
                 current, fresh = self._sendable(d)
                 if current is None:
                     return False
@@ -1208,7 +1225,7 @@ class Webhooks:
         for sub in self.store.all("SELECT id FROM suite_webhook_subscriptions WHERE status='disabled' AND deleted_at IS NULL "
                                   "AND disabled_reason LIKE 'authorization_revoked:%' AND status_changed_at<?",
                                   (t - ORPHAN_AFTER_S,)):
-            self._remove(sub["id"], "authorization_revoked")
+            self._remove(sub["id"], "authorization_revoked", orphaned_before=t - ORPHAN_AFTER_S)
         removed = 0
         while True:                                         # in pieces: each is one short hold of the write lock
             n = self.store.execute("DELETE FROM suite_webhook_deliveries WHERE rowid IN (SELECT rowid FROM suite_webhook_deliveries "

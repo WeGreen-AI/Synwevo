@@ -1287,6 +1287,42 @@ def test_housekeeping_disables_what_no_event_would_and_removes_what_nobody_can(h
     assert hub.subscribe(again, rx.url, events=["tables.*"])["id"] not in (active, paused)
 
 
+STOPPED_AGAIN = {"": None, ", then answered 410": "gone", ", and that grant ended in turn": "authorization_revoked:grant_revoked"}
+
+
+@pytest.mark.parametrize("then", list(STOPPED_AGAIN))
+def test_housekeeping_does_not_remove_a_subscription_resumed_since_it_was_listed(hub, monkeypatch, then):
+    """The sweep lists what nobody may be left to remove, then removes them one by one. A
+    subscription its holder — authorised again — resumed in between is theirs again: it keeps its
+    secret and stays, whatever has happened to it since (a stop for another reason is its holder's
+    to deal with; a grant that ended again starts the thirty days again)."""
+    g = grant(hub.api, "bob")
+    rx = hub.receiver()
+    made = hub.subscribe(g["auth"], rx.url, events=["tables.*"])
+    sid = made["id"]
+    _consent_withdrawn(hub, g)
+    hub.service.sweep()
+    assert hub.store.one("SELECT disabled_reason FROM suite_webhook_subscriptions WHERE id=?", (sid,))["disabled_reason"] \
+        == "authorization_revoked:grant_revoked"
+    hub.clock.advance(31 * DAY)
+    again = grant(hub.api, "bob")["auth"]
+    real, resumed = hub.service._remove, []
+
+    def removing(*args, **kwargs):
+        # fixture: this lands after the sweep listed the subscription and before it removes it
+        resumed.append(hub.api.post(f"{BASE}/{sid}/resume", headers=again).json()["status"])
+        if STOPPED_AGAIN[then]:
+            assert hub.service.disable(sid, STOPPED_AGAIN[then])
+        return real(*args, **kwargs)
+    monkeypatch.setattr(hub.service, "_remove", removing)
+    hub.service.sweep()
+    seen = hub.api.get(f"{BASE}/{sid}", headers=again)
+    assert resumed == ["active"] and seen.status_code == 200
+    assert (seen.json()["status"], seen.json()["disabled_reason"]) == (("disabled", STOPPED_AGAIN[then]) if then else ("active", None))
+    stored = hub.store.one("SELECT secret_enc, deleted_at FROM suite_webhook_subscriptions WHERE id=?", (sid,))
+    assert stored["deleted_at"] is None and sealed.unseal(hub.store, "webhook-secret", stored["secret_enc"]) == made["secret"]
+
+
 def test_pausing_what_is_paused_and_resuming_what_is_active_change_nothing(hub):
     alice = grant(hub.api, "alice")["auth"]
     rx = hub.receiver()
@@ -1438,6 +1474,97 @@ def test_where_pushing_stopped_is_a_feed_cursor_for_what_was_not_pushed(hub):
     hub.service.tick()
     gone = hub.api.get(f"{BASE}/{sid}", headers=alice).json()
     assert (gone["status"], gone["disabled_reason"]) == ("disabled", "gone") and pulled(gone["missed_events_cursor"]) == [r6]
+
+
+def _pulled(hub, auth, cursor) -> list[str]:
+    r = hub.api.get("/api/suite/v1/events", params={"cursor": cursor}, headers=auth)
+    assert r.status_code == 200, r.text
+    return [e["object"]["id"] for e in r.json()["items"]]
+
+
+def test_an_event_given_up_on_before_the_subscription_was_is_in_the_gap_too(hub):
+    """Where the jitter puts the retries decides whether the first event of an outage is still
+    waiting or has already run out of attempts when the three days are up. Either way it was not
+    pushed, and the place to pull from is before it."""
+    from synwevo_core.webhook_delivery import BACKOFF_S
+    hub.service.rng = SimpleNamespace(uniform=lambda low, high: low)     # fixture: every wait at its shortest
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver(lambda n: 500)
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    table = a_table(hub.api, alice)
+    hub.service.tick()
+    r1 = a_record(hub.api, alice, table, "r1")["output"]["id"]
+    for step in BACKOFF_S:
+        hub.clock.advance(step * 0.8 + 1)
+        hub.service.tick()
+    assert [(r["status"], r["attempts"]) for r in hub.rows(sid)] == [("failed", 10), ("pending", 0)]
+    assert hub.clock.offset < 3 * DAY and hub.api.get(f"{BASE}/{sid}", headers=alice).json()["status"] == "active", \
+        "a whole schedule of attempts, and not yet three days"
+    for step in BACKOFF_S:
+        hub.service.tick()
+        if hub.api.get(f"{BASE}/{sid}", headers=alice).json()["status"] != "active":
+            break
+        hub.clock.advance(step * 0.8 + 1)
+    stopped = hub.api.get(f"{BASE}/{sid}", headers=alice).json()
+    assert (stopped["status"], stopped["disabled_reason"]) == ("disabled", "failing") and hub.clock.offset >= 3 * DAY
+    assert _pulled(hub, alice, stopped["missed_events_cursor"]) == [table, r1]
+    # a resume starts a fresh run: what was given up on before it belongs to the stop before it
+    hub.api.post(f"{BASE}/{sid}/resume", headers=alice)
+    r2 = a_record(hub.api, alice, table, "r2")["output"]["id"]
+    hub.service.tick()
+    paused = hub.api.post(f"{BASE}/{sid}/pause", headers=alice).json()
+    assert _pulled(hub, alice, paused["missed_events_cursor"]) == [r2]
+
+
+def test_an_event_given_up_on_before_a_later_success_is_not_where_pushing_stopped(hub):
+    from synwevo_core.webhook_delivery import BACKOFF_S
+    hub.service.rng = SimpleNamespace(uniform=lambda low, high: low)     # fixture: every wait at its shortest
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver(lambda n: 500)
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    table = a_table(hub.api, alice)
+    hub.service.tick()
+    for step in BACKOFF_S:
+        hub.clock.advance(step * 0.8 + 1)
+        hub.service.tick()
+    rx.behaviour = lambda n: 200
+    r1 = a_record(hub.api, alice, table, "r1")["output"]["id"]
+    hub.service.tick()
+    assert [(r["status"], r["attempts"]) for r in hub.rows(sid)] == [("failed", 10), ("delivered", 1)]
+    rx.behaviour = lambda n: 500
+    r2 = a_record(hub.api, alice, table, "r2")["output"]["id"]
+    hub.service.tick()
+    paused = hub.api.post(f"{BASE}/{sid}/pause", headers=alice).json()
+    assert objects(rx)[-2:] == [r1, r2] and _pulled(hub, alice, paused["missed_events_cursor"]) == [r2]
+
+
+def test_a_ping_or_a_redelivery_the_receiver_takes_is_not_the_queue_moving_on(hub):
+    """What the gap follows is the queue: the events in their order. A test event or a repeat of an
+    old one that happens to get through does not put an event given up on behind it."""
+    from synwevo_core.webhook_delivery import BACKOFF_S
+    hub.service.rng = SimpleNamespace(uniform=lambda low, high: low)     # fixture: every wait at its shortest
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    table = a_table(hub.api, alice)
+    hub.service.tick()
+    rx.behaviour = lambda n: 500
+    r1 = a_record(hub.api, alice, table, "r1")["output"]["id"]
+    hub.service.tick()
+    for step in BACKOFF_S:
+        hub.clock.advance(step * 0.8 + 1)
+        hub.service.tick()
+    assert [(r["status"], r["attempts"]) for r in hub.rows(sid)] == [("delivered", 1), ("failed", 10)]
+    rx.behaviour = lambda n: 200
+    assert hub.api.post(f"{BASE}/{sid}/ping", headers=alice).json()["status"] == "delivered"
+    assert hub.api.post(f"{BASE}/{sid}/deliveries/{hub.rows(sid)[0]['id']}/redeliver", headers=alice).status_code == 202
+    hub.service.tick()
+    assert [r["status"] for r in hub.rows(sid)] == ["delivered", "failed", "delivered", "delivered"]
+    rx.behaviour = lambda n: 500
+    r2 = a_record(hub.api, alice, table, "r2")["output"]["id"]
+    hub.service.tick()
+    paused = hub.api.post(f"{BASE}/{sid}/pause", headers=alice).json()
+    assert _pulled(hub, alice, paused["missed_events_cursor"]) == [r1, r2]
 
 
 def test_an_event_that_cannot_be_decided_holds_the_subscription_there_visibly(hub, monkeypatch):
@@ -1594,6 +1721,47 @@ def test_an_attempt_that_never_reports_back_is_still_an_attempt(hub, monkeypatch
     assert (mine["status"], mine["attempts"], mine["last_error"]) == ("pending", 1, "internal_error")
     assert theirs["status"] == "delivered" and len(rx.received) == 1
     assert hub.store.one("SELECT consecutive_failures AS n FROM suite_webhook_subscriptions WHERE id=?", (sid,))["n"] == 0
+
+
+def test_a_delivery_stopped_after_its_claim_and_before_anything_was_sent_counts_no_attempt(hub, monkeypatch):
+    """Paused between the claim and the send, or while the send was resolving the address: the log
+    shows a delivery dropped unsent — no attempt on it, and no claim left on it. A claim another
+    worker has taken over is that worker's row, and is not touched."""
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    table = a_table(hub.api, alice)
+    hub.service.fan_out()
+    claimed = hub.service.claim_next()
+    assert claimed["attempts"] == 1 and claimed["claimed_by"] == hub.service.worker_id
+    hub.api.post(f"{BASE}/{sid}/pause", headers=alice)                   # between the claim and the send
+    assert hub.service.send_one(claimed) is False
+    unsent = ("dropped", "subscription_paused", 0, None, None)
+    assert tuple(hub.rows(sid)[0][k] for k in ("status", "last_error", "attempts", "claimed_by", "claimed_until")) == unsent
+    hub.api.post(f"{BASE}/{sid}/resume", headers=alice)
+    a_record(hub.api, alice, table, "r1")
+    hub.service.fan_out()
+    real = hub.W.resolve_checked
+
+    def resolving(url, **kwargs):
+        # fixture: the pause lands while the send is resolving the address
+        assert hub.api.post(f"{BASE}/{sid}/pause", headers=alice).json()["status"] == "paused"
+        return real(url, **kwargs)
+    with monkeypatch.context() as during:
+        during.setattr(hub.W, "resolve_checked", resolving)
+        assert hub.service.deliver_due() == 0
+    assert tuple(hub.rows(sid)[1][k] for k in ("status", "last_error", "attempts", "claimed_by", "claimed_until")) == unsent
+    assert [d["attempts"] for d in hub.api.get(f"{BASE}/{sid}/deliveries", headers=alice).json()["items"]] == [0, 0]
+    # another worker's claim: its attempt stands, and so does everything else on the row
+    hub.api.post(f"{BASE}/{sid}/resume", headers=alice)
+    a_record(hub.api, alice, table, "r2")
+    hub.service.fan_out()
+    claimed = hub.service.claim_next()
+    hub.store.execute("UPDATE suite_webhook_deliveries SET claimed_by='worker-2', claimed_until=? WHERE id=?",
+                      (hub.clock() + 100, claimed["id"]))
+    theirs = hub.rows(sid)[2]
+    assert hub.service.send_one(claimed) is False and hub.rows(sid)[2] == theirs and theirs["attempts"] == 1
+    assert rx.received == []
 
 
 def test_settled_deliveries_are_removed_in_pieces(hub, monkeypatch):
