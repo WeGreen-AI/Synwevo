@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel, Field
 
-from synwevo_core.capabilities import manifest_json
+from synwevo_core.capabilities import caller_correlation, manifest_json
 from synwevo_core.errors import ServiceError
 
 from .web import page_args, signed_in
@@ -54,7 +54,7 @@ def build_router(ctx) -> APIRouter:
         if body.idempotency_key and idempotency_key and body.idempotency_key != idempotency_key:
             raise ServiceError(400, "bad_idempotency_key", "请求头与请求体里的幂等键不一致")
         return caps.invoke(operation, body.input, user_id=user["id"], workspace_id=body.workspace_id,
-                           via="ui", idempotency_key=key, correlation_id=body.correlation_id,
+                           via="ui", idempotency_key=key, correlation_id=caller_correlation(body.correlation_id),
                            request=request)
 
     @r.get("/runs")

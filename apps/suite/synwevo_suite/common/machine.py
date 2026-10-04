@@ -33,8 +33,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from synwevo_core import authority
 from synwevo_core.apps import Apps
-from synwevo_core.capabilities import (MACHINE_KEY_PREFIX, TERMINAL_STATES, Operation, machine_credential,
-                                       machine_scope, manifest_json, public_run)
+from synwevo_core.capabilities import (MACHINE_KEY_PREFIX, TERMINAL_STATES, Operation, caller_correlation,
+                                       machine_credential, machine_scope, manifest_json, public_run)
 from synwevo_core.errors import ServiceError
 from synwevo_core.http import SUITE_V1
 from synwevo_core.oidc import suite_resource
@@ -224,7 +224,7 @@ def build_machine_router(ctx) -> APIRouter:
             key = _key(p, op, body.idempotency_key, idempotency_key)
             result = caps.invoke(
                 op.id, body.input, user_id=p["user_id"], workspace_id=p["tenant"], via="api",
-                idempotency_key=key, correlation_id=body.correlation_id, request=request,
+                idempotency_key=key, correlation_id=caller_correlation(body.correlation_id), request=request,
                 principal=authority.describe(p), scopes=frozenset(p["scopes"]),
                 delegation={"kind": "oauth_client", "client_id": p["client_id"], "grant": p["grant_family"]})
             if result["status"] not in TERMINAL_STATES:

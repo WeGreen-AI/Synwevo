@@ -31,6 +31,7 @@ import contextvars
 import hashlib
 import json
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -74,6 +75,11 @@ MAX_IDEMPOTENCY_KEY = 200
 #: Keys of machine callers (``via="api"``) are stored as ``api:<client>:<key>``; nobody else may
 #: use the prefix, and a run is only ever replayed to the kind of caller that made it.
 MACHINE_KEY_PREFIX = "api:"
+#: The correlation ids the platform makes: a run's own id (``new_id("run")``) and a flow run's
+#: (``new_id("flowrun")``, in the flow engine). Platform administration shows a correlation of this
+#: form as it is and takes every run under it for one chain, so a caller names its own in any
+#: other form (:func:`caller_correlation`).
+PLATFORM_CORRELATION = re.compile(r"(?:run|flowrun)_[0-9a-f]{12}")
 #: A chain of runs started by runs (a flow step whose event triggers another flow…) stops here
 #: rather than looping; see :meth:`Capabilities.invoke`'s ``depth``.
 MAX_DEPTH = 8
@@ -420,6 +426,19 @@ def machine_credential(scopes, app: str):
         yield
     finally:
         _CREDENTIAL.reset(entered)
+
+
+def caller_correlation(value: str | None) -> str | None:
+    """A correlation id as a caller names it at an HTTP entry (the page's operations route, the
+    machine API): kept as written, unless it has the form of the platform's own run ids. A run id
+    of someone else's that the caller learnt, or a constant of that form two integrations happen
+    to share, would otherwise put the caller's runs into a chain that is not theirs in platform
+    administration's view (R3-AR-3). The platform's own callers — the flow engine, triggers, a
+    handler passing its call's chain on — name such ids to :meth:`Capabilities.invoke` directly."""
+    if value is not None and PLATFORM_CORRELATION.fullmatch(value):
+        raise ServiceError(400, "bad_correlation_id",
+                           "run_ 或 flowrun_ 加 12 位十六进制数字形式的关联编号保留给平台自己的运行，请换一个")
+    return value
 
 
 def _person_required(op_id: str) -> ServiceError:

@@ -377,6 +377,40 @@ def test_idempotency_is_per_client_and_never_runs_a_call_twice(api):
     assert p.store.one("SELECT COUNT(*) AS n FROM tb_records WHERE table_id=?", (table["id"],))["n"] == 3
 
 
+def test_a_caller_cannot_name_a_correlation_in_the_form_of_the_platforms_run_ids(api):
+    """R3-AR-3: a correlation of the form the platform gives its runs (`run_` or `flowrun_` and
+    twelve hex digits) is read as the platform's own — platform administration shows it as it is
+    and takes every run under it for one chain. Bob, an editor of A, has learnt the id of one of
+    Alice's runs. Naming it as the correlation of his own calls, from the page or from an
+    integration, would put his runs in her chain; a constant of that form would link two
+    integrations that never met. Both entries refuse such a value and run nothing. A label of
+    his own is still taken, including one that merely starts with run_."""
+    p = api.people
+    owner = bearer(api, "alice", "tables.read tables.write")
+    table = m(api, owner, "tables.table.create", {"name": "Fixture contacts"}, key="t-1")["output"]
+    hers = m(api, owner, "tables.record.create", {"table_id": table["id"], "cells": {}}, key="rec-1")["run_id"]
+    before = p.store.one("SELECT COUNT(*) AS n FROM op_runs")["n"]
+    bob = bearer(api, "bob", "tables.read tables.write")
+    for forged in (hers, "run_00000000c0de", "flowrun_0123456789ab"):
+        refused(api.post("/api/suite/v1/ops/tables.record.create", headers=bob,
+                         json={"input": {"table_id": table["id"], "cells": {}}, "correlation_id": forged}),
+                400, "bad_correlation_id")
+        api.sign_in("bob")
+        page = api.post("/api/suite/ops/tables.record.create", headers={"X-Synwevo-CSRF": "fixture-csrf"},
+                        json={"workspace_id": p.a, "input": {"table_id": table["id"], "cells": {}},
+                              "correlation_id": forged})
+        api.cookies.clear()
+        assert page.status_code == 400 and page.json()["error"] == "bad_correlation_id", page.text
+    assert p.store.one("SELECT COUNT(*) AS n FROM op_runs")["n"] == before
+    # Alice's chain is hers alone
+    assert {r["user_id"] for r in p.store.all("SELECT user_id FROM op_runs WHERE correlation_id=?", (hers,))} \
+        == {p.uid("alice")}
+    # his own labels are his: kept as he wrote them
+    for label in ("sync-7", "run_2026-10-04", "RUN_00000000C0DE", hers + "-retry"):
+        own = m(api, bob, "tables.record.create", {"table_id": table["id"], "cells": {}}, correlation_id=label)
+        assert p.store.one("SELECT correlation_id FROM op_runs WHERE id=?", (own["run_id"],))["correlation_id"] == label
+
+
 def test_reaching_someone_outside_needs_a_key(api):
     p = api.people
     auth = bearer(api, "bob", "forms.read forms.write")

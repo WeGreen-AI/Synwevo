@@ -83,7 +83,7 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 |---|---|
 | `GET /whoami` | 客户端、本人、工作空间、当前角色、仍然有效的 scope、可用应用 |
 | `GET /operations[?app=]` | 本人在该工作空间可用的全部操作契约（输入/输出 JSON Schema、所需 scope、幂等规则、是否已授予） |
-| `POST /ops/{operation}` | 执行一个操作。请求体 `{input, idempotency_key?, correlation_id?, workspace_id?}`，不接受其他成员 |
+| `POST /ops/{operation}` | 执行一个操作。请求体 `{input, idempotency_key?, correlation_id?, workspace_id?}`，不接受其他成员。`correlation_id` 是调用方自选的追踪文本（≤100 字符）；`run_` 或 `flowrun_` 加 12 位小写十六进制数字的形式是平台自己的运行编号，不能自选（400 `bad_correlation_id`） |
 | `GET /runs/{run_id}` | 本客户端为本人发起的一次运行的回执；读取时重新鉴权，来源已不可读时 `snapshot_hidden: true`、`output: null` |
 
 响应 `{run_id, operation, status, output, replayed, workspace_id}`。`200` 表示已完成；异步操作尚未结束时为 `202`
