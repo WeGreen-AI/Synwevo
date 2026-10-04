@@ -410,3 +410,45 @@ def test_content_travels_where_every_source_allows_it(world):
     data_flow.set_workspace_outbound(w.store, w.p.a, "any", actor_id=w.alice, revision=0)
     assert w.run(wider, "any") == ("succeeded", None, "end")
     assert w.titles(w.wide) == [SECRET]
+
+
+# ---------------------------------------------------------------- second review round (R2)
+
+def test_a_chain_is_read_once_for_a_page_of_its_runs(world, monkeypatch):
+    """R2-F4: carried() rescanned the whole chain once per run, under the write lock."""
+    w = world
+    fid = w.flow([read(w.p.a)], "page")
+    runs = [w.flows.start(fid, user_id=w.alice, version=1, parameters={}, idempotency_key=f"page-{n}",
+                          correlation_id="fixture-one-chain")["id"] for n in range(5)]
+    w.flows.tick()
+    calls = []
+    real = w.flows._sources
+    monkeypatch.setattr(w.flows, "_sources", lambda run: calls.append(run["id"]) or real(run))
+    assert w.flows.carried(runs, user_id=w.alice) == [w.p.a]
+    assert len(calls) == 1
+
+
+def test_a_person_starting_a_run_does_not_choose_its_chain(world):
+    """R2-F4: a correlation named by the caller is tracing; a run the person starts begins its own chain."""
+    w = world
+    fid = w.flow([read(w.p.a)], "own-chain")
+    from .test_forms import CSRF
+    r = w.suite.post("/api/suite/ops/agent.flow.start", headers=CSRF,
+                     json={"input": {"flow_id": fid, "version": 1, "idempotency_key": "own-chain"},
+                           "correlation_id": "fixture-chosen-chain"})
+    assert r.status_code == 200, r.text
+    run = w.store.one("SELECT id, correlation_id FROM flow_runs WHERE flow_id=?", (fid,))
+    assert run["correlation_id"] == run["id"]
+
+
+def test_a_run_that_stopped_at_a_step_counts_that_steps_workspace(world):
+    """R2-F7: the error code of the step a run stopped at was decided there."""
+    w = world
+    failing = {"id": "get", "kind": "call", "operation": "forms.form.get", "workspace_id": w.p.b,
+               "input": {"form_id": "frm_000000000000"}}
+    fid = w.flow([failing], "stopped")
+    rid = w.flows.start(fid, user_id=w.alice, version=1, parameters={}, idempotency_key="stopped")["id"]
+    w.flows.tick()
+    status, code, step = w.outcome(rid)
+    assert status in ("failed", "blocked") and step == "get", (status, code)
+    assert w.flows.carried([rid], user_id=w.alice) == [w.p.b]

@@ -119,8 +119,11 @@ def register(registry, flows):
     add("get", Version, lambda c, i: flows.definition(i.flow_id, user_id=c.user_id, version=i.version))
     add("list", ListFlows, lambda c, i: flows.list(user_id=c.user_id, after=i.after, limit=i.limit))
     add("runs", FlowPage, lambda c, i: flows.runs(i.flow_id, user_id=c.user_id, after=i.after, limit=i.limit))
+    # A run a person starts begins its own chain: the correlation a caller may name is tracing,
+    # and a chain is what a run's sources are read over (Flows._sources) — growing one at will
+    # would make every run of it rescan that much.
     add("start", Start, lambda c, i: flows.start(i.flow_id, user_id=c.user_id, version=i.version, parameters=i.parameters,
-                                                idempotency_key=i.idempotency_key, correlation_id=c.correlation_id,
+                                                idempotency_key=i.idempotency_key, correlation_id=None,
                                                 parent_run_id=c.run_id, depth=c.depth), write=True)
     # The Agent's model gets the run's progress, not its steps' business snapshots: a personal
     # operation's answer names no source workspace, so content passed through it would be untracked.

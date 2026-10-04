@@ -208,12 +208,24 @@ class Flows(Triggers):
         """Workspaces whose content these runs of this person may reflect (``_sources``). Not
         only a step's value: which steps ran, a run's state and its error code were decided on
         what the run read, so a reader that tracks sources counts them for a run's progress too."""
-        found = set()
+        found, chains, specs = set(), set(), {}
         for run_id in dict.fromkeys(run_ids):
             row = self.store.one("SELECT * FROM flow_runs WHERE id=? AND user_id=?", (run_id, user_id))
-            if row:
+            if not row:
+                continue
+            # The chain's sources are the same for every run of it: read once per chain, not once
+            # per run (a page of runs is mostly one chain).
+            if row["correlation_id"] not in chains:
+                chains.add(row["correlation_id"])
                 found |= self._sources(row)
-        return sorted(found)
+            if row["status"] in ("failed", "blocked", "unknown") and row["step_id"]:
+                # The step the run stopped at answered with its error code: its places count too,
+                # though _sources leaves the current step's failure out for a step being retried.
+                version = (row["flow_id"], row["version"])
+                if version not in specs:
+                    specs[version] = {st.id: st for st in self._spec(*version).steps}
+                found |= self._places(specs[version].get(row["step_id"]))
+        return sorted(found - {None})
 
     def run(self, run_id, *, user_id, after=0, limit=100, outputs=True):
         """``outputs=False`` leaves the steps' business snapshots out: the answer of a personal
@@ -361,6 +373,11 @@ class Flows(Triggers):
         found = {r["place"] for r in self.store.all(
             "SELECT DISTINCT json_extract(event_json,'$.workspace_id') AS place FROM flow_runs "
             "WHERE correlation_id=? AND user_id=? AND event_json IS NOT NULL", chain)}
+        # What any write of the chain carried, by whoever made it — an Agent's write whose event
+        # started this chain included: its run record keeps the sources it was asked for.
+        for r in self.store.all("SELECT DISTINCT delegation FROM op_runs WHERE correlation_id=? AND user_id=? "
+                                "AND delegation LIKE '%transfer_from%'", chain):
+            found.update((decode(r["delegation"], {}) or {}).get("transfer_from") or ())
         specs = {}
         # Distinct facts, not one row per step: a chain of events can be thousands of runs long.
         # A handled failure is an answer too; the step being run again has not given one yet.
