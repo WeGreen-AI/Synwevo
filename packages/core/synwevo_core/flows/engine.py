@@ -49,6 +49,16 @@ class AttemptFailed(ServiceError):
     def __init__(self, original, attempt):
         super().__init__(original.status, original.code, original.message)
         self.attempt = attempt
+        self.reader = getattr(original, "reader", None)
+
+
+class ResultReadFailed(ServiceError):
+    """A step's result read ran and failed. The failure is that workspace's answer: the step
+    keeps the reader, so the run counts where it read (Flows._sources)."""
+
+    def __init__(self, original, reader):
+        super().__init__(original.status, original.code, original.message)
+        self.reader = reader
 
 
 class Flows(Triggers):
@@ -415,7 +425,8 @@ class Flows(Triggers):
             used = {path[1] for path in references(step.model_dump(mode="json")) if path[0] in ("steps", "outcome")}
             if row["failed"] and step.on_error:
                 # A handled failure is an answer from where the step ran. A result read it never
-                # reached told it nothing; a read that did happen is counted from its stored reader.
+                # reached told it nothing; a read that did happen, also one that failed, is
+                # counted from its stored reader.
                 found.add(step.workspace_id if isinstance(step, CallStep)
                           else step.read.workspace_id if isinstance(step, WaitStep) else None)
             for other in used:
@@ -686,7 +697,10 @@ class Flows(Triggers):
             reader = Read(operation=step.operation, operation_version=step.operation_version,
                           workspace_id=step.workspace_id, input=payload)
         if reader:
-            value = self._inspect(reader, run["user_id"], run=run)
+            try:
+                value = self._inspect(reader, run["user_id"], run=run)
+            except ServiceError as exc:
+                raise (ResultReadFailed(exc, reader) if step.result_read else exc) from exc
         t.execute("UPDATE flow_steps SET status=?,value_json=?,reader_json=?,error_code=NULL,updated_at=? "
                   "WHERE run_id=? AND step_id=?",
                   (state, canonical(value), canonical(reader.model_dump(mode="json")) if reader else None,
@@ -761,6 +775,12 @@ class Flows(Triggers):
             # A dispatched external call remains recoverable by its original key, never a retry.
             if uncertain:
                 t.execute("UPDATE flow_steps SET status='unknown' WHERE run_id=? AND step_id=?", (run["id"], step.id))
+            reader = getattr(exc, "reader", None)
+            if reader is not None:
+                # The result read was reached and answered with this failure (its attempt was
+                # rolled back): where it read is a source of the run like a read that succeeded.
+                t.execute("UPDATE flow_steps SET reader_json=? WHERE run_id=? AND step_id=?",
+                          (canonical(reader.model_dump(mode="json")), run["id"], step.id))
             self._history(t, run, "step_failed", state, step=self._step_row(run), code=exc.code)
             if state == "failed" and step.on_error and exc.code not in ("flow_budget_exhausted", "flow_deadline_exceeded"):
                 self._advance(t, run, spec, step, target=step.on_error)

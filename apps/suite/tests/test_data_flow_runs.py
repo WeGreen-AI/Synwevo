@@ -452,3 +452,27 @@ def test_a_run_that_stopped_at_a_step_counts_that_steps_workspace(world):
     status, code, step = w.outcome(rid)
     assert status in ("failed", "blocked") and step == "get", (status, code)
     assert w.flows.carried([rid], user_id=w.alice) == [w.p.b]
+
+
+# ---------------------------------------------------------------- third review round (R3)
+
+def test_a_result_read_that_failed_counts_where_it_read(world):
+    """R3-DF-4: A takes no transfers. A literal write in the personal workspace whose result read
+    asks A for a guessed form failed there, and the run went on through ``on_error``: whether A
+    holds that form decided the next write in ``wide``, and A was never asked. The same probe as a
+    plain read step in A is refused."""
+    w = world
+    w.close(w.p.a)
+    guess = {"form_id": "frm_000000000000"}
+    probe = create("probe", w.personal, "Fixture literal", on_error="absent",
+                   result_read={"operation": "forms.form.get", "workspace_id": w.p.a, "input": guess})
+    after = [create("present", w.wide, "A has that form", next="end"), create("absent", w.wide, "A has no such form")]
+    assert w.run([probe, *after], "result-probe") == ("blocked", "transfer_source_closed", "absent")
+    plain = {"id": "probe", "kind": "call", "operation": "forms.form.get", "workspace_id": w.p.a, "input": guess,
+             "on_error": "absent"}
+    assert w.run([plain, *after], "plain-probe") == ("blocked", "transfer_source_closed", "absent")
+    assert w.titles(w.wide) == []
+    # A write that failed before its result read was reached told the run nothing about A.
+    early = create("early", w.personal, "", on_error="land",
+                   result_read={"operation": "forms.form.get", "workspace_id": w.p.a, "input": guess})
+    assert w.run([early, create("land", w.wide, "Fixture literal")], "early-failure") == ("partial", None, "end")
