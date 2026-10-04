@@ -194,7 +194,12 @@ class MachineAuth:
                      "user_id": None, "client_id": client["client_id"], "name": client["name"], "lineage": None,
                      "grant_family": None, "role": None, "can_export": None,
                      "expires_at": row.get("access_expires_at")}
-        return enforce_principal(self.store, principal)
+        bound = enforce_principal(self.store, principal)
+        if not bound.get("approval_id"):
+            # The directory API shipped after owner approvals: a service account without a live
+            # one (registered on the host, outside the console) reads no member list (D5).
+            raise ServiceError(403, "approval_inactive", "工作空间审批无效、已撤回或已过期")
+        return bound
 
     # ------------------------------------------------------------------ legacy dw_ keys
     def _legacy_key(self, header: str | None) -> dict:

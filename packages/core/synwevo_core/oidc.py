@@ -266,6 +266,19 @@ class Clients:
             auds = [docs_resource()]
         elif not auds and has_api and any(s in WORKSPACE_API_SCOPES for s in api_scopes.split()):
             auds = [workspace_resource()]
+        if existing and existing["kind"] == "service":
+            # A service account's secret already acts in its workspace. Re-registering it renames
+            # or narrows it; moving it to another workspace or application, turning it into another
+            # kind or widening its scopes or audiences would hand whoever holds that secret more
+            # than anyone approved (admin defect D5).
+            had_scopes = set((existing["api_scopes"] or "").split())
+            had_auds = set(json.loads(existing["audiences"] or "[]"))
+            if (kind != "service" or existing["app_id"] != app_id
+                    or (existing["workspace_id"] or None) != (workspace_id or None)
+                    or not set(api_scopes.split()) <= had_scopes or not set(auds) <= had_auds):
+                raise ServiceError(409, "service_account_change",
+                                   f"服务账户 {client_id} 不能改换工作空间、应用或类型，也不能扩大权限；"
+                                   "请通过工作空间所有者批准的新凭据申请")
         ts = now()
         self.store.execute(
             "INSERT INTO oauth_clients (client_id,app_id,name,secret_hash,redirect_uris,"

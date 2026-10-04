@@ -115,3 +115,42 @@ def test_withdrawing_the_approval_or_freezing_the_workspace_stops_it(plane):
     refused = TestClient(e["api"]).post("/oidc/token", data={"grant_type": "client_credentials", "client_id": cred2["client_id"],
                                                              "client_secret": cred2["client_secret"], "resource": workspace_resource()})
     assert refused.status_code in (400, 403)
+
+
+def test_a_service_account_without_an_owner_approval_reads_no_directory(plane):
+    """Admin defect D5: a service account registered on the host (outside the console's owner
+    approval) read the workspace's member list, e-mail addresses included."""
+    from synwevo_core.oidc import Clients
+    e = plane
+    _, secret = Clients(e["store"]).register(
+        client_id="fixture-unapproved-directory", app_id="platform", name="Fixture host-registered service", redirect_uris=[],
+        confidential=True, kind="service", workspace_id=e["ws"], api_scopes="workspace.read")
+    tok = token(e, {"client_id": "fixture-unapproved-directory", "client_secret": secret})
+    r = get(e, tok["access_token"], f"{D}/members")
+    assert r.status_code == 403 and r.json()["error"]["code"] == "approval_inactive", r.text
+    assert e["users"]["owner"]["email"] not in r.text
+
+
+def test_a_service_account_cannot_be_moved_or_widened_by_registering_it_again(plane):
+    """Admin defect D5: Clients.register is an upsert; re-registering a service account could move it
+    into another workspace or widen it, and the holder of its original secret followed."""
+    from synwevo_core.errors import ServiceError
+    from synwevo_core.oidc import Clients
+    e = plane
+    clients = Clients(e["store"])
+    base = dict(app_id="platform", redirect_uris=[], confidential=True, kind="service")
+    clients.register(client_id="fixture-movable", name="Fixture service", workspace_id=e["ws"], api_scopes="workspace.read", **base)
+    other = e["ident"].create_workspace("Fixture other team", owner_id=e["users"]["stranger"]["id"])["id"]
+    for change in ({"workspace_id": other, "api_scopes": "workspace.read"},
+                   {"workspace_id": e["ws"], "api_scopes": "workspace.read workspace.members.write"}):
+        try:
+            clients.register(client_id="fixture-movable", name="Fixture service", **base, **change)
+        except ServiceError as err:
+            assert err.code == "service_account_change"
+        else:
+            raise AssertionError(f"re-registration was accepted: {change}")
+    row = clients.get("fixture-movable")
+    assert (row["workspace_id"], row["api_scopes"]) == (e["ws"], "workspace.read")
+    # renaming (and narrowing to the same or fewer scopes) still works
+    assert clients.register(client_id="fixture-movable", name="Fixture renamed", workspace_id=e["ws"], api_scopes="workspace.read",
+                            **base)[0]["name"] == "Fixture renamed"
