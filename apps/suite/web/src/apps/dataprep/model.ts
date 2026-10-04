@@ -10,7 +10,9 @@ export interface Run { id: string; recipe_id: string; recipe_version: number; st
   cancel_requested: number; error_code: string | null; inputs: Record<string, { dataset_id: string; content_hash: string }>; params: Values;
   progress: { step?: number; processed?: number; total?: number }; counts: { output_rows: number; issues: number } | null;
   reports: { step_id: string; input_rows: number; output_rows: number; issues: number }[] | null; issue_total: number; attempts: number }
-export interface Issue { code: string; source_row?: number; input_name?: string; column_name?: string; step_id?: string; value?: string; message?: string }
+/** `input_name` is the recorded source (an uploaded file's `dpf_…` id, a submission or task id, or
+ *  "records"); `input_label` is the file name the server resolves for people, null otherwise. */
+export interface Issue { code: string; source_row?: number; input_name?: string; input_label?: string | null; column_name?: string; step_id?: string; value?: string; message?: string }
 export interface Page<T> { items: T[]; next_offset: number | null; total?: number; hidden?: number }
 export const stepNames: Record<string, string> = { trim: "清理空白", cast: "类型转换", split: "拆分字段", merge: "合并字段", filter: "过滤", sort: "排序", dedupe: "去重", append: "追加数据", join: "关联匹配", aggregate: "分组汇总", validate: "规则校验" };
 export const typeNames: Record<string, string> = { text: "文本", integer: "整数", decimal: "金额", date: "日期", datetime: "日期时间", boolean: "布尔值" };

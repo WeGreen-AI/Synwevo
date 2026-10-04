@@ -194,6 +194,11 @@ synchronous record-import model without introducing an unbounded batch or anothe
   null/missing values, use exact arithmetic and keep the input scale (`0.10 + 0.20` is `0.30`);
   count counts rows and is written as an integer (`4`, never `4.000000`). Complete row errors are paged
   and downloadable. Structural failure commits no output dataset.
+- Every issue keeps its recorded source in `input_name` (an uploaded file's `dpf_…` id, a Forms
+  submission or Extract task id, or `records`) and its 1-based row there in `source_row`. Issue
+  reads (dataset/run issue pages, preview, the downloaded run list) add `input_label`, the
+  uploaded file's name, so a row number says which file it counts in; it is null for other
+  sources. The label is resolved on read and is not part of stored issues or content hashes.
 - A preview applies the draft to actual selected samples (offset/size for each source), declares
   those ranges and is read-only. It displays up to 200 result rows and refuses oversized previews.
   Full jobs pin an immutable published definition, all input dataset hashes and parameters.

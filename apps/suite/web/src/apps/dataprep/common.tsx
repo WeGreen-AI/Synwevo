@@ -76,7 +76,7 @@ export function IssueList({ items, stepLabels = {} }: { items: Issue[]; stepLabe
   const { t } = useI18n();
   if (!items.length) return <Empty title={t("当前范围没有异常")} />;
   return <div className="dp-grid" tabIndex={0} role="region" aria-label={t("异常行")}><table><thead><tr>{["来源", "来源行", "列", "步骤", "异常原因"].map(k => <th key={k} scope="col">{t(k)}</th>)}</tr></thead>
-    <tbody>{items.map((i, n) => <tr key={n}><td>{i.input_name || "—"}</td><td>{i.source_row ?? "—"}</td><td>{i.column_name || "—"}</td><td>{i.step_id ? stepLabels[i.step_id] || t("步骤") : "—"}</td><td>{t(errorKeys[i.code] || "未通过校验规则")}{i.code === "rule_failed" && i.message && i.message !== i.code ? ` · ${i.message}` : ""}</td></tr>)}</tbody></table></div>;
+    <tbody>{items.map((i, n) => <tr key={n}><td title={i.input_label ? i.input_name : undefined}>{i.input_label || i.input_name || "—"}</td><td>{i.source_row ?? "—"}</td><td>{i.column_name || "—"}</td><td>{i.step_id ? stepLabels[i.step_id] || t("步骤") : "—"}</td><td>{t(errorKeys[i.code] || "未通过校验规则")}{i.code === "rule_failed" && i.message && i.message !== i.code ? ` · ${i.message}` : ""}</td></tr>)}</tbody></table></div>;
 }
 export function Pager({ offset, next, set }: { offset: number; next: number | null; set: (n: number) => void }) {
   const { t } = useI18n();

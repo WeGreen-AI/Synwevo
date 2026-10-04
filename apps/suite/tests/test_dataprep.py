@@ -469,6 +469,35 @@ def test_comparisons_read_a_missing_cell_as_null():
     assert kept('ne', 'region', 'Test', kind='validate') == (['0003', '0004', '0005', '0011'], [5])
 
 
+def test_issue_lists_name_the_uploaded_file_a_row_number_refers_to(suite):
+    """Release acceptance: the 来源 column of every issue list showed the internal file id
+    (dpf_…), so with several inputs nobody could tell which file a row number belonged to."""
+    suite.sign_in('bob')
+    files = {}
+    for name, content in (('orders.csv', b'id,amount\n001,0.10\n002,bad\n003,1,extra\n'), ('refunds.csv', b'id,amount\n009,oops\n')):
+        upload = suite.post('/api/suite/dataprep/files', params={'workspace_id': suite.people.a}, headers={'X-Synwevo-CSRF': 'fixture-csrf'},
+                            data={'upload_key': 'fixture-' + name}, files={'file': (name, content)})
+        assert upload.status_code == 200, upload.text
+        files[name] = op(suite, 'dataset.import', {'file_id': upload.json()['id'], 'name': 'Fixture ' + name})
+    imported = op(suite, 'dataset.issues', {'dataset_id': files['orders.csv']['id']})['items']
+    assert [(i['input_name'], i['input_label'], i['source_row']) for i in imported] == [(files['orders.csv']['file_id'], 'orders.csv', 4)]
+    steps = [{'id': 'more', 'type': 'append', 'source': 'refunds'}, {'id': 'money', 'type': 'cast', 'column': 'amount', 'to': 'decimal'}]
+    inputs = {'main': files['orders.csv']['id'], 'refunds': files['refunds.csv']['id']}
+    preview = op(suite, 'recipe.preview', {'definition': {'steps': steps}, 'inputs': inputs})
+    assert sorted((i['input_label'], i['source_row']) for i in preview['issues']) == [('orders.csv', 3), ('refunds.csv', 2)]
+    r = recipe(suite, steps)
+    run = finish(suite, op(suite, 'run.start', {'recipe_id': r['id'], 'version': 1, 'inputs': inputs}))
+    listed = op(suite, 'run.issues', {'run_id': run['id']})['items']
+    assert sorted((i['input_label'], i['source_row'], i['code']) for i in listed) == [
+        ('orders.csv', 3, 'invalid_decimal'), ('orders.csv', 4, 'row_width'), ('refunds.csv', 2, 'invalid_decimal')]
+    assert all(i['input_name'].startswith('dpf_') for i in listed)
+    download = suite.get(f"/api/suite/dataprep/runs/{run['id']}/issues", params={'workspace_id': suite.people.a}).json()
+    assert sorted(i['input_label'] for i in download) == ['orders.csv', 'orders.csv', 'refunds.csv']
+    # Records have no file to name; their source stays as recorded.
+    plain = op(suite, 'recipe.preview', {'definition': {'steps': steps[1:]}, 'inputs': {'main': dataset(suite, [{'id': '1', 'amount': 'x'}])['id']}})
+    assert [(i['input_name'], i['input_label']) for i in plain['issues']] == [('records', None)]
+
+
 def test_isolated_import_roots():
     from pathlib import Path
     import synwevo_core.store
