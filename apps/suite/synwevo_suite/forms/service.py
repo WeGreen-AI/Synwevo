@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Any
 
-from synwevo_core import env, sealed
+from synwevo_core import data_flow, env, sealed
 from synwevo_core.capabilities import Call, canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id, now
@@ -176,18 +176,27 @@ class Forms:
         payload = defn.model_dump(mode="json", by_alias=True)
         digest = fingerprint(payload)
         last = self.store.one("SELECT * FROM form_versions WHERE form_id=? ORDER BY version DESC LIMIT 1", (form_id,))
-        if last and last["definition_hash"] == digest and last["title"] == row["title"] and last["status"] == "published":
+        if last and last["definition_hash"] == digest and last["title"] == row["title"] \
+                and (last["description"] or "") == row["description"] and last["status"] == "published":
             # Nothing changed since the last version: publishing again would mint a version that
             # differs only in its number and move every new request onto it for no reason.
             raise ServiceError(409, "nothing_to_publish", "草稿与最新发布的版本相同，不需要再次发布",
                                {"version": last["version"]})
+        if row["public_token_hash"] and not row["public_version"]:
+            # The public link follows the latest version, so publishing puts this version in front
+            # of everyone holding that link: content this call carried from other workspaces is
+            # an outward send there, asked as one (docs/platform/data-flow.md §3, rule 8).
+            for source in (call.delegation or {}).get("transfer_from") or ():
+                if source != call.workspace_id:
+                    data_flow.check(self.store, user_id=call.user_id, source=source, target=call.workspace_id,
+                                    external=True)
         version = (last["version"] if last else 0) + 1
         ts = now()
         with self.store.tx() as t:
-            t.execute("INSERT INTO form_versions (form_id,version,workspace_id,definition_json,definition_hash,title,status,"
-                      "note,published_by,published_at) VALUES (?,?,?,?,?,?,'published',?,?,?)",
-                      (form_id, version, call.workspace_id, canonical(payload), digest, row["title"], note,
-                       call.user_id, ts))
+            t.execute("INSERT INTO form_versions (form_id,version,workspace_id,definition_json,definition_hash,title,"
+                      "description,status,note,published_by,published_at) VALUES (?,?,?,?,?,?,?,'published',?,?,?)",
+                      (form_id, version, call.workspace_id, canonical(payload), digest, row["title"],
+                       row["description"], note, call.user_id, ts))
             t.execute("UPDATE forms SET published_version=?, updated_at=? WHERE id=?", (version, ts, form_id))
         call.touches("form", form_id)
         call.emit("forms.form.published", object_kind="form", object_id=form_id,
@@ -221,11 +230,13 @@ class Forms:
 
     def duplicate(self, call: Call, form_id: str, *, target_workspace_id: str | None, title: str | None) -> dict:
         """Copy the draft definition — and nothing else: no versions, no links, no requests, no
-        submissions, no files. Into another workspace only where the caller can create forms."""
+        submissions, no files. Into another workspace only where the caller can create forms and
+        the source's data-flow policy lets its content go (synwevo_core.data_flow)."""
         row = self._form(call.workspace_id, form_id)
         target = target_workspace_id or call.workspace_id
         if target != call.workspace_id:
             self.caps.check_workspace(call.user_id, APP, target, "write")
+            data_flow.check(self.store, user_id=call.user_id, source=call.workspace_id, target=target)
         elif not call.can("write"):
             call.require("write")
         defn = Definition.model_validate(_j(row["draft_json"], {}))
@@ -551,7 +562,9 @@ class Forms:
                   data={"submission_id": submission_id, "request_id": s["request_id"], "form_id": s["form_id"],
                         "fields": [it.get("field_id") for it in items if it.get("field_id")]})
         if s["submitted_by"] and s["submitted_by"] != call.user_id and req["token_sealed"]:
-            form = self._form(call.workspace_id, s["form_id"])
+            # The submitter may be outside the workspace: name the version they answered, never
+            # the live draft row.
+            form = self._version(s["form_id"], s["form_version"])
             token = sealed.unseal(self.store, LINK_PURPOSE, req["token_sealed"])
             reviewer = call.user.get("display_name") or call.user["email"]
             self.store.after_commit(lambda: self._notify(
@@ -579,7 +592,7 @@ class Forms:
         call.emit("forms.submission.accepted", object_kind="form_submission", object_id=submission_id,
                   data={"submission_id": submission_id, "request_id": s["request_id"], "form_id": s["form_id"]})
         if s["submitted_by"] and s["submitted_by"] != call.user_id:
-            form = self._form(call.workspace_id, s["form_id"])
+            form = self._version(s["form_id"], s["form_version"])
             reviewer = call.user.get("display_name") or call.user["email"]
             self.store.after_commit(lambda: self._notify(
                 s["submitted_by"], "forms.submission.accepted", {"form": form["title"], "reviewer": reviewer},

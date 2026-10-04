@@ -61,7 +61,8 @@ def build_router(store, ident, sessions, audit, invites, mailer) -> APIRouter:
     @r.patch("/{oid}")
     def update_organization(request: Request, oid: str, body: dict = Body(...)):
         return write(request, lambda orgs, uid: {"organization": orgs.update(oid, uid, name=body.get("name"),
-                     invitation_policy=body.get("invitation_policy"), version=body.get("version"),
+                     invitation_policy=body.get("invitation_policy"), transfer_policy=body.get("transfer_policy"),
+                     version=body.get("version"),
                      reason=body.get("reason"))}, sensitive=True)
 
     @r.get("/{oid}/workspaces")

@@ -9,6 +9,7 @@ import "./messages";
 
 type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 type Processing = "none" | "platform" | "any";
+type Outbound = "none" | "audience" | "organization" | "any";
 type ModelProvider = "anthropic" | "deepseek";
 const providerNames: Record<ModelProvider, string> = { anthropic: "Anthropic", deepseek: "DeepSeek" };
 interface AgentSettings {
@@ -24,10 +25,15 @@ interface AgentSettings {
   efforts: Effort[];
 }
 interface Memory { id: string; body: string }
+interface TransferPolicy {
+  outbound: Outbound; explicit: boolean; revision: number;
+  in_organization: boolean; organization_outbound: "organization" | "any";
+}
 interface WorkspacePolicy {
   workspace_id: string; name: string; kind: string; role: string;
   processing: Processing; explicit: boolean; can_change: boolean;
   providers: ModelProvider[]; providers_explicit: boolean;
+  transfer: TransferPolicy;
 }
 
 const effortLabels: Record<Effort, string> = {
@@ -40,6 +46,16 @@ const policyImpact: Record<Processing, string> = {
   none: "此空间的业务内容不得发送给任何模型提供方；已获授权的应用操作仍可执行。",
   platform: "仅使用平台凭据，将获授权的业务内容发送给此空间允许的提供方。个人密钥不能处理此空间内容。",
   any: "可使用平台或个人凭据，将获授权的业务内容发送给此空间允许的提供方；具体凭据仍须受当前模型服务支持。",
+};
+
+const outboundLabels: Record<Outbound, string> = {
+  none: "不外发", audience: "仅限已有阅读者", organization: "同一组织内", any: "转移人可写的任何空间",
+};
+const outboundImpact: Record<Outbound, string> = {
+  none: "此空间的内容不能被 Agent、流程或表单复制带入其他工作空间。",
+  audience: "只能带入其全部成员都已是本空间成员的工作空间：没有人因此看到原本看不到的内容。",
+  organization: "只能带入同一组织的工作空间。",
+  any: "可以带入转移人有写入权限的任何工作空间。",
 };
 
 /** Do not render server prose or validation details: they may include submitted secrets. */
@@ -55,6 +71,7 @@ function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
     too_many_memories: "最多保存 50 条个人记忆，请先删除一些。",
     memory_not_found: "这条记忆已不存在，请重新加载记忆列表。",
     idempotency_conflict: "这次请求与先前的操作不一致，请重新加载并核对结果。",
+    transfer_policy_changed: "这个工作空间的数据流政策刚被其他人修改，本次更改没有保存。请重新加载后核对当前政策再决定。",
     account_unavailable: "登录已失效，请重新登录。",
     app_unavailable: "Agent 目前不可用，请联系平台管理员。",
     unknown_operation: "服务器暂不支持此操作，请联系平台管理员。",
@@ -426,6 +443,78 @@ function PolicyRow({ workspace, onChanged }: { workspace: WorkspacePolicy; onCha
   </article>;
 }
 
+function TransferRow({ workspace, onChanged }: { workspace: WorkspacePolicy; onChanged: (value: TransferPolicy) => void }) {
+  const { t } = useI18n();
+  const dialog = useDialog();
+  const write = useWrite();
+  const current = workspace.transfer;
+  const [outbound, setOutbound] = useState(current.outbound);
+  const [confirming, setConfirming] = useState(false);
+  const locked = write.locked || confirming;
+  // A default follows the workspace (a personal workspace becomes "audience" once shared, and
+  // returns to "any" when it is not): choosing the same value pins it as an explicit decision.
+  const pin = outbound === current.outbound && !current.explicit;
+  const unchanged = outbound === current.outbound && current.explicit;
+  // "Same organization" can never be met by a workspace outside one; it stays visible only if already chosen.
+  const choices = (["none", "audience", "organization", "any"] as const)
+    .filter((value) => value !== "organization" || current.in_organization || current.outbound === "organization");
+
+  async function save() {
+    if (locked || !workspace.can_change || unchanged) return;
+    const proposed = outbound;
+    setConfirming(true);
+    try {
+      if (!await dialog.confirm(t("确认更改数据流政策"), <div className="col">
+        <p>{t("目标工作空间：{name}", { name: workspace.name })}</p><code>{workspace.workspace_id}</code>
+        <p>{pin ? t("把默认政策「{policy}」明确设为本工作空间的政策：之后成员变化不会再改变它。", { policy: t(outboundLabels[proposed]) })
+          : t("从「{before}」更改为「{after}」。", { before: t(outboundLabels[current.outbound]), after: t(outboundLabels[proposed]) })}</p>
+        <p>{t(outboundImpact[proposed])}</p>
+        <p>{t("新政策只约束之后的转移；已转移到其他空间的独立记录按目标空间的权限管理。")}</p>
+      </div>, t("确认更改政策"), true)) return;
+      write.start<TransferPolicy>("agent.transfer_policy.set", { outbound: proposed, revision: current.revision }, (out) => {
+        onChanged({ ...current, ...out }); setOutbound(out.outbound);
+      }, workspace.workspace_id);
+    } finally { setConfirming(false); }
+  }
+
+  return <article className="suite-row">
+    <div className="col grow">
+      <h3>{workspace.name}</h3><code>{workspace.workspace_id}</code>
+      <div className="row wrap"><strong>{t(outboundLabels[current.outbound])}</strong>
+        <span className="badge">{current.explicit ? t("已明确设置") : t("默认政策")}</span></div>
+      <p className="muted small">{t(outboundImpact[current.outbound])}</p>
+      {current.in_organization && current.organization_outbound === "organization" &&
+        <p className="muted small">{t("所属组织只允许内容留在组织内：组织以外的目标仍会被拒绝。")}</p>}
+      {workspace.can_change ? <form className="col" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        <label className="field"><span>{t("{name} 的数据流政策", { name: workspace.name })}</span>
+          <select className="input" value={outbound} disabled={locked}
+            onChange={(e) => { setOutbound(e.target.value as Outbound); write.dismiss(); }}>
+            {choices.map((value) => <option key={value} value={value}>{t(outboundLabels[value])}</option>)}
+          </select></label>
+        {outbound !== current.outbound && <p className="muted small">{t(outboundImpact[outbound])}</p>}
+        <div><button type="submit" className="btn" disabled={locked || unchanged}>{pin ? t("明确设置为此政策") : t("更改数据流政策")}</button></div>
+      </form> : <p className="muted small">{t("仅此工作空间的所有者或管理员可以更改政策。")}</p>}
+      <WriteFeedback write={write} />
+    </div>
+  </article>;
+}
+
+function TransferPolicies() {
+  const { t } = useI18n();
+  const resource = useRead<{ workspaces: WorkspacePolicy[] }>("agent.workspace_policy.list");
+  return <section className="card" aria-labelledby="ag-transfer-title">
+    <div className="card-h"><h2 id="ag-transfer-title">{t("工作空间的数据流政策")}</h2></div>
+    <div className="card-b col gap16">
+      <p className="muted">{t("决定各工作空间的内容能否被 Agent、流程或表单复制带入其他工作空间。能同时阅读两个空间不等于可以转移：转移人还需要来源空间的导出权限（所有者、管理员、编辑者，或被授予导出权限的成员）。")}</p>
+      {resource.loading ? <Loading /> : resource.error != null ? <ErrorNotice error={resource.error} retry={resource.reload} />
+        : resource.data?.workspaces.length === 0 ? <Empty title={t("没有可显示的工作空间政策")} />
+        : <div className="suite-list">{resource.data?.workspaces.map((workspace) => <TransferRow key={workspace.workspace_id} workspace={workspace}
+          onChanged={(transfer) => resource.setData((old) => old && ({ workspaces: old.workspaces.map((w) =>
+            w.workspace_id === workspace.workspace_id ? { ...w, transfer } : w) }))} />)}</div>}
+    </div>
+  </section>;
+}
+
 function WorkspacePolicies() {
   const { t } = useI18n();
   const resource = useRead<{ workspaces: WorkspacePolicy[] }>("agent.workspace_policy.list");
@@ -450,5 +539,6 @@ export default function Settings() {
     <AccessSettings />
     <Memories />
     <WorkspacePolicies />
+    <TransferPolicies />
   </div>;
 }

@@ -193,9 +193,11 @@ class Organizations:
                               "ON m.organization_id=o.id WHERE m.user_id=? ORDER BY o.created_at,o.id", (actor_id,))
 
     def get(self, oid, actor_id):
+        from .data_flow import organization_outbound
         org, member = self.require(oid, actor_id)
         # Governance counts only. Never inspect documents or invent a storage quota.
-        return {**org, "role": member["role"], "has_avatar": bool(self.store.one(
+        return {**org, "role": member["role"], "transfer_policy": organization_outbound(self.store, oid)["outbound"],
+                "has_avatar": bool(self.store.one(
             "SELECT 1 FROM organization_avatars WHERE organization_id=?", (oid,))), "usage": {
             "workspaces": self.store.one("SELECT COUNT(*) AS n FROM workspaces WHERE organization_id=? "
                                          "AND deleted_at IS NULL", (oid,))["n"],
@@ -241,23 +243,38 @@ class Organizations:
         self.store.execute("UPDATE workspaces SET organization_id=? WHERE id=?", (oid, ws["id"]))
         return {**ws, "organization_id": oid}
 
-    def update(self, oid, actor_id, *, name=None, invitation_policy=None, reason, version=None):
+    def update(self, oid, actor_id, *, name=None, invitation_policy=None, transfer_policy=None, reason, version=None):
+        """`transfer_policy` caps where the organization's workspace content may be carried
+        (synwevo_core.data_flow): "organization" keeps it inside, "any" leaves it to each
+        workspace's own policy. Like the invitation policy, only an owner changes it."""
+        from .data_flow import ORGANIZATION_OUTBOUND, organization_outbound, set_organization_outbound
         reason = _reason(reason)
-        if name is None and invitation_policy is None:
+        if name is None and invitation_policy is None and transfer_policy is None:
             raise ServiceError(400, "invalid_field", "请提供要修改的组织设置")
         if name is not None:
             name = _name(name)
         if invitation_policy is not None and invitation_policy not in ("admins", "owners"):
             raise ServiceError(400, "invalid_field", "请选择有效的邀请策略", {"field": "invitation_policy"})
+        if transfer_policy is not None and transfer_policy not in ORGANIZATION_OUTBOUND:
+            raise ServiceError(400, "invalid_field", "请选择有效的数据外发上限", {"field": "transfer_policy"})
         with self.store.tx():
-            org, _ = self.require(oid, actor_id, permission="org.settings.manage", owner=invitation_policy is not None, active=True)
+            org, _ = self.require(oid, actor_id, permission="org.settings.manage",
+                                  owner=invitation_policy is not None or transfer_policy is not None, active=True)
+            if transfer_policy is not None and version is None:
+                # The cap decides where the organization's content may go: it is only changed
+                # against the settings the owner was looking at, never on top of a newer change.
+                raise ServiceError(400, "invalid_field", "更改内容外发上限需要提供当前的组织设置版本", {"field": "version"})
             if version is not None and (type(version) is not int or version != org["version"]):
                 raise ServiceError(409, "organization_changed", "组织设置已更新，请刷新后重试")
+            transfer_before = organization_outbound(self.store, oid)["outbound"]
             after = {"name": name if name is not None else org["name"],
                      "invitation_policy": invitation_policy or org["invitation_policy"],
                      "updated_at": now(), "version": org["version"] + 1}
             self._record(actor_id, oid, "organization.update", {"reason": reason, "before": {
-                "name": org["name"], "invitation_policy": org["invitation_policy"]}, "after": after})
+                "name": org["name"], "invitation_policy": org["invitation_policy"], "transfer_policy": transfer_before},
+                "after": {**after, "transfer_policy": transfer_policy or transfer_before}})
+            if transfer_policy is not None and transfer_policy != transfer_before:
+                set_organization_outbound(self.store, oid, transfer_policy, actor_id=actor_id)
             if invitation_policy == "owners" and org["invitation_policy"] != "owners":
                 record_organization(self.store, "organization_policy_restricted", organization_id=oid)
             self.store.update("organizations", {"id": oid}, after)

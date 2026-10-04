@@ -36,6 +36,10 @@ function ActionCard({ call, act, busy }: { call: ToolCall; act: Act; busy: boole
     <p className="muted small">{call.app_name} {call.workspace_name ? `· ${call.workspace_name}` : `· ${t("个人 Agent")}`}</p>
     {call.target_workspace_name && call.target_workspace_id !== call.workspace_id &&
       <p className="small">{t("目标工作空间")} · <strong>{call.target_workspace_name}</strong></p>}
+    {!call.hidden && !!call.transfer_from?.length && <div className="small ag-transfer">
+      <p>{t("会把以下工作空间的内容带入{target}，其成员将能看到：", { target: call.target_workspace_name ?? t("目标工作空间") })}</p>
+      <ul>{call.transfer_from.map((source) => <li key={source.workspace_id}><strong>{source.workspace_name ?? source.workspace_id}</strong></li>)}</ul>
+    </div>}
     {call.hidden ? <p>{t("内容因权限变化已隐藏")}</p> : <>
       <details open={pending ? true : undefined}>
         <summary>{pending ? t("拟执行的变更") : t("执行详情")}</summary>

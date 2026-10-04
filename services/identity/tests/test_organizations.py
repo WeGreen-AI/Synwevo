@@ -495,6 +495,35 @@ def test_stale_organization_version_cannot_overwrite_updated_policy(env):
     assert stale.status_code == 409 and stale.json()["error"] == "organization_changed"
 
 
+def test_only_an_owner_sets_the_content_export_cap_and_it_is_audited(env):
+    """synwevo_core.data_flow: the organization's cap on where its workspaces' content may go."""
+    from synwevo_core import data_flow
+    created = create(env)
+    org, main = created["organization"], created["workspace"]["id"]
+    assert org["transfer_policy"] == "organization"  # the default keeps content inside
+    reauth(env)
+    path = f"{BASE}/{org['id']}"
+    bad = request(env, "PATCH", path, {"transfer_policy": "everywhere", "version": org["version"], "reason": REASON})
+    assert bad.status_code == 400 and bad.json()["error"] == "invalid_field"
+    admin = member_fixture(env, org["id"], "bob", role="admin")
+    expect_error("forbidden", lambda: env["orgs"].update(org["id"], admin, transfer_policy="any", reason=REASON))
+    # The cap is changed only against the settings the owner was looking at.
+    blind = request(env, "PATCH", path, {"transfer_policy": "any", "reason": REASON})
+    assert blind.status_code == 400 and blind.json()["error"] == "invalid_field"
+    stale = request(env, "PATCH", path, {"transfer_policy": "any", "version": org["version"] + 1, "reason": REASON})
+    assert stale.status_code == 409 and stale.json()["error"] == "organization_changed"
+    assert data_flow.organization_outbound(env["store"], org["id"])["outbound"] == "organization"
+    done = request(env, "PATCH", path, {"transfer_policy": "any", "version": org["version"], "reason": REASON})
+    assert done.status_code == 200 and done.json()["organization"]["transfer_policy"] == "any"
+    assert data_flow.organization_outbound(env["store"], org["id"])["outbound"] == "any"
+    personal = env["ident"].create_workspace("Fixture personal", owner_id=env["users"]["alice"]["id"], kind="personal")["id"]
+    data_flow.set_workspace_outbound(env["store"], main, "any", actor_id=env["users"]["alice"]["id"], revision=data_flow.workspace_outbound(env["store"], main)["revision"])
+    assert data_flow.check(env["store"], user_id=env["users"]["alice"]["id"], source=main, target=personal)
+    audit = env["store"].one("SELECT meta FROM audit_events WHERE action='organization.update' ORDER BY at DESC LIMIT 1")
+    meta = json.loads(audit["meta"]) if isinstance(audit["meta"], str) else audit["meta"]
+    assert meta["before"]["transfer_policy"] == "organization" and meta["after"]["transfer_policy"] == "any"
+
+
 @pytest.mark.fresh_store_schema  # builds the v5 schema itself
 def test_v5_upgrade_is_additive_without_historical_adoption(tmp_path, monkeypatch):
     """Build a v5-era fixture through Store, then upgrade it through real Store."""

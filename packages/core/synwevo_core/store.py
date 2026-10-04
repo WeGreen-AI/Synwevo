@@ -903,6 +903,10 @@ class Store:
         # idle under older code; `conversations.purpose` is ignored by it.
         from .messaging_bridge import COLUMNS as MESSAGING_BRIDGE_COLUMNS, SCHEMA as MESSAGING_BRIDGE_SCHEMA
         c.executescript(MESSAGING_BRIDGE_SCHEMA)
+        # Cross-workspace content transfer policies (data_flow.py). Additive: older code never
+        # reads them and keeps refusing every transfer.
+        from .data_flow import SCHEMA as DATA_FLOW_SCHEMA
+        c.executescript(DATA_FLOW_SCHEMA)
         # Business applications on the workplace origin (docs/agent-work/DECISIONS.md D1, D2): the
         # capability layer's run records and event outbox, then each application's own tables.
         # Additive only; rollback: older code never reads them.

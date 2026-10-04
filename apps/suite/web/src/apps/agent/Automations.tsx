@@ -13,25 +13,28 @@ import {
   type Run, type RunDetail, type Schema, type Step, type TriggerSpec, type Values,
 } from './automationModel';
 import { automationCopy, type AutomationText } from './automations.messages';
+import { agentErrorText } from './errors';
 import './automations.css';
 
 function useText() {
   const { t, locale } = useI18n();
   const m = (key: AutomationText, params?: Params) => t(automationCopy[key][0], params);
   const date = (stamp: number | null | undefined) => stamp == null || !Number.isFinite(stamp) ? '—' : new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(stamp * 1000);
-  return { m, locale, date };
+  return { m, t, locale, date };
 }
 const payload = (value: object): Values => JSON.parse(JSON.stringify(value)) as Values;
 const safeCode = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.-]{1,120}$/.test(value) ? value : '';
 function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
-  const { m } = useText();
+  const { m, t } = useText();
   const code = safeCode(error instanceof ApiError ? error.code === 'idempotent_failure' ? error.detail?.code : error.code : error instanceof Error ? error.message : error);
+  // A data-flow refusal or a personal step says exactly what the source's policy decided.
+  const decided = code.startsWith('transfer_') || code === 'person_required' ? agentErrorText({ code }, t) : null;
   const key: AutomationText = code === 'pending_intent' ? 'conflictIntent' : code === 'flow_version_conflict' ? 'conflict'
     : /operation_failed|operation_cancelled/.test(code) ? 'operationEnded'
     : /reconciliation|outcome_unknown/.test(code) ? 'reconciliation' : /source_changed|source_unavailable|result_unverifiable/.test(code) ? 'changedSource'
     : /expired|exhausted|deadline|quota/.test(code) ? 'limitError' : /unknown_operation|app_unavailable/.test(code) ? 'unavailable'
     : error instanceof ApiError && error.status === 403 ? 'denied' : 'error';
-  const sanitized = new Error(m(key));
+  const sanitized = new Error(decided ?? m(key));
   return <div><Failure error={sanitized} onRetry={retry} />
     {code && <p className="muted small">{m('errorCode', { code })}</p>}
     {error instanceof ApiError && error.requestId && <p className="muted small">{m('requestId', { id: error.requestId })}</p>}

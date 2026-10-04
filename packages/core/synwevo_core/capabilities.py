@@ -551,6 +551,12 @@ class Capabilities:
         if not ok or wid != workspace_id:
             raise ServiceError(403, "app_access_denied", reason or "你不能在该工作空间使用这个应用",
                                {"workspace_id": workspace_id, "app": app_id})
+        from .organizations import workspace_access_failure
+        if workspace_access_failure(self.store, workspace_id, user_id):
+            # Platform applications (the Agent) answer for membership only; a workspace of a frozen
+            # or deleted organization, or one whose organization the person left, is closed to
+            # every application's operations alike, including its owners' policy settings.
+            raise ServiceError(403, "app_access_denied", "该组织当前不可用", {"workspace_id": workspace_id, "app": app_id})
         member = self.identity.membership(workspace_id, user_id)
         role = member["role"] if member else None
         refusal = role_refusal(role, need, workspace_id)

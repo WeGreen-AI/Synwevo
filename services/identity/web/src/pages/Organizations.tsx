@@ -51,13 +51,14 @@ function OrganizationDetail({ id }: { id: string }) {
   const [org, setOrg] = useState<Organization | null>(null); const [workspaces, setWorkspaces] = useState<OrganizationWorkspace[]>([]);
   const [error, setError] = useState<unknown>(null); const [revision, setRevision] = useState(0); const [modal, setModal] = useState<string | null>(null);
   const [name, setName] = useState(""); const [policy, setPolicy] = useState<"admins" | "owners">("admins");
+  const [transfer, setTransfer] = useState<"organization" | "any">("organization");
   const [mine, setMine] = useState<string[]>([]); const [catalogue, setCatalogue] = useState<PermissionInfo[]>([]);
   useEffect(() => {
     if (!me || needsVerification(me)) return;
     const abort = new AbortController(); setError(null);
     Promise.all([get<{ organization: Organization }>(orgPath(id), abort.signal), get<{ items: OrganizationWorkspace[] }>(`${orgPath(id)}/workspaces`, abort.signal),
                  get<{ catalogue: PermissionInfo[]; mine: string[] }>(`${orgPath(id)}/permissions?lang=${encodeURIComponent(locale)}`, abort.signal)])
-      .then(([a, b, c]) => { setOrg(a.organization); setWorkspaces(b.items); setName(a.organization.name); setPolicy(a.organization.invitation_policy); setMine(c.mine); setCatalogue(c.catalogue); })
+      .then(([a, b, c]) => { setOrg(a.organization); setWorkspaces(b.items); setName(a.organization.name); setPolicy(a.organization.invitation_policy); setTransfer(a.organization.transfer_policy ?? "organization"); setMine(c.mine); setCatalogue(c.catalogue); })
       .catch(e => { if (!abort.signal.aborted) setError(e); });
     return () => abort.abort();
   }, [id, me?.id, revision, needsVerification(me), locale]);
@@ -74,7 +75,7 @@ function OrganizationDetail({ id }: { id: string }) {
     leave: { title: "退出组织", impact: "你将失去此组织及所属工作空间的成员资格，相关登录与令牌会失效。若你是唯一所有者，需要先交接组织和工作空间。", danger: true },
   };
   let spec: OrganizationActionSpec | null = null;
-  if (modal === "settings" && org) spec = { title: t("编辑组织设置"), impact: t("更新组织名称或邀请策略。更严格的策略可能撤销不再符合条件的待处理邀请。"), run: reason => patch(orgPath(id), { name: name.trim(), ...(org.role === "owner" ? { invitation_policy: policy } : {}), version: org.version, reason }) };
+  if (modal === "settings" && org) spec = { title: t("编辑组织设置"), impact: t("更新组织名称、邀请策略或内容外发上限。更严格的邀请策略可能撤销不再符合条件的待处理邀请；外发上限只约束之后的转移。"), run: reason => patch(orgPath(id), { name: name.trim(), ...(org.role === "owner" ? { invitation_policy: policy, transfer_policy: transfer } : {}), version: org.version, reason }) };
   else if (modal && lifecycle[modal]) spec = { title: t(lifecycle[modal].title), impact: t(lifecycle[modal].impact), danger: lifecycle[modal].danger, run: reason => post(`${orgPath(id)}/${modal}`, { reason }) };
   return <OrgPage title={org?.name || t("组织详情")}>
     <FlowError error={error} />
@@ -89,13 +90,13 @@ function OrganizationDetail({ id }: { id: string }) {
       <OrganizationApprovals organization={org} mine={mine} />
       <OrganizationReports organization={org} mine={mine} />
       <OrganizationAudit organization={org} mine={mine} />
-      {manage && <section className="org-section"><h2>{t("组织设置")}</h2><p className="tiny muted">{t(org.invitation_policy === "owners" ? "仅组织所有者可发送工作空间邀请。" : "组织所有者和管理员可发送工作空间邀请。")}</p>{org.status === "active" && <button type="button" className="btn" onClick={() => { setName(org.name); setPolicy(org.invitation_policy); setModal("settings"); }}>{t("编辑组织设置")}</button>}</section>}
+      {manage && <section className="org-section"><h2>{t("组织设置")}</h2><p className="tiny muted">{t(org.invitation_policy === "owners" ? "仅组织所有者可发送工作空间邀请。" : "组织所有者和管理员可发送工作空间邀请。")}</p><p className="tiny muted">{t(org.transfer_policy === "any" ? "组织内容可按各工作空间的数据流政策带到组织以外。" : "组织内容只能在组织的工作空间之间转移。")}</p>{org.status === "active" && <button type="button" className="btn" onClick={() => { setName(org.name); setPolicy(org.invitation_policy); setTransfer(org.transfer_policy ?? "organization"); setModal("settings"); }}>{t("编辑组织设置")}</button>}</section>}
       <section className="org-section"><h2>{t("组织访问")}</h2><div className="org-actions">
         {org.role === "owner" && <>{org.status === "active" && <button type="button" className="btn" onClick={() => setModal("freeze")}>{t("冻结组织")}</button>}{org.status === "frozen" && <button type="button" className="btn" onClick={() => setModal("unfreeze")}>{t("解冻组织")}</button>}{org.status !== "deleted" ? <button type="button" className="btn danger" onClick={() => setModal("delete")}>{t("删除组织")}</button> : org.recover_until && org.recover_until * 1000 > Date.now() ? <button type="button" className="btn primary" onClick={() => setModal("recover")}>{t("恢复组织")}</button> : <span className="muted">{t("恢复期限已过。")}</span>}</>}
         <button type="button" className="btn" onClick={() => setModal("leave")}>{t("退出组织")}</button>
       </div></section>
       {spec && <OrganizationAction spec={spec} ready={modal !== "settings" || !!name.trim()} onClose={() => setModal(null)} onDone={() => { if (modal === "leave") { window.location.assign("/organizations"); return; } setModal(null); changed(); }}>
-        {modal === "settings" && <><div className="field"><label htmlFor="edit-org-name">{t("组织名称")}</label><input id="edit-org-name" className="input" value={name} onChange={e => setName(e.target.value)} required maxLength={100} /></div>{org.role === "owner" && <div className="field"><label htmlFor="invitation-policy">{t("邀请策略")}</label><select id="invitation-policy" className="input" value={policy} onChange={e => setPolicy(e.target.value as "owners" | "admins")}><option value="admins">{t("所有者和管理员")}</option><option value="owners">{t("仅所有者")}</option></select></div>}</>}
+        {modal === "settings" && <><div className="field"><label htmlFor="edit-org-name">{t("组织名称")}</label><input id="edit-org-name" className="input" value={name} onChange={e => setName(e.target.value)} required maxLength={100} /></div>{org.role === "owner" && <div className="field"><label htmlFor="invitation-policy">{t("邀请策略")}</label><select id="invitation-policy" className="input" value={policy} onChange={e => setPolicy(e.target.value as "owners" | "admins")}><option value="admins">{t("所有者和管理员")}</option><option value="owners">{t("仅所有者")}</option></select></div>}{org.role === "owner" && <div className="field"><label htmlFor="transfer-policy">{t("内容外发上限")}</label><select id="transfer-policy" className="input" value={transfer} onChange={e => setTransfer(e.target.value as "organization" | "any")}><option value="organization">{t("仅限组织内的工作空间")}</option><option value="any">{t("按各工作空间的数据流政策")}</option></select><p className="tiny muted">{t("Agent、流程或表单复制把组织工作空间的内容带入其他空间时，先受此上限约束，再受各空间政策与转移人的导出权限约束。")}</p></div>}</>}
       </OrganizationAction>}
     </>}
   </OrgPage>;

@@ -2,6 +2,8 @@ export type OrganizationRole = "owner" | "admin" | "member";
 export interface Organization {
   id: string; name: string; status: "active" | "frozen" | "deleted"; role: OrganizationRole;
   invitation_policy: "admins" | "owners"; version: number; created_at: number;
+  /** Where the organization's workspace content may be carried (synwevo_core.data_flow). */
+  transfer_policy?: "organization" | "any";
   updated_at?: number; has_avatar?: boolean;
   recover_until: number | null; usage?: { workspaces: number; members: number }; quota?: null;
 }

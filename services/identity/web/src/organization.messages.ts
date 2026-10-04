@@ -283,10 +283,6 @@ export const messages = {
     "en": "Edit organization settings",
     "zh-Hant": "編輯組織設定"
   },
-  "更新组织名称或邀请策略。更严格的策略可能撤销不再符合条件的待处理邀请。": {
-    "en": "Update the organization name or invitation policy. A stricter policy may revoke pending invitations that no longer qualify.",
-    "zh-Hant": "更新組織名稱或邀請策略。更嚴格的策略可能撤銷不再符合條件的待處理邀請。"
-  },
   "组织详情": {
     "en": "Organization details",
     "zh-Hant": "組織詳情"
@@ -800,6 +796,42 @@ export const messages = {
   "这个角色包含你没有的权限，不能复制": { en: "This role includes permissions you do not hold, so you cannot copy it", "zh-Hant": "這個角色包含你沒有的權限，不能複製" },
   "已达到 50 个自定义角色的上限": { en: "The limit of 50 custom roles has been reached", "zh-Hant": "已達到 50 個自訂角色的上限" },
   "副本与「{name}」有相同的说明和权限，不分配给任何成员；之后可以单独编辑。": { en: "The copy has the same description and permissions as “{name}” and is not assigned to anyone; you can edit it on its own afterwards.", "zh-Hant": "副本與「{name}」有相同的說明和權限，不分配給任何成員；之後可以單獨編輯。" },
+  "更新组织名称、邀请策略或内容外发上限。更严格的邀请策略可能撤销不再符合条件的待处理邀请；外发上限只约束之后的转移。": {
+    "en": "Update the organization name, invitation policy or content export cap. A stricter invitation policy may revoke pending invitations that no longer qualify; the export cap governs later transfers only.",
+    "zh-Hant": "更新組織名稱、邀請策略或內容外發上限。更嚴格的邀請策略可能撤銷不再符合條件的待處理邀請；外發上限只約束之後的轉移。"
+  },
+  "组织内容可按各工作空间的数据流政策带到组织以外。": {
+    "en": "Organization content may leave the organization as each workspace's data-flow policy allows.",
+    "zh-Hant": "組織內容可按各工作空間的資料流政策帶到組織以外。"
+  },
+  "组织内容只能在组织的工作空间之间转移。": {
+    "en": "Organization content can only move between the organization's workspaces.",
+    "zh-Hant": "組織內容只能在組織的工作空間之間轉移。"
+  },
+  "内容外发上限": {
+    "en": "Content export cap",
+    "zh-Hant": "內容外發上限"
+  },
+  "仅限组织内的工作空间": {
+    "en": "Only workspaces of this organization",
+    "zh-Hant": "僅限組織內的工作空間"
+  },
+  "按各工作空间的数据流政策": {
+    "en": "As each workspace's data-flow policy allows",
+    "zh-Hant": "按各工作空間的資料流政策"
+  },
+  "Agent、流程或表单复制把组织工作空间的内容带入其他空间时，先受此上限约束，再受各空间政策与转移人的导出权限约束。": {
+    "en": "When the Agent, a flow or a form copy carries content of the organization's workspaces elsewhere, this cap applies first, then each workspace's policy and the person's export right.",
+    "zh-Hant": "Agent、流程或表單複製把組織工作空間的內容帶入其他空間時，先受此上限約束，再受各空間政策與轉移人的匯出權限約束。"
+  },
+  "请选择有效的数据外发上限": {
+    "en": "Choose a valid content export cap.",
+    "zh-Hant": "請選擇有效的資料外發上限"
+  },
+  "更改内容外发上限需要提供当前的组织设置版本": {
+    "en": "Changing the content export cap needs the current version of the organization settings.",
+    "zh-Hant": "更改內容外發上限需要提供目前的組織設定版本"
+  },
 };
 
 registerMessages(messages);

@@ -135,6 +135,17 @@ class Filling:
             raise ServiceError(409, "form_version_changed", "表单已更新，请刷新页面后填写新版本")
         return v
 
+    def _shown(self, ctx: dict) -> dict | None:
+        """The published version whose title and description this link shows, also when the
+        link no longer accepts answers. Never the live form row: that is the editors' draft,
+        and saving it must not change what anyone outside the workspace sees."""
+        req, form = ctx["request"], ctx["form"]
+        version = (form["public_version"] or form["published_version"]) if req["kind"] == "public" else req["form_version"]
+        if not version:
+            return None
+        return self.store.one("SELECT title, description FROM form_versions WHERE form_id=? AND version=?",
+                              (req["form_id"], version))
+
     def _state_refusal(self, req: dict) -> ServiceError | None:
         st = req["status"]
         if st == "revoked":
@@ -149,11 +160,12 @@ class Filling:
     def load(self, ctx: dict) -> dict:
         req, filler = ctx["request"], ctx["filler"]
         refusal = self._state_refusal(req)
+        shown = self._shown(ctx) or {"title": "", "description": ""}
         base = {"request": {"id": req["id"] if req["kind"] == "personal" else None, "kind": req["kind"],
-                            "title": req["title"] or ctx["form"]["title"], "status": req["status"],
+                            "title": req["title"] or shown["title"], "status": req["status"],
                             "due_at": req["due_at"], "submission_policy": req["submission_policy"],
                             "require_sign_in": bool(req["require_sign_in"])},
-                "form": {"title": ctx["form"]["title"], "description": ctx["form"]["description"]}}
+                "form": {"title": shown["title"], "description": shown["description"] or ""}}
         if refusal:
             return {**base, "closed": {"code": refusal.code, "message": refusal.message}}
         v = self._version_for(ctx)

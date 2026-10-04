@@ -121,10 +121,13 @@ rechecked. Application configuration/template versions belong explicitly in oper
   explicit `result_read` or the upgraded `Operation.result_guard`; workspace membership alone
   is not treated as a resource guard. The coordinator should retain upgraded capability result
   presentation for its generic operation-history endpoint too.
-* Independent operations can target several explicitly authorized workspaces. Mapping business
-  content across spaces (or to personal operations), and `writes_elsewhere` operations, are
-  refused until a shared data-transfer/export-policy contract is integrated. This package does
-  not infer data-transfer authority from dual membership. No browser workspace binding is read.
+* Independent operations can target several explicitly authorized workspaces. Carrying business
+  content across spaces follows the shared data-flow contract (`docs/platform/data-flow.md` §3,
+  Flows): once a run has read a workspace, every later write elsewhere, and every read whose input
+  takes a value from the run, is asked for that source; runs started by the run's events carry
+  its sources on. Personal operations and `writes_elsewhere` operations are not flow steps. This
+  package does not infer data-transfer authority from dual membership. No browser workspace
+  binding is read.
 
 ## Trigger contract
 

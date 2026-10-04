@@ -2,6 +2,8 @@ export interface ToolCall {
   id: string; tool: string; operation: string | null; operation_title: Record<string, string> | null;
   app_name: string | null; workspace_id: string | null; workspace_name: string | null;
   target_workspace_id: string | null; target_workspace_name: string | null;
+  /** Other workspaces whose content this write would carry into its target (synwevo_core.data_flow). */
+  transfer_from?: { workspace_id: string; workspace_name: string | null; outbound: string }[] | null;
   status: string; confirmation: string | null; needs_confirmation: boolean;
   input: unknown; result: unknown; hidden: boolean; link: string | null; run_id: string | null;
   error: { code: string; message: string } | null;

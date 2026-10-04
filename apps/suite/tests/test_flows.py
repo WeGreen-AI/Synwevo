@@ -666,17 +666,40 @@ def test_event_depth_limit_is_a_persistent_refusal(flow):
 
 
 def test_independent_workspace_targets_work_but_content_transfer_needs_policy(flow):
+    from synwevo_core import data_flow
     f = flow
     f.store.execute("UPDATE memberships SET role='editor' WHERE workspace_id=? AND user_id=?", (f.p.b, f.uid))
     second = f.write("second", workspace_id=f.p.b, result_read=None)
-    rid = f.start(f.create([f.write(), second]))
+    # Two writes and no read in between: the run holds nothing of A when it writes into B.
+    rid = f.start(f.create([f.write(result_read=None), second]))
     f.tick()
     assert f.row(rid)["status"] == "succeeded"
     assert {r["workspace_id"] for r in f.store.all("SELECT workspace_id FROM fixture_flow_records")} == {f.ws, f.p.b}
-    second["input"] = {"text": {"$ref": "steps.write.text"}}
-    blocked = f.start(f.create([f.write(), second]))
+    # Once the run has read A (the first step's result read), the same literal write into B carries
+    # whatever was read. B has a member A does not (Oscar): A's default policy keeps its content from him.
+    literal = f.start(f.create([f.write(), second]), key="literal")
     f.tick()
-    assert f.row(blocked)["error_code"] == "flow_transfer_policy_required"
+    assert (f.row(literal)["status"], f.row(literal)["error_code"]) == ("blocked", "transfer_audience_denied")
+    second["input"] = {"text": {"$ref": "steps.write.text"}}
+    flow_id = f.create([f.write(), second])
+    blocked = f.start(flow_id, key="blocked")
+    f.tick()
+    assert f.row(blocked)["error_code"] == "transfer_audience_denied"
+    assert f.store.one("SELECT COUNT(*) AS n FROM fixture_flow_records WHERE workspace_id=?", (f.p.b,))["n"] == 1
+    data_flow.set_workspace_outbound(f.store, f.ws, "any", actor_id=f.uid, revision=data_flow.workspace_outbound(f.store, f.ws)["revision"])
+    carried = f.start(flow_id, key="carried")
+    f.tick()
+    assert f.row(carried)["status"] == "succeeded"
+    assert f.store.one("SELECT COUNT(*) AS n FROM fixture_flow_records WHERE workspace_id=?", (f.p.b,))["n"] == 2
+    f.e.resume(literal, user_id=f.uid)  # the literal write is asked again, with the policy as it is now
+    f.tick()
+    assert f.row(literal)["status"] == "succeeded"
+    assert f.store.one("SELECT COUNT(*) AS n FROM fixture_flow_records WHERE workspace_id=?", (f.p.b,))["n"] == 3
+    data_flow.set_workspace_outbound(f.store, f.ws, "none", actor_id=f.uid, revision=data_flow.workspace_outbound(f.store, f.ws)["revision"])  # rechecked on every run
+    closed = f.start(flow_id, key="closed")
+    f.tick()
+    assert f.row(closed)["error_code"] == "transfer_source_closed"
+    assert f.store.one("SELECT COUNT(*) AS n FROM fixture_flow_records WHERE workspace_id=?", (f.p.b,))["n"] == 3
 
 
 def test_source_changed_after_wait_stops_cached_branch(flow):
