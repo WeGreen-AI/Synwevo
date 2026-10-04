@@ -358,11 +358,14 @@ class Filling:
                                     "revision": revision,
                                     "kind": req["kind"]})
         capabilities.announce([ev])
-        form = ctx["form"]
         who = label or "—"
-        self.forms._notify(req["created_by"], "forms.submission.received", {"form": form["title"], "who": who},
-                           req["workspace_id"], "form_submission", sid,
-                           f"/forms/w/{req['workspace_id']}/s/{sid}", dedupe=f"forms.received:{sid}")
+        # The request's creator is told only while they may still read Forms here (a removed
+        # member keeps being its creator), and of the version that was answered, never the
+        # editors' live draft: the notice also leaves by mail and push.
+        if self.forms.may_read(req["created_by"], req["workspace_id"]):
+            self.forms._notify(req["created_by"], "forms.submission.received", {"form": v["title"], "who": who},
+                               req["workspace_id"], "form_submission", sid,
+                               f"/forms/w/{req['workspace_id']}/s/{sid}", dedupe=f"forms.received:{sid}")
         row = self.store.one("SELECT * FROM form_submissions WHERE id=?", (sid,))
         return self._receipt(ctx, row, replayed=False, confirmation=_j(v["definition_json"], {}).get("confirmation", ""))
 

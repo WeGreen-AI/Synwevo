@@ -246,3 +246,61 @@ def test_links_of_a_frozen_organizations_workspace_close(world):
         for k, v in jar.items():
             w.suite.cookies.set(k, v)
     assert r.status_code == 410 and r.json()["error"] == "link_unavailable"
+
+
+# ---------------------------------------------------------------- third review round (R3)
+
+DRAFT_ONLY = "Fixture unpublished reorg plan"
+APPLICANT = "Fixture Applicant Carol"
+
+
+def bobs_public_form(w: World) -> dict:
+    """A form Bob (an editor of A) built, published and opened to the public in A; Alice has
+    since renamed its draft to something nobody outside A has been shown."""
+    s = w.suite
+    s.sign_in("bob")
+    form = ws_op(s, "forms.form.create", w.p.a, {"title": ORIGINAL, "definition": DEFINITION})["output"]
+    ws_op(s, "forms.form.publish", w.p.a, {"form_id": form["id"], "draft_rev": form["draft_rev"]})
+    url = ws_op(s, "forms.public_link.set", w.p.a, {"form_id": form["id"], "enabled": True})["output"]["url"]
+    s.sign_in("alice")
+    ws_op(s, "forms.form.update_draft", w.p.a, {"form_id": form["id"], "draft_rev": 1, "title": DRAFT_ONLY})
+    return {"id": form["id"], "public": token_of(url)}
+
+
+def told_bob(w: World) -> list[dict]:
+    return w.store.all("SELECT kind, params FROM notifications WHERE user_id=? AND kind='forms.submission.received'",
+                       (w.p.uid("bob"),))
+
+
+def submit_publicly(w: World, token: str, key: str):
+    r = anonymous_post(w, f"/api/suite/public/forms/r/{token}/submit",
+                       {"version": 1, "answers": good_answers(), "idempotency_key": key, "submitter_label": APPLICANT})
+    assert r.status_code in (200, 201), r.text
+    return r.json()["submission_id"]
+
+
+def test_the_link_owner_is_told_the_title_of_the_version_answered(world):
+    """R3-DF-2: the submission notice named the editors' live draft, not the version answered."""
+    w = world
+    form = bobs_public_form(w)
+    submit_publicly(w, form["public"], "r3-df2-member-0001")
+    told = told_bob(w)
+    assert len(told) == 1, told
+    assert ORIGINAL in str(told[0]["params"]) and DRAFT_ONLY not in str(told[0]["params"])
+
+
+def test_a_removed_member_is_not_told_of_later_submissions(world):
+    """R3-DF-2: whoever opened the public link kept hearing of every submission — who answered,
+    and what the editors had renamed the form to — after being removed from the workspace."""
+    w = world
+    form = bobs_public_form(w)
+    w.p.ident.remove_member(w.p.a, w.p.uid("bob"))
+    submit_publicly(w, form["public"], "r3-df2-removed-0001")
+    assert told_bob(w) == []
+    # Switching the link off and on again keeps the public request, and its creator, as they were.
+    ws_op(w.suite, "forms.public_link.set", w.p.a, {"form_id": form["id"], "enabled": False})
+    again = token_of(ws_op(w.suite, "forms.public_link.set", w.p.a, {"form_id": form["id"], "enabled": True})["output"]["url"])
+    submit_publicly(w, again, "r3-df2-removed-0002")
+    assert told_bob(w) == []
+    # Nobody was told the draft's title: it is not on any page or notice outside the editor.
+    assert w.store.all("SELECT id FROM notifications WHERE params LIKE ?", (f"%{DRAFT_ONLY}%",)) == []

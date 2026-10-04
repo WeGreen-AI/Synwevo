@@ -372,6 +372,19 @@ class Forms:
         except Exception:  # noqa: BLE001 — a notification is a courtesy, never part of the result
             log.exception("forms notification %s failed", kind)
 
+    def may_read(self, user_id: str | None, workspace_id: str) -> bool:
+        """Whether this person may read Forms in this workspace now. A notice addressed to a
+        workspace member by a record (a request's creator) is sent only while this holds: the
+        record keeps its creator after they leave, and a former member must not keep hearing
+        what happens in the workspace."""
+        if not user_id or not self.caps:
+            return False
+        try:
+            self.caps.check_workspace(user_id, APP, workspace_id, "read")
+        except ServiceError:
+            return False
+        return True
+
     def _request(self, workspace_id: str, request_id: str) -> dict:
         row = self.store.one("SELECT * FROM form_requests WHERE id=? AND workspace_id=?", (request_id, workspace_id))
         if not row:
