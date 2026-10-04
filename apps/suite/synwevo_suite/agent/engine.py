@@ -269,6 +269,10 @@ class Agent:
                 if wid in lost or key in checked:
                     continue
                 checked.add(key)
+                if "carried_into" in source:
+                    # The copy is the target's content: leaving the source does not take it away
+                    # from its legal readers. A later write still asks the source (and is refused).
+                    continue
                 try:
                     if "reported_by" in source:
                         # No object there to re-read: the answer stays visible while the person
@@ -290,8 +294,10 @@ class Agent:
 
     @staticmethod
     def _source_workspaces(message: dict) -> set[str]:
+        """Workspaces an answer depends on (losing one hides it). Not where a copy came from:
+        that copy is its target's content, kept only for the transfer question."""
         return {s if isinstance(s, str) else s["workspace_id"]
-                for s in _j(message["sources_json"], []) or []}
+                for s in _j(message["sources_json"], []) or [] if isinstance(s, str) or "carried_into" not in s}
 
     @staticmethod
     def _content_workspaces(message: dict) -> set[str]:
@@ -310,7 +316,7 @@ class Agent:
         if not target:
             return []
         asst = self.store.one("SELECT sources_json FROM agent_messages WHERE id=?", (t["assistant_message_id"],))
-        sources = self._content_workspaces(asst) & self._transmitted_workspaces(t)
+        sources = self._content_workspaces(asst) & self._transmitted_workspaces(t, carried=True)
         if op.writes_elsewhere and wid:
             sources.add(wid)  # The operation itself copies from where it runs; its service checks it too.
         # A message or a form request reaches whoever it is addressed to, not only the target's members.
@@ -776,7 +782,9 @@ class Agent:
         # another operation keeps its own provenance and processing-policy dependency.
         return (clean.get("target_workspace_id") or wid) if op and op.writes_elsewhere else wid
 
-    def _transmitted_workspaces(self, t: dict) -> set[str]:
+    def _transmitted_workspaces(self, t: dict, *, carried: bool = False) -> set[str]:
+        """Workspaces whose content reached the model in this branch; with ``carried``, also the
+        sources that content was carried from in this conversation (for the transfer question)."""
         branch = {m["id"] for m in self._path(t["conversation_id"], t["assistant_message_id"])}
         workspaces = set()
         for c in self.store.all(
@@ -787,6 +795,8 @@ class Agent:
             payload = _j(c["for_model_json"], {}) or {}
             if payload.get("withheld") or "result" not in payload:
                 continue  # A previously withheld result stays withheld, even after policy changes.
+            if carried:
+                workspaces.update(payload.get("carried_from") or ())
             if "source_workspaces" in payload:
                 workspaces.update(payload["source_workspaces"])
             else:
@@ -932,10 +942,18 @@ class Agent:
         # what the run read): they are sources like any other, though no object there was read.
         reported = {w for w in (result.get("source_workspaces") or ()) if isinstance(w, str)} \
             if op.need == "personal" and isinstance(result, dict) else set()
+        # What this branch's own writes carried into a workspace keeps where it came from for the
+        # transfer question (as inside a flow run): reading it back, or the receipt of the write
+        # itself, is asked for those sources on a later write. Processing is not: a legally
+        # transferred copy is the target's content, under the target's policy.
+        carried = (set(delegation.get("transfer_from") or ()) | self._carried_into(t, result_workspaces)) \
+            - result_workspaces - reported
         for_model = ctx.for_model(op, result_wid, {"status": out["status"], "run_id": out["run_id"], "output": result},
                                   also=sorted(reported))
         if not for_model.get("withheld"):
             for_model["source_workspaces"] = sorted(result_workspaces | reported)
+            if carried:
+                for_model["carried_from"] = sorted(carried)
         status = "succeeded" if out["status"] == "succeeded" else "unknown"
         error = None if status == "succeeded" else {"code": "outcome_unresolved", "message": "操作尚未确认完成，请在应用中查看"}
         if record:
@@ -946,6 +964,30 @@ class Agent:
             self._record_source(t, op, result_wid, clean, result, out["run_id"])
         for source in sorted(reported - result_workspaces):
             self._add_source(t["assistant_message_id"], {"workspace_id": source, "reported_by": op.id})
+        if not for_model.get("withheld"):
+            for source in sorted(carried):
+                self._add_source(t["assistant_message_id"], {"workspace_id": source, "carried_into": result_wid})
+
+    def _carried_into(self, t: dict, workspaces: set[str]) -> set[str]:
+        """Other workspaces whose content writes of this conversation branch carried into
+        ``workspaces`` (their recorded ``transfer_from``). A write whose outcome is not known yet
+        counts: it may have happened."""
+        if not workspaces:
+            return set()
+        branch = {m["id"] for m in self._path(t["conversation_id"], t["assistant_message_id"])}
+        found = set()
+        for c in self.store.all(
+                "SELECT c.operation, c.workspace_id, c.input_json, c.run_id, t.assistant_message_id FROM agent_tool_calls c "
+                "JOIN agent_turns t ON t.id=c.turn_id WHERE c.conversation_id=? AND c.run_id IS NOT NULL "
+                "AND c.status IN ('succeeded','unknown')", (t["conversation_id"],)):
+            op = self.caps.registry.get(c["operation"])
+            if c["assistant_message_id"] not in branch or not op or op.side_effect == "none":
+                continue
+            if self._result_workspace(op, c["workspace_id"], _j(c["input_json"], {})) not in workspaces:
+                continue
+            run = self.store.one("SELECT delegation FROM op_runs WHERE id=?", (c["run_id"],))
+            found.update((_j(run["delegation"], {}) or {}).get("transfer_from") or () if run else ())
+        return found - workspaces
 
     def _update_call(self, t: dict, call_id: str, status: str, *, result=None, for_model=None, error=None, run_id=None) -> None:
         self.store.execute("UPDATE agent_tool_calls SET status=?, result_json=COALESCE(?,result_json), "

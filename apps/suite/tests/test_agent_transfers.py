@@ -5,6 +5,8 @@ owns A (with Bob, an editor, and Vera, a viewer) and only views B, which Oscar o
 """
 import json
 
+import pytest
+
 from .test_agent import agent, call, op, say  # noqa: F401 (fixture)
 from .test_agent_governance_boundaries import advance, begin, governed, policy  # noqa: F401 (fixture)
 from .test_data_flow import revision
@@ -206,3 +208,50 @@ def test_audience_lets_a_record_through_but_not_a_send_to_other_people(governed)
     assert done["send"] == ("failed", "transfer_audience_external")
     assert done["write"] == ("awaiting_confirmation", None)
     assert g.store.one("SELECT COUNT(*) AS n FROM form_requests")["n"] == 0
+
+
+@pytest.mark.parametrize("receipt_withheld", [False, True])
+def test_a_copy_made_in_the_conversation_keeps_its_source_for_a_later_write(governed, receipt_withheld):
+    """CR-047 AGENT-DF-3: B keeps its default ``audience``. Copying B's form into Alice's personal
+    workspace is legal (only she reads it there), and the model never reads B itself. Writing the
+    copy's content on into a workspace with someone outside B is still a transfer from B — also when
+    the copy's receipt was withheld from the model and the copy is read back in a later turn."""
+    g, p = governed, governed.people
+    alice = p.uid("alice")
+    g.client.sign_in("oscar")
+    source = op(g.client, "forms.form.create", {"title": "Fixture B salary review"}, ws=p.b)["output"]["id"]
+    p.ident.change_role(p.b, alice, "viewer", can_export=True)
+    g.client.sign_in("alice")
+    personal = p.ident.create_workspace("Fixture personal", owner_id=alice, kind="personal")["id"]
+    wide = p.ident.create_workspace("Fixture wide team", owner_id=alice)["id"]
+    p.ident.add_member(wide, p.uid("out"), "viewer")
+    policy(g, personal, "none" if receipt_withheld else "platform")
+    policy(g, wide, "platform")
+    cid, turn = begin(g, [call("run_operation", {"operation": "forms.form.duplicate", "workspace_id": p.b,
+                                               "input": {"form_id": source, "target_workspace_id": personal}}, tid="copy"),
+                        say("copied")])
+    assert advance(g, turn)["status"] == "waiting_confirmation"
+    card = g.store.one("SELECT * FROM agent_tool_calls WHERE turn_id=? AND tool_use_id='copy'", (turn["turn_id"],))
+    assert op(g.client, "agent.tool_call.confirm", {"tool_call_id": card["id"],
+                                                    "confirmation": card["input_hash"]})["output"]["status"] == "succeeded"
+    steps = [read(personal, "read-copy"), create(wide, "Fixture B salary review", "land"),
+             create(personal, "Fixture note for myself", "keep"), say("stopped")]
+    if receipt_withheld:
+        assert advance(g, turn)["status"] == "succeeded"
+        saved = g.store.one("SELECT for_model_json FROM agent_tool_calls WHERE id=?", (card["id"],))
+        assert json.loads(saved["for_model_json"]).get("withheld") is True
+        policy(g, personal, "platform")
+        _, turn = begin(g, steps, conversation=cid)
+    else:
+        g.model.steps = steps
+    advance(g, turn)
+    # The copy is personal content to read; landing it in wide is refused on B's policy, before any card.
+    assert calls(g, turn)["read-copy"] == ("succeeded", None)
+    assert calls(g, turn)["land"] == ("failed", "transfer_audience_denied")
+    assert forms_in(g, wide) == []
+    # Writing back where the copy already is carries nothing new.
+    assert calls(g, turn)["keep"][0] == "awaiting_confirmation"
+    # Leaving B does not take the copy away from its reader: answers about it stay visible.
+    p.ident.remove_member(p.b, alice)
+    shown = op(g.client, "agent.conversation.get", {"conversation_id": cid})["output"]
+    assert not any(m["hidden"] for m in shown["messages"] if m["role"] == "assistant")

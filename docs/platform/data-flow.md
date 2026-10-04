@@ -39,7 +39,7 @@ it was decided on: a page loaded before someone else's change answers 409 (`tran
 ## 3. Where it applies
 
 * **Personal Agent** (`apps/suite/synwevo_suite/agent/engine.py`).
-  * **Which writes count.** Writing into the workspace that will own the result counts as a transfer from every other workspace whose content reached the model in this conversation branch. Catalogue names alone do not count, and withheld results do not count. The model's input cannot be traced word by word, so every such source counts. A copy-type operation (`writes_elsewhere`) also counts its own source.
+  * **Which writes count.** Writing into the workspace that will own the result counts as a transfer from every other workspace whose content reached the model in this conversation branch. Catalogue names alone do not count, and withheld results do not count. The model's input cannot be traced word by word, so every such source counts. A copy-type operation (`writes_elsewhere`) also counts its own source. What a write of this conversation branch carried into a workspace keeps where it came from: reading it back there, or the receipt of that write, counts those sources for later writes too (a copy made in the conversation does not lose its source). This is for the transfer question only: the copy is the target's content, so the model reads it under the target's processing policy, and leaving the source does not hide it.
   * **When it is checked.** At three points:
     * when the call is proposed, so no card is shown for a refused transfer;
     * when the person confirms: the confirmation fingerprint includes each source's policy facts, so any change voids it;
