@@ -66,6 +66,9 @@ CREATE INDEX IF NOT EXISTS suite_whdel_due ON suite_webhook_deliveries(status, n
 -- A subscription's deliveries go out in the order they were queued: its oldest pending row first.
 CREATE INDEX IF NOT EXISTS suite_whdel_head ON suite_webhook_deliveries(subscription_id, status);
 CREATE INDEX IF NOT EXISTS suite_whdel_log ON suite_webhook_deliveries(subscription_id, created_at);
+-- How many of a workspace's deliveries are being sent right now: one workspace takes at most half
+-- the workers (Webhooks.claim_next).
+CREATE INDEX IF NOT EXISTS suite_whdel_busy ON suite_webhook_deliveries(workspace_id, status, claimed_until);
 """
 
 

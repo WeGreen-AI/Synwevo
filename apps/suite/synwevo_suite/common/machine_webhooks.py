@@ -151,7 +151,7 @@ def _policy() -> dict:
     return {"allow_http": _on("SUITE_WEBHOOK_ALLOW_HTTP"), "http_refusal": "回调地址必须使用 https"}
 
 
-def resolve_checked(url: str, *, deadline: float | None = None) -> list:
+def resolve_checked(url: str, *, deadline: float | None = None, owner: str | None = None) -> list:
     """This deployment's policy for the business applications' callbacks: https to a globally
     routable address. The two switches are the operator's, for local development and tests.
 
@@ -161,7 +161,7 @@ def resolve_checked(url: str, *, deadline: float | None = None) -> list:
     delivery.check_address_text(url, **_policy())
     try:
         return delivery.resolve_checked(url, deadline=deadline, timeout=TIMEOUT_S, allow_private=_allow_private(),
-                                        **_policy())
+                                        owner=owner, **_policy())
     except ResolverBusy:
         raise                                               # this server's fault: says nothing about the address
     except UrlUnresolvable as e:
@@ -170,19 +170,20 @@ def resolve_checked(url: str, *, deadline: float | None = None) -> list:
         raise UrlRejected("回调地址不可用：无法解析，或不被允许") from e
 
 
-def _resolve_now(url: str) -> list:
+def _resolve_now(url: str, owner: str | None = None) -> list:
     """The check a management call makes, on the request's own thread: it gets `CHECK_TIMEOUT_S`,
     not a send's whole deadline. No resolver free in time is not a verdict on the address: the
     caller is told to come back, not that its URL is invalid."""
     try:
-        return resolve_checked(url, deadline=time.monotonic() + CHECK_TIMEOUT_S)
+        return resolve_checked(url, deadline=time.monotonic() + CHECK_TIMEOUT_S, owner=owner)
     except ResolverBusy as e:
         raise ServiceError(429, "destination_check_busy", "正在检查的回调地址过多，请稍后再试",
                            {"retry_after": LOCAL_RETRY_S}) from e
 
 
-def validate_url(url) -> str:
-    return delivery.validate_url(url, resolve=_resolve_now)
+def validate_url(url, owner: str | None = None) -> str:
+    """`owner` is the workspace the check is made for: its lookups are counted against it."""
+    return delivery.validate_url(url, resolve=lambda u: _resolve_now(u, owner))
 
 
 def address_text(url) -> str:
@@ -233,6 +234,14 @@ def normalize_events(registry, value, scopes) -> list[str]:
         if item != "*" and app not in held:
             raise ServiceError(403, "insufficient_scope", f"该凭据没有 {app}.read 权限", {"required_scope": f"{app}.read"})
     return out
+
+
+def _covers(new: list[str], old: list[str]) -> bool:
+    """Whether the filter ``new`` lets through everything ``old`` did (patterns included)."""
+    def covered(item: str) -> bool:
+        return "*" in new or item in new or any(
+            n.endswith(".*") and (item.startswith(n[:-1]) and (item != "*")) for n in new)
+    return all(covered(o) for o in old)
 
 
 def matches(filters, etype: str) -> bool:
@@ -383,7 +392,7 @@ class Webhooks:
         """Where the address leads, asked last: after everything that could be refused without
         asking a resolver (`address_text`, the filter, the grant, the limits)."""
         with self._checking(p):
-            validate_url(url)
+            validate_url(url, owner=p["tenant"])
 
     def _journal(self, sid: str) -> None:
         """Written before a change that takes something back — a pause, another address, another
@@ -516,8 +525,10 @@ class Webhooks:
                     with self.store.conn() as c:
                         self._address_free(c, p, values["url"], besides=sid)
                 self._look_up(p, values["url"])
-            if moved:
-                self._journal(sid)                          # a restore must not send to the address it left
+            narrowed = "events" in values and not _covers(json.loads(values["events"]), json.loads(row["events"] or "[]"))
+            if moved or narrowed:
+                # a restore must not send to the address it left, nor the events it stopped sending
+                self._journal(sid)
             sets = ", ".join(f"{k}=?" for k in values)       # keys of the closed set above
             with self.store.tx() as c:
                 if moved:
@@ -929,10 +940,14 @@ class Webhooks:
         anything is sent: an attempt that never reports back (the process died) is still an attempt,
         and a delivery cannot be claimed for ever without reaching the end of its schedule."""
         t = self.clock()
+        # A workspace holds at most half the workers at once (at least one), however old and slow
+        # its queue: the others stay free for every other workspace's deliveries (CR-049 WH-1).
         sql = ("SELECT id, attempts FROM suite_webhook_deliveries AS d WHERE status='pending' AND next_attempt_at<=? "
                "AND (claimed_until IS NULL OR claimed_until<?) AND NOT EXISTS (SELECT 1 FROM suite_webhook_deliveries AS head "
-               "WHERE head.subscription_id=d.subscription_id AND head.status='pending' AND head.rowid<d.rowid)")
-        args: list = [t, t]
+               "WHERE head.subscription_id=d.subscription_id AND head.status='pending' AND head.rowid<d.rowid) "
+               "AND (SELECT COUNT(*) FROM suite_webhook_deliveries AS busy WHERE busy.workspace_id=d.workspace_id "
+               "AND busy.status='pending' AND busy.claimed_until>=?) < ?")
+        args: list = [t, t, t, max(1, self.concurrency // 2)]
         if exclude:
             sql += f" AND subscription_id NOT IN ({','.join('?' * len(exclude))})"
             args += list(exclude)
@@ -1074,7 +1089,7 @@ class Webhooks:
         try:
             # Validate and connect to *the same* address; the hostname is never resolved twice.
             with RequestDeadline(TIMEOUT_S) as deadline:
-                validated = resolve_checked(url, deadline=deadline.end)
+                validated = resolve_checked(url, deadline=deadline.end, owner=d["workspace_id"])
                 # DNS can take most of the attempt. A pause, a revocation or another claimant may
                 # have intervened since the body was made: never connect on stale authority.
                 if not self._owns_claim(d):
@@ -1322,6 +1337,13 @@ def build_router(service: Webhooks, audit=None):
         p = getattr(request.state, "principal", None)
         if not p or p.get("kind") != "delegated" or not p.get("user_id") or not p.get("tenant"):
             raise ServiceError(401, "unauthorized", "缺少凭据（Authorization: Bearer <平台访问令牌>）")
+        # Reading a subscription (its address), its delivery log (event types and ids), pinging and
+        # redelivering are reads of the event feed: the same read scope the feed itself asks for
+        # (CR-049 WH-5). What a send carries is still decided for the grant bound to it.
+        feeds = machine_events.feeds(service.caps.registry)
+        if not {s.split(".")[0] for s in (p.get("scopes") or ()) if str(s).endswith(".read")} & set(feeds):
+            raise ServiceError(403, "insufficient_scope", "管理订阅需要至少一个应用的 read 权限",
+                               {"any_of": sorted(f"{app}.read" for app in feeds)})
         return p
 
     def no_key(request: Request) -> None:

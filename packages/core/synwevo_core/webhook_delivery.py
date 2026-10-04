@@ -46,6 +46,12 @@ DEFAULT_TIMEOUT_S = 15.0
 # they only resolve names, never send, and release their slot if libc eventually returns.
 DNS_SLOTS = 16
 _DNS_SLOTS = threading.BoundedSemaphore(DNS_SLOTS)
+# Lookups one owner (a workspace) may have running at once, counted until each lookup's thread
+# returns: a lookup abandoned at its deadline still holds a resolver, so whoever named a slow name
+# must not be able to take the shared pool one abandoned lookup at a time.
+OWNER_LOOKUPS = 2
+_OWNERS: dict[str, int] = {}
+_OWNERS_LOCK = threading.Lock()
 
 # NAT64 (RFC 6052's well-known prefix, RFC 8215's local-use one): an IPv6 spelling of an IPv4
 # address. Where it leads is the translating gateway's decision — a private network included —
@@ -93,7 +99,7 @@ def check_address_text(url: str, *, allow_http: bool = False,
 
 def resolve_checked(url: str, *, deadline: float | None = None, allow_http: bool = False,
                     allow_private=(), timeout: float = DEFAULT_TIMEOUT_S,
-                    http_refusal: str = "回调默认要求 https") -> list:
+                    http_refusal: str = "回调默认要求 https", owner: str | None = None) -> list:
     """Validate the callback host **and return the exact addresses that were validated.**
 
     The caller must connect to one of these rather than to the hostname again. Resolving twice —
@@ -108,7 +114,7 @@ def resolve_checked(url: str, *, deadline: float | None = None, allow_http: bool
     host, port = check_address_text(url, allow_http=allow_http, http_refusal=http_refusal)
     allow = list(allow_private)
     try:
-        infos = _resolve(host, port, deadline if deadline is not None else time.monotonic() + timeout)
+        infos = _resolve(host, port, deadline if deadline is not None else time.monotonic() + timeout, owner)
     except (socket.gaierror, UnicodeError) as e:
         # UnicodeError: a name that cannot be written as a DNS name at all (an empty label, one
         # longer than 63 bytes) — the resolver's codec says so before any lookup is made.
@@ -126,12 +132,36 @@ def resolve_checked(url: str, *, deadline: float | None = None, allow_http: bool
     return ok
 
 
+# IPv6 global unicast. `is_global` also says yes to IPv4-compatible (::/96), SIIT-translated
+# (::ffff:0:0:0/96), site-local (fec0::/10) and multicast addresses: where those lead is the host's
+# tunnels and translators, not a callback receiver.
+GLOBAL_UNICAST6 = ipaddress.ip_network("2000::/3")
+
+
 def _routable(ip) -> bool:
-    return ip.is_global and not any(ip in net for net in TRANSLATED)
+    if not ip.is_global or ip.is_multicast or any(ip in net for net in TRANSLATED):
+        return False
+    return ip.version == 4 or ip in GLOBAL_UNICAST6
 
 
-def _resolve(host: str, port: int, deadline: float):
+def _resolve(host: str, port: int, deadline: float, owner: str | None = None):
+    if owner is not None:
+        with _OWNERS_LOCK:
+            if _OWNERS.get(owner, 0) >= OWNER_LOOKUPS:
+                raise ResolverBusy("无法解析回调地址主机：同一来源仍有解析未结束")
+            _OWNERS[owner] = _OWNERS.get(owner, 0) + 1
+
+    def owner_done():
+        if owner is not None:
+            with _OWNERS_LOCK:
+                left = _OWNERS.get(owner, 1) - 1
+                if left:
+                    _OWNERS[owner] = left
+                else:
+                    _OWNERS.pop(owner, None)
+
     if not _DNS_SLOTS.acquire(timeout=max(0, deadline - time.monotonic())):
+        owner_done()
         raise ResolverBusy("无法解析回调地址主机：解析超时")
     result = Future()
 
@@ -142,11 +172,13 @@ def _resolve(host: str, port: int, deadline: float):
             result.set_exception(exc)
         finally:
             _DNS_SLOTS.release()
+            owner_done()                                    # when the lookup ends, not when it is given up on
 
     try:
         threading.Thread(target=run, name="webhook-dns", daemon=True).start()
     except Exception:
         _DNS_SLOTS.release()
+        owner_done()
         raise
     try:
         return result.result(timeout=max(0, deadline - time.monotonic()))

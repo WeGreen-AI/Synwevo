@@ -1793,8 +1793,8 @@ def test_what_was_taken_back_stays_taken_back_after_a_restore(hub, monkeypatch):
     sid = made["id"]
     changes = ((hub.api.patch, f"{BASE}/{sid}", {"url": rx.url + "/moved"}), (hub.api.post, f"{BASE}/{sid}/rotate-secret", {}),
                (hub.api.post, f"{BASE}/{sid}/pause", None))
-    # nothing below journals a description or a filter: they take nothing back
-    assert hub.api.patch(f"{BASE}/{sid}", json={"description": "x", "events": ["tables.table.changed"]}, headers=alice).status_code == 200
+    # a description, or a filter that only widens, takes nothing back: not journalled
+    assert hub.api.patch(f"{BASE}/{sid}", json={"description": "x", "events": ["*"]}, headers=alice).status_code == 200
     assert not [e for e in journal(hub.store) if e.get("subscription_id") == sid]
 
     def unavailable(*a, **k):
@@ -2084,3 +2084,123 @@ def test_redelivery_waits_at_the_same_queue_bound_as_the_cursor(hub, monkeypatch
     assert err["details"] == {"limit": 2}
     hub.service.tick()                                       # the queue drains…
     assert hub.api.post(f"{BASE}/{sid}/deliveries/{first['id']}/redeliver", headers=owner).status_code == 202
+
+
+def test_one_workspace_never_holds_every_worker(hub):
+    """CR-049 WH-1: claims took the globally oldest due delivery, so a workspace whose many
+    receivers answer slowly (but successfully, so nothing backs off) occupied every worker and the
+    other workspaces waited behind its whole queue."""
+    service, store, t = hub.service, hub.store, hub.clock()
+    service.concurrency = 4                                  # at most two of them for one workspace
+    rows = [(f"whdel_a{n:010d}", f"whsub_a{n:010d}", "w_fixture_a", t - 100 + n) for n in range(4)]
+    rows.append(("whdel_b0000000000", "whsub_b0000000000", "w_fixture_b", t - 1))    # queued last
+    for did, sid, ws, at in rows:
+        store.execute("INSERT INTO suite_webhook_deliveries (id, subscription_id, workspace_id, event_id, event_type, "
+                      "status, attempts, next_attempt_at, created_at) VALUES (?,?,?,?,?,'pending',0,?,?)",
+                      (did, sid, ws, "evt_" + did[-10:], "tables.record.created", at, at))
+    claimed = [service.claim_next()["workspace_id"] for _ in range(3)]
+    assert claimed == ["w_fixture_a", "w_fixture_a", "w_fixture_b"], claimed
+    assert service.claim_next() is None, "A already has its half of the workers; nothing else is due"
+    # One finishes: A gets a worker back.
+    store.execute("UPDATE suite_webhook_deliveries SET status='delivered', claimed_until=NULL WHERE id='whdel_a0000000000'")
+    assert service.claim_next()["workspace_id"] == "w_fixture_a"
+
+
+def test_abandoned_lookups_count_against_whoever_started_them(monkeypatch):
+    """CR-049 WH-2: a lookup given up at its deadline keeps a resolver until libc returns. One owner
+    may have only a couple running, so naming slow names cannot take the shared pool."""
+    from synwevo_core import webhook_delivery
+    release = threading.Event()
+    real = socket.getaddrinfo
+
+    def slow_for_one(host, *a, **k):
+        if host == "slow.fixture.test":
+            release.wait(10)
+            raise socket.gaierror(socket.EAI_NONAME, "fixture")
+        return real(host, *a, **k)
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow_for_one)
+    url = "https://slow.fixture.test/hook"
+    try:
+        for _ in range(webhook_delivery.OWNER_LOOKUPS):
+            with pytest.raises(webhook_delivery.UrlUnresolvable) as given_up:
+                webhook_delivery.resolve_checked(url, timeout=0.2, owner="w_fixture_a")
+            assert not isinstance(given_up.value, webhook_delivery.ResolverBusy)
+        # Both lookups are still running: the owner gets no third, whatever the pool has left.
+        with pytest.raises(webhook_delivery.ResolverBusy):
+            webhook_delivery.resolve_checked(url, timeout=0.2, owner="w_fixture_a")
+        # Another owner is untouched.
+        assert webhook_delivery.resolve_checked("https://127.0.0.1/hook", timeout=2, owner="w_fixture_b",
+                                                allow_private=("127.0.0.1",)) == ["127.0.0.1"]
+    finally:
+        release.set()
+    deadline = time.monotonic() + 5
+    while webhook_delivery._OWNERS.get("w_fixture_a") and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert "w_fixture_a" not in webhook_delivery._OWNERS, "a lookup that ends gives its place back"
+
+
+def test_management_checks_and_sends_count_lookups_for_their_workspace(hub, monkeypatch):
+    from synwevo_core import webhook_delivery
+    owners = []
+    real = webhook_delivery._resolve
+    monkeypatch.setattr(webhook_delivery, "_resolve", lambda h, p, d, owner=None: owners.append(owner) or real(h, p, d, owner))
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    hub.subscribe(alice, rx.url, events=["tables.*"])
+    a_table(hub.api, alice)
+    hub.service.tick()
+    assert len(rx.received) == 1
+    assert owners and set(owners) == {hub.p.a}, owners
+
+
+
+def test_narrowing_a_filter_is_journalled_so_a_restore_does_not_widen_it_again(hub):
+    """CR-049 WH-6: narrowing stops pushing some applications' events to an endpoint; a database
+    restored from before it would quietly send them again. Like the other take-backs, it is
+    journalled first and the replay brings the subscription back disabled."""
+    from synwevo_core import journal as security_journal
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(alice, rx.url, events=["*"])["id"]
+    before = hub.store.one("SELECT * FROM suite_webhook_subscriptions WHERE id=?", (sid,))
+    assert hub.api.patch(f"{BASE}/{sid}", json={"events": ["tables.*", "forms.*"]}, headers=alice).status_code == 200
+    assert hub.api.patch(f"{BASE}/{sid}", json={"events": ["tables.*"]}, headers=alice).status_code == 200
+    kinds = [e["kind"] for e in journal(hub.store) if e.get("subscription_id") == sid]
+    assert kinds == ["webhook_disabled", "webhook_disabled"], kinds
+    assert hub.api.patch(f"{BASE}/{sid}", json={"events": ["tables.*", "forms.form.published"]}, headers=alice).status_code == 200
+    assert len([e for e in journal(hub.store) if e.get("subscription_id") == sid]) == 2, "widening is not journalled"
+    # the restore: the wide filter as the backup had it, then the journal
+    hub.store.execute("UPDATE suite_webhook_subscriptions SET status='active', events=? WHERE id=?", (before["events"], sid))
+    security_journal.apply(hub.store, [e for e in journal(hub.store) if e.get("subscription_id") == sid])
+    row = hub.store.one("SELECT status, disabled_reason FROM suite_webhook_subscriptions WHERE id=?", (sid,))
+    assert (row["status"], row["disabled_reason"]) == ("disabled", "journal_replay")
+
+
+def test_ipv6_and_multicast_addresses_that_only_look_global_are_refused(hub, monkeypatch):
+    """CR-049 WH-3: is_global said yes to IPv4-compatible, SIIT-translated, site-local and
+    multicast addresses; only IPv6 global unicast (2000::/3) is a place a callback may go."""
+    alice = grant(hub.api, "alice")["auth"]
+    monkeypatch.delenv("SYNWEVO_SUITE_WEBHOOK_ALLOW_PRIVATE")
+    monkeypatch.delenv("SYNWEVO_SUITE_WEBHOOK_ALLOW_HTTP")
+    for literal in ("[::a9fe:a9fe]", "[::7f00:1]", "[::ffff:0:a9fe:a9fe]", "[fec0::1]", "[ff0e::1]", "224.0.0.1"):
+        refused(hub.api.post(BASE, json={"url": f"https://{literal}/hook", "events": ["*"]}, headers=alice), 400, "invalid_url")
+    assert hub.store.one("SELECT COUNT(*) AS n FROM suite_webhook_subscriptions")["n"] == 0
+    # a global unicast address is accepted (nothing is sent when a subscription is made)
+    assert hub.api.post(BASE, json={"url": "https://[2606:4700::1111]/hook", "events": ["*"]}, headers=alice).status_code == 201
+
+
+def test_managing_a_subscription_needs_a_read_scope_of_the_event_feed(hub):
+    """CR-049 WH-5: a token of the same client and person holding only tables.write read the
+    subscription's address and its delivery log, pinged and redelivered."""
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    a_table(hub.api, alice)
+    hub.service.tick()
+    first = hub.api.get(f"{BASE}/{sid}/deliveries", headers=alice).json()["items"][0]
+    writer = grant(hub.api, "alice", scopes="offline_access tables.write")["auth"]
+    for method, path in (("get", f"{BASE}/{sid}"), ("get", f"{BASE}/{sid}/deliveries"), ("post", f"{BASE}/{sid}/ping"),
+                         ("post", f"{BASE}/{sid}/deliveries/{first['id']}/redeliver"), ("get", BASE)):
+        refused(getattr(hub.api, method)(path, headers=writer), 403, "insufficient_scope")
+    assert len(rx.received) == 1, "nothing was sent for the write-only token"
