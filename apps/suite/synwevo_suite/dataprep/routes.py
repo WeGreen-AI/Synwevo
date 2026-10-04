@@ -65,6 +65,6 @@ def router(ctx, service, prefix='/api/suite/dataprep'):
                 check_sources(service, workspace_id, who.user['id'], ref['dataset_id'])
             from .service import decode
             rows = ctx.store.all('SELECT * FROM dataprep_run_issues WHERE run_id=? AND workspace_id=? ORDER BY seq', (run_id, workspace_id))
-        return Response(canonical([decode(r) for r in rows]), media_type='application/json',
+        return Response(canonical(service.label_issues(workspace_id, [decode(r) for r in rows])), media_type='application/json',
                         headers={'Content-Disposition': f'attachment; filename="{run_id}-issues.json"', 'Cache-Control': 'no-store'})
     return api

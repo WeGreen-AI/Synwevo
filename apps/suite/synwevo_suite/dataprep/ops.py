@@ -47,7 +47,7 @@ def register(registry, service):
         import json
         check_sources(service, c.workspace_id, c.user_id, i.dataset_id)
         found = json.loads(service.get('datasets', c.workspace_id, i.dataset_id)['read_problems_json'])
-        return {'items': found[i.offset:i.offset + i.limit], 'total': len(found), 'next_offset': i.offset + i.limit if i.offset + i.limit < len(found) else None}
+        return {'items': service.label_issues(c.workspace_id, found[i.offset:i.offset + i.limit]), 'total': len(found), 'next_offset': i.offset + i.limit if i.offset + i.limit < len(found) else None}
     add('dataset.issues', ('查看导入异常', '查看匯入異常', 'Read all import issues by page'), M.DatasetPage, dataset_issues)
     add('recipe.create', ('新建方案', '新增方案', 'Create a reusable draft recipe'), M.CreateRecipe, service.create, write=True)
     add('recipe.get', ('查看方案', '查看方案', 'Read recipe draft and immutable published versions'), M.RecipeRef,

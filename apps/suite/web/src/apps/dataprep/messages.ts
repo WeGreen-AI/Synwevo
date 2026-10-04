@@ -943,6 +943,38 @@ export const dataprep = {
   "预览结果过大，请缩小样本": {
     "en": "Preview is too large; reduce the sample size",
     "zh-Hant": "預覽結果過大，請縮小樣本"
+  },
+  "文件结构无效：第 {line} 行开始的记录无法读取，请检查引号是否成对": {
+    "en": "Invalid file structure: the record starting on line {line} cannot be read; check that its quotes are paired",
+    "zh-Hant": "檔案結構無效：第 {line} 行開始的記錄無法讀取，請檢查引號是否成對"
+  },
+  "请填写「{field}」": {
+    "en": "Fill in “{field}”",
+    "zh-Hant": "請填寫「{field}」"
+  },
+  "「{field}」的值无效": {
+    "en": "“{field}” is not valid",
+    "zh-Hant": "「{field}」的值無效"
+  },
+  "步骤 {step}：请填写「{field}」": {
+    "en": "Step {step}: fill in “{field}”",
+    "zh-Hant": "步驟 {step}：請填寫「{field}」"
+  },
+  "步骤 {step}：「{field}」的值无效": {
+    "en": "Step {step}: “{field}” is not valid",
+    "zh-Hant": "步驟 {step}：「{field}」的值無效"
+  },
+  "步骤 {step}：本表关联键与来源关联键的数量必须相同": {
+    "en": "Step {step}: primary and other source join keys must be the same number of columns",
+    "zh-Hant": "步驟 {step}：本表關聯鍵與來源關聯鍵的數量必須相同"
+  },
+  "步骤 {step}：参数不完整或不一致": {
+    "en": "Step {step}: its settings are incomplete or inconsistent",
+    "zh-Hant": "步驟 {step}：參數不完整或不一致"
+  },
+  "空值与缺失按同一规则比较：「不等于」保留这两类行，其他比较都不成立。要检查单元格有值，请用「包含」并留空比较值。": {
+    "en": "Null and missing cells compare the same way: “Does not equal” keeps them and every other comparison fails. To check that a cell has a value, use “includes” with an empty comparison value.",
+    "zh-Hant": "空值與缺失按同一規則比較：「不等於」保留這兩類列，其他比較都不成立。要檢查儲存格有值，請用「包含」並留空比較值。"
   }
 } as const;
 

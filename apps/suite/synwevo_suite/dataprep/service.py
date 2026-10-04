@@ -157,6 +157,19 @@ class DataPrep:
                               'uploaded_by': user, 'created_at': now(), 'upload_key': key})
         return {**decode(self.get('files', workspace, fid)), **info, 'scan_status': scan.get('status')}
 
+    def label_issues(self, workspace, issues):
+        """Give each issue a name a person can read: an uploaded file's id (`dpf_…`) becomes the
+        file's name, so a row number says which file it counts in. Added on read only — stored
+        issues, provenance and their hashes stay as they were. Other sources (records, Forms
+        submissions, Extract tasks) have no file name and keep `input_label` null."""
+        ids = sorted({i['input_name'] for i in issues if isinstance(i.get('input_name'), str) and i['input_name'].startswith('dpf_')})
+        names = {}
+        for start in range(0, len(ids), 500):
+            part = ids[start:start + 500]
+            names.update((r['id'], r['filename']) for r in self.store.all(
+                f"SELECT id,filename FROM dataprep_files WHERE workspace_id=? AND id IN ({','.join('?' * len(part))})", (workspace, *part)))
+        return [{**i, 'input_label': names.get(i.get('input_name'))} for i in issues]
+
     def save_table(self, workspace, user, name, table, *, origin='file', source=None, file_id=None, run_id=None, notes=None):
         bounds(table)
         payload = {'columns': table.columns, 'rows': [{'values': r.values, 'origins': r.origins} for r in table.rows]}
@@ -392,7 +405,7 @@ class DataPrep:
         out, issues, reports = execute(input.definition, sources, input.parameters)
         result = {'sample_only': True, 'ranges': ranges, 'before': before, 'columns': out.columns,
                   'rows': [{'values': r.values, 'origins': r.origins[:20]} for r in out.rows[:200]],
-                  'output_rows': len(out.rows), 'issues': issues, 'reports': reports}
+                  'output_rows': len(out.rows), 'issues': self.label_issues(call.workspace_id, issues), 'reports': reports}
         if len(canonical(result).encode()) > 400_000:
             refuse('preview_limit')
         return result
@@ -447,7 +460,7 @@ class DataPrep:
     def issues(self, workspace, rid, offset, limit):
         row = self.get('runs', workspace, rid)
         found = self.store.all('SELECT * FROM dataprep_run_issues WHERE run_id=? AND workspace_id=? ORDER BY seq LIMIT ? OFFSET ?', (rid, workspace, limit, offset))
-        return {'items': [decode(r) for r in found], 'total': row['issue_total'], 'next_offset': offset + limit if offset + limit < row['issue_total'] else None}
+        return {'items': self.label_issues(workspace, [decode(r) for r in found]), 'total': row['issue_total'], 'next_offset': offset + limit if offset + limit < row['issue_total'] else None}
 
     def finish(self, row, status, *, output=None, issues=None, reports=None, error=None):
         # Caller holds a transaction and, for workers, has checked its current lease token.

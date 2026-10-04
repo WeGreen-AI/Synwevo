@@ -402,6 +402,136 @@ def test_fractional_precision_rejection_rounding_and_large_sum():
     assert out.rows[0].values['total'] == '246913578024691357802469135780.24'
 
 
+def test_count_is_an_exact_integer_while_sum_min_max_keep_their_decimal_text():
+    """Release acceptance: 分组汇总 with 行数 read "4.000000" in the preview, the result grid and
+    all three exports. A count counts rows; it is an integer, never a formatted float."""
+    source = Table(['region', 'amount'], [Row({'region': r, 'amount': a}, [['fixture', n + 2]]) for n, (r, a) in
+                                          enumerate([('N', '0.10'), ('N', '0.20'), ('S', None), ('N', '1.00')])])
+    definition = Definition.model_validate({'steps': [{'id': 'totals', 'type': 'aggregate', 'group_by': ['region'], 'measures': [
+        {'op': 'count', 'target': 'orders'}, {'op': 'sum', 'column': 'amount', 'target': 'total'},
+        {'op': 'min', 'column': 'amount', 'target': 'low'}, {'op': 'max', 'column': 'amount', 'target': 'high'}]}]})
+    out, issues, _ = execute(definition, {'main': source}, {})
+    assert not issues
+    assert [r.values for r in out.rows] == [
+        {'region': 'N', 'orders': '3', 'total': '1.30', 'low': '0.10', 'high': '1.00'},
+        {'region': 'S', 'orders': '1', 'total': None, 'low': None, 'high': None}]
+    many = Table(['id'], [Row({'id': str(n)}) for n in range(1234)])
+    out, _, _ = execute(Definition.model_validate({'steps': [{'id': 'n', 'type': 'aggregate', 'measures': [{'op': 'count', 'target': 'n'}]}]}), {'main': many}, {})
+    assert out.rows[0].values == {'n': '1234'}
+
+
+def test_count_reads_as_an_integer_in_preview_result_and_every_export(suite):
+    suite.sign_in('bob')
+    d = dataset(suite, [{'id': '001', 'amount': '0.10'}, {'id': '001', 'amount': '0.20'}, {'id': '002', 'amount': '5'}])
+    steps = [{'id': 'totals', 'type': 'aggregate', 'group_by': ['id'], 'measures': [
+        {'op': 'count', 'target': 'orders'}, {'op': 'sum', 'column': 'amount', 'target': 'total'}]}]
+    preview = op(suite, 'recipe.preview', {'definition': {'steps': steps}, 'inputs': {'main': d['id']}})
+    assert [r['values'] for r in preview['rows']] == [{'id': '001', 'orders': '2', 'total': '0.30'}, {'id': '002', 'orders': '1', 'total': '5'}]
+    run = finish(suite, start(suite, recipe(suite, steps), d))
+    assert run['status'] == 'succeeded'
+    grid = op(suite, 'dataset.get', {'dataset_id': run['output_dataset_id']})
+    assert [r['values']['orders'] for r in grid['rows']] == ['2', '1']
+    url, params = f"/api/suite/dataprep/datasets/{run['output_dataset_id']}/export", {'workspace_id': suite.people.a}
+    csv = suite.get(url, params=params).text
+    assert csv.splitlines()[1:] == ['"001","2","0.30"', '"002","1","5"']
+    cells = [[c.value for c in row] for row in load_workbook(io.BytesIO(suite.get(url, params={**params, 'format': 'xlsx'}).content)).active.rows]
+    assert cells[1:] == [['001', '2', '0.30'], ['002', '1', '5']]
+    exported = suite.get(url, params={**params, 'format': 'json'}).json()
+    assert [r['values']['orders'] for r in exported['rows']] == ['2', '1']
+
+
+def test_comparisons_read_a_missing_cell_as_null():
+    """Release acceptance: region ≠ "Test" silently dropped order 0005, a short CSV row with no
+    region, while note ≠ "x" kept 0003, whose note is null. A missing cell has no value, exactly
+    like null, in every comparison; only is_null / is_missing / is_empty tell them apart."""
+    data = b'order_id,amount,note,region\n0003,\\N,\\N,South\n0004,2,,North\n0005\n0011,1,x,Test\n'
+    table, _ = read_file(data, 'csv', ImportOptions(), 'fixture')
+    assert table.rows[0].values['note'] is None and 'note' not in table.rows[2].values
+
+    def kept(op, column, value=None, numeric=False, kind='filter'):
+        step = {'id': 'only', 'type': kind, 'condition': {'column': column, 'op': op, 'value': value, 'numeric': numeric}}
+        out, issues, _ = execute(Definition.model_validate({'steps': [step]}), {'main': table}, {})
+        return [r.values['order_id'] for r in out.rows], [i['source_row'] for i in issues]
+
+    assert kept('ne', 'region', 'Test') == (['0003', '0004', '0005'], [])
+    assert kept('ne', 'note', 'x') == (['0003', '0004', '0005'], [])
+    assert kept('ne', 'amount', '1.00', numeric=True) == (['0003', '0004', '0005'], [])
+    assert kept('eq', 'note', None) == (['0003', '0005'], [])  # API callers may compare with null itself
+    assert kept('ne', 'note', None) == (['0004', '0011'], [])  # "has a value"
+    for op in ('eq', 'gt', 'ge', 'lt', 'le', 'contains'):
+        assert not {'0003', '0005'} & set(kept(op, 'note', 'x')[0]), op
+        assert not {'0003', '0005'} & set(kept(op, 'amount', '0', numeric=op != 'contains')[0]), op
+    assert kept('contains', 'note', '')[0] == ['0004', '0011']  # "has a value", empty text included
+    assert kept('is_null', 'note')[0] == ['0003']
+    assert kept('is_missing', 'note')[0] == ['0005']
+    assert kept('is_empty', 'note')[0] == ['0004']
+    # A check uses the same rule as a filter: null and missing pass `ne`, only the real "Test" fails.
+    assert kept('ne', 'region', 'Test', kind='validate') == (['0003', '0004', '0005', '0011'], [5])
+
+
+def test_issue_lists_name_the_uploaded_file_a_row_number_refers_to(suite):
+    """Release acceptance: the 来源 column of every issue list showed the internal file id
+    (dpf_…), so with several inputs nobody could tell which file a row number belonged to."""
+    suite.sign_in('bob')
+    files = {}
+    for name, content in (('orders.csv', b'id,amount\n001,0.10\n002,bad\n003,1,extra\n'), ('refunds.csv', b'id,amount\n009,oops\n')):
+        upload = suite.post('/api/suite/dataprep/files', params={'workspace_id': suite.people.a}, headers={'X-Synwevo-CSRF': 'fixture-csrf'},
+                            data={'upload_key': 'fixture-' + name}, files={'file': (name, content)})
+        assert upload.status_code == 200, upload.text
+        files[name] = op(suite, 'dataset.import', {'file_id': upload.json()['id'], 'name': 'Fixture ' + name})
+    imported = op(suite, 'dataset.issues', {'dataset_id': files['orders.csv']['id']})['items']
+    assert [(i['input_name'], i['input_label'], i['source_row']) for i in imported] == [(files['orders.csv']['file_id'], 'orders.csv', 4)]
+    steps = [{'id': 'more', 'type': 'append', 'source': 'refunds'}, {'id': 'money', 'type': 'cast', 'column': 'amount', 'to': 'decimal'}]
+    inputs = {'main': files['orders.csv']['id'], 'refunds': files['refunds.csv']['id']}
+    preview = op(suite, 'recipe.preview', {'definition': {'steps': steps}, 'inputs': inputs})
+    assert sorted((i['input_label'], i['source_row']) for i in preview['issues']) == [('orders.csv', 3), ('refunds.csv', 2)]
+    r = recipe(suite, steps)
+    run = finish(suite, op(suite, 'run.start', {'recipe_id': r['id'], 'version': 1, 'inputs': inputs}))
+    listed = op(suite, 'run.issues', {'run_id': run['id']})['items']
+    assert sorted((i['input_label'], i['source_row'], i['code']) for i in listed) == [
+        ('orders.csv', 3, 'invalid_decimal'), ('orders.csv', 4, 'row_width'), ('refunds.csv', 2, 'invalid_decimal')]
+    assert all(i['input_name'].startswith('dpf_') for i in listed)
+    download = suite.get(f"/api/suite/dataprep/runs/{run['id']}/issues", params={'workspace_id': suite.people.a}).json()
+    assert sorted(i['input_label'] for i in download) == ['orders.csv', 'orders.csv', 'refunds.csv']
+    # Records have no file to name; their source stays as recorded.
+    plain = op(suite, 'recipe.preview', {'definition': {'steps': steps[1:]}, 'inputs': {'main': dataset(suite, [{'id': '1', 'amount': 'x'}])['id']}})
+    assert [(i['input_name'], i['input_label']) for i in plain['issues']] == [('records', None)]
+
+
+def test_an_unfinished_step_is_refused_with_its_position_and_field(suite):
+    """The contract the editor names a step and field from (release acceptance: saving only said
+    "请检查必填字段与步骤参数"). apps/suite/web/tests/dataprep.test.ts uses these locations."""
+    suite.sign_in('bob')
+    r = op(suite, 'recipe.create', {'name': 'Fixture recipe'})
+    steps = [{'id': 's_trim0001', 'type': 'trim', 'columns': ['a']},
+             {'id': 's_cast0001', 'type': 'cast', 'column': '', 'to': 'decimal'},
+             {'id': 's_agg00001', 'type': 'aggregate', 'measures': [{'op': 'sum', 'column': None, 'target': 'total'}]}]
+    refused = op(suite, 'recipe.save', {'recipe_id': r['id'], 'draft_rev': 1, 'name': 'Fixture recipe', 'definition': {'steps': steps}}, status=422)
+    assert refused['error'] == 'invalid_input'
+    assert [(f['loc'], f['type']) for f in refused['detail']['fields']] == [
+        (['definition', 'steps', '1', 'cast', 'column'], 'string_too_short'),
+        (['definition', 'steps', '2', 'aggregate', 'measures', '0'], 'value_error')]
+    assert op(suite, 'recipe.get', {'recipe_id': r['id']})['draft_rev'] == 1
+
+
+def test_an_unreadable_csv_record_names_the_line_it_starts_on(suite):
+    """Release acceptance: a CSV with an unbalanced quote was refused as 文件结构无效 with no line
+    number. The reader knows the physical line where the unreadable record starts; say it."""
+    cases = ((b'id,name\r\n1,"ok"\r\n2,"broken"tail\r\n3,fine\r\n', 3),  # the acceptance malformed.csv
+             (b'id,name\n1,ok\n2,"never closed\n3,x\n4,y\n', 3),         # an open quote swallows the rest
+             (b'id,note\n1,"two\nlines"\n2,"bad"x\n', 4))                # a quoted line break counts as a line
+    for data, line in cases:
+        with pytest.raises(ServiceError) as e:
+            read_file(data, 'csv', ImportOptions(), 'fixture')
+        assert (e.value.code, e.value.detail) == ('invalid_csv', {'line': line}), data
+    suite.sign_in('bob')
+    upload = suite.post('/api/suite/dataprep/files', params={'workspace_id': suite.people.a}, headers={'X-Synwevo-CSRF': 'fixture-csrf'},
+                        data={'upload_key': 'fixture-malformed'}, files={'file': ('malformed.csv', cases[0][0])})
+    assert upload.status_code == 200, upload.text
+    refused = op(suite, 'dataset.import', {'file_id': upload.json()['id'], 'name': 'Malformed'}, status=422)
+    assert (refused['error'], refused['detail']) == ('invalid_csv', {'line': 3})
+
+
 def test_isolated_import_roots():
     from pathlib import Path
     import synwevo_core.store

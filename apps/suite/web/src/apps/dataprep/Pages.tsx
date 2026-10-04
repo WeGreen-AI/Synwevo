@@ -5,7 +5,7 @@ import { useI18n } from "@synwevo/ui";
 import { newKey } from "../../shared/ops";
 import { Empty, Loading, RunBadge } from "../../shared/states";
 import { useRead, useAction, ErrorState, Grid, IssueList, Field, Pager, when, errorKeys } from "./common";
-import { stepNames, type Definition, type WS, type Dataset, type DataRow, type Recipe, type Run, type Page, type Issue } from "./model";
+import { stepLabels, type Definition, type WS, type Dataset, type DataRow, type Recipe, type Run, type Page, type Issue } from "./model";
 
 export function Library({ ws, write, kind }: { ws: WS; write: boolean; kind: "dataset" | "recipe" | "run" }) {
   const { t } = useI18n(), navigate = useNavigate();
@@ -83,7 +83,7 @@ export function DatasetPage({ ws }: { ws: WS }) {
     {data.read_notes?.includes("formula_cache_not_recalculated") && <p className="notice">{t("使用了文件缓存公式值，可能不是最新计算结果。")}</p>}
     <Grid columns={data.columns} rows={data.rows} caption={t("数据预览")} /><Pager offset={offset} next={data.next_offset} set={setOffset} />
     <h2>{t("导入异常")}{issues.data?.total ? ` (${issues.data.total})` : ""}</h2>
-    {issues.error ? <ErrorState error={issues.error} retry={issues.reload} /> : !issues.data ? <Loading /> : <><IssueList items={issues.data.items} /><Pager offset={issueOffset} next={issues.data.next_offset} set={setIssueOffset} /></>}
+    {issues.error ? <ErrorState error={issues.error} retry={issues.reload} /> : !issues.data ? <Loading /> : <><IssueList items={issues.data.items} steps={[]} /><Pager offset={issueOffset} next={issues.data.next_offset} set={setIssueOffset} /></>}
   </>;
 }
 
@@ -100,7 +100,7 @@ export function RunPage({ ws, write }: { ws: WS; write: boolean }) {
   if (result.error) return <ErrorState error={result.error} retry={result.reload} />;
   if (!result.data) return <Loading />;
   const run = result.data, active = ["queued", "running"].includes(run.status), base = `/dataprep/w/${ws.id}`;
-  const stepLabels = Object.fromEntries((version.data?.definition.steps ?? []).map((step, index) => [step.id, `${index + 1}. ${t(stepNames[step.type] || "步骤")}`]));
+  const steps = version.data?.definition.steps ?? [], labels = stepLabels(steps, t);
   return <><div className="suite-head"><div><h1>{run.output_name}</h1><p className="lede">{t("版本 {v}", { v: run.recipe_version })} · {when(run.created_at)}</p></div><RunBadge status={run.status} /></div>
     <div className="dp-actions"><Link className="btn" to={`${base}/recipes/${run.recipe_id}`}>{t("打开处理方案")}</Link>
       {write && <button className="btn" disabled={action.busy || !!(active && run.cancel_requested)} onClick={() => void action.run(active ? "run.cancel" : "run.retry", { run_id: id }, value => active ? result.reload() : navigate(`${base}/runs/${value.id}`))}>{active ? run.cancel_requested ? t("正在取消…") : t("取消运行") : t("以相同输入重新运行")}</button>}
@@ -110,8 +110,8 @@ export function RunPage({ ws, write }: { ws: WS; write: boolean }) {
     {run.error_code && <ErrorState error={run.error_code} />}{action.error && <ErrorState error={action.error} />}
     {run.counts && <p className="dp-summary">{t("输出 {n} 行 · 异常 {errors} 项", { n: run.counts.output_rows, errors: run.counts.issues })}</p>}
     <section className="dp-panel"><h2>{t("固定输入")}</h2>{Object.entries(run.inputs).map(([name, input]) => <InputDataset key={name} ws={ws} name={name} id={input.dataset_id} />)}<p>{t("运行尝试次数：{n}", { n: run.attempts })}</p></section>
-    {!!run.reports?.length && <div className="dp-grid"><table><caption>{t("逐步统计")}</caption><thead><tr>{["步骤", "输入行数", "输出行数", "异常"].map(s => <th key={s}>{t(s)}</th>)}</tr></thead><tbody>{run.reports.map(r => <tr key={r.step_id}><td>{stepLabels[r.step_id] || t("步骤")}</td><td>{r.input_rows}</td><td>{r.output_rows}</td><td>{r.issues}</td></tr>)}</tbody></table></div>}
-    <h2>{t("异常行")}</h2>{issues.error ? <ErrorState error={issues.error} retry={issues.reload} /> : !issues.data ? <Loading /> : <><IssueList items={issues.data.items} stepLabels={stepLabels} /><Pager offset={offset} next={issues.data.next_offset} set={setOffset} /></>}
+    {!!run.reports?.length && <div className="dp-grid"><table><caption>{t("逐步统计")}</caption><thead><tr>{["步骤", "输入行数", "输出行数", "异常"].map(s => <th key={s}>{t(s)}</th>)}</tr></thead><tbody>{run.reports.map(r => <tr key={r.step_id}><td>{labels[r.step_id] || t("步骤")}</td><td>{r.input_rows}</td><td>{r.output_rows}</td><td>{r.issues}</td></tr>)}</tbody></table></div>}
+    <h2>{t("异常行")}</h2>{issues.error ? <ErrorState error={issues.error} retry={issues.reload} /> : !issues.data ? <Loading /> : <><IssueList items={issues.data.items} steps={steps} /><Pager offset={offset} next={issues.data.next_offset} set={setOffset} /></>}
   </>;
 }
 

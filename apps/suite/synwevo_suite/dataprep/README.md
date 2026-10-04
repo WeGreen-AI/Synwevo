@@ -151,6 +151,9 @@ synchronous record-import model without introducing an unbounded batch or anothe
 
 - Uploaded files: CSV (UTF-8 with optional BOM, UTF-16, GB18030; comma, semicolon, tab, pipe) and
   XLSX. Inclusive 1-based row/column range, first selected row is a unique nonempty header.
+  A CSV record the strict reader cannot parse (an unbalanced quote, text after a closing quote)
+  refuses the whole import as `invalid_csv` with `detail.line`, the physical line where that
+  record starts (quoted line breaks count as lines).
   Import creates an immutable dataset. The upload key is accepted as `Idempotency-Key` header
   or multipart `upload_key`, so the shared authenticated upload client can retry safely.
 - Limits: 8 MiB file, 32 MiB XLSX expanded content, 500 ZIP members, 50 sheets, 8 MiB per non-sheet
@@ -170,6 +173,15 @@ synchronous record-import model without introducing an unbounded batch or anothe
   Split uses literal separators, limited by target count; the last field retains the remainder.
   Merge has an explicit null policy. Filter/check comparisons use operators, never code/eval/SQL.
   Parameter references are exact `$name` values declared in the recipe.
+- Filter and check comparisons read a **missing cell exactly like null**: neither has a value (a
+  short CSV row, a column another appended source lacks, an unmatched left join, an Extract field
+  with status `missing`). `eq`/`ne` treat no value as unlike every text, `""` included, so
+  `ne "x"` keeps null and missing rows and `eq "x"` drops them; `gt`/`ge`/`lt`/`le`/`contains`
+  never hold for them. An empty string is a value. `is_null`, `is_missing` and `is_empty` select
+  exactly one state. A check that a cell has a value is `contains ""` (or `ne` null through the
+  API); `ne ""` does not reject null or missing cells. Merge and numeric aggregation already read
+  missing as null; ascending sort orders missing, then null, then values; join and deduplication keys
+  keep the two apart.
 - Dates use ISO strings. Timestamps with an offset normalize to UTC; timestamps without one
   require a recipe-provided fixed offset. There is no guess at local timezone or daylight saving.
   XLSX dates use the workbook epoch and millisecond resolution, returning local ISO values;
@@ -182,8 +194,14 @@ synchronous record-import model without introducing an unbounded batch or anothe
   expansion. Duplicate right keys under unique matching are a structural failure.
 - Cast, numeric sort and numeric aggregate errors exclude the affected row and record its
   source; validation explicitly keeps or drops an invalid row. Numeric aggregations ignore
-  null/missing values, use exact arithmetic; count counts rows. Complete row errors are paged
+  null/missing values, use exact arithmetic and keep the input scale (`0.10 + 0.20` is `0.30`);
+  count counts rows and is written as an integer (`4`, never `4.000000`). Complete row errors are paged
   and downloadable. Structural failure commits no output dataset.
+- Every issue keeps its recorded source in `input_name` (an uploaded file's `dpf_…` id, a Forms
+  submission or Extract task id, or `records`) and its 1-based row there in `source_row`. Issue
+  reads (dataset/run issue pages, preview, the downloaded run list) add `input_label`, the
+  uploaded file's name, so a row number says which file it counts in; it is null for other
+  sources. The label is resolved on read and is not part of stored issues or content hashes.
 - A preview applies the draft to actual selected samples (offset/size for each source), declares
   those ranges and is read-only. It displays up to 200 result rows and refuses oversized previews.
   Full jobs pin an immutable published definition, all input dataset hashes and parameters.

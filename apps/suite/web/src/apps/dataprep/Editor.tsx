@@ -38,7 +38,9 @@ export function Editor({ ws, write }: { ws: WS; write: boolean }) {
     if (draft) setUndo(u => [...u.slice(-49), draft]);
     setRedo([]); setDraft(next); setPreview(null);
   }
-  function save() { if (draft) void action.run<Recipe>("recipe.save", { recipe_id: id, draft_rev: rev, ...draft }, r => { adopt(r); result.reload(); }); }
+  // The steps a save sent: a refusal names their positions, which later edits may move.
+  const [sentSteps, setSentSteps] = useState<Definition["steps"]>([]);
+  function save() { if (draft) { setSentSteps(draft.definition.steps); void action.run<Recipe>("recipe.save", { recipe_id: id, draft_rev: rev, ...draft }, r => { adopt(r); result.reload(); }); } }
   useEffect(() => {
     const key = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); if (dirty && write && !action.busy) save(); } };
     window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key);
@@ -68,7 +70,9 @@ export function Editor({ ws, write }: { ws: WS; write: boolean }) {
   async function sample() {
     if (previewing) return;
     setPreviewing(true); setPreviewError(null);
-    try { setPreview(await read("dataprep.recipe.preview", { definition: def, ...bind(def), offset: sampleOffset, limit: sampleSize }, ws.id)); }
+    // Keep the previewed definition: undo/redo change the draft without clearing the preview,
+    // and its issues must be labelled by the steps that produced them.
+    try { setPreview({ ...await read("dataprep.recipe.preview", { definition: def, ...bind(def), offset: sampleOffset, limit: sampleSize }, ws.id), definition: def }); }
     catch (e) { setPreviewError(e); } finally { setPreviewing(false); }
   }
   return <div className="dp-editor" onClickCapture={e => {
@@ -78,7 +82,7 @@ export function Editor({ ws, write }: { ws: WS; write: boolean }) {
       <div className="actions"><button className="btn" disabled={!write || !undo.length || action.busy} onClick={() => { setRedo(r => [draft, ...r]); setDraft(undo.at(-1)!); setUndo(u => u.slice(0, -1)); }}>{t("撤销编辑")}</button>
         <button className="btn" disabled={!write || !redo.length || action.busy} onClick={() => { setUndo(u => [...u, draft]); setDraft(redo[0]); setRedo(r => r.slice(1)); }}>{t("重做")}</button>
         <button className="btn primary" disabled={!write || !dirty || action.busy || recipe.status !== "active"} onClick={save}>{action.busy ? t("处理中…") : t("保存草稿")}</button></div></div>
-    {action.error && <><ErrorState error={action.error} /><button className="btn" onClick={() => { if (!dirty || window.confirm(t("重新载入会丢弃本地修改。继续？"))) { setDraft(null); setSaved(""); result.reload(); } }}>{t("重新载入")}</button></>}
+    {action.error && <><ErrorState error={action.error} steps={sentSteps} /><button className="btn" onClick={() => { if (!dirty || window.confirm(t("重新载入会丢弃本地修改。继续？"))) { setDraft(null); setSaved(""); result.reload(); } }}>{t("重新载入")}</button></>}
     <div className="dp-editor-layout"><section>
       <fieldset className="dp-panel" disabled={!write || action.busy || recipe.status !== "active"}>
         <div className="dp-fields"><Field label={t("方案名称")}><input className="input" maxLength={120} value={draft.name} onChange={e => edit({ ...draft, name: e.target.value })} /></Field>
@@ -118,6 +122,6 @@ export function Editor({ ws, write }: { ws: WS; write: boolean }) {
     {previewError && <ErrorState error={previewError} />}{previewing && <Loading />}
     {preview && <section className="dp-preview"><h2>{t("前后对比（仅所选样本）")}</h2><p className="notice">{Object.entries(preview.ranges).map(([k, r]: [string, any]) => `${k}: ${r.offset + 1}–${r.offset + r.selected} / ${r.total}`).join(" · ")}</p>
       <div className="dp-comparison"><Grid columns={sourceColumns[def.source] || []} rows={preview.before || []} caption={t("处理前")} /><Grid columns={preview.columns} rows={preview.rows} caption={t("处理后")} /></div>
-      <p>{t("预览产出 {n} 行，最多显示 200 行", { n: preview.output_rows })}</p><IssueList items={preview.issues} /></section>}
+      <p>{t("预览产出 {n} 行，最多显示 200 行", { n: preview.output_rows })}</p><IssueList items={preview.issues} steps={preview.definition.steps} /></section>}
   </div>;
 }

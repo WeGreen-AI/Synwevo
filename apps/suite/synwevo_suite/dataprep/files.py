@@ -174,15 +174,23 @@ def read_file(data: bytes, format: str, options: ImportOptions, source: str):
         reader = csv.reader(io.StringIO(text, newline=''), delimiter=options.delimiter, strict=True)
 
         def csv_rows():
-            try:
-                for n, row in enumerate(reader, 1):
-                    if n > MAX_ROWS + 1:
-                        refuse('row_limit')
-                    if len(row) > MAX_COLUMNS:
-                        refuse('table_limit')
-                    yield n, {i + 1: v for i, v in enumerate(row)}, []
-            except csv.Error:
-                refuse('invalid_csv')
+            n = 0
+            while True:
+                # Physical line where the next record starts (quoted line breaks count as lines):
+                # an unbalanced quote is reported where the person can find it in the file.
+                line = reader.line_num + 1
+                try:
+                    row = next(reader)
+                except StopIteration:
+                    return
+                except csv.Error:
+                    refuse('invalid_csv', {'line': line})
+                n += 1
+                if n > MAX_ROWS + 1:
+                    refuse('row_limit')
+                if len(row) > MAX_COLUMNS:
+                    refuse('table_limit')
+                yield n, {i + 1: v for i, v in enumerate(row)}, []
         incoming = csv_rows()
     header, columns, out, issues = None, [], [], []
     for rn, values, problems in incoming:

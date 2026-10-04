@@ -1,5 +1,8 @@
 """Deterministic bounded table transformations; missing, null and empty remain distinct.
 
+Comparisons (eq/ne/gt/ge/lt/le/contains) read a missing cell as null; only the is_null,
+is_missing and is_empty predicates tell the states apart.
+
 Invalid casts/sort keys/aggregate values produce issues and exclude the offending row. Validation
 can retain or drop rows explicitly. Null join keys do not match by default. `one` rejects duplicate
 right keys structurally; `all` permits Cartesian matches subject to the output budget.
@@ -114,9 +117,9 @@ def predicate(row, condition, parameters):
         return c in row.values and row.values[c] is None
     if condition.op == 'is_empty':
         return row.values.get(c) == ''
-    if c not in row.values:
-        return False
-    value, other = row.values[c], condition.value
+    # Comparisons read a missing cell as null: neither has a value. eq/ne treat that as unlike
+    # every text (so `ne` keeps both), ordering and `contains` never hold for it.
+    value, other = row.values.get(c), condition.value
     if isinstance(other, str) and other.startswith('$'):
         other = parameters[other[1:]]
     if condition.numeric and value is not None and other is not None:
@@ -304,7 +307,9 @@ def execute(definition: Definition, sources: dict[str, Table], parameters: dict,
                             acc[j] = value if acc[j] is None else acc[j] + value if m.op == 'sum' else min(acc[j], value) if m.op == 'min' else max(acc[j], value)
                 out = []
                 for group, acc in groups.values():
-                    group.values.update({m.target: None if acc[j] is None else format(acc[j], 'f') for j, m in enumerate(step.measures)})
+                    # A count is an exact integer; sums/min/max keep their Decimal text (scale intact).
+                    group.values.update({m.target: None if acc[j] is None else str(acc[j]) if m.op == 'count' else format(acc[j], 'f')
+                                         for j, m in enumerate(step.measures)})
                     out.append(group)
                 table = Table(columns, out)
         bounds(table)
