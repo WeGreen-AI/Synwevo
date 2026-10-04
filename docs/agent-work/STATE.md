@@ -5,14 +5,14 @@
 | 项 | 当前事实 |
 |---|---|
 | 锁 | 主检出 docs/agent-work/.coordinator.lock 由 80146fec 持有（记录了接管证据），每轮更新 heartbeat |
-| 实施树 | .claude/worktrees/business-apps，feat/business-apps；origin 停在 43e7e3c（df-flows 合入），本地另有 CR-047 修复 0f0124b、af62448、64cdf9d、f7afc66、baad721、9048d40、3f43348 及 DFP-2/AGENT-DF-4/AGENT-DF-5 待提交批次；门槛通过后一次推送（Actions 额度：每次推送一次完整 verify） |
-| PR | 草稿 PR #1，https://github.com/WeGreen-AI/Synwevo/pull/1；64e9348 的 CI（Actions 37166232361）通过；未合并 |
+| 实施树 | .claude/worktrees/business-apps，feat/business-apps；origin 614b0cb（CR-047 第一、二轮修复全部推送并合入 main@9bf71b9）；本地另有 078a2a1（并入平台运行页 claude/admin-governance 3dc06d6）与记录更新，待 Webhook 分支（claude/suite-machine-webhooks）全量回归后一并合入、推送 |
+| PR | 草稿 PR #1（https://github.com/WeGreen-AI/Synwevo/pull/1）：曾因与 main 冲突导致 pull_request 不触发；合并 main 后恢复 MERGEABLE，614b0cb 的 CI（Actions 37173429956）进行中 |
 | 主检出 | main@2dd03c7；图标任务等其他会话的改动完整保留，不触碰 |
-| CI / 部署 | 生产仍为 aadcb9e。main 37cd253（GCRA 计时测试修复）运行 37169458599 verify 2 失败/2877 通过：API 会话提交的 OpenAPI 413/416 描述取自运行时 Python（本机 3.14 与 CI 3.12 措辞不同）；b8cb31a 固定为 RFC 9110 名称并重新生成契约（3.12 措辞注入下与提交文件一致；旧代码在同注入下复现 CI 差异），已推送，运行 37171551868 进行中，通过后由既有流水线部署 |
+| CI / 部署 | **生产已更新**：Actions 37171551868 验证并部署 b8cb31a（2026-10-04 03:09 UTC）；五个正式主机 /readyz 200，四个角色同为 synwevo:b8cb31a8（只读核对）；记录 docs/quality/deployment.md（main@9bf71b9，仅文档未触发 CI）。阻断原因：Actions 计费（已恢复）与两处潜伏测试缺陷（GCRA 计时断言、运行时 Python 决定的 413/416 描述），均已在 main 修复 |
 | 本机门槛（提交前同一树，2026-10-04T00:25–00:48Z） | 五套件 4572 passed / 2 skipped / 0 failed（docs 1488+2 skipped、identity 1206、messages 63、suite 717、integration 1098）；五守卫、typecheck、build、npm test（6 个工作区 360 项）、infra unittest 8、Python SDK 35 均通过 |
-| 当前包 | ① data_flow：df-flows（F1、F3–F7）已复核并合入；df-forms（F2/AGENT-DF-1 高：公开表单页向持链接者暴露草稿）与 df-agent（AGENT-DF-2..5、DFP-1..6）两个 worker 因子代理额度耗尽中断，改由协调者直接做；**复核无高/中项前 PR #1 不得合并 main**；② Webhook：投递侧 8 个提交在 claude/suite-machine-webhooks（0c36724），管理侧修复与两项审查因额度中断；③ Admin 运行页：claude/admin-governance f85cada（AR-1..10），独立验证因额度中断；④ D3–D20 待分组修复（D3 语义待所有者决定） |
+| 当前包 | ① data_flow：第二轮复核 R2-F1..F8 全部修复（无高；中 4 项）；② 平台运行页：独立核查 AR-1/AR-2（中）已修复并入；③ Webhook：管理侧修复与补审 WH-1..WH-6 已修复（worktree suite-machine-api，全量回归中）；④ 待做：浏览器验收（Settings 固定默认政策、Automations 拒绝原因、平台运行页停滞/历史标签）、第三轮数据流复核或协调者自审、CR-048 其余（DF-B2/B3/B4 流程引擎健壮性）、D3–D20 |
 | 并行 | 只读：data_flow 审查×2、admin 运行页审查×1（会话重启后已续跑）；工作流 wf_f4d87c36-c38（Webhook：交付侧修复→管理侧修复→授权/数据暴露与核心影响面两路审查+对抗核实，唯一写入者，仅 suite-machine-api；step 2 已本地提交 930a954）；工作流 wf_a9743a28-ba8（只读复核 admin-coverage D3–D20 并给出最小修复方案，6 组） |
-| 下一动作 | 37171551868 通过则核对五个正式主机 /readyz、各角色镜像并写 docs/quality/deployment.md；失败读日志修根因。业务分支：提交 DFP-2/AGENT-DF-4/5 批次并推送；随后第二轮对抗复核（子代理额度恢复后，否则协调者自审）、浏览器验收 Settings/Automations 改动、CR-048 其余、Webhook 管理侧与 Admin 运行页合入 |
+| 下一动作 | 本地 feat/business-apps 已合入平台运行页、Webhook（WH-1..6）、流程健壮性（DF-B4/DF-B3），全量门槛在跑（scratchpad/gate-py.log）；门槛通过后推送。浏览器验收已做（隔离实例 scratchpad/live，36769/36770）：平台运行页停滞标记、历史标签、英文与 375px；Automations 拒绝原因；Settings 固定默认政策（revision 1）。待：门槛结果、推送、PR CI、第三轮复核、D3–D20 |
 
 ## 已验证与边界
 

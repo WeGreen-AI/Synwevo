@@ -217,9 +217,9 @@ test("a parked flow run has a word and a tone, is counted in the summary and can
   for (const [state, word] of [["paused", "已暂停"], ["blocked", "受阻"], ["unknown", "结果不明"]]) {
     assert.ok(page.includes(`<option value="${state}">${word}</option>`), state);
   }
-  assert.match(page, /需要关注（失败、部分成功、受阻、结果不明或已超过期限）/);
-  assert.equal(ui.translate("en", "需要关注（失败、部分成功、受阻、结果不明或已超过期限）"),
-    "Needs attention (failed, partly succeeded, blocked, outcome unknown or past its deadline)");
+  assert.match(page, /需要关注（失败、部分成功、受阻、结果不明、已超过期限或已停滞）/);
+  assert.equal(ui.translate("en", "需要关注（失败、部分成功、受阻、结果不明、已超过期限或已停滞）"),
+    "Needs attention (failed, partly succeeded, blocked, outcome unknown, past its deadline or stalled)");
 });
 
 // ---------------------------------------------------------------- the capped count

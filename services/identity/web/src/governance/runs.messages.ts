@@ -137,9 +137,9 @@ registerMessages({
   "流程属于创建它的人。这里只显示运行的状态、时间和它调用了哪些操作；流程的名称、步骤名称、参数和结果不显示。": {
     en: "A flow belongs to the person who created it. Only a run's state, times and the operations it called are shown here; the flow's name, step names, parameters and results are not.",
     "zh-Hant": "流程屬於建立它的人。這裡只顯示執行的狀態、時間和它呼叫了哪些操作；流程的名稱、步驟名稱、參數和結果不顯示。" },
-  "需要关注（失败、部分成功、受阻、结果不明或已超过期限）": {
-    en: "Needs attention (failed, partly succeeded, blocked, outcome unknown or past its deadline)",
-    "zh-Hant": "需要關注（失敗、部分成功、受阻、結果不明或已超過期限）" },
+  "需要关注（失败、部分成功、受阻、结果不明、已超过期限或已停滞）": {
+    en: "Needs attention (failed, partly succeeded, blocked, outcome unknown, past its deadline or stalled)",
+    "zh-Hant": "需要關注（失敗、部分成功、受阻、結果不明、已超過期限或已停滯）" },
   "流程运行编号或关联编号": { en: "Flow run ID or correlation ID", "zh-Hant": "流程執行編號或關聯編號" },
   "只显示账户 {id} 的流程运行。": { en: "Showing only flow runs of account {id}.", "zh-Hant": "只顯示帳戶 {id} 的流程執行。" },
   "只显示流程 {id} 的运行。": { en: "Showing only runs of flow {id}.", "zh-Hant": "只顯示流程 {id} 的執行。" },

@@ -271,7 +271,7 @@ export function FlowRunsTab({ onDenied }: Props) {
       <p className="muted small">{t("流程属于创建它的人。这里只显示运行的状态、时间和它调用了哪些操作；流程的名称、步骤名称、参数和结果不显示。")}</p>
       <div className="row gap12 wrap" style={{ alignItems: "flex-end" }}>
         <label className="field">{t("状态")}<select className="input" value={view.status} onChange={(e) => set({ status: e.target.value })}>
-          <option value="">{t("全部状态")}</option><option value="attention">{t("需要关注（失败、部分成功、受阻、结果不明或已超过期限）")}</option>
+          <option value="">{t("全部状态")}</option><option value="attention">{t("需要关注（失败、部分成功、受阻、结果不明、已超过期限或已停滞）")}</option>
           <option value="active">{t("未结束")}</option>
           {FLOW_STATES.map((state) => <option key={state} value={state}>{t(STATE_LABEL[state])}</option>)}</select></label>
         <label className="field grow">{t("流程运行编号或关联编号")}<input className="input" type="search" maxLength={100} value={q}
