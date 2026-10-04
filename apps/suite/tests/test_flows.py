@@ -656,10 +656,10 @@ def test_an_event_is_about_a_wait_only_when_it_names_everything_the_wait_reads()
     assert names_read(_read_target(reader), {"object_id": "fixture-submission", "data": {"request_id": "fixture-request"}})
     assert _read_target(json.dumps({"input": {"table_id": "T", "record_id": "R", "q": "x", "ids": ["a"]}})) == {"T", "R"}
     assert _read_target("[" * 100000) == set(), "a damaged row too deep to parse is not about anything"
-    deep = {"input": {"record_id": "R"}}
-    for _ in range(5000):                                   # valid JSON, too deep to walk (review R6)
-        deep = {"input": [deep]}
-    assert _read_target(json.dumps(deep)) == set()
+    # valid JSON too deep to walk (review R6), written as text: encoding it with json.dumps would
+    # itself overflow the recursion limit on the CI image's Python 3.12
+    deep = '{"input": [' * 5000 + '{"input": {"record_id": "R"}}' + ']}' * 5000
+    assert _read_target(deep) == set()
 
 
 def test_a_damaged_wait_row_does_not_stop_the_tick_for_everyone(flow):
