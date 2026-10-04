@@ -1,17 +1,18 @@
 # 业务应用、Admin/API 与个人 Agent：状态与断点
 
-最后检查：2026-10-03T12:00Z。协调任务 Claude `df1f0b15-17ae-4370-a6b0-aacd082144be`（/loop f5cb7ce9，取代 9d5641b6）；统一目标仍执行，无递归loop。
+最后检查：2026-10-04T00:50Z。协调任务 Claude `80146fec-e8b8-43eb-aafb-6b062986dc5d`（/loop d90b5952）；2026-10-03T15:01Z 自 `df1f0b15…` 接管：用户于 14:00Z 中断其回合并取消其循环 f5cb7ce9，原并行会话 `12134ed7…`（Admin）与 `7bc70746…`（Webhook）同时被中断；三者均已书面交接并确认不再写入。
 
 | 项 | 当前事实 |
 |---|---|
-| 锁 | 主检出docs/agent-work/.coordinator.lock由df1f0b15持有，每轮更新heartbeat。2026-10-03T04:09Z自Codex `01a0f104…`接管：其goal paused、turn被用户中断（2026-10-02T15:05Z），服务15:10Z退出，此后无事件 |
-| 实施树 | .claude/worktrees/business-apps，feat/business-apps；remote af68968（WP9事件层+traffic+CODE_REVIEW）；本地另有 ab69741 流程结果语义、0e95fcc Message排队发送、d2e1f15 数据集→文档输入（未推送） |
-| PR | 草稿PR #1，https://github.com/WeGreen-AI/Synwevo/pull/1；未合并/部署本分支 |
-| 主检出 | main@2dd03c7；其他图标任务改动完整保留，不触碰 |
-| CI | cf1bb32 Actions37105534440 success；af68968 Actions37119711384 verify 运行中（11:27Z 起） |
-| 当前包 | B1 跨应用链路：引擎 partial/failed/cancelled 语义、portal 角色 Message 排队投递与收据结算、DataPrep 数据集物化为 Docs 输入均已本地验证并提交；B1 七应用端到端测试由子代理编写中 |
-| 并行 | local_561a6cda：签名 Webhook（claude/suite-machine-webhooks，叠在 af68968），CR-035 已修复于 1dba69b/47daf54；只本地提交 |
-| 下一动作 | 完成 B1 端到端测试与浏览器验收；全量门槛后推送 ab69741..；合并 Webhook 栈；随后跨空间 Agent（C1–C4） |
+| 锁 | 主检出 docs/agent-work/.coordinator.lock 由 80146fec 持有（记录了接管证据），每轮更新 heartbeat |
+| 实施树 | .claude/worktrees/business-apps，feat/business-apps；HEAD = data_flow 契约（a407c2c）+ CI 测试修复（e6018ff）+ 本记录提交，按用户 2026-10-04 指令“直接推送”推送到 origin/feat/business-apps（未触碰 main，未部署） |
+| PR | 草稿 PR #1，https://github.com/WeGreen-AI/Synwevo/pull/1；未合并/部署本分支 |
+| 主检出 | main@2dd03c7；图标任务等其他会话的改动完整保留，不触碰 |
+| CI | 67b08c4 verify 失败（偶发测试，CR-039，已由 e6018ff 修复）；新推送提交的 CI 待该 SHA 的运行结果，尚未核对 |
+| 本机门槛（提交前同一树，2026-10-04T00:25–00:48Z） | 五套件 4572 passed / 2 skipped / 0 failed（docs 1488+2 skipped、identity 1206、messages 63、suite 717、integration 1098）；五守卫、typecheck、build、npm test（6 个工作区 360 项）、infra unittest 8、Python SDK 35 均通过 |
+| 当前包 | ① data_flow 已提交推送；其正确性审查与三路对抗复核（wf_5138fc3a-478）仍在进行，结论到达后另行修复提交（推送先于这两项结论，属用户指令）；② Webhook 分支：工作流 wf_f4d87c36-c38 修复与补审中，完成后变基到新 HEAD 再合并；③ Admin 运行页：工作流 wf_653d06ea-6cf 修复与复验中，随后浏览器验收、变基合并；④ Admin 缺陷 D3–D20 已复核，待分组修复（D3 语义待所有者决定） |
+| 并行 | 只读：data_flow 审查×2、admin 运行页审查×1（会话重启后已续跑）；工作流 wf_f4d87c36-c38（Webhook：交付侧修复→管理侧修复→授权/数据暴露与核心影响面两路审查+对抗核实，唯一写入者，仅 suite-machine-api；step 2 已本地提交 930a954）；工作流 wf_a9743a28-ba8（只读复核 admin-coverage D3–D20 并给出最小修复方案，6 组） |
+| 下一动作 | 跟踪新 SHA 的 CI；处理 data_flow 复核结论；合并 Webhook 与 Admin 运行页；D3–D20 修复批次；随后 C3 同名对象澄清、C5–C10 复核、CR-045（Docs 复制/模板库纳入数据流政策） |
 
 ## 已验证与边界
 
